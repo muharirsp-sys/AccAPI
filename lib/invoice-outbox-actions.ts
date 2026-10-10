@@ -35,6 +35,19 @@ export function pencariFaktur(database: NodePgDatabase, session: SesiCari | null
     return (q) => cariFaktur({ db: database, key: q.orderId, customerNo: q.customerNo, queuedAt: q.queuedAt, session });
 }
 
+type SesiPenekan = { accessToken?: string | null; sessionHost?: string | null; sessionId?: string | null; databaseId?: string | number | null } | null;
+
+/** Sesi penekan dipakai mencari hanya bila lengkap, host-nya Accurate, dan terbuka pada database faktur. */
+export function sesiCariSah(sesi: SesiPenekan, targetDb: string): { session: SesiCari | null; catatan: string } {
+    if (!sesi?.accessToken || !sesi.sessionHost || !sesi.sessionId || !isAllowedAccurateHost(sesi.sessionHost)) {
+        return { session: null, catatan: "sesi Accurate Anda tidak lengkap — login Accurate di /api-wrapper" };
+    }
+    if (!targetDb || String(sesi.databaseId ?? "") !== targetDb) {
+        return { session: null, catatan: `sesi Accurate Anda terbuka pada database ${sesi.databaseId ?? "?"}, bukan database faktur ${targetDb || "(ACCURATE_INVOICE_DB_ID kosong)"}` };
+    }
+    return { session: { sessionHost: sesi.sessionHost, sessionId: sesi.sessionId, accessToken: sesi.accessToken }, catatan: "" };
+}
+
 /**
  * Pencari dengan sesi Accurate PENEKAN — hanya bila sesi itu terbuka pada database tujuan faktur
  * (`ACCURATE_INVOICE_DB_ID`); database lain = list.do akan mencari di pembukuan yang salah. Tanpa
@@ -43,15 +56,7 @@ export function pencariFaktur(database: NodePgDatabase, session: SesiCari | null
 export async function pencariPenekan(database: NodePgDatabase, userId: string): Promise<{ targetDb: string; cari: Pencari }> {
     const targetDb = String(process.env.ACCURATE_INVOICE_DB_ID || "").trim();
     const sesi = userId ? await getAccurateSession(userId).catch(() => null) : null;
-    let session: SesiCari | null = null;
-    let catatan = "";
-    if (!sesi?.accessToken || !sesi.sessionHost || !sesi.sessionId || !isAllowedAccurateHost(sesi.sessionHost)) {
-        catatan = "sesi Accurate Anda tidak lengkap — login Accurate di /api-wrapper";
-    } else if (String(sesi.databaseId ?? "") !== targetDb) {
-        catatan = `sesi Accurate Anda terbuka pada database ${sesi.databaseId ?? "?"}, bukan database faktur ${targetDb || "(ACCURATE_INVOICE_DB_ID kosong)"}`;
-    } else {
-        session = { sessionHost: sesi.sessionHost, sessionId: sesi.sessionId, accessToken: sesi.accessToken };
-    }
+    const { session, catatan } = sesiCariSah(sesi, targetDb);
     const dasar = pencariFaktur(database, session);
     return {
         targetDb,

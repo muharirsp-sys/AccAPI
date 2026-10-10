@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { aksiAntrean, antrekan, cariTidakPasti, selesaikanTidakPasti, type Pencari } from "./invoice-outbox-actions.ts";
+import { aksiAntrean, antrekan, cariTidakPasti, selesaikanTidakPasti, sesiCariSah, type Pencari } from "./invoice-outbox-actions.ts";
 import type { HasilCari } from "./invoice-search.ts";
 
 const DIBUAT = new Date("2026-10-08T02:00:00Z");
@@ -232,4 +232,13 @@ test("cariTidakPasti (S6c): hanya baris TIDAK PASTI — status lain 409 tanpa pe
         assert.equal(calls.length, 0);
         assert.equal(tulis.length, 0);
     }
+});
+
+test("sesiCariSah (tinjauan S6c a): sesi dipakai hanya pada database faktur yang TERISI — env kosong tidak lolos", () => {
+    const sesi = { accessToken: "t", sessionHost: "https://zeus.accurate.id", sessionId: "s", databaseId: "" };
+    assert.equal(sesiCariSah(sesi, "").session, null, "ACCURATE_INVOICE_DB_ID kosong + sesi tanpa database = jangan cari di pembukuan sembarang");
+    assert.match(sesiCariSah(sesi, "").catatan, /kosong/);
+    assert.equal(sesiCariSah({ ...sesi, databaseId: "1001" }, "2002").session, null);
+    assert.equal(sesiCariSah({ ...sesi, databaseId: "1001", sessionHost: "https://contoh.example" }, "1001").session, null);
+    assert.deepEqual(sesiCariSah({ ...sesi, databaseId: 1001 }, "1001"), { session: { sessionHost: "https://zeus.accurate.id", sessionId: "s", accessToken: "t" }, catatan: "" });
 });
