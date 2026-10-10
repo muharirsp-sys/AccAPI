@@ -75,9 +75,9 @@ export function cocokFaktur(raw: unknown, key: string): CaraCocok | null {
     const lines = Array.isArray(row.detailItem) ? row.detailItem : [];
     if (lines.some((line) => String(obj(line).charField1 ?? "").trim() === want)) return "baris";
     // Pola buildInvoicePayload: [`Order ${id}`, outlet, channel, note].join(" | "). Pemisah ` |` wajib
-    // (atau description hanya `Order <kunci>`), supaya "Order KINO:SO-1" tidak mengenai "Order KINO:SO-12 |".
+    // (atau description hanya `Order <kunci>`), DI AWAL — "Order KINO:SO-1" tidak mengenai "Order KINO:SO-12 |", "Standing Order …", atau "… | Order … |".
     const description = String(row.description ?? "").trim();
-    return description === `Order ${want}` || description.includes(`Order ${want} |`) ? "description" : null;
+    return description === `Order ${want}` || description.startsWith(`Order ${want} |`) ? "description" : null;
 }
 
 export const milikKunci = (raw: unknown, key: string): boolean => cocokFaktur(raw, key) !== null;

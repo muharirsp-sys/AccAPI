@@ -220,6 +220,9 @@ test("cocokFaktur: description `Order <kunci> |` hanya cadangan saat charField1 
     assert.equal(cocokFaktur({ description: `Order ${KEY}` }, KEY), "description");
     assert.equal(cocokFaktur({ charField1: "", description: `Order ${KEY}2 | TK SUBHAN` }, KEY), null, "awalan bukan kunci yang sama");
     assert.equal(cocokFaktur({ charField1: "", description: `Disalin dari Order ${KEY}` }, KEY), null, "tanpa pemisah ` |` = bukan pola kita");
+    // Putaran 3: pola kita selalu DI AWAL description.
+    assert.equal(cocokFaktur({ charField1: "", description: `Standing Order ${KEY} | x` }, KEY), null, "awalan lain");
+    assert.equal(cocokFaktur({ charField1: "", description: `Catatan | Order ${KEY} | y` }, KEY), null, "di tengah catatan");
     assert.equal(cocokFaktur({ charField1: "KINO:LAIN", description: `Order ${KEY} | X` }, KEY), null, "kepala berkunci lain menang");
     assert.equal(cocokFaktur({ charField1: KEY, description: "" }, KEY), "charField1");
 });
