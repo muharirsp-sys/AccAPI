@@ -594,7 +594,8 @@ async def payments_cart_create(request: Request):
     record_ids = payload.get("record_ids", payload.get("no_lpbs", []))
     target_payment_date = _normalize_yyyy_mm_dd(s(payload.get("target_payment_date", "")))
     if not target_payment_date:
-        target_payment_date = (pd.Timestamp.now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        # S6-0e butir 7: "besok" menurut WITA, bukan jam server (produksi UTC: 00:00-07:59 WITA dulu = "hari ini").
+        target_payment_date = (wita_now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     if method not in ["NON_PANIN", "BANK_PANIN"]:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Metode pembayaran tidak valid."})
     if not isinstance(record_ids, list) or not record_ids:
@@ -713,11 +714,10 @@ def payments_cart_data(request: Request):
     drafts = db.get("drafts", {})
     draft = drafts.get(draft_id) or drafts.get(draft_id.lower()) or drafts.get(draft_id.upper())
     if not draft or not _can_access_draft(user, draft):
-        if is_admin_user(user):
-            keys = list(drafts.keys())
-            preview = ", ".join(keys[:8])
-            msg = f"Draft tidak ditemukan. PATH={PAYMENTS_DB_PATH}. Drafts: {preview}"
-            return JSONResponse(status_code=404, content={"ok": False, "error": msg})
+        # S6-0e butir 7: pesan generik untuk SEMUA (dulu admin menerima PATH payments.json + id draf orang lain);
+        # detail diagnosis hanya di log server.
+        print(f"[payments/cart-info] draft tidak ditemukan/ditolak: draft={draft_id!r} user={user!r} "
+              f"ada={bool(draft)} jumlah_draft={len(drafts)}", flush=True)
         return JSONResponse(status_code=404, content={"ok": False, "error": "Draft tidak ditemukan."})
     items = []
     for it in draft.get("items", []):
@@ -750,7 +750,7 @@ def payments_cart_data(request: Request):
     method_label = "Bank Panin" if method == "BANK_PANIN" else ("Non Panin" if method == "NON_PANIN" else "")
     target_payment_date = _normalize_yyyy_mm_dd(s(draft.get("target_payment_date", "")))
     if not target_payment_date:
-        target_payment_date = (pd.Timestamp.now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        target_payment_date = (wita_now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     return JSONResponse({
         "ok": True,
         "items": items,

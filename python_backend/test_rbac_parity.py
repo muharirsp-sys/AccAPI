@@ -187,11 +187,82 @@ def check_mutation_routes():
     assert open(shared.BANK_DATA_PATH, "rb").read() != b"ASLI"
 
 
+def check_csrf_bank_data():
+    """S6-0e butir 7: mutasi master rekening & nama principal butuh CSRF (dulu tanpa CSRF sama sekali)."""
+    import main
+
+    client = TestClient(main.app)
+    main.get_current_user = lambda request: identity(
+        "csrf", role="viewer", permissions="{}", effectivePermissions=["sppd.edit_settings", "payments.edit", "payments.view"])
+    evil = {"Origin": "http://evil.invalid"}
+    open(shared.BANK_DATA_PATH, "wb").write(b"ASLI")
+    buf = io.BytesIO()
+    pd.DataFrame([{"PRINCIPLE": "X", "NAMA BANK": "B", "NOMOR REKENING": "999", "NAMA PENERIMA": "Z"}]).to_excel(buf, index=False)
+    files = {"file": ("r.xlsx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    r = client.post("/api/bank-data/upload", files=files, headers=evil)
+    assert r.status_code == 403, f"upload rekening lintas origin tanpa CSRF: {r.status_code} {r.text[:200]}"
+    assert open(shared.BANK_DATA_PATH, "rb").read() == b"ASLI", "file rekening tertimpa walau CSRF gagal"
+    for path, body in [("/api/bank-data/replace-principle-name", {"old_name": "A", "new_name": "B"}),
+                       ("/api/bank-data/auto-fix-names", {"confirm": True})]:
+        r = client.post(path, json=body, headers=evil)
+        assert r.status_code == 403 and "CSRF" in r.text, f"{path} lintas origin tanpa CSRF: {r.status_code} {r.text[:200]}"
+    # Token sah (cookie = header) tetap lolos dari origin lain (halaman :3000 -> backend :8000).
+    token = shared.make_csrf_token()
+    client.cookies.set(shared.CSRF_COOKIE, token)
+    r = client.post("/api/bank-data/replace-principle-name", json={"old_name": "A", "new_name": "B"}, headers={**evil, "X-CSRF-Token": token})
+    assert r.status_code == 200, f"token CSRF sah ditolak: {r.status_code} {r.text[:200]}"
+    client.cookies.clear()
+
+
+def check_resolve_parity():
+    """S6-0e butir 7: pemegang finance.resolve_unknown TANPA finance.update menuntaskan ledger pada jalur resolve
+    (paritas dengan route Next /resolve) — tanpa hak update umum. Dulu: attempt server selesai, ledger 403 = terbelah."""
+    import json
+    import main
+    from routers import finance
+
+    client = TestClient(main.app)
+    finance.get_current_user = lambda request: identity(
+        "res7", role="viewer", permissions="{}", effectivePermissions=["finance.view", "finance.resolve_unknown"])
+    base = {"principle": "PT ABC", "status_pembayaran": "Sudah Transfer", "transfer_date": "2026-10-09", "proof_id": "p1",
+            "transfer_proof": {"proof_id": "p1"}}
+    ledger = {"lpb": {"UNK": {**base, "no_lpb": "UNK", "accurate_post_status": "unknown", "accurate_post_error": "timeout"},
+                      "OK": {**base, "no_lpb": "OK", "accurate_post_status": "failed", "accurate_post_error": "Vendor tidak ditemukan"}},
+              "proofs": {"p1": {"proof_id": "p1"}, "p2": {"proof_id": "p2"}}}
+    with open(shared.PAYMENTS_DB_PATH, "w", encoding="utf-8") as f:
+        json.dump(ledger, f)
+    before = open(shared.PAYMENTS_DB_PATH, encoding="utf-8").read()
+    note = "dicek manual di Accurate: PP/1009/3 ada"
+
+    def upd(**item):
+        return client.post("/payments/finance/update", json={"items": [item]})
+
+    # Bukan penyelesaian -> 403 tanpa tulis (hak update umum tidak ikut).
+    for bad in [dict(no_lpb="UNK", status_pembayaran="Belum Transfer"),
+                dict(no_lpb="OK", status_pembayaran="Sudah Transfer", accurate_post_status="posted", resolution_note=note),
+                dict(no_lpb="UNK", status_pembayaran="Sudah Transfer", accurate_post_status="posted", resolution_note="pendek")]:
+        r = upd(**bad)
+        assert r.status_code == 403, f"resolve-only melakukan update umum: {bad} -> {r.status_code} {r.text[:200]}"
+    assert open(shared.PAYMENTS_DB_PATH, encoding="utf-8").read() == before
+    # Penyelesaian sah: posted + nomor + catatan; tanggal/bukti transfer dari permintaan TIDAK dipakai.
+    r = upd(no_lpb="UNK", status_pembayaran="Sudah Transfer", transfer_date="2030-01-01", proof_id="p2",
+            accurate_post_status="posted", accurate_purchase_payment_number="PP/1009/3", resolution_note=note)
+    assert r.status_code == 200, f"pemegang resolve_unknown ditolak menuntaskan ledger: {r.status_code} {r.text[:200]}"
+    rec = shared.load_payments_db()["lpb"]["UNK"]
+    assert rec["accurate_post_status"] == "posted" and rec["accurate_post_resolution"]["source"] == "manual_attestation", rec
+    assert rec["transfer_date"] == "2026-10-09" and rec["proof_id"] == "p1", f"resolve-only mengubah data transfer: {rec}"
+    # Tanpa keduanya tetap 403.
+    finance.get_current_user = lambda request: identity("nores", role="viewer", permissions="{}", effectivePermissions=["finance.view"])
+    assert upd(no_lpb="UNK", status_pembayaran="Belum Transfer").status_code == 403
+
+
 def main_check():
     check_policy()
     check_fail_closed()
     check_registry_parity()
     check_mutation_routes()
+    check_csrf_bank_data()
+    check_resolve_parity()
     print("OK test_rbac_parity")
 
 

@@ -432,7 +432,11 @@ async def payments_finance_update(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not user_has_permission(user, "finance", "update"):
+    # S6-0e butir 7 (paritas dengan route Next /resolve): pemegang finance.resolve_unknown TANPA finance.update boleh
+    # menuntaskan ledger untuk posting TIDAK PASTI saja — dulu attempt server selesai tetapi ledger 403 (terbelah).
+    can_update = user_has_permission(user, "finance", "update")
+    resolve_only = not can_update and user_has_permission(user, "finance", "resolve_unknown")
+    if not can_update and not resolve_only:
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
@@ -446,6 +450,12 @@ async def payments_finance_update(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "error": "Format data tidak valid."})
     if not items:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Data finance yang akan diupdate tidak boleh kosong."})
+    resolve_only_error = ("Tanpa finance.update hanya boleh menyelesaikan posting TIDAK PASTI: status Sudah Transfer, "
+                          "hasil posted/failed, dan catatan pemeriksaan minimal 15 karakter.")
+    if resolve_only and any(not isinstance(it, dict) or s(it.get("status_pembayaran", "")) != "Sudah Transfer"
+                            or s(it.get("accurate_post_status", "")) not in ("posted", "failed")
+                            or len(s(it.get("resolution_note", ""))) < 15 for it in items):
+        return JSONResponse(status_code=403, content={"ok": False, "error": resolve_only_error})
     # AM-014: load..save di bawah lock yang sama dengan route payments; dulu tanpa lock, save
     # payments dari worker thread bisa menimpa status posting yang baru ditulis di sini.
     async with _PAYMENTS_DB_LOCK:
@@ -470,7 +480,7 @@ async def payments_finance_update(request: Request):
             if accurate_post_status not in ["", "posted", "failed", "skipped", "unknown"]:
                 return JSONResponse(status_code=400, content={"ok": False, "error": f"Status posting Accurate tidak dikenal: {accurate_post_status}"})
             resolution_note = s(item.get("resolution_note", ""))
-            if status == "Sudah Transfer":
+            if status == "Sudah Transfer" and not resolve_only:
                 if not transfer_date:
                     return JSONResponse(status_code=400, content={"ok": False, "error": "Tanggal transfer wajib diisi untuk status Sudah Transfer."})
                 if not proof_id or not isinstance(proof_meta, dict) or not proof_meta:
@@ -521,9 +531,10 @@ async def payments_finance_update(request: Request):
                                 "posted_by": s(rec.get("accurate_posted_by", "")),
                             },
                         }
-                    rec["transfer_date"] = transfer_date
-                    rec["proof_id"] = proof_id
-                    rec["transfer_proof"] = proof_meta
+                    if not resolve_only:  # penyelesai tanpa finance.update tidak mengubah data transfer/bukti
+                        rec["transfer_date"] = transfer_date
+                        rec["proof_id"] = proof_id
+                        rec["transfer_proof"] = proof_meta
                     rec["accurate_post_status"] = accurate_post_status or "skipped"
                     rec["accurate_post_error"] = s(item.get("accurate_post_error", ""))
                     rec["accurate_purchase_payment_number"] = s(item.get("accurate_purchase_payment_number", ""))
@@ -534,7 +545,12 @@ async def payments_finance_update(request: Request):
                     rec["accurate_posted_by"] = user if rec["accurate_post_status"] == "posted" else s(rec.get("accurate_posted_by", ""))
                 updated_count += 1
 
+            def resolve_only_denied(rec: Dict[str, Any]) -> bool:
+                return resolve_only and effective_post_status(rec) != "unknown"
+
             if no and no in db.get("lpb", {}):
+                if resolve_only_denied(db["lpb"][no]):
+                    return JSONResponse(status_code=403, content={"ok": False, "error": resolve_only_error})
                 conflict = post_status_conflict(db["lpb"][no])
                 if conflict:
                     return JSONResponse(status_code=409, content={"ok": False, "error": conflict})
@@ -554,6 +570,8 @@ async def payments_finance_update(request: Request):
                     if tipe_pengajuan and normalize_pengajuan_type(r.get("tipe_pengajuan", "LPB")) != tipe_pengajuan:
                         continue
                     if s(r.get("principle", "")).upper() == principle:
+                        if resolve_only_denied(db["lpb"][k]):
+                            return JSONResponse(status_code=403, content={"ok": False, "error": resolve_only_error})
                         conflict = post_status_conflict(db["lpb"][k])
                         if conflict:
                             return JSONResponse(status_code=409, content={"ok": False, "error": conflict})

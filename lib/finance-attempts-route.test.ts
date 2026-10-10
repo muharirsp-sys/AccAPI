@@ -25,7 +25,7 @@ async function asUserWith<T>(keys: string[], fn: () => Promise<T>): Promise<T> {
     Object.defineProperty(auth.api, "getSession", { configurable: true, value: async () => ({ user: { id: "u-fin", role: "staff" }, session: { id: "s1" } }) });
     const rows = keys.map((key) => ({ groupId: "g1", key }));
     // getUserPermissions = select().from().leftJoin().where(); query attempt (select().from().leftJoin().where().orderBy()) melempar.
-    Object.defineProperty(db, "select", { configurable: true, value: () => ({ from: () => ({ leftJoin: () => ({ where: (..._: unknown[]) => Object.assign(Promise.resolve(rows), { orderBy: () => { throw new Error("DB attempt tidak tersedia di uji ini"); } }) }) }) }) });
+    Object.defineProperty(db, "select", { configurable: true, value: () => ({ from: () => ({ leftJoin: () => ({ where: () => Object.assign(Promise.resolve(rows), { orderBy: () => { throw new Error("DB attempt tidak tersedia di uji ini"); } }) }) }) }) });
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: () => { throw new Error("TIDAK BOLEH ke jaringan"); } });
     try {
         return await fn();

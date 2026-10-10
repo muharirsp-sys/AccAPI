@@ -82,6 +82,7 @@ from shared import (
     time,
     user_has_permission,
     uuid,
+    validate_csrf_request,
 )
 
 app = FastAPI(title="Discount Validator API", version=f"PATCH-{PATCH_VERSION}")
@@ -208,6 +209,10 @@ async def upload_bank_data(request: Request, file: UploadFile = File(None)):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "sppd", "edit_settings"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.edit_settings"})
+    # S6-0e butir 7: menimpa master rekening seluruh principal = mutasi -> CSRF (dulu tanpa).
+    csrf_token = request.headers.get("X-CSRF-Token", "")
+    if not validate_csrf_request(request, csrf_token):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
     if file is None:
         return JSONResponse(status_code=400, content={"ok": False, "error": "File Excel belum diupload."})
     try:
@@ -312,6 +317,10 @@ async def replace_principle_name(request: Request):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "payments", "edit"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.edit"})
+    # S6-0e butir 7: CSRF (dulu tanpa). Pratinjau ikut dicek — satu kontrak untuk halaman.
+    csrf_token = request.headers.get("X-CSRF-Token", "")
+    if not validate_csrf_request(request, csrf_token):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
     try:
         payload = await request.json()
     except Exception:
@@ -377,6 +386,11 @@ async def auto_fix_principle_names(request: Request):
     need = "edit" if confirm else "view"
     if not user_has_permission(user, "payments", need):
         return JSONResponse(status_code=403, content={"ok": False, "error": f"Forbidden: butuh permission payments.{need}"})
+    if confirm:
+        # S6-0e butir 7: eksekusi rename massal = mutasi -> CSRF (pratinjau tetap tanpa, perilaku lama).
+        csrf_token = request.headers.get("X-CSRF-Token", "")
+        if not validate_csrf_request(request, csrf_token):
+            return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
 
     bank_map, norm_keys = load_bank_map_with_normalized_keys()
     # AM-012: satu lock untuk semua penulis ledger (salinan per request -> tanpa lock = lost update).
