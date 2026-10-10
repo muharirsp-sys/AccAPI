@@ -96,18 +96,24 @@ export function kalimatPencarian(p: Pencarian | undefined | null): string {
 
 export const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas (koneksi putus atau jawaban bukan data). "
     + "Antrean dimuat ulang — periksa baris Mengirim dan Tidak pasti sebelum mengulang.";
-/** Dilempar `tulis` bila jawaban TIDAK PASTI: koneksi putus, status ≥ 502, atau badan bukan JSON (mis. HTML "504 Gateway Time-out"). */
+/**
+ * Dilempar `tulis` bila jawaban TIDAK PASTI: koneksi putus / batas waktu, badan bukan JSON (mis. HTML "504 Gateway Time-out"), atau
+ * status ≥ 502 tanpa amplop galat aplikasi ini (`{ok:false, error}`) — 503 berbadan amplop itu = penolakan PASTI dari route sendiri
+ * (mis. sesi Accurate belum lengkap, tidak ada yang dikirim).
+ */
 export class TidakPasti extends Error {}
 
 /**
  * POST/DELETE JSON. Mengembalikan status + badan JSON apa adanya (pemanggil yang menilai `ok`: Kirim menjawab 200 dengan ok=false
  * bila ada hasil tidak pasti/selisih). Jawaban tidak pasti → TidakPasti(BELUM_PASTI), tidak pernah teks/HTML mentah.
  */
-export async function tulis(url: string, body: Record<string, unknown>, method: "POST" | "DELETE" = "POST"): Promise<{ status: number; data: Record<string, unknown> }> {
+export async function tulis(url: string, body: Record<string, unknown>, opsi: { method?: "POST" | "DELETE"; batasMs?: number } = {}): Promise<{ status: number; data: Record<string, unknown> }> {
     let res: Response;
     let text: string;
     try {
-        res = await fetch(url, { method, credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        // Batas waktu: dialog tidak boleh menunggu selamanya; habis = belum pasti (server mungkin sudah menulis).
+        res = await fetch(url, { method: opsi.method ?? "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body), signal: AbortSignal.timeout(opsi.batasMs ?? 120_000) });
         text = await res.text();
     } catch {
         throw new TidakPasti(BELUM_PASTI);
@@ -117,7 +123,8 @@ export async function tulis(url: string, body: Record<string, unknown>, method: 
         const j: unknown = JSON.parse(text);
         data = j && typeof j === "object" && !Array.isArray(j) ? (j as Record<string, unknown>) : null;
     } catch { /* bukan JSON */ }
-    if (res.status >= 502 || data === null) {
+    const amplopAplikasi = data !== null && data.ok === false && typeof data.error === "string";
+    if (data === null || (res.status >= 502 && !amplopAplikasi)) {
         throw new TidakPasti(typeof data?.error === "string" ? `${BELUM_PASTI} Pesan server: ${data.error}` : BELUM_PASTI);
     }
     return { status: res.status, data };

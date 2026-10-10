@@ -167,7 +167,7 @@ test("Daftar: kartu = saringan, jawaban Accurate terbaca, mengirim > 15 mnt, gal
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/antrean-faktur", NAV);
     await expect(main.getByRole("list", { name: "Antrean" })).toContainText("SO-B-002", NAV);
-    await expect(main.getByRole("button", { name: "Selesaikan…" }).last()).toBeVisible();
+    await expect(main.getByRole("button", { name: "Selesaikan SO SO-A-003" }).last()).toBeVisible();
     await noOverflow(page);
     await page.screenshot({ path: "test-results/antrean-faktur/ponsel.png", fullPage: true });
 });
@@ -269,6 +269,67 @@ test("Kirim: pratinjau diperiksa ulang tepat sebelum mengirim — berubah = dial
     expect(tulisKe(log, "/api/invoice-outbox/send")[0].body).toEqual({ orderIds: ["PRINCIPLE-A:SO-A-001", "PRINCIPLE-A:SO-A-002", "PRINCIPLE-A:SO-A-010"] });
 });
 
+test("Hasil Kirim: 503 JSON server = pasti (galat di dialog); ditolak, berhenti setelah tidak pasti, dan tidak lagi Antre per baris", async ({ page }) => {
+    const tiga = PRATINJAU({ jumlah: 3, orders: [order("PRINCIPLE-A:SO-A-001", 111000), order("PRINCIPLE-A:SO-A-002", 111000), order("PRINCIPLE-A:SO-A-010", 111000)] });
+    const hasil = (results: unknown[], over: Over = {}) => ({ ok: false, sent: 0, verifiedOk: 0, mismatched: 0, unchecked: 0, rejected: 0, unknown: 0, remaining: 1,
+        sentBy: "admin@contoh", results, verified: [], ...over });
+    const opsi: Opsi = {
+        preview: (r) => r.fulfill(json(tiga)),
+        send: (r) => r.fulfill(json({ ok: false, error: "Sesi Accurate Anda tidak lengkap. Login Accurate dulu di /api-wrapper, lalu coba lagi." }, 503)),
+    };
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click(NAV);
+    let dlg = page.getByRole("dialog", { name: "Kirim 3 faktur ke Accurate?" });
+    await dlg.getByRole("button", { name: "Kirim 3 faktur" }).click();
+    await expect(dlg.getByRole("alert").filter({ hasText: "Sesi Accurate Anda tidak lengkap" })).toBeVisible();
+    await expect(main.getByText("Hasil tindakan terakhir belum pasti.")).toHaveCount(0);
+    await dlg.getByRole("button", { name: "Batal" }).click();
+
+    opsi.send = (r) => r.fulfill(json(hasil([
+        { orderId: "PRINCIPLE-A:SO-A-001", state: "rejected", error: "[\"Batas piutang pelanggan terlampaui\"]" },
+        { orderId: "PRINCIPLE-A:SO-A-002", state: "unknown", error: "The operation was aborted due to timeout" },
+    ], { rejected: 1, unknown: 1, remaining: 1 })));
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click();
+    dlg = page.getByRole("dialog", { name: "Kirim 3 faktur ke Accurate?" });
+    await dlg.getByRole("button", { name: "Kirim 3 faktur" }).click();
+    await expect(dlg).toBeHidden();
+    let panel = main.getByRole("region", { name: /Hasil kiriman/ });
+    await expect(panel.getByRole("status")).toContainText("Pengiriman berhenti: ada faktur yang hasilnya tidak pasti.");
+    let per = panel.getByRole("list", { name: "Hasil per faktur" });
+    await expect(per.getByRole("listitem").filter({ hasText: "SO-A-001" })).toContainText("DitolakBatas piutang pelanggan terlampaui");
+    await expect(per.getByRole("listitem").filter({ hasText: "SO-A-002" })).toContainText("Accurate tidak menjawab dalam 60 detik");
+    await expect(per.getByRole("listitem").filter({ hasText: "SO-A-010" })).toContainText("Pengiriman berhenti setelah hasil tidak pasti; tetap antre.");
+
+    // Tanpa tidak pasti: order pratinjau yang tidak ada di hasil = sudah tidak Antre saat Kirim; ditolak = strip peringatan.
+    opsi.send = (r) => r.fulfill(json(hasil([{ orderId: "PRINCIPLE-A:SO-A-001", state: "rejected", error: "[\"Stok gudang kurang\"]" }], { rejected: 1 })));
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click();
+    await page.getByRole("dialog", { name: "Kirim 3 faktur ke Accurate?" }).getByRole("button", { name: "Kirim 3 faktur" }).click();
+    panel = main.getByRole("region", { name: /Hasil kiriman/ });
+    await expect(panel.getByRole("status")).toContainText("Sebagian ditolak Accurate");
+    per = panel.getByRole("list", { name: "Hasil per faktur" });
+    await expect(per.getByRole("listitem").filter({ hasText: "SO-A-002" })).toContainText("tidak lagi Antre saat Kirim — muat ulang");
+    expect(tulisKe(log, "/api/invoice-outbox/send")).toHaveLength(3);
+});
+
+test("Kirim: lebih dari 50 pilihan = disebut sisanya tidak ikut (bukan 'tidak lagi Antre')", async ({ page }) => {
+    const banyak = Array.from({ length: 52 }, (_, i) => row(`PRINCIPLE-A:SO-X-${String(i).padStart(3, "0")}`, "queued"));
+    await mock(page, {
+        list: (r) => r.fulfill(json(antrean(banyak, { summary: { queued: 52 }, overdue: 0, pendingBatches: [] }))),
+        preview: (r) => r.fulfill(json(PRATINJAU({ jumlah: 50, antreanMenunggu: 52, orders: banyak.slice(0, 50).map((b) => order(b.orderId, 1000)) }))),
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    await main.getByRole("checkbox", { name: "Pilih semua baris" }).check(NAV);
+    await main.getByRole("button", { name: "Kirim 52 terpilih…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Kirim 50 faktur ke Accurate?" });
+    await expect(dlg).toContainText("Anda memilih 52 baris; maks. 50 per tekan — 2 sisanya tidak ikut kali ini.");
+    await expect(dlg).not.toContainText("tidak lagi berstatus Antre");
+});
+
 test("Kirim: sesi tidak cocok = nonaktif berlasan; 502 HTML = 'belum pasti' + muat ulang + kunci sampai antrean terbaru", async ({ page }) => {
     const opsi: Opsi = { preview: (r) => r.fulfill(json(PRATINJAU({ ok: false, database: { tujuan: "1001", label: "x", sesiPenekan: { id: "2002", alias: "DB LAIN" }, cocok: false } }))) };
     const log = await mock(page, opsi);
@@ -317,7 +378,7 @@ test("Selesaikan: hasil pencarian tampil DULU; ketemu → terposting; tidak kete
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/antrean-faktur", NAV);
     const main = page.locator("main");
-    await main.getByRole("button", { name: "Selesaikan…" }).click(NAV);
+    await main.getByRole("button", { name: "Selesaikan SO SO-A-003" }).click(NAV);
     let dlg = page.getByRole("dialog", { name: "Selesaikan faktur tidak pasti" });
     await expect(dlg).toContainText("Ditemukan langsung di Accurate");
     await expect(dlg).toContainText("INV/A/0009");
@@ -339,7 +400,7 @@ test("Selesaikan: hasil pencarian tampil DULU; ketemu → terposting; tidak kete
     // Tidak ketemu: calon tanpa kunci tampil; tidak terposting dipilih → server 409 masa tunggu → sisa menit tampil, pilihan terkunci.
     opsi.cari = (r) => r.fulfill(json(TIDAK));
     opsi.selesai = (r) => r.fulfill(json({ ok: false, sisaMenit: 12, error: "Kiriman terakhir baru 3 menit lalu — Accurate mungkin masih menyimpannya; tunggu 12 menit lagi sebelum menetapkan tidak terposting." }, 409));
-    await main.getByRole("button", { name: "Selesaikan…" }).click();
+    await main.getByRole("button", { name: "Selesaikan SO SO-A-003" }).click();
     dlg = page.getByRole("dialog", { name: "Selesaikan faktur tidak pasti" });
     await expect(dlg).toContainText("Tidak ditemukan di Accurate");
     await expect(dlg).toContainText("1 faktur pelanggan ini tanpa kunci antrean.");
@@ -359,11 +420,13 @@ test("Selesaikan: hasil pencarian tampil DULU; ketemu → terposting; tidak kete
 
     // Pencarian gagal: alasan tampil, tidak ada keputusan yang bisa disimpan.
     opsi.cari = (r) => r.fulfill(json({ ...TIDAK, pencarian: { hasil: "gagal_cek", alasan: "list.do HTTP 401: sesi habis" } }));
-    await main.getByRole("button", { name: "Selesaikan…" }).click();
+    await main.getByRole("button", { name: "Selesaikan SO SO-A-003" }).click();
     dlg = page.getByRole("dialog", { name: "Selesaikan faktur tidak pasti" });
     await expect(dlg).toContainText("Pencarian tidak bisa memastikan. list.do HTTP 401: sesi habis");
     await expect(dlg.getByRole("radio", { name: /Tetapkan terposting/ })).toBeDisabled();
     await expect(dlg.getByRole("radio", { name: /Tetapkan tidak terposting/ })).toBeDisabled();
+    await expect(dlg.getByRole("radiogroup")).not.toContainText("tidak ditemukan oleh pencarian");
+    await expect(dlg.getByRole("radiogroup")).toContainText("pencarian tidak bisa memastikan");
 });
 
 test("Selesaikan: 409 yang membalik hasil pencarian TIDAK membalik keputusan diam-diam — pilihan eksplisit + peringatan", async ({ page }) => {
@@ -393,7 +456,7 @@ test("Tanpa izin: Selesaikan/Kirim/Buang nonaktif dengan alasan berkalimat (buka
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/antrean-faktur", NAV);
     const main = page.locator("main");
-    const selesai = main.getByRole("button", { name: "Selesaikan…" });
+    const selesai = main.getByRole("button", { name: "Selesaikan SO SO-A-003" });
     await expect(selesai).toBeDisabled(NAV);
     await expect(selesai).toHaveAttribute("title", /izin Selesaikan posting tidak pasti/);
     await expect(selesai).not.toHaveAttribute("title", /order\./);
@@ -404,12 +467,14 @@ test("Tanpa izin: Selesaikan/Kirim/Buang nonaktif dengan alasan berkalimat (buka
     await expect(main.getByText("Anda hanya bisa melihat antrean.")).toBeVisible();
 });
 
-test("Antre ulang menampilkan hasil pencarian server; Buang wajib alasan; Riwayat per order (galat ≠ kosong)", async ({ page }) => {
+test("Antre ulang menampilkan hasil pencarian server; Buang wajib alasan (502 = belum pasti, strip lama dibersihkan); Riwayat per order (galat ≠ kosong)", async ({ page }) => {
     const opsi: Opsi = {
-        aksi: (r, b) => r.fulfill(json(b?.action === "resend"
-            ? { ok: true, orderId: b.orderId, action: "resend", state: "posted", accurateId: "9005", number: "INV/B/0005",
-                pencarian: { hasil: "ketemu", sumber: "accurate", cocok: "charField1", id: "9005", number: "INV/B/0005", semua: [] } }
-            : { ok: true, orderId: b?.orderId, action: "discard", state: null })),
+        aksi: (r, b) => b?.orderId === "PRINCIPLE-A:SO-A-002"
+            ? r.fulfill({ status: 502, contentType: "text/html", body: "<html><body>502 Bad Gateway</body></html>" })
+            : r.fulfill(json(b?.action === "resend"
+                ? { ok: true, orderId: b.orderId, action: "resend", state: "posted", accurateId: "9005", number: "INV/B/0005",
+                    pencarian: { hasil: "ketemu", sumber: "accurate", cocok: "charField1", id: "9005", number: "INV/B/0005", semua: [] } }
+                : { ok: true, orderId: b?.orderId, action: "discard", state: null })),
         riwayat: (r) => r.fulfill(json({ ok: true, events: [
             { id: 1, jenis: "antre", stateFrom: null, stateTo: "queued", actor: "admin@contoh", httpStatus: null, errorCode: "", reason: "", createdAt: menitLalu(140), detail: {} },
             { id: 2, jenis: "kirim", stateFrom: "queued", stateTo: "sending", actor: "fakturist@contoh", httpStatus: null, errorCode: "", reason: "", createdAt: menitLalu(60), detail: { attempt: 1, target_db: "1001", trans_date: "09/10/2026" } },
@@ -422,14 +487,26 @@ test("Antre ulang menampilkan hasil pencarian server; Buang wajib alasan; Riwaya
     await page.goto("/antrean-faktur", NAV);
     const main = page.locator("main");
 
-    await main.getByRole("button", { name: "Antre ulang…" }).click(NAV);
-    let dlg = page.getByRole("dialog", { name: "Antre ulang SO SO-B-002?" });
+    // Buang menjawab 502 HTML (jalur selain Kirim): "belum pasti" + muat ulang, bukan HTML mentah.
+    await main.getByRole("button", { name: "Buang SO SO-A-002" }).click(NAV);
+    let dlg = page.getByRole("dialog", { name: "Buang 1 baris dari antrean?" });
+    await dlg.getByLabel("Alasan buang").fill("SO dobel di batch");
+    await dlg.getByRole("button", { name: "Buang baris" }).click();
+    await expect(dlg).toBeHidden();
+    const belumPasti = main.getByRole("status").filter({ hasText: "Hasil tindakan terakhir belum pasti." });
+    await expect(belumPasti).toBeVisible();
+    await expect(belumPasti).not.toContainText("<html");
+
+    await main.getByRole("button", { name: "Antre ulang SO SO-B-002" }).click();
+    dlg = page.getByRole("dialog", { name: "Antre ulang SO SO-B-002?" });
     await expect(dlg).toContainText("server mencari faktur SO ini di Accurate");
     await expect(dlg).toContainText("Pelanggan C-B-009 tidak ditemukan");
     await dlg.getByRole("button", { name: "Cari lalu antre ulang" }).click();
     await expect(dlg).toBeHidden();
-    expect(tulisKe(log, "/api/invoice-outbox")[0].body).toEqual({ orderId: "PRINCIPLE-B:SO-B-002", action: "resend" });
-    await expect(main.getByRole("status").filter({ hasText: "Faktur INV/B/0005 sudah ada di Accurate." })).toContainText("tidak dikirim ulang");
+    expect(tulisKe(log, "/api/invoice-outbox")[1].body).toEqual({ orderId: "PRINCIPLE-B:SO-B-002", action: "resend" });
+    const ketemu = main.getByRole("status").filter({ hasText: "Faktur INV/B/0005 sudah ada di Accurate." });
+    await expect(ketemu).toContainText("tidak dikirim ulang");
+    await expect(belumPasti).toHaveCount(0); // strip lama dibersihkan oleh hasil yang lebih baru
 
     await main.getByRole("button", { name: "Buang SO SO-A-001" }).click();
     dlg = page.getByRole("dialog", { name: "Buang 1 baris dari antrean?" });
@@ -439,7 +516,8 @@ test("Antre ulang menampilkan hasil pencarian server; Buang wajib alasan; Riwaya
     await dlg.getByLabel("Alasan buang").fill("Harga kategori di batch salah");
     await buang.click();
     await expect(dlg).toBeHidden();
-    expect(tulisKe(log, "/api/invoice-outbox")[1].body).toEqual({ orderId: "PRINCIPLE-A:SO-A-001", action: "discard", reason: "Harga kategori di batch salah" });
+    expect(tulisKe(log, "/api/invoice-outbox")[2].body).toEqual({ orderId: "PRINCIPLE-A:SO-A-001", action: "discard", reason: "Harga kategori di batch salah" });
+    await expect(ketemu).toHaveCount(0);
     const strip = main.getByRole("status").filter({ hasText: "SO SO-A-001 dibuang dari antrean." });
     await strip.getByRole("button", { name: "Lihat riwayat" }).click();
     dlg = page.getByRole("dialog", { name: "Riwayat SO SO-A-001" });

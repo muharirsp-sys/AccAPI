@@ -44,7 +44,10 @@ function kueri(saring: Saring) {
 /** Hasil satu order dari jawaban Kirim → badge + kalimat. */
 function hasilOrder(k: Kiriman, orderId: string): { tone: Tone; label: string; teks: string } {
     const r = k.hasil.results.find((x) => x.orderId === orderId);
-    if (!r) return { tone: "neu", label: "Tidak dikirim", teks: k.hasil.unknown ? "Pengiriman berhenti setelah hasil tidak pasti; tetap antre." : "Tetap antre." };
+    // Tidak ada di hasil: berhenti setelah tidak pasti (tetap antre), atau sudah tidak Antre saat Kirim (dibuang/diambil proses lain).
+    if (!r) return { tone: "neu", label: "Tidak dikirim", teks: k.hasil.unknown
+        ? "Pengiriman berhenti setelah hasil tidak pasti; tetap antre."
+        : "Baris tidak lagi Antre saat Kirim — muat ulang." };
     if (r.state === "posted") {
         const v = k.hasil.verified.find((x) => x.orderId === orderId);
         const no = r.number || r.accurateId || "";
@@ -65,6 +68,7 @@ function PanelKiriman({ k, onClose }: { k: Kiriman; onClose: () => void }) {
         ...h.results.filter((r) => !k.urutan.some((o) => o.orderId === r.orderId)).map((r) => ({ orderId: r.orderId, so: r.orderId }))];
     const [tone, judul]: [Exclude<Tone, "neu">, string] = h.unknown > 0 ? ["warn", "Pengiriman berhenti: ada faktur yang hasilnya tidak pasti."]
         : h.mismatched > 0 ? ["neg", "Ada faktur terkirim yang isinya berselisih dengan yang dikirim."]
+            : h.rejected > 0 ? ["warn", "Sebagian ditolak Accurate — perbaiki penyebabnya lalu Antre ulang."]
             : h.results.length === 0 ? ["warn", "Tidak ada faktur yang terkirim."]
                 : h.sent > 0 && h.sent === h.verifiedOk && h.rejected === 0 && dilewati === 0 ? ["pos", "Faktur terkirim dan terverifikasi cocok per baris."]
                     : ["info", "Kiriman selesai — tidak semua terposting dan cocok; periksa hasil per baris."];
@@ -147,16 +151,17 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
     const gantiCari = (v: string) => { setCari(v); setDipilih(new Set()); };
     const gantiPrincipal = (v: string) => { setPrincipal(v); setDipilih(new Set()); };
     const tutupDialog = () => setDialog(null);
-    const tidakPastiTerjadi = (pesan: string) => { setTidakPasti(pesan); setKunci({ data }); setDialog(null); muatSemua(); };
-    const aksiSelesai = (h: HasilAksi) => { setAksi(h); setDialog(null); muatSemua(); };
+    // Satu hasil terbaru di atas: strip lama dibersihkan supaya tidak terbaca sebagai keadaan sekarang.
+    const tidakPastiTerjadi = (pesan: string) => { setAksi(null); setTidakPasti(pesan); setKunci({ data }); setDialog(null); muatSemua(); };
+    const aksiSelesai = (h: HasilAksi) => { setTidakPasti(null); setAksi(h); setDialog(null); muatSemua(); };
 
     const aksiBaris = (r: Row) => (
         <div className="fi-btnrow" style={{ gap: 4, flexWrap: "nowrap", justifyContent: "flex-end" }}>
             {r.state === "unknown" && (
-                <Button disabled={Boolean(alasanSelesai)} disabledReason={alasanSelesai} onClick={() => setDialog({ jenis: "selesai", row: r })}>Selesaikan…</Button>
+                <Button aria-label={`Selesaikan SO ${nomorSo(r)}`} disabled={Boolean(alasanSelesai)} disabledReason={alasanSelesai} onClick={() => setDialog({ jenis: "selesai", row: r })}>Selesaikan…</Button>
             )}
             {r.state === "rejected" && (
-                <Button variant="tertiary" disabled={Boolean(alasanTulis)} disabledReason={alasanTulis} onClick={() => setDialog({ jenis: "antreUlang", row: r })}>Antre ulang…</Button>
+                <Button variant="tertiary" aria-label={`Antre ulang SO ${nomorSo(r)}`} disabled={Boolean(alasanTulis)} disabledReason={alasanTulis} onClick={() => setDialog({ jenis: "antreUlang", row: r })}>Antre ulang…</Button>
             )}
             {(r.state === "rejected" || r.state === "queued") && (
                 <Button variant="icon" aria-label={`Buang SO ${nomorSo(r)}`} icon={<Trash2 className="fi-icon" aria-hidden />}
@@ -306,6 +311,8 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
                 <KirimDialog dipilih={dipilihSah} tanggal={tanggal} saringanAktif={Boolean(kata || principal)} onClose={tutupDialog} onTidakPasti={tidakPastiTerjadi}
                     onTerkirim={(hasil, urutan) => {
                         setKiriman({ hasil, urutan, tanggal, jam: new Date().toISOString() });
+                        setAksi(null);
+                        setTidakPasti(null);
                         setDipilih(new Set());
                         setDialog(null);
                         muatSemua();

@@ -80,7 +80,8 @@ export function KirimDialog({ dipilih, tanggal, saringanAktif, onClose, onTerkir
     // Pratinjau yang diperiksa ulang saat Kirim dan ternyata berubah: menggantikan yang tampil sampai dimuat ulang.
     const [baru, setBaru] = useState<Pratinjau | null>(null);
     const p = baru ?? (pratinjau.status === "siap" ? pratinjau.data : undefined);
-    const keluar = p && dipilih.length ? dipilih.length - p.orders.length : 0;
+    const lebih = p && dipilih.length > p.maksPerTekan ? dipilih.length - p.orders.length : 0;
+    const keluar = p && dipilih.length && !lebih ? dipilih.length - p.orders.length : 0;
 
     const blok = !p && pratinjau.status === "memuat" ? "Menyiapkan ringkasan kiriman…"
         : !p ? "Ringkasan kiriman gagal dimuat — coba lagi"
@@ -97,8 +98,11 @@ export function KirimDialog({ dipilih, tanggal, saringanAktif, onClose, onTerkir
             setBaru(cek.data);
             throw new Error("Pratinjau berubah sejak dialog dibuka — periksa lagi isi di atas, lalu tekan Kirim. Tidak ada faktur dikirim.");
         }
+        // Server memperlakukan orderIds kosong sebagai "semua yang antre": jangan pernah mengirimnya kosong.
+        if (cek.data.orders.length === 0) throw new Error("Tidak ada faktur antre untuk dikirim; tidak ada yang dikirim.");
         try {
-            const { status, data } = await tulis("/api/invoice-outbox/send", { orderIds: cek.data.orders.map((o) => o.orderId), invoiceDate: tanggal || undefined });
+            const { status, data } = await tulis("/api/invoice-outbox/send",
+                { orderIds: cek.data.orders.map((o) => o.orderId), invoiceDate: tanggal || undefined }, { batasMs: 620_000 });
             // 200 = hasil per order (ok=false bila ada tidak pasti/selisih — tetap hasil, bukan galat). 4xx = tidak ada yang dikirim.
             if (status !== 200 || !Array.isArray(data.results)) throw new Error(pesanGagal(status, data, "Pengiriman ditolak server; tidak ada faktur dikirim."));
             onTerkirim(data as unknown as HasilKirim, p.orders);
@@ -129,6 +133,7 @@ export function KirimDialog({ dipilih, tanggal, saringanAktif, onClose, onTerkir
                     ]} />
                     {!p.database.cocok && <MessageStrip tone="neg" title="Kirim akan ditolak.">{kalimatSesi(p.database)}</MessageStrip>}
                     {p.ditolak && <MessageStrip tone="neg" title="Tidak ada faktur dikirim.">{p.ditolak}</MessageStrip>}
+                    {lebih > 0 && <MessageStrip tone="info">Anda memilih {dipilih.length} baris; maks. {p.maksPerTekan} per tekan — {lebih} sisanya tidak ikut kali ini.</MessageStrip>}
                     {keluar > 0 && <MessageStrip tone="info">{keluar} baris pilihan tidak lagi berstatus Antre dan tidak ikut dikirim.</MessageStrip>}
                     {!dipilih.length && saringanAktif && (
                         <MessageStrip tone="info" title="Saringan di layar tidak membatasi Kirim.">Tanpa pilihan, yang antre paling lama ikut — periksa daftar di bawah, atau batalkan lalu pilih barisnya.</MessageStrip>
@@ -229,7 +234,8 @@ export function SelesaikanDialog({ row, onClose, onSelesai, onTidakPasti }: {
         : p.hasil === "ketemu" ? "Tidak tersedia: faktur ditemukan — mengirim ulang akan membuat faktur ganda."
             : p.hasil === "gagal_cek" ? "Tidak tersedia: pencarian tidak bisa memastikan."
                 : cari!.sisaMenit > 0 ? `Tersedia ${cari!.sisaMenit} menit lagi: kiriman terakhir mungkin masih diproses Accurate.` : "";
-    const alasanYa = !p ? "Menunggu hasil pencarian" : p.hasil === "ketemu" ? "" : "Tidak tersedia: faktur tidak ditemukan oleh pencarian.";
+    const alasanYa = !p ? "Menunggu hasil pencarian" : p.hasil === "ketemu" ? ""
+        : p.hasil === "gagal_cek" ? "Tidak tersedia: pencarian tidak bisa memastikan." : "Tidak tersedia: faktur tidak ditemukan oleh pencarian.";
     const blok = load.status === "memuat" ? "Menunggu hasil pencarian"
         : !cari ? "Pencarian belum berhasil — cari lagi"
             : !keputusan ? "Pilih hasil dulu"
@@ -237,7 +243,7 @@ export function SelesaikanDialog({ row, onClose, onSelesai, onTidakPasti }: {
 
     const simpan = async (alasan: string) => {
         try {
-            const { status, data } = await tulis("/api/invoice-outbox/resolve", { orderId: row.orderId, keputusan, alasan });
+            const { status, data } = await tulis("/api/invoice-outbox/resolve", { orderId: row.orderId, keputusan, alasan }, { batasMs: 150_000 });
             if (status === 200 && data.ok) {
                 onSelesai(data.state === "posted"
                     ? `SO ${nomorSo(row)} ditetapkan terposting sebagai ${String(data.number || data.accurateId)}. Baris ikut verifikasi balik.`
@@ -315,7 +321,7 @@ export function AntreUlangDialog({ row, onClose, onSelesai, onTidakPasti }: {
 }) {
     const jalankan = async () => {
         try {
-            const { status, data } = await tulis("/api/invoice-outbox", { orderId: row.orderId, action: "resend" });
+            const { status, data } = await tulis("/api/invoice-outbox", { orderId: row.orderId, action: "resend" }, { batasMs: 150_000 }); // pencarian faktur s.d. 90 dtk
             if (status !== 200 || !data.ok) throw new Error(pesanGagal(status, data, "Antre ulang ditolak server; tidak ada yang diubah."));
             const p = data.pencarian as Pencarian | undefined;
             if (data.state === "posted") {

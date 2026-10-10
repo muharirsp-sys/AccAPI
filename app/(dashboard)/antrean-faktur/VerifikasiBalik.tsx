@@ -52,7 +52,7 @@ export default function VerifikasiBalik({ bolehUbah, load, muatUlang }: { bolehU
         setSibuk(`${r.orderId}:${jenis}`);
         setPesan(null);
         try {
-            const { status, data } = await tulis("/api/invoice-verify", { orderId: r.orderId, jenis, sidik: r.sidik[jenis], note }, cabut ? "DELETE" : "POST");
+            const { status, data } = await tulis("/api/invoice-verify", { orderId: r.orderId, jenis, sidik: r.sidik[jenis], note }, { method: cabut ? "DELETE" : "POST" });
             if (status !== 200 || !data.ok) { setPesan({ tone: "neg", teks: pesanGagal(status, data, "Penjelasan gagal disimpan.") }); return; }
             if (jenis === "isi" && !cabut) setCatatan((c) => ({ ...c, [r.orderId]: "" }));
             setPesan({ tone: "pos", teks: cabut ? `Penjelasan SO ${r.soNo ?? r.orderId} dicabut; selisihnya terbuka lagi.`
