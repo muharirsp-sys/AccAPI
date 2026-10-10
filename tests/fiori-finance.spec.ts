@@ -378,7 +378,7 @@ test("Kembalikan ke Pembayaran lewat dialog: tolakan 409 (BL-49) tampil di dialo
     await expect(detail.getByText(/^Posting gagal: Accurate menolak: vendor tidak ditemukan\. Boleh diposting ulang/)).toBeVisible(NAV);
     await detail.getByRole("button", { name: "Kembalikan ke Pembayaran" }).click();
     const dlg = page.getByRole("dialog", { name: "Kembalikan DRAFT-0418 ke Pembayaran?" });
-    await expect(dlg).toContainText("Tidak ada yang dikirim ke Accurate");
+    await expect(dlg).toContainText("terbuka lagi di Pembayaran untuk diubah lalu diajukan ulang");
     await dlg.getByRole("button", { name: "Kembalikan ke Pembayaran" }).click();
     await expect(dlg.getByRole("alert")).toContainText("sudah terposting di Accurate (PP/1010/1)");
     await dlg.getByRole("button", { name: "Kembalikan ke Pembayaran" }).click();
