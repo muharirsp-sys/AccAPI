@@ -182,7 +182,8 @@ export async function aksiAntrean(
  * Hapus/Ganti batch = `update` (lalu periksa antrean, lalu hapus); antre dari batch = `key share` (lalu tulis antrean). Keduanya
  * bentrok, jadi yang kedua menunggu: hapus duluan -> antre melihat batch sudah tidak ada dan tidak menulis; antre duluan -> hapus
  * (READ COMMITTED, snapshot baru per pernyataan) melihat baris antreannya dan menjawab 409. `key share` sengaja paling lemah:
- * tidak menahan Validasi yang hanya mengubah kolom bukan kunci. undefined = batch sudah tidak ada.
+ * antre dan Validasi tidak saling menahan. Validasi juga `key share`, SEBELUM baris line: Hapus memegang batch lalu CASCADE ke
+ * line, jadi Validasi yang mengubah line dulu = siklus 40P01. undefined = batch sudah tidak ada.
  */
 export async function kunciBatch(tx: Pick<NodePgDatabase, "select">, batchId: string, mode: "update" | "key share") {
     const [batch] = await tx.select({ id: principalOrderBatch.id, principal: principalOrderBatch.principal })
