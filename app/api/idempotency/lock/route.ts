@@ -29,6 +29,11 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Setiap key idempotency wajib berupa teks.' }, { status: 400 });
         }
 
+        // S6e-2 (owner #5): mengunci = langkah pertama kirim pelunasan -> kunci `pelunasan.kirim`. Pratinjau baca-saja tetap terbuka.
+        if (!preview && !access.perms!.has('pelunasan.kirim')) {
+            return NextResponse.json({ error: 'Kirim pelunasan ke Accurate butuh izin pelunasan.kirim.', code: 'PERMISSION_REQUIRED' }, { status: 403 });
+        }
+
         const entries = keys as LockEntry[];
         const existing = await db.select().from(idempotencyLog).where(inArray(idempotencyLog.key, entries.map((k) => k.key)));
         const now = new Date();

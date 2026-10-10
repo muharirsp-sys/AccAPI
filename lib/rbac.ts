@@ -40,6 +40,8 @@ export const appModules = [
     // karena POST /orders internal menerima harga dari klien; jalur sales hanya kirim
     // kode, satuan, jumlah dan uangnya dihitung server.
     "websales",
+    // Pelunasan (S6e-2, owner #5 10 Okt 2026): kirim sales-receipt ke Accurate dari wizard; ditegakkan server.
+    "pelunasan",
 ] as const;
 export type AppModule = (typeof appModules)[number];
 
@@ -62,6 +64,7 @@ export const moduleLabels: Record<AppModule, string> = {
     rekapan_nota: "Rekapan Nota",
     insentif_sales: "Insentif Sales",
     websales: "Order Sales (Web Sales)",
+    pelunasan: "Pelunasan",
 };
 
 export const permissionActions = [
@@ -105,6 +108,7 @@ export const permissionActions = [
     "input_support",
     "manage_payment",
     "manage_hierarchy",
+    "kirim",
 ] as const;
 export type PermissionAction = (typeof permissionActions)[number];
 
@@ -149,6 +153,7 @@ export const actionLabels: Record<PermissionAction, string> = {
     delete_user: "Hapus User",
     set_role: "Set Role",
     set_permission: "Set Permission",
+    kirim: "Kirim ke Accurate",
 };
 
 export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
@@ -176,6 +181,7 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
         "input_support", "manage_payment", "manage_hierarchy",
     ],
     websales: ["view", "create"],
+    pelunasan: ["kirim"],
 };
 
 export type PermissionMap = Partial<Record<AppModule, PermissionAction[]>>;

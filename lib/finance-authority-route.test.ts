@@ -51,7 +51,7 @@ export const jsonPost = (url: string, body: unknown) => new NextRequest(`http://
 
 /** Semua kunci finance KECUALI `except` — membuktikan kapabilitas tidak saling menggantikan. */
 const financeAllBut = (except: string) => ["finance.view", "finance.update", "finance.retry_post", "finance.resolve_unknown",
-    "finance.override_duplicate", "finance.repost_payment", "api_wrapper.view", "api_wrapper.execute"].filter((k) => k !== except);
+    "finance.override_duplicate", "finance.repost_payment", "api_wrapper.view", "api_wrapper.execute", "pelunasan.kirim"].filter((k) => k !== except);
 
 const PP_PAYLOAD = [{ bankNo: "1101", vendorNo: "V-01", chequeAmount: 1000, transDate: "29/09/2026", chequeDate: "29/09/2026",
     paymentMethod: "BANK_TRANSFER", description: "SPPD: 001", detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 1000 }] }];
@@ -83,7 +83,8 @@ test("D-18 override sales-receipt: hanya finance.override_duplicate -> lolos; al
     const body = (overrideReason = "") => ({ keys: [{ key: successRow[0].key }], allowLockedKeys: [successRow[0].key], overrideReason });
     const denied = await asUserWith(financeAllBut("finance.override_duplicate"), () => lockIdempotency(jsonPost("/api/idempotency/lock", body("alasan override yang cukup panjang"))), successRow);
     assert.equal(denied.status, 403, "override tanpa finance.override_duplicate harus 403");
-    const noReason = await asUserWith(["finance.override_duplicate"], () => lockIdempotency(jsonPost("/api/idempotency/lock", body("pendek"))), successRow);
+    // S6e-2: lock non-pratinjau juga butuh pelunasan.kirim (Finance mengirim sendiri, owner #1/#5).
+    const noReason = await asUserWith(["finance.override_duplicate", "pelunasan.kirim"], () => lockIdempotency(jsonPost("/api/idempotency/lock", body("pendek"))), successRow);
     assert.equal(noReason.status, 400, "alasan < 15 karakter harus 400");
     // Kontrol positif: tanpa override, non-Finance tetap boleh melihat blok (preview) — 200, tanpa tulis.
     const preview = await asUserWith(["api_wrapper.view"], () => lockIdempotency(jsonPost("/api/idempotency/lock", { keys: [{ key: successRow[0].key }], preview: true })), successRow);

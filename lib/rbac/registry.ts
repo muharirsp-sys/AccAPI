@@ -68,6 +68,10 @@ export const PERMISSION_REGISTRY = {
     // Rekapan Nota (wave-based picking). print = cetak lembar picking/TTF;
     // approve_takeout = melepas nota dari wave (butuh persetujuan gudang, Q9).
     rekapan_nota: ["view", "manage", "print", "approve_takeout"],
+    // kirim (S6e-2, owner #5 10 Okt 2026) = kirim pelunasan (sales-receipt) ke Accurate. Ditegakkan server di
+    //   /api/proxy cabang tulis sales-receipt dan /api/idempotency/lock non-pratinjau. Konsol AOL tetap api_wrapper.*.
+    //   Belum ada di preset grup mana pun — IT Support menambahkannya ke grup pengirim (D-17).
+    pelunasan: ["kirim"],
 } as const;
 
 export type PermissionModule = keyof typeof PERMISSION_REGISTRY;

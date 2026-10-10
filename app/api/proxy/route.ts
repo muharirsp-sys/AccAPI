@@ -4,6 +4,7 @@ import { getAccurateSession } from "@/lib/accurate-session";
 import { accurateTimeoutMessage, forwardAccurate, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
 import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
 import { db } from "@/lib/db";
+import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 
 export async function POST(req: NextRequest) {
     let requestMethod = "";
@@ -40,6 +41,13 @@ export async function POST(req: NextRequest) {
         if (salesReceipt) {
             const bad = checkSalesReceiptWrite(write);
             if (bad) return NextResponse.json({ error: bad, code: "SALES_RECEIPT_LOCK_REQUIRED" }, { status: 409 });
+            // S6e-2 (owner #5): kirim pelunasan = kunci `pelunasan.kirim`, ditegakkan di sini (bukan hanya UI).
+            // Hanya cabang tulis sales-receipt — GET & tulis endpoint lain tidak berubah.
+            const access = await resolveRequestPermissions(req);
+            if (access.response) return access.response;
+            if (!access.perms!.has("pelunasan.kirim")) {
+                return NextResponse.json({ error: "Kirim pelunasan ke Accurate butuh izin pelunasan.kirim.", code: "PERMISSION_REQUIRED", sent: false }, { status: 403 });
+            }
         }
         const accurateSession = await getAccurateSession(String(authCheck.session.user.id));
         const sessionHost = accurateSession?.sessionHost;
