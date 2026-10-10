@@ -32,3 +32,44 @@ test("golden kode lama: p01-pratinjau-duplikat", async () => {
     assert.equal(json(hasil), json(golden["p01-pratinjau-duplikat"].hasil));
     assert.deepEqual(emu.panggilanKanonik(), golden["p01-pratinjau-duplikat"].panggilan);
 });
+
+// ---- lib/pelunasan (S6e-1 tahap 2): HARUS identik dengan golden yang sama.
+import { deteksiFormatPelunasan, parsePelunasan, type JenisLapor } from "./parser.ts";
+import { pratinjauDuplikat } from "./pratinjau-ganda.ts";
+import type { AccurateFetch } from "./retur.ts";
+
+/** Jalankan lib persis seperti halaman: deteksi dulu; toast direkam dalam bentuk panggilan `toast[jenis](pesan, opsi?)`. */
+export async function jalankanLib(fx: ReturnType<(typeof FIXTURES)[number]>, emu: ReturnType<typeof buatEmulator>) {
+    const toasts: unknown[][] = [];
+    if (!deteksiFormatPelunasan(fx.rows)) return { payload: null, manualRows: null, toasts };
+    const { trxDate, isKeySaved, ...peta } = fx.opsi;
+    const hasil = await parsePelunasan(fx.rows, {
+        trxDate, isKeySaved, peta, accurateFetch: emu.accurateFetch as AccurateFetch,
+        lapor: (jenis: JenisLapor, pesan: string, opsi?: { id: string }) => { toasts.push(opsi ? [jenis, pesan, opsi] : [jenis, pesan]); },
+    });
+    return { payload: hasil.payload, manualRows: hasil.manualRows, toasts };
+}
+
+for (const buat of FIXTURES) {
+    const fx = buat();
+    test(`golden lib/pelunasan: ${fx.nama}`, async () => {
+        const g = golden[fx.nama];
+        const emu = buatEmulator(fx.data);
+        const k = await jalankanLib(fx, emu);
+        assert.equal(json(k.payload), json(g.payload ?? null), "payload");
+        assert.equal(json(k.manualRows), json(g.manualRows), "baris manual");
+        assert.equal(json(k.toasts), json(g.toasts), "toast");
+        assert.deepEqual(emu.panggilanKanonik(), g.panggilan, "panggilan Accurate");
+    });
+}
+
+test("golden lib/pelunasan: p01-pratinjau-duplikat", async () => {
+    const p = fixturePratinjau();
+    const emu = buatEmulator(p.data);
+    const hasil = await pratinjauDuplikat(p.rows, p.routeKey, {
+        accurateFetch: emu.accurateFetch as AccurateFetch,
+        pratinjauKunci: async () => ({ blockedEntries: p.blockedEntries }),
+    });
+    assert.equal(json(hasil), json(golden["p01-pratinjau-duplikat"].hasil));
+    assert.deepEqual(emu.panggilanKanonik(), golden["p01-pratinjau-duplikat"].panggilan);
+});

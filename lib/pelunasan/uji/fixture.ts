@@ -65,7 +65,7 @@ const f1 = (): Fixture => ({
 const f2 = (): Fixture => ({
     nama: "f02-transfer-tanpa-total-trx",
     catatan: "Format terdeteksi tanpa Total.Trx; Trf MAYBANK/PRMT/Ket.TF; snap ≤ 100 tanpa Total.Trx; overpay dibatasi piutang; "
-        + "pencarian faktur EQUAL / KEYWORD_FULL / NUMBER_CONTAIN_FULL / NUMBER_CONTAIN_TAIL / tidak ketemu (anti-ghosting).",
+        + "pencarian faktur EQUAL / KEYWORD_FULL / NUMBER_CONTAIN_FULL / NUMBER_CONTAIN_TAIL / tidak ketemu (anti-ghosting) / galat jaringan (ERROR).",
     opsi: { ...OPSI_DASAR, mapTrfAutoNum: "450", mapTrfBank: "110103" },
     rows: [
         { "Code Outlet": "PLG-A-001", "No. Nota": "INV/2610/XX00011", "Trf": 2000040, "Ket. Trf": "trf maybank 01" },
@@ -75,6 +75,7 @@ const f2 = (): Fixture => ({
         { "Code Outlet": "PLG-A-003", "No. Nota": "XX00015", "Trf": 400000 },
         { "Code Outlet": "PLG-A-003", "No. Nota": "FJ/2610/XX00016", "Trf": 250000 },
         { "Code Outlet": "PLG-A-003", "No. Nota": "INV/2610/XX00017", "Trf": 125000.5 },
+        { "Code Outlet": "PLG-A-003", "No. Nota": "INV/2610/XX00018", "Trf": 50000 },
     ],
     data: {
         salesInvoice: [
@@ -84,8 +85,10 @@ const f2 = (): Fixture => ({
             faktur("INV/2610/XX00015", 400000, "PLG-A-003"),
             faktur("INV/2610/XX00016", 300000, "PLG-A-003"),
             faktur("INV/2610/XX00017-R", 125000.5, "PLG-A-003"),
+            faktur("INV/2610/XX00018", 50000, "PLG-A-003"),
         ],
         salesReturn: [],
+        galat: ['"filter.number.val":"INV/2610/XX00018"'],
     },
 });
 
@@ -131,24 +134,27 @@ const f4 = (): Fixture => ({
 
 const f5 = (): Fixture => ({
     nama: "f05-retur-srb-rjs",
-    catatan: "SRB ketemu lewat keywords (snap retur ≤ 100); RJS nomor penuh SRT/… lewat EQUAL (retur saja → OTHERS); "
+    catatan: "SRB ketemu lewat keywords (snap retur ≤ 100); RJS nomor penuh SRT/… lewat EQUAL (retur saja → OTHERS) dan lewat CONTAIN (nomor bersufiks); "
         + "SRB yang di Accurate tersimpan TANPA spasi (variannya ketemu, skornya 0) → NOT_FOUND → baris manual.",
     opsi: { ...OPSI_DASAR, mapTunaiAutoNum: "300" },
     rows: [
         { "Code Outlet": "PLG-D-001", "No. Nota": "INV/2610/XX00041", "Tunai": 800000, "No.SRB Rt Ktr": "SRB 2610.0001", "Pot.RT Ktr": 199960 },
         { "Code Outlet": "PLG-D-001", "No. Nota": "INV/2610/XX00042", "No.RJS RT Gt": "SRT/2610/XX0002", "Pot. RT Gt": 150000 },
         { "Code Outlet": "PLG-D-002", "No. Nota": "INV/2610/XX00043", "Tunai": 100000, "No.SRB Rt Ktr": "SRB 2610.0003", "Pot.RT Ktr": 50000, "Ket. All Trx": "Setoran D2" },
+        { "Code Outlet": "PLG-D-002", "No. Nota": "INV/2610/XX00044", "Tunai": 70000, "No.RJS RT Gt": "SRT/2610/XX0004", "Pot. RT Gt": 30000 },
     ],
     data: {
         salesInvoice: [
             faktur("INV/2610/XX00041", 1000000, "PLG-D-001"),
             faktur("INV/2610/XX00042", 150000, "PLG-D-001"),
             faktur("INV/2610/XX00043", 150000, "PLG-D-002"),
+            faktur("INV/2610/XX00044", 100000, "PLG-D-002"),
         ],
         salesReturn: [
             retur(201, "SRT/2610/XX0001", 200000, "PLG-D-001", { keywords: "SRB 2610.0001", description: "Retur SRB 2610.0001" }),
             retur(202, "SRT/2610/XX0002", 150000, "PLG-D-001"),
             retur(203, "SRT/2610/XX0003", 50000, "PLG-D-002", { keywords: "SRB2610.0003" }),
+            retur(204, "SRT/2610/XX0004.R", 30000, "PLG-D-002"),
         ],
     },
 });
