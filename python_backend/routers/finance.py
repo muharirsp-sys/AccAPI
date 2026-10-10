@@ -461,9 +461,17 @@ async def payments_finance_update(request: Request):
 
             def post_status_conflict(rec: Dict[str, Any]) -> Optional[str]:
                 """posted final dari layar ini; unknown hanya keluar lewat catatan penyelesaian."""
-                if status != "Sudah Transfer":
-                    return None
                 current = effective_post_status(rec)  # "failed" lama bergalat ambigu = unknown (tinjauan S6-0a)
+                if status != "Sudah Transfer":
+                    # BL-49 (S6-0e): yang sudah/mungkin sudah terposting tidak dikembalikan ke Pembayaran — mengajukan
+                    # ulang rekaman itu = membayar dua kali. "failed" berpesan jelas tetap boleh (owner 9 Okt).
+                    if current == "posted":
+                        no = s(rec.get('accurate_purchase_payment_number', '')) or s(rec.get('accurate_purchase_payment_id', ''))
+                        return f"LPB {s(rec.get('no_lpb', ''))} sudah terposting di Accurate ({no}); status tidak bisa dikembalikan ke {status}."
+                    if current == "unknown":
+                        return (f"Posting Accurate LPB {s(rec.get('no_lpb', ''))} TIDAK PASTI; selesaikan dulu (periksa Accurate) "
+                                f"sebelum mengembalikan ke {status}.")
+                    return None
                 if current == "posted":
                     return f"LPB {s(rec.get('no_lpb', ''))} sudah posted ke Accurate ({s(rec.get('accurate_purchase_payment_number', '')) or s(rec.get('accurate_purchase_payment_id', ''))}); status tidak bisa diubah dari sini."
                 if current == "unknown" and accurate_post_status != "unknown":

@@ -647,6 +647,10 @@ async def payments_cart_create(request: Request):
             return JSONResponse(status_code=400, content={"ok": False, "error": f"LPB untuk principle {principle} terindikasi sudah pernah diajukan (kemungkinan case CBD). Cek data finance terlebih dulu."})
         if _already_submitted(rec):
             return JSONResponse(status_code=400, content={"ok": False, "error": f"Record {no_lpb or rec.get('record_id','')} sudah pernah diajukan ke finance."})
+        lock = payment_lock_reason(rec)
+        if lock:
+            # BL-49/BL-05 (S6-0e): "Ajukan Ulang" lama pada rekaman terposting tidak boleh menjadi pengajuan kedua.
+            return JSONResponse(status_code=409, content={"ok": False, "error": f"Record {no_lpb or rec.get('record_id','')} {lock}; tidak bisa diajukan ulang."})
 
     order_keys: List[str] = []
     groups: Dict[str, List[Dict[str, Any]]] = {}
@@ -945,6 +949,11 @@ async def payments_cart_submit(request: Request):
         taken = [k for k in (s(r.get("record_id", "")) for r in selected) if _already_submitted(db.get("lpb", {}).get(k, {}))]
         if taken:
             return JSONResponse(status_code=409, content={"ok": False, "error": f"Sudah diajukan lewat pengajuan lain: {', '.join(taken)}. Buat draft baru."})
+        # BL-49 (S6-0e): rekaman bisa terposting/ditransfer sejak draf dibuat — cek di lock yang sama dengan tulis.
+        locked = [payment_lock_entry(k, db["lpb"][k], why) for k in (s(r.get("record_id", "")) for r in selected)
+                  if k in db.get("lpb", {}) and (why := payment_lock_reason(db["lpb"][k]))]
+        if locked:
+            return JSONResponse(status_code=409, content={"ok": False, "error": payment_lock_message("Ajukan", locked), "locked": locked})
         if method == "BANK_PANIN":
             # AM-012: nomor diambil dari ledger yang AKAN disimpan, di dalam lock yang sama.
             # Dulu diambil dari objek bagian lock pertama dan hanya bertahan karena load
