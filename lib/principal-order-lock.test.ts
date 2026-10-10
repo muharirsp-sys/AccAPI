@@ -1,21 +1,70 @@
-/* BL-21 (S6d lanjutan): Hapus/Ganti batch Order Principal vs Antrekan yang BERSAMAAN — kunci baris principal_order_batch.
+/* BL-21 (S6d lanjutan): Hapus/Ganti batch Order Principal vs Antrekan / Validasi yang BERSAMAAN — kunci baris principal_order_batch.
  * Postgres EVALUASI (AM-040, bukan produksi) lewat AM040_DATABASE_URL; tanpa env itu dilewati dengan sebabnya. Tanpa Accurate.
+ * principal_order_batch/line dibuat di SKEMA SEKALI-PAKAI (search_path skema itu lalu public, di-DROP di akhir) persis seperti
+ * migrasi 0008 produksi: FK line -> batch ON DELETE CASCADE + indeks unik (principal, file_hash). DB am040_s6 (drizzle push) tidak
+ * punya keduanya, padahal CASCADE itulah yang membuat Hapus mengunci baris line — tanpa FK, deadlock Validasi tidak terlihat.
  * Urutan antar-transaksi dibuat pasti dengan klien "penahan" + pg_blocking_pids (bukan sleep):
  *   A. hapus memegang kunci batch duluan -> antrekan menunggu, lalu melihat batch sudah tidak ada: tidak ada baris antrean.
  *   B. antrekan memegang kunci batch duluan -> DELETE route menunggu, lalu melihat baris antreannya: 409, batch utuh.
+ *   V1. hapus memegang kunci batch duluan -> Validasi menunggu SEBELUM menyentuh baris line; hapus (CASCADE) lolos, Validasi 409.
+ *       Kode lama (line dulu, batch belakangan) = siklus: 40P01.
+ *   V2. Validasi memegang kunci batch duluan -> DELETE route menunggu, lalu menghapus sesudah Validasi commit; keduanya 200.
+ *   E.  jalur E2 `posted` antrekan (SO pernah dibuang, faktur ketemu) di bawah kunci batch yang sama: hapus duluan -> tidak ada
+ *       baris terposting; antre duluan -> DELETE menunggu lalu 409, baris terposting + event tercatat.
+ *   Q.  route queue membentuk payload di luar kunci: Validasi ulang yang commit di antaranya (validated_at berubah) -> antrekan
+ *       menolak di bawah kunci (batchVersi); versi yang sama -> diantrekan.
+ *   G.  dua Ganti bersamaan untuk berkas sama -> yang kedua menunggu kunci batch lama, lalu INSERT-nya bentrok indeks unik:
+ *       409 `BERKAS_SUDAH_DISIMPAN` (kode lama: 23505 tak tertangani = 500).
  * Penjaga statik urutannya: lib/route-lock-order.test.ts. */
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool, type PoolClient } from "pg";
+import * as XLSX from "xlsx";
 import { invoiceKey } from "./principal-invoice.ts";
 
 const PG_URL = process.env.AM040_DATABASE_URL ?? "";
 const pgSkip = PG_URL ? false : "AM040_DATABASE_URL tidak di-set (Postgres evaluasi lokal AM-040)";
+const SKEMA = `uji_bl21_${randomUUID().slice(0, 8)}`;
+/** Koneksi uji DAN route: nama tabel tanpa skema -> skema sekali-pakai dulu (batch/line), sisanya public. */
+const URL_UJI = PG_URL ? (() => {
+    const url = new URL(PG_URL);
+    url.searchParams.set("options", `-c search_path=${SKEMA},public`);
+    return url.toString();
+})() : "";
+if (PG_URL) Object.assign(process.env, { DATABASE_URL: URL_UJI, NODE_ENV: "development", LOCAL_AUTH_BYPASS: "true" });
+
+const pool = new Pool({ connectionString: URL_UJI || undefined, max: 4 });
+const pg = drizzle(pool);
+const tag = randomUUID().slice(0, 8);
+const principal = `UJI-LOCK-${tag}`;
+const kunciDibuat: string[] = [];
+
+before(async () => {
+    if (!PG_URL) return;
+    await pool.query(`CREATE SCHEMA ${SKEMA}`);
+    await pool.query(`CREATE TABLE ${SKEMA}.principal_order_batch (LIKE public.principal_order_batch INCLUDING ALL)`);
+    await pool.query(`CREATE UNIQUE INDEX ON ${SKEMA}.principal_order_batch (principal, file_hash)`);
+    await pool.query(`CREATE TABLE ${SKEMA}.principal_order_line (LIKE public.principal_order_line INCLUDING ALL)`);
+    await pool.query(`ALTER TABLE ${SKEMA}.principal_order_line ADD FOREIGN KEY (batch_id)
+        REFERENCES ${SKEMA}.principal_order_batch (id) ON DELETE CASCADE`);
+});
+
+after(async () => {
+    if (PG_URL) {
+        await pool.query("DELETE FROM invoice_outbox_event WHERE order_id = ANY($1)", [kunciDibuat]).catch(() => undefined);
+        await pool.query("DELETE FROM invoice_outbox WHERE order_id = ANY($1)", [kunciDibuat]).catch(() => undefined);
+        await pool.query("DELETE FROM principal_mapping WHERE principal = $1", [principal]).catch(() => undefined);
+        await pool.query(`DROP SCHEMA IF EXISTS ${SKEMA} CASCADE`);
+        const { pool: poolRoute } = await import("./db.ts");
+        await poolRoute.end();
+    }
+    await pool.end();
+});
 
 /** Tunggu sampai ada backend yang tertahan (langsung atau lewat satu perantara) oleh `pid`; false = `selesai` duluan / 10 dtk. */
-async function tertahanOleh(pool: Pool, pid: number, selesai: Promise<unknown>, lapis: 1 | 2) {
+async function tertahanOleh(pid: number, selesai: Promise<unknown>, lapis: 1 | 2) {
     let beres = false;
     void selesai.finally(() => { beres = true; });
     const sql = lapis === 1
@@ -29,26 +78,66 @@ async function tertahanOleh(pool: Pool, pid: number, selesai: Promise<unknown>, 
     return false;
 }
 
-test("PG BL-21: hapus/ganti vs antrekan bersamaan — yang kedua menunggu; tak ada batch terhapus sementara SO-nya diantrekan", { skip: pgSkip }, async () => {
-    Object.assign(process.env, { DATABASE_URL: PG_URL, NODE_ENV: "development", LOCAL_AUTH_BYPASS: "true" });
-    const { pool: poolRoute } = await import("./db.ts");
+const seed = async (batchId: string, soNo: string, baris = 1) => {
+    await pool.query(`INSERT INTO principal_order_batch (id, principal, file_name, file_hash) VALUES ($1, $2, 'uji.xlsx', $1)`, [batchId, principal]);
+    for (let row = 1; row <= baris; row++) {
+        await pool.query(`INSERT INTO principal_order_line (batch_id, row_number, so_no) VALUES ($1, $2, $3)`, [batchId, row, soNo]);
+    }
+};
+const calon = (orderId: string) => {
+    kunciDibuat.push(orderId);
+    return { orderId, customerNo: "C-UJI-LOCK", orderDate: "2026-10-10", payload: { charField1: orderId, detailItem: [] } };
+};
+const ada = async (sql: string, id: string) => (await pool.query(sql, [id])).rowCount ?? 0;
+/** Kode SQLSTATE dari galat pg / pembungkus drizzle; undefined bila bukan galat. */
+const kodePg = (hasil: unknown) => hasil instanceof Error
+    ? String((hasil as { code?: string }).code ?? (hasil as { cause?: { code?: string } }).cause?.code ?? hasil.message)
+    : undefined;
+const tanpaLempar = <T,>(p: Promise<T>) => p.then((r) => r, (e: unknown) => (e instanceof Error ? e : new Error(String(e))));
+
+async function penahanBaru() {
+    const client: PoolClient = await pool.connect();
+    const pid = (await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+    return { client, pid };
+}
+
+/** Berkas Order Detail minimal: satu baris SO, produk P-UJI (mapping dibuat di uji G). */
+function berkasOrderDetail(soNo: string) {
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
+        ["REPORT ORDER DETAIL"],
+        ["SLSMAN_ID", "CUST_ID1", "CUSTOMER", "SO_NO", "SO_DATE", "PRD_ID", "PRD_DESC", "QTY", "PRICE", "GROSS", "NET", "FLAG_BONUS"],
+        ["S-UJI", "C-UJI", "OUTLET UJI", soNo, "2026-10-10", "P-UJI", "BARANG UJI", 2, 1000, 2000, 2000, "N"],
+    ]), "Sheet1");
+    return new Uint8Array(XLSX.write(book, { type: "array", bookType: "xlsx" }));
+}
+
+async function route() {
     const { antrekan } = await import("./invoice-outbox-actions.ts");
-    const { DELETE: hapus } = await import("../app/api/principal-order/route.ts");
+    const { DELETE: hapus, POST: unggah } = await import("../app/api/principal-order/route.ts");
+    const { POST: validasi } = await import("../app/api/principal-order/validate/route.ts");
     const { NextRequest } = await import("next/server");
-    const pool = new Pool({ connectionString: PG_URL, max: 4 });
-    const pg = drizzle(pool);
-    const tag = randomUUID().slice(0, 8);
-    const principal = `UJI-LOCK-${tag}`;
+    const req = (path: string, method: string) => new NextRequest(`http://localhost${path}`, { method, headers: { host: "localhost" } });
+    return {
+        antrekan,
+        hapus: (id: string) => hapus(req(`/api/principal-order?id=${id}`, "DELETE")),
+        validasi: (id: string) => validasi(req(`/api/principal-order/validate?id=${id}`, "POST")),
+        gantiBerkas: (bytes: Uint8Array) => {
+            const form = new FormData();
+            form.set("file", new File([bytes], "uji.xlsx"));
+            form.set("principal", principal);
+            form.set("apply", "true");
+            form.set("replace", "true");
+            return unggah(new NextRequest("http://localhost/api/principal-order", { method: "POST", body: form, headers: { host: "localhost" } }));
+        },
+    };
+}
+
+test("PG BL-21: hapus/ganti vs antrekan bersamaan — yang kedua menunggu; tak ada batch terhapus sementara SO-nya diantrekan", { skip: pgSkip }, async () => {
+    const { antrekan, hapus } = await route();
     const batchA = `bl21-a-${tag}`, batchB = `bl21-b-${tag}`;
     const keyA = invoiceKey(principal, `SO-A-${tag}`), keyB = invoiceKey(principal, `SO-B-${tag}`);
-    const seed = async (batchId: string, soNo: string) => {
-        await pool.query(`INSERT INTO principal_order_batch (id, principal, file_name, file_hash) VALUES ($1, $2, 'uji.xlsx', $1)`, [batchId, principal]);
-        await pool.query(`INSERT INTO principal_order_line (batch_id, row_number, so_no) VALUES ($1, 1, $2)`, [batchId, soNo]);
-    };
-    const calon = (orderId: string) => ({ orderId, customerNo: "C-UJI-LOCK", orderDate: "2026-10-10", payload: { charField1: orderId, detailItem: [] } });
-    const ada = async (sql: string, id: string) => (await pool.query(sql, [id])).rowCount ?? 0;
-    const penahan: PoolClient = await pool.connect();
-    const pidPenahan = (await penahan.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+    const { client: penahan, pid: pidPenahan } = await penahanBaru();
     try {
         await seed(batchA, `SO-A-${tag}`);
         await seed(batchB, `SO-B-${tag}`);
@@ -57,7 +146,7 @@ test("PG BL-21: hapus/ganti vs antrekan bersamaan — yang kedua menunggu; tak a
         await penahan.query("BEGIN");
         await penahan.query("SELECT id FROM principal_order_batch WHERE id = $1 FOR UPDATE", [batchA]);
         const antreA = antrekan(pg, { entries: [calon(keyA)], actor: "uji-lock", targetDb: "", cari: null, batchId: batchA });
-        const antreMenunggu = await tertahanOleh(pool, pidPenahan, antreA, 1);
+        const antreMenunggu = await tertahanOleh(pidPenahan, antreA, 1);
         await penahan.query("DELETE FROM principal_order_batch WHERE id = $1", [batchA]);
         await penahan.query("COMMIT");
         const hasilA = await antreA;
@@ -71,9 +160,9 @@ test("PG BL-21: hapus/ganti vs antrekan bersamaan — yang kedua menunggu; tak a
         await penahan.query("BEGIN");
         await penahan.query(`INSERT INTO invoice_outbox (order_id, customer_no, order_date, payload) VALUES ($1, 'C-UJI-LOCK', '2026-10-10', '{}'::jsonb)`, [keyB]);
         const antreB = antrekan(pg, { entries: [calon(keyB)], actor: "uji-lock", targetDb: "", cari: null, batchId: batchB });
-        assert.ok(await tertahanOleh(pool, pidPenahan, antreB, 1), "B: antrekan tidak tertahan penahan");
-        const hapusB = hapus(new NextRequest(`http://localhost/api/principal-order?id=${batchB}`, { method: "DELETE", headers: { host: "localhost" } }));
-        const hapusMenunggu = await tertahanOleh(pool, pidPenahan, hapusB, 2);
+        assert.ok(await tertahanOleh(pidPenahan, antreB, 1), "B: antrekan tidak tertahan penahan");
+        const hapusB = hapus(batchB);
+        const hapusMenunggu = await tertahanOleh(pidPenahan, hapusB, 2);
         await penahan.query("ROLLBACK");
         const [hasilB, jawabB] = await Promise.all([antreB, hapusB]);
         assert.deepEqual(hasilB.queued, [keyB]);
@@ -84,10 +173,158 @@ test("PG BL-21: hapus/ganti vs antrekan bersamaan — yang kedua menunggu; tak a
     } finally {
         await penahan.query("ROLLBACK").catch(() => undefined);
         penahan.release();
-        await pool.query("DELETE FROM invoice_outbox WHERE order_id = ANY($1)", [[keyA, keyB]]).catch(() => undefined);
-        await pool.query("DELETE FROM principal_order_line WHERE batch_id = ANY($1)", [[batchA, batchB]]).catch(() => undefined);
-        await pool.query("DELETE FROM principal_order_batch WHERE id = ANY($1)", [[batchA, batchB]]).catch(() => undefined);
-        await pool.end();
-        await poolRoute.end();
     }
+});
+
+test("PG BL-21: Validasi vs Hapus bersamaan — tanpa deadlock 40P01 (FK CASCADE line -> batch seperti migrasi 0008)", { skip: pgSkip }, async () => {
+    const { hapus, validasi } = await route();
+    const batchV1 = `bl21-v1-${tag}`, batchV2 = `bl21-v2-${tag}`;
+    const { client: penahan, pid: pidPenahan } = await penahanBaru();
+    try {
+        await seed(batchV1, `SO-V1-${tag}`, 3);
+        await seed(batchV2, `SO-V2-${tag}`, 3);
+
+        // V1. Hapus duluan (penahan = transaksi DELETE route sesudah kunciBatch "update"): Validasi harus menunggu SEBELUM
+        //     mengubah baris line. Kode lama mengubah line dulu lalu menunggu di UPDATE batch; DELETE ... CASCADE lalu menunggu
+        //     line milik Validasi = siklus -> 40P01 (deadlock_timeout) di salah satunya.
+        await penahan.query("BEGIN");
+        await penahan.query("SELECT id FROM principal_order_batch WHERE id = $1 FOR UPDATE", [batchV1]);
+        const v1 = tanpaLempar(validasi(batchV1));
+        const v1Menunggu = await tertahanOleh(pidPenahan, v1, 1);
+        const hapusV1 = await tanpaLempar(penahan.query("DELETE FROM principal_order_batch WHERE id = $1", [batchV1]));
+        await penahan.query(hapusV1 instanceof Error ? "ROLLBACK" : "COMMIT");
+        const jawabV1 = await v1;
+        assert.equal(kodePg(hapusV1), undefined, `V1: DELETE batch (CASCADE line) gagal: ${kodePg(hapusV1)}`);
+        assert.ok(!(jawabV1 instanceof Error), `V1: Validasi gagal: ${kodePg(jawabV1)}`);
+        assert.ok(v1Menunggu, "V1: Validasi tidak menunggu kunci batch hapus");
+        assert.equal(jawabV1.status, 409, `V1: Validasi menjawab ${jawabV1.status}`);
+        assert.match(String((await jawabV1.json()).error), /dihapus atau diganti/);
+        assert.equal(await ada("SELECT 1 FROM principal_order_line WHERE batch_id = $1", batchV1), 0, "V1: CASCADE tidak menghapus baris line");
+
+        // V2. Validasi duluan: penahan mengunci baris line #1 sehingga Validasi berhenti DI DALAM transaksinya (sesudah kunci
+        //     batch). DELETE route harus menunggu Validasi (lapis 2), lalu menghapus sesudah Validasi commit — bukan deadlock.
+        await penahan.query("BEGIN");
+        await penahan.query("SELECT 1 FROM principal_order_line WHERE batch_id = $1 AND row_number = 1 FOR UPDATE", [batchV2]);
+        const v2 = tanpaLempar(validasi(batchV2));
+        assert.ok(await tertahanOleh(pidPenahan, v2, 1), "V2: Validasi tidak tertahan penahan");
+        const hapusV2 = tanpaLempar(hapus(batchV2));
+        const hapusMenunggu = await tertahanOleh(pidPenahan, hapusV2, 2);
+        await penahan.query("ROLLBACK");
+        const [jawabV2, jawabHapus] = await Promise.all([v2, hapusV2]);
+        assert.ok(!(jawabV2 instanceof Error), `V2: Validasi gagal: ${kodePg(jawabV2)}`);
+        assert.ok(!(jawabHapus instanceof Error), `V2: DELETE gagal: ${kodePg(jawabHapus)}`);
+        assert.equal(jawabV2.status, 200, `V2: Validasi menjawab ${jawabV2.status}`);
+        assert.deepEqual(await jawabHapus.json(), { ok: true, removed: 1 });
+        assert.ok(hapusMenunggu, "V2: DELETE tidak menunggu Validasi yang sedang menulis");
+        assert.equal(await ada("SELECT 1 FROM principal_order_line WHERE batch_id = $1", batchV2), 0, "V2: baris line tersisa");
+    } finally {
+        await penahan.query("ROLLBACK").catch(() => undefined);
+        penahan.release();
+    }
+});
+
+test("PG BL-21: dua Ganti bersamaan untuk berkas yang sama — yang kedua 409 berkode, bukan 500", { skip: pgSkip }, async () => {
+    const { gantiBerkas } = await route();
+    await pool.query(`INSERT INTO principal_mapping (principal, kind, source_code, target_code, unit, pack_size)
+        VALUES ($1, 'item', 'P-UJI', 'I-UJI', 'PCS', 1)`, [principal]);
+    const bytes = berkasOrderDetail(`SO-G-${tag}`);
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const lama = `bl21-g-lama-${tag}`, baruA = `bl21-g-a-${tag}`;
+    const sisip = (q: { query: PoolClient["query"] } | Pool, id: string) =>
+        q.query(`INSERT INTO principal_order_batch (id, principal, file_name, file_hash) VALUES ($1, $2, 'uji.xlsx', $3)`, [id, principal, hash]);
+    await sisip(pool, lama);
+    const { client: penahan, pid: pidPenahan } = await penahanBaru();
+    try {
+        // Ganti A (penahan) sudah mengunci batch lama, menghapusnya, dan menyisipkan batch baru berkas yang sama — belum commit.
+        await penahan.query("BEGIN");
+        await penahan.query("SELECT id FROM principal_order_batch WHERE id = $1 FOR UPDATE", [lama]);
+        await penahan.query("DELETE FROM principal_order_batch WHERE id = $1", [lama]);
+        await sisip(penahan, baruA);
+        const gantiB = tanpaLempar(gantiBerkas(bytes));
+        const menunggu = await tertahanOleh(pidPenahan, gantiB, 1);
+        await penahan.query("COMMIT");
+        const jawab = await gantiB;
+        assert.ok(!(jawab instanceof Error), `G: Ganti kedua gagal (500): ${kodePg(jawab)}`);
+        const body = await jawab.json();
+        assert.equal(jawab.status, 409, `G: Ganti kedua menjawab ${jawab.status} ${JSON.stringify(body)}`);
+        assert.equal(body.code, "BERKAS_SUDAH_DISIMPAN");
+        assert.ok(menunggu, "G: Ganti kedua tidak menunggu kunci batch lama");
+        const tersisa = await pool.query("SELECT id FROM principal_order_batch WHERE principal = $1 AND file_hash = $2", [principal, hash]);
+        assert.deepEqual(tersisa.rows.map((row) => row.id), [baruA], "G: batch berkas ini bukan satu-satunya milik Ganti pertama");
+    } finally {
+        await penahan.query("ROLLBACK").catch(() => undefined);
+        penahan.release();
+    }
+});
+
+test("PG BL-21: jalur E2 `posted` antrekan juga di bawah kunci batch (hapus duluan / antre duluan)", { skip: pgSkip }, async () => {
+    const { antrekan, hapus } = await route();
+    const batchE1 = `bl21-e1-${tag}`, batchE2 = `bl21-e2-${tag}`;
+    const keyE1 = invoiceKey(principal, `SO-E1-${tag}`), keyE2 = invoiceKey(principal, `SO-E2-${tag}`);
+    // Pencari stub (tanpa Accurate): faktur SUDAH ada -> jalur `posted`, bukan kirim.
+    const cari = async () => ({ hasil: "ketemu" as const, id: "9001", number: "UJI/E2", sumber: "cache" as const, cocok: "charField1" as const, semua: [] });
+    const masukan = (key: string, batchId: string) => ({ entries: [calon(key)], actor: "uji-lock", targetDb: "DB-UJI", cari, batchId });
+    const { client: penahan, pid: pidPenahan } = await penahanBaru();
+    try {
+        await seed(batchE1, `SO-E1-${tag}`);
+        await seed(batchE2, `SO-E2-${tag}`);
+        for (const key of [keyE1, keyE2]) {
+            await pool.query(`INSERT INTO invoice_outbox_event (order_id, jenis, state_from, actor, reason) VALUES ($1, 'buang', 'rejected', 'uji-lock', 'uji')`, [key]);
+        }
+
+        // E1. Hapus duluan: transaksi `posted` menunggu kunci batch, lalu melihat batch hilang -> tidak menulis apa pun.
+        await penahan.query("BEGIN");
+        await penahan.query("SELECT id FROM principal_order_batch WHERE id = $1 FOR UPDATE", [batchE1]);
+        const antreE1 = antrekan(pg, masukan(keyE1, batchE1));
+        const e1Menunggu = await tertahanOleh(pidPenahan, antreE1, 1);
+        await penahan.query("DELETE FROM principal_order_batch WHERE id = $1", [batchE1]);
+        await penahan.query("COMMIT");
+        const hasilE1 = await antreE1;
+        assert.deepEqual(hasilE1.posted, [], "E1: SO batch terhapus tetap ditandai terposting");
+        assert.match(hasilE1.blocked[0]?.reason ?? "", /sudah dihapus atau diganti/);
+        assert.equal(await ada("SELECT 1 FROM invoice_outbox WHERE order_id = $1", keyE1), 0, "E1: baris antrean tertulis untuk batch terhapus");
+        assert.equal(await ada("SELECT 1 FROM invoice_outbox_event WHERE order_id = $1 AND jenis = 'posted'", keyE1), 0, "E1: event posted tertulis");
+        assert.ok(e1Menunggu, "E1: jalur posted tidak menunggu kunci batch hapus");
+
+        // E2. Antre duluan: penahan menyisipkan kunci yang sama (belum commit) -> transaksi `posted` berhenti sesudah mengunci batch;
+        //     DELETE route menunggu (lapis 2), lalu melihat baris terpostingnya: 409, batch utuh.
+        await penahan.query("BEGIN");
+        await penahan.query(`INSERT INTO invoice_outbox (order_id, customer_no, order_date, payload) VALUES ($1, 'C-UJI-LOCK', '2026-10-10', '{}'::jsonb)`, [keyE2]);
+        const antreE2 = antrekan(pg, masukan(keyE2, batchE2));
+        assert.ok(await tertahanOleh(pidPenahan, antreE2, 1), "E2: jalur posted tidak tertahan penahan");
+        const hapusE2 = hapus(batchE2);
+        const hapusMenunggu = await tertahanOleh(pidPenahan, hapusE2, 2);
+        await penahan.query("ROLLBACK");
+        const [hasilE2, jawabE2] = await Promise.all([antreE2, hapusE2]);
+        assert.deepEqual(hasilE2.posted, [{ orderId: keyE2, accurateId: "9001", number: "UJI/E2" }]);
+        const [baris] = (await pool.query("SELECT state, accurate_id FROM invoice_outbox WHERE order_id = $1", [keyE2])).rows;
+        assert.deepEqual(baris, { state: "posted", accurate_id: "9001" });
+        assert.equal(await ada("SELECT 1 FROM invoice_outbox_event WHERE order_id = $1 AND jenis = 'posted'", keyE2), 1, "E2: event posted tidak tercatat");
+        assert.equal(jawabE2.status, 409, `E2: DELETE menjawab ${jawabE2.status}`);
+        assert.equal(await ada("SELECT 1 FROM principal_order_batch WHERE id = $1", batchE2), 1, "E2: batch terhapus padahal SO-nya terposting");
+        assert.ok(hapusMenunggu, "E2: DELETE tidak menunggu jalur posted yang sedang berjalan");
+    } finally {
+        await penahan.query("ROLLBACK").catch(() => undefined);
+        penahan.release();
+    }
+});
+
+test("PG BL-21: payload dari baris sebelum Validasi ulang (validated_at berubah) ditolak di bawah kunci batch", { skip: pgSkip }, async () => {
+    const { antrekan } = await route();
+    const batchQ = `bl21-q-${tag}`;
+    const keyBasi = invoiceKey(principal, `SO-Q1-${tag}`), keyKini = invoiceKey(principal, `SO-Q2-${tag}`);
+    await seed(batchQ, `SO-Q1-${tag}`);
+    const validasiUlang = async () => (await pool.query(
+        "UPDATE principal_order_batch SET validated_at = date_trunc('milliseconds', clock_timestamp()) WHERE id = $1 RETURNING validated_at",
+        [batchQ])).rows[0].validated_at as Date;
+    const v1 = await validasiUlang();                 // route queue membaca baris + validated_at = v1, membentuk payload
+    await new Promise((r) => setTimeout(r, 5));
+    const v2 = await validasiUlang();                 // Validasi ulang commit sebelum antrekan mengunci batch
+    assert.notEqual(v1.getTime(), v2.getTime());
+    const basi = await antrekan(pg, { entries: [calon(keyBasi)], actor: "uji-lock", targetDb: "", cari: null, batchId: batchQ, batchVersi: v1 });
+    assert.deepEqual(basi.queued, [], "Q: payload dari baris sebelum Validasi ulang tetap diantrekan");
+    assert.match(basi.blocked[0]?.reason ?? "", /divalidasi ulang/);
+    assert.equal(await ada("SELECT 1 FROM invoice_outbox WHERE order_id = $1", keyBasi), 0);
+    const kini = await antrekan(pg, { entries: [calon(keyKini)], actor: "uji-lock", targetDb: "", cari: null, batchId: batchQ, batchVersi: v2 });
+    assert.deepEqual(kini.queued, [keyKini], "Q: versi yang sama ditolak");
 });

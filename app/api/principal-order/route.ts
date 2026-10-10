@@ -56,6 +56,15 @@ async function soBatchDiAntrean(q: Kueri, batchId: string, principal: string) {
     return q.select({ orderId: invoiceOutbox.orderId, state: invoiceOutbox.state }).from(invoiceOutbox).where(inArray(invoiceOutbox.orderId, keys));
 }
 
+/**
+ * 23505 pada principal_order_batch = unggahan lain untuk berkas yang SAMA (indeks unik principal + file_hash) tersimpan lebih dulu,
+ * mis. dua Ganti bersamaan: yang kedua menunggu kunci batch lama, melihatnya sudah terhapus, lalu INSERT-nya bentrok. Dijawab 409.
+ */
+const berkasBentrok = (error: unknown) => [error, (error as { cause?: unknown } | null)?.cause].some((e) => {
+    const { code, table } = (e ?? {}) as { code?: string; table?: string };
+    return code === "23505" && table === "principal_order_batch";
+});
+
 /** Dilempar di dalam transaksi hapus/ganti agar tidak ada yang terhapus (rollback); dijawab 409. */
 class BatchTerkunci extends Error {}
 const pesanTerkunci = (antre: { orderId: string }[], batch: "ini" | "lama") => {
@@ -168,6 +177,12 @@ export async function POST(request: NextRequest) {
         });
     } catch (error) {
         if (error instanceof BatchTerkunci) return NextResponse.json({ ok: false, error: error.message, duplicateOf: existing?.id }, { status: 409 });
+        if (berkasBentrok(error)) {
+            return NextResponse.json({
+                ok: false, code: "BERKAS_SUDAH_DISIMPAN",
+                error: "Berkas yang sama baru saja disimpan oleh unggahan lain (mis. dua Ganti bersamaan); muat ulang daftar batch — batch terbarunya sudah ada.",
+            }, { status: 409 });
+        }
         throw error;
     }
     return NextResponse.json({ ok: true, applied: true, id, ...summary });

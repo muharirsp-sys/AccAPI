@@ -174,8 +174,9 @@ export async function POST(request: NextRequest) {
     const pencari = await pencariPenekan(db, String(gate.session?.user?.id ?? ""));
     const hasil = await antrekan(db, {
         entries: ready.map((entry) => ({ orderId: entry.key, customerNo: entry.payload.customerNo, orderDate: entry.orderDate, payload: entry.payload })),
-        // BL-21: tulisan antrean mengunci baris batch (bentrok dengan Hapus/Ganti batch yang berjalan bersamaan).
-        actor: queuedBy, targetDb: pencari.targetDb, cari: pencari.cari, detail: { batch_id: id }, batchId: id,
+        // BL-21: tulisan antrean mengunci baris batch (bentrok dengan Hapus/Ganti batch yang berjalan bersamaan). Payload dibentuk
+        // dari baris yang dibaca DI LUAR kunci; batchVersi menolaknya bila Validasi ulang commit di antaranya (validated_at berubah).
+        actor: queuedBy, targetDb: pencari.targetDb, cari: pencari.cari, detail: { batch_id: id }, batchId: id, batchVersi: batch.validatedAt,
     });
     const soOf = new Map(ready.map((entry) => [entry.key, entry.soNo]));
     blocked.push(...hasil.blocked.map((entry) => ({ soNo: soOf.get(entry.orderId) ?? entry.orderId, reason: entry.reason })));
