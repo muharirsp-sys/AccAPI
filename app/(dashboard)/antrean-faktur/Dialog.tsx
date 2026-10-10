@@ -283,7 +283,7 @@ export function SelesaikanDialog({ row, onClose, onSelesai, onTidakPasti }: {
             {load.status === "galat" && <ErrorState title="Pencarian faktur gagal" message={load.error} onRetry={cariLagi} />}
             {cari && (
                 <>
-                    {timpa?.dari === load.data && timpa.berubah && (
+                    {timpa && timpa.dari === load.data && timpa.berubah && (
                         <MessageStrip tone="warn" title="Hasil pencarian berubah saat disimpan.">
                             Sekarang: {kalimatPencarian(cari.pencarian)}. Pilih keputusan lagi dan sesuaikan alasan Anda dengan hasil ini.
                         </MessageStrip>
