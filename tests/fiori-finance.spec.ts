@@ -61,9 +61,11 @@ async function siapkan(target: Page | BrowserContext, opsi: Opsi = {}) {
     ];
     const attempts: Record<string, unknown> = { ...(opsi.attempts ?? {}) };
     const antri = { command: [...(opsi.command ?? [])], resolve: [...(opsi.resolve ?? [])], update: [...(opsi.update ?? [])] };
-    const m = { urutan: [] as string[], command: [] as Array<{ clientRef: string; payload: Array<Record<string, unknown>> }>, update: [] as Array<Record<string, unknown>>,
+    const m = { urutan: [] as string[], command: [] as Array<{ clientRef: string; expectedDatabaseId: string; payload: Array<Record<string, unknown>> }>, update: [] as Array<Record<string, unknown>>,
         resolve: [] as Array<Record<string, unknown>>, mapping: [] as Array<Record<string, unknown>>, proxy: [] as Array<Record<string, unknown>>, dataDates: [] as string[],
-        dataGagal: opsi.dataGagal, attemptsGagal: opsi.attemptsGagal, attempts, rows };
+        dataGagal: opsi.dataGagal, attemptsGagal: opsi.attemptsGagal, attempts, rows,
+        /** Database sesi Accurate SEKARANG (bisa diganti di tengah tes = tab lain membuka database lain). */
+        sesiDb: { id: "DB-1", alias: "PT CONTOH A" } };
     const jawab = (r: Route, j: Jawab, cors = false) => j === "putus" ? r.abort("connectionreset")
         : r.fulfill({ status: j.status, headers: { ...(cors ? CORS : {}), "content-type": j.html ? "text/html" : "application/json" }, body: j.html ?? JSON.stringify(j.body) });
     const terapkan = (it: Record<string, unknown>) => {
@@ -111,14 +113,14 @@ async function siapkan(target: Page | BrowserContext, opsi: Opsi = {}) {
         }
         return jawab(r, { status: 404, body: { ok: false, error: "tidak dimock" } }, true);
     });
-    await target.route((u) => u.pathname === "/api/auth/accurate-session", (r) => jawab(r, { status: 200, body: { ok: true, connected: true, databaseConnected: true, sessionHost: "x", databaseId: "DB-1", databaseAlias: "PT CONTOH A" } }));
+    await target.route((u) => u.pathname === "/api/auth/accurate-session", (r) => jawab(r, { status: 200, body: { ok: true, connected: true, databaseConnected: true, sessionHost: "x", databaseId: m.sesiDb.id, databaseAlias: m.sesiDb.alias } }));
     await target.route((u) => u.pathname === "/api/finance/purchase-payment/attempts", (r) => {
         if (m.attemptsGagal) return jawab(r, m.attemptsGagal);
         const groups = new URL(r.request().url()).searchParams.getAll("invoices").map((g) => g.split(","));
         return jawab(r, { status: 200, body: { ok: true, data: groups.map((inv) => ({ invoices: inv, subjectKey: subjek(inv), attempt: attempts[subjek(inv)] ?? null })) } });
     });
     await target.route((u) => u.pathname === "/api/finance/purchase-payment", async (r) => {
-        const body = r.request().postDataJSON() as { clientRef: string; payload: Array<Record<string, unknown>> };
+        const body = r.request().postDataJSON() as { clientRef: string; expectedDatabaseId: string; payload: Array<Record<string, unknown>> };
         m.urutan.push("command");
         m.command.push(body);
         const sub = subjek((body.payload[0].detailInvoice as Array<{ invoiceNo: string }>).map((d) => d.invoiceNo));
@@ -193,6 +195,7 @@ test("Default → Transfer & posting: dialog menyebut isi kiriman, urutan 5 lang
     expect(m.urutan).toEqual(["mapping", "proof", "command", "update:posted"]);
     expect(m.command).toHaveLength(1);
     expect(m.command[0].clientRef).toBe("DRAFT-0418|-|PRINCIPLE A|LPB");
+    expect(m.command[0].expectedDatabaseId).toBe("DB-1"); // database yang tampil di dialog (A-1)
     expect(m.command[0].payload[0]).toMatchObject({ bankNo: "1102-03", vendorNo: "V-0012", chequeAmount: 48_200_000, paymentMethod: "BANK_TRANSFER",
         transDate: HARI_INI.split("-").reverse().join("/"), detailInvoice: FAKTUR_A.map(([invoiceNo, paymentAmount]) => ({ invoiceNo, paymentAmount })) });
     expect(String(m.command[0].payload[0].description)).toContain("Bukti: proof_20261010_pf-1.pdf");
@@ -252,6 +255,43 @@ test("{claimed:false} = tidak terkirim & tidak dikunci; 409 in_flight = tanpa tu
     expect(m.update.length).toBe(nUpdate); // in_flight: tidak ada catatan "unknown" yang mendahului hasil tab lain
     expect(m.command).toHaveLength(2);
     expect(m.command[1].clientRef).toBe("DRAFT-0418|-|PRINCIPLE A|LPB");
+});
+
+test("A-1 database dikunci ke kiriman: dialog membaca database SEGAR; berganti sebelum/sesudah dialog dibuka = tanpa tulis; 409 server = tidak terkirim", async ({ page }) => {
+    const m = await siapkan(page, { command: [{ status: 409, body: { code: "database_changed", claimed: false, live: null,
+        error: "Database Accurate berganti sejak dialog dibuka (sekarang PT CONTOH B). Tidak ada yang dikirim ke Accurate; muat ulang lalu periksa tujuan." } }] });
+    const { main, detail } = await bukaPengajuan(page);
+    await expect(detail.getByLabel("Pemasok")).toHaveValue("V-0012", NAV);
+    await detail.getByLabel("Bukti transfer").setInputFiles(PDF);
+    // 1) Tab lain membuka database B setelah daftar dimuat: dialog menyebut B (bukan A dari daftar) dan terkunci dengan alasan TERLIHAT.
+    m.sesiDb = { id: "DB-2", alias: "PT CONTOH B" };
+    await detail.getByRole("button", { name: "Transfer & posting…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Posting Purchase Payment ke Accurate?" });
+    await expect(dlg).toContainText("PT CONTOH B", NAV);
+    await expect(dlg).not.toContainText("PT CONTOH A");
+    await expect(dlg.getByText(/^Database Accurate berganti sejak daftar dimuat \(sekarang PT CONTOH B\)/)).toBeVisible();
+    await expect(dlg.getByRole("button", { name: "Posting Rp 48.200.000" })).toBeDisabled();
+    await dlg.getByRole("button", { name: "Batal" }).click();
+    // 2) Kembali ke A, dialog dibuka (A), lalu sesi berganti ke B sebelum konfirmasi: klien berhenti SEBELUM simpan tujuan.
+    m.sesiDb = { id: "DB-1", alias: "PT CONTOH A" };
+    await detail.getByRole("button", { name: "Transfer & posting…" }).click();
+    await expect(dlg).toContainText("PT CONTOH A", NAV);
+    m.sesiDb = { id: "DB-2", alias: "PT CONTOH B" };
+    await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
+    await expect(dlg.getByRole("alert")).toContainText("Database Accurate berganti sejak dialog dibuka (sekarang PT CONTOH B)", NAV);
+    expect(m.urutan).toEqual([]);
+    // 3) Celah waktu: klien melihat A, server melihat B → 409 database_changed {claimed:false} = pasti tidak terkirim, TIDAK dikunci.
+    m.sesiDb = { id: "DB-1", alias: "PT CONTOH A" };
+    await dlg.getByRole("button", { name: "Batal" }).click();
+    await detail.getByRole("button", { name: "Transfer & posting…" }).click();
+    await expect(dlg).toContainText("PT CONTOH A", NAV);
+    await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
+    await expect(main.getByRole("alert").filter({ hasText: "Tidak ada yang dikirim ke Accurate untuk DRAFT-0418." })).toBeVisible(NAV);
+    expect(m.command).toHaveLength(1);
+    expect(m.command[0].expectedDatabaseId).toBe("DB-1");
+    expect(m.update.at(-1)).toMatchObject({ accurate_post_status: "failed" });
+    await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeEnabled(NAV);
+    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toHaveCount(0);
 });
 
 test("Selesaikan: 'Tidak ada' nonaktif < 2 menit; 'Ada' + nomor → resolve + catatan posted; 404 no_open_attempt ditoleransi", async ({ page }) => {
@@ -332,6 +372,7 @@ test("Galat ≠ kosong (tanpa localhost/HTML), Kosong, status posting tak terbac
 });
 
 test("Klik ganda konfirmasi = satu POST; dua tab: tab kedua melihat 'Sedang diposting' dan tidak bisa memposting", async ({ context }) => {
+    test.setTimeout(60_000); // dua tab = dua kompilasi halaman di server dev
     let lepas!: () => void;
     const m = await siapkan(context, { tahanCommand: new Promise<void>((ok) => { lepas = ok; }) });
     const a = await context.newPage();

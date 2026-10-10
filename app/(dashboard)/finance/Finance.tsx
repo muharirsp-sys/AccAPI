@@ -26,8 +26,8 @@ import {
 import { rupiah, tgl } from "@/lib/promo-ui";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import {
-    TidakPasti, muatFinance, muatMaster, postingPurchasePayment, recordKey, selesaikanTidakPasti, simpanTujuan, ubahStatusTransfer, urlBerkas,
-    type DataFinance, type FinanceMapping, type FinanceRecord, type MasterAccurate,
+    TidakPasti, bacaSesi, muatFinance, muatMaster, postingPurchasePayment, recordKey, selesaikanTidakPasti, simpanTujuan, ubahStatusTransfer, urlBerkas,
+    type DataFinance, type FinanceMapping, type FinanceRecord, type MasterAccurate, type SesiAccurate,
 } from "./posting";
 
 type Saring = "semua" | "belum" | "tidak_pasti" | "terposting";
@@ -141,7 +141,8 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
         setBukti((s) => tanpa(s, key));
     };
 
-    async function jalankanPosting() {
+    /** `tujuanDb` = database yang ditampilkan dialog BL-03 dari bacaan SEGAR (dikirim sebagai expectedDatabaseId). */
+    async function jalankanPosting(tujuanDb: SesiAccurate) {
         const b = dialogBaris;
         if (!b || !data) throw new Error("Pengajuan tidak ada lagi di daftar; muat ulang.");
         if (postingRef.current.has(b.key)) return;
@@ -150,14 +151,14 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
             const total = rupiah(b.r.total_nilai);
             const h = await postingPurchasePayment({
                 record: b.r, mapping: tujuanDari(b), transferDate: tanggalTransfer(b), proofFile: bukti[b.key] ?? null, date: data.date,
-                kunciLokal: () => setKunciLokal((s) => new Set(s).add(b.key)),
+                kunciLokal: () => setKunciLokal((s) => new Set(s).add(b.key)), expectedDatabaseId: tujuanDb.id,
             });
             // Belum ada yang ditulis ke mana pun: dialog tetap terbuka dengan pesannya.
             if (h.jenis === "tidak_terkirim" && !h.tercatat) throw new Error(`${h.pesan} Tidak ada yang dikirim ke Accurate.`);
             setDialog(null);
             if (h.jenis === "terposting") {
                 bersihkanDraf(b.key);
-                setHasil({ tone: "pos", judul: `Terposting ${h.nomor} · ${total} · ${sesi?.alias || "database Accurate"}`, isi: h.catatan ? "Hasil posting sebelumnya dicatat; tidak ada kiriman baru ke Accurate." : `${b.r.draft_label} · ${b.r.principle}. Status transfer dan posting dimuat ulang.` });
+                setHasil({ tone: "pos", judul: `Terposting ${h.nomor} · ${total} · ${tujuanDb.alias || `ID ${tujuanDb.id}`}`, isi: h.catatan ? "Hasil posting sebelumnya dicatat; tidak ada kiriman baru ke Accurate." : `${b.r.draft_label} · ${b.r.principle}. Status transfer dan posting dimuat ulang.` });
             } else if (h.jenis === "sedang") {
                 setHasil({ tone: "info", judul: `${b.r.draft_label} sedang diposting dari sesi atau tab lain.`, isi: `${h.pesan} Status dimuat ulang; jangan posting lagi dari sini.` });
             } else if (h.jenis === "tidak_pasti") {
@@ -323,7 +324,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
 
             {dialogBaris && (
                 <>
-                    <DialogPosting open={dialog?.jenis === "pp"} onClose={() => setDialog(null)} b={dialogBaris} sesiAlias={sesi?.alias || (sesi?.id ? `ID ${sesi.id}` : "")}
+                    <DialogPosting open={dialog?.jenis === "pp"} onClose={() => setDialog(null)} b={dialogBaris} dbDimuat={sesi?.id ?? ""}
                         tujuan={tujuanDari(dialogBaris)} tanggalTransfer={tanggalTransfer(dialogBaris)} bukti={bukti[dialogBaris.key] ?? null}
                         blokir={alasanPosting(dialogBaris)} onConfirm={jalankanPosting} />
                     <ConfirmDialog open={dialog?.jenis === "belum" || dialog?.jenis === "ulang"} onClose={() => setDialog(null)} tag="Status transfer"
@@ -520,20 +521,36 @@ function Detail(p: DetailProps) {
     );
 }
 
-/** Dialog `pp`: menyebut database, pemasok, rekening, faktur, nilai, tanggal transfer, dan bukti SEBELUM kirim (BL-03). */
+/**
+ * Dialog `pp`: menyebut database, pemasok, rekening, faktur, nilai, tanggal transfer, dan bukti SEBELUM kirim (BL-03). Database dibaca
+ * SEGAR saat dialog dibuka (tinjauan A-1) — bukan dari data daftar — dan id-nya yang dikirim sebagai expectedDatabaseId; berbeda dari
+ * database saat daftar dimuat (master pemasok/rekening milik database itu) = terkunci sampai dimuat ulang.
+ */
 function DialogPosting(p: {
-    open: boolean; onClose: () => void; b: Baris; sesiAlias: string; tujuan: FinanceMapping; tanggalTransfer: string; bukti: File | null;
-    blokir?: string; onConfirm: () => Promise<void>;
+    open: boolean; onClose: () => void; b: Baris; dbDimuat: string; tujuan: FinanceMapping; tanggalTransfer: string; bukti: File | null;
+    blokir?: string; onConfirm: (tujuanDb: SesiAccurate) => Promise<void>;
 }) {
     const r = p.b.r;
     const faktur = (r.detail_invoices || []).map((d) => d.invoiceNo);
     const catatHasil = p.b.posting.catatanTertinggal;
+    const [segar] = useLoad(useCallback(async (): Promise<Load<SesiAccurate>> => {
+        if (!p.open) return { status: "memuat" };
+        const s = await bacaSesi();
+        return s.sesi ? { status: "siap", data: s.sesi } : { status: "galat", error: s.galat };
+    }, [p.open]));
+    const db = segar.status === "siap" ? segar.data : undefined;
+    const namaDb = db ? db.alias || `ID ${db.id}` : segar.status === "galat" ? "tidak terbaca" : "memeriksa…";
+    const blokir = p.blokir
+        ?? (segar.status === "memuat" ? "Memeriksa database Accurate yang terbuka…" : undefined)
+        ?? (!db ? `${segar.error || "Sesi Accurate tidak terbaca."} Tutup lalu buka lagi dialog ini.` : undefined)
+        ?? (!db.tersambung ? "Login dan buka database Accurate dulu." : undefined)
+        ?? (db.id !== p.dbDimuat ? `Database Accurate berganti sejak daftar dimuat (sekarang ${namaDb}); pemasok dan rekening belum diperiksa di database ini. Tutup lalu muat ulang.` : undefined);
     return (
-        <ConfirmDialog open={p.open} onClose={p.onClose} tag="BL-03" confirmDisabled={p.blokir} onConfirm={p.onConfirm}
+        <ConfirmDialog open={p.open} onClose={p.onClose} tag="Tulis ke Accurate" confirmDisabled={blokir} onConfirm={() => p.onConfirm(db!)}
             title={catatHasil ? "Catat hasil posting yang sudah ada?" : "Posting Purchase Payment ke Accurate?"}
             confirmLabel={catatHasil ? "Catat hasil posting" : `Posting ${rupiah(r.total_nilai)}`}
             facts={[
-                ["Database", p.sesiAlias || "–"],
+                ["Database", namaDb],
                 ["Pemasok", `${p.tujuan.vendorNo || "–"} · ${p.tujuan.vendorName || ""}`],
                 ["Rekening bank", `${p.tujuan.bankNo || "–"} · ${p.tujuan.bankName || ""}`],
                 ["Faktur dibayar", `${faktur.length} · ${faktur.slice(0, 4).join(", ")}${faktur.length > 4 ? ` dan ${faktur.length - 4} lain` : ""}`],
@@ -544,6 +561,7 @@ function DialogPosting(p: {
             {catatHasil
                 ? <MessageStrip tone="info" title={`Server sudah mencatat posting ${p.b.posting.nomor}.`}>Tombol ini hanya mencatat hasilnya ke Finance; server menolak kiriman kedua.</MessageStrip>
                 : <MessageStrip tone="warn" title="Purchase Payment yang terposting tidak bisa ditarik dari aplikasi ini.">Bila Accurate tidak menjawab, pengajuan dikunci sebagai Tidak pasti sampai Finance mencocokkannya.</MessageStrip>}
+            {blokir && <p className="fi-small fi-why">{blokir}</p>}
         </ConfirmDialog>
     );
 }

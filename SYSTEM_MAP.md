@@ -265,8 +265,10 @@ Antrean Faktur / outbox sales-invoice (S6-0d, DRAFT — zona tulis Accurate):
 
 Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
   UI Finance (/finance, Fiori S6b: finance/posting.ts postingPurchasePayment — urutan & clientRef = recordKey lama; dialog pp)
-  -> GET /api/auth/accurate-session (database terbuka) -> FastAPI /payments/finance/mapping -> /payments/finance/proof
-  -> POST /api/finance/purchase-payment (finance.update)
+  -> GET /api/auth/accurate-session (database terbuka; dialog pp membaca SEGAR, id = expectedDatabaseId; beda = berhenti
+     sebelum tulis) -> FastAPI /payments/finance/mapping -> /payments/finance/proof
+  -> POST /api/finance/purchase-payment (finance.update) {clientRef, expectedDatabaseId, payload} — tanpa expectedDatabaseId
+     = 400, database sesi saat POST ≠ expectedDatabaseId = 409 {code: database_changed, claimed:false} SEBELUM klaim (S6b A-1)
      -> lib/accurate-write-attempt.ts runGuardedWrite: INSERT ... SELECT accurate_write_attempt state=sending
         generasi 0 (ADR-004 rilis A; subjek ber-reopen -> 409 reopened_use_repost) — unique partial index per
         himpunan faktur × generasi; attempt hidup -> 409 {live, generation, currentGeneration} SEBELUM kirim
@@ -855,7 +857,7 @@ AccAPI/_github_clean/
 |---|---|---|
 | `lib/sync.ts` | `AccuratePaginator`, `syncModule` | Sync paginated data Accurate ke SQLite lokal (item/customer) dengan checkpoint |
 | `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment |
-| `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance: klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
+| `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance: database sesi wajib = `expectedDatabaseId` (409 `database_changed`), klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
 | `app/api/finance/purchase-payment/resolve/route.ts` | `POST` | Atestasi manual attempt purchase-payment tidak pasti (alasan + sumber pemeriksaan) |
 | `app/api/finance/purchase-payment/attempts/route.ts` | `GET` | Baca-saja status attempt terbaru per kelompok faktur (S6-0e; kontrak `docs/handover/S6-0e-KONTRAK-API.md`) |
 | `app/api/auth/callback/route.ts` | `GET` | OAuth2 callback dari Accurate (tukar code ke token) |

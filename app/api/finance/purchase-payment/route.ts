@@ -1,9 +1,11 @@
 /**
  * Tujuan: Command server posting purchase-payment Finance ke Accurate (AM-014 / C.12, DRAFT
  *   zona Accurate write — butuh review manusia). Attempt diklaim di Postgres SEBELUM kirim.
- * Caller: app/(dashboard)/finance/page.tsx (approveTransfer).
+ * Caller: app/(dashboard)/finance/posting.ts (postingPurchasePayment).
  * Dependensi: lib/accurate-write-attempt, lib/accurate-forward, lib/accurate-session, lib/rbac/resolve.
- * Main Functions: POST {clientRef, payload:[PurchasePaymentItem]} -> {state, attemptId, accurateId,
+ * Main Functions: POST {clientRef, expectedDatabaseId, payload:[PurchasePaymentItem]} -> {state, attemptId, accurateId,
+ *   accurateNumber, ...}; tanpa expectedDatabaseId = 400 {claimed:false}; database sesi ≠ expectedDatabaseId = 409
+ *   {code: database_changed, claimed:false, live:null} (S6b A-1, sebelum klaim). Selain itu -> {state, attemptId, accurateId,
  *   accurateNumber, message, response, persisted}; 409 {live, generation, currentGeneration} bila attempt hidup
  *   sudah ada; 409 {code: reopened_use_repost} bila subjek sudah dibuka ulang (ADR-004 rilis B, belum ada di sini).
  *   Gagal SEBELUM klaim (validasi, sesi, DB) = {claimed:false}: pasti tidak terkirim (UI tidak mengunci record).
@@ -27,9 +29,16 @@ export async function POST(request: Request) {
     const gate = await requirePermission(request, "finance.update");
     if (gate.response) return gate.response;
 
-    const body = await request.json().catch(() => null) as { clientRef?: unknown; payload?: unknown } | null;
+    const body = await request.json().catch(() => null) as { clientRef?: unknown; payload?: unknown; expectedDatabaseId?: unknown } | null;
     const normalized = normalizePurchasePaymentPayload(body?.payload);
     if ("error" in normalized) return NextResponse.json({ error: normalized.error, claimed: false }, { status: 400 });
+    // Tinjauan S6b A-1: database yang DILIHAT Finance di dialog BL-03. Wajib — tanpa itu server tidak tahu database mana yang
+    // disetujui (sesi bisa berganti di tab lain antara dialog dan kirim).
+    const expectedDatabaseId = typeof body?.expectedDatabaseId === "string" || typeof body?.expectedDatabaseId === "number"
+        ? String(body.expectedDatabaseId).trim() : "";
+    if (!expectedDatabaseId) {
+        return NextResponse.json({ error: "Database Accurate tujuan tidak disebut — muat ulang halaman Finance lalu ulangi. Tidak ada yang dikirim ke Accurate.", claimed: false }, { status: 400 });
+    }
     // Yang dikirim, di-hash dan dijadikan subjek = objek hasil allowlist, bukan kiriman browser.
     const payload = [normalized.item];
     const clientRef = String(body?.clientRef ?? "").slice(0, 300);
@@ -49,6 +58,13 @@ export async function POST(request: Request) {
     }
     if (!isAllowedAccurateHost(session.sessionHost)) {
         return NextResponse.json({ error: "Session host Accurate tidak diizinkan", claimed: false }, { status: 400 });
+    }
+    // Dicek di server SEBELUM klaim (cek klien saja menyisakan celah waktu): sesi berganti database sejak dialog = tolak.
+    if (String(session.databaseId) !== expectedDatabaseId) {
+        return NextResponse.json({
+            code: "database_changed", claimed: false, live: null,
+            error: `Database Accurate berganti sejak dialog dibuka (sekarang ${session.databaseAlias || `ID ${session.databaseId}`}). Tidak ada yang dikirim ke Accurate; muat ulang lalu periksa tujuan.`,
+        }, { status: 409 });
     }
     const target = { sessionHost: session.sessionHost, sessionId: session.sessionId, accessToken: session.accessToken };
 

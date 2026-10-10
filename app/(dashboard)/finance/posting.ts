@@ -166,7 +166,8 @@ async function bacaFinance(date: string): Promise<Load<{ rows: FinanceRecord[]; 
     };
 }
 
-async function bacaSesi(): Promise<{ sesi: SesiAccurate | null; galat?: string }> {
+/** Sesi Accurate SEGAR (tanpa cache): database yang terbuka sekarang. Dipakai saat memuat daftar dan saat dialog BL-03 dibuka. */
+export async function bacaSesi(): Promise<{ sesi: SesiAccurate | null; galat?: string }> {
     try {
         const res = await fetch("/api/auth/accurate-session", { cache: "no-store" });
         const d = (await bacaTeks(res)) as { databaseConnected?: boolean; databaseAlias?: string | null; databaseId?: string | number | null } | null;
@@ -362,19 +363,25 @@ type CommandOut = {
  */
 export async function postingPurchasePayment(p: {
     record: FinanceRecord; mapping: FinanceMapping; transferDate: string; proofFile: File | null; date: string; kunciLokal: () => void;
+    /** Database yang DITAMPILKAN di dialog BL-03 (bacaan segar). Server menolak 409 bila sesi saat POST berbeda (tinjauan A-1). */
+    expectedDatabaseId: string;
 }): Promise<HasilPosting> {
     const { record, mapping, transferDate, date } = p;
     const key = recordKey(record);
     if (record.accurate_post_status === "posted") throw new Error("Pengajuan ini sudah terposting ke Accurate.");
     if (!transferDate) throw new Error("Tanggal transfer wajib diisi.");
     if (!mapping.vendorNo || !mapping.bankNo) throw new Error("Pemasok dan rekening bank Accurate wajib lengkap.");
-    let sessionOk = false;
+    if (!p.expectedDatabaseId) throw new Error("Database Accurate tujuan belum terbaca; tutup lalu buka lagi dialog ini. Tidak ada yang dikirim.");
+    let sessionData: { databaseConnected?: boolean; databaseId?: string | number | null; databaseAlias?: string | null } | null = null;
     try {
         const sessionRes = await fetch("/api/auth/accurate-session", { cache: "no-store" });
-        const sessionData = (await bacaTeks(sessionRes)) as { databaseConnected?: boolean } | null;
-        sessionOk = sessionRes.ok && Boolean(sessionData?.databaseConnected);
-    } catch { /* sessionOk tetap false */ }
-    if (!sessionOk) throw new Error("Login dan buka database Accurate dulu sebelum posting. Tidak ada yang dikirim.");
+        sessionData = sessionRes.ok ? (await bacaTeks(sessionRes)) as typeof sessionData : null;
+    } catch { /* sessionData tetap null */ }
+    if (!sessionData?.databaseConnected) throw new Error("Login dan buka database Accurate dulu sebelum posting. Tidak ada yang dikirim.");
+    // Tinjauan A-1: sesi bisa berganti database di tab lain sejak dialog dibuka — berhenti SEBELUM simpan tujuan (belum ada yang ditulis).
+    if (String(sessionData.databaseId ?? "") !== p.expectedDatabaseId) {
+        throw new Error(`Database Accurate berganti sejak dialog dibuka (sekarang ${sessionData.databaseAlias || `ID ${sessionData.databaseId ?? "–"}`}). Tidak ada yang dikirim; muat ulang lalu periksa tujuan.`);
+    }
 
     let proof: ProofMeta | undefined;
     let payload: PurchasePaymentPayload[] = [];
@@ -413,10 +420,15 @@ export async function postingPurchasePayment(p: {
         const res = await fetch("/api/finance/purchase-payment", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ clientRef: key, payload }),
+            body: JSON.stringify({ clientRef: key, expectedDatabaseId: p.expectedDatabaseId, payload }),
         });
         const out = (await bacaTeks(res)) as CommandOut;
         let posted: { id: string; number: string; note?: string } | null = null;
+        if (res.status === 409 && out?.claimed === false) {
+            // 409 SEBELUM klaim (database sesi berganti, tinjauan A-1) = pasti belum terkirim; bukan konflik attempt.
+            notSent = true;
+            throw new Error(out.error || "Command posting menolak sebelum kirim (HTTP 409).");
+        }
         const conflict = res.status === 409 ? purchasePaymentConflict(out) : null;
         if (conflict === "in_flight") {
             // Tinjauan S6-0a: record INI sedang diposting sesi/tab lain — hasilnya dicatat sesi itu. Menulis "unknown" di sini bisa
