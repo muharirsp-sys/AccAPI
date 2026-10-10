@@ -24,7 +24,7 @@ import {
     type Isian, type Rekaman as Baris,
 } from "@/lib/payments-ui";
 import { rupiah } from "@/lib/promo-ui";
-import { tulis, unduhUrl } from "./bersama";
+import { PeringatanTanggalLampau, tulis, unduhUrl } from "./bersama";
 
 type Selesai = (p: { pesan: string }) => void;
 const nama = (r: Baris) => r.no_lpb || r.record_id;
@@ -195,6 +195,7 @@ export function DialogKeranjang({ open, onClose, dipilih, total, alasan, onSeles
                 help={`Finance melihat pengajuan ini di halaman Finance pada tanggal ini (bawaan besok WITA; Finance membuka tanggal hari ini ${tanggalTampil(hariIniWita())}). Bisa diubah lagi di langkah Tinjau.`}>
                 {(a) => <input {...a} className="fi-input" type="date" value={tanggal} onChange={(e) => setTanggal(e.target.value)} />}
             </FormField>
+            <PeringatanTanggalLampau tanggal={tanggal} />
         </ConfirmDialog>
     );
 }

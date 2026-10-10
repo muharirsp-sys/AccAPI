@@ -253,3 +253,20 @@ test("Format SPPD: operasi data tidak pasti mengunci semua operasi di halaman sa
     for (const nama of ["Unggah Excel data SPPD…", "Restore backup…"]) await expect(main.getByRole("button", { name: nama })).toBeEnabled();
 });
 
+
+test("Tanggal bayar yang sudah lewat diperingatkan di Keranjang dan di dialog Buat keranjang (Finance membuka tanggal hari ini)", async ({ page }) => {
+    await mock(page, (p, r) => (p === "/payments/cart-info" ? json(r, { ...CART, target_payment_date: "2026-01-05" }) : "lewat"));
+    await page.goto("/payments/cart/7f3c91ab", NAV);
+    const main = page.locator("main");
+    await expect(main.getByText("Tanggal bayar sudah lewat", { exact: false })).toBeVisible(NAV);
+    await main.getByLabel("Tanggal bayar Finance").fill(hariIni());
+    await expect(main.getByText("Tanggal bayar sudah lewat", { exact: false })).toHaveCount(0);
+
+    await page.goto("/payments", NAV);
+    await main.getByRole("table", { name: "Rekaman" }).getByRole("checkbox", { name: "Pilih LPB-A-001" }).check(NAV);
+    await main.getByRole("button", { name: "Buat keranjang…" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByText("Tanggal bayar sudah lewat", { exact: false })).toHaveCount(0); // bawaan besok WITA
+    await dlg.getByLabel("Tanggal bayar Finance").fill("2026-01-05");
+    await expect(dlg.getByText("Tanggal bayar sudah lewat", { exact: false })).toBeVisible();
+});

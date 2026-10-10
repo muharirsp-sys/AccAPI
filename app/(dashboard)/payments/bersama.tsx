@@ -17,8 +17,10 @@
 
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { MessageStrip } from "@/components/fiori/core";
 import type { Load } from "@/components/fiori/interactive";
 import { resolveApiBase } from "@/lib/apiBase";
+import { hariIniWita, tanggalTampil } from "@/lib/payments-ui";
 
 export const API_BASE = resolveApiBase();
 // ponytail: tanpa timeout, backend yang menggantung membuat spinner abadi. Angka tetap dari halaman lama: unggah/ajukan ikut
@@ -133,5 +135,20 @@ export function RangkaPembayaran({ halaman, judul, deskripsi, aksi, permKeys, ch
             )}
             {children}
         </div>
+    );
+}
+
+/**
+ * Tanggal bayar Finance yang sudah lewat: antrean Finance memfilter `target_payment_date` = tanggal yang dibuka (bawaan hari ini WITA,
+ * python_backend finance.py) — pengajuan bertanggal lampau tidak muncul di antrean hari ini. Peringatan saja (server menerima).
+ */
+export function PeringatanTanggalLampau({ tanggal }: { tanggal: string }) {
+    const hariIni = hariIniWita();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal) || tanggal >= hariIni) return null;
+    return (
+        <MessageStrip tone="warn" title={`Tanggal bayar sudah lewat (${tanggalTampil(tanggal)}).`}>
+            Halaman Finance membuka tanggal hari ini ({tanggalTampil(hariIni)} WITA) dan hanya menampilkan pengajuan bertanggal sama — pengajuan ini
+            tidak muncul di antrean Finance kecuali Finance memilih tanggal itu. Pakai hari ini atau tanggal sesudahnya.
+        </MessageStrip>
     );
 }

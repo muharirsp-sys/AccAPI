@@ -23,7 +23,7 @@ import {
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { angka, hariIniWita, izinPembayaran, tanggalTampil } from "@/lib/payments-ui";
 import { rupiah } from "@/lib/promo-ui";
-import { BELUM_PASTI, baca, tulis, unduhUrl } from "../../bersama";
+import { BELUM_PASTI, PeringatanTanggalLampau, baca, tulis, unduhUrl } from "../../bersama";
 
 type Item = {
     no?: number | string; group_key: string; principle: string; tipe_pengajuan: string; total: number; invoice_concat?: string;
@@ -247,6 +247,7 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
                         <FormField label="Tanggal bayar Finance" required help={`Finance melihat pengajuan ini di halaman Finance pada tanggal ini (Finance membuka tanggal hari ini ${tanggalTampil(hariIniWita())} WITA).`}>
                             {(a) => <input {...a} className="fi-input" style={{ maxWidth: 220 }} type="date" value={tgl} onChange={(e) => setTanggal(e.target.value === c2.target_payment_date ? null : e.target.value)} />}
                         </FormField>
+                        <PeringatanTanggalLampau tanggal={tgl} />
                     </div>
                 </Section>
                 <Section title="Rincian" subtitle={`${items.length} principal · ${rupiah(totalInvoice)}`}>
