@@ -13,7 +13,7 @@
 import type { Load } from "@/components/fiori/interactive";
 import { resolveApiBase } from "@/lib/apiBase";
 import { certainlyNotSent, purchasePaymentConflict } from "@/lib/finance-post-status";
-import { alasanFaktur, saringCatatan, type AttemptFinance } from "@/lib/finance-ui";
+import { alasanFaktur, bedaPengajuan, saringCatatan, type AttemptFinance } from "@/lib/finance-ui";
 
 export type FinanceMapping = { principle?: string; vendorNo?: string; vendorName?: string; bankNo?: string; bankName?: string };
 export type ProofMeta = { proof_id?: string; original_filename?: string; stored_filename?: string; sha256?: string; url?: string };
@@ -386,6 +386,11 @@ export async function postingPurchasePayment(p: {
     if (String(sessionData.databaseId ?? "") !== p.expectedDatabaseId) {
         throw new Error(`Database Accurate berganti sejak dialog dibuka (sekarang ${sessionData.databaseAlias || `ID ${sessionData.databaseId ?? "–"}`}). Tidak ada yang dikirim; muat ulang lalu periksa tujuan.`);
     }
+    // Tinjauan B-5: data di layar bisa usang (tab/orang lain mengubah pengajuan). Baca ulang baris ini SEBELUM langkah tulis pertama.
+    const segar = await bacaFinance(date);
+    if (segar.status !== "siap" || !segar.data) throw new Error("Data pengajuan terbaru tidak terbaca; tidak ada yang dikirim. Muat ulang lalu ulangi.");
+    const beda = bedaPengajuan(record, segar.data.rows.find((r) => recordKey(r) === key));
+    if (beda) throw new Error(`Pengajuan berubah sejak dimuat (${beda}); tidak ada yang dikirim. Tutup dialog, muat ulang, lalu periksa lagi.`);
 
     let proof: ProofMeta | undefined;
     let payload: PurchasePaymentPayload[] = [];

@@ -388,6 +388,19 @@ test("Selesaikan 'Tidak ada' setelah basi; already_posted untuk 'Tidak ada' dito
     expect(m.update.at(-1)).toMatchObject({ accurate_post_status: "failed", accurate_post_error: "dicek manual: tidak ada di Accurate" });
 });
 
+test("B-5: pengajuan berubah sejak dimuat (nilai diubah di tab lain) → batal SEBELUM tulis apa pun; data sama → lanjut", async ({ page }) => {
+    const m = await siapkan(page);
+    const { main, dlg } = await bukaDialogPosting(page);
+    m.rows[0].total_nilai = 47_000_000; // diubah orang lain setelah daftar dimuat
+    await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
+    await expect(dlg.getByRole("alert")).toContainText("Pengajuan berubah sejak dimuat (nilai dibayar); tidak ada yang dikirim.", NAV);
+    expect(m.urutan).toEqual([]);
+    m.rows[0].total_nilai = 48_200_000; // kembali sama → lanjut
+    await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
+    await expect(main.getByRole("status").filter({ hasText: "Terposting PP/2610/0031" })).toBeVisible(NAV);
+    expect(m.urutan).toEqual(["mapping", "proof", "command", "update:posted"]);
+});
+
 test("B-4: Selesaikan separuh jalan (resolve tercatat, catatan Finance 400) → dialog ditutup, muat ulang, 'periksa status' — bukan 'Ulangi'", async ({ page }) => {
     const sub = subjek(FAKTUR_A.map(([f]) => f));
     const m = await siapkan(page, {

@@ -4,7 +4,7 @@
  *   kapan "Tidak ada di Accurate" boleh dipilih, dan penyaring catatan lama. Tanpa HTTP.
  * Caller: app/(dashboard)/finance/{Finance,posting}.tsx/ts, finance-ui.test.ts.
  * Dependensi: lib/finance-post-status (postStatusNote, teks C11), lib/promo-ui (tgl), tipe Tone.
- * Main Functions: izinFinance, statusTransfer, statusPosting, kodeTampil, kunciBaris, alasanTidakAda, saringCatatan, catatanPosting, alasanFaktur.
+ * Main Functions: izinFinance, statusTransfer, statusPosting, kodeTampil, kunciBaris, bedaPengajuan, alasanTidakAda, saringCatatan, catatanPosting, alasanFaktur.
  * Side Effects: Tidak ada.
  */
 import type { Tone } from "@/components/fiori/core";
@@ -165,6 +165,25 @@ export function catatanPosting(kode: KodePosting, error: string, raw: string): s
     if (kode === "tidak_pasti") return saringCatatan(postStatusNote("unknown", saringCatatan(error), raw || "unknown"));
     if (kode === "gagal") return `Posting gagal${error ? `: ${saringCatatan(error)}` : ""}. Boleh diposting ulang setelah diperbaiki.`;
     return "";
+}
+
+type PengajuanBanding = {
+    total_nilai: number; status_pembayaran: string; accurate_post_status?: string;
+    detail_invoices: Array<{ invoiceNo: string; paymentAmount: number }>;
+};
+
+/**
+ * Tinjauan B-5: baris yang akan ditulis dibaca ULANG sebelum langkah tulis pertama. Kembalikan bagian yang berubah (undefined = sama):
+ * pengajuan hilang, nilai dibayar, faktur/nilainya, status transfer, atau status posting. Berubah = batal tanpa tulis.
+ */
+export function bedaPengajuan(lama: PengajuanBanding, kini: PengajuanBanding | undefined): string | undefined {
+    if (!kini) return "pengajuan tidak ada lagi di daftar";
+    if (Number(lama.total_nilai || 0) !== Number(kini.total_nilai || 0)) return "nilai dibayar";
+    const faktur = (x: PengajuanBanding) => (x.detail_invoices || []).map((d) => `${String(d.invoiceNo).trim()}=${Number(d.paymentAmount || 0)}`).sort().join("|");
+    if (faktur(lama) !== faktur(kini)) return "faktur atau nilainya";
+    if (String(lama.status_pembayaran || "") !== String(kini.status_pembayaran || "")) return "status transfer";
+    if (String(lama.accurate_post_status || "") !== String(kini.accurate_post_status || "")) return "status posting";
+    return undefined;
 }
 
 /** Faktur yang bisa diposting: ada, dan tidak kosong/BELUM ADA (aturan normalizePurchasePaymentPayload server). */

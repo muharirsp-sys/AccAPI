@@ -266,7 +266,8 @@ Antrean Faktur / outbox sales-invoice (S6-0d, DRAFT — zona tulis Accurate):
 Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
   UI Finance (/finance, Fiori S6b: finance/posting.ts postingPurchasePayment — urutan & clientRef = recordKey lama; dialog pp)
   -> GET /api/auth/accurate-session (database terbuka; dialog pp membaca SEGAR, id = expectedDatabaseId; beda = berhenti
-     sebelum tulis) -> FastAPI /payments/finance/mapping -> /payments/finance/proof
+     sebelum tulis) -> FastAPI GET /payments/finance/data (baca ulang baris; nilai/faktur/status berubah = batal tanpa
+     tulis, S6b B-5) -> FastAPI /payments/finance/mapping -> /payments/finance/proof
   -> POST /api/finance/purchase-payment (finance.update) {clientRef, expectedDatabaseId, payload} — tanpa expectedDatabaseId
      = 400, database sesi saat POST ≠ expectedDatabaseId = 409 {code: database_changed, claimed:false} SEBELUM klaim (S6b A-1)
      -> lib/accurate-write-attempt.ts runGuardedWrite: INSERT ... SELECT accurate_write_attempt state=sending

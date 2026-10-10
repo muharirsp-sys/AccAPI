@@ -2,7 +2,7 @@
  * penyaring catatan lama. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LABEL_POSTING, alasanFaktur, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, saringCatatan, statusPosting, statusTransfer, type AttemptFinance } from "./finance-ui.ts";
+import { LABEL_POSTING, alasanFaktur, bedaPengajuan, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, saringCatatan, statusPosting, statusTransfer, type AttemptFinance } from "./finance-ui.ts";
 
 const attempt = (over: Partial<AttemptFinance>): AttemptFinance => ({
     attemptId: "a1", state: "unknown", status: "unknown", stale: false, accurateNumber: "", actorName: "Finance A", clientRef: "K1", targetDbId: "DB-1",
@@ -115,6 +115,17 @@ test("catatan lama disaring: tanpa 'Coba lagi' dan tanpa alamat server lokal", (
     assert.match(n, /^TIDAK PASTI/);
     assert.doesNotMatch(n, /Coba lagi/);
     assert.match(catatanPosting("gagal", "dicek manual: tidak ada di Accurate", "failed"), /Boleh diposting ulang/);
+});
+
+test("B-5: baris dibaca ulang sebelum tulis — nilai/faktur/status berubah atau hilang = batal", () => {
+    const p = { total_nilai: 1500, status_pembayaran: "Belum Transfer", accurate_post_status: "", detail_invoices: [{ invoiceNo: "A", paymentAmount: 1000 }, { invoiceNo: "B", paymentAmount: 500 }] };
+    assert.equal(bedaPengajuan(p, { ...p, detail_invoices: [...p.detail_invoices].reverse() }), undefined, "urutan faktur tidak berpengaruh");
+    assert.equal(bedaPengajuan(p, undefined), "pengajuan tidak ada lagi di daftar");
+    assert.equal(bedaPengajuan(p, { ...p, total_nilai: 1400 }), "nilai dibayar");
+    assert.equal(bedaPengajuan(p, { ...p, detail_invoices: [{ invoiceNo: "A", paymentAmount: 1000 }, { invoiceNo: "C", paymentAmount: 500 }] }), "faktur atau nilainya");
+    assert.equal(bedaPengajuan(p, { ...p, detail_invoices: [{ invoiceNo: "A", paymentAmount: 900 }, { invoiceNo: "B", paymentAmount: 600 }] }), "faktur atau nilainya");
+    assert.equal(bedaPengajuan(p, { ...p, status_pembayaran: "Ajukan Ulang" }), "status transfer");
+    assert.equal(bedaPengajuan(p, { ...p, accurate_post_status: "unknown" }), "status posting");
 });
 
 test("faktur kosong/BELUM ADA menahan posting", () => {
