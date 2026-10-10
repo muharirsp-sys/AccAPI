@@ -289,6 +289,30 @@ test("Order baru: harga terisi dari master + sumbernya, harga diubah ditandai, s
     await expect(main(page).getByText("Order tersimpan dengan aturan promo yang dibekukan.")).toBeVisible(NAV);
 });
 
+test("Order baru: sesudah tersimpan Simpan terkunci sampai halaman order terbuka — tidak tersimpan dua kali", async ({ page }) => {
+    const log = await pasang(page);
+    let lepas: () => void = () => {};
+    const tahan = new Promise<void>((ok) => { lepas = ok; });
+    // Tahan navigasi ke halaman order (host Next saja, bukan FastAPI) supaya keadaan "sudah tersimpan, belum pindah" bisa diuji.
+    await page.route((u) => u.host === "localhost:3011" && u.pathname === `/orders/${ID_A}`, async (r) => { await tahan; await r.continue(); });
+    await page.goto("/orders/baru");
+    const m = main(page);
+    await m.getByLabel("Kode pelanggan Accurate").fill("C-A001-KN", NAV);
+    const b1 = m.getByRole("listitem", { name: "Barang 1" });
+    await b1.getByLabel("Kode barang").fill("BRG-A1");
+    await expect(b1.getByLabel("Harga")).toHaveValue("456000");
+    await page.getByRole("button", { name: "Simpan order…" }).click();
+    const simpan = page.getByRole("dialog").getByRole("button", { name: "Simpan order", exact: true });
+    await simpan.click();
+    await expect.poll(() => log.simpan.length).toBe(1);
+    await expect(simpan).toBeDisabled();
+    await expect(simpan).toHaveAttribute("title", "Order sudah tersimpan; membuka halaman order…");
+    await simpan.click({ force: true });
+    lepas();
+    await expect(page).toHaveURL(new RegExp(`/orders/${ID_A}\\?baru=1$`), NAV);
+    expect(log.simpan).toHaveLength(1);
+});
+
 test("Order baru: galat server tampil di dialog apa adanya; simpan tidak pasti mengunci Simpan", async ({ page }) => {
     await pasang(page, { simpan: [
         { status: 422, body: { detail: "Channel outlet C-A001-KN menurut master MT, bukan GT" } },

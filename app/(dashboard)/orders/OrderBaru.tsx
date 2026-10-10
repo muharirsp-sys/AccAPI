@@ -192,7 +192,9 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                                 : salahSatuan >= 0 ? `Perbaiki satuan barang ${salahSatuan + 1}`
                                     : pratinjau?.status === "memuat" ? "Menunggu harga dihitung"
                                         : tanpaHargaIdx >= 0 ? `Isi harga barang ${tanpaHargaIdx + 1} (lebih dari 0; harga master belum ada)` : undefined;
-    const terkunci = ragu ? "Periksa Order Masuk dulu — order terakhir mungkin sudah tersimpan" : terkunciIsian;
+    // Sesudah tersimpan halaman masih tampil sampai halaman order terbuka: Simpan terkunci supaya order tidak tersimpan dua kali.
+    const sudahTersimpan = tersimpan ? "Order sudah tersimpan; membuka halaman order…" : undefined;
+    const terkunci = sudahTersimpan ?? (ragu ? "Periksa Order Masuk dulu — order terakhir mungkin sudah tersimpan" : terkunciIsian);
     const draf = !tersimpan && Boolean(note.trim() || filled.length > 0);
     useUnsavedGuard(draf);
 
@@ -371,7 +373,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                     ["Netto estimasi", net !== null ? rupiah(net) : "dihitung saat disimpan"],
                     ...(nDiubah ? [["Harga diubah", `${nDiubah} barang beda dari master`] as [string, string]] : []),
                 ]}
-                confirmLabel={dialog === "ulang" ? "Simpan lagi" : "Simpan order"} onConfirm={simpan} />
+                confirmLabel={dialog === "ulang" ? "Simpan lagi" : "Simpan order"} confirmDisabled={sudahTersimpan} onConfirm={simpan} />
         </div>
     );
 }
