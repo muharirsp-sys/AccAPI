@@ -63,7 +63,7 @@ export function certainlyNotSent(status: number, out: { claimed?: unknown; error
  * Kode 409 command yang DIJAMIN ditolak sebelum klaim attempt (tidak ada yang dikirim ke Accurate). Daftar eksplisit: 409 lain
  * (konflik attempt, kode baru kelak) = tidak pasti — meski membawa claimed:false (tinjauan putaran 2 A).
  */
-const KODE_409_TIDAK_TERKIRIM = new Set(["database_changed"]);
+const KODE_409_TIDAK_TERKIRIM = new Set(["database_changed", "reopened_use_repost"]);
 
 /** 409 yang pasti belum terkirim: claimed:false DAN kode terdaftar di KODE_409_TIDAK_TERKIRIM. */
 export function conflictNotSent(status: number, out: { claimed?: unknown; code?: unknown } | null | undefined): boolean {

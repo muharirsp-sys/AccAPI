@@ -20,8 +20,11 @@ function enkripsi(value: string) {
     return `${iv.toString("base64")}.${c.getAuthTag().toString("base64")}.${isi.toString("base64")}`;
 }
 
-/** Jalankan POST sebagai user berizin `keys` dengan sesi Accurate di database `dbId`. `klaim` = berapa kali klaim attempt dicoba. */
-async function kirim(keys: string[], dbId: string, body: Record<string, unknown>) {
+/**
+ * Jalankan POST sebagai user berizin `keys` dengan sesi Accurate di database `dbId`. `klaim` = berapa kali klaim attempt dicoba.
+ * `reopened` = subjek sudah dibuka ulang (ADR-004): INSERT klaim tidak menyisipkan apa pun, generasi terkini 1.
+ */
+async function kirim(keys: string[], dbId: string, body: Record<string, unknown>, opsi: { reopened?: boolean } = {}) {
     const saved = [
         [auth.api, "getSession", Object.getOwnPropertyDescriptor(auth.api, "getSession")],
         [db, "select", Object.getOwnPropertyDescriptor(db, "select")],
@@ -32,19 +35,26 @@ async function kirim(keys: string[], dbId: string, body: Record<string, unknown>
     delete process.env.LOCAL_AUTH_BYPASS;
     process.env.ACCURATE_TOKEN_ENCRYPTION_KEY = KUNCI;
     let klaim = 0;
+    let jaringan = 0;
     const perms = keys.map((key) => ({ groupId: "g1", key }));
     const sesi = { userId: "u-fin", accessToken: enkripsi("tok"), sessionHost: "https://zeus.accurate.id", sessionId: enkripsi("sid"),
         databaseId: dbId, databaseAlias: `PT CONTOH ${dbId}`, createdAt: new Date(), updatedAt: new Date() };
     Object.defineProperty(auth.api, "getSession", { configurable: true, value: async () => ({ user: { id: "u-fin", role: "staff" }, session: { id: "s1" } }) });
     // getUserPermissions = select().from().leftJoin().where(); getAccurateSession = select().from().where().limit(1).
-    Object.defineProperty(db, "select", { configurable: true, value: () => ({ from: () => ({ leftJoin: () => ({ where: async () => perms }), where: () => ({ limit: async () => [sesi] }) }) }) });
-    Object.defineProperty(db, "execute", { configurable: true, value: async () => { klaim += 1; throw new Error("uji: klaim attempt dihentikan di sini"); } });
-    Object.defineProperty(globalThis, "fetch", { configurable: true, value: () => { throw new Error("TIDAK BOLEH ke jaringan"); } });
+    // currentGeneration (lib/accurate-write-attempt) = select().from().where() yang di-await langsung → [{ g }].
+    Object.defineProperty(db, "select", { configurable: true, value: () => ({ from: () => ({ leftJoin: () => ({ where: async () => perms }),
+        where: () => Object.assign(Promise.resolve([{ g: opsi.reopened ? 1 : 0 }]), { limit: async () => [sesi] }) }) }) });
+    Object.defineProperty(db, "execute", { configurable: true, value: async () => {
+        klaim += 1;
+        if (opsi.reopened) return { rows: [] };
+        throw new Error("uji: klaim attempt dihentikan di sini");
+    } });
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: () => { jaringan += 1; throw new Error("TIDAK BOLEH ke jaringan"); } });
     try {
         const res = await postPurchasePayment(new NextRequest("http://app.test/api/finance/purchase-payment", {
             method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
         }));
-        return { status: res.status, body: await res.json() as Record<string, unknown>, klaim };
+        return { status: res.status, body: await res.json() as Record<string, unknown>, klaim, jaringan };
     } finally {
         for (const [obj, k, d] of saved) {
             if (d) Object.defineProperty(obj, k, d);
@@ -90,4 +100,14 @@ test("A-1: tanpa expectedDatabaseId (klien lama / kiriman buatan) -> 400 claimed
         assert.equal(r.body.claimed, false);
         assert.equal(r.klaim, 0);
     }
+});
+
+test("Putaran 2 B-6: subjek dibuka ulang (reopened_use_repost) -> 409 claimed:false; klaim tidak menyisipkan apa pun, tidak ada kiriman", async () => {
+    const r = await kirim(["finance.update"], "1001", { ...BODY, expectedDatabaseId: "1001" }, { reopened: true });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.code, "reopened_use_repost");
+    assert.equal(r.body.claimed, false, "tidak ada attempt yang diklaim/dikirim di jalur ini");
+    assert.equal(r.body.live, null);
+    assert.equal(r.klaim, 1, "hanya INSERT klaim (tanpa baris) — tidak ada UPDATE hasil kiriman");
+    assert.equal(r.jaringan, 0, "tidak ada kiriman ke Accurate");
 });

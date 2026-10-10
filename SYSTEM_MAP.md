@@ -271,7 +271,7 @@ Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
   -> POST /api/finance/purchase-payment (finance.update) {clientRef, expectedDatabaseId, payload} — tanpa expectedDatabaseId
      = 400, database sesi saat POST ≠ expectedDatabaseId = 409 {code: database_changed, claimed:false} SEBELUM klaim (S6b A-1)
      -> lib/accurate-write-attempt.ts runGuardedWrite: INSERT ... SELECT accurate_write_attempt state=sending
-        generasi 0 (ADR-004 rilis A; subjek ber-reopen -> 409 reopened_use_repost) — unique partial index per
+        generasi 0 (ADR-004 rilis A; subjek ber-reopen -> 409 reopened_use_repost {claimed:false}, tanpa klaim/kiriman) — unique partial index per
         himpunan faktur × generasi; attempt hidup -> 409 {live, generation, currentGeneration} SEBELUM kirim
      -> forwardAccurate purchase-payment/bulk-save.do (tanpa transaksi DB terbuka)
      -> classifyProviderReply -> posted / unknown / not_sent (C11: penolakan Accurate belum terbukti = unknown)

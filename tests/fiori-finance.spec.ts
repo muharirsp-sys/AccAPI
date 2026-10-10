@@ -263,7 +263,6 @@ const TIDAK_PASTI: Array<[string, Jawab]> = [
     ["409 unknown", { status: 409, body: { error: "Ada attempt posting yang belum pasti untuk faktur ini — periksa Accurate lalu selesaikan manual.", live: { attemptId: "at-0", state: "unknown", accurateId: "", accurateNumber: "", targetDbId: "DB-1", sameRecord: true, sameTarget: true, stale: true }, generation: 0, currentGeneration: 0 } }],
     // Putaran 2 A: claimed:false dengan kode 409 yang TIDAK terdaftar (konflik attempt kelak) tetap tidak pasti — bukan "failed".
     ["409 claimed:false kode lain", { status: 409, body: { code: "attempt_conflict", claimed: false, live: null, error: "Konflik attempt posting untuk faktur ini (uji)." } }],
-    ["409 reopened_use_repost", { status: 409, body: { code: "reopened_use_repost", error: "Pembayaran untuk faktur ini sudah dibuka ulang untuk posting ulang (repost).", live: null, generation: 0, currentGeneration: 1 } }],
 ];
 for (const [nama, j] of TIDAK_PASTI) {
     test(`Tidak pasti (${nama}) → "hasilnya belum pasti", catatan unknown, baris dikunci + Selesaikan; tanpa HTML mentah`, async ({ page }) => {
@@ -284,6 +283,18 @@ for (const [nama, j] of TIDAK_PASTI) {
         await expect(main.getByRole("list", { name: "Daftar pengajuan" }).getByRole("button", { name: /DRAFT-0418/ })).not.toContainText("draf");
     });
 }
+
+test("Putaran 2 B-6: 409 reopened_use_repost {claimed:false} = tidak terkirim (catatan gagal, tidak dikunci) — bukan tidak pasti", async ({ page }) => {
+    const m = await siapkan(page, { command: [{ status: 409, body: { code: "reopened_use_repost", claimed: false, live: null, generation: 0, currentGeneration: 1,
+        error: "Pembayaran untuk faktur ini sudah dibuka ulang untuk posting ulang (repost). Posting biasa ditolak — posting ulang belum tersedia di versi ini." } }] });
+    const { main, detail, dlg } = await bukaDialogPosting(page);
+    await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
+    await expect(main.getByRole("alert").filter({ hasText: "Tidak ada yang dikirim ke Accurate untuk DRAFT-0418." })).toContainText("dibuka ulang untuk posting ulang", NAV);
+    expect(m.update.at(-1)).toMatchObject({ accurate_post_status: "failed" });
+    expect(m.update.some((u) => u.accurate_post_status === "unknown")).toBe(false);
+    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toHaveCount(0, NAV);
+    expect(m.command).toHaveLength(1);
+});
 
 test("A-2/B-2: terposting lalu catatan Finance gagal → belum pasti + nomor PP; tab yang sama bisa 'Catat hasil posting' tanpa kiriman baru", async ({ page }) => {
     test.setTimeout(90_000); // dua kiriman + dua muat ulang: 30 dtk bawaan habis pada jalankan penuh (tinjauan putaran 2)

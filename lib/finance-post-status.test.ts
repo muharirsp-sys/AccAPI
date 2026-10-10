@@ -40,6 +40,8 @@ test("gagal sebelum klaim = pasti belum terkirim (record tidak dikunci); 5xx tan
 
 test("Putaran 2 A: 409 pasti tidak terkirim HANYA bila claimed:false + kode yang terdaftar; 409 lain = tidak pasti (bukan failed)", () => {
     assert.equal(conflictNotSent(409, { code: "database_changed", claimed: false, live: null }), true);
+    assert.equal(conflictNotSent(409, { code: "reopened_use_repost", claimed: false, live: null }), true, "subjek dibuka ulang: tanpa klaim/kiriman");
+    assert.equal(conflictNotSent(409, { code: "reopened_use_repost", live: null }), false, "server lama tanpa claimed:false");
     assert.equal(conflictNotSent(409, { code: "attempt_conflict", claimed: false, live: null }), false, "kode 409 lain kelak");
     assert.equal(conflictNotSent(409, { claimed: false, live: null }), false, "tanpa kode");
     assert.equal(conflictNotSent(409, { code: "database_changed", live: null }), false, "tanpa claimed:false");

@@ -7,7 +7,8 @@
  *   accurateNumber, ...}; tanpa expectedDatabaseId = 400 {claimed:false}; database sesi ≠ expectedDatabaseId = 409
  *   {code: database_changed, claimed:false, live:null} (S6b A-1, sebelum klaim). Selain itu -> {state, attemptId, accurateId,
  *   accurateNumber, message, response, persisted}; 409 {live, generation, currentGeneration} bila attempt hidup
- *   sudah ada; 409 {code: reopened_use_repost} bila subjek sudah dibuka ulang (ADR-004 rilis B, belum ada di sini).
+ *   sudah ada; 409 {code: reopened_use_repost, claimed:false} bila subjek sudah dibuka ulang (ADR-004 rilis B, belum ada di sini;
+ *   tanpa klaim, tanpa kiriman).
  *   Gagal SEBELUM klaim (validasi, sesi, DB) = {claimed:false}: pasti tidak terkirim (UI tidak mengunci record).
  * Side Effects: INSERT/UPDATE accurate_write_attempt; POST purchase-payment/bulk-save.do ke Accurate.
  */
@@ -88,8 +89,10 @@ export async function POST(request: Request) {
 
     if (!result.claimed) {
         if (result.reopened) {
+            // claimed:false benar di jalur ini: INSERT klaim tidak menyisipkan apa pun (WHERE NOT EXISTS reopen) dan send() tidak
+            // dipanggil (runGuardedWrite kembali sebelum kirim) — tidak ada yang diklaim/dikirim oleh permintaan ini (tinjauan B-6).
             return NextResponse.json({
-                code: "reopened_use_repost",
+                code: "reopened_use_repost", claimed: false,
                 error: "Pembayaran untuk faktur ini sudah dibuka ulang untuk posting ulang (repost). Posting biasa ditolak — posting ulang belum tersedia di versi ini.",
                 live: null, generation: result.generation, currentGeneration: result.currentGeneration,
             }, { status: 409 });
