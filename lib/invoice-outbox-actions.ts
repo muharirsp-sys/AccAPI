@@ -5,7 +5,7 @@
  *   Dipisah dari route agar diuji dengan Postgres evaluasi (route memakai next/headers).
  * Dependensi: invoice_outbox + invoice_outbox_event, lib/accurate-invoice-write (aturan status),
  *   lib/invoice-outbox-event, lib/invoice-search (pencarian faktur AM-029, disuntikkan).
- * Main Functions: aksiAntrean, antrekan, selesaikanTidakPasti, cariTidakPasti, pencariFaktur, pencariPenekan.
+ * Main Functions: aksiAntrean, antrekan, selesaikanTidakPasti, cariTidakPasti, sekaliJalan, pencariFaktur, pencariPenekan, sesiCariSah.
  * Side Effects: UPDATE/DELETE/INSERT invoice_outbox + INSERT event dalam SATU transaksi per baris.
  *   Request ke Accurate HANYA lewat pencari yang disuntikkan (BACA SAJA, list.do/detail.do).
  *
@@ -370,4 +370,19 @@ export async function cariTidakPasti(database: NodePgDatabase, input: { orderId:
         dikirim: payload && Array.isArray(payload.detailItem) ? nilaiPayload(payload) : null,
         sisaMenit: menit !== null && menit < SAPU_SETELAH_MENIT ? Math.max(1, Math.ceil(SAPU_SETELAH_MENIT - menit)) : 0,
     } };
+}
+
+const berjalan = new Map<string, Promise<AksiJawaban>>();
+
+/**
+ * Satu pencarian per `kunci` (penekan × order) pada satu waktu: buka-tutup dialog / klik ganda / efek ganda mode dev tidak
+ * menggandakan list.do + detail.do ke Accurate — pemanggil kedua menunggu jawaban yang sama.
+ * ponytail: per proses Next (satu instance di VPS); multi-instance = tiap instance mencari sendiri.
+ */
+export function sekaliJalan(kunci: string, fn: () => Promise<AksiJawaban>): Promise<AksiJawaban> {
+    const ada = berjalan.get(kunci);
+    if (ada) return ada;
+    const janji = fn().finally(() => berjalan.delete(kunci));
+    berjalan.set(kunci, janji);
+    return janji;
 }

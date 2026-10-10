@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requirePermission } from "@/lib/rbac/resolve";
-import { cariTidakPasti, cekInputSelesaikan, pencariPenekan, selesaikanTidakPasti } from "@/lib/invoice-outbox-actions";
+import { cariTidakPasti, cekInputSelesaikan, pencariPenekan, sekaliJalan, selesaikanTidakPasti } from "@/lib/invoice-outbox-actions";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -24,8 +24,9 @@ export async function GET(request: NextRequest) {
     if (gate.response) return gate.response;
     const orderId = (request.nextUrl.searchParams.get("orderId") ?? "").trim();
     if (!orderId) return NextResponse.json({ ok: false, error: "orderId wajib diisi" }, { status: 400 });
-    const pencari = await pencariPenekan(db, String(gate.session?.user?.id ?? ""));
-    const result = await cariTidakPasti(db, { orderId, cari: pencari.cari });
+    const userId = String(gate.session?.user?.id ?? "");
+    // Dialog dibuka ulang / Cari lagi selagi pencarian berjalan: satu pencarian ke Accurate, jawaban dipakai bersama.
+    const result = await sekaliJalan(`${userId}:${orderId}`, async () => cariTidakPasti(db, { orderId, cari: (await pencariPenekan(db, userId)).cari }));
     return NextResponse.json(result.body, { status: result.status });
 }
 

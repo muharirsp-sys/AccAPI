@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { aksiAntrean, antrekan, cariTidakPasti, selesaikanTidakPasti, sesiCariSah, type Pencari } from "./invoice-outbox-actions.ts";
+import { aksiAntrean, antrekan, cariTidakPasti, sekaliJalan, selesaikanTidakPasti, sesiCariSah, type Pencari } from "./invoice-outbox-actions.ts";
 import type { HasilCari } from "./invoice-search.ts";
 
 const DIBUAT = new Date("2026-10-08T02:00:00Z");
@@ -241,4 +241,19 @@ test("sesiCariSah (tinjauan S6c a): sesi dipakai hanya pada database faktur yang
     assert.equal(sesiCariSah({ ...sesi, databaseId: "1001" }, "2002").session, null);
     assert.equal(sesiCariSah({ ...sesi, databaseId: "1001", sessionHost: "https://contoh.example" }, "1001").session, null);
     assert.deepEqual(sesiCariSah({ ...sesi, databaseId: 1001 }, "1001"), { session: { sessionHost: "https://zeus.accurate.id", sessionId: "s", accessToken: "t" }, catatan: "" });
+});
+
+test("sekaliJalan (tinjauan S6c d): pencarian yang sedang berjalan untuk kunci sama dipakai bersama; selesai = boleh lagi", async () => {
+    let n = 0;
+    let lepas: () => void = () => {};
+    const fn = () => { n += 1; return new Promise<{ status: number; body: Record<string, unknown> }>((ok) => { lepas = () => ok({ status: 200, body: { n } }); }); };
+    const a = sekaliJalan("u1:K", fn);
+    const b = sekaliJalan("u1:K", fn);
+    assert.equal(n, 1, "panggilan kedua menunggu yang pertama");
+    lepas();
+    assert.deepEqual(await a, await b);
+    await sekaliJalan("u1:K", async () => { n += 1; return { status: 200, body: {} }; });
+    assert.equal(n, 2, "setelah selesai, pencarian berikutnya berjalan lagi");
+    await sekaliJalan("u2:K", async () => { n += 1; return { status: 200, body: {} }; });
+    assert.equal(n, 3, "penekan lain = pencarian sendiri");
 });
