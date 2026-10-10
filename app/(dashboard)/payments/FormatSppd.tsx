@@ -34,6 +34,8 @@ type Kunci = "nomor" | "template" | "jaminan" | "jatuhTempo" | "perHalaman";
 
 const LABEL: Record<Kunci, string> = { nomor: "Nomor surat terakhir", template: "Format nomor", jaminan: "Tanggal jaminan", jatuhTempo: "Jatuh tempo bank (bulan)", perHalaman: "Transfer per halaman" };
 const bulat = (v: string) => (/^\d+$/.test(v.trim()) ? Number(v.trim()) : NaN);
+/** Lompatan nomor sebesar ini wajib diketik ulang: nomor tidak bisa diturunkan lagi tahun ini (D-05), jadi salah ketik 310 untuk 31 permanen. */
+const LOMPAT_KETIK_ULANG = 50;
 
 export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
     const izin = izinPembayaran(permKeys);
@@ -78,6 +80,10 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
     const [pesan, setPesan] = useState<{ tone: "pos" | "warn"; judul: string; isi?: string } | null>(null);
     const [dialog, setDialog] = useState<null | "simpan" | "excel" | "ganti" | "autofix" | "restore">(null);
     const [namaLama, setNamaLama] = useState("");
+    const [ketikUlang, setKetikUlang] = useState("");
+    const lompat = s && berubah.includes("nomor") && !Number.isNaN(nomorBaru) ? nomorBaru - s.efektif : 0;
+    const perluKetik = lompat > LOMPAT_KETIK_ULANG;
+    const alasanKetik = perluKetik && ketikUlang.trim() !== String(nomorBaru) ? `Nomor ketikan ulang belum sama dengan ${nomorBaru}.` : undefined;
 
     const kunciMuat = set.status === "galat" ? "Setelan SPPD belum berhasil dimuat — muat ulang dulu agar urutan nomor tidak mundur."
         : set.status === "memuat" ? "Setelan sedang dimuat." : masihTerkunci ? "Hasil simpan terakhir belum pasti; tunggu setelan dimuat ulang." : undefined;
@@ -224,15 +230,23 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
 
             <FooterToolbar message={alasanSimpan ? <span className="fi-why">{alasanSimpan}</span> : `${berubah.length} isian berubah: ${berubah.map((k) => LABEL[k]).join(", ")}.`}>
                 {berubah.length > 0 && <Button variant="tertiary" onClick={() => setUbah({})}>Batalkan perubahan</Button>}
-                <Button variant="primary" disabled={Boolean(alasanSimpan)} disabledReason={alasanSimpan} onClick={() => setDialog("simpan")}>Simpan…</Button>
+                <Button variant="primary" disabled={Boolean(alasanSimpan)} disabledReason={alasanSimpan} onClick={() => { setKetikUlang(""); setDialog("simpan"); }}>Simpan…</Button>
             </FooterToolbar>
 
-            <ConfirmDialog open={dialog === "simpan"} onClose={() => setDialog(null)} title="Simpan format SPPD?" tag="Setelan" confirmLabel="Simpan" confirmDisabled={alasanSimpan} onConfirm={simpan}
+            <ConfirmDialog open={dialog === "simpan"} onClose={() => setDialog(null)} title="Simpan format SPPD?" tag="Setelan" confirmLabel="Simpan" confirmDisabled={alasanSimpan ?? alasanKetik} onConfirm={simpan}
                 facts={[
                     ...berubah.map((k): [string, ReactNode] => [LABEL[k], `${k === "jaminan" ? tanggalTampil(awal?.[k]) : awal?.[k]} → ${k === "jaminan" ? tanggalTampil(nilai(k)) : nilai(k)}`]),
                     ["Nomor berikutnya", <span key="n" className="fi-mono">{pratinjau || "—"}</span>],
                 ]}>
                 {berubah.includes("nomor") && <MessageStrip tone="warn" title={`Nomor ${String((s?.efektif ?? 0) + 1).padStart(3, "0")}–${String(nomorBaru).padStart(3, "0")} tidak akan terbit.`}>Urutan dinaikkan; nomor yang dilewati tidak bisa dipakai lagi tahun ini.</MessageStrip>}
+                {perluKetik && (
+                    <>
+                        <MessageStrip tone="neg" title={`Nomor naik ${lompat} sekaligus (${s?.efektif} → ${nomorBaru}).`}>Nomor tidak bisa diturunkan lagi tahun ini (D-05); pastikan ini bukan salah ketik.</MessageStrip>
+                        <FormField label="Ketik ulang nomor surat terakhir" required help={`Ketik ulang nomor ${nomorBaru} untuk melanjutkan.`}>
+                            {(a) => <input {...a} className="fi-input fi-tnum" inputMode="numeric" autoComplete="off" value={ketikUlang} onChange={(e) => setKetikUlang(e.target.value)} />}
+                        </FormField>
+                    </>
+                )}
             </ConfirmDialog>
             {/* Dialog operasi dipasang hanya saat dibuka: isian dan pratinjau selalu segar. */}
             {dialog === "excel" && <DialogExcel open onClose={() => setDialog(null)} kunci={izin.excelSppd}

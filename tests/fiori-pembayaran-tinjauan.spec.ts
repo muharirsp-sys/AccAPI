@@ -114,3 +114,36 @@ test("Keranjang: sesudah Ajukan, nilai bayar dibaca ulang dari server dan beda d
     await expect(main.getByText("Nilai bayar tercatat di server: Rp 30.000.000")).toBeVisible();
     await expect(main.getByText("berbeda dari Rp 30.450.000 yang tampil sebelum Ajukan", { exact: false })).toBeVisible();
 });
+
+// ── Butir 3: lompatan besar nomor SPPD wajib diketik ulang ──
+test("Format SPPD: lompatan nomor > 50 wajib diketik ulang di dialog sebelum Simpan", async ({ page }) => {
+    const { kirim } = await mock(page, (p, r) => {
+        if (p === "/payments/sppd/settings" && r.request().method() === "POST") return json(r, { ok: true, settings: { ...SETELAN, last_sequence: 310 }, effective_last_sequence: 310, preview_number: "311/SPA/PDSB/X/2026" });
+        return "lewat";
+    });
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    await main.getByLabel("Nomor surat terakhir").fill("310", NAV);
+    await main.getByRole("button", { name: "Simpan…" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByText("Nomor naik 279 sekaligus", { exact: false })).toBeVisible();
+    await expect(dlg.getByRole("button", { name: "Simpan", exact: true })).toBeDisabled();
+    await expect(dlg.getByText("Ketik ulang nomor 310 untuk melanjutkan.")).toBeVisible(); // alasan nonaktif terlihat (butir 4f)
+    await dlg.getByLabel("Ketik ulang nomor surat terakhir").fill("301");
+    await expect(dlg.getByRole("button", { name: "Simpan", exact: true })).toBeDisabled();
+    await dlg.getByLabel("Ketik ulang nomor surat terakhir").fill("310");
+    await dlg.getByRole("button", { name: "Simpan", exact: true }).click();
+    await expect(main.getByText("Format SPPD tersimpan.")).toBeVisible();
+    expect(kirim.filter((k) => k.path === "/payments/sppd/settings")[0].body).toMatchObject({ last_sequence: 310, expected_last_sequence: 31 });
+});
+
+test("Format SPPD: lompatan kecil (≤ 50) tidak meminta ketik ulang", async ({ page }) => {
+    await mock(page);
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    await main.getByLabel("Nomor surat terakhir").fill("40", NAV);
+    await main.getByRole("button", { name: "Simpan…" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByLabel("Ketik ulang nomor surat terakhir")).toHaveCount(0);
+    await expect(dlg.getByRole("button", { name: "Simpan", exact: true })).toBeEnabled();
+});
