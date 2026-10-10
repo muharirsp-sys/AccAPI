@@ -18,6 +18,12 @@ from shared import (
     format_sppd_number_with_template,
     get_current_user,
     get_sppd_settings,
+    io,
+    looks_like_payments_backup,
+    parse_payments_backup_upload,
+    plan_backup_restore,
+    raise_sppd_sequence_from_records,
+    rebuild_payment_submissions,
     is_dry_run,
     load_payments_db,
     normalize_sppd_settings,
@@ -197,3 +203,50 @@ async def payments_sppd_settings_save(request: Request):
         })
 
 
+@router.post("/payments/sppd/restore-backup")
+async def payments_sppd_restore_backup(request: Request, file: UploadFile = File(None)):
+    """S6-0e butir 5: pulihkan backup PAYMENTS (berkas dari /payments/export). Dulu efek samping /payments/upload dengan
+    izin payments.edit saja. Kini sppd.edit_settings (izin yang sama dengan nomor SPPD/setelan, yang ikut berubah) + CSRF
+    + `?dry_run=1`. Hanya MENAMBAH rekaman (konflik id/No. LPB = semua-atau-tidak); nomor SPPD tidak pernah turun (D-05)."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "sppd", "edit_settings"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.edit_settings"})
+    csrf_token = request.headers.get("X-CSRF-Token", "")
+    if not validate_csrf_request(request, csrf_token):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
+    if file is None:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "File backup belum diupload."})
+    try:
+        content = await read_upload_file_limited(file, max_bytes=MAX_EXCEL_UPLOAD_BYTES, allowed_exts=(".xlsx", ".xls"), label="File backup")
+        head = pd.read_excel(io.BytesIO(content), nrows=1)
+        if not looks_like_payments_backup({str(c).strip().upper(): c for c in head.columns}):
+            return JSONResponse(status_code=400, content={"ok": False, "error": "Berkas ini bukan backup PAYMENTS (unduh lewat Ekspor backup)."})
+        rows = parse_payments_backup_upload(content)
+        if not rows:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "Data backup PAYMENTS kosong."})
+        dry_run = is_dry_run(request)
+        now = wita_now()
+        async with _PAYMENTS_DB_LOCK:
+            db = load_payments_db()
+            plan = plan_backup_restore(db, rows, now)
+            if dry_run:
+                return JSONResponse({"ok": True, "dry_run": True, "can_apply": not plan["conflicts"], **plan})
+            if plan["conflicts"]:
+                return JSONResponse(status_code=400, content={"ok": False, "dry_run": False, **plan,
+                                                              "error": "Restore backup dibatalkan: " + "; ".join(plan["conflicts"][:5])})
+            for key, rec in rows:
+                db["lpb"][key] = rec
+            rebuild_payment_submissions(db)
+            # D-05/C10: urutan SPPD tahun berjalan naik ke nomor tertinggi yang dipulihkan, tak pernah turun.
+            raise_sppd_sequence_from_records(db, [rec for _, rec in rows], now)
+            save_payments_db(db)
+        append_audit_log(user, "payments_restore_backup", "lpb", {"added": len(rows), "sppd": plan["sppd"]})
+        return JSONResponse({"ok": True, "dry_run": False, "mode": "restore_backup", "added": len(rows), **plan,
+                             "message": f"Restore backup berhasil: {len(rows)} record."})
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
+    except Exception as e:
+        append_error_log("payments_sppd_restore_backup", e, {"user": user})
+        return JSONResponse(status_code=500, content={"ok": False, "error": "Gagal memproses restore backup."})

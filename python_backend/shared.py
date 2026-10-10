@@ -1736,6 +1736,28 @@ def raise_sppd_sequence_from_records(db: Dict[str, Any], records: List[Dict[str,
         db["sppd_seq"] = restored
     return restored
 
+def plan_backup_restore(db: Dict[str, Any], rows: List[Tuple[str, Dict[str, Any]]], now: pd.Timestamp) -> Dict[str, Any]:
+    """Restore backup PAYMENTS — SATU ringkasan untuk pratinjau dan eksekusi (S6-0e butir 5). "Rekaman draf" =
+    rekaman tanpa pengajuan (istilah it08). Nomor SPPD: restore hanya bisa MENAIKKAN urutan (D-05/C10)."""
+    recs = [r for _, r in rows]
+    subs = {s(r.get("submission_id", "")) for r in recs if s(r.get("submission_id", ""))}
+    existing = db.get("submissions", {}) if isinstance(db.get("submissions"), dict) else {}
+    settings = get_sppd_settings(copy.deepcopy(db))  # get_sppd_settings menulis balik ke db -> salinan
+    year = int(now.year)
+    before = sppd_last_sequence_for_year(settings, year)
+    restored = max_sppd_sequence_from_records(recs, year)
+    after = max(before, restored)
+    return {
+        "records": len(recs),
+        "submissions": len(subs),
+        "new_submissions": len(subs - set(existing)),
+        "draft_records": sum(1 for r in recs if not s(r.get("submission_id", ""))),
+        "sppd": {"year": year, "last_sequence_before": before, "max_restored": restored, "last_sequence_after": after,
+                 "next_number": format_sppd_number_with_template(after + 1, now, s(settings.get("number_template", "")))},
+        "conflicts": validate_backup_restore_conflicts(db, rows),
+    }
+
+
 def rebuild_payment_submissions(db: Dict[str, Any]) -> None:
     submissions = dict(db.get("submissions", {}) or {})
     grouped: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}

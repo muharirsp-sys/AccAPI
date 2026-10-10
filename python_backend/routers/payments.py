@@ -51,16 +51,13 @@ from shared import (
     plan_lpb_upload,
     parse_number_id,
     parse_number_strict,
-    parse_payments_backup_upload,
     payment_lock_entry,
     payment_lock_message,
     payment_lock_reason,
     payment_locked_field_changes,
     PAYMENT_LOCK_EXEMPT_FIELDS,
     pd,
-    raise_sppd_sequence_from_records,
     read_upload_file_limited,
-    rebuild_payment_submissions,
     render_sppd_docx,
     resolve_payment_record_key,
     s,
@@ -69,7 +66,6 @@ from shared import (
     slugify,
     user_has_permission,
     uuid,
-    validate_backup_restore_conflicts,
     validate_csrf_request,
     wita_now,
     write_invoice_excel,
@@ -231,26 +227,9 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
         dry_run = is_dry_run(request)
         preview_df = await asyncio.to_thread(pd.read_excel, io.BytesIO(content), nrows=1)
         preview_cols = {str(c).strip().upper(): c for c in preview_df.columns}
-        if looks_like_payments_backup(preview_cols) and dry_run:
-            # Pratinjau TIDAK PERNAH menulis; cabang restore di bawah menulis.
-            return JSONResponse(status_code=400, content={"ok": False, "error": "Berkas ini backup PAYMENTS, bukan berkas LPB."})
         if looks_like_payments_backup(preview_cols):
-            restore_rows = parse_payments_backup_upload(content)
-            if not restore_rows:
-                return JSONResponse(status_code=400, content={"ok": False, "error": "Data backup PAYMENTS kosong."})
-            async with _PAYMENTS_DB_LOCK:
-                db = await asyncio.to_thread(load_payments_db)
-                conflicts = validate_backup_restore_conflicts(db, restore_rows)
-                if conflicts:
-                    return JSONResponse(status_code=400, content={"ok": False, "error": "Restore backup dibatalkan: " + "; ".join(conflicts[:5])})
-                for key, rec in restore_rows:
-                    db["lpb"][key] = rec
-                rebuild_payment_submissions(db)
-                # D-05/C10: urutan SPPD tahun berjalan naik ke nomor tertinggi yang dipulihkan, tak pernah turun.
-                max_seq = raise_sppd_sequence_from_records(db, [rec for _, rec in restore_rows], wita_now())
-                await asyncio.to_thread(save_payments_db, db)
-            append_audit_log(user, "payments_restore_backup", "lpb", {"added": len(restore_rows), "max_sppd_seq": max_seq})
-            return JSONResponse({"ok": True, "added": len(restore_rows), "mode": "restore_backup", "message": f"Restore backup berhasil: {len(restore_rows)} record."})
+            # S6-0e butir 5: restore backup = endpoint sendiri (sppd.edit_settings + pratinjau), bukan efek samping unggah LPB.
+            return JSONResponse(status_code=400, content={"ok": False, "error": "Berkas ini backup PAYMENTS, bukan berkas LPB — gunakan Restore backup di Format SPPD."})
 
         rows, number_errors, date_errors = await asyncio.to_thread(parse_lpb_upload_collect, content)
         invalid_message = lpb_upload_error_message(number_errors, date_errors)
