@@ -127,10 +127,10 @@ async function siapkan(target: Page | BrowserContext, opsi: Opsi = {}) {
         attempts[sub] = attempt({ state: "sending", status: "sending", ageSeconds: 0 });
         if (opsi.tahanCommand) await opsi.tahanCommand;
         const j = antri.command.shift() ?? { status: 200, body: { attemptId: "at-1", state: "posted", accurateId: "9001", accurateNumber: "PP/2610/0031", message: "", response: { s: true }, persisted: true } };
-        const isi = j === "putus" ? null : (j.body as { state?: string; claimed?: boolean; live?: { state: string; stale?: boolean } | null } | undefined);
+        const isi = j === "putus" ? null : (j.body as { state?: string; claimed?: boolean; live?: { state: string; stale?: boolean; accurateNumber?: string } | null } | undefined);
         if (j !== "putus" && j.status === 200 && isi?.state === "posted") attempts[sub] = attempt({ state: "posted", status: "posted", accurateNumber: "PP/2610/0031", ageSeconds: 1 });
         else if (isi?.claimed === false) delete attempts[sub];
-        else if (isi?.live) attempts[sub] = attempt({ state: isi.live.state, status: isi.live.state === "sending" ? (isi.live.stale ? "stale" : "sending") : isi.live.state, stale: Boolean(isi.live.stale) });
+        else if (isi?.live) attempts[sub] = attempt({ state: isi.live.state, status: isi.live.state === "sending" ? (isi.live.stale ? "stale" : "sending") : isi.live.state, stale: Boolean(isi.live.stale), accurateNumber: isi.live.accurateNumber ?? "" });
         else attempts[sub] = attempt({ ageSeconds: 1 });
         return jawab(r, j);
     });
@@ -234,6 +234,30 @@ for (const [nama, j] of TIDAK_PASTI) {
         expect(m.command).toHaveLength(1);
     });
 }
+
+test("A-2/B-2: terposting lalu catatan Finance gagal → belum pasti + nomor PP; tab yang sama bisa 'Catat hasil posting' tanpa kiriman baru", async ({ page }) => {
+    const m = await siapkan(page, {
+        command: [
+            { status: 200, body: { attemptId: "at-1", state: "posted", accurateId: "9001", accurateNumber: "PP/2610/0031", message: "", response: { s: true }, persisted: true } },
+            { status: 409, body: { error: "Himpunan faktur ini SUDAH diposting (PP/2610/0031).", live: { attemptId: "at-1", state: "posted", accurateId: "9001", accurateNumber: "PP/2610/0031", targetDbId: "DB-1", sameRecord: true, sameTarget: true, stale: true }, generation: 0, currentGeneration: 0 } },
+        ],
+        update: [{ status: 500, body: { ok: false, error: "Gagal menulis data pembayaran." } }],
+    });
+    const { main, detail, dlg } = await bukaDialogPosting(page);
+    await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
+    const strip = main.getByRole("status").filter({ hasText: "Hasilnya belum pasti — DRAFT-0418 dikunci." });
+    await expect(strip).toContainText("Accurate menjawab Purchase Payment PP/2610/0031", NAV);
+    expect(m.update.map((u) => u.accurate_post_status)).toEqual(["posted", "unknown"]);
+    // Muat ulang: server = terposting (catatan tertinggal). Kunci lokal tab ini TIDAK boleh membuat tombolnya buntu.
+    const catat = detail.getByRole("button", { name: "Catat hasil posting…" });
+    await expect(catat).toBeEnabled(NAV);
+    await catat.click();
+    await page.getByRole("dialog", { name: "Catat hasil posting yang sudah ada?" }).getByRole("button", { name: "Catat hasil posting" }).click();
+    await expect(main.getByRole("status").filter({ hasText: "Terposting PP/2610/0031" })).toContainText("Hasil posting sebelumnya dicatat", NAV);
+    expect(m.command).toHaveLength(2); // kiriman kedua dijawab 409 posted oleh server — bukan purchase-payment kedua
+    expect(m.update.at(-1)).toMatchObject({ accurate_post_status: "posted", accurate_purchase_payment_number: "PP/2610/0031" });
+    await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled(NAV);
+});
 
 test("{claimed:false} = tidak terkirim & tidak dikunci; 409 in_flight = tanpa tulis catatan (tab lain yang mencatat)", async ({ page }) => {
     const m = await siapkan(page, { command: [

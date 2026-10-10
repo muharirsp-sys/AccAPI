@@ -4,7 +4,7 @@
  *   kapan "Tidak ada di Accurate" boleh dipilih, dan penyaring catatan lama. Tanpa HTTP.
  * Caller: app/(dashboard)/finance/{Finance,posting}.tsx/ts, finance-ui.test.ts.
  * Dependensi: lib/finance-post-status (postStatusNote, teks C11), lib/promo-ui (tgl), tipe Tone.
- * Main Functions: izinFinance, statusTransfer, statusPosting, kunciBaris, alasanTidakAda, saringCatatan, catatanPosting, alasanFaktur.
+ * Main Functions: izinFinance, statusTransfer, statusPosting, kodeTampil, kunciBaris, alasanTidakAda, saringCatatan, catatanPosting, alasanFaktur.
  * Side Effects: Tidak ada.
  */
 import type { Tone } from "@/components/fiori/core";
@@ -88,6 +88,15 @@ export function statusPosting(row: { accurate_post_status?: string; accurate_pur
     return { kode: "belum", nomor: "", catatanTertinggal: false };
 }
 
+/**
+ * Kode yang DITAMPILKAN: hasil tidak pasti di tab ini (`kunciLokal`, sebelum server sempat mencatatnya) hanya menggeser baris yang
+ * masih tampak belum/gagal. Bila server sudah menunjukkan terposting/sedang/tidak pasti, keadaan server yang berlaku — kalau tidak,
+ * "Catat hasil posting" buntu di tab yang sama (tinjauan A-2/B-2).
+ */
+export function kodeTampil(kode: KodePosting, kunciLokal: boolean): KodePosting {
+    return kunciLokal && (kode === "belum" || kode === "gagal") ? "tidak_pasti" : kode;
+}
+
 export type KunciBaris = { posting?: string; status?: string; selesaikan?: string; tujuan?: string };
 
 /**
@@ -98,7 +107,7 @@ export type KunciBaris = { posting?: string; status?: string; selesaikan?: strin
 export function kunciBaris(p: { posting: StatusPosting; izin: IzinFinance; sumber?: string; kunciLokal?: boolean }): KunciBaris {
     const { kode, catatanTertinggal } = p.posting;
     const sedang = kode === "sedang" ? "Sedang diposting dari sesi atau tab lain; tunggu hasilnya lalu muat ulang." : undefined;
-    const tidakPasti = kode === "tidak_pasti" || p.kunciLokal;
+    const tidakPasti = kodeTampil(kode, Boolean(p.kunciLokal)) === "tidak_pasti";
     const terposting = kode === "terposting";
     return {
         posting: sedang

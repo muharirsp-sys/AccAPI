@@ -20,7 +20,7 @@ import {
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
 import {
-    LABEL_POSTING, alasanFaktur, alasanTidakAda, catatanPosting, izinFinance, kunciBaris, statusPosting, statusTransfer,
+    LABEL_POSTING, alasanFaktur, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, statusPosting, statusTransfer,
     type AttemptFinance, type StatusPosting,
 } from "@/lib/finance-ui";
 import { rupiah, tgl } from "@/lib/promo-ui";
@@ -95,7 +95,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
 
     const hitung = useMemo(() => {
         const belum = baris.filter((b) => statusTransfer(b.r.status_pembayaran).label === "Belum transfer");
-        const tp = baris.filter((b) => b.posting.kode === "tidak_pasti" || kunciLokal.has(b.key));
+        const tp = baris.filter((b) => kodeTampil(b.posting.kode, kunciLokal.has(b.key)) === "tidak_pasti");
         const ok = baris.filter((b) => b.posting.kode === "terposting");
         const jumlah = (xs: Baris[]) => xs.reduce((t, b) => t + Number(b.r.total_nilai || 0), 0);
         return { belum, tp, ok, nBelum: jumlah(belum), nOk: jumlah(ok) };
@@ -161,6 +161,9 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
                 setHasil({ tone: "pos", judul: `Terposting ${h.nomor} · ${total} · ${tujuanDb.alias || `ID ${tujuanDb.id}`}`, isi: h.catatan ? "Hasil posting sebelumnya dicatat; tidak ada kiriman baru ke Accurate." : `${b.r.draft_label} · ${b.r.principle}. Status transfer dan posting dimuat ulang.` });
             } else if (h.jenis === "sedang") {
                 setHasil({ tone: "info", judul: `${b.r.draft_label} sedang diposting dari sesi atau tab lain.`, isi: `${h.pesan} Status dimuat ulang; jangan posting lagi dari sini.` });
+            } else if (h.jenis === "tidak_pasti" && h.nomor) {
+                // Accurate sudah menjawab nomor PP, tetapi catatan Finance tidak tersimpan: setelah muat ulang, "Catat hasil posting".
+                setHasil({ tone: "warn", judul: `Hasilnya belum pasti — ${b.r.draft_label} dikunci.`, isi: `Accurate menjawab Purchase Payment ${h.nomor}, tetapi catatan Finance belum tersimpan (${h.pesan}). Jangan posting ulang: setelah dimuat ulang, tekan Catat hasil posting.` });
             } else if (h.jenis === "tidak_pasti") {
                 setHasil({ tone: "warn", judul: `Hasilnya belum pasti — ${b.r.draft_label} dikunci.`, isi: `${h.pesan} Jangan posting ulang: Finance memeriksa Purchase Payment di Accurate lalu menyelesaikannya.` });
             } else if (h.jenis === "gagal") {
@@ -248,7 +251,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
                 : (
                     <ul className="fi-list" style={{ display: "block" }} aria-label="Daftar pengajuan">
                         {tampil.map((b) => {
-                            const pt = LABEL_POSTING[kunciLokal.has(b.key) && b.posting.kode !== "terposting" ? "tidak_pasti" : b.posting.kode];
+                            const pt = LABEL_POSTING[kodeTampil(b.posting.kode, kunciLokal.has(b.key))];
                             const t = tujuanDari(b);
                             return (
                                 <li key={b.key} className="fi-wl-row">
@@ -359,7 +362,7 @@ type DetailProps = {
 function Detail(p: DetailProps) {
     const { b, data, kunci } = p;
     const r = b.r;
-    const kode = p.kunciLokal && b.posting.kode !== "terposting" ? "tidak_pasti" : b.posting.kode;
+    const kode = kodeTampil(b.posting.kode, p.kunciLokal);
     const tr = statusTransfer(r.status_pembayaran, r.transfer_date);
     const pt = LABEL_POSTING[kode];
     const a = b.attempt;

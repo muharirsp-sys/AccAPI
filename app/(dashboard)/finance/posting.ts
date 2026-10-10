@@ -341,8 +341,9 @@ export type HasilPosting =
     | { jenis: "terposting"; nomor: string; catatan?: string }
     /** Record ini sedang diposting sesi/tab lain (attempt `sending` segar): TIDAK ada tulis ledger dari tab ini. */
     | { jenis: "sedang"; pesan: string }
-    /** Mungkin sudah tersimpan di Accurate: baris dikunci sampai Finance menyelesaikan. */
-    | { jenis: "tidak_pasti"; pesan: string }
+    /** Mungkin sudah tersimpan di Accurate: baris dikunci sampai Finance menyelesaikan. `nomor` = nomor PP yang SUDAH dijawab Accurate
+     *  (posting terjadi, hanya catatan Finance yang gagal). */
+    | { jenis: "tidak_pasti"; pesan: string; nomor?: string }
     /** Accurate menjawab menolak jelas / tak pernah terhubung: boleh diposting ulang setelah diperbaiki. */
     | { jenis: "gagal"; pesan: string }
     /** Pasti tidak terkirim ke Accurate. `tercatat` = catatan "gagal" sudah ditulis ke FastAPI (bukti sudah terunggah). */
@@ -387,6 +388,7 @@ export async function postingPurchasePayment(p: {
     let payload: PurchasePaymentPayload[] = [];
     let sent = false;
     let accurateRes: unknown;
+    let posted: { id: string; number: string; note?: string } | null = null;
     // Command server menolak SEBELUM klaim (4xx / claimed:false) = pasti belum terkirim ke Accurate.
     let notSent = false;
     // AM-014: "failed" hanya bila Accurate MENJAWAB menolak (atau gagal sebelum terkirim). Timeout/non-JSON/gateway/sukses tanpa
@@ -423,7 +425,6 @@ export async function postingPurchasePayment(p: {
             body: JSON.stringify({ clientRef: key, expectedDatabaseId: p.expectedDatabaseId, payload }),
         });
         const out = (await bacaTeks(res)) as CommandOut;
-        let posted: { id: string; number: string; note?: string } | null = null;
         if (res.status === 409 && out?.claimed === false) {
             // 409 SEBELUM klaim (database sesi berganti, tinjauan A-1) = pasti belum terkirim; bukan konflik attempt.
             notSent = true;
@@ -480,7 +481,7 @@ export async function postingPurchasePayment(p: {
             return { jenis: "tidak_terkirim", pesan, tercatat };
         }
         await recordNotPosted("unknown", message, accurateRes);
-        return { jenis: "tidak_pasti", pesan };
+        return { jenis: "tidak_pasti", pesan, ...(posted?.number ? { nomor: posted.number } : {}) };
     }
 }
 

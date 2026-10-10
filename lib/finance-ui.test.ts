@@ -2,7 +2,7 @@
  * penyaring catatan lama. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { alasanFaktur, alasanTidakAda, catatanPosting, izinFinance, kunciBaris, saringCatatan, statusPosting, statusTransfer, type AttemptFinance } from "./finance-ui.ts";
+import { alasanFaktur, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, saringCatatan, statusPosting, statusTransfer, type AttemptFinance } from "./finance-ui.ts";
 
 const attempt = (over: Partial<AttemptFinance>): AttemptFinance => ({
     attemptId: "a1", state: "unknown", status: "unknown", stale: false, accurateNumber: "", actorName: "Finance A", targetDbId: "DB-1",
@@ -59,6 +59,19 @@ test("kunci baris: terposting/tidak pasti/sedang/data usang mengunci; gagal jela
     assert.equal(kunciBaris({ posting: { kode: "terposting", nomor: "PP/2", catatanTertinggal: true }, izin }).posting, undefined, "catatan tertinggal boleh dicatat");
     const tanpaIzin = kunciBaris({ posting: { kode: "belum", nomor: "", catatanTertinggal: false }, izin: izinFinance(new Set(["finance.view"])) });
     assert.ok(tanpaIzin.posting && tanpaIzin.status && tanpaIzin.tujuan);
+});
+
+test("A-2/B-2: kunci lokal hanya untuk belum/gagal — hasil terposting (catatan tertinggal) tetap bisa dicatat di tab yang sama", () => {
+    const izin = izinFinance(new Set(["finance.view", "finance.update", "finance.resolve_unknown"]));
+    assert.equal(kodeTampil("belum", true), "tidak_pasti");
+    assert.equal(kodeTampil("gagal", true), "tidak_pasti");
+    for (const kode of ["terposting", "sedang", "tidak_pasti", "belum"] as const) assert.equal(kodeTampil(kode, false), kode);
+    assert.equal(kodeTampil("terposting", true), "terposting");
+    assert.equal(kodeTampil("sedang", true), "sedang");
+    const tertinggal = kunciBaris({ posting: { kode: "terposting", nomor: "PP/2", catatanTertinggal: true }, izin, kunciLokal: true });
+    assert.equal(tertinggal.posting, undefined, "Catat hasil posting tidak boleh buntu karena kunci lokal");
+    assert.match(tertinggal.selesaikan!, /Hanya untuk posting tidak pasti/);
+    assert.match(kunciBaris({ posting: { kode: "gagal", nomor: "", catatanTertinggal: false }, izin, kunciLokal: true }).posting!, /tidak pasti/);
 });
 
 test("'Tidak ada di Accurate' hanya setelah percobaan basi ≥ 2 menit; tanpa attempt server boleh", () => {
