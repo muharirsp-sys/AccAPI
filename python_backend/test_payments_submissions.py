@@ -97,7 +97,7 @@ def main_check():
     detail = r.json()["data"]
     rows = {x["record_id"]: x for x in detail["records"]}
     assert set(rows) == {"A", "B"} and rows["A"]["accurate_post_status"] == "posted" and rows["A"]["locked_reason"], rows
-    assert rows["B"]["locked_reason"] == "" and rows["A"]["accurate_purchase_payment_number"] == "PP/1010/1", rows
+    assert "diajukan" in rows["B"]["locked_reason"] and rows["A"]["accurate_purchase_payment_number"] == "PP/1010/1", rows
     assert detail["cart_items"]["PT ABC||LPB"]["jenis_pembayaran"] == "TRF", detail["cart_items"]
 
     r = client.get("/payments/submissions/TIDAK-ADA")

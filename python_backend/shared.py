@@ -1891,7 +1891,7 @@ def effective_post_status(rec: Dict[str, Any]) -> str:
     return status
 
 
-# BL-05 (S6-0e): rekaman yang sudah ditransfer, terposting, atau berposting TIDAK PASTI terkunci di semua jalur tulis
+# BL-05/BL-49 (S6-0e): rekaman yang sudah diajukan, ditransfer, terposting, atau berposting TIDAK PASTI terkunci di semua jalur tulis
 # Pembayaran (update, delete, clear, Excel SPPD, ganti nama/auto-fix principal). Satu-satunya isian yang tetap boleh:
 # `ajukan` — centang pilihan layar, bukan data (it08 "Pilihan bukan data"). Status/bukti/tanggal transfer milik Finance
 # (/payments/finance/update), bukan jalur ini. Nilai yang dikirim sama dengan yang tersimpan = bukan perubahan.
@@ -1911,8 +1911,14 @@ def payment_lock_reason(rec: Dict[str, Any]) -> str:
         return f"sudah terposting di Accurate ({no})" if no else "sudah terposting di Accurate"
     if post == "unknown":
         return "posting Accurate tidak pasti (menunggu penyelesaian Finance)"
-    if s(rec.get("status_pembayaran", "")).lower() == "sudah transfer":
+    status = s(rec.get("status_pembayaran", "")).lower()
+    if status == "sudah transfer":
         return "sudah ditransfer"
+    # BL-49 (owner menerima): rekaman yang DIAJUKAN terkunci kecuali dikembalikan Finance. Mulai: cart/submit
+    # (Belum Transfer + submission_id); berakhir: Finance "Ajukan Ulang" (submission_id tetap ada -> status yang dicek,
+    # sama dengan _already_submitted di routers/payments.py); diajukan lagi -> terkunci lagi.
+    if status == "belum transfer" and s(rec.get("submission_id", "")):
+        return "sudah diajukan; minta Finance mengembalikan (Ajukan Ulang)"
     return ""
 
 

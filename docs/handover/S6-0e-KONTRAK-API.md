@@ -12,13 +12,19 @@ FastAPI = `NEXT_PUBLIC_FASTAPI_BASE_URL` (port 8000, cookie sesi + `X-CSRF-Token
 - **Pratinjau**: `?dry_run=1` (atau badan JSON `"dry_run": true` untuk endpoint JSON). Pratinjau **tidak pernah menulis**,
   memakai kode yang sama dengan eksekusi, dan menjawab `200 {ok:true, dry_run:true, can_apply, ...laporan}` walau ada
   masalah (masalah = `can_apply:false` + `error`). Eksekusi pada data yang sama menghasilkan laporan yang sama.
-- **Kunci BL-05** (`shared.payment_lock_reason`): rekaman **terkunci** bila `status_pembayaran = "Sudah Transfer"` ATAU
-  posting Accurate `posted`/`unknown` (`failed` bergalat ambigu = `unknown`; `failed` berpesan jelas TIDAK terkunci).
+- **Kunci BL-05/BL-49** (`shared.payment_lock_reason`): rekaman **terkunci** bila `status_pembayaran = "Sudah Transfer"` ATAU
+  posting Accurate `posted`/`unknown` (`failed` bergalat ambigu = `unknown`; `failed` berpesan jelas TIDAK terkunci) ATAU
+  **sudah diajukan** (`"Belum Transfer"` + `submission_id`; alasan `"sudah diajukan; minta Finance mengembalikan (Ajukan Ulang)"`).
+  Kunci "diajukan" berakhir saat Finance memberi "Ajukan Ulang"; diajukan lagi = terkunci lagi.
   Satu-satunya isian yang tetap boleh di jalur Pembayaran: `ajukan` (centang pilihan layar). Bukti, tanggal transfer,
   status transfer/posting = milik Finance (`/payments/finance/update`). Nilai yang dikirim sama dengan yang tersimpan
   (angka/tanggal dinormalisasi) **bukan** perubahan. Entri kunci: `{record_id, no_lpb, principle, reason, fields?}`.
 
 ## 1. Pembayaran (FastAPI `routers/payments.py`)
+
+### GET `/payments/data` — BERUBAH
+Izin `payments.view`. Tiap baris kini memuat `locked_reason` (`""` = boleh diubah/dihapus; selain itu alasan kunci dari server).
+UI menonaktifkan isian/hapus dengan alasan ini — jangan menebak dari status.
 
 ### POST `/payments/update` — BERUBAH
 Izin `payments.update`, CSRF. Badan `{items:[{record_id, <isian>…}]}` (sama seperti sebelumnya).
@@ -162,5 +168,4 @@ Izin `finance.view`. Baca-saja. `?invoices=INV-1,INV-2&invoices=INV-3` — satu 
 | BL-33 riwayat nilai lama → baru | Tidak ada penyimpanan riwayat; audit log hanya jumlah/sampel. | Penyimpanan baru (skema, zona §3). UI tampilkan varian "riwayat belum tersedia". |
 | Konkurensi optimis `/payments/update` | UI mengirim `source_updated_at`, server mengabaikannya; tulis terakhir menang (di dalam satu lock). | Versi per rekaman + 409 basi. |
 | Pemilih pemasok/rekening (S6b) | Mapping diketik bebas (`/payments/finance/mapping`). | GET proxy baca-saja `vendor/list.do`, `glaccount/list.do`. |
-| Rekaman "Belum Transfer" (sudah diajukan) | Masih bisa diubah lewat `/payments/update` / Excel SPPD (BL-49 bagian "terkunci kecuali dikembalikan" belum). | Keputusan owner (lihat laporan). |
 | Restore backup di layar | Server siap; halaman Pembayaran lama masih bertuliskan "backup export PAYMENTS untuk restore" tetapi kini ditolak. | Tombol Restore di Format SPPD (S6a). |

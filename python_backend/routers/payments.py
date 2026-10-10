@@ -126,6 +126,8 @@ def payments_data(request: Request):
             row["gap_nilai"] = gap_val
             row["gap_nilai_display"] = format_idr(gap_val)
         row["status_pembayaran"] = row.get("status_pembayaran", "")
+        # S6-0e: alasan kunci dari server (BL-05/BL-49; failed ambigu = unknown) — UI tidak menebak dari status.
+        row["locked_reason"] = payment_lock_reason(r)
         rows.append(row)
     return ORJSONResponse({"ok": True, "data": rows})
 

@@ -47,8 +47,10 @@ def seed():
         "PST-1": rec("PST-1", "Ajukan Ulang", "posted"),
         # "failed" bergalat AMBIGU = unknown (tinjauan S6-0a) -> terkunci.
         "UNK-1": rec("UNK-1", "Belum Transfer", "failed", "Accurate tidak merespons dalam 30 detik (timeout)."),
-        # "failed" berpesan JELAS (owner 9 Okt: boleh dikirim ulang) -> tidak terkunci.
-        "FAIL-1": rec("FAIL-1", "Belum Transfer", "failed", "Vendor tidak ditemukan"),
+        # "failed" berpesan JELAS (owner 9 Okt: boleh dikirim ulang) dan DIKEMBALIKAN Finance -> tidak terkunci.
+        "FAIL-1": rec("FAIL-1", "Ajukan Ulang", "failed", "Vendor tidak ditemukan"),
+        # BL-49 (owner menerima): sudah DIAJUKAN (Belum Transfer + submission) -> terkunci sampai Finance mengembalikan.
+        "SUB-1": rec("SUB-1", "Belum Transfer", ""),
     }
     with open(DB_PATH, "w", encoding="utf-8") as f:
         json.dump({"lpb": lpb, "submissions": {}, "drafts": {}, "proofs": {}}, f)
@@ -73,8 +75,11 @@ def check_helper():
     db = json.loads(seed())["lpb"]
     assert shared.payment_lock_reason(db["OPEN-1"]) == ""
     assert shared.payment_lock_reason(db["FAIL-1"]) == "", "failed berpesan jelas ikut terkunci"
-    for key in ("TRF-1", "PST-1", "UNK-1"):
+    for key in ("TRF-1", "PST-1", "UNK-1", "SUB-1"):
         assert shared.payment_lock_reason(db[key]), f"{key} tidak terkunci"
+    assert "diajukan" in shared.payment_lock_reason(db["SUB-1"]), shared.payment_lock_reason(db["SUB-1"])
+    # Status Belum Transfer TANPA pengajuan (data lama/aneh) bukan "diajukan".
+    assert shared.payment_lock_reason({**db["SUB-1"], "submission_id": ""}) == ""
 
 
 def check_update():
@@ -90,14 +95,17 @@ def check_update():
     assert [x["record_id"] for x in body["locked"]] == ["TRF-1"] and body["locked"][0]["fields"] == ["nilai_invoice"], body
     assert raw() == before, "permintaan ditolak tetapi ledger berubah"
 
-    for key, field, value in [("PST-1", "principle", "PT LAIN"), ("UNK-1", "invoice_no", "INV-X"), ("TRF-1", "tgl_pembayaran", "2026-10-01")]:
+    for key, field, value in [("PST-1", "principle", "PT LAIN"), ("UNK-1", "invoice_no", "INV-X"), ("TRF-1", "tgl_pembayaran", "2026-10-01"),
+                              ("SUB-1", "nilai_invoice", 999)]:
         r = client.post("/payments/update", json={"items": [{"record_id": key, field: value}]})
         assert r.status_code == 409, f"{key}.{field} terkunci tetapi diterima: {r.status_code}"
     assert raw() == before
 
     # `ajukan` = pilihan layar (it08 "Pilihan bukan data") tetap boleh; nilai yang SAMA bukan perubahan.
-    r = client.post("/payments/update", json={"items": [{"record_id": "TRF-1", "ajukan": True, "principle": "PT ABC", "nilai_invoice": "1.000"}]})
+    r = client.post("/payments/update", json={"items": [{"record_id": "TRF-1", "ajukan": True, "principle": "PT ABC", "nilai_invoice": "1.000"},
+                                                        {"record_id": "SUB-1", "ajukan": True}]})
     assert r.status_code == 200, r.text[:200]
+    assert ledger()["SUB-1"]["ajukan"] is True
     after = ledger()["TRF-1"]
     assert after["ajukan"] is True and after["principle"] == "PT ABC" and after["nilai_invoice"] == 1000.0, after
 
@@ -109,9 +117,9 @@ def check_update():
 
 def check_delete_and_clear():
     before = seed()
-    r = client.post("/payments/delete", json={"record_ids": ["OPEN-1", "PST-1"]})
-    assert r.status_code == 409, f"hapus rekaman terposting diterima: {r.status_code} {r.text[:200]}"
-    assert [x["record_id"] for x in r.json()["locked"]] == ["PST-1"], r.json()
+    r = client.post("/payments/delete", json={"record_ids": ["OPEN-1", "PST-1", "SUB-1"]})
+    assert r.status_code == 409, f"hapus rekaman terposting/diajukan diterima: {r.status_code} {r.text[:200]}"
+    assert [x["record_id"] for x in r.json()["locked"]] == ["PST-1", "SUB-1"], r.json()
     assert raw() == before, "hapus ditolak tetapi rekaman lain ikut terhapus"
     r = client.post("/payments/delete", json={"record_ids": ["OPEN-1"]})
     assert r.status_code == 200 and r.json()["deleted"] == 1, r.text[:200]
@@ -120,17 +128,18 @@ def check_delete_and_clear():
     before = raw()
     r = client.post("/payments/clear", json={"confirm": "CLEAR PAYMENTS"})
     assert r.status_code == 409, f"clear dengan rekaman terkunci diterima: {r.status_code} {r.text[:200]}"
-    assert r.json()["locked_count"] == 3, r.json()
+    assert r.json()["locked_count"] == 4, r.json()
     assert raw() == before, "clear ditolak tetapi ledger berubah"
 
 
 def check_sppd_excel():
     before = seed()
-    files = xlsx([{"Record ID": "OPEN-1", "Keterangan": "boleh"}, {"Record ID": "TRF-1", "Nilai Pembayaran": 1}])
+    files = xlsx([{"Record ID": "OPEN-1", "Keterangan": "boleh"}, {"Record ID": "TRF-1", "Nilai Pembayaran": 1},
+                  {"Record ID": "SUB-1", "Potongan": 5}])
     r = client.post("/payments/sppd/upload", files=files)
-    assert r.status_code == 409, f"Excel SPPD mengubah rekaman Sudah Transfer: {r.status_code} {r.text[:200]}"
+    assert r.status_code == 409, f"Excel SPPD mengubah rekaman Sudah Transfer/diajukan: {r.status_code} {r.text[:200]}"
     body = r.json()
-    assert [x["record_id"] for x in body["locked"]] == ["TRF-1"], body
+    assert [x["record_id"] for x in body["locked"]] == ["TRF-1", "SUB-1"], body
     assert body["locked"][0]["fields"][0]["field"] == "nilai_pembayaran", body
     assert raw() == before, "unggahan ditolak tetapi baris lain tersimpan"
 
@@ -147,9 +156,10 @@ def check_rename():
     r = client.post("/api/bank-data/replace-principle-name", json={"old_name": "pt abc", "new_name": "PT ABC BARU"})
     assert r.status_code == 200, r.text[:200]
     body = r.json()
-    assert body["replaced"] == 2 and body["locked_skipped"] == 3, body
+    assert body["replaced"] == 2 and body["locked_skipped"] == 4, body
     names = {k: v["principle"] for k, v in ledger().items()}
-    assert names == {"OPEN-1": "PT ABC BARU", "FAIL-1": "PT ABC BARU", "TRF-1": "PT ABC", "PST-1": "PT ABC", "UNK-1": "PT ABC"}, names
+    assert names == {"OPEN-1": "PT ABC BARU", "FAIL-1": "PT ABC BARU", "TRF-1": "PT ABC", "PST-1": "PT ABC", "UNK-1": "PT ABC",
+                     "SUB-1": "PT ABC"}, names
 
     # Auto-fix memakai kunci yang sama: rekaman terkunci tidak di-rename.
     seed()
@@ -157,11 +167,27 @@ def check_rename():
         os.environ["BANK_DATA_PATH"], index=False)
     preview = client.post("/api/bank-data/auto-fix-names", json={"confirm": False}).json()
     change = next((c for c in preview["changes"] if c["old"] == "PT ABC"), None)
-    assert change and change["count"] == 2 and change["locked"] == 3, preview
+    assert change and change["count"] == 2 and change["locked"] == 4, preview
     r = client.post("/api/bank-data/auto-fix-names", json={"confirm": True})
     assert r.status_code == 200 and r.json()["executed"], r.text[:200]
     names = {k: v["principle"] for k, v in ledger().items()}
-    assert names["OPEN-1"] == "PT. ABC" and names["TRF-1"] == "PT ABC" and names["UNK-1"] == "PT ABC", names
+    assert names["OPEN-1"] == "PT. ABC" and names["TRF-1"] == "PT ABC" and names["UNK-1"] == "PT ABC" and names["SUB-1"] == "PT ABC", names
+
+
+def check_returned_and_data():
+    """BL-49 berakhir saat Finance mengembalikan (Ajukan Ulang, submission_id tetap ada); /payments/data mengirim
+    locked_reason dari server (termasuk failed ambigu = unknown) agar UI tidak menebak."""
+    seed()
+    db = shared.load_payments_db()
+    db["lpb"]["SUB-1"]["status_pembayaran"] = "Ajukan Ulang"
+    shared.save_payments_db(db)
+    r = client.post("/payments/update", json={"items": [{"record_id": "SUB-1", "nilai_invoice": 1200}]})
+    assert r.status_code == 200 and ledger()["SUB-1"]["nilai_invoice"] == 1200.0, r.text[:200]
+    seed()
+    rows = {x["record_id"]: x for x in client.get("/payments/data").json()["data"]}
+    assert rows["OPEN-1"]["locked_reason"] == "" and rows["FAIL-1"]["locked_reason"] == "", rows["FAIL-1"]
+    assert "tidak pasti" in rows["UNK-1"]["locked_reason"] and "diajukan" in rows["SUB-1"]["locked_reason"], rows["UNK-1"]
+    assert rows["TRF-1"]["locked_reason"] == "sudah ditransfer", rows["TRF-1"]
 
 
 def main_check():
@@ -170,6 +196,7 @@ def main_check():
     check_delete_and_clear()
     check_sppd_excel()
     check_rename()
+    check_returned_and_data()
     print("OK test_payments_lock")
 
 
