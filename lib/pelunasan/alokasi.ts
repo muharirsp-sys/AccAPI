@@ -20,6 +20,9 @@ export type PetaAkun = {
     mapPot1Account: string; mapPot2Account: string; mapPot3Account: string;
 };
 
+/** Baris Excel yang dilewati alokasi: tanpa Code Outlet, atau tanpa nominal bayar/retur/potongan sama sekali. */
+export type BarisDilewati = { row: number; reason: "KODE_OUTLET_KOSONG" | "TANPA_NOMINAL" };
+
 export type PeringatanRetur = {
     invoiceNo: string,
     customerNo: string,
@@ -48,8 +51,10 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
     const ayatSilangDocs: Bebas[] = [];
     const unresolvedReturWarnings: PeringatanRetur[] = [];
     const unresolvedReturKeys = new Set<string>();
+    // S6e-2 butir 9: baris data yang tidak menghasilkan pelunasan (nomor baris mulai 1) — untuk langkah Tinjau.
+    const dilewati: BarisDilewati[] = [];
 
-    cleanedData.forEach((row: Bebas) => {
+    cleanedData.forEach((row: Bebas, indeks: number) => {
         const rawOutlet = getTextVal(row, "Code Outlet");
         let srbDesc = getTextVal(row, "No.SRB Rt Ktr");
         let rjsDesc = getTextVal(row, "No.RJS RT Gt");
@@ -86,7 +91,7 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
             branchName = ib.branchName;
         }
 
-        if (!customerNo) return;
+        if (!customerNo) { dilewati.push({ row: indeks + 1, reason: "KODE_OUTLET_KOSONG" }); return; }
 
         // 1. Ambil nominal pembayaran
         const tunaiAmt = Number(getVal(row, "Tunai")) || 0;
@@ -182,6 +187,7 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
                 // Enum API Accurate untuk Non Tunai Lainnya secara harafiah adalah OTHERS
                 payments.push({ type: 'RETUR_ONLY', amt: 0, bank: mapTunaiBank || "110102", code: mapTunaiAutoNum || "300", cNo: "", pMeth: "OTHERS" });
             } else {
+                dilewati.push({ row: indeks + 1, reason: "TANPA_NOMINAL" });
                 return; // baris kosong beneran
             }
         }
@@ -568,5 +574,5 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
         });
     });
 
-    return { groupedMap, ayatSilangDocs, unresolvedReturWarnings };
+    return { groupedMap, ayatSilangDocs, unresolvedReturWarnings, dilewati };
 }

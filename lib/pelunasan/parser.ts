@@ -11,7 +11,7 @@
 import { getTextVal, getVal, type Bebas } from "./sel.ts";
 import { buildReturLookupKey, cariRetur, isAyatSilangReference, type AccurateFetch, type KueriRetur } from "./retur.ts";
 import { cariFaktur } from "./cari-faktur.ts";
-import { alokasikan, type PetaAkun } from "./alokasi.ts";
+import { alokasikan, type BarisDilewati, type PetaAkun } from "./alokasi.ts";
 import { finalisasiPayload, pesanPeringatanRetur, susunBarisManual } from "./payload.ts";
 
 export type JenisLapor = "loading" | "success" | "warning" | "error";
@@ -96,8 +96,9 @@ export type OpsiPelunasan = {
  * Baris Excel Pelunasan (sudah `sheet_to_json` + header `(*wajib)` dibersihkan) → payload sales-receipt.
  * Pemanggil memastikan `deteksiFormatPelunasan(rows)` true. Baris masukan disalin dangkal (tidak dimutasi).
  * `manualRows` = baris laporan retur/pot.lain yang belum ketemu (null bila tidak ada) — pemanggil yang mengunduh.
+ * `counts` (S6e-2 butir 9) = baris data dibaca + yang dilewati beserta alasannya (langkah Tinjau); payload/manualRows tidak berubah.
  */
-export async function parsePelunasan(rows: Bebas[], opsi: OpsiPelunasan): Promise<{ payload: Bebas[]; manualRows: Bebas[] | null }> {
+export async function parsePelunasan(rows: Bebas[], opsi: OpsiPelunasan): Promise<{ payload: Bebas[]; manualRows: Bebas[] | null; counts: { read: number; skipped: BarisDilewati[] } }> {
     const { trxDate, isKeySaved, accurateFetch } = opsi;
     const lapor: Lapor = opsi.lapor ?? (() => {});
     const cleanedData = rows.map((r) => ({ ...r }));
@@ -123,7 +124,7 @@ export async function parsePelunasan(rows: Bebas[], opsi: OpsiPelunasan): Promis
         ({ invoiceBranchMap, invoiceLookupDebugMap } = await cariFaktur(invoiceNos, accurateFetch));
     }
 
-    const { groupedMap, ayatSilangDocs, unresolvedReturWarnings } = alokasikan(cleanedData, {
+    const { groupedMap, ayatSilangDocs, unresolvedReturWarnings, dilewati } = alokasikan(cleanedData, {
         trxDate, peta: opsi.peta, returMap, invoiceBranchMap, invoiceLookupDebugMap,
     });
 
@@ -135,5 +136,5 @@ export async function parsePelunasan(rows: Bebas[], opsi: OpsiPelunasan): Promis
     }
 
     lapor("success", `Format Pelunasan dikonversi menjadi ${payload.length} Sales Receipt.`, { id: "parse" });
-    return { payload, manualRows };
+    return { payload, manualRows, counts: { read: cleanedData.length, skipped: dilewati } };
 }
