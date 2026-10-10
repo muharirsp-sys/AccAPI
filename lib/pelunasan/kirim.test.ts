@@ -2,7 +2,7 @@
  * complete. Server (lock/proxy/complete) TIRUAN di sini; riwayat Accurate = emulator lib/pelunasan/uji (tanpa jaringan). */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { kirimPelunasan, type JawabanHttp } from "./kirim.ts";
+import { GalatKirim, kirimPelunasan, type JawabanHttp } from "./kirim.ts";
 import { buatEmulator } from "./uji/emulator-accurate.ts";
 import { pratinjauRiwayatAccurate } from "./pratinjau-ganda.ts";
 import type { AccurateFetch } from "./retur.ts";
@@ -113,4 +113,25 @@ test("409 LOCK_REQUIRED = gagal (tidak terkirim) hanya paket itu; placeholder ak
     const b = server(sukses, { status: 200, data: { ok: true, lockId: null, blockedKeys: ["K"] } });
     await assert.rejects(kirimPelunasan(banyak(2), { postJson: b.postJson, expectedDatabaseId: "DB-1" }), /berubah status duplikat/);
     assert.equal(b.log.proxy.length, 0);
+});
+
+test("galat lock membawa code/status/sent:false (GalatKirim) — UI memetakan menurut kode, bukan teks; tanpa kiriman", async () => {
+    const kasus: Array<[JawabanHttp | "putus", string, number]> = [
+        [{ status: 403, data: { error: "butuh pelunasan.kirim", code: "PERMISSION_REQUIRED" } }, "PERMISSION_REQUIRED", 403],
+        [{ status: 403, data: { error: "hanya Finance", code: "OVERRIDE_PERMISSION_REQUIRED" } }, "OVERRIDE_PERMISSION_REQUIRED", 403],
+        [{ status: 409, data: { error: "database berubah", code: "database_changed" } }, "database_changed", 409],
+        [{ status: 500, data: { error: "x" } }, "HTTP_500", 500],
+        [{ status: 200, data: { ok: true, lockId: null, blockedKeys: ["K"] } }, "BLOCKED_KEYS", 200],
+        [{ status: 200, data: { ok: true, lockId: null, blockedKeys: [] } }, "LOCK_NOT_ISSUED", 200],
+        ["putus", "NETWORK", 0],
+    ];
+    for (const [jawab, code, status] of kasus) {
+        const s = jawab === "putus"
+            ? { postJson: async () => { throw new Error("Failed to fetch"); }, log: { proxy: [] as unknown[] } }
+            : server(sukses, jawab);
+        const e = await kirimPelunasan(banyak(2), { postJson: s.postJson, expectedDatabaseId: "DB-1" }).then(() => null, (x: unknown) => x);
+        assert.ok(e instanceof GalatKirim, code);
+        assert.deepEqual([e.code, e.status, e.sent], [code, status, false]);
+        assert.equal(s.log.proxy.length, 0);
+    }
 });

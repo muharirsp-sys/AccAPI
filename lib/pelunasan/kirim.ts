@@ -41,6 +41,23 @@ export type DepsKirim = {
     ukuranPaket?: number;
 };
 
+/**
+ * Galat SEBELUM ada yang dikirim (lock ditolak / terblokir / tak terbit / jaringan saat lock): membawa `code` server agar UI
+ * memetakan menurut kode (PERMISSION_REQUIRED = pelunasan.kirim, OVERRIDE_PERMISSION_REQUIRED = finance.override_duplicate, …),
+ * bukan teks. `sent` selalu false di sini.
+ */
+export class GalatKirim extends Error {
+    readonly code: string;
+    readonly status: number;
+    readonly sent = false as const;
+    constructor(message: string, code: string, status: number) {
+        super(message);
+        this.name = "GalatKirim";
+        this.code = code;
+        this.status = status;
+    }
+}
+
 const PATH = "/api/sales-receipt/bulk-save.do";
 /** Penolakan proxy sebelum kirim yang berlaku untuk SEMUA paket berikutnya (sesi/izin/database) — kirim dihentikan. */
 const BERHENTI = new Set(["database_changed", "ACCURATE_SESSION_INCOMPLETE", "DATABASE_REQUIRED", "PERMISSION_REQUIRED"]);
@@ -49,8 +66,8 @@ type Data = { error?: unknown; code?: unknown; sent?: unknown; rows?: unknown; l
 const teks = (v: unknown) => (typeof v === "string" ? v : "");
 
 /**
- * Lock + kirim. Galat lock (ditolak, ada yang berubah terblokir, lock tak terbit) MELEMPAR seperti kode lama — tidak ada yang
- * dikirim. Setelah lock terbit tidak pernah melempar: setiap baris mendapat hasil.
+ * Lock + kirim. Galat lock (ditolak, ada yang berubah terblokir, lock tak terbit, jaringan) MELEMPAR GalatKirim {code, status,
+ * sent:false} — tidak ada yang dikirim. Setelah lock terbit tidak pernah melempar: setiap baris mendapat hasil.
  */
 export async function kirimPelunasan(rows: Bebas[], deps: DepsKirim): Promise<{ lockId: string | null; rows: BarisHasil[] }> {
     const n = rows.length;
@@ -74,13 +91,17 @@ export async function kirimPelunasan(rows: Bebas[], deps: DepsKirim): Promise<{ 
         allowHistoryKeys: o.allowHistoryKeys ?? [],
         overrideReason: o.overrideReason ?? "",
         expectedDatabaseId: deps.expectedDatabaseId,
+    }).catch((e: unknown) => {
+        throw new GalatKirim(`Gagal mengunci idempotency (${e instanceof Error ? e.message : String(e)}) — tidak ada yang dikirim.`, "NETWORK", 0);
     });
     const ld = lock.data as Data;
-    if (lock.status < 200 || lock.status >= 300) throw new Error(teks(ld?.error) || "Gagal mengunci idempotency.");
-    if (Array.isArray(ld?.blockedKeys) && ld.blockedKeys.length > 0) {
-        throw new Error("Beberapa baris berubah status duplikat saat review. Buka ulang review lalu pilih kembali.");
+    if (lock.status < 200 || lock.status >= 300) {
+        throw new GalatKirim(teks(ld?.error) || "Gagal mengunci idempotency.", teks(ld?.code) || `HTTP_${lock.status}`, lock.status);
     }
-    if (typeof ld?.lockId !== "string" || !ld.lockId) throw new Error("Lock idempotency tidak diterbitkan server — tidak ada yang dikirim.");
+    if (Array.isArray(ld?.blockedKeys) && ld.blockedKeys.length > 0) {
+        throw new GalatKirim("Beberapa baris berubah status duplikat saat review. Buka ulang review lalu pilih kembali.", "BLOCKED_KEYS", lock.status);
+    }
+    if (typeof ld?.lockId !== "string" || !ld.lockId) throw new GalatKirim("Lock idempotency tidak diterbitkan server — tidak ada yang dikirim.", "LOCK_NOT_ISSUED", lock.status);
     const lockId = ld.lockId;
 
     // Status idempotency dicatat SERVER untuk baris yang diteruskan (SENDING → SUCCESS/UNKNOWN); laporan klien hanya menaikkan

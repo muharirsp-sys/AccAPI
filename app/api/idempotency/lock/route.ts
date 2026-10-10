@@ -60,10 +60,10 @@ export async function POST(req: Request) {
         const reason = typeof overrideReason === 'string' ? overrideReason.trim() : '';
         if (!preview && overrides.length > 0) {
             if (!access.perms!.has('finance.override_duplicate')) {
-                return NextResponse.json({ error: 'Override blok duplikat hanya untuk kewenangan Finance (finance.override_duplicate).' }, { status: 403 });
+                return NextResponse.json({ error: 'Override blok duplikat hanya untuk kewenangan Finance (finance.override_duplicate).', code: 'OVERRIDE_PERMISSION_REQUIRED' }, { status: 403 });
             }
             if (reason.length < 15) {
-                return NextResponse.json({ error: 'Alasan override wajib (minimal 15 karakter).' }, { status: 400 });
+                return NextResponse.json({ error: 'Alasan override wajib (minimal 15 karakter).', code: 'OVERRIDE_REASON_REQUIRED' }, { status: 400 });
             }
         }
 

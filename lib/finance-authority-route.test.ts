@@ -83,6 +83,7 @@ test("D-18 override sales-receipt: hanya finance.override_duplicate -> lolos; al
     const body = (overrideReason = "") => ({ keys: [{ key: successRow[0].key }], allowLockedKeys: [successRow[0].key], overrideReason });
     const denied = await asUserWith(financeAllBut("finance.override_duplicate"), () => lockIdempotency(jsonPost("/api/idempotency/lock", body("alasan override yang cukup panjang"))), successRow);
     assert.equal(denied.status, 403, "override tanpa finance.override_duplicate harus 403");
+    assert.equal((await denied.json()).code, "OVERRIDE_PERMISSION_REQUIRED", "S6e-2b memetakan menurut kode");
     // S6e-2: lock non-pratinjau juga butuh pelunasan.kirim (Finance mengirim sendiri, owner #1/#5).
     const noReason = await asUserWith(["finance.override_duplicate", "pelunasan.kirim"], () => lockIdempotency(jsonPost("/api/idempotency/lock", body("pendek"))), successRow);
     assert.equal(noReason.status, 400, "alasan < 15 karakter harus 400");
