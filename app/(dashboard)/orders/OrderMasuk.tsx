@@ -48,6 +48,7 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
     const [sumber, setSumber] = useState<"" | "sales" | "petugas">("");
     const [tarik, setTarik] = useState<{ busy: boolean; hasil?: HasilTarik; galat?: string; ragu?: boolean }>({ busy: false });
     const [dialogKoneksi, setDialogKoneksi] = useState(false);
+    const [koneksiRagu, setKoneksiRagu] = useState(false);
 
     // Daftar per cakupan; data cakupan lain tetap tampil redup sampai jawaban baru tiba (List Report).
     const [daftar, muatDaftar] = useLoad(useCallback(async (): Promise<Load<Daftar>> => {
@@ -121,7 +122,9 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
     async function ubahKoneksi() {
         const nyala = !koneksi.data?.connection.enabled;
         const j = await fastapi("POST", "/orders/connection", { enabled: nyala });
-        if (tidakPasti(j)) { setDialogKoneksi(false); muatKoneksi(); throw new Error(BELUM_PASTI); }
+        // Tidak pasti: setelan mungkin sudah berubah. Dialog ditutup, pesan tetap di halaman, status koneksi dibaca ulang
+        // (tombol terkunci selama memuat ulang).
+        if (tidakPasti(j)) { setDialogKoneksi(false); setKoneksiRagu(true); muatKoneksi(); return; }
         if (!sukses(j)) throw new Error(pesanJawaban(j, "Koneksi Order Sales gagal diubah."));
         setDialogKoneksi(false);
         muatKoneksi();
@@ -157,6 +160,7 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
                 </MessageStrip>
             )}
             {tarik.galat && <MessageStrip tone="neg" title="Tarik Order Sales gagal." onClose={() => setTarik({ busy: false })}>{tarik.galat}</MessageStrip>}
+            {koneksiRagu && <MessageStrip tone="warn" title="Hasil ubah koneksi Order Sales belum pasti." onClose={() => setKoneksiRagu(false)}>{BELUM_PASTI} Lihat status tarik otomatis di bawah sebelum mengubahnya lagi.</MessageStrip>}
             {tarik.ragu && <MessageStrip tone="warn" title="Hasil tarik belum pasti." onClose={() => setTarik({ busy: false })}>{BELUM_PASTI} Menarik lagi aman: permintaan yang sudah masuk tidak digandakan.</MessageStrip>}
 
             <section className="fi-panel" aria-label="Order Sales">
@@ -176,7 +180,7 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
                                 {kon.connection.last_result && ` (${kon.connection.last_result.imported} masuk, ${kon.connection.last_result.failed} tertahan).`}
                             </p>
                         </div>
-                        <Button icon={<Power className="fi-icon" aria-hidden />} disabled={Boolean(kunciKoneksi)} disabledReason={kunciKoneksi} onClick={() => setDialogKoneksi(true)}>
+                        <Button icon={<Power className="fi-icon" aria-hidden />} disabled={Boolean(kunciKoneksi)} disabledReason={kunciKoneksi} onClick={() => { setKoneksiRagu(false); setDialogKoneksi(true); }}>
                             {kon.connection.enabled ? "Matikan tarik otomatis…" : "Nyalakan tarik otomatis…"}
                         </Button>
                         <Button icon={<Download className="fi-icon" aria-hidden />} busy={tarik.busy} disabled={Boolean(tanpaIzinTarik)} disabledReason={tanpaIzinTarik} onClick={() => void tarikSekarang()}>Tarik sekarang</Button>

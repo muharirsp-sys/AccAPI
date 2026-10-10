@@ -60,6 +60,7 @@ type Opsi = {
     /** Ditunggu sebelum status antrean daftar dijawab (keadaan "memuat"). */
     tundaStatus?: () => Promise<void>;
     koneksi?: unknown;
+    koneksiPost?: () => { body?: unknown; status?: number; html?: string };
     pull?: { body?: unknown; status?: number; html?: string };
     detail?: Record<string, { body?: unknown; status?: number; html?: string }>;
     simpan?: Array<{ body?: unknown; status?: number; html?: string }>;
@@ -90,7 +91,11 @@ async function pasang(page: Page, opsi: Opsi = {}): Promise<Log> {
             return fa(r, x.body, x.status, x.html);
         }
         if (u.pathname === "/orders/connection") {
-            if (m === "POST") { log.koneksi.push(req.postDataJSON()); return fa(r, { ok: true, connection: { enabled: true, owner: "PETUGAS A" }, pending: 0 }); }
+            if (m === "POST") {
+                log.koneksi.push(req.postDataJSON());
+                const x = opsi.koneksiPost?.() ?? { body: { ok: true, connection: { enabled: true, owner: "PETUGAS A" }, pending: 0 } };
+                return fa(r, x.body, x.status, x.html);
+            }
             return fa(r, opsi.koneksi ?? { ok: true, pending: 3, connection: { enabled: false, owner: "", updated_by: "", updated_at: "", last_run_at: "", last_result: null } });
         }
         if (u.pathname === "/orders/pull") {
@@ -249,6 +254,23 @@ test("Tarik Order Sales: hasil tarikan tampil; jawaban tidak pasti = belum pasti
     await expect(dlg).toContainText("3 permintaan");
     await dlg.getByRole("button", { name: "Nyalakan" }).click();
     await expect(dlg).toBeHidden();
+    expect(log.koneksi).toEqual([{ enabled: true }]);
+});
+
+test("Koneksi Order Sales: jawaban tidak pasti → dialog tertutup, pesan belum pasti tetap di halaman, status dibaca ulang", async ({ page }) => {
+    let bacaKoneksi = 0;
+    const log = await pasang(page, { koneksiPost: () => ({ status: 504, html: HTML_502 }) });
+    page.on("request", (q) => { if (q.method() === "GET" && new URL(q.url()).pathname === "/orders/connection") bacaKoneksi += 1; });
+    await page.goto("/orders");
+    const m = main(page);
+    await m.getByRole("button", { name: "Nyalakan tarik otomatis…" }).click(NAV);
+    const dlg = page.getByRole("dialog", { name: "Nyalakan tarik otomatis Order Sales?" });
+    const sebelum = bacaKoneksi;
+    await dlg.getByRole("button", { name: "Nyalakan" }).click();
+    await expect(dlg).toBeHidden();
+    await expect(m.getByText("Hasil ubah koneksi Order Sales belum pasti.")).toBeVisible();
+    await expect(m.getByText(/Bad Gateway|504/)).toHaveCount(0);
+    await expect.poll(() => bacaKoneksi).toBeGreaterThan(sebelum);
     expect(log.koneksi).toEqual([{ enabled: true }]);
 });
 
