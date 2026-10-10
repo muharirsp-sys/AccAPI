@@ -73,3 +73,12 @@ test("golden lib/pelunasan: p01-pratinjau-duplikat", async () => {
     assert.equal(json(hasil), json(golden["p01-pratinjau-duplikat"].hasil));
     assert.deepEqual(emu.panggilanKanonik(), golden["p01-pratinjau-duplikat"].panggilan);
 });
+
+test("cari faktur: paling banyak 4 pencarian sales-invoice serentak (dulu Promise.all tanpa batas), golden tetap", async () => {
+    const fx = FIXTURES[1](); // f02: 8 No. Nota
+    const emu = buatEmulator(fx.data);
+    const k = await jalankanLib(fx, emu);
+    assert.equal(json(k.payload), json(golden[fx.nama].payload));
+    assert.ok(emu.maksSerentak("/api/sales-invoice/list.do") <= 4, `serentak ${emu.maksSerentak("/api/sales-invoice/list.do")}`);
+    assert.ok(emu.maksSerentak("/api/sales-invoice/list.do") >= 2, "tetap paralel");
+});

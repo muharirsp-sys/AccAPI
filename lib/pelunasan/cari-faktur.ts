@@ -4,19 +4,31 @@
  *   CONTAIN nomor penuh → CONTAIN ekor. Perilaku dikunci golden lib/pelunasan/uji/golden.json.
  * Caller: lib/pelunasan/parser.ts (parsePelunasan).
  * Main Functions: cariFaktur.
- * Side Effects: GET Accurate `sales-invoice/list.do` lewat `accurateFetch` DIINJEKSI (serentak, `Promise.all`).
+ * Side Effects: GET Accurate `sales-invoice/list.do` lewat `accurateFetch` DIINJEKSI. S6e-1: dulu `Promise.all` tanpa
+ *   batas (N No. Nota = N pencarian serentak → risiko 429 Accurate); kini kolam `konkurensi` (bawaan 4).
  *   Hasil tidak bergantung urutan selesai: kedua peta hanya dibaca per kunci (get), tidak pernah diiterasi.
  */
 import type { Bebas } from "./sel.ts";
 import type { AccurateFetch } from "./retur.ts";
 
-export async function cariFaktur(invoiceNos: Set<string>, accurateFetch: AccurateFetch) {
+export const KONKURENSI_CARI_FAKTUR = 4;
+
+/** Jalankan `kerja` atas tiap butir, paling banyak `n` berjalan bersamaan. `kerja` tidak boleh melempar (cariSatu menangkap sendiri). */
+async function kolam<T>(items: T[], n: number, kerja: (item: T) => Promise<void>) {
+    let berikut = 0;
+    const pekerja = Array.from({ length: Math.min(Math.max(1, n), items.length) }, async () => {
+        while (berikut < items.length) await kerja(items[berikut++]);
+    });
+    await Promise.all(pekerja);
+}
+
+export async function cariFaktur(invoiceNos: Set<string>, accurateFetch: AccurateFetch, konkurensi = KONKURENSI_CARI_FAKTUR) {
     const invoiceBranchMap = new Map<string, Bebas>();
     const invoiceLookupDebugMap = new Map<string, Bebas>();
     try {
         const invArray = Array.from(invoiceNos);
-        // Gunakan Promise.all dengan pencarian individual per nama invoice
-        const invPromises = invArray.map(async (invNo) => {
+        // Pencarian individual per nama invoice, dibatasi kolam `konkurensi`.
+        await kolam(invArray, konkurensi, async (invNo) => {
             const cleanInvNo = invNo.trim();
             try {
                 let invObj: Bebas | null | undefined = null;
@@ -115,8 +127,6 @@ export async function cariFaktur(invoiceNos: Set<string>, accurateFetch: Accurat
                 });
             }
         });
-
-        await Promise.all(invPromises);
     } catch (e) {
         console.error("Gagal menarik data cabang invoice", e);
     }
