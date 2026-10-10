@@ -262,19 +262,49 @@ test("PG: DDL manual (E5 + append-only) — dijalankan DUA kali: data lama dikun
 });
 
 // B-SEDANG: tanpa role accapi_app di DB uji, baris VERIFIKASI hak bernilai NULL dan REVOKE/GRANT tidak pernah teruji.
+// Role = objek SEKLUSTER dan am040_s6 dipakai banyak worktree: buat/pakai/hapus role dibungkus advisory lock tetap,
+// role diberi penanda milik uji, role asing tidak disentuh, dan pembersihan selalu lewat koneksi BARU (koneksi uji bisa
+// membawa transaksi yang abort — dulu DROP ROLE gagal "current transaction is aborted" dan role + hak tertinggal).
+const KUNCI_ROLE_UJI = 6_100_0423; // pg_advisory_lock tetap untuk role accapi_app sementara
+const PENANDA_ROLE = "UJI-S6D-SEMENTARA lib/invoice-outbox-event.test.ts";
+
+async function hapusRoleUji() {
+    const { Client } = await import("pg");
+    const bersih = new Client({ connectionString: PG_URL });
+    await bersih.connect();
+    try {
+        await bersih.query(`DROP OWNED BY accapi_app`);
+        await bersih.query(`DROP ROLE accapi_app`);
+    } finally {
+        await bersih.end();
+    }
+}
+
 test("PG: DDL manual — hak accapi_app: INSERT event boleh, UPDATE/DELETE/TRUNCATE ditolak oleh HAK (REVOKE), bukan hanya trigger", { skip: pgSkip }, async (t) => {
-    const pool = new Pool({ connectionString: PG_URL, max: 2 });
+    const pool = new Pool({ connectionString: PG_URL, max: 3 });
+    const kunci = await pool.connect();
     let dibuat = false;
     try {
+        await kunci.query(`SELECT pg_advisory_lock($1)`, [KUNCI_ROLE_UJI]);
         await pool.query((await entriMigrasi("invoice_outbox_event")).sql);
-        if (!(await pool.query(`SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app'`)).rowCount) {
-            try {
-                await pool.query(`CREATE ROLE accapi_app NOLOGIN`);
-                dibuat = true;
-            } catch (error) {
+        const ada = await pool.query(`SELECT shobj_description(oid, 'pg_authid') AS penanda FROM pg_roles WHERE rolname = 'accapi_app'`);
+        if (ada.rowCount) {
+            if (ada.rows[0].penanda !== PENANDA_ROLE) {
+                t.skip("role accapi_app sudah ada dan BUKAN milik uji ini — tidak disentuh; REVOKE/GRANT TIDAK teruji");
+                return;
+            }
+            await hapusRoleUji(); // sisa uji yang mati di tengah jalan (penanda kita), aman dibersihkan
+        }
+        try {
+            await pool.query(`CREATE ROLE accapi_app NOLOGIN`);
+            dibuat = true;
+            await pool.query(`COMMENT ON ROLE accapi_app IS '${PENANDA_ROLE}'`);
+        } catch (error) {
+            if (!dibuat) {
                 t.skip(`role accapi_app tidak ada dan tidak bisa dibuat (${error instanceof Error ? error.message : error}) — REVOKE/GRANT TIDAK teruji`);
                 return;
             }
+            throw error;
         }
         // Tiru default privileges produksi (runbook L1g: role aplikasi mendapat hak penuh pada tabel baru) —
         // tanpa ini role baru memang tak berhak apa pun dan REVOKE tidak pernah diuji.
@@ -303,16 +333,19 @@ test("PG: DDL manual — hak accapi_app: INSERT event boleh, UPDATE/DELETE/TRUNC
                 await assert.rejects(client.query(perintah), /permission denied/, perintah);
                 await client.query("ROLLBACK TO SAVEPOINT coba");
             }
-            await client.query("ROLLBACK");
         } finally {
-            client.release();
+            // Transaksi (uji atau DDL) yang gagal di tengah tidak boleh kembali ke pool: batalkan, lalu buang koneksinya.
+            await client.query("ROLLBACK").catch(() => undefined);
+            client.release(true);
         }
     } finally {
-        if (dibuat) {
-            await pool.query(`DROP OWNED BY accapi_app`);
-            await pool.query(`DROP ROLE accapi_app`);
+        try {
+            if (dibuat) await hapusRoleUji();
+        } finally {
+            await kunci.query(`SELECT pg_advisory_unlock($1)`, [KUNCI_ROLE_UJI]).catch(() => undefined);
+            kunci.release(true);
+            await pool.end();
         }
-        await pool.end();
     }
 });
 
