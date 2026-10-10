@@ -11,9 +11,13 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const NAV = { timeout: 60_000 } as const;
-const CORS = { "access-control-allow-origin": "http://localhost:3012", "access-control-allow-credentials": "true", "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, OPTIONS" };
-const json = (r: Route, body: unknown, status = 200) => r.fulfill({ status, headers: { ...CORS, "content-type": "application/json" }, body: JSON.stringify(body) });
-const html = (r: Route, status = 500) => r.fulfill({ status, headers: { ...CORS, "content-type": "text/html" }, body: "<html>Internal Server Error</html>" });
+// Asal halaman = baseURL proyek Playwright (port bebas), dibaca saat uji berjalan — bukan port tetap.
+const CORS = () => ({
+    "access-control-allow-origin": new URL(test.info().project.use.baseURL ?? "http://localhost:3000").origin, "access-control-allow-credentials": "true",
+    "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, OPTIONS",
+});
+const json = (r: Route, body: unknown, status = 200) => r.fulfill({ status, headers: { ...CORS(), "content-type": "application/json" }, body: JSON.stringify(body) });
+const html = (r: Route, status = 500) => r.fulfill({ status, headers: { ...CORS(), "content-type": "text/html" }, body: "<html>Internal Server Error</html>" });
 const tahun = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date()).slice(0, 4);
 
 const SETELAN = { last_sequence: 31, sequence_year: Number(tahun), number_template: "{seq:03d}/SPA/PDSB/{roman_month}/{year}", fixed_jaminan_date: "2026-02-19", maturity_months: 6, items_per_page: 7, updated_by: "betterauth|admin|admin.a@contoh.test" };
@@ -24,7 +28,7 @@ type Kirim = { path: string; search: string; body: unknown };
 async function mock(page: Page, ganti: (p: string, r: Route) => Promise<void> | void | "lewat" = () => "lewat") {
     const kirim: Kirim[] = [];
     await page.route((u) => u.host === "localhost:8000", async (r) => {
-        if (r.request().method() === "OPTIONS") return r.fulfill({ status: 204, headers: CORS });
+        if (r.request().method() === "OPTIONS") return r.fulfill({ status: 204, headers: CORS() });
         const url = new URL(r.request().url());
         if (r.request().method() === "POST") {
             const ct = r.request().headers()["content-type"] ?? "";
@@ -46,7 +50,7 @@ test("Format SPPD: gagal muat = Simpan terkunci; nomor tidak boleh turun; Simpan
         if (p === "/payments/sppd/settings" && r.request().method() === "GET" && rusak) return html(r);
         if (p === "/payments/sppd/settings" && r.request().method() === "POST") {
             const b = r.request().postDataJSON() as { maturity_months: number; last_sequence?: number };
-            return json(r, { ok: true, settings: { ...SETELAN, maturity_months: b.maturity_months, last_sequence: b.last_sequence ?? 31 }, preview_number: b.last_sequence ? `0${b.last_sequence + 1}/SPA/PDSB/X/2026` : "032/SPA/PDSB/X/2026" });
+            return json(r, { ok: true, settings: { ...SETELAN, maturity_months: b.maturity_months, last_sequence: b.last_sequence ?? 31 }, effective_last_sequence: b.last_sequence ?? 31, preview_number: b.last_sequence ? `0${b.last_sequence + 1}/SPA/PDSB/X/2026` : "032/SPA/PDSB/X/2026" });
         }
         return "lewat";
     });

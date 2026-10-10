@@ -284,3 +284,56 @@ test("Dialog: alasan tombol konfirmasi nonaktif TERLIHAT (bukan hanya title) dan
     await expect(dlg.getByRole("button", { name: "Buat keranjang" })).toBeEnabled();
     await expect(dlg.getByText("Pilih rute pembayaran dulu.")).toHaveCount(0);
 });
+
+// ── Butir 5: 403 diulang sekali dengan token CSRF baru ──
+test("Tulis: 403 (token kedaluwarsa) diulang SEKALI dengan token baru dari /api/me; 403 kedua = ditolak tanpa ulang ketiga", async ({ page }) => {
+    let ke = 0;
+    const m = await mock(page, (p, r) => {
+        if (p !== "/payments/update") return "lewat";
+        ke += 1;
+        if (ke === 1) return json(r, { ok: false, error: "CSRF token invalid" }, 403);
+        if (ke === 2) return json(r, { ok: true, updated: 1, updated_ids: ["LPB-A-001"], skipped: 0 });
+        return json(r, { ok: false, error: "Forbidden" }, 403);
+    });
+    await page.goto("/payments", NAV);
+    const main = page.locator("main");
+    const tabel = main.getByRole("table", { name: "Rekaman" });
+    const ubah = async (nilai: string) => {
+        await tabel.getByRole("button", { name: "Buka rincian LPB-A-001" }).click(NAV);
+        await page.getByRole("dialog").getByLabel("No. invoice", { exact: true }).fill(nilai);
+        await page.getByRole("dialog").getByRole("button", { name: "Selesai" }).click();
+        await main.getByRole("button", { name: "Simpan 1 perubahan" }).click();
+    };
+    await ubah("INV-A-1B");
+    await expect(main.getByText("1 rekaman tersimpan.")).toBeVisible();
+    expect(m.kirim.filter((k) => k.path === "/payments/update")).toHaveLength(2);
+    expect(m.me()).toBeGreaterThanOrEqual(2); // token disegarkan untuk ulangan
+    await ubah("INV-A-1C");
+    await expect(main.getByText("Server menolak: akun Anda tidak berhak", { exact: false }).first()).toBeVisible();
+    await expect(main.getByText("Forbidden")).toHaveCount(0); // teks mentah server tidak tampil
+    expect(m.kirim.filter((k) => k.path === "/payments/update")).toHaveLength(4); // 403 + ulang sekali, bukan lebih
+});
+
+test("Rekaman: koneksi putus saat simpan rekaman ke-2 dari 3 — berhenti (ke-3 tidak dikirim), belum pasti, tulis dikunci selama data gagal dimuat ulang", async ({ page }) => {
+    const TIGA = ["LPB-A-001", "LPB-A-002", "LPB-A-003"].map((id, i) => ({ ...REKAMAN[0], record_id: id, no_lpb: id, invoice_no: `INV-A-${i + 1}` }));
+    let ke = 0;
+    const { kirim } = await mock(page, (p, r) => {
+        if (p === "/payments/data") return ke >= 2 ? r.fulfill({ status: 502, headers: { ...cors(r), "content-type": "text/html" }, body: "<html>Bad Gateway</html>" }) : json(r, { ok: true, data: TIGA });
+        if (p !== "/payments/update") return "lewat";
+        ke += 1;
+        return ke === 1 ? json(r, { ok: true, updated: 1, updated_ids: ["LPB-A-001"], skipped: 0 }) : r.abort("connectionreset");
+    });
+    await page.goto("/payments", NAV);
+    const main = page.locator("main");
+    const tabel = main.getByRole("table", { name: "Rekaman" });
+    for (const id of ["LPB-A-001", "LPB-A-002", "LPB-A-003"]) {
+        await tabel.getByRole("button", { name: `Buka rincian ${id}` }).click(NAV);
+        await page.getByRole("dialog").getByLabel("No. invoice", { exact: true }).fill(`${id}-B`);
+        await page.getByRole("dialog").getByRole("button", { name: "Selesai" }).click();
+    }
+    await main.getByRole("button", { name: "Simpan 3 perubahan" }).click();
+    await expect(main.getByText("1 dari 3 rekaman tersimpan; hasil sisanya belum pasti.", { exact: false })).toBeVisible();
+    expect(kirim.filter((k) => k.path === "/payments/update")).toHaveLength(2);
+    await expect(main.getByRole("button", { name: /^Simpan \d+ perubahan$/ })).toBeDisabled();
+    await expect(main.locator(".fi-ftb")).toContainText("Data gagal dimuat ulang");
+});

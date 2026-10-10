@@ -10,10 +10,13 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const NAV = { timeout: 60_000 } as const;
-const ASAL = "http://localhost:3012";
-const CORS = { "access-control-allow-origin": ASAL, "access-control-allow-credentials": "true", "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, OPTIONS" };
-const json = (r: Route, body: unknown, status = 200) => r.fulfill({ status, headers: { ...CORS, "content-type": "application/json" }, body: JSON.stringify(body) });
-const html = (r: Route, status = 502) => r.fulfill({ status, headers: { ...CORS, "content-type": "text/html" }, body: "<html><body>Bad Gateway</body></html>" });
+// Asal halaman = baseURL proyek Playwright (port bebas), dibaca saat uji berjalan — bukan port tetap.
+const CORS = () => ({
+    "access-control-allow-origin": new URL(test.info().project.use.baseURL ?? "http://localhost:3000").origin, "access-control-allow-credentials": "true",
+    "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, OPTIONS",
+});
+const json = (r: Route, body: unknown, status = 200) => r.fulfill({ status, headers: { ...CORS(), "content-type": "application/json" }, body: JSON.stringify(body) });
+const html = (r: Route, status = 502) => r.fulfill({ status, headers: { ...CORS(), "content-type": "text/html" }, body: "<html><body>Bad Gateway</body></html>" });
 const besokWita = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date(Date.now() + 864e5));
 
 const LENGKAP = { tipe_pengajuan: "LPB", tgl_invoice: "2026-10-06", jt_invoice: "2026-11-05", status_pembayaran: "", locked_reason: "" };
@@ -33,7 +36,7 @@ type Kirim = { path: string; search: string; body: unknown };
 async function mockFastapi(page: Page, jawab: (path: string, r: Route, kirim: Kirim[]) => Promise<void> | void | "lewat" = () => "lewat") {
     const kirim: Kirim[] = [];
     await page.route((u) => u.host === "localhost:8000", async (r) => {
-        if (r.request().method() === "OPTIONS") return r.fulfill({ status: 204, headers: CORS });
+        if (r.request().method() === "OPTIONS") return r.fulfill({ status: 204, headers: CORS() });
         const url = new URL(r.request().url());
         if (r.request().method() === "POST") {
             const ct = r.request().headers()["content-type"] ?? "";
