@@ -221,3 +221,35 @@ test("Format SPPD tahun baru: server tidak mengubah nomor (isian = urutan tahun 
     await expect(main.getByText(`Server mencatat nomor terakhir ${tahun} = 000, bukan 046`, { exact: false })).toBeVisible();
     await expect(main.getByText("Nomor surat terakhir 0 → 46", { exact: false })).toHaveCount(0);
 });
+
+test("Format SPPD: operasi data tidak pasti mengunci semua operasi di halaman sampai data terbaca ulang", async ({ page }) => {
+    let putus = false;
+    await mock(page, (p, r) => {
+        const dry = new URL(r.request().url()).searchParams.get("dry_run");
+        if (p === "/payments/sppd/restore-backup") {
+            if (dry === "1") return json(r, { ok: true, dry_run: true, can_apply: true, records: 3, submissions: 1, new_submissions: 1, draft_records: 1, sppd: { last_sequence_before: 30, max_restored: 45, last_sequence_after: 45, next_number: "046/SPA/PDSB/X/2026" }, conflicts: [] });
+            putus = true;
+            return r.abort("connectionreset");
+        }
+        if (p === "/api/bank-data/match-report" && putus) return r.fulfill({ status: 502, headers: { ...cors(r), "content-type": "text/html" }, body: "<html>Bad Gateway</html>" });
+        return "lewat";
+    });
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    await expect(main.getByLabel("Nomor surat terakhir")).toHaveValue("31", NAV);
+    await main.getByRole("button", { name: "Restore backup…" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.getByLabel("Berkas backup PAYMENTS (.xlsx)").setInputFiles(berkas("backup.xlsx"));
+    await dlg.getByRole("button", { name: "Pulihkan 3 rekaman" }).click();
+    await expect(dlg.getByText(/Hasilnya belum pasti/)).toBeVisible();
+    await dlg.getByRole("button", { name: "Batal" }).click();
+    for (const nama of ["Unggah Excel data SPPD…", "Ganti nama principal…", "Auto-Fix nama principal…", "Restore backup…"]) {
+        await expect(main.getByRole("button", { name: nama })).toBeDisabled();
+    }
+    await expect(main.getByText("Hasil operasi terakhir belum pasti", { exact: false }).first()).toBeVisible();
+    // Data terbaca ulang (referensi baru) = kunci dibuka.
+    putus = false;
+    await main.getByRole("button", { name: "Muat ulang" }).click();
+    for (const nama of ["Unggah Excel data SPPD…", "Restore backup…"]) await expect(main.getByRole("button", { name: nama })).toBeEnabled();
+});
+

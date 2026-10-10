@@ -36,6 +36,7 @@ const LABEL: Record<Kunci, string> = { nomor: "Nomor surat terakhir", template: 
 const bulat = (v: string) => (/^\d+$/.test(v.trim()) ? Number(v.trim()) : NaN);
 /** Lompatan nomor sebesar ini wajib diketik ulang: nomor tidak bisa diturunkan lagi tahun ini (D-05), jadi salah ketik 310 untuk 31 permanen. */
 const LOMPAT_KETIK_ULANG = 50;
+const KUNCI_OP = "Hasil operasi terakhir belum pasti; tunggu data dimuat ulang sebelum mengulang atau menyimpan.";
 
 export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
     const izin = izinPembayaran(permKeys);
@@ -77,6 +78,10 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
     // Jawaban tidak pasti: Simpan dikunci sampai setelan terbaca ulang (referensi data berganti).
     const [kunciPada, setKunciPada] = useState<DataSetelan | null | undefined>(undefined);
     const masihTerkunci = kunciPada !== undefined && kunciPada === set.data;
+    // Operasi data yang jawabannya tidak pasti: SEMUA tulis di halaman dikunci (bukan hanya dialognya, yang bisa ditutup) sampai data
+    // yang mungkin berubah terbaca ulang — referensi data berganti. Galat memuat ulang mempertahankan referensi lama = tetap terkunci.
+    const [kunciOp, setKunciOp] = useState<{ lap: Laporan | null | undefined; set?: DataSetelan | null } | null>(null);
+    const opTerkunci = kunciOp !== null && (kunciOp.lap === lap.data || ("set" in kunciOp && kunciOp.set === set.data));
     const [pesan, setPesan] = useState<{ tone: "pos" | "warn"; judul: string; isi?: string } | null>(null);
     const [dialog, setDialog] = useState<null | "simpan" | "excel" | "ganti" | "autofix" | "restore">(null);
     const [namaLama, setNamaLama] = useState("");
@@ -86,7 +91,8 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
     const alasanKetik = perluKetik && ketikUlang.trim() !== String(nomorBaru) ? `Nomor ketikan ulang belum sama dengan ${nomorBaru}.` : undefined;
 
     const kunciMuat = set.status === "galat" ? "Setelan SPPD belum berhasil dimuat — muat ulang dulu agar urutan nomor tidak mundur."
-        : set.status === "memuat" ? "Setelan sedang dimuat." : masihTerkunci ? "Hasil simpan terakhir belum pasti; tunggu setelan dimuat ulang." : undefined;
+        : set.status === "memuat" ? "Setelan sedang dimuat." : masihTerkunci ? "Hasil simpan terakhir belum pasti; tunggu setelan dimuat ulang."
+            : opTerkunci ? KUNCI_OP : undefined;
     const alasanSimpan = izin.setelan ?? kunciMuat ?? (berubah.length === 0 ? "Belum ada perubahan." : adaGalat ? "Perbaiki isian yang ditandai dulu." : undefined);
     const bisaIsi = Boolean(s) && !izin.setelan && set.status === "siap";
 
@@ -123,7 +129,11 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
         setPesan({ tone: "pos", judul: p.judul, isi: p.isi });
         muatLap(); if (p.nomor) muatSet();
     };
-    const tidakPasti = (nomor?: boolean) => { setPesan({ tone: "warn", judul: "Hasil operasi belum pasti.", isi: "Data dimuat ulang — periksa hasilnya sebelum mengulang." }); muatLap(); if (nomor) muatSet(); };
+    const tidakPasti = (nomor?: boolean) => {
+        setKunciOp(nomor ? { lap: lap.data, set: set.data } : { lap: lap.data });
+        setPesan({ tone: "warn", judul: "Hasil operasi belum pasti.", isi: "Data dimuat ulang — periksa hasilnya sebelum mengulang. Operasi data dan Simpan dikunci sampai data terbaca ulang." });
+        muatLap(); if (nomor) muatSet();
+    };
 
     const namaWeb = useMemo(() => [...new Set([...(lap.data?.matched ?? []).map((m) => m.web_name), ...(lap.data?.unmatched ?? []), ...(lap.data?.ambiguous ?? [])])].sort(), [lap.data]);
     const namaMaster = useMemo(() => [...new Set((bank.data ?? []).map((b) => b.principle))].sort(), [bank.data]);
@@ -176,7 +186,7 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
                             {[...lap.data.unmatched.map((n) => [n, "tidak cocok dengan master"]), ...lap.data.ambiguous.map((n) => [n, "ambigu · lebih dari satu rekening cocok"])].map(([n, k]) => (
                                 <div key={n} className="fi-page-bar">
                                     <span><b>{n}</b> <span className="fi-small fi-subtle">{k}</span></span><span className="fi-spacer" />
-                                    <Button disabled={Boolean(izin.gantiNama)} disabledReason={izin.gantiNama} onClick={() => { setNamaLama(n); setDialog("ganti"); }}>Samakan nama…</Button>
+                                    <Button disabled={Boolean(izin.gantiNama) || opTerkunci} disabledReason={izin.gantiNama ?? KUNCI_OP} onClick={() => { setNamaLama(n); setDialog("ganti"); }}>Samakan nama…</Button>
                                 </div>
                             ))}
                             {lap.data.empty_rekening.map((e) => <p key={e.principle} className="fi-small fi-why">{e.principle}: {e.reason}</p>)}
@@ -221,10 +231,11 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
             <Section id="operasi" title="Operasi data" subtitle="selalu Pratinjau → Terapkan">
                 <div className="fi-sect-in">
                     <div className="fi-btnrow">
-                        {operasi.map((o) => <Button key={o.k} icon={o.ikon} disabled={Boolean(o.alasan)} disabledReason={o.alasan} onClick={() => { setNamaLama(""); setDialog(o.k); }}>{o.label}</Button>)}
+                        {operasi.map((o) => <Button key={o.k} icon={o.ikon} disabled={Boolean(o.alasan) || opTerkunci} disabledReason={o.alasan ?? KUNCI_OP} onClick={() => { setNamaLama(""); setDialog(o.k); }}>{o.label}</Button>)}
                         <a className="fi-btn fi-btn--tertiary" href={unduhUrl("/payments/export")} target="_blank" rel="noopener noreferrer"><Download className="fi-icon" aria-hidden />Unduh backup</a>
                     </div>
                     {operasi.filter((o) => o.alasan).map((o) => <p key={o.k} className="fi-small fi-subtle">{o.label.replace("…", "")}: {o.alasan}</p>)}
+                    {opTerkunci && <p className="fi-small fi-why">{KUNCI_OP}</p>}
                     <p className="fi-small fi-subtle">Rekaman yang sudah diajukan, ditransfer, atau terposting tidak ikut diubah (BL-05/BL-49). Restore backup hanya menambah rekaman dan menaikkan nomor SPPD bila perlu — nomor tidak pernah turun.</p>
                 </div>
             </Section>
