@@ -1451,7 +1451,55 @@ def parse_sppd_date_ddmmyyyy(value) -> str:
         raise ValueError(f"'{raw}'")
     return parsed.strftime("%Y-%m-%d")
 
+def lpb_upload_error_message(number_errors: List[str], date_errors: List[str]) -> str:
+    """Pesan galat unggah LPB (urutan & kalimat sama dengan sebelum S6-0e: angka dulu, lalu tanggal)."""
+    if number_errors:
+        extra = len(number_errors) - 5
+        return ("Angka tidak valid: " + "; ".join(number_errors[:5]) + (f"; dan {extra} lainnya" if extra > 0 else "")
+                + ". Upload dibatalkan.")
+    if date_errors:
+        extra = len(date_errors) - 5
+        suffix = f"; dan {extra} lainnya" if extra > 0 else ""
+        return f"Tanggal tidak valid (harus DD/MM/YYYY): {'; '.join(date_errors[:5])}{suffix}. Upload dibatalkan."
+    return ""
+
+
 def parse_lpb_upload(content: bytes) -> List[Dict[str, Any]]:
+    rows, number_errors, date_errors = parse_lpb_upload_collect(content)
+    message = lpb_upload_error_message(number_errors, date_errors)
+    if message:
+        raise ValueError(message)
+    return rows
+
+
+def plan_lpb_upload(db: Dict[str, Any], rows: List[Dict[str, Any]], invalid: List[str]) -> Dict[str, Any]:
+    """Unggah LPB — SATU ringkasan untuk pratinjau dan eksekusi (S6-0e butir 4): jumlah baris, total, duplikat di
+    sistem dan DI BERKAS (dulu baris kedua diam-diam menimpa yang pertama), angka/tanggal invalid."""
+    duplicates: List[str] = []
+    in_file: List[str] = []
+    seen: Set[str] = set()
+    for r in rows:
+        no_lpb = s(r.get("no_lpb", ""))
+        key = normalize_lpb_no(no_lpb)
+        # Eksekusi menulis db["lpb"][normalize_lpb_no(no_lpb)]: KUNCI yang sudah dipakai rekaman lain (no_lpb-nya sudah
+        # diganti) juga duplikat — dulu lolos lalu menimpa rekaman itu (putaran 2 butir 1; pola validate_backup_restore_conflicts).
+        if find_lpb_duplicate_key(db, no_lpb) or key in db.get("lpb", {}):
+            duplicates.append(no_lpb)
+        if key in seen:
+            in_file.append(no_lpb)
+        seen.add(key)
+    return {
+        "rows": len(rows),
+        "total_nilai_win": sum(parse_number_id(r.get("nilai_win", 0)) for r in rows),
+        "total_nilai_invoice": sum(parse_number_id(r.get("nilai_invoice", 0)) for r in rows),
+        "duplicates": duplicates,
+        "duplicates_in_file": in_file,
+        "invalid": invalid,
+    }
+
+
+def parse_lpb_upload_collect(content: bytes) -> Tuple[List[Dict[str, Any]], List[str], List[str]]:
+    """Baca Excel LPB tanpa melempar galat per sel: (baris, galat angka, galat tanggal). Kolom wajib hilang tetap ValueError."""
     df = pd.read_excel(io.BytesIO(content))
     cols = {c.strip().upper(): c for c in df.columns}
     required = ["TGL. SETOR", "NO. LPB", "TGL. WIN", "TGL. J. TEMPO WIN", "PRINCIPLE", "NILAI WIN", "TGL TERIMA BARANG"]
@@ -1515,20 +1563,7 @@ def parse_lpb_upload(content: bytes) -> List[Dict[str, Any]]:
             "nomor_dokumen": s(_row_value(r, cols, "Nomor Dokumen", "NOMOR DOKUMEN")),
             "keterangan": s(_row_value(r, cols, "Keterangan", "KETERANGAN")),
         })
-    if number_errors:
-        extra = len(number_errors) - 5
-        raise ValueError(
-            "Angka tidak valid: " + "; ".join(number_errors[:5]) + (f"; dan {extra} lainnya" if extra > 0 else "")
-            + ". Upload dibatalkan."
-        )
-    if date_errors:
-        shown = "; ".join(date_errors[:5])
-        extra = len(date_errors) - 5
-        suffix = f"; dan {extra} lainnya" if extra > 0 else ""
-        raise ValueError(
-            f"Tanggal tidak valid (harus DD/MM/YYYY): {shown}{suffix}. Upload dibatalkan."
-        )
-    return out
+    return out, number_errors, date_errors
 
 def _col_lookup(cols: Dict[str, Any], *names: str) -> Optional[Any]:
     for name in names:
@@ -1703,6 +1738,28 @@ def raise_sppd_sequence_from_records(db: Dict[str, Any], records: List[Dict[str,
         db["sppd_seq"] = restored
     return restored
 
+def plan_backup_restore(db: Dict[str, Any], rows: List[Tuple[str, Dict[str, Any]]], now: pd.Timestamp) -> Dict[str, Any]:
+    """Restore backup PAYMENTS — SATU ringkasan untuk pratinjau dan eksekusi (S6-0e butir 5). "Rekaman draf" =
+    rekaman tanpa pengajuan (istilah it08). Nomor SPPD: restore hanya bisa MENAIKKAN urutan (D-05/C10)."""
+    recs = [r for _, r in rows]
+    subs = {s(r.get("submission_id", "")) for r in recs if s(r.get("submission_id", ""))}
+    existing = db.get("submissions", {}) if isinstance(db.get("submissions"), dict) else {}
+    settings = get_sppd_settings(copy.deepcopy(db))  # get_sppd_settings menulis balik ke db -> salinan
+    year = int(now.year)
+    before = sppd_last_sequence_for_year(settings, year)
+    restored = max_sppd_sequence_from_records(recs, year)
+    after = max(before, restored)
+    return {
+        "records": len(recs),
+        "submissions": len(subs),
+        "new_submissions": len(subs - set(existing)),
+        "draft_records": sum(1 for r in recs if not s(r.get("submission_id", ""))),
+        "sppd": {"year": year, "last_sequence_before": before, "max_restored": restored, "last_sequence_after": after,
+                 "next_number": format_sppd_number_with_template(after + 1, now, s(settings.get("number_template", "")))},
+        "conflicts": validate_backup_restore_conflicts(db, rows),
+    }
+
+
 def rebuild_payment_submissions(db: Dict[str, Any]) -> None:
     submissions = dict(db.get("submissions", {}) or {})
     grouped: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
@@ -1834,10 +1891,200 @@ def effective_post_status(rec: Dict[str, Any]) -> str:
     return status
 
 
+# BL-05/BL-49 (S6-0e): rekaman yang sudah diajukan, ditransfer, terposting, atau berposting TIDAK PASTI terkunci di semua jalur tulis
+# Pembayaran (update, delete, clear, Excel SPPD, ganti nama/auto-fix principal). Satu-satunya isian yang tetap boleh:
+# `ajukan` — centang pilihan layar, bukan data (it08 "Pilihan bukan data"). Status/bukti/tanggal transfer milik Finance
+# (/payments/finance/update), bukan jalur ini. Nilai yang dikirim sama dengan yang tersimpan = bukan perubahan.
+PAYMENT_LOCK_EXEMPT_FIELDS = {"ajukan"}
+# Turunan / identitas internal: tidak dibandingkan (gap_nilai ikut nilai_invoice/nilai_win yang dibandingkan).
+_PAYMENT_LOCK_DERIVED_FIELDS = {"record_id", "gap_nilai"}
+PAYMENT_MONEY_FIELDS = {"nilai_invoice", "nilai_win", "potongan", "nilai_pembayaran", "gap_nilai"}
+
+
+def payment_lock_reason(rec: Dict[str, Any]) -> str:
+    """'' bila rekaman boleh diubah/dihapus dari jalur Pembayaran; selain itu alasannya (Indonesia)."""
+    if not isinstance(rec, dict):
+        return ""
+    post = effective_post_status(rec)  # "failed" bergalat ambigu = unknown (tinjauan S6-0a)
+    if post == "posted":
+        no = s(rec.get("accurate_purchase_payment_number", "")) or s(rec.get("accurate_purchase_payment_id", ""))
+        return f"sudah terposting di Accurate ({no})" if no else "sudah terposting di Accurate"
+    if post == "unknown":
+        return "posting Accurate tidak pasti (menunggu penyelesaian Finance)"
+    status = s(rec.get("status_pembayaran", "")).lower()
+    if status == "sudah transfer":
+        return "sudah ditransfer"
+    # BL-49 (owner menerima): rekaman yang DIAJUKAN terkunci kecuali dikembalikan Finance. Mulai: cart/submit
+    # (Belum Transfer + submission_id); berakhir: Finance "Ajukan Ulang" (submission_id tetap ada -> status yang dicek,
+    # sama dengan _already_submitted di routers/payments.py); diajukan lagi -> terkunci lagi.
+    if status == "belum transfer" and s(rec.get("submission_id", "")):
+        return "sudah diajukan; minta Finance mengembalikan (Ajukan Ulang)"
+    return ""
+
+
+def payment_field_changed(field: str, old: Any, new: Any) -> bool:
+    """Perubahan NYATA satu isian (angka/tanggal/tipe dinormalisasi) — dipakai kunci BL-05 dan pratinjau Excel SPPD."""
+    if isinstance(old, (dict, list, tuple)) or isinstance(new, (dict, list, tuple)):
+        # Nilai non-skalar (jawaban Accurate, bukti transfer): s() memanggil pd.isna -> array -> ValueError (putaran 2 butir 4).
+        canon = lambda v: json.dumps(v, sort_keys=True, default=str, ensure_ascii=False)  # noqa: E731
+        return canon(old) != canon(new)
+    if field in PAYMENT_MONEY_FIELDS:
+        return abs(parse_number_id(old) - parse_number_id(new)) > 0.005
+    if field in SPPD_EXCEL_DATE_FIELDS:
+        return (_normalize_yyyy_mm_dd(s(old)) or s(old)) != (_normalize_yyyy_mm_dd(s(new)) or s(new))
+    if field == "tipe_pengajuan":
+        return normalize_pengajuan_type(old) != normalize_pengajuan_type(new)
+    return s(old) != s(new)
+
+
+def payment_locked_field_changes(before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
+    """Isian yang BERUBAH dari `before` ke `after` dan tidak dikecualikan kunci (urut nama)."""
+    skip = PAYMENT_LOCK_EXEMPT_FIELDS | _PAYMENT_LOCK_DERIVED_FIELDS
+    return sorted(f for f in set(before) | set(after) if f not in skip and payment_field_changed(f, before.get(f), after.get(f)))
+
+
+def payment_lock_entry(key: str, rec: Dict[str, Any], reason: str, **extra: Any) -> Dict[str, Any]:
+    return {"record_id": s(key), "no_lpb": s(rec.get("no_lpb", "")), "principle": s(rec.get("principle", "")), "reason": reason, **extra}
+
+
+def payment_lock_message(action: str, locked: List[Dict[str, Any]]) -> str:
+    shown = ", ".join(f"{x['no_lpb'] or x['record_id']} ({x['reason']})" for x in locked[:5])
+    extra = f" dan {len(locked) - 5} lainnya" if len(locked) > 5 else ""
+    # Judul netral: alasan (diajukan / ditransfer / terposting / tidak pasti) ada per rekaman.
+    return f"{action} ditolak — rekaman terkunci: {shown}{extra}. Tidak ada yang diubah."
+
+
+def apply_sppd_excel_rows(db: Dict[str, Any], rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Unggah Excel data SPPD — SATU jalur untuk pratinjau dan eksekusi (S6-0e butir 1+4). Mengubah `db` (salinan per
+    request, AM-012) berurutan per baris; pemanggil menyimpan HANYA bila tidak ada `errors`/`locked`.
+    Baris rekaman terkunci yang mengubah sesuatu -> `locked` (seluruh unggahan ditolak); yang tidak mengubah apa pun
+    -> `unchanged`."""
+    changes: List[Dict[str, Any]] = []
+    unchanged: List[Dict[str, Any]] = []
+    locked: List[Dict[str, Any]] = []
+    not_found: List[str] = []
+    errors: List[str] = []
+    changed_fields: Dict[str, int] = {}
+    for item in rows:
+        row_id = s(item.get("record_id", "")) or s(item.get("no_lpb", ""))
+        key = resolve_payment_record_key(db, row_id)
+        if not key or key not in db.get("lpb", {}):
+            not_found.append(row_id or "-")
+            continue
+        rec = db["lpb"][key]
+        next_no_lpb = s(item.get("no_lpb", rec.get("no_lpb", "")))
+        if next_no_lpb and find_lpb_duplicate_key(db, next_no_lpb, exclude_key=key):
+            errors.append(f"No. LPB {next_no_lpb} sudah dipakai record lain.")
+            continue
+        diffs = [{"field": f, "old": rec.get(f, ""), "new": v} for f, v in item.items()
+                 if f != "record_id" and f not in SPPD_EXCEL_FORBIDDEN_FIELDS and payment_field_changed(f, rec.get(f, ""), v)]
+        reason = payment_lock_reason(rec)
+        if reason and any(d["field"] not in PAYMENT_LOCK_EXEMPT_FIELDS for d in diffs):
+            locked.append(payment_lock_entry(key, rec, reason, fields=diffs))
+            continue
+        entry = {"record_id": key, "no_lpb": s(rec.get("no_lpb", "")), "principle": s(rec.get("principle", "")), "fields": diffs}
+        if not diffs:
+            unchanged.append(entry)
+            continue
+        for d in diffs:
+            rec[d["field"]] = d["new"]
+            changed_fields[d["field"]] = changed_fields.get(d["field"], 0) + 1
+        if any(d["field"] in ("nilai_invoice", "nilai_win") for d in diffs):
+            try:
+                rec["gap_nilai"] = float(parse_number_id(rec.get("nilai_win", 0))) - float(parse_number_id(rec.get("nilai_invoice", 0)))
+            except Exception:
+                rec["gap_nilai"] = 0.0
+        changes.append(entry)
+    return {"updated": len(changes), "unchanged": len(unchanged), "changes": changes, "unchanged_records": unchanged,
+            "locked": locked, "not_found": not_found, "errors": errors, "changed_fields": changed_fields}
+
+
+def plan_principle_rename(db: Dict[str, Any], old_name: str, new_name: str) -> Tuple[Dict[str, Any], List[str]]:
+    """Ganti nama principal (Replace All) — SATU jalur untuk pratinjau dan eksekusi. Rekaman terkunci DILEWATI dan
+    dihitung (it08: "tidak diubah: N ditransfer"); mapping Finance yang berkunci nama ikut dilaporkan (it08 #15)."""
+    to_change: List[str] = []
+    locked: List[Dict[str, Any]] = []
+    per_status: Dict[str, int] = {}
+    for key, rec in db.get("lpb", {}).items():
+        if s(rec.get("principle", "")).upper() != s(old_name).upper():
+            continue
+        status = s(rec.get("status_pembayaran", "")) or "Draf"
+        per_status[status] = per_status.get(status, 0) + 1
+        reason = payment_lock_reason(rec)
+        if reason:
+            locked.append(payment_lock_entry(key, rec, reason))
+        else:
+            to_change.append(s(key))
+    mappings = db.get("finance_mappings", {}) if isinstance(db.get("finance_mappings"), dict) else {}
+    has_old = finance_mapping_key(old_name) in mappings
+    has_new = finance_mapping_key(new_name) in mappings
+    report = {
+        "matched": len(to_change) + len(locked),
+        "replaced": len(to_change),
+        "locked_skipped": len(locked),
+        "locked": locked[:50],
+        "per_status": per_status,
+        "finance_mapping": {"old_name_has_mapping": has_old, "new_name_has_mapping": has_new,
+                            "needs_remap": bool(to_change) and has_old and not has_new},
+        "samples": to_change[:20],
+    }
+    return report, to_change
+
+
 def wita_now() -> pd.Timestamp:
     """Waktu sekarang di WITA (naif). Server produksi berjalan UTC; tanggal terbit SPPD (nomor, bulan romawi,
     tahun urutan) mengikuti WITA. ponytail: offset tetap UTC+8 — Indonesia tanpa DST."""
     return (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=8)).tz_localize(None)
+
+
+DRY_RUN_INVALID = "Nilai dry_run tidak dikenal: pakai 1/true (pratinjau) atau 0/false (terapkan). Tidak ada yang diubah."
+_DRY_RUN_VALUES = {"1": True, "true": True, "0": False, "false": False}
+
+
+def parse_flag(raw: Any) -> Optional[bool]:
+    """Bendera tulis/pratinjau dari JSON: boolean, atau 1/0/"1"/"0"/"true"/"false" (tanpa beda huruf). Lainnya None
+    -> pemanggil 400 (gagal-tertutup; dulu bool("false") = True)."""
+    if isinstance(raw, bool):
+        return raw
+    return _DRY_RUN_VALUES.get(str(raw).strip().lower()) if isinstance(raw, (int, str)) else None
+
+
+def dry_run_flag(request: Request, payload: Optional[Dict[str, Any]] = None) -> Optional[bool]:
+    """Pratinjau tanpa tulis (S6-0e): `?dry_run=` dan/atau badan JSON `"dry_run"`. GAGAL-TERTUTUP (putaran 2 butir 5):
+    hanya 1/true (pratinjau) dan 0/false (terapkan) dikenal — nilai lain = None -> pemanggil menjawab 400, BUKAN
+    dianggap "bukan pratinjau" lalu menulis. Tidak ada keduanya = False (terapkan, perilaku lama)."""
+    found: List[bool] = []
+    values = request.query_params.getlist("dry_run")
+    if len(values) > 1:
+        return None  # putaran 3: ?dry_run=1&dry_run=0 — Starlette memakai nilai TERAKHIR -> dulu menulis
+    if values:
+        flag = _DRY_RUN_VALUES.get(s(values[0]).lower())
+        if flag is None:
+            return None
+        found.append(flag)
+    if isinstance(payload, dict) and "dry_run" in payload:
+        flag = parse_flag(payload.get("dry_run"))
+        if flag is None:
+            return None
+        found.append(flag)
+    if len(set(found)) > 1:
+        return None  # query dan badan bertentangan
+    return found[0] if found else False
+
+
+def server_time_to_wita(value: Any) -> str:
+    """Jejak waktu ledger (submitted_at, created_at, accurate_posted_at, …) ditulis jam SERVER naif
+    (pd.Timestamp.now()); untuk tampilan dikonversi ke WITA. Teks tak terbaca dikembalikan apa adanya.
+    ponytail: menganggap zona server tidak berubah sejak jejak ditulis — jejak dari mesin berzona lain bergeser."""
+    import datetime as _dt
+    text = s(value)
+    if not text:
+        return ""
+    try:
+        moment = _dt.datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    return moment.astimezone(_dt.timezone(_dt.timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def sppd_last_sequence_for_year(settings: Dict[str, Any], year: int) -> int:

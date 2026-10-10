@@ -4,11 +4,11 @@
  * Caller: lib/invoice-sender (kirim/hasil/sapu), app/api/invoice-outbox (buang, antre ulang,
  *         selesaikan), app/api/principal-order/queue + app/api/orders/[id]/invoice (antre).
  * Dependensi: tabel invoice_outbox_event (db/schema.ts, scripts/migrate-pg.mjs).
- * Main Functions: potongJawaban, kodeGalat, catatEvent, waktuAntrePertama, pernahDibuang, menitSejakKirimTerakhir.
+ * Main Functions: potongJawaban, kodeGalat, catatEvent, waktuAntrePertama, pernahDibuang, menitSejakKirimTerakhir, bacaRiwayat.
  * Side Effects: catatEvent = INSERT invoice_outbox_event. Tidak ada UPDATE/DELETE di sini — dan
  *   DDL manual (docs/handover/DDL_OUTBOX_EVENT.sql) menolaknya di tingkat DB.
  */
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { invoiceOutboxEvent, type INVOICE_OUTBOX_EVENT_KINDS } from "@/db/schema";
 
@@ -88,4 +88,19 @@ export async function menitSejakKirimTerakhir(database: OutboxDb, orderId: strin
         menit: sql<number | null>`extract(epoch from (now() - max(${invoiceOutboxEvent.createdAt}))) / 60`,
     }).from(invoiceOutboxEvent).where(and(eq(invoiceOutboxEvent.orderId, orderId), eq(invoiceOutboxEvent.jenis, "kirim")));
     return row?.menit === null || row?.menit === undefined ? null : Number(row.menit);
+}
+
+/**
+ * Riwayat satu order untuk layar (S6c, GET /api/invoice-outbox/riwayat): `batas` catatan TERBARU, dikembalikan urut lama → baru;
+ * `terpotong` = ada catatan yang lebih tua. Salinan payload di event `buang` dibuang dari `detail` (besar, tidak dibaca layar).
+ */
+export async function bacaRiwayat(database: Pick<NodePgDatabase, "select">, orderId: string, batas = 200) {
+    const rows = await database.select({
+        id: invoiceOutboxEvent.id, jenis: invoiceOutboxEvent.jenis, stateFrom: invoiceOutboxEvent.stateFrom, stateTo: invoiceOutboxEvent.stateTo,
+        actor: invoiceOutboxEvent.actor, httpStatus: invoiceOutboxEvent.httpStatus, responseExcerpt: invoiceOutboxEvent.responseExcerpt,
+        errorCode: invoiceOutboxEvent.errorCode, reason: invoiceOutboxEvent.reason, createdAt: invoiceOutboxEvent.createdAt,
+        detail: sql<Record<string, unknown> | null>`${invoiceOutboxEvent.detail} - 'payload'`,
+    }).from(invoiceOutboxEvent).where(eq(invoiceOutboxEvent.orderId, orderId))
+        .orderBy(desc(invoiceOutboxEvent.createdAt), desc(invoiceOutboxEvent.id)).limit(batas + 1);
+    return { events: rows.slice(0, batas).reverse(), terpotong: rows.length > batas };
 }

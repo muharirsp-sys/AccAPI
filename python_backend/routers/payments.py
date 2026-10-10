@@ -2,6 +2,7 @@
 # Dipindahkan mekanis dari main.py tanpa perubahan logic; hanya @app.* diganti @router.*.
 from fastapi import APIRouter
 import asyncio
+import copy
 
 from shared import (
     Any,
@@ -18,6 +19,7 @@ from shared import (
     RedirectResponse,
     Request,
     SPPD_TEMPLATE_PATH,
+    Tuple,
     UploadFile,
     _PAYMENTS_DB_LOCK,
     _can_access_draft,
@@ -26,6 +28,7 @@ from shared import (
     append_audit_log,
     append_error_log,
     empty_payments_db_preserving_config,
+    effective_post_status,
     find_best_match,
     find_lpb_duplicate_key,
     format_idr,
@@ -42,22 +45,28 @@ from shared import (
     normalize_lpb_no,
     normalize_pengajuan_type,
     os,
-    parse_lpb_upload,
+    DRY_RUN_INVALID,
+    dry_run_flag,
+    lpb_upload_error_message,
+    parse_lpb_upload_collect,
+    plan_lpb_upload,
     parse_number_id,
     parse_number_strict,
-    parse_payments_backup_upload,
+    payment_lock_entry,
+    payment_lock_message,
+    payment_lock_reason,
+    payment_locked_field_changes,
+    PAYMENT_LOCK_EXEMPT_FIELDS,
     pd,
-    raise_sppd_sequence_from_records,
     read_upload_file_limited,
-    rebuild_payment_submissions,
     render_sppd_docx,
     resolve_payment_record_key,
     s,
     save_payments_db,
+    server_time_to_wita,
     slugify,
     user_has_permission,
     uuid,
-    validate_backup_restore_conflicts,
     validate_csrf_request,
     wita_now,
     write_invoice_excel,
@@ -118,6 +127,8 @@ def payments_data(request: Request):
             row["gap_nilai"] = gap_val
             row["gap_nilai_display"] = format_idr(gap_val)
         row["status_pembayaran"] = row.get("status_pembayaran", "")
+        # S6-0e: alasan kunci dari server (BL-05/BL-49; failed ambigu = unknown) — UI tidak menebak dari status.
+        row["locked_reason"] = payment_lock_reason(r)
         rows.append(row)
     return ORJSONResponse({"ok": True, "data": rows})
 
@@ -209,6 +220,9 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
     if file is None:
         return JSONResponse(status_code=400, content={"ok": False, "error": "File belum diupload."})
+    dry_run = dry_run_flag(request)
+    if dry_run is None:
+        return JSONResponse(status_code=400, content={"ok": False, "error": DRY_RUN_INVALID})
     try:
         content = await read_upload_file_limited(
             file,
@@ -219,36 +233,25 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
         preview_df = await asyncio.to_thread(pd.read_excel, io.BytesIO(content), nrows=1)
         preview_cols = {str(c).strip().upper(): c for c in preview_df.columns}
         if looks_like_payments_backup(preview_cols):
-            restore_rows = parse_payments_backup_upload(content)
-            if not restore_rows:
-                return JSONResponse(status_code=400, content={"ok": False, "error": "Data backup PAYMENTS kosong."})
-            async with _PAYMENTS_DB_LOCK:
-                db = await asyncio.to_thread(load_payments_db)
-                conflicts = validate_backup_restore_conflicts(db, restore_rows)
-                if conflicts:
-                    return JSONResponse(status_code=400, content={"ok": False, "error": "Restore backup dibatalkan: " + "; ".join(conflicts[:5])})
-                for key, rec in restore_rows:
-                    db["lpb"][key] = rec
-                rebuild_payment_submissions(db)
-                # D-05/C10: urutan SPPD tahun berjalan naik ke nomor tertinggi yang dipulihkan, tak pernah turun.
-                max_seq = raise_sppd_sequence_from_records(db, [rec for _, rec in restore_rows], wita_now())
-                await asyncio.to_thread(save_payments_db, db)
-            append_audit_log(user, "payments_restore_backup", "lpb", {"added": len(restore_rows), "max_sppd_seq": max_seq})
-            return JSONResponse({"ok": True, "added": len(restore_rows), "mode": "restore_backup", "message": f"Restore backup berhasil: {len(restore_rows)} record."})
+            # S6-0e butir 5: restore backup = endpoint sendiri (sppd.edit_settings + pratinjau), bukan efek samping unggah LPB.
+            return JSONResponse(status_code=400, content={"ok": False, "error": "Berkas ini backup PAYMENTS, bukan berkas LPB — gunakan Restore backup di Format SPPD."})
 
-        rows = parse_lpb_upload(content)
-        if not rows:
+        rows, number_errors, date_errors = await asyncio.to_thread(parse_lpb_upload_collect, content)
+        invalid_message = lpb_upload_error_message(number_errors, date_errors)
+        if not rows and not invalid_message:
             return JSONResponse(status_code=400, content={"ok": False, "error": "Data LPB kosong."})
         now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
         async with _PAYMENTS_DB_LOCK:
             db = await asyncio.to_thread(load_payments_db)
-            dups = []
-            for r in rows:
-                no_lpb = s(r.get("no_lpb", ""))
-                if find_lpb_duplicate_key(db, no_lpb):
-                    dups.append(no_lpb)
-            if dups:
-                return JSONResponse(status_code=400, content={"ok": False, "error": f"No. LPB {dups[0]} sudah ada di sistem, gagal upload"})
+            # S6-0e butir 4: pratinjau dan eksekusi memakai ringkasan yang SAMA; satu masalah = tidak ada yang ditulis.
+            report = plan_lpb_upload(db, rows, number_errors + date_errors)
+            error = (invalid_message
+                     or (f"No. LPB {report['duplicates'][0]} sudah ada di sistem, gagal upload" if report["duplicates"] else "")
+                     or (f"No. LPB {report['duplicates_in_file'][0]} ganda di berkas, gagal upload" if report["duplicates_in_file"] else ""))
+            if dry_run:
+                return JSONResponse({"ok": True, "dry_run": True, "can_apply": not error, **report, **({"error": error} if error else {})})
+            if error:
+                return JSONResponse(status_code=400, content={"ok": False, "error": error, **report})
             for r in rows:
                 key = normalize_lpb_no(r["no_lpb"])
                 nilai_invoice = parse_number_id(r.get("nilai_invoice", 0))
@@ -281,7 +284,7 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
                 }
             await asyncio.to_thread(save_payments_db, db)
         append_audit_log(user, "payments_upload", "lpb", {"added": len(rows)})
-        return JSONResponse({"ok": True, "added": len(rows)})
+        return JSONResponse({"ok": True, "dry_run": False, "added": len(rows), **report})
     except ValueError as e:
         return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
     except Exception as e:
@@ -391,6 +394,7 @@ async def payments_update(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "error": "Format data tidak valid."})
     updated = []
     skipped = []
+    locked: List[Dict[str, Any]] = []
     async with _PAYMENTS_DB_LOCK:
         db = await asyncio.to_thread(load_payments_db)
         for item in items:
@@ -403,6 +407,7 @@ async def payments_update(request: Request):
                 skipped.append(row_id)
                 continue
             rec = db["lpb"][key]
+            before = copy.deepcopy(rec)
             tipe = normalize_pengajuan_type(item.get("tipe_pengajuan", rec.get("tipe_pengajuan", "LPB")))
             no_lpb = s(item.get("no_lpb", rec.get("no_lpb", "")))
             jenis_dokumen = s(item.get("jenis_dokumen", rec.get("jenis_dokumen", "")))
@@ -462,8 +467,21 @@ async def payments_update(request: Request):
                 rec["gap_nilai"] = float(rec.get("nilai_win", 0) or 0.0) - float(rec.get("nilai_invoice", 0) or 0.0)
             except Exception:
                 rec["gap_nilai"] = 0.0
+            reason = payment_lock_reason(before)
+            if reason:
+                # BL-05: rekaman terkunci hanya boleh berubah di `ajukan`; nilai yang sama bukan perubahan.
+                fields = payment_locked_field_changes(before, rec)
+                if fields:
+                    locked.append(payment_lock_entry(key, before, reason, fields=fields))
+                    continue
+                kept = {f: rec[f] for f in PAYMENT_LOCK_EXEMPT_FIELDS if f in rec}
+                rec.clear()
+                rec.update(before, **kept)
             if changed:
                 updated.append(key)
+        if locked:
+            # Semua-atau-tidak (kontrak yang ada): satu rekaman terkunci = tidak ada yang disimpan.
+            return JSONResponse(status_code=409, content={"ok": False, "error": payment_lock_message("Simpan", locked), "locked": locked})
         await asyncio.to_thread(save_payments_db, db)
     append_audit_log(user, "payments_update", "lpb", {"count": len(updated), "samples": updated[:10], "skipped": skipped[:10]})
     return JSONResponse({"ok": True, "updated": len(updated), "updated_ids": updated, "skipped": len(skipped)})
@@ -491,10 +509,14 @@ async def payments_delete(request: Request):
     await _PAYMENTS_DB_LOCK.acquire()
     try:
         db = await asyncio.to_thread(load_payments_db)
+        keys = [k for k in (resolve_payment_record_key(db, s(row_id)) for row_id in record_ids) if k in db.get("lpb", {})]
+        # BL-05: rekaman Sudah Transfer/terposting tidak dihapus; satu saja = tidak ada yang dihapus.
+        locked = [payment_lock_entry(k, db["lpb"][k], r) for k in dict.fromkeys(keys) if (r := payment_lock_reason(db["lpb"][k]))]
+        if locked:
+            return JSONResponse(status_code=409, content={"ok": False, "error": payment_lock_message("Hapus", locked), "locked": locked})
         deleted = 0
-        for row_id in record_ids:
-            key = resolve_payment_record_key(db, s(row_id))
-            if key in db.get("lpb", {}):
+        for key in keys:
+            if key in db["lpb"]:
                 del db["lpb"][key]
                 deleted += 1
         await asyncio.to_thread(save_payments_db, db)
@@ -527,6 +549,13 @@ async def payments_clear(request: Request):
     try:
         async with _PAYMENTS_DB_LOCK:
             db = await asyncio.to_thread(load_payments_db)
+            # BL-05: clear tidak boleh menghapus rekaman yang sudah ditransfer/terposting.
+            locked = [payment_lock_entry(k, r, why) for k, r in db.get("lpb", {}).items() if (why := payment_lock_reason(r))]
+            if locked:
+                return JSONResponse(status_code=409, content={
+                    "ok": False, "locked_count": len(locked), "locked": locked[:20],
+                    "error": f"Clear ditolak: {len(locked)} rekaman sudah ditransfer/terposting dan terkunci. Tidak ada yang dihapus.",
+                })
             before_counts = {
                 "lpb": len(db.get("lpb", {}) or {}),
                 "submissions": len(db.get("submissions", {}) or {}),
@@ -570,7 +599,8 @@ async def payments_cart_create(request: Request):
     record_ids = payload.get("record_ids", payload.get("no_lpbs", []))
     target_payment_date = _normalize_yyyy_mm_dd(s(payload.get("target_payment_date", "")))
     if not target_payment_date:
-        target_payment_date = (pd.Timestamp.now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        # S6-0e butir 7: "besok" menurut WITA, bukan jam server (produksi UTC: 00:00-07:59 WITA dulu = "hari ini").
+        target_payment_date = (wita_now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     if method not in ["NON_PANIN", "BANK_PANIN"]:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Metode pembayaran tidak valid."})
     if not isinstance(record_ids, list) or not record_ids:
@@ -615,6 +645,10 @@ async def payments_cart_create(request: Request):
             return JSONResponse(status_code=400, content={"ok": False, "error": f"LPB untuk principle {principle} terindikasi sudah pernah diajukan (kemungkinan case CBD). Cek data finance terlebih dulu."})
         if _already_submitted(rec):
             return JSONResponse(status_code=400, content={"ok": False, "error": f"Record {no_lpb or rec.get('record_id','')} sudah pernah diajukan ke finance."})
+        lock = payment_lock_reason(rec)
+        if lock:
+            # BL-49/BL-05 (S6-0e): "Ajukan Ulang" lama pada rekaman terposting tidak boleh menjadi pengajuan kedua.
+            return JSONResponse(status_code=409, content={"ok": False, "error": f"Record {no_lpb or rec.get('record_id','')} {lock}; tidak bisa diajukan ulang."})
 
     order_keys: List[str] = []
     groups: Dict[str, List[Dict[str, Any]]] = {}
@@ -685,11 +719,10 @@ def payments_cart_data(request: Request):
     drafts = db.get("drafts", {})
     draft = drafts.get(draft_id) or drafts.get(draft_id.lower()) or drafts.get(draft_id.upper())
     if not draft or not _can_access_draft(user, draft):
-        if is_admin_user(user):
-            keys = list(drafts.keys())
-            preview = ", ".join(keys[:8])
-            msg = f"Draft tidak ditemukan. PATH={PAYMENTS_DB_PATH}. Drafts: {preview}"
-            return JSONResponse(status_code=404, content={"ok": False, "error": msg})
+        # S6-0e butir 7: pesan generik untuk SEMUA (dulu admin menerima PATH payments.json + id draf orang lain);
+        # detail diagnosis hanya di log server.
+        print(f"[payments/cart-info] draft tidak ditemukan/ditolak: draft={draft_id!r} user={user!r} "
+              f"ada={bool(draft)} jumlah_draft={len(drafts)}", flush=True)
         return JSONResponse(status_code=404, content={"ok": False, "error": "Draft tidak ditemukan."})
     items = []
     for it in draft.get("items", []):
@@ -722,7 +755,7 @@ def payments_cart_data(request: Request):
     method_label = "Bank Panin" if method == "BANK_PANIN" else ("Non Panin" if method == "NON_PANIN" else "")
     target_payment_date = _normalize_yyyy_mm_dd(s(draft.get("target_payment_date", "")))
     if not target_payment_date:
-        target_payment_date = (pd.Timestamp.now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        target_payment_date = (wita_now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     return JSONResponse({
         "ok": True,
         "items": items,
@@ -913,6 +946,11 @@ async def payments_cart_submit(request: Request):
         taken = [k for k in (s(r.get("record_id", "")) for r in selected) if _already_submitted(db.get("lpb", {}).get(k, {}))]
         if taken:
             return JSONResponse(status_code=409, content={"ok": False, "error": f"Sudah diajukan lewat pengajuan lain: {', '.join(taken)}. Buat draft baru."})
+        # BL-49 (S6-0e): rekaman bisa terposting/ditransfer sejak draf dibuat — cek di lock yang sama dengan tulis.
+        locked = [payment_lock_entry(k, db["lpb"][k], why) for k in (s(r.get("record_id", "")) for r in selected)
+                  if k in db.get("lpb", {}) and (why := payment_lock_reason(db["lpb"][k]))]
+        if locked:
+            return JSONResponse(status_code=409, content={"ok": False, "error": payment_lock_message("Ajukan", locked), "locked": locked})
         if method == "BANK_PANIN":
             # AM-012: nomor diambil dari ledger yang AKAN disimpan, di dalam lock yang sama.
             # Dulu diambil dari objek bagian lock pertama dan hanya bertahan karena load
@@ -1113,8 +1151,178 @@ def payments_files(request: Request, file_name: str):
     if not user_has_permission(user, "payments", "view"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
     safe_name = os.path.basename(file_name)
+    if _is_sppd_file(safe_name) and not user_has_permission(user, "sppd", "download"):
+        # Tinjauan B (a): sppd.download terdaftar di registry tetapi dulu tidak pernah ditegakkan di Python.
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.download"})
     path = os.path.join(PAYMENTS_FILES_DIR, safe_name)
-    if not os.path.exists(path):
-        return JSONResponse(status_code=404, content={"detail": "File not found"})
+    if not os.path.isfile(path):  # tinjauan B (c): direktori ("..", subfolder) dulu lolos exists() lalu 500
+        return JSONResponse(status_code=404, content={"ok": False, "error": "Berkas tidak ditemukan."})
     return FileResponse(path, filename=safe_name)
 
+
+# ---------------------------------------------------------------------------------------------------------------
+# BL-50 (S6-0e): Pengajuan & SPPD bisa dibuka ulang — BACA-SAJA. Berkas diunduh lewat /payments/files/{nama}.
+# ---------------------------------------------------------------------------------------------------------------
+_SUBMISSION_STATUS_LABEL = {
+    "kosong": "Tanpa rekaman",
+    "tidak_pasti": "Posting tidak pasti",
+    "terposting": "Semua terposting",
+    "dikembalikan": "Ada yang dikembalikan Finance",
+    "ditransfer": "Semua ditransfer",
+    "sebagian": "Sebagian ditransfer",
+    "menunggu_transfer": "Menunggu transfer",
+}
+
+
+def _is_sppd_file(name: str) -> bool:
+    """Dokumen SPPD (sppd_<id>.docx, cart/submit & submit lama) — butuh sppd.download (tinjauan B (a))."""
+    return s(name).lower().startswith("sppd_")
+
+
+def _recorded_files(sub: Dict[str, Any], can_sppd: bool) -> List[Tuple[str, str]]:
+    """(label, nama) yang TERCATAT di pengajuan, tanpa cek disk; SPPD disaring bila tanpa sppd.download."""
+    out: List[Tuple[str, str]] = []
+    seen = set()
+    listed = [(s(f.get("label", "")), s(f.get("url", ""))) for f in (sub.get("files") or []) if isinstance(f, dict)]
+    if s(sub.get("sppd_file", "")):
+        listed.append(("SPPD Bank Panin", s(sub.get("sppd_file", ""))))
+    for label, ref in listed:
+        name = os.path.basename(ref)
+        if not name or name in seen or (_is_sppd_file(name) and not can_sppd):
+            continue
+        seen.add(name)
+        out.append((label or name, name))
+    return out
+
+
+def _submission_files(sub: Dict[str, Any], can_sppd: bool) -> List[Dict[str, str]]:
+    """Berkas yang BENAR-BENAR ada di PAYMENTS_FILES_DIR (restore backup membuat files=[] -> kosong, bukan tebakan).
+    Hanya di endpoint DETAIL — daftar cukup jumlah tercatat (tinjauan B (b): tanpa isfile per pengajuan per panggilan)."""
+    return [{"label": label, "name": name, "url": f"/payments/files/{name}"} for label, name in _recorded_files(sub, can_sppd)
+            if os.path.isfile(os.path.join(PAYMENTS_FILES_DIR, name))]
+
+
+def _submission_summary(sid: str, sub: Dict[str, Any], recs: List[Tuple[str, Dict[str, Any]]], can_sppd: bool) -> Dict[str, Any]:
+    method = s(sub.get("method", ""))
+    transfer: Dict[str, int] = {}
+    posting: Dict[str, int] = {}
+    for _, r in recs:
+        st = s(r.get("status_pembayaran", "")) or "Belum diajukan"
+        transfer[st] = transfer.get(st, 0) + 1
+        post = effective_post_status(r) or "belum"
+        posting[post] = posting.get(post, 0) + 1
+    n = len(recs)
+    if not n:
+        status = "kosong"
+    elif posting.get("unknown"):
+        status = "tidak_pasti"
+    elif posting.get("posted") == n:
+        status = "terposting"
+    elif transfer.get("Ajukan Ulang"):
+        status = "dikembalikan"
+    elif transfer.get("Sudah Transfer") == n:
+        status = "ditransfer"
+    elif transfer.get("Sudah Transfer"):
+        status = "sebagian"
+    else:
+        status = "menunggu_transfer"
+    created_at = s(sub.get("created_at", ""))
+    return {
+        "id": sid,
+        "sppd_no": s(sub.get("sppd_no", "")) or next((s(r.get("sppd_no", "")) for _, r in recs if s(r.get("sppd_no", ""))), ""),
+        "created_at": created_at,
+        "created_at_wita": server_time_to_wita(created_at),
+        "created_by": s(sub.get("created_by", "")),
+        "target_payment_date": _normalize_yyyy_mm_dd(s(sub.get("target_payment_date", ""))),
+        "method": method,
+        # Rute Panin = SPPD (Surat Perintah Penarikan Dana, templat Bank Panin); Non Panin tanpa SPPD.
+        "route_label": "Bank Panin (SPPD)" if method == "BANK_PANIN" else ("Non Panin" if method == "NON_PANIN" else method),
+        "record_count": n,
+        "principles": sorted({s(r.get("principle", "")) for _, r in recs if s(r.get("principle", ""))}),
+        "total_invoice": sum(parse_number_id(r.get("nilai_invoice", r.get("nilai_principle", 0))) for _, r in recs),
+        "total_potongan": sum(parse_number_id(r.get("potongan", 0)) for _, r in recs),
+        "total_pembayaran": sum(parse_number_id(r.get("nilai_pembayaran", 0)) for _, r in recs),
+        "transfer": transfer,
+        "posting": posting,
+        "status": status,
+        "status_label": _SUBMISSION_STATUS_LABEL[status],
+        "file_count": len(_recorded_files(sub, can_sppd)),
+    }
+
+
+def _submissions_index(db: Dict[str, Any]) -> Dict[str, Tuple[Dict[str, Any], List[Tuple[str, Dict[str, Any]]]]]:
+    """Pengajuan dari db["submissions"] DIGABUNG dengan submission_id di rekaman (data lama tanpa entri pengajuan)."""
+    recs_by_sid: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
+    for key, r in db.get("lpb", {}).items():
+        sid = s(r.get("submission_id", ""))
+        if sid:
+            recs_by_sid.setdefault(sid, []).append((s(key), r))
+    subs = db.get("submissions", {}) if isinstance(db.get("submissions"), dict) else {}
+    out = {}
+    for sid in set(subs) | set(recs_by_sid):
+        recs = recs_by_sid.get(sid, [])
+        sub = subs.get(sid)
+        if not isinstance(sub, dict):
+            first = recs[0][1]
+            sub = {"created_at": s(first.get("submitted_at", "")), "created_by": s(first.get("submitted_by", "")),
+                   "target_payment_date": s(first.get("target_payment_date", "")), "files": [], "sppd_file": "",
+                   "method": "BANK_PANIN" if s(first.get("payment_method", "")).lower() == "bank panin" else "NON_PANIN"}
+        out[s(sid)] = (sub, recs)
+    return out
+
+
+@router.get("/payments/submissions")
+def payments_submissions(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "payments", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    # Tinjauan B (b): paginasi. ponytail: tetap membaca seluruh ledger lalu memotong (payments.json satu berkas);
+    # yang dihemat = ukuran jawaban & kerja render. Ceiling: O(rekaman) per panggilan — indeks bila ledger membesar.
+    try:
+        limit = int(request.query_params.get("limit", "100"))
+        offset = int(request.query_params.get("offset", "0"))
+    except ValueError:
+        limit, offset = -1, -1
+    if not (1 <= limit <= 500) or offset < 0:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "limit harus 1–500 dan offset >= 0."})
+    can_sppd = user_has_permission(user, "sppd", "download")
+    db = load_payments_db()
+    rows = [_submission_summary(sid, sub, recs, can_sppd) for sid, (sub, recs) in _submissions_index(db).items()]
+    rows.sort(key=lambda x: (x["created_at"], x["id"]), reverse=True)
+    return JSONResponse({"ok": True, "data": rows[offset:offset + limit], "total": len(rows), "limit": limit, "offset": offset})
+
+
+@router.get("/payments/submissions/{submission_id}")
+def payments_submission_detail(request: Request, submission_id: str):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "payments", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    db = load_payments_db()
+    found = _submissions_index(db).get(s(submission_id))
+    if not found:
+        return JSONResponse(status_code=404, content={"ok": False, "error": "Pengajuan tidak ditemukan."})
+    sub, recs = found
+    records = [{
+        "record_id": key,
+        "no_lpb": s(r.get("no_lpb", "")),
+        "tipe_pengajuan": normalize_pengajuan_type(r.get("tipe_pengajuan", "LPB")),
+        "principle": s(r.get("principle", "")),
+        "invoice_no": s(r.get("invoice_no", "")) or s(r.get("nomor_dokumen", "")),
+        "nilai_invoice": parse_number_id(r.get("nilai_invoice", r.get("nilai_principle", 0))),
+        "potongan": parse_number_id(r.get("potongan", 0)),
+        "nilai_pembayaran": parse_number_id(r.get("nilai_pembayaran", 0)),
+        "jenis_pembayaran": s(r.get("jenis_pembayaran", "")),
+        "status_pembayaran": s(r.get("status_pembayaran", "")),
+        "transfer_date": s(r.get("transfer_date", "")),
+        "accurate_post_status": effective_post_status(r),
+        "accurate_purchase_payment_number": s(r.get("accurate_purchase_payment_number", "")),
+        "locked_reason": payment_lock_reason(r),
+    } for key, r in sorted(recs, key=lambda kv: kv[0])]
+    cart_items = sub.get("cart_items") if isinstance(sub.get("cart_items"), dict) else {}
+    can_sppd = user_has_permission(user, "sppd", "download")
+    return JSONResponse({"ok": True, "data": {**_submission_summary(s(submission_id), sub, recs, can_sppd), "files": _submission_files(sub, can_sppd),
+                                             "records": records, "cart_items": cart_items}})

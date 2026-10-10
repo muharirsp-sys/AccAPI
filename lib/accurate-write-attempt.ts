@@ -2,18 +2,18 @@
  * Tujuan: Cegah pengiriman ganda ke Accurate secara server-side (AM-014 / C.12–C.16): attempt
  *   diklaim atomik di Postgres SEBELUM request keluar, hasil dicatat per tahap, attempt yang
  *   tidak pasti tidak pernah dibuka ulang otomatis.
- * Caller: app/api/finance/purchase-payment/route.ts dan .../resolve/route.ts.
+ * Caller: app/api/finance/purchase-payment/route.ts, .../resolve/route.ts, .../attempts/route.ts (baca-saja).
  * Dependensi: tabel accurate_write_attempt + accurate_write_attempt_reopen (db/schema.ts,
  *   scripts/migrate-pg.mjs; bentuk final ADR-004 rev 3.1 rilis A), classifyBulkSaveResponse (lib/apiFetcher.ts).
  * Main Functions: purchasePaymentSubject, validatePurchasePaymentPayload, classifyProviderReply,
- *   runGuardedWrite, resolveAttempt.
+ *   runGuardedWrite, resolveAttempt, latestAttemptsBySubject + attemptStatus (baca-saja).
  * Side Effects: INSERT/UPDATE accurate_write_attempt; `send` (jaringan) dipanggil TANPA
  *   transaksi DB terbuka — klaim sudah commit sendiri sebelum kirim.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, getTableColumns, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray, lt, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { accurateWriteAttempt, accurateWriteAttemptReopen } from "@/db/schema";
+import { accurateWriteAttempt, accurateWriteAttemptReopen, user } from "@/db/schema";
 import { classifyBulkSaveResponse } from "@/lib/apiFetcher";
 
 export const PURCHASE_PAYMENT_OPERATION = "purchase-payment/bulk-save";
@@ -234,6 +234,37 @@ export async function runGuardedWrite(input: GuardedWriteInput): Promise<Guarded
         console.error("[accurate-write-attempt] hasil tidak tercatat, attempt tetap sending:", attemptId, err);
     }
     return { claimed: true, attemptId, outcome, response, persisted };
+}
+
+/** Status attempt untuk layar Finance (S6-0e butir 6). `stale` = `sending` yang belum berubah >= 2 menit menurut jam DB
+ * (ambang yang sama dengan resolve); `failed` = ditolak/tak terhubung/diatestasi tidak ada (boleh dikirim ulang). */
+export type AttemptStatus = "sending" | "stale" | "posted" | "unknown" | "failed";
+export function attemptStatus(state: string, stale: boolean): AttemptStatus {
+    if (state === "sending") return stale ? "stale" : "sending";
+    if (state === "posted" || state === "unknown") return state;
+    return "failed";
+}
+
+export type AttemptView = LiveAttempt & { ageSeconds: number; actorName: string | null };
+
+/**
+ * BACA-SAJA (S6-0e butir 6): attempt TERBARU per subjek (generasi tertinggi, lalu terbaru) untuk banyak subjek sekaligus.
+ * Umur & basi dihitung jam DB. Subjek = purchasePaymentSubject (format kunci tidak berubah — rekonsiliasi lama).
+ */
+export async function latestAttemptsBySubject(db: NodePgDatabase, operation: string, subjectKeys: string[]): Promise<Map<string, AttemptView>> {
+    const out = new Map<string, AttemptView>();
+    if (!subjectKeys.length) return out;
+    const rows = await db.select({
+        ...getTableColumns(accurateWriteAttempt),
+        stale: sql<boolean>`${accurateWriteAttempt.updatedAt} < ${STALE_SQL}`,
+        ageSeconds: sql<number>`floor(extract(epoch from now() - ${accurateWriteAttempt.createdAt}))::int`,
+        actorName: user.name,
+    }).from(accurateWriteAttempt)
+        .leftJoin(user, eq(user.id, accurateWriteAttempt.actor))
+        .where(and(eq(accurateWriteAttempt.operation, operation), inArray(accurateWriteAttempt.subjectKey, subjectKeys)))
+        .orderBy(desc(accurateWriteAttempt.generation), desc(accurateWriteAttempt.createdAt));
+    for (const row of rows) if (!out.has(row.subjectKey)) out.set(row.subjectKey, row);
+    return out;
 }
 
 type ResolveInput = {
