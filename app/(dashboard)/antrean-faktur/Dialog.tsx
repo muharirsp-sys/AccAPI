@@ -369,8 +369,8 @@ function kalimatEvent(e: Event): { apa: string; ubah?: string } {
 
 export function RiwayatDialog({ row, onClose }: { row: Row; onClose: () => void }) {
     const judul = useId();
-    const [load, muatUlang] = useLoad(useCallback(() => ambil<Event[]>(`/api/invoice-outbox/riwayat?orderId=${encodeURIComponent(row.orderId)}`,
-        (j) => (j as { events?: Event[] }).events ?? []), [row.orderId]));
+    const [load, muatUlang] = useLoad(useCallback(() => ambil<{ events: Event[]; terpotong: boolean }>(`/api/invoice-outbox/riwayat?orderId=${encodeURIComponent(row.orderId)}`,
+        (j) => ({ events: (j as { events?: Event[] }).events ?? [], terpotong: Boolean((j as { terpotong?: boolean }).terpotong) })), [row.orderId]));
     return (
         <Dialog open onClose={onClose} labelledBy={judul} className="fi-dialog" closeOnBackdrop>
             <header>
@@ -381,9 +381,10 @@ export function RiwayatDialog({ row, onClose }: { row: Row; onClose: () => void 
                 <p className="fi-small fi-subtle">Catatan tidak bisa diubah atau dihapus. Masuk antrean {jamWita(row.createdAt)} WITA · umur {usia(row.ageMinutes)}.</p>
                 {load.status === "memuat" && <Skeleton rows={4} label="Memuat riwayat" />}
                 {load.status === "galat" && <ErrorState title="Riwayat gagal dimuat" message={load.error} onRetry={muatUlang} />}
-                {load.status === "siap" && (load.data?.length ? (
+                {load.data?.terpotong && <MessageStrip tone="info">Menampilkan 200 catatan terbaru; catatan yang lebih tua tidak ditampilkan.</MessageStrip>}
+                {load.status === "siap" && (load.data?.events.length ? (
                     <ol className="fi-hist" aria-label={`Riwayat SO ${nomorSo(row)}`}>
-                        {load.data.map((e) => {
+                        {load.data.events.map((e) => {
                             const k = kalimatEvent(e);
                             return (
                                 <li key={e.id}>

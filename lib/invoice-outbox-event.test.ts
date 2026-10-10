@@ -10,7 +10,7 @@ import type { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
-import { kodeGalat, potongJawaban } from "./invoice-outbox-event.ts";
+import { bacaRiwayat, kodeGalat, potongJawaban } from "./invoice-outbox-event.ts";
 import { aksiAntrean } from "./invoice-outbox-actions.ts";
 import { sendQueuedInvoices } from "./invoice-sender.ts";
 
@@ -592,5 +592,24 @@ test("PG: dua Kirim bersamaan pada antrean yang sama -> SATU kiriman per order, 
         await poolA.query(`DELETE FROM invoice_outbox WHERE order_id = ANY($1)`, [ids]);
         await poolA.end();
         await poolB.end();
+    }
+});
+
+test("PG (tinjauan S6c c): riwayat = N catatan TERBARU urut lama → baru + terpotong bila ada yang lebih tua", { skip: pgSkip }, async () => {
+    const pool = new Pool({ connectionString: PG_URL, max: 2 });
+    try {
+        const orderId = `UJI-RIWAYAT:${randomUUID()}`;
+        await pool.query((await entriMigrasi("invoice_outbox_event")).sql);
+        for (const [jenis, menit] of [["antre", 30], ["kirim", 20], ["rejected", 19], ["antre_ulang", 5]] as const) {
+            await pool.query(`INSERT INTO invoice_outbox_event (order_id, jenis, actor, created_at) VALUES ($1, $2, 'uji', now() - make_interval(mins => $3))`, [orderId, jenis, menit]);
+        }
+        const dua = await bacaRiwayat(drizzle(pool), orderId, 2);
+        assert.deepEqual(dua.events.map((e) => e.jenis), ["rejected", "antre_ulang"]);
+        assert.equal(dua.terpotong, true);
+        const semua = await bacaRiwayat(drizzle(pool), orderId, 10);
+        assert.deepEqual(semua.events.map((e) => e.jenis), ["antre", "kirim", "rejected", "antre_ulang"]);
+        assert.equal(semua.terpotong, false);
+    } finally {
+        await pool.end();
     }
 });
