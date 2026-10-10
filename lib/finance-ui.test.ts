@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { alasanFaktur, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, saringCatatan, statusPosting, statusTransfer, type AttemptFinance } from "./finance-ui.ts";
 
 const attempt = (over: Partial<AttemptFinance>): AttemptFinance => ({
-    attemptId: "a1", state: "unknown", status: "unknown", stale: false, accurateNumber: "", actorName: "Finance A", targetDbId: "DB-1",
+    attemptId: "a1", state: "unknown", status: "unknown", stale: false, accurateNumber: "", actorName: "Finance A", clientRef: "K1", targetDbId: "DB-1",
     ageSeconds: 30, createdAtWita: "2026-10-10 09:00:00", updatedAtWita: "2026-10-10 09:00:30", message: "", ...over,
 });
 
@@ -31,15 +31,27 @@ test("status transfer dipisah dari status posting", () => {
     assert.equal(statusTransfer("").label, "Belum transfer");
 });
 
+const MILIK = { key: "K1", dbId: "DB-1" };
+
 test("status posting: attempt sending segar = sedang; basi/unknown = tidak pasti; posted server tanpa catatan = catatan tertinggal", () => {
-    assert.equal(statusPosting({ accurate_post_status: "" }, attempt({ status: "sending", state: "sending" })).kode, "sedang");
-    assert.equal(statusPosting({ accurate_post_status: "" }, attempt({ status: "stale", state: "sending", stale: true })).kode, "tidak_pasti");
-    assert.equal(statusPosting({ accurate_post_status: "unknown" }, null).kode, "tidak_pasti");
-    assert.equal(statusPosting({ accurate_post_status: "failed" }, attempt({ status: "unknown" })).kode, "tidak_pasti", "attempt tidak pasti mengalahkan gagal");
-    assert.deepEqual(statusPosting({ accurate_post_status: "posted", accurate_purchase_payment_number: "PP/1" }, null), { kode: "terposting", nomor: "PP/1", catatanTertinggal: false });
-    assert.deepEqual(statusPosting({ accurate_post_status: "" }, attempt({ status: "posted", state: "posted", accurateNumber: "PP/2" })), { kode: "terposting", nomor: "PP/2", catatanTertinggal: true });
-    assert.equal(statusPosting({ accurate_post_status: "failed" }, null).kode, "gagal");
-    assert.equal(statusPosting({ accurate_post_status: "skipped" }, null).kode, "belum");
+    assert.equal(statusPosting({ accurate_post_status: "" }, attempt({ status: "sending", state: "sending" }), MILIK).kode, "sedang");
+    assert.equal(statusPosting({ accurate_post_status: "" }, attempt({ status: "stale", state: "sending", stale: true }), MILIK).kode, "tidak_pasti");
+    assert.equal(statusPosting({ accurate_post_status: "unknown" }, null, MILIK).kode, "tidak_pasti");
+    assert.equal(statusPosting({ accurate_post_status: "failed" }, attempt({ status: "unknown" }), MILIK).kode, "tidak_pasti", "attempt tidak pasti mengalahkan gagal");
+    assert.deepEqual(statusPosting({ accurate_post_status: "posted", accurate_purchase_payment_number: "PP/1" }, null, MILIK), { kode: "terposting", nomor: "PP/1", catatanTertinggal: false });
+    assert.deepEqual(statusPosting({ accurate_post_status: "" }, attempt({ status: "posted", state: "posted", accurateNumber: "PP/2" }), MILIK), { kode: "terposting", nomor: "PP/2", catatanTertinggal: true });
+    assert.equal(statusPosting({ accurate_post_status: "failed" }, null, MILIK).kode, "gagal");
+    assert.equal(statusPosting({ accurate_post_status: "skipped" }, null, MILIK).kode, "belum");
+});
+
+test("A-3: attempt posted hanya milik record (clientRef) & database sesi yang sama; selain itu tidak pasti", () => {
+    const posted = attempt({ status: "posted", state: "posted", accurateNumber: "PP/2" });
+    assert.equal(statusPosting({}, posted, MILIK).kode, "terposting");
+    assert.equal(statusPosting({}, posted, { key: "K2", dbId: "DB-1" }).kode, "tidak_pasti", "record lain dengan himpunan faktur sama");
+    assert.equal(statusPosting({}, posted, { key: "K1", dbId: "DB-9" }).kode, "tidak_pasti", "database sesi lain");
+    assert.equal(statusPosting({}, posted, { key: "K1", dbId: "" }).kode, "tidak_pasti", "database sesi tidak terbaca");
+    assert.equal(statusPosting({}, attempt({ status: "posted", state: "posted", clientRef: "" }), MILIK).kode, "tidak_pasti");
+    assert.equal(statusPosting({ accurate_post_status: "posted" }, posted, { key: "K2", dbId: "DB-9" }).kode, "terposting", "catatan Finance record ini tetap berlaku");
 });
 
 test("kunci baris: terposting/tidak pasti/sedang/data usang mengunci; gagal jelas boleh dikirim ulang", () => {

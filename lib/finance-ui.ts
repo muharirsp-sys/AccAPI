@@ -52,6 +52,8 @@ export type AttemptFinance = {
     stale: boolean;
     accurateNumber: string;
     actorName: string | null;
+    /** Record pengirim (= recordKey). */
+    clientRef: string;
     targetDbId: string;
     ageSeconds: number;
     createdAtWita: string;
@@ -75,14 +77,22 @@ export type StatusPosting = { kode: KodePosting; nomor: string; catatanTertingga
  * Status POSTING gabungan catatan FastAPI (`accurate_post_status` efektif: "failed" lama bergalat ambigu sudah = unknown di server)
  * dan attempt server terbaru. Attempt `sending` segar = sedang diposting sesi/tab lain; `stale` = TIDAK PASTI (bukan "sedang").
  * Attempt `posted` sementara catatan belum = terposting dengan catatan tertinggal (browser ditutup sebelum mencatat) — menekan
- * posting lagi hanya mencatat hasilnya (server menjawab 409 posted record yang sama, tidak mengirim ulang).
+ * posting lagi hanya mencatat hasilnya (server menjawab 409 posted record yang sama, tidak mengirim ulang). Itu HANYA bila attempt
+ * milik record ini (`clientRef` = recordKey) di database sesi ini; record lain dengan himpunan faktur sama / database lain = TIDAK
+ * PASTI (tinjauan A-3: subjek attempt = himpunan faktur, bukan record).
  */
-export function statusPosting(row: { accurate_post_status?: string; accurate_purchase_payment_number?: string }, attempt: AttemptFinance | null | undefined): StatusPosting {
+export function statusPosting(
+    row: { accurate_post_status?: string; accurate_purchase_payment_number?: string }, attempt: AttemptFinance | null | undefined,
+    milik: { key: string; dbId: string },
+): StatusPosting {
     const ledger = String(row.accurate_post_status || "");
     const a = attempt?.status;
     if (a === "sending") return { kode: "sedang", nomor: "", catatanTertinggal: false };
     if (ledger === "posted") return { kode: "terposting", nomor: row.accurate_purchase_payment_number || attempt?.accurateNumber || "", catatanTertinggal: false };
-    if (a === "posted") return { kode: "terposting", nomor: attempt?.accurateNumber || "", catatanTertinggal: true };
+    if (a === "posted") {
+        const milikSendiri = attempt!.clientRef === milik.key && Boolean(milik.dbId) && attempt!.targetDbId === milik.dbId;
+        return milikSendiri ? { kode: "terposting", nomor: attempt!.accurateNumber || "", catatanTertinggal: true } : { kode: "tidak_pasti", nomor: "", catatanTertinggal: false };
+    }
     if (ledger === "unknown" || a === "unknown" || a === "stale") return { kode: "tidak_pasti", nomor: "", catatanTertinggal: false };
     if (ledger === "failed" || a === "failed") return { kode: "gagal", nomor: "", catatanTertinggal: false };
     return { kode: "belum", nomor: "", catatanTertinggal: false };

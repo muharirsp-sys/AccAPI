@@ -37,7 +37,7 @@ const pengajuan = (id: string, principle: string, faktur: Array<[string, number]
 };
 const FAKTUR_A: Array<[string, number]> = [["LPB-A/0918", 14_200_000], ["LPB-A/0921", 12_900_000], ["LPB-A/0926", 11_600_000], ["LPB-A/0930", 9_500_000]];
 const attempt = (over: Record<string, unknown>) => ({
-    attemptId: "at-9", state: "unknown", status: "unknown", stale: false, accurateNumber: "", accurateId: "", actor: "u-1", actorName: "Finance A", targetDbId: "DB-1",
+    attemptId: "at-9", state: "unknown", status: "unknown", stale: false, accurateNumber: "", accurateId: "", actor: "u-1", actorName: "Finance A", clientRef: "DRAFT-0418|-|PRINCIPLE A|LPB", targetDbId: "DB-1",
     generation: 0, ageSeconds: 30, createdAt: "", createdAtWita: `${HARI_INI} 08:21:00`, updatedAt: "", updatedAtWita: `${HARI_INI} 08:21:30`, message: "", resolution: null, ...over,
 });
 
@@ -124,14 +124,15 @@ async function siapkan(target: Page | BrowserContext, opsi: Opsi = {}) {
         m.urutan.push("command");
         m.command.push(body);
         const sub = subjek((body.payload[0].detailInvoice as Array<{ invoiceNo: string }>).map((d) => d.invoiceNo));
-        attempts[sub] = attempt({ state: "sending", status: "sending", ageSeconds: 0 });
+        const milik = { clientRef: body.clientRef, targetDbId: m.sesiDb.id };
+        attempts[sub] = attempt({ state: "sending", status: "sending", ageSeconds: 0, ...milik });
         if (opsi.tahanCommand) await opsi.tahanCommand;
         const j = antri.command.shift() ?? { status: 200, body: { attemptId: "at-1", state: "posted", accurateId: "9001", accurateNumber: "PP/2610/0031", message: "", response: { s: true }, persisted: true } };
         const isi = j === "putus" ? null : (j.body as { state?: string; claimed?: boolean; live?: { state: string; stale?: boolean; accurateNumber?: string } | null } | undefined);
-        if (j !== "putus" && j.status === 200 && isi?.state === "posted") attempts[sub] = attempt({ state: "posted", status: "posted", accurateNumber: "PP/2610/0031", ageSeconds: 1 });
+        if (j !== "putus" && j.status === 200 && isi?.state === "posted") attempts[sub] = attempt({ state: "posted", status: "posted", accurateNumber: "PP/2610/0031", ageSeconds: 1, ...milik });
         else if (isi?.claimed === false) delete attempts[sub];
-        else if (isi?.live) attempts[sub] = attempt({ state: isi.live.state, status: isi.live.state === "sending" ? (isi.live.stale ? "stale" : "sending") : isi.live.state, stale: Boolean(isi.live.stale), accurateNumber: isi.live.accurateNumber ?? "" });
-        else attempts[sub] = attempt({ ageSeconds: 1 });
+        else if (isi?.live) attempts[sub] = attempt({ state: isi.live.state, status: isi.live.state === "sending" ? (isi.live.stale ? "stale" : "sending") : isi.live.state, stale: Boolean(isi.live.stale), accurateNumber: isi.live.accurateNumber ?? "", ...milik });
+        else attempts[sub] = attempt({ ageSeconds: 1, ...milik });
         return jawab(r, j);
     });
     await target.route((u) => u.pathname === "/api/finance/purchase-payment/resolve", (r) => {
@@ -257,6 +258,21 @@ test("A-2/B-2: terposting lalu catatan Finance gagal → belum pasti + nomor PP;
     expect(m.command).toHaveLength(2); // kiriman kedua dijawab 409 posted oleh server — bukan purchase-payment kedua
     expect(m.update.at(-1)).toMatchObject({ accurate_post_status: "posted", accurate_purchase_payment_number: "PP/2610/0031" });
     await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled(NAV);
+});
+
+test("A-3: attempt posted himpunan faktur sama dari record lain = TIDAK PASTI (bukan terposting) di record ini", async ({ page }) => {
+    const sub = subjek(FAKTUR_A.map(([f]) => f));
+    await siapkan(page, {
+        rows: () => [pengajuan("DRAFT-0418", "PRINCIPLE A", FAKTUR_A), pengajuan("DRAFT-0419", "PRINCIPLE A", FAKTUR_A)],
+        attempts: { [sub]: attempt({ state: "posted", status: "posted", accurateNumber: "PP/2610/0031", stale: true, ageSeconds: 900 }) },
+    });
+    const { main, detail } = await bukaPengajuan(page, "DRAFT-0419");
+    const daftar = main.getByRole("list", { name: "Daftar pengajuan" });
+    await expect(daftar.getByRole("button", { name: /DRAFT-0418/ })).toContainText("Terposting PP/2610/0031");
+    await expect(daftar.getByRole("button", { name: /DRAFT-0419/ })).toContainText("Posting tidak pasti");
+    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+    await expect(detail.getByRole("button", { name: "Catat hasil posting…" })).toHaveCount(0);
+    await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled();
 });
 
 test("{claimed:false} = tidak terkirim & tidak dikunci; 409 in_flight = tanpa tulis catatan (tab lain yang mencatat)", async ({ page }) => {

@@ -73,7 +73,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
     const baris: Baris[] = useMemo(() => (data?.rows ?? []).map((r) => {
         const key = recordKey(r);
         const attempt = data?.attempts.get(key) ?? null;
-        return { r, key, attempt, posting: statusPosting(r, attempt) };
+        return { r, key, attempt, posting: statusPosting(r, attempt, { key, dbId: data?.sesi?.id ?? "" }) };
     }), [data]);
 
     // Tulis terkunci saat sumber memuat ulang, gagal dimuat ulang, atau status posting server tidak terbaca.
