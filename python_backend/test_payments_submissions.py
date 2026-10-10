@@ -4,10 +4,17 @@ Main Functions: main; assert izin payments.view, berkas hanya yang BENAR-BENAR a
   bukan tebakan), ringkasan transfer/posting per pengajuan, rute Panin = SPPD, waktu WITA, 404 berpesan Indonesia.
 Side Effects: file sementara di direktori temp saja.
 """
-import datetime as dt
 import json
 import os
 import tempfile
+
+import subprocess
+import sys
+
+# Server produksi berjalan UTC: jalankan ulang uji ini dengan zona proses UTC supaya konversi WITA benar-benar diuji
+# (di mesin berzona WITA, jam server == WITA dan konversi yang hilang tidak akan ketahuan).
+if os.environ.get("TZ") != "UTC0":
+    sys.exit(subprocess.call([sys.executable, os.path.abspath(__file__)], env={**os.environ, "TZ": "UTC0"}))
 
 TMP = tempfile.mkdtemp(prefix="payments-subs-")
 DB_PATH = os.path.join(TMP, "payments.json")
@@ -82,8 +89,7 @@ def main_check():
     assert data["S3"]["files"] == [] and data["S3"]["record_count"] == 1 and data["S3"]["status"] == "dikembalikan", data["S3"]
 
     # Jejak waktu ledger ditulis jam server; tampil WITA = UTC+8 dari jam server itu.
-    naive = dt.datetime(2026, 10, 9, 10, 0, 0)
-    expected = (naive - naive.astimezone().utcoffset() + dt.timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
+    expected = "2026-10-09 18:00:00"  # jam server UTC 10:00 = 18:00 WITA
     assert s1["created_at_wita"] == expected, (s1["created_at_wita"], expected)
 
     r = client.get("/payments/submissions/S1")

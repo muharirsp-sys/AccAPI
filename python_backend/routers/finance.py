@@ -35,6 +35,7 @@ from shared import (
     s,
     safe_upload_filename,
     save_payments_db,
+    server_time_to_wita,
     user_has_permission,
     uuid,
     validate_csrf_request,
@@ -105,6 +106,9 @@ def payments_finance_data(request: Request):
             "accurate_post_error": "",
             "accurate_purchase_payment_number": "",
             "accurate_purchase_payment_id": "",
+            "accurate_posted_by": "",
+            "accurate_posted_at": "",
+            "accurate_post_resolution": None,
             "submitted_date": target_payment_date,
         })
         g["total_nilai"] += amount
@@ -149,6 +153,16 @@ def payments_finance_data(request: Request):
             g["accurate_purchase_payment_number"] = s(r.get("accurate_purchase_payment_number", ""))
         if not g["accurate_purchase_payment_id"]:
             g["accurate_purchase_payment_id"] = s(r.get("accurate_purchase_payment_id", ""))
+        # S6-0e butir 6: siapa & kapan memposting (jejak jam server -> WITA) dan penyelesaian tidak pasti (atestasi
+        # manual). `previous` (bukti mentah jawaban Accurate) sengaja TIDAK dikirim ke layar.
+        if not g["accurate_posted_by"]:
+            g["accurate_posted_by"] = s(r.get("accurate_posted_by", ""))
+        if not g["accurate_posted_at"]:
+            g["accurate_posted_at"] = server_time_to_wita(r.get("accurate_posted_at", ""))
+        res = r.get("accurate_post_resolution")
+        if g["accurate_post_resolution"] is None and isinstance(res, dict) and res:
+            g["accurate_post_resolution"] = {**{k: s(res.get(k, "")) for k in ("from", "to", "source", "by", "note")},
+                                             "at": server_time_to_wita(res.get("at", ""))}
 
     def pick_status(statuses: List[str]) -> str:
         lower = [s(x).lower() for x in statuses if s(x)]
@@ -203,6 +217,9 @@ def payments_finance_data(request: Request):
             "accurate_post_error": g.get("accurate_post_error", ""),
             "accurate_purchase_payment_number": g.get("accurate_purchase_payment_number", ""),
             "accurate_purchase_payment_id": g.get("accurate_purchase_payment_id", ""),
+            "accurate_posted_by": g.get("accurate_posted_by", ""),
+            "accurate_posted_at": g.get("accurate_posted_at", ""),
+            "accurate_post_resolution": g.get("accurate_post_resolution"),
             "mapping": mapping,
             "payment_method": method_val,
             "status_pembayaran": status_val,
