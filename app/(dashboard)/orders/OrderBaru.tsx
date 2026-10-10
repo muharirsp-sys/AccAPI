@@ -26,8 +26,9 @@ import { BELUM_PASTI, fastapi, nextApi, pesanJawaban, sukses, tidakPasti, type P
 
 /** `price` null = ikut harga master dari pratinjau; teks = diketik petugas. */
 type Line = { code: string; unit: string; quantity: string; price: string | null };
-type ItemMaster = { found: boolean; name: string; units: string[] };
-type CustomerMaster = { found: boolean; name: string; area: string; priceCategoryName: string };
+/** `galat` = master TIDAK TERBACA (server/jaringan) — dibedakan dari "tidak ada di master" (`found: false`). */
+type ItemMaster = { found: boolean; name: string; units: string[]; galat?: boolean };
+type CustomerMaster = { found: boolean; name: string; area: string; priceCategoryName: string; galat?: boolean };
 type Suggestion = { program_id: string; message: string; codes: string[] };
 type WrongUnit = { code: string; unit: string; known_units: string[] };
 type Pratinjau =
@@ -86,6 +87,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     const [note, setNote] = useState("");
     const [lines, setLines] = useState<Line[]>([emptyLine()]);
     const [master, setMaster] = useState<Record<string, ItemMaster>>({});
+    const [ulangMaster, setUlangMaster] = useState(0);
     const [hasil, setHasil] = useState<{ key: string; p: Pratinjau } | null>(null);
     const [dialog, setDialog] = useState<null | "biasa" | "ulang">(null);
     // FastAPI POST /orders TIDAK idempoten: jawaban tidak pasti → Simpan ditahan sampai isian diubah atau "Simpan lagi" eksplisit.
@@ -97,14 +99,18 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     useEffect(() => {
         const code = customerNo.trim();
         if (!code) { setCustomer(null); setChannel(""); setChannelMasalah(""); return; }
+        // Jawaban untuk kode SEBELUMNYA yang datang terlambat tidak boleh menimpa pelanggan/channel kode yang sedang diketik.
+        let hidup = true;
         const timer = setTimeout(async () => {
             const c = await nextApi(`/api/customers/lookup?no=${encodeURIComponent(code)}`);
+            if (!hidup) return;
             if (sukses(c)) {
                 const d = c.data;
                 setCustomer({ found: Boolean(d.found), name: String(d.name ?? ""), area: String(d.area ?? ""), priceCategoryName: String(d.priceCategoryName ?? "") });
                 if (d.found && !outlet.trim()) setOutlet(String(d.name ?? ""));
-            } else setCustomer(null);
+            } else setCustomer({ found: false, name: "", area: "", priceCategoryName: "", galat: true });
             const k = await nextApi(`/api/outlet-channel?no=${encodeURIComponent(code)}`);
+            if (!hidup) return;
             if (!sukses(k)) {
                 setChannel("");
                 setChannelMasalah("Channel outlet tidak bisa ditanyakan ke master sekarang; coba lagi sebentar lagi.");
@@ -118,7 +124,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                 ? `Outlet ${code} tidak ada di master pelanggan Accurate; sinkronkan master atau betulkan kodenya.`
                 : dariMaster ? "" : `Outlet ${code} belum punya kategori (TT/MT) di Accurate. Isi kategorinya di Accurate lebih dulu.`);
         }, 400);
-        return () => clearTimeout(timer);
+        return () => { hidup = false; clearTimeout(timer); };
         // outlet sengaja tidak masuk deps: prefill hanya saat outlet masih kosong.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [customerNo]);
@@ -126,19 +132,22 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     // Satuan dan nama barang dari master, satu permintaan per kode baru. Satuan sengaja tidak ditebak (selisih satuan bisa 72x).
     const codesKey = [...new Set(lines.map((line) => line.code.trim()).filter(Boolean))].join(",");
     useEffect(() => {
-        const pending = codesKey.split(",").filter((code) => code && !(code in master));
+        // Yang gagal dibaca (galat) dicoba lagi lewat "Coba lagi" (ulangMaster); yang sudah terbaca tidak diminta ulang.
+        const pending = codesKey.split(",").filter((code) => code && (!(code in master) || master[code].galat));
         if (pending.length === 0) return;
         const timer = setTimeout(async () => {
             const loaded = await Promise.all(pending.map(async (code): Promise<[string, ItemMaster]> => {
                 const j = await nextApi(`/api/items/units?code=${encodeURIComponent(code)}`);
-                if (!sukses(j)) return [code, { found: false, name: "", units: [] }];
+                if (!sukses(j)) return [code, { found: false, name: "", units: [], galat: true }];
                 return [code, { found: Boolean(j.data.found), name: String(j.data.name ?? ""), units: (j.data.units ?? []) as string[] }];
             }));
             setMaster((prev) => ({ ...prev, ...Object.fromEntries(loaded) }));
         }, 400);
         return () => clearTimeout(timer);
+        // `master` sengaja tidak masuk deps: efek ini MENGISI master; memasukkannya membuat setiap jawaban memicu putaran baru.
+        // Kode yang sudah ada disaring lewat `code in master`; percobaan ulang yang gagal lewat `ulangMaster`.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [codesKey]);
+    }, [codesKey, ulangMaster]);
 
     // Satuan yang tidak ada di master dibuang; satu-satunya satuan dipilih otomatis.
     useEffect(() => {
@@ -184,6 +193,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     const nDiubah = lengkap.filter(diubah).length;
     const terkunciIsian = !bolehBuat ? "Akun Anda tidak berhak membuat order"
         : !customerNo.trim() ? "Pilih pelanggan dan isi minimal satu barang"
+            : customer?.galat ? "Data pelanggan belum terbaca dari master; coba lagi"
             : customer && !customer.found ? `Kode ${customerNo.trim()} tidak ada di master Accurate`
                 : !outlet.trim() ? "Isi nama outlet"
                     : !channel.trim() ? (channelMasalah || "Channel outlet belum dipastikan dari master")
@@ -239,7 +249,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                     <div className="fi-sect-in">
                         <div className="fi-formgrid">
                             <FormField label="Kode pelanggan Accurate" required
-                                error={customer && !customer.found ? `Kode ${customerNo.trim()} tidak ada di master Accurate` : channelMasalah || undefined}
+                                error={customer?.galat ? "Data pelanggan tidak terbaca dari master; ketik ulang kodenya untuk mencoba lagi." : customer && !customer.found ? `Kode ${customerNo.trim()} tidak ada di master Accurate` : channelMasalah || undefined}
                                 help={customer?.found ? `${customer.name}${customer.area ? ` · ${customer.area}` : ""} · harga ${customer.priceCategoryName || "standar (kategori belum tersedia)"}` : "Harga dan seri faktur mengikuti pelanggan."}>
                                 {(a) => <input {...a} className="fi-input fi-mono" value={customerNo} placeholder="C.00000" autoComplete="off" onChange={(e) => { setRagu(false); setCustomerNo(e.target.value); }} />}
                             </FormField>
@@ -284,7 +294,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                                     </div>
                                     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_8rem_6rem_10rem]">
                                         <FormField label="Kode barang"
-                                            error={info && !info.found ? `Kode ${code} tidak ada di master Accurate` : undefined}
+                                            error={info?.galat ? "Master barang tidak terbaca dari server; ini bukan berarti kodenya tidak ada." : info && !info.found ? `Kode ${code} tidak ada di master Accurate` : undefined}
                                             help={info?.found ? (info.units.length === 0 ? `${info.name} — belum ada daftar harga` : info.name) : undefined}>
                                             {(a) => <input {...a} className="fi-input fi-mono" value={line.code} placeholder="kode barang" autoComplete="off" onChange={(e) => ubah(index, "code", e.target.value)} />}
                                         </FormField>
@@ -321,6 +331,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                                             {hasilBaris && <span className="fi-tnum fi-muted">netto {rupiah(hasilBaris.net)} (harga master)</span>}
                                         </div>
                                     )}
+                                    {info?.galat && <div><Button variant="tertiary" onClick={() => setUlangMaster((n) => n + 1)}>Coba lagi baca master barang</Button></div>}
                                     {advice && <p className="fi-small fi-why flex items-start gap-1.5"><Lightbulb className="fi-icon" aria-hidden /><span>{advice.message}</span></p>}
                                 </li>
                             );

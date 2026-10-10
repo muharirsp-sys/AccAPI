@@ -61,6 +61,8 @@ type Opsi = {
     tundaStatus?: () => Promise<void>;
     koneksi?: unknown;
     koneksiPost?: () => { body?: unknown; status?: number; html?: string };
+    lookup?: (no: string) => Promise<{ body: unknown; status?: number }>;
+    units?: (code: string) => { body: unknown; status?: number } | undefined;
     pull?: { body?: unknown; status?: number; html?: string };
     detail?: Record<string, { body?: unknown; status?: number; html?: string }>;
     simpan?: Array<{ body?: unknown; status?: number; html?: string }>;
@@ -132,13 +134,19 @@ async function pasang(page: Page, opsi: Opsi = {}): Promise<Log> {
         const net = b.lines.reduce((t, l) => t + (MASTER[`${l.code}|${l.unit}`] ?? 0) * Number(l.quantity), 0);
         return r.fulfill(json({ ok: true, prices, lines: b.lines, result: { gross: String(net), discount: "0", net: String(net), lines: [], bonuses: [] }, suggestions: [] }));
     });
-    await page.route((u) => u.pathname === "/api/customers/lookup", (r) => r.fulfill(json({ ok: true, found: true, name: "TOKO A", area: "CABANG A", priceCategoryName: "Grosir" })));
+    await page.route((u) => u.pathname === "/api/customers/lookup", async (r) => {
+        const no = new URL(r.request().url()).searchParams.get("no") ?? "";
+        const x = opsi.lookup ? await opsi.lookup(no) : { body: { ok: true, found: true, name: "TOKO A", area: "CABANG A", priceCategoryName: "Grosir" } };
+        return r.fulfill(json(x.body, x.status));
+    });
     await page.route((u) => u.pathname === "/api/outlet-channel", (r) => {
         const no = new URL(r.request().url()).searchParams.get("no") ?? "";
         return r.fulfill(json({ ok: true, channels: { [no]: "GT" } }));
     });
     await page.route((u) => u.pathname === "/api/items/units", (r) => {
         const code = new URL(r.request().url()).searchParams.get("code") ?? "";
+        const x = opsi.units?.(code);
+        if (x) return r.fulfill(json(x.body, x.status));
         return r.fulfill(json({ ok: true, found: true, name: `BARANG ${code}`, units: code === "BRG-A2" ? ["LSN"] : ["KRT"] }));
     });
     return log;
@@ -333,6 +341,35 @@ test("Order baru: sesudah tersimpan Simpan terkunci sampai halaman order terbuka
     lepas();
     await expect(page).toHaveURL(new RegExp(`/orders/${ID_A}\\?baru=1$`), NAV);
     expect(log.simpan).toHaveLength(1);
+});
+
+test("Order baru: jawaban pelanggan lama yang telat tidak menimpa; master barang gagal dibaca ≠ tidak ada di master (+ Coba lagi)", async ({ page }) => {
+    let unitsGagal = true;
+    await pasang(page, {
+        lookup: async (no) => {
+            if (no === "C-LAMA") await new Promise((ok) => setTimeout(ok, 2500));
+            return { body: { ok: true, found: true, name: no === "C-LAMA" ? "TOKO LAMA" : "TOKO A", area: "CABANG A", priceCategoryName: "Grosir" } };
+        },
+        units: (code) => (code === "BRG-A9" && unitsGagal ? { body: { ok: false, error: "Gagal membaca master" }, status: 500 } : undefined),
+    });
+    await page.goto("/orders/baru");
+    const m = main(page);
+    const kode = m.getByLabel("Kode pelanggan Accurate");
+    await kode.fill("C-LAMA", NAV);
+    await page.waitForTimeout(900); // lewat jeda 400 ms: permintaan C-LAMA sudah berangkat
+    await kode.fill("C-A001-KN");
+    await expect(m.getByLabel("Outlet")).toHaveValue("TOKO A");
+    await page.waitForTimeout(2500); // jawaban C-LAMA tiba belakangan
+    await expect(m.getByText(/TOKO LAMA/)).toHaveCount(0);
+    await expect(m.getByText(/TOKO A · CABANG A/)).toBeVisible();
+
+    const b1 = m.getByRole("listitem", { name: "Barang 1" });
+    await b1.getByLabel("Kode barang").fill("BRG-A9");
+    await expect(b1.getByText("Master barang tidak terbaca dari server; ini bukan berarti kodenya tidak ada.")).toBeVisible();
+    await expect(b1.getByText(/tidak ada di master Accurate/)).toHaveCount(0);
+    unitsGagal = false;
+    await b1.getByRole("button", { name: "Coba lagi baca master barang" }).click();
+    await expect(b1.getByText("BARANG BRG-A9")).toBeVisible();
 });
 
 test("Order baru: galat server tampil di dialog apa adanya; simpan tidak pasti mengunci Simpan", async ({ page }) => {
