@@ -217,11 +217,13 @@ export function SelesaikanDialog({ row, onClose, onSelesai, onTidakPasti }: {
     const [load, cariLagi] = useLoad(useCallback(() => ambil<HasilCari>(`/api/invoice-outbox/resolve?orderId=${encodeURIComponent(row.orderId)}`,
         (j) => j as HasilCari, 120_000), [row.orderId]));
     // Jawaban 409 POST membawa pencarian/masa tunggu terbaru: menimpa yang tampil sampai dicari lagi.
-    const [timpa, setTimpa] = useState<{ dari: HasilCari; isi: Partial<HasilCari> } | null>(null);
+    // `berubah` = jenis hasil pencarian di jawaban 409 beda dengan yang tadi dibaca petugas (alasannya mungkin tidak berlaku lagi).
+    const [timpa, setTimpa] = useState<{ dari: HasilCari; isi: Partial<HasilCari>; berubah: boolean } | null>(null);
     const [pilih, setPilih] = useState<Keputusan | "">("");
     const cari = load.status === "siap" && load.data ? { ...load.data, ...(timpa?.dari === load.data ? timpa.isi : {}) } : undefined;
     const p = cari?.pencarian;
-    const keputusan: Keputusan | "" = pilih || (p?.hasil === "ketemu" ? "terposting" : "");
+    // Tidak pernah dipilih otomatis: keputusan + alasan selalu dari petugas, juga setelah hasil pencarian berubah.
+    const keputusan: Keputusan | "" = pilih;
 
     const alasanTidak = !p ? "Menunggu hasil pencarian"
         : p.hasil === "ketemu" ? "Tidak tersedia: faktur ditemukan — mengirim ulang akan membuat faktur ganda."
@@ -243,8 +245,9 @@ export function SelesaikanDialog({ row, onClose, onSelesai, onTidakPasti }: {
                 return;
             }
             if (status === 409 && cari && load.data && (data.pencarian || typeof data.sisaMenit === "number")) {
-                setTimpa({ dari: load.data, isi: {
-                    ...(data.pencarian ? { pencarian: data.pencarian as Pencarian } : {}),
+                const pencarian = data.pencarian as Pencarian | undefined;
+                setTimpa({ dari: load.data, berubah: Boolean(pencarian && pencarian.hasil !== cari.pencarian.hasil), isi: {
+                    ...(pencarian ? { pencarian } : {}),
                     ...(typeof data.sisaMenit === "number" ? { sisaMenit: data.sisaMenit } : {}),
                 } });
                 setPilih("");
@@ -274,6 +277,11 @@ export function SelesaikanDialog({ row, onClose, onSelesai, onTidakPasti }: {
             {load.status === "galat" && <ErrorState title="Pencarian faktur gagal" message={load.error} onRetry={cariLagi} />}
             {cari && (
                 <>
+                    {timpa?.dari === load.data && timpa.berubah && (
+                        <MessageStrip tone="warn" title="Hasil pencarian berubah saat disimpan.">
+                            Sekarang: {kalimatPencarian(cari.pencarian)}. Pilih keputusan lagi dan sesuaikan alasan Anda dengan hasil ini.
+                        </MessageStrip>
+                    )}
                     <BlokPencarian cari={cari} />
                     <div role="radiogroup" aria-label="Hasil penyelesaian" className="fi-sect-in" style={{ padding: 0 }}>
                         {opsi.map((o) => (

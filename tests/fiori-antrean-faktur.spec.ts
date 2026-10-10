@@ -326,7 +326,8 @@ test("Selesaikan: hasil pencarian tampil DULU; ketemu → terposting; tidak kete
     expect(getKe(log, "/api/invoice-outbox/resolve").at(-1)?.query).toBe("?orderId=PRINCIPLE-A%3ASO-A-003");
     await expect(dlg.getByRole("radio", { name: /Tetapkan tidak terposting/ })).toBeDisabled();
     await expect(dlg.getByRole("radiogroup")).toContainText("faktur ditemukan — mengirim ulang akan membuat faktur ganda");
-    await expect(dlg.getByRole("radio", { name: /Tetapkan terposting sebagai INV\/A\/0009/ })).toBeChecked();
+    await expect(dlg.getByRole("radio", { name: /Tetapkan terposting sebagai INV\/A\/0009/ })).not.toBeChecked(); // tidak dipilih otomatis
+    await dlg.getByRole("radio", { name: /Tetapkan terposting sebagai INV\/A\/0009/ }).check();
     await dlg.getByLabel("Alasan").fill("sudah ada");
     await expect(dlg.getByRole("button", { name: "Tetapkan terposting" })).toBeDisabled();
     await dlg.getByLabel("Alasan").fill(ALASAN);
@@ -363,6 +364,27 @@ test("Selesaikan: hasil pencarian tampil DULU; ketemu → terposting; tidak kete
     await expect(dlg).toContainText("Pencarian tidak bisa memastikan. list.do HTTP 401: sesi habis");
     await expect(dlg.getByRole("radio", { name: /Tetapkan terposting/ })).toBeDisabled();
     await expect(dlg.getByRole("radio", { name: /Tetapkan tidak terposting/ })).toBeDisabled();
+});
+
+test("Selesaikan: 409 yang membalik hasil pencarian TIDAK membalik keputusan diam-diam — pilihan eksplisit + peringatan", async ({ page }) => {
+    const opsi: Opsi = {
+        cari: (r) => r.fulfill(json({ ...TIDAK, pencarian: { ...TIDAK.pencarian, calon_tanpa_kunci: [] } })),
+        selesai: (r) => r.fulfill(json({ ok: false, pencarian: KETEMU.pencarian,
+            error: "Faktur INV/A/0009 DITEMUKAN di Accurate untuk SO ini — tetapkan terposting, bukan tidak terposting." }, 409)),
+    };
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    await page.locator("main").getByRole("button", { name: /^Selesaikan/ }).click(NAV);
+    const dlg = page.getByRole("dialog", { name: "Selesaikan faktur tidak pasti" });
+    await dlg.getByRole("radio", { name: /Tetapkan tidak terposting/ }).check();
+    await dlg.getByLabel("Alasan").fill(ALASAN);
+    await dlg.getByRole("button", { name: "Tetapkan tidak terposting" }).click();
+    await expect(dlg.getByRole("alert").filter({ hasText: "DITEMUKAN di Accurate" })).toBeVisible();
+    await expect(dlg.getByRole("status").filter({ hasText: "Hasil pencarian berubah" })).toBeVisible();
+    await expect(dlg.getByRole("radio", { name: /Tetapkan terposting sebagai INV\/A\/0009/ })).not.toBeChecked();
+    await expect(dlg.getByRole("button", { name: "Simpan penyelesaian" })).toHaveAttribute("title", "Pilih hasil dulu");
+    expect(tulisKe(log, "/api/invoice-outbox/resolve")).toHaveLength(1);
 });
 
 test("Tanpa izin: Selesaikan/Kirim/Buang nonaktif dengan alasan berkalimat (bukan nama kunci mentah)", async ({ page }) => {
