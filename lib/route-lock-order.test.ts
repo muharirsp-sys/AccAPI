@@ -43,7 +43,7 @@ const BATCH_ROUTE = "app/api/principal-order/route.ts";
 const BATCH_LOCK = /^const \w+ = (?:existing \? )?await kunciBatch\(tx, [\w.]+, "update"\)/;
 const VALIDASI_ROUTE = "app/api/principal-order/validate/route.ts";
 const VALIDASI_LOCK = /^if \(!\(await kunciBatch\(tx, id, "key share"\)\)\) return false;/;
-const ANTRE_LOCK = /^if \(input\.batchId && !\(await kunciBatch\(tx, input\.batchId, "key share"\)\)\) return null;/;
+const ANTRE_LOCK = /^if \(input\.batchId && !batchSah\(await kunciBatch\(tx, input\.batchId, "key share"\), input\.batchVersi\)\) return null;/;
 
 const CLAIM_LOCK = /^await lockClaimWorkflow\(tx, id\);/;
 const OFF_LOCK = /^const \[\w+\] = await tx\.select\(\)\.from\(offBatch\)\.where\(eq\(offBatch\.id, id\)\)\.for\("no key update"\);/;
@@ -82,4 +82,9 @@ test("kunci batch = pernyataan pertama setiap transaksi tulis antrekan()", () =>
     const firsts = firstStatements(src.slice(awal, src.indexOf("\nexport ", awal + 1)));
     assert.equal(firsts.length, 2, "jalur terposting + jalur biasa — daftar penjaga basi?");
     firsts.forEach((first, i) => assert.match(first, ANTRE_LOCK, `transaksi #${i + 1} dimulai dengan: ${first}`));
+});
+
+test("route queue membawa versi batch (validated_at) ke antrekan — payload basi ditolak di bawah kunci", () => {
+    const src = readFileSync(`${ROOT}app/api/principal-order/queue/route.ts`, "utf8");
+    assert.match(src, /batchId: id, batchVersi: batch\.validatedAt,/);
 });

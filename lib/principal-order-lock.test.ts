@@ -11,6 +11,8 @@
  *   V2. Validasi memegang kunci batch duluan -> DELETE route menunggu, lalu menghapus sesudah Validasi commit; keduanya 200.
  *   E.  jalur E2 `posted` antrekan (SO pernah dibuang, faktur ketemu) di bawah kunci batch yang sama: hapus duluan -> tidak ada
  *       baris terposting; antre duluan -> DELETE menunggu lalu 409, baris terposting + event tercatat.
+ *   Q.  route queue membentuk payload di luar kunci: Validasi ulang yang commit di antaranya (validated_at berubah) -> antrekan
+ *       menolak di bawah kunci (batchVersi); versi yang sama -> diantrekan.
  *   G.  dua Ganti bersamaan untuk berkas sama -> yang kedua menunggu kunci batch lama, lalu INSERT-nya bentrok indeks unik:
  *       409 `BERKAS_SUDAH_DISIMPAN` (kode lama: 23505 tak tertangani = 500).
  * Penjaga statik urutannya: lib/route-lock-order.test.ts. */
@@ -305,4 +307,24 @@ test("PG BL-21: jalur E2 `posted` antrekan juga di bawah kunci batch (hapus dulu
         await penahan.query("ROLLBACK").catch(() => undefined);
         penahan.release();
     }
+});
+
+test("PG BL-21: payload dari baris sebelum Validasi ulang (validated_at berubah) ditolak di bawah kunci batch", { skip: pgSkip }, async () => {
+    const { antrekan } = await route();
+    const batchQ = `bl21-q-${tag}`;
+    const keyBasi = invoiceKey(principal, `SO-Q1-${tag}`), keyKini = invoiceKey(principal, `SO-Q2-${tag}`);
+    await seed(batchQ, `SO-Q1-${tag}`);
+    const validasiUlang = async () => (await pool.query(
+        "UPDATE principal_order_batch SET validated_at = date_trunc('milliseconds', clock_timestamp()) WHERE id = $1 RETURNING validated_at",
+        [batchQ])).rows[0].validated_at as Date;
+    const v1 = await validasiUlang();                 // route queue membaca baris + validated_at = v1, membentuk payload
+    await new Promise((r) => setTimeout(r, 5));
+    const v2 = await validasiUlang();                 // Validasi ulang commit sebelum antrekan mengunci batch
+    assert.notEqual(v1.getTime(), v2.getTime());
+    const basi = await antrekan(pg, { entries: [calon(keyBasi)], actor: "uji-lock", targetDb: "", cari: null, batchId: batchQ, batchVersi: v1 });
+    assert.deepEqual(basi.queued, [], "Q: payload dari baris sebelum Validasi ulang tetap diantrekan");
+    assert.match(basi.blocked[0]?.reason ?? "", /divalidasi ulang/);
+    assert.equal(await ada("SELECT 1 FROM invoice_outbox WHERE order_id = $1", keyBasi), 0);
+    const kini = await antrekan(pg, { entries: [calon(keyKini)], actor: "uji-lock", targetDb: "", cari: null, batchId: batchQ, batchVersi: v2 });
+    assert.deepEqual(kini.queued, [keyKini], "Q: versi yang sama ditolak");
 });
