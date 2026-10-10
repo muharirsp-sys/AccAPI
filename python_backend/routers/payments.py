@@ -19,6 +19,7 @@ from shared import (
     RedirectResponse,
     Request,
     SPPD_TEMPLATE_PATH,
+    Tuple,
     UploadFile,
     _PAYMENTS_DB_LOCK,
     _can_access_draft,
@@ -27,6 +28,7 @@ from shared import (
     append_audit_log,
     append_error_log,
     empty_payments_db_preserving_config,
+    effective_post_status,
     find_best_match,
     find_lpb_duplicate_key,
     format_idr,
@@ -60,6 +62,7 @@ from shared import (
     resolve_payment_record_key,
     s,
     save_payments_db,
+    server_time_to_wita,
     slugify,
     user_has_permission,
     uuid,
@@ -1159,3 +1162,146 @@ def payments_files(request: Request, file_name: str):
         return JSONResponse(status_code=404, content={"detail": "File not found"})
     return FileResponse(path, filename=safe_name)
 
+
+# ---------------------------------------------------------------------------------------------------------------
+# BL-50 (S6-0e): Pengajuan & SPPD bisa dibuka ulang — BACA-SAJA. Berkas diunduh lewat /payments/files/{nama}.
+# ---------------------------------------------------------------------------------------------------------------
+_SUBMISSION_STATUS_LABEL = {
+    "kosong": "Tanpa rekaman",
+    "tidak_pasti": "Posting tidak pasti",
+    "terposting": "Semua terposting",
+    "dikembalikan": "Ada yang dikembalikan Finance",
+    "ditransfer": "Semua ditransfer",
+    "sebagian": "Sebagian ditransfer",
+    "menunggu_transfer": "Menunggu transfer",
+}
+
+
+def _submission_files(sub: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Berkas yang BENAR-BENAR ada di PAYMENTS_FILES_DIR (restore backup membuat files=[] -> kosong, bukan tebakan)."""
+    out: List[Dict[str, str]] = []
+    seen = set()
+    listed = [(s(f.get("label", "")), s(f.get("url", ""))) for f in (sub.get("files") or []) if isinstance(f, dict)]
+    if s(sub.get("sppd_file", "")):
+        listed.append(("SPPD Bank Panin", s(sub.get("sppd_file", ""))))
+    for label, ref in listed:
+        name = os.path.basename(ref)
+        if not name or name in seen or not os.path.isfile(os.path.join(PAYMENTS_FILES_DIR, name)):
+            continue
+        seen.add(name)
+        out.append({"label": label or name, "name": name, "url": f"/payments/files/{name}"})
+    return out
+
+
+def _submission_summary(sid: str, sub: Dict[str, Any], recs: List[Tuple[str, Dict[str, Any]]]) -> Dict[str, Any]:
+    method = s(sub.get("method", ""))
+    transfer: Dict[str, int] = {}
+    posting: Dict[str, int] = {}
+    for _, r in recs:
+        st = s(r.get("status_pembayaran", "")) or "Belum diajukan"
+        transfer[st] = transfer.get(st, 0) + 1
+        post = effective_post_status(r) or "belum"
+        posting[post] = posting.get(post, 0) + 1
+    n = len(recs)
+    if not n:
+        status = "kosong"
+    elif posting.get("unknown"):
+        status = "tidak_pasti"
+    elif posting.get("posted") == n:
+        status = "terposting"
+    elif transfer.get("Ajukan Ulang"):
+        status = "dikembalikan"
+    elif transfer.get("Sudah Transfer") == n:
+        status = "ditransfer"
+    elif transfer.get("Sudah Transfer"):
+        status = "sebagian"
+    else:
+        status = "menunggu_transfer"
+    created_at = s(sub.get("created_at", ""))
+    return {
+        "id": sid,
+        "sppd_no": s(sub.get("sppd_no", "")) or next((s(r.get("sppd_no", "")) for _, r in recs if s(r.get("sppd_no", ""))), ""),
+        "created_at": created_at,
+        "created_at_wita": server_time_to_wita(created_at),
+        "created_by": s(sub.get("created_by", "")),
+        "target_payment_date": _normalize_yyyy_mm_dd(s(sub.get("target_payment_date", ""))),
+        "method": method,
+        # Rute Panin = SPPD (Surat Perintah Penarikan Dana, templat Bank Panin); Non Panin tanpa SPPD.
+        "route_label": "Bank Panin (SPPD)" if method == "BANK_PANIN" else ("Non Panin" if method == "NON_PANIN" else method),
+        "record_count": n,
+        "principles": sorted({s(r.get("principle", "")) for _, r in recs if s(r.get("principle", ""))}),
+        "total_invoice": sum(parse_number_id(r.get("nilai_invoice", r.get("nilai_principle", 0))) for _, r in recs),
+        "total_potongan": sum(parse_number_id(r.get("potongan", 0)) for _, r in recs),
+        "total_pembayaran": sum(parse_number_id(r.get("nilai_pembayaran", 0)) for _, r in recs),
+        "transfer": transfer,
+        "posting": posting,
+        "status": status,
+        "status_label": _SUBMISSION_STATUS_LABEL[status],
+        "files": _submission_files(sub),
+    }
+
+
+def _submissions_index(db: Dict[str, Any]) -> Dict[str, Tuple[Dict[str, Any], List[Tuple[str, Dict[str, Any]]]]]:
+    """Pengajuan dari db["submissions"] DIGABUNG dengan submission_id di rekaman (data lama tanpa entri pengajuan)."""
+    recs_by_sid: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
+    for key, r in db.get("lpb", {}).items():
+        sid = s(r.get("submission_id", ""))
+        if sid:
+            recs_by_sid.setdefault(sid, []).append((s(key), r))
+    subs = db.get("submissions", {}) if isinstance(db.get("submissions"), dict) else {}
+    out = {}
+    for sid in set(subs) | set(recs_by_sid):
+        recs = recs_by_sid.get(sid, [])
+        sub = subs.get(sid)
+        if not isinstance(sub, dict):
+            first = recs[0][1]
+            sub = {"created_at": s(first.get("submitted_at", "")), "created_by": s(first.get("submitted_by", "")),
+                   "target_payment_date": s(first.get("target_payment_date", "")), "files": [], "sppd_file": "",
+                   "method": "BANK_PANIN" if s(first.get("payment_method", "")).lower() == "bank panin" else "NON_PANIN"}
+        out[s(sid)] = (sub, recs)
+    return out
+
+
+@router.get("/payments/submissions")
+def payments_submissions(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "payments", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    db = load_payments_db()
+    rows = [_submission_summary(sid, sub, recs) for sid, (sub, recs) in _submissions_index(db).items()]
+    rows.sort(key=lambda x: (x["created_at"], x["id"]), reverse=True)
+    return JSONResponse({"ok": True, "data": rows})
+
+
+@router.get("/payments/submissions/{submission_id}")
+def payments_submission_detail(request: Request, submission_id: str):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "payments", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    db = load_payments_db()
+    found = _submissions_index(db).get(s(submission_id))
+    if not found:
+        return JSONResponse(status_code=404, content={"ok": False, "error": "Pengajuan tidak ditemukan."})
+    sub, recs = found
+    records = [{
+        "record_id": key,
+        "no_lpb": s(r.get("no_lpb", "")),
+        "tipe_pengajuan": normalize_pengajuan_type(r.get("tipe_pengajuan", "LPB")),
+        "principle": s(r.get("principle", "")),
+        "invoice_no": s(r.get("invoice_no", "")) or s(r.get("nomor_dokumen", "")),
+        "nilai_invoice": parse_number_id(r.get("nilai_invoice", r.get("nilai_principle", 0))),
+        "potongan": parse_number_id(r.get("potongan", 0)),
+        "nilai_pembayaran": parse_number_id(r.get("nilai_pembayaran", 0)),
+        "jenis_pembayaran": s(r.get("jenis_pembayaran", "")),
+        "status_pembayaran": s(r.get("status_pembayaran", "")),
+        "transfer_date": s(r.get("transfer_date", "")),
+        "accurate_post_status": effective_post_status(r),
+        "accurate_purchase_payment_number": s(r.get("accurate_purchase_payment_number", "")),
+        "locked_reason": payment_lock_reason(r),
+    } for key, r in sorted(recs, key=lambda kv: kv[0])]
+    cart_items = sub.get("cart_items") if isinstance(sub.get("cart_items"), dict) else {}
+    return JSONResponse({"ok": True, "data": {**_submission_summary(s(submission_id), sub, recs), "records": records, "cart_items": cart_items}})

@@ -1969,6 +1969,21 @@ def wita_now() -> pd.Timestamp:
     return (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=8)).tz_localize(None)
 
 
+def server_time_to_wita(value: Any) -> str:
+    """Jejak waktu ledger (submitted_at, created_at, accurate_posted_at, …) ditulis jam SERVER naif
+    (pd.Timestamp.now()); untuk tampilan dikonversi ke WITA. Teks tak terbaca dikembalikan apa adanya.
+    ponytail: menganggap zona server tidak berubah sejak jejak ditulis — jejak dari mesin berzona lain bergeser."""
+    import datetime as _dt
+    text = s(value)
+    if not text:
+        return ""
+    try:
+        moment = _dt.datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    return moment.astimezone(_dt.timezone(_dt.timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def sppd_last_sequence_for_year(settings: Dict[str, Any], year: int) -> int:
     """Nomor urut terakhir yang berlaku untuk tahun terbit `year` (D-05/C10): tahun yang lebih baru dari tahun
     urutan tersimpan mulai dari 0 (nomor pertama 001). `sequence_year` kosong (data sebelum aturan ini) diisi
