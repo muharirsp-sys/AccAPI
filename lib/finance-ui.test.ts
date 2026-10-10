@@ -73,7 +73,11 @@ test("kunci baris: terposting/tidak pasti/sedang/data usang mengunci; gagal jela
     const k = (kode: Parameters<typeof kunciBaris>[0]["posting"]["kode"], over: Partial<Parameters<typeof kunciBaris>[0]> = {}) =>
         kunciBaris({ posting: { kode, nomor: "", catatanTertinggal: false }, izin, ...over });
     assert.match(k("terposting").posting!, /Sudah terposting/);
-    assert.match(k("terposting").status!, /BL-05/);
+    assert.match(k("terposting").status!, /tidak bisa dikembalikan/);
+    // Alasan tampil ke pengguna: tanpa kode BL mentah.
+    for (const kode of ["belum", "sedang", "terposting", "tidak_pasti", "gagal", "tak_terbaca"] as const) {
+        for (const alasan of Object.values(k(kode))) if (alasan) assert.doesNotMatch(alasan, /BL-\d/, `${kode}: ${alasan}`);
+    }
     assert.match(k("tidak_pasti").posting!, /tidak pasti/);
     assert.match(k("tidak_pasti").status!, /selesaikan dulu/);
     assert.equal(k("tidak_pasti").selesaikan, undefined);

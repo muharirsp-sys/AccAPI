@@ -213,10 +213,14 @@ test.beforeEach(async ({ page }) => {
     page.on("dialog", (d) => { throw new Error(`window.${d.type()} masih dipakai: ${d.message()}`); });
 });
 
-test("Default → Transfer & posting: dialog menyebut isi kiriman, urutan 5 langkah, clientRef lama, sukses = nomor PP + siapa; BL-05 setelahnya", async ({ page }) => {
+test("Default → Transfer & posting: dialog menyebut isi kiriman, urutan 5 langkah, clientRef lama, sukses = nomor PP + siapa; BL-05 setelahnya (alasan terlihat, tanpa kode BL)", async ({ page }) => {
     const m = await siapkan(page);
     await page.setViewportSize({ width: 1440, height: 1000 });
-    const { main, detail, dlg } = await bukaDialogPosting(page);
+    const { main, detail } = await bukaPengajuan(page);
+    // Alasan nonaktif TERLIHAT (bukan hanya title): Simpan tujuan tanpa perubahan, Tandai belum transfer yang sudah belum.
+    await expect(detail.getByText("Simpan tujuan: belum ada perubahan tujuan.")).toBeVisible(NAV);
+    await expect(detail.getByRole("list", { name: "Alasan aksi nonaktif" })).toContainText("Tandai belum transfer: status sudah Belum transfer.");
+    const { dlg } = await bukaDialogPosting(page);
     expect(m.dataDates[0]).toBe(HARI_INI); // tanggal bawaan WITA, bukan UTC
     await expect(main.getByText("Database Accurate: PT CONTOH A")).toBeVisible();
     await expect(main.getByRole("button", { name: /Belum transfer\s*2/ })).toBeVisible();
@@ -245,7 +249,8 @@ test("Default → Transfer & posting: dialog menyebut isi kiriman, urutan 5 lang
     await expect(detail).toContainText("finance.a@example.invalid");
     await expect(detail.getByText(/Ditransfer \d{2}\/\d{2}\/\d{4}/).first()).toBeVisible();
     await expect(detail.getByRole("button", { name: "Kembalikan ke Pembayaran" })).toBeDisabled();
-    await expect(detail.getByRole("list", { name: "Alasan aksi nonaktif" })).toContainText("BL-05");
+    await expect(detail.getByRole("list", { name: "Alasan aksi nonaktif" })).toContainText("status transfer tidak bisa dikembalikan");
+    await expect(main).not.toContainText(/BL-\d/);
     await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled();
     await expect(detail.getByText("Sudah terposting di Accurate. Pembatalan lewat dokumen pembalik di Accurate.")).toBeVisible();
     await page.screenshot({ path: "test-results/fiori-finance-sukses.png", fullPage: true });

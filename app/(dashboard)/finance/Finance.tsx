@@ -141,7 +141,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
         setBukti((s) => tanpa(s, key));
     };
 
-    /** `tujuanDb` = database yang ditampilkan dialog BL-03 dari bacaan SEGAR (dikirim sebagai expectedDatabaseId). */
+    /** `tujuanDb` = database yang ditampilkan dialog posting (BL-03) dari bacaan SEGAR (dikirim sebagai expectedDatabaseId). */
     async function jalankanPosting(tujuanDb: SesiAccurate) {
         const b = dialogBaris;
         if (!b || !data) throw new Error("Pengajuan tidak ada lagi di daftar; muat ulang.");
@@ -348,7 +348,9 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
                                 ? "Rekaman pengajuan ini terbuka lagi di Pembayaran untuk diubah lalu diajukan ulang; Finance tidak memprosesnya sampai diajukan lagi."
                                 : "Status transfer kembali Belum transfer. Tidak ada yang dikirim ke Accurate."],
                         ]}
-                        onConfirm={() => jalankanStatus(dialog?.jenis === "ulang" ? "Ajukan Ulang" : "Belum Transfer")} />
+                        onConfirm={() => jalankanStatus(dialog?.jenis === "ulang" ? "Ajukan Ulang" : "Belum Transfer")}>
+                        {kunciBarisIni(dialogBaris).status && <p className="fi-small fi-why">{kunciBarisIni(dialogBaris).status}</p>}
+                    </ConfirmDialog>
                     <DialogSelesai open={dialog?.jenis === "selesai"} onClose={() => setDialog(null)} b={dialogBaris} data={data!} dibuka={dialog?.pada ?? 0}
                         blokir={kunciBarisIni(dialogBaris).selesaikan} onConfirm={jalankanSelesai} />
                 </>
@@ -376,6 +378,7 @@ function Detail(p: DetailProps) {
     const sesi = data.sesi;
     const db = (id: string) => (id && sesi?.id === id ? sesi.alias || `ID ${id}` : id ? `ID ${id}` : "–");
     const tujuanTerkunci = kunci.tujuan;
+    const alasanSimpan = tujuanTerkunci ?? (!p.tujuanBerubah ? "belum ada perubahan tujuan." : !p.tujuan.vendorNo || !p.tujuan.bankNo ? "pilih pemasok dan rekening dulu." : undefined);
     const postingTerkunci = Boolean(kunci.posting) && !(kode === "terposting" && b.posting.catatanTertinggal);
     const catatan = catatanPosting(kode, r.accurate_post_error || a?.message || "", r.accurate_post_status_raw || "");
     const sudahBelum = statusTransfer(r.status_pembayaran).label === "Belum transfer";
@@ -392,6 +395,7 @@ function Detail(p: DetailProps) {
 
     const alasanLain = [
         kunci.status && `Kembalikan / tandai belum transfer: ${kunci.status}`,
+        !kunci.status && sudahBelum && "Tandai belum transfer: status sudah Belum transfer.",
         kode === "tidak_pasti" && kunci.selesaikan && `Selesaikan: ${kunci.selesaikan}`,
     ].filter(Boolean) as string[];
     const label = b.posting.catatanTertinggal ? "Catat hasil posting…" : "Transfer & posting…";
@@ -428,10 +432,10 @@ function Detail(p: DetailProps) {
                 {m.terpotong && <p className="fi-small fi-subtle">Daftar Accurate dipotong pada 10.000 baris; pilihan di luar daftar tidak diperiksa.</p>}
                 {p.galatTujuan && <MessageStrip tone="neg" title={p.galatTujuan} />}
                 <div className="fi-btnrow">
-                    <Button icon={<Save className="fi-icon" aria-hidden />} busy={p.menyimpan} disabled={!p.tujuanBerubah || Boolean(tujuanTerkunci) || !p.tujuan.vendorNo || !p.tujuan.bankNo}
-                        disabledReason={tujuanTerkunci ?? (!p.tujuanBerubah ? "Belum ada perubahan tujuan" : "Pilih pemasok dan rekening dulu")} onClick={p.onSimpanTujuan}>Simpan tujuan</Button>
+                    <Button icon={<Save className="fi-icon" aria-hidden />} busy={p.menyimpan} disabled={Boolean(alasanSimpan)} disabledReason={alasanSimpan} onClick={p.onSimpanTujuan}>Simpan tujuan</Button>
                     <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={p.onMuatMaster}>Muat ulang daftar</Button>
                 </div>
+                {alasanSimpan && !p.menyimpan && <p className="fi-small fi-why">Simpan tujuan: {alasanSimpan}</p>}
             </>
         );
     }
@@ -606,6 +610,8 @@ function DialogSelesai(p: {
         ?? (hasil === "ada" && !nomor.trim() ? "Isi nomor Purchase Payment" : undefined)
         ?? (hasil === "tidak_ada" ? tidakAda : undefined)
         ?? (!sumber.trim() ? "Isi tempat Anda memeriksa" : undefined);
+    // Alasan nonaktif TERLIHAT; yang sudah tampil sebagai strip database / bantuan "Tidak ada" tidak diulang.
+    const blokirTampil = blokir && blokir !== dbCocok && blokir !== tidakAda ? blokir : undefined;
     const nama = `selesai-${bukaKe}`;
     return (
         <ConfirmDialog open={p.open} onClose={p.onClose} tag="Hanya Finance" title="Selesaikan posting tidak pasti" confirmLabel="Simpan penyelesaian"
@@ -629,6 +635,7 @@ function DialogSelesai(p: {
             {dbCocok
                 ? <MessageStrip tone="neg" title={dbCocok} />
                 : <MessageStrip tone="pos" title={a ? `Sesi Accurate Anda (${sesi?.alias || `ID ${sesi?.id}`}) sama dengan database percobaan.` : `Sesi Accurate Anda: ${sesi?.alias || `ID ${sesi?.id}`}.`} />}
+            {blokirTampil && <p className="fi-small fi-why">{blokirTampil}.</p>}
         </ConfirmDialog>
     );
 }

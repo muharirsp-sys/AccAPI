@@ -133,7 +133,7 @@ export function kunciBaris(p: { posting: StatusPosting; izin: IzinFinance; sumbe
             ?? (tidakPasti ? "Posting tidak pasti: Finance memeriksa Accurate lalu menyelesaikannya sebelum posting lagi." : undefined)
             ?? p.sumber ?? p.izin.posting,
         status: takTerbaca ?? sedang
-            ?? (terposting ? "Sudah terposting; status transfer tidak bisa dikembalikan (BL-05). Pembatalan lewat dokumen pembalik di Accurate." : undefined)
+            ?? (terposting ? "Sudah terposting; status transfer tidak bisa dikembalikan. Pembatalan lewat dokumen pembalik di Accurate." : undefined)
             ?? (tidakPasti ? "Posting tidak pasti; selesaikan dulu sebelum mengubah status transfer." : undefined)
             ?? p.sumber ?? p.izin.status,
         selesaikan: (!tidakPasti ? "Hanya untuk posting tidak pasti." : undefined) ?? sedang ?? p.sumber ?? p.izin.selesaikan,
