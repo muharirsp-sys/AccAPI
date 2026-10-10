@@ -224,6 +224,25 @@ test("Kirim: dialog dari pratinjau server; yang dikirim = orderIds HASIL PRATINJ
     await page.screenshot({ path: "test-results/antrean-faktur/hasil-kirim.png", fullPage: true });
 });
 
+test("Kirim: pilihan hanya dari baris yang tampil — Cari/principal mengosongkan pilihan; tanpa pilihan dialog menyebut saringan tidak membatasi", async ({ page }) => {
+    const log = await mock(page, {});
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    await main.getByRole("checkbox", { name: "Pilih SO SO-A-002" }).check(NAV);
+    await expect(main.getByRole("button", { name: "Kirim 1 terpilih…" })).toBeVisible();
+    // SO-A-002 (TOKO B) tersembunyi oleh Cari: tidak boleh tetap terpilih lalu terkirim tanpa terlihat.
+    await main.getByLabel("Cari").first().fill("TOKO A");
+    await expect(main.getByRole("button", { name: "Kirim 2 faktur…" })).toBeVisible();
+    await main.getByLabel("Cari").first().fill("");
+    await expect(main.getByRole("checkbox", { name: "Pilih SO SO-A-002" })).not.toBeChecked();
+    await main.getByLabel("Cari").first().fill("TOKO");
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Kirim 2 faktur ke Accurate?" });
+    await expect(dlg).toContainText("Saringan di layar tidak membatasi Kirim");
+    expect(getKe(log, "/api/invoice-outbox/send/preview").at(-1)?.query).toBe("");
+});
+
 test("Kirim: sesi tidak cocok = nonaktif berlasan; 502 HTML = 'belum pasti' + muat ulang + kunci sampai antrean terbaru", async ({ page }) => {
     const opsi: Opsi = { preview: (r) => r.fulfill(json(PRATINJAU({ ok: false, database: { tujuan: "1001", label: "x", sesiPenekan: { id: "2002", alias: "DB LAIN" }, cocok: false } }))) };
     const log = await mock(page, opsi);

@@ -129,7 +129,8 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
     const baris = useMemo(() => (data?.rows ?? []).filter((r) =>
         (!principal || principalDari(r.orderId) === principal)
         && (!kata || [r.orderId, r.outlet, r.customerNo, r.salesman, r.accurateNumber].some((v) => v?.toLowerCase().includes(kata)))), [data, principal, kata]);
-    const dipilihSah = (data?.rows ?? []).filter((r) => r.state === "queued" && dipilih.has(r.orderId)).map((r) => r.orderId);
+    // Hanya baris yang TERLIHAT: baris yang tersembunyi oleh Cari/principal tidak boleh ikut terkirim sebagai pilihan.
+    const dipilihSah = baris.filter((r) => r.state === "queued" && dipilih.has(r.orderId)).map((r) => r.orderId);
     const nKirim = dipilihSah.length || Math.min(antre, MAKS_KIRIM);
 
     const alasanKirim = !bolehUbah ? "Hanya petugas berizin ubah order yang boleh mengirim faktur ke Accurate"
@@ -141,7 +142,10 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
     const alasanSelesai = !bolehSelesai ? "Hanya pemegang izin Selesaikan posting tidak pasti yang boleh menyelesaikan — minta IT Support menambahkannya ke grup Anda"
         : !segar ? "Muat ulang dulu: antrean belum terbaru" : "";
 
+    // Saringan berubah = pilihan dikosongkan (yang dipilih selalu yang terlihat).
     const ganti = (s: Saring) => { setSaring(s); setDipilih(new Set()); };
+    const gantiCari = (v: string) => { setCari(v); setDipilih(new Set()); };
+    const gantiPrincipal = (v: string) => { setPrincipal(v); setDipilih(new Set()); };
     const tutupDialog = () => setDialog(null);
     const tidakPastiTerjadi = (pesan: string) => { setTidakPasti(pesan); setKunci({ data }); setDialog(null); muatSemua(); };
     const aksiSelesai = (h: HasilAksi) => { setAksi(h); setDialog(null); muatSemua(); };
@@ -243,10 +247,10 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
             )}
 
             <div className="fi-panel" style={{ padding: 0, overflow: "clip" }}>
-                <FilterBar title="Saringan" activeCount={Number(Boolean(principal))} onReset={() => { setPrincipal(""); setCari(""); }}
-                    search={<FormField label="Cari">{(a11y) => <input {...a11y} className="fi-input" type="search" placeholder="SO, outlet, pelanggan, sales, nomor faktur" value={cari} onChange={(e) => setCari(e.target.value)} />}</FormField>}
-                    fields={<FormField label="Principal">{(a11y) => <select {...a11y} className="fi-input" value={principal} onChange={(e) => setPrincipal(e.target.value)}><option value="">Semua principal</option>{principals.map((p) => <option key={p}>{p}</option>)}</select>}</FormField>}
-                    chips={principal ? [{ label: `Principal: ${principal}`, onRemove: () => setPrincipal("") }] : []} />
+                <FilterBar title="Saringan" activeCount={Number(Boolean(principal))} onReset={() => { gantiPrincipal(""); gantiCari(""); }}
+                    search={<FormField label="Cari">{(a11y) => <input {...a11y} className="fi-input" type="search" placeholder="SO, outlet, pelanggan, sales, nomor faktur" value={cari} onChange={(e) => gantiCari(e.target.value)} />}</FormField>}
+                    fields={<FormField label="Principal">{(a11y) => <select {...a11y} className="fi-input" value={principal} onChange={(e) => gantiPrincipal(e.target.value)}><option value="">Semua principal</option>{principals.map((p) => <option key={p}>{p}</option>)}</select>}</FormField>}
+                    chips={principal ? [{ label: `Principal: ${principal}`, onRemove: () => gantiPrincipal("") }] : []} />
             </div>
 
             {saring === "posted" && data && (ringkas.posted ?? 0) > data.rows.length && (
@@ -294,7 +298,7 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
             )}
 
             {dialog?.jenis === "kirim" && (
-                <KirimDialog dipilih={dipilihSah} tanggal={tanggal} onClose={tutupDialog} onTidakPasti={tidakPastiTerjadi}
+                <KirimDialog dipilih={dipilihSah} tanggal={tanggal} saringanAktif={Boolean(kata || principal)} onClose={tutupDialog} onTidakPasti={tidakPastiTerjadi}
                     onTerkirim={(hasil, urutan) => {
                         setKiriman({ hasil, urutan, tanggal, jam: new Date().toISOString() });
                         setDipilih(new Set());

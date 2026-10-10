@@ -62,8 +62,8 @@ function rentangTanggal(orders: OrderPratinjau[]): string {
  * Dialog Kirim. Isinya dari pratinjau server (kueri & urutan yang sama dengan Kirim). Yang dikirim = `orderIds` HASIL PRATINJAU,
  * bukan "semua yang antre": antrean bisa bertambah sesudah pratinjau, dan yang terkirim harus sama dengan yang dibaca petugas.
  */
-export function KirimDialog({ dipilih, tanggal, onClose, onTerkirim, onTidakPasti }: {
-    dipilih: string[]; tanggal: string; onClose: () => void;
+export function KirimDialog({ dipilih, tanggal, saringanAktif, onClose, onTerkirim, onTidakPasti }: {
+    dipilih: string[]; tanggal: string; saringanAktif?: boolean; onClose: () => void;
     onTerkirim: (hasil: HasilKirim, urutan: OrderPratinjau[]) => void; onTidakPasti: (pesan: string) => void;
 }) {
     const kunci = JSON.stringify(dipilih);
@@ -117,6 +117,9 @@ export function KirimDialog({ dipilih, tanggal, onClose, onTerkirim, onTidakPast
                     {!p.database.cocok && <MessageStrip tone="neg" title="Kirim akan ditolak.">{kalimatSesi(p.database)}</MessageStrip>}
                     {p.ditolak && <MessageStrip tone="neg" title="Tidak ada faktur dikirim.">{p.ditolak}</MessageStrip>}
                     {keluar > 0 && <MessageStrip tone="info">{keluar} baris pilihan tidak lagi berstatus Antre dan tidak ikut dikirim.</MessageStrip>}
+                    {!dipilih.length && saringanAktif && (
+                        <MessageStrip tone="info" title="Saringan di layar tidak membatasi Kirim.">Tanpa pilihan, yang antre paling lama ikut — periksa daftar di bawah, atau batalkan lalu pilih barisnya.</MessageStrip>
+                    )}
                     {!dipilih.length && p.antreanMenunggu > p.jumlah && (
                         <MessageStrip tone="info">{p.antreanMenunggu - p.jumlah} faktur lainnya tetap antre (maks. {p.maksPerTekan} per tekan).</MessageStrip>
                     )}
