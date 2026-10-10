@@ -55,7 +55,11 @@ export type AttemptFinance = {
     /** Record pengirim (= recordKey). */
     clientRef: string;
     targetDbId: string;
+    /** Umur sejak DIBUAT menurut jam DB. */
     ageSeconds: number;
+    /** ISO jam DB; selisihnya dipakai menghitung umur sejak PERUBAHAN terakhir (ambang basi server = updatedAt). */
+    createdAt: string;
+    updatedAt: string;
     createdAtWita: string;
     updatedAtWita: string;
     message: string;
@@ -138,12 +142,15 @@ export function kunciBaris(p: { posting: StatusPosting; izin: IzinFinance; sumbe
 }
 
 /**
- * "Tidak ada di Accurate" membuka posting ulang, jadi hanya setelah percobaan basi ≥ 2 menit (Accurate mungkin masih memproses;
- * server menegakkan dengan jam DB). `detikSejakMuat` menambah umur dari GET attempts. Tanpa attempt server (status lama) = boleh.
+ * "Tidak ada di Accurate" membuka posting ulang, jadi hanya setelah percobaan basi ≥ 2 menit sejak PERUBAHAN terakhir (server menegakkan
+ * `updatedAt` dengan jam DB, tinjauan B; bukan sejak dibuat). Umur sejak ubah = ageSeconds − (updatedAt − createdAt), keduanya jam DB;
+ * tak terbaca = dianggap baru berubah. `detikSejakMuat` menambah umur dari GET attempts. Tanpa attempt server (status lama) = boleh.
  */
 export function alasanTidakAda(attempt: AttemptFinance | null | undefined, detikSejakMuat: number): string | undefined {
     if (!attempt || attempt.stale) return undefined;
-    const sisa = 120 - (attempt.ageSeconds + Math.max(0, detikSejakMuat));
+    const jedaUbah = (Date.parse(attempt.updatedAt) - Date.parse(attempt.createdAt)) / 1000;
+    const umurUbah = Number.isFinite(jedaUbah) ? Math.max(0, attempt.ageSeconds - Math.max(0, jedaUbah)) : 0;
+    const sisa = 120 - (umurUbah + Math.max(0, detikSejakMuat));
     return sisa <= 0 ? undefined : `Tersedia 2 menit setelah percobaan (±${Math.ceil(sisa / 60)} menit lagi); Accurate mungkin masih memproses.`;
 }
 

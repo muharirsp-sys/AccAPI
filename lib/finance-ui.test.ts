@@ -6,7 +6,7 @@ import { LABEL_POSTING, alasanFaktur, bedaPengajuan, potongKelompok, alasanTidak
 
 const attempt = (over: Partial<AttemptFinance>): AttemptFinance => ({
     attemptId: "a1", state: "unknown", status: "unknown", stale: false, accurateNumber: "", actorName: "Finance A", clientRef: "K1", targetDbId: "DB-1",
-    ageSeconds: 30, createdAtWita: "2026-10-10 09:00:00", updatedAtWita: "2026-10-10 09:00:30", message: "", ...over,
+    ageSeconds: 30, createdAt: "2026-10-10T01:00:00.000Z", updatedAt: "2026-10-10T01:00:00.000Z", createdAtWita: "2026-10-10 09:00:00", updatedAtWita: "2026-10-10 09:00:00", message: "", ...over,
 });
 
 test("izin: satu fungsi; tanpa kunci = alasan terlihat tanpa nama kunci mentah", () => {
@@ -105,6 +105,11 @@ test("'Tidak ada di Accurate' hanya setelah percobaan basi ≥ 2 menit; tanpa at
     assert.equal(alasanTidakAda(attempt({ stale: true, ageSeconds: 10 }), 0), undefined);
     assert.match(alasanTidakAda(attempt({ ageSeconds: 30 }), 0)!, /2 menit/);
     assert.equal(alasanTidakAda(attempt({ ageSeconds: 30 }), 95), undefined, "umur bertambah sejak dimuat");
+    // Dibuat 10 menit lalu tetapi DIUBAH 30 detik lalu (mis. sending → unknown): server menghitung basi dari updatedAt.
+    const baruDiubah = attempt({ ageSeconds: 600, updatedAt: "2026-10-10T01:09:30.000Z" });
+    assert.match(alasanTidakAda(baruDiubah, 0)!, /2 menit/);
+    assert.equal(alasanTidakAda(baruDiubah, 95), undefined);
+    assert.match(alasanTidakAda(attempt({ ageSeconds: 600, updatedAt: "" }), 0)!, /2 menit/, "updatedAt tak terbaca = dianggap baru berubah");
 });
 
 test("catatan lama disaring: tanpa 'Coba lagi' dan tanpa alamat server lokal", () => {
