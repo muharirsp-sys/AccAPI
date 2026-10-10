@@ -73,7 +73,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
     const baris: Baris[] = useMemo(() => (data?.rows ?? []).map((r) => {
         const key = recordKey(r);
         const attempt = data?.attempts.get(key) ?? null;
-        return { r, key, attempt, posting: statusPosting(r, attempt, { key, dbId: data?.sesi?.id ?? "" }) };
+        return { r, key, attempt, posting: statusPosting(r, attempt, { key, dbId: data?.sesi?.id ?? "", terbaca: !data?.attemptsGalat }) };
     }), [data]);
 
     // Tulis terkunci saat sumber memuat ulang, gagal dimuat ulang, atau status posting server tidak terbaca.
@@ -446,6 +446,7 @@ function Detail(p: DetailProps) {
             )}
             {kode === "sedang" && <MessageStrip tone="info" title="Sedang diposting dari sesi atau tab lain.">{a ? `Dimulai ${a.createdAtWita} WITA oleh ${a.actorName || "pengguna lain"}.` : ""} Muat ulang beberapa saat lagi.</MessageStrip>}
             {kode === "gagal" && catatan && <MessageStrip tone="neg" title={catatan} />}
+            {kode === "tak_terbaca" && <MessageStrip tone="warn" title="Status posting tidak terbaca.">Belum diketahui apakah pengajuan ini sudah diposting; posting dan ubah status dikunci sampai dimuat ulang.</MessageStrip>}
 
             <Section title="Ringkasan">
                 <div className="fi-sect-in">

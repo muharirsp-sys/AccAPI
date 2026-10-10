@@ -61,7 +61,7 @@ export type AttemptFinance = {
     message: string;
 };
 
-export type KodePosting = "belum" | "sedang" | "terposting" | "tidak_pasti" | "gagal";
+export type KodePosting = "belum" | "sedang" | "terposting" | "tidak_pasti" | "gagal" | "tak_terbaca";
 
 export const LABEL_POSTING: Record<KodePosting, { label: string; tone: Tone }> = {
     belum: { label: "Belum diposting", tone: "neu" },
@@ -69,6 +69,7 @@ export const LABEL_POSTING: Record<KodePosting, { label: string; tone: Tone }> =
     terposting: { label: "Terposting", tone: "pos" },
     tidak_pasti: { label: "Posting tidak pasti", tone: "warn" },
     gagal: { label: "Posting gagal", tone: "neg" },
+    tak_terbaca: { label: "Status posting tidak terbaca", tone: "warn" },
 };
 
 export type StatusPosting = { kode: KodePosting; nomor: string; catatanTertinggal: boolean };
@@ -83,9 +84,11 @@ export type StatusPosting = { kode: KodePosting; nomor: string; catatanTertingga
  */
 export function statusPosting(
     row: { accurate_post_status?: string; accurate_purchase_payment_number?: string }, attempt: AttemptFinance | null | undefined,
-    milik: { key: string; dbId: string },
+    milik: { key: string; dbId: string; terbaca?: boolean },
 ): StatusPosting {
     const ledger = String(row.accurate_post_status || "");
+    // Tinjauan B-3: attempt server tak terbaca ≠ "belum diposting". Hanya catatan Finance yang pasti (posted / unknown) tetap berlaku.
+    if (milik.terbaca === false && ledger !== "posted" && ledger !== "unknown") return { kode: "tak_terbaca", nomor: "", catatanTertinggal: false };
     const a = attempt?.status;
     if (a === "sending") return { kode: "sedang", nomor: "", catatanTertinggal: false };
     if (ledger === "posted") return { kode: "terposting", nomor: row.accurate_purchase_payment_number || attempt?.accurateNumber || "", catatanTertinggal: false };
@@ -104,7 +107,7 @@ export function statusPosting(
  * "Catat hasil posting" buntu di tab yang sama (tinjauan A-2/B-2).
  */
 export function kodeTampil(kode: KodePosting, kunciLokal: boolean): KodePosting {
-    return kunciLokal && (kode === "belum" || kode === "gagal") ? "tidak_pasti" : kode;
+    return kunciLokal && (kode === "belum" || kode === "gagal" || kode === "tak_terbaca") ? "tidak_pasti" : kode;
 }
 
 export type KunciBaris = { posting?: string; status?: string; selesaikan?: string; tujuan?: string };
@@ -119,12 +122,13 @@ export function kunciBaris(p: { posting: StatusPosting; izin: IzinFinance; sumbe
     const sedang = kode === "sedang" ? "Sedang diposting dari sesi atau tab lain; tunggu hasilnya lalu muat ulang." : undefined;
     const tidakPasti = kodeTampil(kode, Boolean(p.kunciLokal)) === "tidak_pasti";
     const terposting = kode === "terposting";
+    const takTerbaca = kode === "tak_terbaca" && !tidakPasti ? "Status posting dari server tidak terbaca; muat ulang dulu." : undefined;
     return {
-        posting: sedang
+        posting: takTerbaca ?? sedang
             ?? (terposting && !catatanTertinggal ? "Sudah terposting di Accurate. Pembatalan lewat dokumen pembalik di Accurate." : undefined)
             ?? (tidakPasti ? "Posting tidak pasti: Finance memeriksa Accurate lalu menyelesaikannya sebelum posting lagi." : undefined)
             ?? p.sumber ?? p.izin.posting,
-        status: sedang
+        status: takTerbaca ?? sedang
             ?? (terposting ? "Sudah terposting; status transfer tidak bisa dikembalikan (BL-05). Pembatalan lewat dokumen pembalik di Accurate." : undefined)
             ?? (tidakPasti ? "Posting tidak pasti; selesaikan dulu sebelum mengubah status transfer." : undefined)
             ?? p.sumber ?? p.izin.status,

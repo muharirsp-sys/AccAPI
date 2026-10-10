@@ -404,6 +404,11 @@ test("Galat ≠ kosong (tanpa localhost/HTML), Kosong, status posting tak terbac
     m.attemptsGagal = { status: 503, body: { ok: false, error: "Status posting tidak bisa dibaca dari database. Coba lagi." } };
     await main.getByRole("button", { name: "Muat ulang", exact: true }).click();
     await expect(main.getByRole("status").filter({ hasText: "Status posting dari server tidak terbaca." })).toBeVisible(NAV);
+    // B-3: tak terbaca ≠ "Belum diposting"; tidak dihitung ke kartu posting mana pun.
+    await expect(main.getByRole("list", { name: "Daftar pengajuan" }).getByRole("button", { name: /DRAFT-0418/ })).toContainText("Status posting tidak terbaca");
+    await expect(main.getByText("Belum diposting")).toHaveCount(0);
+    await expect(main.getByRole("button", { name: /^Posting tidak pasti\s*0/ })).toBeVisible();
+    await expect(main.getByRole("button", { name: /^Terposting\s*0/ })).toBeVisible();
     await main.getByRole("list", { name: "Daftar pengajuan" }).getByRole("button", { name: /DRAFT-0418/ }).click();
     const detail = main.getByRole("region", { name: "Detail pengajuan" });
     await detail.getByLabel("Bukti transfer").setInputFiles(PDF);

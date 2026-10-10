@@ -2,7 +2,7 @@
  * penyaring catatan lama. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { alasanFaktur, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, saringCatatan, statusPosting, statusTransfer, type AttemptFinance } from "./finance-ui.ts";
+import { LABEL_POSTING, alasanFaktur, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, saringCatatan, statusPosting, statusTransfer, type AttemptFinance } from "./finance-ui.ts";
 
 const attempt = (over: Partial<AttemptFinance>): AttemptFinance => ({
     attemptId: "a1", state: "unknown", status: "unknown", stale: false, accurateNumber: "", actorName: "Finance A", clientRef: "K1", targetDbId: "DB-1",
@@ -52,6 +52,20 @@ test("A-3: attempt posted hanya milik record (clientRef) & database sesi yang sa
     assert.equal(statusPosting({}, posted, { key: "K1", dbId: "" }).kode, "tidak_pasti", "database sesi tidak terbaca");
     assert.equal(statusPosting({}, attempt({ status: "posted", state: "posted", clientRef: "" }), MILIK).kode, "tidak_pasti");
     assert.equal(statusPosting({ accurate_post_status: "posted" }, posted, { key: "K2", dbId: "DB-9" }).kode, "terposting", "catatan Finance record ini tetap berlaku");
+});
+
+test("B-3: status posting server tak terbaca = 'tidak terbaca' (bukan 'belum'); catatan Finance posted/unknown tetap berlaku; mengunci", () => {
+    const tak = { ...MILIK, terbaca: false };
+    assert.equal(statusPosting({ accurate_post_status: "" }, null, tak).kode, "tak_terbaca");
+    assert.equal(statusPosting({ accurate_post_status: "failed" }, null, tak).kode, "tak_terbaca");
+    assert.equal(statusPosting({ accurate_post_status: "posted", accurate_purchase_payment_number: "PP/1" }, null, tak).kode, "terposting");
+    assert.equal(statusPosting({ accurate_post_status: "unknown" }, null, tak).kode, "tidak_pasti");
+    assert.equal(LABEL_POSTING.tak_terbaca.label, "Status posting tidak terbaca");
+    const izin = izinFinance(new Set(["finance.view", "finance.update", "finance.resolve_unknown"]));
+    const k = kunciBaris({ posting: { kode: "tak_terbaca", nomor: "", catatanTertinggal: false }, izin });
+    assert.match(k.posting!, /tidak terbaca/);
+    assert.match(k.status!, /tidak terbaca/);
+    assert.equal(kodeTampil("tak_terbaca", true), "tidak_pasti");
 });
 
 test("kunci baris: terposting/tidak pasti/sedang/data usang mengunci; gagal jelas boleh dikirim ulang", () => {
