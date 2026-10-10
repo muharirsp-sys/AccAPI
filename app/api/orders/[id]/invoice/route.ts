@@ -1,8 +1,10 @@
 /*
  * Tujuan: Menyiapkan faktur Accurate dari satu order internal — dry-run atau masuk antrean.
  * Caller: halaman Order Masuk (petugas), izin `order.edit`.
- * Dependensi: FastAPI GET /orders/{id} (order beku), lib/accurate-invoice-write, lib/accurate-units, db invoice_outbox.
- * Main Functions: POST (dry-run default, `queue: true` untuk memasukkan ke antrean), GET (status).
+ * Dependensi: FastAPI GET /orders/{id} (order beku), lib/accurate-invoice-write, lib/accurate-units, lib/order-salesman,
+ *   db invoice_outbox + accurate_employee.
+ * Main Functions: POST (dry-run default, `queue: true` untuk memasukkan ke antrean; `salesman` = nomor pegawai Accurate, WAJIB
+ *   saat antre — C7), GET (status).
  * Side Effects: Queue membekukan payload + jejak program dalam satu insert invoice_outbox; dry-run hanya baca.
  *   TIDAK ADA request tulis ke Accurate di sini — pengirimannya di /api/cron/post-invoices.
  *
@@ -12,11 +14,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { invoiceOutbox } from "@/db/schema";
+import { accurateEmployee, invoiceOutbox } from "@/db/schema";
 import { antrekan, pencariPenekan } from "@/lib/invoice-outbox-actions";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { buildInvoicePayload, type InvoiceOrder } from "@/lib/accurate-invoice-write";
 import { accurateUnits } from "@/lib/accurate-units";
+import { salesmanOrder } from "@/lib/order-salesman";
 import { resolveOrderBranch } from "@/lib/order-branch";
 import { programSnapshot } from "@/lib/program-realization";
 
@@ -47,7 +50,19 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         return NextResponse.json({ ok: false, error: "Hanya petugas yang boleh menyiapkan faktur" }, { status: 403 });
     }
     const { id } = await context.params;
-    const wantQueue = await request.json().then((body) => body?.queue === true).catch(() => false);
+    const body = await request.json().catch(() => ({})) as { queue?: unknown; salesman?: unknown };
+    const wantQueue = body?.queue === true;
+    // C7 (owner 8 Okt 2026): SATU salesman per order, disalin ke tiap baris — bentuk sama dengan jalur Order Principal.
+    // Dipilih petugas saat antre (Order Masuk dulu tidak mengirim sales sama sekali); diperiksa ke master SEBELUM order dibaca,
+    // supaya antre tanpa salesman tidak pernah sampai membekukan payload.
+    const kodeSalesman = typeof body?.salesman === "string" ? body.salesman.trim().toUpperCase() : "";
+    const pegawai = kodeSalesman
+        ? await db.select({ id: accurateEmployee.id, number: accurateEmployee.number, name: accurateEmployee.name,
+            salesman: accurateEmployee.salesman, suspended: accurateEmployee.suspended })
+            .from(accurateEmployee).where(eq(accurateEmployee.number, kodeSalesman))
+        : [];
+    const salesman = salesmanOrder({ queue: wantQueue, kode: kodeSalesman, pegawai });
+    if (!salesman.ok) return NextResponse.json({ ok: false, error: salesman.error }, { status: salesman.status });
 
     const fetched = await fetchOrder(request, id);
     if (!fetched.order) return NextResponse.json({ ok: false, error: fetched.error }, { status: fetched.status ?? 502 });
@@ -65,12 +80,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }
     const orderBranch = resolvedBranch.branch;
 
+    const salesmanInfo = salesman.opsi ? { number: salesman.opsi.salesmanNumber, id: salesman.opsi.masterSalesmanId, name: salesman.nama ?? "" } : null;
     let payload;
     try {
         payload = buildInvoicePayload(fetched.order, {
             unitIds: master.units,
             branchId: orderBranch.branchId,
             typeAutoNumber: orderBranch.autoNumberId,
+            ...salesman.opsi,
         });
     } catch (error) {
         // Payload gagal dibuat = ada yang tidak pasti (satuan, pelanggan, angka belum beku).
@@ -79,8 +96,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }
 
     if (!wantQueue) {
-        // Dry-run: payload persis yang akan dikirim, tanpa menyentuh DB maupun Accurate.
-        return NextResponse.json({ ok: true, dry_run: true, payload, branch: orderBranch });
+        // Dry-run: payload persis yang akan dikirim, tanpa menulis DB dan tanpa Accurate.
+        return NextResponse.json({ ok: true, dry_run: true, payload, branch: orderBranch, salesman: salesmanInfo });
     }
 
     const existing = await db.select({ state: invoiceOutbox.state }).from(invoiceOutbox)
@@ -106,7 +123,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
             pesan: `Faktur ${hasil.posted[0].number || hasil.posted[0].accurateId} sudah ada di Accurate — ditandai terposting, tidak dikirim.` });
     }
     if (!hasil.queued.length) return NextResponse.json({ ok: false, error: "Order ini sudah ada di antrean faktur" }, { status: 409 });
-    return NextResponse.json({ ok: true, queued: true, payload });
+    return NextResponse.json({ ok: true, queued: true, payload, salesman: salesmanInfo });
 }
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
