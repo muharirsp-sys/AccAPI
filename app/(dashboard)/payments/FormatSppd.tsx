@@ -99,10 +99,17 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
         if (berubah.includes("nomor")) { body.last_sequence = nomorBaru; body.expected_last_sequence = s.settings.last_sequence; }
         const res = await tulis("/payments/sppd/settings", body);
         if (res.ok) {
-            const riwayat = berubah.map((k) => `${LABEL[k]} ${awal?.[k]} → ${nilai(k)}`).join("; ");
+            // Nomor sesudah simpan = urutan BERLAKU dari jawaban POST, bukan isian: tahun baru, isian sama dengan urutan tersimpan tahun
+            // lalu (mis. 46) tidak diubah server — effective tetap 0, jadi "0 → 46" akan bohong.
+            const efPost = Number(res.data.effective_last_sequence);
+            const nomorBeda = berubah.includes("nomor") && efPost !== nomorBaru;
+            const riwayat = berubah.map((k) => `${LABEL[k]} ${awal?.[k]} → ${k === "nomor" ? (Number.isFinite(efPost) ? efPost : "tidak terbaca") : nilai(k)}`).join("; ");
             setUbah({});
             setDialog(null);
-            setPesan({ tone: "pos", judul: "Format SPPD tersimpan.", isi: `${riwayat}. Nomor berikutnya ${String(res.data.preview_number ?? "")}.` });
+            setPesan({
+                tone: nomorBeda ? "warn" : "pos", judul: nomorBeda ? "Format SPPD tersimpan, tetapi nomor surat terakhir tidak seperti yang diisi." : "Format SPPD tersimpan.",
+                isi: `${riwayat}.${nomorBeda ? ` Server mencatat nomor terakhir ${tahun} = ${Number.isFinite(efPost) ? String(efPost).padStart(3, "0") : "(tidak terbaca)"}, bukan ${String(nomorBaru).padStart(3, "0")}. Periksa nilainya sebelum mengajukan SPPD.` : ""} Nomor berikutnya ${String(res.data.preview_number ?? "")}.`,
+            });
             muatSet();
             return;
         }

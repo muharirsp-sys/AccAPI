@@ -188,3 +188,36 @@ test("Baca: 200 tanpa daftar data = galat (bukan kosong); 404 tanpa penolakan se
     await expect(main.getByText("Keranjang gagal dimuat")).toBeVisible(NAV);
     await expect(main.getByText("Keranjang tidak ditemukan atau sudah diajukan")).toHaveCount(0);
 });
+
+test("Format SPPD tahun baru: nomor sesudah simpan dari jawaban server (urutan berlaku), expected = urutan tersimpan tahun lalu", async ({ page }) => {
+    const lalu = Number(tahun) - 1;
+    const { kirim } = await mock(page, (p, r) => {
+        if (p !== "/payments/sppd/settings") return "lewat";
+        if (r.request().method() === "POST") return json(r, { ok: true, settings: { ...SETELAN, last_sequence: 5, sequence_year: Number(tahun) }, effective_last_sequence: 5, preview_number: `006/SPA/PDSB/I/${tahun}` });
+        return json(r, { ok: true, settings: { ...SETELAN, last_sequence: 46, sequence_year: lalu }, effective_last_sequence: 0, preview_number: `001/SPA/PDSB/I/${tahun}` });
+    });
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    await expect(main.getByLabel("Nomor surat terakhir")).toHaveValue("0", NAV);
+    await expect(main.getByText(`Urutan ${lalu} berakhir di 46; tahun ini mulai 001.`, { exact: false })).toBeVisible();
+    await main.getByLabel("Nomor surat terakhir").fill("5");
+    await main.getByRole("button", { name: "Simpan…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Simpan", exact: true }).click();
+    await expect(main.getByText("Nomor surat terakhir 0 → 5", { exact: false })).toBeVisible();
+    expect(kirim.filter((k) => k.path === "/payments/sppd/settings")[0].body).toMatchObject({ last_sequence: 5, expected_last_sequence: 46 });
+});
+
+test("Format SPPD tahun baru: server tidak mengubah nomor (isian = urutan tahun lalu) → layar sukses memperingatkan, bukan '0 → 46'", async ({ page }) => {
+    const lalu = Number(tahun) - 1;
+    const tersimpan = { ok: true, settings: { ...SETELAN, last_sequence: 46, sequence_year: lalu }, effective_last_sequence: 0, preview_number: `001/SPA/PDSB/I/${tahun}` };
+    await mock(page, (p, r) => (p === "/payments/sppd/settings" ? json(r, tersimpan) : "lewat"));
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    await expect(main.getByLabel("Nomor surat terakhir")).toHaveValue("0", NAV);
+    await main.getByLabel("Nomor surat terakhir").fill("46");
+    await main.getByRole("button", { name: "Simpan…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Simpan", exact: true }).click();
+    await expect(main.getByText("nomor surat terakhir tidak seperti yang diisi", { exact: false })).toBeVisible();
+    await expect(main.getByText(`Server mencatat nomor terakhir ${tahun} = 000, bukan 046`, { exact: false })).toBeVisible();
+    await expect(main.getByText("Nomor surat terakhir 0 → 46", { exact: false })).toHaveCount(0);
+});
