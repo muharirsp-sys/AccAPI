@@ -1480,9 +1480,11 @@ def plan_lpb_upload(db: Dict[str, Any], rows: List[Dict[str, Any]], invalid: Lis
     seen: Set[str] = set()
     for r in rows:
         no_lpb = s(r.get("no_lpb", ""))
-        if find_lpb_duplicate_key(db, no_lpb):
-            duplicates.append(no_lpb)
         key = normalize_lpb_no(no_lpb)
+        # Eksekusi menulis db["lpb"][normalize_lpb_no(no_lpb)]: KUNCI yang sudah dipakai rekaman lain (no_lpb-nya sudah
+        # diganti) juga duplikat — dulu lolos lalu menimpa rekaman itu (putaran 2 butir 1; pola validate_backup_restore_conflicts).
+        if find_lpb_duplicate_key(db, no_lpb) or key in db.get("lpb", {}):
+            duplicates.append(no_lpb)
         if key in seen:
             in_file.append(no_lpb)
         seen.add(key)

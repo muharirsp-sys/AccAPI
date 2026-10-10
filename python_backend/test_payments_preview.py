@@ -96,6 +96,21 @@ def check_lpb():
     assert run.status_code == 400 and "ganda di berkas" in run.json()["error"] and raw() == before, run.text[:300]
 
 
+def check_lpb_key_collision():
+    """Putaran 2 butir 1: KUNCI dict rekaman lama = No. LPB baru, padahal no_lpb rekaman itu sudah diganti -> dulu
+    lolos cek duplikat (per no_lpb) lalu `db["lpb"]["1234"]` tertimpa: jejak transfer + PP hilang."""
+    trf = {"record_id": "1234", "tipe_pengajuan": "LPB", "no_lpb": "5678", "principle": "PT ABC", "nilai_invoice": 1000.0,
+           "status_pembayaran": "Sudah Transfer", "accurate_post_status": "posted", "accurate_purchase_payment_number": "PP-1",
+           "submission_id": "S1"}
+    with open(DB_PATH, "w", encoding="utf-8") as f:
+        json.dump({"lpb": {"1234": trf}}, f)
+    before = raw()
+    p = client.post("/payments/upload?dry_run=1", files=xlsx([lpb_row("1234", 10)])).json()
+    assert p["can_apply"] is False and p["duplicates"] == ["1234"], p
+    r = client.post("/payments/upload", files=xlsx([lpb_row("1234", 10)]))
+    assert r.status_code == 400 and raw() == before, f"rekaman berkunci '1234' tertimpa unggah LPB: {r.status_code} {r.text[:200]}"
+
+
 def check_sppd_excel():
     rows = [{"Record ID": "LPB-OLD", "Keterangan": "baru", "Nilai Invoice": 1500}, {"Record ID": "LPB-TRF", "Nilai Invoice": 2000},
             {"Record ID": "TIDAK-ADA", "Keterangan": "x"}]
@@ -140,6 +155,7 @@ def check_rename():
 
 def main_check():
     check_lpb()
+    check_lpb_key_collision()
     check_sppd_excel()
     check_rename()
     print("OK test_payments_preview")
