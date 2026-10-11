@@ -68,6 +68,10 @@ CREATE TABLE IF NOT EXISTS principal_variant (
 -- yang sudah punya tabel varian bentuk 893f8cbf ikut lengkap dan urutan kolom sama di semua jalur.
 ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS name text;
 ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
+-- Aturan kanonik varian (B-RENDAH; lintas baris -> tidak bisa CHECK, DITEGAKKAN S7-2 saat benih/tulis): alias untuk principal
+-- UTUH = variant_key NULL (bukan ''); varian '' hanya "varian dasar" pada principal yang JUGA punya varian lain (KINO '' vs
+-- NON_FOOD); principal tanpa varian lain tidak punya baris varian ''. no_claim_template.variant_key '' = principal utuh.
+-- alias_norm = bentuk normal normalizer S7-2 (CHECK): HURUF BESAR, tanpa spasi tepi, spasi tunggal (tanda baca bebas).
 -- 1a. Bentuk lama 893f8cbf (hanya pernah ada di DB evaluasi): principal_alias ber-PK alias_norm tanpa kolom id. KOSONG -> dihapus
 --     lalu dibuat ulang di bawah dalam bentuk baru; BERISI -> berhenti (konversi manual, jangan DROP data).
 DO $$
@@ -94,7 +98,7 @@ CREATE TABLE IF NOT EXISTS principal_alias (
     CONSTRAINT principal_alias_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
     CONSTRAINT principal_alias_variant_fk FOREIGN KEY (principal_id, variant_key)
         REFERENCES principal_variant (principal_id, variant_key) ON DELETE RESTRICT,
-    CONSTRAINT principal_alias_norm_isi CHECK (btrim(alias_norm) <> ''),
+    CONSTRAINT principal_alias_norm_bentuk CHECK (alias_norm = upper(alias_norm) AND alias_norm ~ '^[^[:space:]]+( [^[:space:]]+)*$'),
     CONSTRAINT principal_alias_asli_isi CHECK (btrim(alias_asli) <> ''),
     CONSTRAINT principal_alias_sumber_isi CHECK (btrim(sumber) <> ''),
     CONSTRAINT principal_alias_jenis CHECK (jenis IN

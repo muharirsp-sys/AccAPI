@@ -62,6 +62,10 @@ ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS is_active boolean NOT NUL
 
 -- variant_key NULL = alias menunjuk principal utuh (FK komposit MATCH SIMPLE tidak diperiksa);
 -- terisi = harus varian milik principal yang sama.
+-- Aturan kanonik varian (B-RENDAH; lintas baris -> tidak bisa CHECK, DITEGAKKAN S7-2 saat benih/tulis): alias untuk principal
+-- UTUH = variant_key NULL (bukan ''); varian '' hanya "varian dasar" pada principal yang JUGA punya varian lain (KINO '' vs
+-- NON_FOOD); principal tanpa varian lain tidak punya baris varian ''. no_claim_template.variant_key '' = principal utuh.
+-- alias_norm = bentuk normal normalizer S7-2 (CHECK): HURUF BESAR, tanpa spasi tepi, spasi tunggal (tanda baca bebas).
 CREATE TABLE IF NOT EXISTS principal_alias (
     id           text NOT NULL DEFAULT gen_random_uuid()::text,
     alias_norm   text NOT NULL,
@@ -76,7 +80,7 @@ CREATE TABLE IF NOT EXISTS principal_alias (
     CONSTRAINT principal_alias_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
     CONSTRAINT principal_alias_variant_fk FOREIGN KEY (principal_id, variant_key)
         REFERENCES principal_variant (principal_id, variant_key) ON DELETE RESTRICT,
-    CONSTRAINT principal_alias_norm_isi CHECK (btrim(alias_norm) <> ''),
+    CONSTRAINT principal_alias_norm_bentuk CHECK (alias_norm = upper(alias_norm) AND alias_norm ~ '^[^[:space:]]+( [^[:space:]]+)*$'),
     CONSTRAINT principal_alias_asli_isi CHECK (btrim(alias_asli) <> ''),
     CONSTRAINT principal_alias_sumber_isi CHECK (btrim(sumber) <> ''),
     CONSTRAINT principal_alias_jenis CHECK (jenis IN

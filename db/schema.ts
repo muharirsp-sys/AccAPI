@@ -2068,6 +2068,8 @@ export const principal = pgTable("principal", {
 
 // variant_key '' = tanpa varian — bentuk sama dengan no_claim_template.variant_key (HEINZ: HZ/BS). name = nama tampilan
 // opsional (mis. "KINO NON FOOD"); is_active = varian dinonaktifkan tanpa dihapus (alias/templat tetap merujuk).
+// Aturan kanonik (lintas baris -> tidak bisa CHECK; DITEGAKKAN S7-2): principal UTUH dirujuk alias dengan variant_key NULL
+// (bukan ''); varian '' hanya "varian dasar" pada principal yang JUGA punya varian lain (KINO '' vs NON_FOOD).
 export const principalVariant = pgTable("principal_variant", {
     principalId: text("principal_id").notNull(),
     variantKey: text("variant_key").notNull().default(""),
@@ -2086,7 +2088,8 @@ export const principalVariant = pgTable("principal_variant", {
 // Tabrakan nama yang sah tetap DITOLAK (masuk laporan ambiguous S7-2): JANGAN PERNAH ON CONFLICT DO UPDATE (alias diam-diam
 // pindah principal). NILAINYA WAJIB hasil normalizer baku S7-2 (lib/principal); jangan menulis alias_norm dari normalizer lain
 // (TS master-barang / Python principle_matcher berbeda hasil). variant_key NULL = alias menunjuk principal utuh; terisi = harus
-// varian milik principal yang sama (FK komposit; NULL tidak diperiksa).
+// varian milik principal yang sama (FK komposit; NULL tidak diperiksa). CHECK bentuk normal alias_norm = invarian normalizer S7-2:
+// HURUF BESAR, tanpa spasi tepi, spasi tunggal (tanda baca bebas). Huruf non-ASCII: upper() Postgres bisa beda dari JS -> ditolak, aman.
 export const principalAlias = pgTable("principal_alias", {
     id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
     aliasNorm: text("alias_norm").notNull(),
@@ -2104,7 +2107,7 @@ export const principalAlias = pgTable("principal_alias", {
     variantFk: foreignKey({ name: "principal_alias_variant_fk", columns: [t.principalId, t.variantKey],
         foreignColumns: [principalVariant.principalId, principalVariant.variantKey] }).onDelete("restrict"),
     principalIdx: index("idx_principal_alias_principal").on(t.principalId, t.variantKey),
-    normIsi: check("principal_alias_norm_isi", sql`btrim(${t.aliasNorm}) <> ''`),
+    normBentuk: check("principal_alias_norm_bentuk", sql`${t.aliasNorm} = upper(${t.aliasNorm}) AND ${t.aliasNorm} ~ '^[^[:space:]]+( [^[:space:]]+)*$'`),
     asliIsi: check("principal_alias_asli_isi", sql`btrim(${t.aliasAsli}) <> ''`),
     sumberIsi: check("principal_alias_sumber_isi", sql`btrim(${t.sumber}) <> ''`),
     jenisCek: check("principal_alias_jenis", sql`${t.jenis} IN ('nama', 'kode_master_barang', 'label_mapping', 'nama_bank', 'nama_summary', 'nama_surat')`),

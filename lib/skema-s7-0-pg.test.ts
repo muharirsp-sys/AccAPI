@@ -292,9 +292,15 @@ test("PG S7-0: constraint — satu bintang per user, alias_norm unik per kelompo
         await assert.rejects(alias("TAK ADA", randomUUID(), null), kodeGalat("23503"), "FK principal");
         await assert.rejects(alias("HEINZ NON FOOD", heinz, "NON_FOOD"), kodeGalat("23503"), "varian milik principal lain ditolak");
         await assert.rejects(alias("", kino, null), kodeGalat("23514"), "alias_norm kosong");
+        // B-RENDAH: alias_norm sudah dalam bentuk normal (invarian normalizer S7-2): HURUF BESAR, tanpa spasi tepi, spasi tunggal.
+        for (const salah of ["kino x", "Kino X", " KINO X", "KINO X ", "KINO  X", "KINO\tX", "KINO\nX"]) {
+            await assert.rejects(alias(salah, kino, null), kodeGalat("23514"), `alias_norm ${JSON.stringify(salah)} bukan bentuk normal`);
+        }
+        await alias("P&G (KINO) 2", kino, null); // tanda baca = urusan normalizer, bukan skema
         await assert.rejects(alias("KINO X", kino, null, "lain"), kodeGalat("23514"), "jenis di luar daftar");
         await assert.rejects(q(`INSERT INTO principal_variant (principal_id, variant_key) VALUES ($1, '')`, [randomUUID()]), kodeGalat("23503"), "FK varian");
         await assert.rejects(q(`INSERT INTO principal_variant (principal_id, variant_key) VALUES ($1, 'non food')`, [kino]), kodeGalat("23514"), "format varian");
+        await assert.rejects(q(`INSERT INTO principal_variant (principal_id, variant_key) VALUES ($1, 'hz')`, [heinz]), kodeGalat("23514"), "varian huruf kecil");
         for (const kode of ["kino", "", "KINO INDONESIA", "A".repeat(21)]) {
             await assert.rejects(q(`INSERT INTO principal (code, name) VALUES ($1, 'X')`, [kode]), kodeGalat("23514"), `kode ${JSON.stringify(kode)}`);
         }
