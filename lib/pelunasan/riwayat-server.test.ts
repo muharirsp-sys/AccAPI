@@ -154,7 +154,10 @@ test("A3: list.do {s:false} / {s:false, d:[]} / {s:true} tanpa d = GAGAL BACA (b
 
 test("A2: list.do tanpa sp.pageCount angka = dianggap TERPOTONG (halaman berikut tak bisa dipastikan) -> GAGAL", async () => {
     const seratus = Array.from({ length: 100 }, (_, i) => ({ id: i + 1 }));
-    for (const jawab of [{ s: true, d: seratus }, { s: true, d: [] }, { s: true, d: seratus, sp: {} }, { s: true, d: seratus, sp: { pageCount: "2" } }]) {
+    // Putaran 2 (orkestrator): teks angka ("2") DITERIMA — lihat uji di bawah; yang hilang/bukan angka/kosong/0 berisi tetap ditahan.
+    for (const jawab of [{ s: true, d: seratus }, { s: true, d: [] }, { s: true, d: seratus, sp: {} }, { s: true, d: seratus, sp: { pageCount: "dua" } },
+        { s: true, d: seratus, sp: { pageCount: "" } }, { s: true, d: seratus, sp: { pageCount: null } }, { s: true, d: seratus, sp: { pageCount: true } },
+        { s: true, d: seratus, sp: { pageCount: 0 } }]) {
         const f: AccurateFetch = async (path) => path.endsWith("list.do") ? jawab : lainDetail;
         const r = await periksaRiwayatAccurate([target(satuBaris)], f);
         assert.match(r.gagal.get(target(satuBaris).key) ?? "", /jumlah halaman/, JSON.stringify({ ...jawab, d: jawab.d.length }));
@@ -235,4 +238,20 @@ test("B-N1: identikKasar = himpunan faktur sama DAN setiap faktur bernominal sam
     assert.equal(identikKasar(baris, s([["I1", 900], ["I2", 500], ["I3", 1]])), false, "pelunasan ⊃ baris");
     assert.equal(identikKasar(baris, s([["I1", 900], ["I2", 400]])), false, "satu faktur bernominal lain");
     assert.equal(identikKasar(new Map(), s([])), false, "kosong");
+});
+
+test("Putaran 2: sp.pageCount teks angka ('1', '2') DITERIMA (halaman 2 dibaca); 0 hanya sah bila daftar kosong", async () => {
+    const seratus = Array.from({ length: 100 }, (_, i) => ({ id: i + 1 }));
+    const halaman: unknown[] = [];
+    const r = await periksaRiwayatAccurate([target(satuBaris)], async (path, _m, q) => {
+        if (!path.endsWith("list.do")) return lainDetail;
+        halaman.push((q as Record<string, unknown>)["sp.page"]);
+        return { s: true, d: (q as Record<string, unknown>)["sp.page"] === 1 ? seratus : [{ id: 101 }], sp: { pageCount: "2" } };
+    });
+    assert.equal(r.gagal.size, 0, [...r.gagal.values()].join());
+    assert.deepEqual(halaman, [1, 2]);
+    for (const jawab of [{ s: true, d: [{ id: 1 }], sp: { pageCount: "1" } }, { s: true, d: [], sp: { pageCount: 0 } }, { s: true, d: [], sp: { pageCount: " 1 " } }]) {
+        const g = await periksaRiwayatAccurate([target(satuBaris)], async (path) => path.endsWith("list.do") ? jawab : lainDetail);
+        assert.equal(g.gagal.size, 0, JSON.stringify(jawab));
+    }
 });

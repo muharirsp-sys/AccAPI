@@ -62,8 +62,8 @@ Jawaban 409 `ACCURATE_HISTORY` (seluruh paket TIDAK dikirim, override & lock TID
 
 Biaya: tiap paket membaca riwayat per kelompok pelanggan+tanggal = `list.do` (≤ 5 halaman) + `detail.do` per kandidat
 (≤ 300), paling banyak 4 serentak, batas 60 dtk per paket (melewati batas = kelompok sisanya `UNREADABLE`; sesudah batas tidak
-ada panggilan Accurate baru). `list.do` wajib `s:true` + `d` daftar + `sp.pageCount` angka — selain itu `UNREADABLE`
-(tanpa jumlah halaman = dianggap terpotong). Pra-deploy: pastikan `list.do` produksi membawa `sp.pageCount`.
+ada panggilan Accurate baru). `list.do` wajib `s:true` + `d` daftar + `sp.pageCount` angka (angka JSON atau teks angka seperti
+`"1"`; ≥ 1, atau 0 hanya bila `d` kosong) — selain itu `UNREADABLE` (tanpa jumlah halaman = dianggap terpotong). Pra-deploy: pastikan `list.do` produksi membawa `sp.pageCount`.
 Tindak lanjut (DITUNDA, orkestrator 10 Okt): satu `list.do` per tanggal (bukan per pelanggan) menekan biaya, tetapi mengubah
 logika pratinjau bersama — belum dikerjakan.
 
@@ -237,3 +237,5 @@ diselesaikan; tampilkan bila > 0).
   `checked_source` jejak diberi penanda `[mirip: …]` bila diterima.
 - (11 Okt, putaran 2 B-N2) §2 `KEY_IDENTITY_MISMATCH` juga bila faktur kolom `invoiceNo` bukan segmen `key`; §4/§5 kandidat
   ditentukan dari segmen `key` saja.
+- (11 Okt, putaran 2 orkestrator) §1 `sp.pageCount` teks angka diterima; 0 hanya bila daftar kosong; hilang/bukan angka tetap
+  `UNREADABLE`.

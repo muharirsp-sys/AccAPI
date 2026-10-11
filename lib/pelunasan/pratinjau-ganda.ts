@@ -175,9 +175,14 @@ async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ke
             "sp.page": currentPage
         });
         if (ketat && !(listRes?.s === true && Array.isArray(listRes.d))) throw new Error("daftar riwayat sales-receipt tidak terbaca");
-        // Tinjauan A2: tanpa jumlah halaman angka, "halaman 2" tak bisa dipastikan ada/tidak -> terpotong (fail-closed).
-        if (ketat && !(typeof listRes.sp?.pageCount === "number" && Number.isFinite(listRes.sp.pageCount))) {
-            throw new Error("daftar riwayat sales-receipt tanpa jumlah halaman (sp.pageCount) — dianggap terpotong");
+        // Tinjauan A2: tanpa jumlah halaman angka, "halaman 2" tak bisa dipastikan ada/tidak -> terpotong (fail-closed). Putaran 2:
+        // teks angka ("1") diterima; 0 hanya sah bila daftarnya kosong (0 halaman + baris = tak konsisten = ditahan).
+        if (ketat) {
+            const pc = listRes.sp?.pageCount;
+            const n = typeof pc === "number" || (typeof pc === "string" && pc.trim() !== "") ? Number(pc) : NaN;
+            if (!(Number.isFinite(n) && (n >= 1 || (n === 0 && listRes.d.length === 0)))) {
+                throw new Error("daftar riwayat sales-receipt tanpa jumlah halaman (sp.pageCount) — dianggap terpotong");
+            }
         }
 
         const pageRows = Array.isArray(listRes?.d) ? listRes.d : [];
