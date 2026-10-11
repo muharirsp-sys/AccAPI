@@ -201,6 +201,10 @@ diselesaikan; tampilkan bila > 0).
 
 - **Kunci izin**: IT Support menambah `pelunasan.kirim` ke grup yang MENGIRIM pelunasan (Admin Incaso, Finance) SEBELUM deploy —
   tanpanya semua kirim sales-receipt non-admin 403. `seed-rbac-presets` tidak dijalankan ke produksi.
+- **Halaman `/pelunasan` = `pelunasan.kirim`** (`lib/rbac.ts` pagePermissions, sama dengan penegakan server owner #5): wizard,
+  daftar Perlu tindakan, Selesaikan, dan Izinkan baris ganda semuanya di halaman ini. **Finance yang menyelesaikan
+  (`finance.resolve_unknown`) atau mengizinkan baris ganda (`finance.override_duplicate`) WAJIB juga memegang `pelunasan.kirim`**
+  — tanpa itu halamannya tidak terbuka (API `/api/idempotency/resolve` & `/summary` tetap bisa dipanggil, tetapi tidak ada layarnya).
 - **DDL**: `docs/handover/DDL_S6E2.sql` (IT Support, role pemilik, **SEBELUM image baru di-deploy**; idempoten) — kolom `idempotency_log."databaseId"`
   + kolom `idempotency_override.database_id` + tabel `idempotency_resolution` (juga dibuat migrate-pg entri `idempotency_s6e2` &
   `idempotency_override_database` bila `DATABASE_MIGRATION_URL` terpasang) + trigger append-only + REVOKE
@@ -249,3 +253,5 @@ diselesaikan; tampilkan bila > 0).
 - (11 Okt, susulan S6e, tinjauan A RENDAH) §1 paginasi `list.do` (server): jumlah halaman tidak boleh menyusut (halaman 1
   `pageCount:3` lalu halaman 2 `pageCount:0` tidak lagi melewatkan halaman 3); halaman kosong sebelum halaman terakhir yang
   diumumkan = `UNREADABLE`. Pratinjau klien tidak berubah. Bentuk jawaban tidak berubah.
+- (11 Okt, susulan S6e, tinjauan UI 2b) §8 ditulis eksplisit: halaman `/pelunasan` butuh `pelunasan.kirim`, termasuk bagi Finance
+  yang hanya menyelesaikan/mengizinkan. Tidak ada perubahan perilaku server.
