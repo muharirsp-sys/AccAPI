@@ -85,7 +85,8 @@ export async function POST(request: NextRequest) {
     }
     const baca = bacaAccurate({ sessionHost: sesi.sessionHost, sessionId: sesi.sessionId, accessToken: sesi.accessToken });
     const hasil = await selesaikanPelunasan(db, {
-        ...inp, actor: String(gate.session.user.email ?? gate.session.user.id), sessionDatabaseId: String(sesi.databaseId),
+        // Tinjauan B5: jejak = user id (seperti idempotency_override & Finance resolve), bukan email yang bisa berubah.
+        ...inp, actor: String(gate.session.user.id), sessionDatabaseId: String(sesi.databaseId),
     }, (t) => periksaRiwayatAccurate([t], baca));
     return NextResponse.json(hasil.body, { status: hasil.status });
 }

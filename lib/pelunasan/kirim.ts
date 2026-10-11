@@ -162,8 +162,10 @@ export async function kirimPelunasan(rows: Bebas[], deps: DepsKirim): Promise<{ 
                 idx = ditahan.size ? idx.filter((i) => !ditahan.has(i)) : [];
                 continue;
             }
-            // Ditolak SEBELUM diteruskan ke Accurate (C11: pasti tidak terkirim) -> gagal, boleh diulang.
-            if (jawab && (d?.sent === false || jawab.status === 401 || jawab.status === 403)) {
+            // Ditolak SEBELUM diteruskan ke Accurate (C11: pasti tidak terkirim) -> gagal, boleh diulang. Tinjauan A5: `sent:false`
+            // hanya dipercaya pada 4xx (penolakan penjaga); 5xx/2xx ber-sent:false = jawaban tak terduga -> tidak pasti di bawah.
+            const ditolak4xx = jawab !== null && jawab.status >= 400 && jawab.status < 500;
+            if (jawab && ((ditolak4xx && d?.sent === false) || jawab.status === 401 || jawab.status === 403)) {
                 const msg = teks(d?.error) || `HTTP ${jawab.status}`;
                 set(idx, paket, "gagal", code === "SALES_RECEIPT_LOCK_REQUIRED"
                     ? `${msg} — tidak ada yang dikirim ke Accurate; kirim ulang butuh override Finance lewat tinjauan.`

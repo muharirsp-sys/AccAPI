@@ -135,3 +135,15 @@ test("galat lock membawa code/status/sent:false (GalatKirim) — UI memetakan me
         assert.equal(s.log.proxy.length, 0);
     }
 });
+
+test("A5 (tinjauan 11 Okt): sent:false hanya dipercaya untuk 4xx — 500/502 ber-sent:false = TIDAK PASTI (UNKNOWN), bukan gagal", async () => {
+    for (const status of [500, 502, 200]) {
+        const s = server(() => ({ status, data: { error: "galat", sent: false } }));
+        const r = await kirimPelunasan(banyak(3), { postJson: s.postJson, expectedDatabaseId: "DB-1" });
+        assert.deepEqual(hitung(r.rows), { tidak_pasti: 3 }, `HTTP ${status}`);
+        assert.deepEqual(statusComplete(s.log), { UNKNOWN: 3 }, `HTTP ${status}`);
+    }
+    // Kontrol: 409 sent:false = gagal (pasti tidak terkirim).
+    const s = server(() => ({ status: 409, data: { error: "x", code: "SALES_RECEIPT_LOCK_REQUIRED", sent: false } }));
+    assert.deepEqual(hitung((await kirimPelunasan(banyak(2), { postJson: s.postJson, expectedDatabaseId: "DB-1" })).rows), { gagal: 2 });
+});

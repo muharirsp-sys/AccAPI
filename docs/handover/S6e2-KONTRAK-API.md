@@ -90,6 +90,8 @@ bisa dipakai untuk blok lock, dan sebaliknya).
 - **Non-pratinjau wajib `expectedDatabaseId`** (BARU): 400 `DATABASE_REQUIRED`; sesi tanpa database 400
   `ACCURATE_SESSION_INCOMPLETE`; database sesi berbeda 409 `database_changed` — semua sebelum menulis. Lock mencatat database itu
   di `idempotency_log."databaseId"`.
+- Non-pratinjau: `key` setiap entri wajib diawali `PAY_<customerNo dipangkas>_<transDate dipangkas>_` (rumus sidik jari) —
+  selain itu **400** `{code:"KEY_IDENTITY_MISMATCH"}` sebelum menulis (lib `kirimPelunasan` selalu memenuhinya).
 - Jawaban sukses tidak berubah: `{ok, lockId, blockedKeys, blockedEntries}`.
 
 ## 3. `POST /api/idempotency/complete` — TIDAK berubah
@@ -122,7 +124,7 @@ satu transaksi: status `SUCCESS` (terposting) / `FAILED` (tidak_ada = boleh diki
 | Status | `code` | Kapan |
 |---|---|---|
 | 200 | — | `{ok, status, resolutionId, receiptNumbers}` |
-| 200 | — | `{ok, alreadyResolved:true, status}` — keputusan sama sudah berlaku (klik ganda) |
+| 200 | — | `{ok, alreadyResolved:true, status}` — keputusan sama sudah berlaku (klik ganda), juga bila kalah balapan dari keputusan yang sama (dua tab serentak) |
 | 400 | — / `DATABASE_REQUIRED` / `ACCURATE_SESSION_INCOMPLETE` | masukan tak sah (sebelum DB/Accurate) / sesi |
 | 403 | — | tanpa `finance.resolve_unknown` |
 | 404 | `not_found` | key tidak ada |
@@ -144,11 +146,14 @@ Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
                  {"databaseId": null, "label": "tidak tercatat", "uncertain": {"unknown": 0, "sendingStale": 1, "total": 1}, "retryable": 3, "processingStale": 0}],
  "staleMinutes": 15, "asOf": "2026-10-10T08:00:00.000Z"}
 ```
-`?rows=1` menambah `rows: [{key, status, customerNo, transDate, invoiceNo, amount, databaseId, updatedAt, category:"uncertain"|"retryable"}]`
-(UNKNOWN + SENDING basi + FAILED, terbaru dulu, ≤ 200, tanpa payload) dan `rowsTruncated`. Alias database tidak disimpan
-(UI memetakan id → alias dari daftar database).
-`uncertain` = Tidak pasti (tile 1; `SENDING` basi = > 15 mnt, sama dengan lock). `retryable` = `FAILED` (tidak terkirim, tile 2).
-`processingStale` = lock > 15 mnt yang tak pernah diteruskan (diblokir lock sebagai tidak pasti; tampilkan bila > 0).
+`?rows=1` menambah `rows: [{key, status, customerNo, transDate, invoiceNo, amount, databaseId, updatedAt,
+category:"uncertain"|"processingStale"|"retryable"}]` (UNKNOWN + SENDING ≥ 2 mnt + PROCESSING > 15 mnt + FAILED, terbaru dulu,
+≤ 200, tanpa payload) dan `rowsTruncated`. Baris non-`retryable` di daftar = TEPAT baris yang boleh diselesaikan (§4 `eligible`).
+`&databaseId=X` menyaring `rows` (bukan hitungan) ke database lock X dan menambah `rowsDatabaseId: "X"`. Alias database tidak
+disimpan (UI memetakan id → alias dari daftar database).
+`uncertain` = Tidak pasti (tile 1; `sendingStale` = `SENDING` ≥ 2 mnt, SAMA dengan ambang Selesaikan). `retryable` = `FAILED`
+(tidak terkirim, tile 2). `processingStale` = lock > 15 mnt yang tak pernah diteruskan (diblokir lock sebagai tidak pasti; boleh
+diselesaikan; tampilkan bila > 0).
 `perDatabase` hanya database yang punya angka > 0; `databaseId:null` = lock sebelum S6e-2 ("tidak tercatat").
 
 ## 7. Lib untuk wizard (bukan HTTP)
@@ -158,7 +163,8 @@ Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
 - `kirimPelunasan(rows, deps)` (`lib/pelunasan/kirim.ts`, BARU): lock → paket 100 → laporan per baris → complete.
   `deps = {postJson(url, body) → {status, data}, expectedDatabaseId, override?, cariRiwayat?, lapor?, chunkSize?}`.
   Hasil `{lockId, rows: [{index, paket, outcome:"terposting"|"gagal"|"tidak_pasti"|"ditahan", message, code?, receiptNumbers?, item?}]}`.
-  Pra-cek klien: placeholder akun → semua baris `gagal` tanpa lock.
+  Pra-cek klien: placeholder akun → semua baris `gagal` tanpa lock. Jawaban proxy `sent:false` hanya berarti `gagal` pada 4xx
+  (401/403 selalu `gagal`); 5xx/2xx ber-`sent:false` = `tidak_pasti` (tinjauan A5).
   Lock mengirim `expectedDatabaseId`. Galat SEBELUM kirim (lock ditolak/terblokir/tak terbit/jaringan) melempar
   **`GalatKirim {code, status, sent:false}`** — `code` = kode server lock (`PERMISSION_REQUIRED`, `OVERRIDE_PERMISSION_REQUIRED`,
   `OVERRIDE_REASON_REQUIRED`, `PLACEHOLDER_AKUN`, `DATABASE_REQUIRED`, `ACCURATE_SESSION_INCOMPLETE`, `database_changed`) atau
@@ -168,7 +174,7 @@ Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
 
 - **Kunci izin**: IT Support menambah `pelunasan.kirim` ke grup yang MENGIRIM pelunasan (Admin Incaso, Finance) SEBELUM deploy —
   tanpanya semua kirim sales-receipt non-admin 403. `seed-rbac-presets` tidak dijalankan ke produksi.
-- **DDL**: `docs/handover/DDL_S6E2.sql` (IT Support, role pemilik, saat deploy; idempoten) — kolom `idempotency_log."databaseId"`
+- **DDL**: `docs/handover/DDL_S6E2.sql` (IT Support, role pemilik, **SEBELUM image baru di-deploy**; idempoten) — kolom `idempotency_log."databaseId"`
   + kolom `idempotency_override.database_id` + tabel `idempotency_resolution` (juga dibuat migrate-pg entri `idempotency_s6e2` &
   `idempotency_override_database` bila `DATABASE_MIGRATION_URL` terpasang) + trigger append-only + REVOKE
   UPDATE/DELETE/TRUNCATE, GRANT SELECT/INSERT ke `accapi_app`.
@@ -191,3 +197,7 @@ Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
 - (11 Okt, tinjauan B2) §1 7b: override lock juga mencatat database (`idempotency_override.database_id`); lock yang hanya
   berisi override `resend_success` kini ditolak 409 `database_changed` bila database sesi berbeda; override lama tanpa
   database = `"tidak tercatat"` (ditolak). §8: kolom baru di DDL_S6E2 + entri migrate-pg `idempotency_override_database`.
+- (11 Okt, tinjauan RENDAH) §2 400 `KEY_IDENTITY_MISMATCH` (B3). §5 `alreadyResolved` juga untuk kalah CAS dari keputusan sama
+  (B4); jejak `actor` = user id, bukan email (B5). §6 `sendingStale` = SENDING ≥ 2 mnt (dulu > 15), `rows` memuat PROCESSING basi
+  (`category:"processingStale"`), `&databaseId=` + `rowsDatabaseId` (B6). §7 `sent:false` hanya untuk 4xx (A5). §8 DDL SEBELUM
+  image baru (B7).

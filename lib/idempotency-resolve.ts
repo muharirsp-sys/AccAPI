@@ -131,6 +131,11 @@ export async function selesaikanPelunasan(db: NodePgDatabase, inp: InputSelesaik
             checkedSource: inp.checkedSource, reason: inp.reason, actor: inp.actor,
         });
     }).catch((e: unknown) => { if (!(e instanceof TransactionRollbackError)) throw e; });
-    if (!berubah) return tolak(409, "changed", "Status baris berubah saat diselesaikan — muat ulang lalu periksa lagi.");
+    if (!berubah) {
+        // Tinjauan B4: kalah CAS dari keputusan yang SAMA (dua tab / klik ganda serentak) = sudah selesai, bukan galat.
+        const [kini] = await db.select({ status: idempotencyLog.status }).from(idempotencyLog).where(eq(idempotencyLog.key, row.key)).limit(1);
+        if (kini?.status === tujuan) return { status: 200, body: { ok: true, alreadyResolved: true, status: tujuan } };
+        return tolak(409, "changed", "Status baris berubah saat diselesaikan — muat ulang lalu periksa lagi.");
+    }
     return { status: 200, body: { ok: true, status: tujuan, resolutionId: id, receiptNumbers: nomor } };
 }

@@ -5,14 +5,15 @@
 -- lib/pelunasan-ddl-pg.test.ts.
 --
 -- SIAPA & KAPAN (pola S6-0a/ADR-004, keputusan owner 9 Okt 2026 "DDL manual = Claude tulis, IT Support jalankan"):
--- IT Support, SAAT DEPLOY S6e-2, sebagai role PEMILIK tabel (bukan accapi_app), SESUDAH image baru hidup. JANGAN dijalankan
--- oleh loop/agen ke produksi.
+-- IT Support, SAAT DEPLOY S6e-2, sebagai role PEMILIK tabel (bukan accapi_app), SEBELUM image baru di-deploy (tinjauan B7:
+-- satu urutan saja). JANGAN dijalankan oleh loop/agen ke produksi.
 --
 --   docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 < docs/handover/DDL_S6E2.sql
 --
--- PRASYARAT: migrate-pg (container start) membuat kolom + tabel bila `DATABASE_MIGRATION_URL` (role ber-hak DDL) terpasang.
--- Bila tidak, blok 1 berkas ini membuatnya (idempoten, sama persis) — jalankan berkas ini SEBELUM image baru agar
--- migrate-pg tidak gagal start.
+-- KENAPA SEBELUM: image baru menulis/membaca kolom baru sejak request pertama, dan migrate-pg (container start) yang berjalan
+-- sebagai role aplikasi tanpa hak DDL akan GAGAL start bila kolomnya belum ada (bila `DATABASE_MIGRATION_URL` terpasang,
+-- migrate-pg membuatnya sendiri — berkas ini tetap aman dijalankan sebelum/sesudahnya, idempoten). Image LAMA tidak terganggu
+-- oleh kolom nullable + tabel baru (EXPAND), jadi menjalankan berkas ini lebih dulu aman.
 --
 -- IDEMPOTEN (satu transaksi; menjalankan ulang = tanpa perubahan):
 --   1. ADD COLUMN / CREATE TABLE / CREATE INDEX IF NOT EXISTS (aditif, tanpa backfill: baris lama "databaseId" NULL =

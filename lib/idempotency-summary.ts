@@ -4,16 +4,22 @@
  * Caller: app/api/idempotency/summary/route.ts.
  * Main Functions: ringkasanIdempotensi, daftarBarisRingkasan.
  * Side Effects: SELECT idempotency_log saja.
- * Basi = sama dengan lock (STALE_PROCESSING_MS, 15 mnt) terhadap coalesce(updatedAt, createdAt); kolom timestamp tanpa zona
- * berisi jam UTC (Date JS) — pembanding dikirim sebagai ISO UTC::timestamp, pola CAS lock route.
+ * Basi = SELARAS dengan Selesaikan (bolehDiselesaikan, tinjauan B6): SENDING >= 2 mnt (UMUR_SELESAIKAN_MS), PROCESSING > 15 mnt
+ * (STALE_PROCESSING_MS) terhadap coalesce(updatedAt, createdAt); kolom timestamp tanpa zona berisi jam UTC (Date JS) —
+ * pembanding dikirim sebagai ISO UTC::timestamp, pola CAS lock route.
  */
 import { and, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { idempotencyLog } from "@/db/schema";
 import { STALE_PROCESSING_MS } from "@/lib/idempotency-lock";
+import { UMUR_SELESAIKAN_MS } from "@/lib/idempotency-resolve";
 
-const ekspresiBasi = (now: Date) =>
-    sql<boolean>`coalesce(${idempotencyLog.updatedAt}, ${idempotencyLog.createdAt}) < ${new Date(now.getTime() - STALE_PROCESSING_MS).toISOString()}::timestamp`;
+const ekspresiBasi = (now: Date) => {
+    const t = sql`coalesce(${idempotencyLog.updatedAt}, ${idempotencyLog.createdAt})`;
+    const iso = (ms: number) => new Date(now.getTime() - ms).toISOString();
+    return sql<boolean>`CASE WHEN ${idempotencyLog.status} = 'SENDING' THEN ${t} <= ${iso(UMUR_SELESAIKAN_MS)}::timestamp
+        ELSE ${t} < ${iso(STALE_PROCESSING_MS)}::timestamp END`;
+};
 
 type Grup = { status: string; basi: boolean | null; n: number };
 function hitungan(rows: Grup[]) {
@@ -46,18 +52,21 @@ export async function ringkasanIdempotensi(db: NodePgDatabase, now: Date, saring
 
 export const BATAS_BARIS_RINGKASAN = 200;
 
-/** Daftar baris tile (Tidak pasti = UNKNOWN + SENDING basi; Gagal boleh diulang = FAILED), terbaru dulu, ≤ 200, tanpa payload. */
-export async function daftarBarisRingkasan(db: NodePgDatabase, now: Date, saring?: SQL) {
+/** Daftar baris tile = baris yang bisa ditindak: Tidak pasti (UNKNOWN + SENDING >= 2 mnt), PROCESSING basi (> 15 mnt) — keduanya
+ * boleh diselesaikan — dan Gagal boleh diulang (FAILED); terbaru dulu, ≤ 200, tanpa payload. `databaseId` = saring database lock. */
+export async function daftarBarisRingkasan(db: NodePgDatabase, now: Date, saring?: SQL, databaseId?: string) {
     const basi = ekspresiBasi(now);
     const rows = await db.select({
         key: idempotencyLog.key, status: idempotencyLog.status, customerNo: idempotencyLog.customerNo, transDate: idempotencyLog.transDate,
         invoiceNo: idempotencyLog.invoiceNo, amount: idempotencyLog.amount, databaseId: idempotencyLog.databaseId, updatedAt: idempotencyLog.updatedAt,
     }).from(idempotencyLog)
-        .where(and(or(inArray(idempotencyLog.status, ["UNKNOWN", "FAILED"]), and(eq(idempotencyLog.status, "SENDING"), basi)), saring))
+        .where(and(or(inArray(idempotencyLog.status, ["UNKNOWN", "FAILED"]), and(inArray(idempotencyLog.status, ["SENDING", "PROCESSING"]), basi)), saring,
+            databaseId === undefined ? undefined : eq(idempotencyLog.databaseId, databaseId)))
         .orderBy(desc(sql`coalesce(${idempotencyLog.updatedAt}, ${idempotencyLog.createdAt})`))
         .limit(BATAS_BARIS_RINGKASAN + 1);
     return {
-        rows: rows.slice(0, BATAS_BARIS_RINGKASAN).map((r) => ({ ...r, category: r.status === "FAILED" ? "retryable" : "uncertain" })),
+        rows: rows.slice(0, BATAS_BARIS_RINGKASAN).map((r) => ({ ...r,
+            category: r.status === "FAILED" ? "retryable" : r.status === "PROCESSING" ? "processingStale" : "uncertain" })),
         rowsTruncated: rows.length > BATAS_BARIS_RINGKASAN,
     };
 }

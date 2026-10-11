@@ -28,7 +28,7 @@ export async function sebagai<T>(keys: string[], fn: () => Promise<T>, opsi: Ops
     const env = process.env.LOCAL_AUTH_BYPASS;
     delete process.env.LOCAL_AUTH_BYPASS;
     const grup = keys.map((key) => ({ groupId: "g1", key }));
-    const rows = (r: unknown[]) => Object.assign(Promise.resolve(r), { limit: async () => r, groupBy: async () => r });
+    const rows = (r: unknown[]) => Object.assign(Promise.resolve(r), { limit: async () => r, groupBy: async () => r, orderBy: () => ({ limit: async () => r }) });
     Object.defineProperty(auth.api, "getSession", { configurable: true, value: async () => ({ user: { id: "u-p", role: "staff" }, session: { id: "s1" } }) });
     Object.defineProperty(db, "select", { configurable: true, value: () => ({ from: (t: unknown) => ({
         leftJoin: () => ({ where: async () => grup }),
@@ -192,4 +192,25 @@ test("B1: target Selesaikan menyentuh faktur dari kolom invoiceNo (koreksi) DAN 
     assert.ok(t.menyentuh("INV-2"), "segmen kunci berikutnya");
     assert.ok(t.menyentuh("INV-Z"), "kolom invoiceNo (jangkar koreksi)");
     assert.ok(!t.menyentuh("INV") && !t.menyentuh("C1"), "bukan faktur baris");
+});
+
+test("B3: lock menolak entri yang key-nya tidak diawali PAY_<pelanggan>_<tanggal>_ (400 KEY_IDENTITY_MISMATCH, sebelum DB)", async () => {
+    const r = { customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 1000 }] };
+    const ok = buildSalesReceiptIdempotencyPayload(r);
+    for (const salah of [{ ...ok, customerNo: "C2" }, { ...ok, transDate: "02/10/2026" }, { ...ok, key: ok.key.replace("PAY_C1_", "PAY_C1X_") }]) {
+        const res = await sebagai(["pelunasan.kirim"], () => lockPost(jsonPost("/api/idempotency/lock", { keys: [ok, salah], expectedDatabaseId: "DB-1" })));
+        assert.equal(res.status, 400, JSON.stringify(salah));
+        assert.equal((await res.json()).code, "KEY_IDENTITY_MISMATCH");
+    }
+    // Pelanggan berspasi = sidik jari memangkasnya -> tetap sah; pratinjau tidak diperiksa (baca-saja).
+    const spasi = await sebagai(["pelunasan.kirim"], () => lockPost(jsonPost("/api/idempotency/lock", { keys: [{ ...ok, customerNo: " C1 " }], preview: true })));
+    assert.equal(spasi.status, 200);
+});
+
+test("B6: ringkasan ?rows=1&databaseId= diteruskan ke penyaring daftar (route)", async () => {
+    const res = await sebagai(["pelunasan.kirim"], () => summaryGet(new NextRequest("http://app.test/api/idempotency/summary?rows=1&databaseId=DB-1")), { idem: [] });
+    assert.equal(res.status, 200);
+    const b = await res.json();
+    assert.deepEqual(b.rows, []);
+    assert.equal(b.rowsDatabaseId, "DB-1");
 });

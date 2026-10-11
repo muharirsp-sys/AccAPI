@@ -47,7 +47,7 @@ async function dalamDunia(buatDunia: (tag: string, m: Awaited<ReturnType<typeof 
     const env = process.env.LOCAL_AUTH_BYPASS;
     delete process.env.LOCAL_AUTH_BYPASS;
     const realSelect = m.db.select.bind(m.db);
-    Object.defineProperty(m.auth.api, "getSession", { configurable: true, value: async () => ({ user: { id: ME, role: "staff" }, session: { id: "s1" } }) });
+    Object.defineProperty(m.auth.api, "getSession", { configurable: true, value: async () => ({ user: { id: ME, email: "finance@contoh.test", role: "staff" }, session: { id: "s1" } }) });
     Object.defineProperty(m.db, "select", { configurable: true, value: (...a: unknown[]) => {
         const b = (realSelect as (...x: unknown[]) => { from: (t: unknown) => unknown })(...a);
         const realFrom = b.from.bind(b);
@@ -208,29 +208,37 @@ test("PG butir 4: sesi Accurate belum lengkap -> 400 ACCURATE_SESSION_INCOMPLETE
         assert.equal(await statusDb(m.db, kunci(a).key), "PROCESSING");
     }));
 
-test("PG butir 6: ringkasanIdempotensi — basi 15 mnt menurut updatedAt (jam UTC), status dihitung benar", { skip: pgSkip }, async () => {
+test("PG butir 6 + B6: ringkasan selaras Selesaikan — SENDING >= 2 mnt, PROCESSING > 15 mnt (jam UTC); ?rows=1 memuat PROCESSING basi; saring database", { skip: pgSkip }, async () => {
     const { db } = await modul();
     const { ringkasanIdempotensi } = await import("./idempotency-summary.ts");
+    const { bolehDiselesaikan } = await import("./idempotency-resolve.ts");
     const tag = `s6e2-${randomUUID().slice(0, 8)}`;
     const now = new Date();
     const lalu = (mnt: number) => new Date(now.getTime() - mnt * 60_000);
     const baru = (k: string, status: string, umur: number, databaseId: string | null = "DB-1") => ({ key: `PAY_${tag}_${k}`, status, createdAt: lalu(umur), updatedAt: lalu(umur), databaseId });
     try {
         await db.insert(idempotencyLog).values([baru("u", "UNKNOWN", 1), baru("s1", "SENDING", 20), baru("s3", "SENDING", 16, "DB-2"), baru("s2", "SENDING", 5),
+            baru("s5", "SENDING", 2), baru("s4", "SENDING", 1),
             baru("f", "FAILED", 60, null), baru("p1", "PROCESSING", 16), baru("p2", "PROCESSING", 14), baru("p3", "PROCESSING", 1), baru("ok", "SUCCESS", 99)]);
         const saring = like(idempotencyLog.key, `PAY_${tag}%`);
         const r = await ringkasanIdempotensi(db, now, saring);
-        assert.deepEqual(r.uncertain, { unknown: 1, sendingStale: 2, total: 3 });
+        assert.deepEqual(r.uncertain, { unknown: 1, sendingStale: 4, total: 5 }, "SENDING >= 2 mnt = tidak pasti (ambang Selesaikan)");
         assert.equal(r.retryable, 1);
         assert.equal(r.processingStale, 1);
         const per = Object.fromEntries(r.perDatabase.map((d) => [d.label, [d.uncertain.total, d.retryable, d.processingStale]]));
-        assert.deepEqual(per, { "DB-1": [2, 0, 1], "DB-2": [1, 0, 0], "tidak tercatat": [0, 1, 0] });
+        assert.deepEqual(per, { "DB-1": [4, 0, 1], "DB-2": [1, 0, 0], "tidak tercatat": [0, 1, 0] });
         const { daftarBarisRingkasan } = await import("./idempotency-summary.ts");
         const d = await daftarBarisRingkasan(db, now, saring);
         assert.deepEqual(d.rows.map((x) => [x.key.slice(-2), x.category]).sort(),
-            [["_f", "retryable"], ["_u", "uncertain"], ["s1", "uncertain"], ["s3", "uncertain"]].sort(), "SENDING muda & PROCESSING tidak masuk daftar");
+            [["_f", "retryable"], ["_u", "uncertain"], ["s1", "uncertain"], ["s2", "uncertain"], ["s3", "uncertain"], ["s5", "uncertain"], ["p1", "processingStale"]].sort(),
+            "SENDING < 2 mnt & PROCESSING muda tidak masuk daftar");
+        // Selaras: baris non-FAILED di daftar = TEPAT baris yang boleh diselesaikan.
+        const semua = await db.select().from(idempotencyLog).where(saring);
+        assert.deepEqual(d.rows.filter((x) => x.category !== "retryable").map((x) => x.key).sort(),
+            semua.filter((x) => bolehDiselesaikan(x, now)).map((x) => x.key).sort());
         assert.equal(d.rowsTruncated, false);
         assert.ok(d.rows.every((x) => !("payload" in x)));
+        assert.deepEqual((await daftarBarisRingkasan(db, now, saring, "DB-2")).rows.map((x) => x.key.slice(-2)), ["s3"], "disaring per database");
     } finally {
         await db.delete(idempotencyLog).where(like(idempotencyLog.key, `PAY_${tag}%`));
     }
@@ -469,3 +477,39 @@ test("PG REV-B G: lock berisi override resend_success saja (tanpa baris lock) di
         assert.equal(catat.post.length, 1);
     });
 });
+
+// ------------------------------------------------------------------ Tinjauan 11 Okt RENDAH (B4, B8)
+test("PG B4: Selesaikan kalah CAS tetapi status kini = tujuan (keputusan sama dari tab lain) -> 200 alreadyResolved, tanpa jejak ganda", { skip: pgSkip }, async () => {
+    const { db } = await modul();
+    const { selesaikanPelunasan } = await import("./idempotency-resolve.ts");
+    const { eq } = await import("drizzle-orm");
+    const tag = `s6e2-${randomUUID().slice(0, 8)}`;
+    const k = await tanam(db, baris(`${tag}-K`, "INV-K", 1), "UNKNOWN", 5, "DB-1");
+    try {
+        const r = await selesaikanPelunasan(db, { key: k, decision: "tidak_ada", accurateNumber: "", reason: ALASAN, checkedSource: "uji", actor: "uji", sessionDatabaseId: "DB-1" },
+            async () => {
+                await db.update(idempotencyLog).set({ status: "FAILED", updatedAt: new Date() }).where(eq(idempotencyLog.key, k));
+                return { mirip: new Map(), gagal: new Map() };
+            });
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        assert.equal(r.body.alreadyResolved, true);
+        assert.equal(r.body.status, "FAILED");
+        assert.equal((await jejak(db, k)).length, 0, "pemenang yang mencatat jejaknya");
+    } finally {
+        await db.delete(idempotencyLog).where(like(idempotencyLog.key, `PAY_${tag}%`));
+    }
+});
+
+test("PG B8: lock PROCESSING tanpa database tercatat (baris lama) -> proxy 409 database_changed lockDatabaseId 'tidak tercatat', tidak dikirim", { skip: pgSkip }, () =>
+    dalamDunia((_t, m) => ({ izin: KIRIM, sesi: m.sesiAccurate(), data: KOSONG }), async (m, tag, catat) => {
+        const a = baris(`${tag}-N`, "INV-N", 1000);
+        const p = kunci(a);
+        await m.db.insert(idempotencyLog).values({ key: p.key, status: "PROCESSING", customerNo: p.customerNo, transDate: p.transDate, invoiceNo: p.invoiceNo,
+            amount: p.amount, createdAt: new Date(), updatedAt: new Date(), lockId: `L-${tag}`, lockedBy: ME, databaseId: null });
+        const res = await kirim(m, `L-${tag}`, [a]);
+        assert.equal(res.status, 409);
+        const b = await res.json();
+        assert.deepEqual([b.code, b.lockDatabaseId, b.sent], ["database_changed", "tidak tercatat", false]);
+        assert.equal(catat.post.length + catat.baca, 0);
+        assert.equal(await statusDb(m.db, p.key), "PROCESSING");
+    }));

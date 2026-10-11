@@ -4,7 +4,8 @@
  * Caller: Beranda (S6e-2b).
  * Dependensi: lib/idempotency-summary (ringkasanIdempotensi), lib/rbac/resolve.
  * Main Functions: GET -> {ok, uncertain:{unknown, sendingStale, total}, retryable, processingStale, perDatabase:[{databaseId, label, …}],
- *   staleMinutes, asOf}; `?rows=1` menambah {rows:[≤200 baris tanpa payload], rowsTruncated}.
+ *   staleMinutes, asOf}; `?rows=1` menambah {rows:[≤200 baris tanpa payload], rowsTruncated}; `&databaseId=X` menyaring rows
+ *   (bukan hitungan) ke database lock X dan menggemakan `rowsDatabaseId`.
  * Side Effects: SELECT idempotency_log saja.
  * Izin: `pelunasan.kirim` ATAU `finance.resolve_unknown`. perDatabase: database lock NULL (baris lama) = label "tidak tercatat".
  */
@@ -21,7 +22,10 @@ export async function GET(request: Request) {
     }
     try {
         const now = new Date();
-        const baris = new URL(request.url).searchParams.get("rows") === "1" ? await daftarBarisRingkasan(db, now) : {};
+        const q = new URL(request.url).searchParams;
+        const dbRows = q.get("databaseId")?.trim() || undefined;
+        const baris = q.get("rows") === "1"
+            ? { ...(await daftarBarisRingkasan(db, now, undefined, dbRows)), ...(dbRows ? { rowsDatabaseId: dbRows } : {}) } : {};
         return NextResponse.json({ ok: true, ...(await ringkasanIdempotensi(db, now)), ...baris });
     } catch (e: unknown) {
         console.error("[idempotency/summary]", e);

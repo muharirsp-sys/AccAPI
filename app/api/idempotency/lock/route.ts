@@ -41,6 +41,13 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Akun potongan belum dipilih (ISI_KODE_AKUN_…) — pilih akun di langkah Akun. Tidak ada yang dikunci.', code: 'PLACEHOLDER_AKUN' }, { status: 400 });
         }
 
+        // Tinjauan B3: kolom pelanggan/tanggal yang disimpan (target pencarian Selesaikan & identitas koreksi) harus sama dengan
+        // awalan sidik jari kunci (rumus buildSalesReceiptIdempotencyPayload memangkas keduanya).
+        const awalan = (k: LockEntry) => `PAY_${String(k.customerNo ?? '').trim()}_${String(k.transDate ?? '').trim()}_`;
+        if (!preview && keys.some((k: LockEntry) => !k.key.startsWith(awalan(k)))) {
+            return NextResponse.json({ error: 'Kunci idempotency tidak sesuai pelanggan/tanggal barisnya — muat ulang lalu ulangi dari Tinjau. Tidak ada yang dikunci.', code: 'KEY_IDENTITY_MISMATCH' }, { status: 400 });
+        }
+
         const entries = keys as LockEntry[];
         const existing = await db.select().from(idempotencyLog).where(inArray(idempotencyLog.key, entries.map((k) => k.key)));
         const now = new Date();
