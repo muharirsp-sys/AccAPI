@@ -66,11 +66,14 @@ const sebab = (status: number, data: Record<string, unknown> | null, umum: strin
     return pesan ? `${umum} ${pesan}` : `${umum} Server gagal memproses permintaan.`;
 };
 
-/** GET → Load. Galat tidak pernah menjadi data kosong; HTTP 2xx tanpa `ok: true` juga galat (sama dengan cek kode lama). */
-export async function baca<T>(url: string, pick: (data: Record<string, unknown>) => T, umum: string): Promise<Load<T>> {
+/**
+ * GET → Load. Galat tidak pernah menjadi data kosong; HTTP 2xx tanpa `ok: true` juga galat (sama dengan cek kode lama).
+ * `http` = kode status jawaban galat (mis. 404 = sumbernya sudah tidak ada), dibaca dari kode, bukan dari teks pesan.
+ */
+export async function baca<T>(url: string, pick: (data: Record<string, unknown>) => T, umum: string): Promise<Load<T> & { http?: number }> {
     const j = await ambilJson(url, { credentials: "include" });
     if (j.status >= 200 && j.status < 300 && j.data?.ok) return { status: "siap", data: pick(j.data) };
-    return { status: "galat", error: sebab(j.status, j.data, umum) };
+    return { status: "galat", error: sebab(j.status, j.data, umum), http: j.status };
 }
 
 /** Pesan bila jawaban server tidak pasti (aksi mungkin sudah tersimpan, mungkin belum). */

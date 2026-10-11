@@ -81,8 +81,12 @@ function BadgeBaris({ line }: { line: Line }) {
 
 export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tutupPesan, onHapus, onBerubah }: Props) {
     const enc = encodeURIComponent(batchId);
-    const [isi, muatIsi] = useLoad(useCallback(() => baca(`/api/principal-order?id=${enc}`,
-        (j) => ({ batch: j.batch as Batch, lines: (j.lines ?? []) as Line[] }), "Batch belum berhasil dimuat."), [enc]));
+    const [isi, muatIsi] = useLoad(useCallback(async (): Promise<Load<{ batch: Batch; lines: Line[] } | null>> => {
+        const r = await baca(`/api/principal-order?id=${enc}`, (j) => ({ batch: j.batch as Batch, lines: (j.lines ?? []) as Line[] }), "Batch belum berhasil dimuat.");
+        // 404 = batch sudah dihapus/diganti (mis. Validasi 409 lalu muat ulang). `data: null` membuat useLoad TIDAK mempertahankan
+        // bacaan lama: batch yang sudah tidak ada tidak boleh tetap tampil sebagai data dengan tombol tulisnya.
+        return r.http === 404 ? { status: "galat", error: `${r.error} Batch ini mungkin sudah dihapus atau diganti; buka Batch terakhir untuk batch terbarunya.`, data: null } : r;
+    }, [enc]));
     const principal = isi.data?.batch.principal ?? "";
     const [acks, muatAcks] = useLoad(useCallback((): Promise<Load<Ack[]>> => principal
         ? baca(`/api/principal-order/dupe-ack?principal=${encodeURIComponent(principal)}`, (j) => (j.acks ?? []) as Ack[], "Konfirmasi order ganda yang tercatat belum terbaca.")
@@ -273,6 +277,7 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
         return (
             <div className="fi-page">
                 {kepala}
+                {pesanAtas}
                 {isi.status === "galat"
                     ? <><ErrorState title="Batch belum berhasil dimuat" message={isi.error} onRetry={muatIsi} /><div><Link href="/principal-order" className="fi-btn fi-btn--tertiary"><ArrowLeft className="fi-icon" aria-hidden />Kembali ke unggah</Link></div></>
                     : <Skeleton rows={6} label="Memuat batch" />}

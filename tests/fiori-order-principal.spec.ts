@@ -468,6 +468,28 @@ test("Hapus: status antrean dibaca ULANG tepat sebelum DELETE (bacaan dialog usa
     await expect(main.getByText(`Batch ${FILE} dihapus.`)).toHaveCount(0);
 });
 
+// ── Susulan PR #149: tiga jawaban server yang membuat bacaan layar usang ──
+test("Validasi 409 (batch dihapus/diganti saat divalidasi) → muat ulang 404: layar batch usang tidak dipertahankan", async ({ page }) => {
+    const HILANG = "Batch ini dihapus atau diganti saat divalidasi; muat ulang daftar batch";
+    let ada = true;
+    await pasang(page, {
+        detail: (_id, r) => r.fulfill(ada ? json({ ok: true, batch: BATCH, lines: LINES }) : json({ ok: false, error: "Batch tidak ditemukan" }, 404)),
+        validasi: (r) => { ada = false; return r.fulfill(json({ ok: false, error: HILANG }, 409)); },
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/principal-order?batch=b1", NAV);
+    const main = page.locator("main");
+    await expect(main.getByRole("table", { name: "Baris perlu ditinjau" })).toBeVisible(NAV);
+    await page.locator(".fi-ftb").getByRole("button", { name: "Validasi ulang" }).click();
+    await expect(main.getByRole("alert").filter({ hasText: HILANG })).toBeVisible();
+    await expect(main.getByRole("alert").filter({ hasText: "Batch tidak ditemukan" })).toBeVisible();
+    // Batch yang sudah tidak ada tidak lagi tampil sebagai data (tabel, KPI) dan tidak menyisakan tombol tulis.
+    await expect(main.getByRole("table", { name: "Baris perlu ditinjau" })).toHaveCount(0);
+    await expect(main.locator('[aria-label="Ringkasan validasi"]')).toHaveCount(0);
+    await expect(page.locator(".fi-ftb")).toHaveCount(0);
+    await expect(main.getByRole("link", { name: "Kembali ke unggah" })).toHaveAttribute("href", "/principal-order");
+});
+
 test("Batch tidak ditemukan = galat (bukan kosong); ponsel 390 px tanpa gulir menyamping di Unggah dan Validasi", async ({ page }) => {
     await pasang(page, { detail: (id, r) => (id === "hilang" ? r.fulfill(json({ ok: false, error: "Batch tidak ditemukan" }, 404)) : r.fulfill(json({ ok: true, batch: BATCH, lines: LINES }))) });
     await page.setViewportSize({ width: 1366, height: 900 });
