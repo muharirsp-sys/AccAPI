@@ -723,6 +723,8 @@ export const idempotencyOverride = pgTable("idempotency_override", {
     action: text("action").notNull(),
     consumedAt: timestamp("consumed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // S6e-2a tinjauan B2: database Accurate sesi saat lock (proxy menolak kiriman ke database lain). NULL = override lama.
+    databaseId: text("database_id"),
 }, (t) => [
     index("idx_idempotency_override_lock_key").on(t.lockId, t.key),
     check("idempotency_override_action", sql`${t.action} IN ('takeover', 'resend_success', 'allow_duplicate')`),

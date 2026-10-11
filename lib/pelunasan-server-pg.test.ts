@@ -436,3 +436,36 @@ test("PG REV-B F: baris berpotongan, detail Accurate tanpa discountNotes → tid
         assert.equal(catat.post.length, 1);
     });
 });
+
+// ------------------------------------------------------------------ Tinjauan 11 Okt B2 (REV-B G): override terikat database lock
+test("PG REV-B G: lock berisi override resend_success saja (tanpa baris lock) di DB-1, sesi pindah DB-2 -> 409 database_changed, tidak dikirim", { skip: pgSkip }, async () => {
+    let sesiKini: Record<string, unknown> | null = null;
+    await dalamDunia((_t, m) => { sesiKini = m.sesiAccurate(); return { izin: FINANCE, get sesi() { return sesiKini; }, data: KOSONG }; }, async (m, tag, catat) => {
+        const a = baris(`${tag}-G`, "INV-G", 1000);
+        await tanam(m.db, a, "SUCCESS", 30, "DB-1");
+        const lockId = await kunciLock(m, [a], { allowLockedKeys: [kunci(a).key], overrideReason: "Kirim ulang atas konfirmasi Finance tertulis" });
+        const o = await overrideDb(m.db, kunci(a).key);
+        assert.equal(o.length, 1, "satu override resend_success, tanpa baris lock");
+        sesiKini = m.sesiAccurate({ databaseId: "DB-2", databaseAlias: "PT B" });
+        const res = await m.proxy(post("/api/proxy", { endpointPath: PATH, method: "POST", payload: [a], idempotencyLockId: lockId, expectedDatabaseId: "DB-2" }));
+        const body = await res.json();
+        assert.equal(res.status, 409, JSON.stringify(body));
+        assert.equal(body.code, "database_changed");
+        assert.equal(body.lockDatabaseId, "DB-1");
+        assert.equal(body.sent, false);
+        assert.equal(catat.post.length + catat.baca, 0);
+        assert.ok((await overrideDb(m.db, kunci(a).key)).every((x) => !x.consumedAt), "override tidak dihabiskan");
+        // Kontrol: database yang sama dengan lock -> terkirim (override dihabiskan).
+        sesiKini = m.sesiAccurate();
+        assert.equal((await kirim(m, lockId, [a])).status, 200);
+        assert.equal(catat.post.length, 1);
+        // Override lama (database_id NULL, sebelum kolom ada) = "tidak tercatat" -> ditolak juga.
+        const b = baris(`${tag}-H`, "INV-H", 5);
+        await m.db.insert(idempotencyOverride).values({ id: randomUUID(), lockId: `L-${tag}`, key: kunci(b).key, actor: ME,
+            reason: "Override lama sebelum kolom database", blockReason: "ALREADY_SUCCESS", previousStatus: "SUCCESS", action: "resend_success" });
+        const lama = await kirim(m, `L-${tag}`, [b]);
+        assert.equal(lama.status, 409);
+        assert.equal((await lama.json()).lockDatabaseId, "tidak tercatat");
+        assert.equal(catat.post.length, 1);
+    });
+});

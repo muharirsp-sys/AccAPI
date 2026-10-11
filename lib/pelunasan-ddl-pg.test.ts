@@ -23,6 +23,12 @@ test("PG: DDL_S6E2.sql idempoten (dua kali) + entri migrate-pg; jejak append-onl
         assert.ok(m, "entri migrate-pg idempotency_s6e2");
         assert.equal((await pool.query(m.sudahAda)).rowCount, 1, "sudahAda mengenali hasil DDL");
         await pool.query(m.sql); // sesudah DDL manual: tetap aman diulang
+        // Tinjauan B2: entri terpisah untuk idempotency_override.database_id — dikenali sesudah DDL, aman diulang.
+        const o = mod.migrations.find((x) => x.nama === "idempotency_override_database");
+        assert.ok(o, "entri migrate-pg idempotency_override_database");
+        assert.ok(mod.migrations.indexOf(o) > mod.migrations.findIndex((x) => x.nama === "idempotency_lock_owner_override"), "sesudah tabel override dibuat");
+        assert.equal((await pool.query(o.sudahAda)).rowCount, 1, "sudahAda mengenali kolom database_id");
+        await pool.query(o.sql);
 
         const c = await pool.connect();
         try {

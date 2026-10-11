@@ -396,6 +396,16 @@ export const migrations = [
     `,
   },
   {
+    // 2026-10-11 (S6e-2a tinjauan B2; DRAFT — zona idempotensi, butuh review manusia). EXPAND: database Accurate lock juga
+    // di override (lock yang hanya berisi override resend_success tidak punya baris idempotency_log). NULL = override lama
+    // = "tidak tercatat" (proxy menolak). Entri TERPISAH dari `idempotency_s6e2` agar `sudahAda` entri itu tetap benar
+    // untuk DB yang sudah menjalankannya; tabel idempotency_override dibuat entri `idempotency_lock_owner_override`.
+    nama: "idempotency_override_database",
+    sudahAda: `SELECT 1 FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'idempotency_override' AND column_name = 'database_id'`,
+    sql: `ALTER TABLE idempotency_override ADD COLUMN IF NOT EXISTS database_id text;`,
+  },
+  {
     // 2026-10-09 (S6-0d BL-17 + R6; DRAFT — zona Accurate write/idempotensi, butuh review manusia).
     // Riwayat antrean faktur APPEND-ONLY: satu baris per aksi/percobaan (antre, kirim + status HTTP
     // + potongan jawaban, buang, antre ulang, selesaikan, sapu). TANPA FK ke invoice_outbox —

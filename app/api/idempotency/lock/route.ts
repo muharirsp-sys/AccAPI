@@ -149,6 +149,8 @@ export async function POST(req: Request) {
                     blockReason: o.blockReason,
                     previousStatus: o.previousStatus,
                     action: o.action,
+                    // Tinjauan B2: lock yang hanya berisi override (resend_success) tetap terikat database.
+                    databaseId,
                 })));
             }
         }).catch((e: unknown) => {

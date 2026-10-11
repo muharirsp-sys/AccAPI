@@ -48,12 +48,18 @@ export type RiwayatPaket = { cocok: Map<string, string[]>; gagal: Map<string, st
 /**
  * S6e-2 butir 2: database yang DICATAT lock (idempotency_log."databaseId") harus sama dengan database sesi saat kirim.
  * null = cocok; teks = database lock yang berbeda ("tidak tercatat" untuk baris lama tanpa database = ditolak juga).
+ * Tinjauan B2: override lock (idempotency_override.database_id) ikut diperiksa — lock yang hanya berisi override
+ * `resend_success` tidak punya baris idempotency_log.
  */
 export async function databaseLockBerbeda(db: NodePgDatabase, lockId: string, userId: string, databaseId: string): Promise<string | null> {
     const [r] = await db.select({ d: idempotencyLog.databaseId }).from(idempotencyLog)
         .where(and(eq(idempotencyLog.lockId, lockId), eq(idempotencyLog.lockedBy, userId), sql`${idempotencyLog.databaseId} IS DISTINCT FROM ${databaseId}`))
         .limit(1);
-    return r ? (r.d ?? "tidak tercatat") : null;
+    if (r) return r.d ?? "tidak tercatat";
+    const [o] = await db.select({ d: idempotencyOverride.databaseId }).from(idempotencyOverride)
+        .where(and(eq(idempotencyOverride.lockId, lockId), eq(idempotencyOverride.actor, userId), sql`${idempotencyOverride.databaseId} IS DISTINCT FROM ${databaseId}`))
+        .limit(1);
+    return o ? (o.d ?? "tidak tercatat") : null;
 }
 
 /** Pemeriksaan murni (tanpa DB/sesi/jaringan). null = lanjut; teks = alasan penolakan (409). */

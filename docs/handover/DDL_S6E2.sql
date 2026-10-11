@@ -1,7 +1,8 @@
--- DDL MANUAL S6e-2 — Pelunasan: idempotency_log."databaseId" (lock mencatat database Accurate) + idempotency_resolution
--- (jejak "Selesaikan" pelunasan tidak pasti, append-only).
--- Rujukan: db/schema.ts (idempotencyLog.databaseId, idempotencyResolution), scripts/migrate-pg.mjs (entri `idempotency_s6e2`
--- = kolom + tabel, SQL sama dengan blok 1 di bawah), docs/handover/S6e2-KONTRAK-API.md, lib/pelunasan-ddl-pg.test.ts.
+-- DDL MANUAL S6e-2 — Pelunasan: idempotency_log."databaseId" + idempotency_override.database_id (lock & override mencatat
+-- database Accurate) + idempotency_resolution (jejak "Selesaikan" pelunasan tidak pasti, append-only).
+-- Rujukan: db/schema.ts (idempotencyLog.databaseId, idempotencyOverride.databaseId, idempotencyResolution), scripts/migrate-pg.mjs
+-- (entri `idempotency_s6e2` + `idempotency_override_database` = SQL sama dengan blok 1 di bawah), docs/handover/S6e2-KONTRAK-API.md,
+-- lib/pelunasan-ddl-pg.test.ts.
 --
 -- SIAPA & KAPAN (pola S6-0a/ADR-004, keputusan owner 9 Okt 2026 "DDL manual = Claude tulis, IT Support jalankan"):
 -- IT Support, SAAT DEPLOY S6e-2, sebagai role PEMILIK tabel (bukan accapi_app), SESUDAH image baru hidup. JANGAN dijalankan
@@ -34,8 +35,10 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
 
--- 1. Kolom + tabel (sama dengan entri migrate-pg `idempotency_s6e2`).
+-- 1. Kolom + tabel (sama dengan entri migrate-pg `idempotency_s6e2` dan `idempotency_override_database`).
 ALTER TABLE idempotency_log ADD COLUMN IF NOT EXISTS "databaseId" text;
+-- Tinjauan B2 (11 Okt): database lock juga di override (lock yang hanya berisi override resend_success). NULL = override lama.
+ALTER TABLE idempotency_override ADD COLUMN IF NOT EXISTS database_id text;
 CREATE TABLE IF NOT EXISTS idempotency_resolution (
     id              text PRIMARY KEY,
     key             text NOT NULL,
@@ -91,6 +94,8 @@ COMMIT;
 SELECT cek, ok FROM (VALUES
     ('kolom idempotency_log.databaseId', EXISTS (SELECT 1 FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'idempotency_log' AND column_name = 'databaseId')),
+    ('kolom idempotency_override.database_id', EXISTS (SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'idempotency_override' AND column_name = 'database_id')),
     ('tabel idempotency_resolution', to_regclass('public.idempotency_resolution') IS NOT NULL),
     ('trigger UPDATE/DELETE', EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_idempotency_resolution_guard')),
     ('trigger TRUNCATE', EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_idempotency_resolution_no_truncate')),

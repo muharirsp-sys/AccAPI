@@ -43,7 +43,7 @@ Urutan pemeriksaan (yang pertama gagal menjawab; semua sebelum `SENDING` = `sent
 | 5 | 409 | `SALES_RECEIPT_LOCK_REQUIRED` | sesi belum lengkap DAN lock tidak mencakup baris (lama) |
 | 6 | 400 | `ACCURATE_SESSION_INCOMPLETE` | sesi Accurate belum lengkap / host tak diizinkan — `sent:false` (dulu tanpa kode → klien menganggap Tidak pasti) |
 | 7 | 409 | `database_changed` | database sesi ≠ `expectedDatabaseId` — `{sent:false, databaseId, databaseAlias}` (database sesi kini) |
-| 7b | 409 | `database_changed` | database yang DICATAT lock ≠ database sesi (atau lock lama tanpa database) — `{sent:false, lockDatabaseId}` |
+| 7b | 409 | `database_changed` | database yang DICATAT lock (baris `idempotency_log` ATAU override lock) ≠ database sesi (atau lock/override lama tanpa database, `lockDatabaseId:"tidak tercatat"`) — `{sent:false, lockDatabaseId}` |
 | 8 | 409 | `SALES_RECEIPT_LOCK_REQUIRED` | baris tidak tercakup lock/override (dinilai SEBELUM membaca riwayat) |
 | 9 | 409 | `ACCURATE_HISTORY` | ada baris MIRIP riwayat Accurate (atau riwayat GAGAL dibaca) tanpa override `ACCURATE_HISTORY` |
 | — | 200 | — | jawaban Accurate apa adanya (lama); hasil per baris dicatat server (`SUCCESS` hanya untuk `s:true` per baris, selain itu `UNKNOWN`) |
@@ -169,8 +169,9 @@ Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
 - **Kunci izin**: IT Support menambah `pelunasan.kirim` ke grup yang MENGIRIM pelunasan (Admin Incaso, Finance) SEBELUM deploy —
   tanpanya semua kirim sales-receipt non-admin 403. `seed-rbac-presets` tidak dijalankan ke produksi.
 - **DDL**: `docs/handover/DDL_S6E2.sql` (IT Support, role pemilik, saat deploy; idempoten) — kolom `idempotency_log."databaseId"`
-  + tabel `idempotency_resolution` (juga dibuat migrate-pg entri `idempotency_s6e2` bila `DATABASE_MIGRATION_URL` terpasang) +
-  trigger append-only + REVOKE UPDATE/DELETE/TRUNCATE, GRANT SELECT/INSERT ke `accapi_app`.
+  + kolom `idempotency_override.database_id` + tabel `idempotency_resolution` (juga dibuat migrate-pg entri `idempotency_s6e2` &
+  `idempotency_override_database` bila `DATABASE_MIGRATION_URL` terpasang) + trigger append-only + REVOKE
+  UPDATE/DELETE/TRUNCATE, GRANT SELECT/INSERT ke `accapi_app`.
 - Lock yang dibuat sebelum deploy tidak bisa dikirim lagi (database tidak tercatat) — muat ulang `/api-wrapper`, ulangi dari Tinjau.
 
 ## Catatan perubahan sesudah commit kontrak (86ec53b7)
@@ -187,3 +188,6 @@ Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
   `terposting` menerima nomor kandidat mana pun; `number_mismatch` membawa `candidates`.
 - (11 Okt, tinjauan A2–A4) §1 Biaya: `list.do` tanpa `sp.pageCount` angka / bukan `s:true` / tanpa `d` = `UNREADABLE`;
   pembacaan berhenti saat batas waktu (tanpa panggilan baru).
+- (11 Okt, tinjauan B2) §1 7b: override lock juga mencatat database (`idempotency_override.database_id`); lock yang hanya
+  berisi override `resend_success` kini ditolak 409 `database_changed` bila database sesi berbeda; override lama tanpa
+  database = `"tidak tercatat"` (ditolak). §8: kolom baru di DDL_S6E2 + entri migrate-pg `idempotency_override_database`.
