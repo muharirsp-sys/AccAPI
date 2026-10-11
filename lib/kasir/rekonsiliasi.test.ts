@@ -377,6 +377,97 @@ test("RENDAH 3: metode di luar daftar putih (CASH_OTHER/BANK_TRANSFER/BANK_CHEQU
         `Uang tak teralokasi ${kartu.nomor} belum dijelaskan: Rp 500.000 (metode "CREDIT_CARD" tak dikenal; tidak dihitung ke orang).`);
 });
 
+test("K1b RENDAH 5a: metode tak dikenal ber-cheque 0 DILEWATI — tanpa ember sisa 0 (CHECK sisa <> 0 membuat Tutup terhalang permanen)", () => {
+    const nol = pel("CREDIT_CARD", 0, [[11, 100_000]]);
+    const nolTanpaBaris = pel("GIRO_MUNDUR", 0, []);
+    const kartu = pel("CREDIT_CARD", 25_000, [[11, 25_000]]);
+    const h = rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [nol, nolTanpaBaris, kartu], setoran: [] });
+    assert.deepEqual(h.takTeralokasi.map((t) => [t.pelunasanId, t.sisa]), [[kartu.id, Rp(25_000)]], "hanya ember bernominal");
+    assert.ok(h.takTeralokasi.every((t) => t.sisa !== 0), "tidak ada ember sisa 0");
+    assert.deepEqual(h.baris, [], "tidak dihitung ke orang");
+    assert.deepEqual(penghalangTutup(rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [nol], setoran: [] })).bisaDitutup, true);
+});
+
+// K-1 (owner 12 Okt, pilihan a): cheque metode UANG < 0 -> SELURUH nominal ke ember tak teralokasi `nominal_negatif` (wajib dijelaskan sebelum
+// Tutup, meniru metode_tak_dikenal); TIDAK mengurangi total orang; orang lain tetap direkonsiliasi (tanpa galat sehari).
+test("K1b RENDAH 5b (K-1 = a): cheque uang NEGATIF -> ember nominal_negatif penuh, tidak mengurangi orang, hari tidak gagal", () => {
+    const negatif = pel("CASH_OTHER", -300_000, [[12, -300_000]]);
+    const negatifCampur = pel("BANK_TRANSFER", -80_000, [[14, -80_000], [11, 0]]);
+    const positifC = pel("CASH_OTHER", 30_000, [[14, 30_000]]);
+    const sah = pel("CASH_OTHER", 50_000, [[11, 50_000]]);
+    const giro = pel("BANK_CHEQUE", -0.5, []);
+    const masukan = { tanggal: D, peta: PETA, pelunasan: [negatif, negatifCampur, positifC, sah, giro],
+        setoran: [setor("S-A", 50_000), setor("S-B", 0), setor("S-C", 30_000)] };
+    const h = rekonsiliasiHari(masukan);
+    assert.deepEqual(h.baris.map((b) => [b.orang, b.pelunasan, b.status]), [["S-A", Rp(50_000), "klop"], ["S-B", 0, "klop"], ["S-C", Rp(30_000), "klop"]],
+        "orang lain tetap direkonsiliasi; cheque negatif tidak mengurangi total orang");
+    assert.deepEqual(h.takTeralokasi.map((t) => [t.pelunasanId, t.sisa, t.arah, t.alasan, t.jumlahInvoicePayment, t.orang]), [
+        [negatif.id, Rp(-300_000), "kredit", "nominal_negatif", 0, ["S-B"]],
+        [negatifCampur.id, Rp(-80_000), "kredit", "nominal_negatif", 0, ["S-C", "S-A"]],
+        [giro.id, -50, "kredit", "nominal_negatif", 0, []],
+    ]);
+    assert.equal(h.total.pelunasan + h.total.takTeralokasi, Rp(-300_000 - 80_000 + 30_000 + 50_000) - 50, "invarian Σ orang + Σ ember = Σ cheque");
+    const p = penghalangTutup(h);
+    assert.equal(p.bisaDitutup, false, "wajib dijelaskan sebelum Tutup");
+    assert.equal(p.alasan[0], `Uang tak teralokasi ${negatif.nomor} belum dijelaskan: Rp -300.000 (pelunasan Tunai/Transfer/Giro bernominal negatif; `
+        + "tidak dihitung ke orang S-B).");
+    assert.deepEqual(snapshotHari(h).takTeralokasi.map((t) => t.alasan), ["nominal_negatif", "nominal_negatif", "nominal_negatif"]);
+    const jelas = rekonsiliasiHari({ ...masukan, catatanTakTeralokasi: h.takTeralokasi.map((t) => ({ pelunasanId: t.pelunasanId, sisa: t.sisa })) });
+    assert.equal(penghalangTutup(jelas).bisaDitutup, true, "dijelaskan (angka sisa sama) -> Tutup boleh");
+    // Metode tak dikenal bernominal negatif tetap metode_tak_dikenal; OTHERS negatif tetap non-kas.
+    const kartu = pel("CREDIT_CARD", -10_000, [[11, -10_000]]);
+    const retur = pel("OTHERS", -20_000, [[11, -20_000]]);
+    const h2 = rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [kartu, retur], setoran: [] });
+    assert.deepEqual(h2.takTeralokasi.map((t) => t.alasan), ["metode_tak_dikenal"]);
+    assert.deepEqual(h2.nonKas.map((x) => x.id), [retur.id]);
+});
+
+test("K1b RENDAH 4 (K-1 a per orang): invoicePayment NEGATIF pada pelunasan multi-orang -> bagian negatif ke ember nominal_negatif, orang tidak dikurangi", () => {
+    const p = pel("CASH_OTHER", 100_000, [[11, 150_000], [12, -50_000], [12, -10_000], [14, 10_000]]);
+    const h = rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [p], setoran: [setor("S-A", 150_000), setor("S-B", 0), setor("S-C", 10_000)] });
+    assert.deepEqual(h.baris.map((b) => [b.orang, b.pelunasan, b.status]), [["S-A", Rp(150_000), "klop"], ["S-B", 0, "klop"], ["S-C", Rp(10_000), "klop"]]);
+    assert.deepEqual(h.takTeralokasi.map((t) => [t.alasan, t.sisa, t.arah, t.orang]), [
+        ["nominal_negatif", Rp(-60_000), "kredit", ["S-B"]],
+        ["jumlah_invoice_payment_beda", Rp(100_000 - 100_000), "lebih_bayar", ["S-A", "S-B", "S-C"]],
+    ].filter((x) => x[1] !== 0));
+    assert.equal(h.total.pelunasan + h.total.takTeralokasi, Rp(100_000), "invarian Σ orang + Σ ember = Σ cheque");
+    assert.match(penghalangTutup(h).alasan.join(" | "), /baris faktur bernominal negatif/);
+});
+
+/** PRNG berbenih (mulberry32) — fuzz deterministik. */
+function acak(benih: number) {
+    let a = benih >>> 0;
+    return () => {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+test("K1b RENDAH 4 fuzz: data Accurate apa pun (cheque/invoicePayment ±, metode campur, salesman null/tak dikenal) -> rekonsiliasi TIDAK PERNAH melempar", () => {
+    const r = acak(20261012);
+    const pilih = <T,>(xs: readonly T[]) => xs[Math.floor(r() * xs.length)];
+    const nominal = () => (r() < 0.15 ? 0 : Math.round((r() * 2 - 1) * 50_000_000));
+    for (let iter = 0; iter < 400; iter++) {
+        const pelunasan: Pelunasan[] = Array.from({ length: 1 + Math.floor(r() * 6) }, (_, i) => ({
+            id: iter * 100 + i, nomor: `SR/F/${iter}/${i}`, tanggal: D, chequeAmount: nominal(),
+            metode: pilih(["CASH_OTHER", "BANK_TRANSFER", "BANK_CHEQUE", "OTHERS", "CREDIT_CARD"]),
+            faktur: Array.from({ length: Math.floor(r() * 4) }, (__, j) => ({ fakturId: j + 1, nomorFaktur: null,
+                masterSalesmanId: pilih([11, 12, 13, 14, 15, 999, null]), invoicePayment: nominal() })),
+        }));
+        const setoran = (["S-A", "S-B", "S-C"] as const).filter(() => r() < 0.6).map((k) => setor(k, Math.round(r() * 500_000)));
+        const h = rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan, setoran });
+        penghalangTutup(h);
+        snapshotHari(h);
+        const uang = pelunasan.filter((x) => x.metode !== "OTHERS").reduce((a, x) => a + x.chequeAmount, 0);
+        assert.equal(h.total.pelunasan + h.total.takTeralokasi, uang, `invarian iterasi ${iter}`);
+        assert.ok(h.baris.every((b) => b.pelunasan >= 0), `total orang >= 0 iterasi ${iter}`);
+        assert.ok(h.takTeralokasi.every((t) => t.sisa !== 0), `tanpa ember sisa 0 iterasi ${iter}`);
+    }
+});
+
 test("RENDAH 4–6: gabungan siklik = galat; klop/setoran negatif & urutan revisi ditolak lib; `pada` wajib Date atau ISO berofset", () => {
     const siklik = { gabunganPerBulan: new Map([["2026-10", new Map([["A", "B"], ["B", "C"], ["C", "A"]])]]) };
     assert.throws(() => orangDariKode("A", D, siklik), /siklik/);

@@ -315,10 +315,14 @@ test("PG K1a: VERIFIKASI DDL menangkap trigger append-only yang dilemahkan (tanp
         await pool.query(`CREATE OR REPLACE TRIGGER trg_kasir_setoran_append_only BEFORE DELETE ON kasir_setoran
             FOR EACH ROW EXECUTE FUNCTION kasir_append_only()`);
         assert.ok(trigger(await verifikasi(pool, cekVerifikasi)).some((r) => r.ok === false), "trigger tanpa UPDATE = VERIFIKASI tidak ok");
-        // Sabotase 2: trigger dimatikan.
-        await pool.query("ALTER TABLE kasir_hari_event DISABLE TRIGGER trg_kasir_hari_event_append_only");
-        await pool.query("ALTER TABLE kasir_tak_teralokasi_catatan DISABLE TRIGGER trg_kasir_tak_teralokasi_catatan_no_truncate");
-        assert.ok(trigger(await verifikasi(pool, cekVerifikasi)).some((r) => r.ok === false), "trigger dimatikan = VERIFIKASI tidak ok");
+        // K1b RENDAH 5c: sabotase 2 BERDIRI SENDIRI — pulihkan dulu (semua trigger ok), baru matikan SATU trigger per uji.
+        for (const [tabel, nama] of [["kasir_hari_event", "trg_kasir_hari_event_append_only"],
+            ["kasir_tak_teralokasi_catatan", "trg_kasir_tak_teralokasi_catatan_no_truncate"]]) {
+            await verifikasi(pool, ddl);
+            assert.ok(trigger(await verifikasi(pool, cekVerifikasi)).every((r) => r.ok === true), `sebelum mematikan ${nama}: semua trigger ok`);
+            await pool.query(`ALTER TABLE ${tabel} DISABLE TRIGGER ${nama}`);
+            assert.ok(trigger(await verifikasi(pool, cekVerifikasi)).some((r) => r.ok === false), `${nama} dimatikan (sendiri) = VERIFIKASI tidak ok`);
+        }
         // DDL diulang: semua kembali ok (CREATE OR REPLACE + ENABLE).
         for (const v of await verifikasi(pool, ddl)) assert.notEqual(v.ok, false, `VERIFIKASI sesudah DDL diulang: ${v.cek}`);
         await pool.query(`INSERT INTO kasir_hari_event (tanggal, jenis, snapshot, oleh) VALUES ('2026-10-05', 'tutup', '{"terhalang":[]}', 'k')`);

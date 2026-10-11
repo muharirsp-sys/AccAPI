@@ -2,7 +2,8 @@
  * Tujuan: Rekonsiliasi harian Kasir ↔ Incaso (K1a, BL-59) — lib MURNI tanpa I/O.
  *   (a) alokasi uang pelunasan (chequeAmount = nominal owner) ke ORANG salesman faktur: semua baris milik satu orang -> chequeAmount
  *       PENUH ke orang itu; multi-orang -> per baris invoicePayment, Σ ≠ chequeAmount -> selisihnya ke ember TAK TERALOKASI per
- *       pelunasan (membawa orang[] + arah; tidak pernah dibagi diam-diam); metode OTHERS dikeluarkan;
+ *       pelunasan (membawa orang[] + arah; tidak pernah dibagi diam-diam); metode OTHERS dikeluarkan; cheque metode uang NEGATIF ->
+ *       ember `nominal_negatif` penuh (owner 12 Okt, K-1 a), tidak mengurangi total orang;
  *   (b) masterSalesmanId -> kode (accurate_employee.number) -> ORANG (gabungan sales_code_merge per bulan);
  *   (c) rekonsiliasi per orang per hari: klop = sama persis ATAU setoran = total dibulatkan KE ATAS ke kelipatan Rp 100;
  *       Tutup hari terhalang sampai setiap selisih orang DAN setiap ember tak teralokasi dijelaskan (owner 11 Okt, T2);
@@ -97,14 +98,14 @@ export interface BagianOrang {
     sen: Sen;
 }
 
-export type AlasanTakTeralokasi = "jumlah_invoice_payment_beda" | "tanpa_baris_faktur" | "metode_tak_dikenal";
+export type AlasanTakTeralokasi = "jumlah_invoice_payment_beda" | "tanpa_baris_faktur" | "metode_tak_dikenal" | "nominal_negatif";
 
 export interface TakTeralokasi {
     pelunasanId: number;
     nomor: string;
     metode: string;
     chequeAmount: Sen;
-    /** Σ invoicePayment yang DIALOKASIKAN (0 untuk metode_tak_dikenal: tidak ada yang dialokasikan). */
+    /** Σ invoicePayment yang DIALOKASIKAN (0 untuk metode_tak_dikenal / nominal_negatif: tidak ada yang dialokasikan). */
     jumlahInvoicePayment: Sen;
     /** chequeAmount − jumlahInvoicePayment: > 0 = uang lebih / lebih bayar, < 0 = kredit / non-kas (mis. useCredit). */
     sisa: Sen;
@@ -119,7 +120,8 @@ export interface TakTeralokasi {
  * PENUH ke orang itu (lebih bayar / kredit ikut orangnya, tanpa ember). Pelunasan multi-orang -> per baris invoicePayment; bila
  * Σ invoicePayment ≠ chequeAmount, baris tetap utuh dan SELISIHNYA masuk ember tak teralokasi berisi orang[] + arah (tidak dibagi
  * diam-diam). Tanpa baris faktur -> seluruh chequeAmount ke ember. Invarian: Σ bagian + Σ sisa = Σ chequeAmount metode uang.
- * Metode OTHERS -> `nonKas`, tidak dialokasikan. Orang dihitung dengan peta gabungan bulan `tanggal` pelunasan.
+ * Metode OTHERS -> `nonKas`, tidak dialokasikan. Cheque metode uang < 0 -> ember `nominal_negatif` penuh (K-1 a). Orang dihitung dengan peta
+ * gabungan bulan `tanggal` pelunasan.
  */
 export function alokasiPelunasan(daftar: readonly Pelunasan[], peta: PetaOrang) {
     const bagian: BagianOrang[] = [];
@@ -136,8 +138,19 @@ export function alokasiPelunasan(daftar: readonly Pelunasan[], peta: PetaOrang) 
             continue;
         }
         if (!METODE_UANG.includes(p.metode)) {
+            // K1b RENDAH 5a: cheque 0 = tak ada uang yang tak teralokasi; ember sisa 0 tak bisa dijelaskan (CHECK sisa <> 0) -> lewati.
+            if (p.chequeAmount === 0) continue;
             takTeralokasi.push({ pelunasanId: p.id, nomor: p.nomor, metode: p.metode, chequeAmount: p.chequeAmount, jumlahInvoicePayment: 0,
                 sisa: p.chequeAmount, arah: p.chequeAmount > 0 ? "lebih_bayar" : "kredit", alasan: "metode_tak_dikenal",
+                orang: [...new Set(p.faktur.map((f) => orangDariSalesmanId(f.masterSalesmanId, p.tanggal, peta).orang))] });
+            continue;
+        }
+        // K-1 (owner 12 Okt, pilihan a): cheque metode UANG < 0 -> SELURUH nominal ke ember `nominal_negatif` (wajib dijelaskan sebelum
+        // Tutup, meniru metode_tak_dikenal), TIDAK mengurangi total orang. Dulu dinetkan ke orang -> total < 0 -> klop() melempar ->
+        // rekonsiliasiHari gagal untuk SEMUA orang.
+        if (p.chequeAmount < 0) {
+            takTeralokasi.push({ pelunasanId: p.id, nomor: p.nomor, metode: p.metode, chequeAmount: p.chequeAmount, jumlahInvoicePayment: 0,
+                sisa: p.chequeAmount, arah: "kredit", alasan: "nominal_negatif",
                 orang: [...new Set(p.faktur.map((f) => orangDariSalesmanId(f.masterSalesmanId, p.tanggal, peta).orang))] });
             continue;
         }
@@ -159,12 +172,24 @@ export function alokasiPelunasan(daftar: readonly Pelunasan[], peta: PetaOrang) 
             b.salesmanIdTakDikenal.sort((x, y) => x - y);
         }
         if (daftarOrang.length === 1) {
-            daftarOrang[0].sen = p.chequeAmount; // satu orang: uang pelunasan utuh miliknya
-        } else if (jumlah !== p.chequeAmount) {
-            const sisa = p.chequeAmount - jumlah;
-            takTeralokasi.push({ pelunasanId: p.id, nomor: p.nomor, metode: p.metode, chequeAmount: p.chequeAmount, jumlahInvoicePayment: jumlah,
-                sisa, arah: sisa > 0 ? "lebih_bayar" : "kredit", alasan: p.faktur.length ? "jumlah_invoice_payment_beda" : "tanpa_baris_faktur",
-                orang: daftarOrang.map((b) => b.orang) });
+            daftarOrang[0].sen = p.chequeAmount; // satu orang: uang pelunasan utuh miliknya (cheque >= 0 di sini)
+        } else {
+            // K-1 (a) juga PER ORANG (tinjauan K1b): bagian orang yang negatif (Σ invoicePayment < 0) -> ember nominal_negatif, bagian orang
+            // itu 0 — total orang tidak pernah negatif, jadi klop() tidak pernah melempar karena data Accurate.
+            const negatif = daftarOrang.filter((b) => b.sen < 0);
+            if (negatif.length) {
+                takTeralokasi.push({ pelunasanId: p.id, nomor: p.nomor, metode: p.metode, chequeAmount: p.chequeAmount, jumlahInvoicePayment: 0,
+                    sisa: negatif.reduce((a, b) => a + b.sen, 0), arah: "kredit", alasan: "nominal_negatif", orang: negatif.map((b) => b.orang) });
+                for (const b of negatif) b.sen = 0;
+            }
+            // ponytail: satu pelunasan bisa punya dua ember (nominal_negatif + jumlah_invoice_payment_beda); penjelasan berkunci (pelunasan, sisa)
+            // sehingga dua ember bersisa SAMA dijelaskan sekali. Plafon: kunci penjelasan + alasan bila kasus itu muncul.
+            if (jumlah !== p.chequeAmount) {
+                const sisa = p.chequeAmount - jumlah;
+                takTeralokasi.push({ pelunasanId: p.id, nomor: p.nomor, metode: p.metode, chequeAmount: p.chequeAmount, jumlahInvoicePayment: jumlah,
+                    sisa, arah: sisa > 0 ? "lebih_bayar" : "kredit", alasan: p.faktur.length ? "jumlah_invoice_payment_beda" : "tanpa_baris_faktur",
+                    orang: daftarOrang.map((b) => b.orang) });
+            }
         }
         bagian.push(...daftarOrang);
     }
@@ -435,6 +460,11 @@ const namaOrang = (orang: string) => (orang === TANPA_SALESMAN ? "Tanpa salesman
 function alasanEmber(t: TakTeralokasi): string {
     if (t.alasan === "metode_tak_dikenal") {
         return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} (metode ${JSON.stringify(t.metode)} tak dikenal; tidak dihitung ke orang).`;
+    }
+    if (t.alasan === "nominal_negatif") {
+        const asal = t.chequeAmount < 0 ? "pelunasan Tunai/Transfer/Giro bernominal negatif" : "baris faktur bernominal negatif (invoicePayment)";
+        return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} (${asal}; tidak dihitung ke `
+            + `orang${t.orang.length ? ` ${t.orang.map(namaOrang).join(", ")}` : ""}).`;
     }
     if (t.alasan === "tanpa_baris_faktur") return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} (pelunasan tanpa baris faktur).`;
     const arah = t.arah === "lebih_bayar" ? "uang lebih / lebih bayar" : "kredit / non-kas";
