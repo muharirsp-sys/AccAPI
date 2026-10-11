@@ -8,7 +8,7 @@
  */
 import { NextResponse } from "next/server";
 import { requireCronSecret } from "@/lib/api-security";
-import { resolveSyncCredentials } from "@/lib/accurate-session";
+import { redactAccurateSecrets, resolveSyncCredentials } from "@/lib/accurate-session";
 
 // ponytail: pass-through respons Accurate apa adanya, tanpa retry/parse. Sekali seminggu,
 // idempoten, dan kalau gagal tinggal panggil lagi. Tambah retry hanya kalau terbukti flaky.
@@ -30,6 +30,6 @@ export async function GET(req: Request) {
         signal: AbortSignal.timeout(30_000),
     });
     const body = await res.json().catch(() => null);
-    console.log(`[WEBHOOK RENEW] HTTP ${res.status} ${JSON.stringify(body)?.slice(0, 500)}`);
+    console.log(`[WEBHOOK RENEW] HTTP ${res.status} ${redactAccurateSecrets(JSON.stringify(body)).slice(0, 500)}`);
     return NextResponse.json({ ok: res.ok, status: res.status, accurate: body }, { status: res.ok ? 200 : 502 });
 }

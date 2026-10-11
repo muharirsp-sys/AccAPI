@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { upsertAccurateSession } from '@/lib/accurate-session';
+import { redactAccurateSecrets, upsertAccurateSession } from '@/lib/accurate-session';
 
 export async function GET(request: Request) {
     // request.url bisa berupa alamat internal container di belakang proxy (Coolify) — semua
@@ -50,7 +50,7 @@ export async function GET(request: Request) {
 
         if (!tokenResponse.ok) {
             const errText = await tokenResponse.text();
-            console.error("Tukar Token Gagal:", errText);
+            console.error("Tukar Token Gagal:", redactAccurateSecrets(errText));
             return NextResponse.redirect(new URL(`/?error=Failed+to+exchange+token`, publicBase));
         }
 

@@ -1,6 +1,6 @@
 /** Tujuan: Sesi OAuth Accurate terenkripsi beserta identitas database untuk sync/realisasi.
  * Caller: API Accurate, cron, webhook. Dependensi: crypto, Drizzle, session table.
- * Main Functions: getAccurateSession, upsertAccurateSession, resolveSyncCredentials, ensureFreshAccurateSession.
+ * Main Functions: getAccurateSession, upsertAccurateSession, resolveSyncCredentials, ensureFreshAccurateSession, redactAccurateSecrets.
  * Side Effects: PostgreSQL dan HTTP pembaruan sesi; tidak menulis dokumen bisnis.
  */
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
@@ -133,6 +133,17 @@ export async function upsertAccurateSession(userId: string, update: AccurateSess
  */
 export function pickSyncUserId(sessions: Array<{ userId: string; role: string | null }>) {
     return sessions.find((s) => s.role === "admin")?.userId ?? "";
+}
+
+/**
+ * Sensor token sebelum badan respons Accurate masuk console.*. Accurate menggemakan token di
+ * badan galat — 11 Okt 2026 badan 401 webhook-renew.do `"Invalid access token: <uuid>"` masuk
+ * log container. Token Accurate berbentuk UUID; sisa teks (kode galat) tetap terbaca.
+ */
+export function redactAccurateSecrets(text: string) {
+    return text
+        .replace(/(token\s*:\s*)[^\s"',}]+/gi, "$1[REDACTED]")
+        .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "[REDACTED]");
 }
 
 /**

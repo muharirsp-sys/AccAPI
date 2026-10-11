@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
-import { getAccurateSession } from "@/lib/accurate-session";
+import { getAccurateSession, redactAccurateSecrets } from "@/lib/accurate-session";
 
 export async function POST(req: NextRequest) {
     try {
@@ -93,14 +93,14 @@ export async function POST(req: NextRequest) {
         try {
             data = JSON.parse(rawText);
         } catch (e) {
-            console.error("[ACCURATE API RETURNED NON-JSON]", rawText);
+            console.error("[ACCURATE API RETURNED NON-JSON]", redactAccurateSecrets(rawText));
             return NextResponse.json({ error: "Accurate mengembalikan respons non-JSON (Gagal)", detail: rawText.substring(0, 1000) }, { status: 502 });
         }
 
         // SERVER LOG FOR DEBUGGING
         const accurateResult = data as { s?: boolean };
         if (!response.ok || !accurateResult.s) {
-            console.error("[ACCURATE API ERROR FORMAT JSON]", JSON.stringify(data, null, 2));
+            console.error("[ACCURATE API ERROR FORMAT JSON]", redactAccurateSecrets(JSON.stringify(data, null, 2)));
         }
 
         return NextResponse.json(data);
