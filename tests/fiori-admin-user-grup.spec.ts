@@ -501,6 +501,36 @@ test("Akses Group: riwayat grup, tambah anggota, draf dibuang lewat dialog, hapu
     expect(log.native).toBe(0);
 });
 
+for (const [lebar, tinggi] of [[390, 844], [1280, 800]] as const) {
+    test(`Footer Akses Group keadaan Draf ${lebar} px: tombol utuh, tak bertumpuk, tombol final di kanan bawah`, async ({ page }) => {
+        await page.setViewportSize({ width: lebar, height: tinggi });
+        await pasang(page);
+        await page.goto("/admin/groups", NAV);
+        await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bFinance\b/ }).click();
+        await page.getByRole("checkbox", { name: "Payments · Hapus" }).check();
+        const footer = page.locator(".fi-ftb");
+        const simpan = footer.getByRole("button", { name: "Simpan izin…" });
+        const batal = footer.getByRole("button", { name: "Batal perubahan" });
+        await expect(simpan).toBeVisible();
+        await expect(batal).toBeVisible();
+        await expect(footer.getByRole("button", { name: "Hapus grup…" })).toHaveCount(0); // aksi hapus di header objek, bukan di footer Draf
+        // Label tidak meluap dari tombolnya (bug 390 px: "impan" menimpa "Batal perubahan").
+        for (const tombol of [simpan, batal]) expect(await tombol.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+        const f = (await footer.boundingBox())!, a = (await batal.boundingBox())!, b = (await simpan.boundingBox())!;
+        const bertumpuk = a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+        expect(bertumpuk, "Batal perubahan dan Simpan izin tidak boleh bertumpuk").toBe(false);
+        // Aksi final di kanan bawah: tombol utama paling kanan, rapat ke tepi kanan footer, tidak turun ke kiri.
+        expect(b.x).toBeGreaterThanOrEqual(a.x);
+        expect(b.x + b.width).toBeGreaterThanOrEqual(f.x + f.width - 24);
+        if (lebar >= 1000) expect(b.x, "di layar lebar tombol final tidak turun ke kiri").toBeGreaterThan(f.x + f.width / 2);
+        expect(b.y + b.height).toBeLessThanOrEqual(tinggi);
+        expect(b.y).toBeGreaterThan(tinggi / 2);
+        if (lebar >= 1000) expect(Math.abs(a.y - b.y), "satu baris di layar lebar").toBeLessThan(8);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
+        await page.screenshot({ path: `test-results/fiori-s7a-10-footer-draf-${lebar}.png` });
+    });
+}
+
 test("Ponsel 390 px: daftar ↔ detail tanpa gulir menyamping halaman", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await pasang(page);

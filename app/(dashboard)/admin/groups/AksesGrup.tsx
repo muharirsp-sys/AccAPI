@@ -163,6 +163,11 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
         : (
             <div style={{ display: "grid", gap: 12 }}>
                 <ObjectPageHeader title={det.group.name} draft={berubah}
+                    actions={
+                        // Aksi destruktif di header objek (bukan footer): footer Draf hanya memuat Batal + Simpan, selalu muat 390 px (tinjauan S7a #1).
+                        <Button variant="tertiary" icon={<Trash2 className="fi-icon" aria-hidden />} disabled={det.group.isPreset || Boolean(kunciAnggota)}
+                            disabledReason={det.group.isPreset ? "Grup preset tidak bisa dihapus" : kunciAnggota} onClick={() => setDialog("hapus")}>Hapus grup…</Button>
+                    }
                     status={<StatusBadge tone={det.group.isPreset ? "neu" : "info"}>{det.group.isPreset ? "Preset" : "Custom"}</StatusBadge>}
                     attributes={[
                         { label: "Izin", value: String(asli?.perms.size ?? 0) },
@@ -272,8 +277,6 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                 <FooterToolbar message={berubah
                     ? <span className="fi-sum"><b>+{sel.ditambah.length} −{sel.dicabut.length}</b> belum disimpan{infoBerubah ? " · info grup" : ""}</span>
                     : kunciSimpan ? <span className="fi-why">{kunciSimpan}</span> : undefined}>
-                    <Button variant="tertiary" icon={<Trash2 className="fi-icon" aria-hidden />} disabled={det.group.isPreset || Boolean(kunciAnggota)}
-                        disabledReason={det.group.isPreset ? "Grup preset tidak bisa dihapus" : kunciAnggota} onClick={() => setDialog("hapus")}>Hapus grup…</Button>
                     {berubah && <Button variant="tertiary" onClick={() => setDraf(null)}>Batal perubahan</Button>}
                     <Button variant="primary" icon={<Save className="fi-icon" aria-hidden />} disabled={!berubah || Boolean(kunciSimpan) || (infoBerubah && !nilai.name.trim())}
                         disabledReason={kunciSimpan ?? (!berubah ? "Belum ada perubahan" : "Isi nama grup")} onClick={() => setDialog("simpan")}>Simpan izin…</Button>
