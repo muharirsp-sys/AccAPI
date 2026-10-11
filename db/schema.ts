@@ -2076,10 +2076,14 @@ export const principalVariant = pgTable("principal_variant", {
     keyFormat: check("principal_variant_key_format", sql`${t.variantKey} ~ '^[A-Z0-9_-]{0,20}$'`),
 }));
 
-// alias_norm UNIK global (satu ejaan -> satu principal[/varian]). NILAINYA WAJIB hasil normalizer baku S7-2 (lib/principal);
-// jangan menulis alias_norm dari normalizer lain (TS master-barang / Python principle_matcher berbeda hasil). variant_key NULL
-// = alias menunjuk principal utuh; terisi = harus varian milik principal yang sama (FK komposit; NULL tidak diperiksa).
+// alias_norm unik PER KELOMPOK (satu ejaan -> satu principal[/varian]): kode Master Barang 2 karakter (jenis kode_master_barang)
+// terpisah dari nama/label/kode OPC (jenis lain) — "MI" boleh jadi nama satu principal dan kode Master Barang principal lain.
+// Tabrakan nama yang sah tetap DITOLAK (masuk laporan ambiguous S7-2): JANGAN PERNAH ON CONFLICT DO UPDATE (alias diam-diam
+// pindah principal). NILAINYA WAJIB hasil normalizer baku S7-2 (lib/principal); jangan menulis alias_norm dari normalizer lain
+// (TS master-barang / Python principle_matcher berbeda hasil). variant_key NULL = alias menunjuk principal utuh; terisi = harus
+// varian milik principal yang sama (FK komposit; NULL tidak diperiksa).
 export const principalAlias = pgTable("principal_alias", {
+    id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
     aliasNorm: text("alias_norm").notNull(),
     principalId: text("principal_id").notNull(),
     variantKey: text("variant_key"),
@@ -2089,7 +2093,8 @@ export const principalAlias = pgTable("principal_alias", {
     createdBy: text("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
-    pk: primaryKey({ name: "principal_alias_pkey", columns: [t.aliasNorm] }),
+    kodeMbUq: uniqueIndex("uq_principal_alias_kode_mb").on(t.aliasNorm).where(sql`${t.jenis} = 'kode_master_barang'`),
+    namaUq: uniqueIndex("uq_principal_alias_nama").on(t.aliasNorm).where(sql`${t.jenis} <> 'kode_master_barang'`),
     principalFk: foreignKey({ name: "principal_alias_principal_fk", columns: [t.principalId], foreignColumns: [principal.id] }).onDelete("restrict"),
     variantFk: foreignKey({ name: "principal_alias_variant_fk", columns: [t.principalId, t.variantKey],
         foreignColumns: [principalVariant.principalId, principalVariant.variantKey] }).onDelete("restrict"),

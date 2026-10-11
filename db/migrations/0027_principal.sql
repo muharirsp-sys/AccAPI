@@ -6,7 +6,8 @@
 -- KINO NON FOOD / Forisa MT-GT / Heinz HZ-BS = VARIAN satu principal.
 --   principal         : code = kode OPC/Klaim (^[A-Z0-9_-]{1,20}$), name = nama resmi.
 --   principal_variant : variant_key '' = tanpa varian (bentuk = no_claim_template.variant_key).
---   principal_alias   : alias_norm UNIK global -> principal (+ varian bila terisi).
+--   principal_alias   : id PK; alias_norm unik per kelompok (kode Master Barang | selain itu)
+--                       -> principal (+ varian bila terisi).
 --                       alias_norm WAJIB hasil normalizer baku S7-2 (lib/principal), bukan
 --                       normalizer TS master-barang / Python principle_matcher.
 -- Tabel saja: TANPA benih (S7-2: laporan matched/ambiguous dulu, lalu benih manual).
@@ -18,6 +19,16 @@
 --     --single-transaction < db/migrations/0027_principal.sql
 -- Idempoten dan aditif; tidak menyentuh data yang ada.
 -- =====================================================================
+
+-- Bentuk 893f8cbf (PK alias_norm, tanpa kolom id; hanya pernah ada di DB evaluasi) tidak bisa diubah secara aditif:
+-- berhenti jelas alih-alih diam-diam mempertahankan PK global. docs/handover/DDL_S7_0.sql mengubahnya (tabel kosong).
+DO $guard$
+BEGIN
+    IF to_regclass('principal_alias') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+           WHERE table_schema = current_schema() AND table_name = 'principal_alias' AND column_name = 'id') THEN
+        RAISE EXCEPTION 'S7-0: principal_alias berbentuk lama 893f8cbf (PK alias_norm) — jalankan docs/handover/DDL_S7_0.sql';
+    END IF;
+END $guard$;
 
 CREATE TABLE IF NOT EXISTS principal (
     id         text PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -46,6 +57,7 @@ CREATE TABLE IF NOT EXISTS principal_variant (
 -- variant_key NULL = alias menunjuk principal utuh (FK komposit MATCH SIMPLE tidak diperiksa);
 -- terisi = harus varian milik principal yang sama.
 CREATE TABLE IF NOT EXISTS principal_alias (
+    id           text NOT NULL DEFAULT gen_random_uuid()::text,
     alias_norm   text NOT NULL,
     principal_id text NOT NULL,
     variant_key  text,
@@ -54,7 +66,7 @@ CREATE TABLE IF NOT EXISTS principal_alias (
     sumber       text NOT NULL,
     created_by   text,
     created_at   timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT principal_alias_pkey PRIMARY KEY (alias_norm),
+    CONSTRAINT principal_alias_pkey PRIMARY KEY (id),
     CONSTRAINT principal_alias_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
     CONSTRAINT principal_alias_variant_fk FOREIGN KEY (principal_id, variant_key)
         REFERENCES principal_variant (principal_id, variant_key) ON DELETE RESTRICT,
@@ -64,4 +76,8 @@ CREATE TABLE IF NOT EXISTS principal_alias (
     CONSTRAINT principal_alias_jenis CHECK (jenis IN
         ('nama', 'kode_master_barang', 'label_mapping', 'nama_bank', 'nama_summary', 'nama_surat'))
 );
+-- Unik per kelompok (B-SEDANG-1): kode Master Barang 2 karakter terpisah dari nama/label/kode OPC. Tabrakan nama yang
+-- sah tetap DITOLAK (masuk laporan ambiguous S7-2) — JANGAN PERNAH ON CONFLICT DO UPDATE (alias diam-diam pindah principal).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_principal_alias_kode_mb ON principal_alias (alias_norm) WHERE jenis = 'kode_master_barang';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_principal_alias_nama ON principal_alias (alias_norm) WHERE jenis <> 'kode_master_barang';
 CREATE INDEX IF NOT EXISTS idx_principal_alias_principal ON principal_alias (principal_id, variant_key);

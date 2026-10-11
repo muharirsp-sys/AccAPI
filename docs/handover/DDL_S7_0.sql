@@ -19,6 +19,8 @@
 --
 -- ISI (nama tabel TANPA skema = public pada search_path bawaan; ditulis begitu agar uji PG bisa memakai skema sekali-pakai):
 --   1. CREATE TABLE/INDEX IF NOT EXISTS principal, principal_variant, principal_alias (aditif, TANPA benih — benih = S7-2).
+--      1a: principal_alias bentuk lama 893f8cbf (PK alias_norm; hanya DB evaluasi) yang KOSONG di-DROP lalu dibuat ulang;
+--      bila BERISI berkas berhenti (RAISE) tanpa mengubah apa pun.
 --   2. ADD COLUMN IF NOT EXISTS user_group.is_primary boolean NOT NULL DEFAULT false + indeks unik parsial (satu bintang per user).
 --   3. GRANT SELECT, INSERT, UPDATE, DELETE ke accapi_app (bila role ada; default privileges L1g biasanya sudah memberi ini).
 --   4. VERIFIKASI (baca-saja) — semua `ok` harus true (NULL = role accapi_app tidak ada, tidak relevan).
@@ -60,7 +62,20 @@ CREATE TABLE IF NOT EXISTS principal_variant (
     CONSTRAINT principal_variant_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
     CONSTRAINT principal_variant_key_format CHECK (variant_key ~ '^[A-Z0-9_-]{0,20}$')
 );
+-- 1a. Bentuk lama 893f8cbf (hanya pernah ada di DB evaluasi): principal_alias ber-PK alias_norm tanpa kolom id. KOSONG -> dihapus
+--     lalu dibuat ulang di bawah dalam bentuk baru; BERISI -> berhenti (konversi manual, jangan DROP data).
+DO $$
+BEGIN
+    IF to_regclass('principal_alias') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+           WHERE table_schema = current_schema() AND table_name = 'principal_alias' AND column_name = 'id') THEN
+        IF EXISTS (SELECT 1 FROM principal_alias) THEN
+            RAISE EXCEPTION 'S7-0: principal_alias bentuk lama 893f8cbf BERISI — hentikan, konversi manual (jangan DROP data)';
+        END IF;
+        DROP TABLE principal_alias;
+    END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS principal_alias (
+    id           text NOT NULL DEFAULT gen_random_uuid()::text,
     alias_norm   text NOT NULL,
     principal_id text NOT NULL,
     variant_key  text,
@@ -69,7 +84,7 @@ CREATE TABLE IF NOT EXISTS principal_alias (
     sumber       text NOT NULL,
     created_by   text,
     created_at   timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT principal_alias_pkey PRIMARY KEY (alias_norm),
+    CONSTRAINT principal_alias_pkey PRIMARY KEY (id),
     CONSTRAINT principal_alias_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
     CONSTRAINT principal_alias_variant_fk FOREIGN KEY (principal_id, variant_key)
         REFERENCES principal_variant (principal_id, variant_key) ON DELETE RESTRICT,
@@ -79,6 +94,10 @@ CREATE TABLE IF NOT EXISTS principal_alias (
     CONSTRAINT principal_alias_jenis CHECK (jenis IN
         ('nama', 'kode_master_barang', 'label_mapping', 'nama_bank', 'nama_summary', 'nama_surat'))
 );
+-- Unik per kelompok (B-SEDANG-1): kode Master Barang 2 karakter terpisah dari nama/label/kode OPC. Tabrakan nama yang
+-- sah tetap DITOLAK (masuk laporan ambiguous S7-2) — JANGAN PERNAH ON CONFLICT DO UPDATE (alias diam-diam pindah principal).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_principal_alias_kode_mb ON principal_alias (alias_norm) WHERE jenis = 'kode_master_barang';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_principal_alias_nama ON principal_alias (alias_norm) WHERE jenis <> 'kode_master_barang';
 CREATE INDEX IF NOT EXISTS idx_principal_alias_principal ON principal_alias (principal_id, variant_key);
 
 -- 2. Grup utama (sama dengan entri migrate-pg "user_group.is_primary"). DEFAULT false = tanpa rewrite tabel.
@@ -101,7 +120,13 @@ SELECT cek, ok FROM (VALUES
     ('tabel principal_variant', to_regclass('principal_variant') IS NOT NULL),
     ('tabel principal_alias', to_regclass('principal_alias') IS NOT NULL),
     ('indeks unik principal.code', EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('uq_principal_code') AND indisunique)),
-    ('alias_norm unik global (PK)', EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('principal_alias_pkey') AND indisprimary)),
+    ('PK principal_alias = id (bukan alias_norm)', EXISTS (SELECT 1 FROM pg_index x JOIN pg_attribute a ON a.attrelid = x.indrelid
+        AND a.attnum = ANY (x.indkey) WHERE x.indexrelid = to_regclass('principal_alias_pkey') AND x.indisprimary AND x.indnatts = 1
+        AND a.attname = 'id')),
+    ('unik alias kode Master Barang (parsial)', EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('uq_principal_alias_kode_mb')
+        AND indisunique AND indpred IS NOT NULL)),
+    ('unik alias nama/label/kode OPC (parsial)', EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('uq_principal_alias_nama')
+        AND indisunique AND indpred IS NOT NULL)),
     ('kolom user_group.is_primary NOT NULL DEFAULT false', EXISTS (SELECT 1 FROM information_schema.columns
         WHERE table_schema = current_schema() AND table_name = 'user_group' AND column_name = 'is_primary'
           AND is_nullable = 'NO' AND column_default = 'false')),

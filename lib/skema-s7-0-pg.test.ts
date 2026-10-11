@@ -150,6 +150,71 @@ test("PG S7-0: keadaan sebagian — sudahAda tidak tertipu, entri melengkapi", {
     });
 });
 
+// Bentuk entri principal di commit 893f8cbf (alias_norm = PK global; varian tanpa name/is_active) — dibekukan untuk uji
+// "DB yang sudah menjalankan versi lama". Jangan diubah mengikuti skema baru.
+const BENTUK_893F8CBF = `
+    CREATE TABLE principal (
+        id text PRIMARY KEY DEFAULT gen_random_uuid()::text, code text NOT NULL, name text NOT NULL,
+        is_active boolean NOT NULL DEFAULT true, created_by text, created_at timestamptz NOT NULL DEFAULT now(),
+        updated_by text, updated_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT principal_code_format CHECK (code ~ '^[A-Z0-9_-]{1,20}$'),
+        CONSTRAINT principal_name_isi CHECK (btrim(name) <> ''));
+    CREATE UNIQUE INDEX uq_principal_code ON principal (code);
+    CREATE TABLE principal_variant (
+        principal_id text NOT NULL, variant_key text NOT NULL DEFAULT '', created_by text, created_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT principal_variant_pkey PRIMARY KEY (principal_id, variant_key),
+        CONSTRAINT principal_variant_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
+        CONSTRAINT principal_variant_key_format CHECK (variant_key ~ '^[A-Z0-9_-]{0,20}$'));
+    CREATE TABLE principal_alias (
+        alias_norm text NOT NULL, principal_id text NOT NULL, variant_key text, alias_asli text NOT NULL, jenis text NOT NULL,
+        sumber text NOT NULL, created_by text, created_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT principal_alias_pkey PRIMARY KEY (alias_norm),
+        CONSTRAINT principal_alias_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
+        CONSTRAINT principal_alias_variant_fk FOREIGN KEY (principal_id, variant_key)
+            REFERENCES principal_variant (principal_id, variant_key) ON DELETE RESTRICT,
+        CONSTRAINT principal_alias_norm_isi CHECK (btrim(alias_norm) <> ''),
+        CONSTRAINT principal_alias_asli_isi CHECK (btrim(alias_asli) <> ''),
+        CONSTRAINT principal_alias_sumber_isi CHECK (btrim(sumber) <> ''),
+        CONSTRAINT principal_alias_jenis CHECK (jenis IN
+            ('nama', 'kode_master_barang', 'label_mapping', 'nama_bank', 'nama_summary', 'nama_surat')));
+    CREATE INDEX idx_principal_alias_principal ON principal_alias (principal_id, variant_key);
+    ALTER TABLE user_group ADD COLUMN is_primary boolean NOT NULL DEFAULT false;
+    CREATE UNIQUE INDEX uq_user_group_primary ON user_group (user_id) WHERE is_primary;`;
+
+test("PG S7-0: DB yang sudah menjalankan 893f8cbf — sudahAda tidak tertipu, migrate-pg menolak jelas, DDL mengubah tabel alias KOSONG dan berhenti bila berisi", { skip: pgSkip }, async () => {
+    const ms = await entri();
+    const { ddl } = await berkasDdl();
+    let bentukBaru: Awaited<ReturnType<typeof katalog>> | undefined;
+    await denganSkema(async (pool) => {
+        await jalankanMigrasi(pool, ms);
+        bentukBaru = await katalog(pool);
+    });
+    await denganSkema(async (pool) => {
+        await pool.query(BENTUK_893F8CBF);
+        assert.equal((await pool.query(ms[0].sudahAda)).rowCount, 0, "bentuk lama = belum ada");
+        assert.equal((await pool.query(ms[1].sudahAda)).rowCount, 1, "is_primary tidak berubah sejak 893f8cbf");
+        await assert.rejects(pool.query(ms[0].sql), /DDL_S7_0\.sql/, "migrate-pg tidak diam-diam membiarkan PK global");
+
+        // Tabel alias lama BERISI -> DDL berhenti (tidak pernah DROP data), baris tetap ada.
+        await pool.query(`INSERT INTO principal (id, code, name) VALUES ('p1', 'KINO', 'KINO')`);
+        await pool.query(`INSERT INTO principal_alias (alias_norm, principal_id, alias_asli, jenis, sumber) VALUES ('KINO', 'p1', 'KINO', 'nama', 'uji')`);
+        const c = await pool.connect();
+        try {
+            await assert.rejects(c.query(ddl), /BERISI/);
+        } finally {
+            await c.query("ROLLBACK"); // BEGIN berkas meninggalkan transaksi gagal di koneksi ini
+            c.release();
+        }
+        assert.equal((await pool.query("SELECT count(*)::int AS n FROM principal_alias")).rows[0].n, 1, "data lama utuh");
+
+        await pool.query("DELETE FROM principal_alias");
+        await pool.query("DELETE FROM principal");
+        for (const v of verifikasi(await jalankanBerkas(pool, ddl))) assert.notEqual(v.ok, false, `VERIFIKASI gagal: ${v.cek}`);
+        assert.deepEqual(await jalankanMigrasi(pool, ms), NAMA_ENTRI.map((n) => `SKIP ${n}`), "sesudah DDL, migrate-pg melewati");
+        assert.deepEqual(await katalog(pool), bentukBaru, "bentuk lama diubah persis ke bentuk baru");
+    });
+});
+
 test("PG S7-0: DDL_S7_0.sql dua kali idempoten + VERIFIKASI; sesudahnya migrate-pg melewati; bentuk = migrate-pg = db/migrations = Drizzle", { skip: pgSkip }, async () => {
     const ms = await entri();
     const { ddl } = await berkasDdl();
@@ -191,7 +256,7 @@ test("PG S7-0: DDL_S7_0.sql dua kali idempoten + VERIFIKASI; sesudahnya migrate-
     }
 });
 
-test("PG S7-0: constraint — satu bintang per user, alias_norm unik global, FK principal/varian, CHECK kode/varian/jenis", { skip: pgSkip }, async () => {
+test("PG S7-0: constraint — satu bintang per user, alias_norm unik per kelompok jenis, FK principal/varian, CHECK kode/varian/jenis", { skip: pgSkip }, async () => {
     const ms = await entri();
     await denganSkema(async (pool) => {
         await jalankanMigrasi(pool, ms);
@@ -206,7 +271,13 @@ test("PG S7-0: constraint — satu bintang per user, alias_norm unik global, FK 
         await alias("KINO", kino, null);
         await alias("HZ", heinz, "HZ", "kode_master_barang");
 
-        await assert.rejects(alias("KINO", heinz, null), kodeGalat("23505"), "alias_norm unik global");
+        // B-SEDANG-1: kode Master Barang 2 karakter tidak boleh bertabrakan dengan nama/kode OPC (probe peninjau "MI");
+        // di dalam kelompoknya masing-masing tetap unik — tabrakan nama sah DITOLAK (laporan ambiguous S7-2).
+        await alias("MI", kino, null, "nama");
+        await alias("MI", heinz, "HZ", "kode_master_barang");
+        await assert.rejects(alias("MI", kino, null, "kode_master_barang"), kodeGalat("23505"), "kode Master Barang unik antar principal");
+        await assert.rejects(alias("KINO", heinz, null), kodeGalat("23505"), "nama unik global");
+        await assert.rejects(alias("KINO", heinz, null, "nama_bank"), kodeGalat("23505"), "nama unik lintas jenis non-kode");
         await assert.rejects(alias("TAK ADA", randomUUID(), null), kodeGalat("23503"), "FK principal");
         await assert.rejects(alias("HEINZ NON FOOD", heinz, "NON_FOOD"), kodeGalat("23503"), "varian milik principal lain ditolak");
         await assert.rejects(alias("", kino, null), kodeGalat("23514"), "alias_norm kosong");

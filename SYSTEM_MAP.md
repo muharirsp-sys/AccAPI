@@ -1011,7 +1011,7 @@ permission_audit_log [siapa ubah group/permission siapa, kapan]
 
 # Principal resmi (S7-0 BL-64; tabel saja — benih & pembaca = S7-2; DDL manual docs/handover/DDL_S7_0.sql SEBELUM image)
 principal [code unik = kode OPC/Klaim] ── principal_variant (principal_id + variant_key; '' = tanpa varian)
-  └──────────── principal_alias [alias_norm UNIK global -> principal (+ varian); nilai WAJIB dari normalizer baku S7-2]
+  └──────────── principal_alias [id; alias_norm unik per kelompok: kode Master Barang | nama/label/kode OPC -> principal (+ varian); nilai WAJIB dari normalizer baku S7-2]
 ```
 
 **Status Lifecycle offBatch:**
