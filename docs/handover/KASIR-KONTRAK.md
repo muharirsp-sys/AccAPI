@@ -8,7 +8,7 @@ eksplorasi `KASIR-EKSPLORASI-2026-10-11.md` §4–§5. Zona AGENTS §3: uang + s
 | Aturan | Isi | Di mana |
 |---|---|---|
 | Kolektor | salesman FAKTUR = `detailInvoice[].invoice.masterSalesmanId` | `alokasiPelunasan` |
-| Uang Incaso | `chequeAmount` pelunasan (Tunai `CASH_OTHER` + Transfer `BANK_TRANSFER` + Giro `BANK_CHEQUE`); metode `OTHERS` (retur/ayat silang) DIKELUARKAN (`nonKas`, info). Daftar putih `METODE_UANG` dicocokkan PERSIS: metode lain (`CREDIT_CARD`, huruf/spasi beda) -> ember tak teralokasi `metode_tak_dikenal` (seluruh cheque, terlihat, wajib dijelaskan) — tidak pernah dihitung tunai diam-diam | `alokasiPelunasan` |
+| Uang Incaso | `chequeAmount` pelunasan (Tunai `CASH_OTHER` + Transfer `BANK_TRANSFER` + Giro `BANK_CHEQUE`); metode `OTHERS` (retur/ayat silang) DIKELUARKAN (`nonKas`, info). Daftar putih `METODE_UANG` dicocokkan PERSIS: metode lain (`CREDIT_CARD`, huruf/spasi beda) -> ember tak teralokasi `metode_tak_dikenal` (seluruh cheque, terlihat, wajib dijelaskan) — tidak pernah dihitung tunai diam-diam. Cheque metode UANG **negatif** -> ember `nominal_negatif` (seluruh cheque, wajib dijelaskan, TIDAK mengurangi total orang; owner 12 Okt K-1 a) | `alokasiPelunasan` |
 | Bagi per orang (nominal = `chequeAmount`) | semua baris faktur milik SATU orang -> `chequeAmount` PENUH ke orang itu (lebih bayar / kredit ikut orangnya, tanpa ember). Multi-orang -> per baris `invoicePayment`; Σ ≠ `chequeAmount` -> selisih ke ember **tak teralokasi** per pelunasan: `sisa` = cheque − Σ (> 0 `lebih_bayar` "uang lebih / lebih bayar", < 0 `kredit` "kredit / non-kas"), `orang[]` dari baris faktur, `alasan` (`jumlah_invoice_payment_beda` / `tanpa_baris_faktur`) — TIDAK dibagi diam-diam. Invarian: Σ bagian + Σ sisa = Σ chequeAmount | `alokasiPelunasan` |
 | Orang | id -> `accurate_employee.number` (kode) -> `sales_code_merge` (`decision='merge'`, bulan = bulan `tanggal`, rantai diikuti; rantai SIKLIK A->B->C->A = galat) -> ORANG; kode tanpa gabungan / peta ke diri sendiri = orang sendiri; id null / tanpa kode -> `TANPA_SALESMAN` (`""`, baris terlihat + `salesmanIdTakDikenal`) | `orangDariSalesmanId`, `orangDariKode` |
 | Setoran | per ORANG per hari, Tunai + Transfer + Giro; revisi terbesar per kode berlaku; kode setoran juga dilipat lewat gabungan bulan itu (gabungan yang diputuskan belakangan tetap menyatukan) | `rekonsiliasiHari` |
@@ -98,6 +98,12 @@ database). Penjelasan tak teralokasi = TABEL SENDIRI, bukan perluasan `kasir_sel
 - **T1** Sesudah buka kembali: terkunci ulang otomatis **20.00 WITA berikutnya** (perilaku lib; uji `kunci hari T1`).
 - **T2** Uang tak teralokasi **WAJIB dijelaskan sebelum Tutup** (uji lib `T2` + uji PG CHECK `tutup_tuntas`); kunci otomatis tetap mengunci dan snapshot-nya
   mencatat yang belum dijelaskan.
+- **K-1 (12 Okt, pilihan a)** Pelunasan Tunai/Transfer/Giro ber-`chequeAmount` NEGATIF -> SELURUH nominal ke ember tak teralokasi `nominal_negatif`
+  (arah `kredit`, `orang[]` dari baris faktur, wajib dijelaskan sebelum Tutup seperti `metode_tak_dikenal`), TIDAK mengurangi total orang; orang lain
+  tetap direkonsiliasi — tidak ada galat sehari (dulu `klop` melempar untuk semua orang). Metode tak dikenal bernominal negatif tetap
+  `metode_tak_dikenal`; OTHERS tetap non-kas. Tanpa DDL: penjelasan ember berkunci `pelunasan_id` + `sisa` (negatif sah). Uji lib `K1b RENDAH 5b`.
+- **K-3 (12 Okt, setuju)** Hari yang memuat pelunasan DITOLAK pembaca (bentuk/nominal/s:false) tak pernah `lengkap`; Tutup terhalang sampai
+  diperbaiki di Accurate (tanpa jalan "jelaskan & tutup"); kunci 20.00 tetap berjalan. Uji `baca-pelunasan.test.ts` (ditolak = gagal, tetap gagal).
 
 ## 7. K1b — pembaca/cache Accurate pelunasan (12 Okt 2026)
 
@@ -124,7 +130,8 @@ cadangan `paymentAmount`), > 2 desimal = `nominal`, faktur sama dua kali = dijum
 | `gagal` | `sebab` = kelas galat di bawah; `pesan` disaring (tanpa token); `ditolak` = [{id, nomor, sebab, pesan}] | Galat terlihat; Tutup terhalang |
 
 Galat TIDAK pernah menghapus cache atau memundurkan `lengkap_pada` (hanya maju). Hari dengan pelunasan DITOLAK (`bentuk`/`nominal`/`ditolak`) tak
-pernah `lengkap` sampai diperbaiki di Accurate (K-3 bawaan; jalan "jelaskan & tutup" menunggu jawaban owner untuk K2).
+pernah `lengkap` sampai diperbaiki di Accurate — **keputusan owner 12 Okt (K-3)**: Tutup terhalang sampai diperbaiki; tanpa jalan "jelaskan & tutup"; kunci
+20.00 tetap berjalan.
 
 **Kelas galat (`sebab`)**: `sesi_sinkron` (HTTP 401 / kredensial absen — BERHENTI seketika), `hak_akses` (403 — berhenti), `batas_laju` (429 — ulang
 0,5/1/2 dtk, Retry-After dihormati, lalu galat), `accurate_5xx` / `jaringan` (ulang ≤ 3×), `tidak_pasti` (timeout/abort/bukan JSON — ulang 1×),
@@ -150,9 +157,7 @@ dari cache (sama dengan `lib/item-price-sync.ts`); balapan dua tanggal yang diba
 milidetik yang sama bisa meninggalkan satu baris basi sampai putaran berikut. `databaseIdSinkron` menyalin pemilihan user `resolveSyncCredentials`
 (ubah keduanya bersama).
 
-**TERBUKA**: K-1 (owner) — pelunasan Tunai/Transfer/Giro ber-`chequeAmount` NEGATIF masih menggagalkan `rekonsiliasiHari` sehari (uji todo
-"K1b RENDAH 5b"; titik pasang (a) ember `nominal_negatif` / (b) netto → `selisih` ditandai `K-1 TERBUKA` di `rekonsiliasi.ts`). K-2 (IT): crontab.
-K-3 (owner, untuk K2): "jelaskan & tutup" untuk hari dengan pelunasan ditolak.
+**TERBUKA**: K-2 (IT): crontab VPS (jadwal usul di bawah). K-1 dan K-3 sudah diputuskan owner (§6).
 
 **Prasyarat deploy (IT, urut)**: `DDL_K1A.sql` (sudah) → `docs/handover/DDL_K1B.sql` sebagai role pemilik SEBELUM image (VERIFIKASI semua `ok`; baris
 "prasyarat K1a" false = DDL_K1A belum jalan) → image → `ACCURATE_SYNC_USER_ID` terisi (akun admin, sesi hidup + database terpilih) → baris crontab
