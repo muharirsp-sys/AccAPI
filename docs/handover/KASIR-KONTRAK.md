@@ -30,9 +30,12 @@ Semua nominal = **sen** (bilangan bulat aman). Nominal rusak = `RangeError` (gag
 - `rekonsiliasiHari({ tanggal, pelunasan, setoran: SetoranRevisi[], catatan?: CatatanSelisih[], catatanTakTeralokasi?: { pelunasanId, sisa }[], peta: PetaOrang }) -> HasilRekonsiliasi`
   `{ tanggal, baris: BarisOrang[] (urut kode, Tanpa salesman terakhir), takTeralokasi: (TakTeralokasi & { dijelaskan })[], nonKas, total: { pelunasan, setoran, takTeralokasi, nonKas } }`.
   `catatanTakTeralokasi` = baris `kasir_tak_teralokasi_catatan` yang SUDAH disaring ke `database_id` yang dibaca.
-  `BarisOrang = { orang, kode[], pelunasan, pelunasanPerMetode{metode->sen}, jumlahFaktur, setoran: {tunai,transfer,giro,total}|null, selisih|null, status, dijelaskan, salesmanIdTakDikenal[] }`.
+  `BarisOrang = { orang, kode[], pelunasan, pelunasanPerMetode{metode->sen}, jumlahFaktur, setoran: {tunai,transfer,giro,total}|null, setoranPerKode: {kode, revisi, tunai, transfer, giro, total}[], selisih|null, status, dijelaskan, salesmanIdTakDikenal[] }`.
   Pelunasan lain tanggal / revisi setoran ganda = galat pemanggil.
 - `PetaOrang = { kodeSalesman: Map<id, number>, gabunganPerBulan: Map<"YYYY-MM", Map<from, to>> }` — dibangun pemanggil dari `accurate_employee` + `sales_code_merge`.
+- `rencanaSetoranOrang(baris, { tunai, transfer, giro }) -> RevisiBaru[]` ({ salesmanKode, revisi, revisiSebelumnya, tunai, transfer, giro }):
+  catat/koreksi setoran ORANG — kode utama (= `orang`) dapat revisi baru bernominal baru, SETIAP rantai kode lain milik orang itu yang masih ≠ 0
+  dapat revisi baru = 0 (rantai yang sudah 0 tidak ditulis ulang). Tanpa salesman / nominal negatif / bukan sen = galat.
 - `penghalangTutup(hasil) -> { bisaDitutup, alasan: string[], baris: BarisOrang[], takTeralokasi[] }` (alasan urut: orang, lalu ember; contoh
   "Uang tak teralokasi SR/2610/5 belum dijelaskan: Rp 100.000 (pelunasan Rp 1.000.000, faktur Rp 900.000).").
 - `snapshotHari(hasil)` (JSON murni, `versi: 1`: `total`, `baris[]`, `takTeralokasi[]` {pelunasanId, nomor, sisa, alasan, dijelaskan}, `terhalang` = alasan
@@ -65,7 +68,10 @@ database). Penjelasan tak teralokasi = TABEL SENDIRI, bukan perluasan `kasir_sel
   memutuskan (jangan tampilkan total sebagian sebagai lengkap; Tutup butuh pembacaan sukses terbaru, spec it11 Galat).
 - **K2**: `requirePermission` `kasir.view` (GET), `kasir.catat` (setoran + jelaskan), `kasir.tutup`, `kasir.buka` (alasan ≥ 15). Sebelum menulis setoran/
   penjelasan/tutup: `bolehDiubah` (dan untuk tutup: `penghalangTutup(...).bisaDitutup`, snapshot dari `snapshotHari`) di DALAM transaksi yang sama dengan INSERT, diserialkan per tanggal (mis. `pg_advisory_xact_lock(hashtext('kasir:'||tanggal))`)
-  agar Tutup dan Catat tidak berbalapan. Revisi baru = `max(revisi)+1` dengan `revisi_sebelumnya`; 23505 -> 409. Spec it11: Nomor Form Kasir wajib dan
+  agar Tutup dan Catat tidak berbalapan. **Catat/koreksi setoran = `rencanaSetoranOrang(baris, nominal)`; SEMUA baris rencana disisipkan dalam SATU
+  transaksi** (satu gagal = semua batal). Alasan: orang multi-kode (gabungan `sales_code_merge` bisa diputuskan SESUDAH setoran dicatat per kode) —
+  koreksi hanya di satu rantai membuat total orang dobel; rencana menolkan rantai lain. Revisi = revisi terakhir rantai + 1 dengan `revisi_sebelumnya`;
+  23505 -> 409 (baca ulang, susun rencana lagi). Spec it11: Nomor Form Kasir wajib dan
   bukti wajib bila transfer > 0 — skema membiarkan nullable agar perubahan keputusan tidak butuh DDL; K2 menegakkan. Event `kunci` ditulis sistem
   (best effort, `oleh = 'sistem'`) saat pertama kali melihat hari terkunci otomatis tanpa event — kunci tidak bergantung pada baris itu.
 - **K3**: Beranda hanya membaca cache + tabel ini (tidak pernah memicu Accurate).

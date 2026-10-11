@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
     alokasiPelunasan, batasKunci, bolehDiubah, bulatkanKeAtas100, hariKerja, keSen, klop, orangDariKode, orangDariSalesmanId,
-    penghalangTutup, rekonsiliasiHari, senKeTeks, snapshotHari, statusHari, TANPA_SALESMAN,
+    penghalangTutup, rekonsiliasiHari, rencanaSetoranOrang, senKeTeks, snapshotHari, statusHari, TANPA_SALESMAN,
     type EventHari, type Pelunasan, type PetaOrang, type SetoranRevisi,
 } from "./rekonsiliasi.ts";
 
@@ -222,6 +222,48 @@ test("rekonsiliasi: Tanpa salesman TERLIHAT (id null / id tanpa kode), ember tak
     assert.deepEqual(h.total, { pelunasan: Rp(750_000), setoran: 0, takTeralokasi: Rp(50_000), nonKas: 0 });
     assert.throws(() => rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [pel("CASH_OTHER", 1, [[11, 1]], "2026-10-06")], setoran: [] }), /tanggal/);
     assert.throws(() => rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [], setoran: [setor("S-A", 1), setor("S-A", 2)] }), /revisi/);
+});
+
+test("koreksi setoran ORANG multi-kode: rencana menulis revisi di SETIAP rantai kode orang itu (utama = nominal baru, lain = 0) — tanpa dobel hitung", () => {
+    // S-B dan S-A dicatat terpisah (belum digabung), lalu Insentif memutuskan gabung S-B -> S-A untuk Okt.
+    const petaGabung: PetaOrang = { ...PETA, gabunganPerBulan: new Map([["2026-10", new Map([["S-A2", "S-A"], ["S-B", "S-A"]])]]) };
+    const pelunasan = [pel("CASH_OTHER", 3_000_000, [[11, 3_000_000]])];
+    const awal = [setor("S-B", 1_000_000), setor("S-A", 2_000_000)];
+    const hari = (setoran: SetoranRevisi[]) => baris(rekonsiliasiHari({ tanggal: D, peta: petaGabung, pelunasan, setoran }), "S-A");
+    const a = hari(awal);
+    assert.deepEqual(a.setoranPerKode, [
+        { kode: "S-A", revisi: 1, tunai: Rp(2_000_000), transfer: 0, giro: 0, total: Rp(2_000_000) },
+        { kode: "S-B", revisi: 1, tunai: Rp(1_000_000), transfer: 0, giro: 0, total: Rp(1_000_000) },
+    ]);
+    assert.equal(a.setoran?.total, Rp(3_000_000));
+
+    // Koreksi total orang ke 3 jt. Naif (hanya rantai S-A) = dobel hitung 4 jt.
+    const naif = hari([...awal, setor("S-A", 3_000_000, 0, 0, 2)]);
+    assert.equal(naif.setoran?.total, Rp(4_000_000), "naif: rantai S-B tertinggal");
+    const rencana = rencanaSetoranOrang(a, { tunai: Rp(3_000_000), transfer: 0, giro: 0 });
+    assert.deepEqual(rencana, [
+        { salesmanKode: "S-A", revisi: 2, revisiSebelumnya: 1, tunai: Rp(3_000_000), transfer: 0, giro: 0 },
+        { salesmanKode: "S-B", revisi: 2, revisiSebelumnya: 1, tunai: 0, transfer: 0, giro: 0 },
+    ]);
+    const sesudah = hari([...awal, ...rencana]);
+    assert.equal(sesudah.setoran?.total, Rp(3_000_000), "rencana: total orang = nominal baru");
+    assert.equal(sesudah.status, "klop");
+
+    // Rantai lain yang sudah 0 tidak ditulis ulang; koreksi berikutnya hanya rantai utama.
+    assert.deepEqual(rencanaSetoranOrang(sesudah, { tunai: Rp(2_900_000), transfer: Rp(100_000), giro: 0 }),
+        [{ salesmanKode: "S-A", revisi: 3, revisiSebelumnya: 2, tunai: Rp(2_900_000), transfer: Rp(100_000), giro: 0 }]);
+    // Setoran hanya di kode lama (S-B) yang kini digabung: kode utama mulai revisi 1, S-B dinolkan.
+    const hanyaB = hari([setor("S-B", 1_000_000)]);
+    assert.deepEqual(rencanaSetoranOrang(hanyaB, { tunai: Rp(3_000_000), transfer: 0, giro: 0 }), [
+        { salesmanKode: "S-A", revisi: 1, revisiSebelumnya: null, tunai: Rp(3_000_000), transfer: 0, giro: 0 },
+        { salesmanKode: "S-B", revisi: 2, revisiSebelumnya: 1, tunai: 0, transfer: 0, giro: 0 },
+    ]);
+    // Orang tanpa setoran = catat pertama; Tanpa salesman / nominal negatif / bukan sen ditolak.
+    assert.deepEqual(rencanaSetoranOrang({ orang: "S-C", setoranPerKode: [] }, { tunai: Rp(5), transfer: 0, giro: 0 }),
+        [{ salesmanKode: "S-C", revisi: 1, revisiSebelumnya: null, tunai: Rp(5), transfer: 0, giro: 0 }]);
+    assert.throws(() => rencanaSetoranOrang({ orang: TANPA_SALESMAN, setoranPerKode: [] }, { tunai: 1, transfer: 0, giro: 0 }), /Tanpa salesman/);
+    assert.throws(() => rencanaSetoranOrang({ orang: "S-C", setoranPerKode: [] }, { tunai: -1, transfer: 0, giro: 0 }), RangeError);
+    assert.throws(() => rencanaSetoranOrang({ orang: "S-C", setoranPerKode: [] }, { tunai: 0.5, transfer: 0, giro: 0 }), RangeError);
 });
 
 test("penjelasan selisih berlaku hanya untuk angka yang dijelaskan; penghalang tutup = belum klop & belum dijelaskan", () => {

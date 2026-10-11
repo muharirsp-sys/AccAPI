@@ -11,7 +11,7 @@
  * Caller: K1b (pembaca Accurate, cache kasir_pelunasan*), K2 (route & UI /kasir), K3 (Beranda).
  * Dependensi: lib/sales-code-merge (applyMergeMap), lib/insentif-payment-date (todayWita), lib/promo-ui (rupiah) — semuanya murni.
  * Main Functions: keSen, senKeTeks, alokasiPelunasan, orangDariKode, orangDariSalesmanId, klop, bulatkanKeAtas100,
- *   rekonsiliasiHari, penghalangTutup, snapshotHari, batasKunci, statusHari, bolehDiubah, hariKerja.
+ *   rekonsiliasiHari, rencanaSetoranOrang, penghalangTutup, snapshotHari, batasKunci, statusHari, bolehDiubah, hariKerja.
  * Side Effects: tidak ada.
  *
  * SEMUA nominal = SEN (bilangan bulat aman; Rp 1 = 100 sen) — tanpa galat floating. Nominal rusak = RangeError (gagal keras),
@@ -232,6 +232,16 @@ export interface CatatanTakTeralokasi {
 
 export type StatusOrang = "klop" | "selisih" | "belum_setor" | "setoran_tanpa_pelunasan";
 
+/** Revisi TERAKHIR satu rantai kode setoran yang terlipat ke seorang orang. */
+export interface SetoranKode {
+    kode: string;
+    revisi: number;
+    tunai: Sen;
+    transfer: Sen;
+    giro: Sen;
+    total: Sen;
+}
+
 export interface BarisOrang {
     /** Kode orang (kode kanonik sesudah gabungan); TANPA_SALESMAN = "". */
     orang: string;
@@ -240,8 +250,10 @@ export interface BarisOrang {
     pelunasan: Sen;
     pelunasanPerMetode: Record<string, Sen>;
     jumlahFaktur: number;
-    /** null = belum ada setoran tercatat. Setoran 0 yang tercatat BUKAN null. */
+    /** null = belum ada setoran tercatat. Setoran 0 yang tercatat BUKAN null. Jumlah dari `setoranPerKode`. */
     setoran: { tunai: Sen; transfer: Sen; giro: Sen; total: Sen } | null;
+    /** Revisi terakhir tiap rantai kode milik orang ini (urut kode) — dasar `rencanaSetoranOrang`. */
+    setoranPerKode: SetoranKode[];
     /** setoran.total − pelunasan; null bila belum setor. */
     selisih: Sen | null;
     status: StatusOrang;
@@ -286,11 +298,11 @@ export function rekonsiliasiHari(m: MasukanRekonsiliasi): HasilRekonsiliasi {
     const { bagian, takTeralokasi, nonKas } = alokasiPelunasan(m.pelunasan, m.peta);
 
     type Kerja = { kode: Set<string>; pelunasan: Sen; perMetode: Record<string, Sen>; faktur: number; adaPelunasan: boolean;
-        setoran: BarisOrang["setoran"]; takDikenal: Set<number> };
+        setoran: BarisOrang["setoran"]; perKode: SetoranKode[]; takDikenal: Set<number> };
     const per = new Map<string, Kerja>();
     const ambil = (orang: string) => {
         let k = per.get(orang);
-        if (!k) per.set(orang, k = { kode: new Set(), pelunasan: 0, perMetode: {}, faktur: 0, adaPelunasan: false, setoran: null, takDikenal: new Set() });
+        if (!k) per.set(orang, k = { kode: new Set(), pelunasan: 0, perMetode: {}, faktur: 0, adaPelunasan: false, setoran: null, perKode: [], takDikenal: new Set() });
         return k;
     };
 
@@ -315,7 +327,9 @@ export function rekonsiliasiHari(m: MasukanRekonsiliasi): HasilRekonsiliasi {
         const k = ambil(orangDariKode(s.salesmanKode, m.tanggal, m.peta));
         k.kode.add(s.salesmanKode.trim());
         const a = k.setoran ?? { tunai: 0, transfer: 0, giro: 0, total: 0 };
-        k.setoran = { tunai: a.tunai + s.tunai, transfer: a.transfer + s.transfer, giro: a.giro + s.giro, total: a.total + s.tunai + s.transfer + s.giro };
+        const total = s.tunai + s.transfer + s.giro;
+        k.setoran = { tunai: a.tunai + s.tunai, transfer: a.transfer + s.transfer, giro: a.giro + s.giro, total: a.total + total };
+        k.perKode.push({ kode: s.salesmanKode.trim(), revisi: s.revisi, tunai: s.tunai, transfer: s.transfer, giro: s.giro, total });
     }
 
     const dijelaskan = new Set((m.catatan ?? []).map((c) => `${orangDariKode(c.salesmanKode, m.tanggal, m.peta)}|${c.pelunasan}|${c.setoran}`));
@@ -323,7 +337,8 @@ export function rekonsiliasiHari(m: MasukanRekonsiliasi): HasilRekonsiliasi {
         const total = k.setoran?.total ?? null;
         return {
             orang, kode: [...k.kode].sort(), pelunasan: k.pelunasan, pelunasanPerMetode: k.perMetode, jumlahFaktur: k.faktur,
-            setoran: k.setoran, selisih: total === null ? null : total - k.pelunasan, status: status(k.pelunasan, k.adaPelunasan, total),
+            setoran: k.setoran, setoranPerKode: k.perKode.sort((x, y) => x.kode.localeCompare(y.kode)),
+            selisih: total === null ? null : total - k.pelunasan, status: status(k.pelunasan, k.adaPelunasan, total),
             dijelaskan: dijelaskan.has(`${orang}|${k.pelunasan}|${total ?? 0}`), salesmanIdTakDikenal: [...k.takDikenal].sort((x, y) => x - y),
         };
     }).sort((a, b) => (a.orang === TANPA_SALESMAN ? 1 : 0) - (b.orang === TANPA_SALESMAN ? 1 : 0) || a.orang.localeCompare(b.orang));
@@ -340,6 +355,39 @@ export function rekonsiliasiHari(m: MasukanRekonsiliasi): HasilRekonsiliasi {
             nonKas: jumlah(nonKas.map((p) => p.chequeAmount)),
         },
     };
+}
+
+/** Satu baris kasir_setoran yang harus disisipkan (revisiSebelumnya = kolom revisi_sebelumnya). */
+export interface RevisiBaru {
+    salesmanKode: string;
+    revisi: number;
+    revisiSebelumnya: number | null;
+    tunai: Sen;
+    transfer: Sen;
+    giro: Sen;
+}
+
+/**
+ * RENCANA catat/koreksi setoran satu ORANG (K2 menulis SEMUA barisnya dalam SATU transaksi, diserialkan per tanggal):
+ * kode utama (= `orang`, kode kanonik sesudah gabungan) mendapat revisi baru bernominal baru; setiap rantai kode LAIN yang terlipat
+ * ke orang itu dan masih ≠ 0 mendapat revisi baru bernilai 0. Tanpa ini koreksi di satu rantai meninggalkan rantai lain dan total
+ * orang terhitung dobel (gabungan sales_code_merge bisa diputuskan SESUDAH setoran dicatat per kode). Rantai yang sudah 0 tidak
+ * ditulis ulang. `baris.setoranPerKode` = revisi terakhir tiap rantai (rekonsiliasiHari).
+ */
+export function rencanaSetoranOrang(baris: Pick<BarisOrang, "orang" | "setoranPerKode">, nominal: { tunai: Sen; transfer: Sen; giro: Sen }): RevisiBaru[] {
+    if (baris.orang === TANPA_SALESMAN) throw new Error("Setoran tidak bisa dicatat untuk Tanpa salesman");
+    for (const v of [nominal.tunai, nominal.transfer, nominal.giro]) {
+        if (wajibSen(v, "nominal setoran") < 0) throw new RangeError(`Nominal setoran negatif: ${v}`);
+    }
+    const lanjut = (kode: string) => {
+        const lama = baris.setoranPerKode.find((x) => x.kode === kode);
+        return { salesmanKode: kode, revisi: (lama?.revisi ?? 0) + 1, revisiSebelumnya: lama?.revisi ?? null };
+    };
+    return [
+        { ...lanjut(baris.orang), ...nominal },
+        ...baris.setoranPerKode.filter((x) => x.kode !== baris.orang && x.total !== 0)
+            .map((x) => ({ ...lanjut(x.kode), tunai: 0, transfer: 0, giro: 0 })),
+    ];
 }
 
 const rp = (sen: Sen) => rupiah(senKeTeks(sen));
