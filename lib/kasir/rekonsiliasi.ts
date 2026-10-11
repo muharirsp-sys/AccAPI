@@ -1,7 +1,8 @@
 /*
  * Tujuan: Rekonsiliasi harian Kasir ↔ Incaso (K1a, BL-59) — lib MURNI tanpa I/O.
- *   (a) alokasi uang pelunasan (chequeAmount) ke salesman faktur per baris (invoicePayment); Σ invoicePayment ≠ chequeAmount
- *       -> selisihnya ke ember TAK TERALOKASI per pelunasan (tidak pernah dibagi diam-diam); metode OTHERS dikeluarkan;
+ *   (a) alokasi uang pelunasan (chequeAmount = nominal owner) ke ORANG salesman faktur: semua baris milik satu orang -> chequeAmount
+ *       PENUH ke orang itu; multi-orang -> per baris invoicePayment, Σ ≠ chequeAmount -> selisihnya ke ember TAK TERALOKASI per
+ *       pelunasan (membawa orang[] + arah; tidak pernah dibagi diam-diam); metode OTHERS dikeluarkan;
  *   (b) masterSalesmanId -> kode (accurate_employee.number) -> ORANG (gabungan sales_code_merge per bulan);
  *   (c) rekonsiliasi per orang per hari: klop = sama persis ATAU setoran = total dibulatkan KE ATAS ke kelipatan Rp 100;
  *       Tutup hari terhalang sampai setiap selisih orang DAN setiap ember tak teralokasi dijelaskan (owner 11 Okt, T2);
@@ -79,13 +80,17 @@ export interface Pelunasan {
     faktur: readonly PelunasanFaktur[];
 }
 
-export interface BagianSalesman {
+/** Bagian uang satu pelunasan untuk satu ORANG. */
+export interface BagianOrang {
     pelunasanId: number;
     nomor: string;
     metode: string;
-    fakturId: number;
-    nomorFaktur: string | null;
-    masterSalesmanId: number | null;
+    orang: string;
+    /** Kode salesman baris faktur yang terlipat ke orang ini, urut. */
+    kode: string[];
+    /** masterSalesmanId tanpa kode di accurate_employee (orang = TANPA_SALESMAN). */
+    salesmanIdTakDikenal: number[];
+    jumlahFaktur: number;
     sen: Sen;
 }
 
@@ -97,18 +102,23 @@ export interface TakTeralokasi {
     metode: string;
     chequeAmount: Sen;
     jumlahInvoicePayment: Sen;
-    /** chequeAmount − Σ invoicePayment (bisa negatif: kredit/lebih bayar). */
+    /** chequeAmount − Σ invoicePayment: > 0 = uang lebih / lebih bayar, < 0 = kredit / non-kas (mis. useCredit). */
     sisa: Sen;
+    arah: "lebih_bayar" | "kredit";
     alasan: AlasanTakTeralokasi;
+    /** Orang pemilik baris faktur pelunasan itu (TANPA_SALESMAN = ""), urut kemunculan. */
+    orang: string[];
 }
 
 /**
- * Uang pelunasan dibagi PER BARIS FAKTUR (invoicePayment -> masterSalesmanId faktur itu). Bila Σ invoicePayment ≠ chequeAmount,
- * baris tetap utuh dan SELISIHNYA masuk ember tak teralokasi (bukti 11 Okt: sama di 39/40 sampel). Invarian:
- * Σ bagian + Σ sisa = Σ chequeAmount metode uang. Metode OTHERS -> `nonKas`, tidak dialokasikan.
+ * Owner 11 Okt: nominal = uang pelunasan (chequeAmount). Pelunasan yang SEMUA baris fakturnya milik SATU orang -> chequeAmount
+ * PENUH ke orang itu (lebih bayar / kredit ikut orangnya, tanpa ember). Pelunasan multi-orang -> per baris invoicePayment; bila
+ * Σ invoicePayment ≠ chequeAmount, baris tetap utuh dan SELISIHNYA masuk ember tak teralokasi berisi orang[] + arah (tidak dibagi
+ * diam-diam). Tanpa baris faktur -> seluruh chequeAmount ke ember. Invarian: Σ bagian + Σ sisa = Σ chequeAmount metode uang.
+ * Metode OTHERS -> `nonKas`, tidak dialokasikan. Orang dihitung dengan peta gabungan bulan `tanggal` pelunasan.
  */
-export function alokasiPelunasan(daftar: readonly Pelunasan[]) {
-    const bagian: BagianSalesman[] = [];
+export function alokasiPelunasan(daftar: readonly Pelunasan[], peta: PetaOrang) {
+    const bagian: BagianOrang[] = [];
     const takTeralokasi: TakTeralokasi[] = [];
     const nonKas: Pelunasan[] = [];
     const sudah = new Set<number>();
@@ -121,16 +131,32 @@ export function alokasiPelunasan(daftar: readonly Pelunasan[]) {
             nonKas.push(p);
             continue;
         }
+        const per = new Map<string, BagianOrang>();
         let jumlah = 0;
         for (const f of p.faktur) {
+            const { orang, kode } = orangDariSalesmanId(f.masterSalesmanId, p.tanggal, peta);
+            let b = per.get(orang);
+            if (!b) per.set(orang, b = { pelunasanId: p.id, nomor: p.nomor, metode: p.metode, orang, kode: [], salesmanIdTakDikenal: [], jumlahFaktur: 0, sen: 0 });
+            if (kode && !b.kode.includes(kode)) b.kode.push(kode);
+            if (!kode && f.masterSalesmanId !== null && !b.salesmanIdTakDikenal.includes(f.masterSalesmanId)) b.salesmanIdTakDikenal.push(f.masterSalesmanId);
+            b.jumlahFaktur++;
+            b.sen += f.invoicePayment;
             jumlah += f.invoicePayment;
-            bagian.push({ pelunasanId: p.id, nomor: p.nomor, metode: p.metode, fakturId: f.fakturId, nomorFaktur: f.nomorFaktur ?? null,
-                masterSalesmanId: f.masterSalesmanId, sen: f.invoicePayment });
         }
-        if (jumlah !== p.chequeAmount) {
+        const daftarOrang = [...per.values()];
+        for (const b of daftarOrang) {
+            b.kode.sort();
+            b.salesmanIdTakDikenal.sort((x, y) => x - y);
+        }
+        if (daftarOrang.length === 1) {
+            daftarOrang[0].sen = p.chequeAmount; // satu orang: uang pelunasan utuh miliknya
+        } else if (jumlah !== p.chequeAmount) {
+            const sisa = p.chequeAmount - jumlah;
             takTeralokasi.push({ pelunasanId: p.id, nomor: p.nomor, metode: p.metode, chequeAmount: p.chequeAmount, jumlahInvoicePayment: jumlah,
-                sisa: p.chequeAmount - jumlah, alasan: p.faktur.length ? "jumlah_invoice_payment_beda" : "tanpa_baris_faktur" });
+                sisa, arah: sisa > 0 ? "lebih_bayar" : "kredit", alasan: p.faktur.length ? "jumlah_invoice_payment_beda" : "tanpa_baris_faktur",
+                orang: daftarOrang.map((b) => b.orang) });
         }
+        bagian.push(...daftarOrang);
     }
     return { bagian, takTeralokasi, nonKas };
 }
@@ -257,7 +283,7 @@ export function rekonsiliasiHari(m: MasukanRekonsiliasi): HasilRekonsiliasi {
     for (const p of m.pelunasan) {
         if (p.tanggal !== m.tanggal) throw new Error(`Pelunasan ${p.nomor} bertanggal ${p.tanggal}, bukan ${m.tanggal}`);
     }
-    const { bagian, takTeralokasi, nonKas } = alokasiPelunasan(m.pelunasan);
+    const { bagian, takTeralokasi, nonKas } = alokasiPelunasan(m.pelunasan, m.peta);
 
     type Kerja = { kode: Set<string>; pelunasan: Sen; perMetode: Record<string, Sen>; faktur: number; adaPelunasan: boolean;
         setoran: BarisOrang["setoran"]; takDikenal: Set<number> };
@@ -269,13 +295,12 @@ export function rekonsiliasiHari(m: MasukanRekonsiliasi): HasilRekonsiliasi {
     };
 
     for (const b of bagian) {
-        const { orang, kode } = orangDariSalesmanId(b.masterSalesmanId, m.tanggal, m.peta);
-        const k = ambil(orang);
-        if (kode) k.kode.add(kode);
-        else if (b.masterSalesmanId !== null) k.takDikenal.add(b.masterSalesmanId);
+        const k = ambil(b.orang);
+        b.kode.forEach((x) => k.kode.add(x));
+        b.salesmanIdTakDikenal.forEach((x) => k.takDikenal.add(x));
         k.pelunasan += b.sen;
         k.perMetode[b.metode] = (k.perMetode[b.metode] ?? 0) + b.sen;
-        k.faktur++;
+        k.faktur += b.jumlahFaktur;
         k.adaPelunasan = true;
     }
 
@@ -320,17 +345,20 @@ export function rekonsiliasiHari(m: MasukanRekonsiliasi): HasilRekonsiliasi {
 const rp = (sen: Sen) => rupiah(senKeTeks(sen));
 
 function alasanBaris(b: BarisOrang): string {
-    const siapa = b.orang === TANPA_SALESMAN ? "Tanpa salesman" : b.orang;
+    const siapa = namaOrang(b.orang);
     if (b.status === "belum_setor") return `${siapa} belum setor dan belum dijelaskan: pelunasan ${rp(b.pelunasan)}.`;
     const setoran = b.setoran?.total ?? 0;
     if (b.status === "setoran_tanpa_pelunasan") return `Setoran ${siapa} tanpa pelunasan belum dijelaskan: ${rp(setoran)}.`;
     return `Selisih ${siapa} belum dijelaskan: setoran ${rp(setoran)} lawan pelunasan ${rp(b.pelunasan)} (${rp(setoran - b.pelunasan)}).`;
 }
 
+const namaOrang = (orang: string) => (orang === TANPA_SALESMAN ? "Tanpa salesman" : orang);
+
 function alasanEmber(t: TakTeralokasi): string {
-    const rincian = t.alasan === "tanpa_baris_faktur" ? "pelunasan tanpa baris faktur"
-        : `pelunasan ${rp(t.chequeAmount)}, faktur ${rp(t.jumlahInvoicePayment)}`;
-    return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} (${rincian}).`;
+    if (t.alasan === "tanpa_baris_faktur") return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} (pelunasan tanpa baris faktur).`;
+    const arah = t.arah === "lebih_bayar" ? "uang lebih / lebih bayar" : "kredit / non-kas";
+    return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} ${arah} (pelunasan ${rp(t.chequeAmount)}, faktur `
+        + `${rp(t.jumlahInvoicePayment)}; orang ${t.orang.map(namaOrang).join(", ")}).`;
 }
 
 /**
@@ -356,7 +384,8 @@ export function snapshotHari(h: HasilRekonsiliasi) {
         tanggal: h.tanggal,
         total: { ...h.total },
         baris: h.baris.map((b) => ({ orang: b.orang, pelunasan: b.pelunasan, setoran: b.setoran?.total ?? null, status: b.status, dijelaskan: b.dijelaskan })),
-        takTeralokasi: h.takTeralokasi.map((t) => ({ pelunasanId: t.pelunasanId, nomor: t.nomor, sisa: t.sisa, alasan: t.alasan, dijelaskan: t.dijelaskan })),
+        takTeralokasi: h.takTeralokasi.map((t) => ({ pelunasanId: t.pelunasanId, nomor: t.nomor, sisa: t.sisa, alasan: t.alasan, arah: t.arah,
+            orang: t.orang, dijelaskan: t.dijelaskan })),
         terhalang: penghalangTutup(h).alasan,
     };
 }

@@ -9,7 +9,7 @@ eksplorasi `KASIR-EKSPLORASI-2026-10-11.md` §4–§5. Zona AGENTS §3: uang + s
 |---|---|---|
 | Kolektor | salesman FAKTUR = `detailInvoice[].invoice.masterSalesmanId` | `alokasiPelunasan` |
 | Uang Incaso | `chequeAmount` pelunasan (Tunai `CASH_OTHER` + Transfer `BANK_TRANSFER` + Giro `BANK_CHEQUE`); metode `OTHERS` (retur/ayat silang) DIKELUARKAN (`nonKas`, info) | `alokasiPelunasan` |
-| Bagi per salesman | per baris faktur `invoicePayment`; Σ invoicePayment ≠ chequeAmount -> selisih (`sisa`, bisa negatif) ke ember **tak teralokasi** per pelunasan + `alasan` (`jumlah_invoice_payment_beda` / `tanpa_baris_faktur`) — TIDAK dibagi diam-diam. Invarian: Σ bagian + Σ sisa = Σ chequeAmount | `alokasiPelunasan` |
+| Bagi per orang (nominal = `chequeAmount`) | semua baris faktur milik SATU orang -> `chequeAmount` PENUH ke orang itu (lebih bayar / kredit ikut orangnya, tanpa ember). Multi-orang -> per baris `invoicePayment`; Σ ≠ `chequeAmount` -> selisih ke ember **tak teralokasi** per pelunasan: `sisa` = cheque − Σ (> 0 `lebih_bayar` "uang lebih / lebih bayar", < 0 `kredit` "kredit / non-kas"), `orang[]` dari baris faktur, `alasan` (`jumlah_invoice_payment_beda` / `tanpa_baris_faktur`) — TIDAK dibagi diam-diam. Invarian: Σ bagian + Σ sisa = Σ chequeAmount | `alokasiPelunasan` |
 | Orang | id -> `accurate_employee.number` (kode) -> `sales_code_merge` (`decision='merge'`, bulan = bulan `tanggal`, rantai diikuti) -> ORANG; kode tanpa gabungan = orang sendiri; id null / tanpa kode -> `TANPA_SALESMAN` (`""`, baris terlihat + `salesmanIdTakDikenal`) | `orangDariSalesmanId`, `orangDariKode` |
 | Setoran | per ORANG per hari, Tunai + Transfer + Giro; revisi terbesar per kode berlaku; kode setoran juga dilipat lewat gabungan bulan itu (gabungan yang diputuskan belakangan tetap menyatukan) | `rekonsiliasiHari` |
 | Klop | setoran = total PERSIS atau = ⌈total / Rp 100⌉ × Rp 100 (41.592.193 -> 41.592.200 klop; 41.592.300 selisih) | `klop`, `bulatkanKeAtas100` |
@@ -25,7 +25,8 @@ Semua nominal = **sen** (bilangan bulat aman). Nominal rusak = `RangeError` (gag
 
 - `keSen(number | string): Sen` — angka JSON Accurate / teks numeric Postgres -> sen tepat; > 2 desimal, notasi e, pemisah ribuan -> `RangeError`.
   Isian manusia ("Rp 1.250.000") = `parseLocaleNumber` (lib/insentif-sales-excel) lalu `keSen`. `senKeTeks(sen)` -> "108741.15" untuk kolom numeric.
-- `alokasiPelunasan(Pelunasan[]) -> { bagian: BagianSalesman[], takTeralokasi: TakTeralokasi[], nonKas: Pelunasan[] }` (id pelunasan ganda = galat).
+- `alokasiPelunasan(Pelunasan[], PetaOrang) -> { bagian: BagianOrang[] (per pelunasan × orang: orang, kode[], salesmanIdTakDikenal[], jumlahFaktur, sen),
+  takTeralokasi: TakTeralokasi[] (… sisa, arah, orang[]), nonKas: Pelunasan[] }` (id pelunasan ganda = galat).
 - `rekonsiliasiHari({ tanggal, pelunasan, setoran: SetoranRevisi[], catatan?: CatatanSelisih[], catatanTakTeralokasi?: { pelunasanId, sisa }[], peta: PetaOrang }) -> HasilRekonsiliasi`
   `{ tanggal, baris: BarisOrang[] (urut kode, Tanpa salesman terakhir), takTeralokasi: (TakTeralokasi & { dijelaskan })[], nonKas, total: { pelunasan, setoran, takTeralokasi, nonKas } }`.
   `catatanTakTeralokasi` = baris `kasir_tak_teralokasi_catatan` yang SUDAH disaring ke `database_id` yang dibaca.

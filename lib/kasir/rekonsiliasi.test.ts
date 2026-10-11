@@ -55,39 +55,66 @@ test("keSen: angka JSON Accurate / teks numeric Postgres -> sen tepat; > 2 desim
     assert.equal(keSen(senKeTeks(4159219300)), 4159219300, "pulang-pergi");
 });
 
-test("alokasi: satu pelunasan membayar faktur DUA salesman -> dibagi per baris faktur (invoicePayment)", () => {
+test("alokasi: satu pelunasan membayar faktur DUA orang -> dibagi per baris faktur (invoicePayment)", () => {
     const p = pel("CASH_OTHER", 1_500_000, [[11, 1_000_000], [12, 500_000]]);
-    const a = alokasiPelunasan([p]);
-    assert.deepEqual(a.bagian.map((b) => [b.masterSalesmanId, b.sen]), [[11, Rp(1_000_000)], [12, Rp(500_000)]]);
+    const a = alokasiPelunasan([p], PETA);
+    assert.deepEqual(a.bagian.map((b) => [b.orang, b.sen]), [["S-A", Rp(1_000_000)], ["S-B", Rp(500_000)]]);
     assert.deepEqual(a.takTeralokasi, []);
     assert.deepEqual(a.nonKas, []);
 });
 
-test("alokasi: Σ invoicePayment ≠ chequeAmount -> selisih ke ember TAK TERALOKASI per pelunasan + alasan (tidak dibagi diam-diam)", () => {
-    const lebih = pel("BANK_TRANSFER", 1_000_000, [[11, 600_000], [12, 300_000]]); // cheque 100rb lebih besar
-    const kurang = pel("CASH_OTHER", 400_000, [[11, 450_000]]); // kredit/overpay: cheque lebih kecil
+test("alokasi (owner: nominal = chequeAmount): SATU orang -> chequeAmount PENUH (lebih bayar / kredit tanpa ember); multi-orang Σ ≠ cheque -> ember dengan orang & arah", () => {
+    const lebih1 = pel("CASH_OTHER", 1_000_000, [[11, 900_000]]); // satu orang, uang lebih / lebih bayar
+    const kredit1 = pel("CASH_OTHER", 400_000, [[11, 450_000]]); // satu orang, kredit / non-kas
+    const duaKode = pel("BANK_TRANSFER", 700_000, [[11, 300_000], [13, 300_000]]); // S-A + S-A2 = SATU orang (gabungan Okt)
+    const multiLebih = pel("BANK_TRANSFER", 1_000_000, [[11, 600_000], [12, 300_000]]);
+    const multiKredit = pel("CASH_OTHER", 1_000_000, [[11, 700_000], [12, 400_000]]);
     const kosong = pel("BANK_CHEQUE", 250_000, []);
-    const a = alokasiPelunasan([lebih, kurang, kosong]);
-    assert.deepEqual(a.bagian.map((b) => [b.pelunasanId, b.masterSalesmanId, b.sen]),
-        [[lebih.id, 11, Rp(600_000)], [lebih.id, 12, Rp(300_000)], [kurang.id, 11, Rp(450_000)]], "baris faktur tetap utuh, tidak diskalakan");
-    assert.deepEqual(a.takTeralokasi.map((t) => [t.pelunasanId, t.sisa, t.alasan]), [
-        [lebih.id, Rp(100_000), "jumlah_invoice_payment_beda"],
-        [kurang.id, Rp(-50_000), "jumlah_invoice_payment_beda"],
-        [kosong.id, Rp(250_000), "tanpa_baris_faktur"],
+    const a = alokasiPelunasan([lebih1, kredit1, duaKode, multiLebih, multiKredit, kosong], PETA);
+    assert.deepEqual(a.bagian.map((b) => [b.pelunasanId, b.orang, b.sen]), [
+        [lebih1.id, "S-A", Rp(1_000_000)], [kredit1.id, "S-A", Rp(400_000)], [duaKode.id, "S-A", Rp(700_000)],
+        [multiLebih.id, "S-A", Rp(600_000)], [multiLebih.id, "S-B", Rp(300_000)],
+        [multiKredit.id, "S-A", Rp(700_000)], [multiKredit.id, "S-B", Rp(400_000)],
+    ], "satu orang = chequeAmount; multi-orang = invoicePayment utuh (tidak diskalakan)");
+    const dua = a.bagian.find((b) => b.pelunasanId === duaKode.id)!;
+    assert.deepEqual([dua.kode, dua.jumlahFaktur], [["S-A", "S-A2"], 2]);
+    // sisa = chequeAmount − Σ invoicePayment: > 0 = uang lebih / lebih bayar, < 0 = kredit / non-kas.
+    assert.deepEqual(a.takTeralokasi.map((t) => [t.pelunasanId, t.sisa, t.alasan, t.arah, t.orang]), [
+        [multiLebih.id, Rp(100_000), "jumlah_invoice_payment_beda", "lebih_bayar", ["S-A", "S-B"]],
+        [multiKredit.id, Rp(-100_000), "jumlah_invoice_payment_beda", "kredit", ["S-A", "S-B"]],
+        [kosong.id, Rp(250_000), "tanpa_baris_faktur", "lebih_bayar", []],
     ]);
     const t0 = a.takTeralokasi[0];
     assert.equal(t0.chequeAmount, Rp(1_000_000));
     assert.equal(t0.jumlahInvoicePayment, Rp(900_000));
     // Invarian: Σ bagian + Σ sisa = Σ chequeAmount (uang tidak hilang dan tidak bertambah).
     const total = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
-    assert.equal(total(a.bagian.map((b) => b.sen)) + total(a.takTeralokasi.map((t) => t.sisa)), Rp(1_000_000 + 400_000 + 250_000));
+    assert.equal(total(a.bagian.map((b) => b.sen)) + total(a.takTeralokasi.map((t) => t.sisa)), Rp(1_000_000 + 400_000 + 700_000 + 1_000_000 + 1_000_000 + 250_000));
+});
+
+test("rekonsiliasi memakai chequeAmount: lebih bayar 1 orang (setor 1.000.000 klop, 900.000 selisih −100.000), kredit 1 orang (setor 400.000 klop); ember multi-orang berkalimat orang & arah", () => {
+    const lebih = pel("CASH_OTHER", 1_000_000, [[11, 900_000]]);
+    const kredit = pel("CASH_OTHER", 400_000, [[12, 450_000]]);
+    const hari = (sa: number, sb: number) => rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [lebih, kredit], setoran: [setor("S-A", sa), setor("S-B", sb)] });
+    const ok = hari(1_000_000, 400_000);
+    assert.deepEqual(ok.baris.map((b) => [b.orang, b.pelunasan, b.status]), [["S-A", Rp(1_000_000), "klop"], ["S-B", Rp(400_000), "klop"]]);
+    assert.deepEqual(ok.takTeralokasi, [], "satu orang: tanpa ember");
+    const kurang = hari(900_000, 400_000);
+    assert.deepEqual([baris(kurang, "S-A").status, baris(kurang, "S-A").selisih], ["selisih", Rp(-100_000)]);
+
+    const multiKredit = pel("CASH_OTHER", 1_000_000, [[11, 700_000], [null, 400_000]]);
+    const m = rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [multiKredit], setoran: [setor("S-A", 700_000)] });
+    assert.deepEqual(penghalangTutup(m).alasan, [
+        "Tanpa salesman belum setor dan belum dijelaskan: pelunasan Rp 400.000.",
+        `Uang tak teralokasi ${multiKredit.nomor} belum dijelaskan: Rp -100.000 kredit / non-kas (pelunasan Rp 1.000.000, faktur Rp 1.100.000; orang S-A, Tanpa salesman).`,
+    ]);
 });
 
 test("alokasi: metode OTHERS (retur/ayat silang) DIKELUARKAN — tidak masuk salesman maupun ember", () => {
     const retur = pel("OTHERS", 300_000, [[11, 300_000]]);
     const silang = pel("OTHERS", -300_000, [[11, -300_000]]);
     const tunai = pel("CASH_OTHER", 200_000, [[11, 200_000]]);
-    const a = alokasiPelunasan([retur, silang, tunai]);
+    const a = alokasiPelunasan([retur, silang, tunai], PETA);
     assert.deepEqual(a.nonKas.map((p) => p.id), [retur.id, silang.id]);
     assert.deepEqual(a.bagian.map((b) => b.pelunasanId), [tunai.id]);
     assert.deepEqual(a.takTeralokasi, []);
@@ -95,9 +122,9 @@ test("alokasi: metode OTHERS (retur/ayat silang) DIKELUARKAN — tidak masuk sal
 
 test("alokasi: input rusak ditolak keras — nominal bukan sen bulat, id pelunasan ganda", () => {
     const p = pel("CASH_OTHER", 1, [[11, 1]]);
-    assert.throws(() => alokasiPelunasan([{ ...p, chequeAmount: 10.5 }]), RangeError);
-    assert.throws(() => alokasiPelunasan([{ ...p, faktur: [{ ...p.faktur[0], invoicePayment: Number.NaN }] }]), RangeError);
-    assert.throws(() => alokasiPelunasan([p, p]), /ganda/);
+    assert.throws(() => alokasiPelunasan([{ ...p, chequeAmount: 10.5 }], PETA), RangeError);
+    assert.throws(() => alokasiPelunasan([{ ...p, faktur: [{ ...p.faktur[0], invoicePayment: Number.NaN }] }], PETA), RangeError);
+    assert.throws(() => alokasiPelunasan([p, p], PETA), /ganda/);
 });
 
 test("orang: kode -> orang lewat gabungan PER BULAN (rantai diikuti); kode tanpa gabungan = orang sendiri; id tanpa kode = Tanpa salesman", () => {
@@ -183,7 +210,7 @@ test("rekonsiliasi: selisih (kurang/lebih), setoran 0 tercatat = selisih (bukan 
 test("rekonsiliasi: Tanpa salesman TERLIHAT (id null / id tanpa kode), ember tak teralokasi ikut total; tanggal lain ditolak", () => {
     const h = rekonsiliasiHari({
         tanggal: D, peta: PETA,
-        pelunasan: [pel("CASH_OTHER", 300_000, [[null, 100_000], [99, 200_000]]), pel("CASH_OTHER", 500_000, [[11, 450_000]])],
+        pelunasan: [pel("CASH_OTHER", 300_000, [[null, 100_000], [99, 200_000]]), pel("CASH_OTHER", 500_000, [[11, 300_000], [12, 150_000]])],
         setoran: [],
     });
     const t = baris(h, TANPA_SALESMAN);
@@ -222,20 +249,20 @@ test("penjelasan selisih berlaku hanya untuk angka yang dijelaskan; penghalang t
 });
 
 test("T2 (owner 11 Okt): uang TAK TERALOKASI wajib dijelaskan sebelum Tutup — per pelunasan, angka sisa sama; kunci tetap mencatat yang belum", () => {
-    const lebih = pel("BANK_TRANSFER", 1_000_000, [[11, 900_000]]); // sisa Rp 100.000
+    const lebih = pel("BANK_TRANSFER", 1_000_000, [[11, 600_000], [12, 300_000]]); // dua orang, sisa Rp 100.000
     const kosong = pel("CASH_OTHER", 250_000, []); // tanpa baris faktur
-    const masukan = (catatanTakTeralokasi: { pelunasanId: number; sisa: number }[], setoranA = 900_000) => ({
-        tanggal: D, peta: PETA, pelunasan: [lebih, kosong], setoran: [setor("S-A", setoranA)], catatanTakTeralokasi,
+    const masukan = (catatanTakTeralokasi: { pelunasanId: number; sisa: number }[]) => ({
+        tanggal: D, peta: PETA, pelunasan: [lebih, kosong], setoran: [setor("S-A", 600_000), setor("S-B", 300_000)], catatanTakTeralokasi,
     });
     const belum = rekonsiliasiHari(masukan([]));
-    assert.equal(baris(belum, "S-A").status, "klop", "semua orang klop ...");
+    assert.deepEqual(belum.baris.map((b) => b.status), ["klop", "klop"], "semua orang klop ...");
     assert.deepEqual(belum.takTeralokasi.map((t) => t.dijelaskan), [false, false]);
     const p = penghalangTutup(belum);
     assert.equal(p.bisaDitutup, false, "... tetapi ember tak teralokasi menghalangi Tutup");
     assert.deepEqual(p.baris, []);
     assert.deepEqual(p.takTeralokasi.map((t) => t.pelunasanId), [lebih.id, kosong.id]);
     assert.deepEqual(p.alasan, [
-        `Uang tak teralokasi ${lebih.nomor} belum dijelaskan: Rp 100.000 (pelunasan Rp 1.000.000, faktur Rp 900.000).`,
+        `Uang tak teralokasi ${lebih.nomor} belum dijelaskan: Rp 100.000 uang lebih / lebih bayar (pelunasan Rp 1.000.000, faktur Rp 900.000; orang S-A, S-B).`,
         `Uang tak teralokasi ${kosong.nomor} belum dijelaskan: Rp 250.000 (pelunasan tanpa baris faktur).`,
     ]);
 
@@ -251,8 +278,8 @@ test("T2 (owner 11 Okt): uang TAK TERALOKASI wajib dijelaskan sebelum Tutup — 
     assert.equal(statusHari(D, [], wita("2026-10-05T20:00:00")).terkunci, true);
     const sk = snapshotHari(belum);
     assert.deepEqual(sk.takTeralokasi, [
-        { pelunasanId: lebih.id, nomor: lebih.nomor, sisa: Rp(100_000), alasan: "jumlah_invoice_payment_beda", dijelaskan: false },
-        { pelunasanId: kosong.id, nomor: kosong.nomor, sisa: Rp(250_000), alasan: "tanpa_baris_faktur", dijelaskan: false },
+        { pelunasanId: lebih.id, nomor: lebih.nomor, sisa: Rp(100_000), alasan: "jumlah_invoice_payment_beda", arah: "lebih_bayar", orang: ["S-A", "S-B"], dijelaskan: false },
+        { pelunasanId: kosong.id, nomor: kosong.nomor, sisa: Rp(250_000), alasan: "tanpa_baris_faktur", arah: "lebih_bayar", orang: [], dijelaskan: false },
     ]);
     assert.deepEqual(sk.terhalang, p.alasan);
 });
