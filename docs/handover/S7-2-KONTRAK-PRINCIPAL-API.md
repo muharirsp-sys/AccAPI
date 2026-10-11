@@ -128,4 +128,6 @@ Untuk pemakai luar (Python tahap 2) agar SATU normalizer dipakai. `200 { ok, has
    blok "PERIKSA" (cocok longgar) ber-komentar; ambiguous/unmatched hanya dicantumkan.
 3. IT Support menjalankan `benih.sql` yang sudah disetujui: `docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 < benih.sql`
    — idempoten (`ON CONFLICT DO NOTHING`, tanpa UPDATE), menolak berjalan tanpa trigger penjaga, VERIFIKASI di akhir (baris `false` di atas).
+   Seperti API (`PRINCIPAL_NONAKTIF` / `VARIAN_NONAKTIF`), benih tidak menambah varian/alias ke principal/varian NONAKTIF: yang sudah
+   nonaktif saat laporan dicantumkan di bagian 5 `[nonaktif]`; yang dinonaktifkan sesudahnya dilewati SQL dan tampil `false` di VERIFIKASI.
 4. Jalankan laporan lagi: usulan principal/varian = 0, tanpa KONFLIK. Baru sesudah itu pemakai beralih (S7-2b).

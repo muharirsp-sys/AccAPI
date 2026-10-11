@@ -466,14 +466,39 @@ test("PG S7-2: laporan BACA-SAJA pada data sintetis (ejaan nyata) — sumber hil
         assert.equal(await hitungDi(lap.pool, "principal"), 0, "laporan tidak menulis apa pun");
 
         const benih = await readFile(path.join(folder, "benih.sql"), "utf8");
+        const jumlah = async () => Promise.all(["principal", "principal_variant", "principal_alias", "principal_log"].map((t) => hitungDi(lap.pool, t)));
+        let pertama: number[] = [];
         for (let i = 0; i < 2; i++) {
             const v = verifikasi(await lap.pool.query(benih));
             assert.ok(v.length > 100);
             semuaOk(v);
+            const n = await jumlah();
+            if (i === 0) {
+                pertama = n;
+                assert.equal(n[3], n[0] + n[1] + n[2], "jalan PERTAMA: tepat satu baris riwayat per baris benih");
+            } else assert.deepEqual(n, pertama, "jalan KEDUA: tanpa baris maupun riwayat baru (idempoten)");
         }
-        assert.deepEqual([await hitungDi(lap.pool, "principal"), await hitungDi(lap.pool, "principal_variant")], [25, 5]);
-        const jumlahAlias = await hitungDi(lap.pool, "principal_alias");
+        assert.deepEqual(pertama.slice(0, 2), [25, 5]);
+        const jumlahAlias = pertama[2];
         assert.equal(await hitungDi(lap.pool, "principal_log"), 25 + 5 + jumlahAlias, "satu baris riwayat per baris benih, tidak berlipat saat diulang");
+
+        // Status berubah SESUDAH laporan (benih lama dijalankan pada DB yang principal/varian-nya nonaktif): tidak ada varian/alias baru
+        // ke target nonaktif (= API PRINCIPAL_NONAKTIF / VARIAN_NONAKTIF), dan VERIFIKASI menandai baris itu false (tidak diam-diam).
+        const basi = await skemaBaru("s72");
+        await basi.pool.query(`INSERT INTO principal (code, name, is_active) VALUES ('GDI', 'GODREJ DISTRIBUSI INDONESIA, PT', false),
+            ('FRS', 'FORISA NUSAPERSADA, PT', false), ('KINO', 'KINO INDONESIA. TBK, PT', true);
+            INSERT INTO principal_variant (principal_id, variant_key, name, is_active) SELECT id, 'NON_FOOD', 'KINO NON FOOD', false FROM principal WHERE code = 'KINO'`);
+        const vb = verifikasi(await basi.pool.query(benih));
+        const salah = vb.filter((x) => x.ok === false).map((x) => x.cek);
+        assert.ok(salah.length > 0 && salah.every((c) => /-> (GDI|FRS(\/[A-Z]+)?|KINO\/NON_FOOD)$|^varian FRS\//.test(c)), `hanya target nonaktif yang false: ${salah.join("; ")}`);
+        for (const c of ["alias MB GD -> GDI", "varian FRS/MT", "alias MB KN -> KINO/NON_FOOD"]) assert.ok(salah.includes(c), `${c} ditandai false`);
+        const keNonaktif = (await basi.pool.query(`SELECT
+            (SELECT count(*)::int FROM principal_alias a JOIN principal p ON p.id = a.principal_id WHERE NOT p.is_active) AS alias_p,
+            (SELECT count(*)::int FROM principal_variant v JOIN principal p ON p.id = v.principal_id WHERE NOT p.is_active) AS varian_p,
+            (SELECT count(*)::int FROM principal_alias a JOIN principal_variant v ON v.principal_id = a.principal_id AND v.variant_key = a.variant_key WHERE NOT v.is_active) AS alias_v,
+            (SELECT count(*)::int FROM principal_alias a JOIN principal p ON p.id = a.principal_id WHERE p.code = 'KINO' AND a.variant_key IS NULL) AS kino_utuh`)).rows[0];
+        assert.deepEqual(keNonaktif, { alias_p: 0, varian_p: 0, alias_v: 0, kino_utuh: keNonaktif.kino_utuh });
+        assert.ok(keNonaktif.kino_utuh >= 3, "principal AKTIF tetap mendapat alias");
 
         // Bentuk JSON riwayat benih = API (kunci camelCase sama per entitas; waktu ISO UTC milidetik = nilai kolom).
         const kunciLog = async (pool: Pool, aktor: string) => Object.fromEntries((await pool.query(`SELECT entitas, array_agg(DISTINCT k ORDER BY k) AS k

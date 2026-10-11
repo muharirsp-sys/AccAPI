@@ -130,3 +130,25 @@ test("bentuk JSON riwayat benih = baris Drizzle API: kunci camelCase = properti 
     assert.doesNotMatch(sql, /to_jsonb/, "benih tidak memakai to_jsonb (snake_case)");
     for (const e of ["principal", "varian", "alias"] as const) assert.ok(sql.includes(jsonLog(e)), `benih ${e} memakai jsonLog`);
 });
+
+test("benih tidak menambah varian/alias ke principal/varian NONAKTIF (= API PRINCIPAL_NONAKTIF / VARIAN_NONAKTIF); SQL juga menjaga", () => {
+    const lap = susunLaporan(dataSintetis({
+        principal: { ok: true, rows: [
+            { code: "GDI", name: "GODREJ DISTRIBUSI INDONESIA, PT", isActive: false },
+            { code: "FRS", name: "FORISA NUSAPERSADA, PT", isActive: false },
+            { code: "KINO", name: "KINO INDONESIA. TBK, PT", isActive: true },
+        ] },
+        principalVariant: { ok: true, rows: [{ code: "KINO", variantKey: "NON_FOOD", name: "KINO NON FOOD", isActive: false }] },
+    }), "2026-10-11T00:00:00.000Z");
+    const sql = benihSql(lap);
+    const aktif = sql.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
+    assert.doesNotMatch(aktif, /\('GDI', /, "alias ke principal nonaktif tidak diusulkan");
+    assert.doesNotMatch(aktif, /\('FRS', /, "varian/alias ke principal nonaktif tidak diusulkan");
+    assert.doesNotMatch(aktif, /\('KINO', 'NON_FOOD'/, "alias ke varian nonaktif tidak diusulkan");
+    assert.match(aktif, /\('KINO', NULL::text, 'K1', 'K1', 'kode_master_barang', 'master_barang'\)/, "principal aktif tetap diusulkan");
+    assert.match(sql, /^-- {3}\[nonaktif\] alias MB GD -> GDI: principal GDI nonaktif$/m);
+    assert.match(sql, /^-- {3}\[nonaktif\] varian FRS\/MT: principal FRS nonaktif$/m);
+    assert.match(sql, /^-- {3}\[nonaktif\] alias MB KN -> KINO\/NON_FOOD: varian KINO\/NON_FOOD nonaktif$/m);
+    assert.match(aktif, /JOIN principal p ON p\.code = v\.code AND p\.is_active\n\s+LEFT JOIN principal_variant x ON x\.principal_id = p\.id AND x\.variant_key = v\.variant_key\n\s+WHERE v\.variant_key IS NULL OR x\.is_active/);
+    assert.match(laporanMarkdown(lap), /^\| GDI \| .* \| ya \(NONAKTIF\) \|$/m);
+});

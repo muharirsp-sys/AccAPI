@@ -34,8 +34,8 @@ export const TS_LAIN = [
 
 export type Target = { code: string; variantKey: string | null };
 export type UsulanAlias = Target & { aliasNorm: string; aliasAsli: string; jenis: JenisAlias; sumber: string; adaDiDb?: boolean };
-type UsulanPrincipal = { code: string; name: string; sumber: string; adaDiDb: boolean; namaDb?: string };
-type UsulanVarian = { code: string; variantKey: string; name: string | null; sumber: string; adaDiDb: boolean };
+type UsulanPrincipal = { code: string; name: string; sumber: string; adaDiDb: boolean; namaDb?: string; aktifDb?: boolean };
+type UsulanVarian = { code: string; variantKey: string; name: string | null; sumber: string; adaDiDb: boolean; aktifDb?: boolean };
 
 /** Hasil baca satu sumber DB: baris atau galat (galat ≠ kosong). */
 export type Bacaan<T> = { ok: true; rows: T[] } | { ok: false; galat: string };
@@ -107,13 +107,13 @@ export function susunRegistri(data: Pick<DataDb, "principal" | "principalVariant
     // Isi DB yang sudah ada ikut registri (hasil API/benih sebelumnya); beda dengan usulan = konflik, bukan ditimpa.
     for (const p of data.principal.ok ? data.principal.rows : []) {
         const u = reg.principal.get(p.code);
-        if (u) Object.assign(u, { adaDiDb: true, namaDb: p.name });
-        else reg.principal.set(p.code, { code: p.code, name: p.name, sumber: "db", adaDiDb: true, namaDb: p.name });
+        if (u) Object.assign(u, { adaDiDb: true, namaDb: p.name, aktifDb: p.isActive });
+        else reg.principal.set(p.code, { code: p.code, name: p.name, sumber: "db", adaDiDb: true, namaDb: p.name, aktifDb: p.isActive });
     }
     for (const v of data.principalVariant.ok ? data.principalVariant.rows : []) {
         const u = reg.varian.get(`${v.code}:${v.variantKey}`);
-        if (u) u.adaDiDb = true;
-        else reg.varian.set(`${v.code}:${v.variantKey}`, { code: v.code, variantKey: v.variantKey, name: v.name, sumber: "db", adaDiDb: true });
+        if (u) Object.assign(u, { adaDiDb: true, aktifDb: v.isActive });
+        else reg.varian.set(`${v.code}:${v.variantKey}`, { code: v.code, variantKey: v.variantKey, name: v.name, sumber: "db", adaDiDb: true, aktifDb: v.isActive });
     }
     for (const a of data.principalAlias.ok ? data.principalAlias.rows : []) {
         tambahAlias({ ...a, jenis: a.jenis as JenisAlias, adaDiDb: true });
@@ -276,10 +276,10 @@ export function laporanMarkdown(lap: Laporan): string {
     l.push("", `## Registri usulan`, "", `Principal: ${reg.principal.size} (${[...reg.principal.values()].filter((p) => p.adaDiDb).length} sudah di DB) · varian: ${reg.varian.size} · alias: ${reg.alias.size} · konflik: ${reg.konflik.length}`, "",
         "| Kode | Nama | Asal | Di DB |", "|---|---|---|---|");
     for (const p of reg.principal.values()) {
-        l.push(`| ${p.code} | ${md(p.name)} | ${md(p.sumber)} | ${p.adaDiDb ? (p.namaDb === p.name ? "ya" : `ya — nama DB: ${md(p.namaDb ?? "")}`) : "belum"} |`);
+        l.push(`| ${p.code} | ${md(p.name)} | ${md(p.sumber)} | ${p.adaDiDb ? (p.namaDb === p.name ? "ya" : `ya — nama DB: ${md(p.namaDb ?? "")}`) : "belum"}${p.aktifDb === false ? " (NONAKTIF)" : ""} |`);
     }
     l.push("", "| Varian | Nama | Asal | Di DB |", "|---|---|---|---|");
-    for (const v of reg.varian.values()) l.push(`| ${v.code}/${v.variantKey} | ${md(v.name ?? "")} | ${md(v.sumber)} | ${v.adaDiDb ? "ya" : "belum"} |`);
+    for (const v of reg.varian.values()) l.push(`| ${v.code}/${v.variantKey} | ${md(v.name ?? "")} | ${md(v.sumber)} | ${v.adaDiDb ? "ya" : "belum"}${v.aktifDb === false ? " (NONAKTIF)" : ""} |`);
     if (reg.konflik.length) {
         l.push("", "### KONFLIK registri (satu ejaan, beberapa target — tidak diusulkan)", "", "| Ruang | Ejaan | Target |", "|---|---|---|");
         for (const k of reg.konflik) l.push(`| ${k.ruang} | ${md(k.aliasNorm)} | ${k.target.join(", ")} |`);
@@ -317,7 +317,9 @@ const SISIP_ALIAS = (baris: string[]) => [
     `    ${baris.join(",\n    ")}`,
     "), baru AS (",
     "    INSERT INTO principal_alias (alias_norm, principal_id, variant_key, alias_asli, jenis, sumber, created_by)",
-    `    SELECT v.alias_norm, p.id, v.variant_key, v.alias_asli, v.jenis, v.sumber, ${lit(AKTOR_BENIH)} FROM v JOIN principal p ON p.code = v.code`,
+    `    SELECT v.alias_norm, p.id, v.variant_key, v.alias_asli, v.jenis, v.sumber, ${lit(AKTOR_BENIH)} FROM v JOIN principal p ON p.code = v.code AND p.is_active`,
+    "    LEFT JOIN principal_variant x ON x.principal_id = p.id AND x.variant_key = v.variant_key",
+    "    WHERE v.variant_key IS NULL OR x.is_active -- principal/varian NONAKTIF dilewati (= API PRINCIPAL_NONAKTIF / VARIAN_NONAKTIF)",
     "    ON CONFLICT DO NOTHING RETURNING *",
     ")",
     "INSERT INTO principal_log (entitas, kunci, principal_id, aksi, after, aktor)",
@@ -328,11 +330,24 @@ const SISIP_ALIAS = (baris: string[]) => [
 export function benihSql(lap: Laporan): string {
     const reg = lap.registri;
     const ps = [...reg.principal.values()].filter((p) => !p.adaDiDb);
-    const vs = [...reg.varian.values()].filter((v) => !v.adaDiDb);
-    const asReg = aliasRegistriBaru(reg);
-    const { persis, longgar } = usulanSumber(lap);
+    // Target NONAKTIF di DB tidak diberi varian/alias baru (sama dengan API 409 PRINCIPAL_NONAKTIF / VARIAN_NONAKTIF); SQL juga menjaga
+    // bila status berubah sesudah laporan (baris itu lalu ok=false di VERIFIKASI).
+    const sebabNonaktif = (t: Target) => reg.principal.get(t.code)?.aktifDb === false ? `principal ${t.code} nonaktif`
+        : t.variantKey !== null && reg.varian.get(`${t.code}:${t.variantKey}`)?.aktifDb === false ? `varian ${tampilTarget(t)} nonaktif` : null;
+    const nonaktif: string[] = [];
+    const saringAktif = <T extends Target>(daftar: T[], label: (x: T) => string) => daftar.filter((x) => {
+        const sebab = sebabNonaktif(x);
+        if (sebab) nonaktif.push(`--   [nonaktif] ${label(x)}: ${sebab}`);
+        return !sebab;
+    });
+    const labelAlias = (a: UsulanAlias) => `alias ${ruang(a.jenis)} ${a.aliasNorm} -> ${tampilTarget(a)}`;
+    const vs = saringAktif([...reg.varian.values()].filter((v) => !v.adaDiDb), (v) => `varian ${v.code}/${v.variantKey}`);
+    const asReg = saringAktif(aliasRegistriBaru(reg), labelAlias);
+    const sumberUsul = usulanSumber(lap);
+    const persis = saringAktif(sumberUsul.persis, labelAlias);
+    const longgar = saringAktif(sumberUsul.longgar, labelAlias);
     const aktif = [...asReg, ...persis];
-    const tolakan = lap.sumber.flatMap((b) => b.baris.filter((x) => x.status !== "matched").map((x) => `--   [${b.judul}] ${rapikanTeks(x.nilai)} -> ${x.status}${x.kandidat?.length ? ` (${x.kandidat.map(tampilTarget).join(", ")})` : ""}`));
+    const tolakan = [...nonaktif, ...lap.sumber.flatMap((b) => b.baris.filter((x) => x.status !== "matched").map((x) => `--   [${b.judul}] ${rapikanTeks(x.nilai)} -> ${x.status}${x.kandidat?.length ? ` (${x.kandidat.map(tampilTarget).join(", ")})` : ""}`))];
     const galat = lap.sumber.filter((b) => b.galat).map((b) => `--   GAGAL DIBACA [${b.judul}]: ${rapikanTeks(b.galat)}`);
     const s: string[] = [
         `-- BENIH principal S7-2 (BL-64) — DIHASILKAN scripts/principal-laporan.mjs pada ${lap.dibuat}. DITINJAU OWNER sebelum dijalankan.`,
@@ -341,6 +356,8 @@ export function benihSql(lap: Laporan): string {
         "-- Idempoten: hanya INSERT ... ON CONFLICT DO NOTHING (TIDAK PERNAH UPDATE / DO UPDATE) + principal_log untuk baris yang benar-benar",
         "-- tersisip. Ejaan yang sudah dipakai principal LAIN dilewati DB lalu ditandai ok=false di VERIFIKASI (tidak diam-diam).",
         "-- Alias principal utuh = variant_key NULL; varian '' (dasar) tidak pernah diusulkan. alias_norm = normalizer baku lib/principal.",
+        "-- Principal/varian NONAKTIF tidak diberi varian/alias baru (sama dengan API PRINCIPAL_NONAKTIF / VARIAN_NONAKTIF): yang sudah",
+        "-- nonaktif saat laporan dicantumkan di bagian 5; yang dinonaktifkan sesudahnya dilewati SQL lalu ok=false di VERIFIKASI.",
         ...(galat.length ? ["-- PERHATIAN: sumber berikut GAGAL dibaca saat laporan dibuat — usulan dari sumber itu TIDAK ada di berkas ini:", ...galat] : []),
         "",
         "BEGIN;",
@@ -373,7 +390,7 @@ export function benihSql(lap: Laporan): string {
         `    ${vs.map((v) => `(${lit(v.code)}, ${lit(v.variantKey)}, ${lit(v.name)})`).join(",\n    ")}`,
         "), baru AS (",
         "    INSERT INTO principal_variant (principal_id, variant_key, name, created_by)",
-        `    SELECT p.id, v.variant_key, v.name, ${lit(AKTOR_BENIH)} FROM v JOIN principal p ON p.code = v.code`,
+        `    SELECT p.id, v.variant_key, v.name, ${lit(AKTOR_BENIH)} FROM v JOIN principal p ON p.code = v.code AND p.is_active -- principal NONAKTIF dilewati`,
         "    ON CONFLICT DO NOTHING RETURNING *",
         ")",
         "INSERT INTO principal_log (entitas, kunci, principal_id, aksi, after, aktor)",
@@ -386,11 +403,11 @@ export function benihSql(lap: Laporan): string {
         "--    lalu buang tanda komentar seluruh blok (sebagai transaksi sendiri). Tidak ada UPDATE.");
     if (longgar.length) s.push(...["BEGIN;", "SET LOCAL standard_conforming_strings = on;", ...SISIP_ALIAS(longgar.map(nilaiAlias)), "COMMIT;"]
         .join("\n").split("\n").map((x) => `-- ${x}`));
-    s.push("", `-- 5. TIDAK diusulkan (${tolakan.length}; keputusan owner — ambiguous / unmatched):`, ...(tolakan.length ? tolakan : ["--   (tidak ada)"]));
+    s.push("", `-- 5. TIDAK diusulkan (${tolakan.length}; keputusan owner — nonaktif / ambiguous / unmatched):`, ...(tolakan.length ? tolakan : ["--   (tidak ada)"]));
     const cek = [
         ...ps.map((p) => `('principal ${p.code}', EXISTS (SELECT 1 FROM principal WHERE code = ${lit(p.code)} AND name = ${lit(p.name)}))`),
         ...vs.map((v) => `('varian ${v.code}/${v.variantKey}', EXISTS (SELECT 1 FROM principal_variant x JOIN principal p ON p.id = x.principal_id WHERE p.code = ${lit(v.code)} AND x.variant_key = ${lit(v.variantKey)}))`),
-        ...aktif.map((a) => `(${lit(`alias ${ruang(a.jenis)} ${a.aliasNorm} -> ${tampilTarget(a)}`)}, EXISTS (SELECT 1 FROM principal_alias x JOIN principal p ON p.id = x.principal_id WHERE x.alias_norm = ${lit(a.aliasNorm)} AND (x.jenis = 'kode_master_barang') = ${a.jenis === "kode_master_barang"} AND p.code = ${lit(a.code)} AND x.variant_key IS NOT DISTINCT FROM ${lit(a.variantKey)}))`),
+        ...aktif.map((a) => `(${lit(labelAlias(a))}, EXISTS (SELECT 1 FROM principal_alias x JOIN principal p ON p.id = x.principal_id WHERE x.alias_norm = ${lit(a.aliasNorm)} AND (x.jenis = 'kode_master_barang') = ${a.jenis === "kode_master_barang"} AND p.code = ${lit(a.code)} AND x.variant_key IS NOT DISTINCT FROM ${lit(a.variantKey)}))`),
     ];
     s.push("", "-- 6. VERIFIKASI (baca-saja) — semua ok harus true; baris false (bila ada) tampil paling atas.");
     if (cek.length) s.push("SELECT cek, ok FROM (VALUES", `    ${cek.join(",\n    ")}`, ") AS v(cek, ok) ORDER BY ok, cek;");
