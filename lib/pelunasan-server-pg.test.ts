@@ -514,3 +514,15 @@ test("PG B8: lock PROCESSING tanpa database tercatat (baris lama) -> proxy 409 d
         assert.equal(catat.post.length + catat.baca, 0);
         assert.equal(await statusDb(m.db, p.key), "PROCESSING");
     }));
+
+// ------------------------------------------------------------------ Putaran 2, A-N1 lewat route asli
+test("PG A-N1: pelunasan {INV-1:900, INV-2:500} terposting, unggah ulang {INV-1:900} -> 409 ACCURATE_HISTORY, tidak dikirim", { skip: pgSkip }, () =>
+    dalamDunia((tag, m) => ({ izin: KIRIM, sesi: m.sesiAccurate(), data: { ...KOSONG, salesReceipt: [{ id: "PR.X", number: "PR.X", customer: { customerNo: `${tag}-A` },
+        transDate: "09/10/2026", detailInvoice: [{ invoice: { number: "INV-1" }, paymentAmount: 900 }, { invoice: { number: "INV-2" }, paymentAmount: 500 }] }] } }),
+    async (m, tag, catat) => {
+        const a = baris(`${tag}-A`, "INV-1", 900);
+        const res = await kirim(m, await kunciLock(m, [a]), [a]);
+        assert.equal(res.status, 409);
+        assert.deepEqual((await res.json()).rows, [{ index: 0, key: kunci(a).key, reason: "ACCURATE_HISTORY", receiptNumbers: ["PR.X"] }]);
+        assert.equal(catat.post.length, 0);
+    }));

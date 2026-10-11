@@ -197,3 +197,22 @@ test("A4: batas waktu -> TIDAK ADA panggilan Accurate baru sesudah fungsi kembal
     await new Promise((res) => setTimeout(res, 200));
     assert.equal(n2, n2Kembali, `detail.do sesudah kembali: ${n2 - n2Kembali}`);
 });
+
+// ------------------------------------------------------------------ Putaran 2, A-N1: cocok PER FAKTUR, bukan himpunan faktur
+const struk = (lines: Array<[string, number]>) => satuKandidat({ s: true, d: { number: "PR.X", customer: { customerNo: "C1" },
+    detailInvoice: lines.map(([inv, pa]) => ({ invoice: { number: inv }, paymentAmount: pa, detailDiscount: [] })) } });
+const dgnFaktur = (lines: Array<[string, number]>) => ({ customerNo: "C1", transDate: "01/10/2026",
+    detailInvoice: lines.map(([invoiceNo, paymentAmount]) => ({ invoiceNo, paymentAmount })) });
+
+test("A-N1: SATU faktur baris bernominal sama dengan faktur yang sama di pelunasan mana pun = DITAHAN (kedua arah)", async () => {
+    const cocok = async (row: Record<string, unknown>, f: AccurateFetch) => (await periksaRiwayatAccurate([target(row)], f)).cocok.get(target(row).key);
+    // Pelunasan X {I1:900, I2:500} terposting; Excel diunggah ulang hanya {I1:900} -> I1 akan terbayar dua kali.
+    assert.deepEqual(await cocok(dgnFaktur([["I1", 900]]), struk([["I1", 900], ["I2", 500]])), ["PR.X"], "baris ⊂ pelunasan");
+    // Kebalikannya: pelunasan {I1:900}; baris {I1:900, I2:500}.
+    assert.deepEqual(await cocok(dgnFaktur([["I1", 900], ["I2", 500]]), struk([["I1", 900]])), ["PR.X"], "pelunasan ⊂ baris");
+    assert.deepEqual(await cocok(dgnFaktur([["I1", 900], ["I2", 500]]), struk([["I1", 100], ["I2", 500]])), ["PR.X"], "satu faktur cocok");
+    // Kontrol: faktur sama tetapi tidak ada nominal yang cocok = tidak ditahan (cicilan lain).
+    assert.equal(await cocok(dgnFaktur([["I1", 900], ["I2", 500]]), struk([["I1", 800], ["I2", 400]])), undefined);
+    const klien = await pratinjauRiwayatAccurate([dgnFaktur([["I1", 900]])], struk([["I1", 900], ["I2", 500]]));
+    assert.deepEqual(klien.get(target(dgnFaktur([["I1", 900]])).key), ["PR.X"], "pratinjau klien sama");
+});

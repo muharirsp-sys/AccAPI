@@ -70,9 +70,10 @@ logika pratinjau bersama — belum dikerjakan.
 **Identitas kasar (orkestrator 11 Okt, tinjauan A1/B1; bentuk asli `detail.do` per `S6e2-BUKTI-DETAIL-DO-2026-10-10.md`)**:
 `detail.do` tidak membawa `invoiceNo` (nomor faktur di `detailInvoice[].invoice.number`) dan tidak membawa `customerNo` tingkat
 atas. Dinormalkan di SATU tempat (`strukDariDetail`, pratinjau & server): `invoiceNo = invoiceNo ?? invoice.number`,
-`paymentAmount`, `invoicePayment`. Baris DITAHAN bila ada pelunasan di grup pelanggan+tanggal dengan himpunan faktur sama dan,
-per faktur, nominal baris (`paymentAmount`, atau `paymentAmount` + potongannya) = `paymentAmount` ATAU `invoicePayment` Accurate
-(arti keduanya belum terbukti — lebih banyak menahan = aman). Item potongan TIDAK dibaca: akun/catatan/jumlah/bentuknya tidak
+`paymentAmount`, `invoicePayment`. Baris DITAHAN bila ada SATU faktur baris yang nominalnya (`paymentAmount`, atau
+`paymentAmount` + potongannya) = `paymentAmount` ATAU `invoicePayment` faktur yang SAMA di pelunasan MANA PUN di grup
+pelanggan+tanggal — dicocokkan per faktur, bukan himpunan faktur (putaran 2, A-N1: pelunasan {I1, I2} terposting lalu baris {I1}
+diunggah ulang = ditahan; sebaliknya juga). Arti `paymentAmount`/`invoicePayment` belum terbukti — lebih banyak menahan = aman. Item potongan TIDAK dibaca: akun/catatan/jumlah/bentuknya tidak
 menahan dan tidak meloloskan. Tak terbaca (`detailInvoice` bukan daftar, baris tanpa nomor faktur, `paymentAmount` bukan angka,
 `invoicePayment` ada tetapi bukan angka) = `ACCURATE_HISTORY_UNREADABLE` (ditahan). Identik tanpa nomor pelunasan tetap ditahan
 (`receiptNumbers: []`). Pratinjau (`pratinjauDuplikat`) memakai aturan yang sama; `ACCURATE_HISTORY_UNREADABLE` = "tidak
@@ -212,3 +213,5 @@ diselesaikan; tampilkan bila > 0).
   (dulu `{number, invoices}`); `terposting` MENERIMA nomor kandidat mirip (nomor di luar kandidat tetap `number_mismatch`).
   §6 saring baris = **`database=<id>`** (bukan `databaseId`). §7 baris `tidak_pasti` membawa `code` server bila ada. 403
   `/api/idempotency/resolve` & `/api/idempotency/summary` = `{ok:false, code:"forbidden", error}` (Aturan umum).
+- (11 Okt, putaran 2 A-N1) §1 penahanan riwayat dicocokkan PER FAKTUR: satu faktur bernominal sama di pelunasan mana pun di
+  grup = `ACCURATE_HISTORY` (dulu himpunan faktur harus sama persis). Bentuk jawaban tidak berubah.

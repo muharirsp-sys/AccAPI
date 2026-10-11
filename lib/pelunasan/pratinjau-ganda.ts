@@ -33,7 +33,8 @@ export type DuplicateReviewEntry = {
  * Identitas KASAR riwayat (keputusan orkestrator 11 Okt, tinjauan S6e-2a A1/B1): pelanggan + tanggal (= nilai FILTER list.do,
  * bukan versi Accurate) + {nomor faktur: nominal bayar}. Akun, catatan, dan jumlah potongan TIDAK ikut — bentuk item potongan
  * di detail.do belum terbukti, dan "akun potongan diganti" tetap ganda (definisi owner #1). `nominal` = per faktur, nominal yang
- * dianggap SAMA: Σ paymentAmount dan (lebih banyak menahan = aman) Σ paymentAmount + potongan baris itu.
+ * dianggap SAMA: Σ paymentAmount dan (lebih banyak menahan = aman) Σ paymentAmount + potongan baris itu. Dicocokkan PER FAKTUR
+ * (putaran 2, A-N1): satu faktur bernominal sama di pelunasan mana pun di grup sudah menahan baris.
  */
 export type TargetRiwayat = {
     key: string;
@@ -101,9 +102,8 @@ export function strukDariDetail(detail: Bebas, cadanganNomor?: unknown, cadangan
     return { number: teks(detail.number) || teks(cadanganNomor), transDate: teks(detail.transDate) || (cadanganTanggal ?? ""), invoices };
 }
 
-/** Identitas kasar sama: himpunan faktur sama, dan per faktur nominal baris ∈ {Σ paymentAmount, Σ invoicePayment} Accurate. */
-function samaKasar(t: TargetRiwayat, s: StrukAccurate): boolean {
-    if (!t.nominal.size) return false;
+/** Per faktur di SATU pelunasan Accurate: [Σ paymentAmount, Σ invoicePayment (cadangan paymentAmount)]. */
+function nominalStruk(s: StrukAccurate): Map<string, number[]> {
     // ponytail: dijumlah per faktur (satu pelunasan menyebut faktur yang sama dua kali = dijumlah); campuran pa/ip antarbaris
     // faktur yang sama tidak dicoba — plafon: pencocokan per baris bila Accurate terbukti mengizinkan faktur berulang.
     const acc = new Map<string, [number, number]>();
@@ -111,19 +111,25 @@ function samaKasar(t: TargetRiwayat, s: StrukAccurate): boolean {
         const [p, q] = acc.get(b.invoiceNo) ?? [0, 0];
         acc.set(b.invoiceNo, [p + b.paymentAmount, q + (b.invoicePayment ?? b.paymentAmount)]);
     }
-    if (acc.size !== t.nominal.size) return false;
-    for (const [no, alt] of t.nominal) {
-        const a = acc.get(no);
-        if (!a || !a.some((v) => alt.includes(bulat(v)))) return false;
-    }
-    return true;
+    return new Map([...acc].map(([no, v]) => [no, v.map(bulat)]));
 }
 
-/** `cocok` = kunci → nomor pelunasan identik kasar (kunci ada walau nomor kosong); `mirip` = kunci → pelunasan yang menyentuh faktur baris. */
+/**
+ * TAHAN (putaran 2, A-N1): ada SATU faktur baris yang nominalnya (paymentAmount / + potongan) = nominal faktur yang SAMA di
+ * pelunasan ini (paymentAmount / invoicePayment). Per faktur, bukan himpunan: pelunasan {I1, I2} terposting lalu baris {I1}
+ * diunggah ulang (atau sebaliknya) tetap ditahan — I1 bisa terbayar dua kali.
+ */
+function adaFakturCocok(t: TargetRiwayat, s: StrukAccurate): boolean {
+    const acc = nominalStruk(s);
+    return [...t.nominal].some(([no, alt]) => (acc.get(no) ?? []).some((v) => alt.includes(v)));
+}
+
+/** `cocok` = kunci → nomor pelunasan yang punya faktur bernominal sama (kunci ada walau nomor kosong); `mirip` = kunci → pelunasan
+ * yang menyentuh faktur baris (berapa pun nominalnya). */
 function cocokkan(group: Kelompok, struk: StrukAccurate[], cocok: Map<string, string[]>, mirip?: Map<string, StrukAccurate[]>) {
     for (const t of group.targets.values()) {
         for (const s of struk) {
-            if (samaKasar(t, s)) {
+            if (adaFakturCocok(t, s)) {
                 if (!cocok.has(t.key)) cocok.set(t.key, []);
                 const list = cocok.get(t.key)!;
                 if (s.number && !list.includes(s.number)) list.push(s.number);
