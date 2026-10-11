@@ -721,3 +721,47 @@ test("perbaikan #1: role turunan TIDAK tertinggal — multi-grup tanpa bintang b
         assert.equal(((await (await panggil(m.anggota.POST, a, "POST", lain, { userId: x })).json()) as { role: string }).role, "staff");
     });
 });
+
+/** Trigger uji generik (dibuang sesudahnya): `badan` = isi IF plpgsql yang RAISE. */
+async function pemicu<T>(nama: string, saat: string, tabel: string, badan: string, fn: () => Promise<T>): Promise<T> {
+    await m.pool.query(`CREATE OR REPLACE FUNCTION ${nama}() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN ${badan} RETURN COALESCE(NEW, OLD); END $f$`);
+    await m.pool.query(`DROP TRIGGER IF EXISTS ${nama} ON ${tabel}`);
+    await m.pool.query(`CREATE TRIGGER ${nama} ${saat} ON ${tabel} FOR EACH ROW EXECUTE FUNCTION ${nama}()`);
+    try { return await fn(); } finally {
+        await m.pool.query(`DROP TRIGGER IF EXISTS ${nama} ON ${tabel}`);
+        await m.pool.query(`DROP FUNCTION IF EXISTS ${nama}()`);
+    }
+}
+
+test("perbaikan #4: Better Auth gagal DI TENGAH (user dibuat, akun gagal) -> user setengah jadi dihapus, jawaban jujur 500 GAGAL_SIMPAN", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const ga = await w.grup("kelola", ["users.manage"]);
+        const a = await w.user("a");
+        await w.masuk(a, ga);
+        const email = `${w.p}-gagalba@s71.test`;
+        const res = await pemicu("s71_akun_gagal", "BEFORE INSERT", "account",
+            `IF NEW."userId" IN (SELECT id FROM "user" WHERE email = '${email}') THEN RAISE EXCEPTION 'uji s71: akun gagal'; END IF;`,
+            () => buat(a, { name: "Gagal BA", email, password: PW, groupIds: [ga] }));
+        assert.deepEqual(await kode(res), { status: 500, code: "GAGAL_SIMPAN" });
+        assert.equal((await m.pool.query(`SELECT count(*)::int AS n FROM "user" WHERE email = $1`, [email])).rows[0].n, 0, "user setengah jadi dihapus");
+    });
+});
+
+test("perbaikan #5: audit gagal + kompensasi gagal -> 500 USER_SETENGAH_JADI (jujur), user tetap banned 'sedang disiapkan', masuk ditolak BANNED_USER", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const ga = await w.grup("kelola", ["users.manage"]);
+        const a = await w.user("a");
+        await w.masuk(a, ga);
+        const email = `${w.p}-tetap@s71.test`;
+        const res = await pemicu("s71_hapus_gagal", "BEFORE DELETE", `"user"`,
+            `IF OLD.email = '${email}' THEN RAISE EXCEPTION 'uji s71: hapus gagal'; END IF;`,
+            () => auditGagal("user.create", `${w.p}-tetap`, () => buat(a, { name: "Tetap", email, password: PW, groupIds: [ga] })));
+        const j = await res.json() as { code: string; userId?: string };
+        assert.equal(res.status, 500);
+        assert.equal(j.code, "USER_SETENGAH_JADI");
+        const u = (await m.pool.query(`SELECT id, banned, "banReason" FROM "user" WHERE email = $1`, [email])).rows[0];
+        assert.deepEqual([u.banned, u.banReason, j.userId], [true, "sedang disiapkan (S7-1)", u.id]);
+        assert.equal((await m.pool.query(`SELECT count(*)::int AS n FROM user_group WHERE user_id = $1`, [u.id])).rows[0].n, 0);
+        await assert.rejects(masukDengan(email, PW), (e: { body?: { code?: string } }) => e.body?.code === "BANNED_USER");
+    });
+});

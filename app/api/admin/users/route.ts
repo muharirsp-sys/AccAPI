@@ -5,7 +5,8 @@
  * Main Functions: POST.
  * Side Effects: tulis user + akun credential (Better Auth), user_group + audit `user.create` (transaksi app).
  * Urutan aman (Better Auth di luar transaksi app): validasi -> createUser BANNED "sedang disiapkan" -> transaksi app (grup,
- *   bintang, buka ban, audit) -> gagal: kompensasi hapus user; kompensasi gagal pun user tetap banned (tidak bisa masuk).
+ *   bintang, buka ban, audit) -> gagal (juga Better Auth gagal di tengah): kompensasi hapus user; kompensasi gagal pun user
+ *   tetap banned (tidak bisa masuk) dan jawaban jujur 500 USER_SETENGAH_JADI + userId.
  * Kontrak: docs/handover/S7-KONTRAK-ADMIN-API.md §5.2.
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -21,8 +22,8 @@ import { galat, GalatOtorisasi, jawabGalat, periksaSandi, selesaiUtama, transaks
 const DISIAPKAN = "sedang disiapkan (S7-1)";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** Kompensasi: hapus user setengah jadi — HANYA bila masih dalam keadaan "sedang disiapkan". */
-async function hapusSetengahJadi(id: string) {
+/** Kompensasi: hapus user setengah jadi — HANYA bila masih dalam keadaan "sedang disiapkan". true = bersih (atau tidak ada). */
+async function hapusSetengahJadi(id: string): Promise<boolean> {
     try {
         await db.transaction(async (tx) => {
             const [u] = await tx.select({ id: user.id }).from(user).where(and(eq(user.id, id), eq(user.banReason, DISIAPKAN))).for("update");
@@ -32,10 +33,16 @@ async function hapusSetengahJadi(id: string) {
             await tx.delete(userGroup).where(eq(userGroup.userId, id));
             await tx.delete(user).where(eq(user.id, id));
         });
+        return true;
     } catch (e) {
-        console.error("[admin-users] kompensasi gagal; user tetap banned:", id, (e as { cause?: { code?: string } })?.cause?.code ?? "");
+        console.error("[admin-users] kompensasi gagal; user tetap banned 'sedang disiapkan':", id, (e as { cause?: { code?: string } })?.cause?.code ?? "");
+        return false;
     }
 }
+
+/** Kompensasi gagal = jawaban JUJUR (bukan "tidak ada yang berubah"): user ada tetapi nonaktif dan tidak bisa masuk. */
+const setengahJadi = (id: string) => galat(500, "USER_SETENGAH_JADI",
+    "User terbuat sebagian dan dibiarkan NONAKTIF (\"sedang disiapkan\", tidak bisa masuk). Minta IT Support menghapusnya, lalu ulangi.", { userId: id });
 
 export async function POST(request: NextRequest) {
     const gate = await requirePermission(request, "users.manage");
@@ -73,7 +80,10 @@ export async function POST(request: NextRequest) {
         const code = (e as { body?: { code?: string } })?.body?.code ?? "";
         if (code.startsWith("USER_ALREADY_EXISTS")) return galat(409, "EMAIL_TERPAKAI", "Email sudah terdaftar.");
         if (code === "INVALID_EMAIL") return galat(400, "EMAIL_TIDAK_VALID", "Format email tidak valid.");
-        console.error("[admin-users] createUser gagal:", code);
+        // Better Auth bisa gagal DI TENGAH (user tersimpan, akun/sandi gagal): cari user setengah jadi lewat email + penanda.
+        const [sisa] = await db.select({ id: user.id }).from(user).where(and(eq(user.email, email), eq(user.banReason, DISIAPKAN))).limit(1).catch(() => [undefined]);
+        console.error("[admin-users] createUser gagal:", code, sisa ? `user setengah jadi ${sisa.id}` : "");
+        if (sisa && !(await hapusSetengahJadi(sisa.id))) return setengahJadi(sisa.id);
         return galat(500, "GAGAL_SIMPAN", "Gagal membuat user; tidak ada yang berubah.");
     }
 
@@ -96,7 +106,7 @@ export async function POST(request: NextRequest) {
         });
         return NextResponse.json({ ok: true, user: { id, name, email, role: hasil.role, groupIds, primaryGroupId: hasil.primaryGroupId } }, { status: 201 });
     } catch (e) {
-        await hapusSetengahJadi(id);
+        if (!(await hapusSetengahJadi(id))) return setengahJadi(id);
         return jawabGalat(e);
     }
 }

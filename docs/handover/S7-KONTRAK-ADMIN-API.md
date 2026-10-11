@@ -38,6 +38,7 @@ Dasar: matriks D-01 (DISETUJUI 11 Okt, `scratch/fiori-intake/D01-MATRIKS-DRAF-20
 | 409 | `EMAIL_TERPAKAI` / `NAMA_GRUP_TERPAKAI` | unik |
 | 409 | `BINTANG_BENTROK` | bentrok bintang bersamaan (indeks unik `uq_user_group_primary`); ulangi |
 | 500 | `GAGAL_SIMPAN` | galat tak terduga; tidak ada yang berubah |
+| 500 | `USER_SETENGAH_JADI` | buat user: kompensasi gagal — user ada tetapi NONAKTIF ("sedang disiapkan", tidak bisa masuk); `userId`; IT Support menghapus |
 
 ## 3. Penjaga BL-61 (`lib/rbac/otorisasi.ts`, satu fungsi bersama)
 
@@ -162,3 +163,6 @@ Cursor rusak → 400 `INPUT_TIDAK_VALID`. Label aksi: `auditActionLabels` di `li
   grup preset tempat user TADINYA anggota dan sesudah perubahan ia tidak lagi anggota grup preset ber-peta itu → `viewer` (tercatat
   `roleBefore/roleAfter`). Mis. user 3 grup tanpa bintang ber-role `admin` dikeluarkan dari Admin → `viewer`. Role lama yang tidak
   berasal dari keanggotaan preset tidak disentuh.
+- **Perbaikan #4/#5 (tinjauan B):** Better Auth gagal DI TENGAH (user tersimpan, akun gagal) → user setengah jadi dicari lewat email +
+  penanda "sedang disiapkan" lalu dihapus. Kompensasi gagal → **500 `USER_SETENGAH_JADI`** + `userId` (bukan "tidak ada yang berubah");
+  user tetap banned dan masuk ditolak `BANNED_USER`. Log memuat id user, tanpa sandi.
