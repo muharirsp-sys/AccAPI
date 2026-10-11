@@ -18,8 +18,11 @@ Prasyarat deploy: `docs/handover/DDL_S7_0.sql` lalu `docs/handover/DDL_S7_2.sql`
   Support". `503 PRINCIPAL_SKEMA_BELUM` = tabel belum ada.
 - `code` principal **tidak bisa diubah** (tanpa jalur ubah; trigger DB menolak juga). Kode salah = buat principal baru +
   nonaktifkan yang lama. Nama resmi juga belum punya jalur ubah (TERBUKA).
-- `alias_norm` selalu dihitung server dengan normalizer baku: NFKC, huruf besar, semua spasi Unicode/kendali → satu spasi, trim,
-  karakter format tak terlihat dibuang; **tanda baca tetap** (`PT.`, koma, `**` OCR). Client tidak pernah mengirim `aliasNorm`.
+- `alias_norm` selalu dihitung server dengan normalizer baku (`lib/principal/normalisasi.ts`): karakter tak terlihat dibuang
+  (`\p{Cf}` + Default_Ignorable: lebar-nol, BOM, U+034F, variation selector, pengisi Hangul), NFKC, kutip/tanda hubung tipografis
+  OCR/Word disamakan (kutip lengkung → `'` / `"`, U+2010–2015 & minus → `-`), semua spasi Unicode/kendali → satu spasi, trim,
+  huruf besar; **tanda baca lain tetap** (`PT.`, koma, `**` OCR). `name`/`aliasAsli` dirapikan sama tanpa huruf besar. Client
+  tidak pernah mengirim `aliasNorm`.
 - `variantKey`: tidak dikirim / `null` = principal **utuh**; `""` **persis** = varian dasar (hanya bila principal punya varian
   lain); selain itu `^[A-Z0-9_-]{1,20}$` sesudah dirapikan (huruf kecil dinaikkan; spasi di tengah ditolak — pakai `NON_FOOD`).
   Teks yang kosong SESUDAH dirapikan (`"   "`, lebar-nol) = 400 `VARIAN_TIDAK_SAH` — tidak pernah diam-diam jadi varian dasar.

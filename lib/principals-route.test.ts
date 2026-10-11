@@ -85,7 +85,7 @@ test("validasi isian -> 400 berkode sebelum DB", async () => {
         await cek(buatPost(req("POST", "/api/principals", "bukan json")), "BODY_TIDAK_SAH");
         await cek(buatPost(req("POST", "/api/principals", [1])), "BODY_TIDAK_SAH");
         await cek(buatPost(req("POST", "/api/principals", { code: "KI NO", name: "x" })), "KODE_TIDAK_SAH");
-        await cek(buatPost(req("POST", "/api/principals", { code: "KINO", name: "   " })), "TIDAK_SAH");
+        await cek(buatPost(req("POST", "/api/principals", { code: "KINO", name: " \u00A0 " })), "TIDAK_SAH");
         await cek(principalPatch(req("PATCH", "/api/principals/p1", { isActive: "false" }), ctx()), "TIDAK_SAH");
         await cek(varianPost(req("POST", "/api/principals/p1/variants", {}), ctx()), "VARIAN_TIDAK_SAH");
         await cek(varianPost(req("POST", "/api/principals/p1/variants", { variantKey: "NON FOOD" }), ctx()), "VARIAN_TIDAK_SAH");
@@ -96,7 +96,7 @@ test("validasi isian -> 400 berkode sebelum DB", async () => {
         await cek(aliasPost(req("POST", "/api/principals/p1/aliases", { alias: "X", jenis: ["nama"] }), ctx()), "JENIS_TIDAK_SAH");
         await cek(aliasPost(req("POST", "/api/principals/p1/aliases", { alias: "X", jenis: { toString: "nama" } }), ctx()), "JENIS_TIDAK_SAH");
         // variantKey kosong SESUDAH dirapikan (spasi, lebar-nol) = 400, bukan diam-diam varian dasar "".
-        for (const vk of ["   ", "​", " \t"]) {
+        for (const vk of ["   ", "\u200B", "\u00A0\t"]) {
             await cek(varianPost(req("POST", "/api/principals/p1/variants", { variantKey: vk }), ctx()), "VARIAN_TIDAK_SAH");
             await cek(varianPatch(req("PATCH", "/api/principals/p1/variants", { variantKey: vk, isActive: false }), ctx()), "VARIAN_TIDAK_SAH");
             await cek(aliasPost(req("POST", "/api/principals/p1/aliases", { alias: "X", jenis: "nama", variantKey: vk }), ctx()), "VARIAN_TIDAK_SAH");

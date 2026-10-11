@@ -20,7 +20,7 @@ export function dataSintetis(over: Partial<DataDb> = {}): DataDb {
         principalMapping: { ok: true, rows: [
             { principal: "KINO NON FOOD", kind: "item", n: 120 }, { principal: "KINO NON FOOD", kind: "customer", n: 40 },
             { principal: "KINO NON FOOD-KN", kind: "item", n: 2 },
-            { principal: "Forisa MT", kind: "item", n: 9 },
+            { principal: "Forisa\u00A0MT", kind: "item", n: 9 },
             { principal: "PRISKILA'S PRIMA MAKMUR", kind: "brand", n: 1 },
         ] },
         noClaimTemplate: { ok: true, rows: [{ principleCode: "HEINZ", variantKey: "HZ" }, { principleCode: "KINO", variantKey: "" }, { principleCode: "ZZZ", variantKey: "" }] },
@@ -63,7 +63,7 @@ test("klasifikasi per sumber: persis / longgar / ambiguous / unmatched; sumber g
     const map = baris(lap, "principal_mapping");
     assert.deepEqual([map.get("KINO NON FOOD")?.status, map.get("KINO NON FOOD")?.jumlah], ["matched", 160]);
     assert.equal(map.get("KINO NON FOOD-KN")?.status, "ambiguous", "akhiran cabang -KN: KINO utuh vs NON_FOOD — tidak ditebak");
-    assert.deepEqual(map.get("Forisa MT")?.target, { code: "FRS", variantKey: "MT" });
+    assert.deepEqual(map.get("Forisa\u00A0MT")?.target, { code: "FRS", variantKey: "MT" });
 
     const nc = baris(lap, "no_claim_template");
     assert.deepEqual([nc.get("HEINZ/HZ")?.status, nc.get("KINO")?.status, nc.get("ZZZ")?.status], ["matched", "matched", "unmatched"]);

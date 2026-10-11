@@ -206,7 +206,7 @@ test("PG S7-2: principal_log append-only — UPDATE/DELETE/TRUNCATE ditolak trig
 // --------------------------------------------------------------------------- route + DB nyata
 
 test("PG S7-2: buat principal = principal + alias kode & nama + principal_log satu transaksi; kode ganda 409; nama bertabrakan 409 tanpa sisa", { skip: pgSkip }, async () => {
-    const kino = await buat("kino", " KINO INDONESIA. TBK, PT ");
+    const kino = await buat("kino", " KINO INDONESIA.\u00A0TBK, PT ");
     assert.equal(kino.status, 201, JSON.stringify(kino.body));
     const p = kino.body.principal as { id: string; code: string; name: string };
     assert.deepEqual([p.code, p.name], ["KINO", "KINO INDONESIA. TBK, PT"]);
@@ -243,7 +243,7 @@ test("PG S7-2: varian & alias — varian dasar ditolak tanpa varian lain; tabrak
     assert.equal((await varian(kino, { variantKey: "", name: "KINO FOOD" })).status, 201, "dasar boleh sesudah ada varian lain");
     assert.equal((await varian(frs.id, { variantKey: "MT", name: "FORISA MT" })).status, 201);
 
-    const sama = await alias(kino, { alias: "Kino Non  Food", jenis: "label_mapping", variantKey: "NON_FOOD" });
+    const sama = await alias(kino, { alias: "Kino\u00A0Non  Food", jenis: "label_mapping", variantKey: "NON_FOOD" });
     assert.deepEqual([sama.status, sama.body.code], [409, "ALIAS_SUDAH_ADA"]);
     const rebut = await alias(mi.id, { alias: "kino non food", jenis: "label_mapping" });
     assert.deepEqual([rebut.status, rebut.body.code, (rebut.body.pemilik as { code: string; variantKey: string }).variantKey], [409, "ALIAS_TABRAKAN", "NON_FOOD"]);

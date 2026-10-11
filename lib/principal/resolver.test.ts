@@ -20,7 +20,7 @@ const indeks = buatIndeksAlias([
 ]);
 
 test("cocok: principal utuh (variantKey null) dan varian; teks dinormalkan dulu; jenis apa pun di ruang nama", () => {
-    const utuh = resolvePrincipal("  kino indonesia. tbk, pt ", indeks, "nama");
+    const utuh = resolvePrincipal("  kino indonesia.\u00A0tbk, pt ", indeks, "nama");
     assert.deepEqual(utuh.status === "cocok" && [utuh.code, utuh.variantKey, utuh.aktif], ["KINO", null, true]);
     const varian = resolvePrincipal("Kino Non Food", indeks, "nama");
     assert.deepEqual(varian.status === "cocok" && [varian.code, varian.variantKey], ["KINO", "NON_FOOD"], "alias label_mapping tetap ditemukan di ruang nama");
