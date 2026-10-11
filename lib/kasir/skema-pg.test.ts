@@ -10,7 +10,7 @@ import { readFile } from "node:fs/promises";
 import { Pool, type PoolClient } from "pg";
 import { is, SQL } from "drizzle-orm";
 import { getTableConfig, PgDialect, type PgTable } from "drizzle-orm/pg-core";
-import { kasirHariEvent, kasirPelunasan, kasirPelunasanFaktur, kasirSelisihCatatan, kasirSetoran } from "../../db/schema.ts";
+import { kasirHariEvent, kasirPelunasan, kasirPelunasanFaktur, kasirSelisihCatatan, kasirSetoran, kasirTakTeralokasiCatatan } from "../../db/schema.ts";
 import { keSen, senKeTeks } from "./rekonsiliasi.ts";
 
 const PG_URL = process.env.AM040_DATABASE_URL ?? "";
@@ -18,8 +18,8 @@ const pgSkip = PG_URL ? false : "AM040_DATABASE_URL tidak di-set (Postgres evalu
 
 type Migration = { nama: string; sudahAda: string; sql: string };
 const NAMA_ENTRI = "kasir (setoran, catatan, hari, cache pelunasan)";
-const TABEL = ["kasir_setoran", "kasir_selisih_catatan", "kasir_hari_event", "kasir_pelunasan", "kasir_pelunasan_faktur"];
-const JEJAK = ["kasir_setoran", "kasir_selisih_catatan", "kasir_hari_event"];
+const TABEL = ["kasir_setoran", "kasir_selisih_catatan", "kasir_hari_event", "kasir_tak_teralokasi_catatan", "kasir_pelunasan", "kasir_pelunasan_faktur"];
+const JEJAK = ["kasir_setoran", "kasir_selisih_catatan", "kasir_hari_event", "kasir_tak_teralokasi_catatan"];
 
 async function entri(): Promise<Migration> {
     const mod = await import(new URL("../../scripts/migrate-pg.mjs", import.meta.url).href) as { migrations: Migration[] };
@@ -89,7 +89,7 @@ test("PG K1a: migrate-pg dari kosong dua kali — OK lalu SKIP; SQL mentah aman 
         const sebelum = await katalog(pool);
         await pool.query(m.sql);
         assert.deepEqual(await katalog(pool), sebelum, "SQL entri diulang tanpa perubahan");
-        assert.equal(sebelum.indeks.length, 9, "9 indeks (PK + unik revisi + indeks baca)");
+        assert.equal(sebelum.indeks.length, 11, "11 indeks (PK + unik revisi + indeks baca)");
     });
 });
 
@@ -130,7 +130,8 @@ test("PG K1a: DDL_K1A.sql dua kali idempoten + VERIFIKASI; sesudahnya migrate-pg
     });
     const k = bentuk!;
     const tabelDrizzle: [string, PgTable][] = [["kasir_setoran", kasirSetoran], ["kasir_selisih_catatan", kasirSelisihCatatan],
-        ["kasir_hari_event", kasirHariEvent], ["kasir_pelunasan", kasirPelunasan], ["kasir_pelunasan_faktur", kasirPelunasanFaktur]];
+        ["kasir_hari_event", kasirHariEvent], ["kasir_tak_teralokasi_catatan", kasirTakTeralokasiCatatan], ["kasir_pelunasan", kasirPelunasan],
+        ["kasir_pelunasan_faktur", kasirPelunasanFaktur]];
     for (const [nama, t] of tabelDrizzle) {
         const cfg = getTableConfig(t);
         assert.deepEqual(
@@ -201,9 +202,20 @@ test("PG K1a: constraint — nominal >= 0, revisi BERANTAI (menunjuk revisi sebe
 
         const event = (jenis: string, alasan: string | null, snapshot: string | null) =>
             q(`INSERT INTO kasir_hari_event (tanggal, jenis, alasan, snapshot, oleh) VALUES ('2026-10-05', $1, $2, $3::jsonb, 'kasir-1')`, [jenis, alasan, snapshot]);
-        await event("tutup", null, `{"versi":1}`);
-        await event("kunci", null, `{"versi":1}`);
+        await event("tutup", null, `{"versi":1,"terhalang":[]}`);
+        await event("kunci", null, `{"versi":1,"terhalang":["Uang tak teralokasi SR/1 belum dijelaskan"]}`); // kunci ≠ tutup: boleh terhalang
         await event("buka", "Setoran MKS-03 salah dicatat", null);
+        // Owner 11 Okt (T2): Tutup DITOLAK selama ada yang terhalang (selisih / uang tak teralokasi belum dijelaskan) — juga tanpa kunci.
+        await assert.rejects(event("tutup", null, `{"versi":1,"terhalang":["Uang tak teralokasi SR/1 belum dijelaskan"]}`), kodeGalat("23514"), "tutup terhalang");
+        await assert.rejects(event("tutup", null, `{"versi":1}`), kodeGalat("23514"), "tutup tanpa terhalang (NULL tidak lolos)");
+        await assert.rejects(event("tutup", null, `{"versi":1,"terhalang":null}`), kodeGalat("23514"), "tutup terhalang null");
+        const ember = (sisa: string, penjelasan: string, db = "DB-1") => q(`INSERT INTO kasir_tak_teralokasi_catatan
+            (tanggal, database_id, pelunasan_id, sisa, penjelasan, dicatat_oleh) VALUES ('2026-10-05', $1, 77, $2, $3, 'kasir-1')`, [db, sisa, penjelasan]);
+        await ember("100000.00", "Kredit pelanggan dipakai, cek Incaso");
+        await ember("-50000.00", "Lebih bayar dicatat sebagai uang muka");
+        await assert.rejects(ember("1", "pendek sekali  "), kodeGalat("23514"), "penjelasan ember < 15 huruf");
+        await assert.rejects(ember("0", "Kredit pelanggan dipakai, cek Incaso"), kodeGalat("23514"), "sisa 0 bukan tak teralokasi");
+        await assert.rejects(ember("1", "Kredit pelanggan dipakai, cek Incaso", " "), kodeGalat("23514"), "database kosong");
         await assert.rejects(event("buka", null, null), kodeGalat("23514"), "buka tanpa alasan (NULL tidak lolos)");
         await assert.rejects(event("buka", "kurang panjang", null), kodeGalat("23514"), "alasan buka < 15 huruf");
         await assert.rejects(event("buka", "Alasan yang cukup panjang", `{"versi":1}`), kodeGalat("23514"), "buka tanpa snapshot");
@@ -228,14 +240,16 @@ test("PG K1a: constraint — nominal >= 0, revisi BERANTAI (menunjuk revisi sebe
     });
 });
 
-test("PG K1a: DDL — trigger append-only menolak UPDATE/DELETE/TRUNCATE pada setoran, catatan, event; cache tetap bisa diubah", { skip: pgSkip }, async () => {
+test("PG K1a: DDL — trigger append-only menolak UPDATE/DELETE/TRUNCATE pada setoran, catatan, event, catatan tak teralokasi; cache tetap bisa diubah", { skip: pgSkip }, async () => {
     const ddl = await ddlK1a();
     await denganSkema(async (pool) => {
         await verifikasi(pool, ddl);
         await pool.query(`INSERT INTO kasir_setoran (tanggal, salesman_kode, revisi, tunai, transfer, giro, dicatat_oleh) VALUES ('2026-10-05', 'S-A', 1, 1, 0, 0, 'k')`);
         await pool.query(`INSERT INTO kasir_selisih_catatan (tanggal, salesman_kode, pelunasan, setoran, penjelasan, tindak_lanjut, dicatat_oleh)
             VALUES ('2026-10-05', 'S-A', 2, 1, 'Setor susulan 6 Okt pagi', 'setor_susulan', 'k')`);
-        await pool.query(`INSERT INTO kasir_hari_event (tanggal, jenis, snapshot, oleh) VALUES ('2026-10-05', 'tutup', '{}', 'k')`);
+        await pool.query(`INSERT INTO kasir_hari_event (tanggal, jenis, snapshot, oleh) VALUES ('2026-10-05', 'tutup', '{"terhalang":[]}', 'k')`);
+        await pool.query(`INSERT INTO kasir_tak_teralokasi_catatan (tanggal, database_id, pelunasan_id, sisa, penjelasan, dicatat_oleh)
+            VALUES ('2026-10-05', 'DB-1', 77, 100000, 'Kredit pelanggan dipakai, cek Incaso', 'k')`);
         const ditolak = (e: unknown) => kodeGalat("23001")(e) && /append-only/.test(String((e as Error).message));
         for (const t of JEJAK) {
             await assert.rejects(pool.query(`UPDATE ${t} SET tanggal = tanggal`), ditolak, `${t}: UPDATE`);
@@ -269,10 +283,13 @@ test("PG K1a: DDL — hak accapi_app (role sementara, transaksi di-ROLLBACK): je
             for (const [cek, ok] of v) assert.equal(ok, true, `VERIFIKASI ${cek}`);
             await c.query("SET LOCAL ROLE accapi_app");
             await c.query(`INSERT INTO kasir_setoran (tanggal, salesman_kode, revisi, tunai, transfer, giro, dicatat_oleh) VALUES ('2026-10-05', 'S-A', 1, 1, 0, 0, 'k')`);
-            await c.query(`INSERT INTO kasir_hari_event (tanggal, jenis, snapshot, oleh) VALUES ('2026-10-05', 'tutup', '{}', 'k')`);
+            await c.query(`INSERT INTO kasir_hari_event (tanggal, jenis, snapshot, oleh) VALUES ('2026-10-05', 'tutup', '{"terhalang":[]}', 'k')`);
+            await c.query(`INSERT INTO kasir_tak_teralokasi_catatan (tanggal, database_id, pelunasan_id, sisa, penjelasan, dicatat_oleh)
+                VALUES ('2026-10-05', 'DB-1', 77, 1, 'Kredit pelanggan dipakai, cek Incaso', 'k')`);
             await c.query(`INSERT INTO kasir_pelunasan (database_id, pelunasan_id, nomor, tanggal, metode, cheque_amount) VALUES ('DB-1', 1, 'SR/1', '2026-10-05', 'CASH_OTHER', 1)`);
             await c.query(`UPDATE kasir_pelunasan SET cheque_amount = 2`);
-            for (const sql of [`UPDATE kasir_setoran SET tunai = 9`, `DELETE FROM kasir_hari_event`, `TRUNCATE kasir_selisih_catatan`]) {
+            for (const sql of [`UPDATE kasir_setoran SET tunai = 9`, `DELETE FROM kasir_hari_event`, `TRUNCATE kasir_selisih_catatan`,
+                `UPDATE kasir_tak_teralokasi_catatan SET sisa = 2`]) {
                 await c.query("SAVEPOINT s");
                 await assert.rejects(c.query(sql), kodeGalat("42501"), `accapi_app: ${sql} ditolak hak (sebelum trigger)`);
                 await c.query("ROLLBACK TO SAVEPOINT s");
@@ -282,5 +299,67 @@ test("PG K1a: DDL — hak accapi_app (role sementara, transaksi di-ROLLBACK): je
             c.release();
         }
         assert.equal((await pool.query("SELECT to_regclass('kasir_setoran') AS r")).rows[0].r, null, "transaksi uji benar-benar di-ROLLBACK");
+    });
+});
+
+// Cermin tabel RBAC (db/schema.ts accessGroup, groupPermission, permissionAuditLog) — kolom yang dipakai berkas preset saja.
+const RBAC_DASAR = `
+    CREATE TABLE access_group (id text PRIMARY KEY, name text NOT NULL UNIQUE, description text, is_preset boolean NOT NULL DEFAULT false,
+        created_at timestamp NOT NULL DEFAULT now(), updated_at timestamp NOT NULL DEFAULT now());
+    CREATE TABLE group_permission (group_id text NOT NULL REFERENCES access_group(id), permission_key text NOT NULL,
+        PRIMARY KEY (group_id, permission_key));
+    CREATE TABLE permission_audit_log (id text PRIMARY KEY, actor_user_id text, actor_name text, action text NOT NULL, target_user_id text,
+        target_group_id text, detail jsonb, created_at timestamp NOT NULL);`;
+
+test("PG K1a: RBAC_PRESET_KASIR.sql — grup lewat nama, grup absen = NOTICE (tidak gagal), idempoten, kunci lain tidak disentuh, jejak audit", { skip: pgSkip }, async () => {
+    const sql = await berkas("../../docs/handover/RBAC_PRESET_KASIR.sql");
+    await denganSkema(async (pool) => {
+        await pool.query(RBAC_DASAR);
+        await pool.query(`INSERT INTO access_group (id, name) VALUES ('g-om', 'OM'), ('g-admin', 'Admin'), ('g-fin', 'Finance')`);
+        await pool.query(`INSERT INTO group_permission VALUES ('g-om', 'off_program_control.om_approve'), ('g-om', 'kasir.view'),
+            ('g-admin', 'users.manage'), ('g-fin', 'finance.view')`);
+        const lain = async () => (await pool.query(`SELECT group_id || ':' || permission_key AS k FROM group_permission
+            WHERE permission_key NOT LIKE 'kasir.%' ORDER BY 1`)).rows.map((r) => r.k);
+        const sebelum = await lain();
+        const jalan = async () => {
+            const c = await pool.connect();
+            const notice: string[] = [];
+            c.on("notice", (n) => notice.push(String(n.message)));
+            try {
+                const hasil = await c.query(sql) as unknown as { fields?: { name: string }[]; rows: Record<string, unknown>[] }[];
+                const ambil = (kolom: string) => hasil.find((r) => r.fields?.some((f) => f.name === kolom))!.rows;
+                const [ringkas] = ambil("izin_disisipkan");
+                return { izin: Number(ringkas.izin_disisipkan), audit: Number(ringkas.audit), laporan: ambil("kunci_kasir"), notice };
+            } finally {
+                c.release();
+            }
+        };
+
+        // 1. Grup Kasir belum dibuat (BL-37 belum jalan): NOTICE, OM/Admin tetap diisi; kasir.view OM yang sudah ada tidak digandakan.
+        const r1 = await jalan();
+        assert.equal(r1.izin, 3, "OM +buka, Admin +view +buka");
+        assert.equal(r1.audit, 2, "satu jejak per grup yang bertambah");
+        assert.ok(r1.notice.some((n) => /grup "Kasir" tidak ada/.test(n)), `NOTICE grup Kasir: ${r1.notice.join(" | ")}`);
+        assert.deepEqual(r1.laporan, [
+            { grup: "Admin", ada: true, kunci_kasir: ["kasir.buka", "kasir.view"] },
+            { grup: "Kasir", ada: false, kunci_kasir: [] },
+            { grup: "OM", ada: true, kunci_kasir: ["kasir.buka", "kasir.view"] },
+        ]);
+        // 2. Sesudah BL-37 membuat grup Kasir: hanya Kasir yang bertambah, tanpa kasir.buka.
+        await pool.query(`INSERT INTO access_group (id, name, is_preset) VALUES ('g-kasir', 'Kasir', true)`);
+        await pool.query(`INSERT INTO group_permission VALUES ('g-kasir', 'dashboard.view')`);
+        const r2 = await jalan();
+        assert.deepEqual([r2.izin, r2.audit, r2.notice.length], [3, 1, 0]);
+        assert.deepEqual(r2.laporan.find((r) => r.grup === "Kasir"), { grup: "Kasir", ada: true, kunci_kasir: ["kasir.catat", "kasir.tutup", "kasir.view"] });
+        // 3. Idempoten; kunci non-kasir (termasuk dashboard.view Kasir) tidak disentuh.
+        const r3 = await jalan();
+        assert.deepEqual([r3.izin, r3.audit], [0, 0]);
+        assert.deepEqual(await lain(), [...sebelum, "g-kasir:dashboard.view"].sort());
+        const audit = (await pool.query(`SELECT target_group_id, action, detail->'added' AS added FROM permission_audit_log ORDER BY target_group_id`)).rows;
+        assert.deepEqual(audit, [
+            { target_group_id: "g-admin", action: "group_permission.sync", added: ["kasir.buka", "kasir.view"] },
+            { target_group_id: "g-kasir", action: "group_permission.sync", added: ["kasir.catat", "kasir.tutup", "kasir.view"] },
+            { target_group_id: "g-om", action: "group_permission.sync", added: ["kasir.buka"] },
+        ]);
     });
 });

@@ -4,10 +4,11 @@
  *       -> selisihnya ke ember TAK TERALOKASI per pelunasan (tidak pernah dibagi diam-diam); metode OTHERS dikeluarkan;
  *   (b) masterSalesmanId -> kode (accurate_employee.number) -> ORANG (gabungan sales_code_merge per bulan);
  *   (c) rekonsiliasi per orang per hari: klop = sama persis ATAU setoran = total dibulatkan KE ATAS ke kelipatan Rp 100;
+ *       Tutup hari terhalang sampai setiap selisih orang DAN setiap ember tak teralokasi dijelaskan (owner 11 Okt, T2);
  *   (d) kunci hari: tutup/kunci tercatat ATAU ≥ 20.00 WITA; dibuka kembali hanya oleh event buka beralasan.
  * Keputusan owner: scratch/fiori-intake/OWNER-ANSWERS-S7-2026-10-10.md (C8 + Kasir 11 Okt). Kontrak: docs/handover/KASIR-KONTRAK.md.
  * Caller: K1b (pembaca Accurate, cache kasir_pelunasan*), K2 (route & UI /kasir), K3 (Beranda).
- * Dependensi: lib/sales-code-merge (applyMergeMap, murni), lib/insentif-payment-date (todayWita, murni).
+ * Dependensi: lib/sales-code-merge (applyMergeMap), lib/insentif-payment-date (todayWita), lib/promo-ui (rupiah) — semuanya murni.
  * Main Functions: keSen, senKeTeks, alokasiPelunasan, orangDariKode, orangDariSalesmanId, klop, bulatkanKeAtas100,
  *   rekonsiliasiHari, penghalangTutup, snapshotHari, batasKunci, statusHari, bolehDiubah, hariKerja.
  * Side Effects: tidak ada.
@@ -17,6 +18,7 @@
  */
 import { applyMergeMap } from "../sales-code-merge.ts";
 import { todayWita } from "../insentif-payment-date.ts";
+import { rupiah } from "../promo-ui.ts";
 
 /** Rupiah dalam sen (bilangan bulat aman). */
 export type Sen = number;
@@ -195,6 +197,13 @@ export interface CatatanSelisih {
     setoran: Sen;
 }
 
+/** Penjelasan uang tak teralokasi (kasir_tak_teralokasi_catatan, sudah disaring ke database Accurate yang dibaca):
+ * berlaku untuk pelunasan itu selama `sisa` sama. */
+export interface CatatanTakTeralokasi {
+    pelunasanId: number;
+    sisa: Sen;
+}
+
 export type StatusOrang = "klop" | "selisih" | "belum_setor" | "setoran_tanpa_pelunasan";
 
 export interface BarisOrang {
@@ -220,13 +229,14 @@ export interface MasukanRekonsiliasi {
     pelunasan: readonly Pelunasan[];
     setoran: readonly SetoranRevisi[];
     catatan?: readonly CatatanSelisih[];
+    catatanTakTeralokasi?: readonly CatatanTakTeralokasi[];
     peta: PetaOrang;
 }
 
 export interface HasilRekonsiliasi {
     tanggal: string;
     baris: BarisOrang[];
-    takTeralokasi: TakTeralokasi[];
+    takTeralokasi: (TakTeralokasi & { dijelaskan: boolean })[];
     nonKas: Pelunasan[];
     total: { pelunasan: Sen; setoran: Sen; takTeralokasi: Sen; nonKas: Sen };
 }
@@ -293,9 +303,11 @@ export function rekonsiliasiHari(m: MasukanRekonsiliasi): HasilRekonsiliasi {
         };
     }).sort((a, b) => (a.orang === TANPA_SALESMAN ? 1 : 0) - (b.orang === TANPA_SALESMAN ? 1 : 0) || a.orang.localeCompare(b.orang));
 
+    const embJelas = new Set((m.catatanTakTeralokasi ?? []).map((c) => `${c.pelunasanId}|${c.sisa}`));
     const jumlah = (xs: Sen[]) => xs.reduce((s, x) => s + x, 0);
     return {
-        tanggal: m.tanggal, baris, takTeralokasi, nonKas,
+        tanggal: m.tanggal, baris, nonKas,
+        takTeralokasi: takTeralokasi.map((t) => ({ ...t, dijelaskan: embJelas.has(`${t.pelunasanId}|${t.sisa}`) })),
         total: {
             pelunasan: jumlah(baris.map((b) => b.pelunasan)),
             setoran: jumlah(baris.map((b) => b.setoran?.total ?? 0)),
@@ -305,22 +317,47 @@ export function rekonsiliasiHari(m: MasukanRekonsiliasi): HasilRekonsiliasi {
     };
 }
 
-/**
- * Baris yang menghalangi Tutup hari: belum klop dan belum dijelaskan (spec it11: "hari ditutup setelah semua klop atau
- * dijelaskan"). Ember tak teralokasi TIDAK menghalangi (tidak punya orang; tampil di snapshot) — lihat TERBUKA di kontrak.
- */
-export function penghalangTutup(h: HasilRekonsiliasi): BarisOrang[] {
-    return h.baris.filter((b) => b.status !== "klop" && !b.dijelaskan);
+const rp = (sen: Sen) => rupiah(senKeTeks(sen));
+
+function alasanBaris(b: BarisOrang): string {
+    const siapa = b.orang === TANPA_SALESMAN ? "Tanpa salesman" : b.orang;
+    if (b.status === "belum_setor") return `${siapa} belum setor dan belum dijelaskan: pelunasan ${rp(b.pelunasan)}.`;
+    const setoran = b.setoran?.total ?? 0;
+    if (b.status === "setoran_tanpa_pelunasan") return `Setoran ${siapa} tanpa pelunasan belum dijelaskan: ${rp(setoran)}.`;
+    return `Selisih ${siapa} belum dijelaskan: setoran ${rp(setoran)} lawan pelunasan ${rp(b.pelunasan)} (${rp(setoran - b.pelunasan)}).`;
 }
 
-/** Snapshot angka untuk kasir_hari_event (tutup / kunci) — JSON murni, sen bulat. Banding dengan snapshot baru = "berubah sejak ditutup". */
+function alasanEmber(t: TakTeralokasi): string {
+    const rincian = t.alasan === "tanpa_baris_faktur" ? "pelunasan tanpa baris faktur"
+        : `pelunasan ${rp(t.chequeAmount)}, faktur ${rp(t.jumlahInvoicePayment)}`;
+    return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} (${rincian}).`;
+}
+
+/**
+ * Syarat Tutup hari (spec it11 + owner 11 Okt T2): SETIAP baris orang klop atau dijelaskan DAN SETIAP ember tak teralokasi
+ * dijelaskan. `alasan` = kalimat siap tampil (urut: orang, lalu ember). Kunci otomatis 20.00 tidak memakai syarat ini (kunci ≠ tutup).
+ */
+export function penghalangTutup(h: HasilRekonsiliasi) {
+    const baris = h.baris.filter((b) => b.status !== "klop" && !b.dijelaskan);
+    const takTeralokasi = h.takTeralokasi.filter((t) => !t.dijelaskan);
+    const alasan = [...baris.map(alasanBaris), ...takTeralokasi.map(alasanEmber)];
+    return { bisaDitutup: alasan.length === 0, alasan, baris, takTeralokasi };
+}
+
+/**
+ * Snapshot angka untuk kasir_hari_event (tutup / kunci) — JSON murni, sen bulat. Banding dengan snapshot baru = "berubah sejak
+ * ditutup". `terhalang` = alasan penghalangTutup SAAT itu: Tutup hanya sah bila kosong (CHECK kasir_hari_event_tutup_tuntas);
+ * snapshot KUNCI otomatis boleh berisi — mencatat selisih/ember yang belum dijelaskan saat hari terkunci (menjelaskannya
+ * sesudah itu butuh buka kembali, kasir.buka).
+ */
 export function snapshotHari(h: HasilRekonsiliasi) {
     return {
         versi: 1 as const,
         tanggal: h.tanggal,
         total: { ...h.total },
-        jumlahTakTeralokasi: h.takTeralokasi.length,
         baris: h.baris.map((b) => ({ orang: b.orang, pelunasan: b.pelunasan, setoran: b.setoran?.total ?? null, status: b.status, dijelaskan: b.dijelaskan })),
+        takTeralokasi: h.takTeralokasi.map((t) => ({ pelunasanId: t.pelunasanId, nomor: t.nomor, sisa: t.sisa, alasan: t.alasan, dijelaskan: t.dijelaskan })),
+        terhalang: penghalangTutup(h).alasan,
     };
 }
 
@@ -367,7 +404,7 @@ export interface StatusHari {
 /**
  * Event terakhir (menurut id) yang sah menentukan: tutup/kunci -> terkunci. Tanpa event -> terkunci sejak 20.00 WITA hari itu.
  * Buka beralasan (≥ 15 huruf) -> terbuka sampai 20.00 WITA berikutnya sesudah waktu buka, lalu terkunci otomatis lagi
- * (fail-closed; lihat TERBUKA di kontrak). Buka tanpa alasan sah diabaikan. `sekarang` disuntikkan (tanpa jam sistem).
+ * (owner 11 Okt, T1). Buka tanpa alasan sah diabaikan. `sekarang` disuntikkan (tanpa jam sistem).
  */
 export function statusHari(tanggal: string, events: readonly EventHari[], sekarang: Date): StatusHari {
     const batasHari = batasKunci(tanggal);

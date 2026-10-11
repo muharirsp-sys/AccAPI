@@ -536,12 +536,13 @@ export const migrations = [
     // 2026-10-11 (K1a BL-59 Kasir ↔ Incaso, owner 11 Okt: per ORANG per hari, Tunai+Transfer+Giro lawan chequeAmount, kunci 20.00
     // WITA; DRAFT — zona uang + skema, butuh review manusia). Tabel baru saja (tanpa data). Lihat db/migrations/0029_kasir.sql.
     // Trigger append-only + REVOKE/GRANT (setoran, catatan, event) TIDAK di sini (pola repo) — docs/handover/DDL_K1A.sql WAJIB
-    // dijalankan (juga bila DATABASE_MIGRATION_URL terpasang). sudahAda = SEMUA 9 indeks (PK + unik revisi + indeks baca) ada.
+    // dijalankan (juga bila DATABASE_MIGRATION_URL terpasang). sudahAda = SEMUA 11 indeks (PK + unik revisi + indeks baca) ada.
+    // T2 (owner 11 Okt): uang tak teralokasi wajib dijelaskan sebelum Tutup -> kasir_tak_teralokasi_catatan + CHECK tutup_tuntas.
     nama: "kasir (setoran, catatan, hari, cache pelunasan)",
     sudahAda: `SELECT 1 WHERE (SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname IN
                    ('kasir_setoran_pkey', 'uq_kasir_setoran_revisi', 'kasir_selisih_catatan_pkey', 'idx_kasir_selisih_catatan_hari',
                     'kasir_hari_event_pkey', 'idx_kasir_hari_event_tanggal', 'kasir_pelunasan_pkey', 'idx_kasir_pelunasan_tanggal',
-                    'kasir_pelunasan_faktur_pkey')) = 9`,
+                    'kasir_pelunasan_faktur_pkey', 'kasir_tak_teralokasi_catatan_pkey', 'idx_kasir_tak_teralokasi_catatan_hari')) = 11`,
     sql: `
       CREATE TABLE IF NOT EXISTS kasir_setoran (
           id                bigserial PRIMARY KEY,
@@ -596,9 +597,25 @@ export const migrations = [
           CONSTRAINT kasir_hari_event_alasan_buka CHECK (jenis <> 'buka' OR char_length(btrim(coalesce(alasan, ''))) >= 15),
           CONSTRAINT kasir_hari_event_snapshot CHECK ((jenis = 'buka') = (snapshot IS NULL)
               AND (snapshot IS NULL OR jsonb_typeof(snapshot) = 'object')),
+          CONSTRAINT kasir_hari_event_tutup_tuntas CHECK (jenis <> 'tutup' OR coalesce(snapshot -> 'terhalang', 'null'::jsonb) = '[]'::jsonb),
           CONSTRAINT kasir_hari_event_oleh CHECK (btrim(oleh) <> '')
       );
       CREATE INDEX IF NOT EXISTS idx_kasir_hari_event_tanggal ON kasir_hari_event (tanggal, id);
+      CREATE TABLE IF NOT EXISTS kasir_tak_teralokasi_catatan (
+          id           bigserial PRIMARY KEY,
+          tanggal      date NOT NULL,
+          database_id  text NOT NULL,
+          pelunasan_id bigint NOT NULL,
+          sisa         numeric(18,2) NOT NULL,
+          penjelasan   text NOT NULL,
+          dicatat_oleh text NOT NULL,
+          dicatat_pada timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT kasir_tak_teralokasi_catatan_database CHECK (btrim(database_id) <> ''),
+          CONSTRAINT kasir_tak_teralokasi_catatan_sisa CHECK (sisa <> 0),
+          CONSTRAINT kasir_tak_teralokasi_catatan_penjelasan CHECK (char_length(btrim(penjelasan)) >= 15),
+          CONSTRAINT kasir_tak_teralokasi_catatan_oleh CHECK (btrim(dicatat_oleh) <> '')
+      );
+      CREATE INDEX IF NOT EXISTS idx_kasir_tak_teralokasi_catatan_hari ON kasir_tak_teralokasi_catatan (database_id, tanggal);
       CREATE TABLE IF NOT EXISTS kasir_pelunasan (
           database_id   text NOT NULL,
           pelunasan_id  bigint NOT NULL,

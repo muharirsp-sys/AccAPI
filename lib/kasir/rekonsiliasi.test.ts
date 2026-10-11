@@ -11,6 +11,8 @@ import {
 
 const Rp = (rupiah: number) => rupiah * 100; // contoh uji dalam Rupiah bulat -> sen
 const D = "2026-10-05"; // Senin
+// Waktu WITA (UTC+8): 20.00 WITA = 12.00 UTC.
+const wita = (isoLokal: string) => new Date(`${isoLokal}+08:00`);
 
 // Pegawai Accurate (accurate_employee.id -> number) + gabungan kode (sales_code_merge 'merge') per bulan.
 const PETA: PetaOrang = {
@@ -204,19 +206,56 @@ test("penjelasan selisih berlaku hanya untuk angka yang dijelaskan; penghalang t
     });
     const h = rekonsiliasiHari(masukan(8_750_000));
     assert.equal(baris(h, "S-B").dijelaskan, true);
-    assert.deepEqual(penghalangTutup(h), []);
+    assert.deepEqual(penghalangTutup(h), { bisaDitutup: true, alasan: [], baris: [], takTeralokasi: [] });
     const berubah = rekonsiliasiHari(masukan(8_800_000));
     assert.equal(baris(berubah, "S-B").dijelaskan, false, "angka berubah = penjelasan lama tidak berlaku");
-    assert.deepEqual(penghalangTutup(berubah).map((x) => x.orang), ["S-B"]);
+    const p = penghalangTutup(berubah);
+    assert.equal(p.bisaDitutup, false);
+    assert.deepEqual(p.baris.map((x) => x.orang), ["S-B"]);
+    assert.deepEqual(p.alasan, ["Selisih S-B belum dijelaskan: setoran Rp 8.800.000 lawan pelunasan Rp 9.150.000 (Rp -350.000)."]);
     const s = snapshotHari(berubah);
     assert.equal(s.tanggal, D);
     assert.deepEqual(s.total, berubah.total);
     assert.deepEqual(s.baris.find((x) => x.orang === "S-B"), { orang: "S-B", pelunasan: Rp(9_150_000), setoran: Rp(8_800_000), status: "selisih", dijelaskan: false });
+    assert.deepEqual(s.terhalang, p.alasan);
     assert.deepEqual(JSON.parse(JSON.stringify(s)), s, "snapshot = JSON murni (kolom jsonb)");
 });
 
-// Waktu WITA (UTC+8): 20.00 WITA = 12.00 UTC.
-const wita = (isoLokal: string) => new Date(`${isoLokal}+08:00`);
+test("T2 (owner 11 Okt): uang TAK TERALOKASI wajib dijelaskan sebelum Tutup — per pelunasan, angka sisa sama; kunci tetap mencatat yang belum", () => {
+    const lebih = pel("BANK_TRANSFER", 1_000_000, [[11, 900_000]]); // sisa Rp 100.000
+    const kosong = pel("CASH_OTHER", 250_000, []); // tanpa baris faktur
+    const masukan = (catatanTakTeralokasi: { pelunasanId: number; sisa: number }[], setoranA = 900_000) => ({
+        tanggal: D, peta: PETA, pelunasan: [lebih, kosong], setoran: [setor("S-A", setoranA)], catatanTakTeralokasi,
+    });
+    const belum = rekonsiliasiHari(masukan([]));
+    assert.equal(baris(belum, "S-A").status, "klop", "semua orang klop ...");
+    assert.deepEqual(belum.takTeralokasi.map((t) => t.dijelaskan), [false, false]);
+    const p = penghalangTutup(belum);
+    assert.equal(p.bisaDitutup, false, "... tetapi ember tak teralokasi menghalangi Tutup");
+    assert.deepEqual(p.baris, []);
+    assert.deepEqual(p.takTeralokasi.map((t) => t.pelunasanId), [lebih.id, kosong.id]);
+    assert.deepEqual(p.alasan, [
+        `Uang tak teralokasi ${lebih.nomor} belum dijelaskan: Rp 100.000 (pelunasan Rp 1.000.000, faktur Rp 900.000).`,
+        `Uang tak teralokasi ${kosong.nomor} belum dijelaskan: Rp 250.000 (pelunasan tanpa baris faktur).`,
+    ]);
+
+    // Penjelasan berlaku hanya untuk pelunasan & angka sisa yang sama.
+    const sebagian = rekonsiliasiHari(masukan([{ pelunasanId: lebih.id, sisa: Rp(100_000) }, { pelunasanId: kosong.id, sisa: Rp(1) }]));
+    assert.deepEqual(sebagian.takTeralokasi.map((t) => t.dijelaskan), [true, false]);
+    assert.deepEqual(penghalangTutup(sebagian).takTeralokasi.map((t) => t.pelunasanId), [kosong.id]);
+    const tuntas = rekonsiliasiHari(masukan([{ pelunasanId: lebih.id, sisa: Rp(100_000) }, { pelunasanId: kosong.id, sisa: Rp(250_000) }]));
+    assert.deepEqual(penghalangTutup(tuntas), { bisaDitutup: true, alasan: [], baris: [], takTeralokasi: [] });
+    assert.deepEqual(snapshotHari(tuntas).terhalang, [], "snapshot Tutup: tidak terhalang");
+
+    // Kunci otomatis 20.00 TETAP mengunci walau terhalang (kunci ≠ tutup); snapshot kunci MENCATAT ember yang belum dijelaskan.
+    assert.equal(statusHari(D, [], wita("2026-10-05T20:00:00")).terkunci, true);
+    const sk = snapshotHari(belum);
+    assert.deepEqual(sk.takTeralokasi, [
+        { pelunasanId: lebih.id, nomor: lebih.nomor, sisa: Rp(100_000), alasan: "jumlah_invoice_payment_beda", dijelaskan: false },
+        { pelunasanId: kosong.id, nomor: kosong.nomor, sisa: Rp(250_000), alasan: "tanpa_baris_faktur", dijelaskan: false },
+    ]);
+    assert.deepEqual(sk.terhalang, p.alasan);
+});
 
 test("kunci hari: 19.59 WITA terbuka, 20.00 WITA terkunci otomatis; lintas tengah malam UTC & WITA", () => {
     assert.equal(batasKunci(D).toISOString(), "2026-10-05T12:00:00.000Z");
@@ -235,7 +274,7 @@ test("kunci hari: 19.59 WITA terbuka, 20.00 WITA terkunci otomatis; lintas tenga
     assert.throws(() => statusHari("2026-02-30", [], new Date()), /tanggal/);
 });
 
-test("kunci hari: tutup lebih awal mengunci; buka kembali HANYA dengan alasan ≥ 15 huruf, berlaku sampai 20.00 WITA berikutnya", () => {
+test("kunci hari T1 (owner 11 Okt): tutup lebih awal mengunci; buka kembali HANYA dengan alasan ≥ 15 huruf, terkunci ulang otomatis 20.00 WITA berikutnya", () => {
     const tutup: EventHari = { id: 1, jenis: "tutup", pada: wita("2026-10-05T17:42:00") };
     assert.deepEqual(statusHari(D, [tutup], wita("2026-10-05T17:43:00")), { terkunci: true, sebab: "tutup", kunciBerikutnya: null });
     const bukaPendek: EventHari = { id: 2, jenis: "buka", pada: wita("2026-10-05T18:00:00"), alasan: "salah ketik" };

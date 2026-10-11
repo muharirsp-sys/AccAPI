@@ -17,11 +17,14 @@
 --   WAJIB (aman sesudah migrate-pg — idempoten) dan blok VERIFIKASI-nya diperiksa: semua `ok` true.
 --
 -- ISI (nama tabel TANPA skema = public pada search_path bawaan; ditulis begitu agar uji PG bisa memakai skema sekali-pakai):
---   1. CREATE TABLE/INDEX IF NOT EXISTS kasir_setoran, kasir_selisih_catatan, kasir_hari_event, kasir_pelunasan, kasir_pelunasan_faktur.
---   2. Trigger append-only (UPDATE/DELETE per baris + TRUNCATE) pada kasir_setoran, kasir_selisih_catatan, kasir_hari_event.
+--   1. CREATE TABLE/INDEX IF NOT EXISTS kasir_setoran, kasir_selisih_catatan, kasir_hari_event, kasir_tak_teralokasi_catatan,
+--      kasir_pelunasan, kasir_pelunasan_faktur. Event `tutup` wajib snapshot.terhalang = [] (owner 11 Okt T2: setiap selisih DAN
+--      setiap uang tak teralokasi dijelaskan dulu); `kunci` otomatis boleh terhalang (kunci ≠ tutup).
+--   2. Trigger append-only (UPDATE/DELETE per baris + TRUNCATE) pada kasir_setoran, kasir_selisih_catatan, kasir_hari_event,
+--      kasir_tak_teralokasi_catatan.
 --      Koreksi setoran = baris revisi baru; penjelasan baru = baris baru; buka kembali = event baru. Cache pelunasan TIDAK dijaga
 --      (upsert/hapus oleh pembaca K1b).
---   3. accapi_app: REVOKE UPDATE/DELETE/TRUNCATE + GRANT SELECT/INSERT (+ USAGE sequence) pada tiga tabel jejak; GRANT SELECT/INSERT/
+--   3. accapi_app: REVOKE UPDATE/DELETE/TRUNCATE + GRANT SELECT/INSERT (+ USAGE sequence) pada empat tabel jejak; GRANT SELECT/INSERT/
 --      UPDATE/DELETE (tanpa TRUNCATE) pada dua tabel cache. Role absen = dilewati.
 --   4. VERIFIKASI (baca-saja) — semua `ok` harus true (NULL = role accapi_app tidak ada, tidak relevan).
 -- Menjalankan ulang seluruh berkas = tanpa perubahan.
@@ -30,7 +33,7 @@
 --   AM040_DATABASE_URL=<url> npx tsx --test lib/kasir/skema-pg.test.ts
 --
 -- ROLLBACK DARURAT (hanya bila trigger menghalangi operasi sah; catat alasannya): image lama tetap jalan dengan objek ini.
---   DROP TRIGGER IF EXISTS trg_kasir_setoran_append_only ON kasir_setoran;   (dst. untuk 5 trigger lain)
+--   DROP TRIGGER IF EXISTS trg_kasir_setoran_append_only ON kasir_setoran;   (dst. untuk 7 trigger lain)
 --   JANGAN drop tabel — jejak setoran/penjelasan/kunci hari adalah catatan uang.
 
 BEGIN;
@@ -91,9 +94,25 @@ CREATE TABLE IF NOT EXISTS kasir_hari_event (
     CONSTRAINT kasir_hari_event_alasan_buka CHECK (jenis <> 'buka' OR char_length(btrim(coalesce(alasan, ''))) >= 15),
     CONSTRAINT kasir_hari_event_snapshot CHECK ((jenis = 'buka') = (snapshot IS NULL)
         AND (snapshot IS NULL OR jsonb_typeof(snapshot) = 'object')),
+    CONSTRAINT kasir_hari_event_tutup_tuntas CHECK (jenis <> 'tutup' OR coalesce(snapshot -> 'terhalang', 'null'::jsonb) = '[]'::jsonb),
     CONSTRAINT kasir_hari_event_oleh CHECK (btrim(oleh) <> '')
 );
 CREATE INDEX IF NOT EXISTS idx_kasir_hari_event_tanggal ON kasir_hari_event (tanggal, id);
+CREATE TABLE IF NOT EXISTS kasir_tak_teralokasi_catatan (
+    id           bigserial PRIMARY KEY,
+    tanggal      date NOT NULL,
+    database_id  text NOT NULL,
+    pelunasan_id bigint NOT NULL,
+    sisa         numeric(18,2) NOT NULL,
+    penjelasan   text NOT NULL,
+    dicatat_oleh text NOT NULL,
+    dicatat_pada timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT kasir_tak_teralokasi_catatan_database CHECK (btrim(database_id) <> ''),
+    CONSTRAINT kasir_tak_teralokasi_catatan_sisa CHECK (sisa <> 0),
+    CONSTRAINT kasir_tak_teralokasi_catatan_penjelasan CHECK (char_length(btrim(penjelasan)) >= 15),
+    CONSTRAINT kasir_tak_teralokasi_catatan_oleh CHECK (btrim(dicatat_oleh) <> '')
+);
+CREATE INDEX IF NOT EXISTS idx_kasir_tak_teralokasi_catatan_hari ON kasir_tak_teralokasi_catatan (database_id, tanggal);
 CREATE TABLE IF NOT EXISTS kasir_pelunasan (
     database_id   text NOT NULL,
     pelunasan_id  bigint NOT NULL,
@@ -119,7 +138,7 @@ CREATE TABLE IF NOT EXISTS kasir_pelunasan_faktur (
         REFERENCES kasir_pelunasan (database_id, pelunasan_id) ON DELETE CASCADE
 );
 
--- 2. Append-only (CREATE OR REPLACE = idempoten, PG14+). Satu fungsi untuk tiga tabel jejak.
+-- 2. Append-only (CREATE OR REPLACE = idempoten, PG14+). Satu fungsi untuk empat tabel jejak.
 CREATE OR REPLACE FUNCTION kasir_append_only() RETURNS trigger LANGUAGE plpgsql AS $fn$
 BEGIN
     RAISE EXCEPTION 'K1a: % append-only — % ditolak (koreksi = baris baru)', TG_TABLE_NAME, TG_OP
@@ -137,14 +156,20 @@ CREATE OR REPLACE TRIGGER trg_kasir_hari_event_append_only BEFORE UPDATE OR DELE
     FOR EACH ROW EXECUTE FUNCTION kasir_append_only();
 CREATE OR REPLACE TRIGGER trg_kasir_hari_event_no_truncate BEFORE TRUNCATE ON kasir_hari_event
     FOR EACH STATEMENT EXECUTE FUNCTION kasir_append_only();
+CREATE OR REPLACE TRIGGER trg_kasir_tak_teralokasi_catatan_append_only BEFORE UPDATE OR DELETE ON kasir_tak_teralokasi_catatan
+    FOR EACH ROW EXECUTE FUNCTION kasir_append_only();
+CREATE OR REPLACE TRIGGER trg_kasir_tak_teralokasi_catatan_no_truncate BEFORE TRUNCATE ON kasir_tak_teralokasi_catatan
+    FOR EACH STATEMENT EXECUTE FUNCTION kasir_append_only();
 
 -- 3. Hak role aplikasi. Default privileges (L1g) bisa saja sudah memberi DML penuh -> REVOKE eksplisit pada tabel jejak.
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
-        REVOKE UPDATE, DELETE, TRUNCATE ON kasir_setoran, kasir_selisih_catatan, kasir_hari_event FROM accapi_app;
-        GRANT SELECT, INSERT ON kasir_setoran, kasir_selisih_catatan, kasir_hari_event TO accapi_app;
-        GRANT USAGE, SELECT ON SEQUENCE kasir_setoran_id_seq, kasir_selisih_catatan_id_seq, kasir_hari_event_id_seq TO accapi_app;
+        REVOKE UPDATE, DELETE, TRUNCATE ON kasir_setoran, kasir_selisih_catatan, kasir_hari_event, kasir_tak_teralokasi_catatan
+            FROM accapi_app;
+        GRANT SELECT, INSERT ON kasir_setoran, kasir_selisih_catatan, kasir_hari_event, kasir_tak_teralokasi_catatan TO accapi_app;
+        GRANT USAGE, SELECT ON SEQUENCE kasir_setoran_id_seq, kasir_selisih_catatan_id_seq, kasir_hari_event_id_seq,
+            kasir_tak_teralokasi_catatan_id_seq TO accapi_app;
         REVOKE TRUNCATE ON kasir_pelunasan, kasir_pelunasan_faktur FROM accapi_app;
         GRANT SELECT, INSERT, UPDATE, DELETE ON kasir_pelunasan, kasir_pelunasan_faktur TO accapi_app;
     END IF;
@@ -154,28 +179,33 @@ COMMIT;
 
 -- 4. VERIFIKASI (baca-saja).
 SELECT cek, ok FROM (VALUES
-    ('tabel kasir_* (5)', (SELECT count(*) = 5 FROM unnest(ARRAY['kasir_setoran', 'kasir_selisih_catatan', 'kasir_hari_event',
-        'kasir_pelunasan', 'kasir_pelunasan_faktur']) AS t WHERE to_regclass(t) IS NOT NULL)),
+    ('tabel kasir_* (6)', (SELECT count(*) = 6 FROM unnest(ARRAY['kasir_setoran', 'kasir_selisih_catatan', 'kasir_hari_event',
+        'kasir_tak_teralokasi_catatan', 'kasir_pelunasan', 'kasir_pelunasan_faktur']) AS t WHERE to_regclass(t) IS NOT NULL)),
     ('unik revisi setoran (tanggal, kode, revisi)', EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_kasir_setoran_revisi'
         AND conrelid = to_regclass('kasir_setoran') AND contype = 'u')),
     ('FK revisi setoran -> revisi sebelumnya', EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'kasir_setoran_revisi_sebelumnya_fk'
         AND conrelid = to_regclass('kasir_setoran') AND confrelid = to_regclass('kasir_setoran') AND contype = 'f')),
     ('CHECK nominal setoran >= 0', EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'kasir_setoran_nominal'
         AND conrelid = to_regclass('kasir_setoran') AND contype = 'c')),
-    ('trigger append-only (6)', (SELECT count(*) = 6 FROM pg_trigger WHERE NOT tgisinternal AND tgname IN
+    ('CHECK tutup hanya bila tidak terhalang (T2)', EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'kasir_hari_event_tutup_tuntas'
+        AND conrelid = to_regclass('kasir_hari_event') AND contype = 'c')),
+    ('trigger append-only (8)', (SELECT count(*) = 8 FROM pg_trigger WHERE NOT tgisinternal AND tgname IN
         ('trg_kasir_setoran_append_only', 'trg_kasir_setoran_no_truncate', 'trg_kasir_selisih_catatan_append_only',
-         'trg_kasir_selisih_catatan_no_truncate', 'trg_kasir_hari_event_append_only', 'trg_kasir_hari_event_no_truncate')
-        AND tgrelid IN (to_regclass('kasir_setoran'), to_regclass('kasir_selisih_catatan'), to_regclass('kasir_hari_event')))),
+         'trg_kasir_selisih_catatan_no_truncate', 'trg_kasir_hari_event_append_only', 'trg_kasir_hari_event_no_truncate',
+         'trg_kasir_tak_teralokasi_catatan_append_only', 'trg_kasir_tak_teralokasi_catatan_no_truncate')
+        AND tgrelid IN (to_regclass('kasir_setoran'), to_regclass('kasir_selisih_catatan'), to_regclass('kasir_hari_event'),
+                        to_regclass('kasir_tak_teralokasi_catatan')))),
     ('accapi_app tanpa UPDATE/DELETE/TRUNCATE jejak', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app')
         THEN NOT (SELECT bool_or(has_table_privilege('accapi_app', t, p))
-              FROM unnest(ARRAY['kasir_setoran', 'kasir_selisih_catatan', 'kasir_hari_event']) AS t,
+              FROM unnest(ARRAY['kasir_setoran', 'kasir_selisih_catatan', 'kasir_hari_event', 'kasir_tak_teralokasi_catatan']) AS t,
                    unnest(ARRAY['UPDATE', 'DELETE', 'TRUNCATE']) AS p) END),
     ('accapi_app boleh SELECT/INSERT jejak + sequence', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app')
         THEN (SELECT bool_and(has_table_privilege('accapi_app', t, p))
-              FROM unnest(ARRAY['kasir_setoran', 'kasir_selisih_catatan', 'kasir_hari_event']) AS t,
+              FROM unnest(ARRAY['kasir_setoran', 'kasir_selisih_catatan', 'kasir_hari_event', 'kasir_tak_teralokasi_catatan']) AS t,
                    unnest(ARRAY['SELECT', 'INSERT']) AS p)
          AND (SELECT bool_and(has_sequence_privilege('accapi_app', s, 'USAGE'))
-              FROM unnest(ARRAY['kasir_setoran_id_seq', 'kasir_selisih_catatan_id_seq', 'kasir_hari_event_id_seq']) AS s) END),
+              FROM unnest(ARRAY['kasir_setoran_id_seq', 'kasir_selisih_catatan_id_seq', 'kasir_hari_event_id_seq',
+                                'kasir_tak_teralokasi_catatan_id_seq']) AS s) END),
     ('accapi_app boleh SELECT/INSERT/UPDATE/DELETE cache pelunasan', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app')
         THEN (SELECT bool_and(has_table_privilege('accapi_app', t, p))
               FROM unnest(ARRAY['kasir_pelunasan', 'kasir_pelunasan_faktur']) AS t,

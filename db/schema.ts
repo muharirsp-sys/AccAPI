@@ -2114,8 +2114,9 @@ export const principalAlias = pgTable("principal_alias", {
 }));
 
 // --- Kasir ↔ Incaso (K1a, BL-59; owner 11 Okt 2026: per ORANG per hari, Tunai + Transfer + Giro lawan chequeAmount) --- //
-// Setoran (append-only, revisi berantai), penjelasan selisih (append-only), event hari (tutup / kunci otomatis 20.00 WITA / buka;
-// append-only), dan cache pelunasan Accurate berkolom sempit untuk K1b (TANPA raw_data — heap 2 GB pernah habis, promo-recap).
+// Setoran (append-only, revisi berantai), penjelasan selisih & penjelasan uang tak teralokasi (append-only), event hari (tutup /
+// kunci otomatis 20.00 WITA / buka; append-only), dan cache pelunasan Accurate berkolom sempit untuk K1b (TANPA raw_data — heap 2 GB
+// pernah habis, promo-recap).
 // SQL: migrate-pg `kasir (setoran, catatan, hari, cache pelunasan)`, db/migrations/0029_kasir.sql, docs/handover/DDL_K1A.sql
 // (trigger append-only + REVOKE/GRANT HANYA di DDL manual). Lib murni: lib/kasir/rekonsiliasi.ts. Kontrak: docs/handover/KASIR-KONTRAK.md.
 // Uang = numeric(18,2): Postgres MEMBULATKAN > 2 desimal diam-diam -> penulis WAJIB lewat keSen/senKeTeks (menolak > 2 desimal).
@@ -2185,7 +2186,31 @@ export const kasirHariEvent = pgTable("kasir_hari_event", {
     check("kasir_hari_event_jenis", sql`${t.jenis} IN ('tutup', 'kunci', 'buka')`),
     check("kasir_hari_event_alasan_buka", sql`${t.jenis} <> 'buka' OR char_length(btrim(coalesce(${t.alasan}, ''))) >= 15`),
     check("kasir_hari_event_snapshot", sql`(${t.jenis} = 'buka') = (${t.snapshot} IS NULL) AND (${t.snapshot} IS NULL OR jsonb_typeof(${t.snapshot}) = 'object')`),
+    // Owner 11 Okt (T2): Tutup hanya bila TIDAK terhalang — snapshot.terhalang (lib penghalangTutup) wajib []. Kunci otomatis boleh
+    // terhalang (kunci ≠ tutup): snapshot kunci mencatat selisih/ember yang belum dijelaskan.
+    check("kasir_hari_event_tutup_tuntas", sql`${t.jenis} <> 'tutup' OR coalesce(${t.snapshot} -> 'terhalang', 'null'::jsonb) = '[]'::jsonb`),
     check("kasir_hari_event_oleh", sql`btrim(${t.oleh}) <> ''`),
+]);
+
+// Penjelasan uang TAK TERALOKASI (Σ invoicePayment ≠ chequeAmount, lib alokasiPelunasan) per pelunasan — owner 11 Okt (T2): wajib
+// sebelum Tutup. Tabel sendiri (bukan kasir_selisih_catatan): kuncinya pelunasan (database_id + pelunasan_id), bukan orang, dan
+// angkanya `sisa`, bukan pelunasan/setoran. sisa = angka saat dijelaskan; berubah = tidak berlaku. TANPA FK ke cache kasir_pelunasan
+// (cache boleh dihapus/dibaca ulang; penjelasan tetap). Append-only (trigger + REVOKE di DDL_K1A.sql).
+export const kasirTakTeralokasiCatatan = pgTable("kasir_tak_teralokasi_catatan", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tanggal: date("tanggal").notNull(),
+    databaseId: text("database_id").notNull(),
+    pelunasanId: bigint("pelunasan_id", { mode: "number" }).notNull(),
+    sisa: numeric("sisa", { precision: 18, scale: 2 }).notNull(),
+    penjelasan: text("penjelasan").notNull(),
+    dicatatOleh: text("dicatat_oleh").notNull(),
+    dicatatPada: timestamp("dicatat_pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_kasir_tak_teralokasi_catatan_hari").on(t.databaseId, t.tanggal),
+    check("kasir_tak_teralokasi_catatan_database", sql`btrim(${t.databaseId}) <> ''`),
+    check("kasir_tak_teralokasi_catatan_sisa", sql`${t.sisa} <> 0`),
+    check("kasir_tak_teralokasi_catatan_penjelasan", sql`char_length(btrim(${t.penjelasan})) >= 15`),
+    check("kasir_tak_teralokasi_catatan_oleh", sql`btrim(${t.dicatatOleh}) <> ''`),
 ]);
 
 // Cache pelunasan (sales-receipt) — ditulis HANYA pembaca sistem K1b (upsert; Kasir tidak punya jalur tulis = "Kasir tidak bisa

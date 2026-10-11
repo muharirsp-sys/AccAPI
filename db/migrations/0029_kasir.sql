@@ -5,7 +5,9 @@
 --                            tunai/transfer/giro numeric(18,2) >= 0; dicatat_oleh/pada.
 --   kasir_selisih_catatan  : append-only; angka pelunasan/setoran saat dijelaskan (berubah = tidak berlaku); salesman_kode '' =
 --                            "Tanpa salesman".
---   kasir_hari_event       : append-only; tutup / kunci (snapshot kunci otomatis 20.00 WITA) / buka (alasan >= 15).
+--   kasir_hari_event       : append-only; tutup (snapshot.terhalang WAJIB [] — owner T2) / kunci (snapshot kunci otomatis
+--                            20.00 WITA, boleh terhalang) / buka (alasan >= 15).
+--   kasir_tak_teralokasi_catatan: append-only; penjelasan uang tak teralokasi per pelunasan (angka sisa saat dijelaskan).
 --   kasir_pelunasan(+_faktur): cache sales-receipt berkolom sempit untuk K1b (TANPA raw_data); ditulis pembaca sistem saja.
 -- Trigger append-only + REVOKE/GRANT ada di docs/handover/DDL_K1A.sql SAJA (pola repo: trigger = DDL manual), bukan di berkas ini.
 -- Uang numeric(18,2): Postgres membulatkan > 2 desimal diam-diam -> aplikasi menulis lewat lib/kasir keSen/senKeTeks.
@@ -72,9 +74,25 @@ CREATE TABLE IF NOT EXISTS kasir_hari_event (
     CONSTRAINT kasir_hari_event_alasan_buka CHECK (jenis <> 'buka' OR char_length(btrim(coalesce(alasan, ''))) >= 15),
     CONSTRAINT kasir_hari_event_snapshot CHECK ((jenis = 'buka') = (snapshot IS NULL)
         AND (snapshot IS NULL OR jsonb_typeof(snapshot) = 'object')),
+    CONSTRAINT kasir_hari_event_tutup_tuntas CHECK (jenis <> 'tutup' OR coalesce(snapshot -> 'terhalang', 'null'::jsonb) = '[]'::jsonb),
     CONSTRAINT kasir_hari_event_oleh CHECK (btrim(oleh) <> '')
 );
 CREATE INDEX IF NOT EXISTS idx_kasir_hari_event_tanggal ON kasir_hari_event (tanggal, id);
+CREATE TABLE IF NOT EXISTS kasir_tak_teralokasi_catatan (
+    id           bigserial PRIMARY KEY,
+    tanggal      date NOT NULL,
+    database_id  text NOT NULL,
+    pelunasan_id bigint NOT NULL,
+    sisa         numeric(18,2) NOT NULL,
+    penjelasan   text NOT NULL,
+    dicatat_oleh text NOT NULL,
+    dicatat_pada timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT kasir_tak_teralokasi_catatan_database CHECK (btrim(database_id) <> ''),
+    CONSTRAINT kasir_tak_teralokasi_catatan_sisa CHECK (sisa <> 0),
+    CONSTRAINT kasir_tak_teralokasi_catatan_penjelasan CHECK (char_length(btrim(penjelasan)) >= 15),
+    CONSTRAINT kasir_tak_teralokasi_catatan_oleh CHECK (btrim(dicatat_oleh) <> '')
+);
+CREATE INDEX IF NOT EXISTS idx_kasir_tak_teralokasi_catatan_hari ON kasir_tak_teralokasi_catatan (database_id, tanggal);
 
 CREATE TABLE IF NOT EXISTS kasir_pelunasan (
     database_id   text NOT NULL,
