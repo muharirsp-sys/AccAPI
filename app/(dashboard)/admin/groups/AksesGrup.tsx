@@ -1,15 +1,15 @@
 /*
  * Tujuan: Akses Group (Fiori S7a, FCL): daftar grup (preset terkunci nama) → Object Page dengan Izin per modul (20 modul, label satu
  *   sumber lib/rbac; kunci kapabilitas dicentang satu per satu), Anggota (tambah, keluarkan), Info, Riwayat; footer Simpan → dialog
- *   SELISIH izin (ditambah/dicabut, anggota terkena, alasan bila mencabut users.manage); Hapus grup custom; Grup baru.
+ *   SELISIH izin (ditambah/dicabut, anggota terkena; mencabut users.manage = peringatan + tombol tegas); Hapus grup custom; Grup baru.
  *   Menggantikan GroupManagement.tsx (gaya inline + hex, confirm, simpan langsung).
  * Caller: app/(dashboard)/admin/groups/page.tsx (gerbang users.manage).
  * Dependensi: GET|POST /api/admin/groups, GET|PATCH|DELETE /api/admin/groups/[id], POST|DELETE /api/admin/groups/[id]/members,
  *   GET /api/admin/groups/[id]/history, GET /api/admin/users/permissions; lib/rbac(/registry); components/admin/*, components/fiori/*.
  * Main Functions: AksesGrup.
  * Side Effects: HTTP tulis ke API admin (zona auth). beforeunload saat ada draf izin/info.
- * TERBUKA: alasan mencabut users.manage belum diterima server (PATCH grup tanpa field alasan, kontrak §5.8) — dialog mewajibkannya
- *   sebagai konfirmasi sadar, tidak terkirim.
+ * TERBUKA (server): PATCH grup tidak menerima/mencatat alasan cabut users.manage (kontrak §5.8) — karena itu dialog TIDAK meminta
+ *   isian alasan (tidak boleh mewajibkan isian yang dibuang); konfirmasinya tegas lewat peringatan + tombol "Simpan dan cabut Kelola user".
  */
 "use client";
 
@@ -298,9 +298,9 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
             <FlexibleColumnLayout list={daftarEl} detail={detail} detailOpen={pilihId !== null} onBack={() => buka(null)} listLabel="Daftar grup" detailLabel="Detail grup" />
 
             <ConfirmDialog open={dialog === "simpan" && Boolean(det)} onClose={() => setDialog(null)} tag="Izin"
-                title={izinBerubah ? `Simpan izin grup ${asli?.name ?? ""}?` : `Simpan info grup ${asli?.name ?? ""}?`} confirmLabel={izinBerubah ? "Simpan izin" : "Simpan info"}
+                title={izinBerubah ? `Simpan izin grup ${asli?.name ?? ""}?` : `Simpan info grup ${asli?.name ?? ""}?`}
+                confirmLabel={cabutKelola ? "Simpan dan cabut Kelola user" : izinBerubah ? "Simpan izin" : "Simpan info"} tone={cabutKelola ? "negative" : "primary"}
                 confirmDisabled={kunciSimpan} alasanTerlihat
-                reason={cabutKelola ? { label: "Alasan mencabut Kelola user", placeholder: "mis. grup ini tidak lagi mengelola akun" } : undefined}
                 facts={det && nilai && asli ? [
                     ...(nilai.name.trim() !== asli.name ? [["Nama", `${asli.name} → ${nilai.name.trim()}`] as [string, string]] : []),
                     ...(nilai.description.trim() !== asli.description ? [["Deskripsi", `${asli.description || "—"} → ${nilai.description.trim() || "—"}`] as [string, string]] : []),
@@ -336,7 +336,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                 )}
                 {cabutKelola && (
                     <MessageStrip tone="warn" title="Mencabut Kelola user (users.manage).">
-                        Anggota grup ini kehilangan pengelolaan user kecuali dari grup lain. Server menolak bila tidak tersisa admin aktif, atau bila akses Anda sendiri ikut hilang. Alasan belum ikut tersimpan di riwayat server.
+                        Anggota grup ini kehilangan pengelolaan user kecuali dari grup lain. Server menolak bila tidak tersisa admin aktif, atau bila akses Anda sendiri ikut hilang. Riwayat mencatat kunci yang dicabut dan siapa yang mencabutnya, bukan alasannya.
                     </MessageStrip>
                 )}
             </ConfirmDialog>

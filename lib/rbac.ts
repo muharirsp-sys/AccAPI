@@ -374,7 +374,9 @@ export const SESI_ACCURATE_KEYS = ["api_wrapper.view", "order.edit", "pelunasan.
 /** `anyOf` = kunci alternatif: halaman terbuka bila `module.action` ATAU salah satu kunci ini dipegang. */
 export const pagePermissions: Array<{ prefix: string; module: AppModule; action: PermissionAction; anyOf?: readonly string[] }> = [
     { prefix: "/admin/groups", module: "users", action: "manage" },
-    { prefix: "/admin/users", module: "users", action: "view" },
+    // S7a (owner S7 10 Okt): halaman User dibuka users.view (baca-saja) ATAU users.manage (tulis, ditegakkan API); pemegang users.manage
+    // saja lolos layout dan gerbang klien SidebarLayout. /admin/groups tetap users.manage (GET grup hanya menerima users.manage).
+    { prefix: "/admin/users", module: "users", action: "view", anyOf: ["users.manage"] },
     { prefix: "/payments/sppd", module: "sppd", action: "view" },
     { prefix: "/payments", module: "payments", action: "view" },
     { prefix: "/finance", module: "finance", action: "view" },

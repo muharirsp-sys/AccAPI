@@ -1,9 +1,10 @@
 /*
  * Tujuan: Fiori S7a — User & Akses Group (FCL) di atas kontrak S7-1: buat user (grup awal wajib, sandi bertopeng ketik dua kali —
  *   tidak muncul di DOM/URL), atur sandi, nonaktif (alasan; akun sendiri dicegah), bintang + peringatan role WAJIB (§4), keluarkan →
- *   GRUP_TERAKHIR (dicegah di layar + jawaban server), simpan izin = dialog SELISIH (+/−, anggota terkena, alasan bila mencabut
- *   users.manage), ADMIN_TERAKHIR → kalimat dari `code`, users.view = baca-saja beralasan terbaca, galat ≠ kosong, jawaban tidak pasti
- *   (putus) = "belum pasti" + muat ulang, riwayat berkursor, ponsel 390 px, tanpa dialog native.
+ *   GRUP_TERAKHIR (dicegah di layar + jawaban server), simpan izin = dialog SELISIH (+/−, anggota terkena; mencabut users.manage =
+ *   peringatan + tombol tegas, TANPA isian alasan karena server tidak mencatatnya), ADMIN_TERAKHIR → kalimat dari `code`, users.view =
+ *   baca-saja beralasan terbaca, users.manage saja lolos gerbang halaman (anyOf), galat ≠ kosong, jawaban tidak pasti (putus) =
+ *   "belum pasti" + muat ulang, riwayat berkursor, ponsel 390 px, tanpa dialog native.
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin, aktor "local-dev-admin"):
  *   `npx playwright test tests/fiori-admin-user-grup.spec.ts --config <config lokal port 3026> --workers=1`.
  * Dependensi: semua /api/admin/** di-mock page.route per docs/handover/S7-KONTRAK-ADMIN-API.md (tidak menyentuh DB/Better Auth).
@@ -280,7 +281,7 @@ test("Keluarkan: grup terakhir dicegah di layar; data usang → server GRUP_TERA
     expect(log.native).toBe(0);
 });
 
-test("Simpan izin: dialog SELISIH (+/−, anggota terkena) → PATCH kunci persis; cabut users.manage wajib alasan; KUNCI_TIDAK_VALID", async ({ page }) => {
+test("Simpan izin: dialog SELISIH (+/−, anggota terkena) → PATCH kunci persis; cabut users.manage = peringatan + tombol tegas tanpa isian alasan; KUNCI_TIDAK_VALID", async ({ page }) => {
     let patchKe = 0;
     const { log } = await pasang(page, {
         tulis: (t) => (t.method === "PATCH" && ++patchKe === 2 ? json({ ok: false, code: "KUNCI_TIDAK_VALID", error: "x", invalid: ["finance.reopen"] }, 400) : undefined),
@@ -306,17 +307,20 @@ test("Simpan izin: dialog SELISIH (+/−, anggota terkena) → PATCH kunci persi
     expect(log.tulis[0].path).toBe("/api/admin/groups/g-fin");
     expect((log.tulis[0].body?.permissions as string[]).sort()).toEqual(["finance.view", "payments.delete", "payments.view"]);
 
-    // Grup custom: cabut users.manage = alasan wajib; server menolak kunci tak dikenal -> kalimat jelas, draf tetap.
+    // Grup custom: cabut users.manage = peringatan + tombol tegas, TANPA isian alasan (server tidak mencatatnya, jadi tidak boleh
+    // diwajibkan); server menolak kunci tak dikenal -> kalimat jelas, draf tetap.
     await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bPromo A\b/ }).click();
     await page.getByRole("checkbox", { name: "Users & RBAC · Manage" }).uncheck();
     await page.getByRole("button", { name: "Simpan izin…" }).click();
     const d2 = page.getByRole("dialog", { name: "Simpan izin grup Promo A?" });
     await expect(d2).toContainText("Mencabut Kelola user (users.manage)");
-    await expect(d2.getByRole("button", { name: "Simpan izin" })).toBeDisabled();
-    await d2.getByLabel("Alasan mencabut Kelola user").fill("Grup promo tidak mengelola akun");
-    await d2.getByRole("button", { name: "Simpan izin" }).click();
+    await expect(d2).toContainText("bukan alasannya");
+    await expect(d2.getByRole("textbox")).toHaveCount(0);
+    await expect(d2.getByRole("button", { name: "Simpan izin", exact: true })).toHaveCount(0); // tombol biasa diganti yang tegas
+    await d2.getByRole("button", { name: "Simpan dan cabut Kelola user" }).click();
     await expect(d2.getByRole("alert")).toContainText("kunci izin tidak dikenal (finance.reopen)");
     await expect(page.getByText("+0 −1 belum disimpan")).toBeVisible();
+    expect(Object.keys(log.tulis[1].body ?? {})).toEqual(["permissions"]); // tidak ada field alasan yang dikirim/dibuang server
     expect(log.native).toBe(0);
 });
 
@@ -328,6 +332,21 @@ test("Grup preset Admin: Users · Manage terkunci; centang modul tidak mencabutn
     await page.getByRole("checkbox", { name: "Semua izin Users & RBAC" }).click(); // nyalakan semua
     await page.getByRole("checkbox", { name: "Semua izin Users & RBAC" }).click(); // cabut semua
     await expect(page.getByRole("checkbox", { name: "Users & RBAC · Manage" })).toBeChecked();
+});
+
+test("Gerbang halaman: pemegang users.manage SAJA (tanpa users.view) tetap masuk /admin/users lewat navigasi klien; menu User & RBAC muncul", async ({ page }) => {
+    // Kunci users.view dicabut dari payload dokumen /admin/groups (kunci SidebarLayout di peramban); users.manage tetap ada.
+    await tanpaIzin(page, "/admin/groups", "users.view");
+    await pasang(page);
+    await page.goto("/admin/groups", NAV);
+    await expect(page.getByRole("list", { name: "Daftar grup" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Menu ruang kerja" }).getByRole("link", { name: "User & RBAC" })).toBeVisible();
+    // Navigasi klien: layout server TIDAK dijalankan ulang; gerbang klien SidebarLayout menilai /admin/users dengan kunci yang sama.
+    await page.locator("main").getByRole("link", { name: "User", exact: true }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect(page.getByRole("heading", { level: 1, name: "User" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Akses ditolak" })).toHaveCount(0);
+    await expect(daftarUser(page).getByRole("button", { name: /USER A/ })).toBeVisible();
 });
 
 test("users.view: semua baca-saja dengan alasan terbaca; daftar grup tidak diminta; tidak ada tulisan", async ({ page }) => {

@@ -98,6 +98,13 @@ assert.deepEqual(rolePermissionPresets.admin.kasir, ["view", "catat", "tutup", "
 assert.deepEqual(getPagePermission("/kasir"), { prefix: "/kasir", module: "kasir", action: "view" });
 assert.ok(canAccessPathWithKeys("/kasir/2026-10-05", ["kasir.view"]));
 assert.ok(!canAccessPathWithKeys("/kasir", ["dashboard.view", "pelunasan.kirim"]));
+// S7a: /admin/users = users.view ATAU users.manage (anyOf); /admin/groups tetap users.manage saja (GET grup hanya menerima users.manage).
+assert.deepEqual(getPagePermission("/admin/users"), { prefix: "/admin/users", module: "users", action: "view", anyOf: ["users.manage"] });
+assert.ok(canAccessPathWithKeys("/admin/users", ["users.view"]));
+assert.ok(canAccessPathWithKeys("/admin/users", ["users.manage"]), "pemegang users.manage saja harus lolos layout + gerbang klien");
+assert.ok(!canAccessPathWithKeys("/admin/users", ["dashboard.view", "finance.view"]));
+assert.ok(canAccessPathWithKeys("/admin/groups", ["users.manage"]));
+assert.ok(!canAccessPathWithKeys("/admin/groups", ["users.view"]), "users.view tidak membuka Akses Group");
 
 // --- 2. Scan requirePermission(...) di route ---
 function walk(dir: string): string[] {

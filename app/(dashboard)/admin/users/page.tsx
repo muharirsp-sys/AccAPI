@@ -1,12 +1,11 @@
 /*
  * Tujuan: Rute /admin/users (Fiori S7a): gerbang server + layar User (FCL) di dalam FioriScope.
- * Caller: menu Pengaturan › User. Guard: layout dashboard (pagePermissions /admin/users) + halaman ini.
+ * Caller: menu Pengaturan › User. Guard: layout dashboard (pagePermissions /admin/users) + gerbang klien SidebarLayout + halaman ini.
  * Dependensi: resolveRequestPermissionsH, FioriScope, AccessDenied, Pengguna (klien).
  * Main Functions: AdminUsersPage.
  * Side Effects: Membaca session/permission; redirect /login tanpa sesi.
- * Gerbang (orkestrator, owner S7-1 11 Okt): `users.view` ATAU `users.manage`; `users.view` = baca-saja (tulis = users.manage, ditegakkan API).
- *   TERBUKA S7a: `pagePermissions` belum mendukung anyOf (datang dari S7-sesi) — layout masih menuntut `users.view`, jadi akun
- *   ber-`users.manage` tanpa `users.view` tertahan di layout; orkestrator menyesuaikan sesudah S7-sesi merge.
+ * Gerbang (owner S7-1 11 Okt): `users.view` ATAU `users.manage`; `users.view` = baca-saja (tulis = users.manage, ditegakkan API).
+ *   Layout/SidebarLayout memakai `pagePermissions` `/admin/users` (users.view, anyOf users.manage) — kunci yang sama dengan cek di sini.
  */
 import { redirect } from "next/navigation";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
