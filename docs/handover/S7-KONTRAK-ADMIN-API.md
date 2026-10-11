@@ -166,3 +166,6 @@ Cursor rusak → 400 `INPUT_TIDAK_VALID`. Label aksi: `auditActionLabels` di `li
 - **Perbaikan #4/#5 (tinjauan B):** Better Auth gagal DI TENGAH (user tersimpan, akun gagal) → user setengah jadi dicari lewat email +
   penanda "sedang disiapkan" lalu dihapus. Kompensasi gagal → **500 `USER_SETENGAH_JADI`** + `userId` (bukan "tidak ada yang berubah");
   user tetap banned dan masuk ditolak `BANNED_USER`. Log memuat id user, tanpa sandi.
+- **Perbaikan #7 (tinjauan A):** `PUT/DELETE primary-group` menjawab `{ ok, changed, primaryGroupId, role, roleChanged }`; audit
+  `user_group.star/unstar` hanya bila bintang tersimpan atau role BERUBAH (lepas pada user 1 grup = bintang otomatis kembali =
+  `changed:false`, tanpa audit). Route lama `users/[id]/group` ke grup yang sudah berbintang = tanpa audit bintang.

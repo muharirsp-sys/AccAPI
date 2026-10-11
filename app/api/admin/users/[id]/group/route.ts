@@ -38,7 +38,10 @@ export async function POST(request: NextRequest, context: Context) {
             const hasil = await selesaiUtama(tx, userId, lama);
             const base = { id: "", actorUserId: actor.id, actorName: actor.name, targetUserId: userId, targetGroupId: groupId, createdAt: now };
             if (baru) await tx.insert(permissionAuditLog).values({ ...base, id: randomUUID(), action: "user_group.assign", detail: { userName: target.name, groupName: group.name, via: "users/[id]/group" } });
-            await tx.insert(permissionAuditLog).values({ ...base, id: randomUUID(), action: "user_group.star", detail: { userName: target.name, groupName: group.name, via: "users/[id]/group", ...detailUtama(lama, hasil) } });
+            // Grup sudah berbintang = tanpa audit bintang (tinjauan A #7).
+            if (hasil.bintangSebelum !== hasil.bintang || hasil.roleChanged) {
+                await tx.insert(permissionAuditLog).values({ ...base, id: randomUUID(), action: "user_group.star", detail: { userName: target.name, groupName: group.name, via: "users/[id]/group", ...detailUtama(lama, hasil) } });
+            }
             return hasil;
         });
         return NextResponse.json({ ok: true, role: h.roleAfter, primaryGroupId: h.primaryGroupId });

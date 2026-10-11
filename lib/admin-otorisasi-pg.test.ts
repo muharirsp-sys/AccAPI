@@ -464,7 +464,7 @@ test("BL-63 bintang: preset -> role turun; tukar bintang dua langkah dua arah (i
         await w.masuk(u, mgr); await w.masuk(u, fin); await w.masuk(u, cus);
         const put = (gid: string) => panggil(m.bintang.PUT, a, "PUT", u, { groupId: gid });
 
-        assert.deepEqual(await (await put(mgr)).json(), { ok: true, primaryGroupId: mgr, role: "manager", roleChanged: true });
+        assert.deepEqual(await (await put(mgr)).json(), { ok: true, changed: true, primaryGroupId: mgr, role: "manager", roleChanged: true });
         assert.deepEqual(await bintangDb(u), [mgr]);
         for (const [gid, r] of [[fin, "finance"], [mgr, "manager"], [fin, "finance"]]) {
             const res = await put(gid);
@@ -473,9 +473,9 @@ test("BL-63 bintang: preset -> role turun; tukar bintang dua langkah dua arah (i
             assert.equal(await role(u), r);
         }
         // Ke grup custom: role "finance" adalah turunan utama lama (Finance) -> viewer, bukan tertinggal.
-        assert.deepEqual(await (await put(cus)).json(), { ok: true, primaryGroupId: cus, role: "viewer", roleChanged: true });
+        assert.deepEqual(await (await put(cus)).json(), { ok: true, changed: true, primaryGroupId: cus, role: "viewer", roleChanged: true });
         // Lepas bintang (3 grup) -> tanpa utama; role tetap (bukan turunan).
-        assert.deepEqual(await (await panggil(m.bintang.DELETE, a, "DELETE", u)).json(), { ok: true, primaryGroupId: null, role: "viewer", roleChanged: false });
+        assert.deepEqual(await (await panggil(m.bintang.DELETE, a, "DELETE", u)).json(), { ok: true, changed: true, primaryGroupId: null, role: "viewer", roleChanged: false });
         assert.deepEqual(await bintangDb(u), []);
         assert.deepEqual(await kode(await put(ga)), { status: 404, code: "BUKAN_ANGGOTA" });
         assert.deepEqual(await kode(await panggil(m.bintang.PUT, a, "PUT", u, {})), { status: 400, code: "INPUT_TIDAK_VALID" });
@@ -777,5 +777,28 @@ test("perbaikan #6: IZIN_BERUBAH sejati — aktor ber-users.manage yang sudah ba
         assert.deepEqual(await kode(await panggil(m.anggota.POST, b, "POST", ga, { userId: u })), { status: 403, code: "IZIN_BERUBAH" });
         assert.deepEqual(await w.grupUser(u), [gv]);
         assert.deepEqual(await w.audit(), []);
+    });
+});
+
+test("perbaikan #7: audit bintang hanya bila bintang tersimpan BERUBAH — lepas pada user 1 grup / tandai grup yang sudah berbintang / route lama ke grup berbintang = tanpa audit", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const ga = await w.grup("kelola", ["users.manage"]);
+        const a = await w.user("a");
+        await w.masuk(a, ga);
+        const mgr = await preset(w, "Manager"), cus = await w.grup("promo", ["dashboard.view"]);
+        const u = await w.user("u", { role: "manager" });
+        await w.masuk(u, mgr, true);
+        const audit = async () => (await w.audit()).filter((x) => x.target_user_id === u).map((x) => x.action);
+
+        assert.deepEqual(await (await panggil(m.bintang.DELETE, a, "DELETE", u)).json(), { ok: true, changed: false, primaryGroupId: mgr, role: "manager", roleChanged: false });
+        assert.deepEqual(await bintangDb(u), [mgr], "1 grup: bintang tetap");
+        assert.deepEqual(await (await panggil(m.bintang.PUT, a, "PUT", u, { groupId: mgr })).json(), { ok: true, changed: false, primaryGroupId: mgr, role: "manager", roleChanged: false });
+        assert.equal((await panggil(m.userGrup.POST, a, "POST", u, { groupId: mgr })).status, 200);
+        assert.deepEqual(await audit(), [], "tanpa perubahan = tanpa audit");
+
+        await w.masuk(u, cus);
+        assert.equal(((await (await panggil(m.bintang.PUT, a, "PUT", u, { groupId: cus })).json()) as { changed: boolean }).changed, true);
+        assert.equal((await panggil(m.userGrup.POST, a, "POST", u, { groupId: cus })).status, 200);
+        assert.deepEqual(await audit(), ["user_group.star"], "satu perubahan nyata = satu audit");
     });
 });

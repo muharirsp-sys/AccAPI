@@ -31,13 +31,16 @@ async function ubah(request: NextRequest, context: Context, pasang: boolean) {
             const lama = await mulaiUtama(tx, id);
             await pasangBintang(tx, id, groupId);
             const hasil = await selesaiUtama(tx, id, lama);
-            await tx.insert(permissionAuditLog).values({
+            // Audit hanya bila bintang tersimpan / role BERUBAH (tinjauan A #7): lepas pada user 1 grup (bintang otomatis kembali)
+            // atau tandai grup yang sudah berbintang = tanpa baris audit.
+            const changed = hasil.bintangSebelum !== hasil.bintang || hasil.roleChanged;
+            if (changed) await tx.insert(permissionAuditLog).values({
                 id: randomUUID(), actorUserId: actor.id, actorName: actor.name, action: groupId ? "user_group.star" : "user_group.unstar",
-                targetUserId: id, targetGroupId: groupId ?? lama.utama?.groupId ?? null, detail: { userName: t.name, ...detailUtama(lama, hasil) }, createdAt: now,
+                targetUserId: id, targetGroupId: groupId ?? hasil.bintangSebelum, detail: { userName: t.name, ...detailUtama(lama, hasil) }, createdAt: now,
             });
-            return hasil;
+            return { ...hasil, changed };
         });
-        return NextResponse.json({ ok: true, primaryGroupId: h.primaryGroupId, role: h.roleAfter, roleChanged: h.roleChanged });
+        return NextResponse.json({ ok: true, changed: h.changed, primaryGroupId: h.primaryGroupId, role: h.roleAfter, roleChanged: h.roleChanged });
     } catch (e) {
         return jawabGalat(e);
     }
