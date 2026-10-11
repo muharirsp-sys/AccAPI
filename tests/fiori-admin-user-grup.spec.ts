@@ -122,6 +122,25 @@ async function tanpaIzin(page: Page, path: string, kunci: string) {
     });
 }
 
+/**
+ * Izin yang BISA dicabut di tengah sesi: dokumen dan permintaan RSC (router.refresh) halaman `path` diteruskan apa adanya sampai
+ * `dicabut = true`, sesudahnya kunci diganti nama di keduanya (HTML: `\"kunci\"`, aliran RSC: `"kunci"`). `refresh` = jumlah permintaan RSC.
+ */
+async function izinBisaDicabut(page: Page, path: string, kunci: string) {
+    const s = { dicabut: false, refresh: 0 };
+    await page.route((u) => u.pathname === path, async (route) => {
+        if (route.request().headers()["rsc"] === "1") s.refresh++;
+        const res = await route.fetch();
+        if (!s.dicabut) return route.fulfill({ response: res });
+        const headers = { ...res.headers() };
+        delete headers["content-length"];
+        delete headers["content-encoding"];
+        const body = (await res.text()).replaceAll(`\\"${kunci}\\"`, `\\"${kunci}_tes\\"`).replaceAll(`"${kunci}"`, `"${kunci}_tes"`);
+        return route.fulfill({ status: res.status(), headers, body });
+    });
+    return s;
+}
+
 const daftarUser = (page: Page) => page.getByRole("list", { name: "Daftar user" });
 async function bukaUser(page: Page, nama: string) {
     await daftarUser(page).getByRole("button", { name: new RegExp(`${nama}\\b`) }).click();
@@ -500,6 +519,32 @@ test("Akses Group: riwayat grup, tambah anggota, draf dibuang lewat dialog, hapu
     ]);
     expect(log.native).toBe(0);
 });
+
+for (const [nama, jawaban] of [
+    ["IZIN_BERUBAH (403 berkode)", json({ ok: false, code: "IZIN_BERUBAH", error: "x" }, 403)],
+    ["403 tanpa kode (gerbang requirePermission)", json({ error: "Forbidden" }, 403)],
+] as const) {
+    test(`${nama}: izin disegarkan lewat router.refresh (permintaan RSC) + data dimuat ulang; tombol tulis mengikuti izin baru`, async ({ page }) => {
+        const izin = await izinBisaDicabut(page, "/admin/users", "users.manage");
+        const { log } = await pasang(page, { tulis: (t) => (t.path.endsWith("/status") ? jawaban : undefined) });
+        await page.goto("/admin/users", NAV);
+        await bukaUser(page, "USER B");
+        await expect(page.getByRole("button", { name: "Buat user…" })).toBeEnabled();
+        await expect(page.getByRole("status").filter({ hasText: "Baca-saja." })).toHaveCount(0);
+        const rscSebelum = izin.refresh, daftarSebelum = log.get.filter((g) => g === "/api/admin/users/permissions").length;
+        izin.dicabut = true; // admin lain mencabut users.manage Anda sesudah halaman dimuat
+        await page.getByRole("button", { name: "Nonaktifkan…" }).click();
+        await page.getByRole("dialog", { name: "Nonaktifkan USER B?" }).getByRole("button", { name: "Nonaktifkan" }).click();
+        await expect(page.getByRole("dialog")).toHaveCount(0);
+        await expect.poll(() => izin.refresh, "router.refresh: permintaan RSC ke halaman").toBeGreaterThan(rscSebelum);
+        await expect.poll(() => log.get.filter((g) => g === "/api/admin/users/permissions").length, "data dimuat ulang").toBeGreaterThan(daftarSebelum);
+        await expect(page.getByRole("status").filter({ hasText: "Baca-saja." })).toContainText("users.view"); // izin layout baru terbaca
+        await expect(page.getByRole("button", { name: "Buat user…" })).toBeDisabled();
+        await expect(page.getByRole("button", { name: "Atur sandi sementara…" })).toBeDisabled();
+        await expect(page.getByRole("button", { name: "Nonaktifkan…" })).toBeDisabled();
+        expect(log.tulis.map((t) => t.path)).toEqual(["/api/admin/users/u-b/status"]); // tidak ada tulisan ulang otomatis
+    });
+}
 
 for (const [lebar, tinggi] of [[390, 844], [1280, 800]] as const) {
     test(`Footer Akses Group keadaan Draf ${lebar} px: tombol utuh, tak bertumpuk, tombol final di kanan bawah`, async ({ page }) => {

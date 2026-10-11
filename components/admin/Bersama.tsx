@@ -29,6 +29,12 @@ export class GalatAdmin extends Error {
     }
 }
 
+/**
+ * Galat yang berarti IZIN akun berubah di server (IZIN_BERUBAH, atau 403 tanpa kode dari gerbang requirePermission): permKeys halaman
+ * berasal dari server component, jadi memuat ulang data saja tidak cukup — halaman memanggil router.refresh() agar izin layout terbaca ulang.
+ */
+export const izinPerluDisegarkan = (e: unknown) => e instanceof GalatAdmin && (e.code === "IZIN_BERUBAH" || e.code === "forbidden");
+
 async function minta(url: string, init?: RequestInit): Promise<{ status: number; data: Record<string, unknown> | null }> {
     try {
         const res = await fetch(url, { credentials: "include", cache: "no-store", signal: AbortSignal.timeout(30_000), ...init });

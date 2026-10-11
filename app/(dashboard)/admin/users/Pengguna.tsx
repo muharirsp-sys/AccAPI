@@ -13,12 +13,13 @@
 
 import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { KeyRound, Plus, Power, Star, StarOff, UserMinus } from "lucide-react";
 import {
     AnchorBar, Button, EmptyState, ErrorState, FlexibleColumnLayout, KeyValues, ListItem, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge,
 } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
-import { DialogKeluarkan, GalatAdmin, PeringatanRole, Riwayat, SandiGanda, muatAdmin, tulisAdmin, type GrupRingkas, type UserBaris } from "@/components/admin/Bersama";
+import { DialogKeluarkan, GalatAdmin, PeringatanRole, Riwayat, izinPerluDisegarkan, SandiGanda, muatAdmin, tulisAdmin, type GrupRingkas, type UserBaris } from "@/components/admin/Bersama";
 import { perkiraanRole, roleDariGrup, statusAkun } from "@/components/admin/admin-ui";
 
 type Dialog = { jenis: "buat" | "sandi" | "status" } | { jenis: "bintang"; grupId: string | null } | { jenis: "keluar"; grupId: string };
@@ -34,6 +35,7 @@ const grupTeks = (u: UserBaris) => (u.groups.length
     : "Tanpa grup (akses role lama)");
 
 export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; aktorId: string }) {
+    const router = useRouter();
     const bolehKelola = permKeys.includes("users.manage");
     const [daftar, muatDaftar] = useLoad(useCallback(() => muatAdmin<{ users: UserBaris[] }>("/api/admin/users/permissions"), []));
     // Daftar grup hanya untuk menulis (tambah ke grup, buat user); GET /api/admin/groups butuh users.manage.
@@ -65,6 +67,8 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
         : grupL.status === "galat" ? "Daftar grup gagal dimuat — muat ulang dulu" : undefined);
 
     function muatSemua() { muatDaftar(); if (bolehKelola) muatGrup(); setVersi((v) => v + 1); }
+    /** Coba lagi sesudah galat baca: izin bisa saja yang berubah, jadi izin halaman dibaca ulang bersama datanya. */
+    function cobaLagi() { router.refresh(); muatSemua(); }
 
     /** Penangan aksi tulis: sukses = pesan + muat ulang; galat yang menuntut muat ulang (tidak pasti, data/izin berubah) = tutup dialog,
      * pesan di halaman, muat ulang; galat lain dilempar ke dialog (isian tetap). */
@@ -79,6 +83,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
                 setDialog(null);
                 setPesan({ tone: e.belumPasti ? "warn" : "neg", teks: e.message });
                 muatSemua();
+                if (izinPerluDisegarkan(e)) router.refresh(); // izin akun berubah: baca ulang izin layout/halaman, bukan hanya data
                 return;
             }
             throw e;
@@ -124,7 +129,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
         <div className="fi-sect" style={{ borderRadius: 0, boxShadow: "none" }}>
             <header><h2>User</h2><span>{daftar.data ? `${tampil.length} dari ${users.length}` : ""}{daftar.status === "memuat" && daftar.data ? " · memperbarui…" : ""}</span></header>
             {memuatAwal ? <div className="fi-sect-in"><Skeleton rows={6} label="Memuat user" /></div>
-                : daftar.status === "galat" && !daftar.data ? <ErrorState title="Daftar user gagal dimuat" message={daftar.error} onRetry={muatDaftar} />
+                : daftar.status === "galat" && !daftar.data ? <ErrorState title="Daftar user gagal dimuat" message={daftar.error} onRetry={cobaLagi} />
                 : users.length === 0 ? <EmptyState title="Belum ada user" message={bolehKelola ? "Buat user pertama lewat tombol Buat user." : undefined} />
                 : tampil.length === 0 ? <EmptyState title={q ? `Tidak ada user “${cari.trim()}”` : "Tidak ada user yang sesuai saringan"} message="Cari dengan nama atau email lain, atau ubah saringan status dan grup." />
                 : (
@@ -259,7 +264,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
             )}
             {pesan && <MessageStrip tone={pesan.tone} title={pesan.teks} onClose={() => setPesan(null)} />}
             {daftar.status === "galat" && daftar.data && (
-                <MessageStrip tone="neg" title="Gagal memuat ulang user.">{daftar.error} Yang tampil hasil sebelumnya; aksi tulis terkunci. <Button variant="tertiary" onClick={muatDaftar}>Coba lagi</Button></MessageStrip>
+                <MessageStrip tone="neg" title="Gagal memuat ulang user.">{daftar.error} Yang tampil hasil sebelumnya; aksi tulis terkunci. <Button variant="tertiary" onClick={cobaLagi}>Coba lagi</Button></MessageStrip>
             )}
             <div className="fi-panel" style={{ padding: 0, overflow: "clip" }}>
                 <FilterBar title="Saringan" activeCount={(saringGrup ? 1 : 0) + (saringStatus !== "aktif" ? 1 : 0)} onReset={() => { setSaringGrup(""); setSaringStatus("aktif"); }}

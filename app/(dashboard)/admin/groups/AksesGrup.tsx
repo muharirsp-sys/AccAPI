@@ -15,12 +15,13 @@
 
 import { useCallback, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Plus, Save, Trash2, UserMinus, UserPlus } from "lucide-react";
 import {
     AnchorBar, Button, EmptyState, ErrorState, FlexibleColumnLayout, FooterToolbar, ListItem, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge,
 } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
-import { DialogKeluarkan, GalatAdmin, Riwayat, muatAdmin, tulisAdmin, type GrupRingkas, type UserBaris } from "@/components/admin/Bersama";
+import { DialogKeluarkan, GalatAdmin, Riwayat, izinPerluDisegarkan, muatAdmin, tulisAdmin, type GrupRingkas, type UserBaris } from "@/components/admin/Bersama";
 import { selisihIzin } from "@/components/admin/admin-ui";
 import { actionLabels, permissionKeyLabel, permissionModuleLabels } from "@/lib/rbac";
 import { CAPABILITY_KEYS, PERMISSION_MODULES, PERMISSION_REGISTRY, moduleAllOn, toggleModuleKeys, type PermissionModule } from "@/lib/rbac/registry";
@@ -35,6 +36,7 @@ const KOSONG: Load<DetailGrup | null> = { status: "siap", data: null };
 const daftarNama = (nama: string[], maks = 5) => nama.slice(0, maks).join(", ") + (nama.length > maks ? ` dan ${nama.length - maks} lain` : "");
 
 export default function AksesGrup({ aktorId }: { aktorId: string }) {
+    const router = useRouter();
     const [grupL, muatGrup] = useLoad(useCallback(() => muatAdmin<{ groups: GrupRingkas[] }>("/api/admin/groups"), []));
     const [userL, muatUser] = useLoad(useCallback(() => muatAdmin<{ users: UserBaris[] }>("/api/admin/users/permissions"), []));
     const [pilihId, setPilihId] = useState<string | null>(null);
@@ -69,6 +71,8 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
         : userL.status === "galat" ? "Daftar user gagal dimuat — muat ulang dulu" : undefined);
 
     function muatSemua() { muatGrup(); muatUser(); muatDetail(); setVersi((v) => v + 1); }
+    /** Coba lagi sesudah galat baca: izin bisa saja yang berubah, jadi izin halaman dibaca ulang bersama datanya. */
+    function cobaLagi() { router.refresh(); muatSemua(); }
 
     async function jalankan(fn: () => Promise<string>) {
         try {
@@ -81,6 +85,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                 setDialog(null);
                 setPesan({ tone: e.belumPasti ? "warn" : "neg", teks: e.message });
                 muatSemua();
+                if (izinPerluDisegarkan(e)) router.refresh(); // izin akun berubah: baca ulang izin layout/halaman (tanpa users.manage halaman ini menolak), bukan hanya data
                 return;
             }
             throw e;
@@ -132,7 +137,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                 <FormField label="Cari grup">{(a11y) => <input {...a11y} className="fi-input" type="search" value={cari} onChange={(e) => setCari(e.target.value)} />}</FormField>
             </div>
             {grupL.status === "memuat" && !grupL.data ? <div className="fi-sect-in"><Skeleton rows={6} label="Memuat grup" /></div>
-                : grupL.status === "galat" && !grupL.data ? <ErrorState title="Daftar grup gagal dimuat" message={grupL.error} onRetry={muatGrup} />
+                : grupL.status === "galat" && !grupL.data ? <ErrorState title="Daftar grup gagal dimuat" message={grupL.error} onRetry={cobaLagi} />
                 : groups.length === 0 ? <EmptyState title="Belum ada grup" message="Buat grup lewat tombol Grup baru." />
                 : tampil.length === 0 ? <EmptyState title={`Tidak ada grup “${cari.trim()}”`} message="Cari dengan nama lain." />
                 : (
@@ -297,7 +302,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                 <p>Izin per modul untuk setiap grup. Izin user = gabungan semua grupnya. Selisih izin ditampilkan sebelum disimpan dan tercatat di riwayat.</p>
             </header>
             {pesan && <MessageStrip tone={pesan.tone} title={pesan.teks} onClose={() => setPesan(null)} />}
-            {grupL.status === "galat" && grupL.data && <MessageStrip tone="neg" title="Gagal memuat ulang grup.">{grupL.error} Daftar masih hasil sebelumnya. <Button variant="tertiary" onClick={muatGrup}>Coba lagi</Button></MessageStrip>}
+            {grupL.status === "galat" && grupL.data && <MessageStrip tone="neg" title="Gagal memuat ulang grup.">{grupL.error} Daftar masih hasil sebelumnya. <Button variant="tertiary" onClick={cobaLagi}>Coba lagi</Button></MessageStrip>}
             <FlexibleColumnLayout list={daftarEl} detail={detail} detailOpen={pilihId !== null} onBack={() => buka(null)} listLabel="Daftar grup" detailLabel="Detail grup" />
 
             <ConfirmDialog open={dialog === "simpan" && Boolean(det)} onClose={() => setDialog(null)} tag="Izin"
