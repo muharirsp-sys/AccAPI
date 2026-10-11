@@ -38,8 +38,10 @@ export const PERMISSION_REGISTRY = {
     master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
     reconciliation: ["view", "run", "manage"],
+    // S7-1b (AM-042, D-01 §D): create/update/export DIPENSIUNKAN (KUNCI_PENSIUN di bawah) — diganti kunci granular; approve menyusul
+    //   sesudah profil Beranda pindah ke bintang (S7-3, PK-O2).
     off_program_control: [
-        "view", "create", "update", "approve", "export",
+        "view", "approve",
         // workflow granular (mirror OffAction) — chain SPV→SM→Claim→OM→Finance:
         "create_batch", "edit_returned_batch", "submit_batch", "sm_approve", "sm_return",
         "claim_review", "claim_final", "om_approve", "om_cancel", "finance_payment",
@@ -47,7 +49,8 @@ export const PERMISSION_REGISTRY = {
         "period_unlock", "discount_view", "discount_manage",
     ],
     claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export"],
-    users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission", "manage"],
+    // S7-1b: create_user/edit_user/delete_user/set_role/set_permission DIPENSIUNKAN -> users.manage (KUNCI_PENSIUN).
+    users: ["view", "manage"],
     // Modul yang sebelumnya TIDAK terdaftar di RBAC (temuan Fase 3 — page-guard gap):
     form_kontrol: ["view", "submit", "manage"],
     // view          = boleh membuka halaman & membaca angkanya (dipakai semua GET modul ini)
@@ -95,6 +98,17 @@ export function allPermissionKeys(): Set<string> {
 export function isValidPermissionKey(key: string): boolean {
     return allPermissionKeys().has(key);
 }
+
+/**
+ * S7-1b (AM-042, D-01 §D "Pensiunkan"): kunci yang dihapus dari registry. Masih bisa tersimpan di group_permission sampai
+ * docs/handover/RBAC_S7_1B_PENSIUN.sql dijalankan (SESUDAH image) — PATCH grup membuangnya dari kiriman tanpa 400 dan mencatatnya
+ * di `removed` audit `group_permission.sync`. TIDAK dipetakan ke kunci granular (memetakan = memperluas akses).
+ * off_program_control.approve menyusul di S7-3 (profil Beranda, PK-O2).
+ */
+export const KUNCI_PENSIUN: ReadonlySet<string> = new Set([
+    "off_program_control.create", "off_program_control.update", "off_program_control.export",
+    "users.create_user", "users.edit_user", "users.delete_user", "users.set_role", "users.set_permission",
+]);
 
 /** Kunci kapabilitas yang membuka kiriman ulang ke Accurate (D-14/D-15/D-18), menetapkan nasib faktur
  * tidak pasti (order.resolve_unknown, S6-0d E6), atau membuka kembali hari Kasir yang terkunci (kasir.buka, K1a).

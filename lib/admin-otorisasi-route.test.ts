@@ -111,6 +111,12 @@ test("400 sebelum transaksi: kunci izin tak terdaftar (berkode + daftar), userId
     assert.equal(n.status, 400);
     const kosong = await sebagai(["users.manage"], () => grupId.PATCH(req("PATCH", { name: "  " }), ctx));
     assert.equal(kosong.status, 400);
+    // S7-1b: kunci PENSIUN di kiriman BUKAN 400 (dibuang; layar Akses Group tetap bisa disimpan) — berhenti di transaksi tiruan;
+    // kunci tak dikenal lain tetap 400. Perilaku DB (+ `removed` audit) = lib/admin-otorisasi-pg.test.ts.
+    const pensiun = await sebagai(["users.manage"], () => grupId.PATCH(req("PATCH", { permissions: ["finance.view", "users.create_user", "off_program_control.export"] }), ctx));
+    assert.notEqual(pensiun.status, 400);
+    const campur = await sebagai(["users.manage"], () => grupId.PATCH(req("PATCH", { permissions: ["users.set_role", "finance.nope"] }), ctx));
+    assert.deepEqual(await campur.json(), { ok: false, code: "KUNCI_TIDAK_VALID", error: "Key tidak valid: finance.nope", invalid: ["finance.nope"] });
 });
 
 test("plugin admin Better Auth ditutup dari browser: SEMUA endpoint /admin/* plugin -> HTTP 404 (cocok persis, juga ?query)", async () => {

@@ -10,7 +10,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { actionLabels, auditActionLabels, canAccessPathWithKeys, getPagePermission, permissionKeyLabel, permissionModuleLabels, rolePermissionPresets } from "../rbac.ts";
-import { CAPABILITY_KEYS, PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey, moduleAllOn, toggleModuleKeys } from "./registry.ts";
+import { CAPABILITY_KEYS, KUNCI_PENSIUN, PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey, moduleAllOn, toggleModuleKeys } from "./registry.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_DIR = path.resolve(__dirname, "../../app/api");
@@ -72,8 +72,21 @@ for (const [mod, actions] of Object.entries(PERMISSION_REGISTRY)) {
 assert.equal(permissionKeyLabel("off_program_control.sm_approve"), "OFF Program Control · Setujui (SM)");
 assert.equal(permissionKeyLabel("form_kontrol.manage"), "Form Kontrol · Manage");
 assert.equal(permissionKeyLabel("nope.x"), "nope.x");
-// Label OPC tidak memperluas preset role lama (moduleActions OPC tetap 5 aksi).
-assert.deepEqual(rolePermissionPresets.admin.off_program_control, ["view", "create", "update", "approve", "export"]);
+// Label OPC tidak memperluas preset role lama. S7-1b: create/update/export dipensiunkan -> moduleActions OPC tinggal view + approve
+// (approve menunggu S7-3); preset tidak diperluas ke kunci granular.
+assert.deepEqual(rolePermissionPresets.admin.off_program_control, ["view", "approve"]);
+assert.deepEqual(rolePermissionPresets.manager.off_program_control, ["view", "approve"]);
+assert.deepEqual(rolePermissionPresets.admin.users, ["view", "manage"]);
+// S7-1b KUNCI_PENSIUN (literal, re-review b955f836 #1): tepat 8 kunci, tidak ada di registry, tidak ada di preset role lama.
+assert.deepEqual([...KUNCI_PENSIUN].sort(), ["off_program_control.create", "off_program_control.export", "off_program_control.update",
+    "users.create_user", "users.delete_user", "users.edit_user", "users.set_permission", "users.set_role"]);
+for (const k of KUNCI_PENSIUN) {
+    assert.ok(!isValidPermissionKey(k), `${k} masih di registry`);
+    const [mod, act] = k.split(".");
+    for (const [role, preset] of Object.entries(rolePermissionPresets)) {
+        assert.ok(!(preset as Record<string, string[] | undefined>)[mod]?.includes(act), `preset ${role} masih memuat ${k}`);
+    }
+}
 for (const a of ["user.create", "user.password_set", "user.deactivate", "user.activate", "user_group.assign", "user_group.remove", "user_group.star", "user_group.unstar", "group.delete", "group_permission.sync"]) {
     assert.ok(auditActionLabels[a], `aksi audit ${a} tanpa label`);
 }

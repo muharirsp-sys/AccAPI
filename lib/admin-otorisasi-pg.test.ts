@@ -701,6 +701,27 @@ test("preset BL-37 SQL: idempoten (jalan 2x), isi persis D-01 §B, grup lama ber
     });
 });
 
+// ---------------- S7-1b: kunci pensiun di grup lama ----------------
+
+test("S7-1b: PATCH grup yang masih memuat kunci PENSIUN di DB -> 200, kunci pensiun terhapus & tercatat di `removed`; kunci lain utuh", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const ga = await w.grup("kelola", ["users.manage"]);
+        const a = await w.user("a");
+        await w.masuk(a, ga);
+        // Grup lama: kunci pensiun masih tersimpan (sebelum RBAC_S7_1B_PENSIUN.sql); layar mengirim ulang SEMUA kunci + satu tambahan.
+        const g = await w.grup("lama", ["off_program_control.view", "off_program_control.create", "off_program_control.export", "users.create_user"]);
+        const kirim = ["off_program_control.view", "off_program_control.create", "off_program_control.export", "users.create_user", "off_program_control.audit_read"];
+        const res = await panggil(m.grupId.PATCH, a, "PATCH", g, { permissions: kirim });
+        assert.equal(res.status, 200);
+        const kunci = (await m.pool.query(`SELECT permission_key FROM group_permission WHERE group_id = $1 ORDER BY 1`, [g])).rows.map((r) => r.permission_key);
+        assert.deepEqual(kunci, ["off_program_control.audit_read", "off_program_control.view"]);
+        const sync = (await w.audit()).filter((x) => x.action === "group_permission.sync" && x.target_group_id === g);
+        assert.equal(sync.length, 1);
+        assert.deepEqual(sync[0].detail, { keyCount: 2, added: ["off_program_control.audit_read"],
+            removed: ["off_program_control.create", "off_program_control.export", "users.create_user"] });
+    });
+});
+
 // ---------------- Putaran perbaikan (tinjauan A/B) ----------------
 
 test("perbaikan #1: role turunan TIDAK tertinggal — multi-grup tanpa bintang ber-role admin dikeluarkan dari Admin -> viewer (tercatat); masih anggota preset ber-peta itu / role lama tanpa grup preset -> tetap", { skip: pgSkip }, async () => {
