@@ -156,6 +156,39 @@ Browser -> any /api/* route (modul baru)
      -> perms.has(key) ? proceed : 403
 ```
 
+**Sesi Accurate (S7-sesi, AM-033, 11 Okt 2026).** Masuk Accurate + pilih database tanpa Konsol: halaman `/sesi-accurate`
+(pagePermissions `anyOf` = `SESI_ACCURATE_KEYS`: `api_wrapper.view` | `order.edit` | `pelunasan.kirim` | `finance.update` |
+`finance.resolve_unknown`; tautan di menu profil). Kartu `components/accurate/SesiAccurate.tsx` dipakai juga oleh Konsol `/api-wrapper`.
+```
+Kartu "Masuk Accurate" -> GET /api/auth/accurate-login?returnTo=<daftar putih>
+  -> Sec-Fetch-Site=cross-site -> alasan=lintas_situs; tanpa sesi app -> /login?error=…; baca sesi melempar -> alasan=galat_server
+  -> state = randomBytes(32); Set-Cookie __Secure-accurate_oauth_state="<state>:<returnTo>" (HttpOnly, Secure, SameSite=Lax, 600 dtk, Path=/api/auth/callback)
+  -> 307 https://account.accurate.id/oauth/authorize?client_id&redirect_uri&scope(TETAP, lib/accurate-oauth.ts)&state
+Accurate -> GET /api/auth/callback?code&state
+  -> baca sesi app melempar     -> alasan=galat_server (bukan 500)
+  -> tanpa sesi app            -> /login?error=Accurate+login+requires+app+session (nilai lama, dibaca S7c)
+  -> cookie state tidak ada     -> alasan=state_hilang   (code TIDAK ditukar)
+  -> state query hilang/beda    -> alasan=state_beda     (code TIDAK ditukar; cookie DIBIARKAN: tab lain/pihak luar tak membatalkan)
+  -> tanpa code / env kurang    -> alasan=tanpa_kode / konfigurasi
+  -> POST oauth/token gagal / tanpa access_token -> alasan=tukar_token_gagal (log: status HTTP saja)
+  -> exception                  -> alasan=galat_server (log: nama galat saja)
+  -> sukses: upsertAccurateSession(token, database dikosongkan) -> accurate=connected
+  -> cabang lain menghapus cookie; mendarat di halaman berkartu: returnTo=/api-wrapper -> /api-wrapper?…,
+     selain itu -> /sesi-accurate?…[&returnTo=/pelunasan|/antrean-faktur|/finance] (tombol Kembali)
+Kartu membaca ?accurate=&alasan= -> MessageStrip dari pemetaan kode (GALAT_ACCURATE), lalu membuang keduanya dari URL.
+Route sesi (GET/DELETE accurate-session, GET db-list, POST open-db, accurate-login, callback) cukup sesi app — tidak ada kunci; tidak ada
+route tulis baru. open-db sukses = {ok, databaseId, databaseAlias, host} (session database Accurate tidak ke peramban; GET dihapus).
+Kartu: Ganti database (open-db menimpa), Keluar lewat konfirmasi, daftar kosong = keadaan kosong, 401 = tautan masuk ulang.
+Gerbang klien: SidebarLayout menghitung ulang canAccessPathWithKeys(usePathname) — navigasi klien ke halaman terlarang = AccessDenied
+(layout server tidak berjalan ulang pada navigasi klien; otoritas tetap server + guard API).
+db-list/open-db galat = {ok:false, code, error netral}: SESI_BELUM_TERHUBUNG 400, DATABASE_ID_KOSONG 400, ACCURATE_MENOLAK 502
+  (+accurateStatus), GALAT_SERVER 500 — isi jawaban Accurate/pesan exception tidak ke peramban maupun log.
+```
+**Gerbang halaman Konsol (S7-sesi).** `proxy.ts` memasang `x-current-path` yang dibaca layout. Matcher lama `(?!api|…)` ikut melewatkan
+halaman `/api-wrapper`, sehingga layout menilai "/" dan `dashboard.view` cukup membuka Konsol. Kini hanya `/api` dan `/api/...`
+dikecualikan (`lib/proxy-matcher.test.ts`). **Dampak produksi saat rilis:** user tanpa `api_wrapper.view` (mis. Fakturist, Admin Incaso)
+kehilangan Konsol (Akses ditolak); login Accurate + pilih database pindah ke `/sesi-accurate` (menu profil).
+
 ### 2. OFF Program Control — Buat & Submit Pengajuan
 ```
 UI: OffProgramControlPage (tab supervisor)
@@ -639,7 +672,8 @@ AccAPI/_github_clean/
 │   └── api/
 │       ├── auth/
 │       │   ├── [...all]/route.ts       # Better Auth catch-all handler
-│       │   ├── callback/route.ts       # Accurate OAuth callback
+│       │   ├── accurate-login/route.ts # Mulai OAuth Accurate: state + returnTo di cookie httpOnly (AM-033)
+│       │   ├── callback/route.ts       # Accurate OAuth callback (cocokkan state, galat berkode)
 │       │   ├── db-list/route.ts
 │       │   └── open-db/route.ts
 │       ├── off-program-control/
@@ -777,7 +811,7 @@ AccAPI/_github_clean/
 ├── .dockerignore                       # Keluarkan env/compose/runtime data dari build context
 ├── Dockerfile.frontend
 ├── Dockerfile.backend
-└── proxy.ts                            # Dev proxy config
+└── proxy.ts                            # Pasang x-current-path untuk gerbang halaman (matcher: semua kecuali /api, /api/..., aset)
 ```
 
 ---
@@ -800,7 +834,9 @@ AccAPI/_github_clean/
 |---|---|---|
 | `lib/auth.ts` | `auth` (betterAuth instance) | Konfigurasi server auth: email/password, admin plugin, adapter PostgreSQL, email reset/verify. S7-1: `disabledPaths` menutup 15 endpoint `/api/auth/admin/*` plugin dari browser (404; `auth.api.*` server-side tetap jalan); `revokeSessionsOnPasswordReset` (reset lupa sandi mencabut sesi lama) |
 | `lib/auth-client.ts` | `authClient` | Client-side Better Auth hooks untuk browser |
-| `lib/rbac.ts` | `canAccess`, `canAccessPath`, `permissionMapForUser`, `normalizeRole`, `actionLabels`, `permissionModuleLabels`, `permissionKeyLabel`, `auditActionLabels` | RBAC legacy: preset per role (fallback user tanpa grup). S7-1: SATU sumber label izin (20 modul registry + 18 aksi OPC granular) & label aksi audit untuk layar S7a |
+| `lib/rbac.ts` | `canAccess`, `canAccessPath`, `permissionMapForUser`, `normalizeRole`, `canAccessPathWithKeys` (`anyOf`), `SESI_ACCURATE_KEYS`, `actionLabels`, `permissionModuleLabels`, `permissionKeyLabel`, `auditActionLabels` | RBAC legacy: preset per role (fallback user tanpa grup); `pagePermissions` boleh memuat `anyOf` (kunci alternatif, dipakai `/sesi-accurate`). S7-1: SATU sumber label izin (20 modul registry + 18 aksi OPC granular) & label aksi audit untuk layar S7a |
+| `lib/accurate-oauth.ts` | `urlAuthorize`, `returnToAman`, `halamanMendarat`, `kabarAccurate`, `GALAT_ACCURATE` | Bagian murni OAuth Accurate (server+klien): scope tetap, daftar putih returnTo, kode galat → kalimat |
+| `components/accurate/SesiAccurate.tsx` | `SesiAccurate` | Kartu Sesi Accurate bersama `/sesi-accurate` dan Konsol: status, Masuk, daftar/buka database, Keluar, kabar callback |
 | `lib/rbac/registry.ts` | `PERMISSION_REGISTRY`, `allPermissionKeys`, `isValidPermissionKey` | **Sumber tunggal** 85 permission key (`module.action`). Zero import — pure data. Test-guard scan semua route.ts saat CI |
 | `lib/rbac/resolve.ts` | `getUserPermissions`, `getPrimaryGroup`, `requirePermission`, `requirePermissionH`, `resolveRequestPermissions`, `resolveRequestPermissionsH` | Resolver: grup (otoritatif) / legacy role bila tanpa grup. Guard endpoint default-deny. `getPrimaryGroup` (BL-63) = grup berbintang atau satu-satunya grup |
 | `lib/rbac/otorisasi.ts` | `transaksiOtorisasi`, `adminAktif`, `evaluasiPenjaga`, `mulaiUtama`/`selesaiUtama`, `pasangBintang`, `roleTurunan`, `GROUP_NAME_TO_ROLE` | S7-1: SATU penjaga BL-61 (admin = aktif + `users.manage` efektif; 409 `ADMIN_TERAKHIR`/`AKSES_SENDIRI`/`GRUP_TERAKHIR`) di dalam transaksi + `pg_advisory_xact_lock`; grup utama + penurunan `user.role` dari grup preset di transaksi yang sama. Kontrak `docs/handover/S7-KONTRAK-ADMIN-API.md` |
@@ -903,7 +939,8 @@ AccAPI/_github_clean/
 | `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance: database sesi wajib = `expectedDatabaseId` (409 `database_changed`), klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
 | `app/api/finance/purchase-payment/resolve/route.ts` | `POST` | Atestasi manual attempt purchase-payment tidak pasti (alasan + sumber pemeriksaan) |
 | `app/api/finance/purchase-payment/attempts/route.ts` | `GET` | Baca-saja status attempt terbaru per kelompok faktur (S6-0e; kontrak `docs/handover/S6-0e-KONTRAK-API.md`) |
-| `app/api/auth/callback/route.ts` | `GET` | OAuth2 callback dari Accurate (tukar code ke token) |
+| `app/api/auth/accurate-login/route.ts` | `GET` | Mulai OAuth2 Accurate: `state` acak + `returnTo` daftar putih di cookie httpOnly berumur 10 menit, 307 ke authorize (scope tetap) |
+| `app/api/auth/callback/route.ts` | `GET` | OAuth2 callback dari Accurate: tolak state hilang/beda SEBELUM tukar code, simpan token, alihkan dengan `accurate=connected` atau `accurate=error&alasan=<kode>` |
 | `app/api/faktur/route.ts` | `GET` | Daftar faktur dari cache `sales_invoice` (cari nomor/pelanggan, default hanya nomor mengandung INV, `?all=1` untuk semua) |
 | `app/api/faktur/[id]/route.ts` | `GET` | Detail 1 faktur + baris item (qty/harga) live dari `sales-invoice/detail.do`; `?raw=1` menampilkan respons Accurate mentah |
 | `app/api/webhook/accurate/route.ts` | `POST` | Terima event webhook Faktur Penjualan dari Accurate (IP whitelist fail-closed + log rotasi + upsert `sales_invoice`) |

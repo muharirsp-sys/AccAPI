@@ -1,7 +1,7 @@
 /*
  * Tujuan: Wizard Pelunasan (Fiori S6e-2b, it02 #16–19): 1 Jenis (Pembayaran pembelian nonaktif, D-06) → 2 Unggah (Format Pelunasan Internal,
  *   berkas lain = kosong beralasan) → 3 Akun (rekening Tunai/Trf/BG, Pot.1–3, penomoran Otomatis; BG/potongan wajib bila berkas memuatnya)
- *   → 4 Tinjau → 5 Hasil (LangkahKirim). Kepala menampilkan database Accurate aktif + tautan Konsol (login OAuth tetap di Konsol).
+ *   → 4 Tinjau → 5 Hasil (LangkahKirim). Kepala menampilkan database Accurate aktif + tautan halaman Sesi Accurate (S7-sesi: masuk & pilih database tanpa Konsol).
  *   Langkah Jenis juga memuat daftar Perlu tindakan (Tidak pasti + Gagal dari kiriman sebelumnya, BL-41) dengan Selesaikan untuk Finance.
  * Caller: app/(dashboard)/pelunasan/page.tsx.
  * Dependensi: lib/pelunasan (deteksi/parse, pratinjau ganda, tanggal WITA), lib/pelunasan-wizard, lib/apiFetcher (GET Accurate lewat proxy),
@@ -30,7 +30,7 @@ const LANGKAH = ["Jenis", "Unggah", "Akun", "Tinjau", "Hasil"];
 type Berkas = { nama: string; sheet: string; rows: Bebas[]; isi: IsiBerkas };
 type Bacaan = { status: "memuat"; nama: string } | { status: "kosong"; nama: string; sheet: string } | { status: "galat"; nama: string; pesan: string } | null;
 
-function Kepala({ langkah, sesi, onPeriksa, bisaKonsol }: { langkah: number; sesi: Load<Sesi>; onPeriksa: () => void; bisaKonsol: boolean }) {
+function Kepala({ langkah, sesi, onPeriksa }: { langkah: number; sesi: Load<Sesi>; onPeriksa: () => void }) {
     const steps: FlowStep[] = LANGKAH.map((label, i) => ({ label, state: i < langkah ? "done" : i === langkah ? "current" : "todo" }));
     const s = sesi.data;
     const badge = !s && sesi.status === "memuat" ? <StatusBadge tone="neu" busy>Memeriksa sesi Accurate…</StatusBadge>
@@ -46,13 +46,11 @@ function Kepala({ langkah, sesi, onPeriksa, bisaKonsol }: { langkah: number; ses
                 <span aria-live="polite">{badge}</span>
                 <span className="fi-spacer" />
                 <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} busy={sesi.status === "memuat" && Boolean(s)} onClick={onPeriksa}>Periksa ulang sesi</Button>
-                {bisaKonsol
-                    ? <a className="fi-btn fi-btn--secondary" href="/api-wrapper" target="_blank" rel="noopener"><ExternalLink className="fi-icon" aria-hidden />Masuk/ganti database di Konsol</a>
-                    : <Button icon={<ExternalLink className="fi-icon" aria-hidden />} disabled disabledReason={ALASAN.konsol}>Masuk/ganti database di Konsol</Button>}
+                {/* pelunasan.kirim (gerbang halaman ini) termasuk SESI_ACCURATE_KEYS — tautan selalu boleh dibuka. */}
+                <a className="fi-btn fi-btn--secondary" href="/sesi-accurate?returnTo=/pelunasan" target="_blank" rel="noopener"><ExternalLink className="fi-icon" aria-hidden />Masuk/ganti database Accurate</a>
             </div>
-            {!bisaKonsol && <p className="fi-small fi-why">{ALASAN.konsol}</p>}
             <p>Unggah Format Pelunasan Internal, pilih rekening dan akun, tinjau baris ganda dan retur manual, lalu kirim ke Accurate. Login Accurate dan
-                pilihan database tetap di Konsol AOL (tab baru); kembali ke sini lalu tekan Periksa ulang sesi.</p>
+                pilihan database di halaman Sesi Accurate (tab baru); kembali ke sini lalu tekan Periksa ulang sesi.</p>
             <Flow steps={steps} label="Langkah Pelunasan" />
         </header>
     );
@@ -89,7 +87,7 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
     const sesiSiap = sesi.status === "siap" && Boolean(s?.databaseConnected && s.databaseId);
     const kunciSesi = sesi.status === "memuat" ? "Sesi Accurate sedang diperiksa."
         : sesi.status === "galat" ? "Sesi Accurate tidak terbaca; tekan Periksa ulang sesi."
-            : !sesiSiap ? "Masuk ke Accurate dan buka database dulu (Konsol AOL), lalu Periksa ulang sesi." : undefined;
+            : !sesiSiap ? "Masuk ke Accurate dan buka database dulu (halaman Sesi Accurate), lalu Periksa ulang sesi." : undefined;
 
     function mulaiBaru() {
         setLangkah(1); setBacaan(null); setBerkas(null); setAkun(AKUN_KOSONG); setTinjauan(null); setHasil(null); setGalatSiap(null); setTanggal(tanggalKemarin());
@@ -138,7 +136,7 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
             });
             setMenyiapkan("Memeriksa baris ganda (kunci aplikasi dan riwayat Accurate)…");
             const cek = out.payload.length ? await pratinjauDuplikat(out.payload, "pelunasan", { accurateFetch, pratinjauKunci }) : null;
-            // 2b #4: database bisa diganti di Konsol (tab lain) SELAMA pratinjau — faktur, retur, dan riwayat mungkin terbaca dari
+            // 2b #4: database bisa diganti di Sesi Accurate/Konsol (tab lain) SELAMA pratinjau — faktur, retur, dan riwayat mungkin terbaca dari
             // database lain. Sesi dibaca ulang; berbeda dari awal / tak terbaca = pratinjau dibuang dengan alasan.
             const akhir = await bacaSesi();
             if (akhir.status !== "siap" || !akhir.data?.databaseConnected || akhir.data.databaseId !== s.databaseId) {
@@ -161,7 +159,7 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
         }
     }
 
-    const kepala = <Kepala langkah={langkah} sesi={sesi} onPeriksa={muatSesi} bisaKonsol={bisaKonsol} />;
+    const kepala = <Kepala langkah={langkah} sesi={sesi} onPeriksa={muatSesi} />;
 
     if (langkah === 4 && hasil && tinjauan) {
         return <div className="fi-page" style={{ paddingBottom: 0 }}>{kepala}<LangkahHasil tinjauan={tinjauan} hasil={hasil} izin={izin} onBaru={mulaiBaru} /></div>;
@@ -170,7 +168,7 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
         return (
             <div className="fi-page" style={{ paddingBottom: 0 }}>
                 {kepala}
-                <LangkahTinjau key={tinjauan.dibuat} tinjauan={tinjauan} sesi={sesi} muatSesi={muatSesi} izin={izin} bisaKonsol={bisaKonsol}
+                <LangkahTinjau key={tinjauan.dibuat} tinjauan={tinjauan} sesi={sesi} muatSesi={muatSesi} izin={izin}
                     menyiapkan={menyiapkan} galatSiap={galatSiap} onUlangi={() => void siapkanTinjauan()}
                     onKembali={() => { setTinjauan(null); setLangkah(2); }}
                     onHasil={(h) => { setHasil(h); setLangkah(4); }} />

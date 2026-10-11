@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
                 pesan: !targetDb
                     ? "ACCURATE_INVOICE_DB_ID belum di-set — Kirim akan ditolak."
                     : !sesiDb
-                        ? "Sesi Accurate Anda tidak lengkap — login Accurate dulu di /api-wrapper."
+                        ? "Sesi Accurate Anda tidak lengkap — masuk Accurate dan buka database dulu di /sesi-accurate."
                         : `Sesi Accurate Anda terbuka pada database ${sesiDb}, bukan ${targetDb} — Kirim akan ditolak.`,
             }),
         },

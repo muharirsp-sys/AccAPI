@@ -40,7 +40,7 @@ type SesiPenekan = { accessToken?: string | null; sessionHost?: string | null; s
 /** Sesi penekan dipakai mencari hanya bila lengkap, host-nya Accurate, dan terbuka pada database faktur. */
 export function sesiCariSah(sesi: SesiPenekan, targetDb: string): { session: SesiCari | null; catatan: string } {
     if (!sesi?.accessToken || !sesi.sessionHost || !sesi.sessionId || !isAllowedAccurateHost(sesi.sessionHost)) {
-        return { session: null, catatan: "sesi Accurate Anda tidak lengkap — login Accurate di /api-wrapper" };
+        return { session: null, catatan: "sesi Accurate Anda tidak lengkap — masuk Accurate di /sesi-accurate" };
     }
     if (!targetDb || String(sesi.databaseId ?? "") !== targetDb) {
         return { session: null, catatan: `sesi Accurate Anda terbuka pada database ${sesi.databaseId ?? "?"}, bukan database faktur ${targetDb || "(ACCURATE_INVOICE_DB_ID kosong)"}` };
