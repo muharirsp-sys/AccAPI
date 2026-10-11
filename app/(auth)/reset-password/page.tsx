@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { use, useState, type FormEvent } from "react";
+import { use, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { authClient } from "@/lib/auth-client";
 import { Button, MessageStrip } from "@/components/fiori/core";
@@ -27,7 +27,11 @@ type Keadaan = "isi" | "tak-berlaku" | "tersimpan";
 export default function ResetPasswordPage({ searchParams }: { searchParams: Promise<{ token?: string | string[]; error?: string | string[] }> }) {
     const query = use(searchParams);
     const token = typeof query.token === "string" ? query.token : "";
-    const [keadaan, setKeadaan] = useState<Keadaan>(token && query.error === undefined ? "isi" : "tak-berlaku");
+    const awal: Keadaan = token && query.error === undefined ? "isi" : "tak-berlaku";
+    const [keadaan, setKeadaan] = useState<Keadaan>(awal);
+    const judulRef = useRef<HTMLHeadingElement>(null);
+    // Keadaan berganti (tersimpan / tautan ditolak server) → fokus ke judul baru, bukan hilang ke <body>.
+    useEffect(() => { if (keadaan !== awal) judulRef.current?.focus(); }, [keadaan, awal]);
     const [sandi, setSandi] = useState("");
     const [ulang, setUlang] = useState("");
     const [loading, setLoading] = useState(false);
@@ -56,7 +60,7 @@ export default function ResetPasswordPage({ searchParams }: { searchParams: Prom
     if (keadaan === "tak-berlaku") {
         return (
             <>
-                <h1 className="fi-title-1">Tautan tidak berlaku</h1>
+                <h1 ref={judulRef} tabIndex={-1} className="fi-title-1">Tautan tidak berlaku</h1>
                 <MessageStrip tone="warn">Tautan atur ulang sandi ini sudah kedaluwarsa, sudah dipakai, atau tidak lengkap.</MessageStrip>
                 <Link href="/forgot-password" className="fi-btn fi-btn--primary">Minta tautan baru</Link>
                 <Link href="/login" className="fi-btn fi-btn--tertiary">Kembali ke halaman masuk</Link>
@@ -67,7 +71,7 @@ export default function ResetPasswordPage({ searchParams }: { searchParams: Prom
     if (keadaan === "tersimpan") {
         return (
             <>
-                <h1 className="fi-title-1">Sandi tersimpan</h1>
+                <h1 ref={judulRef} tabIndex={-1} className="fi-title-1">Sandi tersimpan</h1>
                 <MessageStrip tone="pos">Sandi baru sudah tersimpan. Masuk dengan sandi baru.</MessageStrip>
                 <Link href="/login" className="fi-btn fi-btn--primary">Masuk</Link>
             </>

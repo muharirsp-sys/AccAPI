@@ -111,16 +111,16 @@ test("masuk: sukses mengirim email + sandi lalu pindah ke Beranda", async ({ pag
     await page.getByRole("button", { name: "Tampilkan sandi" }).click();
     await expect(page.getByLabel("Kata sandi", { exact: true })).toHaveAttribute("type", "text");
     await page.getByRole("button", { name: "Masuk", exact: true }).click();
-    await expect(page).toHaveURL(/localhost:3020\/$/);
     await expect(page.getByText("Beranda uji")).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe("/");
     expect(masuk).toHaveLength(1);
     expect(masuk[0].postDataJSON()).toMatchObject({ email: "andi@contoh.test", password: "rahasia123" });
 });
 
-test("lupa sandi: layar identik untuk email terdaftar dan tidak terdaftar, dengan kalimat jujur", async ({ page }) => {
+test("lupa sandi: layar identik untuk semua jawaban server non-5xx, dengan kalimat jujur; fokus ke judul", async ({ page }) => {
     const layar: string[] = [];
-    // Email pertama: server menjawab sukses; email kedua: server menjawab galat. Layar tidak boleh berbeda.
-    for (const [email, status] of [["terdaftar@contoh.test", 200], ["tidak-ada@contoh.test", 400]] as const) {
+    // Jawaban 2xx/4xx bisa berbeda per akun; layar tidak boleh berbeda (tidak membocorkan email terdaftar).
+    for (const [email, status] of [["terdaftar@contoh.test", 200], ["tidak-ada@contoh.test", 400], ["lain@contoh.test", 429]] as const) {
         await page.unrouteAll({ behavior: "wait" });
         await page.route("**/api/auth/**", (route) => route.fulfill({ status: 500, json: {} }));
         const r = await mockAuth(page, "request-password-reset", status, status === 200 ? { status: true, message: "If this email exists..." } : { code: "USER_NOT_FOUND", message: "not found" });
@@ -129,6 +129,7 @@ test("lupa sandi: layar identik untuk email terdaftar dan tidak terdaftar, denga
         await page.getByRole("button", { name: "Kirim tautan" }).click();
         await expect(kartu(page)).toContainText("Bila email terdaftar, tautan dikirim.");
         await expect(kartu(page)).toContainText("Tidak menerima surel? Minta admin mengatur sandi Anda.");
+        await expect(page.getByRole("heading", { level: 1, name: "Permintaan diterima" })).toBeFocused();
         expect(r).toHaveLength(1);
         const body = r[0].postDataJSON() as { email: string; redirectTo: string };
         expect(body.email).toBe(email);
@@ -136,7 +137,29 @@ test("lupa sandi: layar identik untuk email terdaftar dan tidak terdaftar, denga
         layar.push(await kartu(page).innerText());
     }
     expect(layar[1]).toBe(layar[0]);
-    await expect(kartu(page)).not.toContainText("tidak-ada@contoh.test");
+    expect(layar[2]).toBe(layar[0]);
+    await expect(kartu(page)).not.toContainText("lain@contoh.test");
+});
+
+test("lupa sandi: jaringan putus atau 5xx → galat dan form tetap; coba lagi → layar netral", async ({ page }) => {
+    for (const putus of [true, false]) {
+        await page.unrouteAll({ behavior: "wait" });
+        await page.route("**/api/auth/**", (route) => route.fulfill({ status: 500, json: {} }));
+        await page.route("**/api/auth/request-password-reset", (route) =>
+            putus ? route.abort("failed") : route.fulfill({ status: 503, json: { message: "RAHASIA-SERVER" } }));
+        await buka(page, "/forgot-password");
+        await page.getByLabel("Email").fill("andi@contoh.test");
+        await page.getByRole("button", { name: "Kirim tautan" }).click();
+        await expect(kartu(page).getByRole("alert")).toContainText("Server tidak dapat dihubungi");
+        await expect(page.locator(":focus")).toContainText("Server tidak dapat dihubungi");
+        await expect(kartu(page)).not.toContainText("Permintaan diterima");
+        await expect(kartu(page)).not.toContainText("RAHASIA-SERVER");
+        await expect(page.getByLabel("Email")).toHaveValue("andi@contoh.test");
+    }
+    await mockAuth(page, "request-password-reset", 200, { status: true });
+    await page.getByRole("button", { name: "Kirim tautan" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Permintaan diterima" })).toBeFocused();
+    await expect(kartu(page).getByRole("alert")).toHaveCount(0);
 });
 
 test("atur ulang tanpa token atau token tak berlaku: pesan + Minta tautan baru, bukan tombol mati", async ({ page }) => {
@@ -169,6 +192,7 @@ test("atur ulang: sandi pendek atau tidak sama mengunci Simpan; sama → tersimp
     await expect(tombol).toBeEnabled();
     await tombol.click();
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sandi tersimpan");
+    await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
     await expect(kartu(page).getByRole("link", { name: "Masuk" })).toHaveAttribute("href", "/login");
     expect(simpan).toHaveLength(1);
     expect(simpan[0].postDataJSON()).toMatchObject({ token: "TOKEN-UJI", newPassword: "rahasia123" });
@@ -181,6 +205,7 @@ test("atur ulang: sandi pendek atau tidak sama mengunci Simpan; sama → tersimp
     await page.getByLabel("Ketik ulang sandi baru").fill("rahasia123");
     await page.getByRole("button", { name: "Simpan sandi" }).click();
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Tautan tidak berlaku");
+    await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
     await expect(kartu(page).getByRole("link", { name: "Minta tautan baru" })).toBeVisible();
 });
 

@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { authClient } from "@/lib/auth-client";
 import { Button, MessageStrip } from "@/components/fiori/core";
@@ -20,7 +20,15 @@ export default function ForgotPasswordPage() {
     const [salah, setSalah] = useState<string>();
     const [loading, setLoading] = useState(false);
     const [terkirim, setTerkirim] = useState(false);
+    // Objek baru tiap kegagalan supaya fokus berpindah lagi pada percobaan ulang yang gagal.
+    const [galat, setGalat] = useState<{ pada: number }>();
     const emailRef = useRef<HTMLInputElement>(null);
+    const judulRef = useRef<HTMLHeadingElement>(null);
+    const galatRef = useRef<HTMLDivElement>(null);
+
+    // Keadaan berganti → fokus ke judul/galat baru, bukan hilang ke <body>.
+    useEffect(() => { if (terkirim) judulRef.current?.focus(); }, [terkirim]);
+    useEffect(() => { if (galat) galatRef.current?.focus(); }, [galat]);
 
     const handleReset = async (e: FormEvent) => {
         e.preventDefault();
@@ -29,20 +37,23 @@ export default function ForgotPasswordPage() {
         setSalah(pesan);
         if (pesan) { emailRef.current?.focus(); return; }
         setLoading(true);
+        setGalat(undefined);
         // Anti user-enumeration: JANGAN cek keberadaan/verifikasi akun dulu (itu oracle
         // enumerasi + timing leak). Better Auth hanya mengirim email untuk akun terdaftar;
-        // UI selalu menampilkan layar identik apa pun jawaban server, dan tidak mengulang email yang diketik.
-        await authClient
+        // UI menampilkan layar identik untuk SEMUA jawaban 2xx/4xx (bisa berbeda per akun), dan tidak mengulang email.
+        // Hanya jaringan putus/batal atau 5xx yang menjadi galat "coba lagi" (5xx = server gagal; keputusan peninjau S7c).
+        const tidakTerhubung = await authClient
             .requestPasswordReset({ email: trimmed, redirectTo: `${window.location.origin}/reset-password` })
-            .catch(() => {});
-        setTerkirim(true);
+            .then(({ error }) => Boolean(error && error.status >= 500), () => true);
+        if (tidakTerhubung) setGalat({ pada: Date.now() });
+        else setTerkirim(true);
         setLoading(false);
     };
 
     if (terkirim) {
         return (
             <>
-                <h1 className="fi-title-1">Permintaan diterima</h1>
+                <h1 ref={judulRef} tabIndex={-1} className="fi-title-1">Permintaan diterima</h1>
                 <MessageStrip tone="info">Bila email terdaftar, tautan dikirim. Tautan berlaku 1 jam.</MessageStrip>
                 {/* Owner 11 Okt: email akun belum tentu alamat nyata; admin mengatur sandi lewat dialog di halaman User. */}
                 <p className="fi-small fi-muted">Tidak menerima surel? Minta admin mengatur sandi Anda.</p>
@@ -54,6 +65,11 @@ export default function ForgotPasswordPage() {
     return (
         <>
             <h1 className="fi-title-1">Lupa sandi</h1>
+            {galat && (
+                <div ref={galatRef} tabIndex={-1}>
+                    <MessageStrip tone="neg" title="Server tidak dapat dihubungi.">Periksa koneksi, lalu coba lagi.</MessageStrip>
+                </div>
+            )}
             <p className="fi-small fi-muted">Masukkan email akun Anda. Bila terdaftar, tautan atur ulang sandi dikirim ke email itu.</p>
             <form onSubmit={handleReset} noValidate>
                 <FormField label="Email" error={salah}>
