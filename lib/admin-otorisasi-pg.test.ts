@@ -256,6 +256,13 @@ test("balapan: dua admin saling mencabut BERSAMAAN -> tepat satu berhasil, tersi
 // ---------------- BL-62: buat user, atur sandi, aktif/nonaktif (Better Auth server-side + transaksi app) ----------------
 
 const masukDengan = (email: string, password: string) => m.auth.api.signInEmail({ body: { email, password } });
+/** Masuk lalu kembalikan header Cookie sesi (token bertanda tangan dari Set-Cookie Better Auth). */
+async function cookieSesi(email: string, password: string) {
+    const { headers } = await m.auth.api.signInEmail({ body: { email, password }, returnHeaders: true });
+    const c = (headers.get("set-cookie") ?? "").split(/,(?=\s*[\w.-]+=)/).map((x) => x.split(";")[0].trim()).filter((x) => x.includes("session_token="));
+    assert.ok(c.length, "cookie sesi tidak ada");
+    return c.join("; ");
+}
 
 /** Tangkap console.* selama fn (sandi tidak boleh muncul di log). */
 async function tangkapLog<T>(fn: () => Promise<T>): Promise<{ hasil: T; log: string }> {
@@ -367,10 +374,15 @@ test("BL-62 aktif/nonaktif: nonaktif = ban + cabut sesi (tidak dihapus), masuk d
         await w.masuk(a, ga);
         const email = `${w.p}-status@s71.test`;
         const uid = ((await (await buat(a, { name: "Status", email, password: PW, groupIds: [gv] })).json()) as { user: { id: string } }).user.id;
-        await masukDengan(email, PW);
+        // Sesi NYATA (cookie bertanda tangan) + getSession ASLI Better Auth (bukan sesi palsu uji).
+        const cookie = await cookieSesi(email, PW);
+        const getSessionAsli = savedSes!.value as typeof m.auth.api.getSession;
+        assert.equal((await getSessionAsli({ headers: new Headers({ cookie }) }))?.user.id, uid, "sesi hidup sebelum nonaktif");
 
         const off = await panggil(m.status.POST, a, "POST", uid, { active: false, reason: "Cuti panjang" });
         assert.deepEqual(await off.json(), { ok: true, active: false, changed: true, sessionsRevoked: 1 });
+        assert.equal((await m.pool.query(`SELECT count(*)::int AS n FROM session WHERE "userId" = $1`, [uid])).rows[0].n, 0, "baris sesi benar-benar dihapus");
+        assert.equal(await getSessionAsli({ headers: new Headers({ cookie }) }), null, "token lama tidak lagi memberi sesi");
         assert.deepEqual((await m.pool.query(`SELECT banned, "banReason" FROM "user" WHERE id = $1`, [uid])).rows[0], { banned: true, banReason: "Cuti panjang" });
         await assert.rejects(masukDengan(email, PW), (e: { body?: { code?: string } }) => e.body?.code === "BANNED_USER");
         const n = (await w.audit()).length;
