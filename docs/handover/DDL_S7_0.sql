@@ -17,6 +17,14 @@
 --   - Image LAMA tidak terganggu (tabel baru tanpa pembaca + kolom ber-DEFAULT false). Catatan: route lama POST
 --     /api/admin/users/[id]/group (hapus semua lalu sisipkan satu) menghapus bintang user itu — S7-1 mempensiunkannya.
 --
+-- JALUR DATABASE_MIGRATION_URL (A-RENDAH-4): bila terpasang, migrate-pg membuat tabel/kolom/indeks sendiri, TETAPI tidak menjalankan
+--   GRANT (blok 3), trigger principal.code tetap (blok 1b), maupun BACKFILL. Berkas ini TETAP WAJIB dijalankan (aman sesudah
+--   migrate-pg — idempoten) dan blok VERIFIKASI-nya diperiksa: semua `ok` true.
+--
+-- ULANGI BACKFILL SAAT DEPLOY S7-1 (A-RENDAH-3): sampai image S7-1 terpasang, route lama "ganti grup" menghapus bintang user yang
+--   diganti grupnya. Saat deploy S7-1 (sesudah image S7-1 hidup), jalankan ulang bagian "===== BACKFILL" di akhir berkas ini
+--   (idempoten; hanya user tepat 1 grup tanpa bintang).
+--
 -- ISI (nama tabel TANPA skema = public pada search_path bawaan; ditulis begitu agar uji PG bisa memakai skema sekali-pakai):
 --   1. CREATE TABLE/INDEX IF NOT EXISTS principal, principal_variant, principal_alias (aditif, TANPA benih — benih = S7-2).
 --      1a: principal_alias bentuk lama 893f8cbf (PK alias_norm; hanya DB evaluasi) yang KOSONG di-DROP lalu dibuat ulang;
@@ -171,6 +179,7 @@ SELECT cek, ok FROM (VALUES
 -- berbintang. User dengan > 1 grup TIDAK disentuh (bintangnya keputusan admin di layar S7a); user yang sudah berbintang tidak
 -- disentuh. TIDAK mengubah user.role (identitas lama, dipakai cron Accurate) — penurunan role dari bintang = logika S7-1.
 -- Idempoten: jalan kedua memperbarui 0 baris. Batas satu bintang dijaga indeks uq_user_group_primary.
+-- ULANGI bagian ini saat deploy S7-1 (route lama "ganti grup" menghapus bintang sampai S7-1 terpasang) — lihat kepala berkas.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
