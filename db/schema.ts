@@ -2112,3 +2112,25 @@ export const principalAlias = pgTable("principal_alias", {
     sumberIsi: check("principal_alias_sumber_isi", sql`btrim(${t.sumber}) <> ''`),
     jenisCek: check("principal_alias_jenis", sql`${t.jenis} IN ('nama', 'kode_master_barang', 'label_mapping', 'nama_bank', 'nama_summary', 'nama_surat')`),
 }));
+
+// Riwayat principal/varian/alias APPEND-ONLY (S7-2 BL-64): satu baris per perubahan, ditulis dalam transaksi yang SAMA dengan
+// perubahannya (lib/principal/tulis.ts; benih SQL juga). Trigger tolak UPDATE/DELETE/TRUNCATE + REVOKE = docs/handover/DDL_S7_2.sql
+// saja (pola repo), BUKAN migrate-pg — jalur tulis menolak 503 bila trigger itu tidak terpasang. Tanpa FK: riwayat bertahan apa pun
+// yang terjadi pada barisnya. kunci: principal = id; varian = "<principal_id>:<variant_key>"; alias = id alias.
+// SQL: migrate-pg `principal_log`, db/migrations/0029_principal_log.sql, docs/handover/DDL_S7_2.sql.
+export const principalLog = pgTable("principal_log", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    entitas: text("entitas").notNull(),
+    kunci: text("kunci").notNull(),
+    principalId: text("principal_id").notNull(),
+    aksi: text("aksi").notNull(),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    aktor: text("aktor").notNull(),
+    waktu: timestamp("waktu", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+    principalIdx: index("idx_principal_log_principal").on(t.principalId, t.id),
+    entitasCek: check("principal_log_entitas", sql`${t.entitas} IN ('principal', 'varian', 'alias')`),
+    aksiCek: check("principal_log_aksi", sql`${t.aksi} IN ('buat', 'aktif', 'nonaktif', 'hapus')`),
+    aktorIsi: check("principal_log_aktor_isi", sql`btrim(${t.aktor}) <> ''`),
+}));
