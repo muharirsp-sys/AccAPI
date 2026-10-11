@@ -7,6 +7,7 @@ import { buatEmulator } from "./uji/emulator-accurate.ts";
 import { fixturePratinjau } from "./uji/fixture.ts";
 import { periksaRiwayatAccurate, pratinjauRiwayatAccurate, targetRiwayat } from "./pratinjau-ganda.ts";
 import type { AccurateFetch } from "./retur.ts";
+import type { Bebas } from "./sel.ts";
 
 const target = (r: Record<string, unknown>) => targetRiwayat(r);
 
@@ -61,7 +62,7 @@ test("server: melewati batas waktu -> kelompok yang belum selesai GAGAL; paling 
 // S6e-2 (bukti baca-saja detail.do 10 Okt): bentuk ASLI = invoice.number + customer.customerNo; item diskon account.no.
 const asli = (cust: string, inv: string, amt: number, diskon: unknown[] = []) => ({ s: true, d: {
     number: "PR.1", customer: { customerNo: cust }, transDate: "01/10/2026", detailInvoice: [{ invoice: { number: inv }, invoiceId: 5, paymentAmount: amt, detailDiscount: diskon }] } });
-const satuKandidat = (detail: unknown): AccurateFetch => async (path) => path.endsWith("list.do") ? { s: true, d: [{ id: 1, number: "PR.1" }], sp: { pageCount: 1 } } : detail;
+const satuKandidat = (detail: unknown): AccurateFetch => async (path) => path.endsWith("list.do") ? { s: true, d: [{ id: 1, number: "PR.1" }], sp: { pageCount: 1 } } : detail as Bebas;
 
 test("normalisasi: bentuk asli Accurate (invoice.number, account.no) cocok dengan baris payload; bentuk lama (invoiceNo) tetap", async () => {
     const row = { customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "I1", paymentAmount: 900, detailDiscount: [{ accountNo: "600123", amount: 100 }] }] };
@@ -147,7 +148,7 @@ const lainDetail = { s: true, d: { number: "PR.X", detailInvoice: [{ invoice: { 
 
 test("A3: list.do {s:false} / {s:false, d:[]} / {s:true} tanpa d = GAGAL BACA (bukan 'tidak mirip')", async () => {
     for (const jawab of [{ s: false }, { s: false, d: [], sp: { pageCount: 1 } }, { s: true, sp: { pageCount: 1 } }, null]) {
-        const r = await periksaRiwayatAccurate([target(satuBaris)], async () => jawab);
+        const r = await periksaRiwayatAccurate([target(satuBaris)], async () => jawab as never); // bentuk salah disengaja
         assert.match(r.gagal.get(target(satuBaris).key) ?? "", /tidak terbaca/, JSON.stringify(jawab));
     }
 });
@@ -258,7 +259,7 @@ test("Putaran 2: sp.pageCount teks angka ('1', '2') DITERIMA (halaman 2 dibaca);
 
 test("Susulan S6e (A, RENDAH): jumlah halaman tidak boleh menyusut; halaman kosong sebelum halaman terakhir yang diumumkan = GAGAL BACA", async () => {
     const seratus = Array.from({ length: 100 }, (_, i) => ({ id: i + 1 }));
-    const jalan = async (jawab: (page: number) => unknown) => {
+    const jalan = async (jawab: (page: number) => Bebas) => {
         const halaman: number[] = [];
         const r = await periksaRiwayatAccurate([target(satuBaris)], async (path, _m, q) => {
             if (!path.endsWith("list.do")) return lainDetail;

@@ -71,8 +71,8 @@ test("rencana kirim: ganda ditahan tanpa izin; izin Finance → kunci override p
 
 test("hitung hasil per keadaan", () => {
     assert.deepEqual(hitungHasil([
-        { index: 0, outcome: "terposting", message: "" }, { index: 1, outcome: "tidak_pasti", message: "" },
-        { index: 2, outcome: "gagal", message: "" }, { index: 3, outcome: "terposting", message: "" },
+        { outcome: "terposting" }, { outcome: "tidak_pasti" },
+        { outcome: "gagal" }, { outcome: "terposting" },
     ]), { terposting: 2, gagal: 1, tidak_pasti: 1, ditahan: 0 });
 });
 

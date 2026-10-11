@@ -193,7 +193,9 @@ test("butir 5 (POST): hanya finance.resolve_unknown; masukan tak sah 400 SEBELUM
 
 test("B1 + B-N2: target Selesaikan menyentuh faktur dari segmen kunci saja (kolom invoiceNo tidak menentukan)", () => {
     const k = buildSalesReceiptIdempotencyPayload({ customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "INV,9", paymentAmount: 1 }, { invoiceNo: "INV-2", paymentAmount: 2 }] }).key;
-    const t = targetDariLog({ key: k, customerNo: " C1 ", transDate: "01/10/2026", invoiceNo: "INV-Z" });
+    // Baris idempotency_log utuh (kolom invoiceNo ikut, seperti di route) — bukan literal, supaya tipe parameter tetap sempit.
+    const baris = { key: k, customerNo: " C1 ", transDate: "01/10/2026", invoiceNo: "INV-Z" };
+    const t = targetDariLog(baris);
     assert.deepEqual([t.customerNo, t.nominal.size], ["C1", 0], "pelanggan dipangkas; tanpa nominal = tidak dicocokkan kasar");
     assert.ok(t.menyentuh("INV,9"), "segmen kunci pertama (berkoma)");
     assert.ok(t.menyentuh("INV-2"), "segmen kunci berikutnya");
@@ -225,7 +227,8 @@ test("B6 + UI S6e-2b: ringkasan ?rows=1&database= diteruskan ke penyaring daftar
 
 test("A-N2: target Selesaikan menyentuh faktur tanpa beda huruf (kunci/kolom 'kn01340' vs Accurate 'KN01340')", () => {
     const k = buildSalesReceiptIdempotencyPayload({ customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "kn01340", paymentAmount: 1 }] }).key;
-    const t = targetDariLog({ key: k, customerNo: "C1", transDate: "01/10/2026", invoiceNo: "kn01340" });
+    const baris = { key: k, customerNo: "C1", transDate: "01/10/2026", invoiceNo: "kn01340" };
+    const t = targetDariLog(baris);
     assert.ok(t.menyentuh("KN01340") && t.menyentuh(" Kn01340 "));
 });
 
