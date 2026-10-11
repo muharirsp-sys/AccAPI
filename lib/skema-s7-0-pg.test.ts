@@ -142,6 +142,12 @@ test("PG S7-0: keadaan sebagian — sudahAda tidak tertipu, entri melengkapi", {
         assert.equal(await cek(pool, mPrincipal), 1, "dilengkapi");
         assert.ok((await pool.query("SELECT to_regclass('principal_alias') AS r")).rows[0].r);
 
+        // Varian tanpa name/is_active (bentuk 893f8cbf) -> belum ada; entri menambah kolomnya.
+        await pool.query("ALTER TABLE principal_variant DROP COLUMN name, DROP COLUMN is_active");
+        assert.equal(await cek(pool, mPrincipal), 0, "varian tanpa name/is_active = belum ada");
+        await pool.query(mPrincipal.sql);
+        assert.equal(await cek(pool, mPrincipal), 1, "kolom varian ditambahkan");
+
         // Kolom sudah ada (mis. ditambah tangan) tetapi indeks unik parsial belum.
         await pool.query("ALTER TABLE user_group ADD COLUMN is_primary boolean NOT NULL DEFAULT false");
         assert.equal(await cek(pool, mPrimary), 0, "kolom tanpa indeks = belum ada");
@@ -264,7 +270,12 @@ test("PG S7-0: constraint — satu bintang per user, alias_norm unik per kelompo
         const id = async (code: string) => (await q("SELECT id FROM principal WHERE code = $1", [code])).rows[0].id as string;
         await q(`INSERT INTO principal (code, name, created_by) VALUES ('KINO', 'KINO INDONESIA TBK, PT', 'uji'), ('HEINZ', 'HEINZ ABC INDONESIA, PT', 'uji')`);
         const kino = await id("KINO"), heinz = await id("HEINZ");
-        await q(`INSERT INTO principal_variant (principal_id, variant_key) VALUES ($1, ''), ($1, 'NON_FOOD'), ($2, 'HZ'), ($2, 'BS')`, [kino, heinz]);
+        await q(`INSERT INTO principal_variant (principal_id, variant_key) VALUES ($1, ''), ($2, 'HZ'), ($2, 'BS')`, [kino, heinz]);
+        await q(`INSERT INTO principal_variant (principal_id, variant_key, name) VALUES ($1, 'NON_FOOD', 'KINO NON FOOD')`, [kino]);
+        // B-SEDANG-2: varian punya nama tampilan (opsional) + aktif (bawaan true).
+        assert.deepEqual((await q(`SELECT variant_key, name, is_active FROM principal_variant WHERE principal_id = $1 ORDER BY 1`, [kino])).rows,
+            [{ variant_key: "", name: null, is_active: true }, { variant_key: "NON_FOOD", name: "KINO NON FOOD", is_active: true }]);
+        await assert.rejects(q(`UPDATE principal_variant SET is_active = NULL WHERE principal_id = $1`, [kino]), kodeGalat("23502"), "is_active NOT NULL");
         const alias = (norm: string, pid: string, varian: string | null, jenis = "nama") =>
             q(`INSERT INTO principal_alias (alias_norm, principal_id, variant_key, alias_asli, jenis, sumber) VALUES ($1, $2, $3, $1, $4, 'uji')`, [norm, pid, varian, jenis]);
         await alias("KINO NON FOOD", kino, "NON_FOOD", "label_mapping");

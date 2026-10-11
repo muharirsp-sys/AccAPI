@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS principal_variant (
     CONSTRAINT principal_variant_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
     CONSTRAINT principal_variant_key_format CHECK (variant_key ~ '^[A-Z0-9_-]{0,20}$')
 );
+-- B-SEDANG-2: nama tampilan varian (opsional, mis. "KINO NON FOOD") + aktif. ALTER (bukan kolom CREATE TABLE) agar DB
+-- yang sudah punya tabel varian bentuk 893f8cbf ikut lengkap dan urutan kolom sama di semua jalur.
+ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS name text;
+ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
 -- 1a. Bentuk lama 893f8cbf (hanya pernah ada di DB evaluasi): principal_alias ber-PK alias_norm tanpa kolom id. KOSONG -> dihapus
 --     lalu dibuat ulang di bawah dalam bentuk baru; BERISI -> berhenti (konversi manual, jangan DROP data).
 DO $$
@@ -127,6 +131,9 @@ SELECT cek, ok FROM (VALUES
         AND indisunique AND indpred IS NOT NULL)),
     ('unik alias nama/label/kode OPC (parsial)', EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('uq_principal_alias_nama')
         AND indisunique AND indpred IS NOT NULL)),
+    ('kolom principal_variant.name + is_active NOT NULL DEFAULT true', (SELECT count(*) = 2 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'principal_variant'
+          AND ((column_name = 'name' AND is_nullable = 'YES') OR (column_name = 'is_active' AND is_nullable = 'NO' AND column_default = 'true')))),
     ('kolom user_group.is_primary NOT NULL DEFAULT false', EXISTS (SELECT 1 FROM information_schema.columns
         WHERE table_schema = current_schema() AND table_name = 'user_group' AND column_name = 'is_primary'
           AND is_nullable = 'NO' AND column_default = 'false')),

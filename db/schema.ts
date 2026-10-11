@@ -2064,12 +2064,15 @@ export const principal = pgTable("principal", {
     nameIsi: check("principal_name_isi", sql`btrim(${t.name}) <> ''`),
 }));
 
-// variant_key '' = tanpa varian — bentuk sama dengan no_claim_template.variant_key (HEINZ: HZ/BS).
+// variant_key '' = tanpa varian — bentuk sama dengan no_claim_template.variant_key (HEINZ: HZ/BS). name = nama tampilan
+// opsional (mis. "KINO NON FOOD"); is_active = varian dinonaktifkan tanpa dihapus (alias/templat tetap merujuk).
 export const principalVariant = pgTable("principal_variant", {
     principalId: text("principal_id").notNull(),
     variantKey: text("variant_key").notNull().default(""),
     createdBy: text("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    name: text("name"),
+    isActive: boolean("is_active").notNull().default(true),
 }, (t) => ({
     pk: primaryKey({ name: "principal_variant_pkey", columns: [t.principalId, t.variantKey] }),
     principalFk: foreignKey({ name: "principal_variant_principal_fk", columns: [t.principalId], foreignColumns: [principal.id] }).onDelete("restrict"),

@@ -5,7 +5,7 @@
 -- Master Barang, principal_mapping, rekening bank, Master Summary, surat).
 -- KINO NON FOOD / Forisa MT-GT / Heinz HZ-BS = VARIAN satu principal.
 --   principal         : code = kode OPC/Klaim (^[A-Z0-9_-]{1,20}$), name = nama resmi.
---   principal_variant : variant_key '' = tanpa varian (bentuk = no_claim_template.variant_key).
+--   principal_variant : variant_key '' = tanpa varian (bentuk = no_claim_template.variant_key); name (tampilan), is_active.
 --   principal_alias   : id PK; alias_norm unik per kelompok (kode Master Barang | selain itu)
 --                       -> principal (+ varian bila terisi).
 --                       alias_norm WAJIB hasil normalizer baku S7-2 (lib/principal), bukan
@@ -53,6 +53,10 @@ CREATE TABLE IF NOT EXISTS principal_variant (
     CONSTRAINT principal_variant_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
     CONSTRAINT principal_variant_key_format CHECK (variant_key ~ '^[A-Z0-9_-]{0,20}$')
 );
+-- B-SEDANG-2: nama tampilan varian (opsional, mis. "KINO NON FOOD") + aktif. ALTER (bukan kolom CREATE TABLE) agar DB
+-- yang sudah punya tabel varian bentuk 893f8cbf ikut lengkap dan urutan kolom sama di semua jalur.
+ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS name text;
+ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
 
 -- variant_key NULL = alias menunjuk principal utuh (FK komposit MATCH SIMPLE tidak diperiksa);
 -- terisi = harus varian milik principal yang sama.

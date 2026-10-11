@@ -443,12 +443,14 @@ export const migrations = [
     // dulu), tanpa pembaca. Lihat db/migrations/0027_principal.sql. Unik kode & alias = indeks terpisah agar entri ini bisa
     // melengkapi tabel yang ada tanpa indeksnya; sudahAda memeriksa SEMUA indeks (PK tersirat = tabel ada) + kolom bentuk baru.
     // Putaran tinjauan (B-SEDANG-1): alias ber-PK id + unik parsial per kelompok jenis; bentuk 893f8cbf -> DO $guard$ menolak.
+    // (B-SEDANG-2): principal_variant.name + is_active lewat ADD COLUMN IF NOT EXISTS (aditif, DB lama ikut lengkap).
     nama: "principal (+variant, +alias)",
     sudahAda: `SELECT 1 WHERE (SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname IN
                    ('uq_principal_code', 'principal_variant_pkey', 'principal_alias_pkey', 'idx_principal_alias_principal',
                     'uq_principal_alias_kode_mb', 'uq_principal_alias_nama')) = 6
                AND (SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema()
-                   AND (table_name, column_name) IN (('principal_alias', 'id'))) = 1`,
+                   AND (table_name, column_name) IN (('principal_alias', 'id'), ('principal_variant', 'name'),
+                                                     ('principal_variant', 'is_active'))) = 3`,
     sql: `
       -- Bentuk 893f8cbf (PK alias_norm, tanpa kolom id; hanya pernah ada di DB evaluasi) tidak bisa diubah secara aditif:
       -- berhenti jelas alih-alih diam-diam mempertahankan PK global. docs/handover/DDL_S7_0.sql mengubahnya (tabel kosong).
@@ -481,6 +483,10 @@ export const migrations = [
           CONSTRAINT principal_variant_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
           CONSTRAINT principal_variant_key_format CHECK (variant_key ~ '^[A-Z0-9_-]{0,20}$')
       );
+      -- B-SEDANG-2: nama tampilan varian (opsional, mis. "KINO NON FOOD") + aktif. ALTER (bukan kolom CREATE TABLE) agar DB
+      -- yang sudah punya tabel varian bentuk 893f8cbf ikut lengkap dan urutan kolom sama di semua jalur.
+      ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS name text;
+      ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
       CREATE TABLE IF NOT EXISTS principal_alias (
           id           text NOT NULL DEFAULT gen_random_uuid()::text,
           alias_norm   text NOT NULL,
