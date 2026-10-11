@@ -222,3 +222,12 @@ test("preset BL-37 SQL (statis): kunci = PERSIS D-01 §B di kedua blok, semua te
     assert.match(sql, /SELECT baru\.id, isi\.kunci FROM baru JOIN isi/, "izin hanya untuk grup yang BARU dibuat");
     assert.doesNotMatch(sql, /\b(UPDATE|DELETE)\b/i);
 });
+
+test("layar lama /admin/users: teks dropdown jujur (TAMBAH + utama, grup lain tetap), tidak lagi 'mengikuti group baru'", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../app/(dashboard)/admin/users/UserManagement.tsx", import.meta.url), "utf8");
+    assert.doesNotMatch(src, /akan langsung mengikuti group baru|diperbarui ke/);
+    assert.match(src, /ditambahkan & dijadikan utama/);
+    assert.match(src, /Grup lain user ini TETAP/);
+    assert.match(src, /item\.groups/, "daftar menampilkan semua grup user");
+});
