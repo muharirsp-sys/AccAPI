@@ -109,6 +109,9 @@ test("status akun: aktif / nonaktif / sedang disiapkan", () => {
     assert.equal(statusAkun({ banned: null }).aktif, true);
     assert.equal(statusAkun({ banned: true, banReason: "Pindah cabang" }).label, "Nonaktif");
     assert.equal(statusAkun({ banned: true, banReason: "sedang disiapkan (S7-1)" }).label, "Sedang disiapkan");
+    assert.equal(statusAkun({ banned: true, banReason: "sedang disiapkan (S7-1)" }).setengah, true, "setengah jadi: tidak boleh diaktifkan (IT Support menghapusnya)");
+    assert.equal(statusAkun({ banned: true, banReason: "Pindah cabang" }).setengah, false);
+    assert.equal(statusAkun({ banned: false }).setengah, false);
 });
 
 test("ringkasan riwayat: label aksi satu sumber + rincian tanpa kunci mentah", () => {

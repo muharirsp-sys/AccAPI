@@ -120,10 +120,10 @@ export function alasanSandi(panjang: number, panjangUlang: number, sama: boolean
 /** Penanda buat user S7-1 (`app/api/admin/users/route.ts` DISIAPKAN): user setengah jadi, banned, tidak bisa masuk. */
 const DISIAPKAN = "sedang disiapkan";
 
-export function statusAkun(u: { banned?: boolean | null; banReason?: string | null }): { aktif: boolean; label: string; tone: Tone } {
-    if (!u.banned) return { aktif: true, label: "Aktif", tone: "pos" };
-    if (u.banReason?.startsWith(DISIAPKAN)) return { aktif: false, label: "Sedang disiapkan", tone: "warn" };
-    return { aktif: false, label: "Nonaktif", tone: "neu" };
+export function statusAkun(u: { banned?: boolean | null; banReason?: string | null }): { aktif: boolean; label: string; tone: Tone; setengah: boolean } {
+    if (!u.banned) return { aktif: true, label: "Aktif", tone: "pos", setengah: false };
+    if (u.banReason?.startsWith(DISIAPKAN)) return { aktif: false, label: "Sedang disiapkan", tone: "warn", setengah: true };
+    return { aktif: false, label: "Nonaktif", tone: "neu", setengah: false };
 }
 
 export type ItemRiwayat = {

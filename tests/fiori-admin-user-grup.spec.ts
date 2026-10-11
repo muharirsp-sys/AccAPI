@@ -25,10 +25,10 @@ const G = {
     promo: { id: "g-promo", name: "Promo A", isPreset: false },
     promo2: { id: "g-promo2", name: "Promo C", isPreset: false },
 };
-const user = (id: string, name: string, role: string, groups: Array<{ id: string; name: string; isPreset: boolean; isPrimary: boolean }>, banned = false) => {
+const user = (id: string, name: string, role: string, groups: Array<{ id: string; name: string; isPreset: boolean; isPrimary: boolean }>, banned = false, alasan = "Pindah ke CABANG A") => {
     const utama = groups.find((g) => g.isPrimary) ?? (groups.length === 1 ? groups[0] : null);
     return {
-        id, name, email: `${name.toLowerCase().replace(" ", ".")}@contoh.test`, role, permissions: "{}", emailVerified: true, banned, banReason: banned ? "Pindah ke CABANG A" : null,
+        id, name, email: `${name.toLowerCase().replace(" ", ".")}@contoh.test`, role, permissions: "{}", emailVerified: true, banned, banReason: banned ? alasan : null,
         groups, primaryGroupId: utama?.id ?? null, primaryGroupName: utama?.name ?? null, groupId: utama?.id ?? null, groupName: utama?.name ?? null,
     };
 };
@@ -38,6 +38,7 @@ const USERS = [
     user("u-c", "USER C", "viewer", [{ ...G.promo, isPrimary: true }], true),
     user("local-dev-admin", "ADMIN LOKAL", "admin", [{ ...G.admin, isPrimary: true }]),
     user("u-d", "USER D", "viewer", [], true), // nonaktif & tanpa grup (akses role lama) — aktivasi harus menambah grup dulu
+    user("u-f", "USER F", "viewer", [{ ...G.fin, isPrimary: true }], true, "sedang disiapkan (S7-1)"), // pembuatan gagal sebagian (kontrak USER_SETENGAH_JADI): IT Support menghapusnya
     user("u-e", "USER E", "viewer", [{ ...G.promo2, isPrimary: true }, { ...G.admin, isPrimary: false }]), // Promo C berbintang + Admin: hapus Promo C -> utama Admin -> role admin
 ];
 const GROUPS = [
@@ -626,6 +627,24 @@ test("Draf izin: tautan dalam aplikasi (header, menu samping) tidak membuang dra
     await dlg.getByRole("button", { name: "Buang perubahan" }).click();
     await expect(page).toHaveURL(/\/admin\/users$/);
     await expect(page.getByRole("heading", { level: 1, name: "User" })).toBeVisible();
+});
+
+test("User 'Sedang disiapkan' (pembuatan gagal sebagian): tidak bisa diaktifkan, alasan terbaca — IT Support menghapusnya", async ({ page }) => {
+    const { log } = await pasang(page);
+    await page.goto("/admin/users", NAV);
+    await page.getByRole("group", { name: "Status akun" }).getByRole("button", { name: /^Nonaktif/ }).click();
+    await expect(daftarUser(page).getByRole("button", { name: /USER F/ })).toContainText("Sedang disiapkan");
+    await bukaUser(page, "USER F");
+    await expect(page.getByRole("button", { name: "Aktifkan…" })).toBeDisabled();
+    const strip = page.getByRole("status").filter({ hasText: "belum selesai dibuat" });
+    await expect(strip).toContainText("IT Support");
+    await expect(strip).toContainText("u-f");
+    await expect(page.getByText("Terkunci: User ini setengah jadi")).toBeVisible();
+    await page.screenshot({ path: "test-results/fiori-s7a-13-sedang-disiapkan.png", fullPage: true });
+    // USER C nonaktif biasa tetap bisa diaktifkan.
+    await bukaUser(page, "USER C");
+    await expect(page.getByRole("button", { name: "Aktifkan…" })).toBeEnabled();
+    expect(log.tulis).toEqual([]);
 });
 
 for (const [lebar, tinggi] of [[390, 844], [1280, 800]] as const) {

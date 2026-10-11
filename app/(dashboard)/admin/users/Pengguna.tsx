@@ -58,6 +58,8 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
     const grupList = grupL.data?.groups ?? [];
     const u = users.find((x) => x.id === pilihId) ?? null;
     const st = u ? statusAkun(u) : null;
+    // User setengah jadi (buat user gagal sebagian, kontrak USER_SETENGAH_JADI) dibiarkan nonaktif: tidak boleh diaktifkan, IT Support menghapusnya.
+    const kunciSetengah = st?.setengah ? "User ini setengah jadi (pembuatannya gagal sebagian) — minta IT Support menghapusnya, jangan diaktifkan" : undefined;
 
     // Aksi tulis terkunci saat data penentu memuat / galat / usang (gagal dimuat ulang).
     const kunciData = daftar.status === "memuat" ? "Menunggu data user dimuat ulang"
@@ -217,15 +219,21 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
             <Section id="u-keamanan" title="Keamanan" subtitle="tanpa email: beri tahu sandi langsung ke user">
                 <div className="fi-sect-in">
                     {terkunci(kunciTulis)}
+                    {kunciSetengah && (
+                        <MessageStrip tone="warn" title="User ini belum selesai dibuat.">
+                            Pembuatannya gagal sebagian dan dibiarkan nonaktif (tidak bisa masuk). Minta IT Support menghapusnya (id {u.id}), lalu buat ulang. Jangan diaktifkan.
+                        </MessageStrip>
+                    )}
                     <KeyValues items={[
                         ["Status", st?.label ?? ""],
                         ...(u.banned && u.banReason ? [["Alasan nonaktif", u.banReason] as [string, string]] : []),
                     ]} />
                     <div className="fi-btnrow">
                         <Button icon={<KeyRound className="fi-icon" aria-hidden />} disabled={Boolean(kunciTulis)} disabledReason={kunciTulis} onClick={() => buka({ jenis: "sandi" })}>Atur sandi sementara…</Button>
-                        <Button variant={st?.aktif ? "negative" : "secondary"} icon={<Power className="fi-icon" aria-hidden />} disabled={Boolean(kunciTulis)} disabledReason={kunciTulis}
+                        <Button variant={st?.aktif ? "negative" : "secondary"} icon={<Power className="fi-icon" aria-hidden />} disabled={Boolean(kunciTulis ?? kunciSetengah)} disabledReason={kunciTulis ?? kunciSetengah}
                             onClick={() => buka({ jenis: "status" })}>{st?.aktif ? "Nonaktifkan…" : "Aktifkan…"}</Button>
                     </div>
+                    {!kunciTulis && terkunci(kunciSetengah)}
                     <p className="fi-small fi-subtle">Atur sandi dan Nonaktifkan mengakhiri semua sesi user itu. Nonaktif tidak menghapus user; grup dan riwayat tetap. Untuk mencabut akses, Nonaktifkan (user tidak boleh tanpa grup).</p>
                 </div>
             </Section>
@@ -355,7 +363,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
             <ConfirmDialog open={dialog?.jenis === "status" && Boolean(u)} onClose={() => setDialog(null)} tag={st?.aktif ? "Nonaktif" : "Aktif"}
                 tone={st?.aktif ? "negative" : "primary"} title={st?.aktif ? `Nonaktifkan ${u?.name ?? ""}?` : `Aktifkan ${u?.name ?? ""}?`}
                 confirmLabel={st?.aktif ? "Nonaktifkan" : "Aktifkan"} alasanTerlihat
-                confirmDisabled={kunciTulis ?? (st?.aktif && diriSendiri ? "Anda tidak bisa menonaktifkan akun sendiri"
+                confirmDisabled={kunciTulis ?? kunciSetengah ?? (st?.aktif && diriSendiri ? "Anda tidak bisa menonaktifkan akun sendiri"
                     : !st?.aktif && u?.groups.length === 0 ? `Tambahkan ${u?.name} ke grup dulu (user aktif tanpa grup jatuh ke akses role lama)` : undefined)}
                 facts={st?.aktif ? [
                     ["Akibat", "Tidak bisa masuk; sesi di semua perangkat diakhiri"],
