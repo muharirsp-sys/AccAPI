@@ -5,6 +5,9 @@
  * Caller: app/api/idempotency/resolve/route.ts (GET memakai bolehDiselesaikan; POST memakai selesaikanPelunasan).
  * Dependensi: idempotency_log ("databaseId" dari lock), idempotency_resolution (DDL_S6E2.sql), pencarian `cari` DIINJEKSI
  *   (route: periksaRiwayatAccurate + bacaAccurate dengan sesi pemanggil).
+ * Bukti (orkestrator 11 Okt, tinjauan B1 / REV-B D): pencarian = pelunasan di grup pelanggan+tanggal yang MENYENTUH faktur mana
+ *   pun dari baris (`mirip`, berapa pun nominal/potongan) — kiriman koreksi (nominal lain) atau potongan yang dibaca berbeda tidak
+ *   boleh terbaca "tidak ada". `tidak_ada` hanya bila tidak ada satu pun; `terposting` = nomor salah satu kandidat itu.
  * Side Effects: satu transaksi — UPDATE idempotency_log (CAS status + updatedAt teramati) + INSERT idempotency_resolution.
  * Aturan (orkestrator 10 Okt): database lock NULL (baris sebelum S6e-2) -> `terposting` boleh (nomor ditemukan di database sesi),
  *   `tidak_ada` DITOLAK (database_unknown) — tanpa tahu database kiriman, "tidak ditemukan" bisa berarti terposting di database lain.
@@ -14,7 +17,7 @@ import { and, eq, sql, TransactionRollbackError } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { idempotencyLog, idempotencyResolution } from "@/db/schema";
 import { STALE_PROCESSING_MS } from "@/lib/idempotency-lock";
-import type { TargetRiwayat } from "@/lib/pelunasan/pratinjau-ganda";
+import type { StrukAccurate, TargetRiwayat } from "@/lib/pelunasan/pratinjau-ganda";
 
 /** Umur minimum sebelum Selesaikan (pola Finance purchase-payment: 2 mnt). */
 export const UMUR_SELESAIKAN_MS = 2 * 60 * 1000;
@@ -33,6 +36,22 @@ export function bolehDiselesaikan(r: BarisLog, now: Date): boolean {
     if (r.status === "PROCESSING") return umur !== null && umur > STALE_PROCESSING_MS;
     return false;
 }
+
+/**
+ * Target pencarian dari baris idempotency_log. Faktur = kolom invoiceNo (koreksi dijangkar lewat kolom ini) DAN segmen sidik jari
+ * kunci (baris persis) — gabungan, lebih banyak menyentuh = lebih aman. Tanpa nominal: hanya `mirip`, tidak dicocokkan kasar.
+ */
+export function targetDariLog(r: { key: string; customerNo: string | null; transDate: string | null; invoiceNo: string | null }): TargetRiwayat {
+    const kolom = `,${r.invoiceNo ?? ""},`;
+    return {
+        key: r.key, customerNo: String(r.customerNo ?? "").trim(), transDate: String(r.transDate ?? "").trim(), nominal: new Map(),
+        menyentuh: (no) => kolom.includes(`,${no},`) || r.key.includes(`_${no}|`) || r.key.includes(`;${no}|`),
+    };
+}
+
+/** Kandidat untuk UI/jawaban galat: nomor + faktur + nominal (Finance memilih `terposting` dari sini). */
+export const nomorKandidat = (k: StrukAccurate[]) => [...new Set(k.map((s) => s.number).filter(Boolean))];
+export type HasilCari = { mirip: Map<string, StrukAccurate[]>; gagal: Map<string, string> };
 
 export type InputSelesaikan = { key: string; decision: "terposting" | "tidak_ada"; accurateNumber: string; reason: string; checkedSource: string };
 
@@ -56,7 +75,7 @@ const tolak = (status: number, code: string, error: string, extra: Record<string
     ({ status, body: { ok: false, code, error, ...extra } });
 
 export async function selesaikanPelunasan(db: NodePgDatabase, inp: InputSelesaikan & { actor: string; sessionDatabaseId: string },
-    cari: (t: TargetRiwayat) => Promise<{ cocok: Map<string, string[]>; gagal: Map<string, string> }>, now = new Date()): Promise<Hasil> {
+    cari: (t: TargetRiwayat) => Promise<HasilCari>, now = new Date()): Promise<Hasil> {
     const [row] = await db.select().from(idempotencyLog).where(eq(idempotencyLog.key, inp.key)).limit(1);
     if (!row) return tolak(404, "not_found", "Baris pelunasan tidak ditemukan.");
     const tujuan = inp.decision === "terposting" ? "SUCCESS" : "FAILED";
@@ -80,18 +99,21 @@ export async function selesaikanPelunasan(db: NodePgDatabase, inp: InputSelesaik
             { lockDatabaseId: row.databaseId });
     }
 
-    // Server MENCARI dulu (sidik jari sama dengan penahanan riwayat proxy).
-    const hasil = await cari({ key: row.key, customerNo: row.customerNo ?? "", transDate: row.transDate ?? "" });
+    // Server MENCARI dulu: pelunasan pelanggan+tanggal yang menyentuh faktur baris (bukan sidik jari persis).
+    const hasil = await cari(targetDariLog(row));
     const galat = hasil.gagal.get(row.key);
     if (galat !== undefined) return tolak(409, "search_failed", `Pencarian di Accurate gagal (${galat}) — tidak ada yang diubah; coba lagi.`);
-    const nomor = hasil.cocok.get(row.key) ?? [];
+    const candidates = hasil.mirip.get(row.key) ?? [];
+    const nomor = nomorKandidat(candidates);
     if (inp.decision === "terposting" && !nomor.includes(inp.accurateNumber)) {
         return tolak(409, "number_mismatch", nomor.length
-            ? `Nomor ${inp.accurateNumber} tidak cocok dengan pelunasan yang ditemukan (${nomor.join(", ")}).`
-            : `Pelunasan identik tidak ditemukan di Accurate — nomor ${inp.accurateNumber} tidak bisa dicocokkan.`, { receiptNumbers: nomor });
+            ? `Nomor ${inp.accurateNumber} bukan pelunasan pelanggan+tanggal ini yang menyentuh faktur baris (${nomor.join(", ")}).`
+            : `Tidak ada pelunasan pelanggan+tanggal ini yang menyentuh faktur baris — nomor ${inp.accurateNumber} tidak bisa dicocokkan.`,
+        { receiptNumbers: nomor, candidates });
     }
-    if (inp.decision === "tidak_ada" && nomor.length) {
-        return tolak(409, "found_in_accurate", `Pelunasan identik DITEMUKAN di Accurate (${nomor.join(", ")}) — tetapkan terposting.`, { receiptNumbers: nomor });
+    if (inp.decision === "tidak_ada" && candidates.length) {
+        return tolak(409, "similar_found", `Ada pelunasan di Accurate untuk pelanggan+tanggal ini yang menyentuh faktur baris (${nomor.join(", ") || "tanpa nomor"})`
+            + " — periksa nominalnya; bila itu kiriman ini, tetapkan terposting. \"Tidak ada\" ditolak.", { receiptNumbers: nomor, candidates });
     }
 
     const id = randomUUID();

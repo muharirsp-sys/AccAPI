@@ -125,6 +125,15 @@ test("PG butir 3: baris MIRIP riwayat tanpa override -> 409 ACCURATE_HISTORY per
         assert.equal(await statusDb(m.db, kunci(b).key), "PROCESSING");
     }));
 
+test("PG A1: identik kasar walau pelunasan Accurate tanpa nomor -> tetap DITAHAN (receiptNumbers kosong), tidak dikirim", { skip: pgSkip }, () =>
+    dalamDunia((tag, m) => ({ izin: KIRIM, sesi: m.sesiAccurate(), data: { ...KOSONG, salesReceipt: [{ ...riwayat(`${tag}-A`, "INV-1", 1000, ""), id: "X1" }] } }), async (m, tag, catat) => {
+        const a = baris(`${tag}-A`, "INV-1", 1000);
+        const res = await kirim(m, await kunciLock(m, [a]), [a]);
+        assert.equal(res.status, 409);
+        assert.deepEqual((await res.json()).rows, [{ index: 0, key: kunci(a).key, reason: "ACCURATE_HISTORY", receiptNumbers: [] }]);
+        assert.equal(catat.post.length, 0);
+    }));
+
 test("PG butir 3: riwayat GAGAL dibaca -> ditahan ACCURATE_HISTORY_UNREADABLE (fail-closed), tidak dikirim", { skip: pgSkip }, () =>
     dalamDunia((_t, m) => ({ izin: KIRIM, sesi: m.sesiAccurate(), data: KOSONG, galatBaca: true }), async (m, tag, catat) => {
         const a = baris(`${tag}-A`, "INV-1", 1000);
@@ -292,7 +301,7 @@ test("PG butir 5: tidak_ada — ditolak bila ditemukan / < 2 mnt / database lain
     dalamDunia((tag, m) => ({ izin: RESOLVE, sesi: m.sesiAccurate(), data: { ...KOSONG, salesReceipt: [riwayat(`${tag}-F`, "INV-F", 1, "PR.F")] } }), async (m, tag) => {
         const kode = async (body: Record<string, unknown>) => { const r = await selesaikan(m, body); return [r.status, (await r.json()).code]; };
         const ditemukan = await tanam(m.db, baris(`${tag}-F`, "INV-F", 1), "UNKNOWN", 5, "DB-1");
-        assert.deepEqual(await kode({ key: ditemukan, decision: "tidak_ada" }), [409, "found_in_accurate"]);
+        assert.deepEqual(await kode({ key: ditemukan, decision: "tidak_ada" }), [409, "similar_found"]);
         const muda = await tanam(m.db, baris(`${tag}-M`, "INV-M", 1), "UNKNOWN", 1, "DB-1");
         assert.deepEqual(await kode({ key: muda, decision: "tidak_ada" }), [409, "not_eligible"]);
         const sending = await tanam(m.db, baris(`${tag}-S`, "INV-S", 1), "SENDING", 1, "DB-1");
@@ -341,7 +350,7 @@ test("PG butir 5: status berubah selama pencarian (keputusan/kiriman lain) -> 40
         const r = await selesaikanPelunasan(db, { key: k, decision: "tidak_ada", accurateNumber: "", reason: ALASAN, checkedSource: "uji", actor: "uji", sessionDatabaseId: "DB-1" },
             async () => {
                 await db.update(idempotencyLog).set({ status: "SUCCESS", updatedAt: new Date() }).where(eq(idempotencyLog.key, k));
-                return { cocok: new Map(), gagal: new Map() };
+                return { mirip: new Map(), gagal: new Map() };
             });
         assert.equal(r.status, 409);
         assert.equal(r.body.code, "changed");
@@ -350,4 +359,80 @@ test("PG butir 5: status berubah selama pencarian (keputusan/kiriman lain) -> 40
     } finally {
         await db.delete(idempotencyLog).where(like(idempotencyLog.key, `PAY_${tag}%`));
     }
+});
+
+// ------------------------------------------------------------------ Tinjauan 11 Okt B1 (REV-B D & F): `tidak_ada` = bukti ketiadaan KETAT
+async function mundurkan(db: Db, k: string, mnt: number) {
+    const { eq } = await import("drizzle-orm");
+    await db.update(idempotencyLog).set({ updatedAt: new Date(Date.now() - mnt * 60_000) }).where(eq(idempotencyLog.key, k));
+}
+/** Accurate MENYIMPAN pelunasan `simpan` tetapi jawabannya tidak pasti (amplop s:false tanpa hasil per baris = UNKNOWN, C11). */
+const simpanLaluRagu = (data: { salesReceipt?: Record<string, unknown>[] }, simpan: () => Record<string, unknown>) => () => {
+    data.salesReceipt!.push(simpan());
+    return { s: false, d: ["Proses belum selesai"] };
+};
+
+test("PG REV-B D: lock Rp1.000 → kiriman koreksi Rp900 → UNKNOWN → tidak_ada 409 similar_found; tetap 1 POST; Finance bisa pilih terposting", { skip: pgSkip }, () => {
+    const data = { ...KOSONG, salesReceipt: [] as Record<string, unknown>[] };
+    let tagD = "";
+    return dalamDunia((tag, m) => {
+        tagD = tag;
+        return { izin: [...KIRIM, ...RESOLVE], sesi: m.sesiAccurate(), data, balasPost: simpanLaluRagu(data, () => riwayat(`${tagD}-D`, "INV-D", 900, "PR.D1")) };
+    }, async (m, tag, catat) => {
+        const a = baris(`${tag}-D`, "INV-D", 1000);
+        const lockId = await kunciLock(m, [a]);
+        const res = await kirim(m, lockId, [baris(`${tag}-D`, "INV-D", 900)]); // koreksi: identitas dasar sama, diterima guard
+        assert.equal(res.status, 200);
+        assert.equal(catat.post.length, 1);
+        assert.equal(await statusDb(m.db, kunci(a).key), "UNKNOWN");
+        await mundurkan(m.db, kunci(a).key, 5);
+        const r = await selesaikan(m, { key: kunci(a).key, decision: "tidak_ada" });
+        const b = await r.json();
+        assert.equal(r.status, 409, JSON.stringify(b));
+        assert.equal(b.code, "similar_found");
+        assert.deepEqual(b.receiptNumbers, ["PR.D1"]);
+        assert.deepEqual(b.candidates, [{ number: "PR.D1", invoices: [{ invoiceNo: "INV-D", paymentAmount: 900, invoicePayment: null }] }]);
+        assert.equal(await statusDb(m.db, kunci(a).key), "UNKNOWN");
+        assert.equal((await jejak(m.db, kunci(a).key)).length, 0);
+        // Lock ulang tetap terblokir (UNKNOWN) -> tidak ada POST kedua.
+        const ulang = await m.lock(post("/api/idempotency/lock", { keys: [kunci(a)], expectedDatabaseId: "DB-1" }));
+        assert.deepEqual((await ulang.json()).blockedKeys, [kunci(a).key]);
+        assert.equal(catat.post.length, 1);
+        // Finance memilih kandidat yang dilaporkan -> terposting.
+        const t = await selesaikan(m, { key: kunci(a).key, decision: "terposting", accurateNumber: "PR.D1" });
+        assert.equal(t.status, 200);
+        assert.equal(await statusDb(m.db, kunci(a).key), "SUCCESS");
+    });
+});
+
+test("PG REV-B F: baris berpotongan, detail Accurate tanpa discountNotes → tidak_ada 409 similar_found; FAILED paksa → kirim ulang DITAHAN", { skip: pgSkip }, () => {
+    const data = { ...KOSONG, salesReceipt: [] as Record<string, unknown>[] };
+    let tagF = "";
+    const dgnPot = (cust: string) => ({ customerNo: cust, transDate: "09/10/2026",
+        detailInvoice: [{ invoiceNo: "INV-F", paymentAmount: 900, detailDiscount: [{ accountNo: "600123", discountNotes: "Pot TB", amount: 100 }] }] });
+    return dalamDunia((tag, m) => {
+        tagF = tag;
+        return { izin: [...KIRIM, ...RESOLVE], sesi: m.sesiAccurate(), data, balasPost: simpanLaluRagu(data, () => ({ id: "PR.F1", number: "PR.F1",
+            customer: { customerNo: `${tagF}-F` }, transDate: "09/10/2026",
+            detailInvoice: [{ invoice: { number: "INV-F" }, paymentAmount: 900, detailDiscount: [{ account: { no: "600123" }, amount: 100 }] }] })) };
+    }, async (m, tag, catat) => {
+        const a = dgnPot(`${tag}-F`);
+        const lockId = await kunciLock(m, [a]);
+        assert.equal((await kirim(m, lockId, [a])).status, 200);
+        assert.equal(await statusDb(m.db, kunci(a).key), "UNKNOWN");
+        await mundurkan(m.db, kunci(a).key, 5);
+        const r = await selesaikan(m, { key: kunci(a).key, decision: "tidak_ada" });
+        assert.equal(r.status, 409);
+        assert.equal((await r.json()).code, "similar_found");
+        // Andai baris tetap FAILED (jalur lain), kirim ulang ditahan penjaga riwayat (identitas kasar) — tidak ada POST kedua.
+        const { eq } = await import("drizzle-orm");
+        await m.db.update(idempotencyLog).set({ status: "FAILED" }).where(eq(idempotencyLog.key, kunci(a).key));
+        const lock2 = await kunciLock(m, [a]);
+        const res2 = await kirim(m, lock2, [a]);
+        assert.equal(res2.status, 409);
+        const b2 = await res2.json();
+        assert.equal(b2.code, "ACCURATE_HISTORY");
+        assert.deepEqual(b2.rows[0].receiptNumbers, ["PR.F1"]);
+        assert.equal(catat.post.length, 1);
+    });
 });

@@ -14,6 +14,7 @@ import { accurateOAuthSession } from "../db/schema.ts";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
 import { sesiAccurate } from "./pelunasan/uji/sesi-accurate.ts";
+import { targetDariLog } from "./idempotency-resolve.ts";
 
 type Opsi = { sesi?: Record<string, unknown> | null; idem?: unknown[]; fetch?: typeof fetch };
 /** Jalankan `fn` sebagai user bergrup dengan izin `keys`. */
@@ -160,6 +161,7 @@ test("butir 5 (GET): pratinjau Selesaikan — hanya finance.resolve_unknown; car
     assert.equal(b.databaseId, "DB-1");
     const [a, c] = b.rows;
     assert.deepEqual([a.found, a.receiptNumbers, a.eligible], [true, ["PR.7"], true]);
+    assert.deepEqual(a.candidates, [{ number: "PR.7", invoices: [{ invoiceNo: "INV-1", paymentAmount: 1000, invoicePayment: null }] }]);
     assert.deepEqual([c.found, c.receiptNumbers, c.eligible], [false, [], false], "SENDING < 2 mnt belum boleh diselesaikan");
     assert.ok(log.length > 0 && log.every((p) => p.endsWith("list.do") || p.endsWith("detail.do")));
     // Riwayat gagal dibaca: found = null + readError (bukan "tidak ada").
@@ -180,4 +182,14 @@ test("butir 5 (POST): hanya finance.resolve_unknown; masukan tak sah 400 SEBELUM
     const beda = await sebagai(["finance.resolve_unknown"], () => resolvePost(jsonPost("/api/idempotency/resolve", { ...body, expectedDatabaseId: "DB-2" })), { sesi: sesiAccurate() });
     assert.equal(beda.status, 409);
     assert.equal((await beda.json()).code, "database_changed");
+});
+
+test("B1: target Selesaikan menyentuh faktur dari kolom invoiceNo (koreksi) DAN dari segmen kunci (baris persis)", () => {
+    const k = buildSalesReceiptIdempotencyPayload({ customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "INV,9", paymentAmount: 1 }, { invoiceNo: "INV-2", paymentAmount: 2 }] }).key;
+    const t = targetDariLog({ key: k, customerNo: " C1 ", transDate: "01/10/2026", invoiceNo: "INV-Z" });
+    assert.deepEqual([t.customerNo, t.nominal.size], ["C1", 0], "pelanggan dipangkas; tanpa nominal = tidak dicocokkan kasar");
+    assert.ok(t.menyentuh("INV,9"), "segmen kunci pertama (berkoma)");
+    assert.ok(t.menyentuh("INV-2"), "segmen kunci berikutnya");
+    assert.ok(t.menyentuh("INV-Z"), "kolom invoiceNo (jangkar koreksi)");
+    assert.ok(!t.menyentuh("INV") && !t.menyentuh("C1"), "bukan faktur baris");
 });

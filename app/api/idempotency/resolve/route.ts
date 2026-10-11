@@ -1,9 +1,10 @@
 /**
  * Tujuan: "Selesaikan" pelunasan TIDAK PASTI (owner #7 S6e-2) — GET = pratinjau pencarian BACA-SAJA di Accurate sebelum Finance
- *   memutuskan (pola invoice-outbox/resolve). Sidik jari sama dengan penahanan riwayat di proxy (periksaRiwayatAccurate).
+ *   memutuskan (pola invoice-outbox/resolve). Kandidat = pelunasan pelanggan+tanggal yang menyentuh faktur baris (sama dengan
+ *   bukti POST, lib/idempotency-resolve targetDariLog), dengan nomor + faktur + nominal agar Finance bisa memilih `terposting`.
  * Caller: dialog Selesaikan wizard Pelunasan / Beranda (S6e-2b).
  * Dependensi: idempotency_log, lib/accurate-session, lib/accurate-forward (bacaAccurate), lib/pelunasan/pratinjau-ganda.
- * Main Functions: GET ?key=…(&key=…, 1–50) -> {ok, databaseId, databaseAlias, rows:[{key, status, …, eligible, found, receiptNumbers, readError}]};
+ * Main Functions: GET ?key=…(&key=…, 1–50) -> {ok, databaseId, databaseAlias, rows:[{key, status, …, eligible, found, receiptNumbers, candidates, readError}]};
  *   POST {key, decision, accurateNumber?, reason, checkedSource, expectedDatabaseId} -> lib/idempotency-resolve (cari dulu, lalu tetapkan).
  * Side Effects: GET = SELECT + GET Accurate list.do/detail.do dengan sesi PEMANGGIL, tanpa tulis. POST = pencarian yang sama lalu
  *   satu transaksi UPDATE idempotency_log + INSERT idempotency_resolution. TIDAK ADA tulis ke Accurate.
@@ -18,7 +19,7 @@ import { getAccurateSession } from "@/lib/accurate-session";
 import { isAllowedAccurateHost } from "@/lib/api-security";
 import { bacaAccurate } from "@/lib/accurate-forward";
 import { periksaRiwayatAccurate } from "@/lib/pelunasan/pratinjau-ganda";
-import { bolehDiselesaikan, cekInputSelesaikan, selesaikanPelunasan } from "@/lib/idempotency-resolve";
+import { bolehDiselesaikan, cekInputSelesaikan, nomorKandidat, selesaikanPelunasan, targetDariLog } from "@/lib/idempotency-resolve";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -38,7 +39,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ ok: false, error: "Sesi Accurate belum lengkap. Login dan buka database yang diperiksa dulu.", code: "ACCURATE_SESSION_INCOMPLETE" }, { status: 400 });
     }
     const riwayat = await periksaRiwayatAccurate(
-        rows.map((r) => ({ key: r.key, customerNo: r.customerNo ?? "", transDate: r.transDate ?? "" })),
+        rows.map(targetDariLog),
         bacaAccurate({ sessionHost: sesi.sessionHost, sessionId: sesi.sessionId, accessToken: sesi.accessToken }),
     );
     const now = Date.now();
@@ -50,13 +51,14 @@ export async function GET(request: NextRequest) {
             const t = (r.updatedAt ?? r.createdAt)?.getTime();
             const umur = t === undefined ? null : now - t;
             const readError = riwayat.gagal.get(r.key) ?? null;
-            const receiptNumbers = riwayat.cocok.get(r.key) ?? [];
+            const candidates = riwayat.mirip.get(r.key) ?? [];
             return {
                 key: r.key, status: r.status, customerNo: r.customerNo, transDate: r.transDate, invoiceNo: r.invoiceNo, amount: r.amount,
                 updatedAt: r.updatedAt, ageSeconds: umur === null ? null : Math.floor(umur / 1000),
                 eligible: bolehDiselesaikan(r, new Date(now)),
-                found: readError ? null : receiptNumbers.length > 0,
-                receiptNumbers,
+                found: readError ? null : candidates.length > 0,
+                receiptNumbers: nomorKandidat(candidates),
+                candidates,
                 readError,
             };
         }),

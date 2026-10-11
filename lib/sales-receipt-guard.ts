@@ -38,7 +38,8 @@ const badRow = (r: unknown) => !isObj(r) || ![r.customerNo, r.transDate].every(s
 export type SalesReceiptWrite = { lockId: unknown; userId: string; payload: unknown; endpointPath: string; method: string };
 /** Lolos guard: `anchors[i]` = key idempotency_log yang hasilnya ditentukan baris payload ke-i. */
 export type SalesReceiptDispatch = { lockId: string; userId: string; anchors: string[][] };
-/** S6e-2 (owner #6): baris paket yang MIRIP riwayat Accurate (atau riwayatnya tak terbaca) tanpa override Finance. */
+/** S6e-2 (owner #6): baris paket yang identik KASAR dengan riwayat Accurate (pelanggan + tanggal + {faktur: nominal}, tanpa
+ * potongan — orkestrator 11 Okt), atau riwayatnya tak terbaca, tanpa override Finance. */
 export type BarisDitahan = { index: number; key: string; reason: "ACCURATE_HISTORY" | "ACCURATE_HISTORY_UNREADABLE"; receiptNumbers: string[]; detail?: string };
 export type SalesReceiptHeld = { held: BarisDitahan[] };
 /** Hasil periksaRiwayatAccurate (lib/pelunasan/pratinjau-ganda.ts) untuk baris paket. */
@@ -136,9 +137,10 @@ export async function authorizeSalesReceiptWrite(
             const held: BarisDitahan[] = [];
             for (const [index, row] of rows.entries()) {
                 const key = buildSalesReceiptIdempotencyPayload(row).key;
-                const nomor = opts.riwayat.cocok.get(key) ?? [];
+                // Kunci ada di `cocok` = identik kasar walau Accurate tak memberi nomor (ditahan juga).
+                const nomor = opts.riwayat.cocok.get(key);
                 const sebab = opts.riwayat.gagal.get(key);
-                if (!nomor.length && sebab === undefined) continue;
+                if (nomor === undefined && sebab === undefined) continue;
                 const [o] = await tx.select({ id: idempotencyOverride.id })
                     .from(idempotencyOverride)
                     .where(and(
@@ -154,7 +156,7 @@ export async function authorizeSalesReceiptWrite(
                     .for("update", { skipLocked: true });
                 if (o) await tx.update(idempotencyOverride).set({ consumedAt: sql`now()` }).where(eq(idempotencyOverride.id, o.id));
                 else held.push(sebab === undefined
-                    ? { index, key, reason: "ACCURATE_HISTORY", receiptNumbers: nomor }
+                    ? { index, key, reason: "ACCURATE_HISTORY", receiptNumbers: nomor ?? [] }
                     : { index, key, reason: "ACCURATE_HISTORY_UNREADABLE", receiptNumbers: [], detail: sebab });
             }
             if (held.length) {

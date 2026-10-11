@@ -3,7 +3,7 @@
  *   `app/(dashboard)/api-wrapper/page.tsx` basis 5d6cc936 (S6e-1): duplikat dalam unggahan, kunci yang diblokir lock
  *   idempotency (pratinjau), dan kemiripan histori sales-receipt Accurate. Perilaku dikunci golden.
  * Caller: app/(dashboard)/api-wrapper/page.tsx (previewSalesReceiptDuplicates, executeBulkPayload); S6e-2.
- * Main Functions: pratinjauRiwayatAccurate, pratinjauDuplikat.
+ * Main Functions: pratinjauRiwayatAccurate, pratinjauDuplikat, periksaRiwayatAccurate (server), targetRiwayat, strukDariDetail.
  * Side Effects: GET Accurate sales-receipt/list.do & detail.do lewat `accurateFetch` DIINJEKSI; pratinjau lock lewat
  *   `pratinjauKunci` DIINJEKSI (halaman: POST /api/idempotency/lock {preview:true}); console.error saat histori galat.
  */
@@ -29,64 +29,119 @@ export type DuplicateReviewEntry = {
     matchedReceiptNumbers: string[];
 };
 
-/** Target pencocokan riwayat: sidik jari baris (key) + kelompok pelanggan|tanggal pencarian list.do. */
-export type TargetRiwayat = { key: string; customerNo: unknown; transDate: string };
-type Kelompok = { customerNo: string; transDate: string; keys: Set<string> };
+/**
+ * Identitas KASAR riwayat (keputusan orkestrator 11 Okt, tinjauan S6e-2a A1/B1): pelanggan + tanggal (= nilai FILTER list.do,
+ * bukan versi Accurate) + {nomor faktur: nominal bayar}. Akun, catatan, dan jumlah potongan TIDAK ikut — bentuk item potongan
+ * di detail.do belum terbukti, dan "akun potongan diganti" tetap ganda (definisi owner #1). `nominal` = per faktur, nominal yang
+ * dianggap SAMA: Σ paymentAmount dan (lebih banyak menahan = aman) Σ paymentAmount + potongan baris itu.
+ */
+export type TargetRiwayat = {
+    key: string;
+    customerNo: string;
+    transDate: string;
+    /** nomor faktur → nominal yang dianggap sama. Kosong = tidak dicocokkan kasar (baris idempotency_log: hanya `mirip`). */
+    nominal: Map<string, number[]>;
+    /** Nomor faktur Accurate ini milik baris? (`mirip` = pelunasan di grup yang menyentuh faktur MANA PUN dari baris.) */
+    menyentuh: (invoiceNo: string) => boolean;
+};
+/** Pelunasan Accurate yang terbaca (detail.do dinormalkan). invoicePayment null = tidak dikirim Accurate. */
+export type StrukAccurate = { number: string; invoices: Array<{ invoiceNo: string; paymentAmount: number; invoicePayment: number | null }> };
+type Kelompok = { customerNo: string; transDate: string; targets: Map<string, TargetRiwayat> };
+
+const bulat = (v: number) => Number(v.toFixed(2));
+
+/** Target dari baris PAYLOAD (pratinjau klien & penahanan proxy). Uang = rumus sidik jari (Number(x) || 0). */
+export function targetRiwayat(row: Bebas): TargetRiwayat {
+    const fp = buildSalesReceiptIdempotencyPayload(row);
+    const uang = (v: unknown) => bulat(Number(v) || 0);
+    const jumlah = new Map<string, [number, number]>();
+    for (const d of (row.detailInvoice ?? []) as Bebas[]) {
+        const no = String(d.invoiceNo || "").trim();
+        const bayar = uang(d.paymentAmount);
+        const potongan = ((d.detailDiscount ?? []) as Bebas[]).reduce((a: number, x: Bebas) => a + uang(x.amount), 0);
+        const [a, b] = jumlah.get(no) ?? [0, 0];
+        jumlah.set(no, [a + bayar, b + bayar + potongan]);
+    }
+    const nominal = new Map([...jumlah].map(([no, v]) => [no, v.map(bulat)]));
+    return { key: fp.key, customerNo: String(fp.customerNo ?? "").trim(), transDate: fp.transDate, nominal, menyentuh: (no) => nominal.has(no) };
+}
 
 function kelompokkan(targets: TargetRiwayat[]) {
     const groupedTargets = new Map<string, Kelompok>();
     targets.forEach((item) => {
         const groupKey = `${item.customerNo}|${item.transDate}`;
         if (!groupedTargets.has(groupKey)) {
-            groupedTargets.set(groupKey, {
-                customerNo: item.customerNo as string,
-                transDate: item.transDate,
-                keys: new Set<string>()
-            });
+            groupedTargets.set(groupKey, { customerNo: item.customerNo, transDate: item.transDate, targets: new Map() });
         }
-        groupedTargets.get(groupKey)!.keys.add(item.key);
+        groupedTargets.get(groupKey)!.targets.set(item.key, item);
     });
     return [...groupedTargets.values()];
 }
 
 /**
  * Bentuk ASLI `sales-receipt/detail.do` (bukti baca-saja 10 Okt 2026, scratch/fiori-intake/S6e2-BUKTI-DETAIL-DO-2026-10-10.md):
- * tanpa `customerNo` tingkat atas (ada `customer.customerNo`), nomor faktur di `detailInvoice[].invoice.number` (tanpa
- * `invoiceNo`); item diskon diduga `account.no` (belum terlihat). Dinormalkan ke bentuk payload sebelum sidik jari — SATU tempat
- * untuk pratinjau klien dan penahanan server. null = bentuk tidak dikenali (baris tanpa nomor faktur, item diskon tanpa nomor
- * akun, detailInvoice bukan daftar) = TIDAK TERBACA, bukan "tidak mirip".
+ * nomor faktur di `detailInvoice[].invoice.number` (bentuk lama `invoiceNo` tetap dibaca), `paymentAmount`, `invoicePayment`
+ * (arti belum terbukti — keduanya dipakai). Item potongan TIDAK dibaca. null = TIDAK TERBACA (detailInvoice bukan daftar, baris
+ * tanpa nomor faktur, nominal bukan angka) → ditahan, bukan "tidak mirip". SATU tempat untuk pratinjau klien dan server.
  */
-export function normalisasiDetailAccurate(detail: Bebas, group: { customerNo: string; transDate: string }): Bebas | null {
+export function strukDariDetail(detail: Bebas, cadanganNomor?: unknown): StrukAccurate | null {
     if (!Array.isArray(detail?.detailInvoice)) return null;
     const teks = (v: unknown) => (typeof v === "string" || typeof v === "number" ? String(v).trim() : "");
-    const detailInvoice: Bebas[] = [];
+    const angka = (v: unknown) => typeof v === "number" ? (Number.isFinite(v) ? v : null)
+        : typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : null;
+    const invoices: StrukAccurate["invoices"] = [];
     for (const x of detail.detailInvoice as Bebas[]) {
         const invoiceNo = teks(x?.invoiceNo ?? x?.invoice?.number);
-        if (!invoiceNo) return null;
-        if (x.detailDiscount !== undefined && x.detailDiscount !== null && !Array.isArray(x.detailDiscount)) return null;
-        const detailDiscount: Bebas[] = [];
-        for (const d of (x.detailDiscount ?? []) as Bebas[]) {
-            const accountNo = teks(d?.accountNo ?? d?.account?.no);
-            if (!accountNo) return null;
-            detailDiscount.push({ accountNo, discountNotes: d.discountNotes, amount: d.amount });
-        }
-        detailInvoice.push({ invoiceNo, paymentAmount: x.paymentAmount, detailDiscount });
+        const paymentAmount = angka(x?.paymentAmount);
+        const adaIp = x?.invoicePayment !== undefined && x?.invoicePayment !== null;
+        const invoicePayment = adaIp ? angka(x.invoicePayment) : null;
+        if (!invoiceNo || paymentAmount === null || (adaIp && invoicePayment === null)) return null;
+        invoices.push({ invoiceNo, paymentAmount, invoicePayment });
     }
-    return {
-        customerNo: detail.customerNo || detail.customer?.customerNo || group.customerNo,
-        transDate: detail.transDate || group.transDate,
-        paymentMethod: detail.paymentMethod || "",
-        chequeAmount: detail.chequeAmount || 0,
-        detailInvoice,
-    };
+    return { number: teks(detail.number) || teks(cadanganNomor), invoices };
+}
+
+/** Identitas kasar sama: himpunan faktur sama, dan per faktur nominal baris ∈ {Σ paymentAmount, Σ invoicePayment} Accurate. */
+function samaKasar(t: TargetRiwayat, s: StrukAccurate): boolean {
+    if (!t.nominal.size) return false;
+    // ponytail: dijumlah per faktur (satu pelunasan menyebut faktur yang sama dua kali = dijumlah); campuran pa/ip antarbaris
+    // faktur yang sama tidak dicoba — plafon: pencocokan per baris bila Accurate terbukti mengizinkan faktur berulang.
+    const acc = new Map<string, [number, number]>();
+    for (const b of s.invoices) {
+        const [p, q] = acc.get(b.invoiceNo) ?? [0, 0];
+        acc.set(b.invoiceNo, [p + b.paymentAmount, q + (b.invoicePayment ?? b.paymentAmount)]);
+    }
+    if (acc.size !== t.nominal.size) return false;
+    for (const [no, alt] of t.nominal) {
+        const a = acc.get(no);
+        if (!a || !a.some((v) => alt.includes(bulat(v)))) return false;
+    }
+    return true;
+}
+
+/** `cocok` = kunci → nomor pelunasan identik kasar (kunci ada walau nomor kosong); `mirip` = kunci → pelunasan yang menyentuh faktur baris. */
+function cocokkan(group: Kelompok, struk: StrukAccurate[], cocok: Map<string, string[]>, mirip?: Map<string, StrukAccurate[]>) {
+    for (const t of group.targets.values()) {
+        for (const s of struk) {
+            if (samaKasar(t, s)) {
+                if (!cocok.has(t.key)) cocok.set(t.key, []);
+                const list = cocok.get(t.key)!;
+                if (s.number && !list.includes(s.number)) list.push(s.number);
+            }
+            if (mirip && s.invoices.some((b) => t.menyentuh(b.invoiceNo))) {
+                const list = mirip.get(t.key) ?? [];
+                if (!s.number || !list.some((x) => x.number === s.number)) mirip.set(t.key, [...list, s]);
+            }
+        }
+    }
 }
 
 /**
- * W:1903-1977 (satu kelompok pelanggan+tanggal): list.do (≤ 5 halaman, ≤ 300 kandidat) → detail.do per kandidat → sidik
- * jari identik dengan kunci kelompok dicatat ke `hasil`. `ketat` (server, S6e-2 owner #6, fail-closed): jawaban yang tidak
- * terbaca (bukan `s:true`, detail kosong, daftar terpotong) MELEMPAR — klien (pratinjau) tetap menelan galat detail seperti dulu.
+ * W:1903-1977 (satu kelompok pelanggan+tanggal): list.do (≤ 5 halaman, ≤ 300 kandidat) → detail.do per kandidat → daftar
+ * pelunasan terbaca. `ketat` (server, S6e-2 owner #6, fail-closed): jawaban yang tidak terbaca (bukan `s:true`, detail kosong,
+ * daftar terpotong, bentuk tak dikenali) MELEMPAR — klien (pratinjau) menandai kelompoknya `tidakTerbaca` dan lanjut.
  */
-async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, hasil: Map<string, string[]>, ketat: boolean, tidakTerbaca?: Set<string>) {
+async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ketat: boolean, tidakTerbaca?: Set<string>): Promise<StrukAccurate[]> {
     let currentPage = 1;
     let pageCount = 1;
     const candidateReceipts: Bebas[] = [];
@@ -109,6 +164,7 @@ async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ha
     } while (currentPage <= pageCount && currentPage <= 5 && candidateReceipts.length < 300);
     if (ketat && currentPage <= pageCount) throw new Error("riwayat sales-receipt terpotong (> 5 halaman / 300 kandidat)");
 
+    const struk: StrukAccurate[] = [];
     for (const candidate of candidateReceipts) {
         try {
             const detailRes = await accurateFetch('/api/sales-receipt/detail.do', 'GET', candidate?.id ? { id: candidate.id } : { number: candidate.number });
@@ -118,65 +174,56 @@ async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ha
             const detail = detailRes?.d || detailRes;
             if (!detail) continue;
 
-            const detailPayload = normalisasiDetailAccurate(detail, group);
-            if (!detailPayload) throw new Error(`bentuk detail sales-receipt ${candidate?.number ?? candidate?.id ?? "?"} tidak dikenali`);
-
-            const detailKey = buildSalesReceiptIdempotencyPayload(detailPayload).key;
-            if (!group.keys.has(detailKey)) continue;
-
-            if (!hasil.has(detailKey)) hasil.set(detailKey, []);
-            const targetList = hasil.get(detailKey)!;
-            const receiptNumber = String(detail.number || candidate.number || "").trim();
-            if (receiptNumber && !targetList.includes(receiptNumber)) {
-                targetList.push(receiptNumber);
-            }
+            const s = strukDariDetail(detail, candidate?.number);
+            if (!s) throw new Error(`bentuk detail sales-receipt ${candidate?.number ?? candidate?.id ?? "?"} tidak dikenali`);
+            struk.push(s);
         } catch (detailErr) {
             if (ketat) throw detailErr;
             // S6e-2: kandidat yang tidak terbaca = kelompok TIDAK TERBACA (bukan "aman") — pratinjau menandainya.
-            group.keys.forEach((k) => tidakTerbaca?.add(k));
+            group.targets.forEach((_, k) => tidakTerbaca?.add(k));
             console.error("Accurate history preview detail error:", detailErr);
         }
     }
+    return struk;
 }
 
-/** W:1903-1977: kunci fingerprint → nomor sales-receipt Accurate yang identik (per pelanggan + tanggal). Pratinjau klien:
+/** W:1903-1977: kunci fingerprint → nomor sales-receipt Accurate yang identik KASAR (per pelanggan + tanggal). Pratinjau klien:
  * kelompok berurutan, galat menghentikan pencarian (hasil sebagian) — perilaku lama, dikunci golden. S6e-2: `tidakTerbaca` =
  * kunci yang kelompoknya gagal dibaca / bentuk detailnya tak dikenali / tidak sempat dibaca setelah galat (bukan "aman"). */
 export const pratinjauRiwayatAccurate = async (rows: Bebas[], accurateFetch: AccurateFetch) => {
     const matchedReceiptsByKey = new Map<string, string[]>();
     const tidakTerbaca = new Set<string>();
-    const groups = kelompokkan(rows.map((row: Bebas) => buildSalesReceiptIdempotencyPayload(row)));
+    const groups = kelompokkan(rows.map(targetRiwayat));
     let i = 0;
     try {
         for (; i < groups.length; i++) {
-            await riwayatKelompok(groups[i], accurateFetch, matchedReceiptsByKey, false, tidakTerbaca);
+            cocokkan(groups[i], await riwayatKelompok(groups[i], accurateFetch, false, tidakTerbaca), matchedReceiptsByKey);
         }
     } catch (historyErr) {
-        groups.slice(i).forEach((g) => g.keys.forEach((k) => tidakTerbaca.add(k)));
+        groups.slice(i).forEach((g) => g.targets.forEach((_, k) => tidakTerbaca.add(k)));
         console.error("Accurate history preview skipped:", historyErr);
     }
     return Object.assign(matchedReceiptsByKey, { tidakTerbaca });
 };
 
 /**
- * S6e-2 (owner #6): pemeriksaan riwayat di SERVER untuk satu paket, fail-closed. Logika pencocokan = pratinjau
- * (riwayatKelompok, mode ketat). `cocok` = kunci → nomor identik; `gagal` = kunci yang kelompoknya tidak terbaca (galat,
- * jawaban bukan `s:true`, terpotong, atau melewati `batasMs`) → ditahan pemanggil. Paling banyak `konkurensi` kelompok serentak.
+ * S6e-2 (owner #6): pemeriksaan riwayat di SERVER, fail-closed. Logika = pratinjau (riwayatKelompok, mode ketat). `cocok` =
+ * kunci → nomor identik KASAR (penahanan proxy); `mirip` = kunci → pelunasan di grup pelanggan+tanggal yang menyentuh faktur
+ * mana pun dari baris (bukti ketiadaan Selesaikan); `gagal` = kunci yang kelompoknya tidak terbaca (galat, bukan `s:true`,
+ * terpotong, bentuk tak dikenali, atau melewati `batasMs`). Paling banyak `konkurensi` kelompok serentak.
  * Biaya per paket: per kelompok pelanggan+tanggal 1–5 list.do + 1 detail.do per kandidat.
  */
 export async function periksaRiwayatAccurate(targets: TargetRiwayat[], accurateFetch: AccurateFetch, opsi: { konkurensi?: number; batasMs?: number } = {}) {
     const kelompok = kelompokkan(targets);
-    const selesai = new Map<Kelompok, Map<string, string[]>>();
+    const selesai = new Map<Kelompok, StrukAccurate[]>();
     const galat = new Map<Kelompok, string>();
     let berikut = 0;
     let habis = false;
     const pekerja = async () => {
         while (!habis && berikut < kelompok.length) {
             const g = kelompok[berikut++];
-            const hasil = new Map<string, string[]>();
             try {
-                await riwayatKelompok(g, accurateFetch, hasil, true);
-                selesai.set(g, hasil);
+                selesai.set(g, await riwayatKelompok(g, accurateFetch, true));
             } catch (e) {
                 galat.set(g, e instanceof Error ? e.message : String(e));
             }
@@ -190,13 +237,14 @@ export async function periksaRiwayatAccurate(targets: TargetRiwayat[], accurateF
     clearTimeout(tunda);
     habis = true; // kelompok yang belum selesai saat batas waktu = tidak terbaca (jawaban terlambat diabaikan)
     const cocok = new Map<string, string[]>();
+    const mirip = new Map<string, StrukAccurate[]>();
     const gagal = new Map<string, string>();
     for (const g of kelompok) {
-        const h = selesai.get(g);
-        if (h) h.forEach((v, k) => cocok.set(k, [...v]));
-        else g.keys.forEach((k) => gagal.set(k, galat.get(g) ?? "batas waktu pembacaan riwayat terlampaui"));
+        const s = selesai.get(g);
+        if (s) cocokkan(g, s, cocok, mirip);
+        else g.targets.forEach((_, k) => gagal.set(k, galat.get(g) ?? "batas waktu pembacaan riwayat terlampaui"));
     }
-    return { cocok, gagal };
+    return { cocok, mirip, gagal };
 }
 
 type KunciFingerprint = ReturnType<typeof buildSalesReceiptIdempotencyPayload>;

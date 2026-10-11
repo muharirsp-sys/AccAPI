@@ -5,8 +5,7 @@ import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, isGuardedAccurat
 import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, databaseLockBerbeda, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
 import { db } from "@/lib/db";
 import { memuatPlaceholderAkun } from "@/lib/sales-receipt-upload";
-import { buildSalesReceiptIdempotencyPayload } from "@/lib/sales-receipt-fingerprint";
-import { periksaRiwayatAccurate } from "@/lib/pelunasan/pratinjau-ganda";
+import { periksaRiwayatAccurate, targetRiwayat } from "@/lib/pelunasan/pratinjau-ganda";
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 
 export async function POST(req: NextRequest) {
@@ -105,10 +104,11 @@ export async function POST(req: NextRequest) {
             // Lock dinilai DULU tanpa menulis: kiriman yang tak tercakup lock tidak memicu pembacaan riwayat ke Accurate.
             const pre = await authorizeSalesReceiptWrite(db, write, { dryRun: true });
             if (typeof pre === "string") return NextResponse.json({ error: pre, code: "SALES_RECEIPT_LOCK_REQUIRED", sent: false }, { status: 409 });
-            // S6e-2 (owner #6): baris MIRIP riwayat Accurate ditahan di SERVER tiap paket, tepat sebelum kirim; riwayat yang
-            // gagal dibaca = ditahan (fail-closed). Override Finance `ACCURATE_HISTORY` (lock allowHistoryKeys) membukanya.
+            // S6e-2 (owner #6): baris identik KASAR dengan riwayat Accurate (pelanggan + tanggal + {faktur: nominal}, tanpa potongan —
+            // orkestrator 11 Okt) ditahan di SERVER tiap paket, tepat sebelum kirim; riwayat yang gagal dibaca = ditahan (fail-closed).
+            // Override Finance `ACCURATE_HISTORY` (lock allowHistoryKeys) membukanya.
             const rows = (Array.isArray(payload) ? payload : [payload]) as Record<string, unknown>[];
-            const riwayat = await periksaRiwayatAccurate(rows.map((r) => buildSalesReceiptIdempotencyPayload(r)),
+            const riwayat = await periksaRiwayatAccurate(rows.map(targetRiwayat),
                 bacaAccurate({ sessionHost, sessionId, accessToken: apiKey }));
             const r = await authorizeSalesReceiptWrite(db, write, { riwayat });
             if (typeof r === "string") return NextResponse.json({ error: r, code: "SALES_RECEIPT_LOCK_REQUIRED", sent: false }, { status: 409 });

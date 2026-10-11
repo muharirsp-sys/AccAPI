@@ -12,8 +12,9 @@ Semua route Next same-origin, sesi Better Auth (cookie). Dasar keputusan: `OWNER
 - **C11**: jawaban Accurate selain `s:true` per baris = **Tidak pasti** (bukan Gagal, bukan Ditolak). Tidak ada jalur yang
   menghasilkan "Ditolak" dari jawaban Accurate. "Gagal" hanya untuk baris yang pasti tidak terkirim (`sent:false`, ditolak
   penjaga sebelum kirim).
-- **Kemiripan riwayat** (sidik jari pelanggan|tanggal|faktur+nominal+potongan identik dengan sales-receipt di Accurate) tidak
-  pernah menaikkan baris ke Terposting — hanya petunjuk.
+- **Kemiripan riwayat** = identitas KASAR sama dengan sales-receipt di Accurate: pelanggan + tanggal (nilai filter pencarian)
+  + {nomor faktur: nominal bayar}, TANPA akun/catatan/jumlah potongan (keputusan orkestrator 11 Okt). Tidak pernah menaikkan
+  baris ke Terposting — hanya petunjuk/penahanan.
 
 ## Izin
 
@@ -63,13 +64,16 @@ paling banyak 4 serentak, batas 60 dtk per paket (melewati batas = kelompok sisa
 Tindak lanjut (DITUNDA, orkestrator 10 Okt): satu `list.do` per tanggal (bukan per pelanggan) menekan biaya, tetapi mengubah
 logika pratinjau bersama — belum dikerjakan.
 
-**Sidik jari riwayat (bukti baca-saja produksi 10 Okt, `S6e2-BUKTI-DETAIL-DO-2026-10-10.md`)**: `detail.do` tidak membawa
-`invoiceNo` (nomor faktur di `detailInvoice[].invoice.number`) dan tidak membawa `customerNo` tingkat atas. Detail dinormalkan di
-SATU tempat (`normalisasiDetailAccurate`, pratinjau & server): `invoiceNo = invoiceNo ?? invoice.number`, item diskon
-`accountNo = accountNo ?? account.no`. Bentuk tak dikenali (baris tanpa nomor faktur, item diskon tanpa nomor akun,
-`detailInvoice` bukan daftar) = `ACCURATE_HISTORY_UNREADABLE` (ditahan). Sebelum perbaikan ini pemeriksaan mirip-riwayat tidak
-pernah memicu (juga di pratinjau lama). Pratinjau (`pratinjauDuplikat`) kini punya alasan `ACCURATE_HISTORY_UNREADABLE`
-("tidak terbaca", bukan aman) — baris itu butuh override Finance seperti `ACCURATE_HISTORY`.
+**Identitas kasar (orkestrator 11 Okt, tinjauan A1/B1; bentuk asli `detail.do` per `S6e2-BUKTI-DETAIL-DO-2026-10-10.md`)**:
+`detail.do` tidak membawa `invoiceNo` (nomor faktur di `detailInvoice[].invoice.number`) dan tidak membawa `customerNo` tingkat
+atas. Dinormalkan di SATU tempat (`strukDariDetail`, pratinjau & server): `invoiceNo = invoiceNo ?? invoice.number`,
+`paymentAmount`, `invoicePayment`. Baris DITAHAN bila ada pelunasan di grup pelanggan+tanggal dengan himpunan faktur sama dan,
+per faktur, nominal baris (`paymentAmount`, atau `paymentAmount` + potongannya) = `paymentAmount` ATAU `invoicePayment` Accurate
+(arti keduanya belum terbukti — lebih banyak menahan = aman). Item potongan TIDAK dibaca: akun/catatan/jumlah/bentuknya tidak
+menahan dan tidak meloloskan. Tak terbaca (`detailInvoice` bukan daftar, baris tanpa nomor faktur, `paymentAmount` bukan angka,
+`invoicePayment` ada tetapi bukan angka) = `ACCURATE_HISTORY_UNREADABLE` (ditahan). Identik tanpa nomor pelunasan tetap ditahan
+(`receiptNumbers: []`). Pratinjau (`pratinjauDuplikat`) memakai aturan yang sama; `ACCURATE_HISTORY_UNREADABLE` = "tidak
+terbaca", bukan aman — baris itu butuh override Finance seperti `ACCURATE_HISTORY`.
 
 ## 2. `POST /api/idempotency/lock` (BERUBAH)
 
@@ -90,21 +94,26 @@ bisa dipakai untuk blok lock, dan sebaliknya).
 
 ## 4. `GET /api/idempotency/resolve?key=…&key=…` (BARU, baca-saja) — pratinjau pencarian Selesaikan
 
-Izin `finance.resolve_unknown`. 1–50 `key`. Mencari di Accurate dengan sesi PEMANGGIL (database sesi kini) memakai sidik jari
-yang sama dengan penahanan riwayat. Tidak menulis apa pun.
+Izin `finance.resolve_unknown`. 1–50 `key`. Mencari di Accurate dengan sesi PEMANGGIL (database sesi kini): **kandidat** =
+pelunasan di grup pelanggan+tanggal baris yang MENYENTUH faktur mana pun dari baris (berapa pun nominal/potongannya; faktur
+dari kolom `invoiceNo` DAN dari kunci). Tidak menulis apa pun.
 ```json
 {"ok": true, "databaseId": "123", "databaseAlias": "PT A",
  "rows": [{"key": "PAY_…", "status": "UNKNOWN", "customerNo": "C1", "transDate": "01/10/2026", "invoiceNo": "INV-1",
            "amount": 1000, "updatedAt": "…", "ageSeconds": 900, "eligible": true,
-           "found": true, "receiptNumbers": ["PR.2026.10.00012"], "readError": null}]}
+           "found": true, "receiptNumbers": ["PR.2026.10.00012"],
+           "candidates": [{"number": "PR.2026.10.00012", "invoices": [{"invoiceNo": "INV-1", "paymentAmount": 900, "invoicePayment": null}]}],
+           "readError": null}]}
 ```
+`found` = ada kandidat (BUKAN "identik": nominal bisa berbeda — tampilkan `candidates` agar Finance membandingkan `amount` baris
+dengan nominal kandidat lalu memilih nomornya untuk `terposting`). `invoicePayment: null` = tidak dikirim Accurate.
 `eligible` = `UNKNOWN`, `SENDING` ≥ 2 mnt, atau `PROCESSING` > 15 mnt (basi lock). `found:null` + `readError` = riwayat gagal dibaca. 400 tanpa key /
 > 50; 400 `ACCURATE_SESSION_INCOMPLETE`; 404 key tidak ada.
 
 ## 5. `POST /api/idempotency/resolve` (BARU) — Selesaikan
 
 Izin `finance.resolve_unknown`. Badan `{key, decision:"terposting"|"tidak_ada", accurateNumber (wajib untuk terposting), reason
-(≥ 15), checkedSource, expectedDatabaseId}`. Server MENCARI dulu (sesi pemanggil, sidik jari sama dengan penahanan riwayat), lalu
+(≥ 15), checkedSource, expectedDatabaseId}`. Server MENCARI dulu (sesi pemanggil, kandidat sama dengan §4), lalu
 satu transaksi: status `SUCCESS` (terposting) / `FAILED` (tidak_ada = boleh dikirim ulang; proxy tetap menahan riwayat) + jejak
 `idempotency_resolution` (siapa, kapan, database, sumber, alasan, nomor; tidak bisa diubah/dihapus).
 
@@ -120,8 +129,8 @@ satu transaksi: status `SUCCESS` (terposting) / `FAILED` (tidak_ada = boleh diki
 | 409 | `wrong_database` | database lock ≠ database sesi — `{lockDatabaseId}` (buka database itu) |
 | 409 | `database_unknown` | `tidak_ada` untuk baris lama tanpa database tercatat (bisa terposting di database lain); `terposting` BOLEH |
 | 409 | `search_failed` | pencarian Accurate gagal / bentuk tak dikenali — tidak ada yang diubah |
-| 409 | `number_mismatch` | `terposting` dengan nomor yang tidak ditemukan — `{receiptNumbers}` |
-| 409 | `found_in_accurate` | `tidak_ada` padahal ditemukan — `{receiptNumbers}` |
+| 409 | `number_mismatch` | `terposting` dengan nomor yang bukan kandidat §4 — `{receiptNumbers, candidates}` |
+| 409 | `similar_found` | `tidak_ada` padahal ada kandidat (pelunasan pelanggan+tanggal yang menyentuh faktur baris, berapa pun nominal/potongan) — `{receiptNumbers, candidates}`. Menggantikan `found_in_accurate`. |
 | 409 | `changed` | status berubah selama pencarian (CAS) |
 
 ## 6. `GET /api/idempotency/summary` (BARU, baca-saja) — Beranda Admin Incaso (BL-41)
@@ -169,3 +178,8 @@ Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
 - §7: hasil `kirimPelunasan` per baris membawa `paket` (nomor paket, mulai 1).
 - (10 Okt, sesudah keputusan orkestrator) §1 7b, §2 `expectedDatabaseId` + kode gerbang override, §5 POST ADA, §6 `perDatabase` +
   `?rows=1`, §7 `GalatKirim`, §8 DDL_S6E2; sidik jari riwayat memakai bentuk ASLI `detail.do` (§1).
+- (11 Okt, tinjauan S6e-2a A1/B1 + keputusan orkestrator) Kemiripan riwayat = identitas KASAR pelanggan + tanggal + {faktur:
+  nominal}, tanpa potongan (§1; `normalisasiDetailAccurate` diganti `strukDariDetail`; item potongan tak dikenal tidak lagi
+  `UNREADABLE`; nominal bukan angka kini `UNREADABLE`). §4 baris membawa `candidates`; `found`/`receiptNumbers` = kandidat yang
+  MENYENTUH faktur baris (bukan identik). §5 `found_in_accurate` → **`similar_found`** (`{receiptNumbers, candidates}`);
+  `terposting` menerima nomor kandidat mana pun; `number_mismatch` membawa `candidates`.
