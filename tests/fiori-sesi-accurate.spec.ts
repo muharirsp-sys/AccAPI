@@ -248,6 +248,19 @@ test.describe("akun nyata (tanpa bypass)", () => {
         await expect(page.getByRole("heading", { name: "Akses ditolak" })).toBeVisible();
         await expect(kartu(page)).toHaveCount(0);
         await expect(page.getByRole("button", { name: "Eksekusi Endpoint" })).toHaveCount(0);
+
+        // Peninjau OAuth #1: tombol Kembali ke tujuan terlarang tidak tampil; navigasi KLIEN (layout server tidak berjalan ulang)
+        // dari halaman yang diizinkan ke Konsol tetap Akses ditolak (gerbang klien SidebarLayout), lalu kembali normal.
+        await page.goto("/sesi-accurate?returnTo=/api-wrapper", { timeout: 90_000 });
+        await expect(kartu(page)).toContainText("Belum masuk ke Accurate");
+        await expect(page.getByRole("link", { name: /Kembali ke/ })).toHaveCount(0);
+        await page.evaluate(() => (window as unknown as { next: { router: { push: (h: string) => void } } }).next.router.push("/api-wrapper"));
+        await expect(page).toHaveURL(/\/api-wrapper$/);
+        await expect(page.getByRole("heading", { name: "Akses ditolak" })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Eksekusi Endpoint" })).toHaveCount(0);
+        await page.evaluate(() => (window as unknown as { next: { router: { push: (h: string) => void } } }).next.router.push("/sesi-accurate"));
+        await expect(kartu(page)).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Akses ditolak" })).toHaveCount(0);
     });
 
     test("pemegang api_wrapper.view: Konsol terbuka dengan kartu Sesi Accurate", async ({ page }) => {

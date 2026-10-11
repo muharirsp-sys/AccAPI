@@ -18,6 +18,7 @@ import { fioriClass } from "@/components/fiori/Scope";
 import { SchemeSwitcher } from "@/components/fiori/interactive";
 import Dialog from "@/components/ui/Dialog";
 import { OPEN_HELP_EVENT } from "@/components/ChatWidget";
+import AccessDenied from "@/components/AccessDenied";
 
 const LocalAuthRoleContext = createContext<string | null>(null);
 export function useLocalAuthRole() { return useContext(LocalAuthRoleContext); }
@@ -34,6 +35,9 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
     const items = groups.flatMap(group => group.items);
     const home = canAccessPathWithKeys("/", keys) ? [HOME_ITEM] : [];
     const active = activeNavigationItem(pathname, [...home, ...items]);
+    // Gerbang klien (S7-sesi): layout server TIDAK dijalankan ulang pada navigasi klien (Link/router.push), jadi izin path aktif
+    // dihitung ulang di sini dari kunci yang sama. Otoritas tetap server (layout + guard API); ini menutup tampilan halaman terlarang.
+    const pathDiizinkan = canAccessPathWithKeys(pathname, keys);
     const roleLabel = roleProfile(keys)?.label ?? "CV. Surya Perkasa";
     const [drawerOpen, setDrawerOpen] = useState(false);
     // Tutup drawer pada setiap pindah rute (klik tautan, Back, router.push) — disesuaikan saat render, bukan di effect.
@@ -102,7 +106,7 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
             {drawerOpen && nav("Menu mobile", () => setDrawerOpen(false))}
         </Dialog>
         <main id="workspace-content" tabIndex={-1} className="fi-shell-main">
-            <LocalAuthRoleContext.Provider value={localAuthRole ?? null}><PermKeysContext.Provider value={keys}>{children}</PermKeysContext.Provider></LocalAuthRoleContext.Provider>
+            <LocalAuthRoleContext.Provider value={localAuthRole ?? null}><PermKeysContext.Provider value={keys}>{pathDiizinkan ? children : <AccessDenied />}</PermKeysContext.Provider></LocalAuthRoleContext.Provider>
         </main>
         <nav className={`${fioriClass} fi-bnav`} aria-label="Navigasi utama">
             {[...home, ...roleShortcuts(keys, items)].map(item => {
