@@ -388,19 +388,38 @@ test("K1b RENDAH 5a: metode tak dikenal ber-cheque 0 DILEWATI — tanpa ember si
     assert.deepEqual(penghalangTutup(rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [nol], setoran: [] })).bisaDitutup, true);
 });
 
-// K-1 (owner) BELUM dijawab: uji ini SENGAJA merah (todo -> tidak menggagalkan `npm test`) dan netral terhadap pilihan:
-// (a) ember tak teralokasi `nominal_negatif` (seluruh cheque, wajib dijelaskan, tidak mengurangi total orang) — ATAU
-// (b) dinetkan ke orang, total orang < 0 = status `selisih`. Keduanya membuat uji ini hijau; hapus `todo` saat K-1 dipasang.
-test("K1b RENDAH 5b (K-1 TERBUKA): pelunasan uang ber-cheque NEGATIF tidak boleh menggagalkan rekonsiliasi SEHARI", { todo: "K-1 menunggu owner — pilihan (a) ember nominal_negatif / (b) netto -> selisih" }, () => {
+// K-1 (owner 12 Okt, pilihan a): cheque metode UANG < 0 -> SELURUH nominal ke ember tak teralokasi `nominal_negatif` (wajib dijelaskan sebelum
+// Tutup, meniru metode_tak_dikenal); TIDAK mengurangi total orang; orang lain tetap direkonsiliasi (tanpa galat sehari).
+test("K1b RENDAH 5b (K-1 = a): cheque uang NEGATIF -> ember nominal_negatif penuh, tidak mengurangi orang, hari tidak gagal", () => {
     const negatif = pel("CASH_OTHER", -300_000, [[12, -300_000]]);
-    const negatifCampur = pel("BANK_TRANSFER", -80_000, [[14, -80_000]]);
+    const negatifCampur = pel("BANK_TRANSFER", -80_000, [[14, -80_000], [11, 0]]);
     const positifC = pel("CASH_OTHER", 30_000, [[14, 30_000]]);
     const sah = pel("CASH_OTHER", 50_000, [[11, 50_000]]);
-    const h = rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [negatif, negatifCampur, positifC, sah],
-        setoran: [setor("S-A", 50_000), setor("S-B", 0), setor("S-C", 0)] });
-    assert.equal(baris(h, "S-A").status, "klop", "orang lain tetap direkonsiliasi");
-    assert.equal(h.total.pelunasan + h.total.takTeralokasi, Rp(-300_000 - 80_000 + 30_000 + 50_000), "invarian Σ orang + Σ ember = Σ cheque");
-    assert.equal(penghalangTutup(h).bisaDitutup, false, "uang negatif wajib terlihat (ember belum dijelaskan / selisih), tidak lolos diam-diam");
+    const giro = pel("BANK_CHEQUE", -0.5, []);
+    const masukan = { tanggal: D, peta: PETA, pelunasan: [negatif, negatifCampur, positifC, sah, giro],
+        setoran: [setor("S-A", 50_000), setor("S-B", 0), setor("S-C", 30_000)] };
+    const h = rekonsiliasiHari(masukan);
+    assert.deepEqual(h.baris.map((b) => [b.orang, b.pelunasan, b.status]), [["S-A", Rp(50_000), "klop"], ["S-B", 0, "klop"], ["S-C", Rp(30_000), "klop"]],
+        "orang lain tetap direkonsiliasi; cheque negatif tidak mengurangi total orang");
+    assert.deepEqual(h.takTeralokasi.map((t) => [t.pelunasanId, t.sisa, t.arah, t.alasan, t.jumlahInvoicePayment, t.orang]), [
+        [negatif.id, Rp(-300_000), "kredit", "nominal_negatif", 0, ["S-B"]],
+        [negatifCampur.id, Rp(-80_000), "kredit", "nominal_negatif", 0, ["S-C", "S-A"]],
+        [giro.id, -50, "kredit", "nominal_negatif", 0, []],
+    ]);
+    assert.equal(h.total.pelunasan + h.total.takTeralokasi, Rp(-300_000 - 80_000 + 30_000 + 50_000) - 50, "invarian Σ orang + Σ ember = Σ cheque");
+    const p = penghalangTutup(h);
+    assert.equal(p.bisaDitutup, false, "wajib dijelaskan sebelum Tutup");
+    assert.equal(p.alasan[0], `Uang tak teralokasi ${negatif.nomor} belum dijelaskan: Rp -300.000 (pelunasan Tunai/Transfer/Giro bernominal negatif; `
+        + "tidak dihitung ke orang S-B).");
+    assert.deepEqual(snapshotHari(h).takTeralokasi.map((t) => t.alasan), ["nominal_negatif", "nominal_negatif", "nominal_negatif"]);
+    const jelas = rekonsiliasiHari({ ...masukan, catatanTakTeralokasi: h.takTeralokasi.map((t) => ({ pelunasanId: t.pelunasanId, sisa: t.sisa })) });
+    assert.equal(penghalangTutup(jelas).bisaDitutup, true, "dijelaskan (angka sisa sama) -> Tutup boleh");
+    // Metode tak dikenal bernominal negatif tetap metode_tak_dikenal; OTHERS negatif tetap non-kas.
+    const kartu = pel("CREDIT_CARD", -10_000, [[11, -10_000]]);
+    const retur = pel("OTHERS", -20_000, [[11, -20_000]]);
+    const h2 = rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [kartu, retur], setoran: [] });
+    assert.deepEqual(h2.takTeralokasi.map((t) => t.alasan), ["metode_tak_dikenal"]);
+    assert.deepEqual(h2.nonKas.map((x) => x.id), [retur.id]);
 });
 
 test("RENDAH 4–6: gabungan siklik = galat; klop/setoran negatif & urutan revisi ditolak lib; `pada` wajib Date atau ISO berofset", () => {
