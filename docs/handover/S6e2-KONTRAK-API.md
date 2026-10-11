@@ -59,8 +59,10 @@ Jawaban 409 `ACCURATE_HISTORY` (seluruh paket TIDAK dikirim, override & lock TID
 (fail-closed). Override `ACCURATE_HISTORY` menutup keduanya. Klien (lib `kirim.ts`) menandai baris itu "ditahan", melaporkannya
 `FAILED` (tidak terkirim), lalu mengirim ulang sisa paket SEKALI.
 
-Biaya: tiap paket membaca riwayat per kelompok pelanggan+tanggal = `list.do` (≤ 5 halaman) + `detail.do` per kandidat,
-paling banyak 4 serentak, batas 60 dtk per paket (melewati batas = kelompok sisanya `UNREADABLE`).
+Biaya: tiap paket membaca riwayat per kelompok pelanggan+tanggal = `list.do` (≤ 5 halaman) + `detail.do` per kandidat
+(≤ 300), paling banyak 4 serentak, batas 60 dtk per paket (melewati batas = kelompok sisanya `UNREADABLE`; sesudah batas tidak
+ada panggilan Accurate baru). `list.do` wajib `s:true` + `d` daftar + `sp.pageCount` angka — selain itu `UNREADABLE`
+(tanpa jumlah halaman = dianggap terpotong). Pra-deploy: pastikan `list.do` produksi membawa `sp.pageCount`.
 Tindak lanjut (DITUNDA, orkestrator 10 Okt): satu `list.do` per tanggal (bukan per pelanggan) menekan biaya, tetapi mengubah
 logika pratinjau bersama — belum dikerjakan.
 
@@ -183,3 +185,5 @@ Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
   `UNREADABLE`; nominal bukan angka kini `UNREADABLE`). §4 baris membawa `candidates`; `found`/`receiptNumbers` = kandidat yang
   MENYENTUH faktur baris (bukan identik). §5 `found_in_accurate` → **`similar_found`** (`{receiptNumbers, candidates}`);
   `terposting` menerima nomor kandidat mana pun; `number_mismatch` membawa `candidates`.
+- (11 Okt, tinjauan A2–A4) §1 Biaya: `list.do` tanpa `sp.pageCount` angka / bukan `s:true` / tanpa `d` = `UNREADABLE`;
+  pembacaan berhenti saat batas waktu (tanpa panggilan baru).

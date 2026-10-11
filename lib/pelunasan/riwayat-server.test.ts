@@ -140,3 +140,60 @@ test("A1: nomor faktur / nominal TAK TERBACA (bukan angka) = GAGAL BACA (ditahan
     const lain = await periksaRiwayatAccurate([target(row)], baris({ invoice: { number: "I9" }, paymentAmount: 5, detailDiscount: [{ aneh: true }] }));
     assert.equal(lain.gagal.size + lain.cocok.size, 0);
 });
+
+// ------------------------------------------------------------------ Tinjauan 11 Okt A2–A4: daftar list.do & batas waktu (fail-closed)
+const satuBaris = { customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "I1", paymentAmount: 1 }] };
+const lainDetail = { s: true, d: { number: "PR.X", detailInvoice: [{ invoice: { number: "I9" }, paymentAmount: 5 }] } };
+
+test("A3: list.do {s:false} / {s:false, d:[]} / {s:true} tanpa d = GAGAL BACA (bukan 'tidak mirip')", async () => {
+    for (const jawab of [{ s: false }, { s: false, d: [], sp: { pageCount: 1 } }, { s: true, sp: { pageCount: 1 } }, null]) {
+        const r = await periksaRiwayatAccurate([target(satuBaris)], async () => jawab);
+        assert.match(r.gagal.get(target(satuBaris).key) ?? "", /tidak terbaca/, JSON.stringify(jawab));
+    }
+});
+
+test("A2: list.do tanpa sp.pageCount angka = dianggap TERPOTONG (halaman berikut tak bisa dipastikan) -> GAGAL", async () => {
+    const seratus = Array.from({ length: 100 }, (_, i) => ({ id: i + 1 }));
+    for (const jawab of [{ s: true, d: seratus }, { s: true, d: [] }, { s: true, d: seratus, sp: {} }, { s: true, d: seratus, sp: { pageCount: "2" } }]) {
+        const f: AccurateFetch = async (path) => path.endsWith("list.do") ? jawab : lainDetail;
+        const r = await periksaRiwayatAccurate([target(satuBaris)], f);
+        assert.match(r.gagal.get(target(satuBaris).key) ?? "", /jumlah halaman/, JSON.stringify({ ...jawab, d: jawab.d.length }));
+    }
+    // Kontrol: pageCount angka -> halaman 2 dibaca, tidak gagal.
+    const halaman: unknown[] = [];
+    const ok = await periksaRiwayatAccurate([target(satuBaris)], async (path, _m, q) => {
+        if (!path.endsWith("list.do")) return lainDetail;
+        halaman.push((q as Record<string, unknown>)["sp.page"]);
+        return { s: true, d: (q as Record<string, unknown>)["sp.page"] === 1 ? seratus : [{ id: 101 }], sp: { pageCount: 2 } };
+    });
+    assert.equal(ok.gagal.size, 0);
+    assert.deepEqual(halaman, [1, 2]);
+});
+
+test("A4: batas waktu -> TIDAK ADA panggilan Accurate baru sesudah fungsi kembali (kandidat & halaman berhenti)", async () => {
+    const banyak = Array.from({ length: 50 }, (_, i) => ({ id: i + 1 }));
+    let panggilan = 0;
+    // Kelompok C0–C3: list.do lambat 3 halaman (batas waktu jatuh di halaman 2); C4–C5: belum dimulai.
+    const lambat: AccurateFetch = async (path) => {
+        panggilan++;
+        await new Promise((r) => setTimeout(r, path.endsWith("list.do") ? 40 : 15));
+        return path.endsWith("list.do") ? { s: true, d: banyak, sp: { pageCount: 3 } } : lainDetail;
+    };
+    const rows = Array.from({ length: 6 }, (_, i) => ({ ...satuBaris, customerNo: `C${i}` }));
+    const r = await periksaRiwayatAccurate(rows.map(target), lambat, { batasMs: 60 });
+    const saatKembali = panggilan;
+    assert.equal(r.gagal.size, 6, "semua kelompok belum selesai = gagal");
+    await new Promise((res) => setTimeout(res, 200));
+    assert.equal(panggilan, saatKembali, `panggilan sesudah kembali: ${panggilan - saatKembali}`);
+    // Kandidat: list.do cepat, detail.do lambat -> batas waktu jatuh di tengah kandidat.
+    let n2 = 0;
+    const detailLambat: AccurateFetch = async (path) => {
+        n2++;
+        await new Promise((res) => setTimeout(res, path.endsWith("list.do") ? 1 : 15));
+        return path.endsWith("list.do") ? { s: true, d: banyak, sp: { pageCount: 1 } } : lainDetail;
+    };
+    await periksaRiwayatAccurate(rows.map(target), detailLambat, { batasMs: 60 });
+    const n2Kembali = n2;
+    await new Promise((res) => setTimeout(res, 200));
+    assert.equal(n2, n2Kembali, `detail.do sesudah kembali: ${n2 - n2Kembali}`);
+});

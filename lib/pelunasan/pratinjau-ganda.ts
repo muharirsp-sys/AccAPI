@@ -139,14 +139,18 @@ function cocokkan(group: Kelompok, struk: StrukAccurate[], cocok: Map<string, st
 /**
  * W:1903-1977 (satu kelompok pelanggan+tanggal): list.do (≤ 5 halaman, ≤ 300 kandidat) → detail.do per kandidat → daftar
  * pelunasan terbaca. `ketat` (server, S6e-2 owner #6, fail-closed): jawaban yang tidak terbaca (bukan `s:true`, detail kosong,
- * daftar terpotong, bentuk tak dikenali) MELEMPAR — klien (pratinjau) menandai kelompoknya `tidakTerbaca` dan lanjut.
+ * daftar terpotong / tanpa `sp.pageCount` angka, bentuk tak dikenali) MELEMPAR — klien (pratinjau) menandai kelompoknya
+ * `tidakTerbaca` dan lanjut. `berhenti()` (server, tinjauan A4) diperiksa SEBELUM setiap panggilan Accurate: sesudah batas
+ * waktu tidak ada list.do/detail.do baru (jawaban yang sedang berjalan diabaikan pemanggil).
  */
-async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ketat: boolean, tidakTerbaca?: Set<string>): Promise<StrukAccurate[]> {
+async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ketat: boolean, tidakTerbaca?: Set<string>, berhenti?: () => boolean): Promise<StrukAccurate[]> {
+    const cekWaktu = () => { if (berhenti?.()) throw new Error("batas waktu pembacaan riwayat terlampaui"); };
     let currentPage = 1;
     let pageCount = 1;
     const candidateReceipts: Bebas[] = [];
 
     do {
+        cekWaktu();
         const listRes = await accurateFetch('/api/sales-receipt/list.do', 'GET', {
             fields: "id,number,customer,branch,transDate,chequeAmount,paymentMethod,description",
             "filter.customerNo": group.customerNo,
@@ -156,6 +160,10 @@ async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ke
             "sp.page": currentPage
         });
         if (ketat && !(listRes?.s === true && Array.isArray(listRes.d))) throw new Error("daftar riwayat sales-receipt tidak terbaca");
+        // Tinjauan A2: tanpa jumlah halaman angka, "halaman 2" tak bisa dipastikan ada/tidak -> terpotong (fail-closed).
+        if (ketat && !(typeof listRes.sp?.pageCount === "number" && Number.isFinite(listRes.sp.pageCount))) {
+            throw new Error("daftar riwayat sales-receipt tanpa jumlah halaman (sp.pageCount) — dianggap terpotong");
+        }
 
         const pageRows = Array.isArray(listRes?.d) ? listRes.d : [];
         candidateReceipts.push(...pageRows);
@@ -167,6 +175,7 @@ async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ke
     const struk: StrukAccurate[] = [];
     for (const candidate of candidateReceipts) {
         try {
+            cekWaktu();
             const detailRes = await accurateFetch('/api/sales-receipt/detail.do', 'GET', candidate?.id ? { id: candidate.id } : { number: candidate.number });
             if (ketat && !(detailRes?.s === true && detailRes.d && typeof detailRes.d === "object" && !Array.isArray(detailRes.d))) {
                 throw new Error(`detail sales-receipt ${candidate?.number ?? candidate?.id ?? "?"} tidak terbaca`);
@@ -211,7 +220,8 @@ export const pratinjauRiwayatAccurate = async (rows: Bebas[], accurateFetch: Acc
  * kunci → nomor identik KASAR (penahanan proxy); `mirip` = kunci → pelunasan di grup pelanggan+tanggal yang menyentuh faktur
  * mana pun dari baris (bukti ketiadaan Selesaikan); `gagal` = kunci yang kelompoknya tidak terbaca (galat, bukan `s:true`,
  * terpotong, bentuk tak dikenali, atau melewati `batasMs`). Paling banyak `konkurensi` kelompok serentak.
- * Biaya per paket: per kelompok pelanggan+tanggal 1–5 list.do + 1 detail.do per kandidat.
+ * Biaya per paket: per kelompok pelanggan+tanggal 1–5 list.do + 1 detail.do per kandidat (≤ 300 kandidat; lebih = terpotong =
+ * ditahan); sesudah `batasMs` tidak ada panggilan baru (tinjauan A4).
  */
 export async function periksaRiwayatAccurate(targets: TargetRiwayat[], accurateFetch: AccurateFetch, opsi: { konkurensi?: number; batasMs?: number } = {}) {
     const kelompok = kelompokkan(targets);
@@ -223,7 +233,7 @@ export async function periksaRiwayatAccurate(targets: TargetRiwayat[], accurateF
         while (!habis && berikut < kelompok.length) {
             const g = kelompok[berikut++];
             try {
-                selesai.set(g, await riwayatKelompok(g, accurateFetch, true));
+                selesai.set(g, await riwayatKelompok(g, accurateFetch, true, undefined, () => habis));
             } catch (e) {
                 galat.set(g, e instanceof Error ? e.message : String(e));
             }
