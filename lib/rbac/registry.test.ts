@@ -9,7 +9,7 @@ import assert from "node:assert";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { canAccessPathWithKeys, getPagePermission, rolePermissionPresets } from "../rbac.ts";
+import { actionLabels, auditActionLabels, canAccessPathWithKeys, getPagePermission, permissionKeyLabel, permissionModuleLabels, rolePermissionPresets } from "../rbac.ts";
 import { CAPABILITY_KEYS, PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey, moduleAllOn, toggleModuleKeys } from "./registry.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -34,7 +34,7 @@ for (const action of ["resolve_unknown", "override_duplicate", "repost_payment"]
 // AM-057: centang modul di UI grup TIDAK menyalakan kunci kapabilitas Finance (harus satu per satu);
 // mematikan modul mencabut semuanya, termasuk kapabilitas.
 // Kunci ditulis literal (re-review b955f836 #1): iterasi CAPABILITY_KEYS sendiri lulus walau satu kunci dibuang.
-assert.equal(CAPABILITY_KEYS.size, 4);
+assert.equal(CAPABILITY_KEYS.size, 5);
 const moduleOn = toggleModuleKeys(new Set(), "finance");
 assert.ok(moduleOn.has("finance.view") && moduleOn.has("finance.post_accurate"), "centang modul menyalakan kunci biasa");
 for (const k of ["finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment"]) {
@@ -60,6 +60,23 @@ assert.ok(isValidPermissionKey("pelunasan.kirim"), "pelunasan.kirim wajib terdaf
 for (const role of ["manager", "staff", "viewer", "finance"] as const) {
     assert.ok(!rolePermissionPresets[role].pelunasan?.includes("kirim"), `preset ${role} memuat pelunasan.kirim`);
 }
+// S7-1: SATU sumber label untuk layar grup (S7a) — setiap modul & aksi registry WAJIB berlabel (termasuk 18 aksi OPC
+// granular dan modul form_kontrol). Kunci baru tanpa label = merah.
+for (const [mod, actions] of Object.entries(PERMISSION_REGISTRY)) {
+    assert.ok((permissionModuleLabels as Record<string, string>)[mod]?.trim(), `modul ${mod} tanpa label`);
+    for (const a of actions) {
+        assert.ok((actionLabels as Record<string, string>)[a]?.trim(), `aksi ${mod}.${a} tanpa label`);
+        assert.notEqual(permissionKeyLabel(`${mod}.${a}`), `${mod}.${a}`);
+    }
+}
+assert.equal(permissionKeyLabel("off_program_control.sm_approve"), "OFF Program Control · Setujui (SM)");
+assert.equal(permissionKeyLabel("form_kontrol.manage"), "Form Kontrol · Manage");
+assert.equal(permissionKeyLabel("nope.x"), "nope.x");
+// Label OPC tidak memperluas preset role lama (moduleActions OPC tetap 5 aksi).
+assert.deepEqual(rolePermissionPresets.admin.off_program_control, ["view", "create", "update", "approve", "export"]);
+for (const a of ["user.create", "user.password_set", "user.deactivate", "user.activate", "user_group.assign", "user_group.remove", "user_group.star", "user_group.unstar", "group.delete", "group_permission.sync"]) {
+    assert.ok(auditActionLabels[a], `aksi audit ${a} tanpa label`);
+}
 assert.ok(isValidPermissionKey("reconciliation.view"));
 assert.ok(isValidPermissionKey("reconciliation.run"));
 assert.ok(isValidPermissionKey("reconciliation.manage"));
@@ -70,6 +87,17 @@ assert.deepEqual(getPagePermission("/reconciliation"), {
 });
 assert.ok(canAccessPathWithKeys("/reconciliation", ["reconciliation.view"]));
 assert.ok(!canAccessPathWithKeys("/reconciliation", ["reconciliation.run"]));
+// K1a (BL-59): kasir.view/catat/tutup/buka terdaftar; kasir.buka = kapabilitas (centang modul tidak menyalakannya, OM/Admin);
+// preset role non-admin tidak memuat kasir (preset grup = docs/handover/RBAC_PRESET_KASIR.sql); /kasir dijaga kasir.view (bukan jatuh ke dashboard.view).
+for (const a of ["view", "catat", "tutup", "buka"]) assert.ok(isValidPermissionKey(`kasir.${a}`), `kasir.${a} wajib terdaftar`);
+assert.ok(CAPABILITY_KEYS.has("kasir.buka"), "kasir.buka wajib kunci kapabilitas");
+const kasirOn = toggleModuleKeys(new Set(), "kasir");
+assert.deepEqual([...kasirOn].sort(), ["kasir.catat", "kasir.tutup", "kasir.view"], "centang modul kasir tanpa kasir.buka");
+for (const role of ["manager", "staff", "viewer", "finance"] as const) assert.ok(!rolePermissionPresets[role].kasir, `preset ${role} memuat kasir`);
+assert.deepEqual(rolePermissionPresets.admin.kasir, ["view", "catat", "tutup", "buka"]);
+assert.deepEqual(getPagePermission("/kasir"), { prefix: "/kasir", module: "kasir", action: "view" });
+assert.ok(canAccessPathWithKeys("/kasir/2026-10-05", ["kasir.view"]));
+assert.ok(!canAccessPathWithKeys("/kasir", ["dashboard.view", "pelunasan.kirim"]));
 
 // --- 2. Scan requirePermission(...) di route ---
 function walk(dir: string): string[] {
