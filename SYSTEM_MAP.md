@@ -294,13 +294,14 @@ Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConf
   -> POST /api/proxy sales-receipt/bulk-save.do WAJIB idempotencyLockId + expectedDatabaseId (lib/sales-receipt-guard.ts):
      placeholder akun 400 -> pelunasan.kirim 403 -> database sesi ≠ expected 409 database_changed -> lock dinilai
      (dry-run) -> riwayat Accurate dibaca server (lib/pelunasan/pratinjau-ganda.ts periksaRiwayatAccurate, fail-closed,
-     4 serentak, 60 dtk) -> baris identik KASAR (pelanggan+tanggal+{faktur: nominal}, tanpa potongan) / tak terbaca
-     tanpa override 409 ACCURATE_HISTORY ->
+     4 serentak, 60 dtk) -> baris yang punya SATU faktur bernominal sama (per faktur, tanpa potongan, tanpa beda huruf)
+     dengan pelunasan pelanggan+tanggal mana pun / tak terbaca tanpa override 409 ACCURATE_HISTORY ->
      baris milik lock ditandai SENDING -> kirim -> hasil per baris dicatat SERVER (classifySalesReceiptReply:
      s:true = SUCCESS, selain itu UNKNOWN — C11; server tidak pernah menyimpulkan FAILED)
   -> POST /api/idempotency/complete — klien hanya menaikkan; FAILED hanya untuk baris PROCESSING (belum dikirim)
   -> GET/POST /api/idempotency/resolve — Selesaikan tidak pasti (finance.resolve_unknown; cari dulu = kandidat pelunasan
-     pelanggan+tanggal yang menyentuh faktur baris; tidak_ada ditolak 409 similar_found bila ada; lalu CAS status +
+     pelanggan+tanggal yang menyentuh faktur segmen key; tidak_ada ditolak 409 similar_found bila ada; terposting kandidat tak
+     identik wajib acceptSimilar (409 similar_not_identical; hint takeover = override takeover lock); lalu CAS status +
      jejak idempotency_resolution, lib/idempotency-resolve.ts). Lock mencatat database di idempotency_log."databaseId" DAN
      idempotency_override.database_id (DDL_S6E2.sql); proxy menolak bila salah satunya ≠ database sesi
   -> GET /api/idempotency/summary — Tidak pasti / Gagal boleh diulang (BL-41; pelunasan.kirim ATAU finance.resolve_unknown)
