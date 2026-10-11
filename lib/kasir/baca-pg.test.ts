@@ -409,6 +409,7 @@ test("PG K1b PENUH_TERTUNDA: dicatat tanpa menyentuh lease, terlihat (ISO), memb
         assert.deepEqual(await toko.tanggalTertunda(DB, "2026-10-06"), [], "sejak sesudah tanggal itu");
         assert.equal(await toko.tandaiBasi("T2", DB, D), true);
         assert.equal((await toko.status(DB, D)).penuhTertundaPada, null);
+        assert.deepEqual(await toko.tanggalTertunda(DB, "2026-09-28"), [], "penanda dikosongkan -> tanggal tidak lagi tertunda");
     });
 });
 
