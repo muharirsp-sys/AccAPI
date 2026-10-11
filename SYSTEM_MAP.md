@@ -303,11 +303,14 @@ Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConf
   -> POST /api/idempotency/complete — klien hanya menaikkan; FAILED hanya untuk baris PROCESSING (belum dikirim)
   -> GET/POST /api/idempotency/resolve — Selesaikan tidak pasti (finance.resolve_unknown; cari dulu = kandidat pelunasan
      pelanggan+tanggal yang menyentuh faktur segmen key; tidak_ada ditolak 409 similar_found bila ada; terposting kandidat tak
-     identik wajib acceptSimilar (409 similar_not_identical; hint takeover = override takeover lock); lalu CAS status +
+     identik wajib acceptSimilar (409 similar_not_identical; hint takeover = override takeover lock; identik hanya bila sidik jari
+     key terurai pasti: Σ bayar+potongan = amount baris, tanpa angka negatif); lalu CAS status +
      jejak idempotency_resolution, lib/idempotency-resolve.ts). Lock mencatat database di idempotency_log."databaseId" DAN
      idempotency_override.database_id (DDL_S6E2.sql); proxy menolak bila salah satunya ≠ database sesi
   -> GET /api/idempotency/summary — Tidak pasti / Gagal boleh diulang (BL-41; pelunasan.kirim ATAU finance.resolve_unknown)
-  UI (S6e-2b): /pelunasan wizard Jenis -> Unggah -> Akun -> Tinjau -> Hasil (app/(dashboard)/pelunasan/*); galat lock dipetakan menurut
+  UI (S6e-2b): /pelunasan wizard Jenis -> Unggah -> Akun -> Tinjau -> Hasil (app/(dashboard)/pelunasan/*); pratinjau membaca ulang sesi
+     di akhir (database berganti selama pratinjau = dibuang); nomor Hasil = nomor terposting (item r.number / keputusan Selesaikan),
+     nomor mirip di kolom Excel terpisah; galat lock dipetakan menurut
      GalatKirim.code; Selesaikan (Selesaikan.tsx: GET pencarian dulu -> POST keputusan; kode 409 menutup pilihan) dari Hasil dan dari
      daftar Perlu tindakan (?rows=1) di langkah Jenis
 
