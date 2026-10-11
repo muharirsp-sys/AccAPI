@@ -9,7 +9,7 @@ import assert from "node:assert";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { canAccessPathWithKeys, getPagePermission, rolePermissionPresets } from "../rbac.ts";
+import { actionLabels, auditActionLabels, canAccessPathWithKeys, getPagePermission, permissionKeyLabel, permissionModuleLabels, rolePermissionPresets } from "../rbac.ts";
 import { CAPABILITY_KEYS, PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey, moduleAllOn, toggleModuleKeys } from "./registry.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -59,6 +59,23 @@ for (const role of ["manager", "staff", "viewer", "finance"] as const) {
 assert.ok(isValidPermissionKey("pelunasan.kirim"), "pelunasan.kirim wajib terdaftar");
 for (const role of ["manager", "staff", "viewer", "finance"] as const) {
     assert.ok(!rolePermissionPresets[role].pelunasan?.includes("kirim"), `preset ${role} memuat pelunasan.kirim`);
+}
+// S7-1: SATU sumber label untuk layar grup (S7a) — setiap modul & aksi registry WAJIB berlabel (termasuk 18 aksi OPC
+// granular dan modul form_kontrol). Kunci baru tanpa label = merah.
+for (const [mod, actions] of Object.entries(PERMISSION_REGISTRY)) {
+    assert.ok((permissionModuleLabels as Record<string, string>)[mod]?.trim(), `modul ${mod} tanpa label`);
+    for (const a of actions) {
+        assert.ok((actionLabels as Record<string, string>)[a]?.trim(), `aksi ${mod}.${a} tanpa label`);
+        assert.notEqual(permissionKeyLabel(`${mod}.${a}`), `${mod}.${a}`);
+    }
+}
+assert.equal(permissionKeyLabel("off_program_control.sm_approve"), "OFF Program Control · Setujui (SM)");
+assert.equal(permissionKeyLabel("form_kontrol.manage"), "Form Kontrol · Manage");
+assert.equal(permissionKeyLabel("nope.x"), "nope.x");
+// Label OPC tidak memperluas preset role lama (moduleActions OPC tetap 5 aksi).
+assert.deepEqual(rolePermissionPresets.admin.off_program_control, ["view", "create", "update", "approve", "export"]);
+for (const a of ["user.create", "user.password_set", "user.deactivate", "user.activate", "user_group.assign", "user_group.remove", "user_group.star", "user_group.unstar", "group.delete", "group_permission.sync"]) {
+    assert.ok(auditActionLabels[a], `aksi audit ${a} tanpa label`);
 }
 assert.ok(isValidPermissionKey("reconciliation.view"));
 assert.ok(isValidPermissionKey("reconciliation.run"));
