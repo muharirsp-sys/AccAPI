@@ -347,6 +347,36 @@ test("peran Sales Manager dari sesi: hanya antrean SM, tombol aktif", async ({ p
     await expect(footer(page).getByRole("button", { name: "Kembalikan ke SPV…" })).toBeEnabled();
 });
 
+test("AM-026 peran Manager dari sesi: 7 tab baca, tombol tulis nonaktif beralasan, Ekspor CSV log audit aktif", async ({ page }) => {
+    const tulis = await mockOpc(page, { peran: "manager" });
+    await page.route((u) => u.pathname === "/api/off-program-control/audit", (r) => r.fulfill(json({ ok: true, audit: [
+        { id: "a1", batchId: "b-sm1", noPengajuan: "007/KINO/10/2026", action: "batch_submitted", actorName: "Rahmat", actorRole: "supervisor", createdAt: kini },
+    ] })));
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/off-program-control?tab=sales&batch=b-sm1", NAV);
+    const main = page.locator("main");
+    await expect(main.getByText("Peran OFF: Manager.")).toBeVisible(NAV);
+    await expect(main.getByText(/Baca semua antrean dan log audit/)).toBeVisible();
+    await expect(main.getByRole("navigation", { name: "Antrean OFF Program Control" }).getByRole("link"))
+        .toHaveText([/^Ringkasan/, /^Supervisor/, /^Sales Manager/, /^Klaim/, /^Operational Manager/, /^Keuangan/, /^Log audit/]);
+    await expect(detailOf(page).getByRole("heading", { level: 1, name: "007/KINO/10/2026" })).toBeVisible(NAV);
+    const alasan = /Manager hanya membaca OFF Program Control/;
+    for (const nama of ["Setujui & teruskan ke Klaim…", "Kembalikan ke SPV…"]) {
+        await expect(footer(page).getByRole("button", { name: nama })).toBeDisabled();
+        await expect(footer(page).getByRole("button", { name: nama })).toHaveAttribute("title", alasan);
+    }
+    await page.goto("/off-program-control?tab=om&batch=b-om", NAV);
+    await expect(detailOf(page).getByRole("heading", { level: 1, name: "002/KINO/10/2026" })).toBeVisible(NAV);
+    for (const nama of ["Setujui…", "Batalkan…"]) await expect(footer(page).getByRole("button", { name: nama })).toBeDisabled();
+    await page.goto("/off-program-control?tab=audit", NAV);
+    const ekspor = main.getByRole("link", { name: "Ekspor CSV" });
+    await expect(ekspor).toBeVisible(NAV);
+    await expect(ekspor).toHaveAttribute("href", /\/api\/off-program-control\/audit\?format=csv/);
+    await expect(main.getByRole("button", { name: /^Koreksi log/ }).first()).toBeDisabled();
+    await page.screenshot({ path: "test-results/fiori-opc-manager-audit.png", fullPage: true });
+    expect(tulis).toEqual([]);
+});
+
 test("galat daftar tidak tampil sebagai kosong atau angka nol; antrean kosong punya kalimatnya sendiri (SM dan OM)", async ({ page }) => {
     let gagal = true;
     await mockOpc(page, { daftar: () => (gagal ? json({ ok: false, error: "Server tidak menjawab." }, 500) : json({ ok: true, batches: [] })) });
