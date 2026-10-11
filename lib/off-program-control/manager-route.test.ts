@@ -1,6 +1,7 @@
 /* S7-1b AM-026 (D-01 §C "manager bukan admin") + AM-042 baris 2 (audit_export): akibat SERVER dari normalizeOffRole("manager")
  * = "manager", diuji di route ASLI (bukan diubah satu per satu): Manager membaca/mengekspor audit, tidak lagi lolos periode tutup,
  * tidak lagi memakai alternatif role === "admin" di refund, tidak lagi istimewa di Claim Workflow; admin tidak berubah.
+ * Juga PK-3: Antrean Faktur (route command, bukan /api/proxy) tidak bergantung pada api_wrapper.execute.
  * Sesi Better Auth, grup, dan DB dipalsukan (tanpa Postgres/jaringan). Route OPC memakai `headers()` (next/headers): uji dijalankan
  * dalam lingkup permintaan tiruan — ponytail: memakai AsyncLocalStorage internal Next (work/work-unit store "private-cache");
  * plafon: bila Next mengubah internal ini, uji gagal keras (bukan lolos diam-diam) — ganti dengan uji Playwright API. */
@@ -17,6 +18,7 @@ async function muat() {
         audit: await import("../../app/api/off-program-control/audit/route.ts"),
         refund: await import("../../app/api/off-program-control/batches/[id]/refund/route.ts"),
         tutup: await import("../../app/api/claim-workflow/[id]/submissions/[submissionId]/close/route.ts"),
+        kirimFaktur: await import("../../app/api/invoice-outbox/send/route.ts"),
         schema: await import("../../db/schema.ts"),
         auth: (await import("../auth.ts")).auth,
         db: (await import("../db.ts")).db,
@@ -125,4 +127,17 @@ test("akibat ke Claim Workflow: Manager tidak lagi istimewa (route peran admin/c
     assert.equal((await mgr.json() as { code: string }).code, "CLAIM_CLOSE_FORBIDDEN");
     const adm = await sebagai("admin", [], () => m.tutup.POST(req("/api/claim-workflow/cw1/submissions/s1/close", "POST", {}), cctx));
     assert.notEqual(adm.status, 403, "admin tetap istimewa");
+});
+
+test("S7-1b PK-3: Antrean Faktur (POST /api/invoice-outbox/send, bukan proxy) — order.edit saja lolos izin; api_wrapper.execute tidak cukup", async () => {
+    const env = process.env.ACCURATE_INVOICE_DB_ID;
+    delete process.env.ACCURATE_INVOICE_DB_ID;
+    try {
+        const kirim = (keys: string[]) => sebagai("staff", keys, () => m.kirimFaktur.POST(req("/api/invoice-outbox/send", "POST", { ids: ["x"] }) as never));
+        const lolos = await kirim(["order.edit"]);
+        assert.equal(lolos.status, 503, "melewati izin sampai pemeriksaan ACCURATE_INVOICE_DB_ID");
+        assert.equal((await kirim(["api_wrapper.view", "api_wrapper.execute"])).status, 403);
+    } finally {
+        if (env === undefined) delete process.env.ACCURATE_INVOICE_DB_ID; else process.env.ACCURATE_INVOICE_DB_ID = env;
+    }
 });

@@ -231,3 +231,19 @@ test("S7-1b: Finance [finance.view, finance.update] GET vendor/list.do & glaccou
         assert.equal(c.kiriman.length, 1);
     }
 });
+
+test("S7-1b PK-3: jalur tulis non-proxy tidak terputus — Antrean Faktur (order.edit) & Finance purchase-payment (finance.update) tidak lewat /api/proxy maupun api_wrapper.*", async () => {
+    const { readFileSync } = await import("node:fs");
+    const baca = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
+    for (const [route, kunci] of [["app/api/invoice-outbox/send/route.ts", "order.edit"], ["app/api/finance/purchase-payment/route.ts", "finance.update"]]) {
+        const src = baca(route);
+        assert.match(src, new RegExp(`["']${kunci.replace(".", "\.")}["']`), `${route} dijaga ${kunci}`);
+        assert.doesNotMatch(src, /api_wrapper|\/api\/proxy/, `${route} tidak bergantung pada kunci/route Konsol`);
+    }
+    // Klien: kirim Antrean & posting Finance memanggil route command masing-masing; Finance hanya MEMBACA lewat proxy (method GET).
+    assert.match(baca("app/(dashboard)/antrean-faktur/Dialog.tsx"), /"\/api\/invoice-outbox\/send"/);
+    const posting = baca("app/(dashboard)/finance/posting.ts");
+    assert.match(posting, /fetch\("\/api\/finance\/purchase-payment"/);
+    assert.match(posting, /JSON\.stringify\(\{ endpointPath, method: "GET"/);
+    // Gerbang dinamis Finance (finance.update saja, tanpa api_wrapper.*, lolos izin) = lib/finance-authority-route.test.ts "galat SEBELUM klaim".
+});
