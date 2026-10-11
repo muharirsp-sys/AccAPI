@@ -71,7 +71,7 @@ assert.deepEqual(getPagePermission("/reconciliation"), {
 assert.ok(canAccessPathWithKeys("/reconciliation", ["reconciliation.view"]));
 assert.ok(!canAccessPathWithKeys("/reconciliation", ["reconciliation.run"]));
 // K1a (BL-59): kasir.view/catat/tutup/buka terdaftar; kasir.buka = kapabilitas (centang modul tidak menyalakannya, OM/Admin);
-// preset role non-admin tidak memuat kasir (preset grup = SQL BL-37 di S7-1); /kasir dijaga kasir.view (bukan jatuh ke dashboard.view).
+// preset role non-admin tidak memuat kasir (preset grup = docs/handover/RBAC_PRESET_KASIR.sql); /kasir dijaga kasir.view (bukan jatuh ke dashboard.view).
 for (const a of ["view", "catat", "tutup", "buka"]) assert.ok(isValidPermissionKey(`kasir.${a}`), `kasir.${a} wajib terdaftar`);
 assert.ok(CAPABILITY_KEYS.has("kasir.buka"), "kasir.buka wajib kunci kapabilitas");
 const kasirOn = toggleModuleKeys(new Set(), "kasir");

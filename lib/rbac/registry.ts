@@ -74,7 +74,7 @@ export const PERMISSION_REGISTRY = {
     pelunasan: ["kirim"],
     // Kasir ↔ Incaso (K1a BL-59, owner 11 Okt 2026). catat = catat/koreksi setoran + jelaskan selisih; tutup = tutup hari;
     //   buka = buka kembali hari terkunci (alasan tercatat) — kunci KAPABILITAS untuk OM/Admin (CAPABILITY_KEYS). Kasir/Incaso tidak
-    //   memegang buka (D-01). Belum ada di preset grup mana pun (SQL preset BL-37 di S7-1 yang menambah ke grup Kasir).
+    //   memegang buka (D-01). Ke grup lewat docs/handover/RBAC_PRESET_KASIR.sql (sesudah RBAC_PRESET_BL37.sql S7-1).
     kasir: ["view", "catat", "tutup", "buka"],
 } as const;
 
