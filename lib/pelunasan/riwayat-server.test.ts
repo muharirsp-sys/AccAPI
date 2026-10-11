@@ -216,3 +216,12 @@ test("A-N1: SATU faktur baris bernominal sama dengan faktur yang sama di pelunas
     const klien = await pratinjauRiwayatAccurate([dgnFaktur([["I1", 900]])], struk([["I1", 900], ["I2", 500]]));
     assert.deepEqual(klien.get(target(dgnFaktur([["I1", 900]])).key), ["PR.X"], "pratinjau klien sama");
 });
+
+test("A-N2: nomor faktur dibandingkan tanpa beda huruf/spasi (Excel 'kn01340' vs Accurate 'KN01340') -> DITAHAN", async () => {
+    const row = dgnFaktur([[" kn01340 ", 900]]);
+    const r = await periksaRiwayatAccurate([target(row)], struk([["KN01340", 900]]));
+    assert.deepEqual(r.cocok.get(target(row).key), ["PR.X"]);
+    assert.equal(r.mirip.get(target(row).key)?.length, 1, "mirip juga peka-huruf-tidak");
+    const balik = dgnFaktur([["KN01340", 900]]);
+    assert.deepEqual((await periksaRiwayatAccurate([target(balik)], struk([["kn01340", 900]]))).cocok.get(target(balik).key), ["PR.X"]);
+});

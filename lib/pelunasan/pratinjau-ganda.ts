@@ -50,6 +50,8 @@ export type StrukAccurate = { number: string; transDate: string; invoices: Array
 type Kelompok = { customerNo: string; transDate: string; targets: Map<string, TargetRiwayat> };
 
 const bulat = (v: number) => Number(v.toFixed(2));
+/** Nomor faktur untuk PERBANDINGAN saja (putaran 2, A-N2): Excel "kn01340" = Accurate "KN01340". Payload ke Accurate tidak diubah. */
+export const normFaktur = (v: unknown) => String(v ?? "").trim().toUpperCase();
 
 /** Target dari baris PAYLOAD (pratinjau klien & penahanan proxy). Uang = rumus sidik jari (Number(x) || 0). */
 export function targetRiwayat(row: Bebas): TargetRiwayat {
@@ -57,14 +59,14 @@ export function targetRiwayat(row: Bebas): TargetRiwayat {
     const uang = (v: unknown) => bulat(Number(v) || 0);
     const jumlah = new Map<string, [number, number]>();
     for (const d of (row.detailInvoice ?? []) as Bebas[]) {
-        const no = String(d.invoiceNo || "").trim();
+        const no = normFaktur(d.invoiceNo || "");
         const bayar = uang(d.paymentAmount);
         const potongan = ((d.detailDiscount ?? []) as Bebas[]).reduce((a: number, x: Bebas) => a + uang(x.amount), 0);
         const [a, b] = jumlah.get(no) ?? [0, 0];
         jumlah.set(no, [a + bayar, b + bayar + potongan]);
     }
     const nominal = new Map([...jumlah].map(([no, v]) => [no, v.map(bulat)]));
-    return { key: fp.key, customerNo: String(fp.customerNo ?? "").trim(), transDate: fp.transDate, nominal, menyentuh: (no) => nominal.has(no) };
+    return { key: fp.key, customerNo: String(fp.customerNo ?? "").trim(), transDate: fp.transDate, nominal, menyentuh: (no) => nominal.has(normFaktur(no)) };
 }
 
 function kelompokkan(targets: TargetRiwayat[]) {
@@ -108,8 +110,9 @@ function nominalStruk(s: StrukAccurate): Map<string, number[]> {
     // faktur yang sama tidak dicoba — plafon: pencocokan per baris bila Accurate terbukti mengizinkan faktur berulang.
     const acc = new Map<string, [number, number]>();
     for (const b of s.invoices) {
-        const [p, q] = acc.get(b.invoiceNo) ?? [0, 0];
-        acc.set(b.invoiceNo, [p + b.paymentAmount, q + (b.invoicePayment ?? b.paymentAmount)]);
+        const no = normFaktur(b.invoiceNo);
+        const [p, q] = acc.get(no) ?? [0, 0];
+        acc.set(no, [p + b.paymentAmount, q + (b.invoicePayment ?? b.paymentAmount)]);
     }
     return new Map([...acc].map(([no, v]) => [no, v.map(bulat)]));
 }

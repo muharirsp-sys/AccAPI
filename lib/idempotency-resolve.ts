@@ -17,7 +17,7 @@ import { and, eq, sql, TransactionRollbackError } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { idempotencyLog, idempotencyResolution } from "@/db/schema";
 import { STALE_PROCESSING_MS } from "@/lib/idempotency-lock";
-import type { StrukAccurate, TargetRiwayat } from "@/lib/pelunasan/pratinjau-ganda";
+import { normFaktur, type StrukAccurate, type TargetRiwayat } from "@/lib/pelunasan/pratinjau-ganda";
 
 /** Umur minimum sebelum Selesaikan (pola Finance purchase-payment: 2 mnt). */
 export const UMUR_SELESAIKAN_MS = 2 * 60 * 1000;
@@ -40,12 +40,17 @@ export function bolehDiselesaikan(r: BarisLog, now: Date): boolean {
 /**
  * Target pencarian dari baris idempotency_log. Faktur = kolom invoiceNo (koreksi dijangkar lewat kolom ini) DAN segmen sidik jari
  * kunci (baris persis) — gabungan, lebih banyak menyentuh = lebih aman. Tanpa nominal: hanya `mirip`, tidak dicocokkan kasar.
+ * Dibandingkan tanpa beda huruf/spasi (putaran 2, A-N2).
  */
 export function targetDariLog(r: { key: string; customerNo: string | null; transDate: string | null; invoiceNo: string | null }): TargetRiwayat {
-    const kolom = `,${r.invoiceNo ?? ""},`;
+    const kolom = `,${normFaktur(r.invoiceNo).split(",").map(normFaktur).join(",")},`;
+    const kunci = r.key.toUpperCase();
     return {
         key: r.key, customerNo: String(r.customerNo ?? "").trim(), transDate: String(r.transDate ?? "").trim(), nominal: new Map(),
-        menyentuh: (no) => kolom.includes(`,${no},`) || r.key.includes(`_${no}|`) || r.key.includes(`;${no}|`),
+        menyentuh: (no) => {
+            const n = normFaktur(no);
+            return kolom.includes(`,${n},`) || kunci.includes(`_${n}|`) || kunci.includes(`;${n}|`);
+        },
     };
 }
 

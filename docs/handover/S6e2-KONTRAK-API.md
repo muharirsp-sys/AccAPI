@@ -73,7 +73,9 @@ atas. Dinormalkan di SATU tempat (`strukDariDetail`, pratinjau & server): `invoi
 `paymentAmount`, `invoicePayment`. Baris DITAHAN bila ada SATU faktur baris yang nominalnya (`paymentAmount`, atau
 `paymentAmount` + potongannya) = `paymentAmount` ATAU `invoicePayment` faktur yang SAMA di pelunasan MANA PUN di grup
 pelanggan+tanggal — dicocokkan per faktur, bukan himpunan faktur (putaran 2, A-N1: pelunasan {I1, I2} terposting lalu baris {I1}
-diunggah ulang = ditahan; sebaliknya juga). Arti `paymentAmount`/`invoicePayment` belum terbukti — lebih banyak menahan = aman. Item potongan TIDAK dibaca: akun/catatan/jumlah/bentuknya tidak
+diunggah ulang = ditahan; sebaliknya juga). Arti `paymentAmount`/`invoicePayment` belum terbukti — lebih banyak menahan = aman.
+Nomor faktur dibandingkan setelah `trim().toUpperCase()` di kedua sisi (penahanan, pratinjau, kandidat Selesaikan; A-N2) —
+payload ke Accurate tidak diubah; `candidates[].invoiceNos` tetap tulisan Accurate. Item potongan TIDAK dibaca: akun/catatan/jumlah/bentuknya tidak
 menahan dan tidak meloloskan. Tak terbaca (`detailInvoice` bukan daftar, baris tanpa nomor faktur, `paymentAmount` bukan angka,
 `invoicePayment` ada tetapi bukan angka) = `ACCURATE_HISTORY_UNREADABLE` (ditahan). Identik tanpa nomor pelunasan tetap ditahan
 (`receiptNumbers: []`). Pratinjau (`pratinjauDuplikat`) memakai aturan yang sama; `ACCURATE_HISTORY_UNREADABLE` = "tidak
@@ -215,3 +217,4 @@ diselesaikan; tampilkan bila > 0).
   `/api/idempotency/resolve` & `/api/idempotency/summary` = `{ok:false, code:"forbidden", error}` (Aturan umum).
 - (11 Okt, putaran 2 A-N1) §1 penahanan riwayat dicocokkan PER FAKTUR: satu faktur bernominal sama di pelunasan mana pun di
   grup = `ACCURATE_HISTORY` (dulu himpunan faktur harus sama persis). Bentuk jawaban tidak berubah.
+- (11 Okt, putaran 2 A-N2) §1/§4/§5 nomor faktur dibandingkan tanpa beda huruf/spasi. Bentuk jawaban tidak berubah.

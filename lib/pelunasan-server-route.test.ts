@@ -221,3 +221,9 @@ test("B6 + UI S6e-2b: ringkasan ?rows=1&database= diteruskan ke penyaring daftar
     assert.deepEqual(b.rows, []);
     assert.equal(b.rowsDatabaseId, "DB-1");
 });
+
+test("A-N2: target Selesaikan menyentuh faktur tanpa beda huruf (kunci/kolom 'kn01340' vs Accurate 'KN01340')", () => {
+    const k = buildSalesReceiptIdempotencyPayload({ customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "kn01340", paymentAmount: 1 }] }).key;
+    const t = targetDariLog({ key: k, customerNo: "C1", transDate: "01/10/2026", invoiceNo: "kn01340" });
+    assert.ok(t.menyentuh("KN01340") && t.menyentuh(" Kn01340 "));
+});
