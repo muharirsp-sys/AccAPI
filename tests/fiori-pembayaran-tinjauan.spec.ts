@@ -96,6 +96,32 @@ test("Excel SPPD: pratinjau berkas LAMA yang terlambat tidak mengaktifkan Terapk
     expect(kirim.filter((k) => k.path === "/payments/sppd/upload").map((k) => k.search)).toEqual(["?dry_run=1", "?dry_run=1"]);
 });
 
+test("Restore backup: pratinjau berkas LAMA yang terlambat tidak mengaktifkan Pulihkan untuk berkas BARU", async ({ page }) => {
+    const { kirim } = await mock(page, async (p, r) => {
+        if (p !== "/payments/sppd/restore-backup") return "lewat";
+        if (namaBerkas(r) === "LAMA.xlsx") {
+            await tunda(4_000);
+            return json(r, { ok: true, dry_run: true, can_apply: true, records: 3, submissions: 1, new_submissions: 1, draft_records: 0, conflicts: [],
+                sppd: { year: 2026, last_sequence_before: 30, max_restored: 45, last_sequence_after: 45, next_number: "046/SPA/PDSB/X/2026" } });
+        }
+        return json(r, { ok: true, dry_run: true, can_apply: false, records: 2, submissions: 0, new_submissions: 0, draft_records: 0, conflicts: ["Record ID LPB-A-001 sudah ada"] });
+    });
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    await expect(main.getByLabel("Nomor surat terakhir")).toHaveValue("31", NAV);
+    await main.getByRole("button", { name: "Restore backup…" }).click();
+    const dlg = page.getByRole("dialog");
+    const input = dlg.getByLabel("Berkas backup PAYMENTS (.xlsx)");
+    await input.setInputFiles(berkas("LAMA.xlsx"));
+    await input.setInputFiles(berkas("BARU.xlsx"));
+    await expect(dlg.getByText("Record ID LPB-A-001 sudah ada")).toBeVisible();
+    await tunda(5_000); // jawaban pratinjau LAMA tiba sesudahnya
+    await expect(dlg.getByText("Record ID LPB-A-001 sudah ada")).toBeVisible();
+    await expect(dlg.getByRole("button", { name: "Pulihkan 3 rekaman" })).toHaveCount(0);
+    await expect(dlg.getByRole("button", { name: /^Pulihkan/ })).toBeDisabled();
+    expect(kirim.filter((k) => k.path === "/payments/sppd/restore-backup").map((k) => k.search)).toEqual(["?dry_run=1", "?dry_run=1"]);
+});
+
 // ── Butir 2: total sesudah Ajukan dibaca ulang dari server ──
 test("Keranjang: sesudah Ajukan, nilai bayar dibaca ulang dari server dan beda dengan tampilan diperingatkan", async ({ page }) => {
     await mock(page, (p, r) => {
