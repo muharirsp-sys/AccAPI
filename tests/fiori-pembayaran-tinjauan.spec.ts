@@ -207,19 +207,39 @@ test("Format SPPD tahun baru: nomor sesudah simpan dari jawaban server (urutan b
     expect(kirim.filter((k) => k.path === "/payments/sppd/settings")[0].body).toMatchObject({ last_sequence: 5, expected_last_sequence: 46 });
 });
 
-test("Format SPPD tahun baru: server tidak mengubah nomor (isian = urutan tahun lalu) → layar sukses memperingatkan, bukan '0 → 46'", async ({ page }) => {
+test("Format SPPD tahun baru: isian = urutan tahun lalu ditolak SEBELUM Simpan (server membacanya 'tidak berubah'); strip '001–046 tidak akan terbit' tidak muncul", async ({ page }) => {
+    const lalu = Number(tahun) - 1;
+    const tersimpan = { ok: true, settings: { ...SETELAN, last_sequence: 46, sequence_year: lalu }, effective_last_sequence: 0, preview_number: `001/SPA/PDSB/I/${tahun}` };
+    const { kirim } = await mock(page, (p, r) => (p === "/payments/sppd/settings" ? json(r, tersimpan) : "lewat"));
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    const nomor = main.getByLabel("Nomor surat terakhir");
+    await expect(nomor).toHaveValue("0", NAV);
+    await nomor.fill("46");
+    await expect(main.getByText(`Nomor 046 sama dengan nomor terakhir tahun ${lalu}; server membacanya sebagai “tidak berubah”, jadi nomor terakhir ${tahun} tetap 000.`, { exact: false })).toBeVisible();
+    const simpan = main.getByRole("button", { name: "Simpan…" });
+    await expect(simpan).toBeDisabled();
+    await expect(page.locator(".fi-ftb")).toContainText("Perbaiki isian yang ditandai dulu.");
+    await expect(page.getByText("001–046 tidak akan terbit", { exact: false })).toHaveCount(0);
+    // Nomor lain tetap boleh (server mengubahnya).
+    await nomor.fill("47");
+    await expect(simpan).toBeEnabled();
+    expect(kirim.filter((k) => k.path === "/payments/sppd/settings")).toHaveLength(0);
+});
+
+test("Format SPPD: jawaban simpan dengan nomor berlaku lain dari isian → layar sukses memperingatkan (jaring pengaman), bukan '0 → 47'", async ({ page }) => {
     const lalu = Number(tahun) - 1;
     const tersimpan = { ok: true, settings: { ...SETELAN, last_sequence: 46, sequence_year: lalu }, effective_last_sequence: 0, preview_number: `001/SPA/PDSB/I/${tahun}` };
     await mock(page, (p, r) => (p === "/payments/sppd/settings" ? json(r, tersimpan) : "lewat"));
     await page.goto("/payments/sppd", NAV);
     const main = page.locator("main");
     await expect(main.getByLabel("Nomor surat terakhir")).toHaveValue("0", NAV);
-    await main.getByLabel("Nomor surat terakhir").fill("46");
+    await main.getByLabel("Nomor surat terakhir").fill("47");
     await main.getByRole("button", { name: "Simpan…" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Simpan", exact: true }).click();
     await expect(main.getByText("nomor surat terakhir tidak seperti yang diisi", { exact: false })).toBeVisible();
-    await expect(main.getByText(`Server mencatat nomor terakhir ${tahun} = 000, bukan 046`, { exact: false })).toBeVisible();
-    await expect(main.getByText("Nomor surat terakhir 0 → 46", { exact: false })).toHaveCount(0);
+    await expect(main.getByText(`Server mencatat nomor terakhir ${tahun} = 000, bukan 047`, { exact: false })).toBeVisible();
+    await expect(main.getByText("Nomor surat terakhir 0 → 47", { exact: false })).toHaveCount(0);
 });
 
 test("Format SPPD: operasi data tidak pasti mengunci semua operasi di halaman sampai data terbaca ulang", async ({ page }) => {
