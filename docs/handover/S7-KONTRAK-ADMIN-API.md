@@ -144,4 +144,6 @@ Cursor rusak → 400 `INPUT_TIDAK_VALID`. Label aksi: `auditActionLabels` di `li
 `permissionKeyLabel(key)`, `auditActionLabels`.
 
 ## Catatan perubahan
-- (kosong)
+- **Butir 1 (penjaga):** kode baru **403 `IZIN_BERUBAH`** — aktor lolos gerbang `users.manage` saat permintaan masuk, tetapi saat kunci
+  global didapat ia sudah bukan admin (dicabut admin lain sesaat sebelumnya; mis. balapan saling mencabut) → ditolak, tidak ada perubahan.
+  `POST /api/admin/groups/[id]/members` kini menjawab `{ ok, added }`; 404 berkode `USER_TIDAK_ADA` / `GRUP_TIDAK_ADA`.

@@ -15,6 +15,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accessGroup, userGroup, user, permissionAuditLog } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
+import { jawabGalat, transaksiOtorisasi } from "@/lib/rbac/otorisasi";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -44,17 +45,24 @@ export async function POST(request: NextRequest, context: Context) {
     const now = new Date();
     const mappedRole = GROUP_NAME_TO_ROLE[group.name];
 
-    await db.delete(userGroup).where(eq(userGroup.userId, userId));
-    await db.insert(userGroup).values({ userId, groupId, assignedBy: actor.id, assignedAt: now });
-    await db
-        .update(user)
-        .set({ permissions: "{}", ...(mappedRole ? { role: mappedRole } : {}), updatedAt: now })
-        .where(eq(user.id, userId));
-    await db.insert(permissionAuditLog).values({
-        id: randomUUID(), actorUserId: actor.id, actorName: actor.name,
-        action: "user_group.set_primary", targetUserId: userId, targetGroupId: groupId,
-        detail: { userName: targetUser.name, groupName: group.name, mappedRole: mappedRole ?? null }, createdAt: now,
-    });
+    try {
+        // S7-1 BL-61: satu transaksi + penjaga (dulu 4 pernyataan lepas; gagal di tengah = user tanpa grup).
+        await transaksiOtorisasi(actor.id, async (tx) => {
+            await tx.delete(userGroup).where(eq(userGroup.userId, userId));
+            await tx.insert(userGroup).values({ userId, groupId, assignedBy: actor.id, assignedAt: now });
+            await tx
+                .update(user)
+                .set({ permissions: "{}", ...(mappedRole ? { role: mappedRole } : {}), updatedAt: now })
+                .where(eq(user.id, userId));
+            await tx.insert(permissionAuditLog).values({
+                id: randomUUID(), actorUserId: actor.id, actorName: actor.name,
+                action: "user_group.set_primary", targetUserId: userId, targetGroupId: groupId,
+                detail: { userName: targetUser.name, groupName: group.name, mappedRole: mappedRole ?? null }, createdAt: now,
+            });
+        });
+    } catch (e) {
+        return jawabGalat(e);
+    }
 
     return NextResponse.json({ ok: true, role: mappedRole ?? null });
 }
