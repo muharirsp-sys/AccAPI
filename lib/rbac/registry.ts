@@ -72,6 +72,10 @@ export const PERMISSION_REGISTRY = {
     //   /api/proxy cabang tulis sales-receipt dan /api/idempotency/lock non-pratinjau. Konsol AOL tetap api_wrapper.*.
     //   Belum ada di preset grup mana pun — IT Support menambahkannya ke grup pengirim (D-17).
     pelunasan: ["kirim"],
+    // Kasir ↔ Incaso (K1a BL-59, owner 11 Okt 2026). catat = catat/koreksi setoran + jelaskan selisih; tutup = tutup hari;
+    //   buka = buka kembali hari terkunci (alasan tercatat) — kunci KAPABILITAS untuk OM/Admin (CAPABILITY_KEYS). Kasir/Incaso tidak
+    //   memegang buka (D-01). Belum ada di preset grup mana pun (SQL preset BL-37 di S7-1 yang menambah ke grup Kasir).
+    kasir: ["view", "catat", "tutup", "buka"],
 } as const;
 
 export type PermissionModule = keyof typeof PERMISSION_REGISTRY;
@@ -91,11 +95,13 @@ export function isValidPermissionKey(key: string): boolean {
     return allPermissionKeys().has(key);
 }
 
-/** Kunci kapabilitas yang membuka kiriman ulang ke Accurate (D-14/D-15/D-18) atau menetapkan nasib faktur
- * tidak pasti (order.resolve_unknown, S6-0d E6). UI grup tidak menyalakannya lewat centang modul — harus
- * dicentang satu per satu (AM-057). UI bukan otoritas; backend tetap menegakkan. */
+/** Kunci kapabilitas yang membuka kiriman ulang ke Accurate (D-14/D-15/D-18), menetapkan nasib faktur
+ * tidak pasti (order.resolve_unknown, S6-0d E6), atau membuka kembali hari Kasir yang terkunci (kasir.buka, K1a).
+ * UI grup tidak menyalakannya lewat centang modul — harus dicentang satu per satu (AM-057). UI bukan otoritas;
+ * backend tetap menegakkan. */
 export const CAPABILITY_KEYS: ReadonlySet<string> = new Set([
     "finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment", "order.resolve_unknown",
+    "kasir.buka",
 ]);
 
 const moduleKeys = (mod: PermissionModule) => PERMISSION_REGISTRY[mod].map((a) => `${mod}.${a}`);
