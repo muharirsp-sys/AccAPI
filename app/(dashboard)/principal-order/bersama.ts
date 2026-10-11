@@ -89,9 +89,14 @@ export class DitolakDenganDaftar extends Error {
     constructor(message: string, readonly skipped: SoTidakIkut[]) { super(message); }
 }
 
+/** Penolakan server yang membawa `code` (mis. 409 BERKAS_SUDAH_DISIMPAN): pemanggil menanganinya menurut kode, bukan teks pesan. */
+export class DitolakBerkode extends Error {
+    constructor(message: string, readonly code: string) { super(message); }
+}
+
 /**
- * Tulis ke endpoint Order Principal. Objek → JSON; FormData apa adanya. Ditolak (4xx/500 atau `ok` bukan true) → Error(pesan server).
- * Tidak pasti → TidakPasti, tidak pernah teks/HTML mentah.
+ * Tulis ke endpoint Order Principal. Objek → JSON; FormData apa adanya. Ditolak (4xx/500 atau `ok` bukan true) → Error(pesan server);
+ * berkode → DitolakBerkode. Tidak pasti → TidakPasti, tidak pernah teks/HTML mentah.
  */
 export async function tulis(url: string, opsi: { method?: "POST" | "DELETE"; body?: Record<string, unknown> | FormData; gagal: string }) {
     const isForm = typeof FormData !== "undefined" && opsi.body instanceof FormData;
@@ -105,7 +110,9 @@ export async function tulis(url: string, opsi: { method?: "POST" | "DELETE"; bod
     if (j.status < 200 || j.status >= 300 || !j.data.ok) {
         const pesan = typeof j.data.error === "string" && j.data.error ? j.data.error : opsi.gagal;
         if (Array.isArray(j.data.skipped)) throw new DitolakDenganDaftar(pesan, j.data.skipped as SoTidakIkut[]);
-        throw new Error(j.status === 403 ? `${pesan}. Minta admin menambahkan izinnya.` : pesan);
+        const teks = j.status === 403 ? `${pesan}. Minta admin menambahkan izinnya.` : pesan;
+        if (typeof j.data.code === "string" && j.data.code) throw new DitolakBerkode(teks, j.data.code);
+        throw new Error(teks);
     }
     return j.data;
 }
