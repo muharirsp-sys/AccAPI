@@ -798,20 +798,30 @@ AccAPI/_github_clean/
 
 | File | Fungsi Utama | Peran |
 |---|---|---|
-| `lib/auth.ts` | `auth` (betterAuth instance) | Konfigurasi server auth: email/password, admin plugin, SQLite adapter, email reset/verify |
+| `lib/auth.ts` | `auth` (betterAuth instance) | Konfigurasi server auth: email/password, admin plugin, adapter PostgreSQL, email reset/verify. S7-1: `disabledPaths` menutup 15 endpoint `/api/auth/admin/*` plugin dari browser (404; `auth.api.*` server-side tetap jalan); `revokeSessionsOnPasswordReset` (reset lupa sandi mencabut sesi lama) |
 | `lib/auth-client.ts` | `authClient` | Client-side Better Auth hooks untuk browser |
-| `lib/rbac.ts` | `canAccess`, `canAccessPath`, `permissionMapForUser`, `normalizeRole` | RBAC legacy: preset per role, custom per-user — masih aktif sebagai legacy union layer |
+| `lib/rbac.ts` | `canAccess`, `canAccessPath`, `permissionMapForUser`, `normalizeRole`, `actionLabels`, `permissionModuleLabels`, `permissionKeyLabel`, `auditActionLabels` | RBAC legacy: preset per role (fallback user tanpa grup). S7-1: SATU sumber label izin (20 modul registry + 18 aksi OPC granular) & label aksi audit untuk layar S7a |
 | `lib/rbac/registry.ts` | `PERMISSION_REGISTRY`, `allPermissionKeys`, `isValidPermissionKey` | **Sumber tunggal** 85 permission key (`module.action`). Zero import — pure data. Test-guard scan semua route.ts saat CI |
-| `lib/rbac/resolve.ts` | `getUserPermissions`, `requirePermission`, `requirePermissionH`, `resolveRequestPermissions`, `resolveRequestPermissionsH` | Union resolver: DB group + legacy role/permissions. Guard endpoint default-deny. `requirePermissionH` untuk route pakai `next/headers` |
+| `lib/rbac/resolve.ts` | `getUserPermissions`, `getPrimaryGroup`, `requirePermission`, `requirePermissionH`, `resolveRequestPermissions`, `resolveRequestPermissionsH` | Resolver: grup (otoritatif) / legacy role bila tanpa grup. Guard endpoint default-deny. `getPrimaryGroup` (BL-63) = grup berbintang atau satu-satunya grup |
+| `lib/rbac/otorisasi.ts` | `transaksiOtorisasi`, `adminAktif`, `evaluasiPenjaga`, `mulaiUtama`/`selesaiUtama`, `pasangBintang`, `roleTurunan`, `GROUP_NAME_TO_ROLE` | S7-1: SATU penjaga BL-61 (admin = aktif + `users.manage` efektif; 409 `ADMIN_TERAKHIR`/`AKSES_SENDIRI`/`GRUP_TERAKHIR`) di dalam transaksi + `pg_advisory_xact_lock`; grup utama + penurunan `user.role` dari grup preset di transaksi yang sama. Kontrak `docs/handover/S7-KONTRAK-ADMIN-API.md` |
+| `lib/rbac/riwayat.ts` | `jawabRiwayat` | Riwayat `permission_audit_log` per user/grup, keyset presisi mikrodetik |
 | `lib/rbac/registry.test.ts` | self-check script | Validasi integritas registry + scan semua route.ts: gagal jika ada key tidak terdaftar. Jalankan: `node --experimental-strip-types lib/rbac/registry.test.ts` |
 | `app/(dashboard)/layout.tsx` | `DashboardLayout`, `dynamic = "force-dynamic"` | Guard semua halaman dashboard: session check + RBAC path check; selalu render per request karena membaca header/session |
-| `app/(dashboard)/admin/users/` | `UserManagement` | UI kelola user internal, set role, set legacy custom permission |
+| `app/(dashboard)/admin/users/` | `UserManagement` | UI kelola user internal (layar lama; S7a menggantinya). Halaman digerbang `users.manage` efektif (S7-1); buat user & atur sandi lewat `/api/admin/users/**` |
 | `app/(dashboard)/admin/groups/` | `GroupManagement` | **UI Dynamic RBAC**: buat/edit Access Group, assign permission key per group, assign user ke group |
 | `app/api/auth/[...all]/route.ts` | Better Auth catch-all | Mount semua endpoint auth Better Auth |
 | `app/api/admin/bootstrap/route.ts` | `POST` | One-time setup akun admin pertama via token |
 | `app/api/admin/groups/route.ts` | `GET`, `POST` | List + buat Access Group; gate: `users.manage` |
-| `app/api/admin/groups/[id]/route.ts` | `GET`, `PATCH`, `DELETE` | Detail + sync permission + hapus group; tulis `permission_audit_log` |
-| `app/api/admin/groups/[id]/members/route.ts` | `POST`, `DELETE` | Assign/remove user dari group; tulis `permission_audit_log` |
+| `app/api/admin/groups/[id]/route.ts` | `GET`, `PATCH`, `DELETE` | Detail + sync permission + hapus group (satu transaksi + penjaga BL-61; preset tak bisa diganti nama, `users.manage` preset Admin terkunci; hapus grup menghitung ulang grup utama/role tiap anggota); tulis `permission_audit_log` |
+| `app/api/admin/groups/[id]/members/route.ts` | `POST`, `DELETE` | Assign/remove user dari group; penjaga BL-61 + grup utama/role satu transaksi; tulis `permission_audit_log` |
+| `app/api/admin/groups/[id]/history/route.ts` | `GET` | Riwayat grup (`users.manage` \| `users.view`) |
+| `app/api/admin/users/route.ts` | `POST` | BL-62 buat user: `auth.api.createUser` server-side (banned "sedang disiapkan") -> transaksi app (grup, bintang, role, buka ban, audit) -> kompensasi bila gagal |
+| `app/api/admin/users/[id]/password/route.ts` | `POST` | Atur sandi (hasher Better Auth), cabut semua sesi, audit tanpa sandi |
+| `app/api/admin/users/[id]/status/route.ts` | `POST` | Aktif/nonaktif (ban + cabut sesi; tidak menghapus) |
+| `app/api/admin/users/[id]/primary-group/route.ts` | `PUT`, `DELETE` | BL-63 tandai/lepas bintang grup utama (dua langkah) -> `user.role` dari grup preset |
+| `app/api/admin/users/[id]/group/route.ts` | `POST` | LAMA, dipensiunkan: kini tambah + bintang (bukan "ganti semua") |
+| `app/api/admin/users/[id]/history/route.ts` | `GET` | Riwayat user (`users.manage` \| `users.view`) |
+| `app/api/admin/users/permissions/route.ts` | `GET` | Daftar user + semua grup + grup utama efektif (`users.manage` \| `users.view`) |
 
 ### OFF Program Control (OPC)
 
@@ -1012,7 +1022,7 @@ accurate_write_attempt [klaim tulis Accurate per subjek × generasi] ── accu
 # Dynamic RBAC (additive — Fase 2/4; user.role & user.permissions TIDAK dihapus)
 access_group ──── group_permission (group_id)   [permission_key = "module.action"]
   └──────────── user_group (group_id + user_id)  [akses user = UNION group; is_primary = bintang grup utama, maks. 1/user — S7-0, dibaca mulai S7-1/S7-3]
-permission_audit_log [siapa ubah group/permission siapa, kapan]
+permission_audit_log [siapa ubah group/permission/user siapa, kapan; dibaca riwayat S7-1]
 
 # Principal resmi (S7-0/S7-2 BL-64; DDL manual docs/handover/DDL_S7_0.sql lalu DDL_S7_2.sql SEBELUM image)
 principal [code unik = kode OPC/Klaim, TETAP] ── principal_variant (principal_id + variant_key; '' = varian dasar)
@@ -1022,6 +1032,14 @@ principal_log [append-only (trigger + REVOKE di DDL_S7_2): satu baris per buat/a
   (principles.view), tulis (principles.upload; hapus alias principles.delete) — 409 berkode tanpa menimpa, 503 tanpa trigger penjaga.
   Resolver lib/principal/resolver.ts (alias saja: cocok | tak_dikenal | ambigu). Laporan + benih: npx tsx scripts/principal-laporan.mjs
   (baca-saja) -> laporan.md/json + benih.sql (INSERT ... ON CONFLICT DO NOTHING) untuk ditinjau owner. Pemakai belum beralih (S7-2b).
+
+# Kasir ↔ Incaso (K1a BL-59; skema + lib murni lib/kasir/rekonsiliasi.ts; pembaca K1b, UI K2; DDL manual docs/handover/DDL_K1A.sql SEBELUM image; kontrak docs/handover/KASIR-KONTRAK.md)
+kasir_setoran [append-only; (tanggal, salesman_kode=ORANG, revisi) unik; revisi n+1 -> revisi n (FK komposit); tunai/transfer/giro >= 0]
+kasir_selisih_catatan [append-only; angka pelunasan/setoran saat dijelaskan; '' = Tanpa salesman] · kasir_tak_teralokasi_catatan [append-only; per pelunasan, angka sisa]
+kasir_hari_event [append-only; tutup (snapshot.terhalang WAJIB [] — owner T2) | kunci (otomatis 20.00 WITA, boleh terhalang) | buka(alasan >= 15)]
+  izin ke grup: docs/handover/RBAC_PRESET_KASIR.sql SESUDAH RBAC_PRESET_BL37.sql (S7-1)
+kasir_pelunasan (database_id + pelunasan_id; chequeAmount, metode, last_update) ── kasir_pelunasan_faktur (faktur_id, master_salesman_id, invoice_payment) [cache K1b, TANPA raw_data]
+  masterSalesmanId -> accurate_employee.number -> sales_code_merge (merge, per bulan) -> ORANG; OTHERS dikeluarkan; Σ invoicePayment ≠ chequeAmount -> ember tak teralokasi
 ```
 
 **Status Lifecycle offBatch:**

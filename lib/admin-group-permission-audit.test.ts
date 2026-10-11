@@ -1,7 +1,7 @@
 /* AM-057: PATCH /api/admin/groups/[id] mencatat kunci yang DITAMBAH & DICABUT (bukan hanya keyCount), terurut.
  * Baca kunci lama + hapus-isi-ulang + audit lewat SATU transaksi dengan baris grup `FOR UPDATE` (atomisitas
  * sendiri = jaminan Postgres; di sini dibuktikan bahwa semua baca/tulis itu memang lewat transaksi).
- * Sesi & DB dipalsukan; tanpa DB/jaringan. */
+ * Sesi & DB dipalsukan; tanpa DB/jaringan. S7-1: PATCH memakai transaksiOtorisasi (kunci global + penjaga) — urutan di bawah tetap. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
@@ -47,6 +47,9 @@ async function patchAs(body: unknown, groupKeys: string[], groupInTx = true) {
             return q;
         },
         insert: (table: unknown) => ({ values: async (values: unknown) => { writes.push({ via, op: "insert", table, values }); } }),
+        // S7-1: kunci global + kueri admin penjaga BL-61 (tx.execute). Di uji ini tanpa baris admin -> penjaga diam;
+        // perilaku penjaga diuji di lib/admin-otorisasi-pg.test.ts (Postgres nyata).
+        execute: async () => ({ rows: [] }),
         // Dicatat saat dipanggil (urutan tulis terlihat); delete tanpa .where() = tercatat tanpa kondisi.
         delete: (table: unknown) => {
             const w: Write = { via, op: "delete", table };

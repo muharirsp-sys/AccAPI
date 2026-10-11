@@ -1,6 +1,6 @@
 -- DDL MANUAL S7-2 — riwayat principal_log APPEND-ONLY (BL-64) untuk API /api/principals dan benih principal.
 -- Rujukan: db/schema.ts (principalLog), scripts/migrate-pg.mjs (entri "principal_log" = SQL sama dengan blok 1 di bawah),
--- db/migrations/0029_principal_log.sql, lib/principal/tulis.ts (cekDdl: jalur tulis menolak 503 PRINCIPAL_DDL_BELUM tanpa trigger
+-- db/migrations/0030_principal_log.sql, lib/principal/tulis.ts (cekDdl: jalur tulis menolak 503 PRINCIPAL_DDL_BELUM tanpa trigger
 -- di bawah ATAU tanpa trg_principal_code_tetap S7-0), docs/handover/S7-2-KONTRAK-PRINCIPAL-API.md, lib/principal-pg.test.ts.
 --
 -- SIAPA & KAPAN (pola S6e-2/S7-0, owner 9 Okt "DDL manual = Claude tulis, IT Support jalankan"): IT Support, SAAT DEPLOY S7-2,

@@ -533,11 +533,121 @@ export const migrations = [
     `,
   },
   {
+    // 2026-10-11 (K1a BL-59 Kasir ↔ Incaso, owner 11 Okt: per ORANG per hari, Tunai+Transfer+Giro lawan chequeAmount, kunci 20.00
+    // WITA; DRAFT — zona uang + skema, butuh review manusia). Tabel baru saja (tanpa data). Lihat db/migrations/0029_kasir.sql.
+    // Trigger append-only + REVOKE/GRANT (setoran, catatan, event) TIDAK di sini (pola repo) — docs/handover/DDL_K1A.sql WAJIB
+    // dijalankan (juga bila DATABASE_MIGRATION_URL terpasang). sudahAda = SEMUA 11 indeks (PK + unik revisi + indeks baca) ada.
+    // T2 (owner 11 Okt): uang tak teralokasi wajib dijelaskan sebelum Tutup -> kasir_tak_teralokasi_catatan + CHECK tutup_tuntas.
+    nama: "kasir (setoran, catatan, hari, cache pelunasan)",
+    sudahAda: `SELECT 1 WHERE (SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname IN
+                   ('kasir_setoran_pkey', 'uq_kasir_setoran_revisi', 'kasir_selisih_catatan_pkey', 'idx_kasir_selisih_catatan_hari',
+                    'kasir_hari_event_pkey', 'idx_kasir_hari_event_tanggal', 'kasir_pelunasan_pkey', 'idx_kasir_pelunasan_tanggal',
+                    'kasir_pelunasan_faktur_pkey', 'kasir_tak_teralokasi_catatan_pkey', 'idx_kasir_tak_teralokasi_catatan_hari')) = 11`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS kasir_setoran (
+          id                bigserial PRIMARY KEY,
+          tanggal           date NOT NULL,
+          salesman_kode     text NOT NULL,
+          revisi            integer NOT NULL,
+          revisi_sebelumnya integer,
+          tunai             numeric(18,2) NOT NULL,
+          transfer          numeric(18,2) NOT NULL,
+          giro              numeric(18,2) NOT NULL,
+          no_form_kasir     text,
+          bukti_transfer    text,
+          catatan           text,
+          dicatat_oleh      text NOT NULL,
+          dicatat_pada      timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT uq_kasir_setoran_revisi UNIQUE (tanggal, salesman_kode, revisi),
+          CONSTRAINT kasir_setoran_revisi_sebelumnya_fk FOREIGN KEY (tanggal, salesman_kode, revisi_sebelumnya)
+              REFERENCES kasir_setoran (tanggal, salesman_kode, revisi),
+          CONSTRAINT kasir_setoran_rantai CHECK (revisi >= 1 AND revisi_sebelumnya IS NOT DISTINCT FROM nullif(revisi - 1, 0)),
+          CONSTRAINT kasir_setoran_nominal CHECK (tunai >= 0 AND transfer >= 0 AND giro >= 0),
+          CONSTRAINT kasir_setoran_kode CHECK (salesman_kode <> '' AND salesman_kode = btrim(salesman_kode)),
+          CONSTRAINT kasir_setoran_teks CHECK (btrim(coalesce(no_form_kasir, '-')) <> '' AND btrim(coalesce(bukti_transfer, '-')) <> ''
+              AND btrim(coalesce(catatan, '-')) <> ''),
+          CONSTRAINT kasir_setoran_oleh CHECK (btrim(dicatat_oleh) <> '')
+      );
+      CREATE TABLE IF NOT EXISTS kasir_selisih_catatan (
+          id            bigserial PRIMARY KEY,
+          tanggal       date NOT NULL,
+          salesman_kode text NOT NULL,
+          pelunasan     numeric(18,2) NOT NULL,
+          setoran       numeric(18,2) NOT NULL,
+          penjelasan    text NOT NULL,
+          tindak_lanjut text NOT NULL,
+          dicatat_oleh  text NOT NULL,
+          dicatat_pada  timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT kasir_selisih_catatan_kode CHECK (salesman_kode = btrim(salesman_kode)),
+          CONSTRAINT kasir_selisih_catatan_setoran CHECK (setoran >= 0),
+          CONSTRAINT kasir_selisih_catatan_penjelasan CHECK (char_length(btrim(penjelasan)) >= 15),
+          CONSTRAINT kasir_selisih_catatan_tindak_lanjut CHECK (tindak_lanjut IN ('setor_susulan', 'koreksi_incaso', 'lapor_om')),
+          CONSTRAINT kasir_selisih_catatan_oleh CHECK (btrim(dicatat_oleh) <> '')
+      );
+      CREATE INDEX IF NOT EXISTS idx_kasir_selisih_catatan_hari ON kasir_selisih_catatan (tanggal, salesman_kode);
+      CREATE TABLE IF NOT EXISTS kasir_hari_event (
+          id       bigserial PRIMARY KEY,
+          tanggal  date NOT NULL,
+          jenis    text NOT NULL,
+          alasan   text,
+          snapshot jsonb,
+          oleh     text NOT NULL,
+          pada     timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT kasir_hari_event_jenis CHECK (jenis IN ('tutup', 'kunci', 'buka')),
+          CONSTRAINT kasir_hari_event_alasan_buka CHECK (jenis <> 'buka' OR char_length(btrim(coalesce(alasan, ''))) >= 15),
+          CONSTRAINT kasir_hari_event_snapshot CHECK ((jenis = 'buka') = (snapshot IS NULL)
+              AND (snapshot IS NULL OR jsonb_typeof(snapshot) = 'object')),
+          CONSTRAINT kasir_hari_event_tutup_tuntas CHECK (jenis <> 'tutup' OR coalesce(snapshot -> 'terhalang', 'null'::jsonb) = '[]'::jsonb),
+          CONSTRAINT kasir_hari_event_oleh CHECK (btrim(oleh) <> '')
+      );
+      CREATE INDEX IF NOT EXISTS idx_kasir_hari_event_tanggal ON kasir_hari_event (tanggal, id);
+      CREATE TABLE IF NOT EXISTS kasir_tak_teralokasi_catatan (
+          id           bigserial PRIMARY KEY,
+          tanggal      date NOT NULL,
+          database_id  text NOT NULL,
+          pelunasan_id bigint NOT NULL,
+          sisa         numeric(18,2) NOT NULL,
+          penjelasan   text NOT NULL,
+          dicatat_oleh text NOT NULL,
+          dicatat_pada timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT kasir_tak_teralokasi_catatan_database CHECK (btrim(database_id) <> ''),
+          CONSTRAINT kasir_tak_teralokasi_catatan_sisa CHECK (sisa <> 0),
+          CONSTRAINT kasir_tak_teralokasi_catatan_penjelasan CHECK (char_length(btrim(penjelasan)) >= 15),
+          CONSTRAINT kasir_tak_teralokasi_catatan_oleh CHECK (btrim(dicatat_oleh) <> '')
+      );
+      CREATE INDEX IF NOT EXISTS idx_kasir_tak_teralokasi_catatan_hari ON kasir_tak_teralokasi_catatan (database_id, tanggal);
+      CREATE TABLE IF NOT EXISTS kasir_pelunasan (
+          database_id   text NOT NULL,
+          pelunasan_id  bigint NOT NULL,
+          nomor         text NOT NULL,
+          tanggal       date NOT NULL,
+          metode        text NOT NULL,
+          cheque_amount numeric(18,2) NOT NULL,
+          last_update   text,
+          dibaca_pada   timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT kasir_pelunasan_pkey PRIMARY KEY (database_id, pelunasan_id),
+          CONSTRAINT kasir_pelunasan_isi CHECK (btrim(database_id) <> '' AND btrim(nomor) <> '' AND btrim(metode) <> '')
+      );
+      CREATE INDEX IF NOT EXISTS idx_kasir_pelunasan_tanggal ON kasir_pelunasan (database_id, tanggal);
+      CREATE TABLE IF NOT EXISTS kasir_pelunasan_faktur (
+          database_id        text NOT NULL,
+          pelunasan_id       bigint NOT NULL,
+          faktur_id          bigint NOT NULL,
+          nomor_faktur       text,
+          master_salesman_id bigint,
+          invoice_payment    numeric(18,2) NOT NULL,
+          CONSTRAINT kasir_pelunasan_faktur_pkey PRIMARY KEY (database_id, pelunasan_id, faktur_id),
+          CONSTRAINT kasir_pelunasan_faktur_pelunasan_fk FOREIGN KEY (database_id, pelunasan_id)
+              REFERENCES kasir_pelunasan (database_id, pelunasan_id) ON DELETE CASCADE
+      );
+    `,
+  },
+  {
     // 2026-10-11 (S7-2 BL-64; DRAFT — zona skema, butuh review manusia). Riwayat principal/varian/alias APPEND-ONLY, ditulis
     // dalam transaksi yang sama dengan perubahannya. EXPAND saja: tabel baru tanpa pembaca lama. Trigger tolak UPDATE/DELETE/
     // TRUNCATE + REVOKE + USAGE sequence = docs/handover/DDL_S7_2.sql (IT Support saat deploy), BUKAN di sini — jalur tulis
     // /api/principals menolak 503 bila trigger itu belum ada. sudahAda lewat pg_indexes (tidak bergantung hak, RENDAH S7-0).
-    // Lihat db/migrations/0029_principal_log.sql.
+    // Lihat db/migrations/0030_principal_log.sql.
     nama: "principal_log",
     sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema()
                AND indexname IN ('principal_log_pkey', 'idx_principal_log_principal') HAVING count(*) = 2`,

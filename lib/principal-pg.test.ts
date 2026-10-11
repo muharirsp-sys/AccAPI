@@ -157,8 +157,8 @@ test("PG S7-2: DDL_S7_2 berhenti tanpa S7-0 (tidak membuat apa pun); dua kali id
     semuaOk(verifikasi(await lewatMigrasi.pool.query(ddl)));
 
     const lewatBerkas = await skemaBaru("s70");
-    await lewatBerkas.pool.query(await berkas("../db/migrations/0029_principal_log.sql"));
-    assert.deepEqual(await katalog(lewatBerkas.pool), sekali, "db/migrations/0029 = DDL manual");
+    await lewatBerkas.pool.query(await berkas("../db/migrations/0030_principal_log.sql"));
+    assert.deepEqual(await katalog(lewatBerkas.pool), sekali, "db/migrations/0030 = DDL manual");
 
     const cfg = getTableConfig(principalLog);
     assert.deepEqual(cfg.columns.map((k) => [k.name, k.notNull ? "NO" : "YES"].join("|")).sort(),

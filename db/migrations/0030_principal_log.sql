@@ -13,7 +13,7 @@
 -- Apply otomatis lewat scripts/migrate-pg.mjs (entri "principal_log") saat container start bila
 -- DATABASE_MIGRATION_URL terpasang; selain itu docs/handover/DDL_S7_2.sql SEBELUM image baru. Manual:
 --   docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 \
---     --single-transaction < db/migrations/0029_principal_log.sql
+--     --single-transaction < db/migrations/0030_principal_log.sql
 -- Idempoten dan aditif; tidak menyentuh data yang ada.
 -- =====================================================================
 
