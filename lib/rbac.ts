@@ -305,6 +305,8 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/payments/sppd", module: "sppd", action: "view" },
     { prefix: "/payments", module: "payments", action: "view" },
     { prefix: "/finance", module: "finance", action: "view" },
+    // Wizard Pelunasan (S6e-2b): halaman = kirim sales-receipt; kunci yang sama dengan penegakan server (owner #5).
+    { prefix: "/pelunasan", module: "pelunasan", action: "kirim" },
     { prefix: "/principal-mapping", module: "principles", action: "view" },
     { prefix: "/master-barang", module: "master_barang", action: "view" },
     { prefix: "/principles", module: "principles", action: "view" },

@@ -15,7 +15,9 @@ test("all existing modules appear exactly once across six groups", () => {
     // 25 sejak Validator Diskon dihapus (19 Sep 2026): menunya memakan Excel unggahan manual
     // dan tidak pernah membaca `promo_rule`, jadi ia tak pernah memeriksa aturan yang berlaku.
     // 26 sejak Normalisasi Diskon (24 Sep 2026). 27 sejak Penerima laporan (Fiori S3, 7 Okt 2026).
-    assert.equal(items.length, 27);
+    // 28 sejak wizard Pelunasan (Fiori S6e-2, 10 Okt 2026): Admin Incaso mengirim pelunasan tanpa Konsol AOL.
+    assert.equal(items.length, 28);
+    assert.ok(items.some(item => item.href === "/pelunasan"));
     // Master Barang ikut katalog: ia yang MEMBUAT master principal baru, dan matcher
     // deterministik jalur Summary menuntut master berpola `BRAND - JENIS`. Tanpa layar ini
     // satu-satunya cara menambah principal adalah menyusun berkasnya di luar sistem.
@@ -64,6 +66,9 @@ test("bottom-nav shortcuts follow the role guessed from permissions and never le
     const gudang = roleShortcuts(new Set(["rekapan_nota.manage"]), allowed(["/rekapan-nota", "/faktur"]));
     assert.deepEqual(gudang.map(item => item.href), ["/rekapan-nota", "/faktur"]);
     assert.equal(roleProfile(new Set(["dashboard.view"])), undefined);
+    // Admin Incaso = pelunasan.kirim tanpa izin Finance; Finance yang juga mengirim pelunasan tetap profil Finance.
+    assert.equal(roleProfile(new Set(["pelunasan.kirim"]))?.id, "incaso");
+    assert.equal(roleProfile(new Set(["pelunasan.kirim", "finance.transfer"]))?.id, "finance");
     assert.deepEqual(roleShortcuts(new Set(), []), []);
 });
 test("bottom-nav labels are unique across the whole catalog", () => {
