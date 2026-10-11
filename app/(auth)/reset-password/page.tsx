@@ -1,129 +1,101 @@
+/*
+ * Tujuan: Halaman Atur ulang sandi dari tautan email (Better Auth): sandi baru + ketik ulang, atau pesan tautan tidak berlaku.
+ * Caller: Route `/reset-password?token=…` (Better Auth mengalihkan ke sini; token kedaluwarsa → `?error=INVALID_TOKEN`).
+ * Dependensi: authClient.resetPassword, komponen Fiori, kerangka app/(auth)/layout.tsx.
+ * Main Functions: ResetPasswordPage.
+ * Side Effects: HTTP ke Better Auth untuk menyimpan sandi baru (token sekali pakai).
+ */
 "use client";
 
-import { useState, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { authClient } from "@/lib/auth-client";
-import { Lock } from "lucide-react";
-import { toast } from "sonner";
+import { use, useState, type FormEvent } from "react";
 import Link from "next/link";
+import { authClient } from "@/lib/auth-client";
+import { Button, MessageStrip } from "@/components/fiori/core";
+import { FormField } from "@/components/fiori/interactive";
 
-function ResetPasswordForm() {
-    const router = useRouter();
-    const searchParams = useSearchParams();
-    const token = searchParams.get("token") || "";
+// Sama dengan server: lib/auth.ts emailAndPassword.minPasswordLength (6). Server tetap penentu akhir.
+const MIN_SANDI = 6;
 
-    const [password, setPassword] = useState("");
-    const [confirmPassword, setConfirmPassword] = useState("");
+// Kode galat Better Auth → kalimat; pesan server tidak pernah dicetak.
+const GALAT_SIMPAN = new Map<string, string>([
+    ["PASSWORD_TOO_SHORT", `Sandi minimal ${MIN_SANDI} karakter.`],
+    ["PASSWORD_TOO_LONG", "Sandi maksimal 128 karakter."],
+]);
+
+type Keadaan = "isi" | "tak-berlaku" | "tersimpan";
+
+export default function ResetPasswordPage({ searchParams }: { searchParams: Promise<{ token?: string | string[]; error?: string | string[] }> }) {
+    const query = use(searchParams);
+    const token = typeof query.token === "string" ? query.token : "";
+    const [keadaan, setKeadaan] = useState<Keadaan>(token && query.error === undefined ? "isi" : "tak-berlaku");
+    const [sandi, setSandi] = useState("");
+    const [ulang, setUlang] = useState("");
     const [loading, setLoading] = useState(false);
+    const [galat, setGalat] = useState<string>();
 
-    const handleReset = async (e: React.FormEvent) => {
+    const pendek = sandi.length < MIN_SANDI;
+    const beda = ulang !== sandi;
+    const terkunci = pendek ? `Sandi minimal ${MIN_SANDI} karakter.` : beda ? "Ketik ulang sandi yang sama dulu." : undefined;
+
+    const handleReset = async (e: FormEvent) => {
         e.preventDefault();
-        
-        if (password !== confirmPassword) {
-            toast.error("Password tidak cocok.");
-            return;
-        }
-
-        if (password.length < 6) {
-            toast.error("Password minimal 6 karakter.");
-            return;
-        }
-
-        if (!token) {
-            toast.error("Token Reset tidak valid atau tidak ditemukan dalam URL.");
-            return;
-        }
-
+        if (terkunci || loading) return;
         setLoading(true);
-
-        const { error } = await authClient.resetPassword({
-            newPassword: password,
-            token
-        });
-
-        if (error) {
-            toast.error(error.message || "Kesalahan mendasar saat mereset password. Pastikan Link tidak kedaluwarsa.");
-            setLoading(false);
-        } else {
-            toast.success("Password Anda telah berhasil di-reset!", {
-                description: "Silakan gunakan kredensial baru Anda untuk login."
-            });
-            router.push("/login");
+        setGalat(undefined);
+        try {
+            const { error } = await authClient.resetPassword({ newPassword: sandi, token });
+            if (!error) setKeadaan("tersimpan");
+            else if (error.code === "INVALID_TOKEN") setKeadaan("tak-berlaku");
+            else setGalat(GALAT_SIMPAN.get(error.code ?? "") ?? "Sandi belum tersimpan. Coba lagi.");
+        } catch {
+            setGalat("Server tidak dapat dihubungi. Periksa koneksi, lalu coba lagi.");
         }
+        setLoading(false);
     };
 
+    if (keadaan === "tak-berlaku") {
+        return (
+            <>
+                <h1 className="fi-title-1">Tautan tidak berlaku</h1>
+                <MessageStrip tone="warn">Tautan atur ulang sandi ini sudah kedaluwarsa, sudah dipakai, atau tidak lengkap.</MessageStrip>
+                <Link href="/forgot-password" className="fi-btn fi-btn--primary">Minta tautan baru</Link>
+                <Link href="/login" className="fi-btn fi-btn--tertiary">Kembali ke halaman masuk</Link>
+            </>
+        );
+    }
+
+    if (keadaan === "tersimpan") {
+        return (
+            <>
+                <h1 className="fi-title-1">Sandi tersimpan</h1>
+                <MessageStrip tone="pos">Sandi baru sudah tersimpan. Masuk dengan sandi baru.</MessageStrip>
+                <Link href="/login" className="fi-btn fi-btn--primary">Masuk</Link>
+            </>
+        );
+    }
+
     return (
-        <div className="p-8">
-            <form onSubmit={handleReset} className="space-y-6">
-                <div>
-                    <label htmlFor="new-password" className="block text-sm font-medium text-slate-700 mb-1">Password Baru</label>
-                    <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Lock className="h-5 w-5 text-slate-400" />
-                        </div>
-                        <input
-                            id="new-password"
-                            type="password"
-                            required
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 sm:text-sm shadow-sm transition-colors text-slate-900"
-                            placeholder="Minimal 6 Karakter"
-                        />
-                    </div>
-                </div>
-
-                <div>
-                    <label htmlFor="confirm-password" className="block text-sm font-medium text-slate-700 mb-1">Konfirmasi Password Baru</label>
-                    <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Lock className="h-5 w-5 text-slate-400" />
-                        </div>
-                        <input
-                            id="confirm-password"
-                            type="password"
-                            required
-                            value={confirmPassword}
-                            onChange={(e) => setConfirmPassword(e.target.value)}
-                            className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 sm:text-sm shadow-sm transition-colors text-slate-900"
-                            placeholder="Ketik ulan sandi"
-                        />
-                    </div>
-                </div>
-
-                <button
-                    type="submit"
-                    disabled={loading || !token}
-                    className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors disabled:opacity-50"
-                >
-                    {loading ? "Menyimpan Sandi..." : "Simpan Password Baru"}
-                </button>
+        <>
+            <h1 className="fi-title-1">Atur sandi baru</h1>
+            {galat && <MessageStrip tone="neg">{galat}</MessageStrip>}
+            <form onSubmit={handleReset} noValidate>
+                <FormField label="Sandi baru" help={`Minimal ${MIN_SANDI} karakter.`} error={sandi && pendek ? `Sandi minimal ${MIN_SANDI} karakter.` : undefined}>
+                    {(a11y) => (
+                        <input {...a11y} className="fi-input" type="password" autoComplete="new-password" value={sandi} disabled={loading}
+                            onChange={(e) => setSandi(e.target.value)} />
+                    )}
+                </FormField>
+                <FormField label="Ketik ulang sandi baru" error={ulang && beda ? "Belum sama dengan sandi baru." : undefined}>
+                    {(a11y) => (
+                        <input {...a11y} className="fi-input" type="password" autoComplete="new-password" value={ulang} disabled={loading}
+                            onChange={(e) => setUlang(e.target.value)} />
+                    )}
+                </FormField>
+                <Button type="submit" variant="primary" busy={loading} disabled={Boolean(terkunci)} disabledReason={terkunci}>
+                    {loading ? "Menyimpan…" : "Simpan sandi"}
+                </Button>
             </form>
-            
-            <div className="mt-6 text-center">
-                <Link href="/login" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors">
-                    Kembali ke halaman masuk
-                </Link>
-            </div>
-        </div>
-    );
-}
-
-export default function ResetPasswordPage() {
-    return (
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-            <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
-                <div className="bg-gradient-to-r from-blue-600 to-indigo-700 p-8 text-white text-center">
-                    <h2 className="text-3xl font-extrabold tracking-tight">Atur Ulang Sandi</h2>
-                    <p className="mt-2 text-blue-100 text-sm">Gunakan form di bawah untuk mengubah password Anda yang hilang.</p>
-                </div>
-
-                <Suspense fallback={
-                    <div className="p-12 text-center text-slate-500">Menganalisis Token...</div>
-                }>
-                    <ResetPasswordForm />
-                </Suspense>
-            </div>
-        </div>
+            <Link href="/login" className="fi-btn fi-btn--tertiary">Kembali ke halaman masuk</Link>
+        </>
     );
 }
