@@ -546,3 +546,24 @@ dialog.fi-drawer .fi-sidenav { border-right:0; }
   .fi-shell-main { padding:20px 18px 24px; }
 }
 @media print { .fi-shellbar, .fi-sidenav, .fi-bnav, .fi-skip { display:none !important; } .fi-shell { display:block; height:auto; overflow:visible; } .fi-shell-main { overflow:visible; padding:0; } }
+
+/* ===== Masuk dan sandi: panel merek + kartu, di luar shell (app/(auth)/layout.tsx) ===== */
+.fi-auth { min-height:100dvh; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+.fi-auth-brand { background:var(--primary); color:var(--on-primary); padding:var(--sp-8); display:grid; align-content:space-between; gap:var(--sp-6); }
+.fi-auth-brandlogo { display:block; width:191px; height:34px; background:url("/brand/logo_SP_lockup_white.png") left center / contain no-repeat; }
+.fi-auth-brand ul { list-style:none; padding:0; display:grid; gap:var(--sp-3); }
+.fi-auth-brand li { display:flex; gap:10px; align-items:flex-start; }
+.fi-auth-brand li .fi-icon { margin-top:2px; }
+.fi-auth-brand small { font:var(--fs-small); } /* tanpa opacity: putih penuh di --primary gelap = 5:1 (0,85 = 4,1:1) */
+.fi-auth-side { display:grid; place-items:center; padding:var(--sp-6) var(--sp-4); min-width:0; }
+.fi-auth-card, .fi-auth-card form { display:grid; gap:14px; min-width:0; }
+.fi-auth-card { width:100%; max-width:380px; background:var(--surface); border-radius:var(--r-xl); box-shadow:var(--shadow-2); padding:var(--sp-6); }
+.fi-auth-card .fi-logo { width:169px; height:30px; }
+.fi-auth-card .fi-btn:not(.fi-btn--icon) { width:100%; }
+.fi-auth-pw { position:relative; }
+.fi-auth-pw .fi-input { padding-right:calc(var(--ctl-h) + 4px); }
+.fi-auth-pw .fi-input::-ms-reveal { display:none; } /* Edge: tombol intip bawaan menumpuk tombol Tampilkan sandi */
+.fi-auth-pw .fi-btn--icon { position:absolute; right:0; top:0; }
+.fi-auth-row { display:flex; justify-content:flex-end; }
+.fi-auth-row a { display:inline-flex; align-items:center; min-height:var(--ctl-h); font:var(--fs-small); } /* target sentuh 44 px di pointer kasar */
+@media (max-width:767px) { .fi-auth { grid-template-columns:minmax(0,1fr); } .fi-auth-brand { display:none; } }
