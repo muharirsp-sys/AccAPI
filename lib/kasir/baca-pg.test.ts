@@ -420,10 +420,11 @@ test("PG K1b migrate-pg sudahAda lewat katalog: role TANPA hak tabel tetap melih
         const c = await pool.connect();
         try {
             await c.query("BEGIN");
-            await c.query("CREATE ROLE uji_k1b_tanpa_hak NOLOGIN");
-            await c.query(`GRANT USAGE ON SCHEMA ${skema} TO uji_k1b_tanpa_hak`);
-            await c.query("REVOKE ALL ON kasir_pelunasan_baca FROM uji_k1b_tanpa_hak");
-            await c.query("SET LOCAL ROLE uji_k1b_tanpa_hak");
+            // Peran bawaan pg_monitor (tanpa hak tabel) — TIDAK membuat/menghapus peran: CREATE ROLE yang di-ROLLBACK di DB bersama membuat uji
+            // paralel lain gagal "role … was concurrently dropped".
+            await c.query(`GRANT USAGE ON SCHEMA ${skema} TO pg_monitor`);
+            await c.query("SET LOCAL ROLE pg_monitor");
+            assert.equal((await c.query(`SELECT has_table_privilege('kasir_pelunasan_baca', 'SELECT') AS h`)).rows[0].h, false, "memang tanpa hak tabel");
             assert.equal((await c.query(m.sudahAda)).rowCount, 1, "sudahAda = 1 tanpa hak tabel");
         } finally {
             await c.query("ROLLBACK");
