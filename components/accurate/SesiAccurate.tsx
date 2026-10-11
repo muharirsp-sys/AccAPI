@@ -1,7 +1,7 @@
 /*
  * Tujuan: Kartu Sesi Accurate bersama (S7-sesi, owner D-01 Q2): status sesi, Masuk Accurate (lewat /api/auth/accurate-login ber-`state`),
  *   daftar & buka database, Ganti database, Keluar (dikonfirmasi); kabar callback `?accurate=connected|error&alasan=<kode>` sebagai
- *   MessageStrip (pemetaan kode, bukan teks mentah). Fokus pindah ke pesan sesudah aksi (elemen yang ditekan bisa hilang).
+ *   MessageStrip (pemetaan kode, bukan teks mentah). Fokus pindah ke elemen bernama sesudah aksi (elemen yang ditekan bisa hilang).
  * Caller: app/(dashboard)/sesi-accurate/page.tsx dan Konsol app/(dashboard)/api-wrapper/page.tsx (kartu yang sama).
  * Dependensi: GET/DELETE /api/auth/accurate-session, GET /api/auth/db-list, POST /api/auth/open-db, lib/accurate-oauth, components/fiori.
  * Main Functions: SesiAccurate, StatusSesi.
@@ -19,6 +19,8 @@ export type StatusSesi = { connected: boolean; databaseConnected: boolean; sessi
 type Db = { id: string | number; alias: string };
 /** `masukUlang` = sesi login aplikasi berakhir (401): yang menolong adalah masuk ulang, bukan Coba lagi. */
 type Galat = { pesan: string; masukUlang?: boolean };
+/** Sasaran fokus sesudah aksi; selain "pesan" dicari lewat atribut `data-fokus` di kartu. "pulih" = Coba lagi / Masuk ulang di strip galat. */
+type Fokus = "pesan" | "pilih" | "ganti" | "pulih";
 type Keadaan = { status: "memuat" } | ({ status: "galat" } & Galat) | { status: "siap"; sesi: StatusSesi };
 type Daftar = { status: "memuat" } | ({ status: "galat" } & Galat) | { status: "siap"; dbs: Db[] };
 
@@ -59,8 +61,8 @@ function StripGalat({ galat, onCobaLagi }: { galat: Galat; onCobaLagi: () => voi
         <MessageStrip tone="neg">
             {galat.pesan}
             {galat.masukUlang
-                ? <div style={{ marginTop: 8 }}><a className="fi-btn fi-btn--secondary" href="/login"><LogIn className="fi-icon" aria-hidden />Masuk ulang ke aplikasi</a></div>
-                : <>{" "}<Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={onCobaLagi}>Coba lagi</Button></>}
+                ? <div style={{ marginTop: 8 }}><a className="fi-btn fi-btn--secondary" href="/login" data-fokus="pulih"><LogIn className="fi-icon" aria-hidden />Masuk ulang ke aplikasi</a></div>
+                : <>{" "}<Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={onCobaLagi} data-fokus="pulih">Coba lagi</Button></>}
         </MessageStrip>
     );
 }
@@ -85,18 +87,18 @@ export function SesiAccurate({ returnTo, kabar: kabarUrl, onStatus, judul = "Ses
     const [kabar, setKabar] = useState<Kabar | null>(() => kabarAccurate(kabarUrl?.accurate, kabarUrl?.alasan));
     const [galatAksi, setGalatAksi] = useState<string | null>(null);
     const [versi, setVersi] = useState(0);
-    const [fokus, setFokus] = useState<{ ke: "pesan" | "pilih"; n: number } | null>(null);
+    const [fokus, setFokus] = useState<{ ke: Fokus; n: number } | null>(null);
     const onStatusRef = useRef(onStatus);
     const pesanRef = useRef<HTMLDivElement>(null);
-    const pilihRef = useRef<HTMLDivElement>(null);
+    const isiRef = useRef<HTMLDivElement>(null);
     useEffect(() => { onStatusRef.current = onStatus; }, [onStatus]);
-    // Tombol yang ditekan bisa hilang sesudah aksi (Keluar, Buka) — fokus dipindah ke pesan/isian, bukan jatuh ke <body>.
+    // Tombol yang ditekan bisa hilang sesudah aksi (Keluar, Buka, Ganti, Batal ganti) — fokus dipindah ke elemen bernama, bukan jatuh
+    // ke <body>: pesan (berisi strip kabar/galat), isian database, tombol Ganti database, atau aksi pemulihan galat (`data-fokus`).
     useEffect(() => {
         if (!fokus) return;
-        if (fokus.ke === "pesan") pesanRef.current?.focus();
-        else pilihRef.current?.querySelector("select")?.focus();
+        (fokus.ke === "pesan" ? pesanRef.current : isiRef.current?.querySelector<HTMLElement>(`[data-fokus="${fokus.ke}"]`))?.focus();
     }, [fokus]);
-    const fokuskan = (ke: "pesan" | "pilih") => setFokus((f) => ({ ke, n: (f?.n ?? 0) + 1 }));
+    const fokuskan = (ke: Fokus) => setFokus((f) => ({ ke, n: (f?.n ?? 0) + 1 }));
 
     // Kabar sudah dibaca: buang dari URL agar muat ulang tidak menampilkannya lagi (returnTo dan parameter lain tetap).
     useEffect(() => {
@@ -140,7 +142,7 @@ export function SesiAccurate({ returnTo, kabar: kabarUrl, onStatus, judul = "Ses
             fokuskan("pilih");
         } catch (e) {
             setDaftar({ status: "galat", ...galatDari(e, "Daftar database Accurate tidak terbaca.") });
-            fokuskan("pesan"); // tombol Ganti database sudah dibongkar; strip galat diumumkan (role alert)
+            fokuskan("pulih"); // tombol Ganti database sudah dibongkar; strip galat diumumkan (role alert), fokus ke Coba lagi
         }
     }
 
@@ -192,10 +194,10 @@ export function SesiAccurate({ returnTo, kabar: kabarUrl, onStatus, judul = "Ses
                     message="Minta admin Accurate menambahkan akun Anda ke database perusahaan, lalu muat ulang."
                     action={<Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={ganti ? () => void mulaiGanti() : muatUlang}>Muat ulang daftar</Button>} />
             ) : (
-                <div ref={pilihRef} className="fi-sect-in" style={{ padding: 0 }}>
+                <div className="fi-sect-in" style={{ padding: 0 }}>
                     <FormField label="Database Accurate" required error={galatPilih} help="Database tempat Anda bekerja; dokumen dikirim ke database ini.">
                         {(a11y) => (
-                            <select {...a11y} className="fi-input" value={pilih} onChange={(e) => { setPilih(e.target.value); setGalatPilih(undefined); }}>
+                            <select {...a11y} data-fokus="pilih" className="fi-input" value={pilih} onChange={(e) => { setPilih(e.target.value); setGalatPilih(undefined); }}>
                                 <option value="">Pilih database</option>
                                 {daftar.dbs.map((db) => <option key={String(db.id)} value={String(db.id)}>{db.alias}</option>)}
                             </select>
@@ -203,7 +205,7 @@ export function SesiAccurate({ returnTo, kabar: kabarUrl, onStatus, judul = "Ses
                     </FormField>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                         <Button variant="primary" icon={<Database className="fi-icon" aria-hidden />} busy={sibuk === "buka"} onClick={buka}>Buka database</Button>
-                        {ganti && <Button disabled={Boolean(sibuk)} disabledReason={alasanSibuk} onClick={() => { setGanti(false); setGalatPilih(undefined); fokuskan("pesan"); }}>Batal ganti</Button>}
+                        {ganti && <Button disabled={Boolean(sibuk)} disabledReason={alasanSibuk} onClick={() => { setGanti(false); setGalatPilih(undefined); fokuskan("ganti"); }}>Batal ganti</Button>}
                     </div>
                 </div>
             );
@@ -217,7 +219,7 @@ export function SesiAccurate({ returnTo, kabar: kabarUrl, onStatus, judul = "Ses
                         aria-describedby={alasanSibuk ? "sesi-accurate-sibuk" : undefined} onClick={() => setKonfirmasiKeluar(true)}>Keluar dari Accurate</Button>
                 </>
             ) : undefined}>
-            <div className="fi-sect-in">
+            <div ref={isiRef} className="fi-sect-in">
                 <div ref={pesanRef} tabIndex={-1} style={{ outline: "none", display: "grid", gap: 10 }}>
                     {kabar && <MessageStrip tone={kabar.tone} title={kabar.title} onClose={() => setKabar(null)}>{kabar.text}</MessageStrip>}
                     {galatAksi && <MessageStrip tone="neg" onClose={() => setGalatAksi(null)}>{galatAksi}</MessageStrip>}
@@ -239,7 +241,7 @@ export function SesiAccurate({ returnTo, kabar: kabarUrl, onStatus, judul = "Ses
                                     ]} />
                                 )}
                                 {tampilDaftar ? pemilih : (
-                                    <div><Button icon={<ArrowLeftRight className="fi-icon" aria-hidden />} onClick={() => void mulaiGanti()}>Ganti database</Button></div>
+                                    <div><Button icon={<ArrowLeftRight className="fi-icon" aria-hidden />} onClick={() => void mulaiGanti()} data-fokus="ganti">Ganti database</Button></div>
                                 )}
                             </>
                         )}

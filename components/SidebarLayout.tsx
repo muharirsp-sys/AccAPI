@@ -39,6 +39,8 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
     // ulang layout dari cache (Back sesudah pindah grup route), jadi URL kini SELALU dinilai di sini dengan kunci dan fungsi yang sama
     // dengan layout — hasilnya identik untuk path yang memang dirender server. Dulu path awal dipercaya (`useState(pathname)`), dan
     // pemasangan ulang di halaman terlarang mencatatnya sebagai "sudah digerbang" (tinjauan #159). Otoritas tetap server (layout + guard API).
+    // Konsekuensi untuk spec Playwright yang memalsukan `permKeys` di payload RSC (mode bypass): kunci GERBANG halaman yang diuji harus
+    // tetap ada — membuangnya kini menampilkan Akses ditolak, sama seperti server menolak halaman itu untuk akun nyata.
     const pathDiizinkan = canAccessPathWithKeys(pathname, keys);
     const roleLabel = roleProfile(keys)?.label ?? "CV. Surya Perkasa";
     const [drawerOpen, setDrawerOpen] = useState(false);

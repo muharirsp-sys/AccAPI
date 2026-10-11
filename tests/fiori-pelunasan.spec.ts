@@ -651,18 +651,20 @@ test("Daftar Perlu tindakan: galat ≠ kosong; baris lama tanpa database tidak m
     await noOverflow(page);
 });
 
-test("Tanpa izin: Kirim/Izinkan nonaktif dengan alasan terlihat, tanpa nama kunci mentah", async ({ page }) => {
-    // Akun tanpa izin kirim/Finance: permKeys di payload RSC diganti (hanya di tes).
-    await tanpaIzin(page, ["pelunasan.kirim", "finance.override_duplicate", "finance.resolve_unknown"]);
+test("Tanpa izin Finance (Admin Incaso): Izinkan nonaktif dengan alasan terlihat, Kirim tetap bisa, tanpa nama kunci mentah", async ({ page }) => {
+    // Akun tanpa izin Finance: permKeys di payload RSC diganti (hanya di tes). `pelunasan.kirim` = kunci GERBANG halaman ini: tanpa
+    // kunci itu server menolak /pelunasan dan gerbang klien SidebarLayout (yang kini selalu menilai URL) menampilkan Akses ditolak —
+    // jadi cabang "belum berhak mengirim" di wizard tak tercapai lewat halaman dan tidak diuji di sini.
+    await tanpaIzin(page, ["finance.override_duplicate", "finance.resolve_unknown"]);
     await pasang(page, { blok: (key) => (key.includes("PELANGGAN-A_") ? "ALREADY_SUCCESS" : undefined) });
     await sampaiTinjau(page);
-    await expect(page.getByRole("button", { name: /^Kirim 3 pelunasan/ })).toBeDisabled();
-    await expect(footer(page)).toContainText("belum berhak mengirim pelunasan");
+    await expect(page.getByRole("button", { name: /^Kirim 3 pelunasan/ })).toBeEnabled();
+    await expect(footer(page)).not.toContainText("belum berhak mengirim pelunasan");
     const ganda = page.getByRole("region", { name: "Potensi ganda" });
     await expect(ganda.getByRole("button", { name: "Izinkan yang dicentang…" })).toBeDisabled();
     await expect(ganda).toContainText("Izinkan nonaktif: Hanya Finance");
     await expect(ganda.getByRole("checkbox")).toHaveCount(0);
-    await expect(page.locator("main")).not.toContainText("pelunasan.kirim");
+    await expect(page.locator("main")).not.toContainText(/finance\.|pelunasan\.kirim/);
     await page.screenshot({ path: "test-results/fiori-pelunasan-11-tanpa-izin.png", fullPage: true });
 });
 
