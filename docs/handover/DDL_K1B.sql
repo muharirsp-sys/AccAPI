@@ -4,7 +4,7 @@
 -- lib/kasir/baca-pg.test.ts, docs/handover/KASIR-KONTRAK.md §7.
 --
 -- SIAPA & KAPAN (pola K1a, owner 9 Okt "DDL manual = Claude tulis, IT Support jalankan"): IT Support, SAAT DEPLOY K1b, sebagai role
--- PEMILIK tabel (accapi, bukan accapi_app), SESUDAH docs/handover/DDL_K1A.sql dan SEBELUM image baru. JANGAN dijalankan loop/agen ke
+-- PEMILIK tabel (accapi, bukan accapi_app), SESUDAH docs/handover/DDL_K1A.sql lalu docs/handover/DDL_S7_2.sql, dan SEBELUM image baru. JANGAN dijalankan loop/agen ke
 -- produksi.
 --
 --   docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 < docs/handover/DDL_K1B.sql
