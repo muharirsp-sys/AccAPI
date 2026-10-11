@@ -642,6 +642,33 @@ export const migrations = [
       );
     `,
   },
+  {
+    // 2026-10-11 (S7-2 BL-64; DRAFT — zona skema, butuh review manusia). Riwayat principal/varian/alias APPEND-ONLY, ditulis
+    // dalam transaksi yang sama dengan perubahannya. EXPAND saja: tabel baru tanpa pembaca lama. Trigger tolak UPDATE/DELETE/
+    // TRUNCATE + REVOKE + USAGE sequence = docs/handover/DDL_S7_2.sql (IT Support saat deploy), BUKAN di sini — jalur tulis
+    // /api/principals menolak 503 bila trigger itu belum ada. sudahAda lewat pg_indexes (tidak bergantung hak, RENDAH S7-0).
+    // Lihat db/migrations/0030_principal_log.sql.
+    nama: "principal_log",
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema()
+               AND indexname IN ('principal_log_pkey', 'idx_principal_log_principal') HAVING count(*) = 2`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS principal_log (
+          id           bigserial PRIMARY KEY,
+          entitas      text NOT NULL,
+          kunci        text NOT NULL,
+          principal_id text NOT NULL,
+          aksi         text NOT NULL,
+          before       jsonb,
+          after        jsonb,
+          aktor        text NOT NULL,
+          waktu        timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT principal_log_entitas CHECK (entitas IN ('principal', 'varian', 'alias')),
+          CONSTRAINT principal_log_aksi CHECK (aksi IN ('buat', 'aktif', 'nonaktif', 'hapus')),
+          CONSTRAINT principal_log_aktor_isi CHECK (btrim(aktor) <> '')
+      );
+      CREATE INDEX IF NOT EXISTS idx_principal_log_principal ON principal_log (principal_id, id);
+    `,
+  },
 ];
 
 async function main() {
