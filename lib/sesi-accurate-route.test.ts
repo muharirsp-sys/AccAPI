@@ -7,14 +7,17 @@ import { NextRequest } from "next/server";
 import { GET as loginGet } from "../app/api/auth/accurate-login/route.ts";
 import { GET as callbackGet } from "../app/api/auth/callback/route.ts";
 import { GET as sesiGet } from "../app/api/auth/accurate-session/route.ts";
+import { GET as dbListGet } from "../app/api/auth/db-list/route.ts";
+import { POST as openDbPost } from "../app/api/auth/open-db/route.ts";
+import { upsertAccurateSession } from "./accurate-session.ts";
 import { ACCURATE_SCOPE, STATE_COOKIE, kabarAccurate, returnToAman } from "./accurate-oauth.ts";
 import { SESI_ACCURATE_KEYS, canAccessPathWithKeys } from "./rbac.ts";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
 
 const RAHASIA = "TOKEN-RAHASIA-JANGAN-DICETAK";
-type Catatan = { fetch: Array<{ url: string; body: string }>; insert: unknown[]; log: string };
-type Opsi = { sesiApp?: boolean; fetch?: (url: string) => Promise<Response> };
+type Catatan = { fetch: Array<{ url: string; body: string }>; insert: unknown[]; update: unknown[]; log: string };
+type Opsi = { sesiApp?: boolean; fetch?: (url: string) => Promise<Response>; sesiRow?: Record<string, unknown> };
 
 const ENV = { BETTER_AUTH_URL: "https://app.test", ACCURATE_CLIENT_ID: "cid", ACCURATE_CLIENT_SECRET: "csecret",
     NEXT_PUBLIC_ACCURATE_REDIRECT_URI: "https://app.test/api/auth/callback", ACCURATE_TOKEN_ENCRYPTION_KEY: "kunci-uji", NEXT_PUBLIC_ACCURATE_CLIENT_ID: undefined,
@@ -22,7 +25,7 @@ const ENV = { BETTER_AUTH_URL: "https://app.test", ACCURATE_CLIENT_ID: "cid", AC
 
 /** Jalankan `fn` dengan env uji, sesi app (opsional), DB palsu (tanpa sesi Accurate lama; insert dicatat), fetch palsu, console.error dicatat. */
 async function dengan<T>(opsi: Opsi, fn: (c: Catatan) => Promise<T>): Promise<T> {
-    const c: Catatan = { fetch: [], insert: [], log: "" };
+    const c: Catatan = { fetch: [], insert: [], update: [], log: "" };
     const simpanEnv = Object.fromEntries(Object.keys(ENV).map((k) => [k, process.env[k]]));
     for (const [k, v] of Object.entries(ENV)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     const saved = [
@@ -34,9 +37,9 @@ async function dengan<T>(opsi: Opsi, fn: (c: Catatan) => Promise<T>): Promise<T>
         [console, "error", Object.getOwnPropertyDescriptor(console, "error")],
     ] as const;
     Object.defineProperty(auth.api, "getSession", { configurable: true, value: async () => (opsi.sesiApp === false ? null : { user: { id: "u-fakturist", role: "staff" }, session: { id: "s1" } }) });
-    Object.defineProperty(db, "select", { configurable: true, value: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) });
+    Object.defineProperty(db, "select", { configurable: true, value: () => ({ from: () => ({ where: () => ({ limit: async () => (opsi.sesiRow ? [opsi.sesiRow] : []) }) }) }) });
     Object.defineProperty(db, "insert", { configurable: true, value: () => ({ values: async (v: unknown) => { c.insert.push(v); } }) });
-    Object.defineProperty(db, "update", { configurable: true, value: () => { throw new Error("TIDAK BOLEH update: tidak ada sesi lama"); } });
+    Object.defineProperty(db, "update", { configurable: true, value: () => ({ set: (v: unknown) => ({ where: async () => { c.update.push(v); } }) }) });
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: async (url: string | URL, init?: RequestInit) => {
         c.fetch.push({ url: String(url), body: String(init?.body ?? "") });
         if (!opsi.fetch) throw new Error("TIDAK BOLEH ke jaringan");
@@ -216,5 +219,78 @@ test("route sesi cukup sesi app (pemegang order.edit saja tidak 403); tanpa sesi
     });
     await dengan({ sesiApp: false }, async () => {
         assert.equal((await sesiGet(new NextRequest("https://app.test/api/auth/accurate-session"))).status, 401);
+    });
+});
+
+/** Baris accurate_oauth_session terenkripsi (dibuat lewat upsert asli) berisi token RAHASIA. */
+async function barisSesi() {
+    return dengan({}, async (c) => {
+        await upsertAccurateSession("u-fakturist", { accessToken: RAHASIA, sessionHost: null, sessionId: null, databaseId: null, databaseAlias: null });
+        return c.insert[0] as Record<string, unknown>;
+    });
+}
+const tanpaRahasia = (teks: string) => !teks.includes(RAHASIA) && !teks.includes("pesan-accurate");
+
+test("db-list: galat Accurate/exception → kode tetap + kalimat netral; isi jawaban & pesan tidak ke peramban/log", async () => {
+    const sesiRow = await barisSesi();
+    const kasus: Array<[(url: string) => Promise<Response>, number, string]> = [
+        [async () => new Response(`{"error":"pesan-accurate ${RAHASIA}"}`, { status: 401 }), 502, "ACCURATE_MENOLAK"],
+        [async () => new Response(JSON.stringify({ s: false, d: [`pesan-accurate ${RAHASIA}`] }), { status: 200 }), 502, "ACCURATE_MENOLAK"],
+        [async () => { throw new Error(`pesan-accurate ${RAHASIA}`); }, 500, "GALAT_SERVER"],
+    ];
+    for (const [fetch, status, code] of kasus) {
+        await dengan({ sesiRow, fetch }, async (c) => {
+            const res = await dbListGet(new NextRequest("https://app.test/api/auth/db-list"));
+            const teks = await res.text();
+            assert.equal(res.status, status);
+            assert.equal(JSON.parse(teks).code, code);
+            assert.ok(tanpaRahasia(teks), teks);
+            assert.ok(tanpaRahasia(c.log), c.log);
+        });
+    }
+    await dengan({ sesiRow, fetch: async () => new Response(JSON.stringify({ s: true, d: [{ id: 77, alias: "PT CONTOH" }] }), { status: 200 }) }, async () => {
+        const res = await dbListGet(new NextRequest("https://app.test/api/auth/db-list"));
+        assert.equal(res.status, 200);
+        assert.deepEqual(await res.json(), { s: true, d: [{ id: 77, alias: "PT CONTOH" }] });
+    });
+    await dengan({}, async (c) => {
+        const res = await dbListGet(new NextRequest("https://app.test/api/auth/db-list"));
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "SESI_BELUM_TERHUBUNG");
+        assert.equal(c.fetch.length, 0);
+    });
+});
+
+test("open-db: galat Accurate/exception → kode tetap tanpa isi mentah, sesi tidak diubah; sukses menyimpan database", async () => {
+    const sesiRow = await barisSesi();
+    const buka = (body: unknown) => openDbPost(new NextRequest("https://app.test/api/auth/open-db", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+    const kasus: Array<[(url: string) => Promise<Response>, number, string]> = [
+        [async () => new Response(`pesan-accurate ${RAHASIA}`, { status: 403 }), 502, "ACCURATE_MENOLAK"],
+        [async () => new Response(JSON.stringify({ s: false, d: [`pesan-accurate ${RAHASIA}`] }), { status: 200 }), 502, "ACCURATE_MENOLAK"],
+        [async () => { throw new Error(`pesan-accurate ${RAHASIA}`); }, 500, "GALAT_SERVER"],
+    ];
+    for (const [fetch, status, code] of kasus) {
+        await dengan({ sesiRow, fetch }, async (c) => {
+            const res = await buka({ id: "77", alias: "PT CONTOH" });
+            const teks = await res.text();
+            assert.equal(res.status, status);
+            assert.equal(JSON.parse(teks).code, code);
+            assert.ok(tanpaRahasia(teks), teks);
+            assert.ok(tanpaRahasia(c.log), c.log);
+            assert.equal(c.update.length + c.insert.length, 0, "sesi tidak berubah");
+        });
+    }
+    await dengan({ sesiRow, fetch: async () => new Response(JSON.stringify({ s: true, host: "https://contoh.accurate.id", session: "sesi-db" }), { status: 200 }) }, async (c) => {
+        const res = await buka({ id: "77", alias: "PT CONTOH" });
+        assert.equal(res.status, 200);
+        assert.match(c.fetch[0].url, /open-db\.do\?id=77$/);
+        const v = c.update[0] as { databaseId: string; databaseAlias: string; sessionHost: string };
+        assert.deepEqual([v.databaseId, v.databaseAlias, v.sessionHost], ["77", "PT CONTOH", "https://contoh.accurate.id"]);
+    });
+    await dengan({ sesiRow }, async (c) => {
+        const res = await buka({});
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "DATABASE_ID_KOSONG");
+        assert.equal(c.fetch.length, 0);
     });
 });

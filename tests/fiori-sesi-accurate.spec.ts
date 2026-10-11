@@ -4,8 +4,9 @@
  *   tautan Masuk = route login ber-`state` (cookie httpOnly+Secure+Lax hanya ke callback) / Konsol memakai kartu yang sama.
  * Caller: Playwright lokal, DUA mode server (config sementara, baseURL :3021, `--workers=1`):
  *   A. `LOCAL_AUTH_BYPASS=true` (izin admin, tanpa DB): blok "kartu".
- *   B. Akun nyata (server tanpa bypass + Postgres berisi 2 akun bergrup): set `PW_SESI_FAKTURIST` dan `PW_SESI_TANPA_KUNCI` = "email:sandi"
- *      (grup Fakturist = order.view+order.edit saja; tanpa kunci = dashboard.view saja) → blok "akun nyata"; blok A dilewati.
+ *   B. Akun nyata (server tanpa bypass + Postgres berisi 3 akun bergrup): set `PW_SESI_FAKTURIST`, `PW_SESI_TANPA_KUNCI`, `PW_SESI_KONSOL`
+ *      = "email:sandi" (Fakturist = order.view+order.edit; tanpa kunci = dashboard.view; Konsol = dashboard.view+api_wrapper.view)
+ *      → blok "akun nyata"; blok A dilewati.
  * Dependensi: /api/auth/accurate-session, /api/auth/db-list, /api/auth/open-db di-mock page.route. Route login ASLI dipanggil lewat
  *   route.fetch tanpa mengikuti redirect (page.route tidak mencegat permintaan hasil redirect) → peramban TIDAK pernah ke accurate.id
  *   (dijaga asersi); callback hanya diuji dengan state salah/hilang, yang ditolak sebelum code ditukar.
@@ -18,7 +19,7 @@ const BELUM = { ok: true, connected: false, databaseConnected: false, sessionHos
 const TANPA_DB = { ...BELUM, connected: true };
 const AKTIF = { ok: true, connected: true, databaseConnected: true, sessionHost: "https://contoh.accurate.id", databaseId: "77", databaseAlias: "PT CONTOH" };
 const DAFTAR = { s: true, d: [{ id: 77, alias: "PT CONTOH" }, { id: 88, alias: "PT CONTOH DUA" }] };
-const AKUN_NYATA = Boolean(process.env.PW_SESI_FAKTURIST && process.env.PW_SESI_TANPA_KUNCI);
+const AKUN_NYATA = Boolean(process.env.PW_SESI_FAKTURIST && process.env.PW_SESI_TANPA_KUNCI && process.env.PW_SESI_KONSOL);
 
 type Jawab = ReturnType<typeof json>;
 type Log = { sesi: number; hapus: number; daftar: number; buka: unknown[] };
@@ -212,7 +213,7 @@ async function masuk(page: Page, env: string | undefined) {
 }
 
 test.describe("akun nyata (tanpa bypass)", () => {
-    test.skip(!AKUN_NYATA, "set PW_SESI_FAKTURIST dan PW_SESI_TANPA_KUNCI (server tanpa LOCAL_AUTH_BYPASS)");
+    test.skip(!AKUN_NYATA, "set PW_SESI_FAKTURIST, PW_SESI_TANPA_KUNCI, PW_SESI_KONSOL (server tanpa LOCAL_AUTH_BYPASS)");
 
     test("Fakturist (order.edit, tanpa api_wrapper.view): buka /sesi-accurate + menu profil; callback state salah/hilang ditolak berkode", async ({ page }) => {
         await masuk(page, process.env.PW_SESI_FAKTURIST);
@@ -238,14 +239,23 @@ test.describe("akun nyata (tanpa bypass)", () => {
         expect(jaga.keAccurate).toEqual([]);
     });
 
-    // TERBUKA (S7-sesi): matcher proxy.ts `(?!api|…)` juga melewatkan `/api-wrapper`, jadi header x-current-path tidak ada dan layout
-    // menilai path "/" (dashboard.view) — gerbang halaman Konsol TIDAK berlaku (sudah begitu di main). Hapus `test.fail` saat matcher diperbaiki.
+    // S7-sesi: dulu matcher proxy.ts `(?!api|…)` melewatkan `/api-wrapper` → tanpa x-current-path layout menilai "/" (dashboard.view)
+    // dan Konsol terbuka untuk siapa saja. Kini gerbang halaman Konsol berlaku (lib/proxy-matcher.test.ts).
     test("Fakturist tanpa api_wrapper.view: Konsol /api-wrapper ditolak", async ({ page }) => {
-        test.fail(true, "celah matcher proxy.ts: /api-wrapper lolos gerbang halaman");
         await masuk(page, process.env.PW_SESI_FAKTURIST);
         await pasang(page, { sesi: () => json(BELUM) });
         await page.goto("/api-wrapper", { timeout: 90_000 });
-        await expect(page.getByRole("heading", { name: "Akses ditolak" })).toBeVisible({ timeout: 5_000 });
+        await expect(page.getByRole("heading", { name: "Akses ditolak" })).toBeVisible();
+        await expect(kartu(page)).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Eksekusi Endpoint" })).toHaveCount(0);
+    });
+
+    test("pemegang api_wrapper.view: Konsol terbuka dengan kartu Sesi Accurate", async ({ page }) => {
+        await masuk(page, process.env.PW_SESI_KONSOL);
+        await pasang(page, { sesi: () => json(AKTIF) });
+        await page.goto("/api-wrapper", { timeout: 90_000 });
+        await expect(kartu(page)).toContainText("PT CONTOH (id 77)");
+        await expect(page.getByRole("button", { name: "Eksekusi Endpoint" })).toBeEnabled();
     });
 
     test("tanpa kunci apa pun: /sesi-accurate ditolak dan menu profil tanpa Sesi Accurate", async ({ page }) => {

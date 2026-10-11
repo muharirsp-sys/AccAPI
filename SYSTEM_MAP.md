@@ -171,7 +171,13 @@ Accurate -> GET /api/auth/callback?code&state
      selain itu -> /sesi-accurate?…[&returnTo=/pelunasan|/antrean-faktur|/finance] (tombol Kembali)
 Kartu membaca ?accurate=&alasan= -> MessageStrip dari pemetaan kode (GALAT_ACCURATE), lalu membuang keduanya dari URL.
 Route sesi (GET/DELETE accurate-session, db-list, open-db, accurate-login, callback) cukup sesi app — tidak ada kunci; tidak ada route tulis baru.
+db-list/open-db galat = {ok:false, code, error netral}: SESI_BELUM_TERHUBUNG 400, DATABASE_ID_KOSONG 400, ACCURATE_MENOLAK 502
+  (+accurateStatus), GALAT_SERVER 500 — isi jawaban Accurate/pesan exception tidak ke peramban maupun log.
 ```
+**Gerbang halaman Konsol (S7-sesi).** `proxy.ts` memasang `x-current-path` yang dibaca layout. Matcher lama `(?!api|…)` ikut melewatkan
+halaman `/api-wrapper`, sehingga layout menilai "/" dan `dashboard.view` cukup membuka Konsol. Kini hanya `/api` dan `/api/...`
+dikecualikan (`lib/proxy-matcher.test.ts`). **Dampak produksi saat rilis:** user tanpa `api_wrapper.view` (mis. Fakturist, Admin Incaso)
+kehilangan Konsol (Akses ditolak); login Accurate + pilih database pindah ke `/sesi-accurate` (menu profil).
 
 ### 2. OFF Program Control — Buat & Submit Pengajuan
 ```
@@ -794,7 +800,7 @@ AccAPI/_github_clean/
 ├── .dockerignore                       # Keluarkan env/compose/runtime data dari build context
 ├── Dockerfile.frontend
 ├── Dockerfile.backend
-└── proxy.ts                            # Dev proxy config
+└── proxy.ts                            # Pasang x-current-path untuk gerbang halaman (matcher: semua kecuali /api, /api/..., aset)
 ```
 
 ---
