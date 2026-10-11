@@ -191,13 +191,14 @@ test("butir 5 (POST): hanya finance.resolve_unknown; masukan tak sah 400 SEBELUM
     assert.equal((await beda.json()).code, "database_changed");
 });
 
-test("B1: target Selesaikan menyentuh faktur dari kolom invoiceNo (koreksi) DAN dari segmen kunci (baris persis)", () => {
+test("B1 + B-N2: target Selesaikan menyentuh faktur dari segmen kunci saja (kolom invoiceNo tidak menentukan)", () => {
     const k = buildSalesReceiptIdempotencyPayload({ customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "INV,9", paymentAmount: 1 }, { invoiceNo: "INV-2", paymentAmount: 2 }] }).key;
     const t = targetDariLog({ key: k, customerNo: " C1 ", transDate: "01/10/2026", invoiceNo: "INV-Z" });
     assert.deepEqual([t.customerNo, t.nominal.size], ["C1", 0], "pelanggan dipangkas; tanpa nominal = tidak dicocokkan kasar");
     assert.ok(t.menyentuh("INV,9"), "segmen kunci pertama (berkoma)");
     assert.ok(t.menyentuh("INV-2"), "segmen kunci berikutnya");
-    assert.ok(t.menyentuh("INV-Z"), "kolom invoiceNo (jangkar koreksi)");
+    // Putaran 2 B-N2: kolom invoiceNo (kiriman klien) TIDAK lagi menentukan kandidat — lock memastikan kolom ⊆ segmen kunci.
+    assert.ok(!t.menyentuh("INV-Z"), "faktur hanya di kolom invoiceNo tidak dihitung");
     assert.ok(!t.menyentuh("INV") && !t.menyentuh("C1"), "bukan faktur baris");
 });
 
@@ -235,4 +236,16 @@ test("B-N1: nominalDariKunci mengurai sidik jari (bayar, bayar+potongan, faktur 
     assert.deepEqual([...n!].sort(), [["INV-1", [900, 1000]], ["INV-2", [500, 500]]]);
     assert.equal(nominalDariKunci(fp([{ invoiceNo: "I1", paymentAmount: 9, detailDiscount: [{ accountNo: "6001", discountNotes: "a;b:c", amount: 1 }] }])), null, "catatan berpemisah");
     assert.equal(nominalDariKunci({ ...fp([{ invoiceNo: "I1", paymentAmount: 9 }]), customerNo: "C2" }), null, "awalan beda");
+});
+
+test("B-N2: lock menolak entri yang kolom invoiceNo-nya memuat faktur di luar segmen kunci (400 KEY_IDENTITY_MISMATCH, sebelum DB)", async () => {
+    const ok = buildSalesReceiptIdempotencyPayload({ customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 1 }, { invoiceNo: "INV-2", paymentAmount: 2 }] });
+    for (const invoiceNo of ["INV-1,INV-9", "INV-9"]) {
+        const res = await sebagai(["pelunasan.kirim"], () => lockPost(jsonPost("/api/idempotency/lock", { keys: [{ ...ok, invoiceNo }], expectedDatabaseId: "DB-1" })));
+        assert.equal(res.status, 400, invoiceNo);
+        assert.equal((await res.json()).code, "KEY_IDENTITY_MISMATCH", invoiceNo);
+    }
+    // Kontrol: kolom asli (urutan/huruf sama dengan rumus) lolos cek ini -> berhenti di sesi Accurate (tiruan tanpa sesi).
+    const asli = await sebagai(["pelunasan.kirim"], () => lockPost(jsonPost("/api/idempotency/lock", { keys: [ok], expectedDatabaseId: "DB-1" })));
+    assert.equal((await asli.json()).code, "ACCURATE_SESSION_INCOMPLETE");
 });

@@ -37,20 +37,23 @@ export function bolehDiselesaikan(r: BarisLog, now: Date): boolean {
     return false;
 }
 
+/** Faktur `no` adalah awal segmen sidik jari `key` (`_<faktur>|` atau `;<faktur>|`), tanpa beda huruf/spasi (A-N2). Tanpa mengurai
+ * kunci: catatan potongan berpemisah paling banyak menambah "sentuhan" (arah aman). */
+export const kunciMenyentuh = (key: string, no: unknown) => {
+    const k = key.toUpperCase();
+    const n = normFaktur(no);
+    return k.includes(`_${n}|`) || k.includes(`;${n}|`);
+};
+
 /**
- * Target pencarian dari baris idempotency_log. Faktur = kolom invoiceNo (koreksi dijangkar lewat kolom ini) DAN segmen sidik jari
- * kunci (baris persis) — gabungan, lebih banyak menyentuh = lebih aman. Tanpa nominal: hanya `mirip`, tidak dicocokkan kasar.
- * Dibandingkan tanpa beda huruf/spasi (putaran 2, A-N2).
+ * Target pencarian dari baris idempotency_log. Faktur = segmen sidik jari KUNCI saja (putaran 2, B-N2): kolom invoiceNo adalah
+ * kiriman klien; lock memastikan setiap fakturnya juga segmen kunci (KEY_IDENTITY_MISMATCH), jadi faktur koreksi yang dijangkar
+ * lewat kolom itu tetap tercakup. Tanpa nominal: hanya `mirip`, tidak dicocokkan kasar.
  */
-export function targetDariLog(r: { key: string; customerNo: string | null; transDate: string | null; invoiceNo: string | null }): TargetRiwayat {
-    const kolom = `,${normFaktur(r.invoiceNo).split(",").map(normFaktur).join(",")},`;
-    const kunci = r.key.toUpperCase();
+export function targetDariLog(r: { key: string; customerNo: string | null; transDate: string | null }): TargetRiwayat {
     return {
         key: r.key, customerNo: String(r.customerNo ?? "").trim(), transDate: String(r.transDate ?? "").trim(), nominal: new Map(),
-        menyentuh: (no) => {
-            const n = normFaktur(no);
-            return kolom.includes(`,${n},`) || kunci.includes(`_${n}|`) || kunci.includes(`;${n}|`);
-        },
+        menyentuh: (no) => kunciMenyentuh(r.key, no),
     };
 }
 

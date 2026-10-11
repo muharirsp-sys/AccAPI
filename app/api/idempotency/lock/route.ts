@@ -14,6 +14,7 @@ import { resolveRequestPermissions } from '@/lib/rbac/resolve';
 import { decideLock, type LockEntry } from '@/lib/idempotency-lock';
 import { memuatPlaceholderAkun } from '@/lib/sales-receipt-upload';
 import { getAccurateSession } from '@/lib/accurate-session';
+import { kunciMenyentuh } from '@/lib/idempotency-resolve';
 
 export async function POST(req: Request) {
     try {
@@ -43,8 +44,11 @@ export async function POST(req: Request) {
 
         // Tinjauan B3: kolom pelanggan/tanggal yang disimpan (target pencarian Selesaikan & identitas koreksi) harus sama dengan
         // awalan sidik jari kunci (rumus buildSalesReceiptIdempotencyPayload memangkas keduanya).
+        // Putaran 2 B-N2: setiap faktur kolom invoiceNo (jangkar identitas kiriman koreksi) harus segmen sidik jari key — Selesaikan
+        // menentukan kandidat dari key saja.
         const awalan = (k: LockEntry) => `PAY_${String(k.customerNo ?? '').trim()}_${String(k.transDate ?? '').trim()}_`;
-        if (!preview && keys.some((k: LockEntry) => !k.key.startsWith(awalan(k)))) {
+        const fakturDiKunci = (k: LockEntry) => String(k.invoiceNo ?? '').split(',').map((x) => x.trim()).filter(Boolean).every((no) => kunciMenyentuh(k.key, no));
+        if (!preview && keys.some((k: LockEntry) => !k.key.startsWith(awalan(k)) || !fakturDiKunci(k))) {
             return NextResponse.json({ error: 'Kunci idempotency tidak sesuai pelanggan/tanggal barisnya — muat ulang lalu ulangi dari Tinjau. Tidak ada yang dikunci.', code: 'KEY_IDENTITY_MISMATCH' }, { status: 400 });
         }
 

@@ -94,8 +94,9 @@ bisa dipakai untuk blok lock, dan sebaliknya).
 - **Non-pratinjau wajib `expectedDatabaseId`** (BARU): 400 `DATABASE_REQUIRED`; sesi tanpa database 400
   `ACCURATE_SESSION_INCOMPLETE`; database sesi berbeda 409 `database_changed` — semua sebelum menulis. Lock mencatat database itu
   di `idempotency_log."databaseId"`.
-- Non-pratinjau: `key` setiap entri wajib diawali `PAY_<customerNo dipangkas>_<transDate dipangkas>_` (rumus sidik jari) —
-  selain itu **400** `{code:"KEY_IDENTITY_MISMATCH"}` sebelum menulis (lib `kirimPelunasan` selalu memenuhinya).
+- Non-pratinjau: `key` setiap entri wajib diawali `PAY_<customerNo dipangkas>_<transDate dipangkas>_` (rumus sidik jari), dan
+  setiap faktur di `invoiceNo` (dipisah koma) wajib juga segmen faktur di `key` (putaran 2, B-N2) — selain itu **400**
+  `{code:"KEY_IDENTITY_MISMATCH"}` sebelum menulis (lib `kirimPelunasan` selalu memenuhinya).
 - Jawaban sukses tidak berubah: `{ok, lockId, blockedKeys, blockedEntries}`.
 
 ## 3. `POST /api/idempotency/complete` — TIDAK berubah
@@ -104,7 +105,7 @@ bisa dipakai untuk blok lock, dan sebaliknya).
 
 Izin `finance.resolve_unknown`. 1–50 `key`. Mencari di Accurate dengan sesi PEMANGGIL (database sesi kini): **kandidat** =
 pelunasan di grup pelanggan+tanggal baris yang MENYENTUH faktur mana pun dari baris (berapa pun nominal/potongannya; faktur
-dari kolom `invoiceNo` DAN dari kunci). Tidak menulis apa pun.
+dari segmen `key` saja — kolom `invoiceNo` kiriman klien tidak menentukan, putaran 2 B-N2). Tidak menulis apa pun.
 ```json
 {"ok": true, "databaseId": "123", "databaseAlias": "PT A",
  "rows": [{"key": "PAY_…", "status": "UNKNOWN", "customerNo": "C1", "transDate": "01/10/2026", "invoiceNo": "INV-1",
@@ -234,3 +235,5 @@ diselesaikan; tampilkan bila > 0).
 - (11 Okt, putaran 2 B-N1, REV-B H) §5 badan `acceptSimilar?`; 409 BARU `similar_not_identical` (kandidat tidak identik kasar);
   `similar_found` & `similar_not_identical` membawa `hint:"takeover"` (jalur cicilan belum terkirim = override takeover lock);
   `checked_source` jejak diberi penanda `[mirip: …]` bila diterima.
+- (11 Okt, putaran 2 B-N2) §2 `KEY_IDENTITY_MISMATCH` juga bila faktur kolom `invoiceNo` bukan segmen `key`; §4/§5 kandidat
+  ditentukan dari segmen `key` saja.
