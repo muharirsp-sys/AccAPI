@@ -1006,8 +1006,12 @@ accurate_write_attempt [klaim tulis Accurate per subjek × generasi] ── accu
 
 # Dynamic RBAC (additive — Fase 2/4; user.role & user.permissions TIDAK dihapus)
 access_group ──── group_permission (group_id)   [permission_key = "module.action"]
-  └──────────── user_group (group_id + user_id)  [akses user = UNION group]
+  └──────────── user_group (group_id + user_id)  [akses user = UNION group; is_primary = bintang grup utama, maks. 1/user — S7-0, dibaca mulai S7-1/S7-3]
 permission_audit_log [siapa ubah group/permission siapa, kapan]
+
+# Principal resmi (S7-0 BL-64; tabel saja — benih & pembaca = S7-2; DDL manual docs/handover/DDL_S7_0.sql SEBELUM image)
+principal [code unik = kode OPC/Klaim] ── principal_variant (principal_id + variant_key; '' = tanpa varian)
+  └──────────── principal_alias [alias_norm UNIK global -> principal (+ varian); nilai WAJIB dari normalizer baku S7-2]
 ```
 
 **Status Lifecycle offBatch:**

@@ -437,6 +437,72 @@ export const migrations = [
       CREATE INDEX IF NOT EXISTS idx_invoice_outbox_event_order ON invoice_outbox_event (order_id, created_at);
     `,
   },
+  {
+    // 2026-10-11 (S7-0 BL-64, owner 11 Okt: tabel resmi + alias; KINO NON FOOD / Forisa MT-GT / Heinz HZ-BS = VARIAN satu
+    // principal; DRAFT — zona skema, butuh review manusia). Tabel saja: TANPA benih (S7-2 membuat laporan matched/ambiguous
+    // dulu), tanpa pembaca. Lihat db/migrations/0027_principal.sql. Unik kode & alias = indeks terpisah agar entri ini bisa
+    // melengkapi tabel yang ada tanpa indeksnya; sudahAda memeriksa SEMUA indeks (PK tersirat = tabel ada).
+    nama: "principal (+variant, +alias)",
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema()
+               AND indexname IN ('uq_principal_code', 'principal_variant_pkey', 'principal_alias_pkey', 'idx_principal_alias_principal')
+               HAVING count(*) = 4`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS principal (
+          id         text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+          code       text NOT NULL,
+          name       text NOT NULL,
+          is_active  boolean NOT NULL DEFAULT true,
+          created_by text,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_by text,
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT principal_code_format CHECK (code ~ '^[A-Z0-9_-]{1,20}$'),
+          CONSTRAINT principal_name_isi CHECK (btrim(name) <> '')
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_principal_code ON principal (code);
+      CREATE TABLE IF NOT EXISTS principal_variant (
+          principal_id text NOT NULL,
+          variant_key  text NOT NULL DEFAULT '',
+          created_by   text,
+          created_at   timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT principal_variant_pkey PRIMARY KEY (principal_id, variant_key),
+          CONSTRAINT principal_variant_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
+          CONSTRAINT principal_variant_key_format CHECK (variant_key ~ '^[A-Z0-9_-]{0,20}$')
+      );
+      CREATE TABLE IF NOT EXISTS principal_alias (
+          alias_norm   text NOT NULL,
+          principal_id text NOT NULL,
+          variant_key  text,
+          alias_asli   text NOT NULL,
+          jenis        text NOT NULL,
+          sumber       text NOT NULL,
+          created_by   text,
+          created_at   timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT principal_alias_pkey PRIMARY KEY (alias_norm),
+          CONSTRAINT principal_alias_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
+          CONSTRAINT principal_alias_variant_fk FOREIGN KEY (principal_id, variant_key)
+              REFERENCES principal_variant (principal_id, variant_key) ON DELETE RESTRICT,
+          CONSTRAINT principal_alias_norm_isi CHECK (btrim(alias_norm) <> ''),
+          CONSTRAINT principal_alias_asli_isi CHECK (btrim(alias_asli) <> ''),
+          CONSTRAINT principal_alias_sumber_isi CHECK (btrim(sumber) <> ''),
+          CONSTRAINT principal_alias_jenis CHECK (jenis IN
+              ('nama', 'kode_master_barang', 'label_mapping', 'nama_bank', 'nama_summary', 'nama_surat'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_principal_alias_principal ON principal_alias (principal_id, variant_key);
+    `,
+  },
+  {
+    // 2026-10-11 (S7-0 BL-63, owner 11 Okt: BINTANG grup utama, opsional; DRAFT — zona skema, butuh review manusia).
+    // ADD COLUMN dengan DEFAULT: baris lama false seketika (tanpa rewrite). Satu bintang per user = indeks unik parsial.
+    // TANPA backfill di sini: "user tepat 1 grup -> berbintang" = bagian BACKFILL docs/handover/DDL_S7_0.sql (manual).
+    // Lihat db/migrations/0028_user_group_primary.sql. Indeks tersirat kolom ada -> sudahAda cukup memeriksa indeks.
+    nama: "user_group.is_primary",
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'uq_user_group_primary'`,
+    sql: `
+      ALTER TABLE user_group ADD COLUMN IF NOT EXISTS is_primary boolean NOT NULL DEFAULT false;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_user_group_primary ON user_group (user_id) WHERE is_primary;
+    `,
+  },
 ];
 
 async function main() {
