@@ -665,3 +665,36 @@ test("Tanpa izin: Kirim/Izinkan nonaktif dengan alasan terlihat, tanpa nama kunc
     await expect(page.locator("main")).not.toContainText("pelunasan.kirim");
     await page.screenshot({ path: "test-results/fiori-pelunasan-11-tanpa-izin.png", fullPage: true });
 });
+
+// ── Susulan S6e (tinjauan UI 2b) ──────────────────────────────────────────────────────────────────────
+
+test("Susulan 2b #3: baris terposting membawa nomor dari jawaban Accurate; Excel memisah Nomor Accurate dan Nomor mirip", async ({ page }) => {
+    await pasang(page);
+    await sampaiTinjau(page);
+    await page.getByRole("button", { name: "Kirim 4 pelunasan…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Kirim 4 pelunasan" }).click();
+    await expect(page.getByLabel("Ringkasan hasil")).toContainText("Terposting4", { timeout: 60_000 });
+    await expect(page.getByRole("table", { name: "Hasil per baris" })).toContainText("Terposting · PR.2026.10.00001 · paket 1");
+    const unduh = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Laporan per baris (Excel)" }).click();
+    const wb = XLSX.readFile(await (await unduh).path());
+    const isi = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+    expect(isi.map((r) => r["Nomor Accurate"]).sort()).toEqual(["PR.2026.10.00001", "PR.2026.10.00002", "PR.2026.10.00003", "PR.2026.10.00004"]);
+    expect(isi.every((r) => r["Nomor mirip"] === "")).toBe(true);
+});
+
+test("Susulan 2b #1: server sudah SUCCESS saat dicari = Terposting tanpa nomor kandidat; nomor lihat jejak penyelesaian", async ({ page }) => {
+    await pasang(page, {
+        tulis: () => "putus",
+        resolve: (key) => cari(key, { status: "SUCCESS", eligible: false, ...kandidat("PR.2026.10.00055", "INV/A/001", 100000) }),
+    });
+    await sampaiHasilRagu(page);
+    await page.getByRole("button", { name: /^Selesaikan INV\/A\/001/ }).click();
+    const sel = page.getByRole("dialog", { name: "Selesaikan pelunasan tidak pasti" });
+    await expect(sel).toContainText("sudah tercatat terposting di server; nomor pelunasan Accurate lihat jejak penyelesaian.");
+    await sel.getByRole("button", { name: "Batal" }).click();
+    await expect(page.getByLabel("Ringkasan hasil")).toContainText("Terposting1");
+    const tabel = page.getByRole("table", { name: "Hasil per baris" });
+    await expect(tabel).toContainText("Diselesaikan: terposting — nomor pelunasan Accurate lihat jejak penyelesaian");
+    await expect(tabel).not.toContainText("PR.2026.10.00055");
+});

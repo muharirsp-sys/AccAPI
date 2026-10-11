@@ -24,7 +24,7 @@ import { buildSalesReceiptIdempotencyPayload } from "@/lib/sales-receipt-fingerp
 import { memuatPlaceholderAkun } from "@/lib/sales-receipt-upload";
 import { rupiah } from "@/lib/promo-ui";
 import {
-    KODE_DISELESAIKAN, LABEL_ALASAN, LABEL_DILEWATI, LABEL_HASIL, barisLaporanHasil, butuhTakeover, fakturDari, hitungHasil, nilaiUang, paketDari, rencanaKirim,
+    KODE_DISELESAIKAN, LABEL_ALASAN, LABEL_DILEWATI, LABEL_HASIL, barisLaporanHasil, butuhTakeover, fakturDari, hitungHasil, nilaiUang, nomorTerposting, paketDari, rencanaKirim,
     terapkanPenyelesaian, type Penyelesaian,
 } from "@/lib/pelunasan-wizard";
 import { waktuWita } from "@/app/(dashboard)/principal-order/bersama";
@@ -384,7 +384,7 @@ export function LangkahHasil({ tinjauan: t, hasil, izin, onBaru }: { tinjauan: T
             <FooterToolbar message={`Selesai ${waktuWita(hasil.selesai)} WITA · ${hasil.paket} paket · ${namaDatabase(t)}`}>
                 <Button icon={<Download className="fi-icon" aria-hidden />} onClick={() => void unduhExcel([
                     ...barisLaporanHasil(hasil.kirim, efektif, hasil.ditahan),
-                    ...t.dilewati.map((d) => ({ "Code Outlet": "", "Faktur": `baris berkas ${d.row}`, "Metode": "", "Uang diterima": 0, "Paket": "", "Hasil": "Dilewati saat dibaca", "Nomor Accurate": "", "Keterangan": LABEL_DILEWATI[d.reason] ?? d.reason })),
+                    ...t.dilewati.map((d) => ({ "Code Outlet": "", "Faktur": `baris berkas ${d.row}`, "Metode": "", "Uang diterima": 0, "Paket": "", "Hasil": "Dilewati saat dibaca", "Nomor Accurate": "", "Nomor mirip": "", "Keterangan": LABEL_DILEWATI[d.reason] ?? d.reason })),
                 ], "Hasil Pelunasan", "Hasil_Pelunasan")}>Laporan per baris (Excel)</Button>
                 <Button variant="primary" onClick={onBaru}>Pelunasan baru</Button>
             </FooterToolbar>
@@ -410,4 +410,5 @@ function BadgeHasil({ h }: { h: BarisHasil | undefined }) {
 }
 const keterangan = (h: BarisHasil | undefined) => !h ? "Tanpa hasil dari server; cek Accurate sebelum mengulang."
     : h.code === KODE_DISELESAIKAN ? h.message
-        : h.outcome === "terposting" ? `Terposting${h.receiptNumbers?.length ? ` · ${h.receiptNumbers.join(", ")}` : ""} · paket ${h.paket}` : `Paket ${h.paket}: ${h.message}`;
+        // Nomor = item jawaban Accurate (bukan receiptNumbers: untuk baris lain itu nomor MIRIP).
+        : h.outcome === "terposting" ? `Terposting${nomorTerposting(h).length ? ` · ${nomorTerposting(h).join(", ")}` : ""} · paket ${h.paket}` : `Paket ${h.paket}: ${h.message}`;

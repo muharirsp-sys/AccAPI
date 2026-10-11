@@ -5,7 +5,7 @@
  * Caller: app/(dashboard)/pelunasan/*; lib/pelunasan-wizard.test.ts.
  * Dependensi: lib/pelunasan (sel, tipe PetaAkun & pratinjau ganda), lib/sales-receipt-fingerprint, lib/sales-receipt-upload (override, penanda akun).
  * Main Functions: bersihkanHeader, isiBerkas, periksaAkun, petaDari, rencanaKirim, LABEL_ALASAN, LABEL_DILEWATI, LABEL_HASIL, hitungHasil,
- *   paketDari, LABEL_STATUS_SERVER, terapkanPenyelesaian, nilaiUang, barisLaporanHasil.
+ *   paketDari, LABEL_STATUS_SERVER, terapkanPenyelesaian, nomorTerposting, nilaiUang, barisLaporanHasil.
  * Side Effects: tidak ada (murni).
  */
 import { getTextVal, getVal, type Bebas } from "./pelunasan/sel.ts";
@@ -157,14 +157,30 @@ export function terapkanPenyelesaian(h: BarisHasil | undefined, index: number, s
     if (!s) return h;
     const paket = h?.paket ?? 0;
     return s.status === "SUCCESS"
-        ? { index, paket, outcome: "terposting", code: KODE_DISELESAIKAN, receiptNumbers: s.nomor, message: `Diselesaikan: terposting${s.nomor.length ? ` ${s.nomor.join(", ")}` : ""}` }
+        // nomor kosong = server sudah SUCCESS tanpa keputusan di dialog ini: nomornya hanya di jejak penyelesaian (kandidat pencarian bukan nomor itu).
+        ? { index, paket, outcome: "terposting", code: KODE_DISELESAIKAN, receiptNumbers: s.nomor,
+            message: `Diselesaikan: terposting${s.nomor.length ? ` ${s.nomor.join(", ")}` : " — nomor pelunasan Accurate lihat jejak penyelesaian"}` }
         : { index, paket, outcome: "gagal", code: KODE_DISELESAIKAN, message: "Diselesaikan: tidak ada di Accurate — boleh dikirim ulang lewat Pelunasan baru." };
 }
+
+/**
+ * Nomor pelunasan Accurate yang BENAR-BENAR terposting (susulan S6e, tinjauan 2b): keputusan Selesaikan, atau item jawaban bulk-save
+ * (`r.number`, bentuk yang sama dibaca lib/apiFetcher). `receiptNumbers` baris Tidak pasti/Ditahan = nomor MIRIP, bukan nomor terposting.
+ */
+export function nomorTerposting(h: Pick<BarisHasil, "outcome" | "code" | "receiptNumbers" | "item"> | undefined): string[] {
+    if (h?.outcome !== "terposting") return [];
+    if (h.code === KODE_DISELESAIKAN) return h.receiptNumbers ?? [];
+    const n = (h.item as { r?: { number?: unknown } } | undefined)?.r?.number;
+    const teks = typeof n === "string" || typeof n === "number" ? String(n).trim() : "";
+    return teks ? [teks] : [];
+}
+/** Nomor pelunasan Accurate yang MIRIP (petunjuk Tidak pasti / alasan Ditahan) — kolom terpisah, tidak pernah "Nomor Accurate". */
+const nomorMirip = (h: Pick<BarisHasil, "outcome" | "receiptNumbers"> | undefined) => (h && h.outcome !== "terposting" ? h.receiptNumbers ?? [] : []);
 
 export const fakturDari = (row: Bebas) => (Array.isArray(row.detailInvoice) ? row.detailInvoice : []).map((d: Bebas) => String(d.invoiceNo ?? "")).filter(Boolean);
 
 /** Laporan per baris (Excel atas permintaan): baris terkirim + hasilnya, lalu baris yang ditahan di Tinjau. */
-export function barisLaporanHasil(kirim: Bebas[], hasil: Array<Pick<BarisHasil, "index" | "paket" | "outcome" | "message" | "receiptNumbers">>, ditahan: DuplicateReviewEntry[]) {
+export function barisLaporanHasil(kirim: Bebas[], hasil: Array<Pick<BarisHasil, "index" | "paket" | "outcome" | "message" | "code" | "receiptNumbers" | "item">>, ditahan: DuplicateReviewEntry[]) {
     const per = new Map(hasil.map((h) => [h.index, h]));
     return [
         ...kirim.map((row, i) => {
@@ -172,12 +188,14 @@ export function barisLaporanHasil(kirim: Bebas[], hasil: Array<Pick<BarisHasil, 
             return {
                 "Code Outlet": String(row.customerNo ?? ""), "Faktur": fakturDari(row).join(", "), "Metode": String(row.paymentMethod ?? ""),
                 "Uang diterima": Number(row.chequeAmount) || 0, "Paket": h?.paket || "", "Hasil": h ? LABEL_HASIL[h.outcome].label : "Tidak pasti",
-                "Nomor Accurate": (h?.receiptNumbers ?? []).join(", "), "Keterangan": h?.message ?? "Tanpa hasil dari server; cek Accurate sebelum mengulang.",
+                "Nomor Accurate": nomorTerposting(h).join(", "), "Nomor mirip": nomorMirip(h).join(", "),
+                "Keterangan": h?.message ?? "Tanpa hasil dari server; cek Accurate sebelum mengulang.",
             };
         }),
         ...ditahan.map((r) => ({
             "Code Outlet": r.customerNo, "Faktur": r.invoiceNo, "Metode": r.paymentMethod, "Uang diterima": Number(r.row.chequeAmount) || 0, "Paket": "",
-            "Hasil": "Dilewati · potensi ganda", "Nomor Accurate": r.matchedReceiptNumbers.join(", "), "Keterangan": r.reasons.map((x) => LABEL_ALASAN[x]).join("; "),
+            "Hasil": "Dilewati · potensi ganda", "Nomor Accurate": "", "Nomor mirip": r.matchedReceiptNumbers.join(", "),
+            "Keterangan": r.reasons.map((x) => LABEL_ALASAN[x]).join("; "),
         })),
     ];
 }

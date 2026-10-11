@@ -54,7 +54,9 @@ export function SelesaikanDialog({ kunci, ringkas, lockDb, izinTakeover, onClose
     const cariLagi = () => { setKeputusan(""); setNomor(""); setYakin(false); cariUlang(); };
     const db = load.status === "siap" ? load.data : undefined;
     const r = db?.rows.find((x) => x.key === kunci);
-    const sudah: Penyelesaian | undefined = r?.status === "SUCCESS" ? { status: "SUCCESS", nomor: r.receiptNumbers, pesan: "sudah tercatat terposting di server." }
+    // SUCCESS dari server tanpa keputusan di dialog ini: `receiptNumbers` = KANDIDAT pencarian (menyentuh faktur), bukan nomor yang
+    // ditetapkan — nomornya hanya di jejak penyelesaian (susulan S6e, tinjauan 2b).
+    const sudah: Penyelesaian | undefined = r?.status === "SUCCESS" ? { status: "SUCCESS", nomor: [], pesan: "sudah tercatat terposting di server; nomor pelunasan Accurate lihat jejak penyelesaian." }
         : r?.status === "FAILED" ? { status: "FAILED", nomor: [], pesan: "sudah tercatat tidak terkirim di server; boleh dikirim ulang." } : undefined;
     const target = dbWajib ? { id: dbWajib, label: `database id ${dbWajib}` } : lockDb;
     // Nomor untuk "terposting" = kandidat yang menyentuh faktur baris (server menerima kandidat mana pun; nomor kosong tidak bisa dipakai).
@@ -100,7 +102,7 @@ export function SelesaikanDialog({ kunci, ringkas, lockDb, izinTakeover, onClose
             // alreadyResolved: klik ganda atau Finance lain lebih dulu — yang berlaku = status SERVER, bukan pilihan di dialog ini.
             if (j.sudah) {
                 onClose(j.status === "SUCCESS"
-                    ? { status: "SUCCESS", nomor: j.nomor, pesan: `sudah diselesaikan sebelumnya (oleh Anda atau Finance lain): terposting${j.nomor.length ? ` ${j.nomor.join(", ")}` : ""}; status baris mengikuti server.` }
+                    ? { status: "SUCCESS", nomor: [], pesan: "sudah diselesaikan sebelumnya (oleh Anda atau Finance lain): terposting, nomor pelunasan Accurate lihat jejak penyelesaian; status baris mengikuti server." }
                     : { status: "FAILED", nomor: [], pesan: "sudah diselesaikan sebelumnya (oleh Anda atau Finance lain): tidak ada di Accurate, boleh dikirim ulang; status baris mengikuti server." });
                 return;
             }
