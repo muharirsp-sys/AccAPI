@@ -189,3 +189,27 @@ test("riwayat: 403 tanpa users.manage/users.view; 400 limit/cursor rusak SEBELUM
     assert.equal(bacaKursor(k), null, "id dengan '|' ditolak (kursor ambigu)");
     assert.deepEqual(bacaKursor(kodeKursor("2026-10-11T01:02:03.123456", "abc")), { ts: "2026-10-11T01:02:03.123456", id: "abc" });
 });
+
+test("preset BL-37 SQL (statis): kunci = PERSIS D-01 §B di kedua blok, semua terdaftar di registry, tanpa kunci terlarang; grup lama tidak disentuh", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { isValidPermissionKey } = await import("./rbac/registry.ts");
+    const sql = readFileSync(new URL("../docs/handover/RBAC_PRESET_BL37.sql", import.meta.url), "utf8").replace(/--.*$/gm, "");
+    const blok = [...sql.matchAll(/WITH isi\(grup, kunci\) AS \(VALUES([\s\S]*?)\n\)/g)].map((m) => [...m[1].matchAll(/\('([^']+)', '([^']+)'\)/g)].map((x) => `${x[1]}|${x[2]}`).sort());
+    assert.equal(blok.length, 2, "blok isi + blok verifikasi");
+    assert.deepEqual(blok[0], blok[1], "blok verifikasi = blok isi");
+    const D01: Record<string, string[]> = {
+        Fakturist: ["dashboard.view", "order.view", "order.create", "order.edit", "order.export", "sales_history.view", "principles.view"],
+        "Admin Incaso": ["dashboard.view", "pelunasan.kirim", "sales_history.view"],
+        Kasir: ["dashboard.view"],
+        "Admin Gudang": ["dashboard.view", "rekapan_nota.view", "rekapan_nota.manage", "rekapan_nota.print", "rekapan_nota.approve_takeout", "order.view"],
+    };
+    assert.deepEqual(blok[0], Object.entries(D01).flatMap(([g, ks]) => ks.map((k) => `${g}|${k}`)).sort());
+    for (const x of blok[0]) {
+        const k = x.split("|")[1];
+        assert.ok(isValidPermissionKey(k), k);
+        assert.ok(!/^(users\.|api_wrapper\.)|^(finance\.resolve_unknown|finance\.override_duplicate|order\.resolve_unknown)$/.test(k), `kunci terlarang ${k}`);
+    }
+    assert.match(sql, /ON CONFLICT \(name\) DO NOTHING\s+RETURNING id, name/);
+    assert.match(sql, /SELECT baru\.id, isi\.kunci FROM baru JOIN isi/, "izin hanya untuk grup yang BARU dibuat");
+    assert.doesNotMatch(sql, /\b(UPDATE|DELETE)\b/i);
+});

@@ -155,3 +155,6 @@ Cursor rusak → 400 `INPUT_TIDAK_VALID`. Label aksi: `auditActionLabels` di `li
 - **Butir 3 (BL-63):** `getPrimaryGroup(userId)` → `{ id, name, isPreset, starred } | null` (`starred = false` = utama karena satu-satunya
   grup). Peta nama→role hanya berlaku untuk grup `is_preset = true` (grup custom bernama "Admin" tidak menurunkan role) — lebih ketat dari
   route lama yang memetakan nama saja.
+- **Butir 5 (label & preset):** `permissionKeyLabel("off_program_control.sm_approve")` = `"OFF Program Control · Setujui (SM)"`.
+  Preset BL-37 = `docs/handover/RBAC_PRESET_BL37.sql` (IT Support, sekali; grup bernama sama yang sudah ada TIDAK disentuh — verifikasi
+  `cocok = false`). Cek baca-saja grup utama vs `user.role` = `docs/handover/RBAC_S7_1_CEK_ROLE.sql` (sebelum & sesudah deploy).

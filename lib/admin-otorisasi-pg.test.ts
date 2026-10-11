@@ -626,3 +626,58 @@ test("Riwayat per user & per grup: users.view cukup; terbaru dulu; keyset tidak 
         assert.equal(g.items[0].targetGroupName, null);
     });
 });
+
+// ---------------- Preset BL-37 (SQL terarah) + kueri cek role (baca-saja) ----------------
+
+test("preset BL-37 SQL: idempoten (jalan 2x), isi persis D-01 §B, grup lama bernama sama TIDAK disentuh, is_preset; cek role melaporkan selisih", { skip: pgSkip }, async () => {
+    const { readFileSync } = await import("node:fs");
+    const NAMA = ["Fakturist", "Admin Incaso", "Kasir", "Admin Gudang"];
+    const bersihPreset = async () => {
+        const ids = (await m.pool.query(`SELECT id FROM access_group WHERE name = ANY($1)`, [NAMA])).rows.map((r) => r.id as string);
+        await m.pool.query(`DELETE FROM group_permission WHERE group_id = ANY($1)`, [ids]);
+        await m.pool.query(`DELETE FROM permission_audit_log WHERE target_group_id = ANY($1)`, [ids]);
+        await m.pool.query(`DELETE FROM access_group WHERE id = ANY($1)`, [ids]);
+    };
+    await dunia(async (w) => {
+        await bersihPreset();
+        // Grup lama "Kasir" (custom, isi lain) sudah ada -> tidak boleh disentuh.
+        const kasirLama = await w.grup("kasir", ["dashboard.view", "finance.view"], { nama: "Kasir" });
+        const sqlPreset = readFileSync(new URL("../docs/handover/RBAC_PRESET_BL37.sql", import.meta.url), "utf8");
+        const jalan = async () => {
+            const c = await m.pool.connect();
+            try { return (await c.query(sqlPreset)) as unknown as Array<{ rows: Array<Record<string, unknown>> }>; } finally { c.release(); }
+        };
+        try {
+            const r1 = await jalan();
+            assert.deepEqual(r1.find((x) => x.rows[0] && "grup_dibuat" in x.rows[0])!.rows[0], { grup_dibuat: "3", izin_disisipkan: "16", audit: "3" });
+            const r2 = await jalan();
+            assert.deepEqual(r2.find((x) => x.rows[0] && "grup_dibuat" in x.rows[0])!.rows[0], { grup_dibuat: "0", izin_disisipkan: "0", audit: "0" }, "idempoten");
+            const verif = Object.fromEntries(r2[r2.length - 1].rows.map((x) => [x.grup, [x.is_preset, x.cocok]]));
+            assert.deepEqual(verif, { "Admin Gudang": [true, true], "Admin Incaso": [true, true], Fakturist: [true, true], Kasir: [false, false] });
+            const kunci = async (nama: string) => (await m.pool.query(`SELECT array_agg(permission_key ORDER BY permission_key) AS k FROM group_permission gp JOIN access_group g ON g.id = gp.group_id WHERE g.name = $1`, [nama])).rows[0].k;
+            assert.deepEqual(await kunci("Kasir"), ["dashboard.view", "finance.view"], "grup lama tidak disentuh");
+            assert.equal((await m.pool.query(`SELECT id FROM access_group WHERE name = 'Kasir'`)).rows[0].id, kasirLama);
+            assert.deepEqual(await kunci("Admin Gudang"), ["dashboard.view", "order.view", "rekapan_nota.approve_takeout", "rekapan_nota.manage", "rekapan_nota.print", "rekapan_nota.view"]);
+            assert.deepEqual(await kunci("Admin Incaso"), ["dashboard.view", "pelunasan.kirim", "sales_history.view"]);
+            assert.deepEqual(await kunci("Fakturist"), ["dashboard.view", "order.create", "order.edit", "order.export", "order.view", "principles.view", "sales_history.view"]);
+        } finally {
+            await bersihPreset();
+        }
+
+        // Cek role (baca-saja): Manager berbintang tetapi role staff -> cek 1; role admin tanpa utama Admin -> cek 2.
+        const mgr = await w.grup("manager", ["dashboard.view"], { preset: true, nama: "Manager" });
+        const u = await w.user("cek", { role: "staff" });
+        await w.masuk(u, mgr, true);
+        const v = await w.user("cekadmin", { role: "admin" });
+        await w.masuk(v, mgr);
+        const c = await m.pool.connect();
+        try {
+            const hasil = (await c.query(readFileSync(new URL("../docs/handover/RBAC_S7_1_CEK_ROLE.sql", import.meta.url), "utf8"))) as unknown as Array<{ rows: Array<Record<string, unknown>> }>;
+            const milik = (i: number) => hasil[i].rows.filter((x) => String(x.email).startsWith(w.p));
+            assert.deepEqual(milik(0).map((x) => [x.email, x.role_sekarang, x.role_menurut_peta]).sort(), [[`${w.p}-cek@s71.test`, "staff", "manager"], [`${w.p}-cekadmin@s71.test`, "admin", "manager"]]);
+            assert.deepEqual(milik(1).map((x) => x.email), [`${w.p}-cekadmin@s71.test`]);
+            const sebelum = (await m.pool.query(`SELECT role FROM "user" WHERE id = ANY($1) ORDER BY id`, [[u, v]])).rows;
+            assert.deepEqual(sebelum.map((x) => x.role).sort(), ["admin", "staff"], "kueri cek tidak mengubah data");
+        } finally { c.release(); }
+    });
+});
