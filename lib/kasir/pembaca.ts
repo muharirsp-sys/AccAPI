@@ -125,9 +125,10 @@ export function uraiHalamanDaftar(body: unknown, tanggal: string, halaman: numbe
  * (b) Daftar LENGKAP satu tanggal: halaman 1..pageCount (jumlah halaman terbesar yang diumumkan), id ganda dibuang. `rowCount` berubah
  * antarhalaman atau jumlah id unik ≠ rowCount (baris bergeser karena hapus/tambah di tengah) -> daftar diulang SEKALI dari halaman 1,
  * lalu `terpotong`. `ambil(halaman)` (disuntik) mengembalikan badan JSON atau melempar (galat transport pemanggil diteruskan apa adanya).
- * ponytail: halaman yang bergeser (pelunasan dihapus/ditambah di tengah pembacaan) TIDAK diperbaiki di dalam putaran — cukup diulang sekali
- * lalu `terpotong`; putaran berikut (tombol / cron 15 menit) membaca ulang dari awal dan sembuh sendiri begitu Accurate tenang. Plafon:
- * hari yang terus-menerus diubah selama pembacaan bisa `terpotong` berulang; jalan naik = kursor id (filter id > terakhir) bila terbukti perlu.
+ * ponytail (batas yang DISENGAJA): halaman yang bergeser selama pembacaan hanya terdeteksi bila rowCount / jumlah id unik berubah (-> ulang
+ * sekali lalu `terpotong`). Hapus + tambah dalam jumlah SAMA di tengah pembacaan (rowCount tetap) bisa melewatkan satu baris dan tetap
+ * `lengkap` KELIRU — baris itu bahkan dianggap hilang lalu dihapus dari cache — sampai putaran berikut (cron 15 menit / tombol) atau baca penuh
+ * 19.30 membacanya lagi. Jalan naik bila terbukti perlu: kursor id (filter id > terakhir) atau baca daftar dua kali dan bandingkan.
  */
 export async function bacaDaftar(tanggal: string, ambil: (halaman: number) => Promise<unknown>, rahasia: readonly string[] = []): Promise<BarisDaftar[]> {
     let alasan = "";

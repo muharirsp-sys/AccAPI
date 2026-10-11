@@ -1079,7 +1079,7 @@ kasir_hari_event [append-only; tutup (snapshot.terhalang WAJIB [] — owner T2) 
   izin ke grup: docs/handover/RBAC_PRESET_KASIR.sql SESUDAH RBAC_PRESET_BL37.sql (S7-1)
 kasir_pelunasan (database_id + pelunasan_id; chequeAmount, metode, last_update) ── kasir_pelunasan_faktur (faktur_id, master_salesman_id, invoice_payment) [cache K1b, TANPA raw_data]
   masterSalesmanId -> accurate_employee.number -> sales_code_merge (merge, per bulan) -> ORANG; OTHERS dikeluarkan; Σ invoicePayment ≠ chequeAmount -> ember tak teralokasi; cheque uang < 0 -> ember nominal_negatif (K-1 a)
-kasir_pelunasan_baca (database_id + tanggal; status berjalan|lengkap|sebagian|gagal, sebab (+hapus_massal), sisa_detail, ditolak, token lease 2 mnt, lengkap_pada, akun_sinkron) [K1b; DDL_K1A -> DDL_S7_2 -> DDL_K1B SEBELUM image; 0031 sesudah 0030]
+kasir_pelunasan_baca (database_id + tanggal; status berjalan|lengkap|sebagian|gagal, sebab (+hapus_massal), sisa_detail, ditolak, token lease 2 mnt, lengkap_pada, akun_sinkron, penuh_tertunda_pada) [K1b; DDL_K1A -> DDL_S7_2 -> DDL_K1B SEBELUM image; 0031 sesudah 0030]
   pembaca K1b (lib/kasir/baca-pelunasan.ts, identitas SINKRON resolveSyncCredentials; murni lib/kasir/pembaca.ts):
     POST /api/kasir/segarkan {tanggal, penuh?, konfirmasiHapus?} (kasir.view; penuh/konfirmasi = kasir.buka) | GET /api/cron/kasir-pelunasan (CRON_SECRET; hari ini WITA + mundur ke hari kerja sebelumnya; penuh=1 menunggu lease; sedang_dibaca = 202)
       -> lease (INSERT .. ON CONFLICT .. WHERE lease basi) -> sales-receipt/list.do filter transDate (fail-closed pageCount/rowCount) -> detail.do HANYA id baru/lastUpdate beda
