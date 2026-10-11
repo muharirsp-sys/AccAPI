@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
     if (!session?.accessToken || !session.sessionHost || !session.sessionId) {
         return NextResponse.json({
             ok: false,
-            error: "Sesi Accurate Anda tidak lengkap. Login Accurate dulu di /api-wrapper, lalu coba lagi.",
+            error: "Sesi Accurate Anda tidak lengkap. Masuk Accurate dan buka database dulu di /sesi-accurate, lalu coba lagi.",
         }, { status: 503 });
     }
     if (!isAllowedAccurateHost(session.sessionHost)) {

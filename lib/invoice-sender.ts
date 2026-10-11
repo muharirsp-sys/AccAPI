@@ -88,7 +88,7 @@ export async function sapuSending(database: NodePgDatabase, actor: string): Prom
  */
 export async function cekSesiBacaSaja(session: SenderSession): Promise<string | null> {
     const gagal = (sebab: string) => `Sesi Accurate perlu login ulang (pemeriksaan baca-saja branch/list.do: ${sebab}). `
-        + "Tidak ada faktur dikirim; login Accurate lagi di /api-wrapper lalu ulangi.";
+        + "Tidak ada faktur dikirim; masuk Accurate lagi di /sesi-accurate lalu ulangi.";
     try {
         const response = await fetch(`${session.sessionHost}/accurate/api/branch/list.do?fields=id&sp.pageSize=1`, {
             method: "GET",

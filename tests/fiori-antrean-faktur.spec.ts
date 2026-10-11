@@ -286,7 +286,7 @@ test("Hasil Kirim: 503 JSON server = pasti (galat di dialog); ditolak, berhenti 
         sentBy: "admin@contoh", results, verified: [], ...over });
     const opsi: Opsi = {
         preview: (r) => r.fulfill(json(tiga)),
-        send: (r) => r.fulfill(json({ ok: false, error: "Sesi Accurate Anda tidak lengkap. Login Accurate dulu di /api-wrapper, lalu coba lagi." }, 503)),
+        send: (r) => r.fulfill(json({ ok: false, error: "Sesi Accurate Anda tidak lengkap. Masuk Accurate dan buka database dulu di /sesi-accurate, lalu coba lagi." }, 503)),
     };
     const log = await mock(page, opsi);
     await page.setViewportSize({ width: 1366, height: 900 });
