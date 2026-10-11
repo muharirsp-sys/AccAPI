@@ -2,7 +2,7 @@
  * Tujuan: Katalog tile tugas dan kartu pantauan Beranda per peran, dari endpoint yang SUDAH ada (tanpa logic baru).
  * Caller: app/(dashboard)/Beranda.tsx; lib/beranda.test.ts.
  * Dependensi: lib/rbac (izin halaman tujuan); endpoint GET yang dibaca di browser (lihat SOURCES).
- * Main Functions: SOURCES, TILES, tilesFor, CARDS, cardFor, witaToday.
+ * Main Functions: SOURCES, sourceValid, TILES, tilesFor, CARDS (incaso: perDatabase + database aktif + baris ?rows=1), cardFor, linksFor, witaToday.
  * Side Effects: Tidak ada; fungsi murni atas JSON respons.
  */
 
@@ -24,8 +24,21 @@ export const SOURCES = {
     claimOutstanding: { perm: "claim_workflow.view", url: () => "/api/claim-workflow/outstanding", label: "Klaim outstanding" },
     claimPaid: { perm: "claim_workflow.view", url: () => "/api/claim-workflow?status=Paid&limit=200", label: "Klaim lunas" },
     users: { perm: "users.manage", url: () => "/api/admin/users/permissions", label: "User & RBAC" },
+    // BL-41 (S6e-2): ringkasan baca-saja idempotency sales-receipt + daftar baris (?rows=1, kontrak §6). Endpoint juga terbuka untuk
+    // finance.resolve_unknown; Beranda memakainya hanya untuk profil Admin Incaso (pelunasan.kirim). `valid`: jawaban tanpa angka/daftar =
+    // galat, tidak pernah dibaca nol.
+    pelunasan: { perm: "pelunasan.kirim", url: () => "/api/idempotency/summary?rows=1", label: "Ringkasan pelunasan",
+        valid: (d: unknown) => obj(d).ok === true && typeof obj(obj(d).uncertain).total === "number" && typeof obj(d).retryable === "number"
+            && Array.isArray(obj(d).perDatabase) && Array.isArray(obj(d).rows) },
+    // Database Accurate yang sedang terbuka (alias tidak disimpan di ringkasan): penanda "database aktif" di kartu Pelunasan.
+    sesiAccurate: { perm: "pelunasan.kirim", url: () => "/api/auth/accurate-session", label: "Sesi Accurate", valid: (d: unknown) => obj(d).ok === true },
 } as const;
 export type SourceKey = keyof typeof SOURCES;
+/** Jawaban 2xx yang bentuknya salah = galat (bukan nol). Sumber tanpa `valid` cukup HTTP 2xx (perilaku lama). */
+export const sourceValid = (key: SourceKey, data: unknown) => {
+    const src = SOURCES[key];
+    return !("valid" in src) || src.valid(data);
+};
 
 const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 const rows = (value: unknown): Row[] => (Array.isArray(value) ? value.filter((v): v is Row => Boolean(v) && typeof v === "object") : []);
@@ -101,6 +114,17 @@ export const TILES = {
     } },
     siapTutup: { title: "Siap ditutup", subtitle: "Sudah dibayar principal", href: "/claim-workflow", source: "claimPaid", icon: "check", pick: (data) =>
         count(rows(obj(data).workflows).length, "klaim", "Tutup klaim yang lunas", "info", obj(obj(data).pagination).hasMore === true) },
+    pelunasanTidakPasti: { title: "Pelunasan tidak pasti", subtitle: "Menunggu Finance", href: "/pelunasan", source: "pelunasan", icon: "alert", pick: (data) => {
+        const d = obj(data);
+        const u = obj(d.uncertain);
+        const macet = num(d.processingStale);
+        // sendingStale = SENDING ≥ 2 mnt (ambang Selesaikan); staleMinutes hanya untuk kunci PROCESSING (kontrak §6).
+        const footer = [num(u.unknown) && `${num(u.unknown)} tidak pasti`, num(u.sendingStale) && `${num(u.sendingStale)} mengirim macet`,
+            macet && `${macet} kunci macet > ${num(d.staleMinutes) || 15} mnt (tak terkirim)`].filter(Boolean).join(" · ") || "Jangan unggah ulang; Finance menyelesaikan";
+        return count(num(u.total) + macet, "baris", footer, "warn");
+    } },
+    pelunasanGagal: { title: "Gagal, boleh diulang", subtitle: "Tidak terkirim ke Accurate", href: "/pelunasan", source: "pelunasan", icon: "undo", pick: (data) =>
+        count(num(obj(data).retryable), "baris", "Perbaiki lalu unggah ulang lewat wizard", "neg") },
     userTanpaGrup: { title: "User tanpa grup", subtitle: "Masih memakai akses role lama", href: "/admin/users", source: "users", icon: "users", pick: (data) =>
         count(rows(obj(data).users).filter((u) => !u.groupId && !u.banned).length, "user", "Tetapkan grup akses", "info") },
 } satisfies Record<string, TileSpec>;
@@ -117,7 +141,19 @@ export const PROFILE_TILES: Record<string, TileId[]> = {
     claim: ["reviewKlaim", "outstanding", "siapTutup"],
     fakturist: ["antrean", "batchTinjau", "selisih"],
     gudang: ["wave", "exception", "kanvas"],
+    incaso: ["pelunasanTidakPasti", "pelunasanGagal"],
 };
+
+/** Tile tanpa angka per peran (pintasan / aplikasi luar). Tanpa `href` = informasi saja (bukan tautan). */
+export type LinkTile = { title: string; subtitle: string; href?: string; icon: string; footer: string };
+export const PROFILE_LINKS: Record<string, LinkTile[]> = {
+    incaso: [
+        { title: "Unggah pelunasan", subtitle: "Wizard langkah 1", href: "/pelunasan", icon: "upload", footer: "Format Pelunasan Internal ke Accurate" },
+        { title: "Cek incaso", subtitle: "Aplikasi desktop", icon: "monitor", footer: "AR Incaso Checker di PC Anda; hasilnya Excel lokal, tanpa angka di sini" },
+    ],
+};
+export const linksFor = (profileId: string | undefined, permKeys: ReadonlySet<string>) =>
+    (profileId ? PROFILE_LINKS[profileId] ?? [] : []).filter((l) => !l.href || canAccessPathWithKeys(l.href, permKeys));
 const UNION_ORDER: TileId[] = ["antrean", "batchTinjau", "selisih", "wave", "exception", "kanvas", "persetujuanOff", "reviewKlaim", "pembayaranOff", "outstanding", "siapTutup", "dikembalikan", "userTanpaGrup"];
 
 /** Tile peran yang sumber DAN halaman tujuannya boleh dibuka; tanpa profil = gabungan tugas dari izin (maks 6). */
@@ -128,7 +164,51 @@ export function tilesFor(profileId: string | undefined, permKeys: ReadonlySet<st
 }
 
 export type CardRow = { title: string; meta: string; badge?: [Tone, string] };
-export type CardSpec = { title: string; subtitle: string; href: string; more: string; source: SourceKey; kind: "list" | "kv"; rows: (data: unknown) => CardRow[] };
+/** Muatan satu sumber di halaman (Beranda.tsx). */
+export type SourceLoad = { status: "memuat" | "siap" | "galat"; data?: unknown };
+/**
+ * `extra` = sumber kedua (pelengkap, mis. sesi Accurate); gagal/memuat tidak menyembunyikan kartu — `notes`/`rows` menerima muatannya
+ * dan menulis keadaannya. `notes` = kalimat ringkas di atas daftar.
+ */
+export type CardSpec = {
+    title: string; subtitle: string; href: string; more: string; source: SourceKey; kind: "list" | "kv";
+    rows: (data: unknown, extra?: SourceLoad) => CardRow[]; extra?: SourceKey; notes?: (data: unknown, extra?: SourceLoad) => string[];
+};
+
+/** Sesi Accurate (GET /api/auth/accurate-session) dari muatan sumber; undefined = belum/gagal terbaca. */
+const sesiDari = (l?: SourceLoad) => (l?.status === "siap" ? { databaseId: obj(l.data).databaseId == null ? null : String(obj(l.data).databaseId), alias: str(obj(l.data).databaseAlias) } : undefined);
+const labelDb = (id: unknown, sesi: ReturnType<typeof sesiDari>) => id == null ? "tidak tercatat"
+    : sesi?.databaseId === String(id) ? `${sesi.alias || `id ${String(id)}`} (aktif)` : `database id ${String(id)}`;
+const witaJam = (iso: unknown) => {
+    const d = new Date(str(iso));
+    return Number.isNaN(d.getTime()) ? "" : new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Makassar", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
+};
+
+/** BL-41: database aktif + angka per database (perDatabase), lalu baris terbaru (?rows=1). */
+const pelunasanNotes = (data: unknown, extra?: SourceLoad): string[] => {
+    const sesi = sesiDari(extra);
+    const aktif = extra?.status === "memuat" ? "Database aktif sedang dibaca."
+        : !sesi ? "Database aktif tidak terbaca (sesi Accurate gagal dimuat)."
+            : sesi.databaseId ? `Database aktif Anda: ${sesi.alias || "tanpa nama"} (id ${sesi.databaseId}).` : "Anda belum membuka database Accurate.";
+    const perDb = rows(obj(data).perDatabase).map((d) => {
+        const angka = [num(obj(d.uncertain).total) && `${num(obj(d.uncertain).total)} tidak pasti`, num(d.retryable) && `${num(d.retryable)} gagal`,
+            num(d.processingStale) && `${num(d.processingStale)} kunci macet`].filter(Boolean).join(" · ");
+        return `${labelDb(d.databaseId, sesi)}: ${angka}`;
+    });
+    return [aktif, ...perDb];
+};
+const pelunasanRows = (data: unknown, extra?: SourceLoad): CardRow[] => {
+    const sesi = sesiDari(extra);
+    const daftar = rows(obj(data).rows);
+    return [
+        ...daftar.slice(0, 5).map((r): CardRow => ({
+            title: `${str(r.invoiceNo) || "Tanpa faktur"} · ${str(r.customerNo) || "—"}`,
+            meta: [rupiahRingkas(num(r.amount)), str(r.transDate), labelDb(r.databaseId, sesi), witaJam(r.updatedAt) && `${witaJam(r.updatedAt)} WITA`].filter(Boolean).join(" · "),
+            badge: r.category === "retryable" ? ["neg", "Gagal · boleh diulang"] : ["warn", r.category === "processingStale" ? "Tidak pasti · kunci macet" : "Tidak pasti"],
+        })),
+        ...(daftar.length > 5 ? [{ title: `${daftar.length - 5}${obj(data).rowsTruncated === true ? "+" : ""} baris lain`, meta: "Buka Pelunasan untuk daftar lengkap" }] : []),
+    ];
+};
 
 const opcRows = (predicate: (b: Row) => boolean, label: string, tone: Tone) => (data: unknown): CardRow[] =>
     opcBatches(data).filter(predicate).slice(0, 3).map((b) => ({
@@ -153,6 +233,8 @@ export const CARDS: Record<string, CardSpec> = {
     sm: { title: "Persetujuan menunggu Anda", subtitle: "OFF Program Control", href: "/off-program-control?tab=sales", more: "Buka tab Sales Manager", source: "opc", kind: "list", rows: opcRows(smActionable, "Menunggu", "warn") },
     claim: { title: "Review klaim menunggu", subtitle: "OFF Program Control", href: "/off-program-control?tab=claim", more: "Buka tab Claim", source: "opc", kind: "list", rows: opcRows(claimActionable, "Review", "info") },
     finance: { title: "Pembayaran OFF menunggu", subtitle: "OFF Program Control", href: "/off-program-control?tab=finance", more: "Buka tab Finance", source: "opc", kind: "list", rows: opcRows(financeActionable, "Belum lunas", "info") },
+    incaso: { title: "Pelunasan perlu tindakan", subtitle: "Tidak pasti dan gagal, terbaru dulu", href: "/pelunasan", more: "Buka Pelunasan", source: "pelunasan", extra: "sesiAccurate",
+        kind: "list", notes: pelunasanNotes, rows: pelunasanRows },
 };
 
 export function cardFor(profileId: string | undefined, permKeys: ReadonlySet<string>): CardSpec | undefined {

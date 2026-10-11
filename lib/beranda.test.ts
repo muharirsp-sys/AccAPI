@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TILES, cardFor, tilesFor, witaToday } from "./beranda";
+import { TILES, cardFor, linksFor, sourceValid, tilesFor, witaToday } from "./beranda";
 
 test("tiles count from real response shapes and treat zero as all clear", () => {
     const outbox = { escalateAfterMinutes: 120, summary: { queued: 7, unknown: 1, rejected: 2, posted: 30 }, overdueQueue: 3, pendingBatches: [{ reviewCount: 6 }, { reviewCount: 2 }] };
@@ -37,6 +37,47 @@ test("tiles count from real response shapes and treat zero as all clear", () => 
     // Respons rusak tidak melempar: dihitung nol, bukan angka palsu.
     assert.equal(TILES.persetujuanOff.pick({ batches: "x" }).value, 0);
     assert.equal(TILES.userTanpaGrup.pick({ users: [{ groupId: null }, { groupId: "g" }, { groupId: null, banned: true }] }).value, 1);
+});
+
+test("BL-41 Admin Incaso: tidak pasti + gagal dari ringkasan; jawaban tanpa angka = galat, bukan nol", () => {
+    const summary = { ok: true, uncertain: { unknown: 2, sendingStale: 1, total: 3 }, retryable: 4, processingStale: 1, staleMinutes: 15,
+        perDatabase: [{ databaseId: "77", label: "77", uncertain: { unknown: 2, sendingStale: 0, total: 2 }, retryable: 1, processingStale: 0 },
+            { databaseId: null, label: "tidak tercatat", uncertain: { unknown: 0, sendingStale: 1, total: 1 }, retryable: 3, processingStale: 1 }],
+        rows: [{ key: "PAY_A", status: "UNKNOWN", customerNo: "PELANGGAN-A", transDate: "09/10/2026", invoiceNo: "INV/A/001", amount: 120000, databaseId: "77", updatedAt: "2026-10-10T01:00:00.000Z", category: "uncertain" },
+            { key: "PAY_B", status: "FAILED", customerNo: "PELANGGAN-B", transDate: "09/10/2026", invoiceNo: "INV/A/002", amount: 2500000, databaseId: null, updatedAt: null, category: "retryable" }],
+        rowsTruncated: false };
+    assert.deepEqual(TILES.pelunasanTidakPasti.pick(summary), { value: 4, unit: "baris", tone: "warn", footer: "2 tidak pasti · 1 mengirim macet · 1 kunci macet > 15 mnt (tak terkirim)" });
+    assert.deepEqual(TILES.pelunasanGagal.pick(summary), { value: 4, unit: "baris", tone: "neg", footer: "Perbaiki lalu unggah ulang lewat wizard" });
+    assert.equal(TILES.pelunasanTidakPasti.pick({ ok: true, uncertain: { total: 0 }, retryable: 0, processingStale: 0 }).tone, "pos");
+    assert.equal(sourceValid("pelunasan", summary), true);
+    assert.equal(sourceValid("pelunasan", { ok: false, error: "x" }), false);
+    assert.equal(sourceValid("pelunasan", { ok: true }), false, "tanpa angka = galat");
+    assert.equal(sourceValid("pelunasan", { ...summary, rows: undefined }), false, "?rows=1 tanpa daftar = galat");
+    assert.equal(sourceValid("pelunasan", { ...summary, perDatabase: null }), false, "tanpa perDatabase = galat");
+    assert.equal(sourceValid("outbox", {}), true, "sumber lama tidak berubah");
+    assert.deepEqual(tilesFor("incaso", new Set(["pelunasan.kirim"])), ["pelunasanTidakPasti", "pelunasanGagal"]);
+    assert.deepEqual(tilesFor("incaso", new Set()), []);
+    assert.deepEqual(linksFor("incaso", new Set(["pelunasan.kirim"])).map((l) => l.title), ["Unggah pelunasan", "Cek incaso"]);
+    assert.deepEqual(linksFor("incaso", new Set()).map((l) => l.title), ["Cek incaso"], "pintasan tanpa izin halaman tidak tampil");
+
+    // Kartu Pantauan: database aktif dari sesi Accurate (alias), angka per database, lalu baris terbaru.
+    const card = cardFor("incaso", new Set(["pelunasan.kirim"]));
+    assert.equal(card?.source, "pelunasan");
+    assert.equal(card?.extra, "sesiAccurate");
+    const sesi = { status: "siap" as const, data: { ok: true, connected: true, databaseConnected: true, databaseId: "77", databaseAlias: "PT CONTOH" } };
+    assert.deepEqual(card?.notes?.(summary, sesi), [
+        "Database aktif Anda: PT CONTOH (id 77).", "PT CONTOH (aktif): 2 tidak pasti · 1 gagal", "tidak tercatat: 1 tidak pasti · 3 gagal · 1 kunci macet",
+    ]);
+    assert.match(card?.notes?.(summary, { status: "galat" })[0] ?? "", /tidak terbaca/, "sesi gagal ≠ belum membuka database");
+    assert.match(card?.notes?.(summary, { status: "galat" })[1] ?? "", /^database id 77:/);
+    const baris = card?.rows(summary, sesi) ?? [];
+    assert.equal(baris.length, 2);
+    assert.deepEqual(baris[0].badge, ["warn", "Tidak pasti"]);
+    assert.match(baris[0].meta, /PT CONTOH \(aktif\)/);
+    assert.match(baris[0].meta, /WITA$/);
+    assert.deepEqual(baris[1].badge, ["neg", "Gagal · boleh diulang"]);
+    assert.match(baris[1].meta, /tidak tercatat/);
+    assert.equal(cardFor("incaso", new Set()), undefined);
 });
 
 test("tiles and cards never appear without the endpoint permission", () => {
