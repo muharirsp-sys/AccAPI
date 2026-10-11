@@ -437,6 +437,101 @@ export const migrations = [
       CREATE INDEX IF NOT EXISTS idx_invoice_outbox_event_order ON invoice_outbox_event (order_id, created_at);
     `,
   },
+  {
+    // 2026-10-11 (S7-0 BL-64, owner 11 Okt: tabel resmi + alias; KINO NON FOOD / Forisa MT-GT / Heinz HZ-BS = VARIAN satu
+    // principal; DRAFT — zona skema, butuh review manusia). Tabel saja: TANPA benih (S7-2 membuat laporan matched/ambiguous
+    // dulu), tanpa pembaca. Lihat db/migrations/0027_principal.sql. Unik kode & alias = indeks terpisah agar entri ini bisa
+    // melengkapi tabel yang ada tanpa indeksnya; sudahAda memeriksa SEMUA indeks (PK tersirat = tabel ada) + kolom bentuk baru.
+    // Putaran tinjauan (B-SEDANG-1): alias ber-PK id + unik parsial per kelompok jenis; bentuk 893f8cbf -> DO $guard$ menolak.
+    // (B-SEDANG-2): principal_variant.name + is_active lewat ADD COLUMN IF NOT EXISTS (aditif, DB lama ikut lengkap).
+    // (B-SEDANG-3): trigger "principal.code tetap" TIDAK di sini (pola repo: trigger/REVOKE = DDL manual) — ada di
+    // docs/handover/DDL_S7_0.sql; jalur DATABASE_MIGRATION_URL saja = tanpa trigger & GRANT, jadi DDL tetap wajib dijalankan.
+    nama: "principal (+variant, +alias)",
+    sudahAda: `SELECT 1 WHERE (SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname IN
+                   ('uq_principal_code', 'principal_variant_pkey', 'principal_alias_pkey', 'idx_principal_alias_principal',
+                    'uq_principal_alias_kode_mb', 'uq_principal_alias_nama')) = 6
+               AND (SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema()
+                   AND (table_name, column_name) IN (('principal_alias', 'id'), ('principal_variant', 'name'),
+                                                     ('principal_variant', 'is_active'))) = 3`,
+    sql: `
+      -- Bentuk 893f8cbf (PK alias_norm, tanpa kolom id; hanya pernah ada di DB evaluasi) tidak bisa diubah secara aditif:
+      -- berhenti jelas alih-alih diam-diam mempertahankan PK global. docs/handover/DDL_S7_0.sql mengubahnya (tabel kosong).
+      DO $guard$
+      BEGIN
+          IF to_regclass('principal_alias') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = current_schema() AND table_name = 'principal_alias' AND column_name = 'id') THEN
+              RAISE EXCEPTION 'S7-0: principal_alias berbentuk lama 893f8cbf (PK alias_norm) — jalankan docs/handover/DDL_S7_0.sql';
+          END IF;
+      END $guard$;
+      CREATE TABLE IF NOT EXISTS principal (
+          id         text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+          code       text NOT NULL,
+          name       text NOT NULL,
+          is_active  boolean NOT NULL DEFAULT true,
+          created_by text,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_by text,
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT principal_code_format CHECK (code ~ '^[A-Z0-9_-]{1,20}$'),
+          CONSTRAINT principal_name_isi CHECK (btrim(name) <> '')
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_principal_code ON principal (code);
+      CREATE TABLE IF NOT EXISTS principal_variant (
+          principal_id text NOT NULL,
+          variant_key  text NOT NULL DEFAULT '',
+          created_by   text,
+          created_at   timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT principal_variant_pkey PRIMARY KEY (principal_id, variant_key),
+          CONSTRAINT principal_variant_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
+          CONSTRAINT principal_variant_key_format CHECK (variant_key ~ '^[A-Z0-9_-]{0,20}$')
+      );
+      -- B-SEDANG-2: nama tampilan varian (opsional, mis. "KINO NON FOOD") + aktif. ALTER (bukan kolom CREATE TABLE) agar DB
+      -- yang sudah punya tabel varian bentuk 893f8cbf ikut lengkap dan urutan kolom sama di semua jalur.
+      ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS name text;
+      ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
+      -- Aturan kanonik varian (B-RENDAH; lintas baris -> tidak bisa CHECK, DITEGAKKAN S7-2 saat benih/tulis): alias untuk principal
+      -- UTUH = variant_key NULL (bukan ''); varian '' hanya "varian dasar" pada principal yang JUGA punya varian lain (KINO '' vs
+      -- NON_FOOD); principal tanpa varian lain tidak punya baris varian ''. no_claim_template.variant_key '' = principal utuh.
+      -- alias_norm = bentuk normal normalizer S7-2 (CHECK): HURUF BESAR, tanpa spasi tepi, spasi tunggal (tanda baca bebas).
+      CREATE TABLE IF NOT EXISTS principal_alias (
+          id           text NOT NULL DEFAULT gen_random_uuid()::text,
+          alias_norm   text NOT NULL,
+          principal_id text NOT NULL,
+          variant_key  text,
+          alias_asli   text NOT NULL,
+          jenis        text NOT NULL,
+          sumber       text NOT NULL,
+          created_by   text,
+          created_at   timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT principal_alias_pkey PRIMARY KEY (id),
+          CONSTRAINT principal_alias_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
+          CONSTRAINT principal_alias_variant_fk FOREIGN KEY (principal_id, variant_key)
+              REFERENCES principal_variant (principal_id, variant_key) ON DELETE RESTRICT,
+          CONSTRAINT principal_alias_norm_bentuk CHECK (alias_norm = upper(alias_norm) AND alias_norm ~ '^[^[:space:]]+( [^[:space:]]+)*$'),
+          CONSTRAINT principal_alias_asli_isi CHECK (btrim(alias_asli) <> ''),
+          CONSTRAINT principal_alias_sumber_isi CHECK (btrim(sumber) <> ''),
+          CONSTRAINT principal_alias_jenis CHECK (jenis IN
+              ('nama', 'kode_master_barang', 'label_mapping', 'nama_bank', 'nama_summary', 'nama_surat'))
+      );
+      -- Unik per kelompok (B-SEDANG-1): kode Master Barang 2 karakter terpisah dari nama/label/kode OPC. Tabrakan nama yang
+      -- sah tetap DITOLAK (masuk laporan ambiguous S7-2) — JANGAN PERNAH ON CONFLICT DO UPDATE (alias diam-diam pindah principal).
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_principal_alias_kode_mb ON principal_alias (alias_norm) WHERE jenis = 'kode_master_barang';
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_principal_alias_nama ON principal_alias (alias_norm) WHERE jenis <> 'kode_master_barang';
+      CREATE INDEX IF NOT EXISTS idx_principal_alias_principal ON principal_alias (principal_id, variant_key);
+    `,
+  },
+  {
+    // 2026-10-11 (S7-0 BL-63, owner 11 Okt: BINTANG grup utama, opsional; DRAFT — zona skema, butuh review manusia).
+    // ADD COLUMN dengan DEFAULT: baris lama false seketika (tanpa rewrite). Satu bintang per user = indeks unik parsial.
+    // TANPA backfill di sini: "user tepat 1 grup -> berbintang" = bagian BACKFILL docs/handover/DDL_S7_0.sql (manual).
+    // Lihat db/migrations/0028_user_group_primary.sql. Indeks tersirat kolom ada -> sudahAda cukup memeriksa indeks.
+    nama: "user_group.is_primary",
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'uq_user_group_primary'`,
+    sql: `
+      ALTER TABLE user_group ADD COLUMN IF NOT EXISTS is_primary boolean NOT NULL DEFAULT false;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_user_group_primary ON user_group (user_id) WHERE is_primary;
+    `,
+  },
 ];
 
 async function main() {
