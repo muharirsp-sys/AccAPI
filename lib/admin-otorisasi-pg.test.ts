@@ -681,3 +681,31 @@ test("preset BL-37 SQL: idempoten (jalan 2x), isi persis D-01 §B, grup lama ber
         } finally { c.release(); }
     });
 });
+
+// ---------------- Putaran perbaikan (tinjauan A/B) ----------------
+
+test("perbaikan #1: role turunan TIDAK tertinggal — multi-grup tanpa bintang ber-role admin dikeluarkan dari Admin -> viewer (tercatat); masih anggota preset ber-peta itu / role lama tanpa grup preset -> tetap", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const ga = await w.grup("kelola", ["users.manage"]);
+        const a = await w.user("a");
+        await w.masuk(a, ga);
+        const adm = await preset(w, "Admin", ["dashboard.view"]), mgr = await preset(w, "Manager"), cus = await w.grup("promo", ["dashboard.view"]);
+        const u = await w.user("u", { role: "admin" });
+        await w.masuk(u, adm); await w.masuk(u, mgr); await w.masuk(u, cus);
+        const d = await panggil(m.anggota.DELETE, a, "DELETE", adm, { userId: u });
+        assert.deepEqual(await d.json(), { ok: true, primaryGroupId: null, role: "viewer" });
+        assert.equal(await role(u), "viewer");
+        const det = (await w.audit()).find((x) => x.action === "user_group.remove" && x.target_user_id === u)!.detail as Record<string, unknown>;
+        assert.deepEqual([det.roleBefore, det.roleAfter], ["admin", "viewer"]);
+
+        // Masih anggota grup preset ber-peta role itu (Manager tetap) -> role manager tidak disentuh saat keluar dari custom.
+        const v = await w.user("v", { role: "manager" });
+        await w.masuk(v, mgr); await w.masuk(v, cus); await w.masuk(v, ga);
+        assert.deepEqual(await (await panggil(m.anggota.DELETE, a, "DELETE", cus, { userId: v })).json(), { ok: true, primaryGroupId: null, role: "manager" });
+        // Role lama tanpa pernah di grup preset ber-peta itu (data pra-S7) -> tidak disentuh.
+        const x = await w.user("x", { role: "staff" });
+        await w.masuk(x, cus); await w.masuk(x, ga);
+        const lain = await w.grup("lain", ["dashboard.view"]);
+        assert.equal(((await (await panggil(m.anggota.POST, a, "POST", lain, { userId: x })).json()) as { role: string }).role, "staff");
+    });
+});

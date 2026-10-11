@@ -180,6 +180,17 @@ export function roleTurunan(lama: GrupUser | null, baru: GrupUser | null, roleSe
     return null;
 }
 
+/**
+ * Murni: role SISA (tinjauan A #1) — role sekarang = peta salah satu grup preset tempat user TADINYA anggota, tetapi sesudah
+ * perubahan user tidak lagi anggota grup preset ber-peta role itu -> bawaan `viewer`. Role lama yang tidak pernah berasal dari
+ * keanggotaan preset (data pra-S7) tidak disentuh.
+ */
+export function roleSisa(lama: readonly GrupUser[], baru: readonly GrupUser[], roleSekarang: string | null): string | null {
+    if (!roleSekarang || roleSekarang === defaultRole) return null;
+    const punya = (rows: readonly GrupUser[]) => rows.some((g) => roleDariGrup(g) === roleSekarang);
+    return punya(lama) && !punya(baru) ? defaultRole : null;
+}
+
 async function grupUser(tx: Tx, userId: string): Promise<GrupUser[]> {
     return tx.select({ groupId: userGroup.groupId, name: accessGroup.name, isPreset: accessGroup.isPreset, isPrimary: userGroup.isPrimary })
         .from(userGroup).innerJoin(accessGroup, eq(accessGroup.id, userGroup.groupId))
@@ -194,25 +205,35 @@ async function sematkanTunggal(tx: Tx, userId: string, rows: GrupUser[]) {
     }
 }
 
-/** Panggil SEBELUM mengubah keanggotaan/bintang user: menormalkan data lalu mengembalikan utama efektif lama. */
-export async function mulaiUtama(tx: Tx, userId: string): Promise<GrupUser | null> {
-    const rows = await grupUser(tx, userId);
-    await sematkanTunggal(tx, userId, rows);
-    return pilihUtama(rows);
+/** Keadaan grup user SEBELUM perubahan (sesudah dinormalkan): utama efektif + semua grup. */
+export type Awal = { utama: GrupUser | null; grup: GrupUser[] };
+
+/** Panggil SEBELUM mengubah keanggotaan/bintang user: menormalkan data lalu mengembalikan keadaan lama. */
+export async function mulaiUtama(tx: Tx, userId: string): Promise<Awal> {
+    const grup = await grupUser(tx, userId);
+    await sematkanTunggal(tx, userId, grup);
+    return { utama: pilihUtama(grup), grup };
 }
 
-export type HasilUtama = { primaryGroupId: string | null; primaryGroupName: string | null; roleBefore: string | null; roleAfter: string | null; roleChanged: boolean };
+export type HasilUtama = {
+    primaryGroupId: string | null; primaryGroupName: string | null; roleBefore: string | null; roleAfter: string | null; roleChanged: boolean;
+    /** Bintang tersimpan sebelum/sesudah (untuk audit: tanpa perubahan = tanpa baris audit bintang). */
+    bintangSebelum: string | null; bintang: string | null;
+};
 
-/** Panggil SESUDAH perubahan (transaksi sama): normalkan 1 grup, hitung utama baru, turunkan role bila utama berubah. */
-export async function selesaiUtama(tx: Tx, userId: string, lama: GrupUser | null): Promise<HasilUtama> {
+/** Panggil SESUDAH perubahan (transaksi sama): normalkan 1 grup, hitung utama baru, turunkan role (utama berubah / role sisa). */
+export async function selesaiUtama(tx: Tx, userId: string, awal: Awal | null): Promise<HasilUtama> {
     const rows = await grupUser(tx, userId);
     await sematkanTunggal(tx, userId, rows);
     const baru = pilihUtama(rows);
     const [u] = await tx.select({ role: user.role }).from(user).where(eq(user.id, userId));
     const roleBefore = u?.role ?? null;
-    const r = roleTurunan(lama, baru, roleBefore);
+    const r = roleTurunan(awal?.utama ?? null, baru, roleBefore) ?? roleSisa(awal?.grup ?? [], rows, roleBefore);
     if (r) await tx.update(user).set({ role: r, updatedAt: new Date() }).where(eq(user.id, userId));
-    return { primaryGroupId: baru?.groupId ?? null, primaryGroupName: baru?.name ?? null, roleBefore, roleAfter: r ?? roleBefore, roleChanged: Boolean(r) };
+    return {
+        primaryGroupId: baru?.groupId ?? null, primaryGroupName: baru?.name ?? null, roleBefore, roleAfter: r ?? roleBefore, roleChanged: Boolean(r),
+        bintangSebelum: awal?.grup.find((g) => g.isPrimary)?.groupId ?? null, bintang: rows.find((g) => g.isPrimary)?.groupId ?? null,
+    };
 }
 
 /** Bintang = DUA langkah (lepas semua, lalu pasang): satu UPDATE `is_primary = (group_id = $g)` bisa 23505 tergantung urutan
@@ -223,7 +244,8 @@ export async function pasangBintang(tx: Tx, userId: string, groupId: string | nu
 }
 
 /** Detail audit grup utama/role (hanya bila berubah). */
-export function detailUtama(lama: GrupUser | null, h: HasilUtama) {
+export function detailUtama(awal: Awal | null, h: HasilUtama) {
+    const lama = awal?.utama ?? null;
     return {
         ...((lama?.groupId ?? null) !== h.primaryGroupId ? { primaryBefore: lama?.groupId ?? null, primaryAfter: h.primaryGroupId } : {}),
         ...(h.roleChanged ? { roleBefore: h.roleBefore, roleAfter: h.roleAfter } : {}),

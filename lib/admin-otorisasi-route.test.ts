@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
-import { adminDariBaris, evaluasiPenjaga, jawabGalat, pilihUtama, roleTurunan, type GrupUser } from "./rbac/otorisasi.ts";
+import { adminDariBaris, evaluasiPenjaga, jawabGalat, pilihUtama, roleSisa, roleTurunan, type GrupUser } from "./rbac/otorisasi.ts";
 import * as grup from "../app/api/admin/groups/route.ts";
 import * as grupId from "../app/api/admin/groups/[id]/route.ts";
 import * as anggota from "../app/api/admin/groups/[id]/members/route.ts";
@@ -155,6 +155,15 @@ test("BL-63 role turunan: hanya saat utama berubah; preset berpeta -> peta; cust
     assert.equal(roleTurunan(mgr, fak, "manager"), "viewer", "preset tanpa peta = tanpa role turunan");
     assert.equal(roleTurunan(null, palsu, "viewer"), null);
     assert.equal(roleTurunan(null, mgr, "manager"), null, "sudah sama -> tanpa tulis");
+});
+
+test("role sisa (tinjauan A #1): role = peta grup preset yang DITINGGALKAN dan tak ada lagi preset ber-peta itu -> viewer; lainnya tetap", () => {
+    const adm = g("ga", "Admin", true), mgr = g("gm", "Manager", true), cus = g("gc", "Promo", false), palsu = g("gx", "Admin", false);
+    assert.equal(roleSisa([adm, mgr, cus], [mgr, cus], "admin"), "viewer");
+    assert.equal(roleSisa([adm, mgr], [adm], "admin"), null, "masih anggota Admin");
+    assert.equal(roleSisa([cus], [cus, mgr], "staff"), null, "role lama tanpa asal preset tidak disentuh");
+    assert.equal(roleSisa([palsu, cus], [cus], "admin"), null, "custom bernama Admin bukan asal role");
+    assert.equal(roleSisa([adm], [], "viewer"), null);
 });
 
 test("23505 dikenal -> 409 berkode (BINTANG_BENTROK / NAMA_GRUP_TERPAKAI / EMAIL_TERPAKAI); lainnya 500 GAGAL_SIMPAN tanpa parameter kueri di log", async () => {

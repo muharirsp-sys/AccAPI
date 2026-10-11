@@ -158,3 +158,7 @@ Cursor rusak → 400 `INPUT_TIDAK_VALID`. Label aksi: `auditActionLabels` di `li
 - **Butir 5 (label & preset):** `permissionKeyLabel("off_program_control.sm_approve")` = `"OFF Program Control · Setujui (SM)"`.
   Preset BL-37 = `docs/handover/RBAC_PRESET_BL37.sql` (IT Support, sekali; grup bernama sama yang sudah ada TIDAK disentuh — verifikasi
   `cocok = false`). Cek baca-saja grup utama vs `user.role` = `docs/handover/RBAC_S7_1_CEK_ROLE.sql` (sebelum & sesudah deploy).
+- **Perbaikan #1 (tinjauan A):** selain aturan grup utama, **role sisa** dibersihkan di transaksi yang sama: bila `user.role` = peta
+  grup preset tempat user TADINYA anggota dan sesudah perubahan ia tidak lagi anggota grup preset ber-peta itu → `viewer` (tercatat
+  `roleBefore/roleAfter`). Mis. user 3 grup tanpa bintang ber-role `admin` dikeluarkan dari Admin → `viewer`. Role lama yang tidak
+  berasal dari keanggotaan preset tidak disentuh.

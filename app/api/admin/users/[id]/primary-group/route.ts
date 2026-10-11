@@ -33,7 +33,7 @@ async function ubah(request: NextRequest, context: Context, pasang: boolean) {
             const hasil = await selesaiUtama(tx, id, lama);
             await tx.insert(permissionAuditLog).values({
                 id: randomUUID(), actorUserId: actor.id, actorName: actor.name, action: groupId ? "user_group.star" : "user_group.unstar",
-                targetUserId: id, targetGroupId: groupId ?? lama?.groupId ?? null, detail: { userName: t.name, ...detailUtama(lama, hasil) }, createdAt: now,
+                targetUserId: id, targetGroupId: groupId ?? lama.utama?.groupId ?? null, detail: { userName: t.name, ...detailUtama(lama, hasil) }, createdAt: now,
             });
             return hasil;
         });
