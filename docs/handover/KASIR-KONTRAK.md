@@ -54,6 +54,7 @@ Semua nominal = **sen** (bilangan bulat aman). Nominal rusak = `RangeError` (gag
 | `kasir_tak_teralokasi_catatan` | append-only | `tanggal`, `database_id`, `pelunasan_id`, `sisa` (angka saat dijelaskan; berubah = tidak berlaku), `penjelasan` (≥ 15), `dicatat_oleh/pada` | sisa ≠ 0; TANPA FK ke cache (cache boleh dibaca ulang/dihapus, penjelasan tetap) |
 | `kasir_pelunasan` | cache (upsert/hapus oleh K1b) | PK `(database_id, pelunasan_id)`, `nomor`, `tanggal` (transDate), `metode`, `cheque_amount`, `last_update` (teks Accurate apa adanya), `dibaca_pada` | indeks `(database_id, tanggal)`; TANPA raw_data |
 | `kasir_pelunasan_faktur` | cache | PK `(database_id, pelunasan_id, faktur_id)`, `nomor_faktur`, `master_salesman_id`, `invoice_payment` | FK ke kepala ON DELETE CASCADE |
+| `kasir_pelunasan_baca` (K1b, §7) | status baca (UPDATE oleh pembaca; tanpa trigger, tanpa DELETE aplikasi) | PK `(database_id, tanggal)`, `status`, `sebab`, `pesan`, `jumlah_daftar`, `sisa_detail`, `ditolak jsonb`, `token`, `mulai_pada`, `selesai_pada`, `lengkap_pada`, `pemicu` | CHECK status/sebab/isi/konsisten (gagal ⇔ sebab; berjalan ⇔ token & tanpa selesai; lengkap ⇒ sisa 0, tanpa ditolak, lengkap_pada) |
 
 Penyimpangan dari usulan §4 eksplorasi: setoran SATU baris per revisi berisi tiga kolom metode (owner: per ORANG, dialog Tunai/Transfer/Giro)
 alih-alih satu baris per metode; penunjuk revisi = FK komposit `revisi_sebelumnya` (rantai dijamin DB, tanpa trigger); penjelasan menyimpan
@@ -65,9 +66,8 @@ database). Penjelasan tak teralokasi = TABEL SENDIRI, bukan perluasan `kasir_sel
 ## 4. Kewajiban pemakai
 
 - **Semua penulis uang** lewat `keSen` -> `senKeTeks`: `numeric(18,2)` membulatkan > 2 desimal DIAM-DIAM (diuji).
-- **K1b**: tulis cache hanya dari pembaca sistem (`resolveSyncCredentials`); nominal Accurate lewat `keSen` — pelunasan yang ditolak = galat terlihat,
-  bukan dilewati; hapus kepala yang hilang di Accurate (baris ikut terhapus). Status "cache tanggal D lengkap/terpotong" BELUM ada tabelnya — K1b
-  memutuskan (jangan tampilkan total sebagian sebagai lengkap; Tutup butuh pembacaan sukses terbaru, spec it11 Galat).
+- **K1b** (SELESAI, §7): tulis cache hanya dari pembaca sistem (`resolveSyncCredentials`); nominal Accurate lewat `keSen` — pelunasan yang ditolak =
+  galat terlihat, bukan dilewati; hapus kepala yang hilang di Accurate (baris ikut terhapus). Status baca = tabel `kasir_pelunasan_baca` (§7).
 - **K2**: `requirePermission` `kasir.view` (GET), `kasir.catat` (setoran + jelaskan), `kasir.tutup`, `kasir.buka` (alasan ≥ 15). Sebelum menulis setoran/
   penjelasan/tutup: `bolehDiubah` (dan untuk tutup: `penghalangTutup(...).bisaDitutup`, snapshot dari `snapshotHari`) di DALAM transaksi yang sama dengan INSERT, diserialkan per tanggal (mis. `pg_advisory_xact_lock(hashtext('kasir:'||tanggal))`)
   agar Tutup dan Catat tidak berbalapan. **Catat/koreksi setoran = `rencanaSetoranOrang(baris, nominal)`; SEMUA baris rencana disisipkan dalam SATU
@@ -98,3 +98,63 @@ database). Penjelasan tak teralokasi = TABEL SENDIRI, bukan perluasan `kasir_sel
 - **T1** Sesudah buka kembali: terkunci ulang otomatis **20.00 WITA berikutnya** (perilaku lib; uji `kunci hari T1`).
 - **T2** Uang tak teralokasi **WAJIB dijelaskan sebelum Tutup** (uji lib `T2` + uji PG CHECK `tutup_tuntas`); kunci otomatis tetap mengunci dan snapshot-nya
   mencatat yang belum dijelaskan.
+
+## 7. K1b — pembaca/cache Accurate pelunasan (12 Okt 2026)
+
+Berkas: `lib/kasir/pembaca.ts` (murni), `lib/kasir/baca-pelunasan.ts` (server), `app/api/kasir/segarkan/route.ts`, `app/api/cron/kasir-pelunasan/route.ts`,
+skema `kasir_pelunasan_baca` (`db/schema.ts` = migrate-pg = `db/migrations/0031_kasir_baca.sql` = `docs/handover/DDL_K1B.sql`).
+
+**Cara membaca** (per tanggal, identitas SINKRON — Kasir tak punya sesi Accurate): lease baris status → `sales-receipt/list.do` filter `transDate`
+SAJA, urut `id|asc`, 100/halaman, berurutan + jeda 150 ms → `detail.do` HANYA untuk id baru / `lastUpdate` beda TEKS (≤ 4 serentak; sesudah 429
+turun ke 2 sampai akhir putaran) → per pelunasan SATU transaksi (upsert kepala + ganti baris faktur, token lease dicek `FOR SHARE`) → hapus id cache
+yang tak ada di daftar (HANYA bila daftar lengkap) → status. "Inkremental" = per id, bukan kursor jam; `last_update` disimpan = nilai list.do yang
+dibaca SEBELUM detail. `penuh` = tandai `last_update` tanggal itu NULL (isi tetap) lalu baca biasa → terputus pun, putaran berikut membaca sisanya.
+Daftar fail-closed: `s:true` + `d` larik; `sp.pageCount` sah (0 hanya bila kosong) dan tidak turun; halaman kosong sebelum halaman terakhir = gagal;
+`sp.rowCount` wajib; `rowCount` berubah antarhalaman / id unik ≠ `rowCount` → daftar diulang SEKALI lalu `terpotong`; `transDate` baris ≠ tanggal
+= `bentuk` (filter diabaikan, tidak membaca seluruh riwayat); > 50 halaman = `terpotong`. Detail: `invoicePayment` absen = `bentuk` (TANPA
+cadangan `paymentAmount`), > 2 desimal = `nominal`, faktur sama dua kali = dijumlah (salesman beda = `bentuk`), `transDate` pindah = tidak ditulis.
+
+**Status `kasir_pelunasan_baca`** (PK `database_id, tanggal`):
+
+| status | arti | K2 |
+|---|---|---|
+| `berjalan` | lease aktif (`aktif` = dimulai < 2 mnt lalu menurut jam DB); `aktif = false` = pembaca terhenti, boleh diklaim ulang | tampil "Membaca…", BUKAN lengkap |
+| `lengkap` | daftar lengkap ∧ setiap id daftar ada di cache dengan `last_update` sama ∧ tanpa ditolak ∧ tanpa galat; `lengkap_pada` = saat itu | satu-satunya status yang boleh menampilkan total sebagai lengkap dan membuka Tutup |
+| `sebagian` | batas waktu putaran (45 dtk) habis; `sisa_detail` = id belum cocok (null bila daftar belum selesai) | klien memanggil POST lagi ("Membaca n/N") |
+| `gagal` | `sebab` = kelas galat di bawah; `pesan` disaring (tanpa token); `ditolak` = [{id, nomor, sebab, pesan}] | Galat terlihat; Tutup terhalang |
+
+Galat TIDAK pernah menghapus cache atau memundurkan `lengkap_pada` (hanya maju). Hari dengan pelunasan DITOLAK (`bentuk`/`nominal`/`ditolak`) tak
+pernah `lengkap` sampai diperbaiki di Accurate (K-3 bawaan; jalan "jelaskan & tutup" menunggu jawaban owner untuk K2).
+
+**Kelas galat (`sebab`)**: `sesi_sinkron` (HTTP 401 / kredensial absen — BERHENTI seketika), `hak_akses` (403 — berhenti), `batas_laju` (429 — ulang
+0,5/1/2 dtk, Retry-After dihormati, lalu galat), `accurate_5xx` / `jaringan` (ulang ≤ 3×), `tidak_pasti` (timeout/abort/bukan JSON — ulang 1×),
+`ditolak` (`s:false` / HTTP lain), `bentuk`, `nominal`, `terpotong`.
+
+**Route & kode HTTP**: `POST /api/kasir/segarkan {tanggal, penuh?}` (`kasir.view`; tanggal sah ≤ hari ini WITA): 200 `{ok, status}` lengkap/sebagian,
+200 `{ok, dariCache: true}` bila lengkap < 60 dtk lalu (tanpa Accurate), 409 `SEDANG_DIBACA` + status, 503 `SESI_SINKRON` ("Sesi Accurate akun
+sinkron kedaluwarsa — admin login ulang di /sesi-accurate lalu pilih database"), 502 `BACA_GAGAL` + status. `GET /api/kasir/segarkan?tanggal=` →
+status TANPA Accurate (`belum_dibaca` bila tak ada baris). `GET /api/cron/kasir-pelunasan` (`CRON_SECRET`; `?tanggal=`, `?penuh=1`, `?check=1`):
+bawaan hari ini WITA + mundur sampai hari kerja sebelumnya (Senin: Sabtu & Minggu), berurutan, `sebagian` dilanjutkan ≤ 3×; 200 hanya bila semua
+`lengkap`, sesi mati 503, selain itu 502 dengan rincian.
+
+**Fungsi untuk K2/K3** (`lib/kasir/baca-pelunasan.ts`, tanpa Accurate): `databaseIdSinkron()` (database sesi sinkron saat ini; "" = sesi tak ada →
+503 SESI_SINKRON), `muatPelunasanHari(databaseId, tanggal)` → `{ status, pelunasan: Pelunasan[] }` (satu snapshot REPEATABLE READ; sen lewat
+`keSen`) = masukan `rekonsiliasiHari`, `statusBaca(databaseId, tanggal)`.
+
+**Catatan untuk K2**: Tutup HANYA bila `status.status === "lengkap"` pada snapshot yang sama dengan angka yang ditutup (baca ulang di dalam transaksi
+Tutup); snapshot hari (`snapshotHari`) sebaiknya memuat `{ status, lengkapPada, jumlahDaftar }` baca saat itu. Cache hanya untuk `databaseIdSinkron()`
+saat ini — database lain = tidak dibaca. Klien yang mengulang POST selama `sebagian` wajib punya batas ulang.
+
+**Plafon (ponytail)**: identitas sinkron dipercaya penuh — akun yang hanya melihat sebagian cabang membuat pelunasan cabang lain "hilang" dan terhapus
+dari cache (sama dengan `lib/item-price-sync.ts`); balapan dua tanggal yang dibaca bersamaan saat pelunasan dipindah tanggal di Accurate dalam
+milidetik yang sama bisa meninggalkan satu baris basi sampai putaran berikut. `databaseIdSinkron` menyalin pemilihan user `resolveSyncCredentials`
+(ubah keduanya bersama).
+
+**TERBUKA**: K-1 (owner) — pelunasan Tunai/Transfer/Giro ber-`chequeAmount` NEGATIF masih menggagalkan `rekonsiliasiHari` sehari (uji todo
+"K1b RENDAH 5b"; titik pasang (a) ember `nominal_negatif` / (b) netto → `selisih` ditandai `K-1 TERBUKA` di `rekonsiliasi.ts`). K-2 (IT): crontab.
+K-3 (owner, untuk K2): "jelaskan & tutup" untuk hari dengan pelunasan ditolak.
+
+**Prasyarat deploy (IT, urut)**: `DDL_K1A.sql` (sudah) → `docs/handover/DDL_K1B.sql` sebagai role pemilik SEBELUM image (VERIFIKASI semua `ok`; baris
+"prasyarat K1a" false = DDL_K1A belum jalan) → image → `ACCURATE_SYNC_USER_ID` terisi (akun admin, sesi hidup + database terpilih) → baris crontab
+`/api/cron/kasir-pelunasan` (usul K-2: `*/15` 07.00–21.00 WITA Senin–Sabtu + `?penuh=1` 19.30 WITA). Tanpa env baru. Beban Accurate tambahan
+±9 list.do per tanggal per putaran + detail yang berubah (token dipakai bersama webhook faktur). Boleh rilis sebelum K2 (cache terisi tanpa UI).
