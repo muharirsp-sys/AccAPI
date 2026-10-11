@@ -8,6 +8,7 @@
  */
 import type { Bebas } from "./sel.ts";
 import type { PeringatanRetur } from "./alokasi.ts";
+import { todayWita } from "../insentif-payment-date.ts";
 
 export const normalizePayloadMoney = (value: unknown) => {
     const num = Number(value);
@@ -18,14 +19,14 @@ export const normalizePayloadMoney = (value: unknown) => {
     return Math.abs(normalized) < 0.000001 ? 0 : normalized;
 };
 
-const WITA_MS = 8 * 60 * 60 * 1000; // WITA = UTC+8 tetap (tanpa DST)
 const HARI_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Tanggal transaksi bawaan (YYYY-MM-DD) = KEMARIN menurut WITA, tak bergantung zona peramban. S6e-1: dulu
- * `setDate(-1)` waktu lokal lalu `toISOString()` (UTC) → pukul 00.00–07.59 WITA mundur dua hari.
+ * `setDate(-1)` waktu lokal lalu `toISOString()` (UTC) → pukul 00.00–07.59 WITA mundur dua hari. Susulan S6e-1: memakai
+ * `todayWita` bersama (UTC+8 tetap) — hasil identik dengan rumus lokal sebelumnya (now + 8 j − 24 j).
  */
-export const tanggalKemarin = (now: Date = new Date()) => new Date(now.getTime() + WITA_MS - HARI_MS).toISOString().slice(0, 10);
+export const tanggalKemarin = (now: Date = new Date()) => todayWita(new Date(now.getTime() - HARI_MS));
 
 /** W:1575-1591: gabung kelompok bayar + dokumen Ayat Silang, buang yang tanpa faktur, rapikan angka. */
 export function finalisasiPayload(kelompok: Bebas[], ayatSilangDocs: Bebas[]) {

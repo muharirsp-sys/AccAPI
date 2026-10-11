@@ -16,7 +16,7 @@ export const getVal = (row: Bebas, keyMatch: string) => {
 export const getTextVal = (row: Bebas, keyMatch: string) => {
     const rawVal = getVal(row, keyMatch);
     if (rawVal === undefined || rawVal === null) return "";
-    const text = String(rawVal).replace(/ /g, " ").trim();
+    const text = String(rawVal).replace(/\u00A0/g, " ").trim();
     if (!text || ["nan", "undefined", "null"].includes(text.toLowerCase())) return "";
     return text;
 };
@@ -24,6 +24,6 @@ export const getTextVal = (row: Bebas, keyMatch: string) => {
 export const hasMeaningfulCellValue = (row: Bebas, keyMatch: string) => {
     const rawVal = getVal(row, keyMatch);
     if (rawVal === undefined || rawVal === null) return false;
-    const text = String(rawVal).replace(/ /g, " ").trim();
+    const text = String(rawVal).replace(/\u00A0/g, " ").trim();
     return !!text && !["nan", "undefined", "null"].includes(text.toLowerCase());
 };
