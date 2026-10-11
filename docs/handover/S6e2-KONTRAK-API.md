@@ -64,6 +64,8 @@ Biaya: tiap paket membaca riwayat per kelompok pelanggan+tanggal = `list.do` (�
 (≤ 300), paling banyak 4 serentak, batas 60 dtk per paket (melewati batas = kelompok sisanya `UNREADABLE`; sesudah batas tidak
 ada panggilan Accurate baru). `list.do` wajib `s:true` + `d` daftar + `sp.pageCount` angka (angka JSON atau teks angka seperti
 `"1"`; ≥ 1, atau 0 hanya bila `d` kosong) — selain itu `UNREADABLE` (tanpa jumlah halaman = dianggap terpotong). Pra-deploy: pastikan `list.do` produksi membawa `sp.pageCount`.
+Jumlah halaman yang diumumkan tidak menyusut antarhalaman (dipakai yang terbesar); halaman KOSONG sebelum halaman terakhir yang
+diumumkan = `UNREADABLE` (halaman terakhir yang kosong tetap sah).
 Tindak lanjut (DITUNDA, orkestrator 10 Okt): satu `list.do` per tanggal (bukan per pelanggan) menekan biaya, tetapi mengubah
 logika pratinjau bersama — belum dikerjakan.
 
@@ -244,3 +246,6 @@ diselesaikan; tampilkan bila > 0).
   potongan) hasil urai = `amount` baris dan tidak ada angka negatif. Catatan potongan berpemisah (`x:0;INV-1|200|a:b`) tidak
   lagi bisa memalsukan nominal → `similar_not_identical` (wajib `acceptSimilar`). Baris lama tanpa `amount` juga wajib
   `acceptSimilar`. Bentuk jawaban tidak berubah.
+- (11 Okt, susulan S6e, tinjauan A RENDAH) §1 paginasi `list.do` (server): jumlah halaman tidak boleh menyusut (halaman 1
+  `pageCount:3` lalu halaman 2 `pageCount:0` tidak lagi melewatkan halaman 3); halaman kosong sebelum halaman terakhir yang
+  diumumkan = `UNREADABLE`. Pratinjau klien tidak berubah. Bentuk jawaban tidak berubah.

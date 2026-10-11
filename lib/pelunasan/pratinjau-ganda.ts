@@ -154,8 +154,8 @@ function cocokkan(group: Kelompok, struk: StrukAccurate[], cocok: Map<string, st
 /**
  * W:1903-1977 (satu kelompok pelanggan+tanggal): list.do (≤ 5 halaman, ≤ 300 kandidat) → detail.do per kandidat → daftar
  * pelunasan terbaca. `ketat` (server, S6e-2 owner #6, fail-closed): jawaban yang tidak terbaca (bukan `s:true`, detail kosong,
- * daftar terpotong / tanpa `sp.pageCount` angka, bentuk tak dikenali) MELEMPAR — klien (pratinjau) menandai kelompoknya
- * `tidakTerbaca` dan lanjut. `berhenti()` (server, tinjauan A4) diperiksa SEBELUM setiap panggilan Accurate: sesudah batas
+ * daftar terpotong / tanpa `sp.pageCount` angka / halaman kosong sebelum halaman terakhir yang diumumkan, bentuk tak dikenali)
+ * MELEMPAR — klien (pratinjau) menandai kelompoknya `tidakTerbaca` dan lanjut. `berhenti()` (server, tinjauan A4) diperiksa SEBELUM setiap panggilan Accurate: sesudah batas
  * waktu tidak ada list.do/detail.do baru (jawaban yang sedang berjalan diabaikan pemanggil).
  */
 async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ketat: boolean, tidakTerbaca?: Set<string>, berhenti?: () => boolean): Promise<StrukAccurate[]> {
@@ -183,11 +183,18 @@ async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ke
             if (!(Number.isFinite(n) && (n >= 1 || (n === 0 && listRes.d.length === 0)))) {
                 throw new Error("daftar riwayat sales-receipt tanpa jumlah halaman (sp.pageCount) — dianggap terpotong");
             }
+            // Susulan S6e (tinjauan A, RENDAH): halaman 1 `pageCount:3` lalu halaman 2 kosong `pageCount:0` dulu menyusutkan jumlah
+            // halaman -> halaman 3 tak dibaca, lolos. Jumlah halaman tidak boleh turun (di bawah), dan halaman kosong sebelum
+            // halaman terakhir yang diumumkan = gagal baca. Halaman terakhir yang kosong tetap sah (daftar menyusut).
+            if (listRes.d.length === 0 && currentPage < Math.max(pageCount, n)) {
+                throw new Error("halaman riwayat sales-receipt kosong sebelum halaman terakhir yang diumumkan — dianggap gagal baca");
+            }
         }
 
         const pageRows = Array.isArray(listRes?.d) ? listRes.d : [];
         candidateReceipts.push(...pageRows);
-        pageCount = Number(listRes?.sp?.pageCount || currentPage || 1);
+        const umum = Number(listRes?.sp?.pageCount || currentPage || 1);
+        pageCount = ketat ? Math.max(pageCount, umum) : umum; // pratinjau klien (golden) tetap perilaku lama
         currentPage += 1;
     } while (currentPage <= pageCount && currentPage <= 5 && candidateReceipts.length < 300);
     if (ketat && currentPage <= pageCount) throw new Error("riwayat sales-receipt terpotong (> 5 halaman / 300 kandidat)");

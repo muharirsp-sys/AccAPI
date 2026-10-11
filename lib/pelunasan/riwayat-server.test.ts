@@ -255,3 +255,28 @@ test("Putaran 2: sp.pageCount teks angka ('1', '2') DITERIMA (halaman 2 dibaca);
         assert.equal(g.gagal.size, 0, JSON.stringify(jawab));
     }
 });
+
+test("Susulan S6e (A, RENDAH): jumlah halaman tidak boleh menyusut; halaman kosong sebelum halaman terakhir yang diumumkan = GAGAL BACA", async () => {
+    const seratus = Array.from({ length: 100 }, (_, i) => ({ id: i + 1 }));
+    const jalan = async (jawab: (page: number) => unknown) => {
+        const halaman: number[] = [];
+        const r = await periksaRiwayatAccurate([target(satuBaris)], async (path, _m, q) => {
+            if (!path.endsWith("list.do")) return lainDetail;
+            const p = Number((q as Record<string, unknown>)["sp.page"]);
+            halaman.push(p);
+            return jawab(p);
+        });
+        return { gagal: r.gagal.get(target(satuBaris).key), halaman };
+    };
+    // Temuan: halaman 1 `pageCount:3`, halaman 2 kosong `pageCount:0` -> dulu jumlah halaman menyusut, halaman 3 tak dibaca, lolos.
+    const susut = await jalan((p) => p === 2 ? { s: true, d: [], sp: { pageCount: 0 } } : { s: true, d: p === 1 ? seratus : [{ id: 201 }], sp: { pageCount: 3 } });
+    assert.match(susut.gagal ?? "", /kosong sebelum halaman terakhir/);
+    // Halaman 2 berisi tetapi pageCount turun ke 2 -> halaman 3 tetap dibaca (jumlah yang diumumkan tidak menyusut).
+    const turun = await jalan((p) => ({ s: true, d: p === 3 ? [{ id: 201 }] : seratus, sp: { pageCount: p === 1 ? 3 : 2 } }));
+    assert.deepEqual([turun.gagal, turun.halaman], [undefined, [1, 2, 3]]);
+    // Halaman 1 kosong padahal mengumumkan 3 halaman = tak konsisten -> GAGAL.
+    assert.match((await jalan(() => ({ s: true, d: [], sp: { pageCount: 3 } }))).gagal ?? "", /kosong sebelum halaman terakhir/);
+    // Kontrol: halaman TERAKHIR yang diumumkan kosong tetap sah (daftar menyusut sesudah halaman 1 dibaca).
+    const akhir = await jalan((p) => ({ s: true, d: p === 1 ? seratus : [], sp: { pageCount: p === 1 ? 2 : 1 } }));
+    assert.deepEqual([akhir.gagal, akhir.halaman], [undefined, [1, 2]]);
+});
