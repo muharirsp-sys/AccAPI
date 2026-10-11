@@ -12,7 +12,9 @@ Prasyarat deploy: `docs/handover/DDL_S7_0.sql` lalu `docs/handover/DDL_S7_2.sql`
 - Izin: baca `principles.view`; tulis `principles.upload`; hapus alias `principles.delete` (kunci registry yang sudah ada).
 - Setiap tulis = SATU transaksi + baris `principal_log` (aktor = id user sesi). Tak ada yang menimpa: bentrok = 409 berkode.
 - **503 `PRINCIPAL_DDL_BELUM`** `{ kurang: string[] }` — trigger penjaga (`trg_principal_code_tetap`,
-  `trg_principal_log_append_only`, `trg_principal_log_no_truncate`) tidak ada/nonaktif; tidak ada yang ditulis. UI: "Hubungi IT
+  `trg_principal_log_append_only`, `trg_principal_log_no_truncate`) tidak terpasang PERSIS: tidak ada, nonaktif, atau bernama sama
+  tetapi jenis event (`tgtype` 19 / 27 / 34), kolom (`OF code` / tanpa kolom), WHEN, fungsi atau isi fungsi lain
+  (`lib/principal/penjaga.ts`; VERIFIKASI `DDL_S7_2.sql` memakai ekspresi yang sama). Tidak ada yang ditulis. UI: "Hubungi IT
   Support". `503 PRINCIPAL_SKEMA_BELUM` = tabel belum ada.
 - `code` principal **tidak bisa diubah** (tanpa jalur ubah; trigger DB menolak juga). Kode salah = buat principal baru +
   nonaktifkan yang lama. Nama resmi juga belum punya jalur ubah (TERBUKA).

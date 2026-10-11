@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { benihSql, laporanMarkdown, ringkas, susunLaporan, tokenLonggar, type DataDb } from "./laporan.ts";
+import { PENJAGA, sqlPenjagaSah } from "./penjaga.ts";
 
 const kosong = { ok: true as const, rows: [] };
 export function dataSintetis(over: Partial<DataDb> = {}): DataDb {
@@ -83,7 +84,8 @@ test("benih SQL: hanya INSERT ... ON CONFLICT DO NOTHING (tanpa UPDATE), penjaga
     const aktif = sql.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
     assert.doesNotMatch(aktif, /\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b/);
     assert.equal((aktif.match(/ON CONFLICT DO NOTHING/g) ?? []).length, 3, "principal, varian, alias");
-    for (const t of ["trg_principal_code_tetap", "trg_principal_log_append_only", "trg_principal_log_no_truncate"]) assert.ok(aktif.includes(`tgname = '${t}'`), t);
+    const rapat = (x: string) => x.replace(/\s+/g, " ");
+    for (const p of PENJAGA) assert.ok(rapat(aktif).includes(rapat(`IF NOT ${sqlPenjagaSah(p)} THEN`)), `penjaga benih ketat: ${p.nama}`);
     assert.match(aktif, /\('KINO', NULL::text, 'K1', 'K1', 'kode_master_barang', 'master_barang'\)/, "kode MB persis = aktif");
     assert.match(aktif, /\('GDI', NULL::text, 'GD', 'GD', 'kode_master_barang', 'master_barang'\)/);
     assert.doesNotMatch(aktif, /'UR'|'P1'|PTMIX/, "longgar tidak aktif");

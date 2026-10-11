@@ -6,7 +6,7 @@
  *   Tak pernah menebak: hanya kecocokan PERSIS (normalizer baku) yang masuk SQL aktif; kecocokan longgar ditulis sebagai blok
  *   SQL ber-komentar untuk ditinjau owner; ambiguous/unmatched hanya dicantumkan.
  * Caller: scripts/principal-laporan.mjs (baca DB baca-saja lalu memanggil ini); uji lib/principal/laporan.test.ts, principal-pg.test.ts.
- * Dependensi: lib/principal/normalisasi.ts, resolver.ts (JenisAlias, SUMBER_KODE, TRIGGER_WAJIB), lib/off-program-control/constants.ts,
+ * Dependensi: lib/principal/normalisasi.ts, resolver.ts (JenisAlias, SUMBER_KODE), penjaga.ts, lib/off-program-control/constants.ts,
  *   lib/claim-workflow/no-claim-rules.ts. TANPA @/ alias & tanpa DB agar bisa diimpor skrip .mjs lewat tsx.
  * Main Functions: tokenLonggar, susunRegistri, susunLaporan, laporanMarkdown, benihSql.
  * Side Effects: tidak ada.
@@ -15,7 +15,8 @@
 import { offPrinciples } from "../off-program-control/constants.ts";
 import { noClaimRuleConfigs } from "../claim-workflow/no-claim-rules.ts";
 import { normalisasiPrincipal, rapikanTeks } from "./normalisasi.ts";
-import { SUMBER_KODE, TRIGGER_WAJIB, type JenisAlias } from "./resolver.ts";
+import { SUMBER_KODE, type JenisAlias } from "./resolver.ts";
+import { PENJAGA, sqlPenjagaSah } from "./penjaga.ts";
 
 export const AKTOR_BENIH = "benih:S7-2";
 
@@ -334,10 +335,9 @@ export function benihSql(lap: Laporan): string {
         "SET LOCAL standard_conforming_strings = on;",
         "DO $$",
         "BEGIN",
-        ...TRIGGER_WAJIB.flatMap(([nama, tabel, ddl]) => [
-            `    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = '${nama}' AND tgrelid = to_regclass('${tabel}')`,
-            "                   AND NOT tgisinternal AND tgenabled IN ('O', 'A')) THEN",
-            `        RAISE EXCEPTION 'benih S7-2: trigger ${nama} tidak aktif — jalankan docs/handover/${ddl} dulu';`,
+        ...PENJAGA.flatMap((p) => [
+            `    IF NOT ${sqlPenjagaSah(p).replace(/\n/g, "\n    ")} THEN`,
+            `        RAISE EXCEPTION 'benih S7-2: trigger ${p.nama} tidak terpasang persis (jenis/fungsi) — jalankan docs/handover/${p.ddl} dulu';`,
             "    END IF;",
         ]),
         "END $$;",

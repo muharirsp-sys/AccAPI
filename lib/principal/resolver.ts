@@ -20,13 +20,6 @@ export const ruangAlias = (jenis: string): Ruang => (jenis === "kode_master_bara
 
 /** sumber alias kode principal: dibuat bersama principal (API & benih), tidak bisa dihapus/dibuat lewat API — menjaga "kode -> principal-nya". */
 export const SUMBER_KODE = "kode_principal";
-/** Trigger yang WAJIB aktif sebelum jalur tulis / benih berjalan (migrate-pg saja tidak memasangnya). [nama, tabel, berkas DDL] */
-export const TRIGGER_WAJIB = [
-    ["trg_principal_code_tetap", "principal", "DDL_S7_0.sql"],
-    ["trg_principal_log_append_only", "principal_log", "DDL_S7_2.sql"],
-    ["trg_principal_log_no_truncate", "principal_log", "DDL_S7_2.sql"],
-] as const;
-
 export type AliasTerindeks = {
     id: string;
     aliasNorm: string;

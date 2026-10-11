@@ -32,7 +32,7 @@ const urlSkema = (skema: string) => {
     return u.toString();
 };
 type Hasil = { rows: { cek: string; ok: boolean | null }[] };
-const verifikasi = (hasil: unknown) => { const h = hasil as Hasil[]; return h[h.length - 1].rows; };
+const verifikasi = (hasil: unknown) => { const h = (Array.isArray(hasil) ? hasil : [hasil]) as Hasil[]; return h[h.length - 1].rows; };
 const semuaOk = (rows: { cek: string; ok: boolean | null }[]) => { for (const v of rows) assert.notEqual(v.ok, false, `VERIFIKASI gagal: ${v.cek}`); };
 const kodeGalat = (kode: string) => (e: unknown) => (e as { code?: string }).code === kode;
 
@@ -134,7 +134,7 @@ test("PG S7-2: DDL_S7_2 berhenti tanpa S7-0 (tidak membuat apa pun); dua kali id
     await dasar.pool.query("ALTER TABLE principal DISABLE TRIGGER trg_principal_code_tetap");
     const c2 = await dasar.pool.connect();
     try {
-        await assert.rejects(c2.query(ddl), /trg_principal_code_tetap tidak aktif/, "trigger S7-0 nonaktif = prasyarat gagal");
+        await assert.rejects(c2.query(ddl), /trg_principal_code_tetap tidak terpasang persis/, "trigger S7-0 nonaktif = prasyarat gagal");
     } finally {
         await c2.query("ROLLBACK");
         c2.release();
@@ -367,6 +367,60 @@ test("PG S7-2: atomik — principal_log gagal = principal TIDAK tercipta; trigge
     assert.equal((await buat("SESUDAH", "SESUDAH DDL, PT")).status, 201, "DDL dipasang ulang -> tulis jalan lagi");
 });
 
+test("PG S7-2: penjaga KETAT — trigger bernama sama tetapi jenis event / kolom / WHEN / fungsi / isi fungsi lain = 503 + VERIFIKASI false + prasyarat DDL berhenti", { skip: pgSkip }, async () => {
+    const ddl72 = await berkas("../docs/handover/DDL_S7_2.sql");
+    const ddl70 = await berkas("../docs/handover/DDL_S7_0.sql");
+    const blokVerifikasi = ddl72.slice(ddl72.indexOf("-- 4. VERIFIKASI"));
+    assert.ok(blokVerifikasi.length > 100);
+    const { id: kino } = (await utama.pool.query(`SELECT id FROM principal WHERE code = 'KINO'`)).rows[0];
+    const sebelum = [await hitung("principal"), await hitung("principal_log")];
+    const kasus: { nama: string; rusak: string; pulih: string; kurang: string[] }[] = [
+        { nama: "fungsi log diganti RETURN NEW", kurang: ["trg_principal_log_append_only", "trg_principal_log_no_truncate"], pulih: ddl72,
+            rusak: "CREATE OR REPLACE FUNCTION principal_log_append_only() RETURNS trigger LANGUAGE plpgsql AS $fn$ BEGIN RETURN NEW; END $fn$" },
+        { nama: "nama sama, jenis AFTER INSERT", kurang: ["trg_principal_log_append_only"], pulih: ddl72,
+            rusak: `DROP TRIGGER trg_principal_log_append_only ON principal_log;
+                    CREATE TRIGGER trg_principal_log_append_only AFTER INSERT ON principal_log FOR EACH ROW EXECUTE FUNCTION principal_log_append_only()` },
+        { nama: "TRUNCATE jadi BEFORE INSERT statement", kurang: ["trg_principal_log_no_truncate"], pulih: ddl72,
+            rusak: `DROP TRIGGER trg_principal_log_no_truncate ON principal_log;
+                    CREATE TRIGGER trg_principal_log_no_truncate BEFORE INSERT ON principal_log FOR EACH STATEMENT EXECUTE FUNCTION principal_log_append_only()` },
+        { nama: "nama & jenis sama, fungsi lain (isi sama)", kurang: ["trg_principal_log_append_only"], pulih: `${ddl72}; DROP FUNCTION IF EXISTS uji_lain()`,
+            rusak: `CREATE FUNCTION uji_lain() RETURNS trigger LANGUAGE plpgsql AS $fn$
+                    BEGIN RAISE EXCEPTION 'S7-2: principal_log append-only — % ditolak (riwayat principal)', TG_OP USING ERRCODE = 'restrict_violation'; END $fn$;
+                    CREATE OR REPLACE TRIGGER trg_principal_log_append_only BEFORE UPDATE OR DELETE ON principal_log FOR EACH ROW EXECUTE FUNCTION uji_lain()` },
+        { nama: "fungsi kode tetap diganti RETURN NEW", kurang: ["trg_principal_code_tetap"], pulih: ddl70,
+            rusak: "CREATE OR REPLACE FUNCTION principal_code_tetap() RETURNS trigger LANGUAGE plpgsql AS $fn$ BEGIN RETURN NEW; END $fn$" },
+        { nama: "kode tetap WHEN (false)", kurang: ["trg_principal_code_tetap"], pulih: ddl70,
+            rusak: "CREATE OR REPLACE TRIGGER trg_principal_code_tetap BEFORE UPDATE OF code ON principal FOR EACH ROW WHEN (false) EXECUTE FUNCTION principal_code_tetap()" },
+        { nama: "kode tetap tanpa OF code (kolom lain)", kurang: ["trg_principal_code_tetap"], pulih: ddl70,
+            rusak: "CREATE OR REPLACE TRIGGER trg_principal_code_tetap BEFORE UPDATE OF name ON principal FOR EACH ROW EXECUTE FUNCTION principal_code_tetap()" },
+    ];
+    for (const k of kasus) {
+        await utama.pool.query(k.rusak);
+        try {
+            const r = await panggil(m.satu.PATCH(req("PATCH", `/api/principals/${kino}`, { isActive: false }), ctx(kino)));
+            assert.deepEqual([r.status, r.body.code, r.body.kurang], [503, "PRINCIPAL_DDL_BELUM", k.kurang], k.nama);
+            const v = verifikasi(await utama.pool.query(blokVerifikasi));
+            assert.ok(v.some((x) => x.ok === false), `${k.nama}: VERIFIKASI DDL_S7_2 harus menandai false`);
+            if (k.kurang.includes("trg_principal_code_tetap")) {
+                const c = await utama.pool.connect();
+                try {
+                    await assert.rejects(c.query(ddl72), /trg_principal_code_tetap/, `${k.nama}: prasyarat DDL_S7_2 berhenti`);
+                } finally {
+                    await c.query("ROLLBACK");
+                    c.release();
+                }
+            }
+        } finally {
+            await utama.pool.query(k.pulih);
+        }
+        semuaOk(verifikasi(await utama.pool.query(blokVerifikasi)));
+    }
+    assert.equal((await utama.pool.query(`SELECT is_active FROM principal WHERE id = $1`, [kino])).rows[0].is_active, true);
+    assert.deepEqual([await hitung("principal"), await hitung("principal_log")], sebelum, "tidak ada tulisan selama penjaga rusak");
+    const pulih = await panggil(m.satu.PATCH(req("PATCH", `/api/principals/${kino}`, { isActive: true }), ctx(kino)));
+    assert.deepEqual([pulih.status, pulih.body.berubah], [200, false], "penjaga dipulihkan -> tulis jalan");
+});
+
 // --------------------------------------------------------------------------- laporan + benih
 
 const SUMBER = `
@@ -440,7 +494,7 @@ test("PG S7-2: laporan BACA-SAJA pada data sintetis (ejaan nyata) — sumber hil
         await tanpa.pool.query((await import(new URL("../scripts/migrate-pg.mjs", import.meta.url).href)).migrations.find((x: { nama: string }) => x.nama === "principal_log").sql);
         const c = await tanpa.pool.connect();
         try {
-            await assert.rejects(c.query(benih), /trg_principal_log_append_only tidak aktif/);
+            await assert.rejects(c.query(benih), /trg_principal_log_append_only tidak terpasang persis/);
         } finally {
             await c.query("ROLLBACK");
             c.release();

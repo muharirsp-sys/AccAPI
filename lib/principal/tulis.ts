@@ -13,7 +13,8 @@ import { and, asc, desc, eq, lt, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { principal, principalAlias, principalLog, principalVariant } from "@/db/schema";
 import { normalisasiPrincipal, rapikanTeks } from "./normalisasi.ts";
-import { buatIndeksAlias, JENIS_ALIAS, resolvePrincipal, RUANG, ruangDari, SUMBER_KODE, TRIGGER_WAJIB, type AliasTerindeks, type IndeksAlias, type JenisAlias } from "./resolver.ts";
+import { buatIndeksAlias, JENIS_ALIAS, resolvePrincipal, RUANG, ruangDari, SUMBER_KODE, type AliasTerindeks, type IndeksAlias, type JenisAlias } from "./resolver.ts";
+import { SQL_PENJAGA_HILANG } from "./penjaga.ts";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Baris = Record<string, unknown>;
@@ -29,15 +30,13 @@ const KODE = /^[A-Z0-9_-]{1,20}$/;
 const VARIAN = /^[A-Z0-9_-]{0,20}$/;
 const KODE_MB = /^[A-Z0-9]{2}$/;
 
-/** 503 PRINCIPAL_DDL_BELUM bila salah satu TRIGGER_WAJIB tidak ada / nonaktif. Dipanggil di DALAM transaksi tulis. */
+/** 503 PRINCIPAL_DDL_BELUM bila salah satu trigger penjaga (lib/principal/penjaga.ts) tidak terpasang PERSIS — tidak ada, nonaktif,
+ * atau bernama sama tetapi jenis event/kolom/WHEN/fungsi/isi fungsi lain. Dipanggil di DALAM transaksi tulis. */
 export async function cekDdl(q: Pick<Tx, "execute">) {
-    const nilai = sql.join(TRIGGER_WAJIB.map(([nama, tabel]) => sql`(${nama}, ${tabel})`), sql`, `);
-    const { rows } = await q.execute(sql`SELECT t.nama FROM (VALUES ${nilai}) AS t(nama, tabel) WHERE NOT EXISTS (
-        SELECT 1 FROM pg_trigger g WHERE g.tgname = t.nama AND g.tgrelid = to_regclass(t.tabel)
-          AND NOT g.tgisinternal AND g.tgenabled IN ('O', 'A'))`);
+    const { rows } = await q.execute(sql.raw(SQL_PENJAGA_HILANG));
     if (rows.length) {
         throw new GalatPrincipal(503, "PRINCIPAL_DDL_BELUM",
-            "Penjaga database principal belum terpasang (DDL_S7_0/DDL_S7_2). Hubungi IT Support — perubahan tidak disimpan.",
+            "Penjaga database principal belum terpasang persis (DDL_S7_0/DDL_S7_2). Hubungi IT Support — perubahan tidak disimpan.",
             { kurang: rows.map((r) => (r as { nama: string }).nama) });
     }
 }

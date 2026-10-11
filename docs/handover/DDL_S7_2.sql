@@ -17,7 +17,8 @@
 --   REVOKE/GRANT. Berkas ini TETAP WAJIB (idempoten, aman sesudah migrate-pg); tanpa trigger jalur tulis menolak 503.
 --
 -- ISI (nama tanpa skema = public pada search_path bawaan; ditulis begitu agar uji PG bisa memakai skema sekali-pakai):
---   0. Prasyarat S7-0: tabel principal + trigger trg_principal_code_tetap aktif — bila tidak, berhenti (RAISE) tanpa mengubah apa pun.
+--   0. Prasyarat S7-0: tabel principal + trigger trg_principal_code_tetap terpasang PERSIS (jenis event, kolom code, WHEN, fungsi +
+--      isi fungsi) — bila tidak, berhenti (RAISE) tanpa mengubah apa pun.
 --   1. CREATE TABLE/INDEX IF NOT EXISTS principal_log (aditif).
 --   2. Trigger append-only: UPDATE/DELETE per baris + TRUNCATE ditolak (CREATE OR REPLACE = idempoten, PG14+).
 --   3. Hak accapi_app: REVOKE UPDATE, DELETE, TRUNCATE; GRANT SELECT, INSERT + USAGE sequence (role absen = dilewati).
@@ -36,15 +37,20 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
 
--- 0. Prasyarat S7-0.
+-- 0. Prasyarat S7-0: trigger kode tetap terpasang PERSIS (jenis BEFORE UPDATE OF code FOR EACH ROW, WHEN, fungsi + isi fungsi),
+--    bukan sekadar bernama sama. Ekspresi = lib/principal/penjaga.ts sqlPenjagaSah (uji penjaga.test.ts memastikan sama).
 DO $$
 BEGIN
     IF to_regclass('principal') IS NULL THEN
         RAISE EXCEPTION 'S7-2: tabel principal belum ada — jalankan docs/handover/DDL_S7_0.sql dulu';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_principal_code_tetap' AND tgrelid = to_regclass('principal')
-                   AND NOT tgisinternal AND tgenabled IN ('O', 'A')) THEN
-        RAISE EXCEPTION 'S7-2: trigger trg_principal_code_tetap tidak aktif — jalankan docs/handover/DDL_S7_0.sql dulu';
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc f ON f.oid = t.tgfoid JOIN pg_language l ON l.oid = f.prolang
+        WHERE t.tgname = 'trg_principal_code_tetap' AND t.tgrelid = to_regclass('principal') AND NOT t.tgisinternal AND t.tgenabled IN ('O', 'A')
+          AND t.tgtype = 19 AND cardinality(t.tgattr::int2[]) = 1 AND t.tgattr[0] = (SELECT a.attnum FROM pg_attribute a WHERE a.attrelid = t.tgrelid AND a.attname = 'code')
+          AND (t.tgqual IS NULL OR regexp_replace(lower(pg_get_triggerdef(t.oid)), '[^a-z]', '', 'g') LIKE '%whenoldcodeisdistinctfromnewcodeexecute%')
+          AND f.proname = 'principal_code_tetap' AND f.prorettype = 'trigger'::regtype AND l.lanname = 'plpgsql'
+          AND btrim(regexp_replace(f.prosrc, '\s+', ' ', 'g')) = 'BEGIN RAISE EXCEPTION ''S7-0: principal.code tidak boleh diubah (% -> %) — buat principal baru, jangan ganti kode'', OLD.code, NEW.code USING ERRCODE = ''restrict_violation''; END') THEN
+        RAISE EXCEPTION 'S7-2: trigger trg_principal_code_tetap tidak terpasang persis (jenis/kolom/WHEN/fungsi) — jalankan docs/handover/DDL_S7_0.sql dulu';
     END IF;
 END $$;
 
@@ -92,12 +98,25 @@ COMMIT;
 SELECT cek, ok FROM (VALUES
     ('tabel principal_log', to_regclass('principal_log') IS NOT NULL),
     ('indeks idx_principal_log_principal', to_regclass('idx_principal_log_principal') IS NOT NULL),
-    ('trigger principal_log tolak UPDATE/DELETE aktif', EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_principal_log_append_only'
-        AND tgrelid = to_regclass('principal_log') AND NOT tgisinternal AND tgenabled IN ('O', 'A'))),
-    ('trigger principal_log tolak TRUNCATE aktif', EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_principal_log_no_truncate'
-        AND tgrelid = to_regclass('principal_log') AND NOT tgisinternal AND tgenabled IN ('O', 'A'))),
-    ('trigger principal.code tetap aktif (S7-0)', EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_principal_code_tetap'
-        AND tgrelid = to_regclass('principal') AND NOT tgisinternal AND tgenabled IN ('O', 'A'))),
+    -- Trigger penjaga PERSIS: nama + tabel + aktif + jenis event (tgtype) + kolom + WHEN + fungsi + isi fungsi (lib/principal/penjaga.ts).
+    ('trigger principal_log tolak UPDATE/DELETE (BEFORE ROW, fungsi & isi benar)', EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc f ON f.oid = t.tgfoid JOIN pg_language l ON l.oid = f.prolang
+        WHERE t.tgname = 'trg_principal_log_append_only' AND t.tgrelid = to_regclass('principal_log') AND NOT t.tgisinternal AND t.tgenabled IN ('O', 'A')
+          AND t.tgtype = 27 AND cardinality(t.tgattr::int2[]) = 0
+          AND t.tgqual IS NULL
+          AND f.proname = 'principal_log_append_only' AND f.prorettype = 'trigger'::regtype AND l.lanname = 'plpgsql'
+          AND btrim(regexp_replace(f.prosrc, '\s+', ' ', 'g')) = 'BEGIN RAISE EXCEPTION ''S7-2: principal_log append-only — % ditolak (riwayat principal)'', TG_OP USING ERRCODE = ''restrict_violation''; END')),
+    ('trigger principal_log tolak TRUNCATE (BEFORE STATEMENT, fungsi & isi benar)', EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc f ON f.oid = t.tgfoid JOIN pg_language l ON l.oid = f.prolang
+        WHERE t.tgname = 'trg_principal_log_no_truncate' AND t.tgrelid = to_regclass('principal_log') AND NOT t.tgisinternal AND t.tgenabled IN ('O', 'A')
+          AND t.tgtype = 34 AND cardinality(t.tgattr::int2[]) = 0
+          AND t.tgqual IS NULL
+          AND f.proname = 'principal_log_append_only' AND f.prorettype = 'trigger'::regtype AND l.lanname = 'plpgsql'
+          AND btrim(regexp_replace(f.prosrc, '\s+', ' ', 'g')) = 'BEGIN RAISE EXCEPTION ''S7-2: principal_log append-only — % ditolak (riwayat principal)'', TG_OP USING ERRCODE = ''restrict_violation''; END')),
+    ('trigger principal.code tetap (S7-0; BEFORE UPDATE OF code, WHEN, fungsi & isi benar)', EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc f ON f.oid = t.tgfoid JOIN pg_language l ON l.oid = f.prolang
+        WHERE t.tgname = 'trg_principal_code_tetap' AND t.tgrelid = to_regclass('principal') AND NOT t.tgisinternal AND t.tgenabled IN ('O', 'A')
+          AND t.tgtype = 19 AND cardinality(t.tgattr::int2[]) = 1 AND t.tgattr[0] = (SELECT a.attnum FROM pg_attribute a WHERE a.attrelid = t.tgrelid AND a.attname = 'code')
+          AND (t.tgqual IS NULL OR regexp_replace(lower(pg_get_triggerdef(t.oid)), '[^a-z]', '', 'g') LIKE '%whenoldcodeisdistinctfromnewcodeexecute%')
+          AND f.proname = 'principal_code_tetap' AND f.prorettype = 'trigger'::regtype AND l.lanname = 'plpgsql'
+          AND btrim(regexp_replace(f.prosrc, '\s+', ' ', 'g')) = 'BEGIN RAISE EXCEPTION ''S7-0: principal.code tidak boleh diubah (% -> %) — buat principal baru, jangan ganti kode'', OLD.code, NEW.code USING ERRCODE = ''restrict_violation''; END')),
     ('accapi_app tanpa UPDATE/DELETE/TRUNCATE principal_log', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app')
         THEN NOT (has_table_privilege('accapi_app', 'principal_log', 'UPDATE') OR has_table_privilege('accapi_app', 'principal_log', 'DELETE')
                   OR has_table_privilege('accapi_app', 'principal_log', 'TRUNCATE')) END),
