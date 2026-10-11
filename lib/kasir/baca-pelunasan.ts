@@ -67,6 +67,8 @@ export interface TokoBaca {
         Promise<{ diklaim: true; akunLama: string | null; penuhTertunda: boolean } | { diklaim: false; status: StatusBaca }>;
     /** Catat baca penuh yang tertunda (tanpa menyentuh lease/token pemegang). */
     tandaiPenuhTertunda(databaseId: string, tanggal: string): Promise<void>;
+    /** Tanggal ≥ `sejak` yang masih bertanda baca penuh tertunda (cron ikut membacanya). */
+    tanggalTertunda(databaseId: string, sejak: string): Promise<string[]>;
     status(databaseId: string, tanggal: string): Promise<StatusBaca>;
     /** id -> last_update cache pelunasan bertanggal itu. */
     cache(databaseId: string, tanggal: string): Promise<Map<number, string | null>>;
@@ -359,6 +361,11 @@ export function tokoPg(d: Db): TokoBaca {
             const baris = r.rows[0];
             return baris ? { diklaim: true, akunLama: (baris.akun_lama ?? null) as string | null, penuhTertunda: baris.penuh_tertunda === true }
                 : { diklaim: false, status: await bacaStatus(d, databaseId, tanggal) };
+        },
+        async tanggalTertunda(databaseId, sejak) {
+            const r = await d.execute(sql`SELECT tanggal::text AS tanggal FROM kasir_pelunasan_baca WHERE database_id = ${databaseId}
+                AND penuh_tertunda_pada IS NOT NULL AND tanggal >= ${sejak}::date ORDER BY tanggal`);
+            return r.rows.map((x) => String(x.tanggal));
         },
         async tandaiPenuhTertunda(databaseId, tanggal) {
             await d.execute(sql`UPDATE kasir_pelunasan_baca SET penuh_tertunda_pada = coalesce(penuh_tertunda_pada, now())

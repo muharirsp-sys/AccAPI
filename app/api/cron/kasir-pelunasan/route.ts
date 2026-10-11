@@ -5,6 +5,8 @@
  *   sekali 19.30 WITA (faktur yang disunting mengganti salesman TANPA mengubah lastUpdate pelunasan).
  * Dependensi: lib/kasir/baca-pelunasan, lib/kasir/pembaca (tanggalCron), lib/api-security (requireCronSecret).
  * Main Functions: GET ?tanggal=YYYY-MM-DD (satu tanggal), ?penuh=1 (baca ulang semua detail), ?check=1 (laporan status tanpa Accurate).
+ *   Bawaan juga membaca tanggal ≤ 7 hari yang masih bertanda baca penuh tertunda (mis. Sabtu/Minggu yang ditandai Senin) — klaimnya otomatis
+ *   penuh; penanda > 7 hari kedaluwarsa (tidak dijalankan otomatis: `?tanggal=…&penuh=1`).
  *   200 bila SEMUA tanggal lengkap; 202 bila sisanya hanya `sedang_dibaca` (tombol/cron lain memegang lease — bukan galat); sesi sinkron
  *   mati -> 503; selain itu 502 dengan rincian. `penuh=1` yang bertemu lease pemegang lain MENUNGGU (tiap 5 dtk) sampai lease selesai /
  *   kedaluwarsa, baru menyerah `PENUH_TERTUNDA` (502) — baca penuh 19.30 tidak hilang karena bertabrakan dengan cron tiap 15 menit.
@@ -13,7 +15,7 @@
 import { NextResponse } from "next/server";
 import { requireCronSecret } from "@/lib/api-security";
 import { todayWita } from "@/lib/insentif-payment-date";
-import { bacaPelunasanHari, bawaan, databaseIdSinkron, LEASE_DETIK, publikkan, statusBaca, type HasilBaca } from "@/lib/kasir/baca-pelunasan";
+import { bacaPelunasanHari, bawaan, LEASE_DETIK, publikkan, statusBaca, type HasilBaca } from "@/lib/kasir/baca-pelunasan";
 import { PESAN_SESI_SINKRON, tanggalCron, tanggalSah } from "@/lib/kasir/pembaca";
 
 export const runtime = "nodejs";
@@ -26,6 +28,8 @@ const JEDA_TUNGGU_MS = 5_000;
 const TUNGGU_PENUH_MS = (LEASE_DETIK + 30) * 1000;
 /** Tidak memulai putaran baru sesudah ini (curl --max-time 900; satu putaran ≤ ±70 dtk). */
 const BATAS_ROUTE_MS = 780_000;
+/** Penanda baca penuh tertunda yang ikut dibaca cron bawaan. */
+const TERTUNDA_HARI = 7;
 
 export async function GET(req: Request) {
     const gate = requireCronSecret(req);
@@ -36,11 +40,13 @@ export async function GET(req: Request) {
     if (satu !== null && (!tanggalSah(satu) || satu > hariIni)) {
         return NextResponse.json({ ok: false, error: `tanggal wajib YYYY-MM-DD dan tidak melewati hari ini (${hariIni} WITA)` }, { status: 400 });
     }
-    const daftar = satu ? [satu] : tanggalCron(hariIni);
     const penuh = sp.get("penuh") === "1";
     try {
+        const databaseId = (await bawaan.sesi().catch(() => ({ userId: "", databaseId: "" }))).databaseId.trim();
+        const sejak = new Date(Date.parse(`${hariIni}T00:00:00Z`) - TERTUNDA_HARI * 86_400_000).toISOString().slice(0, 10);
+        const tertunda = !satu && databaseId ? await bawaan.toko().tanggalTertunda(databaseId, sejak) : [];
+        const daftar = satu ? [satu] : [...new Set([...tanggalCron(hariIni), ...tertunda])];
         if (sp.get("check") === "1") {
-            const databaseId = await databaseIdSinkron();
             return NextResponse.json({ ok: true, checkOnly: true, penuh, tanggal: daftar, sesiSinkron: Boolean(databaseId),
                 status: databaseId ? await Promise.all(daftar.map(async (t) => publikkan(await statusBaca(databaseId, t)))) : [] });
         }
@@ -48,6 +54,8 @@ export async function GET(req: Request) {
         const hasil: Record<string, unknown>[] = [];
         for (const tanggal of daftar) {
             if (bawaan.sekarang() >= batasRoute) {
+                // Baca penuh yang tak sempat = tertunda (klaim berikutnya membaca penuh; tanggal ≤ 7 hari ikut cron berikut).
+                if (penuh && databaseId) await bawaan.toko().tandaiPenuhTertunda(databaseId, tanggal);
                 hasil.push({ tanggal, status: "tidak_sempat", kode: "BATAS_ROUTE", pesan: "Batas waktu cron habis sebelum tanggal ini dibaca." });
                 continue;
             }

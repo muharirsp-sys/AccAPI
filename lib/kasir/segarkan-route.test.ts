@@ -71,6 +71,7 @@ function toko(klaim: Awaited<ReturnType<TokoBaca["klaim"]>> = { diklaim: true, a
         selesaiDipanggil: 0,
         tertunda: [] as string[],
         tandaiPenuhTertunda: async (_d: string, tanggal: string) => { t.tertunda.push(tanggal); },
+        tanggalTertunda: async () => [] as string[],
         klaim: async () => klaim,
         status: async () => st({ status: "berjalan", aktif: false }),
         cache: async () => new Map<number, string | null>(),
@@ -246,4 +247,43 @@ test("cron: cron biasa bertemu lease tombol = 202 berketerangan (bukan galat); p
     assert.equal(bp.hasil[0].kode, "PENUH_TERTUNDA");
     assert.deepEqual(tkSibuk.tertunda, [D], "PENUH_TERTUNDA dicatat di baris status (terlihat UI)");
     assert.ok(percobaan > 20 && jam.t >= 120_000, `menunggu > lease (percobaan ${percobaan}, ${jam.t} ms)`);
+});
+
+const geser = (t: string, hari: number) => new Date(Date.parse(`${t}T00:00:00Z`) + hari * 86_400_000).toISOString().slice(0, 10);
+
+test("cron: tanggal ≤ 7 hari yang bertanda baca penuh TERTUNDA ikut dibaca (klaim penuh, penanda kosong); penanda > 7 hari tidak", async () => {
+    const rahasia = "rahasia-cron-uji";
+    const jam = { t: Date.parse("2026-10-05T03:00:00Z") };
+    const t = tokoTiruan(jam, DB);
+    const hariIni = todayWita(new Date());
+    const [d5, d10] = [geser(hariIni, -5), geser(hariIni, -10)];
+    for (const tanggal of [d5, d10]) {
+        await t.toko.klaim({ databaseId: DB, tanggal, token: `x-${tanggal}`, pemicu: "cron", penuh: false, akun: "u-sinkron" });
+        await t.toko.selesai(`x-${tanggal}`, DB, tanggal, { status: "lengkap", sebab: null, pesan: null, jumlahDaftar: 0, sisaDetail: 0 }, [], "u-sinkron");
+        await t.toko.tandaiPenuhTertunda(DB, tanggal);
+    }
+    jam.t += 120_000;
+    const r = await dengan({ env: { CRON_SECRET: rahasia }, deps: { kredensial: async () => KRED, sesi: async () => ({ userId: "u-sinkron", databaseId: DB }),
+        toko: () => t.toko, fetch: daftarKosong, sekarang: () => jam.t } }, () => getCron(cron("", rahasia)));
+    const b = await r.json() as { hasil: { tanggal: string; status: string }[] };
+    assert.equal(r.status, 200, JSON.stringify(b));
+    assert.ok(b.hasil.some((h) => h.tanggal === d5 && h.status === "lengkap"), "tanggal tertunda 5 hari lalu ikut dibaca");
+    assert.ok(!b.hasil.some((h) => h.tanggal === d10), "penanda > 7 hari kedaluwarsa");
+    assert.ok(t.klaimPenuh.includes(`${d5}:cron`), "klaimnya baca penuh");
+    assert.deepEqual([t.rows.get(d5)!.penuhTertunda, t.rows.get(d10)!.penuhTertunda === null], [null, false]);
+});
+
+test("cron penuh=1: tanggal `tidak_sempat` (batas waktu route) ditandai baca penuh tertunda", async () => {
+    const rahasia = "rahasia-cron-uji";
+    const jam = { t: 0 };
+    const tk = toko();
+    const klaimAsli = tk.klaim;
+    tk.klaim = async () => { jam.t += 800_000; return klaimAsli(); }; // satu putaran menghabiskan batas route
+    const r = await dengan({ env: { CRON_SECRET: rahasia }, deps: { kredensial: async () => KRED, sesi: async () => ({ userId: "u-sinkron", databaseId: DB }),
+        toko: () => tk, fetch: daftarKosong, sekarang: () => jam.t } }, () => getCron(cron("?penuh=1", rahasia)));
+    const b = await r.json() as { hasil: { tanggal: string; status: string }[] };
+    const tak = b.hasil.filter((h) => h.status === "tidak_sempat").map((h) => h.tanggal);
+    assert.equal(r.status, 502);
+    assert.ok(tak.length >= 1, JSON.stringify(b));
+    assert.deepEqual(tk.tertunda, tak, "setiap tanggal tidak_sempat ditandai tertunda");
 });

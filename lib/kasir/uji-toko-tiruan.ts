@@ -38,6 +38,7 @@ export function tokoTiruan(jam: { t: number }, databaseId = "DB-UJI") {
                 mulai: jam.t, selesai: null, sebab: null, pesan: null, pemicu, akun: akunLama });
             return { diklaim: true, akunLama, penuhTertunda: tertunda };
         },
+        tanggalTertunda: async (_db, sejak) => [...rows].filter(([t, r]) => r.penuhTertunda !== null && t >= sejak).map(([t]) => t).sort(),
         async tandaiPenuhTertunda(_db, tanggal) {
             const r = rows.get(tanggal);
             if (r && r.penuhTertunda === null) r.penuhTertunda = jam.t;

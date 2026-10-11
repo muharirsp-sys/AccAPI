@@ -405,6 +405,8 @@ test("PG K1b PENUH_TERTUNDA: dicatat tanpa menyentuh lease, terlihat (ISO), memb
         await toko.selesai("T1", DB, D, { status: "lengkap", sebab: null, pesan: null, jumlahDaftar: 0, sisaDetail: 0 }, [], "u-sinkron");
         const k = await toko.klaim({ databaseId: DB, tanggal: D, token: "T2", pemicu: "cron", penuh: false, akun: "u-sinkron" });
         assert.ok(k.diklaim && k.penuhTertunda, "lengkap < 60 dtk tidak menahan baca penuh yang tertunda");
+        assert.deepEqual(await toko.tanggalTertunda(DB, "2026-09-28"), [D]);
+        assert.deepEqual(await toko.tanggalTertunda(DB, "2026-10-06"), [], "sejak sesudah tanggal itu");
         assert.equal(await toko.tandaiBasi("T2", DB, D), true);
         assert.equal((await toko.status(DB, D)).penuhTertundaPada, null);
     });
@@ -426,5 +428,13 @@ test("PG K1b migrate-pg sudahAda lewat katalog: role TANPA hak tabel tetap melih
             await c.query("ROLLBACK");
             c.release();
         }
+        // Tanpa kolom penuh_tertunda_pada (akun_sinkron ada): sudahAda = 0, migrate melengkapi; VERIFIKASI kolom = false.
+        await pool.query("ALTER TABLE kasir_pelunasan_baca DROP COLUMN penuh_tertunda_pada");
+        assert.equal((await pool.query(m.sudahAda)).rowCount, 0, "kolom penuh_tertunda_pada wajib ada");
+        const ddlB = await berkas("../../docs/handover/DDL_K1B.sql");
+        const v = new Map((await verifikasi(pool, ddlB.slice(ddlB.indexOf("-- 3. VERIFIKASI")))).map((r) => [r.cek, r.ok]));
+        assert.equal([...v].find(([cek]) => /kolom akun_sinkron/.test(cek))?.[1], false, "VERIFIKASI kolom menangkap kolom yang kurang");
+        assert.equal(await migrasi(pool, m), `OK ${NAMA_K1B}`);
+        assert.equal(await migrasi(pool, m), `SKIP ${NAMA_K1B}`);
     });
 });

@@ -133,7 +133,8 @@ Galat TIDAK pernah menghapus cache atau memundurkan `lengkap_pada` (hanya maju).
 pernah `lengkap` sampai diperbaiki di Accurate — **keputusan owner 12 Okt (K-3)**: Tutup terhalang sampai diperbaiki; tanpa jalan "jelaskan & tutup"; kunci
 20.00 tetap berjalan. **Sesi sinkron mati** (kredensial gagal) sementara database sesi masih diketahui: status tanggal itu DITULIS `gagal`/`sesi_sinkron`
 (lease dihormati, `lengkap_pada` tetap sebagai riwayat) — `lengkap` lama tidak tetap tampil. Kolom `akun_sinkron` = user.id akun Accurate sinkron yang
-cache-nya TERAKHIR DITERAPKAN (tidak ditimpa saat klaim; tetap akun lama selama penjaga ganti-akun menahan hapus); ke klien sebagai NAMA (`akun`),
+cache-nya TERAKHIR DITERAPKAN dari daftar LENGKAP (tidak ditimpa saat klaim; tetap akun lama bila putaran gagal sebelum langkah hapus — 5xx/401/
+terpotong/waktu habis/sesi mati — dan selama penjaga ganti-akun menahan hapus); ke klien sebagai NAMA (`akun`),
 `pemicu` tanpa id (`pemicu` = cron/manual, `pemicuOleh` = nama); waktu = ISO UTC (`…Z`). `penuh_tertunda_pada` (`penuhTertundaPada`) = baca penuh
 cron yang menyerah menunggu lease: terlihat di UI, dan klaim BERIKUTNYA (cron 15 menit / tombol, juga dalam jeda lengkap 60 dtk) menjalankan baca
 penuh lalu mengosongkannya. Baca penuh menandai cache basi SEGERA sesudah klaim (sebelum list.do): putaran yang kehabisan waktu di tengah daftar
@@ -153,7 +154,9 @@ daftar id/nomor; bertahan sampai POST `konfirmasiHapus: true` oleh pemegang `kas
 `?tanggal=`, `?penuh=1`, `?check=1`): bawaan hari ini WITA + mundur sampai hari kerja sebelumnya (Senin: Sabtu & Minggu), berurutan, `sebagian`
 dilanjutkan ≤ 3×; tanggal yang lease-nya dipegang tombol/cron lain = `sedang_dibaca` berketerangan (BUKAN galat); `penuh=1` yang bertemu lease
 MENUNGGU tiap 5 dtk sampai lease selesai/kedaluwarsa (≤ 2,5 mnt per tanggal) lalu `PENUH_TERTUNDA` (dicatat `penuh_tertunda_pada`; klaim berikut
-membaca penuh). 200 = semua lengkap, 202 = sisanya hanya
+membaca penuh; tanggal `tidak_sempat` di bawah `penuh=1` juga ditandai). Cron bawaan IKUT membaca tanggal ≤ 7 hari yang masih bertanda
+tertunda (mis. Sabtu/Minggu yang ditandai Senin; klaimnya otomatis penuh); penanda > 7 hari = kedaluwarsa, tetap terlihat di status, tidak
+dijalankan otomatis (`?tanggal=…&penuh=1` manual). 200 = semua lengkap, 202 = sisanya hanya
 `sedang_dibaca`, 503 = sesi mati, 502 = lainnya (rincian per tanggal). Tidak memulai putaran baru sesudah 13 menit (`tidak_sempat`).
 
 **Fungsi untuk K2/K3** (`lib/kasir/baca-pelunasan.ts`, tanpa Accurate): `sesiSinkron()` / `databaseIdSinkron()` (database sesi sinkron saat ini; ""
