@@ -15,12 +15,12 @@ const NAMA = async (ids: string[]) => new Map(ids.filter((id) => id.startsWith("
 
 type Jam = { t: number };
 
-type PelSim = { id: number; lastUpdate: string; transDate?: string; cheque?: number | string; detail?: unknown };
+type PelSim = { id: number; lastUpdate: string; transDate?: string; cheque?: number | string; detail?: unknown; salesman?: number };
 type Panggilan = { jenis: "list" | "detail"; id?: number; page?: number; ke: number };
 type Aturan = (p: Panggilan) => Response | Error | undefined;
 
 /** Simulator Accurate: list.do (100/halaman, filter transDate, rowCount/pageCount) + detail.do; `aturan` menyuntik 401/429/timeout. */
-function simulator(jam: Jam, data: PelSim[], aturan: Aturan = () => undefined, opsi: { msPerDetail?: number; jedaMs?: (p: Panggilan) => number } = {}) {
+function simulator(jam: Jam, data: PelSim[], aturan: Aturan = () => undefined, opsi: { msPerDetail?: number; msPerList?: number; jedaMs?: (p: Panggilan) => number } = {}) {
     const log: Panggilan[] = [];
     let aktif = 0;
     let maksAktif = 0;
@@ -40,7 +40,7 @@ function simulator(jam: Jam, data: PelSim[], aturan: Aturan = () => undefined, o
         if (setelah429) pasca429.maks = Math.max(pasca429.maks, ++pasca429.aktif);
         try {
             await new Promise((r) => setTimeout(r, opsi.jedaMs?.(p) ?? 2));
-            if (jenis === "detail") jam.t += opsi.msPerDetail ?? 0;
+            jam.t += (jenis === "detail" ? opsi.msPerDetail : opsi.msPerList) ?? 0;
             const paksa = aturan(p);
             if (paksa instanceof Error) throw paksa;
             if (paksa) {
@@ -58,7 +58,7 @@ function simulator(jam: Jam, data: PelSim[], aturan: Aturan = () => undefined, o
             const x = data.find((y) => y.id === p.id);
             if (!x) return json({ s: false, d: ["Data tidak ditemukan"] });
             return json({ s: true, d: x.detail ?? { id: x.id, number: `SR/${x.id}`, transDate: x.transDate ?? DA, paymentMethod: "CASH_OTHER",
-                chequeAmount: x.cheque ?? 1000.5, detailInvoice: [{ invoiceId: x.id * 10, invoice: { id: x.id * 10, number: `INV/${x.id}`, masterSalesmanId: 11 },
+                chequeAmount: x.cheque ?? 1000.5, detailInvoice: [{ invoiceId: x.id * 10, invoice: { id: x.id * 10, number: `INV/${x.id}`, masterSalesmanId: x.salesman ?? 11 },
                     invoicePayment: x.cheque ?? 1000.5 }] } });
         } finally {
             aktif--;
@@ -358,4 +358,32 @@ test("jawaban detail yang TERLAMBAT sesudah 401 tidak ditulis (berhenti seketika
     assert.deepEqual([status(h).status, status(h).sebab], ["gagal", "sesi_sinkron"]);
     assert.ok(x.s.detail().some((p) => p.id === 2), "id 2 memang sudah terbang saat 401");
     assert.equal(x.t.cache.size, 0, "tidak satu pun jawaban terlambat ditulis");
+});
+
+test("P1d: baca penuh yang kehabisan waktu SAAT list.do -> lanjutan (bukan penuh) tetap membaca ulang SEMUA; suntingan salesman tanpa lastUpdate ikut", async () => {
+    const data: PelSim[] = hari(250); // 3 halaman
+    const x = siapkan(data);
+    await x.baca();
+    assert.ok([...x.t.cache.values()].every((v) => v.p.faktur[0].masterSalesmanId === 11));
+    // Faktur disunting di Accurate: salesman berganti TANPA mengubah lastUpdate pelunasan (memori "Tak Bertuan = Faktur Disunting").
+    for (const b of data) b.salesman = 12;
+    x.majuMenit(2);
+    Object.assign(x.deps, { fetch: simulator(x.jam, data, undefined, { msPerList: 30_000 }).fetch }); // list.do lambat / sesi disegarkan
+    const h = await x.baca({ penuh: true, batasMs: 45_000 });
+    assert.equal(status(h).status, "sebagian", "batas waktu habis di tengah daftar");
+    Object.assign(x.deps, { fetch: simulator(x.jam, data).fetch });
+    let akhir = await x.baca(); // lanjutan cron TANPA penuh
+    for (let i = 0; i < 5 && status(akhir).status === "sebagian"; i++) akhir = await x.baca();
+    assert.equal(status(akhir).status, "lengkap");
+    const lama = [...x.t.cache.values()].filter((v) => v.p.faktur[0].masterSalesmanId !== 12).length;
+    assert.equal(lama, 0, `${lama} pelunasan masih ke salesman lama — baca penuh hilang`);
+});
+
+test("sesi mati TEPAT sesudah lengkap (< 60 dtk, dalam jeda lengkap) -> tetap ditulis gagal/sesi_sinkron (klaim jalur sesi mati mengabaikan jeda)", async () => {
+    const x = siapkan(hari(2));
+    await x.baca();
+    x.jam.t += 20_000; // 20 dtk sesudah lengkap
+    Object.assign(x.deps, { kredensial: async () => ({ error: "Sesi Accurate tidak bisa di-refresh" }) });
+    await x.baca();
+    assert.deepEqual([x.t.rows.get(D)!.status, x.t.rows.get(D)!.sebab], ["gagal", "sesi_sinkron"], "lengkap 20 dtk lalu tidak boleh menahan status gagal");
 });

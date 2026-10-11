@@ -203,6 +203,9 @@ export async function bacaPelunasanHari(opsi: OpsiBaca, deps: DepsBaca = bawaan)
     const st: { galat: { kelas: KelasGalat; pesan: string } | null; daftar: BarisDaftar[] | null; ditolak: Ditolak[]; leaseHilang: boolean } =
         { galat: null, daftar: null, ditolak: [], leaseHilang: false };
     try {
+        // 0. Baca penuh: tandai basi SEGERA sesudah klaim, SEBELUM list.do — putaran yang kehabisan waktu di tengah daftar tetap meninggalkan
+        //    last_update NULL, jadi lanjutan (bukan penuh) membaca ulang semuanya (probe P1d: suntingan salesman tanpa lastUpdate).
+        if (penuh && !(await toko.tandaiBasi(token, databaseId, tanggal))) return { jenis: "lease_hilang", status: await toko.status(databaseId, tanggal) };
         // 1. Daftar lengkap, berurutan (jeda 150 ms antarpanggilan).
         let pertama = true;
         try {
@@ -220,8 +223,7 @@ export async function bacaPelunasanHari(opsi: OpsiBaca, deps: DepsBaca = bawaan)
 
         const daftar = st.daftar;
         if (daftar) {
-            // 2. Penuh = tandai basi (isi tetap). 3. Rencana per id. 4. Hapus yang hilang — daftar di sini selalu LENGKAP (terpotong = galat di atas).
-            if (penuh && !(await toko.tandaiBasi(token, databaseId, tanggal))) st.leaseHilang = true;
+            // 2. Rencana per id. 3. Hapus yang hilang — daftar di sini selalu LENGKAP (terpotong = galat di atas).
             const cache = await toko.cache(databaseId, tanggal);
             const rencana = rencanaBaca(cache, { baris: daftar, lengkap: true }, penuh);
             if (!st.leaseHilang && rencana.hapus.length) {
