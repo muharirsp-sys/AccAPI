@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { getTableColumns } from "drizzle-orm";
 import { principal, principalAlias, principalVariant } from "../../db/schema.ts";
-import { benihSql, jsonLog, KOLOM_LOG, laporanMarkdown, ringkas, susunLaporan, tokenLonggar, type DataDb } from "./laporan.ts";
+import { benihSql, jsonLog, klasifikasiNama, KOLOM_LOG, laporanMarkdown, ringkas, susunLaporan, susunRegistri, tokenLonggar, type DataDb } from "./laporan.ts";
 import { PENJAGA, sqlPenjagaSah } from "./penjaga.ts";
 
 const kosong = { ok: true as const, rows: [] };
@@ -18,6 +18,7 @@ export function dataSintetis(over: Partial<DataDb> = {}): DataDb {
             { principleCode: "UR", principleName: "URC INDONESIA, PTMIX FOOD", n: 2 },
             { principleCode: "AC", principleName: "ABC INDONESIA", n: 1 },
             { principleCode: "XX", principleName: "PT MAJU JAYA", n: 1 },
+            { principleCode: "HB", principleName: "HEINZ HZ/BS", n: 1 },
         ] },
         principalMapping: { ok: true, rows: [
             { principal: "KINO NON FOOD", kind: "item", n: 120 }, { principal: "KINO NON FOOD", kind: "customer", n: 40 },
@@ -52,19 +53,23 @@ test("klasifikasi per sumber: persis / longgar / ambiguous / unmatched; sumber g
     assert.deepEqual([nama.get("GODREJ")?.cara, nama.get("GODREJ")?.target?.code], ["persis", "GDI"], "label No Claim 'Godrej'");
     assert.deepEqual([nama.get("PT. PRISKILA PRIMA MAKMUR")?.cara, nama.get("PT. PRISKILA PRIMA MAKMUR")?.target?.code], ["longgar", "PRISKILA"]);
     assert.deepEqual([nama.get("URC INDONESIA, PTMIX FOOD")?.cara, nama.get("URC INDONESIA, PTMIX FOOD")?.target?.code], ["longgar", "URC"]);
-    assert.equal(nama.get("ABC INDONESIA")?.status, "ambiguous", "ABC President vs Heinz ABC");
+    assert.deepEqual([nama.get("ABC INDONESIA")?.cara, nama.get("ABC INDONESIA")?.target?.code, nama.get("ABC INDONESIA")?.dikesampingkan],
+        ["longgar", "ABC", [{ code: "HEINZ", variantKey: null }]], "token sama persis dengan kode ABC; Heinz ABC dikesampingkan & dicatat");
+    assert.deepEqual(nama.get("HEINZ HZ/BS")?.kandidat, [{ code: "HEINZ", variantKey: "BS" }, { code: "HEINZ", variantKey: "HZ" }], "seri = ambiguous");
     assert.equal(nama.get("PT MAJU JAYA")?.status, "unmatched");
 
     const kode = baris(lap, "master_barang — kode");
     assert.deepEqual([kode.get("K1")?.status, kode.get("K1")?.cara, kode.get("K1")?.usulan?.jenis], ["matched", "persis", "kode_master_barang"]);
     assert.deepEqual(kode.get("KN")?.target, { code: "KINO", variantKey: "NON_FOOD" });
     assert.equal(kode.get("UR")?.cara, "longgar");
-    assert.equal(kode.get("AC")?.status, "ambiguous");
+    assert.deepEqual([kode.get("AC")?.cara, kode.get("AC")?.dikesampingkan], ["longgar", [{ code: "HEINZ", variantKey: null }]]);
+    assert.equal(kode.get("HB")?.status, "ambiguous");
     assert.equal(kode.get("XX")?.status, "unmatched");
 
     const map = baris(lap, "principal_mapping");
     assert.deepEqual([map.get("KINO NON FOOD")?.status, map.get("KINO NON FOOD")?.jumlah], ["matched", 160]);
-    assert.equal(map.get("KINO NON FOOD-KN")?.status, "ambiguous", "akhiran cabang -KN: KINO utuh vs NON_FOOD — tidak ditebak");
+    assert.deepEqual([map.get("KINO NON FOOD-KN")?.cara, map.get("KINO NON FOOD-KN")?.target, map.get("KINO NON FOOD-KN")?.dikesampingkan],
+        ["longgar", { code: "KINO", variantKey: "NON_FOOD" }, [{ code: "KINO", variantKey: null }]], "akhiran cabang -KN: paling spesifik = NON_FOOD");
     assert.deepEqual(map.get("Forisa\u00A0MT")?.target, { code: "FRS", variantKey: "MT" });
 
     const nc = baris(lap, "no_claim_template");
@@ -78,7 +83,7 @@ test("klasifikasi per sumber: persis / longgar / ambiguous / unmatched; sumber g
     const mdx = laporanMarkdown(lap);
     assert.match(mdx, /\| claim_workflow — kode Klaim \| GAGAL \| GAGAL \| GAGAL \|/);
     assert.match(mdx, /\*\*GAGAL DIBACA:\*\* 42P01/);
-    assert.deepEqual(ringkas(lap.sumber[0]), { matched: 5, ambiguous: 1, unmatched: 1 });
+    assert.deepEqual(ringkas(lap.sumber[0]), { matched: 6, ambiguous: 1, unmatched: 1 });
 });
 
 test("benih SQL: hanya INSERT ... ON CONFLICT DO NOTHING (tanpa UPDATE), penjaga trigger, persis aktif, longgar ber-komentar", () => {
@@ -96,7 +101,8 @@ test("benih SQL: hanya INSERT ... ON CONFLICT DO NOTHING (tanpa UPDATE), penjaga
     assert.match(sql, /^-- .*'PRISKILA''S PRIMA MAKMUR'.*'label_mapping', 'principal_mapping'\)/m, "kutip di-escape");
     assert.doesNotMatch(aktif, /\('[A-Z0-9_-]+', '', /, "varian dasar '' tidak pernah diusulkan (varian maupun alias)");
     assert.match(sql, /PERHATIAN: sumber berikut GAGAL dibaca/);
-    assert.match(sql, /\[master_barang — nama principal\] ABC INDONESIA -> ambiguous \(ABC, HEINZ\)/);
+    assert.match(sql, /\[master_barang — nama principal\] HEINZ HZ\/BS -> ambiguous \(HEINZ\/BS, HEINZ\/HZ\)/);
+    assert.match(sql, /^-- +\/\* dikesampingkan: HEINZ \*\/ \('ABC', NULL::text, 'ABC INDONESIA'/m, "longgar yang menyisihkan target lain diberi penanda");
     assert.match(aktif, /\('KINO', 'NON_FOOD', 'KINO NON FOOD', 'KINO NON FOOD', 'nama', 'nama_varian'\)/);
 });
 
@@ -151,4 +157,21 @@ test("benih tidak menambah varian/alias ke principal/varian NONAKTIF (= API PRIN
     assert.match(sql, /^-- {3}\[nonaktif\] alias MB KN -> KINO\/NON_FOOD: varian KINO\/NON_FOOD nonaktif$/m);
     assert.match(aktif, /JOIN principal p ON p\.code = v\.code AND p\.is_active\n\s+LEFT JOIN principal_variant x ON x\.principal_id = p\.id AND x\.variant_key = v\.variant_key\n\s+WHERE v\.variant_key IS NULL OR x\.is_active/);
     assert.match(laporanMarkdown(lap), /^\| GDI \| .* \| ya \(NONAKTIF\) \|$/m);
+});
+
+test("klasifikasi longgar: token SAMA PERSIS didahulukan, lalu PALING SPESIFIK; seri = ambiguous; yang disisihkan dicatat", () => {
+    const reg = susunRegistri({ principal: kosong, principalVariant: kosong, principalAlias: kosong });
+    const k = (s: string) => {
+        const h = klasifikasiNama(s, reg);
+        const t = (x?: { code: string; variantKey: string | null }) => (x ? `${x.code}/${x.variantKey ?? "*"}` : undefined);
+        return [h.status, h.cara, t(h.target), (h.kandidat ?? []).map(t), (h.dikesampingkan ?? []).map(t)];
+    };
+    assert.deepEqual(k("HEINZ ABC INDONESIA"), ["matched", "longgar", "HEINZ/*", [], ["ABC/*"]], "token = nama resmi HEINZ, bukan kode ABC");
+    assert.deepEqual(k("KINO"), ["matched", "persis", "KINO/*", [], []]);
+    assert.deepEqual(k("PT KINO"), ["matched", "longgar", "KINO/*", [], ["KINO/NON_FOOD"]], "token sama persis = KINO utuh");
+    assert.deepEqual(k("PT"), ["unmatched", undefined, undefined, [], []], "badan hukum saja tidak cocok apa pun");
+    assert.deepEqual(k("PT."), ["unmatched", undefined, undefined, [], []]);
+    assert.deepEqual(k("KINO NON FOOD-KN"), ["matched", "longgar", "KINO/NON_FOOD", [], ["KINO/*"]], "paling spesifik");
+    assert.deepEqual(k("HEINZ HZ/BS"), ["ambiguous", "longgar", undefined, ["HEINZ/BS", "HEINZ/HZ"], []], "seri antar-varian = ambiguous");
+    assert.deepEqual(k("ABC INDONESIA"), ["matched", "longgar", "ABC/*", [], ["HEINZ/*"]]);
 });

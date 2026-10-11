@@ -33,7 +33,7 @@ export const TS_LAIN = [
 ] as const;
 
 export type Target = { code: string; variantKey: string | null };
-export type UsulanAlias = Target & { aliasNorm: string; aliasAsli: string; jenis: JenisAlias; sumber: string; adaDiDb?: boolean };
+export type UsulanAlias = Target & { aliasNorm: string; aliasAsli: string; jenis: JenisAlias; sumber: string; adaDiDb?: boolean; dikesampingkan?: Target[] };
 type UsulanPrincipal = { code: string; name: string; sumber: string; adaDiDb: boolean; namaDb?: string; aktifDb?: boolean };
 type UsulanVarian = { code: string; variantKey: string; name: string | null; sumber: string; adaDiDb: boolean; aktifDb?: boolean };
 
@@ -130,24 +130,38 @@ export type Status = "matched" | "ambiguous" | "unmatched";
 export type BarisLaporan = {
     nilai: string; norm: string; status: Status; cara?: "persis" | "longgar"; target?: Target; kandidat?: Target[];
     jumlah?: number; konteks?: string; catatan?: string; usulan?: UsulanAlias;
+    /** Kecocokan longgar: target lain yang ikut cocok tetapi kalah spesifik (ditampilkan, tidak diusulkan). */
+    dikesampingkan?: Target[];
 };
 
 const unik = (ts: Target[]) => [...new Map(ts.map((t) => [kunciTarget(t), t])).values()].sort((a, b) => kunciTarget(a).localeCompare(kunciTarget(b)));
 
-/** Satu nilai teks nama -> matched (persis/longgar satu target) / ambiguous / unmatched terhadap registri (ruang NAMA). */
-export function klasifikasiNama(nilai: string, reg: Registri): Pick<BarisLaporan, "norm" | "status" | "cara" | "target" | "kandidat"> {
+/**
+ * Satu nilai teks nama -> matched / ambiguous / unmatched terhadap registri (ruang NAMA). Urutan: (1) bentuk normal PERSIS; (2) longgar
+ * (token, laporan saja): himpunan token SAMA PERSIS didahulukan ("HEINZ ABC INDONESIA" = HEINZ, bukan ABC), lalu yang PALING SPESIFIK
+ * = token bersama terbanyak ("KINO NON FOOD-KN" = KINO/NON_FOOD, bukan KINO utuh). Seri antar-target = ambiguous (tak menebak). Target
+ * yang kalah dicatat di `dikesampingkan` (laporan & benih menampilkannya) agar owner melihat apa yang disisihkan.
+ */
+export function klasifikasiNama(nilai: string, reg: Registri): Pick<BarisLaporan, "norm" | "status" | "cara" | "target" | "kandidat" | "dikesampingkan"> {
     const norm = normalisasiPrincipal(nilai);
     if (!norm) return { norm, status: "unmatched" };
     const persis = unik((reg.alias.get(`NAMA|${norm}`) ?? []).map(({ code, variantKey }) => ({ code, variantKey })));
     if (persis.length === 1) return { norm, status: "matched", cara: "persis", target: persis[0] };
     if (persis.length > 1) return { norm, status: "ambiguous", cara: "persis", kandidat: persis };
     const tok = tokenLonggar(norm);
-    const longgar = unik([...reg.alias.entries()].filter(([k]) => k.startsWith("NAMA|"))
-        .flatMap(([, daftar]) => daftar.filter((a) => cocokLonggar(tok, tokenLonggar(a.aliasNorm))))
-        .map(({ code, variantKey }) => ({ code, variantKey })));
-    if (longgar.length === 1) return { norm, status: "matched", cara: "longgar", target: longgar[0] };
-    if (longgar.length > 1) return { norm, status: "ambiguous", cara: "longgar", kandidat: longgar };
-    return { norm, status: "unmatched" };
+    const A = new Set(tok);
+    const calon = [...reg.alias.entries()].filter(([k]) => k.startsWith("NAMA|")).flatMap(([, daftar]) => daftar).flatMap((a) => {
+        const b = tokenLonggar(a.aliasNorm);
+        if (!cocokLonggar(tok, b)) return [];
+        const B = new Set(b), bersama = [...A].filter((t) => B.has(t)).length;
+        return [{ target: { code: a.code, variantKey: a.variantKey }, skor: bersama === A.size && bersama === B.size ? Infinity : bersama }];
+    });
+    if (!calon.length) return { norm, status: "unmatched" };
+    const puncak = Math.max(...calon.map((c) => c.skor));
+    const menang = unik(calon.filter((c) => c.skor === puncak).map((c) => c.target));
+    if (menang.length > 1) return { norm, status: "ambiguous", cara: "longgar", kandidat: menang };
+    const kalah = unik(calon.map((c) => c.target)).filter((t) => kunciTarget(t) !== kunciTarget(menang[0]));
+    return { norm, status: "matched", cara: "longgar", target: menang[0], ...(kalah.length ? { dikesampingkan: kalah } : {}) };
 }
 
 export type BagianSumber = { judul: string; asal: string; galat?: string; baris: BarisLaporan[] };
@@ -164,7 +178,7 @@ export function susunLaporan(data: DataDb, dibuat: string): Laporan {
     const usulNama = (nilai: string, jenis: JenisAlias, sumberAlias: string, extra: Partial<BarisLaporan> = {}): BarisLaporan => {
         const k = klasifikasiNama(nilai, reg);
         const usulan = k.status === "matched" && k.cara === "longgar" && k.target
-            ? { ...k.target, aliasNorm: k.norm, aliasAsli: rapikanTeks(nilai), jenis, sumber: sumberAlias } : undefined;
+            ? { ...k.target, aliasNorm: k.norm, aliasAsli: rapikanTeks(nilai), jenis, sumber: sumberAlias, dikesampingkan: k.dikesampingkan } : undefined;
         return { nilai, ...k, usulan, ...extra };
     };
 
@@ -194,8 +208,10 @@ export function susunLaporan(data: DataDb, dibuat: string): Laporan {
                     catatan: target.length ? "sebagian nama tak dikenal" : undefined };
             }
             const cara = hasil.every((h) => h.cara === "persis") ? "persis" : "longgar";
+            const dikesampingkan = unik(hasil.flatMap((h) => h.dikesampingkan ?? []));
             return { nilai: kode, norm, status: "matched", cara, target: target[0], jumlah: e.n, konteks,
-                usulan: { ...target[0], aliasNorm: norm, aliasAsli: kode, jenis: "kode_master_barang", sumber: "master_barang" } };
+                usulan: { ...target[0], aliasNorm: norm, aliasAsli: kode, jenis: "kode_master_barang", sumber: "master_barang", dikesampingkan },
+                ...(dikesampingkan.length ? { dikesampingkan } : {}) };
         });
     });
     bagian("principal_mapping — principal", "Postgres principal_mapping.principal (distinct)", data.principalMapping, (rows) => {
@@ -291,7 +307,7 @@ export function laporanMarkdown(lap: Laporan): string {
         l.push("| Nilai | Norm | Status | Target / kandidat | Jumlah | Konteks / catatan |", "|---|---|---|---|---:|---|");
         for (const x of b.baris) {
             const t = x.target ? tampilTarget(x.target) : (x.kandidat ?? []).map(tampilTarget).join(", ");
-            l.push(`| ${md(x.nilai)} | ${md(x.norm)} | ${x.status}${x.cara ? ` (${x.cara})` : ""} | ${t} | ${x.jumlah ?? ""} | ${md([x.konteks, x.catatan].filter(Boolean).join(" — "))} |`);
+            l.push(`| ${md(x.nilai)} | ${md(x.norm)} | ${x.status}${x.cara ? ` (${x.cara})` : ""} | ${t} | ${x.jumlah ?? ""} | ${md([x.konteks, x.catatan, x.dikesampingkan?.length ? `dikesampingkan: ${x.dikesampingkan.map(tampilTarget).join(", ")}` : ""].filter(Boolean).join(" — "))} |`);
         }
     }
     return `${l.join("\n")}\n`;
@@ -311,7 +327,8 @@ const KOLOM_WAKTU = new Set(["created_at", "updated_at"]);
 export const jsonLog = (entitas: keyof typeof KOLOM_LOG) => `jsonb_build_object(${Object.entries(KOLOM_LOG[entitas])
     .map(([k, c]) => `'${k}', ${KOLOM_WAKTU.has(c) ? `to_char(b.${c} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')` : `b.${c}`}`).join(", ")})`;
 
-const nilaiAlias = (a: UsulanAlias) => `(${[a.code, a.variantKey, a.aliasNorm, a.aliasAsli, a.jenis, a.sumber].map(lit).join(", ")})`;
+/** Satu baris VALUES; kecocokan longgar yang menyisihkan target lain diberi penanda komentar (tetap SQL sah bila blok dibuka). */
+const nilaiAlias = (a: UsulanAlias) => `${a.dikesampingkan?.length ? `/* dikesampingkan: ${a.dikesampingkan.map(tampilTarget).join(", ")} */ ` : ""}(${[a.code, a.variantKey, a.aliasNorm, a.aliasAsli, a.jenis, a.sumber].map(lit).join(", ")})`;
 const SISIP_ALIAS = (baris: string[]) => [
     "WITH v(code, variant_key, alias_norm, alias_asli, jenis, sumber) AS (VALUES",
     `    ${baris.join(",\n    ")}`,

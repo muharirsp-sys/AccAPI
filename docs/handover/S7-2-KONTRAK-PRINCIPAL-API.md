@@ -125,7 +125,10 @@ Untuk pemakai luar (Python tahap 2) agar SATU normalizer dipakai. `200 { ok, has
    URL tidak pernah dicetak. Keluar `2` = ada sumber GAGAL dibaca (lihat `laporan.md`, galat ≠ kosong) — jangan dipakai sebagai lengkap.
 2. Owner meninjau `laporan.md` (matched / ambiguous / unmatched per sumber, KONFLIK registri) dan `benih.sql`: blok aktif = registri
    (25 principal OPC, varian K9 + HEINZ, alias kode/nama/label No Claim/nama varian) + kode Master Barang yang namanya cocok PERSIS;
-   blok "PERIKSA" (cocok longgar) ber-komentar; ambiguous/unmatched hanya dicantumkan.
+   blok "PERIKSA" (cocok longgar) ber-komentar; ambiguous/unmatched hanya dicantumkan. Cocok longgar (token, tanpa tanda baca/badan
+   hukum): himpunan token SAMA PERSIS didahulukan, lalu yang PALING SPESIFIK (token bersama terbanyak); seri antar-target = ambiguous.
+   Target lain yang ikut cocok tetapi kalah ditandai `dikesampingkan` (kolom catatan laporan; `/* dikesampingkan: … */` di benih) —
+   periksa baris itu terutama (mis. `ABC INDONESIA` → ABC, Heinz ABC dikesampingkan).
 3. IT Support menjalankan `benih.sql` yang sudah disetujui: `docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 < benih.sql`
    — idempoten (`ON CONFLICT DO NOTHING`, tanpa UPDATE), menolak berjalan tanpa trigger penjaga, VERIFIKASI di akhir (baris `false` di atas).
    Seperti API (`PRINCIPAL_NONAKTIF` / `VARIAN_NONAKTIF`), benih tidak menambah varian/alias ke principal/varian NONAKTIF: yang sudah
