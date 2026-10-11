@@ -229,11 +229,14 @@ test("preset BL-37 SQL (statis): kunci = PERSIS D-01 §B di kedua blok, semua te
     assert.doesNotMatch(sql, /\b(UPDATE|DELETE)\b/i);
 });
 
-test("layar lama /admin/users: teks dropdown jujur (TAMBAH + utama, grup lain tetap), tidak lagi 'mengikuti group baru'", async () => {
+test("layar S7a (User & Akses Group): tanpa dialog native, tanpa /api/auth/admin (plugin ditutup), tanpa route lama users/[id]/group", async () => {
     const { readFileSync } = await import("node:fs");
-    const src = readFileSync(new URL("../app/(dashboard)/admin/users/UserManagement.tsx", import.meta.url), "utf8");
-    assert.doesNotMatch(src, /akan langsung mengikuti group baru|diperbarui ke/);
-    assert.match(src, /ditambahkan & dijadikan utama/);
-    assert.match(src, /Grup lain user ini TETAP/);
-    assert.match(src, /item\.groups/, "daftar menampilkan semua grup user");
+    const baca = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+    // Komentar dibuang dulu: kepala berkas boleh menyebut window.prompt (yang digantikan), kode tidak.
+    const layar = ["../app/(dashboard)/admin/users/Pengguna.tsx", "../app/(dashboard)/admin/groups/AksesGrup.tsx", "../components/admin/Bersama.tsx"]
+        .map((p) => baca(p).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")).join("\n");
+    assert.doesNotMatch(layar, /window\.(prompt|confirm|alert)|(?<![.\w])(prompt|confirm|alert)\(/, "sandi dan konfirmasi lewat dialog Fiori, bukan dialog native");
+    assert.doesNotMatch(layar, /\/api\/auth\/admin/, "plugin admin Better Auth ditutup dari browser (kontrak §6)");
+    assert.match(layar, /\/primary-group/, "bintang lewat PUT/DELETE primary-group (kontrak §5.6)");
+    assert.doesNotMatch(layar, /\/api\/admin\/users\/\$\{[^}]+\}\/group`/, "route lama users/[id]/group (pensiun, semantik tambah+bintang) tidak dipakai layar baru");
 });
