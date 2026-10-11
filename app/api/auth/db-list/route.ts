@@ -1,6 +1,16 @@
+/*
+ * Tujuan: Daftar database Accurate milik sesi OAuth user (kartu Sesi Accurate).
+ * Caller: components/accurate/SesiAccurate.tsx (/sesi-accurate, Konsol).
+ * Dependensi: lib/accurate-session (token terenkripsi), lib/api-security (sesi app).
+ * Main Functions: GET.
+ * Side Effects: GET https://account.accurate.id/api/db-list.do. Galat = kode tetap + kalimat netral; isi jawaban Accurate dan pesan
+ *   exception TIDAK dikirim ke peramban maupun dicetak ke log (bisa memuat token) — S7-sesi.
+ */
 import { NextResponse } from 'next/server';
 import { getAccurateSession } from '@/lib/accurate-session';
 import { requireApiSession } from '@/lib/api-security';
+
+const galat = (status: number, code: string, error: string, extra: Record<string, unknown> = {}) => NextResponse.json({ ok: false, code, error, ...extra }, { status });
 
 export async function GET(request: Request) {
     const authCheck = await requireApiSession(request);
@@ -8,7 +18,7 @@ export async function GET(request: Request) {
 
     const accurateSession = await getAccurateSession(String(authCheck.session.user.id));
     if (!accurateSession?.accessToken) {
-        return NextResponse.json({ error: "Sesi Accurate belum terhubung." }, { status: 400 });
+        return galat(400, "SESI_BELUM_TERHUBUNG", "Sesi Accurate belum terhubung.");
     }
 
     try {
@@ -19,14 +29,14 @@ export async function GET(request: Request) {
             }
         });
 
-        if (!response.ok) {
-            const errText = await response.text();
-            return NextResponse.json({ error: "Failed to fetch db-list", details: errText }, { status: response.status });
+        const data = response.ok ? await response.json().catch(() => null) : null;
+        if (!response.ok || data?.s === false || !Array.isArray(data?.d)) {
+            console.error(`[db-list] Accurate menolak: HTTP ${response.status}`);
+            return galat(502, "ACCURATE_MENOLAK", "Accurate menolak permintaan daftar database.", { accurateStatus: response.status });
         }
-
-        const data = await response.json();
         return NextResponse.json(data);
-    } catch (err: any) {
-        return NextResponse.json({ error: "Internal Server Error", message: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        console.error("[db-list] exception:", err instanceof Error ? err.name : typeof err);
+        return galat(500, "GALAT_SERVER", "Server gagal mengambil daftar database Accurate.");
     }
 }

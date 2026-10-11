@@ -10,7 +10,7 @@
 import { createContext, Fragment, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LifeBuoy, LogOut, Menu, Search, X } from "lucide-react";
+import { KeyRound, LifeBuoy, LogOut, Menu, Search, X } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { canAccessPathWithKeys } from "@/lib/rbac";
 import { HOME_ITEM, activeNavigationItem, navigationForPermissions, roleProfile, roleShortcuts, type WorkspaceGroup, type WorkspaceItem } from "@/config/workspace-navigation";
@@ -18,6 +18,7 @@ import { fioriClass } from "@/components/fiori/Scope";
 import { SchemeSwitcher } from "@/components/fiori/interactive";
 import Dialog from "@/components/ui/Dialog";
 import { OPEN_HELP_EVENT } from "@/components/ChatWidget";
+import AccessDenied from "@/components/AccessDenied";
 
 const LocalAuthRoleContext = createContext<string | null>(null);
 export function useLocalAuthRole() { return useContext(LocalAuthRoleContext); }
@@ -34,6 +35,11 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
     const items = groups.flatMap(group => group.items);
     const home = canAccessPathWithKeys("/", keys) ? [HOME_ITEM] : [];
     const active = activeNavigationItem(pathname, [...home, ...items]);
+    // Gerbang klien (S7-sesi): layout server TIDAK dijalankan ulang pada navigasi klien (Link/router.push), jadi path yang dicapai
+    // lewat navigasi klien dinilai ulang di sini dengan kunci yang sama. Path yang dirender server sudah digerbang layout.
+    // Otoritas tetap server (layout + guard API); ini menutup tampilan halaman terlarang.
+    const [pathServer] = useState(pathname);
+    const pathDiizinkan = pathname === pathServer || canAccessPathWithKeys(pathname, keys);
     const roleLabel = roleProfile(keys)?.label ?? "CV. Surya Perkasa";
     const [drawerOpen, setDrawerOpen] = useState(false);
     // Tutup drawer pada setiap pindah rute (klik tautan, Back, router.push) — disesuaikan saat render, bukan di effect.
@@ -79,6 +85,12 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
                 <hr />
                 <div className="fi-menu-row"><SchemeSwitcher /></div>
                 <hr />
+                {/* S7-sesi (owner D-01 Q2): masuk Accurate + pilih database tanpa Konsol, untuk pemegang salah satu SESI_ACCURATE_KEYS. */}
+                {canAccessPathWithKeys("/sesi-accurate", keys) && (
+                    <Link href="/sesi-accurate" prefetch={false} className="fi-menu-item" onClick={() => document.getElementById("fi-menu-profile")?.hidePopover()}>
+                        <KeyRound className="fi-icon" aria-hidden /><b>Sesi Accurate</b><small>Masuk dan pilih database</small>
+                    </Link>
+                )}
                 <button type="button" className="fi-menu-item" popoverTarget="fi-menu-profile" popoverTargetAction="hide" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_HELP_EVENT, { detail: { returnFocus: avatarRef.current } }))}>
                     <LifeBuoy className="fi-icon" aria-hidden /><b>Bantuan</b><small>Asisten dan panduan</small>
                 </button>
@@ -96,7 +108,7 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
             {drawerOpen && nav("Menu mobile", () => setDrawerOpen(false))}
         </Dialog>
         <main id="workspace-content" tabIndex={-1} className="fi-shell-main">
-            <LocalAuthRoleContext.Provider value={localAuthRole ?? null}><PermKeysContext.Provider value={keys}>{children}</PermKeysContext.Provider></LocalAuthRoleContext.Provider>
+            <LocalAuthRoleContext.Provider value={localAuthRole ?? null}><PermKeysContext.Provider value={keys}>{pathDiizinkan ? children : <AccessDenied />}</PermKeysContext.Provider></LocalAuthRoleContext.Provider>
         </main>
         <nav className={`${fioriClass} fi-bnav`} aria-label="Navigasi utama">
             {[...home, ...roleShortcuts(keys, items)].map(item => {

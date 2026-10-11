@@ -27,7 +27,7 @@ const NAV_MAP: Record<string, { label: string; href: string }[]> = {
   principal: [{ label: "Master Principle", href: "/principles" }],
   summary: [{ label: "Summary Promo", href: "/summary" }],
   finance: [{ label: "Finance", href: "/finance" }],
-  accurate: [{ label: "AOL Form Engine", href: "/api-wrapper" }],
+  accurate: [{ label: "Sesi Accurate", href: "/sesi-accurate" }],
   aol: [{ label: "AOL Form Engine", href: "/api-wrapper" }],
   dashboard: [{ label: "Dashboard", href: "/" }],
 };

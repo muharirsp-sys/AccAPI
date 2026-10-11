@@ -286,7 +286,7 @@ test("Hasil Kirim: 503 JSON server = pasti (galat di dialog); ditolak, berhenti 
         sentBy: "admin@contoh", results, verified: [], ...over });
     const opsi: Opsi = {
         preview: (r) => r.fulfill(json(tiga)),
-        send: (r) => r.fulfill(json({ ok: false, error: "Sesi Accurate Anda tidak lengkap. Login Accurate dulu di /api-wrapper, lalu coba lagi." }, 503)),
+        send: (r) => r.fulfill(json({ ok: false, error: "Sesi Accurate Anda tidak lengkap. Masuk Accurate dan buka database dulu di /sesi-accurate, lalu coba lagi." }, 503)),
     };
     const log = await mock(page, opsi);
     await page.setViewportSize({ width: 1366, height: 900 });
@@ -357,7 +357,9 @@ test("Kirim: sesi tidak cocok = nonaktif berlasan; 502 HTML = 'belum pasti' + mu
     const main = page.locator("main");
     await main.getByRole("button", { name: "Kirim 2 faktur…" }).click(NAV);
     let dlg = page.getByRole("dialog");
-    await expect(dlg).toContainText("bukan database faktur 1001 — ganti database di API Wrapper");
+    // S7-sesi: Fakturist tidak memegang Konsol — arahan ke halaman Sesi Accurate (tab baru, kembali ke Antrean).
+    await expect(dlg).toContainText("bukan database faktur 1001 — ganti database di halaman Sesi Accurate");
+    await expect(dlg.getByRole("link", { name: "Buka Sesi Accurate (tab baru)" })).toHaveAttribute("href", "/sesi-accurate?returnTo=/antrean-faktur");
     await expect(dlg).not.toContainText("ACCURATE_INVOICE_DB_ID");
     await expect(dlg.getByRole("button", { name: "Kirim 2 faktur" })).toBeDisabled();
     await expect(dlg.getByRole("button", { name: "Kirim 2 faktur" })).toHaveAttribute("title", "Sesi Accurate Anda tidak cocok dengan database tujuan");

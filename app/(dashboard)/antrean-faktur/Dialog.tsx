@@ -48,8 +48,8 @@ export type HasilKirim = {
 /** Kalimat database tanpa nama env/endpoint (aturan: istilah internal tidak tampil). */
 function kalimatSesi(db: Pratinjau["database"]): string {
     if (!db.tujuan) return "Database tujuan faktur belum diatur di server — hubungi IT. Kirim akan ditolak.";
-    if (!db.sesiPenekan.id) return "Sesi Accurate Anda belum lengkap — login Accurate dulu di menu API Wrapper, lalu buka dialog ini lagi.";
-    return `Sesi Accurate Anda terbuka pada database ${db.sesiPenekan.alias || db.sesiPenekan.id}, bukan database faktur ${db.tujuan} — ganti database di API Wrapper.`;
+    if (!db.sesiPenekan.id) return "Sesi Accurate Anda belum lengkap — masuk Accurate dan buka database dulu di halaman Sesi Accurate, lalu buka dialog ini lagi.";
+    return `Sesi Accurate Anda terbuka pada database ${db.sesiPenekan.alias || db.sesiPenekan.id}, bukan database faktur ${db.tujuan} — ganti database di halaman Sesi Accurate.`;
 }
 
 function rentangTanggal(orders: OrderPratinjau[]): string {
@@ -131,7 +131,8 @@ export function KirimDialog({ dipilih, tanggal, saringanAktif, onClose, onTerkir
                         ["Nilai (DPP + PPN 11%)", <span key="n">{rupiah(p.total.total)}<span className="fi-sub">DPP {rupiah(p.total.dpp)} · PPN {rupiah(p.total.ppn)} · perkiraan, Accurate membulatkan PPN sendiri</span></span>],
                         ["Tanggal faktur", tanggal ? `${tanggalPendek(tanggal)} untuk semua faktur` : rentangTanggal(p.orders)],
                     ]} />
-                    {!p.database.cocok && <MessageStrip tone="neg" title="Kirim akan ditolak.">{kalimatSesi(p.database)}</MessageStrip>}
+                    {!p.database.cocok && <MessageStrip tone="neg" title="Kirim akan ditolak.">{kalimatSesi(p.database)}{p.database.tujuan && <>{" "}
+                        <a href="/sesi-accurate?returnTo=/antrean-faktur" target="_blank" rel="noopener">Buka Sesi Accurate (tab baru)</a></>}</MessageStrip>}
                     {p.ditolak && <MessageStrip tone="neg" title="Tidak ada faktur dikirim.">{p.ditolak}</MessageStrip>}
                     {lebih > 0 && <MessageStrip tone="info">Anda memilih {dipilih.length} baris; maks. {p.maksPerTekan} per tekan — {lebih} sisanya tidak ikut kali ini.</MessageStrip>}
                     {keluar > 0 && <MessageStrip tone="info">{keluar} baris pilihan tidak lagi berstatus Antre dan tidak ikut dikirim.</MessageStrip>}
