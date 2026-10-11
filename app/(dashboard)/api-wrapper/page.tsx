@@ -637,6 +637,14 @@ export default function Home() {
         }
       } catch (chunkErr: any) {
         console.error(`Chunk ${i+1} Failed:`, chunkErr);
+        // S7-1b: proxy menolak SEBELUM meneruskan (4xx + sent:false — mis. tanpa api_wrapper.execute, endpoint di luar katalog,
+        // sesi Accurate belum lengkap) = tahap ini dan berikutnya TIDAK terkirim: berhenti, tampilkan pesan server apa adanya.
+        if (classifyWriteError(chunkErr).kind === "rejected" && chunkErr?.rawErrorObject?.sent === false) {
+          const sebelumnya = combinedResults.length ? ` Data yang berhasil di tahap sebelumnya: ${combinedResults.length}.` : "";
+          setResponseLog({ status: "error", message: `${chunkErr.message}${sebelumnya}` });
+          toast.error(`Tahap ${i+1} ditolak — tidak ada yang dikirim: ${chunkErr.message}`, { id: 'exec' });
+          return;
+        }
         let chunkHadUnresolvedFailure = false;
 
         if (chunkErr.rawDetails && Array.isArray(chunkErr.rawDetails)) {
