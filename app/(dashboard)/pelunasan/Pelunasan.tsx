@@ -117,9 +117,17 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
     const galatAkun = berkas ? periksaAkun(akun, berkas.isi) : {};
     const nGalatAkun = Object.keys(galatAkun).length;
 
-    /** Langkah 3 → 4: parse dengan akun terpilih (GET Accurate) lalu pratinjau ganda (lock pratinjau + riwayat). Tidak menulis apa pun. */
+    /**
+     * Langkah 3 → 4: parse dengan akun terpilih (GET Accurate) lalu pratinjau ganda (lock pratinjau + riwayat). Tidak menulis apa pun.
+     * Juga dipanggil "Ulangi pratinjau" di Tinjau (tombol itu tidak dikunci sesi) — belum bisa jalan = alasan terbaca, bukan diam (2b #8).
+     */
     async function siapkanTinjauan() {
-        if (sedang.current || !berkas || !sesiSiap || !s || nGalatAkun) return;
+        if (sedang.current) return;
+        if (!berkas || !sesiSiap || !s || nGalatAkun) {
+            setGalatSiap(`Pratinjau belum bisa dibuat. ${!berkas ? "Berkas belum dipilih." : nGalatAkun ? "Rekening/akun wajib belum lengkap di langkah Akun."
+                : kunciSesi ?? "Sesi Accurate belum siap."} Tidak ada yang dikirim ke Accurate.`);
+            return;
+        }
         sedang.current = true;
         setGalatSiap(null); setMenyiapkan("Membaca faktur dan retur di Accurate…");
         const peringatan: string[] = [];
@@ -130,6 +138,15 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
             });
             setMenyiapkan("Memeriksa baris ganda (kunci aplikasi dan riwayat Accurate)…");
             const cek = out.payload.length ? await pratinjauDuplikat(out.payload, "pelunasan", { accurateFetch, pratinjauKunci }) : null;
+            // 2b #4: database bisa diganti di Konsol (tab lain) SELAMA pratinjau — faktur, retur, dan riwayat mungkin terbaca dari
+            // database lain. Sesi dibaca ulang; berbeda dari awal / tak terbaca = pratinjau dibuang dengan alasan.
+            const akhir = await bacaSesi();
+            if (akhir.status !== "siap" || !akhir.data?.databaseConnected || akhir.data.databaseId !== s.databaseId) {
+                muatSesi();
+                throw new Error(akhir.status !== "siap" || !akhir.data ? `Sesi Accurate tidak terbaca di akhir pratinjau (${akhir.error ?? "tanpa jawaban"}); pratinjau dibuang.`
+                    : !akhir.data.databaseConnected ? "Sesi Accurate berakhir selama pratinjau; pratinjau dibuang."
+                        : `Database Accurate berubah selama pratinjau (dari ${namaDatabase(s)} ke ${namaDatabase(akhir.data)}); pratinjau dibuang karena faktur dan riwayat bisa terbaca dari database lain. Ulangi pratinjau.`);
+            }
             setTinjauan({
                 payload: out.payload, manualRows: out.manualRows ?? [], review: cek?.reviewRows ?? [], peringatan,
                 dibaca: out.counts.read, dilewati: out.counts.skipped,

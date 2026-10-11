@@ -665,3 +665,154 @@ test("Tanpa izin: Kirim/Izinkan nonaktif dengan alasan terlihat, tanpa nama kunc
     await expect(page.locator("main")).not.toContainText("pelunasan.kirim");
     await page.screenshot({ path: "test-results/fiori-pelunasan-11-tanpa-izin.png", fullPage: true });
 });
+
+// ── Susulan S6e (tinjauan UI 2b) ──────────────────────────────────────────────────────────────────────
+
+test("Susulan 2b #3: baris terposting membawa nomor dari jawaban Accurate; Excel memisah Nomor Accurate dan Nomor mirip", async ({ page }) => {
+    await pasang(page);
+    await sampaiTinjau(page);
+    await page.getByRole("button", { name: "Kirim 4 pelunasan…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Kirim 4 pelunasan" }).click();
+    await expect(page.getByLabel("Ringkasan hasil")).toContainText("Terposting4", { timeout: 60_000 });
+    await expect(page.getByRole("table", { name: "Hasil per baris" })).toContainText("Terposting · PR.2026.10.00001 · paket 1");
+    const unduh = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Laporan per baris (Excel)" }).click();
+    const wb = XLSX.readFile(await (await unduh).path());
+    const isi = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+    expect(isi.map((r) => r["Nomor Accurate"]).sort()).toEqual(["PR.2026.10.00001", "PR.2026.10.00002", "PR.2026.10.00003", "PR.2026.10.00004"]);
+    expect(isi.every((r) => r["Nomor mirip"] === "")).toBe(true);
+});
+
+test("Susulan 2b #1: server sudah SUCCESS saat dicari = Terposting tanpa nomor kandidat; nomor lihat jejak penyelesaian", async ({ page }) => {
+    await pasang(page, {
+        tulis: () => "putus",
+        resolve: (key) => cari(key, { status: "SUCCESS", eligible: false, ...kandidat("PR.2026.10.00055", "INV/A/001", 100000) }),
+    });
+    await sampaiHasilRagu(page);
+    await page.getByRole("button", { name: /^Selesaikan INV\/A\/001/ }).click();
+    const sel = page.getByRole("dialog", { name: "Selesaikan pelunasan tidak pasti" });
+    await expect(sel).toContainText("sudah tercatat terposting di server; nomor pelunasan Accurate lihat jejak penyelesaian.");
+    await sel.getByRole("button", { name: "Batal" }).click();
+    await expect(page.getByLabel("Ringkasan hasil")).toContainText("Terposting1");
+    const tabel = page.getByRole("table", { name: "Hasil per baris" });
+    await expect(tabel).toContainText("Diselesaikan: terposting — nomor pelunasan Accurate lihat jejak penyelesaian");
+    await expect(tabel).not.toContainText("PR.2026.10.00055");
+});
+
+test("Susulan 2b #2/#8: POST Selesaikan 500 berbadan kosong = belum pasti + cari ulang; GET pencarian 403 = alasan izin tanpa Coba lagi", async ({ page }) => {
+    const log = await pasang(page, {
+        tulis: () => "putus",
+        resolve: (key) => (key.includes("PELANGGAN-B_") ? json({ ok: false, code: "forbidden", error: "Selesaikan pelunasan butuh izin finance.resolve_unknown." }, 403) : cari(key)),
+        selesai: () => ({ status: 500, contentType: "application/json", body: "" }),
+    });
+    await sampaiHasilRagu(page);
+    const sel = page.getByRole("dialog", { name: "Selesaikan pelunasan tidak pasti" });
+
+    // #2: 500 tanpa `code` (badan kosong) = hasilnya belum pasti, BUKAN "Tidak ada yang diubah"; pencarian dimuat ulang.
+    await page.getByRole("button", { name: /^Selesaikan INV\/A\/001/ }).click();
+    await sel.getByRole("radio", { name: /Tetapkan tidak ada/ }).check();
+    await sel.getByLabel("Diperiksa di").fill("Accurate › Penerimaan Penjualan, pelanggan dan tanggal sama");
+    await sel.getByRole("textbox", { name: "Alasan", exact: true }).fill("Tidak ada pelunasan untuk faktur ini di Accurate.");
+    const cariSebelum = log.resolve.length;
+    await sel.getByRole("button", { name: "Tetapkan tidak ada" }).click();
+    await expect(sel.getByRole("alert")).toContainText("hasilnya belum pasti");
+    await expect(sel.getByRole("alert")).not.toContainText("Tidak ada yang diubah");
+    await expect.poll(() => log.resolve.length).toBeGreaterThan(cariSebelum);
+    await sel.getByRole("button", { name: "Batal" }).click();
+
+    // #8: pencarian 403 (izin dicabut sesudah halaman dibuka) = alasan izin; tidak menawarkan Coba lagi / Cari lagi.
+    await page.getByRole("button", { name: /^Selesaikan INV\/A\/002/ }).click();
+    await expect(sel.getByRole("alert")).toContainText("Server menolak: akun Anda tidak (lagi) berhak menyelesaikan baris tidak pasti");
+    await expect(sel.getByRole("button", { name: "Coba lagi" })).toHaveCount(0);
+    await expect(sel.getByRole("button", { name: "Cari lagi" })).toHaveCount(0);
+    await sel.getByRole("textbox", { name: "Alasan", exact: true }).fill("Tidak ada pelunasan untuk faktur ini di Accurate.");
+    await expect(sel.locator("footer .fi-why")).toContainText("Server menolak");
+});
+
+test("Susulan 2b #4/#8: database berganti SELAMA pratinjau = pratinjau dibuang beralasan; Ulangi pratinjau saat sesi tak terbaca = alasan, bukan diam", async ({ page }) => {
+    let mode: "ok" | "lain" | "galat" = "ok";
+    let gantiSaatPratinjau = true;
+    await pasang(page, {
+        sesi: () => (mode === "galat" ? json({ ok: false, error: "Koneksi basis data terputus." }, 500) : json(mode === "ok" ? SESI : { ...SESI, databaseId: "88", databaseAlias: "PT LAIN" })),
+        // Pratinjau lock dipanggil di TENGAH pratinjau: database diganti di Konsol (tab lain) saat itu.
+        blok: () => { if (gantiSaatPratinjau) mode = "lain"; return undefined; },
+    });
+    await page.goto("/pelunasan", NAV);
+    await expect(page.getByText("Database: PT CONTOH (id 77)")).toBeVisible();
+    await page.getByRole("button", { name: /Pelunasan penjualan/ }).click();
+    await page.getByLabel("Berkas Format Pelunasan").setInputFiles(berkas(BARIS.slice(0, 1)));
+    await page.getByRole("button", { name: "Lanjut ke Akun" }).click();
+    await page.getByRole("button", { name: "Lanjut ke Tinjau" }).click();
+    // #4: sesi dibaca ulang di akhir pratinjau; database lain = pratinjau dibuang dengan alasan, Tinjau tidak dibuka.
+    await expect(page.getByText("Pratinjau gagal.")).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator("main")).toContainText("Database Accurate berubah selama pratinjau (dari PT CONTOH (id 77) ke PT LAIN (id 88))");
+    await expect(page.getByRole("region", { name: "Siap kirim" })).toHaveCount(0);
+    await expect(page.getByText("Database: PT LAIN (id 88)")).toBeVisible();
+
+    gantiSaatPratinjau = false;
+    mode = "ok";
+    await page.getByRole("button", { name: "Periksa ulang sesi" }).click();
+    await expect(page.getByText("Database: PT CONTOH (id 77)")).toBeVisible();
+    await page.getByRole("button", { name: "Lanjut ke Tinjau" }).click();
+    await expect(page.getByRole("region", { name: "Siap kirim" })).toBeVisible({ timeout: 60_000 });
+
+    // #8: database berubah → strip "Ulangi pratinjau"; sesi lalu tak terbaca → Ulangi pratinjau memberi alasan (dulu diam).
+    mode = "lain";
+    await page.getByRole("button", { name: "Periksa ulang sesi" }).click();
+    await expect(page.getByText("Database Accurate berubah sejak pratinjau.")).toBeVisible();
+    mode = "galat";
+    await page.getByRole("button", { name: "Periksa ulang sesi" }).click();
+    await expect(page.getByText("Sesi Accurate Anda berakhir.")).toBeVisible();
+    await page.getByRole("button", { name: "Ulangi pratinjau" }).click();
+    await expect(page.getByText("Pratinjau ulang gagal.")).toBeVisible();
+    await expect(page.locator("main")).toContainText("Pratinjau belum bisa dibuat. Sesi Accurate tidak terbaca; tekan Periksa ulang sesi.");
+});
+
+const DUA_GANDA = (key: string) => (key.includes("PELANGGAN-A_") || key.includes("PELANGGAN-B_") ? "UNKNOWN_OUTCOME" : undefined);
+async function izinkan(page: Page, faktur: string, alasan: string) {
+    const ganda = page.getByRole("region", { name: "Potensi ganda" });
+    await ganda.getByRole("checkbox", { name: `Pilih ${faktur}` }).check();
+    await ganda.getByRole("button", { name: "Izinkan yang dicentang…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Kirim ulang terkendali 1 baris?" });
+    await dlg.getByLabel("Alasan mengizinkan").fill(alasan);
+    await dlg.getByRole("button", { name: "Izinkan 1 baris" }).click();
+    await expect(dlg).toBeHidden();
+    return dlg;
+}
+async function kirimSemua(page: Page, n: number) {
+    await page.getByRole("button", { name: `Kirim ${n} pelunasan…` }).click();
+    await page.getByRole("dialog").getByRole("button", { name: `Kirim ${n} pelunasan` }).click();
+    await expect(page.getByLabel("Ringkasan hasil")).toBeVisible({ timeout: 60_000 });
+}
+
+test("Susulan 2b #7: dua baris ganda, centang SATU → badan lock allowLockedKeys hanya yang dicentang; yang lain tetap ditahan", async ({ page }) => {
+    const log = await pasang(page, { blok: DUA_GANDA });
+    await sampaiTinjau(page);
+    await expect(page.getByLabel("Ringkasan tinjauan")).toContainText("Potensi ganda2");
+    await izinkan(page, "INV/A/001", "Cicilan kedua belum masuk Accurate, dicek Finance");
+    await expect(page.getByLabel("Ringkasan tinjauan")).toContainText("Siap kirim3");
+    await kirimSemua(page, 3);
+    expect(log.lock).toHaveLength(1);
+    expect(log.lock[0].allowLockedKeys).toEqual([expect.stringContaining("PELANGGAN-A_")]);
+    expect((log.lock[0].keys ?? []).some((k) => k.key.includes("PELANGGAN-B_"))).toBe(false);
+    expect(log.tulis.flatMap((t) => t.payload as Baris[]).map((r) => r.customerNo)).not.toContain("PELANGGAN-B");
+});
+
+test("Susulan 2b #6: Izinkan kedua MENAMBAH izin pertama (bukan menimpa); alasan digabung dan tercatat di lock", async ({ page }) => {
+    const log = await pasang(page, { blok: DUA_GANDA });
+    await sampaiTinjau(page);
+    await izinkan(page, "INV/A/001", "Cicilan kedua outlet A belum masuk Accurate");
+    const ganda = page.getByRole("region", { name: "Potensi ganda" });
+    await ganda.getByRole("checkbox", { name: "Pilih INV/A/002" }).check();
+    await ganda.getByRole("button", { name: "Izinkan yang dicentang…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Kirim ulang terkendali 1 baris?" });
+    await expect(dlg).toContainText("Izin sebelumnya (1 baris) tetap berlaku; alasan ini ditambahkan ke alasannya.");
+    await dlg.getByLabel("Alasan mengizinkan").fill("Cicilan kedua outlet B belum masuk Accurate");
+    await dlg.getByRole("button", { name: "Izinkan 1 baris" }).click();
+    await expect(ganda.getByText("Diizinkan Finance")).toHaveCount(2);
+    await expect(page.getByLabel("Ringkasan tinjauan")).toContainText("Siap kirim4");
+    await kirimSemua(page, 4);
+    expect(log.lock).toHaveLength(1);
+    expect([...(log.lock[0].allowLockedKeys as string[])].sort()).toEqual([expect.stringContaining("PELANGGAN-A_"), expect.stringContaining("PELANGGAN-B_")]);
+    expect(log.lock[0].overrideReason).toBe("Cicilan kedua outlet A belum masuk Accurate; Cicilan kedua outlet B belum masuk Accurate");
+});

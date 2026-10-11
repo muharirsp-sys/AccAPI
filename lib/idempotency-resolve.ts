@@ -74,28 +74,35 @@ export type HasilCari = { mirip: Map<string, StrukAccurate[]>; gagal: Map<string
 /**
  * Nominal per faktur dari SIDIK JARI kunci (rumus buildSalesReceiptIdempotencyPayload: `PAY_<pelanggan>_<tanggal>_` + segmen
  * `faktur|bayar|potongan` dipisah ";", potongan = `akun:catatan:jumlah` dipisah "&") — bentuk sama dengan targetRiwayat.
- * null = tak bisa diurai pasti (awalan beda, catatan/akun memuat pemisah, angka tak terbaca) = dianggap TIDAK identik (Finance wajib
- * acceptSimilar) — arah aman.
+ * null = tak bisa diurai pasti (awalan beda, catatan/akun memuat pemisah, angka tak terbaca/negatif, Σ urai ≠ `amount` baris) =
+ * dianggap TIDAK identik (Finance wajib acceptSimilar) — arah aman.
+ * Susulan S6e (tinjauan B, RENDAH): catatan potongan yang disusun dengan pemisah (`x:0;INV-1|200|a:b`) bisa terurai menjadi segmen
+ * faktur tambahan (INV-1 Rp500 padahal baris Rp300). Angka asli kunci selalu terhitung (atau urai gagal), jadi Σ (bayar+potongan)
+ * hasil urai = `amount` baris (Σ yang sama, dihitung rumus sidik jari) DAN tidak ada angka negatif = tidak ada angka sisipan bernilai.
+ * Tanpa syarat non-negatif, sisipan `…|200|a:b:-200&…` menyamakan Σ lagi. Potongan sah selalu > 0 (alokasi.ts membuang ≤ 0).
  */
-export function nominalDariKunci(r: { key: string; customerNo: string | null; transDate: string | null }): Map<string, number[]> | null {
+export function nominalDariKunci(r: { key: string; customerNo: string | null; transDate: string | null; amount: number | null }): Map<string, number[]> | null {
     const awalan = `PAY_${String(r.customerNo ?? "").trim()}_${String(r.transDate ?? "").trim()}_`;
     if (!r.key.startsWith(awalan)) return null;
     const jumlah = new Map<string, [number, number]>();
+    let total = 0;
     for (const seg of r.key.slice(awalan.length).split(";")) {
         const [no, bayarTeks = "", ...sisa] = seg.split("|");
         const bayar = Number(bayarTeks);
-        if (!sisa.length || !bayarTeks.trim() || !Number.isFinite(bayar)) return null;
+        if (!sisa.length || !bayarTeks.trim() || !Number.isFinite(bayar) || bayar < 0) return null;
         let potongan = 0;
         for (const item of sisa.join("|") ? sisa.join("|").split("&") : []) {
             const bagian = item.split(":");
             const n = Number(bagian[2]);
-            if (bagian.length !== 3 || !bagian[2].trim() || !Number.isFinite(n)) return null;
+            if (bagian.length !== 3 || !bagian[2].trim() || !Number.isFinite(n) || n < 0) return null;
             potongan += n;
         }
         const k = normFaktur(no);
         const [a, b] = jumlah.get(k) ?? [0, 0];
         jumlah.set(k, [a + bayar, b + bayar + potongan]);
+        total += bayar + potongan;
     }
+    if (typeof r.amount !== "number" || total.toFixed(2) !== r.amount.toFixed(2)) return null;
     return new Map([...jumlah].map(([k, v]) => [k, v.map((x) => Number(x.toFixed(2)))]));
 }
 

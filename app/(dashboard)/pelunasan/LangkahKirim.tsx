@@ -24,7 +24,7 @@ import { buildSalesReceiptIdempotencyPayload } from "@/lib/sales-receipt-fingerp
 import { memuatPlaceholderAkun } from "@/lib/sales-receipt-upload";
 import { rupiah } from "@/lib/promo-ui";
 import {
-    KODE_DISELESAIKAN, LABEL_ALASAN, LABEL_DILEWATI, LABEL_HASIL, barisLaporanHasil, butuhTakeover, fakturDari, hitungHasil, nilaiUang, paketDari, rencanaKirim,
+    KODE_DISELESAIKAN, LABEL_ALASAN, LABEL_DILEWATI, LABEL_HASIL, barisLaporanHasil, butuhTakeover, fakturDari, hitungHasil, nilaiUang, nomorTerposting, paketDari, rencanaKirim,
     terapkanPenyelesaian, type Penyelesaian,
 } from "@/lib/pelunasan-wizard";
 import { waktuWita } from "@/app/(dashboard)/principal-order/bersama";
@@ -270,14 +270,19 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, bisaKonsol, m
 
             <ConfirmDialog open={dialog === "izinkan"} onClose={() => setDialog(null)} tag="Hanya Finance"
                 title={dipilihTakeover.length === pilih.size && pilih.size > 0 ? `Kirim ulang terkendali ${pilih.size} baris?` : `Izinkan ${pilih.size} baris yang mirip pelunasan lain?`}
-                description="Baris yang diizinkan ikut dikirim. Izin tercatat per baris di server saat baris dikunci (siapa, alasan, status sebelumnya); satu izin berlaku untuk satu kiriman."
+                description={`Baris yang diizinkan ikut dikirim. Izin tercatat per baris di server saat baris dikunci (siapa, alasan, status sebelumnya); satu izin berlaku untuk satu kiriman.${diizinkan.size ? ` Izin sebelumnya (${diizinkan.size} baris) tetap berlaku; alasan ini ditambahkan ke alasannya.` : ""}`}
                 facts={ganda.filter((r) => pilih.has(r.reviewId)).slice(0, 8).map((r) => [
                     `${r.invoiceNo || "—"} · ${r.customerNo}`,
                     `${rupiah(r.amount)} · ${r.reasons.map((x) => LABEL_ALASAN[x]).join("; ")}${r.matchedReceiptNumbers.length ? ` · ${r.matchedReceiptNumbers.join(", ")}` : ""}`,
                 ] as [string, ReactNode])}
                 reason={{ label: "Alasan mengizinkan", min: 15, placeholder: "mis. pelunasan kedua untuk cicilan; dikonfirmasi dengan outlet" }}
                 confirmLabel={`Izinkan ${pilih.size} baris`} confirmDisabled={kunciIzinkan} alasanTerlihat
-                onConfirm={(alasan) => { setDiizinkan(new Set(pilih)); setAlasanIzin(alasan); setPilih(new Set()); setDialog(null); }}>
+                // 2b #6: Izinkan kedua MENAMBAH (dulu menimpa izin pertama tanpa kabar); satu overrideReason per kiriman = alasan digabung.
+                onConfirm={(alasan) => {
+                    setDiizinkan((d) => new Set([...d, ...pilih]));
+                    setAlasanIzin((a) => (a ? `${a}; ${alasan}` : alasan));
+                    setPilih(new Set()); setDialog(null);
+                }}>
                 {dipilihTakeover.length > 0 && (
                     <MessageStrip tone="warn" title={`Kirim ulang terkendali (takeover) untuk ${dipilihTakeover.length} baris yang kiriman sebelumnya belum pasti atau sudah tercatat.`}>
                         Pakai hanya bila Anda sudah memeriksa di Accurate bahwa baris itu (mis. cicilan lain) BELUM terposting. Bila ternyata sudah, kiriman ini
@@ -384,7 +389,7 @@ export function LangkahHasil({ tinjauan: t, hasil, izin, onBaru }: { tinjauan: T
             <FooterToolbar message={`Selesai ${waktuWita(hasil.selesai)} WITA · ${hasil.paket} paket · ${namaDatabase(t)}`}>
                 <Button icon={<Download className="fi-icon" aria-hidden />} onClick={() => void unduhExcel([
                     ...barisLaporanHasil(hasil.kirim, efektif, hasil.ditahan),
-                    ...t.dilewati.map((d) => ({ "Code Outlet": "", "Faktur": `baris berkas ${d.row}`, "Metode": "", "Uang diterima": 0, "Paket": "", "Hasil": "Dilewati saat dibaca", "Nomor Accurate": "", "Keterangan": LABEL_DILEWATI[d.reason] ?? d.reason })),
+                    ...t.dilewati.map((d) => ({ "Code Outlet": "", "Faktur": `baris berkas ${d.row}`, "Metode": "", "Uang diterima": 0, "Paket": "", "Hasil": "Dilewati saat dibaca", "Nomor Accurate": "", "Nomor mirip": "", "Keterangan": LABEL_DILEWATI[d.reason] ?? d.reason })),
                 ], "Hasil Pelunasan", "Hasil_Pelunasan")}>Laporan per baris (Excel)</Button>
                 <Button variant="primary" onClick={onBaru}>Pelunasan baru</Button>
             </FooterToolbar>
@@ -410,4 +415,5 @@ function BadgeHasil({ h }: { h: BarisHasil | undefined }) {
 }
 const keterangan = (h: BarisHasil | undefined) => !h ? "Tanpa hasil dari server; cek Accurate sebelum mengulang."
     : h.code === KODE_DISELESAIKAN ? h.message
-        : h.outcome === "terposting" ? `Terposting${h.receiptNumbers?.length ? ` · ${h.receiptNumbers.join(", ")}` : ""} · paket ${h.paket}` : `Paket ${h.paket}: ${h.message}`;
+        // Nomor = item jawaban Accurate (bukan receiptNumbers: untuk baris lain itu nomor MIRIP).
+        : h.outcome === "terposting" ? `Terposting${nomorTerposting(h).length ? ` · ${nomorTerposting(h).join(", ")}` : ""} · paket ${h.paket}` : `Paket ${h.paket}: ${h.message}`;

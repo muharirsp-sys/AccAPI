@@ -64,6 +64,8 @@ Biaya: tiap paket membaca riwayat per kelompok pelanggan+tanggal = `list.do` (�
 (≤ 300), paling banyak 4 serentak, batas 60 dtk per paket (melewati batas = kelompok sisanya `UNREADABLE`; sesudah batas tidak
 ada panggilan Accurate baru). `list.do` wajib `s:true` + `d` daftar + `sp.pageCount` angka (angka JSON atau teks angka seperti
 `"1"`; ≥ 1, atau 0 hanya bila `d` kosong) — selain itu `UNREADABLE` (tanpa jumlah halaman = dianggap terpotong). Pra-deploy: pastikan `list.do` produksi membawa `sp.pageCount`.
+Jumlah halaman yang diumumkan tidak menyusut antarhalaman (dipakai yang terbesar); halaman KOSONG sebelum halaman terakhir yang
+diumumkan = `UNREADABLE` (halaman terakhir yang kosong tetap sah).
 Tindak lanjut (DITUNDA, orkestrator 10 Okt): satu `list.do` per tanggal (bukan per pelanggan) menekan biaya, tetapi mengubah
 logika pratinjau bersama — belum dikerjakan.
 
@@ -131,7 +133,8 @@ satu transaksi: status `SUCCESS` (terposting) / `FAILED` (tidak_ada = boleh diki
 `idempotency_resolution` (siapa, kapan, database, sumber, alasan, nomor; tidak bisa diubah/dihapus).
 
 **`acceptSimilar` (putaran 2, B-N1)**: `terposting` dengan kandidat yang TIDAK identik kasar dengan baris (himpunan faktur beda,
-atau ada faktur bernominal lain menurut sidik jari kunci — mis. cicilan lain, atau koreksi nominal) wajib `acceptSimilar: true`;
+atau ada faktur bernominal lain menurut sidik jari kunci — mis. cicilan lain, atau koreksi nominal; sidik jari yang tidak terurai
+pasti — Σ hasil urai ≠ `amount` baris, angka negatif — juga dianggap tidak identik) wajib `acceptSimilar: true`;
 tanpa itu 409 `similar_not_identical`. Bila diterima, `checked_source` jejak diakhiri `[mirip: <nomor> Rp<nominal kandidat> ≠
 Rp<nominal baris>]`.
 
@@ -198,6 +201,10 @@ diselesaikan; tampilkan bila > 0).
 
 - **Kunci izin**: IT Support menambah `pelunasan.kirim` ke grup yang MENGIRIM pelunasan (Admin Incaso, Finance) SEBELUM deploy —
   tanpanya semua kirim sales-receipt non-admin 403. `seed-rbac-presets` tidak dijalankan ke produksi.
+- **Halaman `/pelunasan` = `pelunasan.kirim`** (`lib/rbac.ts` pagePermissions, sama dengan penegakan server owner #5): wizard,
+  daftar Perlu tindakan, Selesaikan, dan Izinkan baris ganda semuanya di halaman ini. **Finance yang menyelesaikan
+  (`finance.resolve_unknown`) atau mengizinkan baris ganda (`finance.override_duplicate`) WAJIB juga memegang `pelunasan.kirim`**
+  — tanpa itu halamannya tidak terbuka (API `/api/idempotency/resolve` & `/summary` tetap bisa dipanggil, tetapi tidak ada layarnya).
 - **DDL**: `docs/handover/DDL_S6E2.sql` (IT Support, role pemilik, **SEBELUM image baru di-deploy**; idempoten) — kolom `idempotency_log."databaseId"`
   + kolom `idempotency_override.database_id` + tabel `idempotency_resolution` (juga dibuat migrate-pg entri `idempotency_s6e2` &
   `idempotency_override_database` bila `DATABASE_MIGRATION_URL` terpasang) + trigger append-only + REVOKE
@@ -239,3 +246,12 @@ diselesaikan; tampilkan bila > 0).
   ditentukan dari segmen `key` saja.
 - (11 Okt, putaran 2 orkestrator) §1 `sp.pageCount` teks angka diterima; 0 hanya bila daftar kosong; hilang/bukan angka tetap
   `UNREADABLE`.
+- (11 Okt, susulan S6e, tinjauan B RENDAH) §5 kandidat identik kasar hanya bila sidik jari kunci terurai PASTI: Σ (bayar +
+  potongan) hasil urai = `amount` baris dan tidak ada angka negatif. Catatan potongan berpemisah (`x:0;INV-1|200|a:b`) tidak
+  lagi bisa memalsukan nominal → `similar_not_identical` (wajib `acceptSimilar`). Baris lama tanpa `amount` juga wajib
+  `acceptSimilar`. Bentuk jawaban tidak berubah.
+- (11 Okt, susulan S6e, tinjauan A RENDAH) §1 paginasi `list.do` (server): jumlah halaman tidak boleh menyusut (halaman 1
+  `pageCount:3` lalu halaman 2 `pageCount:0` tidak lagi melewatkan halaman 3); halaman kosong sebelum halaman terakhir yang
+  diumumkan = `UNREADABLE`. Pratinjau klien tidak berubah. Bentuk jawaban tidak berubah.
+- (11 Okt, susulan S6e, tinjauan UI 2b) §8 ditulis eksplisit: halaman `/pelunasan` butuh `pelunasan.kirim`, termasuk bagi Finance
+  yang hanya menyelesaikan/mengizinkan. Tidak ada perubahan perilaku server.
