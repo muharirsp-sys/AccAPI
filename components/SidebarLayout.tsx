@@ -35,9 +35,11 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
     const items = groups.flatMap(group => group.items);
     const home = canAccessPathWithKeys("/", keys) ? [HOME_ITEM] : [];
     const active = activeNavigationItem(pathname, [...home, ...items]);
-    // Gerbang klien (S7-sesi): layout server TIDAK dijalankan ulang pada navigasi klien (Link/router.push), jadi izin path aktif
-    // dihitung ulang di sini dari kunci yang sama. Otoritas tetap server (layout + guard API); ini menutup tampilan halaman terlarang.
-    const pathDiizinkan = canAccessPathWithKeys(pathname, keys);
+    // Gerbang klien (S7-sesi): layout server TIDAK dijalankan ulang pada navigasi klien (Link/router.push), jadi path yang dicapai
+    // lewat navigasi klien dinilai ulang di sini dengan kunci yang sama. Path yang dirender server sudah digerbang layout.
+    // Otoritas tetap server (layout + guard API); ini menutup tampilan halaman terlarang.
+    const [pathServer] = useState(pathname);
+    const pathDiizinkan = pathname === pathServer || canAccessPathWithKeys(pathname, keys);
     const roleLabel = roleProfile(keys)?.label ?? "CV. Surya Perkasa";
     const [drawerOpen, setDrawerOpen] = useState(false);
     // Tutup drawer pada setiap pindah rute (klik tautan, Back, router.push) — disesuaikan saat render, bukan di effect.
