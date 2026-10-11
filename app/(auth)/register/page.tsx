@@ -5,7 +5,10 @@
  * Main Functions: RegisterPage.
  * Side Effects: Tidak ada.
  */
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = { title: "Pendaftaran ditutup" };
 
 export default function RegisterPage() {
     return (

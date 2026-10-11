@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { use, useEffect, useRef, useState, type FormEvent } from "react";
+import { use, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { authClient } from "@/lib/auth-client";
 import { Button, MessageStrip } from "@/components/fiori/core";
@@ -36,10 +36,15 @@ export default function ResetPasswordPage({ searchParams }: { searchParams: Prom
     const [ulang, setUlang] = useState("");
     const [loading, setLoading] = useState(false);
     const [galat, setGalat] = useState<string>();
+    // Galat isian baru tampil setelah isian ditinggalkan (blur), bukan sejak karakter pertama; sesudahnya ikut berubah langsung.
+    const [ditinggal, setDitinggal] = useState({ sandi: false, ulang: false });
+    const alasanId = useId();
 
     const pendek = sandi.length < MIN_SANDI;
     const beda = ulang !== sandi;
-    const terkunci = pendek ? `Sandi minimal ${MIN_SANDI} karakter.` : beda ? "Ketik ulang sandi yang sama dulu." : undefined;
+    const galatSandi = ditinggal.sandi && sandi && pendek ? `Sandi minimal ${MIN_SANDI} karakter.` : undefined;
+    const galatUlang = ditinggal.ulang && ulang && beda ? "Belum sama dengan sandi baru." : undefined;
+    const terkunci = pendek ? "Simpan aktif setelah sandi baru cukup panjang." : beda ? "Simpan aktif setelah ketik ulang sama dengan sandi baru." : undefined;
 
     const handleReset = async (e: FormEvent) => {
         e.preventDefault();
@@ -83,21 +88,24 @@ export default function ResetPasswordPage({ searchParams }: { searchParams: Prom
             <h1 className="fi-title-1">Atur sandi baru</h1>
             {galat && <MessageStrip tone="neg">{galat}</MessageStrip>}
             <form onSubmit={handleReset} noValidate>
-                <FormField label="Sandi baru" help={`Minimal ${MIN_SANDI} karakter.`} error={sandi && pendek ? `Sandi minimal ${MIN_SANDI} karakter.` : undefined}>
+                {/* Galat menggantikan bantuan supaya "minimal 6 karakter" tidak tertulis dua kali. */}
+                <FormField label="Sandi baru" help={galatSandi ? undefined : `Minimal ${MIN_SANDI} karakter.`} error={galatSandi}>
                     {(a11y) => (
                         <input {...a11y} className="fi-input" type="password" autoComplete="new-password" value={sandi} disabled={loading}
-                            onChange={(e) => setSandi(e.target.value)} />
+                            onChange={(e) => setSandi(e.target.value)} onBlur={() => setDitinggal((d) => ({ ...d, sandi: true }))} />
                     )}
                 </FormField>
-                <FormField label="Ketik ulang sandi baru" error={ulang && beda ? "Belum sama dengan sandi baru." : undefined}>
+                <FormField label="Ketik ulang sandi baru" error={galatUlang}>
                     {(a11y) => (
                         <input {...a11y} className="fi-input" type="password" autoComplete="new-password" value={ulang} disabled={loading}
-                            onChange={(e) => setUlang(e.target.value)} />
+                            onChange={(e) => setUlang(e.target.value)} onBlur={() => setDitinggal((d) => ({ ...d, ulang: true }))} />
                     )}
                 </FormField>
-                <Button type="submit" variant="primary" busy={loading} disabled={Boolean(terkunci)} disabledReason={terkunci}>
+                <Button type="submit" variant="primary" busy={loading} disabled={Boolean(terkunci)} disabledReason={terkunci}
+                    aria-describedby={terkunci ? alasanId : undefined}>
                     {loading ? "Menyimpan…" : "Simpan sandi"}
                 </Button>
+                {terkunci && <p id={alasanId} className="fi-small fi-muted">{terkunci}</p>}
             </form>
             <Link href="/login" className="fi-btn fi-btn--tertiary">Kembali ke halaman masuk</Link>
         </>

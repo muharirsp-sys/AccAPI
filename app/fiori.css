@@ -554,7 +554,7 @@ dialog.fi-drawer .fi-sidenav { border-right:0; }
 .fi-auth-brand ul { list-style:none; padding:0; display:grid; gap:var(--sp-3); }
 .fi-auth-brand li { display:flex; gap:10px; align-items:flex-start; }
 .fi-auth-brand li .fi-icon { margin-top:2px; }
-.fi-auth-brand small { font:var(--fs-small); opacity:.85; }
+.fi-auth-brand small { font:var(--fs-small); } /* tanpa opacity: putih penuh di --primary gelap = 5:1 (0,85 = 4,1:1) */
 .fi-auth-side { display:grid; place-items:center; padding:var(--sp-6) var(--sp-4); min-width:0; }
 .fi-auth-card, .fi-auth-card form { display:grid; gap:14px; min-width:0; }
 .fi-auth-card { width:100%; max-width:380px; background:var(--surface); border-radius:var(--r-xl); box-shadow:var(--shadow-2); padding:var(--sp-6); }

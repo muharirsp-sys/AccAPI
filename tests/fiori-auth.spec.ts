@@ -34,10 +34,30 @@ test.beforeEach(async ({ page }) => {
     await page.route("**/api/auth/**", (route) => route.fulfill({ status: 500, json: { message: "tidak dimock" } }));
 });
 
-test("satu kerangka: panel merek + kartu berlogo di keempat halaman; ponsel tanpa panel merek dan tanpa gulir menyamping", async ({ page }) => {
-    for (const url of ["/login", "/forgot-password", "/reset-password?token=t", "/register"]) {
+/** Kontras terendah teks panel merek (li, small) terhadap latarnya, memperhitungkan opacity. */
+function kontrasPanel(page: Page) {
+    return page.locator(".fi-auth-brand").evaluate((brand) => {
+        const rgb = (s: string) => s.match(/[\d.]+/g)!.map(Number);
+        const lum = (c: number[]) => {
+            const f = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+            return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+        };
+        const latar = rgb(getComputedStyle(brand).backgroundColor);
+        return Math.min(...[...brand.querySelectorAll("li, small")].map((el) => {
+            const cs = getComputedStyle(el);
+            const [r, g, b, a = 1] = rgb(cs.color);
+            const op = Number(cs.opacity) * a;
+            const [l1, l2] = [lum([r, g, b].map((v, i) => v * op + latar[i] * (1 - op))), lum(latar)].sort((x, y) => y - x);
+            return (l1 + 0.05) / (l2 + 0.05);
+        }));
+    });
+}
+
+test("satu kerangka: panel merek + kartu berlogo di keempat halaman; judul tab; ponsel tanpa panel merek dan tanpa gulir menyamping", async ({ page }) => {
+    for (const [url, judul] of [["/login", "Masuk"], ["/forgot-password", "Lupa sandi"], ["/reset-password?token=t", "Atur ulang sandi"], ["/register", "Pendaftaran ditutup"]]) {
         await page.setViewportSize({ width: 1280, height: 800 });
         await buka(page, url);
+        await expect(page).toHaveTitle(judul);
         await expect(page.locator(".fi-auth-brand")).toBeVisible();
         await expect(kartu(page).getByRole("img", { name: "CV. Surya Perkasa" })).toBeVisible();
         await page.setViewportSize({ width: 360, height: 760 });
@@ -49,8 +69,10 @@ test("satu kerangka: panel merek + kartu berlogo di keempat halaman; ponsel tanp
     await page.setViewportSize({ width: 1280, height: 800 });
     const latar = () => kartu(page).evaluate((el) => getComputedStyle(el).backgroundColor);
     const terang = await latar();
+    expect(await kontrasPanel(page)).toBeGreaterThanOrEqual(4.5);
     await page.emulateMedia({ colorScheme: "dark" });
     await expect.poll(latar).not.toBe(terang);
+    expect(await kontrasPanel(page), "kontras teks panel merek di tema gelap").toBeGreaterThanOrEqual(4.5);
 });
 
 test("?error= dikenal: kalimat Indonesia, teks mentah query tidak tampil", async ({ page }) => {
@@ -134,7 +156,7 @@ test("lupa sandi: layar identik untuk semua jawaban server non-5xx, dengan kalim
         const body = r[0].postDataJSON() as { email: string; redirectTo: string };
         expect(body.email).toBe(email);
         expect(body.redirectTo).toMatch(/\/reset-password$/);
-        layar.push(await kartu(page).innerText());
+        layar.push(await kartu(page).innerHTML()); // markup, bukan hanya teks: atribut tersembunyi pun tidak boleh berbeda
     }
     expect(layar[1]).toBe(layar[0]);
     expect(layar[2]).toBe(layar[0]);
@@ -177,19 +199,31 @@ test("atur ulang: sandi pendek atau tidak sama mengunci Simpan; sama → tersimp
     const simpan = await mockAuth(page, "reset-password", 200, { status: true });
     await buka(page, "/reset-password?token=TOKEN-UJI");
     const tombol = page.getByRole("button", { name: "Simpan sandi" });
+    const baru = page.getByLabel("Sandi baru", { exact: true });
+    const ulang = page.getByLabel("Ketik ulang sandi baru");
+    // Alasan tombol nonaktif terlihat sebagai teks dan menjadi deskripsi tombol.
     await expect(tombol).toBeDisabled();
-    await page.getByLabel("Sandi baru", { exact: true }).fill("rahasia123");
-    await page.getByLabel("Ketik ulang sandi baru").fill("rahasia12");
-    await expect(kartu(page)).toContainText("Belum sama dengan sandi baru.");
-    await expect(tombol).toBeDisabled();
-    await page.getByLabel("Sandi baru", { exact: true }).fill("abc12");
-    await page.getByLabel("Ketik ulang sandi baru").fill("abc12");
+    await expect(kartu(page)).toContainText("Simpan aktif setelah sandi baru cukup panjang.");
+    await expect(tombol).toHaveAccessibleDescription("Simpan aktif setelah sandi baru cukup panjang.");
+    // Galat tidak muncul sejak karakter pertama: bantuan saja sampai isian ditinggalkan, lalu galat MENGGANTIKAN bantuan.
+    await baru.fill("r");
+    await expect(kartu(page)).toContainText("Minimal 6 karakter.");
+    await expect(kartu(page)).not.toContainText("Sandi minimal 6 karakter.");
+    await baru.blur();
     await expect(kartu(page)).toContainText("Sandi minimal 6 karakter.");
+    await expect(kartu(page)).not.toContainText("Minimal 6 karakter.");
+    await baru.fill("rahasia123");
+    await expect(kartu(page)).not.toContainText("Sandi minimal 6 karakter.");
+    await ulang.fill("rahasia12");
+    await expect(kartu(page)).not.toContainText("Belum sama dengan sandi baru.");
     await expect(tombol).toBeDisabled();
-    await page.getByLabel("Sandi baru", { exact: true }).fill("rahasia123");
-    await page.getByLabel("Ketik ulang sandi baru").fill("rahasia123");
+    await expect(tombol).toHaveAccessibleDescription("Simpan aktif setelah ketik ulang sama dengan sandi baru.");
+    await ulang.blur();
+    await expect(kartu(page)).toContainText("Belum sama dengan sandi baru.");
+    await ulang.fill("rahasia123");
     await expect(kartu(page)).not.toContainText("Belum sama dengan sandi baru.");
     await expect(tombol).toBeEnabled();
+    await expect(kartu(page)).not.toContainText("Simpan aktif setelah");
     await tombol.click();
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sandi tersimpan");
     await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
