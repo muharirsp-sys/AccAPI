@@ -66,13 +66,14 @@ export function navigationForPermissions(canAccess: (href: string) => boolean): 
 export const ROLE_PROFILES: Array<{ id: string; label: string; when: string; shortcuts: string[] }> = [
     { id: "admin", label: "Admin", when: "users.manage", shortcuts: ["/admin/groups", "/api-wrapper", "/principles"] },
     { id: "finance", label: "Finance", when: "finance.transfer", shortcuts: ["/finance", "/payments", "/off-program-control"] },
-    // Sesudah Finance: Finance juga memegang pelunasan.kirim (owner #1), tetapi Berandanya tetap Finance.
-    { id: "incaso", label: "Admin Incaso", when: "pelunasan.kirim", shortcuts: ["/pelunasan"] },
     { id: "salesman", label: "Salesman", when: "websales.create", shortcuts: ["/form-kontrol", "/sales", "/insentif-sales"] },
     { id: "sm", label: "Sales Manager", when: "off_program_control.approve", shortcuts: ["/off-program-control", "/form-kontrol", "/insentif-sales"] },
     { id: "claim", label: "Claim", when: "claim_workflow.create", shortcuts: ["/off-program-control", "/claim-workflow", "/rekap-promo"] },
     { id: "fakturist", label: "Fakturist", when: "order.create", shortcuts: ["/principal-order", "/antrean-faktur", "/faktur"] },
     { id: "gudang", label: "Admin Gudang", when: "rekapan_nota.manage", shortcuts: ["/rekapan-nota"] },
+    // TERAKHIR (susulan S6e, tinjauan 2b): pelunasan.kirim juga diberikan ke Finance (owner #1) dan bisa ke peran lain; profil
+    // utama mereka menang, Admin Incaso hanya bila tidak ada peran lain yang cocok.
+    { id: "incaso", label: "Admin Incaso", when: "pelunasan.kirim", shortcuts: ["/pelunasan"] },
 ];
 
 export function roleProfile(permKeys: ReadonlySet<string>) {

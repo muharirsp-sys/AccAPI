@@ -69,6 +69,12 @@ test("bottom-nav shortcuts follow the role guessed from permissions and never le
     // Admin Incaso = pelunasan.kirim tanpa izin Finance; Finance yang juga mengirim pelunasan tetap profil Finance.
     assert.equal(roleProfile(new Set(["pelunasan.kirim"]))?.id, "incaso");
     assert.equal(roleProfile(new Set(["pelunasan.kirim", "finance.transfer"]))?.id, "finance");
+    // Susulan S6e (tinjauan 2b): incaso SESUDAH peran utama — pemegang peran lain yang juga diberi pelunasan.kirim tetap
+    // mendapat Beranda perannya sendiri, bukan Beranda Admin Incaso.
+    for (const [kunci, id] of [["websales.create", "salesman"], ["off_program_control.approve", "sm"], ["claim_workflow.create", "claim"],
+        ["order.create", "fakturist"], ["rekapan_nota.manage", "gudang"], ["users.manage", "admin"]]) {
+        assert.equal(roleProfile(new Set(["pelunasan.kirim", kunci]))?.id, id, kunci);
+    }
     assert.deepEqual(roleShortcuts(new Set(), []), []);
 });
 test("bottom-nav labels are unique across the whole catalog", () => {
