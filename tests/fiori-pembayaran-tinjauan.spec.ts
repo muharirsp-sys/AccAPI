@@ -115,6 +115,27 @@ test("Keranjang: sesudah Ajukan, nilai bayar dibaca ulang dari server dan beda d
     await expect(main.getByText("berbeda dari Rp 30.450.000 yang tampil sebelum Ajukan", { exact: false })).toBeVisible();
 });
 
+test("Keranjang: nilai bayar tercatat null / nomor SPPD tanpa urutan = belum terbaca, bukan Rp 0 / 000", async ({ page }) => {
+    await mock(page, (p, r) => {
+        if (p === "/payments/cart-info") return json(r, { ...CART, method: "BANK_PANIN", method_label: "Bank Panin" });
+        if (p === "/api/bank-data/lookup") return json(r, { status: "matched", data: { principle: "PRINCIPLE A", bank: "BANK A", rekening: "0213", penerima: "PT PRINCIPLE A", has_rekening: true } });
+        if (p === "/payments/sppd/settings") return json(r, { ok: true, settings: SETELAN, preview_number: "032/SPA/PDSB/X/2026" });
+        if (p === "/payments/cart/submit") return json(r, { ok: true, submission_id: "c41e0d27", files: [] });
+        if (p === "/payments/submissions/c41e0d27") return json(r, { ok: true, data: { id: "c41e0d27", total_pembayaran: null, records: [], files: [], cart_items: {} } });
+        return "lewat";
+    });
+    await page.goto("/payments/cart/7f3c91ab", NAV);
+    const main = page.locator("main");
+    await expect(main.getByText("Nomor belum bisa dibaca", { exact: false })).toBeVisible(NAV);
+    await expect(main.getByText("terakhir 000", { exact: false })).toHaveCount(0);
+    await main.getByLabel("Jenis pembayaran PRINCIPLE A").selectOption("TRF");
+    await main.getByRole("button", { name: "Ajukan ke Finance…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Ajukan ke Finance" }).click();
+    await expect(main.getByText("Pengajuan c41e0d27 dibuat.")).toBeVisible();
+    await expect(main.getByText("Nilai bayar tercatat belum terbaca.")).toBeVisible();
+    await expect(main.getByText("Rp 0", { exact: false })).toHaveCount(0);
+});
+
 // ── Butir 3: lompatan besar nomor SPPD wajib diketik ulang ──
 test("Format SPPD: lompatan nomor > 50 wajib diketik ulang di dialog sebelum Simpan", async ({ page }) => {
     const { kirim } = await mock(page, (p, r) => {

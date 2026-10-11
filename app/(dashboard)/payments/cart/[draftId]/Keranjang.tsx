@@ -21,7 +21,7 @@ import {
     Button, EmptyState, ErrorState, Flow, FooterToolbar, KeyValues, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge, type FlowStep,
 } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
-import { angka, hariIniWita, izinPembayaran, tanggalTampil } from "@/lib/payments-ui";
+import { angka, angkaJawaban, hariIniWita, izinPembayaran, tanggalTampil } from "@/lib/payments-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { BELUM_PASTI, PeringatanTanggalLampau, baca, tulis, unduhUrl } from "../../bersama";
 
@@ -66,7 +66,11 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
         return { status: "siap", data: Object.fromEntries(daftar.map((p, i) => [p, hasil[i].data as Rekening])) };
     }, [kunciPrincipal, panin, izin.lihatSppd]));
     const [nomor, muatNomor] = useLoad(useCallback(async () => (panin && !izin.lihatSppd
-        ? baca("/payments/sppd/settings", (d) => ({ preview: String(d.preview_number ?? ""), terakhir: Number(d.effective_last_sequence ?? 0) }))
+        ? baca("/payments/sppd/settings", (d) => {
+            // Urutan tidak terbaca = galat ("Nomor belum bisa dibaca"), bukan "terakhir 000".
+            const terakhir = angkaJawaban(d.effective_last_sequence);
+            return terakhir === undefined ? undefined : { preview: String(d.preview_number ?? ""), terakhir };
+        })
         : { status: "siap" as const, data: null }), [panin, izin.lihatSppd]));
 
     const [isi, setIsi] = useState<Record<string, Isi>>({});
@@ -83,10 +87,7 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
     // = perubahan server, lintas slice.
     const idHasil = hasil?.id ?? "";
     const [tercatat, muatTercatat] = useLoad(useCallback(async (): Promise<Load<number | null>> => (idHasil
-        ? baca(`/payments/submissions/${encodeURIComponent(idHasil)}`, (d) => {
-            const t = Number((d.data as { total_pembayaran?: unknown } | undefined)?.total_pembayaran);
-            return Number.isFinite(t) ? t : undefined;
-        })
+        ? baca(`/payments/submissions/${encodeURIComponent(idHasil)}`, (d) => angkaJawaban((d.data as { total_pembayaran?: unknown } | undefined)?.total_pembayaran))
         : { status: "siap", data: null }), [idHasil]));
     // Jawaban tidak pasti: kunci sampai draf terbaca ulang (referensi data berganti).
     const [kunciPada, setKunciPada] = useState<Cart | null | undefined>(undefined);

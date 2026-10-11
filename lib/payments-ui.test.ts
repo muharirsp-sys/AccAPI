@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { angka, besokWita, bisaDiajukan, galatTemplat, izinPembayaran, keYmd, kurangLengkap, namaAkun, pratinjauNomor, statusRekaman, tanggalTampil, type Rekaman } from "@/lib/payments-ui";
+import { angka, angkaJawaban, besokWita, bisaDiajukan, galatTemplat, izinPembayaran, keYmd, kurangLengkap, namaAkun, pratinjauNomor, statusRekaman, tanggalTampil, type Rekaman } from "@/lib/payments-ui";
 
 const LENGKAP: Rekaman = { record_id: "LPB-1", tipe_pengajuan: "LPB", no_lpb: "LPB-1", principle: "PRINCIPLE A", tgl_invoice: "2026-10-06", jt_invoice: "2026-11-05", invoice_no: "INV-1", nilai_invoice: "12.500.000", locked_reason: "" };
 
@@ -44,6 +44,13 @@ test("angka ketat: rupiah Indonesia, NaN untuk teks rusak (bukan 0)", () => {
     assert.equal(angka(""), 0);
     assert.ok(Number.isNaN(angka("17.750.00O")));
     assert.ok(Number.isNaN(angka("5 juta")));
+});
+
+test("angka dari jawaban server: null/kosong/bukan angka = tidak terbaca (bukan 0)", () => {
+    assert.equal(angkaJawaban(30_000_000), 30_000_000);
+    assert.equal(angkaJawaban(0), 0);
+    assert.equal(angkaJawaban("46"), 46);
+    for (const v of [null, undefined, "", " ", "abc", NaN, Infinity, {}, true]) assert.equal(angkaJawaban(v), undefined, JSON.stringify(v));
 });
 
 test("izin: tanpa kunci = alasan terlihat tanpa nama kunci mentah", () => {
