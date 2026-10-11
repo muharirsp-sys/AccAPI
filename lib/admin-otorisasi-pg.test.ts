@@ -244,7 +244,8 @@ test("balapan: dua admin saling mencabut BERSAMAAN -> tepat satu berhasil, tersi
             ]);
             const hasil = [await kode(ra), await kode(rb)].sort((x, y) => x.status - y.status);
             assert.equal(hasil[0].status, 200, JSON.stringify(hasil));
-            assert.ok(["IZIN_BERUBAH", "ADMIN_TERAKHIR"].includes(String(hasil[1].code)), JSON.stringify(hasil));
+            // Yang kedua mendapat kunci sesudah yang pertama commit -> ia sudah bukan admin -> HANYA IZIN_BERUBAH yang sah.
+            assert.deepEqual(hasil[1], { status: 403, code: "IZIN_BERUBAH" }, JSON.stringify(hasil));
             assert.equal((await w.admin()).length, 1, "tepat satu admin tersisa");
         } finally {
             await m.pool.query(`DROP TRIGGER IF EXISTS s71_lambat ON user_group`);
@@ -763,5 +764,18 @@ test("perbaikan #5: audit gagal + kompensasi gagal -> 500 USER_SETENGAH_JADI (ju
         assert.deepEqual([u.banned, u.banReason, j.userId], [true, "sedang disiapkan (S7-1)", u.id]);
         assert.equal((await m.pool.query(`SELECT count(*)::int AS n FROM user_group WHERE user_id = $1`, [u.id])).rows[0].n, 0);
         await assert.rejects(masukDengan(email, PW), (e: { body?: { code?: string } }) => e.body?.code === "BANNED_USER");
+    });
+});
+
+test("perbaikan #6: IZIN_BERUBAH sejati — aktor ber-users.manage yang sudah banned (sesi masih ada) ditolak 403 tanpa perubahan/audit", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const ga = await w.grup("kelola", ["users.manage"]);
+        const gv = await w.grup("lihat", ["dashboard.view"]);
+        const a = await w.user("a"), b = await w.user("b", { banned: true }), u = await w.user("u");
+        await w.masuk(a, ga); await w.masuk(b, ga); await w.masuk(u, gv);
+        assert.deepEqual(await w.admin(), [a], "b banned bukan admin");
+        assert.deepEqual(await kode(await panggil(m.anggota.POST, b, "POST", ga, { userId: u })), { status: 403, code: "IZIN_BERUBAH" });
+        assert.deepEqual(await w.grupUser(u), [gv]);
+        assert.deepEqual(await w.audit(), []);
     });
 });
