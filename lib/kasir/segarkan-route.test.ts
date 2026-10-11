@@ -6,7 +6,9 @@ import { NextRequest } from "next/server";
 import { GET as getSegarkan, POST as postSegarkan } from "../../app/api/kasir/segarkan/route.ts";
 import { GET as getCron } from "../../app/api/cron/kasir-pelunasan/route.ts";
 import { bawaan, belumDibaca, publikkan, type DepsBaca, type StatusBaca, type TokoBaca } from "./baca-pelunasan.ts";
-import { PESAN_SESI_SINKRON } from "./pembaca.ts";
+import { PESAN_SESI_SINKRON, tanggalCron } from "./pembaca.ts";
+import { tokoTiruan } from "./uji-toko-tiruan.ts";
+import { todayWita } from "../insentif-payment-date.ts";
 import { auth } from "../auth.ts";
 import { db } from "../db.ts";
 
@@ -196,4 +198,48 @@ test("segarkan: `penuh` / `konfirmasiHapus` hanya pemegang kasir.buka (OM/Admin)
         () => postSegarkan(post({ tanggal: D, penuh: true, konfirmasiHapus: true })));
     assert.equal(ok.status, 200);
     assert.equal((opsiTerima as { penuh: boolean }).penuh, true, "penuh diteruskan untuk kasir.buka");
+});
+
+test("cron probe B2: penuh=1 serentak dengan cron biasa/tombol yang memegang lease -> penuh MENUNGGU dan tetap jalan untuk SEMUA tanggal", async () => {
+    const rahasia = "rahasia-cron-uji";
+    const jam = { t: Date.parse("2026-10-05T11:30:00Z") };
+    const t = tokoTiruan(jam, DB);
+    const daftar = tanggalCron(todayWita(new Date()));
+    for (const tanggal of daftar) await t.toko.klaim({ databaseId: DB, tanggal, token: `biasa-${tanggal}`, pemicu: "cron", penuh: false, akun: null });
+    let tidurKe = 0;
+    const tidur = async (ms: number) => {
+        jam.t += ms;
+        // Pembaca biasa tanggal pertama selesai sesudah 10 dtk; sisanya mati tanpa selesai (lease kedaluwarsa 2 mnt).
+        if (++tidurKe === 2) await t.toko.selesai(`biasa-${daftar[0]}`, DB, daftar[0], { status: "sebagian", sebab: null, pesan: null, jumlahDaftar: null, sisaDetail: null }, []);
+    };
+    const r = await dengan({ env: { CRON_SECRET: rahasia }, deps: { kredensial: async () => KRED, toko: () => t.toko, fetch: daftarKosong, tidur, sekarang: () => jam.t } },
+        () => getCron(cron("?penuh=1", rahasia)));
+    const b = await r.json() as { hasil: { tanggal: string; status: string }[] };
+    assert.equal(r.status, 200, JSON.stringify(b));
+    assert.deepEqual(b.hasil.map((h) => [h.tanggal, h.status]), daftar.map((d) => [d, "lengkap"]));
+    assert.deepEqual(t.klaimPenuh, daftar.map((d) => `${d}:cron`), "baca penuh benar-benar jalan untuk SETIAP tanggal");
+    assert.ok(tidurKe >= 2, "menunggu lease, bukan langsung menyerah");
+});
+
+test("cron: cron biasa bertemu lease tombol = 202 berketerangan (bukan galat); penuh yang menunggu sampai batas = 502 PENUH_TERTUNDA", async () => {
+    const rahasia = "rahasia-cron-uji";
+    const sibuk = st({ status: "berjalan", aktif: true });
+    const biasa = await dengan({ env: { CRON_SECRET: rahasia }, deps: { kredensial: async () => KRED, toko: () => toko({ diklaim: false, status: sibuk }) } },
+        () => getCron(cron(`?tanggal=${D}`, rahasia)));
+    assert.equal(biasa.status, 202);
+    const bb = await biasa.json() as { ok: boolean; hasil: { status: string; keterangan: string; kode?: string }[] };
+    assert.deepEqual([bb.ok, bb.hasil[0].status, bb.hasil[0].kode], [true, "sedang_dibaca", undefined]);
+    assert.match(bb.hasil[0].keterangan, /bukan galat/);
+
+    const jam = { t: 0 };
+    let percobaan = 0;
+    const tkSibuk = toko({ diklaim: false, status: sibuk });
+    const klaimAsli = tkSibuk.klaim;
+    tkSibuk.klaim = async () => { percobaan++; return klaimAsli(); };
+    const penuh = await dengan({ env: { CRON_SECRET: rahasia }, deps: { kredensial: async () => KRED, toko: () => tkSibuk,
+        tidur: async (ms: number) => { jam.t += ms; }, sekarang: () => jam.t } }, () => getCron(cron(`?tanggal=${D}&penuh=1`, rahasia)));
+    assert.equal(penuh.status, 502);
+    const bp = await penuh.json() as { hasil: { kode: string }[] };
+    assert.equal(bp.hasil[0].kode, "PENUH_TERTUNDA");
+    assert.ok(percobaan > 20 && jam.t >= 120_000, `menunggu > lease (percobaan ${percobaan}, ${jam.t} ms)`);
 });
