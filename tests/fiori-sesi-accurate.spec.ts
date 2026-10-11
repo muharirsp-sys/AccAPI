@@ -1,7 +1,9 @@
 /*
  * Tujuan: Halaman /sesi-accurate + kartu Sesi Accurate di Konsol (S7-sesi, owner D-01 Q2, AM-033): belum masuk / masuk tanpa database /
  *   database aktif / Keluar / galat sesi & daftar ≠ kosong / kabar `?accurate=error&alasan=<kode>` dipetakan (teks query tidak tampil) /
- *   tautan Masuk = route login ber-`state` (cookie httpOnly+Secure+Lax hanya ke callback) / Konsol memakai kartu yang sama.
+ *   tautan Masuk = route login ber-`state` (cookie httpOnly+Secure+Lax hanya ke callback) / Konsol memakai kartu yang sama /
+ *   fokus tidak jatuh ke <body> (Batal ganti, daftar gagal saat Ganti) / tautan 401 ≥ 44 px di ponsel sentuh.
+ *   Gerbang klien SidebarLayout di mode bypass (izin admin = semua) diuji di components/SidebarLayout.test.ts (render tanpa server).
  * Caller: Playwright lokal, DUA mode server (config sementara, baseURL :3021, `--workers=1`):
  *   A. `LOCAL_AUTH_BYPASS=true` (izin admin, tanpa DB): blok "kartu".
  *   B. Akun nyata (server tanpa bypass + Postgres berisi 3 akun bergrup): set `PW_SESI_FAKTURIST`, `PW_SESI_TANPA_KUNCI`, `PW_SESI_KONSOL`
@@ -121,18 +123,29 @@ test.describe("kartu (LOCAL_AUTH_BYPASS)", () => {
         await page.screenshot({ path: "test-results/fiori-sesi-accurate-aktif.png", fullPage: true });
     });
 
-    test("database aktif → Ganti database memakai daftar + open-db; Batal ganti kembali", async ({ page }) => {
+    test("database aktif → Ganti database memakai daftar + open-db; daftar gagal & Batal ganti tidak menjatuhkan fokus ke body", async ({ page }) => {
         let sesi: Record<string, unknown> = AKTIF;
-        const log = await pasang(page, { sesi: () => json(sesi) });
+        let daftar = json({ error: "Failed" }, 502);
+        const log = await pasang(page, { sesi: () => json(sesi), daftar: () => daftar });
         await page.goto("/sesi-accurate", { timeout: 90_000 });
         const k = kartu(page);
         await expect(k).toContainText("PT CONTOH (id 77)");
+        // Tombol Ganti database hilang begitu diklik; daftar gagal → fokus ke kartu (pesan), bukan <body>.
         await k.getByRole("button", { name: "Ganti database" }).click();
+        await expect(k.getByRole("alert")).toContainText("Daftar database Accurate tidak terbaca");
+        await expect.poll(() => fokusDiBody(page)).toBe(false);
+        await expect.poll(() => k.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+        daftar = json(DAFTAR);
+        await k.getByRole("button", { name: "Coba lagi" }).click();
         const pilih = k.getByLabel("Database Accurate");
         await expect(pilih).toBeFocused();
+        // Batal ganti membongkar tombolnya sendiri → fokus ke pesan di kartu.
         await k.getByRole("button", { name: "Batal ganti" }).click();
         await expect(pilih).toHaveCount(0);
+        await expect.poll(() => fokusDiBody(page)).toBe(false);
+        await expect.poll(() => k.evaluate((el) => el.contains(document.activeElement))).toBe(true);
         await k.getByRole("button", { name: "Ganti database" }).click();
+        await expect(pilih).toBeFocused();
         await pilih.selectOption("88");
         sesi = { ...AKTIF, databaseId: "88", databaseAlias: "PT CONTOH DUA" };
         await k.getByRole("button", { name: "Buka database" }).click();
@@ -189,6 +202,33 @@ test.describe("kartu (LOCAL_AUTH_BYPASS)", () => {
         daftar = json(DAFTAR);
         await k.getByRole("button", { name: "Muat ulang daftar" }).click();
         await expect(k.getByLabel("Database Accurate")).toBeVisible();
+    });
+
+    test.describe("ponsel 390 px layar sentuh", () => {
+        test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+        test("401: Masuk ulang ke aplikasi = target sentuh ≥ 44 px di baris sendiri, kalimat galat utuh; tanpa gulir menyamping", async ({ page }) => {
+            await pasang(page, { sesi: () => json({ ok: false, error: "Unauthorized" }, 401) });
+            await page.goto("/sesi-accurate", { timeout: 90_000 });
+            const strip = kartu(page).getByRole("alert");
+            await expect(strip).toContainText("Sesi login aplikasi Anda berakhir.");
+            const tautan = strip.getByRole("link", { name: "Masuk ulang ke aplikasi" });
+            await expect(tautan).toHaveAttribute("href", "/login");
+            const kotak = await tautan.boundingBox();
+            expect(kotak?.height ?? 0).toBeGreaterThanOrEqual(44);
+            expect(kotak?.width ?? 0).toBeGreaterThanOrEqual(44);
+            // Tautan di bawah kalimat (bukan disisipkan di tengahnya): tepi atasnya ≥ tepi bawah teks galat.
+            const bawahKalimat = await strip.evaluate((el) => {
+                const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+                for (let n = w.nextNode(); n; n = w.nextNode()) {
+                    if (!n.textContent?.includes("berakhir.")) continue;
+                    const r = document.createRange(); r.selectNodeContents(n); return r.getBoundingClientRect().bottom;
+                }
+                return Number.POSITIVE_INFINITY;
+            });
+            expect(kotak?.y ?? 0).toBeGreaterThanOrEqual(bawahKalimat - 1);
+            expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        });
     });
 
     test("kabar callback: kode dipetakan ke kalimat tetap, teks query tidak tampil, URL dibersihkan (returnTo tetap)", async ({ page }) => {
@@ -308,6 +348,14 @@ test.describe("akun nyata (tanpa bypass)", () => {
         await expect(kartu(page)).toContainText("Belum masuk ke Accurate");
         await expect(page.getByRole("link", { name: /Kembali ke/ })).toHaveCount(0);
         await page.evaluate(() => (window as unknown as { next: { router: { push: (h: string) => void } } }).next.router.push("/api-wrapper"));
+        await expect(page).toHaveURL(/\/api-wrapper$/);
+        await expect(page.getByRole("heading", { name: "Akses ditolak" })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Eksekusi Endpoint" })).toHaveCount(0);
+        // Tinjauan #159: pindah grup route lalu Back → router memasang ulang layout dari cache (layout server tidak berjalan). Dulu
+        // gerbang klien mempercayai path saat dipasang (`useState`) dan Konsol tampil; kini URL selalu dinilai dengan kunci.
+        await page.evaluate(() => (window as unknown as { next: { router: { push: (h: string) => void } } }).next.router.push("/forgot-password"));
+        await expect(page.getByRole("heading", { name: "Lupa sandi" })).toBeVisible();
+        await page.goBack();
         await expect(page).toHaveURL(/\/api-wrapper$/);
         await expect(page.getByRole("heading", { name: "Akses ditolak" })).toBeVisible();
         await expect(page.getByRole("button", { name: "Eksekusi Endpoint" })).toHaveCount(0);

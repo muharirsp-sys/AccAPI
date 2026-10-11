@@ -62,7 +62,7 @@ export async function GET(request: Request) {
     }
     const session = await getAccurateSession(officer);
     if (!session?.accessToken || !session.sessionHost || !session.sessionId) {
-        return NextResponse.json({ ok: false, error: "Sesi Accurate petugas tidak lengkap; login ulang di /api-wrapper" }, { status: 503 });
+        return NextResponse.json({ ok: false, error: "Sesi Accurate petugas tidak lengkap; login ulang di /sesi-accurate" }, { status: 503 });
     }
     if (!isAllowedAccurateHost(session.sessionHost)) {
         return NextResponse.json({ ok: false, error: "Session host Accurate tidak diizinkan" }, { status: 400 });

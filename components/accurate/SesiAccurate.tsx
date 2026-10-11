@@ -50,14 +50,17 @@ async function bacaDaftar(): Promise<Db[]> {
     return d.d as Db[];
 }
 
-/** Galat baca: 401 → tautan masuk ulang; lainnya → Coba lagi. Judul ada di lencana status, jadi strip tanpa judul ganda. */
+/**
+ * Galat baca: 401 → tautan masuk ulang (blok sendiri di bawah kalimat, setinggi kontrol = 44 px di layar sentuh); lainnya → Coba lagi.
+ * Judul ada di lencana status, jadi strip tanpa judul ganda.
+ */
 function StripGalat({ galat, onCobaLagi }: { galat: Galat; onCobaLagi: () => void }) {
     return (
         <MessageStrip tone="neg">
-            {galat.pesan}{" "}
+            {galat.pesan}
             {galat.masukUlang
-                ? <a href="/login">Masuk ulang ke aplikasi</a>
-                : <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={onCobaLagi}>Coba lagi</Button>}
+                ? <div style={{ marginTop: 8 }}><a className="fi-btn fi-btn--secondary" href="/login"><LogIn className="fi-icon" aria-hidden />Masuk ulang ke aplikasi</a></div>
+                : <>{" "}<Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={onCobaLagi}>Coba lagi</Button></>}
         </MessageStrip>
     );
 }
@@ -137,6 +140,7 @@ export function SesiAccurate({ returnTo, kabar: kabarUrl, onStatus, judul = "Ses
             fokuskan("pilih");
         } catch (e) {
             setDaftar({ status: "galat", ...galatDari(e, "Daftar database Accurate tidak terbaca.") });
+            fokuskan("pesan"); // tombol Ganti database sudah dibongkar; strip galat diumumkan (role alert)
         }
     }
 
@@ -199,7 +203,7 @@ export function SesiAccurate({ returnTo, kabar: kabarUrl, onStatus, judul = "Ses
                     </FormField>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                         <Button variant="primary" icon={<Database className="fi-icon" aria-hidden />} busy={sibuk === "buka"} onClick={buka}>Buka database</Button>
-                        {ganti && <Button disabled={Boolean(sibuk)} disabledReason={alasanSibuk} onClick={() => { setGanti(false); setGalatPilih(undefined); }}>Batal ganti</Button>}
+                        {ganti && <Button disabled={Boolean(sibuk)} disabledReason={alasanSibuk} onClick={() => { setGanti(false); setGalatPilih(undefined); fokuskan("pesan"); }}>Batal ganti</Button>}
                     </div>
                 </div>
             );
