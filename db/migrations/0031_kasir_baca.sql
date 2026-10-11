@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS kasir_pelunasan_baca (
     lengkap_pada  timestamptz,
     pemicu        text NOT NULL,
     akun_sinkron  text,
+    penuh_tertunda_pada timestamptz,
     CONSTRAINT kasir_pelunasan_baca_pkey PRIMARY KEY (database_id, tanggal),
     CONSTRAINT kasir_pelunasan_baca_status CHECK (status IN ('berjalan', 'lengkap', 'sebagian', 'gagal')),
     CONSTRAINT kasir_pelunasan_baca_sebab CHECK (sebab IS NULL OR sebab IN ('sesi_sinkron', 'hak_akses', 'batas_laju', 'accurate_5xx',

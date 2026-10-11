@@ -387,3 +387,42 @@ test("sesi mati TEPAT sesudah lengkap (< 60 dtk, dalam jeda lengkap) -> tetap di
     await x.baca();
     assert.deepEqual([x.t.rows.get(D)!.status, x.t.rows.get(D)!.sebab], ["gagal", "sesi_sinkron"], "lengkap 20 dtk lalu tidak boleh menahan status gagal");
 });
+
+test("akun sinkron BERGANTI + putaran akan menghapus >= 1 baris -> hapus_massal (bertahan sampai konfirmasi); tanpa hapus -> akun baru diterima", async () => {
+    const data = hari(10);
+    const x = siapkan(data);
+    await x.baca();
+    assert.equal(x.t.rows.get(D)!.akun, "u-sinkron");
+    x.majuMenit(2);
+    Object.assign(x.deps, { sesi: async () => ({ userId: "u-lain", databaseId: DB }) });
+    data.splice(0, 1); // hanya 1 baris hilang (di bawah ambang 5 / 10 %)
+    const h = await x.baca();
+    assert.deepEqual([status(h).status, status(h).sebab, x.t.cache.size], ["gagal", "hapus_massal", 10]);
+    assert.match(status(h).pesan!, /akun Accurate sinkron berganti/);
+    assert.equal(x.t.rows.get(D)!.akun, "u-sinkron", "akun lama dipertahankan selama hapus ditahan");
+    x.majuMenit(2);
+    assert.equal(status(await x.baca()).sebab, "hapus_massal", "penjaga bertahan pada putaran berikut");
+    x.majuMenit(2);
+    const ok = await x.baca({ konfirmasiHapus: true });
+    assert.deepEqual([status(ok).status, x.t.cache.size, x.t.rows.get(D)!.akun], ["lengkap", 9, "u-lain"]);
+    // Akun berganti lagi TANPA ada yang dihapus -> tidak ditahan, akun baru dicatat.
+    x.majuMenit(2);
+    Object.assign(x.deps, { sesi: async () => ({ userId: "u-ketiga", databaseId: DB }) });
+    const tanpaHapus = await x.baca();
+    assert.deepEqual([status(tanpaHapus).status, x.t.rows.get(D)!.akun], ["lengkap", "u-ketiga"]);
+});
+
+test("PENUH_TERTUNDA tercatat di status; klaim berikutnya (bukan penuh, bahkan dalam jeda lengkap) menjalankan baca penuh lalu mengosongkannya", async () => {
+    const x = siapkan(hari(6));
+    await x.baca();
+    const detailAwal = x.s.detail().length;
+    await x.t.toko.klaim({ databaseId: DB, tanggal: D, token: "tombol", pemicu: "manual:u-k", penuh: false, akun: "u-sinkron" });
+    await x.t.toko.tandaiPenuhTertunda(DB, D); // cron 19.30 menyerah menunggu lease tombol
+    assert.ok((await x.t.toko.status(DB, D)).penuhTertundaPada, "terlihat di status");
+    await x.t.toko.selesai("tombol", DB, D, { status: "lengkap", sebab: null, pesan: null, jumlahDaftar: 6, sisaDetail: 0 }, [], "u-sinkron");
+    x.jam.t += 10_000; // masih dalam jeda lengkap 60 dtk
+    const h = await x.baca();
+    assert.equal(status(h).status, "lengkap");
+    assert.equal(x.s.detail().length - detailAwal, 6, "semua detail dibaca ulang (penuh)");
+    assert.equal(status(h).penuhTertundaPada, null, "dikosongkan sesudah baca penuh");
+});

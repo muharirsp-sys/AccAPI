@@ -65,9 +65,12 @@ const cron = (qs: string, rahasia?: string) => new Request(`http://app.test/api/
 
 const st = (o: Partial<StatusBaca>): StatusBaca => ({ ...belumDibaca(DB, D), ...o });
 /** Toko tiruan minimal: klaim menurut `klaim`; tulis selalu sah; selesai memantulkan status akhir. */
-function toko(klaim: Awaited<ReturnType<TokoBaca["klaim"]>> = { diklaim: true }): TokoBaca & { selesaiDipanggil: number } {
+function toko(klaim: Awaited<ReturnType<TokoBaca["klaim"]>> = { diklaim: true, akunLama: null, penuhTertunda: false }):
+    TokoBaca & { selesaiDipanggil: number; tertunda: string[] } {
     const t = {
         selesaiDipanggil: 0,
+        tertunda: [] as string[],
+        tandaiPenuhTertunda: async (_d: string, tanggal: string) => { t.tertunda.push(tanggal); },
         klaim: async () => klaim,
         status: async () => st({ status: "berjalan", aktif: false }),
         cache: async () => new Map<number, string | null>(),
@@ -241,5 +244,6 @@ test("cron: cron biasa bertemu lease tombol = 202 berketerangan (bukan galat); p
     assert.equal(penuh.status, 502);
     const bp = await penuh.json() as { hasil: { kode: string }[] };
     assert.equal(bp.hasil[0].kode, "PENUH_TERTUNDA");
+    assert.deepEqual(tkSibuk.tertunda, [D], "PENUH_TERTUNDA dicatat di baris status (terlihat UI)");
     assert.ok(percobaan > 20 && jam.t >= 120_000, `menunggu > lease (percobaan ${percobaan}, ${jam.t} ms)`);
 });

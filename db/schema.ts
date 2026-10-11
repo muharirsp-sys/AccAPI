@@ -2286,7 +2286,8 @@ export const kasirPelunasanBaca = pgTable("kasir_pelunasan_baca", {
     selesaiPada: timestamp("selesai_pada", { withTimezone: true }),
     lengkapPada: timestamp("lengkap_pada", { withTimezone: true }),
     pemicu: text("pemicu").notNull(),
-    akunSinkron: text("akun_sinkron"), // user.id akun Accurate sinkron yang membaca (tampil sebagai NAMA)
+    akunSinkron: text("akun_sinkron"), // user.id akun Accurate sinkron yang cache-nya terakhir diterapkan (tampil sebagai NAMA)
+    penuhTertundaPada: timestamp("penuh_tertunda_pada", { withTimezone: true }), // baca penuh cron menyerah menunggu lease; klaim berikut = penuh
 }, (t) => [
     primaryKey({ name: "kasir_pelunasan_baca_pkey", columns: [t.databaseId, t.tanggal] }),
     check("kasir_pelunasan_baca_status", sql`${t.status} IN ('berjalan', 'lengkap', 'sebagian', 'gagal')`),

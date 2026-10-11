@@ -672,11 +672,14 @@ export const migrations = [
   {
     // 2026-10-12 (K1b BL-59 pembaca pelunasan Accurate Kasir; DRAFT — zona uang + skema, butuh review manusia). Tabel baru saja
     // (tanpa data, tanpa trigger: cache). Hak accapi_app (SELECT/INSERT/UPDATE) = docs/handover/DDL_K1B.sql. Lihat
-    // db/migrations/0031_kasir_baca.sql; SESUDAH entri principal_log (0030, S7-2 #160). sudahAda = PK + kolom akun_sinkron (EXPAND).
+    // db/migrations/0031_kasir_baca.sql; SESUDAH entri principal_log (0030, S7-2 #160). ADD COLUMN = EXPAND KOLOM saja; CHECK sebab tabel versi
+    // awal TIDAK diperluas (versi awal hanya di DB uji: DROP TABLE kasir_pelunasan_baca lalu jalankan ulang — tabel status, bukan data uang).
     nama: "kasir_pelunasan_baca (status baca K1b)",
+    // sudahAda lewat katalog (pg_indexes + pg_attribute), BUKAN information_schema: tanpa hak tabel information_schema kosong ->
+    // ALTER 42501 -> crash loop (tinjauan B putaran 2, pola S7-0).
     sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'kasir_pelunasan_baca_pkey'
-               AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
-                           AND table_name = 'kasir_pelunasan_baca' AND column_name = 'akun_sinkron')`,
+               AND (SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('kasir_pelunasan_baca') AND NOT attisdropped
+                    AND attname IN ('akun_sinkron', 'penuh_tertunda_pada')) = 2`,
     sql: `
       CREATE TABLE IF NOT EXISTS kasir_pelunasan_baca (
           database_id   text NOT NULL,
@@ -693,6 +696,7 @@ export const migrations = [
           lengkap_pada  timestamptz,
           pemicu        text NOT NULL,
           akun_sinkron  text,
+          penuh_tertunda_pada timestamptz,
           CONSTRAINT kasir_pelunasan_baca_pkey PRIMARY KEY (database_id, tanggal),
           CONSTRAINT kasir_pelunasan_baca_status CHECK (status IN ('berjalan', 'lengkap', 'sebagian', 'gagal')),
           CONSTRAINT kasir_pelunasan_baca_sebab CHECK (sebab IS NULL OR sebab IN ('sesi_sinkron', 'hak_akses', 'batas_laju', 'accurate_5xx',
@@ -705,6 +709,7 @@ export const migrations = [
                   AND ditolak = '[]'::jsonb AND lengkap_pada IS NOT NULL)))
       );
       ALTER TABLE kasir_pelunasan_baca ADD COLUMN IF NOT EXISTS akun_sinkron text;
+      ALTER TABLE kasir_pelunasan_baca ADD COLUMN IF NOT EXISTS penuh_tertunda_pada timestamptz;
     `,
   },
 ];

@@ -50,8 +50,11 @@ export type StatusBaca = {
     lengkapPada: string | null;
     /** "cron" | "manual:<user.id>" — INTERNAL; ke klien lewat publikkan() (tanpa id user). */
     pemicu: string | null;
-    /** user.id akun Accurate sinkron yang membaca — INTERNAL; ke klien sebagai NAMA lewat publikkan(). */
+    /** user.id akun Accurate sinkron yang cache-nya TERAKHIR DITERAPKAN — INTERNAL; ke klien sebagai NAMA lewat publikkan(). Tidak ditimpa saat
+     * klaim, dan tetap akun lama selama penjaga ganti-akun menahan hapus (sampai OM/Admin mengonfirmasi). */
     akunSinkron: string | null;
+    /** Baca penuh cron yang menyerah menunggu lease (PENUH_TERTUNDA); klaim berikutnya menjalankan baca penuh lalu mengosongkannya. */
+    penuhTertundaPada: string | null;
 };
 
 /** Status untuk klien: tanpa id user mentah (akun & pemicu sebagai nama). */
@@ -60,7 +63,10 @@ export type StatusPublik = Omit<StatusBaca, "akunSinkron" | "pemicu"> & { akun: 
 /** Penyimpanan cache + status (PG = tokoPg; uji tanpa DB memakai tiruan dengan aturan lease/token yang sama). */
 export interface TokoBaca {
     /** Lease: sukses bila tak ada pembaca aktif dan (penuh ATAU bukan `lengkap` < JEDA_LENGKAP_DETIK lalu). */
-    klaim(a: { databaseId: string; tanggal: string; token: string; pemicu: string; penuh: boolean; akun: string | null }): Promise<{ diklaim: true } | { diklaim: false; status: StatusBaca }>;
+    klaim(a: { databaseId: string; tanggal: string; token: string; pemicu: string; penuh: boolean; akun: string | null }):
+        Promise<{ diklaim: true; akunLama: string | null; penuhTertunda: boolean } | { diklaim: false; status: StatusBaca }>;
+    /** Catat baca penuh yang tertunda (tanpa menyentuh lease/token pemegang). */
+    tandaiPenuhTertunda(databaseId: string, tanggal: string): Promise<void>;
     status(databaseId: string, tanggal: string): Promise<StatusBaca>;
     /** id -> last_update cache pelunasan bertanggal itu. */
     cache(databaseId: string, tanggal: string): Promise<Map<number, string | null>>;
@@ -71,8 +77,8 @@ export interface TokoBaca {
     hapus(token: string, databaseId: string, tanggal: string, ids: number[]): Promise<boolean>;
     /** id -> nomor pelunasan di cache (rincian penjaga hapus massal). */
     nomor(databaseId: string, ids: number[]): Promise<Map<number, string>>;
-    /** Simpan status akhir bila token masih pemilik; null = token basi. lengkap_pada hanya maju. */
-    selesai(token: string, databaseId: string, tanggal: string, akhir: StatusAkhir, ditolak: Ditolak[]): Promise<StatusBaca | null>;
+    /** Simpan status akhir (+ akun sinkron yang cache-nya diterapkan) bila token masih pemilik; null = token basi. lengkap_pada hanya maju. */
+    selesai(token: string, databaseId: string, tanggal: string, akhir: StatusAkhir, ditolak: Ditolak[], akun: string | null): Promise<StatusBaca | null>;
 }
 
 type Kredensial = Awaited<ReturnType<typeof resolveSyncCredentials>>;
@@ -188,7 +194,8 @@ export async function bacaPelunasanHari(opsi: OpsiBaca, deps: DepsBaca = bawaan)
         const tk = deps.token();
         const kl = await t.klaim({ databaseId: dbSesi, tanggal, token: tk, pemicu, penuh: true, akun });
         if (!kl.diklaim) return { jenis: "kredensial", pesan, status: kl.status };
-        const st = await t.selesai(tk, dbSesi, tanggal, { status: "gagal", sebab: "sesi_sinkron", pesan: PESAN_SESI_SINKRON, jumlahDaftar: null, sisaDetail: null }, []);
+        const st = await t.selesai(tk, dbSesi, tanggal, { status: "gagal", sebab: "sesi_sinkron", pesan: PESAN_SESI_SINKRON, jumlahDaftar: null, sisaDetail: null },
+            [], kl.akunLama);
         return { jenis: "kredensial", pesan, ...(st ? { status: st } : {}) };
     }
     const creds = k.creds;
@@ -196,6 +203,11 @@ export async function bacaPelunasanHari(opsi: OpsiBaca, deps: DepsBaca = bawaan)
     const token = deps.token();
     const klaim = await toko.klaim({ databaseId, tanggal, token, pemicu, penuh, akun });
     if (!klaim.diklaim) return { jenis: klaim.status.status === "lengkap" ? "jeda_lengkap" : "sedang_dibaca", status: klaim.status };
+    // Baca penuh yang tertunda (cron 19.30 menyerah menunggu lease) dijalankan oleh klaim berikutnya, siapa pun pemicunya.
+    const penuhEfektif = penuh || klaim.penuhTertunda;
+    // Akun sinkron berganti sejak cache terakhir diterapkan: cabang yang terlihat bisa berbeda -> hapus apa pun ditahan (penjaga murah).
+    const akunGanti = Boolean(klaim.akunLama && akun && klaim.akunLama !== akun);
+    let akunSimpan = akun ?? klaim.akunLama;
 
     const rahasia = [creds.apiKey, creds.sessionId];
     const kendali: Kendali = { izin: Math.max(1, Math.min(opsi.konkurensi ?? 4, 4)), henti: false, aktif: 0, antre: [] };
@@ -205,7 +217,7 @@ export async function bacaPelunasanHari(opsi: OpsiBaca, deps: DepsBaca = bawaan)
     try {
         // 0. Baca penuh: tandai basi SEGERA sesudah klaim, SEBELUM list.do — putaran yang kehabisan waktu di tengah daftar tetap meninggalkan
         //    last_update NULL, jadi lanjutan (bukan penuh) membaca ulang semuanya (probe P1d: suntingan salesman tanpa lastUpdate).
-        if (penuh && !(await toko.tandaiBasi(token, databaseId, tanggal))) return { jenis: "lease_hilang", status: await toko.status(databaseId, tanggal) };
+        if (penuhEfektif && !(await toko.tandaiBasi(token, databaseId, tanggal))) return { jenis: "lease_hilang", status: await toko.status(databaseId, tanggal) };
         // 1. Daftar lengkap, berurutan (jeda 150 ms antarpanggilan).
         let pertama = true;
         try {
@@ -225,13 +237,15 @@ export async function bacaPelunasanHari(opsi: OpsiBaca, deps: DepsBaca = bawaan)
         if (daftar) {
             // 2. Rencana per id. 3. Hapus yang hilang — daftar di sini selalu LENGKAP (terpotong = galat di atas).
             const cache = await toko.cache(databaseId, tanggal);
-            const rencana = rencanaBaca(cache, { baris: daftar, lengkap: true }, penuh);
+            const rencana = rencanaBaca(cache, { baris: daftar, lengkap: true }, penuhEfektif);
             if (!st.leaseHilang && rencana.hapus.length) {
-                if (!opsi.konfirmasiHapus && hapusMassal(rencana.hapus.length, cache.size)) {
+                if (!opsi.konfirmasiHapus && (hapusMassal(rencana.hapus.length, cache.size) || akunGanti)) {
                     // Akun sinkron yang hanya melihat sebagian cabang "menghilangkan" pelunasan cabang lain: jangan hapus diam-diam.
                     const nomor = await toko.nomor(databaseId, rencana.hapus);
-                    st.galat = { kelas: "hapus_massal", pesan: `${rencana.hapus.length} dari ${cache.size} pelunasan tanggal ini hilang dari daftar Accurate — `
-                        + "tidak dihapus. Periksa cabang yang terlihat akun sinkron; OM/Admin dapat mengonfirmasi hapus." };
+                    if (akunGanti) akunSimpan = klaim.akunLama; // penjaga bertahan sampai dikonfirmasi
+                    st.galat = { kelas: "hapus_massal", pesan: `${rencana.hapus.length} dari ${cache.size} pelunasan tanggal ini hilang dari daftar Accurate`
+                        + `${akunGanti ? " sesudah akun Accurate sinkron berganti" : ""} — tidak dihapus. Periksa cabang yang terlihat akun sinkron; OM/Admin dapat `
+                        + "mengonfirmasi hapus." };
                     st.ditolak.push(...rencana.hapus.map((id) => ({ id, nomor: nomor.get(id) ?? `id ${id}`, sebab: "hapus_massal" as const,
                         pesan: "hilang dari daftar Accurate; menunggu konfirmasi hapus" })));
                 } else if (!(await toko.hapus(token, databaseId, tanggal, rencana.hapus))) st.leaseHilang = true;
@@ -268,13 +282,13 @@ export async function bacaPelunasanHari(opsi: OpsiBaca, deps: DepsBaca = bawaan)
 
         if (st.leaseHilang) return { jenis: "lease_hilang", status: await toko.status(databaseId, tanggal) };
         const akhir = statusAkhir({ galat: st.galat, daftar, cacheAkhir: daftar ? await toko.cache(databaseId, tanggal) : new Map(), ditolak: st.ditolak });
-        const tersimpan = await toko.selesai(token, databaseId, tanggal, akhir, st.ditolak);
+        const tersimpan = await toko.selesai(token, databaseId, tanggal, akhir, st.ditolak, akunSimpan);
         return tersimpan ? { jenis: "selesai", status: tersimpan } : { jenis: "lease_hilang", status: await toko.status(databaseId, tanggal) };
     } catch (e) {
         // Galat tak terduga (DB / bug): status gagal bila lease masih milik kita (cache tidak disentuh), lalu dilempar (route 500).
         const pesan = `galat internal pembaca: ${e instanceof Error ? e.message : String(e)}`.slice(0, 500);
-        await toko.selesai(token, databaseId, tanggal, { status: "gagal", sebab: "tidak_pasti", pesan, jumlahDaftar: null, sisaDetail: null }, st.ditolak)
-            .catch(() => null);
+        await toko.selesai(token, databaseId, tanggal, { status: "gagal", sebab: "tidak_pasti", pesan, jumlahDaftar: null, sisaDetail: null }, st.ditolak,
+            klaim.akunLama).catch(() => null);
         throw e;
     }
 }
@@ -291,7 +305,8 @@ const JEDA_LENGKAP = sql.raw(`interval '${JEDA_LENGKAP_DETIK} seconds'`);
 /** Waktu keluar sebagai ISO UTC (`…Z`) — driver Drizzle mengembalikan timestamptz mentah sebagai teks PG. */
 const isoPg = (kolom: string) => sql.raw(`to_char(${kolom} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS ${kolom}`);
 const KOLOM_STATUS = sql`database_id, tanggal::text AS tanggal, status, sebab, pesan, jumlah_daftar, sisa_detail, ditolak, ${isoPg("mulai_pada")},
-    ${isoPg("selesai_pada")}, ${isoPg("lengkap_pada")}, pemicu, akun_sinkron, (status = 'berjalan' AND mulai_pada > now() - ${LEASE}) AS aktif`;
+    ${isoPg("selesai_pada")}, ${isoPg("lengkap_pada")}, pemicu, akun_sinkron, ${isoPg("penuh_tertunda_pada")},
+    (status = 'berjalan' AND mulai_pada > now() - ${LEASE}) AS aktif`;
 
 const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : v === null || v === undefined ? null : String(v));
 const angkaAtauNull = (v: unknown) => (v === null || v === undefined ? null : Number(v));
@@ -302,13 +317,13 @@ function keStatus(r: Record<string, unknown>): StatusBaca {
         sebab: (r.sebab ?? null) as KelasGalat | null, pesan: (r.pesan ?? null) as string | null,
         jumlahDaftar: angkaAtauNull(r.jumlah_daftar), sisaDetail: angkaAtauNull(r.sisa_detail), ditolak: Array.isArray(r.ditolak) ? r.ditolak as Ditolak[] : [],
         mulaiPada: iso(r.mulai_pada), selesaiPada: iso(r.selesai_pada), lengkapPada: iso(r.lengkap_pada), pemicu: (r.pemicu ?? null) as string | null,
-        akunSinkron: (r.akun_sinkron ?? null) as string | null,
+        akunSinkron: (r.akun_sinkron ?? null) as string | null, penuhTertundaPada: iso(r.penuh_tertunda_pada),
     };
 }
 
 export const belumDibaca = (databaseId: string, tanggal: string): StatusBaca => ({
     databaseId, tanggal, status: "belum_dibaca", aktif: false, sebab: null, pesan: null, jumlahDaftar: null, sisaDetail: null, ditolak: [],
-    mulaiPada: null, selesaiPada: null, lengkapPada: null, pemicu: null, akunSinkron: null,
+    mulaiPada: null, selesaiPada: null, lengkapPada: null, pemicu: null, akunSinkron: null, penuhTertundaPada: null,
 });
 
 async function bacaStatus(d: Db | Tx, databaseId: string, tanggal: string): Promise<StatusBaca> {
@@ -333,11 +348,18 @@ export function tokoPg(d: Db): TokoBaca {
                 INSERT INTO kasir_pelunasan_baca AS b (database_id, tanggal, status, token, mulai_pada, pemicu, akun_sinkron)
                 VALUES (${databaseId}, ${tanggal}::date, 'berjalan', ${token}, now(), ${pemicu}, ${akun})
                 ON CONFLICT (database_id, tanggal) DO UPDATE SET status = 'berjalan', token = EXCLUDED.token, mulai_pada = now(),
-                    pemicu = EXCLUDED.pemicu, akun_sinkron = EXCLUDED.akun_sinkron, sebab = NULL, pesan = NULL, selesai_pada = NULL
+                    pemicu = EXCLUDED.pemicu, sebab = NULL, pesan = NULL, selesai_pada = NULL
                 WHERE NOT (b.status = 'berjalan' AND b.mulai_pada > now() - ${LEASE})
-                  AND (${penuh}::boolean OR NOT (b.status = 'lengkap' AND b.selesai_pada > now() - ${JEDA_LENGKAP}))
-                RETURNING 1`);
-            return (r.rowCount ?? 0) > 0 ? { diklaim: true } : { diklaim: false, status: await bacaStatus(d, databaseId, tanggal) };
+                  AND (${penuh}::boolean OR b.penuh_tertunda_pada IS NOT NULL OR NOT (b.status = 'lengkap' AND b.selesai_pada > now() - ${JEDA_LENGKAP}))
+                RETURNING b.akun_sinkron AS akun_lama, b.penuh_tertunda_pada IS NOT NULL AS penuh_tertunda`);
+            // akun_sinkron TIDAK diubah klaim (hanya diisi saat baris baru) -> RETURNING = akun yang cache-nya terakhir diterapkan.
+            const baris = r.rows[0];
+            return baris ? { diklaim: true, akunLama: (baris.akun_lama ?? null) as string | null, penuhTertunda: baris.penuh_tertunda === true }
+                : { diklaim: false, status: await bacaStatus(d, databaseId, tanggal) };
+        },
+        async tandaiPenuhTertunda(databaseId, tanggal) {
+            await d.execute(sql`UPDATE kasir_pelunasan_baca SET penuh_tertunda_pada = coalesce(penuh_tertunda_pada, now())
+                WHERE database_id = ${databaseId} AND tanggal = ${tanggal}::date`);
         },
         status: (databaseId, tanggal) => bacaStatus(d, databaseId, tanggal),
         async cache(databaseId, tanggal) {
@@ -348,6 +370,7 @@ export function tokoPg(d: Db): TokoBaca {
         tandaiBasi: (token, databaseId, tanggal) => d.transaction(async (tx) => {
             if (!(await leaseSah(tx, token, databaseId, tanggal))) return false;
             await tx.update(kasirPelunasan).set({ lastUpdate: null }).where(diKepala(databaseId, tanggal));
+            await tx.execute(sql`UPDATE kasir_pelunasan_baca SET penuh_tertunda_pada = NULL WHERE database_id = ${databaseId} AND tanggal = ${tanggal}::date`);
             return true;
         }),
         tulis: (token, databaseId, p, lastUpdate) => d.transaction(async (tx) => {
@@ -373,11 +396,11 @@ export function tokoPg(d: Db): TokoBaca {
                 .where(and(eq(kasirPelunasan.databaseId, databaseId), inArray(kasirPelunasan.pelunasanId, ids)));
             return new Map(rows.map((r) => [Number(r.id), r.nomor]));
         },
-        async selesai(token, databaseId, tanggal, akhir, ditolak) {
+        async selesai(token, databaseId, tanggal, akhir, ditolak, akun) {
             const r = await d.execute(sql`
                 UPDATE kasir_pelunasan_baca SET status = ${akhir.status}, sebab = ${akhir.sebab}, pesan = ${akhir.pesan?.slice(0, 1000) ?? null},
                     jumlah_daftar = ${akhir.jumlahDaftar}, sisa_detail = ${akhir.sisaDetail}, ditolak = ${JSON.stringify(ditolak)}::jsonb,
-                    token = NULL, selesai_pada = now(),
+                    token = NULL, selesai_pada = now(), akun_sinkron = ${akun ?? null},
                     lengkap_pada = CASE WHEN ${akhir.status === "lengkap"}::boolean THEN now() ELSE lengkap_pada END
                 WHERE database_id = ${databaseId} AND tanggal = ${tanggal}::date AND token = ${token} AND status = 'berjalan'
                 RETURNING ${KOLOM_STATUS}`);

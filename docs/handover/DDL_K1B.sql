@@ -16,7 +16,8 @@
 --
 -- ISI (nama tabel TANPA skema = public pada search_path bawaan; agar uji PG bisa memakai skema sekali-pakai):
 --   1. CREATE TABLE IF NOT EXISTS kasir_pelunasan_baca (PK database_id+tanggal, CHECK status/sebab/isi/konsisten, akun_sinkron = user.id akun
---      Accurate sinkron yang membaca). TANPA trigger (cache).
+--      Accurate sinkron yang cache-nya terakhir diterapkan, penuh_tertunda_pada = baca penuh cron yang menyerah menunggu lease — klaim
+--      berikutnya menjalankan baca penuh). TANPA trigger (cache).
 --   2. accapi_app: GRANT SELECT/INSERT/UPDATE; REVOKE DELETE/TRUNCATE (status tidak pernah dihapus aplikasi). Role absen = dilewati.
 --   3. VERIFIKASI (baca-saja) — semua `ok` harus true (NULL = role accapi_app tidak ada, tidak relevan). Juga memeriksa prasyarat
 --      K1a: accapi_app boleh SELECT/INSERT/UPDATE/DELETE cache kasir_pelunasan(+_faktur) (pembaca menghapus pelunasan yang hilang).
@@ -48,6 +49,7 @@ CREATE TABLE IF NOT EXISTS kasir_pelunasan_baca (
     lengkap_pada  timestamptz,
     pemicu        text NOT NULL,
     akun_sinkron  text,
+    penuh_tertunda_pada timestamptz,
     CONSTRAINT kasir_pelunasan_baca_pkey PRIMARY KEY (database_id, tanggal),
     CONSTRAINT kasir_pelunasan_baca_status CHECK (status IN ('berjalan', 'lengkap', 'sebagian', 'gagal')),
     CONSTRAINT kasir_pelunasan_baca_sebab CHECK (sebab IS NULL OR sebab IN ('sesi_sinkron', 'hak_akses', 'batas_laju', 'accurate_5xx',
@@ -60,7 +62,10 @@ CREATE TABLE IF NOT EXISTS kasir_pelunasan_baca (
             AND ditolak = '[]'::jsonb AND lengkap_pada IS NOT NULL)))
 );
 
-ALTER TABLE kasir_pelunasan_baca ADD COLUMN IF NOT EXISTS akun_sinkron text; -- EXPAND bila tabel dibuat versi awal K1b
+-- EXPAND KOLOM saja untuk tabel versi awal; CHECK sebab versi awal TIDAK diperluas (VERIFIKASI "definisi persis" = false). Versi awal hanya
+-- pernah ada di DB uji: DROP TABLE kasir_pelunasan_baca lalu jalankan ulang berkas ini (tabel status baca, bukan data uang).
+ALTER TABLE kasir_pelunasan_baca ADD COLUMN IF NOT EXISTS akun_sinkron text;
+ALTER TABLE kasir_pelunasan_baca ADD COLUMN IF NOT EXISTS penuh_tertunda_pada timestamptz;
 
 -- 2. Hak role aplikasi. Default privileges (L1g) bisa saja sudah memberi DML penuh -> REVOKE eksplisit DELETE/TRUNCATE.
 DO $$
@@ -86,8 +91,8 @@ SELECT cek, ok FROM (VALUES
         ('kasir_pelunasan_baca_konsisten', $d$CHECK ((((status = 'gagal'::text) = (sebab IS NOT NULL)) AND ((status = 'berjalan'::text) = (token IS NOT NULL)) AND ((status = 'berjalan'::text) = (selesai_pada IS NULL)) AND ((status <> 'lengkap'::text) OR ((COALESCE(sisa_detail, '-1'::integer) = 0) AND (jumlah_daftar IS NOT NULL) AND (ditolak = '[]'::jsonb) AND (lengkap_pada IS NOT NULL)))))$d$)
     ) AS e(nama, def) ON c.conname = e.nama AND pg_get_constraintdef(c.oid) = e.def
         WHERE c.conrelid = to_regclass('kasir_pelunasan_baca') AND c.contype = 'c')),
-    ('kolom akun_sinkron (akun sinkron pembaca)', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
-        AND table_name = 'kasir_pelunasan_baca' AND column_name = 'akun_sinkron')),
+    ('kolom akun_sinkron + penuh_tertunda_pada', (SELECT count(*) = 2 FROM pg_attribute WHERE attrelid = to_regclass('kasir_pelunasan_baca')
+        AND NOT attisdropped AND attname IN ('akun_sinkron', 'penuh_tertunda_pada'))),
     ('accapi_app boleh SELECT/INSERT/UPDATE status baca', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app')
         THEN (SELECT bool_and(has_table_privilege('accapi_app', 'kasir_pelunasan_baca', p)) FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE']) AS p) END),
     ('accapi_app tanpa DELETE/TRUNCATE status baca', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app')
