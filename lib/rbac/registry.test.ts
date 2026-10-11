@@ -34,7 +34,7 @@ for (const action of ["resolve_unknown", "override_duplicate", "repost_payment"]
 // AM-057: centang modul di UI grup TIDAK menyalakan kunci kapabilitas Finance (harus satu per satu);
 // mematikan modul mencabut semuanya, termasuk kapabilitas.
 // Kunci ditulis literal (re-review b955f836 #1): iterasi CAPABILITY_KEYS sendiri lulus walau satu kunci dibuang.
-assert.equal(CAPABILITY_KEYS.size, 4);
+assert.equal(CAPABILITY_KEYS.size, 5);
 const moduleOn = toggleModuleKeys(new Set(), "finance");
 assert.ok(moduleOn.has("finance.view") && moduleOn.has("finance.post_accurate"), "centang modul menyalakan kunci biasa");
 for (const k of ["finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment"]) {
@@ -87,6 +87,17 @@ assert.deepEqual(getPagePermission("/reconciliation"), {
 });
 assert.ok(canAccessPathWithKeys("/reconciliation", ["reconciliation.view"]));
 assert.ok(!canAccessPathWithKeys("/reconciliation", ["reconciliation.run"]));
+// K1a (BL-59): kasir.view/catat/tutup/buka terdaftar; kasir.buka = kapabilitas (centang modul tidak menyalakannya, OM/Admin);
+// preset role non-admin tidak memuat kasir (preset grup = docs/handover/RBAC_PRESET_KASIR.sql); /kasir dijaga kasir.view (bukan jatuh ke dashboard.view).
+for (const a of ["view", "catat", "tutup", "buka"]) assert.ok(isValidPermissionKey(`kasir.${a}`), `kasir.${a} wajib terdaftar`);
+assert.ok(CAPABILITY_KEYS.has("kasir.buka"), "kasir.buka wajib kunci kapabilitas");
+const kasirOn = toggleModuleKeys(new Set(), "kasir");
+assert.deepEqual([...kasirOn].sort(), ["kasir.catat", "kasir.tutup", "kasir.view"], "centang modul kasir tanpa kasir.buka");
+for (const role of ["manager", "staff", "viewer", "finance"] as const) assert.ok(!rolePermissionPresets[role].kasir, `preset ${role} memuat kasir`);
+assert.deepEqual(rolePermissionPresets.admin.kasir, ["view", "catat", "tutup", "buka"]);
+assert.deepEqual(getPagePermission("/kasir"), { prefix: "/kasir", module: "kasir", action: "view" });
+assert.ok(canAccessPathWithKeys("/kasir/2026-10-05", ["kasir.view"]));
+assert.ok(!canAccessPathWithKeys("/kasir", ["dashboard.view", "pelunasan.kirim"]));
 
 // --- 2. Scan requirePermission(...) di route ---
 function walk(dir: string): string[] {

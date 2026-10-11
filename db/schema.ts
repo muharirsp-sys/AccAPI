@@ -2112,3 +2112,136 @@ export const principalAlias = pgTable("principal_alias", {
     sumberIsi: check("principal_alias_sumber_isi", sql`btrim(${t.sumber}) <> ''`),
     jenisCek: check("principal_alias_jenis", sql`${t.jenis} IN ('nama', 'kode_master_barang', 'label_mapping', 'nama_bank', 'nama_summary', 'nama_surat')`),
 }));
+
+// --- Kasir ↔ Incaso (K1a, BL-59; owner 11 Okt 2026: per ORANG per hari, Tunai + Transfer + Giro lawan chequeAmount) --- //
+// Setoran (append-only, revisi berantai), penjelasan selisih & penjelasan uang tak teralokasi (append-only), event hari (tutup /
+// kunci otomatis 20.00 WITA / buka; append-only), dan cache pelunasan Accurate berkolom sempit untuk K1b (TANPA raw_data — heap 2 GB
+// pernah habis, promo-recap).
+// SQL: migrate-pg `kasir (setoran, catatan, hari, cache pelunasan)`, db/migrations/0029_kasir.sql, docs/handover/DDL_K1A.sql
+// (trigger append-only + REVOKE/GRANT HANYA di DDL manual). Lib murni: lib/kasir/rekonsiliasi.ts. Kontrak: docs/handover/KASIR-KONTRAK.md.
+// Uang = numeric(18,2): Postgres MEMBULATKAN > 2 desimal diam-diam -> penulis WAJIB lewat keSen/senKeTeks (menolak > 2 desimal).
+// Kolom *_oleh = id aktor TANPA FK (aktor bypass lokal / sistem bukan baris `user`).
+
+// salesman_kode = kode ORANG saat dicatat (accurate_employee.number sesudah gabungan sales_code_merge bulan itu); pembaca melipatnya
+// lagi lewat peta gabungan bulan `tanggal` (lib orangDariKode) — koreksi orang multi-kode = lib rencanaSetoranOrang (satu transaksi). Koreksi = baris BARU revisi n+1 yang menunjuk revisi n hari & kode yang sama
+// (FK komposit); revisi terbesar berlaku. Unik (tanggal, kode, revisi) = dobel-klik/balapan -> 23505 (409 di K2).
+export const kasirSetoran = pgTable("kasir_setoran", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tanggal: date("tanggal").notNull(),
+    salesmanKode: text("salesman_kode").notNull(),
+    revisi: integer("revisi").notNull(),
+    revisiSebelumnya: integer("revisi_sebelumnya"),
+    tunai: numeric("tunai", { precision: 18, scale: 2 }).notNull(),
+    transfer: numeric("transfer", { precision: 18, scale: 2 }).notNull(),
+    giro: numeric("giro", { precision: 18, scale: 2 }).notNull(),
+    noFormKasir: text("no_form_kasir"),
+    buktiTransfer: text("bukti_transfer"),
+    catatan: text("catatan"),
+    dicatatOleh: text("dicatat_oleh").notNull(),
+    dicatatPada: timestamp("dicatat_pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    unique("uq_kasir_setoran_revisi").on(t.tanggal, t.salesmanKode, t.revisi),
+    foreignKey({ name: "kasir_setoran_revisi_sebelumnya_fk", columns: [t.tanggal, t.salesmanKode, t.revisiSebelumnya],
+        foreignColumns: [t.tanggal, t.salesmanKode, t.revisi] }),
+    check("kasir_setoran_rantai", sql`${t.revisi} >= 1 AND ${t.revisiSebelumnya} IS NOT DISTINCT FROM nullif(${t.revisi} - 1, 0)`),
+    check("kasir_setoran_nominal", sql`${t.tunai} >= 0 AND ${t.transfer} >= 0 AND ${t.giro} >= 0`),
+    check("kasir_setoran_kode", sql`${t.salesmanKode} <> '' AND ${t.salesmanKode} = btrim(${t.salesmanKode})`),
+    check("kasir_setoran_teks", sql`btrim(coalesce(${t.noFormKasir}, '-')) <> '' AND btrim(coalesce(${t.buktiTransfer}, '-')) <> '' AND btrim(coalesce(${t.catatan}, '-')) <> ''`),
+    check("kasir_setoran_oleh", sql`btrim(${t.dicatatOleh}) <> ''`),
+]);
+
+// Penjelasan selisih per orang per hari. pelunasan/setoran = angka SAAT dijelaskan; angka berubah = penjelasan tidak berlaku
+// (lib rekonsiliasiHari). salesman_kode '' = baris "Tanpa salesman" (TANPA_SALESMAN).
+export const kasirSelisihCatatan = pgTable("kasir_selisih_catatan", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tanggal: date("tanggal").notNull(),
+    salesmanKode: text("salesman_kode").notNull(),
+    pelunasan: numeric("pelunasan", { precision: 18, scale: 2 }).notNull(),
+    setoran: numeric("setoran", { precision: 18, scale: 2 }).notNull(),
+    penjelasan: text("penjelasan").notNull(),
+    tindakLanjut: text("tindak_lanjut").notNull(), // setor_susulan | koreksi_incaso | lapor_om
+    dicatatOleh: text("dicatat_oleh").notNull(),
+    dicatatPada: timestamp("dicatat_pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_kasir_selisih_catatan_hari").on(t.tanggal, t.salesmanKode),
+    check("kasir_selisih_catatan_kode", sql`${t.salesmanKode} = btrim(${t.salesmanKode})`),
+    check("kasir_selisih_catatan_setoran", sql`${t.setoran} >= 0`),
+    check("kasir_selisih_catatan_penjelasan", sql`char_length(btrim(${t.penjelasan})) >= 15`),
+    check("kasir_selisih_catatan_tindak_lanjut", sql`${t.tindakLanjut} IN ('setor_susulan', 'koreksi_incaso', 'lapor_om')`),
+    check("kasir_selisih_catatan_oleh", sql`btrim(${t.dicatatOleh}) <> ''`),
+]);
+
+// Event hari: tutup (Kasir, kapan pun), kunci (sistem mencatat snapshot kunci otomatis 20.00 WITA — kuncinya sendiri DIHITUNG
+// lib statusHari, tidak menunggu baris ini), buka (OM/Admin, kasir.buka, alasan ≥ 15). Snapshot = lib snapshotHari (tutup/kunci).
+export const kasirHariEvent = pgTable("kasir_hari_event", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tanggal: date("tanggal").notNull(),
+    jenis: text("jenis").notNull(), // tutup | kunci | buka
+    alasan: text("alasan"),
+    snapshot: jsonb("snapshot"),
+    oleh: text("oleh").notNull(),
+    pada: timestamp("pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_kasir_hari_event_tanggal").on(t.tanggal, t.id),
+    check("kasir_hari_event_jenis", sql`${t.jenis} IN ('tutup', 'kunci', 'buka')`),
+    check("kasir_hari_event_alasan_buka", sql`${t.jenis} <> 'buka' OR char_length(btrim(coalesce(${t.alasan}, ''))) >= 15`),
+    check("kasir_hari_event_snapshot", sql`(${t.jenis} = 'buka') = (${t.snapshot} IS NULL) AND (${t.snapshot} IS NULL OR jsonb_typeof(${t.snapshot}) = 'object')`),
+    // Owner 11 Okt (T2): Tutup hanya bila TIDAK terhalang — snapshot.terhalang (lib penghalangTutup) wajib []. Kunci otomatis boleh
+    // terhalang (kunci ≠ tutup): snapshot kunci mencatat selisih/ember yang belum dijelaskan.
+    check("kasir_hari_event_tutup_tuntas", sql`${t.jenis} <> 'tutup' OR coalesce(${t.snapshot} -> 'terhalang', 'null'::jsonb) = '[]'::jsonb`),
+    check("kasir_hari_event_oleh", sql`btrim(${t.oleh}) <> ''`),
+]);
+
+// Penjelasan uang TAK TERALOKASI (Σ invoicePayment ≠ chequeAmount, lib alokasiPelunasan) per pelunasan — owner 11 Okt (T2): wajib
+// sebelum Tutup. Tabel sendiri (bukan kasir_selisih_catatan): kuncinya pelunasan (database_id + pelunasan_id), bukan orang, dan
+// angkanya `sisa`, bukan pelunasan/setoran. sisa = angka saat dijelaskan; berubah = tidak berlaku. TANPA FK ke cache kasir_pelunasan
+// (cache boleh dihapus/dibaca ulang; penjelasan tetap). Append-only (trigger + REVOKE di DDL_K1A.sql).
+export const kasirTakTeralokasiCatatan = pgTable("kasir_tak_teralokasi_catatan", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tanggal: date("tanggal").notNull(),
+    databaseId: text("database_id").notNull(),
+    pelunasanId: bigint("pelunasan_id", { mode: "number" }).notNull(),
+    sisa: numeric("sisa", { precision: 18, scale: 2 }).notNull(),
+    penjelasan: text("penjelasan").notNull(),
+    dicatatOleh: text("dicatat_oleh").notNull(),
+    dicatatPada: timestamp("dicatat_pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_kasir_tak_teralokasi_catatan_hari").on(t.databaseId, t.tanggal),
+    check("kasir_tak_teralokasi_catatan_database", sql`btrim(${t.databaseId}) <> ''`),
+    check("kasir_tak_teralokasi_catatan_sisa", sql`${t.sisa} <> 0`),
+    check("kasir_tak_teralokasi_catatan_penjelasan", sql`char_length(btrim(${t.penjelasan})) >= 15`),
+    check("kasir_tak_teralokasi_catatan_oleh", sql`btrim(${t.dicatatOleh}) <> ''`),
+]);
+
+// Cache pelunasan (sales-receipt) — ditulis HANYA pembaca sistem K1b (upsert; Kasir tidak punya jalur tulis = "Kasir tidak bisa
+// mengubah angka Incaso"). Id Accurate unik per database -> PK ber-database_id. last_update = teks Accurate apa adanya
+// (pola dd/MM/yyyy HH…, hanya dibandingkan sama/beda untuk baca ulang inkremental).
+export const kasirPelunasan = pgTable("kasir_pelunasan", {
+    databaseId: text("database_id").notNull(),
+    pelunasanId: bigint("pelunasan_id", { mode: "number" }).notNull(),
+    nomor: text("nomor").notNull(),
+    tanggal: date("tanggal").notNull(), // transDate
+    metode: text("metode").notNull(), // paymentMethod: CASH_OTHER | BANK_TRANSFER | BANK_CHEQUE | OTHERS | …
+    chequeAmount: numeric("cheque_amount", { precision: 18, scale: 2 }).notNull(),
+    lastUpdate: text("last_update"),
+    dibacaPada: timestamp("dibaca_pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    primaryKey({ name: "kasir_pelunasan_pkey", columns: [t.databaseId, t.pelunasanId] }),
+    index("idx_kasir_pelunasan_tanggal").on(t.databaseId, t.tanggal),
+    check("kasir_pelunasan_isi", sql`btrim(${t.databaseId}) <> '' AND btrim(${t.nomor}) <> '' AND btrim(${t.metode}) <> ''`),
+]);
+
+// Baris faktur per pelunasan (detailInvoice[]): salesman = invoice.masterSalesmanId (bukti 11 Okt: terisi 43/43). nomor_faktur
+// opsional (rincian K2) — tambahan kecil dari brief agar rincian tidak bergantung pada sales_invoice yang tak memuat faktur lama.
+export const kasirPelunasanFaktur = pgTable("kasir_pelunasan_faktur", {
+    databaseId: text("database_id").notNull(),
+    pelunasanId: bigint("pelunasan_id", { mode: "number" }).notNull(),
+    fakturId: bigint("faktur_id", { mode: "number" }).notNull(),
+    nomorFaktur: text("nomor_faktur"),
+    masterSalesmanId: bigint("master_salesman_id", { mode: "number" }),
+    invoicePayment: numeric("invoice_payment", { precision: 18, scale: 2 }).notNull(),
+}, (t) => [
+    primaryKey({ name: "kasir_pelunasan_faktur_pkey", columns: [t.databaseId, t.pelunasanId, t.fakturId] }),
+    foreignKey({ name: "kasir_pelunasan_faktur_pelunasan_fk", columns: [t.databaseId, t.pelunasanId],
+        foreignColumns: [kasirPelunasan.databaseId, kasirPelunasan.pelunasanId] }).onDelete("cascade"),
+]);

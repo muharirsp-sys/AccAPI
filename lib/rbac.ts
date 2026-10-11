@@ -43,6 +43,8 @@ export const appModules = [
     "websales",
     // Pelunasan (S6e-2, owner #5 10 Okt 2026): kirim sales-receipt ke Accurate dari wizard; ditegakkan server.
     "pelunasan",
+    // Kasir ↔ Incaso (K1a BL-59): setoran per orang per hari lawan pelunasan Accurate; kunci di lib/rbac/registry.ts.
+    "kasir",
 ] as const;
 export type AppModule = (typeof appModules)[number];
 
@@ -66,6 +68,7 @@ export const moduleLabels: Record<AppModule, string> = {
     insentif_sales: "Insentif Sales",
     websales: "Order Sales (Web Sales)",
     pelunasan: "Pelunasan",
+    kasir: "Kasir ↔ Incaso",
 };
 
 export const permissionActions = [
@@ -102,6 +105,9 @@ export const permissionActions = [
     "set_permission",
     "print",
     "approve_takeout",
+    "catat",
+    "tutup",
+    "buka",
     "view_dashboard",
     "view_all",
     "upload_target",
@@ -122,6 +128,9 @@ export const actionLabels: Record<PermissionAction, string> = {
     send: "Kirim Email",
     print: "Cetak",
     approve_takeout: "Setujui Take-out",
+    catat: "Catat Setoran & Jelaskan Selisih",
+    tutup: "Tutup Hari",
+    buka: "Buka Kembali Hari",
     view_dashboard: "Lihat Dashboard",
     view_all: "Lihat Semua Cakupan",
     upload_target: "Unggah Target",
@@ -237,6 +246,8 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     ],
     websales: ["view", "create"],
     pelunasan: ["kirim"],
+    // buka = kunci kapabilitas (lib/rbac/registry.ts CAPABILITY_KEYS) — hanya preset admin (semua) yang memuatnya.
+    kasir: ["view", "catat", "tutup", "buka"],
 };
 
 export type PermissionMap = Partial<Record<AppModule, PermissionAction[]>>;
@@ -362,6 +373,8 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/finance", module: "finance", action: "view" },
     // Wizard Pelunasan (S6e-2b): halaman = kirim sales-receipt; kunci yang sama dengan penegakan server (owner #5).
     { prefix: "/pelunasan", module: "pelunasan", action: "kirim" },
+    // Kasir ↔ Incaso (K1a BL-59; halaman = K2). Tanpa entri ini /kasir jatuh ke "/" = dashboard.view.
+    { prefix: "/kasir", module: "kasir", action: "view" },
     { prefix: "/principal-mapping", module: "principles", action: "view" },
     { prefix: "/master-barang", module: "master_barang", action: "view" },
     { prefix: "/principles", module: "principles", action: "view" },
