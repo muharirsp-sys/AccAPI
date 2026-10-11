@@ -9,7 +9,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
-import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
+import { is, SQL } from "drizzle-orm";
+import { getTableConfig, PgDialect, type PgTable } from "drizzle-orm/pg-core";
 import { principal, principalAlias, principalVariant, userGroup } from "../db/schema.ts";
 
 const PG_URL = process.env.AM040_DATABASE_URL ?? "";
@@ -46,7 +47,7 @@ const DASAR = `
         user_id     text NOT NULL,
         group_id    text NOT NULL,
         assigned_by text,
-        assigned_at timestamp NOT NULL DEFAULT now(),
+        assigned_at timestamp NOT NULL,
         CONSTRAINT user_group_user_id_group_id_pk PRIMARY KEY (user_id, group_id),
         CONSTRAINT user_group_user_id_user_id_fk FOREIGN KEY (user_id) REFERENCES "user"(id),
         CONSTRAINT user_group_group_id_access_group_id_fk FOREIGN KEY (group_id) REFERENCES access_group(id)
@@ -95,10 +96,20 @@ async function katalog(pool: Pool) {
     const constraint = await pool.query(`SELECT c.conrelid::regclass::text AS tabel, c.conname, pg_get_constraintdef(c.oid) AS def
         FROM pg_constraint c WHERE c.connamespace = current_schema()::regnamespace AND c.conrelid::regclass::text = ANY($1)
         ORDER BY 1, 2`, [TABEL]);
-    const indeks = await pool.query(`SELECT tablename, indexname, replace(indexdef, current_schema() || '.', '') AS def
-        FROM pg_indexes WHERE schemaname = current_schema() AND tablename = ANY($1) ORDER BY 1, 2`, [TABEL]);
+    const indeks = await pool.query(`SELECT t.relname AS tablename, c.relname AS indexname,
+            replace(pg_get_indexdef(c.oid), current_schema() || '.', '') AS def, x.indisunique AS unik,
+            pg_get_expr(x.indpred, x.indrelid) AS predikat
+        FROM pg_index x JOIN pg_class c ON c.oid = x.indexrelid JOIN pg_class t ON t.oid = x.indrelid
+        WHERE t.relnamespace = current_schema()::regnamespace AND t.relname = ANY($1) ORDER BY 1, 2`, [TABEL]);
     return { kolom: kolom.rows, constraint: constraint.rows, indeks: indeks.rows };
 }
+
+// Bentuk teks SQL yang sebanding antara Drizzle (sqlToQuery) dan katalog (pg_get_expr/column_default): tanpa awalan tabel,
+// cast ::text/::boolean, kutip, kurung, spasi. Cukup untuk predikat/default sederhana di skema ini (bukan pembanding SQL umum).
+const dialek = new PgDialect();
+const teksSql = (v: unknown) => v === undefined || v === null ? "" : is(v, SQL) ? dialek.sqlToQuery(v).sql : typeof v === "string" ? `'${v}'` : String(v);
+const normSql = (s: string | null | undefined) => (s ?? "").replace(/::(text|boolean)\b/g, "").replace(/"[^"]+"\./g, "").replace(/["()\s]/g, "");
+const tipeDrizzle = (t: string) => (t === "timestamp" ? "timestamp without time zone" : t);
 
 const kodeGalat = (kode: string) => (e: unknown) => (e as { code?: string }).code === kode;
 
@@ -131,11 +142,82 @@ test("PG S7-0: keadaan sebagian — sudahAda tidak tertipu, entri melengkapi", {
         assert.equal(await cek(pool, mPrincipal), 1, "dilengkapi");
         assert.ok((await pool.query("SELECT to_regclass('principal_alias') AS r")).rows[0].r);
 
+        // Varian tanpa name/is_active (bentuk 893f8cbf) -> belum ada; entri menambah kolomnya.
+        await pool.query("ALTER TABLE principal_variant DROP COLUMN name, DROP COLUMN is_active");
+        assert.equal(await cek(pool, mPrincipal), 0, "varian tanpa name/is_active = belum ada");
+        await pool.query(mPrincipal.sql);
+        assert.equal(await cek(pool, mPrincipal), 1, "kolom varian ditambahkan");
+
         // Kolom sudah ada (mis. ditambah tangan) tetapi indeks unik parsial belum.
         await pool.query("ALTER TABLE user_group ADD COLUMN is_primary boolean NOT NULL DEFAULT false");
         assert.equal(await cek(pool, mPrimary), 0, "kolom tanpa indeks = belum ada");
         await pool.query(mPrimary.sql);
         assert.equal(await cek(pool, mPrimary), 1, "indeks dibuat");
+    });
+});
+
+// Bentuk entri principal di commit 893f8cbf (alias_norm = PK global; varian tanpa name/is_active) — dibekukan untuk uji
+// "DB yang sudah menjalankan versi lama". Jangan diubah mengikuti skema baru.
+const BENTUK_893F8CBF = `
+    CREATE TABLE principal (
+        id text PRIMARY KEY DEFAULT gen_random_uuid()::text, code text NOT NULL, name text NOT NULL,
+        is_active boolean NOT NULL DEFAULT true, created_by text, created_at timestamptz NOT NULL DEFAULT now(),
+        updated_by text, updated_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT principal_code_format CHECK (code ~ '^[A-Z0-9_-]{1,20}$'),
+        CONSTRAINT principal_name_isi CHECK (btrim(name) <> ''));
+    CREATE UNIQUE INDEX uq_principal_code ON principal (code);
+    CREATE TABLE principal_variant (
+        principal_id text NOT NULL, variant_key text NOT NULL DEFAULT '', created_by text, created_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT principal_variant_pkey PRIMARY KEY (principal_id, variant_key),
+        CONSTRAINT principal_variant_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
+        CONSTRAINT principal_variant_key_format CHECK (variant_key ~ '^[A-Z0-9_-]{0,20}$'));
+    CREATE TABLE principal_alias (
+        alias_norm text NOT NULL, principal_id text NOT NULL, variant_key text, alias_asli text NOT NULL, jenis text NOT NULL,
+        sumber text NOT NULL, created_by text, created_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT principal_alias_pkey PRIMARY KEY (alias_norm),
+        CONSTRAINT principal_alias_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
+        CONSTRAINT principal_alias_variant_fk FOREIGN KEY (principal_id, variant_key)
+            REFERENCES principal_variant (principal_id, variant_key) ON DELETE RESTRICT,
+        CONSTRAINT principal_alias_norm_isi CHECK (btrim(alias_norm) <> ''),
+        CONSTRAINT principal_alias_asli_isi CHECK (btrim(alias_asli) <> ''),
+        CONSTRAINT principal_alias_sumber_isi CHECK (btrim(sumber) <> ''),
+        CONSTRAINT principal_alias_jenis CHECK (jenis IN
+            ('nama', 'kode_master_barang', 'label_mapping', 'nama_bank', 'nama_summary', 'nama_surat')));
+    CREATE INDEX idx_principal_alias_principal ON principal_alias (principal_id, variant_key);
+    ALTER TABLE user_group ADD COLUMN is_primary boolean NOT NULL DEFAULT false;
+    CREATE UNIQUE INDEX uq_user_group_primary ON user_group (user_id) WHERE is_primary;`;
+
+test("PG S7-0: DB yang sudah menjalankan 893f8cbf — sudahAda tidak tertipu, migrate-pg menolak jelas, DDL mengubah tabel alias KOSONG dan berhenti bila berisi", { skip: pgSkip }, async () => {
+    const ms = await entri();
+    const { ddl } = await berkasDdl();
+    let bentukBaru: Awaited<ReturnType<typeof katalog>> | undefined;
+    await denganSkema(async (pool) => {
+        await jalankanMigrasi(pool, ms);
+        bentukBaru = await katalog(pool);
+    });
+    await denganSkema(async (pool) => {
+        await pool.query(BENTUK_893F8CBF);
+        assert.equal((await pool.query(ms[0].sudahAda)).rowCount, 0, "bentuk lama = belum ada");
+        assert.equal((await pool.query(ms[1].sudahAda)).rowCount, 1, "is_primary tidak berubah sejak 893f8cbf");
+        await assert.rejects(pool.query(ms[0].sql), /DDL_S7_0\.sql/, "migrate-pg tidak diam-diam membiarkan PK global");
+
+        // Tabel alias lama BERISI -> DDL berhenti (tidak pernah DROP data), baris tetap ada.
+        await pool.query(`INSERT INTO principal (id, code, name) VALUES ('p1', 'KINO', 'KINO')`);
+        await pool.query(`INSERT INTO principal_alias (alias_norm, principal_id, alias_asli, jenis, sumber) VALUES ('KINO', 'p1', 'KINO', 'nama', 'uji')`);
+        const c = await pool.connect();
+        try {
+            await assert.rejects(c.query(ddl), /BERISI/);
+        } finally {
+            await c.query("ROLLBACK"); // BEGIN berkas meninggalkan transaksi gagal di koneksi ini
+            c.release();
+        }
+        assert.equal((await pool.query("SELECT count(*)::int AS n FROM principal_alias")).rows[0].n, 1, "data lama utuh");
+
+        await pool.query("DELETE FROM principal_alias");
+        await pool.query("DELETE FROM principal");
+        for (const v of verifikasi(await jalankanBerkas(pool, ddl))) assert.notEqual(v.ok, false, `VERIFIKASI gagal: ${v.cek}`);
+        assert.deepEqual(await jalankanMigrasi(pool, ms), NAMA_ENTRI.map((n) => `SKIP ${n}`), "sesudah DDL, migrate-pg melewati");
+        assert.deepEqual(await katalog(pool), bentukBaru, "bentuk lama diubah persis ke bentuk baru");
     });
 });
 
@@ -160,23 +242,27 @@ test("PG S7-0: DDL_S7_0.sql dua kali idempoten + VERIFIKASI; sesudahnya migrate-
         }
         assert.deepEqual(await katalog(pool), bentukMigrasi, "db/migrations = entri migrate-pg");
     });
-    // Drizzle: nama kolom (+NOT NULL), indeks, CHECK, FK, PK sama dengan katalog.
+    // Drizzle: kolom (tipe, NOT NULL, default), indeks (unik + predikat parsial), CHECK/FK/PK (nama) sama dengan katalog.
     const k = bentukMigrasi!;
     const tabelDrizzle: [string, PgTable][] = [["principal", principal], ["principal_variant", principalVariant], ["principal_alias", principalAlias], ["user_group", userGroup]];
     for (const [nama, t] of tabelDrizzle) {
         const cfg = getTableConfig(t);
         assert.deepEqual(
-            cfg.columns.map((c) => `${c.name}:${c.notNull ? "NO" : "YES"}`).sort(),
-            k.kolom.filter((r) => r.table_name === nama).map((r) => `${r.column_name}:${r.is_nullable}`).sort(),
-            `kolom Drizzle ${nama}`);
-        const namaDb = new Set([...k.indeks, ...k.constraint].filter((r) => (r.tablename ?? r.tabel) === nama).map((r) => r.indexname ?? r.conname));
-        const namaDrizzle = [...cfg.indexes.map((i) => i.config.name), ...cfg.checks.map((c) => c.name),
-            ...cfg.foreignKeys.map((f) => f.getName()), ...cfg.primaryKeys.map((p) => p.getName())];
-        for (const n of namaDrizzle) assert.ok(namaDb.has(n), `${nama}: ${n} (Drizzle) ada di DB`);
+            cfg.columns.map((c) => [c.name, tipeDrizzle(c.getSQLType()), c.notNull ? "NO" : "YES", c.hasDefault ? normSql(teksSql(c.default)) : ""].join("|")).sort(),
+            k.kolom.filter((r) => r.table_name === nama).map((r) => [r.column_name, r.data_type, r.is_nullable, normSql(r.column_default)].join("|")).sort(),
+            `kolom Drizzle ${nama} (nama|tipe|nullable|default)`);
+        const indeksDb = new Map(k.indeks.filter((r) => r.tablename === nama).map((r) => [r.indexname, `${r.unik}|${normSql(r.predikat)}`]));
+        for (const i of cfg.indexes) {
+            assert.equal(indeksDb.get(i.config.name), `${Boolean(i.config.unique)}|${normSql(teksSql(i.config.where))}`, `${nama}: indeks ${i.config.name} (unik|predikat)`);
+        }
+        const namaDb = new Set(k.constraint.filter((r) => r.tabel === nama).map((r) => r.conname));
+        for (const n of [...cfg.checks.map((c) => c.name), ...cfg.foreignKeys.map((f) => f.getName()), ...cfg.primaryKeys.map((p) => p.getName())]) {
+            assert.ok(namaDb.has(n), `${nama}: ${n} (Drizzle) ada di DB`);
+        }
     }
 });
 
-test("PG S7-0: constraint — satu bintang per user, alias_norm unik global, FK principal/varian, CHECK kode/varian/jenis", { skip: pgSkip }, async () => {
+test("PG S7-0: constraint — satu bintang per user, alias_norm unik per kelompok jenis, FK principal/varian, CHECK kode/varian/jenis", { skip: pgSkip }, async () => {
     const ms = await entri();
     await denganSkema(async (pool) => {
         await jalankanMigrasi(pool, ms);
@@ -184,20 +270,37 @@ test("PG S7-0: constraint — satu bintang per user, alias_norm unik global, FK 
         const id = async (code: string) => (await q("SELECT id FROM principal WHERE code = $1", [code])).rows[0].id as string;
         await q(`INSERT INTO principal (code, name, created_by) VALUES ('KINO', 'KINO INDONESIA TBK, PT', 'uji'), ('HEINZ', 'HEINZ ABC INDONESIA, PT', 'uji')`);
         const kino = await id("KINO"), heinz = await id("HEINZ");
-        await q(`INSERT INTO principal_variant (principal_id, variant_key) VALUES ($1, ''), ($1, 'NON_FOOD'), ($2, 'HZ'), ($2, 'BS')`, [kino, heinz]);
+        await q(`INSERT INTO principal_variant (principal_id, variant_key) VALUES ($1, ''), ($2, 'HZ'), ($2, 'BS')`, [kino, heinz]);
+        await q(`INSERT INTO principal_variant (principal_id, variant_key, name) VALUES ($1, 'NON_FOOD', 'KINO NON FOOD')`, [kino]);
+        // B-SEDANG-2: varian punya nama tampilan (opsional) + aktif (bawaan true).
+        assert.deepEqual((await q(`SELECT variant_key, name, is_active FROM principal_variant WHERE principal_id = $1 ORDER BY 1`, [kino])).rows,
+            [{ variant_key: "", name: null, is_active: true }, { variant_key: "NON_FOOD", name: "KINO NON FOOD", is_active: true }]);
+        await assert.rejects(q(`UPDATE principal_variant SET is_active = NULL WHERE principal_id = $1`, [kino]), kodeGalat("23502"), "is_active NOT NULL");
         const alias = (norm: string, pid: string, varian: string | null, jenis = "nama") =>
             q(`INSERT INTO principal_alias (alias_norm, principal_id, variant_key, alias_asli, jenis, sumber) VALUES ($1, $2, $3, $1, $4, 'uji')`, [norm, pid, varian, jenis]);
         await alias("KINO NON FOOD", kino, "NON_FOOD", "label_mapping");
         await alias("KINO", kino, null);
         await alias("HZ", heinz, "HZ", "kode_master_barang");
 
-        await assert.rejects(alias("KINO", heinz, null), kodeGalat("23505"), "alias_norm unik global");
+        // B-SEDANG-1: kode Master Barang 2 karakter tidak boleh bertabrakan dengan nama/kode OPC (probe peninjau "MI");
+        // di dalam kelompoknya masing-masing tetap unik — tabrakan nama sah DITOLAK (laporan ambiguous S7-2).
+        await alias("MI", kino, null, "nama");
+        await alias("MI", heinz, "HZ", "kode_master_barang");
+        await assert.rejects(alias("MI", kino, null, "kode_master_barang"), kodeGalat("23505"), "kode Master Barang unik antar principal");
+        await assert.rejects(alias("KINO", heinz, null), kodeGalat("23505"), "nama unik global");
+        await assert.rejects(alias("KINO", heinz, null, "nama_bank"), kodeGalat("23505"), "nama unik lintas jenis non-kode");
         await assert.rejects(alias("TAK ADA", randomUUID(), null), kodeGalat("23503"), "FK principal");
         await assert.rejects(alias("HEINZ NON FOOD", heinz, "NON_FOOD"), kodeGalat("23503"), "varian milik principal lain ditolak");
         await assert.rejects(alias("", kino, null), kodeGalat("23514"), "alias_norm kosong");
+        // B-RENDAH: alias_norm sudah dalam bentuk normal (invarian normalizer S7-2): HURUF BESAR, tanpa spasi tepi, spasi tunggal.
+        for (const salah of ["kino x", "Kino X", " KINO X", "KINO X ", "KINO  X", "KINO\tX", "KINO\nX"]) {
+            await assert.rejects(alias(salah, kino, null), kodeGalat("23514"), `alias_norm ${JSON.stringify(salah)} bukan bentuk normal`);
+        }
+        await alias("P&G (KINO) 2", kino, null); // tanda baca = urusan normalizer, bukan skema
         await assert.rejects(alias("KINO X", kino, null, "lain"), kodeGalat("23514"), "jenis di luar daftar");
         await assert.rejects(q(`INSERT INTO principal_variant (principal_id, variant_key) VALUES ($1, '')`, [randomUUID()]), kodeGalat("23503"), "FK varian");
         await assert.rejects(q(`INSERT INTO principal_variant (principal_id, variant_key) VALUES ($1, 'non food')`, [kino]), kodeGalat("23514"), "format varian");
+        await assert.rejects(q(`INSERT INTO principal_variant (principal_id, variant_key) VALUES ($1, 'hz')`, [heinz]), kodeGalat("23514"), "varian huruf kecil");
         for (const kode of ["kino", "", "KINO INDONESIA", "A".repeat(21)]) {
             await assert.rejects(q(`INSERT INTO principal (code, name) VALUES ($1, 'X')`, [kode]), kodeGalat("23514"), `kode ${JSON.stringify(kode)}`);
         }
@@ -208,10 +311,24 @@ test("PG S7-0: constraint — satu bintang per user, alias_norm unik global, FK 
         // Bintang: satu per user; user lain boleh berbintang di grup yang sama.
         await q(`INSERT INTO "user" (id, name, email) VALUES ('u1', 'A', 'a@x'), ('u2', 'B', 'b@x')`);
         await q(`INSERT INTO access_group (id, name) VALUES ('g1', 'G1'), ('g2', 'G2')`);
-        await q(`INSERT INTO user_group (user_id, group_id) VALUES ('u1', 'g1'), ('u1', 'g2'), ('u2', 'g1')`);
+        await q(`INSERT INTO user_group (user_id, group_id, assigned_at) VALUES ('u1', 'g1', now()), ('u1', 'g2', now()), ('u2', 'g1', now())`);
         await q(`UPDATE user_group SET is_primary = true WHERE user_id = 'u1' AND group_id = 'g1'`);
         await q(`UPDATE user_group SET is_primary = true WHERE user_id = 'u2' AND group_id = 'g1'`);
         await assert.rejects(q(`UPDATE user_group SET is_primary = true WHERE user_id = 'u1' AND group_id = 'g2'`), kodeGalat("23505"), "dua bintang ditolak");
+    });
+});
+
+test("PG S7-0: DDL — principal.code TETAP (trigger; kunci teks OPC/Klaim/no_claim_template), kolom lain & nilai sama boleh", { skip: pgSkip }, async () => {
+    const { ddl } = await berkasDdl();
+    await denganSkema(async (pool) => {
+        await jalankanBerkas(pool, ddl);
+        await jalankanBerkas(pool, ddl); // CREATE OR REPLACE: idempoten
+        await pool.query(`INSERT INTO principal (id, code, name) VALUES ('p1', 'KINO', 'KINO INDONESIA TBK, PT')`);
+        await assert.rejects(pool.query(`UPDATE principal SET code = 'KINO2' WHERE id = 'p1'`),
+            (e: unknown) => kodeGalat("23001")(e) && /principal\.code/.test(String((e as Error).message)), "ganti kode ditolak");
+        await pool.query(`UPDATE principal SET name = 'KINO INDONESIA TBK', is_active = false, updated_by = 'uji' WHERE id = 'p1'`);
+        await pool.query(`UPDATE principal SET code = 'KINO' WHERE id = 'p1'`); // nilai sama = bukan perubahan
+        assert.deepEqual((await pool.query(`SELECT code, name FROM principal WHERE id = 'p1'`)).rows, [{ code: "KINO", name: "KINO INDONESIA TBK" }]);
     });
 });
 
@@ -221,8 +338,8 @@ test("PG S7-0: BACKFILL — hanya user tepat 1 grup, user > 1 grup / sudah berbi
         await jalankanBerkas(pool, ddl);
         await pool.query(`INSERT INTO "user" (id, name, email) VALUES ('u1','1','1@x'), ('u2','2','2@x'), ('u3','3','3@x'), ('u4','4','4@x'), ('u5','5','5@x')`);
         await pool.query(`INSERT INTO access_group (id, name) VALUES ('g1', 'G1'), ('g2', 'G2')`);
-        await pool.query(`INSERT INTO user_group (user_id, group_id, is_primary) VALUES
-            ('u1','g1',false), ('u2','g1',false), ('u2','g2',false), ('u4','g2',true), ('u5','g1',false), ('u5','g2',true)`);
+        await pool.query(`INSERT INTO user_group (user_id, group_id, is_primary, assigned_at) VALUES
+            ('u1','g1',false,now()), ('u2','g1',false,now()), ('u2','g2',false,now()), ('u4','g2',true,now()), ('u5','g1',false,now()), ('u5','g2',true,now())`);
         const keadaan = async () => (await pool.query(`SELECT user_id, group_id, is_primary FROM user_group ORDER BY 1, 2`)).rows
             .map((r) => `${r.user_id}/${r.group_id}:${r.is_primary}`);
         const diperbarui = (h: Hasil[]) => h.filter((r) => r.command === "UPDATE").reduce((n, r) => n + (r.rowCount ?? 0), 0);

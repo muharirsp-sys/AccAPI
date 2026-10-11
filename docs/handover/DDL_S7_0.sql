@@ -17,8 +17,19 @@
 --   - Image LAMA tidak terganggu (tabel baru tanpa pembaca + kolom ber-DEFAULT false). Catatan: route lama POST
 --     /api/admin/users/[id]/group (hapus semua lalu sisipkan satu) menghapus bintang user itu — S7-1 mempensiunkannya.
 --
+-- JALUR DATABASE_MIGRATION_URL (A-RENDAH-4): bila terpasang, migrate-pg membuat tabel/kolom/indeks sendiri, TETAPI tidak menjalankan
+--   GRANT (blok 3), trigger principal.code tetap (blok 1b), maupun BACKFILL. Berkas ini TETAP WAJIB dijalankan (aman sesudah
+--   migrate-pg — idempoten) dan blok VERIFIKASI-nya diperiksa: semua `ok` true.
+--
+-- ULANGI BACKFILL SAAT DEPLOY S7-1 (A-RENDAH-3): sampai image S7-1 terpasang, route lama "ganti grup" menghapus bintang user yang
+--   diganti grupnya. Saat deploy S7-1 (sesudah image S7-1 hidup), jalankan ulang bagian "===== BACKFILL" di akhir berkas ini
+--   (idempoten; hanya user tepat 1 grup tanpa bintang).
+--
 -- ISI (nama tabel TANPA skema = public pada search_path bawaan; ditulis begitu agar uji PG bisa memakai skema sekali-pakai):
 --   1. CREATE TABLE/INDEX IF NOT EXISTS principal, principal_variant, principal_alias (aditif, TANPA benih — benih = S7-2).
+--      1a: principal_alias bentuk lama 893f8cbf (PK alias_norm; hanya DB evaluasi) yang KOSONG di-DROP lalu dibuat ulang;
+--      bila BERISI berkas berhenti (RAISE) tanpa mengubah apa pun.
+--      1b: trigger trg_principal_code_tetap — UPDATE yang MENGUBAH principal.code ditolak (HANYA di berkas ini, bukan migrate-pg).
 --   2. ADD COLUMN IF NOT EXISTS user_group.is_primary boolean NOT NULL DEFAULT false + indeks unik parsial (satu bintang per user).
 --   3. GRANT SELECT, INSERT, UPDATE, DELETE ke accapi_app (bila role ada; default privileges L1g biasanya sudah memberi ini).
 --   4. VERIFIKASI (baca-saja) — semua `ok` harus true (NULL = role accapi_app tidak ada, tidak relevan).
@@ -31,6 +42,7 @@
 --
 -- ROLLBACK DARURAT (hanya bila DDL menghalangi operasi sah; catat alasannya): image lama tetap jalan dengan objek ini.
 --   DROP INDEX IF EXISTS uq_user_group_primary;   -- melepas batas satu bintang; kolom & tabel JANGAN di-drop selama image baru hidup.
+--   DROP TRIGGER IF EXISTS trg_principal_code_tetap ON principal;   -- mengizinkan ganti kode (periksa rujukan OPC/Klaim dulu).
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -60,7 +72,28 @@ CREATE TABLE IF NOT EXISTS principal_variant (
     CONSTRAINT principal_variant_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
     CONSTRAINT principal_variant_key_format CHECK (variant_key ~ '^[A-Z0-9_-]{0,20}$')
 );
+-- B-SEDANG-2: nama tampilan varian (opsional, mis. "KINO NON FOOD") + aktif. ALTER (bukan kolom CREATE TABLE) agar DB
+-- yang sudah punya tabel varian bentuk 893f8cbf ikut lengkap dan urutan kolom sama di semua jalur.
+ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS name text;
+ALTER TABLE principal_variant ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
+-- Aturan kanonik varian (B-RENDAH; lintas baris -> tidak bisa CHECK, DITEGAKKAN S7-2 saat benih/tulis): alias untuk principal
+-- UTUH = variant_key NULL (bukan ''); varian '' hanya "varian dasar" pada principal yang JUGA punya varian lain (KINO '' vs
+-- NON_FOOD); principal tanpa varian lain tidak punya baris varian ''. no_claim_template.variant_key '' = principal utuh.
+-- alias_norm = bentuk normal normalizer S7-2 (CHECK): HURUF BESAR, tanpa spasi tepi, spasi tunggal (tanda baca bebas).
+-- 1a. Bentuk lama 893f8cbf (hanya pernah ada di DB evaluasi): principal_alias ber-PK alias_norm tanpa kolom id. KOSONG -> dihapus
+--     lalu dibuat ulang di bawah dalam bentuk baru; BERISI -> berhenti (konversi manual, jangan DROP data).
+DO $$
+BEGIN
+    IF to_regclass('principal_alias') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+           WHERE table_schema = current_schema() AND table_name = 'principal_alias' AND column_name = 'id') THEN
+        IF EXISTS (SELECT 1 FROM principal_alias) THEN
+            RAISE EXCEPTION 'S7-0: principal_alias bentuk lama 893f8cbf BERISI — hentikan, konversi manual (jangan DROP data)';
+        END IF;
+        DROP TABLE principal_alias;
+    END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS principal_alias (
+    id           text NOT NULL DEFAULT gen_random_uuid()::text,
     alias_norm   text NOT NULL,
     principal_id text NOT NULL,
     variant_key  text,
@@ -69,17 +102,32 @@ CREATE TABLE IF NOT EXISTS principal_alias (
     sumber       text NOT NULL,
     created_by   text,
     created_at   timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT principal_alias_pkey PRIMARY KEY (alias_norm),
+    CONSTRAINT principal_alias_pkey PRIMARY KEY (id),
     CONSTRAINT principal_alias_principal_fk FOREIGN KEY (principal_id) REFERENCES principal (id) ON DELETE RESTRICT,
     CONSTRAINT principal_alias_variant_fk FOREIGN KEY (principal_id, variant_key)
         REFERENCES principal_variant (principal_id, variant_key) ON DELETE RESTRICT,
-    CONSTRAINT principal_alias_norm_isi CHECK (btrim(alias_norm) <> ''),
+    CONSTRAINT principal_alias_norm_bentuk CHECK (alias_norm = upper(alias_norm) AND alias_norm ~ '^[^[:space:]]+( [^[:space:]]+)*$'),
     CONSTRAINT principal_alias_asli_isi CHECK (btrim(alias_asli) <> ''),
     CONSTRAINT principal_alias_sumber_isi CHECK (btrim(sumber) <> ''),
     CONSTRAINT principal_alias_jenis CHECK (jenis IN
         ('nama', 'kode_master_barang', 'label_mapping', 'nama_bank', 'nama_summary', 'nama_surat'))
 );
+-- Unik per kelompok (B-SEDANG-1): kode Master Barang 2 karakter terpisah dari nama/label/kode OPC. Tabrakan nama yang
+-- sah tetap DITOLAK (masuk laporan ambiguous S7-2) — JANGAN PERNAH ON CONFLICT DO UPDATE (alias diam-diam pindah principal).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_principal_alias_kode_mb ON principal_alias (alias_norm) WHERE jenis = 'kode_master_barang';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_principal_alias_nama ON principal_alias (alias_norm) WHERE jenis <> 'kode_master_barang';
 CREATE INDEX IF NOT EXISTS idx_principal_alias_principal ON principal_alias (principal_id, variant_key);
+
+-- 1b. principal.code TETAP (B-SEDANG-3). Kode = kunci teks tanpa FK di OPC/Klaim (off_batch/claim_workflow.principle_code)
+--     dan no_claim_template.principle_code -> mengganti kode memutus rujukan diam-diam. Kode salah = principal baru (+ nonaktifkan
+--     yang lama). Hanya di berkas ini (pola repo: trigger = DDL manual, tidak di migrate-pg). CREATE OR REPLACE = idempoten (PG14+).
+CREATE OR REPLACE FUNCTION principal_code_tetap() RETURNS trigger LANGUAGE plpgsql AS $fn$
+BEGIN
+    RAISE EXCEPTION 'S7-0: principal.code tidak boleh diubah (% -> %) — buat principal baru, jangan ganti kode', OLD.code, NEW.code
+        USING ERRCODE = 'restrict_violation';
+END $fn$;
+CREATE OR REPLACE TRIGGER trg_principal_code_tetap BEFORE UPDATE OF code ON principal
+    FOR EACH ROW WHEN (OLD.code IS DISTINCT FROM NEW.code) EXECUTE FUNCTION principal_code_tetap();
 
 -- 2. Grup utama (sama dengan entri migrate-pg "user_group.is_primary"). DEFAULT false = tanpa rewrite tabel.
 ALTER TABLE user_group ADD COLUMN IF NOT EXISTS is_primary boolean NOT NULL DEFAULT false;
@@ -101,7 +149,18 @@ SELECT cek, ok FROM (VALUES
     ('tabel principal_variant', to_regclass('principal_variant') IS NOT NULL),
     ('tabel principal_alias', to_regclass('principal_alias') IS NOT NULL),
     ('indeks unik principal.code', EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('uq_principal_code') AND indisunique)),
-    ('alias_norm unik global (PK)', EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('principal_alias_pkey') AND indisprimary)),
+    ('trigger principal.code tetap', EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_principal_code_tetap'
+        AND tgrelid = to_regclass('principal') AND NOT tgisinternal)),
+    ('PK principal_alias = id (bukan alias_norm)', EXISTS (SELECT 1 FROM pg_index x JOIN pg_attribute a ON a.attrelid = x.indrelid
+        AND a.attnum = ANY (x.indkey) WHERE x.indexrelid = to_regclass('principal_alias_pkey') AND x.indisprimary AND x.indnatts = 1
+        AND a.attname = 'id')),
+    ('unik alias kode Master Barang (parsial)', EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('uq_principal_alias_kode_mb')
+        AND indisunique AND indpred IS NOT NULL)),
+    ('unik alias nama/label/kode OPC (parsial)', EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('uq_principal_alias_nama')
+        AND indisunique AND indpred IS NOT NULL)),
+    ('kolom principal_variant.name + is_active NOT NULL DEFAULT true', (SELECT count(*) = 2 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'principal_variant'
+          AND ((column_name = 'name' AND is_nullable = 'YES') OR (column_name = 'is_active' AND is_nullable = 'NO' AND column_default = 'true')))),
     ('kolom user_group.is_primary NOT NULL DEFAULT false', EXISTS (SELECT 1 FROM information_schema.columns
         WHERE table_schema = current_schema() AND table_name = 'user_group' AND column_name = 'is_primary'
           AND is_nullable = 'NO' AND column_default = 'false')),
@@ -120,6 +179,7 @@ SELECT cek, ok FROM (VALUES
 -- berbintang. User dengan > 1 grup TIDAK disentuh (bintangnya keputusan admin di layar S7a); user yang sudah berbintang tidak
 -- disentuh. TIDAK mengubah user.role (identitas lama, dipakai cron Accurate) — penurunan role dari bintang = logika S7-1.
 -- Idempoten: jalan kedua memperbarui 0 baris. Batas satu bintang dijaga indeks uq_user_group_primary.
+-- ULANGI bagian ini saat deploy S7-1 (route lama "ganti grup" menghapus bintang sampai S7-1 terpasang) — lihat kepala berkas.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';

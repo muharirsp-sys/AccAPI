@@ -2048,7 +2048,9 @@ export const noClaimTemplateLog = pgTable("no_claim_template_log", {
 // SQL: migrate-pg `principal (+variant, +alias)`, db/migrations/0027_principal.sql, docs/handover/DDL_S7_0.sql.
 // Kolom *_by = id aktor TANPA FK (aktor bypass lokal / IT Support bukan baris `user`).
 
-// code = kode OPC/Klaim (format lib/claim-workflow/no-claim-rules.ts validateNoClaimTemplate: ^[A-Z0-9_-]{1,20}$).
+// code = kode OPC/Klaim (format lib/claim-workflow/no-claim-rules.ts validateNoClaimTemplate: ^[A-Z0-9_-]{1,20}$). TETAP sesudah
+// dibuat: kunci teks tanpa FK di OPC/Klaim/no_claim_template -> trigger trg_principal_code_tetap (docs/handover/DDL_S7_0.sql saja)
+// menolak UPDATE yang mengubahnya. Kode salah = principal baru + nonaktifkan yang lama.
 export const principal = pgTable("principal", {
     id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
     code: text("code").notNull(),
@@ -2064,22 +2066,32 @@ export const principal = pgTable("principal", {
     nameIsi: check("principal_name_isi", sql`btrim(${t.name}) <> ''`),
 }));
 
-// variant_key '' = tanpa varian — bentuk sama dengan no_claim_template.variant_key (HEINZ: HZ/BS).
+// variant_key '' = tanpa varian — bentuk sama dengan no_claim_template.variant_key (HEINZ: HZ/BS). name = nama tampilan
+// opsional (mis. "KINO NON FOOD"); is_active = varian dinonaktifkan tanpa dihapus (alias/templat tetap merujuk).
+// Aturan kanonik (lintas baris -> tidak bisa CHECK; DITEGAKKAN S7-2): principal UTUH dirujuk alias dengan variant_key NULL
+// (bukan ''); varian '' hanya "varian dasar" pada principal yang JUGA punya varian lain (KINO '' vs NON_FOOD).
 export const principalVariant = pgTable("principal_variant", {
     principalId: text("principal_id").notNull(),
     variantKey: text("variant_key").notNull().default(""),
     createdBy: text("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    name: text("name"),
+    isActive: boolean("is_active").notNull().default(true),
 }, (t) => ({
     pk: primaryKey({ name: "principal_variant_pkey", columns: [t.principalId, t.variantKey] }),
     principalFk: foreignKey({ name: "principal_variant_principal_fk", columns: [t.principalId], foreignColumns: [principal.id] }).onDelete("restrict"),
     keyFormat: check("principal_variant_key_format", sql`${t.variantKey} ~ '^[A-Z0-9_-]{0,20}$'`),
 }));
 
-// alias_norm UNIK global (satu ejaan -> satu principal[/varian]). NILAINYA WAJIB hasil normalizer baku S7-2 (lib/principal);
-// jangan menulis alias_norm dari normalizer lain (TS master-barang / Python principle_matcher berbeda hasil). variant_key NULL
-// = alias menunjuk principal utuh; terisi = harus varian milik principal yang sama (FK komposit; NULL tidak diperiksa).
+// alias_norm unik PER KELOMPOK (satu ejaan -> satu principal[/varian]): kode Master Barang 2 karakter (jenis kode_master_barang)
+// terpisah dari nama/label/kode OPC (jenis lain) — "MI" boleh jadi nama satu principal dan kode Master Barang principal lain.
+// Tabrakan nama yang sah tetap DITOLAK (masuk laporan ambiguous S7-2): JANGAN PERNAH ON CONFLICT DO UPDATE (alias diam-diam
+// pindah principal). NILAINYA WAJIB hasil normalizer baku S7-2 (lib/principal); jangan menulis alias_norm dari normalizer lain
+// (TS master-barang / Python principle_matcher berbeda hasil). variant_key NULL = alias menunjuk principal utuh; terisi = harus
+// varian milik principal yang sama (FK komposit; NULL tidak diperiksa). CHECK bentuk normal alias_norm = invarian normalizer S7-2:
+// HURUF BESAR, tanpa spasi tepi, spasi tunggal (tanda baca bebas). Huruf non-ASCII: upper() Postgres bisa beda dari JS -> ditolak, aman.
 export const principalAlias = pgTable("principal_alias", {
+    id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
     aliasNorm: text("alias_norm").notNull(),
     principalId: text("principal_id").notNull(),
     variantKey: text("variant_key"),
@@ -2089,12 +2101,13 @@ export const principalAlias = pgTable("principal_alias", {
     createdBy: text("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
-    pk: primaryKey({ name: "principal_alias_pkey", columns: [t.aliasNorm] }),
+    kodeMbUq: uniqueIndex("uq_principal_alias_kode_mb").on(t.aliasNorm).where(sql`${t.jenis} = 'kode_master_barang'`),
+    namaUq: uniqueIndex("uq_principal_alias_nama").on(t.aliasNorm).where(sql`${t.jenis} <> 'kode_master_barang'`),
     principalFk: foreignKey({ name: "principal_alias_principal_fk", columns: [t.principalId], foreignColumns: [principal.id] }).onDelete("restrict"),
     variantFk: foreignKey({ name: "principal_alias_variant_fk", columns: [t.principalId, t.variantKey],
         foreignColumns: [principalVariant.principalId, principalVariant.variantKey] }).onDelete("restrict"),
     principalIdx: index("idx_principal_alias_principal").on(t.principalId, t.variantKey),
-    normIsi: check("principal_alias_norm_isi", sql`btrim(${t.aliasNorm}) <> ''`),
+    normBentuk: check("principal_alias_norm_bentuk", sql`${t.aliasNorm} = upper(${t.aliasNorm}) AND ${t.aliasNorm} ~ '^[^[:space:]]+( [^[:space:]]+)*$'`),
     asliIsi: check("principal_alias_asli_isi", sql`btrim(${t.aliasAsli}) <> ''`),
     sumberIsi: check("principal_alias_sumber_isi", sql`btrim(${t.sumber}) <> ''`),
     jenisCek: check("principal_alias_jenis", sql`${t.jenis} IN ('nama', 'kode_master_barang', 'label_mapping', 'nama_bank', 'nama_summary', 'nama_surat')`),
