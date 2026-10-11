@@ -28,7 +28,9 @@ async function muat() {
     const bootstrap = await import("../app/api/admin/bootstrap/route.ts");
     const bintang = await import("../app/api/admin/users/[id]/primary-group/route.ts");
     const daftar = await import("../app/api/admin/users/permissions/route.ts");
-    return { db, pool, auth, adminAktif, grup, grupId, anggota, userGrup, users, sandi, status, bootstrap, bintang, daftar };
+    const riwayatUser = await import("../app/api/admin/users/[id]/history/route.ts");
+    const riwayatGrup = await import("../app/api/admin/groups/[id]/history/route.ts");
+    return { db, pool, auth, adminAktif, grup, grupId, anggota, userGrup, users, sandi, status, bootstrap, bintang, daftar, riwayatUser, riwayatGrup };
 }
 
 let m: Modul;
@@ -577,5 +579,50 @@ test("BL-63 daftar user: semua grup + utama efektif + field lama (groupId) untuk
         const gv = cari(v).groups as Array<{ id: string }>;
         assert.deepEqual([cari(v).primaryGroupId, cari(v).groupId], [null, gv[0].id], "tanpa bintang: groupId lama = grup pertama (urut nama)");
         assert.equal(gv.length, 2);
+    });
+});
+
+// ---------------- Riwayat: GET per user / per grup, keyset (permission_audit_log) ----------------
+
+test("Riwayat per user & per grup: users.view cukup; terbaru dulu; keyset tidak melewatkan/menggandakan baris ber-mikrodetik; riwayat grup tetap sesudah grup dihapus", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const ga = await w.grup("kelola", ["users.manage"]);
+        const gbaca = await w.grup("baca", ["users.view"]);
+        const a = await w.user("a"), pembaca = await w.user("pembaca"), u = await w.user("u");
+        await w.masuk(a, ga); await w.masuk(pembaca, gbaca);
+        const tim = await w.grup("tim", ["dashboard.view"]), lain = await w.grup("lain", ["dashboard.view"]);
+        await w.masuk(u, tim);
+        assert.equal((await panggil(m.anggota.POST, a, "POST", lain, { userId: u })).status, 200);
+        assert.equal((await panggil(m.bintang.PUT, a, "PUT", u, { groupId: lain })).status, 200);
+        assert.equal((await panggil(m.anggota.DELETE, a, "DELETE", tim, { userId: u })).status, 200);
+        // Tiga baris SQL dengan created_at sama sampai milidetik, beda mikrodetik (batas halaman yang rawan).
+        for (const [i, us] of [[1, "100"], [2, "400"], [3, "700"]] as const) {
+            await m.pool.query(`INSERT INTO permission_audit_log (id, actor_user_id, action, target_user_id, detail, created_at)
+                VALUES ($1, $2, 'uji.mikro', $3, '{}', timestamp '2020-01-01 01:02:03.123${us}')`, [`${w.p}-mikro-${i}`, a, u]);
+        }
+        const halaman = async (target: "users" | "groups", id: string, qs: string) => {
+            const h = target === "users" ? m.riwayatUser.GET : m.riwayatGrup.GET;
+            const res = await h(new NextRequest(`http://localhost/api/admin/${target}/${id}/history${qs}`, { headers: { host: "app.test", "x-uji-aktor": pembaca } }), { params: Promise.resolve({ id }) });
+            assert.equal(res.status, 200, await res.clone().text());
+            return res.json() as Promise<{ items: Array<{ id: string; action: string; targetUserName: string | null; targetGroupName: string | null; createdAt: string }>; nextCursor: string | null }>;
+        };
+        const semua: string[] = [];
+        let cursor: string | null = null;
+        do {
+            const pg: Awaited<ReturnType<typeof halaman>> = await halaman("users", u, `?limit=2${cursor ? `&cursor=${cursor}` : ""}`);
+            semua.push(...pg.items.map((x) => x.action));
+            cursor = pg.nextCursor;
+        } while (cursor);
+        assert.deepEqual(semua, ["user_group.remove", "user_group.star", "user_group.assign", "uji.mikro", "uji.mikro", "uji.mikro"], "terbaru dulu, tiap baris tepat sekali");
+        const satu = await halaman("users", u, "?limit=50");
+        assert.equal(satu.nextCursor, null);
+        assert.equal(satu.items[0].targetUserName, "Uji u");
+        assert.deepEqual(satu.items.filter((x) => x.action === "uji.mikro").map((x) => x.id), [`${w.p}-mikro-3`, `${w.p}-mikro-2`, `${w.p}-mikro-1`]);
+
+        // Grup: hapus grup custom tanpa anggota tunggal -> riwayat grup tetap terbaca (nama grup null sesudah dihapus).
+        assert.equal((await panggil(m.grupId.DELETE, a, "DELETE", tim)).status, 200);
+        const g = await halaman("groups", tim, "");
+        assert.deepEqual(g.items.map((x) => x.action), ["group.delete", "user_group.remove"]);
+        assert.equal(g.items[0].targetGroupName, null);
     });
 });

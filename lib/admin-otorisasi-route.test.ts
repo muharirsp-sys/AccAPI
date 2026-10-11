@@ -16,6 +16,9 @@ import * as buatUser from "../app/api/admin/users/route.ts";
 import * as sandi from "../app/api/admin/users/[id]/password/route.ts";
 import * as status from "../app/api/admin/users/[id]/status/route.ts";
 import * as bintang from "../app/api/admin/users/[id]/primary-group/route.ts";
+import * as riwayatUser from "../app/api/admin/users/[id]/history/route.ts";
+import * as riwayatGrup from "../app/api/admin/groups/[id]/history/route.ts";
+import { bacaKursor, kodeKursor } from "./rbac/riwayat.ts";
 
 type Handler = (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => Promise<Response>;
 
@@ -170,4 +173,19 @@ test("23505 dikenal -> 409 berkode (BINTANG_BENTROK / NAMA_GRUP_TERPAKAI / EMAIL
         assert.equal((await r.json() as { code: string }).code, "GAGAL_SIMPAN");
     } finally { console.error = asli; }
     assert.ok(!log.join(" ").includes("rahasia"), log.join(" "));
+});
+
+test("riwayat: 403 tanpa users.manage/users.view; 400 limit/cursor rusak SEBELUM DB; kursor bolak-balik presisi mikrodetik", async () => {
+    const get = (qs: string) => new NextRequest(`http://localhost/api/admin/users/u1/history${qs}`);
+    for (const h of [riwayatUser.GET, riwayatGrup.GET]) {
+        assert.equal((await sebagai(["dashboard.view", "users.create_user"], () => h(get(""), ctx))).status, 403);
+        for (const qs of ["?limit=0", "?limit=201", "?limit=abc", "?cursor=rusak", `?cursor=${Buffer.from("2026-10-11 01:02:03|x").toString("base64url")}`]) {
+            const r = await sebagai(["users.view"], () => h(get(qs), ctx));
+            assert.equal(r.status, 400, qs);
+            assert.equal((await r.json() as { code: string }).code, "INPUT_TIDAK_VALID");
+        }
+    }
+    const k = kodeKursor("2026-10-11T01:02:03.123456", "id|x");
+    assert.equal(bacaKursor(k), null, "id dengan '|' ditolak (kursor ambigu)");
+    assert.deepEqual(bacaKursor(kodeKursor("2026-10-11T01:02:03.123456", "abc")), { ts: "2026-10-11T01:02:03.123456", id: "abc" });
 });
