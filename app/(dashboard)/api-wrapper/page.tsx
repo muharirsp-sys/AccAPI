@@ -2,13 +2,13 @@
  * Tujuan: UI API Wrapper Accurate termasuk parser Excel bulk yang membentuk payload transaksi manual/bulk-save.
  * Caller: App Router dashboard `app/(dashboard)/api-wrapper/page.tsx` dan interaksi user di halaman API Wrapper.
  * Dependensi: `accurateRoutes`, `accurateFetch`, parser workbook per-route, Accurate OAuth/session dari browser, parser `xlsx`, toast `sonner`, route idempotency Next, `DatePickerField`, `Dialog` native bersama, `lib/pelunasan/*` (parser Format Pelunasan, retur, cari faktur, alokasi, payload, pratinjau duplikat — dipindah dari halaman ini di S6e-1; kirim sales-receipt `lib/pelunasan/kirim.ts`, S6e-2).
- * Main Functions: `Home`, `handleLoginAccurate`, `fetchDatabases`, `handleOpenDatabase`, `handleDownloadTemplate`, `handleExecute`.
+ * Main Functions: `Home`, `terapkanSesi` (kartu `SesiAccurate` bersama /sesi-accurate: masuk ber-`state`, pilih database, keluar — S7-sesi), `handleDownloadTemplate`, `handleExecute`.
  * Side Effects: HTTP call ke Accurate route handler/proxy, baca file Excel lokal, dispatch parser workbook khusus per route, deteksi format pelunasan walau `Total.Trx` kosong, normalisasi lookup invoice/retur termasuk variasi SRB tanpa spasi, susun payload bulk-save, keluarkan laporan manual follow-up untuk retur/pot.lain yang gagal diproses, preview/lock idempotency SQLite, cek histori sales receipt Accurate, konfirmasi hasil error ke histori Accurate, tampilkan review duplicate, logging debug ke response UI.
  */
 "use client";
 
 import { useState, useEffect } from "react";
-import { Key, Upload, FileJson, Play, ServerCrash, ExternalLink, Settings2, Database, FileSpreadsheet, CheckCircle2, Loader2, LogOut, CalendarIcon } from "lucide-react";
+import { Upload, FileJson, Play, ServerCrash, ExternalLink, Settings2, Database, FileSpreadsheet, CheckCircle2, Loader2, CalendarIcon } from "lucide-react";
 import { toast } from "sonner";
 import { accurateRoutes } from "@/config/accurateRoutes";
 import { accurateFetch, classifyWriteError } from "@/lib/apiFetcher";
@@ -22,6 +22,8 @@ import { deteksiFormatPelunasan, parsePelunasan } from "@/lib/pelunasan/parser";
 import { normalizePayloadMoney, tanggalKemarin } from "@/lib/pelunasan/payload";
 import { pratinjauDuplikat, pratinjauRiwayatAccurate, type DuplicateConflictReason, type DuplicateReviewEntry } from "@/lib/pelunasan/pratinjau-ganda";
 import { workbookRouteParsers } from "./parsers";
+import { FioriScope } from "@/components/fiori/Scope";
+import { SesiAccurate, type StatusSesi } from "@/components/accurate/SesiAccurate";
 
 type RouteKey = keyof typeof accurateRoutes;
 
@@ -40,26 +42,16 @@ type DuplicateReviewState = {
   selections: Record<string, boolean>;
 };
 
-// Pastikan mengarah ke client ID yang sama di .env
-// ponytail: fallback client id hardcoded dihapus — kalau env belum di-set, Accurate menolak
-// dengan "Client ID tidak tepat" dan penyebabnya tidak kelihatan. Lebih baik gagal bersuara.
-const NEXT_PUBLIC_CLIENT_ID = process.env.NEXT_PUBLIC_ACCURATE_CLIENT_ID || "";
-const REDIRECT_URI = process.env.NEXT_PUBLIC_ACCURATE_REDIRECT_URI || "http://localhost:3000/api/auth/callback";
-
 export default function Home() {
 
-  const [isAccurateConnected, setIsAccurateConnected] = useState(false);
-  const [dbHost, setDbHost] = useState("");
-
+  // Sesi Accurate dibaca kartu bersama `SesiAccurate` (S7-sesi); halaman ini hanya menyimpan hasilnya untuk mengunci eksekusi.
   const [isKeySaved, setIsKeySaved] = useState(false);
   const [isMounted, setIsMounted] = useState(false); // To prevent hydration mismatch
+  // Kabar callback OAuth (`?accurate=…&alasan=<kode>`) — ditampilkan kartu sebagai MessageStrip.
+  const [kabarUrl, setKabarUrl] = useState<{ accurate: string | null; alasan: string | null }>({ accurate: null, alasan: null });
 
-  // Database Selection State
-  const [databases, setDatabases] = useState<Array<{ id: string | number; alias: string }>>([]);
-  const [selectedDb, setSelectedDb] = useState("");
   // S6e-2 butir 2: database yang terbuka saat halaman dimuat/dibuka — dikirim sebagai expectedDatabaseId (sesi berganti di tab lain = 409).
   const [openDbId, setOpenDbId] = useState("");
-  const [isFetchingDbs, setIsFetchingDbs] = useState(false);
 
   const [selectedRoute, setSelectedRoute] = useState<RouteKey>("salesInvoice");
   const [inputMode, setInputMode] = useState<"manual" | "excel">("manual");
@@ -87,104 +79,15 @@ export default function Home() {
     setIsMounted(true); // Ensure client-side only rendering for heavy interactive parts
 
     const searchParams = new URLSearchParams(window.location.search);
-    if (searchParams.get("accurate") === "connected") {
-      toast.success("Login Accurate Berhasil! Silakan pilih database.");
-      window.history.replaceState(null, "", window.location.pathname);
-    }
+    setKabarUrl({ accurate: searchParams.get("accurate"), alasan: searchParams.get("alasan") });
 
-    loadAccurateSession();
     setPayloadStr(JSON.stringify(accurateRoutes[selectedRoute].samplePayload, null, 2));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleLoginAccurate = () => {
-    if (!NEXT_PUBLIC_CLIENT_ID) {
-      toast.error("NEXT_PUBLIC_ACCURATE_CLIENT_ID belum di-set. Isi di .env.local lalu restart server.");
-      return;
-    }
-    const params = new URLSearchParams({
-      client_id: NEXT_PUBLIC_CLIENT_ID,
-      response_type: "code",
-      redirect_uri: REDIRECT_URI,
-      scope: "auto_number_save auto_number_view branch_save branch_view currency_save currency_view customer_save customer_view customer_category_save customer_category_view customer_claim_save customer_claim_view delivery_order_save delivery_order_view department_save department_view employee_view employee_save finished_good_slip_save finished_good_slip_view item_save item_view item_adjustment_save item_adjustment_view item_category_save item_category_view item_transfer_save item_transfer_view job_order_save job_order_view material_adjustment_save material_adjustment_view payment_term_save payment_term_view project_save project_view purchase_invoice_save purchase_invoice_view purchase_order_save purchase_order_view purchase_payment_save purchase_payment_view purchase_requisition_save purchase_requisition_view purchase_return_save purchase_return_view receive_item_save receive_item_view sales_invoice_save sales_invoice_view sales_order_save sales_order_view sales_quotation_save sales_quotation_view sales_receipt_save sales_receipt_view sales_return_save sales_return_view stock_opname_order_save stock_opname_order_view stock_opname_result_save stock_opname_result_view tax_save tax_view vendor_save vendor_view vendor_category_save vendor_category_view vendor_claim_save vendor_claim_view vendor_price_save vendor_price_view warehouse_view warehouse_save bank_statement_view bank_statement_save",
-    });
-    window.location.href = `https://account.accurate.id/oauth/authorize?${params.toString()}`;
-  };
-
-  const loadAccurateSession = async () => {
-    try {
-      const res = await fetch("/api/auth/accurate-session");
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || "Gagal memuat sesi Accurate.");
-
-      setIsAccurateConnected(Boolean(data.connected));
-      setIsKeySaved(Boolean(data.databaseConnected));
-      setDbHost(data.sessionHost || "");
-      setOpenDbId(data.databaseId ? String(data.databaseId) : "");
-
-      if (data.connected && !data.databaseConnected) {
-        fetchDatabases();
-      }
-    } catch (e: unknown) {
-      setIsAccurateConnected(false);
-      setIsKeySaved(false);
-      setDbHost("");
-      toast.error(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await fetch("/api/auth/accurate-session", { method: "DELETE" });
-    } catch {
-      // UI state is cleared even if server session has already expired.
-    }
-    setIsAccurateConnected(false);
-    setDbHost("");
-    setIsKeySaved(false);
-    setOpenDbId("");
-    setDatabases([]);
-    toast.info("Anda telah log out dari sesi aplikasi.");
-  };
-
-  const fetchDatabases = async () => {
-    setIsFetchingDbs(true);
-    try {
-      const res = await fetch("/api/auth/db-list");
-      const data = await res.json();
-      if (data.error || !data.d) throw new Error(data.error || "Gagal mengambil database.");
-      setDatabases(data.d);
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setIsFetchingDbs(false);
-    }
-  };
-
-  const handleOpenDatabase = async () => {
-    if (!selectedDb) {
-      toast.error("Pilih database terlebih dahulu");
-      return;
-    }
-    const tId = toast.loading("Membuka database...");
-    try {
-      const dbMeta = databases.find((db) => String(db.id) === String(selectedDb));
-      const res = await fetch("/api/auth/open-db", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: selectedDb, alias: dbMeta?.alias || null }),
-      });
-      const data = await res.json();
-      if (data.error || !data.host || !data.session) throw new Error(data.error || "Gagal membuka database.");
-
-      setDbHost(data.host);
-      setOpenDbId(String(selectedDb));
-      setIsKeySaved(true);
-
-      toast.success("Database berhasil terhubung!", { id: tId });
-    } catch (e: any) {
-      toast.error(e.message, { id: tId });
-    }
+  const terapkanSesi = (sesi: StatusSesi | null) => {
+    setIsKeySaved(Boolean(sesi?.databaseConnected));
+    setOpenDbId(sesi?.databaseId ?? "");
   };
 
   const handleChangeRoute = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -1120,11 +1023,6 @@ export default function Home() {
             </h1>
             <p className="text-sm text-slate-400 mt-1">SaaS & Internal IT Execution Dashboard</p>
           </div>
-          {isKeySaved && (
-            <button onClick={handleLogout} className="text-sm font-medium text-red-400 hover:text-red-300 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 px-4 py-2 rounded-xl flex items-center gap-2 transition-all backdrop-blur-md shadow-[0_0_15px_rgba(239,68,68,0.1)]">
-              <LogOut className="w-4 h-4" /> Disconnect
-            </button>
-          )}
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -1132,65 +1030,10 @@ export default function Home() {
           {/* Left Column - Configuration */}
           <div className="lg:col-span-4 space-y-6">
 
-            {/* Authenticated State Card */}
-            <div className="bg-[#1e1f29]/40 backdrop-blur-xl rounded-2xl p-6 shadow-2xl border border-white/10 relative overflow-hidden text-slate-300">
-              <div className={`absolute top-0 left-0 w-1 h-full rounded-l-2xl shadow-[0_0_15px_currentColor] ${isKeySaved ? "bg-emerald-500 text-emerald-500" : "bg-indigo-500 text-indigo-500"}`}></div>
-              <h2 className="text-lg font-semibold flex items-center gap-2 mb-4 text-white">
-                <Key className={`w-5 h-5 ${isKeySaved ? "text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.8)]" : "text-indigo-400 drop-shadow-[0_0_8px_rgba(99,102,241,0.8)]"}`} />
-                {isKeySaved ? "Sesi Terhubung" : "Autentikasi Aplikasi"}
-              </h2>
-
-              {!isAccurateConnected ? (
-                <div className="space-y-4 text-center">
-                  <p className="text-sm text-white/50 mb-2">Aplikasi ini membutuhkan akses Secure OAuth ke Accurate Online Anda.</p>
-                  <button
-                    onClick={handleLoginAccurate}
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)] hover:shadow-[0_0_25px_rgba(79,70,229,0.5)] flex items-center justify-center gap-2"
-                  >
-                    Login dengan Accurate
-                  </button>
-                </div>
-              ) : !isKeySaved ? (
-                <div className="space-y-4">
-                  <p className="text-sm text-white/60">Pilih Database yang ingin dikelola:</p>
-                  {isFetchingDbs ? (
-                    <div className="flex items-center gap-2 text-indigo-400 text-sm font-medium">
-                      <Loader2 className="w-4 h-4 animate-spin drop-shadow-[0_0_5px_currentColor]" /> Mengambil daftar database...
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-3">
-                      <select
-                        value={selectedDb}
-                        onChange={(e) => setSelectedDb(e.target.value)}
-                        className="w-full px-4 py-3 text-sm rounded-xl border border-white/10 bg-black/40 text-white focus:ring-2 focus:ring-indigo-500/50 appearance-none bg-no-repeat"
-                        style={{ backgroundImage: `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%23ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>')`, backgroundPosition: 'right 16px center' }}
-                      >
-                        <option value="" className="bg-[#1e1f29] text-white">-- Pilih Database --</option>
-                        {databases.map((db, i) => (
-                          <option key={i} value={db.id} className="bg-[#1e1f29] text-white">{db.alias}</option>
-                        ))}
-                      </select>
-                      <button
-                        onClick={handleOpenDatabase}
-                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(5,150,105,0.3)] hover:shadow-[0_0_25px_rgba(5,150,105,0.5)]"
-                      >
-                        Buka Database
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-3 mt-2">
-                  <div className="bg-emerald-500/20 text-emerald-300 text-xs font-semibold px-4 py-3 rounded-xl border border-emerald-500/30 flex items-center gap-2 shadow-[0_0_15px_rgba(52,211,153,0.1)]">
-                    <CheckCircle2 className="w-4 h-4 drop-shadow-[0_0_5px_currentColor]" /> Ready to serve
-                  </div>
-                  <div className="text-xs break-all text-white/50 bg-black/40 p-3 rounded-xl font-mono border border-white/5">
-                    <span className="font-semibold text-white/70 block mb-1">Host Endpoint:</span>
-                    {dbHost}
-                  </div>
-                </div>
-              )}
-            </div>
+            {/* Kartu Sesi Accurate — komponen yang sama dengan /sesi-accurate (masuk, pilih database, keluar). */}
+            <FioriScope>
+              <SesiAccurate returnTo="/api-wrapper" kabar={kabarUrl} onStatus={terapkanSesi} />
+            </FioriScope>
 
             {/* Route Selector Card */}
             <div className={`bg-[#1e1f29]/40 backdrop-blur-xl rounded-2xl p-6 shadow-2xl border border-white/10 transition-opacity ${!isKeySaved ? "opacity-40 pointer-events-none grayscale blur-[1px]" : ""}`}>

@@ -2,7 +2,7 @@
  * Tujuan: Definisi role, permission module/action, dan helper akses halaman untuk RBAC internal aktif.
  * Caller: Better Auth admin plugin, dashboard layout/sidebar, admin user management, dan API admin permission.
  * Dependensi: better-auth default access controller.
- * Main Functions: normalizeRole, normalizePermissionMap, permissionMapForUser, canAccess, canAccessPathWithKeys.
+ * Main Functions: normalizeRole, normalizePermissionMap, permissionMapForUser, canAccess, canAccessPathWithKeys (kunci tunggal atau `anyOf`).
  * Side Effects: Tidak ada; hanya normalisasi data permission in-memory.
  */
 import { defaultAc } from "better-auth/plugins/admin/access";
@@ -365,7 +365,14 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
     ),
 };
 
-export const pagePermissions: Array<{ prefix: string; module: AppModule; action: PermissionAction }> = [
+/**
+ * Halaman Sesi Accurate (owner D-01 Q2, 11 Okt): masuk Accurate + pilih database tanpa Konsol. Dibuka pemegang SALAH SATU kunci ini;
+ * route sesi (/api/auth/accurate-session, db-list, open-db, accurate-login, callback) cukup sesi app — tidak ada route tulis yang dibuka.
+ */
+export const SESI_ACCURATE_KEYS = ["api_wrapper.view", "order.edit", "pelunasan.kirim", "finance.update", "finance.resolve_unknown"] as const;
+
+/** `anyOf` = kunci alternatif: halaman terbuka bila `module.action` ATAU salah satu kunci ini dipegang. */
+export const pagePermissions: Array<{ prefix: string; module: AppModule; action: PermissionAction; anyOf?: readonly string[] }> = [
     { prefix: "/admin/groups", module: "users", action: "manage" },
     { prefix: "/admin/users", module: "users", action: "view" },
     { prefix: "/payments/sppd", module: "sppd", action: "view" },
@@ -389,6 +396,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/normalisasi-diskon", module: "summary", action: "view" },
     { prefix: "/summary", module: "summary", action: "view" },
     { prefix: "/api-wrapper", module: "api_wrapper", action: "view" },
+    { prefix: "/sesi-accurate", module: "api_wrapper", action: "view", anyOf: SESI_ACCURATE_KEYS },
     { prefix: "/off-program-control", module: "off_program_control", action: "view" },
     { prefix: "/reconciliation", module: "reconciliation", action: "view" },
     { prefix: "/claim-workflow", module: "claim_workflow", action: "view" },
@@ -487,5 +495,5 @@ export function getPagePermission(pathname: string) {
 export function canAccessPathWithKeys(pathname: string, keys: ReadonlySet<string> | readonly string[]): boolean {
     const permission = getPagePermission(pathname);
     const set = keys instanceof Set ? keys : new Set(keys);
-    return set.has(`${permission.module}.${permission.action}`);
+    return set.has(`${permission.module}.${permission.action}`) || Boolean(permission.anyOf?.some((key) => set.has(key)));
 }
