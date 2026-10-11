@@ -603,6 +603,31 @@ test("Kunci usang (ada di DB, tak ada di registry): tidak tampil tetapi diumumka
     expect((log.tulis[0].body?.permissions as string[]).sort()).toEqual(["finance.approve", "finance.view", "payments.delete", "payments.view"]);
 });
 
+test("Draf izin: tautan dalam aplikasi (header, menu samping) tidak membuang draf diam-diam — dialog Buang perubahan; tautan hash tidak ditahan", async ({ page }) => {
+    await pasang(page);
+    await page.goto("/admin/groups", NAV);
+    await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bFinance\b/ }).click();
+    await page.getByRole("checkbox", { name: "Payments · Hapus" }).check();
+    const dlg = page.getByRole("dialog", { name: "Buang perubahan pada grup Finance?" });
+    await page.getByRole("link", { name: "Anggota", exact: true }).click(); // AnchorBar (#g-anggota) saat ADA draf: halaman sama, tidak ditahan
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page).toHaveURL(/#g-anggota$/);
+
+    await page.locator("main").getByRole("link", { name: "User", exact: true }).click(); // tautan header halaman
+    await expect(dlg).toBeVisible();
+    await expect(page).toHaveURL(/\/admin\/groups(#g-anggota)?$/);
+    await expect(dlg).toContainText("/admin/users");
+    await dlg.getByRole("button", { name: "Batal", exact: true }).click();
+    await expect(page.getByText("+1 −0 belum disimpan")).toBeVisible(); // draf utuh
+
+    await page.getByRole("navigation", { name: "Menu ruang kerja" }).getByRole("link", { name: "User & RBAC" }).click(); // menu samping
+    await expect(dlg).toBeVisible();
+    await expect(page).toHaveURL(/\/admin\/groups(#g-anggota)?$/);
+    await dlg.getByRole("button", { name: "Buang perubahan" }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect(page.getByRole("heading", { level: 1, name: "User" })).toBeVisible();
+});
+
 for (const [lebar, tinggi] of [[390, 844], [1280, 800]] as const) {
     test(`Footer Akses Group keadaan Draf ${lebar} px: tombol utuh, tak bertumpuk, tombol final di kanan bawah`, async ({ page }) => {
         await page.setViewportSize({ width: lebar, height: tinggi });

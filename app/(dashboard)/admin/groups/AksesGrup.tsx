@@ -13,7 +13,7 @@
  */
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, Save, Trash2, UserMinus, UserPlus } from "lucide-react";
@@ -44,6 +44,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
     const [draf, setDraf] = useState<Draf | null>(null);
     const [dialog, setDialog] = useState<Dialog | null>(null);
     const [pindahKe, setPindahKe] = useState<string | null | undefined>(undefined);
+    const [tujuan, setTujuan] = useState<string | null>(null); // tautan keluar halaman yang sedang ditahan (draf belum disimpan)
     const [pesan, setPesan] = useState<{ tone: "pos" | "warn" | "neg"; teks: string } | null>(null);
     const [cari, setCari] = useState("");
     const [versi, setVersi] = useState(0);
@@ -64,6 +65,26 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
     const izinBerubah = sel.ditambah.length + sel.dicabut.length > 0;
     const berubah = izinBerubah || infoBerubah;
     useUnsavedGuard(berubah);
+    // Navigasi klien (Link, menu samping, bilah bawah, pencarian menu) tidak memicu beforeunload dan kit belum punya penjaga navigasi:
+    // selama ada draf, klik tautan ke halaman lain ditahan di fase tangkap (tanpa mengubah SidebarLayout) dan ditanyakan lewat dialog.
+    // TERBUKA: tombol Kembali/Maju peramban dan navigasi terprogram tidak tertahan (butuh penjaga navigasi di kit).
+    useEffect(() => {
+        if (!berubah) return;
+        const tahan = (e: MouseEvent) => {
+            if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            const a = e.target instanceof Element ? e.target.closest("a[href]") : null;
+            if (!(a instanceof HTMLAnchorElement) || (a.target && a.target !== "_self") || a.hasAttribute("download")) return;
+            const url = new URL(a.href, window.location.href);
+            if (url.origin !== window.location.origin) return;
+            if (url.pathname === window.location.pathname && url.search === window.location.search) return; // tautan #hash di halaman ini
+            e.preventDefault();
+            e.stopPropagation();
+            setTujuan(url.pathname + url.search + url.hash);
+            setDialog("buang");
+        };
+        document.addEventListener("click", tahan, true);
+        return () => document.removeEventListener("click", tahan, true);
+    }, [berubah]);
     const adminPreset = Boolean(det?.group.isPreset && det.group.name === "Admin");
     const cabutKelola = sel.dicabut.includes("users.manage");
 
@@ -413,10 +434,20 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                 <FormField label="Deskripsi">{(a11y) => <input {...a11y} className="fi-input" value={baru.deskripsi} onChange={(e) => setBaru({ ...baru, deskripsi: e.target.value })} />}</FormField>
             </ConfirmDialog>
 
-            <ConfirmDialog open={dialog === "buang"} onClose={() => { setDialog(null); setPindahKe(undefined); }} tag="Perubahan" tone="negative"
+            <ConfirmDialog open={dialog === "buang"} onClose={() => { setDialog(null); setPindahKe(undefined); setTujuan(null); }} tag="Perubahan" tone="negative"
                 title={`Buang perubahan pada grup ${asli?.name ?? ""}?`} confirmLabel="Buang perubahan"
-                facts={[["Akibat", `${sel.ditambah.length + sel.dicabut.length} perubahan izin${infoBerubah ? " dan info grup" : ""} dikembalikan ke nilai tersimpan`]]}
-                onConfirm={() => { setDialog(null); if (pindahKe !== undefined) pindah(pindahKe); setPindahKe(undefined); }} />
+                facts={[
+                    ["Akibat", `${sel.ditambah.length + sel.dicabut.length} perubahan izin${infoBerubah ? " dan info grup" : ""} dikembalikan ke nilai tersimpan`],
+                    ...(tujuan ? [["Pindah ke", tujuan] as [string, string]] : []),
+                ]}
+                onConfirm={() => {
+                    const ke = tujuan;
+                    setDialog(null);
+                    setTujuan(null);
+                    if (ke) { router.push(ke); return; } // halaman ini dilepas bersama drafnya
+                    if (pindahKe !== undefined) pindah(pindahKe);
+                    setPindahKe(undefined);
+                }} />
 
             <DialogKeluarkan target={keluarTarget} aktorId={aktorId} kunci={kunciAnggota} onClose={() => setDialog(null)} jalankan={jalankan} />
         </div>
