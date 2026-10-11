@@ -17,7 +17,7 @@ export type LockEntry = {
     source?: string | null;
 };
 export type LockRow = LockEntry & { status: string; updatedAt?: Date | null; createdAt?: Date | null };
-export type BlockReason = "DUPLICATE_IN_UPLOAD" | "ALREADY_SUCCESS" | "STILL_PROCESSING" | "UNKNOWN_OUTCOME";
+export type BlockReason = "DUPLICATE_IN_UPLOAD" | "ALREADY_SUCCESS" | "STILL_PROCESSING" | "UNKNOWN_OUTCOME" | "ACCURATE_HISTORY";
 export type BlockedEntry = LockEntry & { status: string; reason: BlockReason };
 
 /** Satu override manusia yang BENAR-BENAR dipakai (D-18): butuh finance.override_duplicate + alasan, dicatat audit. */
@@ -37,7 +37,10 @@ function blockReasonFor(ex: LockRow, now: Date): BlockReason {
     return "UNKNOWN_OUTCOME"; // PROCESSING/SENDING basi, UNKNOWN, status asing
 }
 
-export function decideLock(entries: LockEntry[], existing: Map<string, LockRow>, now: Date, allowDuplicate: Set<string>, allowLocked: Set<string>) {
+/** `allowHistory` (S6e-2, owner #6): kunci MIRIP riwayat Accurate yang diizinkan Finance — satu override
+ * `ACCURATE_HISTORY` per KEMUNCULAN di `entries` (tiap baris paket yang ditahan proxy menghabiskan satu). */
+export function decideLock(entries: LockEntry[], existing: Map<string, LockRow>, now: Date, allowDuplicate: Set<string>, allowLocked: Set<string>,
+    allowHistory: Set<string> = new Set()) {
     const blocked: BlockedEntry[] = [];
     const toInsert: LockEntry[] = [];
     const toRetry: string[] = [];
@@ -58,6 +61,9 @@ export function decideLock(entries: LockEntry[], existing: Map<string, LockRow>,
     });
 
     for (const item of entries) {
+        if (allowHistory.has(item.key)) {
+            overrides.push({ key: item.key, blockReason: "ACCURATE_HISTORY", previousStatus: existing.get(item.key)?.status ?? null, action: "allow_duplicate" });
+        }
         if (seen.has(item.key)) {
             if (!allowDuplicate.has(item.key)) block(item, undefined, "IN_REQUEST_DUPLICATE", "DUPLICATE_IN_UPLOAD");
             else overrides.push({ key: item.key, blockReason: "DUPLICATE_IN_UPLOAD", previousStatus: existing.get(item.key)?.status ?? null, action: "allow_duplicate" });

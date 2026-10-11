@@ -12,6 +12,9 @@ import { idempotencyLog, idempotencyOverride } from '@/db/schema';
 import { and, eq, inArray, sql, TransactionRollbackError } from 'drizzle-orm';
 import { resolveRequestPermissions } from '@/lib/rbac/resolve';
 import { decideLock, type LockEntry } from '@/lib/idempotency-lock';
+import { memuatPlaceholderAkun } from '@/lib/sales-receipt-upload';
+import { getAccurateSession } from '@/lib/accurate-session';
+import { kunciMenyentuh } from '@/lib/idempotency-resolve';
 
 export async function POST(req: Request) {
     try {
@@ -20,13 +23,33 @@ export async function POST(req: Request) {
         const actor = String(access.session!.user.id);
 
         const body = await req.json();
-        const { keys, preview, allowDuplicateKeys, allowLockedKeys, overrideReason } = body; // Array of objects { key, invoiceNo, customerNo, amount, transDate, paymentMethod, source }
+        const { keys, preview, allowDuplicateKeys, allowLockedKeys, allowHistoryKeys, overrideReason, expectedDatabaseId } = body; // Array of objects { key, invoiceNo, customerNo, amount, transDate, paymentMethod, source }
 
         if (!keys || !Array.isArray(keys) || keys.length === 0) {
             return NextResponse.json({ ok: true, blockedKeys: [], blockedEntries: [] });
         }
         if (keys.some((k: unknown) => typeof (k as LockEntry)?.key !== 'string' || !(k as LockEntry).key)) {
             return NextResponse.json({ error: 'Setiap key idempotency wajib berupa teks.' }, { status: 400 });
+        }
+
+        // S6e-2 (owner #5): mengunci = langkah pertama kirim pelunasan -> kunci `pelunasan.kirim`. Pratinjau baca-saja tetap terbuka.
+        if (!preview && !access.perms!.has('pelunasan.kirim')) {
+            return NextResponse.json({ error: 'Kirim pelunasan ke Accurate butuh izin pelunasan.kirim.', code: 'PERMISSION_REQUIRED' }, { status: 403 });
+        }
+
+        // S6e-2 butir 8: kunci = sidik jari payload; penanda akun belum dipilih = payload tak boleh dikirim -> jangan dikunci.
+        if (!preview && memuatPlaceholderAkun(keys.map((k: LockEntry) => k.key))) {
+            return NextResponse.json({ error: 'Akun potongan belum dipilih (ISI_KODE_AKUN_…) — pilih akun di langkah Akun. Tidak ada yang dikunci.', code: 'PLACEHOLDER_AKUN' }, { status: 400 });
+        }
+
+        // Tinjauan B3: kolom pelanggan/tanggal yang disimpan (target pencarian Selesaikan & identitas koreksi) harus sama dengan
+        // awalan sidik jari kunci (rumus buildSalesReceiptIdempotencyPayload memangkas keduanya).
+        // Putaran 2 B-N2: setiap faktur kolom invoiceNo (jangkar identitas kiriman koreksi) harus segmen sidik jari key — Selesaikan
+        // menentukan kandidat dari key saja.
+        const awalan = (k: LockEntry) => `PAY_${String(k.customerNo ?? '').trim()}_${String(k.transDate ?? '').trim()}_`;
+        const fakturDiKunci = (k: LockEntry) => String(k.invoiceNo ?? '').split(',').map((x) => x.trim()).filter(Boolean).every((no) => kunciMenyentuh(k.key, no));
+        if (!preview && keys.some((k: LockEntry) => !k.key.startsWith(awalan(k)) || !fakturDiKunci(k))) {
+            return NextResponse.json({ error: 'Kunci idempotency tidak sesuai pelanggan/tanggal barisnya — muat ulang lalu ulangi dari Tinjau. Tidak ada yang dikunci.', code: 'KEY_IDENTITY_MISMATCH' }, { status: 400 });
         }
 
         const entries = keys as LockEntry[];
@@ -39,6 +62,8 @@ export async function POST(req: Request) {
             now,
             new Set(Array.isArray(allowDuplicateKeys) ? allowDuplicateKeys : []),
             new Set(Array.isArray(allowLockedKeys) ? allowLockedKeys : []),
+            // S6e-2 (owner #6): izinkan baris MIRIP riwayat Accurate — gerbang Finance + alasan yang sama di bawah.
+            new Set(Array.isArray(allowHistoryKeys) ? allowHistoryKeys.filter((k: unknown) => typeof k === 'string') : []),
         );
 
         // D-18 (owner 2026-09-30): override blok duplikat = membuka kiriman ulang ke Accurate -> hanya
@@ -46,17 +71,37 @@ export async function POST(req: Request) {
         const reason = typeof overrideReason === 'string' ? overrideReason.trim() : '';
         if (!preview && overrides.length > 0) {
             if (!access.perms!.has('finance.override_duplicate')) {
-                return NextResponse.json({ error: 'Override blok duplikat hanya untuk kewenangan Finance (finance.override_duplicate).' }, { status: 403 });
+                return NextResponse.json({ error: 'Override blok duplikat hanya untuk kewenangan Finance (finance.override_duplicate).', code: 'OVERRIDE_PERMISSION_REQUIRED' }, { status: 403 });
             }
             if (reason.length < 15) {
-                return NextResponse.json({ error: 'Alasan override wajib (minimal 15 karakter).' }, { status: 400 });
+                return NextResponse.json({ error: 'Alasan override wajib (minimal 15 karakter).', code: 'OVERRIDE_REASON_REQUIRED' }, { status: 400 });
             }
         }
 
         // AM-050: pemilik lock. Hanya pemegang lockId ini (user yang sama) yang boleh menutup barisnya
         // lewat /complete dan mengirimnya lewat /api/proxy.
         const lockId = preview ? null : randomUUID();
-        const owner = { lockId, lockedBy: actor };
+        // S6e-2 butir 2: lock MENCATAT database Accurate sesi = database yang ditampilkan (expectedDatabaseId); proxy
+        // menolak kiriman ke database lain, Selesaikan mencari di database ini.
+        let databaseId: string | null = null;
+        if (!preview && blocked.length === 0) {
+            const expected = typeof expectedDatabaseId === 'string' || typeof expectedDatabaseId === 'number' ? String(expectedDatabaseId).trim() : '';
+            if (!expected) {
+                return NextResponse.json({ error: 'expectedDatabaseId wajib (database Accurate tujuan yang ditampilkan). Tidak ada yang dikunci.', code: 'DATABASE_REQUIRED' }, { status: 400 });
+            }
+            const sesi = await getAccurateSession(actor);
+            if (!sesi?.databaseId) {
+                return NextResponse.json({ error: 'Sesi Accurate belum lengkap. Login dan pilih database terlebih dahulu.', code: 'ACCURATE_SESSION_INCOMPLETE' }, { status: 400 });
+            }
+            if (String(sesi.databaseId) !== expected) {
+                return NextResponse.json({
+                    error: `Database Accurate sesi berubah (kini ${sesi.databaseAlias || sesi.databaseId}) — muat ulang lalu periksa tujuan. Tidak ada yang dikunci.`,
+                    code: 'database_changed', databaseId: sesi.databaseId, databaseAlias: sesi.databaseAlias ?? null,
+                }, { status: 409 });
+            }
+            databaseId = expected;
+        }
+        const owner = { lockId, lockedBy: actor, databaseId };
 
         // Semua-atau-tidak-sama-sekali (review AM-025 F2): halaman membatalkan kiriman bila ada yang
         // terblokir, jadi mengunci sebagian hanya meninggalkan PROCESSING yatim.
@@ -115,6 +160,8 @@ export async function POST(req: Request) {
                     blockReason: o.blockReason,
                     previousStatus: o.previousStatus,
                     action: o.action,
+                    // Tinjauan B2: lock yang hanya berisi override (resend_success) tetap terikat database.
+                    databaseId,
                 })));
             }
         }).catch((e: unknown) => {

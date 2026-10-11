@@ -55,6 +55,11 @@ assert.ok(moduleAllOn(orderOn, "order"), "status centang modul order harus aktif
 for (const role of ["manager", "staff", "viewer", "finance"] as const) {
     assert.ok(!rolePermissionPresets[role].order?.includes("resolve_unknown"), `preset ${role} memuat order.resolve_unknown`);
 }
+// S6e-2 (owner #5, 10 Okt): pelunasan.kirim terdaftar; preset non-admin TIDAK memuatnya (IT Support menambah ke grup, D-17).
+assert.ok(isValidPermissionKey("pelunasan.kirim"), "pelunasan.kirim wajib terdaftar");
+for (const role of ["manager", "staff", "viewer", "finance"] as const) {
+    assert.ok(!rolePermissionPresets[role].pelunasan?.includes("kirim"), `preset ${role} memuat pelunasan.kirim`);
+}
 assert.ok(isValidPermissionKey("reconciliation.view"));
 assert.ok(isValidPermissionKey("reconciliation.run"));
 assert.ok(isValidPermissionKey("reconciliation.manage"));

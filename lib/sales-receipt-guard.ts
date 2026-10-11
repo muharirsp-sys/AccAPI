@@ -9,7 +9,7 @@
  * Side Effects: satu transaksi — UPDATE idempotency_override.consumed_at (sekali pakai) + idempotency_log
  *   status SENDING; sesudah kirim UPDATE status SUCCESS/UNKNOWN (C11: server tidak menyimpulkan FAILED).
  */
-import { and, asc, eq, inArray, isNull, sql, TransactionRollbackError } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, sql, TransactionRollbackError } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { idempotencyLog, idempotencyOverride } from "@/db/schema";
 import { classifySalesReceiptReply, planSalesReceiptRows, type RowOutcome } from "@/lib/idempotency-lock";
@@ -38,6 +38,29 @@ const badRow = (r: unknown) => !isObj(r) || ![r.customerNo, r.transDate].every(s
 export type SalesReceiptWrite = { lockId: unknown; userId: string; payload: unknown; endpointPath: string; method: string };
 /** Lolos guard: `anchors[i]` = key idempotency_log yang hasilnya ditentukan baris payload ke-i. */
 export type SalesReceiptDispatch = { lockId: string; userId: string; anchors: string[][] };
+/** S6e-2 (owner #6): baris paket yang identik KASAR dengan riwayat Accurate (pelanggan + tanggal + {faktur: nominal}, tanpa
+ * potongan — orkestrator 11 Okt), atau riwayatnya tak terbaca, tanpa override Finance. */
+export type BarisDitahan = { index: number; key: string; reason: "ACCURATE_HISTORY" | "ACCURATE_HISTORY_UNREADABLE"; receiptNumbers: string[]; detail?: string };
+export type SalesReceiptHeld = { held: BarisDitahan[] };
+/** Hasil periksaRiwayatAccurate (lib/pelunasan/pratinjau-ganda.ts) untuk baris paket. */
+export type RiwayatPaket = { cocok: Map<string, string[]>; gagal: Map<string, string> };
+
+/**
+ * S6e-2 butir 2: database yang DICATAT lock (idempotency_log."databaseId") harus sama dengan database sesi saat kirim.
+ * null = cocok; teks = database lock yang berbeda ("tidak tercatat" untuk baris lama tanpa database = ditolak juga).
+ * Tinjauan B2: override lock (idempotency_override.database_id) ikut diperiksa — lock yang hanya berisi override
+ * `resend_success` tidak punya baris idempotency_log.
+ */
+export async function databaseLockBerbeda(db: NodePgDatabase, lockId: string, userId: string, databaseId: string): Promise<string | null> {
+    const [r] = await db.select({ d: idempotencyLog.databaseId }).from(idempotencyLog)
+        .where(and(eq(idempotencyLog.lockId, lockId), eq(idempotencyLog.lockedBy, userId), sql`${idempotencyLog.databaseId} IS DISTINCT FROM ${databaseId}`))
+        .limit(1);
+    if (r) return r.d ?? "tidak tercatat";
+    const [o] = await db.select({ d: idempotencyOverride.databaseId }).from(idempotencyOverride)
+        .where(and(eq(idempotencyOverride.lockId, lockId), eq(idempotencyOverride.actor, userId), sql`${idempotencyOverride.databaseId} IS DISTINCT FROM ${databaseId}`))
+        .limit(1);
+    return o ? (o.d ?? "tidak tercatat") : null;
+}
 
 /** Pemeriksaan murni (tanpa DB/sesi/jaringan). null = lanjut; teks = alasan penolakan (409). */
 export function checkSalesReceiptWrite(input: Omit<SalesReceiptWrite, "userId">): string | null {
@@ -73,8 +96,8 @@ export function checkSalesReceiptWrite(input: Omit<SalesReceiptWrite, "userId">)
 export async function authorizeSalesReceiptWrite(
     db: NodePgDatabase,
     input: SalesReceiptWrite,
-    opts: { dryRun?: boolean } = {},
-): Promise<string | SalesReceiptDispatch> {
+    opts: { dryRun?: boolean; riwayat?: RiwayatPaket } = {},
+): Promise<string | SalesReceiptDispatch | SalesReceiptHeld> {
     const bad = checkSalesReceiptWrite(input);
     if (bad) return bad;
     const lockId = input.lockId as string;
@@ -83,7 +106,7 @@ export async function authorizeSalesReceiptWrite(
     const rowKeys = [...new Set(rows.map((r) => buildSalesReceiptIdempotencyPayload(r).key))];
     const ownLock = and(eq(idempotencyLog.lockId, lockId), eq(idempotencyLog.lockedBy, userId));
 
-    let result: string | SalesReceiptDispatch = "Ada baris sales-receipt yang tidak terkunci oleh lock ini (atau izin kirim ulangnya sudah terpakai) — ulangi unggah dari API Wrapper.";
+    let result: string | SalesReceiptDispatch | SalesReceiptHeld = "Ada baris sales-receipt yang tidak terkunci oleh lock ini (atau izin kirim ulangnya sudah terpakai) — ulangi unggah dari API Wrapper.";
     await db.transaction(async (tx) => {
         const owned = await tx
             .select({ key: idempotencyLog.key, customerNo: idempotencyLog.customerNo, transDate: idempotencyLog.transDate, invoiceNo: idempotencyLog.invoiceNo })
@@ -103,12 +126,49 @@ export async function authorizeSalesReceiptWrite(
                     eq(idempotencyOverride.actor, userId),
                     isNull(idempotencyOverride.consumedAt),
                     inArray(idempotencyOverride.action, ["resend_success", "allow_duplicate"]),
+                    // Override riwayat Accurate hanya menutup penahanan riwayat (di bawah), bukan blok lock.
+                    ne(idempotencyOverride.blockReason, "ACCURATE_HISTORY"),
                 ))
                 .orderBy(asc(idempotencyOverride.createdAt))
                 .limit(1)
                 .for("update", { skipLocked: true });
             if (!o) tx.rollback();
             await tx.update(idempotencyOverride).set({ consumedAt: sql`now()` }).where(eq(idempotencyOverride.id, o.id));
+        }
+
+        // S6e-2 (owner #6): baris MIRIP riwayat Accurate (sidik jari identik) atau riwayatnya TIDAK TERBACA (fail-closed)
+        // butuh SATU override Finance `ACCURATE_HISTORY` per baris paket; tanpa itu seluruh paket ditahan (tidak ada yang
+        // ditandai/dihabiskan) dan baris-barisnya dilaporkan per indeks.
+        if (opts.riwayat) {
+            const held: BarisDitahan[] = [];
+            for (const [index, row] of rows.entries()) {
+                const key = buildSalesReceiptIdempotencyPayload(row).key;
+                // Kunci ada di `cocok` = identik kasar walau Accurate tak memberi nomor (ditahan juga).
+                const nomor = opts.riwayat.cocok.get(key);
+                const sebab = opts.riwayat.gagal.get(key);
+                if (nomor === undefined && sebab === undefined) continue;
+                const [o] = await tx.select({ id: idempotencyOverride.id })
+                    .from(idempotencyOverride)
+                    .where(and(
+                        eq(idempotencyOverride.lockId, lockId),
+                        eq(idempotencyOverride.key, key),
+                        eq(idempotencyOverride.actor, userId),
+                        isNull(idempotencyOverride.consumedAt),
+                        eq(idempotencyOverride.action, "allow_duplicate"),
+                        eq(idempotencyOverride.blockReason, "ACCURATE_HISTORY"),
+                    ))
+                    .orderBy(asc(idempotencyOverride.createdAt))
+                    .limit(1)
+                    .for("update", { skipLocked: true });
+                if (o) await tx.update(idempotencyOverride).set({ consumedAt: sql`now()` }).where(eq(idempotencyOverride.id, o.id));
+                else held.push(sebab === undefined
+                    ? { index, key, reason: "ACCURATE_HISTORY", receiptNumbers: nomor ?? [] }
+                    : { index, key, reason: "ACCURATE_HISTORY_UNREADABLE", receiptNumbers: [], detail: sebab });
+            }
+            if (held.length) {
+                result = { held };
+                tx.rollback();
+            }
         }
 
         // Tandai SEBELUM kirim: baris SENDING bukan lagi milik lock (tidak bisa dikirim ulang) dan tidak bisa
