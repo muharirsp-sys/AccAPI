@@ -9,7 +9,7 @@
  *   (d) kunci hari: tutup/kunci tercatat ATAU ≥ 20.00 WITA; dibuka kembali hanya oleh event buka beralasan.
  * Keputusan owner: scratch/fiori-intake/OWNER-ANSWERS-S7-2026-10-10.md (C8 + Kasir 11 Okt). Kontrak: docs/handover/KASIR-KONTRAK.md.
  * Caller: K1b (pembaca Accurate, cache kasir_pelunasan*), K2 (route & UI /kasir), K3 (Beranda).
- * Dependensi: lib/sales-code-merge (applyMergeMap), lib/insentif-payment-date (todayWita), lib/promo-ui (rupiah) — semuanya murni.
+ * Dependensi: lib/insentif-payment-date (todayWita), lib/promo-ui (rupiah) — keduanya murni.
  * Main Functions: keSen, senKeTeks, alokasiPelunasan, orangDariKode, orangDariSalesmanId, klop, bulatkanKeAtas100,
  *   rekonsiliasiHari, rencanaSetoranOrang, penghalangTutup, snapshotHari, batasKunci, statusHari, bolehDiubah, hariKerja.
  * Side Effects: tidak ada.
@@ -17,7 +17,6 @@
  * SEMUA nominal = SEN (bilangan bulat aman; Rp 1 = 100 sen) — tanpa galat floating. Nominal rusak = RangeError (gagal keras),
  * bukan 0 dan bukan dibulatkan.
  */
-import { applyMergeMap } from "../sales-code-merge.ts";
 import { todayWita } from "../insentif-payment-date.ts";
 import { rupiah } from "../promo-ui.ts";
 
@@ -59,6 +58,10 @@ export function senKeTeks(sen: Sen): string {
 /** Pelunasan retur / ayat silang (bukan uang masuk) — dikeluarkan dari rekonsiliasi, ditampilkan sebagai info non-kas. */
 export const METODE_NON_KAS = "OTHERS";
 
+/** Daftar putih metode UANG (owner: Tunai + Transfer + Giro), dicocokkan PERSIS. Metode lain (CREDIT_CARD, huruf/spasi beda) ->
+ * ember tak teralokasi `metode_tak_dikenal` yang terlihat — tidak pernah dihitung tunai diam-diam. */
+export const METODE_UANG: readonly string[] = ["CASH_OTHER", "BANK_TRANSFER", "BANK_CHEQUE"];
+
 /** Satu baris faktur dalam pelunasan (sales-receipt detailInvoice[]). */
 export interface PelunasanFaktur {
     fakturId: number;
@@ -94,15 +97,16 @@ export interface BagianOrang {
     sen: Sen;
 }
 
-export type AlasanTakTeralokasi = "jumlah_invoice_payment_beda" | "tanpa_baris_faktur";
+export type AlasanTakTeralokasi = "jumlah_invoice_payment_beda" | "tanpa_baris_faktur" | "metode_tak_dikenal";
 
 export interface TakTeralokasi {
     pelunasanId: number;
     nomor: string;
     metode: string;
     chequeAmount: Sen;
+    /** Σ invoicePayment yang DIALOKASIKAN (0 untuk metode_tak_dikenal: tidak ada yang dialokasikan). */
     jumlahInvoicePayment: Sen;
-    /** chequeAmount − Σ invoicePayment: > 0 = uang lebih / lebih bayar, < 0 = kredit / non-kas (mis. useCredit). */
+    /** chequeAmount − jumlahInvoicePayment: > 0 = uang lebih / lebih bayar, < 0 = kredit / non-kas (mis. useCredit). */
     sisa: Sen;
     arah: "lebih_bayar" | "kredit";
     alasan: AlasanTakTeralokasi;
@@ -129,6 +133,12 @@ export function alokasiPelunasan(daftar: readonly Pelunasan[], peta: PetaOrang) 
         for (const f of p.faktur) wajibSen(f.invoicePayment, `invoicePayment ${p.nomor}/${f.fakturId}`);
         if (p.metode === METODE_NON_KAS) {
             nonKas.push(p);
+            continue;
+        }
+        if (!METODE_UANG.includes(p.metode)) {
+            takTeralokasi.push({ pelunasanId: p.id, nomor: p.nomor, metode: p.metode, chequeAmount: p.chequeAmount, jumlahInvoicePayment: 0,
+                sisa: p.chequeAmount, arah: p.chequeAmount > 0 ? "lebih_bayar" : "kredit", alasan: "metode_tak_dikenal",
+                orang: [...new Set(p.faktur.map((f) => orangDariSalesmanId(f.masterSalesmanId, p.tanggal, peta).orang))] });
             continue;
         }
         const per = new Map<string, BagianOrang>();
@@ -178,12 +188,19 @@ export interface PetaOrang {
     gabunganPerBulan: ReadonlyMap<string, Map<string, string>>;
 }
 
-/** Kode salesman -> kode ORANG pada bulan `tanggal` (rantai gabungan diikuti; tanpa gabungan = orang sendiri). */
+/** Kode salesman -> kode ORANG pada bulan `tanggal` (rantai gabungan diikuti; tanpa gabungan / peta ke diri sendiri = orang sendiri).
+ * Rantai siklik (A->B->C->A) = data gabungan rusak -> galat, bukan rotasi diam-diam ke salah satu kode. */
 export function orangDariKode(kode: string, tanggal: string, peta: Pick<PetaOrang, "gabunganPerBulan">): string {
-    const k = kode.trim();
+    let k = kode.trim();
     if (!k) return TANPA_SALESMAN;
     const g = peta.gabunganPerBulan.get(tanggal.slice(0, 7));
-    return g ? applyMergeMap(k, g) : k;
+    const lewat = new Set([k]);
+    for (let n = g?.get(k); n !== undefined && n !== k; n = g?.get(k)) {
+        if (lewat.has(n)) throw new Error(`Gabungan kode siklik bulan ${tanggal.slice(0, 7)}: ${[...lewat, n].join(" -> ")}`);
+        lewat.add(n);
+        k = n;
+    }
+    return k;
 }
 
 export function orangDariSalesmanId(id: number | null, tanggal: string, peta: PetaOrang): { orang: string; kode: string | null } {
@@ -202,8 +219,11 @@ export function bulatkanKeAtas100(sen: Sen): Sen {
     return sisa === 0 ? sen : sen - sisa + SEN_RP_100;
 }
 
-/** Owner 6–7 Okt + C8: klop = setoran sama persis ATAU = total dibulatkan ke atas ke kelipatan Rp 100. */
+/** Owner 6–7 Okt + C8: klop = setoran sama persis ATAU = total dibulatkan ke atas ke kelipatan Rp 100. Nilai negatif = galat. */
 export function klop(pelunasan: Sen, setoran: Sen): boolean {
+    if (wajibSen(pelunasan, "klop pelunasan") < 0 || wajibSen(setoran, "klop setoran") < 0) {
+        throw new RangeError(`klop: nilai negatif ditolak (pelunasan ${pelunasan}, setoran ${setoran})`);
+    }
     return setoran === pelunasan || setoran === bulatkanKeAtas100(pelunasan);
 }
 
@@ -316,12 +336,22 @@ export function rekonsiliasiHari(m: MasukanRekonsiliasi): HasilRekonsiliasi {
         k.adaPelunasan = true;
     }
 
+    // Lib memeriksa sendiri (tidak hanya mengandalkan CHECK DB): nominal >= 0, revisi bulat 1..n tanpa lubang & tanpa ganda per kode.
     const terakhir = new Map<string, SetoranRevisi>();
+    const revisiPerKode = new Map<string, Set<number>>();
     for (const s of m.setoran) {
-        for (const v of [s.tunai, s.transfer, s.giro]) wajibSen(v, `setoran ${s.salesmanKode} revisi ${s.revisi}`);
+        for (const v of [s.tunai, s.transfer, s.giro]) {
+            if (wajibSen(v, `setoran ${s.salesmanKode} revisi ${s.revisi}`) < 0) throw new RangeError(`Setoran ${s.salesmanKode} revisi ${s.revisi} negatif: ${v}`);
+        }
+        if (!Number.isSafeInteger(s.revisi) || s.revisi < 1) throw new Error(`Setoran ${s.salesmanKode}: revisi ${s.revisi} tidak sah (bulat ≥ 1)`);
+        const rs = revisiPerKode.get(s.salesmanKode) ?? new Set<number>();
+        if (rs.has(s.revisi)) throw new Error(`Setoran ${s.salesmanKode} revisi ${s.revisi} ganda`);
+        revisiPerKode.set(s.salesmanKode, rs.add(s.revisi));
         const lama = terakhir.get(s.salesmanKode);
-        if (lama?.revisi === s.revisi) throw new Error(`Setoran ${s.salesmanKode} revisi ${s.revisi} ganda`);
         if (!lama || s.revisi > lama.revisi) terakhir.set(s.salesmanKode, s);
+    }
+    for (const [kode, s] of terakhir) {
+        if (revisiPerKode.get(kode)!.size !== s.revisi) throw new Error(`Setoran ${kode}: urutan revisi berlubang (terakhir ${s.revisi}, ada ${revisiPerKode.get(kode)!.size})`);
     }
     for (const s of terakhir.values()) {
         const k = ambil(orangDariKode(s.salesmanKode, m.tanggal, m.peta));
@@ -403,6 +433,9 @@ function alasanBaris(b: BarisOrang): string {
 const namaOrang = (orang: string) => (orang === TANPA_SALESMAN ? "Tanpa salesman" : orang);
 
 function alasanEmber(t: TakTeralokasi): string {
+    if (t.alasan === "metode_tak_dikenal") {
+        return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} (metode ${JSON.stringify(t.metode)} tak dikenal; tidak dihitung ke orang).`;
+    }
     if (t.alasan === "tanpa_baris_faktur") return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} (pelunasan tanpa baris faktur).`;
     const arah = t.arah === "lebih_bayar" ? "uang lebih / lebih bayar" : "kredit / non-kas";
     return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} ${arah} (pelunasan ${rp(t.chequeAmount)}, faktur `
@@ -453,6 +486,16 @@ export interface EventHari {
 /** Alasan buka kembali minimal (sama dengan CHECK kasir_hari_event_alasan_buka dan pola idempotency_resolution). */
 export const ALASAN_BUKA_MIN = 15;
 
+const ISO_BEROFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/;
+
+/** `pada` event: Date sah atau teks ISO BEROFSET (Z / ±hh:mm). Teks tanpa ofset ditolak — zona tebakan menggeser kunci 20.00. */
+function waktuPada(pada: Date | string): Date {
+    const t = pada instanceof Date ? pada : ISO_BEROFSET.test(pada) ? new Date(pada) : null;
+    if (t === null) throw new Error(`Waktu event bukan ISO berofset: ${JSON.stringify(pada)}`);
+    if (Number.isNaN(t.getTime())) throw new Error(`Waktu event tidak sah: ${String(pada)}`);
+    return t;
+}
+
 function wajibTanggal(tanggal: string) {
     const ms = /^\d{4}-\d{2}-\d{2}$/.test(tanggal) ? Date.parse(`${tanggal}T00:00:00Z`) : NaN;
     if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== tanggal) throw new Error(`Format tanggal salah: ${tanggal} (YYYY-MM-DD)`);
@@ -485,11 +528,12 @@ export interface StatusHari {
  */
 export function statusHari(tanggal: string, events: readonly EventHari[], sekarang: Date): StatusHari {
     const batasHari = batasKunci(tanggal);
+    for (const e of events) waktuPada(e.pada);
     const sah = events.filter((e) => e.jenis !== "buka" || (e.alasan ?? "").trim().length >= ALASAN_BUKA_MIN);
     const akhir = [...sah].sort((a, b) => a.id - b.id).at(-1);
     if (akhir && akhir.jenis !== "buka") return { terkunci: true, sebab: akhir.jenis, kunciBerikutnya: null };
     // Buka tidak pernah memperpendek jendela hari itu sendiri (buka bertanggal lebih awal tetap sampai 20.00 hari itu).
-    const sesudahBuka = akhir ? kunciSesudah(new Date(akhir.pada)) : batasHari;
+    const sesudahBuka = akhir ? kunciSesudah(waktuPada(akhir.pada)) : batasHari;
     const batas = sesudahBuka > batasHari ? sesudahBuka : batasHari;
     return sekarang >= batas ? { terkunci: true, sebab: "otomatis_20", kunciBerikutnya: null } : { terkunci: false, sebab: null, kunciBerikutnya: batas };
 }

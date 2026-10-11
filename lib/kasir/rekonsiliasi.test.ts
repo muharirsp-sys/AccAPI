@@ -362,6 +362,47 @@ test("kunci hari T1 (owner 11 Okt): tutup lebih awal mengunci; buka kembali HANY
     assert.deepEqual(statusHari(D, [tutup, buka, bukaMalam, kunci], wita("2026-10-07T20:00:06")), { terkunci: true, sebab: "kunci", kunciBerikutnya: null });
 });
 
+test("RENDAH 3: metode di luar daftar putih (CASH_OTHER/BANK_TRANSFER/BANK_CHEQUE) -> ember 'metode tak dikenal' terlihat, tidak dihitung ke orang", () => {
+    const kartu = pel("CREDIT_CARD", 500_000, [[11, 500_000]]);
+    const kecil = pel("cash_other", 200_000, [[11, 200_000]]);
+    const spasi = pel("CASH_OTHER ", 100_000, [[12, 100_000]]);
+    const sah = pel("CASH_OTHER", 50_000, [[11, 50_000]]);
+    const h = rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [kartu, kecil, spasi, sah], setoran: [setor("S-A", 50_000)] });
+    assert.deepEqual(h.baris.map((b) => [b.orang, b.pelunasan, b.status]), [["S-A", Rp(50_000), "klop"]], "tidak dihitung tunai diam-diam");
+    assert.deepEqual(h.takTeralokasi.map((t) => [t.pelunasanId, t.sisa, t.alasan]), [
+        [kartu.id, Rp(500_000), "metode_tak_dikenal"], [kecil.id, Rp(200_000), "metode_tak_dikenal"], [spasi.id, Rp(100_000), "metode_tak_dikenal"],
+    ]);
+    assert.equal(h.total.takTeralokasi, Rp(800_000), "uangnya tetap terlihat di total");
+    assert.equal(penghalangTutup(h).alasan[0],
+        `Uang tak teralokasi ${kartu.nomor} belum dijelaskan: Rp 500.000 (metode "CREDIT_CARD" tak dikenal; tidak dihitung ke orang).`);
+});
+
+test("RENDAH 4–6: gabungan siklik = galat; klop/setoran negatif & urutan revisi ditolak lib; `pada` wajib Date atau ISO berofset", () => {
+    const siklik = { gabunganPerBulan: new Map([["2026-10", new Map([["A", "B"], ["B", "C"], ["C", "A"]])]]) };
+    assert.throws(() => orangDariKode("A", D, siklik), /siklik/);
+    assert.throws(() => orangDariKode("B", D, siklik), /siklik/);
+    assert.equal(orangDariKode("X", D, { gabunganPerBulan: new Map([["2026-10", new Map([["X", "X"]])]]) }), "X", "peta ke diri sendiri = tanpa gabungan");
+
+    assert.throws(() => klop(Rp(-1), 0), RangeError);
+    assert.throws(() => klop(Rp(1), Rp(-1)), RangeError);
+    const hari = (setoran: SetoranRevisi[]) => rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [], setoran });
+    assert.throws(() => hari([setor("S-A", -1)]), RangeError, "setoran negatif");
+    assert.throws(() => hari([setor("S-A", 0, -5)]), RangeError, "transfer negatif");
+    assert.throws(() => hari([setor("S-A", 1, 0, 0, 1), setor("S-A", 1, 0, 0, 3)]), /revisi/, "revisi 2 hilang");
+    assert.throws(() => hari([setor("S-A", 1, 0, 0, 2)]), /revisi/, "tanpa revisi 1");
+    assert.throws(() => hari([setor("S-A", 1, 0, 0, 0)]), /revisi/, "revisi 0");
+    assert.throws(() => hari([setor("S-A", 1, 0, 0, 1.5)]), /revisi/, "revisi bukan bulat");
+
+    const tutup: EventHari = { id: 1, jenis: "tutup", pada: "2026-10-05T17:42:00+08:00" };
+    const bukaIso = (pada: string): EventHari => ({ id: 2, jenis: "buka", pada, alasan: "Setoran MKS-03 susulan salah dicatat" });
+    assert.equal(statusHari(D, [tutup, bukaIso("2026-10-06T01:00:00Z")], wita("2026-10-06T19:00:00")).terkunci, false, "ISO Z diterima");
+    assert.equal(statusHari(D, [tutup, bukaIso("2026-10-06T09:00:00.123+08:00")], wita("2026-10-06T19:00:00")).terkunci, false, "ISO +08:00 diterima");
+    for (const salah of ["2026-10-06T09:00:00", "2026-10-06 09:00:00+08", "06/10/2026 09:00", ""]) {
+        assert.throws(() => statusHari(D, [tutup, bukaIso(salah)], wita("2026-10-06T19:00:00")), /ofset|waktu/, `pada ${JSON.stringify(salah)}`);
+    }
+    assert.throws(() => statusHari(D, [{ ...tutup, pada: new Date(Number.NaN) }], wita("2026-10-06T19:00:00")), /waktu/i, "Date tidak sah");
+});
+
 test("hari kerja Senin–Sabtu", () => {
     assert.deepEqual(["2026-10-04", "2026-10-05", "2026-10-10", "2026-10-11"].map(hariKerja), [false, true, true, false]);
 });

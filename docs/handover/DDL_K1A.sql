@@ -160,6 +160,7 @@ CREATE OR REPLACE TRIGGER trg_kasir_tak_teralokasi_catatan_append_only BEFORE UP
     FOR EACH ROW EXECUTE FUNCTION kasir_append_only();
 CREATE OR REPLACE TRIGGER trg_kasir_tak_teralokasi_catatan_no_truncate BEFORE TRUNCATE ON kasir_tak_teralokasi_catatan
     FOR EACH STATEMENT EXECUTE FUNCTION kasir_append_only();
+-- CREATE OR REPLACE TRIGGER juga menyalakan lagi trigger yang pernah di-DISABLE (diuji: lib/kasir/skema-pg.test.ts "VERIFIKASI DDL").
 
 -- 3. Hak role aplikasi. Default privileges (L1g) bisa saja sudah memberi DML penuh -> REVOKE eksplisit pada tabel jejak.
 DO $$
@@ -189,12 +190,14 @@ SELECT cek, ok FROM (VALUES
         AND conrelid = to_regclass('kasir_setoran') AND contype = 'c')),
     ('CHECK tutup hanya bila tidak terhalang (T2)', EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'kasir_hari_event_tutup_tuntas'
         AND conrelid = to_regclass('kasir_hari_event') AND contype = 'c')),
-    ('trigger append-only (8)', (SELECT count(*) = 8 FROM pg_trigger WHERE NOT tgisinternal AND tgname IN
-        ('trg_kasir_setoran_append_only', 'trg_kasir_setoran_no_truncate', 'trg_kasir_selisih_catatan_append_only',
-         'trg_kasir_selisih_catatan_no_truncate', 'trg_kasir_hari_event_append_only', 'trg_kasir_hari_event_no_truncate',
-         'trg_kasir_tak_teralokasi_catatan_append_only', 'trg_kasir_tak_teralokasi_catatan_no_truncate')
-        AND tgrelid IN (to_regclass('kasir_setoran'), to_regclass('kasir_selisih_catatan'), to_regclass('kasir_hari_event'),
-                        to_regclass('kasir_tak_teralokasi_catatan')))),
+    -- tgtype (bit): 1 per baris, 2 BEFORE, 4 INSERT, 8 DELETE, 16 UPDATE, 32 TRUNCATE. _append_only = TEPAT 27 (BEFORE UPDATE OR
+    -- DELETE per baris; INSERT tidak boleh ikut), _no_truncate = TEPAT 34 (BEFORE TRUNCATE per pernyataan). tgenabled 'O' = aktif.
+    ('trigger append-only aktif, jenis event benar, fungsi kasir_append_only (4 tabel x 2)', (SELECT bool_and(
+        EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = to_regclass(t) AND tgname = 'trg_' || t || '_append_only' AND NOT tgisinternal
+                AND tgenabled = 'O' AND tgtype = 27 AND tgfoid = to_regproc('kasir_append_only'))
+        AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = to_regclass(t) AND tgname = 'trg_' || t || '_no_truncate' AND NOT tgisinternal
+                AND tgenabled = 'O' AND tgtype = 34 AND tgfoid = to_regproc('kasir_append_only')))
+        FROM unnest(ARRAY['kasir_setoran', 'kasir_selisih_catatan', 'kasir_hari_event', 'kasir_tak_teralokasi_catatan']) AS t)),
     ('accapi_app tanpa UPDATE/DELETE/TRUNCATE jejak', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app')
         THEN NOT (SELECT bool_or(has_table_privilege('accapi_app', t, p))
               FROM unnest(ARRAY['kasir_setoran', 'kasir_selisih_catatan', 'kasir_hari_event', 'kasir_tak_teralokasi_catatan']) AS t,

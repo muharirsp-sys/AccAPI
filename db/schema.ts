@@ -2123,7 +2123,7 @@ export const principalAlias = pgTable("principal_alias", {
 // Kolom *_oleh = id aktor TANPA FK (aktor bypass lokal / sistem bukan baris `user`).
 
 // salesman_kode = kode ORANG saat dicatat (accurate_employee.number sesudah gabungan sales_code_merge bulan itu); pembaca melipatnya
-// lagi lewat gabungan terkini (lib orangDariKode). Koreksi = baris BARU revisi n+1 yang menunjuk revisi n hari & kode yang sama
+// lagi lewat peta gabungan bulan `tanggal` (lib orangDariKode) — koreksi orang multi-kode = lib rencanaSetoranOrang (satu transaksi). Koreksi = baris BARU revisi n+1 yang menunjuk revisi n hari & kode yang sama
 // (FK komposit); revisi terbesar berlaku. Unik (tanggal, kode, revisi) = dobel-klik/balapan -> 23505 (409 di K2).
 export const kasirSetoran = pgTable("kasir_setoran", {
     id: bigserial("id", { mode: "number" }).primaryKey(),

@@ -55,8 +55,8 @@ async function migrasi(pool: Pool, m: Migration) {
 
 type Hasil = { rows: { cek: string; ok: boolean | null }[] };
 const verifikasi = async (c: Pool | PoolClient, sql: string) => {
-    const hasil = await c.query(sql) as unknown as Hasil[];
-    return hasil[hasil.length - 1].rows;
+    const hasil = await c.query(sql) as unknown as Hasil | Hasil[];
+    return Array.isArray(hasil) ? hasil[hasil.length - 1].rows : hasil.rows; // satu pernyataan = satu hasil, bukan larik
 };
 
 async function katalog(pool: Pool) {
@@ -299,6 +299,30 @@ test("PG K1a: DDL — hak accapi_app (role sementara, transaksi di-ROLLBACK): je
             c.release();
         }
         assert.equal((await pool.query("SELECT to_regclass('kasir_setoran') AS r")).rows[0].r, null, "transaksi uji benar-benar di-ROLLBACK");
+    });
+});
+
+test("PG K1a: VERIFIKASI DDL menangkap trigger append-only yang dilemahkan (tanpa UPDATE / dimatikan); DDL diulang memulihkannya", { skip: pgSkip }, async () => {
+    const ddl = await ddlK1a();
+    const i = ddl.indexOf("-- 4. VERIFIKASI");
+    assert.ok(i > 0, "blok VERIFIKASI ada");
+    const cekVerifikasi = ddl.slice(i);
+    const trigger = (rows: Hasil["rows"]) => rows.filter((r) => /trigger/i.test(r.cek));
+    await denganSkema(async (pool) => {
+        const awal = await verifikasi(pool, ddl);
+        assert.ok(trigger(awal).length > 0 && trigger(awal).every((r) => r.ok === true), "trigger ok sesudah DDL");
+        // Sabotase 1: trigger hanya BEFORE DELETE (UPDATE lolos).
+        await pool.query(`CREATE OR REPLACE TRIGGER trg_kasir_setoran_append_only BEFORE DELETE ON kasir_setoran
+            FOR EACH ROW EXECUTE FUNCTION kasir_append_only()`);
+        assert.ok(trigger(await verifikasi(pool, cekVerifikasi)).some((r) => r.ok === false), "trigger tanpa UPDATE = VERIFIKASI tidak ok");
+        // Sabotase 2: trigger dimatikan.
+        await pool.query("ALTER TABLE kasir_hari_event DISABLE TRIGGER trg_kasir_hari_event_append_only");
+        await pool.query("ALTER TABLE kasir_tak_teralokasi_catatan DISABLE TRIGGER trg_kasir_tak_teralokasi_catatan_no_truncate");
+        assert.ok(trigger(await verifikasi(pool, cekVerifikasi)).some((r) => r.ok === false), "trigger dimatikan = VERIFIKASI tidak ok");
+        // DDL diulang: semua kembali ok (CREATE OR REPLACE + ENABLE).
+        for (const v of await verifikasi(pool, ddl)) assert.notEqual(v.ok, false, `VERIFIKASI sesudah DDL diulang: ${v.cek}`);
+        await pool.query(`INSERT INTO kasir_hari_event (tanggal, jenis, snapshot, oleh) VALUES ('2026-10-05', 'tutup', '{"terhalang":[]}', 'k')`);
+        await assert.rejects(pool.query(`UPDATE kasir_hari_event SET oleh = 'x'`), /append-only/, "trigger aktif lagi");
     });
 });
 

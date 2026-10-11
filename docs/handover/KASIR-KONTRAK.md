@@ -8,9 +8,9 @@ eksplorasi `KASIR-EKSPLORASI-2026-10-11.md` §4–§5. Zona AGENTS §3: uang + s
 | Aturan | Isi | Di mana |
 |---|---|---|
 | Kolektor | salesman FAKTUR = `detailInvoice[].invoice.masterSalesmanId` | `alokasiPelunasan` |
-| Uang Incaso | `chequeAmount` pelunasan (Tunai `CASH_OTHER` + Transfer `BANK_TRANSFER` + Giro `BANK_CHEQUE`); metode `OTHERS` (retur/ayat silang) DIKELUARKAN (`nonKas`, info) | `alokasiPelunasan` |
+| Uang Incaso | `chequeAmount` pelunasan (Tunai `CASH_OTHER` + Transfer `BANK_TRANSFER` + Giro `BANK_CHEQUE`); metode `OTHERS` (retur/ayat silang) DIKELUARKAN (`nonKas`, info). Daftar putih `METODE_UANG` dicocokkan PERSIS: metode lain (`CREDIT_CARD`, huruf/spasi beda) -> ember tak teralokasi `metode_tak_dikenal` (seluruh cheque, terlihat, wajib dijelaskan) — tidak pernah dihitung tunai diam-diam | `alokasiPelunasan` |
 | Bagi per orang (nominal = `chequeAmount`) | semua baris faktur milik SATU orang -> `chequeAmount` PENUH ke orang itu (lebih bayar / kredit ikut orangnya, tanpa ember). Multi-orang -> per baris `invoicePayment`; Σ ≠ `chequeAmount` -> selisih ke ember **tak teralokasi** per pelunasan: `sisa` = cheque − Σ (> 0 `lebih_bayar` "uang lebih / lebih bayar", < 0 `kredit` "kredit / non-kas"), `orang[]` dari baris faktur, `alasan` (`jumlah_invoice_payment_beda` / `tanpa_baris_faktur`) — TIDAK dibagi diam-diam. Invarian: Σ bagian + Σ sisa = Σ chequeAmount | `alokasiPelunasan` |
-| Orang | id -> `accurate_employee.number` (kode) -> `sales_code_merge` (`decision='merge'`, bulan = bulan `tanggal`, rantai diikuti) -> ORANG; kode tanpa gabungan = orang sendiri; id null / tanpa kode -> `TANPA_SALESMAN` (`""`, baris terlihat + `salesmanIdTakDikenal`) | `orangDariSalesmanId`, `orangDariKode` |
+| Orang | id -> `accurate_employee.number` (kode) -> `sales_code_merge` (`decision='merge'`, bulan = bulan `tanggal`, rantai diikuti; rantai SIKLIK A->B->C->A = galat) -> ORANG; kode tanpa gabungan / peta ke diri sendiri = orang sendiri; id null / tanpa kode -> `TANPA_SALESMAN` (`""`, baris terlihat + `salesmanIdTakDikenal`) | `orangDariSalesmanId`, `orangDariKode` |
 | Setoran | per ORANG per hari, Tunai + Transfer + Giro; revisi terbesar per kode berlaku; kode setoran juga dilipat lewat gabungan bulan itu (gabungan yang diputuskan belakangan tetap menyatukan) | `rekonsiliasiHari` |
 | Klop | setoran = total PERSIS atau = ⌈total / Rp 100⌉ × Rp 100 (41.592.193 -> 41.592.200 klop; 41.592.300 selisih) | `klop`, `bulatkanKeAtas100` |
 | Status | `klop` · `selisih` · `belum_setor` (tak ada baris setoran) · `setoran_tanpa_pelunasan`. Setoran 0 yang TERCATAT = angka (selisih), bukan belum setor. `dijelaskan` = ada catatan dengan angka (pelunasan, setoran) SAMA dengan sekarang | `rekonsiliasiHari` |
@@ -31,7 +31,8 @@ Semua nominal = **sen** (bilangan bulat aman). Nominal rusak = `RangeError` (gag
   `{ tanggal, baris: BarisOrang[] (urut kode, Tanpa salesman terakhir), takTeralokasi: (TakTeralokasi & { dijelaskan })[], nonKas, total: { pelunasan, setoran, takTeralokasi, nonKas } }`.
   `catatanTakTeralokasi` = baris `kasir_tak_teralokasi_catatan` yang SUDAH disaring ke `database_id` yang dibaca.
   `BarisOrang = { orang, kode[], pelunasan, pelunasanPerMetode{metode->sen}, jumlahFaktur, setoran: {tunai,transfer,giro,total}|null, setoranPerKode: {kode, revisi, tunai, transfer, giro, total}[], selisih|null, status, dijelaskan, salesmanIdTakDikenal[] }`.
-  Pelunasan lain tanggal / revisi setoran ganda = galat pemanggil.
+  Galat pemanggil (dicek lib, tidak hanya CHECK DB): pelunasan lain tanggal; setoran negatif; revisi bukan bulat ≥ 1, ganda, atau berlubang (rantai
+  per kode wajib 1..n lengkap — muat SEMUA revisi hari itu). `klop` dengan nilai negatif = `RangeError`.
 - `PetaOrang = { kodeSalesman: Map<id, number>, gabunganPerBulan: Map<"YYYY-MM", Map<from, to>> }` — dibangun pemanggil dari `accurate_employee` + `sales_code_merge`.
 - `rencanaSetoranOrang(baris, { tunai, transfer, giro }) -> RevisiBaru[]` ({ salesmanKode, revisi, revisiSebelumnya, tunai, transfer, giro }):
   catat/koreksi setoran ORANG — kode utama (= `orang`) dapat revisi baru bernominal baru, SETIAP rantai kode lain milik orang itu yang masih ≠ 0
@@ -41,6 +42,7 @@ Semua nominal = **sen** (bilangan bulat aman). Nominal rusak = `RangeError` (gag
 - `snapshotHari(hasil)` (JSON murni, `versi: 1`: `total`, `baris[]`, `takTeralokasi[]` {pelunasanId, nomor, sisa, alasan, dijelaskan}, `terhalang` = alasan
   penghalang) — disimpan di `kasir_hari_event.snapshot`; beda dengan snapshot baru = "berubah sejak ditutup".
 - `statusHari(tanggal, EventHari[], sekarang) -> { terkunci, sebab: tutup|kunci|otomatis_20|null, kunciBerikutnya }`, `bolehDiubah(...)`, `batasKunci(tanggal)`, `hariKerja(tanggal)`.
+  `EventHari.pada` = `Date` (node-pg timestamptz) atau teks ISO BEROFSET (`Z` / `±hh:mm`); teks tanpa ofset = galat (zona tebakan menggeser kunci 20.00).
 
 ## 3. Tabel (db/schema.ts; SQL = migrate-pg = `db/migrations/0029_kasir.sql` = `docs/handover/DDL_K1A.sql`)
 
@@ -85,6 +87,11 @@ database). Penjelasan tak teralokasi = TABEL SENDIRI, bukan perluasan `kasir_sel
 1. `docs/handover/DDL_K1A.sql` sebagai role pemilik, SEBELUM image K1a; semua baris VERIFIKASI `ok` (juga bila `DATABASE_MIGRATION_URL` terpasang).
 2. Image K1a (migrate-pg men-SKIP entri kasir).
 3. `docs/handover/RBAC_PRESET_BL37.sql` (S7-1, membuat grup Kasir) — lalu `docs/handover/RBAC_PRESET_KASIR.sql`; periksa laporan akhirnya (tiga grup `ada = true`).
+
+**Catatan IT Support:** (a) `scripts/seed-rbac-presets.ts` bila dijalankan ulang menghapus & mengisi ulang izin 11 preset lama: Admin mendapat SEMUA kunci
+`kasir.*` (termasuk `catat`/`tutup`) dari registry, OM KEHILANGAN `kasir.view`/`kasir.buka` -> jalankan `RBAC_PRESET_KASIR.sql` lagi sesudahnya.
+(b) Blok VERIFIKASI `RBAC_PRESET_BL37.sql` akan menampilkan grup Kasir `cocok = false` SESUDAH preset KASIR dijalankan (Kasir kini memegang
+`kasir.*` di samping `dashboard.view`) — itu wajar, bukan tanda grup lama bernama sama.
 
 ## 6. Keputusan owner 11 Okt (dulu TERBUKA)
 
