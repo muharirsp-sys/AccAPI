@@ -23,6 +23,7 @@ const G = {
     admin: { id: "g-admin", name: "Admin", isPreset: true },
     fin: { id: "g-fin", name: "Finance", isPreset: true },
     promo: { id: "g-promo", name: "Promo A", isPreset: false },
+    promo2: { id: "g-promo2", name: "Promo C", isPreset: false },
 };
 const user = (id: string, name: string, role: string, groups: Array<{ id: string; name: string; isPreset: boolean; isPrimary: boolean }>, banned = false) => {
     const utama = groups.find((g) => g.isPrimary) ?? (groups.length === 1 ? groups[0] : null);
@@ -37,11 +38,13 @@ const USERS = [
     user("u-c", "USER C", "viewer", [{ ...G.promo, isPrimary: true }], true),
     user("local-dev-admin", "ADMIN LOKAL", "admin", [{ ...G.admin, isPrimary: true }]),
     user("u-d", "USER D", "viewer", [], true), // nonaktif & tanpa grup (akses role lama) — aktivasi harus menambah grup dulu
+    user("u-e", "USER E", "viewer", [{ ...G.promo2, isPrimary: true }, { ...G.admin, isPrimary: false }]), // Promo C berbintang + Admin: hapus Promo C -> utama Admin -> role admin
 ];
 const GROUPS = [
     { id: "g-admin", name: "Admin", description: "Semua izin", isPreset: true, permCount: 3, memberCount: 2 },
     { id: "g-fin", name: "Finance", description: "Transfer dan pembayaran", isPreset: true, permCount: 3, memberCount: 2 },
     { id: "g-promo", name: "Promo A", description: "", isPreset: false, permCount: 2, memberCount: 1 },
+    { id: "g-promo2", name: "Promo C", description: "", isPreset: false, permCount: 1, memberCount: 1 },
 ];
 const DETAIL: Record<string, unknown> = {
     "g-fin": { group: { id: "g-fin", name: "Finance", description: "Transfer dan pembayaran", isPreset: true }, permissions: ["finance.view", "finance.approve", "payments.view"],
@@ -49,7 +52,9 @@ const DETAIL: Record<string, unknown> = {
     "g-promo": { group: { id: "g-promo", name: "Promo A", description: "", isPreset: false }, permissions: ["users.view", "users.manage"],
         members: [{ userId: "u-c", userName: "USER C", userEmail: "user.c@contoh.test", isPrimary: true }] },
     "g-admin": { group: { id: "g-admin", name: "Admin", description: "Semua izin", isPreset: true }, permissions: ["users.view", "users.manage", "dashboard.view"],
-        members: [{ userId: "u-a", userName: "USER A", userEmail: "user.a@contoh.test", isPrimary: true }] },
+        members: [{ userId: "u-a", userName: "USER A", userEmail: "user.a@contoh.test", isPrimary: true }, { userId: "u-e", userName: "USER E", userEmail: "user.e@contoh.test", isPrimary: false }] },
+    "g-promo2": { group: { id: "g-promo2", name: "Promo C", description: "", isPreset: false }, permissions: ["dashboard.view"],
+        members: [{ userId: "u-e", userName: "USER E", userEmail: "user.e@contoh.test", isPrimary: true }] },
 };
 const RIWAYAT_1 = { ok: true, nextCursor: "kursor-1", items: [
     { id: "h1", action: "user_group.assign", actorName: "ADMIN LOKAL", targetUserName: "USER A", targetGroupName: "Finance", detail: { groupName: "Finance" }, createdAt: "2026-10-11T02:30:00.000Z" },
@@ -545,6 +550,58 @@ for (const [nama, jawaban] of [
         expect(log.tulis.map((t) => t.path)).toEqual(["/api/admin/users/u-b/status"]); // tidak ada tulisan ulang otomatis
     });
 }
+
+test("Tambah anggota di Akses Group: perkiraan role + peringatan sebelum klik (user tanpa grup -> preset Admin = role admin); tanpa perubahan = tanpa peringatan", async ({ page }) => {
+    const { log } = await pasang(page);
+    await page.goto("/admin/groups", NAV);
+    await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bAdmin\b/ }).click();
+    const pilih = page.getByRole("combobox", { name: "Tambah anggota" });
+    await pilih.selectOption({ label: "USER B (user.b@contoh.test)" }); // USER B: 1 grup (Finance) -> utama tetap Finance, role tidak berubah
+    await expect(page.getByText(/Role identitas lama akan menjadi/)).toHaveCount(0);
+    await pilih.selectOption({ label: "USER D (user.d@contoh.test)" }); // USER D: tanpa grup, role viewer -> Admin menjadi utama -> role admin
+    await expect(page.getByText("Role identitas lama akan menjadi admin (sekarang viewer).")).toBeVisible();
+    await page.screenshot({ path: "test-results/fiori-s7a-11-tambah-anggota-role.png", fullPage: true });
+    await page.getByRole("button", { name: "Tambah anggota", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "USER D ditambahkan ke Admin" })).toBeVisible();
+    expect(log.tulis).toEqual([{ method: "POST", path: "/api/admin/groups/g-admin/members", body: { userId: "u-d" } }]);
+});
+
+test("Hapus grup: dialog memperkirakan role identitas tiap anggota yang berubah ([Promo C★, Admin] -> admin) sebelum konfirmasi", async ({ page }) => {
+    await pasang(page);
+    await page.goto("/admin/groups", NAV);
+    await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bPromo C\b/ }).click();
+    await page.getByRole("button", { name: "Hapus grup…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Hapus grup Promo C?" });
+    await expect(dlg.getByRole("button", { name: "Hapus grup" })).toBeEnabled(); // USER E masih punya grup Admin
+    await expect(dlg).toContainText("USER E: viewer → admin");
+    await expect(dlg).toContainText("Role identitas lama berubah");
+    await page.screenshot({ path: "test-results/fiori-s7a-12-hapus-grup-role.png", fullPage: true });
+    await expect(dlg.getByRole("list", { name: "Role identitas berubah" })).toHaveCount(1);
+    await dlg.getByRole("button", { name: "Batal", exact: true }).click();
+});
+
+test("Kunci usang (ada di DB, tak ada di registry): tidak tampil tetapi diumumkan; dialog selisih mencantumkan 'dibuang'; PATCH tanpa kunci itu (server menolak KUNCI_TIDAK_VALID bila ikut)", async ({ page }) => {
+    const USANG = "finance.reopen_lama";
+    const fin = DETAIL["g-fin"] as { permissions: string[] };
+    const { log } = await pasang(page, {
+        detail: (id) => (id === "g-fin" ? json({ ...fin, permissions: [...fin.permissions, USANG] }) : undefined),
+        tulis: (t) => (t.method === "PATCH" && (t.body?.permissions as string[] | undefined)?.includes(USANG)
+            ? json({ ok: false, code: "KUNCI_TIDAK_VALID", error: "x", invalid: [USANG] }, 400) : undefined),
+    });
+    await page.goto("/admin/groups", NAV);
+    await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bFinance\b/ }).click();
+    await expect(page.getByRole("status").filter({ hasText: /memuat 1 kunci usang/ })).toContainText(USANG);
+    await expect(page.getByRole("button", { name: "Simpan izin…" })).toBeDisabled(); // kunci usang saja bukan draf
+    await page.getByRole("checkbox", { name: "Payments · Hapus" }).check();
+    await page.getByRole("button", { name: "Simpan izin…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Simpan izin grup Finance?" });
+    await expect(dlg.getByRole("list", { name: "Kunci usang dibuang" })).toContainText(USANG);
+    await expect(dlg.getByRole("list", { name: "Izin ditambah" })).toContainText("+ Payments · Hapus");
+    await expect(dlg).toContainText("tercatat dicabut");
+    await dlg.getByRole("button", { name: "Simpan izin", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "1 kunci usang dibuang" })).toBeVisible();
+    expect((log.tulis[0].body?.permissions as string[]).sort()).toEqual(["finance.approve", "finance.view", "payments.delete", "payments.view"]);
+});
 
 for (const [lebar, tinggi] of [[390, 844], [1280, 800]] as const) {
     test(`Footer Akses Group keadaan Draf ${lebar} px: tombol utuh, tak bertumpuk, tombol final di kanan bawah`, async ({ page }) => {

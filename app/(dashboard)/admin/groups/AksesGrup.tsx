@@ -21,10 +21,10 @@ import {
     AnchorBar, Button, EmptyState, ErrorState, FlexibleColumnLayout, FooterToolbar, ListItem, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge,
 } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
-import { DialogKeluarkan, GalatAdmin, Riwayat, izinPerluDisegarkan, muatAdmin, tulisAdmin, type GrupRingkas, type UserBaris } from "@/components/admin/Bersama";
-import { selisihIzin } from "@/components/admin/admin-ui";
+import { DialogKeluarkan, GalatAdmin, PeringatanRole, Riwayat, izinPerluDisegarkan, muatAdmin, tulisAdmin, type GrupRingkas, type UserBaris } from "@/components/admin/Bersama";
+import { perkiraanRole, selisihIzin } from "@/components/admin/admin-ui";
 import { actionLabels, permissionKeyLabel, permissionModuleLabels } from "@/lib/rbac";
-import { CAPABILITY_KEYS, PERMISSION_MODULES, PERMISSION_REGISTRY, moduleAllOn, toggleModuleKeys, type PermissionModule } from "@/lib/rbac/registry";
+import { CAPABILITY_KEYS, PERMISSION_MODULES, PERMISSION_REGISTRY, isValidPermissionKey, moduleAllOn, toggleModuleKeys, type PermissionModule } from "@/lib/rbac/registry";
 
 type Anggota = { userId: string; userName: string; userEmail: string; isPrimary: boolean };
 type DetailGrup = { group: { id: string; name: string; description: string | null; isPreset: boolean }; permissions: string[]; members: Anggota[] };
@@ -54,7 +54,10 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
     const groups = grupL.data?.groups ?? [];
     const users = userL.data?.users ?? [];
     const det = detailL.data && detailL.data.group.id === pilihId ? detailL.data : null;
-    const asli: Draf | null = det ? { name: det.group.name, description: det.group.description ?? "", perms: new Set(det.permissions) } : null;
+    // Kunci di DB yang tak ada di registry (usang) tidak tampil dan tidak ikut draf: dikirim TANPA kunci itu (server menolak KUNCI_TIDAK_VALID),
+    // diumumkan di Object Page dan di dialog selisih, dan tercatat dicabut oleh server saat izin disimpan.
+    const asli: Draf | null = det ? { name: det.group.name, description: det.group.description ?? "", perms: new Set(det.permissions.filter(isValidPermissionKey)) } : null;
+    const usang = det ? det.permissions.filter((k) => !isValidPermissionKey(k)).sort() : [];
     const nilai = draf ?? asli;
     const sel = asli && nilai ? selisihIzin(asli.perms, nilai.perms) : { ditambah: [], dicabut: [] };
     const infoBerubah = Boolean(asli && nilai && (nilai.name.trim() !== asli.name || nilai.description.trim() !== asli.description));
@@ -157,6 +160,16 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
     const anggotaUser = (det?.members ?? []).map((m) => ({ m, u: users.find((x) => x.id === m.userId) }));
     const terakhir = anggotaUser.filter(({ u }) => u && u.groups.length === 1).map(({ m }) => m.userName);
     const calon = det ? users.filter((x) => !det.members.some((m) => m.userId === x.id)) : [];
+    // Perkiraan role identitas bila user terpilih ditambahkan (cermin server, sama dengan layar User) — diperingatkan SEBELUM klik.
+    const calonPilih = calon.find((x) => x.id === tambahId) ?? null;
+    const prTambah = det && calonPilih
+        ? perkiraanRole(calonPilih.groups, calonPilih.role, { tambah: { id: det.group.id, name: det.group.name, isPreset: det.group.isPreset, isPrimary: false } }) : null;
+    // Hapus grup: role identitas tiap anggota yang berubah (keluar dari grup ini -> utama/role dihitung ulang).
+    const perubahanRole = det ? anggotaUser.flatMap(({ m, u }) => {
+        if (!u) return [];
+        const p = perkiraanRole(u.groups, u.role, { keluar: det.group.id });
+        return p.berubah ? [`${m.userName}: ${u.role ?? "—"} → ${p.role ?? "—"}`] : [];
+    }) : [];
     const keluarTarget = dialog && typeof dialog === "object" && det ? (() => {
         const u = users.find((x) => x.id === dialog.keluar);
         return u ? { user: u, grup: { id: det.group.id, name: det.group.name } } : null;
@@ -186,6 +199,11 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                 <Section id="g-izin" title="Izin" subtitle={`${nilai.perms.size} kunci aktif · label tugas; garis putus = kunci kapabilitas, dicentang satu per satu`}>
                     <div className="fi-sect-in">
                         {kunciSimpan && <p className="fi-small fi-why">Terkunci: {kunciSimpan}.</p>}
+                        {usang.length > 0 && (
+                            <MessageStrip tone="info" title={`Grup ini memuat ${usang.length} kunci usang (tidak dikenal registry).`}>
+                                {usang.join(", ")}. Kunci itu tidak tampil di daftar dan dibuang saat Anda menyimpan perubahan izin; riwayat mencatatnya sebagai dicabut.
+                            </MessageStrip>
+                        )}
                         {nilai.perms.size === 0 && <MessageStrip tone="info" title="Grup ini belum punya izin.">Centang izin per modul. Anggota grup tanpa izin hanya melihat Beranda.</MessageStrip>}
                         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 300px), 1fr))" }}>
                             {PERMISSION_MODULES.map((mod) => {
@@ -258,6 +276,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                             <Button icon={<UserPlus className="fi-icon" aria-hidden />} busy={menambah} disabled={Boolean(kunciAnggota) || !tambahId}
                                 disabledReason={kunciAnggota ?? "Pilih user dulu"} onClick={tambahAnggota}>Tambah anggota</Button>
                         </div>
+                        {prTambah?.berubah && <PeringatanRole dari={calonPilih?.role ?? null} ke={prTambah.role} />}
                         {userL.status === "galat" && <MessageStrip tone="neg" title="Daftar user gagal dimuat.">{userL.error} <Button variant="tertiary" onClick={muatUser}>Coba lagi</Button></MessageStrip>}
                     </div>
                 </Section>
@@ -323,7 +342,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                         ...(infoBerubah ? { ...(det.group.isPreset ? {} : { name: nilai.name.trim() }), description: nilai.description.trim() } : {}),
                     });
                     setDraf(null);
-                    const izin = izinBerubah ? `${sel.ditambah.length} ditambah, ${sel.dicabut.length} dicabut` : "info diperbarui";
+                    const izin = izinBerubah ? `${sel.ditambah.length} ditambah, ${sel.dicabut.length} dicabut${usang.length ? `, ${usang.length} kunci usang dibuang` : ""}` : "info diperbarui";
                     return `Grup ${nilai.name.trim()} tersimpan: ${izin}; tercatat di riwayat. Berlaku untuk ${det.members.length} anggota pada permintaan berikutnya.`;
                 })}>
                 {sel.ditambah.length > 0 && (
@@ -342,6 +361,15 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                         </ul>
                     </div>
                 )}
+                {izinBerubah && usang.length > 0 && (
+                    <div>
+                        <b className="fi-small">Kunci usang dibuang ({usang.length})</b>
+                        <ul aria-label="Kunci usang dibuang" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                            {usang.map((k) => <li key={k} className="fi-small">− {permissionKeyLabel(k)} (usang, tidak dikenal registry)</li>)}
+                        </ul>
+                        <p className="fi-small fi-subtle">Ada di grup ini tetapi sudah tidak terdaftar. Dikirim tanpa kunci itu; tercatat dicabut di riwayat.</p>
+                    </div>
+                )}
                 {cabutKelola && (
                     <MessageStrip tone="warn" title="Mencabut Kelola user (users.manage).">
                         Anggota grup ini kehilangan pengelolaan user kecuali dari grup lain. Server menolak bila tidak tersisa admin aktif, atau bila akses Anda sendiri ikut hilang. Riwayat mencatat kunci yang dicabut dan siapa yang mencabutnya, bukan alasannya.
@@ -356,6 +384,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                     ["Anggota", det.members.length ? `${det.members.length}: ${daftarNama(det.members.map((m) => m.userName))}` : "0"],
                     ["Izin", String(det.permissions.length)],
                     ["Akibat", "Izin dan keanggotaan grup ini dihapus; grup utama dan role identitas tiap anggota dihitung ulang"],
+                    ["Role identitas", perubahanRole.length ? `${perubahanRole.length} anggota berubah (rinci di atas)` : "Tidak ada anggota yang berubah"],
                     ["Riwayat", "Tetap terbaca sesudah grup dihapus"],
                 ] : undefined}
                 onConfirm={() => jalankan(async () => {
@@ -363,7 +392,14 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                     await tulisAdmin(`/api/admin/groups/${det.group.id}`, "DELETE");
                     pindah(null);
                     return `Grup ${det.group.name} dihapus.`;
-                })} />
+                })}>
+                {perubahanRole.length > 0 && (
+                    <MessageStrip tone="warn" title={`Role identitas lama berubah untuk ${perubahanRole.length} anggota.`}>
+                        <ul aria-label="Role identitas berubah" style={{ margin: "4px 0", paddingLeft: 18, listStyle: "disc" }}>{perubahanRole.map((t) => <li key={t}>{t}</li>)}</ul>
+                        Gerbang berbasis role (OPC/Klaim/Form Kontrol, sinkron Accurate tanpa ACCURATE_SYNC_USER_ID) ikut berubah. Izin dari grup lain tidak berubah.
+                    </MessageStrip>
+                )}
+            </ConfirmDialog>
 
             <ConfirmDialog open={dialog === "baru"} onClose={() => setDialog(null)} tag="Buat" title="Grup baru" confirmLabel="Buat grup"
                 confirmDisabled={baru.nama.trim() ? undefined : "Isi nama grup"} alasanTerlihat
