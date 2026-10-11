@@ -131,35 +131,61 @@ cadangan `paymentAmount`), > 2 desimal = `nominal`, faktur sama dua kali = dijum
 
 Galat TIDAK pernah menghapus cache atau memundurkan `lengkap_pada` (hanya maju). Hari dengan pelunasan DITOLAK (`bentuk`/`nominal`/`ditolak`) tak
 pernah `lengkap` sampai diperbaiki di Accurate — **keputusan owner 12 Okt (K-3)**: Tutup terhalang sampai diperbaiki; tanpa jalan "jelaskan & tutup"; kunci
-20.00 tetap berjalan.
+20.00 tetap berjalan. **Sesi sinkron mati** (kredensial gagal) sementara database sesi masih diketahui: status tanggal itu DITULIS `gagal`/`sesi_sinkron`
+(lease dihormati, `lengkap_pada` tetap sebagai riwayat) — `lengkap` lama tidak tetap tampil. Kolom `akun_sinkron` = user.id akun Accurate sinkron yang
+membaca; ke klien sebagai NAMA (`akun`), `pemicu` tanpa id (`pemicu` = cron/manual, `pemicuOleh` = nama); waktu = ISO UTC (`…Z`).
 
 **Kelas galat (`sebab`)**: `sesi_sinkron` (HTTP 401 / kredensial absen — BERHENTI seketika), `hak_akses` (403 — berhenti), `batas_laju` (429 — ulang
 0,5/1/2 dtk, Retry-After dihormati, lalu galat), `accurate_5xx` / `jaringan` (ulang ≤ 3×), `tidak_pasti` (timeout/abort/bukan JSON — ulang 1×),
-`ditolak` (`s:false` / HTTP lain), `bentuk`, `nominal`, `terpotong`.
+`ditolak` (`s:false` / HTTP lain), `bentuk`, `nominal`, `terpotong`, `hapus_massal` (penjaga: satu putaran akan menghapus > 5 pelunasan DAN > 10 %
+cache tanggal itu -> TIDAK dihapus, `ditolak` = daftar id/nomor; jalan keluar POST `konfirmasiHapus: true` oleh pemegang `kasir.buka`).
 
-**Route & kode HTTP**: `POST /api/kasir/segarkan {tanggal, penuh?}` (`kasir.view`; tanggal sah ≤ hari ini WITA): 200 `{ok, status}` lengkap/sebagian,
-200 `{ok, dariCache: true}` bila lengkap < 60 dtk lalu (tanpa Accurate), 409 `SEDANG_DIBACA` + status, 503 `SESI_SINKRON` ("Sesi Accurate akun
-sinkron kedaluwarsa — admin login ulang di /sesi-accurate lalu pilih database"), 502 `BACA_GAGAL` + status. `GET /api/kasir/segarkan?tanggal=` →
-status TANPA Accurate (`belum_dibaca` bila tak ada baris). `GET /api/cron/kasir-pelunasan` (`CRON_SECRET`; `?tanggal=`, `?penuh=1`, `?check=1`):
-bawaan hari ini WITA + mundur sampai hari kerja sebelumnya (Senin: Sabtu & Minggu), berurutan, `sebagian` dilanjutkan ≤ 3×; 200 hanya bila semua
-`lengkap`, sesi mati 503, selain itu 502 dengan rincian.
+**Route & kode HTTP**: `POST /api/kasir/segarkan {tanggal, penuh?, konfirmasiHapus?}` (`kasir.view`; tanggal sah ≤ hari ini WITA; `penuh` &
+`konfirmasiHapus` HANYA pemegang **`kasir.buka`** (kunci kapabilitas OM/Admin, D-01) -> selain itu 403): 200 `{ok, status}` lengkap/sebagian, 200
+`{ok, dariCache: true}` bila lengkap < 60 dtk lalu (tanpa Accurate), 409 `SEDANG_DIBACA` + status, 409 `HAPUS_MASSAL` + status, 503 `SESI_SINKRON`
+("Sesi Accurate akun sinkron kedaluwarsa — admin login ulang di /sesi-accurate lalu pilih database"), 502 `BACA_GAGAL` + status.
+`GET /api/kasir/segarkan?tanggal=` → status TANPA Accurate (`belum_dibaca` bila tak ada baris). `GET /api/cron/kasir-pelunasan` (`CRON_SECRET`;
+`?tanggal=`, `?penuh=1`, `?check=1`): bawaan hari ini WITA + mundur sampai hari kerja sebelumnya (Senin: Sabtu & Minggu), berurutan, `sebagian`
+dilanjutkan ≤ 3×; tanggal yang lease-nya dipegang tombol/cron lain = `sedang_dibaca` berketerangan (BUKAN galat); `penuh=1` yang bertemu lease
+MENUNGGU tiap 5 dtk sampai lease selesai/kedaluwarsa (≤ 2,5 mnt per tanggal) lalu `PENUH_TERTUNDA`. 200 = semua lengkap, 202 = sisanya hanya
+`sedang_dibaca`, 503 = sesi mati, 502 = lainnya (rincian per tanggal). Tidak memulai putaran baru sesudah 13 menit (`tidak_sempat`).
 
-**Fungsi untuk K2/K3** (`lib/kasir/baca-pelunasan.ts`, tanpa Accurate): `databaseIdSinkron()` (database sesi sinkron saat ini; "" = sesi tak ada →
-503 SESI_SINKRON), `muatPelunasanHari(databaseId, tanggal)` → `{ status, pelunasan: Pelunasan[] }` (satu snapshot REPEATABLE READ; sen lewat
-`keSen`) = masukan `rekonsiliasiHari`, `statusBaca(databaseId, tanggal)`.
+**Fungsi untuk K2/K3** (`lib/kasir/baca-pelunasan.ts`, tanpa Accurate): `sesiSinkron()` / `databaseIdSinkron()` (database sesi sinkron saat ini; ""
+= sesi tak ada → 503 SESI_SINKRON), `muatPelunasanHari(databaseId, tanggal)` → `{ status, pelunasan: Pelunasan[] }` (satu snapshot REPEATABLE READ;
+sen lewat `keSen`) = masukan `rekonsiliasiHari`, `statusBaca(databaseId, tanggal)`, `publikkan(status)` (WAJIB sebelum status dikirim ke klien),
+`segarUntukTutup(status, sekarang)` (lib/kasir/pembaca).
 
-**Catatan untuk K2**: Tutup HANYA bila `status.status === "lengkap"` pada snapshot yang sama dengan angka yang ditutup (baca ulang di dalam transaksi
-Tutup); snapshot hari (`snapshotHari`) sebaiknya memuat `{ status, lengkapPada, jumlahDaftar }` baca saat itu. Cache hanya untuk `databaseIdSinkron()`
-saat ini — database lain = tidak dibaca. Klien yang mengulang POST selama `sebagian` wajib punya batas ulang.
+**Catatan untuk K2 (keputusan orkestrator 12 Okt)**: Tutup hari mensyaratkan `status === "lengkap"` DAN `lengkap_pada` ≤ **15 menit** lalu
+(`segarUntukTutup`); bila lebih tua, UI memicu segarkan dulu dan memakai hasilnya. Periksa pada snapshot yang sama dengan angka yang ditutup (baca
+ulang di dalam transaksi Tutup); snapshot hari (`snapshotHari`) sebaiknya memuat `{ status, lengkapPada, jumlahDaftar }` baca saat itu. Cache hanya
+untuk `databaseIdSinkron()` saat ini — database lain = tidak dibaca. Klien yang mengulang POST selama `sebagian` wajib punya batas ulang. Halaman
+daftar yang bergeser selama pembacaan = `terpotong` sekali, sembuh sendiri di putaran berikut (tanpa mekanisme baru).
 
-**Plafon (ponytail)**: identitas sinkron dipercaya penuh — akun yang hanya melihat sebagian cabang membuat pelunasan cabang lain "hilang" dan terhapus
-dari cache (sama dengan `lib/item-price-sync.ts`); balapan dua tanggal yang dibaca bersamaan saat pelunasan dipindah tanggal di Accurate dalam
-milidetik yang sama bisa meninggalkan satu baris basi sampai putaran berikut. `databaseIdSinkron` menyalin pemilihan user `resolveSyncCredentials`
-(ubah keduanya bersama).
+**Plafon (ponytail)**: penjaga hapus massal = ambang heuristik (> 5 DAN > 10 %) — akun sinkron yang kehilangan SEDIKIT cabang tetap bisa menghapus
+pelunasan cabang itu; jalan naik = bandingkan daftar cabang yang terlihat akun sinkron dengan harapan sebelum menghapus. Balapan dua tanggal yang
+dibaca bersamaan saat pelunasan dipindah tanggal di Accurate dalam milidetik yang sama bisa meninggalkan satu baris basi sampai putaran berikut.
+`sesiSinkron` menyalin pemilihan user `resolveSyncCredentials` (ubah keduanya bersama). Satu pelunasan bisa punya dua ember (`nominal_negatif` +
+`jumlah_invoice_payment_beda`); penjelasan berkunci (pelunasan, sisa).
 
-**TERBUKA**: K-2 (IT): crontab VPS (jadwal usul di bawah). K-1 dan K-3 sudah diputuskan owner (§6).
+**TERBUKA**: K-2 (IT): crontab VPS (jadwal di bawah). K-1 dan K-3 sudah diputuskan owner (§6).
 
-**Prasyarat deploy (IT, urut)**: `DDL_K1A.sql` (sudah) → `docs/handover/DDL_K1B.sql` sebagai role pemilik SEBELUM image (VERIFIKASI semua `ok`; baris
-"prasyarat K1a" false = DDL_K1A belum jalan) → image → `ACCURATE_SYNC_USER_ID` terisi (akun admin, sesi hidup + database terpilih) → baris crontab
-`/api/cron/kasir-pelunasan` (usul K-2: `*/15` 07.00–21.00 WITA Senin–Sabtu + `?penuh=1` 19.30 WITA). Tanpa env baru. Beban Accurate tambahan
-±9 list.do per tanggal per putaran + detail yang berubah (token dipakai bersama webhook faktur). Boleh rilis sebelum K2 (cache terisi tanpa UI).
+**Prasyarat deploy (IT, urut — feat/fiori BELUM di produksi)**: `docs/handover/DDL_K1A.sql` → `docs/handover/DDL_S7_2.sql` (entri migrate-pg
+`principal_log` 0030 berjalan lebih dulu) → `docs/handover/DDL_K1B.sql`, semuanya sebagai role pemilik SEBELUM image (VERIFIKASI semua `ok`; baris
+"prasyarat K1a" false = DDL_K1A belum jalan; baris "definisi persis" false = CHECK diubah/dilemahkan) → image → `ACCURATE_SYNC_USER_ID` = akun
+**admin yang melihat SEMUA cabang** (sesi hidup + database terpilih; akun bercabang sebagian memicu `hapus_massal` / menghapus pelunasan cabang
+lain) → crontab `/api/cron/kasir-pelunasan`. Tanpa env baru. Beban Accurate tambahan ±9 list.do per tanggal per putaran + detail yang berubah
+(token dipakai bersama webhook faktur). Boleh rilis sebelum K2 (cache terisi tanpa UI).
+
+**Crontab (K-2, usul; WITA = UTC+8, jadwal ditulis UTC EKSPLISIT untuk server ber-TZ UTC)** — 07.00–21.00 WITA Senin–Sabtu tiap 15 menit + baca penuh
+19.30 WITA; Senin 07.00 WITA = **Minggu 23.00 UTC**:
+
+```
+# m   h     dom mon dow   (UTC)
+*/15  23    *   *   0-5   curl -fsS --max-time 900 -H "Authorization: Bearer $CRON_SECRET" https://<host>/api/cron/kasir-pelunasan   # 07.00–07.45 WITA Sen–Sab
+*/15  0-12  *   *   1-6   curl -fsS --max-time 900 -H "Authorization: Bearer $CRON_SECRET" https://<host>/api/cron/kasir-pelunasan   # 08.00–20.45 WITA
+0     13    *   *   1-6   curl -fsS --max-time 900 -H "Authorization: Bearer $CRON_SECRET" https://<host>/api/cron/kasir-pelunasan   # 21.00 WITA
+30    11    *   *   1-6   curl -fsS --max-time 900 -H "Authorization: Bearer $CRON_SECRET" "https://<host>/api/cron/kasir-pelunasan?penuh=1"   # 19.30 WITA
+```
+
+Bila TZ server = WITA, pakai jam WITA langsung (`*/15 7-20 * * 1-6`, `0 21 * * 1-6`, `30 19 * * 1-6 …?penuh=1`). `--max-time` ≥ 900 (route berhenti
+memulai putaran baru sesudah 13 menit). Kode 202 = normal (tanggal sedang dibaca tombol); 502/503 = periksa status di UI.
