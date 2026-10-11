@@ -7,7 +7,7 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -441,21 +441,36 @@ test("PG S7-2: laporan BACA-SAJA pada data sintetis (ejaan nyata) — sumber hil
     await lap.pool.query(SUMBER); // claim_workflow sengaja TIDAK dibuat -> GAGAL dibaca, bukan kosong
     const url = urlSkema(lap.skema);
     const skrip = await import(new URL("../scripts/principal-laporan.mjs", import.meta.url).href) as {
-        bukaBacaSaja: (u: string) => Promise<import("pg").Client>;
-        jalankan: (o: { url: string; keluar: string; sekarang?: Date }) => Promise<{ gagal: string[] }>;
+        eksporDariDb: (u: string) => Promise<string>;
+        jalankan: (o: { url?: string; dariJson?: string; keluar: string; sekarang?: Date }) => Promise<{ gagal: string[] }>;
     };
-    const ro = await skrip.bukaBacaSaja(url);
-    try {
-        assert.equal((await ro.query("SHOW default_transaction_read_only")).rows[0].default_transaction_read_only, "on");
-        await assert.rejects(ro.query(`INSERT INTO principal_log (entitas, kunci, principal_id, aksi, aktor) VALUES ('principal', 'x', 'x', 'buat', 'x')`), kodeGalat("25006"));
-    } finally {
-        await ro.end();
-    }
+    // Berkas ekspor (dipakai psql di produksi DAN mode DB skrip) benar-benar baca-saja: tulisan di dalam transaksinya ditolak 25006;
+    // tanpa SET/READ ONLY, pemeriksa di blok DO berhenti sebelum membaca. Tiap uji = koneksi sendiri, diakhiri ROLLBACK.
+    const ekspor = await berkas("../docs/handover/PRINCIPAL_EKSPOR.sql");
+    const jalankanSql = async (sql: string) => {
+        const c = await lap.pool.connect();
+        try {
+            return await c.query(sql);
+        } finally {
+            await c.query("ROLLBACK").catch(() => undefined);
+            await c.query("RESET default_transaction_read_only");
+            c.release();
+        }
+    };
+    const SELECT_EKSPOR = "SELECT current_setting('principal_ekspor.hasil') AS ekspor;";
+    assert.ok(ekspor.includes(SELECT_EKSPOR) && ekspor.includes("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;") && /^ROLLBACK;$/m.test(ekspor));
+    await assert.rejects(jalankanSql(ekspor.replace(SELECT_EKSPOR, `INSERT INTO principal_log (entitas, kunci, principal_id, aksi, aktor)
+        VALUES ('principal', 'x', 'x', 'buat', 'x');`)), kodeGalat("25006"), "tulisan di transaksi ekspor ditolak");
+    await assert.rejects(jalankanSql(ekspor.replace("SET default_transaction_read_only = on;", "").replace(" READ ONLY;", ";")),
+        /sesi tidak baca-saja/, "pemeriksa baca-saja berhenti sebelum membaca");
+    const aktifEkspor = ekspor.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
+    assert.doesNotMatch(aktifEkspor, /\b(INSERT|UPDATE|DELETE|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE|COMMIT)\b/i, "berkas ekspor tanpa perintah tulis");
 
     const folder = await mkdtemp(path.join(tmpdir(), "s72-laporan-"));
     try {
         const { gagal } = await skrip.jalankan({ url, keluar: folder, sekarang: new Date("2026-10-11T00:00:00Z") });
         assert.deepEqual(gagal, ["claim_workflow — kode Klaim"]);
+        const eksporAwal = await skrip.eksporDariDb(url);
         const md = await readFile(path.join(folder, "laporan.md"), "utf8");
         assert.match(md, /\| claim_workflow — kode Klaim \| GAGAL \| GAGAL \| GAGAL \|/);
         assert.match(md, /\| master_barang — nama principal \| 7 \| 1 \| 1 \|/, "persis 3 + longgar 4 (P1, P2, UR, ABC=token sama) / HEINZ HZ\/BS seri / MAJU unmatched");
@@ -549,6 +564,26 @@ test("PG S7-2: laporan BACA-SAJA pada data sintetis (ejaan nyata) — sumber hil
         const sandi = decodeURIComponent(new URL(PG_URL).password);
         assert.ok(sandi && !cli.stdout.includes(sandi) && !cli.stderr.includes(sandi), "sandi tidak tercetak");
         assert.match(cli.stdout, /claim_workflow — kode Klaim: GAGAL/);
+
+        // Produksi tanpa terowongan: keluaran PRINCIPAL_EKSPOR.sql (di sini lewat pg, baris tag psql ditiru) -> --dari-json OFFLINE
+        // (tanpa DATABASE_URL) = laporan yang sama dengan mode DB; ekspor dibuat SEBELUM benih -> bandingkan dengan laporan pertama.
+        const lapDb = JSON.parse(await readFile(path.join(folder, "laporan.json"), "utf8")) as { sumber: unknown };
+        const berkasEkspor = path.join(folder, "principal-ekspor.json");
+        await writeFile(berkasEkspor, `SET\nBEGIN\n${eksporAwal}\nROLLBACK\n`);
+        const envTanpaDb = { ...process.env };
+        delete envTanpaDb.DATABASE_URL;
+        const offline = spawnSync(process.execPath, ["--import", "tsx", "scripts/principal-laporan.mjs", "--dari-json", berkasEkspor, "--keluar", path.join(folder, "offline")], {
+            cwd: new URL("..", import.meta.url), env: { ...envTanpaDb, AM040_DATABASE_URL: "" }, encoding: "utf8", timeout: 120_000,
+        });
+        assert.equal(offline.status, 2, offline.stderr);
+        assert.match(offline.stdout, /claim_workflow — kode Klaim: GAGAL — 42P01/);
+        const lapOffline = JSON.parse(await readFile(path.join(folder, "offline", "laporan.json"), "utf8")) as { dibuat: string; sumber: unknown };
+        assert.deepEqual(lapOffline.sumber, lapDb.sumber, "laporan dari berkas ekspor = laporan mode DB");
+        assert.match(lapOffline.dibuat, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/, "waktu laporan = waktu data dibaca");
+        const rusak = spawnSync(process.execPath, ["--import", "tsx", "scripts/principal-laporan.mjs", "--dari-json", berkasEkspor.replace(".json", ".tidak-ada.json"), "--keluar", path.join(folder, "rusak")], {
+            cwd: new URL("..", import.meta.url), env: envTanpaDb, encoding: "utf8", timeout: 120_000,
+        });
+        assert.equal(rusak.status, 1, "berkas ekspor tak terbaca = gagal (bukan laporan kosong)");
     } finally {
         await rm(folder, { recursive: true, force: true });
     }

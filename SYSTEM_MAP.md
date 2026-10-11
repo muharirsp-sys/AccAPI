@@ -1030,8 +1030,10 @@ principal [code unik = kode OPC/Klaim, TETAP] ── principal_variant (principa
 principal_log [append-only (trigger + REVOKE di DDL_S7_2): satu baris per buat/aktif/nonaktif/hapus, transaksi sama dengan perubahannya]
   API app/api/principals/** (lib/principal/tulis.ts; kontrak docs/handover/S7-2-KONTRAK-PRINCIPAL-API.md): GET daftar/riwayat
   (principles.view), tulis (principles.upload; hapus alias principles.delete) — 409 berkode tanpa menimpa, 503 tanpa trigger penjaga.
-  Resolver lib/principal/resolver.ts (alias saja: cocok | tak_dikenal | ambigu). Laporan + benih: npx tsx scripts/principal-laporan.mjs
-  (baca-saja) -> laporan.md/json + benih.sql (INSERT ... ON CONFLICT DO NOTHING) untuk ditinjau owner. Pemakai belum beralih (S7-2b).
+  Resolver lib/principal/resolver.ts (ruang WAJIB nama | kode_master_barang; alias saja: cocok | tak_dikenal | ambigu; GET /api/principals/resolve).
+  Laporan + benih: docs/handover/PRINCIPAL_EKSPOR.sql (psql -qAt di VPS, baca-saja -> 1 baris JSON) lalu OFFLINE npx tsx scripts/principal-laporan.mjs
+  --dari-json (atau DATABASE_URL langsung, berkas SQL yang sama) -> laporan.md/json + benih.sql (INSERT ... ON CONFLICT DO NOTHING) untuk ditinjau owner.
+  Pemakai belum beralih (S7-2b).
 
 # Kasir ↔ Incaso (K1a BL-59; skema + lib murni lib/kasir/rekonsiliasi.ts; pembaca K1b, UI K2; DDL manual docs/handover/DDL_K1A.sql SEBELUM image; kontrak docs/handover/KASIR-KONTRAK.md)
 kasir_setoran [append-only; (tanggal, salesman_kode=ORANG, revisi) unik; revisi n+1 -> revisi n (FK komposit); tunai/transfer/giro >= 0]

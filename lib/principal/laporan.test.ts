@@ -4,7 +4,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { getTableColumns } from "drizzle-orm";
 import { principal, principalAlias, principalVariant } from "../../db/schema.ts";
-import { benihSql, jsonLog, klasifikasiNama, KOLOM_LOG, laporanMarkdown, ringkas, susunLaporan, susunRegistri, tokenLonggar, type DataDb } from "./laporan.ts";
+import { readFile } from "node:fs/promises";
+import { benihSql, FORMAT_EKSPOR, jsonLog, klasifikasiNama, KOLOM_LOG, laporanMarkdown, ringkas, SUMBER_EKSPOR, susunLaporan, susunRegistri, tokenLonggar,
+    uraiEkspor, type DataDb } from "./laporan.ts";
 import { PENJAGA, sqlPenjagaSah } from "./penjaga.ts";
 
 const kosong = { ok: true as const, rows: [] };
@@ -174,4 +176,26 @@ test("klasifikasi longgar: token SAMA PERSIS didahulukan, lalu PALING SPESIFIK; 
     assert.deepEqual(k("KINO NON FOOD-KN"), ["matched", "longgar", "KINO/NON_FOOD", [], ["KINO/*"]], "paling spesifik");
     assert.deepEqual(k("HEINZ HZ/BS"), ["ambiguous", "longgar", undefined, ["HEINZ/BS", "HEINZ/HZ"], []], "seri antar-varian = ambiguous");
     assert.deepEqual(k("ABC INDONESIA"), ["matched", "longgar", "ABC/*", [], ["HEINZ/*"]]);
+});
+
+test("berkas ekspor (PRINCIPAL_EKSPOR.sql, psql -qAt) -> DataDb: baris JSON terakhir; sumber absen/galat = GAGAL, bukan kosong; format salah = dilempar", async () => {
+    assert.deepEqual([...SUMBER_EKSPOR].sort(), Object.keys(dataSintetis()).sort(), "SUMBER_EKSPOR = semua kunci DataDb");
+    const sql = await readFile(new URL("../../docs/handover/PRINCIPAL_EKSPOR.sql", import.meta.url), "utf8");
+    for (const k of SUMBER_EKSPOR) assert.ok(sql.includes(`('${k}', $q$`), `PRINCIPAL_EKSPOR.sql membaca ${k}`);
+    assert.ok(sql.includes(`'${FORMAT_EKSPOR}'`));
+
+    const isi = { format: FORMAT_EKSPOR, dibaca: "2026-10-11T07:00:00.000Z", data: {
+        masterBarang: { ok: true, rows: [{ principleCode: "K1", principleName: "KINO INDONESIA. TBK, PT", n: 2 }] },
+        claimWorkflow: { ok: false, galat: "42P01 relation \"claim_workflow\" does not exist" },
+    } };
+    const { dibaca, data } = uraiEkspor(`SET\nBEGIN\n${JSON.stringify({ ...isi, dibaca: "lama" })}\n${JSON.stringify(isi)}\r\nROLLBACK\n`);
+    assert.equal(dibaca, "2026-10-11T07:00:00.000Z", "baris JSON TERAKHIR");
+    assert.deepEqual(data.masterBarang, isi.data.masterBarang);
+    assert.deepEqual(data.claimWorkflow, isi.data.claimWorkflow, "galat dibawa");
+    assert.deepEqual(data.offBatch, { ok: false, galat: "tidak ada di berkas ekspor" }, "absen = GAGAL, bukan kosong");
+    const lap = susunLaporan(data, dibaca);
+    assert.deepEqual(lap.sumber.filter((b) => b.galat).map((b) => b.judul.split(" ")[0]), ["principal_mapping", "no_claim_template", "off_batch", "claim_workflow"]);
+    assert.throws(() => uraiEkspor("SET\nROLLBACK\n"), /tanpa baris JSON/);
+    assert.throws(() => uraiEkspor(JSON.stringify({ ...isi, format: "lain" })), /bukan principal-ekspor-v1/);
+    assert.throws(() => uraiEkspor("{rusak"), SyntaxError);
 });

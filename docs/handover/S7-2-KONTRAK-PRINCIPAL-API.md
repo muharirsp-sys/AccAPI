@@ -118,11 +118,17 @@ Untuk pemakai luar (Python tahap 2) agar SATU normalizer dipakai. `200 { ok, has
 
 ## Runbook laporan + benih (produksi, BACA-SAJA lalu ditinjau owner)
 
-1. Sesudah `DDL_S7_0.sql` + `DDL_S7_2.sql` (VERIFIKASI semua `ok`), dari checkout repo yang sudah `npm ci` dan punya akses jaringan
-   ke Postgres produksi (mis. terowongan SSH ke VPS; sebaiknya role baca-saja):
-   `DATABASE_URL=<url> npx tsx scripts/principal-laporan.mjs --keluar scratch/principal-laporan/prod-<tanggal>`
-   Skrip memasang `default_transaction_read_only=on` + transaksi `REPEATABLE READ READ ONLY` dan berhenti bila sesi tidak baca-saja;
-   URL tidak pernah dicetak. Keluar `2` = ada sumber GAGAL dibaca (lihat `laporan.md`, galat ≠ kosong) — jangan dipakai sebagai lengkap.
+1. Sesudah `DDL_S7_0.sql` + `DDL_S7_2.sql` (VERIFIKASI semua `ok`). **Tanpa terowongan & tanpa tsx di image** — dua langkah:
+   a. IT Support di VPS (salin `docs/handover/PRINCIPAL_EKSPOR.sql` ke VPS seperti berkas DDL), BACA-SAJA:
+      `docker exec -i accapi-postgres psql -U accapi -d accapi -qAt -v ON_ERROR_STOP=1 < PRINCIPAL_EKSPOR.sql > principal-ekspor.json`
+      Berkas memasang `default_transaction_read_only=on` + `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, berhenti bila sesi tidak
+      baca-saja, diakhiri `ROLLBACK`; keluaran = SATU baris JSON (`principal-ekspor-v1`: nama/kode principal + hitungan, tanpa rahasia).
+      Tiap sumber dibaca terpisah: tabel hilang/galat = `{ ok:false, galat }`, sumber lain tetap terbaca.
+   b. Salin `principal-ekspor.json` ke checkout repo yang sudah `npm ci`, lalu OFFLINE (tanpa DATABASE_URL):
+      `npx tsx scripts/principal-laporan.mjs --dari-json principal-ekspor.json --keluar scratch/principal-laporan/prod-<tanggal>`
+   Alternatif dev / DB uji: `DATABASE_URL=<url> npx tsx scripts/principal-laporan.mjs` menjalankan berkas ekspor yang SAMA langsung
+   (pengurai sama; URL tidak pernah dicetak). Keluar `2` = ada sumber GAGAL dibaca (lihat `laporan.md`, galat ≠ kosong) — jangan dipakai
+   sebagai lengkap; `1` = berkas ekspor tak terbaca/bukan `principal-ekspor-v1` (tidak ada laporan).
 2. Owner meninjau `laporan.md` (matched / ambiguous / unmatched per sumber, KONFLIK registri) dan `benih.sql`: blok aktif = registri
    (25 principal OPC, varian K9 + HEINZ, alias kode/nama/label No Claim/nama varian) + kode Master Barang yang namanya cocok PERSIS;
    blok "PERIKSA" (cocok longgar) ber-komentar; ambiguous/unmatched hanya dicantumkan. Cocok longgar (token, tanpa tanda baca/badan
@@ -133,4 +139,4 @@ Untuk pemakai luar (Python tahap 2) agar SATU normalizer dipakai. `200 { ok, has
    — idempoten (`ON CONFLICT DO NOTHING`, tanpa UPDATE), menolak berjalan tanpa trigger penjaga, VERIFIKASI di akhir (baris `false` di atas).
    Seperti API (`PRINCIPAL_NONAKTIF` / `VARIAN_NONAKTIF`), benih tidak menambah varian/alias ke principal/varian NONAKTIF: yang sudah
    nonaktif saat laporan dicantumkan di bagian 5 `[nonaktif]`; yang dinonaktifkan sesudahnya dilewati SQL dan tampil `false` di VERIFIKASI.
-4. Jalankan laporan lagi: usulan principal/varian = 0, tanpa KONFLIK. Baru sesudah itu pemakai beralih (S7-2b).
+4. Jalankan ekspor + laporan lagi (langkah 1): usulan principal/varian = 0, tanpa KONFLIK. Baru sesudah itu pemakai beralih (S7-2b).

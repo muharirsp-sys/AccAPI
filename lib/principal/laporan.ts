@@ -5,10 +5,11 @@
  *   no_claim_template, off_batch, claim_workflow, hard-code TS) diklasifikasi matched / ambiguous / unmatched.
  *   Tak pernah menebak: hanya kecocokan PERSIS (normalizer baku) yang masuk SQL aktif; kecocokan longgar ditulis sebagai blok
  *   SQL ber-komentar untuk ditinjau owner; ambiguous/unmatched hanya dicantumkan.
- * Caller: scripts/principal-laporan.mjs (baca DB baca-saja lalu memanggil ini); uji lib/principal/laporan.test.ts, principal-pg.test.ts.
+ * Caller: scripts/principal-laporan.mjs (keluaran docs/handover/PRINCIPAL_EKSPOR.sql -> uraiEkspor -> susunLaporan); uji lib/principal/laporan.test.ts,
+ *   principal-pg.test.ts.
  * Dependensi: lib/principal/normalisasi.ts, resolver.ts (JenisAlias, SUMBER_KODE), penjaga.ts, lib/off-program-control/constants.ts,
  *   lib/claim-workflow/no-claim-rules.ts. TANPA @/ alias & tanpa DB agar bisa diimpor skrip .mjs lewat tsx.
- * Main Functions: tokenLonggar, susunRegistri, susunLaporan, laporanMarkdown, benihSql.
+ * Main Functions: uraiEkspor, tokenLonggar, susunRegistri, klasifikasiNama, susunLaporan, laporanMarkdown, KOLOM_LOG/jsonLog, benihSql.
  * Side Effects: tidak ada.
  * Tahap 2 (TIDAK di sini): Python principles.sqlite3, payments.json, Excel rekening, Finance/SPPD.
  */
@@ -49,6 +50,31 @@ export type DataDb = {
     principalVariant: Bacaan<{ code: string; variantKey: string; name: string | null; isActive: boolean }>;
     principalAlias: Bacaan<{ code: string; variantKey: string | null; aliasNorm: string; aliasAsli: string; jenis: string; sumber: string }>;
 };
+
+/** Kunci sumber di berkas ekspor docs/handover/PRINCIPAL_EKSPOR.sql (= kunci DataDb; laporan.test.ts memastikan SQL memuat semuanya). */
+export const SUMBER_EKSPOR = ["masterBarang", "principalMapping", "noClaimTemplate", "offBatch", "claimWorkflow", "principal", "principalVariant",
+    "principalAlias"] as const satisfies readonly (keyof DataDb)[];
+export const FORMAT_EKSPOR = "principal-ekspor-v1";
+
+/**
+ * Keluaran PRINCIPAL_EKSPOR.sql (psql -qAt, atau mode DB skrip) -> DataDb + waktu baca. Baris lain (tag perintah, kosong) diabaikan;
+ * baris JSON TERAKHIR dipakai. Sumber yang absen di berkas = galat (bukan kosong). Bentuk/format salah = dilempar (laporan tidak dibuat).
+ */
+export function uraiEkspor(teks: string): { dibaca: string; data: DataDb } {
+    const json = teks.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith("{")).pop();
+    if (!json) throw new Error("berkas ekspor tanpa baris JSON — jalankan docs/handover/PRINCIPAL_EKSPOR.sql dengan psql -qAt");
+    const j = JSON.parse(json) as { format?: unknown; dibaca?: unknown; data?: unknown };
+    if (j.format !== FORMAT_EKSPOR || typeof j.dibaca !== "string" || !j.data || typeof j.data !== "object") {
+        throw new Error(`berkas ekspor bukan ${FORMAT_EKSPOR}`);
+    }
+    const isi = j.data as Record<string, { ok?: unknown; rows?: unknown; galat?: unknown } | undefined>;
+    const data = Object.fromEntries(SUMBER_EKSPOR.map((k) => {
+        const b = isi[k];
+        return [k, b?.ok === true && Array.isArray(b.rows) ? { ok: true, rows: b.rows }
+            : { ok: false, galat: typeof b?.galat === "string" ? b.galat : "tidak ada di berkas ekspor" }];
+    })) as DataDb;
+    return { dibaca: j.dibaca, data };
+}
 
 const kunciTarget = (t: Target) => `${t.code}:${t.variantKey ?? "*"}`;
 const ruang = (jenis: string) => (jenis === "kode_master_barang" ? "MB" : "NAMA");
@@ -367,7 +393,7 @@ export function benihSql(lap: Laporan): string {
     const tolakan = [...nonaktif, ...lap.sumber.flatMap((b) => b.baris.filter((x) => x.status !== "matched").map((x) => `--   [${b.judul}] ${rapikanTeks(x.nilai)} -> ${x.status}${x.kandidat?.length ? ` (${x.kandidat.map(tampilTarget).join(", ")})` : ""}`))];
     const galat = lap.sumber.filter((b) => b.galat).map((b) => `--   GAGAL DIBACA [${b.judul}]: ${rapikanTeks(b.galat)}`);
     const s: string[] = [
-        `-- BENIH principal S7-2 (BL-64) — DIHASILKAN scripts/principal-laporan.mjs pada ${lap.dibuat}. DITINJAU OWNER sebelum dijalankan.`,
+        `-- BENIH principal S7-2 (BL-64) — DIHASILKAN scripts/principal-laporan.mjs dari data yang dibaca ${lap.dibuat}. DITINJAU OWNER sebelum dijalankan.`,
         "-- Dijalankan IT Support (role accapi), SESUDAH DDL_S7_0.sql + DDL_S7_2.sql:",
         "--   docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 < benih.sql",
         "-- Idempoten: hanya INSERT ... ON CONFLICT DO NOTHING (TIDAK PERNAH UPDATE / DO UPDATE) + principal_log untuk baris yang benar-benar",
