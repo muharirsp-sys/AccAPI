@@ -11,7 +11,7 @@
 import { NextResponse } from "next/server";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { user, userGroup } from "@/db/schema";
+import { session, user, userGroup } from "@/db/schema";
 import { permissionMapForUser } from "@/lib/rbac";
 
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -123,4 +123,24 @@ export function tolakGrupTerakhir(users: Array<{ id: string; name: string }>) {
 export async function anggota(tx: Tx, userId: string, groupId: string): Promise<boolean> {
     const [r] = await tx.select({ u: userGroup.userId }).from(userGroup).where(and(eq(userGroup.userId, userId), eq(userGroup.groupId, groupId))).limit(1);
     return Boolean(r);
+}
+
+/** Batas sandi = konfigurasi Better Auth server (min 6, maks 128). Pesan TIDAK pernah memuat sandinya. */
+export function periksaSandi(password: unknown, min: number, max: number): GalatOtorisasi | null {
+    if (typeof password !== "string" || password.length < min) return new GalatOtorisasi(400, "SANDI_TERLALU_PENDEK", `Sandi minimal ${min} karakter.`);
+    if (password.length > max) return new GalatOtorisasi(400, "SANDI_TERLALU_PANJANG", `Sandi maksimal ${max} karakter.`);
+    return null;
+}
+
+/** Cabut SEMUA sesi user (tabel session Better Auth; tanpa cookie cache/secondary storage -> berlaku seketika). */
+export async function cabutSesi(tx: Tx, userId: string): Promise<number> {
+    return (await tx.delete(session).where(eq(session.userId, userId)).returning({ id: session.id })).length;
+}
+
+/** Baris user target dibaca dalam transaksi; tidak ada -> 404 berkode. */
+export async function userTarget(tx: Tx, userId: string) {
+    const [u] = await tx.select({ id: user.id, name: user.name, email: user.email, role: user.role, banned: user.banned, banExpires: user.banExpires })
+        .from(user).where(eq(user.id, userId)).limit(1);
+    if (!u) throw new GalatOtorisasi(404, "USER_TIDAK_ADA", "User tidak ditemukan");
+    return u;
 }

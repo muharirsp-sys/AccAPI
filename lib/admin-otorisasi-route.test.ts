@@ -12,6 +12,9 @@ import * as grupId from "../app/api/admin/groups/[id]/route.ts";
 import * as anggota from "../app/api/admin/groups/[id]/members/route.ts";
 import * as userGrup from "../app/api/admin/users/[id]/group/route.ts";
 import * as daftar from "../app/api/admin/users/permissions/route.ts";
+import * as buatUser from "../app/api/admin/users/route.ts";
+import * as sandi from "../app/api/admin/users/[id]/password/route.ts";
+import * as status from "../app/api/admin/users/[id]/status/route.ts";
 
 type Handler = (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => Promise<Response>;
 
@@ -48,6 +51,9 @@ const TULIS: Array<[string, Handler, string]> = [
     ["POST members", anggota.POST, "POST"],
     ["DELETE members", anggota.DELETE, "DELETE"],
     ["POST users/[id]/group", userGrup.POST, "POST"],
+    ["POST users", buatUser.POST as unknown as Handler, "POST"],
+    ["POST users/[id]/password", sandi.POST, "POST"],
+    ["POST users/[id]/status", status.POST, "POST"],
 ];
 
 test("penjaga murni: AKSES_SENDIRI, ADMIN_TERAKHIR, aman bila tersisa admin; aktor bukan admin sebelumnya tidak dicek diri", () => {
@@ -99,4 +105,24 @@ test("400 sebelum transaksi: kunci izin tak terdaftar (berkode + daftar), userId
     assert.equal(n.status, 400);
     const kosong = await sebagai(["users.manage"], () => grupId.PATCH(req("PATCH", { name: "  " }), ctx));
     assert.equal(kosong.status, 400);
+});
+
+test("plugin admin Better Auth ditutup dari browser: SEMUA endpoint /admin/* plugin -> HTTP 404 (cocok persis, juga ?query)", async () => {
+    const api = auth.api as unknown as Record<string, { path?: string; options?: { method?: string | string[] } }>;
+    const admin = Object.values(api).filter((e) => typeof e?.path === "string" && e.path.startsWith("/admin/"));
+    assert.ok(admin.length >= 15, `endpoint plugin admin terdeteksi: ${admin.length}`);
+    const tertutup = new Set((auth.options as { disabledPaths?: string[] }).disabledPaths ?? []);
+    for (const e of admin) {
+        assert.ok(tertutup.has(e.path!), `${e.path} belum ada di disabledPaths`);
+        const method = [e.options?.method ?? "POST"].flat()[0] === "GET" ? "GET" : "POST";
+        for (const q of ["", "?userId=x"]) {
+            const res = await auth.handler(new Request(`http://localhost:3000/api/auth${e.path}${q}`, {
+                method, headers: { "content-type": "application/json", origin: "http://localhost:3000" }, ...(method === "POST" ? { body: "{}" } : {}),
+            }));
+            assert.equal(res.status, 404, `${method} ${e.path}${q}`);
+        }
+    }
+    // Kontrol: endpoint bukan admin tetap hidup (tanpa sesi -> 200 null, bukan 404).
+    const ses = await auth.handler(new Request("http://localhost:3000/api/auth/get-session", { headers: { origin: "http://localhost:3000" } }));
+    assert.notEqual(ses.status, 404);
 });

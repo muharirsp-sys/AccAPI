@@ -147,3 +147,6 @@ Cursor rusak → 400 `INPUT_TIDAK_VALID`. Label aksi: `auditActionLabels` di `li
 - **Butir 1 (penjaga):** kode baru **403 `IZIN_BERUBAH`** — aktor lolos gerbang `users.manage` saat permintaan masuk, tetapi saat kunci
   global didapat ia sudah bukan admin (dicabut admin lain sesaat sebelumnya; mis. balapan saling mencabut) → ditolak, tidak ada perubahan.
   `POST /api/admin/groups/[id]/members` kini menjawab `{ ok, added }`; 404 berkode `USER_TIDAK_ADA` / `GRUP_TIDAK_ADA`.
+- **Butir 2 (BL-62):** `POST /api/admin/users/[id]/status` `{ active: true }` untuk user TANPA grup → 409 `GRUP_TERAKHIR` (aktif tanpa grup =
+  akses role lama); tetapkan grup dulu. Galat buat user: `GRUP_TIDAK_ADA` menyertakan `missing: string[]`. Layar lama
+  `UserManagement.tsx` dialihkan ke `POST /api/admin/users` dan `POST /api/admin/users/[id]/password` (plugin ditutup); S7a menggantinya.

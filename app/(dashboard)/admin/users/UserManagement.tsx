@@ -3,7 +3,7 @@
 /*
  * Tujuan: UI admin untuk membuat user internal, reset password, dan pilih Access Group.
  * Caller: Route dashboard `/admin/users`.
- * Dependensi: Better Auth admin API, `/api/admin/users/permissions`, `/api/admin/users/[id]/group`,
+ * Dependensi: `/api/admin/users` (buat), `/api/admin/users/[id]/password`, `/api/admin/users/permissions`, `/api/admin/users/[id]/group`,
  *   `/api/admin/groups`, sonner.
  * Main Functions: UserManagement, loadUsers, loadGroups, createUser, setUserGroup, resetPassword.
  * Side Effects: HTTP read/write ke API auth/admin.
@@ -98,17 +98,11 @@ export default function UserManagement() {
         }
         setSaving(true);
         try {
-            const created = await authFetch<{ user?: { id?: string } }>("/api/auth/admin/create-user", {
+            // S7-1: satu permintaan server (atomik + tercatat); plugin /api/auth/admin/* ditutup dari browser.
+            await authFetch("/api/admin/users", {
                 method: "POST",
-                body: JSON.stringify({ name, email, password, role: "viewer", data: { emailVerified: true } }),
+                body: JSON.stringify({ name, email, password, groupIds: [groupId] }),
             });
-            const newUserId = created.user?.id;
-            if (newUserId) {
-                await authFetch(`/api/admin/users/${newUserId}/group`, {
-                    method: "POST",
-                    body: JSON.stringify({ groupId }),
-                });
-            }
             toast.success("User dibuat.");
             setName("");
             setEmail("");
@@ -148,9 +142,9 @@ export default function UserManagement() {
             return;
         }
         try {
-            await authFetch("/api/auth/admin/set-user-password", {
+            await authFetch(`/api/admin/users/${userId}/password`, {
                 method: "POST",
-                body: JSON.stringify({ userId, newPassword }),
+                body: JSON.stringify({ password: newPassword }),
             });
             toast.success("Password user diperbarui.");
         } catch (error) {

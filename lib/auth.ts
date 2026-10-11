@@ -42,6 +42,16 @@ const trustedOrigins = Array.from(new Set([
 export const auth = betterAuth({
     baseURL,
     trustedOrigins,
+    // S7-1 BL-62: plugin admin TIDAK boleh dipanggil dari browser (melewati grup, penjaga BL-61, dan audit); rute server
+    // /api/admin/users/** menggantikannya. disabledPaths hanya menutup router HTTP (404, cocok persis); auth.api.* server-side
+    // (POST /api/admin/users, bootstrap/route.ts) tetap jalan. Uji lib/admin-otorisasi-route.test.ts memeriksa SEMUA endpoint
+    // /admin/* plugin tertutup — endpoint baru sesudah upgrade Better Auth membuat uji merah.
+    disabledPaths: [
+        "/admin/create-user", "/admin/set-user-password", "/admin/set-role", "/admin/ban-user", "/admin/unban-user",
+        "/admin/remove-user", "/admin/list-users", "/admin/get-user", "/admin/update-user", "/admin/has-permission",
+        "/admin/impersonate-user", "/admin/stop-impersonating", "/admin/list-user-sessions", "/admin/revoke-user-session",
+        "/admin/revoke-user-sessions",
+    ],
     rateLimit: {
         // ponytail: explicit — don't rely on NODE_ENV inference; custom rule gentler than
         // the 3/10s default while still blocking brute force (5 per 15 min per IP)
