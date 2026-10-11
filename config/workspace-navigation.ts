@@ -6,7 +6,7 @@
  * Side Effects: Tidak ada; tidak mengubah hak akses.
  */
 import {
-    FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, ClipboardList, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, PackageSearch, type LucideIcon } from "lucide-react";
+    FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, ClipboardList, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, PackageSearch, HandCoins, type LucideIcon } from "lucide-react";
 
 /** `short` = label navigasi bawah ponsel (≤ 10 huruf); bawaan kata pertama `name`. */
 export type WorkspaceItem = { name: string; href: string; icon: LucideIcon; short?: string };
@@ -35,6 +35,8 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
     ] },
     { id: "finance", name: "Keuangan", description: "Kelola pembayaran, perjalanan, dan rekonsiliasi.", icon: Wallet, items: [
         { name: "Finance", href: "/finance", icon: DollarSign },
+        // Wizard Pelunasan (S6e-2): kirim sales-receipt ke Accurate; dibuka pemegang `pelunasan.kirim` (Admin Incaso, Finance).
+        { name: "Pelunasan", href: "/pelunasan", icon: HandCoins },
         { name: "Pembayaran / SPPD", href: "/payments", icon: Wallet, short: "Pembayaran" },
         { name: "Format SPPD", href: "/payments/sppd", icon: FileText },
         { name: "Rekonsiliasi", href: "/reconciliation", icon: GitCompareArrows },
@@ -64,6 +66,8 @@ export function navigationForPermissions(canAccess: (href: string) => boolean): 
 export const ROLE_PROFILES: Array<{ id: string; label: string; when: string; shortcuts: string[] }> = [
     { id: "admin", label: "Admin", when: "users.manage", shortcuts: ["/admin/groups", "/api-wrapper", "/principles"] },
     { id: "finance", label: "Finance", when: "finance.transfer", shortcuts: ["/finance", "/payments", "/off-program-control"] },
+    // Sesudah Finance: Finance juga memegang pelunasan.kirim (owner #1), tetapi Berandanya tetap Finance.
+    { id: "incaso", label: "Admin Incaso", when: "pelunasan.kirim", shortcuts: ["/pelunasan"] },
     { id: "salesman", label: "Salesman", when: "websales.create", shortcuts: ["/form-kontrol", "/sales", "/insentif-sales"] },
     { id: "sm", label: "Sales Manager", when: "off_program_control.approve", shortcuts: ["/off-program-control", "/form-kontrol", "/insentif-sales"] },
     { id: "claim", label: "Claim", when: "claim_workflow.create", shortcuts: ["/off-program-control", "/claim-workflow", "/rekap-promo"] },

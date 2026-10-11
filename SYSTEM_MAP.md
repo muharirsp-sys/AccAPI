@@ -89,6 +89,8 @@ DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)
   -> config/workspace-navigation.ts: 18 modul dalam 6 kelompok + Beranda
   -> navigasi samping Fiori (kelompok dari izin) + cari menu Ctrl K; favorit/rail lama dihapus (S1a)
 Beranda (Fiori, S1b) -> profil peran dari izin -> tile tugas (lib/beranda.ts, GET endpoint yang ada) + Pintasan + Pantauan + Semua aplikasi
+  -> Admin Incaso (pelunasan.kirim, S6e-2b): tile Tidak pasti/Gagal + Pantauan dari GET /api/idempotency/summary?rows=1 (perDatabase,
+     database aktif dari /api/auth/accurate-session); jawaban tanpa angka/daftar = galat, bukan 0
 RootLayout -> html[data-theme="surya"] statis (Office Calm/Neon/iOS pensiun, Okt 2026)
   -> app/workspace.css: remap Surya untuk isi halaman yang belum dimigrasi
 SidebarLayout (shell Fiori, S1a) -> shell bar: logo resmi, cari menu Ctrl K, menu profil (Mode/Density, Bantuan -> ChatWidget, Keluar)
@@ -305,6 +307,9 @@ Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConf
      jejak idempotency_resolution, lib/idempotency-resolve.ts). Lock mencatat database di idempotency_log."databaseId" DAN
      idempotency_override.database_id (DDL_S6E2.sql); proxy menolak bila salah satunya ≠ database sesi
   -> GET /api/idempotency/summary — Tidak pasti / Gagal boleh diulang (BL-41; pelunasan.kirim ATAU finance.resolve_unknown)
+  UI (S6e-2b): /pelunasan wizard Jenis -> Unggah -> Akun -> Tinjau -> Hasil (app/(dashboard)/pelunasan/*); galat lock dipetakan menurut
+     GalatKirim.code; Selesaikan (Selesaikan.tsx: GET pencarian dulu -> POST keputusan; kode 409 menutup pilihan) dari Hasil dan dari
+     daftar Perlu tindakan (?rows=1) di langkah Jenis
 
 Data Sync (item/customer):
   -> lib/sync.ts [syncModule(moduleName, endpoint, creds)]

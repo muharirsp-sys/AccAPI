@@ -10,20 +10,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-    CalendarDays, CircleCheck, ClipboardCheck, Clock, FileText, Package, RefreshCw, Send, ShoppingCart, TriangleAlert, Undo2, Users, Wallet,
+    CalendarDays, CircleCheck, ClipboardCheck, Clock, FileText, Monitor, Package, RefreshCw, Send, ShoppingCart, TriangleAlert, Undo2, Upload, Users, Wallet,
     type LucideIcon,
 } from "lucide-react";
 import { canAccessPathWithKeys } from "@/lib/rbac";
 import { ROLE_PROFILES, navigationForPermissions, roleProfile, roleShortcuts } from "@/config/workspace-navigation";
-import { SOURCES, TILES, cardFor, tilesFor, witaToday, type SourceKey, type TileId, type TileValue } from "@/lib/beranda";
+import { SOURCES, TILES, cardFor, linksFor, sourceValid, tilesFor, witaToday, type SourceKey, type SourceLoad, type TileId, type TileValue } from "@/lib/beranda";
 import { MessageStrip, Skeleton, StatusBadge, Tile } from "@/components/fiori/core";
 
 const ICONS: Record<string, LucideIcon> = {
     send: Send, file: FileText, alert: TriangleAlert, box: Package, cart: ShoppingCart, clipboard: ClipboardCheck,
-    undo: Undo2, wallet: Wallet, clock: Clock, check: CircleCheck, users: Users,
+    undo: Undo2, wallet: Wallet, clock: Clock, check: CircleCheck, users: Users, upload: Upload, monitor: Monitor,
 };
 
-type Load = { status: "memuat" | "siap" | "galat"; data?: unknown };
+type Load = SourceLoad;
 
 export default function Beranda({ permKeys, firstName, greeting, dateLabel, previewProfile }: {
     permKeys: string[]; firstName: string; greeting: string; dateLabel: string;
@@ -33,8 +33,9 @@ export default function Beranda({ permKeys, firstName, greeting, dateLabel, prev
     const keys = useMemo(() => new Set(permKeys), [permKeys]);
     const profile = (previewProfile && ROLE_PROFILES.find((p) => p.id === previewProfile)) || roleProfile(keys);
     const tileIds = tilesFor(profile?.id, keys);
+    const links = linksFor(profile?.id, keys);
     const card = cardFor(profile?.id, keys);
-    const sourceList = [...new Set<SourceKey>([...tileIds.map((id) => TILES[id].source), ...(card ? [card.source] : [])])].join(",");
+    const sourceList = [...new Set<SourceKey>([...tileIds.map((id) => TILES[id].source), ...(card ? [card.source] : []), ...(card?.extra ? [card.extra] : [])])].join(",");
     const groups = navigationForPermissions((href) => canAccessPathWithKeys(href, keys));
     const shortcuts = roleShortcuts(keys, groups.flatMap((g) => g.items), 4, profile);
     const [loads, setLoads] = useState<Partial<Record<SourceKey, Load>>>({});
@@ -45,7 +46,9 @@ export default function Beranda({ permKeys, firstName, greeting, dateLabel, prev
             // Batas waktu: endpoint yang menggantung jadi galat (dengan Coba lagi), bukan "memuat" selamanya.
             const res = await fetch(SOURCES[key].url(witaToday()), { cache: "no-store", signal: AbortSignal.timeout(20_000) });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            next = { status: "siap", data: await res.json() };
+            const data: unknown = await res.json();
+            if (!sourceValid(key, data)) throw new Error("bentuk jawaban tidak dikenal");
+            next = { status: "siap", data };
         } catch {
             next = { status: "galat" };
         }
@@ -97,6 +100,15 @@ export default function Beranda({ permKeys, firstName, greeting, dateLabel, prev
                     )}
                     <div className="fi-tiles">
                         {tileIds.map((id) => <TaskTile key={id} id={id} load={loads[TILES[id].source]} onRetry={() => retry(TILES[id].source)} />)}
+                        {links.map((l) => {
+                            const Icon = ICONS[l.icon];
+                            return l.href
+                                ? <Tile key={l.title} title={l.title} subtitle={l.subtitle} icon={<Icon className="fi-icon" />} footer={l.footer} href={l.href} />
+                                : <div key={l.title} className="fi-tile" role="group" aria-label={l.title} style={{ cursor: "default" }}>
+                                    <span className="fi-tile-ico" aria-hidden><Icon className="fi-icon" /></span>
+                                    <span className="fi-tile-t">{l.title}</span><span className="fi-tile-s">{l.subtitle}</span><span className="fi-tile-f">{l.footer}</span>
+                                </div>;
+                        })}
                     </div>
                 </section>
             )}
@@ -123,7 +135,11 @@ export default function Beranda({ permKeys, firstName, greeting, dateLabel, prev
                         <header><h3>{card.title}</h3><span>{card.subtitle}</span></header>
                         {status(card.source) === "memuat" ? <Skeleton rows={3} label={`Memuat ${card.title}`} />
                             : status(card.source) === "galat" ? <p className="fi-card-note fi-card-note--err">{SOURCES[card.source].label} gagal dimuat.</p>
-                                : <CardRows kind={card.kind} rows={card.rows(loads[card.source]?.data)} />}
+                                : <>
+                                    {card.notes?.(loads[card.source]?.data, card.extra ? loads[card.extra] ?? { status: "memuat" } : undefined)
+                                        .map((n) => <p key={n} className="fi-card-note">{n}</p>)}
+                                    <CardRows kind={card.kind} rows={card.rows(loads[card.source]?.data, card.extra ? loads[card.extra] ?? { status: "memuat" } : undefined)} />
+                                </>}
                         <footer><Link href={card.href} prefetch={false}>{card.more}</Link></footer>
                     </article>
                 </section>
