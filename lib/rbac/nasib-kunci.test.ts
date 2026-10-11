@@ -149,7 +149,7 @@ const DAFTAR_PUTIH: Record<string, string> = {
     "auth/accurate-session/route.ts": "sesi Accurate MILIK pengguna sendiri (zona OAuth, cukup sesi app — D-01 Q2)",
     "auth/open-db/route.ts": "buka database Accurate untuk sesi milik sendiri (zona OAuth, cukup sesi app)",
     "chatbot/route.ts": "chatbot baca-informasi untuk sesi app; tidak menulis data bisnis",
-    "claim-workflow/[id]/submissions/[submissionId]/close/route.ts": "peran admin/claim (user.role) — sisa AM-026, pindah ke kunci menyusul",
+    "claim-workflow/[id]/submissions/[submissionId]/close/route.ts": "peran admin/claim (manager = admin lewat requireClaimSession, owner 12 Okt) — pindah ke kunci menyusul",
     "claim-workflow/[id]/submissions/[submissionId]/items/route.ts": "peran admin/claim (user.role) — sisa AM-026",
     "claim-workflow/[id]/submissions/[submissionId]/payments/[paymentId]/void/route.ts": "peran admin/claim (user.role) — sisa AM-026",
     "idempotency/complete/route.ts": "hanya pemilik lock (lockId + user yang sama, AM-050); izin kirim ditegakkan di /lock & /api/proxy",
@@ -172,4 +172,22 @@ test("guard statik: /api/proxy memuat api_wrapper.execute (tulis Konsol) DAN pel
     const src = baca("app/api/proxy/route.ts");
     assert.match(src, /perms!?\.has\("api_wrapper\.execute"\)/);
     assert.match(src, /perms!?\.has\("pelunasan\.kirim"\)/);
+});
+
+test("PK-1 (owner 12 Okt: biarkan): tidak ada SQL handover yang menulis api_wrapper.*; preset tidak mencabut execute dari Manager/Fakturist", async () => {
+    const { readdirSync: daftar } = await import("node:fs");
+    for (const f of daftar(path.join(ROOT, "docs", "handover")).filter((n) => /^RBAC_.*\.sql$/.test(n))) {
+        const aktif = baca(`docs/handover/${f}`).replace(/--.*$/gm, "");
+        const tulis = aktif.slice(0, aktif.indexOf("VERIFIKASI") >= 0 ? aktif.indexOf("VERIFIKASI") : undefined);
+        // Pernyataan tulis yang menyebut api_wrapper (INSERT/DELETE/UPDATE dalam satu pernyataan ber-";").
+        for (const stmt of tulis.split(";")) {
+            if (/\b(INSERT\s+INTO|DELETE\s+FROM|UPDATE\s+"?\w+"?\s+SET)\b/i.test(stmt)) assert.doesNotMatch(stmt, /api_wrapper/, `${f} menulis api_wrapper.*`);
+        }
+        assert.doesNotMatch(tulis, /\bDELETE\s+FROM\s+group_permission\b[^;]*\bWHERE\b[^;]*NOT\b/i, `${f}: DELETE berbasis pengecualian bisa mencabut execute`);
+    }
+    // Preset BL-37 hanya menyisipkan ke grup yang BARU dibuat (grup lama bernama sama — termasuk Fakturist produksi — tidak disentuh).
+    assert.match(baca("docs/handover/RBAC_PRESET_BL37.sql"), /ON CONFLICT \(name\) DO NOTHING/);
+    const { rolePermissionPresets } = await import("../rbac.ts");
+    assert.deepEqual(rolePermissionPresets.manager.api_wrapper, ["view", "execute"], "preset lama Manager tetap execute");
+    assert.match(baca("scripts/seed-rbac-presets.ts"), /k\("api_wrapper", \["view", "execute"\]\)/, "seed Manager tetap execute");
 });

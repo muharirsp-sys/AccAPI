@@ -212,8 +212,10 @@ UI: Supervisor submit batch
 ### 3. OFF Program Control — Approval Chain (SM → Claim → OM → Finance)
 ```
 Peran OFF (lib/off-program-control/access.ts normalizeOffRole): S7-1b AM-026 (D-01 §C "manager bukan admin") — role `manager`
-  = peran sendiri: PEMBACA 7 tab + audit_read/audit_export saja; tidak lolos periode tutup, tanpa alternatif role admin di refund,
-  tidak istimewa di Claim Workflow (route peran admin/claim). Admin tidak berubah. Ekspor CSV audit = audit_read ∧ audit_export.
+  = peran sendiri: PEMBACA 7 tab + audit_read/audit_export saja; tidak lolos periode tutup, tanpa alternatif role admin di refund.
+  Admin tidak berubah. Ekspor CSV audit = audit_read ∧ audit_export. "Manager bukan admin" HANYA OPC (owner 12 Okt): Claim Workflow
+  tetap memperlakukan Manager seperti sebelum S7-1b — requireClaimSession (lib/claim-workflow/access.ts) memetakan manager -> admin
+  (kelola klaim, route close/items/void).
 
 SM Approve:
   -> PATCH /api/off-program-control/batches/[id]/sm-approve
@@ -1088,7 +1090,8 @@ kasir_setoran [append-only; (tanggal, salesman_kode=ORANG, revisi) unik; revisi 
 kasir_selisih_catatan [append-only; angka pelunasan/setoran saat dijelaskan; '' = Tanpa salesman] · kasir_tak_teralokasi_catatan [append-only; per pelunasan, angka sisa]
 kasir_hari_event [append-only; tutup (snapshot.terhalang WAJIB [] — owner T2) | kunci (otomatis 20.00 WITA, boleh terhalang) | buka(alasan >= 15)]
   izin ke grup: docs/handover/RBAC_PRESET_KASIR.sql SESUDAH RBAC_PRESET_BL37.sql (S7-1)
-  S7-1b (urutan di header SQL): RBAC_S7_1B_CEK.sql baca-saja -> PK-1 owner -> RBAC_S7_1B_KUNCI.sql SEBELUM image -> image ->
+  S7-1b (urutan di header SQL): RBAC_S7_1B_CEK.sql baca-saja -> PK-1 owner (12 Okt: biarkan — KUNCI tidak menulis api_wrapper.*;
+  Admin/Fakturist/Manager sudah memegang execute) -> RBAC_S7_1B_KUNCI.sql SEBELUM image -> image ->
   RBAC_S7_1B_PENSIUN.sql SESUDAH image -> CEK ulang (mode cek bawaan = ROLLBACK; terapkan PGOPTIONS='-c rbac.terapkan=1')
 kasir_pelunasan (database_id + pelunasan_id; chequeAmount, metode, last_update) ── kasir_pelunasan_faktur (faktur_id, master_salesman_id, invoice_payment) [cache K1b, TANPA raw_data]
   masterSalesmanId -> accurate_employee.number -> sales_code_merge (merge, per bulan) -> ORANG; OTHERS dikeluarkan; Σ invoicePayment ≠ chequeAmount -> ember tak teralokasi
