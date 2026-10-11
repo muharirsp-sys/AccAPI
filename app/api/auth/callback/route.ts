@@ -4,7 +4,8 @@
  * Caller: Accurate (redirect_uri = NEXT_PUBLIC_ACCURATE_REDIRECT_URI).
  * Dependensi: Better Auth (sesi app), lib/accurate-session (upsertAccurateSession), lib/accurate-oauth (returnTo, halaman, kode galat).
  * Main Functions: GET.
- * Side Effects: POST https://account.accurate.id/oauth/token; tulis accurate_oauth_session; hapus cookie state di SEMUA cabang.
+ * Side Effects: POST https://account.accurate.id/oauth/token; tulis accurate_oauth_session; hapus cookie state di semua cabang KECUALI
+ *   state_beda (tab lain / pihak luar tidak boleh membatalkan masuk yang sedang berjalan).
  *   Log tidak memuat token maupun isi jawaban Accurate (bisa memuat token) — hanya status HTTP / nama galat.
  */
 import { timingSafeEqual } from "node:crypto";
@@ -29,14 +30,20 @@ export async function GET(request: NextRequest) {
     const stateCookie = pisah > 0 ? isiCookie.slice(0, pisah) : "";
     const returnTo = returnToAman(pisah > 0 ? isiCookie.slice(pisah + 1) : null);
 
-    const selesai = (path: string) => {
+    const selesai = (path: string, hapusCookie = true) => {
         const res = NextResponse.redirect(new URL(path, publicBase));
-        res.cookies.set(STATE_COOKIE, "", { httpOnly: true, secure: true, sameSite: "lax", maxAge: 0, path: STATE_COOKIE_PATH });
+        if (hapusCookie) res.cookies.set(STATE_COOKIE, "", { httpOnly: true, secure: true, sameSite: "lax", maxAge: 0, path: STATE_COOKIE_PATH });
         return res;
     };
-    const galat = (alasan: KodeGalatAccurate) => selesai(halamanMendarat(returnTo, { accurate: "error", alasan }));
+    const galat = (alasan: KodeGalatAccurate, hapusCookie = true) => selesai(halamanMendarat(returnTo, { accurate: "error", alasan }), hapusCookie);
 
-    const appSession = await auth.api.getSession({ headers: request.headers });
+    let appSession: Awaited<ReturnType<typeof auth.api.getSession>>;
+    try {
+        appSession = await auth.api.getSession({ headers: request.headers });
+    } catch (err: unknown) {
+        console.error("[accurate-callback] baca sesi app gagal:", err instanceof Error ? err.name : typeof err);
+        return galat("galat_server");
+    }
     if (!appSession) {
         // Cabang ini dulu diam. Dengan LOCAL_AUTH_BYPASS, /login melempar balik ke home
         // sehingga gagalnya terlihat seperti "login Accurate berputar-putar" tanpa sebab.
@@ -49,7 +56,8 @@ export async function GET(request: NextRequest) {
     // State diperiksa SEBELUM code disentuh: tanpa cookie (kedaluwarsa/alamat lain) atau beda = code tidak ditukar.
     if (!stateCookie) return galat("state_hilang");
     const state = searchParams.get("state");
-    if (!state || !samaAman(state, stateCookie)) return galat("state_beda");
+    // State beda: cookie DIBIARKAN — bisa tab lain yang sedang masuk, atau tautan pihak luar yang tidak boleh membatalkannya.
+    if (!state || !samaAman(state, stateCookie)) return galat("state_beda", false);
 
     const code = searchParams.get("code");
     if (!code) return galat("tanpa_kode");

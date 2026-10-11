@@ -246,7 +246,7 @@ test.describe("kartu (LOCAL_AUTH_BYPASS)", () => {
         await expect(page.getByRole("heading", { name: "Accurate tiruan" })).toBeVisible();
         const state = new URL(jaga.lokasi[0]).searchParams.get("state");
         expect(state?.length ?? 0).toBeGreaterThanOrEqual(40);
-        const c = (await context.cookies("http://localhost:3021/api/auth/callback")).find((x) => x.name === "accurate_oauth_state");
+        const c = (await context.cookies("http://localhost:3021/api/auth/callback")).find((x) => x.name === "__Secure-accurate_oauth_state");
         expect(c?.httpOnly).toBe(true);
         expect(c?.secure).toBe(true);
         expect(decodeURIComponent(c?.value ?? "")).toBe(`${state}:/sesi-accurate`);
@@ -283,7 +283,10 @@ test.describe("akun nyata (tanpa bypass)", () => {
         await expect(page).toHaveURL(/\/sesi-accurate\?returnTo=%2Fantrean-faktur$/);
         await expect(kartu(page).getByRole("alert")).toContainText("tidak dikenali");
         await expect(page.getByRole("link", { name: "Kembali ke Antrean Faktur" })).toBeVisible();
-        // Cookie sudah dihapus callback → percobaan ulang = state hilang.
+        // State beda TIDAK membatalkan masuk yang sedang berjalan: cookie tetap ada. Tanpa cookie (kedaluwarsa) = state hilang.
+        const state = (await page.context().cookies("http://localhost:3021/api/auth/callback")).find((x) => x.name === "__Secure-accurate_oauth_state");
+        expect(state?.value).toBeTruthy();
+        await page.context().clearCookies({ name: "__Secure-accurate_oauth_state" });
         await page.goto("/api/auth/callback?code=KODE-UJI&state=state-palsu", { timeout: 90_000 });
         await expect(kartu(page).getByRole("alert")).toContainText("kedaluwarsa");
         expect(jaga.keAccurate).toEqual([]);

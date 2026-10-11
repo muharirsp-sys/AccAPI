@@ -61,7 +61,7 @@ test.describe("security guardrails for sensitive utility routes", () => {
     const dbList = await request.get("/api/auth/db-list?access_token=fake-browser-token");
     expect(dbList.status()).toBe(401);
 
-    const openDb = await request.get("/api/auth/open-db?access_token=fake-browser-token&id=1");
+    const openDb = await request.post("/api/auth/open-db", { data: { id: "1" } });
     expect(openDb.status()).toBe(401);
 
     const principles = await request.get("/api/off-program-control/principles");

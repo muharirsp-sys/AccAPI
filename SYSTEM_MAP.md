@@ -161,20 +161,26 @@ Browser -> any /api/* route (modul baru)
 `finance.resolve_unknown`; tautan di menu profil). Kartu `components/accurate/SesiAccurate.tsx` dipakai juga oleh Konsol `/api-wrapper`.
 ```
 Kartu "Masuk Accurate" -> GET /api/auth/accurate-login?returnTo=<daftar putih>
-  -> state = randomBytes(32); Set-Cookie accurate_oauth_state="<state>:<returnTo>" (HttpOnly, Secure, SameSite=Lax, 600 dtk, Path=/api/auth/callback)
+  -> Sec-Fetch-Site=cross-site -> alasan=lintas_situs; tanpa sesi app -> /login?error=…; baca sesi melempar -> alasan=galat_server
+  -> state = randomBytes(32); Set-Cookie __Secure-accurate_oauth_state="<state>:<returnTo>" (HttpOnly, Secure, SameSite=Lax, 600 dtk, Path=/api/auth/callback)
   -> 307 https://account.accurate.id/oauth/authorize?client_id&redirect_uri&scope(TETAP, lib/accurate-oauth.ts)&state
 Accurate -> GET /api/auth/callback?code&state
+  -> baca sesi app melempar     -> alasan=galat_server (bukan 500)
   -> tanpa sesi app            -> /login?error=Accurate+login+requires+app+session (nilai lama, dibaca S7c)
   -> cookie state tidak ada     -> alasan=state_hilang   (code TIDAK ditukar)
-  -> state query hilang/beda    -> alasan=state_beda     (code TIDAK ditukar)
+  -> state query hilang/beda    -> alasan=state_beda     (code TIDAK ditukar; cookie DIBIARKAN: tab lain/pihak luar tak membatalkan)
   -> tanpa code / env kurang    -> alasan=tanpa_kode / konfigurasi
   -> POST oauth/token gagal / tanpa access_token -> alasan=tukar_token_gagal (log: status HTTP saja)
   -> exception                  -> alasan=galat_server (log: nama galat saja)
   -> sukses: upsertAccurateSession(token, database dikosongkan) -> accurate=connected
-  -> SEMUA cabang menghapus cookie; mendarat di halaman berkartu: returnTo=/api-wrapper -> /api-wrapper?…,
+  -> cabang lain menghapus cookie; mendarat di halaman berkartu: returnTo=/api-wrapper -> /api-wrapper?…,
      selain itu -> /sesi-accurate?…[&returnTo=/pelunasan|/antrean-faktur|/finance] (tombol Kembali)
 Kartu membaca ?accurate=&alasan= -> MessageStrip dari pemetaan kode (GALAT_ACCURATE), lalu membuang keduanya dari URL.
-Route sesi (GET/DELETE accurate-session, db-list, open-db, accurate-login, callback) cukup sesi app — tidak ada kunci; tidak ada route tulis baru.
+Route sesi (GET/DELETE accurate-session, GET db-list, POST open-db, accurate-login, callback) cukup sesi app — tidak ada kunci; tidak ada
+route tulis baru. open-db sukses = {ok, databaseId, databaseAlias, host} (session database Accurate tidak ke peramban; GET dihapus).
+Kartu: Ganti database (open-db menimpa), Keluar lewat konfirmasi, daftar kosong = keadaan kosong, 401 = tautan masuk ulang.
+Gerbang klien: SidebarLayout menghitung ulang canAccessPathWithKeys(usePathname) — navigasi klien ke halaman terlarang = AccessDenied
+(layout server tidak berjalan ulang pada navigasi klien; otoritas tetap server + guard API).
 db-list/open-db galat = {ok:false, code, error netral}: SESI_BELUM_TERHUBUNG 400, DATABASE_ID_KOSONG 400, ACCURATE_MENOLAK 502
   (+accurateStatus), GALAT_SERVER 500 — isi jawaban Accurate/pesan exception tidak ke peramban maupun log.
 ```

@@ -2,7 +2,7 @@
  * Tujuan: Membuka database Accurate untuk sesi OAuth user dan menyimpan host + session database (kartu Sesi Accurate).
  * Caller: components/accurate/SesiAccurate.tsx (/sesi-accurate, Konsol).
  * Dependensi: lib/accurate-session (get/upsert), lib/api-security (sesi app).
- * Main Functions: GET, POST.
+ * Main Functions: POST (GET dihapus S7-sesi: tidak ada pemanggil; kartu memakai POST).
  * Side Effects: GET https://account.accurate.id/api/open-db.do; tulis accurate_oauth_session. Galat = kode tetap + kalimat netral;
  *   isi jawaban Accurate dan pesan exception TIDAK dikirim ke peramban maupun dicetak ke log — S7-sesi.
  */
@@ -12,10 +12,6 @@ import { requireApiSession } from '@/lib/api-security';
 
 const galat = (status: number, code: string, error: string, extra: Record<string, unknown> = {}) => NextResponse.json({ ok: false, code, error, ...extra }, { status });
 
-export async function GET(request: Request) {
-    return openDatabase(request);
-}
-
 export async function POST(request: Request) {
     return openDatabase(request);
 }
@@ -24,12 +20,8 @@ async function openDatabase(request: Request) {
     const authCheck = await requireApiSession(request);
     if (authCheck.response) return authCheck.response;
 
-    const url = new URL(request.url);
-    const queryDbId = url.searchParams.get('id');
-    const body = request.method === "POST"
-        ? await request.json().catch(() => ({})) as { id?: unknown; alias?: unknown }
-        : {};
-    const dbId = String(body.id || queryDbId || "").trim();
+    const body = await request.json().catch(() => ({})) as { id?: unknown; alias?: unknown };
+    const dbId = String(body.id || "").trim();
     const databaseAlias = typeof body.alias === "string" ? body.alias : null;
 
     if (!dbId) {
@@ -60,7 +52,8 @@ async function openDatabase(request: Request) {
             databaseId: dbId,
             databaseAlias,
         });
-        return NextResponse.json(data);
+        // Session database Accurate TIDAK dikirim ke peramban (cukup tersimpan terenkripsi di server).
+        return NextResponse.json({ ok: true, databaseId: dbId, databaseAlias, host: data.host });
     } catch (err: unknown) {
         console.error("[open-db] exception:", err instanceof Error ? err.name : typeof err);
         return galat(500, "GALAT_SERVER", "Server gagal membuka database Accurate.");

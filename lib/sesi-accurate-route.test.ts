@@ -8,7 +8,7 @@ import { GET as loginGet } from "../app/api/auth/accurate-login/route.ts";
 import { GET as callbackGet } from "../app/api/auth/callback/route.ts";
 import { GET as sesiGet } from "../app/api/auth/accurate-session/route.ts";
 import { GET as dbListGet } from "../app/api/auth/db-list/route.ts";
-import { POST as openDbPost } from "../app/api/auth/open-db/route.ts";
+import * as openDbRoute from "../app/api/auth/open-db/route.ts";
 import { upsertAccurateSession } from "./accurate-session.ts";
 import { ACCURATE_SCOPE, STATE_COOKIE, kabarAccurate, returnToAman } from "./accurate-oauth.ts";
 import { SESI_ACCURATE_KEYS, canAccessPathWithKeys } from "./rbac.ts";
@@ -17,7 +17,7 @@ import { db } from "./db.ts";
 
 const RAHASIA = "TOKEN-RAHASIA-JANGAN-DICETAK";
 type Catatan = { fetch: Array<{ url: string; body: string }>; insert: unknown[]; update: unknown[]; log: string };
-type Opsi = { sesiApp?: boolean; fetch?: (url: string) => Promise<Response>; sesiRow?: Record<string, unknown> };
+type Opsi = { sesiApp?: boolean | "lempar"; fetch?: (url: string) => Promise<Response>; sesiRow?: Record<string, unknown> };
 
 const ENV = { BETTER_AUTH_URL: "https://app.test", ACCURATE_CLIENT_ID: "cid", ACCURATE_CLIENT_SECRET: "csecret",
     NEXT_PUBLIC_ACCURATE_REDIRECT_URI: "https://app.test/api/auth/callback", ACCURATE_TOKEN_ENCRYPTION_KEY: "kunci-uji", NEXT_PUBLIC_ACCURATE_CLIENT_ID: undefined,
@@ -36,7 +36,10 @@ async function dengan<T>(opsi: Opsi, fn: (c: Catatan) => Promise<T>): Promise<T>
         [globalThis, "fetch", Object.getOwnPropertyDescriptor(globalThis, "fetch")],
         [console, "error", Object.getOwnPropertyDescriptor(console, "error")],
     ] as const;
-    Object.defineProperty(auth.api, "getSession", { configurable: true, value: async () => (opsi.sesiApp === false ? null : { user: { id: "u-fakturist", role: "staff" }, session: { id: "s1" } }) });
+    Object.defineProperty(auth.api, "getSession", { configurable: true, value: async () => {
+        if (opsi.sesiApp === "lempar") throw new Error(`koneksi DB putus ${RAHASIA}`);
+        return opsi.sesiApp === false ? null : { user: { id: "u-fakturist", role: "staff" }, session: { id: "s1" } };
+    } });
     Object.defineProperty(db, "select", { configurable: true, value: () => ({ from: () => ({ where: () => ({ limit: async () => (opsi.sesiRow ? [opsi.sesiRow] : []) }) }) }) });
     Object.defineProperty(db, "insert", { configurable: true, value: () => ({ values: async (v: unknown) => { c.insert.push(v); } }) });
     Object.defineProperty(db, "update", { configurable: true, value: () => ({ set: (v: unknown) => ({ where: async () => { c.update.push(v); } }) }) });
@@ -73,6 +76,7 @@ const lokasi = (res: Response) => {
     return `${u.origin}${u.pathname}?${u.searchParams.toString()}`;
 };
 const cookieDihapus = (res: Response) => /accurate_oauth_state=;.*Max-Age=0/i.test(res.headers.get("set-cookie") ?? "");
+const openDbPost = openDbRoute.POST;
 
 test("login: URL authorize membawa state acak + scope tetap; cookie httpOnly/Secure/Lax/10 menit hanya ke callback", async () => {
     await dengan({}, async (c) => {
@@ -129,13 +133,15 @@ test("callback: state benar → tukar code (sekali) → simpan sesi → mendarat
     });
 });
 
-test("callback: state hilang/beda → code TIDAK ditukar, galat berkode, cookie dihapus", async () => {
+test("callback: state hilang/beda → code TIDAK ditukar, galat berkode; state beda TIDAK menghapus cookie", async () => {
     await dengan({ fetch: tokenOk }, async (c) => {
         const a = await mulai("/api-wrapper");
         const tanpaCookie = await panggil(`code=K&state=${a.state}`);
         assert.equal(lokasi(tanpaCookie), "https://app.test/sesi-accurate?accurate=error&alasan=state_hilang");
         assert.ok(cookieDihapus(tanpaCookie));
-        assert.equal(lokasi(await panggil(`code=K&state=${a.state}x`, a.cookie)), "https://app.test/api-wrapper?accurate=error&alasan=state_beda");
+        const beda = await panggil(`code=K&state=${a.state}x`, a.cookie);
+        assert.equal(lokasi(beda), "https://app.test/api-wrapper?accurate=error&alasan=state_beda");
+        assert.ok(!cookieDihapus(beda) && beda.headers.get("set-cookie") === null, "state_beda tidak membatalkan masuk yang sedang berjalan");
         assert.equal(lokasi(await panggil("code=K", a.cookie)), "https://app.test/api-wrapper?accurate=error&alasan=state_beda");
         const b = await mulai("/api-wrapper");
         assert.equal(lokasi(await panggil(`code=K&state=${a.state}`, b.cookie)), "https://app.test/api-wrapper?accurate=error&alasan=state_beda", "state permintaan lain");
@@ -154,8 +160,8 @@ test("callback: returnTo cookie di luar daftar putih → bawaan /sesi-accurate",
 });
 
 test("callback: tanpa sesi app → /login dengan nilai lama (dibaca S7c), tanpa tukar code", async () => {
+    const a = await dengan({}, async () => mulai("/pelunasan")); // sesi app berakhir SESUDAH masuk dimulai
     await dengan({ sesiApp: false, fetch: tokenOk }, async (c) => {
-        const a = await mulai("/pelunasan");
         const res = await panggil(`code=K&state=${a.state}`, a.cookie);
         const u = new URL(res.headers.get("location") ?? "");
         assert.equal(u.pathname, "/login");
@@ -292,5 +298,52 @@ test("open-db: galat Accurate/exception → kode tetap tanpa isi mentah, sesi ti
         assert.equal(res.status, 400);
         assert.equal((await res.json()).code, "DATABASE_ID_KOSONG");
         assert.equal(c.fetch.length, 0);
+    });
+});
+
+test("login: wajib sesi app, tolak navigasi lintas situs, baca sesi gagal = galat berkode (tanpa cookie)", async () => {
+    await dengan({}, async () => {
+        const lintas = await loginGet(new Request("https://app.test/api/auth/accurate-login?returnTo=/pelunasan", { headers: { "sec-fetch-site": "cross-site" } }));
+        assert.equal(lokasi(lintas), "https://app.test/sesi-accurate?accurate=error&alasan=lintas_situs&returnTo=%2Fpelunasan");
+        assert.equal(lintas.headers.get("set-cookie"), null);
+        const sama = await loginGet(new Request("https://app.test/api/auth/accurate-login?returnTo=/pelunasan", { headers: { "sec-fetch-site": "same-origin" } }));
+        assert.match(sama.headers.get("location") ?? "", /^https:\/\/account\.accurate\.id\/oauth\/authorize\?/);
+        assert.match(sama.headers.get("set-cookie") ?? "", /^__Secure-accurate_oauth_state=/);
+    });
+    await dengan({ sesiApp: false }, async () => {
+        const res = await loginGet(new Request("https://app.test/api/auth/accurate-login?returnTo=/pelunasan"));
+        const u = new URL(res.headers.get("location") ?? "");
+        assert.equal(u.pathname, "/login");
+        assert.equal(u.searchParams.get("error"), "Accurate login requires app session");
+        assert.equal(res.headers.get("set-cookie"), null);
+    });
+    await dengan({ sesiApp: "lempar" }, async (c) => {
+        const res = await loginGet(new Request("https://app.test/api/auth/accurate-login?returnTo=/api-wrapper"));
+        assert.equal(lokasi(res), "https://app.test/api-wrapper?accurate=error&alasan=galat_server");
+        assert.ok(!c.log.includes(RAHASIA));
+    });
+});
+
+test("callback: baca sesi app melempar → galat_server berkode (bukan 500), cookie dihapus, code tidak ditukar", async () => {
+    const a = await dengan({}, async () => mulai("/api-wrapper"));
+    await dengan({ sesiApp: "lempar", fetch: tokenOk }, async (c) => {
+        const res = await panggil(`code=K&state=${a.state}`, a.cookie);
+        assert.equal(res.status, 307);
+        assert.equal(lokasi(res), "https://app.test/api-wrapper?accurate=error&alasan=galat_server");
+        assert.ok(cookieDihapus(res));
+        assert.equal(c.fetch.length, 0);
+        assert.ok(!c.log.includes(RAHASIA));
+    });
+});
+
+test("open-db: hanya POST; jawaban sukses tidak membawa session Accurate", async () => {
+    assert.ok(!("GET" in openDbRoute), "handler GET open-db harus tidak ada");
+    const sesiRow = await barisSesi();
+    await dengan({ sesiRow, fetch: async () => new Response(JSON.stringify({ s: true, host: "https://contoh.accurate.id", session: "SESI-DB-RAHASIA" }), { status: 200 }) }, async () => {
+        const res = await openDbPost(new NextRequest("https://app.test/api/auth/open-db", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "77", alias: "PT CONTOH" }) }));
+        const teks = await res.text();
+        assert.equal(res.status, 200);
+        assert.ok(!teks.includes("SESI-DB-RAHASIA"), teks);
+        assert.deepEqual(JSON.parse(teks), { ok: true, databaseId: "77", databaseAlias: "PT CONTOH", host: "https://contoh.accurate.id" });
     });
 });
