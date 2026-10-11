@@ -18,8 +18,10 @@ Prasyarat deploy: `docs/handover/DDL_S7_0.sql` lalu `docs/handover/DDL_S7_2.sql`
   nonaktifkan yang lama. Nama resmi juga belum punya jalur ubah (TERBUKA).
 - `alias_norm` selalu dihitung server dengan normalizer baku: NFKC, huruf besar, semua spasi Unicode/kendali → satu spasi, trim,
   karakter format tak terlihat dibuang; **tanda baca tetap** (`PT.`, koma, `**` OCR). Client tidak pernah mengirim `aliasNorm`.
-- `variantKey`: `null`/tidak dikirim = principal **utuh**; `""` = varian dasar (hanya bila principal punya varian lain); selain itu
-  `^[A-Z0-9_-]{1,20}$` (huruf kecil dinaikkan; spasi ditolak — pakai `NON_FOOD`).
+- `variantKey`: tidak dikirim / `null` = principal **utuh**; `""` **persis** = varian dasar (hanya bila principal punya varian
+  lain); selain itu `^[A-Z0-9_-]{1,20}$` sesudah dirapikan (huruf kecil dinaikkan; spasi di tengah ditolak — pakai `NON_FOOD`).
+  Teks yang kosong SESUDAH dirapikan (`"   "`, lebar-nol) = 400 `VARIAN_TIDAK_SAH` — tidak pernah diam-diam jadi varian dasar.
+- `jenis` wajib teks (array/objek = 400 `JENIS_TIDAK_SAH`).
 
 ## GET `/api/principals` (principles.view)
 

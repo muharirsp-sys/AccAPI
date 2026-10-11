@@ -94,12 +94,16 @@ const kodeDari = (v: unknown) => {
     if (!KODE.test(k)) throw tolak(400, "KODE_TIDAK_SAH", "Kode 1–20 karakter: huruf besar, angka, _ atau - (mis. KINO, GDI).");
     return k;
 };
-/** null = utuh (tanpa varian); "" = varian dasar. */
+/** null/tidak dikirim = utuh (tanpa varian); "" PERSIS = varian dasar; teks yang kosong SESUDAH dirapikan (spasi, lebar-nol) = 400
+ * — tidak pernah diam-diam jadi varian dasar. */
 export function varianDari(v: unknown): string | null {
     if (v === undefined || v === null) return null;
     if (typeof v !== "string") throw tolak(400, "VARIAN_TIDAK_SAH", "Kode varian harus teks.");
+    if (v === "") return "";
     const k = rapikanTeks(v).toUpperCase();
-    if (!VARIAN.test(k)) throw tolak(400, "VARIAN_TIDAK_SAH", "Kode varian 0–20 karakter: huruf besar, angka, _ atau - (mis. NON_FOOD, HZ).");
+    if (!k || !VARIAN.test(k)) {
+        throw tolak(400, "VARIAN_TIDAK_SAH", "Kode varian 1–20 karakter: huruf besar, angka, _ atau - (mis. NON_FOOD, HZ); varian dasar = \"\" persis.");
+    }
     return k;
 }
 
@@ -273,8 +277,8 @@ export async function ubahAktifVarian(principalId: string, input: Baris, aktor: 
 export async function tambahAlias(principalId: string, input: Baris, aktor: string) {
     const aliasAsli = teks(input.alias, "Alias", true);
     const aliasNorm = normalisasiPrincipal(aliasAsli);
-    const jenis = String(input.jenis ?? "") as JenisAlias;
-    if (!JENIS_ALIAS.includes(jenis)) throw tolak(400, "JENIS_TIDAK_SAH", `Jenis alias: ${JENIS_ALIAS.join(", ")}.`);
+    const jenis = input.jenis as JenisAlias;
+    if (typeof jenis !== "string" || !JENIS_ALIAS.includes(jenis)) throw tolak(400, "JENIS_TIDAK_SAH", `Jenis alias: ${JENIS_ALIAS.join(", ")}.`);
     if (jenis === "kode_master_barang" && !KODE_MB.test(aliasNorm)) throw tolak(400, "KODE_MB_TIDAK_SAH", "Kode Master Barang = tepat 2 huruf/angka (mis. K1).");
     const sumber = teks(input.sumber, "Sumber", false) || "manual";
     if (sumber === SUMBER_KODE) throw tolak(400, "SUMBER_KHUSUS", `Sumber "${SUMBER_KODE}" hanya dibuat bersama principal.`);

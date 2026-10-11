@@ -92,7 +92,19 @@ test("validasi isian -> 400 berkode sebelum DB", async () => {
         await cek(aliasPost(req("POST", "/api/principals/p1/aliases", { alias: "X", jenis: "kode" }), ctx()), "JENIS_TIDAK_SAH");
         await cek(aliasPost(req("POST", "/api/principals/p1/aliases", { alias: "KINO", jenis: "kode_master_barang" }), ctx()), "KODE_MB_TIDAK_SAH");
         await cek(aliasPost(req("POST", "/api/principals/p1/aliases", { alias: "X", jenis: "nama", sumber: "kode_principal" }), ctx()), "SUMBER_KHUSUS");
+        // jenis harus teks: String(["nama"]) === "nama" tidak boleh lolos.
+        await cek(aliasPost(req("POST", "/api/principals/p1/aliases", { alias: "X", jenis: ["nama"] }), ctx()), "JENIS_TIDAK_SAH");
+        await cek(aliasPost(req("POST", "/api/principals/p1/aliases", { alias: "X", jenis: { toString: "nama" } }), ctx()), "JENIS_TIDAK_SAH");
+        // variantKey kosong SESUDAH dirapikan (spasi, lebar-nol) = 400, bukan diam-diam varian dasar "".
+        for (const vk of ["   ", "​", " \t"]) {
+            await cek(varianPost(req("POST", "/api/principals/p1/variants", { variantKey: vk }), ctx()), "VARIAN_TIDAK_SAH");
+            await cek(varianPatch(req("PATCH", "/api/principals/p1/variants", { variantKey: vk, isActive: false }), ctx()), "VARIAN_TIDAK_SAH");
+            await cek(aliasPost(req("POST", "/api/principals/p1/aliases", { alias: "X", jenis: "nama", variantKey: vk }), ctx()), "VARIAN_TIDAK_SAH");
+        }
     });
+    // "" persis = varian dasar: lolos validasi, sampai ke DB (transaksi tiruan melempar -> 500, bukan 400).
+    const dasar = await sebagai(UPLOAD, () => varianPost(req("POST", "/api/principals/p1/variants", { variantKey: "" }), ctx()));
+    assert.equal(dasar.status, 500);
 });
 
 test("resolve: ruang wajib (nama | kode_master_barang) dan teks wajib -> 400 sebelum DB", async () => {
