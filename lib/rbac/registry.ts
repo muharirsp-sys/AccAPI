@@ -69,7 +69,8 @@ export const PERMISSION_REGISTRY = {
     // approve_takeout = melepas nota dari wave (butuh persetujuan gudang, Q9).
     rekapan_nota: ["view", "manage", "print", "approve_takeout"],
     // kirim (S6e-2, owner #5 10 Okt 2026) = kirim pelunasan (sales-receipt) ke Accurate. Ditegakkan server di
-    //   /api/proxy cabang tulis sales-receipt dan /api/idempotency/lock non-pratinjau. Konsol AOL tetap api_wrapper.*.
+    //   /api/proxy cabang tulis sales-receipt dan /api/idempotency/lock non-pratinjau (api_wrapper.execute tidak diminta dan tidak
+    //   cukup). Tulis Konsol lain lewat /api/proxy = api_wrapper.execute + katalog Konsol (S7-1b, AM-024; GET baca = sesi app).
     //   Belum ada di preset grup mana pun — IT Support menambahkannya ke grup pengirim (D-17).
     pelunasan: ["kirim"],
     // Kasir ↔ Incaso (K1a BL-59, owner 11 Okt 2026). catat = catat/koreksi setoran + jelaskan selisih; tutup = tutup hari;

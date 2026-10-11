@@ -4,9 +4,11 @@
  * Caller: app/api/proxy/route.ts, app/api/finance/purchase-payment/route.ts.
  * Dependensi: fetch global.
  * Main Functions: flattenPayload, buildAccurateRequest, forwardAccurate, isGuardedAccurateWrite,
- *   isSalesReceiptWrite, isSalesInvoiceWrite.
+ *   isSalesReceiptWrite, isSalesInvoiceWrite, isAccurateRead, isCatalogWrite.
+ * Dependensi tambahan: config/accurateRoutes.js (katalog Konsol — sumber yang sama dengan UI /api-wrapper).
  * Side Effects: forwardAccurate = HTTP ke host Accurate (timeout 30 s, redirect manual).
  */
+import { accurateRoutes } from "@/config/accurateRoutes";
 
 // Helper untuk nge-flatten JSON bersarang atau array ke dalam format properti dot/bracket (data[0].key)
 export const flattenPayload = (obj: unknown, prefix = ""): Record<string, unknown> => {
@@ -99,9 +101,33 @@ export function accurateTimeoutMessage(method: string) {
 }
 
 /**
+ * S7-1b (AM-024): BACA lewat proxy generik = method GET ke jalur KANONIK `/api/<sumber>/{list,detail,get-stock,list-stock}.do`
+ * (hanya yang dipakai pemanggil sah — Konsol, parser retur pembelian, Pelunasan, Finance; `git grep`). Selain itu = TULIS
+ * (fail-closed). ponytail: pola kanonik (huruf kecil/angka/"-" per segmen, tanpa `.`, `%`, `;`, `\`, `//`, spasi, query)
+ * lebih ketat daripada normalisasi matchesWritePath — path yang dinormalkan host (dot-segment, encoding, ;param, huruf besar)
+ * tidak pernah lolos sebagai baca, jadi cara host men-decode tidak perlu ditiru.
+ */
+const JALUR_BACA = /^\/api(?:\/[a-z0-9-]+)+\/(?:list|detail|get-stock|list-stock)\.do$/;
+export function isAccurateRead(endpointPath: string, method: string) {
+    return String(method).toUpperCase() === "GET" && JALUR_BACA.test(String(endpointPath));
+}
+
+/**
+ * PK-3 (owner 12 Okt 2026): tulis lewat proxy generik hanya ke save.do / bulk-save.do yang ADA di katalog Konsol
+ * (config/accurateRoutes.js — satu sumber dengan UI, tidak disalin) dengan method katalog, path PERSIS. `*\/delete.do`,
+ * endpoint tak dikenal, dan varian path (encoding, `./`, `//`, huruf besar, query) di luar katalog.
+ */
+const KATALOG_TULIS: ReadonlySet<string> = new Set(Object.values(accurateRoutes as Record<string, { method: string; path: string }>)
+    .filter((r) => r.method.toUpperCase() !== "GET" && /\/(?:bulk-)?save\.do$/.test(r.path))
+    .map((r) => `${r.method.toUpperCase()} ${r.path}`));
+export function isCatalogWrite(endpointPath: string, method: string) {
+    return KATALOG_TULIS.has(`${String(method).toUpperCase()} ${String(endpointPath)}`);
+}
+
+/**
  * Tulis Accurate yang hanya boleh lewat command server ber-klaim (AM-014 / C.14): proxy generik
  * menolaknya agar guard pengiriman ganda tidak bisa dilewati dari browser.
- * ponytail: denylist satu operasi; allowlist penuh proxy = AM-024 (butuh keputusan daftar endpoint).
+ * Tulis lain lewat proxy: `api_wrapper.execute` + katalog (isAccurateRead / isCatalogWrite, S7-1b).
  */
 export function isGuardedAccurateWrite(endpointPath: string) {
     return matchesWritePath(endpointPath, /\/purchase-payment\/(bulk-)?save\.do/i, "purchase-payment");

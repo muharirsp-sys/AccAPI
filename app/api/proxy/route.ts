@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
-import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
+import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, isAccurateRead, isCatalogWrite, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
 import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, databaseLockBerbeda, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
 import { db } from "@/lib/db";
 import { memuatPlaceholderAkun } from "@/lib/sales-receipt-upload";
@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
         if (endpointPath && isGuardedAccurateWrite(String(endpointPath))) {
             return NextResponse.json({
                 error: "Posting purchase-payment hanya lewat halaman Finance (pencegahan posting ganda). Proxy generik menolak operasi ini.",
+                code: "PURCHASE_PAYMENT_VIA_FINANCE", sent: false,
             }, { status: 403 });
         }
         // S6-0d E4 (owner 9 Okt): faktur penjualan hanya lewat Antrean Faktur (klaim + riwayat + pencarian
@@ -33,7 +34,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({
                 error: "Faktur penjualan hanya dikirim lewat Antrean Faktur (pencegahan faktur ganda dan riwayat kirim). "
                     + "Proxy generik menolak sales-invoice/save.do dan bulk-save.do.",
-                code: "SALES_INVOICE_VIA_OUTBOX",
+                code: "SALES_INVOICE_VIA_OUTBOX", sent: false,
             }, { status: 403 });
         }
         // AM-024 (owner D-18): tulis sales-receipt tidak boleh melewati idempotency — wajib lock milik user
@@ -62,6 +63,27 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ error: "expectedDatabaseId wajib (database Accurate tujuan yang ditampilkan). Tidak ada yang dikirim.", code: "DATABASE_REQUIRED", sent: false }, { status: 400 });
             }
         }
+        // S7-1b (AM-024; owner PK-1..3 12 Okt): tulis NON-sales-receipt = kunci Konsol `api_wrapper.execute` + hanya save/bulk-save
+        // katalog Konsol (delete.do & endpoint lain ditolak). Ditolak SEBELUM sesi Accurate, DB guard, dan jaringan = tidak terkirim.
+        // Cabang sales-receipt di atas TIDAK memakai kunci ini (pelunasan.kirim). GET baca kanonik tetap cukup sesi app: Finance &
+        // Pelunasan membaca lewat proxy tanpa api_wrapper.* (sengaja menyimpang dari kontrak AM-024 "GET: api_wrapper.view").
+        const tulisKonsol = !salesReceipt && !isAccurateRead(endpointPath, method);
+        if (tulisKonsol) {
+            const access = await resolveRequestPermissions(req);
+            if (access.response) return access.response;
+            if (!access.perms!.has("api_wrapper.execute")) {
+                return NextResponse.json({
+                    error: "Tulis ke Accurate lewat Konsol butuh izin Konsol · Eksekusi (api_wrapper.execute). Tidak ada yang dikirim.",
+                    code: "PERMISSION_REQUIRED", permission: "api_wrapper.execute", sent: false,
+                }, { status: 403 });
+            }
+            if (!isCatalogWrite(endpointPath, method)) {
+                return NextResponse.json({
+                    error: "Endpoint ini tidak ada di katalog tulis Konsol (hanya save.do/bulk-save.do katalog; hapus dan endpoint lain ditolak). Tidak ada yang dikirim.",
+                    code: "ENDPOINT_TIDAK_DIIZINKAN", sent: false,
+                }, { status: 403 });
+            }
+        }
         const accurateSession = await getAccurateSession(String(authCheck.session.user.id));
         const sessionHost = accurateSession?.sessionHost;
         const sessionId = accurateSession?.sessionId;
@@ -77,7 +99,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: sessionHost && !isAllowedAccurateHost(sessionHost)
                 ? "Session host Accurate tidak diizinkan"
                 : "Sesi Accurate belum lengkap. Login dan pilih database terlebih dahulu.",
-            ...(salesReceipt ? { code: "ACCURATE_SESSION_INCOMPLETE", sent: false } : {}) }, { status: 400 });
+            ...(salesReceipt || tulisKonsol ? { code: "ACCURATE_SESSION_INCOMPLETE", sent: false } : {}) }, { status: 400 });
         }
         if (salesReceipt && String(accurateSession?.databaseId ?? "") !== expectedDatabaseId) {
             return NextResponse.json({
@@ -124,8 +146,8 @@ export async function POST(req: NextRequest) {
             dispatch = r;
         }
 
-        // Audit F5: log tanpa query string (bisa berisi data bisnis).
-        console.log(`[PROXY FIRE] ${String(method).toUpperCase()} ${endpointPath}`);
+        // Audit F5: log tanpa query string (bisa berisi data bisnis). S7-1b: tulis mencatat id pengguna (tanpa email/token/payload).
+        console.log(`[PROXY FIRE] ${String(method).toUpperCase()} ${endpointPath}${salesReceipt || tulisKonsol ? ` user=${write.userId}` : ""}`);
 
         // Hasil per baris sales-receipt dicatat SERVER di sendSalesReceipt (timeout/non-JSON/5xx = UNKNOWN).
         const { status, text: rawText, json, data } = await sendSalesReceipt(db, dispatch,
