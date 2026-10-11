@@ -728,3 +728,42 @@ test("Susulan 2b #2/#8: POST Selesaikan 500 berbadan kosong = belum pasti + cari
     await sel.getByRole("textbox", { name: "Alasan", exact: true }).fill("Tidak ada pelunasan untuk faktur ini di Accurate.");
     await expect(sel.locator("footer .fi-why")).toContainText("Server menolak");
 });
+
+test("Susulan 2b #4/#8: database berganti SELAMA pratinjau = pratinjau dibuang beralasan; Ulangi pratinjau saat sesi tak terbaca = alasan, bukan diam", async ({ page }) => {
+    let mode: "ok" | "lain" | "galat" = "ok";
+    let gantiSaatPratinjau = true;
+    await pasang(page, {
+        sesi: () => (mode === "galat" ? json({ ok: false, error: "Koneksi basis data terputus." }, 500) : json(mode === "ok" ? SESI : { ...SESI, databaseId: "88", databaseAlias: "PT LAIN" })),
+        // Pratinjau lock dipanggil di TENGAH pratinjau: database diganti di Konsol (tab lain) saat itu.
+        blok: () => { if (gantiSaatPratinjau) mode = "lain"; return undefined; },
+    });
+    await page.goto("/pelunasan", NAV);
+    await expect(page.getByText("Database: PT CONTOH (id 77)")).toBeVisible();
+    await page.getByRole("button", { name: /Pelunasan penjualan/ }).click();
+    await page.getByLabel("Berkas Format Pelunasan").setInputFiles(berkas(BARIS.slice(0, 1)));
+    await page.getByRole("button", { name: "Lanjut ke Akun" }).click();
+    await page.getByRole("button", { name: "Lanjut ke Tinjau" }).click();
+    // #4: sesi dibaca ulang di akhir pratinjau; database lain = pratinjau dibuang dengan alasan, Tinjau tidak dibuka.
+    await expect(page.getByText("Pratinjau gagal.")).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator("main")).toContainText("Database Accurate berubah selama pratinjau (dari PT CONTOH (id 77) ke PT LAIN (id 88))");
+    await expect(page.getByRole("region", { name: "Siap kirim" })).toHaveCount(0);
+    await expect(page.getByText("Database: PT LAIN (id 88)")).toBeVisible();
+
+    gantiSaatPratinjau = false;
+    mode = "ok";
+    await page.getByRole("button", { name: "Periksa ulang sesi" }).click();
+    await expect(page.getByText("Database: PT CONTOH (id 77)")).toBeVisible();
+    await page.getByRole("button", { name: "Lanjut ke Tinjau" }).click();
+    await expect(page.getByRole("region", { name: "Siap kirim" })).toBeVisible({ timeout: 60_000 });
+
+    // #8: database berubah → strip "Ulangi pratinjau"; sesi lalu tak terbaca → Ulangi pratinjau memberi alasan (dulu diam).
+    mode = "lain";
+    await page.getByRole("button", { name: "Periksa ulang sesi" }).click();
+    await expect(page.getByText("Database Accurate berubah sejak pratinjau.")).toBeVisible();
+    mode = "galat";
+    await page.getByRole("button", { name: "Periksa ulang sesi" }).click();
+    await expect(page.getByText("Sesi Accurate Anda berakhir.")).toBeVisible();
+    await page.getByRole("button", { name: "Ulangi pratinjau" }).click();
+    await expect(page.getByText("Pratinjau ulang gagal.")).toBeVisible();
+    await expect(page.locator("main")).toContainText("Pratinjau belum bisa dibuat. Sesi Accurate tidak terbaca; tekan Periksa ulang sesi.");
+});
