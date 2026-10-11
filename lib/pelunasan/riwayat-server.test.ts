@@ -225,3 +225,14 @@ test("A-N2: nomor faktur dibandingkan tanpa beda huruf/spasi (Excel 'kn01340' vs
     const balik = dgnFaktur([["KN01340", 900]]);
     assert.deepEqual((await periksaRiwayatAccurate([target(balik)], struk([["kn01340", 900]]))).cocok.get(target(balik).key), ["PR.X"]);
 });
+
+test("B-N1: identikKasar = himpunan faktur sama DAN setiap faktur bernominal sama (subset/superset/nominal lain = tidak identik)", async () => {
+    const { identikKasar } = await import("./pratinjau-ganda.ts");
+    const s = (lines: Array<[string, number, number?]>) => ({ number: "PR", transDate: "", invoices: lines.map(([invoiceNo, paymentAmount, ip]) => ({ invoiceNo, paymentAmount, invoicePayment: ip ?? null })) });
+    const baris = new Map([["I1", [900, 1000]], ["I2", [500, 500]]]);
+    assert.equal(identikKasar(baris, s([["i1", 1000], ["I2", 500]])), true, "potongan termasuk + beda huruf");
+    assert.equal(identikKasar(baris, s([["I1", 900]])), false, "pelunasan ⊂ baris");
+    assert.equal(identikKasar(baris, s([["I1", 900], ["I2", 500], ["I3", 1]])), false, "pelunasan ⊃ baris");
+    assert.equal(identikKasar(baris, s([["I1", 900], ["I2", 400]])), false, "satu faktur bernominal lain");
+    assert.equal(identikKasar(new Map(), s([])), false, "kosong");
+});

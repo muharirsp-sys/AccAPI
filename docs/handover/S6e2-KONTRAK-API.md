@@ -125,9 +125,21 @@ Accurate (bisa `""` bila Accurate tak memberi nomor), `invoiceNos` = faktur yang
 ## 5. `POST /api/idempotency/resolve` (BARU) — Selesaikan
 
 Izin `finance.resolve_unknown`. Badan `{key, decision:"terposting"|"tidak_ada", accurateNumber (wajib untuk terposting), reason
-(≥ 15), checkedSource, expectedDatabaseId}`. Server MENCARI dulu (sesi pemanggil, kandidat sama dengan §4), lalu
+(≥ 15), checkedSource, expectedDatabaseId, acceptSimilar?}`. Server MENCARI dulu (sesi pemanggil, kandidat sama dengan §4), lalu
 satu transaksi: status `SUCCESS` (terposting) / `FAILED` (tidak_ada = boleh dikirim ulang; proxy tetap menahan riwayat) + jejak
 `idempotency_resolution` (siapa, kapan, database, sumber, alasan, nomor; tidak bisa diubah/dihapus).
+
+**`acceptSimilar` (putaran 2, B-N1)**: `terposting` dengan kandidat yang TIDAK identik kasar dengan baris (himpunan faktur beda,
+atau ada faktur bernominal lain menurut sidik jari kunci — mis. cicilan lain, atau koreksi nominal) wajib `acceptSimilar: true`;
+tanpa itu 409 `similar_not_identical`. Bila diterima, `checked_source` jejak diakhiri `[mirip: <nomor> Rp<nominal kandidat> ≠
+Rp<nominal baris>]`.
+
+**Cicilan yang BELUM terkirim (`hint: "takeover"`)**: `similar_found` dan `similar_not_identical` membawa `hint: "takeover"`. Bila
+Finance menilai baris ini memang belum masuk Accurate, jalurnya BUKAN Selesaikan, melainkan kirim ulang dengan override takeover
+Finance di lock: `kirimPelunasan(rows, {override: {allowLockedKeys: [key], overrideReason}})` → `POST /api/idempotency/lock`
+`allowLockedKeys` + `overrideReason` (≥ 15; izin `finance.override_duplicate`; galat `OVERRIDE_PERMISSION_REQUIRED` /
+`OVERRIDE_REASON_REQUIRED`; tercatat `idempotency_override` action `takeover`). Bila proxy lalu menahan `ACCURATE_HISTORY`
+(nominal sama dengan pelunasan yang ada), tambah `allowHistoryKeys: [key]`.
 
 | Status | `code` | Kapan |
 |---|---|---|
@@ -142,7 +154,8 @@ satu transaksi: status `SUCCESS` (terposting) / `FAILED` (tidak_ada = boleh diki
 | 409 | `database_unknown` | `tidak_ada` untuk baris lama tanpa database tercatat (bisa terposting di database lain); `terposting` BOLEH |
 | 409 | `search_failed` | pencarian Accurate gagal / bentuk tak dikenali — tidak ada yang diubah |
 | 409 | `number_mismatch` | `terposting` dengan nomor yang bukan kandidat §4 (persis maupun mirip — kandidat mirip DITERIMA) — `{receiptNumbers, candidates}` |
-| 409 | `similar_found` | `tidak_ada` padahal ada kandidat (pelunasan pelanggan+tanggal yang menyentuh faktur baris, berapa pun nominal/potongan) — `{receiptNumbers, candidates}`. Menggantikan `found_in_accurate`. |
+| 409 | `similar_found` | `tidak_ada` padahal ada kandidat (pelunasan pelanggan+tanggal yang menyentuh faktur baris, berapa pun nominal/potongan) — `{receiptNumbers, candidates, hint:"takeover"}`. Menggantikan `found_in_accurate`. |
+| 409 | `similar_not_identical` | `terposting` dengan kandidat yang tidak identik kasar tanpa `acceptSimilar:true` — `{receiptNumbers, candidates, selected (bentuk kandidat), rowAmount, candidateAmount, difference (= rowAmount − candidateAmount; null bila rowAmount null), hint:"takeover"}` |
 | 409 | `changed` | status berubah selama pencarian (CAS) |
 
 ## 6. `GET /api/idempotency/summary` (BARU, baca-saja) — Beranda Admin Incaso (BL-41)
@@ -218,3 +231,6 @@ diselesaikan; tampilkan bila > 0).
 - (11 Okt, putaran 2 A-N1) §1 penahanan riwayat dicocokkan PER FAKTUR: satu faktur bernominal sama di pelunasan mana pun di
   grup = `ACCURATE_HISTORY` (dulu himpunan faktur harus sama persis). Bentuk jawaban tidak berubah.
 - (11 Okt, putaran 2 A-N2) §1/§4/§5 nomor faktur dibandingkan tanpa beda huruf/spasi. Bentuk jawaban tidak berubah.
+- (11 Okt, putaran 2 B-N1, REV-B H) §5 badan `acceptSimilar?`; 409 BARU `similar_not_identical` (kandidat tidak identik kasar);
+  `similar_found` & `similar_not_identical` membawa `hint:"takeover"` (jalur cicilan belum terkirim = override takeover lock);
+  `checked_source` jejak diberi penanda `[mirip: …]` bila diterima.

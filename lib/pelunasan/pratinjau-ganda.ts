@@ -127,6 +127,12 @@ function adaFakturCocok(t: TargetRiwayat, s: StrukAccurate): boolean {
     return [...t.nominal].some(([no, alt]) => (acc.get(no) ?? []).some((v) => alt.includes(v)));
 }
 
+/** IDENTIK kasar penuh (Selesaikan `terposting`, putaran 2 B-N1): himpunan faktur sama dan SETIAP faktur bernominal sama. */
+export function identikKasar(nominal: Map<string, number[]>, s: StrukAccurate): boolean {
+    const acc = nominalStruk(s);
+    return nominal.size > 0 && acc.size === nominal.size && [...nominal].every(([no, alt]) => (acc.get(no) ?? []).some((v) => alt.includes(v)));
+}
+
 /** `cocok` = kunci → nomor pelunasan yang punya faktur bernominal sama (kunci ada walau nomor kosong); `mirip` = kunci → pelunasan
  * yang menyentuh faktur baris (berapa pun nominalnya). */
 function cocokkan(group: Kelompok, struk: StrukAccurate[], cocok: Map<string, string[]>, mirip?: Map<string, StrukAccurate[]>) {

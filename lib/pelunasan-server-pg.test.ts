@@ -407,10 +407,14 @@ test("PG REV-B D: lock Rp1.000 → kiriman koreksi Rp900 → UNKNOWN → tidak_a
         const ulang = await m.lock(post("/api/idempotency/lock", { keys: [kunci(a)], expectedDatabaseId: "DB-1" }));
         assert.deepEqual((await ulang.json()).blockedKeys, [kunci(a).key]);
         assert.equal(catat.post.length, 1);
-        // Finance memilih kandidat yang dilaporkan -> terposting.
-        const t = await selesaikan(m, { key: kunci(a).key, decision: "terposting", accurateNumber: "PR.D1" });
+        // Finance memilih kandidat yang dilaporkan: nominal Rp900 ≠ Rp1.000 baris -> wajib acceptSimilar (putaran 2, B-N1).
+        const tanpa = await selesaikan(m, { key: kunci(a).key, decision: "terposting", accurateNumber: "PR.D1" });
+        assert.equal(tanpa.status, 409);
+        assert.equal((await tanpa.json()).code, "similar_not_identical");
+        const t = await selesaikan(m, { key: kunci(a).key, decision: "terposting", accurateNumber: "PR.D1", acceptSimilar: true });
         assert.equal(t.status, 200);
         assert.equal(await statusDb(m.db, kunci(a).key), "SUCCESS");
+        assert.match((await jejak(m.db, kunci(a).key))[0].checkedSource, /\[mirip: PR\.D1 Rp900 ≠ Rp1000\]$/);
     });
 });
 
@@ -525,4 +529,30 @@ test("PG A-N1: pelunasan {INV-1:900, INV-2:500} terposting, unggah ulang {INV-1:
         assert.equal(res.status, 409);
         assert.deepEqual((await res.json()).rows, [{ index: 0, key: kunci(a).key, reason: "ACCURATE_HISTORY", receiptNumbers: ["PR.X"] }]);
         assert.equal(catat.post.length, 0);
+    }));
+
+// ------------------------------------------------------------------ Putaran 2, B-N1 (REV-B H): terposting kandidat mirip butuh acceptSimilar
+test("PG REV-B H: cicilan-2 Rp300 tak tersimpan, Finance memilih PR.H1 Rp500 -> 409 similar_not_identical (hint takeover); jalur takeover mengirim cicilan-2", { skip: pgSkip }, () =>
+    dalamDunia((tag, m) => ({ izin: [...FINANCE, ...RESOLVE], sesi: m.sesiAccurate(),
+        data: { ...KOSONG, salesReceipt: [riwayat(`${tag}-H`, "INV-H", 500, "PR.H1")] }, balasPost: () => ({ s: false, d: ["Proses belum selesai"] }) }),
+    async (m, tag, catat) => {
+        const c2 = baris(`${tag}-H`, "INV-H", 300);
+        assert.equal((await kirim(m, await kunciLock(m, [c2]), [c2])).status, 200, "cicilan-2 tidak ditahan (nominal beda)");
+        assert.equal(await statusDb(m.db, kunci(c2).key), "UNKNOWN");
+        await mundurkan(m.db, kunci(c2).key, 5);
+        const r = await selesaikan(m, { key: kunci(c2).key, decision: "terposting", accurateNumber: "PR.H1" });
+        const b = await r.json();
+        assert.equal(r.status, 409, JSON.stringify(b));
+        assert.equal(b.code, "similar_not_identical");
+        assert.equal(b.hint, "takeover");
+        assert.deepEqual([b.selected.receiptNumber, b.rowAmount, b.candidateAmount, b.difference], ["PR.H1", 300, 500, -200]);
+        assert.equal(await statusDb(m.db, kunci(c2).key), "UNKNOWN", "cicilan tidak hilang diam-diam");
+        assert.equal((await jejak(m.db, kunci(c2).key)).length, 0);
+        // tidak_ada juga menunjuk jalur takeover.
+        const t = await selesaikan(m, { key: kunci(c2).key, decision: "tidak_ada" });
+        assert.deepEqual([t.status, (await t.json()).hint], [409, "takeover"]);
+        // Jalur yang benar untuk cicilan belum terkirim: override takeover Finance di lock -> terkirim lagi.
+        const lock2 = await kunciLock(m, [c2], { allowLockedKeys: [kunci(c2).key], overrideReason: "Cicilan kedua belum masuk Accurate, dicek Finance" });
+        assert.equal((await kirim(m, lock2, [c2])).status, 200);
+        assert.equal(catat.post.length, 2);
     }));

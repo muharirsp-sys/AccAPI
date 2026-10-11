@@ -227,3 +227,12 @@ test("A-N2: target Selesaikan menyentuh faktur tanpa beda huruf (kunci/kolom 'kn
     const t = targetDariLog({ key: k, customerNo: "C1", transDate: "01/10/2026", invoiceNo: "kn01340" });
     assert.ok(t.menyentuh("KN01340") && t.menyentuh(" Kn01340 "));
 });
+
+test("B-N1: nominalDariKunci mengurai sidik jari (bayar, bayar+potongan, faktur dinormalkan); bentuk meragukan = null (tidak identik)", async () => {
+    const { nominalDariKunci } = await import("./idempotency-resolve.ts");
+    const fp = (detailInvoice: unknown[]) => ({ ...buildSalesReceiptIdempotencyPayload({ customerNo: "C1", transDate: "01/10/2026", detailInvoice }), customerNo: "C1" });
+    const n = nominalDariKunci(fp([{ invoiceNo: "inv-1", paymentAmount: 900, detailDiscount: [{ accountNo: "6001", discountNotes: "Pot", amount: 100 }] }, { invoiceNo: "INV-2", paymentAmount: 500 }]));
+    assert.deepEqual([...n!].sort(), [["INV-1", [900, 1000]], ["INV-2", [500, 500]]]);
+    assert.equal(nominalDariKunci(fp([{ invoiceNo: "I1", paymentAmount: 9, detailDiscount: [{ accountNo: "6001", discountNotes: "a;b:c", amount: 1 }] }])), null, "catatan berpemisah");
+    assert.equal(nominalDariKunci({ ...fp([{ invoiceNo: "I1", paymentAmount: 9 }]), customerNo: "C2" }), null, "awalan beda");
+});

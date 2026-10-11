@@ -17,7 +17,7 @@ import { and, eq, sql, TransactionRollbackError } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { idempotencyLog, idempotencyResolution } from "@/db/schema";
 import { STALE_PROCESSING_MS } from "@/lib/idempotency-lock";
-import { normFaktur, type StrukAccurate, type TargetRiwayat } from "@/lib/pelunasan/pratinjau-ganda";
+import { identikKasar, normFaktur, type StrukAccurate, type TargetRiwayat } from "@/lib/pelunasan/pratinjau-ganda";
 
 /** Umur minimum sebelum Selesaikan (pola Finance purchase-payment: 2 mnt). */
 export const UMUR_SELESAIKAN_MS = 2 * 60 * 1000;
@@ -68,7 +68,41 @@ export const kandidatUI = (s: StrukAccurate) => ({
 });
 export type HasilCari = { mirip: Map<string, StrukAccurate[]>; gagal: Map<string, string> };
 
-export type InputSelesaikan = { key: string; decision: "terposting" | "tidak_ada"; accurateNumber: string; reason: string; checkedSource: string };
+/**
+ * Nominal per faktur dari SIDIK JARI kunci (rumus buildSalesReceiptIdempotencyPayload: `PAY_<pelanggan>_<tanggal>_` + segmen
+ * `faktur|bayar|potongan` dipisah ";", potongan = `akun:catatan:jumlah` dipisah "&") — bentuk sama dengan targetRiwayat.
+ * null = tak bisa diurai pasti (awalan beda, catatan/akun memuat pemisah, angka tak terbaca) = dianggap TIDAK identik (Finance wajib
+ * acceptSimilar) — arah aman.
+ */
+export function nominalDariKunci(r: { key: string; customerNo: string | null; transDate: string | null }): Map<string, number[]> | null {
+    const awalan = `PAY_${String(r.customerNo ?? "").trim()}_${String(r.transDate ?? "").trim()}_`;
+    if (!r.key.startsWith(awalan)) return null;
+    const jumlah = new Map<string, [number, number]>();
+    for (const seg of r.key.slice(awalan.length).split(";")) {
+        const [no, bayarTeks = "", ...sisa] = seg.split("|");
+        const bayar = Number(bayarTeks);
+        if (!sisa.length || !bayarTeks.trim() || !Number.isFinite(bayar)) return null;
+        let potongan = 0;
+        for (const item of sisa.join("|") ? sisa.join("|").split("&") : []) {
+            const bagian = item.split(":");
+            const n = Number(bagian[2]);
+            if (bagian.length !== 3 || !bagian[2].trim() || !Number.isFinite(n)) return null;
+            potongan += n;
+        }
+        const k = normFaktur(no);
+        const [a, b] = jumlah.get(k) ?? [0, 0];
+        jumlah.set(k, [a + bayar, b + bayar + potongan]);
+    }
+    return new Map([...jumlah].map(([k, v]) => [k, v.map((x) => Number(x.toFixed(2)))]));
+}
+
+/** Jalur yang benar untuk cicilan yang BELUM terkirim (bukan Selesaikan): override takeover Finance di lock. */
+const PETUNJUK_TAKEOVER = " Bila cicilan ini BELUM masuk Accurate, jangan diselesaikan — kirim ulang lewat override takeover Finance di lock"
+    + " (allowLockedKeys + alasan, izin finance.override_duplicate).";
+
+export type InputSelesaikan = { key: string; decision: "terposting" | "tidak_ada"; accurateNumber: string; reason: string; checkedSource: string;
+    /** Putaran 2 B-N1: wajib true bila nomor `terposting` = kandidat yang TIDAK identik kasar dengan baris. */
+    acceptSimilar?: boolean };
 
 /** Validasi murah SEBELUM DB/Accurate. Teks = 400. */
 export function cekInputSelesaikan(b: Record<string, unknown> | null): string | InputSelesaikan {
@@ -82,7 +116,7 @@ export function cekInputSelesaikan(b: Record<string, unknown> | null): string | 
     if (!checkedSource) return "checkedSource wajib (di mana pelunasan diperiksa).";
     const accurateNumber = t(b?.accurateNumber).slice(0, 100);
     if (decision === "terposting" && !accurateNumber) return "Keputusan terposting wajib nomor pelunasan Accurate.";
-    return { key, decision, accurateNumber, reason, checkedSource };
+    return { key, decision, accurateNumber, reason, checkedSource, acceptSimilar: b?.acceptSimilar === true };
 }
 
 type Hasil = { status: number; body: Record<string, unknown> };
@@ -128,7 +162,27 @@ export async function selesaikanPelunasan(db: NodePgDatabase, inp: InputSelesaik
     }
     if (inp.decision === "tidak_ada" && candidates.length) {
         return tolak(409, "similar_found", `Ada pelunasan di Accurate untuk pelanggan+tanggal ini yang menyentuh faktur baris (${nomor.join(", ") || "tanpa nomor"})`
-            + " — periksa nominalnya; bila itu kiriman ini, tetapkan terposting. \"Tidak ada\" ditolak.", { receiptNumbers: nomor, candidates: candidates.map(kandidatUI) });
+            + " — periksa nominalnya; bila itu kiriman ini, tetapkan terposting. \"Tidak ada\" ditolak." + PETUNJUK_TAKEOVER,
+        { receiptNumbers: nomor, candidates: candidates.map(kandidatUI), hint: "takeover" });
+    }
+    // Putaran 2 B-N1 (REV-B H): kandidat yang TIDAK identik kasar (faktur/nominal beda — mis. cicilan lain) hanya dengan
+    // acceptSimilar:true, dan selisihnya dicatat di checked_source (tanpa ubah skema).
+    let checkedSource = inp.checkedSource;
+    if (inp.decision === "terposting") {
+        const dipilih = candidates.find((s) => s.number === inp.accurateNumber)!; // ada: nomor sudah dicek di atas
+        const pilih = kandidatUI(dipilih);
+        const nominal = nominalDariKunci(row);
+        if (!(nominal && identikKasar(nominal, dipilih))) {
+            const rowAmount = row.amount ?? null;
+            if (!inp.acceptSimilar) {
+                return tolak(409, "similar_not_identical", `Pelunasan ${pilih.receiptNumber} (Rp${pilih.amount}) tidak identik dengan baris ini`
+                    + ` (Rp${rowAmount ?? "?"}; faktur/nominal berbeda). Bila memang kiriman ini (mis. koreksi nominal), ulangi dengan acceptSimilar — tercatat di jejak.`
+                    + PETUNJUK_TAKEOVER,
+                { receiptNumbers: nomor, candidates: candidates.map(kandidatUI), selected: pilih, rowAmount, candidateAmount: pilih.amount,
+                    difference: rowAmount === null ? null : Number((rowAmount - pilih.amount).toFixed(2)), hint: "takeover" });
+            }
+            checkedSource = `${inp.checkedSource} [mirip: ${pilih.receiptNumber} Rp${pilih.amount} ≠ Rp${rowAmount ?? "?"}]`;
+        }
     }
 
     const id = randomUUID();
@@ -143,7 +197,7 @@ export async function selesaikanPelunasan(db: NodePgDatabase, inp: InputSelesaik
         await tx.insert(idempotencyResolution).values({
             id, key: row.key, lockId: row.lockId, previousStatus: row.status, decision: inp.decision,
             accurateNumber: inp.decision === "terposting" ? inp.accurateNumber : null, databaseId: inp.sessionDatabaseId,
-            checkedSource: inp.checkedSource, reason: inp.reason, actor: inp.actor,
+            checkedSource, reason: inp.reason, actor: inp.actor,
         });
     }).catch((e: unknown) => { if (!(e instanceof TransactionRollbackError)) throw e; });
     if (!berubah) {
