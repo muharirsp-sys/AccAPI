@@ -85,6 +85,9 @@ export const auth = betterAuth({
         disableSignUp: true,
         requireEmailVerification: true,
         minPasswordLength: 6,
+        // S7-1 (peninjau keamanan S7c): reset lewat tautan lupa sandi mencabut SEMUA sesi lama user itu (Better Auth 1.6.22
+        // api/routes/password.mjs: deleteUserSessions sesudah sandi diganti). Atur sandi oleh admin mencabut sesi di route sendiri.
+        revokeSessionsOnPasswordReset: true,
         sendResetPassword: async ({ user, url }) => {
             void sendEmail({
                 to: user.email,

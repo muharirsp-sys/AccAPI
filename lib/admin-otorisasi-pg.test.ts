@@ -415,3 +415,24 @@ test("disabledPaths tidak mematikan auth.api server-side: bootstrap/route.ts (cr
         }
     });
 });
+
+test("lupa sandi: reset lewat tautan (token Better Auth) mencabut SEMUA sesi lama user itu (revokeSessionsOnPasswordReset)", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const ga = await w.grup("kelola", ["users.manage"]);
+        const gv = await w.grup("lihat", ["dashboard.view"]);
+        const a = await w.user("a");
+        await w.masuk(a, ga);
+        const email = `${w.p}-reset@s71.test`;
+        const uid = ((await (await buat(a, { name: "Reset", email, password: PW, groupIds: [gv] })).json()) as { user: { id: string } }).user.id;
+        await masukDengan(email, PW); await masukDengan(email, PW);
+        const sesi = async () => (await m.pool.query(`SELECT count(*)::int AS n FROM session WHERE "userId" = $1`, [uid])).rows[0].n as number;
+        assert.equal(await sesi(), 2);
+        // Token = yang dibuat /request-password-reset (tanpa kirim surel): identifier "reset-password:<token>", value = userId.
+        const ctx = await m.auth.$context;
+        const token = `${w.p}-tok`;
+        await ctx.internalAdapter.createVerificationValue({ identifier: `reset-password:${token}`, value: uid, expiresAt: new Date(Date.now() + 3_600_000) });
+        await m.auth.api.resetPassword({ body: { newPassword: PW2, token } });
+        assert.equal(await sesi(), 0, "sesi lama wajib dicabut sesudah reset sandi");
+        assert.ok((await masukDengan(email, PW2)).token);
+    });
+});

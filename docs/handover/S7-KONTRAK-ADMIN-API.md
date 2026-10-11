@@ -150,3 +150,5 @@ Cursor rusak → 400 `INPUT_TIDAK_VALID`. Label aksi: `auditActionLabels` di `li
 - **Butir 2 (BL-62):** `POST /api/admin/users/[id]/status` `{ active: true }` untuk user TANPA grup → 409 `GRUP_TERAKHIR` (aktif tanpa grup =
   akses role lama); tetapkan grup dulu. Galat buat user: `GRUP_TIDAK_ADA` menyertakan `missing: string[]`. Layar lama
   `UserManagement.tsx` dialihkan ke `POST /api/admin/users` dan `POST /api/admin/users/[id]/password` (plugin ditutup); S7a menggantinya.
+- **Tambahan (peninjau keamanan S7c):** `emailAndPassword.revokeSessionsOnPasswordReset: true` (nama opsi persis Better Auth 1.6.22) —
+  reset sandi lewat tautan lupa sandi mencabut semua sesi lama user (uji PG `lib/admin-otorisasi-pg.test.ts` "lupa sandi").
