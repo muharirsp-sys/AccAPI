@@ -468,6 +468,95 @@ test("Hapus: status antrean dibaca ULANG tepat sebelum DELETE (bacaan dialog usa
     await expect(main.getByText(`Batch ${FILE} dihapus.`)).toHaveCount(0);
 });
 
+// ── Susulan PR #149: tiga jawaban server yang membuat bacaan layar usang ──
+test("Validasi 409 (batch dihapus/diganti saat divalidasi) → muat ulang 404: layar batch usang tidak dipertahankan", async ({ page }) => {
+    const HILANG = "Batch ini dihapus atau diganti saat divalidasi; muat ulang daftar batch";
+    let ada = true;
+    await pasang(page, {
+        detail: (_id, r) => r.fulfill(ada ? json({ ok: true, batch: BATCH, lines: LINES }) : json({ ok: false, error: "Batch tidak ditemukan" }, 404)),
+        validasi: (r) => { ada = false; return r.fulfill(json({ ok: false, error: HILANG }, 409)); },
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/principal-order?batch=b1", NAV);
+    const main = page.locator("main");
+    await expect(main.getByRole("table", { name: "Baris perlu ditinjau" })).toBeVisible(NAV);
+    await page.locator(".fi-ftb").getByRole("button", { name: "Validasi ulang" }).click();
+    await expect(main.getByRole("alert").filter({ hasText: HILANG })).toBeVisible();
+    await expect(main.getByRole("alert").filter({ hasText: "Batch tidak ditemukan" })).toBeVisible();
+    // Batch yang sudah tidak ada tidak lagi tampil sebagai data (tabel, KPI) dan tidak menyisakan tombol tulis.
+    await expect(main.getByRole("table", { name: "Baris perlu ditinjau" })).toHaveCount(0);
+    await expect(main.locator('[aria-label="Ringkasan validasi"]')).toHaveCount(0);
+    await expect(page.locator(".fi-ftb")).toHaveCount(0);
+    await expect(main.getByRole("link", { name: "Kembali ke unggah" })).toHaveAttribute("href", "/principal-order");
+});
+
+test("Ganti/Simpan 409 BERKAS_SUDAH_DISIMPAN (unggahan lain baru menyimpan berkas sama): daftar dimuat ulang, pratinjau usang dibuang", async ({ page }) => {
+    const BENTROK = "Berkas yang sama baru saja disimpan oleh unggahan lain (mis. dua Ganti bersamaan); muat ulang daftar batch — batch terbarunya sudah ada.";
+    let bacaDaftar = 0;
+    let dup = true;
+    const kirim = await pasang(page, {
+        daftar: (r) => { bacaDaftar += 1; return r.fulfill(json({ ok: true, batches: [BATCH, BATCH_LAMA] })); },
+        antrean: antreanServer(() => []),
+        unggah: (form, r) => r.fulfill(field(form, "apply") === "true"
+            ? json({ ok: false, code: "BERKAS_SUDAH_DISIMPAN", error: BENTROK }, 409)
+            : json({ ok: true, applied: false, fileName: BATCH_LAMA.fileName, branch: "CABANG A", period: "2026-10-02", lineCount: 64, skipped: 0, issues: [],
+                unmappedProducts: [], unmappedCustomers: [], unmappedSalesmen: [], duplicateOf: dup ? { id: "b0", fileName: BATCH_LAMA.fileName, uploadedAt: BATCH_LAMA.uploadedAt } : null })),
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/principal-order", NAV);
+    const main = page.locator("main");
+    const ftb = page.locator(".fi-ftb");
+    await expect(main.getByRole("table", { name: "Batch terakhir" }).locator("tbody tr")).toHaveCount(2, NAV);
+    const tulis = () => kirim.filter((k) => k.method === "POST" && k.path === "/api/principal-order" && field(k.body as string, "apply") === "true");
+
+    // Ganti: pratinjau menunjuk batch lama yang baru saja diganti unggahan lain.
+    await main.getByLabel(/Berkas Order Detail/).setInputFiles(berkas(BATCH_LAMA.fileName));
+    await ftb.getByRole("button", { name: "Pratinjau" }).click();
+    await ftb.getByRole("button", { name: "Ganti batch lama…" }).click(NAV);
+    const dlg = page.getByRole("dialog");
+    let sebelum = bacaDaftar;
+    await dlg.getByRole("button", { name: "Ganti batch", exact: true }).click();
+    await expect(dlg).toBeHidden();
+    await expect(main.getByRole("status").filter({ hasText: BENTROK })).toContainText("Batch belum diganti.");
+    await expect.poll(() => bacaDaftar).toBeGreaterThan(sebelum);
+    await expect(main.getByRole("heading", { name: "Pratinjau berkas" })).toHaveCount(0);
+    await expect(ftb.getByRole("button", { name: "Ganti batch lama…" })).toHaveCount(0);
+    await expect(ftb.getByRole("button", { name: "Pratinjau" })).toBeEnabled();
+    expect(tulis().map((k) => field(k.body as string, "replace"))).toEqual(["true"]);
+
+    // Simpan: pratinjau tanpa duplikat, tetapi unggahan lain menyimpan berkas yang sama sebelum Simpan.
+    dup = false;
+    await ftb.getByRole("button", { name: "Pratinjau" }).click();
+    sebelum = bacaDaftar;
+    await ftb.getByRole("button", { name: "Simpan batch" }).click(NAV);
+    await expect(main.getByRole("status").filter({ hasText: BENTROK })).toContainText("Batch belum tersimpan.");
+    await expect.poll(() => bacaDaftar).toBeGreaterThan(sebelum);
+    await expect(main.getByRole("heading", { name: "Pratinjau berkas" })).toHaveCount(0);
+    await expect(ftb.getByRole("button", { name: "Simpan batch" })).toHaveCount(0);
+    expect(tulis().map((k) => field(k.body as string, "replace"))).toEqual(["true", "false"]);
+});
+
+test("Antrekan queued:0 (semua SO tertolak di bawah kunci batch) = peringatan dengan alasannya, bukan '0 faktur masuk'", async ({ page }) => {
+    const HILANG = "batch laporan principal sudah dihapus atau diganti (atau divalidasi ulang) saat diantrekan; muat ulang lalu ulangi dari batch yang ada";
+    await pasang(page, {
+        calon: (queue, r) => r.fulfill(json(queue
+            ? { ok: true, id: "b1", queued: 0, keys: [], alreadyPosted: [], skipped: [...SKIPPED, ...READY.map((c) => ({ soNo: c.soNo, reason: HILANG }))] }
+            : { ok: true, dry_run: true, id: "b1", ready: READY, skipped: SKIPPED })),
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/principal-order?batch=b1", NAV);
+    await page.locator(".fi-ftb").getByRole("button", { name: "Lanjut ke calon faktur" }).click(NAV);
+    await page.locator(".fi-ftb").getByRole("button", { name: "Antrekan 2 faktur…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Antrekan 2 faktur", exact: true }).click();
+    const main = page.locator("main");
+    const strip = main.getByRole("status").filter({ hasText: "Tidak ada faktur yang diantrekan." });
+    await expect(strip).toBeVisible();
+    await expect(strip).toHaveAttribute("data-tone", "warn");
+    await expect(strip).toContainText(`${HILANG} (SO 1671-SOP-260013022, 1671-SOP-260013026)`);
+    await expect(strip).toContainText("ada baris yang perlu ditinjau (SO 1671-SOP-260013024, 1671-SOP-260013030)");
+    await expect(main.getByText("0 faktur masuk Antrean Faktur.")).toHaveCount(0);
+});
+
 test("Batch tidak ditemukan = galat (bukan kosong); ponsel 390 px tanpa gulir menyamping di Unggah dan Validasi", async ({ page }) => {
     await pasang(page, { detail: (id, r) => (id === "hilang" ? r.fulfill(json({ ok: false, error: "Batch tidak ditemukan" }, 404)) : r.fulfill(json({ ok: true, batch: BATCH, lines: LINES }))) });
     await page.setViewportSize({ width: 1366, height: 900 });

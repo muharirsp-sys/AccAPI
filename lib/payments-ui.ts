@@ -62,6 +62,12 @@ export function angka(v: unknown): number {
     return parseLocaleNumber(t(v));
 }
 
+/** Angka dari JAWABAN server (bukan isian): null/kosong/bukan angka = undefined (tidak terbaca), bukan 0 seperti `Number(null)`. */
+export function angkaJawaban(v: unknown): number | undefined {
+    const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+    return Number.isFinite(n) ? n : undefined;
+}
+
 /**
  * Isian yang masih kosong sebelum rekaman bisa diajukan — cermin urutan validasi POST /payments/cart/create
  * (python_backend/routers/payments.py). Server tetap memeriksa ulang (termasuk indikasi LPB ganda yang tidak bisa dicek di layar).

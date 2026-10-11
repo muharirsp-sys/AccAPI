@@ -63,6 +63,10 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
         const no = bulat(nilai("nomor"));
         if (Number.isNaN(no)) galat.nomor = "Nomor surat terakhir harus bilangan bulat.";
         else if (no < s.efektif) galat.nomor = `Nomor urut SPPD tidak boleh turun di dalam satu tahun: nomor terakhir ${tahun} adalah ${String(s.efektif).padStart(3, "0")}. Nomor yang sudah terbit tidak boleh terbit ulang (D-05).`;
+        // Tahun baru: urutan tersimpan masih milik tahun lalu (efektif ≠ tersimpan). Server membuang nomor yang SAMA dengan urutan
+        // tersimpan sebagai "tidak berubah" (sppd.py), jadi isian itu tidak akan pernah berlaku — tolak sebelum Simpan.
+        // ponytail: perbaikan tuntas = server membandingkan dengan urutan BERLAKU tahun ini (lintas slice).
+        else if (no === s.settings.last_sequence && no !== s.efektif) galat.nomor = `Nomor ${String(no).padStart(3, "0")} sama dengan nomor terakhir tahun ${s.settings.sequence_year ?? "lalu"}; server membacanya sebagai “tidak berubah”, jadi nomor terakhir ${tahun} tetap ${String(s.efektif).padStart(3, "0")}. Isi nomor lain, atau kembalikan ke ${s.efektif} bila hanya ingin menyimpan isian lain.`;
         galat.template = galatTemplat(nilai("template"));
         if (!/^\d{4}-\d{2}-\d{2}$/.test(nilai("jaminan"))) galat.jaminan = "Isi tanggal jaminan yang valid.";
         const jt = bulat(nilai("jatuhTempo"));

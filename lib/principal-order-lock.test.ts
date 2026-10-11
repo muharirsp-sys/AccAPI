@@ -3,6 +3,8 @@
  * principal_order_batch/line dibuat di SKEMA SEKALI-PAKAI (search_path skema itu lalu public, di-DROP di akhir) persis seperti
  * migrasi 0008 produksi: FK line -> batch ON DELETE CASCADE + indeks unik (principal, file_hash). DB am040_s6 (drizzle push) tidak
  * punya keduanya, padahal CASCADE itulah yang membuat Hapus mengunci baris line — tanpa FK, deadlock Validasi tidak terlihat.
+ * invoice_outbox/_event juga dibuat di skema itu (LIKE tidak menyalin trigger append-only): DELETE riwayat ditolak trigger, jadi baris
+ * uji yang sampai ke public tertinggal selamanya (dulu +5 event `UJI-LOCK-%` per run di DB evaluasi).
  * Urutan antar-transaksi dibuat pasti dengan klien "penahan" + pg_blocking_pids (bukan sleep):
  *   A. hapus memegang kunci batch duluan -> antrekan menunggu, lalu melihat batch sudah tidak ada: tidak ada baris antrean.
  *   B. antrekan memegang kunci batch duluan -> DELETE route menunggu, lalu melihat baris antreannya: 409, batch utuh.
@@ -49,12 +51,12 @@ before(async () => {
     await pool.query(`CREATE TABLE ${SKEMA}.principal_order_line (LIKE public.principal_order_line INCLUDING ALL)`);
     await pool.query(`ALTER TABLE ${SKEMA}.principal_order_line ADD FOREIGN KEY (batch_id)
         REFERENCES ${SKEMA}.principal_order_batch (id) ON DELETE CASCADE`);
+    await pool.query(`CREATE TABLE ${SKEMA}.invoice_outbox (LIKE public.invoice_outbox INCLUDING ALL)`);
+    await pool.query(`CREATE TABLE ${SKEMA}.invoice_outbox_event (LIKE public.invoice_outbox_event INCLUDING ALL)`);
 });
 
 after(async () => {
     if (PG_URL) {
-        await pool.query("DELETE FROM invoice_outbox_event WHERE order_id = ANY($1)", [kunciDibuat]).catch(() => undefined);
-        await pool.query("DELETE FROM invoice_outbox WHERE order_id = ANY($1)", [kunciDibuat]).catch(() => undefined);
         await pool.query("DELETE FROM principal_mapping WHERE principal = $1", [principal]).catch(() => undefined);
         await pool.query(`DROP SCHEMA IF EXISTS ${SKEMA} CASCADE`);
         const { pool: poolRoute } = await import("./db.ts");
@@ -327,4 +329,12 @@ test("PG BL-21: payload dari baris sebelum Validasi ulang (validated_at berubah)
     assert.equal(await ada("SELECT 1 FROM invoice_outbox WHERE order_id = $1", keyBasi), 0);
     const kini = await antrekan(pg, { entries: [calon(keyKini)], actor: "uji-lock", targetDb: "", cari: null, batchId: batchQ, batchVersi: v2 });
     assert.deepEqual(kini.queued, [keyKini], "Q: versi yang sama ditolak");
+});
+
+// Uji terakhir di berkas ini (node:test menjalankannya berurutan): riwayat antrean append-only — DELETE ditolak trigger — jadi baris
+// uji yang sampai ke tabel public tertinggal selamanya di DB evaluasi. Semua tulisan antrean uji harus berhenti di skema sekali-pakai.
+test("PG BL-21: uji ini tidak meninggalkan baris antrean/riwayat di skema public", { skip: pgSkip }, async () => {
+    const sisa = async (tabel: string) => (await pool.query(`SELECT count(*)::int AS n FROM public.${tabel} WHERE order_id = ANY($1)`, [kunciDibuat])).rows[0].n as number;
+    assert.equal(await sisa("invoice_outbox_event"), 0, "event uji tertulis ke public.invoice_outbox_event (tidak bisa dihapus: append-only)");
+    assert.equal(await sisa("invoice_outbox"), 0, "baris antrean uji tertulis ke public.invoice_outbox");
 });

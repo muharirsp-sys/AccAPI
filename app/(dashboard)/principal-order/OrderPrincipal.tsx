@@ -21,7 +21,7 @@ import {
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import LangkahBatch, { Kepala, type Pesan } from "./LangkahBatch";
 import {
-    ALASAN_IZIN, PESAN_TIDAK_PASTI, PRINCIPAL_DIDUKUNG, TidakPasti, angka, baca, ditahanUtuh, tanggalSo, tulis, waktuWita,
+    ALASAN_IZIN, DitolakBerkode, PESAN_TIDAK_PASTI, PRINCIPAL_DIDUKUNG, TidakPasti, angka, baca, ditahanUtuh, tanggalSo, tulis, waktuWita,
     type BarisAntrean, type Batch, type Pratinjau,
 } from "./bersama";
 
@@ -89,6 +89,18 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
         }
     }
 
+    /**
+     * 409 BERKAS_SUDAH_DISIMPAN: unggahan lain baru saja menyimpan berkas yang sama (mis. dua Ganti bersamaan). Pratinjau ini — termasuk
+     * batch lama yang ditunjuknya — sudah usang: dibuang (klik ulang akan menunjuk batch yang sudah tidak ada) dan daftar dimuat ulang.
+     */
+    function berkasBaruDisimpanLain(e: unknown, judul: string): boolean {
+        if (!(e instanceof DitolakBerkode && e.code === "BERKAS_SUDAH_DISIMPAN")) return false;
+        setPratinjau(null); setDialog(null);
+        setPesan({ tone: "warn", title: judul, body: `${e.message} Daftar batch dimuat ulang; Pratinjau ulang bila masih perlu.` });
+        muatDaftar();
+        return true;
+    }
+
     function tersimpan(data: Record<string, unknown>, ganti: boolean) {
         setPesan({ tone: "pos", title: `${angka(Number(data.lineCount) || 0)} baris tersimpan${ganti ? " menggantikan batch lama" : ""}.`, body: "Lanjutkan dengan Validasi." });
         setPratinjau(null); setBerkas(null); setBasi(false); setDialog(null);
@@ -104,7 +116,7 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
             if (e instanceof TidakPasti) {
                 setBasi(true); muatDaftar();
                 setPesan({ tone: "warn", title: "Hasil simpan belum pasti.", body: `${PESAN_TIDAK_PASTI} Bila batchnya muncul di Batch terakhir, buka dari sana; bila tidak, Pratinjau ulang lalu simpan.` });
-            } else {
+            } else if (!berkasBaruDisimpanLain(e, "Batch belum tersimpan.")) {
                 setPesan({ tone: "neg", title: "Batch belum tersimpan.", body: pesanDari(e, "Unggah gagal.") });
             }
         } finally {
@@ -131,6 +143,7 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
             tersimpan(await kirimBerkas(true, true), true);
         } catch (e) {
             if (e instanceof TidakPasti) { setBasi(true); muatDaftar(); muatCek(); }
+            if (berkasBaruDisimpanLain(e, "Batch belum diganti.")) return;
             throw e;
         }
     }
