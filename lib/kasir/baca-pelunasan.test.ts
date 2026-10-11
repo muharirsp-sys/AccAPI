@@ -426,3 +426,23 @@ test("PENUH_TERTUNDA tercatat di status; klaim berikutnya (bukan penuh, bahkan d
     assert.equal(x.s.detail().length - detailAwal, 6, "semua detail dibaca ulang (penuh)");
     assert.equal(status(h).penuhTertundaPada, null, "dikosongkan sesudah baca penuh");
 });
+
+test("P6a: ganti akun lalu putaran GAGAL sebelum langkah hapus (list.do 5xx / sesi mati) -> akun_sinkron TETAP lama; putaran berikut menahan hapus", async () => {
+    const data = hari(10);
+    const x = siapkan(data);
+    await x.baca();
+    x.majuMenit(2);
+    Object.assign(x.deps, { sesi: async () => ({ userId: "u-lain", databaseId: DB }),
+        fetch: simulator(x.jam, data, (p) => (p.jenis === "list" ? new Response("x", { status: 503 }) : undefined)).fetch });
+    assert.equal(status(await x.baca()).sebab, "accurate_5xx");
+    assert.equal(x.t.rows.get(D)!.akun, "u-sinkron", "daftar tak lengkap = cache tidak diterapkan -> akun tidak berganti");
+    x.majuMenit(2);
+    Object.assign(x.deps, { kredensial: async () => ({ error: "sesi mati" }) });
+    await x.baca();
+    assert.equal(x.t.rows.get(D)!.akun, "u-sinkron", "jalur sesi mati juga tidak menyimpan akun baru");
+    x.majuMenit(2);
+    data.splice(0, 1);
+    Object.assign(x.deps, { kredensial: async () => KRED, fetch: simulator(x.jam, data).fetch });
+    const h = await x.baca();
+    assert.deepEqual([status(h).sebab, x.t.cache.size], ["hapus_massal", 10], "hapus TIDAK diam-diam sesudah putaran gagal");
+});

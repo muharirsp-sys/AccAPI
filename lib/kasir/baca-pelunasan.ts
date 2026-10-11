@@ -281,6 +281,9 @@ export async function bacaPelunasanHari(opsi: OpsiBaca, deps: DepsBaca = bawaan)
         }
 
         if (st.leaseHilang) return { jenis: "lease_hilang", status: await toko.status(databaseId, tanggal) };
+        // akun_sinkron = akun yang cache-nya DITERAPKAN dari daftar LENGKAP: putaran yang gagal sebelum langkah hapus (daftar null: 5xx/401/
+        // terpotong/waktu habis) tidak boleh "menerima" akun baru — kalau tidak, putaran berikut menghapus diam-diam (probe P6a).
+        if (!daftar) akunSimpan = klaim.akunLama;
         const akhir = statusAkhir({ galat: st.galat, daftar, cacheAkhir: daftar ? await toko.cache(databaseId, tanggal) : new Map(), ditolak: st.ditolak });
         const tersimpan = await toko.selesai(token, databaseId, tanggal, akhir, st.ditolak, akunSimpan);
         return tersimpan ? { jenis: "selesai", status: tersimpan } : { jenis: "lease_hilang", status: await toko.status(databaseId, tanggal) };
