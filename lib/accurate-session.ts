@@ -151,14 +151,14 @@ export async function resolveSyncCredentials(): Promise<
             .orderBy(desc(accurateOAuthSession.updatedAt));
         userId = pickSyncUserId(sessions);
     }
-    if (!userId) return { error: "Tidak ada sesi Accurate milik admin. Set ACCURATE_SYNC_USER_ID atau login Accurate sebagai admin di /api-wrapper." };
+    if (!userId) return { error: "Tidak ada sesi Accurate milik admin. Set ACCURATE_SYNC_USER_ID atau login Accurate sebagai admin di /sesi-accurate." };
 
     let session = await getAccurateSession(userId);
-    if (!session?.accessToken) return { error: "Tidak ada access token Accurate. Login ulang di /api-wrapper." };
+    if (!session?.accessToken) return { error: "Tidak ada access token Accurate. Login ulang di /sesi-accurate." };
     // X-Session-ID berumur pendek dan habis independen dari access token.
     if (!session.sessionHost || !session.sessionId) session = await ensureFreshAccurateSession(userId);
     if (!session?.sessionHost || !session.sessionId || !session.accessToken) {
-        return { error: "Sesi Accurate tidak bisa di-refresh — access token kemungkinan sudah kadaluarsa. Login ulang di /api-wrapper." };
+        return { error: "Sesi Accurate tidak bisa di-refresh — access token kemungkinan sudah kadaluarsa. Login ulang di /sesi-accurate." };
     }
 
     return { creds: { sessionHost: session.sessionHost, sessionId: session.sessionId, apiKey: session.accessToken, databaseId: String(session.databaseId ?? "") } };
