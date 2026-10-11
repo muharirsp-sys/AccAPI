@@ -67,6 +67,16 @@ Dasar: matriks D-01 (DISETUJUI 11 Okt, `scratch/fiori-intake/D01-MATRIKS-DRAF-20
   sesudah keluar dari grup Admin). Jalur: tambah/keluarkan anggota, tandai/lepas bintang, hapus grup (semua anggotanya), buat user,
   route lama `users/[id]/group`. Perubahan role dicatat di `detail` audit aksi pemicunya (`roleBefore`, `roleAfter`).
 - `pickSyncUserId` (`lib/accurate-session.ts`) TIDAK diubah; ia memakai `role === "admin"` bila `ACCURATE_SYNC_USER_ID` kosong.
+- **WAJIB untuk S7a:** melepas bintang grup preset Admin (atau memindah bintang ke grup custom) MENURUNKAN `user.role` ke `viewer`
+  walaupun user MASIH anggota grup Admin (izin `users.manage` tetap dari grup; role identitas lama turun). Dialog bintang wajib
+  memperingatkan: "Role identitas lama akan menjadi viewer — gerbang berbasis role (OPC/Klaim/Form Kontrol, sinkron Accurate tanpa
+  ACCURATE_SYNC_USER_ID) ikut berubah." Hal yang sama untuk preset lain ber-peta role.
+
+## 4a. Prasyarat deploy
+- **`ACCURATE_SYNC_USER_ID` WAJIB terisi** di produksi sebelum image S7-1: kelayakan identitas sinkron (`role === "admin"`) kini
+  ikut bintang/keanggotaan grup, jadi tanpa env itu identitas cron bisa berpindah saat admin menata bintang.
+- `docs/handover/DDL_S7_0.sql` sebelum image; jalankan ulang bagian BACKFILL sesudah image S7-1 hidup (anjuran S7-0).
+- `docs/handover/RBAC_S7_1_CEK_ROLE.sql` (baca-saja) sebelum dan sesudah deploy; `docs/handover/RBAC_PRESET_BL37.sql` sekali (IT Support).
 
 ## 5. Endpoint
 
@@ -169,3 +179,5 @@ Cursor rusak → 400 `INPUT_TIDAK_VALID`. Label aksi: `auditActionLabels` di `li
 - **Perbaikan #7 (tinjauan A):** `PUT/DELETE primary-group` menjawab `{ ok, changed, primaryGroupId, role, roleChanged }`; audit
   `user_group.star/unstar` hanya bila bintang tersimpan atau role BERUBAH (lepas pada user 1 grup = bintang otomatis kembali =
   `changed:false`, tanpa audit). Route lama `users/[id]/group` ke grup yang sudah berbintang = tanpa audit bintang.
+- **Perbaikan #9:** catatan WAJIB S7a (lepas bintang Admin → role `viewer` walau masih anggota) dan §4a prasyarat deploy
+  (`ACCURATE_SYNC_USER_ID` wajib terisi).
