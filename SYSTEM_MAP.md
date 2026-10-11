@@ -1012,6 +1012,12 @@ permission_audit_log [siapa ubah group/permission siapa, kapan]
 # Principal resmi (S7-0 BL-64; tabel saja — benih & pembaca = S7-2; DDL manual docs/handover/DDL_S7_0.sql SEBELUM image)
 principal [code unik = kode OPC/Klaim] ── principal_variant (principal_id + variant_key; '' = tanpa varian)
   └──────────── principal_alias [id; alias_norm unik per kelompok: kode Master Barang | nama/label/kode OPC -> principal (+ varian); nilai WAJIB dari normalizer baku S7-2]
+
+# Kasir ↔ Incaso (K1a BL-59; skema + lib murni lib/kasir/rekonsiliasi.ts; pembaca K1b, UI K2; DDL manual docs/handover/DDL_K1A.sql SEBELUM image; kontrak docs/handover/KASIR-KONTRAK.md)
+kasir_setoran [append-only; (tanggal, salesman_kode=ORANG, revisi) unik; revisi n+1 -> revisi n (FK komposit); tunai/transfer/giro >= 0]
+kasir_selisih_catatan [append-only; angka pelunasan/setoran saat dijelaskan; '' = Tanpa salesman] · kasir_hari_event [append-only; tutup | kunci | buka(alasan >= 15)]
+kasir_pelunasan (database_id + pelunasan_id; chequeAmount, metode, last_update) ── kasir_pelunasan_faktur (faktur_id, master_salesman_id, invoice_payment) [cache K1b, TANPA raw_data]
+  masterSalesmanId -> accurate_employee.number -> sales_code_merge (merge, per bulan) -> ORANG; OTHERS dikeluarkan; Σ invoicePayment ≠ chequeAmount -> ember tak teralokasi
 ```
 
 **Status Lifecycle offBatch:**
