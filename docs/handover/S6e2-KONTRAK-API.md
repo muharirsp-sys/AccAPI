@@ -131,7 +131,8 @@ satu transaksi: status `SUCCESS` (terposting) / `FAILED` (tidak_ada = boleh diki
 `idempotency_resolution` (siapa, kapan, database, sumber, alasan, nomor; tidak bisa diubah/dihapus).
 
 **`acceptSimilar` (putaran 2, B-N1)**: `terposting` dengan kandidat yang TIDAK identik kasar dengan baris (himpunan faktur beda,
-atau ada faktur bernominal lain menurut sidik jari kunci — mis. cicilan lain, atau koreksi nominal) wajib `acceptSimilar: true`;
+atau ada faktur bernominal lain menurut sidik jari kunci — mis. cicilan lain, atau koreksi nominal; sidik jari yang tidak terurai
+pasti — Σ hasil urai ≠ `amount` baris, angka negatif — juga dianggap tidak identik) wajib `acceptSimilar: true`;
 tanpa itu 409 `similar_not_identical`. Bila diterima, `checked_source` jejak diakhiri `[mirip: <nomor> Rp<nominal kandidat> ≠
 Rp<nominal baris>]`.
 
@@ -239,3 +240,7 @@ diselesaikan; tampilkan bila > 0).
   ditentukan dari segmen `key` saja.
 - (11 Okt, putaran 2 orkestrator) §1 `sp.pageCount` teks angka diterima; 0 hanya bila daftar kosong; hilang/bukan angka tetap
   `UNREADABLE`.
+- (11 Okt, susulan S6e, tinjauan B RENDAH) §5 kandidat identik kasar hanya bila sidik jari kunci terurai PASTI: Σ (bayar +
+  potongan) hasil urai = `amount` baris dan tidak ada angka negatif. Catatan potongan berpemisah (`x:0;INV-1|200|a:b`) tidak
+  lagi bisa memalsukan nominal → `similar_not_identical` (wajib `acceptSimilar`). Baris lama tanpa `amount` juga wajib
+  `acceptSimilar`. Bentuk jawaban tidak berubah.

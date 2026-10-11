@@ -238,6 +238,35 @@ test("B-N1: nominalDariKunci mengurai sidik jari (bayar, bayar+potongan, faktur 
     assert.equal(nominalDariKunci({ ...fp([{ invoiceNo: "I1", paymentAmount: 9 }]), customerNo: "C2" }), null, "awalan beda");
 });
 
+test("Susulan S6e (B, RENDAH): catatan potongan berpemisah tidak bisa memalsukan nominal kunci — Σ urai ≠ amount / angka negatif = tidak identik (409, tanpa tulis DB)", async () => {
+    const { nominalDariKunci } = await import("./idempotency-resolve.ts");
+    // Cicilan-2 INV-1 Rp300 yang catatan potongannya disusun dengan pemisah: kunci terurai INV-1 Rp500 (= cicilan-1 di Accurate).
+    const palsu = (discountNotes: string) => buildSalesReceiptIdempotencyPayload({ customerNo: "C1", transDate: "09/10/2026",
+        detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 300, detailDiscount: [{ accountNo: "A", discountNotes, amount: 0 }] }] });
+    const p = palsu("x:0;INV-1|200|a:b");
+    assert.equal(p.amount, 300);
+    assert.equal(nominalDariKunci(p), null, "Σ urai Rp500 ≠ amount baris Rp300");
+    // Σ dibuat sama lewat potongan negatif sisipan (Σ bayar+potongan = 300, bayar INV-1 terurai 500) -> tetap null.
+    assert.equal(nominalDariKunci(palsu("x:0;INV-1|200|a:b:-200&c:d")), null, "angka negatif hasil urai");
+    // Kontrol: baris sah tetap terurai; amount kolom yang tidak sama dengan Σ urai (atau kosong) = null.
+    const sah = buildSalesReceiptIdempotencyPayload({ customerNo: "C1", transDate: "09/10/2026", detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 300, detailDiscount: [{ accountNo: "6001", discountNotes: "Pot", amount: 20 }] }] });
+    assert.deepEqual([...nominalDariKunci(sah)!], [["INV-1", [300, 320]]]);
+    assert.equal(nominalDariKunci({ ...sah, amount: 300 }), null, "amount ≠ Σ bayar+potongan");
+    assert.equal(nominalDariKunci({ ...sah, amount: null }), null, "amount kosong");
+
+    // Route asli: Finance memilih PR.H1 Rp500 (cicilan-1) untuk baris palsu tanpa acceptSimilar -> 409, bukan SUCCESS diam-diam.
+    const lima = new Date(Date.now() - 5 * 60_000);
+    const idem = [{ key: p.key, status: "UNKNOWN", customerNo: "C1", transDate: "09/10/2026", invoiceNo: "INV-1", amount: 300, databaseId: "DB-1",
+        lockId: "lock-1", updatedAt: lima, createdAt: lima }];
+    const data = { salesInvoice: [], salesReturn: [], salesReceipt: [
+        { id: 8, number: "PR.H1", customer: { customerNo: "C1" }, transDate: "09/10/2026", detailInvoice: [{ invoice: { number: "INV-1" }, paymentAmount: 500, detailDiscount: [] }] }] };
+    const body = { key: p.key, decision: "terposting", accurateNumber: "PR.H1", reason: "Ditemukan di Accurate oleh Finance", checkedSource: "Accurate", expectedDatabaseId: "DB-1" };
+    const res = await sebagai(["finance.resolve_unknown"], () => resolvePost(jsonPost("/api/idempotency/resolve", body)), { idem, sesi: sesiAccurate(), fetch: fetchEmulator(data) });
+    const b = await res.json();
+    assert.equal(res.status, 409, JSON.stringify(b));
+    assert.deepEqual([b.code, b.rowAmount, b.candidateAmount, b.hint], ["similar_not_identical", 300, 500, "takeover"]);
+});
+
 test("B-N2: lock menolak entri yang kolom invoiceNo-nya memuat faktur di luar segmen kunci (400 KEY_IDENTITY_MISMATCH, sebelum DB)", async () => {
     const ok = buildSalesReceiptIdempotencyPayload({ customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 1 }, { invoiceNo: "INV-2", paymentAmount: 2 }] });
     for (const invoiceNo of ["INV-1,INV-9", "INV-9"]) {
