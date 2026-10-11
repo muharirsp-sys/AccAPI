@@ -3,14 +3,13 @@
 /*
  * Tujuan: UI admin untuk membuat user internal, reset password, dan pilih Access Group.
  * Caller: Route dashboard `/admin/users`.
- * Dependensi: Better Auth admin API, `/api/admin/users/permissions`, `/api/admin/users/[id]/group`,
+ * Dependensi: `/api/admin/users` (buat), `/api/admin/users/[id]/password`, `/api/admin/users/permissions`, `/api/admin/users/[id]/group`,
  *   `/api/admin/groups`, sonner.
  * Main Functions: UserManagement, loadUsers, loadGroups, createUser, setUserGroup, resetPassword.
  * Side Effects: HTTP read/write ke API auth/admin.
- * Catatan: permission granular SATU PINTU dari Access Group. Dropdown "Access Group" di sini
- *   MENGGANTIKAN dropdown role lama — memilih group otomatis set membership + role identity
- *   (server-side, lihat app/api/admin/users/[id]/group/route.ts) dan menghapus permission
- *   legacy per-user, agar tidak ada dua sumber permission yang tumpang tindih.
+ * Catatan: permission granular SATU PINTU dari Access Group (gabungan semua grup user). Dropdown "Access Group" =
+ *   TAMBAH grup + jadikan UTAMA (bintang; S7-1 BL-63) — grup lain TIDAK dihapus (cabut lewat Kelola Akses Group).
+ *   Layar lama; S7a menggantinya.
  */
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -25,6 +24,8 @@ type UserRow = {
     banned?: boolean | null;
     groupId?: string | null;
     groupName?: string | null;
+    primaryGroupId?: string | null;
+    groups?: Array<{ id: string; name: string; isPrimary: boolean }>;
 };
 
 type GroupOption = { id: string; name: string };
@@ -98,17 +99,11 @@ export default function UserManagement() {
         }
         setSaving(true);
         try {
-            const created = await authFetch<{ user?: { id?: string } }>("/api/auth/admin/create-user", {
+            // S7-1: satu permintaan server (atomik + tercatat); plugin /api/auth/admin/* ditutup dari browser.
+            await authFetch("/api/admin/users", {
                 method: "POST",
-                body: JSON.stringify({ name, email, password, role: "viewer", data: { emailVerified: true } }),
+                body: JSON.stringify({ name, email, password, groupIds: [groupId] }),
             });
-            const newUserId = created.user?.id;
-            if (newUserId) {
-                await authFetch(`/api/admin/users/${newUserId}/group`, {
-                    method: "POST",
-                    body: JSON.stringify({ groupId }),
-                });
-            }
             toast.success("User dibuat.");
             setName("");
             setEmail("");
@@ -121,11 +116,14 @@ export default function UserManagement() {
         }
     }
 
-    async function setUserGroup(userId: string, userName: string, currentGroupName: string | null | undefined, nextGroupId: string) {
+    // S7-1: route ini kini TAMBAH grup + jadikan UTAMA (bintang); grup lain user TETAP (cabut lewat Kelola Akses Group).
+    async function setUserGroup(userId: string, userName: string, nextGroupId: string) {
         if (!nextGroupId) return;
         const nextGroupName = groups.find((g) => g.id === nextGroupId)?.name ?? nextGroupId;
         const confirmed = window.confirm(
-            `Ubah Access Group "${userName}" dari "${currentGroupName || "(belum ada)"}" ke "${nextGroupName}"?\n\nPermission user akan langsung mengikuti group baru ini.`
+            `Tambahkan grup "${nextGroupName}" ke "${userName}" dan jadikan grup utama?
+
+Grup lain user ini TETAP (izin = gabungan semua grup). Untuk mencabut grup lain, pakai Kelola Akses Group.`
         );
         if (!confirmed) return;
         try {
@@ -133,10 +131,10 @@ export default function UserManagement() {
                 method: "POST",
                 body: JSON.stringify({ groupId: nextGroupId }),
             });
-            toast.success(`Access Group "${userName}" diperbarui ke "${nextGroupName}".`);
+            toast.success(`Grup "${nextGroupName}" ditambahkan & dijadikan utama untuk "${userName}". Grup lain tetap — cabut lewat Kelola Akses Group.`);
             await loadUsers();
         } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Gagal update Access Group");
+            toast.error(error instanceof Error ? error.message : "Gagal menambah grup");
         }
     }
 
@@ -148,9 +146,9 @@ export default function UserManagement() {
             return;
         }
         try {
-            await authFetch("/api/auth/admin/set-user-password", {
+            await authFetch(`/api/admin/users/${userId}/password`, {
                 method: "POST",
-                body: JSON.stringify({ userId, newPassword }),
+                body: JSON.stringify({ password: newPassword }),
             });
             toast.success("Password user diperbarui.");
         } catch (error) {
@@ -201,12 +199,16 @@ export default function UserManagement() {
                                     <td className="px-4 py-3">{item.name}</td>
                                     <td className="px-4 py-3">{item.email}</td>
                                     <td className="px-4 py-3">
+                                        <div className="text-xs text-slate-300 mb-1">
+                                            {(item.groups ?? []).length === 0 ? "(belum ada grup)" : (item.groups ?? []).map((g) => g.isPrimary || g.id === item.primaryGroupId ? `★ ${g.name}` : g.name).join(" · ")}
+                                        </div>
                                         <select
-                                            value={item.groupId ?? ""}
-                                            onChange={(e) => setUserGroup(item.id, item.name, item.groupName, e.target.value)}
+                                            value={item.primaryGroupId ?? ""}
+                                            onChange={(e) => setUserGroup(item.id, item.name, e.target.value)}
+                                            aria-label={`Tambah grup & jadikan utama untuk ${item.name}`}
                                             className="rounded bg-black/30 border border-white/10 px-2 py-1 text-white"
                                         >
-                                            <option value="" disabled>— pilih group —</option>
+                                            <option value="" disabled>— tambah & jadikan utama —</option>
                                             {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
                                         </select>
                                     </td>
