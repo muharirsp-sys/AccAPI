@@ -1,30 +1,24 @@
 /*
- * Tujuan: Guard server untuk halaman User & RBAC.
- * Caller: Next.js App Router route `/admin/users`.
- * Dependensi: Better Auth session, izin efektif grup (getUserPermissions), komponen UserManagement.
+ * Tujuan: Rute /admin/users (Fiori S7a): gerbang server + layar User (FCL) di dalam FioriScope.
+ * Caller: menu Pengaturan › User. Guard: layout dashboard (pagePermissions /admin/users) + halaman ini.
+ * Dependensi: resolveRequestPermissionsH, FioriScope, AccessDenied, Pengguna (klien).
  * Main Functions: AdminUsersPage.
- * Side Effects: Redirect login bila tanpa sesi; AccessDenied bila tanpa `users.manage` efektif.
- * Catatan S7-1 (BL-62): gerbang = kunci grup `users.manage` (sama dengan API /api/admin/**), bukan peran lama `role === "admin"`.
+ * Side Effects: Membaca session/permission; redirect /login tanpa sesi.
+ * Gerbang (orkestrator, owner S7-1 11 Okt): `users.view` ATAU `users.manage`; `users.view` = baca-saja (tulis = users.manage, ditegakkan API).
+ *   TERBUKA S7a: `pagePermissions` belum mendukung anyOf (datang dari S7-sesi) — layout masih menuntut `users.view`, jadi akun
+ *   ber-`users.manage` tanpa `users.view` tertahan di layout; orkestrator menyesuaikan sesudah S7-sesi merge.
  */
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
-import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
-import { getUserPermissions } from "@/lib/rbac/resolve";
+import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { FioriScope } from "@/components/fiori/Scope";
 import AccessDenied from "@/components/AccessDenied";
-import UserManagement from "./UserManagement";
+import Pengguna from "./Pengguna";
 
 export default async function AdminUsersPage() {
-    const requestHeaders = await headers();
-    const isLocalDev = isLocalAuthBypassEnabled(requestHeaders);
-    if (isLocalDev) return <UserManagement />;
-
-    const session = await auth.api.getSession({ headers: requestHeaders });
-    if (!session) redirect("/login");
-
-    if (!(await getUserPermissions(session.user.id)).has("users.manage")) {
-        return <AccessDenied message="Halaman ini butuh izin kelola user (users.manage)." />;
+    const { session, perms } = await resolveRequestPermissionsH();
+    if (!session || !perms) redirect("/login");
+    if (!perms.has("users.view") && !perms.has("users.manage")) {
+        return <AccessDenied message="Halaman ini butuh izin Lihat user (users.view) atau Kelola user (users.manage)." />;
     }
-
-    return <UserManagement />;
+    return <FioriScope><Pengguna permKeys={[...perms]} aktorId={session.user.id} /></FioriScope>;
 }
