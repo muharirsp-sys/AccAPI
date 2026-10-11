@@ -1,22 +1,22 @@
-import { headers } from "next/headers";
+/*
+ * Tujuan: Rute /admin/groups (Fiori S7a): gerbang server + layar Akses Group (FCL) di dalam FioriScope.
+ * Caller: menu Pengaturan › Akses Group; tautan dari layar User. Guard: layout dashboard (pagePermissions /admin/groups = users.manage) + halaman ini.
+ * Dependensi: resolveRequestPermissionsH, FioriScope, AccessDenied, AksesGrup (klien).
+ * Main Functions: AdminGroupsPage.
+ * Side Effects: Membaca session/permission; redirect /login tanpa sesi.
+ * Catatan: tetap `users.manage` — GET /api/admin/groups dan /groups/[id] (kontrak S7-1 §5.8) hanya menerima users.manage.
+ */
 import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
-import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
-import { rolePermissionPresets } from "@/lib/rbac";
-import { getUserPermissions } from "@/lib/rbac/resolve";
+import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { FioriScope } from "@/components/fiori/Scope";
 import AccessDenied from "@/components/AccessDenied";
-import GroupManagement from "./GroupManagement";
+import AksesGrup from "./AksesGrup";
 
 export default async function AdminGroupsPage() {
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
-    const isLocalDev = isLocalAuthBypassEnabled(requestHeaders);
-    if (!session && !isLocalDev) redirect("/login");
-    const perms = isLocalDev
-        ? new Set(Object.entries(rolePermissionPresets.admin).flatMap(([moduleName, actions]) => (actions || []).map((action) => `${moduleName}.${action}`)))
-        : await getUserPermissions(session!.user.id);
+    const { session, perms } = await resolveRequestPermissionsH();
+    if (!session || !perms) redirect("/login");
     if (!perms.has("users.manage")) {
-        return <AccessDenied message="Anda butuh izin Kelola Pengguna untuk membuka halaman ini." />;
+        return <AccessDenied message="Halaman ini butuh izin Kelola user (users.manage)." />;
     }
-    return <GroupManagement />;
+    return <FioriScope><AksesGrup aktorId={session.user.id} /></FioriScope>;
 }

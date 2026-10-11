@@ -82,9 +82,10 @@ test("BL-41 Admin Incaso: tidak pasti + gagal dari ringkasan; jawaban tanpa angk
 
 test("tiles and cards never appear without the endpoint permission", () => {
     assert.deepEqual(tilesFor("fakturist", new Set(["order.view"])), ["antrean", "batchTinjau", "selisih"]);
-    // Tile admin butuh izin sumber (users.manage) DAN halaman tujuan (/admin/users = users.view).
-    assert.deepEqual(tilesFor("admin", new Set(["users.manage"])), []);
+    // Tile admin butuh izin sumber (users.manage) DAN halaman tujuan (/admin/users = users.view ATAU users.manage, S7a anyOf).
+    assert.deepEqual(tilesFor("admin", new Set(["users.manage"])), ["userTanpaGrup"]);
     assert.deepEqual(tilesFor("admin", new Set(["users.manage", "users.view"])), ["userTanpaGrup"]);
+    assert.deepEqual(tilesFor("admin", new Set(["users.view"])), [], "users.view saja: izin sumber (users.manage) tidak ada");
     assert.deepEqual(tilesFor("fakturist", new Set()), []);
     assert.deepEqual(tilesFor("gudang", new Set(["rekapan_nota.view"])), ["wave", "exception", "kanvas"]);
     // Tanpa profil: gabungan tugas dari izin, dibatasi 6.
