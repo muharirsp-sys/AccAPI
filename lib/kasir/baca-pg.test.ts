@@ -189,7 +189,7 @@ test("PG K1b tokoPg: dua pengklaim -> satu menang; upsert idempoten + baris fakt
     await denganSkema(async (pool) => {
         await siapSkema(pool);
         const toko = tokoPg(drizzle(pool));
-        const klaim = (token: string, penuh = false) => toko.klaim({ databaseId: DB, tanggal: D, token, pemicu: "uji", penuh });
+        const klaim = (token: string, penuh = false) => toko.klaim({ databaseId: DB, tanggal: D, token, pemicu: "uji", penuh, akun: "u-sinkron" });
         const [a, b] = await Promise.all([klaim("A"), klaim("B")]);
         assert.equal([a, b].filter((x) => x.diklaim).length, 1, "tepat satu menang");
         const menang = a.diklaim ? "A" : "B";
@@ -215,6 +215,12 @@ test("PG K1b tokoPg: dua pengklaim -> satu menang; upsert idempoten + baris fakt
         assert.deepEqual(await baris(), [{ f: 12, s: 7, invoice_payment: "1000.55" }], "token basi tidak menimpa");
         const s = await toko.selesai("C", DB, D, { status: "lengkap", sebab: null, pesan: null, jumlahDaftar: 1, sisaDetail: 0 }, []);
         assert.ok(s && s.status === "lengkap" && s.lengkapPada && !s.aktif);
+        const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+        assert.match(s.lengkapPada!, ISO, "lengkapPada ISO UTC, bukan teks PG");
+        assert.match(s.mulaiPada!, ISO);
+        assert.match(s.selesaiPada!, ISO);
+        assert.equal(s.akunSinkron, "u-sinkron", "akun sinkron pembaca dicatat");
+        assert.deepEqual(await toko.nomor(DB, [1, 999]), new Map([[1, "SR/1"]]));
         const jeda = await klaim("D");
         assert.ok(!jeda.diklaim && jeda.status.status === "lengkap", "lengkap < 60 dtk: tidak diklaim");
         assert.equal((await klaim("E", true)).diklaim, true, "penuh mengabaikan jeda");
@@ -244,6 +250,7 @@ test("PG K1b pelaksana + tokoPg: lengkap, hapus CASCADE hanya saat daftar lengka
         let rusak = false;
         let n = 0;
         const deps: DepsBaca = { kredensial: async () => ({ creds: { sessionHost: "https://sim.accurate.invalid", sessionId: "S", apiKey: "T", databaseId: DB } }),
+            sesi: async () => ({ userId: "u-sinkron", databaseId: DB }), nama: async () => new Map(),
             toko: () => tokoPg(d), fetch: accurate(data, () => rusak), tidur: async () => undefined, sekarang: () => Date.now(), token: () => `tok-${++n}` };
         const baca = (penuh = false) => bacaPelunasanHari({ tanggal: D, pemicu: "uji", penuh }, deps);
         const h1 = await baca();
@@ -271,6 +278,15 @@ test("PG K1b pelaksana + tokoPg: lengkap, hapus CASCADE hanya saat daftar lengka
         assert.deepEqual((await pool.query(`SELECT array_agg(pelunasan_id::int ORDER BY pelunasan_id) AS k, (SELECT count(*)::int FROM kasir_pelunasan_faktur) AS f
             FROM kasir_pelunasan`)).rows[0], { k: [1, 3], f: 2 });
         assert.ok(h3.status.lengkapPada! > lengkapPada!, "lengkap_pada maju");
+
+        // Butir 1: lengkap 3 jam lalu, lalu sesi sinkron MATI -> status gagal/sesi_sinkron tersimpan, lengkap_pada TIDAK dimundurkan.
+        await pool.query(`UPDATE kasir_pelunasan_baca SET selesai_pada = now() - interval '3 hours', lengkap_pada = now() - interval '3 hours'`);
+        const lengkap3jam = (await muatPelunasanHari(DB, D, d)).status.lengkapPada;
+        const mati = await bacaPelunasanHari({ tanggal: D, pemicu: "cron" }, { ...deps, kredensial: async () => ({ error: "token kedaluwarsa" }) });
+        assert.ok(mati.jenis === "kredensial" && mati.status, JSON.stringify(mati));
+        const sesudah = (await muatPelunasanHari(DB, D, d));
+        assert.deepEqual([sesudah.status.status, sesudah.status.sebab, sesudah.status.lengkapPada, sesudah.pelunasan.length],
+            ["gagal", "sesi_sinkron", lengkap3jam, 2], "tidak lagi lengkap; riwayat lengkap_pada & cache utuh");
     });
 });
 
@@ -295,5 +311,50 @@ test("PG K1b databaseIdSinkron: ACCURATE_SYNC_USER_ID, atau sesi TERBARU milik a
             if (env === undefined) delete process.env.ACCURATE_SYNC_USER_ID;
             else process.env.ACCURATE_SYNC_USER_ID = env;
         }
+    });
+});
+
+test("PG K1b penjaga hapus massal: 6 dari 12 hilang -> tidak dihapus, ditolak memuat NOMOR dari cache; konfirmasi menghapus", { skip: pgSkip }, async () => {
+    await denganSkema(async (pool) => {
+        await siapSkema(pool);
+        const d = drizzle(pool);
+        const data = Array.from({ length: 12 }, (_, i) => ({ id: i + 1, lastUpdate: `l${i}` }));
+        let n = 0;
+        const deps: DepsBaca = { kredensial: async () => ({ creds: { sessionHost: "https://sim.accurate.invalid", sessionId: "S", apiKey: "T", databaseId: DB } }),
+            sesi: async () => ({ userId: "u-sinkron", databaseId: DB }), nama: async () => new Map(),
+            toko: () => tokoPg(d), fetch: accurate(data), tidur: async () => undefined, sekarang: () => Date.now(), token: () => `tok-${++n}` };
+        await bacaPelunasanHari({ tanggal: D, pemicu: "uji" }, deps);
+        data.splice(0, 6);
+        const h = await bacaPelunasanHari({ tanggal: D, pemicu: "uji", penuh: true }, deps);
+        assert.ok(h.jenis === "selesai" && h.status.status === "gagal" && h.status.sebab === "hapus_massal", JSON.stringify(h));
+        assert.deepEqual(h.status.ditolak.map((x) => x.nomor), ["SR/1", "SR/2", "SR/3", "SR/4", "SR/5", "SR/6"]);
+        assert.equal((await pool.query(`SELECT count(*)::int AS n FROM kasir_pelunasan`)).rows[0].n, 12);
+        const ok = await bacaPelunasanHari({ tanggal: D, pemicu: "uji", penuh: true, konfirmasiHapus: true }, deps);
+        assert.ok(ok.jenis === "selesai" && ok.status.status === "lengkap");
+        assert.equal((await pool.query(`SELECT count(*)::int AS n FROM kasir_pelunasan`)).rows[0].n, 6);
+    });
+});
+
+test("PG K1b DDL: VERIFIKASI membandingkan DEFINISI CHECK (CHECK (true) bernama sama = false); tabel versi awal tanpa akun_sinkron dilengkapi", { skip: pgSkip }, async () => {
+    const ddl = await berkas("../../docs/handover/DDL_K1B.sql");
+    const cekVerifikasi = ddl.slice(ddl.indexOf("-- 3. VERIFIKASI"));
+    await denganSkema(async (pool) => {
+        await migrasi(pool, await entri(NAMA_K1A));
+        for (const v of await verifikasi(pool, ddl)) assert.notEqual(v.ok, false, `VERIFIKASI awal: ${v.cek}`);
+        for (const nama of ["kasir_pelunasan_baca_status", "kasir_pelunasan_baca_sebab", "kasir_pelunasan_baca_isi", "kasir_pelunasan_baca_konsisten"]) {
+            await pool.query(`ALTER TABLE kasir_pelunasan_baca DROP CONSTRAINT ${nama}, ADD CONSTRAINT ${nama} CHECK (true)`);
+            const v = new Map((await verifikasi(pool, cekVerifikasi)).map((r) => [r.cek, r.ok]));
+            assert.equal([...v].find(([cek]) => /definisi persis/.test(cek))?.[1], false, `${nama} = CHECK (true) harus tertangkap`);
+            await pool.query("DROP TABLE kasir_pelunasan_baca");
+            await verifikasi(pool, ddl); // pulihkan
+        }
+    });
+    await denganSkema(async (pool) => {
+        // Bentuk awal K1b (tanpa akun_sinkron): migrate-pg tidak tertipu, kolom ditambahkan (EXPAND).
+        await pool.query((await entri(NAMA_K1B)).sql.replace(/\n\s*akun_sinkron\s+text,/, "").replace(/ALTER TABLE[^;]*;/, ""));
+        assert.equal((await pool.query(`SELECT count(*)::int AS n FROM information_schema.columns WHERE table_schema = current_schema()
+            AND table_name = 'kasir_pelunasan_baca' AND column_name = 'akun_sinkron'`)).rows[0].n, 0, "tabel versi awal dibuat");
+        assert.equal(await migrasi(pool, await entri(NAMA_K1B)), `OK ${NAMA_K1B}`, "sudahAda memeriksa kolom akun_sinkron");
+        assert.equal(await migrasi(pool, await entri(NAMA_K1B)), `SKIP ${NAMA_K1B}`);
     });
 });

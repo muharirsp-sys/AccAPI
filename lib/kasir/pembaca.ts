@@ -16,7 +16,7 @@ import { hariKerja, keSen, type Pelunasan, type PelunasanFaktur } from "./rekons
 
 /** Kelas galat pembaca (kolom kasir_pelunasan_baca.sebab; CHECK di DDL = daftar ini). */
 export const KELAS_GALAT = ["sesi_sinkron", "hak_akses", "batas_laju", "accurate_5xx", "jaringan", "tidak_pasti", "ditolak", "bentuk",
-    "nominal", "terpotong"] as const;
+    "nominal", "terpotong", "hapus_massal"] as const;
 export type KelasGalat = (typeof KELAS_GALAT)[number];
 
 export class GalatBaca extends Error {
@@ -220,8 +220,22 @@ export function rencanaBaca(cache: ReadonlyMap<number, string | null>, daftar: {
         else baca.push(b);
     }
     const ada = new Set(daftar.baris.map((b) => b.id));
-    const hapus = daftar.lengkap ? [...cache.keys()].filter((id) => !ada.has(id)) : [];
+    const hapus = daftar.lengkap ? [...cache.keys()].filter((id) => !ada.has(id)).sort((a, b) => a - b) : [];
     return { baca, hapus, tetap };
+}
+
+/**
+ * Penjaga hapus massal: satu putaran akan menghapus > 5 pelunasan DAN > 10 % cache tanggal itu -> jangan hapus (status gagal
+ * `hapus_massal`, konfirmasi OM/Admin). ponytail: ambang heuristik — akun sinkron yang kehilangan SEDIKIT cabang (≤ 10 % / ≤ 5 baris) tetap
+ * lolos. Jalan naik: bandingkan daftar cabang yang terlihat akun sinkron (branch/list.do) dengan daftar harapan sebelum menghapus.
+ */
+export const hapusMassal = (hapus: number, cache: number): boolean => hapus > 5 && hapus > cache * 0.1;
+
+/** Kontrak K2 (orkestrator 12 Okt): Tutup hari hanya bila status `lengkap` DAN lengkap_pada ≤ 15 menit; lebih tua -> segarkan dulu. */
+export const SEGAR_TUTUP_MS = 15 * 60_000;
+export function segarUntukTutup(s: { status: string; lengkapPada: string | null }, sekarang: Date): boolean {
+    const t = s.lengkapPada ? Date.parse(s.lengkapPada) : NaN;
+    return s.status === "lengkap" && Number.isFinite(t) && sekarang.getTime() - t <= SEGAR_TUTUP_MS;
 }
 
 /** Pesan Accurate untuk ditampilkan: tanpa token (nilai rahasia sesi, `Bearer …`, untaian panjang mirip token), maks. 300 huruf. */

@@ -2286,11 +2286,12 @@ export const kasirPelunasanBaca = pgTable("kasir_pelunasan_baca", {
     selesaiPada: timestamp("selesai_pada", { withTimezone: true }),
     lengkapPada: timestamp("lengkap_pada", { withTimezone: true }),
     pemicu: text("pemicu").notNull(),
+    akunSinkron: text("akun_sinkron"), // user.id akun Accurate sinkron yang membaca (tampil sebagai NAMA)
 }, (t) => [
     primaryKey({ name: "kasir_pelunasan_baca_pkey", columns: [t.databaseId, t.tanggal] }),
     check("kasir_pelunasan_baca_status", sql`${t.status} IN ('berjalan', 'lengkap', 'sebagian', 'gagal')`),
     check("kasir_pelunasan_baca_sebab", sql`${t.sebab} IS NULL OR ${t.sebab} IN ('sesi_sinkron', 'hak_akses', 'batas_laju', 'accurate_5xx', 'jaringan',
-        'tidak_pasti', 'ditolak', 'bentuk', 'nominal', 'terpotong')`),
+        'tidak_pasti', 'ditolak', 'bentuk', 'nominal', 'terpotong', 'hapus_massal')`),
     check("kasir_pelunasan_baca_isi", sql`btrim(${t.databaseId}) <> '' AND btrim(${t.pemicu}) <> '' AND jsonb_typeof(${t.ditolak}) = 'array'
         AND ${t.jumlahDaftar} >= 0 AND ${t.sisaDetail} >= 0 AND ${t.sisaDetail} <= ${t.jumlahDaftar}`),
     check("kasir_pelunasan_baca_konsisten", sql`(${t.status} = 'gagal') = (${t.sebab} IS NOT NULL)

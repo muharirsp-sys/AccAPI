@@ -672,9 +672,11 @@ export const migrations = [
   {
     // 2026-10-12 (K1b BL-59 pembaca pelunasan Accurate Kasir; DRAFT — zona uang + skema, butuh review manusia). Tabel baru saja
     // (tanpa data, tanpa trigger: cache). Hak accapi_app (SELECT/INSERT/UPDATE) = docs/handover/DDL_K1B.sql. Lihat
-    // db/migrations/0031_kasir_baca.sql; SESUDAH entri principal_log (0030, S7-2 #160). Satu indeks (PK) -> sudahAda memeriksa PK.
+    // db/migrations/0031_kasir_baca.sql; SESUDAH entri principal_log (0030, S7-2 #160). sudahAda = PK + kolom akun_sinkron (EXPAND).
     nama: "kasir_pelunasan_baca (status baca K1b)",
-    sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'kasir_pelunasan_baca_pkey'`,
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'kasir_pelunasan_baca_pkey'
+               AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
+                           AND table_name = 'kasir_pelunasan_baca' AND column_name = 'akun_sinkron')`,
     sql: `
       CREATE TABLE IF NOT EXISTS kasir_pelunasan_baca (
           database_id   text NOT NULL,
@@ -690,10 +692,11 @@ export const migrations = [
           selesai_pada  timestamptz,
           lengkap_pada  timestamptz,
           pemicu        text NOT NULL,
+          akun_sinkron  text,
           CONSTRAINT kasir_pelunasan_baca_pkey PRIMARY KEY (database_id, tanggal),
           CONSTRAINT kasir_pelunasan_baca_status CHECK (status IN ('berjalan', 'lengkap', 'sebagian', 'gagal')),
           CONSTRAINT kasir_pelunasan_baca_sebab CHECK (sebab IS NULL OR sebab IN ('sesi_sinkron', 'hak_akses', 'batas_laju', 'accurate_5xx',
-              'jaringan', 'tidak_pasti', 'ditolak', 'bentuk', 'nominal', 'terpotong')),
+              'jaringan', 'tidak_pasti', 'ditolak', 'bentuk', 'nominal', 'terpotong', 'hapus_massal')),
           CONSTRAINT kasir_pelunasan_baca_isi CHECK (btrim(database_id) <> '' AND btrim(pemicu) <> '' AND jsonb_typeof(ditolak) = 'array'
               AND jumlah_daftar >= 0 AND sisa_detail >= 0 AND sisa_detail <= jumlah_daftar),
           CONSTRAINT kasir_pelunasan_baca_konsisten CHECK ((status = 'gagal') = (sebab IS NOT NULL)
@@ -701,6 +704,7 @@ export const migrations = [
               AND (status <> 'lengkap' OR (coalesce(sisa_detail, -1) = 0 AND jumlah_daftar IS NOT NULL
                   AND ditolak = '[]'::jsonb AND lengkap_pada IS NOT NULL)))
       );
+      ALTER TABLE kasir_pelunasan_baca ADD COLUMN IF NOT EXISTS akun_sinkron text;
     `,
   },
 ];

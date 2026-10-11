@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
     bacaDaftar, bacaRetryAfter, dariTanggalAccurate, GalatBaca, kelasGalat, keTanggalAccurate, kueriDaftar, MAKS_HALAMAN, PESAN_SESI_SINKRON,
-    rencanaBaca, saringPesan, statusAkhir, tanggalCron, tundaUlang, uraiDetail, type BarisDaftar,
+    hapusMassal, rencanaBaca, saringPesan, segarUntukTutup, statusAkhir, tanggalCron, tundaUlang, uraiDetail, type BarisDaftar,
 } from "./pembaca.ts";
 
 const D = "2026-10-05";
@@ -210,4 +210,13 @@ test("tanggalCron: hari ini + mundur sampai hari kerja sebelumnya (Senin: Sabtu 
     assert.deepEqual(tanggalCron("2026-10-06"), ["2026-10-06", "2026-10-05"], "Selasa");
     assert.deepEqual(tanggalCron("2026-10-11"), ["2026-10-11", "2026-10-10"], "Minggu");
     assert.deepEqual(tanggalCron("2026-01-01"), ["2026-01-01", "2025-12-31"], "lintas tahun");
+});
+
+test("hapusMassal: > 5 baris DAN > 10 % cache = tahan; segarUntukTutup: lengkap DAN lengkap_pada <= 15 menit (kontrak K2)", () => {
+    assert.deepEqual([[6, 40], [5, 10], [6, 60], [6, 59], [1, 1], [0, 0]].map(([h, c]) => hapusMassal(h, c)), [true, false, false, true, false, false]);
+    const kini = new Date("2026-10-05T10:00:00.000Z");
+    assert.equal(segarUntukTutup({ status: "lengkap", lengkapPada: "2026-10-05T09:45:00.000Z" }, kini), true);
+    assert.equal(segarUntukTutup({ status: "lengkap", lengkapPada: "2026-10-05T09:44:59.999Z" }, kini), false, "lebih tua -> segarkan dulu");
+    assert.equal(segarUntukTutup({ status: "gagal", lengkapPada: "2026-10-05T09:59:00.000Z" }, kini), false);
+    assert.equal(segarUntukTutup({ status: "lengkap", lengkapPada: null }, kini), false);
 });

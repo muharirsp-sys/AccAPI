@@ -30,10 +30,11 @@ CREATE TABLE IF NOT EXISTS kasir_pelunasan_baca (
     selesai_pada  timestamptz,
     lengkap_pada  timestamptz,
     pemicu        text NOT NULL,
+    akun_sinkron  text,
     CONSTRAINT kasir_pelunasan_baca_pkey PRIMARY KEY (database_id, tanggal),
     CONSTRAINT kasir_pelunasan_baca_status CHECK (status IN ('berjalan', 'lengkap', 'sebagian', 'gagal')),
     CONSTRAINT kasir_pelunasan_baca_sebab CHECK (sebab IS NULL OR sebab IN ('sesi_sinkron', 'hak_akses', 'batas_laju', 'accurate_5xx',
-        'jaringan', 'tidak_pasti', 'ditolak', 'bentuk', 'nominal', 'terpotong')),
+        'jaringan', 'tidak_pasti', 'ditolak', 'bentuk', 'nominal', 'terpotong', 'hapus_massal')),
     CONSTRAINT kasir_pelunasan_baca_isi CHECK (btrim(database_id) <> '' AND btrim(pemicu) <> '' AND jsonb_typeof(ditolak) = 'array'
         AND jumlah_daftar >= 0 AND sisa_detail >= 0 AND sisa_detail <= jumlah_daftar),
     CONSTRAINT kasir_pelunasan_baca_konsisten CHECK ((status = 'gagal') = (sebab IS NOT NULL)

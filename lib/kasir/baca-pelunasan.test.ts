@@ -2,79 +2,25 @@
  * (aturan token = tokoPg; SQL-nya diuji di baca-pg.test.ts). Jam & tidur disuntik (tanpa menunggu nyata). Jaringan nyata DILARANG. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-    bacaPelunasanHari, belumDibaca, JEDA_LENGKAP_DETIK, jawabanSegarkan, LEASE_DETIK, type DepsBaca, type HasilBaca, type StatusBaca, type TokoBaca,
-} from "./baca-pelunasan.ts";
-import { PESAN_SESI_SINKRON, type Ditolak } from "./pembaca.ts";
-import type { Pelunasan } from "./rekonsiliasi.ts";
+import { bacaPelunasanHari, jawabanSegarkan, publikkan, type DepsBaca, type HasilBaca } from "./baca-pelunasan.ts";
+import { PESAN_SESI_SINKRON } from "./pembaca.ts";
+import { tokoTiruan } from "./uji-toko-tiruan.ts";
 
 const D = "2026-10-05";
 const DA = "05/10/2026";
 const DB = "DB-UJI";
 const KRED = { creds: { sessionHost: "https://sim.accurate.invalid", sessionId: "SESI-RAHASIA-1", apiKey: "TOKEN-RAHASIA-1", databaseId: DB } };
+const SESI = { userId: "u-sinkron", databaseId: DB };
+const NAMA = async (ids: string[]) => new Map(ids.filter((id) => id.startsWith("u-")).map((id) => [id, `Nama ${id.slice(2)}`]));
 
 type Jam = { t: number };
-type Row = { status: StatusBaca["status"]; token: string | null; mulai: number; selesai: number | null; lengkap: number | null; sebab: string | null;
-    pesan: string | null; jumlahDaftar: number | null; sisaDetail: number | null; ditolak: Ditolak[]; pemicu: string };
-
-/** Toko tiruan: lease 2 mnt + jeda lengkap 60 dtk menurut `jam`, token dicek di setiap tulis (sama dengan tokoPg). */
-function tokoTiruan(jam: Jam) {
-    const rows = new Map<string, Row>();
-    const cache = new Map<number, { tanggal: string; lastUpdate: string | null; p: Pelunasan }>();
-    const tulisan: number[] = [];
-    const ke = (t: number | null) => (t === null ? null : new Date(t).toISOString());
-    const status = (tanggal: string): StatusBaca => {
-        const r = rows.get(tanggal);
-        return r ? { databaseId: DB, tanggal, status: r.status, aktif: r.status === "berjalan" && jam.t - r.mulai < LEASE_DETIK * 1000,
-            sebab: r.sebab as StatusBaca["sebab"], pesan: r.pesan, jumlahDaftar: r.jumlahDaftar, sisaDetail: r.sisaDetail, ditolak: r.ditolak,
-            mulaiPada: ke(r.mulai), selesaiPada: ke(r.selesai), lengkapPada: ke(r.lengkap), pemicu: r.pemicu } : belumDibaca(DB, tanggal);
-    };
-    const sah = (tanggal: string, token: string) => rows.get(tanggal)?.token === token && rows.get(tanggal)?.status === "berjalan";
-    const toko: TokoBaca = {
-        async klaim({ tanggal, token, pemicu, penuh }) {
-            const r = rows.get(tanggal);
-            const aktif = r?.status === "berjalan" && jam.t - r.mulai < LEASE_DETIK * 1000;
-            const jeda = !penuh && r?.status === "lengkap" && jam.t - (r.selesai ?? 0) < JEDA_LENGKAP_DETIK * 1000;
-            if (aktif || jeda) return { diklaim: false, status: status(tanggal) };
-            rows.set(tanggal, { jumlahDaftar: null, sisaDetail: null, ditolak: [], lengkap: null, ...r, status: "berjalan", token, mulai: jam.t,
-                selesai: null, sebab: null, pesan: null, pemicu });
-            return { diklaim: true };
-        },
-        status: async (_db, tanggal) => status(tanggal),
-        cache: async (_db, tanggal) => new Map([...cache].filter(([, v]) => v.tanggal === tanggal).map(([id, v]) => [id, v.lastUpdate])),
-        async tandaiBasi(token, _db, tanggal) {
-            if (!sah(tanggal, token)) return false;
-            for (const v of cache.values()) if (v.tanggal === tanggal) v.lastUpdate = null;
-            return true;
-        },
-        async tulis(token, _db, p, lastUpdate) {
-            if (!sah(p.tanggal, token)) return false;
-            cache.set(p.id, { tanggal: p.tanggal, lastUpdate, p });
-            tulisan.push(p.id);
-            return true;
-        },
-        async hapus(token, _db, tanggal, ids) {
-            if (!sah(tanggal, token)) return false;
-            for (const id of ids) if (cache.get(id)?.tanggal === tanggal) cache.delete(id);
-            return true;
-        },
-        async selesai(token, _db, tanggal, a, ditolak) {
-            if (!sah(tanggal, token)) return null;
-            const r = rows.get(tanggal)!;
-            Object.assign(r, { status: a.status, sebab: a.sebab, pesan: a.pesan, jumlahDaftar: a.jumlahDaftar, sisaDetail: a.sisaDetail, ditolak,
-                token: null, selesai: jam.t, lengkap: a.status === "lengkap" ? jam.t : r.lengkap });
-            return status(tanggal);
-        },
-    };
-    return { toko, rows, cache, tulisan };
-}
 
 type PelSim = { id: number; lastUpdate: string; transDate?: string; cheque?: number | string; detail?: unknown };
 type Panggilan = { jenis: "list" | "detail"; id?: number; page?: number; ke: number };
 type Aturan = (p: Panggilan) => Response | Error | undefined;
 
 /** Simulator Accurate: list.do (100/halaman, filter transDate, rowCount/pageCount) + detail.do; `aturan` menyuntik 401/429/timeout. */
-function simulator(jam: Jam, data: PelSim[], aturan: Aturan = () => undefined, opsi: { msPerDetail?: number } = {}) {
+function simulator(jam: Jam, data: PelSim[], aturan: Aturan = () => undefined, opsi: { msPerDetail?: number; jedaMs?: (p: Panggilan) => number } = {}) {
     const log: Panggilan[] = [];
     let aktif = 0;
     let maksAktif = 0;
@@ -93,7 +39,7 @@ function simulator(jam: Jam, data: PelSim[], aturan: Aturan = () => undefined, o
         maksAktif = Math.max(maksAktif, aktif);
         if (setelah429) pasca429.maks = Math.max(pasca429.maks, ++pasca429.aktif);
         try {
-            await new Promise((r) => setTimeout(r, 2));
+            await new Promise((r) => setTimeout(r, opsi.jedaMs?.(p) ?? 2));
             if (jenis === "detail") jam.t += opsi.msPerDetail ?? 0;
             const paksa = aturan(p);
             if (paksa instanceof Error) throw paksa;
@@ -123,17 +69,18 @@ function simulator(jam: Jam, data: PelSim[], aturan: Aturan = () => undefined, o
         maksAktif: () => maksAktif, pasca429 };
 }
 
-function siapkan(data: PelSim[], aturan?: Aturan, opsi: { msPerDetail?: number; kredensial?: DepsBaca["kredensial"] } = {}) {
+function siapkan(data: PelSim[], aturan?: Aturan, opsi: { msPerDetail?: number; jedaMs?: (p: Panggilan) => number; kredensial?: DepsBaca["kredensial"];
+    sesi?: DepsBaca["sesi"] } = {}) {
     const jam: Jam = { t: Date.parse("2026-10-05T10:00:00Z") };
     const t = tokoTiruan(jam);
     const s = simulator(jam, data, aturan, opsi);
     const tidur: number[] = [];
     let n = 0;
     const deps: DepsBaca = {
-        kredensial: opsi.kredensial ?? (async () => KRED), toko: () => t.toko, fetch: s.fetch,
+        kredensial: opsi.kredensial ?? (async () => KRED), sesi: opsi.sesi ?? (async () => SESI), nama: NAMA, toko: () => t.toko, fetch: s.fetch,
         tidur: async (ms) => { tidur.push(ms); jam.t += ms; }, sekarang: () => jam.t, token: () => `tok-${++n}`,
     };
-    const baca = (o: { penuh?: boolean; batasMs?: number } = {}) => bacaPelunasanHari({ tanggal: D, pemicu: "uji", ...o }, deps);
+    const baca = (o: { penuh?: boolean; batasMs?: number; konfirmasiHapus?: boolean } = {}) => bacaPelunasanHari({ tanggal: D, pemicu: "uji", ...o }, deps);
     return { jam, t, s, tidur, deps, baca, majuMenit: (m: number) => { jam.t += m * 60_000; } };
 }
 
@@ -240,7 +187,8 @@ test("401 di tengah -> BERHENTI seketika tanpa ulang, status gagal/sesi_sinkron,
     assert.equal(status(h).lengkapPada, new Date(lengkapAwal!).toISOString(), "lengkap_pada tidak dimundurkan");
     assert.ok(detailKe <= 6 + 3, `berhenti seketika: ${detailKe} detail (≤ panggilan yang sudah terbang)`);
     assert.deepEqual([...x.t.cache.keys()].sort((a, b) => a - b), [...cacheAwal.keys()].sort((a, b) => a - b), "tidak ada yang terhapus");
-    assert.deepEqual(jawabanSegarkan(h), { http: 503, body: { ok: false, kode: "SESI_SINKRON", error: PESAN_SESI_SINKRON, status: status(h) } });
+    const j = await jawabanSegarkan(h, { nama: NAMA });
+    assert.deepEqual([j.http, j.body.kode, j.body.error], [503, "SESI_SINKRON", PESAN_SESI_SINKRON]);
 
     // 401 pada daftar: tidak satu pun detail, cache utuh walau Accurate kini berisi lebih sedikit.
     x.majuMenit(5);
@@ -264,7 +212,7 @@ test("403 = hak_akses berhenti tanpa ulang; detail s:false = ditolak terlihat; n
     assert.deepEqual(status(h).ditolak.map((d) => [d.nomor, d.sebab]).sort(), [["SR/2", "ditolak"], ["SR/50", "nominal"]]);
     assert.ok(!JSON.stringify(status(h)).includes("TOKEN-RAHASIA-1"), "pesan tanpa token");
     assert.deepEqual([...x.t.cache.keys()].sort((m, n) => m - n), [1, 3], "yang sah tetap ditulis");
-    assert.equal(jawabanSegarkan(h).http, 502);
+    assert.equal((await jawabanSegarkan(h, { nama: NAMA })).http, 502);
     x.majuMenit(2);
     const ulang = await x.baca();
     assert.equal(status(ulang).status, "gagal", "pelunasan rusak dibaca ulang dan tetap ditolak sampai diperbaiki di Accurate");
@@ -290,7 +238,7 @@ test("batas waktu -> 200 sebagian + sisa_detail ('Membaca n/N'), panggilan berik
     assert.equal(s1.status, "sebagian");
     assert.ok(s1.sisaDetail! > 0 && s1.sisaDetail! < 20, `sisa ${s1.sisaDetail}`);
     assert.equal(s1.pesan, `Membaca ${20 - s1.sisaDetail!}/20`);
-    assert.equal(jawabanSegarkan(h1).http, 200);
+    assert.equal((await jawabanSegarkan(h1, { nama: NAMA })).http, 200);
     assert.equal(s1.lengkapPada, null);
     let h = h1;
     for (let i = 0; i < 5 && status(h).status === "sebagian"; i++) h = await x.baca({ batasMs: 45_000 });
@@ -324,23 +272,90 @@ test("transDate berubah sesudah daftar -> tidak ditulis, sebagian (bukan lengkap
 });
 
 test("kredensial absen / database kosong -> 503 SESI_SINKRON tanpa Accurate dan tanpa baris status; lease aktif -> 409; lease basi direbut", async () => {
-    const tanpa = siapkan(hari(2), undefined, { kredensial: async () => ({ error: "Tidak ada sesi Accurate milik admin." }) });
+    const tanpa = siapkan(hari(2), undefined, { kredensial: async () => ({ error: "Tidak ada sesi Accurate milik admin." }), sesi: async () => ({ userId: "", databaseId: "" }) });
     const h = await tanpa.baca();
     assert.equal(h.jenis, "kredensial");
-    assert.deepEqual(jawabanSegarkan(h), { http: 503, body: { ok: false, kode: "SESI_SINKRON", error: PESAN_SESI_SINKRON, detail: "Tidak ada sesi Accurate milik admin." } });
+    assert.deepEqual(await jawabanSegarkan(h, { nama: NAMA }), { http: 503, body: { ok: false, kode: "SESI_SINKRON", error: PESAN_SESI_SINKRON, detail: "Tidak ada sesi Accurate milik admin." } });
     assert.equal(tanpa.s.log.length, 0);
     assert.equal(tanpa.t.rows.size, 0);
-    const kosong = siapkan(hari(2), undefined, { kredensial: async () => ({ creds: { ...KRED.creds, databaseId: " " } }) });
+    const kosong = siapkan(hari(2), undefined, { kredensial: async () => ({ creds: { ...KRED.creds, databaseId: " " } }), sesi: async () => ({ userId: "u-x", databaseId: "" }) });
     assert.equal((await kosong.baca()).jenis, "kredensial");
 
     const x = siapkan(hari(2));
-    await x.t.toko.klaim({ databaseId: DB, tanggal: D, token: "orang-lain", pemicu: "cron", penuh: false });
+    await x.t.toko.klaim({ databaseId: DB, tanggal: D, token: "orang-lain", pemicu: "cron", penuh: false, akun: null });
     const sibuk = await x.baca();
     assert.equal(sibuk.jenis, "sedang_dibaca");
-    assert.equal(jawabanSegarkan(sibuk).http, 409);
-    assert.equal((jawabanSegarkan(sibuk).body as { kode: string }).kode, "SEDANG_DIBACA");
+    const js = await jawabanSegarkan(sibuk, { nama: NAMA });
+    assert.deepEqual([js.http, js.body.kode], [409, "SEDANG_DIBACA"]);
     assert.equal(x.s.log.length, 0);
     x.majuMenit(3); // pembaca lain mati tanpa selesai: lease kedaluwarsa
     assert.equal(status(await x.baca()).status, "lengkap");
     assert.equal(await x.t.toko.tulis("orang-lain", DB, x.t.cache.get(1)!.p, "x"), false, "token basi tidak menimpa");
+});
+
+test("sesi sinkron mati: `lengkap` lama -> gagal/sesi_sinkron TERSIMPAN (lengkap_pada tetap, cache utuh); lease aktif dihormati", async () => {
+    const x = siapkan(hari(3));
+    await x.baca();
+    const lengkapPada = x.t.rows.get(D)!.lengkap;
+    x.majuMenit(180); // lengkap 3 jam lalu
+    Object.assign(x.deps, { kredensial: async () => ({ error: "Sesi Accurate tidak bisa di-refresh" }) });
+    const h = await x.baca();
+    assert.equal(h.jenis, "kredensial");
+    assert.ok(h.jenis === "kredensial" && h.status, "status ikut dikembalikan");
+    const st = x.t.rows.get(D)!;
+    assert.deepEqual([st.status, st.sebab, st.lengkap, st.pesan], ["gagal", "sesi_sinkron", lengkapPada, PESAN_SESI_SINKRON]);
+    assert.equal(x.t.cache.size, 3, "cache tidak disentuh");
+    assert.equal(x.s.log.length, 4, "tanpa panggilan Accurate tambahan");
+    const j = await jawabanSegarkan(h, { nama: NAMA });
+    assert.deepEqual([j.http, j.body.kode, (j.body.status as { status: string }).status], [503, "SESI_SINKRON", "gagal"]);
+    // Pembaca lain memegang lease: status TIDAK ditimpa.
+    const y = siapkan(hari(1));
+    await y.t.toko.klaim({ databaseId: DB, tanggal: D, token: "lain", pemicu: "cron", penuh: false, akun: null });
+    Object.assign(y.deps, { kredensial: async () => ({ error: "mati" }) });
+    const hy = await y.baca();
+    assert.deepEqual([hy.jenis, y.t.rows.get(D)!.status, y.t.rows.get(D)!.token], ["kredensial", "berjalan", "lain"]);
+});
+
+test("akun sinkron dicatat per putaran; status klien memakai NAMA akun & pemicu tanpa user.id", async () => {
+    const x = siapkan(hari(1));
+    const h = await bacaPelunasanHari({ tanggal: D, pemicu: "manual:u-kasir7" }, x.deps);
+    assert.equal(status(h).akunSinkron, "u-sinkron");
+    const p = await publikkan(status(h), { nama: NAMA });
+    assert.deepEqual([p.akun, p.pemicu, p.pemicuOleh], ["Nama sinkron", "manual", "Nama kasir7"]);
+    assert.ok(!JSON.stringify(p).includes("u-kasir7") && !JSON.stringify(p).includes("u-sinkron"), "tanpa id user mentah");
+    assert.ok(!("akunSinkron" in p));
+    const tak = await publikkan({ ...status(h), akunSinkron: "x-hilang", pemicu: "cron" }, { nama: NAMA });
+    assert.deepEqual([tak.akun, tak.pemicu, tak.pemicuOleh], ["(akun tak dikenal)", "cron", null]);
+});
+
+test("penjaga hapus massal: > 5 baris DAN > 10 % cache hilang -> TIDAK dihapus, gagal hapus_massal + rincian; konfirmasi OM/Admin menghapus", async () => {
+    const data = hari(40);
+    const x = siapkan(data);
+    await x.baca();
+    x.majuMenit(2);
+    data.splice(0, 6); // 6 dari 40 hilang (15 %) — mis. akun sinkron kehilangan satu cabang
+    const h = await x.baca();
+    assert.deepEqual([status(h).status, status(h).sebab], ["gagal", "hapus_massal"]);
+    assert.equal(x.t.cache.size, 40, "tidak ada yang dihapus");
+    assert.deepEqual(status(h).ditolak.map((d) => [d.nomor, d.sebab]), [1, 2, 3, 4, 5, 6].map((id) => [`SR/${id}`, "hapus_massal"]));
+    assert.equal((await jawabanSegarkan(h, { nama: NAMA })).body.kode, "HAPUS_MASSAL");
+    x.majuMenit(2);
+    const ok = await x.baca({ konfirmasiHapus: true });
+    assert.equal(status(ok).status, "lengkap");
+    assert.equal(x.t.cache.size, 34);
+    // Hapus kecil (≤ 5 baris) atau ≤ 10 % tetap jalan tanpa konfirmasi.
+    x.majuMenit(2);
+    data.splice(0, 5);
+    assert.equal(status(await x.baca()).status, "lengkap");
+    assert.equal(x.t.cache.size, 29);
+});
+
+test("jawaban detail yang TERLAMBAT sesudah 401 tidak ditulis (berhenti seketika)", async () => {
+    // id 1 -> 401 cepat; id 2..4 masih terbang (lambat) dan kembali SAH sesudah 401.
+    const x = siapkan(hari(8), (p) => (p.jenis === "detail" && p.id === 1 ? new Response("{}", { status: 401 }) : undefined),
+        { jedaMs: (p) => (p.jenis === "detail" && p.id !== 1 ? 25 : 1) });
+    const h = await x.baca();
+    assert.deepEqual([status(h).status, status(h).sebab], ["gagal", "sesi_sinkron"]);
+    assert.ok(x.s.detail().some((p) => p.id === 2), "id 2 memang sudah terbang saat 401");
+    assert.equal(x.t.cache.size, 0, "tidak satu pun jawaban terlambat ditulis");
 });

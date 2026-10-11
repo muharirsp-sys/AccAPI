@@ -22,7 +22,7 @@ import { accurateOAuthSession, kasirPelunasan, kasirPelunasanFaktur, user } from
 import { pickSyncUserId, resolveSyncCredentials } from "@/lib/accurate-session";
 import { accurateHeaders, type AccurateCredentials } from "@/lib/sync";
 import {
-    bacaDaftar, bacaRetryAfter, GalatBaca, kelasGalat, kueriDaftar, PESAN_SESI_SINKRON, rencanaBaca, statusAkhir, tanggalSah, tundaUlang,
+    bacaDaftar, bacaRetryAfter, GalatBaca, hapusMassal, kelasGalat, kueriDaftar, PESAN_SESI_SINKRON, rencanaBaca, statusAkhir, tanggalSah, tundaUlang,
     uraiDetail, type BarisDaftar, type Ditolak, type Jawaban, type KelasGalat, type StatusAkhir,
 } from "./pembaca.ts";
 import { keSen, senKeTeks, type Pelunasan } from "./rekonsiliasi.ts";
@@ -48,13 +48,19 @@ export type StatusBaca = {
     mulaiPada: string | null;
     selesaiPada: string | null;
     lengkapPada: string | null;
+    /** "cron" | "manual:<user.id>" — INTERNAL; ke klien lewat publikkan() (tanpa id user). */
     pemicu: string | null;
+    /** user.id akun Accurate sinkron yang membaca — INTERNAL; ke klien sebagai NAMA lewat publikkan(). */
+    akunSinkron: string | null;
 };
+
+/** Status untuk klien: tanpa id user mentah (akun & pemicu sebagai nama). */
+export type StatusPublik = Omit<StatusBaca, "akunSinkron" | "pemicu"> & { akun: string | null; pemicu: string | null; pemicuOleh: string | null };
 
 /** Penyimpanan cache + status (PG = tokoPg; uji tanpa DB memakai tiruan dengan aturan lease/token yang sama). */
 export interface TokoBaca {
     /** Lease: sukses bila tak ada pembaca aktif dan (penuh ATAU bukan `lengkap` < JEDA_LENGKAP_DETIK lalu). */
-    klaim(a: { databaseId: string; tanggal: string; token: string; pemicu: string; penuh: boolean }): Promise<{ diklaim: true } | { diklaim: false; status: StatusBaca }>;
+    klaim(a: { databaseId: string; tanggal: string; token: string; pemicu: string; penuh: boolean; akun: string | null }): Promise<{ diklaim: true } | { diklaim: false; status: StatusBaca }>;
     status(databaseId: string, tanggal: string): Promise<StatusBaca>;
     /** id -> last_update cache pelunasan bertanggal itu. */
     cache(databaseId: string, tanggal: string): Promise<Map<number, string | null>>;
@@ -63,14 +69,21 @@ export interface TokoBaca {
     /** Upsert kepala + ganti baris faktur, satu transaksi, token dicek. false = token basi (tidak ditulis). */
     tulis(token: string, databaseId: string, p: Pelunasan, lastUpdate: string): Promise<boolean>;
     hapus(token: string, databaseId: string, tanggal: string, ids: number[]): Promise<boolean>;
+    /** id -> nomor pelunasan di cache (rincian penjaga hapus massal). */
+    nomor(databaseId: string, ids: number[]): Promise<Map<number, string>>;
     /** Simpan status akhir bila token masih pemilik; null = token basi. lengkap_pada hanya maju. */
     selesai(token: string, databaseId: string, tanggal: string, akhir: StatusAkhir, ditolak: Ditolak[]): Promise<StatusBaca | null>;
 }
 
 type Kredensial = Awaited<ReturnType<typeof resolveSyncCredentials>>;
+/** Identitas sinkron TANPA Accurate: user.id + databaseId dari baris sesi (lihat sesiSinkron). */
+export type SesiSinkron = { userId: string; databaseId: string };
 
 export interface DepsBaca {
     kredensial: () => Promise<Kredensial>;
+    sesi: () => Promise<SesiSinkron>;
+    /** user.id -> nama (tampilan status). */
+    nama: (ids: string[]) => Promise<Map<string, string>>;
     toko: () => TokoBaca;
     fetch: (url: string, init: RequestInit) => Promise<Response>;
     tidur: (ms: number) => Promise<void>;
@@ -81,6 +94,8 @@ export interface DepsBaca {
 /** Dependensi produksi. Uji route mengganti propertinya (dan memulihkannya) — jaringan nyata dilarang di uji. */
 export const bawaan: DepsBaca = {
     kredensial: () => resolveSyncCredentials(),
+    sesi: () => sesiSinkron(),
+    nama: async (ids) => new Map((await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, ids))).map((r) => [r.id, r.name])),
     toko: () => tokoPg(db),
     fetch: (url, init) => fetch(url, init),
     tidur: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -94,12 +109,14 @@ export interface OpsiBaca {
     pemicu: string;
     /** Baca ulang SEMUA detail (salesman faktur yang disunting tak mengubah lastUpdate pelunasan). */
     penuh?: boolean;
+    /** Lewati penjaga hapus massal (route: hanya pemegang kasir.buka = OM/Admin). */
+    konfirmasiHapus?: boolean;
     batasMs?: number;
     konkurensi?: number;
 }
 
 export type HasilBaca =
-    | { jenis: "kredensial"; pesan: string }
+    | { jenis: "kredensial"; pesan: string; status?: StatusBaca }
     | { jenis: "sedang_dibaca" | "jeda_lengkap" | "lease_hilang" | "selesai"; status: StatusBaca };
 
 type HasilAmbil = { ok: true; body: Record<string, unknown> } | { ok: false; kelas: KelasGalat | "waktu_habis"; pesan: string };
@@ -147,7 +164,8 @@ async function ambilAccurate(deps: DepsBaca, creds: AccurateCredentials, path: s
 
 /**
  * Satu putaran baca pelunasan bertanggal `tanggal` (YYYY-MM-DD) dari database sesi SINKRON. Hasil `selesai` = status tersimpan
- * (lengkap / sebagian / gagal); `kredensial` = sesi sinkron tak bisa dipakai (tanpa databaseId tak ada baris status untuk ditulis);
+ * (lengkap / sebagian / gagal); `kredensial` = sesi sinkron tak bisa dipakai — bila databaseId sesi masih diketahui, status tanggal itu
+ * DITULIS gagal/sesi_sinkron (lease dihormati; lengkap_pada tidak dimundurkan) agar `lengkap` lama tidak tetap tampil;
  * `sedang_dibaca` = lease dipegang pembaca lain; `jeda_lengkap` = lengkap < 60 dtk lalu (tanpa Accurate); `lease_hilang` = lease direbut
  * pembaca lain karena putaran ini melewati LEASE_DETIK (tulisan berikutnya ditolak token).
  */
@@ -156,13 +174,27 @@ export async function bacaPelunasanHari(opsi: OpsiBaca, deps: DepsBaca = bawaan)
     if (!tanggalSah(tanggal)) throw new Error(`Format tanggal salah: ${tanggal} (YYYY-MM-DD)`);
     const penuh = Boolean(opsi.penuh);
     const tenggat = deps.sekarang() + (opsi.batasMs ?? 45_000);
+    const sesi = await deps.sesi().catch((): SesiSinkron => ({ userId: "", databaseId: "" }));
+    const akun = sesi.userId.trim() || null;
     const k = await deps.kredensial();
     const databaseId = String(k.creds?.databaseId ?? "").trim();
-    if (!k.creds || !databaseId) return { jenis: "kredensial", pesan: k.error ?? "Sesi Accurate akun sinkron tanpa database terpilih." };
+    if (!k.creds || !databaseId) {
+        const pesan = k.error ?? "Sesi Accurate akun sinkron tanpa database terpilih.";
+        const dbSesi = sesi.databaseId.trim();
+        if (!dbSesi) return { jenis: "kredensial", pesan };
+        // Sesi mati tetapi database diketahui: `lengkap` lama TIDAK boleh tetap tampil -> gagal/sesi_sinkron (penuh: abaikan jeda lengkap,
+        // lease tetap dihormati). lengkap_pada tetap (riwayat), cache tidak disentuh.
+        const t = deps.toko();
+        const tk = deps.token();
+        const kl = await t.klaim({ databaseId: dbSesi, tanggal, token: tk, pemicu, penuh: true, akun });
+        if (!kl.diklaim) return { jenis: "kredensial", pesan, status: kl.status };
+        const st = await t.selesai(tk, dbSesi, tanggal, { status: "gagal", sebab: "sesi_sinkron", pesan: PESAN_SESI_SINKRON, jumlahDaftar: null, sisaDetail: null }, []);
+        return { jenis: "kredensial", pesan, ...(st ? { status: st } : {}) };
+    }
     const creds = k.creds;
     const toko = deps.toko();
     const token = deps.token();
-    const klaim = await toko.klaim({ databaseId, tanggal, token, pemicu, penuh });
+    const klaim = await toko.klaim({ databaseId, tanggal, token, pemicu, penuh, akun });
     if (!klaim.diklaim) return { jenis: klaim.status.status === "lengkap" ? "jeda_lengkap" : "sedang_dibaca", status: klaim.status };
 
     const rahasia = [creds.apiKey, creds.sessionId];
@@ -190,8 +222,18 @@ export async function bacaPelunasanHari(opsi: OpsiBaca, deps: DepsBaca = bawaan)
         if (daftar) {
             // 2. Penuh = tandai basi (isi tetap). 3. Rencana per id. 4. Hapus yang hilang — daftar di sini selalu LENGKAP (terpotong = galat di atas).
             if (penuh && !(await toko.tandaiBasi(token, databaseId, tanggal))) st.leaseHilang = true;
-            const rencana = rencanaBaca(await toko.cache(databaseId, tanggal), { baris: daftar, lengkap: true }, penuh);
-            if (!st.leaseHilang && rencana.hapus.length && !(await toko.hapus(token, databaseId, tanggal, rencana.hapus))) st.leaseHilang = true;
+            const cache = await toko.cache(databaseId, tanggal);
+            const rencana = rencanaBaca(cache, { baris: daftar, lengkap: true }, penuh);
+            if (!st.leaseHilang && rencana.hapus.length) {
+                if (!opsi.konfirmasiHapus && hapusMassal(rencana.hapus.length, cache.size)) {
+                    // Akun sinkron yang hanya melihat sebagian cabang "menghilangkan" pelunasan cabang lain: jangan hapus diam-diam.
+                    const nomor = await toko.nomor(databaseId, rencana.hapus);
+                    st.galat = { kelas: "hapus_massal", pesan: `${rencana.hapus.length} dari ${cache.size} pelunasan tanggal ini hilang dari daftar Accurate — `
+                        + "tidak dihapus. Periksa cabang yang terlihat akun sinkron; OM/Admin dapat mengonfirmasi hapus." };
+                    st.ditolak.push(...rencana.hapus.map((id) => ({ id, nomor: nomor.get(id) ?? `id ${id}`, sebab: "hapus_massal" as const,
+                        pesan: "hilang dari daftar Accurate; menunggu konfirmasi hapus" })));
+                } else if (!(await toko.hapus(token, databaseId, tanggal, rencana.hapus))) st.leaseHilang = true;
+            }
 
             // 5. Detail: ≤ izin pekerja; tenggat dicek sebelum tiap panggilan; 401/403/transport habis-ulang = henti semua pekerja.
             let i = 0;
@@ -244,8 +286,10 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 const LEASE = sql.raw(`interval '${LEASE_DETIK} seconds'`);
 const JEDA_LENGKAP = sql.raw(`interval '${JEDA_LENGKAP_DETIK} seconds'`);
-const KOLOM_STATUS = sql`database_id, tanggal::text AS tanggal, status, sebab, pesan, jumlah_daftar, sisa_detail, ditolak, mulai_pada, selesai_pada,
-    lengkap_pada, pemicu, (status = 'berjalan' AND mulai_pada > now() - ${LEASE}) AS aktif`;
+/** Waktu keluar sebagai ISO UTC (`…Z`) — driver Drizzle mengembalikan timestamptz mentah sebagai teks PG. */
+const isoPg = (kolom: string) => sql.raw(`to_char(${kolom} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS ${kolom}`);
+const KOLOM_STATUS = sql`database_id, tanggal::text AS tanggal, status, sebab, pesan, jumlah_daftar, sisa_detail, ditolak, ${isoPg("mulai_pada")},
+    ${isoPg("selesai_pada")}, ${isoPg("lengkap_pada")}, pemicu, akun_sinkron, (status = 'berjalan' AND mulai_pada > now() - ${LEASE}) AS aktif`;
 
 const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : v === null || v === undefined ? null : String(v));
 const angkaAtauNull = (v: unknown) => (v === null || v === undefined ? null : Number(v));
@@ -256,12 +300,13 @@ function keStatus(r: Record<string, unknown>): StatusBaca {
         sebab: (r.sebab ?? null) as KelasGalat | null, pesan: (r.pesan ?? null) as string | null,
         jumlahDaftar: angkaAtauNull(r.jumlah_daftar), sisaDetail: angkaAtauNull(r.sisa_detail), ditolak: Array.isArray(r.ditolak) ? r.ditolak as Ditolak[] : [],
         mulaiPada: iso(r.mulai_pada), selesaiPada: iso(r.selesai_pada), lengkapPada: iso(r.lengkap_pada), pemicu: (r.pemicu ?? null) as string | null,
+        akunSinkron: (r.akun_sinkron ?? null) as string | null,
     };
 }
 
 export const belumDibaca = (databaseId: string, tanggal: string): StatusBaca => ({
     databaseId, tanggal, status: "belum_dibaca", aktif: false, sebab: null, pesan: null, jumlahDaftar: null, sisaDetail: null, ditolak: [],
-    mulaiPada: null, selesaiPada: null, lengkapPada: null, pemicu: null,
+    mulaiPada: null, selesaiPada: null, lengkapPada: null, pemicu: null, akunSinkron: null,
 });
 
 async function bacaStatus(d: Db | Tx, databaseId: string, tanggal: string): Promise<StatusBaca> {
@@ -281,12 +326,12 @@ const diKepala = (databaseId: string, tanggal: string): SQL =>
 
 export function tokoPg(d: Db): TokoBaca {
     return {
-        async klaim({ databaseId, tanggal, token, pemicu, penuh }) {
+        async klaim({ databaseId, tanggal, token, pemicu, penuh, akun }) {
             const r = await d.execute(sql`
-                INSERT INTO kasir_pelunasan_baca AS b (database_id, tanggal, status, token, mulai_pada, pemicu)
-                VALUES (${databaseId}, ${tanggal}::date, 'berjalan', ${token}, now(), ${pemicu})
+                INSERT INTO kasir_pelunasan_baca AS b (database_id, tanggal, status, token, mulai_pada, pemicu, akun_sinkron)
+                VALUES (${databaseId}, ${tanggal}::date, 'berjalan', ${token}, now(), ${pemicu}, ${akun})
                 ON CONFLICT (database_id, tanggal) DO UPDATE SET status = 'berjalan', token = EXCLUDED.token, mulai_pada = now(),
-                    pemicu = EXCLUDED.pemicu, sebab = NULL, pesan = NULL, selesai_pada = NULL
+                    pemicu = EXCLUDED.pemicu, akun_sinkron = EXCLUDED.akun_sinkron, sebab = NULL, pesan = NULL, selesai_pada = NULL
                 WHERE NOT (b.status = 'berjalan' AND b.mulai_pada > now() - ${LEASE})
                   AND (${penuh}::boolean OR NOT (b.status = 'lengkap' AND b.selesai_pada > now() - ${JEDA_LENGKAP}))
                 RETURNING 1`);
@@ -321,6 +366,11 @@ export function tokoPg(d: Db): TokoBaca {
             await tx.delete(kasirPelunasan).where(and(diKepala(databaseId, tanggal), inArray(kasirPelunasan.pelunasanId, ids)));
             return true;
         }),
+        async nomor(databaseId, ids) {
+            const rows = await d.select({ id: kasirPelunasan.pelunasanId, nomor: kasirPelunasan.nomor }).from(kasirPelunasan)
+                .where(and(eq(kasirPelunasan.databaseId, databaseId), inArray(kasirPelunasan.pelunasanId, ids)));
+            return new Map(rows.map((r) => [Number(r.id), r.nomor]));
+        },
         async selesai(token, databaseId, tanggal, akhir, ditolak) {
             const r = await d.execute(sql`
                 UPDATE kasir_pelunasan_baca SET status = ${akhir.status}, sebab = ${akhir.sebab}, pesan = ${akhir.pesan?.slice(0, 1000) ?? null},
@@ -339,21 +389,23 @@ export function tokoPg(d: Db): TokoBaca {
 // ---------------------------------------------------------------------------------------------------------------------
 
 /**
- * databaseId sesi SINKRON tanpa panggilan Accurate (status/cache Kasir hanya untuk database itu).
+ * Identitas sesi SINKRON (user.id + databaseId) tanpa panggilan Accurate (status/cache Kasir hanya untuk database itu).
  * ponytail: menyalin pemilihan user resolveSyncCredentials (lib/accurate-session.ts:147-153, berkas itu tidak diubah) supaya GET status
  * tidak memicu open-db.do. Plafon: bila pemilihan di sana berubah, ubah juga di sini (uji route GET memakai pickSyncUserId yang sama).
  */
-export async function databaseIdSinkron(d: Db = db): Promise<string> {
+export async function sesiSinkron(d: Db = db): Promise<SesiSinkron> {
     let userId = (process.env.ACCURATE_SYNC_USER_ID || "").trim();
     if (!userId) {
         userId = pickSyncUserId(await d.select({ userId: accurateOAuthSession.userId, role: user.role }).from(accurateOAuthSession)
             .innerJoin(user, eq(user.id, accurateOAuthSession.userId)).orderBy(desc(accurateOAuthSession.updatedAt)));
     }
-    if (!userId) return "";
+    if (!userId) return { userId: "", databaseId: "" };
     const [row] = await d.select({ databaseId: accurateOAuthSession.databaseId }).from(accurateOAuthSession)
         .where(eq(accurateOAuthSession.userId, userId)).limit(1);
-    return String(row?.databaseId ?? "").trim();
+    return { userId, databaseId: String(row?.databaseId ?? "").trim() };
 }
+
+export const databaseIdSinkron = async (d: Db = db): Promise<string> => (await sesiSinkron(d)).databaseId;
 
 /** Status baca terakhir (belum_dibaca bila tak ada baris) — tanpa Accurate. */
 export function statusBaca(databaseId: string, tanggal: string, d: Db = db): Promise<StatusBaca> {
@@ -390,15 +442,30 @@ export function muatPelunasanHari(databaseId: string, tanggal: string, d: Db = d
     }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }
 
-/** HasilBaca -> jawaban HTTP POST /api/kasir/segarkan (dipakai route; diuji tanpa jaringan). */
-export function jawabanSegarkan(h: HasilBaca): { http: number; body: Record<string, unknown> } {
-    if (h.jenis === "kredensial") return { http: 503, body: { ok: false, kode: "SESI_SINKRON", error: PESAN_SESI_SINKRON, detail: h.pesan } };
-    if (h.jenis === "sedang_dibaca" || h.jenis === "lease_hilang") {
-        return { http: 409, body: { ok: false, kode: "SEDANG_DIBACA", error: "Pelunasan tanggal ini sedang dibaca — coba lagi sebentar.", status: h.status } };
+/** Status untuk klien: akun sinkron & pemicu manual sebagai NAMA (bukan user.id); nama tak terbaca = "(akun tak dikenal)". */
+export async function publikkan(s: StatusBaca, deps: Pick<DepsBaca, "nama"> = bawaan): Promise<StatusPublik> {
+    const { akunSinkron, pemicu, ...sisa } = s;
+    const [jenis, ...oleh] = (pemicu ?? "").split(":");
+    const pemicuId = oleh.join(":");
+    const ids = [akunSinkron, pemicuId].filter((x): x is string => Boolean(x));
+    const nama = ids.length ? await deps.nama(ids).catch(() => new Map<string, string>()) : new Map<string, string>();
+    const tampil = (id: string | null) => (id ? nama.get(id) ?? "(akun tak dikenal)" : null);
+    return { ...sisa, akun: tampil(akunSinkron), pemicu: jenis || null, pemicuOleh: tampil(pemicuId || null) };
+}
+
+/** HasilBaca -> jawaban HTTP POST /api/kasir/segarkan (status dipublikkan; diuji tanpa jaringan). */
+export async function jawabanSegarkan(h: HasilBaca, deps: Pick<DepsBaca, "nama"> = bawaan): Promise<{ http: number; body: Record<string, unknown> }> {
+    if (h.jenis === "kredensial") {
+        return { http: 503, body: { ok: false, kode: "SESI_SINKRON", error: PESAN_SESI_SINKRON, detail: h.pesan,
+            ...(h.status ? { status: await publikkan(h.status, deps) } : {}) } };
     }
-    if (h.jenis === "jeda_lengkap") return { http: 200, body: { ok: true, dariCache: true, status: h.status } };
-    const s = h.status;
+    const s = await publikkan(h.status, deps);
+    if (h.jenis === "sedang_dibaca" || h.jenis === "lease_hilang") {
+        return { http: 409, body: { ok: false, kode: "SEDANG_DIBACA", error: "Pelunasan tanggal ini sedang dibaca — coba lagi sebentar.", status: s } };
+    }
+    if (h.jenis === "jeda_lengkap") return { http: 200, body: { ok: true, dariCache: true, status: s } };
     if (s.status === "gagal" && s.sebab === "sesi_sinkron") return { http: 503, body: { ok: false, kode: "SESI_SINKRON", error: PESAN_SESI_SINKRON, status: s } };
+    if (s.status === "gagal" && s.sebab === "hapus_massal") return { http: 409, body: { ok: false, kode: "HAPUS_MASSAL", error: s.pesan, status: s } };
     if (s.status === "gagal") return { http: 502, body: { ok: false, kode: "BACA_GAGAL", error: s.pesan, status: s } };
     return { http: 200, body: { ok: true, status: s } };
 }

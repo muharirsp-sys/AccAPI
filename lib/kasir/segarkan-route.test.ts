@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import { GET as getSegarkan, POST as postSegarkan } from "../../app/api/kasir/segarkan/route.ts";
 import { GET as getCron } from "../../app/api/cron/kasir-pelunasan/route.ts";
-import { bawaan, belumDibaca, type DepsBaca, type StatusBaca, type TokoBaca } from "./baca-pelunasan.ts";
+import { bawaan, belumDibaca, publikkan, type DepsBaca, type StatusBaca, type TokoBaca } from "./baca-pelunasan.ts";
 import { PESAN_SESI_SINKRON } from "./pembaca.ts";
 import { auth } from "../auth.ts";
 import { db } from "../db.ts";
@@ -43,6 +43,7 @@ async function dengan<T>(o: { sesi?: boolean; izin?: string[]; select?: unknown[
     Object.defineProperty(db, "execute", { configurable: true, value: async () => ({ rows: [], rowCount: 0 }) });
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: () => { throw new Error("TIDAK BOLEH ke jaringan"); } });
     Object.assign(bawaan, { fetch: () => { throw new Error("TIDAK BOLEH ke Accurate (fetch bawaan)"); }, kredensial: async () => ({ error: "uji: kredensial tidak disuntik" }),
+        sesi: async () => ({ userId: "", databaseId: "" }), nama: async () => new Map<string, string>(),
         toko: () => { throw new Error("uji: toko tidak disuntik"); } }, o.deps ?? {});
     try {
         return await fn();
@@ -68,7 +69,7 @@ function toko(klaim: Awaited<ReturnType<TokoBaca["klaim"]>> = { diklaim: true })
         klaim: async () => klaim,
         status: async () => st({ status: "berjalan", aktif: false }),
         cache: async () => new Map<number, string | null>(),
-        tandaiBasi: async () => true, tulis: async () => true, hapus: async () => true,
+        tandaiBasi: async () => true, tulis: async () => true, hapus: async () => true, nomor: async () => new Map<number, string>(),
         selesai: async (_t: string, _d: string, tanggal: string, a: Parameters<TokoBaca["selesai"]>[3], ditolak: Parameters<TokoBaca["selesai"]>[4]) => {
             t.selesaiDipanggil++;
             return st({ tanggal, status: a.status, sebab: a.sebab, pesan: a.pesan, jumlahDaftar: a.jumlahDaftar, sisaDetail: a.sisaDetail, ditolak,
@@ -118,11 +119,12 @@ test("segarkan: lease dipegang -> 409 SEDANG_DIBACA + status; lengkap < 60 dtk -
     const sibuk = st({ status: "berjalan", aktif: true, mulaiPada: "2026-10-05T10:00:00.000Z", pemicu: "cron" });
     const r = await dengan({ izin: ["kasir.view"], deps: { kredensial: async () => KRED, toko: () => toko({ diklaim: false, status: sibuk }) } }, () => postSegarkan(post({ tanggal: D })));
     assert.equal(r.status, 409);
-    assert.deepEqual(await r.json(), { ok: false, kode: "SEDANG_DIBACA", error: "Pelunasan tanggal ini sedang dibaca — coba lagi sebentar.", status: sibuk });
+    assert.deepEqual(await r.json(), { ok: false, kode: "SEDANG_DIBACA", error: "Pelunasan tanggal ini sedang dibaca — coba lagi sebentar.",
+        status: await publikkan(sibuk, { nama: async () => new Map() }) });
     const lengkap = st({ status: "lengkap", jumlahDaftar: 3, sisaDetail: 0, lengkapPada: "2026-10-05T10:00:00.000Z" });
     const j = await dengan({ izin: ["kasir.view"], deps: { kredensial: async () => KRED, toko: () => toko({ diklaim: false, status: lengkap }) } }, () => postSegarkan(post({ tanggal: D })));
     assert.equal(j.status, 200);
-    assert.deepEqual(await j.json(), { ok: true, dariCache: true, status: lengkap });
+    assert.deepEqual(await j.json(), { ok: true, dariCache: true, status: await publikkan(lengkap, { nama: async () => new Map() }) });
 });
 
 test("segarkan: putaran sukses -> 200 lengkap; batas waktu -> 200 sebagian + sisa_detail; GET belum_dibaca", async () => {
@@ -145,7 +147,7 @@ test("segarkan: putaran sukses -> 200 lengkap; batas waktu -> 200 sebagian + sis
         return getSegarkan(get(`?tanggal=${D}`));
     });
     assert.equal(g.status, 200);
-    assert.deepEqual(await g.json(), { ok: true, status: belumDibaca(DB, D) });
+    assert.deepEqual(await g.json(), { ok: true, status: await publikkan(belumDibaca(DB, D), { nama: async () => new Map() }) });
 });
 
 test("cron: tanpa rahasia 401; tanggal salah 400; check=1 tanpa Accurate; semua lengkap 200; sesi mati 503; selain itu 502", async () => {
@@ -178,4 +180,20 @@ test("cron: tanpa rahasia 401; tanggal salah 400; check=1 tanpa Accurate; semua 
         () => getCron(cron(`?tanggal=${D}`, rahasia)));
     assert.equal(gagal.status, 502);
     assert.deepEqual((await gagal.json() as { hasil: { sebab: string }[] }).hasil.map((h) => h.sebab), ["terpotong"]);
+});
+
+test("segarkan: `penuh` / `konfirmasiHapus` hanya pemegang kasir.buka (OM/Admin) — kasir.view saja = 403 sebelum Accurate", async () => {
+    for (const body of [{ tanggal: D, penuh: true }, { tanggal: D, konfirmasiHapus: true }]) {
+        const r = await dengan({ izin: ["kasir.view", "kasir.catat", "kasir.tutup"] }, () => postSegarkan(post(body)));
+        assert.equal(r.status, 403, JSON.stringify(body));
+        assert.match(String((await r.json() as { error: string }).error), /kasir\.buka/);
+    }
+    let opsiTerima: unknown = null;
+    const t = toko();
+    const klaimAsli = t.klaim;
+    t.klaim = async (a) => { opsiTerima = a; return klaimAsli(); };
+    const ok = await dengan({ izin: ["kasir.view", "kasir.buka"], deps: { kredensial: async () => KRED, toko: () => t, fetch: daftarKosong } },
+        () => postSegarkan(post({ tanggal: D, penuh: true, konfirmasiHapus: true })));
+    assert.equal(ok.status, 200);
+    assert.equal((opsiTerima as { penuh: boolean }).penuh, true, "penuh diteruskan untuk kasir.buka");
 });
