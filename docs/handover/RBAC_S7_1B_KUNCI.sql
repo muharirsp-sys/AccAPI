@@ -4,12 +4,12 @@
 -- yang terkunci saat image S7-1b terpasang. Pemangkasan ke target D-01 = IT Support lewat layar Akses Group sesudah audit D-17 (baris 8).
 --   (1) pasangan PK-2 baris 2 : setiap grup ber-off_program_control.audit_read  -> + off_program_control.audit_export
 --   (2) D-01 §C Manager       : grup bernama persis "Manager"                   -> + off_program_control.audit_read, audit_export
---   (3) PK-1 api_wrapper.execute: HANYA grup di daftar `pk1` di bawah — bawaan KOSONG (tanpa INSERT) sampai owner memilih.
+--   (3) PK-1 api_wrapper.execute: owner 12 Okt "biarkan seperti sekarang" — berkas ini TIDAK menulis api_wrapper.* sama sekali.
 -- Semua kunci yang disisipkan sudah ada di registry image lama (origin/main lib/rbac/registry.ts) -> aman dijalankan SEBELUM image.
 --
 -- URUTAN DEPLOY (IT Support + orkestrator):
 --   1. Prasyarat: DDL lebih dulu; RBAC_PRESET_BL37.sql -> RBAC_PRESET_KASIR.sql.
---   2. RBAC_S7_1B_CEK.sql (baca-saja) di produksi -> owner menjawab PK-1 (isi `pk1` di bawah bila perlu).
+--   2. RBAC_S7_1B_CEK.sql (baca-saja) di produksi — dijalankan 12 Okt; owner menjawab PK-1 = biarkan (lihat blok PK-1 di bawah).
 --   3. BERKAS INI, mode cek lalu terapkan — SEBELUM image S7-1b.
 --   4. Image S7-1b.  5. RBAC_S7_1B_PENSIUN.sql (mode cek -> terapkan) SESUDAH image.  6. RBAC_S7_1B_CEK.sql ulang.
 --
@@ -28,19 +28,19 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
+-- ===== PK-1 (owner 12 Okt, sesudah RBAC_S7_1B_CEK.sql baca-saja di produksi): "BIARKAN SEPERTI SEKARANG".
+-- Fakta produksi 12 Okt: pemegang api_wrapper.view = Admin (4 anggota), Fakturist (2), Manager (1) — KETIGANYA sudah memegang
+-- api_wrapper.execute; CEK bagian 2b (kehilangan tulis Konsol) dan 3 (user aktif tanpa grup) = 0 baris. Maka berkas ini TIDAK
+-- memuat INSERT/DELETE api_wrapper.* apa pun; pemegang execute tetap, tidak ada yang kehilangan tulis Konsol saat rilis.
+-- ===== akhir PK-1
+
 DO $$
 DECLARE
-    -- ===== PK-1 (owner) — siapa memegang api_wrapper.execute (tulis Konsol lewat /api/proxy: sales-return, purchase-order,
-    -- purchase-return, master data; BUKAN pelunasan/purchase-payment/sales-invoice). Bawaan KOSONG = tanpa INSERT: pemegang execute
-    -- kini tetap, pemegang api_wrapper.view tanpa execute kehilangan tulis Konsol saat rilis (daftar nyata: RBAC_S7_1B_CEK.sql bagian 2/2b).
-    -- Sesudah owner memilih, ganti baris di bawah dengan NAMA GRUP PERSIS, mis.:  pk1 text[] := ARRAY['Manager', 'Nama Grup Lain'];
-    pk1 text[] := ARRAY[]::text[];
-    -- ===== akhir PK-1
     g text;
     n_izin bigint;
     n_audit bigint;
 BEGIN
-    FOREACH g IN ARRAY ARRAY['Manager'] || pk1 LOOP
+    FOREACH g IN ARRAY ARRAY['Manager'] LOOP
         IF NOT EXISTS (SELECT 1 FROM access_group WHERE name = g) THEN
             RAISE NOTICE 'S7-1b: grup "%" tidak ada — kuncinya dilewati (periksa ejaan / buat grup lalu jalankan ulang).', g;
         END IF;
@@ -53,8 +53,6 @@ BEGIN
         SELECT ag.id, k.kunci FROM access_group ag
         CROSS JOIN (VALUES ('off_program_control.audit_read'), ('off_program_control.audit_export')) AS k(kunci)
         WHERE ag.name = 'Manager'
-        UNION
-        SELECT ag.id, 'api_wrapper.execute' FROM access_group ag WHERE ag.name = ANY (pk1)
     ),
     izin AS (
         INSERT INTO group_permission (group_id, permission_key)
@@ -72,7 +70,7 @@ BEGIN
     )
     SELECT (SELECT count(*) FROM izin), (SELECT count(*) FROM jejak) INTO n_izin, n_audit;
 
-    RAISE NOTICE 'S7-1b KUNCI: izin_disisipkan=% audit=% (pk1: % grup diminta)', n_izin, n_audit, cardinality(pk1);
+    RAISE NOTICE 'S7-1b KUNCI: izin_disisipkan=% audit=%', n_izin, n_audit;
 END $$;
 
 -- VERIFIKASI (di dalam transaksi; mode cek = keadaan yang AKAN tersimpan).
@@ -84,7 +82,7 @@ SELECT 'VERIFIKASI', 'Manager audit_read+audit_export',
        coalesce((SELECT (count(*) FILTER (WHERE gp.permission_key IN ('off_program_control.audit_read', 'off_program_control.audit_export')) = 2)::text
                  FROM access_group ag LEFT JOIN group_permission gp ON gp.group_id = ag.id WHERE ag.name = 'Manager' GROUP BY ag.id), 'grup Manager tidak ada')
 UNION ALL
-SELECT 'VERIFIKASI', 'pemegang api_wrapper.execute',
+SELECT 'VERIFIKASI', 'pemegang api_wrapper.execute (tidak diubah berkas ini)',
        coalesce((SELECT string_agg(ag.name, ', ' ORDER BY ag.name) FROM group_permission gp JOIN access_group ag ON ag.id = gp.group_id
                  WHERE gp.permission_key = 'api_wrapper.execute'), '-');
 

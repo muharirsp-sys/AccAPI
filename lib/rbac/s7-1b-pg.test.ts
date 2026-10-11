@@ -114,46 +114,43 @@ test("RBAC_S7_1B_CEK.sql: BEGIN READ ONLY … ROLLBACK, menolak tulisan, 7 bagia
     });
 });
 
-test("RBAC_S7_1B_KUNCI.sql: mode cek 0 perubahan; terapkan = hanya pemegang audit_read + Manager; tanpa execute (PK-1 kosong); audit per grup; jalan kedua 0", { skip: pgSkip }, async () => {
+test("RBAC_S7_1B_KUNCI.sql: mode cek 0 perubahan; terapkan = hanya pemegang audit_read + Manager; api_wrapper.* tidak disentuh (PK-1 = biarkan); audit per grup; jalan kedua 0", { skip: pgSkip }, async () => {
     const sql = berkas("RBAC_S7_1B_KUNCI.sql");
+    // PK-1 owner 12 Okt "biarkan": bagian tulis (sebelum VERIFIKASI) tanpa api_wrapper apa pun; sisa berkas hanya membaca.
+    const aktif = sql.replace(/--.*$/gm, "");
+    assert.doesNotMatch(aktif.slice(0, aktif.indexOf("SELECT 'VERIFIKASI'")), /api_wrapper/, "tidak ada INSERT/DELETE api_wrapper.*");
+    assert.match(sql, /PK-1 \(owner 12 Okt[^)]*\): "BIARKAN SEPERTI SEKARANG"/);
     assert.doesNotMatch(sql.replace(/--.*$/gm, ""), /\b(DELETE\s+FROM|UPDATE\s+"?\w+"?\s+SET)\b|(^|;)\s*(TRUNCATE|ALTER|DROP|CREATE)\b/im, "data saja, hanya INSERT");
     await denganSkema(async (pool) => {
         const sebelum = await keadaan(pool);
         const cek = await jalan(pool, sql, false);
         assert.match(String(cek.galat), /S7-1b MODE CEK/);
         assert.ok(cek.notice.some((n) => /izin_disisipkan=3 audit=2/.test(n)), `ringkasan tercetak: ${cek.notice.join(" | ")}`);
+        const executeSebelum = (await pool.query(`SELECT group_id FROM group_permission WHERE permission_key LIKE 'api_wrapper.%' ORDER BY 1, permission_key`)).rows;
         assert.deepEqual(await keadaan(pool), sebelum, "mode cek = 0 perubahan");
 
         const r1 = await jalan(pool, sql, true);
         assert.equal(r1.galat, null);
-        assert.ok(r1.notice.some((n) => /izin_disisipkan=3 audit=2 \(pk1: 0 grup diminta\)/.test(n)), r1.notice.join(" | "));
+        assert.ok(r1.notice.some((n) => /izin_disisipkan=3 audit=2$/.test(n)), r1.notice.join(" | "));
         assert.deepEqual(await kunciGrup(pool, "g-claim"), ["off_program_control.audit_export", "off_program_control.audit_read", "off_program_control.create", "off_program_control.update"]);
         assert.deepEqual((await kunciGrup(pool, "g-mgr")).filter((k) => k.includes("audit")), ["off_program_control.audit_export", "off_program_control.audit_read"]);
         // Grup tanpa kunci lama TIDAK mendapat apa pun; Admin sudah lengkap; tidak ada api_wrapper.execute baru.
         for (const g of ["g-konsol", "g-fin", "g-kosong", "g-adm"]) {
             assert.deepEqual(await kunciGrup(pool, g), sebelum.izin.filter((k) => k.startsWith(`${g}:`)).map((k) => k.slice(g.length + 1)), g);
         }
-        assert.deepEqual((await pool.query(`SELECT group_id FROM group_permission WHERE permission_key = 'api_wrapper.execute' ORDER BY 1`)).rows.map((x) => x.group_id), ["g-mgr"]);
+        assert.deepEqual((await pool.query(`SELECT group_id FROM group_permission WHERE permission_key LIKE 'api_wrapper.%' ORDER BY 1, permission_key`)).rows, executeSebelum, "api_wrapper.* tidak berubah");
         const audit = (await pool.query(`SELECT action, target_group_id, detail FROM permission_audit_log ORDER BY target_group_id`)).rows;
         assert.deepEqual(audit, [
             { action: "group_permission.sync", target_group_id: "g-claim", detail: { added: ["off_program_control.audit_export"], removed: [], sumber: "docs/handover/RBAC_S7_1B_KUNCI.sql" } },
             { action: "group_permission.sync", target_group_id: "g-mgr", detail: { added: ["off_program_control.audit_export", "off_program_control.audit_read"], removed: [], sumber: "docs/handover/RBAC_S7_1B_KUNCI.sql" } },
         ]);
         const verif = r1.hasil.flatMap((h) => h.rows).filter((x) => x.bagian === "VERIFIKASI").map((x) => [x.cek, x.nilai]);
-        assert.deepEqual(verif, [["audit_read tanpa audit_export", "0"], ["Manager audit_read+audit_export", "true"], ["pemegang api_wrapper.execute", "Manager"]]);
+        assert.deepEqual(verif, [["audit_read tanpa audit_export", "0"], ["Manager audit_read+audit_export", "true"], ["pemegang api_wrapper.execute (tidak diubah berkas ini)", "Manager"]]);
 
         const sesudah = await keadaan(pool);
         const r2 = await jalan(pool, sql, true);
         assert.ok(r2.notice.some((n) => /izin_disisipkan=0 audit=0/.test(n)));
         assert.deepEqual(await keadaan(pool), sesudah, "idempoten");
-
-        // Placeholder PK-1 bekerja bila diisi: grup bernama persis mendapat execute; nama tak dikenal = NOTICE, tidak gagal.
-        const pk1 = sql.replace("pk1 text[] := ARRAY[]::text[];", "pk1 text[] := ARRAY['Konsol Baca', 'Grup Tidak Ada'];");
-        assert.notEqual(pk1, sql, "placeholder PK-1 ditemukan");
-        const r3 = await jalan(pool, pk1, true);
-        assert.ok(r3.notice.some((n) => /grup "Grup Tidak Ada" tidak ada/.test(n)), r3.notice.join(" | "));
-        assert.ok((await kunciGrup(pool, "g-konsol")).includes("api_wrapper.execute"));
-        assert.equal(Number((await pool.query(`SELECT count(*) AS n FROM permission_audit_log WHERE target_group_id = 'g-konsol'`)).rows[0].n), 1);
     });
 });
 
