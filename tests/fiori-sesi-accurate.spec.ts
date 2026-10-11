@@ -180,7 +180,7 @@ test.describe("kartu (LOCAL_AUTH_BYPASS)", () => {
 
         sesi = json(TANPA_DB);
         await page.reload();
-        await expect(k.getByRole("alert")).toContainText("Daftar database Accurate tidak terbaca.");
+        await expect(k.getByRole("alert")).toContainText("Daftar database Accurate tidak terbaca");
         await expect(k.getByLabel("Database Accurate")).toHaveCount(0);
         daftar = json({ s: true, d: [] });
         await k.getByRole("button", { name: "Coba lagi" }).click();
