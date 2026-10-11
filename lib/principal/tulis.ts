@@ -4,7 +4,7 @@
  *   Tak pernah menimpa: tabrakan = 409 berkode; code TIDAK punya jalur ubah (trigger S7-0 menjaga di DB).
  * Caller: app/api/principals/** ; uji lib/principals-route.test.ts dan lib/principal-pg.test.ts.
  * Dependensi: lib/db (Drizzle), db/schema principal*, lib/principal/normalisasi.ts, lib/principal/resolver.ts.
- * Main Functions: GalatPrincipal, jawabGalat, cekDdl, daftarPrincipal, riwayatPrincipal, muatIndeksAlias, buatPrincipal,
+ * Main Functions: GalatPrincipal, jawabGalat, cekDdl, daftarPrincipal, riwayatPrincipal, muatIndeksAlias, resolveTeks, buatPrincipal,
  *   tambahVarian, ubahAktifPrincipal, ubahAktifVarian, tambahAlias, hapusAlias.
  * Side Effects: DB read/write principal, principal_variant, principal_alias, principal_log.
  */
@@ -13,7 +13,7 @@ import { and, asc, desc, eq, lt, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { principal, principalAlias, principalLog, principalVariant } from "@/db/schema";
 import { normalisasiPrincipal, rapikanTeks } from "./normalisasi.ts";
-import { buatIndeksAlias, JENIS_ALIAS, SUMBER_KODE, TRIGGER_WAJIB, type AliasTerindeks, type IndeksAlias, type JenisAlias } from "./resolver.ts";
+import { buatIndeksAlias, JENIS_ALIAS, resolvePrincipal, RUANG, ruangDari, SUMBER_KODE, TRIGGER_WAJIB, type AliasTerindeks, type IndeksAlias, type JenisAlias } from "./resolver.ts";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Baris = Record<string, unknown>;
@@ -144,6 +144,15 @@ export async function muatIndeksAlias(): Promise<IndeksAlias> {
         .innerJoin(principal, eq(principal.id, principalAlias.principalId))
         .leftJoin(principalVariant, and(eq(principalVariant.principalId, principalAlias.principalId), eq(principalVariant.variantKey, principalAlias.variantKey)));
     return buatIndeksAlias(rows as AliasTerindeks[]);
+}
+
+/** Satu teks -> hasil resolver pada ruang yang WAJIB disebut (untuk pemakai luar, mis. Python tahap 2: satu normalizer). */
+export async function resolveTeks(teks: unknown, ruang: unknown) {
+    const r = ruangDari(ruang);
+    if (!r) throw tolak(400, "RUANG_TIDAK_SAH", `ruang wajib: ${RUANG.join(" | ")}.`);
+    if (typeof teks !== "string" || !normalisasiPrincipal(teks)) throw tolak(400, "TEKS_KOSONG", "teks wajib diisi.");
+    if (teks.length > BATAS_TEKS) throw tolak(400, "TIDAK_SAH", `teks maksimal ${BATAS_TEKS} karakter.`);
+    return resolvePrincipal(teks, await muatIndeksAlias(), r);
 }
 
 // --------------------------------------------------------------------------- tulis (satu transaksi + principal_log)

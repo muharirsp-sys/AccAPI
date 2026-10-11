@@ -9,6 +9,7 @@ import { GET as riwayatGet } from "../app/api/principals/[id]/history/route.ts";
 import { PATCH as varianPatch, POST as varianPost } from "../app/api/principals/[id]/variants/route.ts";
 import { POST as aliasPost } from "../app/api/principals/[id]/aliases/route.ts";
 import { DELETE as aliasDelete } from "../app/api/principals/[id]/aliases/[aliasId]/route.ts";
+import { GET as resolveGet } from "../app/api/principals/resolve/route.ts";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
 
@@ -51,6 +52,7 @@ test("401 tanpa sesi; 403 tanpa izin yang tepat di setiap route (sebelum DB)", a
     const kasus: [string[], () => Promise<Response>][] = [
         [[], () => daftarGet(req("GET", "/api/principals"))],
         [[], () => riwayatGet(req("GET", "/api/principals/p1/history"), ctx())],
+        [[], () => resolveGet(req("GET", "/api/principals/resolve?teks=KINO&ruang=nama"))],
         [VIEW, () => buatPost(req("POST", "/api/principals", { code: "ZZ", name: "ZZ, PT" }))],
         [VIEW, () => principalPatch(req("PATCH", "/api/principals/p1", { isActive: false }), ctx())],
         [VIEW, () => varianPost(req("POST", "/api/principals/p1/variants", { variantKey: "MT" }), ctx())],
@@ -90,6 +92,16 @@ test("validasi isian -> 400 berkode sebelum DB", async () => {
         await cek(aliasPost(req("POST", "/api/principals/p1/aliases", { alias: "X", jenis: "kode" }), ctx()), "JENIS_TIDAK_SAH");
         await cek(aliasPost(req("POST", "/api/principals/p1/aliases", { alias: "KINO", jenis: "kode_master_barang" }), ctx()), "KODE_MB_TIDAK_SAH");
         await cek(aliasPost(req("POST", "/api/principals/p1/aliases", { alias: "X", jenis: "nama", sumber: "kode_principal" }), ctx()), "SUMBER_KHUSUS");
+    });
+});
+
+test("resolve: ruang wajib (nama | kode_master_barang) dan teks wajib -> 400 sebelum DB", async () => {
+    await sebagai(VIEW, async () => {
+        for (const [q, code] of [["teks=KINO", "RUANG_TIDAK_SAH"], ["teks=KINO&ruang=label_mapping", "RUANG_TIDAK_SAH"],
+            ["ruang=nama", "TEKS_KOSONG"], ["teks=%E2%80%8B%20&ruang=nama", "TEKS_KOSONG"]] as const) {
+            const r = await resolveGet(req("GET", `/api/principals/resolve?${q}`));
+            assert.deepEqual([r.status, (await r.json()).code], [400, code], q);
+        }
     });
 });
 

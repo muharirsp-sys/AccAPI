@@ -80,11 +80,24 @@ Log = { id, entitas: "principal"|"varian"|"alias", kunci, principalId, aksi: "bu
 ```
 `kunci`: principal = id; varian = `"<principal_id>:<variant_key>"`; alias = id alias. Benih memakai aktor `benih:S7-2`.
 
-## Resolver (pemakai S7-2b, server-side)
+## Resolver (pemakai S7-2b)
 
-`resolvePrincipal(teks, await muatIndeksAlias(), { jenis? })` → `cocok { principalId, code, variantKey, aktif, alias[] }` |
-`tak_dikenal` | `ambigu { kandidat[] }`. Lewat alias SAJA, tak pernah menebak. Saring nama: `JENIS_NAMA`; kode Master Barang:
-`"kode_master_barang"`. Python: lewat HTTP ke GET `/api/principals` (tahap 2).
+Server-side: `resolvePrincipal(teks, await muatIndeksAlias(), ruang)` — `ruang` WAJIB: `"nama"` (nama/label/kode OPC/surat/
+bank/Summary = semua jenis kecuali kode MB) atau `"kode_master_barang"` (kode 2 karakter Master Barang). Tidak ada saringan
+per-jenis (satu ejaan di ruang nama hanya punya satu jenis = asal ejaan) dan tidak ada bawaan: tanpa ruang, kode MB pendek ("GD")
+akan ikut cocok di teks bebas. Hasil: `cocok { norm, principalId, code, variantKey, aktif, alias[] }` | `tak_dikenal { norm }` |
+`ambigu { norm, kandidat[] }`. Lewat alias SAJA, tak pernah menebak; `aktif:false` = principal/varian nonaktif (pemakai memutuskan).
+
+### GET `/api/principals/resolve?teks=<teks>&ruang=nama|kode_master_barang` (principles.view)
+
+Untuk pemakai luar (Python tahap 2) agar SATU normalizer dipakai. `200 { ok, hasil }` (bentuk hasil di atas). 400 `RUANG_TIDAK_SAH`
+(ruang absen/lain), `TEKS_KOSONG` (kosong sesudah dinormalkan), `TIDAK_SAH` (> 200 karakter).
+
+## TERBUKA
+
+- Izin: slice ini memakai `principles.upload` / `principles.delete` yang sudah ada. Kunci `principals.manage` untuk membuat /
+  menonaktifkan principal resmi = keputusan owner / matriks D-01.
+- Ganti nama resmi principal / nama varian: belum ada jalur.
 
 ## Runbook laporan + benih (produksi, BACA-SAJA lalu ditinjau owner)
 

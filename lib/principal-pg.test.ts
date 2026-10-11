@@ -62,6 +62,7 @@ async function muatModul() {
         daftar: await r("../app/api/principals/route.ts"), satu: await r("../app/api/principals/[id]/route.ts"),
         riwayat: await r("../app/api/principals/[id]/history/route.ts"), varian: await r("../app/api/principals/[id]/variants/route.ts"),
         alias: await r("../app/api/principals/[id]/aliases/route.ts"), hapus: await r("../app/api/principals/[id]/aliases/[aliasId]/route.ts"),
+        resolve: await r("../app/api/principals/resolve/route.ts"),
     };
 }
 
@@ -260,12 +261,19 @@ test("PG S7-2: varian & alias — varian dasar ditolak tanpa varian lain; tabrak
     assert.ok(["ALIAS_TABRAKAN"].includes(String((x.status === 409 ? x : y).body.code)));
 
     const indeks = await m.tulis.muatIndeksAlias();
-    const r = (t: string, o = {}) => m.resolver.resolvePrincipal(t, indeks, o);
+    const r = (t: string, ruang: "nama" | "kode_master_barang" = "nama") => m.resolver.resolvePrincipal(t, indeks, ruang);
     const nfr = r("kino\tnon food");
     assert.deepEqual(nfr.status === "cocok" && [nfr.code, nfr.variantKey], ["KINO", "NON_FOOD"]);
-    assert.equal(r("MI").status, "ambigu");
-    assert.deepEqual((x => x.status === "cocok" && x.code)(r("MI", { jenis: m.resolver.JENIS_NAMA })), "MI");
+    assert.deepEqual((x => x.status === "cocok" && x.code)(r("MI")), "MI");
+    assert.deepEqual((x => x.status === "cocok" && x.code)(r("MI", "kode_master_barang")), "KINO");
     assert.equal(r("FORISA").status, "tak_dikenal", "resolver tidak menebak");
+
+    // HTTP /api/principals/resolve (pemakai Python tahap 2): normalizer & ruang yang sama, DB nyata.
+    const lewatHttp = async (q: string) => (await panggil(m.resolve.GET(req("GET", `/api/principals/resolve?${q}`)))).body.hasil as { status: string; code?: string; variantKey?: string | null };
+    const nfHttp = await lewatHttp("teks=%20kino%C2%A0non%20food&ruang=nama");
+    assert.deepEqual([nfHttp.status, nfHttp.code, nfHttp.variantKey], ["cocok", "KINO", "NON_FOOD"]);
+    assert.deepEqual([(await lewatHttp("teks=MI&ruang=kode_master_barang")).code, (await lewatHttp("teks=mi&ruang=nama")).code], ["KINO", "MI"]);
+    assert.equal((await lewatHttp("teks=MI%20GORENG&ruang=nama")).status, "tak_dikenal");
 });
 
 test("PG S7-2: kode tidak bisa diubah (route 400 + trigger DB); nonaktif/aktif tercatat; nonaktif menolak tambah alias; hapus alias", { skip: pgSkip }, async () => {
@@ -283,14 +291,14 @@ test("PG S7-2: kode tidak bisa diubah (route 400 + trigger DB); nonaktif/aktif t
     assert.deepEqual([nonaktif.status, nonaktif.body.code], [409, "PRINCIPAL_NONAKTIF"]);
     assert.equal((await patch({ isActive: true })).body.berubah, true);
     const indeks = await m.tulis.muatIndeksAlias();
-    const k = m.resolver.resolvePrincipal("KINO", indeks);
+    const k = m.resolver.resolvePrincipal("KINO", indeks, "nama");
     assert.deepEqual(k.status === "cocok" && k.aktif, true);
 
     const vPatch = (body: unknown) => panggil(m.varian.PATCH(req("PATCH", `/api/principals/${kino}/variants`, body), ctx(kino)));
     assert.equal((await vPatch({ variantKey: "NON_FOOD", isActive: false })).body.berubah, true);
     const keVarianMati = await panggil(m.alias.POST(req("POST", `/api/principals/${kino}/aliases`, { alias: "KNF", jenis: "nama", variantKey: "NON_FOOD" }), ctx(kino)));
     assert.deepEqual(keVarianMati.body.code, "VARIAN_NONAKTIF");
-    const nf = m.resolver.resolvePrincipal("KINO NON FOOD", await m.tulis.muatIndeksAlias());
+    const nf = m.resolver.resolvePrincipal("KINO NON FOOD", await m.tulis.muatIndeksAlias(), "nama");
     assert.deepEqual(nf.status === "cocok" && nf.aktif, false, "varian nonaktif ditandai");
     assert.deepEqual((await vPatch({ variantKey: "ZZ", isActive: true })).body.code, "VARIAN_TIDAK_ADA");
     await vPatch({ variantKey: "NON_FOOD", isActive: true });
