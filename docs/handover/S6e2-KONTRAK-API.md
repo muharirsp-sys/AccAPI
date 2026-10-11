@@ -6,7 +6,8 @@ Semua route Next same-origin, sesi Better Auth (cookie). Dasar keputusan: `OWNER
 ## Aturan umum
 
 - **Galat**: `{ "error": "<kalimat Indonesia>", "code": "<KODE>", ...detail }`. UI memetakan **menurut `code` + status**, bukan teks.
-  401 `Unauthorized` / 403 `Forbidden` (gerbang `requirePermission`) tetap berbentuk lama `{error}`.
+  401 `Unauthorized` / 403 `Forbidden` (gerbang `requirePermission`) tetap berbentuk lama `{error}` — KECUALI 403 di
+  `/api/idempotency/resolve` (GET & POST) dan `/api/idempotency/summary`: `{ok:false, code:"forbidden", error}`.
 - **`sent: false`** pada jawaban galat = server menjamin TIDAK ADA yang diteruskan ke Accurate (baris boleh dilaporkan `FAILED`
   lewat `/api/idempotency/complete` — hanya baris `PROCESSING` milik lock yang berubah).
 - **C11**: jawaban Accurate selain `s:true` per baris = **Tidak pasti** (bukan Gagal, bukan Ditolak). Tidak ada jalur yang
@@ -106,11 +107,15 @@ dari kolom `invoiceNo` DAN dari kunci). Tidak menulis apa pun.
  "rows": [{"key": "PAY_…", "status": "UNKNOWN", "customerNo": "C1", "transDate": "01/10/2026", "invoiceNo": "INV-1",
            "amount": 1000, "updatedAt": "…", "ageSeconds": 900, "eligible": true,
            "found": true, "receiptNumbers": ["PR.2026.10.00012"],
-           "candidates": [{"number": "PR.2026.10.00012", "invoices": [{"invoiceNo": "INV-1", "paymentAmount": 900, "invoicePayment": null}]}],
+           "candidates": [{"receiptNumber": "PR.2026.10.00012", "invoiceNos": ["INV-1"], "amount": 900, "transDate": "01/10/2026",
+                           "invoices": [{"invoiceNo": "INV-1", "paymentAmount": 900, "invoicePayment": null}]}],
            "readError": null}]}
 ```
 `found` = ada kandidat (BUKAN "identik": nominal bisa berbeda — tampilkan `candidates` agar Finance membandingkan `amount` baris
-dengan nominal kandidat lalu memilih nomornya untuk `terposting`). `invoicePayment: null` = tidak dikirim Accurate.
+dengan `amount` kandidat lalu memilih `receiptNumber`-nya untuk `terposting`). Kandidat: `receiptNumber` = nomor pelunasan
+Accurate (bisa `""` bila Accurate tak memberi nomor), `invoiceNos` = faktur yang dibayar pelunasan itu, `amount` = Σ
+`paymentAmount`, `transDate` = tanggal Accurate (cadangan: tanggal pencarian), `invoices` = rincian per faktur
+(`invoicePayment: null` = tidak dikirim Accurate). Bentuk kandidat yang sama dipakai di galat §5.
 `eligible` = `UNKNOWN`, `SENDING` ≥ 2 mnt, atau `PROCESSING` > 15 mnt (basi lock). `found:null` + `readError` = riwayat gagal dibaca. 400 tanpa key /
 > 50; 400 `ACCURATE_SESSION_INCOMPLETE`; 404 key tidak ada.
 
@@ -126,14 +131,14 @@ satu transaksi: status `SUCCESS` (terposting) / `FAILED` (tidak_ada = boleh diki
 | 200 | — | `{ok, status, resolutionId, receiptNumbers}` |
 | 200 | — | `{ok, alreadyResolved:true, status}` — keputusan sama sudah berlaku (klik ganda), juga bila kalah balapan dari keputusan yang sama (dua tab serentak) |
 | 400 | — / `DATABASE_REQUIRED` / `ACCURATE_SESSION_INCOMPLETE` | masukan tak sah (sebelum DB/Accurate) / sesi |
-| 403 | — | tanpa `finance.resolve_unknown` |
+| 403 | `forbidden` | tanpa `finance.resolve_unknown` — `{ok:false, code:"forbidden", error}` (juga GET §4) |
 | 404 | `not_found` | key tidak ada |
 | 409 | `database_changed` | database sesi ≠ `expectedDatabaseId` |
 | 409 | `not_eligible` | bukan UNKNOWN / SENDING ≥ 2 mnt / PROCESSING > 15 mnt; atau `tidak_ada` < 2 mnt |
 | 409 | `wrong_database` | database lock ≠ database sesi — `{lockDatabaseId}` (buka database itu) |
 | 409 | `database_unknown` | `tidak_ada` untuk baris lama tanpa database tercatat (bisa terposting di database lain); `terposting` BOLEH |
 | 409 | `search_failed` | pencarian Accurate gagal / bentuk tak dikenali — tidak ada yang diubah |
-| 409 | `number_mismatch` | `terposting` dengan nomor yang bukan kandidat §4 — `{receiptNumbers, candidates}` |
+| 409 | `number_mismatch` | `terposting` dengan nomor yang bukan kandidat §4 (persis maupun mirip — kandidat mirip DITERIMA) — `{receiptNumbers, candidates}` |
 | 409 | `similar_found` | `tidak_ada` padahal ada kandidat (pelunasan pelanggan+tanggal yang menyentuh faktur baris, berapa pun nominal/potongan) — `{receiptNumbers, candidates}`. Menggantikan `found_in_accurate`. |
 | 409 | `changed` | status berubah selama pencarian (CAS) |
 
@@ -149,7 +154,8 @@ Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
 `?rows=1` menambah `rows: [{key, status, customerNo, transDate, invoiceNo, amount, databaseId, updatedAt,
 category:"uncertain"|"processingStale"|"retryable"}]` (UNKNOWN + SENDING ≥ 2 mnt + PROCESSING > 15 mnt + FAILED, terbaru dulu,
 ≤ 200, tanpa payload) dan `rowsTruncated`. Baris non-`retryable` di daftar = TEPAT baris yang boleh diselesaikan (§4 `eligible`).
-`&databaseId=X` menyaring `rows` (bukan hitungan) ke database lock X dan menambah `rowsDatabaseId: "X"`. Alias database tidak
+`&database=X` menyaring `rows` (bukan hitungan) ke database lock X dan menambah `rowsDatabaseId: "X"`. 403 =
+`{ok:false, code:"forbidden", error}`. Alias database tidak
 disimpan (UI memetakan id → alias dari daftar database).
 `uncertain` = Tidak pasti (tile 1; `sendingStale` = `SENDING` ≥ 2 mnt, SAMA dengan ambang Selesaikan). `retryable` = `FAILED`
 (tidak terkirim, tile 2). `processingStale` = lock > 15 mnt yang tak pernah diteruskan (diblokir lock sebagai tidak pasti; boleh
@@ -164,7 +170,8 @@ diselesaikan; tampilkan bila > 0).
   `deps = {postJson(url, body) → {status, data}, expectedDatabaseId, override?, cariRiwayat?, lapor?, chunkSize?}`.
   Hasil `{lockId, rows: [{index, paket, outcome:"terposting"|"gagal"|"tidak_pasti"|"ditahan", message, code?, receiptNumbers?, item?}]}`.
   Pra-cek klien: placeholder akun → semua baris `gagal` tanpa lock. Jawaban proxy `sent:false` hanya berarti `gagal` pada 4xx
-  (401/403 selalu `gagal`); 5xx/2xx ber-`sent:false` = `tidak_pasti` (tinjauan A5).
+  (401/403 selalu `gagal`); 5xx/2xx ber-`sent:false` = `tidak_pasti` (tinjauan A5). Baris `tidak_pasti` membawa `code` server
+  bila jawaban proxy memuatnya (mis. 409 `database_changed` tanpa `sent:false`) — klasifikasi tetap tidak pasti.
   Lock mengirim `expectedDatabaseId`. Galat SEBELUM kirim (lock ditolak/terblokir/tak terbit/jaringan) melempar
   **`GalatKirim {code, status, sent:false}`** — `code` = kode server lock (`PERMISSION_REQUIRED`, `OVERRIDE_PERMISSION_REQUIRED`,
   `OVERRIDE_REASON_REQUIRED`, `PLACEHOLDER_AKUN`, `DATABASE_REQUIRED`, `ACCURATE_SESSION_INCOMPLETE`, `database_changed`) atau
@@ -199,5 +206,9 @@ diselesaikan; tampilkan bila > 0).
   database = `"tidak tercatat"` (ditolak). §8: kolom baru di DDL_S6E2 + entri migrate-pg `idempotency_override_database`.
 - (11 Okt, tinjauan RENDAH) §2 400 `KEY_IDENTITY_MISMATCH` (B3). §5 `alreadyResolved` juga untuk kalah CAS dari keputusan sama
   (B4); jejak `actor` = user id, bukan email (B5). §6 `sendingStale` = SENDING ≥ 2 mnt (dulu > 15), `rows` memuat PROCESSING basi
-  (`category:"processingStale"`), `&databaseId=` + `rowsDatabaseId` (B6). §7 `sent:false` hanya untuk 4xx (A5). §8 DDL SEBELUM
+  (`category:"processingStale"`), saring database + `rowsDatabaseId` (B6). §7 `sent:false` hanya untuk 4xx (A5). §8 DDL SEBELUM
   image baru (B7).
+- (11 Okt, kebutuhan UI wizard S6e-2b) §4/§5 kandidat berbentuk `{receiptNumber, invoiceNos, amount, transDate, invoices}`
+  (dulu `{number, invoices}`); `terposting` MENERIMA nomor kandidat mirip (nomor di luar kandidat tetap `number_mismatch`).
+  §6 saring baris = **`database=<id>`** (bukan `databaseId`). §7 baris `tidak_pasti` membawa `code` server bila ada. 403
+  `/api/idempotency/resolve` & `/api/idempotency/summary` = `{ok:false, code:"forbidden", error}` (Aturan umum).

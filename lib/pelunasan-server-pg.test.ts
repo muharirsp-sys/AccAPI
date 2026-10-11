@@ -399,7 +399,8 @@ test("PG REV-B D: lock Rp1.000 → kiriman koreksi Rp900 → UNKNOWN → tidak_a
         assert.equal(r.status, 409, JSON.stringify(b));
         assert.equal(b.code, "similar_found");
         assert.deepEqual(b.receiptNumbers, ["PR.D1"]);
-        assert.deepEqual(b.candidates, [{ number: "PR.D1", invoices: [{ invoiceNo: "INV-D", paymentAmount: 900, invoicePayment: null }] }]);
+        assert.deepEqual(b.candidates, [{ receiptNumber: "PR.D1", invoiceNos: ["INV-D"], amount: 900, transDate: "09/10/2026",
+            invoices: [{ invoiceNo: "INV-D", paymentAmount: 900, invoicePayment: null }] }]);
         assert.equal(await statusDb(m.db, kunci(a).key), "UNKNOWN");
         assert.equal((await jejak(m.db, kunci(a).key)).length, 0);
         // Lock ulang tetap terblokir (UNKNOWN) -> tidak ada POST kedua.

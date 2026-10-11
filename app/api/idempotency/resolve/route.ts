@@ -14,18 +14,28 @@ import { NextRequest, NextResponse } from "next/server";
 import { inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { idempotencyLog } from "@/db/schema";
-import { requirePermission } from "@/lib/rbac/resolve";
+import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 import { getAccurateSession } from "@/lib/accurate-session";
 import { isAllowedAccurateHost } from "@/lib/api-security";
 import { bacaAccurate } from "@/lib/accurate-forward";
 import { periksaRiwayatAccurate } from "@/lib/pelunasan/pratinjau-ganda";
-import { bolehDiselesaikan, cekInputSelesaikan, nomorKandidat, selesaikanPelunasan, targetDariLog } from "@/lib/idempotency-resolve";
+import { bolehDiselesaikan, cekInputSelesaikan, kandidatUI, nomorKandidat, selesaikanPelunasan, targetDariLog } from "@/lib/idempotency-resolve";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+/** finance.resolve_unknown. 403 berbentuk galat route ini `{ok:false, code:"forbidden", error}` (kebutuhan UI S6e-2b); 401 tetap lama. */
+async function gerbang(request: Request) {
+    const a = await resolveRequestPermissions(request);
+    if (a.response) return { response: a.response, session: null };
+    if (!a.perms!.has("finance.resolve_unknown")) {
+        return { response: NextResponse.json({ ok: false, code: "forbidden", error: "Selesaikan pelunasan butuh izin finance.resolve_unknown." }, { status: 403 }), session: null };
+    }
+    return { response: null, session: a.session! };
+}
+
 export async function GET(request: NextRequest) {
-    const gate = await requirePermission(request, "finance.resolve_unknown");
+    const gate = await gerbang(request);
     if (gate.response) return gate.response;
     const keys = [...new Set(request.nextUrl.searchParams.getAll("key").map((k) => k.trim()).filter(Boolean))];
     if (!keys.length || keys.length > 50) {
@@ -58,7 +68,7 @@ export async function GET(request: NextRequest) {
                 eligible: bolehDiselesaikan(r, new Date(now)),
                 found: readError ? null : candidates.length > 0,
                 receiptNumbers: nomorKandidat(candidates),
-                candidates,
+                candidates: candidates.map(kandidatUI),
                 readError,
             };
         }),
@@ -66,7 +76,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-    const gate = await requirePermission(request, "finance.resolve_unknown");
+    const gate = await gerbang(request);
     if (gate.response) return gate.response;
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     // Validasi murah dulu: tanpa keputusan/alasan yang sah tidak ada pencarian ke Accurate.

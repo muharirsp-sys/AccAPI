@@ -147,3 +147,15 @@ test("A5 (tinjauan 11 Okt): sent:false hanya dipercaya untuk 4xx — 500/502 ber
     const s = server(() => ({ status: 409, data: { error: "x", code: "SALES_RECEIPT_LOCK_REQUIRED", sent: false } }));
     assert.deepEqual(hitung((await kirimPelunasan(banyak(2), { postJson: s.postJson, expectedDatabaseId: "DB-1" })).rows), { gagal: 2 });
 });
+
+test("UI S6e-2b: baris tidak_pasti membawa code server bila ada (409 database_changed tanpa sent:false, 500 ber-sent:false); klasifikasi tetap tidak pasti", async () => {
+    for (const [status, code] of [[409, "database_changed"], [500, "X_GALAT"]] as const) {
+        const s = server(() => ({ status, data: { error: "galat server", code, ...(status === 500 ? { sent: false } : {}) } }));
+        const r = await kirimPelunasan(banyak(2), { postJson: s.postJson, expectedDatabaseId: "DB-1" });
+        assert.deepEqual(r.rows.map((x) => [x.outcome, x.code]), [["tidak_pasti", code], ["tidak_pasti", code]], `HTTP ${status}`);
+        assert.deepEqual(statusComplete(s.log), { UNKNOWN: 2 });
+    }
+    // Jawaban Accurate tanpa kode -> tanpa code.
+    const s = server(() => ({ status: 200, data: { s: false, d: ["ditolak"] } }));
+    assert.equal((await kirimPelunasan(banyak(1), { postJson: s.postJson, expectedDatabaseId: "DB-1" })).rows[0].code, undefined);
+});

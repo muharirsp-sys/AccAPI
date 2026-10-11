@@ -49,8 +49,18 @@ export function targetDariLog(r: { key: string; customerNo: string | null; trans
     };
 }
 
-/** Kandidat untuk UI/jawaban galat: nomor + faktur + nominal (Finance memilih `terposting` dari sini). */
 export const nomorKandidat = (k: StrukAccurate[]) => [...new Set(k.map((s) => s.number).filter(Boolean))];
+/**
+ * Kandidat untuk UI/jawaban galat (nama field = yang dibaca wizard S6e-2b): `amount` = Σ paymentAmount pelunasan Accurate,
+ * `transDate` = tanggal Accurate (cadangan: tanggal pencarian); `invoices` = rincian per faktur (invoicePayment null = tak dikirim).
+ */
+export const kandidatUI = (s: StrukAccurate) => ({
+    receiptNumber: s.number,
+    invoiceNos: s.invoices.map((b) => b.invoiceNo),
+    amount: Number(s.invoices.reduce((a, b) => a + b.paymentAmount, 0).toFixed(2)),
+    transDate: s.transDate,
+    invoices: s.invoices,
+});
 export type HasilCari = { mirip: Map<string, StrukAccurate[]>; gagal: Map<string, string> };
 
 export type InputSelesaikan = { key: string; decision: "terposting" | "tidak_ada"; accurateNumber: string; reason: string; checkedSource: string };
@@ -109,11 +119,11 @@ export async function selesaikanPelunasan(db: NodePgDatabase, inp: InputSelesaik
         return tolak(409, "number_mismatch", nomor.length
             ? `Nomor ${inp.accurateNumber} bukan pelunasan pelanggan+tanggal ini yang menyentuh faktur baris (${nomor.join(", ")}).`
             : `Tidak ada pelunasan pelanggan+tanggal ini yang menyentuh faktur baris — nomor ${inp.accurateNumber} tidak bisa dicocokkan.`,
-        { receiptNumbers: nomor, candidates });
+        { receiptNumbers: nomor, candidates: candidates.map(kandidatUI) });
     }
     if (inp.decision === "tidak_ada" && candidates.length) {
         return tolak(409, "similar_found", `Ada pelunasan di Accurate untuk pelanggan+tanggal ini yang menyentuh faktur baris (${nomor.join(", ") || "tanpa nomor"})`
-            + " — periksa nominalnya; bila itu kiriman ini, tetapkan terposting. \"Tidak ada\" ditolak.", { receiptNumbers: nomor, candidates });
+            + " — periksa nominalnya; bila itu kiriman ini, tetapkan terposting. \"Tidak ada\" ditolak.", { receiptNumbers: nomor, candidates: candidates.map(kandidatUI) });
     }
 
     const id = randomUUID();

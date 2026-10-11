@@ -45,7 +45,7 @@ export type TargetRiwayat = {
     menyentuh: (invoiceNo: string) => boolean;
 };
 /** Pelunasan Accurate yang terbaca (detail.do dinormalkan). invoicePayment null = tidak dikirim Accurate. */
-export type StrukAccurate = { number: string; invoices: Array<{ invoiceNo: string; paymentAmount: number; invoicePayment: number | null }> };
+export type StrukAccurate = { number: string; transDate: string; invoices: Array<{ invoiceNo: string; paymentAmount: number; invoicePayment: number | null }> };
 type Kelompok = { customerNo: string; transDate: string; targets: Map<string, TargetRiwayat> };
 
 const bulat = (v: number) => Number(v.toFixed(2));
@@ -84,7 +84,7 @@ function kelompokkan(targets: TargetRiwayat[]) {
  * (arti belum terbukti — keduanya dipakai). Item potongan TIDAK dibaca. null = TIDAK TERBACA (detailInvoice bukan daftar, baris
  * tanpa nomor faktur, nominal bukan angka) → ditahan, bukan "tidak mirip". SATU tempat untuk pratinjau klien dan server.
  */
-export function strukDariDetail(detail: Bebas, cadanganNomor?: unknown): StrukAccurate | null {
+export function strukDariDetail(detail: Bebas, cadanganNomor?: unknown, cadanganTanggal?: string): StrukAccurate | null {
     if (!Array.isArray(detail?.detailInvoice)) return null;
     const teks = (v: unknown) => (typeof v === "string" || typeof v === "number" ? String(v).trim() : "");
     const angka = (v: unknown) => typeof v === "number" ? (Number.isFinite(v) ? v : null)
@@ -98,7 +98,7 @@ export function strukDariDetail(detail: Bebas, cadanganNomor?: unknown): StrukAc
         if (!invoiceNo || paymentAmount === null || (adaIp && invoicePayment === null)) return null;
         invoices.push({ invoiceNo, paymentAmount, invoicePayment });
     }
-    return { number: teks(detail.number) || teks(cadanganNomor), invoices };
+    return { number: teks(detail.number) || teks(cadanganNomor), transDate: teks(detail.transDate) || (cadanganTanggal ?? ""), invoices };
 }
 
 /** Identitas kasar sama: himpunan faktur sama, dan per faktur nominal baris ∈ {Σ paymentAmount, Σ invoicePayment} Accurate. */
@@ -183,7 +183,7 @@ async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ke
             const detail = detailRes?.d || detailRes;
             if (!detail) continue;
 
-            const s = strukDariDetail(detail, candidate?.number);
+            const s = strukDariDetail(detail, candidate?.number, group.transDate);
             if (!s) throw new Error(`bentuk detail sales-receipt ${candidate?.number ?? candidate?.id ?? "?"} tidak dikenali`);
             struk.push(s);
         } catch (detailErr) {

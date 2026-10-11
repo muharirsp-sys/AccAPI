@@ -182,7 +182,9 @@ export async function kirimPelunasan(rows: Bebas[], deps: DepsKirim): Promise<{ 
             const ragu = idx.filter((_, k) => !reports[k].ok);
             idx.forEach((i, k) => {
                 if (reports[k].ok) set([i], paket, "terposting", "", { item: reports[k].item ?? { s: true } });
-                else set([i], paket, "tidak_pasti", reports[k].message);
+                // Kebutuhan UI S6e-2b: kode server (mis. 409 database_changed tanpa sent:false) dibawa agar sebabnya bisa dijelaskan;
+                // klasifikasi tetap tidak pasti.
+                else set([i], paket, "tidak_pasti", reports[k].message, code ? { code } : {});
             });
             await lapor(ok, "SUCCESS");
             await lapor(ragu, "UNKNOWN");

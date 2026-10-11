@@ -112,7 +112,9 @@ test("butir 2: database sesi != expectedDatabaseId -> 409 database_changed sebel
 
 test("butir 6: ringkasan BL-41 — izin pelunasan.kirim ATAU finance.resolve_unknown; hitungan dari status & basi", async () => {
     const get = () => summaryGet(new NextRequest("http://app.test/api/idempotency/summary"));
-    assert.equal((await sebagai(["api_wrapper.execute", "finance.override_duplicate"], get)).status, 403);
+    const tolak = await sebagai(["api_wrapper.execute", "finance.override_duplicate"], get);
+    assert.equal(tolak.status, 403);
+    assert.deepEqual(await tolak.json(), { ok: false, code: "forbidden", error: "Ringkasan pelunasan butuh izin pelunasan.kirim atau finance.resolve_unknown." });
     const idem = [{ status: "UNKNOWN", basi: false, n: 2 }, { status: "UNKNOWN", basi: true, n: 1 }, { status: "SENDING", basi: true, n: 4 },
         { status: "SENDING", basi: false, n: 7 }, { status: "FAILED", basi: true, n: 5 }, { status: "PROCESSING", basi: true, n: 6 }, { status: "PROCESSING", basi: false, n: 9 }];
     for (const izin of [["pelunasan.kirim"], ["finance.resolve_unknown"]]) {
@@ -147,7 +149,9 @@ test("butir 5 (GET): pratinjau Selesaikan — hanya finance.resolve_unknown; car
     ];
     const url = `http://app.test/api/idempotency/resolve?key=${encodeURIComponent(k1)}&key=${encodeURIComponent(k2)}`;
     const get = () => resolveGet(new NextRequest(url));
-    assert.equal((await sebagai(["pelunasan.kirim", "finance.override_duplicate", "order.resolve_unknown"], get)).status, 403);
+    const tolak = await sebagai(["pelunasan.kirim", "finance.override_duplicate", "order.resolve_unknown"], get);
+    assert.equal(tolak.status, 403);
+    assert.deepEqual([(await tolak.json()).code], ["forbidden"]);
     assert.equal((await sebagai(["finance.resolve_unknown"], () => resolveGet(new NextRequest("http://app.test/api/idempotency/resolve")))).status, 400);
     const tanpaSesi = await sebagai(["finance.resolve_unknown"], get, { idem });
     assert.equal((await tanpaSesi.json()).code, "ACCURATE_SESSION_INCOMPLETE");
@@ -161,7 +165,8 @@ test("butir 5 (GET): pratinjau Selesaikan — hanya finance.resolve_unknown; car
     assert.equal(b.databaseId, "DB-1");
     const [a, c] = b.rows;
     assert.deepEqual([a.found, a.receiptNumbers, a.eligible], [true, ["PR.7"], true]);
-    assert.deepEqual(a.candidates, [{ number: "PR.7", invoices: [{ invoiceNo: "INV-1", paymentAmount: 1000, invoicePayment: null }] }]);
+    assert.deepEqual(a.candidates, [{ receiptNumber: "PR.7", invoiceNos: ["INV-1"], amount: 1000, transDate: "09/10/2026",
+        invoices: [{ invoiceNo: "INV-1", paymentAmount: 1000, invoicePayment: null }] }]);
     assert.deepEqual([c.found, c.receiptNumbers, c.eligible], [false, [], false], "SENDING < 2 mnt belum boleh diselesaikan");
     assert.ok(log.length > 0 && log.every((p) => p.endsWith("list.do") || p.endsWith("detail.do")));
     // Riwayat gagal dibaca: found = null + readError (bukan "tidak ada").
@@ -173,7 +178,9 @@ test("butir 5 (GET): pratinjau Selesaikan — hanya finance.resolve_unknown; car
 
 test("butir 5 (POST): hanya finance.resolve_unknown; masukan tak sah 400 SEBELUM DB/Accurate", async () => {
     const body = { key: "K", decision: "tidak_ada", reason: "Dicek langsung di Accurate oleh Finance", checkedSource: "Accurate", expectedDatabaseId: "DB-1" };
-    assert.equal((await sebagai(["pelunasan.kirim", "finance.override_duplicate", "order.resolve_unknown"], () => resolvePost(jsonPost("/api/idempotency/resolve", body)))).status, 403);
+    const tolak = await sebagai(["pelunasan.kirim", "finance.override_duplicate", "order.resolve_unknown"], () => resolvePost(jsonPost("/api/idempotency/resolve", body)));
+    assert.equal(tolak.status, 403);
+    assert.deepEqual(await tolak.json(), { ok: false, code: "forbidden", error: "Selesaikan pelunasan butuh izin finance.resolve_unknown." });
     for (const salah of [{ reason: "pendek" }, { decision: "hapus" }, { decision: "terposting", accurateNumber: "" }, { checkedSource: " " }, { expectedDatabaseId: "" }]) {
         const r = await sebagai(["finance.resolve_unknown"], () => resolvePost(jsonPost("/api/idempotency/resolve", { ...body, ...salah })));
         assert.equal(r.status, 400, JSON.stringify(salah));
@@ -207,8 +214,8 @@ test("B3: lock menolak entri yang key-nya tidak diawali PAY_<pelanggan>_<tanggal
     assert.equal(spasi.status, 200);
 });
 
-test("B6: ringkasan ?rows=1&databaseId= diteruskan ke penyaring daftar (route)", async () => {
-    const res = await sebagai(["pelunasan.kirim"], () => summaryGet(new NextRequest("http://app.test/api/idempotency/summary?rows=1&databaseId=DB-1")), { idem: [] });
+test("B6 + UI S6e-2b: ringkasan ?rows=1&database= diteruskan ke penyaring daftar (route)", async () => {
+    const res = await sebagai(["pelunasan.kirim"], () => summaryGet(new NextRequest("http://app.test/api/idempotency/summary?rows=1&database=DB-1")), { idem: [] });
     assert.equal(res.status, 200);
     const b = await res.json();
     assert.deepEqual(b.rows, []);
