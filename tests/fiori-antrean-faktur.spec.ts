@@ -357,7 +357,9 @@ test("Kirim: sesi tidak cocok = nonaktif berlasan; 502 HTML = 'belum pasti' + mu
     const main = page.locator("main");
     await main.getByRole("button", { name: "Kirim 2 faktur…" }).click(NAV);
     let dlg = page.getByRole("dialog");
-    await expect(dlg).toContainText("bukan database faktur 1001 — ganti database di API Wrapper");
+    // S7-sesi: Fakturist tidak memegang Konsol — arahan ke halaman Sesi Accurate (tab baru, kembali ke Antrean).
+    await expect(dlg).toContainText("bukan database faktur 1001 — ganti database di halaman Sesi Accurate");
+    await expect(dlg.getByRole("link", { name: "Buka Sesi Accurate (tab baru)" })).toHaveAttribute("href", "/sesi-accurate?returnTo=/antrean-faktur");
     await expect(dlg).not.toContainText("ACCURATE_INVOICE_DB_ID");
     await expect(dlg.getByRole("button", { name: "Kirim 2 faktur" })).toBeDisabled();
     await expect(dlg.getByRole("button", { name: "Kirim 2 faktur" })).toHaveAttribute("title", "Sesi Accurate Anda tidak cocok dengan database tujuan");

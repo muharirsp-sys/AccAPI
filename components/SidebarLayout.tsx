@@ -10,7 +10,7 @@
 import { createContext, Fragment, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LifeBuoy, LogOut, Menu, Search, X } from "lucide-react";
+import { KeyRound, LifeBuoy, LogOut, Menu, Search, X } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { canAccessPathWithKeys } from "@/lib/rbac";
 import { HOME_ITEM, activeNavigationItem, navigationForPermissions, roleProfile, roleShortcuts, type WorkspaceGroup, type WorkspaceItem } from "@/config/workspace-navigation";
@@ -79,6 +79,12 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
                 <hr />
                 <div className="fi-menu-row"><SchemeSwitcher /></div>
                 <hr />
+                {/* S7-sesi (owner D-01 Q2): masuk Accurate + pilih database tanpa Konsol, untuk pemegang salah satu SESI_ACCURATE_KEYS. */}
+                {canAccessPathWithKeys("/sesi-accurate", keys) && (
+                    <Link href="/sesi-accurate" prefetch={false} className="fi-menu-item" onClick={() => document.getElementById("fi-menu-profile")?.hidePopover()}>
+                        <KeyRound className="fi-icon" aria-hidden /><b>Sesi Accurate</b><small>Masuk dan pilih database</small>
+                    </Link>
+                )}
                 <button type="button" className="fi-menu-item" popoverTarget="fi-menu-profile" popoverTargetAction="hide" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_HELP_EVENT, { detail: { returnFocus: avatarRef.current } }))}>
                     <LifeBuoy className="fi-icon" aria-hidden /><b>Bantuan</b><small>Asisten dan panduan</small>
                 </button>
