@@ -7,7 +7,7 @@
 --                          pelunasan ditolak (bentuk/nominal/s:false). sebagian = batas waktu (klien memanggil lagi). gagal = sebab
 --                          (kelas galat lib/kasir/pembaca KELAS_GALAT). lengkap_pada hanya maju (galat tidak memundurkannya).
 -- Cache, bukan jejak: TANPA trigger. Hak accapi_app (SELECT/INSERT/UPDATE, tanpa DELETE) ada di docs/handover/DDL_K1B.sql.
--- Nomor 0031: 0030 dipakai cabang S7-2 (0030_principal_log.sql, belum merged) — periksa ulang sesudah merge.
+-- Nomor 0031: SESUDAH 0030_principal_log.sql (S7-2 #160, merged); entri migrate-pg principal_log berjalan lebih dulu.
 --
 -- Apply otomatis lewat scripts/migrate-pg.mjs (entri "kasir_pelunasan_baca (status baca K1b)") saat container start bila
 -- DATABASE_MIGRATION_URL terpasang; selain itu docs/handover/DDL_K1B.sql SEBELUM image baru. Manual:

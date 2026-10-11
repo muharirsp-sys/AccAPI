@@ -643,9 +643,36 @@ export const migrations = [
     `,
   },
   {
+    // 2026-10-11 (S7-2 BL-64; DRAFT — zona skema, butuh review manusia). Riwayat principal/varian/alias APPEND-ONLY, ditulis
+    // dalam transaksi yang sama dengan perubahannya. EXPAND saja: tabel baru tanpa pembaca lama. Trigger tolak UPDATE/DELETE/
+    // TRUNCATE + REVOKE + USAGE sequence = docs/handover/DDL_S7_2.sql (IT Support saat deploy), BUKAN di sini — jalur tulis
+    // /api/principals menolak 503 bila trigger itu belum ada. sudahAda lewat pg_indexes (tidak bergantung hak, RENDAH S7-0).
+    // Lihat db/migrations/0030_principal_log.sql.
+    nama: "principal_log",
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema()
+               AND indexname IN ('principal_log_pkey', 'idx_principal_log_principal') HAVING count(*) = 2`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS principal_log (
+          id           bigserial PRIMARY KEY,
+          entitas      text NOT NULL,
+          kunci        text NOT NULL,
+          principal_id text NOT NULL,
+          aksi         text NOT NULL,
+          before       jsonb,
+          after        jsonb,
+          aktor        text NOT NULL,
+          waktu        timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT principal_log_entitas CHECK (entitas IN ('principal', 'varian', 'alias')),
+          CONSTRAINT principal_log_aksi CHECK (aksi IN ('buat', 'aktif', 'nonaktif', 'hapus')),
+          CONSTRAINT principal_log_aktor_isi CHECK (btrim(aktor) <> '')
+      );
+      CREATE INDEX IF NOT EXISTS idx_principal_log_principal ON principal_log (principal_id, id);
+    `,
+  },
+  {
     // 2026-10-12 (K1b BL-59 pembaca pelunasan Accurate Kasir; DRAFT — zona uang + skema, butuh review manusia). Tabel baru saja
     // (tanpa data, tanpa trigger: cache). Hak accapi_app (SELECT/INSERT/UPDATE) = docs/handover/DDL_K1B.sql. Lihat
-    // db/migrations/0031_kasir_baca.sql (0030 dipakai cabang S7-2). Satu indeks (PK) -> sudahAda memeriksa PK.
+    // db/migrations/0031_kasir_baca.sql; SESUDAH entri principal_log (0030, S7-2 #160). Satu indeks (PK) -> sudahAda memeriksa PK.
     nama: "kasir_pelunasan_baca (status baca K1b)",
     sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'kasir_pelunasan_baca_pkey'`,
     sql: `
