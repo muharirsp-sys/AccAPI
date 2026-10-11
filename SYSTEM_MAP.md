@@ -131,11 +131,15 @@ UI upload laporan harian
 
 ### 1. Autentikasi & Guard Halaman
 ```
-Browser -> /login page
-  -> app/(auth)/actions.ts [signIn(email, password)]
-  -> lib/auth.ts [auth.api.signInWithEmailAndPassword]
-  -> Better Auth + Drizzle SQLite (tabel user/session)
-  -> Redirect /dashboard
+Browser -> /login page (app/(auth)/login/page.tsx; kerangka Fiori app/(auth)/layout.tsx untuk login/lupa/atur ulang/daftar)
+  -> authClient.signIn.email -> /api/auth/sign-in/email (lib/auth.ts; 5 percobaan/15 menit/IP)
+  -> Better Auth + Drizzle Postgres (tabel user/session)
+  -> window.location.assign("/") | galat generik (401) · "belum diverifikasi" (403) · "terlalu banyak percobaan" (429)
+  ?error= (hari ini hanya /api/auth/callback tanpa sesi app) -> kalimat terpetakan; kode tak dikenal -> kalimat umum (teks query tidak dicetak)
+
+Browser -> /forgot-password -> authClient.requestPasswordReset -> layar NETRAL identik (tanpa mengulang email)
+  -> email tautan /api/auth/reset-password/<token> -> /reset-password?token=… | ?error=INVALID_TOKEN
+  -> /reset-password: tanpa token/tak berlaku -> "Tautan tidak berlaku" + Minta tautan baru; sandi ≥ 6 + ketik ulang sama -> authClient.resetPassword
 
 Browser -> any /dashboard/* route
   -> app/(dashboard)/layout.tsx [DashboardLayout]
@@ -599,6 +603,7 @@ parse = `summary_manual_parse_pdf_ai` → `summary_mistral.extract` (Pass 3 di d
 AccAPI/_github_clean/
 ├── app/
 │   ├── (auth)/
+│   │   ├── layout.tsx                  # Kerangka Fiori: panel merek + kartu (S7c)
 │   │   ├── login/page.tsx
 │   │   ├── register/page.tsx
 │   │   ├── forgot-password/page.tsx
