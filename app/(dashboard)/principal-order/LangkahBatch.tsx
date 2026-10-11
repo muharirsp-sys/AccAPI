@@ -24,7 +24,7 @@ import { isDuplicateFinding } from "@/lib/order-duplicate";
 import { rupiah } from "@/lib/promo-ui";
 import {
     ALASAN_IZIN, DitolakDenganDaftar, PESAN_TIDAK_PASTI, TidakPasti, angka, baca, ditahanUtuh, labelAntrean, soDariKunci, tanggalSo, tulis,
-    waktuWita, type Ack, type BarisAntrean, type Batch, type CalonFaktur, type HasilAntre, type Line, type Rencana, type StatusAntrean,
+    waktuWita, type Ack, type BarisAntrean, type Batch, type CalonFaktur, type HasilAntre, type Line, type Rencana, type SoTidakIkut, type StatusAntrean,
 } from "./bersama";
 
 const LANGKAH = ["Unggah", "Validasi", "Calon faktur", "Diantrekan"];
@@ -71,6 +71,12 @@ type Props = {
 type Dialog = { jenis: "ganda"; soNo: string; finding: string } | { jenis: "antre" } | null;
 
 const pesanDari = (e: unknown, umum: string) => (e instanceof Error && e.message ? e.message : umum);
+/** SO yang tidak ikut, satu kalimat per alasan: "alasan (SO a, b)". */
+function perAlasan(skipped: SoTidakIkut[]) {
+    const m = new Map<string, string[]>();
+    for (const s of skipped) m.set(s.reason, [...(m.get(s.reason) ?? []), s.soNo]);
+    return [...m].map(([alasan, so]) => `${alasan} (SO ${so.join(", ")})`).join("; ");
+}
 const selisihOf = (l: Line) => (l.expectedPrice == null ? null : Number(l.price) - Number(l.expectedPrice));
 
 function BadgeBaris({ line }: { line: Line }) {
@@ -248,14 +254,21 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
             throw e;
         }
         setDialog(null);
-        setHasilAntre({
+        const hasil: HasilAntre = {
             queued: Number(data.queued) || 0,
             alreadyPosted: (data.alreadyPosted ?? []) as HasilAntre["alreadyPosted"],
             skipped: (data.skipped ?? []) as HasilAntre["skipped"],
-        });
+        };
+        setHasilAntre(hasil);
+        // `ok` dengan 0 diantrekan (mis. batch dihapus/diganti/divalidasi ulang saat diantrekan — ditolak di bawah kunci batch) BUKAN
+        // sukses: peringatan beralasan di atas halaman (tetap tampil bila batch ternyata sudah tidak ada saat dimuat ulang).
+        if (hasil.queued === 0) {
+            setStrip({ tone: "warn", title: "Tidak ada faktur yang diantrekan.",
+                body: hasil.skipped.length ? `Sebabnya: ${perAlasan(hasil.skipped)}.` : "Server tidak menyebut SO yang tertolak; muat ulang lalu siapkan ulang calon faktur." });
+        }
         setRencana(null);
         setLangkah("antre");
-        muatAntrean(); onBerubah();
+        muatAntrean(); muatIsi(); onBerubah();
     }
 
     const langkahKe = langkah === "validasi" ? 1 : langkah === "calon" ? 2 : 3;
@@ -534,8 +547,8 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
     ];
     const halamanAntre = (
         <>
-            {hasilAntre && (
-                <MessageStrip tone={hasilAntre.queued > 0 ? "pos" : "info"} title={`${hasilAntre.queued} faktur masuk Antrean Faktur.`}>
+            {hasilAntre && hasilAntre.queued > 0 && (
+                <MessageStrip tone="pos" title={`${hasilAntre.queued} faktur masuk Antrean Faktur.`}>
                     Faktur dibuat saat Fakturist menekan Kirim di Antrean Faktur; sebelum itu barisnya bisa dibuang di sana.{" "}
                     <Link href="/antrean-faktur">Buka Antrean Faktur</Link>
                 </MessageStrip>

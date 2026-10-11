@@ -536,6 +536,27 @@ test("Ganti/Simpan 409 BERKAS_SUDAH_DISIMPAN (unggahan lain baru menyimpan berka
     expect(tulis().map((k) => field(k.body as string, "replace"))).toEqual(["true", "false"]);
 });
 
+test("Antrekan queued:0 (semua SO tertolak di bawah kunci batch) = peringatan dengan alasannya, bukan '0 faktur masuk'", async ({ page }) => {
+    const HILANG = "batch laporan principal sudah dihapus atau diganti (atau divalidasi ulang) saat diantrekan; muat ulang lalu ulangi dari batch yang ada";
+    await pasang(page, {
+        calon: (queue, r) => r.fulfill(json(queue
+            ? { ok: true, id: "b1", queued: 0, keys: [], alreadyPosted: [], skipped: [...SKIPPED, ...READY.map((c) => ({ soNo: c.soNo, reason: HILANG }))] }
+            : { ok: true, dry_run: true, id: "b1", ready: READY, skipped: SKIPPED })),
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/principal-order?batch=b1", NAV);
+    await page.locator(".fi-ftb").getByRole("button", { name: "Lanjut ke calon faktur" }).click(NAV);
+    await page.locator(".fi-ftb").getByRole("button", { name: "Antrekan 2 faktur…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Antrekan 2 faktur", exact: true }).click();
+    const main = page.locator("main");
+    const strip = main.getByRole("status").filter({ hasText: "Tidak ada faktur yang diantrekan." });
+    await expect(strip).toBeVisible();
+    await expect(strip).toHaveAttribute("data-tone", "warn");
+    await expect(strip).toContainText(`${HILANG} (SO 1671-SOP-260013022, 1671-SOP-260013026)`);
+    await expect(strip).toContainText("ada baris yang perlu ditinjau (SO 1671-SOP-260013024, 1671-SOP-260013030)");
+    await expect(main.getByText("0 faktur masuk Antrean Faktur.")).toHaveCount(0);
+});
+
 test("Batch tidak ditemukan = galat (bukan kosong); ponsel 390 px tanpa gulir menyamping di Unggah dan Validasi", async ({ page }) => {
     await pasang(page, { detail: (id, r) => (id === "hilang" ? r.fulfill(json({ ok: false, error: "Batch tidak ditemukan" }, 404)) : r.fulfill(json({ ok: true, batch: BATCH, lines: LINES }))) });
     await page.setViewportSize({ width: 1366, height: 900 });
