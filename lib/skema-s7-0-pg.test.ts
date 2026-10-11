@@ -9,7 +9,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
-import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
+import { is, SQL } from "drizzle-orm";
+import { getTableConfig, PgDialect, type PgTable } from "drizzle-orm/pg-core";
 import { principal, principalAlias, principalVariant, userGroup } from "../db/schema.ts";
 
 const PG_URL = process.env.AM040_DATABASE_URL ?? "";
@@ -46,7 +47,7 @@ const DASAR = `
         user_id     text NOT NULL,
         group_id    text NOT NULL,
         assigned_by text,
-        assigned_at timestamp NOT NULL DEFAULT now(),
+        assigned_at timestamp NOT NULL,
         CONSTRAINT user_group_user_id_group_id_pk PRIMARY KEY (user_id, group_id),
         CONSTRAINT user_group_user_id_user_id_fk FOREIGN KEY (user_id) REFERENCES "user"(id),
         CONSTRAINT user_group_group_id_access_group_id_fk FOREIGN KEY (group_id) REFERENCES access_group(id)
@@ -95,10 +96,20 @@ async function katalog(pool: Pool) {
     const constraint = await pool.query(`SELECT c.conrelid::regclass::text AS tabel, c.conname, pg_get_constraintdef(c.oid) AS def
         FROM pg_constraint c WHERE c.connamespace = current_schema()::regnamespace AND c.conrelid::regclass::text = ANY($1)
         ORDER BY 1, 2`, [TABEL]);
-    const indeks = await pool.query(`SELECT tablename, indexname, replace(indexdef, current_schema() || '.', '') AS def
-        FROM pg_indexes WHERE schemaname = current_schema() AND tablename = ANY($1) ORDER BY 1, 2`, [TABEL]);
+    const indeks = await pool.query(`SELECT t.relname AS tablename, c.relname AS indexname,
+            replace(pg_get_indexdef(c.oid), current_schema() || '.', '') AS def, x.indisunique AS unik,
+            pg_get_expr(x.indpred, x.indrelid) AS predikat
+        FROM pg_index x JOIN pg_class c ON c.oid = x.indexrelid JOIN pg_class t ON t.oid = x.indrelid
+        WHERE t.relnamespace = current_schema()::regnamespace AND t.relname = ANY($1) ORDER BY 1, 2`, [TABEL]);
     return { kolom: kolom.rows, constraint: constraint.rows, indeks: indeks.rows };
 }
+
+// Bentuk teks SQL yang sebanding antara Drizzle (sqlToQuery) dan katalog (pg_get_expr/column_default): tanpa awalan tabel,
+// cast ::text/::boolean, kutip, kurung, spasi. Cukup untuk predikat/default sederhana di skema ini (bukan pembanding SQL umum).
+const dialek = new PgDialect();
+const teksSql = (v: unknown) => v === undefined || v === null ? "" : is(v, SQL) ? dialek.sqlToQuery(v).sql : typeof v === "string" ? `'${v}'` : String(v);
+const normSql = (s: string | null | undefined) => (s ?? "").replace(/::(text|boolean)\b/g, "").replace(/"[^"]+"\./g, "").replace(/["()\s]/g, "");
+const tipeDrizzle = (t: string) => (t === "timestamp" ? "timestamp without time zone" : t);
 
 const kodeGalat = (kode: string) => (e: unknown) => (e as { code?: string }).code === kode;
 
@@ -160,19 +171,23 @@ test("PG S7-0: DDL_S7_0.sql dua kali idempoten + VERIFIKASI; sesudahnya migrate-
         }
         assert.deepEqual(await katalog(pool), bentukMigrasi, "db/migrations = entri migrate-pg");
     });
-    // Drizzle: nama kolom (+NOT NULL), indeks, CHECK, FK, PK sama dengan katalog.
+    // Drizzle: kolom (tipe, NOT NULL, default), indeks (unik + predikat parsial), CHECK/FK/PK (nama) sama dengan katalog.
     const k = bentukMigrasi!;
     const tabelDrizzle: [string, PgTable][] = [["principal", principal], ["principal_variant", principalVariant], ["principal_alias", principalAlias], ["user_group", userGroup]];
     for (const [nama, t] of tabelDrizzle) {
         const cfg = getTableConfig(t);
         assert.deepEqual(
-            cfg.columns.map((c) => `${c.name}:${c.notNull ? "NO" : "YES"}`).sort(),
-            k.kolom.filter((r) => r.table_name === nama).map((r) => `${r.column_name}:${r.is_nullable}`).sort(),
-            `kolom Drizzle ${nama}`);
-        const namaDb = new Set([...k.indeks, ...k.constraint].filter((r) => (r.tablename ?? r.tabel) === nama).map((r) => r.indexname ?? r.conname));
-        const namaDrizzle = [...cfg.indexes.map((i) => i.config.name), ...cfg.checks.map((c) => c.name),
-            ...cfg.foreignKeys.map((f) => f.getName()), ...cfg.primaryKeys.map((p) => p.getName())];
-        for (const n of namaDrizzle) assert.ok(namaDb.has(n), `${nama}: ${n} (Drizzle) ada di DB`);
+            cfg.columns.map((c) => [c.name, tipeDrizzle(c.getSQLType()), c.notNull ? "NO" : "YES", c.hasDefault ? normSql(teksSql(c.default)) : ""].join("|")).sort(),
+            k.kolom.filter((r) => r.table_name === nama).map((r) => [r.column_name, r.data_type, r.is_nullable, normSql(r.column_default)].join("|")).sort(),
+            `kolom Drizzle ${nama} (nama|tipe|nullable|default)`);
+        const indeksDb = new Map(k.indeks.filter((r) => r.tablename === nama).map((r) => [r.indexname, `${r.unik}|${normSql(r.predikat)}`]));
+        for (const i of cfg.indexes) {
+            assert.equal(indeksDb.get(i.config.name), `${Boolean(i.config.unique)}|${normSql(teksSql(i.config.where))}`, `${nama}: indeks ${i.config.name} (unik|predikat)`);
+        }
+        const namaDb = new Set(k.constraint.filter((r) => r.tabel === nama).map((r) => r.conname));
+        for (const n of [...cfg.checks.map((c) => c.name), ...cfg.foreignKeys.map((f) => f.getName()), ...cfg.primaryKeys.map((p) => p.getName())]) {
+            assert.ok(namaDb.has(n), `${nama}: ${n} (Drizzle) ada di DB`);
+        }
     }
 });
 
@@ -208,7 +223,7 @@ test("PG S7-0: constraint — satu bintang per user, alias_norm unik global, FK 
         // Bintang: satu per user; user lain boleh berbintang di grup yang sama.
         await q(`INSERT INTO "user" (id, name, email) VALUES ('u1', 'A', 'a@x'), ('u2', 'B', 'b@x')`);
         await q(`INSERT INTO access_group (id, name) VALUES ('g1', 'G1'), ('g2', 'G2')`);
-        await q(`INSERT INTO user_group (user_id, group_id) VALUES ('u1', 'g1'), ('u1', 'g2'), ('u2', 'g1')`);
+        await q(`INSERT INTO user_group (user_id, group_id, assigned_at) VALUES ('u1', 'g1', now()), ('u1', 'g2', now()), ('u2', 'g1', now())`);
         await q(`UPDATE user_group SET is_primary = true WHERE user_id = 'u1' AND group_id = 'g1'`);
         await q(`UPDATE user_group SET is_primary = true WHERE user_id = 'u2' AND group_id = 'g1'`);
         await assert.rejects(q(`UPDATE user_group SET is_primary = true WHERE user_id = 'u1' AND group_id = 'g2'`), kodeGalat("23505"), "dua bintang ditolak");
@@ -221,8 +236,8 @@ test("PG S7-0: BACKFILL — hanya user tepat 1 grup, user > 1 grup / sudah berbi
         await jalankanBerkas(pool, ddl);
         await pool.query(`INSERT INTO "user" (id, name, email) VALUES ('u1','1','1@x'), ('u2','2','2@x'), ('u3','3','3@x'), ('u4','4','4@x'), ('u5','5','5@x')`);
         await pool.query(`INSERT INTO access_group (id, name) VALUES ('g1', 'G1'), ('g2', 'G2')`);
-        await pool.query(`INSERT INTO user_group (user_id, group_id, is_primary) VALUES
-            ('u1','g1',false), ('u2','g1',false), ('u2','g2',false), ('u4','g2',true), ('u5','g1',false), ('u5','g2',true)`);
+        await pool.query(`INSERT INTO user_group (user_id, group_id, is_primary, assigned_at) VALUES
+            ('u1','g1',false,now()), ('u2','g1',false,now()), ('u2','g2',false,now()), ('u4','g2',true,now()), ('u5','g1',false,now()), ('u5','g2',true,now())`);
         const keadaan = async () => (await pool.query(`SELECT user_id, group_id, is_primary FROM user_group ORDER BY 1, 2`)).rows
             .map((r) => `${r.user_id}/${r.group_id}:${r.is_primary}`);
         const diperbarui = (h: Hasil[]) => h.filter((r) => r.command === "UPDATE").reduce((n, r) => n + (r.rowCount ?? 0), 0);
