@@ -1014,9 +1014,14 @@ access_group ──── group_permission (group_id)   [permission_key = "modul
   └──────────── user_group (group_id + user_id)  [akses user = UNION group; is_primary = bintang grup utama, maks. 1/user — S7-0, dibaca mulai S7-1/S7-3]
 permission_audit_log [siapa ubah group/permission siapa, kapan]
 
-# Principal resmi (S7-0 BL-64; tabel saja — benih & pembaca = S7-2; DDL manual docs/handover/DDL_S7_0.sql SEBELUM image)
-principal [code unik = kode OPC/Klaim] ── principal_variant (principal_id + variant_key; '' = tanpa varian)
-  └──────────── principal_alias [id; alias_norm unik per kelompok: kode Master Barang | nama/label/kode OPC -> principal (+ varian); nilai WAJIB dari normalizer baku S7-2]
+# Principal resmi (S7-0/S7-2 BL-64; DDL manual docs/handover/DDL_S7_0.sql lalu DDL_S7_2.sql SEBELUM image)
+principal [code unik = kode OPC/Klaim, TETAP] ── principal_variant (principal_id + variant_key; '' = varian dasar)
+  └──────────── principal_alias [id; alias_norm unik per kelompok: kode Master Barang | nama/label/kode OPC -> principal (+ varian); nilai WAJIB dari normalizer baku lib/principal/normalisasi.ts]
+principal_log [append-only (trigger + REVOKE di DDL_S7_2): satu baris per buat/aktif/nonaktif/hapus, transaksi sama dengan perubahannya]
+  API app/api/principals/** (lib/principal/tulis.ts; kontrak docs/handover/S7-2-KONTRAK-PRINCIPAL-API.md): GET daftar/riwayat
+  (principles.view), tulis (principles.upload; hapus alias principles.delete) — 409 berkode tanpa menimpa, 503 tanpa trigger penjaga.
+  Resolver lib/principal/resolver.ts (alias saja: cocok | tak_dikenal | ambigu). Laporan + benih: npx tsx scripts/principal-laporan.mjs
+  (baca-saja) -> laporan.md/json + benih.sql (INSERT ... ON CONFLICT DO NOTHING) untuk ditinjau owner. Pemakai belum beralih (S7-2b).
 ```
 
 **Status Lifecycle offBatch:**
