@@ -377,6 +377,32 @@ test("RENDAH 3: metode di luar daftar putih (CASH_OTHER/BANK_TRANSFER/BANK_CHEQU
         `Uang tak teralokasi ${kartu.nomor} belum dijelaskan: Rp 500.000 (metode "CREDIT_CARD" tak dikenal; tidak dihitung ke orang).`);
 });
 
+test("K1b RENDAH 5a: metode tak dikenal ber-cheque 0 DILEWATI — tanpa ember sisa 0 (CHECK sisa <> 0 membuat Tutup terhalang permanen)", () => {
+    const nol = pel("CREDIT_CARD", 0, [[11, 100_000]]);
+    const nolTanpaBaris = pel("GIRO_MUNDUR", 0, []);
+    const kartu = pel("CREDIT_CARD", 25_000, [[11, 25_000]]);
+    const h = rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [nol, nolTanpaBaris, kartu], setoran: [] });
+    assert.deepEqual(h.takTeralokasi.map((t) => [t.pelunasanId, t.sisa]), [[kartu.id, Rp(25_000)]], "hanya ember bernominal");
+    assert.ok(h.takTeralokasi.every((t) => t.sisa !== 0), "tidak ada ember sisa 0");
+    assert.deepEqual(h.baris, [], "tidak dihitung ke orang");
+    assert.deepEqual(penghalangTutup(rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [nol], setoran: [] })).bisaDitutup, true);
+});
+
+// K-1 (owner) BELUM dijawab: uji ini SENGAJA merah (todo -> tidak menggagalkan `npm test`) dan netral terhadap pilihan:
+// (a) ember tak teralokasi `nominal_negatif` (seluruh cheque, wajib dijelaskan, tidak mengurangi total orang) — ATAU
+// (b) dinetkan ke orang, total orang < 0 = status `selisih`. Keduanya membuat uji ini hijau; hapus `todo` saat K-1 dipasang.
+test("K1b RENDAH 5b (K-1 TERBUKA): pelunasan uang ber-cheque NEGATIF tidak boleh menggagalkan rekonsiliasi SEHARI", { todo: "K-1 menunggu owner — pilihan (a) ember nominal_negatif / (b) netto -> selisih" }, () => {
+    const negatif = pel("CASH_OTHER", -300_000, [[12, -300_000]]);
+    const negatifCampur = pel("BANK_TRANSFER", -80_000, [[14, -80_000]]);
+    const positifC = pel("CASH_OTHER", 30_000, [[14, 30_000]]);
+    const sah = pel("CASH_OTHER", 50_000, [[11, 50_000]]);
+    const h = rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [negatif, negatifCampur, positifC, sah],
+        setoran: [setor("S-A", 50_000), setor("S-B", 0), setor("S-C", 0)] });
+    assert.equal(baris(h, "S-A").status, "klop", "orang lain tetap direkonsiliasi");
+    assert.equal(h.total.pelunasan + h.total.takTeralokasi, Rp(-300_000 - 80_000 + 30_000 + 50_000), "invarian Σ orang + Σ ember = Σ cheque");
+    assert.equal(penghalangTutup(h).bisaDitutup, false, "uang negatif wajib terlihat (ember belum dijelaskan / selisih), tidak lolos diam-diam");
+});
+
 test("RENDAH 4–6: gabungan siklik = galat; klop/setoran negatif & urutan revisi ditolak lib; `pada` wajib Date atau ISO berofset", () => {
     const siklik = { gabunganPerBulan: new Map([["2026-10", new Map([["A", "B"], ["B", "C"], ["C", "A"]])]]) };
     assert.throws(() => orangDariKode("A", D, siklik), /siklik/);

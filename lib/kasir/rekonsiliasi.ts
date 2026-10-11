@@ -136,11 +136,17 @@ export function alokasiPelunasan(daftar: readonly Pelunasan[], peta: PetaOrang) 
             continue;
         }
         if (!METODE_UANG.includes(p.metode)) {
+            // K1b RENDAH 5a: cheque 0 = tak ada uang yang tak teralokasi; ember sisa 0 tak bisa dijelaskan (CHECK sisa <> 0) -> lewati.
+            if (p.chequeAmount === 0) continue;
             takTeralokasi.push({ pelunasanId: p.id, nomor: p.nomor, metode: p.metode, chequeAmount: p.chequeAmount, jumlahInvoicePayment: 0,
                 sisa: p.chequeAmount, arah: p.chequeAmount > 0 ? "lebih_bayar" : "kredit", alasan: "metode_tak_dikenal",
                 orang: [...new Set(p.faktur.map((f) => orangDariSalesmanId(f.masterSalesmanId, p.tanggal, peta).orang))] });
             continue;
         }
+        // K-1 TERBUKA (owner, K1b 5b): cheque metode UANG < 0 kini dinetkan ke orang -> total orang < 0 -> klop() melempar ->
+        // rekonsiliasiHari gagal untuk SEMUA orang (uji todo "K1b RENDAH 5b"). Titik pasang: (a) di sini — `if (p.chequeAmount < 0)`
+        // -> ember `nominal_negatif` (seluruh cheque, orang[] dari baris) + `continue` (+ alasan baru di AlasanTakTeralokasi &
+        // alasanEmber); ATAU (b) di status() — pelunasan < 0 -> "selisih" sebelum klop().
         const per = new Map<string, BagianOrang>();
         let jumlah = 0;
         for (const f of p.faktur) {
