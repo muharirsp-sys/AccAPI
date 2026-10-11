@@ -80,7 +80,8 @@ test("D-14 resolve purchase-payment: hanya finance.resolve_unknown (retry_post/o
 
 test("D-18 override sales-receipt: hanya finance.override_duplicate -> lolos; alasan wajib; tanpa tulis DB", async () => {
     const successRow = [{ key: "PAY_C1_01/09/2026_INV-1|1000|", status: "SUCCESS", updatedAt: new Date(), createdAt: null }];
-    const body = (overrideReason = "") => ({ keys: [{ key: successRow[0].key }], allowLockedKeys: [successRow[0].key], overrideReason });
+    // Entri lock berbentuk sidik jari asli (pelanggan + tanggal = awalan key; S6e-2a tinjauan B3 menolak yang tidak cocok).
+    const body = (overrideReason = "") => ({ keys: [{ key: successRow[0].key, customerNo: "C1", transDate: "01/09/2026" }], allowLockedKeys: [successRow[0].key], overrideReason });
     const denied = await asUserWith(financeAllBut("finance.override_duplicate"), () => lockIdempotency(jsonPost("/api/idempotency/lock", body("alasan override yang cukup panjang"))), successRow);
     assert.equal(denied.status, 403, "override tanpa finance.override_duplicate harus 403");
     assert.equal((await denied.json()).code, "OVERRIDE_PERMISSION_REQUIRED", "S6e-2b memetakan menurut kode");
