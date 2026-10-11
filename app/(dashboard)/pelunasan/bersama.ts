@@ -157,5 +157,5 @@ export const ALASAN = {
     selesaikan: "Hanya Finance yang dapat menyelesaikan baris tidak pasti.",
     /** Server menolak 403 walau tombol aktif (izin dicabut sesudah halaman dibuka): jangan suruh menekan tombol yang sama. */
     selesaikanDitolak: "Server menolak: akun Anda tidak (lagi) berhak menyelesaikan baris tidak pasti; minta admin menambahkan izinnya, lalu muat ulang halaman.",
-    konsol: "Akun Anda belum bisa membuka Konsol AOL tempat masuk ke Accurate; minta admin/IT menambahkan aksesnya atau membukakan database.",
+    konsol: "Akun Anda belum bisa membuka Konsol AOL (khusus Admin/IT); minta admin/IT bila jenis dokumen ini perlu dikirim.",
 };

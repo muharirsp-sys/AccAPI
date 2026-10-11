@@ -64,7 +64,7 @@ function galatKunci(e: GalatKirim): { pesan: string; sesi?: boolean; basi?: stri
         case "OVERRIDE_REASON_REQUIRED": return { pesan: "Alasan izin Finance minimal 15 karakter; batalkan izin lalu izinkan lagi dengan alasan." };
         case "PLACEHOLDER_AKUN": return { pesan: "Akun potongan belum lengkap; kembali ke langkah Akun dan isi akunnya." };
         case "DATABASE_REQUIRED": return { pesan: "Database Accurate pratinjau tidak terbaca; tekan Periksa ulang sesi.", sesi: true };
-        case "ACCURATE_SESSION_INCOMPLETE": return { pesan: "Sesi Accurate belum lengkap; masuk lagi dan buka database lewat Konsol AOL.", sesi: true };
+        case "ACCURATE_SESSION_INCOMPLETE": return { pesan: "Sesi Accurate belum lengkap; masuk lagi dan buka database di halaman Sesi Accurate.", sesi: true };
         case "database_changed": return { pesan: "Database Accurate sesi Anda berubah sejak pratinjau; buka lagi database pratinjau atau ulangi pratinjau.", sesi: true };
         case "KEY_IDENTITY_MISMATCH": return { pesan: "Kunci baris tidak cocok dengan pelanggan dan tanggalnya (galat aplikasi); ulangi pratinjau, bila berulang laporkan ke IT." };
         case "BLOCKED_KEYS": return { pesan: "Status ganda berubah sejak pratinjau.", basi: "Status ganda berubah sejak pratinjau; ulangi pratinjau." };
@@ -76,16 +76,15 @@ function galatKunci(e: GalatKirim): { pesan: string; sesi?: boolean; basi?: stri
     }
 }
 
-function KonsolLink({ bisa }: { bisa: boolean }) {
-    return bisa
-        ? <a href="/api-wrapper" target="_blank" rel="noopener">Masuk ke Accurate di Konsol <ExternalLink className="fi-icon" aria-hidden style={{ display: "inline", verticalAlign: "-3px" }} /></a>
-        : <span className="fi-why">{ALASAN.konsol}</span>;
+/** Halaman Sesi Accurate (S7-sesi) terbuka bagi pemegang pelunasan.kirim — gerbang halaman ini. */
+function SesiLink() {
+    return <a href="/sesi-accurate?returnTo=/pelunasan" target="_blank" rel="noopener">Masuk ke Accurate di halaman Sesi Accurate <ExternalLink className="fi-icon" aria-hidden style={{ display: "inline", verticalAlign: "-3px" }} /></a>;
 }
 
 // ── Langkah 4 · Tinjau ──────────────────────────────────────────────────────────────────────────────────
 
-export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, bisaKonsol, menyiapkan, galatSiap, onUlangi, onKembali, onHasil }: {
-    tinjauan: Tinjauan; sesi: Load<Sesi>; muatSesi: () => void; izin: Izin; bisaKonsol: boolean;
+export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, galatSiap, onUlangi, onKembali, onHasil }: {
+    tinjauan: Tinjauan; sesi: Load<Sesi>; muatSesi: () => void; izin: Izin;
     menyiapkan: string | null; galatSiap: string | null; onUlangi: () => void; onKembali: () => void; onHasil: (h: Hasil) => void;
 }) {
     const [diizinkan, setDiizinkan] = useState<Set<string>>(new Set());
@@ -121,7 +120,7 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, bisaKonsol, m
         // Database dibaca ULANG tepat sebelum kirim: yang dikirim = yang ditampilkan di dialog (server juga menolak 409 database_changed).
         const cek = await bacaSesi();
         if (cek.status !== "siap" || !cek.data) { muatSesi(); throw new Error(`${cek.error ?? "Sesi Accurate tidak terbaca."} Tidak ada yang dikirim.`); }
-        if (!cek.data.databaseConnected) { muatSesi(); throw new Error("Sesi Accurate Anda berakhir; masuk lagi lewat Konsol. Tidak ada yang dikirim."); }
+        if (!cek.data.databaseConnected) { muatSesi(); throw new Error("Sesi Accurate Anda berakhir; masuk lagi di halaman Sesi Accurate. Tidak ada yang dikirim."); }
         if (cek.data.databaseId !== t.databaseId) {
             muatSesi();
             throw new Error(`Database Accurate berubah sejak pratinjau (kini ${namaDatabase(cek.data)}). Tidak ada yang dikirim; ulangi pratinjau.`);
@@ -187,7 +186,7 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, bisaKonsol, m
         <>
             {(sesi.status === "galat" || sesiBerakhir) && (
                 <MessageStrip tone="neg" title="Sesi Accurate Anda berakhir.">
-                    Masuk lagi dan buka database {namaDatabase(t)} untuk mengirim. Pratinjau dan pilihan Anda tetap di halaman ini. <KonsolLink bisa={bisaKonsol} />
+                    Masuk lagi dan buka database {namaDatabase(t)} untuk mengirim. Pratinjau dan pilihan Anda tetap di halaman ini. <SesiLink />
                 </MessageStrip>
             )}
             {dbBerubah && s && (
@@ -361,7 +360,7 @@ export function LangkahHasil({ tinjauan: t, hasil, izin, onBaru }: { tinjauan: T
             )}
             {kodeSesi && kodeSesi !== "database_changed" && (
                 <MessageStrip tone="warn" title="Server menolak sebelum mengirim.">
-                    {kodeSesi === "PERMISSION_REQUIRED" ? ALASAN.kirim : "Sesi Accurate belum lengkap; masuk lagi lewat Konsol."} Baris yang ditolak tidak terkirim (Gagal, boleh diulang).
+                    {kodeSesi === "PERMISSION_REQUIRED" ? ALASAN.kirim : "Sesi Accurate belum lengkap; masuk lagi di halaman Sesi Accurate."} Baris yang ditolak tidak terkirim (Gagal, boleh diulang).
                 </MessageStrip>
             )}
             {n.tidak_pasti > 0 && (

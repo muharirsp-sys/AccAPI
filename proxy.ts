@@ -23,5 +23,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-    matcher: ["/((?!api|_next/static|_next/image|favicon.ico|sw.js|manifest.json).*)"],
+    // Hanya `/api` dan `/api/...` yang dikecualikan. Dulu `(?!api|…)` ikut melewatkan halaman `/api-wrapper` (Konsol): tanpa
+    // x-current-path layout menilai "/" sehingga dashboard.view cukup membuka Konsol (S7-sesi; uji lib/proxy-matcher.test.ts).
+    matcher: ["/((?!api/|api$|_next/static|_next/image|favicon.ico|sw.js|manifest.json).*)"],
 };

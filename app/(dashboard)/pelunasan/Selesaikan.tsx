@@ -84,11 +84,11 @@ export function SelesaikanDialog({ kunci, ringkas, lockDb, izinTakeover, onClose
     /** GET pencarian 403 (izin dicabut sesudah halaman dibuka): tanpa "Coba lagi"/"cari lagi" — mengulang tidak menolong. */
     const cariDitolak = load.status === "galat" && load.error === ALASAN.selesaikanDitolak;
     const dbBeda = db && target.id !== null && db.databaseId !== target.id
-        ? `Baris ini dikirim ke ${target.label}; sesi Anda membuka ${namaDatabase(db)}. Buka database itu di Konsol AOL lalu Cari lagi.` : "";
+        ? `Baris ini dikirim ke ${target.label}; sesi Anda membuka ${namaDatabase(db)}. Buka database itu di halaman Sesi Accurate lalu Cari lagi.` : "";
     const blok = load.status === "memuat" ? "Menunggu hasil pencarian di Accurate"
         : izinDitolak || cariDitolak ? ALASAN.selesaikanDitolak
             : !r ? "Pencarian belum berhasil — cari lagi"
-                : !db?.databaseId ? "Sesi Accurate tanpa database terbuka; buka database lewat Konsol AOL lalu Cari lagi"
+                : !db?.databaseId ? "Sesi Accurate tanpa database terbuka; buka database di halaman Sesi Accurate lalu Cari lagi"
                     : dbBeda || (!keputusan ? "Pilih hasil pemeriksaan dulu" : tidak[keputusan])
                         || (keputusan === "terposting" && !nomorPilih ? "Pilih nomor pelunasan" : "")
                         || (perluYakin && !yakin ? "Centang konfirmasi selisih nominal dulu" : "")
@@ -153,7 +153,7 @@ export function SelesaikanDialog({ kunci, ringkas, lockDb, izinTakeover, onClose
                 throw new Error(`Baris ini tidak ada di catatan aplikasi.${TETAP}`);
             case "DATABASE_REQUIRED": case "ACCURATE_SESSION_INCOMPLETE":
                 cariLagi();
-                throw new Error(`Sesi Accurate belum lengkap; masuk dan buka database lewat Konsol AOL, lalu Cari lagi.${TETAP}`);
+                throw new Error(`Sesi Accurate belum lengkap; masuk dan buka database di halaman Sesi Accurate, lalu Cari lagi.${TETAP}`);
             case "forbidden": case "HTTP_403":
                 setIzinDitolak(true);
                 throw new Error(`${ALASAN.selesaikanDitolak}${TETAP}`);
