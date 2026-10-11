@@ -270,14 +270,19 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, bisaKonsol, m
 
             <ConfirmDialog open={dialog === "izinkan"} onClose={() => setDialog(null)} tag="Hanya Finance"
                 title={dipilihTakeover.length === pilih.size && pilih.size > 0 ? `Kirim ulang terkendali ${pilih.size} baris?` : `Izinkan ${pilih.size} baris yang mirip pelunasan lain?`}
-                description="Baris yang diizinkan ikut dikirim. Izin tercatat per baris di server saat baris dikunci (siapa, alasan, status sebelumnya); satu izin berlaku untuk satu kiriman."
+                description={`Baris yang diizinkan ikut dikirim. Izin tercatat per baris di server saat baris dikunci (siapa, alasan, status sebelumnya); satu izin berlaku untuk satu kiriman.${diizinkan.size ? ` Izin sebelumnya (${diizinkan.size} baris) tetap berlaku; alasan ini ditambahkan ke alasannya.` : ""}`}
                 facts={ganda.filter((r) => pilih.has(r.reviewId)).slice(0, 8).map((r) => [
                     `${r.invoiceNo || "—"} · ${r.customerNo}`,
                     `${rupiah(r.amount)} · ${r.reasons.map((x) => LABEL_ALASAN[x]).join("; ")}${r.matchedReceiptNumbers.length ? ` · ${r.matchedReceiptNumbers.join(", ")}` : ""}`,
                 ] as [string, ReactNode])}
                 reason={{ label: "Alasan mengizinkan", min: 15, placeholder: "mis. pelunasan kedua untuk cicilan; dikonfirmasi dengan outlet" }}
                 confirmLabel={`Izinkan ${pilih.size} baris`} confirmDisabled={kunciIzinkan} alasanTerlihat
-                onConfirm={(alasan) => { setDiizinkan(new Set(pilih)); setAlasanIzin(alasan); setPilih(new Set()); setDialog(null); }}>
+                // 2b #6: Izinkan kedua MENAMBAH (dulu menimpa izin pertama tanpa kabar); satu overrideReason per kiriman = alasan digabung.
+                onConfirm={(alasan) => {
+                    setDiizinkan((d) => new Set([...d, ...pilih]));
+                    setAlasanIzin((a) => (a ? `${a}; ${alasan}` : alasan));
+                    setPilih(new Set()); setDialog(null);
+                }}>
                 {dipilihTakeover.length > 0 && (
                     <MessageStrip tone="warn" title={`Kirim ulang terkendali (takeover) untuk ${dipilihTakeover.length} baris yang kiriman sebelumnya belum pasti atau sudah tercatat.`}>
                         Pakai hanya bila Anda sudah memeriksa di Accurate bahwa baris itu (mis. cicilan lain) BELUM terposting. Bila ternyata sudah, kiriman ini

@@ -767,3 +767,52 @@ test("Susulan 2b #4/#8: database berganti SELAMA pratinjau = pratinjau dibuang b
     await expect(page.getByText("Pratinjau ulang gagal.")).toBeVisible();
     await expect(page.locator("main")).toContainText("Pratinjau belum bisa dibuat. Sesi Accurate tidak terbaca; tekan Periksa ulang sesi.");
 });
+
+const DUA_GANDA = (key: string) => (key.includes("PELANGGAN-A_") || key.includes("PELANGGAN-B_") ? "UNKNOWN_OUTCOME" : undefined);
+async function izinkan(page: Page, faktur: string, alasan: string) {
+    const ganda = page.getByRole("region", { name: "Potensi ganda" });
+    await ganda.getByRole("checkbox", { name: `Pilih ${faktur}` }).check();
+    await ganda.getByRole("button", { name: "Izinkan yang dicentang…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Kirim ulang terkendali 1 baris?" });
+    await dlg.getByLabel("Alasan mengizinkan").fill(alasan);
+    await dlg.getByRole("button", { name: "Izinkan 1 baris" }).click();
+    await expect(dlg).toBeHidden();
+    return dlg;
+}
+async function kirimSemua(page: Page, n: number) {
+    await page.getByRole("button", { name: `Kirim ${n} pelunasan…` }).click();
+    await page.getByRole("dialog").getByRole("button", { name: `Kirim ${n} pelunasan` }).click();
+    await expect(page.getByLabel("Ringkasan hasil")).toBeVisible({ timeout: 60_000 });
+}
+
+test("Susulan 2b #7: dua baris ganda, centang SATU → badan lock allowLockedKeys hanya yang dicentang; yang lain tetap ditahan", async ({ page }) => {
+    const log = await pasang(page, { blok: DUA_GANDA });
+    await sampaiTinjau(page);
+    await expect(page.getByLabel("Ringkasan tinjauan")).toContainText("Potensi ganda2");
+    await izinkan(page, "INV/A/001", "Cicilan kedua belum masuk Accurate, dicek Finance");
+    await expect(page.getByLabel("Ringkasan tinjauan")).toContainText("Siap kirim3");
+    await kirimSemua(page, 3);
+    expect(log.lock).toHaveLength(1);
+    expect(log.lock[0].allowLockedKeys).toEqual([expect.stringContaining("PELANGGAN-A_")]);
+    expect((log.lock[0].keys ?? []).some((k) => k.key.includes("PELANGGAN-B_"))).toBe(false);
+    expect(log.tulis.flatMap((t) => t.payload as Baris[]).map((r) => r.customerNo)).not.toContain("PELANGGAN-B");
+});
+
+test("Susulan 2b #6: Izinkan kedua MENAMBAH izin pertama (bukan menimpa); alasan digabung dan tercatat di lock", async ({ page }) => {
+    const log = await pasang(page, { blok: DUA_GANDA });
+    await sampaiTinjau(page);
+    await izinkan(page, "INV/A/001", "Cicilan kedua outlet A belum masuk Accurate");
+    const ganda = page.getByRole("region", { name: "Potensi ganda" });
+    await ganda.getByRole("checkbox", { name: "Pilih INV/A/002" }).check();
+    await ganda.getByRole("button", { name: "Izinkan yang dicentang…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Kirim ulang terkendali 1 baris?" });
+    await expect(dlg).toContainText("Izin sebelumnya (1 baris) tetap berlaku; alasan ini ditambahkan ke alasannya.");
+    await dlg.getByLabel("Alasan mengizinkan").fill("Cicilan kedua outlet B belum masuk Accurate");
+    await dlg.getByRole("button", { name: "Izinkan 1 baris" }).click();
+    await expect(ganda.getByText("Diizinkan Finance")).toHaveCount(2);
+    await expect(page.getByLabel("Ringkasan tinjauan")).toContainText("Siap kirim4");
+    await kirimSemua(page, 4);
+    expect(log.lock).toHaveLength(1);
+    expect([...(log.lock[0].allowLockedKeys as string[])].sort()).toEqual([expect.stringContaining("PELANGGAN-A_"), expect.stringContaining("PELANGGAN-B_")]);
+    expect(log.lock[0].overrideReason).toBe("Cicilan kedua outlet A belum masuk Accurate; Cicilan kedua outlet B belum masuk Accurate");
+});
