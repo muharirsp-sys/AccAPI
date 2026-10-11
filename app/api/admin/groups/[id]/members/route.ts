@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq, and } from "drizzle-orm";
 import { accessGroup, userGroup, user, permissionAuditLog } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
-import { anggota, anggotaTunggal, galat, GalatOtorisasi, jawabGalat, tolakGrupTerakhir, transaksiOtorisasi, type Tx } from "@/lib/rbac/otorisasi";
+import { anggota, anggotaTunggal, detailUtama, galat, GalatOtorisasi, jawabGalat, mulaiUtama, selesaiUtama, tolakGrupTerakhir, transaksiOtorisasi, type Tx } from "@/lib/rbac/otorisasi";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -33,18 +33,20 @@ export async function POST(request: NextRequest, context: Context) {
     const now = new Date();
     try {
         // Masuk grup juga bisa MENGURANGI akses (user tanpa grup kehilangan fallback role lama) -> penjaga tetap jalan.
-        const added = await transaksiOtorisasi(actor.id, async (tx) => {
+        const h = await transaksiOtorisasi(actor.id, async (tx) => {
             const { group, targetUser } = await target(tx, id, userId);
-            if (await anggota(tx, userId, id)) return false;
+            if (await anggota(tx, userId, id)) return { added: false, ...await selesaiUtama(tx, userId, await mulaiUtama(tx, userId)) };
+            const lama = await mulaiUtama(tx, userId);
             await tx.insert(userGroup).values({ userId, groupId: id, assignedBy: actor.id, assignedAt: now });
+            const hasil = await selesaiUtama(tx, userId, lama);
             await tx.insert(permissionAuditLog).values({
                 id: randomUUID(), actorUserId: actor.id, actorName: actor.name,
                 action: "user_group.assign", targetUserId: userId, targetGroupId: id,
-                detail: { userName: targetUser.name, groupName: group.name }, createdAt: now,
+                detail: { userName: targetUser.name, groupName: group.name, ...detailUtama(lama, hasil) }, createdAt: now,
             });
-            return true;
+            return { added: true, ...hasil };
         });
-        return NextResponse.json({ ok: true, added });
+        return NextResponse.json({ ok: true, added: h.added, primaryGroupId: h.primaryGroupId, role: h.roleAfter });
     } catch (e) {
         return jawabGalat(e);
     }
@@ -61,18 +63,22 @@ export async function DELETE(request: NextRequest, context: Context) {
     const actor = gate.session!.user;
     const now = new Date();
     try {
-        await transaksiOtorisasi(actor.id, async (tx) => {
+        const h = await transaksiOtorisasi(actor.id, async (tx) => {
             const { group, targetUser } = await target(tx, id, userId);
             if (!(await anggota(tx, userId, id))) throw new GalatOtorisasi(404, "BUKAN_ANGGOTA", "User bukan anggota grup ini");
             tolakGrupTerakhir(await anggotaTunggal(tx, id, [userId]));
+            const lama = await mulaiUtama(tx, userId);
+            // Baris berbintang ikut terhapus -> bintang hilang; selesaiUtama menerapkan aturan 1 grup + role.
             await tx.delete(userGroup).where(and(eq(userGroup.groupId, id), eq(userGroup.userId, userId)));
+            const hasil = await selesaiUtama(tx, userId, lama);
             await tx.insert(permissionAuditLog).values({
                 id: randomUUID(), actorUserId: actor.id, actorName: actor.name,
                 action: "user_group.remove", targetUserId: userId, targetGroupId: id,
-                detail: { userName: targetUser.name, groupName: group.name }, createdAt: now,
+                detail: { userName: targetUser.name, groupName: group.name, ...detailUtama(lama, hasil) }, createdAt: now,
             });
+            return hasil;
         });
-        return NextResponse.json({ ok: true });
+        return NextResponse.json({ ok: true, primaryGroupId: h.primaryGroupId, role: h.roleAfter });
     } catch (e) {
         return jawabGalat(e);
     }

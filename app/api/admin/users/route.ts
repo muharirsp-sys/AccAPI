@@ -16,7 +16,7 @@ import { auth } from "@/lib/auth";
 import { defaultRole } from "@/lib/rbac";
 import { account, accessGroup, permissionAuditLog, session, user, userGroup } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
-import { galat, GalatOtorisasi, jawabGalat, periksaSandi, transaksiOtorisasi } from "@/lib/rbac/otorisasi";
+import { galat, GalatOtorisasi, jawabGalat, periksaSandi, selesaiUtama, transaksiOtorisasi } from "@/lib/rbac/otorisasi";
 
 const DISIAPKAN = "sedang disiapkan (S7-1)";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -85,13 +85,14 @@ export async function POST(request: NextRequest) {
             if (grup.length !== groupIds.length) throw new GalatOtorisasi(404, "GRUP_TIDAK_ADA", "Grup tidak ditemukan.");
             await tx.insert(userGroup).values(groupIds.map((groupId) => ({ userId: id, groupId, assignedBy: actor.id, assignedAt: now, isPrimary: groupId === utama })));
             await tx.update(user).set({ banned: false, banReason: null, banExpires: null, updatedAt: now }).where(eq(user.id, id));
-            const [u] = await tx.select({ role: user.role }).from(user).where(eq(user.id, id));
+            // BL-63: grup utama preset -> user.role (Better Auth hanya menerima role AppRole; peta grup diterapkan di sini).
+            const h = await selesaiUtama(tx, id, null);
             await tx.insert(permissionAuditLog).values({
                 id: randomUUID(), actorUserId: actor.id, actorName: actor.name, action: "user.create", targetUserId: id,
-                targetGroupId: utama, createdAt: now,
-                detail: { name, email, groupIds, groupNames: groupIds.map((g) => grup.find((x) => x.id === g)?.name), primaryGroupId: utama, role: u?.role ?? null },
+                targetGroupId: h.primaryGroupId, createdAt: now,
+                detail: { name, email, groupIds, groupNames: groupIds.map((g) => grup.find((x) => x.id === g)?.name), primaryGroupId: h.primaryGroupId, role: h.roleAfter },
             });
-            return { role: u?.role ?? null, primaryGroupId: utama };
+            return { role: h.roleAfter, primaryGroupId: h.primaryGroupId };
         });
         return NextResponse.json({ ok: true, user: { id, name, email, role: hasil.role, groupIds, primaryGroupId: hasil.primaryGroupId } }, { status: 201 });
     } catch (e) {

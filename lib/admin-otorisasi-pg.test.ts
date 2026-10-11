@@ -26,7 +26,9 @@ async function muat() {
     const sandi = await import("../app/api/admin/users/[id]/password/route.ts");
     const status = await import("../app/api/admin/users/[id]/status/route.ts");
     const bootstrap = await import("../app/api/admin/bootstrap/route.ts");
-    return { db, pool, auth, adminAktif, grup, grupId, anggota, userGrup, users, sandi, status, bootstrap };
+    const bintang = await import("../app/api/admin/users/[id]/primary-group/route.ts");
+    const daftar = await import("../app/api/admin/users/permissions/route.ts");
+    return { db, pool, auth, adminAktif, grup, grupId, anggota, userGrup, users, sandi, status, bootstrap, bintang, daftar };
 }
 
 let m: Modul;
@@ -220,17 +222,7 @@ test("GRUP_TERAKHIR + DELETE grup: keluarkan dari satu-satunya grup / hapus grup
     });
 });
 
-test("celah 1 (route lama users/[id]/group): ganti grup sendiri ke grup tanpa users.manage -> AKSES_SENDIRI, semua tulisan batal", { skip: pgSkip }, async () => {
-    await dunia(async (w) => {
-        const adm = await w.grup("kelola", ["users.manage"]);
-        const gv = await w.grup("lihat", ["dashboard.view"]);
-        const a = await w.user("a");
-        await w.masuk(a, adm);
-        assert.deepEqual(await kode(await panggil(m.userGrup.POST, a, "POST", a, { groupId: gv })), { status: 409, code: "AKSES_SENDIRI" });
-        assert.deepEqual(await w.grupUser(a), [adm]);
-        assert.deepEqual(await w.audit(), []);
-    });
-});
+// Celah 1 (route lama "ganti semua" users/[id]/group): ditutup dengan PENSIUN semantik — lihat uji BL-63 "route lama".
 
 test("balapan: dua admin saling mencabut BERSAMAAN -> tepat satu berhasil, tersisa satu admin (kunci global dalam transaksi)", { skip: pgSkip }, async () => {
     await dunia(async (w) => {
@@ -434,5 +426,156 @@ test("lupa sandi: reset lewat tautan (token Better Auth) mencabut SEMUA sesi lam
         await m.auth.api.resetPassword({ body: { newPassword: PW2, token } });
         assert.equal(await sesi(), 0, "sesi lama wajib dicabut sesudah reset sandi");
         assert.ok((await masukDengan(email, PW2)).token);
+    });
+});
+
+// ---------------- BL-63: bintang grup utama + user.role (owner 11 Okt; peninjau S7-0 #1-#3) ----------------
+
+const role = async (id: string) => (await m.pool.query(`SELECT role FROM "user" WHERE id = $1`, [id])).rows[0].role as string;
+const bintangDb = async (id: string) => (await m.pool.query(`SELECT group_id FROM user_group WHERE user_id = $1 AND is_primary`, [id])).rows.map((r) => r.group_id as string);
+
+/** Grup preset bernama asli (unik global): dibuat per uji, dihapus oleh bersihkan(awalan). */
+async function preset(w: ReturnType<typeof alat>, nama: string, keys: string[] = ["dashboard.view"]) {
+    return w.grup(nama.toLowerCase().replace(/\s+/g, "-"), keys, { preset: true, nama });
+}
+
+test("BL-63 bintang: preset -> role turun; tukar bintang dua langkah dua arah (indeks unik tidak 23505); custom tidak mengubah role kecuali role turunan utama lama -> viewer; 404 bukan anggota", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const ga = await w.grup("kelola", ["users.manage"]);
+        const a = await w.user("a");
+        await w.masuk(a, ga);
+        const mgr = await preset(w, "Manager"), fin = await preset(w, "Finance"), cus = await w.grup("promo", ["dashboard.view"]);
+        const u = await w.user("u", { role: "staff" });
+        await w.masuk(u, mgr); await w.masuk(u, fin); await w.masuk(u, cus);
+        const put = (gid: string) => panggil(m.bintang.PUT, a, "PUT", u, { groupId: gid });
+
+        assert.deepEqual(await (await put(mgr)).json(), { ok: true, primaryGroupId: mgr, role: "manager", roleChanged: true });
+        assert.deepEqual(await bintangDb(u), [mgr]);
+        for (const [gid, r] of [[fin, "finance"], [mgr, "manager"], [fin, "finance"]]) {
+            const res = await put(gid);
+            assert.equal(res.status, 200, await res.clone().text());
+            assert.deepEqual(await bintangDb(u), [gid], "tepat satu bintang");
+            assert.equal(await role(u), r);
+        }
+        // Ke grup custom: role "finance" adalah turunan utama lama (Finance) -> viewer, bukan tertinggal.
+        assert.deepEqual(await (await put(cus)).json(), { ok: true, primaryGroupId: cus, role: "viewer", roleChanged: true });
+        // Lepas bintang (3 grup) -> tanpa utama; role tetap (bukan turunan).
+        assert.deepEqual(await (await panggil(m.bintang.DELETE, a, "DELETE", u)).json(), { ok: true, primaryGroupId: null, role: "viewer", roleChanged: false });
+        assert.deepEqual(await bintangDb(u), []);
+        assert.deepEqual(await kode(await put(ga)), { status: 404, code: "BUKAN_ANGGOTA" });
+        assert.deepEqual(await kode(await panggil(m.bintang.PUT, a, "PUT", u, {})), { status: 400, code: "INPUT_TIDAK_VALID" });
+        const aksi = (await w.audit()).filter((r) => r.target_user_id === u).map((r) => r.action);
+        assert.deepEqual(aksi, ["user_group.star", "user_group.star", "user_group.star", "user_group.star", "user_group.star", "user_group.unstar"]);
+        const pertama = (await w.audit()).find((r) => r.target_user_id === u)!.detail as Record<string, unknown>;
+        assert.deepEqual({ ...pertama, userName: undefined }, { userName: undefined, primaryBefore: null, primaryAfter: mgr, roleBefore: "staff", roleAfter: "manager" });
+    });
+});
+
+test("BL-63 1 grup = otomatis utama (dibaca tanpa backfill; dijaga saat tulis): getPrimaryGroup, keluarkan dari grup berbintang -> bintang hilang -> sisa 1 grup utama + role", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const ga = await w.grup("kelola", ["users.manage"]);
+        const a = await w.user("a");
+        await w.masuk(a, ga);
+        const adm = await preset(w, "Admin", ["users.manage", "dashboard.view"]), mgr = await preset(w, "Manager");
+        const { getPrimaryGroup } = await import("./rbac/resolve.ts");
+
+        // Data pra-backfill: 1 grup TANPA bintang -> tetap utama saat dibaca.
+        const u = await w.user("u", { role: "manager" });
+        await w.masuk(u, mgr);
+        assert.deepEqual(await bintangDb(u), []);
+        assert.equal((await getPrimaryGroup(u))?.id, mgr);
+        // Tambah grup kedua: grup tunggal lama DIBINTANGI dulu (aturan owner) -> utama tetap, role tidak berubah.
+        const r = await panggil(m.anggota.POST, a, "POST", adm, { userId: u });
+        assert.deepEqual(await r.json(), { ok: true, added: true, primaryGroupId: mgr, role: "manager" });
+        assert.deepEqual(await bintangDb(u), [mgr]);
+
+        // Admin berbintang + Manager; keluarkan dari Admin -> bintang hilang -> Manager satu-satunya -> utama + role manager.
+        const v = await w.user("v", { role: "staff" });
+        await w.masuk(v, adm, true); await w.masuk(v, mgr);
+        await m.pool.query(`UPDATE "user" SET role = 'admin' WHERE id = $1`, [v]);
+        assert.equal((await getPrimaryGroup(v))?.id, adm);
+        const d = await panggil(m.anggota.DELETE, a, "DELETE", adm, { userId: v });
+        assert.deepEqual(await d.json(), { ok: true, primaryGroupId: mgr, role: "manager" });
+        assert.deepEqual(await bintangDb(v), [mgr], "aturan 1 grup tertulis");
+        const det = (await w.audit()).find((x) => x.action === "user_group.remove" && x.target_user_id === v)!.detail as Record<string, unknown>;
+        assert.deepEqual([det.primaryBefore, det.primaryAfter, det.roleBefore, det.roleAfter], [adm, mgr, "admin", "manager"]);
+
+        // >1 grup tanpa bintang -> tidak ada utama.
+        const x = await w.user("x");
+        await w.masuk(x, mgr); await w.masuk(x, ga);
+        assert.equal(await getPrimaryGroup(x), null);
+    });
+});
+
+test("BL-63 hapus grup custom: SEMUA anggota dihitung ulang (utama + role) dalam transaksi yang sama, audit per anggota", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const ga = await w.grup("kelola", ["users.manage"]);
+        const a = await w.user("a");
+        await w.masuk(a, ga);
+        const fin = await preset(w, "Finance"), cus = await w.grup("promo", ["dashboard.view"]);
+        const u = await w.user("u", { role: "staff" }), v = await w.user("v", { role: "staff" });
+        await w.masuk(u, cus, true); await w.masuk(u, fin);
+        await w.masuk(v, cus); await w.masuk(v, fin, true);
+        assert.equal((await panggil(m.grupId.DELETE, a, "DELETE", cus)).status, 200);
+        assert.deepEqual([await bintangDb(u), await role(u)], [[fin], "finance"], "utama pindah ke grup tunggal Finance -> role finance");
+        assert.deepEqual([await bintangDb(v), await role(v)], [[fin], "staff"], "utama tidak berubah -> role tidak disentuh");
+        const per = (await w.audit()).filter((x) => x.action === "user_group.remove").map((x) => [x.target_user_id, (x.detail as { via: string }).via]);
+        assert.deepEqual(per.sort(), [[u, "group.delete"], [v, "group.delete"]].sort());
+    });
+});
+
+test("BL-63 route lama users/[id]/group DIPENSIUNKAN: tambah + bintang (grup lain tetap), role preset turun; aktor admin tidak terkunci", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const adm = await w.grup("kelola", ["users.manage"]);
+        const gv = await w.grup("lihat", ["dashboard.view"]);
+        const mgr = await preset(w, "Manager");
+        const a = await w.user("a");
+        await w.masuk(a, adm);
+        // Dulu (celah 1): "ganti semua" mengeluarkan aktor dari grup kelola. Kini grup lain tetap -> 200, aktor tetap admin.
+        assert.deepEqual(await (await panggil(m.userGrup.POST, a, "POST", a, { groupId: gv })).json(), { ok: true, role: "viewer", primaryGroupId: gv });
+        assert.deepEqual(await w.grupUser(a), [adm, gv].sort());
+        assert.deepEqual(await w.admin(), [a]);
+        const u = await w.user("u");
+        await w.masuk(u, gv);
+        assert.deepEqual(await (await panggil(m.userGrup.POST, a, "POST", u, { groupId: mgr })).json(), { ok: true, role: "manager", primaryGroupId: mgr });
+        assert.deepEqual(await w.grupUser(u), [gv, mgr].sort());
+        assert.deepEqual(await bintangDb(u), [mgr]);
+    });
+});
+
+test("BL-63 buat user: grup utama preset menurunkan role; >1 grup tanpa primaryGroupId = tanpa bintang (role bawaan)", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const ga = await w.grup("kelola", ["users.manage"]);
+        const a = await w.user("a");
+        await w.masuk(a, ga);
+        const fin = await preset(w, "Finance"), cus = await w.grup("promo", ["dashboard.view"]);
+        const r1 = (await (await buat(a, { name: "Fin", email: `${w.p}-fin@s71.test`, password: PW, groupIds: [cus, fin], primaryGroupId: fin })).json()) as { user: { role: string; primaryGroupId: string } };
+        assert.deepEqual([r1.user.role, r1.user.primaryGroupId], ["finance", fin]);
+        const r2 = (await (await buat(a, { name: "Dua", email: `${w.p}-dua@s71.test`, password: PW, groupIds: [cus, fin] })).json()) as { user: { id: string; role: string; primaryGroupId: string | null } };
+        assert.deepEqual([r2.user.role, r2.user.primaryGroupId], ["viewer", null]);
+        assert.deepEqual(await bintangDb(r2.user.id), []);
+    });
+});
+
+test("BL-63 daftar user: semua grup + utama efektif + field lama (groupId) untuk Beranda; users.view cukup", { skip: pgSkip }, async () => {
+    await dunia(async (w) => {
+        const gview = await w.grup("baca", ["users.view"]);
+        const viewer = await w.user("pembaca");
+        await w.masuk(viewer, gview);
+        const mgr = await preset(w, "Manager"), cus = await w.grup("promo", ["dashboard.view"]);
+        const u = await w.user("u");
+        await w.masuk(u, cus); await w.masuk(u, mgr, true);
+        const v = await w.user("v");
+        await w.masuk(v, cus); await w.masuk(v, mgr);
+        const res = await m.daftar.GET(new NextRequest("http://localhost/api/admin/users/permissions", { headers: { host: "app.test", "x-uji-aktor": viewer } }));
+        assert.equal(res.status, 200);
+        const users = ((await res.json()) as { users: Array<Record<string, unknown>> }).users;
+        const cari = (id: string) => users.find((x) => x.id === id)!;
+        const urut = (gs: unknown) => [...(gs as Array<{ id: string }>)].sort((x, y) => x.id.localeCompare(y.id));
+        assert.deepEqual(urut(cari(u).groups), urut([{ id: mgr, name: "Manager", isPreset: true, isPrimary: true }, { id: cus, name: `${w.p} promo`, isPreset: false, isPrimary: false }]));
+        assert.deepEqual([cari(u).primaryGroupId, cari(u).groupId], [mgr, mgr]);
+        const gv = cari(v).groups as Array<{ id: string }>;
+        assert.deepEqual([cari(v).primaryGroupId, cari(v).groupId], [null, gv[0].id], "tanpa bintang: groupId lama = grup pertama (urut nama)");
+        assert.equal(gv.length, 2);
     });
 });

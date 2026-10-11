@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
-import { adminDariBaris, evaluasiPenjaga } from "./rbac/otorisasi.ts";
+import { adminDariBaris, evaluasiPenjaga, jawabGalat, pilihUtama, roleTurunan, type GrupUser } from "./rbac/otorisasi.ts";
 import * as grup from "../app/api/admin/groups/route.ts";
 import * as grupId from "../app/api/admin/groups/[id]/route.ts";
 import * as anggota from "../app/api/admin/groups/[id]/members/route.ts";
@@ -15,6 +15,7 @@ import * as daftar from "../app/api/admin/users/permissions/route.ts";
 import * as buatUser from "../app/api/admin/users/route.ts";
 import * as sandi from "../app/api/admin/users/[id]/password/route.ts";
 import * as status from "../app/api/admin/users/[id]/status/route.ts";
+import * as bintang from "../app/api/admin/users/[id]/primary-group/route.ts";
 
 type Handler = (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => Promise<Response>;
 
@@ -54,6 +55,8 @@ const TULIS: Array<[string, Handler, string]> = [
     ["POST users", buatUser.POST as unknown as Handler, "POST"],
     ["POST users/[id]/password", sandi.POST, "POST"],
     ["POST users/[id]/status", status.POST, "POST"],
+    ["PUT users/[id]/primary-group", bintang.PUT, "PUT"],
+    ["DELETE users/[id]/primary-group", bintang.DELETE, "DELETE"],
 ];
 
 test("penjaga murni: AKSES_SENDIRI, ADMIN_TERAKHIR, aman bila tersisa admin; aktor bukan admin sebelumnya tidak dicek diri", () => {
@@ -125,4 +128,46 @@ test("plugin admin Better Auth ditutup dari browser: SEMUA endpoint /admin/* plu
     // Kontrol: endpoint bukan admin tetap hidup (tanpa sesi -> 200 null, bukan 404).
     const ses = await auth.handler(new Request("http://localhost:3000/api/auth/get-session", { headers: { origin: "http://localhost:3000" } }));
     assert.notEqual(ses.status, 404);
+});
+
+const g = (groupId: string, name: string, isPreset: boolean, isPrimary = false): GrupUser => ({ groupId, name, isPreset, isPrimary });
+
+test("BL-63 grup utama efektif: bintang; tanpa bintang + tepat 1 grup -> grup itu; >1 grup tanpa bintang -> null", () => {
+    assert.equal(pilihUtama([]), null);
+    assert.equal(pilihUtama([g("a", "A", false)])?.groupId, "a");
+    assert.equal(pilihUtama([g("a", "A", false), g("b", "B", false)]), null);
+    assert.equal(pilihUtama([g("a", "A", false), g("b", "B", false, true)])?.groupId, "b");
+});
+
+test("BL-63 role turunan: hanya saat utama berubah; preset berpeta -> peta; custom tidak mengubah; role turunan utama lama -> viewer", () => {
+    const adm = g("ga", "Admin", true), mgr = g("gm", "Manager", true), cus = g("gc", "Promo Kino", false), fak = g("gf", "Fakturist", true);
+    const palsu = g("gx", "Admin", false); // custom bernama "Admin" (tanpa preset) TIDAK menurunkan role
+    assert.equal(roleTurunan(null, mgr, "viewer"), "manager");
+    assert.equal(roleTurunan(cus, adm, "staff"), "admin");
+    assert.equal(roleTurunan(mgr, mgr, "admin"), null, "utama tidak berubah -> role tidak disentuh");
+    assert.equal(roleTurunan(null, cus, "staff"), null, "custom tidak mengubah role");
+    assert.equal(roleTurunan(mgr, cus, "staff"), null, "role bukan turunan utama lama -> tetap");
+    assert.equal(roleTurunan(adm, cus, "admin"), "viewer", "admin tidak tertinggal sesudah keluar dari grup Admin");
+    assert.equal(roleTurunan(adm, null, "admin"), "viewer");
+    assert.equal(roleTurunan(mgr, fak, "manager"), "viewer", "preset tanpa peta = tanpa role turunan");
+    assert.equal(roleTurunan(null, palsu, "viewer"), null);
+    assert.equal(roleTurunan(null, mgr, "manager"), null, "sudah sama -> tanpa tulis");
+});
+
+test("23505 dikenal -> 409 berkode (BINTANG_BENTROK / NAMA_GRUP_TERPAKAI / EMAIL_TERPAKAI); lainnya 500 GAGAL_SIMPAN tanpa parameter kueri di log", async () => {
+    const pg = (constraint: string) => Object.assign(new Error("Failed query: ... params: rahasia"), { cause: { code: "23505", constraint } });
+    for (const [c, code] of [["uq_user_group_primary", "BINTANG_BENTROK"], ["access_group_name_unique", "NAMA_GRUP_TERPAKAI"], ["user_email_unique", "EMAIL_TERPAKAI"]]) {
+        const r = jawabGalat(pg(c));
+        assert.equal(r.status, 409);
+        assert.equal((await r.json() as { code: string }).code, code);
+    }
+    const asli = console.error;
+    const log: string[] = [];
+    console.error = (...a: unknown[]) => { log.push(a.map(String).join(" ")); };
+    try {
+        const r = jawabGalat(new Error("Failed query: UPDATE account SET password = $1 params: hash-rahasia"));
+        assert.equal(r.status, 500);
+        assert.equal((await r.json() as { code: string }).code, "GAGAL_SIMPAN");
+    } finally { console.error = asli; }
+    assert.ok(!log.join(" ").includes("rahasia"), log.join(" "));
 });

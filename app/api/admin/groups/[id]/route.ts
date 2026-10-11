@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { accessGroup, groupPermission, userGroup, user, permissionAuditLog } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { isValidPermissionKey } from "@/lib/rbac/registry";
-import { anggotaTunggal, galat, GalatOtorisasi, jawabGalat, tolakGrupTerakhir, transaksiOtorisasi, type Tx } from "@/lib/rbac/otorisasi";
+import { anggotaTunggal, detailUtama, galat, GalatOtorisasi, jawabGalat, mulaiUtama, selesaiUtama, tolakGrupTerakhir, transaksiOtorisasi, type Tx } from "@/lib/rbac/otorisasi";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest, context: Context) {
         .where(eq(groupPermission.groupId, id));
 
     const members = await db
-        .select({ userId: userGroup.userId, assignedAt: userGroup.assignedAt, assignedBy: userGroup.assignedBy, userName: user.name, userEmail: user.email })
+        .select({ userId: userGroup.userId, assignedAt: userGroup.assignedAt, assignedBy: userGroup.assignedBy, isPrimary: userGroup.isPrimary, userName: user.name, userEmail: user.email })
         .from(userGroup)
         .innerJoin(user, eq(userGroup.userId, user.id))
         .where(eq(userGroup.groupId, id));
@@ -109,12 +109,23 @@ export async function DELETE(request: NextRequest, context: Context) {
             const existing = await kunciGrup(tx, id);
             if (existing.isPreset) throw new GalatOtorisasi(409, "PRESET_TIDAK_BISA_DIHAPUS", "Preset group tidak bisa dihapus");
             tolakGrupTerakhir(await anggotaTunggal(tx, id));
+            // Semua anggota: grup utama efektif + role dihitung ulang di transaksi yang sama (peninjau S7-0 #2).
+            const members = await tx.select({ userId: userGroup.userId, name: user.name }).from(userGroup).innerJoin(user, eq(user.id, userGroup.userId)).where(eq(userGroup.groupId, id));
+            const lama = new Map<string, Awaited<ReturnType<typeof mulaiUtama>>>();
+            for (const mb of members) lama.set(mb.userId, await mulaiUtama(tx, mb.userId));
             await tx.delete(groupPermission).where(eq(groupPermission.groupId, id));
             await tx.delete(userGroup).where(eq(userGroup.groupId, id));
             await tx.delete(accessGroup).where(eq(accessGroup.id, id));
+            for (const mb of members) {
+                const hasil = await selesaiUtama(tx, mb.userId, lama.get(mb.userId) ?? null);
+                await tx.insert(permissionAuditLog).values({
+                    id: randomUUID(), actorUserId: actor.id, actorName: actor.name, action: "user_group.remove", targetUserId: mb.userId, targetGroupId: id,
+                    detail: { userName: mb.name, groupName: existing.name, via: "group.delete", ...detailUtama(lama.get(mb.userId) ?? null, hasil) }, createdAt: now,
+                });
+            }
             await tx.insert(permissionAuditLog).values({
                 id: randomUUID(), actorUserId: actor.id, actorName: actor.name,
-                action: "group.delete", targetGroupId: id, detail: { name: existing.name }, createdAt: now,
+                action: "group.delete", targetGroupId: id, detail: { name: existing.name, memberCount: members.length }, createdAt: now,
             });
         });
     } catch (e) {

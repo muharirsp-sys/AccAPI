@@ -1,68 +1,48 @@
 /*
- * Tujuan: Set SATU Access Group primer milik user (ganti seluruh membership lama).
- * Caller: `app/(dashboard)/admin/users/UserManagement.tsx` (dropdown "Access Group").
- * Dependensi: db (Drizzle), schema user/userGroup/accessGroup/permissionAuditLog, RBAC resolve.
- * Main Functions: POST.
- * Side Effects: Replace user_group user ini (hapus semua lalu insert satu); set user.role
- *   (identity, dipakai gate Claim Workflow/Form Kontrol) bila nama group cocok preset dikenal;
- *   kosongkan user.permissions legacy — permission kini murni dari Access Group.
- * Catatan: model single-primary-group. Membership majemuk (jika sengaja dibuat lewat
- *   /admin/groups "Tambah Member") akan direset ke satu group saat dropdown ini dipakai.
+ * Tujuan: Route LAMA dropdown "Access Group" — DIPENSIUNKAN sebagai "ganti semua" (S7-1 BL-63). Kini = TAMBAH grup (bila belum
+ *   anggota) + BINTANG grup itu; grup lain user TIDAK dihapus. Tetap hidup agar layar lama tidak patah sampai S7a memakai
+ *   `groups/[id]/members` + `users/[id]/primary-group`. Kontrak: docs/handover/S7-KONTRAK-ADMIN-API.md §5.7.
+ * Caller: `app/(dashboard)/admin/users/UserManagement.tsx` (dropdown; layar lama).
+ * Side Effects: user_group (+ is_primary dua langkah), user.role (bila grup utama efektif berubah), audit `user_group.assign`
+ *   (bila baru) + `user_group.star` — satu transaksi + penjaga BL-61.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { accessGroup, userGroup, user, permissionAuditLog } from "@/db/schema";
+import { accessGroup, userGroup, permissionAuditLog } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
-import { jawabGalat, transaksiOtorisasi } from "@/lib/rbac/otorisasi";
+import { anggota, detailUtama, galat, GalatOtorisasi, jawabGalat, mulaiUtama, pasangBintang, selesaiUtama, transaksiOtorisasi, userTarget } from "@/lib/rbac/otorisasi";
 
 type Context = { params: Promise<{ id: string }> };
-
-// Nama preset group -> role identity string. Mirror ROLE_TO_GROUP di scripts/seed-rbac-presets.ts
-// (arah kebalikan). Group custom (bukan preset ini) tidak mengubah user.role.
-const GROUP_NAME_TO_ROLE: Record<string, string> = {
-    Admin: "admin", Manager: "manager", Finance: "finance", Staff: "staff", Viewer: "viewer",
-    SPV: "spv", SM: "sm", Claim: "claim", OM: "om", Salesman: "salesman", "Admin Sales": "admin_sales",
-};
 
 export async function POST(request: NextRequest, context: Context) {
     const gate = await requirePermission(request, "users.manage");
     if (gate.response) return gate.response;
 
     const { id: userId } = await context.params;
-    const [targetUser] = await db.select({ id: user.id, name: user.name }).from(user).where(eq(user.id, userId)).limit(1);
-    if (!targetUser) return NextResponse.json({ error: "User tidak ditemukan" }, { status: 404 });
-
     const body = await request.json().catch(() => ({}));
-    const groupId = String(body?.groupId || "").trim();
-    if (!groupId) return NextResponse.json({ error: "groupId wajib diisi" }, { status: 400 });
-
-    const [group] = await db.select({ id: accessGroup.id, name: accessGroup.name }).from(accessGroup).where(eq(accessGroup.id, groupId)).limit(1);
-    if (!group) return NextResponse.json({ error: "Group tidak ditemukan" }, { status: 404 });
+    const groupId = typeof body?.groupId === "string" ? body.groupId.trim() : "";
+    if (!groupId) return galat(400, "INPUT_TIDAK_VALID", "groupId wajib diisi");
 
     const actor = gate.session!.user;
     const now = new Date();
-    const mappedRole = GROUP_NAME_TO_ROLE[group.name];
-
     try {
-        // S7-1 BL-61: satu transaksi + penjaga (dulu 4 pernyataan lepas; gagal di tengah = user tanpa grup).
-        await transaksiOtorisasi(actor.id, async (tx) => {
-            await tx.delete(userGroup).where(eq(userGroup.userId, userId));
-            await tx.insert(userGroup).values({ userId, groupId, assignedBy: actor.id, assignedAt: now });
-            await tx
-                .update(user)
-                .set({ permissions: "{}", ...(mappedRole ? { role: mappedRole } : {}), updatedAt: now })
-                .where(eq(user.id, userId));
-            await tx.insert(permissionAuditLog).values({
-                id: randomUUID(), actorUserId: actor.id, actorName: actor.name,
-                action: "user_group.set_primary", targetUserId: userId, targetGroupId: groupId,
-                detail: { userName: targetUser.name, groupName: group.name, mappedRole: mappedRole ?? null }, createdAt: now,
-            });
+        const h = await transaksiOtorisasi(actor.id, async (tx) => {
+            const target = await userTarget(tx, userId);
+            const [group] = await tx.select({ id: accessGroup.id, name: accessGroup.name }).from(accessGroup).where(eq(accessGroup.id, groupId)).limit(1);
+            if (!group) throw new GalatOtorisasi(404, "GRUP_TIDAK_ADA", "Group tidak ditemukan");
+            const lama = await mulaiUtama(tx, userId);
+            const baru = !(await anggota(tx, userId, groupId));
+            if (baru) await tx.insert(userGroup).values({ userId, groupId, assignedBy: actor.id, assignedAt: now });
+            await pasangBintang(tx, userId, groupId);
+            const hasil = await selesaiUtama(tx, userId, lama);
+            const base = { id: "", actorUserId: actor.id, actorName: actor.name, targetUserId: userId, targetGroupId: groupId, createdAt: now };
+            if (baru) await tx.insert(permissionAuditLog).values({ ...base, id: randomUUID(), action: "user_group.assign", detail: { userName: target.name, groupName: group.name, via: "users/[id]/group" } });
+            await tx.insert(permissionAuditLog).values({ ...base, id: randomUUID(), action: "user_group.star", detail: { userName: target.name, groupName: group.name, via: "users/[id]/group", ...detailUtama(lama, hasil) } });
+            return hasil;
         });
+        return NextResponse.json({ ok: true, role: h.roleAfter, primaryGroupId: h.primaryGroupId });
     } catch (e) {
         return jawabGalat(e);
     }
-
-    return NextResponse.json({ ok: true, role: mappedRole ?? null });
 }
