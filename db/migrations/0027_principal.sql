@@ -11,6 +11,8 @@
 --                       alias_norm WAJIB hasil normalizer baku S7-2 (lib/principal), bukan
 --                       normalizer TS master-barang / Python principle_matcher.
 -- Tabel saja: TANPA benih (S7-2: laporan matched/ambiguous dulu, lalu benih manual).
+-- principal.code TETAP sesudah dibuat (kunci teks OPC/Klaim/no_claim_template): trigger penolak
+-- ada di docs/handover/DDL_S7_0.sql saja (pola repo: trigger = DDL manual), bukan di berkas ini.
 --
 -- Apply otomatis lewat scripts/migrate-pg.mjs (entri "principal (+variant, +alias)") saat
 -- container start bila DATABASE_MIGRATION_URL terpasang; selain itu docs/handover/DDL_S7_0.sql

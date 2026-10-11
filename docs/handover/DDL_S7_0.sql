@@ -21,6 +21,7 @@
 --   1. CREATE TABLE/INDEX IF NOT EXISTS principal, principal_variant, principal_alias (aditif, TANPA benih — benih = S7-2).
 --      1a: principal_alias bentuk lama 893f8cbf (PK alias_norm; hanya DB evaluasi) yang KOSONG di-DROP lalu dibuat ulang;
 --      bila BERISI berkas berhenti (RAISE) tanpa mengubah apa pun.
+--      1b: trigger trg_principal_code_tetap — UPDATE yang MENGUBAH principal.code ditolak (HANYA di berkas ini, bukan migrate-pg).
 --   2. ADD COLUMN IF NOT EXISTS user_group.is_primary boolean NOT NULL DEFAULT false + indeks unik parsial (satu bintang per user).
 --   3. GRANT SELECT, INSERT, UPDATE, DELETE ke accapi_app (bila role ada; default privileges L1g biasanya sudah memberi ini).
 --   4. VERIFIKASI (baca-saja) — semua `ok` harus true (NULL = role accapi_app tidak ada, tidak relevan).
@@ -33,6 +34,7 @@
 --
 -- ROLLBACK DARURAT (hanya bila DDL menghalangi operasi sah; catat alasannya): image lama tetap jalan dengan objek ini.
 --   DROP INDEX IF EXISTS uq_user_group_primary;   -- melepas batas satu bintang; kolom & tabel JANGAN di-drop selama image baru hidup.
+--   DROP TRIGGER IF EXISTS trg_principal_code_tetap ON principal;   -- mengizinkan ganti kode (periksa rujukan OPC/Klaim dulu).
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -104,6 +106,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_principal_alias_kode_mb ON principal_alias 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_principal_alias_nama ON principal_alias (alias_norm) WHERE jenis <> 'kode_master_barang';
 CREATE INDEX IF NOT EXISTS idx_principal_alias_principal ON principal_alias (principal_id, variant_key);
 
+-- 1b. principal.code TETAP (B-SEDANG-3). Kode = kunci teks tanpa FK di OPC/Klaim (off_batch/claim_workflow.principle_code)
+--     dan no_claim_template.principle_code -> mengganti kode memutus rujukan diam-diam. Kode salah = principal baru (+ nonaktifkan
+--     yang lama). Hanya di berkas ini (pola repo: trigger = DDL manual, tidak di migrate-pg). CREATE OR REPLACE = idempoten (PG14+).
+CREATE OR REPLACE FUNCTION principal_code_tetap() RETURNS trigger LANGUAGE plpgsql AS $fn$
+BEGIN
+    RAISE EXCEPTION 'S7-0: principal.code tidak boleh diubah (% -> %) — buat principal baru, jangan ganti kode', OLD.code, NEW.code
+        USING ERRCODE = 'restrict_violation';
+END $fn$;
+CREATE OR REPLACE TRIGGER trg_principal_code_tetap BEFORE UPDATE OF code ON principal
+    FOR EACH ROW WHEN (OLD.code IS DISTINCT FROM NEW.code) EXECUTE FUNCTION principal_code_tetap();
+
 -- 2. Grup utama (sama dengan entri migrate-pg "user_group.is_primary"). DEFAULT false = tanpa rewrite tabel.
 ALTER TABLE user_group ADD COLUMN IF NOT EXISTS is_primary boolean NOT NULL DEFAULT false;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_group_primary ON user_group (user_id) WHERE is_primary;
@@ -124,6 +137,8 @@ SELECT cek, ok FROM (VALUES
     ('tabel principal_variant', to_regclass('principal_variant') IS NOT NULL),
     ('tabel principal_alias', to_regclass('principal_alias') IS NOT NULL),
     ('indeks unik principal.code', EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('uq_principal_code') AND indisunique)),
+    ('trigger principal.code tetap', EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_principal_code_tetap'
+        AND tgrelid = to_regclass('principal') AND NOT tgisinternal)),
     ('PK principal_alias = id (bukan alias_norm)', EXISTS (SELECT 1 FROM pg_index x JOIN pg_attribute a ON a.attrelid = x.indrelid
         AND a.attnum = ANY (x.indkey) WHERE x.indexrelid = to_regclass('principal_alias_pkey') AND x.indisprimary AND x.indnatts = 1
         AND a.attname = 'id')),

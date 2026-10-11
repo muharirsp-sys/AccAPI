@@ -444,6 +444,8 @@ export const migrations = [
     // melengkapi tabel yang ada tanpa indeksnya; sudahAda memeriksa SEMUA indeks (PK tersirat = tabel ada) + kolom bentuk baru.
     // Putaran tinjauan (B-SEDANG-1): alias ber-PK id + unik parsial per kelompok jenis; bentuk 893f8cbf -> DO $guard$ menolak.
     // (B-SEDANG-2): principal_variant.name + is_active lewat ADD COLUMN IF NOT EXISTS (aditif, DB lama ikut lengkap).
+    // (B-SEDANG-3): trigger "principal.code tetap" TIDAK di sini (pola repo: trigger/REVOKE = DDL manual) — ada di
+    // docs/handover/DDL_S7_0.sql; jalur DATABASE_MIGRATION_URL saja = tanpa trigger & GRANT, jadi DDL tetap wajib dijalankan.
     nama: "principal (+variant, +alias)",
     sudahAda: `SELECT 1 WHERE (SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname IN
                    ('uq_principal_code', 'principal_variant_pkey', 'principal_alias_pkey', 'idx_principal_alias_principal',

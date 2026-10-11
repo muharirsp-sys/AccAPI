@@ -2048,7 +2048,9 @@ export const noClaimTemplateLog = pgTable("no_claim_template_log", {
 // SQL: migrate-pg `principal (+variant, +alias)`, db/migrations/0027_principal.sql, docs/handover/DDL_S7_0.sql.
 // Kolom *_by = id aktor TANPA FK (aktor bypass lokal / IT Support bukan baris `user`).
 
-// code = kode OPC/Klaim (format lib/claim-workflow/no-claim-rules.ts validateNoClaimTemplate: ^[A-Z0-9_-]{1,20}$).
+// code = kode OPC/Klaim (format lib/claim-workflow/no-claim-rules.ts validateNoClaimTemplate: ^[A-Z0-9_-]{1,20}$). TETAP sesudah
+// dibuat: kunci teks tanpa FK di OPC/Klaim/no_claim_template -> trigger trg_principal_code_tetap (docs/handover/DDL_S7_0.sql saja)
+// menolak UPDATE yang mengubahnya. Kode salah = principal baru + nonaktifkan yang lama.
 export const principal = pgTable("principal", {
     id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
     code: text("code").notNull(),

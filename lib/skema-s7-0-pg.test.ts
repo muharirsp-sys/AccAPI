@@ -312,6 +312,20 @@ test("PG S7-0: constraint — satu bintang per user, alias_norm unik per kelompo
     });
 });
 
+test("PG S7-0: DDL — principal.code TETAP (trigger; kunci teks OPC/Klaim/no_claim_template), kolom lain & nilai sama boleh", { skip: pgSkip }, async () => {
+    const { ddl } = await berkasDdl();
+    await denganSkema(async (pool) => {
+        await jalankanBerkas(pool, ddl);
+        await jalankanBerkas(pool, ddl); // CREATE OR REPLACE: idempoten
+        await pool.query(`INSERT INTO principal (id, code, name) VALUES ('p1', 'KINO', 'KINO INDONESIA TBK, PT')`);
+        await assert.rejects(pool.query(`UPDATE principal SET code = 'KINO2' WHERE id = 'p1'`),
+            (e: unknown) => kodeGalat("23001")(e) && /principal\.code/.test(String((e as Error).message)), "ganti kode ditolak");
+        await pool.query(`UPDATE principal SET name = 'KINO INDONESIA TBK', is_active = false, updated_by = 'uji' WHERE id = 'p1'`);
+        await pool.query(`UPDATE principal SET code = 'KINO' WHERE id = 'p1'`); // nilai sama = bukan perubahan
+        assert.deepEqual((await pool.query(`SELECT code, name FROM principal WHERE id = 'p1'`)).rows, [{ code: "KINO", name: "KINO INDONESIA TBK" }]);
+    });
+});
+
 test("PG S7-0: BACKFILL — hanya user tepat 1 grup, user > 1 grup / sudah berbintang tidak disentuh, idempoten", { skip: pgSkip }, async () => {
     const { ddl, backfill } = await berkasDdl();
     await denganSkema(async (pool) => {
