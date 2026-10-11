@@ -87,6 +87,16 @@ Log = { id, entitas: "principal"|"varian"|"alias", kunci, principalId, aksi: "bu
 ```
 `kunci`: principal = id; varian = `"<principal_id>:<variant_key>"`; alias = id alias. Benih memakai aktor `benih:S7-2`.
 
+`before` / `after` = isi baris entitas, bentuk SAMA dari API maupun benih (kunci camelCase = properti `db/schema.ts`; waktu ISO
+UTC milidetik `"2026-10-11T07:05:41.123Z"`; `null` tetap kunci ber-nilai `null`). Benih memakai `jsonb_build_object` dari peta
+`KOLOM_LOG` (`lib/principal/laporan.ts`, diuji sama dengan kolom Drizzle):
+```
+principal: { id, code, name, isActive, createdBy, createdAt, updatedBy, updatedAt }
+varian:    { principalId, variantKey, createdBy, createdAt, name, isActive }
+alias:     { id, aliasNorm, principalId, variantKey, aliasAsli, jenis, sumber, createdBy, createdAt }
+```
+`buat` = `after` saja; `aktif`/`nonaktif` = `before` + `after`; `hapus` (alias) = `before` saja.
+
 ## Resolver (pemakai S7-2b)
 
 Server-side: `resolvePrincipal(teks, await muatIndeksAlias(), ruang)` — `ruang` WAJIB: `"nama"` (nama/label/kode OPC/surat/

@@ -297,6 +297,20 @@ export function laporanMarkdown(lap: Laporan): string {
     return `${l.join("\n")}\n`;
 }
 
+/**
+ * Bentuk JSON riwayat (principal_log.before/after) = baris Drizzle yang ditulis API (lib/principal/tulis.ts): kunci camelCase =
+ * nama properti db/schema.ts, waktu = ISO UTC milidetik ("2026-10-11T07:05:41.123Z", seperti JSON Date). Benih memakai
+ * jsonb_build_object dari peta ini (bukan to_jsonb yang berkunci snake_case) — laporan.test.ts mencocokkannya dengan kolom Drizzle.
+ */
+export const KOLOM_LOG = {
+    principal: { id: "id", code: "code", name: "name", isActive: "is_active", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at" },
+    varian: { principalId: "principal_id", variantKey: "variant_key", createdBy: "created_by", createdAt: "created_at", name: "name", isActive: "is_active" },
+    alias: { id: "id", aliasNorm: "alias_norm", principalId: "principal_id", variantKey: "variant_key", aliasAsli: "alias_asli", jenis: "jenis", sumber: "sumber", createdBy: "created_by", createdAt: "created_at" },
+} as const;
+const KOLOM_WAKTU = new Set(["created_at", "updated_at"]);
+export const jsonLog = (entitas: keyof typeof KOLOM_LOG) => `jsonb_build_object(${Object.entries(KOLOM_LOG[entitas])
+    .map(([k, c]) => `'${k}', ${KOLOM_WAKTU.has(c) ? `to_char(b.${c} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')` : `b.${c}`}`).join(", ")})`;
+
 const nilaiAlias = (a: UsulanAlias) => `(${[a.code, a.variantKey, a.aliasNorm, a.aliasAsli, a.jenis, a.sumber].map(lit).join(", ")})`;
 const SISIP_ALIAS = (baris: string[]) => [
     "WITH v(code, variant_key, alias_norm, alias_asli, jenis, sumber) AS (VALUES",
@@ -307,7 +321,7 @@ const SISIP_ALIAS = (baris: string[]) => [
     "    ON CONFLICT DO NOTHING RETURNING *",
     ")",
     "INSERT INTO principal_log (entitas, kunci, principal_id, aksi, after, aktor)",
-    `SELECT 'alias', b.id, b.principal_id, 'buat', to_jsonb(b), ${lit(AKTOR_BENIH)} FROM baru b;`,
+    `SELECT 'alias', b.id, b.principal_id, 'buat', ${jsonLog("alias")}, ${lit(AKTOR_BENIH)} FROM baru b;`,
 ];
 
 /** Benih SQL idempoten untuk DITINJAU owner: hanya INSERT ... ON CONFLICT DO NOTHING (tanpa UPDATE), + principal_log, + VERIFIKASI. */
@@ -351,7 +365,7 @@ export function benihSql(lap: Laporan): string {
         "    ON CONFLICT DO NOTHING RETURNING *",
         ")",
         "INSERT INTO principal_log (entitas, kunci, principal_id, aksi, after, aktor)",
-        `SELECT 'principal', b.id, b.id, 'buat', to_jsonb(b), ${lit(AKTOR_BENIH)} FROM baru b;`,
+        `SELECT 'principal', b.id, b.id, 'buat', ${jsonLog("principal")}, ${lit(AKTOR_BENIH)} FROM baru b;`,
     );
     s.push("", `-- 2. Varian (${vs.length} baru; keputusan owner K9 + No Claim HEINZ).`);
     if (vs.length) s.push(
@@ -363,7 +377,7 @@ export function benihSql(lap: Laporan): string {
         "    ON CONFLICT DO NOTHING RETURNING *",
         ")",
         "INSERT INTO principal_log (entitas, kunci, principal_id, aksi, after, aktor)",
-        `SELECT 'varian', b.principal_id || ':' || b.variant_key, b.principal_id, 'buat', to_jsonb(b), ${lit(AKTOR_BENIH)} FROM baru b;`,
+        `SELECT 'varian', b.principal_id || ':' || b.variant_key, b.principal_id, 'buat', ${jsonLog("varian")}, ${lit(AKTOR_BENIH)} FROM baru b;`,
     );
     s.push("", `-- 3. Alias (${asReg.length} registri: kode, nama resmi, label No Claim, nama varian; ${persis.length} kecocokan PERSIS dari sumber).`);
     if (aktif.length) s.push(...SISIP_ALIAS(aktif.map(nilaiAlias)));

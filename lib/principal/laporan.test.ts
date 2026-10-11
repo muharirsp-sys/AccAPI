@@ -2,7 +2,9 @@
  * sungguhan di Postgres oleh lib/principal-pg.test.ts. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { benihSql, laporanMarkdown, ringkas, susunLaporan, tokenLonggar, type DataDb } from "./laporan.ts";
+import { getTableColumns } from "drizzle-orm";
+import { principal, principalAlias, principalVariant } from "../../db/schema.ts";
+import { benihSql, jsonLog, KOLOM_LOG, laporanMarkdown, ringkas, susunLaporan, tokenLonggar, type DataDb } from "./laporan.ts";
 import { PENJAGA, sqlPenjagaSah } from "./penjaga.ts";
 
 const kosong = { ok: true as const, rows: [] };
@@ -113,4 +115,18 @@ test("isi DB yang sudah ada: tidak diusulkan ulang; ejaan menunjuk target lain =
     assert.doesNotMatch(sql, /^ {4}\('KINO', NULL::text, 'KINO', 'KINO'/m, "alias yang sudah ada tidak diusulkan ulang");
     assert.doesNotMatch(sql, /^ {4}\('KINO', 'NON_FOOD', 'KINO NON FOOD', 'KINO NON FOOD', 'nama'/m, "alias konflik tidak diusulkan");
     assert.match(laporanMarkdown(lap), /KONFLIK registri/);
+});
+
+test("bentuk JSON riwayat benih = baris Drizzle API: kunci camelCase = properti db/schema, kolom = kolom tabel; waktu ISO UTC", () => {
+    const tabel = { principal, varian: principalVariant, alias: principalAlias } as const;
+    for (const [entitas, t] of Object.entries(tabel) as [keyof typeof KOLOM_LOG, typeof principal][]) {
+        const kolom = Object.fromEntries(Object.entries(getTableColumns(t)).map(([k, c]) => [k, c.name]));
+        assert.deepEqual(KOLOM_LOG[entitas], kolom, `KOLOM_LOG.${entitas} = kolom Drizzle (urutan & nama)`);
+        assert.doesNotMatch(jsonLog(entitas), /to_jsonb/);
+    }
+    assert.match(jsonLog("alias"), /'aliasNorm', b\.alias_norm/);
+    assert.match(jsonLog("principal"), /'createdAt', to_char\(b\.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS\.MS"Z"'\)/);
+    const sql = benihSql(susunLaporan(dataSintetis(), "2026-10-11T00:00:00.000Z"));
+    assert.doesNotMatch(sql, /to_jsonb/, "benih tidak memakai to_jsonb (snake_case)");
+    for (const e of ["principal", "varian", "alias"] as const) assert.ok(sql.includes(jsonLog(e)), `benih ${e} memakai jsonLog`);
 });

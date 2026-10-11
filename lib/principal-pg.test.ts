@@ -474,6 +474,21 @@ test("PG S7-2: laporan BACA-SAJA pada data sintetis (ejaan nyata) — sumber hil
         assert.deepEqual([await hitungDi(lap.pool, "principal"), await hitungDi(lap.pool, "principal_variant")], [25, 5]);
         const jumlahAlias = await hitungDi(lap.pool, "principal_alias");
         assert.equal(await hitungDi(lap.pool, "principal_log"), 25 + 5 + jumlahAlias, "satu baris riwayat per baris benih, tidak berlipat saat diulang");
+
+        // Bentuk JSON riwayat benih = API (kunci camelCase sama per entitas; waktu ISO UTC milidetik = nilai kolom).
+        const kunciLog = async (pool: Pool, aktor: string) => Object.fromEntries((await pool.query(`SELECT entitas, array_agg(DISTINCT k ORDER BY k) AS k
+            FROM principal_log, jsonb_object_keys(after) AS k WHERE aktor = $1 AND aksi = 'buat' GROUP BY 1`, [aktor])).rows.map((r) => [r.entitas, r.k]));
+        const dariBenih = await kunciLog(lap.pool, "benih:S7-2");
+        assert.deepEqual(Object.keys(dariBenih).sort(), ["alias", "principal", "varian"]);
+        assert.deepEqual(dariBenih, await kunciLog(utama.pool, ME), "kunci after benih = kunci after API per entitas");
+        const ISO = "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$";
+        for (const pool of [lap.pool, utama.pool]) {
+            const w = (await pool.query(`SELECT bool_and(after->>'createdAt' ~ $1) AS ok, count(*)::int AS n FROM principal_log WHERE aksi = 'buat'`, [ISO])).rows[0];
+            assert.ok(w.ok && w.n > 0, "createdAt ISO UTC milidetik (benih & API)");
+        }
+        assert.equal((await lap.pool.query(`SELECT bool_and((l.after->>'createdAt')::timestamptz = date_trunc('milliseconds', a.created_at)
+            AND l.after->>'aliasNorm' = a.alias_norm AND l.after->>'variantKey' IS NOT DISTINCT FROM a.variant_key) AS ok
+            FROM principal_log l JOIN principal_alias a ON a.id = l.kunci WHERE l.entitas = 'alias'`)).rows[0].ok, true, "nilai after = baris");
         const mb = (await lap.pool.query(`SELECT a.alias_norm, p.code, a.variant_key FROM principal_alias a JOIN principal p ON p.id = a.principal_id
             WHERE a.jenis = 'kode_master_barang' ORDER BY 1`)).rows;
         assert.deepEqual(mb, [{ alias_norm: "GD", code: "GDI", variant_key: null }, { alias_norm: "K1", code: "KINO", variant_key: null },
