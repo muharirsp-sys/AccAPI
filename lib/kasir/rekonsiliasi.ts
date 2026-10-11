@@ -172,12 +172,24 @@ export function alokasiPelunasan(daftar: readonly Pelunasan[], peta: PetaOrang) 
             b.salesmanIdTakDikenal.sort((x, y) => x - y);
         }
         if (daftarOrang.length === 1) {
-            daftarOrang[0].sen = p.chequeAmount; // satu orang: uang pelunasan utuh miliknya
-        } else if (jumlah !== p.chequeAmount) {
-            const sisa = p.chequeAmount - jumlah;
-            takTeralokasi.push({ pelunasanId: p.id, nomor: p.nomor, metode: p.metode, chequeAmount: p.chequeAmount, jumlahInvoicePayment: jumlah,
-                sisa, arah: sisa > 0 ? "lebih_bayar" : "kredit", alasan: p.faktur.length ? "jumlah_invoice_payment_beda" : "tanpa_baris_faktur",
-                orang: daftarOrang.map((b) => b.orang) });
+            daftarOrang[0].sen = p.chequeAmount; // satu orang: uang pelunasan utuh miliknya (cheque >= 0 di sini)
+        } else {
+            // K-1 (a) juga PER ORANG (tinjauan K1b): bagian orang yang negatif (Σ invoicePayment < 0) -> ember nominal_negatif, bagian orang
+            // itu 0 — total orang tidak pernah negatif, jadi klop() tidak pernah melempar karena data Accurate.
+            const negatif = daftarOrang.filter((b) => b.sen < 0);
+            if (negatif.length) {
+                takTeralokasi.push({ pelunasanId: p.id, nomor: p.nomor, metode: p.metode, chequeAmount: p.chequeAmount, jumlahInvoicePayment: 0,
+                    sisa: negatif.reduce((a, b) => a + b.sen, 0), arah: "kredit", alasan: "nominal_negatif", orang: negatif.map((b) => b.orang) });
+                for (const b of negatif) b.sen = 0;
+            }
+            // ponytail: satu pelunasan bisa punya dua ember (nominal_negatif + jumlah_invoice_payment_beda); penjelasan berkunci (pelunasan, sisa)
+            // sehingga dua ember bersisa SAMA dijelaskan sekali. Plafon: kunci penjelasan + alasan bila kasus itu muncul.
+            if (jumlah !== p.chequeAmount) {
+                const sisa = p.chequeAmount - jumlah;
+                takTeralokasi.push({ pelunasanId: p.id, nomor: p.nomor, metode: p.metode, chequeAmount: p.chequeAmount, jumlahInvoicePayment: jumlah,
+                    sisa, arah: sisa > 0 ? "lebih_bayar" : "kredit", alasan: p.faktur.length ? "jumlah_invoice_payment_beda" : "tanpa_baris_faktur",
+                    orang: daftarOrang.map((b) => b.orang) });
+            }
         }
         bagian.push(...daftarOrang);
     }
@@ -450,7 +462,8 @@ function alasanEmber(t: TakTeralokasi): string {
         return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} (metode ${JSON.stringify(t.metode)} tak dikenal; tidak dihitung ke orang).`;
     }
     if (t.alasan === "nominal_negatif") {
-        return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} (pelunasan Tunai/Transfer/Giro bernominal negatif; tidak dihitung ke `
+        const asal = t.chequeAmount < 0 ? "pelunasan Tunai/Transfer/Giro bernominal negatif" : "baris faktur bernominal negatif (invoicePayment)";
+        return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} (${asal}; tidak dihitung ke `
             + `orang${t.orang.length ? ` ${t.orang.map(namaOrang).join(", ")}` : ""}).`;
     }
     if (t.alasan === "tanpa_baris_faktur") return `Uang tak teralokasi ${t.nomor} belum dijelaskan: ${rp(t.sisa)} (pelunasan tanpa baris faktur).`;

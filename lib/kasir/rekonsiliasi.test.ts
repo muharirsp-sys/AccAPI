@@ -422,6 +422,52 @@ test("K1b RENDAH 5b (K-1 = a): cheque uang NEGATIF -> ember nominal_negatif penu
     assert.deepEqual(h2.nonKas.map((x) => x.id), [retur.id]);
 });
 
+test("K1b RENDAH 4 (K-1 a per orang): invoicePayment NEGATIF pada pelunasan multi-orang -> bagian negatif ke ember nominal_negatif, orang tidak dikurangi", () => {
+    const p = pel("CASH_OTHER", 100_000, [[11, 150_000], [12, -50_000], [12, -10_000], [14, 10_000]]);
+    const h = rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan: [p], setoran: [setor("S-A", 150_000), setor("S-B", 0), setor("S-C", 10_000)] });
+    assert.deepEqual(h.baris.map((b) => [b.orang, b.pelunasan, b.status]), [["S-A", Rp(150_000), "klop"], ["S-B", 0, "klop"], ["S-C", Rp(10_000), "klop"]]);
+    assert.deepEqual(h.takTeralokasi.map((t) => [t.alasan, t.sisa, t.arah, t.orang]), [
+        ["nominal_negatif", Rp(-60_000), "kredit", ["S-B"]],
+        ["jumlah_invoice_payment_beda", Rp(100_000 - 100_000), "lebih_bayar", ["S-A", "S-B", "S-C"]],
+    ].filter((x) => x[1] !== 0));
+    assert.equal(h.total.pelunasan + h.total.takTeralokasi, Rp(100_000), "invarian Σ orang + Σ ember = Σ cheque");
+    assert.match(penghalangTutup(h).alasan.join(" | "), /baris faktur bernominal negatif/);
+});
+
+/** PRNG berbenih (mulberry32) — fuzz deterministik. */
+function acak(benih: number) {
+    let a = benih >>> 0;
+    return () => {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+test("K1b RENDAH 4 fuzz: data Accurate apa pun (cheque/invoicePayment ±, metode campur, salesman null/tak dikenal) -> rekonsiliasi TIDAK PERNAH melempar", () => {
+    const r = acak(20261012);
+    const pilih = <T,>(xs: readonly T[]) => xs[Math.floor(r() * xs.length)];
+    const nominal = () => (r() < 0.15 ? 0 : Math.round((r() * 2 - 1) * 50_000_000));
+    for (let iter = 0; iter < 400; iter++) {
+        const pelunasan: Pelunasan[] = Array.from({ length: 1 + Math.floor(r() * 6) }, (_, i) => ({
+            id: iter * 100 + i, nomor: `SR/F/${iter}/${i}`, tanggal: D, chequeAmount: nominal(),
+            metode: pilih(["CASH_OTHER", "BANK_TRANSFER", "BANK_CHEQUE", "OTHERS", "CREDIT_CARD"]),
+            faktur: Array.from({ length: Math.floor(r() * 4) }, (__, j) => ({ fakturId: j + 1, nomorFaktur: null,
+                masterSalesmanId: pilih([11, 12, 13, 14, 15, 999, null]), invoicePayment: nominal() })),
+        }));
+        const setoran = (["S-A", "S-B", "S-C"] as const).filter(() => r() < 0.6).map((k) => setor(k, Math.round(r() * 500_000)));
+        const h = rekonsiliasiHari({ tanggal: D, peta: PETA, pelunasan, setoran });
+        penghalangTutup(h);
+        snapshotHari(h);
+        const uang = pelunasan.filter((x) => x.metode !== "OTHERS").reduce((a, x) => a + x.chequeAmount, 0);
+        assert.equal(h.total.pelunasan + h.total.takTeralokasi, uang, `invarian iterasi ${iter}`);
+        assert.ok(h.baris.every((b) => b.pelunasan >= 0), `total orang >= 0 iterasi ${iter}`);
+        assert.ok(h.takTeralokasi.every((t) => t.sisa !== 0), `tanpa ember sisa 0 iterasi ${iter}`);
+    }
+});
+
 test("RENDAH 4–6: gabungan siklik = galat; klop/setoran negatif & urutan revisi ditolak lib; `pada` wajib Date atau ISO berofset", () => {
     const siklik = { gabunganPerBulan: new Map([["2026-10", new Map([["A", "B"], ["B", "C"], ["C", "A"]])]]) };
     assert.throws(() => orangDariKode("A", D, siklik), /siklik/);
