@@ -37,7 +37,7 @@ export default async function SesiAccuratePage({ searchParams }: { searchParams:
                     <p>Masuk ke Accurate dengan akun Anda dan buka database tempat Anda bekerja. Faktur, pelunasan, dan posting yang Anda kirim
                         memakai sesi ini atas nama Anda.</p>
                 </header>
-                <SesiAccurate returnTo={returnTo} kabar={{ accurate: satu(sp.accurate), alasan: satu(sp.alasan) }} />
+                <SesiAccurate returnTo={returnTo} judul="Akun dan database" kabar={{ accurate: satu(sp.accurate), alasan: satu(sp.alasan) }} />
             </div>
         </FioriScope>
     );

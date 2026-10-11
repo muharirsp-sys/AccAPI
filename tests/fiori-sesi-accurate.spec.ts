@@ -36,7 +36,9 @@ async function pasang(page: Page, o: { sesi: () => Jawab; daftar?: () => Jawab; 
     });
     return log;
 }
-const kartu = (page: Page) => page.locator("main").getByRole("region", { name: "Sesi Accurate" });
+/** Kartu bersama: judul "Akun dan database" di /sesi-accurate (h1 halaman = Sesi Accurate), "Sesi Accurate" di Konsol. */
+const kartu = (page: Page) => page.locator("main").getByRole("region", { name: /^(Sesi Accurate|Akun dan database)$/ });
+const fokusDiBody = (page: Page) => page.evaluate(() => document.activeElement === document.body);
 
 /**
  * Klik "Masuk Accurate" memanggil route login ASLI (cookie state disetel), tetapi redirect ke Accurate diganti halaman tiruan.
@@ -71,6 +73,8 @@ test.describe("kartu (LOCAL_AUTH_BYPASS)", () => {
         await expect(k.getByRole("link", { name: "Masuk Accurate" })).toHaveAttribute("href", "/api/auth/accurate-login?returnTo=%2Fpelunasan");
         await expect(page.getByRole("link", { name: "Kembali ke Pelunasan" })).toHaveAttribute("href", "/pelunasan");
         await expect(k.getByRole("button", { name: "Keluar dari Accurate" })).toHaveCount(0);
+        await expect(page.locator("main h1")).toHaveText("Sesi Accurate");
+        await expect(k.getByRole("heading", { level: 2 })).toHaveText("Akun dan database");
         await page.screenshot({ path: "test-results/fiori-sesi-accurate-belum.png", fullPage: true });
 
         await page.goto("/sesi-accurate?returnTo=https://evil.example/x", { timeout: 90_000 });
@@ -83,29 +87,61 @@ test.describe("kartu (LOCAL_AUTH_BYPASS)", () => {
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     });
 
-    test("masuk tanpa database: pilih wajib, Buka mengirim id+alias, lalu Database aktif dari sesi terbaca ulang", async ({ page }) => {
+    test("masuk tanpa database: pilih wajib (terkait isian), Buka gagal tetap di daftar + fokus ke pesan, Buka sukses = Database aktif", async ({ page }) => {
         let sesi = TANPA_DB;
-        const log = await pasang(page, { sesi: () => json(sesi) });
+        let buka = json({ ok: false, code: "ACCURATE_MENOLAK", error: "x" }, 502);
+        const log = await pasang(page, { sesi: () => json(sesi), buka: () => buka });
         await page.goto("/sesi-accurate", { timeout: 90_000 });
         const k = kartu(page);
         await expect(k).toContainText("Database belum dibuka");
         const pilih = k.getByLabel("Database Accurate");
         await expect(pilih.locator("option")).toHaveText(["Pilih database", "PT CONTOH", "PT CONTOH DUA"]);
         await k.getByRole("button", { name: "Buka database" }).click();
-        await expect(k.getByRole("alert")).toContainText("Pilih database dulu.");
+        await expect(k).toContainText("Pilih database dulu.");
+        await expect(pilih).toHaveAttribute("aria-invalid", "true");
+        await expect(pilih).toBeFocused();
         expect(log.buka).toHaveLength(0);
-        sesi = AKTIF;
+
         await pilih.selectOption("77");
+        await expect(pilih).not.toHaveAttribute("aria-invalid", "true");
+        await k.getByRole("button", { name: "Buka database" }).click();
+        await expect(k.getByRole("alert")).toContainText("Database tidak bisa dibuka.");
+        await expect(pilih).toBeVisible(); // daftar tidak dikosongkan saat sesi dimuat ulang
+        await expect.poll(() => fokusDiBody(page)).toBe(false);
+
+        buka = json({ ok: true, host: "https://contoh.accurate.id", databaseId: "77" });
+        sesi = AKTIF;
         await k.getByRole("button", { name: "Buka database" }).click();
         await expect(k).toContainText("Database terbuka.");
         await expect(k).toContainText("Database aktif");
         await expect(k).toContainText("PT CONTOH (id 77)");
         await expect(k).toContainText("https://contoh.accurate.id");
-        expect(log.buka).toEqual([{ id: "77", alias: "PT CONTOH" }]);
+        await expect.poll(() => fokusDiBody(page)).toBe(false);
+        expect(log.buka).toEqual([{ id: "77", alias: "PT CONTOH" }, { id: "77", alias: "PT CONTOH" }]);
         await page.screenshot({ path: "test-results/fiori-sesi-accurate-aktif.png", fullPage: true });
     });
 
-    test("database aktif → Keluar menghapus sesi; Keluar gagal = pesan galat, bukan 'sudah keluar'", async ({ page }) => {
+    test("database aktif → Ganti database memakai daftar + open-db; Batal ganti kembali", async ({ page }) => {
+        let sesi: Record<string, unknown> = AKTIF;
+        const log = await pasang(page, { sesi: () => json(sesi) });
+        await page.goto("/sesi-accurate", { timeout: 90_000 });
+        const k = kartu(page);
+        await expect(k).toContainText("PT CONTOH (id 77)");
+        await k.getByRole("button", { name: "Ganti database" }).click();
+        const pilih = k.getByLabel("Database Accurate");
+        await expect(pilih).toBeFocused();
+        await k.getByRole("button", { name: "Batal ganti" }).click();
+        await expect(pilih).toHaveCount(0);
+        await k.getByRole("button", { name: "Ganti database" }).click();
+        await pilih.selectOption("88");
+        sesi = { ...AKTIF, databaseId: "88", databaseAlias: "PT CONTOH DUA" };
+        await k.getByRole("button", { name: "Buka database" }).click();
+        await expect(k).toContainText("PT CONTOH DUA (id 88)");
+        await expect(k.getByRole("button", { name: "Ganti database" })).toBeVisible();
+        expect(log.buka).toEqual([{ id: "88", alias: "PT CONTOH DUA" }]);
+    });
+
+    test("Keluar lewat konfirmasi; gagal = galat di dialog (bukan 'sudah keluar'); berhasil = fokus ke pesan", async ({ page }) => {
         let sesi = AKTIF;
         let hapus = json({ ok: false, error: "x" }, 500);
         const log = await pasang(page, { sesi: () => json(sesi), hapus: () => hapus });
@@ -113,31 +149,45 @@ test.describe("kartu (LOCAL_AUTH_BYPASS)", () => {
         const k = kartu(page);
         await expect(k).toContainText("PT CONTOH (id 77)");
         await k.getByRole("button", { name: "Keluar dari Accurate" }).click();
-        await expect(k.getByRole("alert")).toContainText("Keluar gagal; sesi Accurate mungkin masih aktif.");
+        const dlg = page.getByRole("dialog", { name: "Keluar dari Accurate?" });
+        await dlg.getByRole("button", { name: "Keluar dari Accurate" }).click();
+        await expect(dlg.getByRole("alert")).toContainText("Keluar gagal; sesi Accurate mungkin masih aktif.");
         await expect(k).not.toContainText("sudah keluar");
         hapus = json({ ok: true });
         sesi = BELUM;
-        await k.getByRole("button", { name: "Keluar dari Accurate" }).click();
+        await dlg.getByRole("button", { name: "Keluar dari Accurate" }).click();
+        await expect(dlg).toHaveCount(0);
         await expect(k).toContainText("Anda sudah keluar dari Accurate.");
         await expect(k).toContainText("Belum masuk ke Accurate");
+        await expect.poll(() => fokusDiBody(page)).toBe(false);
         expect(log.hapus).toBe(2);
     });
 
-    test("galat: sesi tak terbaca ≠ belum masuk; daftar database gagal ≠ daftar kosong; Coba lagi memuat ulang", async ({ page }) => {
+    test("galat: sesi tak terbaca ≠ belum masuk; 401 = masuk ulang (bukan Coba lagi); daftar gagal ≠ kosong; daftar kosong = keadaan kosong", async ({ page }) => {
         let sesi = json({ ok: false, error: "Internal" }, 500);
         let daftar = json({ error: "Failed" }, 502);
         await pasang(page, { sesi: () => sesi, daftar: () => daftar });
         await page.goto("/sesi-accurate", { timeout: 90_000 });
         const k = kartu(page);
-        await expect(k.getByRole("alert")).toContainText("Sesi Accurate tidak terbaca.");
+        await expect(k).toContainText("Sesi Accurate tidak terbaca");
+        await expect(k.getByRole("alert")).toHaveText(/Server tidak memberi status sesi\./);
         await expect(k).not.toContainText("Belum masuk ke Accurate");
         await expect(k.getByRole("link", { name: "Masuk Accurate" })).toHaveCount(0);
+        sesi = json({ ok: false, error: "Unauthorized" }, 401);
+        await k.getByRole("button", { name: "Coba lagi" }).click();
+        await expect(k.getByRole("link", { name: "Masuk ulang ke aplikasi" })).toHaveAttribute("href", "/login");
+        await expect(k.getByRole("button", { name: "Coba lagi" })).toHaveCount(0);
+
         sesi = json(TANPA_DB);
-        await k.getByRole("button", { name: "Coba lagi" }).click();
-        await expect(k.getByRole("alert")).toContainText("Daftar database tidak terbaca.");
+        await page.reload();
+        await expect(k.getByRole("alert")).toContainText("Daftar database Accurate tidak terbaca.");
         await expect(k.getByLabel("Database Accurate")).toHaveCount(0);
-        daftar = json(DAFTAR);
+        daftar = json({ s: true, d: [] });
         await k.getByRole("button", { name: "Coba lagi" }).click();
+        await expect(k.getByRole("status").filter({ hasText: "Akun Accurate ini tidak punya database" })).toBeVisible();
+        await expect(k.getByRole("button", { name: "Buka database" })).toHaveCount(0);
+        daftar = json(DAFTAR);
+        await k.getByRole("button", { name: "Muat ulang daftar" }).click();
         await expect(k.getByLabel("Database Accurate")).toBeVisible();
     });
 
