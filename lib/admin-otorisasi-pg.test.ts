@@ -686,7 +686,13 @@ test("preset BL-37 SQL: idempoten (jalan 2x), isi persis D-01 §B, grup lama ber
         const c = await m.pool.connect();
         try {
             const hasil = (await c.query(readFileSync(new URL("../docs/handover/RBAC_S7_1_CEK_ROLE.sql", import.meta.url), "utf8"))) as unknown as Array<{ rows: Array<Record<string, unknown>> }>;
-            const milik = (i: number) => hasil[i].rows.filter((x) => String(x.email).startsWith(w.p));
+            // Hanya hasil kueri cek (BEGIN READ ONLY / ROLLBACK juga mengembalikan hasil kosong); urut = cek 1..4.
+            const cek = hasil.filter((x) => x.rows?.[0] === undefined ? false : "cek" in x.rows[0]);
+            const milik = (i: number) => cek.filter((x) => String(x.rows[0].cek).startsWith(`${i + 1} `)).flatMap((x) => x.rows).filter((x) => String(x.email).startsWith(w.p));
+            const sql = readFileSync(new URL("../docs/handover/RBAC_S7_1_CEK_ROLE.sql", import.meta.url), "utf8").replace(/--.*$/gm, "").trim();
+            assert.match(sql, /^BEGIN READ ONLY;/, "dibungkus transaksi baca-saja");
+            assert.match(sql, /ROLLBACK;$/);
+            assert.doesNotMatch(sql, /\b(UPDATE|DELETE|INSERT|COMMIT)\b/i);
             assert.deepEqual(milik(0).map((x) => [x.email, x.role_sekarang, x.role_menurut_peta]).sort(), [[`${w.p}-cek@s71.test`, "staff", "manager"], [`${w.p}-cekadmin@s71.test`, "admin", "manager"]]);
             assert.deepEqual(milik(1).map((x) => x.email), [`${w.p}-cekadmin@s71.test`]);
             const sebelum = (await m.pool.query(`SELECT role FROM "user" WHERE id = ANY($1) ORDER BY id`, [[u, v]])).rows;

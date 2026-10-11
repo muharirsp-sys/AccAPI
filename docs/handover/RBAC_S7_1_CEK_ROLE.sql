@@ -6,8 +6,11 @@
 -- Grup utama efektif = grup berbintang; tanpa bintang dan user tepat 1 grup = grup itu (sama dengan getPrimaryGroup).
 -- Peta role hanya untuk grup PRESET (is_preset) bernama di bawah (= GROUP_NAME_TO_ROLE, lib/rbac/otorisasi.ts).
 -- Hasil TIDAK otomatis salah: role bisa sengaja berbeda (mis. diatur sebelum S7). Keputusan perbaikan = admin lewat layar
--- (tandai ulang bintang) atau owner; JANGAN UPDATE massal dari kueri ini.
+-- (tandai ulang bintang) atau owner; JANGAN ubah massal dari kueri ini.
+-- Dibungkus transaksi READ ONLY yang di-ROLLBACK (tinjauan B #8): tulisan apa pun di dalamnya ditolak Postgres.
 -- =====================================================================
+
+BEGIN READ ONLY;
 
 -- 1. User dengan grup utama PRESET berpeta yang user.role-nya BERBEDA dari peta.
 WITH peta(nama, role) AS (VALUES
@@ -53,3 +56,5 @@ SELECT '4 >1 grup tanpa bintang' AS cek, u.email, u.role, count(*) AS jumlah_gru
 FROM "user" u JOIN user_group ug ON ug.user_id = u.id
 GROUP BY u.id, u.email, u.role HAVING count(*) > 1 AND NOT bool_or(ug.is_primary)
 ORDER BY u.email;
+
+ROLLBACK;
