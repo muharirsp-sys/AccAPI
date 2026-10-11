@@ -10,7 +10,7 @@
  */
 import type { Load } from "@/components/fiori/interactive";
 import { ambilJson } from "@/app/(dashboard)/form-kontrol/lapangan";
-import { baca } from "@/app/(dashboard)/principal-order/bersama";
+import { baca, sebab } from "@/app/(dashboard)/principal-order/bersama";
 
 export type Sesi = { connected: boolean; databaseConnected: boolean; databaseId: string | null; databaseAlias: string | null };
 
@@ -67,18 +67,27 @@ export const kandidatDari = (v: unknown): Kandidat[] => (Array.isArray(v) ? v : 
     return { receiptNumber: String(o.receiptNumber ?? "").trim(), invoiceNos: daftarTeks(o.invoiceNos), amount: typeof o.amount === "number" ? o.amount : null, transDate: String(o.transDate ?? "") };
 });
 
-/** Selesaikan langkah 1: hasil pencarian server di Accurate (sesi pemanggil), baca-saja. */
-export const cariPenyelesaian = (key: string): Promise<Load<Pencarian>> =>
-    baca(`/api/idempotency/resolve?key=${encodeURIComponent(key)}`, (j) => ({
-        databaseId: j.databaseId == null ? null : String(j.databaseId),
-        databaseAlias: typeof j.databaseAlias === "string" ? j.databaseAlias : null,
-        rows: Array.isArray(j.rows)
-            ? (j.rows as Array<Record<string, unknown>>).map((r) => ({ ...r, receiptNumbers: daftarTeks(r.receiptNumbers), candidates: kandidatDari(r.candidates) }) as HasilCari)
+/**
+ * Selesaikan langkah 1: hasil pencarian server di Accurate (sesi pemanggil), baca-saja. 403 = galat ber-`ALASAN.selesaikanDitolak`
+ * (izin dicabut sesudah halaman dibuka): mengulang tidak menolong, jadi dialog tidak menawarkan "Coba lagi" (susulan 2b #8).
+ */
+export async function cariPenyelesaian(key: string): Promise<Load<Pencarian>> {
+    const j = await ambilJson(`/api/idempotency/resolve?key=${encodeURIComponent(key)}`, { credentials: "include" });
+    if (j.status === 403) return { status: "galat", error: ALASAN.selesaikanDitolak };
+    if (!(j.status >= 200 && j.status < 300 && j.data?.ok)) return { status: "galat", error: sebab(j.status, j.data, "Pencarian di Accurate gagal.") };
+    const d = j.data;
+    return { status: "siap", data: {
+        databaseId: d.databaseId == null ? null : String(d.databaseId),
+        databaseAlias: typeof d.databaseAlias === "string" ? d.databaseAlias : null,
+        rows: Array.isArray(d.rows)
+            ? (d.rows as Array<Record<string, unknown>>).map((r) => ({ ...r, receiptNumbers: daftarTeks(r.receiptNumbers), candidates: kandidatDari(r.candidates) }) as HasilCari)
             : [],
-    }), "Pencarian di Accurate gagal.");
+    } };
+}
 
 /**
- * Jawaban POST Selesaikan (kontrak §5): `ragu` = putus / ≥ 502 / bukan JSON / 2xx tanpa bentuk dikenal — penyelesaian MUNGKIN tercatat.
+ * Jawaban POST Selesaikan (kontrak §5): `ragu` = putus / ≥ 502 / bukan JSON / 2xx tanpa bentuk dikenal / 5xx tanpa `code` (mis. 500
+ *   berbadan kosong, yang `ambilJson` baca sebagai `{}`: server bisa gagal SESUDAH mencatat) — penyelesaian MUNGKIN tercatat.
  * `sudah` = alreadyResolved (klik ganda, atau kalah balapan dengan Finance lain): `status` = keputusan yang BERLAKU di server.
  */
 export type JawabSelesaikan =
@@ -101,7 +110,9 @@ export async function simpanPenyelesaian(body: {
         const nomor = Array.isArray(j.data.receiptNumbers) ? j.data.receiptNumbers.map(String) : [];
         return j.data.ok === true && (st === "SUCCESS" || st === "FAILED") ? { jenis: "ok", status: st, sudah: j.data.alreadyResolved === true, nomor } : { jenis: "ragu" };
     }
-    return { jenis: "tolak", code: typeof j.data.code === "string" && j.data.code ? j.data.code : `HTTP_${j.status}`, pesan: typeof j.data.error === "string" ? j.data.error : "", data: j.data };
+    const code = typeof j.data.code === "string" && j.data.code ? j.data.code : "";
+    if (j.status >= 500 && !code) return { jenis: "ragu" };
+    return { jenis: "tolak", code: code || `HTTP_${j.status}`, pesan: typeof j.data.error === "string" ? j.data.error : "", data: j.data };
 }
 
 /** `category`: "uncertain" | "processingStale" = boleh diselesaikan (§4 eligible); "retryable" = Gagal, tidak terkirim. */

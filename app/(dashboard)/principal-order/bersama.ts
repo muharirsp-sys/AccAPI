@@ -58,7 +58,7 @@ export const ALASAN_IZIN = {
     ganti: "Mengganti batch lama menghapusnya, jadi butuh izin ubah Order Masuk (sama dengan Hapus); minta admin menambahkannya.",
 };
 
-const sebab = (status: number, data: Record<string, unknown> | null, umum: string) => {
+export const sebab = (status: number, data: Record<string, unknown> | null, umum: string) => {
     if (status === 0) return `${umum} Server tidak terjangkau; periksa koneksi lalu coba lagi.`;
     if (status === 401) return `${umum} Sesi login berakhir; masuk ulang lalu coba lagi.`;
     if (status === 403) return `${umum} Akun Anda belum punya izin untuk data ini; minta admin menambahkannya ke grup akses.`;

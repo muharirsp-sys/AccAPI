@@ -698,3 +698,33 @@ test("Susulan 2b #1: server sudah SUCCESS saat dicari = Terposting tanpa nomor k
     await expect(tabel).toContainText("Diselesaikan: terposting — nomor pelunasan Accurate lihat jejak penyelesaian");
     await expect(tabel).not.toContainText("PR.2026.10.00055");
 });
+
+test("Susulan 2b #2/#8: POST Selesaikan 500 berbadan kosong = belum pasti + cari ulang; GET pencarian 403 = alasan izin tanpa Coba lagi", async ({ page }) => {
+    const log = await pasang(page, {
+        tulis: () => "putus",
+        resolve: (key) => (key.includes("PELANGGAN-B_") ? json({ ok: false, code: "forbidden", error: "Selesaikan pelunasan butuh izin finance.resolve_unknown." }, 403) : cari(key)),
+        selesai: () => ({ status: 500, contentType: "application/json", body: "" }),
+    });
+    await sampaiHasilRagu(page);
+    const sel = page.getByRole("dialog", { name: "Selesaikan pelunasan tidak pasti" });
+
+    // #2: 500 tanpa `code` (badan kosong) = hasilnya belum pasti, BUKAN "Tidak ada yang diubah"; pencarian dimuat ulang.
+    await page.getByRole("button", { name: /^Selesaikan INV\/A\/001/ }).click();
+    await sel.getByRole("radio", { name: /Tetapkan tidak ada/ }).check();
+    await sel.getByLabel("Diperiksa di").fill("Accurate › Penerimaan Penjualan, pelanggan dan tanggal sama");
+    await sel.getByRole("textbox", { name: "Alasan", exact: true }).fill("Tidak ada pelunasan untuk faktur ini di Accurate.");
+    const cariSebelum = log.resolve.length;
+    await sel.getByRole("button", { name: "Tetapkan tidak ada" }).click();
+    await expect(sel.getByRole("alert")).toContainText("hasilnya belum pasti");
+    await expect(sel.getByRole("alert")).not.toContainText("Tidak ada yang diubah");
+    await expect.poll(() => log.resolve.length).toBeGreaterThan(cariSebelum);
+    await sel.getByRole("button", { name: "Batal" }).click();
+
+    // #8: pencarian 403 (izin dicabut sesudah halaman dibuka) = alasan izin; tidak menawarkan Coba lagi / Cari lagi.
+    await page.getByRole("button", { name: /^Selesaikan INV\/A\/002/ }).click();
+    await expect(sel.getByRole("alert")).toContainText("Server menolak: akun Anda tidak (lagi) berhak menyelesaikan baris tidak pasti");
+    await expect(sel.getByRole("button", { name: "Coba lagi" })).toHaveCount(0);
+    await expect(sel.getByRole("button", { name: "Cari lagi" })).toHaveCount(0);
+    await sel.getByRole("textbox", { name: "Alasan", exact: true }).fill("Tidak ada pelunasan untuk faktur ini di Accurate.");
+    await expect(sel.locator("footer .fi-why")).toContainText("Server menolak");
+});

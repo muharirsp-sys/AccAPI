@@ -81,11 +81,13 @@ export function SelesaikanDialog({ kunci, ringkas, lockDb, izinTakeover, onClose
             ? "Ada pelunasan di Accurate yang menyentuh faktur ini; bandingkan nominalnya — bila itu kiriman ini, tetapkan terposting dengan nomornya. Mengirim ulang bisa membuat pelunasan ganda."
             : target.id === null ? "Database kiriman tidak tercatat (baris sebelum pembaruan): tidak ditemukan di database ini bisa berarti terposting di database lain." : ""),
     };
+    /** GET pencarian 403 (izin dicabut sesudah halaman dibuka): tanpa "Coba lagi"/"cari lagi" — mengulang tidak menolong. */
+    const cariDitolak = load.status === "galat" && load.error === ALASAN.selesaikanDitolak;
     const dbBeda = db && target.id !== null && db.databaseId !== target.id
         ? `Baris ini dikirim ke ${target.label}; sesi Anda membuka ${namaDatabase(db)}. Buka database itu di Konsol AOL lalu Cari lagi.` : "";
     const blok = load.status === "memuat" ? "Menunggu hasil pencarian di Accurate"
-        : !r ? "Pencarian belum berhasil — cari lagi"
-            : izinDitolak ? ALASAN.selesaikanDitolak
+        : izinDitolak || cariDitolak ? ALASAN.selesaikanDitolak
+            : !r ? "Pencarian belum berhasil — cari lagi"
                 : !db?.databaseId ? "Sesi Accurate tanpa database terbuka; buka database lewat Konsol AOL lalu Cari lagi"
                     : dbBeda || (!keputusan ? "Pilih hasil pemeriksaan dulu" : tidak[keputusan])
                         || (keputusan === "terposting" && !nomorPilih ? "Pilih nomor pelunasan" : "")
@@ -171,7 +173,8 @@ export function SelesaikanDialog({ kunci, ringkas, lockDb, izinTakeover, onClose
             reason={{ label: "Alasan", min: 15, placeholder: "Apa yang Anda lihat di Accurate dan mengapa" }}
             confirmLabel={keputusan === "tidak_ada" ? "Tetapkan tidak ada" : "Tetapkan terposting"} confirmDisabled={blok} alasanTerlihat onConfirm={simpan}>
             {load.status === "memuat" && <Skeleton rows={3} label="Mencari pelunasan di Accurate dengan sesi Anda" />}
-            {load.status === "galat" && <ErrorState title="Pencarian di Accurate gagal" message={load.error} onRetry={cariLagi} />}
+            {load.status === "galat" && <ErrorState title={cariDitolak ? "Akun Anda tidak berhak menyelesaikan" : "Pencarian di Accurate gagal"} message={load.error}
+                onRetry={cariDitolak ? undefined : cariLagi} />}
             {load.status === "siap" && !r && <ErrorState title="Baris tidak ditemukan di catatan aplikasi" message="Pencarian tidak mengembalikan baris ini." onRetry={cariLagi} />}
             {r && db && (
                 <>
@@ -224,7 +227,7 @@ export function SelesaikanDialog({ kunci, ringkas, lockDb, izinTakeover, onClose
                     <FormField label="Diperiksa di" required help="Mis. Accurate › Penerimaan Penjualan, saring pelanggan dan tanggal yang sama.">
                         {(a11y) => <input {...a11y} className="fi-input" value={sumber} onChange={(e) => setSumber(e.target.value)} />}
                     </FormField>
-                    <div className="fi-btnrow"><Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={cariLagi}>Cari lagi</Button></div>
+                    {!cariDitolak && <div className="fi-btnrow"><Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={cariLagi}>Cari lagi</Button></div>}
                 </>
             )}
         </ConfirmDialog>
