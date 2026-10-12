@@ -1,6 +1,7 @@
 """Tujuan: Self-check pemisahan basis data Web Sales dan pull idempoten ke internal.
 Caller: `python test_websales_pull.py` (tanpa framework). Dependensi: routers.orders, routers.websales.
-Main Functions: main; assert dua basis data terpisah, tanpa harga dari klien, pull tidak menggandakan.
+Main Functions: main; assert dua basis data terpisah, tanpa harga dari klien, pull tidak menggandakan, dan (O1/BL-18) order tarikan
+berharga server -> draft siap antre faktur; aturan cabang ditanya di simpan (sesi sales) dan di tarik (layanan).
 Side Effects: Dua SQLite sementara di direktori temp; tidak memanggil Mistral/Accurate.
 """
 import json
@@ -14,6 +15,7 @@ os.environ["WEBSALES_STORE_PATH"] = os.path.join(_root, "websales.sqlite3")
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+import order_cabang  # noqa: E402
 import outlet_channel  # noqa: E402
 import websales_store  # noqa: E402
 from routers import orders, websales  # noqa: E402
@@ -43,6 +45,22 @@ PERMISSIONS = {
 }
 
 
+# Jembatan Next `/api/orders/harga` dipalsukan (perilaku HTTP-nya diuji di `test_order_cabang`). Harga server 1000 per baris;
+# TOLAK[kode pelanggan] = (status, kode) menolak order pelanggan itu. PANGGILAN mencatat jalur (sesi/layanan) dan mode harga.
+PANGGILAN = []
+TOLAK = {}
+
+
+def periksa_palsu(customer_no, order_date, lines, cookie=None, harga=True):
+    PANGGILAN.append({"customer_no": customer_no, "sesi": cookie is not None, "harga": harga})
+    if customer_no in TOLAK:
+        status, kode = TOLAK[customer_no]
+        if kode == "TIDAK_PASTI":
+            raise order_cabang.OrderCabangTidakPasti("Next tidak menjawab")
+        raise order_cabang.OrderCabangDitolak(status, kode, f"ditolak {kode}", {"barang": ["A"]})
+    return [{**line, "price": "1000"} if harga else dict(line) for line in lines]
+
+
 def fake_auth(module):
     module.get_current_user = lambda request: request.headers.get("X-Test-User") or None
     module.user_has_permission = lambda user, area, action: (area, action) in PERMISSIONS.get(user, set())
@@ -53,6 +71,7 @@ def main():
     # Channel outlet ditanyakan ke Next sejak PR #64. Self-check tidak boleh menuntut layanan
     # hidup: yang diuji di sini alur order, bukan jembatan channelnya (itu `test_outlet_channel`).
     outlet_channel.verify = lambda customer_no, channel: channel
+    order_cabang.periksa = periksa_palsu
     fake_auth(orders)
     fake_auth(websales)
     app = FastAPI()
@@ -72,6 +91,24 @@ def main():
     assert created.status_code == 200, created.text
     request_id = created.json()["request"]["id"]
     assert created.json()["request"]["status"] == "pending"
+    # O1: simpan Order Sales memeriksa aturan cabang lewat SESI sales (cakupan cabang salesman), dengan harga (tersedia?) —
+    # tetapi harganya TIDAK disimpan di permintaan (dibekukan saat tarik).
+    assert PANGGILAN[-1] == {"customer_no": "C-001", "sesi": True, "harga": True}, PANGGILAN
+    assert set(created.json()["request"]["lines"][0]) == {"code", "unit", "quantity"}, created.json()
+
+    # Ditolak Next (mis. barang beda cabang / salesman belum tertaut) -> kodenya sampai ke sales, tidak ada yang tersimpan.
+    TOLAK["C-TOLAK"] = (409, "BARANG_BEDA_CABANG")
+    sebelum = websales_store.pending_count()
+    ditolak = client.post("/websales/orders", headers=SALES, json={**ask, "outlet": "TOKO TOLAK", "customer_no": "C-TOLAK"})
+    assert ditolak.status_code == 409 and ditolak.json()["kode"] == "BARANG_BEDA_CABANG", ditolak.text
+    assert ditolak.json()["detail"] and ditolak.json()["barang"] == ["A"], ditolak.text
+    TOLAK["C-SALES"] = (403, "SALESMAN_BELUM_TERHUBUNG")
+    belum = client.post("/websales/orders", headers=SALES, json={**ask, "outlet": "TOKO X", "customer_no": "C-SALES"})
+    assert belum.status_code == 403 and belum.json()["kode"] == "SALESMAN_BELUM_TERHUBUNG", belum.text
+    # Next tak pasti -> 503, juga tidak tersimpan (gagal tertutup).
+    TOLAK["C-DIAM"] = (0, "TIDAK_PASTI")
+    assert client.post("/websales/orders", headers=SALES, json={**ask, "outlet": "TOKO Y", "customer_no": "C-DIAM"}).status_code == 503
+    assert websales_store.pending_count() == sebelum
 
     # Harga dari klien diabaikan: baris tersimpan hanya kode, satuan, jumlah.
     # Outletnya sengaja BERBEDA dari `ask`: gerbang order ganda menahan dua order berbarang sama
@@ -104,20 +141,37 @@ def main():
                              "lines": [dict(code="A", unit="PCS", quantity="10", price="1000")]})
     assert peek.status_code == 200 and peek.json()["result"]["discount"] == "500.00", peek.text
 
+    # Permintaan yang SUDAH tersimpan lalu ditolak saat tarik (mis. harga belum disinkron) tetap pending, sebabnya berkode di
+    # `failed`; permintaan lain pada tarikan yang sama tetap masuk.
+    tertahan = client.post("/websales/orders", headers=SALES,
+                           json={**ask, "outlet": "TOKO TERTAHAN", "customer_no": "C-NANTI"}).json()["request"]["id"]
+    TOLAK["C-NANTI"] = (409, "HARGA_BELUM_ADA")
     pulled = client.post("/orders/pull", headers=ADMIN, json={})
     assert pulled.status_code == 200, pulled.text
     body = pulled.json()
-    assert len(body["imported"]) == 2 and body["already_imported"] == [] and body["failed"] == [], body
+    assert len(body["imported"]) == 2 and body["already_imported"] == [], body
+    assert body["failed"] == [{"request_id": tertahan, "error": "ditolak HARGA_BELUM_ADA", "kode": "HARGA_BELUM_ADA"}], body
+    assert websales_store.get_request(tertahan)["status"] == "pending"
+    # Tarikan memakai jalur LAYANAN (tanpa sesi: cron tak punya cookie) dan meminta harga.
+    assert PANGGILAN[-1]["sesi"] is False and PANGGILAN[-1]["harga"] is True, PANGGILAN[-1]
 
-    # Order hasil pull belum berharga: uang TIDAK dihitung dan aturan belum dibekukan.
+    # BL-18: order hasil pull BERHARGA server -> dihitung, aturan dibekukan, status draft (siap diantrekan ke faktur).
     order_id = next(item["order_id"] for item in body["imported"] if item["request_id"] == request_id)
     order = client.get(f"/orders/{order_id}", headers=ADMIN).json()["order"]
-    assert order["status"] == "needs_price" and order["request_id"] == request_id, order
+    assert order["status"] == "draft" and order["request_id"] == request_id, order
     # Pelanggan ikut terbawa dari sisi sales; tanpa ini faktur tidak bisa dibuat.
     assert order["customer_no"] == "C-001", order
-    assert order["result"] == {"pending_price": True, "lines": order["lines"]}, order["result"]
+    assert [line["price"] for line in order["lines"]] == ["1000"], order["lines"]
+    assert order["result"]["discount"] == "500.00" and not order["result"].get("pending_price"), order["result"]
     with connect() as db:
-        assert json.loads(db.execute("SELECT rules FROM sales_order WHERE id=?", (order_id,)).fetchone()[0]) == []
+        assert json.loads(db.execute("SELECT rules FROM sales_order WHERE id=?", (order_id,)).fetchone()[0]) != []
+    # Harga klien 999999 TIDAK pernah dipakai: order permintaan kedua juga berharga server.
+    kedua = next(item["order_id"] for item in body["imported"] if item["request_id"] != request_id)
+    assert [line["price"] for line in client.get(f"/orders/{kedua}", headers=ADMIN).json()["order"]["lines"]] == ["1000"]
+    # Sesudah harganya tersedia, permintaan tertahan ikut masuk pada tarikan berikutnya.
+    del TOLAK["C-NANTI"]
+    lagi = client.post("/orders/pull", headers=ADMIN, json={}).json()
+    assert [item["request_id"] for item in lagi["imported"]] == [tertahan] and lagi["failed"] == [], lagi
 
     # Pull kedua tidak menggandakan order walau permintaan sempat gagal ditandai.
     assert client.post("/orders/pull", headers=ADMIN, json={}).json()["imported"] == []

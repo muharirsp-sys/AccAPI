@@ -712,6 +712,23 @@ export const migrations = [
       ALTER TABLE kasir_pelunasan_baca ADD COLUMN IF NOT EXISTS penuh_tertunda_pada timestamptz;
     `,
   },
+  {
+    // 2026-10-12 (O1 order per cabang Accurate; DRAFT — zona skema + jalur order, butuh review manusia). EXPAND KOLOM saja pada tabel
+    // lama (item, customer) — ALTER butuh role PEMILIK: tanpa DATABASE_MIGRATION_URL jalankan docs/handover/DDL_O1.sql SEBELUM image
+    // (sesudahnya entri ini SKIP). sudahAda lewat pg_attribute (tanpa hak tabel information_schema kosong -> ALTER 42501 -> crash loop).
+    // Lihat db/migrations/0033_order_cabang.sql.
+    nama: "order cabang (item/customer O1)",
+    sudahAda: `SELECT 1 WHERE (SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('item') AND NOT attisdropped
+                   AND attname IN ('branch_id', 'suspended', 'char_field2')) = 3
+               AND (SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('customer') AND NOT attisdropped
+                   AND attname = 'suspended') = 1`,
+    sql: `
+      ALTER TABLE item ADD COLUMN IF NOT EXISTS branch_id bigint;
+      ALTER TABLE item ADD COLUMN IF NOT EXISTS suspended boolean NOT NULL DEFAULT false;
+      ALTER TABLE item ADD COLUMN IF NOT EXISTS char_field2 text;
+      ALTER TABLE customer ADD COLUMN IF NOT EXISTS suspended boolean NOT NULL DEFAULT false;
+    `,
+  },
 ];
 
 async function main() {

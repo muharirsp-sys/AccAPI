@@ -1,15 +1,19 @@
 /*
  * Tujuan: Pratinjau nilai order dan saran promo dengan harga dari server (hasil sync Accurate).
  * Caller: halaman Order Masuk dan aplikasi Web Sales; klien TIDAK pernah mengirim harga.
- * Dependensi: lib/item-price (harga bertingkat + fallback), lib/rbac/resolve, backend FastAPI /orders/preview.
+ * Dependensi: lib/order-cabang (aturan cabang + harga per cabang pelanggan), lib/rbac/resolve, backend FastAPI /orders/preview.
  * Izin: `order.create` (petugas internal) ATAU `websales.create` (sales). Sales HARUS melihat
  * nilai transaksi dan promo; yang dilarang adalah klien MENENTUKAN harga.
  * Main Functions: POST.
  * Side Effects: DB read-only; satu panggilan HTTP ke backend promo. Tidak menyimpan order.
+ *
+ * O1 (owner 12 Okt 2026): cabang harga = cabang PELANGGAN dibaca server (dulu `branch_id` dari badan permintaan yang tak pernah dikirim
+ * layar mana pun -> harga jatuh ke cabang default). Pemeriksaannya SAMA dengan saat order disimpan (lib/order-cabang periksaOrder):
+ * pelanggan wajib, salesman hanya cabangnya, barang beda cabang ditolak `BARANG_BEDA_CABANG`.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { resolvePrices } from "@/lib/item-price";
-import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { cakupanCabang, jawabGalat, periksaOrder } from "@/lib/order-cabang";
+import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 
 export const runtime = "nodejs";
 
@@ -18,11 +22,10 @@ const BACKEND = process.env.FASTAPI_BASE_URL || process.env.NEXT_PUBLIC_FASTAPI_
 
 type IncomingLine = { code?: unknown; unit?: unknown; quantity?: unknown };
 
-// Harga bertingkat butuh identitas pelanggan Accurate; tanpa itu jatuh ke harga standar.
-type Body = { channel?: unknown; order_date?: unknown; lines?: unknown; customer_no?: unknown; branch_id?: unknown };
+type Body = { channel?: unknown; order_date?: unknown; lines?: unknown; customer_no?: unknown };
 
 export async function POST(request: NextRequest) {
-    const gate = await resolveRequestPermissionsH();
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
     if (!gate.perms?.has("order.create") && !gate.perms?.has("websales.create")) {
         return NextResponse.json({ ok: false, error: "Akses pratinjau order tidak diizinkan" }, { status: 403 });
@@ -55,35 +58,12 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: false, error: "Setiap baris butuh kode barang, satuan, dan jumlah lebih dari nol" }, { status: 400 });
     }
 
-    // Harga HANYA dari master hasil sync Accurate. Harga yang dikirim klien diabaikan.
-    const customerNo = String(body.customer_no ?? "").trim();
-    const branchId = Number(body.branch_id);
-    const resolved = await resolvePrices(wanted, {
-        orderDate,
-        customerNo: customerNo || undefined,
-        branchId: Number.isFinite(branchId) ? branchId : undefined,
-    });
-    // Satuan di luar master DITOLAK, bukan dihitung dengan harga standar: selisih satuan pada
-    // satu item bisa 72x (BAG 15.900 vs KRT 1.144.800).
-    const wrongUnit = resolved.filter((row) => row.knownUnits?.length);
-    if (wrongUnit.length) {
-        return NextResponse.json({
-            ok: false,
-            error: wrongUnit.slice(0, 3)
-                .map((row) => `Satuan ${row.unit} tidak ada di master untuk ${row.code} (tersedia: ${row.knownUnits!.join(", ")})`)
-                .join("; "),
-            wrong_unit: wrongUnit.map((row) => ({ code: row.code, unit: row.unit, known_units: row.knownUnits })),
-        }, { status: 409 });
-    }
-
-    const missing = resolved.filter((row) => row.price === null).map((row) => row.code);
-    if (missing.length) {
-        return NextResponse.json({
-            ok: false,
-            error: `Harga belum tersedia dari Accurate untuk: ${[...new Set(missing)].slice(0, 5).join(", ")}`,
-            missing,
-        }, { status: 409 });
-    }
+    const scope = await cakupanCabang(String(gate.session?.user?.id ?? ""), gate.perms);
+    if ("galat" in scope) return jawabGalat(scope.galat);
+    // Harga HANYA dari master hasil sync Accurate, per cabang pelanggan. Harga/cabang yang dikirim klien diabaikan.
+    const cek = await periksaOrder({ customerNo: String(body.customer_no ?? ""), orderDate, lines: wanted, cakupan: scope.cakupan });
+    if (!cek.ok) return jawabGalat(cek);
+    const resolved = cek.harga;
 
     const lines = wanted.map((line, index) => ({ ...line, price: String(resolved[index].price) }));
     const priceInfo = resolved.map((row) => ({
@@ -111,5 +91,8 @@ export async function POST(request: NextRequest) {
     if (!upstream.ok) {
         return NextResponse.json({ ok: false, error: String(data?.detail || data?.error || "Pratinjau gagal") }, { status: upstream.status });
     }
-    return NextResponse.json({ ok: true, lines, prices: priceInfo, result: data.result, suggestions: data.suggestions ?? [] });
+    return NextResponse.json({
+        ok: true, lines, prices: priceInfo, result: data.result, suggestions: data.suggestions ?? [],
+        pelanggan: { customerNo: cek.pelanggan.customerNo, name: cek.pelanggan.name, branchId: cek.pelanggan.branchId, branchName: cek.pelanggan.branchName },
+    });
 }

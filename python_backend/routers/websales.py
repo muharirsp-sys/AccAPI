@@ -2,14 +2,20 @@
 Caller: aplikasi Web Sales terpisah (belum dibangun) dan pengujian.
 Dependensi: shared auth/RBAC, websales_store. TIDAK menyentuh store internal.
 Main Functions: create_request_endpoint, list_requests.
-Side Effects: Tulis ke basis data Web Sales; tanpa perhitungan uang dan tanpa harga.
+Side Effects: Tulis ke basis data Web Sales; tanpa perhitungan uang dan tanpa harga. HTTP ke Next (order_cabang) saat simpan.
 
 Harga sengaja tidak diminta dari sales: uang dihitung internal saat pull memakai
 aturan promo terbit, sehingga klien tidak pernah menentukan nilai transaksi.
+
+O1 (owner 12 Okt 2026): sebelum disimpan, permintaan diperiksa Next dengan SESI sales ini (order_cabang.periksa + cookie): salesman
+tertaut ke karyawan Accurate dan hanya cabangnya, pelanggan aktif, barang = cabang pelanggan, harga tersedia. Ditolak berkode di sini,
+bukan baru gagal saat tarik. Harga TIDAK disimpan di permintaan: dibekukan saat tarik (store_order) dari sumber yang sama.
 """
 import json
 from datetime import date
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
+import order_cabang
 from shared import get_current_user, user_has_permission, validate_csrf_request
 from summary_store import identity
 from websales_store import connect, create_request
@@ -72,6 +78,12 @@ async def create_request_endpoint(request: Request):
         if not code or not unit or not quantity.isdigit() or int(quantity) <= 0:
             raise HTTPException(400, "Setiap baris butuh kode, satuan, dan jumlah bulat lebih dari nol")
         clean.append({"code": code[:80], "unit": unit[:30], "quantity": quantity})
+    try:
+        order_cabang.periksa(customer_no, order_date, clean, cookie=request.headers.get("cookie", ""))
+    except order_cabang.OrderCabangDitolak as error:
+        return JSONResponse(status_code=error.status, content=error.isi())
+    except order_cabang.OrderCabangTidakPasti as error:
+        raise HTTPException(503, str(error)) from None
     return {"ok": True, "request": create_request(sales, outlet, channel, order_date,
                                                   str(body.get("note", "")), clean, customer_no)}
 

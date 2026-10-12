@@ -12,6 +12,7 @@ os.environ["SUMMARY_STORE_PATH"] = os.path.join(tempfile.mkdtemp(prefix="order-c
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+import order_cabang  # noqa: E402
 import outlet_channel  # noqa: E402
 from routers import orders  # noqa: E402
 from summary_store import connect, create_draft  # noqa: E402
@@ -34,10 +35,18 @@ def publish(percentage, code="A", program_id="P1"):
     return draft["id"]
 
 
+def periksa_internal(customer_no, order_date, lines, cookie=None, harga=True):
+    assert harga is False and cookie is None, "input internal berharga: hanya aturan cabang, jalur layanan"
+    return [dict(line) for line in lines]
+
+
 def main():
     # Channel outlet ditanyakan ke Next sejak PR #64. Self-check tidak boleh menuntut layanan
     # hidup: yang diuji di sini alur order, bukan jembatan channelnya (itu `test_outlet_channel`).
     outlet_channel.verify = lambda customer_no, channel: channel
+    # Aturan cabang + harga ditanyakan ke Next sejak O1 (`test_order_cabang`). Input internal membawa harga petugas: harga=False,
+    # barisnya kembali apa adanya — harga petugas TIDAK ditimpa.
+    order_cabang.periksa = periksa_internal
     orders.get_current_user = lambda request: request.headers.get("X-Test-User") or None
     orders.user_has_permission = lambda user, area, action: (
         user != "tamu@surya.local" and (action != "edit" or user == "admin@surya.local"))

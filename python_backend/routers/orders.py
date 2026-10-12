@@ -2,7 +2,7 @@
 Caller: halaman order internal; Web Sales terpisah akan memakai endpoint yang sama.
 Dependensi: shared auth/RBAC, summary_store, summary_rules (Program, calculate), websales_store.
 Main Functions: published_rules, preview_order, create_order, pull_requests, list_orders, order_detail (termasuk aturan beku untuk faktur).
-Side Effects: SQLite read/write; tidak menulis faktur Accurate dan tidak memanggil AI.
+Side Effects: SQLite read/write; HTTP baca ke Next (outlet_channel, order_cabang); tidak menulis faktur Accurate dan tidak memanggil AI.
 """
 import hmac
 import json
@@ -11,11 +11,13 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from order_duplicate import duplicate_message, find_duplicate
 from pydantic import ValidationError
 from shared import get_current_user, user_has_permission, validate_csrf_request
 from summary_store import JsonStore, connect, identity
 from summary_rules import Program, calculate, suggestions
+import order_cabang
 import outlet_class
 import outlet_channel
 import websales_store
@@ -90,9 +92,12 @@ def store_order(owner, outlet, channel, order_date, note, lines, request_id=None
                 confirm_duplicate=False):
     """Hitung dengan aturan terbit lalu bekukan aturan, sumber, dan hasilnya pada order.
 
-    Baris tanpa harga (permintaan dari Web Sales) TIDAK dihitung sebagai uang: order
-    masuk berstatus `needs_price` dengan aturan belum dibekukan, supaya nilai transaksi
-    tidak pernah ditentukan oleh klien. Harga diisi internal (tahap Accurate).
+    ATURAN CABANG + HARGA (O1, owner 12 Okt 2026; BL-18): sebelum dihitung, order ditanyakan ke Next (`order_cabang.periksa`,
+    CRON_SECRET): pelanggan aktif & bercabang, barang = cabang pelanggan. Baris TANPA harga (tarikan Web Sales — sales tidak pernah
+    mengirim harga) diberi harga server per cabang pelanggan (resolvePrices yang sama dengan pratinjau) lalu DIBEKUKAN di order;
+    faktur memakai harga beku itu. Dulu baris itu disimpan `needs_price` dan buntu di Antre Faktur. Baris berharga (input internal
+    petugas) hanya diperiksa aturan cabangnya, harganya tidak ditimpa. Ditolak -> `OrderCabangDitolak` (pemanggil melaporkan kodenya);
+    Next tak pasti -> `OrderCabangTidakPasti` -> 503 (ditahan, tidak pernah disimpan tanpa harga).
 
     GERBANG ORDER GANDA: order yang outletnya sama dan barangnya MIRIP dengan order lain pada
     tanggal yang sama DITOLAK, sampai ada manusia yang menyatakan sudah memeriksanya lewat
@@ -118,16 +123,19 @@ def store_order(owner, outlet, channel, order_date, note, lines, request_id=None
         raise HTTPException(422, str(error)) from None
 
     priced = all(str(line.get("price", "")).strip() for line in lines)
+    try:
+        cek = order_cabang.periksa(customer_no, order_date, lines, harga=not priced)
+    except order_cabang.OrderCabangTidakPasti as error:
+        raise HTTPException(503, str(error)) from None
+    if not priced:
+        lines = cek
     programs, sources = published_rules()
     if not programs:
         raise HTTPException(409, "Belum ada aturan promo terbit; terbitkan Summary sebelum order dihitung")
-    if priced:
-        result = calculate(programs, lines, order_date, channel,
-                           outlet_classes=outlet_class.classes_of(customer_no), known_classes=outlet_class.known())
-        frozen = [program.model_dump(mode="json") for program in programs]
-        status = "draft"
-    else:
-        result, frozen, status = {"pending_price": True, "lines": lines}, [], "needs_price"
+    result = calculate(programs, lines, order_date, channel,
+                       outlet_classes=outlet_class.classes_of(customer_no), known_classes=outlet_class.known())
+    frozen = [program.model_dump(mode="json") for program in programs]
+    status = "draft"
     # Gerbang ganda diperiksa SETELAH ordernya terbukti sah, bukan sebelum: order yang isinya
     # tidak valid harus ditolak karena tidak valid, bukan karena mirip. Meminta manusia
     # mengonfirmasi order yang toh tidak bisa disimpan hanya melatihnya menekan tombol.
@@ -259,6 +267,8 @@ async def create_order(request: Request):
         order_id = store_order(identity(user), outlet, channel, order_date, note, clean,
                                customer_no=customer_no,
                                confirm_duplicate=body.get("confirm_duplicate") is True)
+    except order_cabang.OrderCabangDitolak as error:
+        return JSONResponse(status_code=error.status, content=error.isi())
     except (ValueError, KeyError, TypeError) as error:
         raise HTTPException(400, public_error(error)) from None
     return {"ok": True, "order": order_detail_row(order_id, user)}
@@ -296,6 +306,11 @@ def pull_once(owner, confirm_duplicate=False):
             imported.append({"request_id": entry["id"], "order_id": order_id})
         except sqlite3.IntegrityError:
             duplicated.append(entry["id"])
+        except order_cabang.OrderCabangDitolak as error:
+            # Aturan cabang/harga menolak permintaan ITU (mis. harga belum disinkron, barang beda cabang): tetap `pending`, dicoba lagi
+            # pada tarikan berikutnya, sebabnya berkode di `failed`. Permintaan lain tetap diproses.
+            failed.append({"request_id": entry["id"], "error": error.pesan, "kode": error.kode})
+            continue
         except HTTPException as error:
             # Dugaan order ganda hanya menahan permintaan ITU; permintaan lain pada tarikan yang
             # sama tetap diproses. Galat lain (mis. aturan promo belum terbit) memang menghentikan

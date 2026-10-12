@@ -108,6 +108,11 @@ export const item = pgTable("item", {
     ratio4: doublePrecision("ratio4"),
     ratio5: doublePrecision("ratio5"),
     hasMultiUnit: boolean("has_multi_unit"),
+    // O1 (owner 12 Okt 2026, db/migrations/0033): cabang barang dari tag divisi Accurate `charField2` lewat lib/order-cabang
+    // (TAG_KE_CABANG). NULL = tidak bisa diorder (non-jual / tanpa tag / tag tak dikenal). charField2 = teks tag asli (audit).
+    branchId: bigint("branch_id", { mode: "number" }),
+    suspended: boolean("suspended").notNull().default(false),
+    charField2: text("char_field2"),
     rawData: jsonb("raw_data"), // Complete unprocessed payload
     lastUpdate: text("last_update"), // Accurate's modified timestamp
     // Watermark LOKAL untuk delta feed ke Web Sales. lastUpdate tidak bisa dipakai:
@@ -626,6 +631,8 @@ export const customer = pgTable("customer", {
     // order harus memakai customerNo cabang yang benar.
     branchId: bigint("branch_id", { mode: "number" }),
     branchName: text("branch_name"),
+    // O1 (db/migrations/0033): pelanggan suspended di Accurate tidak bisa dipilih untuk order baru.
+    suspended: boolean("suspended").notNull().default(false),
     rawData: jsonb("raw_data"), // Complete unprocessed payload
     lastUpdate: text("last_update"), // Accurate's modified timestamp
     syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow()
@@ -1266,9 +1273,9 @@ export const salesProfile = pgTable("sales_profile", {
     channel: text("channel").notNull().default("TT"),
     spvName: text("spv_name"),
     smName: text("sm_name"),
-    // Cabang Accurate penjual ini. `branch` di atas adalah teks bebas warisan modul insentif
-    // (isinya sudah tercampur nama principal di produksi); yang menentukan penomoran faktur
-    // dan harga adalah kolom ini. NULL = belum dipetakan, dan jalur order menolaknya.
+    // O1 (owner 12 Okt 2026): `sales_code` = nomor karyawan Accurate (`accurate_employee.number`) = TAUTAN akun salesman <->
+    // karyawan, ditetapkan admin lewat /api/admin/users/[id]/salesman. Cabang salesman = `accurate_employee.branch_id` (lib/order-cabang
+    // cakupanCabang). Kolom ini TIDAK dibaca dan tidak diisi: salinan cabang akan basi saat karyawan dipindah cabang di Accurate.
     accurateBranchId: bigint("accurate_branch_id", { mode: "number" }),
     createdAt: timestamp("created_at").notNull(),
     updatedAt: timestamp("updated_at").notNull(),
