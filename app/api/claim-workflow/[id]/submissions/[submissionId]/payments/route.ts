@@ -26,6 +26,7 @@ import {
     recalcWorkflowAggregateWithPayments,
     requireClaimSession,
     writeClaimAudit,
+    lockClaimWorkflow,
 } from "@/lib/claim-workflow";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
@@ -148,6 +149,7 @@ export async function POST(request: Request, context: Context) {
         const { id, submissionId } = await context.params;
 
         const result = await db.transaction(async (tx) => {
+            await lockClaimWorkflow(tx, id); // AM-022: serialkan mutasi ledger pembayaran per workflow
             const [submission] = await tx
                 .select()
                 .from(claimSubmission)

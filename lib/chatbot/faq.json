@@ -263,7 +263,7 @@
       "filter"
     ],
     "question": "Bagaimana cara input data di AOL Form Engine?",
-    "answer": "Cara input data di AOL Form Engine:\n\n**Langkah-langkah:**\n1. Login ke Accurate Online (klik tombol Login AOL)\n2. Pilih database Accurate\n3. Pilih route/endpoint (misal: sales-invoice/save)\n4. Input data dengan 2 cara:\n   - **Manual:** isi JSON payload langsung di kolom input\n   - **Excel Upload:** upload file .xlsx, sistem auto-parse ke payload\n5. Review data (cek duplicate detection)\n6. Klik Submit untuk post ke Accurate\n\n**Tips:**\n- Pastikan format Excel sesuai template per-route\n- Duplicate detection mencegah posting ganda\n- Semua transaksi dicatat di idempotency log",
+    "answer": "Cara input data di AOL Form Engine:\n\n**Langkah-langkah:**\n1. Login ke Accurate Online (klik tombol Login AOL)\n2. Pilih database Accurate\n3. Pilih route/endpoint (misal: sales-receipt/bulk-save untuk pelunasan)\n4. Input data dengan 2 cara:\n   - **Manual:** isi JSON payload langsung di kolom input\n   - **Excel Upload:** upload file .xlsx, sistem auto-parse ke payload\n5. Review data (cek duplicate detection)\n6. Klik Submit untuk post ke Accurate\n\n**Tips:**\n- Pastikan format Excel sesuai template per-route\n- Duplicate detection mencegah posting ganda\n- Semua transaksi dicatat di idempotency log\n- Faktur penjualan TIDAK lewat konsol ini: kirim dari halaman Antrean Faktur (sales-invoice save/bulk-save ditolak di sini). Pembayaran pembelian lewat halaman Finance.",
     "links": [
       {
         "label": "Buka AOL Form Engine",

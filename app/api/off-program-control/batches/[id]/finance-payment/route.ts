@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { unlink } from "node:fs/promises";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem, offPayment } from "@/db/schema";
 import { canProcessFinancePayment, computeOffFinancePaymentSummary, computeOffPaymentSummary, generateOffPaymentProofPdf, getBatchWithItems, isOffPeriodClosedForBatch, normalizeOffPaymentMethod, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 import { requirePermissionH } from "@/lib/rbac/resolve";
+
+const OFF_PAYMENT_CONFLICT = "AM023_OFF_PAYMENT_CONFLICT";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -111,7 +114,36 @@ export async function POST(request: Request, context: Context) {
             isFullyPaid,
             uploadedProofName,
         });
+        let auditGagal = false;
         const [payment] = await db.transaction(async (tx) => {
+            // AM-023 (H12): baca & cek di atas terjadi DI LUAR transaksi — dua pembayaran bersamaan
+            // atas item yang sama sama-sama lolos "alreadyPaid". Kunci batch, lalu cek ulang snapshot
+            // yang dipakai (item terpilih belum dibayar, nomor pembayaran & total bayar sama).
+            // Berubah = 409, tanpa menulis apa pun; bukti PDF di atas memuat angka snapshot itu.
+            const [freshBatch] = await tx.select().from(offBatch).where(eq(offBatch.id, id)).for("no key update");
+            // Review AM-022/023 M2: status/approval bisa berubah (return/reject) antara cek di atas dan
+            // transaksi ini — cek ulang di bawah lock, bukan dari data.batch yang basi.
+            if (!freshBatch || !canProcessFinancePayment(freshBatch) || freshBatch.financeStatus !== data.batch.financeStatus
+                || (actor.role !== "admin" && await isOffPeriodClosedForBatch(freshBatch, tx))) {
+                throw new Error(OFF_PAYMENT_CONFLICT);
+            }
+            const freshItems = await tx.select({
+                id: offBatchItem.id,
+                status: offBatchItem.financePaymentStatus,
+                paymentRef: offBatchItem.financePaymentId,
+                paidAmount: offBatchItem.financePaidAmount,
+                nominal: offBatchItem.nominal,
+            }).from(offBatchItem).where(eq(offBatchItem.batchId, id)).orderBy(asc(offBatchItem.itemNo));
+            const freshPayments = await tx.select({ paymentNo: offPayment.paymentNo }).from(offPayment).where(eq(offPayment.batchId, id));
+            const freshPaidBefore = freshItems.reduce((total, item) => total + (item.status === "paid" ? Number(item.paidAmount || item.nominal || 0) : 0), 0);
+            const freshNo = freshPayments.reduce((maxNo, p) => Math.max(maxNo, Number(p.paymentNo || 0)), 0) + 1;
+            const selectedTaken = freshItems.some((item) => itemIds.includes(item.id) && (item.status === "paid" || item.paymentRef));
+            // Review M3: bandingkan sen, bukan float (urutan penjumlahan bisa beda 1 ULP).
+            const cents = (n: number) => Math.round(n * 100);
+            const selectedGone = itemIds.some((itemId) => !freshItems.some((item) => item.id === itemId));
+            if (selectedTaken || selectedGone || cents(freshPaidBefore) !== cents(itemPaidBefore) || freshNo !== paymentNo) {
+                throw new Error(OFF_PAYMENT_CONFLICT);
+            }
             const [createdPayment] = await tx.insert(offPayment).values({
             id: paymentId,
             batchId: id,
@@ -149,16 +181,25 @@ export async function POST(request: Request, context: Context) {
             ...(isFullyPaid ? { paidAt: now } : {}),
             updatedAt: now,
             }).where(eq(offBatch.id, id));
+            // S6-0b: audit ikut transaksi — galat audit = seluruh pembayaran di-rollback (dulu pembayaran
+            // tersimpan tanpa jejak audit). Penanda: galat di dalam callback = rollback pasti, bukti PDF boleh dibuang.
+            await writeOffAudit({
+                batchId: id,
+                actor,
+                action: "finance_payment_added",
+                fromStatus: data.batch.financeStatus,
+                toStatus: isFullyPaid ? "Paid" : "Partial Paid",
+                note,
+                metadata: { paymentNo, itemIds, selectedItemCount: itemIds.length, selectedTotal: paidAmount, paymentMethod, proofName: generatedProof.fileName, uploadedProofName, hasUploadedProof: hasProof, totalPaidAfter, remainingAmount },
+            }, tx).catch((error: unknown) => { auditGagal = true; throw error; });
             return [createdPayment];
-        });
-        await writeOffAudit({
-            batchId: id,
-            actor,
-            action: "finance_payment_added",
-            fromStatus: data.batch.financeStatus,
-            toStatus: isFullyPaid ? "Paid" : "Partial Paid",
-            note,
-            metadata: { paymentNo, itemIds, selectedItemCount: itemIds.length, selectedTotal: paidAmount, paymentMethod, proofName: generatedProof.fileName, uploadedProofName, hasUploadedProof: hasProof, totalPaidAfter, remainingAmount },
+        }).catch(async (error: unknown) => {
+            // Konflik & galat audit terjadi DI DALAM transaksi (rollback pasti) -> bukti tanpa pembayaran dibuang.
+            // Galat lain (mis. saat COMMIT) bisa ambigu: bukti dibiarkan agar pembayaran tersimpan tak kehilangan berkas.
+            if (auditGagal || (error instanceof Error && error.message === OFF_PAYMENT_CONFLICT)) {
+                await unlink(generatedProof.filePath).catch(() => undefined); // bukti tanpa pembayaran
+            }
+            throw error;
         });
         const updated = await getBatchWithItems(id);
         return NextResponse.json({
@@ -173,6 +214,10 @@ export async function POST(request: Request, context: Context) {
         });
     } catch (error) {
         const message = error instanceof Error ? error.message : "";
+        if (message === OFF_PAYMENT_CONFLICT) {
+            // Review AM-022/023 LOW: konflik juga bisa dari status/periode yang berubah, bukan hanya pembayaran lain.
+            return NextResponse.json({ ok: false, error: "Pengajuan ini baru saja berubah: pembayaran lain tercatat, atau status/periode berubah. Muat ulang lalu pilih item lagi." }, { status: 409 });
+        }
         if (message === "Jenis pembayaran hanya boleh Tunai atau Transfer.") {
             return NextResponse.json({ ok: false, error: message }, { status: 400 });
         }

@@ -36,12 +36,12 @@ test("file asli menghasilkan 21 laporan dan rekap Pak Fahdhar melalui menu web",
     expect(result.recipientsPreview.some((r: {keyword:string}) => r.keyword === "MSM")).toBe(false);
     expect(result.manager.rows).toBe(26);
     expect(result.manager.unmappedGroups).toBe(0);
-    await expect(page.getByRole("heading", { name: "Pengolahan selesai" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Laporan Pak Fahdhar" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "2 · Tinjau hasil" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Laporan manajer", exact: true })).toBeVisible();
     await page.screenshot({ path: "outputs/parity/menu-web-result.png", fullPage: true });
     const [popup] = await Promise.all([
         page.waitForEvent("popup"),
-        page.getByRole("link", { name: "Buka tampilan screenshot" }).click(),
+        page.getByRole("link", { name: "Laporan manajer", exact: true }).click(),
     ]);
     await popup.waitForLoadState();
     await expect(popup.getByRole("heading", { name: "Laporan Penjualan" })).toBeVisible();
@@ -49,7 +49,7 @@ test("file asli menghasilkan 21 laporan dan rekap Pak Fahdhar melalui menu web",
     await popup.locator("main").screenshot({ path: "outputs/parity/Laporan-Pak-Fahdhar-2026-09-11.png" });
     const [download] = await Promise.all([
         page.waitForEvent("download"),
-        page.getByRole("link", { name: "Unduh Excel Pak Fahdhar" }).click(),
+        page.getByRole("link", { name: "Unduh Excel laporan manajer" }).click(),
     ]);
     await download.saveAs("outputs/parity/web-Pak-Fahdhar.xlsx");
     expect(sends).toEqual([]);

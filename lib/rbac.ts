@@ -2,10 +2,11 @@
  * Tujuan: Definisi role, permission module/action, dan helper akses halaman untuk RBAC internal aktif.
  * Caller: Better Auth admin plugin, dashboard layout/sidebar, admin user management, dan API admin permission.
  * Dependensi: better-auth default access controller.
- * Main Functions: normalizeRole, normalizePermissionMap, permissionMapForUser, canAccess, canAccessPathWithKeys.
+ * Main Functions: normalizeRole, normalizePermissionMap, permissionMapForUser, canAccess, canAccessPathWithKeys (kunci tunggal atau `anyOf`).
  * Side Effects: Tidak ada; hanya normalisasi data permission in-memory.
  */
 import { defaultAc } from "better-auth/plugins/admin/access";
+import type { PermissionModule } from "./rbac/registry";
 
 export const appRoles = ["admin", "manager", "finance", "staff", "viewer"] as const;
 export type AppRole = (typeof appRoles)[number];
@@ -40,6 +41,10 @@ export const appModules = [
     // karena POST /orders internal menerima harga dari klien; jalur sales hanya kirim
     // kode, satuan, jumlah dan uangnya dihitung server.
     "websales",
+    // Pelunasan (S6e-2, owner #5 10 Okt 2026): kirim sales-receipt ke Accurate dari wizard; ditegakkan server.
+    "pelunasan",
+    // Kasir ↔ Incaso (K1a BL-59): setoran per orang per hari lawan pelunasan Accurate; kunci di lib/rbac/registry.ts.
+    "kasir",
 ] as const;
 export type AppModule = (typeof appModules)[number];
 
@@ -62,6 +67,8 @@ export const moduleLabels: Record<AppModule, string> = {
     rekapan_nota: "Rekapan Nota",
     insentif_sales: "Insentif Sales",
     websales: "Order Sales (Web Sales)",
+    pelunasan: "Pelunasan",
+    kasir: "Kasir ↔ Incaso",
 };
 
 export const permissionActions = [
@@ -83,18 +90,19 @@ export const permissionActions = [
     "upload_proof",
     "post_accurate",
     "retry_post",
+    "resolve_unknown",
+    "override_duplicate",
+    "repost_payment",
     "run",
     "email",
     "send",
     "sync",
     "manage",
-    "create_user",
-    "edit_user",
-    "delete_user",
-    "set_role",
-    "set_permission",
     "print",
     "approve_takeout",
+    "catat",
+    "tutup",
+    "buka",
     "view_dashboard",
     "view_all",
     "upload_target",
@@ -102,6 +110,12 @@ export const permissionActions = [
     "input_support",
     "manage_payment",
     "manage_hierarchy",
+    "kirim",
+    // Aksi OPC granular (registry off_program_control, alur SPV→SM→Claim→OM→Finance). Hanya untuk LABEL (S7-1): moduleActions
+    // legacy OPC tetap 5 aksi, jadi preset role lama tidak berubah.
+    "create_batch", "edit_returned_batch", "submit_batch", "sm_approve", "sm_return", "claim_review", "claim_final",
+    "om_approve", "om_cancel", "finance_payment", "submit_refund", "audit_read", "audit_export", "audit_correct",
+    "period_close", "period_unlock", "discount_view", "discount_manage",
 ] as const;
 export type PermissionAction = (typeof permissionActions)[number];
 
@@ -109,6 +123,9 @@ export const actionLabels: Record<PermissionAction, string> = {
     send: "Kirim Email",
     print: "Cetak",
     approve_takeout: "Setujui Take-out",
+    catat: "Catat Setoran & Jelaskan Selisih",
+    tutup: "Tutup Hari",
+    buka: "Buka Kembali Hari",
     view_dashboard: "Lihat Dashboard",
     view_all: "Lihat Semua Cakupan",
     upload_target: "Unggah Target",
@@ -134,31 +151,81 @@ export const actionLabels: Record<PermissionAction, string> = {
     upload_proof: "Upload Bukti",
     post_accurate: "Post Accurate",
     retry_post: "Retry Post",
+    resolve_unknown: "Selesaikan Posting Tidak Pasti",
+    override_duplicate: "Override Blok Duplikat",
+    repost_payment: "Repost Pembayaran",
     run: "Run",
     email: "Email",
     sync: "Sync",
     manage: "Manage",
-    create_user: "Buat User",
-    edit_user: "Edit User",
-    delete_user: "Hapus User",
-    set_role: "Set Role",
-    set_permission: "Set Permission",
+    kirim: "Kirim ke Accurate",
+    create_batch: "Buat Batch",
+    edit_returned_batch: "Edit Batch Dikembalikan",
+    submit_batch: "Ajukan Batch",
+    sm_approve: "Setujui (SM)",
+    sm_return: "Kembalikan (SM)",
+    claim_review: "Tinjau Klaim",
+    claim_final: "Final Klaim",
+    om_approve: "Setujui (OM)",
+    om_cancel: "Batalkan (OM)",
+    finance_payment: "Bayar (Finance)",
+    submit_refund: "Ajukan Refund",
+    audit_read: "Baca Audit",
+    audit_export: "Export Audit",
+    audit_correct: "Koreksi Audit",
+    period_close: "Tutup Periode",
+    period_unlock: "Buka Kunci Periode",
+    discount_view: "Lihat Diskon",
+    discount_manage: "Kelola Diskon",
+};
+
+/** SATU sumber label modul untuk layar grup/izin (S7a): 20 modul registry, termasuk `form_kontrol` yang bukan AppModule. */
+export const permissionModuleLabels: Record<PermissionModule, string> = {
+    ...moduleLabels,
+    form_kontrol: "Form Kontrol",
+};
+
+/** Label kunci izin "module.action" -> "Modul · Aksi" (kunci tak dikenal dikembalikan apa adanya). */
+export function permissionKeyLabel(key: string): string {
+    const [mod, action] = key.split(".");
+    const m = (permissionModuleLabels as Record<string, string>)[mod];
+    const a = (actionLabels as Record<string, string>)[action];
+    return m && a ? `${m} · ${a}` : key;
+}
+
+/** Label aksi audit permission_audit_log (riwayat S7-1; kontrak §5.10). */
+export const auditActionLabels: Record<string, string> = {
+    "user.create": "User dibuat",
+    "user.password_set": "Sandi diatur admin",
+    "user.deactivate": "User dinonaktifkan",
+    "user.activate": "User diaktifkan",
+    "user_group.assign": "Ditambahkan ke grup",
+    "user_group.remove": "Dikeluarkan dari grup",
+    "user_group.star": "Grup utama ditandai",
+    "user_group.unstar": "Grup utama dilepas",
+    "user_group.set_primary": "Grup diganti (lama)",
+    "group.create": "Grup dibuat",
+    "group.update": "Grup diubah",
+    "group.delete": "Grup dihapus",
+    "group_permission.sync": "Izin grup diubah",
 };
 
 export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     dashboard: ["view"],
-    order: ["view", "create", "edit", "export"],
+    // resolve_unknown: kunci kapabilitas S6-0d (lib/rbac/registry.ts) — tidak ada di preset selain admin.
+    order: ["view", "create", "edit", "export", "resolve_unknown"],
     api_wrapper: ["view", "execute"],
     payments: ["view", "create", "edit", "update", "delete", "upload", "export", "submit"],
     sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],
-    finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"],
+    finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update", "resolve_unknown", "override_duplicate", "repost_payment"],
     principles: ["view", "upload", "delete"],
     master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
-    off_program_control: ["view", "create", "update", "approve", "export"],
+    // S7-1b: create/update/export dipensiunkan (KUNCI_PENSIUN, lib/rbac/registry.ts); approve sampai S7-3.
+    off_program_control: ["view", "approve"],
     reconciliation: ["view", "run", "manage"],
     claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export"],
-    users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission", "manage"],
+    users: ["view", "manage"],
     sales_history: ["view", "export", "manage"],
     laporan_harian: ["view", "upload", "send", "manage"],
     rekapan_nota: ["view", "manage", "print", "approve_takeout"],
@@ -169,6 +236,9 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
         "input_support", "manage_payment", "manage_hierarchy",
     ],
     websales: ["view", "create"],
+    pelunasan: ["kirim"],
+    // buka = kunci kapabilitas (lib/rbac/registry.ts CAPABILITY_KEYS) — hanya preset admin (semua) yang memuatnya.
+    kasir: ["view", "catat", "tutup", "buka"],
 };
 
 export type PermissionMap = Partial<Record<AppModule, PermissionAction[]>>;
@@ -242,7 +312,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("finance", ["view", "approve", "export", "update"]),
         pick("principles", ["view"]),
         pick("summary", ["view", "export"]),
-        pick("off_program_control", ["view", "update", "approve", "export"]),
+        pick("off_program_control", ["view", "approve"]),
         pick("reconciliation", ["view"]),
         pick("claim_workflow", ["view", "approve", "export"]),
         pick("sales_history", ["view", "export", "manage"]),
@@ -252,8 +322,8 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("dashboard", ["view"]),
         pick("payments", ["view", "export"]),
         pick("sppd", ["view", "download"]),
-        pick("finance", ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"]),
-        pick("off_program_control", ["view", "update"]),
+        pick("finance", ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update", "resolve_unknown", "override_duplicate", "repost_payment"]),
+        pick("off_program_control", ["view"]),
         pick("claim_workflow", ["view", "update", "export"]),
         pick("principles", ["view"]),
         pick("sales_history", ["view", "export"])
@@ -265,7 +335,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("sppd", ["view", "generate", "download"]),
         pick("principles", ["view"]),
         pick("summary", ["view", "upload", "generate", "export", "edit", "update"]),
-        pick("off_program_control", ["view", "create", "update"]),
+        pick("off_program_control", ["view"]),
         pick("reconciliation", ["view", "run"]),
         // Claim Workflow guardrail: staff hanya boleh membaca daftar / detail
         // sebatas yang diizinkan policy. Pembuatan, edit pajak, dan submit
@@ -286,12 +356,25 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
     ),
 };
 
-export const pagePermissions: Array<{ prefix: string; module: AppModule; action: PermissionAction }> = [
+/**
+ * Halaman Sesi Accurate (owner D-01 Q2, 11 Okt): masuk Accurate + pilih database tanpa Konsol. Dibuka pemegang SALAH SATU kunci ini;
+ * route sesi (/api/auth/accurate-session, db-list, open-db, accurate-login, callback) cukup sesi app — tidak ada route tulis yang dibuka.
+ */
+export const SESI_ACCURATE_KEYS = ["api_wrapper.view", "order.edit", "pelunasan.kirim", "finance.update", "finance.resolve_unknown"] as const;
+
+/** `anyOf` = kunci alternatif: halaman terbuka bila `module.action` ATAU salah satu kunci ini dipegang. */
+export const pagePermissions: Array<{ prefix: string; module: AppModule; action: PermissionAction; anyOf?: readonly string[] }> = [
     { prefix: "/admin/groups", module: "users", action: "manage" },
-    { prefix: "/admin/users", module: "users", action: "view" },
+    // S7a (owner S7 10 Okt): halaman User dibuka users.view (baca-saja) ATAU users.manage (tulis, ditegakkan API); pemegang users.manage
+    // saja lolos layout dan gerbang klien SidebarLayout. /admin/groups tetap users.manage (GET grup hanya menerima users.manage).
+    { prefix: "/admin/users", module: "users", action: "view", anyOf: ["users.manage"] },
     { prefix: "/payments/sppd", module: "sppd", action: "view" },
     { prefix: "/payments", module: "payments", action: "view" },
     { prefix: "/finance", module: "finance", action: "view" },
+    // Wizard Pelunasan (S6e-2b): halaman = kirim sales-receipt; kunci yang sama dengan penegakan server (owner #5).
+    { prefix: "/pelunasan", module: "pelunasan", action: "kirim" },
+    // Kasir ↔ Incaso (K1a BL-59; halaman = K2). Tanpa entri ini /kasir jatuh ke "/" = dashboard.view.
+    { prefix: "/kasir", module: "kasir", action: "view" },
     { prefix: "/principal-mapping", module: "principles", action: "view" },
     { prefix: "/master-barang", module: "master_barang", action: "view" },
     { prefix: "/principles", module: "principles", action: "view" },
@@ -306,6 +389,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/normalisasi-diskon", module: "summary", action: "view" },
     { prefix: "/summary", module: "summary", action: "view" },
     { prefix: "/api-wrapper", module: "api_wrapper", action: "view" },
+    { prefix: "/sesi-accurate", module: "api_wrapper", action: "view", anyOf: SESI_ACCURATE_KEYS },
     { prefix: "/off-program-control", module: "off_program_control", action: "view" },
     { prefix: "/reconciliation", module: "reconciliation", action: "view" },
     { prefix: "/claim-workflow", module: "claim_workflow", action: "view" },
@@ -404,5 +488,5 @@ export function getPagePermission(pathname: string) {
 export function canAccessPathWithKeys(pathname: string, keys: ReadonlySet<string> | readonly string[]): boolean {
     const permission = getPagePermission(pathname);
     const set = keys instanceof Set ? keys : new Set(keys);
-    return set.has(`${permission.module}.${permission.action}`);
+    return set.has(`${permission.module}.${permission.action}`) || Boolean(permission.anyOf?.some((key) => set.has(key)));
 }

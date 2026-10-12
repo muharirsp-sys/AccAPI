@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { MessageCircle, X, Send, Bot, User, ExternalLink } from "lucide-react";
+import { X, Send, Bot, User, ExternalLink } from "lucide-react";
 import type { ChatMessage } from "@/lib/chatbot/types";
 
 const WELCOME: ChatMessage = {
@@ -19,6 +19,9 @@ const WELCOME: ChatMessage = {
     { label: "Finance", href: "/finance" },
   ],
 };
+
+/** Dibuka dari menu profil shell (Bantuan); tombol chat mengambang dihapus karena menutupi konten dan navigasi bawah. */
+export const OPEN_HELP_EVENT = "accapi:open-help";
 
 export default function ChatWidget() {
   const [open, setOpen] = useState(false);
@@ -38,12 +41,25 @@ export default function ChatWidget() {
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  // Tanpa tombol mengambang, fokus dikembalikan ke pemicu (avatar menu profil) saat chat ditutup.
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const close = useCallback(() => { setOpen(false); returnFocus.current?.focus(); }, []);
+
+  useEffect(() => {
+    const show = (event: Event) => {
+      returnFocus.current = (event as CustomEvent<{ returnFocus?: HTMLElement | null }>).detail?.returnFocus ?? null;
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_HELP_EVENT, show);
+    return () => window.removeEventListener(OPEN_HELP_EVENT, show);
+  }, []);
+
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, close]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -89,17 +105,6 @@ export default function ChatWidget() {
 
   return (
     <>
-      {/* Floating button */}
-      <button
-        onClick={() => setOpen(!open)}
-        className="fixed bottom-24 right-6 z-[100] flex h-14 w-14 items-center justify-center rounded-full border border-[var(--btn-primary-border,var(--border-strong))] text-[var(--btn-primary-text)] shadow-[var(--btn-primary-shadow,var(--luxury-shadow))] transition-transform hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--luxury-gold)] md:bottom-6"
-        style={{ background: "var(--btn-primary-bg)" }}
-        aria-label={open ? "Tutup chat" : "Buka chat"}
-        aria-expanded={open}
-      >
-        {open ? <X size={24} /> : <MessageCircle size={24} />}
-      </button>
-
       {/* Chat window */}
       {open && (
         <div
@@ -117,6 +122,9 @@ export default function ChatWidget() {
             <Bot size={18} className="text-[var(--luxury-soft)]" />
             <span className="text-sm font-semibold text-[var(--luxury-text)]">AI Assistant</span>
             <span className="ml-auto text-[10px] text-[var(--luxury-subtle)]">Rule-Based</span>
+            <button type="button" onClick={close} aria-label="Tutup chat" className="rounded-md p-1 text-[var(--luxury-muted)] hover:bg-[var(--surface)]">
+              <X size={16} />
+            </button>
           </div>
 
           {/* Messages */}

@@ -8,6 +8,8 @@
 
 export type OffRole =
   | "admin"
+  // AM-026 (D-01 §C "manager bukan admin", owner 11 Okt): Manager = PEMBACA semua tab + audit (baca/ekspor), tanpa aksi tulis.
+  | "manager"
   | "supervisor"
   | "sales_manager"
   | "claim"
@@ -85,7 +87,9 @@ export function normalizeOffRole(value?: unknown): OffRole {
     .replace(/\s+/g, "_")
     .replace(/-/g, "_");
 
-  if (role === "admin" || role === "manager") return "admin";
+  if (role === "admin") return "admin";
+
+  if (role === "manager") return "manager";
 
   if (role === "spv" || role === "supervisor") {
     return "supervisor";
@@ -174,6 +178,7 @@ export function getOffAccessibleTabs(roleInput: OffRole | string): OffTab[] {
 
   switch (role) {
     case "admin":
+    case "manager":
       return [
         "overview",
         "supervisor",
@@ -224,6 +229,8 @@ export function canPerformOffAction(
 
   const allowedActions: Record<OffRole, OffAction[]> = {
     admin: [],
+    // D-01 §C: baca semua tab + baca/ekspor audit. TANPA aksi atas nama SPV/SM/Claim/OM/Finance, TANPA periode, TANPA discount_view (PK-6).
+    manager: ["audit_read", "audit_export"],
     supervisor: ["create_batch", "edit_returned_batch", "submit_batch", "submit_refund", "discount_view", "discount_manage"],
     sales_manager: ["sm_approve", "sm_return", "submit_refund"],
     // #1-3: Claim role bisa membuat, mengedit, dan submit pengajuan versi CLM (dari direksi).
@@ -257,4 +264,20 @@ export function getOffRoleBadgeLabel(
   }
 
   return resolutionOrRole.role;
+}
+
+// S7-1b: create/update/export dipensiunkan dari registry (KUNCI_PENSIUN) tetapi bisa masih ada di DB sampai RBAC_S7_1B_PENSIUN.sql —
+// tetap dihitung "dasar" (bukan granular) agar tebakan di bawah tidak berubah karena baris lama.
+const AKSI_DASAR_OPC = new Set(["view", "create", "update", "approve", "export"]);
+
+/**
+ * Alasan Tutup periode nonaktif dari izin grup akses (owner 8 Okt 2026: bukan untuk OM); undefined = boleh. Server menuntut
+ * `off_program_control.period_close` (periods/route.ts). Pola D-17 (lihat form-kontrol alasanIzinFk): daftar izin tanpa satu pun
+ * aksi granular OPC (preset peran lama; admin LOCAL_AUTH_BYPASS kini memegang semua kunci registry) tidak bisa dipercaya → tidak dikunci, server yang memutuskan.
+ * ponytail: tebakan ini hilang begitu preset lama diaudit (D-17).
+ */
+export function alasanTutupPeriode(perms: ReadonlySet<string>): string | undefined {
+  const granular = [...perms].some((k) => k.startsWith("off_program_control.") && !AKSI_DASAR_OPC.has(k.slice("off_program_control.".length)));
+  if (!granular || perms.has("off_program_control.period_close")) return undefined;
+  return "Akun Anda tidak punya izin Tutup periode di grup akses.";
 }

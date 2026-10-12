@@ -1,13 +1,18 @@
-// Tujuan: Quick-jump search di halaman OFF Program Control — cari batch berdasarkan nomor pengajuan, principle, atau status.
-// Caller: app/(dashboard)/off-program-control/page.tsx.
-// Dependensi: React hooks, lucide-react, fuzzySearch.
-// Main Functions: OffGlobalSearch, shortcut Ctrl/Cmd+K, navigasi listbox dengan keyboard.
-// Side Effects: Listener keydown dokumen; callback onSelect untuk navigasi/filter.
+/*
+ * Tujuan: Pencarian cepat batch OFF Program Control (Fiori S4d) — cari nomor pengajuan, principal, tahap, atau SPV; memilih hasil
+ *   membuka batch di kolom kedua (perubahan #2 it03).
+ * Caller: app/(dashboard)/off-program-control/OpcApp.tsx.
+ * Dependensi: React hooks, lucide-react, lib/fuzzySearch; kelas fi-* (fi-input, fi-sect, fi-menu-item).
+ * Main Functions: OffGlobalSearch, pintasan Ctrl/Cmd+K (shell mengalah karena preventDefault), navigasi listbox dengan keyboard;
+ *   daftar sumber gagal dimuat tampil sebagai galat, bukan "tidak ditemukan".
+ * Side Effects: Listener keydown dokumen; callback onSelect.
+ */
 "use client";
 
 import { useState, useRef, useEffect, useId, useMemo } from "react";
-import { Search, X, ArrowRight } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
+import type { MuatDaftar } from "./OffNotificationBell";
 
 export interface OffSearchableItem {
     id: string;
@@ -21,9 +26,11 @@ interface OffGlobalSearchProps {
     items: OffSearchableItem[];
     onSelect: (id: string) => void;
     placeholder?: string;
+    /** Keadaan daftar sumber: galat tampil sebagai galat, bukan "tidak ditemukan". */
+    muat?: MuatDaftar;
 }
 
-export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari pengajuan..." }: OffGlobalSearchProps) {
+export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari pengajuan…", muat }: OffGlobalSearchProps) {
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState("");
     const [activeIndex, setActiveIndex] = useState(0);
@@ -42,15 +49,13 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
         ).slice(0, 10);
     }, [items, query]);
 
-    const resolvedActiveIndex = filtered.length === 0
-        ? -1
-        : Math.min(activeIndex, filtered.length - 1);
+    const resolvedActiveIndex = filtered.length === 0 ? -1 : Math.min(activeIndex, filtered.length - 1);
 
-    // Ctrl/Cmd+K membuka quick jump tanpa mengambil alih pencarian native browser.
+    // Ctrl/Cmd+K membuka quick jump tanpa mengambil alih pencarian native browser (Ctrl F).
+    // Listener di document berjalan sebelum listener shell di window; preventDefault membuat shell mengalah.
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && !e.shiftKey) {
-                // Only intercept if this component is visible
                 if (inputRef.current) {
                     e.preventDefault();
                     setOpen(true);
@@ -94,53 +99,36 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
     };
 
     return (
-        <div className="relative">
-            {/* Search trigger / input */}
-            <div className="flex items-center gap-2 rounded-xl border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 transition-all focus-within:border-[var(--luxury-gold)]/50 focus-within:ring-2 focus-within:ring-[var(--luxury-gold)]/20">
-                <Search size={15} className="text-[var(--luxury-subtle)] shrink-0" />
-                <input
-                    ref={inputRef}
-                    type="text"
-                    aria-label="Cari pengajuan OFF"
-                    aria-expanded={hasResultsPopup}
-                    aria-controls={hasResultsPopup ? resultsId : undefined}
-                    aria-activedescendant={resolvedActiveIndex >= 0 ? `${resultsId}-option-${resolvedActiveIndex}` : undefined}
-                    aria-autocomplete="list"
-                    aria-keyshortcuts="Control+K Meta+K"
-                    role="combobox"
-                    value={query}
-                    onChange={(e) => { setQuery(e.target.value); setOpen(true); setActiveIndex(0); }}
-                    onFocus={() => { setOpen(true); setActiveIndex(0); }}
-                    onKeyDown={handleInputKeyDown}
-                    placeholder={placeholder}
-                    className="flex-1 bg-transparent text-sm text-[var(--luxury-text)] placeholder:text-[var(--luxury-subtle)] outline-none min-w-0"
-                />
-                {query && (
-                    <button
-                        type="button"
-                        onClick={() => { setQuery(""); inputRef.current?.focus(); }}
-                        aria-label="Kosongkan pencarian"
-                        className="shrink-0 rounded p-0.5 text-[var(--luxury-subtle)] hover:text-[var(--luxury-text)]"
-                    >
-                        <X size={14} />
-                    </button>
-                )}
-            </div>
-
-            {/* Dropdown results */}
+        <div style={{ position: "relative", minWidth: 0 }}>
+            <input
+                ref={inputRef}
+                type="search"
+                className="fi-input"
+                style={{ width: "100%" }}
+                aria-label="Cari pengajuan OFF"
+                aria-expanded={hasResultsPopup}
+                aria-controls={hasResultsPopup ? resultsId : undefined}
+                aria-activedescendant={hasResultsPopup && resolvedActiveIndex >= 0 ? `${resultsId}-option-${resolvedActiveIndex}` : undefined}
+                aria-autocomplete="list"
+                aria-keyshortcuts="Control+K Meta+K"
+                role="combobox"
+                value={query}
+                onChange={(e) => { setQuery(e.target.value); setOpen(true); setActiveIndex(0); }}
+                onFocus={() => { setOpen(true); setActiveIndex(0); }}
+                onKeyDown={handleInputKeyDown}
+                placeholder={placeholder}
+            />
             {hasResultsPopup && (
                 <>
-                    <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} aria-hidden="true" />
-                    <div
-                        id={resultsId}
-                        role="listbox"
-                        aria-label="Hasil pencarian pengajuan OFF"
-                        className="absolute left-0 right-0 z-40 mt-2 max-h-72 overflow-y-auto rounded-xl border border-[var(--border-strong)] bg-[var(--surface)] shadow-2xl backdrop-blur-xl"
-                    >
-                        {filtered.length === 0 ? (
-                            <div className="py-6 text-center text-sm text-[var(--luxury-subtle)]">
-                                Tidak ditemukan batch yang cocok
-                            </div>
+                    <div style={{ position: "fixed", inset: 0, zIndex: 30 }} onClick={() => setOpen(false)} aria-hidden="true" />
+                    <div id={resultsId} role="listbox" aria-label="Hasil pencarian pengajuan OFF" className="fi-sect"
+                        style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 4px)", zIndex: 40, maxHeight: "18rem", overflowY: "auto", padding: 6 }}>
+                        {muat?.status === "galat" && !muat.adaData ? (
+                            <p className="fi-small" role="alert" style={{ padding: "12px 10px" }}>Daftar pengajuan gagal dimuat, jadi pencarian belum bisa dipakai. {muat.error}</p>
+                        ) : muat?.status === "memuat" && !muat.adaData ? (
+                            <p className="fi-small fi-subtle" role="status" style={{ padding: "12px 10px" }}>Memuat daftar pengajuan…</p>
+                        ) : filtered.length === 0 ? (
+                            <p className="fi-small fi-subtle" style={{ padding: "12px 10px" }}>Tidak ditemukan batch yang cocok.</p>
                         ) : (
                             filtered.map((item, index) => (
                                 <button
@@ -152,19 +140,16 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
                                     aria-selected={index === resolvedActiveIndex}
                                     onClick={() => handleSelect(item.id)}
                                     onMouseEnter={() => setActiveIndex(index)}
-                                    className={`flex w-full items-center gap-3 border-b border-[var(--border-soft)] px-4 py-2.5 text-left transition-colors last:border-b-0 hover:bg-[var(--luxury-gold-2)]/10 ${index === resolvedActiveIndex ? "bg-[var(--luxury-gold-2)]/10" : ""}`}
+                                    className="fi-menu-item"
                                 >
-                                    <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-semibold text-[var(--luxury-text)] truncate">
-                                            {item.noPengajuan}
-                                        </p>
-                                        <p className="text-xs text-[var(--luxury-muted)] truncate">
-                                            {item.principleName} • {item.status}
-                                        </p>
-                                    </div>
-                                    <ArrowRight size={12} className="shrink-0 text-[var(--luxury-gold)] opacity-50" />
+                                    <ArrowRight className="fi-icon" aria-hidden />
+                                    <b className="fi-mono">{item.noPengajuan}</b>
+                                    <small>{item.principleName} · {item.status}</small>
                                 </button>
                             ))
+                        )}
+                        {muat?.status === "galat" && muat.adaData && (
+                            <p className="fi-small fi-subtle" role="alert" style={{ padding: "8px 10px" }}>Daftar terakhir gagal diperbarui; hasil dari data sebelumnya.</p>
                         )}
                     </div>
                 </>

@@ -6,7 +6,7 @@
  * Side Effects: Definisi schema untuk DB read/write PostgreSQL oleh caller.
  */
 import { sql } from "drizzle-orm";
-import { pgTable, text, integer, bigint, bigserial, smallint, numeric, date, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, primaryKey, check, customType, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, bigint, bigserial, smallint, numeric, date, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, unique, foreignKey, primaryKey, check, customType, pgEnum } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
     id: text("id").primaryKey(),
@@ -167,6 +167,32 @@ export const invoiceOutbox = pgTable("invoice_outbox", {
     index("idx_invoice_outbox_identity").on(t.accurateDbId, t.accurateId).where(sql`${t.state} = 'posted'`),
 ]);
 
+// Riwayat antrean faktur APPEND-ONLY (BL-17 + R6, S6-0d; scripts/migrate-pg.mjs). Satu baris per
+// aksi/percobaan: status HTTP + potongan jawaban tidak pernah ditimpa, pelaku tercatat. Sengaja
+// TANPA FK ke invoice_outbox: Buang = DELETE baris antrean, riwayatnya harus tetap ada. Trigger
+// anti-ubah + REVOKE = docs/handover/DDL_OUTBOX_EVENT.sql (manual, IT Support).
+export const INVOICE_OUTBOX_EVENT_KINDS = [
+    "antre", "kirim", "posted", "rejected", "unknown", "buang", "antre_ulang", "selesaikan", "sapu",
+] as const;
+export const invoiceOutboxEvent = pgTable("invoice_outbox_event", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orderId: text("order_id").notNull(),
+    jenis: text("jenis").notNull(),
+    stateFrom: text("state_from"),
+    stateTo: text("state_to"),
+    actor: text("actor").notNull().default(""),
+    httpStatus: integer("http_status"),
+    responseExcerpt: text("response_excerpt").notNull().default(""),
+    errorCode: text("error_code").notNull().default(""),
+    reason: text("reason").notNull().default(""),
+    detail: jsonb("detail"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_invoice_outbox_event_order").on(t.orderId, t.createdAt),
+    check("invoice_outbox_event_jenis", sql`${t.jenis} IN ('antre', 'kirim', 'posted', 'rejected', 'unknown', 'buang', 'antre_ulang', 'selesaikan', 'sapu')`),
+    check("invoice_outbox_event_excerpt", sql`length(${t.responseExcerpt}) <= 500`),
+]);
+
 // Penjelasan manusia atas selisih verifikasi balik (db/migrations/0024). Satu baris per SO ×
 // jenis ("sales" | "isi"). `sidik` = temuan persis yang dijelaskan; berubah = tidak berlaku.
 export const invoiceVerifyNote = pgTable("invoice_verify_note", {
@@ -179,6 +205,80 @@ export const invoiceVerifyNote = pgTable("invoice_verify_note", {
 }, (t) => [
     primaryKey({ columns: [t.orderId, t.jenis] }),
     check("invoice_verify_note_jenis", sql`${t.jenis} IN ('sales', 'isi')`),
+]);
+
+// Klaim tulis Accurate SEBELUM kirim (AM-014 / C.12, scripts/migrate-pg.mjs). Satu attempt
+// HIDUP (sending/posted/unknown) per operation × subject — dijaga unique partial index, bukan
+// kode aplikasi. Hanya server Next yang menulis; browser tidak bisa menghapus klaim. Baris
+// tidak pernah dihapus: penyelesaian manusia dicatat di `resolution`, attempt lama tetap ada.
+export const accurateWriteAttempt = pgTable("accurate_write_attempt", {
+    id: text("id").primaryKey(),
+    operation: text("operation").notNull(),
+    subjectKey: text("subject_key").notNull(),
+    clientRef: text("client_ref").notNull().default(""),
+    targetDbId: text("target_db_id").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    actor: text("actor").notNull(),
+    state: text("state").notNull(),
+    outcome: jsonb("outcome").notNull().default({}),
+    accurateId: text("accurate_id").notNull().default(""),
+    accurateNumber: text("accurate_number").notNull().default(""),
+    resolution: jsonb("resolution"),
+    // ADR-004 rev 3.1 rilis A (C14, owner 8 Okt 2026): generasi per subjek. Rilis A selalu 0 (reopen_id kosong);
+    // generasi > 0 hanya lewat reopen (rilis B, D-15 — belum dibangun).
+    generation: integer("generation").notNull().default(0),
+    reopenId: text("reopen_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    // Satu attempt hidup per operation × subjek × GENERASI (nama lama dipertahankan — ADR-004 Migrasi).
+    uniqueIndex("uq_accurate_write_attempt_live").on(t.operation, t.subjectKey, t.generation)
+        .where(sql`${t.state} IN ('sending', 'posted', 'unknown')`),
+    // Kunci identitas untuk FK komposit dari accurate_write_attempt_reopen.
+    unique("uq_accurate_write_attempt_identity").on(t.id, t.operation, t.subjectKey, t.generation, t.targetDbId),
+    check("accurate_write_attempt_state", sql`${t.state} IN ('sending', 'posted', 'rejected', 'unknown', 'not_sent', 'resolved_absent')`),
+    check("accurate_write_attempt_generation", sql`${t.generation} >= 0`),
+    check("accurate_write_attempt_reopen_gen", sql`(${t.generation} = 0) = (${t.reopenId} IS NULL)`),
+    // FK (reopen_id, operation, subject_key, generation, target_db_id) -> accurate_write_attempt_reopen (melingkar),
+    // fungsi/trigger immutability, dan REVOKE = DDL MANUAL docs/handover/DDL_ADR004.sql (IT Support saat deploy, O5) — sengaja
+    // tidak di sini maupun di migrate-pg. JANGAN drizzle-kit push schema.ts lama ke produksi.
+]);
+
+// ADR-004 rev 3.1: catatan "buka ulang" (repost D-15) yang immutable. Rilis A hanya membuat tabelnya (bentuk final,
+// C14); tidak ada route yang menulisnya sampai rilis B. Konstrain inline = yang juga dibuat scripts/migrate-pg.mjs.
+export const accurateWriteAttemptReopen = pgTable("accurate_write_attempt_reopen", {
+    id: text("id").primaryKey(),
+    operation: text("operation").notNull(),
+    subjectKey: text("subject_key").notNull(),
+    fromAttemptId: text("from_attempt_id").notNull(),
+    targetDbId: text("target_db_id").notNull(),
+    actor: text("actor").notNull(),
+    fromGeneration: integer("from_generation").notNull(),
+    toGeneration: integer("to_generation").notNull(),
+    oldAccurateId: text("old_accurate_id").notNull().default(""),
+    oldAccurateNumber: text("old_accurate_number").notNull().default(""),
+    reason: text("reason").notNull(),
+    checkedSource: text("checked_source").notNull(),
+    verification: jsonb("verification").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    unique("uq_accurate_write_attempt_reopen_generation").on(t.operation, t.subjectKey, t.toGeneration),
+    unique("uq_accurate_write_attempt_reopen_from").on(t.fromAttemptId),
+    unique("uq_accurate_write_attempt_reopen_identity").on(t.id, t.operation, t.subjectKey, t.toGeneration, t.targetDbId),
+    foreignKey({
+        name: "fk_accurate_write_attempt_reopen_from",
+        columns: [t.fromAttemptId, t.operation, t.subjectKey, t.fromGeneration, t.targetDbId],
+        foreignColumns: [accurateWriteAttempt.id, accurateWriteAttempt.operation, accurateWriteAttempt.subjectKey,
+            accurateWriteAttempt.generation, accurateWriteAttempt.targetDbId],
+    }),
+    check("accurate_write_attempt_reopen_from_generation", sql`${t.fromGeneration} >= 0`),
+    check("accurate_write_attempt_reopen_to_generation", sql`${t.toGeneration} = ${t.fromGeneration} + 1`),
+    check("accurate_write_attempt_reopen_old_ref", sql`${t.oldAccurateId} <> '' OR ${t.oldAccurateNumber} <> ''`),
+    check("accurate_write_attempt_reopen_reason", sql`length(btrim(${t.reason})) >= 15`),
+    check("accurate_write_attempt_reopen_checked_source", sql`btrim(${t.checkedSource}) <> ''`),
+    // coalesce: tanpa itu '{}' lolos (CHECK bernilai NULL).
+    check("accurate_write_attempt_reopen_verification",
+        sql`coalesce(${t.verification}->>'method', '') IN ('manual_attestation', 'provider_readback')`),
 ]);
 
 // Aturan promo terbit dalam bentuk yang bisa dibandingkan dengan faktur nyata (db/migrations/0011).
@@ -598,8 +698,59 @@ export const idempotencyLog = pgTable("idempotency_log", {
     paymentMethod: text("paymentMethod"),
     source: text("source"),
     createdAt: timestamp('createdAt'),
-    updatedAt: timestamp('updatedAt')
-});
+    updatedAt: timestamp('updatedAt'),
+    // AM-050 (owner D-18): pemilik lock — hanya request pemegang lockId (dan user yang sama) yang boleh
+    // menutup baris PROCESSING dan mengirimnya lewat /api/proxy. NULL = baris sebelum migrasi.
+    lockId: text("lockId"),
+    lockedBy: text("lockedBy"),
+    // S6e-2 butir 2: database Accurate sesi saat lock (kiriman & Selesaikan harus database yang sama). NULL = baris lama.
+    databaseId: text("databaseId"),
+}, (t) => [
+    // Guard /api/proxy mencari baris per lockId pada setiap kirim sales-receipt (review e641e571 LOW).
+    index("idx_idempotency_log_lock").on(t.lockId),
+]);
+
+// AM-052 (owner D-18): jejak override blok duplikat sales-receipt — hanya INSERT (plus penandaan
+// `consumedAt` saat proxy memakai izin kirim ulang), tahan restart. scripts/migrate-pg.mjs.
+export const idempotencyOverride = pgTable("idempotency_override", {
+    id: text("id").primaryKey(),
+    lockId: text("lock_id").notNull(),
+    key: text("key").notNull(),
+    actor: text("actor").notNull(),
+    reason: text("reason").notNull(),
+    blockReason: text("block_reason").notNull(),
+    previousStatus: text("previous_status"),
+    action: text("action").notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // S6e-2a tinjauan B2: database Accurate sesi saat lock (proxy menolak kiriman ke database lain). NULL = override lama.
+    databaseId: text("database_id"),
+}, (t) => [
+    index("idx_idempotency_override_lock_key").on(t.lockId, t.key),
+    check("idempotency_override_action", sql`${t.action} IN ('takeover', 'resend_success', 'allow_duplicate')`),
+]);
+
+// S6e-2 butir 5 (owner #7): jejak "Selesaikan" pelunasan tidak pasti — hanya INSERT (trigger + REVOKE di
+// docs/handover/DDL_S6E2.sql). Pembuatan tabel: scripts/migrate-pg.mjs entri idempotency_s6e2.
+export const idempotencyResolution = pgTable("idempotency_resolution", {
+    id: text("id").primaryKey(),
+    key: text("key").notNull(),
+    lockId: text("lock_id"),
+    previousStatus: text("previous_status").notNull(),
+    decision: text("decision").notNull(),
+    accurateNumber: text("accurate_number"),
+    databaseId: text("database_id").notNull(),
+    checkedSource: text("checked_source").notNull(),
+    reason: text("reason").notNull(),
+    actor: text("actor").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_idempotency_resolution_key").on(t.key),
+    check("idempotency_resolution_decision", sql`${t.decision} IN ('terposting', 'tidak_ada')`),
+    check("idempotency_resolution_reason", sql`char_length(btrim(${t.reason})) >= 15`),
+    check("idempotency_resolution_number", sql`${t.decision} <> 'terposting' OR coalesce(btrim(${t.accurateNumber}), '') <> ''`),
+    check("idempotency_resolution_source", sql`btrim(${t.checkedSource}) <> ''`),
+]);
 
 export const accurateOAuthSession = pgTable("accurate_oauth_session", {
     userId: text("user_id").primaryKey().references(() => user.id),
@@ -1563,10 +1714,14 @@ export const userGroup = pgTable("user_group", {
     groupId: text("group_id").notNull().references(() => accessGroup.id),
     assignedBy: text("assigned_by"),
     assignedAt: timestamp("assigned_at").notNull(),
+    // S7-0 BL-63 (owner 11 Okt): BINTANG grup utama — opsional, maks. satu per user (indeks unik parsial). Kolom
+    // dari migrate-pg `user_group.is_primary`; backfill "user tepat 1 grup" = docs/handover/DDL_S7_0.sql (manual).
+    isPrimary: boolean("is_primary").notNull().default(false),
 }, (t) => ({
     pk: primaryKey({ columns: [t.userId, t.groupId] }),
     userIdx: index("idx_user_group_user").on(t.userId),
     groupIdx: index("idx_user_group_group").on(t.groupId),
+    primaryUq: uniqueIndex("uq_user_group_primary").on(t.userId).where(sql`${t.isPrimary}`),
 }));
 
 // Jejak audit perubahan otorisasi: siapa ubah group/permission siapa, kapan.
@@ -1886,3 +2041,262 @@ export const noClaimTemplateLog = pgTable("no_claim_template_log", {
     actor: text("actor"),
     createdAt: timestamp("created_at").notNull(),
 });
+
+// --- Principal resmi + varian + alias (S7-0 BL-64, owner 11 Okt 2026) --- //
+// Satu tabel resmi menggantikan pencocokan teks bebas antar sumber (OPC, Master Barang, mapping, bank, Summary, surat).
+// KINO NON FOOD / Forisa MT-GT / Heinz HZ-BS = VARIAN satu principal. Tabel saja: benih & pembaca = S7-2.
+// SQL: migrate-pg `principal (+variant, +alias)`, db/migrations/0027_principal.sql, docs/handover/DDL_S7_0.sql.
+// Kolom *_by = id aktor TANPA FK (aktor bypass lokal / IT Support bukan baris `user`).
+
+// code = kode OPC/Klaim (format lib/claim-workflow/no-claim-rules.ts validateNoClaimTemplate: ^[A-Z0-9_-]{1,20}$). TETAP sesudah
+// dibuat: kunci teks tanpa FK di OPC/Klaim/no_claim_template -> trigger trg_principal_code_tetap (docs/handover/DDL_S7_0.sql saja)
+// menolak UPDATE yang mengubahnya. Kode salah = principal baru + nonaktifkan yang lama.
+export const principal = pgTable("principal", {
+    id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+    codeUq: uniqueIndex("uq_principal_code").on(t.code),
+    codeFormat: check("principal_code_format", sql`${t.code} ~ '^[A-Z0-9_-]{1,20}$'`),
+    nameIsi: check("principal_name_isi", sql`btrim(${t.name}) <> ''`),
+}));
+
+// variant_key '' = tanpa varian — bentuk sama dengan no_claim_template.variant_key (HEINZ: HZ/BS). name = nama tampilan
+// opsional (mis. "KINO NON FOOD"); is_active = varian dinonaktifkan tanpa dihapus (alias/templat tetap merujuk).
+// Aturan kanonik (lintas baris -> tidak bisa CHECK; DITEGAKKAN S7-2): principal UTUH dirujuk alias dengan variant_key NULL
+// (bukan ''); varian '' hanya "varian dasar" pada principal yang JUGA punya varian lain (KINO '' vs NON_FOOD).
+export const principalVariant = pgTable("principal_variant", {
+    principalId: text("principal_id").notNull(),
+    variantKey: text("variant_key").notNull().default(""),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    name: text("name"),
+    isActive: boolean("is_active").notNull().default(true),
+}, (t) => ({
+    pk: primaryKey({ name: "principal_variant_pkey", columns: [t.principalId, t.variantKey] }),
+    principalFk: foreignKey({ name: "principal_variant_principal_fk", columns: [t.principalId], foreignColumns: [principal.id] }).onDelete("restrict"),
+    keyFormat: check("principal_variant_key_format", sql`${t.variantKey} ~ '^[A-Z0-9_-]{0,20}$'`),
+}));
+
+// alias_norm unik PER KELOMPOK (satu ejaan -> satu principal[/varian]): kode Master Barang 2 karakter (jenis kode_master_barang)
+// terpisah dari nama/label/kode OPC (jenis lain) — "MI" boleh jadi nama satu principal dan kode Master Barang principal lain.
+// Tabrakan nama yang sah tetap DITOLAK (masuk laporan ambiguous S7-2): JANGAN PERNAH ON CONFLICT DO UPDATE (alias diam-diam
+// pindah principal). NILAINYA WAJIB hasil normalizer baku S7-2 (lib/principal); jangan menulis alias_norm dari normalizer lain
+// (TS master-barang / Python principle_matcher berbeda hasil). variant_key NULL = alias menunjuk principal utuh; terisi = harus
+// varian milik principal yang sama (FK komposit; NULL tidak diperiksa). CHECK bentuk normal alias_norm = invarian normalizer S7-2:
+// HURUF BESAR, tanpa spasi tepi, spasi tunggal (tanda baca bebas). Huruf non-ASCII: upper() Postgres bisa beda dari JS -> ditolak, aman.
+export const principalAlias = pgTable("principal_alias", {
+    id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    aliasNorm: text("alias_norm").notNull(),
+    principalId: text("principal_id").notNull(),
+    variantKey: text("variant_key"),
+    aliasAsli: text("alias_asli").notNull(),
+    jenis: text("jenis").notNull(), // nama | kode_master_barang | label_mapping | nama_bank | nama_summary | nama_surat
+    sumber: text("sumber").notNull(),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+    kodeMbUq: uniqueIndex("uq_principal_alias_kode_mb").on(t.aliasNorm).where(sql`${t.jenis} = 'kode_master_barang'`),
+    namaUq: uniqueIndex("uq_principal_alias_nama").on(t.aliasNorm).where(sql`${t.jenis} <> 'kode_master_barang'`),
+    principalFk: foreignKey({ name: "principal_alias_principal_fk", columns: [t.principalId], foreignColumns: [principal.id] }).onDelete("restrict"),
+    variantFk: foreignKey({ name: "principal_alias_variant_fk", columns: [t.principalId, t.variantKey],
+        foreignColumns: [principalVariant.principalId, principalVariant.variantKey] }).onDelete("restrict"),
+    principalIdx: index("idx_principal_alias_principal").on(t.principalId, t.variantKey),
+    normBentuk: check("principal_alias_norm_bentuk", sql`${t.aliasNorm} = upper(${t.aliasNorm}) AND ${t.aliasNorm} ~ '^[^[:space:]]+( [^[:space:]]+)*$'`),
+    asliIsi: check("principal_alias_asli_isi", sql`btrim(${t.aliasAsli}) <> ''`),
+    sumberIsi: check("principal_alias_sumber_isi", sql`btrim(${t.sumber}) <> ''`),
+    jenisCek: check("principal_alias_jenis", sql`${t.jenis} IN ('nama', 'kode_master_barang', 'label_mapping', 'nama_bank', 'nama_summary', 'nama_surat')`),
+}));
+
+// Riwayat principal/varian/alias APPEND-ONLY (S7-2 BL-64): satu baris per perubahan, ditulis dalam transaksi yang SAMA dengan
+// perubahannya (lib/principal/tulis.ts; benih SQL juga). Trigger tolak UPDATE/DELETE/TRUNCATE + REVOKE = docs/handover/DDL_S7_2.sql
+// saja (pola repo), BUKAN migrate-pg — jalur tulis menolak 503 bila trigger itu tidak terpasang. Tanpa FK: riwayat bertahan apa pun
+// yang terjadi pada barisnya. kunci: principal = id; varian = "<principal_id>:<variant_key>"; alias = id alias.
+// SQL: migrate-pg `principal_log`, db/migrations/0030_principal_log.sql, docs/handover/DDL_S7_2.sql.
+export const principalLog = pgTable("principal_log", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    entitas: text("entitas").notNull(),
+    kunci: text("kunci").notNull(),
+    principalId: text("principal_id").notNull(),
+    aksi: text("aksi").notNull(),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    aktor: text("aktor").notNull(),
+    waktu: timestamp("waktu", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+    principalIdx: index("idx_principal_log_principal").on(t.principalId, t.id),
+    entitasCek: check("principal_log_entitas", sql`${t.entitas} IN ('principal', 'varian', 'alias')`),
+    aksiCek: check("principal_log_aksi", sql`${t.aksi} IN ('buat', 'aktif', 'nonaktif', 'hapus')`),
+    aktorIsi: check("principal_log_aktor_isi", sql`btrim(${t.aktor}) <> ''`),
+}));
+
+// --- Kasir ↔ Incaso (K1a, BL-59; owner 11 Okt 2026: per ORANG per hari, Tunai + Transfer + Giro lawan chequeAmount) --- //
+// Setoran (append-only, revisi berantai), penjelasan selisih & penjelasan uang tak teralokasi (append-only), event hari (tutup /
+// kunci otomatis 20.00 WITA / buka; append-only), dan cache pelunasan Accurate berkolom sempit untuk K1b (TANPA raw_data — heap 2 GB
+// pernah habis, promo-recap).
+// SQL: migrate-pg `kasir (setoran, catatan, hari, cache pelunasan)`, db/migrations/0029_kasir.sql, docs/handover/DDL_K1A.sql
+// (trigger append-only + REVOKE/GRANT HANYA di DDL manual). Lib murni: lib/kasir/rekonsiliasi.ts. Kontrak: docs/handover/KASIR-KONTRAK.md.
+// Uang = numeric(18,2): Postgres MEMBULATKAN > 2 desimal diam-diam -> penulis WAJIB lewat keSen/senKeTeks (menolak > 2 desimal).
+// Kolom *_oleh = id aktor TANPA FK (aktor bypass lokal / sistem bukan baris `user`).
+
+// salesman_kode = kode ORANG saat dicatat (accurate_employee.number sesudah gabungan sales_code_merge bulan itu); pembaca melipatnya
+// lagi lewat peta gabungan bulan `tanggal` (lib orangDariKode) — koreksi orang multi-kode = lib rencanaSetoranOrang (satu transaksi). Koreksi = baris BARU revisi n+1 yang menunjuk revisi n hari & kode yang sama
+// (FK komposit); revisi terbesar berlaku. Unik (tanggal, kode, revisi) = dobel-klik/balapan -> 23505 (409 di K2).
+export const kasirSetoran = pgTable("kasir_setoran", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tanggal: date("tanggal").notNull(),
+    salesmanKode: text("salesman_kode").notNull(),
+    revisi: integer("revisi").notNull(),
+    revisiSebelumnya: integer("revisi_sebelumnya"),
+    tunai: numeric("tunai", { precision: 18, scale: 2 }).notNull(),
+    transfer: numeric("transfer", { precision: 18, scale: 2 }).notNull(),
+    giro: numeric("giro", { precision: 18, scale: 2 }).notNull(),
+    noFormKasir: text("no_form_kasir"),
+    buktiTransfer: text("bukti_transfer"),
+    catatan: text("catatan"),
+    dicatatOleh: text("dicatat_oleh").notNull(),
+    dicatatPada: timestamp("dicatat_pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    unique("uq_kasir_setoran_revisi").on(t.tanggal, t.salesmanKode, t.revisi),
+    foreignKey({ name: "kasir_setoran_revisi_sebelumnya_fk", columns: [t.tanggal, t.salesmanKode, t.revisiSebelumnya],
+        foreignColumns: [t.tanggal, t.salesmanKode, t.revisi] }),
+    check("kasir_setoran_rantai", sql`${t.revisi} >= 1 AND ${t.revisiSebelumnya} IS NOT DISTINCT FROM nullif(${t.revisi} - 1, 0)`),
+    check("kasir_setoran_nominal", sql`${t.tunai} >= 0 AND ${t.transfer} >= 0 AND ${t.giro} >= 0`),
+    check("kasir_setoran_kode", sql`${t.salesmanKode} <> '' AND ${t.salesmanKode} = btrim(${t.salesmanKode})`),
+    check("kasir_setoran_teks", sql`btrim(coalesce(${t.noFormKasir}, '-')) <> '' AND btrim(coalesce(${t.buktiTransfer}, '-')) <> '' AND btrim(coalesce(${t.catatan}, '-')) <> ''`),
+    check("kasir_setoran_oleh", sql`btrim(${t.dicatatOleh}) <> ''`),
+]);
+
+// Penjelasan selisih per orang per hari. pelunasan/setoran = angka SAAT dijelaskan; angka berubah = penjelasan tidak berlaku
+// (lib rekonsiliasiHari). salesman_kode '' = baris "Tanpa salesman" (TANPA_SALESMAN).
+export const kasirSelisihCatatan = pgTable("kasir_selisih_catatan", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tanggal: date("tanggal").notNull(),
+    salesmanKode: text("salesman_kode").notNull(),
+    pelunasan: numeric("pelunasan", { precision: 18, scale: 2 }).notNull(),
+    setoran: numeric("setoran", { precision: 18, scale: 2 }).notNull(),
+    penjelasan: text("penjelasan").notNull(),
+    tindakLanjut: text("tindak_lanjut").notNull(), // setor_susulan | koreksi_incaso | lapor_om
+    dicatatOleh: text("dicatat_oleh").notNull(),
+    dicatatPada: timestamp("dicatat_pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_kasir_selisih_catatan_hari").on(t.tanggal, t.salesmanKode),
+    check("kasir_selisih_catatan_kode", sql`${t.salesmanKode} = btrim(${t.salesmanKode})`),
+    check("kasir_selisih_catatan_setoran", sql`${t.setoran} >= 0`),
+    check("kasir_selisih_catatan_penjelasan", sql`char_length(btrim(${t.penjelasan})) >= 15`),
+    check("kasir_selisih_catatan_tindak_lanjut", sql`${t.tindakLanjut} IN ('setor_susulan', 'koreksi_incaso', 'lapor_om')`),
+    check("kasir_selisih_catatan_oleh", sql`btrim(${t.dicatatOleh}) <> ''`),
+]);
+
+// Event hari: tutup (Kasir, kapan pun), kunci (sistem mencatat snapshot kunci otomatis 20.00 WITA — kuncinya sendiri DIHITUNG
+// lib statusHari, tidak menunggu baris ini), buka (OM/Admin, kasir.buka, alasan ≥ 15). Snapshot = lib snapshotHari (tutup/kunci).
+export const kasirHariEvent = pgTable("kasir_hari_event", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tanggal: date("tanggal").notNull(),
+    jenis: text("jenis").notNull(), // tutup | kunci | buka
+    alasan: text("alasan"),
+    snapshot: jsonb("snapshot"),
+    oleh: text("oleh").notNull(),
+    pada: timestamp("pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_kasir_hari_event_tanggal").on(t.tanggal, t.id),
+    check("kasir_hari_event_jenis", sql`${t.jenis} IN ('tutup', 'kunci', 'buka')`),
+    check("kasir_hari_event_alasan_buka", sql`${t.jenis} <> 'buka' OR char_length(btrim(coalesce(${t.alasan}, ''))) >= 15`),
+    check("kasir_hari_event_snapshot", sql`(${t.jenis} = 'buka') = (${t.snapshot} IS NULL) AND (${t.snapshot} IS NULL OR jsonb_typeof(${t.snapshot}) = 'object')`),
+    // Owner 11 Okt (T2): Tutup hanya bila TIDAK terhalang — snapshot.terhalang (lib penghalangTutup) wajib []. Kunci otomatis boleh
+    // terhalang (kunci ≠ tutup): snapshot kunci mencatat selisih/ember yang belum dijelaskan.
+    check("kasir_hari_event_tutup_tuntas", sql`${t.jenis} <> 'tutup' OR coalesce(${t.snapshot} -> 'terhalang', 'null'::jsonb) = '[]'::jsonb`),
+    check("kasir_hari_event_oleh", sql`btrim(${t.oleh}) <> ''`),
+]);
+
+// Penjelasan uang TAK TERALOKASI (Σ invoicePayment ≠ chequeAmount, lib alokasiPelunasan) per pelunasan — owner 11 Okt (T2): wajib
+// sebelum Tutup. Tabel sendiri (bukan kasir_selisih_catatan): kuncinya pelunasan (database_id + pelunasan_id), bukan orang, dan
+// angkanya `sisa`, bukan pelunasan/setoran. sisa = angka saat dijelaskan; berubah = tidak berlaku. TANPA FK ke cache kasir_pelunasan
+// (cache boleh dihapus/dibaca ulang; penjelasan tetap). Append-only (trigger + REVOKE di DDL_K1A.sql).
+export const kasirTakTeralokasiCatatan = pgTable("kasir_tak_teralokasi_catatan", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tanggal: date("tanggal").notNull(),
+    databaseId: text("database_id").notNull(),
+    pelunasanId: bigint("pelunasan_id", { mode: "number" }).notNull(),
+    sisa: numeric("sisa", { precision: 18, scale: 2 }).notNull(),
+    penjelasan: text("penjelasan").notNull(),
+    dicatatOleh: text("dicatat_oleh").notNull(),
+    dicatatPada: timestamp("dicatat_pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_kasir_tak_teralokasi_catatan_hari").on(t.databaseId, t.tanggal),
+    check("kasir_tak_teralokasi_catatan_database", sql`btrim(${t.databaseId}) <> ''`),
+    check("kasir_tak_teralokasi_catatan_sisa", sql`${t.sisa} <> 0`),
+    check("kasir_tak_teralokasi_catatan_penjelasan", sql`char_length(btrim(${t.penjelasan})) >= 15`),
+    check("kasir_tak_teralokasi_catatan_oleh", sql`btrim(${t.dicatatOleh}) <> ''`),
+]);
+
+// Cache pelunasan (sales-receipt) — ditulis HANYA pembaca sistem K1b (upsert; Kasir tidak punya jalur tulis = "Kasir tidak bisa
+// mengubah angka Incaso"). Id Accurate unik per database -> PK ber-database_id. last_update = teks Accurate apa adanya
+// (pola dd/MM/yyyy HH…, hanya dibandingkan sama/beda untuk baca ulang inkremental).
+export const kasirPelunasan = pgTable("kasir_pelunasan", {
+    databaseId: text("database_id").notNull(),
+    pelunasanId: bigint("pelunasan_id", { mode: "number" }).notNull(),
+    nomor: text("nomor").notNull(),
+    tanggal: date("tanggal").notNull(), // transDate
+    metode: text("metode").notNull(), // paymentMethod: CASH_OTHER | BANK_TRANSFER | BANK_CHEQUE | OTHERS | …
+    chequeAmount: numeric("cheque_amount", { precision: 18, scale: 2 }).notNull(),
+    lastUpdate: text("last_update"),
+    dibacaPada: timestamp("dibaca_pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    primaryKey({ name: "kasir_pelunasan_pkey", columns: [t.databaseId, t.pelunasanId] }),
+    index("idx_kasir_pelunasan_tanggal").on(t.databaseId, t.tanggal),
+    check("kasir_pelunasan_isi", sql`btrim(${t.databaseId}) <> '' AND btrim(${t.nomor}) <> '' AND btrim(${t.metode}) <> ''`),
+]);
+
+// Baris faktur per pelunasan (detailInvoice[]): salesman = invoice.masterSalesmanId (bukti 11 Okt: terisi 43/43). nomor_faktur
+// opsional (rincian K2) — tambahan kecil dari brief agar rincian tidak bergantung pada sales_invoice yang tak memuat faktur lama.
+export const kasirPelunasanFaktur = pgTable("kasir_pelunasan_faktur", {
+    databaseId: text("database_id").notNull(),
+    pelunasanId: bigint("pelunasan_id", { mode: "number" }).notNull(),
+    fakturId: bigint("faktur_id", { mode: "number" }).notNull(),
+    nomorFaktur: text("nomor_faktur"),
+    masterSalesmanId: bigint("master_salesman_id", { mode: "number" }),
+    invoicePayment: numeric("invoice_payment", { precision: 18, scale: 2 }).notNull(),
+}, (t) => [
+    primaryKey({ name: "kasir_pelunasan_faktur_pkey", columns: [t.databaseId, t.pelunasanId, t.fakturId] }),
+    foreignKey({ name: "kasir_pelunasan_faktur_pelunasan_fk", columns: [t.databaseId, t.pelunasanId],
+        foreignColumns: [kasirPelunasan.databaseId, kasirPelunasan.pelunasanId] }).onDelete("cascade"),
+]);
+
+// Status baca cache pelunasan per (database, tanggal) — K1b. Lease lintas instance = status 'berjalan' + token (kedaluwarsa 2 menit
+// menurut jam DB; token dicek di SETIAP tulis cache). `lengkap` ⇔ daftar list.do lengkap ∧ setiap id daftar ada di cache dengan
+// last_update sama ∧ tanpa pelunasan ditolak; galat tidak pernah menghapus cache atau memundurkan lengkap_pada. Cache, bukan jejak
+// (tanpa trigger). sebab = kelas galat lib/kasir/pembaca KELAS_GALAT. Lihat db/migrations/0031_kasir_baca.sql + docs/handover/DDL_K1B.sql.
+export const kasirPelunasanBaca = pgTable("kasir_pelunasan_baca", {
+    databaseId: text("database_id").notNull(),
+    tanggal: date("tanggal").notNull(),
+    status: text("status").notNull(),
+    sebab: text("sebab"),
+    pesan: text("pesan"),
+    jumlahDaftar: integer("jumlah_daftar"),
+    sisaDetail: integer("sisa_detail"),
+    ditolak: jsonb("ditolak").notNull().default(sql`'[]'::jsonb`), // [{ id, nomor, sebab, pesan }]
+    token: text("token"),
+    mulaiPada: timestamp("mulai_pada", { withTimezone: true }).notNull().defaultNow(),
+    selesaiPada: timestamp("selesai_pada", { withTimezone: true }),
+    lengkapPada: timestamp("lengkap_pada", { withTimezone: true }),
+    pemicu: text("pemicu").notNull(),
+    akunSinkron: text("akun_sinkron"), // user.id akun Accurate sinkron yang cache-nya terakhir diterapkan (tampil sebagai NAMA)
+    penuhTertundaPada: timestamp("penuh_tertunda_pada", { withTimezone: true }), // baca penuh cron menyerah menunggu lease; klaim berikut = penuh
+}, (t) => [
+    primaryKey({ name: "kasir_pelunasan_baca_pkey", columns: [t.databaseId, t.tanggal] }),
+    check("kasir_pelunasan_baca_status", sql`${t.status} IN ('berjalan', 'lengkap', 'sebagian', 'gagal')`),
+    check("kasir_pelunasan_baca_sebab", sql`${t.sebab} IS NULL OR ${t.sebab} IN ('sesi_sinkron', 'hak_akses', 'batas_laju', 'accurate_5xx', 'jaringan',
+        'tidak_pasti', 'ditolak', 'bentuk', 'nominal', 'terpotong', 'hapus_massal')`),
+    check("kasir_pelunasan_baca_isi", sql`btrim(${t.databaseId}) <> '' AND btrim(${t.pemicu}) <> '' AND jsonb_typeof(${t.ditolak}) = 'array'
+        AND ${t.jumlahDaftar} >= 0 AND ${t.sisaDetail} >= 0 AND ${t.sisaDetail} <= ${t.jumlahDaftar}`),
+    check("kasir_pelunasan_baca_konsisten", sql`(${t.status} = 'gagal') = (${t.sebab} IS NOT NULL)
+        AND (${t.status} = 'berjalan') = (${t.token} IS NOT NULL) AND (${t.status} = 'berjalan') = (${t.selesaiPada} IS NULL)
+        AND (${t.status} <> 'lengkap' OR (coalesce(${t.sisaDetail}, -1) = 0 AND ${t.jumlahDaftar} IS NOT NULL
+            AND ${t.ditolak} = '[]'::jsonb AND ${t.lengkapPada} IS NOT NULL))`),
+]);

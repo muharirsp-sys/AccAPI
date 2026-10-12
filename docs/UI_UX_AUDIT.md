@@ -69,6 +69,10 @@ Prioritas: **P0** risiko operasional, **P1** masalah alur/keterbacaan berarti, *
 
 ## P3 — opsional
 
+> **Digantikan (7 Okt 2026).** Owner menyetujui design system Fiori (UI kit Tahap 2): `window.confirm` diganti
+> `ConfirmDialog`, tabel memakai `ResponsiveTable`, dan tema Neon pensiun — per halaman saat dimigrasi.
+> Lihat `docs/UI_DESIGN_SYSTEM.md`. Butir di bawah hanya berlaku untuk halaman yang belum dimigrasi.
+
 - Konfirmasi memakai `window.confirm` (Kirim, normalisasi, hapus). Berfungsi dan bisa dengan papan
   ketik; tidak diganti.
 - Tabel ditulis tangan per halaman walau `@tanstack/react-table` dan `components/DataTable.tsx` ada.

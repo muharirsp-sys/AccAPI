@@ -21,8 +21,8 @@
  * 3. `charField1` adalah kuncinya, dan kunci itu ikut DIPERIKSA. Kalau faktur yang ketemu
  *    membawa charField1 lain, yang salah bukan angkanya — yang salah pasangannya.
  */
-import { TOLERANCE, splitDiscounts, type DiscountAt } from "@/lib/principal-validation";
-import type { InvoicePayload } from "@/lib/accurate-invoice-write";
+import { PPN, TOLERANCE, splitDiscounts, type DiscountAt } from "@/lib/principal-validation";
+import { toAccurateDate, type InvoicePayload } from "@/lib/accurate-invoice-write";
 
 export type Finding = { line: number | null; field: string; expected: string; actual: string };
 
@@ -139,6 +139,48 @@ function chainOf(raw: string): DiscountAt[] {
     return String(raw ?? "").split("+")
         .map((part, index) => ({ position: index + 1, percent: Number(part.trim().replace(",", ".")) }))
         .filter((entry) => Number.isFinite(entry.percent) && entry.percent !== 0);
+}
+
+/**
+ * Netto satu baris payload faktur menurut cara Accurate menghitungnya: rantai persen bertingkat
+ * (sen dibulatkan per langkah) lalu rupiah sisa. SATU rumus untuk verifikasi balik dan pratinjau
+ * Kirim (BL-39), supaya angka di dialog = angka yang nanti diperiksa.
+ */
+export function nettoBaris(line: { quantity: number; unitPrice: number; itemDiscPercent: string; itemCashDiscount: number }): number {
+    const gross = cents(line.quantity * line.unitPrice);
+    return cents(gross - splitDiscounts(gross, chainOf(line.itemDiscPercent)).total - (Number(line.itemCashDiscount) || 0));
+}
+
+/**
+ * DPP + PPN sebuah payload (BL-39). PERKIRAAN: Accurate membulatkan PPN-nya sendiri, jadi bisa
+ * berselisih sen; payload antrean selalu `inclusiveTax: false` (PPN di atas harga).
+ */
+export function nilaiPayload(payload: InvoicePayload): { dpp: number; ppn: number; total: number } {
+    const netto = cents(payload.detailItem.reduce((sum, line) => sum + nettoBaris(line), 0));
+    const dpp = payload.inclusiveTax ? cents(netto / (1 + PPN)) : netto;
+    const ppn = payload.taxable ? cents(payload.inclusiveTax ? netto - dpp : dpp * PPN) : 0;
+    return { dpp, ppn, total: cents(dpp + ppn) };
+}
+
+/**
+ * Calon faktur di cache untuk verifikasi balik (S6-0d R4): record id yang dicatat + pasangan
+ * pelanggan × tanggal yang BENAR-BENAR dikirim (`payload.transDate` — tanggal faktur pilihan
+ * disimpan di klaim), bukan tanggal SO. Tanggal per pelanggan, bukan perkalian silang semua
+ * pelanggan × semua tanggal. Payload lama tanpa tanggal -> tanggal SO.
+ */
+export function kandidatCache(rows: { customerNo: string; orderDate: string; accurateId: string; payload: unknown }[]) {
+    const ids = [...new Set(rows.map((row) => Number(row.accurateId)).filter((id) => Number.isFinite(id) && id > 0))];
+    const perPelanggan = new Map<string, Set<string>>();
+    for (const row of rows) {
+        if (!row.customerNo) continue;
+        let tanggal = str(obj(row.payload).transDate).trim();
+        if (!/^\d{2}\/\d{2}\/\d{4}$/.test(tanggal)) {
+            try { tanggal = toAccurateDate(String(row.orderDate)); } catch { continue; }
+        }
+        if (!perPelanggan.has(row.customerNo)) perPelanggan.set(row.customerNo, new Set());
+        perPelanggan.get(row.customerNo)!.add(tanggal);
+    }
+    return { ids, perPelanggan: [...perPelanggan].map(([customerNo, dates]) => ({ customerNo, transDates: [...dates].sort() })) };
 }
 
 export type VerifyStatus = "cocok" | "selisih" | "tak-terperiksa";
@@ -274,7 +316,7 @@ export function verifyInvoice(payload: InvoicePayload, raw: unknown): VerifyResu
         same("diskon persen", normalizePercentChain(sent.itemDiscPercent), normalizePercentChain(got.discPercent));
 
         const gross = cents(sent.quantity * sent.unitPrice);
-        const expectedNet = cents(gross - splitDiscounts(gross, chainOf(sent.itemDiscPercent)).total - sent.itemCashDiscount);
+        const expectedNet = nettoBaris(sent);
         // `itemCashDiscount` pada JAWABAN Accurate adalah TOTAL potongan rupiah baris — termasuk
         // bagian yang dihitung Accurate sendiri dari rantai persen. Bukan sisa rupiah yang kita
         // kirim di field bernama sama. Dibuktikan 2026-09-12 pada INV/2609/KN00452: kita kirim

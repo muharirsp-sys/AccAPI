@@ -3,11 +3,12 @@
  * Caller: app/api/insentif-sales/dashboard, app/api/insentif-sales/settings.
  * Dependensi: lib/db, db/schema (appSetting).
  * Main Functions: getGtAoTargetMode, setGtAoTargetMode, aoFileKey/spvIkutKey/pasanganKey, toggleDaftar, getDaftar, setDaftar,
- *   getBranchNilaiJual, getSmBerhak, getKonstanta, setKonstanta.
+ *   getBranchNilaiJual, getSmBerhak, getKonstantaBerlabel, readKonstanta, readKonstantaVersi, setKonstanta, tolakLunasTanpaKonstanta.
  * Side Effects: DB read; setter menulis satu baris app_setting.
  */
 
-import { eq } from "drizzle-orm";
+import { NextResponse } from "next/server";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { appSetting } from "@/db/schema";
 import { DEFAULT_BRANCH_NILAI_JUAL } from "./insentif-value-source";
@@ -160,23 +161,68 @@ export function getSmBerhak(): Promise<string[]> {
 export const KONSTANTA_KEY = "insentif_konstanta";
 
 /**
- * Konstanta efektif. Gagal baca / JSON rusak → BAWAAN, dengan alasan sama seperti setelan
- * lain: dashboard insentif memanggil ini di jalur utamanya, dan setelan yang tak terbaca
- * tidak boleh mematikan halaman atau menggeser seluruh nominal ke nol.
+ * Konstanta efektif untuk TAMPILAN (dashboard, spv-dashboard, sm-dashboard). Gagal baca / JSON rusak → BAWAAN, dengan alasan
+ * sama seperti setelan lain: setelan yang tak terbaca tidak boleh mematikan halaman. Tetapi DILABELI (S6-0c, peninjau B):
+ * dulu bawaan dikembalikan diam-diam lalu Pembayaran menandai lunas nominal hasil bawaan. `gagal_baca` = angka sementara;
+ * layar mengunci aksi tulis nominal dan route payments menolak menandai lunas.
  */
-export async function getKonstanta(): Promise<Konstanta> {
+export async function getKonstantaBerlabel(): Promise<{ konstanta: Konstanta; konstantaSumber: "tersimpan" | "gagal_baca" }> {
     try {
-        const [row] = await db
-            .select({ value: appSetting.value })
-            .from(appSetting)
-            .where(eq(appSetting.key, KONSTANTA_KEY))
-            .limit(1);
-        if (row?.value == null) return DEFAULT_KONSTANTA;
-        return parseKonstanta(JSON.parse(row.value));
+        return { konstanta: await readKonstanta(), konstantaSumber: "tersimpan" };
     } catch (e) {
-        console.warn(`[insentif-settings] gagal baca ${KONSTANTA_KEY}, pakai bawaan:`,
+        console.warn(`[insentif-settings] gagal baca ${KONSTANTA_KEY}, pakai bawaan (gagal_baca):`,
             e instanceof Error ? e.message : e);
-        return DEFAULT_KONSTANTA;
+        return { konstanta: DEFAULT_KONSTANTA, konstantaSumber: "gagal_baca" };
+    }
+}
+
+/**
+ * Pagar route payments (POST dan PATCH [id]) sebelum menandai LUNAS: nominal datang dari klien (BL-27 hitung ulang server belum
+ * ada) dan dihitung dashboard dengan konstanta. Selama konstanta tersimpan tak terbaca, dashboard menghitung dengan BAWAAN
+ * (getKonstantaBerlabel → "gagal_baca") — nominal itu tidak boleh ditandai lunas. Layar sudah mengunci tombolnya; ini pagar
+ * server bila layar lama/terbuka saat gangguan atau API langsung tetap mengirim. Jawaban 503 = tolak, null = boleh lanjut.
+ * ponytail: hanya memastikan konstanta TERBACA saat menulis, bukan bahwa nominal klien dihitung darinya — itu BL-27.
+ */
+export async function tolakLunasTanpaKonstanta(): Promise<NextResponse | null> {
+    try {
+        await readKonstanta();
+        return null;
+    } catch {
+        return NextResponse.json(
+            { error: "Konstanta insentif tersimpan gagal dibaca; nominal belum pasti sehingga belum bisa ditandai lunas. Coba lagi nanti.", code: "KONSTANTA_GAGAL_BACA" },
+            { status: 503 },
+        );
+    }
+}
+
+/**
+ * Baca STRICT untuk jalur tulis (AM-020): gagal baca / JSON rusak MELEMPAR. Belum pernah
+ * disimpan = bawaan (itu memang nilai yang berlaku, bukan fallback).
+ */
+export async function readKonstanta(): Promise<Konstanta> {
+    return (await readKonstantaVersi()).konstanta;
+}
+
+/** AM-045: versi = updatedAt (ISO) baris tersimpan, null = belum pernah disimpan. Token CAS editor. */
+export async function readKonstantaVersi(): Promise<{ konstanta: Konstanta; versi: string | null }> {
+    const row = await bacaBarisKonstanta();
+    if (!row) return { konstanta: DEFAULT_KONSTANTA, versi: null };
+    return { konstanta: parseKonstanta(JSON.parse(row.value)), versi: row.updatedAt.toISOString() };
+}
+
+async function bacaBarisKonstanta() {
+    const [row] = await db
+        .select({ value: appSetting.value, updatedAt: appSetting.updatedAt })
+        .from(appSetting)
+        .where(eq(appSetting.key, KONSTANTA_KEY))
+        .limit(1);
+    return row ?? null;
+}
+
+/** Admin lain sudah menyimpan konstanta sejak editor ini memuatnya (AM-045) → 409, bukan timpa. */
+export class KonstantaBerubahError extends Error {
+    constructor() {
+        super("Konstanta sudah diubah admin lain sejak editor dimuat. Muat ulang, lalu ulangi perubahan.");
     }
 }
 
@@ -184,9 +230,13 @@ export async function getKonstanta(): Promise<Konstanta> {
  * Simpan konstanta. `patch` digabung di atas yang TERSIMPAN (bukan di atas bawaan), supaya
  * editor boleh mengirim satu field saja tanpa mengembalikan angka lain ke bawaan.
  * Yang disimpan selalu hasil parseKonstanta: kunci asing dan nilai di luar batas tidak masuk DB.
+ * Dasar gabungan dibaca strict: bila tersimpan tak terbaca, JANGAN menulis bawaan + patch.
+ * AM-045: `versi` = versi yang dimuat editor; beda dari yang tersimpan → KonstantaBerubahError.
  */
-export async function setKonstanta(patch: unknown, actor: string | null): Promise<Konstanta> {
-    const sekarang = await getKonstanta();
+export async function setKonstanta(patch: unknown, actor: string | null, versi: string | null): Promise<{ konstanta: Konstanta; versi: string }> {
+    const row = await bacaBarisKonstanta();
+    if ((row ? row.updatedAt.toISOString() : null) !== versi) throw new KonstantaBerubahError();
+    const sekarang = row ? parseKonstanta(JSON.parse(row.value)) : DEFAULT_KONSTANTA;
     const gabung = {
         gt: { ...sekarang.gt, ...(objek(patch, "gt")) },
         mt: { ...sekarang.mt, ...(objek(patch, "mt")) },
@@ -197,11 +247,19 @@ export async function setKonstanta(patch: unknown, actor: string | null): Promis
     const baru = parseKonstanta(gabung);
     const now = new Date();
     const value = JSON.stringify(baru);
-    await db
-        .insert(appSetting)
-        .values({ key: KONSTANTA_KEY, value, updatedBy: actor, updatedAt: now })
-        .onConflictDoUpdate({ target: appSetting.key, set: { value, updatedBy: actor, updatedAt: now } });
-    return baru;
+    // Tulis BERSYARAT pada isi yang tadi dibaca: penyimpan lain di antara baca dan tulis → 0 baris.
+    // Syaratnya isi, bukan updatedAt — baris dari SQL now() bermikrodetik, Date JS hanya milidetik.
+    const ditulis = row
+        ? await db.update(appSetting)
+            .set({ value, updatedBy: actor, updatedAt: now })
+            .where(and(eq(appSetting.key, KONSTANTA_KEY), eq(appSetting.value, row.value)))
+            .returning({ key: appSetting.key })
+        : await db.insert(appSetting)
+            .values({ key: KONSTANTA_KEY, value, updatedBy: actor, updatedAt: now })
+            .onConflictDoNothing()
+            .returning({ key: appSetting.key });
+    if (ditulis.length === 0) throw new KonstantaBerubahError();
+    return { konstanta: baru, versi: now.toISOString() };
 }
 
 function objek(raw: unknown, nama: string): Record<string, unknown> {

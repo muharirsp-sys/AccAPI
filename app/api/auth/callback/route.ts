@@ -1,40 +1,78 @@
-import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
-import { redactAccurateSecrets, upsertAccurateSession } from '@/lib/accurate-session';
+/*
+ * Tujuan: Callback OAuth Accurate (AM-033): cocokkan `state` dengan cookie httpOnly dari /api/auth/accurate-login SEBELUM menukar code,
+ *   simpan access token terenkripsi ke sesi Accurate user, lalu alihkan ke halaman berkartu Sesi Accurate dengan kabar berkode.
+ * Caller: Accurate (redirect_uri = NEXT_PUBLIC_ACCURATE_REDIRECT_URI).
+ * Dependensi: Better Auth (sesi app), lib/accurate-session (upsertAccurateSession), lib/accurate-oauth (returnTo, halaman, kode galat).
+ * Main Functions: GET.
+ * Side Effects: POST https://account.accurate.id/oauth/token; tulis accurate_oauth_session; hapus cookie state di semua cabang KECUALI
+ *   state_beda (tab lain / pihak luar tidak boleh membatalkan masuk yang sedang berjalan).
+ *   Log tidak memuat token maupun isi jawaban Accurate (bisa memuat token) — hanya status HTTP / nama galat.
+ */
+import { timingSafeEqual } from "node:crypto";
+import { NextResponse, type NextRequest } from "next/server";
+import { auth } from "@/lib/auth";
+import { upsertAccurateSession } from "@/lib/accurate-session";
+import { STATE_COOKIE, STATE_COOKIE_PATH, halamanMendarat, returnToAman, type KodeGalatAccurate } from "@/lib/accurate-oauth";
 
-export async function GET(request: Request) {
+function samaAman(a: string, b: string) {
+    const x = Buffer.from(a);
+    const y = Buffer.from(b);
+    return x.length === y.length && timingSafeEqual(x, y);
+}
+
+export async function GET(request: NextRequest) {
     // request.url bisa berupa alamat internal container di belakang proxy (Coolify) — semua
     // redirect di sini WAJIB pakai base URL publik, bukan request.url (lihat lib/auth.ts).
     const publicBase = process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin;
 
-    const appSession = await auth.api.getSession({ headers: request.headers });
+    const isiCookie = request.cookies.get(STATE_COOKIE)?.value ?? "";
+    const pisah = isiCookie.indexOf(":");
+    const stateCookie = pisah > 0 ? isiCookie.slice(0, pisah) : "";
+    const returnTo = returnToAman(pisah > 0 ? isiCookie.slice(pisah + 1) : null);
+
+    const selesai = (path: string, hapusCookie = true) => {
+        const res = NextResponse.redirect(new URL(path, publicBase));
+        if (hapusCookie) res.cookies.set(STATE_COOKIE, "", { httpOnly: true, secure: true, sameSite: "lax", maxAge: 0, path: STATE_COOKIE_PATH });
+        return res;
+    };
+    const galat = (alasan: KodeGalatAccurate, hapusCookie = true) => selesai(halamanMendarat(returnTo, { accurate: "error", alasan }), hapusCookie);
+
+    let appSession: Awaited<ReturnType<typeof auth.api.getSession>>;
+    try {
+        appSession = await auth.api.getSession({ headers: request.headers });
+    } catch (err: unknown) {
+        console.error("[accurate-callback] baca sesi app gagal:", err instanceof Error ? err.name : typeof err);
+        return galat("galat_server");
+    }
     if (!appSession) {
         // Cabang ini dulu diam. Dengan LOCAL_AUTH_BYPASS, /login melempar balik ke home
         // sehingga gagalnya terlihat seperti "login Accurate berputar-putar" tanpa sebab.
+        // Nilai query TETAP persis (halaman masuk S7c memetakan string ini).
         console.error("Accurate callback ditolak: tidak ada sesi Better Auth yang aktif. Login aplikasi dulu (bypass localhost tidak membuat sesi).");
-        return NextResponse.redirect(new URL('/login?error=Accurate+login+requires+app+session', publicBase));
+        return selesai("/login?error=Accurate+login+requires+app+session");
     }
 
     const { searchParams } = new URL(request.url);
-    const code = searchParams.get('code');
+    // State diperiksa SEBELUM code disentuh: tanpa cookie (kedaluwarsa/alamat lain) atau beda = code tidak ditukar.
+    if (!stateCookie) return galat("state_hilang");
+    const state = searchParams.get("state");
+    // State beda: cookie DIBIARKAN — bisa tab lain yang sedang masuk, atau tautan pihak luar yang tidak boleh membatalkannya.
+    if (!state || !samaAman(state, stateCookie)) return galat("state_beda", false);
 
-    if (!code) {
-        return NextResponse.redirect(new URL('/?error=No+Authorization+Code', publicBase));
-    }
+    const code = searchParams.get("code");
+    if (!code) return galat("tanpa_kode");
 
     const clientId = process.env.ACCURATE_CLIENT_ID;
     const clientSecret = process.env.ACCURATE_CLIENT_SECRET;
     const redirectUri = process.env.NEXT_PUBLIC_ACCURATE_REDIRECT_URI;
-
     if (!clientId || !clientSecret || !redirectUri) {
         console.error("Missing environment variables for Accurate OAuth");
-        return NextResponse.redirect(new URL('/?error=Server+Configuration+Error', publicBase));
+        return galat("konfigurasi");
     }
 
     try {
         // 1. Tukar Authorization Code dengan Access Token
-        const authHeader = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-
+        const authHeader = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
         const tokenResponse = await fetch("https://account.accurate.id/oauth/token", {
             method: "POST",
             headers: {
@@ -43,19 +81,23 @@ export async function GET(request: Request) {
             },
             body: new URLSearchParams({
                 grant_type: "authorization_code",
-                code: code,
+                code,
                 redirect_uri: redirectUri,
             }),
         });
 
         if (!tokenResponse.ok) {
-            const errText = await tokenResponse.text();
-            console.error("Tukar Token Gagal:", redactAccurateSecrets(errText));
-            return NextResponse.redirect(new URL(`/?error=Failed+to+exchange+token`, publicBase));
+            // Isi jawaban TIDAK dicetak (bisa memuat token/kode).
+            console.error(`[accurate-callback] tukar token gagal: HTTP ${tokenResponse.status}`);
+            return galat("tukar_token_gagal");
         }
 
-        const tokenData = await tokenResponse.json();
-        const accessToken = tokenData.access_token;
+        const tokenData = await tokenResponse.json().catch(() => null) as { access_token?: unknown } | null;
+        const accessToken = tokenData?.access_token;
+        if (typeof accessToken !== "string" || !accessToken) {
+            console.error("[accurate-callback] tukar token gagal: jawaban tanpa access_token");
+            return galat("tukar_token_gagal");
+        }
 
         await upsertAccurateSession(String(appSession.user.id), {
             accessToken,
@@ -65,13 +107,10 @@ export async function GET(request: Request) {
             databaseAlias: null,
         });
 
-        const redirectUrl = new URL('/api-wrapper', publicBase);
-        redirectUrl.searchParams.set("accurate", "connected");
-
-        return NextResponse.redirect(redirectUrl);
-
-    } catch (err: any) {
-        console.error("OAuth Callback Exception:", err.message);
-        return NextResponse.redirect(new URL(`/?error=OAuth+Exception`, publicBase));
+        return selesai(halamanMendarat(returnTo, { accurate: "connected" }));
+    } catch (err: unknown) {
+        // Hanya nama galat: pesan bisa memuat potongan isi jawaban (mis. SyntaxError JSON).
+        console.error("[accurate-callback] exception:", err instanceof Error ? err.name : typeof err);
+        return galat("galat_server");
     }
 }

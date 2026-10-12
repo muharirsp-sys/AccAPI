@@ -1,5 +1,5 @@
 /*
- * Tujuan: Menjaga target sentuh login, semantik keyboard kalender, dan shell Laporan Harian.
+ * Tujuan: Menjaga target sentuh login (tautan Lupa sandi), semantik keyboard kalender, dan shell Laporan Harian.
  * Caller: Developer/CI setelah perubahan primitive input atau layar Laporan Harian.
  * Dependensi: node:assert, node:fs, tiga source UI terkait.
  * Main Functions: main.
@@ -10,10 +10,13 @@ import { readFileSync } from "node:fs";
 
 function main() {
   const login = readFileSync("app/(auth)/login/page.tsx", "utf8");
+  const fiori = readFileSync("app/fiori.css", "utf8");
   const datePicker = readFileSync("components/ui/DatePickerField.tsx", "utf8");
   const report = readFileSync("app/(dashboard)/laporan-harian/page.tsx", "utf8");
 
-  assert.match(login, /login-portal-forgot[^"\n]*min-h-11/);
+  // Tautan "Lupa sandi?" (S7c): tinggi = --ctl-h, yaitu 44 px di pointer kasar.
+  assert.match(login, /className="fi-auth-row"/);
+  assert.match(fiori, /\.fi-auth-row a \{[^}]*min-height:var\(--ctl-h\)/);
   assert.match(datePicker, /role="dialog"/);
   assert.match(datePicker, /ArrowLeft: -1/);
   assert.match(datePicker, /aria-haspopup="dialog"/);

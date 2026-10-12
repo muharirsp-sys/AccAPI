@@ -49,9 +49,11 @@ export default async function DashboardLayout({
         <>
             <SidebarLayout localAuthRole={isLocalDev ? role : null} permKeys={permKeys} userId={userId || "local"} userName={session?.user.name || "Ruang kerja lokal"}>
                 {allowed ? children : <AccessDenied />}
-                <ServiceWorkerRegistration />
-                <PWAInstallPrompt />
             </SidebarLayout>
+            {/* Di luar SidebarLayout: gerbang klien mengganti SELURUH children dengan Akses ditolak, jadi pemasangan PWA/SW tidak ikut hilang
+                di halaman terlarang (tinjauan susulan S7-sesi). */}
+            <ServiceWorkerRegistration />
+            <PWAInstallPrompt />
             <ChatWidget />
         </>
     );

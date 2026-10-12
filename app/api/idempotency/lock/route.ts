@@ -1,133 +1,175 @@
 /**
  * Tujuan: mengunci fingerprint idempotency upload sales receipt agar submit ganda tidak lolos.
  * Caller: `app/(dashboard)/api-wrapper/page.tsx` sebelum bulk `sales-receipt/bulk-save.do`.
- * Dependensi: `db`, `idempotencyLog`, Drizzle `inArray`.
- * Main Functions: `POST`.
- * Side Effects: baca/tulis tabel SQLite `idempotency_log`, atau preview duplicate tanpa write saat mode review dipakai.
+ * Dependensi: `db`, `idempotencyLog`, `idempotencyOverride`, `decideLock` (lib/idempotency-lock), RBAC resolver.
+ * Main Functions: `POST` -> {ok, lockId, blockedKeys, blockedEntries}.
+ * Side Effects: baca/tulis `idempotency_log` (+ pemilik lock) dan `idempotency_override`, atau preview tanpa write.
  */
+import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { idempotencyLog } from '@/db/schema';
-import { inArray } from 'drizzle-orm';
-import { requireApiSession } from '@/lib/api-security';
+import { idempotencyLog, idempotencyOverride } from '@/db/schema';
+import { and, eq, inArray, sql, TransactionRollbackError } from 'drizzle-orm';
+import { resolveRequestPermissions } from '@/lib/rbac/resolve';
+import { decideLock, type LockEntry } from '@/lib/idempotency-lock';
+import { memuatPlaceholderAkun } from '@/lib/sales-receipt-upload';
+import { getAccurateSession } from '@/lib/accurate-session';
+import { kunciMenyentuh } from '@/lib/idempotency-resolve';
 
 export async function POST(req: Request) {
     try {
-        const authCheck = await requireApiSession(req);
-        if (authCheck.response) return authCheck.response;
+        const access = await resolveRequestPermissions(req);
+        if (access.response) return access.response;
+        const actor = String(access.session!.user.id);
 
         const body = await req.json();
-        const { keys, preview, allowDuplicateKeys, allowLockedKeys } = body; // Array of objects { key, invoiceNo, customerNo, amount, transDate, paymentMethod, source }
+        const { keys, preview, allowDuplicateKeys, allowLockedKeys, allowHistoryKeys, overrideReason, expectedDatabaseId } = body; // Array of objects { key, invoiceNo, customerNo, amount, transDate, paymentMethod, source }
 
         if (!keys || !Array.isArray(keys) || keys.length === 0) {
             return NextResponse.json({ ok: true, blockedKeys: [], blockedEntries: [] });
         }
+        if (keys.some((k: unknown) => typeof (k as LockEntry)?.key !== 'string' || !(k as LockEntry).key)) {
+            return NextResponse.json({ error: 'Setiap key idempotency wajib berupa teks.' }, { status: 400 });
+        }
 
-        const exactKeys = keys.map((k: { key: string }) => k.key);
-        // Check existing keys
-        const existing = await db.select().from(idempotencyLog).where(inArray(idempotencyLog.key, exactKeys));
+        // S6e-2 (owner #5): mengunci = langkah pertama kirim pelunasan -> kunci `pelunasan.kirim`. Pratinjau baca-saja tetap terbuka.
+        if (!preview && !access.perms!.has('pelunasan.kirim')) {
+            return NextResponse.json({ error: 'Kirim pelunasan ke Accurate butuh izin pelunasan.kirim.', code: 'PERMISSION_REQUIRED' }, { status: 403 });
+        }
 
+        // S6e-2 butir 8: kunci = sidik jari payload; penanda akun belum dipilih = payload tak boleh dikirim -> jangan dikunci.
+        if (!preview && memuatPlaceholderAkun(keys.map((k: LockEntry) => k.key))) {
+            return NextResponse.json({ error: 'Akun potongan belum dipilih (ISI_KODE_AKUN_…) — pilih akun di langkah Akun. Tidak ada yang dikunci.', code: 'PLACEHOLDER_AKUN' }, { status: 400 });
+        }
+
+        // Tinjauan B3: kolom pelanggan/tanggal yang disimpan (target pencarian Selesaikan & identitas koreksi) harus sama dengan
+        // awalan sidik jari kunci (rumus buildSalesReceiptIdempotencyPayload memangkas keduanya).
+        // Putaran 2 B-N2: setiap faktur kolom invoiceNo (jangkar identitas kiriman koreksi) harus segmen sidik jari key — Selesaikan
+        // menentukan kandidat dari key saja.
+        const awalan = (k: LockEntry) => `PAY_${String(k.customerNo ?? '').trim()}_${String(k.transDate ?? '').trim()}_`;
+        const fakturDiKunci = (k: LockEntry) => String(k.invoiceNo ?? '').split(',').map((x) => x.trim()).filter(Boolean).every((no) => kunciMenyentuh(k.key, no));
+        if (!preview && keys.some((k: LockEntry) => !k.key.startsWith(awalan(k)) || !fakturDiKunci(k))) {
+            return NextResponse.json({ error: 'Kunci idempotency tidak sesuai pelanggan/tanggal barisnya — muat ulang lalu ulangi dari Tinjau. Tidak ada yang dikunci.', code: 'KEY_IDENTITY_MISMATCH' }, { status: 400 });
+        }
+
+        const entries = keys as LockEntry[];
+        const existing = await db.select().from(idempotencyLog).where(inArray(idempotencyLog.key, entries.map((k) => k.key)));
         const now = new Date();
-        const FIFTEEN_MINUTES = 15 * 60 * 1000;
+        // AM-025 (H05): PROCESSING basi/UNKNOWN tidak lagi diambil alih diam-diam — lihat lib/idempotency-lock.
+        const { blocked, toInsert, toRetry, toTakeover, overrides } = decideLock(
+            entries,
+            new Map(existing.map((r) => [r.key, r])),
+            now,
+            new Set(Array.isArray(allowDuplicateKeys) ? allowDuplicateKeys : []),
+            new Set(Array.isArray(allowLockedKeys) ? allowLockedKeys : []),
+            // S6e-2 (owner #6): izinkan baris MIRIP riwayat Accurate — gerbang Finance + alasan yang sama di bawah.
+            new Set(Array.isArray(allowHistoryKeys) ? allowHistoryKeys.filter((k: unknown) => typeof k === 'string') : []),
+        );
 
-        const blockedKeys: string[] = [];
-        const blockedEntries: Array<Record<string, unknown>> = [];
-        const toUpdateToProcessing: string[] = [];
-        const toInsert: Array<typeof idempotencyLog.$inferInsert> = [];
-
-        const existingMap = new Map(existing.map((r) => [r.key, r]));
-        const seenInRequest = new Set<string>();
-        const allowDuplicateKeySet = new Set(Array.isArray(allowDuplicateKeys) ? allowDuplicateKeys : []);
-        const allowLockedKeySet = new Set(Array.isArray(allowLockedKeys) ? allowLockedKeys : []);
-
-        for (const item of keys) {
-            if (seenInRequest.has(item.key)) {
-                if (!allowDuplicateKeySet.has(item.key)) {
-                    blockedKeys.push(item.key);
-                    blockedEntries.push({
-                        key: item.key,
-                        invoiceNo: item.invoiceNo,
-                        customerNo: item.customerNo,
-                        amount: item.amount,
-                        transDate: item.transDate,
-                        paymentMethod: item.paymentMethod,
-                        status: 'IN_REQUEST_DUPLICATE',
-                        reason: 'DUPLICATE_IN_UPLOAD'
-                    });
-                }
-                continue;
+        // D-18 (owner 2026-09-30): override blok duplikat = membuka kiriman ulang ke Accurate -> hanya
+        // Finance (finance.override_duplicate), alasan wajib, ditegakkan di sini — bukan hanya UI.
+        const reason = typeof overrideReason === 'string' ? overrideReason.trim() : '';
+        if (!preview && overrides.length > 0) {
+            if (!access.perms!.has('finance.override_duplicate')) {
+                return NextResponse.json({ error: 'Override blok duplikat hanya untuk kewenangan Finance (finance.override_duplicate).', code: 'OVERRIDE_PERMISSION_REQUIRED' }, { status: 403 });
             }
-            seenInRequest.add(item.key);
-            const ex = existingMap.get(item.key);
-            if (ex) {
-                if (ex.status === 'SUCCESS') {
-                    if (!allowLockedKeySet.has(item.key)) {
-                        blockedKeys.push(item.key);
-                        blockedEntries.push({
-                            key: item.key,
-                            invoiceNo: ex.invoiceNo || item.invoiceNo,
-                            customerNo: ex.customerNo || item.customerNo,
-                            amount: ex.amount ?? item.amount,
-                            transDate: ex.transDate || item.transDate,
-                            paymentMethod: ex.paymentMethod || item.paymentMethod,
-                            status: ex.status,
-                            reason: 'ALREADY_SUCCESS'
-                        });
-                    }
-                } else if (ex.status === 'PROCESSING') {
-                    const lastUpdated = new Date(ex.updatedAt || ex.createdAt || now);
-                    if (now.getTime() - lastUpdated.getTime() > FIFTEEN_MINUTES) {
-                        // Expired! We can overtake this.
-                        if (!preview) toUpdateToProcessing.push(item.key);
-                    } else {
-                        // Still actively processing
-                        if (!allowLockedKeySet.has(item.key)) {
-                            blockedKeys.push(item.key);
-                            blockedEntries.push({
-                                key: item.key,
-                                invoiceNo: ex.invoiceNo || item.invoiceNo,
-                                customerNo: ex.customerNo || item.customerNo,
-                                amount: ex.amount ?? item.amount,
-                                transDate: ex.transDate || item.transDate,
-                                paymentMethod: ex.paymentMethod || item.paymentMethod,
-                                status: ex.status,
-                                reason: 'STILL_PROCESSING'
-                            });
-                        }
-                    }
-                } else {
-                    // FAILED or UNKNOWN -> allow retry
-                    if (!preview) toUpdateToProcessing.push(item.key);
-                }
-            } else {
-                if (!preview) {
-                    toInsert.push({
-                        key: item.key,
-                        status: 'PROCESSING',
-                        invoiceNo: item.invoiceNo,
-                        customerNo: item.customerNo,
-                        amount: item.amount,
-                        transDate: item.transDate,
-                        paymentMethod: item.paymentMethod,
-                        source: item.source,
-                        createdAt: now,
-                        updatedAt: now
-                    });
-                }
+            if (reason.length < 15) {
+                return NextResponse.json({ error: 'Alasan override wajib (minimal 15 karakter).', code: 'OVERRIDE_REASON_REQUIRED' }, { status: 400 });
             }
         }
 
-        if (!preview && toInsert.length > 0) {
-            await db.insert(idempotencyLog).values(toInsert);
+        // AM-050: pemilik lock. Hanya pemegang lockId ini (user yang sama) yang boleh menutup barisnya
+        // lewat /complete dan mengirimnya lewat /api/proxy.
+        const lockId = preview ? null : randomUUID();
+        // S6e-2 butir 2: lock MENCATAT database Accurate sesi = database yang ditampilkan (expectedDatabaseId); proxy
+        // menolak kiriman ke database lain, Selesaikan mencari di database ini.
+        let databaseId: string | null = null;
+        if (!preview && blocked.length === 0) {
+            const expected = typeof expectedDatabaseId === 'string' || typeof expectedDatabaseId === 'number' ? String(expectedDatabaseId).trim() : '';
+            if (!expected) {
+                return NextResponse.json({ error: 'expectedDatabaseId wajib (database Accurate tujuan yang ditampilkan). Tidak ada yang dikunci.', code: 'DATABASE_REQUIRED' }, { status: 400 });
+            }
+            const sesi = await getAccurateSession(actor);
+            if (!sesi?.databaseId) {
+                return NextResponse.json({ error: 'Sesi Accurate belum lengkap. Login dan pilih database terlebih dahulu.', code: 'ACCURATE_SESSION_INCOMPLETE' }, { status: 400 });
+            }
+            if (String(sesi.databaseId) !== expected) {
+                return NextResponse.json({
+                    error: `Database Accurate sesi berubah (kini ${sesi.databaseAlias || sesi.databaseId}) — muat ulang lalu periksa tujuan. Tidak ada yang dikunci.`,
+                    code: 'database_changed', databaseId: sesi.databaseId, databaseAlias: sesi.databaseAlias ?? null,
+                }, { status: 409 });
+            }
+            databaseId = expected;
         }
-        
-        if (!preview && toUpdateToProcessing.length > 0) {
-            await db.update(idempotencyLog)
-                    .set({ status: 'PROCESSING', updatedAt: now })
-                    .where(inArray(idempotencyLog.key, toUpdateToProcessing));
-        }
+        const owner = { lockId, lockedBy: actor, databaseId };
 
-        return NextResponse.json({ ok: true, blockedKeys, blockedEntries });
+        // Semua-atau-tidak-sama-sekali (review AM-025 F2): halaman membatalkan kiriman bila ada yang
+        // terblokir, jadi mengunci sebagian hanya meninggalkan PROCESSING yatim.
+        if (!preview && blocked.length === 0) await db.transaction(async (tx) => {
+            // Tulis ATOMIK per key: dua lock bersamaan atas key yang sama -> hanya satu yang menang;
+            // yang kalah diblokir STILL_PROCESSING (dulu cek-lalu-tulis: keduanya lolos lalu mengirim).
+            const won = new Set<string>();
+            if (toInsert.length > 0) {
+                const rows = await tx.insert(idempotencyLog).values(toInsert.map((item) => ({
+                    key: item.key,
+                    status: 'PROCESSING',
+                    invoiceNo: item.invoiceNo,
+                    customerNo: item.customerNo,
+                    amount: item.amount,
+                    transDate: item.transDate,
+                    paymentMethod: item.paymentMethod,
+                    source: item.source,
+                    createdAt: now,
+                    updatedAt: now,
+                    ...owner,
+                }))).onConflictDoNothing().returning({ key: idempotencyLog.key });
+                rows.forEach((r) => won.add(r.key));
+            }
+            if (toRetry.length > 0) {
+                const rows = await tx.update(idempotencyLog)
+                    .set({ status: 'PROCESSING', updatedAt: now, ...owner })
+                    .where(and(inArray(idempotencyLog.key, toRetry), eq(idempotencyLog.status, 'FAILED')))
+                    .returning({ key: idempotencyLog.key });
+                rows.forEach((r) => won.add(r.key));
+            }
+            for (const t of toTakeover) {
+                // CAS status + updatedAt teramati; date_trunc: baris dari SQL now() bermikrodetik, Date JS milidetik.
+                const rows = await tx.update(idempotencyLog)
+                    .set({ status: 'PROCESSING', updatedAt: now, ...owner })
+                    .where(and(
+                        eq(idempotencyLog.key, t.key),
+                        eq(idempotencyLog.status, t.status),
+                        sql`date_trunc('milliseconds', ${idempotencyLog.updatedAt}) IS NOT DISTINCT FROM ${t.updatedAt ? t.updatedAt.toISOString() : null}::timestamp`,
+                    ))
+                    .returning({ key: idempotencyLog.key });
+                rows.forEach((r) => won.add(r.key));
+            }
+            const byKey = new Map(entries.map((e) => [e.key, e]));
+            for (const key of [...toInsert.map((e) => e.key), ...toRetry, ...toTakeover.map((t) => t.key)]) {
+                if (!won.has(key)) blocked.push({ ...byKey.get(key)!, status: 'PROCESSING', reason: 'STILL_PROCESSING' });
+            }
+            if (blocked.length > 0) tx.rollback(); // kalah balapan satu key = tidak mengunci apa pun
+            // Jejak override (D-18) di transaksi yang SAMA: lock yang batal tidak meninggalkan jejak palsu.
+            if (overrides.length > 0) {
+                await tx.insert(idempotencyOverride).values(overrides.map((o) => ({
+                    id: randomUUID(),
+                    lockId: lockId!,
+                    key: o.key,
+                    actor,
+                    reason,
+                    blockReason: o.blockReason,
+                    previousStatus: o.previousStatus,
+                    action: o.action,
+                    // Tinjauan B2: lock yang hanya berisi override (resend_success) tetap terikat database.
+                    databaseId,
+                })));
+            }
+        }).catch((e: unknown) => {
+            if (!(e instanceof TransactionRollbackError)) throw e;
+        });
+
+        const locked = !preview && blocked.length === 0;
+        return NextResponse.json({ ok: true, lockId: locked ? lockId : null, blockedKeys: blocked.map((b) => b.key), blockedEntries: blocked });
     } catch (e: unknown) {
         console.error("Failed idempotency lock:", e);
         return NextResponse.json({ error: e instanceof Error ? e.message : "Failed idempotency lock" }, { status: 500 });

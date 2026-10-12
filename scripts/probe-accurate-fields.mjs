@@ -43,7 +43,7 @@ const row = (await pool.query(
 )).rows[0];
 await pool.end();
 
-if (!row) throw new Error("Belum ada sesi OAuth Accurate di DB. Login dulu di halaman /api-wrapper.");
+if (!row) throw new Error("Belum ada sesi OAuth Accurate di DB. Login dulu di halaman /sesi-accurate.");
 const token = decryptSecret(row.access_token);
 
 // database_id bisa kosong: callback OAuth menyimpan token lalu me-null-kan database_id, dan
@@ -74,7 +74,7 @@ const openRes = await fetch(`https://account.accurate.id/api/open-db.do?id=${row
 const openBody = await openRes.json().catch(() => null);
 if (!openRes.ok || !openBody?.host || !openBody?.session) {
     throw new Error(`open-db.do gagal (${openRes.status}): ${JSON.stringify(openBody)?.slice(0, 300)}
-Access token kemungkinan sudah kadaluarsa — login ulang di /api-wrapper.`);
+Access token kemungkinan sudah kadaluarsa — login ulang di /sesi-accurate.`);
 }
 row.session_host = openBody.host;
 row.session_id = openBody.session;

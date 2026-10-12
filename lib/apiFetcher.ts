@@ -5,15 +5,19 @@
 export class AccurateError extends Error {
     rawDetails?: any[];
     rawErrorObject?: any;
-    constructor(message: string, rawDetails?: any[], rawErrorObject?: any) {
+    /** Status HTTP jawaban /api/proxy (S7-1b: `sent:false` hanya dipercaya pada 4xx, pola tinjauan A5 lib/pelunasan/kirim.ts). */
+    status?: number;
+    constructor(message: string, rawDetails?: any[], rawErrorObject?: any, status?: number) {
         super(message);
         this.name = "AccurateError";
         this.rawDetails = rawDetails;
         this.rawErrorObject = rawErrorObject;
+        this.status = status;
     }
 }
 
-export async function accurateFetch(endpointPath: string, method: string, payload?: unknown) {
+// options.idempotencyLockId: tulis sales-receipt wajib membawa lock idempotency (AM-024; proxy menolak tanpa lock).
+export async function accurateFetch(endpointPath: string, method: string, payload?: unknown, options?: { idempotencyLockId?: string | null }) {
     if (typeof window === "undefined") {
         throw new Error("accurateFetch hanya bisa dijalankan di client-side.");
     }
@@ -28,6 +32,7 @@ export async function accurateFetch(endpointPath: string, method: string, payloa
                 endpointPath,
                 method: method.toUpperCase(),
                 payload: payload || null,
+                ...(options?.idempotencyLockId ? { idempotencyLockId: options.idempotencyLockId } : {}),
             }),
         });
 
@@ -53,7 +58,7 @@ export async function accurateFetch(endpointPath: string, method: string, payloa
             if (data.detail) {
                 errorMsg += `\n\n[INFO TAMBAHAN]: ${data.detail}`;
             }
-            throw new AccurateError(errorMsg, rawDetails, data);
+            throw new AccurateError(errorMsg, rawDetails, data, response.status);
         }
 
         return data;
@@ -66,4 +71,56 @@ export async function accurateFetch(endpointPath: string, method: string, payloa
         }
         throw new Error("Terjadi kesalahan jaringan.");
     }
+}
+
+/**
+ * Hasil tulis Accurate (AM-014, ADR-002). `rejected` = Accurate menjawab dan menolak (aman
+ * diperbaiki lalu diulang). `unknown` = Accurate MUNGKIN sudah menyimpan — jangan diulang buta.
+ */
+export type WriteOutcome =
+    | { kind: "posted"; id: string; number: string }
+    | { kind: "rejected"; message: string }
+    | { kind: "unknown"; message: string };
+
+type Item = { s?: unknown; d?: unknown; r?: { id?: unknown; number?: unknown } };
+
+/** Jawaban sukses accurateFetch untuk bulk-save: `[{s,r,d}]` atau `{s, d:[{s,r,d}]}`. */
+export function classifyBulkSaveResponse(data: unknown): WriteOutcome {
+    const envelope = (data ?? {}) as { s?: unknown; d?: unknown; r?: Item["r"] };
+    const items: Item[] | null = Array.isArray(data) ? data : Array.isArray(envelope.d) ? envelope.d as Item[] : null;
+    if (!items) {
+        const id = String(envelope.r?.id ?? "");
+        return envelope.s === true && id
+            ? { kind: "posted", id, number: String(envelope.r?.number ?? "") }
+            : { kind: "unknown", message: `respons tanpa hasil per item: ${JSON.stringify(data)?.slice(0, 200)}` };
+    }
+    if (items.length && items.every((it) => it?.s === false)) {
+        return { kind: "rejected", message: JSON.stringify(items[0]?.d ?? items[0]).slice(0, 500) };
+    }
+    const first = items[0];
+    const id = String(first?.r?.id ?? "");
+    if (items.length && items.every((it) => it?.s === true && String(it.r?.id ?? ""))) {
+        return { kind: "posted", id, number: String(first.r?.number ?? "") };
+    }
+    // Sebagian masuk / sukses tanpa id: sebagian mungkin SUDAH ada di Accurate.
+    return { kind: "unknown", message: `hasil bulk-save tidak lengkap: ${JSON.stringify(items).slice(0, 300)}` };
+}
+
+/**
+ * Error dari accurateFetch: `rejected` = amplop penolakan Accurate `{s:false, d}` ATAU penolakan proxy SEBELUM diteruskan
+ * (4xx + `sent:false`, mis. 403 `PERMISSION_REQUIRED` api_wrapper.execute / `ENDPOINT_TIDAK_DIIZINKAN`, S7-1b) — tidak terkirim,
+ * boleh diulang sesudah diperbaiki/diberi izin.
+ */
+export function classifyWriteError(err: unknown): WriteOutcome {
+    const message = err instanceof Error ? err.message : String(err);
+    // ponytail: proxy selalu menjawab HTTP 200 untuk JSON apa pun dari Accurate, jadi status
+    // upstream tidak terlihat di sini; amplop s:false dianggap penolakan bisnis (dokumen Accurate:
+    // penolakan = HTTP 200 + s:false). Teruskan status upstream bila 5xx beramplop pernah muncul.
+    const raw = err instanceof AccurateError ? (err.rawErrorObject as { s?: unknown; d?: unknown; sent?: unknown } | undefined) : undefined;
+    const isEnvelopeRejection = raw?.s === false && raw.d !== undefined;
+    const bulkRejection = err instanceof AccurateError && Array.isArray(err.rawDetails) && err.rawDetails.length > 0
+        && err.rawDetails.every((it) => (it as Item)?.s === false);
+    // `sent:false` dari jawaban Accurate yang diteruskan proxy selalu ber-HTTP 200 → tidak dipercaya; hanya 4xx penjaga proxy.
+    const notSent = err instanceof AccurateError && raw?.sent === false && (err.status ?? 0) >= 400 && (err.status ?? 0) < 500;
+    return isEnvelopeRejection || bulkRejection || notSent ? { kind: "rejected", message } : { kind: "unknown", message };
 }
