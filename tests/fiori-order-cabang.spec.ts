@@ -13,7 +13,7 @@
  * Side Effects: Tangkapan di test-results/order-cabang.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { ID_WEBSALES, mockOrderCabang, mockOrdersInternal, mockWebsales, pilihBarang, pilihPelanggan, pratinjauContoh } from "./helpers/order-cabang-mock";
+import { ID_WEBSALES, mockOrderCabang, mockOrdersInternal, mockWebsales, pilihBarang, pilihPelanggan, pratinjauContoh, type Jawab, type PreviewBody } from "./helpers/order-cabang-mock";
 
 const NAV = { timeout: 60_000 } as const;
 const HARI_INI = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date());
@@ -386,6 +386,7 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
         await b1.getByLabel("Satuan").selectOption("KRT");
         await b1.getByLabel("Jumlah").fill("2");
         await expect(main.getByRole("group", { name: "Perkiraan nilai order" })).toContainText("Program promo yang berlaku", NAV);
+        await expect(b1.getByRole("group", { name: "Promo hampir tercapai barang 1" }).getByRole("button", { name: "Tambah 3 KRT" })).toBeVisible(); // kartu ajakan ikut terukur: tanpa gulir menyamping, tombol ≥ 44 px
         await noOverflow(page);
         await target44(main);
         await page.screenshot({ path: "test-results/order-cabang/ponsel-sales-promo.png", fullPage: true });
@@ -1076,4 +1077,110 @@ test("Order Sales + Order baru: ATURAN_TERBIT_RUSAK (keadaan server) = kalimat '
     await expect(strip).not.toContainText("ATURAN_TERBIT_RUSAK");
     await expect(kirim).toBeDisabled();
     await expect(kirim).toHaveAttribute("title", /^Aturan promo terbit rusak\. Order belum bisa dihitung/);
+});
+
+// ---------------------------------------------------------------------------------------------- Promo "hampir dapat" (kartu ajakan di baris)
+
+/** Server hipotetis: PROMO A baru berlaku mulai 5 KRT — di bawahnya tanpa diskon/bonus (saran menunjuk ke 5 KRT), sehingga "tercapai" bisa dibedakan dari "belum". */
+function promoMulai5(b: PreviewBody): Jawab {
+    const j = pratinjauContoh(b);
+    const a1 = b.lines.find((l) => l.code === "A-1" && l.unit === "KRT");
+    if (j === "putus" || !j.body || !a1 || Number(a1.quantity) >= 5) return j;
+    const h = j.body as { result: { gross: string; discount: string; net: string; lines: { gross: string; net: string; percents: string[] }[]; applications: unknown[]; bonuses: unknown[] } };
+    Object.assign(h.result, { discount: "0.00", net: h.result.gross, applications: [], bonuses: [] });
+    h.result.lines = h.result.lines.map((l) => ({ ...l, net: l.gross, percents: [] }));
+    return j;
+}
+
+test("Order Sales (promo hampir dapat): kartu kemajuan + kalimat server + tombol Tambah mengubah jumlah lalu pratinjau BARU; tercapai = penanda 'Program … terpakai'; tombol tidak mengirim", async ({ page }) => {
+    const { log, opsi } = await mockOrderCabang(page, { peran: "sales" });
+    const ws = await mockWebsales(page, { cabang: opsi });
+    let tahan: Promise<void> | null = null;
+    opsi.preview = async (b) => { if (tahan) await tahan; return promoMulai5(b); };
+    await bukaSales(page);
+    const { main, b1 } = await isiSalesSiap(page); // A-1 KRT x 2
+    const kartu = b1.getByRole("group", { name: "Promo hampir tercapai barang 1" });
+    await expect(kartu).toBeVisible(NAV);
+    await expect(kartu).toContainText("PROMO A");
+    await expect(kartu).toContainText("2 / 5 KRT");
+    const bar = kartu.getByRole("progressbar", { name: "Kemajuan PROMO A" });
+    await expect(bar).toHaveAttribute("aria-valuenow", "2");
+    await expect(bar).toHaveAttribute("aria-valuemax", "5");
+    await expect(kartu).toContainText("Tambah 3 KRT lagi untuk diskon 15%"); // kalimat server apa adanya, bukan angka buatan layar
+    await expect(b1.getByRole("group", { name: "Promo barang 1" })).not.toContainText("terpakai"); // belum tercapai
+    const kirim = main.getByRole("button", { name: "Kirim order…" });
+    await expect(kirim).toBeEnabled(NAV);
+    const sidikLama = log.sidik.at(-1)!;
+
+    // Pratinjau berikutnya ditahan: tepat sesudah ketukan isian sudah berubah dan sidik lama tak boleh dipakai.
+    let lepas: () => void = () => {};
+    tahan = new Promise<void>((ok) => { lepas = ok; });
+    await kartu.getByRole("button", { name: "Tambah 3 KRT" }).click();
+    await expect(b1.getByLabel("Jumlah")).toHaveValue("5");
+    await expect(kirim).toBeDisabled();
+    await expect(kirim).toHaveAttribute("title", "Menunggu harga dihitung");
+    lepas();
+    await expect(kirim).toBeEnabled(NAV);
+    expect(log.preview.at(-1)!.lines[0].quantity).toBe("5"); // pratinjau baru dengan jumlah baru
+    expect(log.sidik.at(-1)).not.toBe(sidikLama);
+    // Tercapai: kartu hilang, penanda sukses muncul di baris.
+    await expect(b1.getByRole("group", { name: "Promo hampir tercapai barang 1" })).toHaveCount(0);
+    await expect(b1.getByRole("group", { name: "Promo barang 1" })).toContainText("Program PROMO A terpakai");
+    expect(ws.kirim).toHaveLength(0); // tombol HANYA mengubah jumlah; tidak mengirim apa pun
+});
+
+test("Order baru (promo hampir dapat): beberapa saran satu baris tampil SEMUA urut gap terkecil; tombol Tambah hanya program jumlah satu barang bersatuan sama; mix menyebut barangnya di baris pertama; program nilai di ringkasan", async ({ page }) => {
+    const { log, opsi } = await mockOrderCabang(page);
+    const orders = await mockOrdersInternal(page, { cabang: opsi });
+    opsi.saranTambahan = [
+        { program_id: "prog-m", program_name: "PROMO MIX", threshold: "quantity", codes: ["A-1", "A-4"], minimum: "12", current: "7", gap: "5", message: "Tambah 5 KRT lagi untuk diskon 2%" },
+        { program_id: "prog-v", program_name: "PROMO NILAI", threshold: "value", codes: ["A-1", "A-4"], minimum: "3000000", current: "1500000", gap: "1500000", message: "Tambah Rp 1.500.000 lagi untuk potongan Rp 50.000" },
+        { program_id: "prog-u", program_name: "PROMO PCS", threshold: "quantity", codes: ["A-1"], minimum: "12", current: "10", gap: "2", message: "Tambah 2 PCS lagi untuk bonus 1 PCS" },
+        { program_id: "prog-b", program_name: "PROMO BONUS", threshold: "quantity", codes: ["A-1"], minimum: "3", current: "2", gap: "1", message: "Tambah 1 KRT lagi untuk bonus 1 PCS" },
+    ];
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/orders/baru", NAV);
+    const main = page.locator("main");
+    await pilihPelanggan(main, "PELANGGAN A", "PELANGGAN A");
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await pilihBarang(b1, "A-1", "BARANG A\\b.*KRT");
+    await b1.getByLabel("Satuan").selectOption("KRT");
+    await b1.getByLabel("Jumlah").fill("2");
+    await main.getByRole("button", { name: "Tambah barang" }).click();
+    const b2 = main.getByRole("listitem", { name: "Barang 2" });
+    await pilihBarang(b2, "A-4", "BARANG A4");
+    await b2.getByLabel("Satuan").selectOption("LSN");
+    await b2.getByLabel("Jumlah").fill("4");
+
+    const kartu = b1.getByRole("group", { name: "Promo hampir tercapai barang 1" });
+    await expect(kartu).toBeVisible(NAV);
+    // Semua saran baris itu, urut gap terkecil: BONUS (1), PCS (2), A (3), MIX (5).
+    const bar = kartu.getByRole("progressbar");
+    await expect(bar).toHaveCount(4);
+    await expect(bar.nth(0)).toHaveAttribute("aria-label", "Kemajuan PROMO BONUS");
+    await expect(bar.nth(1)).toHaveAttribute("aria-label", "Kemajuan PROMO PCS");
+    await expect(bar.nth(2)).toHaveAttribute("aria-label", "Kemajuan PROMO A");
+    await expect(bar.nth(3)).toHaveAttribute("aria-label", "Kemajuan PROMO MIX");
+    await expect(kartu).toContainText("10 / 12 PCS");
+    // Tombol hanya untuk program jumlah satu barang bersatuan sama (KRT): BONUS dan A. PCS (satuan beda) dan MIX tanpa tombol.
+    await expect(kartu.getByRole("button")).toHaveCount(2);
+    await expect(kartu.getByRole("button", { name: "Tambah 1 KRT" })).toBeVisible();
+    await expect(kartu.getByRole("button", { name: "Tambah 3 KRT" })).toBeVisible();
+    await expect(kartu.getByRole("button", { name: /Tambah 2 PCS/ })).toHaveCount(0);
+    await expect(kartu.getByRole("button", { name: /Tambah 5/ })).toHaveCount(0);
+    await expect(kartu).toContainText("Dihitung dari: BARANG A, BARANG A4"); // mix menyebut barang yang dihitung
+    await expect(b2).not.toContainText("Dihitung dari:"); // ... hanya di baris pertama, tidak diulang di baris kedua
+    await expect(b2.getByRole("group", { name: "Promo hampir tercapai barang 2" })).toHaveCount(0);
+    // Program nilai: ringkasan order, tanpa tombol.
+    const ringkas = main.getByRole("group", { name: "Promo hampir tercapai (seluruh order)" });
+    await expect(ringkas).toContainText("PROMO NILAI", NAV);
+    await expect(ringkas).toContainText("Rp 1.500.000 / Rp 3.000.000");
+    await expect(ringkas).toContainText("Tambah Rp 1.500.000 lagi untuk potongan Rp 50.000");
+    await expect(ringkas.getByRole("button")).toHaveCount(0);
+
+    // Tombol menaikkan jumlah baris itu (+3) lalu pratinjau dihitung ulang; tidak menyimpan.
+    await kartu.getByRole("button", { name: "Tambah 3 KRT" }).click();
+    await expect(b1.getByLabel("Jumlah")).toHaveValue("5");
+    await expect.poll(() => log.preview.at(-1)?.lines.find((l) => l.code === "A-1")?.quantity, NAV).toBe("5");
+    expect(orders.simpan).toHaveLength(0);
 });

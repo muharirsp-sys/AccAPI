@@ -58,6 +58,8 @@ export type OpsiMock = {
     geser?: number;
     /** `channel_masalah` pratinjau (simpan akan ditolak CHANNEL_BEDA_MASTER). */
     channelMasalah?: string;
+    /** Saran "hampir dapat" tambahan (bentuk server: program_id, program_name, threshold, codes, minimum, current, gap, message). */
+    saranTambahan?: Record<string, unknown>[];
 };
 export type PreviewBody = { channel: string; order_date: string; customer_no: string; lines: { code: string; unit: string; quantity: string; price?: string }[] };
 
@@ -74,7 +76,7 @@ const kirim = async (r: Route, j: Jawab) => {
 const galat403 = (kode: string, error: string) => ({ status: 403, body: { ok: false, kode, error } });
 
 /** Hitung pratinjau seperti server: aturan cabang (BARANG_BEDA_CABANG), satuan, harga master per cabang / harga petugas (hanya baris tanpa master), lalu promo contoh. */
-export function pratinjauContoh(b: PreviewBody, geser = 0, channelMasalah = ""): Jawab {
+export function pratinjauContoh(b: PreviewBody, geser = 0, channelMasalah = "", saranTambahan: Record<string, unknown>[] = []): Jawab {
     const p = PELANGGAN.find((x) => x.customerNo === b.customer_no);
     if (!p) return { status: 409, body: { ok: false, kode: "PELANGGAN_TIDAK_ADA", error: `Pelanggan ${b.customer_no} tidak ada di master Accurate hasil sync.` } };
     const barang = b.lines.map((l) => BARANG.find((x) => x.no === l.code));
@@ -119,11 +121,13 @@ export function pratinjauContoh(b: PreviewBody, geser = 0, channelMasalah = ""):
             priceCategoryName: p.priceCategoryName, branchName: p.branchName, effectiveDate: "2026-10-01", knownUnits: null })),
         result: {
             gross: gross.toFixed(2), discount: potongan.toFixed(2), net: net.toFixed(2), lines: baris,
-            applications: potongan > 0 ? [{ program_id: "prog-a", minimum: "1", discount: potongan.toFixed(2) }] : [],
+            applications: potongan > 0 ? [{ program_id: "prog-a", program_name: "PROMO A", minimum: "1", discount: potongan.toFixed(2) }] : [],
             bonuses: a1 && Number(a1.quantity) >= 2 ? [{ program_id: "prog-a", code: "", unit: "PCS", quantity: "2", eligible_codes: ["A-1"] }] : [],
             blocked: p.channel === "GT" ? [{ program_id: "prog-c", program_name: "PROMO C", reason: "khusus outlet MT" }] : [],
         },
-        suggestions: a1 ? [{ program_id: "prog-a", program_name: "PROMO A", message: "Tambah 3 KRT lagi untuk diskon 15%", codes: ["A-1"] }] : [],
+        // Bentuk server (summary_rules.suggestions): program jumlah satu barang, tier berikutnya di 5 KRT; hilang bila sudah tercapai.
+        suggestions: [...(a1 && Number(a1.quantity) < 5 ? [{ program_id: "prog-a", program_name: "PROMO A", threshold: "quantity", codes: ["A-1"], minimum: "5", current: a1.quantity,
+            gap: String(5 - Number(a1.quantity)), message: `Tambah ${5 - Number(a1.quantity)} KRT lagi untuk diskon 15%` }] : []), ...saranTambahan],
         sources: [{ draft_id: "d1d1d1d1", revision: 1 }], channel_masalah: channelMasalah,
         pelanggan: { customerNo: p.customerNo, name: p.name, branchId: p.branchId, branchName: p.branchName },
         sidik: "",
@@ -198,7 +202,7 @@ export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<
         const b = r.request().postDataJSON() as PreviewBody;
         log.preview.push(b);
         const ganti = await opsi.preview?.(b, log.preview.length);
-        const jawab = ganti ?? blokirSales() ?? pratinjauContoh(b, opsi.geser ?? 0, opsi.channelMasalah ?? "");
+        const jawab = ganti ?? blokirSales() ?? pratinjauContoh(b, opsi.geser ?? 0, opsi.channelMasalah ?? "", opsi.saranTambahan ?? []);
         const sidik = jawab !== "putus" ? (jawab.body as { sidik?: string } | undefined)?.sidik : undefined;
         if (typeof sidik === "string" && sidik) log.sidik.push(sidik);
         return kirim(r, jawab);

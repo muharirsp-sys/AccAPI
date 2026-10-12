@@ -6,7 +6,7 @@
  *   (tipe), components/order/order-cabang.test.ts.
  * Dependensi: tidak ada (murni; tipe saja). Kontrak server: docs/handover/O1-KONTRAK-ORDER-CABANG.md §2-§3.
  * Main Functions: galatDariJawaban, cukupHuruf, urlCariPelanggan, urlCariBarang, labelSatuan, barisBedaCabang, promoBaris, ringkasPromo,
- *   hargaPetugasSah, pratinjauBerubah, hargaCabangDefault.
+ *   hargaPetugasSah, pratinjauBerubah, hargaCabangDefault, bacaSaran, pecahSaran, namaProgramTerpakai.
  * Side Effects: Tidak ada.
  */
 
@@ -38,7 +38,11 @@ export type Result = {
     lines?: ResultLine[]; applications?: { program_id: string; minimum: string; discount: string; program_name?: string }[]; bonuses?: Bonus[];
     blocked?: Blocked[];
 };
-export type Suggestion = { program_id: string; program_name?: string; message: string; codes: string[] };
+/**
+ * Saran "hampir dapat" dari server (`summary_rules.suggestions`): hanya program yang berlaku untuk tanggal/channel/kelas outlet, metrik sama dengan
+ * kalkulator. `threshold` "quantity" | "value"; `minimum`/`current`/`gap` angka (string) dalam satuan/rupiah program; `message` = kalimat server.
+ */
+export type Suggestion = { program_id: string; program_name?: string; message: string; codes: string[]; threshold?: string; minimum?: string; current?: string; gap?: string };
 /** `source` "tier" = harga master sah, "petugas" = harga yang diketik petugas (Order Baru); `hargaMaster` = harga master sah baris itu (null = tak ada). */
 export type PriceInfo = {
     code: string; unit: string; price: number | null; source: string; priceCategoryName: string | null;
@@ -393,6 +397,61 @@ export function barisBedaCabang<T extends { code: string; barang: { branchId: nu
 // ------------------------------------------------------------------ promo (bentuk respons pratinjau yang ada sekarang)
 
 const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+
+// ------------------------------------------------------------------ saran "hampir dapat" (kartu ajakan di baris barang)
+
+export type KartuSaran = {
+    id: string; nama: string; tipe: "jumlah" | "nilai";
+    sekarang: number; target: number; persen: number;
+    /** Satuan program (dibaca dari kalimat server "Tambah 2 PCS lagi …"); null bila tak terbaca / program nilai. */
+    unit: string | null;
+    kalimat: string;
+    /** Ketuk-satu "Tambah N UNIT": HANYA program jumlah untuk SATU kode barang baris itu dengan satuan program = satuan baris. Selain itu null. */
+    tambah: number | null;
+    codes: string[];
+    campur: boolean;
+};
+
+const POLA_TAMBAH = /^Tambah\s+(\d+)\s+(\S+)\s+lagi untuk\s+/i;
+
+/** Satu saran server -> data kartu. Semua angka dari server (tidak ada angka buatan layar); null bila angkanya tak terbaca. */
+export function bacaSaran(s: Suggestion, kodeBaris: string, unitBaris: string): KartuSaran | null {
+    const target = Number(s.minimum), sekarang = Number(s.current);
+    if (!Number.isFinite(target) || target <= 0 || !Number.isFinite(sekarang) || sekarang < 0) return null;
+    const jumlah = s.threshold !== "value";
+    const m = jumlah ? POLA_TAMBAH.exec(s.message) : null;
+    const unit = m ? m[2].toUpperCase() : null;
+    const n = m ? Number(m[1]) : NaN;
+    const tambah = jumlah && s.codes.length === 1 && s.codes[0] === kodeBaris && unit !== null && unit === unitBaris.trim().toUpperCase() && Number.isInteger(n) && n > 0 ? n : null;
+    return { id: `${s.program_id}|${s.codes.join(",")}`, nama: s.program_name || `Program #${s.program_id.slice(0, 8)}`, tipe: jumlah ? "jumlah" : "nilai",
+        sekarang, target, persen: Math.max(0, Math.min(100, (sekarang / target) * 100)), unit, kalimat: s.message, tambah, codes: s.codes, campur: s.codes.length > 1 };
+}
+
+/**
+ * Bagi saran: per baris (program jumlah; satu kode -> baris berkode itu, utamakan yang satuannya = satuan program; campur/mix -> SATU baris saja,
+ * yang pertama memuat salah satu kodenya) dan ringkasan order (program nilai, atau tak ada baris yang cocok). Urut gap terkecil lebih dulu.
+ */
+export function pecahSaran<L extends { code: string; unit: string }>(saran: readonly Suggestion[], lines: readonly L[]): { perBaris: Map<number, Suggestion[]>; ringkasan: Suggestion[] } {
+    const perBaris = new Map<number, Suggestion[]>();
+    const ringkasan: Suggestion[] = [];
+    const gap = (s: Suggestion) => { const g = Number(s.gap); return Number.isFinite(g) ? g : Number.POSITIVE_INFINITY; };
+    for (const s of [...saran].sort((a, b) => gap(a) - gap(b))) {
+        if (s.threshold === "value") { ringkasan.push(s); continue; }
+        const cocok = lines.map((l, i) => (l.code.trim() && s.codes.includes(l.code.trim()) ? i : -1)).filter((i) => i >= 0);
+        if (cocok.length === 0) { ringkasan.push(s); continue; }
+        let i = cocok[0];
+        if (s.codes.length === 1) {
+            const unit = POLA_TAMBAH.exec(s.message)?.[2]?.toUpperCase();
+            i = cocok.find((k) => lines[k].unit.trim().toUpperCase() === unit) ?? cocok[0];
+        }
+        perBaris.set(i, [...(perBaris.get(i) ?? []), s]);
+    }
+    return { perBaris, ringkasan };
+}
+
+/** Nama program yang terpakai di order ini (dari `applications`), tanpa pengulangan. */
+export const namaProgramTerpakai = (result: Result | null | undefined, saran: Suggestion[] = []): string[] =>
+    [...new Set((ringkasPromo(result, saran)?.program ?? []).map((p) => p.nama))];
 
 export type PromoBaris = { gross: number; net: number; diskon: number; persen: string[]; tunai: number; bonus: Bonus[] };
 

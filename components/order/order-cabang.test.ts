@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    MIN_HURUF, bacaBarang, bacaPelanggan, barisBedaCabang, cukupHuruf, alasanKunciBarang, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kalimatGalat, kunciHarga, labelSatuan, pratinjauBerubah, promoBaris, ringkasPromo,
+    MIN_HURUF, bacaBarang, bacaPelanggan, barisBedaCabang, cukupHuruf, alasanKunciBarang, bacaSaran, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kalimatGalat, kunciHarga, labelSatuan, namaProgramTerpakai, pecahSaran, pratinjauBerubah, promoBaris, ringkasPromo,
     urlCariBarang, urlCariPelanggan, urlSalesmanCabang, type Result,
 } from "./order-cabang.ts";
 
@@ -217,4 +217,44 @@ test("HARGA_PETUGAS_TIDAK_DIIZINKAN: per baris menyebut harga master + tindakan 
     const r = galatDariJawaban(jawab(409, { ok: false, kode: "ATURAN_TERBIT_RUSAK", detail: "Aturan terbit d1d1d1d1 program P-1 tidak lolos validasi" }));
     assert.match(r.pesan, /tidak lolos validasi/);
     assert.match(r.tindakan, /bukan karena isian Anda/);
+});
+
+const SARAN = (o: Record<string, unknown>) => ({ program_id: "prog-x", program_name: "PROMO X", message: "Tambah 2 PCS lagi untuk diskon 2%", codes: ["A-1"], threshold: "quantity", minimum: "12", current: "10", gap: "2", ...o });
+
+test("saran hampir dapat: kemajuan dari angka server; tombol Tambah HANYA program jumlah satu barang bersatuan sama dengan baris", () => {
+    const k = bacaSaran(SARAN({}), "A-1", "pcs")!;
+    assert.deepEqual([k.sekarang, k.target, Math.round(k.persen), k.unit, k.tambah, k.campur, k.tipe], [10, 12, 83, "PCS", 2, false, "jumlah"]);
+    assert.equal(k.kalimat, "Tambah 2 PCS lagi untuk diskon 2%"); // kalimat server apa adanya
+    assert.equal(bacaSaran(SARAN({}), "A-1", "KRT")!.tambah, null); // satuan program != satuan baris
+    assert.equal(bacaSaran(SARAN({ codes: ["A-1", "A-4"] }), "A-1", "PCS")!.tambah, null); // campur (mix)
+    assert.equal(bacaSaran(SARAN({ codes: ["A-1", "A-4"] }), "A-1", "PCS")!.campur, true);
+    assert.equal(bacaSaran(SARAN({}), "A-4", "PCS")!.tambah, null); // bukan barang baris itu
+    const nilai = bacaSaran(SARAN({ threshold: "value", minimum: "1000000", current: "750000", gap: "250000", message: "Tambah Rp 250.000 lagi untuk potongan Rp 20.000" }), "A-1", "PCS")!;
+    assert.deepEqual([nilai.tipe, nilai.tambah, nilai.unit, nilai.persen], ["nilai", null, null, 75]);
+    assert.equal(bacaSaran(SARAN({ message: "Kalimat tak dikenal" }), "A-1", "PCS")!.tambah, null); // kalimat tak terbaca = tanpa tombol
+    assert.equal(bacaSaran(SARAN({ minimum: "0" }), "A-1", "PCS"), null);
+    assert.equal(bacaSaran(SARAN({ current: "abc" }), "A-1", "PCS"), null);
+    assert.equal(bacaSaran(SARAN({ current: "20" }), "A-1", "PCS")!.persen, 100); // tak pernah > 100%
+});
+
+test("pecah saran: per baris urut gap terkecil (semua, bukan satu), mix hanya di baris pertama, nilai ke ringkasan order", () => {
+    const lines = [{ code: "A-1", unit: "KRT" }, { code: "A-1", unit: "PCS" }, { code: "A-4", unit: "LSN" }, { code: "", unit: "" }];
+    const saran = [
+        SARAN({ program_id: "p3", gap: "3", message: "Tambah 3 KRT lagi untuk diskon 1%" }),
+        SARAN({ program_id: "p1", gap: "1", message: "Tambah 1 PCS lagi untuk bonus" }),
+        SARAN({ program_id: "pm", codes: ["A-1", "A-4"], gap: "5", message: "Tambah 5 KRT lagi untuk diskon 2%" }),
+        SARAN({ program_id: "pv", threshold: "value", minimum: "3000000", current: "1000000", gap: "2000000", message: "Tambah Rp 2.000.000 lagi untuk potongan" }),
+        SARAN({ program_id: "px", codes: ["Z-9"], gap: "9" }),
+    ];
+    const { perBaris, ringkasan } = pecahSaran(saran, lines);
+    assert.deepEqual(perBaris.get(0)?.map((s) => s.program_id), ["p3", "pm"]); // KRT: p3 (satuan KRT) lalu mix (baris pertama yang memuat A-1)
+    assert.deepEqual(perBaris.get(1)?.map((s) => s.program_id), ["p1"]); // PCS: baris dengan satuan program
+    assert.equal(perBaris.has(2), false); // mix tidak diulang di A-4
+    assert.deepEqual(ringkasan.map((s) => s.program_id), ["px", "pv"]); // tak ada baris yang cocok + nilai, urut gap
+});
+
+test("program terpakai: nama dari saran/diblokir bila ada, tanpa pengulangan", () => {
+    const hasil: Result = { gross: "1", discount: "1", net: "0", applications: [{ program_id: "p1", minimum: "1", discount: "1" }, { program_id: "p1", minimum: "1", discount: "1" }] };
+    assert.deepEqual(namaProgramTerpakai(hasil, [SARAN({ program_id: "p1", program_name: "PROMO SATU" })]), ["PROMO SATU"]);
+    assert.deepEqual(namaProgramTerpakai(null), []);
 });

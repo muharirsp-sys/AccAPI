@@ -20,13 +20,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Lightbulb, Plus, Save, Trash2 } from "lucide-react";
+import { Plus, Save, Trash2 } from "lucide-react";
 import { Button, FooterToolbar, MessageStrip, Section, StatusBadge } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useUnsavedGuard } from "@/components/fiori/interactive";
 import { PemilihBarang } from "@/components/order/PemilihBarang";
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
-import { PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
-import { alasanKunciBarang, barisBedaCabang, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kunciHarga, labelSatuan, pratinjauBerubah, type BarangPilih, type PelangganPilih } from "@/components/order/order-cabang";
+import { KartuPromoBaris, PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
+import { alasanKunciBarang, barisBedaCabang, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kunciHarga, labelSatuan, pecahSaran, pratinjauBerubah, type BarangPilih, type PelangganPilih } from "@/components/order/order-cabang";
 import { hitungPratinjau, type Pratinjau } from "@/components/order/order-cabang-api";
 import { rupiah } from "@/lib/promo-ui";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
@@ -185,6 +185,10 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     const net = pratinjau?.status === "siap" && pratinjau.result ? Number(pratinjau.result.net) : null;
     const nTanpaHarga = pratinjau?.status === "siap" ? pratinjau.tanpaHarga.length : 0;
     const hasilPratinjau = pratinjau?.status === "siap" ? pratinjau.result : null;
+    const saranServer = pratinjau?.status === "siap" ? pratinjau.suggestions : [];
+    // Saran "hampir dapat" dari server dibagi per baris (program jumlah) dan ringkasan order (program nilai); semua angkanya dari server.
+    const { perBaris: saranBaris, ringkasan: saranRingkasan } = pecahSaran(saranServer, lines);
+    const namaBarang = (code: string) => lines.find((l) => l.code.trim() === code)?.barang?.name || code;
 
     async function simpan() {
         // Sidik pratinjau TERAKHIR untuk isian yang sekarang; tombol Simpan sudah terkunci bila tidak ada, ini sabuk pengaman.
@@ -284,7 +288,6 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                             const info = infoHarga(line, pratinjau);
                             const tanpaHarga = pratinjau?.status === "siap" && pratinjau.tanpaHarga.includes(code);
                             const perluPetugas = Boolean(line.barang && line.unit.trim()) && tanpaMaster(line);
-                            const advice = pratinjau?.status === "siap" ? pratinjau.suggestions.find((s) => s.codes.includes(code)) : undefined;
                             const lengkapBaris = Boolean(line.barang && line.unit.trim() && Number(line.quantity) > 0);
                             const petugasSah = line.price !== null && hargaPetugasSah(line.price);
                             return (
@@ -332,8 +335,11 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                                             {tanpaHarga && <><StatusBadge tone="warn">Harga master belum ada</StatusBadge><span className="fi-muted">Isi harga petugas, atau lengkapi daftar harga di Accurate.</span></>}
                                         </div>
                                     )}
-                                    {lengkapBaris && <PromoBarisInfo result={hasilPratinjau} code={code} unit={line.unit} nomor={index + 1} />}
-                                    {advice && <p className="fi-small fi-why flex items-start gap-1.5"><Lightbulb className="fi-icon" aria-hidden /><span>{advice.message}</span></p>}
+                                    {lengkapBaris && <PromoBarisInfo result={hasilPratinjau} code={code} unit={line.unit} nomor={index + 1} saran={saranServer} />}
+                                    {lengkapBaris && (saranBaris.get(index)?.length ?? 0) > 0 && (
+                                        <KartuPromoBaris nomor={index + 1} kodeBaris={code} unitBaris={line.unit} saran={saranBaris.get(index)!} namaBarang={namaBarang}
+                                            onTambah={(n) => ubah(index, "quantity", String(Number(line.quantity) + n))} />
+                                    )}
                                 </li>
                             );
                         })}
@@ -357,7 +363,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                 {pratinjau?.status === "siap" && pratinjau.result && net !== null && (
                     <Section title="Perkiraan" subtitle="pratinjau = yang dibekukan saat disimpan">
                         <div className="fi-sect-in">
-                            <PanelPromo result={pratinjau.result} suggestions={pratinjau.suggestions} nTanpaHarga={nTanpaHarga} ppn
+                            <PanelPromo result={pratinjau.result} suggestions={pratinjau.suggestions} nTanpaHarga={nTanpaHarga} saranRingkasan={saranRingkasan} namaBarang={namaBarang} ppn
                                 catatan={`Perkiraan memakai harga master${nPetugas ? `; ${nPetugas} barang memakai harga petugas (harga master belum ada)` : ""}. Angka akhir faktur dihitung Accurate saat Kirim.`} />
                         </div>
                     </Section>

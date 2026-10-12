@@ -23,13 +23,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Lightbulb, Plus, Send, Trash2 } from "lucide-react";
+import { Plus, Send, Trash2 } from "lucide-react";
 import { Button, EmptyState, ErrorState, FooterToolbar, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { PemilihBarang, type BacaanBarang } from "@/components/order/PemilihBarang";
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
-import { PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
-import { alasanKunciBarang, galatDariJawaban, galatTidakDitemukan, hargaCabangDefault, kalimatGalat, kalimatPenolakan, kunciHarga, labelSatuan, pratinjauBerubah, type BarangPilih, type Cakupan, type Galat, type PelangganPilih } from "@/components/order/order-cabang";
+import { KartuPromoBaris, PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
+import { alasanKunciBarang, galatDariJawaban, galatTidakDitemukan, hargaCabangDefault, kalimatGalat, kalimatPenolakan, kunciHarga, labelSatuan, pecahSaran, pratinjauBerubah, type BarangPilih, type Cakupan, type Galat, type PelangganPilih } from "@/components/order/order-cabang";
 import { bacaBarangKode, hitungPratinjau, muatCakupan, type Pratinjau } from "@/components/order/order-cabang-api";
 import { resolveApiBase } from "@/lib/apiBase";
 import { rupiah } from "@/lib/promo-ui";
@@ -338,6 +338,10 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     const nTanpaHarga = pratinjau?.status === "siap" ? pratinjau.tanpaHarga.length : 0;
     const netto = pratinjau?.status === "siap" && pratinjau.result ? rupiah(pratinjau.result.net ?? 0) : null;
     const hasilPratinjau = pratinjau?.status === "siap" ? pratinjau.result : null;
+    const saranServer = pratinjau?.status === "siap" ? pratinjau.suggestions : [];
+    // Saran "hampir dapat" dari server dibagi per baris (program jumlah) dan ringkasan order (program nilai); semua angkanya dari server.
+    const { perBaris: saranBaris, ringkasan: saranRingkasan } = pecahSaran(saranServer, lines);
+    const namaBarang = (code: string) => lines.find((l) => l.code.trim() === code)?.barang?.name || code;
     const cabangPelanggan = pelanggan?.branchName ?? "";
 
     return (
@@ -444,7 +448,6 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                     const bedaCabang = pratinjau?.status === "barang" ? pratinjau.galat.perBarang[code] : undefined;
                                     const price = pratinjau?.status === "siap" ? pratinjau.prices.find((row) => row.code === code && row.unit === line.unit && row.price != null) : undefined;
                                     const tanpaHarga = pratinjau?.status === "siap" && pratinjau.tanpaHarga.includes(code);
-                                    const advice = pratinjau?.status === "siap" ? pratinjau.suggestions.find((item) => item.codes.includes(code)) : undefined;
                                     const lengkapBaris = Boolean(line.barang && line.unit.trim() && Number(line.quantity) > 0);
                                     const berlakuHarga = line.barang?.hargaUntuk === kunciHarga(pelanggan?.id, orderDate);
                                     return (
@@ -487,11 +490,10 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                                     {tanpaHarga && <><StatusBadge tone="neg">Harga belum ada</StatusBadge><span className="fi-muted">Belum bisa dikirim: harga barang ini belum ada di Accurate untuk cabang pelanggan. Minta petugas melengkapinya.</span></>}
                                                 </div>
                                             )}
-                                            {lengkapBaris && <PromoBarisInfo result={hasilPratinjau} code={code} unit={line.unit} nomor={index + 1} />}
-                                            {advice && (
-                                                <p className="fi-small fi-why flex items-start gap-1.5">
-                                                    <Lightbulb className="fi-icon" aria-hidden /><span>{advice.message}</span>
-                                                </p>
+                                            {lengkapBaris && <PromoBarisInfo result={hasilPratinjau} code={code} unit={line.unit} nomor={index + 1} saran={saranServer} />}
+                                            {lengkapBaris && (saranBaris.get(index)?.length ?? 0) > 0 && (
+                                                <KartuPromoBaris nomor={index + 1} kodeBaris={code} unitBaris={line.unit} saran={saranBaris.get(index)!} namaBarang={namaBarang}
+                                                    onTambah={(n) => updateLine(index, "quantity", String(Number(line.quantity) + n))} />
                                             )}
                                         </li>
                                     );
@@ -514,7 +516,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                 {pratinjau?.status === "barang" && <MessageStrip tone="neg" title={`${pratinjau.galat.judul}.`}>{pratinjau.galat.tindakan}</MessageStrip>}
                                 {pratinjau?.status === "siap" && pratinjau.catatan && <MessageStrip tone="warn" title="Perkiraan tidak tersedia.">{kalimatGalat(pratinjau.catatan)}{" "}<Button variant="tertiary" onClick={hitungUlang}>Hitung ulang</Button></MessageStrip>}
                                 {pratinjau?.status === "siap" && pratinjau.result && (
-                                    <PanelPromo result={pratinjau.result} suggestions={pratinjau.suggestions} nTanpaHarga={nTanpaHarga}
+                                    <PanelPromo result={pratinjau.result} suggestions={pratinjau.suggestions} nTanpaHarga={nTanpaHarga} saranRingkasan={saranRingkasan} namaBarang={namaBarang}
                                         catatan="Perkiraan memakai aturan promo yang terbit sekarang; angka final dibekukan petugas saat order ditarik." />
                                 )}
                                 {pratinjau?.status === "siap" && !pratinjau.result && nTanpaHarga > 0 && (
