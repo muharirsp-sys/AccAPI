@@ -156,6 +156,14 @@ def main():
     assert (e.status, e.kode, e.extra) == (409, "BONUS_TIDAK_BISA_DIORDER", {"bonus": [{"code": "H-01", "alasan": "barang cabang HEINZ"}]})
     pasang(401, {"error": "Unauthorized"})
     assert harus(OrderCabangTidakPasti, lambda: order_cabang.periksa_bonus("C-1", "2026-10-12", ["H-01"])).kode == "KONFIGURASI_SERVER"
+    # Susulan uji: Next 5xx / jaringan (OSError) / timeout saat cek BONUS = TIDAK PASTI (503, ditahan), BUKAN penolakan permanen —
+    # jalur layanan (tarik) dan sesi (simpan) sama.
+    for status, data, gagal in [(500, {"error": "galat"}, None), (503, "<html>", None), (200, {}, OSError("putus")),
+                                (200, {}, TimeoutError("read timed out"))]:
+        pasang(status, data, gagal)
+        for cookie in (None, "sesi=1"):
+            e = harus(OrderCabangTidakPasti, lambda: order_cabang.periksa_bonus("C-1", "2026-10-12", ["H-01"], cookie=cookie))
+            assert e.isi()["kode"] == "LAYANAN_TIDAK_PASTI", (status, gagal, cookie, e.kode)
     print("order cabang bridge check: OK", json.dumps(len(KIRIM)))
 
 

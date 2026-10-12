@@ -984,3 +984,56 @@ test("PG O1 putaran 2: /api/orders/harga mode bonus — barang bonus = syarat ba
     const campur = await tanya(["H-01"], [{ code: "K-01", unit: "PCS", quantity: "2" }]);
     assert.equal(campur.body.kode, "BONUS_TIDAK_BISA_DIORDER");
 });
+
+// Susulan uji (peninjau B, B2): pindahkanProfil tidak melewati tautan AKTIF; balapan dua admin = satu menang (kunci otorisasi);
+// kode PERSIS (riwayat Form Kontrol), spv/sm, laporan harian, dan tepat satu audit ikut.
+test("PG O1 putaran 2: pindahkanProfil — tautan aktif ditolak; dua admin bersamaan = 200/409 satu baris; kode persis + spv/sm + riwayat + satu audit", { skip: pgSkip }, async () => {
+    const t = m.tautan;
+    const p = utama.pool;
+    await p.query(`INSERT INTO "user" (id, name, email) VALUES ('u-r1', 'R1', 'r1@uji'), ('u-r2', 'R2', 'r2@uji'), ('u-r3', 'R3', 'r3@uji')`);
+    await p.query(`INSERT INTO accurate_employee (id, number, name, branch_id, salesman, suspended) VALUES (4699, 'M-SLR', 'KN_SALES R', 101, true, false)`);
+    await p.query(`INSERT INTO sales_profile (id, user_id, sales_code, sales_name, principle, branch, spv_name, sm_name, accurate_linked, created_at, updated_at)
+        VALUES ('sp-r', 'u-r1', 'm-slr ', 'SALES R', 'KINO', 'BDG', 'SPV R', 'SM R', true, now(), now())`);
+    await p.query(`INSERT INTO salesman_daily_report (id, sales_code, date) VALUES ('rr1', 'm-slr ', '2026-10-01')`);
+    const pindah = (target: string) => { sebagai("u-admin"); return panggil(t.PUT(req("PUT", "/x", { employeeNumber: "M-SLR", pindahkanProfil: true }), ctx(target))); };
+    // Profil MASIH tertaut aktif ke u-r1: pindahkanProfil TIDAK boleh merebutnya.
+    const rebut = await pindah("u-r2");
+    assert.deepEqual([rebut.status, rebut.body.code], [409, "KARYAWAN_SUDAH_TERHUBUNG"], JSON.stringify(rebut.body));
+    assert.equal((await p.query("SELECT user_id FROM sales_profile WHERE id = 'sp-r'")).rows[0].user_id, "u-r1");
+    // Lepas, lalu dua admin memindahkan bersamaan ke dua akun: tepat satu menang, yang kalah melihat tautan pemenang.
+    sebagai("u-admin");
+    await panggil(t.DELETE(req("DELETE", "/x"), ctx("u-r1")));
+    // Tumpang-tindih DIPAKSA (tanpa ini balapan bisa lolos karena kebetulan urutan): pemegang luar mengunci baris sp-r; dilepas
+    // baru sesudah DUA backend menunggu kunci yang berakar padanya. Dengan kunci otorisasi: satu di UPDATE, satu di advisory lock.
+    // Tanpa kunci itu: keduanya sudah membaca "dilepas" dan menunggu di UPDATE -> keduanya menulis (200/200).
+    const pemegang = await p.connect();
+    let a: Awaited<ReturnType<typeof pindah>>, b: Awaited<ReturnType<typeof pindah>>;
+    try {
+        await pemegang.query("BEGIN");
+        await pemegang.query("SELECT 1 FROM sales_profile WHERE id = 'sp-r' FOR UPDATE");
+        const pid = (await pemegang.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+        const balapan = Promise.all([pindah("u-r2"), pindah("u-r3")]);
+        for (let i = 0; ; i++) {
+            const n = (await p.query(`SELECT count(*)::int AS n FROM pg_stat_activity s WHERE s.wait_event_type = 'Lock' AND ($1 = ANY(pg_blocking_pids(s.pid))
+                OR EXISTS (SELECT 1 FROM unnest(pg_blocking_pids(s.pid)) x WHERE $1 = ANY(pg_blocking_pids(x))))`, [pid])).rows[0].n as number;
+            if (n >= 2) break;
+            assert.ok(i < 200, `dua transaksi pindah tidak sampai menunggu kunci (menunggu: ${n})`);
+            await new Promise((ok) => setTimeout(ok, 50));
+        }
+        await pemegang.query("COMMIT");
+        [a, b] = await balapan;
+    } finally {
+        await pemegang.query("ROLLBACK").catch(() => undefined);
+        pemegang.release();
+    }
+    assert.deepEqual([a.status, b.status].sort(), [200, 409], JSON.stringify([a.body, b.body]));
+    assert.equal((a.status === 409 ? a : b).body.code, "KARYAWAN_SUDAH_TERHUBUNG");
+    const baris = (await p.query("SELECT user_id, sales_code, spv_name, sm_name, accurate_linked FROM sales_profile WHERE upper(trim(sales_code)) = 'M-SLR'")).rows;
+    assert.equal(baris.length, 1);
+    assert.deepEqual(baris[0], { user_id: a.status === 200 ? "u-r2" : "u-r3", sales_code: "m-slr ", spv_name: "SPV R", sm_name: "SM R", accurate_linked: true },
+        "kode PERSIS (riwayat Form Kontrol), spv/sm ikut, ke akun pemenang");
+    assert.equal((await p.query("SELECT count(*)::int AS n FROM salesman_daily_report WHERE sales_code = 'm-slr '")).rows[0].n, 1);
+    const jejak = (await p.query("SELECT target_user_id, detail FROM permission_audit_log WHERE detail->'dipindahDari'->>'profilId' = 'sp-r'")).rows;
+    assert.equal(jejak.length, 1, "tepat satu audit pindah");
+    assert.deepEqual([jejak[0].target_user_id, jejak[0].detail.dipindahDari.userId], [baris[0].user_id, "u-r1"]);
+});
