@@ -77,6 +77,18 @@ Salesman hanya pelanggan cabangnya: kode cabang lain / tanpa cabang → 403 `CAB
 `SALESMAN_BELUM_TERHUBUNG`. Kode tak ada = 200 `found:false` (bentuk lama). Internal (`order.view`) semua cabang.
 Pelanggan suspended → 409 `PELANGGAN_SUSPENDED` (putaran 2; selaras pencarian & pratinjau).
 
+### `GET /api/customers/riwayat-beli?customerNo=&bulan=3` (baru, O3 — 12 Okt 2026 sesi 13)
+Panel "Biasa diambil toko ini" (Order Sales + Order Baru). Izin & cakupan = pencarian pelanggan (`websales.create` ATAU `order.create`;
+salesman HANYA pelanggan cabangnya → 403 `CABANG_DI_LUAR_CAKUPAN` tanpa membaca faktur; internal `order.view` semua). `customerNo` = kode
+Accurate LENGKAP (≤ 80); `bulan` 1–12 (bawaan 3 = 90 hari termasuk hari ini WITA); lainnya 400 `INPUT_TIDAK_VALID`. Pelanggan tak ada /
+tanpa cabang / suspended = 409 kode §2. Baca-saja `sales_invoice` (satu kueri per pelanggan, indeks `customer_no`).
+200: `{ ok, pelanggan: {customerNo, name, branchId, branchName}, jendela: {bulan, dari, sampai, bulanTeramati}, ringkasan: {jumlahFaktur,
+tanpaRincian, dataSejak}, items: [{ code, name, unit, totalQty, rataPerBulan, jumlahFaktur, terakhirBeli, bisaDiorder, alasan }] }` — per barang +
+SATUAN (tidak dikonversi), urut `rataPerBulan` terbesar. `rataPerBulan` = total ÷ `bulanTeramati` (= `bulan`, atau hari sejak faktur paling
+awal toko ÷ 30 bila faktur itu lebih baru dari awal jendela; minimal 1). Bonus (harga 0) tidak dihitung; retur tidak dikurangkan;
+`tanpaRincian` = faktur tanpa `detailItem` (list.do) — tidak terhitung per barang. `bisaDiorder:false` + `alasan` = aturan barang order O1
+(tidak ada / suspended / tanpa cabang / cabang lain). Galat DB = 500 `RIWAYAT_GAGAL` (bukan daftar kosong).
+
 ### `POST /api/orders/preview` (berubah)
 `customer_no` WAJIB; cabang harga dari pelanggan (badan `branch_id` diabaikan); galat §2. Bentuk jawaban + `sidik` + harga petugas: §4.2.
 
@@ -246,3 +258,6 @@ rejected: [{request_id, kode, error}] }`. `failed` = DITAHAN (tetap `pending`, m
 - Migrasi: O1 memakai `db/migrations/0033_order_cabang.sql` + entri migrate-pg terakhir; K2a (cabang lain) memakai 0032 dan juga menambah
   entri di `scripts/migrate-pg.mjs` → konflik teks saat merge (urutan entri bebas: keduanya aditif + `sudahAda`). Nomor TIDAK diubah.
 - `?secret=` dihapus dari `requireCronSecret`: pemakai yang tidak tercatat di repo (skrip pribadi/bookmark) akan mendapat 401 — gunakan header.
+- O3 riwayat beli: faktur yang masuk lewat `list.do` (cron) tidak punya `detailItem` — probe 12 Okt: MSM 201 dari 1.603 faktur sejak 24 Jul
+  (13%), semua cabang 3 bulan 27.393 dari 70.546 (39%). Backfill rincian lewat `sales-invoice/detail.do` (satu panggilan per faktur, baca-saja
+  Accurate) BELUM dikerjakan; sampai itu rata-rata toko bisa lebih kecil dari kenyataan (panel menyebut jumlah faktur tanpa rincian).

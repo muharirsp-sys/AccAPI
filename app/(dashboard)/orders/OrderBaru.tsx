@@ -14,6 +14,8 @@
  *
  * Keputusan owner 12 Okt (sesi 13): harga petugas HANYA untuk baris tanpa harga master sah; baris berharga master tidak bisa diubah. Layar tidak
  * pernah mengirim `price` untuk baris berharga master (server menolaknya). Tanggal order bawaan = hari ini WITA (bukan UTC).
+ * O3: panel "Biasa diambil toko ini" (components/order/RiwayatBeli; GET /api/customers/riwayat-beli) — Tambah mengisi baris order
+ *   (lib/riwayat-beli sisipkanBaris; harga master tetap baca-saja) lalu pratinjau dihitung ulang seperti biasa.
  */
 "use client";
 
@@ -29,6 +31,8 @@ import { KartuPromoBaris, PanelPromo, PromoBarisInfo } from "@/components/order/
 import { alasanKunciBarang, barisBedaCabang, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kunciHarga, labelSatuan, jumlahSah, pecahSaran, pratinjauBerubah, tanggalSah, type BarangPilih, type PelangganPilih } from "@/components/order/order-cabang";
 import { hitungPratinjau, type Pratinjau } from "@/components/order/order-cabang-api";
 import { rupiah } from "@/lib/promo-ui";
+import { sisipkanBaris } from "@/lib/riwayat-beli";
+import { RiwayatBeli } from "@/components/order/RiwayatBeli";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { useHariBeku } from "../form-kontrol/lapangan";
 import { BELUM_PASTI, fastapi, pesanJawaban, sukses, type PriceInfo } from "./order-ui";
@@ -282,6 +286,8 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                         <p className="fi-small fi-muted">Salesman faktur dipilih saat order diantrekan, satu per order (disalin ke setiap baris faktur).</p>
                     </div>
                 </Section>
+                {pelanggan && <RiwayatBeli pelanggan={pelanggan} tanggal={orderDate} peran="petugas" baris={lines}
+                    onTambah={(b, unit, quantity) => { ubahIsian(); setLines((prev) => sisipkanBaris(prev, { code: b.no, unit, quantity, price: null, barang: b })); }} />}
 
                 <Section title="Barang" subtitle={`${filled.length} barang · harga master baca-saja${pelanggan ? ` · barang cabang ${pelanggan.branchName}` : ""}`}>
                     <ul aria-label="Barang" style={{ listStyle: "none", padding: 0, margin: 0 }}>
