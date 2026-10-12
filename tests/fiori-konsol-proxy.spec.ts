@@ -8,22 +8,24 @@
  * Side Effects: tidak ada.
  */
 import { expect, test, type Page } from "@playwright/test";
+import * as XLSX from "xlsx";
 
 const NAV = { timeout: 90_000 } as const;
 const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 const IZIN = "Tulis ke Accurate lewat Konsol butuh izin Konsol · Eksekusi (api_wrapper.execute). Tidak ada yang dikirim.";
 const KATALOG = "Endpoint ini tidak ada di katalog tulis Konsol (hanya save.do/bulk-save.do katalog; hapus dan endpoint lain ditolak). Tidak ada yang dikirim.";
 
-async function mockKonsol(page: Page, jawab: () => { status: number; body: unknown }) {
+type Panggilan = { endpointPath: string; method: string };
+async function mockKonsol(page: Page, jawab: (p: Panggilan) => { status: number; body: unknown }) {
     const proxy: Array<{ endpointPath: string; method: string }> = [];
     await page.route((u) => u.pathname === "/api/auth/accurate-session", (r) => r.fulfill(json({
         ok: true, connected: true, databaseConnected: true, sessionHost: "https://public.accurate.id", databaseId: "DB-1", databaseAlias: "PT A",
     })));
     await page.route((u) => u.pathname === "/api/auth/db-list", (r) => r.fulfill(json({ d: [{ id: "DB-1", alias: "PT A" }] })));
     await page.route((u) => u.pathname === "/api/proxy", (r) => {
-        const b = r.request().postDataJSON() as { endpointPath: string; method: string };
+        const b = r.request().postDataJSON() as Panggilan;
         proxy.push({ endpointPath: b.endpointPath, method: b.method });
-        const j = jawab();
+        const j = jawab(b);
         return r.fulfill(json(j.body, j.status));
     });
     return proxy;
@@ -65,4 +67,28 @@ test("save.do di luar katalog / sesi belum lengkap: penolakan proxy sebelum dite
     await page.getByRole("button", { name: "Eksekusi Endpoint" }).click();
     await expect(page.getByText("Sesi Accurate belum lengkap. Login dan pilih database terlebih dahulu.").first()).toBeVisible(NAV);
     expect(proxy).toHaveLength(2);
+});
+
+test("tinjauan A: tahap 1 = 504 (TIDAK PASTI), tahap 2 = 400 sent:false -> ringkasan menandai tidak pasti + Excel (100 TIDAK DIKETAHUI, 50 tidak terkirim), tanpa kirim ulang", async ({ page }) => {
+    const SESI = "Sesi Accurate belum lengkap. Login dan pilih database terlebih dahulu.";
+    let tulis = 0;
+    const proxy = await mockKonsol(page, (p) => {
+        if (p.method === "GET") return { status: 200, body: { s: true, d: [] } }; // riwayat Accurate: tidak ditemukan
+        tulis += 1;
+        return tulis === 1
+            ? { status: 504, body: { error: "Accurate tidak merespons dalam 30 detik (timeout) — status tulis TIDAK PASTI: periksa di Accurate sebelum mengirim ulang." } }
+            : { status: 400, body: { error: SESI, code: "ACCURATE_SESSION_INCOMPLETE", sent: false } };
+    });
+    const baris = Array.from({ length: 150 }, (_, i) => ({ customerNo: `C-${i}`, transDate: "01/10/2026", detailItem: [{ itemNo: "I1", quantity: 1 }] }));
+    const unduh = page.waitForEvent("download", { timeout: 120_000 });
+    await eksekusi(page, "salesReturnBulkSave", baris);
+    const log = page.getByText("Error Eksekusi:").locator("xpath=..").locator("xpath=..");
+    await expect(log).toContainText(SESI, NAV);
+    await expect(log).toContainText("100 baris TIDAK DIKETAHUI");
+    await expect(log).toContainText("2 error tahap");
+    const berkas = await (await unduh).path();
+    const isi = XLSX.utils.sheet_to_json<Record<string, unknown>>(XLSX.readFile(berkas).Sheets["Error Log"]);
+    const hitung = (awal: string) => isi.filter((r) => String(r.Status).startsWith(awal)).length;
+    expect([isi.length, hitung("TIDAK DIKETAHUI"), hitung("Gagal — tidak terkirim")]).toEqual([150, 100, 50]);
+    expect(proxy.filter((p) => p.method === "POST").map((p) => p.endpointPath)).toEqual(["/api/sales-return/bulk-save.do", "/api/sales-return/bulk-save.do"]);
 });

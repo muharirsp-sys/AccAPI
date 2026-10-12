@@ -569,6 +569,7 @@ export default function Home() {
     let combinedResults: any[] = [];
     let errorLogForExcel: any[] = [];
     let errorCount = 0;
+    let dihentikan = "";
     const confirmedReceiptNumbersByKey = new Map<string, string[]>();
 
     // outcome "UNKNOWN": galat tanpa jawaban Accurate (timeout/jaringan) — kiriman MUNGKIN sudah tersimpan,
@@ -638,12 +639,23 @@ export default function Home() {
       } catch (chunkErr: any) {
         console.error(`Chunk ${i+1} Failed:`, chunkErr);
         // S7-1b: proxy menolak SEBELUM meneruskan (4xx + sent:false — mis. tanpa api_wrapper.execute, endpoint di luar katalog,
-        // sesi Accurate belum lengkap) = tahap ini dan berikutnya TIDAK terkirim: berhenti, tampilkan pesan server apa adanya.
+        // sesi Accurate belum lengkap) = tahap ini dan berikutnya TIDAK terkirim (tanpa cek riwayat). Baris-barisnya dicatat
+        // "Gagal — tidak terkirim" lalu loop berhenti (`break`, bukan `return`): ringkasan + Excel tahap sebelumnya (termasuk baris
+        // TIDAK DIKETAHUI) tetap keluar — tinjauan A, kirim ulang buta bisa menggandakan tahap yang tidak pasti.
         if (classifyWriteError(chunkErr).kind === "rejected" && chunkErr?.rawErrorObject?.sent === false) {
-          const sebelumnya = combinedResults.length ? ` Data yang berhasil di tahap sebelumnya: ${combinedResults.length}.` : "";
-          setResponseLog({ status: "error", message: `${chunkErr.message}${sebelumnya}` });
-          toast.error(`Tahap ${i+1} ditolak — tidak ada yang dikirim: ${chunkErr.message}`, { id: 'exec' });
-          return;
+          for (let idx = start; idx < totalRows; idx++) {
+            const row = rows[idx];
+            errorLogForExcel.push({
+              "Paket/Batch": `Tahap ${Math.floor(idx / chunkSize) + 1}`,
+              "Baris Ke": idx + 1,
+              "Ref / Invoice No": row.invoiceNo || row.customerNo || row.bankNo || row.description || `Baris Asli ke-${idx + 1}`,
+              "Status": "Gagal — tidak terkirim",
+              "Pesan Error Accurate": chunkErr.message,
+            });
+          }
+          errorCount += totalChunks - i;
+          dihentikan = `Dihentikan di tahap ${i + 1}: ${chunkErr.message} Tahap ${i + 1}–${totalChunks} TIDAK terkirim.`;
+          break;
         }
         let chunkHadUnresolvedFailure = false;
 
@@ -867,8 +879,14 @@ export default function Home() {
       setResponseLog({ status: "success", data: { s: true, d: combinedResults, _note: "Digabung dari beberapa request otomatis." } });
       toast.success(`Eksekusi brutal berhasil! ${combinedResults.length} data telah terposting.`, { id: 'exec' });
     } else {
-      setResponseLog({ status: "error", message: `Selesai dengan ${errorCount} error tahap. Periksa console log untuk rincian error di beberapa baris. Data yang berhasil: ${combinedResults.length}` });
-      toast.error(`Selesai dengan peringatan (${errorCount} Tahap Gagal).`, { id: 'exec' });
+      // Baris yang hasilnya tak diketahui (tanpa jawaban Accurate) WAJIB terlihat di layar, bukan hanya di Excel: kirim ulang buta = ganda.
+      const tidakPasti = errorLogForExcel.filter((r) => String(r.Status).startsWith("TIDAK DIKETAHUI")).length;
+      setResponseLog({ status: "error", message: [
+        dihentikan,
+        `Selesai dengan ${errorCount} error tahap. Periksa console log untuk rincian error di beberapa baris. Data yang berhasil: ${combinedResults.length}.`,
+        tidakPasti ? `${tidakPasti} baris TIDAK DIKETAHUI — cek di Accurate sebelum kirim ulang (lihat Excel log error).` : "",
+      ].filter(Boolean).join("\n") });
+      toast.error(`Selesai dengan peringatan (${errorCount} Tahap Gagal)${tidakPasti ? ` — ${tidakPasti} baris TIDAK DIKETAHUI` : ""}.`, { id: 'exec' });
 
       if (errorLogForExcel.length > 0) {
         setTimeout(async () => {
