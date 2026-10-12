@@ -4,7 +4,7 @@
  *   buildInvoicePayload). Menetapkan apakah salesman yang dipilih sah sebelum payload dibekukan ke antrean.
  * Caller: app/api/orders/[id]/invoice (pratinjau + antre).
  * Dependensi: drizzle-orm `sql` (ekspresi saja); baris pegawai dibaca pemanggil dari `accurate_employee` (sync employee/list.do).
- * Main Functions: salesmanOrder, salesmanDariPayload.
+ * Main Functions: salesmanOrder, salesmanBedaCabang, salesmanDariPayload.
  * Side Effects: Tidak ada.
  *
  * Beda dengan jalur principal: di sana salesman datang dari laporan principal dan yang tidak ketemu membuat faktur terbit TANPA sales
@@ -14,15 +14,15 @@
  */
 import { sql, type SQLWrapper } from "drizzle-orm";
 
-/** Satu baris `accurate_employee`; `number` = kode salesman internal (dibuktikan live 2026-09-12). */
-export type PegawaiAccurate = { id: number; number: string; name: string; salesman: boolean; suspended: boolean };
+/** Satu baris `accurate_employee`; `number` = kode salesman internal (dibuktikan live 2026-09-12). `branchId` = cabang karyawan. */
+export type PegawaiAccurate = { id: number; number: string; name: string; salesman: boolean; suspended: boolean; branchId?: number | null };
 
 /** Opsi buildInvoicePayload; sama persis dengan yang dikirim app/api/principal-order/queue. */
 export type OpsiSalesman = { masterSalesmanId: number; salesmanNumber: string };
 
 export type PilihanSalesman =
-    | { ok: true; opsi?: OpsiSalesman; nama?: string }
-    | { ok: false; status: 400 | 409; error: string };
+    | { ok: true; opsi?: OpsiSalesman; nama?: string; cabang?: number | null }
+    | { ok: false; status: 400 | 409; error: string; kode?: string };
 
 /** `pegawai` = baris `accurate_employee` dengan nomor yang sama dengan `kode` (pemanggil boleh mengirim lebih; yang lain diabaikan). */
 export function salesmanOrder({ queue, kode, pegawai }: { queue: boolean; kode: string; pegawai: PegawaiAccurate[] }): PilihanSalesman {
@@ -40,7 +40,20 @@ export function salesmanOrder({ queue, kode, pegawai }: { queue: boolean; kode: 
         return { ok: false, status: 409, error: `Pegawai ${nomor} ${sebab} di Accurate; pilih salesman lain.` };
     }
     const [sales] = aktif;
-    return { ok: true, opsi: { masterSalesmanId: sales.id, salesmanNumber: nomor }, nama: sales.name };
+    return { ok: true, opsi: { masterSalesmanId: sales.id, salesmanNumber: nomor }, nama: sales.name, cabang: sales.branchId ?? null };
+}
+
+/**
+ * O1 putaran 1 (butir 4, owner 12 Okt: cabang salesman = cabang karyawannya di Accurate): salesman faktur WAJIB secabang dengan
+ * PELANGGAN order (= cabang faktur). Salesman cabang lain / tanpa cabang DITOLAK berkode — termasuk saat pratinjau — bukan diterbitkan
+ * atas nama sales divisi lain yang tak bisa ditarik dari Accurate. Murni; dipanggil sesudah cabang pelanggan diketahui.
+ */
+export function salesmanBedaCabang(pilihan: PilihanSalesman, cabangPelanggan: number, namaCabang: string): PilihanSalesman | null {
+    if (!pilihan.ok || !pilihan.opsi) return null;
+    if (pilihan.cabang != null && Number(pilihan.cabang) === Number(cabangPelanggan)) return null;
+    return { ok: false, status: 409, kode: "SALESMAN_BEDA_CABANG",
+        error: `Salesman ${pilihan.opsi.salesmanNumber} ${pilihan.cabang == null ? "belum punya cabang di Accurate" : "bukan salesman cabang " + (namaCabang || cabangPelanggan)}; `
+            + "pilih salesman cabang pelanggan order ini." };
 }
 
 /**

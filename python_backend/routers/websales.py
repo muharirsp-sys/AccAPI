@@ -1,21 +1,23 @@
 """Tujuan: Endpoint Web Sales: sales mengirim permintaan order berisi kuantitas saja.
-Caller: aplikasi Web Sales terpisah (belum dibangun) dan pengujian.
-Dependensi: shared auth/RBAC, websales_store. TIDAK menyentuh store internal.
+Caller: layar Order Sales (app/(dashboard)/sales) dan pengujian.
+Dependensi: shared auth/RBAC, websales_store, routers.orders (hitung_order + cocokkan: hitungan promo yang SAMA dengan pratinjau).
 Main Functions: create_request_endpoint, list_requests.
-Side Effects: Tulis ke basis data Web Sales; tanpa perhitungan uang dan tanpa harga. HTTP ke Next (order_cabang) saat simpan.
+Side Effects: Tulis ke basis data Web Sales; HTTP ke Next (order_cabang, outlet_channel) dan BACA aturan terbit saat simpan. Tidak
+menulis store internal; harga tidak disimpan di permintaan.
 
-Harga sengaja tidak diminta dari sales: uang dihitung internal saat pull memakai
-aturan promo terbit, sehingga klien tidak pernah menentukan nilai transaksi.
+Harga sengaja tidak diminta dari sales: uang dihitung server (harga master per cabang pelanggan + promo terbit), sehingga klien tidak
+pernah menentukan nilai transaksi.
 
-O1 (owner 12 Okt 2026): sebelum disimpan, permintaan diperiksa Next dengan SESI sales ini (order_cabang.periksa + cookie): salesman
-tertaut ke karyawan Accurate dan hanya cabangnya, pelanggan aktif, barang = cabang pelanggan, harga tersedia. Ditolak berkode di sini,
-bukan baru gagal saat tarik. Harga TIDAK disimpan di permintaan: dibekukan saat tarik (store_order) dari sumber yang sama.
+O1 (owner 12 Okt 2026): sebelum disimpan, permintaan dihitung LENGKAP dengan SESI sales ini (`hitung_order` + cookie): channel = master,
+salesman tertaut ke karyawan Accurate dan hanya cabangnya, pelanggan aktif, barang = cabang pelanggan, harga sah, lalu promo — dan
+angkanya WAJIB sama dengan pratinjau yang dilihat sales (`sidik`, `PRATINJAU_BERUBAH`). Ditolak berkode di sini, bukan baru gagal saat
+tarik. Yang disimpan: kuantitas + sidik; angka uang dibekukan saat tarik dari sumber yang sama dan dicocokkan lagi dengan sidik ini.
 """
 import json
 from datetime import date
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
 import order_cabang
+from routers import orders
 from shared import get_current_user, user_has_permission, validate_csrf_request
 from summary_store import identity
 from websales_store import connect, create_request
@@ -77,21 +79,23 @@ async def create_request_endpoint(request: Request):
         quantity = str(line.get("quantity", "")).strip()
         if not code or not unit or not quantity.isdigit() or int(quantity) <= 0:
             raise HTTPException(400, "Setiap baris butuh kode, satuan, dan jumlah bulat lebih dari nol")
+        # Harga dari klien TIDAK pernah dibaca: baris hanya kode, satuan, jumlah.
         clean.append({"code": code[:80], "unit": unit[:30], "quantity": quantity})
     try:
-        order_cabang.periksa(customer_no, order_date, clean, cookie=request.headers.get("cookie", ""))
-    except order_cabang.OrderCabangDitolak as error:
-        return JSONResponse(status_code=error.status, content=error.isi())
-    except order_cabang.OrderCabangTidakPasti as error:
-        raise HTTPException(503, str(error)) from None
+        hasil = orders.hitung_order(customer_no, channel, order_date, clean, cookie=request.headers.get("cookie", ""))
+        orders.cocokkan(hasil, body.get("sidik"))
+    except (order_cabang.OrderCabangDitolak, order_cabang.OrderCabangTidakPasti) as error:
+        return orders.jawab(error)
+    except (ValueError, KeyError, TypeError) as error:
+        raise HTTPException(400, orders.public_error(error)) from None
     return {"ok": True, "request": create_request(sales, outlet, channel, order_date,
-                                                  str(body.get("note", "")), clean, customer_no)}
+                                                  str(body.get("note", "")), clean, customer_no, hasil["sidik"])}
 
 
 @router.get("/orders")
 def list_requests(request: Request):
     sales = require_sales(request)
     with connect() as db:
-        rows = db.execute("SELECT id,outlet,channel,order_date,customer_no,status,created_at,pulled_at FROM order_request "
-                          "WHERE sales=? ORDER BY created_at DESC,id DESC LIMIT 100", (sales,)).fetchall()
+        rows = db.execute("SELECT id,outlet,channel,order_date,customer_no,status,created_at,pulled_at,reject_code,reject_reason,rejected_at"
+                          " FROM order_request WHERE sales=? ORDER BY created_at DESC,id DESC LIMIT 100", (sales,)).fetchall()
     return {"ok": True, "requests": [dict(row) for row in rows]}

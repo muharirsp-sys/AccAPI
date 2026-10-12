@@ -121,6 +121,30 @@ def test_cache_dipakai_supaya_satu_order_tidak_menanyakan_berulang():
     assert len(dipanggil) == 2
 
 
+def test_jawaban_pasti_master_berkelas_ChannelBedaMaster_jaringan_tidak():
+    """O1 putaran 1: tarikan menolak permanen HANYA jawaban pasti master; kegagalan jaringan menghentikan tarikan (bukan menolak)."""
+    from outlet_channel import ChannelBedaMaster
+    for peta, kode, channel in [({"C-HIL009-KN": "MT"}, "C-HIL009-KN", "GT"), ({"C-BARU001-KN": ""}, "C-BARU001-KN", "GT"),
+                                ({}, "C-HANTU001-KN", "GT"), ({}, "", "GT")]:
+        _pakai(peta)
+        try:
+            outlet_channel.verify(kode, channel)
+        except ChannelBedaMaster:
+            pass
+        else:
+            raise AssertionError(f"{kode or '(kosong)'} seharusnya ChannelBedaMaster")
+
+    def meledak(_kode):
+        raise ChannelTidakPasti("Tidak bisa menanyakan channel outlet ke Next: connection refused")
+    outlet_channel.channels_of = meledak
+    try:
+        outlet_channel.verify("C-GAL006-KN", "GT")
+    except ChannelBedaMaster:
+        raise AssertionError("jaringan putus BUKAN jawaban master")
+    except ChannelTidakPasti:
+        pass
+
+
 def main():
     for nama, fungsi in sorted(globals().items()):
         if nama.startswith("test_") and callable(fungsi):
@@ -132,3 +156,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

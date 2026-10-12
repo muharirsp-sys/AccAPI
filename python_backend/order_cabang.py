@@ -1,24 +1,32 @@
 """Tujuan: Aturan order per cabang Accurate + harga server, DITANYAKAN ke Next (O1, owner 12 Okt 2026) — bukan disalin ke sini.
-Caller: routers/websales.py (`POST /websales/orders`, cookie sesi sales -> cakupan cabang salesman), routers/orders.py (`store_order`:
-Order Baru internal + tarikan Web Sales, CRON_SECRET -> semua cabang).
+Caller: routers/orders.py `hitung_order` (simpan Order Baru, simpan Order Sales dengan cookie sesi sales -> cakupan cabang salesman,
+tarik Order Masuk lewat CRON_SECRET -> semua cabang).
 Dependensi: requests, env NEXT_INTERNAL_URL/AUTH_VERIFY_URL (alamat Next, sama dengan outlet_channel) + CRON_SECRET.
-Main Functions: periksa. Side Effects: HTTP keluar ke Next `/api/orders/harga`; tidak menulis apa pun, tanpa cache.
+Main Functions: periksa, harga_petugas_sah. Side Effects: HTTP keluar ke Next `/api/orders/harga`; tidak menulis apa pun, tanpa cache.
 
 KENAPA DITANYAKAN: FastAPI tidak punya akses ke Postgres (master pelanggan/barang/cabang/harga ada di sana), dan harga + cabang adalah
 dasar uang faktur — salinan lokal akan basi tepat di tempat yang mahal. Polanya sama dengan `outlet_channel`.
 
 GAGAL TERTUTUP. Next menolak (4xx berkode) -> `OrderCabangDitolak` (order itu ditolak dengan sebabnya). Next tak terjangkau / 5xx /
-jawaban rusak -> `OrderCabangTidakPasti` (pemanggil menahan, tidak meneruskan tanpa harga).
+jawaban rusak / secret ditolak -> `OrderCabangTidakPasti` (pemanggil menahan, tidak meneruskan tanpa harga).
+
+HARGA (putaran 1, 12 Okt 2026): per baris. `price` diisi = harga PETUGAS (Order Baru; pemanggil yang memastikan izinnya) — wajib > 0,
+dikirim ke Next apa adanya dan HARUS kembali sama (tidak pernah ditimpa). `price` kosong = harga MASTER dari Next (wajib > 0; Next
+hanya memberi harga daftar Accurate cabang pelanggan/default). Hasil tiap baris membawa `sumber_harga` = "petugas" | "master".
 """
+import logging
 import os
+import re
+from decimal import Decimal, InvalidOperation
 
 from outlet_channel import _base_url
 
 BATAS_DETIK = 10
+LOG = logging.getLogger("accapi.order_cabang")
 
 
 class OrderCabangDitolak(Exception):
-    """Next menolak order ini dengan kode (mis. BARANG_BEDA_CABANG, HARGA_BELUM_ADA, SALESMAN_BELUM_TERHUBUNG)."""
+    """Order ini DITOLAK dengan kode (mis. BARANG_BEDA_CABANG, HARGA_BELUM_ADA, PRATINJAU_BERUBAH, CHANNEL_BEDA_MASTER)."""
 
     def __init__(self, status, kode, pesan, extra=None):
         super().__init__(pesan)
@@ -30,25 +38,61 @@ class OrderCabangDitolak(Exception):
 
 
 class OrderCabangTidakPasti(Exception):
-    """Aturan cabang/harga tidak bisa dipastikan; pemanggil WAJIB menahan, bukan melanjutkan."""
+    """Aturan cabang/harga tidak bisa dipastikan; pemanggil WAJIB menahan (503), bukan melanjutkan atau menolak permanen."""
+
+    def __init__(self, pesan, kode="LAYANAN_TIDAK_PASTI"):
+        super().__init__(pesan)
+        self.pesan, self.kode = str(pesan), str(kode)
+
+    def isi(self):
+        return {"ok": False, "detail": self.pesan, "kode": self.kode}
 
 
-def periksa(customer_no, order_date, lines, cookie=None, harga=True):
-    """Periksa order di Next; kembalikan baris yang sama dengan `price` server (atau apa adanya bila `harga=False`).
+# Bentuk sama dengan Next (lib/order-cabang HARGA_PETUGAS): angka biasa, maksimal 4 desimal — tanpa eksponen/tanda/pemisah ribuan.
+HARGA_PETUGAS = re.compile(r"\d{1,12}(?:\.\d{1,4})?")
+
+
+def positif(teks):
+    """Angka terbatas > 0 dari teks, atau None. Dipakai untuk harga master yang dijawab Next."""
+    try:
+        nilai = Decimal(str(teks).strip())
+    except (InvalidOperation, ValueError):
+        return None
+    return nilai if nilai.is_finite() and nilai > 0 else None
+
+
+def harga_petugas_sah(teks):
+    """Harga ketikan petugas: angka biasa > 0 (bentuk HARGA_PETUGAS). Selain itu None (pemanggil menolak `HARGA_TIDAK_VALID`)."""
+    teks = str(teks).strip()
+    return positif(teks) if HARGA_PETUGAS.fullmatch(teks) else None
+
+
+def periksa(customer_no, order_date, lines, cookie=None):
+    """Periksa order di Next; kembalikan baris yang sama dengan `price` + `sumber_harga` (urutan = masukan).
 
     `cookie` bukan None = sesi pemakai (Order Sales): Next menerapkan cakupan cabang salesman — cookie KOSONG tetap jalur sesi (Next
     menjawab 401 -> ditolak), TIDAK pernah jatuh ke CRON_SECRET yang tanpa cakupan. `cookie=None` = layanan (CRON_SECRET).
-    `harga=False` = hanya aturan cabang; input internal membawa harga petugas sendiri dan tidak ditimpa.
     """
-    badan = {"customer_no": str(customer_no or "").strip(), "order_date": str(order_date or "").strip(), "harga": bool(harga),
-             "lines": [{"code": str(line.get("code", "")).strip(), "unit": str(line.get("unit", "")).strip().upper(),
-                        "quantity": str(line.get("quantity", "")).strip()} for line in lines]}
-    if cookie is not None:
+    kirim = []
+    for line in lines:
+        baris = {"code": str(line.get("code", "")).strip(), "unit": str(line.get("unit", "")).strip().upper(),
+                 "quantity": str(line.get("quantity", "")).strip()}
+        petugas = str(line.get("price", "") or "").strip()
+        if petugas:
+            if harga_petugas_sah(petugas) is None:
+                raise OrderCabangDitolak(400, "HARGA_TIDAK_VALID",
+                                         f"Harga {baris['code']} harus angka lebih dari 0 (diisi: {petugas[:20]}). Kosongkan untuk memakai harga master.")
+            baris["price"] = petugas
+        kirim.append(baris)
+    badan = {"customer_no": str(customer_no or "").strip(), "order_date": str(order_date or "").strip(), "lines": kirim}
+    layanan = cookie is None
+    if not layanan:
         headers = {"cookie": cookie}
     else:
         secret = os.getenv("CRON_SECRET")
         if not secret:
-            raise OrderCabangTidakPasti("CRON_SECRET belum di-set, jadi cabang & harga order tidak bisa ditanyakan ke Next")
+            raise OrderCabangTidakPasti("CRON_SECRET belum di-set, jadi cabang & harga order tidak bisa ditanyakan ke Next",
+                                        kode="KONFIGURASI_SERVER")
         headers = {"Authorization": f"Bearer {secret}"}
     try:
         import requests
@@ -59,6 +103,13 @@ def periksa(customer_no, order_date, lines, cookie=None, harga=True):
         data = response.json()
     except ValueError:
         data = None
+    # Jalur LAYANAN ditolak 401/403 = CRON_SECRET FastAPI != Next (konfigurasi), BUKAN sesi pemakai berakhir dan BUKAN penolakan order:
+    # menolak permanen di sini membuat permintaan Web Sales sah tercatat "ditolak" dan layar berkata "sesi login berakhir".
+    if layanan and response.status_code in (401, 403):
+        LOG.error("Next menolak CRON_SECRET FastAPI di /api/orders/harga (HTTP %s): samakan CRON_SECRET frontend dan backend",
+                  response.status_code)
+        raise OrderCabangTidakPasti("Konfigurasi server: Next menolak kunci layanan FastAPI (CRON_SECRET berbeda). Order TIDAK disimpan; "
+                                    "hubungi admin sistem.", kode="KONFIGURASI_SERVER")
     if 400 <= response.status_code < 500 and isinstance(data, dict) and data.get("error"):
         extra = {k: v for k, v in data.items() if k not in ("ok", "error", "kode")}
         raise OrderCabangDitolak(response.status_code, data.get("kode") or "DITOLAK", data["error"], extra)
@@ -69,16 +120,17 @@ def periksa(customer_no, order_date, lines, cookie=None, harga=True):
     if not isinstance(jawab, list) or len(jawab) != len(lines):
         raise OrderCabangTidakPasti("Jawaban harga Next tidak cocok dengan baris order")
     hasil = []
-    for line, item in zip(lines, jawab):
-        sama = (str(item.get("code", "")) == str(line.get("code", "")).strip()
-                and str(item.get("unit", "")) == str(line.get("unit", "")).strip().upper())
-        if not sama:
+    for line, dikirim, item in zip(lines, kirim, jawab):
+        if not isinstance(item, dict) or str(item.get("code", "")) != dikirim["code"] or str(item.get("unit", "")) != dikirim["unit"]:
             raise OrderCabangTidakPasti("Jawaban harga Next tidak cocok dengan baris order")
-        if not harga:
-            hasil.append(dict(line))
-            continue
-        price = str(item.get("price", "")).strip()
-        if not price or price in ("None", "null"):
-            raise OrderCabangTidakPasti(f"Next menjawab tanpa harga untuk {line.get('code')}")
-        hasil.append({**line, "price": price})
+        price = str(item.get("price", "") if item.get("price") is not None else "").strip()
+        sumber = "petugas" if "price" in dikirim else "master"
+        if str(item.get("sumber_harga", "")) != sumber or (sumber == "petugas" and price != dikirim["price"]):
+            # Harga petugas TIDAK pernah ditimpa; Next yang menjawab lain = jawaban yang tidak bisa dipercaya.
+            raise OrderCabangTidakPasti(f"Jawaban harga Next untuk {dikirim['code']} tidak sesuai harga yang dikirim")
+        if positif(price) is None:
+            # Harga master 0/kosong/negatif tidak pernah boleh menjadi order: faktur Rp 0 tidak bisa ditarik (butir 3).
+            raise OrderCabangDitolak(409, "HARGA_BELUM_ADA", f"Harga {dikirim['code']} {dikirim['unit']} dari master tidak sah ({price or 'kosong'}).",
+                                     {"missing": [dikirim["code"]]})
+        hasil.append({**line, "price": price, "sumber_harga": sumber})
     return hasil

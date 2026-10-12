@@ -1277,6 +1277,9 @@ export const salesProfile = pgTable("sales_profile", {
     // karyawan, ditetapkan admin lewat /api/admin/users/[id]/salesman. Cabang salesman = `accurate_employee.branch_id` (lib/order-cabang
     // cakupanCabang). Kolom ini TIDAK dibaca dan tidak diisi: salinan cabang akan basi saat karyawan dipindah cabang di Accurate.
     accurateBranchId: bigint("accurate_branch_id", { mode: "number" }),
+    // O1 putaran 1 (butir 12): tautan AKTIF ke karyawan Accurate. true = ditautkan admin (PUT); "lepas" (DELETE) = false — baris, kode,
+    // dan hierarki Form Kontrol (spv/sm, laporan per sales_code) TETAP. Bawaan false: profil lama/seed tidak membuka order tanpa admin.
+    accurateLinked: boolean("accurate_linked").notNull().default(false),
     createdAt: timestamp("created_at").notNull(),
     updatedAt: timestamp("updated_at").notNull(),
 }, (t) => ({

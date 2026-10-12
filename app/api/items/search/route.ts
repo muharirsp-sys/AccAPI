@@ -9,12 +9,16 @@
  * Owner 12 Okt: pelanggan cabang X hanya boleh dipesankan barang ber-cabang X -> dengan `customerId` cabangnya = cabang pelanggan
  * (`branchId` lain = 400). Salesman hanya cabangnya (`branchId`/pelanggan cabang lain = 403). Tanpa barang suspended dan tanpa barang
  * bercabang kosong (non-jual / tag tak dikenal). Izin = /api/items/units. Galat DB = 500, bukan daftar kosong.
+ * Putaran 1 (12 Okt): harga satuan = HANYA harga master SAH untuk order (lib/order-cabang hargaSah: daftar harga cabang pelanggan/default,
+ * > 0) — harga standar/0/cabang lain tampil `price: null` (tidak bisa dipilih tanpa harga petugas), sama dengan penolakan pratinjau.
+ * `cabangTanpaBarang: true` = cabang itu memang tidak punya barang yang bisa diorder (bukan "tidak cocok dengan pencarian") — layar
+ * menjelaskan (sync barang belum jalan / cabang tanpa tag divisi).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { and, asc, eq, ilike, isNotNull, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { branch, customer, item } from "@/db/schema";
-import { angkaQuery, cakupanCabang, jawabGalat, polaLike, tolakCabangLain } from "@/lib/order-cabang";
+import { angkaQuery, cakupanCabang, hargaSah, jawabGalat, polaLike, tolakCabangLain } from "@/lib/order-cabang";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { todayWita } from "@/lib/insentif-payment-date";
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
@@ -78,14 +82,19 @@ export async function GET(request: NextRequest) {
         ? await resolvePrices(pasangan, { orderDate: tanggal, customerNo: pelanggan.customerNo, branchId: pelanggan.branchId })
         : [];
     const hargaDari = new Map(harga.map((h) => [`${h.code}|${h.unit}`, h]));
+    // Kosong karena cabangnya memang tanpa barang orderan, atau karena pencarian tidak cocok? Hanya ditanyakan saat kosong.
+    const cabangTanpaBarang = rows.length === 0 && cabang !== null
+        ? (await db.select({ id: item.id }).from(item).where(and(eq(item.branchId, cabang), eq(item.suspended, false))).limit(1)).length === 0
+        : false;
     return NextResponse.json({
-        ok: true, tanggal, branchId: cabang,
+        ok: true, tanggal, branchId: cabang, cabangTanpaBarang,
         items: rows.map((r) => ({
             ...r,
             units: (units.get(r.no) ?? []).map((unit) => {
                 const h = hargaDari.get(`${r.no}|${unit}`);
                 return pelanggan
-                    ? { unit, price: h?.price ?? null, source: h?.source ?? "missing", branchName: h?.branchName ?? null, effectiveDate: h?.effectiveDate ?? null }
+                    ? { unit, price: h && hargaSah(h, pelanggan.branchId) ? h.price : null, source: h?.source ?? "missing",
+                        branchName: h?.branchName ?? null, effectiveDate: h?.effectiveDate ?? null }
                     : { unit };
             }),
         })),
