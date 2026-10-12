@@ -1,133 +1,191 @@
+/*
+ * Tujuan: "Laporan harian" salesman (Fiori S5, it05): lima angka otomatis dari Form AO (WITA) + tindak lanjut, dikirim ke SPV lewat
+ *   dialog; status dibaca SPV. Tanggal = Hari ini atau Kemarin (laporan yang terlewat), tanpa pemilih tanggal bebas. Galat muat ≠ nol.
+ * Caller: form-kontrol/page.tsx (shell tab, default export `({ scope })`).
+ * Dependensi: GET/POST /api/form-kontrol/reports; ../shared (Scope, jamWita, useIzinFk); ../lapangan (bacaFk, kirimFk, useHariBeku,
+ *   kemarinDari); components/fiori/*; lib/rekapan-nota/ui (tanggalPanjang).
+ * Main Functions: TabLaporan, keLaporan.
+ * Side Effects: HTTP GET laporan hari ini + kemarin; POST laporan {salesCode, date, tindakLanjut} (payload sama dengan kode lama) lalu
+ *   muat ulang.
+ *
+ * Server menghitung ulang kelima angka saat laporan dikirim; sebelum dikirim GET mengembalikan angka LIVE (baris sintetis,
+ * submittedAt null). Laporan yang sudah terkirim tidak dikirim ulang dari layar ini (sama dengan tombol "Sudah Disubmit" lama).
+ * "Hari ini" dibekukan saat layar dibuka: lewat 00.00 tindak lanjut yang sedang diketik tidak hilang (strip menawarkan hari baru).
+ */
 "use client";
 
-// Laporan Wajib Salesman — SummaryCard grid responsif grid-cols-2 sm:grid-cols-3 lg:grid-cols-5.
+import { useCallback, useId, useState, type ReactNode } from "react";
+import { CalendarDays, Send } from "lucide-react";
+import { Button, EmptyState, ErrorState, MessageStrip, Section, Skeleton, VariantNote } from "@/components/fiori/core";
+import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
+import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
+import { type Scope, jamWita, useIzinFk } from "../shared";
+import { bacaFk, kemarinDari, kirimFk, useHariBeku } from "../lapangan";
 
-import { useEffect, useState } from "react";
-import { FileText, AlertTriangle, Loader2, Save, CheckCircle2 } from "lucide-react";
-import { toast } from "sonner";
-import { type Scope, SectionTitle, SummaryCard } from "../shared";
+type Laporan = {
+    totalJks: number; order: number; aktif: number; notOrder: number; notVisited: number;
+    tindakLanjut: string; submittedAt: string | null; spvAck: boolean; spvAckAt: string | null;
+};
+/** `kemarin` = "galat" bila laporan kemarin tidak terbaca (laporan hari ini tetap bisa dikirim). */
+type Data = { hari: Laporan | null; kemarin: Laporan | null | "galat" };
+type Pilih = "hari" | "kemarin";
+
+const angka = (v: unknown) => (typeof v === "number" ? v : Number(v) || 0);
+
+function keLaporan(d: Record<string, unknown>): Laporan | null {
+    const row = (Array.isArray(d.rows) ? d.rows[0] : null) as Record<string, unknown> | null;
+    if (!row) return null;
+    return {
+        totalJks: angka(row.totalTokoJks), order: angka(row.totalOrder), aktif: angka(row.totalActive),
+        notOrder: angka(row.totalNotOrder), notVisited: angka(row.totalNotVisited),
+        tindakLanjut: (row.tindakLanjut as string) ?? "",
+        submittedAt: (row.submittedAt as string) ?? null,
+        spvAck: Boolean(row.spvAck), spvAckAt: (row.spvAckAt as string) ?? null,
+    };
+}
 
 export default function TabLaporan({ scope }: { scope: Scope }) {
-    const [tindakLanjut, setTindakLanjut] = useState("");
-    const [saving, setSaving] = useState(false);
-    const [loading, setLoading] = useState(true);
-    const [submitted, setSubmitted] = useState(false);
-    const [summary, setSummary] = useState({ totalJks: 0, order: 0, aktif: 0, notOrder: 0, notVisited: 0 });
-    const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
-
+    const judulId = useId();
     const salesCode = scope.salesCode ?? "";
+    const beku = useHariBeku();
+    const kemarin = kemarinDari(beku.hari);
+    const [pilih, setPilih] = useState<Pilih>("hari");
+    const tanggal = pilih === "hari" ? beku.hari : kemarin;
+    const [dialog, setDialog] = useState(false);
+    // Tanggal yang terkirim sesi ini: menutup jeda antara POST berhasil dan muat ulang (tombol tidak boleh aktif lagi).
+    const [terkirimSesi, setTerkirimSesi] = useState<Record<string, boolean>>({});
+    // Ketikan per tanggal; tetap ada saat berpindah Hari ini/Kemarin atau saat hari berganti.
+    const [ketikan, setKetikan] = useState<Record<string, string>>({});
+    const tanpaIzin = useIzinFk("submit");
 
-    useEffect(() => {
-        if (!salesCode) { setLoading(false); return; }
-        fetch(`/api/form-kontrol/reports?salesCode=${encodeURIComponent(salesCode)}&date=${selectedDate}`)
-            .then(r => r.json())
-            .then(data => {
-                const row = data.rows?.[0];
-                if (row) {
-                    setSummary({
-                        totalJks: (row.totalTokoJks as number) ?? 0,
-                        order: (row.totalOrder as number) ?? 0,
-                        aktif: (row.totalActive as number) ?? 0,
-                        notOrder: (row.totalNotOrder as number) ?? 0,
-                        notVisited: (row.totalNotVisited as number) ?? 0,
-                    });
-                    setTindakLanjut((row.tindakLanjut as string) ?? "");
-                    setSubmitted(!!row.submittedAt);
-                } else {
-                    setSubmitted(false);
-                }
-            })
-            .catch(() => {})
-            .finally(() => setLoading(false));
-    }, [salesCode, selectedDate]);
+    const loader = useCallback(async (): Promise<Load<Data>> => {
+        if (!salesCode) return { status: "siap", data: { hari: null, kemarin: null } };
+        const url = (d: string) => `/api/form-kontrol/reports?salesCode=${encodeURIComponent(salesCode)}&date=${d}`;
+        const [h, k] = await Promise.all([bacaFk(url(beku.hari), keLaporan), bacaFk(url(kemarin), keLaporan)]);
+        if (h.status !== "siap") return { status: "galat", error: h.error };
+        return { status: "siap", data: { hari: h.data ?? null, kemarin: k.status === "siap" ? k.data ?? null : "galat" } };
+    }, [salesCode, beku.hari, kemarin]);
+    const [load, muatUlang] = useLoad(loader);
+    const data = load.data;
+    const kemarinGalat = data?.kemarin === "galat";
+    const lapKemarin = data && data.kemarin !== "galat" ? data.kemarin : null;
+    const lap = pilih === "hari" ? data?.hari ?? null : lapKemarin;
+    const terkirim = Boolean(lap?.submittedAt) || Boolean(terkirimSesi[tanggal]);
 
-    async function handleSubmit() {
-        if (!tindakLanjut.trim()) { toast.error("Tindak lanjut wajib diisi"); return; }
-        if (!salesCode) { toast.error("Sales code tidak ditemukan — pastikan profil salesman sudah terdaftar"); return; }
-        setSaving(true);
-        try {
-            const res = await fetch("/api/form-kontrol/reports", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ salesCode, date: selectedDate, tindakLanjut }),
-            });
-            if (!res.ok) throw new Error("Gagal submit laporan");
-            toast.success("Laporan harian berhasil disubmit ke SPV");
-            setSubmitted(true);
-            const reload = await fetch(`/api/form-kontrol/reports?salesCode=${encodeURIComponent(salesCode)}&date=${selectedDate}`);
-            const reloadData = await reload.json();
-            const row = reloadData.rows?.[0];
-            if (row) {
-                setSummary({
-                    totalJks: (row.totalTokoJks as number) ?? 0,
-                    order: (row.totalOrder as number) ?? 0,
-                    aktif: (row.totalActive as number) ?? 0,
-                    notOrder: (row.totalNotOrder as number) ?? 0,
-                    notVisited: (row.totalNotVisited as number) ?? 0,
-                });
-            }
-        } catch (err: unknown) {
-            toast.error(err instanceof Error ? err.message : "Gagal submit");
-        } finally { setSaving(false); }
+    const teks = ketikan[tanggal] ?? lap?.tindakLanjut ?? "";
+    const draf = Object.entries(ketikan).some(([t, v]) => !terkirimSesi[t] && v !== ((t === beku.hari ? data?.hari : lapKemarin)?.tindakLanjut ?? ""));
+    useUnsavedGuard(draf);
+    const kemarinTertunda = Boolean(lapKemarin && !lapKemarin.submittedAt && !terkirimSesi[kemarin] && lapKemarin.totalJks > 0);
+
+    const terkunci = !salesCode ? "Profil salesman belum terdaftar" : tanpaIzin ? tanpaIzin
+        : load.status !== "siap" ? (load.status === "galat" ? "Laporan gagal dimuat; muat ulang dulu" : "Menunggu laporan dimuat")
+            : !lap ? "Laporan tanggal ini tidak terbaca"
+                : terkirim ? "Laporan tanggal ini sudah terkirim"
+                    : !teks.trim() ? "Isi tindak lanjut dulu" : undefined;
+
+    async function kirim() {
+        const tgl = tanggal;
+        await kirimFk("/api/form-kontrol/reports", { salesCode, date: tgl, tindakLanjut: teks }, { ulangAman: true });
+        setDialog(false);
+        setTerkirimSesi((s) => ({ ...s, [tgl]: true }));
+        setKetikan((k) => { const n = { ...k }; delete n[tgl]; return n; });
+        muatUlang();
     }
 
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center py-16 text-slate-400 gap-2">
-                <Loader2 size={18} className="animate-spin" /> Memuat laporan...
+    let isi: ReactNode;
+    if (!salesCode) {
+        isi = <EmptyState title="Akun belum tertaut ke profil salesman"
+            message="Laporan harian dikirim oleh salesman. SPV membaca dan menandai laporan di Dashboard SPV. Hubungi admin bila akun ini seharusnya salesman." />;
+    } else if (load.status === "galat" && !data) {
+        isi = <ErrorState title="Laporan gagal dimuat" message={`${load.error} Angka tidak ditampilkan agar tidak terbaca sebagai nol.`} onRetry={muatUlang} />;
+    } else if (!data) {
+        isi = <Skeleton rows={4} label="Memuat laporan" />;
+    } else if (!lap) {
+        isi = <ErrorState title="Laporan gagal dimuat"
+            message={pilih === "kemarin" && kemarinGalat ? "Laporan kemarin tidak terbaca. Angka tidak ditampilkan agar tidak terbaca sebagai nol." : "Server tidak mengirim ringkasan."}
+            onRetry={muatUlang} />;
+    } else {
+        isi = (
+            <div className={load.status === "memuat" ? "fi-busy grid gap-4" : "grid gap-4"} aria-busy={load.status === "memuat" || undefined}>
+                {load.status === "galat" && (
+                    <MessageStrip tone="neg" title="Gagal memuat ulang.">
+                        {load.error} Yang tampil adalah hasil sebelumnya.{" "}
+                        <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatUlang}>Coba lagi</button>
+                    </MessageStrip>
+                )}
+                {terkirim && (
+                    <MessageStrip tone="pos" title={`Laporan harian terkirim ke SPV${lap.submittedAt ? ` ${jamWita(lap.submittedAt)}` : ""}.`}>
+                        {lap.spvAck ? `Sudah dibaca SPV${lap.spvAckAt ? ` ${jamWita(lap.spvAckAt)}` : ""}.` : "Menunggu dibaca SPV."}
+                    </MessageStrip>
+                )}
+                <div className="fi-kcards">
+                    {([["Total toko JKS", lap.totalJks], ["Order", lap.order], ["Aktif", lap.aktif], ["Tidak order", lap.notOrder], ["Tidak dikunjungi", lap.notVisited]] as const).map(([l, v]) => (
+                        <div key={l} className="fi-kc"><span>{l}</span><b className="fi-tnum">{v}</b></div>
+                    ))}
+                </div>
+                <p className="fi-small fi-muted">{terkirim ? "Angka saat laporan dikirim." : "Angka terisi otomatis dan langsung dari Form AO; dihitung ulang server saat dikirim."}</p>
+                <Section title="Tindak lanjut" subtitle="wajib">
+                    <div className="fi-sect-in">
+                        <FormField label="Tindak lanjut untuk SPV" required help="Toko yang belum order, rencana kunjungan ulang, eskalasi ke SPV, dll.">
+                            {(a) => <textarea {...a} className="fi-input" rows={5} readOnly={terkirim} value={teks}
+                                onChange={(e) => { const tgl = tanggal; const v = e.target.value; setKetikan((k) => ({ ...k, [tgl]: v })); }} />}
+                        </FormField>
+                        {draf && <p className="fi-draft" role="status">Tindak lanjut belum dikirim.</p>}
+                        <div className="fi-btnrow">
+                            <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} disabled={Boolean(terkunci)} disabledReason={terkunci} onClick={() => setDialog(true)}>
+                                {terkirim ? "Sudah terkirim" : "Kirim laporan ke SPV…"}
+                            </Button>
+                            {terkunci && !terkirim && <span className="fi-small fi-why">{terkunci}</span>}
+                        </div>
+                    </div>
+                </Section>
             </div>
         );
     }
 
     return (
-        <div className="space-y-4">
-            <SectionTitle icon={FileText} no={5} title="Laporan Wajib Salesman"
-                desc="Ringkasan sore — angka terisi otomatis & live dari Form AO, lengkapi tindak lanjut" />
-
-            <div className="flex items-center gap-2 bg-[#1a1c23]/60 border border-white/10 rounded-xl px-4 py-3">
-                <span className="text-sm text-slate-400">Tanggal laporan</span>
-                <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
-                    className="bg-black/40 border border-white/10 rounded-lg text-xs text-white px-2 py-1.5" />
+        <section aria-labelledby={judulId} className="grid gap-4">
+            <div className="grid gap-1">
+                <h2 id={judulId} className="fi-title-2">Laporan harian</h2>
+                <p className="fi-small fi-muted flex flex-wrap items-center gap-x-2">
+                    <CalendarDays className="fi-icon" aria-hidden /><span>{tanggalPanjang(tanggal)} · WITA</span>
+                    {salesCode && <span>· <span className="fi-mono">{salesCode}</span>{scope.salesName ? ` ${scope.salesName}` : ""}</span>}
+                </p>
             </div>
-
-            {submitted && (
-                <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-4 py-2.5 text-emerald-400 text-sm">
-                    <CheckCircle2 size={15} /> Laporan berhasil disubmit. Menunggu acknowledge SPV.
+            {salesCode && (
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Tanggal laporan">
+                    {([["hari", "Hari ini"], ["kemarin", "Kemarin"]] as const).map(([k, label]) => (
+                        <Button key={k} variant={pilih === k ? "primary" : "secondary"} aria-pressed={pilih === k} onClick={() => setPilih(k)}>{label}</Button>
+                    ))}
                 </div>
             )}
-
-            {!salesCode && (
-                <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-2.5 text-amber-400 text-sm">
-                    <AlertTriangle size={15} /> Profil salesman belum terdaftar. Hubungi admin untuk mengisi data.
-                </div>
+            {beku.berganti && (
+                <MessageStrip tone="warn" title="Tanggal sudah berganti.">
+                    Laporan dan isian yang tampil masih untuk {tanggalPanjang(beku.hari)}; tidak ada yang dibuang.{" "}
+                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => { setPilih("hari"); beku.pakaiHariBaru(); }}>Muat {tanggalPanjang(beku.hariBaru)}</button>
+                </MessageStrip>
             )}
-
-            {/* 5 kartu ringkasan — 2 kolom mobile, 3 tablet, 5 desktop */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                <SummaryCard label="Total Toko JKS" value={summary.totalJks} />
-                <SummaryCard label="Order" value={summary.order} color="text-emerald-400" />
-                <SummaryCard label="Aktif" value={summary.aktif} color="text-blue-400" />
-                <SummaryCard label="Tidak Order" value={summary.notOrder} color="text-rose-400" />
-                <SummaryCard label="Tidak Dikunjungi" value={summary.notVisited} color="text-slate-400" />
-            </div>
-
-            <div className="bg-[#1a1c23]/60 border border-white/10 rounded-xl p-4 space-y-3">
-                <h3 className="text-sm font-semibold text-white">Tindak Lanjut</h3>
-                <textarea
-                    value={tindakLanjut}
-                    onChange={e => setTindakLanjut(e.target.value)}
-                    placeholder="Uraikan tindak lanjut untuk toko yang belum order, rencana kunjungan ulang, eskalasi ke SPV, dll..."
-                    rows={5}
-                    className={`w-full bg-black/30 border rounded-lg text-sm text-white px-3 py-2 placeholder-slate-500 resize-none ${!tindakLanjut.trim() ? "border-rose-500/40" : "border-white/10"}`}
-                />
-                <div className="flex justify-end">
-                    <button onClick={handleSubmit} disabled={saving || submitted || !salesCode}
-                        className="flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-semibold">
-                        {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                        {submitted ? "Sudah Disubmit" : "Submit Laporan ke SPV"}
-                    </button>
-                </div>
-            </div>
-        </div>
+            {pilih === "hari" && kemarinTertunda && (
+                <MessageStrip tone="warn" title="Laporan kemarin belum terkirim.">
+                    {tanggalPanjang(kemarin)} belum dilaporkan ke SPV.{" "}
+                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => setPilih("kemarin")}>Buka laporan kemarin</button>
+                </MessageStrip>
+            )}
+            {isi}
+            <VariantNote bl="BL-28">Tanggal laporan = hari ini atau kemarin dalam WITA menurut jam ponsel. Usulan: server yang menetapkan tanggal laporan.</VariantNote>
+            {lap && (
+                <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`Kirim laporan harian ${pilih === "hari" ? "hari ini" : "kemarin"} ke SPV?`}
+                    description="Laporan tanggal ini dikirim sekali; kelima angka dihitung ulang server dari status kunjungan terakhir."
+                    facts={[
+                        ["Tanggal", `${tanggalPanjang(tanggal)} · WITA`],
+                        ["Total toko JKS", String(lap.totalJks)],
+                        ["Order · aktif", `${lap.order} · ${lap.aktif}`],
+                        ["Tidak order", String(lap.notOrder)],
+                        ["Tidak dikunjungi", String(lap.notVisited)],
+                        ["Tindak lanjut", teks.trim().length > 80 ? `${teks.trim().slice(0, 80)}…` : teks.trim()],
+                    ]}
+                    confirmLabel="Kirim laporan" onConfirm={kirim} />
+            )}
+        </section>
     );
 }

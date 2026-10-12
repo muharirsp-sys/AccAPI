@@ -1,109 +1,161 @@
+/*
+ * Tujuan: Tab Briefing Wajib SPV (Fiori S5, it05): sesi pagi/sore, agenda (checkbox asli dalam baris 44 px), toko dibahas,
+ *   penyebab, solusi; simpan lewat dialog. Menampilkan briefing yang sudah tersimpan hari ini (GET briefing) supaya simpan ulang
+ *   tidak diam-diam menambah catatan ganda. Tanggal = hari ini WITA.
+ * Caller: form-kontrol/FormKontrol.tsx (tab "briefing").
+ * Dependensi: ../shared (Scope, BRIEFING_AGENDA, hariIniWita, jamWita, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive},
+ *   lib/rekapan-nota/ui (tanggalPendek).
+ * Main Functions: TabBriefing (default).
+ * Side Effects: GET /api/form-kontrol/briefing?spvName&date; POST /api/form-kontrol/briefing (payload sama dengan hari ini).
+ */
 "use client";
 
-// Briefing Wajib SPV — agenda item selesai: text-slate-400 line-through
-// (lebih terbaca daripada emerald + opacity-60). Tap target min-h-[40px].
+import { useCallback, useState } from "react";
+import { Pencil, Save } from "lucide-react";
+import { Button, MessageStrip, Section, Skeleton } from "@/components/fiori/core";
+import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
+import { tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { BRIEFING_AGENDA, TulisTidakPasti, ambilFk, hariIniWita, jamWita, tulisFk, useIzinFk, type Scope } from "../shared";
 
-import { useEffect, useState } from "react";
-import { Users, Loader2, Save, CheckCircle2 } from "lucide-react";
-import { toast } from "sonner";
-import { type Scope, BRIEFING_AGENDA, SectionTitle } from "../shared";
+type Sesi = "pagi" | "sore";
+type Tersimpan = { session: string; createdAt: string | null };
+const KOSONG = { agenda: [false, false, false, false, false], toko: "", penyebab: "", solusi: "" };
+const LABEL: Record<Sesi, string> = { pagi: "Pagi", sore: "Sore" };
 
 export default function TabBriefing({ scope }: { scope: Scope }) {
-    const [briefingSession, setBriefingSession] = useState<"pagi" | "sore">("pagi");
-    const [agenda, setAgenda] = useState<boolean[]>(Array(5).fill(false));
-    const [tokoDialas, setTokoDialas] = useState("");
-    const [penyebab, setPenyebab] = useState("");
-    const [solusi, setSolusi] = useState("");
-    const [saving, setSaving] = useState(false);
-    const [selectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+    const izin = useIzinFk("submit");
+    const [date] = useState(hariIniWita);
+    const spvName = scope.spvName ?? scope.salesName ?? "";
+    const [sesi, setSesi] = useState<Sesi>("pagi");
+    const [isi, setIsi] = useState(KOSONG);
+    const [dasar, setDasar] = useState(KOSONG); // isian terakhir yang tersimpan (atau kosong) — pembanding draf
+    const [dialog, setDialog] = useState(false);
+    const [sukses, setSukses] = useState("");
+    // Endpoint briefing selalu INSERT: setelah jawaban tidak pasti, simpan dikunci sampai daftar tersimpan dimuat ulang.
+    const [tidakPasti, setTidakPasti] = useState(false);
 
-    useEffect(() => { setAgenda(Array(5).fill(false)); }, [briefingSession]);
+    const [load, muatUlang] = useLoad(useCallback(async (): Promise<Load<Tersimpan[]>> => {
+        if (!spvName) return { status: "siap", data: [] };
+        return ambilFk(`/api/form-kontrol/briefing?${new URLSearchParams({ spvName, date })}`,
+            (j) => (j.rows ?? []) as Tersimpan[], "Briefing tersimpan hari ini belum berhasil dimuat.");
+    }, [spvName, date]));
 
-    async function handleSave() {
-        const spvName = scope.spvName ?? scope.salesName ?? "";
-        if (!spvName) { toast.error("Nama SPV tidak ditemukan"); return; }
-        setSaving(true);
-        try {
-            const agendaItems = BRIEFING_AGENDA[briefingSession];
-            const res = await fetch("/api/form-kontrol/briefing", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    spvName,
-                    date: selectedDate,
-                    session: briefingSession,
-                    agenda: agendaItems.filter((_, i) => agenda[i]),
-                    tokoDialas,
-                    penyebab,
-                    solusi,
-                }),
-            });
-            if (!res.ok) throw new Error("Gagal simpan briefing");
-            toast.success(`Briefing ${briefingSession} berhasil disimpan`);
-        } catch (err: unknown) {
-            toast.error(err instanceof Error ? err.message : "Gagal simpan");
-        } finally { setSaving(false); }
-    }
+    const dirty = JSON.stringify(isi) !== JSON.stringify(dasar);
+    useUnsavedGuard(dirty);
+    const items = BRIEFING_AGENDA[sesi];
+    const selesai = isi.agenda.filter(Boolean).length;
+    const sesiIni = (load.data ?? []).filter((b) => b.session === sesi);
+    const terakhir = sesiIni.map((b) => b.createdAt).filter(Boolean).sort().at(-1) ?? null;
+    const blokir = izin
+        ?? (!spvName ? "Akun ini tidak tertaut ke nama SPV; briefing diisi oleh akun SPV." : undefined)
+        ?? (tidakPasti ? "Hasil simpan terakhir belum pasti; muat ulang untuk memeriksa sebelum menyimpan lagi." : undefined)
+        ?? (load.status !== "siap" ? "Briefing tersimpan belum termuat; simpan dikunci agar tidak tercatat ganda." : undefined);
+    const muatPeriksa = () => { setTidakPasti(false); muatUlang(); };
+
+    const gantiSesi = (s: Sesi) => {
+        // Seperti hari ini: ganti sesi mengosongkan centang agenda (agenda pagi ≠ sore); teks tetap.
+        setSesi(s);
+        setIsi((v) => ({ ...v, agenda: [...KOSONG.agenda] }));
+        setDasar((v) => ({ ...v, agenda: [...KOSONG.agenda] }));
+        setSukses("");
+    };
 
     return (
-        <div className="space-y-4">
-            <SectionTitle icon={Users} no={6} title="Briefing Wajib SPV"
-                desc="Tugas SPV bukan menerima laporan, tetapi mengendalikan lapangan" />
-
-            <div className="inline-flex bg-black/40 border border-white/10 rounded-xl p-1">
-                {(["pagi", "sore"] as const).map(s => (
-                    <button key={s} onClick={() => setBriefingSession(s)}
-                        className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all capitalize ${briefingSession === s ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}>
-                        {s}
-                    </button>
-                ))}
-            </div>
-
-            <div className="bg-[#1a1c23]/60 border border-white/10 rounded-xl p-4 space-y-4">
-                <h3 className="text-sm font-semibold text-white">Agenda Briefing {briefingSession === "pagi" ? "Pagi" : "Sore"}</h3>
-                <div className="space-y-2">
-                    {BRIEFING_AGENDA[briefingSession].map((item, i) => (
-                        <label key={i} className="flex items-center gap-2.5 cursor-pointer group min-h-[40px]">
-                            <button type="button"
-                                onClick={() => setAgenda(prev => prev.map((v, j) => j === i ? !v : v))}
-                                className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 transition-colors ${agenda[i] ? "bg-emerald-500 border-emerald-500" : "bg-black/30 border-white/20 group-hover:border-white/40"}`}>
-                                {agenda[i] && <CheckCircle2 size={11} className="text-white" />}
-                            </button>
-                            {/* done: slate-400 line-through — lebih terbaca dari emerald + opacity-60 */}
-                            <span className={`text-sm ${agenda[i] ? "text-slate-400 line-through" : "text-slate-200"}`}>{item}</span>
-                        </label>
-                    ))}
-                </div>
-
-                <div className="grid gap-3 pt-2 border-t border-white/10">
-                    <div>
-                        <label className="text-xs text-slate-400 block mb-1">Toko yang Dibahas</label>
-                        <input value={tokoDialas} onChange={e => setTokoDialas(e.target.value)}
-                            placeholder="Nama/kode toko yang dibahas..."
-                            className="w-full bg-black/30 border border-white/10 rounded-lg text-sm text-white px-3 py-2 placeholder-slate-500" />
+        <>
+            {!spvName && (
+                <MessageStrip tone="info" title="Briefing diisi oleh akun SPV.">Akun ini tidak tertaut ke nama SPV, jadi tidak bisa menyimpan briefing.</MessageStrip>
+            )}
+            {sukses && <MessageStrip tone="pos" title={sukses} onClose={() => setSukses("")} />}
+            {tidakPasti && (
+                <MessageStrip tone="warn" title="Hasil simpan terakhir belum pasti.">
+                    Briefing mungkin sudah tersimpan. Muat ulang untuk melihat jumlah yang tersimpan sebelum menyimpan lagi.{" "}
+                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatPeriksa}>Muat ulang</button>
+                </MessageStrip>
+            )}
+            <Section
+                title="Briefing Wajib SPV"
+                subtitle={`Tugas SPV bukan menerima laporan, tetapi mengendalikan lapangan · ${tanggalPendek(date)}`}
+                actions={dirty ? <span className="fi-draft"><Pencil className="fi-icon" aria-hidden />Draf belum disimpan</span> : undefined}
+            >
+                <div className="fi-sect-in">
+                    <div className="fi-segs" role="group" aria-label="Sesi briefing">
+                        {(["pagi", "sore"] as const).map((s) => (
+                            <button key={s} type="button" aria-pressed={sesi === s} style={{ height: 44, paddingInline: 20 }} onClick={() => gantiSesi(s)}>{LABEL[s]}</button>
+                        ))}
                     </div>
-                    <div>
-                        <label className="text-xs text-slate-400 block mb-1">Penyebab</label>
-                        <textarea value={penyebab} onChange={e => setPenyebab(e.target.value)} rows={2}
-                            placeholder="Penyebab utama toko tidak order / tidak dikunjungi..."
-                            className="w-full bg-black/30 border border-white/10 rounded-lg text-sm text-white px-3 py-2 placeholder-slate-500 resize-none" />
-                    </div>
-                    <div>
-                        <label className="text-xs text-slate-400 block mb-1">Solusi & Tindak Lanjut</label>
-                        <textarea value={solusi} onChange={e => setSolusi(e.target.value)} rows={2}
-                            placeholder="Solusi yang disepakati dan tindak lanjut konkret..."
-                            className="w-full bg-black/30 border border-white/10 rounded-lg text-sm text-white px-3 py-2 placeholder-slate-500 resize-none" />
-                    </div>
-                </div>
+                    {load.status === "memuat" && !load.data ? <Skeleton rows={1} label="Memuat briefing tersimpan" />
+                        : load.status === "galat" ? (
+                            <MessageStrip tone="neg" title="Briefing tersimpan belum berhasil dimuat.">
+                                {(load.error ?? "").replace("Briefing tersimpan hari ini belum berhasil dimuat.", "").trim()} Belum diketahui apakah sesi ini sudah disimpan.{" "}
+                                <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatPeriksa}>Coba lagi</button>
+                            </MessageStrip>
+                        ) : spvName ? (
+                            <p className="fi-small fi-subtle">
+                                {(["pagi", "sore"] as const).map((s) => {
+                                    const n = (load.data ?? []).filter((b) => b.session === s).length;
+                                    return <span key={s}>{s === "sore" ? " · " : ""}{LABEL[s]}: {n ? `tersimpan ${n}×` : "belum disimpan"}</span>;
+                                })}
+                            </p>
+                        ) : null}
 
-                <div className="flex justify-end">
-                    <button onClick={handleSave} disabled={saving}
-                        className="flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-semibold">
-                        {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                        Simpan Briefing {briefingSession === "pagi" ? "Pagi" : "Sore"}
-                    </button>
+                    <fieldset className="grid gap-1">
+                        <legend className="fi-label">Agenda briefing {LABEL[sesi].toLowerCase()} ({selesai} dari {items.length})</legend>
+                        {items.map((item, i) => (
+                            <label key={item} className="fi-check" style={{ minHeight: 44 }}>
+                                <input type="checkbox" checked={isi.agenda[i]} style={{ width: 20, height: 20 }}
+                                    onChange={() => setIsi((v) => ({ ...v, agenda: v.agenda.map((x, j) => (j === i ? !x : x)) }))} />
+                                {item}
+                            </label>
+                        ))}
+                    </fieldset>
+
+                    <FormField label="Toko yang dibahas">{(a) => <input {...a} className="fi-input" value={isi.toko} onChange={(e) => setIsi((v) => ({ ...v, toko: e.target.value }))} placeholder="Nama/kode toko yang dibahas" />}</FormField>
+                    <FormField label="Penyebab">{(a) => <textarea {...a} className="fi-input" rows={2} value={isi.penyebab} onChange={(e) => setIsi((v) => ({ ...v, penyebab: e.target.value }))} placeholder="Penyebab utama toko tidak order / tidak dikunjungi" />}</FormField>
+                    <FormField label="Solusi & tindak lanjut">{(a) => <textarea {...a} className="fi-input" rows={2} value={isi.solusi} onChange={(e) => setIsi((v) => ({ ...v, solusi: e.target.value }))} placeholder="Solusi yang disepakati dan tindak lanjut konkret" />}</FormField>
+
+                    <div className="fi-btnrow">
+                        {blokir && <span className="fi-small fi-subtle">{blokir}</span>}
+                        <span className="fi-spacer" style={{ flex: 1 }} />
+                        <Button variant="primary" style={{ minHeight: 44 }} icon={<Save className="fi-icon" aria-hidden />} disabled={Boolean(blokir)} disabledReason={blokir}
+                            onClick={() => { setSukses(""); setDialog(true); }}>
+                            Simpan briefing {LABEL[sesi].toLowerCase()}
+                        </Button>
+                    </div>
                 </div>
-            </div>
-        </div>
+            </Section>
+            <ConfirmDialog
+                open={dialog}
+                onClose={() => setDialog(false)}
+                title={`Simpan briefing ${LABEL[sesi].toLowerCase()}?`}
+                facts={[
+                    ["SPV", spvName],
+                    ["Tanggal", tanggalPendek(date)],
+                    ["Agenda selesai", `${selesai} dari ${items.length}`],
+                    ["Toko dibahas", isi.toko || "—"],
+                    ...(sesiIni.length ? [["Sudah tersimpan", `${sesiIni.length}× (terakhir ${jamWita(terakhir)} WITA) — menyimpan lagi menambah catatan baru`] as [string, string]] : []),
+                ]}
+                confirmLabel="Simpan briefing"
+                confirmDisabled={blokir}
+                onConfirm={async () => {
+                    try {
+                        await tulisFk("/api/form-kontrol/briefing", {
+                            body: {
+                                spvName, date, session: sesi,
+                                agenda: items.filter((_, i) => isi.agenda[i]),
+                                tokoDialas: isi.toko, penyebab: isi.penyebab, solusi: isi.solusi,
+                            },
+                            gagal: "Briefing belum tersimpan.",
+                        });
+                    } catch (e) {
+                        if (e instanceof TulisTidakPasti) setTidakPasti(true);
+                        throw e;
+                    }
+                    setDialog(false);
+                    setDasar(isi);
+                    setSukses(`Briefing ${LABEL[sesi].toLowerCase()} tersimpan.`);
+                    muatUlang();
+                }}
+            />
+        </>
     );
 }

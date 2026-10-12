@@ -1,21 +1,25 @@
 /*
- * Tujuan: API admin untuk membaca daftar user internal + Access Group primer masing-masing.
- * Caller: `app/(dashboard)/admin/users/UserManagement.tsx`, `app/(dashboard)/admin/groups/GroupManagement.tsx`.
- * Dependensi: Better Auth session, Drizzle SQLite, schema `user`/`userGroup`/`accessGroup`, helper RBAC.
+ * Tujuan: API admin untuk membaca daftar user internal + SEMUA Access Group tiap user + grup utama efektif (BL-63, S7-1).
+ * Caller: `app/(dashboard)/admin/users/UserManagement.tsx`, `app/(dashboard)/admin/groups/GroupManagement.tsx`, Beranda
+ *   (`lib/beranda.ts` tile "User tanpa grup": `groupId` + `banned`).
+ * Dependensi: Better Auth session, Drizzle, schema `user`/`userGroup`/`accessGroup`, helper RBAC.
  * Main Functions: GET.
  * Side Effects: DB read-only.
- * Catatan: penulisan permission per-user (legacy) dihapus — satu pintu via
- *   app/api/admin/users/[id]/group/route.ts (set Access Group) atau /api/admin/groups (edit group).
+ * Izin: `users.manage` ATAU `users.view` (D-01 §E: users.view = daftar baca-saja). Kontrak: docs/handover/S7-KONTRAK-ADMIN-API.md §5.1.
+ * Catatan: `groupId`/`groupName` = field LAMA dipertahankan (grup utama efektif, selain itu grup pertama menurut nama) agar Beranda &
+ *   GroupManagement tidak berubah; layar baru memakai `groups[]` + `primaryGroupId`.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { user, userGroup, accessGroup } from "@/db/schema";
-import { requirePermission } from "@/lib/rbac/resolve";
+import { resolveRequestPermissions } from "@/lib/rbac/resolve";
+import { pilihUtama } from "@/lib/rbac/otorisasi";
 
 export async function GET(request: NextRequest) {
-    const gate = await requirePermission(request, "users.manage");
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
+    if (!gate.perms!.has("users.manage") && !gate.perms!.has("users.view")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const rows = await db
         .select({
@@ -26,20 +30,29 @@ export async function GET(request: NextRequest) {
             permissions: user.permissions,
             emailVerified: user.emailVerified,
             banned: user.banned,
+            banReason: user.banReason,
         })
         .from(user)
         .orderBy(asc(user.email));
 
-    // Group primer per user (model single-primary-group untuk dropdown Access Group).
     const groupRows = await db
-        .select({ userId: userGroup.userId, groupId: userGroup.groupId, groupName: accessGroup.name })
+        .select({ userId: userGroup.userId, id: userGroup.groupId, name: accessGroup.name, isPreset: accessGroup.isPreset, isPrimary: userGroup.isPrimary })
         .from(userGroup)
         .innerJoin(accessGroup, eq(userGroup.groupId, accessGroup.id))
         .orderBy(asc(accessGroup.name));
-    const groupByUser = new Map<string, { groupId: string; groupName: string }>();
-    for (const r of groupRows) if (!groupByUser.has(r.userId)) groupByUser.set(r.userId, { groupId: r.groupId, groupName: r.groupName });
+    const groupsByUser = new Map<string, Array<{ id: string; name: string; isPreset: boolean; isPrimary: boolean }>>();
+    for (const { userId, ...g } of groupRows) groupsByUser.set(userId, [...(groupsByUser.get(userId) ?? []), g]);
 
     return NextResponse.json({
-        users: rows.map((r) => ({ ...r, groupId: groupByUser.get(r.id)?.groupId ?? null, groupName: groupByUser.get(r.id)?.groupName ?? null })),
+        users: rows.map((r) => {
+            const groups = groupsByUser.get(r.id) ?? [];
+            const utama = pilihUtama(groups);
+            const lama = utama ?? groups[0] ?? null;
+            return {
+                ...r, groups,
+                primaryGroupId: utama?.id ?? null, primaryGroupName: utama?.name ?? null,
+                groupId: lama?.id ?? null, groupName: lama?.name ?? null,
+            };
+        }),
     });
 }

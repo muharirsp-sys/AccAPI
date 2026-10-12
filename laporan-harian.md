@@ -46,7 +46,8 @@ regenerasi dari sheet GOLONGAN/JENIS PRODUK ("2. To Format") + Mapping ("2.3").
 ```bash
 cd AccAPI/_github_clean
 DATABASE_URL=postgres://... npx drizzle-kit push
-DATABASE_URL=postgres://... node --experimental-strip-types scripts/seed-rbac-presets.ts
+# MENGHAPUS & mengisi ulang izin grup preset (izin manual via UI hilang) — jangan untuk produksi tanpa audit D-17:
+RBAC_PRESET_SYNC=reset-preset-groups DATABASE_URL=postgres://... node --experimental-strip-types scripts/seed-rbac-presets.ts
 DATABASE_URL=postgres://... node scripts/sync-insentif-hierarchy.mjs
 # pastikan python_backend punya calamine (baca Excel cepat):
 pip install python-calamine pyexcelerate

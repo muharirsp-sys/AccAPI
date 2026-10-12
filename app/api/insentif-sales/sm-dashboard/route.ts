@@ -18,7 +18,7 @@ import { getTargetsForPeriod, computeMtdByPrinciple } from "@/lib/insentif-sales
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
 import { calculateInsentifSM, type SmSalesRow } from "@/lib/insentif-sm-calc";
-import { getSmBerhak, getKonstanta } from "@/lib/insentif-settings";
+import { getSmBerhak, getKonstantaBerlabel } from "@/lib/insentif-settings";
 import type { StatusInsentif } from "@/lib/insentif-sales-calc";
 
 export async function GET(req: NextRequest) {
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
     const month = parseInt(searchParams.get("month") ?? String(now.getMonth() + 1), 10);
     const year = parseInt(searchParams.get("year") ?? String(now.getFullYear()), 10);
 
-    const [rawTargets, realByPrinciple, spvAssignments, smAssignments, scope, smBerhak, konstanta] = await Promise.all([
+    const [rawTargets, realByPrinciple, spvAssignments, smAssignments, scope, smBerhak, { konstanta, konstantaSumber }] = await Promise.all([
         getTargetsForPeriod(month, year),
         computeMtdByPrinciple(month, year),
         db.select().from(spvSalesAssignment),
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
         // Daftar SM yang ikut skema kini setelan, bukan konstanta — pergantian SM tidak
         // perlu deploy. Gagal baca jatuh ke bawaan, bukan ke daftar kosong.
         getSmBerhak(),
-        getKonstanta(),
+        getKonstantaBerlabel(),
     ]);
 
     const assignedSpvOf = new Map(spvAssignments.map((a) => [a.salesCode, a.spvName]));
@@ -69,5 +69,5 @@ export async function GET(req: NextRequest) {
         ...calculateInsentifSM(smName, smRows, smBerhak, konstanta),
     }));
 
-    return NextResponse.json({ month, year, rows, konstanta });
+    return NextResponse.json({ month, year, rows, konstanta, konstantaSumber });
 }

@@ -9,6 +9,8 @@ import * as Sentry from "@sentry/nextjs";
 
 Sentry.init({
   dsn: "https://6ed2d4438f3ed0d1d40afb280b44a746@o4511749112201216.ingest.us.sentry.io/4511749120524288",
+  // Uji sintetis lokal (AM-040/E2E) tidak boleh mengirim event ke project produksi.
+  enabled: process.env.NEXT_PUBLIC_SENTRY_DISABLED !== "1",
 
   // ponytail: 5% cukup untuk menemukan bottleneck tanpa menambah beban browser/kuota secara berlebihan.
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.05 : 0,

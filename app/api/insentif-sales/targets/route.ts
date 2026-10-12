@@ -92,7 +92,10 @@ export async function POST(req: NextRequest) {
 
     // Angka nominal: tolak NaN/Infinity/negatif. Tanpa ini, Infinity tersimpan lalu
     // "konstanta − Infinity" ter-floor jadi 0 → insentif hilang tanpa error ke Finance.
-    const finiteNonNeg = (v: unknown) => Number.isFinite(Number(v)) && Number(v) >= 0;
+    // AM-043 (D.21): WAJIB number — null (NaN sel Excel setelah JSON.stringify), "" dan "12"
+    // bukan angka sah, dan field target yang HILANG tidak boleh jatuh ke DEFAULT 0 kolom.
+    // Hanya splmValue yang opsional (tidak dikirim = 0, kebijakan lama).
+    const finiteNonNeg = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0;
     const NUMERIC_FIELDS: Array<[keyof TargetInput, string]> = [
         ["targetValue", "Target Value"], ["targetEc", "Target EC"],
         ["targetAo", "Target AO"], ["targetIa", "Target IA"], ["splmValue", "SPLM Value"],
@@ -120,7 +123,7 @@ export async function POST(req: NextRequest) {
         }
         for (const [field, label] of NUMERIC_FIELDS) {
             const raw = t[field];
-            if (raw === undefined || raw === null) continue;
+            if (field === "splmValue" && raw === undefined) continue;
             if (!finiteNonNeg(raw)) {
                 return NextResponse.json(
                     { error: `Baris ${t.salesCode}/${t.principle}: ${label} tidak valid (${String(raw)}).` },

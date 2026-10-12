@@ -15,15 +15,18 @@ import sys
 from pathlib import Path
 
 SRC = Path(__file__).parent / "routers" / "payments.py"
+# AM-012: sejak load_payments_db mengembalikan salinan per request, SETIAP penulis ledger wajib
+# memegang lock yang sama — dulu objek cache bersama menyamarkan lost update di route tanpa lock.
+WRITERS = [SRC] + [Path(__file__).parent / p for p in ("routers/finance.py", "routers/sppd.py", "main.py")]
 BLOCKING = ("pd.read_excel", "save_payments_db", "load_payments_db", "write_invoice_excel", "shutil.copy2")
 
 
-def scan():
+def scan(src=SRC):
     """Kembalikan (nama_fungsi, jenis, baris, teks) per baris beserta status lock."""
     out = []
     kind = name = None
     locked = False
-    for lineno, line in enumerate(SRC.read_text(encoding="utf-8").split("\n"), 1):
+    for lineno, line in enumerate(src.read_text(encoding="utf-8").split("\n"), 1):
         m = re.match(r"(async def|def) (\w+)", line)
         if m:
             kind, name, locked = m.group(1), m.group(2), False
@@ -46,12 +49,13 @@ def test_no_blocking_call_directly_in_async_endpoint():
 
 
 def test_every_save_is_under_the_db_lock():
-    """save_payments_db harus dipanggil sambil memegang _PAYMENTS_DB_LOCK."""
+    """save_payments_db harus dipanggil sambil memegang _PAYMENTS_DB_LOCK — di semua penulis ledger."""
     bad = [
-        (lineno, name, line.strip())
-        for name, kind, locked, lineno, line in scan()
-        if "save_payments_db" in line
-        and "to_thread, save_payments_db" in line  # hanya call site, bukan baris import
+        (src.name, lineno, name, line.strip())
+        for src in WRITERS
+        for name, kind, locked, lineno, line in scan(src)
+        if ("save_payments_db(" in line or "to_thread, save_payments_db" in line)  # call site, bukan import/def
+        and not line.lstrip().startswith(("def ", "#"))
         and not locked
     ]
     assert not bad, "save tanpa lock (risiko lost update):\n" + "\n".join(map(str, bad))

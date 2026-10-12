@@ -4,7 +4,7 @@
    bisa diperiksa tidak boleh pernah berstatus cocok. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { jenisTemuan, normalizePercentChain, readAccurateInvoice, sidikTemuan, terapkanPenjelasan, verifyInvoice } from "./invoice-verify.ts";
+import { jenisTemuan, normalizePercentChain, readAccurateInvoice, sidikTemuan, terapkanPenjelasan, verifyInvoice, kandidatCache } from "./invoice-verify.ts";
 import type { InvoicePayload } from "./accurate-invoice-write.ts";
 
 /** Bentuk nyata faktur uji INV/2609/KN00403 (2026-09-12), diringkas ke field yang diperiksa. */
@@ -330,4 +330,20 @@ test("sales per baris: diperiksa hanya bila dikirim; dibuang Accurate = temuan j
         .findings.some((f) => f.field === "sales baris (salesmanListNumber)"));
     // Faktur lama tanpa field ini tidak dituduh.
     assert.equal(verifyInvoice(base, accurate()).status, "cocok");
+});
+
+// S6-0d butir 12 (R4): calon faktur dicari dengan tanggal yang BENAR-BENAR dikirim (payload.transDate —
+// tanggal faktur pilihan disimpan di klaim), bukan tanggal SO; pasangan per pelanggan, bukan perkalian silang.
+test("kandidat cache: tanggal dari payload.transDate, dikelompokkan per pelanggan", () => {
+    const k = kandidatCache([
+        { customerNo: "C-1", orderDate: "2026-10-01", accurateId: "", payload: { transDate: "05/10/2026" } },
+        { customerNo: "C-1", orderDate: "2026-10-02", accurateId: "77", payload: { transDate: "05/10/2026" } },
+        { customerNo: "C-2", orderDate: "2026-10-03", accurateId: "x", payload: { transDate: "" } },  // payload lama tanpa tanggal -> tanggal SO
+        { customerNo: "", orderDate: "2026-10-03", accurateId: "", payload: {} },
+    ]);
+    assert.deepEqual(k.ids, [77]);
+    assert.deepEqual(k.perPelanggan, [
+        { customerNo: "C-1", transDates: ["05/10/2026"] },
+        { customerNo: "C-2", transDates: ["03/10/2026"] },
+    ]);
 });

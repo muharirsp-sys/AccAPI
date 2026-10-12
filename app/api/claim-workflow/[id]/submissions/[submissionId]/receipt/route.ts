@@ -22,6 +22,7 @@ import {
     isPathInsideClaimDocumentRoot,
     requireClaimSession,
     writeClaimAudit,
+    lockClaimWorkflow,
 } from "@/lib/claim-workflow";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
@@ -124,6 +125,7 @@ export async function POST(_request: Request, context: Context) {
         let workflowMirror = false;
         try {
             await db.transaction(async (tx) => {
+                await lockClaimWorkflow(tx, id); // AM-022: satu urutan lock (workflow dulu)
                 const [submissionFresh] = await tx
                     .select()
                     .from(claimSubmission)

@@ -18,8 +18,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accurateEmployee, invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
-import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { groupCandidates, type BatchLine, type SkippedSo } from "@/lib/principal-invoice";
+import { antrekan, pencariPenekan } from "@/lib/invoice-outbox-actions";
+import { pernahDibuang } from "@/lib/invoice-outbox-event";
+import { resolveRequestPermissions } from "@/lib/rbac/resolve";
+import { groupCandidates, invoiceKey, type BatchLine, type SkippedSo } from "@/lib/principal-invoice";
 import { buildInvoicePayload, type InvoicePayload } from "@/lib/accurate-invoice-write";
 import { accurateUnits } from "@/lib/accurate-units";
 import { resolveOrderBranch } from "@/lib/order-branch";
@@ -34,9 +36,13 @@ async function loadBatch(id: string) {
     return { batch, rows };
 }
 
-/** Status antrean untuk satu batch: dilihat dari kunci SO-nya, bukan dari kolom baru. */
+/**
+ * Status antrean untuk satu batch: dilihat dari kunci SO-nya, bukan dari kolom baru. Kuncinya dari SEMUA nomor SO batch (BL-21):
+ * SO yang sudah antre/terposting lalu ditinjau lagi (Cabut, Segarkan harga, validasi ulang) bukan kandidat lagi, tetapi barisnya
+ * di Antrean Faktur tetap ada — tanpa itu layar menganggap batch bebas dihapus/diganti.
+ */
 export async function GET(request: NextRequest) {
-    const gate = await resolveRequestPermissionsH();
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
     if (!gate.perms?.has("order.view")) {
         return NextResponse.json({ ok: false, error: "Akses antrean faktur tidak diizinkan" }, { status: 403 });
@@ -49,7 +55,7 @@ export async function GET(request: NextRequest) {
     const { candidates } = groupCandidates(loaded.batch.principal, loaded.rows as unknown as BatchLine[], {
         fallbackDate: String(loaded.batch.period).slice(0, 10),
     });
-    const keys = candidates.map((candidate) => candidate.key);
+    const keys = [...new Set(loaded.rows.map((row) => invoiceKey(loaded.batch.principal, row.soNo)))];
     const queued = keys.length
         ? await db.select({
             orderId: invoiceOutbox.orderId, state: invoiceOutbox.state,
@@ -60,7 +66,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-    const gate = await resolveRequestPermissionsH();
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
     if (!gate.perms?.has("order.edit")) {
         return NextResponse.json({ ok: false, error: "Hanya petugas yang boleh menyiapkan faktur" }, { status: 403 });
@@ -153,25 +159,30 @@ export async function POST(request: NextRequest) {
     }
 
     if (!wantQueue) {
-        // Pratinjau: payload persis yang akan diantrekan, tanpa menyentuh DB maupun Accurate.
-        return NextResponse.json({ ok: true, dry_run: true, id, ready, skipped: blocked });
+        // Pratinjau: payload persis yang akan diantrekan, tanpa menulis DB dan tanpa Accurate. SO yang
+        // pernah dibuang ditandai: saat diantrekan, fakturnya dicari dulu di Accurate (E2).
+        const dibuang = await pernahDibuang(db, ready.map((entry) => entry.key));
+        return NextResponse.json({ ok: true, dry_run: true, id, ready: ready.map((entry) => ({ ...entry, pernahDibuang: dibuang.has(entry.key) })), skipped: blocked });
     }
     if (ready.length === 0) {
         return NextResponse.json({ ok: false, error: "Tidak ada SO yang bisa diantrekan", skipped: blocked }, { status: 422 });
     }
 
     const queuedBy = String(gate.session?.user?.email ?? gate.session?.user?.id ?? "");
-    const inserted = await db.insert(invoiceOutbox).values(ready.map((entry) => ({
-        orderId: entry.key,
-        customerNo: entry.payload.customerNo,
-        orderDate: entry.orderDate,
-        state: "queued",
-        payload: entry.payload,
-        queuedBy,
-    }))).onConflictDoNothing().returning({ orderId: invoiceOutbox.orderId });
+    // Baris antrean + event `antre` satu transaksi (BL-17). SO yang PERNAH dibuang dicari dulu di
+    // Accurate (E2) dengan sesi penekan: ketemu = terposting tanpa kirim; gagal = tidak diantrekan.
+    const pencari = await pencariPenekan(db, String(gate.session?.user?.id ?? ""));
+    const hasil = await antrekan(db, {
+        entries: ready.map((entry) => ({ orderId: entry.key, customerNo: entry.payload.customerNo, orderDate: entry.orderDate, payload: entry.payload })),
+        // BL-21: tulisan antrean mengunci baris batch (bentrok dengan Hapus/Ganti batch yang berjalan bersamaan). Payload dibentuk
+        // dari baris yang dibaca DI LUAR kunci; batchVersi menolaknya bila Validasi ulang commit di antaranya (validated_at berubah).
+        actor: queuedBy, targetDb: pencari.targetDb, cari: pencari.cari, detail: { batch_id: id }, batchId: id, batchVersi: batch.validatedAt,
+    });
+    const soOf = new Map(ready.map((entry) => [entry.key, entry.soNo]));
+    blocked.push(...hasil.blocked.map((entry) => ({ soNo: soOf.get(entry.orderId) ?? entry.orderId, reason: entry.reason })));
 
     return NextResponse.json({
-        ok: true, id, queued: inserted.length,
-        keys: inserted.map((row) => row.orderId), skipped: blocked,
+        ok: true, id, queued: hasil.queued.length,
+        keys: hasil.queued, alreadyPosted: hasil.posted, skipped: blocked,
     });
 }

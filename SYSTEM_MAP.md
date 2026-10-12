@@ -38,8 +38,8 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 - **Route Group** `(auth)` untuk halaman login/register, `(dashboard)` untuk seluruh halaman aplikasi yang dilindungi guard layout.
 - Layer `lib/*` memisahkan business logic dari route handler.
 - `lib/db.ts`, `lib/auth.ts`, `db/schema.ts`, dan `drizzle.config.ts` memakai PostgreSQL. `sqlite.db` adalah sumber/rollback migrasi lama, bukan runtime route Next.js.
-- RBAC tiga lapis: **Dynamic Permission-Group** (access_group + group_permission + user_group, default-deny) ∪ legacy **role global** (Better Auth) ∪ legacy **custom permissions** (user.permissions). Union resolver di `lib/rbac/resolve.ts`; sistem lama tetap berjalan selama transisi.
-- Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (92 key). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
+- RBAC: **Dynamic Permission-Group** (access_group + group_permission + user_group, default-deny) OTORITATIF begitu user punya ≥1 group; legacy **role global** / **custom permissions** (user.permissions) hanya fallback untuk user yang belum pernah ber-group. Resolver tunggal `getUserPermissions()` di `lib/rbac/resolve.ts`. FastAPI tidak menghitung izin sendiri: `/api/auth/verify` mengirim `effectivePermissions` dari resolver yang sama dan `python_backend/shared.py` `user_has_permission` memakainya (ADR-001, `docs/modernization/ARCHITECTURE_ADR.md`).
+- Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (111 key sesudah S7-1b; kunci pensiun = `KUNCI_PENSIUN`, nasib 31 kunci D-01 §D = `lib/rbac/nasib-kunci.test.ts`). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
 - Email-domain role inference dihapus. OFF-specific role (`resolveOffRoleFromUser`) tetap ada untuk audit/state-machine, TIDAK untuk authz.
 
 ---
@@ -57,7 +57,7 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 - `python_backend/test_summary_review.py`: runnable check impor/koreksi/auth/CAS dengan SQLite sementara; dapat diberi path paket OCR asli.
 - Efisiensi: list mengambil metadata saja memakai indeks owner/tanggal; detail mengambil satu primary key. Satu perubahan menulis satu paket dalam transaksi singkat dengan pemeriksaan revisi; maksimum 8 MB per paket, tanpa HTTP di dalam transaksi.
 
-`summary_draft published` -> `routers/orders.py: published_rules/store_order` -> order menyimpan aturan, sumber, hasil -> `GET /orders/{id}` menyertakan aturan beku -> `POST /api/orders/{id}/invoice` -> PostgreSQL `invoice_outbox` menyimpan payload dan snapshot program dalam satu insert.
+`summary_draft published` -> `routers/orders.py: published_rules/store_order` -> order menyimpan aturan, sumber, hasil -> `GET /orders/{id}` menyertakan aturan beku -> `POST /api/orders/{id}/invoice` (`salesman` WAJIB saat antre, C7: `lib/order-salesman` cek `accurate_employee` aktif -> `masterSalesmanId` + `salesmanListNumber` di setiap baris, bentuk sama dengan Order Principal; daftar pilihan `GET /api/orders/salesmen`) -> PostgreSQL `invoice_outbox` menyimpan payload dan snapshot program dalam satu insert. Status per order di daftar Order Masuk: `GET /api/orders/invoice-status?ids=` (baca saja).
 
 - `lib/accurate-invoice-write.ts`: membawa bonus SKU pasti sebagai baris gratis; bonus yang SKU-nya belum dipilih menahan pembuatan payload.
 - `lib/program-realization.ts`: cocokkan database (caller), record ID, pelanggan, tanggal, cabang, SKU, unit, harga, jumlah, dan diskon. Mismatch tidak menjadi realisasi; biaya bonus kosong, bukan nol.
@@ -83,21 +83,34 @@ Surat Kino berlapis teks -> `python_backend/kino_letter.py` -> draft; scan memak
   - `db/migrations/0025_discount_normalization_rule.sql`: `discount_normalization.promo_rule_id bigint` + `promo_rule_key text`, NULL-able, TANPA FK (impor mengganti id aturan; keputusan yang kuncinya hilang tidak dipakai rekap, bukan dihapus).
 - Uji: `lib/promo-recap.test.ts` (penjaga + periode, logika murni), `tests/normalisasi-aturan-promo.spec.ts` (Playwright, API dipalsukan).
 
-### Ruang Kerja Surya (Redesign September 2026)
+### Ruang Kerja (shell Fiori sejak S1a, Oktober 2026)
 ```
 DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)
   -> config/workspace-navigation.ts: 18 modul dalam 6 kelompok + Beranda
-  -> WorkspaceNavigation: accordion, pencarian, 3 favorit lokal per akun
-  -> route tujuan; navigasi tidak mengubah preferensi lebar sidebar
-Beranda -> katalog yang sama, disaring RBAC -> akses cepat + direktori kelompok
-RootLayout -> ThemeSwitcher: Surya default + tiga tema alternatif
-  -> app/workspace.css: Geist, hijau/putih, unggah dengan kontras jelas, reduced-motion, print
-  -> mobile dialog native: latar inert, Escape, otomatis menutup saat kembali ke desktop
+  -> navigasi samping Fiori (kelompok dari izin) + cari menu Ctrl K; favorit/rail lama dihapus (S1a)
+Beranda (Fiori, S1b) -> profil peran dari izin -> tile tugas (lib/beranda.ts, GET endpoint yang ada) + Pintasan + Pantauan + Semua aplikasi
+  -> Admin Incaso (pelunasan.kirim, S6e-2b): tile Tidak pasti/Gagal + Pantauan dari GET /api/idempotency/summary?rows=1 (perDatabase,
+     database aktif dari /api/auth/accurate-session); jawaban tanpa angka/daftar = galat, bukan 0
+RootLayout -> html[data-theme="surya"] statis (Office Calm/Neon/iOS pensiun, Okt 2026)
+  -> app/workspace.css: remap Surya untuk isi halaman yang belum dimigrasi
+SidebarLayout (shell Fiori, S1a) -> shell bar: logo resmi, cari menu Ctrl K, menu profil (Mode/Density, Bantuan -> ChatWidget, Keluar)
+  -> navigasi samping dari izin; drawer ponsel (Dialog native); navigasi bawah = Beranda + 3 pintasan ROLE_PROFILES + Menu
 ```
 Validasi: `npx tsx --test components/SidebarLayout.test.ts` dan
-`npx playwright test tests/workspace-redesign.spec.ts tests/sidebar-tooltip-contrast.spec.ts tests/office-calm-theme.spec.ts`
-pada server development lokal (10 browser checks: navigasi, mobile/resize, unggah, kontras, kompatibilitas tema).
+`npx playwright test tests/workspace-redesign.spec.ts tests/sidebar-tooltip-contrast.spec.ts`
+pada server development lokal (navigasi, Ctrl K, menu profil, drawer/navigasi bawah ponsel, chat, kontras terang/gelap).
 Referensi visual: `docs/design/surya-workspace-reference.png`.
+
+### Design system Fiori (S0, Oktober 2026)
+```
+RootLayout -> app/fiori.css (token + kelas fi-*, di-scope ke .fiori; halaman lama tidak berubah)
+  -> skrip pra-render components/fiori/scheme.ts: localStorage fiori-scheme/fiori-density -> html[data-scheme|data-density]
+Halaman yang dimigrasi -> <FioriScope> (components/fiori/Scope.tsx: Plus Jakarta Sans + Geist Mono)
+  -> components/fiori/core.tsx (presentasional) + interactive.tsx (dialog, form, filter bar, SchemeSwitcher)
+/dev/ui-kit -> semua komponen x 6 keadaan; 404 di build produksi
+```
+Validasi: `npx playwright test tests/fiori-ui-kit.spec.ts` pada server development lokal (LOCAL_AUTH_BYPASS);
+baseline di `tests/fiori-ui-kit.spec.ts-snapshots/`. Aturan: `docs/UI_DESIGN_SYSTEM.md`.
 Hasil browser desktop/mobile: `docs/design/surya-workspace-desktop.png`, `docs/design/surya-workspace-mobile.png`.
 Checkpoint implementasi dan instruksi resume: `docs/SURYA_IMPLEMENTATION.md` (keputusan, bukti validasi, file yang disentuh, lingkungan uji, dan langkah berikutnya).
 Status: UI redesign tervalidasi lokal. Audit build menemukan tracing `webhook-backfill -> next.config.ts` memasukkan kunci OCR lokal; pengemasan dihentikan dan salinan kunci di artefak dihapus. Lihat handover sebelum deployment.
@@ -118,11 +131,15 @@ UI upload laporan harian
 
 ### 1. Autentikasi & Guard Halaman
 ```
-Browser -> /login page
-  -> app/(auth)/actions.ts [signIn(email, password)]
-  -> lib/auth.ts [auth.api.signInWithEmailAndPassword]
-  -> Better Auth + Drizzle SQLite (tabel user/session)
-  -> Redirect /dashboard
+Browser -> /login page (app/(auth)/login/page.tsx; kerangka Fiori app/(auth)/layout.tsx untuk login/lupa/atur ulang/daftar)
+  -> authClient.signIn.email -> /api/auth/sign-in/email (lib/auth.ts; 5 percobaan/15 menit/IP)
+  -> Better Auth + Drizzle Postgres (tabel user/session)
+  -> window.location.assign("/") | galat generik (401) · "belum diverifikasi" (403) · "terlalu banyak percobaan" (429)
+  ?error= (hari ini hanya /api/auth/callback tanpa sesi app) -> kalimat terpetakan; kode tak dikenal -> kalimat umum (teks query tidak dicetak)
+
+Browser -> /forgot-password -> authClient.requestPasswordReset -> layar NETRAL identik (tanpa mengulang email)
+  -> email tautan /api/auth/reset-password/<token> -> /reset-password?token=… | ?error=INVALID_TOKEN
+  -> /reset-password: tanpa token/tak berlaku -> "Tautan tidak berlaku" + Minta tautan baru; sandi ≥ 6 + ketik ulang sama -> authClient.resetPassword
 
 Browser -> any /dashboard/* route
   -> app/(dashboard)/layout.tsx [DashboardLayout]
@@ -138,6 +155,39 @@ Browser -> any /api/* route (modul baru)
         -> permissionMapForUser(role, permissions)            ← legacy union
      -> perms.has(key) ? proceed : 403
 ```
+
+**Sesi Accurate (S7-sesi, AM-033, 11 Okt 2026).** Masuk Accurate + pilih database tanpa Konsol: halaman `/sesi-accurate`
+(pagePermissions `anyOf` = `SESI_ACCURATE_KEYS`: `api_wrapper.view` | `order.edit` | `pelunasan.kirim` | `finance.update` |
+`finance.resolve_unknown`; tautan di menu profil). Kartu `components/accurate/SesiAccurate.tsx` dipakai juga oleh Konsol `/api-wrapper`.
+```
+Kartu "Masuk Accurate" -> GET /api/auth/accurate-login?returnTo=<daftar putih>
+  -> Sec-Fetch-Site=cross-site -> alasan=lintas_situs; tanpa sesi app -> /login?error=…; baca sesi melempar -> alasan=galat_server
+  -> state = randomBytes(32); Set-Cookie __Secure-accurate_oauth_state="<state>:<returnTo>" (HttpOnly, Secure, SameSite=Lax, 600 dtk, Path=/api/auth/callback)
+  -> 307 https://account.accurate.id/oauth/authorize?client_id&redirect_uri&scope(TETAP, lib/accurate-oauth.ts)&state
+Accurate -> GET /api/auth/callback?code&state
+  -> baca sesi app melempar     -> alasan=galat_server (bukan 500)
+  -> tanpa sesi app            -> /login?error=Accurate+login+requires+app+session (nilai lama, dibaca S7c)
+  -> cookie state tidak ada     -> alasan=state_hilang   (code TIDAK ditukar)
+  -> state query hilang/beda    -> alasan=state_beda     (code TIDAK ditukar; cookie DIBIARKAN: tab lain/pihak luar tak membatalkan)
+  -> tanpa code / env kurang    -> alasan=tanpa_kode / konfigurasi
+  -> POST oauth/token gagal / tanpa access_token -> alasan=tukar_token_gagal (log: status HTTP saja)
+  -> exception                  -> alasan=galat_server (log: nama galat saja)
+  -> sukses: upsertAccurateSession(token, database dikosongkan) -> accurate=connected
+  -> cabang lain menghapus cookie; mendarat di halaman berkartu: returnTo=/api-wrapper -> /api-wrapper?…,
+     selain itu -> /sesi-accurate?…[&returnTo=/pelunasan|/antrean-faktur|/finance] (tombol Kembali)
+Kartu membaca ?accurate=&alasan= -> MessageStrip dari pemetaan kode (GALAT_ACCURATE), lalu membuang keduanya dari URL.
+Route sesi (GET/DELETE accurate-session, GET db-list, POST open-db, accurate-login, callback) cukup sesi app — tidak ada kunci; tidak ada
+route tulis baru. open-db sukses = {ok, databaseId, databaseAlias, host} (session database Accurate tidak ke peramban; GET dihapus).
+Kartu: Ganti database (open-db menimpa), Keluar lewat konfirmasi, daftar kosong = keadaan kosong, 401 = tautan masuk ulang.
+Gerbang klien: SidebarLayout menghitung ulang canAccessPathWithKeys(usePathname) — navigasi klien ke halaman terlarang = AccessDenied
+(layout server tidak berjalan ulang pada navigasi klien; otoritas tetap server + guard API).
+db-list/open-db galat = {ok:false, code, error netral}: SESI_BELUM_TERHUBUNG 400, DATABASE_ID_KOSONG 400, ACCURATE_MENOLAK 502
+  (+accurateStatus), GALAT_SERVER 500 — isi jawaban Accurate/pesan exception tidak ke peramban maupun log.
+```
+**Gerbang halaman Konsol (S7-sesi).** `proxy.ts` memasang `x-current-path` yang dibaca layout. Matcher lama `(?!api|…)` ikut melewatkan
+halaman `/api-wrapper`, sehingga layout menilai "/" dan `dashboard.view` cukup membuka Konsol. Kini hanya `/api` dan `/api/...`
+dikecualikan (`lib/proxy-matcher.test.ts`). **Dampak produksi saat rilis:** user tanpa `api_wrapper.view` (mis. Fakturist, Admin Incaso)
+kehilangan Konsol (Akses ditolak); login Accurate + pilih database pindah ke `/sesi-accurate` (menu profil).
 
 ### 2. OFF Program Control — Buat & Submit Pengajuan
 ```
@@ -161,6 +211,12 @@ UI: Supervisor submit batch
 
 ### 3. OFF Program Control — Approval Chain (SM → Claim → OM → Finance)
 ```
+Peran OFF (lib/off-program-control/access.ts normalizeOffRole): S7-1b AM-026 (D-01 §C "manager bukan admin") — role `manager`
+  = peran sendiri: PEMBACA 7 tab + audit_read/audit_export saja; tidak lolos periode tutup, tanpa alternatif role admin di refund.
+  Admin tidak berubah. Ekspor CSV audit = audit_read ∧ audit_export. "Manager bukan admin" HANYA OPC (owner 12 Okt): Claim Workflow
+  tetap memperlakukan Manager seperti sebelum S7-1b — requireClaimSession (lib/claim-workflow/access.ts) memetakan manager -> admin
+  (kelola klaim, route close/items/void).
+
 SM Approve:
   -> PATCH /api/off-program-control/batches/[id]/sm-approve
      -> canActorPerformOffAction(actor, "sm_approve")
@@ -216,13 +272,97 @@ Record pembayaran dari principal:
 ```
 UI: API Wrapper page (/api-wrapper)
   -> POST /api/proxy
-     -> route.ts [POST] — forward ke Accurate API (sessionHost + Bearer apiKey)
+     -> route.ts [POST] — forward ke Accurate API (sessionHost + Bearer apiKey) lewat lib/accurate-forward.ts
+        (menolak 403 PURCHASE_PAYMENT_VIA_FINANCE tulis purchase-payment/(bulk-)save.do — hanya lewat command Finance di bawah;
+         menolak 403 SALES_INVOICE_VIA_OUTBOX tulis sales-invoice/(bulk-)save.do — hanya lewat Antrean Faktur, S6-0d E4;
+         tulis sales-receipt = cabang Pelunasan di bawah (pelunasan.kirim; api_wrapper.execute tidak diminta & tidak cukup);
+         S7-1b AM-024: tulis LAIN = api_wrapper.execute (403 PERMISSION_REQUIRED {permission, sent:false}) + hanya save/bulk-save
+         katalog Konsol config/accurateRoutes.js (isCatalogWrite; delete.do & endpoint tak dikenal 403 ENDPOINT_TIDAK_DIIZINKAN) —
+         semua SEBELUM sesi Accurate/DB/jaringan; baca = GET jalur kanonik {list,detail,get-stock,list-stock}.do (isAccurateRead),
+         cukup sesi app (Finance & Pelunasan membaca tanpa api_wrapper.*). [PROXY FIRE] tulis mencatat id pengguna.)
      <- JSON response
+  Klien: lib/apiFetcher.ts classifyWriteError — 4xx + sent:false = rejected (tidak terkirim), bukan TIDAK PASTI; Konsol berhenti
+  di tahap yang ditolak dan menampilkan pesan server.
 
-Idempotency guard (bulk sales receipt):
-  -> POST /api/idempotency/lock — cek & kunci fingerprint di SQLite idempotency_log
-  -> [bulk POST ke Accurate]
-  -> POST /api/idempotency/complete — tandai selesai
+Antrean Faktur / outbox sales-invoice (S6-0d, DRAFT — zona tulis Accurate):
+  antre: POST /api/principal-order/queue | /api/orders/{id}/invoice -> lib/invoice-outbox-actions antrekan()
+     -> invoice_outbox(queued) + invoice_outbox_event `antre` (satu transaksi); kunci PERNAH dibuang -> cariFaktur dulu
+  kirim: POST /api/invoice-outbox/send (order.edit) | GET /api/cron/post-invoices -> lib/invoice-sender sendQueuedInvoices
+     -> sapuSending (sending > 15 mnt -> unknown + event `sapu`) -> rencanaKirim (kueri created_at, order_id; tanggal pilihan;
+        tolak persen+rupiah) -> cekSesiBacaSaja (GET branch/list.do; gagal = batal tanpa klaim)
+     -> per baris: CTE klaim queued->sending + event `kirim` (aktor) -> save.do -> classifySaveResponse:
+        {s:true,r.id bulat positif}=posted; {s:false,d:[teks…]} non-5xx (bukan 401/403/429) = rejected; lainnya = unknown
+        (klaim mensyaratkan payload yang diperiksa; yang dikirim = payload RETURNING klaim)
+     -> CTE hasil (WHERE state='sending') + event (status HTTP, potongan ≤ 500, kode galat)
+  pratinjau BL-39: GET /api/invoice-outbox/send/preview -> pratinjauKirim (rencanaKirim yang sama + nilaiPayload)
+  antre ulang/buang: POST /api/invoice-outbox -> aksiAntrean: resend = cariFaktur dulu (ketemu -> posted, tidak dikirim;
+     gagal -> 409); discard = DELETE baris + event `buang` (salinan baris)
+  tidak pasti: POST /api/invoice-outbox/resolve (order.resolve_unknown) -> selesaikanTidakPasti: pencarian langsung +
+     alasan ≥ 15 -> posted (wajib ketemu) | rejected (wajib tidak_ketemu_dicek DAN kirim terakhir ≥ 15 mnt, jam DB) + event
+  cariFaktur (lib/invoice-search, BACA SAJA): cache sales_invoice per customer_no + created_at ≥ antre −1 hari (hit cache
+     dikonfirmasi 1 detail.do) -> list.do filter.customerId + filter.lastUpdate ≥ antre −10 mnt (TERBUKTI §I 10 Okt; tetap
+     disaring ulang, batas 300 baris) -> charField1 di baris list.do diputuskan langsung (EQUAL); absen/kosong -> detail.do
+     (≤ 25 calon): kepala, baris, lalu description "Order <kunci> |". Tanpa filter.charField1 (diabaikan Accurate).
+  riwayat: invoice_outbox_event append-only (migrate-pg; trigger/REVOKE + E5 data lama = docs/handover/DDL_OUTBOX_EVENT.sql)
+     baca: GET /api/invoice-outbox/riwayat?orderId= (order.view) -> bacaRiwayat: 200 TERBARU urut lama→baru + `terpotong`,
+       tanpa salinan payload event `buang`
+  UI (S6c Fiori): /antrean-faktur -> AntreanFaktur.tsx (kartu status = GET /api/invoice-outbox ?state= | ?overdue=1)
+     Kirim = Dialog.KirimDialog: GET send/preview -> POST send { orderIds HASIL PRATINJAU, invoiceDate } -> hasil per order
+     (Kirim memeriksa ulang pratinjau tepat sebelum POST; berubah = batal + dialog diperbarui; pilihan = baris yang terlihat)
+     Selesaikan = GET /api/invoice-outbox/resolve?orderId= (cariTidakPasti, BACA SAJA: pencarian + salinan lokal + sisa
+       masa tunggu, tanpa penyapu; sekaliJalan per penekan×order; sesi wajib pada ACCURATE_INVOICE_DB_ID terisi) -> POST resolve
+       (mencari ulang; keputusan selalu dipilih petugas); Antre ulang/Buang (alasan wajib di layar) = POST /api/invoice-outbox;
+     jawaban tidak pasti (putus/batas waktu, bukan JSON, >= 502 tanpa amplop {ok:false,error}) = "belum pasti" + muat ulang +
+       tulis terkunci; Verifikasi balik = /api/invoice-verify
+
+Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
+  UI Finance (/finance, Fiori S6b: finance/posting.ts postingPurchasePayment — urutan & clientRef = recordKey lama; dialog pp)
+  -> GET /api/auth/accurate-session (database terbuka; dialog pp membaca SEGAR, id = expectedDatabaseId; beda = berhenti
+     sebelum tulis) -> FastAPI GET /payments/finance/data (baca ulang baris; nilai/faktur/status berubah = batal tanpa
+     tulis, S6b B-5) -> FastAPI /payments/finance/mapping -> /payments/finance/proof
+  -> POST /api/finance/purchase-payment (finance.update) {clientRef, expectedDatabaseId, payload} — tanpa expectedDatabaseId
+     = 400, database sesi saat POST ≠ expectedDatabaseId = 409 {code: database_changed, claimed:false} SEBELUM klaim (S6b A-1)
+     -> lib/accurate-write-attempt.ts runGuardedWrite: INSERT ... SELECT accurate_write_attempt state=sending
+        generasi 0 (ADR-004 rilis A; subjek ber-reopen -> 409 reopened_use_repost {claimed:false}, tanpa klaim/kiriman) — unique partial index per
+        himpunan faktur × generasi; attempt hidup -> 409 {live, generation, currentGeneration} SEBELUM kirim
+     -> forwardAccurate purchase-payment/bulk-save.do (tanpa transaksi DB terbuka)
+     -> classifyProviderReply -> posted / unknown / not_sent (C11: penolakan Accurate belum terbukti = unknown)
+  -> UI melaporkan status ke FastAPI POST /payments/finance/update (payments.json) seperti semula
+  Penyelesaian TIDAK PASTI: POST /api/finance/purchase-payment/resolve (atestasi manual + sumber cek;
+    hanya finance.resolve_unknown). Gagal sebelum klaim = {claimed:false} (pasti tidak terkirim).
+  payments.json: "failed" lama bergalat ambigu (timeout/502/504/non-JSON/jaringan) = unknown
+    (shared.effective_post_status) -> terkunci sampai diselesaikan Finance.
+  Ledger: pemegang finance.resolve_unknown tanpa finance.update menuntaskan /payments/finance/update HANYA untuk
+    unknown -> posted/failed + catatan (S6-0e). Belum Transfer/Ajukan Ulang ditolak 409 bila posted/unknown (BL-49).
+  Baca status: GET /api/finance/purchase-payment/attempts?invoices=… (finance.view, latestAttemptsBySubject; S6-0e).
+  Pemilih tujuan (S6b): /api/proxy method GET vendor/list.do & glaccount/list.do (Kas/Bank) — baca-saja, master Accurate sesi.
+
+Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConfig.path, bukan URL halaman):
+  Orkestrasi klien = lib/pelunasan/kirim.ts kirimPelunasan (S6e-2): lock -> paket 100 -> hasil per baris
+     {terposting | gagal (sent:false) | tidak_pasti | ditahan} -> complete. Kontrak: docs/handover/S6e2-KONTRAK-API.md.
+  -> POST /api/idempotency/lock — preview + kunci fingerprint (lib/sales-receipt-fingerprint.ts) di idempotency_log
+     (pemilik lockId/lockedBy; non-preview butuh pelunasan.kirim; override hanya finance.override_duplicate + alasan ->
+     idempotency_override, termasuk allowHistoryKeys = blockReason ACCURATE_HISTORY; kunci ISI_KODE_AKUN_ = 400)
+  -> POST /api/proxy sales-receipt/bulk-save.do WAJIB idempotencyLockId + expectedDatabaseId (lib/sales-receipt-guard.ts):
+     placeholder akun 400 -> pelunasan.kirim 403 -> database sesi ≠ expected 409 database_changed -> lock dinilai
+     (dry-run) -> riwayat Accurate dibaca server (lib/pelunasan/pratinjau-ganda.ts periksaRiwayatAccurate, fail-closed,
+     4 serentak, 60 dtk) -> baris yang punya SATU faktur bernominal sama (per faktur, tanpa potongan, tanpa beda huruf)
+     dengan pelunasan pelanggan+tanggal mana pun / tak terbaca tanpa override 409 ACCURATE_HISTORY ->
+     baris milik lock ditandai SENDING -> kirim -> hasil per baris dicatat SERVER (classifySalesReceiptReply:
+     s:true = SUCCESS, selain itu UNKNOWN — C11; server tidak pernah menyimpulkan FAILED)
+  -> POST /api/idempotency/complete — klien hanya menaikkan; FAILED hanya untuk baris PROCESSING (belum dikirim)
+  -> GET/POST /api/idempotency/resolve — Selesaikan tidak pasti (finance.resolve_unknown; cari dulu = kandidat pelunasan
+     pelanggan+tanggal yang menyentuh faktur segmen key; tidak_ada ditolak 409 similar_found bila ada; terposting kandidat tak
+     identik wajib acceptSimilar (409 similar_not_identical; hint takeover = override takeover lock; identik hanya bila sidik jari
+     key terurai pasti: Σ bayar+potongan = amount baris, tanpa angka negatif); lalu CAS status +
+     jejak idempotency_resolution, lib/idempotency-resolve.ts). Lock mencatat database di idempotency_log."databaseId" DAN
+     idempotency_override.database_id (DDL_S6E2.sql); proxy menolak bila salah satunya ≠ database sesi
+  -> GET /api/idempotency/summary — Tidak pasti / Gagal boleh diulang (BL-41; pelunasan.kirim ATAU finance.resolve_unknown)
+  UI (S6e-2b): /pelunasan wizard Jenis -> Unggah -> Akun -> Tinjau -> Hasil (app/(dashboard)/pelunasan/*); pratinjau membaca ulang sesi
+     di akhir (database berganti selama pratinjau = dibuang); nomor Hasil = nomor terposting (item r.number / keputusan Selesaikan),
+     nomor mirip di kolom Excel terpisah; galat lock dipetakan menurut
+     GalatKirim.code; Selesaikan (Selesaikan.tsx: GET pencarian dulu -> POST keputusan; kode 409 menutup pilihan) dari Hasil dan dari
+     daftar Perlu tindakan (?rows=1) di langkah Jenis
 
 Data Sync (item/customer):
   -> lib/sync.ts [syncModule(moduleName, endpoint, creds)]
@@ -235,13 +375,19 @@ Data Sync (item/customer):
 ```
 Browser -> NEXT_PUBLIC_FASTAPI_BASE_URL (port 8000)
   -> python_backend/main.py [FastAPI app]
-     -> /payments/upload — parse Excel LPB, simpan ke payments.json
+     -> /payments/upload — parse Excel LPB, simpan ke payments.json (?dry_run=1 = pratinjau; berkas backup DITOLAK)
+     -> /payments/sppd/restore-backup — restore backup PAYMENTS (sppd.edit_settings + CSRF + ?dry_run=1)
+     -> BL-05 shared.payment_lock_reason: Sudah Transfer / posted / unknown TERKUNCI di update, delete, clear,
+        Excel SPPD (apply_sppd_excel_rows, ?dry_run=1), replace-principle-name (?dry_run=1) & auto-fix (dilewati)
+     -> /payments/submissions (+/{id}) — baca Pengajuan & SPPD, berkas yang benar-benar ada (BL-50)
      -> /payments/finance/data — data finance approval
      -> /payments/finance/proof — upload bukti transfer
      -> /validator/upload — upload data penjualan/channel
      -> /validator/run — validator_engine.py [compare expected vs actual]
      -> /sppd/generate — render_sppd_docx() — buat DOCX SPPD
-     -> auth.py — RBAC + rate limiter login internal FastAPI
+     -> nomor SPPD (shared.next_sppd_number): {seq:03d}/SPA/PDSB/{romawi}/{tahun}, tanggal terbit WITA; tahun baru
+        mulai 001; di dalam satu tahun tidak pernah turun (setelan 409, restore backup hanya menaikkan) — D-05/C10
+     -> auth.py — rate limiter login + security headers; izin = effectivePermissions dari Next /api/auth/verify (shared.user_has_permission)
 ```
 
 ### 6A. Repository Guardian & Risk Issue Sync
@@ -503,6 +649,7 @@ parse = `summary_manual_parse_pdf_ai` → `summary_mistral.extract` (Pass 3 di d
 AccAPI/_github_clean/
 ├── app/
 │   ├── (auth)/
+│   │   ├── layout.tsx                  # Kerangka Fiori: panel merek + kartu (S7c)
 │   │   ├── login/page.tsx
 │   │   ├── register/page.tsx
 │   │   ├── forgot-password/page.tsx
@@ -513,19 +660,23 @@ AccAPI/_github_clean/
 │   │   ├── error.tsx                   # Error boundary segmen dashboard (pesan rapi, tanpa stack)
 │   │   ├── page.tsx                    # Home/dashboard utama
 │   │   ├── off-program-control/
-│   │   │   └── page.tsx                # Cockpit OPC (SPV/SM/Claim/OM/Finance/Audit tabs)
+│   │   │   ├── page.tsx                # Server tipis: izin + FioriScope → OpcApp
+│   │   │   ├── OpcApp.tsx              # Klien: peran OPC, navigasi ?tab=, lonceng/pencarian → ?batch=, penjaga draf
+│   │   │   └── opc/                    # Bersama.tsx (hook data, Antrean, KerjaPeran FCL), ObjectPageBatch.tsx, peran/{Spv,Sm,Klaim,Om,Keuangan,Ringkasan,Audit}.tsx
 │   │   ├── claim-workflow/
 │   │   │   ├── page.tsx                # Daftar claim workflow
 │   │   │   ├── [id]/page.tsx           # Detail + aksi per workflow
 │   │   │   └── reports/page.tsx        # Laporan outstanding/paid
-│   │   ├── payments/
-│   │   │   ├── page.tsx
-│   │   │   ├── cart/[draftId]/page.tsx
-│   │   │   └── sppd/page.tsx
+│   │   ├── payments/                   # Fiori S6a (it08): server tipis (izin + FioriScope) → klien
+│   │   │   ├── page.tsx                # → Rekaman.tsx (+ RekamanDialog.tsx): List Report, simpan per rekaman, dialog unggah/manual/keranjang/hapus
+│   │   │   ├── bersama.tsx             # HTTP FastAPI (CSRF /api/me, kode status, "belum pasti"), RangkaPembayaran + subnavigasi
+│   │   │   ├── cart/[draftId]/         # page.tsx → Keranjang.tsx: Tinjau (rekening, nomor SPPD, tanggal WITA) → Diajukan
+│   │   │   ├── pengajuan/              # BL-50: page.tsx → Pengajuan.tsx (daftar); [id]/ → PengajuanDetail.tsx (Object Page)
+│   │   │   └── sppd/page.tsx           # → ../FormatSppd.tsx (+ FormatSppdDialog.tsx): setelan, rekening, operasi Pratinjau → Terapkan
 │   │   ├── api-wrapper/
 │   │   │   ├── page.tsx                # UI proxy Accurate ERP
 │   │   │   └── parsers/                # Parser bulk sales receipt
-│   │   ├── finance/page.tsx
+│   │   ├── finance/                # page.tsx (izin + tanggal WITA) · Finance.tsx (worklist + detail + dialog) · posting.ts (HTTP + orkestrasi)
 │   │   ├── summary/page.tsx
 │   │   ├── validator/page.tsx
 │   │   ├── principles/page.tsx
@@ -534,7 +685,8 @@ AccAPI/_github_clean/
 │   └── api/
 │       ├── auth/
 │       │   ├── [...all]/route.ts       # Better Auth catch-all handler
-│       │   ├── callback/route.ts       # Accurate OAuth callback
+│       │   ├── accurate-login/route.ts # Mulai OAuth Accurate: state + returnTo di cookie httpOnly (AM-033)
+│       │   ├── callback/route.ts       # Accurate OAuth callback (cocokkan state, galat berkode)
 │       │   ├── db-list/route.ts
 │       │   └── open-db/route.ts
 │       ├── off-program-control/
@@ -557,7 +709,7 @@ AccAPI/_github_clean/
 │       │   ├── principles/route.ts
 │       │   ├── discount/route.ts
 │       │   ├── payments/[paymentId]/proof/route.ts
-│       │   └── audit/route.ts          # Export audit log OPC
+│       │   └── audit/route.ts          # Audit log OPC (JSON audit_read; CSV + audit_export, S7-1b)
 │       ├── claim-workflow/
 │       │   ├── route.ts                # GET list (paginated/cursor)
 │       │   ├── [id]/
@@ -595,9 +747,8 @@ AccAPI/_github_clean/
 │   ├── AccessDenied.tsx                # Pesan "Akses ditolak" eksplisit (guard layout + page admin)
 │   ├── PWAInstallPrompt.tsx
 │   ├── ServiceWorkerRegistration.tsx
-│   ├── ThemeSwitcher.tsx
+│   ├── fiori/                          # Design system Fiori: Scope (font + .fiori), core, interactive, scheme
 │   ├── off-program-control/
-│   │   ├── OffBreadcrumb.tsx
 │   │   ├── OffGlobalSearch.tsx
 │   │   └── OffNotificationBell.tsx
 │   └── ui/                             # Input, Select, DatePickerField (dialog kalender + keyboard), AsyncSearchSelect, Dialog native, AsyncState bersama
@@ -606,7 +757,7 @@ AccAPI/_github_clean/
 │   ├── auth-client.ts                  # Better Auth client (browser)
 │   ├── rbac.ts                         # RBAC legacy (union layer selama transisi)
 │   ├── rbac/
-│   │   ├── registry.ts                 # PERMISSION_REGISTRY — sumber tunggal 87 key
+│   │   ├── registry.ts                 # PERMISSION_REGISTRY — sumber tunggal 111 key + KUNCI_PENSIUN (S7-1b)
 │   │   ├── resolve.ts                  # getUserPermissions, requirePermission/H, resolveRequestPermissions/H
 │   │   └── registry.test.ts            # Self-check: integritas registry + scan route.ts
 │   ├── db.ts                           # Drizzle client singleton
@@ -673,7 +824,7 @@ AccAPI/_github_clean/
 ├── .dockerignore                       # Keluarkan env/compose/runtime data dari build context
 ├── Dockerfile.frontend
 ├── Dockerfile.backend
-└── proxy.ts                            # Dev proxy config
+└── proxy.ts                            # Pasang x-current-path untuk gerbang halaman (matcher: semua kecuali /api, /api/..., aset)
 ```
 
 ---
@@ -694,20 +845,32 @@ AccAPI/_github_clean/
 
 | File | Fungsi Utama | Peran |
 |---|---|---|
-| `lib/auth.ts` | `auth` (betterAuth instance) | Konfigurasi server auth: email/password, admin plugin, SQLite adapter, email reset/verify |
+| `lib/auth.ts` | `auth` (betterAuth instance) | Konfigurasi server auth: email/password, admin plugin, adapter PostgreSQL, email reset/verify. S7-1: `disabledPaths` menutup 15 endpoint `/api/auth/admin/*` plugin dari browser (404; `auth.api.*` server-side tetap jalan); `revokeSessionsOnPasswordReset` (reset lupa sandi mencabut sesi lama) |
 | `lib/auth-client.ts` | `authClient` | Client-side Better Auth hooks untuk browser |
-| `lib/rbac.ts` | `canAccess`, `canAccessPath`, `permissionMapForUser`, `normalizeRole` | RBAC legacy: preset per role, custom per-user — masih aktif sebagai legacy union layer |
-| `lib/rbac/registry.ts` | `PERMISSION_REGISTRY`, `allPermissionKeys`, `isValidPermissionKey` | **Sumber tunggal** 85 permission key (`module.action`). Zero import — pure data. Test-guard scan semua route.ts saat CI |
-| `lib/rbac/resolve.ts` | `getUserPermissions`, `requirePermission`, `requirePermissionH`, `resolveRequestPermissions`, `resolveRequestPermissionsH` | Union resolver: DB group + legacy role/permissions. Guard endpoint default-deny. `requirePermissionH` untuk route pakai `next/headers` |
+| `lib/rbac.ts` | `canAccess`, `canAccessPath`, `permissionMapForUser`, `normalizeRole`, `canAccessPathWithKeys` (`anyOf`), `SESI_ACCURATE_KEYS`, `actionLabels`, `permissionModuleLabels`, `permissionKeyLabel`, `auditActionLabels` | RBAC legacy: preset per role (fallback user tanpa grup); `pagePermissions` boleh memuat `anyOf` (kunci alternatif, dipakai `/sesi-accurate`). S7-1: SATU sumber label izin (20 modul registry + 18 aksi OPC granular) & label aksi audit untuk layar S7a |
+| `lib/accurate-oauth.ts` | `urlAuthorize`, `returnToAman`, `halamanMendarat`, `kabarAccurate`, `GALAT_ACCURATE` | Bagian murni OAuth Accurate (server+klien): scope tetap, daftar putih returnTo, kode galat → kalimat |
+| `components/accurate/SesiAccurate.tsx` | `SesiAccurate` | Kartu Sesi Accurate bersama `/sesi-accurate` dan Konsol: status, Masuk, daftar/buka database, Keluar, kabar callback |
+| `lib/rbac/registry.ts` | `PERMISSION_REGISTRY`, `allPermissionKeys`, `isValidPermissionKey`, `KUNCI_PENSIUN` | **Sumber tunggal** 111 permission key (`module.action`); `KUNCI_PENSIUN` (S7-1b) dibuang PATCH grup tanpa 400 + dihapus RBAC_S7_1B_PENSIUN.sql. Zero import — pure data. Test-guard scan semua route.ts saat CI |
+| `lib/rbac/resolve.ts` | `getUserPermissions`, `getPrimaryGroup`, `requirePermission`, `requirePermissionH`, `resolveRequestPermissions`, `resolveRequestPermissionsH` | Resolver: grup (otoritatif) / legacy role bila tanpa grup. Guard endpoint default-deny. `getPrimaryGroup` (BL-63) = grup berbintang atau satu-satunya grup |
+| `lib/rbac/otorisasi.ts` | `transaksiOtorisasi`, `adminAktif`, `evaluasiPenjaga`, `mulaiUtama`/`selesaiUtama`, `pasangBintang`, `roleTurunan`, `GROUP_NAME_TO_ROLE` | S7-1: SATU penjaga BL-61 (admin = aktif + `users.manage` efektif; 409 `ADMIN_TERAKHIR`/`AKSES_SENDIRI`/`GRUP_TERAKHIR`) di dalam transaksi + `pg_advisory_xact_lock`; grup utama + penurunan `user.role` dari grup preset di transaksi yang sama. Kontrak `docs/handover/S7-KONTRAK-ADMIN-API.md` |
+| `lib/rbac/riwayat.ts` | `jawabRiwayat` | Riwayat `permission_audit_log` per user/grup, keyset presisi mikrodetik |
 | `lib/rbac/registry.test.ts` | self-check script | Validasi integritas registry + scan semua route.ts: gagal jika ada key tidak terdaftar. Jalankan: `node --experimental-strip-types lib/rbac/registry.test.ts` |
 | `app/(dashboard)/layout.tsx` | `DashboardLayout`, `dynamic = "force-dynamic"` | Guard semua halaman dashboard: session check + RBAC path check; selalu render per request karena membaca header/session |
-| `app/(dashboard)/admin/users/` | `UserManagement` | UI kelola user internal, set role, set legacy custom permission |
-| `app/(dashboard)/admin/groups/` | `GroupManagement` | **UI Dynamic RBAC**: buat/edit Access Group, assign permission key per group, assign user ke group |
+| `app/(dashboard)/admin/users/` | `Pengguna` (FCL Fiori) | **User (S7a)**: daftar (cari, saring grup/status) -> Object Page Grup (semua grup + bintang utama; tambah/keluarkan/bintang dengan peringatan role identitas), Keamanan (atur sandi bertopeng ketik dua kali, aktif/nonaktif), Riwayat berkursor; dialog buat user. Halaman: `users.view` ATAU `users.manage` (`users.view` = baca-saja, tulis = `users.manage` ditegakkan API); kalimat galat per `code` di `components/admin/admin-ui.ts`. `pagePermissions` `/admin/users` = `users.view` + `anyOf: [users.manage]` (layout dan gerbang klien SidebarLayout); `/admin/groups` = `users.manage` |
+| `app/(dashboard)/admin/groups/` | `AksesGrup` (FCL Fiori) | **Akses Group (S7a)**: daftar grup -> Object Page (izin per modul 20 modul, label satu sumber `lib/rbac`; anggota; info; riwayat), footer Simpan -> dialog SELISIH izin (ditambah/dicabut, anggota terkena; mencabut `users.manage` = peringatan + tombol tegas, tanpa isian alasan karena server belum mencatatnya), hapus grup custom (ditolak bila preset/`GRUP_TERAKHIR`), grup baru. Bersama: `components/admin/{Bersama.tsx,admin-ui.ts}` |
 | `app/api/auth/[...all]/route.ts` | Better Auth catch-all | Mount semua endpoint auth Better Auth |
 | `app/api/admin/bootstrap/route.ts` | `POST` | One-time setup akun admin pertama via token |
 | `app/api/admin/groups/route.ts` | `GET`, `POST` | List + buat Access Group; gate: `users.manage` |
-| `app/api/admin/groups/[id]/route.ts` | `GET`, `PATCH`, `DELETE` | Detail + sync permission + hapus group; tulis `permission_audit_log` |
-| `app/api/admin/groups/[id]/members/route.ts` | `POST`, `DELETE` | Assign/remove user dari group; tulis `permission_audit_log` |
+| `app/api/admin/groups/[id]/route.ts` | `GET`, `PATCH`, `DELETE` | Detail + sync permission + hapus group (satu transaksi + penjaga BL-61; preset tak bisa diganti nama, `users.manage` preset Admin terkunci; hapus grup menghitung ulang grup utama/role tiap anggota); tulis `permission_audit_log` |
+| `app/api/admin/groups/[id]/members/route.ts` | `POST`, `DELETE` | Assign/remove user dari group; penjaga BL-61 + grup utama/role satu transaksi; tulis `permission_audit_log` |
+| `app/api/admin/groups/[id]/history/route.ts` | `GET` | Riwayat grup (`users.manage` \| `users.view`) |
+| `app/api/admin/users/route.ts` | `POST` | BL-62 buat user: `auth.api.createUser` server-side (banned "sedang disiapkan") -> transaksi app (grup, bintang, role, buka ban, audit) -> kompensasi bila gagal |
+| `app/api/admin/users/[id]/password/route.ts` | `POST` | Atur sandi (hasher Better Auth), cabut semua sesi, audit tanpa sandi |
+| `app/api/admin/users/[id]/status/route.ts` | `POST` | Aktif/nonaktif (ban + cabut sesi; tidak menghapus) |
+| `app/api/admin/users/[id]/primary-group/route.ts` | `PUT`, `DELETE` | BL-63 tandai/lepas bintang grup utama (dua langkah) -> `user.role` dari grup preset |
+| `app/api/admin/users/[id]/group/route.ts` | `POST` | LAMA, dipensiunkan: kini tambah + bintang (bukan "ganti semua") |
+| `app/api/admin/users/[id]/history/route.ts` | `GET` | Riwayat user (`users.manage` \| `users.view`) |
+| `app/api/admin/users/permissions/route.ts` | `GET` | Daftar user + semua grup + grup utama efektif (`users.manage` \| `users.view`) |
 
 ### OFF Program Control (OPC)
 
@@ -727,20 +890,25 @@ AccAPI/_github_clean/
 | `app/api/off-program-control/batches/[id]/claim-review/route.ts` | `POST` | Review & approve Claim |
 | `app/api/off-program-control/batches/[id]/finance-payment/route.ts` | `POST` | Input pembayaran Finance |
 | `app/api/off-program-control/batches/[id]/refund/route.ts` | `POST` | Submit refund kelebihan bayar |
-| `app/(dashboard)/off-program-control/page.tsx` | `OffProgramControlPage` + tab components | Cockpit OPC full; data runtime hanya dari API dan error tidak diganti fixture. Untuk stress test UI lokal, `?mock=N` mengaktifkan maksimum 2.000 batch sintetis in-memory hanya pada development; bulk SPV tetap mulai dari baris kosong. Tab dan detail batch tersinkron ke query URL, tab mendukung roving keyboard, overlay kritis memakai Dialog native bersama, hierarchy/density memakai semantic cockpit tokens, shell sesi memakai loading skeleton |
+| `app/(dashboard)/off-program-control/page.tsx` | `OffProgramControlPage` | Rute Fiori S4d: izin server (`resolveRequestPermissionsH`) + `FioriScope` → `OpcApp` |
+| `app/(dashboard)/off-program-control/OpcApp.tsx` | `OpcApp` | Peran OPC sama dengan kode lama (sesi + `useLocalAuthRole` → `resolveOffRole`, SM hanya tab Sales Manager); navigasi `?tab=` lama; lonceng + pencarian membuka `?batch=` di kolom kedua untuk peran apa pun; `?mock=N` fixture dev; dialog "Tinggalkan perubahan?" + `useUnsavedGuard` |
+| `app/(dashboard)/off-program-control/opc/Bersama.tsx` | `useDaftarBatch`, `useDetailBatch`, `KerjaPeran`, `Antrean`, `ambilOpc`, `tulisOpc` | Satu daftar 200 batch (polling 45 dtk + fokus tab, SLA `detectProblematicBatches`), detail batch (+ refund, audit per batch), worklist + saringan + FCL; header berisi KONTRAK untuk modul peran |
+| `app/(dashboard)/off-program-control/opc/ObjectPageBatch.tsx` | `ObjectPageBatch` | Object Page batch: header + Flow 7 tahap + lewat SLA, Item, Validasi klaim, Pembayaran dan refund, Riwayat (log + enam sumbu status), Alur dokumen; slot `bagian`/`gantiItem`/`strip`/`aksi`/`pesanFooter`/`draf` |
+| `app/(dashboard)/off-program-control/opc/peran/*.tsx` | `Spv`, `Sm`, `Klaim`, `Om`, `Keuangan`, `Ringkasan`, `Audit` | Satu modul per tab; header tiap modul mendaftar fitur lama yang dibawa (rentang baris kode lama) |
+| `lib/opc-ui.ts` | `tahapBatch`, `infoTahap`, `alurBatch`, `PREDIKAT`, `TAMPILAN`, `tabTerlihat`, `saringBatch`, `izinAksi` | Murni: enam sumbu status → 7 tahap (Draf → SM → Klaim → OM → Bayar → Final → Selesai + Dikembalikan/Dibatalkan), predikat antrean salinan kode lama, label Indonesia, format WITA (uji: `lib/opc-ui.test.ts`) |
 
 ### Form Kontrol
 
 | File | Fungsi Utama | Peran |
 |---|---|---|
 | `app/(dashboard)/form-kontrol/page.tsx` | `FormKontrolPage`, `loadScope`, `selectTab` | Memuat `/api/form-kontrol/my-scope` secara fail-closed; loading memakai skeleton, error punya retry, lalu tab dibuka sesuai role dan tersinkron ke query URL |
-| `app/(dashboard)/form-kontrol/visit/[custCode]/page.tsx` | `VisitWizardPage`, `PhotoInput` | Flow check-in -> status order -> simpan merchandising -> check-out; langkah hanya maju sesudah persistence sukses |
+| `app/(dashboard)/form-kontrol/**` + `app/(dashboard)/sales/**` (Fiori S5) | `FormKontrol` (shell tab per peran), `TabAo` (Rute hari ini), `Kunjungan` + `FotoBukti` (wizard Check-in → Status → Merchandising → Check-out, Kembali di tiap langkah), `OrderSales`, `DashboardSpv`, tab tim; helper `shared.tsx` (`hariIniWita`, `ambilFk`/`tulisFk`, `useIzinFk`) dan `lapangan.ts` | Rute server tipis + FioriScope; tanggal "hari ini" dihitung WITA di klien dan dikirim ke server (BL-28 penetapan server belum); langkah wizard hanya maju sesudah persistence sukses; galat ≠ kosong; jawaban tidak pasti disebut |
 | `components/form-kontrol/camera-capture.tsx` | `CameraCapture` | Kamera/pratinjau foto dalam Dialog native; tetap terbuka dan dapat retry sampai callback upload+persistence resolve |
 | `components/ui/Dialog.tsx` | `Dialog` | Primitive modal native bersama: focus trap/restoration browser, Escape, label/deskripsi, dan backdrop opsional |
 | `components/DataTable.tsx` | `DataTable` | Tabel generik dengan caption, status live, loading skeleton, empty state eksplisit, sorting semantik, kontrol kolom/pagination aksesibel, sticky header, dan density baris konsisten |
-| `components/off-program-control/OffGlobalSearch.tsx` | `OffGlobalSearch` | Quick jump OFF via Ctrl/Cmd+K; combobox/listbox mendukung Arrow, Home/End, Enter, dan Escape tanpa mengambil alih Ctrl/Cmd+F browser; hasil membuka deep-link batch di overview |
-| `components/off-program-control/OffNotificationBell.tsx` | `OffNotificationBell` | Ringkasan masalah SLA dengan progressive disclosure dan aksi langsung membuka batch terkait tanpa pencarian ulang |
-| `app/(dashboard)/insentif-sales/page.tsx` | `InsentifSalesPage`, `updateContext` | View serta filter principle/cabang tersinkron ke query URL; dashboard/finance memakai loading skeleton, error recovery, empty state reset, dan seluruh tabel memakai density semantic bersama |
+| `components/off-program-control/OffGlobalSearch.tsx` | `OffGlobalSearch` | Quick jump OFF via Ctrl/Cmd+K; combobox/listbox mendukung Arrow, Home/End, Enter, dan Escape tanpa mengambil alih Ctrl/Cmd+F browser; hasil membuka batch di kolom kedua tab aktif |
+| `components/off-program-control/OffNotificationBell.tsx` | `OffNotificationBell` | Tombol berjumlah + popover masalah SLA per peran; "Buka pengajuan" membuka batch di kolom kedua; Sembunyikan berlaku sampai muat ulang |
+| `app/(dashboard)/insentif-sales/**` (Fiori S4c) | `InsentifSalesPage`, `InsentifRangka`, `usePeriode`, `useDashboard`, `aksesInsentif`, `halamanTerlihat` | Enam rute (Dashboard, `/saya`, `/pembayaran`, `/data-periode`, `/support`, `/pengaturan`); navigasi dari izin + identitas hierarki (server); periode/principal/cabang di query URL untuk semua halaman; `?view=` lama dialihkan; enam keadaan per layar, aksi tulis lewat ConfirmDialog |
 | `app/globals.css` | semantic cockpit classes | Sumber token lebar halaman, spacing, radius, page hierarchy, tab, toolbar, panel, tabel, dan action hierarchy untuk route operasional |
 | `components/ui/AsyncState.tsx` | `LoadingState`, `ErrorState`, `EmptyState` | Primitive feedback async bersama; skeleton mengikuti reduced-motion, error meneruskan retry, empty state dapat membawa recovery action |
 
@@ -748,7 +916,11 @@ AccAPI/_github_clean/
 
 | File | Fungsi Utama | Peran |
 |---|---|---|
-| `app/(dashboard)/payments/page.tsx` | `fetchData`, `handleSaveBulk`, `handleSubmitCart` | Refresh focus/visibility ditahan saat ada edit lokal; perubahan wajib tersimpan sebelum draft cart dibuat |
+| `app/(dashboard)/payments/Rekaman.tsx` | `simpanDraf`, tile/saringan, pilihan layar | Kunci baris dari `locked_reason` server; draf isian disimpan SATU `/payments/update` per rekaman (hasil per baris); pilihan tidak dikirim sebagai `ajukan`; keranjang butuh draf kosong; jawaban tidak pasti = muat ulang + kunci tulis |
+| `app/(dashboard)/payments/bersama.tsx` | `baca`, `tulis`, `sebab` | 401/403 diterjemahkan menurut kode status; 403 diulang sekali dengan token CSRF baru; putus/≥502/bukan JSON = "belum pasti" |
+| `app/(dashboard)/payments/cart/[draftId]/Keranjang.tsx` | `ajukan` | Rekening (lookup) + nomor SPPD sebelum Ajukan; potongan angka ketat; submit tidak pasti → muat ulang; 404 = draf terpakai, terkunci |
+| `app/(dashboard)/payments/FormatSppd.tsx` | `simpan` | Simpan terkunci saat setelan gagal/sedang dimuat (AM-019); nomor terakhir hanya dikirim bila diubah + `expected_last_sequence`; nomor tidak boleh turun dalam setahun (D-05) |
+| `lib/payments-ui.ts` | `statusRekaman`, `kurangLengkap`, `izinPembayaran`, `pratinjauNomor` | Helper murni (cermin validasi cart/create, izin → alasan nonaktif, templat nomor SPPD); diuji `payments-ui.test.ts` |
 
 ### Claim Workflow
 
@@ -776,8 +948,12 @@ AccAPI/_github_clean/
 | File | Fungsi Utama | Peran |
 |---|---|---|
 | `lib/sync.ts` | `AccuratePaginator`, `syncModule` | Sync paginated data Accurate ke SQLite lokal (item/customer) dengan checkpoint |
-| `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening) |
-| `app/api/auth/callback/route.ts` | `GET` | OAuth2 callback dari Accurate (tukar code ke token) |
+| `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment & sales-invoice; sales-receipt = `pelunasan.kirim`; tulis lain = `api_wrapper.execute` + katalog Konsol (S7-1b) |
+| `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance: database sesi wajib = `expectedDatabaseId` (409 `database_changed`), klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
+| `app/api/finance/purchase-payment/resolve/route.ts` | `POST` | Atestasi manual attempt purchase-payment tidak pasti (alasan + sumber pemeriksaan) |
+| `app/api/finance/purchase-payment/attempts/route.ts` | `GET` | Baca-saja status attempt terbaru per kelompok faktur (S6-0e; kontrak `docs/handover/S6-0e-KONTRAK-API.md`) |
+| `app/api/auth/accurate-login/route.ts` | `GET` | Mulai OAuth2 Accurate: `state` acak + `returnTo` daftar putih di cookie httpOnly berumur 10 menit, 307 ke authorize (scope tetap) |
+| `app/api/auth/callback/route.ts` | `GET` | OAuth2 callback dari Accurate: tolak state hilang/beda SEBELUM tukar code, simpan token, alihkan dengan `accurate=connected` atau `accurate=error&alasan=<kode>` |
 | `app/api/faktur/route.ts` | `GET` | Daftar faktur dari cache `sales_invoice` (cari nomor/pelanggan, default hanya nomor mengandung INV, `?all=1` untuk semua) |
 | `app/api/faktur/[id]/route.ts` | `GET` | Detail 1 faktur + baris item (qty/harga) live dari `sales-invoice/detail.do`; `?raw=1` menampilkan respons Accurate mentah |
 | `app/api/webhook/accurate/route.ts` | `POST` | Terima event webhook Faktur Penjualan dari Accurate (IP whitelist fail-closed + log rotasi + upsert `sales_invoice`) |
@@ -801,6 +977,8 @@ AccAPI/_github_clean/
 |---|---|---|
 | `app/api/idempotency/lock/route.ts` | `POST` | Kunci fingerprint bulk upload sales receipt (cegah submit ganda) |
 | `app/api/idempotency/complete/route.ts` | `POST` | Tandai idempotency key selesai diproses |
+| `app/api/idempotency/resolve/route.ts` | `GET` | Pratinjau pencarian Selesaikan pelunasan tidak pasti (baca-saja) |
+| `app/api/idempotency/summary/route.ts` | `GET` | Ringkasan pelunasan Tidak pasti / Gagal boleh diulang (Beranda BL-41) |
 | `lib/fuzzySearch.ts` | `fuzzySearch` | Pencarian fuzzy in-memory fallback |
 | `lib/pdf-text.ts` | `uppercasePageText` | Uppercase teks untuk header PDF |
 | `lib/off-program-control/holidays.ts` | `isHoliday`, `getNextWorkday` | Kalender hari libur untuk kalkulasi deadline |
@@ -887,12 +1065,42 @@ claim_workflow (offBatchId -> off_batch.id) [1:1 unique]
 sync_state [checkpoint per modul]
 item [cache Accurate items]
 customer [cache Accurate customers]
-idempotency_log [fingerprint bulk upload]
+idempotency_log [fingerprint bulk upload; lockId/lockedBy] ── idempotency_override [jejak override Finance]
+accurate_write_attempt [klaim tulis Accurate per subjek × generasi] ── accurate_write_attempt_reopen [repost D-15, rilis B]
+  (FK melingkar + trigger immutability + REVOKE = DDL manual docs/handover/DDL_ADR004.sql, dijalankan saat deploy)
 
 # Dynamic RBAC (additive — Fase 2/4; user.role & user.permissions TIDAK dihapus)
 access_group ──── group_permission (group_id)   [permission_key = "module.action"]
-  └──────────── user_group (group_id + user_id)  [akses user = UNION group]
-permission_audit_log [siapa ubah group/permission siapa, kapan]
+  └──────────── user_group (group_id + user_id)  [akses user = UNION group; is_primary = bintang grup utama, maks. 1/user — S7-0, dibaca mulai S7-1/S7-3]
+permission_audit_log [siapa ubah group/permission/user siapa, kapan; dibaca riwayat S7-1]
+
+# Principal resmi (S7-0/S7-2 BL-64; DDL manual docs/handover/DDL_S7_0.sql lalu DDL_S7_2.sql SEBELUM image)
+principal [code unik = kode OPC/Klaim, TETAP] ── principal_variant (principal_id + variant_key; '' = varian dasar)
+  └──────────── principal_alias [id; alias_norm unik per kelompok: kode Master Barang | nama/label/kode OPC -> principal (+ varian); nilai WAJIB dari normalizer baku lib/principal/normalisasi.ts]
+principal_log [append-only (trigger + REVOKE di DDL_S7_2): satu baris per buat/aktif/nonaktif/hapus, transaksi sama dengan perubahannya]
+  API app/api/principals/** (lib/principal/tulis.ts; kontrak docs/handover/S7-2-KONTRAK-PRINCIPAL-API.md): GET daftar/riwayat
+  (principles.view), tulis (principles.upload; hapus alias principles.delete) — 409 berkode tanpa menimpa, 503 tanpa trigger penjaga.
+  Resolver lib/principal/resolver.ts (ruang WAJIB nama | kode_master_barang; alias saja: cocok | tak_dikenal | ambigu; GET /api/principals/resolve).
+  Laporan + benih: docs/handover/PRINCIPAL_EKSPOR.sql (psql -qAt di VPS, baca-saja -> 1 baris JSON) lalu OFFLINE npx tsx scripts/principal-laporan.mjs
+  --dari-json (atau DATABASE_URL langsung, berkas SQL yang sama) -> laporan.md/json + benih.sql (INSERT ... ON CONFLICT DO NOTHING) untuk ditinjau owner.
+  Pemakai belum beralih (S7-2b).
+
+# Kasir ↔ Incaso (K1a BL-59; skema + lib murni lib/kasir/rekonsiliasi.ts; pembaca K1b, UI K2; DDL manual docs/handover/DDL_K1A.sql SEBELUM image; kontrak docs/handover/KASIR-KONTRAK.md)
+kasir_setoran [append-only; (tanggal, salesman_kode=ORANG, revisi) unik; revisi n+1 -> revisi n (FK komposit); tunai/transfer/giro >= 0]
+kasir_selisih_catatan [append-only; angka pelunasan/setoran saat dijelaskan; '' = Tanpa salesman] · kasir_tak_teralokasi_catatan [append-only; per pelunasan, angka sisa]
+kasir_hari_event [append-only; tutup (snapshot.terhalang WAJIB [] — owner T2) | kunci (otomatis 20.00 WITA, boleh terhalang) | buka(alasan >= 15)]
+  izin ke grup: docs/handover/RBAC_PRESET_KASIR.sql SESUDAH RBAC_PRESET_BL37.sql (S7-1)
+  S7-1b (urutan di header SQL): RBAC_S7_1B_CEK.sql baca-saja -> PK-1 owner (12 Okt: biarkan — KUNCI tidak menulis api_wrapper.*;
+  Admin/Fakturist/Manager sudah memegang execute) -> RBAC_S7_1B_KUNCI.sql SEBELUM image -> image ->
+  RBAC_S7_1B_PENSIUN.sql SESUDAH image -> CEK ulang (mode cek bawaan = ROLLBACK; terapkan PGOPTIONS='-c rbac.terapkan=1')
+kasir_pelunasan (database_id + pelunasan_id; chequeAmount, metode, last_update) ── kasir_pelunasan_faktur (faktur_id, master_salesman_id, invoice_payment) [cache K1b, TANPA raw_data]
+  masterSalesmanId -> accurate_employee.number -> sales_code_merge (merge, per bulan) -> ORANG; OTHERS dikeluarkan; Σ invoicePayment ≠ chequeAmount -> ember tak teralokasi; cheque uang < 0 -> ember nominal_negatif (K-1 a)
+kasir_pelunasan_baca (database_id + tanggal; status berjalan|lengkap|sebagian|gagal, sebab (+hapus_massal), sisa_detail, ditolak, token lease 2 mnt, lengkap_pada, akun_sinkron, penuh_tertunda_pada) [K1b; DDL_K1A -> DDL_S7_2 -> DDL_K1B SEBELUM image; 0031 sesudah 0030]
+  pembaca K1b (lib/kasir/baca-pelunasan.ts, identitas SINKRON resolveSyncCredentials; murni lib/kasir/pembaca.ts):
+    POST /api/kasir/segarkan {tanggal, penuh?, konfirmasiHapus?} (kasir.view; penuh/konfirmasi = kasir.buka) | GET /api/cron/kasir-pelunasan (CRON_SECRET; hari ini WITA + mundur ke hari kerja sebelumnya; penuh=1 menunggu lease; sedang_dibaca = 202)
+      -> lease (INSERT .. ON CONFLICT .. WHERE lease basi) -> sales-receipt/list.do filter transDate (fail-closed pageCount/rowCount) -> detail.do HANYA id baru/lastUpdate beda
+         (≤ 4 serentak, 429 -> 2) -> upsert kasir_pelunasan + ganti _faktur per pelunasan (token FOR SHARE) -> hapus id hilang (daftar lengkap saja) -> status
+    GET /api/kasir/segarkan?tanggal= (status tanpa Accurate) | muatPelunasanHari(databaseIdSinkron(), tanggal) -> Pelunasan[] untuk K2/K3 (Tutup hanya bila lengkap)
 ```
 
 **Status Lifecycle offBatch:**
@@ -946,7 +1154,7 @@ Status Lifecycle wave:
 | `db/migrations/` | Output drizzle-kit (SQL migration files) |
 | `scripts/seed-opc-dummy.mjs` | 1.275 batch dummy OPC (51 batch x 25 principal, semua 12 problem code) |
 | `scripts/migrate-rbac-groups.mjs` | Buat tabel Dynamic RBAC (access_group, group_permission, user_group, permission_audit_log) — additive & idempotent |
-| `scripts/seed-rbac-presets.ts` | Sinkron preset Dynamic RBAC termasuk `manage_hierarchy` dan Laporan Harian + backfill user_group (`node --experimental-strip-types`) — PostgreSQL, idempotent |
+| `scripts/seed-rbac-presets.ts` | Sinkron preset Dynamic RBAC termasuk `manage_hierarchy` dan Laporan Harian + backfill user_group (`node --experimental-strip-types`) — PostgreSQL; MENGGANTI izin grup preset (izin manual via UI hilang), wajib `RBAC_PRESET_SYNC=reset-preset-groups` |
 | `db/migrations/0002_rekapan_nota.sql` | DDL modul Rekapan Nota (10 tabel + 6 enum + kolom item/customer) + seed 17 pick_group & 3 app_setting; idempoten |
 | `scripts/apply-rekapan-migration.mjs` | Terapkan 0002 ke PostgreSQL LOKAL dalam satu transaksi (guard hostname; produksi manual dengan role ber-DDL) |
 | `scripts/bandingkan-rekapan-excel.ts` | Kriteria lulus Fase 3: adu hasil AccAPI vs `Paste Data Sore` PER SKU PER GRUP (bukan grand total). Selisih wajib punya sebab yang dibuktikan ke DB; kalau tidak, exit 1. `npx tsx scripts/bandingkan-rekapan-excel.ts --wave <id>` |
@@ -992,10 +1200,10 @@ Status Lifecycle wave:
 
 | Layer | Lokasi |
 |---|---|
-| **Entry point UI** | `app/(dashboard)/insentif-sales/page.tsx` — tab `sales`/`spv`/`sm`/`admin`(Input Penjualan)/`finance` lewat `?view=` |
+| **Entry point UI** | `app/(dashboard)/insentif-sales/` — rute server tipis (`page.tsx`, `saya/`, `pembayaran/`, `data-periode/`, `support/`, `pengaturan/`) → klien `Dashboard`, `Saya`, `Pembayaran`, `DataPeriode`(+`Kualitas`), `Support`, `Pengaturan`(+`Hierarki`); kerangka `Rangka.tsx`, rincian/PPh bersama `Rincian.tsx`; halaman per izin di `lib/insentif-ui.ts` (`HALAMAN`), peran dari `lib/insentif-akses.ts`. `?view=sm|spv|sales|finance|admin` lama dialihkan |
 | **Handler/route** | `app/api/insentif-sales/*/route.ts` (20 route, daftar di bawah) |
 | **Business logic (pure)** | `lib/insentif-sales-calc.ts` (GT), `lib/insentif-mt-calc.ts` (MT), `lib/insentif-spv-calc.ts` (SPV), `lib/insentif-sm-calc.ts` (SM), `lib/insentif-value-source.ts`, `lib/sales-code-merge.ts`, `lib/insentif-payee.ts`, `lib/excel-date.ts` (tanggal Excel, anti geser 1 hari) |
-| **Setelan aturan** | `lib/insentif-settings.ts` + tabel `app_setting` — ambang Target AO GT/TT (`fixed240` \| `file`) + pengecualian **per baris per periode** (key `insentif_ao_file:YYYY-MM`, daftar `KODE\|PRINCIPAL`; tombol "Pakai target file" di tabel Input Support Principle → `PATCH /api/insentif-sales/targets/ao-file`, izin `upload_target` + cakupan tim) + principal yang tetap dihitung untuk **SPV** walau semua sales bawahannya `principle` (key `insentif_spv_ikut:YYYY-MM`, daftar `NAMA SPV|PRINCIPAL`; tombol di panel Input Support Principle - SPV → `PATCH /api/insentif-sales/spv-ikut`, hanya izin lihat-semua; dibaca `spv-dashboard` → `calculateInsentifSPV(…, ikutPaksa)`), daftar cabang NILAI_JUAL, daftar SM berhak, dan **semua konstanta uang** (`lib/insentif-konstanta.ts`, key `insentif_konstanta`: pool & bobot GT/MT, ambang bayar, ambang IA MT, rate SPV, strata SM, tarif PPh). Diubah lewat `PATCH /api/insentif-sales/settings` (izin `manage`) dari panel Admin → "Konstanta skema insentif". Gagal baca jatuh ke bawaan `DEFAULT_KONSTANTA`, bukan melempar; fungsi kalkulasi menerimanya sebagai parameter `k`, tanpa `k` memakai bawaan. |
+| **Setelan aturan** | `lib/insentif-settings.ts` + tabel `app_setting` — ambang Target AO GT/TT (`fixed240` \| `file`) + pengecualian **per baris per periode** (key `insentif_ao_file:YYYY-MM`, daftar `KODE\|PRINCIPAL`; tombol "Pakai target file" di tabel Input Support Principle → `PATCH /api/insentif-sales/targets/ao-file`, izin `upload_target` + cakupan tim) + principal yang tetap dihitung untuk **SPV** walau semua sales bawahannya `principle` (key `insentif_spv_ikut:YYYY-MM`, daftar `NAMA SPV|PRINCIPAL`; tombol di panel Input Support Principle - SPV → `PATCH /api/insentif-sales/spv-ikut`, hanya izin lihat-semua; dibaca `spv-dashboard` → `calculateInsentifSPV(…, ikutPaksa)`), daftar cabang NILAI_JUAL, daftar SM berhak, dan **semua konstanta uang** (`lib/insentif-konstanta.ts`, key `insentif_konstanta`: pool & bobot GT/MT, ambang bayar, ambang IA MT, rate SPV, strata SM, tarif PPh). Diubah lewat `PATCH /api/insentif-sales/settings` (izin `manage`) dari panel Admin → "Konstanta skema insentif". Gagal baca: dashboard (`getKonstanta`) jatuh ke bawaan `DEFAULT_KONSTANTA`; jalur tulis memakai `readKonstanta`/`readKonstantaVersi` yang MELEMPAR (AM-020), dan `GET settings` melabeli `konstantaSumber: "gagal_baca"` sehingga editor Pengaturan terkunci. Versi (AM-045): `konstantaVersi` = `updatedAt` ISO; `PATCH` konstanta wajib membawanya (tanpa → 400, beda → 409 `KONSTANTA_BERUBAH`, tulis bersyarat pada isi yang dibaca). Fungsi kalkulasi menerimanya sebagai parameter `k`, tanpa `k` memakai bawaan. |
 | **Data access** | `lib/insentif-sales.ts` (`getTargetsForPeriod`, `computeMtdProgress`, `computeMtdByPrinciple`, `getMergeMap`), `lib/insentif-hierarchy-scope.ts` (row-level scope) |
 | **Parser Excel** | `lib/insentif-sales-excel.ts` (`parseTargetExcel`), agregasi closing di browser (`page.tsx`) |
 | **DB** | `sales_targets`, `sales_daily_progress`, `incentive_support`, `spv_support`, `incentive_payments`, `incentive_tiers`, `sales_code_merge`, `spv_sales_assignment`, `sm_spv_assignment`, `spv_sales_claim_request`, `app_setting` |

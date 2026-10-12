@@ -1,11 +1,12 @@
 /*
  * Tujuan: Validasi tahap 1 satu batch — item, pelanggan, harga, dan pecahan diskon.
  * Caller: halaman Order Principal, tombol "Validasi".
- * Dependensi: lib/principal-validation, lib/item-price, db/schema, rbac.
+ * Dependensi: lib/principal-validation, lib/item-price, lib/invoice-outbox-actions (kunciBatch), db/schema, rbac.
  *
  * Harga dicari per pelanggan DAN per cabang pelanggan; lihat catatan di dekat `branchOf`.
  * Main Functions: POST.
- * Side Effects: Menulis hasil pemeriksaan ke `principal_order_line` dan hitungan ke batch.
+ * Side Effects: Menulis hasil pemeriksaan ke `principal_order_line` dan hitungan ke batch, dalam satu transaksi yang
+ *   mengunci batch (`kunciBatch` key share) sebagai pernyataan PERTAMA (BL-21; batch hilang = 409).
  *
  * Hasil terjemahan (kode barang, pelanggan, salesman) DISIMPAN, bukan dihitung ulang saat
  * kirim: mapping bisa berubah setelah batch ditinjau, dan faktur wajib memakai angka yang
@@ -16,7 +17,7 @@ import { and, eq, gte, inArray, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { customer, invoiceOutbox, item, orderDupeAck, principalMapping, principalOrderBatch, principalOrderLine, promoOutlet, promoRule,
     salesInvoiceCache } from "@/db/schema";
-import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { syncItemPrices } from "@/lib/item-price-sync";
 import { aturanBerlaku, bonusQuota, channelAllowed, channelOutlet, checkLine, checkSoPromo, daftarKosong,
@@ -25,6 +26,7 @@ import { aturanBerlaku, bonusQuota, channelAllowed, channelOutlet, checkLine, ch
     type DiscountAt, type Normalisasi, type PublishedRule, type TriggerBuy } from "@/lib/principal-validation";
 import { duplicateFinding, findDuplicate, type OrderFingerprint } from "@/lib/order-duplicate";
 import { invoiceKey } from "@/lib/principal-invoice";
+import { kunciBatch } from "@/lib/invoice-outbox-actions";
 import { invoiceLines, pemberianPertama, temuanPoPertama } from "@/lib/promo-recap";
 
 export const runtime = "nodejs";
@@ -39,7 +41,7 @@ async function mappingOf(principal: string, kind: "item" | "customer" | "salesma
 }
 
 export async function POST(request: NextRequest) {
-    const gate = await resolveRequestPermissionsH();
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
     if (!gate.perms?.has("order.create")) {
         return NextResponse.json({ ok: false, error: "Akses validasi batch tidak diizinkan" }, { status: 403 });
@@ -429,7 +431,12 @@ export async function POST(request: NextRequest) {
 
     let ok = 0;
     let review = 0;
-    await db.transaction(async (tx) => {
+    const masihAda = await db.transaction(async (tx) => {
+        // BL-21: kunci batch DULU, sebelum baris line mana pun. Hapus/Ganti memegang batch `FOR UPDATE` lalu CASCADE ke line;
+        // Validasi yang mengubah line dulu lalu batch = siklus kunci (40P01). `key share` cukup bentrok dengan FOR UPDATE
+        // (Hapus/Ganti menunggu Validasi, atau Validasi melihat batchnya sudah hilang) tanpa menahan Validasi lain maupun
+        // Antrekan (sama-sama `key share`); UPDATE batch di bawah tidak terhalang kunci milik sendiri.
+        if (!(await kunciBatch(tx, id, "key share"))) return false;
         for (const line of lines) {
             const itemCode = items.get(line.productCode) ?? null;
             const base = customers.get(line.customerCode) ?? null;
@@ -494,7 +501,11 @@ export async function POST(request: NextRequest) {
             status: review > 0 ? "review" : "validated",
             okCount: ok, reviewCount: review, validatedAt: new Date(),
         }).where(eq(principalOrderBatch.id, id));
+        return true;
     });
+    if (!masihAda) {
+        return NextResponse.json({ ok: false, error: "Batch ini dihapus atau diganti saat divalidasi; muat ulang daftar batch" }, { status: 409 });
+    }
 
     return NextResponse.json({ ok: true, id, checked: lines.length, okCount: ok, reviewCount: review, publishedRules: publishedRules.length, fakturPrograms: [...new Set(soPromo.values())], priceRefresh, peringatan });
 }

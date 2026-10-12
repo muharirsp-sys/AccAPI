@@ -1,4 +1,9 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+
+async function openChat(page: Page) {
+  await page.getByRole("button", { name: /^Menu profil/ }).click();
+  await page.getByRole("dialog", { name: "Menu profil" }).getByRole("button", { name: /Bantuan/ }).click();
+}
 
 test.describe("Chatbot E2E", () => {
   test.beforeEach(async ({ page }) => {
@@ -24,13 +29,14 @@ test.describe("Chatbot E2E", () => {
       test.skip();
       return;
     }
-    const btn = page.locator('button[aria-label="Buka chat"]');
-    await expect(btn).toBeVisible({ timeout: 10000 });
+    // Tombol chat mengambang pindah ke menu profil shell (Bantuan).
+    await page.getByRole("button", { name: /^Menu profil/ }).click();
+    await expect(page.getByRole("dialog", { name: "Menu profil" }).getByRole("button", { name: /Bantuan/ })).toBeVisible({ timeout: 10000 });
   });
 
   test("chat dialog opens with welcome", async ({ page }) => {
     if (page.url().includes("/login")) { test.skip(); return; }
-    await page.locator('button[aria-label="Buka chat"]').click();
+    await openChat(page);
     const dialog = page.locator('[role="dialog"][aria-label="AI Assistant"]');
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("AI Assistant");
@@ -38,7 +44,7 @@ test.describe("Chatbot E2E", () => {
 
   test("send menu and get response", async ({ page }) => {
     if (page.url().includes("/login")) { test.skip(); return; }
-    await page.locator('button[aria-label="Buka chat"]').click();
+    await openChat(page);
     const input = page.locator('input[aria-label="Pesan chatbot"]');
     await input.fill("menu");
     await page.locator('button[aria-label="Kirim pesan"]').click();
@@ -49,7 +55,7 @@ test.describe("Chatbot E2E", () => {
 
   test("escape closes dialog", async ({ page }) => {
     if (page.url().includes("/login")) { test.skip(); return; }
-    await page.locator('button[aria-label="Buka chat"]').click();
+    await openChat(page);
     const dialog = page.locator('[role="dialog"][aria-label="AI Assistant"]');
     await expect(dialog).toBeVisible();
     await page.keyboard.press("Escape");

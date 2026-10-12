@@ -15,12 +15,18 @@ import { headers } from "next/headers";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
-import { user, userGroup, groupPermission } from "@/db/schema";
+import { accessGroup, user, userGroup, groupPermission } from "@/db/schema";
 import { permissionMapForUser, rolePermissionPresets } from "@/lib/rbac";
 import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
+import { allPermissionKeys } from "@/lib/rbac/registry";
+import { pilihUtama } from "@/lib/rbac/otorisasi";
 
+/** HANYA untuk bypass auth lokal (dev, host localhost). Preset legacy tidak memuat key granular
+ * registry (mis. off_program_control.finance_payment), sehingga route granular 403 di dev dan
+ * tidak bisa diuji lokal — digabung dengan registry (AM-040 E.25). */
 function adminPermissionKeys() {
-    return new Set(Object.entries(rolePermissionPresets.admin).flatMap(([moduleName, actions]) => (actions || []).map((action) => `${moduleName}.${action}`)));
+    const legacy = Object.entries(rolePermissionPresets.admin).flatMap(([moduleName, actions]) => (actions || []).map((action) => `${moduleName}.${action}`));
+    return new Set([...legacy, ...allPermissionKeys()]);
 }
 
 /** Permission key efektif user (Set "module.action"). Group jika ada; legacy hanya jika belum punya group. */
@@ -58,6 +64,20 @@ export async function getUserPermissions(userId: string): Promise<Set<string>> {
     }
 
     return keys;
+}
+
+/**
+ * BL-63 (owner 11 Okt): grup UTAMA efektif = grup berbintang; tanpa bintang dan user tepat 1 grup -> grup itu; selain itu null.
+ * Diturunkan saat DIBACA (tidak bergantung backfill DDL_S7_0). Izin tetap gabungan semua grup (getUserPermissions).
+ */
+export async function getPrimaryGroup(userId: string): Promise<{ id: string; name: string; isPreset: boolean; starred: boolean } | null> {
+    const rows = await db
+        .select({ id: accessGroup.id, name: accessGroup.name, isPreset: accessGroup.isPreset, isPrimary: userGroup.isPrimary })
+        .from(userGroup)
+        .innerJoin(accessGroup, eq(accessGroup.id, userGroup.groupId))
+        .where(eq(userGroup.userId, userId));
+    const g = pilihUtama(rows);
+    return g ? { id: g.id, name: g.name, isPreset: g.isPreset, starred: g.isPrimary } : null;
 }
 
 /**

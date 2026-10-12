@@ -34,6 +34,7 @@ import {
     recalcWorkflowAggregateFromSubmissions,
     requireClaimSession,
     writeClaimAudit,
+    lockClaimWorkflow,
 } from "@/lib/claim-workflow";
 
 type Context = { params: Promise<{ id: string; submissionId: string }> };
@@ -80,6 +81,7 @@ export async function POST(request: Request, context: Context) {
         const { id, submissionId } = await context.params;
 
         const result = await db.transaction(async (tx) => {
+            await lockClaimWorkflow(tx, id); // S6-0b: W dulu (S/WI baru sesudahnya) — urutan sama dengan route pembayaran/dokumen
             const [workflow] = await tx
                 .select()
                 .from(claimWorkflow)

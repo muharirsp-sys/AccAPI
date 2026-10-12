@@ -1,172 +1,139 @@
+/*
+ * Tujuan: Tab Hierarki Sales (Fiori S5, it05): SPV dan SM per salesman, dikelompokkan per SPV. Ubah = draf per baris, Simpan per
+ *   baris lewat dialog (lama → baru dan akibatnya pada cakupan). Simpan dikunci bila daftar usang (muat ulang gagal/berjalan).
+ * Caller: form-kontrol/FormKontrol.tsx (tab "hierarki"; peran admin/manager).
+ * Dependensi: ../shared (Scope, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive}.
+ * Main Functions: TabHierarki (default).
+ * Side Effects: GET /api/form-kontrol/sales-profiles; PUT /api/form-kontrol/sales-profiles (payload sama dengan hari ini).
+ */
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Network, Loader2, Save, RefreshCw, ChevronDown, ChevronRight } from "lucide-react";
-import { toast } from "sonner";
-import { type Scope, SectionTitle } from "../shared";
+import { useCallback, useState } from "react";
+import { Pencil, RefreshCw, Save } from "lucide-react";
+import { Button, EmptyState, ErrorState, MessageStrip, Skeleton } from "@/components/fiori/core";
+import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
+import { ambilFk, tulisFk, useIzinFk, type Scope } from "../shared";
 
-interface Profile {
-    salesCode: string;
-    salesName: string;
-    principle: string;
-    branch: string;
-    spvName: string | null;
-    smName: string | null;
-}
-
-interface EditState { spvName: string; smName: string }
+interface Profile { salesCode: string; salesName: string; principle: string; branch: string; spvName: string | null; smName: string | null }
+type Edit = { spvName: string; smName: string };
+const TANPA_SPV = "Belum diatur";
 
 export default function TabHierarki({ scope }: { scope: Scope }) {
-    const [profiles, setProfiles] = useState<Profile[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [edits, setEdits] = useState<Record<string, EditState>>({});
-    const [saving, setSaving] = useState<string | null>(null);
-    const [expandedSpv, setExpandedSpv] = useState<Record<string, boolean>>({});
+    void scope; // tab admin; server memeriksa cakupan global sendiri (allowedSalesCodes === null)
+    const izin = useIzinFk("manage");
+    const [load, muatUlang] = useLoad(useCallback(
+        (): Promise<Load<Profile[]>> => ambilFk("/api/form-kontrol/sales-profiles", (j) => (j.rows ?? []) as Profile[], "Hierarki sales belum berhasil dimuat."), []));
+    const [edits, setEdits] = useState<Record<string, Edit>>({});
+    const [simpan, setSimpan] = useState<Profile | null>(null);
+    const [sukses, setSukses] = useState("");
 
-    const load = useCallback(async () => {
-        setLoading(true);
-        try {
-            const res = await fetch("/api/form-kontrol/sales-profiles");
-            const data = await res.json();
-            const rows: Profile[] = data.rows ?? [];
-            setProfiles(rows);
-            const init: Record<string, EditState> = {};
-            rows.forEach(r => { init[r.salesCode] = { spvName: r.spvName ?? "", smName: r.smName ?? "" }; });
-            setEdits(init);
-            const spvs = [...new Set(rows.map(r => r.spvName ?? "— Belum diatur —"))];
-            setExpandedSpv(Object.fromEntries(spvs.map(s => [s, true])));
-        } catch { toast.error("Gagal memuat profil sales"); }
-        finally { setLoading(false); }
-    }, []);
+    const profiles = load.data ?? [];
+    const nilai = (p: Profile): Edit => edits[p.salesCode] ?? { spvName: p.spvName ?? "", smName: p.smName ?? "" };
+    const berubah = (p: Profile) => { const e = edits[p.salesCode]; return Boolean(e) && (e.spvName !== (p.spvName ?? "") || e.smName !== (p.smName ?? "")); };
+    const nDraf = profiles.filter(berubah).length;
+    useUnsavedGuard(nDraf > 0);
+    const kunci = izin ?? (load.status !== "siap" ? "Tunggu daftar selesai dimuat ulang." : undefined);
 
-    useEffect(() => { load(); }, [load]);
+    const spvNames = [...new Set(profiles.map((r) => r.spvName).filter(Boolean) as string[])].sort();
+    const smNames = [...new Set(profiles.map((r) => r.smName).filter(Boolean) as string[])].sort();
+    const grup = new Map<string, Profile[]>();
+    for (const p of profiles) { const k = p.spvName ?? TANPA_SPV; grup.set(k, [...(grup.get(k) ?? []), p]); }
+    const kunciGrup = [...grup.keys()].sort((a, b) => (a === TANPA_SPV ? 1 : b === TANPA_SPV ? -1 : a.localeCompare(b)));
+    const ubah = (p: Profile, patch: Partial<Edit>) => { setEdits((prev) => ({ ...prev, [p.salesCode]: { ...nilai(p), ...patch } })); setSukses(""); };
 
-    async function handleSave(salesCode: string) {
-        const edit = edits[salesCode];
-        setSaving(salesCode);
-        try {
-            const res = await fetch("/api/form-kontrol/sales-profiles", {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ salesCode, spvName: edit.spvName || null, smName: edit.smName || null }),
-            });
-            if (!res.ok) throw new Error("Gagal simpan");
-            toast.success("Hierarki berhasil diperbarui");
-            await load();
-        } catch { toast.error("Gagal menyimpan"); }
-        finally { setSaving(null); }
-    }
-
-    function isDirty(salesCode: string) {
-        const p = profiles.find(r => r.salesCode === salesCode);
-        if (!p) return false;
-        const e = edits[salesCode];
-        return (e?.spvName ?? "") !== (p.spvName ?? "") || (e?.smName ?? "") !== (p.smName ?? "");
-    }
-
-    const spvNames = [...new Set(profiles.map(r => r.spvName).filter(Boolean) as string[])].sort();
-    const smNames  = [...new Set(profiles.map(r => r.smName).filter(Boolean) as string[])].sort();
-
-    const grouped = profiles.reduce<Record<string, Profile[]>>((acc, p) => {
-        const key = p.spvName ?? "— Belum diatur —";
-        (acc[key] ??= []).push(p);
-        return acc;
-    }, {});
-    const spvKeys = Object.keys(grouped).sort((a, b) =>
-        a === "— Belum diatur —" ? 1 : b === "— Belum diatur —" ? -1 : a.localeCompare(b));
-
-    void scope; // admin-only tab, scope tidak dipakai untuk filter di sini
-
-    return (
-        <div className="space-y-4">
-            <SectionTitle icon={Network} no={8} title="Hierarki Sales"
-                desc="Setting SPV dan SM untuk setiap salesman — menentukan siapa yang bisa melihat data siapa" />
-
-            <div className="flex justify-end">
-                <button onClick={load} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-3 py-1.5 bg-white/5 rounded-lg border border-white/10">
-                    <RefreshCw size={12} /> Refresh
-                </button>
-            </div>
-
-            <datalist id="spv-list">{spvNames.map(n => <option key={n} value={n} />)}</datalist>
-            <datalist id="sm-list">{smNames.map(n => <option key={n} value={n} />)}</datalist>
-
-            {loading ? (
-                <div className="flex items-center justify-center py-16 text-slate-400 gap-2">
-                    <Loader2 size={18} className="animate-spin" /> Memuat...
-                </div>
-            ) : (
-                <div className="space-y-3">
-                    {spvKeys.map(spvKey => {
-                        const salesUnderSpv = grouped[spvKey];
-                        const expanded = expandedSpv[spvKey] ?? true;
-                        const smOfGroup = salesUnderSpv[0]?.smName ?? null;
-                        return (
-                            <div key={spvKey} className="rounded-xl border border-white/10 bg-[#1a1c23]/60 overflow-hidden">
-                                <button
-                                    onClick={() => setExpandedSpv(p => ({ ...p, [spvKey]: !expanded }))}
-                                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left"
-                                >
-                                    {expanded ? <ChevronDown size={14} className="text-slate-400 shrink-0" /> : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
-                                    <div className="flex-1 min-w-0">
-                                        <span className="text-sm font-semibold text-indigo-300">{spvKey}</span>
-                                        {smOfGroup && <span className="ml-2 text-xs text-slate-500">· SM: {smOfGroup}</span>}
-                                    </div>
-                                    <span className="text-xs text-slate-500 shrink-0">{salesUnderSpv.length} salesman</span>
-                                </button>
-
-                                {expanded && (
-                                    <div className="border-t border-white/10 divide-y divide-white/5">
-                                        {salesUnderSpv.map(p => {
-                                            const edit = edits[p.salesCode] ?? { spvName: "", smName: "" };
-                                            const dirty = isDirty(p.salesCode);
-                                            return (
-                                                <div key={p.salesCode} className="px-4 py-3 flex flex-wrap items-end gap-3">
-                                                    <div className="min-w-[160px] flex-shrink-0">
-                                                        <p className="text-sm font-medium text-white">{p.salesName}</p>
-                                                        <p className="text-xs text-slate-500 font-mono">{p.salesCode} · {p.principle}</p>
-                                                    </div>
-
-                                                    <div className="flex flex-col gap-0.5 flex-1 min-w-[140px]">
-                                                        <label className="text-[10px] text-slate-500 uppercase tracking-wide">SPV</label>
-                                                        <input
-                                                            list="spv-list"
-                                                            value={edit.spvName}
-                                                            onChange={e => setEdits(prev => ({ ...prev, [p.salesCode]: { ...prev[p.salesCode], spvName: e.target.value } }))}
-                                                            placeholder="Nama SPV..."
-                                                            className="bg-black/30 border border-white/10 rounded-lg text-sm text-white px-3 py-2 placeholder-slate-500"
-                                                        />
-                                                    </div>
-
-                                                    <div className="flex flex-col gap-0.5 flex-1 min-w-[140px]">
-                                                        <label className="text-[10px] text-slate-500 uppercase tracking-wide">SM</label>
-                                                        <input
-                                                            list="sm-list"
-                                                            value={edit.smName}
-                                                            onChange={e => setEdits(prev => ({ ...prev, [p.salesCode]: { ...prev[p.salesCode], smName: e.target.value } }))}
-                                                            placeholder="Nama SM..."
-                                                            className="bg-black/30 border border-white/10 rounded-lg text-sm text-white px-3 py-2 placeholder-slate-500"
-                                                        />
-                                                    </div>
-
-                                                    <button
-                                                        onClick={() => handleSave(p.salesCode)}
-                                                        disabled={!dirty || saving === p.salesCode}
-                                                        className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg font-semibold shrink-0"
-                                                    >
-                                                        {saving === p.salesCode ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-                                                        Simpan
-                                                    </button>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
+    let isi;
+    if (!load.data && load.status === "galat") isi = <ErrorState title="Hierarki sales belum berhasil dimuat" message={(load.error ?? "").replace("Hierarki sales belum berhasil dimuat.", "").trim() || undefined} onRetry={muatUlang} />;
+    else if (!load.data) isi = <Skeleton rows={6} label="Memuat hierarki sales" />;
+    else if (profiles.length === 0) isi = <EmptyState title="Belum ada profil sales" message="Profil sales dibuat saat akun salesman ditautkan; hierarki diatur setelahnya." />;
+    else isi = (
+        <div className={load.status === "memuat" ? "fi-busy grid gap-3" : "grid gap-3"} aria-busy={load.status === "memuat" || undefined}>
+            {load.status === "galat" && (
+                <MessageStrip tone="neg" title="Gagal memuat ulang.">
+                    {(load.error ?? "").replace("Hierarki sales belum berhasil dimuat.", "").trim()} Yang tampil adalah hasil sebelumnya; simpan dikunci.{" "}
+                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatUlang}>Coba lagi</button>
+                </MessageStrip>
             )}
+            {kunciGrup.map((k) => {
+                const anggota = grup.get(k)!;
+                const sm = anggota[0]?.smName;
+                return (
+                    <details key={k} open className="fi-sect">
+                        <summary className="flex flex-wrap items-center gap-2 px-4" style={{ minHeight: 44, cursor: "pointer" }}>
+                            <b>{k === TANPA_SPV ? "SPV belum diatur" : k}</b>
+                            {sm && <span className="fi-small fi-subtle">SM: {sm}</span>}
+                            <span className="fi-small fi-subtle">· {anggota.length} salesman</span>
+                        </summary>
+                        <ul className="grid" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                            {anggota.map((p) => {
+                                const e = nilai(p);
+                                const draf = berubah(p);
+                                return (
+                                    <li key={p.salesCode} className="grid items-end gap-3 border-t px-4 py-3 sm:grid-cols-[minmax(10rem,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" style={{ borderColor: "var(--line)" }}>
+                                        <div className="min-w-0">
+                                            <b className="fi-small">{p.salesName}</b>
+                                            <span className="fi-codes">{p.salesCode} · {p.principle}</span>
+                                            {draf && <span className="fi-draft"><Pencil className="fi-icon" aria-hidden />Draf</span>}
+                                        </div>
+                                        <FormField label={`SPV ${p.salesName}`}>{(a) => (
+                                            <input {...a} list="fk-spv-list" className="fi-input" style={{ minHeight: 44 }} value={e.spvName} placeholder="Nama SPV" onChange={(ev) => ubah(p, { spvName: ev.target.value })} />
+                                        )}</FormField>
+                                        <FormField label={`SM ${p.salesName}`}>{(a) => (
+                                            <input {...a} list="fk-sm-list" className="fi-input" style={{ minHeight: 44 }} value={e.smName} placeholder="Nama SM" onChange={(ev) => ubah(p, { smName: ev.target.value })} />
+                                        )}</FormField>
+                                        <Button variant={draf ? "primary" : "secondary"} style={{ minHeight: 44 }} icon={<Save className="fi-icon" aria-hidden />}
+                                            disabled={!draf || Boolean(kunci)} disabledReason={kunci ?? "Belum ada perubahan"} onClick={() => setSimpan(p)}>
+                                            Simpan
+                                        </Button>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    </details>
+                );
+            })}
         </div>
+    );
+
+    const target = simpan ? nilai(simpan) : null;
+    return (
+        <>
+            <div className="fi-page-bar">
+                <h2 className="fi-title-2">Hierarki Sales</h2>
+                {nDraf > 0 && <span className="fi-draft"><Pencil className="fi-icon" aria-hidden />{nDraf} perubahan belum disimpan</span>}
+                <span className="fi-spacer" />
+                <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang}>Muat ulang</Button>
+            </div>
+            <p className="fi-small fi-muted">SPV dan SM tiap salesman menentukan siapa yang bisa melihat data siapa (Dashboard SPV, Kontrol SM, cakupan Form Kontrol).</p>
+            {sukses && <MessageStrip tone="pos" title={sukses} onClose={() => setSukses("")} />}
+            <datalist id="fk-spv-list">{spvNames.map((n) => <option key={n} value={n} />)}</datalist>
+            <datalist id="fk-sm-list">{smNames.map((n) => <option key={n} value={n} />)}</datalist>
+            {isi}
+            <ConfirmDialog
+                open={simpan !== null}
+                onClose={() => setSimpan(null)}
+                title={`Ubah hierarki ${simpan?.salesName ?? ""}?`}
+                description="Akibatnya langsung: SPV dan SM baru melihat data salesman ini; yang lama tidak lagi."
+                facts={simpan && target ? [
+                    ["Salesman", `${simpan.salesName} · ${simpan.salesCode}`],
+                    ["SPV", `${simpan.spvName ?? "—"} → ${target.spvName || "—"}`],
+                    ["SM", `${simpan.smName ?? "—"} → ${target.smName || "—"}`],
+                ] : []}
+                confirmLabel="Simpan hierarki"
+                confirmDisabled={kunci}
+                onConfirm={async () => {
+                    const p = simpan!;
+                    const e = nilai(p);
+                    await tulisFk("/api/form-kontrol/sales-profiles", {
+                        method: "PUT",
+                        body: { salesCode: p.salesCode, spvName: e.spvName || null, smName: e.smName || null },
+                        gagal: "Hierarki belum tersimpan.",
+                    });
+                    setSimpan(null);
+                    // Isian tidak dibuang: sampai daftar termuat ulang baris tetap menampilkan nilai baru (lalu tidak lagi "Draf").
+                    setSukses(`Hierarki ${p.salesName} tersimpan.`);
+                    muatUlang();
+                }}
+            />
+        </>
     );
 }
