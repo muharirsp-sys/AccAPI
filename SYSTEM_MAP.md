@@ -70,6 +70,15 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 
 Surat Kino berlapis teks -> `python_backend/kino_letter.py` -> draft; scan memakai Mistral OCR 4.1. Kelompok/varian/kemasan/kode diisi otomatis oleh `kino_letter.match_groups` (kata surat dijelaskan nama master, atau padanan `ALIAS_KELOMPOK`), diterima hanya bila `_apply_native_kelompok` menurunkan kode yang sama; yang tidak pasti tetap kosong untuk operator. Surat "KHUSUS LD JAWA" tidak dibuat barisnya. `summary_rules.py` memeriksa kelas outlet; `outlet_class.py` menyimpan keanggotaan kode outlet dasar, `import_outlet_class.py` memuat hit list. Kelas belum dimuat menahan program. `test_kino_letter.py` dan `test_summary_rules.py` menguji parser, tier, dan kelas outlet.
 
+### Order per cabang Accurate (O1, Oktober 2026 — DRAFT zona §3)
+Keputusan owner 12 Okt: pelanggan cabang X hanya dipesankan barang ber-cabang X; cabang salesman = cabang karyawannya di Accurate.
+Kontrak O2: `docs/handover/O1-KONTRAK-ORDER-CABANG.md`. Skema: `db/migrations/0033_order_cabang.sql` / `docs/handover/DDL_O1.sql`.
+
+`lib/sync.ts` item/list.do (`charField2` tag divisi, `suspended`) -> `barisItem` -> `lib/order-cabang.ts cabangDariTag` (konstanta `TAG_KE_CABANG` + tabel `branch`) -> `item.branch_id` (NULL = tak bisa diorder; tag tak dikenal dihitung di `tagTakDikenal` hasil sync); customer/list.do `suspended` -> `customer.suspended` (field absen di detail.do webhook tidak menimpa).
+Order Sales/Order Baru -> `GET /api/customers/search`, `GET /api/items/search` -> `POST /api/orders/preview` -> `cakupanCabang` (internal `order.view` = semua; sales = `sales_profile.sales_code` -> `accurate_employee.branch_id`) + `periksaOrder` (pelanggan aktif/bercabang/dalam cakupan, barang = cabang pelanggan, `resolvePrices` per CABANG PELANGGAN) -> FastAPI `/orders/preview`.
+Simpan: FastAPI `POST /websales/orders` -> `order_cabang.periksa` (cookie sesi sales) -> `POST /api/orders/harga`; `store_order` (Order Baru + tarik Web Sales) -> `order_cabang.periksa` (CRON_SECRET) -> baris Web Sales DIBEKUKAN berharga server -> `draft` (BL-18: tidak lagi `needs_price`) -> `POST /api/orders/[id]/invoice` memakai harga beku. Antre Faktur: `GET /api/orders/salesmen?branchId=`. Tautan akun↔karyawan: `GET|PUT|DELETE /api/admin/users/[id]/salesman` (audit `salesman.link/unlink`).
+Uji: `lib/order-cabang.test.ts` (tanpa DB), `lib/order-cabang-pg.test.ts` (PG), `python_backend/test_order_cabang.py`, `test_websales_pull.py`.
+
 ### Aturan Promo, Rekap Promo & Normalisasi Diskon (Oktober 2026)
 `/aturan-promo` -> `GET/POST/PATCH/DELETE/PUT /api/promo-rule` -> tabel `promo_rule` (sama dengan importir Rekap Promo dan jembatan Summary).
 `/rekap-promo`, `/normalisasi-diskon` -> `GET /api/promo-recap` -> `lib/promo-recap.ts recap()` atas `sales_invoice.raw_data` + `promo_rule` aktif + `promo_outlet` + `discount_normalization`.
