@@ -158,7 +158,7 @@ def cocokkan(hasil, sidik):
     sidik = str(sidik or "").strip()
     if not sidik:
         raise Ditolak(400, "SIDIK_WAJIB", "Hitung pratinjau order dulu; order disimpan hanya bila angkanya sama dengan pratinjau.")
-    if not hmac.compare_digest(sidik, hasil["sidik"]):
+    if not hmac.compare_digest(sidik.encode("utf-8"), hasil["sidik"].encode("utf-8")):
         raise Ditolak(409, "PRATINJAU_BERUBAH",
                       "Harga atau promo berubah sejak pratinjau (aturan terbit, harga master, atau kelas outlet). Periksa angka baru lalu simpan ulang.",
                       {"pratinjau": {key: hasil[key] for key in ("lines", "result", "sources", "sidik")}})

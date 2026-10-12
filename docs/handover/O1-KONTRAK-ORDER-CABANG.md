@@ -192,10 +192,9 @@ rejected: [{request_id, kode, error}] }`. `failed` = DITAHAN (tetap `pending`, m
    `accapi.order_cabang` "Next menolak CRON_SECRET FastAPI". Pemicu manual/seed: header `Authorization: Bearer`, bukan `?secret=`.
 4b. O1 tanpa O2: layar lama Order Sales/Order Baru TIDAK mengirim `sidik` → simpan ditolak `SIDIK_WAJIB` (produksi: 0 order/0 permintaan).
    Rilis O1 bersama O2, atau sesudah O2 siap.
-5. Order `needs_price` LAMA (sebelum O1) tetap tidak bisa difakturkan — lihat TERBUKA.
+5. Order `needs_price` LAMA: probe produksi 12 Okt = 0 baris `sales_order` dan 0 `order_request` → tidak ada yang buntu (selesai tanpa keputusan).
 
 ## 7. TERBUKA
-- Order `needs_price` yang sudah tersimpan sebelum O1: tidak ada jalur memberi harga (O1 hanya membuat order baru berharga). Perlu hitungan produksi (orkestrator) → batal + order ulang, atau endpoint "beri harga" (keputusan owner).
 - Penanda "petugas internal = `order.view`" (semua cabang) adalah tafsir teknis dari "admin/fakturist boleh semua cabang"; bila owner mau kunci khusus, tambahkan kapabilitas.
 - 31 nilai `charField2` probe tidak tersedia sebagai berkas; uji memakai superset (22 nama cabang + 6 pemetaan + 6 non-jual + tak dikenal). Sesudah sync pertama `tagTakDikenal` membuktikan tidak ada yang terlewat.
 - `customer/list.do` & `item/list.do` `suspended`: bila Accurate mengabaikan field itu, semua tetap `false` — periksa sesudah sync pertama.
@@ -208,3 +207,6 @@ rejected: [{request_id, kode, error}] }`. `failed` = DITAHAN (tetap `pending`, m
 - Permintaan yang ditahan dugaan ganda (BL-20) tetap `pending` tanpa jalur lepas di layar; halaman keyset mencegah antrean macet, tetapi
   keputusan "bukan order ganda" untuk Web Sales belum ada.
 - Bonus barang promo (`bonuses[].code`) tidak diperiksa cabangnya (program principal memberi bonus barang principal itu; tidak divalidasi).
+- Migrasi: O1 memakai `db/migrations/0033_order_cabang.sql` + entri migrate-pg terakhir; K2a (cabang lain) memakai 0032 dan juga menambah
+  entri di `scripts/migrate-pg.mjs` → konflik teks saat merge (urutan entri bebas: keduanya aditif + `sudahAda`). Nomor TIDAK diubah.
+- `?secret=` dihapus dari `requireCronSecret`: pemakai yang tidak tercatat di repo (skrip pribadi/bookmark) akan mendapat 401 — gunakan header.

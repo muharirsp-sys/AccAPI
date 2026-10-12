@@ -466,7 +466,7 @@ test("PG O1 pratinjau: harga dari cabang PELANGGAN (branch_id badan diabaikan); 
     assert.equal((adm.body.prices as Array<{ price: number }>)[0].price, 12000);
 });
 
-test("PG O1 /api/orders/harga: CRON = semua cabang + harga beku -> payload faktur; harga:false hanya aturan cabang; sesi sales tercakup", { skip: pgSkip }, async () => {
+test("PG O1 /api/orders/harga: CRON = semua cabang + harga beku -> payload faktur; harga petugas per baris (harga:false lama tidak berlaku); sesi sales tercakup", { skip: pgSkip }, async () => {
     sebagai(null);
     const cron = { authorization: "Bearer rahasia-o1" };
     const hz = await panggil(m.hargaRoute.POST(req("POST", "/api/orders/harga", { customer_no: "C-C003-HZ", order_date: "2026-10-12",
