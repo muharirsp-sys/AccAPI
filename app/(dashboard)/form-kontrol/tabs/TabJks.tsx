@@ -3,7 +3,7 @@
  *   lewat dialog "Terapkan" berisi pratinjau ringan (nama berkas, baris terbaca, kolom dikenali/tidak) — BERKAS YANG SAMA dikirim
  *   ke server yang memetakan kolom (HEADER_MAP di route jks) — lalu hasil `imported` DAN `skipped`; templat kolom diunduh dari klien.
  * Caller: form-kontrol/FormKontrol.tsx (tab "jks").
- * Dependensi: ../shared (Scope, PRINCIPLES, HARI, JksRow, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive},
+ * Dependensi: ../shared (Scope [principles], HARI, JksRow, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive},
  *   xlsx (dimuat saat dipakai: pratinjau + templat).
  * Main Functions: TabJks (default), bacaPratinjau, unduhTemplat.
  * Side Effects: GET /api/form-kontrol/jks; POST /api/form-kontrol/jks (FormData `file`) lewat ConfirmDialog; unduh templat-jks.xlsx.
@@ -14,7 +14,7 @@ import { useCallback, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Download, RefreshCw, Upload } from "lucide-react";
 import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Skeleton, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
-import { HARI, PRINCIPLES, ambilFk, tulisFk, useIzinFk, type JksRow, type Scope } from "../shared";
+import { HARI, ambilFk, tulisFk, useIzinFk, type JksRow, type Scope } from "../shared";
 
 /**
  * Kolom templat + header yang dikenali server. ponytail: `alias` = salinan kunci HEADER_MAP di app/api/form-kontrol/jks/route.ts
@@ -174,7 +174,7 @@ export default function TabJks({ scope }: { scope: Scope }) {
                         <FormField label="Principal">{(a) => (
                             <select {...a} className="fi-input" value={principle} onChange={(e) => saring(() => setPrinciple(e.target.value))}>
                                 <option value="">Semua principal</option>
-                                {PRINCIPLES.map((p) => <option key={p} value={p}>{p}</option>)}
+                                {(scope.principles ?? []).map((p) => <option key={p} value={p}>{p}</option>)}
                             </select>
                         )}</FormField>
                         <FormField label="Hari kunjungan">{(a) => (

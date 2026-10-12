@@ -69,6 +69,7 @@ before(async () => {
         ('u-sla', 'Sales A', 'sla@uji.test', true, 'staff', now(), now()),
         ('u-slb', 'Sales B', 'slb@uji.test', true, 'staff', now(), now()),
         ('u-slc', 'Sales C', 'slc@uji.test', true, 'staff', now(), now()),
+        ('u-sld', 'Sales D', 'sld@uji.test', true, 'staff', now(), now()),
         ('u-spva', 'SPV A (SPV)', 'spva@uji.test', true, 'spv', now(), now()),
         ('u-spvb', 'SPV B', 'spvb@uji.test', true, 'spv', now(), now()),
         ('u-admin', 'Admin A', 'admin@uji.test', true, 'admin', now(), now())`);
@@ -80,12 +81,13 @@ before(async () => {
     await p.query(`INSERT INTO group_permission (group_id, permission_key) SELECT 'g-admin', k FROM unnest(ARRAY['form_kontrol.view', 'form_kontrol.submit',
         'form_kontrol.manage', 'order.view', 'order.create', 'websales.create']) k`);
     await p.query(`INSERT INTO user_group (user_id, group_id, assigned_at) SELECT u, g, now() FROM (VALUES ('u-sla', 'g-sales'),
-        ('u-slb', 'g-sales'), ('u-slc', 'g-sales'), ('u-spva', 'g-spv'), ('u-spvb', 'g-spv'), ('u-admin', 'g-admin')) v(u, g)`);
+        ('u-slb', 'g-sales'), ('u-slc', 'g-sales'), ('u-sld', 'g-sales'), ('u-spva', 'g-spv'), ('u-spvb', 'g-spv'), ('u-admin', 'g-admin')) v(u, g)`);
     // Nama SPV di Hierarki tidak rapi (spasi, huruf) — sengaja: butir 5. SPV A = profil M-SLA + M-SLB; SPV B = M-SLC. Akun SPV tanpa profil.
     await p.query(`INSERT INTO sales_profile (id, user_id, sales_code, sales_name, principle, branch, spv_name, accurate_linked, created_at, updated_at) VALUES
         ('sp-a', 'u-sla', 'M-SLA', 'SALES A', 'PRINCIPLE A', 'CABANG A', ' spv a ', true, now(), now()),
         ('sp-b', 'u-slb', 'M-SLB', 'SALES B', 'PRINCIPLE B', 'CABANG A', 'SPV A', false, now(), now()),
-        ('sp-c', 'u-slc', 'M-SLC', 'SALES C', 'PRINCIPLE C', 'CABANG B', 'SPV B', true, now(), now())`);
+        ('sp-c', 'u-slc', 'M-SLC', 'SALES C', 'PRINCIPLE C', 'CABANG B', 'SPV B', true, now(), now()),
+        ('sp-d', 'u-sld', 'M-SLD', 'SALES D', 'PRINCIPLE A', 'CABANG A', NULL, false, now(), now())`);
     await p.query(`INSERT INTO branch (id, name) VALUES (201, 'CABANG A'), (202, 'CABANG B')`);
     await p.query(`INSERT INTO accurate_employee (id, number, name, branch_id, salesman, suspended) VALUES
         (1, 'M-SLA', 'SALES A', 201, true, false), (3, 'M-SLC', 'SALES C', 202, true, false)`);
@@ -217,4 +219,19 @@ test("butir 4: JKS — SPV hanya timnya, salesman hanya miliknya (salesCode luar
     const sendiri = await frek("u-sla", "M-SLA", "PRINCIPLE A");
     assert.equal(sendiri.status, 200);
     assert.equal((sendiri.body.rows as unknown[]).length, 5);
+});
+
+// =========================================================================== butir 1: principal dari JKS aktif
+
+test("butir 1: my-scope mengirim principal JKS AKTIF milik cakupan (bukan daftar tetap); tanpa JKS = []", { skip: pgSkip }, async () => {
+    const p = async (u: string) => {
+        const r = await jawab(await sebagai(u, () => m.myScope.GET(req("/api/form-kontrol/my-scope"))));
+        assert.equal(r.status, 200);
+        return r.body.principles;
+    };
+    assert.deepEqual(await p("u-sla"), ["PRINCIPLE A"], "JKS nonaktif (PRINCIPLE Z) tidak ikut");
+    assert.deepEqual(await p("u-spva"), ["PRINCIPLE A", "PRINCIPLE B"], "gabungan tim SPV");
+    assert.deepEqual(await p("u-spvb"), ["PRINCIPLE C"]);
+    assert.deepEqual(await p("u-sld"), [], "salesman tanpa JKS");
+    assert.deepEqual(await p("u-admin"), ["PRINCIPLE A", "PRINCIPLE B", "PRINCIPLE C"]);
 });

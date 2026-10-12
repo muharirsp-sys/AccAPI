@@ -70,6 +70,18 @@ export async function getJksList(filters: {
  * Tulis JKS per baris (kunci sales_code + cust_code + principle). Hari disimpan dalam bentuk BAKU ("SENIN"/"jum'at" → "Senin"/"Jumat");
  * hari tak dikenal (mis. "Minggu", salah ketik) → baris TIDAK ditulis dan dilaporkan di `ditolak` (indeks baris masukan, 0-based).
  */
+/**
+ * Principal JKS AKTIF dalam cakupan (FK-MSM butir 1) — pengganti daftar principal tetap di layar. `salesCodes` null = semua (admin);
+ * [] = tanpa kueri. ponytail: gabungan seluruh cakupan (tim SPV), bukan per salesman; SPV memilih principal dari gabungan timnya.
+ */
+export async function getJksPrinciples(salesCodes: string[] | null): Promise<string[]> {
+    if (salesCodes?.length === 0) return [];
+    const rows = await db.selectDistinct({ principle: jksMaster.principle }).from(jksMaster)
+        .where(and(eq(jksMaster.isActive, true), salesCodes ? inArray(jksMaster.salesCode, salesCodes) : undefined))
+        .orderBy(asc(jksMaster.principle));
+    return rows.map((r) => r.principle).filter(Boolean);
+}
+
 export async function upsertJksRows(rows: {
     salesCode: string; salesName: string; custCode: string; custName: string;
     market?: string; alamat?: string; kota?: string; hariKunjungan?: string;

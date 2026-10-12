@@ -34,7 +34,6 @@ export function validateNoOrderReason(
     return null;
 }
 
-export const PRINCIPLES = ["GODREJ", "MONTISS", "MUSTIKA RATU", "SOFTEX"] as const;
 export const HARI_KUNJUNGAN = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"] as const;
 export const MINGGU_PATTERNS = ["ganjil", "genap", "all"] as const;
 

@@ -17,11 +17,12 @@ const json = (body: unknown, status = 200) => ({ status, contentType: "applicati
 const NAV = { timeout: 60_000 } as const;
 const HARI_INI = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date());
 
+// `principles` = principal JKS aktif cakupan dari my-scope (FK-MSM butir 1).
 const SCOPE = {
-    salesman: { role: "salesman", salesCode: "S-01", salesName: "SALES A", spvName: "SPV A", allowedSalesCodes: ["S-01"] },
-    spv: { role: "spv", salesName: "SPV A", spvName: "SPV A", allowedSalesCodes: ["S-01", "S-02"] },
-    sm: { role: "sm", salesName: "SM A", smName: "SM A", allowedSalesCodes: ["S-01", "S-02"] },
-    admin: { role: "admin", allowedSalesCodes: null },
+    salesman: { role: "salesman", salesCode: "S-01", salesName: "SALES A", spvName: "SPV A", allowedSalesCodes: ["S-01"], principles: ["GODREJ"] },
+    spv: { role: "spv", salesName: "SPV A", spvName: "SPV A", allowedSalesCodes: ["S-01", "S-02"], principles: ["GODREJ"] },
+    sm: { role: "sm", salesName: "SM A", smName: "SM A", allowedSalesCodes: ["S-01", "S-02"], principles: ["GODREJ"] },
+    admin: { role: "admin", allowedSalesCodes: null, principles: ["GODREJ"] },
 };
 const kini = new Date().toISOString();
 const SALESMAN = [

@@ -2,7 +2,8 @@
  * Tujuan: "Rute hari ini" (Fiori S5, it05, ponsel dulu): toko JKS hari ini (WITA) dengan kunjungan yang belum selesai paling atas,
  *   progres kunjungan, tanda prioritas, dan "Kirim status rute hari ini" lewat dialog (pengganti tombol Submit AO).
  * Caller: form-kontrol/page.tsx (shell tab, default export `({ scope })`).
- * Dependensi: GET/POST /api/form-kontrol/ao-control, ../shared (Scope, AoRow, PRINCIPLES, compareRoute, hariIniWita, jamWita, useIzinFk),
+ * Dependensi: GET/POST /api/form-kontrol/ao-control, ../shared (Scope, AoRow, principalAwal, penjelasanTanpaJks, compareRoute, hariIniWita,
+ *   jamWita, useIzinFk),
  *   ../lapangan (bacaFk, kirimFk, keBarisRute, simpanRute, useHariBeku), components/fiori/*, lib/rekapan-nota/ui (tanggalPanjang).
  * Main Functions: TabAo, badgeToko, susunKiriman.
  * Side Effects: HTTP GET rute; GET ulang + POST ao-control per toko saat Kirim status; sessionStorage daftar toko rute (Order Sales).
@@ -21,7 +22,7 @@ import { CalendarDays, FileText, RefreshCw, Send, Star } from "lucide-react";
 import { Button, EmptyState, ErrorState, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
-import { type Scope, type AoRow, PRINCIPLES, compareRoute, hariIniWita, jamWita, useIzinFk, visitDurationMin } from "../shared";
+import { type Scope, type AoRow, compareRoute, hariIniWita, jamWita, penjelasanTanpaJks, principalAwal, useIzinFk, visitDurationMin } from "../shared";
 import { adaHasilKunjungan, statusBintang } from "@/lib/form-kontrol/constants";
 import { bacaFk, keBarisRute, kirimFk, simpanRute, useHariBeku } from "../lapangan";
 
@@ -81,8 +82,10 @@ export default function TabAo({ scope }: { scope: Scope }) {
     const beku = useHariBeku();
     const [tanggalPilih, setTanggalPilih] = useState(beku.hari);
     const tanggal = salesman ? beku.hari : tanggalPilih;
-    // ponytail: my-scope belum mengirim principal (#2) → bawaan GODREJ seperti hari ini; usulan di VariantNote.
-    const [principle, setPrinciple] = useState(scope.principle ?? PRINCIPLES[0]);
+    // Principal = JKS aktif cakupan (my-scope, FK-MSM butir 1): satu = langsung terpilih tanpa pilihan; lebih dari satu = dipilih.
+    const daftarPrincipal = scope.principles ?? [];
+    const tanpaJks = penjelasanTanpaJks(scope);
+    const [principle, setPrinciple] = useState(() => principalAwal(scope));
     const [salesCode, setSalesCode] = useState(scope.salesCode ?? "");
     const [saring, setSaring] = useState<Saring>("semua");
     const [dialog, setDialog] = useState(false);
@@ -93,8 +96,8 @@ export default function TabAo({ scope }: { scope: Scope }) {
         : "Hanya salesman pemilik rute yang mengirim status rute; tampilan ini baca-saja.";
 
     const loader = useCallback(async (): Promise<Load<AoRow[]>> => {
-        // Tanpa salesman terpilih tidak ada permintaan: server menjawab baris AO lintas salesman (admin) atau kosong (SPV) — bukan rute.
-        if (!salesCode) return { status: "siap", data: [] };
+        // Tanpa salesman/principal terpilih tidak ada permintaan: server menjawab baris AO lintas salesman (admin) atau kosong — bukan rute.
+        if (!salesCode || !principle) return { status: "siap", data: [] };
         const p = new URLSearchParams({ date: tanggal, principle });
         p.set("salesCode", salesCode);
         const hasil = await bacaFk(`/api/form-kontrol/ao-control?${p}`, (d) => keBarisRute(d.rows, principle));
@@ -174,12 +177,16 @@ export default function TabAo({ scope }: { scope: Scope }) {
     const hariLabel = tanggalPanjang(tanggal);
     const judulHari = tanggal === hariIniWita() ? "hari ini" : hariLabel;
     let isi: ReactNode;
-    if (!salesCode) {
+    if (!salesCode && tim !== null && tim.length === 0) {
+        isi = <EmptyState title="Belum ada salesman di tim Anda" message="Salesman muncul setelah Admin Sales mengisi SPV/SM mereka di Hierarki Sales." />;
+    } else if (tanpaJks) {
+        isi = <EmptyState title={tanpaJks.title} message={tanpaJks.message} />;
+    } else if (!salesCode) {
         isi = tim === null
             ? <EmptyState title="Isi kode salesman" message="Rute tampil per salesman. Ketik kode salesman di atas." />
-            : tim.length === 0
-                ? <EmptyState title="Belum ada salesman di tim Anda" message="Salesman muncul setelah Admin Sales mengisi SPV/SM mereka di Hierarki Sales." />
-                : <EmptyState title="Pilih salesman tim Anda" message="Rute tampil per salesman." />;
+            : <EmptyState title="Pilih salesman tim Anda" message="Rute tampil per salesman." />;
+    } else if (!principle) {
+        isi = <EmptyState title="Pilih principal" message={`JKS dalam cakupan Anda memuat ${daftarPrincipal.length} principal; rute tampil per principal.`} />;
     } else if (load.status === "galat" && rows.length === 0) {
         // Juga saat muat ulang gagal sesudah hasil kosong: galat tidak pernah tampil sebagai rute kosong.
         isi = <ErrorState title="Rute gagal dimuat" message={`${load.error} Ini bukan rute kosong; kunjungan yang sudah tersimpan tidak hilang.`} onRetry={muatUlang} />;
@@ -187,7 +194,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
         isi = <><Skeleton rows={2} label="Memuat rute" /><Skeleton rows={5} label="Memuat rute" /></>;
     } else if (rows.length === 0) {
         isi = <EmptyState title={tanggal === hariIniWita() ? "Tidak ada rute terjadwal hari ini" : "Tidak ada rute terjadwal pada tanggal ini"}
-            message={`JKS ${salesCode} tidak punya toko ${principle} untuk ${hariLabel}. Bila ini keliru, minta SPV memeriksa JKS atau pilih principal lain.`} />;
+            message={`JKS ${salesCode} tidak punya toko ${principle} untuk ${hariLabel}. Bila ini keliru, minta SPV memeriksa JKS${daftarPrincipal.length > 1 ? " atau pilih principal lain" : ""}.`} />;
     } else {
         const lebar = (k: number) => `${rows.length ? (k / rows.length) * 100 : 0}%`;
         const nOrder = n.order + n.aktif;
@@ -248,18 +255,21 @@ export default function TabAo({ scope }: { scope: Scope }) {
                 <p className="fi-small fi-muted flex flex-wrap items-center gap-x-2">
                     <CalendarDays className="fi-icon" aria-hidden />
                     <span>{hariLabel} · WITA</span>
-                    {salesCode && <span>· <span className="fi-mono">{salesCode}</span>{scope.salesName && salesman ? ` ${scope.salesName}` : ""} · {principle}</span>}
+                    {salesCode && <span>· <span className="fi-mono">{salesCode}</span>{scope.salesName && salesman ? ` ${scope.salesName}` : ""}{principle ? ` · ${principle}` : ""}</span>}
                 </p>
             </div>
 
             <div className="fi-formgrid">
-                <FormField label="Principal">
-                    {(a) => (
-                        <select {...a} className="fi-input" value={principle} onChange={(e) => { setPrinciple(e.target.value); setSukses(""); }}>
-                            {PRINCIPLES.map((p) => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                    )}
-                </FormField>
+                {daftarPrincipal.length > 1 && (
+                    <FormField label="Principal">
+                        {(a) => (
+                            <select {...a} className="fi-input" value={principle} onChange={(e) => { setPrinciple(e.target.value); setSukses(""); }}>
+                                {!principle && <option value="">Pilih principal</option>}
+                                {daftarPrincipal.map((p) => <option key={p} value={p}>{p}</option>)}
+                            </select>
+                        )}
+                    </FormField>
+                )}
                 {!salesman && tim === null && (
                     <FormField label="Kode salesman">
                         {(a) => <input {...a} className="fi-input fi-mono" value={salesCode} placeholder="mis. S01" onChange={(e) => { setSalesCode(e.target.value); setSukses(""); }} />}
@@ -280,7 +290,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
                         {(a) => <input {...a} type="date" className="fi-input" value={tanggalPilih} onChange={(e) => { if (e.target.value) setTanggalPilih(e.target.value); setSukses(""); }} />}
                     </FormField>
                 )}
-                {salesCode && (
+                {salesCode && principle && (
                     <div className="flex items-end">
                         <Button icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang} busy={load.status === "memuat" && Boolean(asal)}>Muat ulang</Button>
                     </div>
@@ -319,10 +329,6 @@ export default function TabAo({ scope }: { scope: Scope }) {
             </Section>
 
             <VariantNote bl="BL-28">Tanggal “hari ini” dihitung di ponsel dalam WITA. Usulan: server yang menetapkan tanggal dan cap foto WITA.</VariantNote>
-            <VariantNote bl="BL-32">
-                Principal dipilih manual (bawaan GODREJ) karena profil belum mengirim principal salesman. Usulan: principal dari profil; pilihan
-                hanya muncul bila salesman memegang lebih dari satu.
-            </VariantNote>
 
             <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`Kirim status ${rows.length} toko rute ${judulHari}?`}
                 description="Rute dibaca ulang dari server sesaat sebelum dikirim; status setiap toko dikirim dari bacaan itu, satu per satu, ditambah tanda prioritas dari layar ini. Toko yang belum disentuh tercatat “tidak dikunjungi”; Dashboard SPV menghitung rute dari kiriman ini."

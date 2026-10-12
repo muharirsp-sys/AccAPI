@@ -2,7 +2,8 @@
  * Tujuan: Tipe, konstanta, dan helper bersama Form Kontrol (shell, tab tim, tab salesman, kunjungan).
  * Caller: form-kontrol/FormKontrol.tsx (shell), tabs/*, spv-dashboard/DashboardSpv.tsx, visit/[custCode]/*.
  * Dependensi: React (context izin), components/fiori/interactive (tipe Load).
- * Main Functions: TABS, hariIniWita, jamWita, IzinFkCtx/useIzinFk/alasanIzinFk, ambilFk, tulisFk, compareRoute, visitDurationMin.
+ * Main Functions: TABS, hariIniWita, jamWita, IzinFkCtx/useIzinFk/alasanIzinFk, ambilFk, tulisFk, principalAwal, penjelasanTanpaJks,
+ *   compareRoute, visitDurationMin.
  * Side Effects: ambilFk/tulisFk melakukan HTTP ke /api/form-kontrol/*; sisanya pure.
  */
 "use client";
@@ -16,7 +17,8 @@ export interface Scope {
     role: string;
     salesCode?: string;
     salesName?: string;
-    principle?: string;
+    /** Principal JKS AKTIF dalam cakupan (my-scope, FK-MSM butir 1); [] / tidak ada = belum ada JKS. */
+    principles?: string[];
     spvName?: string;
     smName?: string;
     allowedSalesCodes: string[] | null;
@@ -203,8 +205,23 @@ export async function tulisFk(url: string, opsi: { method?: "POST" | "PUT"; body
     return data;
 }
 
-export const PRINCIPLES = ["GODREJ", "MONTISS", "MUSTIKA RATU", "SOFTEX"];
 export const HARI = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+
+// ── Principal dari JKS (FK-MSM butir 1) ───────────────────────────────────
+
+/** Principal bawaan: satu-satunya principal JKS di cakupan langsung terpilih; lebih dari satu = pengguna memilih (""). */
+export const principalAwal = (scope: Scope) => (scope.principles?.length === 1 ? scope.principles[0] : "");
+
+/** Penjelasan bila cakupan belum punya JKS aktif sama sekali — supaya rute kosong tidak tampil diam. null = ada JKS. */
+export function penjelasanTanpaJks(scope: Scope): { title: string; message: string } | null {
+    if (scope.principles?.length) return null;
+    if (scope.salesCode) {
+        return { title: "Belum ada JKS aktif untuk Anda", message: `Rute, toko tidak order, dan frekuensi dibaca dari JKS kode sales ${scope.salesCode}. `
+            + `Minta Admin Sales mengimpor JKS Anda (kolom Kode Sales = ${scope.salesCode}); sampai itu tidak ada toko yang tampil.` };
+    }
+    if (scope.allowedSalesCodes === null) return { title: "Belum ada JKS aktif", message: "Impor JKS di tab Kontrol JKS lebih dulu; rute, toko tidak order, dan frekuensi dibaca dari JKS." };
+    return { title: "Belum ada JKS aktif untuk tim Anda", message: "Rute salesman tim dibaca dari JKS. Minta Admin Sales mengimpor JKS tim Anda di tab Kontrol JKS." };
+}
 
 export const BRIEFING_AGENDA: Record<"pagi" | "sore", string[]> = {
     pagi: [
