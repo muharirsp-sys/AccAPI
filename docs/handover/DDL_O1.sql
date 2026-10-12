@@ -26,13 +26,22 @@
 --        akun" saat dua admin menautkan bersamaan. false = JANGAN deploy; laporkan (jangan membuat constraint tanpa memeriksa duplikat).
 --      - Tripwire grup: tidak ada grup ber-`websales.create` + `order.view` TANPA `order.create` (akun sales seperti itu akan mendapat
 --        cakupan SEMUA cabang; aplikasi menolaknya `IZIN_TIDAK_KONSISTEN`). false = betulkan grup lewat layar Grup sebelum go-live.
+--      - Tripwire per USER (putaran 2): aplikasi MENGGABUNG izin semua grup user (lib/rbac/resolve getUserPermissions) — user di grup sales +
+--        grup lain ber-`order.view` tanpa `order.create` juga ditolak `IZIN_TIDAK_KONSISTEN`. false = pindahkan user/betulkan grup.
 -- Menjalankan ulang seluruh berkas = tanpa perubahan.
 --
 -- SESUDAH IMAGE (WAJIB, urut): kolom baru kosong sampai sync ulang. Selama jendela itu SEMUA barang ber-branch_id NULL -> Order Sales /
---   Order Baru / tarikan Web Sales DITOLAK `BARANG_BEDA_CABANG` (gagal tertutup, bukan salah order). Picu sync (CRON_SECRET, jaringan
---   container; HANYA header Authorization — `?secret=` tidak diterima lagi):
---     curl -fsS -H "Authorization: Bearer $CRON_SECRET" \
---       "http://accapi-frontend:3000/api/cron/sync-accurate?modules=branch,employee,item,customer"
+--   Order Baru / tarikan Web Sales DITOLAK `BARANG_BEDA_CABANG` (gagal tertutup, bukan salah order).
+--   a) SEBELUM memicu (baca-saja): sync list.do MELANJUTKAN dari halaman gagal terakhir — halaman sebelumnya tidak dibaca ulang, jadi
+--      barangnya tetap branch_id NULL. Periksa:
+--        SELECT module, last_page, status FROM sync_state WHERE module IN ('item', 'customer');
+--      last_page <> 1 -> jalankan langkah b DUA kali (run pertama menuntaskan sisa lalu kembali ke halaman 1; run kedua penuh).
+--   b) Picu sync dari VPS lewat pembungkus cron yang sudah ada (127.0.0.1:18080, header Authorization, -m 3500; `?secret=` tidak
+--      diterima lagi):
+--        /usr/local/bin/accapi-cron.sh "/api/cron/sync-accurate?modules=branch,employee,item,customer"
+--   c) Ulangi b sampai `ada_key` (kueri di bawah) = jumlah barang dan semua cabang orderan terisi.
+--   d) Grup akses sales: `websales.view` + `websales.create` SAJA — TANPA `order.view` (tidak ada preset sales; buat/periksa lewat layar
+--      Grup). VERIFIKASI tripwire grup + per user harus `t`.
 --   Perkiraan: branch 1 halaman (<5 dtk), employee 1–3 halaman, item ±43 halaman list.do (±1–3 menit), customer ±330 halaman (±32 rb,
 --   ±8–15 menit). Hasil `results.item.tagTakDikenal` = tag charField2 yang tak dipetakan (barangnya tak bisa diorder) — kirim ke
 --   orkestrator; kosong = semua tag dikenal. Periksa sesudahnya (baca-saja):
@@ -82,6 +91,10 @@ SELECT cek, ok FROM (VALUES
         WHERE ws.permission_key = 'websales.create'
           AND EXISTS (SELECT 1 FROM group_permission v WHERE v.group_id = ws.group_id AND v.permission_key = 'order.view')
           AND NOT EXISTS (SELECT 1 FROM group_permission c WHERE c.group_id = ws.group_id AND c.permission_key = 'order.create'))),
+    ('tripwire per user (gabungan grup): tidak ada user websales.create + order.view tanpa order.create', NOT EXISTS (
+        SELECT 1 FROM user_group ug JOIN group_permission gp ON gp.group_id = ug.group_id GROUP BY ug.user_id
+        HAVING bool_or(gp.permission_key = 'websales.create') AND bool_or(gp.permission_key = 'order.view')
+           AND NOT bool_or(gp.permission_key = 'order.create'))),
     ('accapi_app boleh SELECT/INSERT/UPDATE kolom baru (sync + tautan)', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app')
         THEN (SELECT bool_and(has_column_privilege('accapi_app', k.t, k.c, p)) FROM (VALUES ('item', 'branch_id'), ('item', 'suspended'),
               ('item', 'char_field2'), ('customer', 'suspended'), ('sales_profile', 'accurate_linked')) AS k(t, c),

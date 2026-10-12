@@ -8,8 +8,8 @@ import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
-import { alasanHarga, angkaQuery, cabangDariTag, hargaPetugasSah, hargaSah, normalNama, petaCabang, polaLike, putusanHarga, TAG_KE_CABANG,
-    TAG_NON_JUAL, tolakCabangLain, tripwireIzin } from "./order-cabang.ts";
+import { alasanBonus, alasanHarga, angkaQuery, cabangDariTag, hargaPetugasSah, hargaSah, normalNama, petaCabang, polaLike, putusanHarga, sumberHarga,
+    TAG_KE_CABANG, TAG_NON_JUAL, tolakCabangLain, tripwireIzin } from "./order-cabang.ts";
 import { requireCronSecret, samaRahasia } from "./api-security.ts";
 import { barisItem } from "./sync.ts";
 import * as preview from "../app/api/orders/preview/route.ts";
@@ -268,4 +268,21 @@ test("owner sesi 13: harga petugas HANYA untuk baris TANPA harga master sah; bar
         assert.deepEqual(putusanHarga("", row, 101), { jenis: "belum_ada" }, `${nama}: tanpa harga petugas = belum ada`);
         assert.deepEqual(putusanHarga("0", row, 101), { jenis: "petugas_tidak_valid" }, `${nama}: harga petugas 0 tidak sah`);
     }
+});
+
+test("putaran 2 butir 7: alasanBonus — bonus wajib ada, aktif, dan barang cabang pelanggan (non-jual/tanpa cabang ditolak)", () => {
+    const b = { no: "K-03", name: "SAMPO", branchId: 101, suspended: false, tag: "KINO NON FOOD", branchName: "KINO NON FOOD" };
+    assert.equal(alasanBonus(b, 101), null);
+    assert.match(alasanBonus(undefined, 101)!, /tidak ada/);
+    assert.match(alasanBonus({ ...b, suspended: true }, 101)!, /suspended/);
+    assert.match(alasanBonus({ ...b, branchId: 102, branchName: "HEINZ" }, 101)!, /barang cabang HEINZ/);
+    assert.match(alasanBonus({ ...b, branchId: null, tag: "ASSET", branchName: null }, 101)!, /tanpa cabang \(tag "ASSET"/);
+});
+
+test("putaran 2 butir 9: sumberHarga — master / master_default (fallback cabang default) / petugas", () => {
+    const dasar = { code: "K", unit: "PCS", price: 5000 };
+    assert.equal(sumberHarga({ ...dasar, source: "tier", hargaDefault: false }), "master");
+    assert.equal(sumberHarga({ ...dasar, source: "tier", hargaDefault: true }), "master_default");
+    assert.equal(sumberHarga({ ...dasar, source: "tier" }), "master");
+    assert.equal(sumberHarga({ ...dasar, source: "petugas", hargaMaster: null }), "petugas");
 });

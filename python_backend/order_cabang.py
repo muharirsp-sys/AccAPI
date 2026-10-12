@@ -2,7 +2,8 @@
 Caller: routers/orders.py `hitung_order` (simpan Order Baru, simpan Order Sales dengan cookie sesi sales -> cakupan cabang salesman,
 tarik Order Masuk lewat CRON_SECRET -> semua cabang).
 Dependensi: requests, env NEXT_INTERNAL_URL/AUTH_VERIFY_URL (alamat Next, sama dengan outlet_channel) + CRON_SECRET.
-Main Functions: periksa, harga_petugas_sah. Side Effects: HTTP keluar ke Next `/api/orders/harga`; tidak menulis apa pun, tanpa cache.
+Main Functions: periksa, periksa_bonus, harga_petugas_sah. Side Effects: HTTP keluar ke Next `/api/orders/harga`; tidak menulis apa pun,
+tanpa cache.
 
 KENAPA DITANYAKAN: FastAPI tidak punya akses ke Postgres (master pelanggan/barang/cabang/harga ada di sana), dan harga + cabang adalah
 dasar uang faktur — salinan lokal akan basi tepat di tempat yang mahal. Polanya sama dengan `outlet_channel`.
@@ -68,24 +69,12 @@ def harga_petugas_sah(teks):
     return positif(teks) if HARGA_PETUGAS.fullmatch(teks) else None
 
 
-def periksa(customer_no, order_date, lines, cookie=None):
-    """Periksa order di Next; kembalikan baris yang sama dengan `price` + `sumber_harga` (urutan = masukan).
+def _tanya(badan, cookie):
+    """POST /api/orders/harga; kembalikan jawaban 200 `ok`. Gagal: `OrderCabangDitolak` (4xx berkode) / `OrderCabangTidakPasti`.
 
     `cookie` bukan None = sesi pemakai (Order Sales): Next menerapkan cakupan cabang salesman — cookie KOSONG tetap jalur sesi (Next
     menjawab 401 -> ditolak), TIDAK pernah jatuh ke CRON_SECRET yang tanpa cakupan. `cookie=None` = layanan (CRON_SECRET).
     """
-    kirim = []
-    for line in lines:
-        baris = {"code": str(line.get("code", "")).strip(), "unit": str(line.get("unit", "")).strip().upper(),
-                 "quantity": str(line.get("quantity", "")).strip()}
-        petugas = str(line.get("price", "") or "").strip()
-        if petugas:
-            if harga_petugas_sah(petugas) is None:
-                raise OrderCabangDitolak(400, "HARGA_TIDAK_VALID",
-                                         f"Harga {baris['code']} harus angka lebih dari 0 (diisi: {petugas[:20]}). Kosongkan untuk memakai harga master.")
-            baris["price"] = petugas
-        kirim.append(baris)
-    badan = {"customer_no": str(customer_no or "").strip(), "order_date": str(order_date or "").strip(), "lines": kirim}
     layanan = cookie is None
     if not layanan:
         headers = {"cookie": cookie}
@@ -116,6 +105,34 @@ def periksa(customer_no, order_date, lines, cookie=None):
         raise OrderCabangDitolak(response.status_code, data.get("kode") or "DITOLAK", data["error"], extra)
     if response.status_code != 200 or not isinstance(data, dict) or not data.get("ok"):
         raise OrderCabangTidakPasti(f"Next tidak menjawab pemeriksaan cabang & harga order (HTTP {response.status_code})")
+    return data
+
+
+def periksa_bonus(customer_no, order_date, codes, cookie=None):
+    """Barang BONUS promo wajib bisa diorder untuk pelanggan ini (O1 putaran 2, butir 7): ada, tidak suspended, cabang = cabang pelanggan.
+
+    Keputusannya di Next (`periksaBonus`, sama dengan pratinjau); gagal = `OrderCabangDitolak` 409 `BONUS_TIDAK_BISA_DIORDER` apa
+    adanya — order itu DITOLAK, bonusnya tidak dibuang diam-diam. Dipanggil hanya bila hasil promo memuat bonus berkode.
+    """
+    kode = sorted({str(c or "").strip() for c in codes if str(c or "").strip()})
+    if kode:
+        _tanya({"customer_no": str(customer_no or "").strip(), "order_date": str(order_date or "").strip(), "lines": [], "bonus": kode}, cookie)
+
+
+def periksa(customer_no, order_date, lines, cookie=None):
+    """Periksa order di Next; kembalikan baris yang sama dengan `price` + `sumber_harga` (urutan = masukan). Jalur sesi/layanan: `_tanya`."""
+    kirim = []
+    for line in lines:
+        baris = {"code": str(line.get("code", "")).strip(), "unit": str(line.get("unit", "")).strip().upper(),
+                 "quantity": str(line.get("quantity", "")).strip()}
+        petugas = str(line.get("price", "") or "").strip()
+        if petugas:
+            if harga_petugas_sah(petugas) is None:
+                raise OrderCabangDitolak(400, "HARGA_TIDAK_VALID",
+                                         f"Harga {baris['code']} harus angka lebih dari 0 (diisi: {petugas[:20]}). Kosongkan untuk memakai harga master.")
+            baris["price"] = petugas
+        kirim.append(baris)
+    data = _tanya({"customer_no": str(customer_no or "").strip(), "order_date": str(order_date or "").strip(), "lines": kirim}, cookie)
 
     jawab = data.get("lines")
     if not isinstance(jawab, list) or len(jawab) != len(lines):
@@ -125,8 +142,10 @@ def periksa(customer_no, order_date, lines, cookie=None):
         if not isinstance(item, dict) or str(item.get("code", "")) != dikirim["code"] or str(item.get("unit", "")) != dikirim["unit"]:
             raise OrderCabangTidakPasti("Jawaban harga Next tidak cocok dengan baris order")
         price = str(item.get("price", "") if item.get("price") is not None else "").strip()
-        sumber = "petugas" if "price" in dikirim else "master"
-        if str(item.get("sumber_harga", "")) != sumber or (sumber == "petugas" and price != dikirim["price"]):
+        sumber = str(item.get("sumber_harga", ""))
+        # Baris tanpa harga petugas = harga master; `master_default` = master dari cabang DEFAULT (fallback, putaran 2 butir 9).
+        boleh = ("petugas",) if "price" in dikirim else ("master", "master_default")
+        if sumber not in boleh or (sumber == "petugas" and price != dikirim["price"]):
             # Harga petugas TIDAK pernah ditimpa; Next yang menjawab lain = jawaban yang tidak bisa dipercaya.
             raise OrderCabangTidakPasti(f"Jawaban harga Next untuk {dikirim['code']} tidak sesuai harga yang dikirim")
         if positif(price) is None:

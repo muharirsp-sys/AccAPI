@@ -3,7 +3,8 @@
  *   salesman = cabang karyawannya di Accurate; harga = cabang pelanggan. SATU pemeriksa untuk pratinjau dan simpan order.
  * Caller: lib/sync (tag barang -> cabang), app/api/orders/{preview,harga}, app/api/customers/search, app/api/items/search.
  * Dependensi: db (customer, item, branch, accurate_employee, sales_profile), lib/item-price (resolvePrices).
- * Main Functions: cabangDariTag, petaCabang, hargaSah, hargaPetugasSah, putusanHarga, tripwireIzin (murni); cakupanCabang, periksaOrder (DB baca-saja).
+ * Main Functions: cabangDariTag, petaCabang, hargaSah, hargaPetugasSah, putusanHarga, alasanBonus, tripwireIzin (murni); cakupanCabang,
+ *   periksaOrder, periksaBonus (DB baca-saja).
  * Side Effects: DB read-only.
  * Kontrak: docs/handover/O1-KONTRAK-ORDER-CABANG.md.
  */
@@ -186,8 +187,47 @@ export function putusanHarga(petugasTeks: string, row: PriceResult, branchId: nu
 /** `price` = harga PETUGAS (Order Baru) — pemanggil yang memastikan izinnya (`order.create`/layanan); kosong = harga master. */
 export type BarisOrder = { code: string; unit: string; price?: string };
 export type PelangganOrder = { id: number; customerNo: string; name: string; branchId: number; branchName: string; categoryName: string | null };
-/** Harga terpakai per baris: master sah (`tier`) atau petugas (`petugas` — hanya baris tanpa harga master sah, jadi `hargaMaster` selalu null). */
-export type HargaBaris = Omit<PriceResult, "price" | "source"> & { price: number; source: "tier" | "petugas"; hargaMaster?: number | null };
+/** Harga terpakai per baris: master sah (`tier`) atau petugas (`petugas` — hanya baris tanpa harga master sah, jadi `hargaMaster` selalu null).
+ * `hargaDefault` = harga master dari cabang DEFAULT karena cabang pelanggan tak punya baris berlaku (fallback; putaran 2 butir 9). */
+export type HargaBaris = Omit<PriceResult, "price" | "source"> & { price: number; source: "tier" | "petugas"; hargaMaster?: number | null; hargaDefault?: boolean };
+/** `sumber_harga` jawaban pratinjau/harga + baris beku: "master" | "master_default" (fallback cabang default) | "petugas". */
+export const sumberHarga = (h: HargaBaris) => (h.source === "petugas" ? "petugas" : h.hargaDefault ? "master_default" : "master");
+
+// ---------------------------------------------------------------- barang bonus promo (O1 putaran 2, butir 7)
+
+type BarisBarang = { no: string; name: string; branchId: number | null; suspended: boolean; tag: string | null; branchName: string | null };
+
+/**
+ * Barang BONUS promo wajib memenuhi syarat yang SAMA dengan barang order (keputusan orkestrator mengikuti owner "pelanggan cabang X hanya
+ * barang cabang X"): ada di master, tidak suspended, cabang = cabang pelanggan (barang tanpa cabang = non-jual/tag tak dikenal = tidak
+ * bisa diorder). null = boleh. Murni — satu keputusan untuk pratinjau dan simpan/tarik.
+ */
+export function alasanBonus(row: BarisBarang | undefined, branchId: number): string | null {
+    if (!row) return "tidak ada di master Accurate";
+    if (row.suspended) return "nonaktif (suspended) di Accurate";
+    if (row.branchId === null) return `tanpa cabang${row.tag ? ` (tag "${row.tag}" tidak bisa diorder)` : ""}`;
+    if (row.branchId !== branchId) return `barang cabang ${row.branchName ?? row.branchId}`;
+    return null;
+}
+
+/** Bonus yang tidak bisa diorder -> galat 409 `BONUS_TIDAK_BISA_DIORDER` (`bonus: [{code, name, alasan}]`); semua boleh -> null. */
+export async function periksaBonus(pelanggan: { branchId: number; branchName: string }, codes: readonly string[]): Promise<GalatOrder | null> {
+    const kode = [...new Set(codes.map((c) => String(c ?? "").trim()).filter(Boolean))];
+    if (!kode.length) return null;
+    const rows = await db.select({
+        no: item.no, name: item.name, branchId: item.branchId, suspended: item.suspended, tag: item.charField2, branchName: branch.name,
+    }).from(item).leftJoin(branch, eq(branch.id, item.branchId)).where(inArray(item.no, kode));
+    const ada = new Map(rows.map((r) => [r.no, r]));
+    const buruk = kode.flatMap((c) => {
+        const alasan = alasanBonus(ada.get(c), pelanggan.branchId);
+        return alasan ? [{ code: c, name: ada.get(c)?.name ?? null, alasan }] : [];
+    });
+    if (!buruk.length) return null;
+    return { status: 409, kode: "BONUS_TIDAK_BISA_DIORDER",
+        error: `Barang bonus promo tidak bisa diorder untuk pelanggan cabang ${pelanggan.branchName || pelanggan.branchId}: `
+            + `${buruk.slice(0, 5).map((b) => `${b.code} (${b.alasan})`).join("; ")}. Perbaiki aturan promo (Summary) atau master barang; `
+            + "order tidak disimpan tanpa bonusnya.", bonus: buruk };
+}
 export type HasilPeriksa = { ok: true; pelanggan: PelangganOrder; harga: HargaBaris[] } | ({ ok: false } & GalatOrder);
 
 const tolak = (status: number, kode: string, error: string, extra: Record<string, unknown> = {}): HasilPeriksa =>
@@ -201,7 +241,7 @@ const tolak = (status: number, kode: string, error: string, extra: Record<string
  * harga master sah memakai `price` petugas (> 0, tidak ditimpa) atau ditolak `HARGA_BELUM_ADA`. Hasil yang sama dipakai pratinjau dan
  * simpan, jadi promo dihitung atas angka yang sama (kontrak §4).
  */
-export async function periksaOrder(input: { customerNo: string; orderDate: string; lines: BarisOrder[]; cakupan: Cakupan }): Promise<HasilPeriksa> {
+export async function periksaOrder(input: { customerNo: string; orderDate: string; lines: BarisOrder[]; cakupan: Cakupan; bonus?: readonly string[] }): Promise<HasilPeriksa> {
     const customerNo = input.customerNo.trim();
     if (!customerNo) return tolak(400, "PELANGGAN_WAJIB", "Kode pelanggan Accurate wajib diisi.");
     const [p] = await db.select({
@@ -216,6 +256,9 @@ export async function periksaOrder(input: { customerNo: string; orderDate: strin
     if (luar) return { ok: false, ...luar };
     const pelanggan: PelangganOrder = { id: p.id, customerNo: p.customerNo, name: p.name, branchId: p.branchId,
         branchName: p.branchName ?? "", categoryName: p.categoryName };
+    // Barang bonus (dikirim FastAPI sesudah promo dihitung; boleh tanpa baris = mode bonus saja) — butir 7.
+    const bonusBuruk = await periksaBonus(pelanggan, input.bonus ?? []);
+    if (bonusBuruk) return { ok: false, ...bonusBuruk };
 
     const codes = [...new Set(input.lines.map((l) => l.code.trim()).filter(Boolean))];
     const rows = codes.length ? await db.select({
@@ -273,7 +316,7 @@ export async function periksaOrder(input: { customerNo: string; orderDate: strin
             const x = putusan[i];
             return x.jenis === "petugas"
                 ? { code: row.code, unit: row.unit, price: x.price, source: "petugas", hargaMaster: null }
-                : { ...row, price: (x as { price: number }).price, source: "tier" };
+                : { ...row, price: (x as { price: number }).price, source: "tier", hargaDefault: row.branchId !== pelanggan.branchId };
         }),
     };
 }

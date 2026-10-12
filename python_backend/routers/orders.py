@@ -63,8 +63,14 @@ def published_rules():
             continue
         sources.append({"draft_id": row["id"], "revision": row["revision"]})
         for program in sorted(stored, key=lambda item: (item["priority"], item["id"])):
-            programs.append(Program.model_validate({**program, "priority": len(programs) + 1,
-                                                    "id": f"{row['id'][:8]}:{program['id']}"[:80]}))
+            try:
+                programs.append(Program.model_validate({**program, "priority": len(programs) + 1,
+                                                        "id": f"{row['id'][:8]}:{program['id']}"[:80]}))
+            except (ValidationError, KeyError, TypeError) as error:
+                # Keadaan SERVER (aturan terbit rusak), bukan kesalahan order: galat berkode GLOBAL — tarikan berhenti dan permintaan
+                # tetap pending, bukan ditolak permanen satu per satu sebagai DATA_TIDAK_VALID (putaran 2, butir 6).
+                raise Ditolak(409, "ATURAN_TERBIT_RUSAK", f"Aturan terbit {row['id'][:8]} program {program.get('id', '?')} tidak lolos "
+                              f"validasi: {public_error(error)[:300]}. Tarik/perbaiki publikasinya di Summary.") from None
     return programs, sources
 
 
@@ -148,9 +154,15 @@ def hitung_order(customer_no, channel, order_date, lines, cookie=None):
     except outlet_channel.ChannelBedaMaster as error:
         raise Ditolak(422, "CHANNEL_BEDA_MASTER", str(error)) from None
     except outlet_channel.ChannelTidakPasti as error:
-        raise TidakPasti(str(error)) from None
+        # Konfigurasi (CRON_SECRET kosong/ditolak) = KONFIGURASI_SERVER, sama dengan jembatan harga (putaran 2, butir 8).
+        kode = "KONFIGURASI_SERVER" if isinstance(error, outlet_channel.ChannelKonfigurasi) else "LAYANAN_TIDAK_PASTI"
+        raise TidakPasti(str(error), kode=kode) from None
     berharga = order_cabang.periksa(customer_no, order_date, lines, cookie=cookie)
-    return {"lines": berharga, **hitung_promo(customer_no, channel, order_date, berharga)}
+    hasil = {"lines": berharga, **hitung_promo(customer_no, channel, order_date, berharga)}
+    # Barang BONUS wajib bisa diorder untuk pelanggan ini (cabang, suspended, non-jual) — keputusan Next yang sama dengan pratinjau
+    # (putaran 2, butir 7). Gagal = order DITOLAK berkode, bonus tidak dibuang diam-diam.
+    order_cabang.periksa_bonus(customer_no, order_date, [bonus.get("code", "") for bonus in hasil["result"].get("bonuses", [])], cookie=cookie)
+    return hasil
 
 
 def cocokkan(hasil, sidik):
@@ -333,7 +345,7 @@ async def create_order(request: Request):
 
 
 # Galat yang BUKAN soal satu permintaan: menghentikan seluruh tarikan (tidak ada yang ditolak), bukan menolak permintaan satu per satu.
-GLOBAL = {"ATURAN_BELUM_TERBIT"}
+GLOBAL = {"ATURAN_BELUM_TERBIT", "ATURAN_TERBIT_RUSAK"}
 # Satu tarikan memproses paling banyak BATAS_HALAMAN x HALAMAN permintaan.
 # ponytail: halaman keyset, bukan antrean berprioritas — permintaan DITAHAN (dugaan ganda, BL-20) tidak lagi menyumbat 200 baris pertama;
 # batasnya hanya waktu satu tarikan. Naikkan ke kolom "dicoba_at" bila yang ditahan pernah ribuan.
@@ -358,6 +370,11 @@ def pull_once(owner, confirm_duplicate=False):
     setelah = None
     for _ in range(BATAS_HALAMAN):
         batch = websales_store.pending(HALAMAN, setelah)
+        if batch and setelah is None:
+            # Aturan terbit diperiksa SEKALI sebelum permintaan disentuh (butir 6): rusak/kosong = galat GLOBAL, tarikan berhenti,
+            # semua tetap pending — bukan Next ditanya lalu tiap permintaan ditolak karena keadaan server.
+            if not published_rules()[0]:
+                raise Ditolak(409, "ATURAN_BELUM_TERBIT", "Belum ada aturan promo terbit; terbitkan Summary sebelum order dihitung")
         for entry in batch:
             # SUDAH DITARIK diperiksa LEBIH DULU, bukan diserahkan ke kunci unik: gerbang order ganda menahan permintaan
             # yang ordernya SUDAH ADA dengan 409 sebelum kunci unik sempat berbunyi — ia lalu muncul lagi sebagai "dugaan

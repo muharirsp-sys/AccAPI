@@ -15,7 +15,7 @@
  * dihitung, dulu tidak -> pratinjau beda dengan simpan); jawaban membawa `sidik`, `sources`, `channel_masalah`.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { cakupanCabang, jawabGalat, periksaOrder } from "@/lib/order-cabang";
+import { cakupanCabang, jawabGalat, periksaBonus, periksaOrder, sumberHarga } from "@/lib/order-cabang";
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 
 export const runtime = "nodejs";
@@ -80,11 +80,11 @@ export async function POST(request: NextRequest) {
     const lines = wanted.map((line, index) => ({
         code: line.code, unit: line.unit, quantity: line.quantity,
         price: line.price !== "" ? line.price : String(resolved[index].price),
-        sumber_harga: resolved[index].source === "petugas" ? "petugas" : "master",
+        sumber_harga: sumberHarga(resolved[index]),
     }));
     const priceInfo = resolved.map((row) => ({
         code: row.code, unit: row.unit, price: row.price, source: row.source,
-        hargaMaster: row.source === "petugas" ? (row.hargaMaster ?? null) : row.price,
+        hargaMaster: row.source === "petugas" ? (row.hargaMaster ?? null) : row.price, hargaDefault: row.hargaDefault === true,
         priceCategoryName: row.priceCategoryName ?? null, branchName: row.branchName ?? null,
         effectiveDate: row.effectiveDate ?? null, knownUnits: row.knownUnits ?? null,
     }));
@@ -110,6 +110,9 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: false, kode: String(data?.kode || "PRATINJAU_GAGAL"), error: String(data?.detail || data?.error || "Pratinjau gagal") },
             { status: upstream.status });
     }
+    // Barang bonus hasil promo = syarat barang order (butir 7), keputusan SAMA dengan simpan/tarik (/api/orders/harga `bonus`).
+    const bonusBuruk = await periksaBonus(cek.pelanggan, ((data.result?.bonuses ?? []) as Array<{ code?: string }>).map((b) => String(b.code ?? "")));
+    if (bonusBuruk) return jawabGalat(bonusBuruk);
     return NextResponse.json({
         ok: true, lines, prices: priceInfo, result: data.result ?? null, suggestions: data.suggestions ?? [], sources: data.sources ?? [],
         channel_masalah: String(data.channel_masalah ?? ""), sidik: data.sidik ?? null,
