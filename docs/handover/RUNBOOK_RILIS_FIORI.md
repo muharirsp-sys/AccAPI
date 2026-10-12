@@ -2,7 +2,7 @@
 
 Disusun 12 Okt 2026 dari badan PR #116–#163, kepala tiap berkas `docs/handover/DDL_*.sql` / `RBAC_*.sql`, `scripts/migrate-pg.mjs`
 dan HANDOFF-FIORI §00/§0. Dasar: `origin/main` 3382552b, `origin/feat/fiori` **e65bf073** (S7-1b #164 sudah masuk; langkah S7-1b WAJIB).
-**K2a** belum masuk feat/fiori, jadi langkahnya ditandai **[MENYUSUL K2a]**. **O1** (migrasi 0033, `DDL_O1.sql`) adalah rilis TERPISAH sesudah rilis ini (§4).
+**K2a** (DDL_K2A, migrasi 0032) dan **O1** (DDL_O1, migrasi 0033) **TIDAK ikut rilis ini** (owner 12 Okt); keduanya masuk rilis berikutnya (§4).
 Pra-cek baca-saja produksi sudah dijalankan orkestrator 12 Okt 09.33 WITA (§1.0). Selain itu, belum ada yang dijalankan ke produksi.
 
 Tanda: **[IT]** IT Support (SSH VPS, Coolify, psql) · **[ORK]** orkestrator (GitHub `gh`, verifikasi) · **[OWNER]** keputusan ·
@@ -57,10 +57,10 @@ Jangan mengirim sandi atau secret lewat chat. Jangan memakai auto-merge atau `--
 ### 1.1 Siapkan berkas SQL di VPS [ORK → IT]
 Jalankan di PC orkestrator (Git Bash, checkout repo). **Syarat:** cabang `docs/fiori-runbook-rilis` (runbook ini, `RILIS_CEK_PRA`, `RBAC_D01_KUNCI`,
 `RBAC_S7_1B_PULIH`) sudah digabung ke feat/fiori. `REF` = commit yang akan di-merge ke main, dan harus memuat semua berkas di daftar.
-Bila ada "BELUM ADA" selain `DDL_K2A` (menyusul) → BERHENTI.
+Bila ada "BELUM ADA" → BERHENTI.
 ```bash
 cd D:/AccAPI/_github_clean && git fetch origin && REF=origin/feat/fiori && mkdir -p tmp/rilis-fiori
-for f in RILIS_CEK_PRA DDL_S7_0 RBAC_S7_1_CEK_ROLE DDL_K1A DDL_S7_2 DDL_K1B DDL_K2A RBAC_S7_1B_CEK RBAC_S7_1B_KUNCI DDL_ADR004 DDL_OUTBOX_EVENT \
+for f in RILIS_CEK_PRA DDL_S7_0 RBAC_S7_1_CEK_ROLE DDL_K1A DDL_S7_2 DDL_K1B RBAC_S7_1B_CEK RBAC_S7_1B_KUNCI DDL_ADR004 DDL_OUTBOX_EVENT \
          DDL_S6E2 RBAC_D01_KUNCI RBAC_PRESET_BL37 RBAC_PRESET_KASIR RBAC_S7_1B_PENSIUN RBAC_S7_1B_PULIH PRINCIPAL_EKSPOR; do
   git show "$REF:docs/handover/$f.sql" > "tmp/rilis-fiori/$f.sql" 2>/dev/null || { echo "BELUM ADA: $f"; rm -f "tmp/rilis-fiori/$f.sql"; }; done
 ssh root@43.156.118.114 'mkdir -p /root/rilis-fiori' && scp tmp/rilis-fiori/*.sql root@43.156.118.114:/root/rilis-fiori/
@@ -156,7 +156,6 @@ Tunggu 1 mnt lalu **ulangi** berkas yang sama. Galat lain apa pun = **BERHENTI**
 | 3 | `jalankan DDL_K1A.sql` | VERIFIKASI semua `t` | BERHENTI |
 | 4 | `jalankan DDL_S7_2.sql` (butuh #1) | VERIFIKASI semua `t` | BERHENTI. Galat "trigger trg_principal_code_tetap tidak terpasang persis" = ulangi #1 |
 | 5 | `jalankan DDL_K1B.sql` (butuh #3) | VERIFIKASI semua `t` (termasuk "prasyarat K1a") | BERHENTI |
-| 6 | [MENYUSUL K2a] `jalankan DDL_K2A.sql` | VERIFIKASI semua `t` | BERHENTI |
 | 7 | `jalankan RBAC_S7_1B_KUNCI.sql` (mode cek; S7-1b, WAJIB) | NOTICE + VERIFIKASI, lalu ERROR "S7-1b MODE CEK" dan kode 3 = NORMAL | — |
 | 8 | `terapkan RBAC_S7_1B_KUNCI.sql` (WAJIB sebelum image; semua kuncinya dikenal image lama) | kode 0; VERIFIKASI "audit_read tanpa audit_export" = 0; Manager audit_read+audit_export = true; pemegang api_wrapper.execute tetap "Admin, Fakturist, Manager" | BERHENTI |
 | 9 | (Pratinjau) `jalankan RBAC_D01_KUNCI.sql` (mode cek) | NOTICE "image rilis belum hidup — mode cek saja", "izin_disisipkan=8 audit=3"; VERIFIKASI true dan baris "harus -" = `-`; kode 3 = NORMAL | lapor ORK (nama grup) |
@@ -171,7 +170,7 @@ Berkas yang **TIDAK** di sini, dan alasannya:
   dan Manager tidak bisa membuka `/antrean-faktur`, jadi menunggu bukan regresi. Layar Akses Group lama mengirim semua kunci grup, dan PATCH lama menolak kunci tak dikenal
   (400 "Key tidak valid") — `app/api/admin/groups/[id]/route.ts:56-59` di main. Bila diterapkan sebelum image, grup Finance/Admin/Manager tidak bisa
   disimpan di layar lama, dan keadaan itu menetap bila rilis tertunda. Berkas ini sendiri menolak `terapkan` sebelum image.
-- [ ] Jalankan ulang `RILIS_CEK_PRA.sql` (simpan ke `cek-pra-2.txt`). Baris 18–26 (dan 27 bila K2a) kini `ada = t` dan `sesuai = BEDA`, yang memang diharapkan; baris lain tetap `ya`.
+- [ ] Jalankan ulang `RILIS_CEK_PRA.sql` (simpan ke `cek-pra-2.txt`). Baris 18–26 kini `ada = t` dan `sesuai = BEDA`, yang memang diharapkan; baris lain (termasuk 27, K2A, rilis berikutnya) tetap `ya`.
 
 ⛔3: semua VERIFIKASI `t`. Lalu umumkan "pembekuan mulai", dan pastikan tidak ada pelunasan yang sedang dikirim (bagian 3b tidak bertambah).
 
@@ -194,11 +193,11 @@ curl -s -o /dev/null -w 'login: %{http_code}\n' https://web-super.online/login
 ```
 - [ ] Waktu `.Created` kedua container sesudah merge. Status `Up`, bukan `Restarting`.
 - [ ] Hitung jumlah entri migrate-pg dari commit yang di-merge [ORK]: `git show <hash-merge>:scripts/migrate-pg.mjs | grep -cE '^\s+nama:'`.
-  Di e65bf073 hasilnya 22; ditambah 1 bila K2a (0032) masuk. Baris terakhir log harus `<jumlah itu> migrasi selesai.`
+  Di e65bf073 hasilnya 22 (K2a/O1 tidak ikut). Baris terakhir log harus `<jumlah itu> migrasi selesai.`
 - [ ] Log migrate-pg: 10 `SKIP` lama, lalu **`OK`**: `accurate_write_attempt`, `accurate_write_attempt_reopen`, `idempotency_lock_owner_override`,
   `idempotency_log_lock_index`, `idempotency_s6e2`, `idempotency_override_database`, `invoice_outbox_event`.
   Lalu **`SKIP`** untuk entri yang DDL-nya sudah dijalankan di §3: `principal (+variant, +alias)`, `user_group.is_primary`, `kasir (…)`, `principal_log`,
-  `kasir_pelunasan_baca (…)` [+ `kasir_setoran giro (K2a)`]. Entri lain yang ikut di commit yang di-merge harus dibaca ORK satu per satu. Tidak ada `GAGAL` maupun `42501`.
+  `kasir_pelunasan_baca (…)`. Entri lain yang ikut di commit yang di-merge harus dibaca ORK satu per satu. Tidak ada `GAGAL` maupun `42501`.
 - [ ] **O1 bukan bagian rilis ini.** O1 (migrasi 0033, `DDL_O1.sql`) dirilis terpisah sesudahnya dengan pola yang sama: DDL sebelum image.
   Sesudah image O1, sinkron ulang branch, employee, item, customer (**PERLU KONFIRMASI** perintahnya dari ORK saat O1 siap).
 - [ ] `login: 200`. Bila 503 atau crash-loop, lihat §7 "perbaikan cepat" lebih dulu.
@@ -294,7 +293,7 @@ jadi Cara A tetap wajib menyusul.
 
 **Basis data TIDAK dikembalikan.** Semua DDL bersifat EXPAND dan image lama tetap jalan. Bukti dari kepala berkas:
 - DDL_S7_0: "Image LAMA tidak terganggu (tabel baru tanpa pembaca + kolom ber-DEFAULT false)".
-- DDL_K1A, DDL_S7_2, DDL_K1B: "Image LAMA tidak terganggu". DDL_K2A: "kolom baru nullable, tidak dibaca kode lama".
+- DDL_K1A, DDL_S7_2, DDL_K1B: "Image LAMA tidak terganggu".
 - DDL_S6E2: "Image LAMA tidak terganggu oleh kolom nullable + tabel baru (EXPAND)". migrate-pg S6: "EXPAND saja … Tanpa backfill, tanpa drop".
 - DDL_ADR004 dan DDL_OUTBOX_EVENT hanya memasang trigger/REVOKE pada tabel baru yang tidak disentuh kode lama.
 
@@ -354,14 +353,14 @@ Yang TIDAK kembali sendiri:
 | #161 | S7a UI User/Grup | sosialisasi Admin; muat ulang tab lama |
 | #163 | K1b Kasir pembaca | K1A → S7_2 → K1B SEBELUM image; sync = admin semua cabang; crontab UTC (§5 langkah 12) |
 | #164 | S7-1b kunci + proxy + Manager OPC | RBAC_S7_1B_CEK (baca) → KUNCI sebelum image (WAJIB) → image → CEK ulang → PENSIUN H+1 (pulihkan = PULIH) |
-| MENYUSUL | K2a server Kasir · O1 (rilis terpisah) | DDL_K2A sebelum image (migrasi 0032) · O1: DDL_O1 sebelum image O1 (0033), lalu sinkron ulang branch/employee/item/customer |
+| Rilis berikutnya | K2a server Kasir · O1 | TIDAK ikut rilis ini. K2a: DDL_K2A sebelum image (0032). O1: DDL_O1 sebelum image (0033), lalu sinkron ulang branch/employee/item/customer |
 
 ### 9.2 Berkas SQL (commit terakhir yang mengubahnya)
 DDL_S7_0 `0fd3c387` · DDL_K1A `94273e92` · DDL_S7_2 `d3027925` · DDL_K1B `d12bd886` · DDL_ADR004 `0b426ea4` · DDL_OUTBOX_EVENT `864781ba` ·
 DDL_S6E2 `63b4f7d3` · RBAC_S7_1_CEK_ROLE `72f2efc5` · RBAC_PRESET_BL37 `a02d41e0` · RBAC_PRESET_KASIR `364f34d7` · PRINCIPAL_EKSPOR `d80614c1` ·
 RBAC_S7_1B_CEK `b629740c` · RBAC_S7_1B_KUNCI `9dec7f41` · RBAC_S7_1B_PENSIUN `653f85a3` (ketiganya di feat/fiori e65bf073, PR #164) ·
 [cabang `docs/fiori-runbook-rilis`] RILIS_CEK_PRA, RBAC_D01_KUNCI, RBAC_S7_1B_PULIH `1a1390c8` ·
-[MENYUSUL, cabang `feat/fiori-k2a-kasir-server`] DDL_K2A `1bc96802`. Hari-H, ambil semua dari commit yang di-merge (1.1), bukan dari cabang ini.
+(K2a/O1 tidak ikut rilis ini.) Hari-H, ambil semua dari commit yang di-merge (1.1), bukan dari cabang ini.
 
 ### 9.3 Kontak & peran (isi sebelum H-1)
 | Peran | Tugas | Nama / kontak |
