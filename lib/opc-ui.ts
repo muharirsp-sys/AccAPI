@@ -311,14 +311,17 @@ export function subTampilan(tab: OffTab | undefined, claimView: string | null, v
 /** Tab yang punya Object Page batch di kolom kedua (Log audit tidak). */
 export const tabPunyaDetail = (tab: OffTab | undefined) => Boolean(tab) && tab !== "audit";
 
-// ── Izin aksi: matriks peran OFF kode lama (canPerformOffAction). D-01/AM-026 belum diputuskan → jangan diubah di UI. ──
+// ── Izin aksi: matriks peran OFF (canPerformOffAction). AM-026 (D-01 §C): Manager = pembaca semua tab + audit, tanpa aksi tulis. ──
 
 /**
  * `undefined` = boleh; selain itu kalimat alasan untuk `disabledReason`. Sengaja HANYA peran OFF (sama dengan kode lama):
  * izin granular `off_program_control.<aksi>` di grup akses (D-17) tetap ditegakkan server; galatnya tampil di dialog.
  */
 export function izinAksi(peran: OffRole, aksi: OffAction): string | undefined {
-    return canPerformOffAction(peran, aksi) ? undefined : "Peran OFF Anda tidak mencakup aksi ini.";
+    if (canPerformOffAction(peran, aksi)) return undefined;
+    return peran === "manager"
+        ? "Manager hanya membaca OFF Program Control (matriks D-01): aksi ini milik peran SPV/SM/Klaim/OM/Keuangan."
+        : "Peran OFF Anda tidak mencakup aksi ini.";
 }
 
 /**
@@ -396,12 +399,12 @@ export const catatanSendiri = (a: AuditOpc) => (a.metadata?.alasanSendiri ? `Ala
     : a.metadata?.sendiriTanpaAlasan ? "Disetujui sendiri tanpa alasan (layar lama)" : "");
 
 const PERAN_AKTOR: Record<string, string> = {
-    supervisor: "SPV", sales_manager: "SM", claim: "Klaim", operational_manager: "OM", finance: "Keuangan", admin: "Admin", manager: "Admin",
+    supervisor: "SPV", sales_manager: "SM", claim: "Klaim", operational_manager: "OM", finance: "Keuangan", admin: "Admin", manager: "Manager",
 };
 export const labelPeranAktor = (role: string | null | undefined) => (role ? PERAN_AKTOR[role] ?? role : "");
 
 export const LABEL_PERAN: Record<OffRole, string> = {
-    admin: "Admin", supervisor: "Supervisor", sales_manager: "Sales Manager", claim: "Klaim", operational_manager: "Operational Manager",
+    admin: "Admin", manager: "Manager", supervisor: "Supervisor", sales_manager: "Sales Manager", claim: "Klaim", operational_manager: "Operational Manager",
     finance: "Keuangan", sales: "Sales", unknown: "Belum dikenali",
 };
 

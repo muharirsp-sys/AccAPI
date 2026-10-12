@@ -27,6 +27,10 @@ export async function requireClaimSession(): Promise<ClaimSessionActor | null> {
         .where(eq(user.id, offActor.id));
     return {
         ...offActor,
+        // Owner 12 Okt (S7-1b): "manager bukan admin" HANYA untuk OPC (AM-026, lib/off-program-control/access.ts). Claim Workflow tetap
+        // memperlakukan Manager seperti sebelum S7-1b (setara admin: kelola klaim + route close/items/void). Semua route Claim Workflow
+        // memperoleh aktor lewat fungsi ini — satu titik pemetaan.
+        role: offActor.role === "manager" ? "admin" : offActor.role,
         rawRole: row?.role ?? null,
         rawPermissions: row?.permissions ?? null,
     };

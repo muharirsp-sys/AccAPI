@@ -115,7 +115,9 @@ export default function OpcApp({ permKeys }: { permKeys: string[] }) {
             </div>
             {siap && (
                 <p>
-                    {peran === "admin" ? "Pantau semua antrean lalu buka batch untuk melihat detailnya." : "Kerjakan batch di antrean Anda; batch terbuka tampil di kolom kanan."}
+                    {peran === "admin" ? "Pantau semua antrean lalu buka batch untuk melihat detailnya."
+                        : peran === "manager" ? "Baca semua antrean dan log audit (ekspor CSV boleh); aksi tulis milik SPV/SM/Klaim/OM/Keuangan."
+                        : "Kerjakan batch di antrean Anda; batch terbuka tampil di kolom kanan."}
                     {" "}Peran OFF: {LABEL_PERAN[peran]}.
                 </p>
             )}

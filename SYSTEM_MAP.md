@@ -39,7 +39,7 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 - Layer `lib/*` memisahkan business logic dari route handler.
 - `lib/db.ts`, `lib/auth.ts`, `db/schema.ts`, dan `drizzle.config.ts` memakai PostgreSQL. `sqlite.db` adalah sumber/rollback migrasi lama, bukan runtime route Next.js.
 - RBAC: **Dynamic Permission-Group** (access_group + group_permission + user_group, default-deny) OTORITATIF begitu user punya ≥1 group; legacy **role global** / **custom permissions** (user.permissions) hanya fallback untuk user yang belum pernah ber-group. Resolver tunggal `getUserPermissions()` di `lib/rbac/resolve.ts`. FastAPI tidak menghitung izin sendiri: `/api/auth/verify` mengirim `effectivePermissions` dari resolver yang sama dan `python_backend/shared.py` `user_has_permission` memakainya (ADR-001, `docs/modernization/ARCHITECTURE_ADR.md`).
-- Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (92 key). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
+- Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (111 key sesudah S7-1b; kunci pensiun = `KUNCI_PENSIUN`, nasib 31 kunci D-01 §D = `lib/rbac/nasib-kunci.test.ts`). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
 - Email-domain role inference dihapus. OFF-specific role (`resolveOffRoleFromUser`) tetap ada untuk audit/state-machine, TIDAK untuk authz.
 
 ---
@@ -220,6 +220,12 @@ UI: Supervisor submit batch
 
 ### 3. OFF Program Control — Approval Chain (SM → Claim → OM → Finance)
 ```
+Peran OFF (lib/off-program-control/access.ts normalizeOffRole): S7-1b AM-026 (D-01 §C "manager bukan admin") — role `manager`
+  = peran sendiri: PEMBACA 7 tab + audit_read/audit_export saja; tidak lolos periode tutup, tanpa alternatif role admin di refund.
+  Admin tidak berubah. Ekspor CSV audit = audit_read ∧ audit_export. "Manager bukan admin" HANYA OPC (owner 12 Okt): Claim Workflow
+  tetap memperlakukan Manager seperti sebelum S7-1b — requireClaimSession (lib/claim-workflow/access.ts) memetakan manager -> admin
+  (kelola klaim, route close/items/void).
+
 SM Approve:
   -> PATCH /api/off-program-control/batches/[id]/sm-approve
      -> canActorPerformOffAction(actor, "sm_approve")
@@ -276,9 +282,16 @@ Record pembayaran dari principal:
 UI: API Wrapper page (/api-wrapper)
   -> POST /api/proxy
      -> route.ts [POST] — forward ke Accurate API (sessionHost + Bearer apiKey) lewat lib/accurate-forward.ts
-        (menolak 403 tulis purchase-payment/(bulk-)save.do — hanya lewat command Finance di bawah;
-         menolak 403 SALES_INVOICE_VIA_OUTBOX tulis sales-invoice/(bulk-)save.do — hanya lewat Antrean Faktur, S6-0d E4)
+        (menolak 403 PURCHASE_PAYMENT_VIA_FINANCE tulis purchase-payment/(bulk-)save.do — hanya lewat command Finance di bawah;
+         menolak 403 SALES_INVOICE_VIA_OUTBOX tulis sales-invoice/(bulk-)save.do — hanya lewat Antrean Faktur, S6-0d E4;
+         tulis sales-receipt = cabang Pelunasan di bawah (pelunasan.kirim; api_wrapper.execute tidak diminta & tidak cukup);
+         S7-1b AM-024: tulis LAIN = api_wrapper.execute (403 PERMISSION_REQUIRED {permission, sent:false}) + hanya save/bulk-save
+         katalog Konsol config/accurateRoutes.js (isCatalogWrite; delete.do & endpoint tak dikenal 403 ENDPOINT_TIDAK_DIIZINKAN) —
+         semua SEBELUM sesi Accurate/DB/jaringan; baca = GET jalur kanonik {list,detail,get-stock,list-stock}.do (isAccurateRead),
+         cukup sesi app (Finance & Pelunasan membaca tanpa api_wrapper.*). [PROXY FIRE] tulis mencatat id pengguna.)
      <- JSON response
+  Klien: lib/apiFetcher.ts classifyWriteError — 4xx + sent:false = rejected (tidak terkirim), bukan TIDAK PASTI; Konsol berhenti
+  di tahap yang ditolak dan menampilkan pesan server.
 
 Antrean Faktur / outbox sales-invoice (S6-0d, DRAFT — zona tulis Accurate):
   antre: POST /api/principal-order/queue | /api/orders/{id}/invoice -> lib/invoice-outbox-actions antrekan()
@@ -705,7 +718,7 @@ AccAPI/_github_clean/
 │       │   ├── principles/route.ts
 │       │   ├── discount/route.ts
 │       │   ├── payments/[paymentId]/proof/route.ts
-│       │   └── audit/route.ts          # Export audit log OPC
+│       │   └── audit/route.ts          # Audit log OPC (JSON audit_read; CSV + audit_export, S7-1b)
 │       ├── claim-workflow/
 │       │   ├── route.ts                # GET list (paginated/cursor)
 │       │   ├── [id]/
@@ -753,7 +766,7 @@ AccAPI/_github_clean/
 │   ├── auth-client.ts                  # Better Auth client (browser)
 │   ├── rbac.ts                         # RBAC legacy (union layer selama transisi)
 │   ├── rbac/
-│   │   ├── registry.ts                 # PERMISSION_REGISTRY — sumber tunggal 87 key
+│   │   ├── registry.ts                 # PERMISSION_REGISTRY — sumber tunggal 111 key + KUNCI_PENSIUN (S7-1b)
 │   │   ├── resolve.ts                  # getUserPermissions, requirePermission/H, resolveRequestPermissions/H
 │   │   └── registry.test.ts            # Self-check: integritas registry + scan route.ts
 │   ├── db.ts                           # Drizzle client singleton
@@ -846,7 +859,7 @@ AccAPI/_github_clean/
 | `lib/rbac.ts` | `canAccess`, `canAccessPath`, `permissionMapForUser`, `normalizeRole`, `canAccessPathWithKeys` (`anyOf`), `SESI_ACCURATE_KEYS`, `actionLabels`, `permissionModuleLabels`, `permissionKeyLabel`, `auditActionLabels` | RBAC legacy: preset per role (fallback user tanpa grup); `pagePermissions` boleh memuat `anyOf` (kunci alternatif, dipakai `/sesi-accurate`). S7-1: SATU sumber label izin (20 modul registry + 18 aksi OPC granular) & label aksi audit untuk layar S7a |
 | `lib/accurate-oauth.ts` | `urlAuthorize`, `returnToAman`, `halamanMendarat`, `kabarAccurate`, `GALAT_ACCURATE` | Bagian murni OAuth Accurate (server+klien): scope tetap, daftar putih returnTo, kode galat → kalimat |
 | `components/accurate/SesiAccurate.tsx` | `SesiAccurate` | Kartu Sesi Accurate bersama `/sesi-accurate` dan Konsol: status, Masuk, daftar/buka database, Keluar, kabar callback |
-| `lib/rbac/registry.ts` | `PERMISSION_REGISTRY`, `allPermissionKeys`, `isValidPermissionKey` | **Sumber tunggal** 85 permission key (`module.action`). Zero import — pure data. Test-guard scan semua route.ts saat CI |
+| `lib/rbac/registry.ts` | `PERMISSION_REGISTRY`, `allPermissionKeys`, `isValidPermissionKey`, `KUNCI_PENSIUN` | **Sumber tunggal** 111 permission key (`module.action`); `KUNCI_PENSIUN` (S7-1b) dibuang PATCH grup tanpa 400 + dihapus RBAC_S7_1B_PENSIUN.sql. Zero import — pure data. Test-guard scan semua route.ts saat CI |
 | `lib/rbac/resolve.ts` | `getUserPermissions`, `getPrimaryGroup`, `requirePermission`, `requirePermissionH`, `resolveRequestPermissions`, `resolveRequestPermissionsH` | Resolver: grup (otoritatif) / legacy role bila tanpa grup. Guard endpoint default-deny. `getPrimaryGroup` (BL-63) = grup berbintang atau satu-satunya grup |
 | `lib/rbac/otorisasi.ts` | `transaksiOtorisasi`, `adminAktif`, `evaluasiPenjaga`, `mulaiUtama`/`selesaiUtama`, `pasangBintang`, `roleTurunan`, `GROUP_NAME_TO_ROLE` | S7-1: SATU penjaga BL-61 (admin = aktif + `users.manage` efektif; 409 `ADMIN_TERAKHIR`/`AKSES_SENDIRI`/`GRUP_TERAKHIR`) di dalam transaksi + `pg_advisory_xact_lock`; grup utama + penurunan `user.role` dari grup preset di transaksi yang sama. Kontrak `docs/handover/S7-KONTRAK-ADMIN-API.md` |
 | `lib/rbac/riwayat.ts` | `jawabRiwayat` | Riwayat `permission_audit_log` per user/grup, keyset presisi mikrodetik |
@@ -944,7 +957,7 @@ AccAPI/_github_clean/
 | File | Fungsi Utama | Peran |
 |---|---|---|
 | `lib/sync.ts` | `AccuratePaginator`, `syncModule` | Sync paginated data Accurate ke SQLite lokal (item/customer) dengan checkpoint |
-| `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment |
+| `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment & sales-invoice; sales-receipt = `pelunasan.kirim`; tulis lain = `api_wrapper.execute` + katalog Konsol (S7-1b) |
 | `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance: database sesi wajib = `expectedDatabaseId` (409 `database_changed`), klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
 | `app/api/finance/purchase-payment/resolve/route.ts` | `POST` | Atestasi manual attempt purchase-payment tidak pasti (alasan + sumber pemeriksaan) |
 | `app/api/finance/purchase-payment/attempts/route.ts` | `GET` | Baca-saja status attempt terbaru per kelompok faktur (S6-0e; kontrak `docs/handover/S6-0e-KONTRAK-API.md`) |
@@ -1086,6 +1099,9 @@ kasir_setoran [append-only; (tanggal, salesman_kode=ORANG, revisi) unik; revisi 
 kasir_selisih_catatan [append-only; angka pelunasan/setoran saat dijelaskan; '' = Tanpa salesman] · kasir_tak_teralokasi_catatan [append-only; per pelunasan, angka sisa]
 kasir_hari_event [append-only; tutup (snapshot.terhalang WAJIB [] — owner T2) | kunci (otomatis 20.00 WITA, boleh terhalang) | buka(alasan >= 15)]
   izin ke grup: docs/handover/RBAC_PRESET_KASIR.sql SESUDAH RBAC_PRESET_BL37.sql (S7-1)
+  S7-1b (urutan di header SQL): RBAC_S7_1B_CEK.sql baca-saja -> PK-1 owner (12 Okt: biarkan — KUNCI tidak menulis api_wrapper.*;
+  Admin/Fakturist/Manager sudah memegang execute) -> RBAC_S7_1B_KUNCI.sql SEBELUM image -> image ->
+  RBAC_S7_1B_PENSIUN.sql SESUDAH image -> CEK ulang (mode cek bawaan = ROLLBACK; terapkan PGOPTIONS='-c rbac.terapkan=1')
 kasir_pelunasan (database_id + pelunasan_id; chequeAmount, metode, last_update) ── kasir_pelunasan_faktur (faktur_id, master_salesman_id, invoice_payment) [cache K1b, TANPA raw_data]
   masterSalesmanId -> accurate_employee.number -> sales_code_merge (merge, per bulan) -> ORANG; OTHERS dikeluarkan; Σ invoicePayment ≠ chequeAmount -> ember tak teralokasi; cheque uang < 0 -> ember nominal_negatif (K-1 a)
 kasir_pelunasan_baca (database_id + tanggal; status berjalan|lengkap|sebagian|gagal, sebab (+hapus_massal), sisa_detail, ditolak, token lease 2 mnt, lengkap_pada, akun_sinkron, penuh_tertunda_pada) [K1b; DDL_K1A -> DDL_S7_2 -> DDL_K1B SEBELUM image; 0031 sesudah 0030]
