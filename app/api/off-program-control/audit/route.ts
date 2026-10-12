@@ -1,7 +1,7 @@
 /*
  * Tujuan: Akses audit log global OFF Program Control untuk Claim (read + export CSV).
- * Caller: page.tsx tab Audit (role Claim/Admin).
- * Dependensi: Drizzle offAuditLog/offBatch, RBAC OFF (audit_read/audit_export), search/period helper.
+ * Caller: page.tsx tab Audit (role Claim/Admin; Manager pembaca, AM-026).
+ * Dependensi: Drizzle offAuditLog/offBatch, RBAC OFF (audit_read; CSV juga audit_export — S7-1b), search/period helper.
  * Main Functions: GET (read JSON atau export CSV).
  * Side Effects: Hanya membaca DB; tidak menulis.
  *
@@ -61,6 +61,13 @@ export async function GET(request: Request) {
   const dateFrom = url.searchParams.get("dateFrom") || "";
   const dateTo = url.searchParams.get("dateTo") || "";
   const format = (url.searchParams.get("format") || "json").toLowerCase();
+  // S7-1b (AM-042, D-01 §D): ekspor CSV = audit_read ∧ audit_export (pemegang audit_read diberi audit_export lewat RBAC_S7_1B_KUNCI.sql).
+  if (format === "csv" && !gate.perms!.has("off_program_control.audit_export")) {
+    return NextResponse.json({
+      ok: false, code: "PERMISSION_REQUIRED", permission: "off_program_control.audit_export",
+      error: "Ekspor log audit OFF butuh izin OFF Program Control · Export Audit (off_program_control.audit_export).",
+    }, { status: 403 });
+  }
 
   try {
     const rows = await db

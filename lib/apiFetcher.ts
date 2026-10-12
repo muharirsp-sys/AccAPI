@@ -5,11 +5,14 @@
 export class AccurateError extends Error {
     rawDetails?: any[];
     rawErrorObject?: any;
-    constructor(message: string, rawDetails?: any[], rawErrorObject?: any) {
+    /** Status HTTP jawaban /api/proxy (S7-1b: `sent:false` hanya dipercaya pada 4xx, pola tinjauan A5 lib/pelunasan/kirim.ts). */
+    status?: number;
+    constructor(message: string, rawDetails?: any[], rawErrorObject?: any, status?: number) {
         super(message);
         this.name = "AccurateError";
         this.rawDetails = rawDetails;
         this.rawErrorObject = rawErrorObject;
+        this.status = status;
     }
 }
 
@@ -55,7 +58,7 @@ export async function accurateFetch(endpointPath: string, method: string, payloa
             if (data.detail) {
                 errorMsg += `\n\n[INFO TAMBAHAN]: ${data.detail}`;
             }
-            throw new AccurateError(errorMsg, rawDetails, data);
+            throw new AccurateError(errorMsg, rawDetails, data, response.status);
         }
 
         return data;
@@ -103,15 +106,21 @@ export function classifyBulkSaveResponse(data: unknown): WriteOutcome {
     return { kind: "unknown", message: `hasil bulk-save tidak lengkap: ${JSON.stringify(items).slice(0, 300)}` };
 }
 
-/** Error dari accurateFetch: hanya amplop penolakan Accurate `{s:false, d}` yang `rejected`. */
+/**
+ * Error dari accurateFetch: `rejected` = amplop penolakan Accurate `{s:false, d}` ATAU penolakan proxy SEBELUM diteruskan
+ * (4xx + `sent:false`, mis. 403 `PERMISSION_REQUIRED` api_wrapper.execute / `ENDPOINT_TIDAK_DIIZINKAN`, S7-1b) — tidak terkirim,
+ * boleh diulang sesudah diperbaiki/diberi izin.
+ */
 export function classifyWriteError(err: unknown): WriteOutcome {
     const message = err instanceof Error ? err.message : String(err);
     // ponytail: proxy selalu menjawab HTTP 200 untuk JSON apa pun dari Accurate, jadi status
     // upstream tidak terlihat di sini; amplop s:false dianggap penolakan bisnis (dokumen Accurate:
     // penolakan = HTTP 200 + s:false). Teruskan status upstream bila 5xx beramplop pernah muncul.
-    const raw = err instanceof AccurateError ? (err.rawErrorObject as { s?: unknown; d?: unknown } | undefined) : undefined;
+    const raw = err instanceof AccurateError ? (err.rawErrorObject as { s?: unknown; d?: unknown; sent?: unknown } | undefined) : undefined;
     const isEnvelopeRejection = raw?.s === false && raw.d !== undefined;
     const bulkRejection = err instanceof AccurateError && Array.isArray(err.rawDetails) && err.rawDetails.length > 0
         && err.rawDetails.every((it) => (it as Item)?.s === false);
-    return isEnvelopeRejection || bulkRejection ? { kind: "rejected", message } : { kind: "unknown", message };
+    // `sent:false` dari jawaban Accurate yang diteruskan proxy selalu ber-HTTP 200 → tidak dipercaya; hanya 4xx penjaga proxy.
+    const notSent = err instanceof AccurateError && raw?.sent === false && (err.status ?? 0) >= 400 && (err.status ?? 0) < 500;
+    return isEnvelopeRejection || bulkRejection || notSent ? { kind: "rejected", message } : { kind: "unknown", message };
 }

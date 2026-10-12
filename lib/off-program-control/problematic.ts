@@ -445,7 +445,8 @@ export function detectProblematicBatches(
  * Filter problems yang relevan untuk role tertentu.
  */
 export function getProblemsForRole(problems: ProblematicBatch[], role: OffRole): ProblematicBatch[] {
-    if (role === "admin") return problems;
+    // AM-026: Manager = pembaca semua tab -> semua peringatan (seperti sebelum dipisah dari admin).
+    if (role === "admin" || role === "manager") return problems;
     return problems.filter((p) => p.notifyRoles.includes(role));
 }
 

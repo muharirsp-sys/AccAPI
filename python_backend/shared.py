@@ -161,11 +161,8 @@ PERMISSION_ACTIONS = [
     "email",
     "sync",
     "manage",
-    "create_user",
-    "edit_user",
-    "delete_user",
-    "set_role",
-    "set_permission",
+    # S7-1b: lima aksi users granular dipensiunkan (KUNCI_PENSIUN lib/rbac/registry.ts, diganti users.manage) — tidak pernah
+    # dicek FastAPI; kini dibuang normalize_permissions bersama kunci tak dikenal lain.
 ]
 
 if APP_IS_PRODUCTION:
