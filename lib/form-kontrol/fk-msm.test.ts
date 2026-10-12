@@ -3,9 +3,10 @@
  * ASLI pada Postgres = lib/form-kontrol/fk-msm-pg.test.ts. Data contoh generik. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hariBaku, kunciHari } from "./constants.ts";
-import { getWeekParity, parseDateString } from "./db.ts";
+import { hariBaku, kunciHari, paritasMinggu } from "./constants.ts";
+import { hariIniWita } from "../../app/(dashboard)/form-kontrol/shared.tsx";
 import { cocokKodeRute, pilihPelangganRute } from "../order-cabang.ts";
+import { BATAS_KODE_RUTE, cocokkanTokoRute } from "../../components/order/order-cabang-api.ts";
 
 test("butir 2: kunci hari tak peka huruf/spasi/tanda; bentuk baku unggah; hari tak dikenal = null, kosong = ''", () => {
     for (const v of ["SENIN", " senin ", "Senin"]) assert.equal(kunciHari(v), "SENIN");
@@ -15,14 +16,28 @@ test("butir 2: kunci hari tak peka huruf/spasi/tanda; bentuk baku unggah; hari t
     assert.equal(hariBaku("Minggu"), null, "Minggu tidak punya rute");
     assert.equal(hariBaku("Senen"), null);
     assert.equal(hariBaku(""), "");
+    assert.equal(hariBaku("   "), "");
     assert.equal(hariBaku(undefined), "");
+    // KC1: isian tanpa huruf hari BUKAN kosong — ditolak per baris, bukan disimpan tanpa hari.
+    for (const v of ["1", "-", "?", 1]) assert.equal(hariBaku(v), null, String(v));
 });
 
-test("butir 2: paritas minggu = minggu ISO % 2", () => {
-    assert.equal(getWeekParity(parseDateString("2026-10-12")), "genap"); // minggu 42
-    assert.equal(getWeekParity(parseDateString("2026-10-18")), "genap"); // Minggu masih minggu ISO 42
-    assert.equal(getWeekParity(parseDateString("2026-10-19")), "ganjil"); // minggu 43
-    assert.equal(getWeekParity(parseDateString("2026-01-01")), "ganjil"); // Kamis 1 Jan 2026 = minggu 1
+test("owner 12 Okt: paritas minggu selang-seling terus dari minggu acuan (Senin 12 Okt 2026 = genap), bukan minggu ISO", () => {
+    assert.equal(paritasMinggu("2026-10-12"), "genap", "minggu acuan");
+    assert.equal(paritasMinggu("2026-10-18"), "genap", "Minggu = minggu yang sama (Senin-ke-Senin)");
+    assert.equal(paritasMinggu("2026-10-19"), "ganjil", "minggu depan");
+    assert.equal(paritasMinggu("2026-10-26"), "genap");
+    // 2026 punya 53 minggu ISO: ISO % 2 memberi 28 Des 2026 (minggu 53) dan 4 Jan 2027 (minggu 1) sama-sama ganjil. Selang-seling = beda.
+    assert.equal(paritasMinggu("2026-12-28"), "ganjil"); // 11 minggu sesudah acuan
+    assert.equal(paritasMinggu("2027-01-04"), "genap"); // 12 minggu sesudah acuan
+    // Sebelum acuan (selisih negatif): Minggu 11 Okt = minggu sebelumnya.
+    assert.equal(paritasMinggu("2026-10-11"), "ganjil");
+    assert.equal(paritasMinggu("2026-10-05"), "ganjil");
+    assert.equal(paritasMinggu("2026-09-28"), "genap");
+    assert.equal(paritasMinggu("2026-06-01"), "ganjil", "data contoh seed Juni");
+    // Batas hari menurut WITA: Minggu 23.30 WITA masih minggu acuan, Senin 00.30 WITA sudah minggu depan.
+    assert.equal(paritasMinggu(hariIniWita(new Date("2026-10-18T15:30:00Z"))), "genap");
+    assert.equal(paritasMinggu(hariIniWita(new Date("2026-10-18T16:30:00Z"))), "ganjil");
 });
 
 test("butir 6: kode toko JKS cocok persis ATAU kode + '-' + SATU akhiran; tak peka huruf; spasi dalam dipertahankan", () => {
@@ -44,4 +59,24 @@ test("butir 6: tepat satu pelanggan AKTIF = dipilih; dua = GANDA; hanya nonaktif
     assert.deepEqual(pilihPelangganRute("C-1", [p("C-1-CBA"), p("C-1")]), { pelanggan: null, masalah: "GANDA", kandidat: ["C-1-CBA", "C-1"] });
     assert.deepEqual(pilihPelangganRute("C-1", [p("C-1-CBA", true)]), { pelanggan: null, masalah: "NONAKTIF", kandidat: ["C-1-CBA"] });
     assert.deepEqual(pilihPelangganRute("C-1", [p("C-10-CBA")]), { pelanggan: null, masalah: "TIDAK_ADA", kandidat: [] });
+});
+
+test("KC3: rute lebih dari batas per permintaan dipecah (bukan dipotong / gagal semua)", async () => {
+    const asli = globalThis.fetch;
+    const diminta: string[][] = [];
+    globalThis.fetch = (async (url: string | URL | Request) => {
+        const kode = new URL(String(url), "http://app.test").searchParams.getAll("kode");
+        diminta.push(kode);
+        const rute = kode.map((k) => ({ kode: k, pelanggan: null, masalah: "TIDAK_ADA", kandidat: [], alasan: `x ${k}` }));
+        return new Response(JSON.stringify({ ok: true, cakupan: {}, rute }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+        const kode = Array.from({ length: 450 }, (_, i) => `C-${i}`);
+        const h = await cocokkanTokoRute(kode, undefined, "sales");
+        assert.ok(h.ok);
+        assert.deepEqual(h.ok && h.data.map((r) => r.kode), kode, "semua toko, urutan sama");
+        assert.deepEqual(diminta.map((d) => d.length), [BATAS_KODE_RUTE, BATAS_KODE_RUTE, 50]);
+    } finally {
+        globalThis.fetch = asli;
+    }
 });
