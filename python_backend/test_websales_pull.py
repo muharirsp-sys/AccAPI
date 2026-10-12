@@ -9,7 +9,9 @@ Side Effects: Dua SQLite sementara di direktori temp; tidak memanggil Mistral/Ac
 """
 import json
 import os
+import sys
 import tempfile
+import types
 
 _root = tempfile.mkdtemp(prefix="websales-check-")
 os.environ["SUMMARY_STORE_PATH"] = os.path.join(_root, "summary.sqlite3")
@@ -81,6 +83,19 @@ CHANNEL_KONFIG = set()
 # Jembatan bonus Next palsu (putaran 2, butir 7): kode di BONUS_BURUK = barang bonus tak bisa diorder untuk pelanggan.
 BONUS_BURUK = set()
 BONUS_PANGGIL = []
+# Susulan uji: periksa_bonus ASLI (sebelum dipalsukan di main) + `requests` palsu -> galat HTTP cek bonus diuji ujung ke ujung.
+PERIKSA_BONUS_ASLI = order_cabang.periksa_bonus
+NEXT_BONUS = []
+
+
+def next_bonus_rusak(status=500, gagal=None):
+    """Next `/api/orders/harga` (mode bonus) menjawab 5xx, atau `requests.post` gagal (jaringan / timeout)."""
+    def post(url, json=None, headers=None, timeout=None):
+        NEXT_BONUS.append({"json": json, "headers": dict(headers or {})})
+        if gagal:
+            raise gagal
+        return types.SimpleNamespace(status_code=status, json=lambda: {"error": "galat internal"})
+    sys.modules["requests"] = types.SimpleNamespace(post=post)
 
 
 def bonus_palsu(customer_no, order_date, codes, cookie=None):
@@ -362,6 +377,42 @@ def check_putaran2(client):
     assert [(r["request_id"], r["kode"]) for r in tarik["rejected"]] == [(simpan.json()["request"]["id"], "BONUS_TIDAK_BISA_DIORDER")], tarik
     assert BONUS_PANGGIL[-1]["sesi"] is False and BONUS_PANGGIL[-1]["kode"] == ["Y"], BONUS_PANGGIL[-1]
     BONUS_BURUK.discard("Y")
+
+    # Susulan uji: cek bonus Next 500 / OSError / timeout = TIDAK PASTI -> 503 saat simpan (tidak disimpan) DAN saat tarik (berhenti);
+    # permintaan TETAP pending (bukan rejected), lalu masuk sesudah Next pulih.
+    tunda = {**tanya, "outlet": "TOKO BONUS TUNDA"}
+    menunggu = kirim(client, tunda).json()["request"]["id"]
+    requests_asli = sys.modules.get("requests")
+    env_asli = {k: os.environ.get(k) for k in ("NEXT_INTERNAL_URL", "CRON_SECRET")}
+    os.environ.update(NEXT_INTERNAL_URL="http://next.uji:3000", CRON_SECRET="rahasia-bonus")
+    order_cabang.periksa_bonus = PERIKSA_BONUS_ASLI
+    try:
+        for status, gagal in ((500, None), (200, OSError("connection refused")), (200, TimeoutError("read timed out"))):
+            next_bonus_rusak(status, gagal)
+            sebelum = websales_store.pending_count()
+            simpan = kirim(client, tunda)
+            assert simpan.status_code == 503 and simpan.json()["kode"] == "LAYANAN_TIDAK_PASTI", (status, gagal, simpan.text)
+            assert websales_store.pending_count() == sebelum, "tidak pasti saat simpan = tidak disimpan"
+            tarik = client.post("/orders/pull", headers=ADMIN, json={})
+            assert tarik.status_code == 503 and tarik.json()["kode"] == "LAYANAN_TIDAK_PASTI", (status, gagal, tarik.text)
+            baris = websales_store.get_request(menunggu)
+            assert baris["status"] == "pending" and not baris["reject_code"], (status, gagal, baris)
+        assert {p["headers"].get("Authorization") for p in NEXT_BONUS} == {None, "Bearer rahasia-bonus"}, "jalur sesi DAN layanan"
+        assert all(p["json"]["bonus"] == ["Y"] for p in NEXT_BONUS), NEXT_BONUS
+    finally:
+        order_cabang.periksa_bonus = bonus_palsu
+        if requests_asli is None:
+            sys.modules.pop("requests", None)
+        else:
+            sys.modules["requests"] = requests_asli
+        for k, v in env_asli.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    with connect() as db:
+        assert db.execute("SELECT count(*) FROM sales_order WHERE request_id=?", (menunggu,)).fetchone()[0] == 0
+    assert [i["request_id"] for i in client.post("/orders/pull", headers=ADMIN, json={}).json()["imported"]] == [menunggu]
     withdraw(bonus)
 
 
