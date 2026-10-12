@@ -161,7 +161,7 @@ dijalankan otomatis (`?tanggal=…&penuh=1` manual). 200 = semua lengkap, 202 = 
 
 **Fungsi untuk K2/K3** (`lib/kasir/baca-pelunasan.ts`, tanpa Accurate): `sesiSinkron()` / `databaseIdSinkron()` (database sesi sinkron saat ini; ""
 = sesi tak ada → 503 SESI_SINKRON), `muatPelunasanHari(databaseId, tanggal)` → `{ status, pelunasan: Pelunasan[] }` (satu snapshot REPEATABLE READ;
-sen lewat `keSen`) = masukan `rekonsiliasiHari`, `statusBaca(databaseId, tanggal)`, `publikkan(status)` (WAJIB sebelum status dikirim ke klien),
+sen lewat `keSen`) = masukan `rekonsiliasiHari` (K2a: isinya = `muatPelunasanDalam(tx, …)` di transaksi pemanggil, perilaku sama), `statusBaca(databaseId, tanggal)`, `publikkan(status)` (WAJIB sebelum status dikirim ke klien),
 `segarUntukTutup(status, sekarang)` (lib/kasir/pembaca).
 
 **Catatan untuk K2 (keputusan orkestrator 12 Okt)**: Tutup hari mensyaratkan `status === "lengkap"` DAN `lengkap_pada` ≤ **15 menit** lalu
@@ -376,3 +376,15 @@ pembaca -> status tak pernah `lengkap` -> Tutup terhalang (K-3, tanpa jalan jela
 `kasir_setoran.giro_nomor text` (CHECK tidak hanya spasi) + `giro_jatuh_tempo date`, nullable (server menegakkan "giro > 0 -> wajib", pola
 K1a: perubahan keputusan tanpa DDL). `docs/handover/DDL_K2A.sql` (pemilik, SESUDAH DDL_K1B, SEBELUM image) = entri migrate-pg
 `kasir_setoran giro (K2a)` = `db/migrations/0032_kasir_setoran_giro.sql` = Drizzle. Tanpa env baru.
+
+### 8.9 Prasyarat deploy K2 (IT, urut) + plafon
+
+1. `DDL_K1A.sql` -> `DDL_S7_2.sql` -> `DDL_K1B.sql` -> **`DDL_K2A.sql`** sebagai role pemilik, SEBELUM image (VERIFIKASI semua `ok`; NULL = role
+   `accapi_app` tidak ada). Tanpa DDL_K2A, migrate-pg (accapi_app, bukan pemilik) gagal ALTER -> crash loop.
+2. Image (K1b + K2a [+ K2b]). Direktori `data/uploads/kasir-bukti` dibuat otomatis di volume `accapi_frontend_data` (`/app/data`, ditulis frontend).
+3. `RBAC_PRESET_BL37.sql` -> `RBAC_PRESET_KASIR.sql` (Kasir: view/catat/tutup; OM & Admin: view/buka). `ACCURATE_SYNC_USER_ID` + crontab K-2 (§7).
+
+Plafon (ponytail): kunci 20.00 dicatat malas -> snapshot `kunci` mencerminkan cache SAAT aksi pertama sesudah 20.00 (cron K1b masih jalan s/d
+21.00), bukan tepat 20.00 — setoran tetap tak bisa berubah sesudah 20.00 (kunci dihitung dari jam); jalan naik = cron 20.00 yang memanggil GET.
+Berkas bukti di volume satu instance (pola Form Kontrol): multi-instance / cadangan terpisah -> kolom bytea + DDL. Berkas yatim dari jawaban
+`TIDAK_PASTI` tidak dibersihkan otomatis (tak terjangkau; nama UUID).

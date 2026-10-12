@@ -238,14 +238,18 @@ test("PG K2a BALAPAN Tutup ↔ Catat (2 koneksi): Tutup memegang kunci -> Catat 
         const h = await hariKlop(pool, jam);
         const g = gerbang("tutup:sesudah-baca");
         const pTutup = tutupHari({ tanggal: D, sidik: h.sidik! }, KASIR, depsUji(pool, jam, g.jeda));
+        pTutup.catch(() => undefined);
         await g.tiba;
         let catatSelesai = false;
         const pCatat = catatSetoran(setoranIsian({ orang: "S-A", tunai: 15_000_000, dasar: h.orang[0].dasar }), KASIR, depsUji(pool, jam))
             .finally(() => { catatSelesai = true; });
         pCatat.catch(() => undefined);
-        await tidur(400);
-        assert.equal(catatSelesai, false, "Catat menunggu kunci hari selama Tutup berjalan");
-        g.buka();
+        try {
+            await tidur(400);
+            assert.equal(catatSelesai, false, "Catat menunggu kunci hari selama Tutup berjalan");
+        } finally {
+            g.buka(); // merah pun: lepaskan transaksi Tutup agar pool bisa ditutup (tanpa uji menggantung)
+        }
         assert.ok("event" in (await pTutup));
         await assert.rejects(pCatat, galat("HARI_TERKUNCI"));
         assert.deepEqual((await revisi(pool)).map((x) => [x.kode, x.revisi]), [["S-A", 1]], "tak ada setoran sesudah tutup");
@@ -259,13 +263,17 @@ test("PG K2a BALAPAN Tutup ↔ Catat (2 koneksi): Tutup memegang kunci -> Catat 
         const h = await hariKlop(pool, jam);
         const g = gerbang("setoran:sebelum-insert");
         const pCatat = catatSetoran(setoranIsian({ orang: "S-A", tunai: 15_000_000, dasar: h.orang[0].dasar }), KASIR, depsUji(pool, jam, g.jeda));
+        pCatat.catch(() => undefined);
         await g.tiba;
         let tutupSelesai = false;
         const pTutup = tutupHari({ tanggal: D, sidik: h.sidik! }, KASIR, depsUji(pool, jam)).finally(() => { tutupSelesai = true; });
         pTutup.catch(() => undefined);
-        await tidur(400);
-        assert.equal(tutupSelesai, false, "Tutup menunggu kunci hari selama Catat berjalan");
-        g.buka();
+        try {
+            await tidur(400);
+            assert.equal(tutupSelesai, false, "Tutup menunggu kunci hari selama Catat berjalan");
+        } finally {
+            g.buka();
+        }
         await pCatat;
         await assert.rejects(pTutup, (e: unknown) => galat("TERHALANG")(e) && /Selisih S-A/.test(((e as GalatKasir).tambahan.alasan as string[]).join(" ")));
         assert.deepEqual(await event(pool), [], "tidak ada event tutup");
@@ -278,13 +286,18 @@ test("PG K2a Tutup: klaim pembaca K1b MENUNGGU transaksi Tutup (FOR SHARE status
         const h = await hariKlop(pool, jam);
         const g = gerbang("tutup:sesudah-baca");
         const pTutup = tutupHari({ tanggal: D, sidik: h.sidik! }, KASIR, depsUji(pool, jam, g.jeda));
+        pTutup.catch(() => undefined);
         await g.tiba;
         const urutan: string[] = [];
         const pKlaim = tokoPg(drizzle(pool)).klaim({ databaseId: DB, tanggal: D, token: "tok-baru", pemicu: "cron", penuh: true, akun: "u-sinkron" })
             .then((k) => { urutan.push("klaim"); return k; });
-        await tidur(400);
-        assert.deepEqual(urutan, [], "klaim (UPDATE status) menunggu FOR SHARE transaksi Tutup");
-        g.buka();
+        pKlaim.catch(() => undefined);
+        try {
+            await tidur(400);
+            assert.deepEqual(urutan, [], "klaim (UPDATE status) menunggu FOR SHARE transaksi Tutup");
+        } finally {
+            g.buka();
+        }
         assert.ok("event" in (await pTutup));
         const k = await pKlaim;
         assert.equal(k.diklaim, true, "sesudah Tutup commit, klaim pembaca berjalan");
