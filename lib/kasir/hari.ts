@@ -33,6 +33,13 @@ type Db = NodePgDatabase<Record<string, unknown>>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 export const PENJELASAN_MAKS = 1000;
+/** Batas per kolom setoran (Tunai/Transfer/Giro): Rp 100.000.000.000 (tinjauan A K2a). */
+export const BATAS_KOLOM_SEN = 100_000_000_000 * 100;
+/**
+ * Batas aman jumlah SATU hari (Σ setoran revisi terakhir; Σ |cheque| dan Σ |invoicePayment| cache): Rp 10 triliun = 1e15 sen, jauh di bawah
+ * Number.MAX_SAFE_INTEGER (≈ 9e15 sen) — semua jumlah, selisih, pembulatan Rp 100 dan snapshot tetap bulat aman (klop/senKeTeks tak melempar).
+ */
+export const BATAS_HARI_SEN = 10_000_000_000_000 * 100;
 export const TINDAK_LANJUT = ["setor_susulan", "koreksi_incaso", "lapor_om"] as const;
 export type TindakLanjut = (typeof TINDAK_LANJUT)[number];
 
@@ -176,6 +183,16 @@ export async function muatPetaOrang(tx: Db | Tx, tanggal: string) {
     return { peta, namaKode, pegawai, kodeDikenal: new Set(rows.map((r) => r.number.trim()).filter(Boolean)) };
 }
 
+/** Nominal tersimpan yang tak bisa jadi sen bulat aman (keSen RangeError) -> galat terbaca 422, bukan 500. */
+async function angkaAman<T>(apa: string, fn: () => Promise<T>): Promise<T> {
+    try {
+        return await fn();
+    } catch (e) {
+        if (!(e instanceof RangeError)) throw e;
+        throw new GalatKasir(422, "ANGKA_TIDAK_SAH", `Nominal ${apa} tersimpan tidak sah (${e.message}) — hari ini tidak bisa dihitung. Minta IT memeriksa data tersimpan.`);
+    }
+}
+
 /** Semua bahan satu hari dibaca dari `tx` (kunci hari / FOR SHARE dipegang pemanggil) + rekonsiliasi. */
 async function muatDalam(tx: Db | Tx, tanggal: string, databaseId: string): Promise<Muatan> {
     const ev = await tx.select().from(kasirHariEvent).where(eq(kasirHariEvent.tanggal, tanggal)).orderBy(asc(kasirHariEvent.id));
@@ -184,15 +201,30 @@ async function muatDalam(tx: Db | Tx, tanggal: string, databaseId: string): Prom
     const tk = databaseId ? await tx.select().from(kasirTakTeralokasiCatatan)
         .where(and(eq(kasirTakTeralokasiCatatan.tanggal, tanggal), eq(kasirTakTeralokasiCatatan.databaseId, databaseId)))
         .orderBy(asc(kasirTakTeralokasiCatatan.id)) : [];
-    const cache = databaseId ? await muatPelunasanDalam(tx, databaseId, tanggal) : { status: null, pelunasan: [] as Pelunasan[] };
+    const cache = databaseId ? await angkaAman("cache pelunasan", () => muatPelunasanDalam(tx, databaseId, tanggal))
+        : { status: null, pelunasan: [] as Pelunasan[] };
     const orang = await muatPetaOrang(tx, tanggal);
-    const setoran: BarisSetoran[] = st.map((s) => ({ id: Number(s.id), salesmanKode: s.salesmanKode, revisi: s.revisi, tunai: keSen(s.tunai),
-        transfer: keSen(s.transfer), giro: keSen(s.giro), giroNomor: s.giroNomor, giroJatuhTempo: s.giroJatuhTempo, noFormKasir: s.noFormKasir,
-        buktiTransfer: s.buktiTransfer, catatan: s.catatan, dicatatOleh: s.dicatatOleh, dicatatPada: s.dicatatPada }));
-    const catatan = ct.map((c) => ({ id: Number(c.id), salesmanKode: c.salesmanKode, pelunasan: keSen(c.pelunasan), setoran: keSen(c.setoran),
-        penjelasan: c.penjelasan, tindakLanjut: c.tindakLanjut, dicatatOleh: c.dicatatOleh, dicatatPada: c.dicatatPada }));
-    const catatanTak = tk.map((c) => ({ id: Number(c.id), pelunasanId: Number(c.pelunasanId), sisa: keSen(c.sisa), penjelasan: c.penjelasan,
-        dicatatOleh: c.dicatatOleh, dicatatPada: c.dicatatPada }));
+    const setoran: BarisSetoran[] = await angkaAman("setoran", async () => st.map((s) => ({ id: Number(s.id), salesmanKode: s.salesmanKode,
+        revisi: s.revisi, tunai: keSen(s.tunai), transfer: keSen(s.transfer), giro: keSen(s.giro), giroNomor: s.giroNomor,
+        giroJatuhTempo: s.giroJatuhTempo, noFormKasir: s.noFormKasir, buktiTransfer: s.buktiTransfer, catatan: s.catatan, dicatatOleh: s.dicatatOleh,
+        dicatatPada: s.dicatatPada })));
+    const catatan = await angkaAman("penjelasan selisih", async () => ct.map((c) => ({ id: Number(c.id), salesmanKode: c.salesmanKode,
+        pelunasan: keSen(c.pelunasan), setoran: keSen(c.setoran), penjelasan: c.penjelasan, tindakLanjut: c.tindakLanjut, dicatatOleh: c.dicatatOleh,
+        dicatatPada: c.dicatatPada })));
+    const catatanTak = await angkaAman("penjelasan tak teralokasi", async () => tk.map((c) => ({ id: Number(c.id), pelunasanId: Number(c.pelunasanId),
+        sisa: keSen(c.sisa), penjelasan: c.penjelasan, dicatatOleh: c.dicatatOleh, dicatatPada: c.dicatatPada })));
+    // Pertahanan kedua (tinjauan A): angka yang SUDAH tersimpan di luar batas aman -> galat terbaca 422, bukan 500 dari klop/senKeTeks.
+    const terakhir = new Map<string, BarisSetoran>();
+    for (const s of setoran) if ((terakhir.get(s.salesmanKode)?.revisi ?? 0) < s.revisi) terakhir.set(s.salesmanKode, s);
+    const jumlah = (xs: number[]) => xs.reduce((a, x) => a + Math.abs(x), 0);
+    for (const [apa, n] of [["setoran (revisi terakhir)", jumlah([...terakhir.values()].map((s) => s.tunai + s.transfer + s.giro))],
+        ["pelunasan (chequeAmount)", jumlah(cache.pelunasan.map((p) => p.chequeAmount))],
+        ["baris faktur (invoicePayment)", jumlah(cache.pelunasan.flatMap((p) => p.faktur.map((f) => f.invoicePayment)))]] as const) {
+        if (n > BATAS_HARI_SEN) {
+            throw new GalatKasir(422, "ANGKA_TIDAK_SAH", `Jumlah ${apa} tanggal ${tanggal} melebihi batas aman Rp 10 triliun — hari ini tidak bisa dihitung. `
+                + "Minta IT memeriksa data tersimpan (tabel jejak append-only, perbaikan oleh role pemilik).");
+        }
+    }
     const hasil = rekonsiliasiHari({ tanggal, pelunasan: cache.pelunasan, peta: orang.peta,
         setoran: setoran.map((s) => ({ salesmanKode: s.salesmanKode, revisi: s.revisi, tunai: s.tunai, transfer: s.transfer, giro: s.giro })),
         catatan: catatan.map((c) => ({ salesmanKode: c.salesmanKode, pelunasan: c.pelunasan, setoran: c.setoran })),
@@ -414,18 +446,22 @@ export function uraiTanggal(t: unknown, sekarang: Date): string {
     return t;
 }
 
-/** Nominal TEKS ≥ 0 (atau bertanda bila `bertanda`), maks. 2 desimal, tanpa pemisah ribuan -> sen. */
-function uraiNominal(v: unknown, field: string, bertanda = false): Sen {
+/** Nominal TEKS ≥ 0 (atau bertanda bila `bertanda`), maks. 2 desimal, tanpa pemisah ribuan -> sen; |sen| ≤ `maks`. */
+function uraiNominal(v: unknown, field: string, bertanda = false, maks = BATAS_HARI_SEN): Sen {
     const t = typeof v === "string" ? v.trim() : null;
     if (t === null || !(bertanda ? /^-?\d+(\.\d{1,2})?$/ : /^\d+(\.\d{1,2})?$/).test(t)) {
         throw salah(field, `Nominal ${field} tidak sah: teks angka${bertanda ? "" : " tidak negatif"}, maks. 2 desimal, tanpa pemisah ribuan (contoh "1250000").`);
     }
+    let sen: Sen;
     try {
-        return keSen(t);
+        sen = keSen(t);
     } catch {
         throw salah(field, `Nominal ${field} di luar batas.`);
     }
+    if (Math.abs(sen) > maks) throw salah(field, `Nominal ${field} melebihi batas ${rupiahSen(maks)}.`);
+    return sen;
 }
+const rupiahSen = (sen: Sen) => `Rp ${(sen / 100).toLocaleString("id-ID")}`;
 
 function teksOpsional(v: unknown, field: string, maks: number): string | null {
     if (v === undefined || v === null) return null;
@@ -464,9 +500,9 @@ export function uraiSetoran(raw: unknown, sekarang: Date, adaBerkas: boolean): I
     const orang = r.orang.trim();
     if (orang === TANPA_SALESMAN) throw salah("orang", "Setoran tidak bisa dicatat untuk Tanpa salesman — pilih pegawai.");
     if (orang.length > 100) throw salah("orang", "Kode orang terlalu panjang.");
-    const tunai = uraiNominal(r.tunai, "tunai");
-    const transfer = uraiNominal(r.transfer, "transfer");
-    const giro = uraiNominal(r.giro, "giro");
+    const tunai = uraiNominal(r.tunai, "tunai", false, BATAS_KOLOM_SEN);
+    const transfer = uraiNominal(r.transfer, "transfer", false, BATAS_KOLOM_SEN);
+    const giro = uraiNominal(r.giro, "giro", false, BATAS_KOLOM_SEN);
     const total = tunai + transfer + giro;
     const noFormKasir = teksOpsional(r.noFormKasir, "noFormKasir", 100);
     if (total > 0 && !noFormKasir) throw salah("noFormKasir", "Nomor Form Kasir wajib diisi untuk setoran lebih dari 0.");
@@ -582,6 +618,12 @@ export async function catatSetoran(isian: IsianSetoran & { buktiBaru: string | n
                     throw salah("buktiTransfer", "Bukti revisi sebelumnya hanya boleh dipakai bila revisi itu punya bukti dan nominal Transfer-nya sama. Unggah bukti baru.");
                 }
                 bukti = lama.buktiTransfer;
+            }
+            // Batas total hari SEBELUM INSERT: Σ setoran orang lain + kiriman ini ≤ BATAS_HARI_SEN (tinjauan A; pasangan pertahanan kedua muatDalam).
+            const totalLain = m.hasil.total.setoran - (baris.setoran?.total ?? 0);
+            if (totalLain + isian.tunai + isian.transfer + isian.giro > BATAS_HARI_SEN) {
+                throw new GalatKasir(409, "NOMINAL_DI_LUAR_BATAS", `Total setoran tanggal ini akan melebihi batas aman ${rupiahSen(BATAS_HARI_SEN)}. Periksa nominal.`,
+                    { keadaan: { batasHari: T(BATAS_HARI_SEN), totalHariLain: T(totalLain) } });
             }
             const rencana = rencanaSetoranOrang(baris, { tunai: isian.tunai, transfer: isian.transfer, giro: isian.giro });
             await deps.jeda("setoran:sebelum-insert");

@@ -15,7 +15,7 @@ import { POST as postJelaskan } from "../../app/api/kasir/jelaskan/route.ts";
 import { POST as postTutup } from "../../app/api/kasir/tutup/route.ts";
 import { POST as postBuka } from "../../app/api/kasir/buka/route.ts";
 import { GET as getBukti } from "../../app/api/kasir/bukti/route.ts";
-import { bawaanHari, bentukJawabanHari, jawabanGalat, type DepsHari, type Muatan } from "./hari.ts";
+import { BATAS_KOLOM_SEN, bawaanHari, bentukJawabanHari, jawabanGalat, uraiSetoran, type DepsHari, type Muatan } from "./hari.ts";
 import { jenisBukti, namaBuktiSah, tempatBukti } from "./bukti.ts";
 import { belumDibaca, type StatusBaca } from "./baca-pelunasan.ts";
 import { rekonsiliasiHari, type PetaOrang } from "./rekonsiliasi.ts";
@@ -135,6 +135,9 @@ test("route Kasir: tanpa sesi 401; tanpa kunci yang tepat 403 (view/catat/tutup/
 test("POST setoran: 400 INPUT_SALAH + field sebelum DB / berkas (desimal 3, negatif, ribuan, angka, Form Kasir, bukti, Giro, tanggal, dasar)", async () => {
     const kasus: [Record<string, unknown>, string][] = [
         [{ tunai: "100.123" }, "tunai"],
+        [{ tunai: "90000000000000", giro: "90000000000000", giroNomor: "BG-1", giroJatuhTempo: D }, "tunai"], // satu orang dua kolom raksasa
+        [{ tunai: "100000000000.01" }, "tunai"], // > Rp 100 miliar per kolom
+        [{ giro: "100000000001", giroNomor: "BG-1", giroJatuhTempo: D }, "giro"],
         [{ tunai: "-5" }, "tunai"],
         [{ tunai: "1.250.000" }, "tunai"],
         [{ tunai: 1250000 }, "tunai"],
@@ -268,6 +271,11 @@ test("GET bukti: id salah 400; baris/berkas tak ada atau nama tak berpola (trave
         return getBukti(new NextRequest("http://app.test/api/kasir/bukti?id=9"));
     });
     assert.match(pdf.headers.get("content-disposition") ?? "", /^attachment;/);
+});
+
+test("uraiSetoran: tepat Rp 100 miliar per kolom sah (batas inklusif)", () => {
+    const r = uraiSetoran({ ...baku, tunai: "100000000000", giro: "100000000000.00", giroNomor: "BG-1", giroJatuhTempo: D }, JAM, false);
+    assert.deepEqual([r.tunai, r.giro], [BATAS_KOLOM_SEN, BATAS_KOLOM_SEN]);
 });
 
 test("bukti: jenis dari MAGIC BYTES (bukan nama) + pola nama ketat", () => {

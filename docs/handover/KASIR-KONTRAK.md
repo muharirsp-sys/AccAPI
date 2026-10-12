@@ -247,6 +247,8 @@ K2b (UI `/kasir`) boleh membangun mock `page.route` LANGSUNG dari bagian ini.
 | 409 | `TIDAK_TERKUNCI` | (buka) hari sedang terbuka | pasti TIDAK tersimpan |
 | 409 | `BACA_BELUM_SEGAR` | (tutup) status baca ≠ `lengkap` atau `lengkap_pada` > 15 mnt | pasti TIDAK tersimpan |
 | 409 | `TERHALANG` (+ `alasan[]`) | (tutup) masih ada selisih / tak teralokasi belum dijelaskan | pasti TIDAK tersimpan |
+| 409 | `NOMINAL_DI_LUAR_BATAS` | (setoran) total setoran hari + kiriman ini > Rp 10 triliun (`keadaan: { batasHari, totalHariLain }`) | pasti TIDAK tersimpan |
+| 422 | `ANGKA_TIDAK_SAH` | angka TERSIMPAN (setoran / cache pelunasan) di luar batas aman — hari tak bisa dihitung (GET/tulis), minta IT | pasti TIDAK tersimpan |
 | 500 | `GALAT_INTERNAL` | galat SEBELUM commit (transaksi dibatalkan) | pasti TIDAK tersimpan |
 | 502 | `TIDAK_PASTI` | galat SAAT/SESUDAH commit (mis. koneksi putus di COMMIT) | **TIDAK PASTI** |
 | 503 | `SESI_SINKRON` | sesi Accurate akun sinkron tanpa database (jelaskan, tutup) | pasti TIDAK tersimpan |
@@ -319,7 +321,7 @@ Badan `application/json`, ATAU `multipart/form-data` dengan bagian `data` (teks 
 
 - `orang` = kode (dilipat ke kode kanonik lewat `sales_code_merge` bulan itu); BUKAN Tanpa salesman (`""`); harus dikenal (nomor
   `accurate_employee` atau kode setoran hari itu) -> selain itu 400 `field: "orang"`.
-- `tunai`/`transfer`/`giro` WAJIB teks (aturan §8.1). **`noFormKasir` WAJIB bila total > 0** (1–100 huruf); setoran 0 tidak wajib.
+- `tunai`/`transfer`/`giro` WAJIB teks (aturan §8.1), masing-masing ≤ Rp 100.000.000.000 (400). **`noFormKasir` WAJIB bila total > 0** (1–100 huruf); setoran 0 tidak wajib.
 - **Transfer > 0 -> bukti WAJIB**: berkas `bukti` baru (jpg/png/pdf, dicek MAGIC BYTES — JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`, PDF
   `%PDF-` — bukan ekstensi/`type`; ≤ 5 MB; badan > 6 MB ditolak sebelum dibaca) ATAU `buktiLama: true` = pakai berkas revisi terakhir kode
   utama, hanya bila revisi itu punya bukti DAN transfernya sama. Transfer 0 + berkas/`buktiLama` -> 400. `field: "buktiTransfer"`.

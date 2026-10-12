@@ -443,6 +443,47 @@ test("PG K2a GET: status ≠ lengkap -> angka Incaso null (setoran tetap); lengk
     });
 });
 
+test("PG K2a batas nominal: dua orang di batas kolom aman; total hari > Rp 10 triliun -> 409 sebelum INSERT; angka tersimpan di luar batas -> 422 terbaca (bukan 500)", { skip: pgSkip }, async () => {
+    await denganSkema(async (pool) => {
+        const jam = jamUji();
+        const deps = depsUji(pool, jam);
+        await pegawai(pool, [[1, "S-A", "SALES A"], [2, "S-B", "SALES B"], [3, "S-X", "SALES X"], [4, "S-Y", "SALES Y"]]);
+        await pelunasan(pool, 11, "100000", [[101, 1, "100000"]]);
+        await baca(pool, "lengkap", new Date(jam.t.getTime() - 60_000));
+        // Dua orang masing-masing di batas kolom (Rp 100 miliar Tunai + Rp 100 miliar Giro) -> tersimpan, GET menghitung tanpa galat.
+        const besar = 100_000_000_000 * 100;
+        for (const orang of ["S-A", "S-B"]) {
+            await catatSetoran(setoranIsian({ orang, tunai: besar, giro: besar, giroNomor: "BG-1", giroJatuhTempo: "2026-10-20" }), KASIR, deps);
+        }
+        const h = await muatHari(D, { orang: null }, deps);
+        assert.equal(h.total.setoran, "400000000000.00");
+        assert.equal(h.orang.find((o) => o.orang === "S-A")!.selisih, "199999900000.00");
+        // Data lama/di luar aplikasi mendekati batas hari (Rp 9,55 triliun + Rp 400 miliar) -> kiriman yang melewati batas ditolak SEBELUM INSERT.
+        await pool.query(`INSERT INTO kasir_setoran (tanggal, salesman_kode, revisi, tunai, transfer, giro, no_form_kasir, dicatat_oleh)
+            VALUES ($1, 'S-X', 1, '9550000000000', 0, 0, 'FK-L', 'impor')`, [D]);
+        await assert.rejects(catatSetoran(setoranIsian({ orang: "S-Y", tunai: besar }), KASIR, deps), (e: unknown) => galat("NOMINAL_DI_LUAR_BATAS")(e)
+            && (e as GalatKasir).http === 409);
+        assert.equal((await pool.query("SELECT count(*)::int AS n FROM kasir_setoran WHERE salesman_kode = 'S-Y'")).rows[0].n, 0, "tidak ada INSERT");
+        // Pertahanan kedua: angka tersimpan yang jumlahnya melewati batas aman / tak bisa jadi sen aman -> 422 ANGKA_TIDAK_SAH di GET/Tutup/catat.
+        await pool.query(`INSERT INTO kasir_setoran (tanggal, salesman_kode, revisi, tunai, transfer, giro, giro_nomor, giro_jatuh_tempo, no_form_kasir, dicatat_oleh)
+            VALUES ($1, 'S-Y', 1, '90000000000000', 0, '90000000000000', 'BG-9', '2026-10-20', 'FK-L', 'impor')`, [D]);
+        const t422 = (e: unknown) => galat("ANGKA_TIDAK_SAH")(e) && (e as GalatKasir).http === 422 && /batas aman/.test((e as GalatKasir).message);
+        await assert.rejects(muatHari(D, { orang: null }, deps), t422);
+        await assert.rejects(tutupHari({ tanggal: D, sidik: h.sidik! }, KASIR, deps), t422);
+        await assert.rejects(catatSetoran(setoranIsian({ orang: "S-A", tunai: 1, dasar: [{ kode: "S-A", revisi: 1 }] }), KASIR, deps), t422);
+        const asli = console.error;
+        console.error = () => undefined; // catat kunci otomatis yang gagal hanya dicatat log
+        try {
+            await assert.rejects(muatHari(D, { orang: null }, depsUji(pool, jamUji(wita("2026-10-05T20:30:00")))), t422, "GET sesudah 20.00 tetap 422, bukan crash");
+        } finally {
+            console.error = asli;
+        }
+        await pool.query(`INSERT INTO kasir_setoran (tanggal, salesman_kode, revisi, tunai, transfer, giro, no_form_kasir, dicatat_oleh)
+            VALUES ('2026-10-03', 'S-Y', 1, '9999999999999999.99', 0, 0, 'FK-L', 'impor')`);
+        await assert.rejects(muatHari("2026-10-03", { orang: null }, deps), (e: unknown) => galat("ANGKA_TIDAK_SAH")(e) && /tidak sah/.test((e as GalatKasir).message));
+    });
+});
+
 test("PG K2a galat SESUDAH commit -> 502 TIDAK_PASTI (baris memang tersimpan); galat di dalam transaksi -> bukan TIDAK_PASTI", { skip: pgSkip }, async () => {
     await denganSkema(async (pool) => {
         const jam = jamUji();
