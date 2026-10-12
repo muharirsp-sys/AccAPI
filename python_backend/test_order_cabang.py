@@ -114,6 +114,11 @@ def main():
     e = harus(OrderCabangDitolak, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES))
     assert (e.status, e.kode) == (409, "BARANG_BEDA_CABANG"), (e.status, e.kode)
     assert e.isi() == {"ok": False, "detail": "Barang bukan barang cabang KINO", "kode": "BARANG_BEDA_CABANG", "barang": [{"code": "A1"}]}
+    # Owner sesi 13: harga petugas pada baris berharga master -> Next 409 berkode + rincian per baris, diteruskan apa adanya.
+    pasang(409, {"ok": False, "kode": "HARGA_PETUGAS_TIDAK_DIIZINKAN", "error": "Harga master sudah ada",
+                 "barang": [{"code": "A1", "unit": "KRT", "hargaMaster": 456000}]})
+    e = harus(OrderCabangDitolak, lambda: order_cabang.periksa("C-1", "2026-10-12", [{**LINES[0], "price": "450000"}]))
+    assert (e.status, e.kode, e.extra) == (409, "HARGA_PETUGAS_TIDAK_DIIZINKAN", {"barang": [{"code": "A1", "unit": "KRT", "hargaMaster": 456000}]}), e.extra
     pasang(403, {"ok": False, "kode": "SALESMAN_BELUM_TERHUBUNG", "error": "Akun belum terhubung"})
     assert harus(OrderCabangDitolak, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES, cookie="x")).kode == "SALESMAN_BELUM_TERHUBUNG"
 

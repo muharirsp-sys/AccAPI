@@ -3,7 +3,7 @@
  *   salesman = cabang karyawannya di Accurate; harga = cabang pelanggan. SATU pemeriksa untuk pratinjau dan simpan order.
  * Caller: lib/sync (tag barang -> cabang), app/api/orders/{preview,harga}, app/api/customers/search, app/api/items/search.
  * Dependensi: db (customer, item, branch, accurate_employee, sales_profile), lib/item-price (resolvePrices).
- * Main Functions: cabangDariTag, petaCabang, hargaSah, hargaPetugasSah, tripwireIzin (murni); cakupanCabang, periksaOrder (DB baca-saja).
+ * Main Functions: cabangDariTag, petaCabang, hargaSah, hargaPetugasSah, putusanHarga, tripwireIzin (murni); cakupanCabang, periksaOrder (DB baca-saja).
  * Side Effects: DB read-only.
  * Kontrak: docs/handover/O1-KONTRAK-ORDER-CABANG.md.
  */
@@ -160,12 +160,33 @@ export const HARGA_PETUGAS = /^\d{1,12}(\.\d{1,4})?$/;
 /** Harga ketikan petugas (Order Baru): teks angka > 0, atau null. */
 export const hargaPetugasSah = (teks: string) => HARGA_PETUGAS.test(teks) && Number(teks) > 0 ? Number(teks) : null;
 
+export type PutusanHarga =
+    | { jenis: "master"; price: number }
+    | { jenis: "petugas"; price: number }
+    | { jenis: "petugas_ditolak"; hargaMaster: number }
+    | { jenis: "petugas_tidak_valid" }
+    | { jenis: "belum_ada" };
+
+/**
+ * Harga SATU baris order (owner sesi 13, 12 Okt 2026 — menggantikan "harga petugas selalu menang"): harga master SAH (`hargaSah`) SELALU
+ * dipakai bila ada; harga PETUGAS (Order Baru) HANYA untuk baris TANPA harga master sah, wajib > 0. Harga petugas pada baris berharga
+ * master = `petugas_ditolak` (pemanggil menolak berkode, TIDAK diabaikan diam-diam). Murni — satu-satunya keputusan, diuji tanpa DB.
+ */
+export function putusanHarga(petugasTeks: string, row: PriceResult, branchId: number): PutusanHarga {
+    const master = hargaSah(row, branchId) ? (row.price as number) : null;
+    const teks = petugasTeks.trim();
+    if (teks === "") return master === null ? { jenis: "belum_ada" } : { jenis: "master", price: master };
+    if (master !== null) return { jenis: "petugas_ditolak", hargaMaster: master };
+    const nilai = hargaPetugasSah(teks);
+    return nilai === null ? { jenis: "petugas_tidak_valid" } : { jenis: "petugas", price: nilai };
+}
+
 // ---------------------------------------------------------------- pemeriksa order (pratinjau = simpan)
 
 /** `price` = harga PETUGAS (Order Baru) — pemanggil yang memastikan izinnya (`order.create`/layanan); kosong = harga master. */
 export type BarisOrder = { code: string; unit: string; price?: string };
 export type PelangganOrder = { id: number; customerNo: string; name: string; branchId: number; branchName: string; categoryName: string | null };
-/** Harga terpakai per baris: master sah (`tier`) atau petugas (`petugas`, + `hargaMaster` sah/null untuk tanda "diubah"). */
+/** Harga terpakai per baris: master sah (`tier`) atau petugas (`petugas` — hanya baris tanpa harga master sah, jadi `hargaMaster` selalu null). */
 export type HargaBaris = Omit<PriceResult, "price" | "source"> & { price: number; source: "tier" | "petugas"; hargaMaster?: number | null };
 export type HasilPeriksa = { ok: true; pelanggan: PelangganOrder; harga: HargaBaris[] } | ({ ok: false } & GalatOrder);
 
@@ -175,9 +196,10 @@ const tolak = (status: number, kode: string, error: string, extra: Record<string
 /**
  * Satu pemeriksa untuk pratinjau (`/api/orders/preview`) dan simpan (`/api/orders/harga`, dipanggil FastAPI saat Order Sales/Order Baru
  * disimpan dan saat order ditarik): pelanggan ada, tidak suspended, bercabang, di cakupan pemakai; barang ada, tidak suspended,
- * cabangnya = cabang pelanggan; satuan sah; lalu harga PER BARIS: `price` petugas (> 0, tidak pernah ditimpa) atau harga master SAH
- * per CABANG PELANGGAN (`hargaSah`; dibaca server, bukan dari badan permintaan). Hasil yang sama dipakai pratinjau dan simpan,
- * jadi promo dihitung atas angka yang sama (kontrak §4).
+ * cabangnya = cabang pelanggan; satuan sah; lalu harga PER BARIS (`putusanHarga`): harga master SAH per CABANG PELANGGAN (`hargaSah`;
+ * dibaca server, bukan dari badan permintaan) bila ada — harga petugas di baris itu DITOLAK `HARGA_PETUGAS_TIDAK_DIIZINKAN`; baris tanpa
+ * harga master sah memakai `price` petugas (> 0, tidak ditimpa) atau ditolak `HARGA_BELUM_ADA`. Hasil yang sama dipakai pratinjau dan
+ * simpan, jadi promo dihitung atas angka yang sama (kontrak §4).
  */
 export async function periksaOrder(input: { customerNo: string; orderDate: string; lines: BarisOrder[]; cakupan: Cakupan }): Promise<HasilPeriksa> {
     const customerNo = input.customerNo.trim();
@@ -230,7 +252,16 @@ export async function periksaOrder(input: { customerNo: string; orderDate: strin
             .map((row) => `Satuan ${row.unit} tidak ada di master untuk ${row.code} (tersedia: ${row.knownUnits!.join(", ")})`).join("; "),
         { wrong_unit: wrongUnit.map((row) => ({ code: row.code, unit: row.unit, known_units: row.knownUnits })) });
     }
-    const tanpaHarga = harga.filter((row, i) => petugas[i] === "" && !hargaSah(row, pelanggan.branchId));
+    const putusan = harga.map((row, i) => putusanHarga(petugas[i], row, pelanggan.branchId));
+    // Owner sesi 13: harga master sah ada = harga master yang dipakai; harga petugas di baris itu ditolak berkode, per baris.
+    const ditimpa = harga.flatMap((row, i) => { const x = putusan[i]; return x.jenis === "petugas_ditolak" ? [{ row, hargaMaster: x.hargaMaster }] : []; });
+    if (ditimpa.length) {
+        return tolak(409, "HARGA_PETUGAS_TIDAK_DIIZINKAN", `Harga master cabang ${pelanggan.branchName || p.branchId} sudah ada untuk: `
+            + ditimpa.slice(0, 5).map(({ row, hargaMaster }) => `${row.code} ${row.unit} (Rp ${hargaMaster})`).join("; ")
+            + ". Harga petugas hanya untuk barang TANPA harga master; kosongkan harganya.",
+        { barang: ditimpa.map(({ row, hargaMaster }) => ({ code: row.code, unit: row.unit, hargaMaster })) });
+    }
+    const tanpaHarga = harga.filter((_, i) => putusan[i].jenis === "belum_ada" || putusan[i].jenis === "petugas_tidak_valid");
     if (tanpaHarga.length) {
         const ket = tanpaHarga.slice(0, 5).map((row) => `${row.code} ${row.unit}: ${alasanHarga(row, pelanggan.branchId)}`).join("; ");
         return tolak(409, "HARGA_BELUM_ADA", `Harga master cabang ${pelanggan.branchName || p.branchId} belum sah untuk: ${ket}`,
@@ -239,10 +270,10 @@ export async function periksaOrder(input: { customerNo: string; orderDate: strin
     return {
         ok: true, pelanggan,
         harga: harga.map((row, i): HargaBaris => {
-            const master = hargaSah(row, pelanggan.branchId) ? row.price : null;
-            return petugas[i] !== ""
-                ? { code: row.code, unit: row.unit, price: hargaPetugasSah(petugas[i])!, source: "petugas", hargaMaster: master }
-                : { ...row, price: master!, source: "tier" };
+            const x = putusan[i];
+            return x.jenis === "petugas"
+                ? { code: row.code, unit: row.unit, price: x.price, source: "petugas", hargaMaster: null }
+                : { ...row, price: (x as { price: number }).price, source: "tier" };
         }),
     };
 }

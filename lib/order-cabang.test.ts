@@ -8,8 +8,8 @@ import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
-import { alasanHarga, angkaQuery, cabangDariTag, hargaPetugasSah, hargaSah, normalNama, petaCabang, polaLike, TAG_KE_CABANG, TAG_NON_JUAL,
-    tolakCabangLain, tripwireIzin } from "./order-cabang.ts";
+import { alasanHarga, angkaQuery, cabangDariTag, hargaPetugasSah, hargaSah, normalNama, petaCabang, polaLike, putusanHarga, TAG_KE_CABANG,
+    TAG_NON_JUAL, tolakCabangLain, tripwireIzin } from "./order-cabang.ts";
 import { requireCronSecret, samaRahasia } from "./api-security.ts";
 import { barisItem } from "./sync.ts";
 import * as preview from "../app/api/orders/preview/route.ts";
@@ -253,4 +253,19 @@ test("gerbang putaran 1: sales mengirim harga ke pratinjau = 400 SEBELUM DB; tri
     assert.deepEqual([kacau.status, (await kacau.json()).kode], [403, "IZIN_TIDAK_KONSISTEN"]);
     const lookup = await sebagai(["websales.create", "order.view"], () => cariKode.GET(req("GET", "/api/customers/lookup?no=C-A")));
     assert.deepEqual([lookup.status, (await lookup.json()).kode], [403, "IZIN_TIDAK_KONSISTEN"]);
+});
+
+test("owner sesi 13: harga petugas HANYA untuk baris TANPA harga master sah; baris berharga master = ditolak (bukan ditimpa diam-diam)", () => {
+    const tier = { code: "K", unit: "PCS", price: 7207, source: "tier" as const, branchId: 101, defaultBranch: false };
+    const pusat = { ...tier, price: 5000, branchId: 103, defaultBranch: true };
+    assert.deepEqual(putusanHarga("", tier, 101), { jenis: "master", price: 7207 });
+    assert.deepEqual(putusanHarga("7000", tier, 101), { jenis: "petugas_ditolak", hargaMaster: 7207 }, "master cabang pelanggan");
+    assert.deepEqual(putusanHarga(" 7207 ", tier, 101), { jenis: "petugas_ditolak", hargaMaster: 7207 }, "sama nilainya pun ditolak (master yang dipakai)");
+    assert.deepEqual(putusanHarga("4000", pusat, 101), { jenis: "petugas_ditolak", hargaMaster: 5000 }, "master default juga master sah");
+    for (const [nama, row] of [["cabang lain", { ...tier, branchId: 102 }], ["harga 0", { ...tier, price: 0 }],
+        ["standar", { code: "K", unit: "PCS", price: 6306, source: "standard" as const }], ["tidak ada", { code: "K", unit: "PCS", price: null, source: "missing" as const }]] as const) {
+        assert.deepEqual(putusanHarga("9000.5", row, 101), { jenis: "petugas", price: 9000.5 }, `${nama}: harga petugas dipakai`);
+        assert.deepEqual(putusanHarga("", row, 101), { jenis: "belum_ada" }, `${nama}: tanpa harga petugas = belum ada`);
+        assert.deepEqual(putusanHarga("0", row, 101), { jenis: "petugas_tidak_valid" }, `${nama}: harga petugas 0 tidak sah`);
+    }
 });

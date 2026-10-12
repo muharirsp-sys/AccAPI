@@ -451,15 +451,24 @@ test("PG O1 pratinjau: harga dari cabang PELANGGAN (branch_id badan diabaikan); 
     assert.match(String((await pratinjau("u-sa", ORDER("C-A001-KN", [["K-04", "PCS"]]))).body.error), /harga cabang lain \(HEINZ\)/);
     assert.match(String((await pratinjau("u-sa", ORDER("C-A001-KN", [["K-03", "KRT"]]))).body.error), /harga 0/);
     assert.match(String((await pratinjau("u-sa", ORDER("C-A001-KN", [["K-01", "KRT", "1"]], { order_date: "2026-07-15" }))).body.error), /harga standar/);
-    // Butir 7: harga PETUGAS (order.create) per baris — dipakai apa adanya, tercatat; baris lain harga master; master sah ikut sebagai pembanding.
+    // Butir 7 + owner sesi 13: harga PETUGAS (order.create) HANYA untuk baris TANPA harga master sah (K-04: hanya harga cabang lain;
+    // K-03 KRT: harga 0) — dipakai apa adanya, tercatat; baris berharga master memakai harga master.
     const ptg = await pratinjau("u-admin", { ...ORDER("C-A001-KN", []), lines: [{ code: "K-04", unit: "PCS", quantity: "1", price: "9000.5" },
-        { code: "K-01", unit: "PCS", quantity: "2", price: "7000" }, { code: "K-01", unit: "KRT", quantity: "1" }] });
+        { code: "K-03", unit: "KRT", quantity: "2", price: "150000" }, { code: "K-01", unit: "KRT", quantity: "1" }] });
     assert.equal(ptg.status, 200, JSON.stringify(ptg.body));
     assert.deepEqual((ptg.body.lines as Array<{ price: string; sumber_harga: string }>).map((l) => [l.price, l.sumber_harga]),
-        [["9000.5", "petugas"], ["7000", "petugas"], ["172968", "master"]]);
+        [["9000.5", "petugas"], ["150000", "petugas"], ["172968", "master"]]);
     assert.deepEqual((ptg.body.prices as Array<{ source: string; hargaMaster: number | null }>).map((p) => [p.source, p.hargaMaster]),
-        [["petugas", null], ["petugas", 7207], ["tier", 172968]]);
-    assert.deepEqual((PREVIEW_DIKIRIM.at(-1) as { lines: Array<{ price: string }> }).lines.map((l) => l.price), ["9000.5", "7000", "172968"]);
+        [["petugas", null], ["petugas", null], ["tier", 172968]]);
+    assert.deepEqual((PREVIEW_DIKIRIM.at(-1) as { lines: Array<{ price: string }> }).lines.map((l) => l.price), ["9000.5", "150000", "172968"]);
+    // Harga petugas pada baris BERHARGA master (cabang pelanggan, juga default) DITOLAK berkode per baris — bukan diabaikan diam-diam.
+    for (const [baris, hargaMaster] of [[{ code: "K-01", unit: "PCS", quantity: "2", price: "7000" }, 7207],
+        [{ code: "K-03", unit: "PCS", quantity: "1", price: "4000" }, 5000]] as const) {
+        const ditolak = await pratinjau("u-admin", { ...ORDER("C-A001-KN", []), lines: [{ code: "K-04", unit: "PCS", quantity: "1", price: "9000" }, baris] });
+        assert.deepEqual([ditolak.status, ditolak.body.kode], [409, "HARGA_PETUGAS_TIDAK_DIIZINKAN"], JSON.stringify(ditolak.body));
+        assert.deepEqual(ditolak.body.barang, [{ code: baris.code, unit: baris.unit, hargaMaster }]);
+        assert.match(String(ditolak.body.error), /Harga petugas hanya untuk barang TANPA harga master/);
+    }
     // Petugas internal (order.view) = semua cabang: pelanggan HEINZ diterima dengan harga HEINZ (bukan default 11500).
     const adm = await pratinjau("u-admin", ORDER("C-C003-HZ", [["H-01", "PCS"]]));
     assert.equal(adm.status, 200, JSON.stringify(adm.body));
@@ -488,6 +497,10 @@ test("PG O1 /api/orders/harga: CRON = semua cabang + harga beku -> payload faktu
             lines: [{ code: "K-04", unit: "PCS", price: buruk }] }, cron)));
         assert.deepEqual([r.status, r.body.kode], [400, "HARGA_TIDAK_VALID"], buruk);
     }
+    // Owner sesi 13: jalur simpan (layanan) menegakkan aturan yang SAMA dengan pratinjau.
+    const timpa = await panggil(m.hargaRoute.POST(req("POST", "/api/orders/harga", { customer_no: "C-A001-KN", order_date: "2026-10-12",
+        lines: [{ code: "K-01", unit: "PCS", quantity: "2", price: "7000" }] }, cron)));
+    assert.deepEqual([timpa.status, timpa.body.kode, timpa.body.barang], [409, "HARGA_PETUGAS_TIDAK_DIIZINKAN", [{ code: "K-01", unit: "PCS", hargaMaster: 7207 }]]);
     const bedaCron = await panggil(m.hargaRoute.POST(req("POST", "/api/orders/harga", { customer_no: "C-A001-KN", order_date: "2026-10-12",
         lines: [{ code: "H-01", unit: "PCS", price: "12000" }] }, cron)));
     assert.deepEqual([bedaCron.status, bedaCron.body.kode], [409, "BARANG_BEDA_CABANG"], "aturan cabang tetap berlaku untuk harga petugas");
@@ -836,6 +849,13 @@ test("PG O1 E2E promo: pratinjau = tersimpan (Order Sales simpan->tarik, Order B
         const orderB = simpanB.body.order as { id: string; result: Hasil; lines: Array<{ code: string; price: string; sumber_harga: string }> };
         assert.deepEqual(orderB.result, pvB.body.result, "Order Baru: angka tersimpan = pratinjau, per baris");
         assert.deepEqual(orderB.lines.map((l) => [l.code, l.price, l.sumber_harga]), [["K-01", "7207", "master"], ["K-03", "5000", "master"], ["K-04", "9000", "petugas"]]);
+        // Owner sesi 13: harga petugas pada baris BERHARGA master ditolak berkode di pratinjau DAN di simpan FastAPI (Next -> Python apa adanya).
+        const timpa = { ...baru, outlet: "TOKO HARUM TIMPA", lines: [{ code: "K-01", unit: "PCS", quantity: "2", price: "7000" }] };
+        const pvTimpa = await pratinjauE2E("u-admin", timpa);
+        assert.deepEqual([pvTimpa.status, pvTimpa.body.kode], [409, "HARGA_PETUGAS_TIDAK_DIIZINKAN"]);
+        const simpanTimpa = await ke("POST", "/orders", "u-admin", { ...timpa, sidik: pvB.body.sidik });
+        assert.deepEqual([simpanTimpa.status, simpanTimpa.body.kode], [409, "HARGA_PETUGAS_TIDAK_DIIZINKAN"], JSON.stringify(simpanTimpa.body));
+        assert.deepEqual(simpanTimpa.body.barang, [{ code: "K-01", unit: "PCS", hargaMaster: 7207 }]);
 
         // ---- Aturan diubah SESUDAH beku: order tersimpan tidak berubah.
         await ke("POST", "/_uji/cabut", "u-admin", { draft_id: surat });

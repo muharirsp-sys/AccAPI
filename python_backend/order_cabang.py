@@ -10,9 +10,10 @@ dasar uang faktur — salinan lokal akan basi tepat di tempat yang mahal. Polany
 GAGAL TERTUTUP. Next menolak (4xx berkode) -> `OrderCabangDitolak` (order itu ditolak dengan sebabnya). Next tak terjangkau / 5xx /
 jawaban rusak / secret ditolak -> `OrderCabangTidakPasti` (pemanggil menahan, tidak meneruskan tanpa harga).
 
-HARGA (putaran 1, 12 Okt 2026): per baris. `price` diisi = harga PETUGAS (Order Baru; pemanggil yang memastikan izinnya) — wajib > 0,
-dikirim ke Next apa adanya dan HARUS kembali sama (tidak pernah ditimpa). `price` kosong = harga MASTER dari Next (wajib > 0; Next
-hanya memberi harga daftar Accurate cabang pelanggan/default). Hasil tiap baris membawa `sumber_harga` = "petugas" | "master".
+HARGA (putaran 1 + owner sesi 13, 12 Okt 2026): per baris. `price` kosong = harga MASTER dari Next (wajib > 0; Next hanya memberi harga
+daftar Accurate cabang pelanggan/default). `price` diisi = harga PETUGAS (Order Baru; pemanggil yang memastikan izinnya) — HANYA untuk
+baris TANPA harga master sah (Next menolak 409 `HARGA_PETUGAS_TIDAK_DIIZINKAN`, diteruskan apa adanya), wajib > 0 (ditolak di sini
+sebelum jaringan), dikirim apa adanya dan HARUS kembali sama. Hasil tiap baris membawa `sumber_harga` = "petugas" | "master".
 """
 import logging
 import os

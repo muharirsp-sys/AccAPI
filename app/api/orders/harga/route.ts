@@ -11,7 +11,8 @@
  * Izin: CRON_SECRET (FastAPI, termasuk cron tarik Order Masuk yang tanpa cookie siapa pun — secret yang sama sudah dipercaya memicu sync
  * dan kirim faktur, dan endpoint ini hanya membaca), ATAU sesi dengan `websales.create`/`order.create` (sama dengan pratinjau).
  * Badan: { customer_no, order_date: YYYY-MM-DD, lines: [{code, unit, quantity?, price?}] }. `price` = harga PETUGAS (Order Baru) — hanya
- * layanan atau sesi `order.create`; dikembalikan APA ADANYA (tidak pernah ditimpa). Tanpa `price` = harga master SAH cabang pelanggan.
+ * layanan atau sesi `order.create`, HANYA untuk baris TANPA harga master sah (owner sesi 13; baris berharga master + `price` = 409
+ * `HARGA_PETUGAS_TIDAK_DIIZINKAN`); dikembalikan APA ADANYA. Tanpa `price` = harga master SAH cabang pelanggan.
  * Jawaban 200: { ok, pelanggan: {customerNo, name, branchId, branchName}, lines: [{code, unit, quantity, price, sumber_harga}] } (urutan =
  * masukan; `sumber_harga` "master" | "petugas"). Galat: { ok:false, kode, error, ... } — kode di docs/handover/O1-KONTRAK-ORDER-CABANG.md.
  */
