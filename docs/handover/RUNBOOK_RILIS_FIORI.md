@@ -1,9 +1,9 @@
 # RUNBOOK RILIS FIORI — `feat/fiori` → `main` (= deploy produksi)
 
 Disusun 12 Okt 2026 dari badan PR #116–#163, kepala tiap berkas `docs/handover/DDL_*.sql` / `RBAC_*.sql`, `scripts/migrate-pg.mjs`
-dan HANDOFF-FIORI §00/§0. Dasar: `origin/main` 3382552b, `origin/feat/fiori` 2450c7c9. **S7-1b** dan **K2a** belum masuk feat/fiori:
-langkahnya ditandai **[MENYUSUL]**. Pra-cek baca-saja produksi sudah dijalankan orkestrator 12 Okt 09.33 WITA (§1.0). Selain itu,
-belum ada yang dijalankan ke produksi.
+dan HANDOFF-FIORI §00/§0. Dasar: `origin/main` 3382552b, `origin/feat/fiori` **e65bf073** (S7-1b #164 sudah masuk; langkah S7-1b WAJIB).
+**K2a** belum masuk feat/fiori, jadi langkahnya ditandai **[MENYUSUL K2a]**. **O1** (migrasi 0033, `DDL_O1.sql`) adalah rilis TERPISAH sesudah rilis ini (§4).
+Pra-cek baca-saja produksi sudah dijalankan orkestrator 12 Okt 09.33 WITA (§1.0). Selain itu, belum ada yang dijalankan ke produksi.
 
 Tanda: **[IT]** IT Support (SSH VPS, Coolify, psql) · **[ORK]** orkestrator (GitHub `gh`, verifikasi) · **[OWNER]** keputusan ·
 ⛔ = titik henti: lanjut hanya bila semua butir di atasnya beres · **PERLU KONFIRMASI** = belum pasti, tanyakan dulu sebelum dijalankan.
@@ -39,17 +39,25 @@ Jangan mengirim sandi atau secret lewat chat. Jangan memakai auto-merge atau `--
 - **Izin (4a/4c):** tanpa kunci baru, Admin (4), Fakturist (2), dan Manager (1) kehilangan kirim pelunasan (`pelunasan.kirim`).
   Admin dan Manager memegang `finance.update` tanpa `finance.resolve_unknown`. Tidak ada risiko `sppd.download`.
   Grup Admin Incaso / Kasir / Admin Gudang belum ada.
+  Grup **Finance** hanya memegang `dashboard.view`, `insentif_sales.manage_payment`, `insentif_sales.view`: tanpa `finance.view` (tidak bisa membuka `/finance`)
+  dan tanpa `finance.update`. **Manager** memegang `finance.view/update` tetapi TANPA `order.view`. Fakturist dan Admin memegang `order.view`; Admin juga `finance.view`.
 - **Sesi akun sinkron:** sehat — role admin, database "CV Surya Perkasa", umur 0,7 hari.
 - **Env:** `DATABASE_MIGRATION_URL` **ADA**. `ACCURATE_SYNC_USER_ID`, `ACCURATE_INVOICE_DB_ID`, `CRON_SECRET` ADA. `ACCURATE_INVOICE_SEND` kosong.
   Tidak ada cron `post-invoices`, jadi kiriman faktur otomatis mati dan E5 tidak terburu waktu.
 - **`payments.json`:** objek JSON valid. 32 baris `lpb.nilai_invoice` bertipe teks, semuanya string kosong `''`. Vonis **GO**, lihat 1.5.
 - **VPS:** cronie-1.6.1 (mendukung `CRON_TZ`). `/usr/local/bin/accapi-cron.sh` TANPA `--max-time`. Jam VPS CST = WITA (UTC+8).
   Disk kosong 48 GB. `/app/data` frontend 5,4 GB. Image sekarang: frontend `sha256:5580963f…`, backend `sha256:d293bd0b…`, dibuat 2026-10-09T15:32Z.
-- **Keputusan owner 12 Okt:** `pelunasan.kirim` saat rilis = **Finance + Admin** (bukan Fakturist/Manager). Staf incaso = staf lain, namanya menyusul;
-  grup Admin Incaso dibuat kosong oleh BL37 dan diisi sesudah rilis. PK-1: `api_wrapper.*` tidak diubah. Manager tetap mengelola Claim Workflow.
+- **Keputusan owner 12 Okt:** Finance += `finance.view`, `finance.resolve_unknown`, `finance.override_duplicate`, `finance.repost_payment`, `pelunasan.kirim`.
+  Manager += `order.view`, `order.resolve_unknown`. Admin += `pelunasan.kirim` saja. Fakturist dan Manager tidak mengirim pelunasan.
+  Staf incaso = staf lain, namanya menyusul; grup Admin Incaso dibuat kosong oleh BL37 dan diisi sesudah rilis. PK-1: `api_wrapper.*` tidak diubah.
+  Manager tetap mengelola Claim Workflow.
+- **PERLU KONFIRMASI owner:** D-01 §A/Q3 menyebut posting Purchase Payment (`finance.update`) = Finance, tetapi grup Finance produksi belum memegangnya,
+  dan keputusan 12 Okt tidak menambahkannya. Hari ini posting dilakukan Admin/Manager. Bila Finance harus memposting, tambahkan lewat `/admin/groups`.
 
 ### 1.1 Siapkan berkas SQL di VPS [ORK → IT]
-Jalankan di PC orkestrator (Git Bash, checkout repo). `REF` = commit yang akan di-merge, sesudah S7-1b dan K2a masuk feat/fiori.
+Jalankan di PC orkestrator (Git Bash, checkout repo). **Syarat:** cabang `docs/fiori-runbook-rilis` (runbook ini, `RILIS_CEK_PRA`, `RBAC_D01_KUNCI`,
+`RBAC_S7_1B_PULIH`) sudah digabung ke feat/fiori. `REF` = commit yang akan di-merge ke main, dan harus memuat semua berkas di daftar.
+Bila ada "BELUM ADA" selain `DDL_K2A` (menyusul) → BERHENTI.
 ```bash
 cd D:/AccAPI/_github_clean && git fetch origin && REF=origin/feat/fiori && mkdir -p tmp/rilis-fiori
 for f in RILIS_CEK_PRA DDL_S7_0 RBAC_S7_1_CEK_ROLE DDL_K1A DDL_S7_2 DDL_K1B DDL_K2A RBAC_S7_1B_CEK RBAC_S7_1B_KUNCI DDL_ADR004 DDL_OUTBOX_EVENT \
@@ -72,7 +80,8 @@ Itu NORMAL, karena semua perubahan dibatalkan. Baru `terapkan` yang menyimpan.
 - [ ] `docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 -v sync_id="$(docker exec "$F" printenv ACCURATE_SYNC_USER_ID)" < RILIS_CEK_PRA.sql > cek-pra.txt 2>&1; echo $?` lalu `less cek-pra.txt`
 - [ ] Hasilnya harus sama dengan §1.0: bagian 1 benar; bagian 2 seluruhnya `sesuai = ya`; 3a = 0; 3b = 0; 3c `tanpa_grup` = 0; bagian 5 sehat.
   Bila ada yang berbeda → BERHENTI dan lapor ORK. Baris 3b > 0 berarti ada pelunasan baru; pastikan tidak ada yang sedang berjalan saat hari-H.
-- [ ] [MENYUSUL] `jalankan RBAC_S7_1B_CEK.sql` (baca-saja; sudah dijalankan ORK 12 Okt). Hasilnya memuat email staf, jadi simpan di VPS saja.
+- [ ] `jalankan RBAC_S7_1B_CEK.sql` (baca-saja; sudah dijalankan ORK 12 Okt): bagian 2b dan 3 = 0 baris.
+  `jalankan` mencetak `tail` log ke layar dan berkas ini memuat **email staf**: simpan log di VPS saja, jangan tempel ke chat atau repo.
 
 ### 1.3 Env [IT]
 ```bash
@@ -109,7 +118,8 @@ Bukti uji 12 Okt dengan fungsi asli feat/fiori: `parse_number_id('')` = `parse_n
   Pada 12 Okt: frontend `5580963f…` dan backend `d293bd0b…`. Diperlukan untuk rollback cepat (§7).
 
 ### 1.7 Keputusan sebelum hari-H [OWNER, dicatat ORK]
-- [x] Kunci D-01 untuk grup lama → `RBAC_D01_KUNCI.sql` (§5 langkah 4): Finance + Admin = `pelunasan.kirim`, dan seterusnya. Diputuskan owner 12 Okt.
+- [x] Kunci D-01 untuk grup lama → `RBAC_D01_KUNCI.sql` (§5 langkah 4), sesuai keputusan owner 12 Okt (§1.0).
+- [ ] `finance.update` untuk Finance (§1.0, **PERLU KONFIRMASI**).
 - [ ] **Jendela waktu dan pembekuan.** Pilih Minggu, atau ≥ 21.00 WITA, dan hindari cron sinkron :15. Selama jendela, tidak ada kiriman pelunasan, faktur, atau unggah.
 - [ ] **Nama staf** untuk Admin Incaso (menyusul), Kasir, dan Admin Gudang. Ketiga grup ini diisi sesudah rilis (§5 langkah 9).
   Grup "Fakturist" sudah ada di produksi, sehingga BL37 tidak menyentuhnya.
@@ -123,36 +133,42 @@ mkdir -p /root/cadangan && cd /root/cadangan && T=$(date +%Y%m%d-%H%M)
 time docker exec accapi-postgres pg_dump -U accapi -d accapi -Fc -Z 6 > accapi-pra-fiori-$T.dump; echo "kode: $?"; ls -lh accapi-pra-fiori-$T.dump
 docker exec -i accapi-postgres pg_restore -l < accapi-pra-fiori-$T.dump > daftar-$T.txt; echo "kode: $?"; grep -c 'TABLE DATA' daftar-$T.txt   # ≈ 88
 docker cp "$B":/app/python_backend/data backend-data-$T && du -sh backend-data-$T                        # payments.json, users.json, setelan SPPD
+docker exec "$B" du -sh /app/python_backend/output                                                       # volume accapi_backend_output: berkas SPPD, bukti bayar, laporan harian
+time docker exec "$B" tar -cf - -C /app/python_backend output > backend-output-$T.tar; echo "kode: $?"; ls -lh backend-output-$T.tar
 time docker exec "$F" tar -cf - -C /app data > frontend-data-$T.tar; echo "kode: $?"; ls -lh frontend-data-$T.tar  # ±5,4 GB unggahan
-tar -tf frontend-data-$T.tar | wc -l
+tar -tf frontend-data-$T.tar | wc -l; tar -tf backend-output-$T.tar | wc -l
 ```
-- [ ] Semua `kode: 0`. Dump > 0 byte dan `TABLE DATA` ≈ 88 (jumlah tabel public). Arsip frontend ±5,4 GB dan bisa didaftar isinya.
-- [ ] Perkiraan waktu: dump DB 2 GB ±4–6 mnt; arsip frontend ±3–5 mnt. Ruang cukup: 48 GB kosong, perlu ±8 GB.
+- [ ] Semua `kode: 0`. Dump > 0 byte dan `TABLE DATA` ≈ 88 (jumlah tabel public). Kedua arsip (frontend ±5,4 GB, backend output) bisa didaftar isinya.
+- [ ] Perkiraan waktu: dump DB 2 GB ±4–6 mnt; arsip frontend ±3–5 mnt; backend output sesuai ukuran `du`.
+  Ruang: 48 GB kosong; perlu ±8 GB ditambah ukuran backend output.
   Aplikasi tetap hidup selama cadangan berjalan. SQL §3 baru boleh dijalankan **sesudah dump selesai**, karena dump menahan kunci baca dan `lock_timeout` 5 dtk di DDL akan gagal.
 - [ ] (Opsional, **PERLU KONFIRMASI** owner, data sensitif) salin dump ke luar VPS. Hapus arsip lama sesudah rilis stabil.
 
 ⛔2: cadangan terverifikasi.
 
 ## 3. SQL SEBELUM image [IT] (urut; semuanya role pemilik `accapi`, idempoten, aman untuk image lama)
+**Bila gagal:** galat `canceling statement due to lock timeout` (kunci tabel sedang dipakai, misalnya dump belum selesai) = transaksi dibatalkan utuh.
+Tunggu 1 mnt lalu **ulangi** berkas yang sama. Galat lain apa pun = **BERHENTI** dan lapor ORK.
 | # | Perintah (di `/root/rilis-fiori`) | Harus terlihat | Bila tidak |
 |---|---|---|---|
 | 1 | `jalankan DDL_S7_0.sql` | VERIFIKASI 13 baris `t`; VERIFIKASI BACKFILL 2 baris `t` (25 user berbintang) | BERHENTI, lapor ORK |
-| 2 | `jalankan RBAC_S7_1_CEK_ROLE.sql` (baca-saja) | 4 daftar; catat jumlah per daftar (pembanding §5) | — (informasi) |
+| 2 | `jalankan RBAC_S7_1_CEK_ROLE.sql` (baca-saja; log memuat **email staf** — simpan di VPS, jangan tempel ke chat) | 4 daftar; catat jumlah per daftar (pembanding §5) | — (informasi) |
 | 3 | `jalankan DDL_K1A.sql` | VERIFIKASI semua `t` | BERHENTI |
 | 4 | `jalankan DDL_S7_2.sql` (butuh #1) | VERIFIKASI semua `t` | BERHENTI. Galat "trigger trg_principal_code_tetap tidak terpasang persis" = ulangi #1 |
 | 5 | `jalankan DDL_K1B.sql` (butuh #3) | VERIFIKASI semua `t` (termasuk "prasyarat K1a") | BERHENTI |
 | 6 | [MENYUSUL K2a] `jalankan DDL_K2A.sql` | VERIFIKASI semua `t` | BERHENTI |
-| 7 | [MENYUSUL S7-1b] `jalankan RBAC_S7_1B_KUNCI.sql` (mode cek) | NOTICE + VERIFIKASI, lalu ERROR "S7-1b MODE CEK" dan kode 3 = NORMAL | — |
-| 8 | [MENYUSUL S7-1b] `terapkan RBAC_S7_1B_KUNCI.sql` (kunci lama yang dikenal image lama) | kode 0; VERIFIKASI "audit_read tanpa audit_export" = 0; Manager audit_read+audit_export = true | BERHENTI |
-| 9 | (Pratinjau) `jalankan RBAC_D01_KUNCI.sql` (mode cek) | NOTICE "image rilis belum hidup — mode cek saja", "izin_disisipkan=6 audit=3"; VERIFIKASI true; kode 3 = NORMAL | lapor ORK (nama grup) |
+| 7 | `jalankan RBAC_S7_1B_KUNCI.sql` (mode cek; S7-1b, WAJIB) | NOTICE + VERIFIKASI, lalu ERROR "S7-1b MODE CEK" dan kode 3 = NORMAL | — |
+| 8 | `terapkan RBAC_S7_1B_KUNCI.sql` (WAJIB sebelum image; semua kuncinya dikenal image lama) | kode 0; VERIFIKASI "audit_read tanpa audit_export" = 0; Manager audit_read+audit_export = true; pemegang api_wrapper.execute tetap "Admin, Fakturist, Manager" | BERHENTI |
+| 9 | (Pratinjau) `jalankan RBAC_D01_KUNCI.sql` (mode cek) | NOTICE "image rilis belum hidup — mode cek saja", "izin_disisipkan=8 audit=3"; VERIFIKASI true dan baris "harus -" = `-`; kode 3 = NORMAL | lapor ORK (nama grup) |
 
 Berkas yang **TIDAK** di sini, dan alasannya:
 - **DDL_ADR004 dan DDL_OUTBOX_EVENT:** menurut kepala berkasnya, keduanya dijalankan "SESUDAH image baru hidup". Sebelum image, tabelnya belum ada,
   jadi berkas hanya mencetak NOTICE.
 - **DDL_S6E2:** meng-ALTER `idempotency_override`, padahal tabel itu belum ada di produksi (pra-cek baris 10 = f). Tabel itu dibuat migrate-pg saat
   container start, dan migrate-pg hanya bisa membuatnya lewat `DATABASE_MIGRATION_URL`, karena `accapi_app` tidak punya CREATE.
-- **RBAC_D01_KUNCI terapkan:** kelima kuncinya (`finance.resolve_unknown/override_duplicate/repost_payment`, `pelunasan.kirim`, `order.resolve_unknown`)
-  TIDAK ada di registry image lama. Layar Akses Group lama mengirim semua kunci grup, dan PATCH lama menolak kunci tak dikenal
+- **RBAC_D01_KUNCI terapkan:** lima kuncinya (`finance.resolve_unknown/override_duplicate/repost_payment`, `pelunasan.kirim`, `order.resolve_unknown`)
+  TIDAK ada di registry image lama. `finance.view` dan `order.view` dikenal image lama, tetapi ikut sesudah image: hari ini pun Finance tidak bisa membuka `/finance`
+  dan Manager tidak bisa membuka `/antrean-faktur`, jadi menunggu bukan regresi. Layar Akses Group lama mengirim semua kunci grup, dan PATCH lama menolak kunci tak dikenal
   (400 "Key tidak valid") — `app/api/admin/groups/[id]/route.ts:56-59` di main. Bila diterapkan sebelum image, grup Finance/Admin/Manager tidak bisa
   disimpan di layar lama, dan keadaan itu menetap bila rilis tertunda. Berkas ini sendiri menolak `terapkan` sebelum image.
 - [ ] Jalankan ulang `RILIS_CEK_PRA.sql` (simpan ke `cek-pra-2.txt`). Baris 18–26 (dan 27 bila K2a) kini `ada = t` dan `sesuai = BEDA`, yang memang diharapkan; baris lain tetap `ya`.
@@ -177,29 +193,34 @@ docker inspect -f '{{.Created}}' "$F" "$B"; docker logs "$F" 2>&1 | grep -E 'mig
 curl -s -o /dev/null -w 'login: %{http_code}\n' https://web-super.online/login
 ```
 - [ ] Waktu `.Created` kedua container sesudah merge. Status `Up`, bukan `Restarting`.
-- [ ] Log migrate-pg menampilkan 10 `SKIP` lama, lalu **`OK`**: `accurate_write_attempt`, `accurate_write_attempt_reopen`, `idempotency_lock_owner_override`,
+- [ ] Hitung jumlah entri migrate-pg dari commit yang di-merge [ORK]: `git show <hash-merge>:scripts/migrate-pg.mjs | grep -cE '^\s+nama:'`.
+  Di e65bf073 hasilnya 22; ditambah 1 bila K2a (0032) masuk. Baris terakhir log harus `<jumlah itu> migrasi selesai.`
+- [ ] Log migrate-pg: 10 `SKIP` lama, lalu **`OK`**: `accurate_write_attempt`, `accurate_write_attempt_reopen`, `idempotency_lock_owner_override`,
   `idempotency_log_lock_index`, `idempotency_s6e2`, `idempotency_override_database`, `invoice_outbox_event`.
-  Setelah itu **`SKIP`**: `principal (+variant, +alias)`, `user_group.is_primary`, `kasir (…)`, `principal_log`, `kasir_pelunasan_baca (…)` [+ `kasir_setoran giro (K2a)`].
-  Baris terakhir: `22 migrasi selesai.` (23 bila K2a). Tidak ada `GAGAL` maupun `42501`.
+  Lalu **`SKIP`** untuk entri yang DDL-nya sudah dijalankan di §3: `principal (+variant, +alias)`, `user_group.is_primary`, `kasir (…)`, `principal_log`,
+  `kasir_pelunasan_baca (…)` [+ `kasir_setoran giro (K2a)`]. Entri lain yang ikut di commit yang di-merge harus dibaca ORK satu per satu. Tidak ada `GAGAL` maupun `42501`.
+- [ ] **O1 bukan bagian rilis ini.** O1 (migrasi 0033, `DDL_O1.sql`) dirilis terpisah sesudahnya dengan pola yang sama: DDL sebelum image.
+  Sesudah image O1, sinkron ulang branch, employee, item, customer (**PERLU KONFIRMASI** perintahnya dari ORK saat O1 siap).
 - [ ] `login: 200`. Bila 503 atau crash-loop, lihat §7 "perbaikan cepat" lebih dulu.
 
 ⛔5: container hidup, migrate-pg bersih, `/login` 200.
 
-## 5. SESUDAH image [IT] (segera, berurutan; pembekuan tetap berlaku sampai langkah 4)
+## 5. SESUDAH image [IT] (segera, berurutan; pembekuan tetap berlaku sampai ⛔6 GO)
 | # | Perintah | Harus terlihat |
 |---|---|---|
 | 1 | `jalankan DDL_ADR004.sql` lalu `docker exec accapi-postgres psql -U accapi -d accapi -c '\dp accurate_write_attempt*'` | VERIFIKASI 10 baris `t` (PR #136). `accapi_app` pada `_reopen` tanpa `w`/`d`/`D` |
 | 2 | `jalankan DDL_OUTBOX_EVENT.sql` (sebelum ada yang menekan Kirim faktur) | NOTICE "E5: 0 baris …" (pra-cek 3a = 0); VERIFIKASI 7 baris `t` |
 | 3 | `jalankan DDL_S6E2.sql` | VERIFIKASI 8 baris `t` |
-| 4 | `jalankan RBAC_D01_KUNCI.sql`, lalu `terapkan RBAC_D01_KUNCI.sql` | Terapkan: "izin_disisipkan=6 audit=3", kode 0. VERIFIKASI: Finance 4 kunci / Admin / Manager = true; pelunasan.kirim = "Admin, Finance"; resolve/override = "Finance"; order.resolve_unknown = "Manager" |
+| 4 | `jalankan RBAC_D01_KUNCI.sql`, lalu `terapkan RBAC_D01_KUNCI.sql` | Terapkan: "izin_disisipkan=8 audit=3", kode 0. VERIFIKASI: Finance 5 kunci / Admin / Manager 2 kunci = true; pelunasan.kirim = "Admin, Finance"; resolve/override = "Finance"; order.resolve_unknown = "Manager"; tiga baris kunci-prasyarat-halaman = `-` |
 | 5 | `jalankan DDL_S7_0.sql` (ulang, untuk BACKFILL bintang; PR #155/#157) | VERIFIKASI + VERIFIKASI BACKFILL `t` |
 | 6 | `jalankan RBAC_S7_1_CEK_ROLE.sql` | daftar 3 kosong; bandingkan dengan §3 #2 dan lapor ORK |
 | 7 | `jalankan RBAC_PRESET_BL37.sql` | kode 0. "Fakturist" yang sudah ada dilewati (benar); Admin Incaso (memegang `pelunasan.kirim`), Kasir, dan Admin Gudang dibuat kosong |
 | 8 | `jalankan RBAC_PRESET_KASIR.sql` (butuh #7) | kode 0, tanpa NOTICE "grup … tidak ada". Bila ada NOTICE: periksa nama grup OM/Admin |
 | 9 | Admin di `/admin/users` (tekan Ctrl+Shift+R dulu; tab lama menganggap kunci baru "usang", PR #161) | sisa manual, lihat daftar di bawah |
-| 10 | [MENYUSUL] `jalankan RBAC_S7_1B_CEK.sql` | bagian 2b dan 3 = 0 baris |
-| 11 | [MENYUSUL] `RBAC_S7_1B_PENSIUN.sql`: `jalankan` (mode cek) hari-H; `terapkan` **H+1** sesudah ⛔6 GO (PERLU KONFIRMASI) | mode cek kode 3; terapkan: "sisa_kunci_pensiun" = 0 |
-| 12 | Crontab K1b + uji (lihat di bawah) | `check: 200` atau `202` |
+| 10 | `jalankan RBAC_S7_1B_CEK.sql` (log memuat email staf — simpan di VPS) | bagian 2b dan 3 = 0 baris |
+| 11 | `RBAC_S7_1B_PENSIUN.sql`: `jalankan` (mode cek) hari-H; `terapkan` **H+1** sesudah ⛔6 GO, karena kunci yang dihapus masih dipakai image lama (rollback) | mode cek kode 3; terapkan: "sisa_kunci_pensiun" = 0 |
+| 12 | Crontab K1b + uji (lihat di bawah) | `"ok":true`, `"sesiSinkron":true`, `http: 200` |
+| 12b | `RILIS_CEK_PRA.sql` sekali lagi (pemeriksaan akhir izin) | 4c: dua baris "Selesaikan … tanpa … view" tidak muncul. Baris yang tersisa: Fakturist/Manager tanpa `pelunasan.kirim`, Admin/Manager tanpa `finance.resolve_unknown` — sesuai keputusan owner |
 | 13 | `docker exec -i accapi-postgres psql -U accapi -d accapi -qAt -v ON_ERROR_STOP=1 < PRINCIPAL_EKSPOR.sql > principal-ekspor.json` → ORK membuat laporan offline → owner meninjau `benih.sql` (tidak harus hari-H) | 1 baris JSON |
 
 **Langkah 9, sisa manual** (kunci grup lama sudah ditangani langkah 4):
@@ -223,9 +244,11 @@ umask 077; { echo "CRON_TZ=UTC"; echo "CRON_SECRET=$S"; cat <<'CRON'
 30   11   * * 1-6 root curl -fsS --max-time 900 -H "Authorization: Bearer $CRON_SECRET" "https://web-super.online/api/cron/kasir-pelunasan?penuh=1" >> /var/log/accapi-kasir.log 2>&1
 CRON
 } > /etc/cron.d/accapi-kasir; chmod 600 /etc/cron.d/accapi-kasir; ls -l /etc/cron.d/accapi-kasir
-curl -s -o /dev/null --max-time 60 -w 'check: %{http_code}\n' -H "Authorization: Bearer $S" 'https://web-super.online/api/cron/kasir-pelunasan?check=1'; unset S
+curl -sS --max-time 60 -w '\nhttp: %{http_code}\n' -H "Authorization: Bearer $S" 'https://web-super.online/api/cron/kasir-pelunasan?check=1' \
+  | grep -oE '"(ok|sesiSinkron)":(true|false)|^http: [0-9]+'; unset S
 ```
-- [ ] `check: 200` atau `202` = normal. `401` = secret salah. `503` = sesi akun sinkron (1.4).
+- [ ] Harus tampil `"ok":true`, `"sesiSinkron":true`, `http: 200`. `?check=1` SELALU 200 bila secret benar (route :49-51); sesi Accurate akun sinkron
+  yang mati hanya terlihat sebagai `"sesiSinkron":false` → login ulang (1.4). `http: 401` = secret salah.
   `ls -l` harus menampilkan `-rw-------`: berkas ini memuat secret, jadi tidak boleh dibaca selain root.
   Bila `CRON_SECRET` diganti di Coolify, jalankan ulang blok ini.
   `accapi-cron.sh` sengaja TIDAK dipakai karena tidak memakai `--max-time`, sedangkan route berjalan sampai ±13 mnt.
@@ -238,8 +261,8 @@ Jangan menekan tombol tulis kecuali yang disebut di tabel.
 | Admin | `/admin/users`, `/admin/groups`, `/sesi-accurate`, `/api-wrapper`, `/pelunasan` | daftar + ★, Object Page (Grup/Keamanan/Riwayat); status sesi; Konsol terbuka; wizard Pelunasan terbuka |
 | Fakturist | `/sesi-accurate` → `/antrean-faktur`, `/orders`, `/principal-order`, `/faktur` | database benar; kartu status; **Kirim** membuka pratinjau dengan nama database (tekan Batal); daftar terbaca. `/pelunasan` = Akses ditolak (BENAR) |
 | Staff Keuangan | `/payments` (tab Pengajuan & SPPD), `/payments/sppd` | rekaman yang sudah diajukan terkunci + alasan; unduh 1 dokumen SPPD berhasil |
-| Finance | `/finance`, `/pelunasan`, `/sesi-accurate` | daftar posting; "Selesaikan tidak pasti" aktif (bukan "tanpa izin"); `/pelunasan` terbuka, termasuk Selesaikan / izinkan kirim ulang |
-| Manager | `/antrean-faktur`, `/off-program-control`, `/claim-workflow` | Selesaikan tidak pasti (faktur) aktif; OPC semua tab + ekspor; Claim tetap bisa kelola. `/pelunasan` = Akses ditolak (BENAR) |
+| Finance | `/finance`, `/pelunasan`, `/sesi-accurate` | `/finance` terbuka (baru, lewat `finance.view`); "Selesaikan tidak pasti" aktif (bukan "tanpa izin"); `/pelunasan` terbuka, termasuk Selesaikan / izinkan kirim ulang |
+| Manager | `/antrean-faktur`, `/off-program-control`, `/claim-workflow` | `/antrean-faktur` terbuka (baru, lewat `order.view`); Selesaikan tidak pasti aktif; OPC semua tab baca + ekspor tanpa aksi atas nama SPV/SM/OM (S7-1b); Claim tetap bisa kelola. `/pelunasan` = Akses ditolak (BENAR) |
 | SPV / SM | `/off-program-control`, `/form-kontrol` (Dashboard SPV), `/insentif-sales` | antrean batch, tim, dashboard terbaca |
 | Salesman (ponsel) | `/form-kontrol` (Rute hari ini, Kunjungan), `/sales` | layar 390 px tanpa gulir menyamping; draf order tersimpan |
 | OM / Kasir | Beranda | tampil. `/kasir` belum punya layar (K2b menyusul) — wajar |
@@ -278,9 +301,11 @@ jadi Cara A tetap wajib menyusul.
 Yang TIDAK kembali sendiri:
 - (a) E5 bisa mengubah status antrean lama menjadi `unknown`; pada 12 Okt ada 0 baris. Image main mengenal status itu, tetapi tidak punya tombol "Selesaikan".
 - (b) Perubahan user.role dari bintang atau perpindahan grup di layar baru tetap tersimpan.
-- (c) **`RBAC_S7_1B_PENSIUN.sql` menghapus kunci yang dipakai image lama.** Karena itu langkah ini ditunda ke H+1. Bila sudah terlanjur dan harus rollback,
-  `jalankan RBAC_S7_1B_PULIH.sql` (mode cek) lalu `terapkan RBAC_S7_1B_PULIH.sql`. Berkas ini memulihkan pasangan grup-kunci dari jejak `permission_audit_log` PENSIUN;
-  VERIFIKASI "belum kembali" harus 0. Hanya dijalankan sesudah image lama kembali hidup.
+- (c) **Kunci pensiun S7-1b hilang** karena dua sebab: `RBAC_S7_1B_PENSIUN.sql` (karena itu ditunda ke H+1), dan setiap simpan grup di layar baru,
+  yang otomatis membuang kunci pensiun. Image lama masih memakai kunci itu. Sesudah image lama kembali hidup: `jalankan RBAC_S7_1B_PULIH.sql` (mode cek),
+  lalu `terapkan RBAC_S7_1B_PULIH.sql`. Berkas ini memulihkan pasangan grup-kunci dari jejak `permission_audit_log` kedua sebab itu, hanya untuk
+  **siklus rilis terakhir** (jejak sesudah PULIH sebelumnya). Jadi kunci yang sengaja dicabut admin di antara dua siklus tidak ikut kembali.
+  VERIFIKASI "belum kembali" harus 0. Batas: NOTICE mencetak TimeZone DB; bila bukan UTC dan rilis ulang terjadi < 8 jam sesudah PULIH sebelumnya, periksa NOTICE manual.
 - (d) Kunci D-01 (`RBAC_D01_KUNCI`) dan kunci baru lain hanya berupa teks yang diabaikan image lama. Efek sampingnya: layar Akses Group lama menolak menyimpan
   grup Finance/Admin/Manager ("Key tidak valid"). Bila grup itu harus disunting sebelum rilis berikutnya, ORK menyiapkan SQL terarah untuk mencabut
   kunci tersebut (**PERLU KONFIRMASI**). `DATABASE_MIGRATION_URL` aman bagi image lama, karena migrate-pg lama hanya mencetak SKIP.
@@ -299,9 +324,10 @@ Yang TIDAK kembali sendiri:
 - **Staff Keuangan:** rekaman yang sudah diajukan (SPPD terbit) terkunci sampai Finance memberi "Ajukan Ulang". No. LPB ganda ditolak.
   Unggahan memakai pratinjau dulu. Nomor SPPD tidak bisa turun dan mulai dari 001 setiap tahun.
   Rekaman dengan Nilai Invoice kosong tetap tidak bisa masuk keranjang (seperti sekarang).
-- **Finance:** posting Purchase Payment terkunci ke database sesi. Jawaban Accurate yang belum pasti mengunci baris sampai di-"Selesaikan" (alasan ≥ 15 huruf).
+- **Finance:** kini bisa membuka `/finance`. Posting Purchase Payment terkunci ke database sesi. Jawaban Accurate yang belum pasti mengunci baris sampai di-"Selesaikan" (alasan ≥ 15 huruf).
   Hanya Finance yang bisa menyelesaikan, termasuk untuk posting yang dibuat Admin atau Manager.
-- **Manager:** Selesaikan faktur tidak pasti. [MENYUSUL S7-1b] Di OPC hanya membaca dan mengekspor. Claim Workflow tetap seperti sekarang. Pelunasan bukan wewenang Manager.
+- **Manager:** membuka Antrean Faktur dan menyelesaikan faktur "Tidak pasti". Di OPC hanya membaca dan mengekspor (S7-1b, "manager bukan admin").
+  Claim Workflow tetap seperti sekarang. Pelunasan bukan wewenang Manager.
 - **Admin:** layar User & Akses Group baru. ★ = grup utama: bintang pada grup preset menurunkan role, dan pindah ke grup custom menjadikan role viewer.
   User tidak boleh tanpa grup. Mengatur sandi atau menonaktifkan user mencabut sesinya. Admin terakhir tidak bisa dicabut.
 - **Insentif:** impor Excel menolak teks yang bukan angka ("-" = 0). Tandai lunas terkunci bila konstanta gagal dibaca.
@@ -327,13 +353,14 @@ Yang TIDAK kembali sendiri:
 | #160 | S7-2 principal | DDL_S7_0 → DDL_S7_2 SEBELUM image; PRINCIPAL_EKSPOR → owner meninjau benih |
 | #161 | S7a UI User/Grup | sosialisasi Admin; muat ulang tab lama |
 | #163 | K1b Kasir pembaca | K1A → S7_2 → K1B SEBELUM image; sync = admin semua cabang; crontab UTC (§5 langkah 12) |
-| MENYUSUL | S7-1b kunci+proxy · K2a server Kasir | KUNCI sebelum image, PENSIUN sesudah (H+1; pulihkan = PULIH) · DDL_K2A sebelum image |
+| #164 | S7-1b kunci + proxy + Manager OPC | RBAC_S7_1B_CEK (baca) → KUNCI sebelum image (WAJIB) → image → CEK ulang → PENSIUN H+1 (pulihkan = PULIH) |
+| MENYUSUL | K2a server Kasir · O1 (rilis terpisah) | DDL_K2A sebelum image (migrasi 0032) · O1: DDL_O1 sebelum image O1 (0033), lalu sinkron ulang branch/employee/item/customer |
 
 ### 9.2 Berkas SQL (commit terakhir yang mengubahnya)
 DDL_S7_0 `0fd3c387` · DDL_K1A `94273e92` · DDL_S7_2 `d3027925` · DDL_K1B `d12bd886` · DDL_ADR004 `0b426ea4` · DDL_OUTBOX_EVENT `864781ba` ·
 DDL_S6E2 `63b4f7d3` · RBAC_S7_1_CEK_ROLE `72f2efc5` · RBAC_PRESET_BL37 `a02d41e0` · RBAC_PRESET_KASIR `364f34d7` · PRINCIPAL_EKSPOR `d80614c1` ·
-[cabang `docs/fiori-runbook-rilis`] RILIS_CEK_PRA `76ebdc96` · RBAC_D01_KUNCI + RBAC_S7_1B_PULIH `74bef012` ·
-[MENYUSUL, cabang `feat/fiori-s7-1b-kunci`] RBAC_S7_1B_CEK `b629740c` · RBAC_S7_1B_KUNCI `9dec7f41` · RBAC_S7_1B_PENSIUN `653f85a3` ·
+RBAC_S7_1B_CEK `b629740c` · RBAC_S7_1B_KUNCI `9dec7f41` · RBAC_S7_1B_PENSIUN `653f85a3` (ketiganya di feat/fiori e65bf073, PR #164) ·
+[cabang `docs/fiori-runbook-rilis`] RILIS_CEK_PRA, RBAC_D01_KUNCI, RBAC_S7_1B_PULIH `1a1390c8` ·
 [MENYUSUL, cabang `feat/fiori-k2a-kasir-server`] DDL_K2A `1bc96802`. Hari-H, ambil semua dari commit yang di-merge (1.1), bukan dari cabang ini.
 
 ### 9.3 Kontak & peran (isi sebelum H-1)
