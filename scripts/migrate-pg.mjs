@@ -712,6 +712,19 @@ export const migrations = [
       ALTER TABLE kasir_pelunasan_baca ADD COLUMN IF NOT EXISTS penuh_tertunda_pada timestamptz;
     `,
   },
+  {
+    // 2026-10-12 (K2a, BL-59; owner 12 Okt: setoran Giro WAJIB nomor BG + tanggal jatuh tempo). EXPAND: dua kolom nullable di
+    // kasir_setoran (server menegakkan "giro > 0 -> wajib", pola K1a: keputusan berubah tanpa DDL). SESUDAH entri kasir K1a.
+    // Lihat db/migrations/0032_kasir_setoran_giro.sql + docs/handover/DDL_K2A.sql (pemilik, SEBELUM image: accapi_app bukan pemilik).
+    // sudahAda lewat katalog pg_attribute (tanpa hak tabel information_schema kosong -> ALTER 42501 -> crash loop).
+    nama: "kasir_setoran giro (K2a)",
+    sudahAda: `SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('kasir_setoran') AND NOT attisdropped
+               AND attname IN ('giro_nomor', 'giro_jatuh_tempo') HAVING count(*) = 2`,
+    sql: `
+      ALTER TABLE kasir_setoran ADD COLUMN IF NOT EXISTS giro_nomor text CONSTRAINT kasir_setoran_giro_nomor CHECK (btrim(giro_nomor) <> '');
+      ALTER TABLE kasir_setoran ADD COLUMN IF NOT EXISTS giro_jatuh_tempo date;
+    `,
+  },
 ];
 
 async function main() {
