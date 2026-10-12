@@ -22,7 +22,7 @@ import { resolvePrices, type PriceResult } from "@/lib/item-price";
 export const TAG_KE_CABANG: Readonly<Record<string, string>> = {
     "24MNF1": "MIX NON FOOD",
     "21MNF2": "MIX NON FOOD",
-    FRN: "MIX NON FOOD",
+    FRN: "SHINZUI",
     "HEINZ ABC": "HEINZ",
     MIX2: "DOLPHIN",
     FKS: "MIX FOOD",

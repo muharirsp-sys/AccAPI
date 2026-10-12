@@ -32,8 +32,8 @@ test("tag = nama cabang (22, termasuk ejaan huruf kecil/spasi ganda) -> cabang i
     assert.equal(cabangDariTag("FORISA-MT", PETA).jenis, "tak_dikenal");
 });
 
-test("6 pemetaan owner: 24MNF1/21MNF2/FRN -> MIX NON FOOD, HEINZ ABC -> HEINZ, MIX2 -> DOLPHIN, FKS -> MIX FOOD", () => {
-    const harap: Record<string, string> = { "24MNF1": "MIX NON FOOD", "21MNF2": "MIX NON FOOD", FRN: "MIX NON FOOD", "HEINZ ABC": "HEINZ", MIX2: "DOLPHIN", FKS: "MIX FOOD" };
+test("6 pemetaan owner (revisi 12 Okt): 24MNF1/21MNF2 -> MIX NON FOOD, FRN -> SHINZUI, HEINZ ABC -> HEINZ, MIX2 -> DOLPHIN, FKS -> MIX FOOD", () => {
+    const harap: Record<string, string> = { "24MNF1": "MIX NON FOOD", "21MNF2": "MIX NON FOOD", FRN: "SHINZUI", "HEINZ ABC": "HEINZ", MIX2: "DOLPHIN", FKS: "MIX FOOD" };
     assert.deepEqual({ ...TAG_KE_CABANG }, harap, "konstanta = keputusan owner, persis");
     for (const [tag, cabang] of Object.entries(harap)) {
         assert.deepEqual(cabangDariTag(tag, PETA), { branchId: id(cabang), jenis: "peta" }, tag);

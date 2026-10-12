@@ -118,7 +118,7 @@ const BARANG = [
         { id: 5, no: "H-01", name: "SAUS HEINZ", unitPrice: 11000, charField2: "HEINZ ABC", suspended: false },
         { id: 6, no: "M-01", name: "TISU A", charField2: "24MNF1", suspended: false }],
     [{ id: 7, no: "M-02", name: "TISU B", charField2: "21MNF2", suspended: false },
-        { id: 8, no: "M-03", name: "TISU C", charField2: "FRN", suspended: false },
+        { id: 8, no: "S-01", name: "SHINZUI SABUN", charField2: "FRN", suspended: false },
         { id: 9, no: "D-01", name: "DOLPHIN A", charField2: "MIX2", suspended: false },
         { id: 10, no: "F-01", name: "MIE A", charField2: "FKS", suspended: false },
         { id: 11, no: "A-01", name: "LAPTOP KANTOR", charField2: "ASSET", suspended: false },
