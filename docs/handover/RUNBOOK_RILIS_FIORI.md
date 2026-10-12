@@ -156,9 +156,9 @@ Tunggu 1 mnt lalu **ulangi** berkas yang sama. Galat lain apa pun = **BERHENTI**
 | 3 | `jalankan DDL_K1A.sql` | VERIFIKASI semua `t` | BERHENTI |
 | 4 | `jalankan DDL_S7_2.sql` (butuh #1) | VERIFIKASI semua `t` | BERHENTI. Galat "trigger trg_principal_code_tetap tidak terpasang persis" = ulangi #1 |
 | 5 | `jalankan DDL_K1B.sql` (butuh #3) | VERIFIKASI semua `t` (termasuk "prasyarat K1a") | BERHENTI |
-| 7 | `jalankan RBAC_S7_1B_KUNCI.sql` (mode cek; S7-1b, WAJIB) | NOTICE + VERIFIKASI, lalu ERROR "S7-1b MODE CEK" dan kode 3 = NORMAL | — |
-| 8 | `terapkan RBAC_S7_1B_KUNCI.sql` (WAJIB sebelum image; semua kuncinya dikenal image lama) | kode 0; VERIFIKASI "audit_read tanpa audit_export" = 0; Manager audit_read+audit_export = true; pemegang api_wrapper.execute tetap "Admin, Fakturist, Manager" | BERHENTI |
-| 9 | (Pratinjau) `jalankan RBAC_D01_KUNCI.sql` (mode cek) | NOTICE "image rilis belum hidup — mode cek saja", "izin_disisipkan=8 audit=3"; VERIFIKASI true dan baris "harus -" = `-`; kode 3 = NORMAL | lapor ORK (nama grup) |
+| 6 | `jalankan RBAC_S7_1B_KUNCI.sql` (mode cek; S7-1b, WAJIB) | NOTICE + VERIFIKASI, lalu ERROR "S7-1b MODE CEK" dan kode 3 = NORMAL | — |
+| 7 | `terapkan RBAC_S7_1B_KUNCI.sql` (WAJIB sebelum image; semua kuncinya dikenal image lama) | kode 0; VERIFIKASI "audit_read tanpa audit_export" = 0; Manager audit_read+audit_export = true; pemegang api_wrapper.execute tetap "Admin, Fakturist, Manager" | BERHENTI |
+| 8 | (Pratinjau) `jalankan RBAC_D01_KUNCI.sql` (mode cek) | NOTICE "image rilis belum hidup — mode cek saja", "izin_disisipkan=8 audit=3"; VERIFIKASI true dan baris "harus -" = `-`; kode 3 = NORMAL | lapor ORK (nama grup) |
 
 Berkas yang **TIDAK** di sini, dan alasannya:
 - **DDL_ADR004 dan DDL_OUTBOX_EVENT:** menurut kepala berkasnya, keduanya dijalankan "SESUDAH image baru hidup". Sebelum image, tabelnya belum ada,
