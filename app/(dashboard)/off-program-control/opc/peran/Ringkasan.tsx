@@ -72,7 +72,8 @@ function IkhtisarTahap({ ctx, daftar, buka, periode }: PeranProps & { buka: (t: 
         perTahap.set(t, { n: x.n + 1, telat: x.telat + (masalahPer.has(b.id) ? 1 : 0) });
     }
     // Peran OFF admin = AdminHealthPanel lama; peran lain (OM) = SummaryStrip lama. Sama dengan isAdminOverview kode lama.
-    const admin = ctx.peran === "admin" ? hitungAdmin(batches) : null;
+    // AM-026: Manager (dulu dipetakan ke admin) tetap melihat panel pantau yang sama — panel ini baca-saja.
+    const admin = ctx.peran === "admin" || ctx.peran === "manager" ? hitungAdmin(batches) : null;
     return (
         <div style={{ display: "grid", gap: 12 }} aria-busy={load.status === "memuat" || undefined}>
             {load.status === "galat" && (

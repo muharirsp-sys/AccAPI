@@ -102,7 +102,7 @@ export default function Audit({ ctx }: PeranProps) {
     return (
         <div style={{ display: "grid", gap: 12 }}>
             <MessageStrip tone="info" title="Koreksi tidak menghapus jejak.">
-                Klaim dan admin dapat membaca, mengekspor, dan mengoreksi log ini; setiap koreksi tercatat sebagai riwayat baru yang menunjuk log asal.
+                Klaim dan admin dapat membaca, mengekspor, dan mengoreksi log ini (Manager: membaca dan mengekspor); setiap koreksi tercatat sebagai riwayat baru yang menunjuk log asal.
             </MessageStrip>
             {pesan && <MessageStrip tone="pos" title={pesan} onClose={() => setPesan(null)} />}
             <div className="fi-panel" style={{ padding: 0, overflow: "clip" }}>

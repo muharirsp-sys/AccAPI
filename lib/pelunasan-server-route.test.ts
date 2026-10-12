@@ -66,7 +66,7 @@ test("butir 1: tulis sales-receipt tanpa pelunasan.kirim -> 403 PERMISSION_REQUI
     assert.equal(body.sent, false);
 });
 
-test("butir 1: GET proxy & tulis endpoint lain tidak butuh pelunasan.kirim (tidak berubah)", async () => {
+test("butir 1: GET baca proxy tidak butuh pelunasan.kirim (tulis endpoint lain = api_wrapper.execute, lib/proxy-guard-route.test.ts)", async () => {
     const res = await sebagai([], () => proxyPost(jsonPost("/api/proxy", { endpointPath: "/api/customer/list.do", method: "GET", payload: { "sp.pageSize": 1 } })), {
         sesi: sesiAccurate(), fetch: (async () => new Response(JSON.stringify({ s: true, d: [] }), { status: 200 })) as typeof fetch,
     });

@@ -8,8 +8,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    PREDIKAT, SARINGAN_KOSONG, TAMPILAN, alurBatch, infoTahap, izinAksi, pdfBoleh, saringBatch, subTampilan, tabEfektif, tabTerlihat, tahapBatch,
-    tanggalOpc, waktuWita, type BatchOpc,
+    LABEL_PERAN, PREDIKAT, SARINGAN_KOSONG, TAMPILAN, alurBatch, infoTahap, izinAksi, labelPeranAktor, pdfBoleh, saringBatch, subTampilan, tabEfektif,
+    tabTerlihat, tahapBatch, tanggalOpc, waktuWita, type BatchOpc,
 } from "./opc-ui";
 import { createOffDevBatches } from "./off-program-control/dev-fixtures";
 
@@ -144,6 +144,20 @@ test("izin aksi = matriks peran OFF kode lama", () => {
     assert.equal(izinAksi("operational_manager", "om_cancel"), undefined);
     assert.match(izinAksi("claim", "om_approve") ?? "", /Peran OFF/);
     assert.match(izinAksi("supervisor", "finance_payment") ?? "", /Peran OFF/);
+});
+
+test("AM-026 (D-01 §C): Manager = pembaca 7 tab; hanya baca/ekspor audit; semua tombol tulis nonaktif beralasan; label Manager", () => {
+    assert.deepEqual(tabTerlihat("manager"), ["overview", "supervisor", "sales", "claim", "om", "finance", "audit"]);
+    assert.equal(tabEfektif("manager", "finance"), "finance");
+    assert.equal(izinAksi("manager", "audit_read"), undefined);
+    assert.equal(izinAksi("manager", "audit_export"), undefined);
+    for (const aksi of ["create_batch", "edit_returned_batch", "submit_batch", "sm_approve", "sm_return", "claim_review", "claim_final", "om_approve",
+        "om_cancel", "finance_payment", "submit_refund", "audit_correct", "period_close", "period_unlock", "discount_view", "discount_manage"] as const) {
+        assert.match(izinAksi("manager", aksi) ?? "", /Manager hanya membaca/, aksi);
+    }
+    assert.equal(LABEL_PERAN.manager, "Manager");
+    assert.equal(labelPeranAktor("manager"), "Manager");
+    assert.equal(labelPeranAktor("admin"), "Admin");
 });
 
 test("saringan klien: cari, principal, tahap, periode bulan dan rentang", () => {
