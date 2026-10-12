@@ -14,7 +14,7 @@ Keputusan owner (mengikat): `scratch/fiori-intake/OWNER-ANSWERS-ORDER-CABANG-202
 | Petugas internal (punya `order.view`: admin/fakturist/Order Masuk) = semua cabang; akun lain (sales: `websales.*` saja) = cabang karyawannya. Tripwire: `websales.create` + `order.view` TANPA `order.create` = `IZIN_TIDAK_KONSISTEN` (bukan semua cabang) | O1 (tafsir teknis) + butir 11 | `cakupanCabang`/`tripwireIzin`; DDL_O1 VERIFIKASI per grup |
 | Pelanggan/barang suspended di Accurate tidak bisa diorder | brief O1 | sync (`suspended`) + `periksaOrder` + pencarian |
 | Harga master = daftar harga Accurate (`tier`) cabang PELANGGAN (dibaca server), tanggal berlaku terbaru ≤ tanggal order; cabang pelanggan tanpa baris berlaku → cabang DEFAULT. Harga standar `item.unitPrice` (satu angka semua satuan), harga ≤ 0, harga cabang LAIN = TIDAK sah → `HARGA_BELUM_ADA` | lib/item-price + butir 3 | `hargaSah`: pratinjau, `/api/orders/harga`, pencarian barang (`price: null`); Python menolak ≤ 0 |
-| Harga petugas (Order Baru, `order.create`) per baris MENANG, > 0, tercatat `sumber_harga: "petugas"`; kosong = harga master; tidak pernah ditimpa | butir 7 | `periksaOrder`, `order_cabang.periksa`, §4.4 |
+| Harga petugas (Order Baru, `order.create`) HANYA untuk baris TANPA harga master sah; baris berharga master + harga petugas = `HARGA_PETUGAS_TIDAK_DIIZINKAN`; harga petugas > 0, tercatat `sumber_harga: "petugas"`, tidak pernah ditimpa | butir 7 + owner sesi 13 | `putusanHarga` → `periksaOrder` (pratinjau + simpan), `order_cabang.periksa` meneruskan, §4.4 |
 | Order Web Sales dibekukan BERHARGA saat ditarik (tidak lagi `needs_price`); faktur memakai harga beku | BL-18 | FastAPI `store_order` ← `/api/orders/harga` |
 | Promo: pratinjau = tersimpan (`sidik`), satu fungsi hitung | owner 12 Okt (revisi) | §4 |
 | Salesman faktur (Antre Faktur) = salesman cabang PELANGGAN order | butir 4 | `/api/orders/[id]/invoice` (`salesmanBedaCabang`), pratinjau + antre |
@@ -40,6 +40,7 @@ TIDAK dibaca/diisi (salinan cabang akan basi).
 | `SATUAN_SALAH` | 409 | `wrong_unit: [{code, unit, known_units}]` (bentuk lama dipertahankan). |
 | `HARGA_BELUM_ADA` | 409 | `missing: [kode]` (bentuk lama dipertahankan). Kalimat menyebut sebab per baris: belum ada / harga standar / harga 0 / harga cabang lain. |
 | `HARGA_TIDAK_VALID` | 400 | Harga petugas bukan angka > 0 (maks 4 desimal, tanpa titik ribuan). `barang: [kode]`. |
+| `HARGA_PETUGAS_TIDAK_DIIZINKAN` | 409 | Harga petugas dikirim untuk baris yang SUDAH punya harga master sah (owner sesi 13). `barang: [{code, unit, hargaMaster}]` per baris; kosongkan harganya. |
 | `INPUT_TIDAK_VALID` | 400 | Query/badan tidak valid — termasuk `price` dikirim dari Order Sales (sales tidak menentukan harga). |
 | `TIDAK_DIIZINKAN` | 403 | Izin layar tidak ada. |
 | `IZIN_TIDAK_KONSISTEN` | 403 | Akun punya `websales.create` + `order.view` tanpa `order.create` (butir 11). Admin membetulkan grup. |
@@ -74,7 +75,8 @@ Salesman hanya pelanggan cabangnya: kode cabang lain / tanpa cabang → 403 `CAB
 ### `POST /api/orders/harga` (layanan; juga boleh sesi)
 Dipanggil FastAPI (`python_backend/order_cabang.py`). CRON_SECRET (Bearer) = semua cabang; sesi `websales.create`/`order.create` = cakupan pemakai.
 Badan `{ customer_no, order_date, lines: [{code, unit, quantity?, price?}] }` (1–500 baris). `price` = harga petugas (hanya CRON atau sesi
-`order.create`; sesi sales → 400). `harga:false` (bentuk lama) DIHAPUS — tidak lagi melewati harga master.
+`order.create`; sesi sales → 400), hanya baris tanpa harga master sah (lainnya 409 `HARGA_PETUGAS_TIDAK_DIIZINKAN`). `harga:false` (bentuk
+lama) DIHAPUS — tidak lagi melewati harga master.
 200: `{ ok, pelanggan, lines: [{code, unit, quantity, price, sumber_harga: "master"|"petugas"}] }` (urutan = masukan; harga petugas
 kembali APA ADANYA). Tanpa efek samping. CRON_SECRET hanya header `Authorization: Bearer` (konstan-waktu; `?secret=` ditolak — butir 6).
 
@@ -92,7 +94,7 @@ Server MENOLAK salesman cabang lain saat pratinjau/antre faktur: 409 `{ ok:false
 ### FastAPI (berubah)
 - `POST /websales/orders`: dihitung LENGKAP dengan sesi sales (channel master, cabang, harga, promo) + WAJIB `sidik`; ditolak → status +
   `{ ok:false, detail, kode, ... }`; Next tak pasti → 503 berkode. Harga TIDAK disimpan di permintaan (hanya kuantitas + `sidik`). §4.3.
-- `POST /orders` (Order Baru): harga petugas per baris tidak ditimpa, ≤ 0 ditolak; WAJIB `sidik`. §4.3–4.4.
+- `POST /orders` (Order Baru): harga petugas hanya baris tanpa harga master sah, tidak ditimpa, ≤ 0 ditolak; WAJIB `sidik`. §4.3–4.4.
 - Tarik (`/orders/pull`, `/orders/pull-cron`): order dibekukan berharga server → `draft` bila angka = sidik sales; `failed` (ditahan) vs
   `rejected` (permanen, status `rejected` + sebab); Next tak pasti / CRON_SECRET beda → 503 `{ok:false, detail, kode}` (tarikan berhenti,
   tidak ada yang ditolak). §4.5.
@@ -137,26 +139,34 @@ Badan: `{ customer_no, channel, order_date, lines: [{ code, unit, quantity, pric
   channel_masalah: "",            // tidak kosong = simpan akan ditolak CHANNEL_BEDA_MASTER (tampilkan, jangan izinkan simpan)
   sidik: "<64 hex>" }
 ```
-`hargaMaster` = harga master sah baris itu (null bila tak ada) — untuk tanda "harga diubah petugas". Galat FastAPI diteruskan berkode
+`hargaMaster` = harga master sah baris itu; baris `petugas` SELALU null (harga petugas hanya boleh di baris tanpa master — sesi 13). Galat FastAPI diteruskan berkode
 `{ ok:false, kode, error }` (mis. `ATURAN_BELUM_TERBIT` 409); galat Next §2 tetap.
 
 ### 4.3 Simpan (FastAPI) — WAJIB membawa `sidik` pratinjau terakhir
 - Order Baru `POST /orders`: `{ outlet, channel, order_date, note, customer_no, lines: [{ code, unit, quantity, price? }], sidik,
-  confirm_duplicate? }` — `price` HANYA baris yang diketik petugas (kosong = harga master). 200 `{ ok, order }`; `order.lines[]` membawa
+  confirm_duplicate? }` — `price` HANYA baris TANPA harga master sah yang diketik petugas (kosong = harga master; `price` di baris berharga
+  master = 409 `HARGA_PETUGAS_TIDAK_DIIZINKAN`). 200 `{ ok, order }`; `order.lines[]` membawa
   `price` + `sumber_harga`, `order.result` = `result` pratinjau.
 - Order Sales `POST /websales/orders`: `{ outlet, channel, order_date, note, customer_no, lines: [{ code, unit, quantity }], sidik }` → 200
   `{ ok, request }` (permintaan TANPA harga; `sidik` disimpan, dicocokkan lagi saat tarik). `GET /websales/orders` menambah
   `reject_code`, `reject_reason`, `rejected_at` (status `pending` | `pulled` | `rejected`).
 - Galat (`{ ok:false, detail, kode, ... }`): `SIDIK_WAJIB` 400 · `PRATINJAU_BERUBAH` 409 + `pratinjau: { lines, result, sources, sidik }`
   (tampilkan angka baru, minta konfirmasi, simpan ulang dengan sidik baru) · `CHANNEL_BEDA_MASTER` 422 · `HARGA_TIDAK_VALID` 400 ·
+  `HARGA_PETUGAS_TIDAK_DIIZINKAN` 409 (+`barang`) ·
   `ORDER_GANDA` 409 (Order Baru: `confirm_duplicate:true` sesudah diperiksa) · `ATURAN_BELUM_TERBIT` 409 · kode §2 (Next) ·
   `KONFIGURASI_SERVER` / `LAYANAN_TIDAK_PASTI` 503 (TIDAK tersimpan; jangan tampilkan "sesi berakhir").
 
-### 4.4 Harga petugas (Order Baru) — aturan timpa
-Per baris: `price` diisi = harga petugas MENANG atas master, wajib > 0 (≤ 0 / bukan angka → `HARGA_TIDAK_VALID` 400), tercatat
-`sumber_harga: "petugas"`. `price` kosong = harga master yang SAH (daftar harga Accurate cabang pelanggan — atau cabang default bila
-cabang pelanggan tak punya baris berlaku — dan > 0; harga standar `item.unitPrice`, harga 0, harga cabang lain → `HARGA_BELUM_ADA`).
-Server tidak pernah menimpa harga petugas dan tidak pernah mengisi harga diam-diam. Order Sales tidak pernah membawa harga.
+### 4.4 Harga petugas (Order Baru) — HANYA baris tanpa harga master sah (owner sesi 13, 12 Okt 2026)
+Harga master SAH = daftar harga Accurate (`tier`) cabang pelanggan — atau cabang default bila cabang pelanggan tak punya baris berlaku —
+dan > 0 (`hargaSah`). Per baris (`putusanHarga`, satu keputusan untuk pratinjau DAN simpan → sidik konsisten):
+- master sah ada, `price` kosong → harga master (`sumber_harga: "master"`);
+- master sah ada, `price` diisi → DITOLAK 409 `HARGA_PETUGAS_TIDAK_DIIZINKAN` (`barang: [{code, unit, hargaMaster}]`) — tidak diabaikan
+  diam-diam, tidak menimpa master;
+- master sah TIDAK ada (belum ada / harga standar / 0 / cabang lain), `price` diisi > 0 → harga petugas (`sumber_harga: "petugas"`, tidak
+  ditimpa); `price` ≤ 0 / bukan angka → `HARGA_TIDAK_VALID` 400; `price` kosong → `HARGA_BELUM_ADA` 409 (`missing`).
+Menggantikan "harga petugas selalu menang" (putaran 1). Order Sales tidak pernah membawa harga (400).
+Alur layar O2: pratinjau tanpa harga → `HARGA_BELUM_ADA.missing` = baris yang BOLEH diberi harga petugas → isi harga baris itu saja →
+pratinjau ulang → simpan dengan sidiknya. Baris lain: harga master tampil read-only.
 
 ### 4.5 Tarik (`/orders/pull`, `/orders/pull-cron`)
 200 `{ ok, imported: [{request_id, order_id}], already_imported: [id], failed: [{request_id, error, kode: "ORDER_GANDA", duplicate: true}],
@@ -167,7 +177,8 @@ rejected: [{request_id, kode, error}] }`. `failed` = DITAHAN (tetap `pending`, m
 ## 5. Tugas O2 (UI)
 0. Promo (§4): Order Sales & Order Baru menampilkan `result` pratinjau per baris (bruto, persen, potongan rupiah, netto) + `bonuses` +
    `blocked`; simpan membawa `sidik` pratinjau TERAKHIR (pratinjau usang/masih dihitung = tombol simpan terkunci). `PRATINJAU_BERUBAH` →
-   tampilkan `pratinjau` baru dan minta konfirmasi ulang. Order Baru mengirim `price` hanya untuk baris yang diketik petugas.
+   tampilkan `pratinjau` baru dan minta konfirmasi ulang. Order Baru: kolom harga hanya aktif untuk baris tanpa harga master sah
+   (§4.4); `price` hanya untuk baris itu.
 1. Order Sales & Order Baru: pemilih pelanggan (`customers/search`) → tampilkan cabang + channel; pemilih barang (`items/search?customerId=`) → hanya barang cabang itu, satuan dari `units`, harga per satuan. Tampilkan galat berkode §2 sebagai kalimat (bukan "kosong").
 2. Order Sales: `SALESMAN_BELUM_TERHUBUNG` = layar penjelas (hubungi admin), bukan form kosong.
 3. User admin: panel "Salesman Accurate" (GET/PUT/DELETE tautan), pilihan dari `pilihan` (tandai yang sudah tertaut ke akun lain;
@@ -190,8 +201,8 @@ rejected: [{request_id, kode, error}] }`. `failed` = DITAHAN (tetap `pending`, m
 4. Admin menautkan akun salesman (sebelum sales memakai Order Sales) — `accurate_linked` bawaan false: profil lama tidak membuka order.
 4a. Pastikan CRON_SECRET frontend = backend (FastAPI → Next `/api/orders/harga`): beda = tarik/simpan 503 `KONFIGURASI_SERVER` + log
    `accapi.order_cabang` "Next menolak CRON_SECRET FastAPI". Pemicu manual/seed: header `Authorization: Bearer`, bukan `?secret=`.
-4b. O1 tanpa O2: layar lama Order Sales/Order Baru TIDAK mengirim `sidik` → simpan ditolak `SIDIK_WAJIB` (produksi: 0 order/0 permintaan).
-   Rilis O1 bersama O2, atau sesudah O2 siap.
+4b. RILIS: O1 + O2 BERSAMAAN dalam satu deploy (keputusan owner sesi 13, bersama PR #166 runbook) sesudah peninjau APPROVE. TIDAK ada
+   mode "simpan tanpa sidik": layar lama tanpa `sidik` ditolak `SIDIK_WAJIB` (produksi: 0 order/0 permintaan).
 5. Order `needs_price` LAMA: probe produksi 12 Okt = 0 baris `sales_order` dan 0 `order_request` → tidak ada yang buntu (selesai tanpa keputusan).
 
 ## 7. TERBUKA
@@ -200,10 +211,6 @@ rejected: [{request_id, kode, error}] }`. `failed` = DITAHAN (tetap `pending`, m
 - `customer/list.do` & `item/list.do` `suspended`: bila Accurate mengabaikan field itu, semua tetap `false` — periksa sesudah sync pertama.
 - `item/list.do` tanpa key `charField2` untuk barang tak bertag (bila Accurate membuang field null): cabang lama dipertahankan (butir 10) →
   tag yang DIHAPUS di Accurate tidak mengosongkan cabang. Periksa sesudah sync pertama (DDL_O1: `ada_key` harus = jumlah barang).
-- Sidik WAJIB = O1 dan O2 dirilis bersama (lihat §6.4b); bila owner mau O1 lebih dulu, keputusan: izinkan simpan tanpa sidik sementara
-  (hitung ulang diam-diam — bertentangan dengan keputusan "pratinjau = tersimpan") atau tahan Order Sales/Order Baru sampai O2.
-- Harga petugas MENANG atas harga master sah (perilaku Order Baru lama dipertahankan, kini tercatat `sumber_harga`). Bila owner mau harga
-  petugas hanya untuk baris TANPA harga master, cukup tolak `price` saat `hargaMaster` tidak null (satu baris di `periksaOrder`).
 - Permintaan yang ditahan dugaan ganda (BL-20) tetap `pending` tanpa jalur lepas di layar; halaman keyset mencegah antrean macet, tetapi
   keputusan "bukan order ganda" untuk Web Sales belum ada.
 - Bonus barang promo (`bonuses[].code`) tidak diperiksa cabangnya (program principal memberi bonus barang principal itu; tidak divalidasi).
