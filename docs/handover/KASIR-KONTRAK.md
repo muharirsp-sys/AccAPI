@@ -282,7 +282,7 @@ Membaca satu snapshot (REPEATABLE READ, baca-saja) dari cache K1b database sinkr
             setoran: { tunai, transfer, giro, total }|null,      // null = belum ada setoran; "0.00" tercatat ≠ null
             dasar: [{ kode, revisi }],                           // KIRIM BALIK apa adanya di POST setoran
             setoranPerKode: [{ kode, revisi, tunai, transfer, giro, total }],
-            setoranTerakhir: { id, kode, revisi, noFormKasir, buktiUrl|null, giroNomor, giroJatuhTempo, catatan, oleh, pada }|null,  // revisi terakhir kode utama
+            setoranTerakhir: { id, kode, revisi, noFormKasir, buktiUrl|null, giroNomor, giroJatuhTempo, catatan, oleh, pada }|null,  // revisi terakhir kode utama (= dasar buktiLama); belum ada -> revisi terbaru kode lain
             selisih|null, status: "klop"|"selisih"|"belum_setor"|"setoran_tanpa_pelunasan"|null, dijelaskan: boolean|null,
             salesmanIdTakDikenal: number[]|null }],              // urut kode, Tanpa salesman terakhir
   takTeralokasi: [{ pelunasanId, nomor, metode, chequeAmount, jumlahInvoicePayment, sisa, arah: "lebih_bayar"|"kredit",
@@ -307,7 +307,7 @@ Membaca satu snapshot (REPEATABLE READ, baca-saja) dari cache K1b database sinkr
   `riwayat.setoran`) SELALU ada. Sesi sinkron tanpa database -> `baca: null`, `incaso.sebab: "SESI_SINKRON"` (GET tetap 200).
 - Baris orang = setiap orang yang punya pelunasan di cache ATAU setoran (dengan angka Incaso `null` bila tak lengkap).
 - `buktiUrl` = `/api/kasir/bukti?id=<kasir_setoran.id>`. Nama/pencatat = nama user (`"(akun tak dikenal)"` bila tidak ada).
-- Galat: 400 `INPUT_SALAH` (`field: "tanggal"`), 500 `GALAT_INTERNAL`. `orang=` yang tak dikenal -> `rincian.pelunasan: []`.
+- Galat: 400 `INPUT_SALAH` (`field: "tanggal"`, atau `"orang"` > 100 huruf), 500 `GALAT_INTERNAL`. `orang=` yang tak dikenal -> `rincian.pelunasan: []`.
 
 ### 8.4 `POST /api/kasir/setoran` (`kasir.catat`)
 

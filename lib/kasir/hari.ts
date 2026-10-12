@@ -344,7 +344,9 @@ export function bentukJawabanHari(m: Muatan, o: { sekarang: Date; orang: string 
             nonKas: L ? T(h.total.nonKas) : null, klop: L ? h.baris.filter((b) => b.status === "klop").length : null, jumlahOrang: h.baris.length,
         },
         orang: h.baris.map((b) => {
-            const terakhir = m.setoran.filter((s) => lipat(s.salesmanKode) === b.orang).sort((x, y) => x.id - y.id).at(-1);
+            // Revisi terakhir kode UTAMA (= dasar buktiLama); belum ada -> revisi terbaru kode lain milik orang itu (sebelum gabungan).
+            const milik = m.setoran.filter((s) => lipat(s.salesmanKode) === b.orang).sort((x, y) => x.id - y.id);
+            const terakhir = milik.filter((s) => s.salesmanKode === b.orang).at(-1) ?? milik.at(-1);
             return {
                 orang: b.orang, nama: namaOrang(b.orang, b.kode), kode: b.kode,
                 pelunasan: L ? T(b.pelunasan) : null,
