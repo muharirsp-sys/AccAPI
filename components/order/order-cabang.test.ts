@@ -198,14 +198,13 @@ test("BONUS_TIDAK_BISA_DIORDER: kalimat menyebut kode barang bonus + alasan; tan
     assert.equal(galatDariJawaban(jawab(409, { kode: "BONUS_TIDAK_BISA_DIORDER", error: "Teks server bonus" })).pesan, "Teks server bonus");
 });
 
-test("harga cabang default: source master_default atau cabang harga != cabang pelanggan; harga petugas tidak pernah", () => {
-    assert.equal(hargaCabangDefault({ source: "master_default", branchName: "CABANG DEFAULT" }, "CABANG A"), true);
-    assert.equal(hargaCabangDefault({ source: "tier", branchName: "CABANG DEFAULT" }, "CABANG A"), true);
-    assert.equal(hargaCabangDefault({ source: "tier", branchName: "CABANG A" }, "CABANG A"), false);
-    assert.equal(hargaCabangDefault({ source: "tier", branchName: "CABANG A", hargaDefault: true }, "CABANG A"), true); // flag server menang
-    assert.equal(hargaCabangDefault({ source: "petugas", branchName: "CABANG B" }, "CABANG A"), false);
-    assert.equal(hargaCabangDefault({ source: "tier", branchName: null }, "CABANG A"), false);
-    assert.equal(hargaCabangDefault(undefined, "CABANG A"), false);
+test("harga cabang default: HANYA flag server hargaDefault (nama cabang yang berbeda tidak ditebak); harga petugas tidak pernah", () => {
+    assert.equal(hargaCabangDefault({ source: "tier", branchName: "CABANG DEFAULT", hargaDefault: true }), true);
+    assert.equal(hargaCabangDefault({ source: "tier", branchName: "CABANG A", hargaDefault: true }), true); // flag server menang atas nama cabang
+    assert.equal(hargaCabangDefault({ source: "tier", branchName: "CABANG LAIN", hargaDefault: false }), false); // nama beda tanpa flag = BUKAN default
+    assert.equal(hargaCabangDefault({ source: "tier", branchName: "CABANG LAIN" }), false);
+    assert.equal(hargaCabangDefault({ source: "petugas", branchName: "CABANG B", hargaDefault: true }), false);
+    assert.equal(hargaCabangDefault(undefined), false);
 });
 
 test("HARGA_PETUGAS_TIDAK_DIIZINKAN: per baris menyebut harga master + tindakan 'kosongkan'; ATURAN_TERBIT_RUSAK = keadaan server, bukan isian pemakai", () => {

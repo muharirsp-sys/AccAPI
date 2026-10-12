@@ -354,11 +354,10 @@ export const kalimatGalat = (g: Galat) => `${g.pesan} ${g.tindakan}`;
 export const hargaPetugasSah = (teks: string) => /^\d+(\.\d{1,4})?$/.test(teks.trim()) && Number(teks) > 0;
 
 /**
- * Harga dari cabang DEFAULT (cabang pelanggan tanpa baris harga berlaku): `source` "master_default" (rencana kontrak) atau harga master yang
- * `branchName`-nya bukan cabang pelanggan. Harga petugas tidak pernah bertanda ini.
+ * Harga dari cabang DEFAULT (cabang pelanggan tanpa baris harga berlaku): HANYA flag server `hargaDefault` (kontrak O1) — nama cabang harga yang
+ * berbeda tidak ditebak. Harga petugas tidak pernah bertanda ini.
  */
-export const hargaCabangDefault = (info: Pick<PriceInfo, "source" | "branchName" | "hargaDefault"> | undefined, cabangPelanggan: string | null | undefined) =>
-    Boolean(info && info.source !== "petugas" && (info.hargaDefault === true || info.source === "master_default" || (info.branchName && cabangPelanggan && info.branchName !== cabangPelanggan)));
+export const hargaCabangDefault = (info: Pick<PriceInfo, "source" | "hargaDefault"> | undefined) => Boolean(info && info.source !== "petugas" && info.hargaDefault === true);
 
 /** PRATINJAU_BERUBAH (409) membawa pratinjau baru: netto + sidik barunya. null = jawaban bukan itu / bentuknya tak terbaca. */
 export function pratinjauBerubah(j: Jawaban): { net: number; sidik: string } | null {

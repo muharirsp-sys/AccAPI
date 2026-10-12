@@ -487,7 +487,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                                 <div className="flex flex-wrap items-center gap-2 fi-small" aria-live="polite">
                                                     {pratinjau.status === "memuat" && <StatusBadge tone="info" busy>Menghitung harga…</StatusBadge>}
                                                     {price && <><StatusBadge tone="pos">Harga ada</StatusBadge><span className="fi-muted fi-tnum">{price.priceCategoryName || "standar"} {rupiah(price.price ?? 0)} per {price.unit} (estimasi)</span>
-                                                        {hargaCabangDefault(price, cabangPelanggan) && <StatusBadge tone="neu">harga cabang default{price.branchName ? ` · ${price.branchName}` : ""}</StatusBadge>}</>}
+                                                        {hargaCabangDefault(price) && <StatusBadge tone="neu">harga cabang default{price.branchName ? ` · ${price.branchName}` : ""}</StatusBadge>}</>}
                                                     {tanpaHarga && <><StatusBadge tone="neg">Harga belum ada</StatusBadge><span className="fi-muted">Belum bisa dikirim: harga barang ini belum ada di Accurate untuk cabang pelanggan. Minta petugas melengkapinya.</span></>}
                                                 </div>
                                             )}

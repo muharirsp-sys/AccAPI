@@ -331,7 +331,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                                         <div className="flex flex-wrap items-center gap-2 fi-small" aria-live="polite">
                                             {pratinjau.status === "memuat" && <StatusBadge tone="info" busy>Menghitung harga…</StatusBadge>}
                                             {info && info.source !== "petugas" && <><StatusBadge tone="pos">Harga master</StatusBadge><span className="fi-muted">{sumberHarga(info)}</span>
-                                                {hargaCabangDefault(info, pelanggan?.branchName) && <StatusBadge tone="neu">harga cabang default</StatusBadge>}</>}
+                                                {hargaCabangDefault(info) && <StatusBadge tone="neu">harga cabang default</StatusBadge>}</>}
                                             {info && info.source === "petugas" && <><StatusBadge tone="warn">Harga petugas</StatusBadge><span className="fi-muted">{sumberHarga(info)}</span></>}
                                             {tanpaHarga && <><StatusBadge tone="warn">Harga master belum ada</StatusBadge><span className="fi-muted">Isi harga petugas, atau lengkapi daftar harga di Accurate.</span></>}
                                         </div>

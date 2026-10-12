@@ -1328,3 +1328,23 @@ test("Order baru (putaran 1 peninjau #6): jumlah desimal ditolak di kolomnya, Si
     await jumlah.fill("3");
     await expect(simpan).toBeEnabled(NAV);
 });
+
+test("Order Sales (putaran 1 peninjau #7): 'harga cabang default' hanya dari flag server hargaDefault — nama cabang harga yang berbeda tanpa flag TIDAK ditebak sebagai default", async ({ page }) => {
+    const { opsi } = await mockOrderCabang(page, { peran: "sales" });
+    await mockWebsales(page, { cabang: opsi });
+    await bukaSales(page);
+    const { b1 } = await isiSalesSiap(page);
+    await expect(b1).toContainText("Harga ada", NAV);
+    const ubahCabang = (hargaDefault: boolean) => (b: PreviewBody): Jawab => {
+        const j = pratinjauContoh(b);
+        if (j !== "putus" && j.body) (j.body as { prices: Record<string, unknown>[] }).prices = (j.body as { prices: Record<string, unknown>[] }).prices.map((p) => ({ ...p, hargaDefault, branchName: "CABANG LAIN" }));
+        return j;
+    };
+    opsi.preview = ubahCabang(false); // nama cabang harga != cabang pelanggan, tetapi server TIDAK menandai default
+    await b1.getByLabel("Jumlah").fill("3");
+    await expect(b1).toContainText("Harga ada", NAV);
+    await expect(b1).not.toContainText("harga cabang default");
+    opsi.preview = ubahCabang(true); // server menandai default
+    await b1.getByLabel("Jumlah").fill("4");
+    await expect(b1).toContainText("harga cabang default · CABANG LAIN", NAV);
+});
