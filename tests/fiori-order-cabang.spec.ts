@@ -1266,3 +1266,20 @@ test("Order baru (putaran 1 peninjau #4): tanggal order dikosongkan = Simpan ter
     await main.getByLabel("Tanggal order").fill(HARI_INI);
     await expect(simpan).toBeEnabled(NAV);
 });
+
+test("Order Sales (putaran 1 peninjau #5): jawaban 2xx tanpa ok ({}) = hasil kirim BELUM PASTI (bukan 'ditolak'), Kirim terkunci sampai Order saya diperiksa — tepat 1 POST", async ({ page }) => {
+    const { opsi } = await mockOrderCabang(page, { peran: "sales" });
+    const ws = await mockWebsales(page, { cabang: opsi, tolak: { status: 200, body: {} } });
+    await bukaSales(page);
+    const { main } = await isiSalesSiap(page);
+    const kirim = main.getByRole("button", { name: "Kirim order…" });
+    await expect(kirim).toBeEnabled(NAV);
+    await kirim.click();
+    await page.getByRole("dialog").getByRole("button", { name: "Kirim order" }).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
+    await expect(main.getByRole("status").filter({ hasText: "Hasil kirim belum pasti." })).toBeVisible();
+    await expect(main.getByText("Permintaan ditolak server")).toHaveCount(0);
+    await expect(kirim).toBeDisabled();
+    await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu — order terakhir mungkin sudah masuk");
+    expect(ws.kirim).toHaveLength(1);
+});

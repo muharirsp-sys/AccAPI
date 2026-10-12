@@ -306,7 +306,7 @@ const kodeBarangDari = (d: Record<string, unknown>, kodeGalat = ""): { kode: str
 };
 
 /**
- * Jawaban server -> kalimat + tindakan. Putus (0), >= 502, atau bukan JSON = "hasilnya belum pasti" (tidak pernah "kosong"/"tidak ada").
+ * Jawaban server -> kalimat + tindakan. Putus (0), >= 502, bukan JSON, atau 2xx tanpa `ok` = "hasilnya belum pasti" (tidak pernah "kosong"/"tidak ada").
  * Kode dibaca dari `kode` (rute order) atau `code` (rute admin); kode yang belum dikenal memakai kalimat server apa adanya.
  */
 export function galatDariJawaban(j: Jawaban, peran: Peran = "petugas"): Galat {
@@ -319,7 +319,9 @@ export function galatDariJawaban(j: Jawaban, peran: Peran = "petugas"): Galat {
     const kode = d ? (typeof d.kode === "string" ? d.kode : typeof d.code === "string" ? d.code : "") : "";
     const a = kode ? ATURAN[kode] : undefined;
     // Kode yang dikenal MENANG atas status: 503 KONFIGURASI_SERVER = "konfigurasi server" (pasti tidak tersimpan), 503/502 LAYANAN_TIDAK_PASTI = belum pasti.
-    if (d === null || (!a && j.status >= 502)) {
+    // 2xx tanpa `ok` ({}) bukan penolakan: server menjawab "berhasil" tanpa bukti (order mungkin tersimpan) -> belum pasti, bukan "ditolak" yang mengundang kirim ulang ganda.
+    const duaXXTanpaOk = j.status >= 200 && j.status < 300 && d !== null && d.ok !== false && d.ok !== true;
+    if (d === null || (!a && (j.status >= 502 || duaXXTanpaOk))) {
         return { ...dasar, kode: "BELUM_PASTI", judul: "Hasilnya belum pasti", tidakPasti: true,
             pesan: "Server tidak memberi jawaban yang jelas (sibuk atau mati sebentar).", tindakan: "Muat ulang data, lalu periksa sebelum mengulang." };
     }

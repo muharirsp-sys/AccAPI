@@ -268,3 +268,14 @@ test("sebabTarik: ORDER_GANDA pada permintaan tertahan = tindakan konteks tarik 
     assert.equal(sebabTarik("KODE_ASING", "kalimat server"), "kalimat server");
     assert.equal(sebabTarik(undefined, "kalimat server"), "kalimat server");
 });
+
+test("galatDariJawaban: jawaban 2xx TANPA ok ({}) = hasil belum pasti (order mungkin tersimpan; jangan dibilang 'ditolak'); 2xx dengan ok:false = ditolak berpesan server; 4xx tanpa kode tetap ditolak", () => {
+    const kosong = galatDariJawaban(jawab(200, {}), "sales");
+    assert.equal(kosong.tidakPasti, true);
+    assert.equal(kosong.kode, "BELUM_PASTI");
+    assert.equal(galatDariJawaban(jawab(201, { request: {} }), "petugas").tidakPasti, true);
+    const tolak = galatDariJawaban(jawab(200, { ok: false, error: "Ditolak dari server" }), "sales");
+    assert.equal(tolak.tidakPasti, false);
+    assert.match(tolak.pesan, /Ditolak dari server/);
+    assert.equal(galatDariJawaban(jawab(400, {}), "sales").tidakPasti, false);
+});
