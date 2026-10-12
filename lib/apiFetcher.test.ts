@@ -26,3 +26,17 @@ test("error tulis: hanya amplop penolakan Accurate yang rejected; timeout/gatewa
     assert.equal(classifyWriteError(new Error("Terjadi kesalahan jaringan.")).kind, "unknown");
     assert.equal(classifyWriteError(new TypeError("Cannot read properties of null (reading 's')")).kind, "unknown");
 });
+
+test("S7-1b: penolakan proxy SEBELUM diteruskan (4xx + sent:false) = rejected; sent:false pada 2xx/5xx atau tanpa status tetap tidak pasti", () => {
+    const izin = { error: "Tulis ke Accurate lewat Konsol butuh izin Konsol · Eksekusi (api_wrapper.execute). Tidak ada yang dikirim.", code: "PERMISSION_REQUIRED", permission: "api_wrapper.execute", sent: false };
+    assert.deepEqual(classifyWriteError(new AccurateError(izin.error, undefined, izin, 403)), { kind: "rejected", message: izin.error });
+    assert.equal(classifyWriteError(new AccurateError("x", undefined, { error: "x", code: "ENDPOINT_TIDAK_DIIZINKAN", sent: false }, 403)).kind, "rejected");
+    assert.equal(classifyWriteError(new AccurateError("x", undefined, { error: "x", code: "ACCURATE_SESSION_INCOMPLETE", sent: false }, 400)).kind, "rejected");
+    // Jawaban Accurate diteruskan proxy = HTTP 200 apa pun isinya; 5xx = galat proxy. Keduanya tidak boleh menjadi "tidak terkirim".
+    assert.equal(classifyWriteError(new AccurateError("x", undefined, { s: true, sent: false }, 200)).kind, "unknown");
+    assert.equal(classifyWriteError(new AccurateError("x", undefined, { error: "x", sent: false }, 502)).kind, "unknown");
+    assert.equal(classifyWriteError(new AccurateError("x", undefined, { error: "x", sent: false })).kind, "unknown");
+    // 403 lama tanpa sent (requirePermission polos) tetap tidak pasti — tidak ada klasifikasi baru untuk jawaban tanpa sent:false.
+    assert.equal(classifyWriteError(new AccurateError("Forbidden", undefined, { error: "Forbidden" }, 403)).kind, "unknown");
+    assert.equal(classifyWriteError(new AccurateError("x", undefined, { error: "x", sent: true }, 403)).kind, "unknown");
+});

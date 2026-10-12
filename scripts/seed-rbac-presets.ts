@@ -14,6 +14,7 @@
  * JANGAN dipakai untuk menambah kunci baru di produksi (D-17: lewat UI grup / INSERT terarah).
  * Preset diturunkan dari rolePermissionPresets (lib/rbac.ts) + allowedActions OPC
  * (lib/off-program-control/access.ts), dinyatakan sebagai permission key registry.
+ * S7-1b: kunci pensiun (KUNCI_PENSIUN, lib/rbac/registry.ts) dibuang dari preset — preset TIDAK diperluas ke kunci pengganti.
  */
 import pg from "pg";
 import { randomUUID } from "node:crypto";
@@ -30,7 +31,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
             ...k("sppd", ["view", "generate", "download"]),
             ...k("finance", ["view", "approve", "export", "update"]),
             ...k("principles", ["view"]), ...k("summary", ["view", "export"]),
-            ...k("off_program_control", ["view", "update", "approve", "export"]),
+            ...k("off_program_control", ["view", "approve"]),
             ...k("claim_workflow", ["view", "approve", "export"]),
             ...k("form_kontrol", ["view", "submit", "manage"]),
             ...k("insentif_sales", ["view", "upload_target", "upload_progress"]),
@@ -41,7 +42,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
             ...k("dashboard", ["view"]), ...k("payments", ["view", "export"]),
             ...k("sppd", ["view", "download"]),
             ...k("finance", ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update", "resolve_unknown", "override_duplicate", "repost_payment"]),
-            ...k("off_program_control", ["view", "update", "finance_payment", "submit_refund"]),
+            ...k("off_program_control", ["view", "finance_payment", "submit_refund"]),
             ...k("claim_workflow", ["view", "update", "export"]),
             ...k("principles", ["view"]),
             ...k("insentif_sales", ["view", "input_support", "manage_payment"]),
@@ -54,7 +55,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
             ...k("sppd", ["view", "generate", "download"]),
             ...k("principles", ["view"]),
             ...k("summary", ["view", "upload", "generate", "export", "edit", "update"]),
-            ...k("off_program_control", ["view", "create", "update"]),
+            ...k("off_program_control", ["view"]),
             ...k("claim_workflow", ["view"]),
         ],
     },
@@ -68,7 +69,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
     {
         name: "SPV", desc: "Supervisor — OPC pengajuan + Form Kontrol tim", keys: [
             ...k("dashboard", ["view"]),
-            ...k("off_program_control", ["view", "create", "update", "create_batch", "edit_returned_batch", "submit_batch", "submit_refund", "discount_view", "discount_manage"]),
+            ...k("off_program_control", ["view", "create_batch", "edit_returned_batch", "submit_batch", "submit_refund", "discount_view", "discount_manage"]),
             ...k("form_kontrol", ["view", "submit"]),
             ...k("insentif_sales", ["view", "upload_progress"]),
         ],
@@ -84,7 +85,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
     {
         name: "Claim", desc: "Tim Klaim — review & klaim", keys: [
             ...k("dashboard", ["view"]),
-            ...k("off_program_control", ["view", "export", "claim_review", "claim_final", "audit_read", "audit_export", "audit_correct", "period_close", "create_batch", "submit_batch", "edit_returned_batch"]),
+            ...k("off_program_control", ["view", "claim_review", "claim_final", "audit_read", "audit_export", "audit_correct", "period_close", "create_batch", "submit_batch", "edit_returned_batch"]),
             ...k("claim_workflow", ["view", "create", "edit", "update", "submit", "approve", "export"]),
         ],
     },

@@ -8,6 +8,8 @@
 
 export type OffRole =
   | "admin"
+  // AM-026 (D-01 §C "manager bukan admin", owner 11 Okt): Manager = PEMBACA semua tab + audit (baca/ekspor), tanpa aksi tulis.
+  | "manager"
   | "supervisor"
   | "sales_manager"
   | "claim"
@@ -85,7 +87,9 @@ export function normalizeOffRole(value?: unknown): OffRole {
     .replace(/\s+/g, "_")
     .replace(/-/g, "_");
 
-  if (role === "admin" || role === "manager") return "admin";
+  if (role === "admin") return "admin";
+
+  if (role === "manager") return "manager";
 
   if (role === "spv" || role === "supervisor") {
     return "supervisor";
@@ -174,6 +178,7 @@ export function getOffAccessibleTabs(roleInput: OffRole | string): OffTab[] {
 
   switch (role) {
     case "admin":
+    case "manager":
       return [
         "overview",
         "supervisor",
@@ -224,6 +229,8 @@ export function canPerformOffAction(
 
   const allowedActions: Record<OffRole, OffAction[]> = {
     admin: [],
+    // D-01 §C: baca semua tab + baca/ekspor audit. TANPA aksi atas nama SPV/SM/Claim/OM/Finance, TANPA periode, TANPA discount_view (PK-6).
+    manager: ["audit_read", "audit_export"],
     supervisor: ["create_batch", "edit_returned_batch", "submit_batch", "submit_refund", "discount_view", "discount_manage"],
     sales_manager: ["sm_approve", "sm_return", "submit_refund"],
     // #1-3: Claim role bisa membuat, mengedit, dan submit pengajuan versi CLM (dari direksi).
@@ -259,6 +266,8 @@ export function getOffRoleBadgeLabel(
   return resolutionOrRole.role;
 }
 
+// S7-1b: create/update/export dipensiunkan dari registry (KUNCI_PENSIUN) tetapi bisa masih ada di DB sampai RBAC_S7_1B_PENSIUN.sql —
+// tetap dihitung "dasar" (bukan granular) agar tebakan di bawah tidak berubah karena baris lama.
 const AKSI_DASAR_OPC = new Set(["view", "create", "update", "approve", "export"]);
 
 /**

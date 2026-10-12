@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accessGroup, groupPermission, userGroup, user, permissionAuditLog } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
-import { isValidPermissionKey } from "@/lib/rbac/registry";
+import { KUNCI_PENSIUN, isValidPermissionKey } from "@/lib/rbac/registry";
 import { anggotaTunggal, detailUtama, galat, GalatOtorisasi, jawabGalat, mulaiUtama, selesaiUtama, tolakGrupTerakhir, transaksiOtorisasi, type Tx } from "@/lib/rbac/otorisasi";
 
 type Context = { params: Promise<{ id: string }> };
@@ -52,7 +52,9 @@ export async function PATCH(request: NextRequest, context: Context) {
     // Semua validasi SEBELUM tulis apa pun (AM-057 LOW: dulu nama tersimpan lalu izin ditolak).
     const ubahNama = body.name !== undefined || body.description !== undefined;
     if (ubahNama && body.name !== undefined && !String(body.name ?? "").trim()) return galat(400, "INPUT_TIDAK_VALID", "Nama group wajib diisi");
-    const keys = Array.isArray(body.permissions) ? [...new Set(body.permissions as unknown[])] : null;
+    // S7-1b: kunci pensiun (KUNCI_PENSIUN) dibuang dari kiriman tanpa 400 — layar Akses Group mengirim ulang SEMUA kunci grup, termasuk
+    // kunci lama yang masih ada di DB sebelum RBAC_S7_1B_PENSIUN.sql; penghapusannya tercatat di `removed` audit di bawah.
+    const keys = Array.isArray(body.permissions) ? [...new Set(body.permissions as unknown[])].filter((k) => !(typeof k === "string" && KUNCI_PENSIUN.has(k))) : null;
     if (keys) {
         const invalid = keys.filter((k) => typeof k !== "string" || !isValidPermissionKey(k)).map(String);
         if (invalid.length > 0) return galat(400, "KUNCI_TIDAK_VALID", `Key tidak valid: ${invalid.join(", ")}`, { invalid });
