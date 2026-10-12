@@ -205,3 +205,174 @@ lain) → crontab `/api/cron/kasir-pelunasan`. Tanpa env baru. Beban Accurate ta
 
 Bila TZ server = WITA, pakai jam WITA langsung (`*/15 7-20 * * 1-6`, `0 21 * * 1-6`, `30 19 * * 1-6 …?penuh=1`). `--max-time` ≥ 900 (route berhenti
 memulai putaran baru sesudah 13 menit). Kode 202 = normal (tanggal sedang dibaca tombol); 502/503 = periksa status di UI.
+
+## 8. K2a — server Kasir: GET hari, setoran, jelaskan, Tutup/Buka (12 Okt 2026)
+
+Keputusan: `scratch/fiori-intake/OWNER-ANSWERS-K1b-S7-1b-2026-10-12.md` (K2) + `OWNER-ANSWERS-S7-2026-10-10.md` (C8, Kasir, T1/T2).
+Berkas: `lib/kasir/hari.ts` (muat + tulis, deps disuntik), `lib/kasir/bukti.ts` (berkas bukti transfer), route `app/api/kasir/route.ts` (GET),
+`app/api/kasir/{setoran,jelaskan,tutup,buka}/route.ts` (POST), `app/api/kasir/bukti/route.ts` (GET unduh). Tanpa Accurate (cache K1b saja).
+K2b (UI `/kasir`) boleh membangun mock `page.route` LANGSUNG dari bagian ini.
+
+### 8.1 Aturan umum
+
+- **Uang masuk & keluar = TEKS desimal**, titik desimal, maks. 2 desimal, tanpa pemisah ribuan, tanpa tanda: `"1250000"`, `"1250000.5"`.
+  Keluar selalu `"1250000.00"` (`senKeTeks`). Isian manusia ("Rp 1.250.000") dinormalkan KLIEN (`parseLocaleNumber`) sebelum dikirim.
+  Negatif / notasi e / pemisah ribuan / > 2 desimal / bukan teks -> 400 `INPUT_SALAH` + `field`. Server menghitung ulang dari DB; angka klien
+  hanya PEMBANDING (bukan sumber).
+- **Waktu** keluar = ISO UTC `…Z`; tampilan WITA urusan klien (`waktuWita`). **`tanggal`** = `YYYY-MM-DD`, tanggal yang ada, ≤ hari ini WITA
+  (jam SERVER) -> selain itu 400 `INPUT_SALAH` `field: "tanggal"`. Hari Minggu TIDAK diblokir (`hari.hariKerja` hanya info).
+- **Bentuk galat**: `{ ok: false, kode, error, field?, alasan?, keadaan? }` — `error` = kalimat siap tampil (tanpa pesan DB mentah). 401/403 =
+  bentuk bawaan `requirePermission` (`{ error: "Unauthorized" | "Forbidden" }`, tanpa `kode`). Sukses: `{ ok: true, … }`.
+- **Serialisasi**: setiap tulis (setoran, jelaskan, tutup, buka, catat kunci otomatis) = SATU transaksi READ COMMITTED yang pernyataan
+  pertamanya `pg_advisory_xact_lock(hashtextextended('kasir:' || tanggal, 0))`, lalu baca ulang event -> `statusHari`/`bolehDiubah` (jam server)
+  -> hitung ulang dari DB -> INSERT. Tanpa UPDATE/DELETE tabel jejak. Tutup juga `SELECT … FROM kasir_pelunasan_baca … FOR SHARE` (klaim
+  pembaca K1b menunggu sampai Tutup selesai; cache diam selama transaksi).
+- **Kunci 20.00 WITA dicatat malas** (orkestrator 12 Okt, tanpa cron): aksi PERTAMA (GET atau POST apa pun) yang melihat hari terkunci
+  otomatis (`statusHari.sebab = "otomatis_20"`: ≥ 20.00 WITA tanpa event, atau jendela buka sudah lewat) menyisipkan event `kunci`
+  (`oleh = "sistem"`, snapshot = `snapshotHari` + `baca`) di transaksi terkunci — sekali walau serentak. POST yang menabrak kunci tetap
+  MENYIMPAN baris kunci itu lalu menjawab 409 `HARI_TERKUNCI`. Dilewati (dicoba lagi aksi berikutnya) bila sesi sinkron tanpa database —
+  kunci tidak bergantung pada baris itu. Gagal mencatat tidak menggagalkan GET.
+
+### 8.2 Kode HTTP — mana yang PASTI
+
+| HTTP | `kode` | Arti | Hasil tulis |
+|---|---|---|---|
+| 400 | `INPUT_SALAH` (+ `field`) | isian tidak sah (lihat tiap route) | pasti TIDAK tersimpan |
+| 401 / 403 | — (bawaan) | tanpa sesi / tanpa kunci izin | pasti TIDAK tersimpan |
+| 404 | `TIDAK_ADA` | (GET bukti) baris/berkas bukti tidak ada | — |
+| 409 | `SETORAN_BERUBAH` | `dasar` ≠ revisi terakhir sekarang (klik ganda / pengguna lain) | pasti TIDAK tersimpan |
+| 409 | `ANGKA_BERUBAH` | angka/sidik klien ≠ hitungan server sekarang | pasti TIDAK tersimpan |
+| 409 | `TIDAK_PERLU_DIJELASKAN` | baris klop / ember tidak ada lagi | pasti TIDAK tersimpan |
+| 409 | `HARI_TERKUNCI` | hari terkunci (tutup / kunci / 20.00 WITA) | pasti TIDAK tersimpan (baris `kunci` sistem boleh tersimpan) |
+| 409 | `TIDAK_TERKUNCI` | (buka) hari sedang terbuka | pasti TIDAK tersimpan |
+| 409 | `BACA_BELUM_SEGAR` | (tutup) status baca ≠ `lengkap` atau `lengkap_pada` > 15 mnt | pasti TIDAK tersimpan |
+| 409 | `TERHALANG` (+ `alasan[]`) | (tutup) masih ada selisih / tak teralokasi belum dijelaskan | pasti TIDAK tersimpan |
+| 500 | `GALAT_INTERNAL` | galat SEBELUM commit (transaksi dibatalkan) | pasti TIDAK tersimpan |
+| 502 | `TIDAK_PASTI` | galat SAAT/SESUDAH commit (mis. koneksi putus di COMMIT) | **TIDAK PASTI** |
+| 503 | `SESI_SINKRON` | sesi Accurate akun sinkron tanpa database (jelaskan, tutup) | pasti TIDAK tersimpan |
+
+**Aturan klien (K2b)** — jawaban PASTI = HTTP < 500, ATAU HTTP ≥ 500 dengan badan JSON ber-`kode` `GALAT_INTERNAL` / `SESI_SINKRON` (route Kasir
+di atas) dan `BACA_GAGAL` (502) / `SESI_SINKRON` (503) dari `POST /api/kasir/segarkan` (§7, baca-saja). **TIDAK PASTI** = koneksi putus /
+abort / timeout, badan bukan JSON (halaman proxy), `kode: "TIDAK_PASTI"`, atau ≥ 500 tanpa `kode` yang dikenal -> tampil "hasilnya belum
+pasti", muat ulang GET lalu bandingkan revisi terakhir / penjelasan terakhir / event terakhir, TANPA ulang otomatis. (`tulis()`
+`principal-order/bersama.ts` menganggap SEMUA ≥ 502 tidak pasti — JANGAN dipakai apa adanya untuk Kasir.) Setiap 409 membawa `keadaan`
+terbaru (lihat route) — klien memperbarui tampilan dari situ atau muat ulang.
+
+**Klik ganda / ulang** (server, bukan hanya tombol nonaktif): setoran -> POST kedua ber-`dasar` sama = 409 `SETORAN_BERUBAH` (satu revisi;
+klien membandingkan `keadaan.setoranPerKode` dengan yang dikirim); jelaskan identik dengan penjelasan terakhir yang masih berlaku (angka +
+teks + tindak lanjut sama) = 200 `{ ok: true, sudahAda: true }` tanpa baris kedua; tutup saat event terakhir `tutup` = 200 `{ ok: true,
+sudahDitutup: true }`; buka kedua = 409 `TIDAK_TERKUNCI` + `keadaan.hari.kunciBerikutnya`.
+
+### 8.3 `GET /api/kasir?tanggal=&orang=` (`kasir.view`, TANPA Accurate)
+
+Membaca satu snapshot (REPEATABLE READ, baca-saja) dari cache K1b database sinkron + tabel jejak. `orang=` (kode) menambah `rincian`.
+
+```
+{ ok: true, tanggal, sekarang,
+  hari: { terkunci, sebab: "tutup"|"kunci"|"otomatis_20"|null, kunciBerikutnya: ISO|null, bolehDiubah, hariKerja,
+          berubahSejakDitutup: boolean|null,              // angka sekarang ≠ snapshot event tutup/kunci TERAKHIR; null = tak ada event / Incaso tak lengkap
+          event: [{ id, jenis: "tutup"|"kunci"|"buka", alasan|null, oleh: <nama>|"Sistem", pada }] },   // urut id
+  baca: StatusPublik|null,                                // §7 publikkan(); null = SESI_SINKRON
+  segarUntukTutup: boolean,                               // lengkap ∧ lengkap_pada ≤ 15 mnt (jam server)
+  incaso: { lengkap: boolean, sebab: null|"SESI_SINKRON"|"BACA_BELUM_LENGKAP", pesan: string|null },
+  total: { pelunasan|null, setoran, selisih|null, takTeralokasi|null, takTeralokasiBelumDijelaskan: number|null, nonKas|null,
+           klop: number|null, jumlahOrang: number },
+  orang: [{ orang: "<kode kanonik>"|"" (Tanpa salesman), nama, kode: string[],
+            pelunasan|null, pelunasanPerMetode: { CASH_OTHER?, BANK_TRANSFER?, BANK_CHEQUE? }|null, jumlahFaktur: number|null,
+            setoran: { tunai, transfer, giro, total }|null,      // null = belum ada setoran; "0.00" tercatat ≠ null
+            dasar: [{ kode, revisi }],                           // KIRIM BALIK apa adanya di POST setoran
+            setoranPerKode: [{ kode, revisi, tunai, transfer, giro, total }],
+            setoranTerakhir: { id, kode, revisi, noFormKasir, buktiUrl|null, giroNomor, giroJatuhTempo, catatan, oleh, pada }|null,  // revisi terakhir kode utama
+            selisih|null, status: "klop"|"selisih"|"belum_setor"|"setoran_tanpa_pelunasan"|null, dijelaskan: boolean|null,
+            salesmanIdTakDikenal: number[]|null }],              // urut kode, Tanpa salesman terakhir
+  takTeralokasi: [{ pelunasanId, nomor, metode, chequeAmount, jumlahInvoicePayment, sisa, arah: "lebih_bayar"|"kredit",
+                    alasan: "jumlah_invoice_payment_beda"|"tanpa_baris_faktur"|"metode_tak_dikenal"|"nominal_negatif",
+                    orang: [{ orang, nama }], dijelaskan }]|null,
+  nonKas: [{ pelunasanId, nomor, metode, chequeAmount }]|null,
+  penghalangTutup: { bisaDitutup, alasan: string[] }|null,
+  sidik: string|null,                                     // sidik angka hari (kirim di POST tutup); null bila Incaso tak lengkap
+  riwayat: { setoran: [{ id, kode, orang, revisi, tunai, transfer, giro, total, noFormKasir, buktiUrl|null, giroNomor, giroJatuhTempo,
+                         catatan, oleh, pada }],          // SEMUA revisi hari itu, urut kode lalu revisi
+             penjelasan: [{ id, jenis: "selisih", orang, pelunasan, setoran, penjelasan, tindakLanjut, oleh, pada, berlaku: boolean|null }
+                        | { id, jenis: "tak_teralokasi", pelunasanId, sisa, penjelasan, oleh, pada, berlaku: boolean|null }] },
+  pegawai: [{ kode, orang, nama }],                       // accurate_employee salesman ∧ ¬suspended (pilihan "setoran tanpa pelunasan")
+  rincian?: { orang, pelunasan: [{ pelunasanId, nomor, metode, chequeAmount, bagian,
+                                   faktur: [{ fakturId, nomorFaktur, invoicePayment }] }] } | null }   // hanya bila ?orang= ∧ Incaso lengkap
+```
+
+- **Angka Incaso hanya bila status baca `lengkap`** (umur bebas; Tutup yang menuntut ≤ 15 mnt): selain itu `pelunasan`, `pelunasanPerMetode`,
+  `jumlahFaktur`, `selisih`, `status`, `dijelaskan`, `salesmanIdTakDikenal`, `total.pelunasan/selisih/takTeralokasi/nonKas/klop`,
+  `takTeralokasi`, `nonKas`, `penghalangTutup`, `sidik`, `berubahSejakDitutup`, `riwayat.penjelasan[].berlaku`, `rincian` = `null` dan
+  `incaso.sebab` terisi (Incaso "belum terbaca", BUKAN 0). Setoran (`setoran`, `dasar`, `setoranPerKode`, `setoranTerakhir`, `total.setoran`,
+  `riwayat.setoran`) SELALU ada. Sesi sinkron tanpa database -> `baca: null`, `incaso.sebab: "SESI_SINKRON"` (GET tetap 200).
+- Baris orang = setiap orang yang punya pelunasan di cache ATAU setoran (dengan angka Incaso `null` bila tak lengkap).
+- `buktiUrl` = `/api/kasir/bukti?id=<kasir_setoran.id>`. Nama/pencatat = nama user (`"(akun tak dikenal)"` bila tidak ada).
+- Galat: 400 `INPUT_SALAH` (`field: "tanggal"`), 500 `GALAT_INTERNAL`. `orang=` yang tak dikenal -> `rincian.pelunasan: []`.
+
+### 8.4 `POST /api/kasir/setoran` (`kasir.catat`)
+
+Badan `application/json`, ATAU `multipart/form-data` dengan bagian `data` (teks JSON, bentuk sama) + bagian berkas `bukti`:
+
+```
+{ tanggal, orang, tunai, transfer, giro, noFormKasir?, giroNomor?, giroJatuhTempo?, buktiLama?: true, catatan?, dasar: [{ kode, revisi }] }
+```
+
+- `orang` = kode (dilipat ke kode kanonik lewat `sales_code_merge` bulan itu); BUKAN Tanpa salesman (`""`); harus dikenal (nomor
+  `accurate_employee` atau kode setoran hari itu) -> selain itu 400 `field: "orang"`.
+- `tunai`/`transfer`/`giro` WAJIB teks (aturan §8.1). **`noFormKasir` WAJIB bila total > 0** (1–100 huruf); setoran 0 tidak wajib.
+- **Transfer > 0 -> bukti WAJIB**: berkas `bukti` baru (jpg/png/pdf, dicek MAGIC BYTES — JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`, PDF
+  `%PDF-` — bukan ekstensi/`type`; ≤ 5 MB; badan > 6 MB ditolak sebelum dibaca) ATAU `buktiLama: true` = pakai berkas revisi terakhir kode
+  utama, hanya bila revisi itu punya bukti DAN transfernya sama. Transfer 0 + berkas/`buktiLama` -> 400. `field: "buktiTransfer"`.
+- **Giro > 0 -> `giroNomor` (nomor BG, 1–100 huruf) + `giroJatuhTempo` (`YYYY-MM-DD`) WAJIB**; giro 0 + salah satunya -> 400.
+- `catatan` ≤ 500 huruf (opsional). `dasar` = larik `{ kode, revisi }` dari GET (`[]` untuk setoran pertama) -> ≠ revisi terakhir sekarang
+  (sebagai himpunan) = 409 `SETORAN_BERUBAH`, `keadaan: { orang, dasar, setoranPerKode, setoran }`.
+- Hari terkunci -> 409 `HARI_TERKUNCI`, `keadaan: { hari }`. TIDAK bergantung status baca (setoran tetap bisa saat Accurate gagal).
+- Tulis = `rencanaSetoranOrang` -> SEMUA baris dalam SATU transaksi: kode utama = revisi baru bernominal baru (+ Form Kasir, bukti, giro,
+  catatan); rantai kode lain milik orang itu yang ≠ 0 = revisi baru bernilai 0 (catatan otomatis). 23505 -> 409 `SETORAN_BERUBAH`.
+- 200 `{ ok: true, orang, revisi: [{ kode, revisi }], buktiUrl: string|null }`.
+
+**Berkas bukti**: disimpan di volume data frontend `data/uploads/kasir-bukti/<uuid>.<jpg|png|pdf>` (mekanisme sama dengan foto Form
+Kontrol, `/app/data` = volume `accapi_frontend_data`); nama dibuat SERVER (`randomUUID`), ditulis eksklusif (`wx`) SEBELUM transaksi, namanya
+disimpan di `kasir_setoran.bukti_transfer`. Galat PASTI (400/409/500) -> berkas dihapus; `TIDAK_PASTI` -> dibiarkan (yatim, tak terjangkau).
+Tidak pernah ditimpa/dihapus sesudahnya (koreksi = revisi baru + berkas baru atau `buktiLama`); cron `cleanup-uploads` hanya menyentuh
+`form-kontrol` (retensi bukti = permanen, cadangan = volume data).
+`GET /api/kasir/bukti?id=<kasir_setoran.id>` (`kasir.view`): berkas apa adanya, `Content-Type` dari jenis tersimpan, `X-Content-Type-Options:
+nosniff`, `Cache-Control: private, no-store`; gambar `inline`, PDF `attachment`; nama unduhan `bukti-<tanggal>-<kode>-r<revisi>.<ext>`. Path
+dari DB (pola UUID ketat + `basename`), tak pernah dari input pengguna. 400 `INPUT_SALAH` (id), 404 `TIDAK_ADA`.
+
+### 8.5 `POST /api/kasir/jelaskan` (`kasir.catat`)
+
+```
+{ tanggal, jenis: "selisih", orang, angka: { pelunasan, setoran }, penjelasan, tindakLanjut: "setor_susulan"|"koreksi_incaso"|"lapor_om" }
+{ tanggal, jenis: "tak_teralokasi", pelunasanId, angka: { sisa }, penjelasan }
+```
+
+- TIDAK mensyaratkan status `lengkap` (orkestrator 12 Okt): server menghitung ulang dari cache SEKARANG; penjelasan berkunci ANGKA, jadi angka
+  yang berubah sesudahnya otomatis membuat penjelasan tak berlaku (Tutup menuntut `lengkap` ≤ 15 mnt). Butuh database sinkron -> 503
+  `SESI_SINKRON`.
+- `penjelasan` 15–1000 huruf (sesudah trim) -> selain itu 400 `field: "penjelasan"`. `tindakLanjut` wajib untuk `selisih`. `orang` `""` =
+  Tanpa salesman (boleh dijelaskan). `angka.setoran` untuk belum setor = `"0"`.
+- Selisih: baris orang tak ada / `klop` -> 409 `TIDAK_PERLU_DIJELASKAN`; angka ≠ -> 409 `ANGKA_BERUBAH`, `keadaan: { angka: { pelunasan,
+  setoran }, status }`. Ember: tak ada ember untuk `pelunasanId` -> 409 `TIDAK_PERLU_DIJELASKAN`; ada tetapi `sisa` beda -> 409
+  `ANGKA_BERUBAH`, `keadaan: { angka: { sisa: [..] } }`. Identik dengan penjelasan terakhir yang berlaku -> 200 `sudahAda`.
+- Hari terkunci -> 409 `HARI_TERKUNCI`. 200 `{ ok: true, id }` | `{ ok: true, sudahAda: true }`.
+
+### 8.6 `POST /api/kasir/tutup` (`kasir.tutup`)
+
+`{ tanggal, sidik }`. Urutan: event terakhir `tutup` -> 200 `{ ok: true, sudahDitutup: true }`; terkunci (kunci/20.00) -> 409 `HARI_TERKUNCI`;
+tanpa database sinkron -> 503 `SESI_SINKRON`; status baca (FOR SHARE) bukan `lengkap` atau `lengkap_pada` > 15 mnt -> 409 `BACA_BELUM_SEGAR`
+(`keadaan: { baca, segarUntukTutup: false }` — klien segarkan berjeda ≥ 6 dtk lalu muat ulang); `penghalangTutup` -> 409 `TERHALANG` +
+`alasan[]`; `sidik` ≠ -> 409 `ANGKA_BERUBAH` (`keadaan: { sidik }`). INSERT event `tutup`, snapshot = `snapshotHari` + `baca: { status,
+lengkapPada, jumlahDaftar, akun }` (CHECK `kasir_hari_event_tutup_tuntas` = jaring kedua; 23514 -> 409 `TERHALANG`). Pelunasan DITOLAK
+pembaca -> status tak pernah `lengkap` -> Tutup terhalang (K-3, tanpa jalan jelaskan). 200 `{ ok: true, event: { id, pada } }`.
+
+### 8.7 `POST /api/kasir/buka` (`kasir.buka`, OM/Admin)
+
+`{ tanggal, alasan }`; `alasan` 15–1000 huruf -> selain itu 400 `field: "alasan"`. Hari tidak terkunci -> 409 `TIDAK_TERKUNCI` (`keadaan:
+{ hari }`). INSERT event `buka` (hari otomatis terkunci lagi 20.00 WITA berikutnya sesudah waktu buka, T1). 200 `{ ok: true, kunciBerikutnya }`.
+
+### 8.8 DDL K2a (owner: Giro wajib nomor BG + jatuh tempo)
+
+`kasir_setoran.giro_nomor text` (CHECK tidak hanya spasi) + `giro_jatuh_tempo date`, nullable (server menegakkan "giro > 0 -> wajib", pola
+K1a: perubahan keputusan tanpa DDL). `docs/handover/DDL_K2A.sql` (pemilik, SESUDAH DDL_K1B, SEBELUM image) = entri migrate-pg
+`kasir_setoran giro (K2a)` = `db/migrations/0032_kasir_setoran_giro.sql` = Drizzle. Tanpa env baru.
