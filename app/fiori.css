@@ -361,7 +361,9 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-hist li:last-child { border-bottom:0; }
 .fi-hist time { color:var(--ink-subtle); font-variant-numeric:tabular-nums; }
 .fi-hist .fi-chg { grid-column:2; color:var(--ink-subtle); }
-.fi-varbox { border:1px dashed color-mix(in srgb, var(--info) 50%, transparent); border-radius:var(--r-lg); padding:10px 12px; display:grid; gap:4px; background:var(--info-bg); }
+.fi-varbox { border:1px dashed color-mix(in srgb, var(--info) 50%, transparent); border-radius:var(--r-lg); padding:10px 12px; display:none; gap:4px; background:var(--info-bg); }
+/* Catatan varian (usulan BL) hanya untuk Admin: SidebarLayout memberi data-admin="true" pada <main> bila akun memegang users.manage. */
+[data-admin="true"] .fi-varbox { display:grid; }
 .fi-varbox > .fi-tag { justify-self:start; }
 .fi-varbox p { font:var(--fs-small); color:var(--ink-muted); }
 .fi-chipgrid { display:grid; gap:8px; }
