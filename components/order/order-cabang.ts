@@ -21,7 +21,7 @@ export type PelangganPilih = {
     /** "GT"/"MT"/… dari kategori Accurate; "" = kategori belum diisi (server menolak order tanpa channel). */
     channel: string; categoryName: string | null; priceCategoryName: string | null; alamat: string | null;
 };
-export type UnitHarga = { unit: string; price: number | null; source?: string; branchName?: string | null; effectiveDate?: string | null };
+export type UnitHarga = { unit: string; price: number | null; source?: string; branchName?: string | null; effectiveDate?: string | null; hargaDefault?: boolean };
 export type BarangPilih = {
     id: number; no: string; name: string; branchId: number | null; branchName: string | null; tag: string | null; units: UnitHarga[];
     /** Harga di `units` berlaku untuk pelanggan+tanggal ini; berubah = harga di daftar dianggap basi (yang final tetap dari pratinjau). */
@@ -43,6 +43,8 @@ export type Suggestion = { program_id: string; program_name?: string; message: s
 export type PriceInfo = {
     code: string; unit: string; price: number | null; source: string; priceCategoryName: string | null;
     branchName: string | null; effectiveDate: string | null; hargaMaster?: number | null;
+    /** Harga master dari cabang DEFAULT (cabang pelanggan tanpa baris harga berlaku). */
+    hargaDefault?: boolean;
 };
 
 // ------------------------------------------------------------------ pencarian
@@ -91,7 +93,7 @@ export function bacaBarang(raw: unknown, hargaUntuk: string): BarangPilih | null
         if (typeof o.unit !== "string" || !o.unit) return [];
         const price = angka(o.price);
         return [{ unit: o.unit, price: Number.isFinite(price) && price > 0 ? price : null, source: teksAtauNull(o.source) ?? undefined,
-            branchName: teksAtauNull(o.branchName), effectiveDate: teksAtauNull(o.effectiveDate) }];
+            branchName: teksAtauNull(o.branchName), effectiveDate: teksAtauNull(o.effectiveDate), hargaDefault: o.hargaDefault === true }];
     });
     const branchId = angka(r.branchId);
     return { id, no: r.no, name: String(r.name ?? ""), branchId: Number.isFinite(branchId) ? branchId : null,
@@ -234,17 +236,30 @@ const ATURAN: Record<string, Aturan> = {
         judul: "Konfigurasi server bermasalah", pesan: () => "Layanan order tidak bisa memeriksa harga dan aturan karena konfigurasi server (bukan karena sesi login Anda).",
         tindakan: "Order belum tersimpan. Hubungi Admin untuk memperbaiki konfigurasi server, lalu coba lagi.",
     },
-    // Barang bonus promo wajib secabang pelanggan, aktif, dan bisa diorder (O1 putaran 2; nama kode final menyusul di kontrak).
+    // Barang bonus promo wajib secabang pelanggan, aktif, dan bisa diorder (O1 putaran 2): 409 `bonus: [{code, name, alasan}]`.
     BONUS_TIDAK_BISA_DIORDER: {
         judul: "Program promo tidak bisa dipakai",
         pesan: (d) => {
-            const kode = (Array.isArray(d.barang) ? d.barang : []).map((b) => (typeof b === "string" ? b : String(((b ?? {}) as Record<string, unknown>).code ?? ""))).filter(Boolean);
-            const alasan = typeof d.alasan === "string" && d.alasan ? d.alasan : typeof d.reason === "string" && d.reason ? d.reason : "";
-            return kode.length
-                ? `Program promo untuk barang bonus ${kode.slice(0, 5).join(", ")} tidak bisa dipakai${alasan ? ` (${alasan})` : ""}: barang bonus harus barang cabang pelanggan, aktif, dan bisa diorder.`
+            const bonus = (Array.isArray(d.bonus) ? d.bonus : Array.isArray(d.barang) ? d.barang : []).map((b) => {
+                const o = (typeof b === "string" ? { code: b } : (b ?? {})) as Record<string, unknown>;
+                const alasan = typeof o.alasan === "string" && o.alasan ? ` (${o.alasan})` : "";
+                return o.code ? `${String(o.code)}${typeof o.name === "string" && o.name ? ` ${o.name}` : ""}${alasan}` : "";
+            }).filter(Boolean);
+            return bonus.length
+                ? `Program promo untuk barang bonus ${bonus.slice(0, 5).join("; ")} tidak bisa dipakai: barang bonus harus barang cabang pelanggan, aktif, dan bisa diorder.`
                 : dariServer(d, "Barang bonus program promo tidak bisa diorder.");
         },
-        tindakan: "Order belum bisa dihitung. Hubungi Admin untuk memeriksa barang bonus di Summary promo, lalu coba lagi.", menolak: true,
+        tindakan: "Order belum bisa dihitung. Hubungi Admin untuk memeriksa barang bonus di Summary promo (atau master barang), lalu coba lagi.", menolak: true,
+    },
+    // Harga petugas HANYA untuk baris tanpa harga master sah (owner sesi 13): 409 `barang: [{code, unit, hargaMaster}]`.
+    HARGA_PETUGAS_TIDAK_DIIZINKAN: {
+        judul: "Harga petugas tidak diizinkan", pesan: (d) => dariServer(d, "Barang ini sudah punya harga master; harga petugas hanya untuk barang tanpa harga master."),
+        tindakan: "Kosongkan harga di barisnya — harga master dipakai dan tidak bisa diubah.", menolak: true,
+    },
+    // Keadaan SERVER (aturan promo terbit rusak), bukan kesalahan order — global: tarikan berhenti, permintaan tetap menunggu.
+    ATURAN_TERBIT_RUSAK: {
+        judul: "Aturan promo terbit rusak", pesan: (d) => dariServer(d, "Salah satu aturan promo yang terbit tidak lolos validasi."),
+        tindakan: "Order belum bisa dihitung (bukan karena isian Anda). Hubungi Admin/tim Promo untuk memperbaiki publikasi di Summary.", menolak: true,
     },
     LAYANAN_TIDAK_PASTI: {
         judul: "Hasilnya belum pasti", pesan: () => "Layanan harga dan promo tidak menjawab dengan jelas.",
@@ -252,9 +267,17 @@ const ATURAN: Record<string, Aturan> = {
     },
 };
 
-const kodeBarangDari = (d: Record<string, unknown>): { kode: string; baris: string }[] => {
+const kodeBarangDari = (d: Record<string, unknown>, kodeGalat = ""): { kode: string; baris: string }[] => {
     const hasil: { kode: string; baris: string }[] = [];
     const tambah = (kode: unknown, baris: string) => { if (typeof kode === "string" && kode) hasil.push({ kode, baris }); };
+    if (kodeGalat === "HARGA_PETUGAS_TIDAK_DIIZINKAN" && Array.isArray(d.barang)) {
+        for (const b of d.barang) {
+            const o = (b ?? {}) as Record<string, unknown>;
+            tambah(o.code, `Sudah punya harga master${typeof o.hargaMaster === "number" ? ` Rp ${o.hargaMaster.toLocaleString("id-ID")}` : ""}; harga petugas hanya untuk barang tanpa harga master.`);
+        }
+        return hasil;
+    }
+    if (kodeGalat === "BONUS_TIDAK_BISA_DIORDER") return hasil; // barang bonus bukan baris order: kalimat di strip, bukan di barisnya
     if (Array.isArray(d.barang)) {
         for (const b of d.barang) {
             if (typeof b === "string") { tambah(b, "Tidak ada atau tidak bisa dipakai di order ini."); continue; }
@@ -295,7 +318,7 @@ export function galatDariJawaban(j: Jawaban, peran: Peran = "petugas"): Galat {
             pesan: "Server tidak memberi jawaban yang jelas (sibuk atau mati sebentar).", tindakan: "Muat ulang data, lalu periksa sebelum mengulang." };
     }
     if (a) {
-        const perBarang = Object.fromEntries(kodeBarangDari(d).map((b) => [b.kode, b.baris]));
+        const perBarang = Object.fromEntries(kodeBarangDari(d, kode).map((b) => [b.kode, b.baris]));
         return { kode, judul: a.judul, pesan: a.pesan ? a.pesan(d) : dariServer(d, a.judul), tindakan: typeof a.tindakan === "string" ? a.tindakan : a.tindakan[peran],
             menolak: Boolean(a.menolak), tidakPasti: Boolean(a.tidakPasti), blokirSales: Boolean(a.blokirSales), perBarang };
     }
@@ -310,6 +333,10 @@ export function galatDariJawaban(j: Jawaban, peran: Peran = "petugas"): Galat {
         pesan: dariServer(d, "Server menolak permintaan ini."), tindakan: "Periksa isiannya lalu coba lagi; bila terulang, hubungi Admin." };
 }
 
+/** Alasan kunci Simpan/Kirim untuk baris barang bermasalah (BARANG_*, HARGA_PETUGAS_TIDAK_DIIZINKAN): tindakan yang tepat per kode. */
+export const alasanKunciBarang = (g: Galat, nomor: number) =>
+    `${g.kode === "HARGA_PETUGAS_TIDAK_DIIZINKAN" ? "Kosongkan harga barang" : "Hapus atau ganti barang"} ${nomor}: ${g.judul}`;
+
 /** Satu kalimat untuk strip/alasan kunci: "Pesan Tindakan". */
 export const kalimatGalat = (g: Galat) => `${g.pesan} ${g.tindakan}`;
 
@@ -320,8 +347,8 @@ export const hargaPetugasSah = (teks: string) => /^\d+(\.\d{1,4})?$/.test(teks.t
  * Harga dari cabang DEFAULT (cabang pelanggan tanpa baris harga berlaku): `source` "master_default" (rencana kontrak) atau harga master yang
  * `branchName`-nya bukan cabang pelanggan. Harga petugas tidak pernah bertanda ini.
  */
-export const hargaCabangDefault = (info: Pick<PriceInfo, "source" | "branchName"> | undefined, cabangPelanggan: string | null | undefined) =>
-    Boolean(info && info.source !== "petugas" && (info.source === "master_default" || (info.branchName && cabangPelanggan && info.branchName !== cabangPelanggan)));
+export const hargaCabangDefault = (info: Pick<PriceInfo, "source" | "branchName" | "hargaDefault"> | undefined, cabangPelanggan: string | null | undefined) =>
+    Boolean(info && info.source !== "petugas" && (info.hargaDefault === true || info.source === "master_default" || (info.branchName && cabangPelanggan && info.branchName !== cabangPelanggan)));
 
 /** PRATINJAU_BERUBAH (409) membawa pratinjau baru: netto + sidik barunya. null = jawaban bukan itu / bentuknya tak terbaca. */
 export function pratinjauBerubah(j: Jawaban): { net: number; sidik: string } | null {

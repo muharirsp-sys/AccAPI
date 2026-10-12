@@ -93,7 +93,7 @@ export type Pratinjau =
     | { status: "barang"; galat: Galat }
     | { status: "galat"; galat: Galat };
 
-const KODE_BARANG = new Set(["BARANG_TIDAK_ADA", "BARANG_SUSPENDED", "BARANG_BEDA_CABANG"]);
+const KODE_BARANG = new Set(["BARANG_TIDAK_ADA", "BARANG_SUSPENDED", "BARANG_BEDA_CABANG", "HARGA_PETUGAS_TIDAK_DIIZINKAN"]);
 
 /**
  * Pratinjau server: `customer_no` WAJIB (cabang harga + aturan cabang dari pelanggan). `price` per baris = HARGA PETUGAS (hanya Order Baru;

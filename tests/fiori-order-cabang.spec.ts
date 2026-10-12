@@ -245,7 +245,7 @@ test("Order Sales: barang beda cabang ditolak server = kalimat di barisnya + Kir
         barang: [{ code: "A-1", name: "BARANG A", branchId: 90, branchName: "CABANG B", tag: "TAG B" }] } });
     await b1.getByLabel("Jumlah").fill("3");
     await expect(b1.getByRole("alert")).toContainText("BARANG A milik cabang CABANG B, bukan cabang pelanggan.");
-    await expect(b1.getByRole("alert")).toContainText("Hapus barang ini atau ganti dengan barang cabang pelanggan.");
+    await expect(b1.getByRole("alert")).toContainText("Hapus barang itu, lalu cari barang yang milik cabang pelanggan.");
     await expect(main.getByRole("alert").filter({ hasText: "Barang bukan milik cabang pelanggan." })).toBeVisible();
     const kirim = page.getByRole("button", { name: "Kirim order…" });
     await expect(kirim).toBeDisabled();
@@ -925,7 +925,7 @@ test("Order baru (sidik): mengubah barang/jumlah membatalkan sidik lama; KONFIGU
     await expect(simpan).toBeEnabled();
 });
 
-test("Order baru: penolakan harga petugas pada baris berharga master (kode menyusul) = kalimat server jelas, bukan layar kosong; UI tidak pernah mengirim harga untuk baris master", async ({ page }) => {
+test("Order baru: HARGA_PETUGAS_TIDAK_DIIZINKAN (baris berharga master + harga petugas) = per baris 'sudah punya harga master' + Kosongkan harga, Simpan terkunci; UI tidak pernah mengirim harga untuk baris master", async ({ page }) => {
     const { log, opsi } = await mockOrderCabang(page);
     await mockOrdersInternal(page, { cabang: opsi });
     await page.setViewportSize({ width: 1366, height: 900 });
@@ -936,11 +936,15 @@ test("Order baru: penolakan harga petugas pada baris berharga master (kode menyu
     await pilihBarang(b1, "A-1", "BARANG A\\b.*KRT");
     await b1.getByLabel("Satuan").selectOption("KRT");
     await expect(b1).toContainText("Harga master", NAV);
-    // Server (kode generik) menolak: ditampilkan sebagai penolakan + kalimat server, Simpan terkunci.
-    opsi.preview = () => ({ status: 409, body: { ok: false, kode: "HARGA_MASTER_TIDAK_BOLEH_DIUBAH", error: "Barang A-1 sudah punya harga master; harga petugas hanya untuk barang tanpa harga master." } });
+    // Server menolak (mis. data master berubah sesudah klasifikasi layar): kalimat per baris + tindakan, bukan layar kosong.
+    opsi.preview = () => ({ status: 409, body: { ok: false, kode: "HARGA_PETUGAS_TIDAK_DIIZINKAN", error: "Harga master cabang CABANG A sudah ada untuk: A-1 KRT (Rp 576000). Harga petugas hanya untuk barang TANPA harga master; kosongkan harganya.",
+        barang: [{ code: "A-1", unit: "KRT", hargaMaster: 576000 }] } });
     await b1.getByLabel("Jumlah").fill("3");
-    await expect(main.getByText("Barang A-1 sudah punya harga master; harga petugas hanya untuk barang tanpa harga master.")).toBeVisible(NAV);
-    await expect(page.getByRole("button", { name: "Simpan order…" })).toBeDisabled();
+    await expect(b1.getByRole("alert")).toContainText("Sudah punya harga master Rp 576.000; harga petugas hanya untuk barang tanpa harga master.", NAV);
+    await expect(b1.getByRole("alert")).toContainText("Kosongkan harga di barisnya");
+    const simpan = page.getByRole("button", { name: "Simpan order…" });
+    await expect(simpan).toBeDisabled();
+    await expect(simpan).toHaveAttribute("title", "Kosongkan harga barang 1: Harga petugas tidak diizinkan");
     expect(log.preview.every((b) => b.lines.every((l) => !l.price))).toBe(true);
 });
 
@@ -960,7 +964,7 @@ test("Order Sales + Order baru: angka pratinjau berlabel 'sebelum PPN'; harga da
     // Harga dari fallback cabang default: bertanda sumbernya.
     opsi.preview = (b) => {
         const j = pratinjauContoh(b);
-        if (j !== "putus" && j.body) (j.body as { prices: Record<string, unknown>[] }).prices = (j.body as { prices: Record<string, unknown>[] }).prices.map((p) => ({ ...p, source: "master_default", branchName: "CABANG DEFAULT" }));
+        if (j !== "putus" && j.body) (j.body as { prices: Record<string, unknown>[] }).prices = (j.body as { prices: Record<string, unknown>[] }).prices.map((p) => ({ ...p, hargaDefault: true, branchName: "CABANG DEFAULT" }));
         return j;
     };
     await b1.getByLabel("Jumlah").fill("3");
@@ -984,12 +988,31 @@ test("Order baru: ringkasan 'sebelum PPN' + PPN 11% + total faktur; BONUS_TIDAK_
     await expect(panel).toContainText("Total faktur (estimasi)");
     const simpan = page.getByRole("button", { name: "Simpan order…" });
     await expect(simpan).toBeEnabled();
-    opsi.preview = () => ({ status: 409, body: { ok: false, kode: "BONUS_TIDAK_BISA_DIORDER", error: "Barang bonus G-9 bukan barang cabang pelanggan", barang: ["G-9"], alasan: "bukan barang cabang CABANG A" } });
+    opsi.preview = () => ({ status: 409, body: { ok: false, kode: "BONUS_TIDAK_BISA_DIORDER", error: "Barang bonus promo tidak bisa diorder untuk pelanggan cabang CABANG A: G-9 (barang cabang CABANG B)",
+        bonus: [{ code: "G-9", name: "BARANG G", alasan: "barang cabang CABANG B" }] } });
     await b1.getByLabel("Jumlah").fill("3");
     const strip = main.getByRole("alert").filter({ hasText: "Program promo tidak bisa dipakai." });
     await expect(strip).toBeVisible(NAV);
-    await expect(strip).toContainText("Program promo untuk barang bonus G-9 tidak bisa dipakai (bukan barang cabang CABANG A)");
+    await expect(strip).toContainText("Program promo untuk barang bonus G-9 BARANG G (barang cabang CABANG B) tidak bisa dipakai");
     await expect(strip).toContainText("Hubungi Admin untuk memeriksa barang bonus di Summary promo");
     await expect(strip).not.toContainText("BONUS_TIDAK_BISA_DIORDER");
     await expect(simpan).toBeDisabled();
+});
+
+test("Order Sales + Order baru: ATURAN_TERBIT_RUSAK (keadaan server) = kalimat 'bukan karena isian Anda' + tindakan Admin; Kirim/Simpan terkunci", async ({ page }) => {
+    const { opsi } = await mockOrderCabang(page, { peran: "sales" });
+    await mockWebsales(page, { cabang: opsi });
+    await bukaSales(page);
+    const { main } = await isiSalesSiap(page);
+    const kirim = main.getByRole("button", { name: "Kirim order…" });
+    await expect(kirim).toBeEnabled(NAV);
+    opsi.preview = () => ({ status: 409, body: { ok: false, kode: "ATURAN_TERBIT_RUSAK", error: "Aturan terbit d1d1d1d1 program P-1 tidak lolos validasi: harga negatif" } });
+    await main.getByLabel("Jumlah").first().fill("3");
+    const strip = main.getByRole("alert").filter({ hasText: "Aturan promo terbit rusak." });
+    await expect(strip).toBeVisible(NAV);
+    await expect(strip).toContainText("tidak lolos validasi: harga negatif");
+    await expect(strip).toContainText("bukan karena isian Anda");
+    await expect(strip).not.toContainText("ATURAN_TERBIT_RUSAK");
+    await expect(kirim).toBeDisabled();
+    await expect(kirim).toHaveAttribute("title", /^Aturan promo terbit rusak\. Order belum bisa dihitung/);
 });

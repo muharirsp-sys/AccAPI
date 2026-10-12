@@ -930,8 +930,8 @@ test("Salesman Accurate (tahap 2): Lepas hanya mematikan tautan — profil/kode/
     await expect(lama.getByRole("button")).toHaveCount(1); // profil akun ini yang dilepas: boleh ditautkan ulang
     await expect(lama).not.toContainText("Tertaut ke akun ini");
     const milikLain = daftar.getByRole("listitem").filter({ hasText: "SALES X" });
-    await expect(milikLain).toContainText("Kode dipegang profil lama USER C (tautan dilepas)");
-    await expect(milikLain.getByRole("button")).toHaveCount(0); // kode unik: dipegang profil akun lain
+    await expect(milikLain).toContainText("Kode dipegang profil lama USER C (tautan dilepas) — bisa dipindahkan");
+    await expect(milikLain.getByRole("button")).toHaveCount(1); // kode unik, tetapi profilnya boleh dipindahkan (salesman ganti akun)
 });
 
 test("Salesman Accurate (tahap 2): KODE_DIPAKAI_FORM_KONTROL = dialog konfirmasi berisi hitungan laporan; konfirmasi = PUT ulang konfirmasiGantiKode:true; batal = tidak ada tulis kedua", async ({ page }) => {
@@ -975,18 +975,64 @@ test("Salesman Accurate (tahap 2): KODE_DIPAKAI_FORM_KONTROL = dialog konfirmasi
     await expect(page.getByRole("status").filter({ hasText: "USER B ditautkan ke SALES A (M-SLA), cabang CABANG A." })).toBeVisible();
 });
 
-test("Salesman Accurate (tahap 2): KODE_DIPAKAI_PROFIL_LAIN = kalimat jelas di dialog (bukan kode), tidak memuat ulang", async ({ page }) => {
+test("Salesman Accurate (putaran 2): KODE_DIPAKAI_PROFIL_LAIN = dialog pindahkan profil (kode tetap, riwayat ikut) → PUT ulang pindahkanProfil:true; PROFIL_TUJUAN_ADA = kalimat jelas", async ({ page }) => {
+    const jawab: Jawab = json({ ok: false, code: "KODE_DIPAKAI_PROFIL_LAIN", error: "teks server", terhubungKe: { userId: "u-c", name: "USER C" } }, 409);
+    const { log } = await pasang(page, {
+        salesman: (id) => (id === "u-b" ? salesmanGet([]) : undefined),
+        tulis: (t) => (t.path.endsWith("/salesman") && t.method === "PUT" && t.body?.pindahkanProfil !== true ? jawab : undefined),
+    });
+    await page.goto("/admin/users", NAV);
+    await bukaUser(page, "USER B");
+    const daftar = bagianSalesman(page).getByRole("list", { name: "Karyawan salesman Accurate" });
+    await expect(daftar).toBeVisible(NAV);
+    const pilih = async () => { await daftar.getByRole("listitem").filter({ hasText: "SALES A" }).first().getByRole("button").click(); await page.getByRole("dialog").getByRole("button", { name: "Tautkan", exact: true }).click(); };
+    await pilih();
+    const pindah = page.getByRole("dialog", { name: "Pindahkan profil sales dari USER C ke USER B?" });
+    await expect(pindah).toBeVisible();
+    await expect(pindah).toContainText("Kode M-SLA masih dipegang profil Form Kontrol akun USER C");
+    await expect(pindah).toContainText("Kode tetap persis, jadi riwayat Form Kontrol dan atasan SPV/SM profil itu ikut ke akun ini");
+    await expect(page.getByRole("alert").filter({ hasText: "KODE_DIPAKAI_PROFIL_LAIN" })).toHaveCount(0);
+    expect(log.tulis.filter((t) => t.path.endsWith("/salesman"))).toHaveLength(1);
+    await pindah.getByRole("button", { name: "Batal" }).click();
+    expect(log.tulis.filter((t) => t.path.endsWith("/salesman"))).toHaveLength(1);
+    await pilih();
+    await page.getByRole("dialog", { name: /Pindahkan profil sales/ }).getByRole("button", { name: "Pindahkan profil dan tautkan" }).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
+    expect(log.tulis.filter((t) => t.path.endsWith("/salesman")).at(-1)).toEqual({ method: "PUT", path: "/api/admin/users/u-b/salesman", body: { employeeNumber: "M-SLA", pindahkanProfil: true } });
+    await expect(page.getByRole("status").filter({ hasText: "USER B ditautkan ke SALES A (M-SLA), cabang CABANG A." })).toBeVisible();
+
+});
+
+test("Salesman Accurate (putaran 2): PROFIL_TUJUAN_ADA di dialog pindah = kalimat jelas (bukan kode)", async ({ page }) => {
     await pasang(page, {
         salesman: (id) => (id === "u-b" ? salesmanGet([]) : undefined),
-        tulis: (t) => (t.path.endsWith("/salesman") ? json({ ok: false, code: "KODE_DIPAKAI_PROFIL_LAIN", error: "teks server" }, 409) : undefined),
+        tulis: (t) => {
+            if (!t.path.endsWith("/salesman") || t.method !== "PUT") return undefined;
+            return t.body?.pindahkanProfil === true
+                ? json({ ok: false, code: "PROFIL_TUJUAN_ADA", error: "Akun ini sudah punya profil sales (S-X)" }, 409)
+                : json({ ok: false, code: "KODE_DIPAKAI_PROFIL_LAIN", error: "x", terhubungKe: { userId: "u-c", name: "USER C" } }, 409);
+        },
     });
     await page.goto("/admin/users", NAV);
     await bukaUser(page, "USER B");
     const daftar = bagianSalesman(page).getByRole("list", { name: "Karyawan salesman Accurate" });
     await expect(daftar).toBeVisible(NAV);
     await daftar.getByRole("listitem").filter({ hasText: "SALES A" }).first().getByRole("button").click();
-    const dlg = page.getByRole("dialog");
-    await dlg.getByRole("button", { name: "Tautkan", exact: true }).click();
-    await expect(dlg.getByRole("alert")).toContainText("Kode karyawan itu masih dipegang profil Form Kontrol akun lain yang tautannya sudah dilepas");
-    await expect(dlg.getByRole("alert")).not.toContainText("KODE_DIPAKAI_PROFIL_LAIN");
+    await page.getByRole("dialog").getByRole("button", { name: "Tautkan", exact: true }).click();
+    const dlg = page.getByRole("dialog", { name: /Pindahkan profil sales/ });
+    await dlg.getByRole("button", { name: "Pindahkan profil dan tautkan" }).click();
+    await expect(dlg.getByRole("alert")).toContainText("Akun ini sudah punya profil sales sendiri, jadi profil akun lain tidak bisa dipindahkan ke sini");
+    await expect(dlg.getByRole("alert")).not.toContainText("PROFIL_TUJUAN_ADA");
+});
+
+test("Riwayat user (putaran 2): profil dipindah dari akun lain tercatat dengan kodenya yang tetap", async ({ page }) => {
+    await pasang(page, { riwayat: json({ ok: true, nextCursor: null, items: [
+        { id: "h7", action: "salesman.link", actorName: "ADMIN LOKAL", targetUserName: "USER B", detail: { userName: "USER B",
+            dipindahDari: { userId: "u-c", name: "USER C", profilId: "p1", salesCode: "M-SLA" }, sesudah: { salesCode: "M-SLA", salesName: "SALES A", branchName: "CABANG A" } }, createdAt: "2026-10-12T02:30:00.000Z" },
+    ] }) });
+    await page.goto("/admin/users", NAV);
+    await bukaUser(page, "USER B");
+    const baris = page.getByRole("list", { name: "Riwayat" }).getByRole("listitem").first();
+    await expect(baris).toContainText("Salesman Accurate ditautkan", NAV);
+    await expect(baris).toContainText("profil dipindah dari akun USER C (kode M-SLA tetap)");
 });

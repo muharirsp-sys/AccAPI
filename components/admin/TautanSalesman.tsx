@@ -4,7 +4,9 @@
  *   tidak bisa dipilih), simpan lewat dialog, lepas lewat dialog konfirmasi. Cabang salesman = cabang karyawannya di Accurate, jadi tautan
  *   menentukan pelanggan dan barang yang boleh dipesan akun itu di Order Sales. "Lepas" HANYA mematikan tautan: profil sales, kode, dan hierarki
  *   Form Kontrol tetap (kontrak O1). Mengganti kode yang punya laporan Form Kontrol ditolak server (KODE_DIPAKAI_FORM_KONTROL) kecuali
- *   dikonfirmasi: dialog kedua menyebut hitungan laporannya. `users.view` = baca-saja; `users.manage` = tulis.
+ *   dikonfirmasi: dialog kedua menyebut hitungan laporannya. Kode yang masih dipegang profil akun LAIN yang tautannya dilepas (salesman ganti
+ *   akun) ditolak KODE_DIPAKAI_PROFIL_LAIN; dialog memindahkan profil itu (kode tetap, riwayat Form Kontrol ikut) lewat `pindahkanProfil`.
+ *   `users.view` = baca-saja; `users.manage` = tulis.
  * Caller: app/(dashboard)/admin/users/Pengguna.tsx (dipasang ulang dengan `key` per user + versi muat ulang).
  * Dependensi: GET|PUT|DELETE /api/admin/users/[id]/salesman (kontrak docs/handover/O1-KONTRAK-ORDER-CABANG.md §3); components/admin/{Bersama,admin-ui};
  *   components/fiori/*.
@@ -33,7 +35,7 @@ type Pilihan = {
 type Data = { tautan: Tautan[]; pilihan: Pilihan[] };
 type TulisHasil = { changed: boolean; tautan?: { salesCode: string; employeeName: string; branchName: string } };
 type Laporan = { laporanHarian?: number; ao?: number; merchandising?: number; jks?: number; total?: number };
-type Dialog = { jenis: "tautkan"; p: Pilihan } | { jenis: "lepas" } | { jenis: "kode"; p: Pilihan; laporan: Laporan } | null;
+type Dialog = { jenis: "tautkan"; p: Pilihan } | { jenis: "lepas" } | { jenis: "kode"; p: Pilihan; laporan: Laporan } | { jenis: "pindah"; p: Pilihan; dari: string } | null;
 
 const BATAS_TAMPIL = 40;
 
@@ -79,13 +81,16 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
     const pemegangLain = (p: Pilihan) => (p.terhubungKe && p.terhubungKe.userId !== user.id ? p.terhubungKe : null);
     const terkunci = (alasan: string | undefined) => alasan ? <p className="fi-small fi-why">Terkunci: {alasan}.</p> : null;
 
-    const dialogP = dialog?.jenis === "tautkan" ? dialog.p : dialog?.jenis === "kode" ? dialog.p : null;
+    const dialogP = dialog?.jenis === "tautkan" || dialog?.jenis === "kode" || dialog?.jenis === "pindah" ? dialog.p : null;
 
-    /** Tulis tautan. Galat KODE_DIPAKAI_FORM_KONTROL dicegat: dialog konfirmasi kedua (hitungan laporan), lalu PUT ulang dengan konfirmasi. */
-    async function tautkan(p: Pilihan, konfirmasiGantiKode: boolean) {
+    /**
+     * Tulis tautan. Galat KODE_DIPAKAI_FORM_KONTROL dicegat: dialog konfirmasi kedua (hitungan laporan), lalu PUT ulang dengan konfirmasi.
+     * KODE_DIPAKAI_PROFIL_LAIN dicegat juga: dialog "pindahkan profil", lalu PUT ulang dengan `pindahkanProfil`.
+     */
+    async function tautkan(p: Pilihan, konfirmasiGantiKode: boolean, pindahkanProfil = false) {
         try {
             await jalankan(async () => {
-                const r = await tulisAdmin<TulisHasil>(url, "PUT", { employeeNumber: p.number, ...(konfirmasiGantiKode ? { konfirmasiGantiKode: true } : {}) });
+                const r = await tulisAdmin<TulisHasil>(url, "PUT", { employeeNumber: p.number, ...(konfirmasiGantiKode ? { konfirmasiGantiKode: true } : {}), ...(pindahkanProfil ? { pindahkanProfil: true } : {}) });
                 return r.changed
                     ? `${user.name} ditautkan ke ${r.tautan?.employeeName ?? p.name} (${r.tautan?.salesCode ?? p.number}), cabang ${r.tautan?.branchName ?? p.branchName ?? "—"}.`
                     : `${user.name} sudah tertaut ke ${p.name}; tidak ada yang berubah.`;
@@ -93,6 +98,11 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
         } catch (e) {
             if (e instanceof GalatAdmin && e.code === "KODE_DIPAKAI_FORM_KONTROL" && !konfirmasiGantiKode) {
                 setDialog({ jenis: "kode", p, laporan: (e.data?.laporan ?? {}) as Laporan });
+                return;
+            }
+            if (e instanceof GalatAdmin && e.code === "KODE_DIPAKAI_PROFIL_LAIN" && !pindahkanProfil) {
+                const dari = (e.data?.terhubungKe ?? {}) as { name?: unknown; userId?: unknown };
+                setDialog({ jenis: "pindah", p, dari: typeof dari.name === "string" && dari.name ? dari.name : typeof dari.userId === "string" ? dari.userId : "akun lain" });
                 return;
             }
             throw e;
@@ -153,9 +163,9 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
                                         <li key={p.id}>
                                             <ListItem doc={p.number} title={p.name} meta={`Cabang ${p.branchName ?? "belum ada"}`}
                                                 badge={lain
-                                                    ? <StatusBadge tone="warn">{lama ? `Kode dipegang profil lama ${lain.name ?? "akun lain"} (tautan dilepas)` : `Sudah ditautkan ke ${lain.name ?? "akun lain"}`}</StatusBadge>
+                                                    ? <StatusBadge tone="warn">{lama ? `Kode dipegang profil lama ${lain.name ?? "akun lain"} (tautan dilepas) — bisa dipindahkan` : `Sudah ditautkan ke ${lain.name ?? "akun lain"}`}</StatusBadge>
                                                     : ini ? <StatusBadge tone="pos">Tertaut ke akun ini</StatusBadge> : undefined}
-                                                onClick={lain || ini || kunci ? undefined : () => setDialog({ jenis: "tautkan", p })} />
+                                                onClick={(lain && !lama) || ini || kunci ? undefined : () => setDialog({ jenis: "tautkan", p })} />
                                         </li>
                                     );
                                 })}
@@ -198,6 +208,19 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
                     ["Riwayat", "Tercatat di riwayat user, termasuk hitungan laporannya"],
                 ] : undefined}
                 onConfirm={async () => { if (dialog?.jenis === "kode") await tautkan(dialog.p, true); }} />
+
+            <ConfirmDialog open={dialog?.jenis === "pindah"} onClose={() => setDialog(null)} tag="Pindah profil" tone="negative" confirmLabel="Pindahkan profil dan tautkan"
+                title={`Pindahkan profil sales dari ${dialog?.jenis === "pindah" ? dialog.dari : ""} ke ${user.name}?`} confirmDisabled={kunci} alasanTerlihat
+                description={`Kode ${dialogP?.number ?? ""} masih dipegang profil Form Kontrol akun ${dialog?.jenis === "pindah" ? dialog.dari : "lain"} (tautan Accurate-nya sudah dilepas). Pakai ini bila salesman berganti akun: profil itu dipindahkan apa adanya ke akun ${user.name}, kodenya tetap sama, dan tautan ke ${dialogP?.name ?? "karyawan"} dinyalakan.`}
+                facts={[
+                    ["Dari akun", dialog?.jenis === "pindah" ? dialog.dari : ""],
+                    ["Ke akun", user.name],
+                    ["Karyawan", dialogP ? `${dialogP.name} · ${dialogP.number}` : ""],
+                    ["Cabang salesman", dialogP?.branchName ?? "belum ada"],
+                    ["Ikut pindah", "Kode tetap persis, jadi riwayat Form Kontrol dan atasan SPV/SM profil itu ikut ke akun ini"],
+                    ["Riwayat", "Tercatat di riwayat user (dipindah dari akun mana)"],
+                ]}
+                onConfirm={async () => { if (dialog?.jenis === "pindah") await tautkan(dialog.p, false, true); }} />
 
             <ConfirmDialog open={dialog?.jenis === "lepas"} onClose={() => setDialog(null)} tag="Lepas" tone="negative" confirmLabel="Lepas tautan"
                 title={`Lepas tautan ${user.name} dari karyawan Accurate?`} confirmDisabled={kunci} alasanTerlihat

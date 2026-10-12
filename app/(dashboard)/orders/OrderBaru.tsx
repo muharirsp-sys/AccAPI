@@ -26,7 +26,7 @@ import { ConfirmDialog, FormField, useUnsavedGuard } from "@/components/fiori/in
 import { PemilihBarang } from "@/components/order/PemilihBarang";
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
 import { PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
-import { barisBedaCabang, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kunciHarga, labelSatuan, pratinjauBerubah, type BarangPilih, type PelangganPilih } from "@/components/order/order-cabang";
+import { alasanKunciBarang, barisBedaCabang, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kunciHarga, labelSatuan, pratinjauBerubah, type BarangPilih, type PelangganPilih } from "@/components/order/order-cabang";
 import { hitungPratinjau, type Pratinjau } from "@/components/order/order-cabang-api";
 import { rupiah } from "@/lib/promo-ui";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
@@ -167,7 +167,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                             : filled.length === 0 ? "Cari dan pilih minimal satu barang"
                                 : tidakLengkap >= 0 ? `Lengkapi satuan dan jumlah barang ${tidakLengkap + 1}`
                                     : salahSatuan >= 0 ? `Perbaiki satuan barang ${salahSatuan + 1}`
-                                        : salahBarang >= 0 ? `Hapus atau ganti barang ${salahBarang + 1}: ${pratinjau?.status === "barang" ? pratinjau.galat.judul : ""}`
+                                        : salahBarang >= 0 && pratinjau?.status === "barang" ? alasanKunciBarang(pratinjau.galat, salahBarang + 1)
                                             : hargaBelumSah >= 0 ? (lines[hargaBelumSah].price === null
                                                 ? `Isi harga barang ${hargaBelumSah + 1} (harga master belum ada)`
                                                 : `Harga barang ${hargaBelumSah + 1} harus angka lebih dari 0 (desimal pakai titik, maksimal 4 digit)`)
@@ -299,7 +299,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                                     </div>
                                     <PemilihBarang nomor={index + 1} pelanggan={pelanggan} tanggal={orderDate} nilai={line.barang} peran="petugas"
                                         onPilih={(b) => pilihBarang(index, b)} onLepas={() => lepasBarang(index)} />
-                                    {beda && <p className="fi-msg" role="alert">{beda} Hapus barang ini atau ganti dengan barang cabang pelanggan.</p>}
+                                    {beda && pratinjau?.status === "barang" && <p className="fi-msg" role="alert">{beda} {pratinjau.galat.tindakan}</p>}
                                     {line.barang && (
                                         <div className="grid gap-3 sm:grid-cols-[12rem_6rem_10rem]">
                                             <FormField label="Satuan" error={wrong ? `Satuan ${wrong.unit} tidak ada untuk ${wrong.code}. Pilih ${wrong.known_units.join(" atau ")}.` : undefined}

@@ -52,6 +52,7 @@ const KODE: Record<string, (body: Jawaban, k: { aktivasi?: boolean }) => [string
         return [`Karyawan itu sudah ditautkan ke akun ${typeof k.name === "string" && k.name ? k.name : "lain"}. Lepas dulu dari akun itu, atau pilih karyawan lain. Daftar dimuat ulang.`, true];
     },
     KODE_DIPAKAI_PROFIL_LAIN: () => ["Kode karyawan itu masih dipegang profil Form Kontrol akun lain yang tautannya sudah dilepas (kode tidak boleh ganda). Pilih karyawan lain, atau minta Admin membereskan profil lama itu lebih dulu.", false],
+    PROFIL_TUJUAN_ADA: () => ["Akun ini sudah punya profil sales sendiri, jadi profil akun lain tidak bisa dipindahkan ke sini. Rapikan profil akun ini dulu (lepas/hapus lewat IT Support), atau pilih karyawan lain.", false],
     KODE_DIPAKAI_FORM_KONTROL: (b) => {
         const l = (b?.laporan ?? {}) as { total?: unknown };
         return [`Akun ini punya ${typeof l.total === "number" ? `${l.total} ` : ""}laporan Form Kontrol berkode salesman lama. Mengganti kode butuh konfirmasi.`, false];
@@ -166,7 +167,9 @@ export function ringkasRiwayat(item: ItemRiwayat, sudut: "user" | "grup"): { apa
         const nama = (o: Record<string, unknown> | null) => (o && teks(o.salesName) ? `${o.salesName}${teks(o.salesCode) ? ` (${o.salesCode})` : ""}` : null);
         const sesudah = (d.sesudah ?? null) as Record<string, unknown> | null;
         const sebelum = (d.sebelum ?? null) as Record<string, unknown> | null;
+        const dari = (d.dipindahDari ?? null) as Record<string, unknown> | null;
         bagian.push(`${sebelum ? `${nama(sebelum) ?? "—"} → ` : ""}${nama(sesudah) ?? "—"}${sesudah && teks(sesudah.branchName) ? ` · cabang ${sesudah.branchName}` : ""}`);
+        if (dari) bagian.push(`profil dipindah dari akun ${teks(dari.name) ?? teks(dari.userId) ?? "lain"}${teks(dari.salesCode) ? ` (kode ${dari.salesCode} tetap)` : ""}`);
     }
     if (item.action === "salesman.unlink" && Array.isArray(d.dihapus)) {
         bagian.push(`dilepas: ${(d.dihapus as Array<Record<string, unknown>>).map((x) => `${teks(x.salesName) ?? "—"} (${teks(x.salesCode) ?? "—"})`).join(", ")}`);

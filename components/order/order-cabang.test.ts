@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    MIN_HURUF, bacaBarang, bacaPelanggan, barisBedaCabang, cukupHuruf, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kalimatGalat, kunciHarga, labelSatuan, pratinjauBerubah, promoBaris, ringkasPromo,
+    MIN_HURUF, bacaBarang, bacaPelanggan, barisBedaCabang, cukupHuruf, alasanKunciBarang, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kalimatGalat, kunciHarga, labelSatuan, pratinjauBerubah, promoBaris, ringkasPromo,
     urlCariBarang, urlCariPelanggan, urlSalesmanCabang, type Result,
 } from "./order-cabang.ts";
 
@@ -25,7 +25,7 @@ test("pencarian: minimal 2 huruf (spasi tidak dihitung); URL tanpa parameter kos
 test("tiap kode galat O1 menjadi kalimat + tindakan, bukan kode mentah", () => {
     const KODE = ["SALESMAN_BELUM_TERHUBUNG", "SALESMAN_TIDAK_AKTIF", "CABANG_DI_LUAR_CAKUPAN", "PELANGGAN_WAJIB", "PELANGGAN_TIDAK_ADA", "PELANGGAN_SUSPENDED",
         "PELANGGAN_TANPA_CABANG", "BARANG_TIDAK_ADA", "BARANG_SUSPENDED", "BARANG_BEDA_CABANG", "SATUAN_SALAH", "HARGA_BELUM_ADA", "INPUT_TIDAK_VALID", "TIDAK_DIIZINKAN", "SALESMAN_BEDA_CABANG",
-        "IZIN_TIDAK_KONSISTEN", "SIDIK_WAJIB", "PRATINJAU_BERUBAH", "CHANNEL_BEDA_MASTER", "ORDER_GANDA", "ATURAN_BELUM_TERBIT", "DATA_TIDAK_VALID", "HARGA_TIDAK_VALID", "KONFIGURASI_SERVER", "LAYANAN_TIDAK_PASTI"];
+        "IZIN_TIDAK_KONSISTEN", "SIDIK_WAJIB", "PRATINJAU_BERUBAH", "CHANNEL_BEDA_MASTER", "ORDER_GANDA", "ATURAN_BELUM_TERBIT", "DATA_TIDAK_VALID", "HARGA_TIDAK_VALID", "KONFIGURASI_SERVER", "LAYANAN_TIDAK_PASTI", "BONUS_TIDAK_BISA_DIORDER", "HARGA_PETUGAS_TIDAK_DIIZINKAN", "ATURAN_TERBIT_RUSAK"];
     for (const kode of KODE) {
         for (const peran of ["sales", "petugas"] as const) {
             const g = galatDariJawaban(jawab(409, { ok: false, kode, error: "Teks server untuk PELANGGAN A." }), peran);
@@ -190,8 +190,9 @@ test("PRATINJAU_BERUBAH membawa pratinjau baru: netto + sidik terbaca; bentuk la
 });
 
 test("BONUS_TIDAK_BISA_DIORDER: kalimat menyebut kode barang bonus + alasan; tanpa daftar barang memakai kalimat server", () => {
-    const g = galatDariJawaban(jawab(409, { ok: false, kode: "BONUS_TIDAK_BISA_DIORDER", error: "x", barang: ["G-9", { code: "G-8" }], alasan: "suspended" }));
-    assert.match(g.pesan, /barang bonus G-9, G-8 tidak bisa dipakai \(suspended\)/);
+    const g = galatDariJawaban(jawab(409, { ok: false, kode: "BONUS_TIDAK_BISA_DIORDER", error: "x", bonus: [{ code: "G-9", name: "BARANG G", alasan: "barang cabang CABANG B" }, { code: "G-8", name: null, alasan: "nonaktif (suspended) di Accurate" }] }));
+    assert.match(g.pesan, /barang bonus G-9 BARANG G \(barang cabang CABANG B\); G-8 \(nonaktif \(suspended\) di Accurate\) tidak bisa dipakai/);
+    assert.deepEqual(g.perBarang, {}); // barang bonus bukan baris order
     assert.match(g.tindakan, /Hubungi Admin.*Summary promo/);
     assert.equal(g.menolak, true);
     assert.equal(galatDariJawaban(jawab(409, { kode: "BONUS_TIDAK_BISA_DIORDER", error: "Teks server bonus" })).pesan, "Teks server bonus");
@@ -201,7 +202,19 @@ test("harga cabang default: source master_default atau cabang harga != cabang pe
     assert.equal(hargaCabangDefault({ source: "master_default", branchName: "CABANG DEFAULT" }, "CABANG A"), true);
     assert.equal(hargaCabangDefault({ source: "tier", branchName: "CABANG DEFAULT" }, "CABANG A"), true);
     assert.equal(hargaCabangDefault({ source: "tier", branchName: "CABANG A" }, "CABANG A"), false);
+    assert.equal(hargaCabangDefault({ source: "tier", branchName: "CABANG A", hargaDefault: true }, "CABANG A"), true); // flag server menang
     assert.equal(hargaCabangDefault({ source: "petugas", branchName: "CABANG B" }, "CABANG A"), false);
     assert.equal(hargaCabangDefault({ source: "tier", branchName: null }, "CABANG A"), false);
     assert.equal(hargaCabangDefault(undefined, "CABANG A"), false);
+});
+
+test("HARGA_PETUGAS_TIDAK_DIIZINKAN: per baris menyebut harga master + tindakan 'kosongkan'; ATURAN_TERBIT_RUSAK = keadaan server, bukan isian pemakai", () => {
+    const g = galatDariJawaban(jawab(409, { kode: "HARGA_PETUGAS_TIDAK_DIIZINKAN", error: "Harga master ... sudah ada", barang: [{ code: "A-1", unit: "KRT", hargaMaster: 576000 }] }));
+    assert.match(g.perBarang["A-1"], /Sudah punya harga master Rp 576\.000; harga petugas hanya untuk barang tanpa harga master\./);
+    assert.match(g.tindakan, /Kosongkan harga di barisnya/);
+    assert.equal(alasanKunciBarang(g, 2), "Kosongkan harga barang 2: Harga petugas tidak diizinkan");
+    assert.equal(alasanKunciBarang(galatDariJawaban(jawab(409, { kode: "BARANG_BEDA_CABANG", error: "x", barang: [] })), 1), "Hapus atau ganti barang 1: Barang bukan milik cabang pelanggan");
+    const r = galatDariJawaban(jawab(409, { ok: false, kode: "ATURAN_TERBIT_RUSAK", detail: "Aturan terbit d1d1d1d1 program P-1 tidak lolos validasi" }));
+    assert.match(r.pesan, /tidak lolos validasi/);
+    assert.match(r.tindakan, /bukan karena isian Anda/);
 });

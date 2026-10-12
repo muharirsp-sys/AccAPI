@@ -93,7 +93,8 @@ export function pratinjauContoh(b: PreviewBody, geser = 0, channelMasalah = ""):
     // Harga petugas: hanya baris TANPA harga master; pada baris berharga master ditolak (nama kode menyusul di kontrak O1 — tangani generik).
     const bermaster = b.lines.filter((l, i) => l.price && barang[i]!.harga[l.unit] !== null);
     if (bermaster.length) {
-        return { status: 409, body: { ok: false, kode: "HARGA_MASTER_TIDAK_BOLEH_DIUBAH", error: `Barang ${bermaster.map((l) => l.code).join(", ")} sudah punya harga master; harga petugas hanya untuk barang tanpa harga master.`, barang: bermaster.map((l) => l.code) } };
+        return { status: 409, body: { ok: false, kode: "HARGA_PETUGAS_TIDAK_DIIZINKAN", error: `Harga master cabang ${p.branchName} sudah ada untuk: ${bermaster.map((l) => `${l.code} ${l.unit}`).join("; ")}. Harga petugas hanya untuk barang TANPA harga master; kosongkan harganya.`,
+            barang: bermaster.map((l) => ({ code: l.code, unit: l.unit, hargaMaster: barang[b.lines.indexOf(l)]!.harga[l.unit] })) } };
     }
     const tanpaPetugas = b.lines.filter((l, i) => barang[i]!.harga[l.unit] === null && !l.price);
     if (tanpaPetugas.length) {
@@ -114,7 +115,7 @@ export function pratinjauContoh(b: PreviewBody, geser = 0, channelMasalah = ""):
     const hasil = {
         ok: true,
         lines: b.lines.map((l, i) => ({ code: l.code, unit: l.unit, quantity: l.quantity, price: String(harga(l)), sumber_harga: petugas(l, i) ? "petugas" : "master" })),
-        prices: b.lines.map((l, i) => ({ code: l.code, unit: l.unit, price: harga(l), source: petugas(l, i) ? "petugas" : "tier", hargaMaster: petugas(l, i) ? null : harga(l),
+        prices: b.lines.map((l, i) => ({ code: l.code, unit: l.unit, price: harga(l), source: petugas(l, i) ? "petugas" : "tier", hargaMaster: petugas(l, i) ? null : harga(l), hargaDefault: false,
             priceCategoryName: p.priceCategoryName, branchName: p.branchName, effectiveDate: "2026-10-01", knownUnits: null })),
         result: {
             gross: gross.toFixed(2), discount: potongan.toFixed(2), net: net.toFixed(2), lines: baris,
@@ -198,8 +199,8 @@ export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<
         log.preview.push(b);
         const ganti = await opsi.preview?.(b, log.preview.length);
         const jawab = ganti ?? blokirSales() ?? pratinjauContoh(b, opsi.geser ?? 0, opsi.channelMasalah ?? "");
-        const sidik = jawab !== "putus" && jawab.body && (jawab.body as { sidik?: string }).sidik;
-        if (sidik) log.sidik.push(sidik);
+        const sidik = jawab !== "putus" ? (jawab.body as { sidik?: string } | undefined)?.sidik : undefined;
+        if (typeof sidik === "string" && sidik) log.sidik.push(sidik);
         return kirim(r, jawab);
     });
 

@@ -29,7 +29,7 @@ import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@
 import { PemilihBarang, type BacaanBarang } from "@/components/order/PemilihBarang";
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
 import { PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
-import { galatDariJawaban, galatTidakDitemukan, hargaCabangDefault, kalimatGalat, kalimatPenolakan, kunciHarga, labelSatuan, pratinjauBerubah, type BarangPilih, type Cakupan, type Galat, type PelangganPilih } from "@/components/order/order-cabang";
+import { alasanKunciBarang, galatDariJawaban, galatTidakDitemukan, hargaCabangDefault, kalimatGalat, kalimatPenolakan, kunciHarga, labelSatuan, pratinjauBerubah, type BarangPilih, type Cakupan, type Galat, type PelangganPilih } from "@/components/order/order-cabang";
 import { bacaBarangKode, hitungPratinjau, muatCakupan, type Pratinjau } from "@/components/order/order-cabang-api";
 import { resolveApiBase } from "@/lib/apiBase";
 import { rupiah } from "@/lib/promo-ui";
@@ -265,7 +265,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                         : menunggu >= 0 ? `Menunggu data barang ${menunggu + 1}`
                                             : tidakLengkap >= 0 ? `Lengkapi satuan dan jumlah barang ${tidakLengkap + 1}`
                                                 : salahSatuan >= 0 ? `Perbaiki satuan barang ${salahSatuan + 1}`
-                                                    : salahBarang >= 0 ? `Hapus atau ganti barang ${salahBarang + 1}: ${pratinjau?.status === "barang" ? pratinjau.galat.judul : ""}`
+                                                    : salahBarang >= 0 && pratinjau?.status === "barang" ? alasanKunciBarang(pratinjau.galat, salahBarang + 1)
                                                         : pratinjau?.status === "galat" ? (pratinjau.galat.menolak ? `${pratinjau.galat.judul}. ${pratinjau.galat.tindakan}` : "Perkiraan harga belum tersedia — hitung ulang dulu")
                                                             : tanpaHargaIdx >= 0 ? `Harga barang ${tanpaHargaIdx + 1} belum ada di Accurate untuk cabang ini — belum bisa dikirim`
                                                                 : pratinjau?.status === "memuat" ? "Menunggu harga dihitung"
@@ -461,7 +461,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                             <PemilihBarang nomor={index + 1} pelanggan={pelanggan} tanggal={orderDate} nilai={line.barang} bacaan={line.bacaan} peran="sales"
                                                 onPilih={(b) => pilihBarang(index, b)} onLepas={() => lepasBarang(index)}
                                                 onBacaUlang={pelanggan ? () => void muatBarangKode(index, code, pelanggan, orderDate) : undefined} />
-                                            {bedaCabang && <p className="fi-msg" role="alert">{bedaCabang} Hapus barang ini atau ganti dengan barang cabang pelanggan.</p>}
+                                            {bedaCabang && pratinjau?.status === "barang" && <p className="fi-msg" role="alert">{bedaCabang} {pratinjau.galat.tindakan}</p>}
                                             {line.barang && (
                                                 <div className="grid gap-3" style={{ gridTemplateColumns: "minmax(0,3fr) minmax(0,2fr)" }}>
                                                     <FormField label="Satuan" error={wrong ? `Satuan ${wrong.unit} tidak ada untuk ${wrong.code}. Pilih ${wrong.known_units.join(" atau ")}.` : undefined}
