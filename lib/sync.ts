@@ -13,6 +13,7 @@ import { matchBranchAutoNumbers } from "./branch-auto-number";
 import { eq, sql } from "drizzle-orm";
 import { recordInvoiceRealization } from "./program-realization-store";
 import { cabangDariTag, normalNama, petaCabang } from "./order-cabang";
+import { redactAccurateSecrets } from "./accurate-redact";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -59,7 +60,7 @@ export async function* AccuratePaginator(
 
         const data = await response.json();
         if (!data.s) {
-            throw new Error(`Accurate API returned logical error: ${data.m || JSON.stringify(data)}`);
+            throw new Error(`Accurate API returned logical error: ${redactAccurateSecrets(String(data.m || JSON.stringify(data)))}`);
         }
 
         if (data.sp && data.sp.pageCount) {
@@ -576,7 +577,7 @@ export async function upsertSalesInvoiceById(id: number, creds: AccurateCredenti
     if (!body?.s) {
         const pesan = [body?.m, ...(Array.isArray(body?.d) ? body.d : [body?.d])]
             .filter((bagian): bagian is string => typeof bagian === "string" && bagian.trim() !== "").join("; ");
-        throw new Error(`detail.do faktur ${id}: ${pesan || `respons gagal ${JSON.stringify(body).slice(0, 300)}`}`);
+        throw new Error(`detail.do faktur ${id}: ${redactAccurateSecrets(pesan) || `respons gagal ${redactAccurateSecrets(JSON.stringify(body)).slice(0, 300)}`}`);
     }
 
     const row = body.d as Record<string, unknown>;

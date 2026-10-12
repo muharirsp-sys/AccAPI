@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
+import { redactAccurateSecrets } from "@/lib/accurate-redact";
 import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, isAccurateRead, isCatalogWrite, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
 import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, databaseLockBerbeda, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
 import { db } from "@/lib/db";
@@ -153,14 +154,14 @@ export async function POST(req: NextRequest) {
         const { status, text: rawText, json, data } = await sendSalesReceipt(db, dispatch,
             () => forwardAccurate({ sessionHost, sessionId, accessToken: apiKey }, endpointPath, method, payload));
         if (!json) {
-            console.error("[ACCURATE API RETURNED NON-JSON]", rawText);
+            console.error("[ACCURATE API RETURNED NON-JSON]", redactAccurateSecrets(rawText));
             return NextResponse.json({ error: "Accurate mengembalikan respons non-JSON (Gagal)", detail: rawText.substring(0, 1000) }, { status: 502 });
         }
 
         // SERVER LOG FOR DEBUGGING
         const accurateResult = data as { s?: boolean };
         if (status < 200 || status >= 300 || !accurateResult.s) {
-            console.error("[ACCURATE API ERROR FORMAT JSON]", JSON.stringify(data, null, 2));
+            console.error("[ACCURATE API ERROR FORMAT JSON]", redactAccurateSecrets(JSON.stringify(data, null, 2)));
         }
 
         return NextResponse.json(data);
