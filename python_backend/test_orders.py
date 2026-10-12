@@ -184,6 +184,13 @@ def check_harga_petugas(client, body):
     order = simpan(client, campur).json()["order"]
     assert [(line["code"], line["price"], line["sumber_harga"]) for line in order["lines"]] == [
         ("A", "1500", "petugas"), ("B", "1000", "master")], order["lines"]
+    # Satuan huruf kecil dari klien = satuan yang sama dengan pratinjau Next (huruf besar): angka & sidik tetap sama.
+    kecil = {**campur, "outlet": "TOKO SATUAN", "lines": [dict(code="A", unit="pcs", quantity="10", price="1500")]}
+    besar = {**kecil, "lines": [dict(code="A", unit="PCS", quantity="10", price="1500")]}
+    lihat = client.post("/orders/preview", headers=SALES, json={**besar, "lines": berharga(besar)}).json()
+    satuan = client.post("/orders", headers=SALES, json={**kecil, "sidik": lihat["sidik"]})
+    assert satuan.status_code == 200 and satuan.json()["order"]["result"] == lihat["result"], satuan.text
+    assert satuan.json()["order"]["lines"][0]["unit"] == "PCS", satuan.json()["order"]["lines"]
     # Jembatan ASLI: harga petugas <= 0 / bukan angka DITOLAK sebelum Next ditanya (tanpa jaringan di uji ini).
     order_cabang.periksa = PERIKSA_ASLI
     try:

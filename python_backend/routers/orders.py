@@ -213,6 +213,14 @@ def jawab(error):
     return JSONResponse(status_code=503 if isinstance(error, TidakPasti) else error.status, content=error.isi())
 
 
+def baris_bersih(line):
+    """Baris masukan pratinjau/Order Baru dalam bentuk SAMA dengan yang diperiksa Next (satuan huruf besar): `calculate` mencocokkan
+    satuan program apa adanya, jadi "pcs" vs "PCS" antara pratinjau dan simpan akan membuat angka (dan sidik) berbeda."""
+    clean = {key: str(line.get(key, "") or "").strip() for key in ("code", "unit", "quantity", "price")}
+    clean["unit"] = clean["unit"].upper()
+    return clean
+
+
 async def read_order_body(request, limit):
     raw = await request.body()
     if len(raw) > limit:
@@ -234,7 +242,7 @@ async def read_order_body(request, limit):
     for line in lines:
         if not isinstance(line, dict):
             raise HTTPException(400, "Baris order tidak valid")
-        clean.append({key: str(line.get(key, "")).strip() for key in ("code", "unit", "quantity", "price")})
+        clean.append(baris_bersih(line))
     return body, channel, order_date, clean
 
 
@@ -312,7 +320,7 @@ async def create_order(request: Request):
     for line in lines:
         if not isinstance(line, dict):
             raise HTTPException(400, "Baris order tidak valid")
-        clean.append({key: str(line.get(key, "") or "").strip() for key in ("code", "unit", "quantity", "price")})
+        clean.append(baris_bersih(line))
     try:
         order_id = store_order(identity(user), outlet, channel, order_date, note, clean,
                                customer_no=customer_no, sidik=body.get("sidik"),
