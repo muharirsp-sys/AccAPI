@@ -1348,3 +1348,36 @@ test("Order Sales (putaran 1 peninjau #7): 'harga cabang default' hanya dari fla
     await b1.getByLabel("Jumlah").fill("4");
     await expect(b1).toContainText("harga cabang default · CABANG LAIN", NAV);
 });
+
+test("Order Sales (putaran 1 peninjau #8): dua ketukan cepat pada tombol konfirmasi Kirim saat server lambat = tepat 1 POST (penjaga inFlight)", async ({ page }) => {
+    const { opsi } = await mockOrderCabang(page, { peran: "sales" });
+    const ws = await mockWebsales(page, { cabang: opsi, lambatMs: 1500 });
+    await bukaSales(page);
+    const { main } = await isiSalesSiap(page);
+    await expect(main.getByRole("button", { name: "Kirim order…" })).toBeEnabled(NAV);
+    await main.getByRole("button", { name: "Kirim order…" }).click();
+    // Dua klik dalam SATU tugas JS: atribut disabled baru berlaku sesudah render, hanya ref inFlight yang bisa menahan yang kedua.
+    await page.getByRole("dialog").getByRole("button", { name: "Kirim order" }).evaluate((el: HTMLElement) => { el.click(); el.click(); });
+    await expect(page.getByRole("dialog")).toBeHidden(NAV);
+    expect(ws.kirim).toHaveLength(1);
+});
+
+test("Order baru (putaran 1 peninjau #8): dua ketukan cepat pada tombol konfirmasi Simpan saat server lambat = tepat 1 POST (penjaga inFlight)", async ({ page }) => {
+    const { opsi } = await mockOrderCabang(page);
+    const orders = await mockOrdersInternal(page, { cabang: opsi, lambatMs: 1500 });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/orders/baru", NAV);
+    const main = page.locator("main");
+    await pilihPelanggan(main, "PELANGGAN A", "PELANGGAN A");
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await pilihBarang(b1, "A-1", "BARANG A\\b.*KRT");
+    await b1.getByLabel("Satuan").selectOption("KRT");
+    await b1.getByLabel("Jumlah").fill("2");
+    const simpan = page.getByRole("button", { name: "Simpan order…" });
+    await expect(simpan).toBeEnabled(NAV);
+    await simpan.click();
+    await page.getByRole("dialog").getByRole("button", { name: "Simpan order" }).evaluate((el: HTMLElement) => { el.click(); el.click(); });
+    await expect.poll(() => orders.simpan.length, NAV).toBeGreaterThanOrEqual(1);
+    await page.waitForTimeout(2200); // lewat jeda server: POST kedua (bila ada) sudah tercatat
+    expect(orders.simpan).toHaveLength(1);
+});

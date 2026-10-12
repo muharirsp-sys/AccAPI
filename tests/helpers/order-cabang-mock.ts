@@ -229,6 +229,8 @@ export type OpsiWebsales = {
     cabang?: OpsiMock;
     /** Baris tambahan di daftar "Order saya" (mis. status rejected). */
     baris?: Record<string, unknown>[];
+    /** POST simpan dijawab setelah jeda ini (ms): menguji klik ganda saat server lambat. */
+    lambatMs?: number;
 };
 
 /** FastAPI Web Sales + /api/me. CORS mengikuti Origin permintaan (port Next tidak ditulis keras). */
@@ -239,12 +241,13 @@ export async function mockWebsales(page: Page, opsi: OpsiWebsales = {}): Promise
     const fa = (r: Route, body: unknown, status = 200, html?: string) => r.request().method() === "OPTIONS"
         ? r.fulfill({ status: 204, headers: cors(r) })
         : r.fulfill({ status, headers: { ...cors(r), "content-type": html ? "text/html" : "application/json" }, body: html ?? JSON.stringify(body) });
-    await page.route((u) => u.host === "localhost:8000", (r) => {
+    await page.route((u) => u.host === "localhost:8000", async (r) => {
         const p = new URL(r.request().url()).pathname;
         if (p === "/api/me") return fa(r, { csrf_token: "t" });
         if (p === "/websales/orders" && r.request().method() === "POST") {
             const badan = r.request().postDataJSON() as Record<string, unknown> & PreviewBody & { sidik?: string };
             dikirim.push(badan);
+            if (opsi.lambatMs) await new Promise((ok) => setTimeout(ok, opsi.lambatMs));
             if (opsi.tolak && opsi.tolak !== "putus") return fa(r, opsi.tolak.body ?? {}, opsi.tolak.status ?? 409, opsi.tolak.html);
             // Pratinjau = tersimpan: sidik WAJIB dan harus sama dengan hitungan server saat ini (tanpa harga dari klien).
             if (!badan.sidik) return fa(r, { ok: false, detail: "Hitung pratinjau order dulu.", kode: "SIDIK_WAJIB" }, 400);
@@ -271,12 +274,14 @@ export type OpsiOrdersInternal = {
     /** Jawaban POST /orders berurutan (satu per permintaan); habis = diterima bila sidik cocok. */
     antrean?: Jawab[];
     cabang?: OpsiMock;
+    /** POST simpan dijawab setelah jeda ini (ms): menguji klik ganda saat server lambat. */
+    lambatMs?: number;
 };
 
 /** FastAPI Order Baru: simpan WAJIB `sidik` yang cocok dengan hitungan server saat ini; navigasi ke halaman order ditahan (fokus pada isi permintaan). */
 export async function mockOrdersInternal(page: Page, opsi: OpsiOrdersInternal = {}): Promise<{ simpan: Record<string, unknown>[] }> {
     const simpan: Record<string, unknown>[] = [];
-    await page.route((u) => u.host === "localhost:8000", (r) => {
+    await page.route((u) => u.host === "localhost:8000", async (r) => {
         const cors = { "access-control-allow-origin": r.request().headers()["origin"] ?? "*", "access-control-allow-credentials": "true", "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, OPTIONS" };
         const req = r.request();
         const p = new URL(req.url()).pathname;
@@ -286,6 +291,7 @@ export async function mockOrdersInternal(page: Page, opsi: OpsiOrdersInternal = 
         if (p === "/orders" && req.method() === "POST") {
             const badan = req.postDataJSON() as Record<string, unknown> & PreviewBody & { sidik?: string };
             simpan.push(badan);
+            if (opsi.lambatMs) await new Promise((ok) => setTimeout(ok, opsi.lambatMs));
             const giliran = opsi.antrean?.shift();
             if (giliran === "putus") return r.abort("connectionreset");
             if (giliran) return giliran.html !== undefined ? r.fulfill({ status: giliran.status ?? 502, headers: { ...cors, "content-type": "text/html" }, body: giliran.html }) : balas(giliran.body ?? {}, giliran.status);
