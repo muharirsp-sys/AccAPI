@@ -1,25 +1,32 @@
 /*
- * Tujuan: Order Sales + Order saya (Fiori S5, it05, ponsel dulu) — sales mengirim kuantitas; harga per baris, diskon, dan bonus
- *   dihitung server dan ditampilkan; nomor permintaan tampil setelah kirim; Order saya membedakan galat dari kosong.
+ * Tujuan: Order Sales + Order saya (Fiori S5 + O2, ponsel dulu) — salesman MENCARI pelanggan (nama/kode, hanya cabang karyawan Accurate-nya)
+ *   dan barang (hanya barang cabang pelanggan, satuan + harga per cabang), mengirim kuantitas; harga, diskon promo, dan bonus dihitung
+ *   server dan tampil per baris + ringkasan; nomor permintaan tampil setelah kirim; Order saya membedakan galat dari kosong. Akun yang
+ *   belum ditautkan ke karyawan salesman Accurate melihat penjelasan "hubungi Admin", bukan formulir kosong.
  * Caller: ./page.tsx (/sales; dibatasi izin `websales.create`, bukan `order.create`).
- * Dependensi: /api/customers/lookup, /api/outlet-channel, /api/items/units, /api/orders/preview, FastAPI /websales/orders (+ /api/me untuk
- *   CSRF); ../form-kontrol/lapangan (ambilJson, PESAN_SINYAL, toko rute tersimpan); ../form-kontrol/shared (hariIniWita);
- *   components/fiori/*; lib/promo-ui (rupiah);
- *   lib/rekapan-nota/ui (tanggalPendek, jamWita).
- * Main Functions: OrderSales, hitungPratinjau, send, csrfHeader.
+ * Dependensi: /api/customers/search, /api/items/search, /api/orders/preview (components/order/*), FastAPI /websales/orders (+ /api/me untuk
+ *   CSRF); ../form-kontrol/lapangan (ambilJson, PESAN_SINYAL, toko rute tersimpan); ../form-kontrol/shared (hariIniWita); components/fiori/*;
+ *   lib/promo-ui (rupiah); lib/rekapan-nota/ui (tanggalPendek, jamWita).
+ * Main Functions: OrderSales, send, csrfHeader.
  * Side Effects: HTTP; permintaan order masuk ke basis data Web Sales yang terpisah. Payload POST sama dengan halaman lama (tanggal
- *   order bawaan kini hari ini WITA, bukan UTC).
+ *   order bawaan = hari ini WITA, bukan UTC); channel + kode pelanggan kini dari hasil pencarian master.
  *
- * Sales TIDAK mengirim harga: yang dikirim hanya kode, satuan, jumlah. Nilai transaksi dihitung server dari master Accurate + aturan
- * promo terbit, dan ditampilkan di sini supaya sales tahu angkanya. Satuan hanya boleh dari master (salah satuan = nilai salah
- * puluhan kali).
+ * Sales TIDAK mengirim harga: yang dikirim hanya kode, satuan, jumlah. Nilai transaksi dihitung server dari master Accurate (harga cabang
+ * pelanggan) + aturan promo terbit, dan ditampilkan di sini supaya sales tahu angkanya. Satuan hanya boleh dari master (salah satuan = nilai
+ * salah puluhan kali). Barang tanpa harga di cabang pelanggan ditolak server saat simpan (O1), jadi layar mengunci Kirim — bukan lagi
+ * "order tetap bisa dikirim".
  */
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Lightbulb, Plus, Send, Trash2 } from "lucide-react";
-import { Button, EmptyState, ErrorState, FooterToolbar, KeyValues, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
+import { Button, EmptyState, ErrorState, FooterToolbar, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
+import { PemilihBarang, type BacaanBarang } from "@/components/order/PemilihBarang";
+import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
+import { PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
+import { galatDariJawaban, galatTidakDitemukan, kalimatGalat, kalimatPenolakan, kunciHarga, labelSatuan, type BarangPilih, type Cakupan, type Galat, type PelangganPilih } from "@/components/order/order-cabang";
+import { bacaBarangKode, hitungPratinjau, muatCakupan, type Pratinjau } from "@/components/order/order-cabang-api";
 import { resolveApiBase } from "@/lib/apiBase";
 import { rupiah } from "@/lib/promo-ui";
 import { jamWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
@@ -28,20 +35,10 @@ import { hariIniWita } from "../form-kontrol/shared";
 
 const API_BASE = resolveApiBase();
 
-type Line = { code: string; unit: string; quantity: string };
-type ItemMaster = { found: boolean; name: string; units: string[] };
-type CustomerMaster = { found: boolean; name: string; area: string; priceCategoryName: string };
-type Suggestion = { program_id: string; message: string; codes: string[] };
-type PriceInfo = { code: string; unit: string; price: number; source: string; priceCategoryName: string | null };
-type Result = { gross: string; discount: string; net: string; bonuses: { code: string; unit: string; quantity: string; eligible_codes?: string[] }[] };
-type WrongUnit = { code: string; unit: string; known_units: string[] };
-/** siap: harga ada (tanpaHarga = kode yang belum berharga, tidak ikut netto); satuan: 409 wrong_unit; galat: lainnya (kirim tidak ditahan). */
-type Pratinjau =
-    | { status: "memuat" }
-    | { status: "siap"; result: Result | null; suggestions: Suggestion[]; prices: PriceInfo[]; tanpaHarga: string[]; catatan?: string }
-    | { status: "satuan"; wrong: WrongUnit[] }
-    | { status: "galat"; error: string };
+/** `barang` null + `bacaan` null = baris baru (belum memilih barang); `bacaan` = barang dari draf sedang/gagal dibaca. */
+type Line = { code: string; unit: string; quantity: string; barang: BarangPilih | null; bacaan: BacaanBarang | null };
 type RequestRow = { id: string; outlet: string; channel: string; order_date: string; status: string; created_at: string };
+type DataCakupan = { cakupan?: Cakupan; blokir?: Galat };
 
 const tanpaLangganan = () => () => {};
 const hariIniKlien = () => hariIniWita();
@@ -67,58 +64,36 @@ async function send(method: string, path: string, body?: unknown): Promise<Jawab
     });
 }
 
-/** Pratinjau server. 409 `missing` → pratinjau kedua hanya dari baris berharga, supaya harga per baris dan netto estimasi tetap tampil. */
-async function hitungPratinjau(channel: string, orderDate: string, customerNo: string, filled: Line[]): Promise<Pratinjau> {
-    const panggil = (ls: Line[]) => ambilJson("/api/orders/preview", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            channel, order_date: orderDate, customer_no: customerNo.trim(),
-            lines: ls.map((line) => ({ code: line.code.trim(), unit: line.unit, quantity: line.quantity })),
-        }),
-    });
-    const siap = (d: Record<string, unknown>, tanpaHarga: string[]): Pratinjau => ({
-        status: "siap", result: (d.result as Result) ?? null, suggestions: (d.suggestions as Suggestion[]) ?? [], prices: (d.prices as PriceInfo[]) ?? [], tanpaHarga,
-    });
-    const j = await panggil(filled);
-    if (j.status === 0) return { status: "galat", error: `${PESAN_SINYAL} Harga belum bisa dihitung; order tetap bisa dikirim.` };
-    const d = j.data ?? {};
-    if (j.status >= 200 && j.status < 300 && d.ok) return siap(d, []);
-    if (j.status === 409 && Array.isArray(d.wrong_unit)) return { status: "satuan", wrong: d.wrong_unit as WrongUnit[] };
-    if (j.status === 409 && Array.isArray(d.missing)) {
-        const tanpaHarga = [...new Set((d.missing as unknown[]).map(String))];
-        const berharga = filled.filter((line) => !tanpaHarga.includes(line.code.trim()));
-        if (berharga.length === 0) return { status: "siap", result: null, suggestions: [], prices: [], tanpaHarga };
-        const k = await panggil(berharga);
-        if (k.status >= 200 && k.status < 300 && k.data?.ok) return siap(k.data, tanpaHarga);
-        return { status: "siap", result: null, suggestions: [], prices: [], tanpaHarga, catatan: String(k.data?.error || "Perkiraan barang berharga tidak tersedia") };
-    }
-    return { status: "galat", error: String(d.error || "Perkiraan tidak tersedia") };
-}
+const emptyLine = (): Line => ({ code: "", unit: "", quantity: "1", barang: null, bacaan: null });
 
-const emptyLine = (): Line => ({ code: "", unit: "", quantity: "1" });
+/** Satu satuan saja = dipilih otomatis; satuan lama dipertahankan bila masih ada; selain itu kosong (satuan tidak pernah ditebak: selisih bisa 72x). */
+const satuanAwal = (b: BarangPilih, lama: string) => (b.units.some((u) => u.unit === lama) ? lama : b.units.length === 1 ? b.units[0].unit : "");
 
 /**
  * Draf order di ponsel ini (owner 8 Okt 2026): satu draf per akun per perangkat (`DRAF_ORDER.<id akun>`), ditulis selama ada isian,
  * dihapus setelah order terkirim. Dipulihkan HANYA lewat tombol; tanggal tidak ikut (kembali hari ini). Order Web Sales tidak idempoten:
  * sebelum POST draf ditandai TERPUTUS, sehingga draf dari kiriman yang tak sempat dijawab (halaman tertutup/berpindah) tetap menahan Kirim
  * setelah dipulihkan; tanda itu baru dilepas oleh jawaban pasti (sukses = draf dihapus, ditolak = tanda sebelumnya kembali).
+ * O2: bentuk draf TIDAK berubah (kode pelanggan + kode/satuan/jumlah barang); sesudah dipulihkan, pelanggan dan barang dibaca ulang dari
+ * master (cabang/harga bisa berubah sejak draf ditulis).
  * ponytail: dua tab berisi draf yang sama — tab yang belum mengirim bisa menulis ulang draf yang sudah terkirim tanpa tanda; tambahkan
  * listener `storage` bila itu terjadi di lapangan.
  */
 const DRAF_ORDER = "accapi.order-sales.draf.v1";
 const TERPUTUS = "Kiriman order ini terputus sebelum ada jawaban server. Order mungkin sudah masuk — periksa Order saya sebelum mengirim ulang.";
-type DrafOrder = { customerNo: string; outlet: string; note: string; lines: Line[]; tidakPasti: string; disimpan: string };
+type BarisDraf = { code: string; unit: string; quantity: string };
+type DrafOrder = { customerNo: string; outlet: string; note: string; lines: BarisDraf[]; tidakPasti: string; disimpan: string };
 function bacaDrafOrder(raw: string | null): DrafOrder | null {
     try {
         const d = raw ? JSON.parse(raw) : null;
         if (!d || !Array.isArray(d.lines)) return null;
         const teks = (v: unknown) => (typeof v === "string" ? v : "");
-        const lines: Line[] = d.lines.map((l: unknown) => {
+        const lines: BarisDraf[] = d.lines.map((l: unknown) => {
             const o = (l ?? {}) as Record<string, unknown>;
             return { code: teks(o.code), unit: teks(o.unit), quantity: teks(o.quantity) };
-        }).filter((l: Line) => l.code.trim());
+        }).filter((l: BarisDraf) => l.code.trim());
         if (lines.length === 0 && !teks(d.note).trim()) return null;
-        return { customerNo: teks(d.customerNo), outlet: teks(d.outlet), note: teks(d.note), lines: lines.length ? lines : [emptyLine()], tidakPasti: teks(d.tidakPasti), disimpan: teks(d.disimpan) };
+        return { customerNo: teks(d.customerNo), outlet: teks(d.outlet), note: teks(d.note), lines: lines.length ? lines : [{ code: "", unit: "", quantity: "1" }], tidakPasti: teks(d.tidakPasti), disimpan: teks(d.disimpan) };
     } catch { return null; }
 }
 const bacaPonsel = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -136,6 +111,13 @@ const bisaSimpanPonsel = () => {
     return ponselBisaSimpan;
 };
 const nomorPermintaan = (id: string) => `#${id.slice(0, 8)}`;
+const buatBarisDraf = (lines: Line[]): BarisDraf[] => lines.map((l) => ({ code: l.code, unit: l.unit, quantity: l.quantity }));
+
+/** Barang dari draf yang tak terbaca karena pelanggannya belum terbaca: bukan "tidak ada", jadi kalimatnya sendiri. */
+const galatMenungguPelanggan = (kode: string): Galat => ({
+    kode: "PELANGGAN_BELUM_TERBACA", judul: "Barang belum bisa diperiksa", menolak: true, tidakPasti: false, blokirSales: false, perBarang: {},
+    pesan: `Barang ${kode} belum bisa dibaca karena pelanggan order ini belum terbaca.`, tindakan: "Pilih pelanggan dulu, lalu cari barangnya lagi.",
+});
 
 export default function OrderSales({ akunId }: { akunId: string }) {
     const kunciDraf = `${DRAF_ORDER}.${akunId}`;
@@ -144,16 +126,16 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     const ruteRaw = useSyncExternalStore(tanpaLangganan, () => { try { return sessionStorage.getItem(RUTE_TERSIMPAN); } catch { return null; } }, () => null);
     const tokoRute = useMemo(() => bacaRuteTersimpan(ruteRaw, hariIni), [ruteRaw, hariIni]);
 
-    const [customerNo, setCustomerNo] = useState("");
-    const [customer, setCustomer] = useState<CustomerMaster | null>(null);
+    const pel = usePelanggan("sales");
+    const pelanggan: PelangganPilih | null = pel.state.jenis === "siap" ? pel.state.p : null;
+    const kodePel = pel.state.jenis === "siap" ? pel.state.p.customerNo : pel.state.jenis === "kosong" ? "" : pel.state.kode;
     const [outlet, setOutlet] = useState("");
-    const [channel, setChannel] = useState("");
-    const [channelMasalah, setChannelMasalah] = useState("");
+    const channel = pelanggan?.channel ?? "";
+    const channelMasalah = pelanggan && !pelanggan.channel ? `Outlet ${pelanggan.customerNo} belum punya kategori (TT/MT) di Accurate. Isi kategorinya di Accurate lebih dulu.` : "";
     const [tanggalIsi, setTanggalIsi] = useState<string | null>(null);
     const orderDate = tanggalIsi ?? hariIni;
     const [note, setNote] = useState("");
     const [lines, setLines] = useState<Line[]>([emptyLine()]);
-    const [master, setMaster] = useState<Record<string, ItemMaster>>({});
     const [hasil, setHasil] = useState<{ key: string; p: Pratinjau } | null>(null);
     // "ulang" = kirim lagi sesudah jawaban tidak pasti, dengan peringatan order ganda (pilihan eksplisit salesman).
     const [dialog, setDialog] = useState<null | "biasa" | "ulang" | "buang">(null);
@@ -165,13 +147,39 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     const drafRaw = useSyncExternalStore(tanpaLangganan, () => bacaPonsel(kunciDraf), () => null);
     const simpanPonsel = useSyncExternalStore(tanpaLangganan, bisaSimpanPonsel, () => false);
     const [diputuskan, setDiputuskan] = useState(false);
+    const acBarang = useRef<AbortController | null>(null);
     // Mulai mengisi menutup tawaran draf; draf lama tetap di ponsel sampai isian baru menjadi draf (menggantikannya).
     const ubahIsian = () => { setSukses(""); setTidakPasti(""); setDiputuskan(true); };
-    function pulihkan() {
+
+    /** Baca satu barang dari kodenya untuk baris `index` (pemulihan draf / Coba lagi). */
+    const muatBarangKode = useCallback(async (index: number, kode: string, p: PelangganPilih, tanggal: string) => {
+        acBarang.current ??= new AbortController();
+        const sinyal = acBarang.current.signal;
+        setLines((prev) => prev.map((l, i) => (i === index ? { ...l, bacaan: { jenis: "memuat", kode } } : l)));
+        const h = await bacaBarangKode(kode, p, tanggal, sinyal, "sales");
+        if (sinyal.aborted || (!h.ok && "batal" in h)) return;
+        setLines((prev) => prev.map((l, i) => {
+            if (i !== index || l.code.trim() !== kode) return l;
+            if (!h.ok) return { ...l, bacaan: { jenis: "galat", kode, galat: h.galat } };
+            if (!h.data) return { ...l, bacaan: { jenis: "galat", kode, galat: galatTidakDitemukan("barang", kode, "sales") } };
+            return { ...l, barang: h.data, bacaan: null, unit: satuanAwal(h.data, l.unit) };
+        }));
+    }, []);
+
+    async function pulihkan() {
         const d = bacaDrafOrder(bacaPonsel(kunciDraf)); // dibaca saat diklik: tab lain bisa sudah mengirim/mengubahnya
         setDiputuskan(true);
         if (!d) return;
-        setCustomerNo(d.customerNo); setOutlet(d.outlet); setNote(d.note); setLines(d.lines); setTidakPasti(d.tidakPasti); setSukses("");
+        setOutlet(d.outlet); setNote(d.note); setTidakPasti(d.tidakPasti); setSukses("");
+        acBarang.current?.abort();
+        acBarang.current = new AbortController();
+        setLines(d.lines.map((l) => ({ ...l, barang: null, bacaan: l.code.trim() ? { jenis: "memuat", kode: l.code.trim() } : null })));
+        const p = d.customerNo.trim() ? await pel.bacaKode(d.customerNo) : null;
+        if (!p) {
+            setLines((prev) => prev.map((l) => (l.bacaan ? { ...l, bacaan: { jenis: "galat", kode: l.code.trim(), galat: galatMenungguPelanggan(l.code.trim()) } } : l)));
+            return;
+        }
+        d.lines.forEach((l, i) => { if (l.code.trim()) void muatBarangKode(i, l.code.trim(), p, hariIni); });
     }
     function buangDraf() { hapusPonsel(kunciDraf); setDialog(null); setDiputuskan(true); }
 
@@ -186,106 +194,72 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     }, []);
     const [orderSaya, muatUlangOrder] = useLoad(muatOrder);
 
-    // Konfirmasi pelanggan: nama dan kategori harga. Outlet diisi otomatis supaya sales tidak mengetik nama yang berbeda dari master.
-    //
-    // Channel ikut DITANYAKAN ke master, tidak diketik. Server sudah menolak order yang channelnya berbeda dari master
-    // (`outlet_channel.verify`), jadi kotak isian bebas hanya menyediakan satu cara untuk salah: perkiraan promo dihitung untuk channel
-    // yang diakui, lalu ordernya ditolak saat dikirim. Yang memutuskan promo per channel adalah master, jadi itu pula yang diperlihatkan.
-    useEffect(() => {
-        const code = customerNo.trim();
-        if (!code) { setCustomer(null); setChannel(""); setChannelMasalah(""); return; }
-        const timer = setTimeout(async () => {
-            try {
-                const res = await fetch(`/api/customers/lookup?no=${encodeURIComponent(code)}`);
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok || !data.ok) { setCustomer(null); return; }
-                setCustomer({ found: Boolean(data.found), name: String(data.name ?? ""), area: String(data.area ?? ""), priceCategoryName: String(data.priceCategoryName ?? "") });
-                if (data.found && !outlet.trim()) setOutlet(String(data.name ?? ""));
-            } catch { setCustomer(null); }
-            try {
-                const res = await fetch(`/api/outlet-channel?no=${encodeURIComponent(code)}`);
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok || !data.ok) throw new Error();
-                const channels = (data.channels ?? {}) as Record<string, string>;
-                const dariMaster = String(channels[code] ?? "");
-                setChannel(dariMaster);
-                // Tiga keadaan, tiga perbaikan yang berbeda — jadi tiga kalimat, bukan satu "channel tidak diketahui" yang tidak
-                // menyuruh siapa pun berbuat apa.
-                setChannelMasalah(!(code in channels)
-                    ? `Outlet ${code} tidak ada di master pelanggan Accurate; sinkronkan master atau betulkan kodenya.`
-                    : dariMaster ? "" : `Outlet ${code} belum punya kategori (TT/MT) di Accurate. Isi kategorinya di Accurate lebih dulu.`);
-            } catch {
-                setChannel("");
-                setChannelMasalah("Channel outlet tidak bisa ditanyakan ke master sekarang; coba lagi sebentar lagi.");
-            }
-        }, 400);
-        return () => clearTimeout(timer);
-        // outlet sengaja tidak masuk deps: prefill hanya saat outlet masih kosong.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [customerNo]);
-
-    // Satuan dari master Accurate, satu permintaan per kode baru.
-    const codesKey = [...new Set(lines.map((line) => line.code.trim()).filter(Boolean))].join(",");
-    useEffect(() => {
-        const pending = codesKey.split(",").filter((code) => code && !(code in master));
-        if (pending.length === 0) return;
-        const timer = setTimeout(async () => {
-            const loaded = await Promise.all(pending.map(async (code) => {
-                const fallback: [string, ItemMaster] = [code, { found: false, name: "", units: [] }];
-                try {
-                    const res = await fetch(`/api/items/units?code=${encodeURIComponent(code)}`);
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok || !data.ok) return fallback;
-                    return [code, { found: Boolean(data.found), name: String(data.name ?? ""), units: (data.units ?? []) as string[] }] as [string, ItemMaster];
-                } catch { return fallback; }
-            }));
-            setMaster((prev) => ({ ...prev, ...Object.fromEntries(loaded) }));
-        }, 400);
-        return () => clearTimeout(timer);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [codesKey]);
-
-    useEffect(() => {
-        setLines((prev) => prev.map((line) => {
-            const info = master[line.code.trim()];
-            if (!info || info.units.length === 0 || info.units.includes(line.unit)) return line;
-            return { ...line, unit: info.units.length === 1 ? info.units[0] : "" };
-        }));
-    }, [master]);
+    // Cakupan cabang salesman (cabang karyawan Accurate yang ditautkan ke akun). `blokir` = jawaban PASTI (belum tertaut / karyawan tidak
+    // aktif) → penjelasan menggantikan formulir; putus / server sibuk = galat sementara (bukan "belum tertaut").
+    const muatPeta = useCallback(async (): Promise<Load<DataCakupan>> => {
+        const r = await muatCakupan();
+        if ("cakupan" in r) return { status: "siap", data: { cakupan: r.cakupan } };
+        if ("blokir" in r) return { status: "siap", data: { blokir: r.blokir } };
+        return { status: "galat", error: kalimatGalat(r.galat) };
+    }, []);
+    const [petaL, muatUlangPeta] = useLoad(muatPeta);
+    const blokir = petaL.data?.blokir ?? null;
 
     // Nilai transaksi dan saran promo dihitung server; sales melihat, tidak menentukan.
     const filled = lines.filter((line) => line.code.trim());
-    const siapPratinjau = Boolean(channel.trim() && /^\d{4}-\d{2}-\d{2}$/.test(orderDate) && filled.length > 0
-        && filled.every((line) => line.unit.trim() && Number(line.quantity) > 0));
-    const previewKey = JSON.stringify([channel, orderDate, customerNo, lines]);
+    const barisSiap = (l: Line) => Boolean(l.barang && l.unit.trim() && Number(l.quantity) > 0);
+    const siapPratinjau = Boolean(pelanggan && channel.trim() && /^\d{4}-\d{2}-\d{2}$/.test(orderDate) && filled.length > 0 && filled.every(barisSiap));
+    const previewKey = JSON.stringify([channel, orderDate, kodePel, lines.map((l) => [l.code, l.unit, l.quantity])]);
     const pratinjau: Pratinjau | null = !siapPratinjau ? null : hasil?.key === previewKey ? hasil.p : { status: "memuat" };
     useEffect(() => {
         if (!siapPratinjau) return;
         let hidup = true;
         const timer = setTimeout(async () => {
-            const p = await hitungPratinjau(channel, orderDate, customerNo, lines.filter((line) => line.code.trim()));
+            const p = await hitungPratinjau({ channel, orderDate, customerNo: kodePel, peran: "sales",
+                lines: lines.filter((l) => l.code.trim()).map((l) => ({ code: l.code, unit: l.unit, quantity: l.quantity })) });
             if (hidup) setHasil({ key: previewKey, p });
         }, 600);
         return () => { hidup = false; clearTimeout(timer); };
+        // previewKey SUDAH memuat channel, tanggal, pelanggan, dan kode/satuan/jumlah tiap baris.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [previewKey, siapPratinjau]);
 
-    const updateLine = (index: number, key: keyof Line, value: string) => {
+    const updateLine = (index: number, key: "unit" | "quantity", value: string) => {
         ubahIsian();
         setLines((prev) => prev.map((line, i) => (i === index ? { ...line, [key]: value } : line)));
     };
+    const pilihBarang = (index: number, b: BarangPilih) => {
+        ubahIsian();
+        setLines((prev) => prev.map((line, i) => (i === index ? { ...line, code: b.no, barang: b, bacaan: null, unit: satuanAwal(b, line.unit) } : line)));
+    };
+    const lepasBarang = (index: number) => {
+        ubahIsian();
+        setLines((prev) => prev.map((line, i) => (i === index ? { ...emptyLine() } : line)));
+    };
 
-    const lengkap = lines.filter((line) => line.code.trim() && line.unit.trim() && Number(line.quantity) > 0);
-    const tidakLengkap = lines.findIndex((line) => line.code.trim() && !(line.unit.trim() && Number(line.quantity) > 0));
+    const lengkap = lines.filter(barisSiap);
+    const tidakLengkap = lines.findIndex((line) => line.barang && !(line.unit.trim() && Number(line.quantity) > 0));
+    const menunggu = lines.findIndex((line) => line.code.trim() && !line.barang);
     const salahSatuan = pratinjau?.status === "satuan"
         ? lines.findIndex((line) => pratinjau.wrong.some((w) => w.code === line.code.trim() && w.unit === line.unit.trim().toUpperCase())) : -1;
-    const terkunciIsian = !customerNo.trim() ? "Isi kode pelanggan"
-        : !outlet.trim() ? "Isi nama outlet"
-            : !channel.trim() ? (channelMasalah || "Channel outlet belum dipastikan dari master")
-                : filled.length === 0 ? "Isi kode barang"
-                    : tidakLengkap >= 0 ? `Lengkapi satuan dan jumlah barang ${tidakLengkap + 1}`
-                        : salahSatuan >= 0 ? `Perbaiki satuan barang ${salahSatuan + 1}`
-                            : pratinjau?.status === "memuat" ? "Menunggu harga dihitung" : undefined;
+    const salahBarang = pratinjau?.status === "barang" ? lines.findIndex((line) => line.code.trim() in pratinjau.galat.perBarang) : -1;
+    const tanpaHargaIdx = pratinjau?.status === "siap" ? lines.findIndex((line) => pratinjau.tanpaHarga.includes(line.code.trim())) : -1;
+    const terkunciIsian = petaL.status === "memuat" && !petaL.data ? "Memuat cabang Anda"
+        : petaL.status === "galat" && !petaL.data ? "Cabang Anda belum terbaca; muat ulang halaman ini"
+            : blokir ? "Akun belum dihubungkan ke karyawan Accurate — hubungi Admin"
+                : pel.state.jenis === "kosong" ? "Cari dan pilih pelanggan"
+                    : pel.state.jenis === "memuat" ? "Membaca data pelanggan"
+                        : pel.state.jenis === "galat" ? "Data pelanggan belum terbaca; pilih pelanggan lagi"
+                            : !outlet.trim() ? "Isi nama outlet"
+                                : !channel.trim() ? (channelMasalah || "Channel outlet belum dipastikan dari master")
+                                    : filled.length === 0 ? "Cari dan pilih barang"
+                                        : menunggu >= 0 ? `Menunggu data barang ${menunggu + 1}`
+                                            : tidakLengkap >= 0 ? `Lengkapi satuan dan jumlah barang ${tidakLengkap + 1}`
+                                                : salahSatuan >= 0 ? `Perbaiki satuan barang ${salahSatuan + 1}`
+                                                    : salahBarang >= 0 ? `Hapus atau ganti barang ${salahBarang + 1}: ${pratinjau?.status === "barang" ? pratinjau.galat.judul : ""}`
+                                                        : pratinjau?.status === "galat" && pratinjau.galat.menolak ? `${pratinjau.galat.judul}. ${pratinjau.galat.tindakan}`
+                                                            : tanpaHargaIdx >= 0 ? `Harga barang ${tanpaHargaIdx + 1} belum ada di Accurate untuk cabang ini — belum bisa dikirim`
+                                                                : pratinjau?.status === "memuat" ? "Menunggu harga dihitung" : undefined;
     const terkunci = tidakPasti ? "Periksa Order saya dulu — order terakhir mungkin sudah masuk" : terkunciIsian;
     // Draf = barang/catatan yang belum dikirim (pelanggan saja tidak dijaga: tetap terisi setelah kirim seperti halaman lama).
     const draf = Boolean(note.trim() || filled.length > 0);
@@ -294,21 +268,22 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     // Dihapus hanya bila draf SESI INI dikosongkan sendiri: ketukan pertama di kolom mana pun tidak menghapus draf lama yang belum diputuskan.
     const adaDrafSesi = useRef(false);
     const mengirim = useRef(false); // selama POST berjalan draf (bertanda TERPUTUS) tidak ditimpa pembaruan layar lain
+    const barisDraf = JSON.stringify(buatBarisDraf(lines));
     useEffect(() => {
         if (mengirim.current) return;
-        if (draf) { tulisPonsel(kunciDraf, { customerNo, outlet, note, lines, tidakPasti }); adaDrafSesi.current = true; }
+        if (draf) { tulisPonsel(kunciDraf, { customerNo: kodePel, outlet, note, lines: JSON.parse(barisDraf) as BarisDraf[], tidakPasti }); adaDrafSesi.current = true; }
         else if (adaDrafSesi.current) { hapusPonsel(kunciDraf); adaDrafSesi.current = false; }
-    }, [kunciDraf, draf, customerNo, outlet, note, lines, tidakPasti]);
+    }, [kunciDraf, draf, kodePel, outlet, note, barisDraf, tidakPasti]);
 
     async function kirim() {
-        const isi = { customerNo, outlet, note, lines };
+        const isi = { customerNo: kodePel, outlet, note, lines: buatBarisDraf(lines) };
         tulisPonsel(kunciDraf, { ...isi, tidakPasti: TERPUTUS }); // lihat DRAF_ORDER: dilepas hanya oleh jawaban pasti
         mengirim.current = true;
         try { await kirimSekali(isi); } finally { mengirim.current = false; }
     }
-    async function kirimSekali(isi: { customerNo: string; outlet: string; note: string; lines: Line[] }) {
+    async function kirimSekali(isi: { customerNo: string; outlet: string; note: string; lines: BarisDraf[] }) {
         const j = await send("POST", "/websales/orders", {
-            outlet, channel, order_date: orderDate, note, customer_no: customerNo.trim(),
+            outlet, channel, order_date: orderDate, note, customer_no: kodePel.trim(),
             lines: lengkap.map((line) => ({ code: line.code.trim(), unit: line.unit, quantity: line.quantity })),
         });
         if (j.status === 0 || j.status >= 502 || j.data === null) {
@@ -319,9 +294,9 @@ export default function OrderSales({ akunId }: { akunId: string }) {
             return;
         }
         if (j.status < 200 || j.status >= 300 || !j.data.ok) {
-            const detail = j.data.detail ?? j.data.error;
             tulisPonsel(kunciDraf, { ...isi, tidakPasti }); // ditolak pasti = tidak ada order baru; tanda sebelumnya kembali
-            throw new Error(typeof detail === "string" && detail ? detail : "Order ditolak server.");
+            const g = galatDariJawaban(j, "sales");
+            throw new Error(kalimatPenolakan(g) || "Order ditolak server.");
         }
         const req = (j.data.request ?? {}) as { id?: string };
         hapusPonsel(kunciDraf); // langsung, bukan lewat efek: tetap terhapus walau halaman sudah ditinggalkan
@@ -336,14 +311,16 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     }
 
     const nTanpaHarga = pratinjau?.status === "siap" ? pratinjau.tanpaHarga.length : 0;
-    const netto = pratinjau?.status === "siap" && pratinjau.result ? rupiah(pratinjau.result.net) : null;
+    const netto = pratinjau?.status === "siap" && pratinjau.result ? rupiah(pratinjau.result.net ?? 0) : null;
+    const hasilPratinjau = pratinjau?.status === "siap" ? pratinjau.result : null;
+    const cabangPelanggan = pelanggan?.branchName ?? "";
 
     return (
         <div>
             <div className="fi-page" style={{ maxWidth: "48rem" }}>
                 <div className="fi-page-head">
                     <h1>Order Sales</h1>
-                    <p>Kirim jumlah barang; harga, diskon, dan bonus dihitung server dari master Accurate dan promo yang berlaku.</p>
+                    <p>Kirim jumlah barang; harga cabang pelanggan, diskon, dan bonus dihitung server dari master Accurate dan promo yang berlaku.</p>
                 </div>
                 {sukses && (
                     <MessageStrip tone="pos" title={sukses === "terkirim" ? "Order terkirim." : `Order terkirim · No. permintaan ${sukses}.`}>
@@ -356,144 +333,157 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                         <Button variant="tertiary" disabled={Boolean(terkunciIsian)} disabledReason={terkunciIsian} onClick={() => setDialog("ulang")}>Kirim lagi…</Button>
                     </MessageStrip>
                 )}
-                {tawaran && (
+                {tawaran && !blokir && (
                     <MessageStrip tone="info" title="Ada draf order di ponsel ini.">
                         {[tawaran.customerNo.trim() || "Tanpa kode pelanggan", tawaran.outlet.trim(), `${tawaran.lines.filter((l) => l.code.trim()).length} barang`].filter(Boolean).join(" · ")}
                         {tawaran.disimpan && ` · disimpan ${jamWita(tawaran.disimpan)}`}.
                         {tawaran.tidakPasti && " Kiriman terakhirnya belum pasti — periksa Order saya sebelum mengirim lagi."}
-                        {" "}Tanggal order kembali ke hari ini; mulai mengisi akan menggantinya.{" "}
-                        <Button variant="tertiary" onClick={pulihkan}>Pulihkan draf</Button>{" "}
+                        {" "}Tanggal order kembali ke hari ini; pelanggan dan barang dibaca ulang dari master. Mulai mengisi akan menggantinya.{" "}
+                        <Button variant="tertiary" onClick={() => void pulihkan()}>Pulihkan draf</Button>{" "}
                         <Button variant="tertiary" onClick={() => setDialog("buang")}>Buang…</Button>
                     </MessageStrip>
                 )}
-                {draf && !sukses && <p className="fi-draft" role="status">{simpanPonsel
+                {draf && !sukses && !blokir && <p className="fi-draft" role="status">{simpanPonsel
                     ? "Isian belum dikirim — tersimpan sebagai draf di ponsel ini, belum di server."
                     : "Isian belum dikirim — belum tersimpan di server maupun di ponsel; jangan tutup halaman ini."}</p>}
 
-                <Section title="Pelanggan">
-                    <div className="fi-sect-in">
-                        {tokoRute.length > 0 && (
-                            <FormField label="Toko di rute hari ini" help="Dari Rute hari ini yang terakhir dibuka di ponsel ini.">
-                                {(a) => (
-                                    <select {...a} className="fi-input" value={tokoRute.some((t) => t.kode === customerNo.trim()) ? customerNo.trim() : ""}
-                                        onChange={(e) => { if (!e.target.value) return; ubahIsian(); setOutlet(""); setCustomerNo(e.target.value); }}>
-                                        <option value="">Pilih toko</option>
-                                        {tokoRute.map((t) => <option key={t.kode} value={t.kode}>{t.nama} · {t.kode}</option>)}
-                                    </select>
-                                )}
-                            </FormField>
-                        )}
-                        <div className="fi-formgrid">
-                            <FormField label="Kode pelanggan Accurate" required
-                                error={customer && !customer.found ? `Kode ${customerNo.trim()} tidak ada di master Accurate` : undefined}
-                                help={customer?.found ? `${customer.name}${customer.area ? ` · ${customer.area}` : ""} · harga ${customer.priceCategoryName || "standar (kategori belum tersedia)"}` : undefined}>
-                                {(a) => <input {...a} className="fi-input fi-mono" value={customerNo} placeholder="C.00000" autoComplete="off" onChange={(e) => { ubahIsian(); setCustomerNo(e.target.value); }} />}
-                            </FormField>
-                            <FormField label="Outlet" required>
-                                {(a) => <input {...a} className="fi-input" value={outlet} placeholder="Nama outlet" onChange={(e) => { ubahIsian(); setOutlet(e.target.value); }} />}
-                            </FormField>
-                            <FormField label="Channel" help="Dari master Accurate, bukan diketik.">
-                                {(a) => <input {...a} className="fi-input" readOnly value={channel || (customerNo.trim() ? "belum dipastikan" : "isi kode pelanggan dulu")} />}
-                            </FormField>
-                            <FormField label="Tanggal order" help="Bawaan hari ini (WITA).">
-                                {(a) => <input {...a} type="date" className="fi-input" value={orderDate} onChange={(e) => { ubahIsian(); setTanggalIsi(e.target.value); }} />}
-                            </FormField>
-                            <FormField label="Catatan">
-                                {(a) => <input {...a} className="fi-input" value={note} placeholder="opsional" onChange={(e) => { ubahIsian(); setNote(e.target.value); }} />}
-                            </FormField>
+                {blokir ? (
+                    <Section title="Order belum bisa dibuat">
+                        <div className="fi-sect-in">
+                            <MessageStrip tone="warn" title={`${blokir.judul}.`}>{blokir.pesan}</MessageStrip>
+                            <p>{blokir.tindakan}</p>
+                            <p className="fi-small fi-muted">Sesudah Admin menautkan akun Anda, buka ulang halaman ini. Order yang sudah pernah Anda kirim tetap terlihat di bawah.</p>
                         </div>
-                        {channelMasalah && (
-                            /* Ditahan, dan sebabnya disebut. Server menolak order tanpa channel juga; menyebutkan alasannya di sini membuat
-                               sales tahu SIAPA yang membetulkannya, bukan menekan Kirim sampai layarnya berhenti mengeluh. */
-                            <MessageStrip tone="warn">{channelMasalah}</MessageStrip>
-                        )}
-                        <VariantNote bl="BL-32">Pelanggan dan barang dicari dengan kode persis; belum ada pencarian nama dan belum dibatasi ke toko di JKS Anda. Usulan: cari nama atau kode, hanya toko JKS salesman.</VariantNote>
-                    </div>
-                </Section>
-
-                <Section title="Barang" subtitle={`${lines.length} baris`}>
-                    <ul aria-label="Barang" style={{ listStyle: "none", padding: 0 }}>
-                        {lines.map((line, index) => {
-                            const code = line.code.trim();
-                            const info = master[code];
-                            const wrong = pratinjau?.status === "satuan" ? pratinjau.wrong.find((w) => w.code === code && w.unit === line.unit.trim().toUpperCase()) : undefined;
-                            const price = pratinjau?.status === "siap" ? pratinjau.prices.find((row) => row.code === code && row.unit === line.unit) : undefined;
-                            const tanpaHarga = pratinjau?.status === "siap" && pratinjau.tanpaHarga.includes(code);
-                            const advice = pratinjau?.status === "siap" ? pratinjau.suggestions.find((item) => item.codes.includes(code)) : undefined;
-                            const lengkapBaris = code && line.unit.trim() && Number(line.quantity) > 0;
-                            return (
-                                // Nomor baris dibuat eksplisit: di layar HP baris kedua dan ketiga terlihat sama saja, dan sales mengoreksi baris yang salah.
-                                <li key={index} className="fi-sect-in" style={{ borderBottom: "1px solid var(--line)" }} aria-label={`Barang ${index + 1}`}>
-                                    <div className="flex items-center justify-between gap-2">
-                                        <span className="fi-tag">Barang {index + 1}</span>
-                                        {lines.length > 1 && (
-                                            <Button variant="icon" aria-label={`Hapus barang ${index + 1}`} onClick={() => { ubahIsian(); setLines((prev) => prev.filter((_, i) => i !== index)); }}>
-                                                <Trash2 className="fi-icon" aria-hidden />
-                                            </Button>
+                    </Section>
+                ) : (
+                    <>
+                        <Section title="Pelanggan" subtitle={petaL.data?.cakupan?.branchName ? `cabang ${petaL.data.cakupan.branchName}` : undefined}>
+                            <div className="fi-sect-in">
+                                {petaL.status === "memuat" && !petaL.data ? <Skeleton rows={2} label="Memuat cabang Anda" />
+                                    : petaL.status === "galat" && !petaL.data ? <ErrorState title="Cabang Anda belum terbaca" message={petaL.error} onRetry={muatUlangPeta} />
+                                        : (
+                                            <>
+                                                {tokoRute.length > 0 && (
+                                                    <FormField label="Toko di rute hari ini" help="Dari Rute hari ini yang terakhir dibuka di ponsel ini.">
+                                                        {(a) => (
+                                                            <select {...a} className="fi-input" value={tokoRute.some((t) => t.kode === kodePel) ? kodePel : ""}
+                                                                onChange={(e) => {
+                                                                    if (!e.target.value) return;
+                                                                    ubahIsian();
+                                                                    setOutlet("");
+                                                                    void pel.bacaKode(e.target.value).then((p) => { if (p) setOutlet(p.name); });
+                                                                }}>
+                                                                <option value="">Pilih toko</option>
+                                                                {tokoRute.map((t) => <option key={t.kode} value={t.kode}>{t.nama} · {t.kode}</option>)}
+                                                            </select>
+                                                        )}
+                                                    </FormField>
+                                                )}
+                                                <PemilihPelanggan state={pel.state} peran="sales" cakupan={petaL.data?.cakupan}
+                                                    onPilih={(p) => { ubahIsian(); setOutlet(p.name); pel.pilih(p); }}
+                                                    onLepas={() => { ubahIsian(); pel.lepas(); }}
+                                                    onBacaUlang={(kode) => { void pel.bacaKode(kode); }} />
+                                                <div className="fi-formgrid">
+                                                    <FormField label="Outlet" required help={pelanggan ? undefined : "Terisi dari nama pelanggan yang dipilih."}>
+                                                        {(a) => <input {...a} className="fi-input" value={outlet} placeholder="Nama outlet" onChange={(e) => { ubahIsian(); setOutlet(e.target.value); }} />}
+                                                    </FormField>
+                                                    <FormField label="Tanggal order" help="Bawaan hari ini (WITA). Harga di daftar barang mengikuti tanggal ini.">
+                                                        {(a) => <input {...a} type="date" className="fi-input" value={orderDate} onChange={(e) => { ubahIsian(); setTanggalIsi(e.target.value); }} />}
+                                                    </FormField>
+                                                    <FormField label="Catatan">
+                                                        {(a) => <input {...a} className="fi-input" value={note} placeholder="opsional" onChange={(e) => { ubahIsian(); setNote(e.target.value); }} />}
+                                                    </FormField>
+                                                </div>
+                                                {channelMasalah && (
+                                                    /* Ditahan, dan sebabnya disebut. Server menolak order tanpa channel juga; menyebutkan alasannya di sini membuat
+                                                       sales tahu SIAPA yang membetulkannya, bukan menekan Kirim sampai layarnya berhenti mengeluh. */
+                                                    <MessageStrip tone="warn">{channelMasalah}</MessageStrip>
+                                                )}
+                                                {pratinjau?.status === "galat" && pratinjau.galat.menolak && (
+                                                    <MessageStrip tone="neg" title={`${pratinjau.galat.judul}.`}>{pratinjau.galat.pesan} {pratinjau.galat.tindakan}</MessageStrip>
+                                                )}
+                                                <VariantNote bl="BL-32">Pencarian pelanggan dan barang sudah per cabang karyawan Accurate Anda. Belum dibatasi ke toko di JKS Anda. Usulan: hanya toko JKS salesman.</VariantNote>
+                                            </>
                                         )}
-                                    </div>
-                                    <FormField label="Kode barang"
-                                        error={info && !info.found ? `Kode ${code} tidak ada di master Accurate` : undefined}
-                                        help={info?.found ? (info.units.length === 0 ? `${info.name} — belum ada daftar harga` : info.name) : undefined}>
-                                        {(a) => <input {...a} className="fi-input fi-mono" value={line.code} placeholder="kode barang" autoComplete="off" onChange={(e) => updateLine(index, "code", e.target.value)} />}
-                                    </FormField>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <FormField label="Satuan" error={wrong ? `Satuan ${wrong.unit} tidak ada untuk ${wrong.code}. Pilih ${wrong.known_units.join(" atau ")}.` : undefined}>
-                                            {(a) => info && info.units.length > 0 ? (
-                                                <select {...a} className="fi-input" value={line.unit} onChange={(e) => updateLine(index, "unit", e.target.value)}>
-                                                    <option value="">pilih</option>
-                                                    {info.units.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
-                                                </select>
-                                            ) : (
-                                                <input {...a} className="fi-input" value={line.unit} placeholder="satuan" onChange={(e) => updateLine(index, "unit", e.target.value.toUpperCase())} />
-                                            )}
-                                        </FormField>
-                                        <FormField label="Jumlah">
-                                            {(a) => <input {...a} className="fi-input fi-tnum" inputMode="numeric" value={line.quantity} placeholder="0" onChange={(e) => updateLine(index, "quantity", e.target.value)} />}
-                                        </FormField>
-                                    </div>
-                                    {lengkapBaris && pratinjau && (
-                                        <div className="flex flex-wrap items-center gap-2 fi-small" aria-live="polite">
-                                            {pratinjau.status === "memuat" && <StatusBadge tone="info" busy>Menghitung harga…</StatusBadge>}
-                                            {price && <><StatusBadge tone="pos">Harga ada</StatusBadge><span className="fi-muted fi-tnum">{price.priceCategoryName || "standar"} {rupiah(price.price)} per {price.unit} (estimasi)</span></>}
-                                            {tanpaHarga && <><StatusBadge tone="warn">Harga belum tersedia</StatusBadge><span className="fi-muted">Order tetap bisa dikirim; petugas mengisi harga dari master.</span></>}
-                                        </div>
-                                    )}
-                                    {advice && (
-                                        <p className="fi-small fi-why flex items-start gap-1.5">
-                                            <Lightbulb className="fi-icon" aria-hidden /><span>{advice.message}</span>
-                                        </p>
-                                    )}
-                                </li>
-                            );
-                        })}
-                    </ul>
-                    <div className="fi-sect-in">
-                        <div><Button icon={<Plus className="fi-icon" aria-hidden />} onClick={() => { ubahIsian(); setLines((prev) => [...prev, emptyLine()]); }}>Tambah barang</Button></div>
-                        {pratinjau?.status === "galat" && <MessageStrip tone="warn" title="Perkiraan harga tidak tersedia.">{pratinjau.error}</MessageStrip>}
-                        {pratinjau?.status === "satuan" && <MessageStrip tone="neg" title="Satuan tidak cocok dengan master.">Perbaiki satuan di barisnya; nilai order dihitung setelah semua satuan cocok.</MessageStrip>}
-                        {pratinjau?.status === "siap" && pratinjau.catatan && <MessageStrip tone="warn" title="Perkiraan tidak tersedia.">{pratinjau.catatan}</MessageStrip>}
-                        {pratinjau?.status === "siap" && pratinjau.result && (
-                            <div className="fi-panel" aria-label="Perkiraan nilai order">
-                                <KeyValues items={[
-                                    [nTanpaHarga ? "Bruto (yang sudah ada harganya)" : "Bruto", rupiah(pratinjau.result.gross)],
-                                    ["Diskon", rupiah(pratinjau.result.discount)],
-                                    ["Netto estimasi", rupiah(pratinjau.result.net)],
-                                ]} />
-                                {pratinjau.result.bonuses.map((bonus, i) => (
-                                    <p key={i} className="fi-small fi-muted">
-                                        Bonus {bonus.quantity} {bonus.unit} {bonus.code || `dari barang yang dibeli (${(bonus.eligible_codes || []).join(", ")})`}
-                                    </p>
-                                ))}
-                                {nTanpaHarga > 0 && <p className="fi-small fi-why">{nTanpaHarga} barang belum berharga tidak ikut dihitung.</p>}
-                                <p className="fi-small fi-subtle">Perkiraan; angka final dibekukan petugas saat order diproses.</p>
                             </div>
-                        )}
-                        {pratinjau?.status === "siap" && !pratinjau.result && nTanpaHarga > 0 && (
-                            <p className="fi-small fi-why">{nTanpaHarga} barang belum berharga; netto estimasi belum bisa dihitung.</p>
-                        )}
-                    </div>
-                </Section>
+                        </Section>
+
+                        <Section title="Barang" subtitle={`${lines.length} baris${cabangPelanggan ? ` · barang cabang ${cabangPelanggan}` : ""}`}>
+                            <ul aria-label="Barang" style={{ listStyle: "none", padding: 0 }}>
+                                {lines.map((line, index) => {
+                                    const code = line.code.trim();
+                                    const wrong = pratinjau?.status === "satuan" ? pratinjau.wrong.find((w) => w.code === code && w.unit === line.unit.trim().toUpperCase()) : undefined;
+                                    const bedaCabang = pratinjau?.status === "barang" ? pratinjau.galat.perBarang[code] : undefined;
+                                    const price = pratinjau?.status === "siap" ? pratinjau.prices.find((row) => row.code === code && row.unit === line.unit && row.price != null) : undefined;
+                                    const tanpaHarga = pratinjau?.status === "siap" && pratinjau.tanpaHarga.includes(code);
+                                    const advice = pratinjau?.status === "siap" ? pratinjau.suggestions.find((item) => item.codes.includes(code)) : undefined;
+                                    const lengkapBaris = Boolean(line.barang && line.unit.trim() && Number(line.quantity) > 0);
+                                    const berlakuHarga = line.barang?.hargaUntuk === kunciHarga(pelanggan?.id, orderDate);
+                                    return (
+                                        // Nomor baris dibuat eksplisit: di layar HP baris kedua dan ketiga terlihat sama saja, dan sales mengoreksi baris yang salah.
+                                        <li key={index} className="fi-sect-in" style={{ borderBottom: "1px solid var(--line)" }} aria-label={`Barang ${index + 1}`}>
+                                            <div className="flex items-center justify-between gap-2">
+                                                <span className="fi-tag">Barang {index + 1}</span>
+                                                {lines.length > 1 && (
+                                                    <Button variant="icon" aria-label={`Hapus barang ${index + 1}`} onClick={() => { ubahIsian(); setLines((prev) => prev.filter((_, i) => i !== index)); }}>
+                                                        <Trash2 className="fi-icon" aria-hidden />
+                                                    </Button>
+                                                )}
+                                            </div>
+                                            <PemilihBarang nomor={index + 1} pelanggan={pelanggan} tanggal={orderDate} nilai={line.barang} bacaan={line.bacaan} peran="sales"
+                                                onPilih={(b) => pilihBarang(index, b)} onLepas={() => lepasBarang(index)}
+                                                onBacaUlang={pelanggan ? () => void muatBarangKode(index, code, pelanggan, orderDate) : undefined} />
+                                            {bedaCabang && <p className="fi-msg" role="alert">{bedaCabang} Hapus barang ini atau ganti dengan barang cabang pelanggan.</p>}
+                                            {line.barang && (
+                                                <div className="grid gap-3" style={{ gridTemplateColumns: "minmax(0,3fr) minmax(0,2fr)" }}>
+                                                    <FormField label="Satuan" error={wrong ? `Satuan ${wrong.unit} tidak ada untuk ${wrong.code}. Pilih ${wrong.known_units.join(" atau ")}.` : undefined}
+                                                        help={line.barang.units.length === 0 ? "Belum ada daftar harga" : undefined}>
+                                                        {(a) => (
+                                                            <select {...a} className="fi-input" value={line.unit} onChange={(e) => updateLine(index, "unit", e.target.value)}>
+                                                                <option value="">pilih</option>
+                                                                {line.barang!.units.map((u) => <option key={u.unit} value={u.unit}>{labelSatuan(u, berlakuHarga, rupiah)}</option>)}
+                                                            </select>
+                                                        )}
+                                                    </FormField>
+                                                    <FormField label="Jumlah">
+                                                        {(a) => <input {...a} className="fi-input fi-tnum" inputMode="numeric" value={line.quantity} placeholder="0" onChange={(e) => updateLine(index, "quantity", e.target.value)} />}
+                                                    </FormField>
+                                                </div>
+                                            )}
+                                            {lengkapBaris && pratinjau && (
+                                                <div className="flex flex-wrap items-center gap-2 fi-small" aria-live="polite">
+                                                    {pratinjau.status === "memuat" && <StatusBadge tone="info" busy>Menghitung harga…</StatusBadge>}
+                                                    {price && <><StatusBadge tone="pos">Harga ada</StatusBadge><span className="fi-muted fi-tnum">{price.priceCategoryName || "standar"} {rupiah(price.price ?? 0)} per {price.unit} (estimasi)</span></>}
+                                                    {tanpaHarga && <><StatusBadge tone="neg">Harga belum ada</StatusBadge><span className="fi-muted">Belum bisa dikirim: harga barang ini belum ada di Accurate untuk cabang pelanggan. Minta petugas melengkapinya.</span></>}
+                                                </div>
+                                            )}
+                                            {lengkapBaris && <PromoBarisInfo result={hasilPratinjau} code={code} unit={line.unit} nomor={index + 1} />}
+                                            {advice && (
+                                                <p className="fi-small fi-why flex items-start gap-1.5">
+                                                    <Lightbulb className="fi-icon" aria-hidden /><span>{advice.message}</span>
+                                                </p>
+                                            )}
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                            <div className="fi-sect-in">
+                                <div><Button icon={<Plus className="fi-icon" aria-hidden />} onClick={() => { ubahIsian(); setLines((prev) => [...prev, emptyLine()]); }}>Tambah barang</Button></div>
+                                {pratinjau?.status === "galat" && !pratinjau.galat.menolak && <MessageStrip tone="warn" title="Perkiraan harga tidak tersedia.">{pratinjau.galat.pesan} {pratinjau.galat.tidakPasti ? "Harga belum bisa dihitung; server tetap memeriksa saat order dikirim." : pratinjau.galat.tindakan}</MessageStrip>}
+                                {pratinjau?.status === "satuan" && <MessageStrip tone="neg" title="Satuan tidak cocok dengan master.">Perbaiki satuan di barisnya; nilai order dihitung setelah semua satuan cocok.</MessageStrip>}
+                                {pratinjau?.status === "barang" && <MessageStrip tone="neg" title={`${pratinjau.galat.judul}.`}>{pratinjau.galat.tindakan}</MessageStrip>}
+                                {pratinjau?.status === "siap" && pratinjau.catatan && <MessageStrip tone="warn" title="Perkiraan tidak tersedia.">{kalimatGalat(pratinjau.catatan)}</MessageStrip>}
+                                {pratinjau?.status === "siap" && pratinjau.result && (
+                                    <PanelPromo result={pratinjau.result} suggestions={pratinjau.suggestions} nTanpaHarga={nTanpaHarga}
+                                        catatan="Perkiraan memakai aturan promo yang terbit sekarang; angka final dibekukan petugas saat order ditarik." />
+                                )}
+                                {pratinjau?.status === "siap" && !pratinjau.result && nTanpaHarga > 0 && (
+                                    <p className="fi-small fi-why">{nTanpaHarga} barang belum berharga; netto estimasi belum bisa dihitung.</p>
+                                )}
+                            </div>
+                        </Section>
+                    </>
+                )}
 
                 <Section title="Order saya" subtitle="permintaan terbaru">
                     {orderSaya.status === "galat" && !orderSaya.data?.length ? (
@@ -530,21 +520,24 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                     </div>
                 </Section>
             </div>
-            <FooterToolbar message={terkunci ?? `${lengkap.length} barang${netto ? ` · netto estimasi ${netto}` : ""}${nTanpaHarga ? ` · ${nTanpaHarga} belum berharga` : ""}`}>
-                <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} disabled={Boolean(terkunci)} disabledReason={terkunci} onClick={() => setDialog("biasa")}>Kirim order…</Button>
-            </FooterToolbar>
+            {!blokir && (
+                <FooterToolbar message={terkunci ?? `${lengkap.length} barang${netto ? ` · netto estimasi ${netto}` : ""}${nTanpaHarga ? ` · ${nTanpaHarga} belum berharga` : ""}`}>
+                    <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} disabled={Boolean(terkunci)} disabledReason={terkunci} onClick={() => setDialog("biasa")}>Kirim order…</Button>
+                </FooterToolbar>
+            )}
             <ConfirmDialog open={dialog === "buang"} onClose={() => setDialog(null)} tone="negative" title="Buang draf order di ponsel ini?"
                 description="Draf yang belum dikirim dihapus dari ponsel ini dan tidak bisa dikembalikan. Order yang sudah terkirim tidak terpengaruh."
                 facts={tawaran ? [["Pelanggan", tawaran.customerNo.trim() || "–"], ["Barang", `${tawaran.lines.filter((l) => l.code.trim()).length} baris`]] : []}
                 confirmLabel="Buang draf" onConfirm={buangDraf} />
             <ConfirmDialog open={dialog === "biasa" || dialog === "ulang"} onClose={() => setDialog(null)}
-                title={dialog === "ulang" ? `Kirim lagi order untuk ${outlet || customerNo}?` : `Kirim order untuk ${outlet || customerNo}?`}
+                title={dialog === "ulang" ? `Kirim lagi order untuk ${outlet || kodePel}?` : `Kirim order untuk ${outlet || kodePel}?`}
                 tone={dialog === "ulang" ? "negative" : "primary"}
                 description={dialog === "ulang"
                     ? "Jawaban kiriman sebelumnya tidak pasti. Bila order itu sudah masuk (periksa Order saya), kiriman ini mencatat order yang sama DUA kali dan belum bisa dibatalkan dari ponsel."
                     : "Order masuk antrean petugas; harga dan promo final dibekukan saat ditarik. Order yang sudah terkirim belum bisa dibatalkan dari ponsel."}
                 facts={[
-                    ["Pelanggan", `${customerNo.trim()}${customer?.found ? ` · ${customer.name}` : ""}`],
+                    ["Pelanggan", `${kodePel.trim()}${pelanggan ? ` · ${pelanggan.name}` : ""}`],
+                    ["Cabang", cabangPelanggan || "–"],
                     ["Channel", channel],
                     ["Tanggal order", tanggalPendek(orderDate)],
                     ["Barang", `${lengkap.length} baris`],

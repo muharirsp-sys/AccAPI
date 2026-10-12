@@ -125,3 +125,31 @@ test("ringkasan riwayat: label aksi satu sumber + rincian tanpa kunci mentah", (
     assert.equal(ringkasRiwayat({ action: "user.password_set", detail: { sessionsRevoked: 2 } }, "user").rinci, "2 sesi diakhiri");
     assert.equal(ringkasRiwayat({ action: "aksi.baru", detail: null }, "user").apa, "aksi.baru");
 });
+
+test("O2 tautan salesman: kode O1 -> kalimat + tindakan (bukan teks server mentah), muat ulang bila data penentu berubah", () => {
+    const g = (code: string, extra: Record<string, unknown> = {}, status = 409) => pesanGalat(status, { ok: false, code, error: "TEKS SERVER", ...extra });
+    assert.match(g("KARYAWAN_SUDAH_TERHUBUNG", { terhubungKe: { userId: "u2", name: "USER C" } }).pesan, /sudah ditautkan ke akun USER C\. Lepas dulu/);
+    assert.match(g("KARYAWAN_SUDAH_TERHUBUNG").pesan, /akun lain/);
+    assert.match(g("KARYAWAN_BUKAN_SALESMAN_AKTIF").pesan, /bukan salesman aktif/);
+    assert.match(g("KARYAWAN_TANPA_CABANG").pesan, /belum punya cabang di Accurate/);
+    assert.match(g("KARYAWAN_TIDAK_ADA", {}, 404).pesan, /tidak ada di master pegawai/);
+    assert.match(g("KARYAWAN_GANDA").pesan, /lebih dari satu karyawan/);
+    assert.match(g("PROFIL_GANDA").pesan, /lebih dari satu profil sales/);
+    for (const code of ["KARYAWAN_SUDAH_TERHUBUNG", "KARYAWAN_BUKAN_SALESMAN_AKTIF", "KARYAWAN_TIDAK_ADA", "PROFIL_GANDA"]) assert.equal(g(code).muatUlang, true, code);
+    for (const code of ["KARYAWAN_TANPA_CABANG", "KARYAWAN_GANDA"]) assert.equal(g(code).muatUlang, false, code);
+    for (const code of ["KARYAWAN_SUDAH_TERHUBUNG", "KARYAWAN_BUKAN_SALESMAN_AKTIF", "KARYAWAN_TANPA_CABANG", "KARYAWAN_TIDAK_ADA", "KARYAWAN_GANDA", "PROFIL_GANDA"]) {
+        assert.doesNotMatch(g(code).pesan, /TEKS SERVER|KARYAWAN_|PROFIL_/, code);
+    }
+    // kode yang belum dikenal (mis. laporan Form Kontrol berkode lama) memakai kalimat server apa adanya
+    assert.equal(pesanGalat(409, { ok: false, code: "KODE_BARU", error: "Ada laporan berkode S-OLD." }).pesan, "Ada laporan berkode S-OLD.");
+});
+
+test("O2 riwayat: salesman.link menyebut sebelum -> sesudah + cabang; salesman.unlink menyebut yang dilepas", () => {
+    const link = ringkasRiwayat({ action: "salesman.link", detail: { sebelum: { salesCode: "S-OLD", salesName: "SALES LAMA" }, sesudah: { salesCode: "M-SLA", salesName: "SALES A", branchName: "CABANG A" } } }, "user");
+    assert.equal(link.apa, "Salesman Accurate ditautkan");
+    assert.match(link.rinci, /SALES LAMA \(S-OLD\) → SALES A \(M-SLA\) · cabang CABANG A/);
+    assert.match(ringkasRiwayat({ action: "salesman.link", detail: { sebelum: null, sesudah: { salesCode: "M-SLA", salesName: "SALES A" } } }, "user").rinci, /^SALES A \(M-SLA\)$/);
+    const lepas = ringkasRiwayat({ action: "salesman.unlink", detail: { dihapus: [{ salesCode: "S-OLD", salesName: "SALES LAMA" }] } }, "user");
+    assert.equal(lepas.apa, "Tautan salesman Accurate dilepas");
+    assert.match(lepas.rinci, /dilepas: SALES LAMA \(S-OLD\)/);
+});

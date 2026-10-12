@@ -1,11 +1,13 @@
 /*
  * Tujuan: User (Fiori S7a, FCL): daftar (cari, grup, status) → Object Page user dengan Grup (semua grup + ★ utama: tambah,
- *   keluarkan, tandai/lepas bintang dengan peringatan role), Keamanan (atur sandi bertopeng, aktif/nonaktif), Riwayat (kursor).
+ *   keluarkan, tandai/lepas bintang dengan peringatan role), Salesman (O2: tautan ke karyawan salesman Accurate = cabang order), Keamanan
+ *   (atur sandi bertopeng, aktif/nonaktif), Riwayat (kursor).
  *   Dialog `buatUser`, `sandi`, `nonaktif`, bintang, `keluarkan`. Menggantikan UserManagement.tsx (window.prompt/confirm).
  * Caller: app/(dashboard)/admin/users/page.tsx (izin dari server: users.view = baca-saja, users.manage = tulis).
  * Dependensi: GET /api/admin/users/permissions, GET /api/admin/groups (hanya users.manage), POST /api/admin/users,
  *   POST /api/admin/users/[id]/{password,status}, PUT|DELETE /api/admin/users/[id]/primary-group, POST|DELETE /api/admin/groups/[id]/members,
- *   GET /api/admin/users/[id]/history; components/admin/*, components/fiori/*. Kontrak: docs/handover/S7-KONTRAK-ADMIN-API.md.
+ *   GET /api/admin/users/[id]/history, GET|PUT|DELETE /api/admin/users/[id]/salesman (components/admin/TautanSalesman);
+ *   components/admin/*, components/fiori/*. Kontrak: docs/handover/S7-KONTRAK-ADMIN-API.md + O1-KONTRAK-ORDER-CABANG.md.
  * Main Functions: Pengguna.
  * Side Effects: HTTP tulis ke API admin (zona auth). Sandi tidak pernah masuk state/URL/riwayat.
  */
@@ -21,6 +23,7 @@ import {
 import { ConfirmDialog, FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { DialogKeluarkan, GalatAdmin, PeringatanRole, Riwayat, izinPerluDisegarkan, SandiGanda, muatAdmin, tulisAdmin, type GrupRingkas, type UserBaris } from "@/components/admin/Bersama";
 import { perkiraanRole, roleDariGrup, statusAkun } from "@/components/admin/admin-ui";
+import { TautanSalesman } from "@/components/admin/TautanSalesman";
 
 type Dialog = { jenis: "buat" | "sandi" | "status" } | { jenis: "bintang"; grupId: string | null } | { jenis: "keluar"; grupId: string };
 type SaringStatus = "aktif" | "nonaktif" | "semua";
@@ -168,7 +171,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
                     { label: "Grup utama", value: u.primaryGroupName ? `★ ${u.primaryGroupName}` : "Belum ada — Beranda gabungan izin" },
                     { label: "Role identitas", value: u.role ?? "—" },
                 ]} />
-            <AnchorBar anchors={[{ id: "u-grup", label: "Grup" }, { id: "u-keamanan", label: "Keamanan" }, { id: "u-riwayat", label: "Riwayat" }]} />
+            <AnchorBar anchors={[{ id: "u-grup", label: "Grup" }, { id: "u-salesman", label: "Salesman" }, { id: "u-keamanan", label: "Keamanan" }, { id: "u-riwayat", label: "Riwayat" }]} />
 
             <Section id="u-grup" title="Grup" subtitle="izin = gabungan semua grup; ★ utama menentukan Beranda">
                 <div className="fi-sect-in">
@@ -214,6 +217,10 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
                     {bolehKelola && grupL.status === "galat" && <MessageStrip tone="neg" title="Daftar grup gagal dimuat.">{grupL.error} <Button variant="tertiary" onClick={muatGrup}>Coba lagi</Button></MessageStrip>}
                     {prTambah?.berubah && <PeringatanRole dari={u.role} ke={prTambah.role} />}
                 </div>
+            </Section>
+
+            <Section id="u-salesman" title="Karyawan Accurate (salesman)" subtitle="cabang salesman = cabang karyawan di Accurate; menentukan pelanggan dan barang Order Sales">
+                <TautanSalesman key={`${u.id}-${versi}`} user={{ id: u.id, name: u.name }} bolehKelola={bolehKelola} kunciTulis={kunciTulis} jalankan={jalankan} />
             </Section>
 
             <Section id="u-keamanan" title="Keamanan" subtitle="tanpa email: beri tahu sandi langsung ke user">

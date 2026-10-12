@@ -3,22 +3,18 @@
  *   "sampai faktur" (status order FastAPI ditimpa status Antrean Faktur bila sudah antre), dan teks sumber/nomor order.
  * Caller: ./OrderMasuk.tsx (List Report), ./OrderBaru.tsx (form), ./OrderDetail.tsx (Object Page + dialog Antrekan).
  * Dependensi: lib/apiBase (FastAPI), lib/promo-ui (rupiah), ../form-kontrol/lapangan (ambilJson, Jawaban), components/fiori/core (Tone).
- * Main Functions: fastapi, nextApi, sukses, tidakPasti, pesanJawaban, nomorOrder, sumberOrder, statusOrder, STATUS_ANTREAN, nilai.
+ * Main Functions: fastapi, nextApi, sukses, tidakPasti, pesanJawaban (+ kode O1), nomorOrder, sumberOrder, statusOrder, STATUS_ANTREAN, nilai.
  * Side Effects: fetch ke FastAPI (/api/me untuk token CSRF, /orders…).
  */
 import type { Tone } from "@/components/fiori/core";
+import { galatDariJawaban, kalimatPenolakan, kodeDikenal, type Result } from "@/components/order/order-cabang";
 import { resolveApiBase } from "@/lib/apiBase";
 import { rupiah } from "@/lib/promo-ui";
 import { ambilJson, type Jawaban } from "../form-kontrol/lapangan";
 
 export const API_BASE = resolveApiBase();
 
-export type ResultLine = { code: string; unit: string; quantity: string; gross: string; net: string; percents?: string[]; cash?: string };
-export type Bonus = { program_id: string; code: string; unit: string; quantity: string; eligible_codes?: string[] };
-export type Result = {
-    pending_price?: boolean; gross?: string; discount?: string; net?: string;
-    lines?: ResultLine[]; applications?: { program_id: string; minimum: string; discount: string }[]; bonuses?: Bonus[];
-};
+export type { ResultLine, Bonus, Result } from "@/components/order/order-cabang";
 export type OrderLine = { code: string; unit: string; quantity: string; price: string };
 /** Baris daftar FastAPI GET /orders (100 terbaru). */
 export type OrderRow = {
@@ -29,10 +25,7 @@ export type OrderRow = {
 export type OrderFull = OrderRow & { note: string; lines: OrderLine[]; rules: { id: string; name: string }[]; sources: { draft_id: string; revision: number }[] };
 export type OutboxState = "queued" | "sending" | "posted" | "unknown" | "rejected";
 export type OutboxRow = { orderId?: string; state: OutboxState; accurateNumber: string | null; lastError: string | null; updatedAt: string | null };
-export type PriceInfo = {
-    code: string; unit: string; price: number | null; source: string; priceCategoryName: string | null;
-    branchName: string | null; effectiveDate: string | null;
-};
+export type { PriceInfo } from "@/components/order/order-cabang";
 
 let cachedCsrf = "";
 async function csrfHeader(): Promise<Record<string, string>> {
@@ -70,8 +63,13 @@ export const tidakPasti = (j: Jawaban) => j.status === 0 || j.status >= 502 || j
 
 export const BELUM_PASTI = "Server tidak memberi jawaban yang pasti — hasilnya belum pasti. Data dimuat ulang; periksa dulu sebelum mengulang.";
 
-/** Pesan server apa adanya (FastAPI `detail`, Next `error`); tanpa kode status mentah. */
+/**
+ * Pesan server apa adanya (FastAPI `detail`, Next `error`); tanpa kode status mentah. Kode penolakan Order per cabang (O1: BARANG_BEDA_CABANG,
+ * SALESMAN_BELUM_TERHUBUNG, …) dijadikan kalimat + tindakan oleh components/order/order-cabang.
+ */
 export function pesanJawaban(j: Jawaban, umum: string): string {
+    const g = galatDariJawaban(j, "petugas");
+    if (kodeDikenal(g.kode)) return kalimatPenolakan(g);
     if (j.status === 0) return `${umum} Server tidak dapat dihubungi.`;
     if (j.status === 401) return "Sesi login berakhir; masuk ulang lalu coba lagi.";
     const d = j.data ?? {};

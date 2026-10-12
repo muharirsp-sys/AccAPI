@@ -42,6 +42,16 @@ const KODE: Record<string, (body: Jawaban, k: { aktivasi?: boolean }) => [string
     BUKAN_ANGGOTA: () => ["User sudah bukan anggota grup itu. Data dimuat ulang.", true],
     USER_SETENGAH_JADI: (b) => [`User terbuat sebagian dan dibiarkan NONAKTIF ("sedang disiapkan", tidak bisa masuk). Minta IT Support menghapusnya${typeof b?.userId === "string" ? ` (id ${b.userId})` : ""}, lalu ulangi.`, true],
     GAGAL_SIMPAN: () => ["Gagal menyimpan; tidak ada yang berubah. Coba lagi.", false],
+    // O2 (kontrak O1 tautan salesman): PUT/DELETE /api/admin/users/[id]/salesman.
+    KARYAWAN_TIDAK_ADA: () => ["Karyawan itu tidak ada di master pegawai hasil sinkron Accurate. Daftar dimuat ulang; sinkronkan master pegawai bila karyawannya baru ditambahkan.", true],
+    KARYAWAN_GANDA: () => ["Ada lebih dari satu karyawan Accurate dengan nomor itu. Betulkan nomornya di Accurate, sinkronkan master pegawai, lalu ulangi.", false],
+    KARYAWAN_BUKAN_SALESMAN_AKTIF: () => ["Karyawan itu bukan salesman aktif di Accurate (nonaktif, atau tidak bertanda salesman). Pilih karyawan lain; daftar dimuat ulang.", true],
+    KARYAWAN_TANPA_CABANG: () => ["Karyawan itu belum punya cabang di Accurate, padahal cabang salesman diambil dari sana. Isi cabangnya di Accurate, sinkronkan master pegawai, lalu ulangi.", false],
+    KARYAWAN_SUDAH_TERHUBUNG: (b) => {
+        const k = (b?.terhubungKe ?? {}) as { name?: unknown };
+        return [`Karyawan itu sudah ditautkan ke akun ${typeof k.name === "string" && k.name ? k.name : "lain"}. Lepas dulu dari akun itu, atau pilih karyawan lain. Daftar dimuat ulang.`, true];
+    },
+    PROFIL_GANDA: () => ["Akun ini punya lebih dari satu profil sales, jadi tautannya tidak bisa diganti begitu saja. Lepas dulu tautannya, lalu tautkan ulang.", true],
 };
 
 /**
@@ -146,6 +156,15 @@ export function ringkasRiwayat(item: ItemRiwayat, sudut: "user" | "grup"): { apa
         if (daftarKunci(d.added)) bagian.push(`+ ${daftarKunci(d.added)}`);
         if (daftarKunci(d.removed)) bagian.push(`− ${daftarKunci(d.removed)}`);
         if (!daftarKunci(d.added) && !daftarKunci(d.removed)) bagian.push("tanpa perubahan kunci");
+    }
+    if (item.action === "salesman.link") {
+        const nama = (o: Record<string, unknown> | null) => (o && teks(o.salesName) ? `${o.salesName}${teks(o.salesCode) ? ` (${o.salesCode})` : ""}` : null);
+        const sesudah = (d.sesudah ?? null) as Record<string, unknown> | null;
+        const sebelum = (d.sebelum ?? null) as Record<string, unknown> | null;
+        bagian.push(`${sebelum ? `${nama(sebelum) ?? "—"} → ` : ""}${nama(sesudah) ?? "—"}${sesudah && teks(sesudah.branchName) ? ` · cabang ${sesudah.branchName}` : ""}`);
+    }
+    if (item.action === "salesman.unlink" && Array.isArray(d.dihapus)) {
+        bagian.push(`dilepas: ${(d.dihapus as Array<Record<string, unknown>>).map((x) => `${teks(x.salesName) ?? "—"} (${teks(x.salesCode) ?? "—"})`).join(", ")}`);
     }
     if (item.action === "user.create" && Array.isArray(d.groupNames)) bagian.push(`grup ${(d.groupNames as string[]).filter(Boolean).join(", ")}`);
     if (item.action === "group.update" && teks(d.name)) bagian.push(`nama ${d.name}${teks(d.description) ? ` · ${d.description}` : ""}`);
