@@ -1381,3 +1381,27 @@ test("Order baru (putaran 1 peninjau #8): dua ketukan cepat pada tombol konfirma
     await page.waitForTimeout(2200); // lewat jeda server: POST kedua (bila ada) sudah tercatat
     expect(orders.simpan).toHaveLength(1);
 });
+
+test("Order Sales (putaran 1 peninjau #9): jeda pencarian TERUKUR >= 300 ms antara ketukan terakhir dan permintaan (bukan sekadar 'satu permintaan')", async ({ page }) => {
+    const { opsi } = await mockOrderCabang(page, { peran: "sales" });
+    await mockWebsales(page, { cabang: opsi });
+    type Ukur = { akhirKetik: number; permintaan: number[] };
+    await page.addInitScript(() => {
+        const w = window as unknown as { __cari: Ukur };
+        w.__cari = { akhirKetik: 0, permintaan: [] };
+        document.addEventListener("input", () => { w.__cari.akhirKetik = performance.now(); }, true);
+        const asli = window.fetch.bind(window);
+        window.fetch = (...a: Parameters<typeof fetch>) => {
+            const u = String(a[0] instanceof Request ? a[0].url : a[0]);
+            if (u.includes("/api/customers/search") && u.includes("q=")) w.__cari.permintaan.push(performance.now());
+            return asli(...a);
+        };
+    });
+    const main = await bukaSales(page);
+    await expect(main.getByLabel("Cari pelanggan")).toBeVisible(NAV);
+    await main.getByLabel("Cari pelanggan").pressSequentially("PELANG", { delay: 40 });
+    await expect(main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button")).toHaveCount(3, NAV);
+    const t = await page.evaluate(() => (window as unknown as { __cari: Ukur }).__cari);
+    expect(t.permintaan).toHaveLength(1);
+    expect(t.permintaan[0] - t.akhirKetik).toBeGreaterThanOrEqual(295); // jeda 300 ms (toleransi pembulatan jam)
+});
