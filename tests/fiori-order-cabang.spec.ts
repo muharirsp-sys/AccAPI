@@ -391,6 +391,67 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
         await page.screenshot({ path: "test-results/order-cabang/ponsel-sales-promo.png", fullPage: true });
     });
 
+    test("Order Sales + Order baru: SEMUA kolom isian (pencarian pelanggan/barang, satuan, jumlah, tanggal, harga) dan kolom `fi-input fi-mono` ≥ 16 px di layar sentuh — tidak memicu zoom iOS", async ({ page }) => {
+        test.setTimeout(120_000); // dua halaman + kompilasi dev pertama
+        const { opsi } = await mockOrderCabang(page, { peran: "sales" });
+        await mockWebsales(page, { cabang: opsi });
+        await mockOrdersInternal(page, { cabang: opsi });
+        // Pindah dari Order Sales yang berisi draf memicu peringatan "perubahan belum disimpan" (beforeunload) — diterima; dialog peramban lain tetap galat.
+        page.removeAllListeners("dialog");
+        page.on("dialog", (d) => { if (d.type() !== "beforeunload") throw new Error(`window.${d.type()} masih dipakai: ${d.message()}`); return d.accept(); });
+        /** Ukuran huruf terhitung semua kolom isian terlihat di <main> + satu kolom `fi-input fi-mono` uji (dipasang di lingkup .fiori halaman itu). */
+        const ukuran = async () => page.evaluate(() => {
+            const host = document.querySelector("main .fiori") ?? document.querySelector(".fiori") ?? document.body;
+            host.querySelector("[data-uji-mono]")?.remove();
+            const mono = document.createElement("input");
+            mono.className = "fi-input fi-mono";
+            mono.setAttribute("data-uji-mono", "1");
+            mono.setAttribute("aria-label", "uji fi-mono");
+            host.appendChild(mono);
+            return [...document.querySelectorAll<HTMLElement>("main input, main select, main textarea")]
+                .filter((el) => el.getBoundingClientRect().width > 0 && !["checkbox", "radio", "hidden"].includes((el as HTMLInputElement).type))
+                .map((el) => ({ nama: `${el.tagName.toLowerCase()}.${el.className.replace(/\s+/g, ".")} ${el.getAttribute("aria-label") ?? (el as HTMLInputElement).labels?.[0]?.textContent ?? ""}`.trim(), px: parseFloat(getComputedStyle(el).fontSize) }));
+        });
+        const kecil = (rows: { nama: string; px: number }[]) => rows.filter((r) => r.px < 16);
+
+        await page.goto("/sales", NAV);
+        const main = page.locator("main");
+        await expect(main.getByLabel("Cari pelanggan")).toBeVisible(NAV);
+        expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+        let rows = await ukuran();
+        expect(rows.some((r) => r.nama.includes("fi-mono"))).toBe(true); // kolom uji ikut terukur
+        expect(kecil(rows)).toEqual([]);
+        await pilihPelanggan(main, "PELANG", "PELANGGAN A");
+        const b1 = main.getByRole("listitem", { name: "Barang 1" });
+        await pilihBarang(b1, "A-1", "BARANG A\\b.*KRT");
+        await b1.getByLabel("Satuan").selectOption("KRT");
+        await b1.getByLabel("Jumlah").fill("2");
+        await expect(b1).toContainText("Harga ada", NAV);
+        rows = await ukuran();
+        expect(rows.length).toBeGreaterThan(5); // pencarian, outlet, tanggal, catatan, satuan, jumlah, uji
+        expect(kecil(rows)).toEqual([]);
+
+        await page.goto("/orders/baru", NAV);
+        await expect(main.getByLabel("Cari pelanggan")).toBeVisible(NAV);
+        expect(kecil(await ukuran())).toEqual([]);
+        // Ketikan sebelum hidrasi halaman baru hilang: diulang sampai hasil pencarian muncul.
+        await expect(async () => {
+            await main.getByLabel("Cari pelanggan").fill("PELANGGAN A");
+            await expect(main.getByRole("list", { name: "Hasil pencarian pelanggan" })).toBeVisible({ timeout: 2_000 });
+        }).toPass({ timeout: 30_000 });
+        await main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button", { name: /PELANGGAN A/ }).click();
+        const c1 = main.getByRole("listitem", { name: "Barang 1" });
+        await c1.getByLabel("Cari barang").fill("BARANG");
+        await expect(c1.getByRole("list", { name: "Hasil pencarian barang" })).toContainText("BARANG A", NAV);
+        expect(kecil(await ukuran())).toEqual([]); // kolom pencarian barang saat hasil terbuka
+        await c1.getByRole("list", { name: "Hasil pencarian barang" }).getByRole("button", { name: /BARANG A\b.*KRT/ }).click();
+        await c1.getByLabel("Satuan").selectOption("KRT");
+        await expect(c1.getByLabel("Harga")).toHaveValue("576000", NAV);
+        rows = await ukuran();
+        expect(rows.some((r) => r.nama.includes("Harga"))).toBe(true); // kolom harga (baca-saja) ikut terukur
+        expect(kecil(rows)).toEqual([]);
+    });
+
     test("Order baru: pelanggan semua cabang + saringan cabang + dialog ganti pelanggan — tanpa gulir menyamping", async ({ page }) => {
         await mockOrderCabang(page);
         await page.route((u) => u.host === "localhost:8000", (r) => r.fulfill({ status: 200, headers: { "access-control-allow-origin": r.request().headers()["origin"] ?? "*", "content-type": "application/json" }, body: JSON.stringify({ ok: true }) }));
