@@ -125,9 +125,9 @@ export function pratinjauContoh(b: PreviewBody, geser = 0, channelMasalah = "", 
             bonuses: a1 && Number(a1.quantity) >= 2 ? [{ program_id: "prog-a", code: "", unit: "PCS", quantity: "2", eligible_codes: ["A-1"] }] : [],
             blocked: p.channel === "GT" ? [{ program_id: "prog-c", program_name: "PROMO C", reason: "khusus outlet MT" }] : [],
         },
-        // Bentuk server (summary_rules.suggestions): program jumlah satu barang, tier berikutnya di 5 KRT; hilang bila sudah tercapai.
-        suggestions: [...(a1 && Number(a1.quantity) < 5 ? [{ program_id: "prog-a", program_name: "PROMO A", threshold: "quantity", codes: ["A-1"], minimum: "5", current: a1.quantity,
-            gap: String(5 - Number(a1.quantity)), message: `Tambah ${5 - Number(a1.quantity)} KRT lagi untuk diskon 15%` }] : []), ...saranTambahan],
+        // Bentuk server (summary_rules.suggestions): program jumlah non-mix dihitung PER BARIS (current = jumlah baris itu), tier berikutnya di 5 KRT; hilang bila tercapai.
+        suggestions: [...b.lines.filter((l) => l.code === "A-1" && l.unit === "KRT" && Number(l.quantity) < 5).map((l) => ({ program_id: "prog-a", program_name: "PROMO A", threshold: "quantity", codes: ["A-1"], minimum: "5", current: l.quantity,
+            gap: String(5 - Number(l.quantity)), message: `Tambah ${5 - Number(l.quantity)} KRT lagi untuk diskon 15%` })), ...saranTambahan],
         sources: [{ draft_id: "d1d1d1d1", revision: 1 }], channel_masalah: channelMasalah,
         pelanggan: { customerNo: p.customerNo, name: p.name, branchId: p.branchId, branchName: p.branchName },
         sidik: "",

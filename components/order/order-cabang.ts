@@ -42,7 +42,10 @@ export type Result = {
  * Saran "hampir dapat" dari server (`summary_rules.suggestions`): hanya program yang berlaku untuk tanggal/channel/kelas outlet, metrik sama dengan
  * kalkulator. `threshold` "quantity" | "value"; `minimum`/`current`/`gap` angka (string) dalam satuan/rupiah program; `message` = kalimat server.
  */
-export type Suggestion = { program_id: string; program_name?: string; message: string; codes: string[]; threshold?: string; minimum?: string; current?: string; gap?: string };
+export type Suggestion = { program_id: string; program_name?: string; message: string; codes: string[]; threshold?: string; minimum?: string; current?: string; gap?: string;
+    /** Diisi KLIEN (bukan server) pada saran yang ambigu antar baris: nomor baris (1-based) yang memuat barang yang sama. */
+    baris?: number[];
+};
 /** `source` "tier" = harga master sah, "petugas" = harga yang diketik petugas (Order Baru); `hargaMaster` = harga master sah baris itu (null = tak ada). */
 export type PriceInfo = {
     code: string; unit: string; price: number | null; source: string; priceCategoryName: string | null;
@@ -426,28 +429,37 @@ export type KartuSaran = {
     tambah: number | null;
     codes: string[];
     campur: boolean;
+    /** Saran ambigu antar baris (kode + satuan sama di beberapa baris): nomor baris terkait (1-based); null = tidak ambigu. */
+    baris: number[] | null;
 };
 
 const POLA_TAMBAH = /^Tambah\s+(\d+)\s+(\S+)\s+lagi untuk\s+/i;
 
 /** Satu saran server -> data kartu. Semua angka dari server (tidak ada angka buatan layar); null bila angkanya tak terbaca. */
-export function bacaSaran(s: Suggestion, kodeBaris: string, unitBaris: string): KartuSaran | null {
+export function bacaSaran(s: Suggestion, kodeBaris: string, unitBaris: string, jumlahBaris: string): KartuSaran | null {
     const target = Number(s.minimum), sekarang = Number(s.current);
     if (!Number.isFinite(target) || target <= 0 || !Number.isFinite(sekarang) || sekarang < 0) return null;
     const jumlah = s.threshold !== "value";
     const m = jumlah ? POLA_TAMBAH.exec(s.message) : null;
     const unit = m ? m[2].toUpperCase() : null;
-    const n = m ? Number(m[1]) : NaN;
-    const tambah = jumlah && s.codes.length === 1 && s.codes[0] === kodeBaris && unit !== null && unit === unitBaris.trim().toUpperCase() && Number.isInteger(n) && n > 0 ? n : null;
-    return { id: `${s.program_id}|${s.codes.join(",")}`, nama: s.program_name || `Program #${s.program_id.slice(0, 8)}`, tipe: jumlah ? "jumlah" : "nilai",
-        sekarang, target, persen: Math.max(0, Math.min(100, (sekarang / target) * 100)), unit, kalimat: s.message, tambah, codes: s.codes, campur: s.codes.length > 1 };
+    // N dari FIELD `gap` (angka server), bukan dari teks pesan: pesan membulatkan half-even (gap 2,5 -> "Tambah 2") sehingga tombol kurang dari yang dibutuhkan.
+    const gap = Number(s.gap);
+    const n = Number.isFinite(gap) && gap > 0 ? Math.ceil(gap) : NaN;
+    // Program non-mix dihitung server PER BARIS: tombol hanya bila jumlah baris ini = metrik saran (saran ini memang milik baris ini).
+    const milikBaris = jumlahBaris.trim() !== "" && Number(jumlahBaris) === sekarang;
+    const tambah = jumlah && s.codes.length === 1 && s.codes[0] === kodeBaris && unit !== null && unit === unitBaris.trim().toUpperCase() && milikBaris && Number.isInteger(n) && n > 0 ? n : null;
+    return { id: `${s.program_id}|${s.codes.join(",")}|${s.current}`, nama: s.program_name || `Program #${s.program_id.slice(0, 8)}`, tipe: jumlah ? "jumlah" : "nilai",
+        sekarang, target, persen: Math.max(0, Math.min(100, (sekarang / target) * 100)), unit, kalimat: s.message, tambah, codes: s.codes, campur: s.codes.length > 1, baris: s.baris && s.baris.length > 0 ? s.baris : null };
 }
 
 /**
  * Bagi saran: per baris (program jumlah; satu kode -> baris berkode itu, utamakan yang satuannya = satuan program; campur/mix -> SATU baris saja,
- * yang pertama memuat salah satu kodenya) dan ringkasan order (program nilai, atau tak ada baris yang cocok). Urut gap terkecil lebih dulu.
+ * yang pertama memuat salah satu kodenya) dan ringkasan order (program nilai, tak ada baris yang cocok, atau ambigu). Urut gap terkecil lebih dulu.
+ * Program non-mix dihitung server PER BARIS (`summary_rules.suggestions`: `current` = jumlah baris pemiliknya), jadi bila kode + satuan sama ada di
+ * beberapa baris, saran dicocokkan ke baris yang jumlahnya = `current`; tetap ambigu (jumlah kembar / tak ada yang cocok) = kartu ringkasan
+ * menyebut baris terkait dan TANPA tombol (satu kartu untuk saran kembar).
  */
-export function pecahSaran<L extends { code: string; unit: string }>(saran: readonly Suggestion[], lines: readonly L[]): { perBaris: Map<number, Suggestion[]>; ringkasan: Suggestion[] } {
+export function pecahSaran<L extends { code: string; unit: string; quantity: string }>(saran: readonly Suggestion[], lines: readonly L[]): { perBaris: Map<number, Suggestion[]>; ringkasan: Suggestion[] } {
     const perBaris = new Map<number, Suggestion[]>();
     const ringkasan: Suggestion[] = [];
     const gap = (s: Suggestion) => { const g = Number(s.gap); return Number.isFinite(g) ? g : Number.POSITIVE_INFINITY; };
@@ -458,7 +470,18 @@ export function pecahSaran<L extends { code: string; unit: string }>(saran: read
         let i = cocok[0];
         if (s.codes.length === 1) {
             const unit = POLA_TAMBAH.exec(s.message)?.[2]?.toUpperCase();
-            i = cocok.find((k) => lines[k].unit.trim().toUpperCase() === unit) ?? cocok[0];
+            const sama = cocok.filter((k) => lines[k].unit.trim().toUpperCase() === unit);
+            const kandidat = sama.length > 0 ? sama : cocok; // satuan tak terbaca/beda: tetap tampil di baris berkode itu (tanpa tombol)
+            if (kandidat.length === 1) i = kandidat[0];
+            else {
+                const milik = kandidat.filter((k) => Number(lines[k].quantity) === Number(s.current));
+                if (milik.length !== 1) {
+                    const terkait = milik.length > 1 ? milik : kandidat;
+                    if (!ringkasan.some((r) => r.program_id === s.program_id && r.current === s.current && r.codes.join() === s.codes.join())) ringkasan.push({ ...s, baris: terkait.map((k) => k + 1) });
+                    continue;
+                }
+                i = milik[0];
+            }
         }
         perBaris.set(i, [...(perBaris.get(i) ?? []), s]);
     }

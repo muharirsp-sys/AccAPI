@@ -202,8 +202,12 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
             lines: lengkap.map((line) => ({ code: line.code.trim(), unit: line.unit, quantity: line.quantity, ...(hargaKirim(line) ? { price: hargaKirim(line) } : {}) })),
         });
         const baik = sukses(j);
-        // Tidak pasti = putus, badan bukan JSON, >= 502 tanpa kode, atau LAYANAN_TIDAK_PASTI. 503 KONFIGURASI_SERVER = PASTI tidak tersimpan.
-        if (!baik && galatDariJawaban(j, "petugas").tidakPasti) {
+        const order: { id?: unknown } = baik ? ((j.data.order ?? {}) as { id?: unknown }) : {};
+        // Tersimpan SAH = 2xx dengan ok true DAN id order. 2xx tanpa itu (mis. {}) = server menjawab "berhasil" tanpa bukti: order mungkin tersimpan,
+        // jadi BELUM PASTI (bukan berhasil + pindah halaman, bukan gagal yang mengundang simpan ulang ganda).
+        const sah = baik && j.data.ok === true && typeof order.id === "string" && order.id !== "";
+        // Tidak pasti = putus, badan bukan JSON, >= 502 tanpa kode, LAYANAN_TIDAK_PASTI, atau 2xx tanpa bukti. 503 KONFIGURASI_SERVER = PASTI tidak tersimpan.
+        if ((baik && !sah) || (!baik && galatDariJawaban(j, "petugas").tidakPasti)) {
             setDialog(null);
             setRagu(true);
             return;
@@ -221,9 +225,8 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
             // Galat server tampil di dialog: kode O1/promo dijadikan kalimat + tindakan; selain itu kalimat server apa adanya.
             throw new Error(pesanJawaban(j, "Order ditolak server."));
         }
-        const order = ((j.data as Record<string, unknown>).order ?? {}) as { id?: string };
         setTersimpan(true);
-        router.push(order.id ? `/orders/${order.id}?baru=1` : "/orders");
+        router.push(`/orders/${String(order.id)}?baru=1`);
     }
 
     return (
@@ -338,7 +341,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                                     )}
                                     {lengkapBaris && <PromoBarisInfo result={hasilPratinjau} code={code} unit={line.unit} nomor={index + 1} saran={saranServer} />}
                                     {lengkapBaris && (saranBaris.get(index)?.length ?? 0) > 0 && (
-                                        <KartuPromoBaris nomor={index + 1} kodeBaris={code} unitBaris={line.unit} saran={saranBaris.get(index)!} namaBarang={namaBarang}
+                                        <KartuPromoBaris nomor={index + 1} kodeBaris={code} unitBaris={line.unit} jumlahBaris={line.quantity} saran={saranBaris.get(index)!} namaBarang={namaBarang}
                                             onTambah={(n) => ubah(index, "quantity", String(Number(line.quantity) + n))} />
                                     )}
                                 </li>

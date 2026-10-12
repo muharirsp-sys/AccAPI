@@ -221,23 +221,23 @@ test("HARGA_PETUGAS_TIDAK_DIIZINKAN: per baris menyebut harga master + tindakan 
 const SARAN = (o: Record<string, unknown>) => ({ program_id: "prog-x", program_name: "PROMO X", message: "Tambah 2 PCS lagi untuk diskon 2%", codes: ["A-1"], threshold: "quantity", minimum: "12", current: "10", gap: "2", ...o });
 
 test("saran hampir dapat: kemajuan dari angka server; tombol Tambah HANYA program jumlah satu barang bersatuan sama dengan baris", () => {
-    const k = bacaSaran(SARAN({}), "A-1", "pcs")!;
+    const k = bacaSaran(SARAN({}), "A-1", "pcs", "10")!;
     assert.deepEqual([k.sekarang, k.target, Math.round(k.persen), k.unit, k.tambah, k.campur, k.tipe], [10, 12, 83, "PCS", 2, false, "jumlah"]);
     assert.equal(k.kalimat, "Tambah 2 PCS lagi untuk diskon 2%"); // kalimat server apa adanya
-    assert.equal(bacaSaran(SARAN({}), "A-1", "KRT")!.tambah, null); // satuan program != satuan baris
-    assert.equal(bacaSaran(SARAN({ codes: ["A-1", "A-4"] }), "A-1", "PCS")!.tambah, null); // campur (mix)
-    assert.equal(bacaSaran(SARAN({ codes: ["A-1", "A-4"] }), "A-1", "PCS")!.campur, true);
-    assert.equal(bacaSaran(SARAN({}), "A-4", "PCS")!.tambah, null); // bukan barang baris itu
-    const nilai = bacaSaran(SARAN({ threshold: "value", minimum: "1000000", current: "750000", gap: "250000", message: "Tambah Rp 250.000 lagi untuk potongan Rp 20.000" }), "A-1", "PCS")!;
+    assert.equal(bacaSaran(SARAN({}), "A-1", "KRT", "10")!.tambah, null); // satuan program != satuan baris
+    assert.equal(bacaSaran(SARAN({ codes: ["A-1", "A-4"] }), "A-1", "PCS", "10")!.tambah, null); // campur (mix)
+    assert.equal(bacaSaran(SARAN({ codes: ["A-1", "A-4"] }), "A-1", "PCS", "10")!.campur, true);
+    assert.equal(bacaSaran(SARAN({}), "A-4", "PCS", "10")!.tambah, null); // bukan barang baris itu
+    const nilai = bacaSaran(SARAN({ threshold: "value", minimum: "1000000", current: "750000", gap: "250000", message: "Tambah Rp 250.000 lagi untuk potongan Rp 20.000" }), "A-1", "PCS", "10")!;
     assert.deepEqual([nilai.tipe, nilai.tambah, nilai.unit, nilai.persen], ["nilai", null, null, 75]);
-    assert.equal(bacaSaran(SARAN({ message: "Kalimat tak dikenal" }), "A-1", "PCS")!.tambah, null); // kalimat tak terbaca = tanpa tombol
-    assert.equal(bacaSaran(SARAN({ minimum: "0" }), "A-1", "PCS"), null);
-    assert.equal(bacaSaran(SARAN({ current: "abc" }), "A-1", "PCS"), null);
-    assert.equal(bacaSaran(SARAN({ current: "20" }), "A-1", "PCS")!.persen, 100); // tak pernah > 100%
+    assert.equal(bacaSaran(SARAN({ message: "Kalimat tak dikenal" }), "A-1", "PCS", "10")!.tambah, null); // kalimat tak terbaca = tanpa tombol
+    assert.equal(bacaSaran(SARAN({ minimum: "0" }), "A-1", "PCS", "10"), null);
+    assert.equal(bacaSaran(SARAN({ current: "abc" }), "A-1", "PCS", "10"), null);
+    assert.equal(bacaSaran(SARAN({ current: "20" }), "A-1", "PCS", "20")!.persen, 100); // tak pernah > 100%
 });
 
 test("pecah saran: per baris urut gap terkecil (semua, bukan satu), mix hanya di baris pertama, nilai ke ringkasan order", () => {
-    const lines = [{ code: "A-1", unit: "KRT" }, { code: "A-1", unit: "PCS" }, { code: "A-4", unit: "LSN" }, { code: "", unit: "" }];
+    const lines = [{ code: "A-1", unit: "KRT", quantity: "9" }, { code: "A-1", unit: "PCS", quantity: "10" }, { code: "A-4", unit: "LSN", quantity: "1" }, { code: "", unit: "", quantity: "" }];
     const saran = [
         SARAN({ program_id: "p3", gap: "3", message: "Tambah 3 KRT lagi untuk diskon 1%" }),
         SARAN({ program_id: "p1", gap: "1", message: "Tambah 1 PCS lagi untuk bonus" }),
@@ -282,4 +282,39 @@ test("galatDariJawaban: jawaban 2xx TANPA ok ({}) = hasil belum pasti (order mun
 test("jumlahSah: hanya bilangan bulat > 0 (server menolak desimal); spasi di tepi diabaikan seperti di server", () => {
     for (const ok of ["1", "12", " 3 ", "007"]) assert.equal(jumlahSah(ok), true, ok);
     for (const salah of ["", "0", "00", "2.5", "2,5", "-1", "1e3", "abc", "1 2"]) assert.equal(jumlahSah(salah), false, salah);
+});
+
+test("saran: N tombol = ceil(gap) dari FIELD gap (pesan server membulatkan half-even: 2,5 -> 'Tambah 2'); gap <= 0 / bukan angka / jumlah baris != metrik saran = tanpa tombol", () => {
+    assert.equal(bacaSaran(SARAN({ gap: "2.5", message: "Tambah 2 PCS lagi untuk diskon 2%" }), "A-1", "PCS", "10")!.tambah, 3);
+    assert.equal(bacaSaran(SARAN({ gap: "2.000" }), "A-1", "PCS", "10")!.tambah, 2);
+    assert.equal(bacaSaran(SARAN({ gap: "0.2", message: "Tambah 0 PCS lagi untuk diskon 2%" }), "A-1", "PCS", "10")!.tambah, 1);
+    for (const gap of ["0", "-1", "abc", "", undefined]) assert.equal(bacaSaran(SARAN({ gap }), "A-1", "PCS", "10")!.tambah, null, String(gap));
+    assert.equal(bacaSaran(SARAN({}), "A-1", "PCS", "3")!.tambah, null); // saran ini milik baris berjumlah 10, bukan 3
+    assert.equal(bacaSaran(SARAN({}), "A-1", "PCS", "")!.tambah, null);
+});
+
+test("pecah saran: kode+satuan sama di beberapa baris = saran dicocokkan ke baris pemilik lewat jumlah === current (server menghitung non-mix PER BARIS); tetap ambigu = kartu TANPA tombol di ringkasan menyebut baris", () => {
+    const krt = (quantity: string) => ({ code: "A-1", unit: "KRT", quantity });
+    const sar = (current: string) => SARAN({ program_id: "pa", codes: ["A-1"], minimum: "5", current, gap: String(5 - Number(current)), message: `Tambah ${5 - Number(current)} KRT lagi untuk diskon 15%` });
+    // Baris 1 jumlah 1, baris 2 jumlah 3: masing-masing mendapat sarannya sendiri (dulu keduanya jatuh ke baris 1).
+    const a = pecahSaran([sar("1"), sar("3")], [krt("1"), krt("3")]);
+    assert.deepEqual(a.perBaris.get(0)?.map((s) => s.current), ["1"]);
+    assert.deepEqual(a.perBaris.get(1)?.map((s) => s.current), ["3"]);
+    assert.equal(a.ringkasan.length, 0);
+    assert.equal(bacaSaran(a.perBaris.get(1)![0], "A-1", "KRT", "3")!.tambah, 2);
+    assert.equal(bacaSaran(a.perBaris.get(1)![0], "A-1", "KRT", "1")!.tambah, null); // jumlah baris berubah: bukan saran baris ini lagi
+    // Dua baris berjumlah sama = ambigu: SATU kartu di ringkasan (saran kembar digabung), menyebut baris 1 dan 2, tanpa tombol.
+    const b = pecahSaran([sar("3"), sar("3")], [krt("3"), krt("3")]);
+    assert.equal(b.perBaris.size, 0);
+    assert.equal(b.ringkasan.length, 1);
+    assert.deepEqual(b.ringkasan[0].baris, [1, 2]);
+    assert.equal(bacaSaran(b.ringkasan[0], "", "", "")!.tambah, null);
+    // Tak ada baris yang jumlahnya = current (data tak sinkron): ambigu juga, tidak ditebak.
+    const c = pecahSaran([sar("3")], [krt("1"), krt("2")]);
+    assert.equal(c.perBaris.size, 0);
+    assert.deepEqual(c.ringkasan[0].baris, [1, 2]);
+    // Satu baris saja: tetap ke baris itu (tanpa uji jumlah); baris dengan satuan lain tidak ikut menjadi kandidat.
+    const d = pecahSaran([sar("3")], [{ code: "A-1", unit: "PCS", quantity: "3" }, krt("3")]);
+    assert.deepEqual([...d.perBaris.keys()], [1]);
+    assert.equal(d.ringkasan.length, 0);
 });

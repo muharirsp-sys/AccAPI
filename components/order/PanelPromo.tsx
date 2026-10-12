@@ -52,6 +52,7 @@ function KartuSaranIsi({ k, saran, namaBarang, onTambah }: { k: KartuSaran; sara
             <p className="fi-small fi-tnum fi-muted" style={{ margin: 0 }}>{teks}</p>
             <p style={{ margin: 0, overflowWrap: "anywhere" }}>{saran.message}</p>
             {k.campur && <p className="fi-small fi-muted" style={{ margin: 0 }}>Dihitung dari: {k.codes.map(namaBarang).join(", ")}</p>}
+            {k.baris && <p className="fi-small fi-muted" style={{ margin: 0 }}>Program ini dihitung per baris; barang yang sama ada di baris {k.baris.join(", ")}. Ubah jumlah langsung di barisnya.</p>}
             {k.tambah !== null && onTambah && (
                 <div><Button variant="secondary" icon={<Plus className="fi-icon" aria-hidden />} onClick={() => onTambah(k.tambah!)}>Tambah {k.tambah} {k.unit}</Button></div>
             )}
@@ -63,10 +64,10 @@ function KartuSaranIsi({ k, saran, namaBarang, onTambah }: { k: KartuSaran; sara
  * Kartu ajakan "hampir dapat" untuk satu baris: SEMUA saran baris itu (urut gap terkecil), bukan hanya yang pertama. Tombol "Tambah N UNIT" hanya
  * mengubah jumlah baris itu (pratinjau dihitung ulang, sidik lama batal); tidak menyimpan apa pun dan tidak menjanjikan angka sendiri.
  */
-export function KartuPromoBaris({ nomor, kodeBaris, unitBaris, saran, namaBarang, onTambah }: {
-    nomor: number; kodeBaris: string; unitBaris: string; saran: Suggestion[]; namaBarang: (code: string) => string; onTambah: (n: number) => void;
+export function KartuPromoBaris({ nomor, kodeBaris, unitBaris, jumlahBaris, saran, namaBarang, onTambah }: {
+    nomor: number; kodeBaris: string; unitBaris: string; jumlahBaris: string; saran: Suggestion[]; namaBarang: (code: string) => string; onTambah: (n: number) => void;
 }) {
-    const kartu = saran.flatMap((s) => { const k = bacaSaran(s, kodeBaris, unitBaris); return k ? [{ k, s }] : []; });
+    const kartu = saran.flatMap((s) => { const k = bacaSaran(s, kodeBaris, unitBaris, jumlahBaris); return k ? [{ k, s }] : []; });
     if (kartu.length === 0) return null;
     return (
         <div role="group" aria-label={`Promo hampir tercapai barang ${nomor}`} aria-live="polite" style={{ display: "grid", gap: 8, minWidth: 0 }}>
@@ -114,7 +115,7 @@ export function PanelPromo({ result, suggestions = [], nTanpaHarga = 0, ppn, cat
             {saranRingkasan.length > 0 && (
                 <div role="group" aria-label="Promo hampir tercapai (seluruh order)" aria-live="polite" style={{ display: "grid", gap: 8, minWidth: 0 }}>
                     <p className="fi-small" style={{ margin: 0 }}><b>Hampir dapat promo</b></p>
-                    {saranRingkasan.flatMap((s) => { const k = bacaSaran(s, "", ""); return k ? [<KartuSaranIsi key={k.id} k={k} saran={s} namaBarang={namaBarang} />] : []; })}
+                    {saranRingkasan.flatMap((s) => { const k = bacaSaran(s, "", "", ""); return k ? [<KartuSaranIsi key={k.id} k={k} saran={s} namaBarang={namaBarang} />] : []; })}
                 </div>
             )}
             {r.bonusLain.length > 0 && (

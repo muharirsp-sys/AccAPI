@@ -493,7 +493,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                             )}
                                             {lengkapBaris && <PromoBarisInfo result={hasilPratinjau} code={code} unit={line.unit} nomor={index + 1} saran={saranServer} />}
                                             {lengkapBaris && (saranBaris.get(index)?.length ?? 0) > 0 && (
-                                                <KartuPromoBaris nomor={index + 1} kodeBaris={code} unitBaris={line.unit} saran={saranBaris.get(index)!} namaBarang={namaBarang}
+                                                <KartuPromoBaris nomor={index + 1} kodeBaris={code} unitBaris={line.unit} jumlahBaris={line.quantity} saran={saranBaris.get(index)!} namaBarang={namaBarang}
                                                     onTambah={(n) => updateLine(index, "quantity", String(Number(line.quantity) + n))} />
                                             )}
                                         </li>
