@@ -21,7 +21,7 @@ async function bukanAdmin(page: Page, path: string) {
         const headers = { ...res.headers() };
         delete headers["content-length"];
         delete headers["content-encoding"];
-        const body = (await res.text()).replaceAll('\\"users.manage\\"', '\\"users.manage_tes\\"').replaceAll('"users.manage"', '"users.manage_tes"');
+        const body = (await res.text()).split('\\"users.manage\\"').join('\\"users.manage_tes\\"').split('"users.manage"').join('"users.manage_tes"');
         return route.fulfill({ status: res.status(), headers, body });
     });
 }

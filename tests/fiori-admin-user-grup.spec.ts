@@ -140,7 +140,7 @@ async function tanpaIzin(page: Page, path: string, kunci: string) {
         const headers = { ...res.headers() };
         delete headers["content-length"];
         delete headers["content-encoding"];
-        const body = (await res.text()).replaceAll(`\\"${kunci}\\"`, `\\"${kunci}_tes\\"`);
+        const body = (await res.text()).split(`\\"${kunci}\\"`).join(`\\"${kunci}_tes\\"`);
         return route.fulfill({ status: res.status(), headers, body });
     });
 }
@@ -158,7 +158,7 @@ async function izinBisaDicabut(page: Page, path: string, kunci: string) {
         const headers = { ...res.headers() };
         delete headers["content-length"];
         delete headers["content-encoding"];
-        const body = (await res.text()).replaceAll(`\\"${kunci}\\"`, `\\"${kunci}_tes\\"`).replaceAll(`"${kunci}"`, `"${kunci}_tes"`);
+        const body = (await res.text()).split(`\\"${kunci}\\"`).join(`\\"${kunci}_tes\\"`).split(`"${kunci}"`).join(`"${kunci}_tes"`);
         return route.fulfill({ status: res.status(), headers, body });
     });
     return s;
