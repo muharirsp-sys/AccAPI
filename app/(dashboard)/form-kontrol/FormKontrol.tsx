@@ -34,8 +34,8 @@ const TAB: Record<TabKey, ComponentType<{ scope: Scope }>> = {
 const LABEL_PERAN: Record<string, string> = {
     salesman: "Salesman", spv: "SPV", sm: "SM", admin: "Admin", manager: "Manager", admin_sales: "Admin Sales", staff: "Staf",
 };
-/** Peran yang melihat tautan Dashboard SPV (sama dengan hari ini). */
-const PERAN_DASHBOARD_SPV = ["spv", "sm", "admin", "manager", "admin_sales"];
+/** Peran yang melihat tautan Dashboard SPV = peran yang dilayani route spv-dashboard (SPV: timnya; admin/manager/admin_sales: memilih SPV). */
+const PERAN_DASHBOARD_SPV = ["spv", "admin", "manager", "admin_sales"];
 const GAGAL_AKSES = "Akses Form Kontrol belum dapat diverifikasi.";
 
 export default function FormKontrol({ permKeys }: { permKeys: string[] }) {

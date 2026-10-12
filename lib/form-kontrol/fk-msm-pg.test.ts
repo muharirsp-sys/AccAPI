@@ -33,6 +33,10 @@ async function muat() {
         ao: await r("../../app/api/form-kontrol/ao-control/route.ts"),
         jks: await r("../../app/api/form-kontrol/jks/route.ts"),
         reports: await r("../../app/api/form-kontrol/reports/route.ts"),
+        ack: await r("../../app/api/form-kontrol/reports/ack/route.ts"),
+        spv: await r("../../app/api/form-kontrol/spv-dashboard/route.ts"),
+        myScope: await r("../../app/api/form-kontrol/my-scope/route.ts"),
+        profil: await r("../../app/api/form-kontrol/sales-profiles/route.ts"),
     };
 }
 let m: Awaited<ReturnType<typeof muat>>;
@@ -151,4 +155,40 @@ test("butir 2: unggah JKS menyimpan hari BAKU; hari tak dikenal ditolak per bari
         { cust_code: "U-5", hari_kunjungan: null, minggu_pattern: "all" },
     ]);
     await pool.query(`DELETE FROM jks_master WHERE cust_code LIKE 'U-%'`);
+});
+
+// =========================================================================== butir 3 + 5: Dashboard SPV, ack, nama SPV
+
+test("butir 5: cakupan SPV = nama SPV Hierarki dibandingkan trim + tanpa beda huruf; simpan Hierarki ter-trim", { skip: pgSkip }, async () => {
+    const sc = await jawab(await sebagai("u-spva", () => m.myScope.GET(req("/api/form-kontrol/my-scope"))));
+    assert.equal(sc.status, 200);
+    assert.deepEqual([...(sc.body.allowedSalesCodes as string[])].sort(), ["M-SLA", "M-SLB"], "' spv a ' dan 'SPV A' = tim SPV A");
+    const put = await jawab(await sebagai("u-admin", () => m.profil.PUT(req("/api/form-kontrol/sales-profiles", "PUT", { salesCode: "M-SLC", spvName: "  SPV B  ", smName: " " }))));
+    assert.equal(put.status, 200);
+    assert.deepEqual((await pool.query(`SELECT spv_name, sm_name FROM sales_profile WHERE sales_code = 'M-SLC'`)).rows, [{ spv_name: "SPV B", sm_name: null }]);
+});
+
+test("butir 3: SPV TANPA sales_profile melihat dashboard timnya saja; salesman tidak; admin memilih SPV (tak peka huruf)", { skip: pgSkip }, async () => {
+    const kode = (b: Record<string, unknown>) => (b.rows as { salesCode: string }[]).map((r) => r.salesCode).sort();
+    const spv = await jawab(await sebagai("u-spva", () => m.spv.GET(req("/api/form-kontrol/spv-dashboard?date=2026-10-12&spvName=SPV%20B"))));
+    assert.equal(spv.status, 200, JSON.stringify(spv.body));
+    assert.deepEqual(kode(spv.body), ["M-SLA", "M-SLB"], "parameter spvName diabaikan untuk SPV");
+    assert.equal(spv.body.spvName, "SPV A");
+    const spvb = await jawab(await sebagai("u-spvb", () => m.spv.GET(req("/api/form-kontrol/spv-dashboard?date=2026-10-12"))));
+    assert.deepEqual(kode(spvb.body), ["M-SLC"]);
+    const sales = await jawab(await sebagai("u-sla", () => m.spv.GET(req("/api/form-kontrol/spv-dashboard?date=2026-10-12"))));
+    assert.equal(sales.status, 403, "salesman tidak melihat dashboard tim");
+    const adm = await jawab(await sebagai("u-admin", () => m.spv.GET(req("/api/form-kontrol/spv-dashboard?date=2026-10-12&spvName=spv%20b"))));
+    assert.deepEqual(kode(adm.body), ["M-SLC"]);
+});
+
+test("butir 3: ack laporan hanya untuk tim sendiri (SPV tanpa profil)", { skip: pgSkip }, async () => {
+    await pool.query(`INSERT INTO salesman_daily_report (id, sales_code, date, period_month, period_year, tindak_lanjut, submitted_at) VALUES
+        ('r-a', 'M-SLA', '2026-10-12', 10, 2026, 'x', now()), ('r-c', 'M-SLC', '2026-10-12', 10, 2026, 'y', now())`);
+    const ack = (u: string, salesCode: string) => sebagai(u, () => m.ack.POST(req("/api/form-kontrol/reports/ack", "POST", { salesCode, date: "2026-10-12" })));
+    assert.equal((await ack("u-spva", "M-SLA")).status, 200);
+    assert.equal((await ack("u-spva", "M-SLC")).status, 403, "tim lain");
+    assert.equal((await ack("u-spvb", "M-SLC")).status, 200);
+    assert.deepEqual((await pool.query(`SELECT sales_code, spv_ack FROM salesman_daily_report ORDER BY 1`)).rows,
+        [{ sales_code: "M-SLA", spv_ack: true }, { sales_code: "M-SLC", spv_ack: true }]);
 });

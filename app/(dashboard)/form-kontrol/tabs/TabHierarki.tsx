@@ -29,15 +29,16 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
 
     const profiles = load.data ?? [];
     const nilai = (p: Profile): Edit => edits[p.salesCode] ?? { spvName: p.spvName ?? "", smName: p.smName ?? "" };
-    const berubah = (p: Profile) => { const e = edits[p.salesCode]; return Boolean(e) && (e.spvName !== (p.spvName ?? "") || e.smName !== (p.smName ?? "")); };
+    // Nama dibandingkan & disimpan ter-trim; server mencocokkan nama SPV/SM tanpa beda huruf (FK-MSM butir 5).
+    const berubah = (p: Profile) => { const e = edits[p.salesCode]; return Boolean(e) && (e.spvName.trim() !== (p.spvName ?? "").trim() || e.smName.trim() !== (p.smName ?? "").trim()); };
     const nDraf = profiles.filter(berubah).length;
     useUnsavedGuard(nDraf > 0);
     const kunci = izin ?? (load.status !== "siap" ? "Tunggu daftar selesai dimuat ulang." : undefined);
 
-    const spvNames = [...new Set(profiles.map((r) => r.spvName).filter(Boolean) as string[])].sort();
-    const smNames = [...new Set(profiles.map((r) => r.smName).filter(Boolean) as string[])].sort();
+    const spvNames = [...new Set(profiles.map((r) => r.spvName?.trim()).filter(Boolean) as string[])].sort();
+    const smNames = [...new Set(profiles.map((r) => r.smName?.trim()).filter(Boolean) as string[])].sort();
     const grup = new Map<string, Profile[]>();
-    for (const p of profiles) { const k = p.spvName ?? TANPA_SPV; grup.set(k, [...(grup.get(k) ?? []), p]); }
+    for (const p of profiles) { const k = p.spvName?.trim() || TANPA_SPV; grup.set(k, [...(grup.get(k) ?? []), p]); }
     const kunciGrup = [...grup.keys()].sort((a, b) => (a === TANPA_SPV ? 1 : b === TANPA_SPV ? -1 : a.localeCompare(b)));
     const ubah = (p: Profile, patch: Partial<Edit>) => { setEdits((prev) => ({ ...prev, [p.salesCode]: { ...nilai(p), ...patch } })); setSukses(""); };
 
@@ -115,8 +116,8 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                 description="Akibatnya langsung: SPV dan SM baru melihat data salesman ini; yang lama tidak lagi."
                 facts={simpan && target ? [
                     ["Salesman", `${simpan.salesName} · ${simpan.salesCode}`],
-                    ["SPV", `${simpan.spvName ?? "—"} → ${target.spvName || "—"}`],
-                    ["SM", `${simpan.smName ?? "—"} → ${target.smName || "—"}`],
+                    ["SPV", `${simpan.spvName ?? "—"} → ${target.spvName.trim() || "—"}`],
+                    ["SM", `${simpan.smName ?? "—"} → ${target.smName.trim() || "—"}`],
                 ] : []}
                 confirmLabel="Simpan hierarki"
                 confirmDisabled={kunci}
@@ -125,7 +126,7 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                     const e = nilai(p);
                     await tulisFk("/api/form-kontrol/sales-profiles", {
                         method: "PUT",
-                        body: { salesCode: p.salesCode, spvName: e.spvName || null, smName: e.smName || null },
+                        body: { salesCode: p.salesCode, spvName: e.spvName.trim() || null, smName: e.smName.trim() || null },
                         gagal: "Hierarki belum tersimpan.",
                     });
                     setSimpan(null);

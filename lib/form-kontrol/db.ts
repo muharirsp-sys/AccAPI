@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql, type AnyColumn } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import {
@@ -27,6 +27,10 @@ export function getWeekParity(date: Date): "ganjil" | "genap" {
 const kunciHariSql = sql`regexp_replace(upper(coalesce(${jksMaster.hariKunjungan}, '')), '[^A-Z]', '', 'g')`;
 const hariIni = (dayName: string) => sql`${kunciHariSql} = ${kunciHari(dayName)}`;
 const polaMinggu = (parity: "ganjil" | "genap") => sql`lower(trim(${jksMaster.mingguPattern})) in ('all', ${parity})`;
+
+// FK-MSM butir 5: nama SPV/SM Hierarki dibandingkan sesudah trim + tanpa beda huruf (" spv a " = "SPV A"); nama kosong tidak cocok apa pun.
+export const kunciNama = (v: string | null | undefined) => (v ?? "").trim().toUpperCase();
+const samaNama = (kolom: AnyColumn, nama: string) => sql`upper(trim(${kolom})) = ${kunciNama(nama)}`;
 
 export function parseDateString(dateStr: string): Date {
     const [y, m, d] = dateStr.split("-").map(Number);
@@ -411,7 +415,8 @@ export async function acknowledgeReport(data: {
         const prof = await db.select({ spvName: salesProfile.spvName, smName: salesProfile.smName })
             .from(salesProfile).where(eq(salesProfile.salesCode, data.salesCode)).limit(1);
         const p = prof[0];
-        if (!p || (p.spvName !== data.supervisorName && p.smName !== data.supervisorName)) return false;
+        const saya = kunciNama(data.supervisorName);
+        if (!p || !saya || (kunciNama(p.spvName) !== saya && kunciNama(p.smName) !== saya)) return false;
     }
     const existing = await db.select({ id: salesmanDailyReport.id, spvAckBy: salesmanDailyReport.spvAckBy, spvAckAt: salesmanDailyReport.spvAckAt })
         .from(salesmanDailyReport)
@@ -459,22 +464,25 @@ export async function getBriefings(spvName: string, dateStr: string) {
 
 // Semua salesCode di bawah satu SPV — untuk RBAC scope SPV.
 export async function getSalesCodesForSpv(spvName: string): Promise<string[]> {
+    if (!kunciNama(spvName)) return [];
     const rows = await db.select({ salesCode: salesProfile.salesCode })
-        .from(salesProfile).where(eq(salesProfile.spvName, spvName));
+        .from(salesProfile).where(samaNama(salesProfile.spvName, spvName));
     return rows.map(r => r.salesCode).filter(Boolean) as string[];
 }
 
 // Semua salesCode di bawah satu SM — untuk RBAC scope SM.
 export async function getSalesCodesForSm(smName: string): Promise<string[]> {
+    if (!kunciNama(smName)) return [];
     const rows = await db.select({ salesCode: salesProfile.salesCode })
-        .from(salesProfile).where(eq(salesProfile.smName, smName));
+        .from(salesProfile).where(samaNama(salesProfile.smName, smName));
     return rows.map(r => r.salesCode).filter(Boolean) as string[];
 }
 
 // SPV di bawah satu SM + briefing mereka hari itu — untuk Kontrol SM (ganti hardcode).
 export async function getSmSpvBriefings(smName: string, dateStr: string) {
+    if (!kunciNama(smName)) return [];
     const profiles = await db.select({ spvName: salesProfile.spvName })
-        .from(salesProfile).where(eq(salesProfile.smName, smName));
+        .from(salesProfile).where(samaNama(salesProfile.smName, smName));
     const spvNames = [...new Set(profiles.map(p => p.spvName).filter((n): n is string => !!n))];
     if (spvNames.length === 0) return [];
     const briefings = await db.select().from(spvBriefing).where(
@@ -576,8 +584,10 @@ export async function getAllSalesProfiles() {
 }
 
 export async function updateSalesHierarchy(salesCode: string, spvName: string | null, smName: string | null) {
+    // Disimpan ter-trim (butir 5); isian bukan teks/kosong = null.
+    const bersih = (v: unknown) => (typeof v === "string" ? v.trim() : "") || null;
     await db.update(salesProfile)
-        .set({ spvName: spvName || null, smName: smName || null, updatedAt: new Date() })
+        .set({ spvName: bersih(spvName), smName: bersih(smName), updatedAt: new Date() })
         .where(eq(salesProfile.salesCode, salesCode));
 }
 
@@ -695,8 +705,9 @@ export async function getVisitDetail(
 // ── SPV Dashboard ─────────────────────────────────────────────────────────────
 
 export async function getSpvDashboard(spvName: string, dateStr: string) {
+    if (!kunciNama(spvName)) return [];
     const profiles = await db.select().from(salesProfile)
-        .where(eq(salesProfile.spvName, spvName));
+        .where(samaNama(salesProfile.spvName, spvName));
 
     if (profiles.length === 0) return [];
 
