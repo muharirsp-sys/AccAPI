@@ -1,8 +1,13 @@
 -- =====================================================================
 -- RBAC D-01 KUNCI — kunci izin BARU rilis Fiori ke grup LAMA (matriks D-01 §A/§C disetujui owner 11 Okt; keputusan owner 12 Okt).
---   Finance : finance.resolve_unknown, finance.override_duplicate, finance.repost_payment, pelunasan.kirim   (D-01 §A; PR #136/#150/#152)
---   Admin   : pelunasan.kirim                                                                             (owner 12 Okt: kirim pelunasan saat rilis = Finance + Admin)
---   Manager : order.resolve_unknown                                                                       (D-01 Q1; PR #141)
+--   Finance : finance.view, finance.resolve_unknown, finance.override_duplicate, finance.repost_payment, pelunasan.kirim
+--             (D-01 §A; PR #136/#150/#152; owner 12 Okt: produksi Finance hanya dashboard.view + insentif_sales.* — tanpa finance.view
+--             tidak bisa membuka /finance untuk "Selesaikan tidak pasti")
+--   Admin   : pelunasan.kirim  (owner 12 Okt: kirim pelunasan saat rilis = Finance + Admin; Admin sudah memegang finance.view & order.view)
+--   Manager : order.view, order.resolve_unknown  (D-01 Q1; PR #141; owner 12 Okt: produksi Manager tanpa order.view -> tidak bisa membuka
+--             /antrean-faktur tempat tombol Selesaikan tidak pasti)
+-- Gerbang halaman (lib/rbac.ts pagePermissions): /finance = finance.view; /antrean-faktur = order.view; /pelunasan = pelunasan.kirim;
+--   /sesi-accurate = api_wrapper.view ATAU salah satu SESI_ACCURATE_KEYS (termasuk pelunasan.kirim, finance.resolve_unknown).
 -- SENGAJA TIDAK diberikan (dasar):
 --   - Admin TIDAK mendapat finance.resolve_unknown / finance.override_duplicate / order.resolve_unknown: D-01 §A memberi Selesaikan &
 --     izinkan-kirim-ulang HANYA ke Finance dan Selesaikan faktur ke Manager (Q1); D-14/D-18 "yang mengirim ≠ yang menyelesaikan / mengizinkan
@@ -14,7 +19,9 @@
 --     Akses Group sesudah audit D-17 — berkas ini tanpa DELETE.
 --
 -- KAPAN: SESUDAH image rilis hidup (runbook §5, tepat sesudah DDL_ADR004 / DDL_OUTBOX_EVENT / DDL_S6E2, masih dalam pembekuan).
---   Kelima kunci TIDAK ada di registry image lama (origin/main lib/rbac/registry.ts: finance tanpa resolve_unknown/override_duplicate/
+--   finance.view dan order.view SUDAH dikenal image lama, tetapi tetap di berkas ini (satu langkah, satu VERIFIKASI): hari ini Finance tak
+--   bisa membuka /finance dan Manager tak bisa membuka /antrean-faktur di image lama juga, jadi menunggu sampai sesudah image bukan regresi.
+--   Lima kunci lain TIDAK ada di registry image lama (origin/main lib/rbac/registry.ts: finance tanpa resolve_unknown/override_duplicate/
 --   repost_payment, order tanpa resolve_unknown, modul pelunasan belum ada). Layar Akses Group LAMA (GroupManagement.tsx) mengirim SEMUA kunci
 --   grup saat simpan dan PATCH lama (app/api/admin/groups/[id]/route.ts) menolak kunci tak dikenal (400 "Key tidak valid: …") -> bila disisipkan
 --   SEBELUM image, izin grup Finance/Admin/Manager tidak bisa disimpan di layar lama sampai image baru hidup (selamanya bila rilis batal/
@@ -31,8 +38,8 @@
 -- Jaminan: grup lewat NAMA persis; grup absen = NOTICE + dilewati; HANYA INSERT ... ON CONFLICT DO NOTHING (tidak menghapus/mengubah kunci
 -- lain, tidak membuat grup); idempoten (jalan kedua 0 izin, 0 audit); satu baris permission_audit_log `group_permission.sync`
 -- {added, removed: [], sumber} per grup yang benar-benar bertambah (pola RBAC_S7_1B_KUNCI.sql).
--- Uji (12 Okt, DB sekali-pakai = salinan am040_fiori + grup sintetis seperti produksi): mode cek 0 tersimpan; terapkan 6 izin + 3 audit;
--- jalan kedua 0/0; terapkan tanpa accurate_write_attempt ditolak.
+-- Uji (12 Okt, DB sekali-pakai = salinan am040_fiori + grup sintetis persis produksi 12 Okt): mode cek 0 tersimpan; terapkan 8 izin +
+-- 3 audit; jalan kedua 0/0; terapkan tanpa accurate_write_attempt ditolak; grup absen = NOTICE.
 -- =====================================================================
 
 BEGIN;
@@ -59,10 +66,10 @@ BEGIN
     END LOOP;
 
     WITH isi(grup, kunci) AS (VALUES
-        ('Finance', 'finance.resolve_unknown'), ('Finance', 'finance.override_duplicate'), ('Finance', 'finance.repost_payment'),
-        ('Finance', 'pelunasan.kirim'),
+        ('Finance', 'finance.view'), ('Finance', 'finance.resolve_unknown'), ('Finance', 'finance.override_duplicate'),
+        ('Finance', 'finance.repost_payment'), ('Finance', 'pelunasan.kirim'),
         ('Admin', 'pelunasan.kirim'),
-        ('Manager', 'order.resolve_unknown')
+        ('Manager', 'order.view'), ('Manager', 'order.resolve_unknown')
     ),
     izin AS (
         INSERT INTO group_permission (group_id, permission_key)
@@ -89,10 +96,10 @@ SELECT 'VERIFIKASI' AS bagian, v.cek,
                  FROM access_group ag LEFT JOIN group_permission gp ON gp.group_id = ag.id WHERE ag.name = v.grup GROUP BY ag.id),
                 'grup ' || v.grup || ' tidak ada') AS nilai
 FROM (VALUES
-    (1, 'Finance memegang 4 kunci (resolve/override/repost + pelunasan.kirim)', 'Finance',
-        ARRAY['finance.resolve_unknown', 'finance.override_duplicate', 'finance.repost_payment', 'pelunasan.kirim']),
+    (1, 'Finance memegang 5 kunci (finance.view + resolve/override/repost + pelunasan.kirim)', 'Finance',
+        ARRAY['finance.view', 'finance.resolve_unknown', 'finance.override_duplicate', 'finance.repost_payment', 'pelunasan.kirim']),
     (2, 'Admin memegang pelunasan.kirim', 'Admin', ARRAY['pelunasan.kirim']),
-    (3, 'Manager memegang order.resolve_unknown', 'Manager', ARRAY['order.resolve_unknown'])
+    (3, 'Manager memegang order.view + order.resolve_unknown', 'Manager', ARRAY['order.view', 'order.resolve_unknown'])
 ) AS v(no, cek, grup, kunci)
 UNION ALL
 SELECT 'VERIFIKASI', 'pemegang pelunasan.kirim (harapan: Admin, Finance [+ Admin Incaso sesudah BL37])',
@@ -106,6 +113,22 @@ UNION ALL
 SELECT 'VERIFIKASI', 'pemegang order.resolve_unknown (harapan: Manager saja)',
        coalesce((SELECT string_agg(ag.name, ', ' ORDER BY ag.name) FROM group_permission gp JOIN access_group ag ON ag.id = gp.group_id
                  WHERE gp.permission_key = 'order.resolve_unknown'), '-')
+UNION ALL
+-- Kunci PRASYARAT halaman (harus '-'): pemegang kunci Selesaikan / kirim yang tidak bisa membuka halaman tempat tombolnya berada.
+SELECT 'VERIFIKASI', 'pemegang finance.resolve_unknown/override_duplicate TANPA finance.view (gerbang /finance) — harus -',
+       coalesce((SELECT string_agg(DISTINCT ag.name, ', ') FROM group_permission gp JOIN access_group ag ON ag.id = gp.group_id
+                 WHERE gp.permission_key IN ('finance.resolve_unknown', 'finance.override_duplicate')
+                   AND NOT EXISTS (SELECT 1 FROM group_permission v WHERE v.group_id = gp.group_id AND v.permission_key = 'finance.view')), '-')
+UNION ALL
+SELECT 'VERIFIKASI', 'pemegang order.resolve_unknown TANPA order.view (gerbang /antrean-faktur) — harus -',
+       coalesce((SELECT string_agg(DISTINCT ag.name, ', ') FROM group_permission gp JOIN access_group ag ON ag.id = gp.group_id
+                 WHERE gp.permission_key = 'order.resolve_unknown'
+                   AND NOT EXISTS (SELECT 1 FROM group_permission v WHERE v.group_id = gp.group_id AND v.permission_key = 'order.view')), '-')
+UNION ALL
+SELECT 'VERIFIKASI', 'pemegang finance.resolve_unknown TANPA pelunasan.kirim (Selesaikan pelunasan ada di /pelunasan) — harus -',
+       coalesce((SELECT string_agg(DISTINCT ag.name, ', ') FROM group_permission gp JOIN access_group ag ON ag.id = gp.group_id
+                 WHERE gp.permission_key = 'finance.resolve_unknown'
+                   AND NOT EXISTS (SELECT 1 FROM group_permission v WHERE v.group_id = gp.group_id AND v.permission_key = 'pelunasan.kirim')), '-')
 UNION ALL
 SELECT 'VERIFIKASI', 'pemegang api_wrapper.execute (tidak diubah berkas ini)',
        coalesce((SELECT string_agg(ag.name, ', ' ORDER BY ag.name) FROM group_permission gp JOIN access_group ag ON ag.id = gp.group_id

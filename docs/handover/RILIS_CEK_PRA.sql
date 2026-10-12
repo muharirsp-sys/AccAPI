@@ -149,8 +149,8 @@ FROM (SELECT coalesce(role, '(kosong)') AS r, count(*) AS n FROM "user" WHERE NO
 -- 4a. Grup + kunci yang disentuh rilis. Kunci baru (pelunasan.kirim, finance.resolve_unknown/override_duplicate/repost_payment,
 --     order.resolve_unknown, kasir.*) belum ada di produksi — wajar kosong sebelum rilis.
 WITH relevan(kunci) AS (VALUES
-    ('api_wrapper.view'), ('api_wrapper.execute'), ('pelunasan.kirim'), ('finance.update'), ('finance.resolve_unknown'),
-    ('finance.override_duplicate'), ('finance.repost_payment'), ('order.edit'), ('order.resolve_unknown'), ('payments.submit'),
+    ('api_wrapper.view'), ('api_wrapper.execute'), ('pelunasan.kirim'), ('finance.view'), ('finance.update'), ('finance.resolve_unknown'),
+    ('finance.override_duplicate'), ('finance.repost_payment'), ('order.view'), ('order.edit'), ('order.resolve_unknown'), ('payments.submit'),
     ('sppd.download'), ('users.manage'), ('users.view'), ('kasir.view'), ('kasir.buka'),
     ('off_program_control.audit_read'), ('off_program_control.audit_export')
 )
@@ -178,6 +178,8 @@ FROM (VALUES
 ORDER BY n.no;
 
 -- 4c. Risiko terkunci SESUDAH image bila kunci baru belum diberikan (RBAC_D01_KUNCI.sql, runbook §5 langkah 4). Satu baris = satu grup yang perlu ditangani.
+--     Dua baris terakhir ("pemegang kunci Selesaikan tanpa kunci lihat halaman") hanya bisa muncul SESUDAH kunci baru ada — jalankan berkas ini
+--     lagi sesudah §5 langkah 4 sebagai pemeriksaan akhir (harus 0 baris untuk keduanya).
 SELECT '4c risiko terkunci' AS bagian, x.risiko, ag.name AS grup,
        (SELECT count(*) FROM user_group ug JOIN "user" u ON u.id = ug.user_id
         WHERE ug.group_id = ag.id AND NOT coalesce(u.banned, false)) AS anggota_aktif
@@ -186,7 +188,9 @@ JOIN (VALUES
     ('kirim tulis Konsol hari ini (api_wrapper.execute) -> kirim pelunasan butuh pelunasan.kirim', 'api_wrapper.execute', 'pelunasan.kirim'),
     ('ajukan keranjang (payments.submit) tanpa sppd.download -> unduh dokumen SPPD 403', 'payments.submit', 'sppd.download'),
     ('posting Finance (finance.update) tanpa finance.resolve_unknown -> tidak bisa Selesaikan tidak pasti', 'finance.update', 'finance.resolve_unknown'),
-    ('lihat Konsol (api_wrapper.view) tanpa api_wrapper.execute -> kehilangan tulis Konsol', 'api_wrapper.view', 'api_wrapper.execute')
+    ('lihat Konsol (api_wrapper.view) tanpa api_wrapper.execute -> kehilangan tulis Konsol', 'api_wrapper.view', 'api_wrapper.execute'),
+    ('Selesaikan Finance (finance.resolve_unknown) tanpa finance.view -> tidak bisa membuka /finance', 'finance.resolve_unknown', 'finance.view'),
+    ('Selesaikan faktur (order.resolve_unknown) tanpa order.view -> tidak bisa membuka /antrean-faktur', 'order.resolve_unknown', 'order.view')
 ) AS x(risiko, punya, belum)
   ON EXISTS (SELECT 1 FROM group_permission gp WHERE gp.group_id = ag.id AND gp.permission_key = x.punya)
  AND NOT EXISTS (SELECT 1 FROM group_permission gp WHERE gp.group_id = ag.id AND gp.permission_key = x.belum)
