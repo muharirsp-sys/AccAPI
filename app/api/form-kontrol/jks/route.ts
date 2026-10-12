@@ -67,8 +67,9 @@ export async function POST(req: Request) {
     try {
         const contentType = req.headers.get("content-type") ?? "";
         let rows: Record<string, unknown>[] = [];
+        const excel = contentType.includes("multipart/form-data");
 
-        if (contentType.includes("multipart/form-data")) {
+        if (excel) {
             // Import Excel dari UI (TabJks kirim file .xlsx via FormData).
             const form = await req.formData();
             const file = form.get("file");
@@ -88,8 +89,10 @@ export async function POST(req: Request) {
         if (!Array.isArray(rows) || rows.length === 0) {
             return NextResponse.json({ error: "Tidak ada baris untuk diimport" }, { status: 400 });
         }
-        const result = await upsertJksRows(rows as Parameters<typeof upsertJksRows>[0]);
-        return NextResponse.json({ success: true, ...result });
+        const { ditolak, ...result } = await upsertJksRows(rows as Parameters<typeof upsertJksRows>[0]);
+        // Nomor baris seperti yang dilihat pengunggah: Excel = baris sheet (baris 1 = judul kolom); JSON = urutan ke-n.
+        return NextResponse.json({ success: true, ...result,
+            ditolak: ditolak.map((d) => ({ baris: d.indeks + (excel ? 2 : 1), custCode: d.custCode, hari: d.hari })) });
     } catch (e: unknown) {
         return NextResponse.json({ error: e instanceof Error ? e.message : "Gagal import" }, { status: 500 });
     }

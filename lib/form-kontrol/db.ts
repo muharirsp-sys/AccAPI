@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import {
@@ -6,7 +6,7 @@ import {
     merchandisingCheck, salesmanDailyReport,
     spvBriefing, smControl, kontrolAuditLog, salesProfile,
 } from "@/db/schema";
-import { DAY_TO_HARI, NO_ORDER_REASONS } from "./constants";
+import { DAY_TO_HARI, NO_ORDER_REASONS, hariBaku, kunciHari } from "./constants";
 import type { AoStatus, TodayRouteRow } from "./types";
 
 // ── Week parity ──────────────────────────────────────────────────────────────
@@ -17,9 +17,16 @@ function getISOWeekNumber(date: Date): number {
     return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
 }
 
-function getWeekParity(date: Date): "ganjil" | "genap" {
+export function getWeekParity(date: Date): "ganjil" | "genap" {
     return getISOWeekNumber(date) % 2 === 1 ? "ganjil" : "genap";
 }
+
+// FK-MSM butir 2: JKS dibandingkan lewat kunci hari (huruf besar tanpa spasi/tanda) dan pola minggu huruf kecil ter-trim, sehingga JKS lama
+// ("SENIN", " Senin ", "JUM'AT", "GENAP") terbaca tanpa unggah ulang. Kunci = kunciHari (constants.ts). ponytail: ekspresi tidak memakai
+// indeks (principle, hari_kunjungan); baris sudah disaring sales_code + principle lewat idx_jks_sales_principle.
+const kunciHariSql = sql`regexp_replace(upper(coalesce(${jksMaster.hariKunjungan}, '')), '[^A-Z]', '', 'g')`;
+const hariIni = (dayName: string) => sql`${kunciHariSql} = ${kunciHari(dayName)}`;
+const polaMinggu = (parity: "ganjil" | "genap") => sql`lower(trim(${jksMaster.mingguPattern})) in ('all', ${parity})`;
 
 export function parseDateString(dateStr: string): Date {
     const [y, m, d] = dateStr.split("-").map(Number);
@@ -37,7 +44,7 @@ export async function getJksList(filters: {
     const conditions = [];
     if (filters.salesCode)     conditions.push(eq(jksMaster.salesCode, filters.salesCode));
     if (filters.principle)     conditions.push(eq(jksMaster.principle, filters.principle));
-    if (filters.hariKunjungan) conditions.push(eq(jksMaster.hariKunjungan, filters.hariKunjungan));
+    if (filters.hariKunjungan) conditions.push(hariIni(filters.hariKunjungan));
     if (filters.isActive !== undefined) conditions.push(eq(jksMaster.isActive, filters.isActive));
 
     const [rows, countResult] = await Promise.all([
@@ -51,6 +58,10 @@ export async function getJksList(filters: {
     return { rows, total: countResult[0]?.count ?? 0 };
 }
 
+/**
+ * Tulis JKS per baris (kunci sales_code + cust_code + principle). Hari disimpan dalam bentuk BAKU ("SENIN"/"jum'at" → "Senin"/"Jumat");
+ * hari tak dikenal (mis. "Minggu", salah ketik) → baris TIDAK ditulis dan dilaporkan di `ditolak` (indeks baris masukan, 0-based).
+ */
 export async function upsertJksRows(rows: {
     salesCode: string; salesName: string; custCode: string; custName: string;
     market?: string; alamat?: string; kota?: string; hariKunjungan?: string;
@@ -59,15 +70,19 @@ export async function upsertJksRows(rows: {
 }[]) {
     const now = new Date();
     let imported = 0, skipped = 0;
-    for (const r of rows) {
+    const ditolak: { indeks: number; custCode: string; hari: string }[] = [];
+    for (const [indeks, r] of rows.entries()) {
         if (!r.salesCode || !r.custCode || !r.principle) { skipped++; continue; }
-        const pattern = (r.mingguPattern ?? "all") as "ganjil" | "genap" | "all";
+        const hari = hariBaku(r.hariKunjungan);
+        if (hari === null) { ditolak.push({ indeks, custCode: String(r.custCode), hari: String(r.hariKunjungan) }); continue; }
+        const polaMasuk = String(r.mingguPattern ?? "").trim().toLowerCase();
+        const pattern = (["ganjil", "genap", "all"].includes(polaMasuk) ? polaMasuk : "all") as "ganjil" | "genap" | "all";
         const freq = r.visitFrequency ?? (pattern === "all" ? 4 : 2);
         await db.insert(jksMaster).values({
             id: randomUUID(), salesCode: r.salesCode, salesName: r.salesName,
             custCode: r.custCode, custName: r.custName, market: r.market ?? null,
             alamat: r.alamat ?? null, kota: r.kota ?? null,
-            hariKunjungan: r.hariKunjungan ?? null, mingguPattern: pattern,
+            hariKunjungan: hari || null, mingguPattern: pattern,
             area: r.area ?? null, rayon: r.rayon ?? null, principle: r.principle,
             channel: r.channel ?? "TT", visitFrequency: freq,
             isActive: true, createdAt: now, updatedAt: now,
@@ -76,14 +91,14 @@ export async function upsertJksRows(rows: {
             set: {
                 salesName: r.salesName, custName: r.custName, market: r.market ?? null,
                 alamat: r.alamat ?? null, kota: r.kota ?? null,
-                hariKunjungan: r.hariKunjungan ?? null, mingguPattern: pattern,
+                hariKunjungan: hari || null, mingguPattern: pattern,
                 area: r.area ?? null, rayon: r.rayon ?? null, channel: r.channel ?? "TT",
                 visitFrequency: freq, isActive: true, updatedAt: now,
             },
         });
         imported++;
     }
-    return { imported, skipped };
+    return { imported, skipped, ditolak };
 }
 
 // ── Today's route with AO status ──────────────────────────────────────────
@@ -99,8 +114,8 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
         and(
             eq(jksMaster.salesCode, salesCode),
             eq(jksMaster.principle, principle),
-            eq(jksMaster.hariKunjungan, dayName),
-            or(eq(jksMaster.mingguPattern, "all"), eq(jksMaster.mingguPattern, parity)),
+            hariIni(dayName),
+            polaMinggu(parity),
             eq(jksMaster.isActive, true),
         )
     );
@@ -318,8 +333,8 @@ async function computeReportSummary(salesCode: string, dateStr: string) {
         const cnt = await db.select({ count: sql<number>`count(*)` }).from(jksMaster).where(
             and(
                 eq(jksMaster.salesCode, salesCode),
-                eq(jksMaster.hariKunjungan, dayName),
-                or(eq(jksMaster.mingguPattern, "all"), eq(jksMaster.mingguPattern, parity)),
+                hariIni(dayName),
+                polaMinggu(parity),
                 eq(jksMaster.isActive, true),
             )
         );

@@ -31,7 +31,7 @@ const KOLOM: { field: string; header: string; isi: string; alias: string[] }[] =
     { field: "channel", header: "Channel", isi: "Wajib diisi: GT, TT, atau MT (sel kosong tersimpan tanpa channel)", alias: ["channel"] },
     { field: "alamat", header: "Alamat", isi: "", alias: ["alamat", "address"] },
     { field: "kota", header: "Kota", isi: "", alias: ["kota", "city"] },
-    { field: "hariKunjungan", header: "Hari", isi: "Senin, Selasa, Rabu, Kamis, Jumat, atau Sabtu", alias: ["hari", "harikunjungan", "day"] },
+    { field: "hariKunjungan", header: "Hari", isi: "Senin, Selasa, Rabu, Kamis, Jumat, atau Sabtu (huruf besar/kecil bebas; Jum'at = Jumat). Hari lain ditolak per baris", alias: ["hari", "harikunjungan", "day"] },
     { field: "mingguPattern", header: "Pola", isi: "ganjil, genap, atau all; isian lain dibaca all", alias: ["pola", "polaminggu", "minggupattern", "pattern"] },
     { field: "area", header: "Area", isi: "", alias: ["area"] },
     { field: "rayon", header: "Rayon", isi: "", alias: ["rayon"] },
@@ -45,6 +45,8 @@ const LIMIT = 50; // bawaan route GET jks
 /** `channelKosong` = jumlah baris dengan sel Channel kosong; null bila berkas tanpa kolom Channel (server memakai TT). */
 type Pratinjau = { baris: number; dikenali: string[]; asing: string[]; wajibHilang: string[]; channelKosong: number | null };
 type DataJks = { rows: JksRow[]; total: number };
+/** Baris berkas yang ditolak server karena hari kunjungan tidak dikenal (tidak ditulis). */
+type Ditolak = { baris: number; custCode: string; hari: string };
 
 /** Baca ringan di peramban: baris dan header sheet pertama, persis cara server membacanya (sheet_to_json, defval ""). */
 async function bacaPratinjau(file: File): Promise<Pratinjau> {
@@ -113,7 +115,7 @@ export default function TabJks({ scope }: { scope: Scope }) {
     const [impor, setImpor] = useState(false);
     const [berkas, setBerkas] = useState<File | null>(null);
     const [pratinjau, setPratinjau] = useState<{ status: "kosong" | "membaca" | "siap" | "galat"; data?: Pratinjau }>({ status: "kosong" });
-    const [hasil, setHasil] = useState<{ nama: string; imported: number; skipped: number } | null>(null);
+    const [hasil, setHasil] = useState<{ nama: string; imported: number; skipped: number; ditolak: Ditolak[] } | null>(null);
     const [galatTemplat, setGalatTemplat] = useState("");
 
     const giliran = useRef(0); // pratinjau berkas yang sudah diganti tidak boleh menimpa pratinjau berkas terbaru
@@ -189,7 +191,15 @@ export default function TabJks({ scope }: { scope: Scope }) {
             {hasil && (
                 <MessageStrip tone="pos" title="Impor JKS diterapkan." onClose={() => setHasil(null)}>
                     {hasil.nama}: {hasil.imported} baris ditulis, {hasil.skipped} baris dilewati
-                    {hasil.skipped > 0 ? " (tanpa kode sales, kode toko, atau principal)" : ""}.
+                    {hasil.skipped > 0 ? " (tanpa kode sales, kode toko, atau principal)" : ""}
+                    {hasil.ditolak.length > 0 ? `, ${hasil.ditolak.length} baris ditolak` : ""}.
+                </MessageStrip>
+            )}
+            {hasil && hasil.ditolak.length > 0 && (
+                <MessageStrip tone="warn" title={`${hasil.ditolak.length} baris tidak ditulis: hari kunjungan tidak dikenal.`}>
+                    Isi Senin–Sabtu, perbaiki barisnya di berkas lalu impor ulang:{" "}
+                    {hasil.ditolak.slice(0, 20).map((d) => `baris ${d.baris} (${d.custCode}: "${d.hari}")`).join("; ")}
+                    {hasil.ditolak.length > 20 ? `; dan ${hasil.ditolak.length - 20} baris lain` : ""}.
                 </MessageStrip>
             )}
             {tanpaHari > 0 && (
@@ -242,7 +252,8 @@ export default function TabJks({ scope }: { scope: Scope }) {
                     fd.append("file", berkas!);
                     try {
                         const d = await tulisFk("/api/form-kontrol/jks", { body: fd, gagal: "Impor JKS gagal." });
-                        setHasil({ nama: berkas!.name, imported: Number(d.imported ?? 0), skipped: Number(d.skipped ?? 0) });
+                        setHasil({ nama: berkas!.name, imported: Number(d.imported ?? 0), skipped: Number(d.skipped ?? 0),
+                            ditolak: Array.isArray(d.ditolak) ? d.ditolak as Ditolak[] : [] });
                         setImpor(false);
                         muatUlang();
                     } catch (e) {

@@ -38,6 +38,18 @@ export const PRINCIPLES = ["GODREJ", "MONTISS", "MUSTIKA RATU", "SOFTEX"] as con
 export const HARI_KUNJUNGAN = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"] as const;
 export const MINGGU_PATTERNS = ["ganjil", "genap", "all"] as const;
 
+/**
+ * Kunci pembanding hari JKS: huruf besar tanpa spasi/tanda ("SENIN", " Senin ", "JUM'AT" → "SENIN"/"JUMAT"). Rute membandingkan kunci,
+ * jadi JKS yang sudah tersimpan HURUF BESAR terbaca tanpa unggah ulang. SAMA dengan ekspresi SQL `kunciHariSql` di db.ts.
+ */
+export const kunciHari = (v: unknown) => String(v ?? "").toUpperCase().replace(/[^A-Z]/g, "");
+const HARI_BAKU = new Map<string, string>(HARI_KUNJUNGAN.map((h) => [kunciHari(h), h]));
+/** Bentuk baku hari untuk disimpan saat unggah: "" = kosong (boleh, ditandai di Kontrol JKS); null = tidak dikenal (baris ditolak). */
+export function hariBaku(v: unknown): string | null {
+    const k = kunciHari(v);
+    return k ? HARI_BAKU.get(k) ?? null : "";
+}
+
 export const DAY_TO_HARI: Record<number, string> = {
     1: "Senin",
     2: "Selasa",
