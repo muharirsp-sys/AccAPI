@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import * as XLSX from "xlsx";
-import { getJksList, upsertJksRows } from "@/lib/form-kontrol";
+import { canAccessSales, getJksList, resolveScope, upsertJksRows } from "@/lib/form-kontrol";
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -17,7 +17,12 @@ export async function GET(req: Request) {
         const limit         = Math.min(200, parseInt(searchParams.get("limit") ?? "50", 10));
         const offset        = (page - 1) * limit;
 
-        const result = await getJksList({ salesCode, principle, hariKunjungan, isActive: true }, limit, offset);
+        // FK-MSM butir 4: cakupan dari server (parameter `salesCodes` klien diabaikan) — SPV hanya timnya, salesman hanya miliknya,
+        // admin/manager/admin_sales semua. Kode sales di luar cakupan = 403 (bukan daftar kosong yang menyesatkan).
+        const scope = await resolveScope(gate.session);
+        if (salesCode && !canAccessSales(scope, salesCode)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        const salesCodes = scope.allowedSalesCodes ?? undefined;
+        const result = await getJksList({ salesCode, salesCodes, principle, hariKunjungan, isActive: true }, limit, offset);
         return NextResponse.json({ ...result, page, limit });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });

@@ -37,6 +37,7 @@ async function muat() {
         spv: await r("../../app/api/form-kontrol/spv-dashboard/route.ts"),
         myScope: await r("../../app/api/form-kontrol/my-scope/route.ts"),
         profil: await r("../../app/api/form-kontrol/sales-profiles/route.ts"),
+        frek: await r("../../app/api/form-kontrol/frequency/route.ts"),
     };
 }
 let m: Awaited<ReturnType<typeof muat>>;
@@ -191,4 +192,29 @@ test("butir 3: ack laporan hanya untuk tim sendiri (SPV tanpa profil)", { skip: 
     assert.equal((await ack("u-spvb", "M-SLC")).status, 200);
     assert.deepEqual((await pool.query(`SELECT sales_code, spv_ack FROM salesman_daily_report ORDER BY 1`)).rows,
         [{ sales_code: "M-SLA", spv_ack: true }, { sales_code: "M-SLC", spv_ack: true }]);
+});
+
+// =========================================================================== butir 4: cakupan JKS
+
+test("butir 4: JKS — SPV hanya timnya, salesman hanya miliknya (salesCode luar cakupan 403), admin semua; frekuensi sama", { skip: pgSkip }, async () => {
+    const jks = async (u: string, q = "") => jawab(await sebagai(u, () => m.jks.GET(req(`/api/form-kontrol/jks${q}`))));
+    const kode = (b: Record<string, unknown>) => [...new Set((b.rows as { salesCode: string }[]).map((r) => r.salesCode))].sort();
+    const spv = await jks("u-spva", "?salesCodes=M-SLC");
+    assert.equal(spv.status, 200);
+    assert.deepEqual(kode(spv.body), ["M-SLA", "M-SLB"], "parameter salesCodes klien diabaikan; cakupan dari server");
+    assert.equal(Number(spv.body.total), 6, "total ikut cakupan (5 aktif M-SLA + 1 M-SLB)");
+    assert.equal((await jks("u-spva", "?salesCode=M-SLC")).status, 403);
+    assert.deepEqual(kode((await jks("u-spva", "?salesCode=M-SLB")).body), ["M-SLB"]);
+    assert.deepEqual(kode((await jks("u-sla")).body), ["M-SLA"]);
+    assert.equal((await jks("u-sla", "?salesCode=M-SLB")).status, 403);
+    assert.deepEqual(kode((await jks("u-admin")).body), ["M-SLA", "M-SLB", "M-SLC"]);
+    // Hari pada saringan dibandingkan lewat kunci (Kontrol JKS mengirim "Senin"; data "SENIN"/" senin ").
+    assert.equal(Number((await jks("u-sla", "?hari=Senin")).body.total), 3);
+
+    const frek = async (u: string, salesCode: string, principle: string) =>
+        jawab(await sebagai(u, () => m.frek.GET(req(`/api/form-kontrol/frequency?${new URLSearchParams({ salesCode, principle, month: "10", year: "2026" })}`))));
+    assert.equal((await frek("u-sla", "M-SLB", "PRINCIPLE B")).status, 403, "frekuensi memuat baris JKS: cakupan sama");
+    const sendiri = await frek("u-sla", "M-SLA", "PRINCIPLE A");
+    assert.equal(sendiri.status, 200);
+    assert.equal((sendiri.body.rows as unknown[]).length, 5);
 });

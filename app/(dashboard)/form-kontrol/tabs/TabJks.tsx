@@ -95,15 +95,14 @@ export default function TabJks({ scope }: { scope: Scope }) {
     const saring = (f: () => void) => { f(); setPage(1); };
 
     const [load, muatUlang] = useLoad(useCallback(async (): Promise<Load<DataJks>> => {
-        // Query sama dengan hari ini (+ `page`, parameter route yang sudah ada).
+        // Cakupan (tim SPV / milik salesman) ditegakkan server dari sesi (FK-MSM butir 4), tidak dikirim dari sini.
         const p = new URLSearchParams();
         if (principle) p.set("principle", principle);
         if (hari) p.set("hari", hari);
         if (sales.trim()) p.set("salesCode", sales.trim());
-        if (scope.allowedSalesCodes) p.set("salesCodes", scope.allowedSalesCodes.join(","));
         if (page > 1) p.set("page", String(page));
         return ambilFk(`/api/form-kontrol/jks?${p}`, (j) => ({ rows: (j.rows ?? []) as JksRow[], total: Number(j.total ?? 0) }), "Data JKS belum berhasil dimuat.");
-    }, [principle, hari, sales, page, scope.allowedSalesCodes]), { pertahankan: true });
+    }, [principle, hari, sales, page]), { pertahankan: true });
 
     const rows = load.data?.rows ?? [];
     const total = load.data?.total ?? 0;
@@ -207,12 +206,7 @@ export default function TabJks({ scope }: { scope: Scope }) {
                     Wajib dilengkapi: perbaiki kolom Hari di berkas JKS lalu impor ulang.
                 </MessageStrip>
             )}
-            {!semuaSales && (
-                <VariantNote bl="BL-32">
-                    Server belum membatasi JKS ke tim Anda: kode sales tim ikut dikirim tetapi belum dipakai, jadi daftar ini bisa memuat toko
-                    salesman lain.
-                </VariantNote>
-            )}
+            {!semuaSales && <p className="fi-small fi-muted">Hanya JKS salesman dalam cakupan Anda.</p>}
             <ResponsiveTable
                 title="JKS aktif"
                 count={total}

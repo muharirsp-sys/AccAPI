@@ -41,12 +41,16 @@ export function parseDateString(dateStr: string): Date {
 
 export async function getJksList(filters: {
     salesCode?: string;
+    /** Cakupan pemakai (FK-MSM butir 4): hanya kode sales ini; undefined = semua (admin). */
+    salesCodes?: string[];
     principle?: string;
     hariKunjungan?: string;
     isActive?: boolean;
 } = {}, limit = 100, offset = 0) {
+    if (filters.salesCodes?.length === 0) return { rows: [], total: 0 };
     const conditions = [];
     if (filters.salesCode)     conditions.push(eq(jksMaster.salesCode, filters.salesCode));
+    if (filters.salesCodes)    conditions.push(inArray(jksMaster.salesCode, filters.salesCodes));
     if (filters.principle)     conditions.push(eq(jksMaster.principle, filters.principle));
     if (filters.hariKunjungan) conditions.push(hariIni(filters.hariKunjungan));
     if (filters.isActive !== undefined) conditions.push(eq(jksMaster.isActive, filters.isActive));
