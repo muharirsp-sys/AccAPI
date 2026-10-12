@@ -255,7 +255,9 @@ async function sisipEvent(tx: Tx, m: Muatan, e: { jenis: EventHari["jenis"]; ala
  * Incaso menyesatkan); kunci tetap berlaku dari statusHari.
  */
 async function pastikanKunci(tx: Tx, m: Muatan, sekarang: Date): Promise<boolean> {
-    if (statusHari(m.tanggal, m.events, sekarang).sebab !== "otomatis_20" || m.baca === null) return false;
+    // belum_dibaca (tinjauan A RENDAH 4): GET tanggal lama (mis. 1900-01-01) dulu menulis kunci permanen bersnapshot Incaso nol — kini dilewati;
+    // kunci tetap berlaku dari jam (statusHari), snapshot dicatat aksi pertama sesudah cache tanggal itu pernah dibaca.
+    if (statusHari(m.tanggal, m.events, sekarang).sebab !== "otomatis_20" || m.baca === null || m.baca.status === "belum_dibaca") return false;
     await sisipEvent(tx, m, { jenis: "kunci", snapshot: snapshotTersimpan(m), oleh: "sistem" }, sekarang);
     return true;
 }
@@ -282,9 +284,15 @@ const inti = (s: unknown) => {
     return { total: o.total ?? null, baris: o.baris ?? null, takTeralokasi: o.takTeralokasi ?? null };
 };
 
-/** Sidik angka hari (total, baris orang + status + dijelaskan, ember) — dikirim klien di POST tutup. */
+/**
+ * Sidik angka hari — dikirim klien di POST tutup: total, baris orang + status + dijelaskan, ember, DAN komposisi metode pelunasan + setoran
+ * per kode (revisi, tunai, transfer, giro). Tanpa yang terakhir, Tunai 100.000 -> Transfer 100.000 oleh pengguna lain lolos Tutup dengan
+ * sidik lama (tinjauan A RENDAH 5).
+ */
 export function sidikHari(h: HasilRekonsiliasi): string {
-    return createHash("sha256").update(kanonik(inti(snapshotHari(h)))).digest("hex").slice(0, 16);
+    const rinci = h.baris.map((b) => ({ orang: b.orang, perMetode: b.pelunasanPerMetode,
+        perKode: b.setoranPerKode.map((x) => [x.kode, x.revisi, x.tunai, x.transfer, x.giro]) }));
+    return createHash("sha256").update(kanonik({ ...inti(snapshotHari(h)), rinci })).digest("hex").slice(0, 16);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -412,6 +412,42 @@ test("PG K2a kunci 20.00 dicatat malas: GET serentak -> SATU kunci; POST yang me
     });
 });
 
+test("PG K2a kunci malas TIDAK ditulis untuk tanggal belum_dibaca (1900-01-01 / tanpa cache); ditulis begitu cache tanggal itu pernah dibaca", { skip: pgSkip }, async () => {
+    await denganSkema(async (pool) => {
+        const jam = jamUji(wita("2026-10-05T20:30:00"));
+        const deps = depsUji(pool, jam);
+        await pegawai(pool, [[1, "S-A", "SALES A"]]);
+        for (const t of ["1900-01-01", D]) {
+            const h = await muatHari(t, { orang: null }, deps);
+            assert.deepEqual([h.hari.terkunci, h.hari.sebab, h.baca?.status], [true, "otomatis_20", "belum_dibaca"], `${t}: terkunci dari jam`);
+            await assert.rejects(catatSetoran(setoranIsian({ tanggal: t, orang: "S-A", tunai: 100 }), KASIR, deps), galat("HARI_TERKUNCI"));
+        }
+        assert.deepEqual(await event(pool), [], "tidak ada baris kunci bersnapshot nol");
+        await baca(pool, "lengkap", new Date(jam.t.getTime() - 60_000));
+        await muatHari(D, { orang: null }, deps);
+        assert.deepEqual((await event(pool)).map((e) => [e.jenis, e.snapshot.baca.status]), [["kunci", "lengkap"]]);
+    });
+});
+
+test("PG K2a sidik memuat metode + revisi: Tunai 100.000 -> Transfer 100.000 (tetap klop) -> sidik lama ditolak ANGKA_BERUBAH", { skip: pgSkip }, async () => {
+    await denganSkema(async (pool) => {
+        const jam = jamUji();
+        const deps = depsUji(pool, jam);
+        const h = await hariKlop(pool, jam);
+        await catatSetoran(setoranIsian({ orang: "S-A", transfer: 10_000_000, buktiBaru: "00000000-0000-4000-8000-000000000001.jpg", dasar: h.orang[0].dasar }),
+            "u-kasir-2", deps);
+        const h2 = await muatHari(D, { orang: null }, deps);
+        assert.deepEqual([h2.orang[0].status, h2.total.setoran], ["klop", "100000.00"], "total & status sama");
+        assert.notEqual(h2.sidik, h.sidik);
+        await assert.rejects(tutupHari({ tanggal: D, sidik: h.sidik! }, KASIR, deps), galat("ANGKA_BERUBAH"));
+        // Revisi baru bernilai SAMA juga mengubah sidik (dasar setoran berubah).
+        await catatSetoran(setoranIsian({ orang: "S-A", transfer: 10_000_000, buktiLama: true, dasar: h2.orang[0].dasar }), "u-kasir-2", deps);
+        const h3 = await muatHari(D, { orang: null }, deps);
+        assert.notEqual(h3.sidik, h2.sidik);
+        assert.ok("event" in (await tutupHari({ tanggal: D, sidik: h3.sidik! }, KASIR, deps)));
+    });
+});
+
 test("PG K2a GET: status ≠ lengkap -> angka Incaso null (setoran tetap); lengkap -> angka + rincian; tanpa database sinkron -> SESI_SINKRON", { skip: pgSkip }, async () => {
     await denganSkema(async (pool) => {
         const jam = jamUji();

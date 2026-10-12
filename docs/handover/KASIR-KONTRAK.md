@@ -230,7 +230,8 @@ K2b (UI `/kasir`) boleh membangun mock `page.route` LANGSUNG dari bagian ini.
 - **Kunci 20.00 WITA dicatat malas** (orkestrator 12 Okt, tanpa cron): aksi PERTAMA (GET atau POST apa pun) yang melihat hari terkunci
   otomatis (`statusHari.sebab = "otomatis_20"`: ≥ 20.00 WITA tanpa event, atau jendela buka sudah lewat) menyisipkan event `kunci`
   (`oleh = "sistem"`, snapshot = `snapshotHari` + `baca`) di transaksi terkunci — sekali walau serentak. POST yang menabrak kunci tetap
-  MENYIMPAN baris kunci itu lalu menjawab 409 `HARI_TERKUNCI`. Dilewati (dicoba lagi aksi berikutnya) bila sesi sinkron tanpa database —
+  MENYIMPAN baris kunci itu lalu menjawab 409 `HARI_TERKUNCI`. Dilewati (dicoba lagi aksi berikutnya) bila sesi sinkron tanpa database ATAU
+  status baca tanggal itu `belum_dibaca` (mis. GET 1900-01-01: tanpa baris kunci bersnapshot nol) —
   kunci tidak bergantung pada baris itu. Gagal mencatat tidak menggagalkan GET.
 
 ### 8.2 Kode HTTP — mana yang PASTI
@@ -292,7 +293,7 @@ Membaca satu snapshot (REPEATABLE READ, baca-saja) dari cache K1b database sinkr
                     orang: [{ orang, nama }], dijelaskan }]|null,
   nonKas: [{ pelunasanId, nomor, metode, chequeAmount }]|null,
   penghalangTutup: { bisaDitutup, alasan: string[] }|null,
-  sidik: string|null,                                     // sidik angka hari (kirim di POST tutup); null bila Incaso tak lengkap
+  sidik: string|null,                                     // sidik angka hari + metode + revisi setoran (kirim di POST tutup); null bila Incaso tak lengkap
   riwayat: { setoran: [{ id, kode, orang, revisi, tunai, transfer, giro, total, noFormKasir, buktiUrl|null, giroNomor, giroJatuhTempo,
                          catatan, oleh, pada }],          // SEMUA revisi hari itu, urut kode lalu revisi
              penjelasan: [{ id, jenis: "selisih", orang, pelunasan, setoran, penjelasan, tindakLanjut, oleh, pada, berlaku: boolean|null }
