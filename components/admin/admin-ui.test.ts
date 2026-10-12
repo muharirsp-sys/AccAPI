@@ -149,7 +149,7 @@ test("O2 riwayat: salesman.link menyebut sebelum -> sesudah + cabang; salesman.u
     assert.equal(link.apa, "Salesman Accurate ditautkan");
     assert.match(link.rinci, /SALES LAMA \(S-OLD\) → SALES A \(M-SLA\) · cabang CABANG A/);
     assert.match(ringkasRiwayat({ action: "salesman.link", detail: { sebelum: null, sesudah: { salesCode: "M-SLA", salesName: "SALES A" } } }, "user").rinci, /^SALES A \(M-SLA\)$/);
-    const lepas = ringkasRiwayat({ action: "salesman.unlink", detail: { dihapus: [{ salesCode: "S-OLD", salesName: "SALES LAMA" }] } }, "user");
+    const lepas = ringkasRiwayat({ action: "salesman.unlink", detail: { dilepas: [{ id: "p1", salesCode: "S-OLD", salesName: "SALES LAMA" }] } }, "user");
     assert.equal(lepas.apa, "Tautan salesman Accurate dilepas");
     assert.match(lepas.rinci, /dilepas: SALES LAMA \(S-OLD\)/);
 });

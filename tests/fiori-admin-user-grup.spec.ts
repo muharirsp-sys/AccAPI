@@ -870,7 +870,7 @@ test("Riwayat user: tautan salesman tercatat sebagai label + sebelum → sesudah
     await pasang(page, { riwayat: json({ ok: true, nextCursor: null, items: [
         { id: "h9", action: "salesman.link", actorName: "ADMIN LOKAL", targetUserName: "USER B", detail: { userName: "USER B",
             sebelum: { salesCode: "S-OLD", salesName: "SALES LAMA" }, sesudah: { salesCode: "M-SLA", salesName: "SALES A", branchName: "CABANG A" } }, createdAt: "2026-10-12T02:30:00.000Z" },
-        { id: "h8", action: "salesman.unlink", actorName: "ADMIN LOKAL", targetUserName: "USER B", detail: { userName: "USER B", dihapus: [{ salesCode: "S-OLD", salesName: "SALES LAMA" }] }, createdAt: "2026-10-11T02:30:00.000Z" },
+        { id: "h8", action: "salesman.unlink", actorName: "ADMIN LOKAL", targetUserName: "USER B", detail: { userName: "USER B", dilepas: [{ id: "p1", salesCode: "S-OLD", salesName: "SALES LAMA" }] }, createdAt: "2026-10-11T02:30:00.000Z" },
     ] }) });
     await page.goto("/admin/users", NAV);
     await bukaUser(page, "USER B");

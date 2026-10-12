@@ -171,8 +171,9 @@ export function ringkasRiwayat(item: ItemRiwayat, sudut: "user" | "grup"): { apa
         bagian.push(`${sebelum ? `${nama(sebelum) ?? "—"} → ` : ""}${nama(sesudah) ?? "—"}${sesudah && teks(sesudah.branchName) ? ` · cabang ${sesudah.branchName}` : ""}`);
         if (dari) bagian.push(`profil dipindah dari akun ${teks(dari.name) ?? teks(dari.userId) ?? "lain"}${teks(dari.salesCode) ? ` (kode ${dari.salesCode} tetap)` : ""}`);
     }
-    if (item.action === "salesman.unlink" && Array.isArray(d.dihapus)) {
-        bagian.push(`dilepas: ${(d.dihapus as Array<Record<string, unknown>>).map((x) => `${teks(x.salesName) ?? "—"} (${teks(x.salesCode) ?? "—"})`).join(", ")}`);
+    // Kunci mengikuti yang ditulis server (`salesman/route.ts`: detail.dilepas = profil yang tautannya dimatikan).
+    if (item.action === "salesman.unlink" && Array.isArray(d.dilepas)) {
+        bagian.push(`dilepas: ${(d.dilepas as Array<Record<string, unknown>>).map((x) => `${teks(x.salesName) ?? "—"} (${teks(x.salesCode) ?? "—"})`).join(", ")}`);
     }
     if (item.action === "user.create" && Array.isArray(d.groupNames)) bagian.push(`grup ${(d.groupNames as string[]).filter(Boolean).join(", ")}`);
     if (item.action === "group.update" && teks(d.name)) bagian.push(`nama ${d.name}${teks(d.description) ? ` · ${d.description}` : ""}`);
