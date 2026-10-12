@@ -8,7 +8,7 @@
  * Tripwire: kunci registry yang tidak dirujuk server mana pun WAJIB punya baris di sini (atau DI_LUAR_31) — kunci baru tanpa
  * penegakan dan tanpa nasib = merah. Heuristik rujukan = Lampiran A S7-EKSPLORASI (literal "modul.aksi" / Python
  * user_has_permission(user, "modul", "aksi" [if … else "aksi"])).
- * Guard route: setiap app/api/**\/route.ts yang mengekspor POST/PUT/PATCH/DELETE memeriksa izin, atau ada di DAFTAR_PUTIH beralasan.
+ * Guard route: setiap HANDLER POST/PUT/PATCH/DELETE di app/api/**\/route.{ts,tsx,js,mjs} memeriksa izin, atau berkasnya di DAFTAR_PUTIH beralasan.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -59,10 +59,9 @@ const NASIB: Array<{ no: string; kunci: string; nasib: Nasib; di?: string[]; ala
 const DI_LUAR_31: Record<string, string> = {
     "dashboard.view": "gerbang halaman bawaan '/' (pagePermissions, lib/rbac.ts)",
     "api_wrapper.view": "gerbang halaman Konsol & Sesi Accurate (pagePermissions); GET /api/proxy sengaja cukup sesi (S7-1b)",
-    "kasir.view": "K1a: kunci + preset SQL; route Kasir menyusul (K2)",
-    "kasir.catat": "K1a: route Kasir menyusul (K2)",
-    "kasir.tutup": "K1a: route Kasir menyusul (K2)",
-    "kasir.buka": "K1a: route Kasir menyusul (K2)",
+    // kasir.view & kasir.buka ditegakkan K1b (app/api/kasir/segarkan) — keluar dari daftar ini (tripwire "basi").
+    "kasir.catat": "K1a: route catat setoran menyusul (K2)",
+    "kasir.tutup": "K1a: route tutup hari menyusul (K2)",
 };
 
 function walk(dir: string, ok: (f: string) => boolean): string[] {
@@ -143,28 +142,126 @@ test("tripwire: kunci registry tanpa rujukan server WAJIB punya baris nasib (ata
 
 // ---------------- butir 6: penjaga statik route tulis ----------------
 
-/** Route tulis tanpa pemeriksaan izin eksplisit — alasan per baris (S7-1b, dipindai 134 berkas tulis). */
+/** Route tulis yang handler-nya tidak memeriksa izin eksplisit — alasan per baris (S7-1b; per handler sejak tinjauan A/B). */
 const DAFTAR_PUTIH: Record<string, string> = {
     "admin/bootstrap/route.ts": "bootstrap admin pertama: token setup x-admin-setup-token (konstan-waktu), bukan sesi",
+    "auth/[...all]/route.ts": "handler Better Auth (masuk/keluar/sesi); plugin admin /admin/* ditutup dari peramban (S7-1 BL-62)",
     "auth/accurate-session/route.ts": "sesi Accurate MILIK pengguna sendiri (zona OAuth, cukup sesi app — D-01 Q2)",
     "auth/open-db/route.ts": "buka database Accurate untuk sesi milik sendiri (zona OAuth, cukup sesi app)",
     "chatbot/route.ts": "chatbot baca-informasi untuk sesi app; tidak menulis data bisnis",
     "claim-workflow/[id]/submissions/[submissionId]/close/route.ts": "peran admin/claim (manager = admin lewat requireClaimSession, owner 12 Okt) — pindah ke kunci menyusul",
-    "claim-workflow/[id]/submissions/[submissionId]/items/route.ts": "peran admin/claim (user.role) — sisa AM-026",
-    "claim-workflow/[id]/submissions/[submissionId]/payments/[paymentId]/void/route.ts": "peran admin/claim (user.role) — sisa AM-026",
+    "claim-workflow/[id]/submissions/[submissionId]/items/route.ts": "peran admin/claim (manager = admin lewat requireClaimSession, owner 12 Okt) — pindah ke kunci menyusul",
+    "claim-workflow/[id]/submissions/[submissionId]/payments/[paymentId]/void/route.ts": "peran admin/claim (manager = admin lewat requireClaimSession, owner 12 Okt) — pindah ke kunci menyusul",
     "idempotency/complete/route.ts": "hanya pemilik lock (lockId + user yang sama, AM-050); izin kirim ditegakkan di /lock & /api/proxy",
     "webhook/accurate/route.ts": "webhook Accurate: allowlist IP + verifikasi, bukan sesi pengguna",
 };
-const TULIS = /export\s+(?:async\s+)?(?:function|const)\s+(?:POST|PUT|PATCH|DELETE)\b/;
 const IZIN = /requirePermission(?:H)?\s*\(|perms[!?]*\.has\s*\(|resolveRequestPermissions(?:H)?\s*\(|requireCronSecret\s*\(/;
+const METODE_TULIS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-test("guard statik: setiap route tulis app/api memeriksa izin atau ada di daftar putih beralasan; daftar putih tidak basi", () => {
+/** Buang komentar blok & baris ("//" di URL "https://…" dan di string berpetik dipertahankan secara kasar). */
+const buangKomentar = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+
+/** Teks dari pembuka `buka` pertama di/ sesudah i sampai penutup yang seimbang. */
+function seimbang(s: string, i: number, buka: string, tutup: string): string {
+    const a = s.indexOf(buka, i);
+    if (a < 0) return "";
+    let d = 0;
+    for (let j = a; j < s.length; j++) {
+        if (s[j] === buka) d++;
+        else if (s[j] === tutup && --d === 0) return s.slice(a, j + 1);
+    }
+    return s.slice(a);
+}
+/** Badan `function nama(…) {…}` mulai di i: lewati daftar parameter yang seimbang, lalu blok `{…}`. */
+const badanFungsi = (s: string, i: number) => {
+    const p = s.indexOf("(", i);
+    const param = seimbang(s, p, "(", ")");
+    return seimbang(s, p + param.length, "{", "}");
+};
+/** Ekspresi sesudah `=` sampai `;` atau baris baru pada kedalaman 0 sesudah ekspresi tertutup. */
+function ekspresi(s: string, i: number): string {
+    const a = s.indexOf("=", i) + 1;
+    let d = 0, pernah = false;
+    for (let j = a; j < s.length; j++) {
+        const c = s[j];
+        if ("([{".includes(c)) { d++; pernah = true; } else if (")]}".includes(c)) d--;
+        if (d === 0 && (c === ";" || (c === "\n" && pernah))) return s.slice(a, j);
+    }
+    return s.slice(a);
+}
+
+/**
+ * Handler tulis (POST/PUT/PATCH/DELETE) yang TIDAK memeriksa izin, per handler. Lolos bila badan handler memuat pola IZIN atau memanggil
+ * fungsi lokal yang badannya memuatnya (satu tingkat). Bentuk: `export (async) function M`, `export const M = …`,
+ * `export const { …M… } = …`, `export { lokal as M }` (lokal diselesaikan di berkas yang sama). `export { M } from "…"` dan
+ * `export * from "…"` = tidak dapat diperiksa (dilaporkan).
+ * ponytail: heuristik teks, bukan parser TS — plafon: penjaga yang ada di modul LAIN (helper impor, pabrik handler dari lib) tidak
+ * diikuti kecuali pola IZIN muncul di argumen di berkas ini (mis. `authorize: … requirePermission(…)`); komentar-semu di dalam string bisa
+ * ikut terbuang; pemanggilan helper diterima di mana pun di badan (bukan bukti dipanggil sebelum tulis). Upgrade: pemeriksa berbasis AST
+ * (ts-morph / TypeScript compiler API) + uji perilaku 401/403 per route.
+ */
+function handlerTanpaIzin(sumber: string): string[] {
+    const s = buangKomentar(sumber);
+    const lokal = new Map<string, string>();
+    for (const m of s.matchAll(/(?:async\s+)?function\s+(\w+)\s*\(/g)) lokal.set(m[1], badanFungsi(s, m.index!));
+    for (const m of s.matchAll(/(?:const|let|var)\s+(\w+)\s*=/g)) if (!lokal.has(m[1])) lokal.set(m[1], ekspresi(s, m.index!));
+    const penjaga = [...lokal].filter(([, badan]) => IZIN.test(badan)).map(([nama]) => nama);
+    // Rujukan ke penjaga lokal = dipanggil (`gateOf(`) atau diakses anggotanya (`handlers.POST`, pabrik handler berizin).
+    const aman = (seg: string) => IZIN.test(seg) || penjaga.some((n) => new RegExp(`\\b${n}\\s*[(.]`).test(seg));
+    const gagal: string[] = [];
+    const nilai = (metode: string, seg: string | null) => { if (METODE_TULIS.has(metode) && (seg === null || !aman(seg))) gagal.push(metode); };
+    for (const m of s.matchAll(/export\s+(?:async\s+)?function\s+(\w+)\s*\(/g)) nilai(m[1], badanFungsi(s, m.index!));
+    for (const m of s.matchAll(/export\s+(?:const|let|var)\s+(\w+)\s*=/g)) nilai(m[1], ekspresi(s, m.index!));
+    for (const m of s.matchAll(/export\s+(?:const|let|var)\s*\{([^}]*)\}\s*=/g)) {
+        const seg = ekspresi(s, m.index! + m[0].length - 1);
+        for (const nama of m[1].split(",").map((x) => x.split(":")[0].trim())) nilai(nama, seg);
+    }
+    for (const m of s.matchAll(/export\s*\{([^}]*)\}\s*(from\s*["'][^"']+["'])?/g)) {
+        for (const spek of m[1].split(",").map((x) => x.trim()).filter(Boolean)) {
+            const [lok, , ekspor = lok] = spek.split(/\s+/);
+            nilai(ekspor, m[2] ? null : (lokal.get(lok) ?? null));
+        }
+    }
+    if (/export\s*\*\s*from/.test(s)) gagal.push("*");
+    return gagal;
+}
+
+test("guard statik: pemeriksa per handler menangkap bentuk ekspor, komentar, dan helper lokal (sabotase bentuk = merah)", () => {
+    const izin = `await requirePermission(r, "a.b")`;
+    const kasus: Array<[string, string[]]> = [
+        [`export async function POST(r) { ${izin}; }`, []],
+        [`export async function POST(r) { return 1; }`, ["POST"]],
+        [`export async function GET(r) { ${izin}; }\nexport async function POST(r) { return 1; }`, ["POST"]],          // GET dijaga, POST tidak
+        [`export async function POST(r) {\n  // ${izin}\n  return 1;\n}`, ["POST"]],                                     // komentar baris
+        [`export async function POST(r) { /* ${izin} */ return 1; }`, ["POST"]],                                        // komentar blok
+        [`async function h(r) { return 1; }\nexport { h as POST };`, ["POST"]],                                          // export { h as POST }
+        [`async function h(r) { ${izin}; }\nexport { h as POST, h as GET };`, []],
+        [`export const { GET, POST } = toNextJsHandler(auth);`, ["POST"]],                                               // destrukturisasi
+        [`export { POST } from "./lain";`, ["POST"]],                                                                    // re-ekspor modul lain
+        [`export * from "./lain";`, ["*"]],
+        [`export const POST = buat({ authorize: async (r) => { ${izin}; } });`, []],                                     // pabrik + authorize
+        [`export const POST = buat({ simpan: () => 1 });`, ["POST"]],
+        [`async function gateOf() { const g = await resolveRequestPermissionsH(); }\nexport async function DELETE() { await gateOf(); }`, []],
+        [`async function gateOf() { return 1; }\nexport async function PATCH() { await gateOf(); }`, ["PATCH"]],
+        [`const u = "https://x.test/a"; export async function PUT(r) { ${izin}; }`, []],                                 // "//" di URL bukan komentar
+        [`export async function GET(r) { return 1; }`, []],                                                              // baca saja
+        [`const handlers = buat({ authorize: async (r) => { ${izin}; } });\nexport const POST = handlers.POST;`, []],     // anggota pabrik berizin
+        [`const handlers = buat({});\nexport const POST = handlers.POST;`, ["POST"]],
+    ];
+    for (const [src, harap] of kasus) assert.deepEqual(handlerTanpaIzin(src), harap, src);
+});
+
+test("guard statik: setiap handler tulis app/api/**/route.{ts,tsx,js,mjs} memeriksa izin atau berkasnya di daftar putih beralasan; tidak basi", () => {
     const API = path.join(ROOT, "app", "api");
-    const tulis = walk(API, (f) => path.basename(f) === "route.ts").filter((f) => TULIS.test(readFileSync(f, "utf8")));
-    assert.ok(tulis.length > 100, `pemindai route tulis rusak (${tulis.length})`);
-    const tanpa = tulis.filter((f) => !IZIN.test(readFileSync(f, "utf8"))).map((f) => path.relative(API, f).replace(/\\/g, "/")).sort();
-    assert.deepEqual(tanpa.filter((f) => !DAFTAR_PUTIH[f]), [], "route tulis baru tanpa pemeriksaan izin — tambah requirePermission/perms.has atau alasan di DAFTAR_PUTIH");
-    assert.deepEqual(Object.keys(DAFTAR_PUTIH).filter((f) => !tanpa.includes(f)), [], "daftar putih basi (route sudah berizin/dihapus)");
+    const berkas = walk(API, (f) => /^route\.(ts|tsx|js|mjs)$/.test(path.basename(f)));
+    const handlerTulis = berkas.flatMap((f) => [...buangKomentar(readFileSync(f, "utf8"))
+        .matchAll(/export\s+(?:async\s+)?function\s+(?:POST|PUT|PATCH|DELETE)\b|export\s+(?:const|let|var)\s+(?:POST|PUT|PATCH|DELETE)\b/g)]);
+    assert.ok(handlerTulis.length > 150, `pemindai route tulis rusak (${handlerTulis.length})`);
+    const tanpa = berkas.map((f) => [path.relative(API, f).replace(/\\/g, "/"), handlerTanpaIzin(readFileSync(f, "utf8"))] as const)
+        .filter(([, g]) => g.length).map(([f, g]) => `${f} ${g.join(",")}`).sort();
+    assert.deepEqual(tanpa.filter((x) => !DAFTAR_PUTIH[x.split(" ")[0]]), [],
+        "handler tulis tanpa pemeriksaan izin — tambah requirePermission/perms.has atau alasan di DAFTAR_PUTIH");
+    assert.deepEqual(Object.keys(DAFTAR_PUTIH).filter((f) => !tanpa.some((x) => x.startsWith(`${f} `))), [], "daftar putih basi (route sudah berizin/dihapus)");
     for (const [f, alasan] of Object.entries(DAFTAR_PUTIH)) assert.ok(alasan.trim().length > 10, f);
 });
 
