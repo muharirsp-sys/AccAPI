@@ -85,16 +85,16 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     const berlakuHarga = (l: Line) => l.barang?.hargaUntuk === kunciHarga(pelanggan?.id, orderDate);
     const infoHarga = (l: Line, p: Pratinjau | null | undefined) => (p?.status === "siap" ? p.prices.find((x) => x.code === l.code.trim() && x.unit === l.unit.trim().toUpperCase()) : undefined);
     /**
-     * Baris TANPA harga master sah = satu-satunya yang boleh memakai harga petugas. Dinilai dari daftar harga hasil pencarian (selama masih
-     * berlaku untuk pelanggan + tanggal ini), selain itu dari pratinjau TERAKHIR yang diterima — bukan dari pratinjau isian sekarang, supaya
-     * tidak berputar (harga petugas ikut kunci pratinjau).
+     * Baris TANPA harga master sah = satu-satunya yang boleh memakai harga petugas. PRATINJAU TERAKHIR yang diterima = sumber kebenaran (server
+     * menghitung dari master saat ini; daftar pencarian bisa usang -> dulu buntu "Isi harga" <-> "Kosongkan harga"); selama belum ada, daftar harga
+     * hasil pencarian (selama berlaku untuk pelanggan + tanggal ini). Bukan pratinjau isian sekarang, supaya tidak berputar (harga petugas ikut kunci pratinjau).
      */
     const tanpaMaster = (l: Line): boolean => {
-        const u = l.barang?.units.find((x) => x.unit === l.unit);
-        if (u && berlakuHarga(l)) return u.price === null;
         const pi = infoHarga(l, hasil?.p);
         if (pi) return pi.hargaMaster == null;
-        return hasil?.p.status === "siap" && hasil.p.tanpaHarga.includes(l.code.trim());
+        if (hasil?.p.status === "siap" && hasil.p.tanpaHarga.includes(l.code.trim())) return true;
+        const u = l.barang?.units.find((x) => x.unit === l.unit);
+        return Boolean(u && berlakuHarga(l) && u.price === null);
     };
     /** Harga petugas yang DIKIRIM (ke pratinjau dan simpan): hanya baris tanpa master dengan harga sah; selain itu server memakai harga master. */
     const hargaKirim = (l: Line) => (tanpaMaster(l) && l.price !== null && hargaPetugasSah(l.price) ? l.price.trim() : "");

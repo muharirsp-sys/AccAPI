@@ -1184,3 +1184,51 @@ test("Order baru (promo hampir dapat): beberapa saran satu baris tampil SEMUA ur
     await expect.poll(() => log.preview.at(-1)?.lines.find((l) => l.code === "A-1")?.quantity, NAV).toBe("5");
     expect(orders.simpan).toHaveLength(0);
 });
+
+// ---------------------------------------------------------------------------------------------- Putaran 1 peninjau
+
+/** Server hipotetis: harga master A-2 LSN SUDAH terbit (daftar pencarian masih usang: LSN tanpa harga). Dengan harga petugas = ditolak; tanpa = dihitung dari master Rp 50.000. */
+function masterA2Terbit(b: PreviewBody): Jawab {
+    if (b.lines.some((l) => l.code === "A-2" && l.price)) {
+        return { status: 409, body: { ok: false, kode: "HARGA_PETUGAS_TIDAK_DIIZINKAN", error: "Harga master cabang CABANG A sudah ada untuk: A-2 LSN (Rp 50000). Harga petugas hanya untuk barang TANPA harga master; kosongkan harganya.",
+            barang: [{ code: "A-2", unit: "LSN", hargaMaster: 50000 }] } };
+    }
+    const j = pratinjauContoh({ ...b, lines: b.lines.map((l) => (l.code === "A-2" ? { ...l, price: "50000" } : l)) });
+    if (j === "putus" || !j.body) return j;
+    const h = j.body as { lines: { sumber_harga: string }[]; prices: { source: string; hargaMaster: number | null }[] };
+    h.lines.forEach((l) => { l.sumber_harga = "master"; });
+    h.prices.forEach((p) => { p.source = "tier"; p.hargaMaster = 50000; });
+    return j;
+}
+
+test("Order baru (putaran 1 peninjau #3): daftar pencarian usang (tanpa harga master) tetapi pratinjau melaporkan harga master = baris berharga master — tidak buntu 'Isi harga' <-> 'Kosongkan harga'", async ({ page }) => {
+    const { log, opsi } = await mockOrderCabang(page);
+    await mockOrdersInternal(page, { cabang: opsi });
+    opsi.preview = masterA2Terbit;
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/orders/baru", NAV);
+    const main = page.locator("main");
+    await pilihPelanggan(main, "PELANGGAN A", "PELANGGAN A");
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await pilihBarang(b1, "A-2", "BARANG A2");
+    await b1.getByLabel("Satuan").selectOption("LSN");
+    await b1.getByLabel("Jumlah").fill("2");
+    const harga = b1.getByLabel("Harga", { exact: true });
+    await expect(harga).toBeEditable(NAV); // menurut daftar pencarian: tanpa harga master -> harga petugas
+    const simpan = page.getByRole("button", { name: "Simpan order…" });
+    await harga.fill("40000");
+    await expect(b1.getByRole("alert")).toContainText("Sudah punya harga master Rp 50.000", NAV);
+    await expect(simpan).toBeDisabled();
+    await harga.fill(""); // sesuai petunjuk: kosongkan harga
+    // Pratinjau tanpa harga melaporkan harga master -> pratinjau = sumber kebenaran: baris berharga master (baca-saja), Simpan terbuka.
+    await expect(simpan).toBeEnabled(NAV);
+    await expect(harga).not.toBeEditable();
+    await expect(harga).toHaveValue("50000");
+    await expect(b1).toContainText("Harga master");
+    await expect(b1.getByRole("alert")).toHaveCount(0);
+    // Tidak berputar: tidak ada pratinjau tambahan dan harga tidak dikirim untuk baris master.
+    const n = log.preview.length;
+    await page.waitForTimeout(1500);
+    expect(log.preview.length).toBe(n);
+    expect(log.preview.at(-1)!.lines[0].price).toBeUndefined();
+});
