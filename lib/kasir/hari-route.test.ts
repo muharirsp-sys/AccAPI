@@ -193,9 +193,14 @@ test("POST setoran multipart: magic bytes palsu / > 5 MB / transfer 0 + berkas -
     }
     const besar = await dengan({ izin: ["kasir.catat"] }, () => postSetoran(new NextRequest("http://app.test/api/kasir/setoran", {
         method: "POST", body: "x", headers: { "content-type": "multipart/form-data; boundary=x", "content-length": String(7 * 1024 * 1024) } })));
-    assert.deepEqual([besar.status, (await besar.json() as Badan).field], [400, "buktiTransfer"]);
-    const lewat5 = await dengan({ izin: ["kasir.catat"] }, () => postSetoran(multipart(transfer, { isi: new Uint8Array(5 * 1024 * 1024 + 1).fill(0xff), nama: "b.jpg" })));
-    assert.deepEqual([lewat5.status, (await lewat5.json() as Badan).field], [400, "buktiTransfer"]);
+    assert.deepEqual([besar.status, (await besar.json() as Badan).kode], [413, "BADAN_TERLALU_BESAR"]);
+    // 5 MiB + 1 byte berheader JPEG SAH -> ditolak karena UKURAN (bukan magic bytes): pesan menyebut 5 MB.
+    const jpeg5 = new Uint8Array(5 * 1024 * 1024 + 1);
+    jpeg5.set([0xff, 0xd8, 0xff, 0xe0]);
+    const lewat5 = await dengan({ izin: ["kasir.catat"] }, () => postSetoran(multipart(transfer, { isi: jpeg5, nama: "b.jpg" })));
+    const l5 = await lewat5.json() as Badan;
+    assert.deepEqual([lewat5.status, l5.field], [400, "buktiTransfer"]);
+    assert.match(l5.error ?? "", /maksimal 5 MB/);
 
     // DB gagal SEBELUM commit -> 500 GALAT_INTERNAL (pasti) dan berkas yang sudah ditulis DIHAPUS.
     const g = await dengan({ izin: ["kasir.catat"] }, async (dir) => {
@@ -228,6 +233,32 @@ test("POST setoran multipart: magic bytes palsu / > 5 MB / transfer 0 + berkas -
         return res;
     });
     assert.deepEqual([tp.status, (await tp.json() as Badan).kode], [502, "TIDAK_PASTI"]);
+});
+
+test("POST setoran: badan CHUNKED tanpa content-length ditolak 413 tanpa membaca badan penuh (stream diputus sesudah 6 MB)", async () => {
+    const POTONG = 64 * 1024;
+    let ditarik = 0;
+    let dibatalkan = false;
+    const aliran = new ReadableStream<Uint8Array>({
+        pull(c) {
+            if (ditarik >= 50 * 1024 * 1024) return c.close();
+            ditarik += POTONG;
+            c.enqueue(new Uint8Array(POTONG));
+        },
+        cancel() { dibatalkan = true; },
+    });
+    const req = new NextRequest("http://app.test/api/kasir/setoran", { method: "POST", body: aliran, duplex: "half",
+        headers: { "content-type": "multipart/form-data; boundary=x" } } as ConstructorParameters<typeof NextRequest>[1]);
+    assert.equal(req.headers.get("content-length"), null, "memang tanpa content-length");
+    const r = await dengan({ izin: ["kasir.catat"] }, () => postSetoran(req));
+    assert.deepEqual([r.status, (await r.json() as Badan).kode], [413, "BADAN_TERLALU_BESAR"]);
+    assert.ok(ditarik <= 6 * 1024 * 1024 + 4 * POTONG, `ditarik ${ditarik} byte (bukan 50 MB)`);
+    assert.equal(dibatalkan, true, "stream dibatalkan");
+    // Badan chunked KECIL tetap diterima (urai normal -> validasi isian).
+    const kecil = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode(JSON.stringify({ ...baku, tunai: "-1" }))); c.close(); } });
+    const rk = await dengan({ izin: ["kasir.catat"] }, () => postSetoran(new NextRequest("http://app.test/api/kasir/setoran", { method: "POST", body: kecil,
+        duplex: "half", headers: { "content-type": "application/json" } } as ConstructorParameters<typeof NextRequest>[1])));
+    assert.deepEqual([rk.status, (await rk.json() as Badan).field], [400, "tunai"]);
 });
 
 test("POST jelaskan/tutup/buka + GET hari: 400 INPUT_SALAH + field", async () => {

@@ -242,6 +242,7 @@ K2b (UI `/kasir`) boleh membangun mock `page.route` LANGSUNG dari bagian ini.
 | 400 | `INPUT_SALAH` (+ `field`) | isian tidak sah (lihat tiap route) | pasti TIDAK tersimpan |
 | 401 / 403 | — (bawaan) | tanpa sesi / tanpa kunci izin | pasti TIDAK tersimpan |
 | 404 | `TIDAK_ADA` | (GET bukti) baris/berkas bukti tidak ada | — |
+| 413 | `BADAN_TERLALU_BESAR` | (setoran) badan > 6 MB: `content-length` > 6 MB ditolak tanpa membaca; badan TANPA `content-length` (chunked) dibaca bertahap dan diputus begitu melewati 6 MB | pasti TIDAK tersimpan |
 | 409 | `SETORAN_BERUBAH` | `dasar` ≠ revisi terakhir sekarang (klik ganda / pengguna lain) | pasti TIDAK tersimpan |
 | 409 | `ANGKA_BERUBAH` | angka/sidik klien ≠ hitungan server sekarang | pasti TIDAK tersimpan |
 | 409 | `TIDAK_PERLU_DIJELASKAN` | baris klop / ember tidak ada lagi | pasti TIDAK tersimpan |
@@ -325,7 +326,7 @@ Badan `application/json`, ATAU `multipart/form-data` dengan bagian `data` (teks 
   `accurate_employee` atau kode setoran hari itu) -> selain itu 400 `field: "orang"`.
 - `tunai`/`transfer`/`giro` WAJIB teks (aturan §8.1), masing-masing ≤ Rp 100.000.000.000 (400). **`noFormKasir` WAJIB bila total > 0** (1–100 huruf); setoran 0 tidak wajib.
 - **Transfer > 0 -> bukti WAJIB**: berkas `bukti` baru (jpg/png/pdf, dicek MAGIC BYTES — JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`, PDF
-  `%PDF-` — bukan ekstensi/`type`; ≤ 5 MB; badan > 6 MB ditolak sebelum dibaca) ATAU `buktiLama: true` = pakai berkas revisi terakhir kode
+  `%PDF-` — bukan ekstensi/`type`; ≤ 5 MB) ATAU `buktiLama: true` = pakai berkas revisi terakhir kode
   utama, hanya bila revisi itu punya bukti DAN transfernya sama. Transfer 0 + berkas/`buktiLama` -> 400. `field: "buktiTransfer"`.
 - **Giro > 0 -> `giroNomor` (nomor BG, 1–100 huruf) + `giroJatuhTempo` (`YYYY-MM-DD`, antara tanggal setoran − 7 hari dan tanggal yang sama
   tahun depan, inklusif) WAJIB**; giro 0 + salah satunya -> 400.

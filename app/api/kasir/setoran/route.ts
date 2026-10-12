@@ -3,7 +3,8 @@
  *   > 0, bukti Transfer WAJIB (unggah jpg/png/pdf, magic bytes, ≤ 5 MB) atau bukti revisi sebelumnya, Giro wajib nomor BG + jatuh tempo.
  * Caller: K2b dialog `setoran` di /kasir. Kontrak: docs/handover/KASIR-KONTRAK.md §8.4.
  * Dependensi: lib/kasir/hari (uraiSetoran, catatSetoran), lib/kasir/bukti (jenisBukti, simpanBukti, hapusBukti), lib/rbac/resolve (kasir.catat).
- * Main Functions: POST JSON | multipart (data + bukti) -> 200 { orang, revisi[], buktiUrl } | 400 INPUT_SALAH | 409 SETORAN_BERUBAH /
+ * Main Functions: POST JSON | multipart (data + bukti; badan ≤ 6 MB dibaca bertahap, juga chunked) -> 200 { orang, revisi[], buktiUrl } |
+ *   400 INPUT_SALAH | 413 BADAN_TERLALU_BESAR | 409 SETORAN_BERUBAH /
  *   HARI_TERKUNCI | 500 GALAT_INTERNAL | 502 TIDAK_PASTI.
  * Side Effects: tulis berkas bukti (data/uploads/kasir-bukti, SEBELUM transaksi; dihapus bila galat pasti) + INSERT kasir_setoran
  *   (semua baris rencana satu transaksi). TANPA Accurate.
@@ -11,18 +12,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { bawaanHari, catatSetoran, GalatKasir, jawabanGalat, uraiSetoran } from "@/lib/kasir/hari";
-import { hapusBukti, jenisBukti, MAKS_BADAN_SETORAN_BYTES, MAKS_BUKTI_BYTES, simpanBukti } from "@/lib/kasir/bukti";
+import { BadanTerlaluBesar, bacaBadanTerbatas, hapusBukti, jenisBukti, MAKS_BADAN_SETORAN_BYTES, MAKS_BUKTI_BYTES, simpanBukti } from "@/lib/kasir/bukti";
 
 export const runtime = "nodejs";
 
 const salahBukti = (pesan: string) => new GalatKasir(400, "INPUT_SALAH", pesan, { field: "buktiTransfer" });
 
 async function badan(request: NextRequest): Promise<{ raw: unknown; berkas: File | null }> {
-    if (Number(request.headers.get("content-length") || 0) > MAKS_BADAN_SETORAN_BYTES) throw salahBukti("Berkas bukti maksimal 5 MB.");
-    if (!(request.headers.get("content-type") || "").toLowerCase().startsWith("multipart/form-data")) {
-        return { raw: await request.json().catch(() => null), berkas: null };
+    let isi: Uint8Array;
+    try {
+        isi = await bacaBadanTerbatas(request, MAKS_BADAN_SETORAN_BYTES);
+    } catch (e) {
+        if (!(e instanceof BadanTerlaluBesar)) throw e;
+        throw new GalatKasir(413, "BADAN_TERLALU_BESAR", "Permintaan terlalu besar — berkas bukti maksimal 5 MB.", { field: "buktiTransfer" });
     }
-    const fd = await request.formData().catch(() => null);
+    const jenis = request.headers.get("content-type") || "";
+    if (!jenis.toLowerCase().startsWith("multipart/form-data")) {
+        try { return { raw: JSON.parse(new TextDecoder().decode(isi)), berkas: null }; } catch { return { raw: null, berkas: null }; }
+    }
+    const fd = await new Response(isi as BodyInit, { headers: { "content-type": jenis } }).formData().catch(() => null);
     if (!fd) throw new GalatKasir(400, "INPUT_SALAH", "Badan multipart tidak terbaca.", { field: "badan" });
     const data = fd.get("data");
     let raw: unknown = null;

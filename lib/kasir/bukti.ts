@@ -39,6 +39,39 @@ export function jenisBukti(b: Uint8Array): JenisBukti | null {
     return null;
 }
 
+export class BadanTerlaluBesar extends Error {}
+
+/**
+ * Badan permintaan ≤ `maks` byte TANPA menyangga lebih (tinjauan B SEDANG 2): `content-length` > maks -> tolak tanpa membaca; tanpa header
+ * (chunked) -> stream dihitung per potongan dan dibatalkan begitu melewati maks. `request.formData()` langsung menyangga badan PENUH
+ * (40 MiB+ chunked -> heap frontend 2 GB terancam), jadi pemanggil mengurai dari hasil ini (`new Response(isi, …).formData()`).
+ */
+export async function bacaBadanTerbatas(req: Request, maks: number): Promise<Uint8Array> {
+    const cl = req.headers.get("content-length");
+    if (cl !== null && !(Number(cl) <= maks)) throw new BadanTerlaluBesar();
+    if (!req.body) return new Uint8Array(0);
+    const pembaca = req.body.getReader();
+    const potong: Uint8Array[] = [];
+    let n = 0;
+    for (;;) {
+        const { done, value } = await pembaca.read();
+        if (done) break;
+        n += value.byteLength;
+        if (n > maks) {
+            await pembaca.cancel().catch(() => undefined);
+            throw new BadanTerlaluBesar();
+        }
+        potong.push(value);
+    }
+    const isi = new Uint8Array(n);
+    let o = 0;
+    for (const p of potong) {
+        isi.set(p, o);
+        o += p.byteLength;
+    }
+    return isi;
+}
+
 const lokasi = (nama: string) => path.join(/*turbopackIgnore: true*/ tempatBukti.dir, path.basename(nama));
 
 /** Tulis berkas baru bernama UUID (flag `wx`: tidak pernah menimpa). Hasil = nama yang disimpan di kasir_setoran.bukti_transfer. */
