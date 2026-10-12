@@ -3,7 +3,7 @@
  *         termasuk bonus dengan SKU pasti, dan menentukan status antrean setelah kirim.
  * Caller: app/api/orders/[id]/invoice (dry-run + enqueue), app/api/cron/post-invoices (pengirim).
  * Beda dari lib/accurate-invoice.ts: itu MEMBACA faktur (detail.do -> tampilan), ini MENULIS.
- * Dependensi: TIDAK ADA (pure) — supaya bisa diuji tanpa DB dan tanpa jaringan.
+ * Dependensi: hanya lib/accurate-redact (murni) — supaya bisa diuji tanpa DB dan tanpa jaringan.
  * Main Functions: toAccurateDate, buildInvoicePayload, readInvoiceIdentity, nextOutboxState.
  * Side Effects: Tidak ada.
  *
@@ -25,6 +25,7 @@
  * repo dan field yang tidak dikenal DIABAIKAN DIAM-DIAM oleh Accurate — jadi satu faktur uji
  * pada database yang ditunjuk pengguna WAJIB diperiksa (terutama satuan) sebelum produksi.
  */
+import { redactAccurateSecrets } from "./accurate-redact";
 
 export type FrozenInputLine = { code: string; unit: string; quantity: string; price: string };
 export type FrozenResultLine = {
@@ -279,7 +280,7 @@ export function readInvoiceIdentity(response: unknown): { ok: boolean; id: strin
     const body = (envelope.r ?? envelope.d ?? envelope) as Record<string, unknown>;
     const nested = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
     const ok = envelope.s === true;
-    const message = ok ? "" : JSON.stringify(envelope.d ?? envelope).slice(0, 500);
+    const message = ok ? "" : redactAccurateSecrets(JSON.stringify(envelope.d ?? envelope)).slice(0, 500);
     return {
         ok,
         id: String(nested.id ?? ""),
@@ -302,7 +303,7 @@ export function classifySaveResponse(status: number, text: string): SendOutcome 
     // S6-0d E7), bahkan berbadan amplop {s:false}; pencegahnya pra-cek sesi sebelum klaim pertama.
     // (1835b724 menjadikannya "rejected belum diproses" = kirim ulang tanpa cek; dibalik di sini.)
     if (status === 401 || status === 403 || status === 429) {
-        return { kind: "no_answer", message: `HTTP ${status} (belum terbukti tidak diproses): ${text.slice(0, 200)}` };
+        return { kind: "no_answer", message: `HTTP ${status} (belum terbukti tidak diproses): ${redactAccurateSecrets(text).slice(0, 200)}` };
     }
     let body: unknown;
     try {
@@ -311,7 +312,7 @@ export function classifySaveResponse(status: number, text: string): SendOutcome 
         return { kind: "no_answer", message: `respons non-JSON (${status})` };
     }
     if (typeof body !== "object" || body === null || Array.isArray(body) || typeof (body as { s?: unknown }).s !== "boolean") {
-        return { kind: "no_answer", message: `respons tanpa amplop Accurate (${status}): ${text.slice(0, 200)}` };
+        return { kind: "no_answer", message: `respons tanpa amplop Accurate (${status}): ${redactAccurateSecrets(text).slice(0, 200)}` };
     }
     const identity = readInvoiceIdentity(body);
     if (identity.ok) {
