@@ -5,8 +5,8 @@
  * Caller: components/order/{useCari.ts,PemilihPelanggan.tsx,PemilihBarang.tsx}, app/(dashboard)/sales/OrderSales.tsx,
  *   app/(dashboard)/orders/{OrderBaru,AntreFaktur}.tsx.
  * Dependensi: ./order-cabang (murni), app/(dashboard)/form-kontrol/lapangan (ambilJson).
- * Main Functions: cariPelanggan, cariBarang, bacaPelangganKode, bacaBarangKode, muatCakupan, hitungPratinjau.
- * Side Effects: HTTP GET /api/customers/search, /api/items/search; POST /api/orders/preview (tanpa menyimpan apa pun).
+ * Main Functions: cariPelanggan, cariBarang, bacaPelangganKode, cocokkanTokoRute, bacaBarangKode, muatCakupan, hitungPratinjau.
+ * Side Effects: HTTP GET /api/customers/search, /api/customers/rute, /api/items/search; POST /api/orders/preview (tanpa menyimpan apa pun).
  */
 import { ambilJson } from "@/app/(dashboard)/form-kontrol/lapangan";
 import {
@@ -58,6 +58,23 @@ export async function bacaPelangganKode(kode: string, signal: AbortSignal, peran
     if (!r.ok) return r;
     const cocok = r.data.items.find((p) => p.customerNo.toUpperCase() === kode.trim().toUpperCase()) ?? null;
     return { ok: true, data: cocok };
+}
+
+/** Toko rute (kode JKS) -> pelanggan cabang Anda. `pelanggan` null = tidak bisa dipilih; `alasan` = kalimat server (per toko). */
+export type TokoRuteCocok = { kode: string; pelanggan: PelangganPilih | null; alasan: string };
+
+/**
+ * Kode toko "Toko di rute hari ini" (kode JKS, TANPA akhiran cabang) -> pelanggan Accurate di cabang salesman (FK-MSM butir 6): server
+ * mencocokkan kode persis ATAU kode + "-" + akhiran, dibatasi cabang Anda, dan hanya menerima tepat satu pelanggan aktif per toko.
+ */
+export async function cocokkanTokoRute(kode: string[], signal: AbortSignal | undefined, peran: Peran): Promise<Hasil<TokoRuteCocok[]>> {
+    const r = await minta(`/api/customers/rute?${new URLSearchParams(kode.map((k) => ["kode", k]))}`, signal, peran);
+    if ("batal" in r) return { ok: false, batal: true };
+    if ("galat" in r) return { ok: false, galat: r.galat };
+    const rute = (Array.isArray(r.d.rute) ? r.d.rute : []) as Record<string, unknown>[];
+    return { ok: true, data: rute.map((x) => ({
+        kode: String(x.kode ?? ""), pelanggan: x.pelanggan ? bacaPelanggan(x.pelanggan) : null, alasan: typeof x.alasan === "string" ? x.alasan : "",
+    })) };
 }
 
 export async function bacaBarangKode(kode: string, pelanggan: PelangganPilih, tanggal: string, signal: AbortSignal, peran: Peran): Promise<Hasil<BarangPilih | null>> {

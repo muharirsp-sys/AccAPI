@@ -1,9 +1,11 @@
-/* FK-MSM (pilot Form Kontrol cabang, 12 Okt 2026) TANPA DB: kunci hari JKS + bentuk baku unggah, paritas minggu ISO. Perilaku route
+/* FK-MSM (pilot Form Kontrol cabang, 12 Okt 2026) TANPA DB: kunci hari JKS + bentuk baku unggah, paritas minggu ISO, pencocokan kode
+ * toko JKS (tanpa akhiran cabang) -> pelanggan Accurate cabang. Perilaku route
  * ASLI pada Postgres = lib/form-kontrol/fk-msm-pg.test.ts. Data contoh generik. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { hariBaku, kunciHari } from "./constants.ts";
 import { getWeekParity, parseDateString } from "./db.ts";
+import { cocokKodeRute, pilihPelangganRute } from "../order-cabang.ts";
 
 test("butir 2: kunci hari tak peka huruf/spasi/tanda; bentuk baku unggah; hari tak dikenal = null, kosong = ''", () => {
     for (const v of ["SENIN", " senin ", "Senin"]) assert.equal(kunciHari(v), "SENIN");
@@ -21,4 +23,25 @@ test("butir 2: paritas minggu = minggu ISO % 2", () => {
     assert.equal(getWeekParity(parseDateString("2026-10-18")), "genap"); // Minggu masih minggu ISO 42
     assert.equal(getWeekParity(parseDateString("2026-10-19")), "ganjil"); // minggu 43
     assert.equal(getWeekParity(parseDateString("2026-01-01")), "ganjil"); // Kamis 1 Jan 2026 = minggu 1
+});
+
+test("butir 6: kode toko JKS cocok persis ATAU kode + '-' + SATU akhiran; tak peka huruf; spasi dalam dipertahankan", () => {
+    assert.equal(cocokKodeRute("C-100001", "C-100001-CBA"), true);
+    assert.equal(cocokKodeRute("c-100001 ", "C-100001-cba"), true);
+    assert.equal(cocokKodeRute("C-100001", "C-100001"), true);
+    assert.equal(cocokKodeRute("C- FA0164", "C- FA0164-CBA"), true);
+    assert.equal(cocokKodeRute("C-FA0164", "C- FA0164-CBA"), false, "spasi dalam tidak ditebak");
+    assert.equal(cocokKodeRute("C-10000", "C-100001-CBA"), false, "awalan angka lain");
+    assert.equal(cocokKodeRute("C-2000", "C-2000-01-CBA"), false, "akhiran lebih dari satu bagian");
+    assert.equal(cocokKodeRute("C-2000", "C-2000-"), false);
+    assert.equal(cocokKodeRute("", "C-1"), false);
+});
+
+test("butir 6: tepat satu pelanggan AKTIF = dipilih; dua = GANDA; hanya nonaktif = NONAKTIF; tidak ada = TIDAK_ADA", () => {
+    const p = (customerNo: string, suspended = false) => ({ customerNo, suspended });
+    assert.equal(pilihPelangganRute("C-1", [p("C-1-CBA"), p("C-2-CBA")]).pelanggan?.customerNo, "C-1-CBA");
+    assert.equal(pilihPelangganRute("C-1", [p("C-1-CBA"), p("C-1-OLD", true)]).pelanggan?.customerNo, "C-1-CBA", "yang nonaktif tidak membuat ganda");
+    assert.deepEqual(pilihPelangganRute("C-1", [p("C-1-CBA"), p("C-1")]), { pelanggan: null, masalah: "GANDA", kandidat: ["C-1-CBA", "C-1"] });
+    assert.deepEqual(pilihPelangganRute("C-1", [p("C-1-CBA", true)]), { pelanggan: null, masalah: "NONAKTIF", kandidat: ["C-1-CBA"] });
+    assert.deepEqual(pilihPelangganRute("C-1", [p("C-10-CBA")]), { pelanggan: null, masalah: "TIDAK_ADA", kandidat: [] });
 });

@@ -1,5 +1,6 @@
 /*
- * Tujuan: Mock bersama Playwright untuk layar Order per cabang (O2): /api/customers/search, /api/items/search, /api/orders/preview,
+ * Tujuan: Mock bersama Playwright untuk layar Order per cabang (O2): /api/customers/search, /api/customers/rute (FK-MSM: kode toko JKS ->
+ *   pelanggan cabang), /api/items/search, /api/orders/preview,
  *   /api/orders/salesmen (sesuai docs/handover/O1-KONTRAK-ORDER-CABANG.md) + FastAPI Web Sales (:8000). Data contoh GENERIK
  *   (PELANGGAN A, CABANG A, SALES A, BARANG A) — bukan nama principal/orang nyata.
  * Caller: tests/fiori-order-cabang.spec.ts, tests/fiori-order-masuk.spec.ts (Order baru + Antrekan), tests/fiori-lapangan-salesman.spec.ts (Order Sales).
@@ -52,6 +53,8 @@ export type OpsiMock = {
     akun?: "ok" | "belum-terhubung" | "tidak-aktif";
     /** Ganti jawaban satu endpoint; undefined = jawaban bawaan. Boleh async (menunda). */
     pelanggan?: (url: URL, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
+    /** Ganti jawaban /api/customers/rute (pencocokan toko rute). */
+    rute?: (url: URL, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
     barang?: (url: URL, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
     preview?: (body: PreviewBody, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
     /** Menggeser netto hitungan server (aturan/harga berubah) — pratinjau lama jadi usang: simpan = PRATINJAU_BERUBAH. */
@@ -63,7 +66,7 @@ export type OpsiMock = {
 };
 export type PreviewBody = { channel: string; order_date: string; customer_no: string; lines: { code: string; unit: string; quantity: string; price?: string }[] };
 
-export type LogMock = { pelanggan: URL[]; barang: URL[]; preview: PreviewBody[]; sidik: string[]; salesmen: URL[]; dibatalkan: string[] };
+export type LogMock = { pelanggan: URL[]; rute: URL[]; barang: URL[]; preview: PreviewBody[]; sidik: string[]; salesmen: URL[]; dibatalkan: string[] };
 
 const kirim = async (r: Route, j: Jawab) => {
     try {
@@ -150,7 +153,7 @@ export function sidikDari(b: PreviewBody, geser = 0): { sidik: string; pratinjau
 }
 
 export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<{ log: LogMock; opsi: OpsiMock }> {
-    const log: LogMock = { pelanggan: [], barang: [], preview: [], sidik: [], salesmen: [], dibatalkan: [] };
+    const log: LogMock = { pelanggan: [], rute: [], barang: [], preview: [], sidik: [], salesmen: [], dibatalkan: [] };
     page.on("requestfailed", (r) => { if (/ERR_ABORTED/.test(r.failure()?.errorText ?? "")) log.dibatalkan.push(new URL(r.url()).search); });
     const sales = () => (opsi.peran ?? "petugas") === "sales";
     const blokirSales = (): Jawab | undefined => {
@@ -175,6 +178,26 @@ export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<
             && (!q || p.name.toLowerCase().includes(q) || p.customerNo.toLowerCase().includes(q)))
             .sort((x, y) => Number(y.customerNo.toLowerCase() === q) - Number(x.customerNo.toLowerCase() === q)).slice(0, limit);
         return kirim(r, { body: { ok: true, cakupan: sales() ? { semua: false, branchId: CABANG.A.id, branchName: CABANG.A.name } : { semua: true, branchId: null, branchName: null }, items: baris } });
+    });
+
+    // Kontrak server (app/api/customers/rute): kode persis ATAU kode + "-" + satu akhiran, sales hanya cabang A, tepat satu pelanggan.
+    await page.route((u) => u.pathname === "/api/customers/rute", async (r) => {
+        const url = new URL(r.request().url());
+        log.rute.push(url);
+        const ganti = await opsi.rute?.(url, log.rute.length);
+        if (ganti) return kirim(r, ganti);
+        const blok = blokirSales();
+        if (blok) return kirim(r, blok);
+        const cocok = (k: string, no: string) => { const a = k.trim().toUpperCase(), c = no.toUpperCase(); return c === a || (c.startsWith(`${a}-`) && !c.slice(a.length + 1).includes("-")); };
+        const kode = [...new Set(url.searchParams.getAll("kode").map((k) => k.trim()).filter(Boolean))];
+        const rute = kode.map((k) => {
+            const hasil = PELANGGAN.filter((p) => (!sales() || p.branchId === CABANG.A.id) && cocok(k, p.customerNo));
+            return hasil.length === 1 ? { kode: k, pelanggan: hasil[0], masalah: null, kandidat: [hasil[0].customerNo], alasan: "" }
+                : { kode: k, pelanggan: null, masalah: hasil.length ? "GANDA" : "TIDAK_ADA", kandidat: hasil.map((p) => p.customerNo),
+                    alasan: hasil.length ? `Lebih dari satu pelanggan cabang Anda cocok (${hasil.map((p) => p.customerNo).join(", ")}); pilih lewat Cari pelanggan.`
+                        : `Belum terdaftar sebagai pelanggan cabang Anda (${CABANG.A.name}) di Accurate.` };
+        });
+        return kirim(r, { body: { ok: true, cakupan: sales() ? { semua: false, branchId: CABANG.A.id, branchName: CABANG.A.name } : { semua: true, branchId: null, branchName: null }, rute } });
     });
 
     await page.route((u) => u.pathname === "/api/items/search", async (r) => {

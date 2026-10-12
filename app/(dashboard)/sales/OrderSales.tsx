@@ -4,7 +4,7 @@
  *   server dan tampil per baris + ringkasan; nomor permintaan tampil setelah kirim; Order saya membedakan galat dari kosong. Akun yang
  *   belum ditautkan ke karyawan salesman Accurate melihat penjelasan "hubungi Admin", bukan formulir kosong.
  * Caller: ./page.tsx (/sales; dibatasi izin `websales.create`, bukan `order.create`).
- * Dependensi: /api/customers/search, /api/items/search, /api/orders/preview (components/order/*; pratinjau membawa `sidik`), FastAPI
+ * Dependensi: /api/customers/search, /api/customers/rute (toko rute -> pelanggan cabang), /api/items/search, /api/orders/preview (components/order/*; pratinjau membawa `sidik`), FastAPI
  *   /websales/orders (simpan WAJIB membawa `sidik` pratinjau terakhir; + /api/me untuk CSRF); ../form-kontrol/lapangan (ambilJson, PESAN_SINYAL, toko rute tersimpan); ../form-kontrol/shared (hariIniWita); components/fiori/*;
  *   lib/promo-ui (rupiah); lib/rekapan-nota/ui (tanggalPendek, jamWita).
  * Main Functions: OrderSales, send, csrfHeader.
@@ -30,7 +30,7 @@ import { PemilihBarang, type BacaanBarang } from "@/components/order/PemilihBara
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
 import { KartuPromoBaris, PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
 import { alasanKunciBarang, galatDariJawaban, galatTidakDitemukan, hargaCabangDefault, kalimatGalat, kalimatPenolakan, kunciHarga, labelSatuan, jumlahSah, pecahSaran, pratinjauBerubah, tanggalSah, type BarangPilih, type Cakupan, type Galat, type PelangganPilih } from "@/components/order/order-cabang";
-import { bacaBarangKode, hitungPratinjau, muatCakupan, type Pratinjau } from "@/components/order/order-cabang-api";
+import { bacaBarangKode, cocokkanTokoRute, hitungPratinjau, muatCakupan, type Pratinjau, type TokoRuteCocok } from "@/components/order/order-cabang-api";
 import { resolveApiBase } from "@/lib/apiBase";
 import { rupiah } from "@/lib/promo-ui";
 import { jamWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
@@ -211,6 +211,20 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     }, []);
     const [petaL, muatUlangPeta] = useLoad(muatPeta);
     const blokir = petaL.data?.blokir ?? null;
+
+    // FK-MSM butir 6: kode toko rute = kode JKS TANPA akhiran cabang (C-100001); server mencocokkannya ke pelanggan CABANG Anda
+    // (C-100001-<akhiran>). Hanya toko dengan tepat satu pelanggan aktif yang ditawarkan; sisanya tampil dengan alasannya (bukan hilang diam).
+    const kodeRute = useMemo(() => tokoRute.map((t) => t.kode).join("\n"), [tokoRute]);
+    const namaRute = useMemo(() => new Map(tokoRute.map((t) => [t.kode, t.nama])), [tokoRute]);
+    const cakupanSiap = Boolean(petaL.data?.cakupan);
+    const [ruteL, muatUlangRute] = useLoad(useCallback(async (): Promise<Load<TokoRuteCocok[]>> => {
+        if (!kodeRute || !cakupanSiap) return { status: "siap", data: [] };
+        const h = await cocokkanTokoRute(kodeRute.split("\n"), undefined, "sales");
+        if (h.ok) return { status: "siap", data: h.data };
+        return { status: "galat", error: "batal" in h ? "" : `${h.galat.judul}. ${kalimatGalat(h.galat)}` };
+    }, [kodeRute, cakupanSiap]));
+    const ruteBisa = (ruteL.data ?? []).filter((r): r is TokoRuteCocok & { pelanggan: PelangganPilih } => r.pelanggan !== null);
+    const ruteTidak = (ruteL.data ?? []).filter((r) => r.pelanggan === null);
 
     // Nilai transaksi dan saran promo dihitung server; sales melihat, tidak menentukan.
     const filled = lines.filter((line) => line.code.trim());
@@ -393,22 +407,43 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                     : petaL.status === "galat" && !petaL.data ? <ErrorState title="Cabang Anda belum terbaca" message={petaL.error} onRetry={muatUlangPeta} />
                                         : (
                                             <>
-                                                {tokoRute.length > 0 && (
-                                                    <FormField label="Toko di rute hari ini" help="Dari Rute hari ini yang terakhir dibuka di ponsel ini.">
-                                                        {(a) => (
-                                                            <select {...a} className="fi-input" value={tokoRute.some((t) => t.kode === kodePel) ? kodePel : ""}
-                                                                onChange={(e) => {
-                                                                    if (!e.target.value) return;
-                                                                    ubahIsian();
-                                                                    setOutlet("");
-                                                                    void pel.bacaKode(e.target.value).then((p) => { if (p) setOutlet(p.name); });
-                                                                }}>
-                                                                <option value="">Pilih toko</option>
-                                                                {tokoRute.map((t) => <option key={t.kode} value={t.kode}>{t.nama} · {t.kode}</option>)}
-                                                            </select>
+                                                {tokoRute.length > 0 && (ruteL.status === "galat" && !ruteL.data ? (
+                                                    <MessageStrip tone="neg" title="Toko di rute hari ini belum bisa dicocokkan dengan pelanggan cabang Anda.">
+                                                        {ruteL.error} Pelanggan tetap bisa dicari di bawah.{" "}
+                                                        <Button variant="tertiary" onClick={muatUlangRute}>Coba lagi</Button>
+                                                    </MessageStrip>
+                                                ) : !ruteL.data ? <Skeleton rows={1} label="Mencocokkan toko rute dengan pelanggan cabang Anda" /> : (
+                                                    <>
+                                                        {ruteBisa.length > 0 && (
+                                                            <FormField label="Toko di rute hari ini" help="Dari Rute hari ini yang terakhir dibuka di ponsel ini; hanya toko yang terdaftar sebagai pelanggan cabang Anda.">
+                                                                {(a) => (
+                                                                    <select {...a} className="fi-input" value={ruteBisa.find((r) => r.pelanggan.customerNo === kodePel)?.kode ?? ""}
+                                                                        onChange={(e) => {
+                                                                            const r = ruteBisa.find((x) => x.kode === e.target.value);
+                                                                            if (!r) return;
+                                                                            ubahIsian();
+                                                                            setOutlet(r.pelanggan.name);
+                                                                            pel.pilih(r.pelanggan);
+                                                                        }}>
+                                                                        <option value="">Pilih toko</option>
+                                                                        {ruteBisa.map((r) => <option key={r.kode} value={r.kode}>{namaRute.get(r.kode) || r.pelanggan.name} · {r.pelanggan.customerNo}</option>)}
+                                                                    </select>
+                                                                )}
+                                                            </FormField>
                                                         )}
-                                                    </FormField>
-                                                )}
+                                                        {ruteTidak.length > 0 && (
+                                                            <MessageStrip tone="warn" title={`${ruteTidak.length} toko rute hari ini belum bisa dipilih.`}>
+                                                                <ul aria-label="Toko rute yang belum bisa dipilih" style={{ margin: 0, paddingLeft: 18 }}>
+                                                                    {ruteTidak.map((r) => (
+                                                                        <li key={r.kode} style={{ overflowWrap: "anywhere" }}>
+                                                                            <b>{namaRute.get(r.kode) || r.kode}</b> <span className="fi-mono">{r.kode}</span>: {r.alasan}
+                                                                        </li>
+                                                                    ))}
+                                                                </ul>
+                                                            </MessageStrip>
+                                                        )}
+                                                    </>
+                                                ))}
                                                 <PemilihPelanggan state={pel.state} peran="sales" cakupan={petaL.data?.cakupan}
                                                     onPilih={(p) => { ubahIsian(); setOutlet(p.name); pel.pilih(p); }}
                                                     onLepas={() => { ubahIsian(); pel.lepas(); }}

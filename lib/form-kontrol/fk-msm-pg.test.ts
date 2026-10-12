@@ -28,6 +28,7 @@ async function muat() {
     return {
         ...await import("next/dist/server/app-render/work-async-storage.external.js"),
         ...await import("next/dist/server/app-render/work-unit-async-storage.external.js"),
+        NextRequest: (await import("next/server")).NextRequest,
         auth: (await import("../auth.ts")).auth,
         dbMod: await import("../db.ts"),
         ao: await r("../../app/api/form-kontrol/ao-control/route.ts"),
@@ -38,6 +39,7 @@ async function muat() {
         myScope: await r("../../app/api/form-kontrol/my-scope/route.ts"),
         profil: await r("../../app/api/form-kontrol/sales-profiles/route.ts"),
         frek: await r("../../app/api/form-kontrol/frequency/route.ts"),
+        rute: await r("../../app/api/customers/rute/route.ts"),
     };
 }
 let m: Awaited<ReturnType<typeof muat>>;
@@ -234,4 +236,59 @@ test("butir 1: my-scope mengirim principal JKS AKTIF milik cakupan (bukan daftar
     assert.deepEqual(await p("u-spvb"), ["PRINCIPLE C"]);
     assert.deepEqual(await p("u-sld"), [], "salesman tanpa JKS");
     assert.deepEqual(await p("u-admin"), ["PRINCIPLE A", "PRINCIPLE B", "PRINCIPLE C"]);
+});
+
+// =========================================================================== butir 6: toko rute JKS -> pelanggan cabang salesman
+
+test("butir 6: kode JKS tanpa akhiran -> pelanggan CABANG salesman; kode yang hanya ada di cabang lain tidak ditawarkan", { skip: pgSkip }, async () => {
+    await pool.query(`INSERT INTO customer (id, "customerNo", name, branch_id, branch_name, category_name, suspended) VALUES
+        (1, 'C-100001-CBA', 'PELANGGAN A', 201, 'CABANG A', 'TT', false),
+        (2, 'C-100001-CBB', 'PELANGGAN A (CABANG B)', 202, 'CABANG B', 'TT', false),
+        (3, 'C-100002-CBB', 'PELANGGAN B', 202, 'CABANG B', 'TT', false),
+        (4, 'C- FA0164-CBA', 'PELANGGAN SPASI', 201, 'CABANG A', 'MT', false),
+        (5, 'C-100007-CBA', 'PELANGGAN G1', 201, 'CABANG A', 'TT', false),
+        (6, 'C-100007-CBX', 'PELANGGAN G2', 201, 'CABANG A', 'TT', false),
+        (7, 'C-100008-CBA', 'PELANGGAN NONAKTIF', 201, 'CABANG A', 'TT', true),
+        (8, 'C-100009', 'PELANGGAN TANPA AKHIRAN', 201, 'CABANG A', 'TT', false),
+        (9, 'C-2000-01-CBA', 'PELANGGAN DUA BAGIAN', 201, 'CABANG A', 'TT', false),
+        (10, 'C-100010-CBA', 'PELANGGAN AWALAN', 201, 'CABANG A', 'TT', false)`);
+    const KODE = ["C-100001", "C-100002", "C- FA0164", "C-100007", "c-100008", "C-100009", "C-2000", "C-10001", "C-100001"];
+    const minta = async (u: string, kode = KODE) => {
+        sesi = (await pool.query(`SELECT id, name, role FROM "user" WHERE id = $1`, [u])).rows[0];
+        const q = new URLSearchParams(kode.map((k) => ["kode", k]));
+        return jawab(await m.rute.GET(new m.NextRequest(`http://app.test/api/customers/rute?${q}`)));
+    };
+    type Baris = { kode: string; pelanggan: { customerNo: string; channel: string } | null; masalah: string | null; alasan: string };
+    const r = await minta("u-sla");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.cakupan, { semua: false, branchId: 201, branchName: "CABANG A" });
+    const per = Object.fromEntries((r.body.rute as Baris[]).map((x) => [x.kode, x]));
+    assert.equal(Object.keys(per).length, 8, "kode ganda di permintaan digabung");
+    assert.equal(per["C-100001"].pelanggan?.customerNo, "C-100001-CBA", "cabang B tidak ikut");
+    assert.equal(per["C-100001"].pelanggan?.channel, "GT");
+    assert.equal(per["C-100002"].pelanggan, null, "hanya ada di cabang lain = TIDAK ditawarkan");
+    assert.equal(per["C-100002"].masalah, "TIDAK_ADA");
+    assert.match(per["C-100002"].alasan, /belum terdaftar sebagai pelanggan cabang Anda \(CABANG A\) di Accurate/i);
+    assert.equal(per["C- FA0164"].pelanggan?.customerNo, "C- FA0164-CBA");
+    assert.equal(per["C-100007"].masalah, "GANDA");
+    assert.match(per["C-100007"].alasan, /C-100007-CBA, C-100007-CBX/);
+    assert.equal(per["c-100008"].masalah, "NONAKTIF");
+    assert.equal(per["C-100009"].pelanggan?.customerNo, "C-100009");
+    assert.equal(per["C-2000"].masalah, "TIDAK_ADA");
+    assert.equal(per["C-10001"].masalah, "TIDAK_ADA", "C-100010-CBA bukan C-10001 + akhiran");
+    // Data JKS tidak disentuh.
+    assert.equal((await pool.query(`SELECT count(*)::int n FROM jks_master WHERE cust_code LIKE 'C-%-%'`)).rows[0].n, 0);
+
+    // Internal (order.view) = semua cabang: kode di dua cabang = GANDA, bukan menebak cabang.
+    const adm = await minta("u-admin", ["C-100001", "C-100002"]);
+    const perAdm = Object.fromEntries((adm.body.rute as Baris[]).map((x) => [x.kode, x]));
+    assert.equal(perAdm["C-100001"].masalah, "GANDA");
+    assert.equal(perAdm["C-100002"].pelanggan?.customerNo, "C-100002-CBB");
+
+    // Akun sales belum tertaut ke karyawan Accurate = kode O1, bukan daftar kosong; tanpa kode = 400; tanpa izin Order Sales = 403.
+    const belum = await minta("u-slb", ["C-100001"]);
+    assert.equal(belum.status, 403);
+    assert.equal(belum.body.kode, "SALESMAN_BELUM_TERHUBUNG");
+    assert.equal((await minta("u-sla", [])).status, 400);
+    assert.equal((await minta("u-spva", ["C-100001"])).status, 403);
 });
