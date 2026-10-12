@@ -1,0 +1,335 @@
+/* K2a route Kasir tanpa DB: GET /api/kasir, POST setoran/jelaskan/tutup/buka, GET bukti — sesi & izin dipalsukan (tanpa bypass lokal),
+ * db.transaction tiruan (dilarang kecuali disuntik), direktori bukti = folder sementara. Diuji: 401, 403 per kunci, 400 INPUT_SALAH (desimal 3,
+ * negatif, pemisah ribuan, angka bukan teks, Form Kasir kosong saat > 0, bukti absen saat transfer > 0, Giro tanpa nomor BG / jatuh tempo,
+ * tanggal depan, magic bytes palsu, berkas > 5 MB), berkas bukti dihapus bila galat pasti & DIBIARKAN bila TIDAK_PASTI, unduh bukti (pola nama
+ * ketat, nosniff, PDF attachment), bentuk GET: angka Incaso null bila status ≠ lengkap, galat internal tanpa pesan mentah. */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { NextRequest } from "next/server";
+import { GET as getHari } from "../../app/api/kasir/route.ts";
+import { POST as postSetoran } from "../../app/api/kasir/setoran/route.ts";
+import { POST as postJelaskan } from "../../app/api/kasir/jelaskan/route.ts";
+import { POST as postTutup } from "../../app/api/kasir/tutup/route.ts";
+import { POST as postBuka } from "../../app/api/kasir/buka/route.ts";
+import { GET as getBukti } from "../../app/api/kasir/bukti/route.ts";
+import { bawaanHari, bentukJawabanHari, jawabanGalat, type DepsHari, type Muatan } from "./hari.ts";
+import { jenisBukti, namaBuktiSah, tempatBukti } from "./bukti.ts";
+import { belumDibaca, type StatusBaca } from "./baca-pelunasan.ts";
+import { rekonsiliasiHari, type PetaOrang } from "./rekonsiliasi.ts";
+import { accurateEmployee, kasirSetoran } from "../../db/schema.ts";
+import { auth } from "../auth.ts";
+import { db } from "../db.ts";
+
+const D = "2026-10-05";
+const JAM = new Date("2026-10-05T10:00:00+08:00");
+const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+
+/** Rantai db.select tiruan: tiap select() memakai jawaban berikutnya dari antrean (izin dulu). */
+function selectTiruan(antrean: unknown[][]) {
+    return () => {
+        const hasil = antrean.shift() ?? [];
+        const rantai: Record<string, unknown> = {};
+        for (const m of ["from", "leftJoin", "innerJoin", "where", "orderBy", "limit"]) rantai[m] = () => rantai;
+        rantai.then = (ok: (v: unknown) => unknown, gagal: (e: unknown) => unknown) => Promise.resolve(hasil).then(ok, gagal);
+        return rantai;
+    };
+}
+
+/**
+ * Transaksi tiruan untuk catatSetoran: SELECT apa pun = [] kecuali accurate_employee (satu pegawai S-A); INSERT kasir_setoran memantulkan
+ * baris. `sesudah` = "commit" (berhasil) | "putus" (galat SESUDAH callback = commit tidak pasti).
+ */
+function transaksiTiruan(sesudah: "commit" | "putus", dicatat: unknown[][]) {
+    const pilih = () => {
+        let tabel: unknown;
+        const r: Record<string, unknown> = {};
+        r.from = (t: unknown) => { tabel = t; return r; };
+        for (const m of ["leftJoin", "innerJoin", "where", "orderBy", "limit"]) r[m] = () => r;
+        r.then = (ok: (v: unknown) => unknown) => Promise.resolve(tabel === accurateEmployee
+            ? [{ id: 1, number: "S-A", name: "SALES A", salesman: true, suspended: false }] : []).then(ok);
+        return r;
+    };
+    const tx = {
+        execute: async () => ({ rows: [], rowCount: 0 }),
+        select: pilih,
+        insert: (t: unknown) => ({ values: (v: Record<string, unknown>[]) => ({ returning: async () => {
+            assert.equal(t, kasirSetoran);
+            dicatat.push(v);
+            return v.map((x, i) => ({ id: 70 + i, kode: x.salesmanKode, revisi: x.revisi, bukti: x.buktiTransfer ?? null }));
+        } }) }),
+    };
+    return async (cb: (t: unknown) => Promise<unknown>) => {
+        const r = await cb(tx);
+        if (sesudah === "putus") throw new Error("uji: koneksi putus saat COMMIT");
+        return r;
+    };
+}
+
+async function dengan<T>(o: { sesi?: boolean; izin?: string[]; select?: unknown[][]; transaksi?: unknown; deps?: Partial<DepsHari> },
+    fn: (dir: string) => Promise<T>): Promise<T> {
+    const simpan = [
+        [auth.api, "getSession", Object.getOwnPropertyDescriptor(auth.api, "getSession")],
+        [db, "select", Object.getOwnPropertyDescriptor(db, "select")],
+        [db, "transaction", Object.getOwnPropertyDescriptor(db, "transaction")],
+        [globalThis, "fetch", Object.getOwnPropertyDescriptor(globalThis, "fetch")],
+    ] as const;
+    const depsLama = { ...bawaanHari };
+    const dirLama = tempatBukti.dir;
+    const bypassLama = process.env.LOCAL_AUTH_BYPASS;
+    delete process.env.LOCAL_AUTH_BYPASS;
+    const dir = await mkdtemp(path.join(tmpdir(), "kasir-bukti-"));
+    tempatBukti.dir = dir;
+    Object.defineProperty(auth.api, "getSession", { configurable: true, value: async () => (o.sesi === false ? null : { user: { id: "u-kasir", role: "staff" }, session: { id: "s1" } }) });
+    Object.defineProperty(db, "select", { configurable: true, value: selectTiruan([(o.izin ?? []).map((key) => ({ groupId: "g1", key })), ...(o.select ?? [])]) });
+    Object.defineProperty(db, "transaction", { configurable: true, value: o.transaksi ?? (async () => { throw new Error("uji: transaksi DB tidak disuntik"); }) });
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: () => { throw new Error("TIDAK BOLEH ke jaringan"); } });
+    Object.assign(bawaanHari, { sekarang: () => JAM, databaseId: async () => "DB-UJI", nama: async () => new Map<string, string>(), jeda: async () => undefined }, o.deps ?? {});
+    try {
+        return await fn(dir);
+    } finally {
+        Object.assign(bawaanHari, depsLama);
+        tempatBukti.dir = dirLama;
+        await rm(dir, { recursive: true, force: true });
+        for (const [obj, k, d] of simpan) {
+            if (d) Object.defineProperty(obj, k, d);
+            else delete (obj as unknown as Record<string, unknown>)[k];
+        }
+        if (bypassLama === undefined) delete process.env.LOCAL_AUTH_BYPASS; else process.env.LOCAL_AUTH_BYPASS = bypassLama;
+    }
+}
+
+const json = (url: string, body: unknown) => new NextRequest(`http://app.test${url}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+function multipart(data: unknown, bukti?: { isi: Uint8Array; nama: string }) {
+    const fd = new FormData();
+    fd.set("data", JSON.stringify(data));
+    if (bukti) fd.set("bukti", new File([bukti.isi], bukti.nama));
+    return new NextRequest("http://app.test/api/kasir/setoran", { method: "POST", body: fd });
+}
+const baku = { tanggal: D, orang: "S-A", tunai: "1250000", transfer: "0", giro: "0", noFormKasir: "FK-0415", dasar: [] };
+type Badan = { ok: boolean; kode?: string; field?: string; error?: string; buktiUrl?: string | null };
+
+test("route Kasir: tanpa sesi 401; tanpa kunci yang tepat 403 (view/catat/tutup/buka dipisah)", async () => {
+    const panggil = [
+        () => getHari(new NextRequest(`http://app.test/api/kasir?tanggal=${D}`)),
+        () => postSetoran(json("/api/kasir/setoran", baku)),
+        () => postJelaskan(json("/api/kasir/jelaskan", {})),
+        () => postTutup(json("/api/kasir/tutup", {})),
+        () => postBuka(json("/api/kasir/buka", {})),
+        () => getBukti(new NextRequest("http://app.test/api/kasir/bukti?id=1")),
+    ];
+    for (const p of panggil) assert.equal((await dengan({ sesi: false }, p)).status, 401);
+    const tolak: [() => Promise<Response>, string[]][] = [
+        [panggil[0], ["kasir.catat", "kasir.tutup", "kasir.buka"]],
+        [panggil[1], ["kasir.view", "kasir.tutup", "kasir.buka"]],
+        [panggil[2], ["kasir.view", "kasir.tutup", "kasir.buka"]],
+        [panggil[3], ["kasir.view", "kasir.catat", "kasir.buka"]],
+        [panggil[4], ["kasir.view", "kasir.catat", "kasir.tutup"]],
+        [panggil[5], ["kasir.catat", "kasir.tutup", "kasir.buka"]],
+    ];
+    for (const [p, izin] of tolak) assert.equal((await dengan({ izin }, p)).status, 403, izin.join(","));
+});
+
+test("POST setoran: 400 INPUT_SALAH + field sebelum DB / berkas (desimal 3, negatif, ribuan, angka, Form Kasir, bukti, Giro, tanggal, dasar)", async () => {
+    const kasus: [Record<string, unknown>, string][] = [
+        [{ tunai: "100.123" }, "tunai"],
+        [{ tunai: "-5" }, "tunai"],
+        [{ tunai: "1.250.000" }, "tunai"],
+        [{ tunai: 1250000 }, "tunai"],
+        [{ transfer: "1e5" }, "transfer"],
+        [{ giro: "" }, "giro"],
+        [{ noFormKasir: "  " }, "noFormKasir"],
+        [{ noFormKasir: undefined }, "noFormKasir"],
+        [{ transfer: "500" }, "buktiTransfer"],
+        [{ giro: "500" }, "giroNomor"],
+        [{ giro: "500", giroNomor: "BG-1" }, "giroJatuhTempo"],
+        [{ giro: "500", giroNomor: "BG-1", giroJatuhTempo: "2026-02-30" }, "giroJatuhTempo"],
+        [{ giroNomor: "BG-1" }, "giroNomor"],
+        [{ buktiLama: true }, "buktiTransfer"],
+        [{ tanggal: "2026-10-06" }, "tanggal"],
+        [{ tanggal: "05/10/2026" }, "tanggal"],
+        [{ orang: "" }, "orang"],
+        [{ dasar: "x" }, "dasar"],
+        [{ dasar: [{ kode: "S-A", revisi: 0 }] }, "dasar"],
+        [{ dasar: [{ kode: "S-A", revisi: 1 }, { kode: "S-A", revisi: 2 }] }, "dasar"],
+    ];
+    for (const [ubah, field] of kasus) {
+        const r = await dengan({ izin: ["kasir.catat"] }, async (dir) => {
+            const res = await postSetoran(json("/api/kasir/setoran", { ...baku, ...ubah }));
+            assert.deepEqual(await readdir(dir), [], "tak ada berkas tertinggal");
+            return res;
+        });
+        assert.equal(r.status, 400, JSON.stringify(ubah));
+        const b = await r.json() as Badan;
+        assert.deepEqual([b.ok, b.kode, b.field], [false, "INPUT_SALAH", field], JSON.stringify(ubah));
+    }
+    // Setoran 0 tanpa nomor Form Kasir = sah (lolos urai, lalu sampai DB — di sini transaksi tiruan menolak -> 500 pasti).
+    const nol = await dengan({ izin: ["kasir.catat"] }, () => postSetoran(json("/api/kasir/setoran", { ...baku, tunai: "0", noFormKasir: undefined })));
+    assert.deepEqual([nol.status, (await nol.json() as Badan).kode], [500, "GALAT_INTERNAL"]);
+});
+
+test("POST setoran multipart: magic bytes palsu / > 5 MB / transfer 0 + berkas -> 400 tanpa berkas tertinggal; galat pasti -> berkas DIHAPUS; TIDAK_PASTI -> berkas DIBIARKAN", async () => {
+    const transfer = { ...baku, transfer: "500000" };
+    for (const [data, bukti] of [
+        [transfer, { isi: new TextEncoder().encode("bukan gambar"), nama: "bukti.jpg" }],
+        [transfer, { isi: Uint8Array.from([0x25, 0x50, 0x44, 0x46]), nama: "bukti.pdf" }], // "%PDF" tanpa "-"
+        [baku, { isi: PNG, nama: "bukti.png" }],
+    ] as const) {
+        const r = await dengan({ izin: ["kasir.catat"] }, async (dir) => {
+            const res = await postSetoran(multipart(data, bukti));
+            assert.deepEqual(await readdir(dir), []);
+            return res;
+        });
+        const b = await r.json() as Badan;
+        assert.deepEqual([r.status, b.kode, b.field], [400, "INPUT_SALAH", "buktiTransfer"], bukti.nama);
+    }
+    const besar = await dengan({ izin: ["kasir.catat"] }, () => postSetoran(new NextRequest("http://app.test/api/kasir/setoran", {
+        method: "POST", body: "x", headers: { "content-type": "multipart/form-data; boundary=x", "content-length": String(7 * 1024 * 1024) } })));
+    assert.deepEqual([besar.status, (await besar.json() as Badan).field], [400, "buktiTransfer"]);
+    const lewat5 = await dengan({ izin: ["kasir.catat"] }, () => postSetoran(multipart(transfer, { isi: new Uint8Array(5 * 1024 * 1024 + 1).fill(0xff), nama: "b.jpg" })));
+    assert.deepEqual([lewat5.status, (await lewat5.json() as Badan).field], [400, "buktiTransfer"]);
+
+    // DB gagal SEBELUM commit -> 500 GALAT_INTERNAL (pasti) dan berkas yang sudah ditulis DIHAPUS.
+    const g = await dengan({ izin: ["kasir.catat"] }, async (dir) => {
+        const res = await postSetoran(multipart(transfer, { isi: PNG, nama: "x.txt" }));
+        assert.deepEqual(await readdir(dir), [], "berkas yatim dihapus");
+        return res;
+    });
+    const gb = await g.json() as Badan;
+    assert.deepEqual([g.status, gb.kode], [500, "GALAT_INTERNAL"]);
+    assert.doesNotMatch(gb.error ?? "", /uji: transaksi/, "tanpa pesan galat mentah");
+
+    // Commit berhasil -> 200 + buktiUrl; berkas tersimpan bernama UUID (bukan nama dari klien).
+    const dicatat: unknown[][] = [];
+    const ok = await dengan({ izin: ["kasir.catat"], transaksi: transaksiTiruan("commit", dicatat) }, async (dir) => {
+        const res = await postSetoran(multipart(transfer, { isi: PNG, nama: "../../etc/passwd" }));
+        const isi = await readdir(dir);
+        assert.equal(isi.length, 1);
+        assert.ok(namaBuktiSah(isi[0]) && isi[0].endsWith(".png"), isi[0]);
+        assert.equal((dicatat[0][0] as { buktiTransfer: string }).buktiTransfer, isi[0]);
+        return res;
+    });
+    const okb = await ok.json() as Badan & { revisi: unknown };
+    assert.deepEqual([ok.status, okb.ok, okb.buktiUrl, okb.revisi], [200, true, "/api/kasir/bukti?id=70", [{ kode: "S-A", revisi: 1 }]]);
+    assert.deepEqual((dicatat[0][0] as Record<string, unknown>).tunai, "1250000.00", "\"Rp 1.250.000\" dikirim \"1250000\" -> numeric 2 desimal");
+
+    // Galat SESUDAH callback (COMMIT putus) -> 502 TIDAK_PASTI; berkas DIBIARKAN (baris mungkin tersimpan).
+    const tp = await dengan({ izin: ["kasir.catat"], transaksi: transaksiTiruan("putus", []) }, async (dir) => {
+        const res = await postSetoran(multipart(transfer, { isi: PNG, nama: "b.png" }));
+        assert.equal((await readdir(dir)).length, 1, "berkas tetap ada");
+        return res;
+    });
+    assert.deepEqual([tp.status, (await tp.json() as Badan).kode], [502, "TIDAK_PASTI"]);
+});
+
+test("POST jelaskan/tutup/buka + GET hari: 400 INPUT_SALAH + field", async () => {
+    const jl = { tanggal: D, jenis: "selisih", orang: "S-A", angka: { pelunasan: "100", setoran: "0" }, penjelasan: "Setor susulan besok pagi", tindakLanjut: "setor_susulan" };
+    for (const [ubah, field] of [
+        [{ penjelasan: "terlalu pendek" }, "penjelasan"],
+        [{ tindakLanjut: undefined }, "tindakLanjut"],
+        [{ jenis: "lain" }, "jenis"],
+        [{ angka: { pelunasan: "100.001", setoran: "0" } }, "angka.pelunasan"],
+        [{ jenis: "tak_teralokasi", pelunasanId: 5, angka: { sisa: "0" } }, "angka.sisa"],
+        [{ jenis: "tak_teralokasi", pelunasanId: "5", angka: { sisa: "-10" } }, "pelunasanId"],
+        [{ tanggal: "2026-10-06" }, "tanggal"],
+    ] as [Record<string, unknown>, string][]) {
+        const r = await dengan({ izin: ["kasir.catat"] }, () => postJelaskan(json("/api/kasir/jelaskan", { ...jl, ...ubah })));
+        assert.deepEqual([r.status, (await r.json() as Badan).field], [400, field], JSON.stringify(ubah));
+    }
+    const t = await dengan({ izin: ["kasir.tutup"] }, () => postTutup(json("/api/kasir/tutup", { tanggal: D, sidik: "x" })));
+    assert.deepEqual([t.status, (await t.json() as Badan).field], [400, "sidik"]);
+    const b = await dengan({ izin: ["kasir.buka"] }, () => postBuka(json("/api/kasir/buka", { tanggal: D, alasan: "  dibuka   " })));
+    assert.deepEqual([b.status, (await b.json() as Badan).field], [400, "alasan"]);
+    for (const q of ["", "?tanggal=2026-10-06", "?tanggal=2026-13-01"]) {
+        const g = await dengan({ izin: ["kasir.view"] }, () => getHari(new NextRequest(`http://app.test/api/kasir${q}`)));
+        assert.deepEqual([g.status, (await g.json() as Badan).field], [400, "tanggal"], q);
+    }
+});
+
+test("GET bukti: id salah 400; baris/berkas tak ada atau nama tak berpola (traversal) 404; gambar inline + nosniff; PDF attachment", async () => {
+    assert.equal((await dengan({ izin: ["kasir.view"] }, () => getBukti(new NextRequest("http://app.test/api/kasir/bukti?id=../1")))).status, 400);
+    assert.equal((await dengan({ izin: ["kasir.view"], select: [[]] }, () => getBukti(new NextRequest("http://app.test/api/kasir/bukti?id=9")))).status, 404);
+    const jalur = await dengan({ izin: ["kasir.view"], select: [[{ bukti: "../../../etc/passwd", tanggal: D, kode: "S-A", revisi: 1 }]] },
+        () => getBukti(new NextRequest("http://app.test/api/kasir/bukti?id=9")));
+    assert.equal(jalur.status, 404);
+    const nama = "0a1b2c3d-0000-4000-8000-000000000001";
+    const png = await dengan({ izin: ["kasir.view"], select: [[{ bukti: `${nama}.png`, tanggal: D, kode: "S/A", revisi: 2 }]] }, async (dir) => {
+        await writeFile(path.join(dir, `${nama}.png`), PNG);
+        return getBukti(new NextRequest("http://app.test/api/kasir/bukti?id=9"));
+    });
+    assert.equal(png.status, 200);
+    assert.deepEqual([png.headers.get("content-type"), png.headers.get("x-content-type-options"), png.headers.get("cache-control"), png.headers.get("content-disposition")],
+        ["image/png", "nosniff", "private, no-store", `inline; filename="bukti-${D}-S_A-r2.png"`]);
+    assert.deepEqual(new Uint8Array(await png.arrayBuffer()), PNG);
+    const pdf = await dengan({ izin: ["kasir.view"], select: [[{ bukti: `${nama}.pdf`, tanggal: D, kode: "S-A", revisi: 1 }]] }, async (dir) => {
+        await writeFile(path.join(dir, `${nama}.pdf`), new TextEncoder().encode("%PDF-1.4"));
+        return getBukti(new NextRequest("http://app.test/api/kasir/bukti?id=9"));
+    });
+    assert.match(pdf.headers.get("content-disposition") ?? "", /^attachment;/);
+});
+
+test("bukti: jenis dari MAGIC BYTES (bukan nama) + pola nama ketat", () => {
+    assert.equal(jenisBukti(Uint8Array.from([0xff, 0xd8, 0xff, 0xe0])), "jpg");
+    assert.equal(jenisBukti(PNG), "png");
+    assert.equal(jenisBukti(new TextEncoder().encode("%PDF-1.7")), "pdf");
+    for (const x of ["GIF89a", "<svg", "%PDF", "<html>"]) assert.equal(jenisBukti(new TextEncoder().encode(x)), null, x);
+    assert.equal(namaBuktiSah("0a1b2c3d-0000-4000-8000-000000000001.jpg"), true);
+    for (const x of ["../x.jpg", "0a1b2c3d-0000-4000-8000-000000000001.svg", "0A1B2C3D-0000-4000-8000-000000000001.jpg", "a/0a1b2c3d-0000-4000-8000-000000000001.jpg"]) {
+        assert.equal(namaBuktiSah(x), false, x);
+    }
+});
+
+// --- bentuk GET (murni) ---
+const PETA: PetaOrang = { kodeSalesman: new Map([[1, "S-A"]]), gabunganPerBulan: new Map() };
+function muatan(baca: StatusBaca | null): Muatan {
+    const pelunasan = baca ? [{ id: 11, nomor: "SR/11", tanggal: D, metode: "CASH_OTHER", chequeAmount: 10_000_000, faktur: [{ fakturId: 1, masterSalesmanId: 1, invoicePayment: 10_000_000 }] },
+        { id: 12, nomor: "SR/12", tanggal: D, metode: "CREDIT_CARD", chequeAmount: 500_000, faktur: [] }] : [];
+    const setoran = [{ id: 7, salesmanKode: "S-A", revisi: 1, tunai: 9_000_000, transfer: 0, giro: 0, giroNomor: null, giroJatuhTempo: null, noFormKasir: "FK-1",
+        buktiTransfer: null, catatan: null, dicatatOleh: "u-kasir", dicatatPada: JAM }];
+    return {
+        tanggal: D, databaseId: baca ? "DB-UJI" : "", events: [], setoran, catatan: [], catatanTak: [], baca, pelunasan, peta: PETA,
+        namaKode: new Map([["S-A", "SALES A"]]), pegawai: [{ kode: "S-A", orang: "S-A", nama: "SALES A" }], kodeDikenal: new Set(["S-A"]),
+        hasil: rekonsiliasiHari({ tanggal: D, pelunasan, setoran, peta: PETA }),
+    };
+}
+const bentuk = (m: Muatan, orang: string | null = "S-A") => bentukJawabanHari(m, { sekarang: JAM, orang, namaUser: new Map([["u-kasir", "KASIR A"]]), baca: null });
+
+test("bentuk GET: status ≠ lengkap -> SEMUA angka Incaso null + sebab (setoran tetap); lengkap -> angka; tanpa database -> SESI_SINKRON", () => {
+    const st = (s: Partial<StatusBaca>): StatusBaca => ({ ...belumDibaca("DB-UJI", D), ...s });
+    for (const b of [st({}), st({ status: "berjalan", aktif: true }), st({ status: "sebagian", jumlahDaftar: 3, sisaDetail: 1 }), st({ status: "gagal", sebab: "bentuk", pesan: "x" })]) {
+        const j = bentuk(muatan(b));
+        assert.deepEqual([j.incaso.lengkap, j.incaso.sebab], [false, "BACA_BELUM_LENGKAP"], b.status);
+        assert.match(j.incaso.pesan!, /bukan nol/);
+        const o = j.orang[0];
+        assert.deepEqual([o.pelunasan, o.pelunasanPerMetode, o.jumlahFaktur, o.selisih, o.status, o.dijelaskan, o.salesmanIdTakDikenal], [null, null, null, null, null, null, null]);
+        assert.deepEqual([j.total.pelunasan, j.total.selisih, j.total.takTeralokasi, j.total.takTeralokasiBelumDijelaskan, j.total.nonKas, j.total.klop],
+            [null, null, null, null, null, null]);
+        assert.deepEqual([j.takTeralokasi, j.nonKas, j.penghalangTutup, j.sidik, j.hari.berubahSejakDitutup, j.rincian], [null, null, null, null, null, null]);
+        assert.deepEqual([o.setoran?.total, j.total.setoran, o.setoranTerakhir?.noFormKasir, j.riwayat.setoran[0].oleh], ["90000.00", "90000.00", "FK-1", "KASIR A"]);
+        assert.equal(j.segarUntukTutup, false);
+    }
+    const lengkap = bentuk(muatan(st({ status: "lengkap", jumlahDaftar: 2, sisaDetail: 0, lengkapPada: new Date(JAM.getTime() - 60_000).toISOString() })));
+    assert.deepEqual([lengkap.incaso, lengkap.orang[0].pelunasan, lengkap.orang[0].status, lengkap.orang[0].selisih, lengkap.segarUntukTutup],
+        [{ lengkap: true, sebab: null, pesan: null }, "100000.00", "selisih", "-10000.00", true]);
+    assert.deepEqual(lengkap.takTeralokasi?.map((t) => [t.nomor, t.sisa, t.alasan]), [["SR/12", "5000.00", "metode_tak_dikenal"]]);
+    assert.equal(lengkap.penghalangTutup?.alasan.length, 2);
+    assert.match(lengkap.sidik!, /^[0-9a-f]{16}$/);
+    assert.equal(lengkap.rincian?.pelunasan.length, 1);
+    const sesi = bentuk(muatan(null), null);
+    assert.deepEqual([sesi.incaso.sebab, sesi.orang.length, sesi.orang[0].setoran?.total, "rincian" in sesi], ["SESI_SINKRON", 1, "90000.00", false]);
+});
+
+test("jawabanGalat: galat tak dikenal -> 500 GALAT_INTERNAL tanpa pesan mentah", () => {
+    const asli = console.error;
+    console.error = () => undefined;
+    try {
+        const j = jawabanGalat(new Error("duplicate key value violates unique constraint \"x\" password=rahasia"), "[UJI]");
+        assert.equal(j.http, 500);
+        assert.equal(j.body.kode, "GALAT_INTERNAL");
+        assert.doesNotMatch(String(j.body.error), /duplicate|rahasia/);
+    } finally {
+        console.error = asli;
+    }
+});
