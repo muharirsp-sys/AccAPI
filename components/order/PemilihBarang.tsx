@@ -18,6 +18,8 @@ import { MIN_HURUF, labelSatuan, type BarangPilih, type Galat, type PelangganPil
 import { cariBarang } from "./order-cabang-api";
 import { useCari } from "./useCari";
 
+const BATAS_HASIL = 20;
+
 export type BacaanBarang = { jenis: "memuat"; kode: string } | { jenis: "galat"; kode: string; galat: Galat };
 
 type Props = {
@@ -38,7 +40,7 @@ type Props = {
 export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran, onPilih, onLepas, onBacaUlang, kunci }: Props) {
     const [q, setQ] = useState("");
     const cari = useCallback(async (kata: string, signal: AbortSignal) => (pelanggan
-        ? cariBarang({ q: kata, pelanggan, tanggal, limit: 20 }, signal, peran)
+        ? cariBarang({ q: kata, pelanggan, tanggal, limit: BATAS_HASIL }, signal, peran)
         : { ok: false as const, batal: true as const }), [pelanggan, tanggal, peran]);
     const [hasil, cobaLagi] = useCari(q, nilai === null && !bacaan && pelanggan !== null, `${pelanggan?.id ?? ""}|${tanggal}`, cari);
 
@@ -106,6 +108,7 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
                         })}
                     </ul>
                 )}
+                {hasil.jenis === "siap" && items.length >= BATAS_HASIL && <p className="fi-small fi-muted">Menampilkan {BATAS_HASIL} teratas — persempit pencarian dengan kode atau nama yang lebih lengkap.</p>}
             </div>
         </div>
     );

@@ -24,6 +24,8 @@ export type StatePelanggan =
     | { jenis: "siap"; p: PelangganPilih }
     | { jenis: "galat"; kode: string; galat: Galat };
 
+const BATAS_HASIL = 20;
+
 export function usePelanggan(peran: Peran) {
     const [state, setState] = useState<StatePelanggan>({ jenis: "kosong" });
     const ac = useRef<AbortController | null>(null);
@@ -70,7 +72,7 @@ export function PemilihPelanggan({ state, peran, onPilih, onLepas, onBacaUlang, 
     const [cabang, setCabang] = useState<number | null>(null);
     const [dikenal, setDikenal] = useState<Map<number, string>>(new Map());
     const cari = useCallback(async (kata: string, signal: AbortSignal) => {
-        const h = await cariPelanggan({ q: kata, branchId: cabang, limit: 20 }, signal, peran);
+        const h = await cariPelanggan({ q: kata, branchId: cabang, limit: BATAS_HASIL }, signal, peran);
         // Cabang yang pernah muncul di hasil menjadi pilihan saringan (belum ada daftar cabang tersendiri di server).
         if (h.ok && saringCabang) setDikenal((prev) => { const m = new Map(prev); for (const p of h.data.items) m.set(p.branchId, p.branchName); return m; });
         return h;
@@ -159,6 +161,7 @@ export function PemilihPelanggan({ state, peran, onPilih, onLepas, onBacaUlang, 
                         ))}
                     </ul>
                 )}
+                {hasil.jenis === "siap" && items.length >= BATAS_HASIL && <p className="fi-small fi-muted">Menampilkan {BATAS_HASIL} teratas — persempit pencarian dengan nama atau kode yang lebih lengkap.</p>}
                 {hasil.jenis === "diam" && <p className="fi-small fi-muted"><Search className="fi-icon" aria-hidden style={{ verticalAlign: "-0.15em" }} /> Hasil muncul setelah {MIN_HURUF} huruf pertama.</p>}
             </div>
         </div>

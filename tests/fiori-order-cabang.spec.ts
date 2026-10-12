@@ -471,6 +471,28 @@ test("Order baru: promo A-1 tampil per baris dan ringkasan yang sama dengan Orde
     const panel = main.getByRole("group", { name: "Perkiraan nilai order" });
     await expect(panel.getByRole("list", { name: "Program promo yang berlaku" })).toContainText("PROMO A — potongan Rp 115.200");
     await expect(panel).toContainText("Rp 1.036.800");
+    await expect(panel).toContainText("Tidak berlaku untuk outlet ini: PROMO C (khusus outlet MT)"); // pelanggan GT
+
+    // Pelanggan MT (cabang sama): hasil promo mengikuti jawaban server untuk pelanggannya — tidak ada program yang diblokir.
+    await main.getByRole("group", { name: "Pelanggan terpilih" }).getByRole("button", { name: "Ganti pelanggan" }).click();
+    await main.getByLabel("Cari pelanggan").fill("PELANGGAN B");
+    await main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button", { name: /PELANGGAN B/ }).click();
+    await expect.poll(() => main.getByRole("group", { name: "Perkiraan nilai order" }).textContent()).not.toContain("PROMO C");
+    await expect(main.getByRole("group", { name: "Perkiraan nilai order" })).toContainText("PROMO A — potongan Rp 115.200");
+});
+
+test("Order baru: 20 hasil teratas = petunjuk persempit pencarian (bukan seolah hanya itu yang ada)", async ({ page }) => {
+    const { opsi } = await mockOrderCabang(page);
+    await mockOrdersInternal(page);
+    opsi.pelanggan = (url) => (url.searchParams.has("q")
+        ? { body: { ok: true, cakupan: { semua: true, branchId: null, branchName: null }, items: Array.from({ length: 20 }, (_, i) => ({ id: 100 + i, customerNo: `C-${100 + i}`, name: `PELANGGAN X${i}`, branchId: 50, branchName: "CABANG A", categoryName: "General Trade", channel: "GT", priceCategoryName: "GROSIR", alamat: null })) } }
+        : undefined);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/orders/baru", NAV);
+    const main = page.locator("main");
+    await main.getByLabel("Cari pelanggan").fill("PELANGGAN X");
+    await expect(main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button")).toHaveCount(20, NAV);
+    await expect(main.getByText("Menampilkan 20 teratas — persempit pencarian dengan nama atau kode yang lebih lengkap.")).toBeVisible();
 });
 
 test("Order baru: ganti pelanggan ke cabang lain dengan baris terisi = konfirmasi (baris dibuang, tidak diam); cabang sama = baris tetap; batal = tidak berubah", async ({ page }) => {
