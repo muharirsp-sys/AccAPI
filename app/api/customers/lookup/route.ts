@@ -16,12 +16,12 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { customer } from "@/db/schema";
 import { cakupanCabang, jawabGalat } from "@/lib/order-cabang";
-import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
-    const gate = await resolveRequestPermissionsH();
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
     if (!gate.perms?.has("order.create") && !gate.perms?.has("websales.create")) {
         return NextResponse.json({ ok: false, error: "Akses master pelanggan tidak diizinkan" }, { status: 403 });

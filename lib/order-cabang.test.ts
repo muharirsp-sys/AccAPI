@@ -1,5 +1,6 @@
 /* O1 (owner 12 Okt 2026) TANPA DB: pemetaan tag divisi barang `charField2` -> cabang (22 cabang + 6 pemetaan + 6 non-jual + tak dikenal),
  * baris sync item dari list.do tiruan, pembantu query, field sync yang wajib diminta, dan gerbang 401/403/400 route baru SEBELUM DB.
+ * Putaran 1: hargaSah (butir 3), harga petugas (7), tripwire izin (11), tag absen (10), requireCronSecret (6), lookup per cabang (14).
  * Perilaku DB nyata (sync, cakupan salesman, pencarian, harga per cabang, tautan) = lib/order-cabang-pg.test.ts. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -7,7 +8,9 @@ import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
-import { angkaQuery, cabangDariTag, normalNama, petaCabang, polaLike, TAG_KE_CABANG, TAG_NON_JUAL, tolakCabangLain } from "./order-cabang.ts";
+import { alasanHarga, angkaQuery, cabangDariTag, hargaPetugasSah, hargaSah, normalNama, petaCabang, polaLike, TAG_KE_CABANG, TAG_NON_JUAL,
+    tolakCabangLain, tripwireIzin } from "./order-cabang.ts";
+import { requireCronSecret, samaRahasia } from "./api-security.ts";
 import { barisItem } from "./sync.ts";
 import * as preview from "../app/api/orders/preview/route.ts";
 import * as harga from "../app/api/orders/harga/route.ts";
@@ -15,6 +18,7 @@ import * as salesmen from "../app/api/orders/salesmen/route.ts";
 import * as cariPelanggan from "../app/api/customers/search/route.ts";
 import * as cariBarang from "../app/api/items/search/route.ts";
 import * as tautan from "../app/api/admin/users/[id]/salesman/route.ts";
+import * as cariKode from "../app/api/customers/lookup/route.ts";
 
 // 22 cabang Accurate produksi (probe 12 Okt 2026, tabel `branch`), id sintetis.
 const CABANG_22 = ["ABC", "CUSSONS", "DOLPHIN", "ENERGIZER", "FORISA", "FORISA - MT", "GODREJ", "HEINZ", "KINO NON FOOD", "Kantor Pusat",
@@ -132,6 +136,7 @@ const TITIK: Array<[string, H, string, string, string[]]> = [
     ["POST orders/harga", harga.POST as unknown as H, "POST", "/api/orders/harga", ["order.view", "websales.view"]],
     ["GET customers/search", cariPelanggan.GET as unknown as H, "GET", "/api/customers/search?q=a", ["order.view", "websales.view"]],
     ["GET items/search", cariBarang.GET as unknown as H, "GET", "/api/items/search?q=a", ["order.view", "websales.view"]],
+    ["GET customers/lookup", cariKode.GET as unknown as H, "GET", "/api/customers/lookup?no=C-A", ["order.view", "websales.view"]],
     ["GET orders/salesmen", salesmen.GET as unknown as H, "GET", "/api/orders/salesmen", ["order.view", "order.create"]],
     ["GET admin salesman", tautan.GET, "GET", "/api/admin/users/u-target/salesman", ["order.edit", "websales.create"]],
     ["PUT admin salesman", tautan.PUT, "PUT", "/api/admin/users/u-target/salesman", ["users.view", "order.edit"]],
@@ -170,4 +175,81 @@ test("gerbang: query tidak valid 400 sebelum DB (pencarian, salesmen); PUT tauta
     const put = await sebagai(["users.manage"], () => tautan.PUT(req("PUT", "/api/admin/users/u-target/salesman", { employeeNumber: "  " }), ctx));
     assert.equal(put.status, 400);
     assert.equal((await put.json()).code, "INPUT_TIDAK_VALID");
+});
+
+// ---------------------------------------------------------------- O1 putaran 1 (TANPA DB)
+
+test("butir 3: hargaSah = HANYA daftar harga (tier) cabang pelanggan/default dan > 0; standar/0/cabang lain/absen DITOLAK", () => {
+    const tier = { code: "K", unit: "KRT", price: 172968, source: "tier" as const, branchId: 101, defaultBranch: false, branchName: "KINO NON FOOD" };
+    assert.equal(hargaSah(tier, 101), true, "cabang pelanggan");
+    assert.equal(hargaSah({ ...tier, branchId: 103, defaultBranch: true, branchName: "Kantor Pusat" }, 101), true, "default (fallback resolvePrices)");
+    const ditolak: Array<[string, Parameters<typeof hargaSah>[0], RegExp]> = [
+        ["cabang LAIN", { ...tier, branchId: 102, branchName: "HEINZ" }, /cabang lain \(HEINZ\)/],
+        ["harga standar (satu angka semua satuan: KRT 6306 = harga PCS)", { code: "K", unit: "KRT", price: 6306, source: "standard" }, /harga standar/],
+        ["harga 0 (tanggal mundur)", { ...tier, price: 0 }, /harga 0/],
+        ["harga negatif", { ...tier, price: -5 }, /harga -5/],
+        ["tidak ada", { code: "K", unit: "KRT", price: null, source: "missing" }, /belum ada/],
+        ["tier tanpa cabang (bentuk lama)", { code: "K", unit: "KRT", price: 100, source: "tier" }, /./],
+        ["NaN", { ...tier, price: Number.NaN }, /./],
+    ];
+    for (const [nama, row, alasan] of ditolak) {
+        assert.equal(hargaSah(row, 101), false, nama);
+        assert.match(alasanHarga(row, 101), alasan, nama);
+    }
+});
+
+test("butir 7: harga petugas = angka biasa > 0 (maks 4 desimal), sama dengan Python order_cabang.HARGA_PETUGAS", () => {
+    for (const [teks, nilai] of [["1500", 1500], ["1500.5", 1500.5], ["0.0001", 0.0001], ["000123", 123]] as const) {
+        assert.equal(hargaPetugasSah(teks), nilai, teks);
+    }
+    for (const salah of ["0", "0.00", "-1", "abc", "1e3", "1.23456", "12,5", "1.500.000", " 15", "", "Infinity"]) {
+        assert.equal(hargaPetugasSah(salah), null, salah);
+    }
+});
+
+test("butir 11: tripwire izin — websales.create + order.view TANPA order.create = IZIN_TIDAK_KONSISTEN; kombinasi sah lolos", () => {
+    const p = (...k: string[]) => new Set(k);
+    const t = tripwireIzin(p("websales.create", "websales.view", "order.view"));
+    assert.deepEqual([t?.status, t?.kode], [403, "IZIN_TIDAK_KONSISTEN"]);
+    for (const sah of [p("websales.create", "websales.view"), p("order.view", "order.create", "websales.create"), p("order.view", "order.edit"),
+        p("order.create"), p()]) assert.equal(tripwireIzin(sah), null, [...sah].join(","));
+});
+
+test("butir 10: barisItem menandai key charField2 absen (cabang lama dipertahankan saat upsert, tidak dihitung kosong)", () => {
+    assert.equal(barisItem({ id: 1, no: "A", charField2: null }, PETA).adaTag, true);
+    assert.equal(barisItem({ id: 1, no: "A", charField2: "" }, PETA).adaTag, true);
+    assert.equal(barisItem({ id: 1, no: "A" }, PETA).adaTag, false);
+    const src = readFileSync(new URL("./sync.ts", import.meta.url), "utf8");
+    assert.match(src, /branchId: tagBila\("branch_id"\)/, "branch_id ditimpa hanya bila key charField2 ada");
+    assert.match(src, /b\.adaTag && \(b\.jenis === "tak_dikenal"/);
+});
+
+test("butir 6: requireCronSecret hanya Bearer (konstan-waktu); ?secret= DITOLAK; secret salah/panjang beda/kosong ditolak", () => {
+    const simpan = process.env.CRON_SECRET;
+    process.env.CRON_SECRET = "rahasia-uji";
+    try {
+        const r = (url: string, auth?: string) => requireCronSecret(new Request(`http://x${url}`, { headers: auth ? { authorization: auth } : {} })).response;
+        assert.equal(r("/a", "Bearer rahasia-uji"), null);
+        assert.equal(r("/a", "Bearer  rahasia-uji "), null, "spasi di tepi dirapikan");
+        for (const [url, auth] of [["/a?secret=rahasia-uji", undefined], ["/a", "Bearer rahasia-ujiX"], ["/a", "Bearer rahasia"], ["/a", "rahasia-uji"],
+            ["/a", "Bearer "], ["/a", undefined]] as const) assert.equal(r(url, auth)?.status, 401, `${url} ${auth}`);
+        delete process.env.CRON_SECRET;
+        assert.equal(r("/a", "Bearer rahasia-uji")?.status, 401, "env kosong = tolak");
+    } finally {
+        if (simpan === undefined) delete process.env.CRON_SECRET; else process.env.CRON_SECRET = simpan;
+    }
+    assert.equal(samaRahasia("abc", "abc"), true);
+    assert.equal(samaRahasia("abc", "abcd"), false);
+});
+
+test("gerbang putaran 1: sales mengirim harga ke pratinjau = 400 SEBELUM DB; tripwire izin 403 sebelum DB (pratinjau, lookup)", async () => {
+    const badan = { channel: "GT", order_date: "2026-10-12", customer_no: "C-A", lines: [{ code: "K", unit: "PCS", quantity: "1", price: "999" }] };
+    const sales = await sebagai(["websales.create"], () => preview.POST(req("POST", "/api/orders/preview", badan)));
+    assert.equal(sales.status, 400);
+    assert.match(String((await sales.json()).error), /Harga tidak boleh dikirim dari Order Sales/);
+    const tanpaHarga = { ...badan, lines: [{ code: "K", unit: "PCS", quantity: "1" }] };
+    const kacau = await sebagai(["websales.create", "order.view"], () => preview.POST(req("POST", "/api/orders/preview", tanpaHarga)));
+    assert.deepEqual([kacau.status, (await kacau.json()).kode], [403, "IZIN_TIDAK_KONSISTEN"]);
+    const lookup = await sebagai(["websales.create", "order.view"], () => cariKode.GET(req("GET", "/api/customers/lookup?no=C-A")));
+    assert.deepEqual([lookup.status, (await lookup.json()).kode], [403, "IZIN_TIDAK_KONSISTEN"]);
 });
