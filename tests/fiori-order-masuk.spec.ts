@@ -237,7 +237,7 @@ test("List Report: selama status antrean dimuat kartu antrean bertanda “–”
 });
 
 test("Tarik Order Sales: hasil tarikan tampil; jawaban tidak pasti = belum pasti; koneksi lewat dialog", async ({ page }) => {
-    let pull: Opsi["pull"] = { body: { ok: true, imported: [{ request_id: "a", order_id: "x" }, { request_id: "b", order_id: "y" }], already_imported: [], failed: [{ request_id: "c0c0c0c0-1", error: "Order serupa sudah ada", duplicate: true },
+    let pull: Opsi["pull"] = { body: { ok: true, imported: [{ request_id: "a", order_id: "x" }, { request_id: "b", order_id: "y" }], already_imported: [], failed: [{ request_id: "c0c0c0c0-1", error: "Order serupa sudah ada", kode: "ORDER_GANDA", duplicate: true },
         { request_id: "d1d1d1d1-2", error: "Barang bukan barang cabang CABANG A milik pelanggan ini: B-1 (cabang CABANG B)", kode: "BARANG_BEDA_CABANG" }],
         rejected: [{ request_id: "e2e2e2e2-3", kode: "PRATINJAU_BERUBAH", error: "Harga atau promo berubah sejak pratinjau" }] } };
     const log = await pasang(page, { get pull() { return pull; } });
@@ -247,7 +247,10 @@ test("Tarik Order Sales: hasil tarikan tampil; jawaban tidak pasti = belum pasti
     const sebelum = log.listCalls;
     await m.getByRole("button", { name: "Tarik sekarang" }).click();
     await expect(m.getByText("2 order baru ditarik dari Order Sales.")).toBeVisible();
-    await expect(m.getByText(/2 tertahan: #c0c0c0c0 — Order serupa sudah ada; #d1d1d1d1 — Barang bukan milik cabang pelanggan\. Barang bukan barang cabang CABANG A/)).toBeVisible();
+    await expect(m.getByText(/2 tertahan: #c0c0c0c0 — Diduga order ganda\. Order serupa sudah ada .*; #d1d1d1d1 — Barang bukan milik cabang pelanggan\. Barang bukan barang cabang CABANG A/)).toBeVisible();
+    // Putaran 1 peninjau #2: ORDER_GANDA pada permintaan TERTAHAN tidak punya dialog konfirmasi di layar tarik — tindakannya khusus konteks tarik.
+    await expect(m.getByText(/Permintaan ini tetap menunggu keputusan Anda\. Periksa order serupa di daftar ini/)).toBeVisible();
+    await expect(m.getByText(/centang konfirmasi di dialog lalu simpan lagi/)).toHaveCount(0);
     await expect(m.getByText(/Hapus barang itu, lalu cari barang yang milik cabang pelanggan\./)).toBeVisible(); // kode O1 -> kalimat + tindakan
     await expect(m.getByText(/BARANG_BEDA_CABANG/)).toHaveCount(0);
     // O1 putaran 1: `rejected` = DITOLAK PERMANEN (tidak dicoba lagi), terpisah dari `failed` (ditahan), dengan kalimat dari kodenya.

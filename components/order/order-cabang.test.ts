@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    MIN_HURUF, bacaBarang, bacaPelanggan, barisBedaCabang, cukupHuruf, alasanKunciBarang, bacaSaran, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kalimatGalat, kunciHarga, labelSatuan, namaProgramTerpakai, pecahSaran, pratinjauBerubah, promoBaris, ringkasPromo,
+    MIN_HURUF, bacaBarang, bacaPelanggan, barisBedaCabang, cukupHuruf, alasanKunciBarang, bacaSaran, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kalimatGalat, kunciHarga, labelSatuan, namaProgramTerpakai, pecahSaran, sebabTarik, pratinjauBerubah, promoBaris, ringkasPromo,
     urlCariBarang, urlCariPelanggan, urlSalesmanCabang, type Result,
 } from "./order-cabang.ts";
 
@@ -257,4 +257,14 @@ test("program terpakai: nama dari saran/diblokir bila ada, tanpa pengulangan", (
     const hasil: Result = { gross: "1", discount: "1", net: "0", applications: [{ program_id: "p1", minimum: "1", discount: "1" }, { program_id: "p1", minimum: "1", discount: "1" }] };
     assert.deepEqual(namaProgramTerpakai(hasil, [SARAN({ program_id: "p1", program_name: "PROMO SATU" })]), ["PROMO SATU"]);
     assert.deepEqual(namaProgramTerpakai(null), []);
+});
+
+test("sebabTarik: ORDER_GANDA pada permintaan tertahan = tindakan konteks tarik (bukan 'centang konfirmasi di dialog'); kode O1 lain = kalimat + tindakan; kode asing / tanpa kode = kalimat server", () => {
+    const ganda = sebabTarik("ORDER_GANDA", "Order serupa sudah ada");
+    assert.match(ganda, /^Diduga order ganda\. Order serupa sudah ada /);
+    assert.match(ganda, /Periksa order serupa di daftar ini/);
+    assert.doesNotMatch(ganda, /centang konfirmasi di dialog lalu simpan lagi/);
+    assert.match(sebabTarik("BARANG_BEDA_CABANG", "Barang X beda cabang"), /Hapus barang itu/);
+    assert.equal(sebabTarik("KODE_ASING", "kalimat server"), "kalimat server");
+    assert.equal(sebabTarik(undefined, "kalimat server"), "kalimat server");
 });

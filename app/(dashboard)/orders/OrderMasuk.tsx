@@ -16,7 +16,7 @@ import Link from "next/link";
 import { Download, Plus, Power } from "lucide-react";
 import { Button, ListItem, MessageStrip, ResponsiveTable, Skeleton, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
-import { galatDariJawaban, kalimatPenolakan, kodeDikenal } from "@/components/order/order-cabang";
+import { sebabTarik } from "@/components/order/order-cabang";
 import { jamWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
 import {
     BELUM_PASTI, fastapi, nextApi, nilai, nomorOrder, pesanJawaban, statusOrder, sukses, sumberOrder, tidakPasti,
@@ -32,9 +32,8 @@ type Saring = "semua" | Exclude<StatusKey, "lain" | "belum">;
 type Tertahan = { request_id: string; error: string; kode?: string };
 /** `failed` = DITAHAN (dugaan ganda; tetap menunggu); `rejected` = DITOLAK PERMANEN (tidak dicoba lagi; sales mengirim ulang). */
 type HasilTarik = { imported: number; already: number; failed: Tertahan[]; rejected: Tertahan[] };
-/** Penyebab per permintaan: kode O1 yang dikenal (barang beda cabang, salesman belum terhubung, PRATINJAU_BERUBAH, …) = kalimat + tindakan; selain itu pesan server. */
-const sebabTertahan = (f: Tertahan) => (f.kode && kodeDikenal(f.kode)
-    ? kalimatPenolakan(galatDariJawaban({ status: 409, data: { kode: f.kode, error: f.error } }, "petugas")) : f.error);
+/** Penyebab per permintaan: kode O1 yang dikenal (barang beda cabang, salesman belum terhubung, PRATINJAU_BERUBAH, ORDER_GANDA konteks tarik, …) = kalimat + tindakan; selain itu pesan server. */
+const sebabTertahan = (f: Tertahan) => sebabTarik(f.kode, f.error);
 
 const KARTU: Array<{ key: Saring; label: string; waspada?: boolean }> = [
     { key: "semua", label: "Semua order" }, { key: "butuh", label: "Butuh harga", waspada: true }, { key: "siap", label: "Siap diantrekan" },

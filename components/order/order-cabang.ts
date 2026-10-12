@@ -6,7 +6,7 @@
  *   (tipe), components/order/order-cabang.test.ts.
  * Dependensi: tidak ada (murni; tipe saja). Kontrak server: docs/handover/O1-KONTRAK-ORDER-CABANG.md §2-§3.
  * Main Functions: galatDariJawaban, cukupHuruf, urlCariPelanggan, urlCariBarang, labelSatuan, barisBedaCabang, promoBaris, ringkasPromo,
- *   hargaPetugasSah, pratinjauBerubah, hargaCabangDefault, bacaSaran, pecahSaran, namaProgramTerpakai.
+ *   hargaPetugasSah, pratinjauBerubah, hargaCabangDefault, bacaSaran, pecahSaran, namaProgramTerpakai, sebabTarik.
  * Side Effects: Tidak ada.
  */
 
@@ -370,6 +370,17 @@ export const kodeDikenal = (kode: string) => kode in ATURAN;
  * (aturan lain: channel beda master 422, dugaan order ganda 409, aturan promo belum terbit 409 — tampil persis seperti sebelum O2).
  */
 export const kalimatPenolakan = (g: Galat) => (g.kode in ATURAN ? `${g.judul}. ${kalimatGalat(g)}` : g.tidakPasti || g.kode === "SESI_BERAKHIR" ? `${g.judul}. ${kalimatGalat(g)}` : g.pesan);
+
+/**
+ * Sebab satu permintaan Order Sales yang tertahan/ditolak saat TARIK (Order Masuk): kode O1 yang dikenal = "Judul. Pesan Tindakan", selain itu kalimat server.
+ * ORDER_GANDA di sini = permintaan DITAHAN (tetap menunggu); layar tarik tidak punya dialog konfirmasi, jadi tindakannya BUKAN "centang konfirmasi di dialog".
+ */
+export const TINDAKAN_GANDA_TARIK = "Permintaan ini tetap menunggu keputusan Anda. Periksa order serupa di daftar ini; bila itu order yang sama, tidak perlu diproses. Bila memang berbeda, buat lewat Order baru dan centang konfirmasi di sana.";
+export function sebabTarik(kode: string | undefined, error: string): string {
+    if (!kode || !kodeDikenal(kode)) return error;
+    const g = galatDariJawaban({ status: 409, data: { kode, error } }, "petugas");
+    return kalimatPenolakan(kode === "ORDER_GANDA" ? { ...g, tindakan: TINDAKAN_GANDA_TARIK } : g);
+}
 
 /** Kode dibaca dari rute hari ini / draf / pemulihan tetapi tidak ada di hasil pencarian: bukan galat server, jadi bukan "belum pasti". */
 export function galatTidakDitemukan(jenis: "pelanggan" | "barang", kode: string, peran: Peran = "petugas"): Galat {
