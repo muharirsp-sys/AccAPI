@@ -2,8 +2,8 @@
  * Tujuan: Berkas bukti setoran Transfer Kasir (K2a, BL-59; owner 12 Okt: unggah foto/PDF bukti WAJIB untuk Transfer) — jenis dari MAGIC
  *   BYTES (bukan ekstensi/MIME klien), batas ukuran, nama dibuat server (UUID), tulis eksklusif, baca/hapus hanya nama berpola ketat.
  * Caller: lib/kasir/hari.ts (catatSetoran), app/api/kasir/setoran (unggah), app/api/kasir/bukti (unduh).
- * Dependensi: node:fs/promises, node:path, node:crypto.
- * Main Functions: jenisBukti, simpanBukti, hapusBukti, bacaBukti, namaBuktiSah.
+ * Dependensi: node:fs/promises, node:path, node:crypto, sharp (encode ulang gambar; sudah dipakai Form Kontrol).
+ * Main Functions: jenisBukti, normalkanBukti, bacaBadanTerbatas, simpanBukti, hapusBukti, bacaBukti, namaBuktiSah.
  * Side Effects: tulis/baca/hapus berkas di `tempatBukti.dir` (bawaan: data/uploads/kasir-bukti = volume data frontend, mekanisme sama
  *   dengan foto Form Kontrol lib/form-kontrol/uploads.ts). TIDAK disentuh cron cleanup-uploads (retensi bukti uang = permanen).
  *
@@ -13,6 +13,7 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import sharp from "sharp";
 
 /** Batas berkas bukti (sama dengan bukti pembayaran OPC & foto Form Kontrol). */
 export const MAKS_BUKTI_BYTES = 5 * 1024 * 1024;
@@ -37,6 +38,28 @@ export function jenisBukti(b: Uint8Array): JenisBukti | null {
     if (b.length >= 8 && PNG.every((x, i) => b[i] === x)) return "png";
     if (b.length >= 5 && String.fromCharCode(...b.subarray(0, 5)) === "%PDF-") return "pdf";
     return null;
+}
+
+/** Sisi terpanjang gambar bukti sesudah encode ulang (keputusan orkestrator sesudah tinjauan B). */
+export const SISI_MAKS_PX = 2000;
+/** Batas piksel MASUKAN (bom dekompresi: PNG 5 MB bisa berukuran 20000×20000). 60 MP > kamera ponsel 50 MP. */
+const PIKSEL_MASUK_MAKS = 60_000_000;
+export class BuktiRusak extends Error {}
+
+/**
+ * Gambar bukti (jpg/png) DI-ENCODE ULANG dengan sharp (sudah dipakai Form Kontrol): orientasi EXIF diterapkan lalu SEMUA metadata (EXIF/GPS)
+ * dibuang, muatan polyglot (data sesudah akhir gambar) hilang, sisi terpanjang ≤ 2000 px (tanpa memperbesar), JPEG kualitas 80 -> jenis
+ * tersimpan selalu `jpg`. PDF disimpan apa adanya (magic bytes + batas ukuran dicek pemanggil). Gambar tak terbaca -> BuktiRusak.
+ */
+export async function normalkanBukti(isi: Uint8Array, jenis: JenisBukti): Promise<{ isi: Uint8Array; jenis: JenisBukti }> {
+    if (jenis === "pdf") return { isi, jenis };
+    try {
+        const keluar = await sharp(isi, { limitInputPixels: PIKSEL_MASUK_MAKS }).rotate()
+            .resize(SISI_MAKS_PX, SISI_MAKS_PX, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+        return { isi: new Uint8Array(keluar), jenis: "jpg" };
+    } catch (e) {
+        throw new BuktiRusak(e instanceof Error ? e.message : String(e));
+    }
 }
 
 export class BadanTerlaluBesar extends Error {}
@@ -82,18 +105,25 @@ export async function simpanBukti(isi: Uint8Array, jenis: JenisBukti): Promise<s
     return nama;
 }
 
-/** Hapus berkas yang BELUM terikat ke baris setoran (galat pasti sebelum commit). Nama tak berpola = diabaikan; galat fs ditelan. */
+const kodeFs = (e: unknown) => (e as NodeJS.ErrnoException | null)?.code;
+
+/** Hapus berkas yang BELUM terikat ke baris setoran (galat pasti sebelum commit). Nama tak berpola = diabaikan; galat selain ENOENT DICATAT
+ * (berkas yatim tertinggal — tidak menggagalkan jawaban, tetapi tidak diam). */
 export async function hapusBukti(nama: string | null | undefined): Promise<void> {
     if (!namaBuktiSah(nama)) return;
-    await unlink(/*turbopackIgnore: true*/ lokasi(nama)).catch(() => undefined);
+    await unlink(/*turbopackIgnore: true*/ lokasi(nama)).catch((e: unknown) => {
+        if (kodeFs(e) !== "ENOENT") console.error("[KASIR BUKTI] gagal menghapus berkas yatim", nama, e);
+    });
 }
 
-/** Baca berkas bukti; null bila nama tak berpola atau berkas tidak ada. */
+/** Baca berkas bukti; null bila nama tak berpola atau berkas TIDAK ADA (ENOENT). Galat lain (izin, disk, EISDIR) dilempar -> route 500 berkode
+ * (bukan 404 diam). */
 export async function bacaBukti(nama: string | null | undefined): Promise<{ isi: Buffer; jenis: JenisBukti } | null> {
     if (!namaBuktiSah(nama)) return null;
     try {
         return { isi: await readFile(/*turbopackIgnore: true*/ lokasi(nama)), jenis: nama.slice(nama.lastIndexOf(".") + 1) as JenisBukti };
-    } catch {
-        return null;
+    } catch (e) {
+        if (kodeFs(e) === "ENOENT") return null;
+        throw e;
     }
 }

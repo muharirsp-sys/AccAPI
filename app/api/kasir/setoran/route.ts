@@ -12,7 +12,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { bawaanHari, catatSetoran, GalatKasir, jawabanGalat, uraiSetoran } from "@/lib/kasir/hari";
-import { BadanTerlaluBesar, bacaBadanTerbatas, hapusBukti, jenisBukti, MAKS_BADAN_SETORAN_BYTES, MAKS_BUKTI_BYTES, simpanBukti } from "@/lib/kasir/bukti";
+import {
+    BadanTerlaluBesar, bacaBadanTerbatas, BuktiRusak, hapusBukti, jenisBukti, MAKS_BADAN_SETORAN_BYTES, MAKS_BUKTI_BYTES, normalkanBukti, simpanBukti,
+} from "@/lib/kasir/bukti";
 
 export const runtime = "nodejs";
 
@@ -52,7 +54,12 @@ export async function POST(request: NextRequest) {
             const isi = new Uint8Array(await berkas.arrayBuffer());
             const jenis = jenisBukti(isi);
             if (!jenis) throw salahBukti("Bukti transfer harus foto JPG/PNG atau PDF (isi berkas diperiksa, bukan nama berkas).");
-            buktiBaru = await simpanBukti(isi, jenis);
+            // Gambar di-encode ulang (EXIF/GPS & polyglot terbuang, ≤ 2000 px, JPEG); PDF apa adanya.
+            const n = await normalkanBukti(isi, jenis).catch((e: unknown) => {
+                if (e instanceof BuktiRusak) throw salahBukti("Gambar bukti rusak atau tidak terbaca — unggah ulang foto/PDF bukti.");
+                throw e;
+            });
+            buktiBaru = await simpanBukti(n.isi, n.jenis);
         }
         const h = await catatSetoran({ ...isian, buktiBaru }, gate.session.user.id, bawaanHari);
         return NextResponse.json({ ok: true, ...h });

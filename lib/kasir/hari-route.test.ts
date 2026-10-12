@@ -5,7 +5,7 @@
  * ketat, nosniff, PDF attachment), bentuk GET: angka Incaso null bila status ≠ lengkap, galat internal tanpa pesan mentah. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server";
@@ -16,7 +16,8 @@ import { POST as postTutup } from "../../app/api/kasir/tutup/route.ts";
 import { POST as postBuka } from "../../app/api/kasir/buka/route.ts";
 import { GET as getBukti } from "../../app/api/kasir/bukti/route.ts";
 import { BATAS_KOLOM_SEN, bawaanHari, bentukJawabanHari, jawabanGalat, uraiSetoran, type DepsHari, type Muatan } from "./hari.ts";
-import { jenisBukti, namaBuktiSah, tempatBukti } from "./bukti.ts";
+import sharp from "sharp";
+import { hapusBukti, jenisBukti, namaBuktiSah, SISI_MAKS_PX, tempatBukti } from "./bukti.ts";
 import { belumDibaca, type StatusBaca } from "./baca-pelunasan.ts";
 import { rekonsiliasiHari, type PetaOrang } from "./rekonsiliasi.ts";
 import { accurateEmployee, kasirSetoran } from "../../db/schema.ts";
@@ -26,6 +27,10 @@ import { db } from "../db.ts";
 const D = "2026-10-05";
 const JAM = new Date("2026-10-05T10:00:00+08:00");
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+/** PNG sah (bisa didekode sharp) untuk unggahan yang harus lolos encode ulang. */
+let pngAsliMemo: Promise<Uint8Array> | null = null;
+const pngAsli = () => (pngAsliMemo ??= sharp({ create: { width: 40, height: 20, channels: 3, background: { r: 200, g: 10, b: 10 } } }).png().toBuffer()
+    .then((b) => new Uint8Array(b)));
 
 /** Rantai db.select tiruan: tiap select() memakai jawaban berikutnya dari antrean (izin dulu). */
 function selectTiruan(antrean: unknown[][]) {
@@ -204,7 +209,7 @@ test("POST setoran multipart: magic bytes palsu / > 5 MB / transfer 0 + berkas -
 
     // DB gagal SEBELUM commit -> 500 GALAT_INTERNAL (pasti) dan berkas yang sudah ditulis DIHAPUS.
     const g = await dengan({ izin: ["kasir.catat"] }, async (dir) => {
-        const res = await postSetoran(multipart(transfer, { isi: PNG, nama: "x.txt" }));
+        const res = await postSetoran(multipart(transfer, { isi: await pngAsli(), nama: "x.txt" }));
         assert.deepEqual(await readdir(dir), [], "berkas yatim dihapus");
         return res;
     });
@@ -215,10 +220,10 @@ test("POST setoran multipart: magic bytes palsu / > 5 MB / transfer 0 + berkas -
     // Commit berhasil -> 200 + buktiUrl; berkas tersimpan bernama UUID (bukan nama dari klien).
     const dicatat: unknown[][] = [];
     const ok = await dengan({ izin: ["kasir.catat"], transaksi: transaksiTiruan("commit", dicatat) }, async (dir) => {
-        const res = await postSetoran(multipart(transfer, { isi: PNG, nama: "../../etc/passwd" }));
+        const res = await postSetoran(multipart(transfer, { isi: await pngAsli(), nama: "../../etc/passwd" }));
         const isi = await readdir(dir);
         assert.equal(isi.length, 1);
-        assert.ok(namaBuktiSah(isi[0]) && isi[0].endsWith(".png"), isi[0]);
+        assert.ok(namaBuktiSah(isi[0]) && isi[0].endsWith(".jpg"), `${isi[0]} (PNG di-encode ulang menjadi JPEG)`);
         assert.equal((dicatat[0][0] as { buktiTransfer: string }).buktiTransfer, isi[0]);
         return res;
     });
@@ -228,11 +233,80 @@ test("POST setoran multipart: magic bytes palsu / > 5 MB / transfer 0 + berkas -
 
     // Galat SESUDAH callback (COMMIT putus) -> 502 TIDAK_PASTI; berkas DIBIARKAN (baris mungkin tersimpan).
     const tp = await dengan({ izin: ["kasir.catat"], transaksi: transaksiTiruan("putus", []) }, async (dir) => {
-        const res = await postSetoran(multipart(transfer, { isi: PNG, nama: "b.png" }));
+        const res = await postSetoran(multipart(transfer, { isi: await pngAsli(), nama: "b.png" }));
         assert.equal((await readdir(dir)).length, 1, "berkas tetap ada");
         return res;
     });
     assert.deepEqual([tp.status, (await tp.json() as Badan).kode], [502, "TIDAK_PASTI"]);
+});
+
+test("POST setoran: gambar bukti DI-ENCODE ULANG (EXIF/GPS & polyglot terbuang, ≤ 2000 px, JPEG); gambar rusak 400; PDF apa adanya", async () => {
+    const transfer = { ...baku, transfer: "500000" };
+    // PNG 3000×1500 ber-EXIF (penanda "GPS-RAHASIA") + muatan polyglot sesudah IEND.
+    const asli = await sharp({ create: { width: 3000, height: 1500, channels: 3, background: { r: 10, g: 120, b: 200 } } })
+        .withExif({ IFD0: { Copyright: "GPS-RAHASIA" } }).png().toBuffer();
+    assert.match(Buffer.from(asli).toString("latin1"), /GPS-RAHASIA/, "masukan memang membawa EXIF");
+    const poliglot = new Uint8Array(Buffer.concat([asli, Buffer.from("<script>alert(1)</script>")]));
+    const tersimpan = async (isi: Uint8Array, nama: string) => {
+        let hasil: { nama: string; isi: Buffer } | null = null;
+        const res = await dengan({ izin: ["kasir.catat"], transaksi: transaksiTiruan("commit", []) }, async (dir) => {
+            const r = await postSetoran(multipart(transfer, { isi, nama }));
+            const [f] = await readdir(dir);
+            if (f) hasil = { nama: f, isi: await readFile(path.join(dir, f)) };
+            return r;
+        });
+        return { status: res.status, berkas: hasil as { nama: string; isi: Buffer } | null };
+    };
+    const g = await tersimpan(poliglot, "bukti.png");
+    assert.equal(g.status, 200);
+    assert.ok(g.berkas?.nama.endsWith(".jpg"));
+    const meta = await sharp(g.berkas!.isi).metadata();
+    assert.deepEqual([meta.format, meta.width, meta.height, meta.exif], ["jpeg", SISI_MAKS_PX, 1000, undefined]);
+    const teks = g.berkas!.isi.toString("latin1");
+    assert.doesNotMatch(teks, /GPS-RAHASIA/, "EXIF dibuang");
+    assert.doesNotMatch(teks, /<script>/, "muatan polyglot dibuang");
+    // Gambar kecil tidak diperbesar.
+    const kecil = await tersimpan(await pngAsli(), "k.png");
+    assert.deepEqual([(await sharp(kecil.berkas!.isi).metadata()).width], [40]);
+    // Berheader PNG tetapi rusak -> 400, tanpa berkas tertinggal.
+    const rusak = await dengan({ izin: ["kasir.catat"] }, async (dir) => {
+        const r = await postSetoran(multipart(transfer, { isi: PNG, nama: "r.png" }));
+        assert.deepEqual(await readdir(dir), []);
+        return r;
+    });
+    const rb = await rusak.json() as Badan;
+    assert.deepEqual([rusak.status, rb.field], [400, "buktiTransfer"]);
+    assert.match(rb.error ?? "", /rusak/);
+    // PDF disimpan byte demi byte.
+    const pdfIsi = new TextEncoder().encode("%PDF-1.4\n% bukti transfer\n%%EOF");
+    const pdf = await tersimpan(pdfIsi, "b.pdf");
+    assert.ok(pdf.berkas?.nama.endsWith(".pdf"));
+    assert.deepEqual(new Uint8Array(pdf.berkas!.isi), pdfIsi);
+});
+
+test("bukti: galat baca selain ENOENT -> 500 GALAT_INTERNAL tercatat (bukan 404 diam); hapusBukti mencatat galat selain ENOENT", async () => {
+    const nama = "0a1b2c3d-0000-4000-8000-000000000002";
+    const log: unknown[][] = [];
+    const asli = console.error;
+    console.error = (...a: unknown[]) => { log.push(a); };
+    try {
+        const r = await dengan({ izin: ["kasir.view"], select: [[{ bukti: `${nama}.jpg`, tanggal: D, kode: "S-A", revisi: 1 }]] }, async (dir) => {
+            await mkdir(path.join(dir, `${nama}.jpg`)); // EISDIR saat dibaca
+            return getBukti(new NextRequest("http://app.test/api/kasir/bukti?id=9"));
+        });
+        assert.deepEqual([r.status, (await r.json() as Badan).kode], [500, "GALAT_INTERNAL"]);
+        assert.ok(log.some((a) => a[0] === "[KASIR BUKTI]"), "galat dicatat");
+        log.length = 0;
+        await dengan({}, async (dir) => {
+            await mkdir(path.join(dir, `${nama}.jpg`));
+            await hapusBukti(`${nama}.jpg`); // unlink direktori -> EPERM/EISDIR
+            await hapusBukti(`${nama.replace(/2$/, "3")}.jpg`); // ENOENT -> diam
+        });
+        assert.equal(log.length, 1, "satu catatan: hanya galat selain ENOENT");
+        assert.match(String(log[0][0]), /gagal menghapus berkas yatim/);
+    } finally {
+        console.error = asli;
+    }
 });
 
 test("POST setoran: badan CHUNKED tanpa content-length ditolak 413 tanpa membaca badan penuh (stream diputus sesudah 6 MB)", async () => {
@@ -301,8 +375,9 @@ test("GET bukti: id salah 400; baris/berkas tak ada atau nama tak berpola (trave
         return getBukti(new NextRequest("http://app.test/api/kasir/bukti?id=9"));
     });
     assert.equal(png.status, 200);
-    assert.deepEqual([png.headers.get("content-type"), png.headers.get("x-content-type-options"), png.headers.get("cache-control"), png.headers.get("content-disposition")],
-        ["image/png", "nosniff", "private, no-store", `inline; filename="bukti-${D}-S_A-r2.png"`]);
+    assert.deepEqual([png.headers.get("content-type"), png.headers.get("x-content-type-options"), png.headers.get("cache-control"), png.headers.get("content-disposition"),
+        png.headers.get("content-security-policy")],
+        ["image/png", "nosniff", "private, no-store", `inline; filename="bukti-${D}-S_A-r2.png"`, "sandbox"]);
     assert.deepEqual(new Uint8Array(await png.arrayBuffer()), PNG);
     const pdf = await dengan({ izin: ["kasir.view"], select: [[{ bukti: `${nama}.pdf`, tanggal: D, kode: "S-A", revisi: 1 }]] }, async (dir) => {
         await writeFile(path.join(dir, `${nama}.pdf`), new TextEncoder().encode("%PDF-1.4"));

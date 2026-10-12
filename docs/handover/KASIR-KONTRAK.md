@@ -337,14 +337,17 @@ Badan `application/json`, ATAU `multipart/form-data` dengan bagian `data` (teks 
   catatan); rantai kode lain milik orang itu yang ≠ 0 = revisi baru bernilai 0 (catatan otomatis). 23505 -> 409 `SETORAN_BERUBAH`.
 - 200 `{ ok: true, orang, revisi: [{ kode, revisi }], buktiUrl: string|null }`.
 
-**Berkas bukti**: disimpan di volume data frontend `data/uploads/kasir-bukti/<uuid>.<jpg|png|pdf>` (mekanisme sama dengan foto Form
-Kontrol, `/app/data` = volume `accapi_frontend_data`); nama dibuat SERVER (`randomUUID`), ditulis eksklusif (`wx`) SEBELUM transaksi, namanya
-disimpan di `kasir_setoran.bukti_transfer`. Galat PASTI (400/409/500) -> berkas dihapus; `TIDAK_PASTI` -> dibiarkan (yatim, tak terjangkau).
-Tidak pernah ditimpa/dihapus sesudahnya (koreksi = revisi baru + berkas baru atau `buktiLama`); cron `cleanup-uploads` hanya menyentuh
-`form-kontrol` (retensi bukti = permanen, cadangan = volume data).
-`GET /api/kasir/bukti?id=<kasir_setoran.id>` (`kasir.view`): berkas apa adanya, `Content-Type` dari jenis tersimpan, `X-Content-Type-Options:
-nosniff`, `Cache-Control: private, no-store`; gambar `inline`, PDF `attachment`; nama unduhan `bukti-<tanggal>-<kode>-r<revisi>.<ext>`. Path
-dari DB (pola UUID ketat + `basename`), tak pernah dari input pengguna. 400 `INPUT_SALAH` (id), 404 `TIDAK_ADA`.
+**Berkas bukti**: disimpan di volume data frontend `data/uploads/kasir-bukti/<uuid>.<jpg|pdf>` (mekanisme sama dengan foto Form
+Kontrol, `/app/data` = volume `accapi_frontend_data`). **Gambar (jpg/png) di-encode ulang** dengan sharp: orientasi diterapkan, SEMUA metadata
+(EXIF/GPS) dan muatan polyglot terbuang, sisi terpanjang ≤ 2000 px (tanpa memperbesar), JPEG kualitas 80 -> selalu `.jpg`; gambar tak terbaca
+-> 400 `buktiTransfer`. PDF disimpan apa adanya. Nama dibuat SERVER (`randomUUID`), ditulis eksklusif (`wx`) SEBELUM transaksi, namanya
+disimpan di `kasir_setoran.bukti_transfer`. Galat PASTI (400/409/413/422/500) -> berkas dihapus (gagal hapus selain ENOENT dicatat log);
+`TIDAK_PASTI` -> dibiarkan (yatim, tak terjangkau). Tidak pernah ditimpa/dihapus sesudahnya (koreksi = revisi baru + berkas baru atau
+`buktiLama`); cron `cleanup-uploads` hanya menyentuh `form-kontrol` (retensi bukti = permanen, cadangan = volume data).
+`GET /api/kasir/bukti?id=<kasir_setoran.id>` (`kasir.view`): berkas tersimpan, `Content-Type` dari jenis tersimpan, `X-Content-Type-Options:
+nosniff`, `Content-Security-Policy: sandbox`, `Cache-Control: private, no-store`; gambar `inline`, PDF `attachment`; nama unduhan
+`bukti-<tanggal>-<kode>-r<revisi>.<ext>`. Path dari DB (pola UUID ketat + `basename`), tak pernah dari input pengguna. 400 `INPUT_SALAH` (id),
+404 `TIDAK_ADA` (baris/berkas tidak ada), 500 `GALAT_INTERNAL` (galat baca selain ENOENT — dicatat, bukan 404 diam).
 
 ### 8.5 `POST /api/kasir/jelaskan` (`kasir.catat`)
 

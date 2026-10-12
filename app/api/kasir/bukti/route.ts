@@ -3,7 +3,8 @@
  *   (pola UUID ketat, basename) — tidak pernah dari input pengguna.
  * Caller: K2b (buktiUrl di GET /api/kasir: riwayat revisi & setoranTerakhir). Kontrak: docs/handover/KASIR-KONTRAK.md §8.4.
  * Dependensi: lib/kasir/hari (cariBukti), lib/kasir/bukti (bacaBukti, MIME_BUKTI), lib/rbac/resolve.
- * Main Functions: GET ?id=<kasir_setoran.id> -> berkas (gambar inline, PDF attachment, nosniff, no-store) | 400 | 404 TIDAK_ADA | 500.
+ * Main Functions: GET ?id=<kasir_setoran.id> -> berkas (gambar inline, PDF attachment, nosniff, CSP sandbox, no-store) | 400 |
+ *   404 TIDAK_ADA (baris/berkas tak ada) | 500 GALAT_INTERNAL (galat baca selain ENOENT, dicatat).
  * Side Effects: SELECT kasir_setoran + baca berkas dari volume data. Tidak menulis.
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -32,6 +33,7 @@ export async function GET(request: NextRequest) {
                 "content-type": MIME_BUKTI[f.jenis],
                 "content-disposition": `${f.jenis === "pdf" ? "attachment" : "inline"}; filename="${nama}"`,
                 "x-content-type-options": "nosniff",
+                "content-security-policy": "sandbox",
                 "cache-control": "private, no-store",
             },
         });
