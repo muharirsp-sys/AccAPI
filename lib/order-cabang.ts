@@ -3,7 +3,7 @@
  *   salesman = cabang karyawannya di Accurate; harga = cabang pelanggan. SATU pemeriksa untuk pratinjau dan simpan order.
  * Caller: lib/sync (tag barang -> cabang), app/api/orders/{preview,harga}, app/api/customers/search, app/api/items/search.
  * Dependensi: db (customer, item, branch, accurate_employee, sales_profile), lib/item-price (resolvePrices).
- * Main Functions: cabangDariTag, petaCabang (murni); cakupanCabang, periksaOrder (DB baca-saja).
+ * Main Functions: cabangDariTag, petaCabang, hargaSah, hargaPetugasSah, tripwireIzin (murni); cakupanCabang, periksaOrder (DB baca-saja).
  * Side Effects: DB read-only.
  * Kontrak: docs/handover/O1-KONTRAK-ORDER-CABANG.md.
  */
@@ -22,7 +22,7 @@ import { resolvePrices, type PriceResult } from "@/lib/item-price";
 export const TAG_KE_CABANG: Readonly<Record<string, string>> = {
     "24MNF1": "MIX NON FOOD",
     "21MNF2": "MIX NON FOOD",
-    FRN: "MIX NON FOOD",
+    FRN: "SHINZUI",
     "HEINZ ABC": "HEINZ",
     MIX2: "DOLPHIN",
     FKS: "MIX FOOD",
@@ -66,13 +66,16 @@ export type GalatOrder = { status: number; kode: string; error: string; [k: stri
  * begitu karyawan dipindah cabang di Accurate; cabang karyawan ikut sync employee/list.do.
  */
 export async function cakupanCabang(userId: string, perms: ReadonlySet<string>): Promise<{ cakupan: Cakupan } | { galat: GalatOrder }> {
+    const tripwire = tripwireIzin(perms);
+    if (tripwire) return { galat: tripwire };
     if (perms.has("order.view")) return { cakupan: { semua: true } };
+    // Hanya profil yang DITAUTKAN admin (`accurate_linked`); profil Form Kontrol yang tautannya dilepas tetap ada tetapi tidak membuka order.
     const res = await db.execute(sql`
         SELECT sp.sales_code, e.id AS employee_id, e.branch_id, e.salesman, e.suspended, b.name AS branch_name
         FROM sales_profile sp
         LEFT JOIN accurate_employee e ON upper(trim(e.number)) = upper(trim(sp.sales_code))
         LEFT JOIN branch b ON b.id = e.branch_id
-        WHERE sp.user_id = ${userId}`);
+        WHERE sp.user_id = ${userId} AND sp.accurate_linked`);
     const rows = res.rows as Array<{ sales_code: string; employee_id: number | null; branch_id: number | string | null;
         salesman: boolean | null; suspended: boolean | null; branch_name: string | null }>;
     const belum = (alasan: string): { galat: GalatOrder } => ({ galat: { status: 403, kode: "SALESMAN_BELUM_TERHUBUNG",
@@ -91,6 +94,18 @@ export async function cakupanCabang(userId: string, perms: ReadonlySet<string>):
     }
     const r = aktif[0];
     return { cakupan: { semua: false, branchId: Number(r.branch_id), branchName: r.branch_name ?? "", salesCode: kode[0] } };
+}
+
+/**
+ * Tripwire izin (butir 11): akun ber-`websales.create` (sales) yang juga punya `order.view` tetapi TANPA `order.create` akan diam-diam
+ * mendapat cakupan SEMUA cabang (penanda petugas internal = `order.view`). Itu salah konfigurasi grup, bukan izin: ditolak berkode
+ * sampai admin membetulkan grupnya (DDL_O1 VERIFIKASI memeriksa hal yang sama per grup). Murni — diuji tanpa DB.
+ */
+export function tripwireIzin(perms: ReadonlySet<string>): GalatOrder | null {
+    if (!perms.has("websales.create") || !perms.has("order.view") || perms.has("order.create")) return null;
+    return { status: 403, kode: "IZIN_TIDAK_KONSISTEN",
+        error: "Akun Anda punya izin Order Sales sekaligus lihat Order Masuk tanpa izin membuat order — cakupan cabang tidak bisa dipastikan. "
+            + "Minta admin membetulkan grup akses (sales: hanya websales.*; petugas: order.create)." };
 }
 
 /** Galat berkode -> jawaban `{ ok:false, kode, error, ... }` dengan status HTTP-nya. */
@@ -117,22 +132,54 @@ export function angkaQuery(v: string | null): number | null | undefined {
     return /^\d{1,15}$/.test(v.trim()) ? Number(v.trim()) : undefined;
 }
 
+// ---------------------------------------------------------------- harga order (murni)
+
+/**
+ * Harga master yang SAH untuk order (O1 putaran 1, butir 3): baris daftar harga Accurate (`tier`; BUKAN `item.unitPrice` — satu angka
+ * untuk semua satuan, terbukti KRT dibekukan 6306 = harga PCS), > 0 (tanggal mundur pernah menghasilkan 0 -> faktur 0), dan dari cabang
+ * PELANGGAN — atau cabang DEFAULT bila cabang pelanggan tak punya baris yang berlaku pada tanggal order. Default = daftar harga pusat
+ * yang memang dipakai Accurate untuk cabang tanpa harga sendiri (aturan fallback lib/item-price, 2026-09-08). Cabang LAIN (urutan
+ * terakhir resolvePrices: id terkecil) TIDAK pernah sah: harga cabang lain = salah harga diam-diam.
+ */
+export function hargaSah(row: PriceResult, branchId: number): boolean {
+    return row.source === "tier" && typeof row.price === "number" && Number.isFinite(row.price) && row.price > 0
+        && row.branchId !== undefined && (row.branchId === branchId || row.defaultBranch === true);
+}
+
+/** Kenapa harga master tidak sah — untuk kalimat galat `HARGA_BELUM_ADA`. */
+export function alasanHarga(row: PriceResult, branchId: number): string {
+    if (row.source === "missing" || row.price === null) return "belum ada";
+    if (row.source === "standard") return "hanya harga standar barang (bukan daftar harga Accurate per satuan)";
+    if (!(row.price > 0)) return `harga ${row.price}`;
+    if (row.branchId !== branchId && row.defaultBranch !== true) return `harga cabang lain (${row.branchName || row.branchId})`;
+    return "tidak sah";
+}
+
+// ponytail: bentuk SAMA dengan Python (order_cabang.HARGA_PETUGAS) — angka biasa, maks 4 desimal, tanpa tanda/eksponen/pemisah ribuan.
+export const HARGA_PETUGAS = /^\d{1,12}(\.\d{1,4})?$/;
+/** Harga ketikan petugas (Order Baru): teks angka > 0, atau null. */
+export const hargaPetugasSah = (teks: string) => HARGA_PETUGAS.test(teks) && Number(teks) > 0 ? Number(teks) : null;
+
 // ---------------------------------------------------------------- pemeriksa order (pratinjau = simpan)
 
-export type BarisOrder = { code: string; unit: string };
+/** `price` = harga PETUGAS (Order Baru) — pemanggil yang memastikan izinnya (`order.create`/layanan); kosong = harga master. */
+export type BarisOrder = { code: string; unit: string; price?: string };
 export type PelangganOrder = { id: number; customerNo: string; name: string; branchId: number; branchName: string; categoryName: string | null };
-export type HasilPeriksa = { ok: true; pelanggan: PelangganOrder; harga: PriceResult[] } | ({ ok: false } & GalatOrder);
+/** Harga terpakai per baris: master sah (`tier`) atau petugas (`petugas`, + `hargaMaster` sah/null untuk tanda "diubah"). */
+export type HargaBaris = Omit<PriceResult, "price" | "source"> & { price: number; source: "tier" | "petugas"; hargaMaster?: number | null };
+export type HasilPeriksa = { ok: true; pelanggan: PelangganOrder; harga: HargaBaris[] } | ({ ok: false } & GalatOrder);
 
 const tolak = (status: number, kode: string, error: string, extra: Record<string, unknown> = {}): HasilPeriksa =>
     ({ ok: false, status, kode, error, ...extra });
 
 /**
- * Satu pemeriksa untuk pratinjau (`/api/orders/preview`) dan simpan (`/api/orders/harga`, dipanggil FastAPI saat Order Sales disimpan
- * dan saat order ditarik/disimpan internal): pelanggan ada, tidak suspended, bercabang, di cakupan pemakai; barang ada, tidak
- * suspended, cabangnya = cabang pelanggan; lalu (bila `harga`) satuan sah dan harga per CABANG PELANGGAN (dibaca server, bukan dari
- * badan permintaan). `harga: false` = hanya aturan cabang — input internal Order Baru membawa harga petugas sendiri.
+ * Satu pemeriksa untuk pratinjau (`/api/orders/preview`) dan simpan (`/api/orders/harga`, dipanggil FastAPI saat Order Sales/Order Baru
+ * disimpan dan saat order ditarik): pelanggan ada, tidak suspended, bercabang, di cakupan pemakai; barang ada, tidak suspended,
+ * cabangnya = cabang pelanggan; satuan sah; lalu harga PER BARIS: `price` petugas (> 0, tidak pernah ditimpa) atau harga master SAH
+ * per CABANG PELANGGAN (`hargaSah`; dibaca server, bukan dari badan permintaan). Hasil yang sama dipakai pratinjau dan simpan,
+ * jadi promo dihitung atas angka yang sama (kontrak §4).
  */
-export async function periksaOrder(input: { customerNo: string; orderDate: string; lines: BarisOrder[]; cakupan: Cakupan; harga?: boolean }): Promise<HasilPeriksa> {
+export async function periksaOrder(input: { customerNo: string; orderDate: string; lines: BarisOrder[]; cakupan: Cakupan }): Promise<HasilPeriksa> {
     const customerNo = input.customerNo.trim();
     if (!customerNo) return tolak(400, "PELANGGAN_WAJIB", "Kode pelanggan Accurate wajib diisi.");
     const [p] = await db.select({
@@ -166,7 +213,12 @@ export async function periksaOrder(input: { customerNo: string; orderDate: strin
             `Barang bukan barang cabang ${pelanggan.branchName || p.branchId} milik pelanggan ini: ${beda.slice(0, 5).map(ket).join("; ")}`,
             { barang: beda.map((b) => ({ code: b.no, name: b.name, branchId: b.branchId, branchName: b.branchName ?? null, tag: b.tag })) });
     }
-    if (input.harga === false) return { ok: true, pelanggan, harga: [] };
+    const petugas = input.lines.map((l) => (l.price ?? "").trim());
+    const hargaBuruk = input.lines.filter((l, i) => petugas[i] !== "" && hargaPetugasSah(petugas[i]) === null);
+    if (hargaBuruk.length) {
+        return tolak(400, "HARGA_TIDAK_VALID", `Harga ${hargaBuruk.slice(0, 5).map((l) => l.code).join(", ")} harus angka lebih dari 0 `
+            + "(maks 4 desimal, tanpa titik ribuan). Kosongkan untuk memakai harga master.", { barang: hargaBuruk.map((l) => l.code) });
+    }
 
     const harga = await resolvePrices(input.lines.map((l) => ({ code: l.code.trim(), unit: l.unit.trim().toUpperCase() })), {
         orderDate: input.orderDate, customerNo, branchId: p.branchId,
@@ -178,9 +230,19 @@ export async function periksaOrder(input: { customerNo: string; orderDate: strin
             .map((row) => `Satuan ${row.unit} tidak ada di master untuk ${row.code} (tersedia: ${row.knownUnits!.join(", ")})`).join("; "),
         { wrong_unit: wrongUnit.map((row) => ({ code: row.code, unit: row.unit, known_units: row.knownUnits })) });
     }
-    const missing = harga.filter((row) => row.price === null).map((row) => row.code);
-    if (missing.length) {
-        return tolak(409, "HARGA_BELUM_ADA", `Harga belum tersedia dari Accurate untuk: ${[...new Set(missing)].slice(0, 5).join(", ")}`, { missing });
+    const tanpaHarga = harga.filter((row, i) => petugas[i] === "" && !hargaSah(row, pelanggan.branchId));
+    if (tanpaHarga.length) {
+        const ket = tanpaHarga.slice(0, 5).map((row) => `${row.code} ${row.unit}: ${alasanHarga(row, pelanggan.branchId)}`).join("; ");
+        return tolak(409, "HARGA_BELUM_ADA", `Harga master cabang ${pelanggan.branchName || p.branchId} belum sah untuk: ${ket}`,
+            { missing: tanpaHarga.map((row) => row.code) });
     }
-    return { ok: true, pelanggan, harga };
+    return {
+        ok: true, pelanggan,
+        harga: harga.map((row, i): HargaBaris => {
+            const master = hargaSah(row, pelanggan.branchId) ? row.price : null;
+            return petugas[i] !== ""
+                ? { code: row.code, unit: row.unit, price: hargaPetugasSah(petugas[i])!, source: "petugas", hargaMaster: master }
+                : { ...row, price: master!, source: "tier" };
+        }),
+    };
 }

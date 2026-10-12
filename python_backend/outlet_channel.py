@@ -55,6 +55,15 @@ class ChannelTidakPasti(Exception):
     """Channel outlet tidak bisa dipastikan; pemanggil WAJIB menahan, bukan melanjutkan."""
 
 
+class ChannelBedaMaster(ChannelTidakPasti):
+    """Jawaban PASTI master: outlet tidak ada, belum berkategori, atau channelnya beda (O1 putaran 1, 12 Okt 2026).
+
+    Dipisah dari kegagalan jaringan supaya tarikan Order Masuk bisa MENOLAK permintaan itu saja (permanen, berkode) alih-alih
+    menghentikan seluruh tarikan, dan simpan menjawab 422 berkode, bukan 503. Subkelas: pemanggil lama yang menangkap
+    `ChannelTidakPasti` tetap menangkapnya.
+    """
+
+
 def _dari_cache(kode: str) -> Optional[str]:
     entry = _CACHE.get(kode)
     if entry and entry[0] > time.time():
@@ -126,19 +135,19 @@ def verify(customer_no: str, channel_diminta: str) -> str:
     kode = str(customer_no or "").strip()
     diminta = str(channel_diminta or "").strip().upper()
     if not kode:
-        raise ChannelTidakPasti("Kode pelanggan Accurate wajib diisi untuk memastikan channelnya")
+        raise ChannelBedaMaster("Kode pelanggan Accurate wajib diisi untuk memastikan channelnya")
 
     peta = channels_of([kode])
     if kode not in peta:
-        raise ChannelTidakPasti(
+        raise ChannelBedaMaster(
             f"Outlet {kode} tidak ada di master pelanggan Accurate, jadi channelnya tidak bisa dipastikan.")
     master = peta[kode]
     if not master:
-        raise ChannelTidakPasti(
+        raise ChannelBedaMaster(
             f"Outlet {kode} belum punya kategori (TT/MT) di Accurate, jadi channelnya tidak bisa dipastikan. "
             "Isi kategorinya di Accurate lebih dulu.")
     if diminta and diminta != master:
-        raise ChannelTidakPasti(
+        raise ChannelBedaMaster(
             f"Order dikirim sebagai channel {diminta}, tetapi master Accurate menyimpan outlet {kode} "
             f"sebagai {master}. Promo per channel diputuskan dari master — betulkan channel ordernya, "
             "atau betulkan kategori outletnya di Accurate.")

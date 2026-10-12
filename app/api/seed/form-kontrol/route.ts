@@ -1,7 +1,8 @@
 /*
  * Tujuan: Seed demo Form Kontrol SUPER — akun login (salesman/spv/sm), sales_profile,
  *   master alasan, JKS, dan AO harian Juni 2026 — dalam satu panggilan.
- * Caller: operator via `GET /api/seed/form-kontrol?secret=<CRON_SECRET>` (sekali jalan).
+ * Caller: operator via `curl -H "Authorization: Bearer $CRON_SECRET" .../api/seed/form-kontrol` (sekali jalan; `?secret=` tidak
+ *   diterima lagi sejak O1 putaran 1 — secret di URL tercatat di log akses).
  * Kenapa endpoint (bukan script libsql): butuh runtime Next untuk hash password
  *   better-auth (auth.$context.password.hash) yang tidak bisa direplikasi di SQL biasa.
  * Idempotent: upsert by email / unique key. Aman dipanggil ulang.

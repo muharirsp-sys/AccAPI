@@ -118,6 +118,11 @@ const bumpSyncedAt = (table: string) =>
 // (`#>> '{}'` lalu ::jsonb; berlaku juga bila suatu hari isinya objek).
 const suspendedBila = (table: string) =>
     sql.raw(`CASE WHEN (excluded.raw_data #>> '{}')::jsonb -> 'suspended' IS NOT NULL THEN excluded."suspended" ELSE ${table}."suspended" END`);
+// Tag divisi barang (cabang order) dengan aturan yang SAMA (O1 putaran 1, butir 10): list.do memintanya eksplisit dan detail.do webhook
+// MEMBAWA charField1/2 (probe produksi 12 Okt 2026), tetapi bentuk jawaban tanpa key `charField2` = "tidak tahu" -> cabang lama
+// DIPERTAHANKAN, bukan dikosongkan. Key ada (termasuk null/"") = ditimpa: tag dikosongkan di Accurate = tanpa cabang = tak bisa diorder.
+const tagBila = (kolom: "branch_id" | "char_field2") =>
+    sql.raw(`CASE WHEN (excluded.raw_data #>> '{}')::jsonb -> 'charField2' IS NOT NULL THEN excluded."${kolom}" ELSE item."${kolom}" END`);
 
 /**
  * Satu baris item/list.do (atau detail.do webhook) -> kolom tabel `item`. Murni supaya pemetaan tag divisi bisa diuji tanpa DB.
@@ -128,6 +133,8 @@ export function barisItem(row: Record<string, unknown>, peta: ReadonlyMap<string
     const tag = cabangDariTag(row.charField2, peta);
     return {
         jenis: tag.jenis,
+        // Key absen = jawaban tanpa tag (cabang lama dipertahankan saat upsert) — tidak dihitung "(kosong)".
+        adaTag: "charField2" in row,
         tag: normalNama(row.charField2) || "(kosong)",
         payload: {
             id: Number(row.id),
@@ -281,7 +288,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
             const takDikenal: TagTakDikenal = {};
             const payloads = rows.map((row) => {
                 const b = barisItem(row, peta);
-                if (b.jenis === "tak_dikenal" || b.jenis === "kosong") takDikenal[b.tag] = (takDikenal[b.tag] ?? 0) + 1;
+                if (b.adaTag && (b.jenis === "tak_dikenal" || b.jenis === "kosong")) takDikenal[b.tag] = (takDikenal[b.tag] ?? 0) + 1;
                 return b.payload;
             });
             await db.insert(item).values(payloads).onConflictDoUpdate({
@@ -291,9 +298,9 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     name: sql`excluded."name"`,
                     itemType: sql`excluded."itemType"`,
                     unitPrice: sql`excluded."unitPrice"`,
-                    // Tag divisi SELALU ditimpa (absen = tanpa cabang = tak bisa diorder: gagal tertutup).
-                    branchId: sql`excluded."branch_id"`,
-                    charField2: sql`excluded."char_field2"`,
+                    // Tag divisi ditimpa bila jawaban MEMBAWA key charField2 (lihat tagBila); key absen = cabang lama tetap.
+                    branchId: tagBila("branch_id"),
+                    charField2: tagBila("char_field2"),
                     suspended: suspendedBila("item"),
                     rawData: sql`excluded."raw_data"`,
                     lastUpdate: sql`excluded."last_update"`,

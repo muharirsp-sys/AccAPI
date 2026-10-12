@@ -4,7 +4,9 @@ Main Functions: main. Side Effects: tidak ada jaringan — modul `requests` dipa
 
 Yang dijaga: (1) cookie kosong TIDAK pernah jatuh ke CRON_SECRET (jalur tanpa cakupan cabang salesman); (2) penolakan berkode Next
 sampai ke pemanggil apa adanya; (3) jawaban rusak / tanpa harga / tidak cocok baris = TIDAK PASTI, bukan diloloskan; (4) harga klien
-ditimpa harga server, kecuali `harga=False` (input internal).
+tanpa izin tidak pernah terkirim: baris tanpa `price` = harga MASTER server, baris ber-`price` = harga PETUGAS yang tidak pernah
+ditimpa; (5) putaran 1: harga <= 0 ditolak (petugas sebelum jaringan, master dari Next), secret layanan ditolak Next = KONFIGURASI
+(503, bukan "ditolak"/"sesi berakhir").
 """
 import json
 import os
@@ -36,9 +38,10 @@ def pasang(status=200, data=None, gagal=None):
     sys.modules["requests"] = types.SimpleNamespace(post=post)
 
 
-LINES = [{"code": "A1", "unit": "krt", "quantity": "2", "price": "999999"}, {"code": "B2", "unit": "PCS", "quantity": "5"}]
-OK = {"ok": True, "lines": [{"code": "A1", "unit": "KRT", "quantity": "2", "price": "456000"},
-                            {"code": "B2", "unit": "PCS", "quantity": "5", "price": "1200.5"}]}
+# Baris master (tanpa price) — harga klien dari Web Sales tidak pernah sampai ke sini (websales membuangnya).
+LINES = [{"code": "A1", "unit": "krt", "quantity": "2"}, {"code": "B2", "unit": "PCS", "quantity": "5"}]
+OK = {"ok": True, "lines": [{"code": "A1", "unit": "KRT", "quantity": "2", "price": "456000", "sumber_harga": "master"},
+                            {"code": "B2", "unit": "PCS", "quantity": "5", "price": "1200.5", "sumber_harga": "master"}]}
 
 
 def harus(galat, fn):
@@ -52,29 +55,59 @@ def harus(galat, fn):
 def main():
     os.environ["NEXT_INTERNAL_URL"] = "http://next.uji:3000"
 
-    # Layanan tanpa CRON_SECRET: tidak pasti, tidak ada panggilan.
+    # Layanan tanpa CRON_SECRET: tidak pasti (konfigurasi), tidak ada panggilan.
     os.environ.pop("CRON_SECRET", None)
     pasang(200, OK)
-    harus(OrderCabangTidakPasti, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES))
-    assert KIRIM == []
+    e = harus(OrderCabangTidakPasti, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES))
+    assert e.kode == "KONFIGURASI_SERVER" and KIRIM == [], (e.kode, KIRIM)
 
-    # Layanan dengan secret: Bearer, alamat Next internal, harga server MENIMPA harga klien, kuantitas/satuan asli tetap.
+    # Layanan dengan secret: Bearer, alamat Next internal, harga MASTER server, kuantitas/satuan asli tetap.
     os.environ["CRON_SECRET"] = "rahasia"
     hasil = order_cabang.periksa("C-1", "2026-10-12", LINES)
     kirim = KIRIM[-1]
     assert kirim["url"] == "http://next.uji:3000/api/orders/harga", kirim
     assert kirim["headers"] == {"Authorization": "Bearer rahasia"}, kirim["headers"]
-    assert kirim["json"]["harga"] is True and kirim["json"]["customer_no"] == "C-1", kirim["json"]
+    assert kirim["json"]["customer_no"] == "C-1" and "harga" not in kirim["json"], kirim["json"]
     assert [line["unit"] for line in kirim["json"]["lines"]] == ["KRT", "PCS"] and "price" not in kirim["json"]["lines"][0]
     assert [line["price"] for line in hasil] == ["456000", "1200.5"], hasil
+    assert [line["sumber_harga"] for line in hasil] == ["master", "master"], hasil
     assert hasil[0]["quantity"] == "2" and hasil[0]["unit"] == "krt", hasil
 
+    # Harga PETUGAS (Order Baru): dikirim per baris, kembali SAMA, bertanda petugas; baris lain harga master.
+    campur = [{**LINES[0], "price": " 450000 "}, LINES[1]]
+    pasang(200, {"ok": True, "lines": [{**OK["lines"][0], "price": "450000", "sumber_harga": "petugas"}, OK["lines"][1]]})
+    hasil = order_cabang.periksa("C-1", "2026-10-12", campur)
+    assert [line.get("price") for line in KIRIM[-1]["json"]["lines"]] == ["450000", None], KIRIM[-1]["json"]
+    assert [(line["price"], line["sumber_harga"]) for line in hasil] == [("450000", "petugas"), ("1200.5", "master")], hasil
+    # Next yang "membetulkan" harga petugas = jawaban yang tidak bisa dipercaya (harga petugas TIDAK pernah ditimpa).
+    for salah in ({**OK["lines"][0], "price": "456000", "sumber_harga": "petugas"}, {**OK["lines"][0], "price": "450000"}):
+        pasang(200, {"ok": True, "lines": [salah, OK["lines"][1]]})
+        harus(OrderCabangTidakPasti, lambda: order_cabang.periksa("C-1", "2026-10-12", campur))
+    # Harga petugas <= 0 / bukan angka / eksponen DITOLAK sebelum jaringan (butir 7).
+    for buruk in ("0", "0.00", "-5", "abc", "1e3", "1.23456", "12,5"):
+        sebelum = len(KIRIM)
+        e = harus(OrderCabangDitolak, lambda: order_cabang.periksa("C-1", "2026-10-12", [{**LINES[0], "price": buruk}]))
+        assert (e.status, e.kode) == (400, "HARGA_TIDAK_VALID") and len(KIRIM) == sebelum, (buruk, e.kode)
+    # Harga MASTER <= 0 dari Next ditolak berkode (butir 3: tanggal mundur -> "0" -> draft -> faktur 0).
+    for nol in ("0", "-1", "0.0"):
+        pasang(200, {"ok": True, "lines": [{**OK["lines"][0], "price": nol}, OK["lines"][1]]})
+        e = harus(OrderCabangDitolak, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES))
+        assert (e.status, e.kode, e.extra) == (409, "HARGA_BELUM_ADA", {"missing": ["A1"]}), (nol, e.kode)
+
     # Sesi: cookie diteruskan, TANPA Authorization — juga saat cookie kosong (Next menjawab 401 -> ditolak), walau CRON_SECRET ada.
+    pasang(200, OK)
     order_cabang.periksa("C-1", "2026-10-12", LINES, cookie="better-auth.session_token=abc")
     assert KIRIM[-1]["headers"] == {"cookie": "better-auth.session_token=abc"}, KIRIM[-1]["headers"]
     pasang(401, {"error": "Unauthorized"})
     e = harus(OrderCabangDitolak, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES, cookie=""))
     assert KIRIM[-1]["headers"] == {"cookie": ""} and e.status == 401 and e.kode == "DITOLAK", (KIRIM[-1], e.kode)
+
+    # Butir 5: jalur LAYANAN ditolak 401/403 = CRON_SECRET beda -> TIDAK PASTI berkode konfigurasi (503), bukan penolakan order.
+    for status in (401, 403):
+        pasang(status, {"error": "Unauthorized"})
+        e = harus(OrderCabangTidakPasti, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES))
+        assert e.kode == "KONFIGURASI_SERVER" and "CRON_SECRET" in e.pesan, (status, e.kode, e.pesan)
+        assert e.isi() == {"ok": False, "detail": e.pesan, "kode": "KONFIGURASI_SERVER"}
 
     # Penolakan berkode Next sampai apa adanya, dengan rinciannya, dalam bentuk jawaban FastAPI.
     pasang(409, {"ok": False, "kode": "BARANG_BEDA_CABANG", "error": "Barang bukan barang cabang KINO", "barang": [{"code": "A1"}]})
@@ -84,21 +117,20 @@ def main():
     pasang(403, {"ok": False, "kode": "SALESMAN_BELUM_TERHUBUNG", "error": "Akun belum terhubung"})
     assert harus(OrderCabangDitolak, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES, cookie="x")).kode == "SALESMAN_BELUM_TERHUBUNG"
 
-    # Tidak pasti: 5xx, bukan JSON, jaringan, ok palsu, jumlah/urutan baris tidak cocok, harga kosong.
+    # Tidak pasti: 5xx, bukan JSON, jaringan, ok palsu, jumlah/urutan baris tidak cocok, harga/sumber kosong.
     for status, data, gagal in [(500, {"error": "galat"}, None), (502, "<html>", None), (200, {}, OSError("putus")),
                                 (200, {"ok": False}, None), (200, {"ok": True, "lines": OK["lines"][:1]}, None),
                                 (200, {"ok": True, "lines": list(reversed(OK["lines"]))}, None),
-                                (200, {"ok": True, "lines": [OK["lines"][0], {**OK["lines"][1], "price": ""}]}, None),
-                                (200, {"ok": True, "lines": [OK["lines"][0], {**OK["lines"][1], "price": None}]}, None),
+                                (200, {"ok": True, "lines": [OK["lines"][0], {**OK["lines"][1], "sumber_harga": ""}]}, None),
+                                (200, {"ok": True, "lines": [OK["lines"][0], "bukan objek"]}, None),
                                 (400, "bukan json", None)]:
         pasang(status, data, gagal)
-        harus(OrderCabangTidakPasti, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES))
-
-    # harga=False (input internal): hanya aturan cabang; baris & harga petugas kembali apa adanya.
-    pasang(200, {"ok": True, "lines": [{**line, "price": ""} for line in OK["lines"]]})
-    hasil = order_cabang.periksa("C-1", "2026-10-12", LINES, harga=False)
-    assert KIRIM[-1]["json"]["harga"] is False
-    assert hasil == LINES and hasil is not LINES, hasil
+        e = harus(OrderCabangTidakPasti, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES))
+        assert e.kode == "LAYANAN_TIDAK_PASTI", (status, e.kode)
+    # Harga kosong / None dari Next = harga tidak sah (ditolak berkode), bukan diloloskan.
+    for kosong in ("", None):
+        pasang(200, {"ok": True, "lines": [OK["lines"][0], {**OK["lines"][1], "price": kosong}]})
+        assert harus(OrderCabangDitolak, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES)).kode == "HARGA_BELUM_ADA"
     print("order cabang bridge check: OK", json.dumps(len(KIRIM)))
 
 

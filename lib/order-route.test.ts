@@ -215,7 +215,7 @@ const ORDER = {
     },
 };
 const tabelOrder = () => new Map<Tabel, unknown[]>([
-    [accurateEmployee, [{ id: 4652, number: "M-SLA", name: "SALES A", salesman: true, suspended: false }]],
+    [accurateEmployee, [{ id: 4652, number: "M-SLA", name: "SALES A", salesman: true, suspended: false, branchId: 50 }]],
     [accurateUnit, [{ id: 100, name: "KRT" }, { id: 200, name: "LSN" }]],
     [customer, [{ branchId: 50, branchName: "CABANG A", autoNumberId: 7, autoNumberName: "SERI A" }]],
 ]);
@@ -272,4 +272,20 @@ test("C7 route: antre (queue:true) MEMBEKUKAN payload bersalesman ke invoice_out
     }, fastapiOrder);
     assert.equal(res.status, 200);
     assert.equal((await res.json()).queued, true);
+});
+
+test("O1 butir 4 route: salesman cabang LAIN ditolak 409 SALESMAN_BEDA_CABANG — pratinjau dan antre, tanpa baris antrean", async () => {
+    for (const queue of [false, true]) {
+        const tabel = tabelOrder();
+        tabel.set(accurateEmployee, [{ id: 4653, number: "M-SLB", name: "SALES B", salesman: true, suspended: false, branchId: 51 }]);
+        const res = await denganDb(["order.view", "order.edit"], tabel, async (catat) => {
+            const r = await postInvoice({ queue, salesman: "M-SLB" });
+            assert.deepEqual(catat.insert, [], "tidak ada baris antrean");
+            return r;
+        }, fastapiOrder);
+        assert.equal(res.status, 409, `queue=${queue}`);
+        const isi = await res.json() as { kode: string; error: string };
+        assert.equal(isi.kode, "SALESMAN_BEDA_CABANG");
+        assert.match(isi.error, /bukan salesman cabang CABANG A/);
+    }
 });
