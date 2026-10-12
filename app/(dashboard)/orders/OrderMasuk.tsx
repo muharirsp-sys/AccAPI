@@ -3,8 +3,8 @@
  *   status sampai faktur (status order + Antrean Faktur), sumber, tarik Order Sales dan koneksi tarik otomatis. Order principal ada di
  *   Order Principal; faktur dibuat saat Kirim di Antrean Faktur.
  * Caller: ./page.tsx (/orders; guard halaman `order.view`).
- * Dependensi: FastAPI GET /orders, POST /orders/pull, GET|POST /orders/connection; GET /api/orders/invoice-status; ./order-ui;
- *   components/fiori/{core,interactive}; lib/rekapan-nota/ui (tanggalPendek, jamWita).
+ * Dependensi: FastAPI GET /orders, POST /orders/pull (tertahan per permintaan: `failed[].kode` O1 → kalimat), GET|POST /orders/connection;
+ *   GET /api/orders/invoice-status; ./order-ui; components/order/order-cabang; components/fiori/{core,interactive}; lib/rekapan-nota/ui.
  * Main Functions: OrderMasuk.
  * Side Effects: HTTP; Tarik menulis order internal (FastAPI, idempoten per permintaan Order Sales); koneksi menulis setelan tarik otomatis.
  *   Tidak ada tulis ke Accurate.
@@ -16,6 +16,7 @@ import Link from "next/link";
 import { Download, Plus, Power } from "lucide-react";
 import { Button, ListItem, MessageStrip, ResponsiveTable, Skeleton, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
+import { sebabTarik } from "@/components/order/order-cabang";
 import { jamWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
 import {
     BELUM_PASTI, fastapi, nextApi, nilai, nomorOrder, pesanJawaban, statusOrder, sukses, sumberOrder, tidakPasti,
@@ -28,7 +29,11 @@ type Koneksi = {
     connection: { enabled: boolean; owner: string; updated_by: string; updated_at: string; last_run_at: string; last_result: { imported: number; already_imported: number; failed: number } | null };
 };
 type Saring = "semua" | Exclude<StatusKey, "lain" | "belum">;
-type HasilTarik = { imported: number; already: number; failed: { request_id: string; error: string }[] };
+type Tertahan = { request_id: string; error: string; kode?: string };
+/** `failed` = DITAHAN (dugaan ganda; tetap menunggu); `rejected` = DITOLAK PERMANEN (tidak dicoba lagi; sales mengirim ulang). */
+type HasilTarik = { imported: number; already: number; failed: Tertahan[]; rejected: Tertahan[] };
+/** Penyebab per permintaan: kode O1 yang dikenal (barang beda cabang, salesman belum terhubung, PRATINJAU_BERUBAH, ORDER_GANDA konteks tarik, …) = kalimat + tindakan; selain itu pesan server. */
+const sebabTertahan = (f: Tertahan) => sebabTarik(f.kode, f.error);
 
 const KARTU: Array<{ key: Saring; label: string; waspada?: boolean }> = [
     { key: "semua", label: "Semua order" }, { key: "butuh", label: "Butuh harga", waspada: true }, { key: "siap", label: "Siap diantrekan" },
@@ -113,6 +118,7 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
                 imported: ((j.data.imported as unknown[]) ?? []).length,
                 already: ((j.data.already_imported as unknown[]) ?? []).length,
                 failed: (j.data.failed as HasilTarik["failed"]) ?? [],
+                rejected: (j.data.rejected as HasilTarik["rejected"]) ?? [],
             } });
         }
         muatDaftar();
@@ -154,9 +160,10 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
             </header>
 
             {tarik.hasil && (
-                <MessageStrip tone={tarik.hasil.failed.length ? "warn" : "pos"} title={`${tarik.hasil.imported} order baru ditarik dari Order Sales.`} onClose={() => setTarik({ busy: false })}>
+                <MessageStrip tone={tarik.hasil.failed.length || tarik.hasil.rejected.length ? "warn" : "pos"} title={`${tarik.hasil.imported} order baru ditarik dari Order Sales.`} onClose={() => setTarik({ busy: false })}>
                     {tarik.hasil.already > 0 && `${tarik.hasil.already} permintaan sudah pernah masuk. `}
-                    {tarik.hasil.failed.length > 0 && <>{tarik.hasil.failed.length} tertahan: {tarik.hasil.failed.slice(0, 3).map((f) => `#${f.request_id.slice(0, 8)} — ${f.error}`).join("; ")}{tarik.hasil.failed.length > 3 && " …"}. Permintaan yang tertahan tetap menunggu dan ikut tarikan berikutnya.</>}
+                    {tarik.hasil.failed.length > 0 && <>{tarik.hasil.failed.length} tertahan: {tarik.hasil.failed.slice(0, 3).map((f) => `#${f.request_id.slice(0, 8)} — ${sebabTertahan(f)}`).join("; ")}{tarik.hasil.failed.length > 3 && " …"}. Permintaan yang tertahan tetap menunggu dan ikut tarikan berikutnya.</>}
+                    {tarik.hasil.rejected.length > 0 && <>{" "}{tarik.hasil.rejected.length} ditolak permanen (tidak dicoba lagi; sales perlu mengirim ulang): {tarik.hasil.rejected.slice(0, 3).map((f) => `#${f.request_id.slice(0, 8)} — ${sebabTertahan(f)}`).join("; ")}{tarik.hasil.rejected.length > 3 && " …"}.</>}
                     {tarik.hasil.imported > 0 && " Order tanpa harga berstatus Butuh harga."}
                 </MessageStrip>
             )}

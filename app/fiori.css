@@ -167,7 +167,7 @@ textarea.fi-input { height:auto; min-height:72px; padding:8px 10px; resize:verti
 .fi-input:disabled { background:var(--surface-2); color:var(--ink-disabled); border-color:var(--line); }
 .fi-input[aria-invalid="true"] { border-color:var(--neg); box-shadow:inset 0 -2px 0 var(--neg); }
 select.fi-input { appearance:none; background-image:linear-gradient(45deg, transparent 50%, var(--ink-muted) 50%), linear-gradient(135deg, var(--ink-muted) 50%, transparent 50%); background-position:calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size:5px 5px; background-repeat:no-repeat; padding-right:28px; }
-@media (pointer: coarse) { .fi-input { font-size:16px; } } /* < 16 px membuat Safari iOS memperbesar halaman saat fokus */
+@media (pointer: coarse) { .fi-input, .fiori .fi-input { font-size:16px; } } /* < 16 px membuat Safari iOS memperbesar halaman saat fokus. `.fiori .fi-input` (0,2,0) SESUDAH `.fiori .fi-mono` (0,2,0, ±14,7 px) supaya kolom ber-fi-mono ikut 16 px */
 .fi-help { font:var(--fs-small); color:var(--ink-subtle); }
 .fi-msg { font:var(--fs-small); display:flex; gap:6px; align-items:flex-start; color:var(--neg); }
 .fi-msg .fi-icon { width:14px; height:14px; margin-top:2px; }
@@ -361,7 +361,9 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-hist li:last-child { border-bottom:0; }
 .fi-hist time { color:var(--ink-subtle); font-variant-numeric:tabular-nums; }
 .fi-hist .fi-chg { grid-column:2; color:var(--ink-subtle); }
-.fi-varbox { border:1px dashed color-mix(in srgb, var(--info) 50%, transparent); border-radius:var(--r-lg); padding:10px 12px; display:grid; gap:4px; background:var(--info-bg); }
+.fi-varbox { border:1px dashed color-mix(in srgb, var(--info) 50%, transparent); border-radius:var(--r-lg); padding:10px 12px; display:none; gap:4px; background:var(--info-bg); }
+/* Catatan varian (usulan BL) hanya untuk Admin: SidebarLayout memberi data-admin="true" pada <main> bila akun memegang users.manage. */
+[data-admin="true"] .fi-varbox { display:grid; }
 .fi-varbox > .fi-tag { justify-self:start; }
 .fi-varbox p { font:var(--fs-small); color:var(--ink-muted); }
 .fi-chipgrid { display:grid; gap:8px; }

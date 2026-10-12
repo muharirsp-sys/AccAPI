@@ -18,9 +18,12 @@ GAGAL TERTUTUP. Tidak ada jawaban berarti ordernya ditahan, bukan diloloskan. It
 sikap yang masuk akal: kalau kita tidak tahu outlet ini channel apa, kita juga tidak tahu ia
 berhak promo yang mana.
 """
+import logging
 import os
 import time
 from typing import Dict, Iterable, Optional
+
+LOG = logging.getLogger("accapi.outlet_channel")
 
 # Cache-nya SENGAJA pendek. Ia optimisasi, bukan sumber kebenaran: kategori yang baru dibetulkan
 # di Accurate harus berlaku hampir seketika, kalau tidak kita cuma memindahkan masalah basi dari
@@ -55,6 +58,22 @@ class ChannelTidakPasti(Exception):
     """Channel outlet tidak bisa dipastikan; pemanggil WAJIB menahan, bukan melanjutkan."""
 
 
+class ChannelKonfigurasi(ChannelTidakPasti):
+    """Konfigurasi server: CRON_SECRET kosong, atau Next menolak kunci layanan (401/403) — bukan jaringan, bukan jawaban master
+    (O1 putaran 2, butir 8). Pemanggil menjawab 503 `KONFIGURASI_SERVER` (bukan "HTTP 401" tak berkode). Subkelas: tetap tertangkap
+    sebagai `ChannelTidakPasti`.
+    """
+
+
+class ChannelBedaMaster(ChannelTidakPasti):
+    """Jawaban PASTI master: outlet tidak ada, belum berkategori, atau channelnya beda (O1 putaran 1, 12 Okt 2026).
+
+    Dipisah dari kegagalan jaringan supaya tarikan Order Masuk bisa MENOLAK permintaan itu saja (permanen, berkode) alih-alih
+    menghentikan seluruh tarikan, dan simpan menjawab 422 berkode, bukan 503. Subkelas: pemanggil lama yang menangkap
+    `ChannelTidakPasti` tetap menangkapnya.
+    """
+
+
 def _dari_cache(kode: str) -> Optional[str]:
     entry = _CACHE.get(kode)
     if entry and entry[0] > time.time():
@@ -87,7 +106,7 @@ def channels_of(customer_nos: Iterable[str]) -> Dict[str, str]:
 
     secret = os.getenv("CRON_SECRET")
     if not secret:
-        raise ChannelTidakPasti("CRON_SECRET belum di-set, jadi channel outlet tidak bisa ditanyakan ke Next")
+        raise ChannelKonfigurasi("CRON_SECRET belum di-set, jadi channel outlet tidak bisa ditanyakan ke Next")
     try:
         import requests
         response = requests.get(
@@ -98,6 +117,11 @@ def channels_of(customer_nos: Iterable[str]) -> Dict[str, str]:
         )
     except Exception as error:  # jaringan, DNS, timeout
         raise ChannelTidakPasti(f"Tidak bisa menanyakan channel outlet ke Next: {error}") from None
+    if response.status_code in (401, 403):
+        LOG.error("Next menolak CRON_SECRET FastAPI di /api/outlet-channel (HTTP %s): samakan CRON_SECRET frontend dan backend",
+                  response.status_code)
+        raise ChannelKonfigurasi("Konfigurasi server: Next menolak kunci layanan FastAPI saat menanyakan channel outlet (CRON_SECRET "
+                                 "berbeda). Order TIDAK disimpan; hubungi admin sistem.")
     if response.status_code != 200:
         raise ChannelTidakPasti(f"Next menolak permintaan channel outlet (HTTP {response.status_code})")
     data = response.json()
@@ -126,19 +150,19 @@ def verify(customer_no: str, channel_diminta: str) -> str:
     kode = str(customer_no or "").strip()
     diminta = str(channel_diminta or "").strip().upper()
     if not kode:
-        raise ChannelTidakPasti("Kode pelanggan Accurate wajib diisi untuk memastikan channelnya")
+        raise ChannelBedaMaster("Kode pelanggan Accurate wajib diisi untuk memastikan channelnya")
 
     peta = channels_of([kode])
     if kode not in peta:
-        raise ChannelTidakPasti(
+        raise ChannelBedaMaster(
             f"Outlet {kode} tidak ada di master pelanggan Accurate, jadi channelnya tidak bisa dipastikan.")
     master = peta[kode]
     if not master:
-        raise ChannelTidakPasti(
+        raise ChannelBedaMaster(
             f"Outlet {kode} belum punya kategori (TT/MT) di Accurate, jadi channelnya tidak bisa dipastikan. "
             "Isi kategorinya di Accurate lebih dulu.")
     if diminta and diminta != master:
-        raise ChannelTidakPasti(
+        raise ChannelBedaMaster(
             f"Order dikirim sebagai channel {diminta}, tetapi master Accurate menyimpan outlet {kode} "
             f"sebagai {master}. Promo per channel diputuskan dari master — betulkan channel ordernya, "
             "atau betulkan kategori outletnya di Accurate.")

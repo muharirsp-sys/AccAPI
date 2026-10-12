@@ -109,7 +109,10 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
             </div>
             {drawerOpen && nav("Menu mobile", () => setDrawerOpen(false))}
         </Dialog>
-        <main id="workspace-content" tabIndex={-1} className="fi-shell-main">
+        {/* `data-admin`: Admin = pemegang users.manage (definisi yang sama dengan penjaga "minimal satu admin" di lib/rbac/otorisasi). CSS `.fi-varbox`
+            (catatan "Perilaku hari ini · usulan BL-…", VariantNote) tersembunyi bawaan dan hanya tampil di bawah atribut ini; diputuskan di server
+            (SSR) sehingga komponen server maupun klien tak perlu tahu perannya. */}
+        <main id="workspace-content" tabIndex={-1} className="fi-shell-main" data-admin={keys.has("users.manage") ? "true" : undefined}>
             <LocalAuthRoleContext.Provider value={localAuthRole ?? null}><PermKeysContext.Provider value={keys}>{pathDiizinkan ? children : <AccessDenied />}</PermKeysContext.Provider></LocalAuthRoleContext.Provider>
         </main>
         <nav className={`${fioriClass} fi-bnav`} aria-label="Navigasi utama">

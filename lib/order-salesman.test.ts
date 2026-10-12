@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildInvoicePayload, type InvoiceOrder } from "./accurate-invoice-write.ts";
-import { salesmanDariPayload, salesmanOrder, type PegawaiAccurate } from "./order-salesman.ts";
+import { salesmanBedaCabang, salesmanDariPayload, salesmanOrder, type PegawaiAccurate } from "./order-salesman.ts";
 
 const UNITS = new Map([["KRT", 100], ["LSN", 200]]);
 const OPSI = { unitIds: UNITS, branchId: 50, typeAutoNumber: 7 };
@@ -25,7 +25,7 @@ const ORDER: InvoiceOrder = {
         bonuses: [{ program_id: "P-A", code: "BRG-A1", unit: "KRT", quantity: "1" }],
     },
 };
-const SALES_A: PegawaiAccurate = { id: 4652, number: "M-SLA", name: "SALES A", salesman: true, suspended: false };
+const SALES_A: PegawaiAccurate = { id: 4652, number: "M-SLA", name: "SALES A", salesman: true, suspended: false, branchId: 50 };
 
 test("C7: salesman order internal satu per order, disalin ke SETIAP baris (bentuk jalur principal)", () => {
     const pilih = salesmanOrder({ queue: true, kode: " m-sla ", pegawai: [SALES_A] });
@@ -89,4 +89,18 @@ test("C7: sales order internal di daftar Antrean Faktur dibaca dari payload beku
     } finally {
         await pool.end();
     }
+});
+
+test("O1 butir 4: salesman faktur WAJIB secabang pelanggan — cabang lain / tanpa cabang DITOLAK 409 SALESMAN_BEDA_CABANG", () => {
+    const pilih = (pegawai: PegawaiAccurate) => salesmanOrder({ queue: true, kode: "M-SLA", pegawai: [pegawai] });
+    assert.equal(salesmanBedaCabang(pilih(SALES_A), 50, "CABANG A"), null, "secabang lolos");
+    assert.equal(salesmanBedaCabang(pilih(SALES_A), "50" as unknown as number, "CABANG A"), null, "bigint sebagai teks tetap sama");
+    for (const [pegawai, pola] of [[{ ...SALES_A, branchId: 51 }, /bukan salesman cabang CABANG A/], [{ ...SALES_A, branchId: null }, /belum punya cabang/],
+        [{ ...SALES_A, branchId: undefined }, /belum punya cabang/]] as const) {
+        const tolak = salesmanBedaCabang(pilih(pegawai), 50, "CABANG A");
+        assert.ok(tolak && !tolak.ok && tolak.status === 409 && tolak.kode === "SALESMAN_BEDA_CABANG" && pola.test(tolak.error), JSON.stringify(tolak));
+    }
+    // Pratinjau tanpa salesman / pilihan yang sudah ditolak: tidak ada yang diperiksa (galat aslinya yang tampil).
+    assert.equal(salesmanBedaCabang(salesmanOrder({ queue: false, kode: "", pegawai: [] }), 50, "CABANG A"), null);
+    assert.equal(salesmanBedaCabang(salesmanOrder({ queue: true, kode: "M-X", pegawai: [] }), 50, "CABANG A"), null);
 });

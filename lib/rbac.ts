@@ -208,6 +208,9 @@ export const auditActionLabels: Record<string, string> = {
     "group.update": "Grup diubah",
     "group.delete": "Grup dihapus",
     "group_permission.sync": "Izin grup diubah",
+    // O1 (owner 12 Okt 2026): tautan akun salesman <-> karyawan salesman Accurate (app/api/admin/users/[id]/salesman).
+    "salesman.link": "Salesman Accurate ditautkan",
+    "salesman.unlink": "Tautan salesman Accurate dilepas",
 };
 
 export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {

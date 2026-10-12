@@ -3,25 +3,24 @@
  *   tautan kunjungan bertanggal WITA, Kirim status lewat dialog → payload per toko; Kosong; Galat ≠ kosong, tanpa sinyal disebut sinyal),
  *   tanggal WITA sebelum 08.00 dengan jam tiruan (Rute, Laporan harian, Order Sales), Kunjungan (status tersimpan tampil lagi, Kembali di
  *   setiap langkah, checkbox asli 24 px dalam baris 56 px, galat merch tampil di langkahnya dan tidak maju, tanpa sinyal: foto tetap +
- *   Coba lagi; Toko tutup R15: merchandising dilewati, foto bukti = check-out, galat server di langkahnya), Order Sales (pemilih toko rute, harga per baris, 409 missing/wrong_unit di barisnya, nomor permintaan, galat Order saya ≠
+ *   Coba lagi; Toko tutup R15: merchandising dilewati, foto bukti = check-out, galat server di langkahnya), Order Sales (pemilih toko rute, harga per baris, satuan salah/harga belum ada di barisnya, nomor permintaan, galat Order saya ≠
  *   kosong), ponsel 390 px layar sentuh (tanpa gulir menyamping, kontrol ≥ 44 px). Temuan peninjau: P6 Kirim status membaca ulang rute
  *   + hanya salesman pemilik, P1 jawaban tidak pasti menahan Kirim order, P2 ketikan toko lain tidak hilang, P3 Lanjut tanpa tulis ulang,
  *   P4 lewat 00.00 isian tidak hilang, laporan Kemarin. Tanpa dialog native.
+ * O2: layar Order Sales memakai pencarian pelanggan/barang per cabang (mock di tests/helpers/order-cabang-mock.ts); skenario lengkapnya
+ *   (belum tertaut, galat, kosong, promo, cabang) di tests/fiori-order-cabang.spec.ts.
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
  *   `npx playwright test tests/fiori-lapangan-salesman.spec.ts --config playwright.fiori-local.config.ts --workers=1 --output=test-results/salesman`.
- * Dependensi: /api/form-kontrol/*, /api/upload/form-kontrol, /api/customers/lookup, /api/outlet-channel, /api/items/units, /api/orders/preview
+ * Dependensi: /api/form-kontrol/*, /api/upload/form-kontrol, /api/customers/search, /api/items/search, /api/orders/preview
  *   di-mock dengan page.route; FastAPI Web Sales (dev: http://localhost:8000) di-mock dengan header CORS. Tidak menyentuh DB.
  * Side Effects: Tangkapan di test-results/salesman.
  */
-import { expect, test, type Locator, type Page, type Request, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
+import { mockOrderCabang, mockWebsales, pilihBarang, pilihPelanggan, type OpsiWebsales } from "./helpers/order-cabang-mock";
 
 const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 const NAV = { timeout: 60_000 } as const;
 const HARI_INI = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date());
-const CORS = { "access-control-allow-origin": "http://localhost:3010", "access-control-allow-credentials": "true", "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, OPTIONS" };
-const fastapi = (r: Route, body: unknown, status = 200, html?: string) => r.request().method() === "OPTIONS"
-    ? r.fulfill({ status: 204, headers: CORS })
-    : r.fulfill({ status, headers: { ...CORS, "content-type": html ? "text/html" : "application/json" }, body: html ?? JSON.stringify(body) });
 // PNG 1×1 untuk foto unggahan dan berkas "kamera".
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 
@@ -299,7 +298,7 @@ test("Tanggal = WITA: 07.30 WITA (UTC masih kemarin) → rute, kirim status, lap
     await lap.getByRole("button", { name: "Hari ini", exact: true }).click();
     await expect(lap.getByText("Laporan kemarin belum terkirim.")).toHaveCount(0);
 
-    await page.route((u) => u.host === "localhost:8000", (rt) => fastapi(rt, { ok: true, requests: [], csrf_token: "t" }));
+    await mockOrder(page, {});
     await page.goto("/sales", NAV);
     await expect(page.locator("main").getByLabel("Tanggal order")).toHaveValue("2026-10-09", NAV);
 });
@@ -549,50 +548,27 @@ test("Laporan (P4): lewat 00.00 WITA tindak lanjut yang diketik tidak hilang dan
     await expect(lap.getByLabel("Tindak lanjut untuk SPV")).toHaveValue("TOKO C stok penuh, kunjungi ulang Kamis.");
 });
 
-/** Order Sales: master + pratinjau di Next, Web Sales di FastAPI :8000. */
-async function mockOrder(page: Page, opsi: { orderGagal?: boolean; terkirim?: boolean; postTidakPasti?: boolean }) {
-    const kirim: unknown[] = [];
-    const pratinjau: Array<{ lines: Array<{ code: string; unit: string; quantity: string }> }> = [];
-    const ID = "3f2a9c1e-77aa-4b3c-9d10-aa00bb11cc22";
-    await page.route((u) => u.pathname === "/api/customers/lookup", (r) => r.fulfill(json({ ok: true, no: "C-01", found: true, name: "TOKO A", area: "AREA A", priceCategoryName: "GROSIR" })));
-    await page.route((u) => u.pathname === "/api/outlet-channel", (r) => r.fulfill(json({ ok: true, channels: { "C-01": "GT" } })));
-    await page.route((u) => u.pathname === "/api/items/units", (r) => {
-        const code = new URL(r.request().url()).searchParams.get("code");
-        return r.fulfill(json({ ok: true, code, found: true, name: code === "A-1" ? "BARANG A" : "BARANG B", units: code === "A-1" ? ["KRT", "PCS"] : ["LSN"] }));
-    });
-    await page.route((u) => u.pathname === "/api/orders/preview", (r) => {
-        const b = r.request().postDataJSON() as (typeof pratinjau)[number];
-        pratinjau.push(b);
-        if (b.lines.some((l) => l.code === "A-1" && l.unit === "PCS")) {
-            return r.fulfill(json({ ok: false, error: "Satuan PCS tidak ada di master untuk A-1 (tersedia: KRT)", wrong_unit: [{ code: "A-1", unit: "PCS", known_units: ["KRT"] }] }, 409));
-        }
-        if (b.lines.some((l) => l.code === "B-2")) return r.fulfill(json({ ok: false, error: "Harga belum tersedia dari Accurate untuk: B-2", missing: ["B-2"] }, 409));
-        return r.fulfill(json({ ok: true, lines: b.lines, prices: [{ code: "A-1", unit: "KRT", price: 576000, source: "kategori", priceCategoryName: "GROSIR" }],
-            result: { gross: "1152000.00", discount: "57600.00", net: "1094400.00", bonuses: [] }, suggestions: [] }));
-    });
-    await page.route((u) => u.host === "localhost:8000", (r) => {
-        const p = new URL(r.request().url()).pathname;
-        if (p === "/api/me") return fastapi(r, { csrf_token: "t" });
-        if (p === "/websales/orders" && r.request().method() === "POST") {
-            kirim.push(r.request().postDataJSON());
-            opsi.terkirim = true;
-            // Order SUDAH tersimpan, tetapi proxy memutus jawaban (502 HTML) → hasil tidak pasti di layar.
-            if (opsi.postTidakPasti) return fastapi(r, null, 502, "<html>Bad Gateway</html>");
-            return fastapi(r, { ok: true, request: { id: ID, status: "pending" } });
-        }
-        if (p === "/websales/orders") {
-            if (opsi.orderGagal && !opsi.terkirim) return fastapi(r, { detail: "database is locked" }, 500);
-            return fastapi(r, { ok: true, requests: opsi.terkirim ? [{ id: ID, outlet: "TOKO A", channel: "GT", order_date: HARI_INI, customer_no: "C-01", status: "pending", created_at: new Date().toISOString(), pulled_at: null }] : [] });
-        }
-        return fastapi(r, { ok: true });
-    });
-    return { kirim, pratinjau };
+/** Order Sales (O2): pelanggan/barang/pratinjau per cabang (mock kontrak O1, cakupan salesman CABANG A) + FastAPI Web Sales di :8000. */
+async function mockOrder(page: Page, opsi: OpsiWebsales) {
+    const { log, opsi: next } = await mockOrderCabang(page, { peran: "sales" });
+    opsi.hari ??= HARI_INI;
+    opsi.cabang = next; // simpan dibandingkan dengan hitungan server (sidik) memakai opsi mock yang sama
+    const ws = await mockWebsales(page, opsi); // objek yang sama: tes mengubah opsi di tengah jalan (postTidakPasti)
+    return { kirim: ws.kirim, pratinjau: log.preview, next };
 }
 
-test("Order Sales: toko rute, harga per baris, 409 per baris, nomor permintaan; galat Order saya ≠ kosong", async ({ page }) => {
+test("Order Sales: toko rute, harga per baris, satuan salah + harga belum ada di barisnya, nomor permintaan; galat Order saya ≠ kosong", async ({ page }) => {
     const opsi = { orderGagal: true };
     const m = await mockOrder(page, opsi);
-    await page.addInitScript((t) => sessionStorage.setItem("fk-rute-hari-ini", JSON.stringify({ tanggal: t, salesCode: "S-01", toko: [{ kode: "C-01", nama: "TOKO A" }] })), HARI_INI);
+    // Satuan PCS ditolak server untuk A-1 (SATUAN_SALAH per baris); harga A-4 hilang di server sesudah dipilih (HARGA_BELUM_ADA) — keduanya per baris.
+    m.next.preview = (b) => {
+        if (b.lines.some((l) => l.code === "A-1" && l.unit === "PCS")) {
+            return { status: 409, body: { ok: false, kode: "SATUAN_SALAH", error: "Satuan PCS tidak ada di master untuk A-1 (tersedia: KRT)", wrong_unit: [{ code: "A-1", unit: "PCS", known_units: ["KRT"] }] } };
+        }
+        if (b.lines.some((l) => l.code === "A-4")) return { status: 409, body: { ok: false, kode: "HARGA_BELUM_ADA", error: "Harga belum tersedia dari Accurate untuk: A-4", missing: ["A-4"] } };
+        return undefined;
+    };
+    await page.addInitScript((t) => sessionStorage.setItem("fk-rute-hari-ini", JSON.stringify({ tanggal: t, salesCode: "S-01", toko: [{ kode: "C-01", nama: "PELANGGAN A" }] })), HARI_INI);
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/sales", NAV);
     const main = page.locator("main");
@@ -600,51 +576,56 @@ test("Order Sales: toko rute, harga per baris, 409 per baris, nomor permintaan; 
     await expect(saya.getByRole("alert")).toContainText("Order saya gagal dimuat", NAV);
     await expect(saya.getByText("Belum ada order terkirim")).toHaveCount(0);
 
-    await main.getByLabel("Toko di rute hari ini").selectOption({ label: "TOKO A · C-01" });
-    await expect(main.getByLabel("Kode pelanggan Accurate")).toHaveValue("C-01");
-    await expect(main.getByLabel("Outlet")).toHaveValue("TOKO A");
-    await expect(main.getByLabel("Channel")).toHaveValue("GT");
+    await main.getByLabel("Toko di rute hari ini").selectOption({ label: "PELANGGAN A · C-01" }, NAV);
+    const kartu = main.getByRole("group", { name: "Pelanggan terpilih" });
+    await expect(kartu).toContainText("PELANGGAN A", NAV);
+    await expect(kartu).toContainText("Channel GT");
+    await expect(main.getByLabel("Outlet")).toHaveValue("PELANGGAN A");
 
     const b1 = main.getByRole("listitem", { name: "Barang 1" });
-    await b1.getByLabel("Kode barang").fill("A-1");
-    await b1.locator("select").selectOption("KRT");
+    await pilihBarang(b1, "A-1", "BARANG A\\b.*KRT");
+    await b1.getByLabel("Satuan").selectOption("KRT");
     await b1.getByLabel("Jumlah").fill("2");
     await main.getByRole("button", { name: "Tambah barang" }).click();
     const b2 = main.getByRole("listitem", { name: "Barang 2" });
-    await b2.getByLabel("Kode barang").fill("B-2");
-    await expect(b2.locator("select")).toHaveValue("LSN");
+    await pilihBarang(b2, "A-4", "BARANG A4");
+    await expect(b2.getByLabel("Satuan")).toHaveValue("LSN"); // satu-satunya satuan
     await b2.getByLabel("Jumlah").fill("6");
     // #13: harga per baris; baris tanpa harga ditandai di barisnya; netto hanya dari baris berharga, dengan penjelasan.
-    await expect(b1).toContainText("Harga ada");
+    await expect(b1).toContainText("Harga ada", NAV);
     await expect(b1).toContainText("Rp 576.000 per KRT");
-    await expect(b2).toContainText("Harga belum tersedia");
+    await expect(b2).toContainText("Harga belum ada");
     const total = main.getByLabel("Perkiraan nilai order");
     await expect(total).toContainText("Bruto (yang sudah ada harganya)");
-    await expect(total).toContainText("Rp 1.094.400");
+    await expect(total).toContainText("Rp 1.036.800");
     await expect(total).toContainText("1 barang belum berharga tidak ikut dihitung.");
     expect(m.pratinjau.at(-1)!.lines.map((l) => l.code)).toEqual(["A-1"]);
     expect(m.pratinjau.at(-1)).toMatchObject({ channel: "GT", order_date: HARI_INI, customer_no: "C-01" });
-    await page.screenshot({ path: "test-results/salesman/order-harga.png", fullPage: true });
-
-    // 409 wrong_unit tampil di barisnya; kirim tertahan dengan alasan.
-    await b1.locator("select").selectOption("PCS");
-    await expect(b1).toContainText("Satuan PCS tidak ada untuk A-1. Pilih KRT.");
+    // O1: server menolak simpan tanpa harga, jadi Kirim terkunci selama ada barang tanpa harga.
     const kirim = main.getByRole("button", { name: "Kirim order…" });
+    await expect(kirim).toBeDisabled();
+    await expect(kirim).toHaveAttribute("title", "Harga barang 2 belum ada di Accurate untuk cabang ini — belum bisa dikirim");
+    await page.screenshot({ path: "test-results/salesman/order-harga.png", fullPage: true });
+    await b2.getByRole("button", { name: "Hapus barang 2" }).click();
+
+    // 409 SATUAN_SALAH tampil di barisnya; kirim tertahan dengan alasan.
+    await b1.getByLabel("Satuan").selectOption("PCS");
+    await expect(b1).toContainText("Satuan PCS tidak ada untuk A-1. Pilih KRT.");
     await expect(kirim).toBeDisabled();
     await expect(kirim).toHaveAttribute("title", "Perbaiki satuan barang 1");
     await page.screenshot({ path: "test-results/salesman/order-satuan.png", fullPage: true });
-    await b1.locator("select").selectOption("KRT");
+    await b1.getByLabel("Satuan").selectOption("KRT");
     await expect(b1).toContainText("Harga ada");
     await expect(kirim).toBeEnabled();
 
     await kirim.click();
     const dlg = page.getByRole("dialog");
-    await expect(dlg.getByRole("heading")).toHaveText("Kirim order untuk TOKO A?");
-    await expect(dlg).toContainText("Rp 1.094.400");
+    await expect(dlg.getByRole("heading")).toHaveText("Kirim order untuk PELANGGAN A?");
+    await expect(dlg).toContainText("Rp 1.036.800");
     await dlg.getByRole("button", { name: "Kirim order" }).click();
     await expect(dlg).toBeHidden();
-    expect(m.kirim).toEqual([{ outlet: "TOKO A", channel: "GT", order_date: HARI_INI, note: "", customer_no: "C-01",
-        lines: [{ code: "A-1", unit: "KRT", quantity: "2" }, { code: "B-2", unit: "LSN", quantity: "6" }] }]);
+    expect(m.kirim).toEqual([{ outlet: "PELANGGAN A", channel: "GT", order_date: HARI_INI, note: "", customer_no: "C-01",
+        sidik: expect.stringMatching(/^[0-9a-f]{64}$/), lines: [{ code: "A-1", unit: "KRT", quantity: "2" }] }]);
     // #12: nomor permintaan = 8 karakter awal id respons.
     await expect(main.getByRole("status").filter({ hasText: "No. permintaan #3f2a9c1e" })).toBeVisible();
     await expect(saya.getByRole("list", { name: "Order saya" })).toContainText("#3f2a9c1e");
@@ -653,19 +634,24 @@ test("Order Sales: toko rute, harga per baris, 409 per baris, nomor permintaan; 
     await page.screenshot({ path: "test-results/salesman/order-terkirim.png", fullPage: true });
 });
 
+/** Order Sales dengan PELANGGAN A + BARANG A (KRT) terisi dan siap kirim. */
+async function isiOrderSiap(page: Page) {
+    const main = page.locator("main");
+    await pilihPelanggan(main, "PELANG", "PELANGGAN A");
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await pilihBarang(b1, "A-1", "BARANG A\\b.*KRT");
+    await b1.getByLabel("Satuan").selectOption("KRT");
+    return { main, b1 };
+}
+
 test("Order Sales (P1): jawaban tidak pasti menahan Kirim → tepat 1 POST; Kirim lagi hanya lewat dialog yang menyebut risiko ganda", async ({ page }) => {
     const opsi = { postTidakPasti: true };
     const m = await mockOrder(page, opsi);
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/sales", NAV);
-    const main = page.locator("main");
-    await main.getByLabel("Kode pelanggan Accurate").fill("C-01");
-    await expect(main.getByLabel("Channel")).toHaveValue("GT", NAV);
-    const b1 = main.getByRole("listitem", { name: "Barang 1" });
-    await b1.getByLabel("Kode barang").fill("A-1");
-    await b1.locator("select").selectOption("KRT");
+    const { main, b1 } = await isiOrderSiap(page);
     const kirim = main.getByRole("button", { name: "Kirim order…" });
-    await expect(kirim).toBeEnabled();
+    await expect(kirim).toBeEnabled(NAV);
     await kirim.click();
     await page.getByRole("dialog").getByRole("button", { name: "Kirim order" }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
@@ -678,7 +664,7 @@ test("Order Sales (P1): jawaban tidak pasti menahan Kirim → tepat 1 POST; Kiri
     // Kirim lagi = pilihan eksplisit dengan peringatan order ganda; Batal tidak mengirim apa pun.
     await strip.getByRole("button", { name: "Kirim lagi…" }).click();
     const dlg = page.getByRole("dialog");
-    await expect(dlg.getByRole("heading")).toHaveText("Kirim lagi order untuk TOKO A?");
+    await expect(dlg.getByRole("heading")).toHaveText("Kirim lagi order untuk PELANGGAN A?");
     await expect(dlg).toContainText("DUA kali");
     await dlg.getByRole("button", { name: "Batal" }).click();
     expect(m.kirim).toHaveLength(1);
@@ -698,33 +684,32 @@ test("Order Sales (owner 8 Okt): draf di ponsel — muat ulang menawarkan Pulihk
     await page.goto("/sales", NAV);
     const main = page.locator("main");
     const tawaran = main.getByRole("status").filter({ hasText: "Ada draf order di ponsel ini." });
-    await main.getByLabel("Kode pelanggan Accurate").fill("C-01");
-    await expect(main.getByLabel("Channel")).toHaveValue("GT", NAV);
-    const b1 = main.getByRole("listitem", { name: "Barang 1" });
-    await b1.getByLabel("Kode barang").fill("A-1");
-    await b1.locator("select").selectOption("KRT");
+    const { b1 } = await isiOrderSiap(page);
     await b1.getByLabel("Jumlah").fill("2");
     await expect(main.getByText("tersimpan sebagai draf di ponsel ini, belum di server")).toBeVisible();
 
-    // Muat ulang: tidak dipulihkan diam-diam; Pulihkan mengembalikan isian (tanggal tetap hari ini).
+    // Muat ulang: tidak dipulihkan diam-diam; Pulihkan mengembalikan isian (tanggal tetap hari ini) dan membaca ulang master.
     await page.reload(NAV);
-    await expect(tawaran).toContainText("C-01 · TOKO A · 1 barang", NAV);
-    await expect(main.getByLabel("Kode pelanggan Accurate")).toHaveValue("");
+    await expect(tawaran).toContainText("C-01 · PELANGGAN A · 1 barang", NAV);
+    await expect(main.getByLabel("Cari pelanggan")).toBeVisible(NAV);
+    await expect(main.getByRole("group", { name: "Pelanggan terpilih" })).toHaveCount(0);
     await tawaran.getByRole("button", { name: "Pulihkan draf" }).click();
     await expect(tawaran).toBeHidden();
-    await expect(main.getByLabel("Kode pelanggan Accurate")).toHaveValue("C-01");
-    await expect(b1.getByLabel("Kode barang")).toHaveValue("A-1");
+    await expect(main.getByRole("group", { name: "Pelanggan terpilih" })).toContainText("C-01", NAV);
+    await expect(b1.getByRole("group", { name: "Barang 1 terpilih" })).toContainText("A-1", NAV);
     await expect(b1.getByLabel("Jumlah")).toHaveValue("2");
-    await expect(main.getByLabel("Channel")).toHaveValue("GT");
+    await expect(main.getByRole("group", { name: "Pelanggan terpilih" })).toContainText("Channel GT");
 
     // Kiriman tidak pasti → draf menyimpan tandanya; setelah dipulihkan Kirim tetap tertahan (tidak ada POST kedua).
     const kirim = main.getByRole("button", { name: "Kirim order…" });
+    await expect(kirim).toBeEnabled(NAV);
     await kirim.click();
     await page.getByRole("dialog").getByRole("button", { name: "Kirim order" }).click();
     await expect(main.getByRole("status").filter({ hasText: "Hasil kirim belum pasti." })).toBeVisible();
     await page.reload(NAV);
     await expect(tawaran).toContainText("Kiriman terakhirnya belum pasti", NAV);
     await tawaran.getByRole("button", { name: "Pulihkan draf" }).click();
+    await expect(b1.getByRole("group", { name: "Barang 1 terpilih" })).toContainText("A-1", NAV);
     await expect(kirim).toBeDisabled();
     await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu — order terakhir mungkin sudah masuk");
     expect(m.kirim).toHaveLength(1);
@@ -742,7 +727,7 @@ test("Order Sales (owner 8 Okt): draf di ponsel — muat ulang menawarkan Pulihk
     await expect(tawaran).toHaveCount(0);
 
     // Buang lewat dialog.
-    await b1.getByLabel("Kode barang").fill("A-1");
+    await isiOrderSiap(page);
     await page.reload(NAV);
     await tawaran.getByRole("button", { name: "Buang…" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Buang draf" }).click();
@@ -767,25 +752,22 @@ test("Order Sales (peninjau): kirim terputus tanpa jawaban → draf menahan Kiri
     const main = page.locator("main");
     const tawaran = main.getByRole("status").filter({ hasText: "Ada draf order di ponsel ini." });
     await expect(main.getByRole("heading", { name: "Order Sales" })).toBeVisible(NAV);
+    await expect(main.getByLabel("Cari pelanggan")).toBeVisible(NAV);
     await expect(tawaran).toHaveCount(0); // draf akun lain di ponsel yang sama tidak ditawarkan
 
-    await main.getByLabel("Kode pelanggan Accurate").fill("C-01");
-    await expect(main.getByLabel("Channel")).toHaveValue("GT", NAV);
-    const b1 = main.getByRole("listitem", { name: "Barang 1" });
-    await b1.getByLabel("Kode barang").fill("A-1");
-    await b1.locator("select").selectOption("KRT");
+    await isiOrderSiap(page);
     await main.getByRole("button", { name: "Kirim order…" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Kirim order" }).click();
     await expect.poll(() => post).toBe(1);
     await page.reload(NAV); // halaman ditinggalkan sebelum jawaban datang
     await expect(tawaran).toContainText("Kiriman terakhirnya belum pasti", NAV);
 
-    // Mengetik kode pelanggan (belum ada barang) menutup tawaran tetapi tidak menghapus draf yang belum diputuskan.
-    await main.getByLabel("Kode pelanggan Accurate").fill("C-02");
+    // Memilih pelanggan lain (belum ada barang) menutup tawaran tetapi tidak menghapus draf yang belum diputuskan.
+    await pilihPelanggan(main, "PELANGGAN B", "PELANGGAN B");
     await expect(tawaran).toBeHidden();
     await page.reload(NAV);
     await tawaran.getByRole("button", { name: "Pulihkan draf" }).click();
-    await expect(main.getByLabel("Kode pelanggan Accurate")).toHaveValue("C-01");
+    await expect(main.getByRole("group", { name: "Pelanggan terpilih" })).toContainText("C-01", NAV);
     await expect(main.getByRole("button", { name: "Kirim order…" })).toBeDisabled();
     expect(post).toBe(1);
 });
@@ -818,7 +800,7 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
 
         await page.goto("/sales", NAV);
         await expect(main.getByRole("heading", { name: "Order Sales" })).toBeVisible(NAV);
-        await main.getByLabel("Kode pelanggan Accurate").fill("C-01");
+        await pilihPelanggan(main, "PELANG", "PELANGGAN A");
         await main.getByRole("button", { name: "Tambah barang" }).click();
         await expect(main.getByRole("button", { name: "Hapus barang 2" })).toBeVisible();
         await noOverflow(page);
