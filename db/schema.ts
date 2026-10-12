@@ -2267,3 +2267,36 @@ export const kasirPelunasanFaktur = pgTable("kasir_pelunasan_faktur", {
     foreignKey({ name: "kasir_pelunasan_faktur_pelunasan_fk", columns: [t.databaseId, t.pelunasanId],
         foreignColumns: [kasirPelunasan.databaseId, kasirPelunasan.pelunasanId] }).onDelete("cascade"),
 ]);
+
+// Status baca cache pelunasan per (database, tanggal) — K1b. Lease lintas instance = status 'berjalan' + token (kedaluwarsa 2 menit
+// menurut jam DB; token dicek di SETIAP tulis cache). `lengkap` ⇔ daftar list.do lengkap ∧ setiap id daftar ada di cache dengan
+// last_update sama ∧ tanpa pelunasan ditolak; galat tidak pernah menghapus cache atau memundurkan lengkap_pada. Cache, bukan jejak
+// (tanpa trigger). sebab = kelas galat lib/kasir/pembaca KELAS_GALAT. Lihat db/migrations/0031_kasir_baca.sql + docs/handover/DDL_K1B.sql.
+export const kasirPelunasanBaca = pgTable("kasir_pelunasan_baca", {
+    databaseId: text("database_id").notNull(),
+    tanggal: date("tanggal").notNull(),
+    status: text("status").notNull(),
+    sebab: text("sebab"),
+    pesan: text("pesan"),
+    jumlahDaftar: integer("jumlah_daftar"),
+    sisaDetail: integer("sisa_detail"),
+    ditolak: jsonb("ditolak").notNull().default(sql`'[]'::jsonb`), // [{ id, nomor, sebab, pesan }]
+    token: text("token"),
+    mulaiPada: timestamp("mulai_pada", { withTimezone: true }).notNull().defaultNow(),
+    selesaiPada: timestamp("selesai_pada", { withTimezone: true }),
+    lengkapPada: timestamp("lengkap_pada", { withTimezone: true }),
+    pemicu: text("pemicu").notNull(),
+    akunSinkron: text("akun_sinkron"), // user.id akun Accurate sinkron yang cache-nya terakhir diterapkan (tampil sebagai NAMA)
+    penuhTertundaPada: timestamp("penuh_tertunda_pada", { withTimezone: true }), // baca penuh cron menyerah menunggu lease; klaim berikut = penuh
+}, (t) => [
+    primaryKey({ name: "kasir_pelunasan_baca_pkey", columns: [t.databaseId, t.tanggal] }),
+    check("kasir_pelunasan_baca_status", sql`${t.status} IN ('berjalan', 'lengkap', 'sebagian', 'gagal')`),
+    check("kasir_pelunasan_baca_sebab", sql`${t.sebab} IS NULL OR ${t.sebab} IN ('sesi_sinkron', 'hak_akses', 'batas_laju', 'accurate_5xx', 'jaringan',
+        'tidak_pasti', 'ditolak', 'bentuk', 'nominal', 'terpotong', 'hapus_massal')`),
+    check("kasir_pelunasan_baca_isi", sql`btrim(${t.databaseId}) <> '' AND btrim(${t.pemicu}) <> '' AND jsonb_typeof(${t.ditolak}) = 'array'
+        AND ${t.jumlahDaftar} >= 0 AND ${t.sisaDetail} >= 0 AND ${t.sisaDetail} <= ${t.jumlahDaftar}`),
+    check("kasir_pelunasan_baca_konsisten", sql`(${t.status} = 'gagal') = (${t.sebab} IS NOT NULL)
+        AND (${t.status} = 'berjalan') = (${t.token} IS NOT NULL) AND (${t.status} = 'berjalan') = (${t.selesaiPada} IS NULL)
+        AND (${t.status} <> 'lengkap' OR (coalesce(${t.sisaDetail}, -1) = 0 AND ${t.jumlahDaftar} IS NOT NULL
+            AND ${t.ditolak} = '[]'::jsonb AND ${t.lengkapPada} IS NOT NULL))`),
+]);

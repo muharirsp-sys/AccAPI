@@ -1,13 +1,34 @@
 /*
- * Tujuan: Memastikan katalog sidebar tidak menghilangkan modul atau melewati izin.
+ * Tujuan: Memastikan katalog sidebar tidak menghilangkan modul atau melewati izin; gerbang klien SidebarLayout menolak halaman
+ *   terlarang yang dicapai tanpa layout server berjalan ulang (navigasi klien, pemasangan ulang dari cache router).
  * Caller: npx tsx --test components/SidebarLayout.test.ts.
- * Dependensi: node:test, workspace-navigation.
- * Main Functions: tes kelengkapan, default-deny, dan pencocokan route terdalam.
+ * Dependensi: node:test, workspace-navigation, react-dom/server + konteks router Next (render SidebarLayout tanpa server).
+ * Main Functions: tes kelengkapan, default-deny, pencocokan route terdalam, gerbang klien.
  * Side Effects: Tidak ada.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
 import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigationItem, roleProfile, roleShortcuts } from "../config/workspace-navigation";
+
+// ponytail: next/font/google kosong di luar kompilator Next, padahal Scope.tsx memanggilnya saat dimuat → stub di cache require
+// SEBELUM SidebarLayout dimuat. Plafon: konteks router diambil dari jalur internal next/dist; bila Next memindahkannya, uji ini
+// gagal dimuat (bukan lulus diam-diam) — perbarui jalurnya.
+require.cache[require.resolve("next/font/google")] = { exports: { Plus_Jakarta_Sans: () => ({ variable: "" }), Geist_Mono: () => ({ variable: "" }) } } as never;
+
+/** Render shell pada URL `pathname` dengan kunci `permKeys` — seperti sesudah navigasi klien atau pemasangan ulang, tanpa layout server. */
+async function shell(pathname: string, permKeys: string[]) {
+    const { default: SidebarLayout } = await import("./SidebarLayout");
+    const router = { push() {}, replace() {}, refresh() {}, back() {}, forward() {}, prefetch() {}, hmrRefresh() {} };
+    return renderToStaticMarkup(createElement(AppRouterContext.Provider, { value: router },
+        createElement(PathnameContext.Provider, { value: pathname },
+            createElement(SidebarLayout, { permKeys }, createElement("p", null, "ISI-HALAMAN")))));
+}
+/** Isi <main> saja: pesan gagal tetap pendek. */
+const isiMain = (html: string) => html.slice(html.indexOf("<main"), html.indexOf("</main>"));
 
 test("all existing modules appear exactly once across six groups", () => {
     const items = WORKSPACE_GROUPS.flatMap(group => group.items);
@@ -80,4 +101,17 @@ test("bottom-nav shortcuts follow the role guessed from permissions and never le
 test("bottom-nav labels are unique across the whole catalog", () => {
     const labels = [HOME_ITEM, ...WORKSPACE_GROUPS.flatMap(group => group.items)].map(item => item.short ?? item.name.split(" ")[0]);
     assert.deepEqual(labels.filter((label, index) => labels.indexOf(label) !== index), []);
+});
+test("client gate re-checks the URL with the same keys: a forbidden page reached without the server layout stays denied", async () => {
+    const fakturist = ["dashboard.view", "order.view", "order.edit"];
+    // Tinjauan #159: /sesi-accurate (server) → router.push /api-wrapper → pindah grup route (/forgot-password) → Back. Router memasang
+    // ulang layout dari cache, jadi SidebarLayout dipasang baru di /api-wrapper tanpa layout server berjalan. Dulu useState(pathname)
+    // mencatat /api-wrapper sebagai "path yang sudah digerbang server" → Konsol tampil.
+    const remount = isiMain(await shell("/api-wrapper", fakturist));
+    assert.match(remount, /Akses ditolak/);
+    assert.doesNotMatch(remount, /ISI-HALAMAN/);
+    assert.doesNotMatch(isiMain(await shell("/api-wrapper/apa-saja", fakturist)), /ISI-HALAMAN/);
+    // Halaman yang diizinkan tetap tampil (salah satu SESI_ACCURATE_KEYS cukup untuk /sesi-accurate).
+    assert.match(isiMain(await shell("/sesi-accurate", fakturist)), /ISI-HALAMAN/);
+    assert.match(isiMain(await shell("/api-wrapper", ["dashboard.view", "api_wrapper.view"])), /ISI-HALAMAN/);
 });

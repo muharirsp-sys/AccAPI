@@ -1,7 +1,9 @@
 /*
  * Tujuan: Halaman /sesi-accurate + kartu Sesi Accurate di Konsol (S7-sesi, owner D-01 Q2, AM-033): belum masuk / masuk tanpa database /
  *   database aktif / Keluar / galat sesi & daftar ≠ kosong / kabar `?accurate=error&alasan=<kode>` dipetakan (teks query tidak tampil) /
- *   tautan Masuk = route login ber-`state` (cookie httpOnly+Secure+Lax hanya ke callback) / Konsol memakai kartu yang sama.
+ *   tautan Masuk = route login ber-`state` (cookie httpOnly+Secure+Lax hanya ke callback) / Konsol memakai kartu yang sama /
+ *   fokus ke elemen bernama (Batal ganti → Ganti database, daftar gagal saat Ganti → Coba lagi) / tautan 401 ≥ 44 px di ponsel sentuh.
+ *   Gerbang klien SidebarLayout di mode bypass: kunci dipalsukan di payload RSC (tanpaKunci) + components/SidebarLayout.test.ts (render tanpa server, ikut npm test).
  * Caller: Playwright lokal, DUA mode server (config sementara, baseURL :3021, `--workers=1`):
  *   A. `LOCAL_AUTH_BYPASS=true` (izin admin, tanpa DB): blok "kartu".
  *   B. Akun nyata (server tanpa bypass + Postgres berisi 3 akun bergrup): set `PW_SESI_FAKTURIST`, `PW_SESI_TANPA_KUNCI`, `PW_SESI_KONSOL`
@@ -56,6 +58,27 @@ async function tanpaAccurate(page: Page) {
     return { keAccurate, lokasi };
 }
 
+/**
+ * Akun tanpa kunci berawalan `buang` di mode bypass (admin memegang semua): array permKeys di payload RSC halaman dashboard diganti —
+ * pola tests/fiori-antrean-faktur.spec.ts (hanya di tes). Server tetap merender sebagai admin, jadi yang diuji = gerbang klien.
+ */
+async function tanpaKunci(page: Page, buang: string[]) {
+    await page.route((u) => ["/sesi-accurate", "/api-wrapper"].includes(u.pathname), async (route) => {
+        const res = await route.fetch();
+        const headers = { ...res.headers() };
+        delete headers["content-length"];
+        delete headers["content-encoding"];
+        const body = (await res.text()).replace(/permKeys(\\?)":\[([^\]]*)\]/g, (_, e: string, isi: string) =>
+            `permKeys${e}":[${isi.split(",").filter((k) => !buang.some((x) => k.includes(`"${x}`))).join(",")}]`);
+        return route.fulfill({ status: res.status(), headers, body });
+    });
+}
+const dorong = (page: Page, href: string) => page.evaluate((h) => (window as unknown as { next: { router: { push: (h: string) => void } } }).next.router.push(h), href);
+
+test.use({
+    // Dokumen dari route.fulfill (tanpaKunci) dianggap bukan jaringan lokal oleh Edge → skrip localhost diblokir. Hanya di peramban tes ini.
+    launchOptions: { args: ["--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights"] },
+});
 test.beforeEach(async ({ page }) => {
     test.setTimeout(120_000);
     await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "light" });
@@ -121,18 +144,27 @@ test.describe("kartu (LOCAL_AUTH_BYPASS)", () => {
         await page.screenshot({ path: "test-results/fiori-sesi-accurate-aktif.png", fullPage: true });
     });
 
-    test("database aktif → Ganti database memakai daftar + open-db; Batal ganti kembali", async ({ page }) => {
+    test("database aktif → Ganti database memakai daftar + open-db; daftar gagal = fokus ke Coba lagi, Batal ganti = fokus ke Ganti database", async ({ page }) => {
         let sesi: Record<string, unknown> = AKTIF;
-        const log = await pasang(page, { sesi: () => json(sesi) });
+        let daftar = json({ error: "Failed" }, 502);
+        const log = await pasang(page, { sesi: () => json(sesi), daftar: () => daftar });
         await page.goto("/sesi-accurate", { timeout: 90_000 });
         const k = kartu(page);
         await expect(k).toContainText("PT CONTOH (id 77)");
+        // Tombol Ganti database hilang begitu diklik; daftar gagal → fokus ke aksi pemulihan bernama (Coba lagi), bukan <body>/div kosong.
         await k.getByRole("button", { name: "Ganti database" }).click();
+        await expect(k.getByRole("alert")).toContainText("Daftar database Accurate tidak terbaca");
+        await expect(k.getByRole("button", { name: "Coba lagi" })).toBeFocused();
+        daftar = json(DAFTAR);
+        await k.getByRole("button", { name: "Coba lagi" }).click();
         const pilih = k.getByLabel("Database Accurate");
         await expect(pilih).toBeFocused();
+        // Batal ganti membongkar tombolnya sendiri → fokus ke tombol Ganti database yang muncul lagi.
         await k.getByRole("button", { name: "Batal ganti" }).click();
         await expect(pilih).toHaveCount(0);
+        await expect(k.getByRole("button", { name: "Ganti database" })).toBeFocused();
         await k.getByRole("button", { name: "Ganti database" }).click();
+        await expect(pilih).toBeFocused();
         await pilih.selectOption("88");
         sesi = { ...AKTIF, databaseId: "88", databaseAlias: "PT CONTOH DUA" };
         await k.getByRole("button", { name: "Buka database" }).click();
@@ -189,6 +221,62 @@ test.describe("kartu (LOCAL_AUTH_BYPASS)", () => {
         daftar = json(DAFTAR);
         await k.getByRole("button", { name: "Muat ulang daftar" }).click();
         await expect(k.getByLabel("Database Accurate")).toBeVisible();
+    });
+
+    test("gerbang klien (kunci dipalsukan): Konsol ditolak lewat navigasi klien dan pemasangan ulang (Back); PWA tetap terpasang di halaman ditolak", async ({ page }) => {
+        // Tanpa api_wrapper.* — kunci lain (order.edit, …) tetap, jadi /sesi-accurate terbuka lewat SESI_ACCURATE_KEYS.
+        await tanpaKunci(page, ["api_wrapper."]);
+        await pasang(page, { sesi: () => json(BELUM) });
+        await page.goto("/sesi-accurate", { timeout: 90_000 });
+        await expect(kartu(page)).toContainText("Belum masuk ke Accurate");
+        const ditolak = page.getByRole("heading", { name: "Akses ditolak" });
+        const eksekusi = page.getByRole("button", { name: "Eksekusi Endpoint" });
+        await dorong(page, "/api-wrapper");
+        await expect(page).toHaveURL(/\/api-wrapper$/);
+        await expect(ditolak).toBeVisible();
+        await expect(eksekusi).toHaveCount(0);
+        // Tinjauan #159: pindah grup route lalu Back → router memasang ulang layout dari cache tanpa layout server.
+        await dorong(page, "/forgot-password");
+        await expect(page.getByRole("heading", { name: "Lupa sandi" })).toBeVisible({ timeout: 60_000 });
+        await page.goBack();
+        await expect(page).toHaveURL(/\/api-wrapper$/);
+        await expect(ditolak).toBeVisible();
+        await expect(eksekusi).toHaveCount(0);
+        // Dimuat langsung (seperti server menolak halaman): pemasangan PWA ada di luar gerbang, jadi prompt pasang tetap bisa muncul.
+        await page.goto("/api-wrapper", { timeout: 90_000 });
+        await expect(ditolak).toBeVisible();
+        await expect(eksekusi).toHaveCount(0);
+        await expect.poll(async () => {
+            await page.evaluate(() => window.dispatchEvent(new Event("beforeinstallprompt", { cancelable: true })));
+            return page.getByText("Install Smart ERP").isVisible();
+        }).toBe(true);
+    });
+
+    test.describe("ponsel 390 px layar sentuh", () => {
+        test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+        test("401: Masuk ulang ke aplikasi = target sentuh ≥ 44 px di baris sendiri, kalimat galat utuh; tanpa gulir menyamping", async ({ page }) => {
+            await pasang(page, { sesi: () => json({ ok: false, error: "Unauthorized" }, 401) });
+            await page.goto("/sesi-accurate", { timeout: 90_000 });
+            const strip = kartu(page).getByRole("alert");
+            await expect(strip).toContainText("Sesi login aplikasi Anda berakhir.");
+            const tautan = strip.getByRole("link", { name: "Masuk ulang ke aplikasi" });
+            await expect(tautan).toHaveAttribute("href", "/login");
+            const kotak = await tautan.boundingBox();
+            expect(kotak?.height ?? 0).toBeGreaterThanOrEqual(44);
+            expect(kotak?.width ?? 0).toBeGreaterThanOrEqual(44);
+            // Tautan di bawah kalimat (bukan disisipkan di tengahnya): tepi atasnya ≥ tepi bawah teks galat.
+            const bawahKalimat = await strip.evaluate((el) => {
+                const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+                for (let n = w.nextNode(); n; n = w.nextNode()) {
+                    if (!n.textContent?.includes("berakhir.")) continue;
+                    const r = document.createRange(); r.selectNodeContents(n); return r.getBoundingClientRect().bottom;
+                }
+                return Number.POSITIVE_INFINITY;
+            });
+            expect(kotak?.y ?? 0).toBeGreaterThanOrEqual(bawahKalimat - 1);
+            expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        });
     });
 
     test("kabar callback: kode dipetakan ke kalimat tetap, teks query tidak tampil, URL dibersihkan (returnTo tetap)", async ({ page }) => {
@@ -308,6 +396,14 @@ test.describe("akun nyata (tanpa bypass)", () => {
         await expect(kartu(page)).toContainText("Belum masuk ke Accurate");
         await expect(page.getByRole("link", { name: /Kembali ke/ })).toHaveCount(0);
         await page.evaluate(() => (window as unknown as { next: { router: { push: (h: string) => void } } }).next.router.push("/api-wrapper"));
+        await expect(page).toHaveURL(/\/api-wrapper$/);
+        await expect(page.getByRole("heading", { name: "Akses ditolak" })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Eksekusi Endpoint" })).toHaveCount(0);
+        // Tinjauan #159: pindah grup route lalu Back → router memasang ulang layout dari cache (layout server tidak berjalan). Dulu
+        // gerbang klien mempercayai path saat dipasang (`useState`) dan Konsol tampil; kini URL selalu dinilai dengan kunci.
+        await page.evaluate(() => (window as unknown as { next: { router: { push: (h: string) => void } } }).next.router.push("/forgot-password"));
+        await expect(page.getByRole("heading", { name: "Lupa sandi" })).toBeVisible();
+        await page.goBack();
         await expect(page).toHaveURL(/\/api-wrapper$/);
         await expect(page.getByRole("heading", { name: "Akses ditolak" })).toBeVisible();
         await expect(page.getByRole("button", { name: "Eksekusi Endpoint" })).toHaveCount(0);
