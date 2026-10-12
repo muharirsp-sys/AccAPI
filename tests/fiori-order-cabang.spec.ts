@@ -1232,3 +1232,37 @@ test("Order baru (putaran 1 peninjau #3): daftar pencarian usang (tanpa harga ma
     expect(log.preview.length).toBe(n);
     expect(log.preview.at(-1)!.lines[0].price).toBeUndefined();
 });
+
+test("Order Sales (putaran 1 peninjau #4): tanggal order dikosongkan = Kirim terkunci dengan alasan 'Isi tanggal order' (bukan aktif tanpa alasan); diisi lagi = terbuka", async ({ page }) => {
+    const { opsi } = await mockOrderCabang(page, { peran: "sales" });
+    await mockWebsales(page, { cabang: opsi });
+    await bukaSales(page);
+    const { main } = await isiSalesSiap(page);
+    const kirim = main.getByRole("button", { name: "Kirim order…" });
+    await expect(kirim).toBeEnabled(NAV);
+    await main.getByLabel("Tanggal order").fill("");
+    await expect(kirim).toBeDisabled();
+    await expect(kirim).toHaveAttribute("title", "Isi tanggal order");
+    await main.getByLabel("Tanggal order").fill(HARI_INI);
+    await expect(kirim).toBeEnabled(NAV);
+});
+
+test("Order baru (putaran 1 peninjau #4): tanggal order dikosongkan = Simpan terkunci dengan alasan 'Isi tanggal order'; diisi lagi = terbuka", async ({ page }) => {
+    const { opsi } = await mockOrderCabang(page);
+    await mockOrdersInternal(page, { cabang: opsi });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/orders/baru", NAV);
+    const main = page.locator("main");
+    await pilihPelanggan(main, "PELANGGAN A", "PELANGGAN A");
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await pilihBarang(b1, "A-1", "BARANG A\\b.*KRT");
+    await b1.getByLabel("Satuan").selectOption("KRT");
+    await b1.getByLabel("Jumlah").fill("2");
+    const simpan = page.getByRole("button", { name: "Simpan order…" });
+    await expect(simpan).toBeEnabled(NAV);
+    await main.getByLabel("Tanggal order").fill("");
+    await expect(simpan).toBeDisabled();
+    await expect(simpan).toHaveAttribute("title", "Isi tanggal order");
+    await main.getByLabel("Tanggal order").fill(HARI_INI);
+    await expect(simpan).toBeEnabled(NAV);
+});

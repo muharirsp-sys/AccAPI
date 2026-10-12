@@ -29,7 +29,7 @@ import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@
 import { PemilihBarang, type BacaanBarang } from "@/components/order/PemilihBarang";
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
 import { KartuPromoBaris, PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
-import { alasanKunciBarang, galatDariJawaban, galatTidakDitemukan, hargaCabangDefault, kalimatGalat, kalimatPenolakan, kunciHarga, labelSatuan, pecahSaran, pratinjauBerubah, type BarangPilih, type Cakupan, type Galat, type PelangganPilih } from "@/components/order/order-cabang";
+import { alasanKunciBarang, galatDariJawaban, galatTidakDitemukan, hargaCabangDefault, kalimatGalat, kalimatPenolakan, kunciHarga, labelSatuan, pecahSaran, pratinjauBerubah, tanggalSah, type BarangPilih, type Cakupan, type Galat, type PelangganPilih } from "@/components/order/order-cabang";
 import { bacaBarangKode, hitungPratinjau, muatCakupan, type Pratinjau } from "@/components/order/order-cabang-api";
 import { resolveApiBase } from "@/lib/apiBase";
 import { rupiah } from "@/lib/promo-ui";
@@ -215,7 +215,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     // Nilai transaksi dan saran promo dihitung server; sales melihat, tidak menentukan.
     const filled = lines.filter((line) => line.code.trim());
     const barisSiap = (l: Line) => Boolean(l.barang && l.unit.trim() && Number(l.quantity) > 0);
-    const siapPratinjau = Boolean(pelanggan && channel.trim() && /^\d{4}-\d{2}-\d{2}$/.test(orderDate) && filled.length > 0 && filled.every(barisSiap));
+    const siapPratinjau = Boolean(pelanggan && channel.trim() && tanggalSah(orderDate) && filled.length > 0 && filled.every(barisSiap));
     const previewKey = JSON.stringify([channel, orderDate, kodePel, lines.map((l) => [l.code, l.unit, l.quantity])]);
     const pratinjau: Pratinjau | null = !siapPratinjau ? null : hasil?.key === previewKey ? hasil.p : { status: "memuat" };
     useEffect(() => {
@@ -261,6 +261,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                         : pel.state.jenis === "galat" ? "Data pelanggan belum terbaca; pilih pelanggan lagi"
                             : !outlet.trim() ? "Isi nama outlet"
                                 : !channel.trim() ? (channelMasalah || "Channel outlet belum dipastikan dari master")
+                                    : !tanggalSah(orderDate) ? "Isi tanggal order"
                                     : filled.length === 0 ? "Cari dan pilih barang"
                                         : menunggu >= 0 ? `Menunggu data barang ${menunggu + 1}`
                                             : tidakLengkap >= 0 ? `Lengkapi satuan dan jumlah barang ${tidakLengkap + 1}`

@@ -26,7 +26,7 @@ import { ConfirmDialog, FormField, useUnsavedGuard } from "@/components/fiori/in
 import { PemilihBarang } from "@/components/order/PemilihBarang";
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
 import { KartuPromoBaris, PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
-import { alasanKunciBarang, barisBedaCabang, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kunciHarga, labelSatuan, pecahSaran, pratinjauBerubah, type BarangPilih, type PelangganPilih } from "@/components/order/order-cabang";
+import { alasanKunciBarang, barisBedaCabang, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kunciHarga, labelSatuan, pecahSaran, pratinjauBerubah, tanggalSah, type BarangPilih, type PelangganPilih } from "@/components/order/order-cabang";
 import { hitungPratinjau, type Pratinjau } from "@/components/order/order-cabang-api";
 import { rupiah } from "@/lib/promo-ui";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
@@ -80,7 +80,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
 
     const filled = lines.filter((line) => line.code.trim());
     const barisSiap = (l: Line) => Boolean(l.barang && l.unit.trim() && Number(l.quantity) > 0);
-    const siapPratinjau = Boolean(pelanggan && channel.trim() && /^\d{4}-\d{2}-\d{2}$/.test(orderDate) && filled.length > 0 && filled.every(barisSiap));
+    const siapPratinjau = Boolean(pelanggan && channel.trim() && tanggalSah(orderDate) && filled.length > 0 && filled.every(barisSiap));
 
     const berlakuHarga = (l: Line) => l.barang?.hargaUntuk === kunciHarga(pelanggan?.id, orderDate);
     const infoHarga = (l: Line, p: Pratinjau | null | undefined) => (p?.status === "siap" ? p.prices.find((x) => x.code === l.code.trim() && x.unit === l.unit.trim().toUpperCase()) : undefined);
@@ -164,6 +164,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                 : pel.state.jenis === "galat" ? "Data pelanggan belum terbaca; pilih pelanggan lagi"
                     : !outlet.trim() ? "Isi nama outlet"
                         : !channel.trim() ? (channelMasalah || "Channel outlet belum dipastikan dari master")
+                            : !tanggalSah(orderDate) ? "Isi tanggal order"
                             : filled.length === 0 ? "Cari dan pilih minimal satu barang"
                                 : tidakLengkap >= 0 ? `Lengkapi satuan dan jumlah barang ${tidakLengkap + 1}`
                                     : salahSatuan >= 0 ? `Perbaiki satuan barang ${salahSatuan + 1}`
