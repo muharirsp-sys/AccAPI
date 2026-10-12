@@ -49,12 +49,14 @@ export class BuktiRusak extends Error {}
 /**
  * Gambar bukti (jpg/png) DI-ENCODE ULANG dengan sharp (sudah dipakai Form Kontrol): orientasi EXIF diterapkan lalu SEMUA metadata (EXIF/GPS)
  * dibuang, muatan polyglot (data sesudah akhir gambar) hilang, sisi terpanjang ≤ 2000 px (tanpa memperbesar), JPEG kualitas 80 -> jenis
- * tersimpan selalu `jpg`. PDF disimpan apa adanya (magic bytes + batas ukuran dicek pemanggil). Gambar tak terbaca -> BuktiRusak.
+ * tersimpan selalu `jpg`. Alfa (PNG RGBA / palet tRNS / abu+alfa) DIRATAKAN ke latar PUTIH sebelum JPEG — tanpa itu piksel transparan jadi
+ * hitam dan bukti berteks hitam hilang permanen (tinjauan B putaran 2). PDF disimpan apa adanya (magic bytes + batas ukuran dicek pemanggil).
+ * Gambar tak terbaca -> BuktiRusak.
  */
 export async function normalkanBukti(isi: Uint8Array, jenis: JenisBukti): Promise<{ isi: Uint8Array; jenis: JenisBukti }> {
     if (jenis === "pdf") return { isi, jenis };
     try {
-        const keluar = await sharp(isi, { limitInputPixels: PIKSEL_MASUK_MAKS }).rotate()
+        const keluar = await sharp(isi, { limitInputPixels: PIKSEL_MASUK_MAKS }).rotate().flatten({ background: "#ffffff" })
             .resize(SISI_MAKS_PX, SISI_MAKS_PX, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
         return { isi: new Uint8Array(keluar), jenis: "jpg" };
     } catch (e) {

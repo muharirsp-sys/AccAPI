@@ -284,6 +284,47 @@ test("POST setoran: gambar bukti DI-ENCODE ULANG (EXIF/GPS & polyglot terbuang, 
     assert.deepEqual(new Uint8Array(pdf.berkas!.isi), pdfIsi);
 });
 
+test("POST setoran: PNG TRANSPARAN berteks hitam -> JPEG berlatar PUTIH (bukan seluruhnya hitam = bukti hilang); RGBA, palet tRNS, abu+alfa", async () => {
+    // 60×20 transparan (RGB 0 di bawah alfa 0) + coretan hitam pekat 40×4 = "teks". Tanpa flatten, JPEG membuang alfa -> semua 0/0/0.
+    const [w, h] = [60, 20];
+    const rgba = Buffer.alloc(w * h * 4);
+    for (let y = 8; y < 12; y++) for (let x = 10; x < 50; x++) rgba[(y * w + x) * 4 + 3] = 255;
+    const mentah = () => sharp(rgba, { raw: { width: w, height: h, channels: 4 } });
+    const varian: [string, Buffer][] = [
+        ["rgba", await mentah().png().toBuffer()],
+        ["palet tRNS", await mentah().png({ palette: true }).toBuffer()],
+        ["abu+alfa", await mentah().toColourspace("b-w").png().toBuffer()],
+    ];
+    for (const [nama, isi] of varian) {
+        assert.ok((await sharp(isi).metadata()).hasAlpha, `${nama}: masukan memang beralfa`);
+        const r = await dengan({ izin: ["kasir.catat"], transaksi: transaksiTiruan("commit", []) }, async (dir) => {
+            const res = await postSetoran(multipart({ ...baku, transfer: "500000" }, { isi: new Uint8Array(isi), nama: "t.png" }));
+            const [f] = await readdir(dir);
+            return { status: res.status, st: f ? await sharp(await readFile(path.join(dir, f))).stats() : null };
+        });
+        assert.equal(r.status, 200, nama);
+        const rata = r.st!.channels.slice(0, 3).map((c) => c.mean);
+        assert.ok(rata.every((m) => m > 200), `${nama}: latar putih, rata-rata kanal ${rata.map(Math.round).join("/")}`);
+        assert.ok(r.st!.channels[0].min < 60, `${nama}: coretan hitam tetap terbaca (min ${r.st!.channels[0].min})`);
+    }
+});
+
+test("GET hari: batas `orang` = 100 CODE POINT (100 emoji = 200 unit UTF-16 lolos; 101 -> 400 field orang)", async () => {
+    let dicapai = 0;
+    const get = (n: number) => dengan({ izin: ["kasir.view"], deps: { databaseId: async () => { dicapai++; throw new Error("uji: berhenti sesudah gerbang orang"); } } },
+        () => getHari(new NextRequest(`http://app.test/api/kasir?tanggal=${D}&orang=${encodeURIComponent("😀".repeat(n))}`)));
+    const salahLog = console.error;
+    console.error = () => undefined;
+    try {
+        const lolos = await get(100);
+        assert.deepEqual([lolos.status, (await lolos.json() as Badan).kode, dicapai], [500, "GALAT_INTERNAL", 1], "100 code point melewati gerbang");
+        const tolak = await get(101);
+        assert.deepEqual([tolak.status, (await tolak.json() as Badan).field, dicapai], [400, "orang", 1]);
+    } finally {
+        console.error = salahLog;
+    }
+});
+
 test("bukti: galat baca selain ENOENT -> 500 GALAT_INTERNAL tercatat (bukan 404 diam); hapusBukti mencatat galat selain ENOENT", async () => {
     const nama = "0a1b2c3d-0000-4000-8000-000000000002";
     const log: unknown[][] = [];

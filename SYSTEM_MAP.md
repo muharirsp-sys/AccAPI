@@ -1105,7 +1105,7 @@ kasir_pelunasan_baca (database_id + tanggal; status berjalan|lengkap|sebagian|ga
     GET /api/kasir?tanggal=&orang= (kasir.view) -> [kunci 20.00 belum dicatat? catatKunciOtomatis] -> snapshot REPEATABLE READ: event + setoran + catatan
         + muatPelunasanDalam (cache sinkron) + muatPetaOrang -> rekonsiliasiHari -> bentukJawabanHari (angka Incaso HANYA bila status baca lengkap)
     POST /api/kasir/setoran (kasir.catat; JSON | multipart data+bukti; bacaBadanTerbatas ≤ 6 MB, chunked diputus -> 413) -> uraiSetoran (kolom ≤ Rp 100 miliar)
-      -> [bukti: magic bytes, ≤ 5 MB -> normalkanBukti (sharp: gambar -> JPEG ≤ 2000 px tanpa EXIF; PDF apa adanya) -> simpanBukti data/uploads/kasir-bukti/<uuid>]
+      -> [bukti: magic bytes, ≤ 5 MB -> normalkanBukti (sharp: gambar -> alfa diratakan putih -> JPEG ≤ 2000 px tanpa EXIF; PDF apa adanya) -> simpanBukti data/uploads/kasir-bukti/<uuid>]
       -> catatSetoran (total hari ≤ Rp 10 triliun sebelum INSERT; CHECK DB giro_wajib/bukti_wajib/form_wajib = jaring kedua)
     POST /api/kasir/jelaskan (kasir.catat) | POST /api/kasir/tutup (kasir.tutup) | POST /api/kasir/buka (kasir.buka) | GET /api/kasir/bukti?id= (kasir.view)
       tulis = transaksiHari: READ COMMITTED -> pg_advisory_xact_lock(hashtextextended('kasir:'||tanggal,0)) -> [tutup: SELECT kasir_pelunasan_baca FOR SHARE]
