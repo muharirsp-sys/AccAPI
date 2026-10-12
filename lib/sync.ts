@@ -114,8 +114,10 @@ const bumpSyncedAt = (table: string) =>
 
 // `suspended` hanya ditimpa bila jawaban Accurate MEMBAWA field itu: list.do memintanya eksplisit, tetapi detail.do (jalur webhook)
 // bentuknya lain. Field absen = "tidak tahu", bukan "aktif" — pola yang sama dengan cabang pelanggan di bawah.
+// raw_data bertipe jsonb tetapi ISINYA STRING JSON (lib/promo-recap, produksi 2026-09-12: jsonb_typeof = "string") -> diurai dulu
+// (`#>> '{}'` lalu ::jsonb; berlaku juga bila suatu hari isinya objek).
 const suspendedBila = (table: string) =>
-    sql.raw(`CASE WHEN excluded.raw_data -> 'suspended' IS NOT NULL THEN excluded."suspended" ELSE ${table}."suspended" END`);
+    sql.raw(`CASE WHEN (excluded.raw_data #>> '{}')::jsonb -> 'suspended' IS NOT NULL THEN excluded."suspended" ELSE ${table}."suspended" END`);
 
 /**
  * Satu baris item/list.do (atau detail.do webhook) -> kolom tabel `item`. Murni supaya pemetaan tag divisi bisa diuji tanpa DB.
