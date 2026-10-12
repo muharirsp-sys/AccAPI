@@ -94,7 +94,9 @@ export async function GET(request: NextRequest) {
                 const h = hargaDari.get(`${r.no}|${unit}`);
                 return pelanggan
                     ? { unit, price: h && hargaSah(h, pelanggan.branchId) ? h.price : null, source: h?.source ?? "missing",
-                        branchName: h?.branchName ?? null, effectiveDate: h?.effectiveDate ?? null }
+                        branchName: h?.branchName ?? null, effectiveDate: h?.effectiveDate ?? null,
+                        // Fallback cabang DEFAULT (cabang pelanggan tanpa baris berlaku) — layar memberi label (butir 9).
+                        hargaDefault: Boolean(h && hargaSah(h, pelanggan.branchId) && h.branchId !== pelanggan.branchId) }
                     : { unit };
             }),
         })),

@@ -290,6 +290,12 @@ test("PG O1: DDL_O1 dua kali idempoten + VERIFIKASI; migrate-pg OK->SKIP, sebagi
     await d.pool.query("ALTER TABLE customer DROP COLUMN suspended");
     assert.equal(await migrasi(d.pool, entri), "OK", "kolom ter-DROP = belum ada");
     assert.deepEqual(await katalog(d.pool), ka);
+    // Putaran 2 (B-3, S15): semua kolom O1 ada KECUALI sales_profile.accurate_linked -> sudahAda false -> entri melengkapi.
+    const e = await skemaBaru();
+    await e.pool.query(`ALTER TABLE item ADD COLUMN branch_id bigint, ADD COLUMN suspended boolean NOT NULL DEFAULT false, ADD COLUMN char_field2 text;
+        ALTER TABLE customer ADD COLUMN suspended boolean NOT NULL DEFAULT false`);
+    assert.equal(await migrasi(e.pool, entri), "OK", "tanpa accurate_linked = belum ada");
+    assert.deepEqual(await katalog(e.pool), ka);
 
     // VERIFIKASI hak accapi_app (role sementara di transaksi yang di-ROLLBACK): hak tabel penuh -> true; cabut UPDATE item -> false.
     const verif = ddl.slice(ddl.lastIndexOf("COMMIT;") + "COMMIT;".length);
@@ -318,6 +324,18 @@ test("PG O1: DDL_O1 dua kali idempoten + VERIFIKASI; migrate-pg OK->SKIP, sebagi
         assert.equal(nilai("UNIQUE sales_profile.sales_code"), false, "sabotase UNIQUE terbaca");
         assert.equal(nilai("tripwire"), false, "grup sales salah terbaca");
         assert.equal(kurang.filter((v) => v.ok === false).length, 5, "hanya yang disabotase");
+        // B-3 (S5b): UNIQUE pengganti yang LEBIH LEMAH (user_id, sales_code) tetap terbaca gagal — satu karyawan bisa ke dua akun.
+        await k.query("ALTER TABLE sales_profile ADD CONSTRAINT sales_profile_user_kode UNIQUE (user_id, sales_code)");
+        assert.equal(((await k.query(verif)).rows as Cek[]).find((v) => v.cek.startsWith("UNIQUE sales_profile.sales_code"))?.ok, false);
+        // B-1: tripwire PER USER (gabungan grup) — dua grup masing-masing sah, user di keduanya = websales.create + order.view tanpa create.
+        await k.query(`DELETE FROM group_permission WHERE group_id = 'g-x';
+            INSERT INTO "user" (id, name, email) VALUES ('u-t', 'Gabung', 'gabung@uji');
+            INSERT INTO access_group (id, name) VALUES ('g-s', 'Sales Sah'), ('g-v', 'Lihat Order');
+            INSERT INTO group_permission (group_id, permission_key) VALUES ('g-s', 'websales.create'), ('g-v', 'order.view');
+            INSERT INTO user_group (user_id, group_id) VALUES ('u-t', 'g-s'), ('u-t', 'g-v')`);
+        const gabung = (await k.query(verif)).rows as Cek[];
+        assert.equal(gabung.find((v) => v.cek.startsWith("tripwire: tidak ada grup"))?.ok, true, "per grup sah");
+        assert.equal(gabung.find((v) => v.cek.startsWith("tripwire per user"))?.ok, false, "gabungan grup user terbaca");
     } finally {
         await k.query("ROLLBACK");
         k.release();
@@ -415,7 +433,9 @@ test("PG O1 pratinjau: harga dari cabang PELANGGAN (branch_id badan diabaikan); 
     const dikirim = PREVIEW_DIKIRIM.at(-1) as { customer_no: string; lines: Array<{ price: string }> };
     assert.deepEqual(dikirim.lines.map((l) => l.price), ["7207", "172968", "5000"], "harga server yang diteruskan ke promo");
     assert.equal(dikirim.customer_no, "C-A001-KN", "butir 2: customer_no DITERUSKAN ke promo (kelas outlet = sama dengan simpan)");
-    assert.deepEqual((ok.body.lines as Array<{ sumber_harga: string }>).map((l) => l.sumber_harga), ["master", "master", "master"]);
+    // Butir 9 (putaran 2): K-03 dari cabang DEFAULT (fallback) bertanda master_default + hargaDefault.
+    assert.deepEqual((ok.body.lines as Array<{ sumber_harga: string }>).map((l) => l.sumber_harga), ["master", "master", "master_default"]);
+    assert.deepEqual((ok.body.prices as Array<{ hargaDefault: boolean }>).map((p) => p.hargaDefault), [false, false, true]);
     assert.equal((ok.body.pelanggan as { branchName: string }).branchName, "KINO NON FOOD");
 
     const kasus: Array<[string, unknown, number, string]> = [
@@ -451,15 +471,24 @@ test("PG O1 pratinjau: harga dari cabang PELANGGAN (branch_id badan diabaikan); 
     assert.match(String((await pratinjau("u-sa", ORDER("C-A001-KN", [["K-04", "PCS"]]))).body.error), /harga cabang lain \(HEINZ\)/);
     assert.match(String((await pratinjau("u-sa", ORDER("C-A001-KN", [["K-03", "KRT"]]))).body.error), /harga 0/);
     assert.match(String((await pratinjau("u-sa", ORDER("C-A001-KN", [["K-01", "KRT", "1"]], { order_date: "2026-07-15" }))).body.error), /harga standar/);
-    // Butir 7: harga PETUGAS (order.create) per baris — dipakai apa adanya, tercatat; baris lain harga master; master sah ikut sebagai pembanding.
+    // Butir 7 + owner sesi 13: harga PETUGAS (order.create) HANYA untuk baris TANPA harga master sah (K-04: hanya harga cabang lain;
+    // K-03 KRT: harga 0) — dipakai apa adanya, tercatat; baris berharga master memakai harga master.
     const ptg = await pratinjau("u-admin", { ...ORDER("C-A001-KN", []), lines: [{ code: "K-04", unit: "PCS", quantity: "1", price: "9000.5" },
-        { code: "K-01", unit: "PCS", quantity: "2", price: "7000" }, { code: "K-01", unit: "KRT", quantity: "1" }] });
+        { code: "K-03", unit: "KRT", quantity: "2", price: "150000" }, { code: "K-01", unit: "KRT", quantity: "1" }] });
     assert.equal(ptg.status, 200, JSON.stringify(ptg.body));
     assert.deepEqual((ptg.body.lines as Array<{ price: string; sumber_harga: string }>).map((l) => [l.price, l.sumber_harga]),
-        [["9000.5", "petugas"], ["7000", "petugas"], ["172968", "master"]]);
+        [["9000.5", "petugas"], ["150000", "petugas"], ["172968", "master"]]);
     assert.deepEqual((ptg.body.prices as Array<{ source: string; hargaMaster: number | null }>).map((p) => [p.source, p.hargaMaster]),
-        [["petugas", null], ["petugas", 7207], ["tier", 172968]]);
-    assert.deepEqual((PREVIEW_DIKIRIM.at(-1) as { lines: Array<{ price: string }> }).lines.map((l) => l.price), ["9000.5", "7000", "172968"]);
+        [["petugas", null], ["petugas", null], ["tier", 172968]]);
+    assert.deepEqual((PREVIEW_DIKIRIM.at(-1) as { lines: Array<{ price: string }> }).lines.map((l) => l.price), ["9000.5", "150000", "172968"]);
+    // Harga petugas pada baris BERHARGA master (cabang pelanggan, juga default) DITOLAK berkode per baris — bukan diabaikan diam-diam.
+    for (const [baris, hargaMaster] of [[{ code: "K-01", unit: "PCS", quantity: "2", price: "7000" }, 7207],
+        [{ code: "K-03", unit: "PCS", quantity: "1", price: "4000" }, 5000]] as const) {
+        const ditolak = await pratinjau("u-admin", { ...ORDER("C-A001-KN", []), lines: [{ code: "K-04", unit: "PCS", quantity: "1", price: "9000" }, baris] });
+        assert.deepEqual([ditolak.status, ditolak.body.kode], [409, "HARGA_PETUGAS_TIDAK_DIIZINKAN"], JSON.stringify(ditolak.body));
+        assert.deepEqual(ditolak.body.barang, [{ code: baris.code, unit: baris.unit, hargaMaster }]);
+        assert.match(String(ditolak.body.error), /Harga petugas hanya untuk barang TANPA harga master/);
+    }
     // Petugas internal (order.view) = semua cabang: pelanggan HEINZ diterima dengan harga HEINZ (bukan default 11500).
     const adm = await pratinjau("u-admin", ORDER("C-C003-HZ", [["H-01", "PCS"]]));
     assert.equal(adm.status, 200, JSON.stringify(adm.body));
@@ -488,6 +517,10 @@ test("PG O1 /api/orders/harga: CRON = semua cabang + harga beku -> payload faktu
             lines: [{ code: "K-04", unit: "PCS", price: buruk }] }, cron)));
         assert.deepEqual([r.status, r.body.kode], [400, "HARGA_TIDAK_VALID"], buruk);
     }
+    // Owner sesi 13: jalur simpan (layanan) menegakkan aturan yang SAMA dengan pratinjau.
+    const timpa = await panggil(m.hargaRoute.POST(req("POST", "/api/orders/harga", { customer_no: "C-A001-KN", order_date: "2026-10-12",
+        lines: [{ code: "K-01", unit: "PCS", quantity: "2", price: "7000" }] }, cron)));
+    assert.deepEqual([timpa.status, timpa.body.kode, timpa.body.barang], [409, "HARGA_PETUGAS_TIDAK_DIIZINKAN", [{ code: "K-01", unit: "PCS", hargaMaster: 7207 }]]);
     const bedaCron = await panggil(m.hargaRoute.POST(req("POST", "/api/orders/harga", { customer_no: "C-A001-KN", order_date: "2026-10-12",
         lines: [{ code: "H-01", unit: "PCS", price: "12000" }] }, cron)));
     assert.deepEqual([bedaCron.status, bedaCron.body.kode], [409, "BARANG_BEDA_CABANG"], "aturan cabang tetap berlaku untuk harga petugas");
@@ -565,6 +598,8 @@ test("PG O1 cari barang: hanya cabang pelanggan, tanpa suspended/non-jual/tak di
         [["KRT", 172968, "KINO NON FOOD"], ["PCS", 7207, "KINO NON FOOD"]]);
     assert.deepEqual(items.find((x) => x.no === "K-03")!.units.map((u) => [u.unit, u.price, u.branchName]),
         [["KRT", null, "KINO NON FOOD"], ["PCS", 5000, "Kantor Pusat"]], "harga 0 tampil null (tak bisa dipilih), default sah");
+    assert.deepEqual(items.find((x) => x.no === "K-03")!.units.map((u) => (u as { hargaDefault?: boolean }).hargaDefault), [false, true]);
+    assert.deepEqual(items.find((x) => x.no === "K-01")!.units.map((u) => (u as { hargaDefault?: boolean }).hargaDefault), [false, false]);
     assert.deepEqual(items.find((x) => x.no === "K-04")!.units.map((u) => [u.unit, u.price, u.branchName]), [["PCS", null, "HEINZ"]],
         "harga cabang LAIN tidak ditawarkan");
     assert.equal(kino.body.cabangTanpaBarang, false);
@@ -665,6 +700,17 @@ test("PG O1 tautan salesman: tetapkan/ganti/lepas + audit; 409 berkode; satu kar
     assert.deepEqual((await utama.pool.query("SELECT spv_name, accurate_linked FROM sales_profile WHERE user_id = 'u-sb'")).rows, [{ spv_name: "SPV B", accurate_linked: true }]);
     assert.equal((await pratinjau("u-sb", ORDER("C-C003-HZ", [["H-01", "PCS"]]))).status, 200);
     await del("u-admin", "u-sb");
+    // B-2 (putaran 2): salesman ganti akun — PINDAHKAN profil yang tautannya dilepas (kode + spv + riwayat ikut), beraudit.
+    sebagai("u-admin");
+    const pindah = (target: string) => panggil(t.PUT(req("PUT", "/x", { employeeNumber: "M-SLB", pindahkanProfil: true }), ctx(target)));
+    assert.deepEqual((await pindah("u-soff")).body.code, "PROFIL_TUJUAN_ADA", "akun tujuan yang sudah berprofil ditolak");
+    const pindahOk = await pindah("u-view");
+    assert.equal(pindahOk.status, 200, JSON.stringify(pindahOk.body));
+    assert.deepEqual((await utama.pool.query("SELECT user_id, sales_code, spv_name, accurate_linked FROM sales_profile WHERE sales_code = 'M-SLB'")).rows,
+        [{ user_id: "u-view", sales_code: "M-SLB", spv_name: "SPV B", accurate_linked: true }]);
+    assert.equal((await utama.pool.query("SELECT count(*)::int AS n FROM sales_profile WHERE user_id = 'u-sb'")).rows[0].n, 0);
+    const jejakPindah = (await audit()).at(-1);
+    assert.deepEqual([jejakPindah.action, jejakPindah.target_user_id, jejakPindah.detail.dipindahDari.userId], ["salesman.link", "u-view", "u-sb"]);
 
     // Butir 12: GANTI KODE padahal laporan Form Kontrol tercatat atas kode lama -> 409 berkode + hitungan; konfirmasi = lanjut + audit.
     await utama.pool.query("INSERT INTO salesman_daily_report (id, sales_code, date) VALUES ('r1', 'm-sla ', '2026-10-01'), ('r2', 'm-sla ', '2026-10-02')");
@@ -700,6 +746,8 @@ test("PG O1 lookup pelanggan (butir 14): salesman hanya cabangnya (lain/tanpa ca
         assert.deepEqual([r.status, r.body.kode], [403, "CABANG_DI_LUAR_CAKUPAN"], no);
     }
     assert.deepEqual([(await lihat("u-sa", "C-ZZZ")).status, (await lihat("u-sa", "C-ZZZ")).body.found], [200, false]);
+    // Putaran 2 (INFO B): suspended cabang sendiri = PELANGGAN_SUSPENDED (selaras pencarian/pratinjau), bukan found:true.
+    assert.deepEqual([(await lihat("u-sa", "C-B002-KN")).status, (await lihat("u-sa", "C-B002-KN")).body.kode], [409, "PELANGGAN_SUSPENDED"]);
     // u-sb bisa menang balapan tautan di uji sebelumnya -> lepas dulu (tautan mati = belum terhubung).
     await utama.pool.query("UPDATE sales_profile SET accurate_linked = false WHERE user_id = 'u-sb'");
     assert.equal((await lihat("u-sb", "C-A001-KN")).body.kode, "SALESMAN_BELUM_TERHUBUNG");
@@ -835,7 +883,15 @@ test("PG O1 E2E promo: pratinjau = tersimpan (Order Sales simpan->tarik, Order B
         assert.equal(simpanB.status, 200, JSON.stringify(simpanB.body));
         const orderB = simpanB.body.order as { id: string; result: Hasil; lines: Array<{ code: string; price: string; sumber_harga: string }> };
         assert.deepEqual(orderB.result, pvB.body.result, "Order Baru: angka tersimpan = pratinjau, per baris");
-        assert.deepEqual(orderB.lines.map((l) => [l.code, l.price, l.sumber_harga]), [["K-01", "7207", "master"], ["K-03", "5000", "master"], ["K-04", "9000", "petugas"]]);
+        assert.deepEqual(orderB.lines.map((l) => [l.code, l.price, l.sumber_harga]), [["K-01", "7207", "master"], ["K-03", "5000", "master_default"], ["K-04", "9000", "petugas"]],
+            "sumber harga beku: master / master_default (fallback cabang default) / petugas");
+        // Owner sesi 13: harga petugas pada baris BERHARGA master ditolak berkode di pratinjau DAN di simpan FastAPI (Next -> Python apa adanya).
+        const timpa = { ...baru, outlet: "TOKO HARUM TIMPA", lines: [{ code: "K-01", unit: "PCS", quantity: "2", price: "7000" }] };
+        const pvTimpa = await pratinjauE2E("u-admin", timpa);
+        assert.deepEqual([pvTimpa.status, pvTimpa.body.kode], [409, "HARGA_PETUGAS_TIDAK_DIIZINKAN"]);
+        const simpanTimpa = await ke("POST", "/orders", "u-admin", { ...timpa, sidik: pvB.body.sidik });
+        assert.deepEqual([simpanTimpa.status, simpanTimpa.body.kode], [409, "HARGA_PETUGAS_TIDAK_DIIZINKAN"], JSON.stringify(simpanTimpa.body));
+        assert.deepEqual(simpanTimpa.body.barang, [{ code: "K-01", unit: "PCS", hargaMaster: 7207 }]);
 
         // ---- Aturan diubah SESUDAH beku: order tersimpan tidak berubah.
         await ke("POST", "/_uji/cabut", "u-admin", { draft_id: surat });
@@ -882,6 +938,17 @@ test("PG O1 E2E promo: pratinjau = tersimpan (Order Sales simpan->tarik, Order B
         assert.ok(d.reject_reason.length > 10);
         await utama.pool.query("UPDATE item_selling_price SET price = 7207 WHERE item_no = 'K-01' AND unit_name = 'PCS' AND branch_id = 101 AND effective_date = '2026-08-01'");
 
+        // ---- Putaran 2 butir 7: barang BONUS wajib bisa diorder untuk pelanggan (HEINZ untuk pelanggan KINO) — ditolak di pratinjau DAN simpan.
+        const hz = (await ke("POST", "/_uji/terbit", "u-admin", { judul: "SURAT BONUS HZ", programs: [program("BONUSHZ", { codes: ["K-03"], tiers: [{ minimum: "1",
+            percentages: [], rupiah: "0", rupiah_mode: "once", bonus_code: "H-01", bonus_quantity: "1", bonus_unit: "PCS", bonus_scope: "code", repeat: false }] })] })).body.draft_id as string;
+        const tanyaBonus = { ...tanya2, outlet: "TOKO ANGGREK BONUS", lines: [{ code: "K-03", unit: "PCS", quantity: "1" }] };
+        const pvBonus = await pratinjauE2E("u-sa", tanyaBonus);
+        assert.deepEqual([pvBonus.status, pvBonus.body.kode], [409, "BONUS_TIDAK_BISA_DIORDER"], JSON.stringify(pvBonus.body));
+        const simpanBonus = await ke("POST", "/websales/orders", "u-sa", { ...tanyaBonus, sidik: pvC.body.sidik });
+        assert.deepEqual([simpanBonus.status, simpanBonus.body.kode], [409, "BONUS_TIDAK_BISA_DIORDER"], JSON.stringify(simpanBonus.body));
+        assert.match(String((simpanBonus.body.bonus as Array<{ code: string; alasan: string }>)[0].alasan), /cabang HEINZ/);
+        await ke("POST", "/_uji/cabut", "u-admin", { draft_id: hz });
+
         // ---- Butir 5: CRON_SECRET FastAPI != Next -> tarik 503 KONFIGURASI_SERVER, permintaan TETAP pending (tidak "ditolak", bukan "sesi berakhir").
         const pvE = await pratinjauE2E("u-sa", { ...tanya2, outlet: "TOKO ANGGREK 4" });
         const idE = ((await ke("POST", "/websales/orders", "u-sa", { ...tanya2, outlet: "TOKO ANGGREK 4", sidik: pvE.body.sidik })).body.request as { id: string }).id;
@@ -898,4 +965,22 @@ test("PG O1 E2E promo: pratinjau = tersimpan (Order Sales simpan->tarik, Order B
         await new Promise((ok) => next.close(ok));
         try { rmSync(dir, { recursive: true, force: true }); } catch { /* SQLite masih terkunci sesaat di Windows; berkas temp */ }
     }
+});
+
+test("PG O1 putaran 2: /api/orders/harga mode bonus — barang bonus = syarat barang order (cabang, suspended, bisa diorder)", { skip: pgSkip }, async () => {
+    sebagai(null);
+    const cron = { authorization: "Bearer rahasia-o1" };
+    const tanya = (bonus: unknown, lines: unknown[] = []) => panggil(m.hargaRoute.POST(req("POST", "/api/orders/harga",
+        { customer_no: "C-A001-KN", order_date: "2026-10-12", lines, bonus }, cron)));
+    for (const [kode, alasan] of [["H-01", /barang cabang HEINZ/], ["K-02", /suspended/], ["A-01", /tanpa cabang \(tag "ASSET"/], ["NOPE", /tidak ada di master/]] as const) {
+        const r = await tanya([kode]);
+        assert.deepEqual([r.status, r.body.kode], [409, "BONUS_TIDAK_BISA_DIORDER"], kode);
+        assert.match(String((r.body.bonus as Array<{ alasan: string }>)[0].alasan), alasan, kode);
+    }
+    const ok = await tanya(["K-03", "K-01"]);
+    assert.deepEqual([ok.status, ok.body.lines, ok.body.bonus], [200, [], ["K-03", "K-01"]], JSON.stringify(ok.body));
+    assert.equal((await tanya([])).status, 400, "tanpa baris DAN tanpa bonus = tidak valid");
+    // Bersama baris order: bonus buruk menolak seluruh order (tidak dibuang diam-diam).
+    const campur = await tanya(["H-01"], [{ code: "K-01", unit: "PCS", quantity: "2" }]);
+    assert.equal(campur.body.kode, "BONUS_TIDAK_BISA_DIORDER");
 });

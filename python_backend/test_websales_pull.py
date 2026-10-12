@@ -77,6 +77,21 @@ def periksa_palsu(customer_no, order_date, lines, cookie=None):
 
 CHANNEL_BEDA = set()
 CHANNEL_PUTUS = set()
+CHANNEL_KONFIG = set()
+# Jembatan bonus Next palsu (putaran 2, butir 7): kode di BONUS_BURUK = barang bonus tak bisa diorder untuk pelanggan.
+BONUS_BURUK = set()
+BONUS_PANGGIL = []
+
+
+def bonus_palsu(customer_no, order_date, codes, cookie=None):
+    kode = sorted({c for c in codes if c})
+    if not kode:
+        return
+    BONUS_PANGGIL.append({"customer_no": customer_no, "sesi": cookie is not None, "kode": kode})
+    buruk = [c for c in kode if c in BONUS_BURUK]
+    if buruk:
+        raise order_cabang.OrderCabangDitolak(409, "BONUS_TIDAK_BISA_DIORDER", f"bonus {buruk} tidak bisa diorder",
+                                              {"bonus": [{"code": c, "alasan": "barang cabang lain"} for c in buruk]})
 
 
 def verify_palsu(customer_no, channel):
@@ -84,6 +99,8 @@ def verify_palsu(customer_no, channel):
         raise outlet_channel.ChannelBedaMaster(f"Order dikirim sebagai channel {channel}, tetapi master Accurate menyimpan outlet {customer_no} sebagai MT.")
     if customer_no in CHANNEL_PUTUS:
         raise outlet_channel.ChannelTidakPasti("Tidak bisa menanyakan channel outlet ke Next: connection refused")
+    if customer_no in CHANNEL_KONFIG:
+        raise outlet_channel.ChannelKonfigurasi("Konfigurasi server: Next menolak kunci layanan FastAPI saat menanyakan channel outlet")
     return channel
 
 
@@ -115,6 +132,7 @@ def main():
     # hidup: yang diuji di sini alur order, bukan jembatan channelnya (itu `test_outlet_channel`).
     outlet_channel.verify = verify_palsu
     order_cabang.periksa = periksa_palsu
+    order_cabang.periksa_bonus = bonus_palsu
     fake_auth(orders)
     fake_auth(websales)
     app = FastAPI()
@@ -294,8 +312,57 @@ def main():
     assert websales_store.get_request(request_id)["status"] == "pulled"
 
     check_halaman(client)
+    check_putaran2(client)
     check_connection(client)
     print("websales split + pull check: OK")
+
+
+def check_putaran2(client):
+    """Putaran 2: (6) aturan terbit rusak = galat GLOBAL, tarikan berhenti, tidak ada yang ditolak; (7) bonus tak bisa diorder = ditolak
+    berkode saat simpan DAN tarik, tidak dibuang; (8) channel 401/403 = KONFIGURASI_SERVER."""
+    ask = dict(outlet="TOKO P2", channel="GT", order_date="2026-06-15", customer_no="C-P2", lines=[dict(code="A", unit="PCS", quantity="2")])
+
+    # (8) CRON_SECRET ditolak Next saat menanyakan CHANNEL (cache dingin) -> 503 KONFIGURASI_SERVER (simpan) dan tarikan berhenti.
+    CHANNEL_KONFIG.add("C-P2")
+    simpan = client.post("/websales/orders", headers=SALES, json={**ask, "sidik": "x"})
+    assert simpan.status_code == 503 and simpan.json()["kode"] == "KONFIGURASI_SERVER", simpan.text
+    CHANNEL_KONFIG.discard("C-P2")
+    tertunda = kirim(client, ask).json()["request"]["id"]
+    CHANNEL_KONFIG.add("C-P2")
+    henti = client.post("/orders/pull", headers=ADMIN, json={})
+    assert henti.status_code == 503 and henti.json()["kode"] == "KONFIGURASI_SERVER", henti.text
+    assert websales_store.get_request(tertunda)["status"] == "pending"
+    CHANNEL_KONFIG.discard("C-P2")
+
+    # (6) Satu aturan terbit RUSAK (tidak lolos Program) -> 409 ATURAN_TERBIT_RUSAK berkode; tarikan berhenti, permintaan TETAP pending.
+    rusak = create_draft("admin@surya.local", "Rusak", {"rows": [], "programs": [{**program("RUSAK"), "tiers": []}]}, None)
+    with connect() as db:
+        db.execute("UPDATE summary_draft SET status='published' WHERE id=?", (rusak["id"],))
+    tarik = client.post("/orders/pull", headers=ADMIN, json={})
+    assert tarik.status_code == 409 and tarik.json()["kode"] == "ATURAN_TERBIT_RUSAK", tarik.text
+    assert websales_store.get_request(tertunda)["status"] == "pending", "keadaan server bukan alasan menolak permintaan"
+    pv = client.post("/orders/preview", headers=SALES, json={**ask, "lines": [dict(code="A", unit="PCS", quantity="2", price="1000")]})
+    assert pv.status_code == 409 and pv.json()["kode"] == "ATURAN_TERBIT_RUSAK", pv.text
+    withdraw(rusak["id"])
+    assert [i["request_id"] for i in client.post("/orders/pull", headers=ADMIN, json={}).json()["imported"]] == [tertunda]
+
+    # (7) Bonus barang: dicek sesudah promo dihitung, lewat jembatan Next (sesi sales saat simpan, layanan saat tarik).
+    bonus = publish({**program("BONUS"), "codes": ["B"], "tiers": [dict(minimum="1", percentages=[], rupiah="0", rupiah_mode="once",
+                     bonus_code="Y", bonus_quantity="1", bonus_unit="PCS", bonus_scope="code", repeat=False)]})
+    tanya = {**ask, "outlet": "TOKO BONUS", "lines": [dict(code="B", unit="PCS", quantity="1")]}
+    BONUS_BURUK.add("Y")
+    ditolak = kirim(client, tanya)
+    assert ditolak.status_code == 409 and ditolak.json()["kode"] == "BONUS_TIDAK_BISA_DIORDER", ditolak.text
+    assert ditolak.json()["bonus"] == [{"code": "Y", "alasan": "barang cabang lain"}] and BONUS_PANGGIL[-1]["sesi"] is True
+    BONUS_BURUK.discard("Y")
+    simpan = kirim(client, tanya)
+    assert simpan.status_code == 200, simpan.text
+    BONUS_BURUK.add("Y")  # barang bonus jadi suspended/pindah cabang sesudah sales menyimpan -> ditolak PERMANEN saat tarik
+    tarik = client.post("/orders/pull", headers=ADMIN, json={}).json()
+    assert [(r["request_id"], r["kode"]) for r in tarik["rejected"]] == [(simpan.json()["request"]["id"], "BONUS_TIDAK_BISA_DIORDER")], tarik
+    assert BONUS_PANGGIL[-1]["sesi"] is False and BONUS_PANGGIL[-1]["kode"] == ["Y"], BONUS_PANGGIL[-1]
+    BONUS_BURUK.discard("Y")
+    withdraw(bonus)
 
 
 def check_halaman(client):

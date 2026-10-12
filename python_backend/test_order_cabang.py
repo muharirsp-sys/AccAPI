@@ -114,6 +114,11 @@ def main():
     e = harus(OrderCabangDitolak, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES))
     assert (e.status, e.kode) == (409, "BARANG_BEDA_CABANG"), (e.status, e.kode)
     assert e.isi() == {"ok": False, "detail": "Barang bukan barang cabang KINO", "kode": "BARANG_BEDA_CABANG", "barang": [{"code": "A1"}]}
+    # Owner sesi 13: harga petugas pada baris berharga master -> Next 409 berkode + rincian per baris, diteruskan apa adanya.
+    pasang(409, {"ok": False, "kode": "HARGA_PETUGAS_TIDAK_DIIZINKAN", "error": "Harga master sudah ada",
+                 "barang": [{"code": "A1", "unit": "KRT", "hargaMaster": 456000}]})
+    e = harus(OrderCabangDitolak, lambda: order_cabang.periksa("C-1", "2026-10-12", [{**LINES[0], "price": "450000"}]))
+    assert (e.status, e.kode, e.extra) == (409, "HARGA_PETUGAS_TIDAK_DIIZINKAN", {"barang": [{"code": "A1", "unit": "KRT", "hargaMaster": 456000}]}), e.extra
     pasang(403, {"ok": False, "kode": "SALESMAN_BELUM_TERHUBUNG", "error": "Akun belum terhubung"})
     assert harus(OrderCabangDitolak, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES, cookie="x")).kode == "SALESMAN_BELUM_TERHUBUNG"
 
@@ -131,6 +136,26 @@ def main():
     for kosong in ("", None):
         pasang(200, {"ok": True, "lines": [OK["lines"][0], {**OK["lines"][1], "price": kosong}]})
         assert harus(OrderCabangDitolak, lambda: order_cabang.periksa("C-1", "2026-10-12", LINES)).kode == "HARGA_BELUM_ADA"
+    # Putaran 2 (butir 9): harga master dari cabang DEFAULT bertanda `master_default` — diterima untuk baris master, tidak untuk petugas.
+    pasang(200, {"ok": True, "lines": [OK["lines"][0], {**OK["lines"][1], "sumber_harga": "master_default"}]})
+    assert [line["sumber_harga"] for line in order_cabang.periksa("C-1", "2026-10-12", LINES)] == ["master", "master_default"]
+    pasang(200, {"ok": True, "lines": [{**OK["lines"][0], "price": "450000", "sumber_harga": "master_default"}, OK["lines"][1]]})
+    harus(OrderCabangTidakPasti, lambda: order_cabang.periksa("C-1", "2026-10-12", [{**LINES[0], "price": "450000"}, LINES[1]]))
+
+    # Putaran 2 (butir 7): bonus — kode unik terurut, baris kosong, jalur sesi/layanan sama; tanpa bonus = tanpa panggilan; 409 apa adanya.
+    sebelum = len(KIRIM)
+    order_cabang.periksa_bonus("C-1", "2026-10-12", ["", None, " "])
+    assert len(KIRIM) == sebelum, "tanpa bonus berkode tidak bertanya ke Next"
+    pasang(200, {"ok": True, "lines": [], "bonus": ["K-03", "K-09"]})
+    order_cabang.periksa_bonus("C-1", "2026-10-12", ["K-09", " K-03 ", "K-09"], cookie="sesi=1")
+    assert KIRIM[-1]["json"] == {"customer_no": "C-1", "order_date": "2026-10-12", "lines": [], "bonus": ["K-03", "K-09"]}, KIRIM[-1]
+    assert KIRIM[-1]["headers"] == {"cookie": "sesi=1"}
+    pasang(409, {"ok": False, "kode": "BONUS_TIDAK_BISA_DIORDER", "error": "Barang bonus tidak bisa diorder",
+                 "bonus": [{"code": "H-01", "alasan": "barang cabang HEINZ"}]})
+    e = harus(OrderCabangDitolak, lambda: order_cabang.periksa_bonus("C-1", "2026-10-12", ["H-01"]))
+    assert (e.status, e.kode, e.extra) == (409, "BONUS_TIDAK_BISA_DIORDER", {"bonus": [{"code": "H-01", "alasan": "barang cabang HEINZ"}]})
+    pasang(401, {"error": "Unauthorized"})
+    assert harus(OrderCabangTidakPasti, lambda: order_cabang.periksa_bonus("C-1", "2026-10-12", ["H-01"])).kode == "KONFIGURASI_SERVER"
     print("order cabang bridge check: OK", json.dumps(len(KIRIM)))
 
 

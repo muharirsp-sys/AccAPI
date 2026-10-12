@@ -41,10 +41,20 @@ def publish(percentage, code="A", program_id="P1", **lain):
 PERIKSA_ASLI = order_cabang.periksa
 
 
+# Kode yang punya harga master SAH di Next palsu: harga petugas di barisnya DITOLAK (owner sesi 13), seperti Next asli.
+MASTER = {"M": "2500"}
+
+
 def periksa_internal(customer_no, order_date, lines, cookie=None):
-    """Jembatan Next palsu: harga petugas kembali SAMA (tidak ditimpa); baris tanpa harga = harga master 1000."""
+    """Jembatan Next palsu: harga petugas kembali SAMA (tidak ditimpa); baris tanpa harga = harga master (MASTER atau 1000).
+    Harga petugas pada kode ber-MASTER -> 409 HARGA_PETUGAS_TIDAK_DIIZINKAN (bentuk jawaban Next, lib/order-cabang putusanHarga)."""
     assert cookie is None, "Order Baru = jalur layanan"
-    return [{**line, "sumber_harga": "petugas"} if line.get("price") else {**line, "price": "1000", "sumber_harga": "master"}
+    timpa = [{"code": line["code"], "unit": line["unit"], "hargaMaster": float(MASTER[line["code"]])}
+             for line in lines if line.get("price") and line["code"] in MASTER]
+    if timpa:
+        raise order_cabang.OrderCabangDitolak(409, "HARGA_PETUGAS_TIDAK_DIIZINKAN", "Harga master sudah ada; harga petugas hanya untuk barang TANPA harga master.",
+                                              {"barang": timpa})
+    return [{**line, "sumber_harga": "petugas"} if line.get("price") else {**line, "price": MASTER.get(line["code"], "1000"), "sumber_harga": "master"}
             for line in lines]
 
 
@@ -191,6 +201,15 @@ def check_harga_petugas(client, body):
     satuan = client.post("/orders", headers=SALES, json={**kecil, "sidik": lihat["sidik"]})
     assert satuan.status_code == 200 and satuan.json()["order"]["result"] == lihat["result"], satuan.text
     assert satuan.json()["order"]["lines"][0]["unit"] == "PCS", satuan.json()["order"]["lines"]
+    # Owner sesi 13: harga petugas pada baris BERHARGA master -> ditolak berkode (kode + rincian Next sampai apa adanya), tidak tersimpan.
+    sebelum = len(client.get("/orders", headers=SALES).json()["orders"])
+    timpa = client.post("/orders", headers=SALES, json={**campur, "outlet": "TOKO TIMPA", "sidik": "x",
+                                                         "lines": [dict(code="M", unit="PCS", quantity="1", price="2000")]})
+    assert timpa.status_code == 409 and timpa.json()["kode"] == "HARGA_PETUGAS_TIDAK_DIIZINKAN", timpa.text
+    assert timpa.json()["barang"] == [{"code": "M", "unit": "PCS", "hargaMaster": 2500.0}], timpa.json()
+    assert len(client.get("/orders", headers=SALES).json()["orders"]) == sebelum
+    tanpa = simpan(client, {**campur, "outlet": "TOKO MASTER", "lines": [dict(code="M", unit="PCS", quantity="1", price="")]}).json()["order"]
+    assert [(line["price"], line["sumber_harga"]) for line in tanpa["lines"]] == [("2500", "master")], tanpa["lines"]
     # Jembatan ASLI: harga petugas <= 0 / bukan angka DITOLAK sebelum Next ditanya (tanpa jaringan di uji ini).
     order_cabang.periksa = PERIKSA_ASLI
     try:

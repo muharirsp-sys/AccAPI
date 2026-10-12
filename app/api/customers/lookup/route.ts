@@ -10,6 +10,7 @@
  *
  * O1 putaran 1 (butir 14): salesman hanya boleh membaca pelanggan CABANGNYA (sama dengan /api/customers/search) — kode cabang lain/tanpa
  * cabang = 403 `CABANG_DI_LUAR_CAKUPAN`, akun belum tertaut = `SALESMAN_BELUM_TERHUBUNG`. Petugas internal (`order.view`) semua cabang.
+ * Putaran 2: pelanggan suspended = 409 `PELANGGAN_SUSPENDED` (sama dengan pencarian & pratinjau).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
@@ -34,12 +35,16 @@ export async function GET(request: NextRequest) {
     if ("galat" in scope) return jawabGalat(scope.galat);
     const [row] = await db.select({
         name: customer.name, area: customer.area,
-        priceCategoryName: customer.priceCategoryName, branchId: customer.branchId,
+        priceCategoryName: customer.priceCategoryName, branchId: customer.branchId, suspended: customer.suspended,
     }).from(customer).where(eq(customer.customerNo, no)).limit(1);
     const cakupan = scope.cakupan;
     if (row && !cakupan.semua && row.branchId !== cakupan.branchId) {
         return jawabGalat({ status: 403, kode: "CABANG_DI_LUAR_CAKUPAN",
             error: `Pelanggan ${no} di luar cabang Anda (${cakupan.branchName || cakupan.branchId}). Salesman hanya bisa order untuk cabangnya sendiri.` });
+    }
+    // Selaras dengan pencarian (yang menyembunyikan suspended) dan periksaOrder: pelanggan suspended tidak bisa diorder (putaran 2 INFO B).
+    if (row?.suspended) {
+        return jawabGalat({ status: 409, kode: "PELANGGAN_SUSPENDED", error: `Pelanggan ${no} (${row.name}) nonaktif (suspended) di Accurate; tidak bisa diorder.` });
     }
     return NextResponse.json({
         ok: true, no, found: Boolean(row), name: row?.name ?? "", area: row?.area ?? "",

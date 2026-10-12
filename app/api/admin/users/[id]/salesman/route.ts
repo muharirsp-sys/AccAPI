@@ -13,6 +13,10 @@
  * nilai lama di audit. Kode BERGANTI sementara laporan Form Kontrol tercatat atas kode lama (laporan harian, AO, merchandising, JKS)
  * = 409 `KODE_DIPAKAI_FORM_KONTROL` (+hitungan) — riwayat itu akan terputus dari akunnya — kecuali `konfirmasiGantiKode: true`
  * (hitungan ikut di audit). Butir 12, O1 putaran 1.
+ * PINDAH PROFIL (putaran 2, B-2): kode masih dipegang profil akun LAIN yang tautannya dilepas (salesman ganti akun) -> 409
+ * `KODE_DIPAKAI_PROFIL_LAIN`; PUT ulang `pindahkanProfil: true` memindahkan BARIS profil itu (kode tetap persis -> riwayat Form Kontrol
+ * ikut, spv/sm ikut) ke akun ini dan menyalakan tautan; akun tujuan yang sudah punya profil = 409 `PROFIL_TUJUAN_ADA`. Audit
+ * `salesman.link` `detail.dipindahDari`.
  * DELETE MELEPAS tautan (`accurate_linked` = false): baris sales_profile, kode, dan hierarki Form Kontrol (lib/form-kontrol/db.ts:
  * ack SPV, cakupan SPV/SM, getScopeForUser) TETAP — dulu barisnya dihapus dan hierarki ikut hilang.
  * `accurate_branch_id` tidak diisi (lihat lib/order-cabang cakupanCabang).
@@ -86,9 +90,10 @@ export async function PUT(request: NextRequest, context: Context) {
     if (gate.response) return gate.response;
     const actor = gate.session!.user;
     const { id } = await context.params;
-    const body = await request.json().catch(() => null) as { employeeNumber?: unknown; konfirmasiGantiKode?: unknown } | null;
+    const body = await request.json().catch(() => null) as { employeeNumber?: unknown; konfirmasiGantiKode?: unknown; pindahkanProfil?: unknown } | null;
     const kode = typeof body?.employeeNumber === "string" ? body.employeeNumber.trim().toUpperCase() : "";
     const konfirmasiGantiKode = body?.konfirmasiGantiKode === true;
+    const pindahkanProfil = body?.pindahkanProfil === true;
     if (!kode) return galat(400, "INPUT_TIDAK_VALID", "employeeNumber (nomor karyawan Accurate) wajib diisi");
     const now = new Date();
     try {
@@ -104,17 +109,37 @@ export async function PUT(request: NextRequest, context: Context) {
                 throw new GalatOtorisasi(409, "KARYAWAN_BUKAN_SALESMAN_AKTIF", `Karyawan ${kode} ${e.suspended ? "nonaktif (suspended)" : "bukan salesman"} di Accurate.`);
             }
             if (e.branchId === null) throw new GalatOtorisasi(409, "KARYAWAN_TANPA_CABANG", `Karyawan ${kode} belum punya cabang di Accurate.`);
-            const [lain] = await tx.select({ userId: salesProfile.userId, name: user.name, terhubung: salesProfile.accurateLinked }).from(salesProfile)
+            const [lain] = await tx.select({ profilId: salesProfile.id, salesCode: salesProfile.salesCode, userId: salesProfile.userId, name: user.name,
+                terhubung: salesProfile.accurateLinked }).from(salesProfile)
                 .leftJoin(user, eq(user.id, salesProfile.userId))
                 .where(and(samaKode(salesProfile.salesCode, kode), ne(salesProfile.userId, id))).limit(1);
             if (lain?.terhubung) {
                 throw new GalatOtorisasi(409, "KARYAWAN_SUDAH_TERHUBUNG", `Karyawan ${kode} sudah tertaut ke akun ${lain.name ?? lain.userId}. Lepas dulu dari akun itu.`,
                     { terhubungKe: { userId: lain.userId, name: lain.name } });
             }
-            if (lain) {
+            if (lain && !pindahkanProfil) {
                 // Kode UNIK: profil Form Kontrol akun lain (tautan dilepas) masih memegangnya — riwayatnya milik akun itu, tidak dipindah diam-diam.
                 throw new GalatOtorisasi(409, "KODE_DIPAKAI_PROFIL_LAIN", `Kode ${kode} masih dipegang profil Form Kontrol akun ${lain.name ?? lain.userId} `
-                    + "(tautan Accurate-nya sudah dilepas). Ganti/rapikan profil akun itu dulu.", { terhubungKe: { userId: lain.userId, name: lain.name } });
+                    + "(tautan Accurate-nya sudah dilepas). Bila salesman berganti akun, kirim ulang dengan pindahkanProfil: profil beserta riwayat "
+                    + "Form Kontrolnya pindah ke akun ini.", { terhubungKe: { userId: lain.userId, name: lain.name } });
+            }
+            if (lain) {
+                const tujuan = await tx.select({ salesCode: salesProfile.salesCode }).from(salesProfile).where(eq(salesProfile.userId, id));
+                if (tujuan.length) {
+                    throw new GalatOtorisasi(409, "PROFIL_TUJUAN_ADA", `Akun ini sudah punya profil sales (${tujuan.map((x) => x.salesCode).join(", ")}); `
+                        + "profil lain tidak bisa dipindah ke sini. Rapikan profil akun ini dulu.");
+                }
+                const [bp] = await tx.select({ name: branch.name }).from(branch).where(eq(branch.id, e.branchId)).limit(1);
+                // Baris DIPINDAH, kode TETAP persis (riwayat Form Kontrol per sales_code ikut), tautan dinyalakan.
+                await tx.update(salesProfile).set({ userId: id, salesName: e.name, accurateLinked: true, updatedAt: now })
+                    .where(eq(salesProfile.id, lain.profilId));
+                await tx.insert(permissionAuditLog).values({
+                    id: randomUUID(), actorUserId: actor.id, actorName: actor.name, action: "salesman.link", targetUserId: id,
+                    detail: { userName: t.name, dipindahDari: { userId: lain.userId, name: lain.name, profilId: lain.profilId, salesCode: lain.salesCode },
+                        sesudah: { salesCode: lain.salesCode, salesName: e.name, employeeId: e.id, branchId: e.branchId, branchName: bp?.name ?? "" } },
+                    createdAt: now,
+                });
+                return { changed: true, tautan: { salesCode: lain.salesCode, employeeName: e.name, employeeId: e.id, branchId: e.branchId, branchName: bp?.name ?? "" } };
             }
             const milik = await tx.select().from(salesProfile).where(eq(salesProfile.userId, id));
             if (milik.length > 1) {

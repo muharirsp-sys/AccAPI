@@ -145,6 +145,62 @@ def test_jawaban_pasti_master_berkelas_ChannelBedaMaster_jaringan_tidak():
         pass
 
 
+def test_secret_ditolak_next_atau_kosong_KONFIGURASI_dengan_log_cache_dingin():
+    """Putaran 2 (butir 8): 401/403 dari /api/outlet-channel = CRON_SECRET beda -> ChannelKonfigurasi + log, bukan "HTTP 401" tak berkode."""
+    import logging
+    import os
+    import sys
+    import types
+    from outlet_channel import ChannelKonfigurasi
+    catatan = []
+
+    class Tangkap(logging.Handler):
+        def emit(self, record):
+            catatan.append(record.getMessage())
+
+    outlet_channel.LOG.addHandler(Tangkap())
+    lama = {k: os.environ.get(k) for k in ("CRON_SECRET", "NEXT_INTERNAL_URL")}
+    asli = sys.modules.get("requests")
+    try:
+        os.environ["NEXT_INTERNAL_URL"] = "http://next.uji:3000"
+        os.environ.pop("CRON_SECRET", None)
+        try:
+            outlet_channel.verify("C-GAL006-KN", "GT")
+        except ChannelKonfigurasi:
+            pass
+        else:
+            raise AssertionError("CRON_SECRET kosong = konfigurasi")
+        os.environ["CRON_SECRET"] = "beda"
+        for status in (401, 403):
+            outlet_channel._CACHE.clear()  # cache DINGIN: pertanyaan benar-benar ke Next
+            sys.modules["requests"] = types.SimpleNamespace(get=lambda *a, **k: types.SimpleNamespace(status_code=status, json=lambda: {}))
+            try:
+                outlet_channel.verify("C-GAL006-KN", "GT")
+            except ChannelKonfigurasi as error:
+                assert "CRON_SECRET" in str(error)
+            else:
+                raise AssertionError(f"HTTP {status} = konfigurasi")
+        assert sum("CRON_SECRET" in c for c in catatan) == 2, catatan
+        sys.modules["requests"] = types.SimpleNamespace(get=lambda *a, **k: types.SimpleNamespace(status_code=502, json=lambda: {}))
+        outlet_channel._CACHE.clear()
+        try:
+            outlet_channel.verify("C-GAL006-KN", "GT")
+        except ChannelKonfigurasi:
+            raise AssertionError("502 = layanan tak pasti, bukan konfigurasi")
+        except ChannelTidakPasti:
+            pass
+    finally:
+        for k, v in lama.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        if asli is None:
+            sys.modules.pop("requests", None)
+        else:
+            sys.modules["requests"] = asli
+
+
 def main():
     for nama, fungsi in sorted(globals().items()):
         if nama.startswith("test_") and callable(fungsi):
