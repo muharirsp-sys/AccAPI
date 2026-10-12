@@ -713,16 +713,34 @@ export const migrations = [
     `,
   },
   {
-    // 2026-10-12 (K2a, BL-59; owner 12 Okt: setoran Giro WAJIB nomor BG + tanggal jatuh tempo). EXPAND: dua kolom nullable di
-    // kasir_setoran (server menegakkan "giro > 0 -> wajib", pola K1a: keputusan berubah tanpa DDL). SESUDAH entri kasir K1a.
-    // Lihat db/migrations/0032_kasir_setoran_giro.sql + docs/handover/DDL_K2A.sql (pemilik, SEBELUM image: accapi_app bukan pemilik).
-    // sudahAda lewat katalog pg_attribute (tanpa hak tabel information_schema kosong -> ALTER 42501 -> crash loop).
+    // 2026-10-12 (K2a, BL-59; owner 12 Okt: setoran Giro WAJIB nomor BG + tanggal jatuh tempo). Dua kolom nullable di kasir_setoran +
+    // CHECK aturan owner JUGA di DB (keputusan orkestrator sesudah tinjauan B: tabel belum ada di produksi -> murah): Giro > 0 -> nomor BG +
+    // jatuh tempo; Transfer > 0 -> bukti_transfer; nominal > 0 -> no_form_kasir. Tabel kasir_setoran KOSONG sampai K2a (tak ada route tulis
+    // sebelumnya) -> ADD CONSTRAINT aman. SESUDAH entri kasir K1a. Lihat db/migrations/0032_kasir_setoran_giro.sql + docs/handover/DDL_K2A.sql
+    // (pemilik, SEBELUM image: accapi_app bukan pemilik). sudahAda lewat katalog pg_attribute/pg_constraint (tanpa hak tabel
+    // information_schema kosong -> ALTER 42501 -> crash loop).
     nama: "kasir_setoran giro (K2a)",
-    sudahAda: `SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('kasir_setoran') AND NOT attisdropped
-               AND attname IN ('giro_nomor', 'giro_jatuh_tempo') HAVING count(*) = 2`,
+    sudahAda: `SELECT 1 WHERE (SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('kasir_setoran') AND NOT attisdropped
+                 AND attname IN ('giro_nomor', 'giro_jatuh_tempo')) = 2
+               AND (SELECT count(*) FROM pg_constraint WHERE conrelid = to_regclass('kasir_setoran') AND conname IN ('kasir_setoran_giro_nomor',
+                 'kasir_setoran_giro_wajib', 'kasir_setoran_bukti_wajib', 'kasir_setoran_form_wajib')) = 4`,
     sql: `
-      ALTER TABLE kasir_setoran ADD COLUMN IF NOT EXISTS giro_nomor text CONSTRAINT kasir_setoran_giro_nomor CHECK (btrim(giro_nomor) <> '');
+      ALTER TABLE kasir_setoran ADD COLUMN IF NOT EXISTS giro_nomor text;
       ALTER TABLE kasir_setoran ADD COLUMN IF NOT EXISTS giro_jatuh_tempo date;
+      DO $k2a$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'kasir_setoran'::regclass AND conname = 'kasir_setoran_giro_nomor') THEN
+          ALTER TABLE kasir_setoran ADD CONSTRAINT kasir_setoran_giro_nomor CHECK (btrim(giro_nomor) <> '');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'kasir_setoran'::regclass AND conname = 'kasir_setoran_giro_wajib') THEN
+          ALTER TABLE kasir_setoran ADD CONSTRAINT kasir_setoran_giro_wajib CHECK (giro = 0 OR (giro_nomor IS NOT NULL AND giro_jatuh_tempo IS NOT NULL));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'kasir_setoran'::regclass AND conname = 'kasir_setoran_bukti_wajib') THEN
+          ALTER TABLE kasir_setoran ADD CONSTRAINT kasir_setoran_bukti_wajib CHECK (transfer = 0 OR bukti_transfer IS NOT NULL);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'kasir_setoran'::regclass AND conname = 'kasir_setoran_form_wajib') THEN
+          ALTER TABLE kasir_setoran ADD CONSTRAINT kasir_setoran_form_wajib CHECK ((tunai + transfer + giro) = 0 OR no_form_kasir IS NOT NULL);
+        END IF;
+      END $k2a$;
     `,
   },
 ];

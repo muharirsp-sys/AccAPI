@@ -379,9 +379,12 @@ pembaca -> status tak pernah `lengkap` -> Tutup terhalang (K-3, tanpa jalan jela
 
 ### 8.8 DDL K2a (owner: Giro wajib nomor BG + jatuh tempo)
 
-`kasir_setoran.giro_nomor text` (CHECK tidak hanya spasi) + `giro_jatuh_tempo date`, nullable (server menegakkan "giro > 0 -> wajib", pola
-K1a: perubahan keputusan tanpa DDL). `docs/handover/DDL_K2A.sql` (pemilik, SESUDAH DDL_K1B, SEBELUM image) = entri migrate-pg
-`kasir_setoran giro (K2a)` = `db/migrations/0032_kasir_setoran_giro.sql` = Drizzle. Tanpa env baru.
+`kasir_setoran.giro_nomor text` (CHECK tidak hanya spasi) + `giro_jatuh_tempo date`, nullable. Aturan owner JUGA di DB (keputusan orkestrator
+sesudah tinjauan B; tabel kosong sampai K2a): CHECK `kasir_setoran_giro_wajib` (giro > 0 -> nomor BG + jatuh tempo), `kasir_setoran_bukti_wajib`
+(transfer > 0 -> `bukti_transfer`), `kasir_setoran_form_wajib` (nominal > 0 -> `no_form_kasir`) — server menegakkannya lebih dulu (400 berkode);
+mengubah keputusan ini kini butuh DDL. `docs/handover/DDL_K2A.sql` (pemilik, SESUDAH DDL_K1B, SEBELUM image; VERIFIKASI definisi persis) =
+entri migrate-pg `kasir_setoran giro (K2a)` (sudahAda lewat katalog, juga tanpa hak tabel) = `db/migrations/0032_kasir_setoran_giro.sql` =
+Drizzle. Tanpa env baru.
 
 ### 8.9 Prasyarat deploy K2 (IT, urut) + plafon
 

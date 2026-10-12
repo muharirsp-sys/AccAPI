@@ -135,7 +135,7 @@ async function hariKlop(pool: Pool, jam: { t: Date }) {
     return h;
 }
 
-test("PG K2a DDL: DDL_K2A dua kali + VERIFIKASI; migrate-pg OK lalu SKIP; 0032 = entri; CHECK giro_nomor", { skip: pgSkip }, async () => {
+test("PG K2a DDL: DDL_K2A dua kali + VERIFIKASI (definisi persis); migrate-pg OK lalu SKIP; 0032 = entri; CHECK aturan owner (Giro, bukti, Form Kasir)", { skip: pgSkip }, async () => {
     const m = await entri("kasir_setoran giro (K2a)");
     const ddl = await berkas("../../docs/handover/DDL_K2A.sql");
     const bentuk = async (pool: Pool) => (await pool.query(`SELECT column_name, data_type, is_nullable FROM information_schema.columns
@@ -155,17 +155,72 @@ test("PG K2a DDL: DDL_K2A dua kali + VERIFIKASI; migrate-pg OK lalu SKIP; 0032 =
         for (let i = 0; i < 2; i++) for (const v of await verifikasi(pool, ddl)) assert.notEqual(v.ok, false, `VERIFIKASI: ${v.cek}`);
         assert.equal(await migrasi(pool, m), `SKIP ${m.nama}`, "migrate-pg melewati sesudah DDL manual");
         assert.deepEqual(await bentuk(pool), acuan, "DDL manual = entri migrate-pg");
-        await assert.rejects(pool.query(`INSERT INTO kasir_setoran (tanggal, salesman_kode, revisi, tunai, transfer, giro, giro_nomor, dicatat_oleh)
-            VALUES ('2026-10-05', 'S-A', 1, 0, 0, 1, '  ', 'x')`), (e: { code?: string }) => e.code === "23514", "nomor BG hanya spasi ditolak");
-        await pool.query(`INSERT INTO kasir_setoran (tanggal, salesman_kode, revisi, tunai, transfer, giro, giro_nomor, giro_jatuh_tempo, dicatat_oleh)
-            VALUES ('2026-10-05', 'S-A', 1, 0, 0, 1, 'BG-1', '2026-11-01', 'x')`);
+        // Aturan owner di DB (jaring kedua): tiap pelanggaran ditolak CHECK bernama.
+        const sisip = (kol: Record<string, unknown>) => {
+            const isi = { tanggal: "2026-10-05", salesman_kode: "S-A", revisi: 1, tunai: 0, transfer: 0, giro: 0, dicatat_oleh: "x", ...kol };
+            return pool.query(`INSERT INTO kasir_setoran (${Object.keys(isi).join(", ")}) VALUES (${Object.keys(isi).map((_, i) => `$${i + 1}`).join(", ")})`,
+                Object.values(isi));
+        };
+        const tolakCheck = (nama: string) => (e: { code?: string; constraint?: string }) => e.code === "23514" && e.constraint === nama;
+        await assert.rejects(sisip({ giro: 1, giro_nomor: "  ", giro_jatuh_tempo: "2026-11-01", no_form_kasir: "F" }), tolakCheck("kasir_setoran_giro_nomor"));
+        await assert.rejects(sisip({ giro: 1, giro_jatuh_tempo: "2026-11-01", no_form_kasir: "F" }), tolakCheck("kasir_setoran_giro_wajib"), "Giro tanpa nomor BG");
+        await assert.rejects(sisip({ giro: 1, giro_nomor: "BG-1", no_form_kasir: "F" }), tolakCheck("kasir_setoran_giro_wajib"), "Giro tanpa jatuh tempo");
+        await assert.rejects(sisip({ transfer: 1, no_form_kasir: "F" }), tolakCheck("kasir_setoran_bukti_wajib"), "Transfer tanpa bukti");
+        await assert.rejects(sisip({ tunai: 1 }), tolakCheck("kasir_setoran_form_wajib"), "nominal > 0 tanpa Form Kasir");
+        await sisip({ revisi: 1 }); // setoran 0 tanpa Form Kasir = sah
+        await sisip({ salesman_kode: "S-B", giro: 1, giro_nomor: "BG-1", giro_jatuh_tempo: "2026-11-01", transfer: 2, bukti_transfer: "b.jpg", no_form_kasir: "F" });
         await assert.rejects(pool.query("UPDATE kasir_setoran SET giro_nomor = 'BG-2'"), /append-only/, "trigger append-only tetap untuk kolom baru");
+        // VERIFIKASI menangkap CHECK yang DILEMAHKAN (nama sama, isi CHECK (true)).
+        await pool.query("ALTER TABLE kasir_setoran DROP CONSTRAINT kasir_setoran_form_wajib, ADD CONSTRAINT kasir_setoran_form_wajib CHECK (true)");
+        const v = (await verifikasi(pool, ddl.slice(ddl.indexOf("-- 3. VERIFIKASI")))).find((r) => /definisi persis/.test(r.cek));
+        assert.equal(v?.ok, false, "CHECK dilemahkan = false");
     }, false);
     await denganSkema(async (pool) => {
         await pool.query(await berkas("../../docs/handover/DDL_K1A.sql"));
         await pool.query(await berkas("../../db/migrations/0032_kasir_setoran_giro.sql"));
         assert.deepEqual(await bentuk(pool), acuan, "db/migrations/0032 = entri migrate-pg");
     }, false);
+    // Keadaan sebagian: kolom ada tetapi satu CHECK hilang -> sudahAda 0, entri melengkapi (konvergen), lalu SKIP.
+    await denganSkema(async (pool) => {
+        await pool.query(await berkas("../../docs/handover/DDL_K1A.sql"));
+        await migrasi(pool, m);
+        await pool.query("ALTER TABLE kasir_setoran DROP CONSTRAINT kasir_setoran_bukti_wajib");
+        assert.equal((await pool.query(m.sudahAda)).rowCount, 0, "CHECK hilang = belum ada");
+        assert.equal(await migrasi(pool, m), `OK ${m.nama}`);
+        assert.deepEqual(await bentuk(pool), acuan, "dilengkapi = bentuk acuan");
+        assert.equal(await migrasi(pool, m), `SKIP ${m.nama}`);
+    }, false);
+});
+
+test("PG K2a migrate-pg sudahAda lewat katalog: role TANPA hak tabel (REVOKE ALL) tetap SKIP — bukan crash loop ALTER 42501", { skip: pgSkip }, async () => {
+    const m = await entri("kasir_setoran giro (K2a)");
+    const skema = `uji_k2a_${randomUUID().slice(0, 8)}`;
+    const admin = new Pool({ connectionString: PG_URL, max: 1 });
+    await admin.query(`CREATE SCHEMA ${skema}`);
+    const url = new URL(PG_URL);
+    url.searchParams.set("options", `-c search_path=${skema}`);
+    const pool = new Pool({ connectionString: url.toString(), max: 2 });
+    try {
+        await pool.query(await berkas("../../docs/handover/DDL_K1A.sql"));
+        await migrasi(pool, m);
+        const c = await pool.connect();
+        try {
+            await c.query("BEGIN");
+            // Peran bawaan pg_monitor (pola K1b; tanpa CREATE/DROP ROLE di DB bersama), hak tabel dicabut habis.
+            await c.query("REVOKE ALL ON kasir_setoran FROM PUBLIC");
+            await c.query(`GRANT USAGE ON SCHEMA ${skema} TO pg_monitor`);
+            await c.query("SET LOCAL ROLE pg_monitor");
+            assert.equal((await c.query("SELECT has_table_privilege('kasir_setoran', 'SELECT') AS h")).rows[0].h, false, "memang tanpa hak tabel");
+            assert.equal((await c.query(m.sudahAda)).rowCount, 1, "sudahAda = 1 tanpa hak tabel -> SKIP");
+        } finally {
+            await c.query("ROLLBACK");
+            c.release();
+        }
+    } finally {
+        await pool.end();
+        await admin.query(`DROP SCHEMA IF EXISTS ${skema} CASCADE`);
+        await admin.end();
+    }
 });
 
 test("PG K2a setoran multi-kode: semua revisi SATU transaksi; satu baris gagal = semua batal; dua POST dasar sama -> satu revisi + 409", { skip: pgSkip }, async () => {

@@ -2156,7 +2156,7 @@ export const kasirSetoran = pgTable("kasir_setoran", {
     tunai: numeric("tunai", { precision: 18, scale: 2 }).notNull(),
     transfer: numeric("transfer", { precision: 18, scale: 2 }).notNull(),
     giro: numeric("giro", { precision: 18, scale: 2 }).notNull(),
-    // K2a (owner 12 Okt): Giro wajib nomor BG + jatuh tempo — nullable, server menegakkan (0032_kasir_setoran_giro.sql, DDL_K2A.sql).
+    // K2a (owner 12 Okt): Giro wajib nomor BG + jatuh tempo — nullable, CHECK giro_wajib + server (0032_kasir_setoran_giro.sql, DDL_K2A.sql).
     giroNomor: text("giro_nomor"),
     giroJatuhTempo: date("giro_jatuh_tempo"),
     noFormKasir: text("no_form_kasir"),
@@ -2174,6 +2174,10 @@ export const kasirSetoran = pgTable("kasir_setoran", {
     check("kasir_setoran_kode", sql`${t.salesmanKode} <> '' AND ${t.salesmanKode} = btrim(${t.salesmanKode})`),
     check("kasir_setoran_teks", sql`btrim(coalesce(${t.noFormKasir}, '-')) <> '' AND btrim(coalesce(${t.buktiTransfer}, '-')) <> '' AND btrim(coalesce(${t.catatan}, '-')) <> ''`),
     check("kasir_setoran_giro_nomor", sql`btrim(${t.giroNomor}) <> ''`),
+    // K2a: aturan owner juga di DB (server menegakkan lebih dulu, 400 berkode) — DDL_K2A.sql / 0032.
+    check("kasir_setoran_giro_wajib", sql`${t.giro} = 0 OR (${t.giroNomor} IS NOT NULL AND ${t.giroJatuhTempo} IS NOT NULL)`),
+    check("kasir_setoran_bukti_wajib", sql`${t.transfer} = 0 OR ${t.buktiTransfer} IS NOT NULL`),
+    check("kasir_setoran_form_wajib", sql`(${t.tunai} + ${t.transfer} + ${t.giro}) = 0 OR ${t.noFormKasir} IS NOT NULL`),
     check("kasir_setoran_oleh", sql`btrim(${t.dicatatOleh}) <> ''`),
 ]);
 
