@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    MIN_HURUF, bacaBarang, bacaPelanggan, barisBedaCabang, cukupHuruf, alasanKunciBarang, bacaSaran, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kalimatGalat, kunciHarga, labelSatuan, namaProgramTerpakai, pecahSaran, sebabTarik, pratinjauBerubah, promoBaris, ringkasPromo,
+    MIN_HURUF, bacaBarang, bacaPelanggan, barisBedaCabang, cukupHuruf, alasanKunciBarang, bacaSaran, galatDariJawaban, hargaCabangDefault, jumlahSah, hargaPetugasSah, kalimatGalat, kunciHarga, labelSatuan, namaProgramTerpakai, pecahSaran, sebabTarik, pratinjauBerubah, promoBaris, ringkasPromo,
     urlCariBarang, urlCariPelanggan, urlSalesmanCabang, type Result,
 } from "./order-cabang.ts";
 
@@ -278,4 +278,9 @@ test("galatDariJawaban: jawaban 2xx TANPA ok ({}) = hasil belum pasti (order mun
     assert.equal(tolak.tidakPasti, false);
     assert.match(tolak.pesan, /Ditolak dari server/);
     assert.equal(galatDariJawaban(jawab(400, {}), "sales").tidakPasti, false);
+});
+
+test("jumlahSah: hanya bilangan bulat > 0 (server menolak desimal); spasi di tepi diabaikan seperti di server", () => {
+    for (const ok of ["1", "12", " 3 ", "007"]) assert.equal(jumlahSah(ok), true, ok);
+    for (const salah of ["", "0", "00", "2.5", "2,5", "-1", "1e3", "abc", "1 2"]) assert.equal(jumlahSah(salah), false, salah);
 });

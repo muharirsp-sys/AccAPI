@@ -6,7 +6,7 @@
  *   (tipe), components/order/order-cabang.test.ts.
  * Dependensi: tidak ada (murni; tipe saja). Kontrak server: docs/handover/O1-KONTRAK-ORDER-CABANG.md §2-§3.
  * Main Functions: galatDariJawaban, cukupHuruf, urlCariPelanggan, urlCariBarang, labelSatuan, barisBedaCabang, promoBaris, ringkasPromo,
- *   hargaPetugasSah, pratinjauBerubah, hargaCabangDefault, bacaSaran, pecahSaran, namaProgramTerpakai, sebabTarik, tanggalSah.
+ *   hargaPetugasSah, pratinjauBerubah, hargaCabangDefault, bacaSaran, pecahSaran, namaProgramTerpakai, sebabTarik, tanggalSah, jumlahSah.
  * Side Effects: Tidak ada.
  */
 
@@ -57,6 +57,8 @@ export type PriceInfo = {
 export const JEDA_CARI_MS = 300;
 export const MIN_HURUF = 2;
 export const cukupHuruf = (q: string) => q.trim().length >= MIN_HURUF;
+/** Jumlah sah untuk server (`preview/route.ts`): bilangan bulat > 0, tanpa desimal; spasi di tepi diabaikan seperti di server. */
+export const jumlahSah = (q: string) => /^\d+$/.test(q.trim()) && Number(q) > 0;
 /** Tanggal order sah untuk server: YYYY-MM-DD (kolom tanggal yang dikosongkan = tak sah, bukan "hari ini"). */
 export const tanggalSah = (t: string) => /^\d{4}-\d{2}-\d{2}$/.test(t);
 

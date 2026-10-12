@@ -26,7 +26,7 @@ import { ConfirmDialog, FormField, useUnsavedGuard } from "@/components/fiori/in
 import { PemilihBarang } from "@/components/order/PemilihBarang";
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
 import { KartuPromoBaris, PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
-import { alasanKunciBarang, barisBedaCabang, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kunciHarga, labelSatuan, pecahSaran, pratinjauBerubah, tanggalSah, type BarangPilih, type PelangganPilih } from "@/components/order/order-cabang";
+import { alasanKunciBarang, barisBedaCabang, galatDariJawaban, hargaCabangDefault, hargaPetugasSah, kunciHarga, labelSatuan, jumlahSah, pecahSaran, pratinjauBerubah, tanggalSah, type BarangPilih, type PelangganPilih } from "@/components/order/order-cabang";
 import { hitungPratinjau, type Pratinjau } from "@/components/order/order-cabang-api";
 import { rupiah } from "@/lib/promo-ui";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
@@ -79,7 +79,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     const ubahIsian = () => { setRagu(false); setGanda(false); setBukanGanda(false); };
 
     const filled = lines.filter((line) => line.code.trim());
-    const barisSiap = (l: Line) => Boolean(l.barang && l.unit.trim() && Number(l.quantity) > 0);
+    const barisSiap = (l: Line) => Boolean(l.barang && l.unit.trim() && jumlahSah(l.quantity));
     const siapPratinjau = Boolean(pelanggan && channel.trim() && tanggalSah(orderDate) && filled.length > 0 && filled.every(barisSiap));
 
     const berlakuHarga = (l: Line) => l.barang?.hargaUntuk === kunciHarga(pelanggan?.id, orderDate);
@@ -151,7 +151,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     }
 
     const lengkap = lines.filter(barisSiap);
-    const tidakLengkap = lines.findIndex((line) => line.barang && !(line.unit.trim() && Number(line.quantity) > 0));
+    const tidakLengkap = lines.findIndex((line) => line.barang && !(line.unit.trim() && jumlahSah(line.quantity)));
     const salahSatuan = pratinjau?.status === "satuan"
         ? lines.findIndex((line) => pratinjau.wrong.some((w) => w.code === line.code.trim() && w.unit === line.unit.trim().toUpperCase())) : -1;
     const salahBarang = pratinjau?.status === "barang" ? lines.findIndex((line) => line.code.trim() in pratinjau.galat.perBarang) : -1;
@@ -289,7 +289,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                             const info = infoHarga(line, pratinjau);
                             const tanpaHarga = pratinjau?.status === "siap" && pratinjau.tanpaHarga.includes(code);
                             const perluPetugas = Boolean(line.barang && line.unit.trim()) && tanpaMaster(line);
-                            const lengkapBaris = Boolean(line.barang && line.unit.trim() && Number(line.quantity) > 0);
+                            const lengkapBaris = Boolean(line.barang && line.unit.trim() && jumlahSah(line.quantity));
                             const petugasSah = line.price !== null && hargaPetugasSah(line.price);
                             return (
                                 <li key={index} className="fi-sect-in" style={{ borderBottom: "1px solid var(--line)" }} aria-label={`Barang ${index + 1}`}>
@@ -315,7 +315,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                                                     </select>
                                                 )}
                                             </FormField>
-                                            <FormField label="Jumlah">
+                                            <FormField label="Jumlah" error={line.quantity.trim() && !jumlahSah(line.quantity) ? "Jumlah harus bilangan bulat lebih dari 0 (tanpa koma atau titik)." : undefined}>
                                                 {(a) => <input {...a} className="fi-input fi-tnum" inputMode="numeric" value={line.quantity} placeholder="0" onChange={(e) => ubah(index, "quantity", e.target.value)} />}
                                             </FormField>
                                             <FormField label="Harga"

@@ -1283,3 +1283,48 @@ test("Order Sales (putaran 1 peninjau #5): jawaban 2xx tanpa ok ({}) = hasil kir
     await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu — order terakhir mungkin sudah masuk");
     expect(ws.kirim).toHaveLength(1);
 });
+
+test("Order Sales (putaran 1 peninjau #6): jumlah desimal ditolak di kolomnya (bilangan bulat > 0, papan angka), Kirim terkunci, tidak ada pratinjau dengan jumlah desimal; bulat = terbuka", async ({ page }) => {
+    const { log, opsi } = await mockOrderCabang(page, { peran: "sales" });
+    await mockWebsales(page, { cabang: opsi });
+    await bukaSales(page);
+    const { main, b1 } = await isiSalesSiap(page);
+    const kirim = main.getByRole("button", { name: "Kirim order…" });
+    await expect(kirim).toBeEnabled(NAV);
+    const jumlah = b1.getByLabel("Jumlah");
+    await expect(jumlah).toHaveAttribute("inputmode", "numeric");
+    await jumlah.fill("2.5");
+    await expect(jumlah).toHaveAttribute("aria-invalid", "true");
+    await expect(b1).toContainText("Jumlah harus bilangan bulat lebih dari 0");
+    await expect(kirim).toBeDisabled();
+    await expect(kirim).toHaveAttribute("title", "Lengkapi satuan dan jumlah barang 1");
+    await page.waitForTimeout(900); // lewat jeda pratinjau: desimal tidak pernah dikirim
+    expect(log.preview.every((b) => b.lines.every((l) => /^\d+$/.test(l.quantity)))).toBe(true);
+    await jumlah.fill("3");
+    await expect(b1).not.toContainText("Jumlah harus bilangan bulat");
+    await expect(kirim).toBeEnabled(NAV);
+});
+
+test("Order baru (putaran 1 peninjau #6): jumlah desimal ditolak di kolomnya, Simpan terkunci; bulat = terbuka", async ({ page }) => {
+    const { log, opsi } = await mockOrderCabang(page);
+    await mockOrdersInternal(page, { cabang: opsi });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/orders/baru", NAV);
+    const main = page.locator("main");
+    await pilihPelanggan(main, "PELANGGAN A", "PELANGGAN A");
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await pilihBarang(b1, "A-1", "BARANG A\\b.*KRT");
+    await b1.getByLabel("Satuan").selectOption("KRT");
+    const jumlah = b1.getByLabel("Jumlah");
+    await jumlah.fill("2");
+    const simpan = page.getByRole("button", { name: "Simpan order…" });
+    await expect(simpan).toBeEnabled(NAV);
+    await jumlah.fill("2.5");
+    await expect(jumlah).toHaveAttribute("aria-invalid", "true");
+    await expect(b1).toContainText("Jumlah harus bilangan bulat lebih dari 0");
+    await expect(simpan).toBeDisabled();
+    await page.waitForTimeout(900);
+    expect(log.preview.every((b) => b.lines.every((l) => /^\d+$/.test(l.quantity)))).toBe(true);
+    await jumlah.fill("3");
+    await expect(simpan).toBeEnabled(NAV);
+});

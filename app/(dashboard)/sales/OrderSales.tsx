@@ -29,7 +29,7 @@ import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@
 import { PemilihBarang, type BacaanBarang } from "@/components/order/PemilihBarang";
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
 import { KartuPromoBaris, PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
-import { alasanKunciBarang, galatDariJawaban, galatTidakDitemukan, hargaCabangDefault, kalimatGalat, kalimatPenolakan, kunciHarga, labelSatuan, pecahSaran, pratinjauBerubah, tanggalSah, type BarangPilih, type Cakupan, type Galat, type PelangganPilih } from "@/components/order/order-cabang";
+import { alasanKunciBarang, galatDariJawaban, galatTidakDitemukan, hargaCabangDefault, kalimatGalat, kalimatPenolakan, kunciHarga, labelSatuan, jumlahSah, pecahSaran, pratinjauBerubah, tanggalSah, type BarangPilih, type Cakupan, type Galat, type PelangganPilih } from "@/components/order/order-cabang";
 import { bacaBarangKode, hitungPratinjau, muatCakupan, type Pratinjau } from "@/components/order/order-cabang-api";
 import { resolveApiBase } from "@/lib/apiBase";
 import { rupiah } from "@/lib/promo-ui";
@@ -214,7 +214,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
 
     // Nilai transaksi dan saran promo dihitung server; sales melihat, tidak menentukan.
     const filled = lines.filter((line) => line.code.trim());
-    const barisSiap = (l: Line) => Boolean(l.barang && l.unit.trim() && Number(l.quantity) > 0);
+    const barisSiap = (l: Line) => Boolean(l.barang && l.unit.trim() && jumlahSah(l.quantity));
     const siapPratinjau = Boolean(pelanggan && channel.trim() && tanggalSah(orderDate) && filled.length > 0 && filled.every(barisSiap));
     const previewKey = JSON.stringify([channel, orderDate, kodePel, lines.map((l) => [l.code, l.unit, l.quantity])]);
     const pratinjau: Pratinjau | null = !siapPratinjau ? null : hasil?.key === previewKey ? hasil.p : { status: "memuat" };
@@ -247,7 +247,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     };
 
     const lengkap = lines.filter(barisSiap);
-    const tidakLengkap = lines.findIndex((line) => line.barang && !(line.unit.trim() && Number(line.quantity) > 0));
+    const tidakLengkap = lines.findIndex((line) => line.barang && !(line.unit.trim() && jumlahSah(line.quantity)));
     const menunggu = lines.findIndex((line) => line.code.trim() && !line.barang);
     const salahSatuan = pratinjau?.status === "satuan"
         ? lines.findIndex((line) => pratinjau.wrong.some((w) => w.code === line.code.trim() && w.unit === line.unit.trim().toUpperCase())) : -1;
@@ -449,7 +449,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                     const bedaCabang = pratinjau?.status === "barang" ? pratinjau.galat.perBarang[code] : undefined;
                                     const price = pratinjau?.status === "siap" ? pratinjau.prices.find((row) => row.code === code && row.unit === line.unit && row.price != null) : undefined;
                                     const tanpaHarga = pratinjau?.status === "siap" && pratinjau.tanpaHarga.includes(code);
-                                    const lengkapBaris = Boolean(line.barang && line.unit.trim() && Number(line.quantity) > 0);
+                                    const lengkapBaris = Boolean(line.barang && line.unit.trim() && jumlahSah(line.quantity));
                                     const berlakuHarga = line.barang?.hargaUntuk === kunciHarga(pelanggan?.id, orderDate);
                                     return (
                                         // Nomor baris dibuat eksplisit: di layar HP baris kedua dan ketiga terlihat sama saja, dan sales mengoreksi baris yang salah.
@@ -478,7 +478,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                                             </select>
                                                         )}
                                                     </FormField>
-                                                    <FormField label="Jumlah">
+                                                    <FormField label="Jumlah" error={line.quantity.trim() && !jumlahSah(line.quantity) ? "Jumlah harus bilangan bulat lebih dari 0 (tanpa koma atau titik)." : undefined}>
                                                         {(a) => <input {...a} className="fi-input fi-tnum" inputMode="numeric" value={line.quantity} placeholder="0" onChange={(e) => updateLine(index, "quantity", e.target.value)} />}
                                                     </FormField>
                                                 </div>
