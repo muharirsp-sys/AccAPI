@@ -552,6 +552,7 @@ test("Laporan (P4): lewat 00.00 WITA tindak lanjut yang diketik tidak hilang dan
 async function mockOrder(page: Page, opsi: OpsiWebsales) {
     const { log, opsi: next } = await mockOrderCabang(page, { peran: "sales" });
     opsi.hari ??= HARI_INI;
+    opsi.cabang = next; // simpan dibandingkan dengan hitungan server (sidik) memakai opsi mock yang sama
     const ws = await mockWebsales(page, opsi); // objek yang sama: tes mengubah opsi di tengah jalan (postTidakPasti)
     return { kirim: ws.kirim, pratinjau: log.preview, next };
 }
@@ -559,10 +560,14 @@ async function mockOrder(page: Page, opsi: OpsiWebsales) {
 test("Order Sales: toko rute, harga per baris, satuan salah + harga belum ada di barisnya, nomor permintaan; galat Order saya ≠ kosong", async ({ page }) => {
     const opsi = { orderGagal: true };
     const m = await mockOrder(page, opsi);
-    // Satuan PCS ditolak server untuk A-1 pada tes ini (SATUAN_SALAH per baris).
-    m.next.preview = (b) => (b.lines.some((l) => l.code === "A-1" && l.unit === "PCS")
-        ? { status: 409, body: { ok: false, kode: "SATUAN_SALAH", error: "Satuan PCS tidak ada di master untuk A-1 (tersedia: KRT)", wrong_unit: [{ code: "A-1", unit: "PCS", known_units: ["KRT"] }] } }
-        : undefined);
+    // Satuan PCS ditolak server untuk A-1 (SATUAN_SALAH per baris); harga A-4 hilang di server sesudah dipilih (HARGA_BELUM_ADA) — keduanya per baris.
+    m.next.preview = (b) => {
+        if (b.lines.some((l) => l.code === "A-1" && l.unit === "PCS")) {
+            return { status: 409, body: { ok: false, kode: "SATUAN_SALAH", error: "Satuan PCS tidak ada di master untuk A-1 (tersedia: KRT)", wrong_unit: [{ code: "A-1", unit: "PCS", known_units: ["KRT"] }] } };
+        }
+        if (b.lines.some((l) => l.code === "A-4")) return { status: 409, body: { ok: false, kode: "HARGA_BELUM_ADA", error: "Harga belum tersedia dari Accurate untuk: A-4", missing: ["A-4"] } };
+        return undefined;
+    };
     await page.addInitScript((t) => sessionStorage.setItem("fk-rute-hari-ini", JSON.stringify({ tanggal: t, salesCode: "S-01", toko: [{ kode: "C-01", nama: "PELANGGAN A" }] })), HARI_INI);
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/sales", NAV);
@@ -583,7 +588,7 @@ test("Order Sales: toko rute, harga per baris, satuan salah + harga belum ada di
     await b1.getByLabel("Jumlah").fill("2");
     await main.getByRole("button", { name: "Tambah barang" }).click();
     const b2 = main.getByRole("listitem", { name: "Barang 2" });
-    await pilihBarang(b2, "A-2", "BARANG A2");
+    await pilihBarang(b2, "A-4", "BARANG A4");
     await expect(b2.getByLabel("Satuan")).toHaveValue("LSN"); // satu-satunya satuan
     await b2.getByLabel("Jumlah").fill("6");
     // #13: harga per baris; baris tanpa harga ditandai di barisnya; netto hanya dari baris berharga, dengan penjelasan.
@@ -620,7 +625,7 @@ test("Order Sales: toko rute, harga per baris, satuan salah + harga belum ada di
     await dlg.getByRole("button", { name: "Kirim order" }).click();
     await expect(dlg).toBeHidden();
     expect(m.kirim).toEqual([{ outlet: "PELANGGAN A", channel: "GT", order_date: HARI_INI, note: "", customer_no: "C-01",
-        lines: [{ code: "A-1", unit: "KRT", quantity: "2" }] }]);
+        sidik: expect.stringMatching(/^[0-9a-f]{64}$/), lines: [{ code: "A-1", unit: "KRT", quantity: "2" }] }]);
     // #12: nomor permintaan = 8 karakter awal id respons.
     await expect(main.getByRole("status").filter({ hasText: "No. permintaan #3f2a9c1e" })).toBeVisible();
     await expect(saya.getByRole("list", { name: "Order saya" })).toContainText("#3f2a9c1e");

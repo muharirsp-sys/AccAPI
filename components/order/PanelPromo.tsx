@@ -38,7 +38,7 @@ type PanelProps = {
     suggestions?: Suggestion[];
     /** Jumlah barang tanpa harga (tidak ikut dihitung). */
     nTanpaHarga?: number;
-    /** Tambahkan baris PPN 11% + total faktur (petugas internal). */
+    /** Tambahkan baris PPN 11% + total faktur (petugas internal). Tanpa ini angka tetap berlabel "sebelum PPN": PPN ditambahkan saat faktur. */
     ppn?: boolean;
     /** Catatan kaki. */
     catatan?: ReactNode;
@@ -55,7 +55,7 @@ export function PanelPromo({ result, suggestions = [], nTanpaHarga = 0, ppn, cat
             <KeyValues items={[
                 [nTanpaHarga ? "Bruto (yang sudah ada harganya)" : "Bruto", rupiah(r.gross)],
                 ["Diskon promo", rupiah(r.diskon)],
-                ["Netto estimasi", rupiah(r.net)],
+                ["Netto estimasi (sebelum PPN)", rupiah(r.net)],
                 ...(ppn ? [["PPN 11%", rupiah(Math.round(r.net * PPN))], ["Total faktur (estimasi)", rupiah(Math.round(r.net * (1 + PPN)))]] as Array<[string, string]> : []),
             ]} />
             {r.program.length > 0 && (
@@ -76,6 +76,7 @@ export function PanelPromo({ result, suggestions = [], nTanpaHarga = 0, ppn, cat
                     {r.tidakBerlaku.map((b, i) => <li key={i}>Tidak berlaku untuk outlet ini: {b.nama} ({b.alasan})</li>)}
                 </ul>
             )}
+            {!ppn && <p className="fi-small fi-subtle">Angka di atas sebelum PPN; PPN 11% ditambahkan saat faktur.</p>}
             {nTanpaHarga > 0 && <p className="fi-small fi-why">{nTanpaHarga} barang belum berharga tidak ikut dihitung.</p>}
             {catatan && <p className="fi-small fi-subtle">{catatan}</p>}
         </div>

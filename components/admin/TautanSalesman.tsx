@@ -1,8 +1,10 @@
 /*
  * Tujuan: Bagian "Karyawan Accurate (salesman)" di Object Page User (O2): tautan akun <-> karyawan salesman Accurate sekarang + cabangnya,
- *   pilih karyawan salesman aktif (cari nama/nomor/cabang; yang sudah tertaut ke akun lain ditandai dan tidak bisa dipilih), simpan lewat
- *   dialog, lepas lewat dialog konfirmasi. Cabang salesman = cabang karyawannya di Accurate, jadi tautan menentukan pelanggan dan barang yang
- *   boleh dipesan akun itu di Order Sales. `users.view` = baca-saja; `users.manage` = tulis.
+ *   pilih karyawan salesman aktif (cari nama/nomor/cabang; yang sudah tertaut ke akun lain atau kodenya dipegang profil akun lain ditandai dan
+ *   tidak bisa dipilih), simpan lewat dialog, lepas lewat dialog konfirmasi. Cabang salesman = cabang karyawannya di Accurate, jadi tautan
+ *   menentukan pelanggan dan barang yang boleh dipesan akun itu di Order Sales. "Lepas" HANYA mematikan tautan: profil sales, kode, dan hierarki
+ *   Form Kontrol tetap (kontrak O1). Mengganti kode yang punya laporan Form Kontrol ditolak server (KODE_DIPAKAI_FORM_KONTROL) kecuali
+ *   dikonfirmasi: dialog kedua menyebut hitungan laporannya. `users.view` = baca-saja; `users.manage` = tulis.
  * Caller: app/(dashboard)/admin/users/Pengguna.tsx (dipasang ulang dengan `key` per user + versi muat ulang).
  * Dependensi: GET|PUT|DELETE /api/admin/users/[id]/salesman (kontrak docs/handover/O1-KONTRAK-ORDER-CABANG.md §3); components/admin/{Bersama,admin-ui};
  *   components/fiori/*.
@@ -15,19 +17,23 @@ import { useCallback, useState } from "react";
 import { Link2, Link2Off, RefreshCw } from "lucide-react";
 import { Button, EmptyState, ErrorState, KeyValues, ListItem, MessageStrip, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactive";
-import { muatAdmin, tulisAdmin } from "./Bersama";
+import { GalatAdmin, muatAdmin, tulisAdmin } from "./Bersama";
 
 type Tautan = {
     salesCode: string; salesName: string; employeeId: number | null; employeeName: string | null;
     branchId: number | null; branchName: string | null; salesman: boolean | null; suspended: boolean | null; aktif: boolean;
+    /** false = tautan DILEPAS (profil sales tetap). Tidak ada (server lama) = tertaut. */
+    terhubung?: boolean;
 };
 type Pilihan = {
     id: number; number: string; name: string; branchId: number | null; branchName: string | null;
-    terhubungKe: { userId: string; name: string | null; email: string | null } | null;
+    /** `terhubung: false` = kode dipegang profil Form Kontrol akun itu yang tautannya sudah dilepas (kode unik: tidak bisa dipakai akun lain). */
+    terhubungKe: { userId: string; name: string | null; email: string | null; terhubung?: boolean } | null;
 };
 type Data = { tautan: Tautan[]; pilihan: Pilihan[] };
 type TulisHasil = { changed: boolean; tautan?: { salesCode: string; employeeName: string; branchName: string } };
-type Dialog = { jenis: "tautkan"; p: Pilihan } | { jenis: "lepas" } | null;
+type Laporan = { laporanHarian?: number; ao?: number; merchandising?: number; jks?: number; total?: number };
+type Dialog = { jenis: "tautkan"; p: Pilihan } | { jenis: "lepas" } | { jenis: "kode"; p: Pilihan; laporan: Laporan } | null;
 
 const BATAS_TAMPIL = 40;
 
@@ -39,6 +45,8 @@ function sebabTidakAktif(t: Tautan): string {
     if (t.branchId === null) return "karyawannya belum punya cabang di Accurate";
     return "data karyawannya belum lengkap";
 }
+
+const angka = (v: unknown) => (typeof v === "number" ? v : 0);
 
 type Props = {
     user: { id: string; name: string };
@@ -61,28 +69,52 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
 
     const tautan = d.data?.tautan ?? [];
     const pilihan = d.data?.pilihan ?? [];
-    const sekarang = tautan[0] ?? null;
+    const aktifTertaut = tautan.filter((t) => t.terhubung !== false);
+    const dilepas = tautan.filter((t) => t.terhubung === false);
+    const sekarang = aktifTertaut[0] ?? null;
     const q = cari.trim().toLowerCase();
     const cocok = pilihan.filter((p) => !q || p.name.toLowerCase().includes(q) || p.number.toLowerCase().includes(q) || (p.branchName ?? "").toLowerCase().includes(q));
     const tampil = cocok.slice(0, BATAS_TAMPIL);
-    const tersambung = (p: Pilihan) => (p.terhubungKe && p.terhubungKe.userId !== user.id ? p.terhubungKe : null);
+    // Pemegang lain: tertaut aktif ke akun lain, atau profil Form Kontrol akun lain yang tautannya dilepas (kode tetap miliknya).
+    const pemegangLain = (p: Pilihan) => (p.terhubungKe && p.terhubungKe.userId !== user.id ? p.terhubungKe : null);
     const terkunci = (alasan: string | undefined) => alasan ? <p className="fi-small fi-why">Terkunci: {alasan}.</p> : null;
 
-    const dialogP = dialog?.jenis === "tautkan" ? dialog.p : null;
+    const dialogP = dialog?.jenis === "tautkan" ? dialog.p : dialog?.jenis === "kode" ? dialog.p : null;
+
+    /** Tulis tautan. Galat KODE_DIPAKAI_FORM_KONTROL dicegat: dialog konfirmasi kedua (hitungan laporan), lalu PUT ulang dengan konfirmasi. */
+    async function tautkan(p: Pilihan, konfirmasiGantiKode: boolean) {
+        try {
+            await jalankan(async () => {
+                const r = await tulisAdmin<TulisHasil>(url, "PUT", { employeeNumber: p.number, ...(konfirmasiGantiKode ? { konfirmasiGantiKode: true } : {}) });
+                return r.changed
+                    ? `${user.name} ditautkan ke ${r.tautan?.employeeName ?? p.name} (${r.tautan?.salesCode ?? p.number}), cabang ${r.tautan?.branchName ?? p.branchName ?? "—"}.`
+                    : `${user.name} sudah tertaut ke ${p.name}; tidak ada yang berubah.`;
+            });
+        } catch (e) {
+            if (e instanceof GalatAdmin && e.code === "KODE_DIPAKAI_FORM_KONTROL" && !konfirmasiGantiKode) {
+                setDialog({ jenis: "kode", p, laporan: (e.data?.laporan ?? {}) as Laporan });
+                return;
+            }
+            throw e;
+        }
+        setDialog(null);
+    }
+
     return (
         <div className="fi-sect-in">
             {terkunci(kunciTulis)}
             {d.status === "galat" && (
                 <MessageStrip tone="neg" title="Gagal memuat ulang tautan.">{d.error} Yang tampil hasil sebelumnya; aksi tulis terkunci. <Button variant="tertiary" onClick={muat}>Coba lagi</Button></MessageStrip>
             )}
-            {tautan.length === 0 && (
+            {!sekarang && (
                 <MessageStrip tone="info" title="Belum dihubungkan ke karyawan Accurate.">
                     Akun salesman yang belum ditautkan tidak bisa memakai Order Sales (cabangnya belum diketahui). Akun yang bukan salesman tidak perlu ditautkan.
+                    {dilepas.length > 0 && ` Profil sales ${dilepas.map((t) => `${t.salesName} (${t.salesCode})`).join(", ")} tetap ada (tautannya dilepas); menautkan ke karyawan yang sama memakainya kembali.`}
                 </MessageStrip>
             )}
-            {tautan.length > 1 && (
-                <MessageStrip tone="warn" title={`Akun ini punya ${tautan.length} profil sales.`}>
-                    Server menolak mengganti tautan selama profilnya lebih dari satu. Lepas dulu, lalu tautkan ulang: {tautan.map((t) => `${t.salesName} (${t.salesCode})`).join(", ")}.
+            {aktifTertaut.length > 1 && (
+                <MessageStrip tone="warn" title={`Akun ini punya ${aktifTertaut.length} profil sales.`}>
+                    Server menolak mengganti tautan selama profilnya lebih dari satu. Lepas dulu, lalu tautkan ulang: {aktifTertaut.map((t) => `${t.salesName} (${t.salesCode})`).join(", ")}.
                 </MessageStrip>
             )}
             {sekarang && (
@@ -114,12 +146,14 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
                         <>
                             <ul className="fi-list" style={{ display: "block", border: "1px solid var(--line)", borderRadius: "var(--r-sm)", overflow: "auto", maxHeight: "18rem", margin: 0 }} aria-label="Karyawan salesman Accurate">
                                 {tampil.map((p) => {
-                                    const lain = tersambung(p);
-                                    const ini = p.terhubungKe?.userId === user.id;
+                                    const lain = pemegangLain(p);
+                                    const ini = p.terhubungKe?.userId === user.id && p.terhubungKe.terhubung !== false;
+                                    const lama = Boolean(lain && lain.terhubung === false);
                                     return (
                                         <li key={p.id}>
                                             <ListItem doc={p.number} title={p.name} meta={`Cabang ${p.branchName ?? "belum ada"}`}
-                                                badge={lain ? <StatusBadge tone="warn">Sudah ditautkan ke {lain.name ?? "akun lain"}</StatusBadge>
+                                                badge={lain
+                                                    ? <StatusBadge tone="warn">{lama ? `Kode dipegang profil lama ${lain.name ?? "akun lain"} (tautan dilepas)` : `Sudah ditautkan ke ${lain.name ?? "akun lain"}`}</StatusBadge>
                                                     : ini ? <StatusBadge tone="pos">Tertaut ke akun ini</StatusBadge> : undefined}
                                                 onClick={lain || ini || kunci ? undefined : () => setDialog({ jenis: "tautkan", p })} />
                                         </li>
@@ -131,7 +165,7 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
                     )}
                     {kunci && !kunciTulis && <p className="fi-small fi-why">Memilih karyawan terkunci: {kunci}.</p>}
                     <div className="fi-btnrow">
-                        <Button variant="negative" icon={<Link2Off className="fi-icon" aria-hidden />} disabled={Boolean(kunci) || tautan.length === 0} disabledReason={kunci ?? "Belum ada tautan untuk dilepas"} onClick={() => setDialog({ jenis: "lepas" })}>Lepas tautan…</Button>
+                        <Button variant="negative" icon={<Link2Off className="fi-icon" aria-hidden />} disabled={Boolean(kunci) || !sekarang} disabledReason={kunci ?? "Belum ada tautan untuk dilepas"} onClick={() => setDialog({ jenis: "lepas" })}>Lepas tautan…</Button>
                         <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muat}>Muat ulang daftar</Button>
                     </div>
                 </>
@@ -139,7 +173,7 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
                 <p className="fi-small fi-subtle">Baca-saja: menautkan atau melepas karyawan butuh izin Kelola user (users.manage).</p>
             )}
 
-            <ConfirmDialog open={dialogP !== null} onClose={() => setDialog(null)} tag="Salesman" confirmLabel="Tautkan" title={`Tautkan ${user.name} ke ${dialogP?.name ?? ""}?`}
+            <ConfirmDialog open={dialog?.jenis === "tautkan"} onClose={() => setDialog(null)} tag="Salesman" confirmLabel="Tautkan" title={`Tautkan ${user.name} ke ${dialogP?.name ?? ""}?`}
                 confirmDisabled={kunci} alasanTerlihat
                 facts={[
                     ["Karyawan", dialogP ? `${dialogP.name} · ${dialogP.number}` : ""],
@@ -148,31 +182,36 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
                     ["Akibat", `${user.name} hanya bisa memesan pelanggan dan barang cabang ${dialogP?.branchName ?? "itu"} di Order Sales`],
                     ["Riwayat", "Tercatat di riwayat user (siapa, sebelum, sesudah)"],
                 ]}
-                onConfirm={async () => {
-                    if (!dialogP) return;
-                    await jalankan(async () => {
-                        const r = await tulisAdmin<TulisHasil>(url, "PUT", { employeeNumber: dialogP.number });
-                        return r.changed
-                            ? `${user.name} ditautkan ke ${r.tautan?.employeeName ?? dialogP.name} (${r.tautan?.salesCode ?? dialogP.number}), cabang ${r.tautan?.branchName ?? dialogP.branchName ?? "—"}.`
-                            : `${user.name} sudah tertaut ke ${dialogP.name}; tidak ada yang berubah.`;
-                    });
-                    setDialog(null);
-                }}>
+                onConfirm={async () => { if (dialogP) await tautkan(dialogP, false); }}>
                 {sekarang && <MessageStrip tone="warn" title="Tautan lama diganti.">Cabang salesman berubah mengikuti karyawan baru. Bila server menolak, alasannya tampil di dialog ini dan tidak ada yang berubah.</MessageStrip>}
             </ConfirmDialog>
+
+            <ConfirmDialog open={dialog?.jenis === "kode"} onClose={() => setDialog(null)} tag="Ganti kode" tone="negative" confirmLabel="Ganti kode dan tautkan"
+                title={`Ganti kode salesman ${user.name} yang punya laporan Form Kontrol?`} confirmDisabled={kunci} alasanTerlihat
+                description={`Akun ini punya ${angka(dialog?.jenis === "kode" ? dialog.laporan.total : 0)} laporan Form Kontrol berkode ${sekarang?.salesCode ?? "salesman lama"}. Mengganti kode ke ${dialogP?.number ?? "kode baru"} berarti laporan itu tidak lagi berada di bawah kode yang sama dengan akun ini. Lanjutkan hanya bila memang disengaja; server menolak bila tidak dikonfirmasi.`}
+                facts={dialog?.jenis === "kode" ? [
+                    ["Laporan harian", String(angka(dialog.laporan.laporanHarian))],
+                    ["Kontrol AO", String(angka(dialog.laporan.ao))],
+                    ["Merchandising", String(angka(dialog.laporan.merchandising))],
+                    ["Daftar toko (JKS)", String(angka(dialog.laporan.jks))],
+                    ["Kode baru", dialog.p.number],
+                    ["Riwayat", "Tercatat di riwayat user, termasuk hitungan laporannya"],
+                ] : undefined}
+                onConfirm={async () => { if (dialog?.jenis === "kode") await tautkan(dialog.p, true); }} />
 
             <ConfirmDialog open={dialog?.jenis === "lepas"} onClose={() => setDialog(null)} tag="Lepas" tone="negative" confirmLabel="Lepas tautan"
                 title={`Lepas tautan ${user.name} dari karyawan Accurate?`} confirmDisabled={kunci} alasanTerlihat
                 facts={[
                     ["Karyawan", sekarang ? `${sekarang.employeeName ?? sekarang.salesName} · ${sekarang.salesCode}` : "—"],
                     ["Akibat", `${user.name} tidak bisa memakai Order Sales sampai ditautkan lagi (cabangnya tidak diketahui)`],
+                    ["Tetap ada", "Profil sales, kode, dan hierarki Form Kontrol tidak dihapus; hanya tautan ke karyawan Accurate yang dimatikan"],
                     ["Data lain", "Order yang sudah dikirim tidak terpengaruh"],
                     ["Riwayat", "Tercatat di riwayat user"],
                 ]}
                 onConfirm={async () => {
                     await jalankan(async () => {
                         const r = await tulisAdmin<{ changed: boolean }>(url, "DELETE");
-                        return r.changed ? `Tautan ${user.name} ke karyawan Accurate dilepas.` : `${user.name} memang belum tertaut; tidak ada yang berubah.`;
+                        return r.changed ? `Tautan ${user.name} ke karyawan Accurate dilepas (profil sales tetap).` : `${user.name} memang belum tertaut; tidak ada yang berubah.`;
                     });
                     setDialog(null);
                 }} />

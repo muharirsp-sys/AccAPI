@@ -153,3 +153,13 @@ test("O2 riwayat: salesman.link menyebut sebelum -> sesudah + cabang; salesman.u
     assert.equal(lepas.apa, "Tautan salesman Accurate dilepas");
     assert.match(lepas.rinci, /dilepas: SALES LAMA \(S-OLD\)/);
 });
+
+test("O2 tahap 2: KODE_DIPAKAI_PROFIL_LAIN / KODE_DIPAKAI_FORM_KONTROL -> kalimat (hitungan laporan), tanpa kode mentah, tidak memuat ulang", () => {
+    const a = pesanGalat(409, { ok: false, code: "KODE_DIPAKAI_PROFIL_LAIN", error: "TEKS SERVER" });
+    assert.match(a.pesan, /profil Form Kontrol akun lain yang tautannya sudah dilepas/);
+    assert.equal(a.muatUlang, false);
+    const f = pesanGalat(409, { ok: false, code: "KODE_DIPAKAI_FORM_KONTROL", error: "TEKS SERVER", laporan: { laporanHarian: 4, ao: 2, merchandising: 1, jks: 3, total: 10 } });
+    assert.match(f.pesan, /10 laporan Form Kontrol berkode salesman lama/);
+    assert.equal(f.code, "KODE_DIPAKAI_FORM_KONTROL");
+    assert.doesNotMatch(`${a.pesan} ${f.pesan}`, /TEKS SERVER|KODE_DIPAKAI/);
+});

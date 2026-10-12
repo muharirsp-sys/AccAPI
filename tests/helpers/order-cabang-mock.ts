@@ -4,11 +4,15 @@
  *   (PELANGGAN A, CABANG A, SALES A, BARANG A) — bukan nama principal/orang nyata.
  * Caller: tests/fiori-order-cabang.spec.ts, tests/fiori-order-masuk.spec.ts (Order baru + Antrekan), tests/fiori-lapangan-salesman.spec.ts (Order Sales).
  * Dependensi: @playwright/test. Tidak menyentuh DB maupun Accurate.
- * Main Functions: mockOrderCabang, mockWebsales, pilihPelanggan, pilihBarang, PELANGGAN, BARANG, SALESMAN_ACCURATE.
+ * Main Functions: mockOrderCabang, mockWebsales, mockOrdersInternal, sidikDari, pilihPelanggan, pilihBarang, PELANGGAN, BARANG, SALESMAN_ACCURATE.
  * Side Effects: Memasang page.route; log permintaan dikembalikan ke pemanggil.
  *
  * Cabang: CABANG A = 50 (cabang salesman), CABANG B = 90, CABANG C = 70 (tanpa barang). Bentuk jawaban = kontrak server (kode galat §2).
+ * Tahap 2 (O1 putaran 1): pratinjau membawa `sidik` (sha256 baris berharga + hasil promo); simpan FastAPI (Web Sales dan Order Baru) WAJIB membawa
+ *   sidik yang sama dengan hitungan server saat itu (`geser` mengubah angka server di tengah tes = PRATINJAU_BERUBAH). Harga petugas hanya sah
+ *   untuk baris TANPA harga master (keputusan owner 12 Okt sesi 13); pada baris berharga master server menolak.
  */
+import { createHash } from "node:crypto";
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
 
 export const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
@@ -50,10 +54,14 @@ export type OpsiMock = {
     pelanggan?: (url: URL, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
     barang?: (url: URL, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
     preview?: (body: PreviewBody, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
+    /** Menggeser netto hitungan server (aturan/harga berubah) — pratinjau lama jadi usang: simpan = PRATINJAU_BERUBAH. */
+    geser?: number;
+    /** `channel_masalah` pratinjau (simpan akan ditolak CHANNEL_BEDA_MASTER). */
+    channelMasalah?: string;
 };
-type PreviewBody = { channel: string; order_date: string; customer_no: string; lines: { code: string; unit: string; quantity: string }[] };
+export type PreviewBody = { channel: string; order_date: string; customer_no: string; lines: { code: string; unit: string; quantity: string; price?: string }[] };
 
-export type LogMock = { pelanggan: URL[]; barang: URL[]; preview: PreviewBody[]; salesmen: URL[]; dibatalkan: string[] };
+export type LogMock = { pelanggan: URL[]; barang: URL[]; preview: PreviewBody[]; sidik: string[]; salesmen: URL[]; dibatalkan: string[] };
 
 const kirim = async (r: Route, j: Jawab) => {
     try {
@@ -65,8 +73,8 @@ const kirim = async (r: Route, j: Jawab) => {
 
 const galat403 = (kode: string, error: string) => ({ status: 403, body: { ok: false, kode, error } });
 
-/** Hitung pratinjau seperti server: aturan cabang (BARANG_BEDA_CABANG), satuan, harga per cabang, lalu promo contoh. */
-export function pratinjauContoh(b: PreviewBody): Jawab {
+/** Hitung pratinjau seperti server: aturan cabang (BARANG_BEDA_CABANG), satuan, harga master per cabang / harga petugas (hanya baris tanpa master), lalu promo contoh. */
+export function pratinjauContoh(b: PreviewBody, geser = 0, channelMasalah = ""): Jawab {
     const p = PELANGGAN.find((x) => x.customerNo === b.customer_no);
     if (!p) return { status: 409, body: { ok: false, kode: "PELANGGAN_TIDAK_ADA", error: `Pelanggan ${b.customer_no} tidak ada di master Accurate hasil sync.` } };
     const barang = b.lines.map((l) => BARANG.find((x) => x.no === l.code));
@@ -82,22 +90,32 @@ export function pratinjauContoh(b: PreviewBody): Jawab {
         return { status: 409, body: { ok: false, kode: "SATUAN_SALAH", error: `Satuan ${salah[0].unit} tidak ada di master untuk ${salah[0].code}`,
             wrong_unit: salah.map((l) => ({ code: l.code, unit: l.unit, known_units: Object.keys(barang[b.lines.indexOf(l)]!.harga) })) } };
     }
-    const missing = b.lines.filter((l, i) => barang[i]!.harga[l.unit] === null).map((l) => l.code);
-    if (missing.length) return { status: 409, body: { ok: false, kode: "HARGA_BELUM_ADA", error: `Harga belum tersedia dari Accurate untuk: ${missing.join(", ")}`, missing } };
-
-    const harga = (l: PreviewBody["lines"][number]) => barang[b.lines.indexOf(l)]!.harga[l.unit] as number;
+    // Harga petugas: hanya baris TANPA harga master; pada baris berharga master ditolak (nama kode menyusul di kontrak O1 — tangani generik).
+    const bermaster = b.lines.filter((l, i) => l.price && barang[i]!.harga[l.unit] !== null);
+    if (bermaster.length) {
+        return { status: 409, body: { ok: false, kode: "HARGA_MASTER_TIDAK_BOLEH_DIUBAH", error: `Barang ${bermaster.map((l) => l.code).join(", ")} sudah punya harga master; harga petugas hanya untuk barang tanpa harga master.`, barang: bermaster.map((l) => l.code) } };
+    }
+    const tanpaPetugas = b.lines.filter((l, i) => barang[i]!.harga[l.unit] === null && !l.price);
+    if (tanpaPetugas.length) {
+        const missing = tanpaPetugas.map((l) => l.code);
+        return { status: 409, body: { ok: false, kode: "HARGA_BELUM_ADA", error: `Harga belum tersedia dari Accurate untuk: ${missing.join(", ")}`, missing } };
+    }
+    const petugas = (l: PreviewBody["lines"][number], i: number) => barang[i]!.harga[l.unit] === null;
+    const harga = (l: PreviewBody["lines"][number]) => { const i = b.lines.indexOf(l); return petugas(l, i) ? Number(l.price) : barang[i]!.harga[l.unit] as number; };
     const baris = b.lines.map((l) => {
         const gross = Number(l.quantity) * harga(l);
         const promo = l.code === "A-1" && l.unit === "KRT";
         const net = promo ? gross * 0.9 : gross;
         return { code: l.code, unit: l.unit, quantity: l.quantity, gross: gross.toFixed(2), net: net.toFixed(2), percents: promo ? ["10"] : [], cash: "0.00" };
     });
-    const gross = baris.reduce((t, x) => t + Number(x.gross), 0), net = baris.reduce((t, x) => t + Number(x.net), 0);
+    const gross = baris.reduce((t, x) => t + Number(x.gross), 0), net = baris.reduce((t, x) => t + Number(x.net), 0) + geser;
     const potongan = gross - net;
     const a1 = b.lines.find((l) => l.code === "A-1" && l.unit === "KRT");
-    return { body: {
-        ok: true, lines: b.lines.map((l) => ({ ...l, price: String(harga(l)) })),
-        prices: b.lines.map((l) => ({ code: l.code, unit: l.unit, price: harga(l), source: "tier", priceCategoryName: p.priceCategoryName, branchName: p.branchName, effectiveDate: "2026-10-01", knownUnits: null })),
+    const hasil = {
+        ok: true,
+        lines: b.lines.map((l, i) => ({ code: l.code, unit: l.unit, quantity: l.quantity, price: String(harga(l)), sumber_harga: petugas(l, i) ? "petugas" : "master" })),
+        prices: b.lines.map((l, i) => ({ code: l.code, unit: l.unit, price: harga(l), source: petugas(l, i) ? "petugas" : "tier", hargaMaster: petugas(l, i) ? null : harga(l),
+            priceCategoryName: p.priceCategoryName, branchName: p.branchName, effectiveDate: "2026-10-01", knownUnits: null })),
         result: {
             gross: gross.toFixed(2), discount: potongan.toFixed(2), net: net.toFixed(2), lines: baris,
             applications: potongan > 0 ? [{ program_id: "prog-a", minimum: "1", discount: potongan.toFixed(2) }] : [],
@@ -105,12 +123,29 @@ export function pratinjauContoh(b: PreviewBody): Jawab {
             blocked: p.channel === "GT" ? [{ program_id: "prog-c", program_name: "PROMO C", reason: "khusus outlet MT" }] : [],
         },
         suggestions: a1 ? [{ program_id: "prog-a", program_name: "PROMO A", message: "Tambah 3 KRT lagi untuk diskon 15%", codes: ["A-1"] }] : [],
+        sources: [{ draft_id: "d1d1d1d1", revision: 1 }], channel_masalah: channelMasalah,
         pelanggan: { customerNo: p.customerNo, name: p.name, branchId: p.branchId, branchName: p.branchName },
-    } };
+        sidik: "",
+    };
+    hasil.sidik = sidikHasil(b, p.channel, hasil);
+    return { body: hasil };
+}
+
+/** Sidik tiruan: sha256 atas pelanggan + channel + tanggal + baris berharga + hasil promo (seperti server; bentuk persisnya tidak penting untuk uji UI). */
+function sidikHasil(b: PreviewBody, channel: string, h: { lines: { code: string; unit: string; quantity: string; price: string }[]; result: unknown }) {
+    return createHash("sha256").update(JSON.stringify({ c: b.customer_no, ch: b.channel || channel, d: b.order_date, l: h.lines.map((l) => [l.code, l.unit, l.quantity, l.price]), r: h.result })).digest("hex");
+}
+
+/** Sidik yang dihitung SERVER untuk badan simpan (hitungan saat ini, termasuk `geser`); null bila order sendiri tak sah. */
+export function sidikDari(b: PreviewBody, geser = 0): { sidik: string; pratinjau: Record<string, unknown> } | null {
+    const j = pratinjauContoh(b, geser);
+    if (j === "putus" || j.status || !j.body) return null;
+    const body = j.body as { lines: unknown[]; result: unknown; sources: unknown[]; sidik: string };
+    return { sidik: body.sidik, pratinjau: { lines: body.lines, result: body.result, sources: body.sources, sidik: body.sidik } };
 }
 
 export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<{ log: LogMock; opsi: OpsiMock }> {
-    const log: LogMock = { pelanggan: [], barang: [], preview: [], salesmen: [], dibatalkan: [] };
+    const log: LogMock = { pelanggan: [], barang: [], preview: [], sidik: [], salesmen: [], dibatalkan: [] };
     page.on("requestfailed", (r) => { if (/ERR_ABORTED/.test(r.failure()?.errorText ?? "")) log.dibatalkan.push(new URL(r.url()).search); });
     const sales = () => (opsi.peran ?? "petugas") === "sales";
     const blokirSales = (): Jawab | undefined => {
@@ -153,14 +188,19 @@ export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<
                 units: Object.entries(x.harga).map(([unit, price]) => (p
                     ? { unit, price, source: price === null ? "missing" : "tier", branchName: price === null ? null : x.branchName, effectiveDate: price === null ? null : "2026-10-01" }
                     : { unit })) }));
-        return kirim(r, { body: { ok: true, tanggal: url.searchParams.get("tanggal") ?? "2026-10-12", branchId: cab, items } });
+        // Kosong karena cabangnya memang tanpa barang orderan (bukan karena ketikan tak cocok): flag server.
+        const cabangTanpaBarang = items.length === 0 && cab !== null && !BARANG.some((x) => x.branchId === cab);
+        return kirim(r, { body: { ok: true, tanggal: url.searchParams.get("tanggal") ?? "2026-10-12", branchId: cab, cabangTanpaBarang, items } });
     });
 
     await page.route((u) => u.pathname === "/api/orders/preview", async (r) => {
         const b = r.request().postDataJSON() as PreviewBody;
         log.preview.push(b);
         const ganti = await opsi.preview?.(b, log.preview.length);
-        return kirim(r, ganti ?? blokirSales() ?? pratinjauContoh(b));
+        const jawab = ganti ?? blokirSales() ?? pratinjauContoh(b, opsi.geser ?? 0, opsi.channelMasalah ?? "");
+        const sidik = jawab !== "putus" && jawab.body && (jawab.body as { sidik?: string }).sidik;
+        if (sidik) log.sidik.push(sidik);
+        return kirim(r, jawab);
     });
 
     await page.route((u) => u.pathname === "/api/orders/salesmen", (r) => {
@@ -180,6 +220,10 @@ export type OpsiWebsales = {
     /** Jawaban POST /websales/orders yang ditolak server (mis. kode O1); undefined = diterima. */
     tolak?: Jawab;
     hari?: string;
+    /** Opsi mock pratinjau (`geser`): simpan dibandingkan dengan hitungan server saat ini. Tanpa ini sidik hanya diperiksa ada. */
+    cabang?: OpsiMock;
+    /** Baris tambahan di daftar "Order saya" (mis. status rejected). */
+    baris?: Record<string, unknown>[];
 };
 
 /** FastAPI Web Sales + /api/me. CORS mengikuti Origin permintaan (port Next tidak ditulis keras). */
@@ -194,8 +238,13 @@ export async function mockWebsales(page: Page, opsi: OpsiWebsales = {}): Promise
         const p = new URL(r.request().url()).pathname;
         if (p === "/api/me") return fa(r, { csrf_token: "t" });
         if (p === "/websales/orders" && r.request().method() === "POST") {
-            dikirim.push(r.request().postDataJSON());
+            const badan = r.request().postDataJSON() as Record<string, unknown> & PreviewBody & { sidik?: string };
+            dikirim.push(badan);
             if (opsi.tolak && opsi.tolak !== "putus") return fa(r, opsi.tolak.body ?? {}, opsi.tolak.status ?? 409, opsi.tolak.html);
+            // Pratinjau = tersimpan: sidik WAJIB dan harus sama dengan hitungan server saat ini (tanpa harga dari klien).
+            if (!badan.sidik) return fa(r, { ok: false, detail: "Hitung pratinjau order dulu.", kode: "SIDIK_WAJIB" }, 400);
+            const baru = sidikDari({ channel: badan.channel, order_date: badan.order_date, customer_no: badan.customer_no, lines: badan.lines }, opsi.cabang?.geser ?? 0);
+            if (baru && baru.sidik !== badan.sidik) return fa(r, { ok: false, detail: "Harga atau promo berubah sejak pratinjau.", kode: "PRATINJAU_BERUBAH", pratinjau: baru.pratinjau }, 409);
             opsi.terkirim = true;
             // Order SUDAH tersimpan, tetapi proxy memutus jawaban (502 HTML) → hasil tidak pasti di layar.
             if (opsi.postTidakPasti) return fa(r, null, 502, "<html>Bad Gateway</html>");
@@ -203,11 +252,47 @@ export async function mockWebsales(page: Page, opsi: OpsiWebsales = {}): Promise
         }
         if (p === "/websales/orders") {
             if (opsi.orderGagal && !opsi.terkirim) return fa(r, { detail: "database is locked" }, 500);
-            return fa(r, { ok: true, requests: opsi.terkirim ? [{ id: ID_WEBSALES, outlet: "PELANGGAN A", channel: "GT", order_date: opsi.hari ?? "2026-10-12", customer_no: "C-01", status: "pending", created_at: new Date().toISOString(), pulled_at: null }] : [] });
+            return fa(r, { ok: true, requests: [...(opsi.baris ?? []), ...(opsi.terkirim ? [{ id: ID_WEBSALES, outlet: "PELANGGAN A", channel: "GT", order_date: opsi.hari ?? "2026-10-12", customer_no: "C-01", status: "pending", created_at: new Date().toISOString(), pulled_at: null }] : [])] });
         }
         return fa(r, { ok: true });
     });
     return { kirim: dikirim };
+}
+
+// ------------------------------------------------------------------ FastAPI order internal (Order Baru)
+
+export const ID_ORDER_BARU = "8f1c0000-aaaa-4bbb-8ccc-000000000001";
+export type OpsiOrdersInternal = {
+    /** Jawaban POST /orders berurutan (satu per permintaan); habis = diterima bila sidik cocok. */
+    antrean?: Jawab[];
+    cabang?: OpsiMock;
+};
+
+/** FastAPI Order Baru: simpan WAJIB `sidik` yang cocok dengan hitungan server saat ini; navigasi ke halaman order ditahan (fokus pada isi permintaan). */
+export async function mockOrdersInternal(page: Page, opsi: OpsiOrdersInternal = {}): Promise<{ simpan: Record<string, unknown>[] }> {
+    const simpan: Record<string, unknown>[] = [];
+    await page.route((u) => u.host === "localhost:8000", (r) => {
+        const cors = { "access-control-allow-origin": r.request().headers()["origin"] ?? "*", "access-control-allow-credentials": "true", "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, OPTIONS" };
+        const req = r.request();
+        const p = new URL(req.url()).pathname;
+        const balas = (body: unknown, status = 200) => r.fulfill({ status, headers: cors, contentType: "application/json", body: JSON.stringify(body) });
+        if (req.method() === "OPTIONS") return r.fulfill({ status: 204, headers: cors });
+        if (p === "/api/me") return balas({ csrf_token: "t" });
+        if (p === "/orders" && req.method() === "POST") {
+            const badan = req.postDataJSON() as Record<string, unknown> & PreviewBody & { sidik?: string };
+            simpan.push(badan);
+            const giliran = opsi.antrean?.shift();
+            if (giliran === "putus") return r.abort("connectionreset");
+            if (giliran) return giliran.html !== undefined ? r.fulfill({ status: giliran.status ?? 502, headers: { ...cors, "content-type": "text/html" }, body: giliran.html }) : balas(giliran.body ?? {}, giliran.status);
+            if (!badan.sidik) return balas({ ok: false, detail: "Hitung pratinjau order dulu.", kode: "SIDIK_WAJIB" }, 400);
+            const baru = sidikDari({ channel: badan.channel, order_date: badan.order_date, customer_no: badan.customer_no, lines: badan.lines }, opsi.cabang?.geser ?? 0);
+            if (baru && baru.sidik !== badan.sidik) return balas({ ok: false, detail: "Harga atau promo berubah sejak pratinjau.", kode: "PRATINJAU_BERUBAH", pratinjau: baru.pratinjau }, 409);
+            return balas({ ok: true, order: { id: ID_ORDER_BARU } });
+        }
+        return balas({ ok: true });
+    });
+    await page.route((u) => /^\/orders\/[0-9a-f-]{36}$/.test(u.pathname), (r) => r.abort());
+    return { simpan };
 }
 
 // ------------------------------------------------------------------ langkah layar bersama (pemilih cari)

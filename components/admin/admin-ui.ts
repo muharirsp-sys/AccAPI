@@ -51,6 +51,11 @@ const KODE: Record<string, (body: Jawaban, k: { aktivasi?: boolean }) => [string
         const k = (b?.terhubungKe ?? {}) as { name?: unknown };
         return [`Karyawan itu sudah ditautkan ke akun ${typeof k.name === "string" && k.name ? k.name : "lain"}. Lepas dulu dari akun itu, atau pilih karyawan lain. Daftar dimuat ulang.`, true];
     },
+    KODE_DIPAKAI_PROFIL_LAIN: () => ["Kode karyawan itu masih dipegang profil Form Kontrol akun lain yang tautannya sudah dilepas (kode tidak boleh ganda). Pilih karyawan lain, atau minta Admin membereskan profil lama itu lebih dulu.", false],
+    KODE_DIPAKAI_FORM_KONTROL: (b) => {
+        const l = (b?.laporan ?? {}) as { total?: unknown };
+        return [`Akun ini punya ${typeof l.total === "number" ? `${l.total} ` : ""}laporan Form Kontrol berkode salesman lama. Mengganti kode butuh konfirmasi.`, false];
+    },
     PROFIL_GANDA: () => ["Akun ini punya lebih dari satu profil sales, jadi tautannya tidak bisa diganti begitu saja. Lepas dulu tautannya, lalu tautkan ulang.", true],
 };
 

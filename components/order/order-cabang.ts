@@ -5,7 +5,8 @@
  *   app/(dashboard)/sales/OrderSales.tsx, app/(dashboard)/orders/{OrderBaru,AntreFaktur,OrderMasuk}.tsx, app/(dashboard)/orders/order-ui.ts
  *   (tipe), components/order/order-cabang.test.ts.
  * Dependensi: tidak ada (murni; tipe saja). Kontrak server: docs/handover/O1-KONTRAK-ORDER-CABANG.md §2-§3.
- * Main Functions: galatDariJawaban, cukupHuruf, urlCariPelanggan, urlCariBarang, labelSatuan, barisBedaCabang, promoBaris, ringkasPromo.
+ * Main Functions: galatDariJawaban, cukupHuruf, urlCariPelanggan, urlCariBarang, labelSatuan, barisBedaCabang, promoBaris, ringkasPromo,
+ *   hargaPetugasSah, pratinjauBerubah, hargaCabangDefault.
  * Side Effects: Tidak ada.
  */
 
@@ -38,9 +39,10 @@ export type Result = {
     blocked?: Blocked[];
 };
 export type Suggestion = { program_id: string; program_name?: string; message: string; codes: string[] };
+/** `source` "tier" = harga master sah, "petugas" = harga yang diketik petugas (Order Baru); `hargaMaster` = harga master sah baris itu (null = tak ada). */
 export type PriceInfo = {
     code: string; unit: string; price: number | null; source: string; priceCategoryName: string | null;
-    branchName: string | null; effectiveDate: string | null;
+    branchName: string | null; effectiveDate: string | null; hargaMaster?: number | null;
 };
 
 // ------------------------------------------------------------------ pencarian
@@ -126,7 +128,7 @@ export type Galat = {
     perBarang: Record<string, string>;
 };
 
-type Aturan = { judul: string; pesan?: (d: Record<string, unknown>) => string; tindakan: string | Record<Peran, string>; menolak?: boolean; blokirSales?: boolean };
+type Aturan = { judul: string; pesan?: (d: Record<string, unknown>) => string; tindakan: string | Record<Peran, string>; menolak?: boolean; blokirSales?: boolean; tidakPasti?: boolean };
 
 const dariServer = (d: Record<string, unknown>, cadangan: string) => (typeof d.error === "string" && d.error ? d.error : typeof d.detail === "string" && d.detail ? d.detail : cadangan);
 
@@ -187,11 +189,66 @@ const ATURAN: Record<string, Aturan> = {
         judul: "Akun Anda tidak berizin", pesan: (d) => dariServer(d, "Akun ini tidak punya izin untuk layar ini."),
         tindakan: "Minta Admin menambahkan izinnya ke grup akses Anda.", menolak: true,
     },
-    // ponytail: nama kode penolakan "salesman beda cabang" di Antre Faktur belum ada di kontrak O1; dipetakan dari dugaan nama +
-    // kalimat server. Betulkan bila putaran perbaikan O1 memakai kode lain (cukup tambah kuncinya di sini).
+    // Antre Faktur (kontrak O1 §2): kalimat server apa adanya + tindakan.
     SALESMAN_BEDA_CABANG: {
         judul: "Salesman bukan dari cabang pelanggan", pesan: (d) => dariServer(d, "Salesman faktur harus karyawan cabang yang sama dengan pelanggan order."),
         tindakan: "Pilih salesman dari daftar (hanya salesman cabang pelanggan).", menolak: true,
+    },
+    IZIN_TIDAK_KONSISTEN: {
+        judul: "Izin akun tidak konsisten", pesan: (d) => dariServer(d, "Akun ini punya izin Order Sales dan Lihat order tanpa Buat order."),
+        tindakan: "Hubungi Admin untuk membetulkan grup akses akun Anda.", menolak: true,
+    },
+    // ---- Promo / simpan (kontrak O1 §4.3): pratinjau = tersimpan.
+    SIDIK_WAJIB: {
+        judul: "Pratinjau belum dihitung", pesan: () => "Order hanya disimpan bila angkanya sama dengan pratinjau, dan pratinjau yang terbaru belum ada.",
+        tindakan: "Tunggu perkiraan harga dan promo selesai (atau muat ulang halaman), lalu simpan lagi.", menolak: true,
+    },
+    PRATINJAU_BERUBAH: {
+        judul: "Hitungan berubah sejak pratinjau", pesan: () => "Harga atau promo berubah sejak Anda melihat pratinjau (aturan terbit, harga master, atau kelas outlet), jadi order belum disimpan.",
+        tindakan: "Periksa angka yang baru, lalu simpan lagi.", menolak: true,
+    },
+    CHANNEL_BEDA_MASTER: {
+        judul: "Channel berbeda dari master", pesan: (d) => dariServer(d, "Channel order berbeda dari channel pelanggan di master Accurate."),
+        tindakan: "Channel mengikuti master dan tidak bisa diubah di order. Pilih ulang pelanggan, atau betulkan kategori outlet di Accurate.", menolak: true,
+    },
+    ORDER_GANDA: {
+        judul: "Diduga order ganda", pesan: (d) => dariServer(d, "Order dengan outlet, tanggal, dan barang yang mirip sudah ada."),
+        tindakan: {
+            sales: "Periksa Order saya. Bila itu order yang sama, tidak perlu dikirim lagi; bila memang berbeda, minta petugas memprosesnya.",
+            petugas: "Periksa Order Masuk dulu. Bila memang BUKAN order ganda, centang konfirmasi di dialog lalu simpan lagi.",
+        }, menolak: true,
+    },
+    ATURAN_BELUM_TERBIT: {
+        judul: "Belum ada aturan promo yang terbit", pesan: (d) => dariServer(d, "Belum ada aturan promo terbit; order belum bisa dihitung."),
+        tindakan: "Minta tim Promo menerbitkan Summary lebih dulu, lalu coba lagi.", menolak: true,
+    },
+    DATA_TIDAK_VALID: {
+        judul: "Data order tidak valid", pesan: (d) => dariServer(d, "Isi order tidak sesuai aturan server."),
+        tindakan: "Periksa tanggal, jumlah, dan satuan di barisnya, lalu coba lagi.", menolak: true,
+    },
+    HARGA_TIDAK_VALID: {
+        judul: "Harga petugas tidak valid", pesan: (d) => dariServer(d, "Harga harus angka lebih dari 0."),
+        tindakan: "Betulkan harga di barisnya (angka lebih dari 0, desimal pakai titik, maksimal 4 digit), atau kosongkan untuk memakai harga master.", menolak: true,
+    },
+    KONFIGURASI_SERVER: {
+        judul: "Konfigurasi server bermasalah", pesan: () => "Layanan order tidak bisa memeriksa harga dan aturan karena konfigurasi server (bukan karena sesi login Anda).",
+        tindakan: "Order belum tersimpan. Hubungi Admin untuk memperbaiki konfigurasi server, lalu coba lagi.",
+    },
+    // Barang bonus promo wajib secabang pelanggan, aktif, dan bisa diorder (O1 putaran 2; nama kode final menyusul di kontrak).
+    BONUS_TIDAK_BISA_DIORDER: {
+        judul: "Program promo tidak bisa dipakai",
+        pesan: (d) => {
+            const kode = (Array.isArray(d.barang) ? d.barang : []).map((b) => (typeof b === "string" ? b : String(((b ?? {}) as Record<string, unknown>).code ?? ""))).filter(Boolean);
+            const alasan = typeof d.alasan === "string" && d.alasan ? d.alasan : typeof d.reason === "string" && d.reason ? d.reason : "";
+            return kode.length
+                ? `Program promo untuk barang bonus ${kode.slice(0, 5).join(", ")} tidak bisa dipakai${alasan ? ` (${alasan})` : ""}: barang bonus harus barang cabang pelanggan, aktif, dan bisa diorder.`
+                : dariServer(d, "Barang bonus program promo tidak bisa diorder.");
+        },
+        tindakan: "Order belum bisa dihitung. Hubungi Admin untuk memeriksa barang bonus di Summary promo, lalu coba lagi.", menolak: true,
+    },
+    LAYANAN_TIDAK_PASTI: {
+        judul: "Hasilnya belum pasti", pesan: () => "Layanan harga dan promo tidak menjawab dengan jelas.",
+        tindakan: "Muat ulang, lalu periksa (Order saya / Order Masuk) sebelum mengulang.", tidakPasti: true,
     },
 };
 
@@ -229,17 +286,18 @@ export function galatDariJawaban(j: Jawaban, peran: Peran = "petugas"): Galat {
         return { ...dasar, kode: "TANPA_SINYAL", judul: "Tidak tersambung ke server", tidakPasti: true,
             pesan: "Permintaan tidak sampai ke server, jadi hasilnya belum pasti.", tindakan: "Periksa sinyal, lalu coba lagi." };
     }
-    if (j.status >= 502 || j.data === null) {
+    const d = j.data;
+    const kode = d ? (typeof d.kode === "string" ? d.kode : typeof d.code === "string" ? d.code : "") : "";
+    const a = kode ? ATURAN[kode] : undefined;
+    // Kode yang dikenal MENANG atas status: 503 KONFIGURASI_SERVER = "konfigurasi server" (pasti tidak tersimpan), 503/502 LAYANAN_TIDAK_PASTI = belum pasti.
+    if (d === null || (!a && j.status >= 502)) {
         return { ...dasar, kode: "BELUM_PASTI", judul: "Hasilnya belum pasti", tidakPasti: true,
             pesan: "Server tidak memberi jawaban yang jelas (sibuk atau mati sebentar).", tindakan: "Muat ulang data, lalu periksa sebelum mengulang." };
     }
-    const d = j.data;
-    const kode = typeof d.kode === "string" ? d.kode : typeof d.code === "string" ? d.code : "";
-    const a = kode ? ATURAN[kode] : undefined;
     if (a) {
         const perBarang = Object.fromEntries(kodeBarangDari(d).map((b) => [b.kode, b.baris]));
         return { kode, judul: a.judul, pesan: a.pesan ? a.pesan(d) : dariServer(d, a.judul), tindakan: typeof a.tindakan === "string" ? a.tindakan : a.tindakan[peran],
-            menolak: Boolean(a.menolak), tidakPasti: false, blokirSales: Boolean(a.blokirSales), perBarang };
+            menolak: Boolean(a.menolak), tidakPasti: Boolean(a.tidakPasti), blokirSales: Boolean(a.blokirSales), perBarang };
     }
     if (j.status === 401) {
         return { ...dasar, kode: "SESI_BERAKHIR", judul: "Sesi login berakhir", tidakPasti: false, pesan: "Sesi Anda sudah berakhir.", tindakan: "Masuk ulang, lalu coba lagi." };
@@ -254,6 +312,24 @@ export function galatDariJawaban(j: Jawaban, peran: Peran = "petugas"): Galat {
 
 /** Satu kalimat untuk strip/alasan kunci: "Pesan Tindakan". */
 export const kalimatGalat = (g: Galat) => `${g.pesan} ${g.tindakan}`;
+
+/** Harga petugas yang sah untuk server (kontrak §4.4): angka > 0, titik desimal, maksimal 4 desimal, tanpa titik ribuan. */
+export const hargaPetugasSah = (teks: string) => /^\d+(\.\d{1,4})?$/.test(teks.trim()) && Number(teks) > 0;
+
+/**
+ * Harga dari cabang DEFAULT (cabang pelanggan tanpa baris harga berlaku): `source` "master_default" (rencana kontrak) atau harga master yang
+ * `branchName`-nya bukan cabang pelanggan. Harga petugas tidak pernah bertanda ini.
+ */
+export const hargaCabangDefault = (info: Pick<PriceInfo, "source" | "branchName"> | undefined, cabangPelanggan: string | null | undefined) =>
+    Boolean(info && info.source !== "petugas" && (info.source === "master_default" || (info.branchName && cabangPelanggan && info.branchName !== cabangPelanggan)));
+
+/** PRATINJAU_BERUBAH (409) membawa pratinjau baru: netto + sidik barunya. null = jawaban bukan itu / bentuknya tak terbaca. */
+export function pratinjauBerubah(j: Jawaban): { net: number; sidik: string } | null {
+    if (j.status !== 409 || !j.data || (j.data.kode ?? j.data.code) !== "PRATINJAU_BERUBAH") return null;
+    const p = (j.data.pratinjau ?? {}) as { result?: { net?: unknown } | null; sidik?: unknown };
+    const net = Number(p.result?.net);
+    return Number.isFinite(net) && typeof p.sidik === "string" ? { net, sidik: p.sidik } : null;
+}
 
 /** Kode yang punya kalimat sendiri di sini (dipakai pemanggil lain untuk memutuskan memakai kalimat ini atau kalimat server). */
 export const kodeDikenal = (kode: string) => kode in ATURAN;

@@ -1,7 +1,7 @@
 /*
- * Tujuan: Panggilan API Order per cabang untuk layar O2: cari pelanggan, cari barang (+ probe "cabang tanpa barang"), baca satu pelanggan/
- *   barang dari kodenya (rute hari ini, draf, pemulihan), cakupan cabang salesman, dan pratinjau order (harga + promo) — semuanya
- *   dengan jawaban yang membedakan galat berkode dari "kosong".
+ * Tujuan: Panggilan API Order per cabang untuk layar O2: cari pelanggan, cari barang (hasil kosong dibedakan: tak cocok vs cabang tanpa
+ *   barang lewat `cabangTanpaBarang`), baca satu pelanggan/barang dari kodenya (rute hari ini, draf, pemulihan), cakupan cabang salesman,
+ *   dan pratinjau order (harga + promo + `sidik`) — semuanya dengan jawaban yang membedakan galat berkode dari "kosong".
  * Caller: components/order/{useCari.ts,PemilihPelanggan.tsx,PemilihBarang.tsx}, app/(dashboard)/sales/OrderSales.tsx,
  *   app/(dashboard)/orders/{OrderBaru,AntreFaktur}.tsx.
  * Dependensi: ./order-cabang (murni), app/(dashboard)/form-kontrol/lapangan (ambilJson).
@@ -40,21 +40,16 @@ export async function cariPelanggan(o: { q: string; branchId?: number | null; li
 }
 
 /**
- * Barang cabang pelanggan. Hasil kosong dicek sekali lagi TANPA kata kunci (limit 1) supaya layar bisa membedakan "tidak ada yang cocok
- * dengan ketikan" dari "cabang ini memang belum punya barang yang bisa diorder" (belum tersinkron / semua non-jual).
+ * Barang cabang pelanggan. Hasil kosong dibedakan oleh server (`cabangTanpaBarang`, kontrak O1 §3): "tidak ada yang cocok dengan ketikan"
+ * vs "cabang ini memang belum punya barang yang bisa diorder" (belum tersinkron / semua non-jual).
  */
 export async function cariBarang(o: { q: string; pelanggan: PelangganPilih; tanggal: string; limit?: number }, signal: AbortSignal, peran: Peran): Promise<Hasil<{ items: BarangPilih[]; cabangKosong: boolean }>> {
     const untuk = kunciHarga(o.pelanggan.id, o.tanggal);
-    const ambil = async (q: string, limit?: number) => minta(urlCariBarang({ q, customerId: o.pelanggan.id, tanggal: o.tanggal, limit }), signal, peran);
-    const r = await ambil(o.q, o.limit);
+    const r = await minta(urlCariBarang({ q: o.q, customerId: o.pelanggan.id, tanggal: o.tanggal, limit: o.limit }), signal, peran);
     if ("batal" in r) return { ok: false, batal: true };
     if ("galat" in r) return { ok: false, galat: r.galat };
     const items = (Array.isArray(r.d.items) ? r.d.items : []).map((b) => bacaBarang(b, untuk)).filter((b): b is BarangPilih => b !== null);
-    if (items.length > 0) return { ok: true, data: { items, cabangKosong: false } };
-    const probe = await ambil("", 1);
-    if ("batal" in probe) return { ok: false, batal: true };
-    if ("galat" in probe) return { ok: false, galat: probe.galat };
-    return { ok: true, data: { items, cabangKosong: !Array.isArray(probe.d.items) || probe.d.items.length === 0 } };
+    return { ok: true, data: { items, cabangKosong: items.length === 0 && r.d.cabangTanpaBarang === true } };
 }
 
 /** Satu pelanggan dari kodenya (kode persis, tanpa membedakan huruf besar). null = tidak ditemukan di hasil pencarian (nonaktif / luar cabang / belum ada). */
@@ -86,27 +81,35 @@ export async function muatCakupan(signal?: AbortSignal): Promise<{ cakupan: Caku
 
 export type WrongUnit = { code: string; unit: string; known_units: string[] };
 /**
- * siap: harga ada (tanpaHarga = kode tanpa harga di cabang pelanggan, tidak ikut netto);
+ * siap: harga ada (tanpaHarga = kode tanpa harga di cabang pelanggan, tidak ikut netto); `sidik` = sidik pratinjau LENGKAP (semua baris
+ *   berharga) yang WAJIB dibawa simpan — null pada pratinjau sebagian (ada baris tanpa harga) atau bila server tak mengirimnya, dan
+ *   `channelMasalah` tidak kosong = simpan akan ditolak CHANNEL_BEDA_MASTER;
  * satuan: SATUAN_SALAH per baris; barang: BARANG_* (hapus/ganti barisnya); galat: selain itu (menolak=true → pasti ditolak saat simpan).
  */
 export type Pratinjau =
     | { status: "memuat" }
-    | { status: "siap"; result: Result | null; suggestions: Suggestion[]; prices: PriceInfo[]; tanpaHarga: string[]; catatan?: Galat }
+    | { status: "siap"; result: Result | null; suggestions: Suggestion[]; prices: PriceInfo[]; tanpaHarga: string[]; sidik: string | null; channelMasalah: string; catatan?: Galat }
     | { status: "satuan"; wrong: WrongUnit[]; galat: Galat }
     | { status: "barang"; galat: Galat }
     | { status: "galat"; galat: Galat };
 
 const KODE_BARANG = new Set(["BARANG_TIDAK_ADA", "BARANG_SUSPENDED", "BARANG_BEDA_CABANG"]);
 
-/** Pratinjau server: `customer_no` WAJIB (cabang harga + aturan cabang dari pelanggan). HARGA_BELUM_ADA → pratinjau kedua hanya dari baris berharga. */
-export async function hitungPratinjau(o: { channel: string; orderDate: string; customerNo: string; lines: { code: string; unit: string; quantity: string }[]; peran: Peran }): Promise<Pratinjau> {
+/**
+ * Pratinjau server: `customer_no` WAJIB (cabang harga + aturan cabang dari pelanggan). `price` per baris = HARGA PETUGAS (hanya Order Baru;
+ * kosong/tidak dikirim = harga master; sales tidak pernah mengirimnya). HARGA_BELUM_ADA → pratinjau kedua hanya dari baris berharga
+ * (tanpa sidik: order dengan baris tanpa harga memang tidak bisa disimpan).
+ */
+export async function hitungPratinjau(o: { channel: string; orderDate: string; customerNo: string; lines: { code: string; unit: string; quantity: string; price?: string | null }[]; peran: Peran }): Promise<Pratinjau> {
     const panggil = (ls: typeof o.lines) => ambilJson("/api/orders/preview", {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ channel: o.channel, order_date: o.orderDate, customer_no: o.customerNo.trim(),
-            lines: ls.map((l) => ({ code: l.code.trim(), unit: l.unit, quantity: l.quantity })) }),
+            lines: ls.map((l) => ({ code: l.code.trim(), unit: l.unit, quantity: l.quantity, ...(l.price ? { price: l.price.trim() } : {}) })) }),
     });
     const siap = (d: Record<string, unknown>, tanpaHarga: string[], catatan?: Galat): Pratinjau => ({
-        status: "siap", result: (d.result as Result) ?? null, suggestions: (d.suggestions as Suggestion[]) ?? [], prices: (d.prices as PriceInfo[]) ?? [], tanpaHarga, catatan,
+        status: "siap", result: (d.result as Result) ?? null, suggestions: (d.suggestions as Suggestion[]) ?? [], prices: (d.prices as PriceInfo[]) ?? [], tanpaHarga,
+        sidik: tanpaHarga.length === 0 && !catatan && typeof d.sidik === "string" && d.sidik ? d.sidik : null,
+        channelMasalah: typeof d.channel_masalah === "string" ? d.channel_masalah : "", catatan,
     });
     const j = await panggil(o.lines);
     if (j.status >= 200 && j.status < 300 && j.data?.ok) return siap(j.data, []);
@@ -117,10 +120,10 @@ export async function hitungPratinjau(o: { channel: string; orderDate: string; c
     if (g.kode === "HARGA_BELUM_ADA" && Array.isArray(d.missing)) {
         const tanpaHarga = [...new Set((d.missing as unknown[]).map(String))];
         const berharga = o.lines.filter((l) => !tanpaHarga.includes(l.code.trim()));
-        if (berharga.length === 0) return { status: "siap", result: null, suggestions: [], prices: [], tanpaHarga };
+        if (berharga.length === 0) return { status: "siap", result: null, suggestions: [], prices: [], tanpaHarga, sidik: null, channelMasalah: "" };
         const k = await panggil(berharga);
         if (k.status >= 200 && k.status < 300 && k.data?.ok) return siap(k.data, tanpaHarga);
-        return { status: "siap", result: null, suggestions: [], prices: [], tanpaHarga, catatan: galatDariJawaban(k, o.peran) };
+        return { status: "siap", result: null, suggestions: [], prices: [], tanpaHarga, sidik: null, channelMasalah: "", catatan: galatDariJawaban(k, o.peran) };
     }
     return { status: "galat", galat: g };
 }

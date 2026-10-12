@@ -4,8 +4,8 @@
  *   server dan tampil per baris + ringkasan; nomor permintaan tampil setelah kirim; Order saya membedakan galat dari kosong. Akun yang
  *   belum ditautkan ke karyawan salesman Accurate melihat penjelasan "hubungi Admin", bukan formulir kosong.
  * Caller: ./page.tsx (/sales; dibatasi izin `websales.create`, bukan `order.create`).
- * Dependensi: /api/customers/search, /api/items/search, /api/orders/preview (components/order/*), FastAPI /websales/orders (+ /api/me untuk
- *   CSRF); ../form-kontrol/lapangan (ambilJson, PESAN_SINYAL, toko rute tersimpan); ../form-kontrol/shared (hariIniWita); components/fiori/*;
+ * Dependensi: /api/customers/search, /api/items/search, /api/orders/preview (components/order/*; pratinjau membawa `sidik`), FastAPI
+ *   /websales/orders (simpan WAJIB membawa `sidik` pratinjau terakhir; + /api/me untuk CSRF); ../form-kontrol/lapangan (ambilJson, PESAN_SINYAL, toko rute tersimpan); ../form-kontrol/shared (hariIniWita); components/fiori/*;
  *   lib/promo-ui (rupiah); lib/rekapan-nota/ui (tanggalPendek, jamWita).
  * Main Functions: OrderSales, send, csrfHeader.
  * Side Effects: HTTP; permintaan order masuk ke basis data Web Sales yang terpisah. Payload POST sama dengan halaman lama (tanggal
@@ -15,6 +15,10 @@
  * pelanggan) + aturan promo terbit, dan ditampilkan di sini supaya sales tahu angkanya. Satuan hanya boleh dari master (salah satuan = nilai
  * salah puluhan kali). Barang tanpa harga di cabang pelanggan ditolak server saat simpan (O1), jadi layar mengunci Kirim — bukan lagi
  * "order tetap bisa dikirim".
+ *
+ * Pratinjau = tersimpan (kontrak O1 §4): Kirim hanya bila pratinjau LENGKAP untuk isian yang sekarang ada (kunci pratinjau = channel, tanggal,
+ * pelanggan, kode/satuan/jumlah tiap baris; berubah = pratinjau lama usang = Kirim terkunci sampai yang baru tiba). `sidik` pratinjau ikut
+ * dikirim; PRATINJAU_BERUBAH (409) = order BELUM terkirim, angka baru ditampilkan dan Kirim meminta konfirmasi ulang.
  */
 "use client";
 
@@ -25,7 +29,7 @@ import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@
 import { PemilihBarang, type BacaanBarang } from "@/components/order/PemilihBarang";
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
 import { PanelPromo, PromoBarisInfo } from "@/components/order/PanelPromo";
-import { galatDariJawaban, galatTidakDitemukan, kalimatGalat, kalimatPenolakan, kunciHarga, labelSatuan, type BarangPilih, type Cakupan, type Galat, type PelangganPilih } from "@/components/order/order-cabang";
+import { galatDariJawaban, galatTidakDitemukan, hargaCabangDefault, kalimatGalat, kalimatPenolakan, kunciHarga, labelSatuan, pratinjauBerubah, type BarangPilih, type Cakupan, type Galat, type PelangganPilih } from "@/components/order/order-cabang";
 import { bacaBarangKode, hitungPratinjau, muatCakupan, type Pratinjau } from "@/components/order/order-cabang-api";
 import { resolveApiBase } from "@/lib/apiBase";
 import { rupiah } from "@/lib/promo-ui";
@@ -37,7 +41,7 @@ const API_BASE = resolveApiBase();
 
 /** `barang` null + `bacaan` null = baris baru (belum memilih barang); `bacaan` = barang dari draf sedang/gagal dibaca. */
 type Line = { code: string; unit: string; quantity: string; barang: BarangPilih | null; bacaan: BacaanBarang | null };
-type RequestRow = { id: string; outlet: string; channel: string; order_date: string; status: string; created_at: string };
+type RequestRow = { id: string; outlet: string; channel: string; order_date: string; status: string; created_at: string; reject_code?: string | null; reject_reason?: string | null };
 type DataCakupan = { cakupan?: Cakupan; blokir?: Galat };
 
 const tanpaLangganan = () => () => {};
@@ -137,6 +141,9 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     const [note, setNote] = useState("");
     const [lines, setLines] = useState<Line[]>([emptyLine()]);
     const [hasil, setHasil] = useState<{ key: string; p: Pratinjau } | null>(null);
+    const [ulangPratinjau, setUlangPratinjau] = useState(0);
+    // PRATINJAU_BERUBAH: order BELUM terkirim; angka lama -> baru ditampilkan untuk isian (kunci pratinjau) yang sama, hilang bila isian berubah.
+    const [berubah, setBerubah] = useState<{ key: string; lama: string | null; baru: string } | null>(null);
     // "ulang" = kirim lagi sesudah jawaban tidak pasti, dengan peringatan order ganda (pilihan eksplisit salesman).
     const [dialog, setDialog] = useState<null | "biasa" | "ulang" | "buang">(null);
     const [sukses, setSukses] = useState("");
@@ -222,7 +229,9 @@ export default function OrderSales({ akunId }: { akunId: string }) {
         return () => { hidup = false; clearTimeout(timer); };
         // previewKey SUDAH memuat channel, tanggal, pelanggan, dan kode/satuan/jumlah tiap baris.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [previewKey, siapPratinjau]);
+    }, [previewKey, siapPratinjau, ulangPratinjau]);
+    const hitungUlang = () => { setHasil(null); setUlangPratinjau((v) => v + 1); };
+    const berubahKini = berubah?.key === previewKey ? berubah : null;
 
     const updateLine = (index: number, key: "unit" | "quantity", value: string) => {
         ubahIsian();
@@ -257,9 +266,11 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                             : tidakLengkap >= 0 ? `Lengkapi satuan dan jumlah barang ${tidakLengkap + 1}`
                                                 : salahSatuan >= 0 ? `Perbaiki satuan barang ${salahSatuan + 1}`
                                                     : salahBarang >= 0 ? `Hapus atau ganti barang ${salahBarang + 1}: ${pratinjau?.status === "barang" ? pratinjau.galat.judul : ""}`
-                                                        : pratinjau?.status === "galat" && pratinjau.galat.menolak ? `${pratinjau.galat.judul}. ${pratinjau.galat.tindakan}`
+                                                        : pratinjau?.status === "galat" ? (pratinjau.galat.menolak ? `${pratinjau.galat.judul}. ${pratinjau.galat.tindakan}` : "Perkiraan harga belum tersedia — hitung ulang dulu")
                                                             : tanpaHargaIdx >= 0 ? `Harga barang ${tanpaHargaIdx + 1} belum ada di Accurate untuk cabang ini — belum bisa dikirim`
-                                                                : pratinjau?.status === "memuat" ? "Menunggu harga dihitung" : undefined;
+                                                                : pratinjau?.status === "memuat" ? "Menunggu harga dihitung"
+                                                                    : pratinjau?.status === "siap" && pratinjau.channelMasalah ? pratinjau.channelMasalah
+                                                                        : pratinjau?.status === "siap" && !pratinjau.sidik ? "Pratinjau lengkap belum tersedia — hitung ulang dulu" : undefined;
     const terkunci = tidakPasti ? "Periksa Order saya dulu — order terakhir mungkin sudah masuk" : terkunciIsian;
     // Draf = barang/catatan yang belum dikirim (pelanggan saja tidak dijaga: tetap terisi setelah kirim seperti halaman lama).
     const draf = Boolean(note.trim() || filled.length > 0);
@@ -276,29 +287,42 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     }, [kunciDraf, draf, kodePel, outlet, note, barisDraf, tidakPasti]);
 
     async function kirim() {
+        // Sidik pratinjau TERAKHIR untuk isian yang sekarang; tombol Kirim sudah terkunci bila tidak ada, ini sabuk pengaman.
+        const sidik = pratinjau?.status === "siap" ? pratinjau.sidik : null;
+        if (!sidik) throw new Error("Pratinjau harga dan promo belum tersedia untuk isian ini. Tunggu perkiraan selesai atau hitung ulang, lalu kirim lagi.");
         const isi = { customerNo: kodePel, outlet, note, lines: buatBarisDraf(lines) };
         tulisPonsel(kunciDraf, { ...isi, tidakPasti: TERPUTUS }); // lihat DRAF_ORDER: dilepas hanya oleh jawaban pasti
         mengirim.current = true;
-        try { await kirimSekali(isi); } finally { mengirim.current = false; }
+        try { await kirimSekali(isi, sidik); } finally { mengirim.current = false; }
     }
-    async function kirimSekali(isi: { customerNo: string; outlet: string; note: string; lines: BarisDraf[] }) {
+    async function kirimSekali(isi: { customerNo: string; outlet: string; note: string; lines: BarisDraf[] }, sidik: string) {
         const j = await send("POST", "/websales/orders", {
-            outlet, channel, order_date: orderDate, note, customer_no: kodePel.trim(),
+            outlet, channel, order_date: orderDate, note, customer_no: kodePel.trim(), sidik,
             lines: lengkap.map((line) => ({ code: line.code.trim(), unit: line.unit, quantity: line.quantity })),
         });
-        if (j.status === 0 || j.status >= 502 || j.data === null) {
+        const sukses = j.status >= 200 && j.status < 300 && j.data !== null && Boolean(j.data.ok);
+        // Tidak pasti = putus, badan bukan JSON, >= 502 tanpa kode, atau LAYANAN_TIDAK_PASTI. 503 KONFIGURASI_SERVER = PASTI tidak tersimpan.
+        if (!sukses && galatDariJawaban(j, "sales").tidakPasti) {
             // Order Web Sales TIDAK idempoten: jawaban tidak pasti → Kirim ditahan (terkunci) sampai isian diubah atau "Kirim lagi" eksplisit.
             setDialog(null);
             setTidakPasti(`${j.status === 0 ? PESAN_SINYAL : "Server tidak memberi jawaban yang pasti."} Order mungkin sudah masuk. Periksa Order saya di bawah sebelum mengirim ulang; isian tidak dihapus.`);
             muatUlangOrder();
             return;
         }
-        if (j.status < 200 || j.status >= 300 || !j.data.ok) {
+        if (!sukses) {
             tulisPonsel(kunciDraf, { ...isi, tidakPasti }); // ditolak pasti = tidak ada order baru; tanda sebelumnya kembali
+            const baru = pratinjauBerubah(j);
+            if (baru) {
+                // Angka berubah sejak pratinjau: BELUM terkirim. Dialog ditutup, angka baru dihitung ulang dan ditampilkan; kirim lagi = konfirmasi ulang.
+                setDialog(null);
+                setBerubah({ key: previewKey, lama: netto, baru: rupiah(baru.net) });
+                hitungUlang();
+                return;
+            }
             const g = galatDariJawaban(j, "sales");
             throw new Error(kalimatPenolakan(g) || "Order ditolak server.");
         }
-        const req = (j.data.request ?? {}) as { id?: string };
+        const req = ((j.data as Record<string, unknown>).request ?? {}) as { id?: string };
         hapusPonsel(kunciDraf); // langsung, bukan lewat efek: tetap terhapus walau halaman sudah ditinggalkan
         adaDrafSesi.current = false;
         setDialog(null);
@@ -307,6 +331,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
         setLines([emptyLine()]);
         setNote("");
         setHasil(null);
+        setBerubah(null);
         muatUlangOrder();
     }
 
@@ -402,6 +427,9 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                                 {pratinjau?.status === "galat" && pratinjau.galat.menolak && (
                                                     <MessageStrip tone="neg" title={`${pratinjau.galat.judul}.`}>{pratinjau.galat.pesan} {pratinjau.galat.tindakan}</MessageStrip>
                                                 )}
+                                                {pratinjau?.status === "siap" && pratinjau.channelMasalah && (
+                                                    <MessageStrip tone="warn" title="Channel pelanggan berbeda dari master.">{pratinjau.channelMasalah} Order ini akan ditolak sampai channel pelanggan dibetulkan di Accurate.</MessageStrip>
+                                                )}
                                                 <VariantNote bl="BL-32">Pencarian pelanggan dan barang sudah per cabang karyawan Accurate Anda. Belum dibatasi ke toko di JKS Anda. Usulan: hanya toko JKS salesman.</VariantNote>
                                             </>
                                         )}
@@ -441,7 +469,8 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                                         {(a) => (
                                                             <select {...a} className="fi-input" value={line.unit} onChange={(e) => updateLine(index, "unit", e.target.value)}>
                                                                 <option value="">pilih</option>
-                                                                {line.barang!.units.map((u) => <option key={u.unit} value={u.unit}>{labelSatuan(u, berlakuHarga, rupiah)}</option>)}
+                                                                {/* Satuan tanpa harga master sah tidak bisa dipesan sales (harga tidak pernah dikirim dari sini). */}
+                                                                {line.barang!.units.map((u) => <option key={u.unit} value={u.unit} disabled={berlakuHarga && u.price === null}>{labelSatuan(u, berlakuHarga, rupiah)}</option>)}
                                                             </select>
                                                         )}
                                                     </FormField>
@@ -453,7 +482,8 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                             {lengkapBaris && pratinjau && (
                                                 <div className="flex flex-wrap items-center gap-2 fi-small" aria-live="polite">
                                                     {pratinjau.status === "memuat" && <StatusBadge tone="info" busy>Menghitung harga…</StatusBadge>}
-                                                    {price && <><StatusBadge tone="pos">Harga ada</StatusBadge><span className="fi-muted fi-tnum">{price.priceCategoryName || "standar"} {rupiah(price.price ?? 0)} per {price.unit} (estimasi)</span></>}
+                                                    {price && <><StatusBadge tone="pos">Harga ada</StatusBadge><span className="fi-muted fi-tnum">{price.priceCategoryName || "standar"} {rupiah(price.price ?? 0)} per {price.unit} (estimasi)</span>
+                                                        {hargaCabangDefault(price, cabangPelanggan) && <StatusBadge tone="neu">harga cabang default{price.branchName ? ` · ${price.branchName}` : ""}</StatusBadge>}</>}
                                                     {tanpaHarga && <><StatusBadge tone="neg">Harga belum ada</StatusBadge><span className="fi-muted">Belum bisa dikirim: harga barang ini belum ada di Accurate untuk cabang pelanggan. Minta petugas melengkapinya.</span></>}
                                                 </div>
                                             )}
@@ -469,10 +499,20 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                             </ul>
                             <div className="fi-sect-in">
                                 <div><Button icon={<Plus className="fi-icon" aria-hidden />} onClick={() => { ubahIsian(); setLines((prev) => [...prev, emptyLine()]); }}>Tambah barang</Button></div>
-                                {pratinjau?.status === "galat" && !pratinjau.galat.menolak && <MessageStrip tone="warn" title="Perkiraan harga tidak tersedia.">{pratinjau.galat.pesan} {pratinjau.galat.tidakPasti ? "Harga belum bisa dihitung; server tetap memeriksa saat order dikirim." : pratinjau.galat.tindakan}</MessageStrip>}
+                                {berubahKini && (
+                                    <MessageStrip tone="warn" title="Hitungan berubah sejak pratinjau — order BELUM terkirim.">
+                                        Netto estimasi {berubahKini.lama ?? "—"} menjadi {berubahKini.baru} (harga atau promo berubah). Periksa angka baru di bawah, lalu kirim lagi.
+                                    </MessageStrip>
+                                )}
+                                {pratinjau?.status === "galat" && !pratinjau.galat.menolak && (
+                                    <MessageStrip tone="warn" title="Perkiraan harga tidak tersedia.">
+                                        {pratinjau.galat.pesan} {pratinjau.galat.tindakan} Order baru bisa dikirim sesudah perkiraan tersedia.{" "}
+                                        <Button variant="tertiary" onClick={hitungUlang}>Hitung ulang</Button>
+                                    </MessageStrip>
+                                )}
                                 {pratinjau?.status === "satuan" && <MessageStrip tone="neg" title="Satuan tidak cocok dengan master.">Perbaiki satuan di barisnya; nilai order dihitung setelah semua satuan cocok.</MessageStrip>}
                                 {pratinjau?.status === "barang" && <MessageStrip tone="neg" title={`${pratinjau.galat.judul}.`}>{pratinjau.galat.tindakan}</MessageStrip>}
-                                {pratinjau?.status === "siap" && pratinjau.catatan && <MessageStrip tone="warn" title="Perkiraan tidak tersedia.">{kalimatGalat(pratinjau.catatan)}</MessageStrip>}
+                                {pratinjau?.status === "siap" && pratinjau.catatan && <MessageStrip tone="warn" title="Perkiraan tidak tersedia.">{kalimatGalat(pratinjau.catatan)}{" "}<Button variant="tertiary" onClick={hitungUlang}>Hitung ulang</Button></MessageStrip>}
                                 {pratinjau?.status === "siap" && pratinjau.result && (
                                     <PanelPromo result={pratinjau.result} suggestions={pratinjau.suggestions} nTanpaHarga={nTanpaHarga}
                                         catatan="Perkiraan memakai aturan promo yang terbit sekarang; angka final dibekukan petugas saat order ditarik." />
@@ -508,7 +548,13 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                         <li key={row.id}>
                                             <ListItem doc={nomorPermintaan(row.id)} title={row.outlet}
                                                 meta={`${row.channel} · order ${tanggalPendek(row.order_date)}${row.created_at ? ` · dikirim ${jamWita(row.created_at)}` : ""}`}
-                                                badge={row.status === "pulled" ? <StatusBadge tone="pos">Sudah ditarik petugas</StatusBadge> : <StatusBadge tone="info">Menunggu ditarik petugas</StatusBadge>} />
+                                                badge={row.status === "pulled" ? <StatusBadge tone="pos">Sudah ditarik petugas</StatusBadge>
+                                                    : row.status === "rejected" ? <StatusBadge tone="neg">Ditolak petugas</StatusBadge> : <StatusBadge tone="info">Menunggu ditarik petugas</StatusBadge>} />
+                                            {row.status === "rejected" && (
+                                                <p className="fi-small fi-why" style={{ padding: "0 14px 10px" }}>
+                                                    {kalimatPenolakan(galatDariJawaban({ status: 409, data: { kode: row.reject_code ?? "", error: row.reject_reason ?? "" } }, "sales")) || "Ditolak saat ditarik."} Order ini tidak akan diproses; buat order baru dengan isian yang sudah dibetulkan.
+                                                </p>
+                                            )}
                                         </li>
                                     ))}
                                 </ul>
@@ -521,7 +567,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                 </Section>
             </div>
             {!blokir && (
-                <FooterToolbar message={terkunci ?? `${lengkap.length} barang${netto ? ` · netto estimasi ${netto}` : ""}${nTanpaHarga ? ` · ${nTanpaHarga} belum berharga` : ""}`}>
+                <FooterToolbar message={terkunci ?? `${lengkap.length} barang${netto ? ` · netto estimasi ${netto} sebelum PPN` : ""}${nTanpaHarga ? ` · ${nTanpaHarga} belum berharga` : ""}`}>
                     <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} disabled={Boolean(terkunci)} disabledReason={terkunci} onClick={() => setDialog("biasa")}>Kirim order…</Button>
                 </FooterToolbar>
             )}
@@ -534,14 +580,15 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                 tone={dialog === "ulang" ? "negative" : "primary"}
                 description={dialog === "ulang"
                     ? "Jawaban kiriman sebelumnya tidak pasti. Bila order itu sudah masuk (periksa Order saya), kiriman ini mencatat order yang sama DUA kali dan belum bisa dibatalkan dari ponsel."
-                    : "Order masuk antrean petugas; harga dan promo final dibekukan saat ditarik. Order yang sudah terkirim belum bisa dibatalkan dari ponsel."}
+                    : berubahKini ? `Angka berubah sejak pratinjau sebelumnya: netto ${berubahKini.lama ?? "—"} menjadi ${berubahKini.baru}. Kirim lagi hanya bila angka baru ini sudah Anda periksa. Order yang sudah terkirim belum bisa dibatalkan dari ponsel.`
+                        : "Order masuk antrean petugas; harga dan promo final dibekukan saat ditarik. Order yang sudah terkirim belum bisa dibatalkan dari ponsel."}
                 facts={[
                     ["Pelanggan", `${kodePel.trim()}${pelanggan ? ` · ${pelanggan.name}` : ""}`],
                     ["Cabang", cabangPelanggan || "–"],
                     ["Channel", channel],
                     ["Tanggal order", tanggalPendek(orderDate)],
                     ["Barang", `${lengkap.length} baris`],
-                    ["Netto estimasi", netto ?? "dihitung petugas"],
+                    ["Netto estimasi (sebelum PPN)", netto ?? "dihitung petugas"],
                     ...(nTanpaHarga ? [["Belum berharga", `${nTanpaHarga} barang`] as [string, string]] : []),
                 ]}
                 confirmLabel={dialog === "ulang" ? "Kirim lagi" : "Kirim order"} onConfirm={kirim} />

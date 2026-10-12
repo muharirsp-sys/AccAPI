@@ -1,11 +1,12 @@
 /*
  * Tujuan: Pemilih barang satu baris order (O2): cari kode/nama HANYA di barang cabang pelanggan (jeda 300 ms, minimal 2 huruf, permintaan
- *   lama dibatalkan), hasil menampilkan satuan + harga per cabang pelanggan, barang tanpa daftar harga tidak bisa dipilih, dan "cabang tanpa
- *   barang" dijelaskan (bukan daftar kosong polos). Barang terpilih tampil sebagai kartu (Ganti barang).
+ *   lama dibatalkan), hasil menampilkan satuan + harga per cabang pelanggan, barang tanpa daftar harga tidak bisa dipilih (Order Sales: juga
+ *   barang yang SEMUA satuannya tanpa harga sah — petugas Order Baru boleh, memakai harga petugas), dan "cabang tanpa barang" (flag server)
+ *   dijelaskan, bukan daftar kosong polos. Barang terpilih tampil sebagai kartu (Ganti barang).
  * Caller: app/(dashboard)/sales/OrderSales.tsx, app/(dashboard)/orders/OrderBaru.tsx.
  * Dependensi: ./useCari, ./order-cabang(-api), lib/promo-ui (rupiah), components/fiori/{core,interactive}.
  * Main Functions: PemilihBarang.
- * Side Effects: HTTP GET /api/items/search (+ satu probe tanpa kata kunci saat hasil kosong).
+ * Side Effects: HTTP GET /api/items/search.
  */
 "use client";
 
@@ -97,12 +98,15 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
                     <ul className="fi-list" style={{ display: "block", border: "1px solid var(--line)", borderRadius: "var(--r-sm)", overflow: "hidden", margin: 0 }} aria-label="Hasil pencarian barang">
                         {items.map((b) => {
                             const tanpaDaftar = b.units.length === 0;
+                            // Harga master TIDAK sah (standar / 0 / cabang lain) = price null: sales tidak bisa memesannya; petugas boleh dengan harga petugas.
+                            const tanpaHargaSah = peran === "sales" && !tanpaDaftar && b.units.every((u) => u.price === null);
                             const ringkas = tanpaDaftar ? "belum ada daftar harga" : b.units.map((u) => labelSatuan(u, true, rupiah).replace(" · ", " ")).join(" · ");
+                            const tutup = tanpaDaftar || tanpaHargaSah;
                             return (
                                 <li key={b.id}>
                                     <ListItem doc={b.no} title={b.name} meta={`${b.branchName ?? ""} · ${ringkas}`}
-                                        badge={tanpaDaftar ? <StatusBadge tone="warn">Belum bisa dipilih</StatusBadge> : undefined}
-                                        onClick={tanpaDaftar ? undefined : () => { setQ(""); onPilih(b); }} />
+                                        badge={tutup ? <StatusBadge tone="warn">Belum bisa dipilih</StatusBadge> : undefined}
+                                        onClick={tutup ? undefined : () => { setQ(""); onPilih(b); }} />
                                 </li>
                             );
                         })}

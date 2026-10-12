@@ -58,8 +58,11 @@ export function nextApi(path: string, body?: unknown): Promise<Jawaban> {
 export const sukses = (j: Jawaban): j is { status: number; data: Record<string, unknown> } =>
     j.status >= 200 && j.status < 300 && j.data !== null && j.data.ok !== false;
 
-/** Jawaban tulis yang TIDAK PASTI: koneksi putus, status ≥ 502, atau badan bukan JSON — aksinya mungkin sudah tersimpan. */
-export const tidakPasti = (j: Jawaban) => j.status === 0 || j.status >= 502 || j.data === null;
+/**
+ * Jawaban tulis yang TIDAK PASTI: koneksi putus, status ≥ 502 tanpa kode, badan bukan JSON, atau LAYANAN_TIDAK_PASTI — aksinya mungkin sudah
+ * tersimpan. 503 KONFIGURASI_SERVER (kontrak O1) = PASTI tidak tersimpan: tampil sebagai "konfigurasi server", bukan "belum pasti".
+ */
+export const tidakPasti = (j: Jawaban) => galatDariJawaban(j).tidakPasti;
 
 export const BELUM_PASTI = "Server tidak memberi jawaban yang pasti — hasilnya belum pasti. Data dimuat ulang; periksa dulu sebelum mengulang.";
 

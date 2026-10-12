@@ -776,7 +776,7 @@ test("Salesman Accurate: Lepas lewat dialog konfirmasi (akibat disebut) = DELETE
     await dlg.getByRole("button", { name: "Lepas tautan", exact: true }).click();
     await expect(dlg).toBeHidden();
     expect(log.tulis.filter((t) => t.path.endsWith("/salesman"))).toEqual([{ method: "DELETE", path: "/api/admin/users/u-b/salesman", body: null }]);
-    await expect(page.getByRole("status").filter({ hasText: "Tautan USER B ke karyawan Accurate dilepas." })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "Tautan USER B ke karyawan Accurate dilepas (profil sales tetap)." })).toBeVisible();
     await expect(b.getByText("Belum dihubungkan ke karyawan Accurate.")).toBeVisible(NAV);
     await expect(b.getByRole("button", { name: "Lepas tautan…" })).toBeDisabled();
     await expect(b.getByRole("button", { name: "Lepas tautan…" })).toHaveAttribute("title", "Belum ada tautan untuk dilepas");
@@ -889,4 +889,104 @@ test("Ponsel 390 px: bagian Karyawan Accurate (salesman) tanpa gulir menyamping"
     await expect(bagianSalesman(page).getByText("SALES LAMA · S-OLD")).toBeVisible(NAV);
     expect(await page.evaluate(() => { const m = document.querySelector("main"); return document.documentElement.scrollWidth <= innerWidth && (!m || m.scrollWidth <= m.clientWidth + 1); })).toBe(true);
     await page.screenshot({ path: "test-results/fiori-o2-admin-salesman-390.png", fullPage: true });
+});
+
+// ---------------------------------------------------------------------------------------------- O2 tahap 2 (O1 putaran 1): lepas = tautan mati, ganti kode berlaporan
+
+test("Salesman Accurate (tahap 2): Lepas hanya mematikan tautan — profil/kode/hierarki Form Kontrol TETAP (kalimat dialog + hasil); profil dilepas bisa ditautkan ulang; kode profil akun lain tidak bisa dipilih", async ({ page }) => {
+    let lepas = false;
+    const dilepas = { ...TAUTAN_LAMA, terhubung: false, aktif: false };
+    const { log } = await pasang(page, {
+        salesman: (id) => {
+            if (id !== "u-b") return undefined;
+            return json({ ok: true,
+                tautan: [lepas ? dilepas : TAUTAN_LAMA],
+                pilihan: [
+                    { id: 1, number: "M-SLA", name: "SALES A", branchId: 50, branchName: "CABANG A", terhubungKe: null },
+                    { id: 3, number: "S-OLD", name: "SALES LAMA", branchId: 50, branchName: "CABANG A", terhubungKe: lepas ? { userId: "u-b", name: "USER B", email: "user.b@contoh.test", terhubung: false } : { userId: "u-b", name: "USER B", email: "user.b@contoh.test", terhubung: true } },
+                    { id: 5, number: "M-SLX", name: "SALES X", branchId: 90, branchName: "CABANG B", terhubungKe: { userId: "u-c", name: "USER C", email: "user.c@contoh.test", terhubung: false } },
+                ] });
+        },
+        tulis: (t) => { if (t.method === "DELETE" && t.path.endsWith("/salesman")) lepas = true; return undefined; },
+    });
+    await page.goto("/admin/users", NAV);
+    await bukaUser(page, "USER B");
+    const b = bagianSalesman(page);
+    await expect(b.getByText("SALES LAMA · S-OLD")).toBeVisible(NAV);
+    await b.getByRole("button", { name: "Lepas tautan…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Lepas tautan USER B dari karyawan Accurate?" });
+    await expect(dlg).toContainText("Profil sales, kode, dan hierarki Form Kontrol tidak dihapus; hanya tautan ke karyawan Accurate yang dimatikan");
+    await expect(dlg).not.toContainText(/dihapus dari|hapus profil/i);
+    await dlg.getByRole("button", { name: "Lepas tautan", exact: true }).click();
+    await expect(dlg).toBeHidden();
+    await expect(page.getByRole("status").filter({ hasText: "Tautan USER B ke karyawan Accurate dilepas (profil sales tetap)." })).toBeVisible();
+    expect(log.tulis.filter((t) => t.path.endsWith("/salesman"))).toEqual([{ method: "DELETE", path: "/api/admin/users/u-b/salesman", body: null }]);
+    // Sesudah dilepas: belum terhubung, profil disebut TETAP ada; Lepas terkunci; menautkan ulang karyawan yang sama dimungkinkan.
+    await expect(b.getByText("Belum dihubungkan ke karyawan Accurate.")).toBeVisible(NAV);
+    await expect(b).toContainText("Profil sales SALES LAMA (S-OLD) tetap ada (tautannya dilepas)");
+    await expect(b.getByRole("button", { name: "Lepas tautan…" })).toBeDisabled();
+    const daftar = b.getByRole("list", { name: "Karyawan salesman Accurate" });
+    const lama = daftar.getByRole("listitem").filter({ hasText: "SALES LAMA" });
+    await expect(lama.getByRole("button")).toHaveCount(1); // profil akun ini yang dilepas: boleh ditautkan ulang
+    await expect(lama).not.toContainText("Tertaut ke akun ini");
+    const milikLain = daftar.getByRole("listitem").filter({ hasText: "SALES X" });
+    await expect(milikLain).toContainText("Kode dipegang profil lama USER C (tautan dilepas)");
+    await expect(milikLain.getByRole("button")).toHaveCount(0); // kode unik: dipegang profil akun lain
+});
+
+test("Salesman Accurate (tahap 2): KODE_DIPAKAI_FORM_KONTROL = dialog konfirmasi berisi hitungan laporan; konfirmasi = PUT ulang konfirmasiGantiKode:true; batal = tidak ada tulis kedua", async ({ page }) => {
+    let konfirmasi = false;
+    const { log } = await pasang(page, {
+        salesman: (id) => (id === "u-b" ? salesmanGet([TAUTAN_LAMA]) : undefined),
+        tulis: (t) => {
+            if (!t.path.endsWith("/salesman") || t.method !== "PUT") return undefined;
+            if (t.body?.konfirmasiGantiKode === true) { konfirmasi = true; return undefined; }
+            return json({ ok: false, code: "KODE_DIPAKAI_FORM_KONTROL", error: "Kode S-OLD punya laporan Form Kontrol", laporan: { laporanHarian: 4, ao: 2, merchandising: 1, jks: 3, total: 10 } }, 409);
+        },
+    });
+    await page.goto("/admin/users", NAV);
+    await bukaUser(page, "USER B");
+    const b = bagianSalesman(page);
+    const daftar = b.getByRole("list", { name: "Karyawan salesman Accurate" });
+    await expect(daftar).toBeVisible(NAV);
+    const pilih = async () => { await daftar.getByRole("listitem").filter({ hasText: "SALES A" }).first().getByRole("button").click(); await page.getByRole("dialog").getByRole("button", { name: "Tautkan", exact: true }).click(); };
+    await pilih();
+    const kode = page.getByRole("dialog", { name: "Ganti kode salesman USER B yang punya laporan Form Kontrol?" });
+    await expect(kode).toBeVisible();
+    await expect(kode).toContainText("10 laporan Form Kontrol berkode S-OLD");
+    await expect(kode).toContainText("Laporan harian");
+    await expect(kode).toContainText("Kontrol AO");
+    await expect(kode).toContainText("Merchandising");
+    await expect(kode).toContainText("Daftar toko (JKS)");
+    await expect(kode).toContainText("M-SLA");
+    expect(log.tulis.filter((t) => t.path.endsWith("/salesman"))).toHaveLength(1);
+    await expect(page.getByRole("alert").filter({ hasText: "KODE_DIPAKAI_FORM_KONTROL" })).toHaveCount(0);
+    // Batal: tidak ada tulis kedua.
+    await kode.getByRole("button", { name: "Batal" }).click();
+    await expect(kode).toBeHidden();
+    expect(log.tulis.filter((t) => t.path.endsWith("/salesman"))).toHaveLength(1);
+    // Konfirmasi: PUT ulang membawa konfirmasiGantiKode.
+    await pilih();
+    await page.getByRole("dialog", { name: /Ganti kode salesman USER B/ }).getByRole("button", { name: "Ganti kode dan tautkan" }).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
+    const put = log.tulis.filter((t) => t.path.endsWith("/salesman"));
+    expect(put.at(-1)).toEqual({ method: "PUT", path: "/api/admin/users/u-b/salesman", body: { employeeNumber: "M-SLA", konfirmasiGantiKode: true } });
+    expect(konfirmasi).toBe(true);
+    await expect(page.getByRole("status").filter({ hasText: "USER B ditautkan ke SALES A (M-SLA), cabang CABANG A." })).toBeVisible();
+});
+
+test("Salesman Accurate (tahap 2): KODE_DIPAKAI_PROFIL_LAIN = kalimat jelas di dialog (bukan kode), tidak memuat ulang", async ({ page }) => {
+    await pasang(page, {
+        salesman: (id) => (id === "u-b" ? salesmanGet([]) : undefined),
+        tulis: (t) => (t.path.endsWith("/salesman") ? json({ ok: false, code: "KODE_DIPAKAI_PROFIL_LAIN", error: "teks server" }, 409) : undefined),
+    });
+    await page.goto("/admin/users", NAV);
+    await bukaUser(page, "USER B");
+    const daftar = bagianSalesman(page).getByRole("list", { name: "Karyawan salesman Accurate" });
+    await expect(daftar).toBeVisible(NAV);
+    await daftar.getByRole("listitem").filter({ hasText: "SALES A" }).first().getByRole("button").click();
+    const dlg = page.getByRole("dialog");
+    await dlg.getByRole("button", { name: "Tautkan", exact: true }).click();
+    await expect(dlg.getByRole("alert")).toContainText("Kode karyawan itu masih dipegang profil Form Kontrol akun lain yang tautannya sudah dilepas");
+    await expect(dlg.getByRole("alert")).not.toContainText("KODE_DIPAKAI_PROFIL_LAIN");
 });
