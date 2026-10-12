@@ -399,4 +399,9 @@ Drizzle. Tanpa env baru.
 Plafon (ponytail): kunci 20.00 dicatat malas -> snapshot `kunci` mencerminkan cache SAAT aksi pertama sesudah 20.00 (cron K1b masih jalan s/d
 21.00), bukan tepat 20.00 — setoran tetap tak bisa berubah sesudah 20.00 (kunci dihitung dari jam); jalan naik = cron 20.00 yang memanggil GET.
 Berkas bukti di volume satu instance (pola Form Kontrol): multi-instance / cadangan terpisah -> kolom bytea + DDL. Berkas yatim dari jawaban
-`TIDAK_PASTI` tidak dibersihkan otomatis (tak terjangkau; nama UUID).
+`TIDAK_PASTI` tidak dibersihkan otomatis (tak terjangkau; nama UUID). Hari tanpa cache (`belum_dibaca`) tidak mendapat baris `kunci` sampai
+cache tanggal itu pernah dibaca (kunci tetap berlaku dari jam).
+
+**Catatan IT (tanpa kode, putaran perbaikan 12 Okt)**: cadangan volume `/app/data` (runbook sudah `tar`) kini memuat bukti setoran
+`data/uploads/kasir-bukti` — retensi permanen; pantau ruang disk volume itu. Slice O1 memakai migrasi **0033** (entri `migrate-pg.mjs`
+K2a = 0032; konflik teks di daftar `migrations` saat merge = urutkan K2a lebih dulu).
