@@ -116,7 +116,7 @@ FROM (VALUES
 ORDER BY no;
 
 -- 3a. E5 (DDL_OUTBOX_EVENT.sql): baris antrean faktur LAMA yang akan dikunci "tidak pasti" / dikembalikan ke Ditolak sesudah image.
---     Produksi 9 Okt: antre_ulang_lama = 0. Angka > 0 pada kolom mana pun = laporkan ke orkestrator SEBELUM merge (runbook §1.3).
+--     Produksi 9 Okt: antre_ulang_lama = 0. Angka > 0 pada kolom mana pun = laporkan ke orkestrator SEBELUM merge (runbook §1.2).
 SELECT '3a E5 antrean faktur' AS bagian,
        count(*) FILTER (WHERE state = 'sending' AND updated_at < now() - interval '15 minutes') AS sending_lebih_15_menit,
        count(*) FILTER (WHERE state = 'posted' AND btrim(accurate_id) = '') AS posted_tanpa_accurate_id,
@@ -177,7 +177,7 @@ FROM (VALUES
 ) AS n(no, nama, dipakai_oleh)
 ORDER BY n.no;
 
--- 4c. Risiko terkunci SESUDAH image bila kunci baru belum diberikan (runbook §5 langkah 8). Satu baris = satu grup yang perlu ditangani.
+-- 4c. Risiko terkunci SESUDAH image bila kunci baru belum diberikan (RBAC_D01_KUNCI.sql, runbook §5 langkah 4). Satu baris = satu grup yang perlu ditangani.
 SELECT '4c risiko terkunci' AS bagian, x.risiko, ag.name AS grup,
        (SELECT count(*) FROM user_group ug JOIN "user" u ON u.id = ug.user_id
         WHERE ug.group_id = ag.id AND NOT coalesce(u.banned, false)) AS anggota_aktif
