@@ -221,6 +221,7 @@ K2b (UI `/kasir`) boleh membangun mock `page.route` LANGSUNG dari bagian ini.
   hanya PEMBANDING (bukan sumber).
 - **Waktu** keluar = ISO UTC `…Z`; tampilan WITA urusan klien (`waktuWita`). **`tanggal`** = `YYYY-MM-DD`, tanggal yang ada, ≤ hari ini WITA
   (jam SERVER) -> selain itu 400 `INPUT_SALAH` `field: "tanggal"`. Hari Minggu TIDAK diblokir (`hari.hariKerja` hanya info).
+- **Panjang teks** (Form Kasir, nomor BG, catatan, penjelasan, alasan) dihitung per CODE POINT sesudah trim (= `char_length` Postgres).
 - **Bentuk galat**: `{ ok: false, kode, error, field?, alasan?, keadaan? }` — `error` = kalimat siap tampil (tanpa pesan DB mentah). 401/403 =
   bentuk bawaan `requirePermission` (`{ error: "Unauthorized" | "Forbidden" }`, tanpa `kode`). Sukses: `{ ok: true, … }`.
 - **Serialisasi**: setiap tulis (setoran, jelaskan, tutup, buka, catat kunci otomatis) = SATU transaksi READ COMMITTED yang pernyataan
@@ -326,7 +327,8 @@ Badan `application/json`, ATAU `multipart/form-data` dengan bagian `data` (teks 
 - **Transfer > 0 -> bukti WAJIB**: berkas `bukti` baru (jpg/png/pdf, dicek MAGIC BYTES — JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`, PDF
   `%PDF-` — bukan ekstensi/`type`; ≤ 5 MB; badan > 6 MB ditolak sebelum dibaca) ATAU `buktiLama: true` = pakai berkas revisi terakhir kode
   utama, hanya bila revisi itu punya bukti DAN transfernya sama. Transfer 0 + berkas/`buktiLama` -> 400. `field: "buktiTransfer"`.
-- **Giro > 0 -> `giroNomor` (nomor BG, 1–100 huruf) + `giroJatuhTempo` (`YYYY-MM-DD`) WAJIB**; giro 0 + salah satunya -> 400.
+- **Giro > 0 -> `giroNomor` (nomor BG, 1–100 huruf) + `giroJatuhTempo` (`YYYY-MM-DD`, antara tanggal setoran − 7 hari dan tanggal yang sama
+  tahun depan, inklusif) WAJIB**; giro 0 + salah satunya -> 400.
 - `catatan` ≤ 500 huruf (opsional). `dasar` = larik `{ kode, revisi }` dari GET (`[]` untuk setoran pertama) -> ≠ revisi terakhir sekarang
   (sebagai himpunan) = 409 `SETORAN_BERUBAH`, `keadaan: { orang, dasar, setoranPerKode, setoran }`.
 - Hari terkunci -> 409 `HARI_TERKUNCI`, `keadaan: { hari }`. TIDAK bergantung status baca (setoran tetap bisa saat Accurate gagal).

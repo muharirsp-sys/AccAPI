@@ -471,20 +471,28 @@ function uraiNominal(v: unknown, field: string, bertanda = false, maks = BATAS_H
 }
 const rupiahSen = (sen: Sen) => `Rp ${(sen / 100).toLocaleString("id-ID")}`;
 
+/** Panjang = CODE POINT (sama dengan char_length Postgres), bukan unit UTF-16 `.length`: 8 emoji = 8, bukan 16 (tinjauan A RENDAH 6). */
+const panjang = (t: string) => [...t].length;
+
 function teksOpsional(v: unknown, field: string, maks: number): string | null {
     if (v === undefined || v === null) return null;
     if (typeof v !== "string") throw salah(field, `${field} harus teks.`);
     const t = v.trim();
-    if (t.length > maks) throw salah(field, `${field} maksimal ${maks} huruf.`);
+    if (panjang(t) > maks) throw salah(field, `${field} maksimal ${maks} huruf.`);
     return t || null;
 }
 
 function teksWajib(v: unknown, field: string, min: number, maks: number, apa: string): string {
     const t = typeof v === "string" ? v.trim() : "";
-    if (t.length < min) throw salah(field, `${apa} wajib diisi minimal ${min} huruf.`);
-    if (t.length > maks) throw salah(field, `${apa} maksimal ${maks} huruf.`);
+    if (panjang(t) < min) throw salah(field, `${apa} wajib diisi minimal ${min} huruf.`);
+    if (panjang(t) > maks) throw salah(field, `${apa} maksimal ${maks} huruf.`);
     return t;
 }
+
+/** `YYYY-MM-DD` digeser `n` hari (UTC, tanpa zona). */
+const geserHari = (t: string, n: number) => new Date(Date.parse(`${t}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+/** Rentang jatuh tempo Giro yang diterima (tinjauan A RENDAH 7): tanggal setoran − 7 hari s/d tanggal yang sama tahun depan. */
+export const GIRO_MUNDUR_HARI = 7;
 
 export interface IsianSetoran {
     tanggal: string;
@@ -507,7 +515,7 @@ export function uraiSetoran(raw: unknown, sekarang: Date, adaBerkas: boolean): I
     if (typeof r.orang !== "string") throw salah("orang", "Orang (kode salesman) wajib diisi.");
     const orang = r.orang.trim();
     if (orang === TANPA_SALESMAN) throw salah("orang", "Setoran tidak bisa dicatat untuk Tanpa salesman — pilih pegawai.");
-    if (orang.length > 100) throw salah("orang", "Kode orang terlalu panjang.");
+    if (panjang(orang) > 100) throw salah("orang", "Kode orang terlalu panjang.");
     const tunai = uraiNominal(r.tunai, "tunai", false, BATAS_KOLOM_SEN);
     const transfer = uraiNominal(r.transfer, "transfer", false, BATAS_KOLOM_SEN);
     const giro = uraiNominal(r.giro, "giro", false, BATAS_KOLOM_SEN);
@@ -517,6 +525,11 @@ export function uraiSetoran(raw: unknown, sekarang: Date, adaBerkas: boolean): I
     const giroNomor = teksOpsional(r.giroNomor, "giroNomor", 100);
     const jt = r.giroJatuhTempo === undefined || r.giroJatuhTempo === null || r.giroJatuhTempo === "" ? null : r.giroJatuhTempo;
     if (jt !== null && !tanggalSah(jt)) throw salah("giroJatuhTempo", "Tanggal jatuh tempo Giro wajib YYYY-MM-DD dan tanggal yang ada.");
+    if (jt !== null) {
+        const bawah = geserHari(tanggal, -GIRO_MUNDUR_HARI);
+        const atas = `${Number(tanggal.slice(0, 4)) + 1}${tanggal.slice(4)}`; // 29 Feb -> "YYYY-02-29" tahun depan: batas teks tetap benar
+        if (jt < bawah || jt > atas) throw salah("giroJatuhTempo", `Jatuh tempo Giro harus antara ${bawah} dan ${atas}.`);
+    }
     if (giro > 0 && !giroNomor) throw salah("giroNomor", "Nomor BG wajib diisi untuk setoran Giro.");
     if (giro > 0 && jt === null) throw salah("giroJatuhTempo", "Tanggal jatuh tempo Giro wajib diisi untuk setoran Giro.");
     if (giro === 0 && (giroNomor || jt !== null)) throw salah(giroNomor ? "giroNomor" : "giroJatuhTempo", "Nomor BG / jatuh tempo hanya untuk setoran Giro lebih dari 0.");
@@ -547,7 +560,7 @@ export function uraiJelaskan(raw: unknown, sekarang: Date): IsianJelaskan {
     const tanggal = uraiTanggal(r.tanggal, sekarang);
     const angka = (r.angka && typeof r.angka === "object" ? r.angka : {}) as Record<string, unknown>;
     if (r.jenis === "selisih") {
-        if (typeof r.orang !== "string" || r.orang.length > 100) throw salah("orang", "Orang (kode salesman; \"\" = Tanpa salesman) wajib diisi.");
+        if (typeof r.orang !== "string" || panjang(r.orang) > 100) throw salah("orang", "Orang (kode salesman; \"\" = Tanpa salesman) wajib diisi.");
         const pelunasan = uraiNominal(angka.pelunasan, "angka.pelunasan");
         const setoran = uraiNominal(angka.setoran, "angka.setoran");
         const penjelasan = teksWajib(r.penjelasan, "penjelasan", ALASAN_BUKA_MIN, PENJELASAN_MAKS, "Penjelasan");

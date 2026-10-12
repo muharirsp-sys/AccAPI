@@ -373,6 +373,11 @@ test("PG K2a Tutup terhalang -> 409 TERHALANG + alasan; jelaskan (tanpa syarat l
         h = await muatHari(D, { orang: null }, deps);
         assert.deepEqual(h.penghalangTutup, { bisaDitutup: true, alasan: [] });
         assert.ok("event" in (await tutupHari({ tanggal: D, sidik: h.sidik! }, KASIR, deps)));
+        // Hari DITUTUP: penjelasan baru ditolak (selisih maupun ember), tidak ada baris tambahan.
+        await assert.rejects(jelaskan({ ...sa, penjelasan: "Penjelasan sesudah ditutup" }, KASIR, deps), galat("HARI_TERKUNCI"));
+        await assert.rejects(jelaskan({ tanggal: D, jenis: "tak_teralokasi", pelunasanId: 12, sisa: 1_000_000, penjelasan: "Penjelasan sesudah ditutup" }, KASIR, deps),
+            galat("HARI_TERKUNCI"));
+        assert.equal((await pool.query("SELECT (SELECT count(*) FROM kasir_selisih_catatan) + (SELECT count(*) FROM kasir_tak_teralokasi_catatan) AS n")).rows[0].n, "3");
     });
 });
 
@@ -389,6 +394,9 @@ test("PG K2a kunci 20.00 dicatat malas: GET serentak -> SATU kunci; POST yang me
         const [k] = await event(pool);
         assert.deepEqual(k.snapshot.terhalang, ["S-A belum setor dan belum dijelaskan: pelunasan Rp 100.000."], "snapshot kunci mencatat yang belum dijelaskan");
         assert.equal(await catatKunciOtomatis(D, deps), false, "sudah dicatat");
+        // Terkunci 20.00 (belum ditutup): jelaskan ditolak.
+        await assert.rejects(jelaskan({ tanggal: D, jenis: "selisih", orang: "S-A", pelunasan: 10_000_000, setoran: 0, penjelasan: "SALES A setor besok pagi",
+            tindakLanjut: "setor_susulan" }, KASIR, deps), galat("HARI_TERKUNCI"));
 
         // Hari lain: POST pertama sesudah 20.00 menyimpan kunci lalu 409.
         await baca(pool, "lengkap", new Date(jam.t.getTime() - 60_000), "2026-10-03");

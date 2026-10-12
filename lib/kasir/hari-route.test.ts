@@ -150,6 +150,9 @@ test("POST setoran: 400 INPUT_SALAH + field sebelum DB / berkas (desimal 3, nega
         [{ giro: "500", giroNomor: "BG-1" }, "giroJatuhTempo"],
         [{ giro: "500", giroNomor: "BG-1", giroJatuhTempo: "2026-02-30" }, "giroJatuhTempo"],
         [{ giroNomor: "BG-1" }, "giroNomor"],
+        [{ giro: "500", giroNomor: "BG-1", giroJatuhTempo: "1900-01-01" }, "giroJatuhTempo"],
+        [{ giro: "500", giroNomor: "BG-1", giroJatuhTempo: "2026-09-27" }, "giroJatuhTempo"], // tanggal − 8 hari
+        [{ giro: "500", giroNomor: "BG-1", giroJatuhTempo: "2027-10-06" }, "giroJatuhTempo"], // > 1 tahun
         [{ buktiLama: true }, "buktiTransfer"],
         [{ tanggal: "2026-10-06" }, "tanggal"],
         [{ tanggal: "05/10/2026" }, "tanggal"],
@@ -231,6 +234,8 @@ test("POST jelaskan/tutup/buka + GET hari: 400 INPUT_SALAH + field", async () =>
     const jl = { tanggal: D, jenis: "selisih", orang: "S-A", angka: { pelunasan: "100", setoran: "0" }, penjelasan: "Setor susulan besok pagi", tindakLanjut: "setor_susulan" };
     for (const [ubah, field] of [
         [{ penjelasan: "terlalu pendek" }, "penjelasan"],
+        [{ penjelasan: "😀".repeat(8) }, "penjelasan"], // 8 code point (16 unit UTF-16) < 15 = char_length DB
+        [{ penjelasan: "😀".repeat(1001) }, "penjelasan"],
         [{ tindakLanjut: undefined }, "tindakLanjut"],
         [{ jenis: "lain" }, "jenis"],
         [{ angka: { pelunasan: "100.001", setoran: "0" } }, "angka.pelunasan"],
@@ -243,8 +248,10 @@ test("POST jelaskan/tutup/buka + GET hari: 400 INPUT_SALAH + field", async () =>
     }
     const t = await dengan({ izin: ["kasir.tutup"] }, () => postTutup(json("/api/kasir/tutup", { tanggal: D, sidik: "x" })));
     assert.deepEqual([t.status, (await t.json() as Badan).field], [400, "sidik"]);
-    const b = await dengan({ izin: ["kasir.buka"] }, () => postBuka(json("/api/kasir/buka", { tanggal: D, alasan: "  dibuka   " })));
-    assert.deepEqual([b.status, (await b.json() as Badan).field], [400, "alasan"]);
+    for (const alasan of ["  dibuka   ", "🔓".repeat(8)]) {
+        const b = await dengan({ izin: ["kasir.buka"] }, () => postBuka(json("/api/kasir/buka", { tanggal: D, alasan })));
+        assert.deepEqual([b.status, (await b.json() as Badan).field], [400, "alasan"], alasan);
+    }
     for (const q of ["", "?tanggal=2026-10-06", "?tanggal=2026-13-01"]) {
         const g = await dengan({ izin: ["kasir.view"] }, () => getHari(new NextRequest(`http://app.test/api/kasir${q}`)));
         assert.deepEqual([g.status, (await g.json() as Badan).field], [400, "tanggal"], q);
@@ -276,6 +283,12 @@ test("GET bukti: id salah 400; baris/berkas tak ada atau nama tak berpola (trave
 test("uraiSetoran: tepat Rp 100 miliar per kolom sah (batas inklusif)", () => {
     const r = uraiSetoran({ ...baku, tunai: "100000000000", giro: "100000000000.00", giroNomor: "BG-1", giroJatuhTempo: D }, JAM, false);
     assert.deepEqual([r.tunai, r.giro], [BATAS_KOLOM_SEN, BATAS_KOLOM_SEN]);
+    // Jatuh tempo Giro: tanggal − 7 hari dan tanggal yang sama tahun depan = batas inklusif.
+    for (const jt of ["2026-09-28", "2027-10-05"]) {
+        assert.equal(uraiSetoran({ ...baku, giro: "1", giroNomor: "BG-1", giroJatuhTempo: jt }, JAM, false).giroJatuhTempo, jt);
+    }
+    // Panjang = code point: 60 emoji (120 unit UTF-16) ≤ 100 huruf Form Kasir.
+    assert.equal(uraiSetoran({ ...baku, noFormKasir: "🧾".repeat(60) }, JAM, false).noFormKasir, "🧾".repeat(60));
 });
 
 test("bukti: jenis dari MAGIC BYTES (bukan nama) + pola nama ketat", () => {

@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
         const q = request.nextUrl.searchParams;
         const tanggal = uraiTanggal(q.get("tanggal"), bawaanHari.sekarang());
         const orang = q.get("orang");
-        if (orang !== null && orang.length > 100) throw new GalatKasir(400, "INPUT_SALAH", "Kode orang terlalu panjang.", { field: "orang" });
+        if (orang !== null && [...orang].length > 100) throw new GalatKasir(400, "INPUT_SALAH", "Kode orang terlalu panjang.", { field: "orang" });
         return NextResponse.json(await muatHari(tanggal, { orang }, bawaanHari));
     } catch (e) {
         const j = jawabanGalat(e, "[KASIR HARI]");
