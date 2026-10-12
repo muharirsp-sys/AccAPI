@@ -186,6 +186,7 @@ test("butir 3: hargaSah = HANYA daftar harga (tier) cabang pelanggan/default dan
     const ditolak: Array<[string, Parameters<typeof hargaSah>[0], RegExp]> = [
         ["cabang LAIN", { ...tier, branchId: 102, branchName: "HEINZ" }, /cabang lain \(HEINZ\)/],
         ["harga standar (satu angka semua satuan: KRT 6306 = harga PCS)", { code: "K", unit: "KRT", price: 6306, source: "standard" }, /harga standar/],
+        ["harga standar walau bercabang (sumber yang menentukan, bukan cabang)", { code: "K", unit: "KRT", price: 6306, source: "standard", branchId: 101 }, /harga standar/],
         ["harga 0 (tanggal mundur)", { ...tier, price: 0 }, /harga 0/],
         ["harga negatif", { ...tier, price: -5 }, /harga -5/],
         ["tidak ada", { code: "K", unit: "KRT", price: null, source: "missing" }, /belum ada/],
