@@ -17,11 +17,13 @@
 -- KUNCI: tabel baru saja — tidak mengunci tabel lama (jks_master tidak diubah bentuknya).
 --
 -- ISI (nama tabel TANPA skema = public pada search_path bawaan; agar uji PG bisa memakai skema sekali-pakai):
---   1. CREATE TABLE IF NOT EXISTS kunjungan_luar_rute (PK id; UNIQUE (sales_code, cust_code, principle, tanggal) = satu toko luar rute sekali
---      per hari; CHECK konfirmasi menunggu/jks/tidak/sudah_jks, isi + format tanggal, hari Senin–Sabtu + pola ganjil/genap/all, dan
---      konfirmasi 'jks' WAJIB membawa jks_id + hari + pola + waktu konfirmasi). Indeks jks_id (jejak baris JKS di Kontrol JKS).
---      TANPA trigger, TANPA data.
---   2. accapi_app: GRANT SELECT/INSERT/UPDATE; REVOKE DELETE/TRUNCATE (baris ini = JEJAK asal baris JKS; aplikasi tidak pernah menghapus).
+--   1. CREATE TABLE IF NOT EXISTS kunjungan_luar_rute (PK id; UNIQUE (sales_code, cust_code, principle, tanggal) WHERE belum batal = satu
+--      toko luar rute AKTIF per hari; CHECK konfirmasi menunggu/jks/tidak/sudah_jks, isi + format tanggal, hari Senin–Sabtu + pola
+--      ganjil/genap/all, konfirmasi 'jks' WAJIB membawa jks_id + hari + pola + waktu konfirmasi, dan batal lunak (dibatalkan_pada/oleh
+--      berpasangan, baris 'jks' tidak bisa batal)). Indeks jks_id (jejak baris JKS di Kontrol JKS). TANPA trigger, TANPA data.
+--      Bentuk ini menggantikan draf 12 Okt (tanpa kolom batal) yang TIDAK pernah dijalankan di produksi.
+--   2. accapi_app: GRANT SELECT/INSERT/UPDATE; REVOKE DELETE/TRUNCATE (baris ini = JEJAK asal baris JKS; aplikasi tidak pernah menghapus —
+--      "Batalkan" kunjungan salah tambah = UPDATE dibatalkan_pada/oleh, butuh UPDATE saja).
 --      Role absen = dilewati.
 --   3. VERIFIKASI (baca-saja) — semua `ok` harus true (NULL = role accapi_app tidak ada, tidak relevan). Juga prasyarat jalur yang dipakai:
 --      accapi_app boleh SELECT/INSERT/UPDATE jks_master (konfirmasi menulis baris JKS; unggah menonaktifkan baris tambahan salesman yang
@@ -66,15 +68,19 @@ CREATE TABLE IF NOT EXISTS kunjungan_luar_rute (
     dikonfirmasi_oleh      text,
     dikonfirmasi_oleh_nama text,
     dikonfirmasi_pada      timestamptz,
+    dibatalkan_pada        timestamptz,
+    dibatalkan_oleh        text,
     CONSTRAINT kunjungan_luar_rute_konfirmasi CHECK (konfirmasi IN ('menunggu', 'jks', 'tidak', 'sudah_jks')),
     CONSTRAINT kunjungan_luar_rute_isi CHECK (btrim(sales_code) <> '' AND btrim(principle) <> '' AND btrim(cust_code) <> ''
         AND tanggal ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
     CONSTRAINT kunjungan_luar_rute_jadwal CHECK ((hari IS NULL OR hari IN ('Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'))
         AND (minggu_pattern IS NULL OR minggu_pattern IN ('ganjil', 'genap', 'all'))),
     CONSTRAINT kunjungan_luar_rute_jks CHECK (konfirmasi <> 'jks' OR (jks_id IS NOT NULL AND hari IS NOT NULL
-        AND minggu_pattern IS NOT NULL AND dikonfirmasi_pada IS NOT NULL))
+        AND minggu_pattern IS NOT NULL AND dikonfirmasi_pada IS NOT NULL)),
+    CONSTRAINT kunjungan_luar_rute_batal CHECK ((dibatalkan_pada IS NULL) = (dibatalkan_oleh IS NULL)
+        AND (dibatalkan_pada IS NULL OR konfirmasi <> 'jks'))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_klr_unik ON kunjungan_luar_rute (sales_code, cust_code, principle, tanggal);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_klr_unik ON kunjungan_luar_rute (sales_code, cust_code, principle, tanggal) WHERE dibatalkan_pada IS NULL;
 CREATE INDEX IF NOT EXISTS idx_klr_jks ON kunjungan_luar_rute (jks_id);
 
 -- 2. Hak role aplikasi. Default privileges (L1g) bisa saja sudah memberi DML penuh -> REVOKE eksplisit DELETE/TRUNCATE.
@@ -93,17 +99,18 @@ SELECT cek, ok FROM (VALUES
     ('tabel kunjungan_luar_rute', to_regclass('kunjungan_luar_rute') IS NOT NULL),
     ('PK (id)', EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'kunjungan_luar_rute_pkey'
         AND conrelid = to_regclass('kunjungan_luar_rute') AND contype = 'p')),
-    ('UNIQUE idx_klr_unik (sales_code, cust_code, principle, tanggal)', EXISTS (SELECT 1 FROM pg_index i
+    ('UNIQUE idx_klr_unik (sales_code, cust_code, principle, tanggal) WHERE belum batal', EXISTS (SELECT 1 FROM pg_index i
         WHERE i.indrelid = to_regclass('kunjungan_luar_rute') AND i.indexrelid = to_regclass('idx_klr_unik') AND i.indisunique
-          AND pg_get_indexdef(i.indexrelid) LIKE '% USING btree (sales_code, cust_code, principle, tanggal)')),
+          AND pg_get_indexdef(i.indexrelid) LIKE '% USING btree (sales_code, cust_code, principle, tanggal) WHERE (dibatalkan_pada IS NULL)')),
     ('indeks idx_klr_jks (jks_id)', EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = to_regclass('kunjungan_luar_rute')
         AND i.indexrelid = to_regclass('idx_klr_jks') AND pg_get_indexdef(i.indexrelid) LIKE '% USING btree (jks_id)')),
     -- Definisi PERSIS (pg_get_constraintdef, bentuk PG 16): CHECK bernama sama tetapi dilemahkan (mis. CHECK (true)) = false.
-    ('CHECK konfirmasi/isi/jadwal/jks (4) — definisi persis', (SELECT count(*) = 4 FROM pg_constraint c JOIN (VALUES
+    ('CHECK konfirmasi/isi/jadwal/jks/batal (5) — definisi persis', (SELECT count(*) = 5 FROM pg_constraint c JOIN (VALUES
         ('kunjungan_luar_rute_konfirmasi', $d$CHECK ((konfirmasi = ANY (ARRAY['menunggu'::text, 'jks'::text, 'tidak'::text, 'sudah_jks'::text])))$d$),
         ('kunjungan_luar_rute_isi', $d$CHECK (((btrim(sales_code) <> ''::text) AND (btrim(principle) <> ''::text) AND (btrim(cust_code) <> ''::text) AND (tanggal ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text)))$d$),
         ('kunjungan_luar_rute_jadwal', $d$CHECK ((((hari IS NULL) OR (hari = ANY (ARRAY['Senin'::text, 'Selasa'::text, 'Rabu'::text, 'Kamis'::text, 'Jumat'::text, 'Sabtu'::text]))) AND ((minggu_pattern IS NULL) OR (minggu_pattern = ANY (ARRAY['ganjil'::text, 'genap'::text, 'all'::text])))))$d$),
-        ('kunjungan_luar_rute_jks', $d$CHECK (((konfirmasi <> 'jks'::text) OR ((jks_id IS NOT NULL) AND (hari IS NOT NULL) AND (minggu_pattern IS NOT NULL) AND (dikonfirmasi_pada IS NOT NULL))))$d$)
+        ('kunjungan_luar_rute_jks', $d$CHECK (((konfirmasi <> 'jks'::text) OR ((jks_id IS NOT NULL) AND (hari IS NOT NULL) AND (minggu_pattern IS NOT NULL) AND (dikonfirmasi_pada IS NOT NULL))))$d$),
+        ('kunjungan_luar_rute_batal', $d$CHECK ((((dibatalkan_pada IS NULL) = (dibatalkan_oleh IS NULL)) AND ((dibatalkan_pada IS NULL) OR (konfirmasi <> 'jks'::text))))$d$)
     ) AS e(nama, def) ON c.conname = e.nama AND pg_get_constraintdef(c.oid) = e.def
         WHERE c.conrelid = to_regclass('kunjungan_luar_rute') AND c.contype = 'c')),
     ('accapi_app boleh SELECT/INSERT/UPDATE kunjungan_luar_rute', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app')

@@ -1,4 +1,4 @@
-import { and, asc, eq, getTableColumns, inArray, sql, type AnyColumn } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, inArray, isNull, sql, type AnyColumn } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import {
@@ -165,7 +165,8 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
             )
         ) : Promise.resolve([]),
         db.select().from(kunjunganLuarRute).where(and(eq(kunjunganLuarRute.salesCode, salesCode),
-            eq(kunjunganLuarRute.principle, principle), eq(kunjunganLuarRute.tanggal, dateStr))).orderBy(asc(kunjunganLuarRute.custName)),
+            eq(kunjunganLuarRute.principle, principle), eq(kunjunganLuarRute.tanggal, dateStr), isNull(kunjunganLuarRute.dibatalkanPada)))
+            .orderBy(asc(kunjunganLuarRute.custName)),
     ]);
     const kodeJks = new Set(jksDb.map((j) => j.custCode));
     const jksRows: (typeof jksDb[number] & { luarRute?: boolean })[] = [...jksDb, ...luar.filter((l) => !kodeJks.has(l.custCode)).map((l) => ({
@@ -761,7 +762,7 @@ export async function getVisitDetail(
         const [l] = await db.select({ k: kunjunganLuarRute, salesName: salesProfile.salesName }).from(kunjunganLuarRute)
             .leftJoin(salesProfile, eq(salesProfile.salesCode, kunjunganLuarRute.salesCode))
             .where(and(eq(kunjunganLuarRute.salesCode, salesCode), eq(kunjunganLuarRute.custCode, custCode),
-                eq(kunjunganLuarRute.principle, principle), eq(kunjunganLuarRute.tanggal, dateStr))).limit(1);
+                eq(kunjunganLuarRute.principle, principle), eq(kunjunganLuarRute.tanggal, dateStr), isNull(kunjunganLuarRute.dibatalkanPada))).limit(1);
         if (l) store = { id: l.k.id, salesCode, salesName: l.salesName ?? "", custCode, custName: l.k.custName, market: null, alamat: l.k.alamat,
             kota: null, hariKunjungan: null, mingguPattern: "all", area: null, rayon: null, principle, channel: "", visitFrequency: 0, isActive: true,
             createdAt: l.k.dibuatPada, updatedAt: l.k.dibuatPada, luarRute: true };
@@ -818,7 +819,8 @@ export async function getSpvDashboard(spvName: string, dateStr: string) {
             )
         ),
         db.select({ salesCode: kunjunganLuarRute.salesCode, custCode: kunjunganLuarRute.custCode, custName: kunjunganLuarRute.custName })
-            .from(kunjunganLuarRute).where(and(eq(kunjunganLuarRute.tanggal, dateStr), inArray(kunjunganLuarRute.salesCode, salesCodes))),
+            .from(kunjunganLuarRute).where(and(eq(kunjunganLuarRute.tanggal, dateStr), inArray(kunjunganLuarRute.salesCode, salesCodes),
+                isNull(kunjunganLuarRute.dibatalkanPada))),
     ]);
 
     const reportMap = new Map(reportRows.map(r => [r.salesCode, r]));

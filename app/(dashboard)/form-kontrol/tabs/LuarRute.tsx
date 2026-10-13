@@ -3,24 +3,25 @@
  *   salesman (pemilih O2: jeda 300 ms, minimal 2 huruf, permintaan lama dibatalkan) lalu tambahkan ke kunjungan HARI INI; toko yang sudah
  *   di rute tidak bisa ditambah ganda. (2) KonfirmasiLuarRute di Laporan harian — per toko luar rute yang DIKUNJUNGI: masuk JKS (hari +
  *   minggu) / jangan masukkan JKS / biarkan "nanti" (tetap menunggu; laporan tetap bisa dikirim); peringatan bila toko ada di JKS salesman lain.
- * Caller: ./TabAo.tsx (TambahLuarRute), ./TabLaporan.tsx (KonfirmasiLuarRute).
- * Dependensi: components/order/PemilihPelanggan (GET /api/customers/search), POST/GET /api/form-kontrol/luar-rute(+/konfirmasi),
+ *   (3) BatalkanLuarRute di kartu toko Rute hari ini (owner 13 Okt): kunjungan salah tambah dibatalkan (batal lunak di server).
+ * Caller: ./TabAo.tsx (TambahLuarRute, BatalkanLuarRute), ./TabLaporan.tsx (KonfirmasiLuarRute).
+ * Dependensi: components/order/PemilihPelanggan (GET /api/customers/search), POST/GET /api/form-kontrol/luar-rute(+/konfirmasi, /batal),
  *   lib/form-kontrol/constants (kodeJksUntuk, paritasMinggu), ../lapangan (bacaFk, kirimFk), ../shared (HARI, jamWita, useIzinFk), components/fiori/*.
- * Main Functions: TambahLuarRute, KonfirmasiLuarRute, labelJadwal.
+ * Main Functions: TambahLuarRute, KonfirmasiLuarRute, BatalkanLuarRute, labelJadwal.
  * Side Effects: HTTP baca/tulis di atas. Server menegakkan semua aturan (pemilik, cabang, hari ini, principal, ganda); layar hanya mencegah
  *   kiriman yang pasti ditolak dan menampilkan kalimat penolakan server.
  */
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { MapPinPlus, RefreshCw } from "lucide-react";
+import { MapPinPlus, RefreshCw, Undo2 } from "lucide-react";
 import { Button, MessageStrip, Section, StatusBadge } from "@/components/fiori/core";
-import { FormField, useLoad, type Load } from "@/components/fiori/interactive";
+import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
 import { kodeJksUntuk, paritasMinggu } from "@/lib/form-kontrol/constants";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { HARI, jamWita, useIzinFk } from "../shared";
-import { bacaFk, kirimFk } from "../lapangan";
+import { GagalKirim, bacaFk, kirimFk } from "../lapangan";
 
 const MINGGU: [string, string][] = [["ganjil", "Minggu ganjil"], ["genap", "Minggu genap"], ["all", "Setiap minggu"]];
 const labelMinggu = (m: string | null | undefined) => (m === "all" ? "setiap minggu" : m === "ganjil" ? "minggu ganjil" : m === "genap" ? "minggu genap" : "—");
@@ -90,6 +91,41 @@ export function TambahLuarRute({ salesCode, principle, tanggal, ruteKode, onDita
                 )}
             </div>
         </Section>
+    );
+}
+
+// ── Batalkan (Rute hari ini, owner 13 Okt) ─────────────────────────────────
+
+export const PESAN_BATAL_TAK_PASTI = "Server tidak memberi jawaban yang pasti — hasil pembatalan belum pasti; muat ulang rute untuk memeriksa sebelum mengulang.";
+
+/**
+ * Tombol "Batalkan" kunjungan luar rute yang salah tambah + dialog. Pemanggil hanya menampilkannya untuk kunjungan luar rute hari ini milik
+ * salesman yang belum punya check-in/status; server menegakkan semua syarat (milik sendiri, hari ini, belum ada catatan kunjungan apa pun) dan
+ * kalimat penolakannya tampil di dialog. Jawaban tidak pasti → `onTakPasti` (pemanggil mengunci semua Batalkan sampai rute dimuat ulang).
+ */
+export function BatalkanLuarRute({ id, custName, custCode, kunci, onBatal, onTakPasti }: {
+    id: string; custName: string; custCode: string; kunci?: string; onBatal: () => void; onTakPasti: () => void;
+}) {
+    const [buka, setBuka] = useState(false);
+    return (
+        <>
+            <Button variant="tertiary" style={{ minHeight: 44 }} icon={<Undo2 className="fi-icon" aria-hidden />} aria-label={`Batalkan kunjungan ${custName}`}
+                disabled={Boolean(kunci)} disabledReason={kunci} onClick={() => setBuka(true)}>Batalkan</Button>
+            <ConfirmDialog open={buka} onClose={() => setBuka(false)} title={`Batalkan kunjungan ${custName}?`} tone="negative"
+                description="Untuk toko yang salah ditambahkan: toko keluar dari kunjungan hari ini. Jejak penambahan dan pembatalan tetap tercatat; toko bisa ditambah lagi bila perlu."
+                facts={[["Toko", `${custName} · ${custCode}`], ["Jenis", "Luar rute · hari ini"]]}
+                confirmLabel="Batalkan kunjungan" cancelLabel="Kembali" confirmDisabled={kunci}
+                onConfirm={async () => {
+                    try {
+                        await kirimFk("/api/form-kontrol/luar-rute/batal", { id });
+                    } catch (e) {
+                        if (e instanceof GagalKirim && e.tidakPasti) { onTakPasti(); throw new Error(PESAN_BATAL_TAK_PASTI); }
+                        throw e;
+                    }
+                    setBuka(false);
+                    onBatal();
+                }} />
+        </>
     );
 }
 

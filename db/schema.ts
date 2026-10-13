@@ -1577,8 +1577,12 @@ export const kunjunganLuarRute = pgTable("kunjungan_luar_rute", {
     dikonfirmasiOleh: text("dikonfirmasi_oleh"),
     dikonfirmasiOlehNama: text("dikonfirmasi_oleh_nama"),
     dikonfirmasiPada: timestamp("dikonfirmasi_pada", { withTimezone: true }),
+    /** Batal LUNAK (owner 13 Okt): kunjungan salah tambah dibatalkan salesman pemilik; baris tetap sebagai jejak. */
+    dibatalkanPada: timestamp("dibatalkan_pada", { withTimezone: true }),
+    dibatalkanOleh: text("dibatalkan_oleh"),
 }, (t) => ({
-    unik: uniqueIndex("idx_klr_unik").on(t.salesCode, t.custCode, t.principle, t.tanggal),
+    /** Satu toko luar rute AKTIF per salesman/principal/hari; baris batal tidak menghalangi tambah ulang. */
+    unik: uniqueIndex("idx_klr_unik").on(t.salesCode, t.custCode, t.principle, t.tanggal).where(sql`${t.dibatalkanPada} IS NULL`),
     jksIdx: index("idx_klr_jks").on(t.jksId),
     konfirmasiCek: check("kunjungan_luar_rute_konfirmasi", sql`${t.konfirmasi} IN ('menunggu', 'jks', 'tidak', 'sudah_jks')`),
     isiCek: check("kunjungan_luar_rute_isi", sql`btrim(${t.salesCode}) <> '' AND btrim(${t.principle}) <> '' AND btrim(${t.custCode}) <> ''
@@ -1587,6 +1591,8 @@ export const kunjunganLuarRute = pgTable("kunjungan_luar_rute", {
         AND (${t.mingguPattern} IS NULL OR ${t.mingguPattern} IN ('ganjil', 'genap', 'all'))`),
     jksCek: check("kunjungan_luar_rute_jks", sql`${t.konfirmasi} <> 'jks' OR (${t.jksId} IS NOT NULL AND ${t.hari} IS NOT NULL
         AND ${t.mingguPattern} IS NOT NULL AND ${t.dikonfirmasiPada} IS NOT NULL)`),
+    batalCek: check("kunjungan_luar_rute_batal", sql`(${t.dibatalkanPada} IS NULL) = (${t.dibatalkanOleh} IS NULL)
+        AND (${t.dibatalkanPada} IS NULL OR ${t.konfirmasi} <> 'jks')`),
 }));
 
 export const salesOutletTxn = pgTable("sales_outlet_txn", {

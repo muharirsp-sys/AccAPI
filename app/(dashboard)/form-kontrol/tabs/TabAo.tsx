@@ -29,7 +29,7 @@ import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { type Scope, type AoRow, compareRoute, hariIniWita, jamWita, penjelasanTanpaJks, principalAwal, useIzinFk, visitDurationMin } from "../shared";
 import { adaHasilKunjungan, statusBintang } from "@/lib/form-kontrol/constants";
 import { bacaFk, keBarisRute, kirimFk, simpanRute, useHariBeku } from "../lapangan";
-import { TambahLuarRute } from "./LuarRute";
+import { BatalkanLuarRute, TambahLuarRute } from "./LuarRute";
 
 type Saring = "semua" | "belum" | "tidak" | "perhatian";
 const sedang = (r: AoRow) => Boolean(r.checkinAt && !r.checkoutAt);
@@ -98,6 +98,8 @@ export default function TabAo({ scope }: { scope: Scope }) {
     const [saring, setSaring] = useState<Saring>("semua");
     const [dialog, setDialog] = useState(false);
     const [sukses, setSukses] = useState("");
+    // Hasil "Batalkan" luar rute terakhir tidak pasti → semua Batalkan dikunci sampai rute dimuat ulang (cegah keputusan dari daftar usang).
+    const [batalTakPasti, setBatalTakPasti] = useState(false);
     const tanpaIzin = useIzinFk("submit");
     // Hanya salesman pemilik rute yang mengirim status (perilaku lama untuk peran salesman); SPV/SM/admin baca-saja.
     const bukanPemilik = salesman && salesCode === scope.salesCode ? undefined
@@ -239,14 +241,23 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                 const b = badgeToko(r);
                                 const q = new URLSearchParams({ salesCode: r.salesCode, principle, date: tanggal });
                                 const alasanBintang = bukanPemilik ?? (adaHasilKunjungan(r.status) ? "Toko ini sudah punya hasil kunjungan" : undefined);
+                                // Owner 13 Okt: kunjungan luar rute salah tambah boleh dibatalkan pemiliknya hari itu, selama belum ada check-in/status.
+                                const bisaBatal = r.luarRute && salesman && !bukanPemilik && tanggal === hariIniWita() && !r.checkinAt && r.status === "not_visited";
                                 return (
-                                    <li key={r.id ?? r.custCode} className="fi-wl-row" style={{ gridTemplateColumns: "auto minmax(0,1fr)", paddingLeft: 4 }}>
+                                    <li key={r.id ?? r.custCode} className="fi-wl-row" style={{ gridTemplateColumns: bisaBatal ? "auto minmax(0,1fr) auto" : "auto minmax(0,1fr)", paddingLeft: 4 }}>
                                         <Button variant="icon" aria-pressed={r.isPriority} aria-label={`Prioritas ${r.custName}`} title="Tandai prioritas"
                                             disabled={Boolean(alasanBintang)} disabledReason={alasanBintang} onClick={() => tandai(r)}>
                                             <Star className="fi-icon" aria-hidden style={r.isPriority ? { fill: "var(--warn-solid)", color: "var(--warn-solid)" } : undefined} />
                                         </Button>
                                         <ListItem href={`/form-kontrol/visit/${encodeURIComponent(r.custCode)}?${q}`} doc={r.custCode} title={r.custName}
                                             meta={metaToko(r)} badge={<StatusBadge tone={b.tone}>{b.label}</StatusBadge>} />
+                                        {bisaBatal && (
+                                            <BatalkanLuarRute id={r.id} custName={r.custName} custCode={r.custCode}
+                                                kunci={tanpaIzin ?? (batalTakPasti ? "Hasil pembatalan terakhir belum pasti; muat ulang rute dulu."
+                                                    : load.status !== "siap" ? "Menunggu rute selesai dimuat" : undefined)}
+                                                onTakPasti={() => setBatalTakPasti(true)}
+                                                onBatal={() => { setSukses(`Kunjungan luar rute ${r.custName} dibatalkan.`); muatUlang(); }} />
+                                        )}
                                     </li>
                                 );
                             })}
@@ -319,6 +330,12 @@ export default function TabAo({ scope }: { scope: Scope }) {
                 </MessageStrip>
             )}
             {sukses && <MessageStrip tone="pos" title="Terkirim.">{sukses}</MessageStrip>}
+            {batalTakPasti && (
+                <MessageStrip tone="warn" title="Hasil pembatalan terakhir belum pasti.">
+                    Muat ulang rute untuk melihat apakah kunjungan itu sudah batal; Batalkan dikunci sampai rute dimuat ulang.{" "}
+                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => { setBatalTakPasti(false); setSukses(""); muatUlang(); }}>Muat ulang</button>
+                </MessageStrip>
+            )}
             {nUbah > 0 && <p className="fi-draft" role="status">{nUbah} tanda prioritas belum dikirim — kirim lewat “Kirim status rute {judulHari}”.</p>}
 
             {isi}
