@@ -379,7 +379,12 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-dropzone b { color:var(--ink); overflow-wrap:anywhere; }
 .fi-dropzone[data-ok="true"] { border-style:solid; border-color:color-mix(in srgb, var(--pos) 50%, transparent); background:var(--pos-bg); }
 .fi-dropzone .fi-input { margin-top:4px; }
-.fi-input[type="file"] { width:100%; min-width:0; max-width:100%; }
+.fi-input[type="file"] { width:100%; min-width:0; max-width:100%; padding:0 10px 0 3px; }
+/* Kotak berkas setinggi input lain (--ctl-h, 44 px di pointer kasar); tombol bawaan peramban harus muat DI DALAMNYA (kotak − border 2 px − celah 3 px × 2).
+   Sebelumnya tombol bergaya tema lama (padding 8 px × 12 px, ±38 px) lebih tinggi dari kotak 32 px sehingga terpotong atas, bawah, dan kiri. */
+.fi-input[type="file"]::file-selector-button { box-sizing:border-box; height:calc(var(--ctl-h) - 8px); margin:0 10px 0 0; padding:0 var(--ctl-px); border:1px solid var(--line-strong); border-radius:var(--r-xs); background:var(--surface-2); color:var(--ink); font:600 1em/1 var(--font-sans); cursor:pointer; transition:background-color var(--dur-fast), border-color var(--dur-fast); }
+.fi-input[type="file"]:not(:disabled):hover::file-selector-button { background:var(--brand-tint); border-color:var(--brand-300); }
+.fi-input[type="file"]:disabled::file-selector-button { background:var(--surface-3); color:var(--ink-disabled); border-color:var(--line); cursor:default; }
 .fi-dropzone, .fi-kc { min-width:0; overflow-wrap:anywhere; }
 .fi-wl-row { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:0 4px; padding-left:12px; border-bottom:1px solid var(--line); }
 .fi-wl-row:not(:has(> input)) { grid-template-columns:minmax(0,1fr); padding-left:0; }
