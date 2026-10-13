@@ -664,7 +664,7 @@ export async function updateSalesHierarchy(salesCode: string, spvName: string | 
 // ponytail: heuristik fake-GPS sederhana, FLAG saja (tidak memblok kunjungan).
 // accuracy>1000m terdeteksi sekarang. Jarak-dari-toko & GPS-vs-IP butuh koordinat toko / lookup IP
 // yang belum tersedia — tambah kalau jksMaster sudah punya lat/lng atau ada provider IP geo.
-function computeGpsFlag(lat: number | null, lng: number | null, accuracy: number | null): string | null {
+export function computeGpsFlag(lat: number | null, lng: number | null, accuracy: number | null): string | null {
     const flags: string[] = [];
     if (lat === null || lng === null) flags.push("tanpa_lokasi");
     if (accuracy !== null && accuracy > 1000) flags.push("akurasi_rendah");

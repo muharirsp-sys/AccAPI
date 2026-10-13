@@ -1595,6 +1595,82 @@ export const kunjunganLuarRute = pgTable("kunjungan_luar_rute", {
         AND (${t.dibatalkanPada} IS NULL OR ${t.konfirmasi} <> 'jks')`),
 }));
 
+/**
+ * NOO — toko baru dari kunjungan salesman (owner 13 Okt 2026): pengajuan toko yang BELUM ada di Accurate. SPV tim / SM di atasnya / grup Admin
+ * menyetujui atau menolak; Admin mendaftarkan pelanggan di Accurate SECARA MANUAL lalu menautkan pelanggan hasil sync (`terdaftar`).
+ * Kunjungan NOO = baris kunjungan_luar_rute biasa (cust_code = `kode`, customer_id NULL). DATA PRIBADI: `nik` + `foto_ktp` (berkas privat
+ * data/private/noo/) — tidak pernah di log, audit, atau respons daftar. DDL produksi: docs/handover/DDL_NOO.sql (accapi_app tanpa DELETE).
+ */
+export const nooToko = pgTable("noo_toko", {
+    /** UUID dari klien = kunci idempoten kirim ulang. */
+    id: text("id").primaryKey(),
+    /** NOO-XXXXXXXX: rujukan untuk orang + cust_code kunjungan NOO. */
+    kode: text("kode").notNull(),
+    salesCode: text("sales_code").notNull(),
+    principle: text("principle").notNull(),
+    /** Cabang Accurate salesman saat pengajuan (cakupan O1); pelanggan yang ditautkan WAJIB cabang ini. */
+    branchId: bigint("branch_id", { mode: "number" }).notNull(),
+    branchName: text("branch_name"),
+    /** YYYY-MM-DD WITA hari pengajuan. */
+    tanggal: text("tanggal").notNull(),
+    namaToko: text("nama_toko").notNull(),
+    namaPemilik: text("nama_pemilik").notNull(),
+    alamat: text("alamat").notNull(),
+    /** Kanonik 08… (lib/form-kontrol/noo-aturan normalHp). */
+    noHp: text("no_hp").notNull(),
+    nik: text("nik").notNull(),
+    namaKtp: text("nama_ktp").notNull(),
+    fotoKtp: text("foto_ktp").notNull(),
+    fotoToko: text("foto_toko").notNull(),
+    lat: doublePrecision("lat").notNull(),
+    lng: doublePrecision("lng").notNull(),
+    akurasi: doublePrecision("akurasi").notNull(),
+    gpsFlag: text("gps_flag"),
+    status: text("status").notNull().default("menunggu_spv"),
+    duplikatDengan: text("duplikat_dengan"),
+    alasanDuplikat: text("alasan_duplikat"),
+    duplikatDikonfirmasi: boolean("duplikat_dikonfirmasi").notNull().default(false),
+    dibuatOleh: text("dibuat_oleh").notNull(),
+    dibuatOlehNama: text("dibuat_oleh_nama"),
+    dibuatPada: timestamp("dibuat_pada", { withTimezone: true }).notNull().defaultNow(),
+    diputuskanOleh: text("diputuskan_oleh"),
+    diputuskanOlehNama: text("diputuskan_oleh_nama"),
+    diputuskanPada: timestamp("diputuskan_pada", { withTimezone: true }),
+    alasanTolak: text("alasan_tolak"),
+    customerId: bigint("customer_id", { mode: "number" }),
+    customerNo: text("customer_no"),
+    ditautkanOleh: text("ditautkan_oleh"),
+    ditautkanOlehNama: text("ditautkan_oleh_nama"),
+    ditautkanPada: timestamp("ditautkan_pada", { withTimezone: true }),
+}, (t) => ({
+    kodeUnik: uniqueIndex("idx_noo_kode").on(t.kode),
+    /** Satu pelanggan Accurate satu NOO. */
+    customerUnik: uniqueIndex("idx_noo_customer").on(t.customerId).where(sql`${t.customerId} IS NOT NULL`),
+    salesIdx: index("idx_noo_sales").on(t.salesCode, t.status),
+    antreanIdx: index("idx_noo_antrean").on(t.status, t.branchId),
+    nikIdx: index("idx_noo_nik").on(t.nik).where(sql`${t.status} <> 'ditolak'`),
+    hpIdx: index("idx_noo_hp").on(t.noHp).where(sql`${t.status} <> 'ditolak'`),
+    statusCek: check("noo_toko_status", sql`${t.status} IN ('menunggu_spv', 'disetujui', 'ditolak', 'terdaftar')`),
+    isiCek: check("noo_toko_isi", sql`${t.kode} ~ '^NOO-[0-9A-Z]{8}$' AND btrim(${t.salesCode}) <> '' AND btrim(${t.principle}) <> ''
+        AND ${t.tanggal} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND btrim(${t.namaToko}) <> '' AND btrim(${t.namaPemilik}) <> '' AND btrim(${t.alamat}) <> ''
+        AND btrim(${t.namaKtp}) <> ''`),
+    pribadiCek: check("noo_toko_pribadi", sql`${t.nik} ~ '^[0-9]{16}$' AND ${t.noHp} ~ '^08[1-9][0-9]{7,10}$'
+        AND ${t.fotoKtp} ~ '^[0-9a-f-]{36}[.]jpg$' AND ${t.fotoToko} ~ '^[0-9a-f-]{36}[.]jpg$' AND ${t.fotoKtp} <> ${t.fotoToko}`),
+    gpsCek: check("noo_toko_gps", sql`${t.lat} BETWEEN -90 AND 90 AND ${t.lng} BETWEEN -180 AND 180 AND ${t.akurasi} >= 0`),
+    duplikatCek: check("noo_toko_duplikat", sql`(${t.duplikatDengan} IS NULL) = (${t.alasanDuplikat} IS NULL)
+        AND (${t.alasanDuplikat} IS NULL OR btrim(${t.alasanDuplikat}) <> '')
+        AND (NOT ${t.duplikatDikonfirmasi} OR ${t.duplikatDengan} IS NOT NULL)
+        AND (${t.duplikatDengan} IS NULL OR ${t.status} IN ('menunggu_spv', 'ditolak') OR ${t.duplikatDikonfirmasi})`),
+    keputusanCek: check("noo_toko_keputusan", sql`(${t.status} = 'menunggu_spv') = (${t.diputuskanPada} IS NULL)
+        AND (${t.diputuskanPada} IS NULL) = (${t.diputuskanOleh} IS NULL)
+        AND (${t.status} = 'ditolak') = (${t.alasanTolak} IS NOT NULL)
+        AND (${t.alasanTolak} IS NULL OR btrim(${t.alasanTolak}) <> '')`),
+    tautanCek: check("noo_toko_tautan", sql`(${t.status} = 'terdaftar') = (${t.customerId} IS NOT NULL)
+        AND (${t.customerId} IS NULL) = (${t.customerNo} IS NULL)
+        AND (${t.customerId} IS NULL) = (${t.ditautkanPada} IS NULL)
+        AND (${t.ditautkanPada} IS NULL) = (${t.ditautkanOleh} IS NULL)`),
+}));
+
 export const salesOutletTxn = pgTable("sales_outlet_txn", {
     id: text("id").primaryKey(),
     salesCode: text("sales_code").notNull(),

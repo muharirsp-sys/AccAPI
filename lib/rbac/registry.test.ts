@@ -34,7 +34,7 @@ for (const action of ["resolve_unknown", "override_duplicate", "repost_payment"]
 // AM-057: centang modul di UI grup TIDAK menyalakan kunci kapabilitas Finance (harus satu per satu);
 // mematikan modul mencabut semuanya, termasuk kapabilitas.
 // Kunci ditulis literal (re-review b955f836 #1): iterasi CAPABILITY_KEYS sendiri lulus walau satu kunci dibuang.
-assert.equal(CAPABILITY_KEYS.size, 5);
+assert.equal(CAPABILITY_KEYS.size, 6);
 const moduleOn = toggleModuleKeys(new Set(), "finance");
 assert.ok(moduleOn.has("finance.view") && moduleOn.has("finance.post_accurate"), "centang modul menyalakan kunci biasa");
 for (const k of ["finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment"]) {
@@ -109,6 +109,13 @@ assert.deepEqual([...kasirOn].sort(), ["kasir.catat", "kasir.tutup", "kasir.view
 for (const role of ["manager", "staff", "viewer", "finance"] as const) assert.ok(!rolePermissionPresets[role].kasir, `preset ${role} memuat kasir`);
 assert.deepEqual(rolePermissionPresets.admin.kasir, ["view", "catat", "tutup", "buka"]);
 assert.deepEqual(getPagePermission("/kasir"), { prefix: "/kasir", module: "kasir", action: "view" });
+// NOO (owner 13 Okt 2026, P2): form_kontrol.noo_ktp = kapabilitas DATA PRIBADI (centang modul Form Kontrol tidak menyalakannya); noo_setujui
+// kunci biasa (SPV/SM/Admin lewat RBAC_PRESET_NOO.sql). Preset role lama tidak memuat keduanya.
+assert.ok(isValidPermissionKey("form_kontrol.noo_setujui") && !CAPABILITY_KEYS.has("form_kontrol.noo_setujui"));
+assert.ok(isValidPermissionKey("form_kontrol.noo_ktp") && CAPABILITY_KEYS.has("form_kontrol.noo_ktp"), "noo_ktp wajib kunci kapabilitas");
+const fkOn = toggleModuleKeys(new Set(), "form_kontrol");
+assert.ok(fkOn.has("form_kontrol.noo_setujui") && !fkOn.has("form_kontrol.noo_ktp"), "centang modul Form Kontrol tanpa noo_ktp");
+assert.equal(permissionKeyLabel("form_kontrol.noo_ktp"), "Form Kontrol · Lihat KTP NOO");
 assert.ok(canAccessPathWithKeys("/kasir/2026-10-05", ["kasir.view"]));
 assert.ok(!canAccessPathWithKeys("/kasir", ["dashboard.view", "pelunasan.kirim"]));
 // S7a: /admin/users = users.view ATAU users.manage (anyOf); /admin/groups tetap users.manage saja (GET grup hanya menerima users.manage).

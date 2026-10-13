@@ -70,7 +70,8 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
         name: "SPV", desc: "Supervisor — OPC pengajuan + Form Kontrol tim", keys: [
             ...k("dashboard", ["view"]),
             ...k("off_program_control", ["view", "create_batch", "edit_returned_batch", "submit_batch", "submit_refund", "discount_view", "discount_manage"]),
-            ...k("form_kontrol", ["view", "submit"]),
+            // NOO (owner 13 Okt 2026): setujui/tolak NOO tim + lihat KTP NOO tim (docs/handover/RBAC_PRESET_NOO.sql).
+            ...k("form_kontrol", ["view", "submit", "noo_setujui"]),
             ...k("insentif_sales", ["view", "upload_progress"]),
         ],
     },
@@ -78,7 +79,8 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
         name: "SM", desc: "Sales Manager — approve OPC + Form Kontrol", keys: [
             ...k("dashboard", ["view"]),
             ...k("off_program_control", ["view", "sm_approve", "sm_return", "submit_refund"]),
-            ...k("form_kontrol", ["view", "submit"]),
+            // NOO: SM menyetujui bila SPV berhalangan (tanpa KTP lengkap).
+            ...k("form_kontrol", ["view", "submit", "noo_setujui"]),
             ...k("insentif_sales", ["view"]),
         ],
     },
