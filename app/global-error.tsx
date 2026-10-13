@@ -4,22 +4,24 @@
  *   Wajib me-render <html>/<body> sendiri karena menggantikan root layout saat error fatal.
  *   Tampilkan pesan rapi, JANGAN bocorkan stack/digest ke UI.
  * Caller: Next.js App Router otomatis saat error tidak tertangkap error boundary segmen.
- * Dependensi: react (useEffect) dan @sentry/nextjs.
+ * Dependensi: react (useEffect), @sentry/nextjs, lib/muat-ulang-versi.
  * Main Functions: GlobalError.
- * Side Effects: console.error(error) dan pengiriman exception ter-sanitasi ke Sentry Cloud.
+ * Side Effects: console.error(error) dan pengiriman exception ter-sanitasi ke Sentry Cloud; galat "versi lama" = muat ulang
+ *   otomatis sekali (tidak dikirim ke Sentry). "Coba lagi" = muat ulang penuh.
  */
 import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
+import { bolehMuatUlang, galatVersiLama } from "@/lib/muat-ulang-versi";
 
 export default function GlobalError({
     error,
-    reset,
 }: {
     error: Error & { digest?: string };
     reset: () => void;
 }) {
     useEffect(() => {
         console.error(error);
+        if (galatVersiLama(error)) { if (bolehMuatUlang()) window.location.reload(); return; }
         Sentry.captureException(error);
     }, [error]);
 
@@ -33,7 +35,7 @@ export default function GlobalError({
                         Maaf, terjadi kesalahan tak terduga. Silakan muat ulang. Jika tetap bermasalah, hubungi admin.
                     </p>
                     <button
-                        onClick={reset}
+                        onClick={() => window.location.reload()}
                         style={{ marginTop: 8, borderRadius: 8, border: "none", background: "#f59e0b", color: "#000", padding: "8px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
                     >
                         Coba lagi
