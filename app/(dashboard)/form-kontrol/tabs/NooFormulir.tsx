@@ -54,17 +54,18 @@ async function kecilkan(b: Blob): Promise<Blob> {
 function FotoSlot({ label, blob, onAmbil, kunci }: { label: string; blob: Blob | null; onAmbil: (b: Blob) => void; kunci?: string }) {
     const [buka, setBuka] = useState(false);
     const url = useMemo(() => (blob ? URL.createObjectURL(blob) : null), [blob]);
+    const nama = label.charAt(0).toLowerCase() + label.slice(1); // "foto toko", "foto KTP"
     useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
     return (
         <div className="grid gap-2">
             <span className="fi-label">{label}<span className="fi-req" aria-hidden>*</span></span>
             {url && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={url} alt={`Pratinjau ${label.toLowerCase()}`} style={{ width: "100%", maxHeight: "10rem", objectFit: "cover", borderRadius: "var(--r-md)" }} />
+                <img src={url} alt={`Pratinjau ${nama}`} style={{ width: "100%", maxHeight: "10rem", objectFit: "cover", borderRadius: "var(--r-md)" }} />
             )}
             <div className="fi-btnrow">
                 <Button icon={<Camera className="fi-icon" aria-hidden />} disabled={Boolean(kunci)} disabledReason={kunci} onClick={() => setBuka(true)}>
-                    {blob ? `Ambil ulang ${label.toLowerCase()}` : `Ambil ${label.toLowerCase()}`}
+                    {blob ? `Ambil ulang ${nama}` : `Ambil ${nama}`}
                 </Button>
             </div>
             <CameraCapture open={buka} onClose={() => setBuka(false)} onCapture={async (b) => { onAmbil(await kecilkan(b)); }} />
