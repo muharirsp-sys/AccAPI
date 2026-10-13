@@ -34,9 +34,73 @@ export function validateNoOrderReason(
     return null;
 }
 
-export const PRINCIPLES = ["GODREJ", "MONTISS", "MUSTIKA RATU", "SOFTEX"] as const;
 export const HARI_KUNJUNGAN = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"] as const;
 export const MINGGU_PATTERNS = ["ganjil", "genap", "all"] as const;
+
+/**
+ * Kunci pembanding hari JKS: huruf besar tanpa spasi/tanda ("SENIN", " Senin ", "JUM'AT" → "SENIN"/"JUMAT"). Rute membandingkan kunci,
+ * jadi JKS yang sudah tersimpan HURUF BESAR terbaca tanpa unggah ulang. SAMA dengan ekspresi SQL `kunciHariSql` di db.ts.
+ */
+export const kunciHari = (v: unknown) => String(v ?? "").toUpperCase().replace(/[^A-Z]/g, "");
+const HARI_BAKU = new Map<string, string>(HARI_KUNJUNGAN.map((h) => [kunciHari(h), h]));
+/**
+ * Bentuk baku hari untuk disimpan saat unggah: "" = kosong (boleh, ditandai di Kontrol JKS); null = tidak dikenal (baris ditolak).
+ * Kosong diputuskan dari teks mentah ter-trim, bukan dari kunci: "1", "-", "?" berkunci kosong tetapi BUKAN sel kosong → ditolak.
+ */
+export function hariBaku(v: unknown): string | null {
+    if (!String(v ?? "").trim()) return "";
+    return HARI_BAKU.get(kunciHari(v)) ?? null;
+}
+
+// ponytail: acuan paritas minggu JKS (keputusan owner 12 Okt 2026) — minggu yang memuat Senin 12 Okt 2026 (tanggal WITA) = GENAP, lalu
+//   selang-seling terus Senin-ke-Senin; BUKAN nomor minggu ISO (2026 punya 53 minggu ISO: 28 Des 2026 dan 4 Jan 2027 sama-sama ganjil).
+//   Plafon: mengganti acuan membalik pola ganjil/genap SEMUA JKS sekaligus — hanya atas keputusan owner.
+export const ACUAN_MINGGU_GENAP = "2026-10-12";
+const nomorHari = (ymd: string) => { const [y, m, d] = ymd.split("-").map(Number); return Date.UTC(y, m - 1, d) / 86_400_000; };
+/**
+ * Paritas minggu untuk tanggal kalender WITA "YYYY-MM-DD" (tanggal yang dikirim layar, hariIniWita): selisih minggu dari acuan, negatif
+ * juga benar. Satu-satunya hitungan paritas — SQL hanya membandingkan pola tersimpan dengan hasil fungsi ini (db.ts polaMinggu).
+ */
+export function paritasMinggu(ymd: string): "ganjil" | "genap" {
+    const minggu = Math.floor((nomorHari(ymd) - nomorHari(ACUAN_MINGGU_GENAP)) / 7);
+    return minggu % 2 === 0 ? "genap" : "ganjil";
+}
+
+/** FK-MSM butir 5: kunci nama SPV/SM — trim + huruf besar (" spv a " = "SPV A"); kosong tidak cocok apa pun (pemanggil menjaga). */
+export const kunciNama = (v: string | null | undefined) => (v ?? "").trim().toUpperCase();
+
+/**
+ * Hierarki Sales (owner 13 Okt 2026): nama SPV/SM di sales_profile WAJIB nama akun aktif ber-role itu, karena cakupan (resolveScope)
+ * mencocokkan nama AKUN sesi dengan nama ini. `akun` = nama akun aktif ber-role itu (scope.ts namaAkunPeran, akhiran dibuang, BOLEH ganda).
+ * Kosong/null = melepas (null). Tidak ada akun = 400 SPV_/SM_TIDAK_DIKENAL; lebih dari satu akun bernama sama = 409 NAMA_GANDA (cakupan
+ * akan bocor ke dua akun). Yang disimpan = ejaan AKUN, bukan ketikan.
+ */
+export function pilihNamaAkun(nama: unknown, akun: readonly string[], peran: "SPV" | "SM"):
+    { nama: string | null } | { galat: { status: number; kode: string; error: string } } {
+    if (nama != null && typeof nama !== "string") return { galat: { status: 400, kode: "INPUT_TIDAK_VALID", error: `Nama ${peran} harus teks.` } };
+    const teks = typeof nama === "string" ? nama.trim() : "";
+    const k = kunciNama(teks);
+    if (!k) return { nama: null };
+    const cocok = akun.filter((a) => kunciNama(a) === k);
+    if (cocok.length === 1) return { nama: cocok[0] };
+    return cocok.length === 0
+        ? { galat: { status: 400, kode: `${peran}_TIDAK_DIKENAL`, error: `${peran} "${teks}" tidak cocok dengan akun ${peran} aktif mana pun; pilih dari daftar akun.` } }
+        : { galat: { status: 409, kode: "NAMA_GANDA", error: `Ada ${cocok.length} akun ${peran} aktif bernama "${cocok[0]}" — cakupan akan terbagi ke semuanya; ubah nama salah satu akun dulu.` } };
+}
+
+// FK-MSM2: kunjungan luar rute.
+/**
+ * Kode toko JKS yang COCOK (lib/order-cabang cocokKodeRute) dengan pelanggan Accurate `customerNo` — kebalikannya: customerNo itu sendiri dan
+ * customerNo tanpa SATU akhiran terakhir ("C-100001-CBA" → ["C-100001-CBA", "C-100001"]). Huruf besar, ter-trim; spasi dalam tidak ditebak.
+ * Dipakai server (cari toko di JKS sendiri / salesman lain, kode pendek maupun lengkap) DAN layar Rute (toko pilihan sudah di rute?).
+ * Murni (tanpa impor server) supaya aman di klien; lib/form-kontrol/fk-msm2.test.ts membuktikan kesetaraannya dengan cocokKodeRute.
+ */
+export function kodeJksUntuk(customerNo: string): string[] {
+    const c = String(customerNo ?? "").trim().toUpperCase();
+    if (!c) return [];
+    const i = c.lastIndexOf("-");
+    return i > 0 && i < c.length - 1 ? [c, c.slice(0, i)] : [c];
+}
 
 export const DAY_TO_HARI: Record<number, string> = {
     1: "Senin",

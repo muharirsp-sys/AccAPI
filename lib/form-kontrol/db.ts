@@ -1,25 +1,26 @@
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, inArray, isNull, sql, type AnyColumn } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import {
     jksMaster, aoControlDaily, noOrderReason,
     merchandisingCheck, salesmanDailyReport,
-    spvBriefing, smControl, kontrolAuditLog, salesProfile,
+    spvBriefing, smControl, kontrolAuditLog, salesProfile, kunjunganLuarRute,
 } from "@/db/schema";
-import { DAY_TO_HARI, NO_ORDER_REASONS } from "./constants";
+import { cocokKodeRute } from "@/lib/order-cabang";
+import { DAY_TO_HARI, NO_ORDER_REASONS, hariBaku, kunciHari, kunciNama, paritasMinggu } from "./constants";
 import type { AoStatus, TodayRouteRow } from "./types";
 
-// ── Week parity ──────────────────────────────────────────────────────────────
-function getISOWeekNumber(date: Date): number {
-    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
+// Paritas minggu = paritasMinggu (constants.ts, acuan owner 12 Okt 2026), dihitung dari string tanggal WITA yang dikirim layar.
 
-function getWeekParity(date: Date): "ganjil" | "genap" {
-    return getISOWeekNumber(date) % 2 === 1 ? "ganjil" : "genap";
-}
+// FK-MSM butir 2: JKS dibandingkan lewat kunci hari (huruf besar tanpa spasi/tanda) dan pola minggu huruf kecil ter-trim, sehingga JKS lama
+// ("SENIN", " Senin ", "JUM'AT", "GENAP") terbaca tanpa unggah ulang. Kunci = kunciHari (constants.ts). ponytail: ekspresi tidak memakai
+// indeks (principle, hari_kunjungan); baris sudah disaring sales_code + principle lewat idx_jks_sales_principle.
+const kunciHariSql = sql`regexp_replace(upper(coalesce(${jksMaster.hariKunjungan}, '')), '[^A-Z]', '', 'g')`;
+const hariIni = (dayName: string) => sql`${kunciHariSql} = ${kunciHari(dayName)}`;
+const polaMinggu = (parity: "ganjil" | "genap") => sql`lower(trim(${jksMaster.mingguPattern})) in ('all', ${parity})`;
+
+// FK-MSM butir 5: nama SPV/SM Hierarki dibandingkan sesudah trim + tanpa beda huruf (kunciNama, constants.ts); nama kosong tidak cocok apa pun.
+const samaNama = (kolom: AnyColumn, nama: string) => sql`upper(trim(${kolom})) = ${kunciNama(nama)}`;
 
 export function parseDateString(dateStr: string): Date {
     const [y, m, d] = dateStr.split("-").map(Number);
@@ -28,20 +29,34 @@ export function parseDateString(dateStr: string): Date {
 
 // ── JKS ─────────────────────────────────────────────────────────────────────
 
+/**
+ * FK-MSM2 butir 3: jejak baris JKS yang DITAMBAHKAN SALESMAN (konfirmasi kunjungan luar rute) — siapa, kapan, dari kunjungan tanggal berapa;
+ * null = baris unggahan. Sumbernya kunjungan_luar_rute.jks_id (jks_master tidak diberi kolom baru); konfirmasi paling awal bila lebih dari satu.
+ * `jks_master.id` ditulis LITERAL: di kolom select Drizzle merender ${jksMaster.id} tanpa nama tabel ("id" = k.id di subkueri).
+ */
+export type JejakTambahanSalesman = { oleh: string | null; pada: string; dariKunjungan: string } | null;
+const jejakTambahanSalesman = sql<JejakTambahanSalesman>`(SELECT json_build_object('oleh', k.dikonfirmasi_oleh_nama, 'pada', k.dikonfirmasi_pada,
+    'dariKunjungan', k.tanggal) FROM ${kunjunganLuarRute} k WHERE k.jks_id = jks_master.id AND k.konfirmasi = 'jks'
+    ORDER BY k.dikonfirmasi_pada LIMIT 1)`;
+
 export async function getJksList(filters: {
     salesCode?: string;
+    /** Cakupan pemakai (FK-MSM butir 4): hanya kode sales ini; undefined = semua (admin). */
+    salesCodes?: string[];
     principle?: string;
     hariKunjungan?: string;
     isActive?: boolean;
 } = {}, limit = 100, offset = 0) {
+    if (filters.salesCodes?.length === 0) return { rows: [], total: 0 };
     const conditions = [];
     if (filters.salesCode)     conditions.push(eq(jksMaster.salesCode, filters.salesCode));
+    if (filters.salesCodes)    conditions.push(inArray(jksMaster.salesCode, filters.salesCodes));
     if (filters.principle)     conditions.push(eq(jksMaster.principle, filters.principle));
-    if (filters.hariKunjungan) conditions.push(eq(jksMaster.hariKunjungan, filters.hariKunjungan));
+    if (filters.hariKunjungan) conditions.push(hariIni(filters.hariKunjungan));
     if (filters.isActive !== undefined) conditions.push(eq(jksMaster.isActive, filters.isActive));
 
     const [rows, countResult] = await Promise.all([
-        db.select().from(jksMaster)
+        db.select({ ...getTableColumns(jksMaster), tambahanSalesman: jejakTambahanSalesman }).from(jksMaster)
             .where(conditions.length ? and(...conditions) : undefined)
             .orderBy(asc(jksMaster.salesCode), asc(jksMaster.custCode))
             .limit(limit).offset(offset),
@@ -51,6 +66,26 @@ export async function getJksList(filters: {
     return { rows, total: countResult[0]?.count ?? 0 };
 }
 
+/**
+ * Principal JKS AKTIF dalam cakupan (FK-MSM butir 1) — pengganti daftar principal tetap di layar. `salesCodes` null = semua (admin);
+ * [] = tanpa kueri. ponytail: gabungan seluruh cakupan (tim SPV), bukan per salesman; SPV memilih principal dari gabungan timnya.
+ */
+export async function getJksPrinciples(salesCodes: string[] | null): Promise<string[]> {
+    if (salesCodes?.length === 0) return [];
+    const rows = await db.selectDistinct({ principle: jksMaster.principle }).from(jksMaster)
+        .where(and(eq(jksMaster.isActive, true), salesCodes ? inArray(jksMaster.salesCode, salesCodes) : undefined))
+        .orderBy(asc(jksMaster.principle));
+    return rows.map((r) => r.principle).filter(Boolean);
+}
+
+/**
+ * Tulis JKS per baris (kunci sales_code + cust_code + principle). Hari disimpan dalam bentuk BAKU ("SENIN"/"jum'at" → "Senin"/"Jumat");
+ * hari tak dikenal (mis. "Minggu", salah ketik) → baris TIDAK ditulis dan dilaporkan di `ditolak` (indeks baris masukan, 0-based).
+ * Unggah TIDAK menghapus/menonaktifkan baris yang tidak ada di berkas — termasuk baris tambahan salesman (FK-MSM2 butir 4). Satu-satunya
+ * pengecualian (FK-MSM2): baris tambahan salesman berkode LENGKAP (C-1-CBA) yang tokonya ada di berkas dengan kode JKS lain yang cocok
+ * (C-1, cocokKodeRute) untuk salesman + principal yang sama → baris tambahan itu DINONAKTIFKAN (tidak dihapus; jejaknya tetap) dan
+ * dilaporkan di `digantikan`, supaya toko yang sama tidak dua kali di rute. Kode persis sama = baris yang sama (upsert biasa).
+ */
 export async function upsertJksRows(rows: {
     salesCode: string; salesName: string; custCode: string; custName: string;
     market?: string; alamat?: string; kota?: string; hariKunjungan?: string;
@@ -59,15 +94,21 @@ export async function upsertJksRows(rows: {
 }[]) {
     const now = new Date();
     let imported = 0, skipped = 0;
-    for (const r of rows) {
+    const ditolak: { indeks: number; custCode: string; hari: string }[] = [];
+    /** salesCode + principal → kode toko (huruf besar) yang ditulis berkas ini. */
+    const tertulis = new Map<string, Set<string>>();
+    for (const [indeks, r] of rows.entries()) {
         if (!r.salesCode || !r.custCode || !r.principle) { skipped++; continue; }
-        const pattern = (r.mingguPattern ?? "all") as "ganjil" | "genap" | "all";
+        const hari = hariBaku(r.hariKunjungan);
+        if (hari === null) { ditolak.push({ indeks, custCode: String(r.custCode), hari: String(r.hariKunjungan) }); continue; }
+        const polaMasuk = String(r.mingguPattern ?? "").trim().toLowerCase();
+        const pattern = (["ganjil", "genap", "all"].includes(polaMasuk) ? polaMasuk : "all") as "ganjil" | "genap" | "all";
         const freq = r.visitFrequency ?? (pattern === "all" ? 4 : 2);
         await db.insert(jksMaster).values({
             id: randomUUID(), salesCode: r.salesCode, salesName: r.salesName,
             custCode: r.custCode, custName: r.custName, market: r.market ?? null,
             alamat: r.alamat ?? null, kota: r.kota ?? null,
-            hariKunjungan: r.hariKunjungan ?? null, mingguPattern: pattern,
+            hariKunjungan: hari || null, mingguPattern: pattern,
             area: r.area ?? null, rayon: r.rayon ?? null, principle: r.principle,
             channel: r.channel ?? "TT", visitFrequency: freq,
             isActive: true, createdAt: now, updatedAt: now,
@@ -76,34 +117,67 @@ export async function upsertJksRows(rows: {
             set: {
                 salesName: r.salesName, custName: r.custName, market: r.market ?? null,
                 alamat: r.alamat ?? null, kota: r.kota ?? null,
-                hariKunjungan: r.hariKunjungan ?? null, mingguPattern: pattern,
+                hariKunjungan: hari || null, mingguPattern: pattern,
                 area: r.area ?? null, rayon: r.rayon ?? null, channel: r.channel ?? "TT",
                 visitFrequency: freq, isActive: true, updatedAt: now,
             },
         });
         imported++;
+        const k = `${r.salesCode}\u0000${r.principle}`;
+        // Peninjau A R-3: baris berkas TANPA hari tidak menggantikan baris tambahan salesman yang berhari (toko tidak keluar dari rute).
+        if (hari) tertulis.set(k, (tertulis.get(k) ?? new Set()).add(String(r.custCode).trim().toUpperCase()));
     }
-    return { imported, skipped };
+    const digantikan: { salesCode: string; principle: string; custCode: string; custName: string; kodeBerkas: string }[] = [];
+    for (const [k, kode] of tertulis) {
+        const [salesCode, principle] = k.split("\u0000");
+        const tambahan = await db.select({ id: jksMaster.id, custCode: jksMaster.custCode, custName: jksMaster.custName }).from(jksMaster)
+            .where(and(eq(jksMaster.salesCode, salesCode), eq(jksMaster.principle, principle), eq(jksMaster.isActive, true),
+                sql`EXISTS (SELECT 1 FROM ${kunjunganLuarRute} k WHERE k.jks_id = jks_master.id AND k.konfirmasi = 'jks')`));
+        for (const t of tambahan) {
+            if (kode.has(t.custCode.trim().toUpperCase())) continue;
+            const kodeBerkas = [...kode].find((u) => cocokKodeRute(u, t.custCode));
+            if (!kodeBerkas) continue;
+            await db.update(jksMaster).set({ isActive: false, updatedAt: now }).where(eq(jksMaster.id, t.id));
+            digantikan.push({ salesCode, principle, custCode: t.custCode, custName: t.custName, kodeBerkas });
+        }
+    }
+    return { imported, skipped, ditolak, digantikan };
 }
 
 // ── Today's route with AO status ──────────────────────────────────────────
 
+/**
+ * Rute tanggal itu = toko JKS (hari + pola minggu) DITAMBAH kunjungan luar rute salesman tanggal itu (FK-MSM2, `luarRute: true`; juga pada
+ * salesman tanpa JKS dan hari tanpa jadwal). Baris luar rute berkode persis sama dengan toko JKS hari itu tidak diulang.
+ */
 export async function getTodayRoute(salesCode: string, principle: string, dateStr: string): Promise<TodayRouteRow[]> {
     const date = parseDateString(dateStr);
     const dayName = DAY_TO_HARI[date.getDay()];
-    if (!dayName) return [];
+    const parity = paritasMinggu(dateStr);
 
-    const parity = getWeekParity(date);
-
-    const jksRows = await db.select().from(jksMaster).where(
-        and(
-            eq(jksMaster.salesCode, salesCode),
-            eq(jksMaster.principle, principle),
-            eq(jksMaster.hariKunjungan, dayName),
-            or(eq(jksMaster.mingguPattern, "all"), eq(jksMaster.mingguPattern, parity)),
-            eq(jksMaster.isActive, true),
-        )
-    );
+    const [jksDb, luar] = await Promise.all([
+        dayName ? db.select().from(jksMaster).where(
+            and(
+                eq(jksMaster.salesCode, salesCode),
+                eq(jksMaster.principle, principle),
+                hariIni(dayName),
+                polaMinggu(parity),
+                eq(jksMaster.isActive, true),
+            )
+        ) : Promise.resolve([]),
+        db.select().from(kunjunganLuarRute).where(and(eq(kunjunganLuarRute.salesCode, salesCode),
+            eq(kunjunganLuarRute.principle, principle), eq(kunjunganLuarRute.tanggal, dateStr), isNull(kunjunganLuarRute.dibatalkanPada)))
+            .orderBy(asc(kunjunganLuarRute.custName)),
+    ]);
+    // Satu toko satu kartu (peninjau A R-1): kode persis sama = baris JKS; kode berbeda tetapi cocok (JKS "C-1" diunggah sesudah pelanggan
+    // "C-1-CBA" ditambah luar rute) = baris luar rute, karena kunjungan hari itu tercatat di kodenya.
+    const jksTampil = jksDb.filter((j) => !luar.some((l) => l.custCode !== j.custCode && cocokKodeRute(j.custCode, l.custCode)));
+    const kodeJks = new Set(jksTampil.map((j) => j.custCode));
+    const jksRows: (typeof jksDb[number] & { luarRute?: boolean })[] = [...jksTampil, ...luar.filter((l) => !kodeJks.has(l.custCode)).map((l) => ({
+        id: l.id, salesCode: l.salesCode, salesName: "", custCode: l.custCode, custName: l.custName, market: null, alamat: l.alamat, kota: null,
+        hariKunjungan: null, mingguPattern: "all", area: null, rayon: null, principle: l.principle, channel: "", visitFrequency: 0,
+        isActive: true, createdAt: l.dibuatPada, updatedAt: l.dibuatPada, luarRute: true,
+    }))];
 
     if (jksRows.length === 0) return [];
 
@@ -166,6 +240,7 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
             checkoutPhotoUrl: ao?.checkoutPhotoUrl ?? null,
             monthlyOrderCount: monthlyMap.get(j.custCode) ?? 0,
             needsAttention: attentionSet.has(j.custCode),
+            luarRute: j.luarRute === true,
         };
     });
 }
@@ -314,12 +389,12 @@ async function computeReportSummary(salesCode: string, dateStr: string) {
     const dayName = DAY_TO_HARI[date.getDay()];
     let totalTokoJks = aoRows.length;
     if (dayName) {
-        const parity = getWeekParity(date);
+        const parity = paritasMinggu(dateStr);
         const cnt = await db.select({ count: sql<number>`count(*)` }).from(jksMaster).where(
             and(
                 eq(jksMaster.salesCode, salesCode),
-                eq(jksMaster.hariKunjungan, dayName),
-                or(eq(jksMaster.mingguPattern, "all"), eq(jksMaster.mingguPattern, parity)),
+                hariIni(dayName),
+                polaMinggu(parity),
                 eq(jksMaster.isActive, true),
             )
         );
@@ -396,7 +471,8 @@ export async function acknowledgeReport(data: {
         const prof = await db.select({ spvName: salesProfile.spvName, smName: salesProfile.smName })
             .from(salesProfile).where(eq(salesProfile.salesCode, data.salesCode)).limit(1);
         const p = prof[0];
-        if (!p || (p.spvName !== data.supervisorName && p.smName !== data.supervisorName)) return false;
+        const saya = kunciNama(data.supervisorName);
+        if (!p || !saya || (kunciNama(p.spvName) !== saya && kunciNama(p.smName) !== saya)) return false;
     }
     const existing = await db.select({ id: salesmanDailyReport.id, spvAckBy: salesmanDailyReport.spvAckBy, spvAckAt: salesmanDailyReport.spvAckAt })
         .from(salesmanDailyReport)
@@ -428,7 +504,7 @@ export async function saveBriefing(data: {
 }) {
     const id = randomUUID();
     await db.insert(spvBriefing).values({
-        id, spvName: data.spvName, date: data.date, session: data.session,
+        id, spvName: data.spvName.trim(), date: data.date, session: data.session,
         agenda: data.agenda ?? null, tokoDialas: data.tokoDialas ?? null,
         penyebab: data.penyebab ?? null, solusi: data.solusi ?? null,
         createdBy: data.createdBy ?? null, createdAt: new Date(),
@@ -437,37 +513,49 @@ export async function saveBriefing(data: {
 }
 
 export async function getBriefings(spvName: string, dateStr: string) {
+    if (!kunciNama(spvName)) return [];
     return db.select().from(spvBriefing).where(
-        and(eq(spvBriefing.spvName, spvName), eq(spvBriefing.date, dateStr))
+        and(samaNama(spvBriefing.spvName, spvName), eq(spvBriefing.date, dateStr))
     );
 }
 
 // Semua salesCode di bawah satu SPV — untuk RBAC scope SPV.
 export async function getSalesCodesForSpv(spvName: string): Promise<string[]> {
+    if (!kunciNama(spvName)) return [];
     const rows = await db.select({ salesCode: salesProfile.salesCode })
-        .from(salesProfile).where(eq(salesProfile.spvName, spvName));
+        .from(salesProfile).where(samaNama(salesProfile.spvName, spvName));
     return rows.map(r => r.salesCode).filter(Boolean) as string[];
 }
 
 // Semua salesCode di bawah satu SM — untuk RBAC scope SM.
 export async function getSalesCodesForSm(smName: string): Promise<string[]> {
+    if (!kunciNama(smName)) return [];
     const rows = await db.select({ salesCode: salesProfile.salesCode })
-        .from(salesProfile).where(eq(salesProfile.smName, smName));
+        .from(salesProfile).where(samaNama(salesProfile.smName, smName));
     return rows.map(r => r.salesCode).filter(Boolean) as string[];
 }
 
 // SPV di bawah satu SM + briefing mereka hari itu — untuk Kontrol SM (ganti hardcode).
-export async function getSmSpvBriefings(smName: string, dateStr: string) {
+/** Nama SPV (unik menurut trim + tanpa beda huruf; tampil = ejaan pertama ter-trim) di bawah satu SM. */
+export async function getSpvNamesForSm(smName: string): Promise<string[]> {
+    if (!kunciNama(smName)) return [];
     const profiles = await db.select({ spvName: salesProfile.spvName })
-        .from(salesProfile).where(eq(salesProfile.smName, smName));
-    const spvNames = [...new Set(profiles.map(p => p.spvName).filter((n): n is string => !!n))];
+        .from(salesProfile).where(samaNama(salesProfile.smName, smName)).orderBy(asc(salesProfile.salesCode));
+    const unik = new Map<string, string>();
+    for (const p of profiles) { const k = kunciNama(p.spvName); if (k && !unik.has(k)) unik.set(k, p.spvName!.trim()); }
+    return [...unik.values()];
+}
+
+export async function getSmSpvBriefings(smName: string, dateStr: string) {
+    const spvNames = await getSpvNamesForSm(smName);
     if (spvNames.length === 0) return [];
+    // KC2: cocok trim + tanpa beda huruf, satu baris per SPV (" spv a " dan "SPV A" = satu).
     const briefings = await db.select().from(spvBriefing).where(
-        and(eq(spvBriefing.date, dateStr), inArray(spvBriefing.spvName, spvNames))
+        and(eq(spvBriefing.date, dateStr), inArray(sql`upper(trim(${spvBriefing.spvName}))`, spvNames.map(kunciNama)))
     );
     return spvNames.map(name => ({
         spvName: name,
-        briefings: briefings.filter(b => b.spvName === name).map(b => ({
+        briefings: briefings.filter(b => kunciNama(b.spvName) === kunciNama(name)).map(b => ({
             session: b.session, penyebab: b.penyebab ?? null, solusi: b.solusi ?? null,
         })),
     }));
@@ -482,7 +570,7 @@ export async function saveSmControl(data: {
 }) {
     const id = randomUUID();
     await db.insert(smControl).values({
-        id, smName: data.smName, date: data.date,
+        id, smName: data.smName.trim(), date: data.date,
         spvChecked: data.spvChecked ?? null,
         jksChecked: data.jksChecked ?? false,
         fotoChecked: data.fotoChecked ?? false,
@@ -496,8 +584,9 @@ export async function saveSmControl(data: {
 }
 
 export async function getSmControl(smName: string, dateStr: string) {
+    if (!kunciNama(smName)) return [];
     return db.select().from(smControl).where(
-        and(eq(smControl.smName, smName), eq(smControl.date, dateStr))
+        and(samaNama(smControl.smName, smName), eq(smControl.date, dateStr))
     ).limit(1);
 }
 
@@ -560,10 +649,14 @@ export async function getAllSalesProfiles() {
     return db.select().from(salesProfile).orderBy(asc(salesProfile.salesName));
 }
 
-export async function updateSalesHierarchy(salesCode: string, spvName: string | null, smName: string | null) {
-    await db.update(salesProfile)
-        .set({ spvName: spvName || null, smName: smName || null, updatedAt: new Date() })
-        .where(eq(salesProfile.salesCode, salesCode));
+/** false = tidak ada profil berkode sales itu (tidak ada yang ditulis). */
+export async function updateSalesHierarchy(salesCode: string, spvName: string | null, smName: string | null): Promise<boolean> {
+    // Disimpan ter-trim (butir 5); isian bukan teks/kosong = null.
+    const bersih = (v: unknown) => (typeof v === "string" ? v.trim() : "") || null;
+    const ditulis = await db.update(salesProfile)
+        .set({ spvName: bersih(spvName), smName: bersih(smName), updatedAt: new Date() })
+        .where(eq(salesProfile.salesCode, salesCode)).returning({ id: salesProfile.id });
+    return ditulis.length > 0;
 }
 
 // ── Check-in / Check-out ──────────────────────────────────────────────────────
@@ -669,9 +762,20 @@ export async function getVisitDetail(
         ).limit(1),
     ]);
 
-    if (!storeRows[0]) return null;
+    let store: (typeof storeRows[number] & { luarRute?: boolean }) | undefined = storeRows[0];
+    if (!store) {
+        // FK-MSM2: toko tidak di JKS → kunjungan luar rute salesman ini pada TANGGAL itu (tanpa baris luar rute = tetap "tidak ditemukan").
+        const [l] = await db.select({ k: kunjunganLuarRute, salesName: salesProfile.salesName }).from(kunjunganLuarRute)
+            .leftJoin(salesProfile, eq(salesProfile.salesCode, kunjunganLuarRute.salesCode))
+            .where(and(eq(kunjunganLuarRute.salesCode, salesCode), eq(kunjunganLuarRute.custCode, custCode),
+                eq(kunjunganLuarRute.principle, principle), eq(kunjunganLuarRute.tanggal, dateStr), isNull(kunjunganLuarRute.dibatalkanPada))).limit(1);
+        if (l) store = { id: l.k.id, salesCode, salesName: l.salesName ?? "", custCode, custName: l.k.custName, market: null, alamat: l.k.alamat,
+            kota: null, hariKunjungan: null, mingguPattern: "all", area: null, rayon: null, principle, channel: "", visitFrequency: 0, isActive: true,
+            createdAt: l.k.dibuatPada, updatedAt: l.k.dibuatPada, luarRute: true };
+    }
+    if (!store) return null;
     return {
-        store: storeRows[0],
+        store,
         ao: aoRows[0] ?? null,
         merch: merchRows[0] ?? null,
     };
@@ -680,8 +784,9 @@ export async function getVisitDetail(
 // ── SPV Dashboard ─────────────────────────────────────────────────────────────
 
 export async function getSpvDashboard(spvName: string, dateStr: string) {
+    if (!kunciNama(spvName)) return [];
     const profiles = await db.select().from(salesProfile)
-        .where(eq(salesProfile.spvName, spvName));
+        .where(samaNama(salesProfile.spvName, spvName));
 
     if (profiles.length === 0) return [];
 
@@ -689,7 +794,7 @@ export async function getSpvDashboard(spvName: string, dateStr: string) {
     const periodYear  = parseInt(dateStr.split("-")[0], 10);
     const periodMonth = parseInt(dateStr.split("-")[1], 10);
 
-    const [aoRows, reportRows, jksRows, merchRows] = await Promise.all([
+    const [aoRows, reportRows, jksRows, merchRows, luarRows] = await Promise.all([
         db.select({
             salesCode: aoControlDaily.salesCode,
             custCode: aoControlDaily.custCode,
@@ -719,10 +824,15 @@ export async function getSpvDashboard(spvName: string, dateStr: string) {
                 inArray(merchandisingCheck.salesCode, salesCodes),
             )
         ),
+        db.select({ salesCode: kunjunganLuarRute.salesCode, custCode: kunjunganLuarRute.custCode, custName: kunjunganLuarRute.custName })
+            .from(kunjunganLuarRute).where(and(eq(kunjunganLuarRute.tanggal, dateStr), inArray(kunjunganLuarRute.salesCode, salesCodes),
+                isNull(kunjunganLuarRute.dibatalkanPada))),
     ]);
 
     const reportMap = new Map(reportRows.map(r => [r.salesCode, r]));
-    const custNameMap = new Map(jksRows.map(j => [j.custCode, j.custName]));
+    const custNameMap = new Map([...luarRows, ...jksRows].map(j => [j.custCode, j.custName]));
+    // FK-MSM2: kunjungan luar rute ditandai di detail kunjungan SPV.
+    const luarSet = new Set(luarRows.map((l) => `${l.salesCode}|${l.custCode}`));
     // merch per toko per sales: hitung 6 item + simpan stepPhotos untuk dilihat SPV
     const merchMap = new Map(merchRows.map(m => [`${m.salesCode}|${m.custCode}`, m]));
 
@@ -755,6 +865,7 @@ export async function getSpvDashboard(spvName: string, dateStr: string) {
                 return {
                     custCode: r.custCode,
                     custName: custNameMap.get(r.custCode) ?? r.custCode,
+                    luarRute: luarSet.has(`${p.salesCode}|${r.custCode}`),
                     status: r.status,
                     checkinAt: r.checkinAt ? r.checkinAt.toISOString() : null,
                     checkoutAt: r.checkoutAt ? r.checkoutAt.toISOString() : null,
