@@ -1,11 +1,11 @@
 /*
  * Tujuan: Helper murni layar Pembayaran & SPPD (Fiori S6a, it08): status rekaman untuk tile/badge, isian yang kurang sebelum
- *   diajukan (cermin validasi /payments/cart/create), izin aksi → alasan nonaktif, angka ketat, tanggal WITA, dan pratinjau nomor
- *   SPPD. Tidak ada logic bisnis baru — server tetap penentu (kunci `locked_reason`, validasi, nomor).
+ *   diajukan (cermin validasi /payments/cart/create), izin aksi → alasan nonaktif, angka ketat, tanggal WITA, saringan rentang
+ *   tanggal, dan pratinjau nomor SPPD. Tidak ada logic bisnis baru — server tetap penentu (kunci `locked_reason`, validasi, nomor).
  * Caller: app/(dashboard)/payments/**, payments-ui.test.ts.
  * Dependensi: lib/insentif-sales-excel (parseLocaleNumber = cermin parse_number_strict), lib/dateFilter (parseAnyDate).
  * Main Functions: statusRekaman, STATUS_REKAMAN, kurangLengkap, bisaDiajukan, angka, ISIAN, nilaiAwal, galatIsian, izinPembayaran,
- *   tanggalTampil, keYmd, hariIniWita, besokWita, namaAkun, pratinjauNomor, galatTemplat, statusFinance.
+ *   tanggalTampil, keYmd, dalamRentang, hariIniWita, besokWita, namaAkun, pratinjauNomor, galatTemplat, statusFinance.
  * Side Effects: Tidak ada.
  */
 import type { Tone } from "@/components/fiori/core";
@@ -184,6 +184,20 @@ export function tanggalTampil(v: unknown): string {
 export function keYmd(v: unknown): string {
     const p = parseAnyDate(v);
     return p ? `${p.y}-${p.m}-${p.d}` : "";
+}
+
+/**
+ * Saringan rentang tanggal (Actual date / Tgl bayar pabrik): `dari`/`sampai` = YYYY-MM-DD dari <input type="date">, kosong = terbuka.
+ * Tidak aktif = semua lolos. Aktif = tanggal tersimpan harus terbaca DAN dari ≤ tgl ≤ sampai (inklusif); baris tanpa tanggal, teks
+ * bukan tanggal, atau tanggal mustahil tidak lolos. Dibandingkan sebagai tanggal kalender (dinormalkan ke YYYY-MM-DD lewat keYmd,
+ * bukan teks mentah "15/10/2026"); tanggal tanpa jam, jadi tidak ada geser zona waktu (WITA tidak berperan).
+ */
+export function dalamRentang(v: unknown, { dari, sampai }: { dari: string; sampai: string }): boolean {
+    if (!dari && !sampai) return true;
+    const ymd = keYmd(v);
+    const t = Date.parse(`${ymd}T00:00:00Z`); // "" / bulan 13 / hari 45 = NaN; 30 Feb bergulir ke Maret → ditolak lewat cek bolak-balik
+    const nyata = Number.isFinite(t) && new Date(t).toISOString().startsWith(ymd);
+    return nyata && (!dari || ymd >= dari) && (!sampai || ymd <= sampai);
 }
 
 export const hariIniWita = (now: Date = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(now);

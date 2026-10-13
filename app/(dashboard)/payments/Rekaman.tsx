@@ -1,5 +1,6 @@
 /*
- * Tujuan: Layar "Rekaman pembayaran" (Fiori S6a, it08 List Report): tile status sekaligus saringan, FilterBar (cari, principal, tipe),
+ * Tujuan: Layar "Rekaman pembayaran" (Fiori S6a, it08 List Report): tile status sekaligus saringan, FilterBar (cari, principal, tipe,
+ *   rentang Actual date & Tgl bayar pabrik = `actual_date` / `tgl_pembayaran`; disaring di klien karena /payments/data memuat semua),
  *   tabel 8 kolom dengan kunci per baris dari server (`locked_reason`), pilihan HANYA di layar (tidak disimpan, tidak menyeberangi
  *   saringan, hanya baris Siap diajukan), draf isian per rekaman yang disimpan SATU PERMINTAAN PER REKAMAN (hasil per baris), lalu
  *   Buat keranjang. Pengganti grid 18 kolom + "Hapus Ceklis" + "Clear Semua" di page.tsx lama.
@@ -22,7 +23,7 @@ import { Download, Lock, Plus, RefreshCw, ShoppingCart, Upload } from "lucide-re
 import { Button, FooterToolbar, ListItem, MessageStrip, ResponsiveTable, StatusBadge, type Column } from "@/components/fiori/core";
 import { FilterBar, FormField, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
 import {
-    STATUS_REKAMAN, angka, bisaDiajukan, galatIsian, izinPembayaran, kurangLengkap, nilaiAwal, statusRekaman, tanggalTampil, tipeRekaman,
+    STATUS_REKAMAN, angka, bisaDiajukan, dalamRentang, galatIsian, izinPembayaran, kurangLengkap, nilaiAwal, statusRekaman, tanggalTampil, tipeRekaman,
     type Draf, type Isian, type Rekaman as Baris, type StatusRekaman,
 } from "@/lib/payments-ui";
 import { rupiah } from "@/lib/promo-ui";
@@ -33,6 +34,11 @@ const KOSONG: ReadonlySet<string> = new Set();
 const PAGE = 50;
 const urutStatus: StatusRekaman[] = ["draf", "siap", "diajukan", "ulang", "transfer"];
 const nama = (r: Baris) => r.no_lpb || r.record_id;
+const TANPA_RENTANG = { dari: "", sampai: "" };
+type Rentang = typeof TANPA_RENTANG;
+const aktif = (x: Rentang) => Boolean(x.dari || x.sampai);
+const labelRentang = (x: Rentang) => x.dari && x.sampai ? `${tanggalTampil(x.dari)}–${tanggalTampil(x.sampai)}` : x.dari ? `sejak ${tanggalTampil(x.dari)}` : `s.d. ${tanggalTampil(x.sampai)}`;
+const galatRentang = (x: Rentang) => (x.dari && x.sampai && x.dari > x.sampai ? "Tanggal akhir lebih awal dari tanggal awal." : undefined);
 const dokumen = (r: Baris) => (tipeRekaman(r) === "NON_LPB" ? [r.nomor_dokumen, r.jenis_dokumen].filter(Boolean).join(" · ") : r.invoice_no || r.invoice || "");
 
 export default function Rekaman({ permKeys }: { permKeys: string[] }) {
@@ -47,13 +53,17 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
     const [cari, setCari] = useState("");
     const [principal, setPrincipal] = useState("");
     const [tipe, setTipe] = useState("");
+    // Rentang tanggal: Actual date = actual_date; Tgl bayar pabrik = tgl_pembayaran (isian "Tanggal bayar pusat", Excel "Tgl Pembayaran").
+    const [actual, setActual] = useState<Rentang>(TANPA_RENTANG);
+    const [bayar, setBayar] = useState<Rentang>(TANPA_RENTANG);
     const [hal, setHal] = useState(1);
     const principals = useMemo(() => [...new Set(rows.map((r) => (r.principle ?? "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "id")), [rows]);
     const q = cari.trim().toLowerCase();
     const tersaring = useMemo(() => rows.filter((r) =>
         (!q || [r.no_lpb, r.record_id, r.invoice_no, r.nomor_dokumen, r.principle].some((v) => String(v ?? "").toLowerCase().includes(q)))
         && (!principal || (r.principle ?? "").trim() === principal)
-        && (!tipe || tipeRekaman(r) === tipe)), [rows, q, principal, tipe]);
+        && (!tipe || tipeRekaman(r) === tipe)
+        && dalamRentang(r.actual_date, actual) && dalamRentang(r.tgl_pembayaran, bayar)), [rows, q, principal, tipe, actual, bayar]);
     const jumlahTile = useMemo(() => {
         const n: Record<StatusRekaman, number> = { draf: 0, siap: 0, diajukan: 0, ulang: 0, transfer: 0 };
         for (const r of tersaring) n[statusRekaman(r)] += 1;
@@ -64,7 +74,7 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
     const halAktif = Math.min(hal, nHal);
     const barisHal = terlihat.slice((halAktif - 1) * PAGE, halAktif * PAGE);
     const ubahSaring = (f: () => void) => { f(); setHal(1); };
-    const hapusSaringan = () => ubahSaring(() => { setTile(null); setCari(""); setPrincipal(""); setTipe(""); });
+    const hapusSaringan = () => ubahSaring(() => { setTile(null); setCari(""); setPrincipal(""); setTipe(""); setActual(TANPA_RENTANG); setBayar(TANPA_RENTANG); });
 
     // Draf isian (per rekaman) + hasil simpan per baris
     const [draf, setDraf] = useState<Draf>({});
@@ -185,7 +195,11 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
         ) },
         { key: "principal", header: "Principal", cell: (r) => tampil(r, "principle") || "—" },
         { key: "invoice", header: "Invoice", cell: (r) => (tipeRekaman(r) === "NON_LPB" ? [tampil(r, "nomor_dokumen"), tampil(r, "jenis_dokumen")].filter(Boolean).join(" · ") : tampil(r, "invoice_no")) || "—" },
-        { key: "tanggal", header: "Tanggal · JT", secondary: true, cell: (r) => `${tanggalTampil(tampil(r, "tgl_invoice"))} · JT ${tanggalTampil(tampil(r, "jt_invoice"))}` },
+        // Saringan tanggal aktif → tanggal yang disaring ikut tampil (teks sebaris, juga di pop-in sempit) agar hasilnya bisa diperiksa.
+        { key: "tanggal", header: "Tanggal · JT", secondary: true, cell: (r) => [
+            `${tanggalTampil(tampil(r, "tgl_invoice"))} · JT ${tanggalTampil(tampil(r, "jt_invoice"))}`,
+            aktif(actual) && `Actual ${tanggalTampil(r.actual_date)}`, aktif(bayar) && `Bayar pabrik ${tanggalTampil(r.tgl_pembayaran)}`,
+        ].filter(Boolean).join(" · ") },
         { key: "nilai", header: "Nilai invoice", align: "end", cell: (r) => <span className="fi-tnum">{nilaiTampil(r)}</span> },
         { key: "selisih", header: "Selisih WIN", align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{selisih(r)}</span> },
         { key: "status", header: "Status", cell: statusSel },
@@ -197,12 +211,24 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
     );
 
     const status = load.status;
-    const disaring = Boolean(tile || q || principal || tipe);
+    const disaring = Boolean(tile || q || principal || tipe || aktif(actual) || aktif(bayar));
     const chips = [
         ...(tile ? [{ label: `Status: ${STATUS_REKAMAN[tile].label}`, onRemove: () => ubahSaring(() => setTile(null)) }] : []),
         ...(principal ? [{ label: `Principal: ${principal}`, onRemove: () => ubahSaring(() => setPrincipal("")) }] : []),
         ...(tipe ? [{ label: `Tipe: ${tipe}`, onRemove: () => ubahSaring(() => setTipe("")) }] : []),
+        ...(aktif(actual) ? [{ label: `Actual date: ${labelRentang(actual)}`, onRemove: () => ubahSaring(() => setActual(TANPA_RENTANG)) }] : []),
+        ...(aktif(bayar) ? [{ label: `Tgl bayar pabrik: ${labelRentang(bayar)}`, onRemove: () => ubahSaring(() => setBayar(TANPA_RENTANG)) }] : []),
     ];
+    const isianRentang = (judul: string, x: Rentang, set: (v: Rentang) => void) => (
+        <>
+            <FormField label={`${judul} dari`}>
+                {(a) => <input {...a} className="fi-input" type="date" value={x.dari} max={x.sampai || undefined} onChange={(e) => ubahSaring(() => set({ ...x, dari: e.target.value }))} />}
+            </FormField>
+            <FormField label={`${judul} sampai`} error={galatRentang(x)}>
+                {(a) => <input {...a} className="fi-input" type="date" value={x.sampai} min={x.dari || undefined} onChange={(e) => ubahSaring(() => set({ ...x, sampai: e.target.value }))} />}
+            </FormField>
+        </>
+    );
 
     return (
         <RangkaPembayaran halaman="rekaman" judul="Rekaman pembayaran" permKeys={permKeys}
@@ -255,9 +281,17 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
                                 <option value="">LPB, CBD, NON_LPB</option><option value="LPB">LPB</option><option value="CBD">CBD</option><option value="NON_LPB">NON_LPB</option>
                             </select>}
                         </FormField>
+                        {isianRentang("Actual date", actual, setActual)}
+                        {isianRentang("Tgl bayar pabrik", bayar, setBayar)}
                     </>
                 }
             />
+            {(aktif(actual) || aktif(bayar)) && (
+                <p className="fi-small fi-subtle">
+                    Saringan tanggal aktif (batas ikut terhitung): baris tanpa {[aktif(actual) && "Actual date", aktif(bayar) && "Tgl bayar pabrik"].filter(Boolean).join(" atau ")} disembunyikan.
+                    {aktif(bayar) && " Tgl bayar pabrik = isian “Tanggal bayar pusat” (kolom Excel Tgl Pembayaran)."}
+                </p>
+            )}
             <ResponsiveTable<Baris>
                 title="Rekaman" count={terlihat.length} columns={kolom} rows={barisHal} rowKey={(r) => r.record_id} rowLabel={(r) => `Pilih ${nama(r)}`}
                 status={status} error={load.error} onRetry={muat}
@@ -276,7 +310,8 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
                     <div className="fi-wl-row">
                         {bisaDiajukan(r) && kotak(r)}
                         <ListItem doc={nama(r)} amount={nilaiTampil(r)} title={`${tampil(r, "principle") || "—"} · ${dokumen(r) || "invoice kosong"}`}
-                            meta={r.locked_reason ? `Terkunci: ${r.locked_reason}` : galatBaris[r.record_id] ? `Ditolak: ${galatBaris[r.record_id]}` : draf[r.record_id] ? "Diubah, belum disimpan" : tanggalTampil(r.tgl_invoice)}
+                            meta={r.locked_reason ? `Terkunci: ${r.locked_reason}` : galatBaris[r.record_id] ? `Ditolak: ${galatBaris[r.record_id]}` : draf[r.record_id] ? "Diubah, belum disimpan"
+                                : [tanggalTampil(r.tgl_invoice), aktif(actual) && `Actual ${tanggalTampil(r.actual_date)}`, aktif(bayar) && `Bayar pabrik ${tanggalTampil(r.tgl_pembayaran)}`].filter(Boolean).join(" · ")}
                             badge={<StatusBadge tone={STATUS_REKAMAN[statusRekaman(r)].tone}>{STATUS_REKAMAN[statusRekaman(r)].label}</StatusBadge>}
                             onClick={() => setRincian(r.record_id)} />
                     </div>

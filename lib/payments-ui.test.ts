@@ -1,11 +1,12 @@
 /*
  * Tujuan: Self-check helper layar Pembayaran & SPPD: status rekaman (diajukan butuh nomor pengajuan), isian kurang = cermin
- *         cart/create, rekaman terkunci tidak bisa dipilih, angka ketat (NaN, bukan 0), izin → alasan, tanggal WITA, nomor SPPD.
+ *         cart/create, rekaman terkunci tidak bisa dipilih, angka ketat (NaN, bukan 0), izin → alasan, tanggal WITA, nomor SPPD,
+ *         saringan rentang tanggal (Actual date / Tgl bayar pabrik).
  * Caller: npm test
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { angka, angkaJawaban, besokWita, bisaDiajukan, galatTemplat, izinPembayaran, keYmd, kurangLengkap, namaAkun, pratinjauNomor, statusRekaman, tanggalTampil, type Rekaman } from "@/lib/payments-ui";
+import { angka, angkaJawaban, besokWita, bisaDiajukan, dalamRentang, galatTemplat, izinPembayaran, keYmd, kurangLengkap, namaAkun, pratinjauNomor, statusRekaman, tanggalTampil, type Rekaman } from "@/lib/payments-ui";
 
 const LENGKAP: Rekaman = { record_id: "LPB-1", tipe_pengajuan: "LPB", no_lpb: "LPB-1", principle: "PRINCIPLE A", tgl_invoice: "2026-10-06", jt_invoice: "2026-11-05", invoice_no: "INV-1", nilai_invoice: "12.500.000", locked_reason: "" };
 
@@ -71,6 +72,38 @@ test("tanggal: tampil dd/mm/yyyy, isian YYYY-MM-DD, besok menurut WITA (bukan UT
     // 9 Okt 23.30 UTC = 10 Okt 07.30 WITA → besok = 11 Okt (UTC akan menjawab 10 Okt).
     assert.equal(besokWita(new Date("2026-10-09T23:30:00Z")), "2026-10-11");
     assert.equal(namaAkun("betterauth|staff|a@x"), "a@x");
+});
+
+test("saringan rentang tanggal: kosong = semua lolos; batas inklusif; dibandingkan sebagai tanggal; tanpa tanggal tidak lolos", () => {
+    const OKT = { dari: "2026-10-01", sampai: "2026-10-31" };
+    // Tidak aktif: semua lolos, termasuk baris tanpa tanggal.
+    assert.equal(dalamRentang("", { dari: "", sampai: "" }), true);
+    assert.equal(dalamRentang(undefined, { dari: "", sampai: "" }), true);
+    // Batas inklusif kedua sisi.
+    assert.equal(dalamRentang("2026-10-01", OKT), true);
+    assert.equal(dalamRentang("2026-10-31", OKT), true);
+    assert.equal(dalamRentang("2026-09-30", OKT), false);
+    assert.equal(dalamRentang("2026-11-01", OKT), false);
+    // Satu sisi saja.
+    assert.equal(dalamRentang("2026-12-25", { dari: "2026-10-01", sampai: "" }), true);
+    assert.equal(dalamRentang("2026-09-30", { dari: "2026-10-01", sampai: "" }), false);
+    assert.equal(dalamRentang("2026-09-30", { dari: "", sampai: "2026-10-31" }), true);
+    assert.equal(dalamRentang("2026-11-01", { dari: "", sampai: "2026-10-31" }), false);
+    // Data lama DD/MM/YYYY dibandingkan sebagai tanggal (sebagai teks "15/10/2026" < "2026-…" → salah).
+    assert.equal(dalamRentang("15/10/2026", OKT), true);
+    assert.equal(dalamRentang("15/11/2026", OKT), false);
+    // Bercap waktu: tanggal kalender di depan dipakai apa adanya (tanpa geser zona waktu).
+    assert.equal(dalamRentang("2026-10-31T23:30:00Z", OKT), true);
+    // Aktif: kosong / teks bukan tanggal / tanggal mustahil = tanpa tanggal → tidak lolos.
+    assert.equal(dalamRentang("", OKT), false);
+    assert.equal(dalamRentang(undefined, { dari: "2026-10-01", sampai: "" }), false);
+    // Hanya "sampai": teks kosong menurut urutan teks < tanggal mana pun → tanpa penjaga, baris tanpa tanggal ikut lolos.
+    assert.equal(dalamRentang("", { dari: "", sampai: "2026-10-31" }), false);
+    assert.equal(dalamRentang("belum", OKT), false);
+    assert.equal(dalamRentang("2026-10-45", { dari: "2026-10-01", sampai: "" }), false);
+    assert.equal(dalamRentang("2027-02-30", { dari: "2026-10-01", sampai: "" }), false);
+    // Dari > sampai: tidak ada yang lolos (layar menampilkan galat).
+    assert.equal(dalamRentang("2026-10-15", { dari: "2026-10-31", sampai: "2026-10-01" }), false);
 });
 
 test("nomor SPPD: cermin templat server; tanpa nomor urut / isian asing ditolak", () => {
