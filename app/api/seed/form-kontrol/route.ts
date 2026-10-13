@@ -65,7 +65,7 @@ function buildJksRows(s: typeof SALESMEN[number]) {
     return rows;
 }
 
-// Kalender Juni 2026: 1 Juni = Senin. Parity = ISO week (sama dgn getWeekParity di db.ts):
+// Kalender Juni 2026: 1 Juni = Senin. Parity = paritasMinggu (lib/form-kontrol/constants.ts, acuan 12 Okt 2026 = genap):
 // minggu 23 (1-5 Jun)=ganjil, minggu 24 (8-12)=genap, minggu 25 (15-19)=ganjil.
 const JUNI_WORKDAYS = [
     { date: "2026-06-01", hari: "Senin",  parity: "ganjil" }, { date: "2026-06-02", hari: "Selasa", parity: "ganjil" },

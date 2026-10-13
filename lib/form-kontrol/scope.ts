@@ -4,7 +4,7 @@
  * Dependensi: getScopeForUser (sales_profile).
  * Catatan: allowedSalesCodes === null = akses global (admin/manager/admin_sales).
  */
-import { getScopeForUser, getSalesCodesForSpv, getSalesCodesForSm } from "./db";
+import { getScopeForUser, getSalesCodesForSpv, getSalesCodesForSm, getSpvNamesForSm, kunciNama } from "./db";
 
 export interface UserScope {
     role: string;
@@ -66,4 +66,31 @@ export function canAccessSales(scope: UserScope, salesCode: string | null | unde
 export function effectiveSupervisorName(scope: UserScope, requested: string | null, fallbackName?: string): string | null {
     if (scope.allowedSalesCodes === null) return requested || fallbackName || null; // admin bebas
     return scope.spvName || scope.smName || scope.salesName || fallbackName || null;
+}
+
+/**
+ * Nama SPV yang boleh dibaca/ditulis briefing-nya (FK-MSM putaran 2) — dari sesi, bukan dari parameter klien. null = semua (admin/manager/
+ * admin_sales). SPV: namanya; SM: namanya + SPV di bawahnya; salesman: hanya MEMBACA briefing SPV-nya (profil), tidak menulis.
+ */
+export async function namaSpvBoleh(scope: UserScope, untuk: "baca" | "tulis"): Promise<string[] | null> {
+    if (scope.allowedSalesCodes === null) return null;
+    if (scope.role === "spv") return scope.spvName ? [scope.spvName] : [];
+    if (scope.role === "sm") return scope.smName ? [scope.smName, ...await getSpvNamesForSm(scope.smName)] : [];
+    return untuk === "baca" && scope.spvName ? [scope.spvName] : [];
+}
+
+/** Nama SM yang boleh dibaca/ditulis Kontrol SM-nya: null = semua (admin); SM = namanya; peran lain tidak ada. */
+export const namaSmBoleh = (scope: UserScope): string[] | null =>
+    scope.allowedSalesCodes === null ? null : scope.role === "sm" && scope.smName ? [scope.smName] : [];
+
+/**
+ * Nama yang dipakai route: `diminta` harus ada di `boleh` (trim + tanpa beda huruf) — selain itu `tolak`; kosong = nama pertama yang boleh.
+ * Admin (`boleh` null) bebas; null = tidak ada nama.
+ */
+export function namaDalamCakupan(boleh: string[] | null, diminta: unknown): { nama: string | null } | { tolak: true } {
+    const d = typeof diminta === "string" ? diminta.trim() : "";
+    if (boleh === null) return { nama: d || null };
+    if (!d) return boleh[0] ? { nama: boleh[0].trim() } : { tolak: true };
+    const cocok = boleh.find((n) => kunciNama(n) === kunciNama(d));
+    return cocok ? { nama: cocok.trim() } : { tolak: true };
 }

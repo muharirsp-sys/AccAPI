@@ -14,7 +14,7 @@ const PG_URL = process.env.AM040_DATABASE_URL ?? "";
 const pgSkip = PG_URL ? false : "AM040_DATABASE_URL tidak di-set (Postgres evaluasi lokal AM-040)";
 
 const TABEL = ["user", "access_group", "user_group", "group_permission", "sales_profile", "jks_master", "ao_control_daily",
-    "salesman_daily_report", "merchandising_check", "kontrol_audit_log", "customer", "branch", "accurate_employee", "item"];
+    "salesman_daily_report", "merchandising_check", "kontrol_audit_log", "customer", "branch", "accurate_employee", "item", "spv_briefing", "sm_control"];
 const skema = `uji_fkmsm_${randomUUID().slice(0, 8)}`;
 let admin: Pool;
 let pool: Pool;
@@ -40,6 +40,9 @@ async function muat() {
         profil: await r("../../app/api/form-kontrol/sales-profiles/route.ts"),
         frek: await r("../../app/api/form-kontrol/frequency/route.ts"),
         rute: await r("../../app/api/customers/rute/route.ts"),
+        briefing: await r("../../app/api/form-kontrol/briefing/route.ts"),
+        smBriefings: await r("../../app/api/form-kontrol/sm-briefings/route.ts"),
+        smControl: await r("../../app/api/form-kontrol/sm-control/route.ts"),
     };
 }
 let m: Awaited<ReturnType<typeof muat>>;
@@ -76,6 +79,8 @@ before(async () => {
         ('u-sld', 'Sales D', 'sld@uji.test', true, 'staff', now(), now()),
         ('u-spva', 'SPV A (SPV)', 'spva@uji.test', true, 'spv', now(), now()),
         ('u-spvb', 'SPV B', 'spvb@uji.test', true, 'spv', now(), now()),
+        ('u-spvx', '(SPV)', 'spvx@uji.test', true, 'spv', now(), now()),
+        ('u-sma', 'SM A (SM)', 'sma@uji.test', true, 'sm', now(), now()),
         ('u-admin', 'Admin A', 'admin@uji.test', true, 'admin', now(), now())`);
     await p.query(`INSERT INTO access_group (id, name, created_at, updated_at) VALUES ('g-sales', 'Salesman', now(), now()),
         ('g-spv', 'SPV', now(), now()), ('g-admin', 'Admin', now(), now())`);
@@ -85,13 +90,15 @@ before(async () => {
     await p.query(`INSERT INTO group_permission (group_id, permission_key) SELECT 'g-admin', k FROM unnest(ARRAY['form_kontrol.view', 'form_kontrol.submit',
         'form_kontrol.manage', 'order.view', 'order.create', 'websales.create']) k`);
     await p.query(`INSERT INTO user_group (user_id, group_id, assigned_at) SELECT u, g, now() FROM (VALUES ('u-sla', 'g-sales'),
-        ('u-slb', 'g-sales'), ('u-slc', 'g-sales'), ('u-sld', 'g-sales'), ('u-spva', 'g-spv'), ('u-spvb', 'g-spv'), ('u-admin', 'g-admin')) v(u, g)`);
+        ('u-slb', 'g-sales'), ('u-slc', 'g-sales'), ('u-sld', 'g-sales'), ('u-spva', 'g-spv'), ('u-spvx', 'g-spv'), ('u-sma', 'g-spv'), ('u-spvb', 'g-spv'), ('u-admin', 'g-admin')) v(u, g)`);
     // Nama SPV di Hierarki tidak rapi (spasi, huruf) — sengaja: butir 5. SPV A = profil M-SLA + M-SLB; SPV B = M-SLC. Akun SPV tanpa profil.
-    await p.query(`INSERT INTO sales_profile (id, user_id, sales_code, sales_name, principle, branch, spv_name, accurate_linked, created_at, updated_at) VALUES
-        ('sp-a', 'u-sla', 'M-SLA', 'SALES A', 'PRINCIPLE A', 'CABANG A', ' spv a ', true, now(), now()),
-        ('sp-b', 'u-slb', 'M-SLB', 'SALES B', 'PRINCIPLE B', 'CABANG A', 'SPV A', false, now(), now()),
-        ('sp-c', 'u-slc', 'M-SLC', 'SALES C', 'PRINCIPLE C', 'CABANG B', 'SPV B', true, now(), now()),
-        ('sp-d', 'u-sld', 'M-SLD', 'SALES D', 'PRINCIPLE A', 'CABANG A', NULL, false, now(), now())`);
+    // SM A membawahi M-SLA + M-SLB (nama SM juga tidak rapi). M-SLE = profil dengan nama SPV KOSONG (spasi) — penjaga nama kosong (S16).
+    await p.query(`INSERT INTO sales_profile (id, user_id, sales_code, sales_name, principle, branch, spv_name, sm_name, accurate_linked, created_at, updated_at) VALUES
+        ('sp-a', 'u-sla', 'M-SLA', 'SALES A', 'PRINCIPLE A', 'CABANG A', ' spv a ', 'sm a ', true, now(), now()),
+        ('sp-b', 'u-slb', 'M-SLB', 'SALES B', 'PRINCIPLE B', 'CABANG A', 'SPV A', 'SM A', false, now(), now()),
+        ('sp-c', 'u-slc', 'M-SLC', 'SALES C', 'PRINCIPLE C', 'CABANG B', 'SPV B', NULL, true, now(), now()),
+        ('sp-d', 'u-sld', 'M-SLD', 'SALES D', 'PRINCIPLE A', 'CABANG A', NULL, NULL, false, now(), now()),
+        ('sp-e', 'u-sle', 'M-SLE', 'SALES E', 'PRINCIPLE A', 'CABANG A', '   ', '  ', false, now(), now())`);
     await p.query(`INSERT INTO branch (id, name) VALUES (201, 'CABANG A'), (202, 'CABANG B')`);
     await p.query(`INSERT INTO accurate_employee (id, number, name, branch_id, salesman, suspended) VALUES
         (1, 'M-SLA', 'SALES A', 201, true, false), (3, 'M-SLC', 'SALES C', 202, true, false)`);
@@ -130,7 +137,7 @@ const rute = async (userId: string, date: string, principle = "PRINCIPLE A", sal
 
 // =========================================================================== butir 2: hari kunjungan tak peka huruf + pola minggu
 
-test("butir 2: JKS hari HURUF BESAR/berspasi/JUM'AT terbaca tanpa unggah ulang; minggu genap/ganjil (minggu ISO)", { skip: pgSkip }, async () => {
+test("butir 2: JKS hari HURUF BESAR/berspasi/JUM'AT terbaca tanpa unggah ulang; minggu genap/ganjil (selang-seling dari acuan owner)", { skip: pgSkip }, async () => {
     // Senin 12 Okt 2026 = minggu ISO 42 (genap): ganjil C-100001 TIDAK, genap C-100003 + all C-100004 ya; JKS nonaktif tidak.
     assert.deepEqual(await rute("u-sla", "2026-10-12"), ["C-100003", "C-100004"]);
     // Senin 19 Okt = minggu 43 (ganjil).
@@ -138,6 +145,9 @@ test("butir 2: JKS hari HURUF BESAR/berspasi/JUM'AT terbaca tanpa unggah ulang; 
     assert.deepEqual(await rute("u-sla", "2026-10-16"), ["C-100005"], "JUM'AT = Jumat");
     assert.deepEqual(await rute("u-sla", "2026-10-13"), ["C-100006"]);
     assert.deepEqual(await rute("u-sla", "2026-10-18"), [], "Minggu tanpa rute");
+    // Owner 12 Okt: selang-seling dari acuan, bukan minggu ISO — Senin 4 Jan 2027 = 12 minggu sesudah acuan = genap (ISO minggu 1 = ganjil).
+    assert.deepEqual(await rute("u-sla", "2027-01-04"), ["C-100003", "C-100004"]);
+    assert.deepEqual(await rute("u-sla", "2026-10-05"), ["C-100001", "C-100004"], "minggu sebelum acuan = ganjil");
     // Laporan harian (live, belum dikirim) menghitung toko JKS hari itu dengan aturan yang sama (lintas principal).
     const lap = await jawab(await sebagai("u-sla", () => m.reports.GET(req("/api/form-kontrol/reports?salesCode=M-SLA&date=2026-10-12"))));
     assert.equal(Number((lap.body.rows as { totalTokoJks: unknown }[])[0].totalTokoJks), 2); // count(*) pg = teks (perilaku lama)
@@ -148,12 +158,15 @@ test("butir 2: unggah JKS menyimpan hari BAKU; hari tak dikenal ditolak per bari
         principle: "PRINCIPLE C", hariKunjungan: hari, mingguPattern: pola });
     const r = await jawab(await sebagai("u-admin", () => m.jks.POST(req("/api/form-kontrol/jks", "POST", { rows: [
         baris("U-1", "SABTU"), baris("U-2", " jum'at ", "GANJIL"), baris("U-3", "Minggu"), baris("U-4", "Senen"), baris("U-5", ""),
+        baris("U-6", "1"), baris("U-7", "-"),
     ] }))));
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.imported, 3);
     assert.deepEqual(r.body.ditolak, [
         { baris: 3, custCode: "U-3", hari: "Minggu" },
         { baris: 4, custCode: "U-4", hari: "Senen" },
+        { baris: 6, custCode: "U-6", hari: "1" },
+        { baris: 7, custCode: "U-7", hari: "-" },
     ]);
     const db = (await pool.query(`SELECT cust_code, hari_kunjungan, minggu_pattern FROM jks_master WHERE cust_code LIKE 'U-%' ORDER BY 1`)).rows;
     assert.deepEqual(db, [
@@ -170,6 +183,11 @@ test("butir 5: cakupan SPV = nama SPV Hierarki dibandingkan trim + tanpa beda hu
     const sc = await jawab(await sebagai("u-spva", () => m.myScope.GET(req("/api/form-kontrol/my-scope"))));
     assert.equal(sc.status, 200);
     assert.deepEqual([...(sc.body.allowedSalesCodes as string[])].sort(), ["M-SLA", "M-SLB"], "' spv a ' dan 'SPV A' = tim SPV A");
+    // S16: akun SPV bernama kosong ("(SPV)") TIDAK mewarisi profil yang nama SPV-nya kosong/spasi.
+    const kosong = await jawab(await sebagai("u-spvx", () => m.myScope.GET(req("/api/form-kontrol/my-scope"))));
+    assert.deepEqual(kosong.body.allowedSalesCodes, []);
+    const dashKosong = await jawab(await sebagai("u-admin", () => m.spv.GET(req("/api/form-kontrol/spv-dashboard?date=2026-10-12&spvName=%20%20"))));
+    assert.deepEqual(dashKosong.body.rows, [], "nama SPV spasi tidak cocok dengan profil bernama kosong");
     const put = await jawab(await sebagai("u-admin", () => m.profil.PUT(req("/api/form-kontrol/sales-profiles", "PUT", { salesCode: "M-SLC", spvName: "  SPV B  ", smName: " " }))));
     assert.equal(put.status, 200);
     assert.deepEqual((await pool.query(`SELECT spv_name, sm_name FROM sales_profile WHERE sales_code = 'M-SLC'`)).rows, [{ spv_name: "SPV B", sm_name: null }]);
@@ -253,8 +271,10 @@ test("butir 6: kode JKS tanpa akhiran -> pelanggan CABANG salesman; kode yang ha
         (7, 'C-100008-CBA', 'PELANGGAN NONAKTIF', 201, 'CABANG A', 'TT', true),
         (8, 'C-100009', 'PELANGGAN TANPA AKHIRAN', 201, 'CABANG A', 'TT', false),
         (9, 'C-2000-01-CBA', 'PELANGGAN DUA BAGIAN', 201, 'CABANG A', 'TT', false),
-        (10, 'C-100010-CBA', 'PELANGGAN AWALAN', 201, 'CABANG A', 'TT', false)`);
-    const KODE = ["C-100001", "C-100002", "C- FA0164", "C-100007", "c-100008", "C-100009", "C-2000", "C-10001", "C-100001"];
+        (10, 'C-100010-CBA', 'PELANGGAN AWALAN', 201, 'CABANG A', 'TT', false),
+        (11, 'C-7_A\\B-CBA', 'PELANGGAN TANDA', 201, 'CABANG A', 'TT', false)`);
+    const PANJANG = `C-${"9".repeat(80)}`;
+    const KODE = ["C-100001", "C-100002", "C- FA0164", "C-100007", "c-100008", "C-100009", "C-2000", "C-10001", "C-100001", "C-7_A\\B", PANJANG];
     const minta = async (u: string, kode = KODE) => {
         sesi = (await pool.query(`SELECT id, name, role FROM "user" WHERE id = $1`, [u])).rows[0];
         const q = new URLSearchParams(kode.map((k) => ["kode", k]));
@@ -265,7 +285,12 @@ test("butir 6: kode JKS tanpa akhiran -> pelanggan CABANG salesman; kode yang ha
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.deepEqual(r.body.cakupan, { semua: false, branchId: 201, branchName: "CABANG A" });
     const per = Object.fromEntries((r.body.rute as Baris[]).map((x) => [x.kode, x]));
-    assert.equal(Object.keys(per).length, 8, "kode ganda di permintaan digabung");
+    assert.equal(Object.keys(per).length, 10, "kode ganda di permintaan digabung");
+    // S17: `_` dan `\` di kode JKS = huruf biasa pada LIKE (tanpa escape, `\B` jadi B dan pelanggannya tak terkandidat).
+    assert.equal(per["C-7_A\\B"].pelanggan?.customerNo, "C-7_A\\B-CBA");
+    // KC3: kode > 80 huruf = alasan untuk toko itu saja, permintaan tetap 200.
+    assert.equal(per[PANJANG].masalah, "KODE_TIDAK_SAH");
+    assert.match(per[PANJANG].alasan, /80 huruf/);
     assert.equal(per["C-100001"].pelanggan?.customerNo, "C-100001-CBA", "cabang B tidak ikut");
     assert.equal(per["C-100001"].pelanggan?.channel, "GT");
     assert.equal(per["C-100002"].pelanggan, null, "hanya ada di cabang lain = TIDAK ditawarkan");
@@ -292,5 +317,58 @@ test("butir 6: kode JKS tanpa akhiran -> pelanggan CABANG salesman; kode yang ha
     assert.equal(belum.status, 403);
     assert.equal(belum.body.kode, "SALESMAN_BELUM_TERHUBUNG");
     assert.equal((await minta("u-sla", [])).status, 400);
+    // Lebih dari batas per permintaan = 400 berkalimat (pemilih memecah kode per 200 — components/order/order-cabang-api.ts).
+    const banyak = await minta("u-sla", Array.from({ length: 201 }, (_, i) => `C-${i}`));
+    assert.equal(banyak.status, 400);
+    assert.match(String(banyak.body.error), /200/);
     assert.equal((await minta("u-spva", ["C-100001"])).status, 403);
+});
+
+// =========================================================================== putaran 2: briefing / Kontrol SM dari sesi (KC2 + SEDANG)
+
+test("KC2: briefing & daftar SPV milik SM dicocokkan trim + tak peka huruf, tanpa baris ganda", { skip: pgSkip }, async () => {
+    await pool.query(`INSERT INTO spv_briefing (id, spv_name, date, session, created_at) VALUES
+        ('b1', 'SPV A', '2026-10-12', 'pagi', now()), ('b2', ' spv a ', '2026-10-12', 'sore', now()), ('b3', 'SPV B', '2026-10-12', 'pagi', now())`);
+    const sm = await jawab(await sebagai("u-sma", () => m.smBriefings.GET(req("/api/form-kontrol/sm-briefings?date=2026-10-12"))));
+    assert.equal(sm.status, 200);
+    const rows = sm.body.rows as { spvName: string; briefings: { session: string }[] }[];
+    assert.equal(rows.length, 1, "' spv a ' dan 'SPV A' = satu SPV");
+    assert.deepEqual(rows[0].briefings.map((b) => b.session).sort(), ["pagi", "sore"]);
+    const spv = await jawab(await sebagai("u-spva", () => m.briefing.GET(req("/api/form-kontrol/briefing?date=2026-10-12"))));
+    assert.equal(spv.body.total, 2);
+});
+
+test("SEDANG: briefing — salesman hanya SPV-nya, SPV hanya namanya, SM hanya SPV bawahannya + namanya; admin semua", { skip: pgSkip }, async () => {
+    const get = async (u: string, q: string) => jawab(await sebagai(u, () => m.briefing.GET(req(`/api/form-kontrol/briefing?date=2026-10-12${q}`))));
+    const post = async (u: string, body: Record<string, unknown>) =>
+        jawab(await sebagai(u, () => m.briefing.POST(req("/api/form-kontrol/briefing", "POST", { date: "2026-10-13", session: "pagi", ...body }))));
+    assert.equal((await get("u-sla", "&spvName=SPV%20B")).status, 403, "salesman membaca SPV lain");
+    assert.equal((await get("u-sla", "")).body.total, 2, "salesman: briefing SPV-nya (profil ' spv a ')");
+    assert.equal((await get("u-spva", "&spvName=SPV%20B")).status, 403);
+    assert.equal((await get("u-spva", "&spvName=spv%20a")).body.total, 2);
+    assert.equal((await get("u-sma", "&spvName=SPV%20A")).body.total, 2, "SM: SPV bawahannya");
+    assert.equal((await get("u-sma", "&spvName=SPV%20B")).status, 403);
+    assert.equal((await get("u-admin", "&spvName=SPV%20B")).body.total, 1);
+
+    assert.equal((await post("u-spva", { spvName: "SPV B" })).status, 403, "SPV menulis atas nama SPV lain");
+    assert.equal((await post("u-sla", { spvName: "SPV A" })).status, 403, "salesman tidak menulis briefing");
+    assert.equal((await post("u-sma", { spvName: "SPV B" })).status, 403);
+    assert.equal((await post("u-spva", {})).status, 200, "tanpa nama = namanya sendiri");
+    assert.equal((await post("u-admin", { spvName: "SPV B" })).status, 200);
+    assert.deepEqual((await pool.query(`SELECT spv_name FROM spv_briefing WHERE date = '2026-10-13' ORDER BY 1`)).rows.map((r) => r.spv_name), ["SPV A", "SPV B"]);
+});
+
+test("SEDANG: Kontrol SM — SM hanya atas namanya, peran lain 403, admin semua", { skip: pgSkip }, async () => {
+    const get = async (u: string, q: string) => jawab(await sebagai(u, () => m.smControl.GET(req(`/api/form-kontrol/sm-control?date=2026-10-12${q}`))));
+    const post = async (u: string, body: Record<string, unknown>) =>
+        jawab(await sebagai(u, () => m.smControl.POST(req("/api/form-kontrol/sm-control", "POST", { date: "2026-10-12", ...body }))));
+    assert.equal((await get("u-sma", "&smName=SM%20B")).status, 403);
+    assert.equal((await get("u-sma", "")).status, 200);
+    assert.equal((await get("u-spva", "&smName=SM%20A")).status, 403);
+    assert.equal((await post("u-sma", { smName: "SM B" })).status, 403);
+    assert.equal((await post("u-spva", { smName: "SM A" })).status, 403);
+    assert.equal((await post("u-sma", { smName: "sm a" })).status, 200);
+    assert.equal((await post("u-admin", { smName: "SM B" })).status, 200);
+    assert.deepEqual((await pool.query(`SELECT sm_name FROM sm_control ORDER BY 1`)).rows.map((r) => r.sm_name), ["SM A", "SM B"]);
+    assert.equal((await get("u-sma", "&smName=sm%20a")).body.total, 1);
 });

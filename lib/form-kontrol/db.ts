@@ -7,20 +7,10 @@ import {
     spvBriefing, smControl, kontrolAuditLog, salesProfile, kunjunganLuarRute,
 } from "@/db/schema";
 import { cocokKodeRute } from "@/lib/order-cabang";
-import { DAY_TO_HARI, NO_ORDER_REASONS, hariBaku, kunciHari } from "./constants";
+import { DAY_TO_HARI, NO_ORDER_REASONS, hariBaku, kunciHari, paritasMinggu } from "./constants";
 import type { AoStatus, TodayRouteRow } from "./types";
 
-// ── Week parity ──────────────────────────────────────────────────────────────
-function getISOWeekNumber(date: Date): number {
-    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
-
-export function getWeekParity(date: Date): "ganjil" | "genap" {
-    return getISOWeekNumber(date) % 2 === 1 ? "ganjil" : "genap";
-}
+// Paritas minggu = paritasMinggu (constants.ts, acuan owner 12 Okt 2026), dihitung dari string tanggal WITA yang dikirim layar.
 
 // FK-MSM butir 2: JKS dibandingkan lewat kunci hari (huruf besar tanpa spasi/tanda) dan pola minggu huruf kecil ter-trim, sehingga JKS lama
 // ("SENIN", " Senin ", "JUM'AT", "GENAP") terbaca tanpa unggah ulang. Kunci = kunciHari (constants.ts). ponytail: ekspresi tidak memakai
@@ -163,7 +153,7 @@ export async function upsertJksRows(rows: {
 export async function getTodayRoute(salesCode: string, principle: string, dateStr: string): Promise<TodayRouteRow[]> {
     const date = parseDateString(dateStr);
     const dayName = DAY_TO_HARI[date.getDay()];
-    const parity = getWeekParity(date);
+    const parity = paritasMinggu(dateStr);
 
     const [jksDb, luar] = await Promise.all([
         dayName ? db.select().from(jksMaster).where(
@@ -395,7 +385,7 @@ async function computeReportSummary(salesCode: string, dateStr: string) {
     const dayName = DAY_TO_HARI[date.getDay()];
     let totalTokoJks = aoRows.length;
     if (dayName) {
-        const parity = getWeekParity(date);
+        const parity = paritasMinggu(dateStr);
         const cnt = await db.select({ count: sql<number>`count(*)` }).from(jksMaster).where(
             and(
                 eq(jksMaster.salesCode, salesCode),
@@ -510,7 +500,7 @@ export async function saveBriefing(data: {
 }) {
     const id = randomUUID();
     await db.insert(spvBriefing).values({
-        id, spvName: data.spvName, date: data.date, session: data.session,
+        id, spvName: data.spvName.trim(), date: data.date, session: data.session,
         agenda: data.agenda ?? null, tokoDialas: data.tokoDialas ?? null,
         penyebab: data.penyebab ?? null, solusi: data.solusi ?? null,
         createdBy: data.createdBy ?? null, createdAt: new Date(),
@@ -519,8 +509,9 @@ export async function saveBriefing(data: {
 }
 
 export async function getBriefings(spvName: string, dateStr: string) {
+    if (!kunciNama(spvName)) return [];
     return db.select().from(spvBriefing).where(
-        and(eq(spvBriefing.spvName, spvName), eq(spvBriefing.date, dateStr))
+        and(samaNama(spvBriefing.spvName, spvName), eq(spvBriefing.date, dateStr))
     );
 }
 
@@ -541,18 +532,26 @@ export async function getSalesCodesForSm(smName: string): Promise<string[]> {
 }
 
 // SPV di bawah satu SM + briefing mereka hari itu — untuk Kontrol SM (ganti hardcode).
-export async function getSmSpvBriefings(smName: string, dateStr: string) {
+/** Nama SPV (unik menurut trim + tanpa beda huruf; tampil = ejaan pertama ter-trim) di bawah satu SM. */
+export async function getSpvNamesForSm(smName: string): Promise<string[]> {
     if (!kunciNama(smName)) return [];
     const profiles = await db.select({ spvName: salesProfile.spvName })
-        .from(salesProfile).where(samaNama(salesProfile.smName, smName));
-    const spvNames = [...new Set(profiles.map(p => p.spvName).filter((n): n is string => !!n))];
+        .from(salesProfile).where(samaNama(salesProfile.smName, smName)).orderBy(asc(salesProfile.salesCode));
+    const unik = new Map<string, string>();
+    for (const p of profiles) { const k = kunciNama(p.spvName); if (k && !unik.has(k)) unik.set(k, p.spvName!.trim()); }
+    return [...unik.values()];
+}
+
+export async function getSmSpvBriefings(smName: string, dateStr: string) {
+    const spvNames = await getSpvNamesForSm(smName);
     if (spvNames.length === 0) return [];
+    // KC2: cocok trim + tanpa beda huruf, satu baris per SPV (" spv a " dan "SPV A" = satu).
     const briefings = await db.select().from(spvBriefing).where(
-        and(eq(spvBriefing.date, dateStr), inArray(spvBriefing.spvName, spvNames))
+        and(eq(spvBriefing.date, dateStr), inArray(sql`upper(trim(${spvBriefing.spvName}))`, spvNames.map(kunciNama)))
     );
     return spvNames.map(name => ({
         spvName: name,
-        briefings: briefings.filter(b => b.spvName === name).map(b => ({
+        briefings: briefings.filter(b => kunciNama(b.spvName) === kunciNama(name)).map(b => ({
             session: b.session, penyebab: b.penyebab ?? null, solusi: b.solusi ?? null,
         })),
     }));
@@ -567,7 +566,7 @@ export async function saveSmControl(data: {
 }) {
     const id = randomUUID();
     await db.insert(smControl).values({
-        id, smName: data.smName, date: data.date,
+        id, smName: data.smName.trim(), date: data.date,
         spvChecked: data.spvChecked ?? null,
         jksChecked: data.jksChecked ?? false,
         fotoChecked: data.fotoChecked ?? false,
@@ -581,8 +580,9 @@ export async function saveSmControl(data: {
 }
 
 export async function getSmControl(smName: string, dateStr: string) {
+    if (!kunciNama(smName)) return [];
     return db.select().from(smControl).where(
-        and(eq(smControl.smName, smName), eq(smControl.date, dateStr))
+        and(samaNama(smControl.smName, smName), eq(smControl.date, dateStr))
     ).limit(1);
 }
 

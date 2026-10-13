@@ -4,7 +4,7 @@
  *   miliknya (hari + pola minggu) / tidak / nanti (tetap `menunggu`). Baris JKS hasil konfirmasi berkode pelanggan Accurate LENGKAP.
  * Caller: app/api/form-kontrol/luar-rute/route.ts (GET daftar, POST tambah), app/api/form-kontrol/luar-rute/konfirmasi/route.ts.
  * Dependensi: db (kunjungan_luar_rute, jks_master, ao_control_daily, sales_profile, kontrol_audit_log), lib/order-cabang (cocokKodeRute,
- *   GalatOrder), ./constants (kunciHari, hariBaku, MINGGU_PATTERNS, DAY_TO_HARI), ./db (getWeekParity, parseDateString).
+ *   GalatOrder), ./constants (kunciHari, hariBaku, MINGGU_PATTERNS, DAY_TO_HARI, paritasMinggu), ./db (parseDateString).
  * Main Functions: periksaKeputusan (murni; kodeJksUntuk di ./constants agar dipakai layar); tambahLuarRute, daftarLuarRute, konfirmasiLuarRute (DB).
  * Side Effects: INSERT/UPDATE kunjungan_luar_rute, INSERT/UPDATE jks_master (konfirmasi), INSERT kontrol_audit_log. Tidak pernah DELETE.
  *
@@ -15,8 +15,8 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { aoControlDaily, jksMaster, kontrolAuditLog, kunjunganLuarRute, salesProfile } from "@/db/schema";
 import { cocokKodeRute, type GalatOrder } from "@/lib/order-cabang";
-import { DAY_TO_HARI, MINGGU_PATTERNS, hariBaku, kodeJksUntuk, kunciHari } from "./constants";
-import { getWeekParity, parseDateString } from "./db";
+import { DAY_TO_HARI, MINGGU_PATTERNS, hariBaku, kodeJksUntuk, kunciHari, paritasMinggu } from "./constants";
+import { parseDateString } from "./db";
 
 // ---------------------------------------------------------------- murni
 
@@ -66,7 +66,7 @@ export async function tambahLuarRute(d: {
     const milik = await jksMilik(d.salesCode, d.principle, d.pelanggan.customerNo);
     const tgl = parseDateString(d.tanggal);
     const hari = DAY_TO_HARI[tgl.getDay()];
-    const paritas = getWeekParity(tgl);
+    const paritas = paritasMinggu(d.tanggal);
     // Sama dengan saringan SQL rute (db.ts hariIni/polaMinggu): kunci hari + pola minggu huruf kecil ter-trim.
     const diRute = hari ? milik.find((j) => kunciHari(j.hariKunjungan) === kunciHari(hari)
         && ["all", paritas].includes(String(j.mingguPattern ?? "").trim().toLowerCase())) : undefined;

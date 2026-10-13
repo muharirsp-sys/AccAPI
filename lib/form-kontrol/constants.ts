@@ -43,10 +43,27 @@ export const MINGGU_PATTERNS = ["ganjil", "genap", "all"] as const;
  */
 export const kunciHari = (v: unknown) => String(v ?? "").toUpperCase().replace(/[^A-Z]/g, "");
 const HARI_BAKU = new Map<string, string>(HARI_KUNJUNGAN.map((h) => [kunciHari(h), h]));
-/** Bentuk baku hari untuk disimpan saat unggah: "" = kosong (boleh, ditandai di Kontrol JKS); null = tidak dikenal (baris ditolak). */
+/**
+ * Bentuk baku hari untuk disimpan saat unggah: "" = kosong (boleh, ditandai di Kontrol JKS); null = tidak dikenal (baris ditolak).
+ * Kosong diputuskan dari teks mentah ter-trim, bukan dari kunci: "1", "-", "?" berkunci kosong tetapi BUKAN sel kosong → ditolak.
+ */
 export function hariBaku(v: unknown): string | null {
-    const k = kunciHari(v);
-    return k ? HARI_BAKU.get(k) ?? null : "";
+    if (!String(v ?? "").trim()) return "";
+    return HARI_BAKU.get(kunciHari(v)) ?? null;
+}
+
+// ponytail: acuan paritas minggu JKS (keputusan owner 12 Okt 2026) — minggu yang memuat Senin 12 Okt 2026 (tanggal WITA) = GENAP, lalu
+//   selang-seling terus Senin-ke-Senin; BUKAN nomor minggu ISO (2026 punya 53 minggu ISO: 28 Des 2026 dan 4 Jan 2027 sama-sama ganjil).
+//   Plafon: mengganti acuan membalik pola ganjil/genap SEMUA JKS sekaligus — hanya atas keputusan owner.
+export const ACUAN_MINGGU_GENAP = "2026-10-12";
+const nomorHari = (ymd: string) => { const [y, m, d] = ymd.split("-").map(Number); return Date.UTC(y, m - 1, d) / 86_400_000; };
+/**
+ * Paritas minggu untuk tanggal kalender WITA "YYYY-MM-DD" (tanggal yang dikirim layar, hariIniWita): selisih minggu dari acuan, negatif
+ * juga benar. Satu-satunya hitungan paritas — SQL hanya membandingkan pola tersimpan dengan hasil fungsi ini (db.ts polaMinggu).
+ */
+export function paritasMinggu(ymd: string): "ganjil" | "genap" {
+    const minggu = Math.floor((nomorHari(ymd) - nomorHari(ACUAN_MINGGU_GENAP)) / 7);
+    return minggu % 2 === 0 ? "genap" : "ganjil";
 }
 
 // FK-MSM2: kunjungan luar rute.

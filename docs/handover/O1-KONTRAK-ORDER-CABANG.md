@@ -75,9 +75,10 @@ bukan karena pencarian tidak cocok — layar menampilkan penjelasan, bukan "tida
 ### `GET /api/customers/rute?kode=&kode=…` (baru, FK-MSM butir 6 — 12 Okt 2026)
 Pemilih "Toko di rute hari ini" Order Sales. Kode toko JKS TANPA akhiran cabang (`C-100001`) -> pelanggan Accurate cabang pemakai
 (`C-100001-<akhiran>`). Izin & cakupan = pencarian pelanggan (`websales.create` ATAU `order.create`; salesman HANYA cabangnya, internal semua).
-1–200 kode unik (≤ 80 huruf; ganda digabung). Cocok = `customerNo` persis ATAU kode + `-` + SATU akhiran (tanpa `-` lagi), tak peka huruf,
+1–200 kode unik per permintaan (ganda digabung; > 200 = 400 berkalimat — pemilih Order Sales memecah rute yang lebih panjang per 200;
+kode > 80 huruf = `masalah: "KODE_TIDAK_SAH"` untuk toko itu saja). Cocok = `customerNo` persis ATAU kode + `-` + SATU akhiran (tanpa `-` lagi), tak peka huruf,
 spasi dalam kode dipertahankan; tepat SATU pelanggan aktif = dipilih. Data JKS tidak diubah.
-200: `{ ok, cakupan, rute: [{ kode, pelanggan: <item pencarian> | null, masalah: null | "TIDAK_ADA" | "GANDA" | "NONAKTIF", kandidat: [customerNo], alasan }] }`
+200: `{ ok, cakupan, rute: [{ kode, pelanggan: <item pencarian> | null, masalah: null | "TIDAK_ADA" | "GANDA" | "NONAKTIF" | "KODE_TIDAK_SAH", kandidat: [customerNo], alasan }] }`
 (`TIDAK_ADA` termasuk kode yang hanya ada di cabang lain — tidak pernah ditawarkan; `alasan` = kalimat untuk layar per toko). Galat §2
 (`SALESMAN_BELUM_TERHUBUNG`, …), `INPUT_TIDAK_VALID` 400.
 
