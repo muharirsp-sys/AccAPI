@@ -1,12 +1,12 @@
 /*
  * Tujuan: Self-check helper layar Pembayaran & SPPD: status rekaman (diajukan butuh nomor pengajuan), isian kurang = cermin
  *         cart/create, rekaman terkunci tidak bisa dipilih, angka ketat (NaN, bukan 0), izin → alasan, tanggal WITA, nomor SPPD,
- *         saringan rentang tanggal (Actual date / Tgl bayar pabrik).
+ *         saringan rentang tanggal (Actual date / Tanggal bayar pabrik) dengan format tanggal ketat.
  * Caller: npm test
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { angka, angkaJawaban, besokWita, bisaDiajukan, dalamRentang, galatTemplat, izinPembayaran, keYmd, kurangLengkap, namaAkun, pratinjauNomor, statusRekaman, tanggalTampil, type Rekaman } from "@/lib/payments-ui";
+import { ISIAN, angka, angkaJawaban, besokWita, bisaDiajukan, dalamRentang, galatTemplat, izinPembayaran, keYmd, kurangLengkap, namaAkun, pratinjauNomor, statusRekaman, tanggalTampil, type Rekaman } from "@/lib/payments-ui";
 
 const LENGKAP: Rekaman = { record_id: "LPB-1", tipe_pengajuan: "LPB", no_lpb: "LPB-1", principle: "PRINCIPLE A", tgl_invoice: "2026-10-06", jt_invoice: "2026-11-05", invoice_no: "INV-1", nilai_invoice: "12.500.000", locked_reason: "" };
 
@@ -102,8 +102,18 @@ test("saringan rentang tanggal: kosong = semua lolos; batas inklusif; dibandingk
     assert.equal(dalamRentang("belum", OKT), false);
     assert.equal(dalamRentang("2026-10-45", { dari: "2026-10-01", sampai: "" }), false);
     assert.equal(dalamRentang("2027-02-30", { dari: "2026-10-01", sampai: "" }), false);
+    // Format ketat: hanya YYYY-MM-DD (boleh berjam), DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY. Tebakan `new Date` ("0" → 2000,
+    // "12" → 2001, "10/15/26") = tanpa tanggal, bukan tanggal acak yang lolos saringan satu sisi.
+    const SEMUA = { dari: "1900-01-01", sampai: "2999-12-31" };
+    for (const rusak of ["0", "1", "12", "10/15/26", "15/10/26", "Oct 15 2026", "2026/10/15", "10/15/2026"]) assert.equal(dalamRentang(rusak, SEMUA), false, rusak);
+    for (const baik of ["2026-10-15", "2026-10-15 00:00:00", "15/10/2026", "15-10-2026", "15.10.2026", "5/1/2026"]) assert.equal(dalamRentang(baik, SEMUA), true, baik);
+    assert.equal(dalamRentang("5/1/2026", { dari: "2026-01-05", sampai: "2026-01-05" }), true); // 5 Jan (DD/MM), bukan 1 Mei
     // Dari > sampai: tidak ada yang lolos (layar menampilkan galat).
     assert.equal(dalamRentang("2026-10-15", { dari: "2026-10-31", sampai: "2026-10-01" }), false);
+});
+
+test("label isian tgl_pembayaran = Tanggal bayar pabrik (owner 13 Okt); kunci data tetap", () => {
+    assert.equal(ISIAN.find((i) => i.key === "tgl_pembayaran")?.label, "Tanggal bayar pabrik");
 });
 
 test("nomor SPPD: cermin templat server; tanpa nomor urut / isian asing ditolak", () => {

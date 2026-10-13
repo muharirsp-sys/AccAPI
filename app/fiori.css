@@ -220,6 +220,9 @@ select.fi-input { appearance:none; background-image:linear-gradient(45deg, trans
 .fi-fbar-top { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
 .fi-fbar-top h2 { font:var(--fs-title-2); margin-right:auto; }
 .fi-fbar-fields { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; align-items:end; }
+/* Pasangan isian (mis. tanggal dari–sampai) = satu sel 2 kolom; di bar saringan selebar dua sel agar tidak terpisah baris. */
+.fi-fpair { display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:start; min-width:0; }
+.fi-fbar-fields > .fi-fpair { grid-column:span 2; }
 .fi-fbar-mobile { display:none; align-items:flex-end; }
 .fi-chips { display:flex; flex-wrap:wrap; gap:6px; list-style:none; padding:0; }
 .fi-chip { display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 6px 0 10px; border-radius:var(--r-pill); background:var(--brand-tint); color:var(--brand); font:600 .75rem/1 var(--font-sans); border:1px solid var(--brand-tint-strong); }

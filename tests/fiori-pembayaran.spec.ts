@@ -1,7 +1,7 @@
 /*
  * Tujuan: Fiori S6a Pembayaran (it08) — Rekaman (tile = saringan, kunci baris dari server, galat ≠ kosong, simpan PER REKAMAN dengan
  *   hasil per baris, unggah pratinjau → simpan), Keranjang (rute + tanggal WITA, rekening dicek sebelum Ajukan, submit tidak pasti →
- *   draf terpakai dikunci), Pengajuan & SPPD (daftar → detail, 404, galat), saringan rentang Actual date / Tgl bayar pabrik.
+ *   draf terpakai dikunci), Pengajuan & SPPD (daftar → detail, 404, galat), saringan rentang Actual date / Tanggal bayar pabrik.
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
  *   `npx playwright test tests/fiori-pembayaran.spec.ts --config playwright.fiori-local.config.ts --workers=1`.
  * Dependensi: FastAPI (dev: http://localhost:8000) di-mock dengan page.route + CORS/OPTIONS 204 + /api/me csrf.
@@ -194,16 +194,16 @@ test("Rekaman: unggah LPB = pratinjau dulu (tanpa tulis), lalu simpan; baris bar
     await expect(baris.getByText("Baru")).toBeVisible();
 });
 
-test("Rekaman: saringan rentang Actual date & Tgl bayar pabrik — batas inklusif, data lama DD/MM/YYYY, tanpa tanggal disembunyikan, gabung saringan lama, dari > sampai", async ({ page }) => {
-    // [actual_date, tgl_pembayaran] per rekaman (urutan REKAMAN): batas tepat, di luar batas, format lama, kosong.
+test("Rekaman: saringan rentang Actual date & Tanggal bayar pabrik — batas inklusif, format lama DD/MM/YYYY, format tak dikenal & tanpa tanggal disembunyikan, gabung saringan lama, pasangan sebaris, picker bebas, dari > sampai", async ({ page }) => {
+    // [actual_date, tgl_pembayaran] per rekaman (urutan REKAMAN): batas tepat, di luar batas, format lama, kosong, tak dikenal.
     const TGL: Array<[string, string]> = [
         ["2026-10-01", "2026-10-20"], // LPB-A-001  PRINCIPLE A
         ["2026-10-31", ""], //           LPB-A-002  PRINCIPLE A — tanpa tgl bayar
         ["15/10/2026", "2026-11-01"], // CBD_1A2B3C4D PRINCIPLE B — format lama DD/MM/YYYY
-        ["", "2026-10-05"], //           LPB-A-003  PRINCIPLE A — tanpa actual date (draf)
+        ["12", "2026-10-05"], //         LPB-A-003  PRINCIPLE A — actual tak dikenal ("12"; new Date = 2001) (draf)
         ["2026-09-30", "2026-10-10"], // LPB-B-010
         ["2026-11-01", "2026-10-31"], // LPB-B-007  sudah transfer
-        ["", ""], //                     LPB-A-004
+        ["2026-10-15", "0"], //          LPB-A-004  PRINCIPLE A — tgl bayar tak dikenal ("0"; new Date = 1 Jan 2000 ≤ s.d. mana pun)
     ];
     const data = REKAMAN.map((r, i) => ({ ...r, actual_date: TGL[i][0], tgl_pembayaran: TGL[i][1] }));
     await mockFastapi(page, (p, r) => (p === "/payments/data" ? json(r, { ok: true, data }) : "lewat"));
@@ -213,32 +213,52 @@ test("Rekaman: saringan rentang Actual date & Tgl bayar pabrik — batas inklusi
     const tabel = main.getByRole("table", { name: "Rekaman" });
     const bar = main.locator(".fi-fbar-fields");
     const tiles = main.getByRole("group", { name: "Saring menurut status" });
+    const chips = main.getByRole("list", { name: "Saringan aktif" });
     await expect(tabel.getByText("LPB-A-001")).toBeVisible(NAV);
     await expect(tabel.getByRole("row")).toHaveCount(8);
     await expect(main.getByText(/baris tanpa .* disembunyikan/)).toHaveCount(0);
+    // Tiap pasangan dari–sampai satu sel saringan: sebaris di 1366 (tidak terpisah baris grid).
+    for (const judul of ["Actual date", "Tanggal bayar pabrik"]) {
+        const pasangan = bar.getByRole("group", { name: judul });
+        await expect(pasangan).toBeVisible(); // gagal cepat (boundingBox menunggu sampai batas waktu uji)
+        const dari = await pasangan.getByLabel(`${judul} dari`).boundingBox();
+        const sampai = await pasangan.getByLabel(`${judul} sampai`).boundingBox();
+        expect(dari && sampai && Math.abs(dari.y - sampai.y) < 1 && sampai.x > dari.x, `${judul}: dari & sampai sebaris`).toBe(true);
+    }
 
     await bar.getByLabel("Actual date dari").fill("2026-10-01");
     await bar.getByLabel("Actual date sampai").fill("2026-10-31");
-    await expect(tabel.getByRole("row")).toHaveCount(4); // kepala + 01/10, 31/10 (batas) + 15/10/2026 (format lama)
-    for (const id of ["LPB-A-001", "LPB-A-002", "CBD_1A2B3C4D"]) await expect(tabel.getByText(id, { exact: true })).toBeVisible();
-    for (const id of ["LPB-A-003", "LPB-B-010", "LPB-B-007", "LPB-A-004"]) await expect(tabel.getByText(id, { exact: true })).toHaveCount(0);
-    await expect(tabel.getByRole("row", { name: /CBD_1A2B3C4D/ })).toContainText("Actual 15/10/2026");
-    await expect(main.getByRole("list", { name: "Saringan aktif" }).getByText("Actual date: 01/10/2026–31/10/2026")).toBeVisible();
+    await expect(tabel.getByRole("row")).toHaveCount(5); // kepala + 01/10, 31/10 (batas) + 15/10/2026 (format lama) + 15/10
+    for (const id of ["LPB-A-001", "LPB-A-002", "CBD_1A2B3C4D", "LPB-A-004"]) await expect(tabel.getByText(id, { exact: true })).toBeVisible();
+    for (const id of ["LPB-A-003", "LPB-B-010", "LPB-B-007"]) await expect(tabel.getByText(id, { exact: true })).toHaveCount(0);
+    await expect(tabel.getByRole("row", { name: /CBD_1A2B3C4D/ })).toContainText("Actual date 15/10/2026");
+    await expect(chips.getByText("Actual date: 01/10/2026–31/10/2026")).toBeVisible();
     await expect(main.getByText("baris tanpa Actual date disembunyikan", { exact: false })).toBeVisible();
-    // Tile ikut saringan tanggal: draf (tanpa actual date) & sudah transfer (01/11) keluar.
+    // Tile ikut saringan tanggal: draf (actual "12") & sudah transfer (01/11) keluar.
     await expect(tiles.getByRole("button", { name: /Draf · belum lengkap\s*0/ })).toBeVisible();
     await expect(tiles.getByRole("button", { name: /Sudah transfer\s*0/ })).toBeVisible();
     await expect(tiles.getByRole("button", { name: /Siap diajukan\s*3/ })).toBeVisible();
 
-    // Gabung saringan lama (principal) + Tgl bayar pabrik satu sisi (s.d. 20/10, inklusif; LPB-A-002 tanpa tgl bayar keluar).
+    // Gabung saringan lama (principal) + Tanggal bayar pabrik satu sisi (s.d. 20/10, inklusif): LPB-A-002 (kosong) dan
+    // LPB-A-004 ("0", dulu terbaca 1 Jan 2000) keluar.
     await bar.getByLabel("Principal").selectOption("PRINCIPLE A");
-    await expect(tabel.getByRole("row")).toHaveCount(3);
-    await bar.getByLabel("Tgl bayar pabrik sampai").fill("2026-10-20");
+    await expect(tabel.getByRole("row")).toHaveCount(4);
+    await bar.getByLabel("Tanggal bayar pabrik sampai").fill("2026-10-20");
     await expect(tabel.getByRole("row")).toHaveCount(2);
     await expect(tabel.getByText("LPB-A-001", { exact: true })).toBeVisible();
-    await expect(tabel.getByRole("row", { name: /LPB-A-001/ })).toContainText("Actual 01/10/2026 · Bayar pabrik 20/10/2026");
-    await expect(main.getByRole("list", { name: "Saringan aktif" }).getByText("Tgl bayar pabrik: s.d. 20/10/2026")).toBeVisible();
-    await expect(main.getByText("baris tanpa Actual date atau Tgl bayar pabrik disembunyikan", { exact: false })).toBeVisible();
+    await expect(tabel.getByRole("row", { name: /LPB-A-001/ })).toContainText("Actual date 01/10/2026 · Tanggal bayar pabrik 20/10/2026");
+    await expect(chips.getByText("Tanggal bayar pabrik: s.d. 20/10/2026")).toBeVisible();
+    await expect(main.getByText("baris tanpa Actual date atau Tanggal bayar pabrik disembunyikan.", { exact: false })).toBeVisible();
+    // Picker bebas: tidak ada min/max saling-terkait yang menonaktifkan tanggal di luar pasangannya.
+    await expect(bar.getByLabel("Actual date dari")).not.toHaveAttribute("max");
+    await expect(bar.getByLabel("Actual date sampai")).not.toHaveAttribute("min");
+    await expect(bar.getByLabel("Tanggal bayar pabrik dari")).not.toHaveAttribute("max");
+    // Label lama "Tanggal bayar pusat" hilang dari layar; rincian memakai label baru (kunci data tetap tgl_pembayaran).
+    await tabel.getByRole("button", { name: "Buka rincian LPB-A-001" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByLabel("Tanggal bayar pabrik", { exact: true })).toHaveValue("2026-10-20");
+    await expect(page.getByText(/bayar pusat/i)).toHaveCount(0);
+    await dlg.getByRole("button", { name: "Selesai" }).click();
 
     // Dari > sampai: galat di isian, tidak ada baris (bukan diam-diam semua).
     await bar.getByLabel("Actual date dari").fill("2026-11-01");
@@ -247,16 +267,20 @@ test("Rekaman: saringan rentang Actual date & Tgl bayar pabrik — batas inklusi
     await page.screenshot({ path: "test-results/pb-filter-tanggal-desktop.png", fullPage: true });
 
     // Hapus semua → kembali 7 rekaman, isian tanggal kosong.
-    await main.getByRole("list", { name: "Saringan aktif" }).getByRole("button", { name: "Hapus semua" }).click();
+    await chips.getByRole("button", { name: "Hapus semua" }).click();
     await expect(tabel.getByRole("row")).toHaveCount(8);
     await expect(bar.getByLabel("Actual date dari")).toHaveValue("");
-    await expect(bar.getByLabel("Tgl bayar pabrik sampai")).toHaveValue("");
+    await expect(bar.getByLabel("Tanggal bayar pabrik sampai")).toHaveValue("");
 
-    // Ponsel: saringan di bottom sheet; Tgl bayar pabrik sejak 31/10 (inklusif) → LPB-B-007 (31/10) + CBD (01/11).
+    // Ponsel: saringan di bottom sheet; Tanggal bayar pabrik sejak 31/10 (inklusif) → LPB-B-007 (31/10) + CBD (01/11).
     await page.setViewportSize({ width: 390, height: 844 });
     await main.getByRole("button", { name: "Saringan", exact: true }).click();
     const sheet = page.getByRole("dialog", { name: "Saringan" });
-    await sheet.getByLabel("Tgl bayar pabrik dari").fill("2026-10-31");
+    await sheet.getByLabel("Tanggal bayar pabrik dari").fill("2026-10-31");
+    const ujung = await sheet.getByLabel("Tanggal bayar pabrik sampai").boundingBox();
+    expect(ujung && ujung.x + ujung.width <= 390, "pasangan muat di lembar saringan 390").toBe(true);
+    await noOverflow(page);
+    await page.screenshot({ path: "test-results/pb-filter-tanggal-ponsel-lembar.png" });
     await sheet.getByRole("button", { name: "Tampilkan hasil" }).click();
     const daftar = main.getByRole("list", { name: "Rekaman" });
     await expect(daftar.getByText("LPB-B-007")).toBeVisible();
