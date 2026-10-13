@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { aturanBerlaku, bonusQuota, channelAllowed, channelLaporan, channelOutlet, checkLine, checkSoPromo,
-    daftarKosong, JARINGAN_POSISI_BEBAS, needsTriggerCheck, normalisasiJaringan, outletAllowed, outletListsOn, purchaseByGroup, splitDiscounts, triggerGroupKey,
+    daftarKosong, JARINGAN_POSISI_BEBAS, needsTriggerCheck, normalisasiJaringan, outletAllowed, outletListsOn, purchaseByGroup, sebabDaftar, splitDiscounts, triggerGroupKey,
     triggerReached,
     type LineInput, type PublishedRule } from "./principal-validation.ts";
 
@@ -450,6 +450,16 @@ test("daftar outlet peserta: INCLUDE hanya peserta, EXCLUDE justru sebaliknya", 
     const duaHanya = { outletList: "LOYALTY,CONTRACTUAL", outletListMode: "INCLUDE" };
     assert.equal(outletAllowed(duaHanya, "C-WIN013-KN", lists), true);
     assert.equal(outletAllowed(duaHanya, "C-NOV009-KN", lists), false);
+
+    // Sebabnya dinilai PER DAFTAR, bukan per nama gabungan (SO 260014607, 13 Okt 2026: layar
+    // melapor "CONTRACTUAL,LOYALTY tidak punya anggota" padahal outletnya anggota LOYALTY).
+    const msg = { ...duaKecuali, suratProgram: "BP-MSG" };
+    assert.equal(sebabDaftar(msg, "C-WIN013-KN", lists),
+        'Outlet ini anggota daftar "LOYALTY", yang DIKECUALIKAN aturan BP-MSG. (Daftar "CONTRACTUAL" belum punya anggota, jadi dilewati.)');
+    assert.equal(sebabDaftar({ ...duaHanya, suratProgram: "BP-B" }, "C-NOV009-KN", lists),
+        'Outlet ini bukan anggota daftar "LOYALTY", yang DISYARATKAN aturan BP-B. (Daftar "CONTRACTUAL" belum punya anggota, jadi dilewati.)');
+    assert.equal(sebabDaftar({ outletList: "CONTRACTUAL,HYBRID", outletListMode: "EXCLUDE", suratProgram: "BP-C" }, "C-NOV009-KN", lists),
+        'Aturan BP-C menunjuk daftar "CONTRACTUAL" dan "HYBRID" yang tidak punya anggota pada tanggal ini.');
 
     // TETAPI kalau TIDAK SATU PUN daftarnya terisi, gagal-tertutup tetap berlaku: kita tidak tahu
     // apa-apa tentang siapa, jadi tidak ada yang diloloskan. Ini yang menahan aturan ON PO selama
