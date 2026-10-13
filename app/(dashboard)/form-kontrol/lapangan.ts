@@ -4,7 +4,7 @@
  * Caller: tabs/TabAo.tsx, tabs/TabNoOrder.tsx, tabs/TabLaporan.tsx, visit/[custCode]/Kunjungan.tsx, visit/[custCode]/FotoBukti.tsx,
  *   app/(dashboard)/sales/OrderSales.tsx (hanya RUTE_TERSIMPAN + bacaRuteTersimpan).
  * Dependensi: components/fiori/interactive (tipe Load), ./shared (AoRow).
- * Main Functions: ambilJson, bacaFk, kirimFk, GagalKirim, keBarisRute, useHariBeku, kemarinDari, simpanRute, bacaRuteTersimpan.
+ * Main Functions: ambilJson, bacaFk, kirimFk, GagalKirim, ditolakBukanRute, keBarisRute, useHariBeku, kemarinDari, simpanRute, bacaRuteTersimpan.
  * Side Effects: fetch (ambilJson/bacaFk/kirimFk); sessionStorage (simpanRute/bacaRuteTersimpan) — hanya tab peramban ini; interval 30 dtk
  *   + pendengar focus/visibilitychange (useHariBeku) untuk mendeteksi pergantian hari.
  *
@@ -57,10 +57,20 @@ export async function bacaFk<T>(url: string, pick: (data: Record<string, unknown
     return { status: "galat", error: j.status >= 200 && j.status < 300 ? "Jawaban server tidak terbaca." : sebabGagal(j.status) };
 }
 
-/** Galat tulis. `tidakPasti` = koneksi putus / status ≥ 502 / badan bukan JSON: mungkin sudah tersimpan, mungkin belum. */
+/**
+ * Galat tulis. `tidakPasti` = koneksi putus / status ≥ 502 / badan bukan JSON: mungkin sudah tersimpan, mungkin belum.
+ * `kode` = kode penolakan server (`{ kode, error }`), bila ada.
+ */
 export class GagalKirim extends Error {
-    constructor(message: string, readonly tidakPasti: boolean, readonly status = 0) { super(message); }
+    constructor(message: string, readonly tidakPasti: boolean, readonly status = 0, readonly kode?: string) { super(message); }
 }
+
+/**
+ * FK-MSM3: server menolak tulis kunjungan karena toko tidak (lagi) di rute tanggal itu — kunjungan luar rute sudah dibatalkan, atau toko
+ * bukan JKS hari itu. Layar memuat ulang rute (bukan mengulang kiriman yang sama).
+ */
+export const ditolakBukanRute = (e: unknown): e is GagalKirim =>
+    e instanceof GagalKirim && (e.kode === "KUNJUNGAN_DIBATALKAN" || e.kode === "BUKAN_RUTE_HARI_INI");
 
 /**
  * POST JSON (objek) atau FormData apa adanya. Berhasil → data JSON; gagal → GagalKirim berkalimat Indonesia.
@@ -78,7 +88,7 @@ export async function kirimFk(url: string, body: Record<string, unknown> | FormD
     if (j.status === 0) throw new GagalKirim(`${PESAN_SINYAL} Belum dipastikan tersimpan; tekan Coba lagi saat ada sinyal${ulang}.`, true);
     if (j.status >= 502 || j.data === null) throw new GagalKirim(`Server tidak memberi jawaban yang pasti; belum dipastikan tersimpan. Coba lagi${ulang}.`, true, j.status);
     // Penolakan BERKODE (`{ kode, error }`, mis. luar rute FK-MSM2) membawa kalimat Indonesia dari server — diteruskan apa adanya.
-    if (j.status < 500 && typeof j.data.kode === "string" && typeof j.data.error === "string" && j.data.error) throw new GagalKirim(j.data.error, false, j.status);
+    if (j.status < 500 && typeof j.data.kode === "string" && typeof j.data.error === "string" && j.data.error) throw new GagalKirim(j.data.error, false, j.status, j.data.kode);
     throw new GagalKirim(sebabGagal(j.status), false, j.status);
 }
 

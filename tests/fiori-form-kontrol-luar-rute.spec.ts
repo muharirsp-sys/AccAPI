@@ -5,6 +5,8 @@
  *   (tanpa tautan = penjelasan); kunjungan luar rute dibuka seperti toko JKS (status + alasan); konfirmasi di Laporan harian: hari + minggu
  *   → JKS, "jangan masukkan JKS", "nanti" tidak menahan kirim laporan; peringatan JKS salesman lain. Kontrol JKS SPV: penanda "Ditambahkan
  *   salesman" + hasil unggah `digantikan`; Dashboard SPV: penanda luar rute. Data generik (PELANGGAN A, CABANG A, PRINCIPLE A).
+ *   FK-MSM3 (13 Okt): tulis kunjungan untuk toko yang tidak lagi di rute = 409 berkode → Kunjungan diganti penjelasan, Kirim status memuat
+ *   ulang rute; tanda prioritas belum dikirim bertahan melewati muat ulang rute (R-7); keputusan konfirmasi dikunci selama daftar dimuat ulang (D7).
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
  *   `npx playwright test tests/fiori-form-kontrol-luar-rute.spec.ts --config playwright.fiori-local.config.ts --workers=1 --output=test-results/fkmsm2`.
  * Dependensi: /api/form-kontrol/* + /api/customers/search di-mock (page.route). Tidak menyentuh DB.
@@ -35,7 +37,9 @@ const luar = (id: string, custCode: string, custName: string, over: Record<strin
 
 type Opsi = { scope?: unknown; rute?: Record<string, unknown>[]; luarRute?: Record<string, unknown>[]; jksRows?: unknown[]; jksPost?: unknown; spv?: unknown;
     /** Jawaban POST luar-rute/batal berikutnya (antrean; kosong = 200 dan baris keluar dari rute). */
-    batalJawab?: { status: number; body?: unknown }[] };
+    batalJawab?: { status: number; body?: unknown }[];
+    /** Jawaban POST ao-control berikutnya (antrean; kosong = 200). */
+    aoJawab?: { status: number; body: unknown }[] };
 
 async function mockFk(page: Page, opsi: Opsi) {
     const baca: URL[] = [];
@@ -60,6 +64,7 @@ async function mockFk(page: Page, opsi: Opsi) {
         if (p === "my-scope") return route.fulfill(json(opsi.scope ?? SALESMAN));
         if (p === "reasons") return route.fulfill(json({ rows: REASONS }));
         if (p === "ao-control" && req.method() === "GET") return route.fulfill(json({ rows: opsi.rute ?? [], summary: {}, date: url.searchParams.get("date") }));
+        if (p === "ao-control" && req.method() === "POST" && opsi.aoJawab?.length) { const j = opsi.aoJawab.shift()!; return route.fulfill(json(j.body, j.status)); }
         if (p === "luar-rute" && req.method() === "GET") return route.fulfill(json({ ok: true, rows: opsi.luarRute ?? [], date: url.searchParams.get("date") }));
         if (p === "luar-rute" && req.method() === "POST") {
             const b = req.postDataJSON() as { customerNo: string };
@@ -195,6 +200,27 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
         expect(postKe(m.tulis, "/ao-control")).toEqual([{ salesCode: "S-01", custCode: "C-100002-CBA", principle: "PRINCIPLE A", date: HARI_INI,
             status: "not_order", noOrderReasonCode: "R01", noOrderNote: "" }]);
         await noOverflow(page);
+    });
+
+    test("FK-MSM3 Kunjungan: status ditolak 409 KUNJUNGAN_DIBATALKAN (dibatalkan di layar lain) → wizard diganti penjelasan + jalan ke Rute hari ini", async ({ page }) => {
+        const m = await mockFk(page, { aoJawab: [{ status: 409, body: { ok: false, kode: "KUNJUNGAN_DIBATALKAN",
+            error: "Kunjungan luar rute PELANGGAN B pada Selasa, 13 Okt 2026 sudah dibatalkan, jadi tidak dicatat. Bila toko ini memang dikunjungi, tambahkan lagi lewat Kunjungan luar rute." } }] });
+        await page.goto(`/form-kontrol/visit/C-100002-CBA?salesCode=S-01&principle=PRINCIPLE+A&date=${HARI_INI}`, NAV);
+        await expect(page.getByRole("heading", { name: "PELANGGAN B" })).toBeVisible(NAV);
+        await page.getByRole("radio", { name: "TIDAK ORDER" }).check();
+        await page.getByLabel("Alasan tidak order").selectOption("R01");
+        await page.getByRole("button", { name: "Simpan & lanjut" }).click();
+        const isi = page.locator(".fi-page");
+        await expect(isi.getByRole("heading", { name: "Toko ini tidak lagi di rute Anda" })).toBeVisible(NAV);
+        await expect(isi).toContainText("sudah dibatalkan, jadi tidak dicatat");
+        await expect(page.getByRole("heading", { name: "Merchandising wajib" })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Simpan & lanjut" })).toHaveCount(0);
+        await noOverflow(page);
+        await page.screenshot({ path: "test-results/fkmsm3/ponsel-kunjungan-bukan-rute.png", fullPage: true });
+        const r0 = ruteDiminta(m.baca).length;
+        await isi.getByRole("link", { name: "Rute hari ini" }).click();
+        await expect(page.getByRole("region", { name: "Rute hari ini" })).toBeVisible(NAV);
+        await expect.poll(() => ruteDiminta(m.baca).length, NAV).toBeGreaterThan(r0);
     });
 
     test("Rute: Batalkan kunjungan luar rute salah tambah (owner 13 Okt) — hanya luar rute belum dikunjungi; galat server di dialog; tidak pasti = kunci + muat ulang", async ({ page }) => {
@@ -344,7 +370,7 @@ type JawabB = { status: number; body?: unknown; delay?: number; terapkan?: boole
 type OpsiB = {
     scope?: unknown; rute?: Record<string, unknown>[]; luarRute?: Record<string, unknown>[]; jksRows?: unknown[]; spv?: unknown;
     profiles?: unknown[]; spvOptions?: string[]; smOptions?: string[];
-    tambah?: JawabB[]; batal?: JawabB[]; konf?: JawabB[]; luarGet?: JawabB[]; ruteGet?: JawabB[];
+    tambah?: JawabB[]; batal?: JawabB[]; konf?: JawabB[]; luarGet?: JawabB[]; ruteGet?: JawabB[]; aoPost?: JawabB[];
     /** GET luar-rute menjawab 500 selama > 0. */
     luarGagal?: number;
 };
@@ -382,6 +408,11 @@ async function mockB(page: Page, o: OpsiB) {
             if (j && !j.terapkan) return jawab(route, j);
             await tidur(j?.delay);
             try { return await route.fulfill(json({ rows: o.rute ?? [], summary: {}, date: url.searchParams.get("date") })); } catch { return; }
+        }
+        if (p === "ao-control" && req.method() === "POST") {
+            const j = o.aoPost?.shift();
+            if (j) return jawab(route, j);
+            return route.fulfill(json({ success: true, id: "x" }));
         }
         if (p === "luar-rute" && req.method() === "GET") {
             if (o.luarGagal) { o.luarGagal--; return route.fulfill(json({ ok: false, error: "Internal server error" }, 500)); }
@@ -632,6 +663,98 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await page.goto("/form-kontrol/spv-dashboard", NAV);
         await page.getByText("Detail kunjungan (1)").click();
         await expect(page.getByRole("listitem").filter({ hasText: "PELANGGAN B" })).toContainText("Luar rute", NAV);
+        await noOverflow(page);
+    });
+
+    test("B7/R-7 tanda prioritas belum dikirim bertahan melewati muat ulang rute (Tambah luar rute, Batalkan); toko yang hilang disebut + tandanya dibuang; Kirim status membawa tanda", async ({ page }) => {
+        const o: OpsiB = { rute: [baris("C-900", "TOKO JKS A"), baris("C-100002-CBA", "PELANGGAN B", { id: "l-b", luarRute: true })] };
+        const m = await mockB(page, o);
+        await page.goto("/form-kontrol?tab=ao", NAV);
+        const r = page.getByRole("region", { name: "Rute hari ini" });
+        const daftar = r.getByRole("list", { name: "Toko di rute" });
+        await expect(daftar.getByRole("listitem")).toHaveCount(2, NAV);
+        await r.getByRole("button", { name: "Prioritas TOKO JKS A" }).click();
+        await r.getByRole("button", { name: "Prioritas PELANGGAN B" }).click();
+        await expect(r.getByText("2 tanda prioritas belum dikirim")).toBeVisible();
+
+        // Tambah luar rute → rute dimuat ulang: kedua tanda tetap (dulu hilang diam).
+        const sek = r.getByRole("region", { name: "Kunjungan luar rute" });
+        await sek.getByRole("button", { name: "Tambah toko luar rute" }).click();
+        await sek.getByLabel("Cari pelanggan").fill("pelanggan c");
+        await sek.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("listitem").first().click();
+        const g0 = nBaca(m.baca, "/ao-control");
+        await sek.getByRole("button", { name: "Tambah ke kunjungan hari ini" }).click();
+        await expect(daftar.getByRole("listitem")).toHaveCount(3, NAV);
+        await expect.poll(() => nBaca(m.baca, "/ao-control")).toBeGreaterThan(g0);
+        await expect(r.getByText("2 tanda prioritas belum dikirim")).toBeVisible();
+        await expect(r.getByRole("button", { name: "Prioritas TOKO JKS A" })).toHaveAttribute("aria-pressed", "true");
+        await expect(r.getByRole("button", { name: "Prioritas PELANGGAN B" })).toHaveAttribute("aria-pressed", "true");
+
+        // Batalkan PELANGGAN B (bertanda) → keluar dari rute: tandanya dibuang DAN disebut; tanda TOKO JKS A tetap.
+        await daftar.getByRole("button", { name: "Batalkan kunjungan PELANGGAN B" }).click();
+        await page.getByRole("dialog", { name: "Batalkan kunjungan PELANGGAN B?" }).getByRole("button", { name: "Batalkan kunjungan" }).click();
+        await expect(daftar.getByRole("listitem")).toHaveCount(2, NAV);
+        const strip = r.getByRole("status").filter({ hasText: "1 tanda prioritas dibuang." });
+        await expect(strip).toContainText("PELANGGAN B tidak lagi ada di rute ini");
+        await expect(r.getByText("1 tanda prioritas belum dikirim")).toBeVisible();
+        await expect(r.getByRole("button", { name: "Prioritas TOKO JKS A" })).toHaveAttribute("aria-pressed", "true");
+        await noOverflow(page);
+        await strip.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: "test-results/fkmsm3/ponsel-r7-tanda-dibuang.png" });
+        await strip.getByRole("button", { name: "Tutup pesan" }).click();
+        await expect(strip).toHaveCount(0);
+
+        // Kirim status membawa tanda yang bertahan (dari bacaan rute terbaru).
+        await r.getByRole("button", { name: /^Kirim status rute/ }).click();
+        await page.getByRole("dialog").getByRole("button", { name: "Kirim status" }).click();
+        await expect(page.getByRole("dialog")).toBeHidden(NAV);
+        expect(postKe(m.tulis, "/ao-control").map((b) => [b.custCode, b.status])).toEqual([["C-900", "priority"], ["C-100003-CBA", "not_visited"]]);
+        await expect(r.getByText(/tanda prioritas belum dikirim/)).toHaveCount(0);
+    });
+
+    test("D7 Konfirmasi: selama daftar dimuat ulang sesudah keputusan, keputusan toko lain DIKUNCI dengan alasan terlihat; sesudah termuat terbuka", async ({ page }) => {
+        const o: OpsiB = { luarRute: [luarPada(HARI_INI, "k1", "C-100001-CBA", "PELANGGAN A"), luarPada(HARI_INI, "k2", "C-100002-CBA", "PELANGGAN B")] };
+        await mockB(page, o);
+        await page.goto("/form-kontrol?tab=laporan", NAV);
+        const sek = page.getByRole("region", { name: "Laporan harian" }).getByRole("region", { name: "Toko luar rute" });
+        const item = (n: string) => sek.getByRole("list", { name: "Toko luar rute" }).getByRole("listitem").filter({ hasText: n });
+        await expect(sek).toContainText("2 menunggu keputusan", NAV);
+        const tidakB = item("PELANGGAN B").getByRole("button", { name: "Jangan masukkan JKS: PELANGGAN B" });
+        await expect(tidakB).toBeEnabled();
+        o.luarGet = [{ status: 200, delay: 3000, terapkan: true }];
+        await item("PELANGGAN A").getByRole("button", { name: "Jangan masukkan JKS" }).click();
+        await expect(item("PELANGGAN A")).toContainText("Tidak dimasukkan JKS", NAV);
+        await expect(tidakB).toBeDisabled();
+        await expect(item("PELANGGAN B").getByRole("button", { name: "Masukkan ke JKS: PELANGGAN B" })).toBeDisabled();
+        await expect(item("PELANGGAN B").locator("p.fi-why", { hasText: "Menunggu daftar dimuat ulang" })).toBeVisible();
+        await expect(tidakB).toBeEnabled(NAV);
+        await expect(item("PELANGGAN B").locator("p.fi-why", { hasText: "Menunggu daftar dimuat ulang" })).toHaveCount(0);
+    });
+
+    test("FK-MSM3 Kirim status: toko luar rute dibatalkan di layar lain → 409 KUNJUNGAN_DIBATALKAN di dialog (berhenti di toko itu), rute dimuat ulang tanpa toko itu", async ({ page }) => {
+        const awal = [baris("C-900", "TOKO JKS A"), baris("C-100002-CBA", "PELANGGAN B", { id: "l-b", luarRute: true })];
+        const o: OpsiB = { rute: awal };
+        const m = await mockB(page, o);
+        await page.goto("/form-kontrol?tab=ao", NAV);
+        const r = page.getByRole("region", { name: "Rute hari ini" });
+        const daftar = r.getByRole("list", { name: "Toko di rute" });
+        await expect(daftar.getByRole("listitem")).toHaveCount(2, NAV);
+        // Bacaan ulang sebelum kirim masih memuat PELANGGAN B; layar lain lalu membatalkannya → server menolak statusnya.
+        o.ruteGet = [{ status: 200, body: { rows: awal, summary: {}, date: HARI_INI } }];
+        o.rute = [awal[0]];
+        o.aoPost = [{ status: 200, body: { success: true, id: "a1" } }, { status: 409, body: { ok: false, kode: "KUNJUNGAN_DIBATALKAN",
+            error: "Kunjungan luar rute PELANGGAN B pada Selasa, 13 Okt 2026 sudah dibatalkan, jadi tidak dicatat. Bila toko ini memang dikunjungi, tambahkan lagi lewat Kunjungan luar rute." } }];
+        const g0 = nBaca(m.baca, "/ao-control");
+        await r.getByRole("button", { name: /^Kirim status rute/ }).click();
+        const d = page.getByRole("dialog");
+        await d.getByRole("button", { name: "Kirim status" }).click();
+        await expect(d.getByRole("alert")).toContainText("sudah dibatalkan, jadi tidak dicatat", NAV);
+        await expect(d.getByRole("alert")).toContainText("Berhenti di PELANGGAN B: 1 dari 2 toko sudah terkirim");
+        await expect.poll(() => nBaca(m.baca, "/ao-control"), NAV).toBe(g0 + 2);
+        await d.getByRole("button", { name: "Batal" }).click();
+        await expect(daftar.getByRole("listitem")).toHaveCount(1, NAV);
+        await expect(daftar).not.toContainText("PELANGGAN B");
+        expect(postKe(m.tulis, "/ao-control").map((b) => b.custCode)).toEqual(["C-900", "C-100002-CBA"]);
         await noOverflow(page);
     });
 

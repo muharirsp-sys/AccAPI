@@ -16,7 +16,7 @@ import { FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fio
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { TOKO_TUTUP_CODE } from "@/lib/form-kontrol/constants";
 import { type Scope, type AoRow, type Reason, penjelasanTanpaJks, principalAwal, useIzinFk } from "../shared";
-import { bacaFk, keBarisRute, kirimFk, useHariBeku } from "../lapangan";
+import { bacaFk, ditolakBukanRute, keBarisRute, kirimFk, useHariBeku } from "../lapangan";
 
 type Alasan = { reasonCode: string; note: string };
 type Data = { rows: AoRow[]; reasons: Reason[] };
@@ -105,6 +105,8 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
             });
         } catch (e) {
             setGalat((g) => ({ ...g, [r.custCode]: `Alasan belum tersimpan. ${e instanceof Error ? e.message : ""}`.trim() }));
+            // FK-MSM3: toko tidak lagi di rute tanggal ini (409 berkode) → daftar dimuat ulang dari server.
+            if (ditolakBukanRute(e)) muatUlang();
         } finally {
             setMenyimpan(null);
         }

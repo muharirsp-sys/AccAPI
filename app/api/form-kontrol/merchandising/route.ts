@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import { getMerchandisingForDate, saveMerchandising, resolveScope, canAccessSales } from "@/lib/form-kontrol";
+import { jawabGalat } from "@/lib/order-cabang";
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -43,7 +44,8 @@ export async function POST(req: Request) {
         if (!canAccessSales(await resolveScope(session), salesCode)) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
-        const id = await saveMerchandising({
+        // FK-MSM3: hanya toko di rute tanggal itu (JKS atau luar rute belum batal) → selain itu 409 berkode.
+        const hasil = await saveMerchandising({
             salesCode, custCode, principle, date,
             produkJelas: body.produkJelas ?? false,
             displayRapi: body.displayRapi ?? false,
@@ -55,7 +57,8 @@ export async function POST(req: Request) {
             stepPhotos: body.stepPhotos ?? null,
             note: body.note ?? null,
         });
-        return NextResponse.json({ success: true, id });
+        if ("galat" in hasil) return jawabGalat(hasil.galat);
+        return NextResponse.json({ success: true, id: hasil.id });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }

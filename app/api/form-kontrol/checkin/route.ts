@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import { saveCheckin, resolveScope, canAccessSales } from "@/lib/form-kontrol";
+import { jawabGalat } from "@/lib/order-cabang";
 
 export async function POST(req: Request) {
     const gate = await requirePermissionH("form_kontrol.submit");
@@ -16,13 +17,15 @@ export async function POST(req: Request) {
         if (!canAccessSales(await resolveScope(session), salesCode)) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
-        const id = await saveCheckin({
+        // FK-MSM3: toko di luar rute tanggal itu (mis. kunjungan luar rute yang sudah dibatalkan) → 409 berkode, tanpa baris AO.
+        const hasil = await saveCheckin({
             salesCode, custCode, principle, date, photoUrl, createdBy: session.user.id,
             lat: typeof lat === "number" ? lat : null,
             lng: typeof lng === "number" ? lng : null,
             accuracy: typeof accuracy === "number" ? accuracy : null,
         });
-        return NextResponse.json({ success: true, id });
+        if ("galat" in hasil) return jawabGalat(hasil.galat);
+        return NextResponse.json({ success: true, id: hasil.id });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
