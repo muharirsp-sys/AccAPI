@@ -32,6 +32,8 @@ interface StoreInfo {
     custCode: string; custName: string;
     market: string | null; alamat: string | null; kota: string | null;
     principle: string; visitFrequency: number;
+    /** FK-MSM2: kunjungan luar rute (toko tidak di JKS; ditambahkan salesman hari itu). */
+    luarRute?: boolean;
 }
 interface AoInfo {
     id: string; status: string;
@@ -102,7 +104,7 @@ export default function Kunjungan(props: Props) {
                 <ObjectPageHeader breadcrumbs={crumbs} title={custCode} attributes={[{ label: "Tanggal", value: `${tanggalPanjang(date)} · WITA` }]} />
                 <div className="fi-page" style={{ maxWidth: "46rem" }}>
                     <EmptyState title="Toko ini tidak ada di JKS Anda"
-                        message={`Kunjungan hanya bisa dibuat untuk toko di JKS ${salesCode || "salesman"} untuk ${principle || "principal ini"}. Kembali ke rute, atau minta SPV menambahkan toko ini ke JKS.`}
+                        message={`Kunjungan hanya bisa dibuat untuk toko di JKS ${salesCode || "salesman"} untuk ${principle || "principal ini"}, atau toko yang ditambahkan sebagai kunjungan luar rute pada tanggal ini. Kembali ke Rute hari ini lalu tambahkan lewat Kunjungan luar rute.`}
                         action={<Link className="fi-btn fi-btn--secondary" href="/form-kontrol?tab=ao"><ArrowLeft className="fi-icon" aria-hidden />Rute hari ini</Link>} />
                 </div>
             </div>
@@ -402,7 +404,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                     { label: "Principal", value: store.principle },
                     { label: "Tanggal", value: `${tanggalPanjang(date)} · WITA` },
                     ...(store.alamat || store.market ? [{ label: "Alamat", value: [store.market, store.alamat, store.kota].filter(Boolean).join(" · ") }] : []),
-                    { label: "Frekuensi", value: `${store.visitFrequency}×/bulan` },
+                    store.luarRute ? { label: "Jenis", value: <StatusBadge tone="info">Luar rute</StatusBadge> } : { label: "Frekuensi", value: `${store.visitFrequency}×/bulan` },
                 ]}
                 flow={step < 4 ? <><Flow steps={flow} label="Langkah kunjungan" /><span className="fi-small fi-subtle">Langkah {step + 1} dari 4 · {LANGKAH[step]}</span></> : undefined}
             />

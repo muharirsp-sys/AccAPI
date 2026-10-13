@@ -1,9 +1,10 @@
 /*
  * Tujuan: Order per cabang Accurate (O1, owner 12 Okt 2026). Pelanggan cabang X hanya boleh dipesankan barang bercabang X; cabang
  *   salesman = cabang karyawannya di Accurate; harga = cabang pelanggan. SATU pemeriksa untuk pratinjau dan simpan order.
- * Caller: lib/sync (tag barang -> cabang), app/api/orders/{preview,harga}, app/api/customers/search, app/api/items/search.
+ * Caller: lib/sync (tag barang -> cabang), app/api/orders/{preview,harga}, app/api/customers/{search,rute}, app/api/items/search.
  * Dependensi: db (customer, item, branch, accurate_employee, sales_profile), lib/item-price (resolvePrices).
- * Main Functions: cabangDariTag, petaCabang, hargaSah, hargaPetugasSah, putusanHarga, alasanBonus, tripwireIzin (murni); cakupanCabang,
+ * Main Functions: cabangDariTag, petaCabang, hargaSah, hargaPetugasSah, putusanHarga, alasanBonus, tripwireIzin, cocokKodeRute,
+ *   pilihPelangganRute (murni); cakupanCabang,
  *   periksaOrder, periksaBonus (DB baca-saja).
  * Side Effects: DB read-only.
  * Kontrak: docs/handover/O1-KONTRAK-ORDER-CABANG.md.
@@ -107,6 +108,32 @@ export function tripwireIzin(perms: ReadonlySet<string>): GalatOrder | null {
     return { status: 403, kode: "IZIN_TIDAK_KONSISTEN",
         error: "Akun Anda punya izin Order Sales sekaligus lihat Order Masuk tanpa izin membuat order — cakupan cabang tidak bisa dipastikan. "
             + "Minta admin membetulkan grup akses (sales: hanya websales.*; petugas: order.create)." };
+}
+
+// ---------------------------------------------------------------- toko rute JKS -> pelanggan cabang (FK-MSM butir 6, murni)
+
+/**
+ * Kode toko JKS (tanpa akhiran cabang, mis. C-100001) cocok dengan `customerNo` Accurate bila sama persis ATAU kode + "-" + SATU akhiran
+ * (C-100001-MSM; master Accurate memberi satu customerNo per cabang). Tak peka huruf; spasi di dalam kode TIDAK ditebak ("C- FA0164").
+ * ponytail: akhiran tidak dicocokkan ke nama cabang (tak ada pemetaan akhiran -> cabang); pembatas cabangnya = kueri pemanggil.
+ */
+export function cocokKodeRute(kode: string, customerNo: string): boolean {
+    const k = kode.trim().toUpperCase(), c = customerNo.trim().toUpperCase();
+    if (!k) return false;
+    if (c === k) return true;
+    const akhiran = c.startsWith(`${k}-`) ? c.slice(k.length + 1) : "";
+    return akhiran !== "" && !akhiran.includes("-");
+}
+
+export type MasalahRute = "TIDAK_ADA" | "GANDA" | "NONAKTIF";
+/** Satu kode toko JKS -> tepat SATU pelanggan aktif di antara `kandidat` (sudah dibatasi cabang pemakai); selain itu masalahnya. */
+export function pilihPelangganRute<T extends { customerNo: string; suspended: boolean }>(kode: string, kandidat: readonly T[]):
+    { pelanggan: T; masalah: null; kandidat: string[] } | { pelanggan: null; masalah: MasalahRute; kandidat: string[] } {
+    const cocok = kandidat.filter((c) => cocokKodeRute(kode, c.customerNo));
+    const aktif = cocok.filter((c) => !c.suspended);
+    if (aktif.length === 1) return { pelanggan: aktif[0], masalah: null, kandidat: [aktif[0].customerNo] };
+    if (aktif.length > 1) return { pelanggan: null, masalah: "GANDA", kandidat: aktif.map((c) => c.customerNo) };
+    return { pelanggan: null, masalah: cocok.length ? "NONAKTIF" : "TIDAK_ADA", kandidat: cocok.map((c) => c.customerNo) };
 }
 
 /** Galat berkode -> jawaban `{ ok:false, kode, error, ... }` dengan status HTTP-nya. */

@@ -3,7 +3,7 @@
  *   kapasitas dari server (simulation). Server menghitung hanya bila kode sales DAN principal terisi (eq keduanya), jadi layar meminta
  *   keduanya alih-alih menampilkan "kosong" yang menyesatkan. SM memilih salesman dari kode timnya (scope yang sudah dimuat).
  * Caller: form-kontrol/FormKontrol.tsx (tab "frekuensi").
- * Dependensi: ../shared (Scope, FreqRow, PRINCIPLES, hariIniWita, ambilFk), components/fiori/{core,interactive}.
+ * Dependensi: ../shared (Scope, FreqRow, principalAwal, penjelasanTanpaJks, hariIniWita, ambilFk), components/fiori/{core,interactive}.
  * Main Functions: TabFrekuensi (default).
  * Side Effects: GET /api/form-kontrol/frequency?month&year&salesCode&principle.
  */
@@ -13,7 +13,7 @@ import { useCallback, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button, EmptyState, ListItem, ResponsiveTable, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
-import { PRINCIPLES, ambilFk, hariIniWita, type FreqRow, type Scope } from "../shared";
+import { ambilFk, hariIniWita, penjelasanTanpaJks, principalAwal, type FreqRow, type Scope } from "../shared";
 
 type Simulasi = { workDays?: number; visitsPerDay?: number; totalSlots: number; capacity1x: number; capacity2x: number; capacity4x: number };
 type Data = { rows: FreqRow[]; simulation: Simulasi | null };
@@ -22,7 +22,10 @@ const BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "O
 export default function TabFrekuensi({ scope }: { scope: Scope }) {
     const [tahun, bulanIni] = hariIniWita().split("-").map(Number);
     const tim = scope.allowedSalesCodes;
-    const [principle, setPrinciple] = useState(PRINCIPLES[0]);
+    // Principal = JKS aktif cakupan (FK-MSM butir 1); satu = langsung terpilih.
+    const daftarPrincipal = scope.principles ?? [];
+    const tanpaJks = penjelasanTanpaJks(scope);
+    const [principle, setPrinciple] = useState(() => principalAwal(scope));
     const [month, setMonth] = useState(bulanIni);
     const [salesCode, setSalesCode] = useState(scope.salesCode ?? (tim?.length === 1 ? tim[0] : ""));
     const lengkap = Boolean(salesCode.trim() && principle);
@@ -66,14 +69,15 @@ export default function TabFrekuensi({ scope }: { scope: Scope }) {
             <FilterBar
                 title="Kontrol Frekuensi Kunjungan"
                 activeCount={0}
-                onReset={() => { setPrinciple(PRINCIPLES[0]); setMonth(bulanIni); }}
+                onReset={() => { setPrinciple(principalAwal(scope)); setMonth(bulanIni); }}
                 actions={<Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} disabled={!lengkap} onClick={muatUlang}>Muat ulang</Button>}
                 search={pilihSales ?? undefined}
                 fields={
                     <>
                         <FormField label="Principal" required>{(a) => (
                             <select {...a} className="fi-input" value={principle} onChange={(e) => setPrinciple(e.target.value)}>
-                                {PRINCIPLES.map((p) => <option key={p} value={p}>{p}</option>)}
+                                {!principle && <option value="">Pilih principal</option>}
+                                {daftarPrincipal.map((p) => <option key={p} value={p}>{p}</option>)}
                             </select>
                         )}</FormField>
                         <FormField label="Bulan">{(a) => (
@@ -95,6 +99,8 @@ export default function TabFrekuensi({ scope }: { scope: Scope }) {
             )}
             {timKosong ? (
                 <EmptyState title="Belum ada salesman di tim Anda" message="Salesman muncul setelah admin mengisi SM/SPV mereka di Hierarki Sales." />
+            ) : tanpaJks ? (
+                <EmptyState title={tanpaJks.title} message={tanpaJks.message} />
             ) : !lengkap ? (
                 <EmptyState title="Pilih salesman dan principal" message="Frekuensi dihitung per salesman per principal; isi keduanya untuk melihat toko yang over-visit." />
             ) : (

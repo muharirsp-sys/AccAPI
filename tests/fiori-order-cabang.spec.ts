@@ -7,13 +7,15 @@
  *   Tahap 2 (O1 putaran 1): simpan Order Sales + Order Baru membawa `sidik` pratinjau terakhir; PRATINJAU_BERUBAH = belum tersimpan, angka baru +
  *   konfirmasi ulang; ubah isian = sidik lama batal (Kirim terkunci sampai pratinjau segar); kode galat baru jadi kalimat; harga petugas hanya
  *   untuk baris tanpa harga master; ORDER_GANDA + konfirmasi; flag cabangTanpaBarang.
+ *   O3: panel "Biasa diambil toko ini" (riwayat beli toko) di Order Sales 390 px + Order baru — Tambah = baris baru + pratinjau baru.
+ *   O3 putaran 1: catatan faktur rusak dilewati; ganti pelanggan saat Tambah masih membaca barang = dibatalkan (baris pelanggan lama tak masuk).
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
  *   `npx playwright test tests/fiori-order-cabang.spec.ts --config <config lokal> --workers=1 --output=test-results/order-cabang`.
  * Dependensi: tests/helpers/order-cabang-mock.ts (mock kontrak O1 + FastAPI Web Sales). Tidak menyentuh DB maupun Accurate.
  * Side Effects: Tangkapan di test-results/order-cabang.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { ID_WEBSALES, mockOrderCabang, mockOrdersInternal, mockWebsales, pilihBarang, pilihPelanggan, pratinjauContoh, type Jawab, type PreviewBody } from "./helpers/order-cabang-mock";
+import { ID_WEBSALES, barisRiwayat, mockOrderCabang, mockOrdersInternal, mockWebsales, pilihBarang, pilihPelanggan, pratinjauContoh, riwayatContoh, type Jawab, type PreviewBody } from "./helpers/order-cabang-mock";
 
 const NAV = { timeout: 60_000 } as const;
 const HARI_INI = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date());
@@ -1513,4 +1515,214 @@ test("Order baru (putaran 2 peninjau #2): simpan dijawab 2xx tanpa ok/id ({} ata
     await expect(main.getByRole("status").filter({ hasText: "Hasil simpan belum pasti." })).toBeVisible();
     await expect(page).toHaveURL(/\/orders\/baru$/);
     expect(orders.simpan).toHaveLength(2);
+});
+
+// ------------------------------------------------------------------ O3: riwayat beli toko ("Biasa diambil toko ini")
+
+/** 12 barang (server sudah mengurutkan rata-rata terbesar): 10 teratas + "Lihat semua". B-1 = barang cabang lain (tak bisa diorder); F-1 = tanpa
+ * cabang dengan alasan bertag PANJANG (bentuk `alasanBonus`) — putaran 2: alasan panjang tidak boleh meruntuhkan kolom nama di 390 px. */
+const ALASAN_TAG = 'tanpa cabang (tag "ALAT TULIS KANTOR" tidak bisa diorder)';
+const RIWAYAT_A = [
+    barisRiwayat("A-1", "BARANG A", "PCS", 12),
+    barisRiwayat("A-1", "BARANG A", "KRT", 2.5, { terakhirBeli: "2026-10-01" }),
+    barisRiwayat("B-1", "BARANG B", "KRT", 2, { bisaDiorder: false, alasan: "barang cabang CABANG B" }),
+    barisRiwayat("A-4", "BARANG A4", "LSN", 1.2),
+    barisRiwayat("F-1", "BARANG F1", "PCS", 1, { bisaDiorder: false, alasan: ALASAN_TAG }),
+    ...Array.from({ length: 7 }, (_, i) => barisRiwayat(`F-${i + 2}`, `BARANG F${i + 2}`, "PCS", Math.round((0.9 - i * 0.1) * 10) / 10)),
+];
+
+test.describe("O3 riwayat beli — ponsel 390 px", () => {
+    test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+    test("Order Sales: panel muncul setelah pelanggan dipilih (10 teratas + Lihat semua, tak bisa diorder bertanda, catatan tanpa rincian); Tambah = baris baru (satuan + bulat ke atas) → pratinjau baru → kirim bersidik", async ({ page }) => {
+        const diminta: string[] = [];
+        const { log, opsi } = await mockOrderCabang(page, { peran: "sales",
+            riwayat: (url) => { diminta.push(url.search); return riwayatContoh(url.searchParams.get("customerNo") ?? "", RIWAYAT_A, { jumlahFaktur: 8, tanpaRincian: 2 }); } });
+        const ws = await mockWebsales(page, { cabang: opsi });
+        await page.goto("/sales", NAV);
+        const main = page.locator("main");
+        await expect(main.getByLabel("Cari pelanggan")).toBeVisible(NAV);
+        const panel = main.getByRole("region", { name: "Biasa diambil toko ini" });
+        await expect(panel).toHaveCount(0); // belum ada pelanggan = belum ada panel
+        expect(diminta).toEqual([]);
+
+        await pilihPelanggan(main, "PELANG", "PELANGGAN A");
+        await expect(panel).toBeVisible(NAV);
+        expect([...new Set(diminta)]).toEqual(["?customerNo=C-01&bulan=3"]); // dev StrictMode boleh meminta dua kali; isinya sama
+        const daftar = panel.getByRole("list", { name: "Riwayat beli toko" });
+        await expect(daftar.getByRole("listitem")).toHaveCount(10);
+        await expect(daftar.getByRole("listitem").first()).toContainText("BARANG A");
+        await expect(daftar.getByRole("listitem").first()).toContainText("12 PCS / bulan");
+        await expect(daftar.getByRole("listitem").first()).toContainText("terakhir 05/10/2026 · 3 faktur");
+        const b = daftar.getByRole("listitem").filter({ hasText: "BARANG B" });
+        await expect(b).toContainText("Tidak bisa diorder");
+        await expect(b).toContainText("barang cabang CABANG B");
+        await expect(b.getByRole("button")).toHaveCount(0);
+        // Alasan bertag panjang: tetap terbaca, kolom nama TIDAK runtuh (dulu 0 px = satu huruf per baris), tanpa gulir horizontal.
+        const f1 = daftar.getByRole("listitem").filter({ hasText: "BARANG F1" });
+        await expect(f1).toContainText("Tidak bisa diorder");
+        await expect(f1).toContainText(ALASAN_TAG);
+        for (const baris of [f1, b]) {
+            const lebarNama = await baris.locator("b").first().evaluate((e) => e.getBoundingClientRect().width);
+            expect(lebarNama, "lebar kolom nama barang").toBeGreaterThanOrEqual(120);
+        }
+        expect(await f1.evaluate((e) => e.getBoundingClientRect().height), "tinggi baris alasan panjang").toBeLessThan(160);
+        await noOverflow(page);
+        await expect(daftar.getByRole("button", { name: "Tambah 2 LSN BARANG A4" })).toBeVisible(); // rata 1,2 -> ke atas 2 (bukan 1)
+        await expect(panel).toContainText("2 dari 8 faktur sejak 15/07/2026 belum punya rincian barang");
+        await expect(panel).toContainText("Bonus promo tidak dihitung; retur belum dikurangkan.");
+        await panel.getByRole("button", { name: "Lihat semua (12)" }).click();
+        await expect(daftar.getByRole("listitem")).toHaveCount(12);
+        await panel.getByRole("button", { name: "Tampilkan 10 teratas" }).click();
+        await expect(daftar.getByRole("listitem")).toHaveCount(10);
+        await noOverflow(page);
+        await target44(panel);
+        await panel.getByRole("heading", { name: "Biasa diambil toko ini" }).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: "test-results/order-cabang/o3-sales-riwayat.png", fullPage: true });
+
+        // Tambah KRT (rata 2,5 -> 3): mengisi baris kosong pertama, satuan KRT, jumlah 3; pratinjau dihitung ulang.
+        const nPratinjau = log.preview.length;
+        await panel.getByRole("button", { name: "Tambah 3 KRT BARANG A" }).click();
+        const b1 = main.getByRole("listitem", { name: "Barang 1" });
+        await expect(b1.getByRole("group", { name: "Barang 1 terpilih" })).toContainText("A-1", NAV);
+        await expect(b1.getByLabel("Satuan")).toHaveValue("KRT");
+        await expect(b1.getByLabel("Jumlah")).toHaveValue("3");
+        await expect(b1).toContainText("Harga ada", NAV);
+        expect(log.preview.length).toBeGreaterThan(nPratinjau);
+        expect(log.preview.at(-1)).toMatchObject({ customer_no: "C-01", lines: [{ code: "A-1", unit: "KRT", quantity: "3" }] });
+        await expect(daftar.getByRole("listitem").filter({ hasText: "2,5 KRT / bulan" })).toContainText("Sudah di order");
+        // Tambah PCS = baris BARU (baris 1 sudah terisi); pratinjau memuat dua baris.
+        await panel.getByRole("button", { name: "Tambah 12 PCS BARANG A" }).click();
+        const b2 = main.getByRole("listitem", { name: "Barang 2" });
+        await expect(b2.getByLabel("Satuan")).toHaveValue("PCS", NAV);
+        await expect(b2.getByLabel("Jumlah")).toHaveValue("12");
+        await expect.poll(() => log.preview.at(-1)?.lines).toEqual([{ code: "A-1", unit: "KRT", quantity: "3" }, { code: "A-1", unit: "PCS", quantity: "12" }]);
+        // Jumlah usulan bisa diubah -> pratinjau baru lagi.
+        await b1.getByLabel("Jumlah").fill("5");
+        await expect.poll(() => log.preview.at(-1)?.lines[0]).toEqual({ code: "A-1", unit: "KRT", quantity: "5" });
+        await noOverflow(page);
+        await target44(panel);
+        await page.screenshot({ path: "test-results/order-cabang/o3-sales-tambah.png", fullPage: true });
+
+        const kirim = page.getByRole("button", { name: "Kirim order…" });
+        await expect(kirim).toBeEnabled(NAV);
+        await kirim.click();
+        await page.getByRole("dialog").getByRole("button", { name: "Kirim order" }).click();
+        await expect(page.getByRole("dialog")).toBeHidden(NAV);
+        expect(ws.kirim.at(-1)).toMatchObject({ customer_no: "C-01", sidik: log.sidik.at(-1),
+            lines: [{ code: "A-1", unit: "KRT", quantity: "5" }, { code: "A-1", unit: "PCS", quantity: "12" }] });
+        // Tangkapan elemen panel PALING AKHIR: tangkapan elemen setinggi > layar mengubah ukuran viewport sementara (emulasi sentuh hilang).
+        await panel.screenshot({ path: "test-results/order-cabang/o3-sales-panel.png" });
+    });
+});
+
+test("O3 Order Sales: keadaan panel — memuat, galat + Coba lagi (bukan 'belum pernah beli'), belum ada riwayat, faktur tanpa rincian; Tambah yang tak bisa = kalimat per barang, baris tidak bertambah", async ({ page }) => {
+    let lepas: () => void = () => {};
+    const tahan = new Promise<void>((ok) => { lepas = ok; });
+    let modeA: "putus" | "ok" = "putus";
+    await mockOrderCabang(page, { peran: "sales", riwayat: async (url) => {
+        const no = url.searchParams.get("customerNo") ?? "";
+        if (no === "C-01" && modeA === "putus") { await tahan; return "putus"; } // ditahan dulu (keadaan memuat), lalu putus
+        if (no === "C-01") {
+            return riwayatContoh(no, [barisRiwayat("A-2", "BARANG A2", "LSN", 4), barisRiwayat("A-9", "BARANG LAMA", "PCS", 3), barisRiwayat("A-1", "BARANG A", "DUS", 2)], { jumlahFaktur: 5 });
+        }
+        if (no === "C-02") return riwayatContoh(no, [], { jumlahFaktur: 3, tanpaRincian: 3, dilewati: 1, dataSejak: "2026-08-01" });
+        return undefined; // bawaan: belum ada riwayat
+    } });
+    await mockWebsales(page);
+    const main = await bukaSales(page);
+    await pilihPelanggan(main, "PELANG", "PELANGGAN A");
+    const panel = main.getByRole("region", { name: "Biasa diambil toko ini" });
+    await expect(panel.getByText("Memuat riwayat beli toko")).toBeAttached(NAV);
+    lepas();
+    await expect(panel).toContainText("Riwayat beli toko belum terbaca.", NAV);
+    await expect(panel).toContainText("Ini bukan berarti toko belum pernah beli.");
+    await expect(panel).not.toContainText("belum punya riwayat faktur");
+    modeA = "ok";
+    await panel.getByRole("button", { name: "Coba lagi" }).click();
+    const daftar = panel.getByRole("list", { name: "Riwayat beli toko" });
+    await expect(daftar.getByRole("listitem")).toHaveCount(3, NAV);
+
+    // Tambah yang tidak bisa: satuan tanpa harga sah (sales), barang tak lagi di cabang pelanggan, satuan tak lagi di master.
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await panel.getByRole("button", { name: "Tambah 4 LSN BARANG A2" }).click();
+    await expect(daftar.getByRole("listitem").filter({ hasText: "BARANG A2" }).getByRole("alert")).toContainText("Harga LSN belum ada di Accurate untuk cabang pelanggan", NAV);
+    await panel.getByRole("button", { name: "Tambah 3 PCS BARANG LAMA" }).click();
+    await expect(daftar.getByRole("listitem").filter({ hasText: "BARANG LAMA" }).getByRole("alert")).toContainText("A-9 tidak ada lagi di barang cabang CABANG A", NAV);
+    await panel.getByRole("button", { name: "Tambah 2 DUS BARANG A" }).click();
+    await expect(daftar.getByRole("listitem").filter({ hasText: "DUS / bulan" }).getByRole("alert")).toContainText("Satuan DUS tidak ada lagi", NAV);
+    await expect(b1.getByLabel("Cari barang")).toBeVisible(); // baris 1 tetap kosong
+    await expect(main.getByRole("listitem", { name: "Barang 2" })).toHaveCount(0);
+
+    // Pelanggan lain: semua faktur tanpa rincian = kalimat sendiri; pelanggan tanpa faktur = "belum punya riwayat faktur sejak <tanggal>".
+    await main.getByRole("button", { name: "Ganti pelanggan" }).click();
+    await main.getByLabel("Cari pelanggan").fill("PELANGGAN B");
+    await main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button", { name: /PELANGGAN B/ }).click();
+    await expect(panel).toContainText("Ada 3 faktur sejak 15/07/2026, tetapi rincian barangnya belum tersedia", NAV);
+    await expect(panel).toContainText("1 faktur toko ini dilewati karena tanggal atau isinya tidak terbaca di data kami"); // putaran 1 butir 3
+    await expect(panel.getByRole("list")).toHaveCount(0);
+    await main.getByRole("button", { name: "Ganti pelanggan" }).click();
+    await main.getByLabel("Cari pelanggan").fill("PELANGGAN D");
+    await main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button", { name: /PELANGGAN D/ }).click();
+    await expect(panel).toContainText("Toko ini belum punya riwayat faktur sejak 15/07/2026.", NAV);
+    await expect(panel).not.toContainText("dilewati");
+    await page.screenshot({ path: "test-results/order-cabang/o3-sales-keadaan.png", fullPage: true });
+});
+
+test("O3 putaran 1: ganti pelanggan saat Tambah masih membaca barang = pembacaan dibatalkan; barang pelanggan lama TIDAK masuk order pelanggan baru", async ({ page }) => {
+    let lepas: () => void = () => {};
+    const tahan = new Promise<void>((ok) => { lepas = ok; });
+    const { log } = await mockOrderCabang(page, { peran: "sales",
+        riwayat: (url) => url.searchParams.get("customerNo") === "C-01"
+            ? riwayatContoh("C-01", [barisRiwayat("A-1", "BARANG A", "KRT", 2.5)], { jumlahFaktur: 2 })
+            : riwayatContoh(url.searchParams.get("customerNo") ?? "", [], { dilewati: 2 }),
+        // Pembacaan barang dari Tambah (pelanggan A, kode A-1) ditahan sampai pelanggan sudah diganti.
+        barang: async (url) => { if (url.searchParams.get("q") === "A-1" && url.searchParams.get("customerId") === "1") await tahan; return undefined; } });
+    await mockWebsales(page);
+    const main = await bukaSales(page);
+    await pilihPelanggan(main, "PELANG", "PELANGGAN A");
+    const panel = main.getByRole("region", { name: "Biasa diambil toko ini" });
+    await panel.getByRole("button", { name: "Tambah 3 KRT BARANG A" }).click();
+    await expect.poll(() => log.barang.some((u) => u.searchParams.get("q") === "A-1"), NAV).toBe(true); // pembacaan berangkat, ditahan
+
+    await main.getByRole("button", { name: "Ganti pelanggan" }).click();
+    await main.getByLabel("Cari pelanggan").fill("PELANGGAN B");
+    await main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button", { name: /PELANGGAN B/ }).click();
+    // Pelanggan baru: 0 faktur terbaca tetapi 2 dilewati = bukan "belum punya riwayat" (butir 3).
+    await expect(panel).toContainText("2 faktur toko ini dilewati karena tanggal atau isinya tidak terbaca", NAV);
+    await expect(panel).not.toContainText("belum punya riwayat faktur");
+    lepas();
+    await page.waitForTimeout(1500); // beri kesempatan jawaban basi tiba (sebelum perbaikan: baris A-1 pelanggan A masuk di sini)
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await expect(b1.getByLabel("Cari barang")).toBeVisible();
+    await expect(main.getByRole("listitem", { name: "Barang 2" })).toHaveCount(0);
+    expect(log.preview.filter((p) => p.lines.some((l) => l.code === "A-1"))).toEqual([]);
+    expect(log.dibatalkan.some((s) => s.includes("q=A-1"))).toBe(true); // panel lama dilepas = permintaannya dibatalkan peramban
+});
+
+test("O3 Order baru (petugas): panel riwayat; Tambah barang berharga master + barang TANPA harga master (petugas boleh, kolom harga petugas aktif) → pratinjau baru", async ({ page }) => {
+    const { log, opsi } = await mockOrderCabang(page, { riwayat: (url) => riwayatContoh(url.searchParams.get("customerNo") ?? "", [
+        barisRiwayat("A-1", "BARANG A", "KRT", 2.5), barisRiwayat("A-2", "BARANG A2", "LSN", 1)], { jumlahFaktur: 4 }) });
+    await mockOrdersInternal(page, { cabang: opsi });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/orders/baru", NAV);
+    const main = page.locator("main");
+    await pilihPelanggan(main, "PELANGGAN A", "PELANGGAN A");
+    const panel = main.getByRole("region", { name: "Biasa diambil toko ini" });
+    await expect(panel.getByRole("list", { name: "Riwayat beli toko" }).getByRole("listitem")).toHaveCount(2, NAV);
+    await panel.getByRole("button", { name: "Tambah 3 KRT BARANG A" }).click();
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await expect(b1.getByLabel("Satuan")).toHaveValue("KRT", NAV);
+    await expect(b1.getByLabel("Jumlah")).toHaveValue("3");
+    await expect.poll(() => log.preview.at(-1), NAV).toMatchObject({ customer_no: "C-01", lines: [{ code: "A-1", unit: "KRT", quantity: "3" }] });
+    await expect(b1.getByText("Harga master", { exact: true })).toBeVisible(NAV); // badge hasil pratinjau
+    await panel.getByRole("button", { name: "Tambah 1 LSN BARANG A2" }).click();
+    const b2 = main.getByRole("listitem", { name: "Barang 2" });
+    await expect(b2.getByLabel("Satuan")).toHaveValue("LSN", NAV);
+    await expect(b2.getByLabel("Harga")).toBeEditable(); // tanpa harga master: harga petugas
+    await expect(page.getByRole("button", { name: "Simpan order…" })).toHaveAttribute("title", "Isi harga barang 2 (harga master belum ada)", NAV);
+    await b2.getByLabel("Harga").fill("15000");
+    await expect.poll(() => log.preview.at(-1)?.lines).toEqual([{ code: "A-1", unit: "KRT", quantity: "3" }, { code: "A-2", unit: "LSN", quantity: "1", price: "15000" }]);
+    await expect(page.getByRole("button", { name: "Simpan order…" })).toBeEnabled(NAV);
+    await page.screenshot({ path: "test-results/order-cabang/o3-baru-riwayat.png", fullPage: true });
 });

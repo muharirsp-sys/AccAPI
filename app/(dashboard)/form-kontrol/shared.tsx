@@ -2,7 +2,8 @@
  * Tujuan: Tipe, konstanta, dan helper bersama Form Kontrol (shell, tab tim, tab salesman, kunjungan).
  * Caller: form-kontrol/FormKontrol.tsx (shell), tabs/*, spv-dashboard/DashboardSpv.tsx, visit/[custCode]/*.
  * Dependensi: React (context izin), components/fiori/interactive (tipe Load).
- * Main Functions: TABS, hariIniWita, jamWita, IzinFkCtx/useIzinFk/alasanIzinFk, ambilFk, tulisFk, compareRoute, visitDurationMin.
+ * Main Functions: TABS, hariIniWita, jamWita, IzinFkCtx/useIzinFk/alasanIzinFk, ambilFk, tulisFk, principalAwal, penjelasanTanpaJks,
+ *   compareRoute, visitDurationMin.
  * Side Effects: ambilFk/tulisFk melakukan HTTP ke /api/form-kontrol/*; sisanya pure.
  */
 "use client";
@@ -16,7 +17,11 @@ export interface Scope {
     role: string;
     salesCode?: string;
     salesName?: string;
-    principle?: string;
+    /** Principal JKS AKTIF dalam cakupan (my-scope, FK-MSM butir 1); [] / tidak ada = belum ada JKS. */
+    principles?: string[];
+    /** FK-MSM2: salesman TANPA JKS — principal = nama cabang karyawan Accurate-nya (kunjungan luar rute); null = tidak ada (lihat alasanCabang). */
+    principalCabang?: string | null;
+    alasanCabang?: string | null;
     spvName?: string;
     smName?: string;
     allowedSalesCodes: string[] | null;
@@ -39,6 +44,8 @@ export interface JksRow {
     principle: string;
     visitFrequency: 1 | 2 | 4;
     isActive: boolean;
+    /** FK-MSM2: baris hasil konfirmasi kunjungan luar rute (siapa, kapan, dari kunjungan tanggal berapa); null = unggahan. */
+    tambahanSalesman?: { oleh: string | null; pada: string; dariKunjungan: string } | null;
 }
 
 export interface AoRow {
@@ -56,6 +63,10 @@ export interface AoRow {
     needsAttention: boolean;
     checkinAt?: string | null;   // ISO — null = belum check-in hari ini
     checkoutAt?: string | null;  // ISO — non-null = kunjungan selesai
+    /** FK-MSM2: kunjungan luar rute (toko tidak di JKS hari ini). */
+    luarRute?: boolean;
+    /** Ada baris AO untuk toko ini (status apa pun, juga "tidak dikunjungi" dari Kirim status rute) — `status` default "not_visited" tidak membedakan. */
+    adaStatus?: boolean;
 }
 
 export interface Reason {
@@ -138,7 +149,8 @@ async function bacaJson(res: Response): Promise<Record<string, unknown> | null> 
 
 /**
  * Pesan `error` route /api/form-kontrol/* yang dikenal → kalimat Indonesia. Pesan lain (Inggris/teknis, 500 "Internal server
- * error", e.message mentah) tidak diteruskan: layar cukup memakai kalimat umum pemanggil, tanpa kode status.
+ * error", e.message mentah) tidak diteruskan: layar cukup memakai kalimat umum pemanggil, tanpa kode status. Penolakan BERKODE 4xx
+ * (`{ kode, error }`, mis. Hierarki SPV_TIDAK_DIKENAL / NAMA_GANDA) membawa kalimat Indonesia dari server — diteruskan apa adanya.
  */
 const PESAN_SERVER: Record<string, string> = {
     "SPV name not found": "Akun Anda belum tertaut ke nama SPV di Hierarki Sales.",
@@ -159,6 +171,7 @@ function pesanServer(res: Response, data: Record<string, unknown> | null): strin
     if (res.status === 401) return " Sesi Anda berakhir; masuk ulang lalu coba lagi.";
     if (res.status === 403 && (!e || e === "Forbidden")) return " Akun Anda tidak punya izin untuk ini.";
     if (res.status >= 500) return "";
+    if (typeof data?.kode === "string" && e) return ` ${e}`;
     if (e.startsWith("Missing")) return " Data wajib belum lengkap.";
     return PESAN_SERVER[e] ? ` ${PESAN_SERVER[e]}` : "";
 }
@@ -203,8 +216,23 @@ export async function tulisFk(url: string, opsi: { method?: "POST" | "PUT"; body
     return data;
 }
 
-export const PRINCIPLES = ["GODREJ", "MONTISS", "MUSTIKA RATU", "SOFTEX"];
 export const HARI = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+
+// ── Principal dari JKS (FK-MSM butir 1) ───────────────────────────────────
+
+/** Principal bawaan: satu-satunya principal JKS di cakupan langsung terpilih; lebih dari satu = pengguna memilih (""). */
+export const principalAwal = (scope: Scope) => (scope.principles?.length === 1 ? scope.principles[0] : "");
+
+/** Penjelasan bila cakupan belum punya JKS aktif sama sekali — supaya rute kosong tidak tampil diam. null = ada JKS. */
+export function penjelasanTanpaJks(scope: Scope): { title: string; message: string } | null {
+    if (scope.principles?.length) return null;
+    if (scope.salesCode) {
+        return { title: "Belum ada JKS aktif untuk Anda", message: `Rute, toko tidak order, dan frekuensi dibaca dari JKS kode sales ${scope.salesCode}. `
+            + `Minta Admin Sales mengimpor JKS Anda (kolom Kode Sales = ${scope.salesCode}); sampai itu tidak ada toko yang tampil.` };
+    }
+    if (scope.allowedSalesCodes === null) return { title: "Belum ada JKS aktif", message: "Impor JKS di tab Kontrol JKS lebih dulu; rute, toko tidak order, dan frekuensi dibaca dari JKS." };
+    return { title: "Belum ada JKS aktif untuk tim Anda", message: "Rute salesman tim dibaca dari JKS. Minta Admin Sales mengimpor JKS tim Anda di tab Kontrol JKS." };
+}
 
 export const BRIEFING_AGENDA: Record<"pagi" | "sore", string[]> = {
     pagi: [

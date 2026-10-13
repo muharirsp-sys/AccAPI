@@ -1,5 +1,6 @@
 /*
- * Tujuan: Mock bersama Playwright untuk layar Order per cabang (O2): /api/customers/search, /api/items/search, /api/orders/preview,
+ * Tujuan: Mock bersama Playwright untuk layar Order per cabang (O2): /api/customers/search, /api/customers/rute (FK-MSM: kode toko JKS ->
+ *   pelanggan cabang), /api/items/search, /api/orders/preview,
  *   /api/orders/salesmen (sesuai docs/handover/O1-KONTRAK-ORDER-CABANG.md) + FastAPI Web Sales (:8000). Data contoh GENERIK
  *   (PELANGGAN A, CABANG A, SALES A, BARANG A) — bukan nama principal/orang nyata.
  * Caller: tests/fiori-order-cabang.spec.ts, tests/fiori-order-masuk.spec.ts (Order baru + Antrekan), tests/fiori-lapangan-salesman.spec.ts (Order Sales).
@@ -11,6 +12,8 @@
  * Tahap 2 (O1 putaran 1): pratinjau membawa `sidik` (sha256 baris berharga + hasil promo); simpan FastAPI (Web Sales dan Order Baru) WAJIB membawa
  *   sidik yang sama dengan hitungan server saat itu (`geser` mengubah angka server di tengah tes = PRATINJAU_BERUBAH). Harga petugas hanya sah
  *   untuk baris TANPA harga master (keputusan owner 12 Okt sesi 13); pada baris berharga master server menolak.
+ * O3: GET /api/customers/riwayat-beli — bawaan = toko tanpa riwayat (0 faktur); `opsi.riwayat` mengganti jawabannya (`riwayatContoh`, ringkasan
+ *   membawa `dilewati` = faktur rusak yang dilewati server).
  */
 import { createHash } from "node:crypto";
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
@@ -52,6 +55,8 @@ export type OpsiMock = {
     akun?: "ok" | "belum-terhubung" | "tidak-aktif";
     /** Ganti jawaban satu endpoint; undefined = jawaban bawaan. Boleh async (menunda). */
     pelanggan?: (url: URL, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
+    /** Ganti jawaban /api/customers/rute (pencocokan toko rute). */
+    rute?: (url: URL, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
     barang?: (url: URL, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
     preview?: (body: PreviewBody, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
     /** Menggeser netto hitungan server (aturan/harga berubah) — pratinjau lama jadi usang: simpan = PRATINJAU_BERUBAH. */
@@ -60,10 +65,12 @@ export type OpsiMock = {
     channelMasalah?: string;
     /** Saran "hampir dapat" tambahan (bentuk server: program_id, program_name, threshold, codes, minimum, current, gap, message). */
     saranTambahan?: Record<string, unknown>[];
+    /** O3: ganti jawaban /api/customers/riwayat-beli (bawaan: toko tanpa riwayat faktur). */
+    riwayat?: (url: URL, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
 };
 export type PreviewBody = { channel: string; order_date: string; customer_no: string; lines: { code: string; unit: string; quantity: string; price?: string }[] };
 
-export type LogMock = { pelanggan: URL[]; barang: URL[]; preview: PreviewBody[]; sidik: string[]; salesmen: URL[]; dibatalkan: string[] };
+export type LogMock = { pelanggan: URL[]; rute: URL[]; barang: URL[]; preview: PreviewBody[]; sidik: string[]; salesmen: URL[]; dibatalkan: string[] };
 
 const kirim = async (r: Route, j: Jawab) => {
     try {
@@ -150,7 +157,7 @@ export function sidikDari(b: PreviewBody, geser = 0): { sidik: string; pratinjau
 }
 
 export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<{ log: LogMock; opsi: OpsiMock }> {
-    const log: LogMock = { pelanggan: [], barang: [], preview: [], sidik: [], salesmen: [], dibatalkan: [] };
+    const log: LogMock = { pelanggan: [], rute: [], barang: [], preview: [], sidik: [], salesmen: [], dibatalkan: [] };
     page.on("requestfailed", (r) => { if (/ERR_ABORTED/.test(r.failure()?.errorText ?? "")) log.dibatalkan.push(new URL(r.url()).search); });
     const sales = () => (opsi.peran ?? "petugas") === "sales";
     const blokirSales = (): Jawab | undefined => {
@@ -175,6 +182,26 @@ export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<
             && (!q || p.name.toLowerCase().includes(q) || p.customerNo.toLowerCase().includes(q)))
             .sort((x, y) => Number(y.customerNo.toLowerCase() === q) - Number(x.customerNo.toLowerCase() === q)).slice(0, limit);
         return kirim(r, { body: { ok: true, cakupan: sales() ? { semua: false, branchId: CABANG.A.id, branchName: CABANG.A.name } : { semua: true, branchId: null, branchName: null }, items: baris } });
+    });
+
+    // Kontrak server (app/api/customers/rute): kode persis ATAU kode + "-" + satu akhiran, sales hanya cabang A, tepat satu pelanggan.
+    await page.route((u) => u.pathname === "/api/customers/rute", async (r) => {
+        const url = new URL(r.request().url());
+        log.rute.push(url);
+        const ganti = await opsi.rute?.(url, log.rute.length);
+        if (ganti) return kirim(r, ganti);
+        const blok = blokirSales();
+        if (blok) return kirim(r, blok);
+        const cocok = (k: string, no: string) => { const a = k.trim().toUpperCase(), c = no.toUpperCase(); return c === a || (c.startsWith(`${a}-`) && !c.slice(a.length + 1).includes("-")); };
+        const kode = [...new Set(url.searchParams.getAll("kode").map((k) => k.trim()).filter(Boolean))];
+        const rute = kode.map((k) => {
+            const hasil = PELANGGAN.filter((p) => (!sales() || p.branchId === CABANG.A.id) && cocok(k, p.customerNo));
+            return hasil.length === 1 ? { kode: k, pelanggan: hasil[0], masalah: null, kandidat: [hasil[0].customerNo], alasan: "" }
+                : { kode: k, pelanggan: null, masalah: hasil.length ? "GANDA" : "TIDAK_ADA", kandidat: hasil.map((p) => p.customerNo),
+                    alasan: hasil.length ? `Lebih dari satu pelanggan cabang Anda cocok (${hasil.map((p) => p.customerNo).join(", ")}); pilih lewat Cari pelanggan.`
+                        : `Belum terdaftar sebagai pelanggan cabang Anda (${CABANG.A.name}) di Accurate.` };
+        });
+        return kirim(r, { body: { ok: true, cakupan: sales() ? { semua: false, branchId: CABANG.A.id, branchName: CABANG.A.name } : { semua: true, branchId: null, branchName: null }, rute } });
     });
 
     await page.route((u) => u.pathname === "/api/items/search", async (r) => {
@@ -214,8 +241,33 @@ export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<
         const cab = url.searchParams.get("branchId") ? Number(url.searchParams.get("branchId")) : null;
         return kirim(r, { body: { ok: true, salesmen: SALESMAN_ACCURATE.filter((s) => cab === null || s.branchId === cab) } });
     });
+
+    let nRiwayat = 0;
+    await page.route((u) => u.pathname === "/api/customers/riwayat-beli", async (r) => {
+        const url = new URL(r.request().url());
+        const ganti = await opsi.riwayat?.(url, ++nRiwayat);
+        if (ganti) return kirim(r, ganti);
+        const blok = blokirSales();
+        if (blok) return kirim(r, blok);
+        return kirim(r, riwayatContoh(url.searchParams.get("customerNo") ?? "", []));
+    });
     return { log, opsi };
 }
+
+/** O3: jawaban /api/customers/riwayat-beli (bentuk route asli). Jendela 90 hari berakhir 12 Okt 2026; `dataSejak` = faktur paling awal toko. */
+export function riwayatContoh(customerNo: string, items: Record<string, unknown>[], ringkasan: { jumlahFaktur?: number; tanpaRincian?: number; dilewati?: number; dataSejak?: string | null } = {}): Jawab {
+    const p = PELANGGAN.find((x) => x.customerNo === customerNo);
+    if (!p) return { status: 409, body: { ok: false, kode: "PELANGGAN_TIDAK_ADA", error: `Pelanggan ${customerNo} tidak ada di master Accurate hasil sync.` } };
+    return { body: { ok: true, pelanggan: { customerNo: p.customerNo, name: p.name, branchId: p.branchId, branchName: p.branchName },
+        jendela: { bulan: 3, dari: "2026-07-15", sampai: "2026-10-12", bulanTeramati: 3 },
+        ringkasan: { jumlahFaktur: ringkasan.jumlahFaktur ?? 0, tanpaRincian: ringkasan.tanpaRincian ?? 0, dilewati: ringkasan.dilewati ?? 0,
+            dataSejak: ringkasan.dataSejak ?? (items.length ? "2026-07-01" : null) },
+        items } };
+}
+
+/** Satu barang riwayat (bawaan: bisa diorder). */
+export const barisRiwayat = (code: string, name: string, unit: string, rataPerBulan: number, lain: Record<string, unknown> = {}) =>
+    ({ code, name, unit, totalQty: rataPerBulan * 3, rataPerBulan, jumlahFaktur: 3, terakhirBeli: "2026-10-05", bisaDiorder: true, alasan: null, ...lain });
 
 // ------------------------------------------------------------------ FastAPI Web Sales (:8000)
 

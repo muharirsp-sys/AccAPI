@@ -75,6 +75,8 @@ export interface TodayRouteRow extends JksMasterRow {
     checkoutPhotoUrl: string | null;
     monthlyOrderCount: number;
     needsAttention: boolean;
+    /** FK-MSM2: kunjungan luar rute (toko tidak di JKS hari itu), bukan baris JKS. */
+    luarRute: boolean;
 }
 
 export interface VisitDetail {

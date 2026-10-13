@@ -1548,6 +1548,53 @@ export const jksMaster = pgTable("jks_master", {
     uniqueEntry: uniqueIndex("idx_jks_unique").on(t.salesCode, t.custCode, t.principle),
 }));
 
+/**
+ * Kunjungan LUAR RUTE (FK-MSM2, owner 12 Okt 2026): toko yang tidak ada di rute JKS hari itu, dicari salesman (pelanggan Accurate cabangnya)
+ * lalu dikunjungi dengan alur yang sama (check-in, status, merchandising, check-out tetap di ao_control_daily/merchandising_check per
+ * cust_code). Di akhir sesi salesman memutuskan: masuk JKS miliknya (hari + pola minggu) / tidak / nanti (= tetap `menunggu`).
+ * JEJAK baris JKS hasil konfirmasi = baris ini (`jks_id` -> jks_master.id; siapa/kapan `dikonfirmasi_*`; tanggal kunjungan `tanggal`) —
+ * jks_master sendiri TIDAK diberi kolom baru. `sudah_jks` = toko sudah di JKS salesman ini pada hari lain (tidak perlu konfirmasi).
+ * DDL produksi: docs/handover/DDL_FK_MSM2.sql (role pemilik; accapi_app SELECT/INSERT/UPDATE tanpa DELETE).
+ */
+export const kunjunganLuarRute = pgTable("kunjungan_luar_rute", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    principle: text("principle").notNull(),
+    /** YYYY-MM-DD WITA, sama dengan ao_control_daily.date. */
+    tanggal: text("tanggal").notNull(),
+    /** customerNo Accurate LENGKAP (mis. C-100001-CBA), = cust_code baris JKS hasil konfirmasi. */
+    custCode: text("cust_code").notNull(),
+    custName: text("cust_name").notNull(),
+    alamat: text("alamat"),
+    customerId: bigint("customer_id", { mode: "number" }),
+    dibuatOleh: text("dibuat_oleh").notNull(),
+    dibuatOlehNama: text("dibuat_oleh_nama"),
+    dibuatPada: timestamp("dibuat_pada", { withTimezone: true }).notNull().defaultNow(),
+    konfirmasi: text("konfirmasi").notNull().default("menunggu"),
+    hari: text("hari"),
+    mingguPattern: text("minggu_pattern"),
+    jksId: text("jks_id"),
+    dikonfirmasiOleh: text("dikonfirmasi_oleh"),
+    dikonfirmasiOlehNama: text("dikonfirmasi_oleh_nama"),
+    dikonfirmasiPada: timestamp("dikonfirmasi_pada", { withTimezone: true }),
+    /** Batal LUNAK (owner 13 Okt): kunjungan salah tambah dibatalkan salesman pemilik; baris tetap sebagai jejak. */
+    dibatalkanPada: timestamp("dibatalkan_pada", { withTimezone: true }),
+    dibatalkanOleh: text("dibatalkan_oleh"),
+}, (t) => ({
+    /** Satu toko luar rute AKTIF per salesman/principal/hari; baris batal tidak menghalangi tambah ulang. */
+    unik: uniqueIndex("idx_klr_unik").on(t.salesCode, t.custCode, t.principle, t.tanggal).where(sql`${t.dibatalkanPada} IS NULL`),
+    jksIdx: index("idx_klr_jks").on(t.jksId),
+    konfirmasiCek: check("kunjungan_luar_rute_konfirmasi", sql`${t.konfirmasi} IN ('menunggu', 'jks', 'tidak', 'sudah_jks')`),
+    isiCek: check("kunjungan_luar_rute_isi", sql`btrim(${t.salesCode}) <> '' AND btrim(${t.principle}) <> '' AND btrim(${t.custCode}) <> ''
+        AND ${t.tanggal} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'`),
+    jadwalCek: check("kunjungan_luar_rute_jadwal", sql`(${t.hari} IS NULL OR ${t.hari} IN ('Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'))
+        AND (${t.mingguPattern} IS NULL OR ${t.mingguPattern} IN ('ganjil', 'genap', 'all'))`),
+    jksCek: check("kunjungan_luar_rute_jks", sql`${t.konfirmasi} <> 'jks' OR (${t.jksId} IS NOT NULL AND ${t.hari} IS NOT NULL
+        AND ${t.mingguPattern} IS NOT NULL AND ${t.dikonfirmasiPada} IS NOT NULL)`),
+    batalCek: check("kunjungan_luar_rute_batal", sql`(${t.dibatalkanPada} IS NULL) = (${t.dibatalkanOleh} IS NULL)
+        AND (${t.dibatalkanPada} IS NULL OR ${t.konfirmasi} <> 'jks')`),
+}));
+
 export const salesOutletTxn = pgTable("sales_outlet_txn", {
     id: text("id").primaryKey(),
     salesCode: text("sales_code").notNull(),

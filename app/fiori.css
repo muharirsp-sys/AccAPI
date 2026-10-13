@@ -205,8 +205,11 @@ select.fi-input { appearance:none; background-image:linear-gradient(45deg, trans
 .fi-anchors a:hover { color:var(--brand); border-color:var(--brand); }
 /* Navigasi antarhalaman satu modul (Insentif Sales): tampilan sama dengan anchor bar, tidak lengket. */
 .fi-subnav { display:flex; gap:4px; overflow-x:auto; scrollbar-width:none; border-bottom:1px solid var(--line); }
-.fi-subnav a { padding:10px; font:600 .8125rem/1 var(--font-sans); color:var(--ink-muted); text-decoration:none; border-bottom:2px solid transparent; white-space:nowrap; }
+.fi-subnav a { flex:none; padding:10px; font:600 .8125rem/1 var(--font-sans); color:var(--ink-muted); text-decoration:none; border-bottom:2px solid transparent; white-space:nowrap; }
 .fi-subnav a:hover, .fi-subnav a[aria-current="page"] { color:var(--brand); border-color:var(--brand); }
+/* Layar sentuh: globals.css memberi a { min-width:44px } sehingga tautan (flex-shrink 1) menyusut ke 44 px dan labelnya bertumpuk (tab Form Kontrol
+   admin/SPV). flex:none = lebar isi + gulir menyamping (sama dengan layar non-sentuh); padding 8 px di ponsel agar 3 tab salesman tetap muat. */
+@media (pointer: coarse) and (max-width:599px) { .fi-subnav a { padding:10px 8px; } }
 .fi-section { scroll-margin-top:56px; }
 @media (max-width:599px) { .fi-oph { padding:12px 14px; } .fi-oph-title h1 { font:var(--fs-title-2); } }
 

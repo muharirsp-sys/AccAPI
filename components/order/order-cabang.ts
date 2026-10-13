@@ -162,6 +162,8 @@ const ATURAN: Record<string, Aturan> = {
         tindakan: "Pilih pelanggan di cabang Anda.", menolak: true,
     },
     PELANGGAN_WAJIB: { judul: "Pelanggan belum dipilih", pesan: () => "Order butuh pelanggan Accurate.", tindakan: "Cari dan pilih pelanggan dulu.", menolak: true },
+    // O3 (GET /api/customers/riwayat-beli 500): tak ada isian yang bisa diperiksa; panel menambahkan sendiri "bukan berarti toko belum pernah beli".
+    RIWAYAT_GAGAL: { judul: "Riwayat beli toko belum termuat", pesan: () => "Riwayat beli toko belum berhasil dimuat.", tindakan: "Coba lagi; bila terulang, hubungi Admin." },
     PELANGGAN_TIDAK_ADA: {
         judul: "Pelanggan tidak ada di master", pesan: (d) => dariServer(d, "Pelanggan tidak ada di master Accurate hasil sinkron."),
         tindakan: { sales: "Cari ulang namanya. Bila memang baru, minta Admin menyinkronkan master pelanggan.", petugas: "Cari ulang namanya, atau sinkronkan master pelanggan dari Accurate." }, menolak: true,
