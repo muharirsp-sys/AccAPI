@@ -6,7 +6,8 @@
  * Caller: Next.js App Router otomatis saat error tidak tertangkap error boundary segmen.
  * Dependensi: react (useEffect), @sentry/nextjs, lib/muat-ulang-versi.
  * Main Functions: GlobalError.
- * Side Effects: console.error(error) dan pengiriman exception ter-sanitasi ke Sentry Cloud; galat "versi lama" = muat ulang
+ * Side Effects: console.error(error) dan pengiriman exception ke Sentry Cloud (instrumentation-client: tanpa userInfo/httpBodies;
+ *   TANPA beforeSend — jangan taruh data pelanggan di pesan Error); galat "versi lama" = muat ulang
  *   otomatis sekali (tidak dikirim ke Sentry). "Coba lagi" = muat ulang penuh.
  */
 import * as Sentry from "@sentry/nextjs";
