@@ -72,10 +72,36 @@ Tanpa `customerId`: salesman = cabangnya; internal = `branchId` atau semua. Tanp
 `cabangTanpaBarang: true` = hasil kosong karena cabang itu memang tanpa barang orderan (sync barang belum jalan / cabang tanpa tag divisi),
 bukan karena pencarian tidak cocok — layar menampilkan penjelasan, bukan "tidak ada hasil".
 
+### `GET /api/customers/rute?kode=&kode=…` (baru, FK-MSM butir 6 — 12 Okt 2026)
+Pemilih "Toko di rute hari ini" Order Sales. Kode toko JKS TANPA akhiran cabang (`C-100001`) -> pelanggan Accurate cabang pemakai
+(`C-100001-<akhiran>`). Izin & cakupan = pencarian pelanggan (`websales.create` ATAU `order.create`; salesman HANYA cabangnya, internal semua).
+1–200 kode unik per permintaan (ganda digabung; > 200 = 400 berkalimat — pemilih Order Sales memecah rute yang lebih panjang per 200;
+kode > 80 huruf = `masalah: "KODE_TIDAK_SAH"` untuk toko itu saja). Cocok = `customerNo` persis ATAU kode + `-` + SATU akhiran (tanpa `-` lagi), tak peka huruf,
+spasi dalam kode dipertahankan; tepat SATU pelanggan aktif = dipilih. Data JKS tidak diubah.
+200: `{ ok, cakupan, rute: [{ kode, pelanggan: <item pencarian> | null, masalah: null | "TIDAK_ADA" | "GANDA" | "NONAKTIF" | "KODE_TIDAK_SAH", kandidat: [customerNo], alasan }] }`
+(`TIDAK_ADA` termasuk kode yang hanya ada di cabang lain — tidak pernah ditawarkan; `alasan` = kalimat untuk layar per toko). Galat §2
+(`SALESMAN_BELUM_TERHUBUNG`, …), `INPUT_TIDAK_VALID` 400.
+
 ### `GET /api/customers/lookup?no=` (berubah, butir 14)
 Salesman hanya pelanggan cabangnya: kode cabang lain / tanpa cabang → 403 `CABANG_DI_LUAR_CAKUPAN`; akun belum tertaut →
 `SALESMAN_BELUM_TERHUBUNG`. Kode tak ada = 200 `found:false` (bentuk lama). Internal (`order.view`) semua cabang.
 Pelanggan suspended → 409 `PELANGGAN_SUSPENDED` (putaran 2; selaras pencarian & pratinjau).
+
+### `GET /api/customers/riwayat-beli?customerNo=&bulan=3` (baru, O3 — 12 Okt 2026 sesi 13)
+Panel "Biasa diambil toko ini" (Order Sales + Order Baru). Izin & cakupan = pencarian pelanggan (`websales.create` ATAU `order.create`;
+salesman HANYA pelanggan cabangnya → 403 `CABANG_DI_LUAR_CAKUPAN` tanpa membaca faktur; internal `order.view` semua). `customerNo` = kode
+Accurate LENGKAP (≤ 80); `bulan` 1–12 (bawaan 3 = 90 hari termasuk hari ini WITA); lainnya 400 `INPUT_TIDAK_VALID`. Pelanggan tak ada /
+tanpa cabang / suspended = 409 kode §2. Baca-saja `sales_invoice` (satu kueri per pelanggan, indeks `customer_no`).
+200: `{ ok, pelanggan: {customerNo, name, branchId, branchName}, jendela: {bulan, dari, sampai, bulanTeramati}, ringkasan: {jumlahFaktur,
+tanpaRincian, dilewati, dataSejak}, items: [{ code, name, unit, totalQty, rataPerBulan, jumlahFaktur, terakhirBeli, bisaDiorder, alasan }] }` — per barang +
+SATUAN (tidak dikonversi), urut `rataPerBulan` terbesar. `rataPerBulan` = total ÷ `bulanTeramati` (= `bulan`, atau hari sejak faktur paling
+awal toko ÷ 30 bila faktur itu lebih baru dari awal jendela; minimal 1). Bonus (harga 0) tidak dihitung; retur tidak dikurangkan;
+`tanpaRincian` = faktur tanpa `detailItem` (list.do) — tidak terhitung per barang. `bisaDiorder:false` + `alasan` = aturan barang order O1
+(tidak ada / suspended / tanpa cabang / cabang lain). Galat DB = 500 `RIWAYAT_GAGAL` (bukan daftar kosong).
+Putaran 1 (13 Okt): `dilewati` = faktur toko yang TAK TERBACA — `trans_date` bukan dd/MM/yyyy sah (mis. 31/02; di mana pun) atau `raw_data`
+bukan JSON (hanya faktur di jendela yang dibuka) — dilewati dan dihitung, TIDAK termasuk `jumlahFaktur`/`tanpaRincian`; satu faktur rusak tidak
+lagi membuat 500 (panel menyebut "N faktur toko ini dilewati"). Faktur yang DIHAPUS di Accurate masih ikut terhitung: cache `sales_invoice`
+tidak punya penanda andal (lihat `ponytail:` di `lib/riwayat-beli.ts`; TERBUKA di bawah).
 
 ### `POST /api/orders/preview` (berubah)
 `customer_no` WAJIB; cabang harga dari pelanggan (badan `branch_id` diabaikan); galat §2. Bentuk jawaban + `sidik` + harga petugas: §4.2.
@@ -246,3 +272,9 @@ rejected: [{request_id, kode, error}] }`. `failed` = DITAHAN (tetap `pending`, m
 - Migrasi: O1 memakai `db/migrations/0033_order_cabang.sql` + entri migrate-pg terakhir; K2a (cabang lain) memakai 0032 dan juga menambah
   entri di `scripts/migrate-pg.mjs` → konflik teks saat merge (urutan entri bebas: keduanya aditif + `sudahAda`). Nomor TIDAK diubah.
 - `?secret=` dihapus dari `requireCronSecret`: pemakai yang tidak tercatat di repo (skrip pribadi/bookmark) akan mendapat 401 — gunakan header.
+- O3 riwayat beli: faktur yang masuk lewat `list.do` (cron) tidak punya `detailItem` — probe 12 Okt: MSM 201 dari 1.603 faktur sejak 24 Jul
+  (13%), semua cabang 3 bulan 27.393 dari 70.546 (39%). Backfill rincian lewat `sales-invoice/detail.do` (satu panggilan per faktur, baca-saja
+  Accurate) BELUM dikerjakan; sampai itu rata-rata toko bisa lebih kecil dari kenyataan (panel menyebut jumlah faktur tanpa rincian).
+- O3 riwayat beli: faktur yang dihapus di Accurate tetap di cache `sales_invoice` (sync hanya upsert; webhook DELETE / penambal dengan detail.do
+  kosong = `AccurateInvoiceGoneError`, baris cache tidak disentuh) → ikut terhitung, rata-rata bisa lebih besar. Jalan naik: tandai/hapus baris
+  cache saat `AccurateInvoiceGoneError` (lib/sync.ts, jalur webhook + penambal), lalu saring di kueri riwayat-beli.

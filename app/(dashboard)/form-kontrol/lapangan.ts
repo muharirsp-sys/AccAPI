@@ -77,6 +77,8 @@ export async function kirimFk(url: string, body: Record<string, unknown> | FormD
     const ulang = opsi.ulangAman ? " — mengulang aman, isian yang sama ditimpa" : "";
     if (j.status === 0) throw new GagalKirim(`${PESAN_SINYAL} Belum dipastikan tersimpan; tekan Coba lagi saat ada sinyal${ulang}.`, true);
     if (j.status >= 502 || j.data === null) throw new GagalKirim(`Server tidak memberi jawaban yang pasti; belum dipastikan tersimpan. Coba lagi${ulang}.`, true, j.status);
+    // Penolakan BERKODE (`{ kode, error }`, mis. luar rute FK-MSM2) membawa kalimat Indonesia dari server — diteruskan apa adanya.
+    if (j.status < 500 && typeof j.data.kode === "string" && typeof j.data.error === "string" && j.data.error) throw new GagalKirim(j.data.error, false, j.status);
     throw new GagalKirim(sebabGagal(j.status), false, j.status);
 }
 
@@ -97,6 +99,8 @@ export function keBarisRute(rows: unknown, principle: string): AoRow[] {
         needsAttention: (r.needsAttention as boolean) ?? false,
         checkinAt: (r.checkinAt as string) ?? null,
         checkoutAt: (r.checkoutAt as string) ?? null,
+        luarRute: r.luarRute === true,
+        adaStatus: r.aoStatus != null,
     }));
 }
 

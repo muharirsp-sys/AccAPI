@@ -3,7 +3,7 @@
  *   per toko, disimpan per baris; galat muat ≠ kosong.
  * Caller: form-kontrol/page.tsx (shell tab, default export `({ scope })`).
  * Dependensi: GET /api/form-kontrol/ao-control + /reasons, POST /api/form-kontrol/ao-control; ../shared (Scope, AoRow, Reason,
- *   PRINCIPLES, hariIniWita); ../lapangan (bacaFk, kirimFk, keBarisRute); components/fiori/*; lib/rekapan-nota/ui (tanggalPanjang).
+ *   principalAwal, penjelasanTanpaJks, hariIniWita); ../lapangan (bacaFk, kirimFk, keBarisRute); components/fiori/*; lib/rekapan-nota/ui (tanggalPanjang).
  * Main Functions: TabNoOrder.
  * Side Effects: HTTP GET; POST ao-control (status not_order + alasan) per toko — payload sama dengan kode lama.
  */
@@ -15,7 +15,7 @@ import { Button, EmptyState, ErrorState, MessageStrip, Section, Skeleton, Status
 import { FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { TOKO_TUTUP_CODE } from "@/lib/form-kontrol/constants";
-import { type Scope, type AoRow, type Reason, PRINCIPLES, useIzinFk } from "../shared";
+import { type Scope, type AoRow, type Reason, penjelasanTanpaJks, principalAwal, useIzinFk } from "../shared";
 import { bacaFk, keBarisRute, kirimFk, useHariBeku } from "../lapangan";
 
 type Alasan = { reasonCode: string; note: string };
@@ -34,12 +34,15 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
     const beku = useHariBeku();
     const [tanggalPilih, setTanggalPilih] = useState(beku.hari);
     const tanggal = salesman ? beku.hari : tanggalPilih;
-    const [principle, setPrinciple] = useState(scope.principle ?? PRINCIPLES[0]);
+    // Principal = JKS aktif cakupan (FK-MSM butir 1); satu = langsung terpilih.
+    const daftarPrincipal = scope.principles ?? [];
+    const tanpaJks = penjelasanTanpaJks(scope);
+    const [principle, setPrinciple] = useState(() => principalAwal(scope));
     const [salesCode, setSalesCode] = useState(scope.salesCode ?? "");
     const tanpaIzin = useIzinFk("submit");
 
     const loader = useCallback(async (): Promise<Load<Data>> => {
-        if (!salesCode) return { status: "siap", data: { rows: [], reasons: [] } };
+        if (!salesCode || !principle) return { status: "siap", data: { rows: [], reasons: [] } };
         const p = new URLSearchParams({ date: tanggal, principle });
         p.set("salesCode", salesCode);
         const [ao, alasan] = await Promise.all([
@@ -108,10 +111,15 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
     }
 
     let isi: ReactNode;
-    if (!salesCode) {
+    if (!salesCode && tim !== null && tim.length === 0) {
+        isi = <EmptyState title="Belum ada salesman di tim Anda" message="Salesman muncul setelah Admin Sales mengisi SPV/SM mereka di Hierarki Sales." />;
+    } else if (tanpaJks) {
+        isi = <EmptyState title={tanpaJks.title} message={tanpaJks.message} />;
+    } else if (!salesCode) {
         isi = tim === null ? <EmptyState title="Isi kode salesman" message="Toko tidak order tampil per salesman." />
-            : tim.length === 0 ? <EmptyState title="Belum ada salesman di tim Anda" message="Salesman muncul setelah Admin Sales mengisi SPV/SM mereka di Hierarki Sales." />
-                : <EmptyState title="Pilih salesman tim Anda" message="Toko tidak order tampil per salesman." />;
+            : <EmptyState title="Pilih salesman tim Anda" message="Toko tidak order tampil per salesman." />;
+    } else if (!principle) {
+        isi = <EmptyState title="Pilih principal" message={`JKS dalam cakupan Anda memuat ${daftarPrincipal.length} principal; toko tidak order tampil per principal.`} />;
     } else if (load.status === "galat" && rows.length === 0) {
         isi = <ErrorState title="Data gagal dimuat" message={`${load.error} Ini bukan daftar kosong.`} onRetry={muatUlang} />;
     } else if (!data) {
@@ -183,18 +191,21 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
                 <h2 id={judulId} className="fi-title-2">Toko tidak order</h2>
                 <p className="fi-small fi-muted flex flex-wrap items-center gap-x-2">
                     <CalendarDays className="fi-icon" aria-hidden /><span>{tanggalPanjang(tanggal)} · WITA</span>
-                    {salesCode && <span>· <span className="fi-mono">{salesCode}</span> · {principle}</span>}
+                    {salesCode && <span>· <span className="fi-mono">{salesCode}</span>{principle ? ` · ${principle}` : ""}</span>}
                 </p>
                 <p className="fi-small fi-muted">Tidak boleh ada toko tanpa alasan — setiap toko tidak order wajib terdokumentasi.</p>
             </div>
             <div className="fi-formgrid">
-                <FormField label="Principal">
-                    {(a) => (
-                        <select {...a} className="fi-input" value={principle} onChange={(e) => setPrinciple(e.target.value)}>
-                            {PRINCIPLES.map((p) => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                    )}
-                </FormField>
+                {daftarPrincipal.length > 1 && (
+                    <FormField label="Principal">
+                        {(a) => (
+                            <select {...a} className="fi-input" value={principle} onChange={(e) => setPrinciple(e.target.value)}>
+                                {!principle && <option value="">Pilih principal</option>}
+                                {daftarPrincipal.map((p) => <option key={p} value={p}>{p}</option>)}
+                            </select>
+                        )}
+                    </FormField>
+                )}
                 {!salesman && tim === null && (
                     <FormField label="Kode salesman">
                         {(a) => <input {...a} className="fi-input fi-mono" value={salesCode} placeholder="mis. S01" onChange={(e) => setSalesCode(e.target.value)} />}
@@ -215,7 +226,7 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
                         {(a) => <input {...a} type="date" className="fi-input" value={tanggalPilih} onChange={(e) => { if (e.target.value) setTanggalPilih(e.target.value); }} />}
                     </FormField>
                 )}
-                {salesCode && (
+                {salesCode && principle && (
                     <div className="flex items-end">
                         <Button icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang} busy={load.status === "memuat" && Boolean(data)}>Muat ulang</Button>
                     </div>

@@ -32,7 +32,7 @@ export function samaRahasia(diberikan: string, rahasia: string): boolean {
  *
  * O1 putaran 1 (butir 6): fallback query `?secret=` DIHAPUS — secret di URL tercatat di log akses proxy/Next dan riwayat shell. Pemakai
  * dicari 12 Okt 2026: crontab produksi (`/usr/local/bin/accapi-cron.sh`, KASIR-KONTRAK) dan FastAPI (outlet_channel, order_cabang)
- * memakai header; satu-satunya rujukan query = komentar seed demo Form Kontrol (diganti ke header).
+ * memakai header; satu-satunya rujukan query = komentar seed demo Form Kontrol (endpoint seed itu dihapus 13 Okt 2026, owner).
  */
 export function requireCronSecret(request: NextRequest | Request) {
     const secret = process.env.CRON_SECRET;

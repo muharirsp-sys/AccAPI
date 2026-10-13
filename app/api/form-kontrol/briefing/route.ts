@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
-import { getBriefings, saveBriefing } from "@/lib/form-kontrol";
+import { getBriefings, namaDalamCakupan, namaSpvBoleh, resolveScope, saveBriefing } from "@/lib/form-kontrol";
+
+// FK-MSM putaran 2: nama SPV ditegakkan dari sesi (namaSpvBoleh) — salesman hanya membaca briefing SPV-nya, SPV hanya atas namanya, SM
+// atas namanya + SPV di bawahnya, admin/manager/admin_sales semua. Nama dari klien di luar cakupan = 403 (bukan diam-diam dipakai).
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -9,7 +12,9 @@ export async function GET(req: Request) {
 
     try {
         const { searchParams } = new URL(req.url);
-        const spvName = searchParams.get("spvName") ?? session.user.name ?? "";
+        const pilih = namaDalamCakupan(await namaSpvBoleh(await resolveScope(session), "baca"), searchParams.get("spvName"));
+        if ("tolak" in pilih) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        const spvName = pilih.nama ?? session.user.name ?? "";
         const today = new Date();
         const dateStr = searchParams.get("date") ??
             `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
@@ -28,15 +33,18 @@ export async function POST(req: Request) {
 
     try {
         const body = await req.json();
-        const { spvName, date, session: briefingSession, agenda, tokoDialas, penyebab, solusi } = body;
-        if (!spvName || !date || !briefingSession) {
+        const { date, session: briefingSession, agenda, tokoDialas, penyebab, solusi } = body;
+        if (!date || !briefingSession) {
             return NextResponse.json({ error: "Missing required fields (spvName, date, session)" }, { status: 400 });
         }
         if (briefingSession !== "pagi" && briefingSession !== "sore") {
             return NextResponse.json({ error: "session must be pagi or sore" }, { status: 400 });
         }
+        const pilih = namaDalamCakupan(await namaSpvBoleh(await resolveScope(session), "tulis"), body.spvName);
+        if ("tolak" in pilih) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        if (!pilih.nama) return NextResponse.json({ error: "Missing required fields (spvName, date, session)" }, { status: 400 });
         const id = await saveBriefing({
-            spvName, date, session: briefingSession,
+            spvName: pilih.nama, date, session: briefingSession,
             agenda, tokoDialas, penyebab, solusi,
             createdBy: session.user.id,
         });

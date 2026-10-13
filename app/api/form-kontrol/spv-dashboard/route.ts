@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
-import { getScopeForUser, getSpvDashboard } from "@/lib/form-kontrol";
+import { getSpvDashboard, resolveScope } from "@/lib/form-kontrol";
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -10,15 +10,13 @@ export async function GET(req: Request) {
     try {
         const { searchParams } = new URL(req.url);
         const date = searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
-        const role = (session.user as { role?: string }).role ?? "staff";
-        let spvName: string | null = null;
-
-        if (role === "admin" || role === "manager" || role === "admin_sales") {
-            spvName = searchParams.get("spvName");
-        } else {
-            const profile = await getScopeForUser(session.user.id);
-            spvName = profile?.spvName ?? profile?.salesName ?? null;
-        }
+        // FK-MSM butir 3: nama SPV dari cakupan (resolveScope) — akun SPV TANPA sales_profile ikut terbaca (nama akun tanpa " (SPV)").
+        // Admin/manager/admin_sales memilih SPV lewat parameter; SPV hanya timnya sendiri; peran lain (salesman, SM) tidak melihat tim SPV.
+        const scope = await resolveScope(session);
+        let spvName: string | null;
+        if (scope.allowedSalesCodes === null) spvName = searchParams.get("spvName");
+        else if (scope.role === "spv") spvName = scope.spvName ?? null;
+        else return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
         if (!spvName) return NextResponse.json({ error: "SPV name not found" }, { status: 400 });
 
