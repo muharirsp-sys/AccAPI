@@ -8,6 +8,7 @@
  *   konfirmasi ulang; ubah isian = sidik lama batal (Kirim terkunci sampai pratinjau segar); kode galat baru jadi kalimat; harga petugas hanya
  *   untuk baris tanpa harga master; ORDER_GANDA + konfirmasi; flag cabangTanpaBarang.
  *   O3: panel "Biasa diambil toko ini" (riwayat beli toko) di Order Sales 390 px + Order baru — Tambah = baris baru + pratinjau baru.
+ *   O3 putaran 1: catatan faktur rusak dilewati; ganti pelanggan saat Tambah masih membaca barang = dibatalkan (baris pelanggan lama tak masuk).
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
  *   `npx playwright test tests/fiori-order-cabang.spec.ts --config <config lokal> --workers=1 --output=test-results/order-cabang`.
  * Dependensi: tests/helpers/order-cabang-mock.ts (mock kontrak O1 + FastAPI Web Sales). Tidak menyentuh DB maupun Accurate.
@@ -1612,7 +1613,7 @@ test("O3 Order Sales: keadaan panel — memuat, galat + Coba lagi (bukan 'belum 
         if (no === "C-01") {
             return riwayatContoh(no, [barisRiwayat("A-2", "BARANG A2", "LSN", 4), barisRiwayat("A-9", "BARANG LAMA", "PCS", 3), barisRiwayat("A-1", "BARANG A", "DUS", 2)], { jumlahFaktur: 5 });
         }
-        if (no === "C-02") return riwayatContoh(no, [], { jumlahFaktur: 3, tanpaRincian: 3, dataSejak: "2026-08-01" });
+        if (no === "C-02") return riwayatContoh(no, [], { jumlahFaktur: 3, tanpaRincian: 3, dilewati: 1, dataSejak: "2026-08-01" });
         return undefined; // bawaan: belum ada riwayat
     } });
     await mockWebsales(page);
@@ -1645,12 +1646,45 @@ test("O3 Order Sales: keadaan panel — memuat, galat + Coba lagi (bukan 'belum 
     await main.getByLabel("Cari pelanggan").fill("PELANGGAN B");
     await main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button", { name: /PELANGGAN B/ }).click();
     await expect(panel).toContainText("Ada 3 faktur sejak 15/07/2026, tetapi rincian barangnya belum tersedia", NAV);
+    await expect(panel).toContainText("1 faktur toko ini dilewati karena tanggal atau isinya tidak terbaca di data kami"); // putaran 1 butir 3
     await expect(panel.getByRole("list")).toHaveCount(0);
     await main.getByRole("button", { name: "Ganti pelanggan" }).click();
     await main.getByLabel("Cari pelanggan").fill("PELANGGAN D");
     await main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button", { name: /PELANGGAN D/ }).click();
     await expect(panel).toContainText("Toko ini belum punya riwayat faktur sejak 15/07/2026.", NAV);
+    await expect(panel).not.toContainText("dilewati");
     await page.screenshot({ path: "test-results/order-cabang/o3-sales-keadaan.png", fullPage: true });
+});
+
+test("O3 putaran 1: ganti pelanggan saat Tambah masih membaca barang = pembacaan dibatalkan; barang pelanggan lama TIDAK masuk order pelanggan baru", async ({ page }) => {
+    let lepas: () => void = () => {};
+    const tahan = new Promise<void>((ok) => { lepas = ok; });
+    const { log } = await mockOrderCabang(page, { peran: "sales",
+        riwayat: (url) => url.searchParams.get("customerNo") === "C-01"
+            ? riwayatContoh("C-01", [barisRiwayat("A-1", "BARANG A", "KRT", 2.5)], { jumlahFaktur: 2 })
+            : riwayatContoh(url.searchParams.get("customerNo") ?? "", [], { dilewati: 2 }),
+        // Pembacaan barang dari Tambah (pelanggan A, kode A-1) ditahan sampai pelanggan sudah diganti.
+        barang: async (url) => { if (url.searchParams.get("q") === "A-1" && url.searchParams.get("customerId") === "1") await tahan; return undefined; } });
+    await mockWebsales(page);
+    const main = await bukaSales(page);
+    await pilihPelanggan(main, "PELANG", "PELANGGAN A");
+    const panel = main.getByRole("region", { name: "Biasa diambil toko ini" });
+    await panel.getByRole("button", { name: "Tambah 3 KRT BARANG A" }).click();
+    await expect.poll(() => log.barang.some((u) => u.searchParams.get("q") === "A-1"), NAV).toBe(true); // pembacaan berangkat, ditahan
+
+    await main.getByRole("button", { name: "Ganti pelanggan" }).click();
+    await main.getByLabel("Cari pelanggan").fill("PELANGGAN B");
+    await main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button", { name: /PELANGGAN B/ }).click();
+    // Pelanggan baru: 0 faktur terbaca tetapi 2 dilewati = bukan "belum punya riwayat" (butir 3).
+    await expect(panel).toContainText("2 faktur toko ini dilewati karena tanggal atau isinya tidak terbaca", NAV);
+    await expect(panel).not.toContainText("belum punya riwayat faktur");
+    lepas();
+    await page.waitForTimeout(1500); // beri kesempatan jawaban basi tiba (sebelum perbaikan: baris A-1 pelanggan A masuk di sini)
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await expect(b1.getByLabel("Cari barang")).toBeVisible();
+    await expect(main.getByRole("listitem", { name: "Barang 2" })).toHaveCount(0);
+    expect(log.preview.filter((p) => p.lines.some((l) => l.code === "A-1"))).toEqual([]);
+    expect(log.dibatalkan.some((s) => s.includes("q=A-1"))).toBe(true); // panel lama dilepas = permintaannya dibatalkan peramban
 });
 
 test("O3 Order baru (petugas): panel riwayat; Tambah barang berharga master + barang TANPA harga master (petugas boleh, kolom harga petugas aktif) → pratinjau baru", async ({ page }) => {

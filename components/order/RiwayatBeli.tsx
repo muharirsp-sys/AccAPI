@@ -3,7 +3,8 @@
  *   (rata-rata per bulan + satuan, terakhir beli; urut terbesar, 10 teratas + "Lihat semua") supaya sales tahu apa yang biasa diambil.
  *   Tombol Tambah menambah baris order dengan satuan itu dan jumlah = pembulatan ke atas rata-rata (bisa diubah) — barang dibaca ulang dari
  *   pencarian barang cabang pelanggan (harga/satuan terkini), lalu pratinjau dihitung ulang seperti biasa (sidik). Barang yang kini tak bisa
- *   diorder tampil bertanda tanpa tombol. Keadaan: memuat / belum ada riwayat / galat + Coba lagi / sebagian faktur tanpa rincian (catatan).
+ *   diorder tampil bertanda tanpa tombol. Keadaan: memuat / belum ada riwayat / galat + Coba lagi / sebagian faktur tanpa rincian (catatan) /
+ *   faktur rusak dilewati (catatan). Ganti pelanggan membatalkan pembacaan barang Tambah yang masih berjalan.
  * Caller: app/(dashboard)/sales/OrderSales.tsx (peran sales), app/(dashboard)/orders/OrderBaru.tsx (peran petugas).
  * Dependensi: GET /api/customers/riwayat-beli (lib/riwayat-beli: bentuk + logika murni), ./order-cabang-api (bacaBarangKode = GET
  *   /api/items/search), ./order-cabang, app/(dashboard)/form-kontrol/lapangan (ambilJson), components/fiori/*, lib/rekapan-nota/ui.
@@ -12,7 +13,7 @@
  */
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus, RefreshCw } from "lucide-react";
 import { Button, MessageStrip, Section, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { useLoad, type Load } from "@/components/fiori/interactive";
@@ -57,13 +58,19 @@ function Panel({ pelanggan, tanggal, peran, baris, onTambah }: Props) {
     const [aksi, setAksi] = useState<Record<string, Aksi>>({});
     const diOrder = new Set(baris.filter((l) => l.code.trim()).map((l) => kunciBaris(l.code, l.unit)));
     const tanpaTanggal = tanggalSah(tanggal) ? undefined : "Isi tanggal order dulu";
+    // Ganti pelanggan = panel ini dilepas (`key`) -> pembacaan barang Tambah yang masih berjalan DIBATALKAN: tanpa ini jawabannya tiba
+    // sesudahnya dan barang pelanggan LAMA masuk ke order pelanggan baru (onTambah = setLines(prev => ...)).
+    const lepas = useRef<AbortController | null>(null);
+    useEffect(() => { const c = new AbortController(); lepas.current = c; return () => c.abort(); }, []);
 
     async function tambah(x: BarangRiwayatOrder) {
+        const sinyal = lepas.current?.signal;
+        if (!sinyal) return;
         const k = kunciBaris(x.code, x.unit);
         const set = (a: Aksi | null) => setAksi((prev) => { const s = { ...prev }; if (a) s[k] = a; else delete s[k]; return s; });
         set({ jenis: "memuat" });
         // Dibaca ulang dari pencarian barang cabang pelanggan: cabang/suspended/satuan/harga TERKINI (riwayat bisa lebih tua dari master).
-        const h = await bacaBarangKode(x.code, pelanggan, tanggal, new AbortController().signal, peran);
+        const h = await bacaBarangKode(x.code, pelanggan, tanggal, sinyal, peran);
         if (!h.ok) { set("batal" in h ? null : { jenis: "galat", pesan: kalimatGalat(h.galat) }); return; }
         if (!h.data) { set({ jenis: "galat", pesan: `${x.code} tidak ada lagi di barang cabang ${pelanggan.branchName} (nonaktif atau pindah cabang). Cari barang lain.` }); return; }
         const s = satuanTambah(h.data, x.unit, peran, kunciHarga(pelanggan.id, tanggal));
@@ -85,7 +92,7 @@ function Panel({ pelanggan, tanggal, peran, baris, onTambah }: Props) {
                         <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang}>Coba lagi</Button>
                     </MessageStrip>
                 )}
-                {r && r.ringkasan.jumlahFaktur === 0 && <p className="fi-muted" style={{ margin: 0 }}>Toko ini belum punya riwayat faktur sejak {sejak}.</p>}
+                {r && r.ringkasan.jumlahFaktur === 0 && r.ringkasan.dilewati === 0 && <p className="fi-muted" style={{ margin: 0 }}>Toko ini belum punya riwayat faktur sejak {sejak}.</p>}
                 {r && r.ringkasan.jumlahFaktur > 0 && r.items.length === 0 && (
                     <p className="fi-muted" style={{ margin: 0 }}>
                         Ada {r.ringkasan.jumlahFaktur} faktur sejak {sejak}, tetapi rincian barangnya belum tersedia di data kami — rata-rata belum bisa dihitung.
@@ -132,6 +139,11 @@ function Panel({ pelanggan, tanggal, peran, baris, onTambah }: Props) {
                 {r && r.ringkasan.tanpaRincian > 0 && r.items.length > 0 && (
                     <p className="fi-small fi-why" style={{ margin: "8px 0 0" }}>
                         {r.ringkasan.tanpaRincian} dari {r.ringkasan.jumlahFaktur} faktur sejak {sejak} belum punya rincian barang di data kami — rata-rata bisa lebih kecil dari kenyataan.
+                    </p>
+                )}
+                {r && r.ringkasan.dilewati > 0 && (
+                    <p className="fi-small fi-why" style={{ margin: "8px 0 0" }}>
+                        {r.ringkasan.dilewati} faktur toko ini dilewati karena tanggal atau isinya tidak terbaca di data kami — tidak ikut dihitung.
                     </p>
                 )}
                 {r && r.items.length > 0 && (

@@ -28,6 +28,12 @@ export function jendelaRiwayat(sampai: string, bulan: number): { dari: string; s
  *   Batas: bulan kalender & musiman tidak dibedakan; retur (sales_return) TIDAK dikurangkan; baris harga 0 (bonus promo) tidak dihitung;
  *   faktur tanpa rincian barang (masuk lewat list.do, bukan detail.do) tidak bisa dihitung per barang — jumlahnya dilaporkan (`tanpaRincian`)
  *   sehingga rata-rata bisa lebih kecil dari kenyataan. Jalan naik: backfill rincian lewat detail.do, lalu kurangi retur per barang.
+ * ponytail: faktur yang DIHAPUS di Accurate MASIH IKUT TERHITUNG — cache `sales_invoice` tidak punya penanda andal: sync hanya upsert
+ *   (list.do tidak melaporkan faktur hilang; synced_at hanya bergerak bila isi berubah), dan webhook DELETE / penambal yang mendapat detail.do
+ *   kosong (AccurateInvoiceGoneError, lib/sync.ts) tidak menyentuh barisnya. lib/invoice-search.ts mengenalinya hanya dengan SATU detail.do
+ *   per hit cache — di sini itu = satu panggilan Accurate per faktur per buka panel (route ini baca-DB saja), jadi tidak dipakai. Batas:
+ *   rata-rata bisa lebih besar dari kenyataan bila toko punya faktur yang dihapus dalam jendela. Jalan naik: tandai/hapus baris cache saat
+ *   AccurateInvoiceGoneError (webhook + penambal), lalu saring di kueri route.
  */
 export function bulanTeramati(o: { dari: string; sampai: string; bulan: number; palingAwal: string | null }): number {
     if (!o.palingAwal || o.palingAwal <= o.dari) return o.bulan;
@@ -39,10 +45,12 @@ export function bulanTeramati(o: { dari: string; sampai: string; bulan: number; 
 export type BarisFaktur = { faktur: string | null; tanggal: string | null; adaRincian: boolean; code: string | null; nama: string | null; satuan: string | null; qty: string | null; harga: string | null };
 export type BarangRiwayat = { code: string; name: string; unit: string; totalQty: number; rataPerBulan: number; jumlahFaktur: number; terakhirBeli: string };
 export type Jendela = { bulan: number; dari: string; sampai: string; bulanTeramati: number };
-export type RingkasanRiwayat = { jumlahFaktur: number; tanpaRincian: number; dataSejak: string | null };
+/** `dilewati` = faktur toko yang tak terbaca (tanggal bukan dd/MM/yyyy sah, di mana pun; atau raw_data bukan JSON, di jendela) — dihitung
+ * di SQL, TIDAK termasuk `jumlahFaktur`/`tanpaRincian`, supaya satu faktur rusak tidak menggagalkan seluruh jawaban tetapi juga tidak hilang diam-diam. */
+export type RingkasanRiwayat = { jumlahFaktur: number; tanpaRincian: number; dilewati: number; dataSejak: string | null };
 
 /** Agregasi per barang + SATUAN (KRT dan PCS barang yang sama = dua baris; satuan tidak dikonversi). Urut rata-rata terbesar. */
-export function ringkasRiwayat(rows: readonly BarisFaktur[], o: { dari: string; sampai: string; bulan: number; palingAwal: string | null }):
+export function ringkasRiwayat(rows: readonly BarisFaktur[], o: { dari: string; sampai: string; bulan: number; palingAwal: string | null; dilewati: number }):
     { jendela: Jendela; ringkasan: RingkasanRiwayat; items: BarangRiwayat[] } {
     const faktur = new Map<string, boolean>();
     const per = new Map<string, { code: string; name: string; unit: string; total: number; faktur: Set<string>; terakhir: string }>();
@@ -69,7 +77,7 @@ export function ringkasRiwayat(rows: readonly BarisFaktur[], o: { dari: string; 
     })).sort((a, b) => b.rataPerBulan - a.rataPerBulan || b.terakhirBeli.localeCompare(a.terakhirBeli) || a.code.localeCompare(b.code) || a.unit.localeCompare(b.unit));
     return {
         jendela: { bulan: o.bulan, dari: o.dari, sampai: o.sampai, bulanTeramati: bulat2(bulan) },
-        ringkasan: { jumlahFaktur: faktur.size, tanpaRincian: [...faktur.values()].filter((ada) => !ada).length, dataSejak: o.palingAwal },
+        ringkasan: { jumlahFaktur: faktur.size, tanpaRincian: [...faktur.values()].filter((ada) => !ada).length, dilewati: o.dilewati, dataSejak: o.palingAwal },
         items,
     };
 }
@@ -115,8 +123,9 @@ const angka = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v :
 export function bacaRiwayat(d: Record<string, unknown>): Riwayat | null {
     const j = (d.jendela ?? {}) as Record<string, unknown>, r = (d.ringkasan ?? {}) as Record<string, unknown>;
     const jendela: Jendela = { bulan: angka(j.bulan), dari: teks(j.dari), sampai: teks(j.sampai), bulanTeramati: angka(j.bulanTeramati) };
-    const ringkasan: RingkasanRiwayat = { jumlahFaktur: angka(r.jumlahFaktur), tanpaRincian: angka(r.tanpaRincian), dataSejak: typeof r.dataSejak === "string" ? r.dataSejak : null };
-    if (!Array.isArray(d.items) || !jendela.dari || Number.isNaN(jendela.bulanTeramati) || Number.isNaN(ringkasan.jumlahFaktur) || Number.isNaN(ringkasan.tanpaRincian)) return null;
+    const ringkasan: RingkasanRiwayat = { jumlahFaktur: angka(r.jumlahFaktur), tanpaRincian: angka(r.tanpaRincian), dilewati: angka(r.dilewati),
+        dataSejak: typeof r.dataSejak === "string" ? r.dataSejak : null };
+    if (!Array.isArray(d.items) || !jendela.dari || Number.isNaN(jendela.bulanTeramati) || [ringkasan.jumlahFaktur, ringkasan.tanpaRincian, ringkasan.dilewati].some(Number.isNaN)) return null;
     const items = d.items.flatMap((raw): BarangRiwayatOrder[] => {
         const x = (raw ?? {}) as Record<string, unknown>;
         if (!teks(x.code) || !teks(x.unit) || Number.isNaN(angka(x.rataPerBulan))) return [];

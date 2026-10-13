@@ -11,7 +11,8 @@
  * Tahap 2 (O1 putaran 1): pratinjau membawa `sidik` (sha256 baris berharga + hasil promo); simpan FastAPI (Web Sales dan Order Baru) WAJIB membawa
  *   sidik yang sama dengan hitungan server saat itu (`geser` mengubah angka server di tengah tes = PRATINJAU_BERUBAH). Harga petugas hanya sah
  *   untuk baris TANPA harga master (keputusan owner 12 Okt sesi 13); pada baris berharga master server menolak.
- * O3: GET /api/customers/riwayat-beli — bawaan = toko tanpa riwayat (0 faktur); `opsi.riwayat` mengganti jawabannya (`riwayatContoh`).
+ * O3: GET /api/customers/riwayat-beli — bawaan = toko tanpa riwayat (0 faktur); `opsi.riwayat` mengganti jawabannya (`riwayatContoh`, ringkasan
+ *   membawa `dilewati` = faktur rusak yang dilewati server).
  */
 import { createHash } from "node:crypto";
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
@@ -231,12 +232,13 @@ export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<
 }
 
 /** O3: jawaban /api/customers/riwayat-beli (bentuk route asli). Jendela 90 hari berakhir 12 Okt 2026; `dataSejak` = faktur paling awal toko. */
-export function riwayatContoh(customerNo: string, items: Record<string, unknown>[], ringkasan: { jumlahFaktur?: number; tanpaRincian?: number; dataSejak?: string | null } = {}): Jawab {
+export function riwayatContoh(customerNo: string, items: Record<string, unknown>[], ringkasan: { jumlahFaktur?: number; tanpaRincian?: number; dilewati?: number; dataSejak?: string | null } = {}): Jawab {
     const p = PELANGGAN.find((x) => x.customerNo === customerNo);
     if (!p) return { status: 409, body: { ok: false, kode: "PELANGGAN_TIDAK_ADA", error: `Pelanggan ${customerNo} tidak ada di master Accurate hasil sync.` } };
     return { body: { ok: true, pelanggan: { customerNo: p.customerNo, name: p.name, branchId: p.branchId, branchName: p.branchName },
         jendela: { bulan: 3, dari: "2026-07-15", sampai: "2026-10-12", bulanTeramati: 3 },
-        ringkasan: { jumlahFaktur: ringkasan.jumlahFaktur ?? 0, tanpaRincian: ringkasan.tanpaRincian ?? 0, dataSejak: ringkasan.dataSejak ?? (items.length ? "2026-07-01" : null) },
+        ringkasan: { jumlahFaktur: ringkasan.jumlahFaktur ?? 0, tanpaRincian: ringkasan.tanpaRincian ?? 0, dilewati: ringkasan.dilewati ?? 0,
+            dataSejak: ringkasan.dataSejak ?? (items.length ? "2026-07-01" : null) },
         items } };
 }
 

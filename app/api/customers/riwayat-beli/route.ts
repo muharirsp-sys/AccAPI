@@ -1,7 +1,8 @@
 /*
  * Tujuan: Riwayat beli SATU toko (O3, owner 12 Okt 2026 sesi 13) untuk panel "Biasa diambil toko ini" di Order Sales & Order Baru:
  *   per barang + satuan — total qty dalam jendela, rata-rata per bulan, jumlah faktur, tanggal beli terakhir, dan apakah barang itu KINI
- *   bisa diorder untuk pelanggan ini; plus ringkasan (faktur dalam jendela, berapa tanpa rincian barang, tanggal data paling awal toko itu).
+ *   bisa diorder untuk pelanggan ini; plus ringkasan (faktur dalam jendela, berapa tanpa rincian barang, berapa faktur rusak DILEWATI,
+ *   tanggal data paling awal toko itu). Faktur yang dihapus di Accurate masih ikut terhitung (tak ada penanda di cache — lib/riwayat-beli).
  * Caller: components/order/RiwayatBeli.tsx.
  * Dependensi: db sales_invoice (cache faktur Accurate; rincian baris HANYA ada untuk faktur yang masuk lewat detail.do/webhook),
  *   customer/branch/item, lib/order-cabang (cakupanCabang, tolakCabangLain, alasanBonus), lib/riwayat-beli (murni), lib/rbac/resolve.
@@ -27,7 +28,7 @@ export const runtime = "nodejs";
 
 const galat = (status: number, kode: string, error: string) => NextResponse.json({ ok: false, kode, error }, { status });
 
-type BarisSql = { paling_awal: string | null; faktur: string | null; tanggal: string | null; ada_rincian: boolean | null;
+type BarisSql = { paling_awal: string | null; dilewati: number | null; faktur: string | null; tanggal: string | null; ada_rincian: boolean | null;
     code: string | null; nama: string | null; satuan: string | null; qty: string | null; harga: string | null };
 
 export async function GET(request: NextRequest) {
@@ -61,22 +62,32 @@ export async function GET(request: NextRequest) {
 
         const jendela = jendelaRiwayat(todayWita(new Date()), bulan);
         // `f` = semua faktur toko (hanya id + tanggal, untuk tanggal data paling awal); raw_data dibuka hanya untuk faktur di jendela (`w`).
-        // `trans_date` TEKS dd/MM/yyyy dari Accurate; bentuk lain dilewati (to_date tidak dipanggil padanya). raw_data = STRING JSON di kolom
-        // jsonb (lib/sync) -> `#>> '{}'` lalu ::jsonb (objek juga terbaca). Satu baris per baris barang; faktur tanpa `detailItem` (list.do)
-        // = satu baris ber-`code` null; tak ada faktur di jendela = satu baris `faktur` null (tetap membawa `paling_awal`).
+        // `trans_date` TEKS dd/MM/yyyy dari Accurate. raw_data = STRING JSON di kolom jsonb (lib/sync) -> `#>> '{}'` lalu ::jsonb (objek juga
+        // terbaca). Satu baris per baris barang; faktur tanpa `detailItem` (list.do) = satu baris ber-`code` null; tak ada faktur di jendela =
+        // satu baris `faktur` null (tetap membawa `paling_awal` + `dilewati`).
+        // Faktur rusak TIDAK boleh menggagalkan seluruh jawaban (to_date '31/02' dan ::jsonb teks rusak = galat Postgres): tanggal bukan
+        // dd/MM/yyyy sah -> tgl NULL; raw_data bukan JSON -> `rusak`. Keduanya dilewati dan dihitung (`dilewati`). pg_input_is_valid = PG 16+
+        // (produksi 16.14); tanggal diperiksa dalam bentuk ISO (tak bergantung DateStyle).
+        // `w` MATERIALIZED (eksplisit, jangan diandalkan dari jumlah rujukan): CTE yang di-inline membuat raw_data diurai ulang PER BARIS
+        // BARANG (40 faktur x 40 baris: 410–770 ms vs ~50 ms; dijaga uji "rencana kueri" di lib/riwayat-beli-pg.test.ts).
         const res = await db.execute(sql`
             WITH f AS (
-                SELECT id, to_date(trans_date, 'DD/MM/YYYY') AS tgl FROM sales_invoice
-                WHERE customer_no = ${pel.customerNo} AND trans_date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
-            ), w AS (
-                SELECT f.id, f.tgl, (s.raw_data #>> '{}')::jsonb -> 'detailItem' AS rinci
+                SELECT id, CASE WHEN pg_input_is_valid(iso, 'date') THEN iso::date END AS tgl
+                FROM (SELECT id, CASE WHEN trans_date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+                        THEN substr(trans_date, 7, 4) || '-' || substr(trans_date, 4, 2) || '-' || substr(trans_date, 1, 2) END AS iso
+                    FROM sales_invoice WHERE customer_no = ${pel.customerNo}) AS t
+            ), w AS MATERIALIZED (
+                SELECT f.id, f.tgl, coalesce(NOT pg_input_is_valid(s.raw_data #>> '{}', 'jsonb'), false) AS rusak,
+                    CASE WHEN pg_input_is_valid(s.raw_data #>> '{}', 'jsonb') THEN (s.raw_data #>> '{}')::jsonb -> 'detailItem' END AS rinci
                 FROM f JOIN sales_invoice s ON s.id = f.id
                 WHERE f.tgl BETWEEN ${jendela.dari}::date AND ${jendela.sampai}::date
             )
-            SELECT (SELECT min(tgl) FROM f)::text AS paling_awal, w.id::text AS faktur, w.tgl::text AS tanggal,
+            SELECT (SELECT min(tgl) FROM f)::text AS paling_awal,
+                ((SELECT count(*) FROM f WHERE tgl IS NULL) + (SELECT count(*) FROM w WHERE rusak))::int AS dilewati,
+                w.id::text AS faktur, w.tgl::text AS tanggal,
                 coalesce(jsonb_typeof(w.rinci) = 'array', false) AS ada_rincian, d.code, d.nama, d.satuan, d.qty, d.harga
             FROM (SELECT 1) AS satu
-            LEFT JOIN w ON true
+            LEFT JOIN w ON NOT w.rusak
             LEFT JOIN LATERAL (
                 SELECT coalesce(x -> 'item' ->> 'no', x ->> 'itemNo') AS code, coalesce(x -> 'item' ->> 'name', x ->> 'detailName') AS nama,
                     x -> 'itemUnit' ->> 'name' AS satuan, x ->> 'quantity' AS qty, x ->> 'unitPrice' AS harga
@@ -84,7 +95,8 @@ export async function GET(request: NextRequest) {
             ) AS d ON true`);
         const rows = res.rows as BarisSql[];
         const hasil = ringkasRiwayat(rows.map((r) => ({ faktur: r.faktur, tanggal: r.tanggal, adaRincian: r.ada_rincian === true,
-            code: r.code, nama: r.nama, satuan: r.satuan, qty: r.qty, harga: r.harga })), { ...jendela, bulan, palingAwal: rows[0]?.paling_awal ?? null });
+            code: r.code, nama: r.nama, satuan: r.satuan, qty: r.qty, harga: r.harga })),
+            { ...jendela, bulan, palingAwal: rows[0]?.paling_awal ?? null, dilewati: Number(rows[0]?.dilewati ?? 0) });
 
         // Barang yang KINI tak bisa diorder (tidak ada / suspended / tanpa cabang = non-jual / cabang lain) tetap tampil, bertanda: aturan
         // SAMA dengan barang order (alasanBonus = syarat barang order O1, dipakai juga untuk bonus promo).

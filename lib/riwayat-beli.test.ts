@@ -2,7 +2,7 @@
  * Bagian 1 (murni, tanpa DB): jendela 90 hari, bulan teramati (faktur paling awal toko lebih baru dari awal jendela), agregasi baris faktur
  *   (satuan berbeda, faktur tanpa rincian, bonus harga 0, qty rusak), jumlah tombol Tambah, satuan saat Tambah, sisip baris order.
  * Bagian 2 (route TANPA DB): gerbang 401/403/400 sebelum DB, cakupan cabang salesman (403), galat DB = 500 berkode (bukan daftar kosong),
- *   bentuk jawaban + tanda "tak bisa diorder" dari master barang. SQL-nya diuji di lib/riwayat-beli-pg.test.ts. */
+ *   bentuk jawaban (+ `dilewati` = faktur rusak) + tanda "tak bisa diorder" dari master barang. SQL-nya diuji di lib/riwayat-beli-pg.test.ts. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
@@ -42,12 +42,13 @@ test("agregasi per barang + SATUAN: KRT dan PCS barang yang sama = dua baris; to
         f("2", "2026-09-10", "A-1", "krt ", "3"), f("2", "2026-09-10", "A-1", "PCS", "12"),
         f("3", "2026-10-05", " A-1 ", "PCS", "6"),
     ];
-    const h = ringkasRiwayat(rows, { dari: "2026-07-15", sampai: "2026-10-12", bulan: 3, palingAwal: "2026-07-01" });
+    const h = ringkasRiwayat(rows, { dari: "2026-07-15", sampai: "2026-10-12", bulan: 3, palingAwal: "2026-07-01", dilewati: 2 });
     assert.deepEqual(h.items, [
         { code: "A-1", name: "", unit: "PCS", totalQty: 18, rataPerBulan: 6, jumlahFaktur: 2, terakhirBeli: "2026-10-05" },
         { code: "A-1", name: "BARANG A", unit: "KRT", totalQty: 6, rataPerBulan: 2, jumlahFaktur: 2, terakhirBeli: "2026-09-10" },
     ]);
-    assert.deepEqual(h.ringkasan, { jumlahFaktur: 3, tanpaRincian: 0, dataSejak: "2026-07-01" });
+    // `dilewati` (faktur rusak, dihitung di SQL) diteruskan apa adanya; tidak ikut jumlahFaktur.
+    assert.deepEqual(h.ringkasan, { jumlahFaktur: 3, tanpaRincian: 0, dilewati: 2, dataSejak: "2026-07-01" });
     assert.deepEqual(h.jendela, { bulan: 3, dari: "2026-07-15", sampai: "2026-10-12", bulanTeramati: 3 });
 });
 
@@ -60,24 +61,24 @@ test("faktur TANPA rincian (list.do) tetap dihitung di ringkasan, tidak masuk ba
         f("4", "2026-09-04", "A-1", "PCS", "abc"), f("4", "2026-09-04", "A-1", "PCS", "-3"), f("4", "2026-09-04", "", "PCS", "5"), f("4", "2026-09-04", "A-2", null, "5"),
         f("5", "2026-09-05", "A-3", "LSN", "1.5", null), // harga tak terkirim != bonus: dihitung
     ];
-    const h = ringkasRiwayat(rows, { dari: "2026-07-15", sampai: "2026-10-12", bulan: 3, palingAwal: "2026-07-15" });
-    assert.deepEqual(h.ringkasan, { jumlahFaktur: 5, tanpaRincian: 2, dataSejak: "2026-07-15" });
+    const h = ringkasRiwayat(rows, { dari: "2026-07-15", sampai: "2026-10-12", bulan: 3, palingAwal: "2026-07-15", dilewati: 0 });
+    assert.deepEqual(h.ringkasan, { jumlahFaktur: 5, tanpaRincian: 2, dilewati: 0, dataSejak: "2026-07-15" });
     assert.deepEqual(h.items.map((x) => [x.code, x.unit, x.totalQty, x.jumlahFaktur]), [["A-1", "KRT", 4, 1], ["A-3", "LSN", 1.5, 1]]);
     // Tanpa faktur di jendela: SQL tetap mengirim satu baris (faktur null) pembawa tanggal data paling awal.
     const kosong = ringkasRiwayat([{ faktur: null, tanggal: null, adaRincian: false, code: null, nama: null, satuan: null, qty: null, harga: null }],
-        { dari: "2026-07-15", sampai: "2026-10-12", bulan: 3, palingAwal: "2026-02-01" });
-    assert.deepEqual(kosong.ringkasan, { jumlahFaktur: 0, tanpaRincian: 0, dataSejak: "2026-02-01" });
+        { dari: "2026-07-15", sampai: "2026-10-12", bulan: 3, palingAwal: "2026-02-01", dilewati: 1 });
+    assert.deepEqual(kosong.ringkasan, { jumlahFaktur: 0, tanpaRincian: 0, dilewati: 1, dataSejak: "2026-02-01" });
     assert.deepEqual(kosong.items, []);
 });
 
 test("rata-rata dengan faktur awal BARU: dibagi bulan sejak faktur pertama (bukan 3), minimal 1; urut rata-rata terbesar", () => {
     const rows = [f("1", "2026-08-28", "A-1", "KRT", "3"), f("2", "2026-10-01", "A-1", "KRT", "3"), f("2", "2026-10-01", "A-4", "LSN", "10")];
-    const baru = ringkasRiwayat(rows, { dari: "2026-07-15", sampai: "2026-10-12", bulan: 3, palingAwal: "2026-08-28" });
+    const baru = ringkasRiwayat(rows, { dari: "2026-07-15", sampai: "2026-10-12", bulan: 3, palingAwal: "2026-08-28", dilewati: 0 });
     assert.equal(baru.jendela.bulanTeramati, 1.53); // 46/30
     assert.deepEqual(baru.items.map((x) => [x.code, x.rataPerBulan]), [["A-4", 6.52], ["A-1", 3.91]]); // 10/1.533, 6/1.533
-    const lama = ringkasRiwayat(rows, { dari: "2026-07-15", sampai: "2026-10-12", bulan: 3, palingAwal: "2026-05-01" });
+    const lama = ringkasRiwayat(rows, { dari: "2026-07-15", sampai: "2026-10-12", bulan: 3, palingAwal: "2026-05-01", dilewati: 0 });
     assert.deepEqual(lama.items.map((x) => [x.code, x.rataPerBulan]), [["A-4", 3.33], ["A-1", 2]]);
-    const sebentar = ringkasRiwayat(rows.slice(1), { dari: "2026-07-15", sampai: "2026-10-12", bulan: 3, palingAwal: "2026-10-01" });
+    const sebentar = ringkasRiwayat(rows.slice(1), { dari: "2026-07-15", sampai: "2026-10-12", bulan: 3, palingAwal: "2026-10-01", dilewati: 0 });
     assert.deepEqual(sebentar.items.map((x) => [x.code, x.rataPerBulan]), [["A-4", 10], ["A-1", 3]]); // 12 hari -> 1 bulan, bukan 0,4
 });
 
@@ -108,10 +109,14 @@ test("sisip baris: isi baris kosong PERTAMA (belum memilih barang), selain itu t
 test("bacaRiwayat (klien): jawaban tak berbentuk = null (galat), bukan riwayat kosong", () => {
     assert.equal(bacaRiwayat({ ok: true }), null);
     assert.equal(bacaRiwayat({ ok: true, items: [], ringkasan: {} }), null);
-    const r = bacaRiwayat({ ok: true, jendela: { bulan: 3, dari: "2026-07-15", sampai: "2026-10-12", bulanTeramati: 3 }, ringkasan: { jumlahFaktur: 0, tanpaRincian: 0, dataSejak: null },
+    const jendela = { bulan: 3, dari: "2026-07-15", sampai: "2026-10-12", bulanTeramati: 3 };
+    // Tanpa `dilewati` = bentuk tak terbaca (faktur yang dilewati tidak boleh hilang diam-diam).
+    assert.equal(bacaRiwayat({ ok: true, jendela, ringkasan: { jumlahFaktur: 0, tanpaRincian: 0, dataSejak: null }, items: [] }), null);
+    const r = bacaRiwayat({ ok: true, jendela, ringkasan: { jumlahFaktur: 0, tanpaRincian: 0, dilewati: 2, dataSejak: null },
         items: [{ code: "A-1", name: "BARANG A", unit: "KRT", totalQty: 3, rataPerBulan: 1, jumlahFaktur: 1, terakhirBeli: "2026-10-01", bisaDiorder: true, alasan: null }, { code: 5 }] });
     assert.equal(r?.items.length, 1);
     assert.equal(r?.ringkasan.dataSejak, null);
+    assert.equal(r?.ringkasan.dilewati, 2);
 });
 
 // ---------------------------------------------------------------- route TANPA DB
@@ -200,12 +205,13 @@ test("route galat ≠ kosong: kueri faktur gagal = 500 { ok:false, kode } — BU
 });
 
 test("route 200: bentuk jawaban; barang yang KINI tak bisa diorder (cabang lain / suspended / tidak ada) tetap tampil bertanda + alasannya", async () => {
+    const k = { paling_awal: "2026-07-24", dilewati: 2 };
     const faktur = [
-        { paling_awal: "2026-07-24", faktur: "1", tanggal: "2026-08-01", ada_rincian: true, code: "A-1", nama: "BARANG A LAMA", satuan: "KRT", qty: "3", harga: "576000" },
-        { paling_awal: "2026-07-24", faktur: "1", tanggal: "2026-08-01", ada_rincian: true, code: "B-1", nama: "BARANG B", satuan: "KRT", qty: "6", harga: "700000" },
-        { paling_awal: "2026-07-24", faktur: "2", tanggal: "2026-09-01", ada_rincian: true, code: "A-9", nama: "BARANG HILANG", satuan: "PCS", qty: "9", harga: "100" },
-        { paling_awal: "2026-07-24", faktur: "2", tanggal: "2026-09-01", ada_rincian: true, code: "A-5", nama: "BARANG NONAKTIF", satuan: "PCS", qty: "1", harga: "100" },
-        { paling_awal: "2026-07-24", faktur: "3", tanggal: "2026-09-15", ada_rincian: false, code: null, nama: null, satuan: null, qty: null, harga: null },
+        { ...k, faktur: "1", tanggal: "2026-08-01", ada_rincian: true, code: "A-1", nama: "BARANG A LAMA", satuan: "KRT", qty: "3", harga: "576000" },
+        { ...k, faktur: "1", tanggal: "2026-08-01", ada_rincian: true, code: "B-1", nama: "BARANG B", satuan: "KRT", qty: "6", harga: "700000" },
+        { ...k, faktur: "2", tanggal: "2026-09-01", ada_rincian: true, code: "A-9", nama: "BARANG HILANG", satuan: "PCS", qty: "9", harga: "100" },
+        { ...k, faktur: "2", tanggal: "2026-09-01", ada_rincian: true, code: "A-5", nama: "BARANG NONAKTIF", satuan: "PCS", qty: "1", harga: "100" },
+        { ...k, faktur: "3", tanggal: "2026-09-15", ada_rincian: false, code: null, nama: null, satuan: null, qty: null, harga: null },
     ];
     const barang = [
         { no: "A-1", name: "BARANG A", branchId: 50, suspended: false, tag: "TAG A", branchName: "CABANG A" },
@@ -218,7 +224,7 @@ test("route 200: bentuk jawaban; barang yang KINI tak bisa diorder (cabang lain 
     assert.equal(j.ok, true);
     assert.deepEqual(j.pelanggan, { customerNo: "C-01", name: "PELANGGAN A", branchId: 50, branchName: "CABANG A" });
     assert.equal(j.jendela.bulan, 3);
-    assert.deepEqual(j.ringkasan, { jumlahFaktur: 3, tanpaRincian: 1, dataSejak: "2026-07-24" });
+    assert.deepEqual(j.ringkasan, { jumlahFaktur: 3, tanpaRincian: 1, dilewati: 2, dataSejak: "2026-07-24" });
     const per = Object.fromEntries(j.items.map((x: { code: string }) => [x.code, x]));
     assert.deepEqual([per["A-1"].name, per["A-1"].bisaDiorder, per["A-1"].alasan], ["BARANG A", true, null]); // nama master menang
     assert.deepEqual([per["B-1"].bisaDiorder, per["B-1"].alasan], [false, "barang cabang CABANG B"]);
@@ -229,4 +235,6 @@ test("route 200: bentuk jawaban; barang yang KINI tak bisa diorder (cabang lain 
     assert.equal(kf.length, 1);
     assert.match(kf[0], /customer_no = \$1/);
     assert.ok(!kf[0].includes("C-01"));
+    // Putaran 1 butir 1: CTE pengurai raw_data WAJIB termaterialisasi (rencananya diuji di lib/riwayat-beli-pg.test.ts).
+    assert.match(kf[0], /\bw AS MATERIALIZED\b/);
 });

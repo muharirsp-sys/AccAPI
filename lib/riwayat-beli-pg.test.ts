@@ -3,7 +3,9 @@
  * `trans_date` TEKS dd/MM/yyyy (bentuk lain dilewati tanpa galat), `raw_data` jsonb berisi STRING JSON (dan objek), faktur list.do tanpa
  * `detailItem` / raw_data NULL = "tanpa rincian", bonus harga 0, batas jendela 90 hari (hari ke-90 masuk, ke-91 tidak), tanggal data paling
  * awal di luar jendela, toko baru (dibagi bulan sejak faktur pertama), pelanggan lain tidak tercampur, cakupan cabang salesman, master barang
- * (cabang lain = tak bisa diorder). Sesi dipalsukan; izin dari tabel grup nyata. Tanpa env dilewati dengan sebabnya. */
+ * (cabang lain = tak bisa diorder). Putaran 1: faktur rusak (tanggal mustahil 31/02, raw_data bukan JSON) dilewati + dihitung `dilewati`
+ * (bukan 500); rencana kueri memakai CTE `w` TERMATERIALISASI (raw_data diurai sekali per faktur). Sesi dipalsukan; izin dari tabel grup
+ * nyata. Tanpa env dilewati dengan sebabnya. */
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -53,7 +55,8 @@ before(async () => {
     await pool.query(`INSERT INTO accurate_employee VALUES (1, 'M-SLA', 50, true, false)`);
     await pool.query(`INSERT INTO sales_profile VALUES ('sp-a', 'u-sa', 'M-SLA', true)`);
     await pool.query(`INSERT INTO customer (id, "customerNo", name, branch_id, branch_name) VALUES (1, 'C-100001-MSM', 'PELANGGAN A', 50, 'CABANG A'),
-        (2, 'C-100002-MSM', 'PELANGGAN B', 50, 'CABANG A'), (3, 'C-100003-MSM', 'PELANGGAN C', 90, 'CABANG B'), (4, 'C-100004-MSM', 'PELANGGAN D', 50, 'CABANG A')`);
+        (2, 'C-100002-MSM', 'PELANGGAN B', 50, 'CABANG A'), (3, 'C-100003-MSM', 'PELANGGAN C', 90, 'CABANG B'), (4, 'C-100004-MSM', 'PELANGGAN D', 50, 'CABANG A'),
+        (6, 'C-100006-MSM', 'PELANGGAN F', 50, 'CABANG A')`);
     await pool.query(`INSERT INTO item (id, no, name, branch_id, suspended, char_field2) VALUES (11, 'A-1', 'BARANG A', 50, false, 'CABANG A'),
         (14, 'A-4', 'BARANG A4', 50, false, 'CABANG A'), (21, 'B-1', 'BARANG B', 90, false, 'CABANG B')`);
     const tulis = (id: number, tgl: string, cust: string, raw: unknown, sebagaiTeks = true) => pool.query(
@@ -73,6 +76,12 @@ before(async () => {
     await tulis(10, teksAcc(7), "C-100002-MSM", { detailItem: [baris("A-1", "BARANG A", "KRT", 500)] }); // pelanggan lain
     await tulis(11, teksAcc(7), "C-100003-MSM", { detailItem: [baris("B-1", "BARANG B", "KRT", 5)] });
     await tulis(12, teksAcc(20), "C-100004-MSM", { detailItem: [baris("A-1", "BARANG A", "KRT", 4)] }); // toko baru: faktur pertama 20 hari lalu
+    // Butir 3 putaran 1: faktur rusak DILEWATI dan DIHITUNG, bukan 500 untuk seluruh jawaban.
+    const R = "C-100006-MSM";
+    await tulis(20, teksAcc(5), R, { detailItem: [baris("A-1", "BARANG A", "KRT", 6)] });
+    await tulis(21, `31/02/${iso(0).slice(0, 4)}`, R, { detailItem: [baris("A-1", "BARANG A", "KRT", 99)] }); // tanggal mustahil (to_date = galat)
+    await pool.query(`INSERT INTO sales_invoice VALUES (22, 'INV/22', $1, $2, to_jsonb('{"detailItem": [ rusak'::text))`, [teksAcc(8), R]); // JSON rusak di jendela
+    await pool.query(`INSERT INTO sales_invoice VALUES (23, 'INV/23', $1, $2, to_jsonb('rusak juga'::text))`, [teksAcc(120), R]); // rusak di LUAR jendela: tidak dibuka
 
     process.env.DATABASE_URL = u.toString();
     delete process.env.LOCAL_AUTH_BYPASS;
@@ -99,8 +108,8 @@ test("SQL asli: tanggal teks, raw_data string/objek, tanpa rincian, bonus, batas
     const { status, body } = await minta("u-admin", "C-100001-MSM");
     assert.equal(status, 200, JSON.stringify(body));
     assert.deepEqual(body.jendela, { bulan: 3, dari: iso(89), sampai: iso(0), bulanTeramati: 3 });
-    // Faktur 2,3,4,6,7,8 (5 = tanggal rusak, 1 & 9 = di luar jendela); 4 (list.do) & 6 (raw_data NULL) tanpa rincian.
-    assert.deepEqual(body.ringkasan, { jumlahFaktur: 6, tanpaRincian: 2, dataSejak: iso(100) });
+    // Faktur 2,3,4,6,7,8 (5 = tanggal bukan dd/MM/yyyy = dilewati, 1 & 9 = di luar jendela); 4 (list.do) & 6 (raw_data NULL) tanpa rincian.
+    assert.deepEqual(body.ringkasan, { jumlahFaktur: 6, tanpaRincian: 2, dilewati: 1, dataSejak: iso(100) });
     assert.deepEqual(body.items.map((x: Record<string, unknown>) => [x.code, x.unit, x.totalQty, x.rataPerBulan, x.jumlahFaktur, x.terakhirBeli, x.bisaDiorder, x.alasan]), [
         ["A-1", "PCS", 12, 4, 1, iso(60), true, null], // bonus 2 PCS harga 0 tidak dihitung
         ["A-1", "KRT", 6, 2, 2, iso(10), true, null],
@@ -119,7 +128,7 @@ test("toko baru (faktur pertama 20 hari lalu) = dibagi 1 bulan, bukan 3; toko ta
     await pool.query(`INSERT INTO customer (id, "customerNo", name, branch_id, branch_name) VALUES (5, 'C-100005-MSM', 'PELANGGAN E', 50, 'CABANG A')`);
     const nol = await minta("u-admin", "C-100005-MSM");
     assert.equal(nol.status, 200);
-    assert.deepEqual(nol.body.ringkasan, { jumlahFaktur: 0, tanpaRincian: 0, dataSejak: null });
+    assert.deepEqual(nol.body.ringkasan, { jumlahFaktur: 0, tanpaRincian: 0, dilewati: 0, dataSejak: null });
     assert.deepEqual(nol.body.items, []);
 });
 
@@ -130,4 +139,35 @@ test("cakupan cabang di DB nyata: salesman CABANG A membaca pelanggannya (200) t
     const lain = await minta("u-sa", "C-100003-MSM");
     assert.equal(lain.status, 403);
     assert.equal(lain.body.kode, "CABANG_DI_LUAR_CAKUPAN");
+});
+
+test("faktur rusak di jendela (tanggal mustahil 31/02, raw_data bukan JSON) DILEWATI + dihitung `dilewati` — bukan 500 untuk seluruh jawaban", { skip: pgSkip }, async () => {
+    const { status, body } = await minta("u-admin", "C-100006-MSM");
+    assert.equal(status, 200, JSON.stringify(body));
+    // 21 (31/02) + 22 (JSON rusak, di jendela) dilewati; 23 rusak tetapi di luar jendela = tidak dibuka (tetap membawa tanggal data paling awal).
+    assert.deepEqual(body.ringkasan, { jumlahFaktur: 1, tanpaRincian: 0, dilewati: 2, dataSejak: iso(120) });
+    assert.deepEqual(body.items.map((x: Record<string, unknown>) => [x.code, x.unit, x.totalQty, x.rataPerBulan]), [["A-1", "KRT", 6, 2]]);
+});
+
+test("rencana kueri: CTE `w` (raw_data diurai) DIMATERIALISASI, bukan di-inline lalu diurai ulang per baris barang", { skip: pgSkip }, async () => {
+    const { db } = await import("./db.ts");
+    const { PgDialect } = await import("drizzle-orm/pg-core");
+    const simpan = Object.getOwnPropertyDescriptor(db, "execute");
+    const asli = db.execute.bind(db);
+    let kueri: { sql: string; params: unknown[] } | null = null;
+    Object.defineProperty(db, "execute", { configurable: true, value: (q: Parameters<typeof db.execute>[0]) => {
+        const t = new PgDialect().sqlToQuery(q as never);
+        if (t.sql.includes("sales_invoice")) kueri = t;
+        return asli(q);
+    } });
+    try {
+        assert.equal((await minta("u-admin", "C-100001-MSM")).status, 200);
+    } finally {
+        if (simpan) Object.defineProperty(db, "execute", simpan); else delete (db as unknown as Record<string, unknown>).execute;
+    }
+    assert.ok(kueri, "kueri faktur tidak tertangkap");
+    const { sql: teks, params } = kueri as { sql: string; params: unknown[] };
+    const plan = (await pool.query(`EXPLAIN (COSTS OFF) ${teks}`, params)).rows.map((r) => r["QUERY PLAN"]).join("\n");
+    assert.match(plan, /CTE w\n/, plan); // node CTE w ada = dimaterialisasi (raw_data diurai sekali per faktur)
+    assert.match(plan, /CTE Scan on w\b/, plan);
 });

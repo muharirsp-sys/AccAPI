@@ -83,11 +83,15 @@ salesman HANYA pelanggan cabangnya → 403 `CABANG_DI_LUAR_CAKUPAN` tanpa membac
 Accurate LENGKAP (≤ 80); `bulan` 1–12 (bawaan 3 = 90 hari termasuk hari ini WITA); lainnya 400 `INPUT_TIDAK_VALID`. Pelanggan tak ada /
 tanpa cabang / suspended = 409 kode §2. Baca-saja `sales_invoice` (satu kueri per pelanggan, indeks `customer_no`).
 200: `{ ok, pelanggan: {customerNo, name, branchId, branchName}, jendela: {bulan, dari, sampai, bulanTeramati}, ringkasan: {jumlahFaktur,
-tanpaRincian, dataSejak}, items: [{ code, name, unit, totalQty, rataPerBulan, jumlahFaktur, terakhirBeli, bisaDiorder, alasan }] }` — per barang +
+tanpaRincian, dilewati, dataSejak}, items: [{ code, name, unit, totalQty, rataPerBulan, jumlahFaktur, terakhirBeli, bisaDiorder, alasan }] }` — per barang +
 SATUAN (tidak dikonversi), urut `rataPerBulan` terbesar. `rataPerBulan` = total ÷ `bulanTeramati` (= `bulan`, atau hari sejak faktur paling
 awal toko ÷ 30 bila faktur itu lebih baru dari awal jendela; minimal 1). Bonus (harga 0) tidak dihitung; retur tidak dikurangkan;
 `tanpaRincian` = faktur tanpa `detailItem` (list.do) — tidak terhitung per barang. `bisaDiorder:false` + `alasan` = aturan barang order O1
 (tidak ada / suspended / tanpa cabang / cabang lain). Galat DB = 500 `RIWAYAT_GAGAL` (bukan daftar kosong).
+Putaran 1 (13 Okt): `dilewati` = faktur toko yang TAK TERBACA — `trans_date` bukan dd/MM/yyyy sah (mis. 31/02; di mana pun) atau `raw_data`
+bukan JSON (hanya faktur di jendela yang dibuka) — dilewati dan dihitung, TIDAK termasuk `jumlahFaktur`/`tanpaRincian`; satu faktur rusak tidak
+lagi membuat 500 (panel menyebut "N faktur toko ini dilewati"). Faktur yang DIHAPUS di Accurate masih ikut terhitung: cache `sales_invoice`
+tidak punya penanda andal (lihat `ponytail:` di `lib/riwayat-beli.ts`; TERBUKA di bawah).
 
 ### `POST /api/orders/preview` (berubah)
 `customer_no` WAJIB; cabang harga dari pelanggan (badan `branch_id` diabaikan); galat §2. Bentuk jawaban + `sidik` + harga petugas: §4.2.
@@ -261,3 +265,6 @@ rejected: [{request_id, kode, error}] }`. `failed` = DITAHAN (tetap `pending`, m
 - O3 riwayat beli: faktur yang masuk lewat `list.do` (cron) tidak punya `detailItem` — probe 12 Okt: MSM 201 dari 1.603 faktur sejak 24 Jul
   (13%), semua cabang 3 bulan 27.393 dari 70.546 (39%). Backfill rincian lewat `sales-invoice/detail.do` (satu panggilan per faktur, baca-saja
   Accurate) BELUM dikerjakan; sampai itu rata-rata toko bisa lebih kecil dari kenyataan (panel menyebut jumlah faktur tanpa rincian).
+- O3 riwayat beli: faktur yang dihapus di Accurate tetap di cache `sales_invoice` (sync hanya upsert; webhook DELETE / penambal dengan detail.do
+  kosong = `AccurateInvoiceGoneError`, baris cache tidak disentuh) → ikut terhitung, rata-rata bisa lebih besar. Jalan naik: tandai/hapus baris
+  cache saat `AccurateInvoiceGoneError` (lib/sync.ts, jalur webhook + penambal), lalu saring di kueri riwayat-beli.
