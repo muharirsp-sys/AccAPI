@@ -1519,13 +1519,16 @@ test("Order baru (putaran 2 peninjau #2): simpan dijawab 2xx tanpa ok/id ({} ata
 
 // ------------------------------------------------------------------ O3: riwayat beli toko ("Biasa diambil toko ini")
 
-/** 12 barang (server sudah mengurutkan rata-rata terbesar): 10 teratas + "Lihat semua". B-1 = barang cabang lain (tak bisa diorder). */
+/** 12 barang (server sudah mengurutkan rata-rata terbesar): 10 teratas + "Lihat semua". B-1 = barang cabang lain (tak bisa diorder); F-1 = tanpa
+ * cabang dengan alasan bertag PANJANG (bentuk `alasanBonus`) — putaran 2: alasan panjang tidak boleh meruntuhkan kolom nama di 390 px. */
+const ALASAN_TAG = 'tanpa cabang (tag "ALAT TULIS KANTOR" tidak bisa diorder)';
 const RIWAYAT_A = [
     barisRiwayat("A-1", "BARANG A", "PCS", 12),
     barisRiwayat("A-1", "BARANG A", "KRT", 2.5, { terakhirBeli: "2026-10-01" }),
     barisRiwayat("B-1", "BARANG B", "KRT", 2, { bisaDiorder: false, alasan: "barang cabang CABANG B" }),
     barisRiwayat("A-4", "BARANG A4", "LSN", 1.2),
-    ...Array.from({ length: 8 }, (_, i) => barisRiwayat(`F-${i + 1}`, `BARANG F${i + 1}`, "PCS", Math.round((1 - i * 0.1) * 10) / 10)),
+    barisRiwayat("F-1", "BARANG F1", "PCS", 1, { bisaDiorder: false, alasan: ALASAN_TAG }),
+    ...Array.from({ length: 7 }, (_, i) => barisRiwayat(`F-${i + 2}`, `BARANG F${i + 2}`, "PCS", Math.round((0.9 - i * 0.1) * 10) / 10)),
 ];
 
 test.describe("O3 riwayat beli — ponsel 390 px", () => {
@@ -1555,6 +1558,16 @@ test.describe("O3 riwayat beli — ponsel 390 px", () => {
         await expect(b).toContainText("Tidak bisa diorder");
         await expect(b).toContainText("barang cabang CABANG B");
         await expect(b.getByRole("button")).toHaveCount(0);
+        // Alasan bertag panjang: tetap terbaca, kolom nama TIDAK runtuh (dulu 0 px = satu huruf per baris), tanpa gulir horizontal.
+        const f1 = daftar.getByRole("listitem").filter({ hasText: "BARANG F1" });
+        await expect(f1).toContainText("Tidak bisa diorder");
+        await expect(f1).toContainText(ALASAN_TAG);
+        for (const baris of [f1, b]) {
+            const lebarNama = await baris.locator("b").first().evaluate((e) => e.getBoundingClientRect().width);
+            expect(lebarNama, "lebar kolom nama barang").toBeGreaterThanOrEqual(120);
+        }
+        expect(await f1.evaluate((e) => e.getBoundingClientRect().height), "tinggi baris alasan panjang").toBeLessThan(160);
+        await noOverflow(page);
         await expect(daftar.getByRole("button", { name: "Tambah 2 LSN BARANG A4" })).toBeVisible(); // rata 1,2 -> ke atas 2 (bukan 1)
         await expect(panel).toContainText("2 dari 8 faktur sejak 15/07/2026 belum punya rincian barang");
         await expect(panel).toContainText("Bonus promo tidak dihitung; retur belum dikurangkan.");

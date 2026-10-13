@@ -112,12 +112,9 @@ function Panel({ pelanggan, tanggal, peran, baris, onTambah }: Props) {
                                     <span className="fi-small fi-muted" style={{ overflowWrap: "anywhere" }}>
                                         <span className="fi-mono">{x.code}</span> · terakhir {tanggalPendek(x.terakhirBeli)} · {x.jumlahFaktur} faktur
                                     </span>
-                                    <span style={{ justifySelf: "end", display: "grid", gap: 2, justifyItems: "end", textAlign: "right" }}>
+                                    <span style={{ justifySelf: "end" }}>
                                         {!x.bisaDiorder ? (
-                                            <>
-                                                <StatusBadge tone="warn">Tidak bisa diorder</StatusBadge>
-                                                {x.alasan && <span className="fi-small fi-muted">{x.alasan}</span>}
-                                            </>
+                                            <StatusBadge tone="warn">Tidak bisa diorder</StatusBadge>
                                         ) : diOrder.has(k) ? (
                                             <StatusBadge tone="neu">Sudah di order</StatusBadge>
                                         ) : (
@@ -125,6 +122,9 @@ function Panel({ pelanggan, tanggal, peran, baris, onTambah }: Props) {
                                                 aria-label={`Tambah ${n} ${x.unit} ${x.name || x.code}`} onClick={() => void tambah(x)}>Tambah {n} {x.unit}</Button>
                                         )}
                                     </span>
+                                    {/* Alasan di baris PENUH, bukan di sel kanan: alasan bertag (`tanpa cabang (tag "…" tidak bisa diorder)`) selebar
+                                        teksnya di sel `auto` meruntuhkan kolom nama ke 0 px di 390 px. */}
+                                    {!x.bisaDiorder && x.alasan && <span className="fi-small fi-muted" style={{ gridColumn: "1 / -1", overflowWrap: "anywhere" }}>{x.alasan}</span>}
                                     {a?.jenis === "galat" && <p className="fi-small fi-msg" role="alert" style={{ gridColumn: "1 / -1", margin: 0 }}>{a.pesan}</p>}
                                 </li>
                             );

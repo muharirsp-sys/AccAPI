@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
         // satu baris `faktur` null (tetap membawa `paling_awal` + `dilewati`).
         // Faktur rusak TIDAK boleh menggagalkan seluruh jawaban (to_date '31/02' dan ::jsonb teks rusak = galat Postgres): tanggal bukan
         // dd/MM/yyyy sah -> tgl NULL; raw_data bukan JSON -> `rusak`. Keduanya dilewati dan dihitung (`dilewati`). pg_input_is_valid = PG 16+
-        // (produksi 16.14); tanggal diperiksa dalam bentuk ISO (tak bergantung DateStyle).
+        // (produksi 16.14); tanggal diperiksa dalam bentuk ISO dan dikeluarkan lewat to_char YYYY-MM-DD (masukan & keluaran tak bergantung DateStyle).
         // `w` MATERIALIZED (eksplisit, jangan diandalkan dari jumlah rujukan): CTE yang di-inline membuat raw_data diurai ulang PER BARIS
         // BARANG (40 faktur x 40 baris: 410–770 ms vs ~50 ms; dijaga uji "rencana kueri" di lib/riwayat-beli-pg.test.ts).
         const res = await db.execute(sql`
@@ -82,9 +82,9 @@ export async function GET(request: NextRequest) {
                 FROM f JOIN sales_invoice s ON s.id = f.id
                 WHERE f.tgl BETWEEN ${jendela.dari}::date AND ${jendela.sampai}::date
             )
-            SELECT (SELECT min(tgl) FROM f)::text AS paling_awal,
+            SELECT to_char((SELECT min(tgl) FROM f), 'YYYY-MM-DD') AS paling_awal,
                 ((SELECT count(*) FROM f WHERE tgl IS NULL) + (SELECT count(*) FROM w WHERE rusak))::int AS dilewati,
-                w.id::text AS faktur, w.tgl::text AS tanggal,
+                w.id::text AS faktur, to_char(w.tgl, 'YYYY-MM-DD') AS tanggal,
                 coalesce(jsonb_typeof(w.rinci) = 'array', false) AS ada_rincian, d.code, d.nama, d.satuan, d.qty, d.harga
             FROM (SELECT 1) AS satu
             LEFT JOIN w ON NOT w.rusak

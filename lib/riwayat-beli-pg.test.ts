@@ -45,7 +45,8 @@ before(async () => {
     admin = new Pool({ connectionString: PG_URL, max: 1 });
     await admin.query(`CREATE SCHEMA ${skema}`);
     const u = new URL(PG_URL);
-    u.searchParams.set("options", `-c search_path=${skema}`);
+    // DateStyle BUKAN ISO (putaran 2 butir 3): tanggal keluaran route wajib YYYY-MM-DD apa pun DateStyle sesi (`::text` = "13/10/2026" di sini).
+    u.searchParams.set("options", `-c search_path=${skema} -c DateStyle=SQL,DMY`);
     pool = new Pool({ connectionString: u.toString(), max: 2 });
     await pool.query(DDL);
     todayWita = (await import("./insentif-payment-date.ts")).todayWita;
