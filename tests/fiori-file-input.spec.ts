@@ -76,8 +76,22 @@ const ukur = (loc: Locator) => loc.evaluate((el) => {
 });
 const tinggi = (loc: Locator) => loc.evaluate((el) => el.getBoundingClientRect().height);
 
-async function periksa(berkas: Locator, tetangga: Locator, tinggiKotak: number) {
+/** Latar tombol terpakai vs warna token Fiori (diselesaikan lewat elemen probe) -- hijau tema Surya (#17694f) berarti aturan lama bocor kembali. */
+const latarTombol = (loc: Locator, token: string) => loc.evaluate((el, t) => {
+    const probe = document.createElement("div");
+    probe.style.background = `var(${t})`;
+    (el.closest(".fiori") ?? document.body).appendChild(probe);
+    const harapan = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return { bg: getComputedStyle(el, "::file-selector-button").backgroundColor, harapan };
+}, token);
+const HIJAU_SURYA = "rgb(23, 105, 79)";
+
+async function periksa(berkas: Locator, tetangga: Locator, tinggiKotak: number, tokenLatar = "--surface-2") {
     const u = await ukur(berkas);
+    const latar = await latarTombol(berkas, tokenLatar);
+    expect(latar.bg, "tombol bukan hijau tema Surya (aturan lama workspace.css tidak bocor ke .fi-input)").not.toBe(HIJAU_SURYA);
+    expect(latar.bg, `latar tombol = token ${tokenLatar}`).toBe(latar.harapan);
     expect(u.ctlH, "density yang diuji").toBe(tinggiKotak);
     expect(u.kotak, "kotak berkas setinggi --ctl-h").toBeCloseTo(tinggiKotak, 0);
     expect(await tinggi(tetangga), "input biasa di sebelahnya setinggi --ctl-h").toBeCloseTo(tinggiKotak, 0);
@@ -140,6 +154,6 @@ test("berkas nonaktif: tombol tetap muat dan bernada nonaktif (bukan hijau/prime
     const { berkas, baris, tetangga } = await bukaSummary(page);
     await berkas.evaluate((el: HTMLInputElement) => { el.disabled = true; });
     await baris.screenshot({ path: "test-results/fiori-file-input-summary-1366-nonaktif.png" });
-    await periksa(berkas, tetangga, 32);
+    await periksa(berkas, tetangga, 32, "--surface-3"); // nonaktif: latar --surface-3, bukan --surface-2 maupun hijau Surya
     expect(await berkas.evaluate((el) => getComputedStyle(el, "::file-selector-button").cursor)).toBe("default");
 });
