@@ -10,7 +10,7 @@ import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { readFile, stat, unlink } from "node:fs/promises";
+import { readFile, readdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
 import sharp from "sharp";
@@ -448,6 +448,7 @@ test("kunjungi ulang: pemilik (menunggu/disetujui) hari ini, sama = baris sama, 
 test("serentak: dua pengajuan NIK sama -> satu 201, satu 409 NOO_DUPLIKAT (kunci advisory); berkas yang kalah dibuang", { skip: pgSkip }, async () => {
     const nik = "7371050505050090";
     const sebelum = (await pool.query(`SELECT count(*)::int n FROM noo_toko`)).rows[0].n;
+    const berkasAwal = (await readdir(NOO_DIR)).length;
     const [x, y] = await Promise.all([
         ajukan("u-sla", formNoo({ namaToko: "TOKO SERENTAK 1", nik, noHp: "081366667777" }).f),
         ajukan("u-slc", formNoo({ salesCode: "M-SLC", principle: "CABANG A", namaToko: "TOKO SERENTAK 2", nik, noHp: "081388889999" }).f),
@@ -455,6 +456,7 @@ test("serentak: dua pengajuan NIK sama -> satu 201, satu 409 NOO_DUPLIKAT (kunci
     assert.deepEqual([x.status, y.status].sort(), [201, 409]);
     assert.equal((x.status === 409 ? x : y).body.kode, "NOO_DUPLIKAT");
     assert.equal((await pool.query(`SELECT count(*)::int n FROM noo_toko`)).rows[0].n, sebelum + 1);
+    assert.equal((await readdir(NOO_DIR)).length, berkasAwal + 2, "hanya 2 foto pemenang yang tertinggal; foto pengajuan yang kalah di-unlink");
 });
 
 // =========================================================================== DDL / migrasi / RBAC
