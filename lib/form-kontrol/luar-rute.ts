@@ -15,10 +15,11 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
-import { aoControlDaily, jksMaster, kontrolAuditLog, kunjunganLuarRute, merchandisingCheck, nooToko, salesProfile } from "@/db/schema";
+import { aoControlDaily, jksMaster, kontrolAuditLog, kunjunganLuarRute, merchandisingCheck, salesProfile } from "@/db/schema";
 import { cocokKodeRute, type GalatOrder } from "@/lib/order-cabang";
 import { DAY_TO_HARI, MINGGU_PATTERNS, hariBaku, kodeJksUntuk, kunciHari, paritasMinggu } from "./constants";
 import { parseDateString } from "./db";
+import { POLA_KODE_NOO, isKodeNoo } from "./noo-aturan";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 
 // ---------------------------------------------------------------- murni
@@ -126,8 +127,9 @@ export async function daftarLuarRute(salesCode: string, tanggal: string) {
     }).from(k).leftJoin(ao, and(eq(ao.salesCode, k.salesCode), eq(ao.custCode, k.custCode), eq(ao.principle, k.principle), eq(ao.date, k.tanggal)))
         .where(and(eq(k.salesCode, salesCode), isNull(k.dibatalkanPada), or(eq(k.tanggal, tanggal),
             and(eq(k.konfirmasi, "menunggu"), isNotNull(ao.checkinAt), sql`${k.tanggal} < ${tanggal}`)),
-            // NOO (13 Okt): kunjungan toko baru (cust_code = kode NOO) tidak dikonfirmasi masuk JKS — belum ada kode pelanggan Accurate.
-            sql`NOT EXISTS (SELECT 1 FROM ${nooToko} n WHERE n.kode = ${k.custCode})`))
+            // NOO (13 Okt): kunjungan toko baru (customer_id NULL + cust_code berbentuk kode NOO) tidak dikonfirmasi masuk JKS — belum ada
+            // pelanggan Accurate. Tanpa membaca tabel noo_toko (alur luar rute tidak bergantung DDL NOO); tambahLuarRute SELALU mengisi customer_id.
+            sql`NOT (${k.customerId} IS NULL AND ${k.custCode} ~ ${POLA_KODE_NOO.source})`))
         .orderBy(desc(k.tanggal), asc(k.custName));
     const kandidat = [...new Set(rows.flatMap((r) => kodeJksUntuk(r.k.custCode)))];
     const principals = [...new Set(rows.map((r) => r.k.principle))];
@@ -172,8 +174,7 @@ export async function konfirmasiLuarRute(d: {
         if (k.dibatalkanPada) return galat(409, "SUDAH_DIBATALKAN", `Kunjungan ${k.custName} sudah dibatalkan; muat ulang daftarnya.`);
         if (k.konfirmasi === "jks") return galat(409, "SUDAH_DIKONFIRMASI", `${k.custName} sudah masuk JKS Anda (${jadwal({ hariKunjungan: k.hari, mingguPattern: k.mingguPattern })}).`);
         if (k.konfirmasi === "sudah_jks") return galat(409, "SUDAH_DI_JKS", `${k.custName} sudah ada di JKS Anda pada hari lain; tidak perlu dikonfirmasi.`);
-        const [noo] = await tx.select({ kode: nooToko.kode }).from(nooToko).where(eq(nooToko.kode, k.custCode)).limit(1);
-        if (noo) return galat(409, "NOO_BELUM_TERDAFTAR", `${k.custName} adalah toko baru (NOO) tanpa kode pelanggan Accurate; masuk JKS sesudah terdaftar, lewat kunjungan luar rute berkode pelanggan.`);
+        if (k.customerId === null && isKodeNoo(k.custCode)) return galat(409, "NOO_BELUM_TERDAFTAR", `${k.custName} adalah toko baru (NOO) tanpa kode pelanggan Accurate; masuk JKS sesudah terdaftar, lewat kunjungan luar rute berkode pelanggan.`);
         const now = new Date();
         const jejak = { dikonfirmasiOleh: d.aktorId, dikonfirmasiOlehNama: d.aktorNama, dikonfirmasiPada: now };
         const audit = (action: string, payload: Record<string, unknown>) => tx.insert(kontrolAuditLog).values({ id: randomUUID(), entity: "luar_rute",
