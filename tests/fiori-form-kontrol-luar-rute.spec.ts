@@ -259,6 +259,8 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
         const daftar = sek.getByRole("list", { name: "Toko luar rute" });
         await expect(daftar.getByRole("listitem")).toHaveCount(5, NAV);
         await expect(sek).toContainText("4 menunggu keputusan");
+        // Peninjau A R-4: kunjungan luar rute hari ini terpisah dari Total toko JKS (kemarin & belum check-in tidak dihitung).
+        await expect(lap.locator(".fi-kc", { hasText: "Luar rute dikunjungi" }).locator("b")).toHaveText("4");
         await expect(daftar.getByRole("listitem").filter({ hasText: "PELANGGAN G" })).toHaveCount(0);
         await expect(daftar.getByRole("listitem").filter({ hasText: "PELANGGAN F" })).toContainText("Kunjungan");
         const b = daftar.getByRole("listitem").filter({ hasText: "PELANGGAN B" });

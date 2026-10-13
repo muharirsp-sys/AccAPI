@@ -144,9 +144,12 @@ const hasil = (s: string | null) => (s === "ordered" || s === "active" ? "order"
 
 /**
  * Toko luar rute yang sudah DIKUNJUNGI (check-in) pada `tanggal` + yang masih menunggu dari hari sebelumnya. `onMenunggu` = jumlah yang belum
- * diputuskan (untuk dialog kirim laporan; tidak menahan kiriman).
+ * diputuskan (untuk dialog kirim laporan; tidak menahan kiriman). `onDikunjungi` = jumlah kunjungan luar rute pada `tanggal` (null = daftar
+ * belum terbaca) — Laporan harian menampilkannya terpisah dari Total toko JKS (peninjau A R-4).
  */
-export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu }: { salesCode: string; tanggal: string; onMenunggu: (n: number) => void }) {
+export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjungi }: {
+    salesCode: string; tanggal: string; onMenunggu: (n: number) => void; onDikunjungi?: (n: number | null) => void;
+}) {
     const tanpaIzin = useIzinFk("submit");
     const [load, muatUlang] = useLoad(useCallback(async (): Promise<Load<BarisLuar[]>> =>
         bacaFk(`/api/form-kontrol/luar-rute?${new URLSearchParams({ salesCode, date: tanggal })}`, (d) => (Array.isArray(d.rows) ? d.rows : []) as BarisLuar[]),
@@ -159,6 +162,8 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu }: { salesCo
 
     const rows = (load.data ?? []).filter((r) => r.checkinAt).map((r) => ({ ...r, ...(putus[r.id] ?? {}) }));
     const menunggu = rows.filter((r) => r.konfirmasi === "menunggu").length;
+    const dikunjungi = load.data ? rows.filter((r) => r.tanggal === tanggal).length : null;
+    useEffect(() => { onDikunjungi?.(dikunjungi); }, [dikunjungi, onDikunjungi]);
     // Paritas minggu laporan = hitungan rute (acuan owner 12 Okt 2026 = genap, selang-seling), supaya pilihan ganjil/genap tidak ditebak.
     const mingguIni = paritasMinggu(tanggal);
     useEffect(() => { onMenunggu(menunggu); }, [menunggu, onMenunggu]);

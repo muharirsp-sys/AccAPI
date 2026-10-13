@@ -51,6 +51,21 @@ async function jksMilik(salesCode: string, principle: string, customerNo: string
     return rows.filter((j) => cocokKodeRute(j.custCode, customerNo));
 }
 
+/**
+ * Catatan kunjungan toko baris luar rute ini pada tanggalnya. `hasil` = hanya kunjungan NYATA (check-in, hasil order/aktif/tidak order,
+ * atau merchandising); tanpa `hasil` = baris AO APA PUN (juga "tidak dikunjungi"/prioritas dari Kirim status rute) atau merchandising.
+ */
+async function adaKunjungan(q: Pick<typeof db, "select">, k: BarisLuarRute, hasil: boolean): Promise<boolean> {
+    const kunciAo = and(eq(aoControlDaily.salesCode, k.salesCode), eq(aoControlDaily.custCode, k.custCode), eq(aoControlDaily.principle, k.principle),
+        eq(aoControlDaily.date, k.tanggal));
+    const [ao] = await q.select({ id: aoControlDaily.id }).from(aoControlDaily).where(hasil
+        ? and(kunciAo, or(isNotNull(aoControlDaily.checkinAt), inArray(aoControlDaily.status, ["ordered", "active", "not_order"]))) : kunciAo).limit(1);
+    if (ao) return true;
+    const [mc] = await q.select({ id: merchandisingCheck.id }).from(merchandisingCheck).where(and(eq(merchandisingCheck.salesCode, k.salesCode),
+        eq(merchandisingCheck.custCode, k.custCode), eq(merchandisingCheck.principle, k.principle), eq(merchandisingCheck.date, k.tanggal))).limit(1);
+    return Boolean(mc);
+}
+
 // ---------------------------------------------------------------- tambah
 
 export type BarisLuarRute = typeof kunjunganLuarRute.$inferSelect;
@@ -137,8 +152,11 @@ export async function daftarLuarRute(salesCode: string, tanggal: string) {
 /**
  * Keputusan salesman untuk satu kunjungan luar rute MILIKNYA. "tidak" = jangan masukkan JKS (boleh diubah lagi ke JKS). "jks" = tulis baris
  * JKS salesman ini (kode pelanggan LENGKAP, principal kunjungan, hari + pola minggu; frekuensi 4 untuk setiap minggu, 2 untuk ganjil/genap;
- * channel = channel JKS salesman yang paling banyak, atau profilnya) — toko yang sudah ada di JKS salesman ini (kode pendek/lengkap) DITOLAK
- * 409 SUDAH_DI_JKS. Baris yang sudah `jks`/`sudah_jks` tidak diputuskan ulang (409). Satu transaksi + kunci baris + jejak audit.
+ * channel = channel JKS salesman yang paling banyak, atau profilnya). Baris yang sudah `jks`/`sudah_jks`/batal tidak diputuskan ulang (409).
+ * Peninjau A 13 Okt: toko yang SUDAH di JKS salesman ini (unggahan kode pendek/lengkap, atau baris luar rute LAIN toko sama yang sudah
+ * dikonfirmasi — juga yang menang saat serentak) → baris ini menjadi `sudah_jks` (jejak + audit `konfirmasi_sudah_jks`) lalu 409 SUDAH_DI_JKS,
+ * untuk "jks" maupun "tidak" (bukan menunggu selamanya, bukan 'tidak' palsu). "jks" mensyaratkan toko benar DIKUNJUNGI pada tanggal baris
+ * (check-in / hasil kunjungan / merchandising) → selain itu 409 BELUM_DIKUNJUNGI. Satu transaksi + kunci baris + jejak audit.
  * `jksLain` (JKS salesman lain, principal sama) dikembalikan sebagai peringatan, tidak menolak.
  */
 export async function konfirmasiLuarRute(d: {
@@ -162,6 +180,14 @@ export async function konfirmasiLuarRute(d: {
             .where(and(eq(jksMaster.isActive, true), eq(jksMaster.principle, k.principle), ne(jksMaster.salesCode, k.salesCode),
                 inArray(kodeBesar, kodeJksUntuk(k.custCode))));
         const jksLain = lainSemua.filter((j) => cocokKodeRute(j.custCode, k.custCode));
+        const sudahJks = async (j: { custCode: string; hariKunjungan: string | null; mingguPattern: string | null }) => {
+            await tx.update(kunjunganLuarRute).set({ konfirmasi: "sudah_jks", hari: null, mingguPattern: null, jksId: null, ...jejak })
+                .where(eq(kunjunganLuarRute.id, k.id));
+            await audit("konfirmasi_sudah_jks", { jks: j.custCode });
+            return galat(409, "SUDAH_DI_JKS", `${k.custName} sudah ada di JKS Anda (${j.custCode}: ${jadwal(j)}); tidak ditambahkan lagi — kunjungan ini ditandai "sudah di JKS".`);
+        };
+        const [ada] = await jksMilik(k.salesCode, k.principle, k.custCode, tx);
+        if (ada) return sudahJks(ada);
 
         if (d.keputusan.keputusan === "tidak") {
             const [row] = await tx.update(kunjunganLuarRute).set({ konfirmasi: "tidak", hari: null, mingguPattern: null, jksId: null, ...jejak })
@@ -171,8 +197,9 @@ export async function konfirmasiLuarRute(d: {
         }
 
         const { hari, minggu } = d.keputusan;
-        const [ada] = await jksMilik(k.salesCode, k.principle, k.custCode, tx);
-        if (ada) return galat(409, "SUDAH_DI_JKS", `${k.custName} sudah ada di JKS Anda (${ada.custCode}: ${jadwal(ada)}); tidak ditambahkan lagi.`);
+        if (!await adaKunjungan(tx, k, true)) {
+            return galat(409, "BELUM_DIKUNJUNGI", `${k.custName} belum dikunjungi pada ${k.tanggal} (belum ada check-in, hasil kunjungan, atau merchandising); kunjungi dulu sebelum memasukkan ke JKS.`);
+        }
         const [prof] = await tx.select({ salesName: salesProfile.salesName, channel: salesProfile.channel }).from(salesProfile)
             .where(eq(salesProfile.salesCode, k.salesCode)).limit(1);
         const [kanal] = await tx.select({ channel: jksMaster.channel }).from(jksMaster)
@@ -184,10 +211,16 @@ export async function konfirmasiLuarRute(d: {
             market: null, alamat: k.alamat, kota: null, hariKunjungan: hari, mingguPattern: minggu, area: null, rayon: null, principle: k.principle,
             channel: kanal?.channel || prof?.channel || "TT", visitFrequency: freq, isActive: true, createdAt: now, updatedAt: now,
         }).onConflictDoUpdate({
-            // Kunci yang sama hanya ada bila baris JKS berkode lengkap itu pernah dinonaktifkan: dihidupkan lagi dengan jadwal baru.
+            // Kunci sama yang NONAKTIF (pernah digantikan unggahan) dihidupkan lagi dengan jadwal baru. Yang AKTIF = konfirmasi lain toko sama
+            // baru saja menang (serentak; INSERT menunggu transaksinya) → tidak ditimpa, baris ini menjadi sudah_jks.
             target: [jksMaster.salesCode, jksMaster.custCode, jksMaster.principle],
             set: { custName: k.custName, alamat: k.alamat, hariKunjungan: hari, mingguPattern: minggu, visitFrequency: freq, isActive: true, updatedAt: now },
+            setWhere: sql`${jksMaster.isActive} = false`,
         }).returning({ id: jksMaster.id });
+        if (!jks) {
+            const [menang] = await jksMilik(k.salesCode, k.principle, k.custCode, tx);
+            return sudahJks(menang ?? { custCode: k.custCode, hariKunjungan: null, mingguPattern: null });
+        }
         const [row] = await tx.update(kunjunganLuarRute).set({ konfirmasi: "jks", hari, mingguPattern: minggu, jksId: jks.id, ...jejak })
             .where(eq(kunjunganLuarRute.id, k.id)).returning();
         await audit("konfirmasi_jks", { jksId: jks.id, hari, mingguPattern: minggu, jksLain: jksLain.map((j) => j.salesCode) });
@@ -216,11 +249,7 @@ export async function batalLuarRute(d: {
         if (k.dibatalkanPada) return galat(409, "SUDAH_DIBATALKAN", `Kunjungan ${k.custName} sudah dibatalkan; muat ulang rute.`);
         if (k.tanggal !== d.hariIni) return galat(409, "BUKAN_HARI_INI", `Hanya kunjungan luar rute hari ini (${d.hariIni}) yang bisa dibatalkan; ini kunjungan ${k.tanggal}.`);
         if (k.konfirmasi === "jks") return galat(409, "SUDAH_DIKONFIRMASI", `${k.custName} sudah masuk JKS Anda; kunjungannya tidak bisa dibatalkan.`);
-        const [ao] = await tx.select({ id: aoControlDaily.id }).from(aoControlDaily).where(and(eq(aoControlDaily.salesCode, k.salesCode),
-            eq(aoControlDaily.custCode, k.custCode), eq(aoControlDaily.principle, k.principle), eq(aoControlDaily.date, k.tanggal))).limit(1);
-        const [mc] = await tx.select({ id: merchandisingCheck.id }).from(merchandisingCheck).where(and(eq(merchandisingCheck.salesCode, k.salesCode),
-            eq(merchandisingCheck.custCode, k.custCode), eq(merchandisingCheck.principle, k.principle), eq(merchandisingCheck.date, k.tanggal))).limit(1);
-        if (ao || mc) return galat(409, "SUDAH_DIKUNJUNGI", `${k.custName} sudah punya catatan kunjungan hari ini (check-in, status, atau merchandising) — tidak bisa dibatalkan.`);
+        if (await adaKunjungan(tx, k, false)) return galat(409, "SUDAH_DIKUNJUNGI", `${k.custName} sudah punya catatan kunjungan hari ini (check-in, status, atau merchandising) — tidak bisa dibatalkan.`);
         const now = new Date();
         const [row] = await tx.update(kunjunganLuarRute).set({ dibatalkanPada: now, dibatalkanOleh: d.aktorId })
             .where(eq(kunjunganLuarRute.id, k.id)).returning();

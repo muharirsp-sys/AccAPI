@@ -61,6 +61,7 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
     const [ketikan, setKetikan] = useState<Record<string, string>>({});
     const tanpaIzin = useIzinFk("submit");
     const [luarMenunggu, setLuarMenunggu] = useState(0);
+    const [luarDikunjungi, setLuarDikunjungi] = useState<number | null>(null);
 
     const loader = useCallback(async (): Promise<Load<Data>> => {
         if (!salesCode) return { status: "siap", data: { hari: null, kemarin: null } };
@@ -123,12 +124,14 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
                     </MessageStrip>
                 )}
                 <div className="fi-kcards">
-                    {([["Total toko JKS", lap.totalJks], ["Order", lap.order], ["Aktif", lap.aktif], ["Tidak order", lap.notOrder], ["Tidak dikunjungi", lap.notVisited]] as const).map(([l, v]) => (
+                    {([["Total toko JKS", lap.totalJks], ["Luar rute dikunjungi", luarDikunjungi ?? "—"], ["Order", lap.order], ["Aktif", lap.aktif],
+                        ["Tidak order", lap.notOrder], ["Tidak dikunjungi", lap.notVisited]] as const).map(([l, v]) => (
                         <div key={l} className="fi-kc"><span>{l}</span><b className="fi-tnum">{v}</b></div>
                     ))}
                 </div>
-                <p className="fi-small fi-muted">{terkirim ? "Angka saat laporan dikirim." : "Angka terisi otomatis dan langsung dari Form AO; dihitung ulang server saat dikirim."}</p>
-                <KonfirmasiLuarRute salesCode={salesCode} tanggal={tanggal} onMenunggu={setLuarMenunggu} />
+                <p className="fi-small fi-muted">{terkirim ? "Angka saat laporan dikirim." : "Angka terisi otomatis dan langsung dari Form AO; dihitung ulang server saat dikirim."}
+                    {" "}Order, Aktif, Tidak order, dan Tidak dikunjungi termasuk kunjungan luar rute; Total toko JKS hanya toko terjadwal JKS.</p>
+                <KonfirmasiLuarRute salesCode={salesCode} tanggal={tanggal} onMenunggu={setLuarMenunggu} onDikunjungi={setLuarDikunjungi} />
                 <Section title="Tindak lanjut" subtitle="wajib">
                     <div className="fi-sect-in">
                         <FormField label="Tindak lanjut untuk SPV" required help="Toko yang belum order, rencana kunjungan ulang, eskalasi ke SPV, dll.">

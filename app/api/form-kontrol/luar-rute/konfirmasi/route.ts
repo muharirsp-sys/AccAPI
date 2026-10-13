@@ -7,7 +7,8 @@
  * Side Effects: UPDATE kunjungan_luar_rute; "jks" = INSERT/UPDATE jks_master (kode pelanggan Accurate LENGKAP); kontrol_audit_log.
  *
  * HANYA salesman pemilik (owner: salesman langsung mengonfirmasi, tanpa persetujuan SPV) → selain itu 403 BUKAN_PEMILIK. Toko yang sudah di
- * JKS salesman ini → 409; toko di JKS salesman LAIN → tetap ditulis, `jksLain` dikembalikan sebagai peringatan (layar sudah menampilkannya).
+ * JKS salesman ini → baris jadi sudah_jks lalu 409 SUDAH_DI_JKS; "jks" tanpa kunjungan nyata → 409 BELUM_DIKUNJUNGI;
+ * toko di JKS salesman LAIN → tetap ditulis, `jksLain` dikembalikan sebagai peringatan (layar sudah menampilkannya).
  */
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";

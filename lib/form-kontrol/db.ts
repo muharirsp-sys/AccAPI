@@ -124,7 +124,8 @@ export async function upsertJksRows(rows: {
         });
         imported++;
         const k = `${r.salesCode}\u0000${r.principle}`;
-        tertulis.set(k, (tertulis.get(k) ?? new Set()).add(String(r.custCode).trim().toUpperCase()));
+        // Peninjau A R-3: baris berkas TANPA hari tidak menggantikan baris tambahan salesman yang berhari (toko tidak keluar dari rute).
+        if (hari) tertulis.set(k, (tertulis.get(k) ?? new Set()).add(String(r.custCode).trim().toUpperCase()));
     }
     const digantikan: { salesCode: string; principle: string; custCode: string; custName: string; kodeBerkas: string }[] = [];
     for (const [k, kode] of tertulis) {
@@ -168,8 +169,11 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
             eq(kunjunganLuarRute.principle, principle), eq(kunjunganLuarRute.tanggal, dateStr), isNull(kunjunganLuarRute.dibatalkanPada)))
             .orderBy(asc(kunjunganLuarRute.custName)),
     ]);
-    const kodeJks = new Set(jksDb.map((j) => j.custCode));
-    const jksRows: (typeof jksDb[number] & { luarRute?: boolean })[] = [...jksDb, ...luar.filter((l) => !kodeJks.has(l.custCode)).map((l) => ({
+    // Satu toko satu kartu (peninjau A R-1): kode persis sama = baris JKS; kode berbeda tetapi cocok (JKS "C-1" diunggah sesudah pelanggan
+    // "C-1-CBA" ditambah luar rute) = baris luar rute, karena kunjungan hari itu tercatat di kodenya.
+    const jksTampil = jksDb.filter((j) => !luar.some((l) => l.custCode !== j.custCode && cocokKodeRute(j.custCode, l.custCode)));
+    const kodeJks = new Set(jksTampil.map((j) => j.custCode));
+    const jksRows: (typeof jksDb[number] & { luarRute?: boolean })[] = [...jksTampil, ...luar.filter((l) => !kodeJks.has(l.custCode)).map((l) => ({
         id: l.id, salesCode: l.salesCode, salesName: "", custCode: l.custCode, custName: l.custName, market: null, alamat: l.alamat, kota: null,
         hariKunjungan: null, mingguPattern: "all", area: null, rayon: null, principle: l.principle, channel: "", visitFrequency: 0,
         isActive: true, createdAt: l.dibuatPada, updatedAt: l.dibuatPada, luarRute: true,
