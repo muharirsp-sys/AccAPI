@@ -30,6 +30,8 @@ interface VisitRow {
     gpsFlag: string | null; durFlag: string | null;
     checkinPhotoUrl: string | null; checkoutPhotoUrl: string | null;
     merchDone: number; merchTotal: number;
+    /** FK-MSM2: kunjungan luar rute (toko tidak di JKS hari itu). */
+    luarRute?: boolean;
 }
 interface SalesmanRow {
     salesCode: string; salesName: string;
@@ -353,7 +355,7 @@ function KartuSalesman({ r, kunci, onTandai, onBatal }: { r: SalesmanRow; kunci?
                                         ))}
                                     </span>
                                     <span className="min-w-0">
-                                        <b>{v.custName}</b>
+                                        <b>{v.custName}</b>{v.luarRute && <> <StatusBadge tone="info">Luar rute</StatusBadge></>}
                                         <span className="fi-sub">
                                             {jamWita(v.checkinAt)}–{jamWita(v.checkoutAt)} WITA · {v.durationMinutes !== null ? `${v.durationMinutes} mnt` : "—"} · Merch {v.merchDone}/{v.merchTotal}
                                             {" · "}{flags.length === 0 ? "tanpa tanda" : flags.map((f) => FLAG_LABEL[f] ?? f).join(", ")}

@@ -66,6 +66,8 @@ before(async () => {
     pool = new Pool({ connectionString: urlSkema(), max: 2 });
     // Kolom O1 (customer.suspended, sales_profile.accurate_linked, ...) = migrasi repo, bukan bentuk DB evaluasi yang bisa tertinggal.
     await pool.query(await readFile(new URL("../../db/migrations/0033_order_cabang.sql", import.meta.url), "utf8"));
+    // FK-MSM2: rute, unggah JKS, dan Dashboard SPV membaca kunjungan_luar_rute.
+    await pool.query(await readFile(new URL("../../db/migrations/0034_kunjungan_luar_rute.sql", import.meta.url), "utf8"));
     const p = pool;
     await p.query(`INSERT INTO "user" (id, name, email, "emailVerified", role, "createdAt", "updatedAt") VALUES
         ('u-sla', 'Sales A', 'sla@uji.test', true, 'staff', now(), now()),

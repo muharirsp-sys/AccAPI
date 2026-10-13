@@ -19,6 +19,9 @@ export interface Scope {
     salesName?: string;
     /** Principal JKS AKTIF dalam cakupan (my-scope, FK-MSM butir 1); [] / tidak ada = belum ada JKS. */
     principles?: string[];
+    /** FK-MSM2: salesman TANPA JKS — principal = nama cabang karyawan Accurate-nya (kunjungan luar rute); null = tidak ada (lihat alasanCabang). */
+    principalCabang?: string | null;
+    alasanCabang?: string | null;
     spvName?: string;
     smName?: string;
     allowedSalesCodes: string[] | null;
@@ -41,6 +44,8 @@ export interface JksRow {
     principle: string;
     visitFrequency: 1 | 2 | 4;
     isActive: boolean;
+    /** FK-MSM2: baris hasil konfirmasi kunjungan luar rute (siapa, kapan, dari kunjungan tanggal berapa); null = unggahan. */
+    tambahanSalesman?: { oleh: string | null; pada: string; dariKunjungan: string } | null;
 }
 
 export interface AoRow {
@@ -58,6 +63,8 @@ export interface AoRow {
     needsAttention: boolean;
     checkinAt?: string | null;   // ISO — null = belum check-in hari ini
     checkoutAt?: string | null;  // ISO — non-null = kunjungan selesai
+    /** FK-MSM2: kunjungan luar rute (toko tidak di JKS hari ini). */
+    luarRute?: boolean;
 }
 
 export interface Reason {

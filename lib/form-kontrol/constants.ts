@@ -49,6 +49,20 @@ export function hariBaku(v: unknown): string | null {
     return k ? HARI_BAKU.get(k) ?? null : "";
 }
 
+// FK-MSM2: kunjungan luar rute.
+/**
+ * Kode toko JKS yang COCOK (lib/order-cabang cocokKodeRute) dengan pelanggan Accurate `customerNo` — kebalikannya: customerNo itu sendiri dan
+ * customerNo tanpa SATU akhiran terakhir ("C-100001-CBA" → ["C-100001-CBA", "C-100001"]). Huruf besar, ter-trim; spasi dalam tidak ditebak.
+ * Dipakai server (cari toko di JKS sendiri / salesman lain, kode pendek maupun lengkap) DAN layar Rute (toko pilihan sudah di rute?).
+ * Murni (tanpa impor server) supaya aman di klien; lib/form-kontrol/fk-msm2.test.ts membuktikan kesetaraannya dengan cocokKodeRute.
+ */
+export function kodeJksUntuk(customerNo: string): string[] {
+    const c = String(customerNo ?? "").trim().toUpperCase();
+    if (!c) return [];
+    const i = c.lastIndexOf("-");
+    return i > 0 && i < c.length - 1 ? [c, c.slice(0, i)] : [c];
+}
+
 export const DAY_TO_HARI: Record<number, string> = {
     1: "Senin",
     2: "Selasa",

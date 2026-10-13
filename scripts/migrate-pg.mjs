@@ -733,6 +733,48 @@ export const migrations = [
       ALTER TABLE sales_profile ADD COLUMN IF NOT EXISTS accurate_linked boolean NOT NULL DEFAULT false;
     `,
   },
+  {
+    // 2026-10-12 (FK-MSM2 kunjungan luar rute + konfirmasi masuk JKS; DRAFT — zona skema, butuh review manusia). Tabel BARU saja (EXPAND,
+    // tanpa data/trigger/pembaca lama). CREATE butuh hak CREATE di skema: tanpa DATABASE_MIGRATION_URL jalankan docs/handover/DDL_FK_MSM2.sql
+    // SEBELUM image (sesudahnya entri ini SKIP). Hak accapi_app (SELECT/INSERT/UPDATE, tanpa DELETE) HANYA di DDL itu. sudahAda lewat
+    // katalog (pg_indexes + pg_attribute), bukan information_schema (tanpa hak tabel kosong -> CREATE 42501 -> crash loop).
+    // Lihat db/migrations/0034_kunjungan_luar_rute.sql.
+    nama: "kunjungan_luar_rute (FK-MSM2)",
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_klr_unik'
+               AND (SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('kunjungan_luar_rute') AND NOT attisdropped
+                    AND attname IN ('konfirmasi', 'jks_id', 'dikonfirmasi_pada')) = 3`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS kunjungan_luar_rute (
+          id                     text PRIMARY KEY,
+          sales_code             text NOT NULL,
+          principle              text NOT NULL,
+          tanggal                text NOT NULL,
+          cust_code              text NOT NULL,
+          cust_name              text NOT NULL,
+          alamat                 text,
+          customer_id            bigint,
+          dibuat_oleh            text NOT NULL,
+          dibuat_oleh_nama       text,
+          dibuat_pada            timestamptz NOT NULL DEFAULT now(),
+          konfirmasi             text NOT NULL DEFAULT 'menunggu',
+          hari                   text,
+          minggu_pattern         text,
+          jks_id                 text,
+          dikonfirmasi_oleh      text,
+          dikonfirmasi_oleh_nama text,
+          dikonfirmasi_pada      timestamptz,
+          CONSTRAINT kunjungan_luar_rute_konfirmasi CHECK (konfirmasi IN ('menunggu', 'jks', 'tidak', 'sudah_jks')),
+          CONSTRAINT kunjungan_luar_rute_isi CHECK (btrim(sales_code) <> '' AND btrim(principle) <> '' AND btrim(cust_code) <> ''
+              AND tanggal ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
+          CONSTRAINT kunjungan_luar_rute_jadwal CHECK ((hari IS NULL OR hari IN ('Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'))
+              AND (minggu_pattern IS NULL OR minggu_pattern IN ('ganjil', 'genap', 'all'))),
+          CONSTRAINT kunjungan_luar_rute_jks CHECK (konfirmasi <> 'jks' OR (jks_id IS NOT NULL AND hari IS NOT NULL
+              AND minggu_pattern IS NOT NULL AND dikonfirmasi_pada IS NOT NULL))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_klr_unik ON kunjungan_luar_rute (sales_code, cust_code, principle, tanggal);
+      CREATE INDEX IF NOT EXISTS idx_klr_jks ON kunjungan_luar_rute (jks_id);
+    `,
+  },
 ];
 
 async function main() {

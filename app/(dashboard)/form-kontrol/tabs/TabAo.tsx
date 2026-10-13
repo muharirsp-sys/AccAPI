@@ -8,6 +8,10 @@
  * Main Functions: TabAo, badgeToko, susunKiriman.
  * Side Effects: HTTP GET rute; GET ulang + POST ao-control per toko saat Kirim status; sessionStorage daftar toko rute (Order Sales).
  *
+ * FK-MSM2: kunjungan LUAR RUTE (./LuarRute TambahLuarRute) — salesman pemilik menambah pelanggan cabangnya ke kunjungan HARI INI; baris itu
+ * ikut rute (server, `luarRute`) dengan penanda "Luar rute". Salesman TANPA JKS memakai principal cabang Accurate (my-scope
+ * `principalCabang`): rute tidak buntu, penjelasan tetap tampil; tanpa principal cabang = penjelasan + alasan dari server.
+ *
  * Kirim status TIDAK dihapus (keputusan orkestrator S5): kunjungan sudah menulis check-in/status/merch/check-out per toko, TETAPI tanda
  * prioritas dan baris "tidak dikunjungi" hanya tertulis lewat kiriman ini, dan Dashboard SPV menghitung "Rute" dari baris AO.
  * Payload per toko sama dengan Submit AO lama (urut, berhenti di galat pertama). Dua penjaga (temuan peninjau S5): hanya salesman
@@ -25,6 +29,7 @@ import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { type Scope, type AoRow, compareRoute, hariIniWita, jamWita, penjelasanTanpaJks, principalAwal, useIzinFk, visitDurationMin } from "../shared";
 import { adaHasilKunjungan, statusBintang } from "@/lib/form-kontrol/constants";
 import { bacaFk, keBarisRute, kirimFk, simpanRute, useHariBeku } from "../lapangan";
+import { TambahLuarRute } from "./LuarRute";
 
 type Saring = "semua" | "belum" | "tidak" | "perhatian";
 const sedang = (r: AoRow) => Boolean(r.checkinAt && !r.checkoutAt);
@@ -42,6 +47,7 @@ function badgeToko(r: AoRow): { tone: Tone; label: string } {
 
 function metaToko(r: AoRow): string {
     const bagian: string[] = [];
+    if (r.luarRute) bagian.push("Luar rute");
     // #3: angka ini menghitung HARI dengan status order/aktif bulan ini (db.ts getTodayRoute), bukan jumlah kunjungan.
     if (r.monthlyOrderCount > 0) bagian.push(`${r.monthlyOrderCount} hari order bulan ini`);
     if (r.needsAttention) bagian.push("≥ 2× tidak order bulan ini");
@@ -83,9 +89,11 @@ export default function TabAo({ scope }: { scope: Scope }) {
     const [tanggalPilih, setTanggalPilih] = useState(beku.hari);
     const tanggal = salesman ? beku.hari : tanggalPilih;
     // Principal = JKS aktif cakupan (my-scope, FK-MSM butir 1): satu = langsung terpilih tanpa pilihan; lebih dari satu = dipilih.
-    const daftarPrincipal = scope.principles ?? [];
+    // FK-MSM2: salesman TANPA JKS = principal cabang Accurate-nya (hanya untuk kunjungan luar rute).
+    const principalCabang = salesman && !scope.principles?.length ? scope.principalCabang ?? null : null;
+    const daftarPrincipal = scope.principles?.length ? scope.principles : principalCabang ? [principalCabang] : [];
     const tanpaJks = penjelasanTanpaJks(scope);
-    const [principle, setPrinciple] = useState(() => principalAwal(scope));
+    const [principle, setPrinciple] = useState(() => principalAwal(scope) || principalCabang || "");
     const [salesCode, setSalesCode] = useState(scope.salesCode ?? "");
     const [saring, setSaring] = useState<Saring>("semua");
     const [dialog, setDialog] = useState(false);
@@ -179,8 +187,8 @@ export default function TabAo({ scope }: { scope: Scope }) {
     let isi: ReactNode;
     if (!salesCode && tim !== null && tim.length === 0) {
         isi = <EmptyState title="Belum ada salesman di tim Anda" message="Salesman muncul setelah Admin Sales mengisi SPV/SM mereka di Hierarki Sales." />;
-    } else if (tanpaJks) {
-        isi = <EmptyState title={tanpaJks.title} message={tanpaJks.message} />;
+    } else if (tanpaJks && !principalCabang) {
+        isi = <EmptyState title={tanpaJks.title} message={`${tanpaJks.message}${scope.alasanCabang ? ` Kunjungan luar rute juga belum bisa: ${scope.alasanCabang}` : ""}`} />;
     } else if (!salesCode) {
         isi = tim === null
             ? <EmptyState title="Isi kode salesman" message="Rute tampil per salesman. Ketik kode salesman di atas." />
@@ -194,7 +202,8 @@ export default function TabAo({ scope }: { scope: Scope }) {
         isi = <><Skeleton rows={2} label="Memuat rute" /><Skeleton rows={5} label="Memuat rute" /></>;
     } else if (rows.length === 0) {
         isi = <EmptyState title={tanggal === hariIniWita() ? "Tidak ada rute terjadwal hari ini" : "Tidak ada rute terjadwal pada tanggal ini"}
-            message={`JKS ${salesCode} tidak punya toko ${principle} untuk ${hariLabel}. Bila ini keliru, minta SPV memeriksa JKS${daftarPrincipal.length > 1 ? " atau pilih principal lain" : ""}.`} />;
+            message={principalCabang ? "Belum ada toko di kunjungan ini. Tambahkan toko lewat Kunjungan luar rute di bawah."
+                : `JKS ${salesCode} tidak punya toko ${principle} untuk ${hariLabel}. Bila ini keliru, minta SPV memeriksa JKS${daftarPrincipal.length > 1 ? " atau pilih principal lain" : ""}.`} />;
     } else {
         const lebar = (k: number) => `${rows.length ? (k / rows.length) * 100 : 0}%`;
         const nOrder = n.order + n.aktif;
@@ -303,10 +312,21 @@ export default function TabAo({ scope }: { scope: Scope }) {
                     <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => { setSukses(""); beku.pakaiHariBaru(); }}>Muat rute {tanggalPanjang(beku.hariBaru)}</button>
                 </MessageStrip>
             )}
+            {tanpaJks && principalCabang && (
+                <MessageStrip tone="info" title={`${tanpaJks.title}.`}>
+                    Rute terjadwal kosong sampai Admin Sales mengimpor JKS Anda. Anda tetap bisa menambah kunjungan luar rute (principal {principalCabang},
+                    cabang Accurate Anda); di Laporan harian toko itu bisa Anda masukkan ke JKS.
+                </MessageStrip>
+            )}
             {sukses && <MessageStrip tone="pos" title="Terkirim.">{sukses}</MessageStrip>}
             {nUbah > 0 && <p className="fi-draft" role="status">{nUbah} tanda prioritas belum dikirim — kirim lewat “Kirim status rute {judulHari}”.</p>}
 
             {isi}
+
+            {salesman && salesCode === scope.salesCode && principle && tanggal === hariIniWita() && asal && (
+                <TambahLuarRute salesCode={salesCode} principle={principle} tanggal={tanggal} ruteKode={rows.map((r) => r.custCode)}
+                    onDitambah={muatUlang} kunci={tanpaIzin} />
+            )}
 
             <Section title="Akhir hari" subtitle="setelah kunjungan terakhir">
                 <div className="fi-sect-in">

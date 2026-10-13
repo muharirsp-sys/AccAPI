@@ -11,6 +11,8 @@
  * Server menghitung ulang kelima angka saat laporan dikirim; sebelum dikirim GET mengembalikan angka LIVE (baris sintetis,
  * submittedAt null). Laporan yang sudah terkirim tidak dikirim ulang dari layar ini (sama dengan tombol "Sudah Disubmit" lama).
  * "Hari ini" dibekukan saat layar dibuka: lewat 00.00 tindak lanjut yang sedang diketik tidak hilang (strip menawarkan hari baru).
+ * FK-MSM2: "Toko luar rute" (./LuarRute KonfirmasiLuarRute) — keputusan JKS per toko luar rute yang dikunjungi, sebelum tindak lanjut; yang
+ * belum diputuskan ("nanti") disebut di dialog kirim tetapi TIDAK menahan kiriman.
  */
 "use client";
 
@@ -21,6 +23,7 @@ import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { type Scope, jamWita, useIzinFk } from "../shared";
 import { bacaFk, kemarinDari, kirimFk, useHariBeku } from "../lapangan";
+import { KonfirmasiLuarRute } from "./LuarRute";
 
 type Laporan = {
     totalJks: number; order: number; aktif: number; notOrder: number; notVisited: number;
@@ -57,6 +60,7 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
     // Ketikan per tanggal; tetap ada saat berpindah Hari ini/Kemarin atau saat hari berganti.
     const [ketikan, setKetikan] = useState<Record<string, string>>({});
     const tanpaIzin = useIzinFk("submit");
+    const [luarMenunggu, setLuarMenunggu] = useState(0);
 
     const loader = useCallback(async (): Promise<Load<Data>> => {
         if (!salesCode) return { status: "siap", data: { hari: null, kemarin: null } };
@@ -124,6 +128,7 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
                     ))}
                 </div>
                 <p className="fi-small fi-muted">{terkirim ? "Angka saat laporan dikirim." : "Angka terisi otomatis dan langsung dari Form AO; dihitung ulang server saat dikirim."}</p>
+                <KonfirmasiLuarRute salesCode={salesCode} tanggal={tanggal} onMenunggu={setLuarMenunggu} />
                 <Section title="Tindak lanjut" subtitle="wajib">
                     <div className="fi-sect-in">
                         <FormField label="Tindak lanjut untuk SPV" required help="Toko yang belum order, rencana kunjungan ulang, eskalasi ke SPV, dll.">
@@ -182,6 +187,7 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
                         ["Order · aktif", `${lap.order} · ${lap.aktif}`],
                         ["Tidak order", String(lap.notOrder)],
                         ["Tidak dikunjungi", String(lap.notVisited)],
+                        ...(luarMenunggu > 0 ? [["Toko luar rute menunggu keputusan", `${luarMenunggu} (boleh nanti)`] as [string, string]] : []),
                         ["Tindak lanjut", teks.trim().length > 80 ? `${teks.trim().slice(0, 80)}…` : teks.trim()],
                     ]}
                     confirmLabel="Kirim laporan" onConfirm={kirim} />
