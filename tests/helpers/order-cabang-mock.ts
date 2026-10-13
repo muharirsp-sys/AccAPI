@@ -12,6 +12,8 @@
  * Tahap 2 (O1 putaran 1): pratinjau membawa `sidik` (sha256 baris berharga + hasil promo); simpan FastAPI (Web Sales dan Order Baru) WAJIB membawa
  *   sidik yang sama dengan hitungan server saat itu (`geser` mengubah angka server di tengah tes = PRATINJAU_BERUBAH). Harga petugas hanya sah
  *   untuk baris TANPA harga master (keputusan owner 12 Okt sesi 13); pada baris berharga master server menolak.
+ * O3: GET /api/customers/riwayat-beli — bawaan = toko tanpa riwayat (0 faktur); `opsi.riwayat` mengganti jawabannya (`riwayatContoh`, ringkasan
+ *   membawa `dilewati` = faktur rusak yang dilewati server).
  */
 import { createHash } from "node:crypto";
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
@@ -63,6 +65,8 @@ export type OpsiMock = {
     channelMasalah?: string;
     /** Saran "hampir dapat" tambahan (bentuk server: program_id, program_name, threshold, codes, minimum, current, gap, message). */
     saranTambahan?: Record<string, unknown>[];
+    /** O3: ganti jawaban /api/customers/riwayat-beli (bawaan: toko tanpa riwayat faktur). */
+    riwayat?: (url: URL, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
 };
 export type PreviewBody = { channel: string; order_date: string; customer_no: string; lines: { code: string; unit: string; quantity: string; price?: string }[] };
 
@@ -237,8 +241,33 @@ export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<
         const cab = url.searchParams.get("branchId") ? Number(url.searchParams.get("branchId")) : null;
         return kirim(r, { body: { ok: true, salesmen: SALESMAN_ACCURATE.filter((s) => cab === null || s.branchId === cab) } });
     });
+
+    let nRiwayat = 0;
+    await page.route((u) => u.pathname === "/api/customers/riwayat-beli", async (r) => {
+        const url = new URL(r.request().url());
+        const ganti = await opsi.riwayat?.(url, ++nRiwayat);
+        if (ganti) return kirim(r, ganti);
+        const blok = blokirSales();
+        if (blok) return kirim(r, blok);
+        return kirim(r, riwayatContoh(url.searchParams.get("customerNo") ?? "", []));
+    });
     return { log, opsi };
 }
+
+/** O3: jawaban /api/customers/riwayat-beli (bentuk route asli). Jendela 90 hari berakhir 12 Okt 2026; `dataSejak` = faktur paling awal toko. */
+export function riwayatContoh(customerNo: string, items: Record<string, unknown>[], ringkasan: { jumlahFaktur?: number; tanpaRincian?: number; dilewati?: number; dataSejak?: string | null } = {}): Jawab {
+    const p = PELANGGAN.find((x) => x.customerNo === customerNo);
+    if (!p) return { status: 409, body: { ok: false, kode: "PELANGGAN_TIDAK_ADA", error: `Pelanggan ${customerNo} tidak ada di master Accurate hasil sync.` } };
+    return { body: { ok: true, pelanggan: { customerNo: p.customerNo, name: p.name, branchId: p.branchId, branchName: p.branchName },
+        jendela: { bulan: 3, dari: "2026-07-15", sampai: "2026-10-12", bulanTeramati: 3 },
+        ringkasan: { jumlahFaktur: ringkasan.jumlahFaktur ?? 0, tanpaRincian: ringkasan.tanpaRincian ?? 0, dilewati: ringkasan.dilewati ?? 0,
+            dataSejak: ringkasan.dataSejak ?? (items.length ? "2026-07-01" : null) },
+        items } };
+}
+
+/** Satu barang riwayat (bawaan: bisa diorder). */
+export const barisRiwayat = (code: string, name: string, unit: string, rataPerBulan: number, lain: Record<string, unknown> = {}) =>
+    ({ code, name, unit, totalQty: rataPerBulan * 3, rataPerBulan, jumlahFaktur: 3, terakhirBeli: "2026-10-05", bisaDiorder: true, alasan: null, ...lain });
 
 // ------------------------------------------------------------------ FastAPI Web Sales (:8000)
 

@@ -19,6 +19,8 @@
  * Pratinjau = tersimpan (kontrak O1 §4): Kirim hanya bila pratinjau LENGKAP untuk isian yang sekarang ada (kunci pratinjau = channel, tanggal,
  * pelanggan, kode/satuan/jumlah tiap baris; berubah = pratinjau lama usang = Kirim terkunci sampai yang baru tiba). `sidik` pratinjau ikut
  * dikirim; PRATINJAU_BERUBAH (409) = order BELUM terkirim, angka baru ditampilkan dan Kirim meminta konfirmasi ulang.
+ * O3: panel "Biasa diambil toko ini" (components/order/RiwayatBeli; GET /api/customers/riwayat-beli) — Tambah mengisi baris order
+ *   (lib/riwayat-beli sisipkanBaris) lalu pratinjau dihitung ulang seperti biasa.
  */
 "use client";
 
@@ -33,6 +35,8 @@ import { alasanKunciBarang, galatDariJawaban, galatTidakDitemukan, hargaCabangDe
 import { bacaBarangKode, cocokkanTokoRute, hitungPratinjau, muatCakupan, type Pratinjau, type TokoRuteCocok } from "@/components/order/order-cabang-api";
 import { resolveApiBase } from "@/lib/apiBase";
 import { rupiah } from "@/lib/promo-ui";
+import { sisipkanBaris } from "@/lib/riwayat-beli";
+import { RiwayatBeli } from "@/components/order/RiwayatBeli";
 import { jamWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { PESAN_SINYAL, RUTE_TERSIMPAN, ambilJson, bacaRuteTersimpan, type Jawaban } from "../form-kontrol/lapangan";
 import { hariIniWita } from "../form-kontrol/shared";
@@ -475,6 +479,8 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                         )}
                             </div>
                         </Section>
+                        {pelanggan && <RiwayatBeli pelanggan={pelanggan} tanggal={orderDate} peran="sales" baris={lines}
+                            onTambah={(b, unit, quantity) => { ubahIsian(); setLines((prev) => sisipkanBaris(prev, { code: b.no, unit, quantity, barang: b, bacaan: null })); }} />}
 
                         <Section title="Barang" subtitle={`${lines.length} baris${cabangPelanggan ? ` · barang cabang ${cabangPelanggan}` : ""}`}>
                             <ul aria-label="Barang" style={{ listStyle: "none", padding: 0 }}>

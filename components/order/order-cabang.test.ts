@@ -318,3 +318,11 @@ test("pecah saran: kode+satuan sama di beberapa baris = saran dicocokkan ke bari
     assert.deepEqual([...d.perBaris.keys()], [1]);
     assert.equal(d.ringkasan.length, 0);
 });
+
+test("O3 RIWAYAT_GAGAL (500 riwayat beli): kalimat tanpa 'periksa isian' (tak ada isian) dan tanpa pengulangan 'bukan berarti…' (panel yang menambahkannya)", () => {
+    const k = kalimatGalat(galatDariJawaban(jawab(500, { ok: false, kode: "RIWAYAT_GAGAL",
+        error: "Riwayat beli toko gagal dibaca dari database (bukan berarti toko belum pernah beli). Coba lagi." }), "sales"));
+    assert.doesNotMatch(k, /isian/i);
+    assert.doesNotMatch(k, /bukan berarti/i);
+    assert.equal(k.match(/coba lagi/gi)?.length, 1, k);
+});
