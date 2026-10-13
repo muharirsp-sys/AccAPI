@@ -22,6 +22,7 @@ import { Button, EmptyState, ErrorState, KeyValues, MessageStrip, Section, Skele
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { alasanIzinFk, ambilFk, hariIniWita, jamWita, tulisFk, type Scope } from "../shared";
+import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
 
 interface VisitRow {
     custCode: string; custName: string; status: string;
@@ -355,7 +356,7 @@ function KartuSalesman({ r, kunci, onTandai, onBatal }: { r: SalesmanRow; kunci?
                                         ))}
                                     </span>
                                     <span className="min-w-0">
-                                        <b>{v.custName}</b>{v.luarRute && <> <StatusBadge tone="info">Luar rute</StatusBadge></>}
+                                        <b>{v.custName}</b>{v.luarRute && <> <StatusBadge tone="info">{isKodeNoo(v.custCode) ? "Toko baru (NOO)" : "Luar rute"}</StatusBadge></>}
                                         <span className="fi-sub">
                                             {jamWita(v.checkinAt)}–{jamWita(v.checkoutAt)} WITA · {v.durationMinutes !== null ? `${v.durationMinutes} mnt` : "—"} · Merch {v.merchDone}/{v.merchTotal}
                                             {" · "}{flags.length === 0 ? "tanpa tanda" : flags.map((f) => FLAG_LABEL[f] ?? f).join(", ")}

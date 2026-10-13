@@ -85,7 +85,7 @@ export interface FreqRow {
     overVisit: boolean;
 }
 
-export type TabKey = "jks" | "ao" | "no-order" | "laporan" | "briefing" | "sm-control" | "frekuensi" | "hierarki";
+export type TabKey = "jks" | "ao" | "no-order" | "laporan" | "briefing" | "sm-control" | "frekuensi" | "hierarki" | "noo";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -99,6 +99,8 @@ export const TABS: { key: TabKey; label: string; roles: string[] }[] = [
     { key: "sm-control", label: "Kontrol SM", roles: ["sm", "admin", "manager"] },
     { key: "frekuensi", label: "Frekuensi Kunjungan", roles: ["admin", "manager", "admin_sales", "sm"] },
     { key: "hierarki", label: "Hierarki Sales", roles: ["admin", "manager"] },
+    // NOO (owner 13 Okt 2026): isi per hak dari server (pengajuan saya / persetujuan SPV-SM / antrean Admin).
+    { key: "noo", label: "Toko Baru (NOO)", roles: ["salesman", "spv", "sm", "admin", "manager", "admin_sales"] },
 ];
 
 /**

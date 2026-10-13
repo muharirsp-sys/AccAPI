@@ -97,7 +97,6 @@ const lihatKtp = async (u: string, id: string) => jawab(await sebagai(u, () => m
 const fotoToko = async (u: string, id: string) => jawab(await sebagai(u, () => m.foto.GET(req(`/api/form-kontrol/noo/${id}/foto-toko`), ctx(id))));
 const nAudit = async (action: string, id?: string) => (await pool.query(`SELECT count(*)::int n FROM kontrol_audit_log WHERE entity = 'noo' AND action = $1
     AND ($2::text IS NULL OR entity_id = $2)`, [action, id ?? null])).rows[0].n as number;
-const kodeDari = (j: J) => (j.body.row as { kode: string }).kode;
 const tanpaNik = (teks: string, ...nik: string[]) => { for (const n of nik) assert.ok(!teks.includes(n), "NIK lengkap bocor di respons"); };
 
 before(async () => {

@@ -14,6 +14,8 @@
 import { useCallback, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+// NOO (owner 13 Okt 2026, P7): kunjungan toko baru (kode NOO) = hanya "Tidak order" + alasan; server menolak ORDER (409 NOO_BELUM_TERDAFTAR).
+import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
 import { ArrowLeft, ShoppingCart, XCircle } from "lucide-react";
 import {
     Button, EmptyState, ErrorState, Flow, FooterToolbar, KeyValues, MessageStrip, ObjectPageHeader, Skeleton, StatusBadge, VariantNote,
@@ -120,6 +122,8 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
     const [checkinAt, setCheckinAt] = useState<string | null>(data.ao?.checkinAt ?? null);
     const [checkoutPhoto, setCheckoutPhoto] = useState<string | null>(data.ao?.checkoutPhotoUrl ?? null);
     const [checkoutAt, setCheckoutAt] = useState<string | null>(data.ao?.checkoutAt ?? null);
+    const noo = isKodeNoo(custCode);
+    const pilihanHasil: ("ordered" | "not_order")[] = noo ? ["not_order"] : ["ordered", "not_order"];
     // Status tersimpan tampil lagi (#5) — tetapi tetap WAJIB dikonfirmasi tiap kunjungan, walau toko sudah transaksi bulan ini:
     // status lama tidak membuat langkah terlewati; true hanya jika dikonfirmasi sesi ini / kunjungan sudah check-out.
     const [orderStatus, setOrderStatus] = useState<"ordered" | "not_order" | null>(awalStatus);
@@ -264,8 +268,13 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                 <div className="fi-panel">
                     <h2 className="fi-title-3">Hasil kunjungan</h2>
                     {statusConfirmed && !drafStatus && <p className="fi-small fi-muted">Tersimpan: {statusTeks(ao?.status)}.</p>}
-                    <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Hasil kunjungan">
-                        {(["ordered", "not_order"] as const).map((s) => (
+                    {noo && (
+                        <MessageStrip tone="info" title="Toko baru (NOO), belum terdaftar di Accurate:">
+                            hasil kunjungan hanya Tidak order dengan alasan. Order bisa dibuat sesudah Admin mendaftarkan toko dan menautkannya.
+                        </MessageStrip>
+                    )}
+                    <div className={`grid ${noo ? "grid-cols-1" : "grid-cols-2"} gap-3`} role="radiogroup" aria-label="Hasil kunjungan">
+                        {pilihanHasil.map((s) => (
                             <label key={s} className="fi-btn fi-btn--secondary" style={{ height: "auto", minHeight: 64, flexDirection: "column", gap: 6, whiteSpace: "normal",
                                 ...(orderStatus === s ? { background: s === "ordered" ? "var(--pos-bg)" : "var(--neg-bg)", borderColor: s === "ordered" ? "var(--pos)" : "var(--neg)", color: s === "ordered" ? "var(--pos)" : "var(--neg)" } : {}) }}>
                                 <input type="radio" name="hasil-kunjungan" value={s} checked={orderStatus === s} onChange={() => { setOrderStatus(s); setGalat(""); }}
@@ -404,7 +413,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                     { label: "Principal", value: store.principle },
                     { label: "Tanggal", value: `${tanggalPanjang(date)} · WITA` },
                     ...(store.alamat || store.market ? [{ label: "Alamat", value: [store.market, store.alamat, store.kota].filter(Boolean).join(" · ") }] : []),
-                    store.luarRute ? { label: "Jenis", value: <StatusBadge tone="info">Luar rute</StatusBadge> } : { label: "Frekuensi", value: `${store.visitFrequency}×/bulan` },
+                    store.luarRute ? { label: "Jenis", value: <StatusBadge tone="info">{isKodeNoo(store.custCode) ? "Toko baru (NOO)" : "Luar rute"}</StatusBadge> } : { label: "Frekuensi", value: `${store.visitFrequency}×/bulan` },
                 ]}
                 flow={step < 4 ? <><Flow steps={flow} label="Langkah kunjungan" /><span className="fi-small fi-subtle">Langkah {step + 1} dari 4 · {LANGKAH[step]}</span></> : undefined}
             />

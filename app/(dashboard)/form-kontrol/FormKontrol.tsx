@@ -29,6 +29,7 @@ const TAB: Record<TabKey, ComponentType<{ scope: Scope }>> = {
     "sm-control": dynamic(() => import("./tabs/TabSmControl"), { ssr: false, loading: MemuatTab }),
     frekuensi: dynamic(() => import("./tabs/TabFrekuensi"), { ssr: false, loading: MemuatTab }),
     hierarki: dynamic(() => import("./tabs/TabHierarki"), { ssr: false, loading: MemuatTab }),
+    noo: dynamic(() => import("./tabs/TabNoo"), { ssr: false, loading: MemuatTab }),
 };
 
 const LABEL_PERAN: Record<string, string> = {
