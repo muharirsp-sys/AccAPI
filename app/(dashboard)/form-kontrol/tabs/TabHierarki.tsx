@@ -1,10 +1,13 @@
 /*
  * Tujuan: Tab Hierarki Sales (Fiori S5, it05): SPV dan SM per salesman, dikelompokkan per SPV. Ubah = draf per baris, Simpan per
  *   baris lewat dialog (lama → baru dan akibatnya pada cakupan). Simpan dikunci bila daftar usang (muat ulang gagal/berjalan).
+ *   Owner 13 Okt 2026: SPV/SM DIPILIH dari nama akun aktif ber-role itu (GET spvOptions/smOptions), bukan diketik — cakupan SPV/SM
+ *   mencocokkan nama akun. Nilai tersimpan yang tidak cocok dengan akun mana pun tetap tampil sebagai opsi bertanda + peringatan baris.
  * Caller: form-kontrol/FormKontrol.tsx (tab "hierarki"; peran admin/manager).
  * Dependensi: ../shared (Scope, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive}.
  * Main Functions: TabHierarki (default).
- * Side Effects: GET /api/form-kontrol/sales-profiles; PUT /api/form-kontrol/sales-profiles (payload sama dengan hari ini).
+ * Side Effects: GET /api/form-kontrol/sales-profiles; PUT /api/form-kontrol/sales-profiles (payload sama; server menolak nama di luar akun
+ *   dengan kalimat berkode yang tampil di dialog).
  */
 "use client";
 
@@ -12,22 +15,32 @@ import { useCallback, useState } from "react";
 import { Pencil, RefreshCw, Save } from "lucide-react";
 import { Button, EmptyState, ErrorState, MessageStrip, Skeleton } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
+import { kunciNama } from "@/lib/form-kontrol/constants";
 import { ambilFk, tulisFk, useIzinFk, type Scope } from "../shared";
 
 interface Profile { salesCode: string; salesName: string; principle: string; branch: string; spvName: string | null; smName: string | null }
 type Edit = { spvName: string; smName: string };
+type Data = { rows: Profile[]; spv: string[]; sm: string[] };
 const TANPA_SPV = "Belum diatur";
+const PERAN = ["spv", "sm"] as const;
+const NAMA = { spv: "spvName", sm: "smName" } as const;
+const LABEL = { spv: "SPV", sm: "SM" } as const;
+const teks = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+/** Opsi akun yang cocok (kunciNama) dengan nilai; "" = kosong; undefined = nilai tidak cocok dengan akun mana pun. */
+const cocokAkun = (v: string, opsi: string[]) => (!v.trim() ? "" : opsi.find((o) => kunciNama(o) === kunciNama(v)));
 
 export default function TabHierarki({ scope }: { scope: Scope }) {
     void scope; // tab admin; server memeriksa cakupan global sendiri (allowedSalesCodes === null)
     const izin = useIzinFk("manage");
     const [load, muatUlang] = useLoad(useCallback(
-        (): Promise<Load<Profile[]>> => ambilFk("/api/form-kontrol/sales-profiles", (j) => (j.rows ?? []) as Profile[], "Hierarki sales belum berhasil dimuat."), []));
+        (): Promise<Load<Data>> => ambilFk("/api/form-kontrol/sales-profiles",
+            (j) => ({ rows: (j.rows ?? []) as Profile[], spv: teks(j.spvOptions), sm: teks(j.smOptions) }), "Hierarki sales belum berhasil dimuat."), []));
     const [edits, setEdits] = useState<Record<string, Edit>>({});
     const [simpan, setSimpan] = useState<Profile | null>(null);
     const [sukses, setSukses] = useState("");
 
-    const profiles = load.data ?? [];
+    const profiles = load.data?.rows ?? [];
+    const opsi = { spv: load.data?.spv ?? [], sm: load.data?.sm ?? [] };
     const nilai = (p: Profile): Edit => edits[p.salesCode] ?? { spvName: p.spvName ?? "", smName: p.smName ?? "" };
     // Nama dibandingkan & disimpan ter-trim; server mencocokkan nama SPV/SM tanpa beda huruf (FK-MSM butir 5).
     const berubah = (p: Profile) => { const e = edits[p.salesCode]; return Boolean(e) && (e.spvName.trim() !== (p.spvName ?? "").trim() || e.smName.trim() !== (p.smName ?? "").trim()); };
@@ -35,8 +48,6 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
     useUnsavedGuard(nDraf > 0);
     const kunci = izin ?? (load.status !== "siap" ? "Tunggu daftar selesai dimuat ulang." : undefined);
 
-    const spvNames = [...new Set(profiles.map((r) => r.spvName?.trim()).filter(Boolean) as string[])].sort();
-    const smNames = [...new Set(profiles.map((r) => r.smName?.trim()).filter(Boolean) as string[])].sort();
     const grup = new Map<string, Profile[]>();
     for (const p of profiles) { const k = p.spvName?.trim() || TANPA_SPV; grup.set(k, [...(grup.get(k) ?? []), p]); }
     const kunciGrup = [...grup.keys()].sort((a, b) => (a === TANPA_SPV ? 1 : b === TANPA_SPV ? -1 : a.localeCompare(b)));
@@ -75,16 +86,31 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                                             <span className="fi-codes">{p.salesCode} · {p.principle}</span>
                                             {draf && <span className="fi-draft"><Pencil className="fi-icon" aria-hidden />Draf</span>}
                                         </div>
-                                        <FormField label={`SPV ${p.salesName}`}>{(a) => (
-                                            <input {...a} list="fk-spv-list" className="fi-input" style={{ minHeight: 44 }} value={e.spvName} placeholder="Nama SPV" onChange={(ev) => ubah(p, { spvName: ev.target.value })} />
-                                        )}</FormField>
-                                        <FormField label={`SM ${p.salesName}`}>{(a) => (
-                                            <input {...a} list="fk-sm-list" className="fi-input" style={{ minHeight: 44 }} value={e.smName} placeholder="Nama SM" onChange={(ev) => ubah(p, { smName: ev.target.value })} />
-                                        )}</FormField>
+                                        {PERAN.map((k) => {
+                                            const v = e[NAMA[k]];
+                                            const akun = cocokAkun(v, opsi[k]);
+                                            return (
+                                                <FormField key={k} label={`${LABEL[k]} ${p.salesName}`}>{(a) => (
+                                                    <select {...a} className="fi-input" style={{ minHeight: 44 }} value={akun ?? v}
+                                                        onChange={(ev) => ubah(p, k === "spv" ? { spvName: ev.target.value } : { smName: ev.target.value })}>
+                                                        <option value="">— kosong —</option>
+                                                        {akun === undefined && <option value={v}>{v.trim()} (tidak cocok dengan akun)</option>}
+                                                        {opsi[k].map((n) => <option key={n} value={n}>{n}</option>)}
+                                                    </select>
+                                                )}</FormField>
+                                            );
+                                        })}
                                         <Button variant={draf ? "primary" : "secondary"} style={{ minHeight: 44 }} icon={<Save className="fi-icon" aria-hidden />}
                                             disabled={!draf || Boolean(kunci)} disabledReason={kunci ?? "Belum ada perubahan"} onClick={() => setSimpan(p)}>
                                             Simpan
                                         </Button>
+                                        {PERAN.filter((k) => cocokAkun(e[NAMA[k]], opsi[k]) === undefined).map((k) => (
+                                            <div key={k} style={{ gridColumn: "1 / -1" }}>
+                                                <MessageStrip tone="warn" title={`${LABEL[k]} "${e[NAMA[k]].trim()}"`}>
+                                                    tidak cocok dengan akun {LABEL[k]} mana pun — {LABEL[k]} ini tidak melihat timnya. Pilih akun {LABEL[k]} dari daftar lalu simpan.
+                                                </MessageStrip>
+                                            </div>
+                                        ))}
                                     </li>
                                 );
                             })}
@@ -104,10 +130,8 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                 <span className="fi-spacer" />
                 <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang}>Muat ulang</Button>
             </div>
-            <p className="fi-small fi-muted">SPV dan SM tiap salesman menentukan siapa yang bisa melihat data siapa (Dashboard SPV, Kontrol SM, cakupan Form Kontrol).</p>
+            <p className="fi-small fi-muted">SPV dan SM tiap salesman menentukan siapa yang bisa melihat data siapa (Dashboard SPV, Kontrol SM, cakupan Form Kontrol). Pilihan = nama akun SPV/SM aktif; akun dibuat di layar User.</p>
             {sukses && <MessageStrip tone="pos" title={sukses} onClose={() => setSukses("")} />}
-            <datalist id="fk-spv-list">{spvNames.map((n) => <option key={n} value={n} />)}</datalist>
-            <datalist id="fk-sm-list">{smNames.map((n) => <option key={n} value={n} />)}</datalist>
             {isi}
             <ConfirmDialog
                 open={simpan !== null}

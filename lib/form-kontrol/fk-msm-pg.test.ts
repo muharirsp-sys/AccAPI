@@ -378,3 +378,41 @@ test("SEDANG: Kontrol SM — SM hanya atas namanya, peran lain 403, admin semua"
     const lama = await jawab(await sebagai("u-sma", () => m.smControl.GET(req("/api/form-kontrol/sm-control?date=2026-10-11"))));
     assert.deepEqual([lama.status, lama.body.total], [200, 1]);
 });
+
+// =========================================================================== Hierarki: SPV/SM dipilih dari akun (owner 13 Okt)
+
+test("Hierarki: GET spvOptions/smOptions = nama akun AKTIF ber-role (akhiran dibuang); PUT wajib tepat satu akun — 400/409, ejaan akun, null melepas", { skip: pgSkip }, async () => {
+    // Akun tambahan di akhir berkas (tidak memengaruhi uji sebelumnya): nonaktif, nonaktif kedaluwarsa (= aktif), nama ganda, kasus produksi.
+    await pool.query(`INSERT INTO "user" (id, name, email, "emailVerified", role, banned, "banExpires", "createdAt", "updatedAt") VALUES
+        ('u-spvl', 'SPV LAMA (SPV)', 'spvl@uji.test', true, 'spv', true, NULL, now(), now()),
+        ('u-spvk', 'SPV KEMBALI', 'spvk@uji.test', true, 'spv', true, now() - interval '1 day', now(), now()),
+        ('u-spvg1', 'SPV GANDA', 'spvg1@uji.test', true, 'spv', false, NULL, now(), now()),
+        ('u-spvg2', 'spv ganda (SPV)', 'spvg2@uji.test', true, 'spv', false, NULL, now(), now()),
+        ('u-spvs', 'SPV_SYAMSUL', 'spvs@uji.test', true, 'spv', false, NULL, now(), now())`);
+    await pool.query(`INSERT INTO user_group (user_id, group_id, assigned_at) VALUES ('u-spvs', 'g-spv', now())`);
+    const g = await jawab(await sebagai("u-admin", () => m.profil.GET(req("/api/form-kontrol/sales-profiles"))));
+    assert.equal(g.status, 200);
+    assert.deepEqual((g.body.spvOptions as string[]).map((n) => n.toUpperCase()), ["SPV A", "SPV B", "SPV GANDA", "SPV KEMBALI", "SPV_SYAMSUL"],
+        "nonaktif & nama kosong '(SPV)' tidak; ganda sekali");
+    assert.deepEqual(g.body.smOptions, ["SM A"]);
+    assert.equal((await sebagai("u-spva", () => m.profil.GET(req("/api/form-kontrol/sales-profiles")))).status, 403, "hanya cakupan global");
+
+    const put = async (isi: Record<string, unknown>) => jawab(await sebagai("u-admin", () => m.profil.PUT(req("/api/form-kontrol/sales-profiles", "PUT", { salesCode: "M-SLD", ...isi }))));
+    const simpanan = async () => (await pool.query(`SELECT spv_name, sm_name FROM sales_profile WHERE sales_code = 'M-SLD'`)).rows[0];
+    const kode = (j: J) => [j.status, j.body.kode];
+    assert.deepEqual(kode(await put({ spvName: "SYAMSUL", smName: null })), [400, "SPV_TIDAK_DIKENAL"], "kasus produksi: ketikan bukan nama akun");
+    assert.deepEqual(kode(await put({ spvName: "SPV LAMA", smName: null })), [400, "SPV_TIDAK_DIKENAL"], "akun nonaktif");
+    assert.deepEqual(kode(await put({ spvName: "SM A", smName: null })), [400, "SPV_TIDAK_DIKENAL"], "akun ber-role lain");
+    assert.deepEqual(kode(await put({ spvName: null, smName: "SM X" })), [400, "SM_TIDAK_DIKENAL"]);
+    assert.deepEqual(kode(await put({ spvName: "spv ganda", smName: null })), [409, "NAMA_GANDA"]);
+    assert.deepEqual(await simpanan(), { spv_name: null, sm_name: null }, "penolakan tidak menulis apa pun");
+
+    const ok = await put({ spvName: " spv_syamsul ", smName: "sm a" });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.deepEqual(await simpanan(), { spv_name: "SPV_SYAMSUL", sm_name: "SM A" }, "ejaan akun");
+    const sc = await jawab(await sebagai("u-spvs", () => m.myScope.GET(req("/api/form-kontrol/my-scope"))));
+    assert.deepEqual(sc.body.allowedSalesCodes, ["M-SLD"], "akun SPV_SYAMSUL kini melihat timnya");
+    assert.deepEqual(kode(await put({ spvName: "SPV KEMBALI", smName: "" })), [200, undefined], "nonaktif kedaluwarsa = aktif");
+    assert.equal((await put({ spvName: null, smName: null })).status, 200);
+    assert.deepEqual(await simpanan(), { spv_name: null, sm_name: null }, "null melepas");
+});

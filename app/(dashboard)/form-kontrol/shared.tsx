@@ -147,7 +147,8 @@ async function bacaJson(res: Response): Promise<Record<string, unknown> | null> 
 
 /**
  * Pesan `error` route /api/form-kontrol/* yang dikenal → kalimat Indonesia. Pesan lain (Inggris/teknis, 500 "Internal server
- * error", e.message mentah) tidak diteruskan: layar cukup memakai kalimat umum pemanggil, tanpa kode status.
+ * error", e.message mentah) tidak diteruskan: layar cukup memakai kalimat umum pemanggil, tanpa kode status. Penolakan BERKODE 4xx
+ * (`{ kode, error }`, mis. Hierarki SPV_TIDAK_DIKENAL / NAMA_GANDA) membawa kalimat Indonesia dari server — diteruskan apa adanya.
  */
 const PESAN_SERVER: Record<string, string> = {
     "SPV name not found": "Akun Anda belum tertaut ke nama SPV di Hierarki Sales.",
@@ -168,6 +169,7 @@ function pesanServer(res: Response, data: Record<string, unknown> | null): strin
     if (res.status === 401) return " Sesi Anda berakhir; masuk ulang lalu coba lagi.";
     if (res.status === 403 && (!e || e === "Forbidden")) return " Akun Anda tidak punya izin untuk ini.";
     if (res.status >= 500) return "";
+    if (typeof data?.kode === "string" && e) return ` ${e}`;
     if (e.startsWith("Missing")) return " Data wajib belum lengkap.";
     return PESAN_SERVER[e] ? ` ${PESAN_SERVER[e]}` : "";
 }

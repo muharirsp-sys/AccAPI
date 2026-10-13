@@ -7,7 +7,7 @@ import {
     spvBriefing, smControl, kontrolAuditLog, salesProfile, kunjunganLuarRute,
 } from "@/db/schema";
 import { cocokKodeRute } from "@/lib/order-cabang";
-import { DAY_TO_HARI, NO_ORDER_REASONS, hariBaku, kunciHari, paritasMinggu } from "./constants";
+import { DAY_TO_HARI, NO_ORDER_REASONS, hariBaku, kunciHari, kunciNama, paritasMinggu } from "./constants";
 import type { AoStatus, TodayRouteRow } from "./types";
 
 // Paritas minggu = paritasMinggu (constants.ts, acuan owner 12 Okt 2026), dihitung dari string tanggal WITA yang dikirim layar.
@@ -19,8 +19,7 @@ const kunciHariSql = sql`regexp_replace(upper(coalesce(${jksMaster.hariKunjungan
 const hariIni = (dayName: string) => sql`${kunciHariSql} = ${kunciHari(dayName)}`;
 const polaMinggu = (parity: "ganjil" | "genap") => sql`lower(trim(${jksMaster.mingguPattern})) in ('all', ${parity})`;
 
-// FK-MSM butir 5: nama SPV/SM Hierarki dibandingkan sesudah trim + tanpa beda huruf (" spv a " = "SPV A"); nama kosong tidak cocok apa pun.
-export const kunciNama = (v: string | null | undefined) => (v ?? "").trim().toUpperCase();
+// FK-MSM butir 5: nama SPV/SM Hierarki dibandingkan sesudah trim + tanpa beda huruf (kunciNama, constants.ts); nama kosong tidak cocok apa pun.
 const samaNama = (kolom: AnyColumn, nama: string) => sql`upper(trim(${kolom})) = ${kunciNama(nama)}`;
 
 export function parseDateString(dateStr: string): Date {

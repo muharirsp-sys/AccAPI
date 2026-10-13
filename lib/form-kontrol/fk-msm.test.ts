@@ -3,7 +3,7 @@
  * ASLI pada Postgres = lib/form-kontrol/fk-msm-pg.test.ts. Data contoh generik. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hariBaku, kunciHari, paritasMinggu } from "./constants.ts";
+import { hariBaku, kunciHari, paritasMinggu, pilihNamaAkun } from "./constants.ts";
 import { hariIniWita } from "../../app/(dashboard)/form-kontrol/shared.tsx";
 import { cocokKodeRute, pilihPelangganRute } from "../order-cabang.ts";
 import { BATAS_KODE_RUTE, cocokkanTokoRute } from "../../components/order/order-cabang-api.ts";
@@ -79,4 +79,18 @@ test("KC3: rute lebih dari batas per permintaan dipecah (bukan dipotong / gagal 
     } finally {
         globalThis.fetch = asli;
     }
+});
+
+test("Hierarki (owner 13 Okt): nama SPV/SM = TEPAT SATU akun aktif (kunciNama), disimpan ejaan akun; kosong = lepas; tak dikenal 400; ganda 409", () => {
+    const akun = ["SPV A", "SPV_SYAMSUL", "spv ganda", "SPV GANDA"];
+    assert.deepEqual(pilihNamaAkun(" spv a ", akun, "SPV"), { nama: "SPV A" }, "ejaan akun, bukan ketikan");
+    for (const v of [null, undefined, "", "   "]) assert.deepEqual(pilihNamaAkun(v, akun, "SPV"), { nama: null });
+    const asing = pilihNamaAkun("SYAMSUL", akun, "SPV");
+    assert.deepEqual("galat" in asing && [asing.galat.status, asing.galat.kode], [400, "SPV_TIDAK_DIKENAL"], "kasus produksi: SYAMSUL vs akun SPV_SYAMSUL");
+    const sm = pilihNamaAkun("SM X", [], "SM");
+    assert.deepEqual("galat" in sm && [sm.galat.status, sm.galat.kode], [400, "SM_TIDAK_DIKENAL"]);
+    const ganda = pilihNamaAkun("Spv Ganda", akun, "SPV");
+    assert.deepEqual("galat" in ganda && [ganda.galat.status, ganda.galat.kode], [409, "NAMA_GANDA"]);
+    const angka = pilihNamaAkun(7, akun, "SPV");
+    assert.deepEqual("galat" in angka && [angka.galat.status, angka.galat.kode], [400, "INPUT_TIDAK_VALID"]);
 });

@@ -66,6 +66,28 @@ export function paritasMinggu(ymd: string): "ganjil" | "genap" {
     return minggu % 2 === 0 ? "genap" : "ganjil";
 }
 
+/** FK-MSM butir 5: kunci nama SPV/SM — trim + huruf besar (" spv a " = "SPV A"); kosong tidak cocok apa pun (pemanggil menjaga). */
+export const kunciNama = (v: string | null | undefined) => (v ?? "").trim().toUpperCase();
+
+/**
+ * Hierarki Sales (owner 13 Okt 2026): nama SPV/SM di sales_profile WAJIB nama akun aktif ber-role itu, karena cakupan (resolveScope)
+ * mencocokkan nama AKUN sesi dengan nama ini. `akun` = nama akun aktif ber-role itu (scope.ts namaAkunPeran, akhiran dibuang, BOLEH ganda).
+ * Kosong/null = melepas (null). Tidak ada akun = 400 SPV_/SM_TIDAK_DIKENAL; lebih dari satu akun bernama sama = 409 NAMA_GANDA (cakupan
+ * akan bocor ke dua akun). Yang disimpan = ejaan AKUN, bukan ketikan.
+ */
+export function pilihNamaAkun(nama: unknown, akun: readonly string[], peran: "SPV" | "SM"):
+    { nama: string | null } | { galat: { status: number; kode: string; error: string } } {
+    if (nama != null && typeof nama !== "string") return { galat: { status: 400, kode: "INPUT_TIDAK_VALID", error: `Nama ${peran} harus teks.` } };
+    const teks = typeof nama === "string" ? nama.trim() : "";
+    const k = kunciNama(teks);
+    if (!k) return { nama: null };
+    const cocok = akun.filter((a) => kunciNama(a) === k);
+    if (cocok.length === 1) return { nama: cocok[0] };
+    return cocok.length === 0
+        ? { galat: { status: 400, kode: `${peran}_TIDAK_DIKENAL`, error: `${peran} "${teks}" tidak cocok dengan akun ${peran} aktif mana pun; pilih dari daftar akun.` } }
+        : { galat: { status: 409, kode: "NAMA_GANDA", error: `Ada ${cocok.length} akun ${peran} aktif bernama "${cocok[0]}" — cakupan akan terbagi ke semuanya; ubah nama salah satu akun dulu.` } };
+}
+
 // FK-MSM2: kunjungan luar rute.
 /**
  * Kode toko JKS yang COCOK (lib/order-cabang cocokKodeRute) dengan pelanggan Accurate `customerNo` — kebalikannya: customerNo itu sendiri dan

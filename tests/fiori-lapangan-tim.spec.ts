@@ -48,6 +48,8 @@ type Opsi = {
     dashboard?: unknown[]; dashboardGagal?: boolean; dashboardTanpaSpv?: boolean;
     briefingGagal?: boolean; briefingPostStatus?: number;
     profilesGagal?: boolean;
+    /** Baris Hierarki pengganti PROFILES; jawaban PUT sales-profiles berikutnya (antrean; kosong = sukses). */
+    profiles?: unknown[]; putProfil?: { status: number; body: unknown }[];
     smControl?: unknown[]; smControlGagal?: boolean;
     /** Jumlah POST reports/ack berikutnya yang ditolak 403 (cakupan). */
     ackDitolak?: number;
@@ -72,8 +74,12 @@ async function mockApi(page: Page, opsi: Opsi) {
             if (opsi.ackDitolak) { opsi.ackDitolak--; return route.fulfill(json({ error: "Tidak berhak atau laporan belum disubmit" }, 403)); }
             return route.fulfill(json({ success: true }));
         }
-        if (p === "sales-profiles" && req.method() === "GET") return opsi.profilesGagal ? route.fulfill(json({ error: "Forbidden" }, 403)) : route.fulfill(json({ rows: PROFILES }));
-        if (p === "sales-profiles" && req.method() === "PUT") return route.fulfill(json({ success: true }));
+        if (p === "sales-profiles" && req.method() === "GET") return opsi.profilesGagal ? route.fulfill(json({ error: "Forbidden" }, 403))
+            : route.fulfill(json({ rows: opsi.profiles ?? PROFILES, spvOptions: ["SPV A", "SPV B"], smOptions: ["SM A"] }));
+        if (p === "sales-profiles" && req.method() === "PUT") {
+            const j = opsi.putProfil?.shift();
+            return route.fulfill(j ? json(j.body, j.status) : json({ success: true }));
+        }
         if (p === "jks" && req.method() === "GET") return route.fulfill(json({ rows: JKS, total: JKS.length, page: 1, limit: 50 }));
         if (p === "jks" && req.method() === "POST") return route.fulfill(json({ success: true, imported: 2, skipped: 1 }));
         if (p === "briefing" && req.method() === "GET") {
@@ -381,7 +387,7 @@ test("Briefing dan Hierarki: tulis lewat dialog, payload sama dengan hari ini (t
 
     opsi.scope = SCOPE.admin;
     await page.goto("/form-kontrol?tab=hierarki", NAV);
-    await main.getByLabel("SPV SALES C").fill("SPV A");
+    await main.getByLabel("SPV SALES C").selectOption("SPV A");
     await main.getByRole("listitem").filter({ hasText: "SALES C" }).getByRole("button", { name: "Simpan" }).click();
     const d2 = page.getByRole("dialog", { name: "Ubah hierarki SALES C?" });
     await expect(d2).toContainText("— → SPV A");
@@ -389,6 +395,39 @@ test("Briefing dan Hierarki: tulis lewat dialog, payload sama dengan hari ini (t
     await expect(d2).toBeHidden();
     const put = tulis.find((r) => r.method() === "PUT")!;
     expect(put.postDataJSON()).toEqual({ salesCode: "S-03", spvName: "SPV A", smName: null });
+});
+
+test("Hierarki (owner 13 Okt): SPV/SM dipilih dari akun; nilai tersimpan tak cocok = opsi bertanda + peringatan; galat berkode di dialog; ponsel 390 px", async ({ page }) => {
+    const opsi: Opsi = { scope: SCOPE.admin, profiles: [PROFILES[0], { ...PROFILES[2], spvName: "SYAMSUL", smName: "sm a" }],
+        putProfil: [{ status: 409, body: { ok: false, kode: "NAMA_GANDA", error: "Ada 2 akun SPV aktif bernama \"SPV B\" — cakupan akan terbagi ke semuanya; ubah nama salah satu akun dulu." } }] };
+    const { tulis } = await mockApi(page, opsi);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/form-kontrol?tab=hierarki", NAV);
+    const main = page.locator("main");
+    const baris = main.getByRole("listitem").filter({ hasText: "SALES C" });
+    const spv = main.getByLabel("SPV SALES C");
+    await expect(spv).toHaveValue("SYAMSUL", NAV);
+    await expect(spv.locator("option")).toHaveText(["— kosong —", "SYAMSUL (tidak cocok dengan akun)", "SPV A", "SPV B"]);
+    await expect(baris.getByRole("status").filter({ hasText: 'SPV "SYAMSUL"' })).toContainText("tidak cocok dengan akun SPV mana pun — SPV ini tidak melihat timnya");
+    await expect(main.getByLabel("SM SALES C")).toHaveValue("SM A", NAV); // ejaan lain dari akun yang sama = cocok, tanpa peringatan
+    await expect(baris.getByRole("status")).toHaveCount(1);
+    await expect(main.getByLabel("SM SALES A").locator("option")).toHaveText(["— kosong —", "SM A"]);
+    expect((await spv.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await noOverflow(page);
+    await page.screenshot({ path: "test-results/tim/ponsel-hierarki.png", fullPage: true });
+
+    await spv.selectOption("SPV B");
+    await expect(baris.getByRole("status")).toHaveCount(0);
+    await baris.getByRole("button", { name: "Simpan" }).click();
+    const d = page.getByRole("dialog", { name: "Ubah hierarki SALES C?" });
+    await expect(d).toContainText("SYAMSUL → SPV B");
+    await d.getByRole("button", { name: "Simpan hierarki" }).click();
+    await expect(d.getByRole("alert")).toContainText("Ada 2 akun SPV aktif bernama \"SPV B\"", NAV);
+    await d.getByRole("button", { name: "Simpan hierarki" }).click();
+    await expect(d).toBeHidden(NAV);
+    expect(tulis.filter((r) => r.method() === "PUT").map((r) => r.postDataJSON())).toEqual([
+        { salesCode: "S-03", spvName: "SPV B", smName: "sm a" }, { salesCode: "S-03", spvName: "SPV B", smName: "sm a" },
+    ]);
 });
 
 test("Briefing: Simpan dikunci saat daftar tersimpan galat dan setelah jawaban tidak pasti (cegah catatan ganda); Frekuensi SM tanpa tim", async ({ page }) => {

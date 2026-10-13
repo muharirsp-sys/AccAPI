@@ -1,10 +1,14 @@
 /*
  * Tujuan: Enforcement scope server-side untuk Form Kontrol — cegah user akses data salesCode/SPV lain.
  * Caller: semua route app/api/form-kontrol/* yang menerima salesCode/spvName/smName dari klien.
- * Dependensi: getScopeForUser (sales_profile).
+ * Dependensi: getScopeForUser (sales_profile), tabel user (namaAkunPeran).
  * Catatan: allowedSalesCodes === null = akses global (admin/manager/admin_sales).
  */
-import { getScopeForUser, getSalesCodesForSpv, getSalesCodesForSm, getSpvNamesForSm, kunciNama } from "./db";
+import { and, eq, sql } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { user } from "@/db/schema";
+import { getScopeForUser, getSalesCodesForSpv, getSalesCodesForSm, getSpvNamesForSm } from "./db";
+import { kunciNama } from "./constants";
 
 export interface UserScope {
     role: string;
@@ -16,7 +20,7 @@ export interface UserScope {
 }
 
 // Strip suffix "(SPV)"/"(SM)" dari nama auth user agar cocok dengan spvName/smName di sales_profile.
-function stripRoleSuffix(name: string | null | undefined): string {
+export function stripRoleSuffix(name: string | null | undefined): string {
     return (name ?? "").replace(/\s*\((SPV|SM)\)\s*$/i, "").trim();
 }
 
@@ -53,6 +57,16 @@ export async function resolveScope(session: { user: { id: string; name?: string 
         };
     }
     return { role, allowedSalesCodes: [] };
+}
+
+/**
+ * Nama akun AKTIF (tidak dinonaktifkan; banned berakhir = aktif) ber-role spv/sm, akhiran dibuang persis seperti resolveScope — nama yang
+ * bisa memberi cakupan. Kosong dibuang; ganda TIDAK dibuang (pilihNamaAkun menolak nama ganda). Urut nama (localeCompare "id", tidak bergantung collation DB).
+ */
+export async function namaAkunPeran(role: "spv" | "sm"): Promise<string[]> {
+    const rows = await db.select({ name: user.name }).from(user).where(and(eq(user.role, role),
+        sql`NOT (COALESCE(${user.banned}, false) AND (${user.banExpires} IS NULL OR ${user.banExpires} > now()))`));
+    return rows.map((r) => stripRoleSuffix(r.name)).filter(Boolean).sort((a, b) => a.localeCompare(b, "id"));
 }
 
 // true bila user boleh baca/tulis data salesCode ini.
