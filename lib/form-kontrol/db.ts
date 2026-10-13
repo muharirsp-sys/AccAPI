@@ -649,12 +649,14 @@ export async function getAllSalesProfiles() {
     return db.select().from(salesProfile).orderBy(asc(salesProfile.salesName));
 }
 
-export async function updateSalesHierarchy(salesCode: string, spvName: string | null, smName: string | null) {
+/** false = tidak ada profil berkode sales itu (tidak ada yang ditulis). */
+export async function updateSalesHierarchy(salesCode: string, spvName: string | null, smName: string | null): Promise<boolean> {
     // Disimpan ter-trim (butir 5); isian bukan teks/kosong = null.
     const bersih = (v: unknown) => (typeof v === "string" ? v.trim() : "") || null;
-    await db.update(salesProfile)
+    const ditulis = await db.update(salesProfile)
         .set({ spvName: bersih(spvName), smName: bersih(smName), updatedAt: new Date() })
-        .where(eq(salesProfile.salesCode, salesCode));
+        .where(eq(salesProfile.salesCode, salesCode)).returning({ id: salesProfile.id });
+    return ditulis.length > 0;
 }
 
 // ── Check-in / Check-out ──────────────────────────────────────────────────────

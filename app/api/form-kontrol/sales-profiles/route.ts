@@ -8,7 +8,8 @@
  *
  * Owner 13 Okt 2026: cakupan SPV/SM (resolveScope) = nama AKUN sesi tanpa akhiran "(SPV)"/"(SM)" dicocokkan dengan nama di sini, jadi
  * nama non-kosong WAJIB nama akun aktif ber-role itu (spvOptions/smOptions = nama akun aktif, satu per nama). Tidak ada akun = 400
- * SPV_TIDAK_DIKENAL / SM_TIDAK_DIKENAL; dua akun bernama sama = 409 NAMA_GANDA; disimpan ejaan akun; kosong/null = melepas.
+ * SPV_TIDAK_DIKENAL / SM_TIDAK_DIKENAL; dua akun bernama sama = 409 NAMA_GANDA; disimpan ejaan akun; kosong/null = melepas; kode sales
+ * tanpa profil = 404 PROFIL_TIDAK_ADA (bukan 200 tanpa tulis).
  * Hanya cakupan global (admin/manager/admin_sales) — selain itu 403.
  */
 import { NextResponse } from "next/server";
@@ -48,7 +49,9 @@ export async function PUT(req: Request) {
         if ("galat" in spv) return jawabGalat(spv.galat);
         const sm = pilihNamaAkun(body.smName, akunSm, "SM");
         if ("galat" in sm) return jawabGalat(sm.galat);
-        await updateSalesHierarchy(salesCode, spv.nama, sm.nama);
+        if (!await updateSalesHierarchy(salesCode, spv.nama, sm.nama)) {
+            return jawabGalat({ status: 404, kode: "PROFIL_TIDAK_ADA", error: `Profil sales ${salesCode} tidak ditemukan; muat ulang Hierarki.` });
+        }
         return NextResponse.json({ success: true, spvName: spv.nama, smName: sm.nama });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });

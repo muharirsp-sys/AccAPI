@@ -415,4 +415,7 @@ test("Hierarki: GET spvOptions/smOptions = nama akun AKTIF ber-role (akhiran dib
     assert.deepEqual(kode(await put({ spvName: "SPV KEMBALI", smName: "" })), [200, undefined], "nonaktif kedaluwarsa = aktif");
     assert.equal((await put({ spvName: null, smName: null })).status, 200);
     assert.deepEqual(await simpanan(), { spv_name: null, sm_name: null }, "null melepas");
+    // Peninjau A: kode sales tanpa profil = 404 berkode, bukan 200 tanpa tulis.
+    const asing = await jawab(await sebagai("u-admin", () => m.profil.PUT(req("/api/form-kontrol/sales-profiles", "PUT", { salesCode: "M-TIDAK-ADA", spvName: "SPV B", smName: null }))));
+    assert.deepEqual(kode(asing), [404, "PROFIL_TIDAK_ADA"]);
 });

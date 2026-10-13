@@ -19,6 +19,7 @@ import { aoControlDaily, jksMaster, kontrolAuditLog, kunjunganLuarRute, merchand
 import { cocokKodeRute, type GalatOrder } from "@/lib/order-cabang";
 import { DAY_TO_HARI, MINGGU_PATTERNS, hariBaku, kodeJksUntuk, kunciHari, paritasMinggu } from "./constants";
 import { parseDateString } from "./db";
+import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 
 // ---------------------------------------------------------------- murni
 
@@ -198,7 +199,7 @@ export async function konfirmasiLuarRute(d: {
 
         const { hari, minggu } = d.keputusan;
         if (!await adaKunjungan(tx, k, true)) {
-            return galat(409, "BELUM_DIKUNJUNGI", `${k.custName} belum dikunjungi pada ${k.tanggal} (belum ada check-in, hasil kunjungan, atau merchandising); kunjungi dulu sebelum memasukkan ke JKS.`);
+            return galat(409, "BELUM_DIKUNJUNGI", `${k.custName} belum dikunjungi pada ${tanggalPanjang(k.tanggal)} (belum ada check-in, hasil kunjungan, atau merchandising); kunjungi dulu sebelum memasukkan ke JKS.`);
         }
         const [prof] = await tx.select({ salesName: salesProfile.salesName, channel: salesProfile.channel }).from(salesProfile)
             .where(eq(salesProfile.salesCode, k.salesCode)).limit(1);
@@ -249,7 +250,9 @@ export async function batalLuarRute(d: {
         if (k.dibatalkanPada) return galat(409, "SUDAH_DIBATALKAN", `Kunjungan ${k.custName} sudah dibatalkan; muat ulang rute.`);
         if (k.tanggal !== d.hariIni) return galat(409, "BUKAN_HARI_INI", `Hanya kunjungan luar rute hari ini (${d.hariIni}) yang bisa dibatalkan; ini kunjungan ${k.tanggal}.`);
         if (k.konfirmasi === "jks") return galat(409, "SUDAH_DIKONFIRMASI", `${k.custName} sudah masuk JKS Anda; kunjungannya tidak bisa dibatalkan.`);
-        if (await adaKunjungan(tx, k, false)) return galat(409, "SUDAH_DIKUNJUNGI", `${k.custName} sudah punya catatan kunjungan hari ini (check-in, status, atau merchandising) — tidak bisa dibatalkan.`);
+        if (await adaKunjungan(tx, k, false)) {
+            return galat(409, "SUDAH_DIKUNJUNGI", `${k.custName} sudah punya status hari ini (check-in, status rute — termasuk "tidak dikunjungi" dari Kirim status rute — atau merchandising); kunjungannya tidak bisa dibatalkan.`);
+        }
         const now = new Date();
         const [row] = await tx.update(kunjunganLuarRute).set({ dibatalkanPada: now, dibatalkanOleh: d.aktorId })
             .where(eq(kunjunganLuarRute.id, k.id)).returning();

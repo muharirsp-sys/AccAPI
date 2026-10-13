@@ -100,6 +100,7 @@ export function keBarisRute(rows: unknown, principle: string): AoRow[] {
         checkinAt: (r.checkinAt as string) ?? null,
         checkoutAt: (r.checkoutAt as string) ?? null,
         luarRute: r.luarRute === true,
+        adaStatus: r.aoStatus != null,
     }));
 }
 

@@ -65,6 +65,8 @@ export interface AoRow {
     checkoutAt?: string | null;  // ISO — non-null = kunjungan selesai
     /** FK-MSM2: kunjungan luar rute (toko tidak di JKS hari ini). */
     luarRute?: boolean;
+    /** Ada baris AO untuk toko ini (status apa pun, juga "tidak dikunjungi" dari Kirim status rute) — `status` default "not_visited" tidak membedakan. */
+    adaStatus?: boolean;
 }
 
 export interface Reason {

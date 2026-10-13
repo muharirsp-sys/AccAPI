@@ -336,3 +336,324 @@ test("SPV: Kontrol JKS menandai baris tambahan salesman; unggah melaporkan baris
     await page.getByText("Detail kunjungan (1)").click();
     await expect(page.getByRole("listitem").filter({ hasText: "PELANGGAN B" })).toContainText("Luar rute", NAV);
 });
+
+// =========================================================================== peninjau B (13 Okt): tes B1–B5b disalin/disesuaikan dari
+// scratchpad revfk2b/specs/zz-revfk2b.spec.ts — mock dengan antrean jawaban per endpoint (`terapkan` = server sudah menerapkan walau jawabannya galat).
+
+type JawabB = { status: number; body?: unknown; delay?: number; terapkan?: boolean };
+type OpsiB = {
+    scope?: unknown; rute?: Record<string, unknown>[]; luarRute?: Record<string, unknown>[]; jksRows?: unknown[]; spv?: unknown;
+    profiles?: unknown[]; spvOptions?: string[]; smOptions?: string[];
+    tambah?: JawabB[]; batal?: JawabB[]; konf?: JawabB[]; luarGet?: JawabB[]; ruteGet?: JawabB[];
+    /** GET luar-rute menjawab 500 selama > 0. */
+    luarGagal?: number;
+};
+const PELANGGAN_B = ["A", "B", "C", "D"].map((h, i) => ({ id: i + 1, customerNo: `C-10000${i + 1}-CBA`, name: `PELANGGAN ${h}`, branchId: 50, branchName: "CABANG A",
+    categoryName: "TT", channel: "TT", priceCategoryName: null, alamat: `JL. CONTOH ${i + 1}` }));
+const luarPada = (tgl: string, id: string, custCode: string, custName: string, over: Record<string, unknown> = {}) => ({
+    ...luar(id, custCode, custName, over), tanggal: tgl, dibuatPada: `${tgl}T08:00:00+08:00`, checkinAt: `${tgl}T09:00:00+08:00`, checkoutAt: `${tgl}T09:20:00+08:00`, ...over });
+const tidur = (ms?: number) => (ms ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve());
+const nBaca = (baca: URL[], akhir: string) => baca.filter((u) => u.pathname.endsWith(akhir)).length;
+
+async function mockB(page: Page, o: OpsiB) {
+    const baca: URL[] = [], tulis: Request[] = [];
+    const jawab = async (route: Parameters<Parameters<Page["route"]>[1]>[0], j: JawabB) => {
+        await tidur(j.delay);
+        try {
+            return j.body === undefined ? await route.fulfill({ status: j.status, contentType: "text/html", body: "<html>Bad Gateway</html>" }) : await route.fulfill(json(j.body, j.status));
+        } catch { /* dibatalkan */ }
+    };
+    await page.route((u) => u.pathname === "/api/customers/search", async (route) => {
+        const q = (new URL(route.request().url()).searchParams.get("q") ?? "").toLowerCase();
+        try {
+            await route.fulfill(json({ ok: true, cakupan: { semua: false, branchId: 50, branchName: "CABANG A" },
+                items: PELANGGAN_B.filter((p) => p.name.toLowerCase().includes(q) || p.customerNo.toLowerCase().includes(q)) }));
+        } catch { /* dibatalkan peramban */ }
+    });
+    await page.route("**/api/form-kontrol/**", async (route) => {
+        const req = route.request();
+        const url = new URL(req.url());
+        const p = url.pathname.replace("/api/form-kontrol/", "");
+        if (req.method() === "GET") baca.push(url); else tulis.push(req);
+        if (p === "my-scope") return route.fulfill(json(o.scope ?? SALESMAN));
+        if (p === "reasons") return route.fulfill(json({ rows: REASONS }));
+        if (p === "ao-control" && req.method() === "GET") {
+            const j = o.ruteGet?.shift();
+            if (j && !j.terapkan) return jawab(route, j);
+            await tidur(j?.delay);
+            try { return await route.fulfill(json({ rows: o.rute ?? [], summary: {}, date: url.searchParams.get("date") })); } catch { return; }
+        }
+        if (p === "luar-rute" && req.method() === "GET") {
+            if (o.luarGagal) { o.luarGagal--; return route.fulfill(json({ ok: false, error: "Internal server error" }, 500)); }
+            const j = o.luarGet?.shift();
+            if (j && !j.terapkan) return jawab(route, j);
+            await tidur(j?.delay);
+            return route.fulfill(json({ ok: true, rows: o.luarRute ?? [], date: url.searchParams.get("date") }));
+        }
+        if (p === "luar-rute" && req.method() === "POST") {
+            const b = req.postDataJSON() as { customerNo: string };
+            const pel = PELANGGAN_B.find((x) => x.customerNo === b.customerNo)!;
+            const j = o.tambah?.shift();
+            if (!j || j.terapkan) o.rute = [...(o.rute ?? []).filter((r) => r.custCode !== pel.customerNo), baris(pel.customerNo, pel.name, { id: `l-${pel.customerNo}`, luarRute: true })];
+            if (j) return jawab(route, j);
+            return route.fulfill(json({ ok: true, baru: true, row: { id: `l-${pel.customerNo}`, custCode: pel.customerNo, custName: pel.name, konfirmasi: "menunggu" } }, 201));
+        }
+        if (p === "luar-rute/konfirmasi") {
+            const b = req.postDataJSON() as { id: string; keputusan: string; hari?: string; mingguPattern?: string };
+            const j = o.konf?.shift();
+            if (!j || j.terapkan) {
+                o.luarRute = (o.luarRute ?? []).map((r) => r.id === b.id ? { ...r, konfirmasi: b.keputusan, hari: b.hari ?? null, mingguPattern: b.mingguPattern ?? null,
+                    dikonfirmasiOlehNama: "SALES A", dikonfirmasiPada: new Date().toISOString() } : r);
+            }
+            if (j) return jawab(route, j);
+            return route.fulfill(json({ ok: true, row: o.luarRute!.find((r) => r.id === b.id), jksLain: [] }));
+        }
+        if (p === "luar-rute/batal") {
+            const { id } = req.postDataJSON() as { id: string };
+            const j = o.batal?.shift();
+            if (!j || j.terapkan) o.rute = (o.rute ?? []).filter((r) => r.id !== id);
+            if (j) return jawab(route, j);
+            return route.fulfill(json({ ok: true, row: { id } }));
+        }
+        if (p === "reports" && req.method() === "GET") return route.fulfill(json({ rows: [{ id: null, salesCode: "S-01", date: url.searchParams.get("date"), totalTokoJks: 2,
+            totalOrder: 1, totalActive: 0, totalNotOrder: 0, totalNotVisited: 1, tindakLanjut: "", submittedAt: null, spvAck: false, spvAckAt: null }], total: 1 }));
+        if (p === "jks" && req.method() === "GET") return route.fulfill(json({ rows: o.jksRows ?? [], total: (o.jksRows ?? []).length, page: 1, limit: 50 }));
+        if (p === "spv-dashboard") return route.fulfill(json(o.spv ?? { rows: [], spvName: "SPV A" }));
+        if (p === "sales-profiles" && req.method() === "GET") return route.fulfill(json({ rows: o.profiles ?? [], spvOptions: o.spvOptions ?? [], smOptions: o.smOptions ?? [] }));
+        if (p === "sales-profiles" && req.method() === "PUT") {
+            // Server menyimpan EJAAN AKUN (pilihNamaAkun), bukan ketikan.
+            const b = req.postDataJSON() as { salesCode: string; spvName: string | null; smName: string | null };
+            const akun = (v: string | null, opsi: string[] = []) => (v ? opsi.find((x) => x.trim().toUpperCase() === v.trim().toUpperCase()) ?? v : null);
+            o.profiles = (o.profiles ?? []).map((x) => (x as { salesCode: string }).salesCode === b.salesCode
+                ? { ...(x as object), spvName: akun(b.spvName, o.spvOptions), smName: akun(b.smName, o.smOptions) } : x);
+            return route.fulfill(json({ success: true }));
+        }
+        return route.fulfill(json({ success: true, id: "x" }));
+    });
+    return { baca, tulis };
+}
+
+test.describe("peninjau B — ponsel 390 px", () => {
+    test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+    test("B1/R-1 tambah luar rute: jawaban tidak pasti (502, tersimpan) → rute dimuat ulang, toko terlihat", async ({ page }) => {
+        const o: OpsiB = { rute: [baris("C-900", "TOKO JKS A")] };
+        const m = await mockB(page, o);
+        await page.goto("/form-kontrol?tab=ao", NAV);
+        const r = page.getByRole("region", { name: "Rute hari ini" });
+        const daftar = r.getByRole("list", { name: "Toko di rute" });
+        await expect(daftar.getByRole("listitem")).toHaveCount(1, NAV);
+        const sek = r.getByRole("region", { name: "Kunjungan luar rute" });
+        await sek.getByRole("button", { name: "Tambah toko luar rute" }).click();
+        await sek.getByLabel("Cari pelanggan").fill("pelanggan c");
+        await sek.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("listitem").first().click();
+        o.tambah = [{ status: 502, terapkan: true }];
+        const sebelum = nBaca(m.baca, "/ao-control");
+        await sek.getByRole("button", { name: "Tambah ke kunjungan hari ini" }).click();
+        await expect(sek.getByRole("alert")).toContainText("belum dipastikan", NAV);
+        await expect(sek.getByRole("alert")).not.toContainText("Bad Gateway");
+        await expect.poll(() => nBaca(m.baca, "/ao-control"), NAV).toBeGreaterThan(sebelum);
+        await expect(daftar.getByRole("listitem").filter({ hasText: "PELANGGAN C" })).toContainText("Luar rute", NAV);
+        await noOverflow(page);
+    });
+
+    test("B2 Batalkan: klik ganda = 1 POST, terkunci saat rute dimuat ulang, 409 tampil, tambah ulang; sesudah Kirim status = tanpa Batalkan; di bawah kartu; SPV tanpa Batalkan", async ({ page }) => {
+        const o: OpsiB = { rute: [baris("C-900", "TOKO JKS A"), baris("C-100002-CBA", "PELANGGAN B DENGAN NAMA TOKO YANG CUKUP PANJANG", { id: "l-b", luarRute: true }),
+            baris("C-100003-CBA", "PELANGGAN C", { id: "l-c", luarRute: true }),
+            // R-3: luar rute yang sudah punya baris AO (Kirim status rute: "tidak dikunjungi") — server menolak batal, tombol tidak ditawarkan.
+            baris("C-100004-CBA", "PELANGGAN D", { id: "l-d", luarRute: true, aoStatus: "not_visited" })] };
+        const m = await mockB(page, o);
+        await page.goto("/form-kontrol?tab=ao", NAV);
+        const daftar = page.getByRole("region", { name: "Rute hari ini" }).getByRole("list", { name: "Toko di rute" });
+        await expect(daftar.getByRole("listitem")).toHaveCount(4, NAV);
+        await expect(daftar.getByRole("button", { name: /^Batalkan kunjungan/ })).toHaveCount(2);
+        await expect(daftar.getByRole("button", { name: "Batalkan kunjungan PELANGGAN D" })).toHaveCount(0);
+        // R-6: tombol di baris bawah kartu — judul toko panjang tidak diperas (tombol di bawah judul, judul selebar kolom isi).
+        const kartuB = daftar.getByRole("listitem").filter({ hasText: "PELANGGAN B DENGAN" });
+        const bB = daftar.getByRole("button", { name: /^Batalkan kunjungan PELANGGAN B/ });
+        const judul = (await kartuB.getByRole("link").boundingBox())!;
+        expect((await bB.boundingBox())!.y).toBeGreaterThanOrEqual(judul.y + judul.height - 1);
+        expect(judul.width).toBeGreaterThan(250);
+        await noOverflow(page);
+        await page.screenshot({ path: "test-results/fkmsm2/ponsel-batalkan-bawah-kartu.png", fullPage: true });
+
+        // Klik ganda pada konfirmasi + muat ulang lambat: satu POST, Batalkan lain terkunci selama rute dimuat ulang.
+        o.batal = [{ status: 200, body: { ok: true, row: { id: "l-b" } }, delay: 1200, terapkan: true }];
+        o.ruteGet = [{ status: 200, delay: 3000, terapkan: true }];
+        await bB.click();
+        const d = page.getByRole("dialog", { name: /^Batalkan kunjungan PELANGGAN B/ });
+        await d.getByRole("button", { name: "Batalkan kunjungan" }).dblclick();
+        await expect(d).toBeHidden(NAV);
+        expect(postKe(m.tulis, "/luar-rute/batal"), "klik ganda = satu POST").toEqual([{ id: "l-b" }]);
+        await expect(daftar.getByRole("button", { name: "Batalkan kunjungan PELANGGAN C" })).toBeDisabled();
+        await expect(daftar.getByRole("listitem")).toHaveCount(3, NAV);
+        await expect(daftar.getByRole("button", { name: "Batalkan kunjungan PELANGGAN C" })).toBeEnabled(NAV);
+
+        // 409 berkode di dialog (kalimat server apa adanya).
+        o.batal = [{ status: 409, body: { ok: false, kode: "SUDAH_DIKUNJUNGI", error: "PELANGGAN C sudah punya status hari ini (check-in, status rute — termasuk \"tidak dikunjungi\" dari Kirim status rute — atau merchandising); kunjungannya tidak bisa dibatalkan." } }];
+        await daftar.getByRole("button", { name: "Batalkan kunjungan PELANGGAN C" }).click();
+        const d2 = page.getByRole("dialog", { name: "Batalkan kunjungan PELANGGAN C?" });
+        await d2.getByRole("button", { name: "Batalkan kunjungan" }).click();
+        await expect(d2.getByRole("alert")).toContainText("sudah punya status hari ini", NAV);
+        await d2.getByRole("button", { name: "Kembali" }).click();
+
+        // Sesudah batal: toko B bisa ditambah ulang.
+        const sek = page.getByRole("region", { name: "Kunjungan luar rute" });
+        await sek.getByRole("button", { name: "Tambah toko luar rute" }).click();
+        await sek.getByLabel("Cari pelanggan").fill("pelanggan b");
+        await sek.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("listitem").first().click();
+        await sek.getByRole("button", { name: "Tambah ke kunjungan hari ini" }).click();
+        await expect(daftar.getByRole("listitem").filter({ hasText: "PELANGGAN B" })).toContainText("Luar rute", NAV);
+
+        // SPV melihat rute salesman: tanpa Batalkan & tanpa Tambah.
+        await mockB(page, { scope: { role: "spv", salesName: "SPV A", spvName: "SPV A", allowedSalesCodes: ["S-01"], principles: ["PRINCIPLE A"] }, rute: o.rute });
+        await page.goto("/form-kontrol?tab=ao", NAV);
+        await page.getByLabel("Salesman tim").selectOption("S-01");
+        await expect(daftar.getByRole("listitem")).toHaveCount(4, NAV);
+        await expect(page.getByRole("button", { name: /^Batalkan kunjungan/ })).toHaveCount(0);
+        await expect(page.getByRole("region", { name: "Kunjungan luar rute" })).toHaveCount(0);
+    });
+
+    test("B3 Konfirmasi: nama toko di kendali + alasan terlihat; 409 BELUM_DIKUNJUNGI; 409 SUDAH_DI_JKS dan 502 → muat ulang; klik ganda = 1 POST; muat ulang gagal = strip + kunci", async ({ page }) => {
+        const o: OpsiB = { luarRute: [
+            luarPada(HARI_INI, "k1", "C-100001-CBA", "PELANGGAN A", { jksLain: [{ salesCode: "S-02", salesName: "SALES B", custCode: "C-100001", hariKunjungan: "Rabu", mingguPattern: "ganjil" }] }),
+            luarPada(HARI_INI, "k2", "C-100002-CBA", "PELANGGAN B"),
+            luarPada(HARI_INI, "k3", "C-100003-CBA", "PELANGGAN C"),
+            luarPada(HARI_INI, "k4", "C-100004-CBA", "PELANGGAN D"),
+        ] };
+        const m = await mockB(page, o);
+        await page.goto("/form-kontrol?tab=laporan", NAV);
+        const lap = page.getByRole("region", { name: "Laporan harian" });
+        const sek = lap.getByRole("region", { name: "Toko luar rute" });
+        const item = (n: string) => sek.getByRole("list", { name: "Toko luar rute" }).getByRole("listitem").filter({ hasText: n });
+        await expect(sek).toContainText("4 menunggu keputusan", NAV);
+        // R-4: kendali per toko bernama toko; alasan tombol nonaktif terlihat (bukan hanya title).
+        const a = item("PELANGGAN A");
+        await expect(a.getByRole("combobox", { name: "Hari kunjungan PELANGGAN A" })).toBeVisible();
+        await expect(a.getByRole("combobox", { name: "Minggu kunjungan PELANGGAN A" })).toBeVisible();
+        await expect(a.getByRole("button", { name: "Masukkan ke JKS: PELANGGAN A" })).toBeDisabled();
+        await expect(a.locator("p.fi-why", { hasText: "Pilih hari" })).toBeVisible();
+        await expect(a.getByRole("button", { name: "Jangan masukkan JKS: PELANGGAN A" })).toBeEnabled();
+        for (const n of ["Masukkan ke JKS", "Jangan masukkan JKS"]) expect((await a.getByRole("button", { name: n }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
+        await noOverflow(page);
+
+        // 409 BELUM_DIKUNJUNGI: kalimat server (tanggal format Indonesia) tampil di barisnya.
+        o.konf = [{ status: 409, body: { ok: false, kode: "BELUM_DIKUNJUNGI", error: "PELANGGAN A belum dikunjungi pada Selasa, 13 Okt 2026 (belum ada check-in, hasil kunjungan, atau merchandising); kunjungi dulu sebelum memasukkan ke JKS." } }];
+        await a.getByLabel("Hari").selectOption("Senin");
+        await a.getByLabel("Minggu").selectOption("all");
+        await a.getByRole("button", { name: "Masukkan ke JKS" }).click();
+        await expect(a.getByRole("alert")).toContainText("belum dikunjungi pada Selasa, 13 Okt 2026", NAV);
+
+        // 409 SUDAH_DI_JKS: server sudah mengubah baris menjadi sudah_jks → daftar dimuat ulang, baris jadi "Sudah di JKS Anda", hitungan benar.
+        const g0 = nBaca(m.baca, "/luar-rute");
+        o.konf = [{ status: 409, body: { ok: false, kode: "SUDAH_DI_JKS", error: "PELANGGAN B sudah ada di JKS Anda (C-100002: Senin · setiap minggu); tidak ditambahkan lagi — kunjungan ini ditandai \"sudah di JKS\"." } }];
+        o.luarRute = o.luarRute!.map((r) => r.id === "k2" ? { ...r, konfirmasi: "sudah_jks", jksSaya: [{ salesCode: "S-01", salesName: "SALES A", custCode: "C-100002", hariKunjungan: "Senin", mingguPattern: "all" }] } : r);
+        await item("PELANGGAN B").getByRole("button", { name: "Jangan masukkan JKS" }).click();
+        await expect(item("PELANGGAN B")).toContainText("Sudah di JKS Anda: Senin · setiap minggu", NAV);
+        await expect(item("PELANGGAN B").getByRole("button", { name: /JKS/ })).toHaveCount(0);
+        expect(nBaca(m.baca, "/luar-rute")).toBeGreaterThan(g0);
+        await expect(sek).toContainText("3 menunggu keputusan");
+
+        // 502 tak pasti (sudah tersimpan): muat ulang → keadaan server tampil.
+        o.konf = [{ status: 502, terapkan: true }];
+        await item("PELANGGAN C").getByRole("button", { name: "Jangan masukkan JKS" }).click();
+        await expect(item("PELANGGAN C")).toContainText("Tidak dimasukkan JKS", NAV);
+        await expect(sek).toContainText("2 menunggu keputusan");
+
+        // Klik ganda (jawaban lambat) = satu POST; lalu muat ulang gagal → strip "hasil sebelumnya" + Coba lagi, keputusan lain dikunci.
+        const nPost = postKe(m.tulis, "/luar-rute/konfirmasi").length;
+        o.konf = [{ status: 200, body: { ok: true, row: {}, jksLain: [] }, delay: 1000, terapkan: true }];
+        o.luarGet = [{ status: 500, body: { ok: false, error: "Internal server error" } }];
+        await item("PELANGGAN D").getByRole("button", { name: "Jangan masukkan JKS" }).dblclick();
+        await expect(item("PELANGGAN D")).toContainText("Tidak dimasukkan JKS", NAV);
+        expect(postKe(m.tulis, "/luar-rute/konfirmasi").length - nPost, "klik ganda = satu POST").toBe(1);
+        const strip = sek.getByRole("alert").filter({ hasText: "Gagal memuat ulang daftar toko luar rute." });
+        await expect(strip).toContainText("Yang tampil hasil sebelumnya", NAV);
+        await expect(a.getByRole("button", { name: "Jangan masukkan JKS" })).toBeDisabled();
+        await expect(a.locator("p.fi-why", { hasText: "Daftar gagal dimuat ulang; tekan Coba lagi dulu" })).toBeVisible();
+        await page.screenshot({ path: "test-results/fkmsm2/ponsel-konfirmasi-muat-ulang-gagal.png", fullPage: true });
+        await strip.getByRole("button", { name: "Coba lagi" }).click();
+        await expect(strip).toHaveCount(0, NAV);
+        await expect(a.getByRole("button", { name: "Jangan masukkan JKS" })).toBeEnabled();
+
+        // "Nanti": laporan tetap terkirim.
+        await lap.getByLabel("Tindak lanjut untuk SPV").fill("Kunjungi ulang toko luar rute");
+        await lap.getByRole("button", { name: "Kirim laporan ke SPV…" }).click();
+        await expect(page.getByRole("dialog")).toContainText("1 (boleh nanti)");
+        await page.getByRole("dialog").getByRole("button", { name: "Kirim laporan" }).click();
+        await expect.poll(() => postKe(m.tulis, "/reports").length).toBe(1);
+        await noOverflow(page);
+    });
+
+    test("B3b Laporan: daftar luar rute gagal = galat (bukan kosong), kartu \"—\", kirim laporan tidak tertahan", async ({ page }) => {
+        const o: OpsiB = { luarGagal: 99 };
+        const m = await mockB(page, o);
+        await page.goto("/form-kontrol?tab=laporan", NAV);
+        const lap = page.getByRole("region", { name: "Laporan harian" });
+        await expect(lap.getByRole("alert").filter({ hasText: "Daftar toko luar rute gagal dimuat." })).toBeVisible(NAV);
+        await expect(lap.locator(".fi-kc", { hasText: "Luar rute dikunjungi" }).locator("b")).toHaveText("—");
+        await lap.getByLabel("Tindak lanjut untuk SPV").fill("Catatan");
+        await lap.getByRole("button", { name: "Kirim laporan ke SPV…" }).click();
+        await page.getByRole("dialog").getByRole("button", { name: "Kirim laporan" }).click();
+        await expect.poll(() => postKe(m.tulis, "/reports").length).toBe(1);
+        o.luarGagal = 0;
+        await lap.getByRole("button", { name: "Coba lagi" }).first().click();
+        await expect(lap.getByRole("alert").filter({ hasText: "Daftar toko luar rute gagal dimuat." })).toHaveCount(0, NAV);
+    });
+
+    for (const [tgl, harap] of [["2026-10-21", "ganjil"], ["2027-01-04", "genap"], ["2026-12-28", "ganjil"]] as const) {
+        test(`B3c penanda "(minggu ini)" ${tgl} = ${harap} (acuan selang-seling, bukan ISO)`, async ({ page }) => {
+            await page.clock.setFixedTime(new Date(`${tgl}T10:00:00+08:00`));
+            await mockB(page, { luarRute: [luarPada(tgl, "k1", "C-100001-CBA", "PELANGGAN A")] });
+            await page.goto("/form-kontrol?tab=laporan", NAV);
+            const sel = page.getByRole("region", { name: "Toko luar rute" }).getByLabel("Minggu");
+            await expect(sel.locator("option", { hasText: "(minggu ini)" })).toHaveCount(1, NAV);
+            await expect(sel.locator(`option[value="${harap}"]`)).toHaveText(/\(minggu ini\)$/);
+        });
+    }
+
+    test("B4 SPV 390: JKS bertanda tambahan salesman; Dashboard SPV bertanda Luar rute", async ({ page }) => {
+        const jksRow = (custCode: string, tambahan: unknown) => ({ id: custCode, salesCode: "S-01", salesName: "SALES A", custCode, custName: `TOKO ${custCode}`,
+            market: null, alamat: null, kota: null, hariKunjungan: "Senin", mingguPattern: "all", area: null, rayon: null, principle: "PRINCIPLE A", visitFrequency: 4,
+            isActive: true, tambahanSalesman: tambahan });
+        await mockB(page, { scope: { role: "spv", salesName: "SPV A", spvName: "SPV A", allowedSalesCodes: ["S-01"], principles: ["PRINCIPLE A"] },
+            jksRows: [jksRow("C-100001", null), jksRow("C-100002-CBA", { oleh: "SALES A", pada: jam("17:05"), dariKunjungan: HARI_INI })],
+            spv: { spvName: "SPV A", rows: [{ salesCode: "S-01", salesName: "SALES A", totalRoute: 2, ordered: 1, notOrder: 0, notVisited: 1, checkedIn: 1, checkedOut: 1,
+                submittedAt: null, tindakLanjut: null, visits: [{ custCode: "C-100002-CBA", custName: "PELANGGAN B", luarRute: true, status: "ordered",
+                    checkinAt: jam("09:00"), checkoutAt: jam("09:20"), durationMinutes: 20, gpsFlag: null, durFlag: null, checkinPhotoUrl: null, checkoutPhotoUrl: null,
+                    merchDone: 6, merchTotal: 6 }], totalFieldMinutes: 20 }] } });
+        await page.goto("/form-kontrol?tab=jks", NAV);
+        const main = page.locator("main");
+        const tambahan = main.getByRole("listitem").filter({ hasText: "C-100002-CBA" });
+        await expect(tambahan).toContainText("Tambahan salesman", NAV);
+        await expect(tambahan).toContainText("ditambahkan salesman oleh SALES A");
+        await expect(main.getByRole("listitem").filter({ hasText: "TOKO C-100001" }).first()).not.toContainText("Tambahan salesman");
+        await noOverflow(page);
+        await page.goto("/form-kontrol/spv-dashboard", NAV);
+        await page.getByText("Detail kunjungan (1)").click();
+        await expect(page.getByRole("listitem").filter({ hasText: "PELANGGAN B" })).toContainText("Luar rute", NAV);
+        await noOverflow(page);
+    });
+
+    test("B5b/R-2 Hierarki: ejaan lama SM ('adnan') + simpan SPV → sesudah tersimpan baris tidak tetap Draf", async ({ page }) => {
+        const o: OpsiB = { scope: { role: "admin", allowedSalesCodes: null, principles: ["CABANG A"] },
+            profiles: [{ salesCode: "M-03", salesName: "SALES C", principle: "CABANG A", branch: "CABANG A", spvName: null, smName: "adnan" }],
+            spvOptions: ["SPV B"], smOptions: ["ADNAN"] };
+        const m = await mockB(page, o);
+        await page.goto("/form-kontrol?tab=hierarki", NAV);
+        const main = page.locator("main");
+        const c = main.getByRole("listitem").filter({ hasText: "SALES C" });
+        await expect(main.getByLabel("SM SALES C")).toHaveValue("ADNAN", NAV);
+        await expect(c.getByText("Draf")).toHaveCount(0);
+        await main.getByLabel("SPV SALES C").selectOption("SPV B");
+        await c.getByRole("button", { name: "Simpan" }).click();
+        const d = page.getByRole("dialog", { name: "Ubah hierarki SALES C?" });
+        await d.getByRole("button", { name: "Simpan hierarki" }).click();
+        await expect(d).toBeHidden(NAV);
+        await expect(main.getByText("Hierarki SALES C tersimpan.")).toBeVisible();
+        await expect.poll(() => m.baca.filter((u) => u.pathname.endsWith("/sales-profiles")).length).toBeGreaterThanOrEqual(2);
+        await expect(c.getByText("Draf")).toHaveCount(0, NAV);
+        await expect(c.getByRole("button", { name: "Simpan" })).toBeDisabled();
+        await expect(main.getByText(/perubahan belum disimpan/)).toHaveCount(0);
+    });
+});

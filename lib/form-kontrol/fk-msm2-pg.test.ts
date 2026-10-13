@@ -331,7 +331,9 @@ test("Batalkan: hanya milik sendiri + hari ini + belum ada check-in/status/merch
     // Baris AO tanpa check-in, status "tidak dikunjungi" (bentuk kiriman "Kirim status rute") — status apa pun menahan batal.
     await pool.query(`INSERT INTO ao_control_daily (id, sales_code, cust_code, principle, date, period_month, period_year, status, created_at, updated_at)
         VALUES ('ao-l', 'M-SLA', 'C-100012-CBA', 'PRINCIPLE A', $1, 10, 2026, 'not_visited', now(), now())`, [HARI_INI]);
-    assert.deepEqual(kode(await batal("u-sla", l)), [409, "SUDAH_DIKUNJUNGI"], "status AO tanpa check-in");
+    const sudahStatus = await batal("u-sla", l);
+    assert.deepEqual(kode(sudahStatus), [409, "SUDAH_DIKUNJUNGI"], "status AO tanpa check-in");
+    assert.match(String(sudahStatus.body.error), /sudah punya status hari ini/, "kalimat masuk akal juga untuk 'tidak dikunjungi' (peninjau B R-3)");
     await pool.query(`INSERT INTO merchandising_check (id, sales_code, cust_code, principle, date, created_at) VALUES ('mc-m', 'M-SLA', 'C-100013-CBA', 'PRINCIPLE A', $1, now())`, [HARI_INI]);
     assert.deepEqual(kode(await batal("u-sla", mm)), [409, "SUDAH_DIKUNJUNGI"], "merchandising saja");
     // Tanggal lain (baris kemarin, langsung di DB) dan baris yang sudah masuk JKS.
@@ -415,7 +417,11 @@ test("peninjau A: toko sudah di JKS sendiri -> baris lain jadi sudah_jks (beruru
     // R-2: "jks" butuh kunjungan nyata; baris AO "tidak dikunjungi" (Kirim status rute) bukan kunjungan.
     assert.equal((await tambah("u-sla", "C-100019-CBA")).status, 201);
     const id19 = await idLuar("C-100019-CBA");
-    assert.deepEqual(kode(await konfirmasi("u-sla", id19, { keputusan: "jks", hari: "Kamis", mingguPattern: "all" })), [409, "BELUM_DIKUNJUNGI"]);
+    const belum = await konfirmasi("u-sla", id19, { keputusan: "jks", hari: "Kamis", mingguPattern: "all" });
+    assert.deepEqual(kode(belum), [409, "BELUM_DIKUNJUNGI"]);
+    // Peninjau B R-5: tanggal di kalimat salesman berformat Indonesia ("Selasa, 13 Okt 2026"), bukan ISO mentah.
+    assert.doesNotMatch(String(belum.body.error), /\d{4}-\d{2}-\d{2}/);
+    assert.match(String(belum.body.error), new RegExp(`pada \\p{L}+, ${Number(HARI_INI.slice(8))} \\p{L}+ ${HARI_INI.slice(0, 4)}`, "u"));
     await pool.query(`INSERT INTO ao_control_daily (id, sales_code, cust_code, principle, date, period_month, period_year, status, created_at, updated_at)
         VALUES ('ao-19', 'M-SLA', 'C-100019-CBA', 'PRINCIPLE A', $1, 10, 2026, 'not_visited', now(), now())`, [HARI_INI]);
     assert.deepEqual(kode(await konfirmasi("u-sla", id19, { keputusan: "jks", hari: "Kamis", mingguPattern: "all" })), [409, "BELUM_DIKUNJUNGI"]);
@@ -498,7 +504,9 @@ async function katalog(p: Pool) {
 }
 
 test("PG FK-MSM2: DDL dua kali idempoten + VERIFIKASI (+ sabotase hak/CHECK); migrate-pg OK->SKIP; = 0034 = Drizzle", { skip: pgSkip }, async () => {
-    const ddl = await berkas("../../docs/handover/DDL_FK_MSM2.sql");
+    // peninjau A: role SENDIRI per run (role = objek sekluster) -> tak ada GRANT ke accapi_app bersama, tak bentrok uji lain.
+    const PERAN_UJI = `uji_app_${randomUUID().slice(0, 8)}`;
+    const ddl = (await berkas("../../docs/handover/DDL_FK_MSM2.sql")).replaceAll("accapi_app", PERAN_UJI);
     const { migrations } = await import(new URL("../../scripts/migrate-pg.mjs", import.meta.url).href) as { migrations: { nama: string; sudahAda: string; sql: string }[] };
     const entri = migrations.find((x) => x.nama === "kunjungan_luar_rute (FK-MSM2)");
     assert.ok(entri, "entri migrate-pg");
@@ -537,31 +545,30 @@ test("PG FK-MSM2: DDL dua kali idempoten + VERIFIKASI (+ sabotase hak/CHECK); mi
     assert.equal(await migrasi(d.pool), "OK", "tanpa idx_klr_unik = belum ada");
     assert.deepEqual(await katalog(d.pool), ka);
 
-    // VERIFIKASI hak + CHECK (role sementara di transaksi yang di-ROLLBACK). Galat "role accapi_app already exists" = uji lain di cluster
-    // yang sama sedang memakainya: jalankan berkas ini sendirian.
+    // VERIFIKASI hak + CHECK (role ACAK per run, PERAN_UJI, di transaksi yang di-ROLLBACK — tidak bentrok dengan accapi_app uji lain di cluster).
     const verif = ddl.slice(ddl.lastIndexOf("COMMIT;") + "COMMIT;".length);
     const k = await b.pool.connect();
     try {
         await k.query("BEGIN");
-        await k.query("CREATE ROLE accapi_app NOLOGIN");
-        await k.query(`GRANT USAGE ON SCHEMA ${b.skema} TO accapi_app`);
-        await k.query("GRANT SELECT, INSERT, UPDATE ON kunjungan_luar_rute, jks_master TO accapi_app");
-        await k.query(`GRANT SELECT ON customer, branch, accurate_employee, sales_profile TO accapi_app`);
-        await k.query("GRANT INSERT ON kontrol_audit_log TO accapi_app");
+        await k.query(`CREATE ROLE ${PERAN_UJI} NOLOGIN`);
+        await k.query(`GRANT USAGE ON SCHEMA ${b.skema} TO ${PERAN_UJI}`);
+        await k.query(`GRANT SELECT, INSERT, UPDATE ON kunjungan_luar_rute, jks_master TO ${PERAN_UJI}`);
+        await k.query(`GRANT SELECT ON customer, branch, accurate_employee, sales_profile TO ${PERAN_UJI}`);
+        await k.query(`GRANT INSERT ON kontrol_audit_log TO ${PERAN_UJI}`);
         // S20 (peninjau A): default privileges L1g memberi DELETE/TRUNCATE -> blok 2 DDL (REVOKE) mencabutnya.
-        await k.query("GRANT DELETE, TRUNCATE ON kunjungan_luar_rute TO accapi_app");
+        await k.query(`GRANT DELETE, TRUNCATE ON kunjungan_luar_rute TO ${PERAN_UJI}`);
         await k.query(ddl.slice(ddl.indexOf("DO $$"), ddl.indexOf("END $$;") + "END $$;".length));
         for (const v of (await k.query(verif)).rows as Cek[]) assert.equal(v.ok, true, `hak penuh: ${v.cek}`);
-        await k.query("GRANT DELETE ON kunjungan_luar_rute TO accapi_app");
-        await k.query("REVOKE UPDATE ON jks_master FROM accapi_app");
-        await k.query("REVOKE SELECT ON branch FROM accapi_app");
+        await k.query(`GRANT DELETE ON kunjungan_luar_rute TO ${PERAN_UJI}`);
+        await k.query(`REVOKE UPDATE ON jks_master FROM ${PERAN_UJI}`);
+        await k.query(`REVOKE SELECT ON branch FROM ${PERAN_UJI}`);
         await k.query("ALTER TABLE kunjungan_luar_rute DROP CONSTRAINT kunjungan_luar_rute_jks");
         await k.query("ALTER TABLE kunjungan_luar_rute ADD CONSTRAINT kunjungan_luar_rute_jks CHECK (true)");
         const kurang = (await k.query(verif)).rows as Cek[];
         const nilai = (awal: string) => kurang.find((v) => v.cek.startsWith(awal))?.ok;
-        assert.equal(nilai("accapi_app tanpa DELETE"), false, "sabotase DELETE terbaca");
-        assert.equal(nilai("prasyarat: accapi_app boleh SELECT/INSERT/UPDATE jks_master"), false);
-        assert.equal(nilai("prasyarat: accapi_app boleh SELECT customer"), false);
+        assert.equal(nilai(`${PERAN_UJI} tanpa DELETE`), false, "sabotase DELETE terbaca");
+        assert.equal(nilai(`prasyarat: ${PERAN_UJI} boleh SELECT/INSERT/UPDATE jks_master`), false);
+        assert.equal(nilai(`prasyarat: ${PERAN_UJI} boleh SELECT customer`), false);
         assert.equal(nilai("CHECK konfirmasi"), false, "CHECK dilemahkan terbaca");
         assert.equal(kurang.filter((v) => v.ok === false).length, 4, "hanya yang disabotase");
     } finally {

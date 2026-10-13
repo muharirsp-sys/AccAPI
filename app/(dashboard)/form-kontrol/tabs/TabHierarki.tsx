@@ -42,8 +42,9 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
     const profiles = load.data?.rows ?? [];
     const opsi = { spv: load.data?.spv ?? [], sm: load.data?.sm ?? [] };
     const nilai = (p: Profile): Edit => edits[p.salesCode] ?? { spvName: p.spvName ?? "", smName: p.smName ?? "" };
-    // Nama dibandingkan & disimpan ter-trim; server mencocokkan nama SPV/SM tanpa beda huruf (FK-MSM butir 5).
-    const berubah = (p: Profile) => { const e = edits[p.salesCode]; return Boolean(e) && (e.spvName.trim() !== (p.spvName ?? "").trim() || e.smName.trim() !== (p.smName ?? "").trim()); };
+    // Nama dibandingkan lewat kunciNama (trim + tanpa beda huruf), sama dengan server: ejaan lama "adnan" yang disimpan server sebagai ejaan
+    // akun "ADNAN" bukan perubahan (peninjau B R-2 — tanpa ini baris tetap "Draf" sesudah tersimpan).
+    const berubah = (p: Profile) => { const e = edits[p.salesCode]; return Boolean(e) && (kunciNama(e.spvName) !== kunciNama(p.spvName) || kunciNama(e.smName) !== kunciNama(p.smName)); };
     const nDraf = profiles.filter(berubah).length;
     useUnsavedGuard(nDraf > 0);
     const kunci = izin ?? (load.status !== "siap" ? "Tunggu daftar selesai dimuat ulang." : undefined);

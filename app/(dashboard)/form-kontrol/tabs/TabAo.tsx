@@ -241,10 +241,11 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                 const b = badgeToko(r);
                                 const q = new URLSearchParams({ salesCode: r.salesCode, principle, date: tanggal });
                                 const alasanBintang = bukanPemilik ?? (adaHasilKunjungan(r.status) ? "Toko ini sudah punya hasil kunjungan" : undefined);
-                                // Owner 13 Okt: kunjungan luar rute salah tambah boleh dibatalkan pemiliknya hari itu, selama belum ada check-in/status.
-                                const bisaBatal = r.luarRute && salesman && !bukanPemilik && tanggal === hariIniWita() && !r.checkinAt && r.status === "not_visited";
+                                // Owner 13 Okt: kunjungan luar rute salah tambah boleh dibatalkan pemiliknya hari itu, selama belum ada check-in/status
+                                // APA PUN (juga "tidak dikunjungi" dari Kirim status rute — server menolaknya, peninjau B R-3).
+                                const bisaBatal = r.luarRute && salesman && !bukanPemilik && tanggal === hariIniWita() && !r.checkinAt && !r.adaStatus;
                                 return (
-                                    <li key={r.id ?? r.custCode} className="fi-wl-row" style={{ gridTemplateColumns: bisaBatal ? "auto minmax(0,1fr) auto" : "auto minmax(0,1fr)", paddingLeft: 4 }}>
+                                    <li key={r.id ?? r.custCode} className="fi-wl-row" style={{ gridTemplateColumns: "auto minmax(0,1fr)", paddingLeft: 4 }}>
                                         <Button variant="icon" aria-pressed={r.isPriority} aria-label={`Prioritas ${r.custName}`} title="Tandai prioritas"
                                             disabled={Boolean(alasanBintang)} disabledReason={alasanBintang} onClick={() => tandai(r)}>
                                             <Star className="fi-icon" aria-hidden style={r.isPriority ? { fill: "var(--warn-solid)", color: "var(--warn-solid)" } : undefined} />
@@ -252,11 +253,14 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                         <ListItem href={`/form-kontrol/visit/${encodeURIComponent(r.custCode)}?${q}`} doc={r.custCode} title={r.custName}
                                             meta={metaToko(r)} badge={<StatusBadge tone={b.tone}>{b.label}</StatusBadge>} />
                                         {bisaBatal && (
+                                            // Di baris bawah kartu (kolom isi), tidak memeras nama toko panjang di 390 px (peninjau B R-6).
+                                            <div style={{ gridColumn: 2, justifySelf: "start" }}>
                                             <BatalkanLuarRute id={r.id} custName={r.custName} custCode={r.custCode}
                                                 kunci={tanpaIzin ?? (batalTakPasti ? "Hasil pembatalan terakhir belum pasti; muat ulang rute dulu."
                                                     : load.status !== "siap" ? "Menunggu rute selesai dimuat" : undefined)}
                                                 onTakPasti={() => setBatalTakPasti(true)}
                                                 onBatal={() => { setSukses(`Kunjungan luar rute ${r.custName} dibatalkan.`); muatUlang(); }} />
+                                            </div>
                                         )}
                                     </li>
                                 );

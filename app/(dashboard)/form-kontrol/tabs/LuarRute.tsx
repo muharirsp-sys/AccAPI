@@ -61,6 +61,8 @@ export function TambahLuarRute({ salesCode, principle, tanggal, ruteKode, onDita
             onDitambah();
         } catch (e) {
             setGalat(e instanceof Error ? e.message : "Gagal menambah kunjungan.");
+            // Jawaban tidak pasti: toko mungkin sudah masuk — rute dimuat ulang supaya terlihat (mengulang tetap aman: baris sama).
+            if (e instanceof GagalKirim && e.tidakPasti) onDitambah();
         } finally { setSibuk(false); }
     }
 
@@ -178,8 +180,13 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjung
             muatUlang();
         } catch (e) {
             setGalat((g) => ({ ...g, [r.id]: e instanceof Error ? e.message : "Keputusan belum tersimpan." }));
+            // Peninjau B: 404/409 (server sudah mengubah/menolak baris, mis. jadi "sudah di JKS") atau jawaban tak pasti → daftar dimuat
+            // ulang supaya layar = keadaan server; selama memuat semua keputusan dikunci.
+            if (e instanceof GagalKirim && (e.tidakPasti || e.status === 404 || e.status === 409)) muatUlang();
         } finally { setSibuk(""); }
     }
+    const kunciMuat = load.status === "memuat" ? "Menunggu daftar dimuat ulang"
+        : load.status === "galat" ? "Daftar gagal dimuat ulang; tekan Coba lagi dulu" : undefined;
 
     if (load.status === "galat" && !load.data) {
         return (
@@ -201,10 +208,17 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjung
                     Putuskan per toko: masukkan ke JKS Anda (hari + minggu) atau tidak. Boleh dibiarkan untuk nanti — tetap menunggu dan laporan tetap bisa dikirim.
                 </p>
                 {tanpaIzin && <p className="fi-small fi-why">{tanpaIzin}</p>}
+                {load.status === "galat" && (
+                    <MessageStrip tone="neg" title="Gagal memuat ulang daftar toko luar rute.">
+                        {load.error} Yang tampil hasil sebelumnya; keputusan dikunci sampai daftar terbaca.{" "}
+                        <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang}>Coba lagi</Button>
+                    </MessageStrip>
+                )}
                 <ul aria-label="Toko luar rute" style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 12 }}>
                     {rows.map((r) => {
                         const pl = pilih[r.id] ?? { hari: "", minggu: "" };
-                        const kurang = tanpaIzin ?? (!pl.hari ? "Pilih hari" : !pl.minggu ? "Pilih minggu" : undefined);
+                        const kunciTidak = tanpaIzin ?? kunciMuat;
+                        const kurang = kunciTidak ?? (!pl.hari ? "Pilih hari" : !pl.minggu ? "Pilih minggu" : undefined);
                         const ubah = (k: "hari" | "minggu", v: string) => setPilih((x) => ({ ...x, [r.id]: { ...pl, [k]: v } }));
                         return (
                             <li key={r.id} className="fi-panel" style={{ minWidth: 0 }}>
@@ -231,7 +245,8 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjung
                                         <div className="fi-formgrid">
                                             <FormField label="Hari">
                                                 {(a) => (
-                                                    <select {...a} className="fi-input" value={pl.hari} disabled={sibuk === r.id} onChange={(e) => ubah("hari", e.target.value)}>
+                                                    <select {...a} aria-label={`Hari kunjungan ${r.custName}`} className="fi-input" value={pl.hari} disabled={sibuk === r.id}
+                                                        onChange={(e) => ubah("hari", e.target.value)}>
                                                         <option value="">Pilih hari</option>
                                                         {HARI.map((h) => <option key={h} value={h}>{h}</option>)}
                                                     </select>
@@ -239,7 +254,8 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjung
                                             </FormField>
                                             <FormField label="Minggu">
                                                 {(a) => (
-                                                    <select {...a} className="fi-input" value={pl.minggu} disabled={sibuk === r.id} onChange={(e) => ubah("minggu", e.target.value)}>
+                                                    <select {...a} aria-label={`Minggu kunjungan ${r.custName}`} className="fi-input" value={pl.minggu} disabled={sibuk === r.id}
+                                                        onChange={(e) => ubah("minggu", e.target.value)}>
                                                         <option value="">Pilih minggu</option>
                                                         {MINGGU.map(([v, l]) => <option key={v} value={v}>{l}{v === mingguIni ? " (minggu ini)" : ""}</option>)}
                                                     </select>
@@ -249,10 +265,14 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjung
                                         {galat[r.id] && <MessageStrip tone="neg" title="Keputusan belum tersimpan.">{galat[r.id]}</MessageStrip>}
                                         <div className="fi-btnrow">
                                             <Button variant="primary" busy={sibuk === r.id} disabled={Boolean(kurang) || Boolean(sibuk)} disabledReason={kurang}
+                                                aria-label={`Masukkan ke JKS: ${r.custName}`}
                                                 onClick={() => void putuskan(r, { keputusan: "jks", hari: pl.hari, mingguPattern: pl.minggu })}>Masukkan ke JKS</Button>
-                                            <Button variant="secondary" disabled={Boolean(tanpaIzin) || Boolean(sibuk)} disabledReason={tanpaIzin}
+                                            <Button variant="secondary" disabled={Boolean(kunciTidak) || Boolean(sibuk)} disabledReason={kunciTidak}
+                                                aria-label={`Jangan masukkan JKS: ${r.custName}`}
                                                 onClick={() => void putuskan(r, { keputusan: "tidak" })}>Jangan masukkan JKS</Button>
                                         </div>
+                                        {/* Alasan tombol nonaktif terlihat (layar sentuh tidak menampilkan title). */}
+                                        {kurang && kurang !== tanpaIzin && <p className="fi-small fi-why">{kurang}</p>}
                                     </>
                                 )}
                             </li>
