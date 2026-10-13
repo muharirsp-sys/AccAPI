@@ -12,6 +12,7 @@
  */
 import { expect, test, type Page, type Request } from "@playwright/test";
 import * as XLSX from "xlsx";
+import { paritasMinggu } from "../lib/form-kontrol/constants";
 
 const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 const NAV = { timeout: 60_000 } as const;
@@ -211,6 +212,9 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
         const masuk = b.getByRole("button", { name: "Masukkan ke JKS" });
         await expect(masuk).toBeDisabled();
         await b.getByLabel("Hari").selectOption("Selasa");
+        // Paritas = rute (acuan owner 12 Okt 2026 = genap, selang-seling; bukan minggu ISO).
+        await expect(b.getByLabel("Minggu").locator(`option[value="${paritasMinggu(HARI_INI)}"]`)).toHaveText(/\(minggu ini\)$/);
+        await expect(b.getByLabel("Minggu").locator("option", { hasText: "minggu ini" })).toHaveCount(1);
         await b.getByLabel("Minggu").selectOption("genap");
         await expect(masuk).toBeEnabled();
         await noOverflow(page);

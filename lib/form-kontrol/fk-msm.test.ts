@@ -1,5 +1,5 @@
-/* FK-MSM (pilot Form Kontrol cabang, 12 Okt 2026) TANPA DB: kunci hari JKS + bentuk baku unggah, paritas minggu ISO, pencocokan kode
- * toko JKS (tanpa akhiran cabang) -> pelanggan Accurate cabang. Perilaku route
+/* FK-MSM (pilot Form Kontrol cabang, 12 Okt 2026) TANPA DB: kunci hari JKS + bentuk baku unggah, paritas minggu dari acuan owner
+ * (12 Okt 2026 = genap, selang-seling; bukan ISO), pencocokan kode toko JKS (tanpa akhiran cabang) -> pelanggan Accurate cabang. Perilaku route
  * ASLI pada Postgres = lib/form-kontrol/fk-msm-pg.test.ts. Data contoh generik. */
 import { test } from "node:test";
 import assert from "node:assert/strict";

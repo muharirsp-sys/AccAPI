@@ -52,6 +52,8 @@ async function muat() {
         reports: await r("../../app/api/form-kontrol/reports/route.ts"),
         spv: await r("../../app/api/form-kontrol/spv-dashboard/route.ts"),
         myScope: await r("../../app/api/form-kontrol/my-scope/route.ts"),
+        lr: await import("./luar-rute.ts"),
+        fk: await import("./db.ts"),
     };
 }
 let m: Awaited<ReturnType<typeof muat>>;
@@ -301,6 +303,32 @@ test("Dashboard SPV menandai kunjungan luar rute (nama toko dari kunjungannya)",
     assert.equal(d.status, 200);
     const sla = (d.body.rows as { salesCode: string; visits: { custCode: string; custName: string; luarRute: boolean }[] }[]).find((r) => r.salesCode === "M-SLA")!;
     assert.deepEqual(sla.visits.map((v) => [v.custCode, v.custName, v.luarRute]), [["C-100002-CBA", "PELANGGAN B", true]]);
+});
+
+// =========================================================================== paritas minggu (FK-MSM putaran 2)
+
+test("paritas lintas tahun = acuan owner (12 Okt 2026 genap, selang-seling): rute + cek ganda luar rute — Senin 28 Des 2026 ganjil, Senin 4 Jan 2027 genap; Minggu tetap memuat luar rute", { skip: pgSkip }, async () => {
+    // Fungsi lib langsung (route hanya menerima hari ini). Minggu ISO % 2 memberi keduanya ganjil (2026 = 53 minggu ISO).
+    await pool.query(`INSERT INTO jks_master (id, sales_code, sales_name, cust_code, cust_name, hari_kunjungan, minggu_pattern, principle, channel,
+        visit_frequency, is_active, created_at, updated_at) VALUES ('j9', 'M-SLA', 'SALES A', 'C-100009', 'PELANGGAN I', 'SENIN', 'ganjil', 'PRINCIPLE A', 'MT', 2, true, now(), now())`);
+    try {
+        const tambahPada = (tanggal: string) => m.lr.tambahLuarRute({ salesCode: "M-SLA", principle: "PRINCIPLE A", tanggal, aktorId: "u-sla", aktorNama: "Sales A",
+            pelanggan: { id: 9, customerNo: "C-100009-CBA", name: "PELANGGAN I", alamat: null } });
+        const ruteC9 = async (tanggal: string) => (await m.fk.getTodayRoute("M-SLA", "PRINCIPLE A", tanggal))
+            .filter((r) => r.custCode.startsWith("C-100009")).map((r) => [r.custCode, r.luarRute]);
+        const ganjil = await tambahPada("2026-12-28");
+        assert.equal("galat" in ganjil ? ganjil.galat.kode : "tertulis", "SUDAH_DI_RUTE", "28 Des 2026 = ganjil: toko JKS Senin-ganjil sudah di rute");
+        assert.deepEqual(await ruteC9("2026-12-28"), [["C-100009", false]]);
+        const genap = await tambahPada("2027-01-04");
+        assert.equal("galat" in genap ? genap.galat.kode : genap.row.konfirmasi, "sudah_jks", "4 Jan 2027 = genap: tidak di rute, boleh ditambah (sudah di JKS hari lain)");
+        assert.deepEqual(await ruteC9("2027-01-04"), [["C-100009-CBA", true]]);
+        // Hari tanpa jadwal JKS (Minggu 3 Jan 2027): kunjungan luar rute tetap ada di rute (merge FK-MSM: tanpa `if (!dayName) return []`).
+        assert.ok(!("galat" in await tambahPada("2027-01-03")));
+        assert.deepEqual(await ruteC9("2027-01-03"), [["C-100009-CBA", true]]);
+    } finally {
+        await pool.query(`DELETE FROM kunjungan_luar_rute WHERE cust_code = 'C-100009-CBA'`);
+        await pool.query(`DELETE FROM jks_master WHERE id = 'j9'`);
+    }
 });
 
 // =========================================================================== DDL / migrasi

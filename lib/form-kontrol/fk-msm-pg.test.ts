@@ -138,9 +138,9 @@ const rute = async (userId: string, date: string, principle = "PRINCIPLE A", sal
 // =========================================================================== butir 2: hari kunjungan tak peka huruf + pola minggu
 
 test("butir 2: JKS hari HURUF BESAR/berspasi/JUM'AT terbaca tanpa unggah ulang; minggu genap/ganjil (selang-seling dari acuan owner)", { skip: pgSkip }, async () => {
-    // Senin 12 Okt 2026 = minggu ISO 42 (genap): ganjil C-100001 TIDAK, genap C-100003 + all C-100004 ya; JKS nonaktif tidak.
+    // Senin 12 Okt 2026 = minggu acuan owner (genap): ganjil C-100001 TIDAK, genap C-100003 + all C-100004 ya; JKS nonaktif tidak.
     assert.deepEqual(await rute("u-sla", "2026-10-12"), ["C-100003", "C-100004"]);
-    // Senin 19 Okt = minggu 43 (ganjil).
+    // Senin 19 Okt = 1 minggu sesudah acuan (ganjil).
     assert.deepEqual(await rute("u-sla", "2026-10-19"), ["C-100001", "C-100004"]);
     assert.deepEqual(await rute("u-sla", "2026-10-16"), ["C-100005"], "JUM'AT = Jumat");
     assert.deepEqual(await rute("u-sla", "2026-10-13"), ["C-100006"]);
@@ -336,6 +336,8 @@ test("KC2: briefing & daftar SPV milik SM dicocokkan trim + tak peka huruf, tanp
     assert.deepEqual(rows[0].briefings.map((b) => b.session).sort(), ["pagi", "sore"]);
     const spv = await jawab(await sebagai("u-spva", () => m.briefing.GET(req("/api/form-kontrol/briefing?date=2026-10-12"))));
     assert.equal(spv.body.total, 2);
+    // R-1 (peninjau FK-MSM 13 Okt): daftar SPV milik SM hanya untuk SM/admin — SPV 403 (bukan daftar atas namanya).
+    assert.equal((await sebagai("u-spva", () => m.smBriefings.GET(req("/api/form-kontrol/sm-briefings?date=2026-10-12")))).status, 403);
 });
 
 test("SEDANG: briefing — salesman hanya SPV-nya, SPV hanya namanya, SM hanya SPV bawahannya + namanya; admin semua", { skip: pgSkip }, async () => {
@@ -371,4 +373,8 @@ test("SEDANG: Kontrol SM — SM hanya atas namanya, peran lain 403, admin semua"
     assert.equal((await post("u-admin", { smName: "SM B" })).status, 200);
     assert.deepEqual((await pool.query(`SELECT sm_name FROM sm_control ORDER BY 1`)).rows.map((r) => r.sm_name), ["SM A", "SM B"]);
     assert.equal((await get("u-sma", "&smName=sm%20a")).body.total, 1);
+    // R-2 (peninjau FK-MSM 13 Okt): baris lama berejaan lain (' sm a ', disimpan sebelum rilis) tetap terbaca SM A — upper(trim()).
+    await pool.query(`INSERT INTO sm_control (id, sm_name, date, created_at) VALUES ('smc-lama', ' sm a ', '2026-10-11', now())`);
+    const lama = await jawab(await sebagai("u-sma", () => m.smControl.GET(req("/api/form-kontrol/sm-control?date=2026-10-11"))));
+    assert.deepEqual([lama.status, lama.body.total], [200, 1]);
 });

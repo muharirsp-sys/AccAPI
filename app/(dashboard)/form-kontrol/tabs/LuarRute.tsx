@@ -5,7 +5,7 @@
  *   minggu) / jangan masukkan JKS / biarkan "nanti" (tetap menunggu; laporan tetap bisa dikirim); peringatan bila toko ada di JKS salesman lain.
  * Caller: ./TabAo.tsx (TambahLuarRute), ./TabLaporan.tsx (KonfirmasiLuarRute).
  * Dependensi: components/order/PemilihPelanggan (GET /api/customers/search), POST/GET /api/form-kontrol/luar-rute(+/konfirmasi),
- *   lib/form-kontrol/constants (kodeJksUntuk), ../lapangan (bacaFk, kirimFk), ../shared (HARI, jamWita, useIzinFk), components/fiori/*.
+ *   lib/form-kontrol/constants (kodeJksUntuk, paritasMinggu), ../lapangan (bacaFk, kirimFk), ../shared (HARI, jamWita, useIzinFk), components/fiori/*.
  * Main Functions: TambahLuarRute, KonfirmasiLuarRute, labelJadwal.
  * Side Effects: HTTP baca/tulis di atas. Server menegakkan semua aturan (pemilik, cabang, hari ini, principal, ganda); layar hanya mencegah
  *   kiriman yang pasti ditolak dan menampilkan kalimat penolakan server.
@@ -17,7 +17,7 @@ import { MapPinPlus, RefreshCw } from "lucide-react";
 import { Button, MessageStrip, Section, StatusBadge } from "@/components/fiori/core";
 import { FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
-import { kodeJksUntuk } from "@/lib/form-kontrol/constants";
+import { kodeJksUntuk, paritasMinggu } from "@/lib/form-kontrol/constants";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { HARI, jamWita, useIzinFk } from "../shared";
 import { bacaFk, kirimFk } from "../lapangan";
@@ -123,6 +123,8 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu }: { salesCo
 
     const rows = (load.data ?? []).filter((r) => r.checkinAt).map((r) => ({ ...r, ...(putus[r.id] ?? {}) }));
     const menunggu = rows.filter((r) => r.konfirmasi === "menunggu").length;
+    // Paritas minggu laporan = hitungan rute (acuan owner 12 Okt 2026 = genap, selang-seling), supaya pilihan ganjil/genap tidak ditebak.
+    const mingguIni = paritasMinggu(tanggal);
     useEffect(() => { onMenunggu(menunggu); }, [menunggu, onMenunggu]);
 
     async function putuskan(r: BarisLuar, isi: { keputusan: "jks"; hari: string; mingguPattern: string } | { keputusan: "tidak" }) {
@@ -198,7 +200,7 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu }: { salesCo
                                                 {(a) => (
                                                     <select {...a} className="fi-input" value={pl.minggu} disabled={sibuk === r.id} onChange={(e) => ubah("minggu", e.target.value)}>
                                                         <option value="">Pilih minggu</option>
-                                                        {MINGGU.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                                                        {MINGGU.map(([v, l]) => <option key={v} value={v}>{l}{v === mingguIni ? " (minggu ini)" : ""}</option>)}
                                                     </select>
                                                 )}
                                             </FormField>
