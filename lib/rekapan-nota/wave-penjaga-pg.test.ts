@@ -2,7 +2,8 @@
  * SEKALI-PAKAI (user/item/customer/app_setting/user_group/group_permission disalin `LIKE public.*`, lalu db/migrations/0002_rekapan_nota.sql
  * dijalankan di skema itu; search_path hanya skema itu; DROP di akhir). Sesi Better Auth dipalsukan; peran legacy admin = semua izin.
  * Uji serentak dibuat deterministik: transaksi uji memegang kunci baris/tabel, menunggu route benar-benar tertahan (pg_stat_activity
- * per application_name), lalu melepas. Data contoh generik. Tanpa env dilewati. */
+ * per application_name), lalu melepas. Tidak boleh menggantung: lock_timeout/statement_timeout di semua koneksi uji, batas waktu per
+ * uji, dan koneksi yang tersisa diputus sebelum DROP SCHEMA. Data contoh generik. Tanpa env dilewati. */
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -16,6 +17,8 @@ const pgSkip = PG_URL ? false : "AM040_DATABASE_URL tidak di-set (Postgres evalu
 const TABEL = ["user", "item", "customer", "app_setting", "user_group", "group_permission"];
 const skema = `uji_rekapan_${randomUUID().slice(0, 8)}`;
 const APP = skema; // application_name koneksi route: penanda "route ini sedang menunggu kunci"
+const BATAS = "-c lock_timeout=10s -c statement_timeout=30s"; // regresi yang menunggu kunci jadi merah, bukan menggantung
+const T_UJI = { skip: pgSkip, timeout: 120_000 } as const;
 type Ctx = { params: Promise<{ id: string }> };
 type Handler = (req: Request, ctx: Ctx) => Promise<Response>;
 let admin: Pool;
@@ -79,11 +82,14 @@ async function layarLain(sql: string[]) {
 
 before(async () => {
     if (!PG_URL) return;
-    admin = new Pool({ connectionString: PG_URL, max: 4 });
+    const ua = new URL(PG_URL);
+    ua.searchParams.set("options", BATAS);
+    ua.searchParams.set("application_name", `${APP}-admin`);
+    admin = new Pool({ connectionString: ua.toString(), max: 4 });
     await admin.query(`CREATE SCHEMA ${skema}`);
     for (const t of TABEL) await admin.query(`CREATE TABLE ${skema}."${t}" (LIKE public."${t}" INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING INDEXES)`);
     const u = new URL(PG_URL);
-    u.searchParams.set("options", `-c search_path=${skema}`);
+    u.searchParams.set("options", `-c search_path=${skema} ${BATAS}`);
     u.searchParams.set("application_name", APP);
     const migrasi = await readFile(new URL("../../db/migrations/0002_rekapan_nota.sql", import.meta.url), "utf8");
     const satu = new Pool({ connectionString: u.toString(), max: 1 });
@@ -97,6 +103,7 @@ before(async () => {
     await satu.end();
 
     process.env.DATABASE_URL = u.toString();
+    process.env.PG_STATEMENT_TIMEOUT_MS = "30000";
     delete process.env.LOCAL_AUTH_BYPASS;
     const auth = (await import("../auth.ts")).auth;
     Object.defineProperty(auth.api, "getSession", { configurable: true,
@@ -114,28 +121,37 @@ before(async () => {
 after(async () => {
     if (!PG_URL) return;
     await db?.end().catch(() => {});
-    await admin.query(`DROP SCHEMA ${skema} CASCADE`);
+    admin.on("error", () => {}); // koneksi idle admin yang diputus di bawah melapor lewat event ini
+    const c = await admin.connect(); // putus + DROP di SATU koneksi: tidak ada koneksi mati yang dipakai ulang
+    await c.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+                    WHERE application_name IN ($1, $2) AND pid <> pg_backend_pid()`, [APP, `${APP}-admin`]);
+    await c.query(`DROP SCHEMA ${skema} CASCADE`);
+    c.release();
     await admin.end();
 });
 
-test("BL-54: file sore tidak menggandakan nota pagi; berubah sebelum wave diganti, sesudah wave jadi exception", { skip: pgSkip }, async () => {
+test("BL-54: file sore tidak menggandakan nota pagi; berubah sebelum wave diganti, sesudah wave jadi exception", T_UJI, async () => {
     const T = "2026-10-06";
-    const pagi = await unggah(T, xlsx(T, [["N1", "BRG-C", 2, 24], ["N2", "BRG-C", 1, 12], ["N3", "BRG-C", 5, 60]]), "pagi.xlsx");
+    const pagi = await unggah(T, xlsx(T, [["N1", "BRG-C", 2, 24], ["N2", "BRG-C", 1, 12], ["N3", "BRG-C", 5, 60], ["N5", "BRG-A", 1, 12], ["N6", "BRG-C", 1, 12]]), "pagi.xlsx");
     assert.equal(pagi.status, 200);
-    assert.deepEqual([pagi.body.notaBaru, pagi.body.notaSudahAda, pagi.body.notaDiganti], [3, 0, 0]);
+    assert.deepEqual([pagi.body.notaBaru, pagi.body.notaSudahAda, pagi.body.notaDiganti], [5, 0, 0]);
     const w = await waveBaru(T, 1);
     assert.equal((await tambah(w, ["N1"])).status, 200);
 
-    // Sore: N1 berubah (di wave), N2 berubah (belum di wave), N3 sama, N4 baru. Alamat/nama outlet beda tidak dihitung berubah.
-    const sore = await unggah(T, xlsx(T, [["N1", "BRG-C", 3, 36], ["N2", "BRG-C", 2, 24], ["N3", "BRG-C", 5, 60], ["N4", "BRG-C", 1, 12]], " (ketik ulang)"), "sore.xlsx");
+    // Sore: N1 berubah (di wave), N2 berubah (belum di wave), N3 sama, N4 baru, N5 barang DITUKAR dengan qty sama,
+    // N6 baris bertambah. Alamat/nama outlet beda tidak dihitung berubah.
+    const sore = await unggah(T, xlsx(T, [["N1", "BRG-C", 3, 36], ["N2", "BRG-C", 2, 24], ["N3", "BRG-C", 5, 60], ["N4", "BRG-C", 1, 12],
+        ["N5", "BRG-C", 1, 12], ["N6", "BRG-C", 1, 12], ["N6", "BRG-A", 1, 12]], " (ketik ulang)"), "sore.xlsx");
     assert.equal(sore.status, 200);
-    assert.deepEqual([sore.body.notaBaru, sore.body.notaSudahAda, sore.body.notaDiganti], [1, 1, 1]);
+    assert.deepEqual([sore.body.notaBaru, sore.body.notaSudahAda, sore.body.notaDiganti], [1, 1, 3]);
     assert.deepEqual(sore.body.notaSelisih, [{ noNota: "N1", waveId: w, wave: "Uji 1" }]);
 
-    const dobel = await db.query(`SELECT no_nota FROM wave_line_pool WHERE tanggal = $1 GROUP BY no_nota HAVING count(*) > 1 OR count(DISTINCT upload_id) > 1`, [T]);
+    const dobel = await db.query(`SELECT no_nota FROM wave_line_pool WHERE tanggal = $1 GROUP BY no_nota HAVING count(*) > count(DISTINCT kode_barang) OR count(DISTINCT upload_id) > 1`, [T]);
     assert.deepEqual(dobel.rows, [], "satu nota = satu set baris di pool tanggal itu");
     const qty = Object.fromEntries((await db.query(`SELECT no_nota, qty_pcs::float8 q FROM wave_line_pool WHERE tanggal = $1`, [T])).rows.map((r) => [r.no_nota, r.q]));
-    assert.deepEqual(qty, { N1: 24, N2: 24, N3: 60, N4: 12 }, "N1 tetap isi yang di wave; N2 diganti isi terbaru");
+    assert.deepEqual(qty, { N1: 24, N2: 24, N3: 60, N4: 12, N5: 12, N6: 12 }, "N1 tetap isi yang di wave; N2 diganti isi terbaru");
+    const brg = (await db.query(`SELECT no_nota, string_agg(kode_barang, ',' ORDER BY kode_barang) b FROM wave_line_pool WHERE tanggal = $1 AND no_nota IN ('N5','N6') GROUP BY 1 ORDER BY 1`, [T])).rows;
+    assert.deepEqual(brg, [{ no_nota: "N5", b: "BRG-C" }, { no_nota: "N6", b: "BRG-A,BRG-C" }], "barang ditukar & baris bertambah = berubah");
     const exc = await db.query(`SELECT jenis::text, ref_tipe, ref_kode, status::text FROM wave_exception WHERE wave_id = $1`, [w]);
     assert.deepEqual(exc.rows, [{ jenis: "REKONSILIASI_SELISIH", ref_tipe: "nota", ref_kode: "N1", status: "open" }]);
 
@@ -145,7 +161,7 @@ test("BL-54: file sore tidak menggandakan nota pagi; berubah sebelum wave digant
     assert.equal((await db.query(`SELECT count(*)::int n FROM wave_exception WHERE wave_id = $1`, [w])).rows[0].n, 1);
 });
 
-test("BL-54 serentak: dua file berbeda dengan nota yang sama diunggah bersamaan -> nota tetap satu kali di pool", { skip: pgSkip }, async () => {
+test("BL-54 serentak: dua file berbeda dengan nota yang sama diunggah bersamaan -> nota tetap satu kali di pool", T_UJI, async () => {
     const T = "2026-10-07";
     const kunci = await layarLain([`LOCK TABLE wave_line_pool IN SHARE MODE`]); // tahan semua INSERT pool
     const a = unggah(T, xlsx(T, [["N10", "BRG-C", 1, 12], ["N11", "BRG-C", 1, 12]]), "a.xlsx");
@@ -160,7 +176,7 @@ test("BL-54 serentak: dua file berbeda dengan nota yang sama diunggah bersamaan 
     assert.equal(n10.rows[0].n, 1);
 });
 
-test("BL-54 serentak: file yang sama diunggah dua kali bersamaan -> satu masuk, satu 'sudah ada', tanpa 500", { skip: pgSkip }, async () => {
+test("BL-54 serentak: file yang sama diunggah dua kali bersamaan -> diproses berurutan, yang kedua '0 baru, 1 sudah ada', tanpa 500", T_UJI, async () => {
     const T = "2026-10-08";
     const buf = xlsx(T, [["N20", "BRG-C", 1, 12]]);
     const kunci = await layarLain([`LOCK TABLE wave_line_pool IN SHARE MODE`]);
@@ -170,12 +186,13 @@ test("BL-54 serentak: file yang sama diunggah dua kali bersamaan -> satu masuk, 
     await kunci.lepas();
     assert.ok(tahan, "kedua unggahan harus benar-benar bertemu kunci");
     const hasil = await Promise.all([a, b]);
-    assert.deepEqual(hasil.map((h) => h.status), [200, 200]);
-    assert.equal(hasil.filter((h) => h.body.sudahAda === true).length, 1);
+    assert.deepEqual(hasil.map((h) => h.status), [200, 200], JSON.stringify(hasil.map((h) => h.body)));
+    assert.deepEqual(hasil.map((h) => [h.body.notaBaru, h.body.notaSudahAda]).sort(), [[0, 1], [1, 0]]);
+    assert.equal(hasil.filter((h) => h.body.fileSama === true).length, 1);
     assert.equal((await db.query(`SELECT count(*)::int n FROM wave_line_pool WHERE tanggal = $1`, [T])).rows[0].n, 1);
 });
 
-test("BL-24: exception ditutup Selesai/Abaikan beralasan; 409 bila sudah ditutup (termasuk serentak); konfirmasi lolos sesudahnya", { skip: pgSkip }, async () => {
+test("BL-24: exception ditutup Selesai/Abaikan beralasan; 409 bila sudah ditutup (termasuk serentak); konfirmasi lolos sesudahnya", T_UJI, async () => {
     const T = "2026-10-09";
     // BRG-A: file 24/karton vs master 12; BRG-B: dijual PCS (tanpa konversi) dan tanpa master.
     const up = await unggah(T, xlsx(T, [["N30", "BRG-A", 1, 24], ["N30", "BRG-B", 6, 6, "PCS"]]));
@@ -223,7 +240,7 @@ test("BL-24: exception ditutup Selesai/Abaikan beralasan; 409 bila sudah ditutup
     assert.equal((await transisi(w, "confirm")).status, 200, "semua KONVERSI_* ditutup -> konfirmasi lolos");
 });
 
-test("BL-25: batal melepas semua nota (kembali ke pool, bisa masuk wave lain); wave tertutup menolak ubah isi", { skip: pgSkip }, async () => {
+test("BL-25: batal melepas semua nota (kembali ke pool, bisa masuk wave lain); wave tertutup menolak ubah isi", T_UJI, async () => {
     const T = "2026-10-10";
     assert.equal((await unggah(T, xlsx(T, ["N40", "N41", "N42", "N43", "N44"].map((n) => [n, "BRG-C", 1, 12] as [string, string, number, number])))).status, 200);
     const w1 = await waveBaru(T, 1);
@@ -258,7 +275,7 @@ test("BL-25: batal melepas semua nota (kembali ke pool, bisa masuk wave lain); w
     assert.equal((await db.query(`SELECT count(*)::int n FROM wave_assignment WHERE wave_id = $1 AND dilepas = false`, [w2])).rows[0].n, 2);
 });
 
-test("BL-25 serentak: layar lain mengonfirmasi saat batal/lepas sedang berjalan -> 409, tidak ada yang tertimpa", { skip: pgSkip }, async () => {
+test("BL-25 serentak: layar lain mengonfirmasi saat batal/lepas sedang berjalan -> 409, tidak ada yang tertimpa", T_UJI, async () => {
     const T = "2026-10-11";
     assert.equal((await unggah(T, xlsx(T, [["N50", "BRG-C", 1, 12], ["N51", "BRG-C", 1, 12]]))).status, 200);
     const konfirmasiLain = (id: number) => [`UPDATE wave SET status = 'confirmed', confirmed_at = now(), confirmed_by = 'u-lain' WHERE id = ${id}`];
@@ -291,7 +308,7 @@ test("BL-25 serentak: layar lain mengonfirmasi saat batal/lepas sedang berjalan 
     assert.equal((await db.query(`SELECT dilepas FROM wave_assignment WHERE wave_id = $1`, [w4])).rows[0].dilepas, false);
 });
 
-test("BL-25: exception terbuka di wave batal tidak dihitung sebagai pekerjaan terbuka di daftar wave", { skip: pgSkip }, async () => {
+test("BL-25: exception terbuka di wave batal tidak dihitung sebagai pekerjaan terbuka di daftar wave", T_UJI, async () => {
     const T = "2026-10-12";
     assert.equal((await unggah(T, xlsx(T, [["N60", "BRG-C", 1, 12]]))).status, 200);
     const w = await waveBaru(T, 1);
@@ -301,4 +318,66 @@ test("BL-25: exception terbuka di wave batal tidak dihitung sebagai pekerjaan te
     assert.ok((await daftar()).exception_open > 0);
     assert.equal((await transisi(w, "cancel", "uji daftar")).status, 200);
     assert.equal((await daftar()).exception_open, 0);
+});
+
+test("R2: file sama diunggah ulang diproses per nota -- nota yang kembali dari wave batal mendapat isi file; file lama tidak menimpa isi lebih baru", T_UJI, async () => {
+    const T = "2026-10-13";
+    const pagi = xlsx(T, [["N80", "BRG-C", 1, 12], ["N81", "BRG-C", 1, 12]]);
+    const sore = xlsx(T, [["N80", "BRG-C", 2, 24], ["N81", "BRG-C", 3, 36]]);
+    assert.equal((await unggah(T, pagi, "pagi.xlsx")).status, 200);
+    const w = await waveBaru(T, 1);
+    await tambah(w, ["N80"]);
+    const s1 = await unggah(T, sore, "sore.xlsx");
+    assert.deepEqual([s1.body.notaDiganti, (s1.body.notaSelisih as unknown[]).length], [1, 1], "N81 diganti, N80 selisih");
+    assert.equal((await transisi(w, "cancel", "uji unggah ulang")).status, 200);
+
+    const ulang = await unggah(T, sore, "sore.xlsx");
+    assert.equal(ulang.status, 200);
+    assert.deepEqual([ulang.body.fileSama, ulang.body.notaBaru, ulang.body.notaSudahAda, ulang.body.notaDiganti], [true, 0, 1, 1]);
+    const pcs = async () => Object.fromEntries((await db.query(`SELECT no_nota, sum(qty_pcs)::float8 q FROM wave_line_pool WHERE tanggal = $1 GROUP BY 1`, [T])).rows.map((r) => [r.no_nota, r.q]));
+    assert.deepEqual(await pcs(), { N80: 24, N81: 36 });
+
+    // File pagi (lebih lama) diunggah ulang: isi sore di pool tidak ditimpa.
+    const lama = await unggah(T, pagi, "pagi.xlsx");
+    assert.deepEqual([lama.body.fileSama, lama.body.notaLebihBaru, lama.body.notaDiganti], [true, 2, 0]);
+    assert.deepEqual(await pcs(), { N80: 24, N81: 36 });
+});
+
+test("R1: selisih file yang sudah ditutup dibuka lagi hanya bila isi file BERBEDA dari selisih yang dicatat", T_UJI, async () => {
+    const T = "2026-10-14";
+    assert.equal((await unggah(T, xlsx(T, [["N90", "BRG-C", 1, 12]]), "pagi.xlsx")).status, 200);
+    const w = await waveBaru(T, 1);
+    await tambah(w, ["N90"]);
+    assert.equal((await unggah(T, xlsx(T, [["N90", "BRG-C", 2, 24]]), "sore.xlsx")).status, 200);
+    const exc = async () => (await db.query(`SELECT id::int, status::text, resolved_by FROM wave_exception WHERE wave_id = $1 AND jenis = 'REKONSILIASI_SELISIH'`, [w])).rows;
+    const [e] = await exc();
+    assert.equal(e.status, "open");
+    assert.equal((await tutup(w, e.id, "selesai")).status, 200);
+
+    // File lain (byte beda) dengan selisih yang SAMA: tetap tertutup.
+    assert.equal((await unggah(T, xlsx(T, [["N90", "BRG-C", 2, 24]], " (export ulang)"), "sore-2.xlsx")).status, 200);
+    assert.deepEqual((await exc()).map((x) => x.status), ["selesai"]);
+    // Selisih BARU: dibuka lagi, penutupan lama dikosongkan.
+    assert.equal((await unggah(T, xlsx(T, [["N90", "BRG-C", 4, 48]]), "malam.xlsx")).status, 200);
+    assert.deepEqual(await exc(), [{ id: e.id, status: "open", resolved_by: null }]);
+});
+
+test("M1 serentak: nota ditambah ke wave saat unggah sedang mengganti isinya -> snapshot karton dari isi baru", T_UJI, async () => {
+    const T = "2026-10-15";
+    assert.equal((await unggah(T, xlsx(T, [["N70", "BRG-C", 1, 12]]), "pagi.xlsx")).status, 200);
+    const w = await waveBaru(T, 1);
+    const kunci = await layarLain([`LOCK TABLE wave_line_pool IN SHARE MODE`]); // unggah tertahan SESUDAH klasifikasi
+    const up = unggah(T, xlsx(T, [["N70", "BRG-C", 5, 60]]), "sore.xlsx");
+    const tahanUnggah = await tertahan(1);
+    const tb = tambah(w, ["N70"]);
+    const tahanTambah = await tertahan(2); // tambah menunggu unggah (kunci bersama per tanggal)
+    await kunci.lepas();
+    const [ru, rt] = await Promise.all([up, tb]);
+    assert.ok(tahanUnggah, "unggah harus tertahan kunci pool");
+    assert.equal(rt.status, 200);
+    assert.equal(ru.status, 200);
+    const snap = (await db.query(`SELECT snap_total_krt::float8 k FROM wave_assignment WHERE wave_id = $1 AND no_nota = 'N70'`, [w])).rows[0].k;
+    const poolKrt = (await db.query(`SELECT sum(qty_pcs)::float8 / 12 k FROM wave_line_pool WHERE tanggal = $1 AND no_nota = 'N70'`, [T])).rows[0].k;
+    const selisih = (await db.query(`SELECT count(*)::int n FROM wave_exception WHERE wave_id = $1 AND jenis = 'REKONSILIASI_SELISIH'`, [w])).rows[0].n;
+    assert.ok(snap === poolKrt || selisih === 1, `snapshot ${snap} krt vs pool ${poolKrt} krt tanpa exception (tambah tertahan: ${tahanTambah})`);
 });

@@ -5,11 +5,13 @@
  * Dependensi: requirePermission, lib/rekapan-nota/parse, lib/db (pool pg).
  * Main Functions: POST.
  * Side Effects: DB write (rekap_upload, wave_line_pool, pick_group jenis_produk, wave_exception REKONSILIASI_SELISIH).
- *   Idempoten per SHA-256 file. Jalur /api/laporan-harian/upload TIDAK disentuh.
+ *   File yang sama (SHA-256) diproses ulang per nota (idempoten: isi sama dilewati) memakai baris rekap_upload lamanya.
+ *   Jalur /api/laporan-harian/upload TIDAK disentuh.
  * BL-54: file sore memuat nota pagi juga (R3.7). Per nota di tanggal itu: belum ada -> ditulis; isi sama -> dilewati;
  *   isi berubah & belum masuk wave -> diganti isi terbaru; isi berubah & sudah di wave aktif -> pool TIDAK diubah
  *   (wave tetap memakai isi yang dicetak) dan dicatat exception REKONSILIASI_SELISIH. Unggah per tanggal diserialkan
  *   advisory lock: tanpa unique (tanggal,no_nota,kode_barang), dua unggah serentak sama-sama melihat nota "baru".
+ *   Pool yang ditulis unggahan LEBIH BARU (rekap_upload.id lebih besar) tidak ditimpa file lama yang diunggah ulang.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
@@ -86,35 +88,34 @@ export async function POST(req: NextRequest) {
         await client.query("BEGIN");
         // ponytail: satu kunci per tanggal; unggah tanggal lain tetap paralel. Dilepas otomatis di COMMIT/ROLLBACK.
         await client.query(`SELECT pg_advisory_xact_lock(hashtext('rekapan_nota.upload'), ($1::date - DATE '2000-01-01'))`, [tanggal]);
-        // ON CONFLICT: file sama diunggah serentak -> yang kedua dapat "sudah ada", bukan 500 unique violation.
+        // File sama (sha256) tidak ditolak: klasifikasi per nota sudah idempoten, dan unggah ulang dibutuhkan bila nota
+        // kembali ke pool sesudah wave-nya batal (isi file belum pernah masuk). Baris rekap_upload lama dipakai ulang --
+        // urutannya (id) yang menjaga file lama tidak menimpa isi yang lebih baru. ON CONFLICT: serentak tanpa 500.
         const up = await client.query<{ id: string }>(
             `INSERT INTO rekap_upload (nama_file, sha256, tanggal_data, baris_total, baris_masuk, principal, uploaded_by)
              VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (sha256) DO NOTHING RETURNING id::text`,
             [file.name, sha256, tanggal, hasil.barisTotal, hasil.barisMasuk, hasil.principal, gate.session!.user.id]);
-        if (!up.rowCount) {
-            await client.query("ROLLBACK");
-            const lama = await pool.query<{ id: string; tanggal_data: string }>(
-                `SELECT id::text, tanggal_data::text FROM rekap_upload WHERE sha256 = $1`, [sha256]);
-            return NextResponse.json({
-                sudahAda: true, uploadId: Number(lama.rows[0]?.id), tanggal: lama.rows[0]?.tanggal_data,
-                pesan: "File ini sudah pernah di-upload. Pool tidak digandakan.",
-            });
-        }
-        const uploadId = Number(up.rows[0].id);
+        const fileSama = !up.rowCount;
+        const uploadId = Number(fileSama
+            ? (await client.query<{ id: string }>(`SELECT id::text FROM rekap_upload WHERE sha256 = $1`, [sha256])).rows[0].id
+            : up.rows[0].id);
 
         // Klasifikasi per nota terhadap pool tanggal yang sama + wave aktif yang memegangnya.
-        const kelas = await client.query<{ no_nota: string; kelas: "baru" | "sama" | "berubah"; wave_id: number | null; wave_nama: string | null; n_lama: number; n_baru: number }>(
+        type Kelas = "baru" | "sama" | "lebih_baru" | "berubah";
+        const kelas = await client.query<{ no_nota: string; kelas: Kelas; wave_id: number | null; wave_nama: string | null; n_lama: number; n_baru: number; sidik: string }>(
             `WITH masuk AS (SELECT x.* FROM ${recordset("$2")}),
                   baru AS (SELECT no_nota, ${SIDIK} AS sidik, count(*)::int AS n FROM masuk GROUP BY no_nota),
-                  lama AS (SELECT no_nota, ${SIDIK} AS sidik, count(*)::int AS n FROM wave_line_pool
+                  lama AS (SELECT no_nota, ${SIDIK} AS sidik, count(*)::int AS n, max(upload_id) AS upload_maks FROM wave_line_pool
                             WHERE tanggal = $1::date AND no_nota IN (SELECT no_nota FROM baru) GROUP BY no_nota)
              SELECT b.no_nota,
-                    CASE WHEN l.no_nota IS NULL THEN 'baru' WHEN l.sidik = b.sidik THEN 'sama' ELSE 'berubah' END AS kelas,
-                    wa.wave_id::int, w.nama AS wave_nama, coalesce(l.n, 0) AS n_lama, b.n AS n_baru
+                    CASE WHEN l.no_nota IS NULL THEN 'baru' WHEN l.sidik = b.sidik THEN 'sama'
+                         WHEN l.upload_maks > $3 THEN 'lebih_baru' ELSE 'berubah' END AS kelas,
+                    wa.wave_id::int, w.nama AS wave_nama, coalesce(l.n, 0) AS n_lama, b.n AS n_baru,
+                    left(md5(b.sidik), 12) AS sidik
                FROM baru b
                LEFT JOIN lama l ON l.no_nota = b.no_nota
                LEFT JOIN wave_assignment wa ON wa.no_nota = b.no_nota AND wa.tanggal_wave = $1::date AND wa.dilepas = false
-               LEFT JOIN wave w ON w.id = wa.wave_id`, [tanggal, baris(hasil.lines)]);
+               LEFT JOIN wave w ON w.id = wa.wave_id`, [tanggal, baris(hasil.lines), uploadId]);
         const baru = kelas.rows.filter((r) => r.kelas === "baru").map((r) => r.no_nota);
         const diganti = kelas.rows.filter((r) => r.kelas === "berubah" && r.wave_id == null).map((r) => r.no_nota);
         const selisih = kelas.rows.filter((r) => r.kelas === "berubah" && r.wave_id != null);
@@ -131,14 +132,17 @@ export async function POST(req: NextRequest) {
              ON CONFLICT (upload_id, no_nota, kode_barang) DO NOTHING`,
             [uploadId, tanggal, baris(hasil.lines.filter((l) => tulis.has(l.noNota)))]);
         if (selisih.length) {
-            // DO NOTHING: unggah ulang dengan selisih yang sama tidak membuka lagi exception yang sudah ditutup.
+            // Selisih yang SAMA (sidik isi file sama) tidak membuka lagi exception yang sudah ditutup; selisih BARU
+            // (isi file berbeda dari yang dicatat) membukanya lagi. Sidik ditulis di ujung keterangan -- tanpa kolom baru.
             await client.query(
                 `INSERT INTO wave_exception (wave_id, jenis, ref_tipe, ref_kode, keterangan)
                  SELECT s.wave_id, 'REKONSILIASI_SELISIH', 'nota', s.no_nota,
                         'Isi nota di file ' || $2 || ' beda dengan yang sudah di wave (' || s.n_lama || ' -> ' || s.n_baru
-                        || ' baris); wave tetap memakai isi lama'
-                   FROM jsonb_to_recordset($1::jsonb) AS s(wave_id bigint, no_nota text, n_lama int, n_baru int)
-                 ON CONFLICT (wave_id, jenis, ref_tipe, ref_kode) DO NOTHING`,
+                        || ' baris); wave tetap memakai isi lama [sidik ' || s.sidik || ']'
+                   FROM jsonb_to_recordset($1::jsonb) AS s(wave_id bigint, no_nota text, n_lama int, n_baru int, sidik text)
+                 ON CONFLICT (wave_id, jenis, ref_tipe, ref_kode) DO UPDATE
+                    SET status = 'open', resolved_at = NULL, resolved_by = NULL, keterangan = EXCLUDED.keterangan
+                  WHERE split_part(wave_exception.keterangan, '[sidik ', 2) IS DISTINCT FROM split_part(EXCLUDED.keterangan, '[sidik ', 2)`,
                 [JSON.stringify(selisih), file.name]);
         }
 
@@ -170,8 +174,8 @@ export async function POST(req: NextRequest) {
             uploadId, tanggal, jumlahNota: kelas.rows.length, jumlahBaris: hasil.lines.length,
             barisTotalFile: hasil.barisTotal, principal: hasil.principal,
             tanggalTersedia: hasil.tanggalTersedia,
-            notaBaru: baru.length, notaSudahAda: kelas.rows.filter((r) => r.kelas === "sama").length,
-            notaDiganti: diganti.length,
+            fileSama, notaBaru: baru.length, notaSudahAda: kelas.rows.filter((r) => r.kelas === "sama").length,
+            notaLebihBaru: kelas.rows.filter((r) => r.kelas === "lebih_baru").length, notaDiganti: diganti.length,
             notaSelisih: selisih.map((r) => ({ noNota: r.no_nota, waveId: r.wave_id, wave: r.wave_nama })),
         });
     } catch (e) {

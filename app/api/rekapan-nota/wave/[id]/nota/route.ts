@@ -66,6 +66,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
             await client.query("ROLLBACK");
             return NextResponse.json({ error: tolak }, { status: 409 });
         }
+        // Kunci bersama dengan unggah tanggal yang sama (unggah memegang versi eksklusifnya): snapshot karton/pareto
+        // di bawah dibaca SESUDAH unggah yang sedang mengganti isi nota selesai, bukan dari isi lama (M1, BL-54).
+        await client.query(`SELECT pg_advisory_xact_lock_shared(hashtext('rekapan_nota.upload'), ($1::date - DATE '2000-01-01'))`, [wave.tanggal]);
         // Snapshot klasifikasi dihitung SEKARANG dan disimpan: master boleh berubah besok,
         // rekapan hari ini tidak boleh ikut berubah (R2.2).
         const ins = await client.query<{ no_nota: string }>(
