@@ -688,6 +688,37 @@ test("FK-MSM3 R-2 (deterministik): check-in/status saat baris AO toko itu baru D
     }
 });
 
+test("FK-MSM3 R-1 (peninjau B): GET visit membawa penolakan rute yang SAMA dengan tulis — layar tidak membuka wizard/foto untuk toko di luar rute", { skip: pgSkip }, async () => {
+    if (!HARI) return; // Minggu: tanpa rute JKS
+    await pool.query(`INSERT INTO jks_master (id, sales_code, sales_name, cust_code, cust_name, hari_kunjungan, minggu_pattern, principle, channel,
+            visit_frequency, is_active, created_at, updated_at) VALUES
+        ('v1', 'M-SLA', 'SALES A', 'C-720001', 'TOKO V1', $1, 'all', 'PRINCIPLE A', 'TT', 4, true, now(), now()),
+        ('v2', 'M-SLA', 'SALES A', 'C-720002', 'TOKO V2', $2, 'all', 'PRINCIPLE A', 'TT', 4, true, now(), now())`, [HARI, HARI_LAIN]);
+    const lihat = async (custCode: string) => {
+        const q = new URLSearchParams({ ...KUNJ, custCode });
+        const j = await jawab(await sebagai("u-sla", () => m.visit.GET(req(`/api/form-kontrol/visit?${q}`))));
+        assert.equal(j.status, 200, JSON.stringify(j.body));
+        return j.body.bukanRute as { kode: string; error: string } | null;
+    };
+    assert.equal(await lihat("C-720001"), null, "JKS hari ini");
+    const lain = await lihat("C-720002");
+    assert.equal(lain?.kode, "BUKAN_RUTE_HARI_INI", "JKS hari lain");
+    assert.match(lain!.error, /^TOKO V2 \(C-720002\) tidak ada di rute .+ Tambahkan dulu lewat Kunjungan luar rute/);
+    // Setara tulis: check-in juga 409 untuk toko itu.
+    assert.deepEqual(kodeJ(await tulis.checkin("C-720002")), [409, "BUKAN_RUTE_HARI_INI"]);
+    // Sudah punya baris AO (R-3) → wizard tetap terbuka.
+    await pool.query(`INSERT INTO ao_control_daily (id, sales_code, cust_code, principle, date, period_month, period_year, status, created_at, updated_at)
+        VALUES ('ao-v2', 'M-SLA', 'C-720002', 'PRINCIPLE A', $1, 10, 2026, 'not_visited', now(), now())`, [HARI_INI]);
+    assert.equal(await lihat("C-720002"), null, "sudah ber-AO");
+    // Luar rute yang dibatalkan → KUNJUNGAN_DIBATALKAN.
+    await pelanggan(95, 95);
+    assert.equal((await tambah("u-sla", "C-100095-CBA")).status, 201);
+    assert.equal(await lihat("C-100095-CBA"), null, "luar rute aktif");
+    assert.equal((await batalkan(await idLuar("C-100095-CBA"))).status, 200);
+    const q = new URLSearchParams({ ...KUNJ, custCode: "C-100095-CBA" });
+    assert.equal((await sebagai("u-sla", () => m.visit.GET(req(`/api/form-kontrol/visit?${q}`)))).status, 404, "luar rute batal tanpa JKS = toko tidak ditemukan (perilaku lama)");
+});
+
 test("FK-MSM3 R-3 (owner): toko yang SUDAH punya baris AO salesman itu pada tanggal itu tetap lolos sesudah JKS dipindah hari; yang belum = 409", { skip: pgSkip }, async () => {
     if (!HARI) return; // Minggu: tanpa rute JKS
     await pool.query(`INSERT INTO jks_master (id, sales_code, sales_name, cust_code, cust_name, hari_kunjungan, minggu_pattern, principle, channel,

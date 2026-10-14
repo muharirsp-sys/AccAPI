@@ -298,6 +298,14 @@ async function galatBukanRute(q: Pick<typeof db, "select">, d: KunciKunjungan): 
         : { status: 409, kode: "BUKAN_RUTE_HARI_INI", error: `${jks?.custName ? `${jks.custName} (${d.custCode})` : `Toko ${d.custCode}`} tidak ada di rute ${d.salesCode} (${d.principle}) pada ${tgl}, jadi tidak dicatat. ${saran}` };
 }
 
+/**
+ * Penjaga yang sama untuk layar Kunjungan (GET visit, peninjau B R-1): toko di luar rute tanggal itu ditolak SEBELUM salesman mengambil foto
+ * check-in (dulu foto terunggah dulu, baru check-in 409). Di luar transaksi: FOR SHARE dilepas seketika; tulis tetap menjaga sendiri.
+ */
+export function cekRuteKunjungan(d: KunciKunjungan): Promise<GalatOrder | null> {
+    return galatBukanRute(db, d);
+}
+
 // ── AO Control ───────────────────────────────────────────────────────────────
 
 export async function upsertAoControl(data: KunciKunjungan & {

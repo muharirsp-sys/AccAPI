@@ -381,7 +381,7 @@ type OpsiB = {
     profiles?: unknown[]; spvOptions?: string[]; smOptions?: string[];
     tambah?: JawabB[]; batal?: JawabB[]; konf?: JawabB[]; luarGet?: JawabB[]; ruteGet?: JawabB[]; aoPost?: JawabB[];
     /** FK-MSM3 (tes peninjau B): GET visit, antrean POST check-in/merchandising, rute per principal. */
-    visit?: { store: unknown; ao: unknown; merch: unknown }; checkin?: JawabB[]; merch?: JawabB[]; rutePer?: Record<string, Record<string, unknown>[]>;
+    visit?: { store: unknown; ao: unknown; merch: unknown; bukanRute?: unknown }; checkin?: JawabB[]; merch?: JawabB[]; rutePer?: Record<string, Record<string, unknown>[]>;
     /** GET luar-rute menjawab 500 selama > 0. */
     luarGagal?: number;
 };
@@ -745,6 +745,15 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await expect(strip).toContainText("PELANGGAN B tidak lagi ada di rute ini");
         await expect(r.getByText("1 tanda prioritas belum dikirim")).toBeVisible();
         await expect(r.getByRole("button", { name: "Prioritas TOKO JKS A" })).toHaveAttribute("aria-pressed", "true");
+        // Peninjau B R-4(d): PELANGGAN B ditambah ulang sebagai luar rute → tanda yang sudah disebut "dibuang" TIDAK hidup lagi.
+        await sek.getByRole("button", { name: "Tambah toko luar rute" }).click();
+        await sek.getByLabel("Cari pelanggan").fill("pelanggan b");
+        await sek.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("listitem").first().click();
+        await sek.getByRole("button", { name: "Tambah ke kunjungan hari ini" }).click();
+        await expect(daftar.getByRole("listitem")).toHaveCount(3, NAV);
+        await expect(r.getByRole("button", { name: "Prioritas PELANGGAN B" })).toHaveAttribute("aria-pressed", "false");
+        await expect(r.getByText("1 tanda prioritas belum dikirim")).toBeVisible();
+        await expect(strip).toContainText("PELANGGAN B tidak lagi ada di rute ini");
         await noOverflow(page);
         await strip.scrollIntoViewIfNeeded();
         await page.screenshot({ path: "test-results/fkmsm3/ponsel-r7-tanda-dibuang.png" });
@@ -758,7 +767,8 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await r.getByRole("button", { name: /^Kirim status rute/ }).click();
         await page.getByRole("dialog").getByRole("button", { name: "Kirim status" }).click();
         await expect(page.getByRole("dialog")).toBeHidden(NAV);
-        expect(postKe(m.tulis, "/ao-control").map((b) => [b.custCode, b.status])).toEqual([["C-900", "priority"], ["C-100003-CBA", "not_visited"]]);
+        expect(postKe(m.tulis, "/ao-control").map((b) => [b.custCode, b.status])).toEqual([["C-900", "priority"], ["C-100003-CBA", "not_visited"],
+            ["C-100002-CBA", "not_visited"]]);
         await expect(r.getByText(/tanda prioritas belum dikirim/)).toHaveCount(0);
     });
 
@@ -859,6 +869,21 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await noOverflow(page);
     });
 
+    test("FK-MSM3 R-1 Kunjungan: toko sudah di luar rute saat dibuka (GET visit) → penjelasan langsung, tanpa wizard/foto check-in", async ({ page }) => {
+        const o: OpsiB = { visit: { store: STORE_JKS, ao: null, merch: null, bukanRute: { kode: "BUKAN_RUTE_HARI_INI", error: MSG_BUKAN } }, rute: ruteN(3) };
+        const m = await mockB(page, o);
+        await page.goto(kunjunganUrl("C-900"), NAV);
+        const isi = page.locator(".fi-page");
+        await expect(isi.getByRole("heading", { name: "Toko ini tidak ada di rute hari ini" })).toBeVisible(NAV);
+        await expect(isi).toContainText("TOKO JKS A (C-900) tidak ada di rute");
+        await expect(isi).toContainText("Kunjungan tidak bisa dimulai dari layar ini.");
+        await expect(page.getByRole("button", { name: "Ambil foto check-in" })).toHaveCount(0);
+        expect(m.tulis.filter((q) => q.method() === "POST"), "tanpa unggah foto / check-in").toHaveLength(0);
+        expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe("BODY");
+        await expect(isi.getByRole("link", { name: "Rute hari ini" })).toHaveAttribute("href", "/form-kontrol?tab=ao#luar-rute");
+        await noOverflow(page);
+    });
+
     test("FK-MSM3 N1 Toko Tidak Order: 409 → muat ulang; penolakan bernama toko di strip tab; ketikan toko lain bertahan", async ({ page }) => {
         const B = baris("C-100002-CBA", "PELANGGAN B", { id: "l-b", luarRute: true, aoStatus: "not_order", noOrderReasonCode: "R01", noOrderNote: "" });
         const C = baris("C-901", "TOKO JKS C", { aoStatus: "not_order", noOrderReasonCode: "R01", noOrderNote: "" });
@@ -904,6 +929,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await expect.poll(() => nBaca(m.baca, "/ao-control"), NAV).toBeGreaterThan(g0);
         await expect(r.getByText("1 tanda prioritas belum dikirim")).toBeVisible(NAV);
         await expect(r.getByRole("button", { name: "Prioritas TOKO JKS A" })).toHaveAttribute("aria-pressed", "false");
+        await expect(r.getByRole("status").filter({ hasText: "1 tanda prioritas dibuang." })).toContainText("TOKO JKS A sudah punya hasil kunjungan");
         // R2 (S-3): buka Kunjungan lalu kembali → tanda B masih ada.
         await r.getByRole("link", { name: /TOKO JKS A/ }).click();
         await expect(page.getByRole("heading", { name: "TOKO JKS A" })).toBeVisible(NAV);
@@ -938,7 +964,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         // R3: ganti hari → rute hari baru tanpa tanda kemarin; kiriman hanya membawa tanda hari baru.
         await page.clock.setFixedTime(new Date("2026-10-14T00:00:30+08:00"));
         await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-        await expect(r.getByRole("status").filter({ hasText: "Tanggal sudah berganti." })).toBeVisible(NAV);
+        await expect(r.getByRole("status").filter({ hasText: "Tanggal sudah berganti." })).toContainText("1 tanda prioritas belum dikirim untuk Selasa, 13 Okt 2026 tidak dibawa ke hari baru", NAV);
         await r.getByRole("button", { name: /^Muat rute/ }).click();
         await expect(r.getByText("Rabu, 14 Okt 2026 · WITA")).toBeVisible(NAV);
         await expect(r.getByRole("button", { name: "Prioritas TOKO JKS A" })).toHaveAttribute("aria-pressed", "false");
