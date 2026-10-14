@@ -2,7 +2,8 @@
  * Tujuan: Rekapan Nota Fiori (S2): Wave harian, Object Page wave, Nota kanvas, Mapping area — enam keadaan dan dialog pengganti prompt/confirm.
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin): `npx playwright test tests/fiori-rekapan-nota.spec.ts`.
  * Dependensi: endpoint /api/rekapan-nota/* di-mock dengan page.route (tidak menyentuh DB/Accurate).
- * Main Functions: wave harian (default/galat unggah/kosong/memuat/dialog wave baru), object page (rilis ditahan, lepas 409, pool saring+pilih),
+ * Main Functions: wave harian (default/galat unggah/sukses unggah BL-54/kosong/memuat/dialog wave baru), object page (rilis ditahan,
+ *   exception Selesai/Abaikan + 409 (BL-24), batal menyebut nota kembali (BL-25), lepas 409, pool saring+pilih),
  *   kanvas (tandai 409, nihil), area (draf, terima Tinggi, memuat lama, galat), ponsel tanpa gulir menyamping, tanpa window.confirm/prompt.
  * Side Effects: Tangkapan di test-results/.
  */
@@ -34,8 +35,8 @@ const DETAIL_RILIS = {
         { no_nota: "INV/2610/KN01380", prioritas: "normal", snap_area: "2", snap_pareto: false, snap_total_krt: 5, dilepas: true, dilepas_alasan: "outlet tutup", dilepas_at: "2026-10-06T01:40:00Z", dilepas_oleh: "Bayu", customer: "UD SUMBER REJEKI", salesman: null, jumlah_baris: 3, total_pcs: 20 },
     ],
     exception: [
-        { id: 1, jenis: "KONVERSI_BEDA_DENGAN_EXPORT", ref_tipe: "item", ref_kode: "ABC10520", keterangan: "Konversi di export 24 beda dengan master 12", status: "open" },
-        { id: 2, jenis: "KONVERSI_TIDAK_ADA", ref_tipe: "item", ref_kode: "ABC21135", keterangan: "Item tidak punya isi per karton", status: "open" },
+        { id: 1, jenis: "KONVERSI_BEDA_DENGAN_EXPORT", ref_tipe: "item", ref_kode: "ABC10520", keterangan: "Konversi di export 24 beda dengan master 12", status: "open", master_saat_ini: "12" },
+        { id: 2, jenis: "KONVERSI_TIDAK_ADA", ref_tipe: "item", ref_kode: "ABC21135", keterangan: "Item tidak punya isi per karton", status: "open", master_saat_ini: null },
         { id: 3, jenis: "OUTLET_TANPA_AREA", ref_tipe: "customer", ref_kode: "C-MKS0418", keterangan: "Outlet belum punya area", status: "open" },
         { id: 4, jenis: "PRINCIPAL_BELUM_MASUK", ref_tipe: "principal", ref_kode: "FORISA", keterangan: "Ada di 30 hari terakhir", status: "open" },
     ],
@@ -125,6 +126,33 @@ test.describe("Wave harian", () => {
         expect(dibuat).toMatchObject({ urutan: 4, nama: "Malam", tipe: "reguler" });
     });
 
+    for (const [lebar, nama] of [[1366, "desktop"], [390, "ponsel"]] as const) {
+        test(`sukses unggah (BL-54, ${nama}): melaporkan nota baru / sudah ada / diganti; selisih setelah masuk wave bertaut ke wave`, async ({ page }) => {
+            await page.route(path("/api/rekapan-nota/wave"), (route) => route.fulfill(json({ wave: WAVES })));
+            await page.route(path("/api/rekapan-nota/pool"), (route) => route.fulfill(json(POOL)));
+            await page.route(path("/api/rekapan-nota/upload"), (route) => route.fulfill(json({
+                uploadId: 9, tanggal: "2026-10-06", jumlahNota: 315, jumlahBaris: 2900, principal: ["PRINCIPLE A", "PRINCIPLE B"],
+                notaBaru: 87, notaSudahAda: 225, notaDiganti: 1, notaSelisih: [{ noNota: "INV/2610/KN01388", waveId: 317, wave: "Pagi 2" }, { noNota: "INV/2610/KN01391", waveId: 317, wave: "Pagi 2" }],
+            })));
+            await page.setViewportSize({ width: lebar, height: 900 });
+            await page.goto("/rekapan-nota", NAV);
+            const main = page.locator("main");
+            await main.getByRole("button", { name: "Unggah file export…" }).first().click(NAV);
+            await expect(page.getByRole("dialog")).toContainText("Tidak ditulis ulang; yang berubah setelah masuk wave dicatat sebagai exception");
+            await page.getByRole("dialog").getByLabel(/File export/).setInputFiles({ name: "Rincian Faktur sore.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("x") });
+            await page.getByRole("dialog").getByRole("button", { name: "Unggah ke pool" }).click();
+            const ok = main.getByRole("status").filter({ hasText: "87 nota baru masuk pool 06/10/2026" });
+            await expect(ok).toBeVisible();
+            await expect(ok).toContainText("315 nota di file · 225 sudah ada di pool, dilewati · 1 berubah sebelum masuk wave, diganti isi terbaru");
+            const selisih = main.getByText("2 nota berubah setelah masuk wave.");
+            await expect(selisih).toBeVisible();
+            await expect(main.getByRole("link", { name: "Wave Pagi 2" }).first()).toHaveAttribute("href", "/rekapan-nota/wave/317");
+            await expect(main.getByText("usulan BL-54")).toHaveCount(0);
+            await noHorizontalOverflow(page);
+            await page.screenshot({ path: `test-results/fiori-rekapan-unggah-sukses-${nama}.png`, fullPage: true });
+        });
+    }
+
     test("kosong: pool dan wave nihil → keadaan kosong + catatan BL-55; memuat: kerangka, bukan 'Belum ada wave'", async ({ page }) => {
         let release: () => void = () => {};
         const gate = new Promise<void>((r) => { release = r; });
@@ -162,7 +190,12 @@ test.describe("Object Page wave", () => {
         await expect(main.getByRole("list", { name: "Status wave" }).locator('[aria-current="step"]')).toContainText("Rilis");
         await expect(main.getByText("2 menahan konfirmasi")).toBeVisible();
         await expect(main.getByRole("table", { name: "Exception" })).toContainText("Isi per karton beda dengan file");
-        await expect(main.getByText("usulan BL-24")).toBeVisible();
+        await expect(main.getByText("usulan BL-24")).toHaveCount(0);
+        const tabelExc = main.getByRole("table", { name: "Exception" });
+        await expect(tabelExc.getByRole("button", { name: "Selesai ABC10520" })).toBeVisible();
+        await expect(tabelExc.getByRole("button", { name: "Abaikan ABC10520" })).toBeVisible();
+        await expect(tabelExc).toContainText("Master saat ini 12 per karton");
+        await expect(tabelExc).toContainText("Master saat ini belum diisi");
         const konfirmasi = main.getByRole("button", { name: "Konfirmasi selesai…" });
         await expect(konfirmasi).toBeDisabled();
         await expect(konfirmasi).toHaveAttribute("title", "Tutup 2 exception isi per karton dulu");
@@ -186,10 +219,73 @@ test.describe("Object Page wave", () => {
         await page.screenshot({ path: "test-results/fiori-rekapan-wave-lepas-galat.png" });
         await dlg.getByRole("button", { name: "Batal" }).click();
 
-        // Batalkan wave: alasan wajib, menyebut perilaku hari ini (nota tetap tercatat).
+        // Batalkan wave (BL-25): alasan wajib, menyebut jumlah nota yang kembali ke pool.
         await main.getByRole("button", { name: "Batalkan wave…" }).click();
-        await expect(page.getByRole("dialog")).toContainText("hari ini pembatalan belum mengembalikannya ke pool");
+        await expect(page.getByRole("dialog")).toContainText("Kembali ke pool");
+        await expect(page.getByRole("dialog")).toContainText("2 nota; bisa masuk wave lain hari ini");
+        await expect(page.getByRole("dialog")).not.toContainText("belum mengembalikannya");
         await expect(page.getByRole("dialog").getByRole("button", { name: "Batalkan wave" })).toBeDisabled();
+    });
+
+    test("BL-24: Abaikan beralasan lewat dialog, Selesai langsung; 409 tampil di halaman; konfirmasi terbuka setelah KONVERSI ditutup", async ({ page }) => {
+        const detail = structuredClone(DETAIL_RILIS);
+        const kiriman: Array<Record<string, unknown>> = [];
+        await page.route(path("/api/rekapan-nota/wave/317"), (route) => route.fulfill(json(detail)));
+        await page.route(path("/api/rekapan-nota/wave/317/exception"), (route) => {
+            const b = route.request().postDataJSON() as { exceptionId: number; aksi: string; alasan?: string };
+            kiriman.push(b);
+            if (b.exceptionId === 3) return route.fulfill(json({ error: "Exception sudah ditandai selesai di layar lain. Muat ulang halaman." }, 409));
+            const e = detail.exception.find((x) => x.id === b.exceptionId)!;
+            Object.assign(e, { status: b.aksi === "selesai" ? "selesai" : "diabaikan", resolved_at: "2026-10-06T02:05:00Z", resolved_oleh: "Admin Gudang A", alasan: b.alasan ?? null });
+            return route.fulfill(json({ ok: true, status: e.status }));
+        });
+        await page.setViewportSize({ width: 1366, height: 900 });
+        await page.goto("/rekapan-nota/wave/317", NAV);
+        const main = page.locator("main");
+        const tabel = main.getByRole("table", { name: "Exception" });
+        await expect(tabel).toBeVisible(NAV);
+        const konfirmasi = main.getByRole("button", { name: "Konfirmasi selesai…" });
+        await expect(konfirmasi).toBeDisabled();
+
+        // Abaikan: dialog dengan alasan wajib (min 5), menyebut akibat ke konfirmasi.
+        await tabel.getByRole("button", { name: "Abaikan ABC10520" }).click();
+        const dlg = page.getByRole("dialog");
+        await expect(dlg.getByRole("heading")).toContainText("Abaikan exception isi per karton beda dengan file?");
+        await expect(dlg).toContainText("Master saat ini 12 per karton");
+        await expect(dlg).toContainText("Tidak lagi ditahan exception ini");
+        await expect(dlg.getByRole("button", { name: "Abaikan dengan alasan" })).toBeDisabled();
+        await dlg.getByLabel(/Alasan/).fill("file benar; master dikoreksi");
+        await page.screenshot({ path: "test-results/fiori-rekapan-exception-abaikan.png" });
+        await dlg.getByRole("button", { name: "Abaikan dengan alasan" }).click();
+        await expect(dlg).toBeHidden();
+        expect(kiriman[0]).toEqual({ exceptionId: 1, aksi: "abaikan", alasan: "file benar; master dikoreksi" });
+        await expect(tabel).toContainText("Diabaikan 6 Okt 10.05 · Admin Gudang A · file benar; master dikoreksi");
+
+        // 409 (sudah ditutup di layar lain) tampil di halaman, bukan diam-diam.
+        await tabel.getByRole("button", { name: "Selesai C-MKS0418" }).click();
+        await expect(main.getByRole("alert")).toContainText("sudah ditandai selesai di layar lain");
+
+        // Selesai langsung; setelah dua KONVERSI ditutup, konfirmasi terbuka.
+        await tabel.getByRole("button", { name: "Selesai ABC21135" }).click();
+        await expect(main.getByRole("status").filter({ hasText: "ABC21135 ditandai selesai" })).toBeVisible();
+        expect(kiriman.at(-1)).toMatchObject({ exceptionId: 2, aksi: "selesai" });
+        await expect(konfirmasi).toBeEnabled();
+        await page.screenshot({ path: "test-results/fiori-rekapan-exception-ditutup.png", fullPage: true });
+    });
+
+    test("BL-25: batal wave -> pesan menyebut nota yang kembali ke pool", async ({ page }) => {
+        let batal: unknown = null;
+        await page.route(path("/api/rekapan-nota/wave/317"), (route) => {
+            if (route.request().method() === "PATCH") { batal = route.request().postDataJSON(); return route.fulfill(json({ ok: true, status: "cancelled", notaKembali: 2 })); }
+            return route.fulfill(json(DETAIL_RILIS));
+        });
+        await page.goto("/rekapan-nota/wave/317", NAV);
+        const main = page.locator("main");
+        await main.getByRole("button", { name: "Batalkan wave…" }).click(NAV);
+        await page.getByRole("dialog").getByLabel(/Alasan/).fill("Mobil rute A rusak");
+        await page.getByRole("dialog").getByRole("button", { name: "Batalkan wave" }).click();
+        expect(batal).toMatchObject({ aksi: "cancel", alasan: "Mobil rute A rusak" });
+        await expect(main.getByRole("status").filter({ hasText: "dibatalkan; 2 nota kembali ke pool" })).toBeVisible();
     });
 
     test("draf: pool dengan cari/saring, Pilih semua hanya yang terlihat, footer Tambah N nota; Rilis dialog", async ({ page }) => {
@@ -226,8 +322,16 @@ test.describe("Object Page wave", () => {
         await page.goto("/rekapan-nota/wave/317", NAV);
         await expect(page.locator("main").getByRole("heading", { level: 1, name: "Wave Pagi 2" })).toBeVisible(NAV);
         await expect(page.locator("main").getByRole("list", { name: "Isi wave" })).toBeVisible();
+        const excPonsel = page.locator("main").getByRole("list", { name: "Exception" });
+        await expect(excPonsel.getByRole("button", { name: "Selesai ABC10520" })).toBeVisible();
+        await expect(excPonsel.getByRole("button", { name: "Abaikan ABC10520" })).toBeVisible();
+        await expect(excPonsel).toContainText("Master saat ini 12 per karton");
         await noHorizontalOverflow(page);
         await page.screenshot({ path: "test-results/fiori-rekapan-wave-ponsel.png", fullPage: true });
+        await excPonsel.getByRole("button", { name: "Abaikan ABC10520" }).click();
+        await expect(page.getByRole("dialog")).toContainText("Tidak lagi ditahan exception ini");
+        await noHorizontalOverflow(page);
+        await page.screenshot({ path: "test-results/fiori-rekapan-exception-abaikan-ponsel.png" });
     });
 });
 
