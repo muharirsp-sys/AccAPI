@@ -610,9 +610,17 @@ test.describe("peninjau B — ponsel 390 px", () => {
         o.konf = [{ status: 409, body: { ok: false, kode: "BELUM_DIKUNJUNGI", error: "PELANGGAN A belum dikunjungi pada Selasa, 13 Okt 2026 (belum ada check-in, hasil kunjungan, atau merchandising); kunjungi dulu sebelum memasukkan ke JKS." } }];
         await a.getByLabel("Hari").selectOption("Senin");
         await a.getByLabel("Minggu").selectOption("all");
+        // 409 → daftar dimuat ulang (keputusan dikunci selama memuat). Jeda 1,5 dtk membuat jendela muat ulang PASTI terlihat: uji ini dulu
+        // mengubah data server (SUDAH_DI_JKS di bawah) SEBELUM muat ulang ini selesai → muat ulang membawa B "sudah di JKS", tombol B lenyap,
+        // klik menunggu 150 dtk (flaky sejak 13 Okt, bergantung kecepatan mesin; bukan tanggal, bukan kode app). Tunggu muat ulang selesai dulu.
+        const g409 = nBaca(m.baca, "/luar-rute");
         o.luarGet = [{ status: 200, delay: 1500, terapkan: true }];
         await a.getByRole("button", { name: "Masukkan ke JKS" }).click();
         await expect(a.getByRole("alert")).toContainText("belum dikunjungi pada Selasa, 13 Okt 2026", NAV);
+        await expect(item("PELANGGAN B").locator("p.fi-why", { hasText: "Menunggu daftar dimuat ulang" })).toBeVisible();
+        await expect.poll(() => nBaca(m.baca, "/luar-rute"), NAV).toBeGreaterThan(g409);
+        await expect(item("PELANGGAN B").getByRole("button", { name: "Jangan masukkan JKS" })).toBeEnabled(NAV);
+        await expect(a.getByRole("alert"), "galat bertahan melewati muat ulang").toContainText("belum dikunjungi pada Selasa, 13 Okt 2026");
 
         // 409 SUDAH_DI_JKS: server sudah mengubah baris menjadi sudah_jks → daftar dimuat ulang, baris jadi "Sudah di JKS Anda", hitungan benar.
         const g0 = nBaca(m.baca, "/luar-rute");

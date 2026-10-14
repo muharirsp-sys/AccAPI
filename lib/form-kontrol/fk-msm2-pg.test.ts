@@ -652,6 +652,42 @@ test("FK-MSM3 R-2: check-in + status SERENTAK pada toko tanpa baris AO, 30 kali 
     assert.equal((await pool.query(`SELECT count(*)::int n FROM ao_control_daily WHERE cust_code LIKE 'C-6000%' AND (is_visited IS NOT TRUE OR status <> 'ordered')`)).rows[0].n, 0);
 });
 
+test("FK-MSM3 R-2 (deterministik): check-in/status saat baris AO toko itu baru DIBUAT transaksi lain (belum COMMIT) → menunggu lalu 200, satu baris, kolom pihak lain utuh", { skip: pgSkip }, async () => {
+    // Uji serentak di atas bergantung jadwal (sabotase "check-in tanpa ON CONFLICT" pernah HIJAU). Di sini jendelanya dipaksa: transaksi lain
+    // memegang INSERT baris AO yang belum di-COMMIT, route harus MENUNGGU kunci indeks unik (dibuktikan lewat pg_blocking_pids) lalu memperbarui
+    // baris itu. SELECT-lalu-INSERT atau INSERT tanpa ON CONFLICT (idx_ao_unique) = 23505 → 500.
+    const kasus = [
+        { jalur: "checkin" as const, cust: "C-610001-CBA", lain: { status: "ordered", ci: false }, harap: { status: "ordered", ci: true } },
+        { jalur: "status" as const, cust: "C-610002-CBA", lain: { status: "not_visited", ci: true }, harap: { status: "ordered", ci: true } },
+    ];
+    for (const k of kasus) {
+        await pool.query(`INSERT INTO kunjungan_luar_rute (id, sales_code, principle, tanggal, cust_code, cust_name, dibuat_oleh)
+            VALUES ($1, 'M-SLA', 'PRINCIPLE A', $2, $3, 'R2 TAHAN', 'u-sla')`, [`r2t-${k.jalur}`, HARI_INI, k.cust]);
+        const lain = await pool.connect();
+        try {
+            await lain.query("BEGIN");
+            const pid = (await lain.query("SELECT pg_backend_pid() AS p")).rows[0].p as number;
+            await lain.query(`INSERT INTO ao_control_daily (id, sales_code, cust_code, principle, date, period_month, period_year, status, is_visited, checkin_at,
+                created_at, updated_at) VALUES ($1, 'M-SLA', $2, 'PRINCIPLE A', $3, 10, 2026, $4, $5, CASE WHEN $5 THEN now() END, now(), now())`,
+            [`ao-r2t-${k.jalur}`, k.cust, HARI_INI, k.lain.status, k.lain.ci]);
+            const janji = tulis[k.jalur](k.cust);
+            let tertahan = false;
+            for (let i = 0; i < 200 && !tertahan; i++) {
+                tertahan = Boolean((await pool.query(`SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`, [pid])).rowCount);
+                if (!tertahan) await new Promise((r) => setTimeout(r, 25));
+            }
+            assert.ok(tertahan, `${k.jalur}: route menunggu baris AO transaksi lain (kalau tidak, uji ini tidak menguji konflik)`);
+            await lain.query("COMMIT");
+            assert.deepEqual(kodeJ(await janji), [200, undefined], `${k.jalur}: tanpa 23505/500`);
+        } finally {
+            await lain.query("ROLLBACK").catch(() => undefined);
+            lain.release();
+        }
+        assert.deepEqual((await pool.query(`SELECT id, status, checkin_at IS NOT NULL ci FROM ao_control_daily WHERE cust_code = $1 AND date = $2`,
+            [k.cust, HARI_INI])).rows, [{ id: `ao-r2t-${k.jalur}`, ...k.harap }], k.jalur);
+    }
+});
+
 test("FK-MSM3 R-3 (owner): toko yang SUDAH punya baris AO salesman itu pada tanggal itu tetap lolos sesudah JKS dipindah hari; yang belum = 409", { skip: pgSkip }, async () => {
     if (!HARI) return; // Minggu: tanpa rute JKS
     await pool.query(`INSERT INTO jks_master (id, sales_code, sales_name, cust_code, cust_name, hari_kunjungan, minggu_pattern, principle, channel,
