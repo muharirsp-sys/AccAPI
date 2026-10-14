@@ -1458,7 +1458,10 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
     if not owned(master, user):
         return JSONResponse(status_code=404, content={"ok": False, "error": "Master tidak tersedia. Muat master kembali."})
     try:
-        raw = await read_upload_file_limited(pdf, max_bytes=MAX_PDF_UPLOAD_BYTES, allowed_exts=(".pdf",), label="PDF Program")
+        from summary_mistral import foto_ke_pdf
+        raw = foto_ke_pdf(await read_upload_file_limited(pdf, max_bytes=MAX_PDF_UPLOAD_BYTES,
+                                                         allowed_exts=(".pdf", ".jpg", ".jpeg", ".png"),
+                                                         label="Surat program"))
         result = (kino_extraction(raw, master) or deterministic_extraction(raw, master)
                   or await extract_mistral(raw, master, user, principle_name))
         # Yang jawabannya sudah pasti tidak perlu ditanyakan kepada peninjau: principal yang

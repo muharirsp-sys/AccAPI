@@ -45,6 +45,30 @@ def status():
     return {"model": MODEL, "configured": bool(os.getenv("MISTRAL_API_KEY", "").strip()), "max_pages": min(40, max(1, int(os.getenv("SUMMARY_MAX_OCR_PAGES", "20"))))}
 
 
+FOTO = {b"\xff\xd8\xff": "jpeg", b"\x89PNG": "png"}
+
+
+def foto_ke_pdf(raw):
+    """Foto surat (kiriman WhatsApp, JPG/PNG) -> PDF satu halaman; PDF dikembalikan apa adanya.
+
+    Mistral membaca foto sama baiknya dengan PDF hasil pindai -- yang menolaknya dulu hanya
+    gerbang unggah kita. Dibungkus PDF supaya pemecahan per halaman, batas halaman, dan cache
+    OCR tetap satu jalur. Hasil konversinya deterministik (byte sama untuk foto yang sama),
+    jadi foto yang diunggah ulang tetap kena cache. Jenisnya dari tanda tangan byte, bukan
+    nama berkas: berkas lain berekstensi .jpg ditolak di sini, bukan di Mistral.
+    """
+    if raw.startswith(b"%PDF-"):
+        return raw
+    jenis = next((nama for tanda, nama in FOTO.items() if raw.startswith(tanda)), None)
+    if not jenis:
+        raise ValueError("Berkas bukan PDF, JPG, atau PNG yang valid")
+    try:
+        with fitz.open(stream=raw, filetype=jenis) as foto:
+            return foto.convert_to_pdf()
+    except Exception:
+        raise ValueError("Foto surat rusak atau tidak dapat dibaca") from None
+
+
 def page_pdf(raw, index):
     """PDF satu halaman: mengirim dokumen penuh sekali per halaman memutus koneksi pada surat besar."""
     with fitz.open(stream=raw, filetype="pdf") as source:
