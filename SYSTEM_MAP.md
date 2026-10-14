@@ -1022,7 +1022,7 @@ AccAPI/_github_clean/
 | `app/(dashboard)/rekapan-nota/area/page.tsx` | `AreaMappingPage` | Antrean mapping area + terima massal TINGGI |
 | `app/api/rekapan-nota/kanvas/route.ts` | `GET`,`POST`,`DELETE` | Nota per salesman + tandai/batal tandai kanvas. Menolak menandai nota yang sudah di wave reguler, dan menolak mencabut tanda yang sudah di wave kanvas rilis |
 | `app/(dashboard)/rekapan-nota/kanvas/page.tsx` | `KanvasPage` | Penandaan kanvas: kelompok per salesman, multi-select, tawaran sekali "tandai semua nota salesman ini" |
-| `app/(cetak)/layout.tsx` + `TombolCetak.tsx` | `CetakLayout` | Grup route cetak: tanpa sidebar, guard `rekapan_nota.print` sendiri, CSS `@page`/`@media print` |
+| `app/(cetak)/layout.tsx` + `BingkaiCetak.tsx` | `CetakLayout`, `BingkaiCetak` | Grup route cetak: tanpa sidebar, guard `rekapan_nota.print` sendiri, CSS `@page`/`@media print`. Bilah Fiori di LAYAR pratinjau (judul + Wave #id, Kembali ke wave, Cetak = `window.print()`); `FioriScope.layar-saja` → `display:none` saat cetak, kertas tidak berubah |
 | `app/(cetak)/rekapan-nota/wave/[id]/cetak/page.tsx` | `CetakRekapanPage` | SATU template lembar rekapan berparameter grup (server component) |
 | `app/(cetak)/rekapan-nota/wave/[id]/ttf/page.tsx` | `CetakTtfPage` | SATU template TTF berparameter wave |
 
