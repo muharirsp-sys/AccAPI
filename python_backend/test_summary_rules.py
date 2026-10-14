@@ -544,6 +544,17 @@ def check_conflict_guard_per_channel():
     ]
     bentrok = kode_bentrok(excel_rows, meta)
     assert bentrok == {("MTI", "S1", "P1")}, bentrok
+
+    # Strata jumlah (MSM 223: 70 s/d 499 DUS, 500 s/d 999, 1000 UP) bukan bentrok; tetapi satu
+    # baris tanpa rentang di antara klaimnya ("4+1" lawan "7+1") tetap bentrok.
+    meta.update({4: {"surat_program": "S3", "ketentuan": "Beli 70 DUS s/d 499 DUS per PO"},
+                 5: {"surat_program": "S3", "ketentuan": "Beli 500 DUS s/d 999 DUS per PO"},
+                 6: {"surat_program": "S3", "ketentuan": "Beli 1000 DUS UP per PO"},
+                 7: {"surat_program": "S3", "ketentuan": "Beli 4 PCS"}})
+    strata = [{"pdf_key": k, "channel": "GT", "kode_barang": "P3"} for k in (4, 5, 6)]
+    assert kode_bentrok(strata, meta) == set(), kode_bentrok(strata, meta)
+    campur = strata + [{"pdf_key": 7, "channel": "GT", "kode_barang": "P3"}]
+    assert kode_bentrok(campur, meta) == {("GT", "S3", "P3")}, kode_bentrok(campur, meta)
     print("summary conflict-guard check: OK")
 
 

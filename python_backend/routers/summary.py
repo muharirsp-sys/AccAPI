@@ -415,13 +415,21 @@ def kode_bentrok(excel_rows, pdf_meta):
     bulanan Oktober 2026 mencetak 8707 Indomaret DAN baris ULTRA LIGHT 8789 MTI sebagai
     "(TIDAK ADA ITEM COCOK DI MASTER)": keduanya MT, keduanya menyebut ELLIPS H.VIT ULTRA LIGHT
     45ML, dan penjaga membuang kode itu dari keduanya.
+
+    STRATA JUMLAH JUGA BUKAN BENTROK. "Beli 70 DUS s/d 499 DUS 2%, 500 s/d 999 3%, 1000 UP 4%"
+    (MSM 223, September 2026) menyentuh kode yang sama tiga kali dan dulu tercetak "(TIDAK ADA
+    ITEM COCOK DI MASTER)". Baris strata ditulis dengan rentangnya (`s/d` / `UP`, checklist S);
+    paket yang bentrok ("4+1" dan "7+1" untuk barang yang sama) tidak. Satu kode bentrok bila
+    salah satu baris yang mengklaimnya BUKAN baris strata.
     """
-    peta: Dict[Tuple[str, str, str], set] = {}
+    peta: Dict[Tuple[str, str, str], Dict[int, bool]] = {}
     for er in excel_rows:
         if er["kode_barang"] and str(er.get("trig_unit", "")).upper() != "RP":
-            surat = str(pdf_meta.get(er["pdf_key"], {}).get("surat_program", "") or "").strip()
-            peta.setdefault((er["channel"], surat, er["kode_barang"]), set()).add(er["pdf_key"])
-    return {k for k, v in peta.items() if len(v) > 1}
+            meta = pdf_meta.get(er["pdf_key"], {})
+            surat = str(meta.get("surat_program", "") or "").strip()
+            strata = bool(re.search(r"\bs/d\b|\bUP\b", str(meta.get("ketentuan", "") or ""), re.I))
+            peta.setdefault((er["channel"], surat, er["kode_barang"]), {})[er["pdf_key"]] = strata
+    return {k for k, v in peta.items() if len(v) > 1 and not all(v.values())}
 
 
 @router.post("/summary/manual/generate")
