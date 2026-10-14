@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import { getMerchandisingForDate, saveMerchandising, resolveScope, canAccessSales } from "@/lib/form-kontrol";
 import { jawabGalat } from "@/lib/order-cabang";
+import { witaToday } from "@/lib/beranda";
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -41,12 +42,13 @@ export async function POST(req: Request) {
         if (!salesCode || !custCode || !principle || !date) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
         }
-        if (!canAccessSales(await resolveScope(session), salesCode)) {
+        const scope = await resolveScope(session);
+        if (!canAccessSales(scope, salesCode)) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
         // FK-MSM3: hanya toko di rute tanggal itu (JKS atau luar rute belum batal) → selain itu 409 berkode.
         const hasil = await saveMerchandising({
-            salesCode, custCode, principle, date,
+            salesCode, custCode, principle, date, penulis: { pemilik: scope.salesCode === salesCode, hariIni: witaToday() },
             produkJelas: body.produkJelas ?? false,
             displayRapi: body.displayRapi ?? false,
             dibersihkan: body.dibersihkan ?? false,

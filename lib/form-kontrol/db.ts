@@ -248,9 +248,15 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
 
 // ── Penjaga tulis kunjungan (FK-MSM3) ───────────────────────────────────────
 
-type KunciKunjungan = { salesCode: string; custCode: string; principle: string; date: string };
+/**
+ * `penulis` = siapa menulis (dari sesi, oleh route): salesman pemilik rute (`pemilik`) dan hari ini WITA server — hanya untuk kalimat
+ * penolakan (peninjau A R-4: saran "tambahkan lewat Kunjungan luar rute" hanya bisa diikuti pemilik, hari ini).
+ */
+type KunciKunjungan = { salesCode: string; custCode: string; principle: string; date: string; penulis?: { pemilik: boolean; hariIni: string } };
 /** Hasil tulis kunjungan: id baris, atau penolakan berkode (route → jawabGalat). */
 export type HasilTulisKunjungan = { id: string } | { galat: GalatOrder };
+/** Kunci unik baris AO (idx_ao_unique) — target ON CONFLICT check-in/status. */
+const KUNCI_AO = [aoControlDaily.salesCode, aoControlDaily.custCode, aoControlDaily.principle, aoControlDaily.date];
 
 /**
  * FK-MSM3 (peninjau A R-D1, owner 13 Okt 2026): check-in, status AO, dan merchandising hanya untuk toko di RUTE salesman pada `date` —
@@ -260,6 +266,8 @@ export type HasilTulisKunjungan = { id: string } | { galat: GalatOrder };
  * → 409 SUDAH_DIKUNJUNGI. Tanpa ini tulis dari halaman basi meninggalkan baris AO yatim (tanpa kartu rute, tanpa nama di Dashboard SPV).
  * Tidak di rute → 409 KUNJUNGAN_DIBATALKAN (toko itu punya kunjungan luar rute tanggal itu yang sudah dibatalkan) / BUKAN_RUTE_HARI_INI.
  * Toko JKS hari itu: satu SELECT tanpa kunci (perilaku lama).
+ * Owner 13 Okt (peninjau A R-3): toko yang SUDAH punya baris AO salesman ini pada tanggal itu tetap lolos — status/merchandising lanjutan
+ * sesudah check-in tidak putus bila JKS dipindah hari di tengah kunjungan. Aman terhadap batal: batal menolak toko yang punya baris AO.
  */
 async function galatBukanRute(q: Pick<typeof db, "select">, d: KunciKunjungan): Promise<GalatOrder | null> {
     const hari = DAY_TO_HARI[parseDateString(d.date).getDay()];
@@ -273,17 +281,26 @@ async function galatBukanRute(q: Pick<typeof db, "select">, d: KunciKunjungan): 
     const kunci = and(eq(k.salesCode, d.salesCode), eq(k.custCode, d.custCode), eq(k.principle, d.principle), eq(k.tanggal, d.date));
     const [aktif] = await q.select({ id: k.id }).from(k).where(and(kunci, isNull(k.dibatalkanPada))).for("share").limit(1);
     if (aktif) return null;
+    const [ao] = await q.select({ id: aoControlDaily.id }).from(aoControlDaily).where(and(eq(aoControlDaily.salesCode, d.salesCode),
+        eq(aoControlDaily.custCode, d.custCode), eq(aoControlDaily.principle, d.principle), eq(aoControlDaily.date, d.date))).limit(1);
+    if (ao) return null;
     const [batal] = await q.select({ custName: k.custName }).from(k).where(and(kunci, isNotNull(k.dibatalkanPada))).limit(1);
+    const [jks] = batal ? [] : await q.select({ custName: jksMaster.custName }).from(jksMaster).where(eq(jksMaster.custCode, d.custCode)).limit(1);
     const tgl = tanggalPanjang(d.date);
+    const hariIniPenulis = d.penulis?.hariIni;
+    const saran = d.penulis?.pemilik && d.date === hariIniPenulis
+        ? (batal ? "Bila toko ini memang dikunjungi, tambahkan lagi lewat Kunjungan luar rute." : "Tambahkan dulu lewat Kunjungan luar rute di Rute hari ini.")
+        : hariIniPenulis && d.date !== hariIniPenulis
+            ? "Kunjungan luar rute hanya bisa ditambah pada hari kunjungannya sendiri, jadi tanggal ini tidak bisa dilengkapi lewat luar rute."
+            : "Hanya salesman pemilik rute yang bisa menambahkannya sebagai kunjungan luar rute.";
     return batal
-        ? { status: 409, kode: "KUNJUNGAN_DIBATALKAN", error: `Kunjungan luar rute ${batal.custName} pada ${tgl} sudah dibatalkan, jadi tidak dicatat. Bila toko ini memang dikunjungi, tambahkan lagi lewat Kunjungan luar rute.` }
-        : { status: 409, kode: "BUKAN_RUTE_HARI_INI", error: `Toko ${d.custCode} tidak ada di rute ${d.salesCode} (${d.principle}) pada ${tgl}, jadi tidak dicatat. Toko di luar JKS hari itu ditambahkan dulu lewat Kunjungan luar rute.` };
+        ? { status: 409, kode: "KUNJUNGAN_DIBATALKAN", error: `Kunjungan luar rute ${batal.custName} pada ${tgl} sudah dibatalkan, jadi tidak dicatat. ${saran}` }
+        : { status: 409, kode: "BUKAN_RUTE_HARI_INI", error: `${jks?.custName ? `${jks.custName} (${d.custCode})` : `Toko ${d.custCode}`} tidak ada di rute ${d.salesCode} (${d.principle}) pada ${tgl}, jadi tidak dicatat. ${saran}` };
 }
 
 // ── AO Control ───────────────────────────────────────────────────────────────
 
-export async function upsertAoControl(data: {
-    salesCode: string; custCode: string; principle: string; date: string;
+export async function upsertAoControl(data: KunciKunjungan & {
     status: AoStatus; isVisited?: boolean; noOrderReasonCode?: string | null;
     noOrderNote?: string | null; createdBy?: string;
 }): Promise<HasilTulisKunjungan> {
@@ -295,29 +312,11 @@ export async function upsertAoControl(data: {
     return db.transaction(async (tx) => {
         const galat = await galatBukanRute(tx, data);
         if (galat) return { galat };
-        const existing = await tx.select({ id: aoControlDaily.id })
-            .from(aoControlDaily)
-            .where(and(
-                eq(aoControlDaily.salesCode, data.salesCode),
-                eq(aoControlDaily.custCode, data.custCode),
-                eq(aoControlDaily.principle, data.principle),
-                eq(aoControlDaily.date, data.date),
-            )).limit(1);
-
-        if (existing.length > 0) {
-            await tx.update(aoControlDaily).set({
-                status: data.status,
-                isVisited: data.isVisited ?? null,
-                noOrderReasonCode: data.noOrderReasonCode ?? null,
-                noOrderNote: data.noOrderNote ?? null,
-                updatedAt: now,
-            }).where(eq(aoControlDaily.id, existing[0].id));
-            return { id: existing[0].id };
-        }
-
-        const id = randomUUID();
-        await tx.insert(aoControlDaily).values({
-            id, salesCode: data.salesCode, custCode: data.custCode,
+        // Peninjau A R-2: satu INSERT … ON CONFLICT (idx_ao_unique), bukan SELECT lalu INSERT — check-in + status serentak pada toko tanpa
+        // baris AO dulu berakhir 23505 → 500. Yang diperbarui hanya kolom STATUS; check-in/check-out tidak disentuh; is_visited tanpa nilai
+        // = tetap (dulu ditimpa null sesudah check-in menulis true).
+        const [row] = await tx.insert(aoControlDaily).values({
+            id: randomUUID(), salesCode: data.salesCode, custCode: data.custCode,
             principle: data.principle, date: data.date,
             periodMonth, periodYear,
             status: data.status, isVisited: data.isVisited ?? null,
@@ -326,8 +325,14 @@ export async function upsertAoControl(data: {
             autoMatched: false, source: "manual",
             createdBy: data.createdBy ?? null,
             createdAt: now, updatedAt: now,
-        });
-        return { id };
+        }).onConflictDoUpdate({ target: KUNCI_AO, set: {
+            status: data.status,
+            isVisited: sql`coalesce(excluded.is_visited, ao_control_daily.is_visited)`,
+            noOrderReasonCode: data.noOrderReasonCode ?? null,
+            noOrderNote: data.noOrderNote ?? null,
+            updatedAt: now,
+        } }).returning({ id: aoControlDaily.id });
+        return { id: row.id };
     });
 }
 
@@ -354,8 +359,7 @@ export async function getReasons() {
 
 // ── Merchandising ─────────────────────────────────────────────────────────────
 
-export async function saveMerchandising(data: {
-    salesCode: string; custCode: string; principle: string; date: string;
+export async function saveMerchandising(data: KunciKunjungan & {
     produkJelas: boolean; displayRapi: boolean; dibersihkan: boolean;
     ditataulang: boolean; posisiMudah: boolean; semuaSku: boolean;
     photoUrl?: string | null; stepPhotos?: Record<string, string> | null; note?: string | null;
@@ -712,8 +716,7 @@ function computeGpsFlag(lat: number | null, lng: number | null, accuracy: number
     return flags.length ? flags.join(",") : null;
 }
 
-export async function saveCheckin(data: {
-    salesCode: string; custCode: string; principle: string; date: string;
+export async function saveCheckin(data: KunciKunjungan & {
     photoUrl: string; createdBy?: string;
     lat?: number | null; lng?: number | null; accuracy?: number | null;
 }): Promise<HasilTulisKunjungan> {
@@ -726,27 +729,9 @@ export async function saveCheckin(data: {
     return db.transaction(async (tx) => {
         const galat = await galatBukanRute(tx, data);
         if (galat) return { galat };
-        const existing = await tx.select({ id: aoControlDaily.id })
-            .from(aoControlDaily)
-            .where(and(
-                eq(aoControlDaily.salesCode, data.salesCode),
-                eq(aoControlDaily.custCode, data.custCode),
-                eq(aoControlDaily.principle, data.principle),
-                eq(aoControlDaily.date, data.date),
-            )).limit(1);
-
-        if (existing.length > 0) {
-            await tx.update(aoControlDaily).set({
-                checkinAt: now, checkinPhotoUrl: data.photoUrl,
-                checkinLat: lat, checkinLng: lng, checkinAccuracy: accuracy, gpsFlag,
-                isVisited: true, updatedAt: now,
-            }).where(eq(aoControlDaily.id, existing[0].id));
-            return { id: existing[0].id };
-        }
-
-        const id = randomUUID();
-        await tx.insert(aoControlDaily).values({
-            id, salesCode: data.salesCode, custCode: data.custCode,
+        // Peninjau A R-2: INSERT … ON CONFLICT (idx_ao_unique); yang diperbarui hanya kolom CHECK-IN — status/alasan milik upsertAoControl.
+        const [row] = await tx.insert(aoControlDaily).values({
+            id: randomUUID(), salesCode: data.salesCode, custCode: data.custCode,
             principle: data.principle, date: data.date,
             periodMonth, periodYear,
             status: "not_visited", isVisited: true,
@@ -756,8 +741,12 @@ export async function saveCheckin(data: {
             checkoutAt: null, checkoutPhotoUrl: null,
             autoMatched: false, source: "manual",
             createdBy: data.createdBy ?? null, createdAt: now, updatedAt: now,
-        });
-        return { id };
+        }).onConflictDoUpdate({ target: KUNCI_AO, set: {
+            checkinAt: now, checkinPhotoUrl: data.photoUrl,
+            checkinLat: lat, checkinLng: lng, checkinAccuracy: accuracy, gpsFlag,
+            isVisited: true, updatedAt: now,
+        } }).returning({ id: aoControlDaily.id });
+        return { id: row.id };
     });
 }
 

@@ -7,11 +7,12 @@
  *   ./FotoBukti; ../../lapangan (ambilJson, kirimFk, sebabGagal, PESAN_SINYAL), ../../shared (alasanIzinFk, jamWita); components/fiori/*; lib/rekapan-nota/ui.
  * Main Functions: Kunjungan (muat/kosong/galat), Wizard (langkah), MERCH_STEPS.
  * Side Effects: HTTP baca/tulis kunjungan; kamera/lokasi lewat FotoBukti. Langkah hanya maju setelah simpan sukses. Payload sama dengan
- *   wizard lama. FK-MSM3: 409 KUNJUNGAN_DIBATALKAN / BUKAN_RUTE_HARI_INI (toko tidak lagi di rute) → wizard diganti penjelasan + Rute hari ini.
+ *   wizard lama. FK-MSM3: 409 KUNJUNGAN_DIBATALKAN / BUKAN_RUTE_HARI_INI (toko tidak lagi di rute) → wizard diganti penjelasan (judul per kode,
+ *   isian yang tidak tersimpan disebut, fokus ke penjelasan) + Rute hari ini langsung di bagian Kunjungan luar rute (`#luar-rute`).
  */
 "use client";
 
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ShoppingCart, XCircle } from "lucide-react";
@@ -24,7 +25,7 @@ import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { TOKO_TUTUP_CODE } from "@/lib/form-kontrol/constants";
 import type { GeoCoords } from "@/lib/form-kontrol/location";
 import { PESAN_SINYAL, ambilJson, ditolakBukanRute, kirimFk, sebabGagal } from "../../lapangan";
-import { alasanIzinFk, jamWita } from "../../shared";
+import { alasanIzinFk, hariIniWita, jamWita } from "../../shared";
 import FotoBukti from "./FotoBukti";
 
 interface StoreInfo {
@@ -48,6 +49,8 @@ interface MerchInfo {
 }
 interface Reason { id: string; reasonCode: string; label: string; category: string }
 type Data = { store: StoreInfo | null; ao: AoInfo | null; merch: MerchInfo | null; reasons: Reason[] };
+/** Penolakan 409 "toko tidak (lagi) di rute": kode server, kalimatnya, dan apakah check-in sudah tercatat sebelumnya. */
+type BukanRute = { kode: string; pesan: string; sudahCheckin: boolean };
 
 const MERCH_STEPS: { key: keyof Omit<MerchInfo, "stepPhotos">; label: string }[] = [
     { key: "produkJelas", label: "Produk terlihat jelas" },
@@ -86,16 +89,21 @@ export default function Kunjungan(props: Props) {
     const kembali = () => router.back();
     // FK-MSM3: server menolak tulis karena toko tidak (lagi) di rute tanggal ini (kunjungan luar rute dibatalkan di layar lain / bukan JKS
     // hari itu) → wizard diganti penjelasan + jalan ke Rute hari ini (dimuat ulang dari server), bukan galat yang bisa diulang.
-    const [bukanRute, setBukanRute] = useState("");
+    const [bukanRute, setBukanRute] = useState<BukanRute | null>(null);
+    const fokusBukanRute = useRef<HTMLDivElement>(null);
+    useEffect(() => { if (bukanRute) fokusBukanRute.current?.focus(); }, [bukanRute]);
 
     const crumbs = [{ label: "Rute hari ini", href: "/form-kontrol?tab=ao" }, { label: "Kunjungan" }];
     if (bukanRute) {
+        const judul = bukanRute.kode === "KUNJUNGAN_DIBATALKAN" ? "Kunjungan luar rute ini sudah dibatalkan"
+            : `Toko ini tidak ada di rute ${date === hariIniWita() ? "hari ini" : "tanggal ini"}`;
+        const isian = bukanRute.sudahCheckin ? "Isian di layar ini tidak tersimpan; check-in yang sudah dikirim tetap tercatat." : "Check-in ini tidak tercatat.";
         return (
             <div>
                 <ObjectPageHeader breadcrumbs={crumbs} title={load.data?.store?.custName ?? custCode} attributes={[{ label: "Tanggal", value: `${tanggalPanjang(date)} · WITA` }]} />
-                <div className="fi-page" style={{ maxWidth: "46rem" }}>
-                    <EmptyState title="Toko ini tidak lagi di rute Anda" message={bukanRute}
-                        action={<Link className="fi-btn fi-btn--secondary" href="/form-kontrol?tab=ao"><ArrowLeft className="fi-icon" aria-hidden />Rute hari ini</Link>} />
+                <div className="fi-page" style={{ maxWidth: "46rem" }} ref={fokusBukanRute} tabIndex={-1}>
+                    <EmptyState title={judul} message={`${bukanRute.pesan} ${isian}`}
+                        action={<Link className="fi-btn fi-btn--secondary" href="/form-kontrol?tab=ao#luar-rute"><ArrowLeft className="fi-icon" aria-hidden />Rute hari ini</Link>} />
                 </div>
             </div>
         );
@@ -128,7 +136,7 @@ export default function Kunjungan(props: Props) {
 }
 
 function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kembali, onBukanRute }: Props & {
-    data: Data; store: StoreInfo; kembali: () => void; onBukanRute: (pesan: string) => void;
+    data: Data; store: StoreInfo; kembali: () => void; onBukanRute: (b: BukanRute) => void;
 }) {
     const awalStatus = data.ao?.status && data.ao.status !== "not_visited" ? awalDari(data.ao.status) : null;
     const [ao, setAo] = useState<AoInfo | null>(data.ao);
@@ -176,7 +184,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                 lat: coords?.lat ?? null, lng: coords?.lng ?? null, accuracy: coords?.accuracy ?? null,
             }, { ulangAman: true });
         } catch (e) {
-            if (ditolakBukanRute(e)) onBukanRute(e.message);
+            if (ditolakBukanRute(e)) onBukanRute({ kode: e.kode ?? "", pesan: e.message, sudahCheckin: false });
             throw e;
         }
         setCheckinPhoto(url);
@@ -204,7 +212,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
             // Toko tutup langsung ke foto bukti (langkah terjauh); selain itu ke Merchandising seperti biasa.
             pindah(lihat === null || (orderStatus === "not_order" && reasonCode === TOKO_TUTUP_CODE) ? null : 2);
         } catch (e) {
-            if (ditolakBukanRute(e)) return onBukanRute(e.message);
+            if (ditolakBukanRute(e)) return onBukanRute({ kode: e.kode ?? "", pesan: e.message, sudahCheckin: true });
             setGalat(`Status belum tersimpan. ${e instanceof Error ? e.message : ""}`.trim());
         } finally { setSaving(false); }
     }
@@ -225,7 +233,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
             setMerchPersisted(true);
             pindah(null);
         } catch (e) {
-            if (ditolakBukanRute(e)) return onBukanRute(e.message);
+            if (ditolakBukanRute(e)) return onBukanRute({ kode: e.kode ?? "", pesan: e.message, sudahCheckin: true });
             // #7: galat merchandising tampil di langkah ini dan langkah tidak maju (dulu diam lalu muncul "Gagal check-out").
             setGalat(`Merchandising belum tersimpan. ${e instanceof Error ? e.message : ""}`.trim());
         } finally { setSaving(false); }

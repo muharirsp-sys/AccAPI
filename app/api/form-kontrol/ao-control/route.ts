@@ -3,6 +3,7 @@ import { requirePermissionH } from "@/lib/rbac/resolve";
 import { getTodayRoute, upsertAoControl, getAoForDate, writeKontrolAudit, resolveScope, canAccessSales, getReasons, validateNoOrderReason } from "@/lib/form-kontrol";
 import type { AoStatus } from "@/lib/form-kontrol";
 import { jawabGalat } from "@/lib/order-cabang";
+import { witaToday } from "@/lib/beranda";
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -76,7 +77,7 @@ export async function POST(req: Request) {
             salesCode, custCode, principle, date,
             status: status as AoStatus,
             isVisited, noOrderReasonCode: reasonCode, noOrderNote,
-            createdBy: session.user.id,
+            createdBy: session.user.id, penulis: { pemilik: scope.salesCode === salesCode, hariIni: witaToday() },
         });
         if ("galat" in hasil) return jawabGalat(hasil.galat);
         await writeKontrolAudit("ao", hasil.id, "upsert", session.user.id, session.user.name, body);
