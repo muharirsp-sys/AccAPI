@@ -139,6 +139,8 @@ export function ensureSalesHistorySchema(): Promise<void> {
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_im_kode_cust_principal_tanggal ON invoice_map(kode_cust, principal, tanggal DESC)`);
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_im_tanggal_principal ON invoice_map(tanggal DESC, principal)`);
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_im_tanggal ON invoice_map(tanggal DESC)`);
+            // Kursor sinkron Accurate -> History (app/api/cron/sales-history-accurate): posisi terakhir (synced_at, id) sales_invoice.
+            await salesClient.execute(`CREATE TABLE IF NOT EXISTS sync_cursor (name TEXT PRIMARY KEY, synced_at TEXT NOT NULL, last_id INTEGER NOT NULL)`);
         })();
     }
     return schemaReady;

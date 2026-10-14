@@ -9,7 +9,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { requirePermissionH } from "@/lib/rbac/resolve";
-import { ensureSalesHistorySchema, salesDb, salesHistoryItem } from "@/lib/sales-history/db";
+import { ensureSalesHistorySchema, salesClient, salesDb, salesHistoryItem } from "@/lib/sales-history/db";
+import { SUMBER_ACCURATE } from "@/lib/sales-history/accurate";
 import {
     parseFkContext,
     parseOfItem,
@@ -31,6 +32,9 @@ export async function POST(request: NextRequest) {
     if (gate.response) return gate.response;
 
     const sourceFile = (request.headers.get("x-filename") || "upload.csv").replace(/[^\w.\-]/g, "_");
+    if (sourceFile === SUMBER_ACCURATE) {
+        return NextResponse.json({ ok: false, error: "Nama berkas dicadangkan untuk salinan Accurate. Ganti nama berkas." }, { status: 400 });
+    }
     if (!request.body) {
         return NextResponse.json({ ok: false, error: "Body kosong." }, { status: 400 });
     }
@@ -87,6 +91,11 @@ export async function POST(request: NextRequest) {
         }
         handleLine(buf.replace(/\r$/, "")); // baris terakhir tanpa newline
         await flush();
+        // Berkas menang atas salinan Accurate (cron sales-history-accurate): buang baris Accurate untuk faktur yang kini ada di berkas ini.
+        await salesClient.execute({
+            sql: "DELETE FROM sales_history_item WHERE source_file = ? AND referensi IN (SELECT referensi FROM sales_history_item WHERE source_file = ?)",
+            args: [SUMBER_ACCURATE, sourceFile],
+        });
 
         return NextResponse.json({ ok: true, sourceFile, imported: total });
     } catch (error) {
