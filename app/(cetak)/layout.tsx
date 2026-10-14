@@ -2,7 +2,7 @@
  * Tujuan: Layout + seluruh gaya cetak lembar gudang. Dirancang untuk dibaca sambil jalan,
  *         satu tangan memegang kertas, di bawah tekanan waktu — bukan untuk dibaca di layar.
  * Caller: app/(cetak)/** (lembar picking & TTF).
- * Dependensi: requirePermissionH (grup ini di luar (dashboard) yang biasa menjaga).
+ * Dependensi: requirePermissionH (grup ini di luar (dashboard) yang biasa menjaga), BingkaiCetak (bilah Fiori hanya di layar).
  * Main Functions: CetakLayout.
  * Side Effects: Membaca session/permission; redirect ke login bila tidak berhak.
  *
@@ -18,6 +18,8 @@
  */
 import { redirect } from "next/navigation";
 import { requirePermissionH } from "@/lib/rbac/resolve";
+import { FioriScope } from "@/components/fiori/Scope";
+import BingkaiCetak from "./BingkaiCetak";
 
 export const dynamic = "force-dynamic";
 
@@ -171,7 +173,12 @@ tr.keluarga td { border: none; height: 3mm; padding: 0; background: none !import
 
 /* ---------- Hanya layar ---------- */
 .layar-saja { margin-bottom: 6mm; }
-.tombol-cetak { border: 1px solid #333; border-radius: 6px; padding: 8px 18px; font-size: 13px; font-weight: 600; background: #111; color: #fff; cursor: pointer; }
+/* Bingkai Fiori pratinjau layar: bilah atas. Seluruhnya .layar-saja -> display:none saat cetak, kertas tidak berubah. */
+.bingkai-cetak-akar { position: sticky; top: 0; z-index: 20; margin-bottom: 0; }
+.bingkai-cetak { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: var(--shell-h); padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.bingkai-cetak h1 { font: 650 .9375rem/1.2 var(--font-sans); color: var(--ink); margin: 0; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.bingkai-cetak h1 span { font-weight: 500; color: var(--ink-muted); }
+@media screen { .cetak-akar { min-height: calc(100vh - var(--shell-h, 52px)) !important; } }
 @media print { .layar-saja { display: none !important; } }
 `;
 
@@ -180,9 +187,12 @@ export default async function CetakLayout({ children }: { children: React.ReactN
     if (gate.response) redirect("/login");
 
     return (
-        <div className="cetak-akar" style={{ color: "#111", minHeight: "100vh", padding: "8mm" }}>
+        <>
             <style>{GAYA}</style>
-            {children}
-        </div>
+            <FioriScope className="layar-saja bingkai-cetak-akar"><BingkaiCetak /></FioriScope>
+            <div className="cetak-akar" style={{ color: "#111", minHeight: "100vh", padding: "8mm" }}>
+                {children}
+            </div>
+        </>
     );
 }
