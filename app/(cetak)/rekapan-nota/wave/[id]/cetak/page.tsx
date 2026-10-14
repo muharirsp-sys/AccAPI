@@ -130,7 +130,6 @@ export default async function CetakRekapanPage({
 
     return (
         <main className="cetak">
-
             {halaman.map((isi, h) => {
                 const krtHalaman = isi.reduce((a, r) => a + krtDari(r), 0);
                 const pcsHalaman = isi.reduce((a, r) => a + Number(r.total_pcs), 0);
