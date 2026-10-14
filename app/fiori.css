@@ -134,7 +134,8 @@ html[data-density="cozy"] .fiori {
 .fi-btn--icon { width:var(--ctl-h); padding:0; color:var(--ink-muted); }
 .fi-btn--icon:hover { background:var(--surface-2); color:var(--ink); }
 .fi-btn:disabled, .fi-btn[aria-disabled="true"] { opacity:.45; cursor:not-allowed; transform:none; }
-.fi-btn .fi-count { min-width:18px; height:18px; border-radius:9px; background:color-mix(in srgb, currentColor 18%, transparent); font:700 .6875rem/18px var(--font-sans); padding:0 5px; }
+.fi-btn .fi-count, .fi-subnav .fi-count { min-width:18px; height:18px; border-radius:9px; background:color-mix(in srgb, currentColor 18%, transparent); font:700 .6875rem/18px var(--font-sans); padding:0 5px; }
+.fi-subnav .fi-count { display:inline-block; margin-left:6px; text-align:center; }
 .fi-btnrow { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
 .fi-spin { animation:fi-spin 800ms linear infinite; }
 @keyframes fi-spin { to { transform:rotate(360deg); } }

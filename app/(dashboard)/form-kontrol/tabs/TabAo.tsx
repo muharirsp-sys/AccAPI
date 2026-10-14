@@ -25,6 +25,9 @@
 
 import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
+// NOO (owner 13 Okt 2026): toko baru (belum di Accurate) diajukan dari sini; kunjungannya bertanda NOO dan tidak masuk daftar Order Sales.
+import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
+import { TambahNoo } from "./NooFormulir";
 import { CalendarDays, FileText, RefreshCw, Send, Star } from "lucide-react";
 import { Button, EmptyState, ErrorState, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
@@ -61,7 +64,7 @@ function badgeToko(r: AoRow): { tone: Tone; label: string } {
 
 function metaToko(r: AoRow): string {
     const bagian: string[] = [];
-    if (r.luarRute) bagian.push("Luar rute");
+    if (r.luarRute) bagian.push(isKodeNoo(r.custCode) ? "Toko baru (NOO) · tanpa order" : "Luar rute");
     // #3: angka ini menghitung HARI dengan status order/aktif bulan ini (db.ts getTodayRoute), bukan jumlah kunjungan.
     if (r.monthlyOrderCount > 0) bagian.push(`${r.monthlyOrderCount} hari order bulan ini`);
     if (r.needsAttention) bagian.push("≥ 2× tidak order bulan ini");
@@ -126,7 +129,9 @@ export default function TabAo({ scope }: { scope: Scope }) {
         const p = new URLSearchParams({ date: tanggal, principle });
         p.set("salesCode", salesCode);
         const hasil = await bacaFk(`/api/form-kontrol/ao-control?${p}`, (d) => keBarisRute(d.rows, principle));
-        if (hasil.status === "siap" && tanggal === hariIniWita()) simpanRute(tanggal, salesCode, hasil.data!.map((r) => ({ kode: r.custCode, nama: r.custName })));
+        if (hasil.status === "siap" && tanggal === hariIniWita()) {
+            simpanRute(tanggal, salesCode, hasil.data!.filter((r) => !isKodeNoo(r.custCode)).map((r) => ({ kode: r.custCode, nama: r.custName })));
+        }
         if (hasil.status === "siap") {
             // Tanda untuk toko yang hilang dari rute / sudah punya hasil kunjungan gugur SEKARANG (bukan saat strip ditutup).
             const kini = new Map(hasil.data!.map((r) => [r.custCode, r]));
@@ -407,6 +412,9 @@ export default function TabAo({ scope }: { scope: Scope }) {
             {salesman && salesCode === scope.salesCode && principle && tanggal === hariIniWita() && asal && (
                 <TambahLuarRute salesCode={salesCode} principle={principle} tanggal={tanggal} ruteKode={rows.map((r) => r.custCode)}
                     onDitambah={muatUlang} kunci={tanpaIzin} />
+            )}
+            {salesman && salesCode === scope.salesCode && principle && tanggal === hariIniWita() && asal && (
+                <TambahNoo salesCode={salesCode} principle={principle} onDiajukan={muatUlang} kunci={tanpaIzin} />
             )}
 
             <Section title="Akhir hari" subtitle="setelah kunjungan terakhir">

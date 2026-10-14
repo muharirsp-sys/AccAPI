@@ -1,3 +1,5 @@
+// NOO (owner 13 Okt 2026, P7): status ORDER/aktif untuk kunjungan toko baru (kode NOO) ditolak 409 berkode — lib/form-kontrol/noo tolakOrderNoo.
+import { tolakOrderNoo } from "@/lib/form-kontrol/noo";
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import { getTodayRoute, upsertAoControl, getAoForDate, writeKontrolAudit, resolveScope, canAccessSales, getReasons, validateNoOrderReason } from "@/lib/form-kontrol";
@@ -68,6 +70,9 @@ export async function POST(req: Request) {
         if (!canAccessSales(scope, salesCode)) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
+        const noo = await tolakOrderNoo(custCode, status);
+        if (noo) return noo;
+
         const reasonCode = typeof noOrderReasonCode === "string" && noOrderReasonCode.trim() ? noOrderReasonCode.trim() : null;
         const existing = (await getAoForDate(salesCode, principle, date)).find((r) => r.custCode === custCode);
         const reasonError = validateNoOrderReason(status, reasonCode, (await getReasons()).map((r) => r.reasonCode), existing);

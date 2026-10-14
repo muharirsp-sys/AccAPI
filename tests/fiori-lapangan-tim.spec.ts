@@ -120,20 +120,20 @@ test("Shell: tab mengikuti peran dari my-scope (salesman, SPV, admin); tautan Da
 
     await page.goto("/form-kontrol", NAV);
     await expect(main.getByRole("heading", { level: 1, name: "Form Kontrol" })).toBeVisible(NAV);
-    await expect(nav.getByRole("link")).toHaveText(["Form AO Harian", "Toko Tidak Order", "Laporan Harian"], NAV);
+    await expect(nav.getByRole("link")).toHaveText(["Form AO Harian", "Toko Tidak Order", "Laporan Harian", "Toko Baru (NOO)"], NAV);
     await expect(nav.getByRole("link", { name: "Form AO Harian" })).toHaveAttribute("aria-current", "page");
     await expect(main.getByRole("link", { name: "Dashboard SPV" })).toHaveCount(0);
     await expect(main.getByText("Tampilan terkunci ke data Anda (SALES A).")).toBeVisible();
 
     opsi.scope = SCOPE.spv;
     await page.goto("/form-kontrol?tab=hierarki", NAV); // tab yang tidak boleh untuk SPV → tab pertama
-    await expect(nav.getByRole("link")).toHaveText(["Kontrol JKS", "Form AO Harian", "Toko Tidak Order", "Laporan Harian", "Briefing SPV"], NAV);
+    await expect(nav.getByRole("link")).toHaveText(["Kontrol JKS", "Form AO Harian", "Toko Tidak Order", "Laporan Harian", "Briefing SPV", "Toko Baru (NOO)"], NAV);
     await expect(nav.getByRole("link", { name: "Kontrol JKS" })).toHaveAttribute("aria-current", "page");
     await expect(main.getByRole("link", { name: "Dashboard SPV" })).toHaveAttribute("href", "/form-kontrol/spv-dashboard");
 
     opsi.scope = SCOPE.admin;
     await page.goto("/form-kontrol?tab=hierarki", NAV);
-    await expect(nav.getByRole("link")).toHaveText(["Kontrol JKS", "Form AO Harian", "Toko Tidak Order", "Laporan Harian", "Briefing SPV", "Kontrol SM", "Frekuensi Kunjungan", "Hierarki Sales"], NAV);
+    await expect(nav.getByRole("link")).toHaveText(["Kontrol JKS", "Form AO Harian", "Toko Tidak Order", "Laporan Harian", "Briefing SPV", "Kontrol SM", "Frekuensi Kunjungan", "Hierarki Sales", "Toko Baru (NOO)"], NAV);
     await expect(nav.getByRole("link", { name: "Hierarki Sales" })).toHaveAttribute("aria-current", "page");
     await nav.getByRole("link", { name: "Kontrol SM" }).click();
     await expect(page).toHaveURL(/tab=sm-control/);
@@ -154,7 +154,7 @@ test("Shell: galat verifikasi akses tampil sebagai galat (bukan kosong); Coba la
     await expect(main.getByText(/Belum ada modul/)).toHaveCount(0);
     opsi.scopeGagal = false;
     await galat.getByRole("button", { name: "Coba lagi" }).click();
-    await expect(main.getByRole("navigation", { name: "Modul Form Kontrol" }).getByRole("link")).toHaveCount(5, NAV);
+    await expect(main.getByRole("navigation", { name: "Modul Form Kontrol" }).getByRole("link")).toHaveCount(6, NAV); // + Toko Baru (NOO)
 });
 
 test("Dashboard SPV: Default per salesman, Tandai sudah dibaca lewat dialog (payload), Sukses", async ({ page }) => {
