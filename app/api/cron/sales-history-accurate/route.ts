@@ -8,7 +8,7 @@
  * Catatan: kursor keyset (synced_at, id) memakai idx_sales_invoice_synced_at. Faktur yang baru ditambal rinciannya atau
  *   disunting (lastUpdate berubah) tersalin ulang; yang lastUpdate-nya sama dengan tabel accurate_copy dilewati. Faktur yang sudah punya baris dari
  *   berkas closing / CSV e-Faktur dilewati (berkas itu otoritas). raw_data diambil lewat primary key per potongan
- *   (pola aman memori: lihat promo-recap). `?limit=` = batas faktur yang diperiksa per run (bawaan 20.000).
+ *   (pola aman memori: lihat promo-recap). `?limit=` = batas faktur yang diperiksa per run (bawaan 150.000; faktur tak berubah hanya 3 baca kecil per 500).
  *   ponytail: faktur yang DIHAPUS di Accurate tetap tinggal di History; tambahkan sapuan hapus bila itu jadi masalah.
  */
 import { NextResponse } from "next/server";
@@ -27,7 +27,7 @@ type Baris = Record<string, unknown>;
 export async function GET(req: Request) {
     const gate = requireCronSecret(req);
     if (gate.response) return gate.response;
-    const limit = Math.min(Math.max(Number(new URL(req.url).searchParams.get("limit")) || 20_000, POTONG), 300_000);
+    const limit = Math.min(Math.max(Number(new URL(req.url).searchParams.get("limit")) || 150_000, POTONG), 300_000);
 
     await ensureSalesHistorySchema();
     for (const [lama, baru] of ALIAS_PRINCIPAL) {
@@ -39,19 +39,16 @@ export async function GET(req: Request) {
     const principalBarang = new Map(barang.rows.map((r: Baris) => [String(r.no), String(r.principal ?? "").trim()]));
 
     const kursor = (await salesClient.execute("SELECT synced_at, last_id FROM sync_cursor WHERE name = 'accurate'")).rows[0];
-    // Mundur 5 menit di awal run: synced_at = now() saat transaksi sync MULAI, jadi baris yang commit belakangan
-    // bisa bertanggal sebelum kursor. Membaca ulang murah karena faktur tak berubah dilewati lewat last_update.
-    let at = String((await db.execute(sql`SELECT (${String(kursor?.synced_at ?? "1970-01-01T00:05:00Z")}::timestamptz
-        - interval '5 minutes')::text AS at`)).rows[0]?.at);
-    let lastId = 0;
-    let diperiksa = 0, disalin = 0, barisItem = 0, dilewatiBerkas = 0, takBerubah = 0, tanpaRincian = 0;
+    let at = String(kursor?.synced_at ?? "1970-01-01T00:00:00Z");
+    let lastId = Number(kursor?.last_id ?? 0);
+    let diperiksa = 0, disalin = 0, barisItem = 0, dilewatiBerkas = 0, takBerubah = 0, tanpaRincian = 0, tuntas = false;
 
     while (diperiksa < limit) {
         // synced_at sebagai TEKS: Date JS memotong mikrodetik, kursor bisa macet di satu milidetik.
         const potongan = (await db.execute(sql`SELECT id, number, synced_at::text AS at, coalesce(last_update, '') AS lu FROM sales_invoice
             WHERE number LIKE 'INV/%' AND (synced_at, id) > (${at}::timestamptz, ${lastId})
             ORDER BY synced_at, id LIMIT ${POTONG}`)).rows as Baris[];
-        if (potongan.length === 0) break;
+        if (potongan.length === 0) { tuntas = true; break; }
         diperiksa += potongan.length;
 
         const refs = potongan.map((r) => String(r.number));
@@ -102,6 +99,14 @@ export async function GET(req: Request) {
         await salesClient.batch(tulis, "write");
     }
 
+    // Hanya run yang TUNTAS menyimpan kursor mundur 5 menit: synced_at = now() saat transaksi sync MULAI, jadi baris yang
+    // commit belakangan bisa bertanggal sebelum kursor. Run yang terpotong `limit` melanjutkan persis dari kursornya —
+    // mundur di setiap run membuat kursor tak pernah maju saat lonjakan >limit baris dalam 5 menit (tinjauan PR #178).
+    // diperiksa > 0: run kosong tidak boleh mundur lagi dari kursor yang sudah mundur (jendela akan melebar tiap run).
+    if (tuntas && diperiksa > 0) {
+        const mundur = String((await db.execute(sql`SELECT (${at}::timestamptz - interval '5 minutes')::text AS at`)).rows[0]?.at);
+        await salesClient.execute({ sql: "INSERT OR REPLACE INTO sync_cursor (name, synced_at, last_id) VALUES ('accurate', ?, 0)", args: [mundur] });
+    }
     const sisa = Number((await db.execute(sql`SELECT count(*)::int AS n FROM sales_invoice
         WHERE number LIKE 'INV/%' AND (synced_at, id) > (${at}::timestamptz, ${lastId})`)).rows[0]?.n ?? 0);
     console.log(`[SALES HISTORY ACCURATE] ${diperiksa} diperiksa, ${disalin} faktur (${barisItem} baris) disalin, ${takBerubah} tak berubah, ${dilewatiBerkas} milik berkas, ${tanpaRincian} tanpa rincian, ${sisa} sisa`);
