@@ -45,6 +45,9 @@ export async function GET(req: Request) {
     const checkOnly = searchParams.get("check") === "1";
     const hours = Math.min(Math.max(Number(searchParams.get("hours")) || DEFAULT_HOURS, 1), 24 * 365);
     const limit = Math.min(Math.max(Number(searchParams.get("limit")) || DEFAULT_LIMIT, 1), 2000);
+    // `?jeda=` ms antar panggilan detail.do (0..2000, bawaan 150): perlambat untuk tambalan massal di jam kerja.
+    const jedaParam = Number(searchParams.get("jeda"));
+    const jedaMs = Number.isFinite(jedaParam) && searchParams.has("jeda") ? Math.min(Math.max(jedaParam, 0), 2000) : 150;
 
     // `?from=2026-09-01&to=2026-09-30`: faktur TERSIMPAN tanpa rincian baris pada rentang tanggal
     // faktur itu, semua principal — tidak lewat log. Sebelum penjagaan di lib/sync (2026-09-12
@@ -70,7 +73,7 @@ export async function GET(req: Request) {
             .orderBy(asc(salesInvoiceCache.id));
         const ids = rows.map((row) => row.id);
         if (checkOnly || ids.length === 0) return NextResponse.json({ ok: true, checkOnly, from, to, missing: ids.length });
-        const hasil = await tambal(ids, limit);
+        const hasil = await tambal(ids, limit, jedaMs);
         return NextResponse.json({ from, to, ...hasil }, { status: "error" in hasil ? 503 : 200 });
     }
 
@@ -119,12 +122,33 @@ export async function GET(req: Request) {
         });
     }
 
-    const hasil = await tambal(missing, limit);
+    const hasil = await tambal(missing, limit, jedaMs);
     return NextResponse.json({ hours, loggedIds: loggedIds.length, ...hasil }, { status: "error" in hasil ? 503 : 200 });
 }
 
+const tidur = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Satu panggilan detail.do dengan jeda sesudahnya, dan coba ulang bila Accurate membalas 429.
+ * Tanpa jeda, penambal beruntun ±5 permintaan/detik pada token sinkron dan Accurate menolak sebagian
+ * (14 Okt 2026: 8 dari 2.000 saat jam kerja). Batas resmi Accurate tak terdokumentasi — jeda 150 ms
+ * sama dengan lib/sync. ponytail: backoff tetap 2/4/8 dtk, tidak membaca Retry-After.
+ */
+async function denganJeda<T>(fn: () => Promise<T>, jedaMs: number): Promise<T> {
+    for (let coba = 0; ; coba++) {
+        try {
+            const hasil = await fn();
+            await tidur(jedaMs);
+            return hasil;
+        } catch (e) {
+            if (coba >= 3 || !/HTTP 429/.test(e instanceof Error ? e.message : String(e))) throw e;
+            await tidur(2000 * 2 ** coba);
+        }
+    }
+}
+
 /** Ambil ulang `detail.do` untuk `ids` (paling banyak `limit`) dan simpan; dipakai kedua mode. */
-async function tambal(ids: number[], limit: number) {
+async function tambal(ids: number[], limit: number, jedaMs: number) {
     const accurate = await resolveSyncCredentials();
     if (!accurate.creds) return { ok: false, error: accurate.error, missing: ids.length };
 
@@ -133,7 +157,7 @@ async function tambal(ids: number[], limit: number) {
     const failed: Array<{ id: number; error: string }> = [];
     for (const id of ids.slice(0, limit)) {
         try {
-            const summary = await upsertSalesInvoiceById(id, accurate.creds);
+            const summary = await denganJeda(() => upsertSalesInvoiceById(id, accurate.creds), jedaMs);
             console.log(`[BACKFILL] Faktur ditambal: ${summary.number ?? id} | ${summary.customerName ?? "-"} | total ${summary.totalAmount} | sisa ${summary.outstanding}`);
             processed.push(summary);
         } catch (e) {
