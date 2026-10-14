@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import { getMerchandisingForDate, saveMerchandising, resolveScope, canAccessSales } from "@/lib/form-kontrol";
+import { jawabGalat } from "@/lib/order-cabang";
+import { witaToday } from "@/lib/beranda";
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -40,11 +42,13 @@ export async function POST(req: Request) {
         if (!salesCode || !custCode || !principle || !date) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
         }
-        if (!canAccessSales(await resolveScope(session), salesCode)) {
+        const scope = await resolveScope(session);
+        if (!canAccessSales(scope, salesCode)) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
-        const id = await saveMerchandising({
-            salesCode, custCode, principle, date,
+        // FK-MSM3: hanya toko di rute tanggal itu (JKS atau luar rute belum batal) → selain itu 409 berkode.
+        const hasil = await saveMerchandising({
+            salesCode, custCode, principle, date, penulis: { pemilik: scope.salesCode === salesCode, hariIni: witaToday() },
             produkJelas: body.produkJelas ?? false,
             displayRapi: body.displayRapi ?? false,
             dibersihkan: body.dibersihkan ?? false,
@@ -55,7 +59,8 @@ export async function POST(req: Request) {
             stepPhotos: body.stepPhotos ?? null,
             note: body.note ?? null,
         });
-        return NextResponse.json({ success: true, id });
+        if ("galat" in hasil) return jawabGalat(hasil.galat);
+        return NextResponse.json({ success: true, id: hasil.id });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
