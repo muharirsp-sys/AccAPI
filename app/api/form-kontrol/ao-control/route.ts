@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import { getTodayRoute, upsertAoControl, getAoForDate, writeKontrolAudit, resolveScope, canAccessSales, getReasons, validateNoOrderReason } from "@/lib/form-kontrol";
 import type { AoStatus } from "@/lib/form-kontrol";
+import { jawabGalat } from "@/lib/order-cabang";
+import { witaToday } from "@/lib/beranda";
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -75,14 +77,16 @@ export async function POST(req: Request) {
         const existing = (await getAoForDate(salesCode, principle, date)).find((r) => r.custCode === custCode);
         const reasonError = validateNoOrderReason(status, reasonCode, (await getReasons()).map((r) => r.reasonCode), existing);
         if (reasonError) return NextResponse.json({ error: reasonError }, { status: 400 });
-        const id = await upsertAoControl({
+        // FK-MSM3: hanya toko di rute tanggal itu (JKS atau luar rute belum batal) → selain itu 409 berkode, tanpa baris AO yatim.
+        const hasil = await upsertAoControl({
             salesCode, custCode, principle, date,
             status: status as AoStatus,
             isVisited, noOrderReasonCode: reasonCode, noOrderNote,
-            createdBy: session.user.id,
+            createdBy: session.user.id, penulis: { pemilik: scope.salesCode === salesCode, hariIni: witaToday() },
         });
-        await writeKontrolAudit("ao", id, "upsert", session.user.id, session.user.name, body);
-        return NextResponse.json({ success: true, id });
+        if ("galat" in hasil) return jawabGalat(hasil.galat);
+        await writeKontrolAudit("ao", hasil.id, "upsert", session.user.id, session.user.name, body);
+        return NextResponse.json({ success: true, id: hasil.id });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }

@@ -154,6 +154,7 @@ html[data-density="cozy"] .fiori {
 .fi-strip > .fi-icon { color:var(--tf); margin-top:2px; }
 .fi-strip b { color:var(--tf); }
 .fi-strip .fi-btn--icon { height:24px; width:24px; margin:-2px -4px 0 0; }
+@media (pointer: coarse) { .fi-strip .fi-btn--icon { height:44px; width:44px; margin:-12px -12px -12px 0; } } /* sasaran sentuh 44 px; margin negatif = tinggi strip tetap (peninjau B FK-MSM3 R-5) */
 
 /* ===== Form ===== */
 .fi-field { display:grid; gap:4px; min-width:0; align-content:start; }
