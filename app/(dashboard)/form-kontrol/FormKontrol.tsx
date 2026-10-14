@@ -16,7 +16,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { BarChart3 } from "lucide-react";
 import { EmptyState, ErrorState, MessageStrip, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { useLoad, type Load } from "@/components/fiori/interactive";
-import { IzinFkCtx, TABS, ambilFk, type Scope, type TabKey } from "./shared";
+import { IzinFkCtx, TABS, ambilFk, useNooMenunggu, type Scope, type TabKey } from "./shared";
 
 const MemuatTab = () => <Skeleton rows={4} label="Memuat modul" />;
 // next/dynamic mewajibkan objek opsi literal per panggilan. Tab L (ao, no-order, laporan) dan tab T dirender dengan kontrak yang sama: default export `({ scope }: { scope: Scope })`.
@@ -51,6 +51,8 @@ export default function FormKontrol({ permKeys }: { permKeys: string[] }) {
         return r;
     }, []));
     const scope = load.status === "siap" ? load.data : undefined;
+    // Lencana tab Toko Baru = NOO menunggu keputusan akun ini (SPV/SM/Admin pemegang noo_setujui). ponytail: dihitung sekali per buka halaman.
+    const nooMenunggu = useNooMenunggu(Boolean(scope && ["spv", "sm", "admin"].includes(scope.role) && izin.has("form_kontrol.noo_setujui")));
 
     const visibleTabs = scope ? TABS.filter((t) => t.roles.includes(scope.role)) : [];
     // Tab yang diminta tidak tersedia untuk peran ini (mis. ?tab=merchandising lama) → tab pertama yang terlihat.
@@ -106,7 +108,11 @@ export default function FormKontrol({ permKeys }: { permKeys: string[] }) {
                 {visibleTabs.length > 1 && (
                     <nav className="fi-subnav" aria-label="Modul Form Kontrol">
                         {visibleTabs.map((t) => (
-                            <Link key={t.key} href={hrefTab(t.key)} replace scroll={false} aria-current={t.key === aktif?.key ? "page" : undefined}>{t.label}</Link>
+                            <Link key={t.key} href={hrefTab(t.key)} replace scroll={false} aria-current={t.key === aktif?.key ? "page" : undefined}
+                                aria-label={t.key === "noo" && nooMenunggu ? `${t.label} (${nooMenunggu} menunggu persetujuan)` : undefined}>
+                                {t.label}
+                                {t.key === "noo" && nooMenunggu ? <span className="fi-count" aria-hidden>{nooMenunggu}</span> : null}
+                            </Link>
                         ))}
                     </nav>
                 )}

@@ -2,14 +2,14 @@
  * Tujuan: Tipe, konstanta, dan helper bersama Form Kontrol (shell, tab tim, tab salesman, kunjungan).
  * Caller: form-kontrol/FormKontrol.tsx (shell), tabs/*, spv-dashboard/DashboardSpv.tsx, visit/[custCode]/*.
  * Dependensi: React (context izin), components/fiori/interactive (tipe Load).
- * Main Functions: TABS, hariIniWita, jamWita, IzinFkCtx/useIzinFk/alasanIzinFk, ambilFk, tulisFk, principalAwal, penjelasanTanpaJks,
+ * Main Functions: TABS, hariIniWita, jamWita, IzinFkCtx/useIzinFk/alasanIzinFk, ambilFk, tulisFk, useNooMenunggu, principalAwal, penjelasanTanpaJks,
  *   compareRoute, visitDurationMin.
  * Side Effects: ambilFk/tulisFk melakukan HTTP ke /api/form-kontrol/*; sisanya pure.
  */
 "use client";
 
-import { createContext, useContext } from "react";
-import type { Load } from "@/components/fiori/interactive";
+import { createContext, useCallback, useContext } from "react";
+import { useLoad, type Load } from "@/components/fiori/interactive";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -188,6 +188,18 @@ export async function ambilFk<T>(url: string, pick: (json: Record<string, unknow
     } catch {
         return { status: "galat", error: `${umum} Server tidak terjangkau — periksa sinyal atau koneksi, lalu coba lagi.` };
     }
+}
+
+/**
+ * Jumlah NOO (toko baru) yang menunggu keputusan AKUN INI (`row.boleh.putuskan` dari server) — lencana tab Toko Baru + strip Dashboard SPV
+ * (peninjau B S4). `aktif` false (salesman, Manager) = tanpa permintaan. null = belum/gagal dimuat → tanpa lencana (bukan "0").
+ */
+export function useNooMenunggu(aktif: boolean): number | null {
+    const [load] = useLoad(useCallback(async (): Promise<Load<number | null>> => (aktif
+        ? ambilFk("/api/form-kontrol/noo?status=menunggu_spv",
+            (j) => (Array.isArray(j.rows) ? j.rows as { boleh?: { putuskan?: boolean } }[] : []).filter((r) => r.boleh?.putuskan).length, "")
+        : { status: "siap", data: null }), [aktif]));
+    return load.status === "siap" ? load.data ?? null : null;
 }
 
 export const PESAN_TIDAK_PASTI = "Server tidak memberi jawaban yang pasti — hasilnya belum pasti; muat ulang untuk memeriksa sebelum mengulang.";

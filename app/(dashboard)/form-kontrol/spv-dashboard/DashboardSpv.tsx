@@ -21,7 +21,7 @@ import { CheckCheck, RefreshCw, Undo2 } from "lucide-react";
 import { Button, EmptyState, ErrorState, KeyValues, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
-import { alasanIzinFk, ambilFk, hariIniWita, jamWita, tulisFk, type Scope } from "../shared";
+import { alasanIzinFk, ambilFk, hariIniWita, jamWita, tulisFk, useNooMenunggu, type Scope } from "../shared";
 import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
 
 interface VisitRow {
@@ -87,6 +87,8 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
         () => ambilFk("/api/form-kontrol/my-scope", (j) => j as unknown as Scope, "Akses Form Kontrol belum dapat diverifikasi."), []));
     const peran = scopeLoad.status === "siap" ? scopeLoad.data?.role ?? "" : null;
     const pemilih = peran !== null && PERAN_PILIH_SPV.includes(peran);
+    // Peninjau B S4: NOO menunggu keputusan akun ini (server menghitung hak per baris) → strip + tautan ke tab Toko Baru.
+    const nooMenunggu = useNooMenunggu(peran === "spv" || peran === "sm" || peran === "admin");
 
     // Daftar SPV untuk admin = nama SPV unik di Hierarki Sales (endpoint yang sudah ada; butuh form_kontrol.manage).
     const [spvLoad] = useLoad(useCallback(async (): Promise<Load<string[]>> => {
@@ -244,6 +246,12 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                 )}
             </div>
             {sukses && <MessageStrip tone="pos" title={sukses} onClose={() => setSukses("")} />}
+            {nooMenunggu ? (
+                <MessageStrip tone="warn" title={`${nooMenunggu} toko baru (NOO) menunggu persetujuan Anda.`}>
+                    Salesman belum bisa order di toko itu sampai disetujui dan didaftarkan Admin.{" "}
+                    <Link className="fi-btn fi-btn--tertiary" href="/form-kontrol?tab=noo">Buka Toko Baru (NOO)</Link>
+                </MessageStrip>
+            ) : null}
             {isi}
             <VariantNote bl="BL-28">
                 Tanggal &quot;hari ini&quot; dihitung di perangkat dalam WITA; penetapan tanggal oleh server menunggu BL-28. Cap waktu yang tercetak

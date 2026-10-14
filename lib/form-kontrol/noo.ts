@@ -128,6 +128,8 @@ async function tulisBerkas(isi: Buffer): Promise<string> {
     }
     return nama;
 }
+// Keputusan owner 14 Okt 2026: foto KTP (dan foto toko) DISIMPAN SELAMANYA — tidak ada penghapusan/retensi otomatis, juga sesudah NOO
+// ditautkan/ditolak. buangBerkas HANYA membuang berkas pengajuan yang GAGAL dibuat (belum pernah punya baris noo_toko).
 const buangBerkas = (nama: string[]) => Promise.all(nama.map((n) => unlink(jalurBerkas(n)).catch(() => undefined)));
 
 // ---------------------------------------------------------------- buat

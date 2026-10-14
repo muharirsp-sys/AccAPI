@@ -2,13 +2,16 @@
  * Tujuan: NOO — toko baru dari kunjungan salesman (owner 13 Okt 2026) di layar: salesman 390 px (formulir di Rute hari ini: isian, foto toko
  *   + KTP lewat kamera, GPS wajib + izin ditolak dijelaskan, kirim multipart ber-id tetap, duplikat → "minta konfirmasi SPV: pemilik sama",
  *   kartu NOO di rute tanpa ORDER), SPV 390 px (rincian, NIK tersamar, Lihat KTP lewat POST + hilang saat ditutup, setujui duplikat WAJIB
- *   centang, tolak beralasan), SM (setujui tanpa KTP), Admin (antrean, Salin, saran + cari, tautkan), Dashboard SPV bertanda NOO.
+ *   centang, tolak beralasan), SM pengganti (setujui + KTP), Admin (antrean, Salin, saran + cari, tautkan), Dashboard SPV bertanda NOO.
+ *   Putaran 2 (peninjau B): galat daftar/rincian/cari = galat (bukan kosong, aksi dikunci) [T1, S6]; kirim ganda = 1 POST [S7]; pindah tab
+ *   saat formulir terisi ditanya dulu [S1]; galat per isian + "Ke isian" [S2]; fokus kembali ke "Lihat KTP" [S3]; lencana + strip NOO
+ *   menunggu [S4]; selesai terpotong diberitahukan; batal kunjungan NOO tidak membatalkan pengajuan [R3].
  *   Data generik (TOKO BARU A, PEMILIK A, CABANG A, PRINCIPLE A).
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true): `npx playwright test tests/fiori-form-kontrol-noo.spec.ts --config playwright.fiori-local.config.ts`.
  * Dependensi: /api/form-kontrol/* di-mock (page.route). Tidak menyentuh DB.
  * Side Effects: Tangkapan di test-results/noo.
  */
-import { expect, test, type Page, type Request } from "@playwright/test";
+import { expect, test, type Page, type Request, type Route } from "@playwright/test";
 
 const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 const NAV = { timeout: 60_000 } as const;
@@ -28,11 +31,14 @@ const noo = (over: Record<string, unknown> = {}) => ({
     namaToko: "TOKO BARU A", alamat: "JL. CONTOH 1", status: "menunggu_spv", gpsFlag: null, duplikatDengan: null, dibuatOlehNama: "Sales A",
     dibuatPada: `${HARI_INI}T09:00:00+08:00`, diputuskanOlehNama: null, diputuskanPada: null, alasanTolak: null, customerNo: null, ditautkanOlehNama: null,
     ditautkanPada: null, boleh: BOLEH, namaPemilik: "PEMILIK A", noHp: "081234567890", namaKtp: "PEMILIK A", nikTersamar: "7371••••••••0012",
-    lat: -5.1477, lng: 119.4327, akurasi: 15, alasanDuplikat: null, duplikatDikonfirmasi: false, fotoToko: "/api/form-kontrol/noo/n-1/foto-toko", ...over,
+    lat: -5.1477, lng: 119.4327, akurasi: 15, alasanDuplikat: null, duplikatDikonfirmasi: false, fotoToko: "/api/form-kontrol/noo/n-1/foto-toko",
+    duplikat: Boolean(over.duplikatDengan), ...over,
 });
 
+/** hook: true = permintaan sudah dijawab hook (galat/tunda buatan), false = lanjut ke mock biasa. */
+type Hook = (route: Route, req: Request, p: string, url: URL) => Promise<boolean> | boolean;
 type Opsi = { scope?: unknown; rute?: Record<string, unknown>[]; daftar?: Record<string, unknown>[]; rinci?: Record<string, Record<string, unknown>>;
-    saran?: unknown[]; nooPost?: { status: number; body: unknown }[]; spv?: unknown };
+    saran?: unknown[]; nooPost?: { status: number; body: unknown }[]; spv?: unknown; hook?: Hook; terpotong?: boolean };
 
 async function mockFk(page: Page, opsi: Opsi) {
     const baca: URL[] = [];
@@ -42,10 +48,14 @@ async function mockFk(page: Page, opsi: Opsi) {
         const url = new URL(req.url());
         const p = url.pathname.replace("/api/form-kontrol/", "");
         if (req.method() === "GET") baca.push(url); else tulis.push(req);
+        if (opsi.hook && (await opsi.hook(route, req, p, url))) return;
         if (p === "my-scope") return route.fulfill(json(opsi.scope ?? SALESMAN));
         if (p === "reasons") return route.fulfill(json({ rows: [{ id: "R01", reasonCode: "R01", label: "Stok masih cukup", category: "stok" }] }));
         if (p === "ao-control" && req.method() === "GET") return route.fulfill(json({ rows: opsi.rute ?? [], summary: {}, date: url.searchParams.get("date") }));
-        if (p === "noo" && req.method() === "GET") return route.fulfill(json({ ok: true, rows: opsi.daftar ?? [] }));
+        if (p === "noo" && req.method() === "GET") {
+            const st = url.searchParams.get("status")?.split(",");
+            return route.fulfill(json({ ok: true, rows: (opsi.daftar ?? []).filter((r) => !st || st.includes(String(r.status))), selesaiTerpotong: Boolean(opsi.terpotong), batasSelesai: 300 }));
+        }
         if (p === "noo" && req.method() === "POST") {
             const j = opsi.nooPost?.shift();
             if (j) return route.fulfill(json(j.body, j.status));
@@ -98,9 +108,10 @@ async function isiFormulir(page: Page, f: ReturnType<Page["getByRole"]>, o: { ni
     await f.getByLabel("No. HP pemilik").fill("0812-3456-7890");
     await f.getByLabel("NIK (16 angka)").fill(o.nik ?? NIK);
     await f.getByLabel("Nama sesuai KTP").fill("PEMILIK A");
-    for (const tombol of ["Ambil foto toko", "Ambil foto KTP"]) {
+    for (const [tombol, judul] of [["Ambil foto toko", "Foto toko"], ["Ambil foto KTP", "Foto KTP"]]) {
         await f.getByRole("button", { name: tombol }).click();
-        const kamera = page.getByRole("dialog", { name: "Foto Bukti Kunjungan" });
+        // Peninjau B R1: judul kamera sesuai fotonya (bukan "Foto Bukti Kunjungan").
+        const kamera = page.getByRole("dialog", { name: judul });
         await kamera.locator('input[type="file"]').setInputFiles({ name: "foto.png", mimeType: "image/png", buffer: PNG });
         await kamera.getByRole("button", { name: /Gunakan/ }).click();
         await expect(kamera).toBeHidden();
@@ -286,15 +297,25 @@ test.describe("SPV ponsel 390 px", () => {
         await noOverflow(page);
     });
 
-    test("SM pengganti: setujui ada, KTP lengkap tidak (teks penjelas, tanpa tombol)", async ({ page }) => {
-        const r = noo({ boleh: { ...BOLEH, putuskan: true, ktp: false } });
+    test("SM pengganti: setujui + Lihat KTP (owner 13 Okt malam); Manager: lihat tanpa KTP & tanpa aksi", async ({ page }) => {
+        const r = noo({ boleh: { ...BOLEH, putuskan: true, ktp: true } });
         await mockFk(page, { scope: { role: "sm", smName: "SM A", salesName: "SM A", allowedSalesCodes: ["S-01"], principles: ["PRINCIPLE A"] }, daftar: [r], rinci: { "n-1": r } });
         await page.goto("/form-kontrol?tab=noo", NAV);
         await page.getByRole("list", { name: "Menunggu persetujuan" }).getByRole("button", { name: /TOKO BARU A/ }).click(NAV);
         const rinci = page.getByRole("region", { name: "Rincian toko baru" });
         await expect(rinci.getByRole("button", { name: "Setujui" })).toBeVisible(NAV);
-        await expect(rinci.getByRole("button", { name: "Lihat KTP" })).toHaveCount(0);
-        await expect(rinci).toContainText("KTP lengkap hanya untuk SPV tim dan Admin.");
+        await expect(rinci.getByRole("button", { name: "Lihat KTP" })).toBeVisible();
+    });
+
+    test("Manager: rincian tanpa Lihat KTP, tanpa Setujui/Tautkan", async ({ page }) => {
+        const r = noo({ status: "disetujui", diputuskanOlehNama: "SPV A (SPV)", diputuskanPada: `${HARI_INI}T10:00:00+08:00`, boleh: BOLEH });
+        await mockFk(page, { scope: { role: "manager", allowedSalesCodes: null, principles: ["PRINCIPLE A"] }, daftar: [r], rinci: { "n-1": r } });
+        await page.goto("/form-kontrol?tab=noo", NAV);
+        await page.getByRole("list", { name: "Disetujui — daftarkan di Accurate" }).getByRole("button", { name: /TOKO BARU A/ }).click(NAV);
+        const rinci = page.getByRole("region", { name: "Rincian toko baru" });
+        await expect(rinci).toContainText("KTP lengkap hanya untuk SPV/SM tim dan Admin.", NAV);
+        await expect(rinci).toContainText("Menunggu Admin mendaftarkan toko ini di Accurate");
+        for (const t of ["Lihat KTP", "Setujui", "Tautkan…"]) await expect(rinci.getByRole("button", { name: t })).toHaveCount(0);
     });
 
     test("Dashboard SPV: kunjungan NOO bertanda Toko baru (NOO)", async ({ page }) => {
@@ -340,5 +361,214 @@ test.describe("Admin", () => {
         await expect(d).toBeHidden(NAV);
         expect(postKe(m.tulis, "/noo/n-1").map((q) => q.postDataJSON())).toEqual([{ aksi: "tautkan", customerId: 14 }]);
         await expect(rinci).toContainText("Terdaftar sebagai C-200011-CBA.", NAV);
+    });
+});
+
+// ============================================================================ putaran 2 (peninjau B 13 Okt)
+
+test.describe("putaran 2 — salesman 390 px", () => {
+    test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, permissions: ["geolocation"], geolocation: { latitude: -5.1477, longitude: 119.4327, accuracy: 15 } });
+
+    test("S7 kirim ganda: dblclick + Enter berulang = 1 POST; tombol terkunci + aria-busy selama kirim", async ({ page }) => {
+        const m = await mockFk(page, { hook: async (_route, req, p) => {
+            if (p === "noo" && req.method() === "POST") await new Promise((r) => setTimeout(r, 1500));
+            return false;
+        } });
+        await page.goto("/form-kontrol?tab=ao", NAV);
+        const sek = page.getByRole("region", { name: "Toko baru (NOO)" });
+        await sek.getByRole("button", { name: "Toko baru (belum ada di Accurate)" }).click(NAV);
+        const f = sek.getByRole("form", { name: "Formulir toko baru" });
+        await isiFormulir(page, f);
+        await f.getByRole("button", { name: "Ambil lokasi" }).click();
+        const kirim = f.getByRole("button", { name: "Ajukan toko baru" });
+        await expect(kirim).toBeEnabled();
+        await kirim.dblclick();
+        await f.getByLabel("Nama toko").press("Enter").catch(() => {});
+        await expect(kirim).toHaveAttribute("aria-busy", "true");
+        await expect(kirim).toBeDisabled();
+        await f.getByLabel("Nama toko").press("Enter").catch(() => {});
+        await expect(sek.getByText(/diajukan sebagai toko baru/)).toBeVisible(NAV);
+        expect(postKe(m.tulis, "/api/form-kontrol/noo")).toHaveLength(1);
+    });
+
+    test("S2 galat per isian: aria-invalid + pesan di isian sesudah disentuh; galat pertama = isian salah paling atas; 'Ke isian' memfokuskan", async ({ page }) => {
+        await mockFk(page, {});
+        await page.goto("/form-kontrol?tab=ao", NAV);
+        const sek = page.getByRole("region", { name: "Toko baru (NOO)" });
+        await sek.getByRole("button", { name: "Toko baru (belum ada di Accurate)" }).click(NAV);
+        const f = sek.getByRole("form", { name: "Formulir toko baru" });
+        const hp = f.getByLabel("No. HP pemilik");
+        await expect(hp).not.toHaveAttribute("aria-invalid", "true");
+        await f.getByLabel("Nama toko").fill("TOKO BARU A");
+        await f.getByLabel("Nama pemilik").fill("PEMILIK A");
+        await f.getByLabel("Alamat toko").fill("JL. CONTOH 1");
+        await hp.fill("0211234567");
+        await f.getByLabel("Nama sesuai KTP").focus(); // keluar dari HP = disentuh
+        await expect(hp).toHaveAttribute("aria-invalid", "true");
+        const pesanHp = page.locator(`#${(await hp.getAttribute("aria-describedby"))!.split(" ")[0]}`);
+        await expect(pesanHp).toHaveText("No. HP pemilik harus nomor seluler Indonesia (08…, +62…), 10–13 angka.");
+        // Nama KTP (isian terakhir) kosong juga, tetapi yang disebut di bawah tombol = HP (lebih atas).
+        await expect(f.locator(".fi-why")).toContainText("No. HP pemilik harus nomor seluler Indonesia");
+        await f.getByRole("button", { name: "Ke isian yang belum benar" }).click();
+        await expect(hp).toBeFocused();
+        await expect(f.getByLabel("Nama sesuai KTP")).toHaveAttribute("aria-invalid", "true");
+        await noOverflow(page);
+    });
+
+    test("S1 pindah tab saat formulir terisi: ditanya dulu; 'Tetap di sini' = isian + foto utuh; 'Buang' = pindah tab", async ({ page }) => {
+        await mockFk(page, {});
+        await page.goto("/form-kontrol?tab=ao", NAV);
+        const sek = page.getByRole("region", { name: "Toko baru (NOO)" });
+        await sek.getByRole("button", { name: "Toko baru (belum ada di Accurate)" }).click(NAV);
+        const f = sek.getByRole("form", { name: "Formulir toko baru" });
+        await isiFormulir(page, f);
+        const tabNoo = page.getByRole("navigation", { name: "Modul Form Kontrol" }).getByRole("link", { name: /Toko Baru \(NOO\)/ });
+        await tabNoo.click();
+        const tanya = page.getByRole("dialog", { name: "Buang isian toko baru?" });
+        await expect(tanya).toBeVisible(NAV);
+        await tanya.getByRole("button", { name: "Tetap di sini" }).click();
+        await expect(tanya).toBeHidden();
+        await expect(page).toHaveURL(/tab=ao/);
+        await expect(f.getByLabel("Nama toko")).toHaveValue("TOKO BARU A");
+        await expect(f.getByRole("img", { name: "Pratinjau foto KTP" })).toBeVisible();
+        await tabNoo.click();
+        await page.getByRole("dialog", { name: "Buang isian toko baru?" }).getByRole("button", { name: "Buang isian dan pindah" }).click();
+        await expect(page).toHaveURL(/tab=noo/, NAV);
+        await expect(page.getByRole("region", { name: "Toko baru", exact: true })).toBeVisible(NAV);
+    });
+
+    test("R3 batalkan kunjungan NOO: dialog menyebut pengajuan tetap menunggu SPV + jalan kembali", async ({ page }) => {
+        await mockFk(page, { rute: [baris("NOO-7K3Q9ZTA", "TOKO BARU A", { id: "l-noo", luarRute: true })] });
+        await page.goto("/form-kontrol?tab=ao", NAV);
+        await page.getByRole("button", { name: "Batalkan kunjungan TOKO BARU A" }).click(NAV);
+        const d = page.getByRole("dialog", { name: "Batalkan kunjungan TOKO BARU A?" });
+        await expect(d).toContainText("pengajuan toko baru TETAP menunggu SPV");
+        await expect(d).toContainText("Toko baru (NOO) · hari ini");
+        await expect(d).not.toContainText("Luar rute · hari ini");
+    });
+});
+
+test.describe("putaran 2 — SPV/Admin 390 px", () => {
+    test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+    test("S6 galat daftar 500 / putus / 403 = ErrorState (bukan kosong); muat ulang berhasil → daftar", async ({ page }) => {
+        let mode = 1;
+        const r = noo({ boleh: { ...BOLEH, putuskan: true, ktp: true } });
+        await mockFk(page, { scope: SPV, daftar: [r], rinci: { "n-1": r }, hook: async (route, req, p) => {
+            if (p !== "noo" || req.method() !== "GET" || mode === 0) return false;
+            if (mode === 2) await route.abort("failed");
+            else await route.fulfill(mode === 1 ? json({ ok: false, error: "Internal server error" }, 500) : json({ ok: false, kode: "LUAR_CAKUPAN", error: "Daftar toko baru di luar cakupan akun Anda." }, 403));
+            return true;
+        } });
+        await page.goto("/form-kontrol?tab=noo", NAV);
+        const tab = page.getByRole("region", { name: "Toko baru", exact: true });
+        for (const md of [1, 2, 3]) {
+            mode = md;
+            if (md > 1) await tab.getByRole("button", { name: /Coba lagi|Muat ulang/ }).first().click();
+            await expect(tab.getByText("Toko baru belum bisa ditampilkan")).toBeVisible(NAV);
+            await expect(tab.getByText("Daftar toko baru gagal dimuat.", { exact: false })).toBeVisible();
+            await expect(tab.getByText("Belum ada pengajuan toko baru")).toHaveCount(0);
+        }
+        mode = 0;
+        await tab.getByRole("button", { name: "Muat ulang" }).first().click();
+        await expect(tab.getByRole("list", { name: "Menunggu persetujuan" }).getByRole("listitem")).toHaveCount(1, NAV);
+    });
+
+    test("B T1 rincian: muat ulang gagal sesudah Setujui = strip galat + aksi dikunci (bukan status lama tanpa tanda); foto toko 404 = kalimat + muat ulang", async ({ page }) => {
+        let rinciGagal = false;
+        const r = noo({ boleh: { ...BOLEH, putuskan: true, ktp: true } });
+        await mockFk(page, { scope: SPV, daftar: [r], rinci: { "n-1": r }, hook: async (route, req, p) => {
+            if (p === "noo/n-1" && req.method() === "GET" && rinciGagal) { await route.fulfill(json({ ok: false, error: "Internal server error" }, 500)); return true; }
+            if (p === "noo/n-1/foto-toko") { await route.fulfill({ status: 404, contentType: "application/json", body: "{}" }); return true; }
+            return false;
+        } });
+        await page.goto("/form-kontrol?tab=noo", NAV);
+        await page.getByRole("list", { name: "Menunggu persetujuan" }).getByRole("button", { name: /TOKO BARU A/ }).click(NAV);
+        const rinci = page.getByRole("region", { name: "Rincian toko baru" });
+        await expect(rinci.getByRole("status").filter({ hasText: "Foto toko gagal dimuat." })).toBeVisible(NAV);
+        await expect(rinci.getByRole("button", { name: "Muat ulang foto" })).toBeVisible();
+        rinciGagal = true;
+        await rinci.getByRole("button", { name: "Setujui" }).click();
+        const d = page.getByRole("dialog", { name: /Setujui toko baru/ });
+        await d.getByRole("button", { name: "Setujui" }).click();
+        await expect(d).toBeHidden(NAV);
+        await expect(rinci.getByRole("alert").filter({ hasText: "Gagal memuat ulang rincian." })).toBeVisible(NAV);
+        await expect(rinci.getByRole("button", { name: "Setujui" })).toBeDisabled();
+        await expect(rinci.getByRole("button", { name: "Tolak…" })).toBeDisabled();
+        await noOverflow(page);
+    });
+
+    test("B T1 Admin cari: 500 / putus = galat (tanpa 'Hasil …' maupun 'Belum ada pelanggan cocok'), Tautkan dikunci; cari berhasil sesudahnya", async ({ page }) => {
+        let cari = "";
+        const r = noo({ status: "disetujui", diputuskanOlehNama: "SPV A (SPV)", diputuskanPada: `${HARI_INI}T10:00:00+08:00`, boleh: { ...BOLEH, ktp: true, tautkan: true } });
+        await mockFk(page, { scope: ADMIN, daftar: [r], rinci: { "n-1": r }, saran: [{ id: 11, customerNo: "C-200011-CBA", name: "TOKO BARU A", alamat: "JL. CONTOH 1", skor: 0.83 }],
+            hook: async (route, req, p, url) => {
+                cari = url.searchParams.get("cari") ?? "";
+                if (p !== "noo/n-1" || req.method() !== "GET") return false;
+                if (cari === "galat") { await route.fulfill(json({ ok: false, error: "Internal server error" }, 500)); return true; }
+                if (cari === "putus") { await route.abort("failed"); return true; }
+                return false;
+            } });
+        await page.goto("/form-kontrol?tab=noo", NAV);
+        await page.getByRole("list", { name: "Disetujui — daftarkan di Accurate" }).getByRole("button", { name: /TOKO BARU A/ }).click(NAV);
+        const rinci = page.getByRole("region", { name: "Rincian toko baru" });
+        await rinci.getByRole("radio", { name: /C-200011-CBA/ }).check(NAV);
+        for (const q of ["galat", "putus"]) {
+            await rinci.getByLabel("Cari nama atau kode pelanggan").fill(q);
+            await rinci.getByRole("button", { name: "Cari" }).click();
+            await expect(rinci.getByRole("alert").filter({ hasText: "Gagal memuat ulang rincian." })).toBeVisible(NAV);
+            await expect(rinci).toContainText(`Pencarian "${q}" gagal dimuat — bukan berarti pelanggan belum ada.`);
+            await expect(rinci.getByText(/Belum ada pelanggan cocok/)).toHaveCount(0);
+            await expect(rinci.getByText(/^Hasil "/)).toHaveCount(0);
+            await expect(rinci.getByRole("radio")).toHaveCount(0);
+            await expect(rinci.getByRole("button", { name: "Tautkan…" })).toBeDisabled();
+        }
+        await rinci.getByLabel("Cari nama atau kode pelanggan").fill("hasil");
+        await rinci.getByRole("button", { name: "Cari" }).click();
+        await expect(rinci.getByText('Hasil "hasil" di cabang CABANG A:')).toBeVisible(NAV);
+        await expect(rinci.getByRole("alert")).toHaveCount(0);
+        await expect(rinci.getByRole("radio", { name: /C-200014-CBA TOKO HASIL CARI/ })).toBeVisible();
+    });
+
+    test("S3 Lihat KTP: fokus kembali ke tombol sesudah Escape maupun Tutup; NIK tidak tersisa di DOM", async ({ page }) => {
+        const r = noo({ boleh: { ...BOLEH, putuskan: true, ktp: true } });
+        await mockFk(page, { scope: SPV, daftar: [r], rinci: { "n-1": r } });
+        await page.goto("/form-kontrol?tab=noo", NAV);
+        await page.getByRole("list", { name: "Menunggu persetujuan" }).getByRole("button", { name: /TOKO BARU A/ }).click(NAV);
+        const rinci = page.getByRole("region", { name: "Rincian toko baru" });
+        const lihat = rinci.getByRole("button", { name: "Lihat KTP" });
+        for (const tutup of ["Escape", "Tutup"]) {
+            await lihat.click(NAV);
+            const ktp = page.getByRole("dialog", { name: "KTP NOO-7K3Q9ZTA" });
+            await expect(ktp).toContainText(NIK, NAV);
+            if (tutup === "Escape") await page.keyboard.press("Escape"); else await ktp.getByRole("button", { name: "Tutup" }).click();
+            await expect(ktp).toBeHidden();
+            await expect(lihat).toBeFocused();
+            expect(await page.content(), `NIK penuh dibuang sesudah ${tutup}`).not.toContain(NIK);
+        }
+    });
+
+    test("S4 lencana tab Toko Baru = NOO menunggu keputusan akun ini; Dashboard SPV memberi strip + tautan", async ({ page }) => {
+        const bisa = noo({ boleh: { ...BOLEH, putuskan: true, ktp: true } });
+        const lain = noo({ id: "n-2", kode: "NOO-LAIN2222", namaToko: "TOKO BARU B", boleh: BOLEH });
+        await mockFk(page, { scope: SPV, daftar: [bisa, lain] });
+        await page.goto("/form-kontrol?tab=ao", NAV);
+        const tabNoo = page.getByRole("navigation", { name: "Modul Form Kontrol" }).getByRole("link", { name: /Toko Baru \(NOO\)/ });
+        await expect(tabNoo).toHaveAccessibleName("Toko Baru (NOO) (1 menunggu persetujuan)", NAV);
+        await page.goto("/form-kontrol/spv-dashboard", NAV);
+        const strip = page.getByRole("status").filter({ hasText: "1 toko baru (NOO) menunggu persetujuan Anda." });
+        await expect(strip).toBeVisible(NAV);
+        await expect(strip.getByRole("link", { name: "Buka Toko Baru (NOO)" })).toHaveAttribute("href", "/form-kontrol?tab=noo");
+        await noOverflow(page);
+    });
+
+    test("selesai terpotong: kelompok Terdaftar/ditolak memberi tahu hanya 300 terbaru; aktif tetap tampil", async ({ page }) => {
+        const tolak = noo({ id: "n-9", kode: "NOO-TOLAK999", namaToko: "TOKO DITOLAK", status: "ditolak", alasanTolak: "Uji.", diputuskanOlehNama: "SPV A", diputuskanPada: `${HARI_INI}T10:00:00+08:00` });
+        await mockFk(page, { scope: ADMIN, daftar: [noo(), tolak], terpotong: true });
+        await page.goto("/form-kontrol?tab=noo", NAV);
+        const tab = page.getByRole("region", { name: "Toko baru", exact: true });
+        await expect(tab.getByRole("list", { name: "Menunggu persetujuan" }).getByRole("listitem")).toHaveCount(1, NAV);
+        await expect(tab).toContainText("1 toko (300 terbaru)");
+        await expect(tab).toContainText("Hanya 300 toko terdaftar/ditolak terbaru yang tampil; yang menunggu dan disetujui selalu tampil semua.");
     });
 });
