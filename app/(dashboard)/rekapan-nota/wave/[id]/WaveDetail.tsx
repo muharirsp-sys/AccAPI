@@ -1,11 +1,12 @@
 /*
- * Tujuan: Object Page satu wave (Fiori S2): status + alur, exception (baca), grup cetak dan kertas, isi wave dengan Lepas beralasan,
+ * Tujuan: Object Page satu wave (Fiori S2): status + alur, exception (Selesai / Abaikan… beralasan, BL-24), grup cetak dan kertas, isi wave dengan Lepas beralasan,
  *   pool dengan cari/saring (draf), riwayat, footer toolbar dengan dialog Rilis / Konfirmasi / Batalkan.
  * Caller: app/(dashboard)/rekapan-nota/wave/[id]/page.tsx.
- * Dependensi: GET|PATCH /api/rekapan-nota/wave/[id], POST|PATCH /api/rekapan-nota/wave/[id]/nota, GET /api/rekapan-nota/pool;
+ * Dependensi: GET|PATCH /api/rekapan-nota/wave/[id], POST|PATCH /api/rekapan-nota/wave/[id]/nota, PATCH /api/rekapan-nota/wave/[id]/exception,
+ *   GET /api/rekapan-nota/pool;
  *   components/fiori/{core,interactive}, lib/rekapan-nota/ui.
  * Main Functions: WaveDetail.
- * Side Effects: HTTP baca/tulis di atas. Logic BL-24/25/56/57 tidak ditulis: layar mengunci tombol dan memberi label; server belum.
+ * Side Effects: HTTP baca/tulis di atas. BL-24/25 dijaga server (409 tampil di layar); BL-56/57 masih varian berlabel.
  */
 "use client";
 
@@ -29,16 +30,28 @@ type NotaWave = {
     customer: string | null; salesman: string | null; jumlah_baris: number; total_pcs: number;
 };
 type NotaPool = { no_nota: string; kode_cust: string; customer: string | null; salesman: string | null; area: string | null; jumlah_baris: number; total_krt: number | null; pareto: boolean | null };
-type Exception = { id: number; jenis: string; ref_tipe: string; ref_kode: string; keterangan: string | null; status: string };
+type Exception = {
+    id: number; jenis: string; ref_tipe: string; ref_kode: string; keterangan: string | null; status: string;
+    master_saat_ini?: string | null; resolved_at?: string | null; resolved_oleh?: string | null; alasan?: string | null;
+};
 type PickGroup = { id: number; kode: string; nama: string; dimensi: string };
 type Riwayat = { event: string; created_at: string; payload: Record<string, unknown>; aktor: string };
 type Detail = { wave: Wave; nota: NotaWave[]; exception: Exception[]; pickGroup: PickGroup[]; pickGroupTersedia: PickGroup[]; riwayat?: Riwayat[] };
 type Pool = { nota: NotaPool[]; disembunyikan?: number; kanvasNihilOleh?: string | null };
-type Dialog = "rilis" | "konfirmasi" | "batal" | "takeout" | null;
+type Dialog = "rilis" | "konfirmasi" | "batal" | "takeout" | "abaikan" | null;
 type SaringIsi = "semua" | "urgent" | "pareto" | "dilepas";
 
 const TIPE_LABEL: Record<string, string> = { reguler: "Reguler", kanvas: "Kanvas" };
 const sama = (a: ReadonlySet<number>, b: ReadonlySet<number>) => a.size === b.size && [...a].every((x) => b.has(x));
+
+/** Nilai master SAAT INI sebagai petunjuk (BL-24): isi per karton untuk barang, area untuk outlet. */
+function petunjukMaster(e: Exception): string {
+    if (e.ref_tipe === "item" && e.jenis.startsWith("KONVERSI")) return e.master_saat_ini ? `Master saat ini ${e.master_saat_ini} per karton` : "Master saat ini belum diisi";
+    if (e.ref_tipe === "customer") return e.master_saat_ini ? `Area master saat ini ${e.master_saat_ini}` : "Area master saat ini belum diisi";
+    return "";
+}
+const penutupan = (e: Exception) =>
+    [`${e.status === "selesai" ? "Selesai" : "Diabaikan"}${e.resolved_at ? ` ${jamWita(e.resolved_at)}` : ""}`, e.resolved_oleh, e.alasan].filter(Boolean).join(" · ");
 
 async function kirimJson(url: string, method: string, body: unknown) {
     const res = await fetch(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -68,6 +81,8 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     const [saringIsi, setSaringIsi] = useState<SaringIsi>("semua");
     const [dialog, setDialog] = useState<Dialog>(null);
     const [notaLepas, setNotaLepas] = useState<NotaWave | null>(null);
+    const [excAbaikan, setExcAbaikan] = useState<Exception | null>(null);
+    const [excSibuk, setExcSibuk] = useState<number | null>(null);
     const [pesan, setPesan] = useState<string | null>(null);
     const [galat, setGalat] = useState<string | null>(null);
     const [sibuk, setSibuk] = useState<"tambah" | "urgent" | "grup" | null>(null);
@@ -142,8 +157,21 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
         setDialog(null); setGalat(null);
         setPesan(aksi === "release" ? `Wave ${wave?.nama} dirilis. Nota tidak bisa ditambah lagi; keluarkan lewat Lepas dengan alasan.`
             : aksi === "confirm" ? `Wave ${wave?.nama} dikonfirmasi. Isi dan grup cetak terkunci; kertas tetap bisa dicetak ulang.`
-            : `Wave ${wave?.nama} dibatalkan.`);
+            : `Wave ${wave?.nama} dibatalkan; ${Number(r.payload.notaKembali ?? 0)} nota kembali ke pool.`);
         muat();
+    }
+
+    /** BL-24: Selesai langsung; Abaikan lewat dialog beralasan (galat dilempar ke dialog). 409 = sudah ditutup di layar lain. */
+    async function tutupException(e: Exception, aksi: "selesai" | "abaikan", alasan?: string) {
+        const r = await kirimJson(`/api/rekapan-nota/wave/${id}/exception`, "PATCH", { exceptionId: e.id, aksi, alasan });
+        if (!r.ok) throw new Error(r.payload.error ?? `Exception tidak ditutup (HTTP ${r.status}).`);
+        setGalat(null);
+        setPesan(`${EXCEPTION_LABEL[e.jenis] ?? e.jenis} ${e.ref_kode} ${aksi === "selesai" ? "ditandai selesai" : "diabaikan"}.`);
+        muat();
+    }
+    async function selesaikan(e: Exception) {
+        setExcSibuk(e.id); setPesan(null);
+        try { await tutupException(e, "selesai"); } catch (err) { setGalat(err instanceof Error ? err.message : String(err)); } finally { setExcSibuk(null); }
     }
 
     async function lepas(alasan: string) {
@@ -189,12 +217,21 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
         ...(draft ? [{ id: "pool", label: "Pool" }] : []), { id: "riwayat", label: "Riwayat" },
     ];
 
+    const bolehTutup = bolehKelola && wave.status !== "cancelled";
+    const badgeStatus = (e: Exception) => e.status === "open" ? <StatusBadge tone="neg">Terbuka</StatusBadge> : e.status === "selesai" ? <StatusBadge tone="pos">Selesai</StatusBadge> : <StatusBadge tone="neu">Diabaikan</StatusBadge>;
+    const aksiException = (e: Exception) => bolehTutup && e.status === "open" ? (
+        <div className="fi-btnrow">
+            <Button busy={excSibuk === e.id} onClick={() => selesaikan(e)} aria-label={`Selesai ${e.ref_kode}`}>Selesai</Button>
+            <Button variant="tertiary" disabled={excSibuk === e.id} onClick={() => { setExcAbaikan(e); setDialog("abaikan"); }} aria-label={`Abaikan ${e.ref_kode}`}>Abaikan…</Button>
+        </div>
+    ) : null;
     const kolomException: Column<Exception>[] = [
         { key: "jenis", header: "Jenis", cell: (e) => <><b>{EXCEPTION_LABEL[e.jenis] ?? e.jenis}</b><span className="fi-codes">{e.jenis}</span></> },
         { key: "ref", header: "Referensi", cell: (e) => <span className="fi-mono">{e.ref_tipe} {e.ref_kode}</span> },
-        { key: "ket", header: "Keterangan", secondary: true, cell: (e) => <span className="fi-small">{e.keterangan}</span> },
+        { key: "ket", header: "Keterangan", secondary: true, cell: (e) => <span className="fi-small">{e.keterangan}{petunjukMaster(e) && <span className="fi-sub">{petunjukMaster(e)}</span>}</span> },
         { key: "konf", header: "Konfirmasi", cell: (e) => menahanKonfirmasi(e.jenis, e.status) ? <StatusBadge tone="warn"><Lock className="fi-icon" aria-hidden />Menahan</StatusBadge> : <span className="fi-small fi-subtle">Informasi</span> },
-        { key: "status", header: "Status", cell: (e) => e.status === "open" ? <StatusBadge tone="neg">Terbuka</StatusBadge> : e.status === "selesai" ? <StatusBadge tone="pos">Selesai</StatusBadge> : <StatusBadge tone="neu">Diabaikan</StatusBadge> },
+        { key: "status", header: "Status", cell: (e) => <>{badgeStatus(e)}{e.status !== "open" && <span className="fi-sub">{penutupan(e)}</span>}</> },
+        ...(bolehTutup && exceptionOpen.length ? [{ key: "aksi", header: "Tindakan", cell: aksiException }] : []),
     ];
     const kolomIsi: Column<NotaWave>[] = [
         { key: "nota", header: "Nota", cell: (n) => <span className="fi-mono">{n.no_nota}</span> },
@@ -238,12 +275,11 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                     subtitle={exceptionOpen.length ? `${exceptionOpen.length} terbuka · ${menahan.length} menahan konfirmasi` : `${data.exception.length} ditutup · tidak ada yang menahan konfirmasi`}>
                     <ResponsiveTable<Exception> title="Exception" columns={kolomException} rows={data.exception} rowKey={(e) => String(e.id)}
                         empty={{ title: "Tidak ada exception" }}
-                        mobileItem={(e) => <ListItem doc={`${e.ref_tipe} ${e.ref_kode}`} title={EXCEPTION_LABEL[e.jenis] ?? e.jenis} meta={e.keterangan}
-                            badge={menahanKonfirmasi(e.jenis, e.status) ? <StatusBadge tone="warn">Menahan</StatusBadge> : e.status === "open" ? <StatusBadge tone="neg">Terbuka</StatusBadge> : <StatusBadge tone="neu">{e.status === "selesai" ? "Selesai" : "Diabaikan"}</StatusBadge>} />} />
-                    {exceptionOpen.length > 0 && (
-                        <div className="fi-sect-in">
-                            <VariantNote bl="BL-24">Hari ini exception hanya bisa dibaca; yang menahan konfirmasi ditutup dengan memperbaiki master barang lalu merilis ulang di wave lain. Usulan: tombol Selesai dan Abaikan… beralasan per exception, dengan nilai master saat ini sebagai petunjuk.</VariantNote>
-                        </div>
+                        mobileItem={(e) => <ListItem doc={`${e.ref_tipe} ${e.ref_kode}`} title={EXCEPTION_LABEL[e.jenis] ?? e.jenis}
+                            meta={<>{e.status === "open" ? [e.keterangan, petunjukMaster(e)].filter(Boolean).join(" · ") : penutupan(e)}{aksiException(e)}</>}
+                            badge={menahanKonfirmasi(e.jenis, e.status) ? <StatusBadge tone="warn">Menahan</StatusBadge> : badgeStatus(e)} />} />
+                    {exceptionOpen.length > 0 && bolehTutup && (
+                        <div className="fi-sect-in"><p className="fi-small fi-subtle">Selesai = sudah diperbaiki · Abaikan = diterima dengan alasan. Konfirmasi hanya ditahan exception isi per karton.</p></div>
                     )}
                 </Section>
             )}
@@ -377,7 +413,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                 reason={{ label: "Alasan", placeholder: "Mis. mobil rute utara rusak; nota dipindah ke wave sore" }} onConfirm={(alasan) => transisi("cancel", alasan)}
                 description={wave.status === "released" ? <MessageStrip tone="warn" title="Wave sudah dirilis:">lembar rekapan dan TTF mungkin sudah di gudang. Tarik kertasnya sebelum nota disusun ulang.</MessageStrip> : undefined}
                 facts={[
-                    ["Nota di wave", `${aktif.length} nota tetap tercatat di wave ini; hari ini pembatalan belum mengembalikannya ke pool. Lepas satu per satu lewat Lepas… bila perlu dipakai wave lain`],
+                    ["Kembali ke pool", `${aktif.length} nota; bisa masuk wave lain hari ini`],
                     ["Setelah batal", "Wave tidak bisa dirilis ulang; buat wave baru"],
                 ]} />
             <ConfirmDialog open={dialog === "takeout"} onClose={() => { setDialog(null); setNotaLepas(null); }} title={`Lepas ${notaLepas?.no_nota ?? ""} dari Wave ${wave.nama}?`} tag="Lepas" confirmLabel="Lepas nota"
@@ -387,6 +423,16 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                     ["Outlet", `${notaLepas?.customer ?? "–"} · ${formatKarton(notaLepas?.snap_total_krt)} karton`],
                     ["Kembali ke", `Pool ${TIPE_LABEL[wave.tipe]?.toLowerCase() ?? wave.tipe} ${tanggalPendek(wave.tanggal)}`],
                     ["Izin", "Setujui lepas nota"],
+                ]} />
+            <ConfirmDialog open={dialog === "abaikan"} onClose={() => { setDialog(null); setExcAbaikan(null); }}
+                title={`Abaikan exception ${(EXCEPTION_LABEL[excAbaikan?.jenis ?? ""] ?? excAbaikan?.jenis ?? "").toLowerCase()}?`} tag="Abaikan" confirmLabel="Abaikan dengan alasan"
+                reason={{ label: "Alasan", min: 5, placeholder: "Mis. file benar; master sedang dikoreksi tim master barang" }}
+                onConfirm={async (alasan) => { if (excAbaikan) await tutupException(excAbaikan, "abaikan", alasan); setDialog(null); setExcAbaikan(null); }}
+                facts={[
+                    ["Referensi", `${excAbaikan?.ref_tipe ?? ""} ${excAbaikan?.ref_kode ?? ""}`],
+                    ["Masalah", excAbaikan?.keterangan ?? "–"],
+                    ...(excAbaikan && petunjukMaster(excAbaikan) ? [["Petunjuk", petunjukMaster(excAbaikan)] as [string, string]] : []),
+                    ["Konfirmasi", excAbaikan && menahanKonfirmasi(excAbaikan.jenis, excAbaikan.status) ? "Tidak lagi ditahan exception ini" : "Tidak terpengaruh (exception informasi)"],
                 ]} />
         </div>
     );

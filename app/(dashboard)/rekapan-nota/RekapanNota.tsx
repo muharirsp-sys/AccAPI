@@ -5,7 +5,8 @@
  * Dependensi: GET /api/rekapan-nota/wave, GET /api/rekapan-nota/pool, POST /api/rekapan-nota/upload, POST /api/rekapan-nota/wave;
  *   components/fiori/{core,interactive}, lib/rekapan-nota/ui, lib/beranda (witaToday).
  * Main Functions: RekapanNota.
- * Side Effects: HTTP baca/tulis di atas. Tidak ada localStorage. Logic BL-54/55 tidak ditulis (varian berlabel).
+ * Side Effects: HTTP baca/tulis di atas. Tidak ada localStorage. Hasil unggah melaporkan nota baru/sudah ada/berubah (BL-54);
+ *   logic BL-55 belum ditulis (varian berlabel).
  */
 "use client";
 
@@ -21,7 +22,10 @@ import { WAVE_STATUS, ambil, tanggalPanjang, tanggalPendek, urutanBerikutnya, ty
 
 type Wave = { id: number; tanggal: string; urutan: number; nama: string; tipe: string; status: WaveStatusKode; jumlah_nota: number; exception_open: number };
 type PoolRingkas = { jumlahNota: number; tanpaArea: number; disembunyikan: number; kanvasNihilOleh: string | null };
-type UploadResult = { tanggal: string; jumlahNota: number; jumlahBaris: number; principal: string[]; sudahAda?: boolean; pesan?: string };
+type UploadResult = {
+    tanggal: string; jumlahNota: number; jumlahBaris: number; principal: string[]; sudahAda?: boolean; pesan?: string;
+    notaBaru?: number; notaSudahAda?: number; notaDiganti?: number; notaSelisih?: Array<{ noNota: string; waveId: number; wave: string }>;
+};
 
 const TIPE_LABEL: Record<string, string> = { reguler: "Reguler", kanvas: "Kanvas" };
 const fmtMB = (bytes: number) => `${(bytes / 1_048_576).toLocaleString("id-ID", { maximumFractionDigits: 1 })} MB`;
@@ -112,14 +116,20 @@ export default function RekapanNota({ permKeys }: { permKeys: string[] }) {
             )}
             {hasilUnggah && (
                 <>
-                    <MessageStrip tone="pos" title={hasilUnggah.sudahAda ? "File ini sudah pernah diunggah." : `${hasilUnggah.jumlahNota} nota / ${hasilUnggah.jumlahBaris} baris masuk pool ${tanggalPendek(hasilUnggah.tanggal)}.`} onClose={() => setHasilUnggah(null)}>
-                        {hasilUnggah.sudahAda ? hasilUnggah.pesan : <>Principal: {hasilUnggah.principal.join(", ") || "–"}.</>}
+                    <MessageStrip tone="pos" title={hasilUnggah.sudahAda ? "File ini sudah pernah diunggah." : `${hasilUnggah.notaBaru ?? hasilUnggah.jumlahNota} nota baru masuk pool ${tanggalPendek(hasilUnggah.tanggal)}.`} onClose={() => setHasilUnggah(null)}>
+                        {hasilUnggah.sudahAda ? hasilUnggah.pesan : <>
+                            {hasilUnggah.jumlahNota} nota di file · {hasilUnggah.notaSudahAda ?? 0} sudah ada di pool, dilewati · {hasilUnggah.notaDiganti ?? 0} berubah sebelum masuk wave, diganti isi terbaru.
+                            {" "}Principal: {hasilUnggah.principal.join(", ") || "–"}.
+                        </>}
                     </MessageStrip>
-                    {!hasilUnggah.sudahAda && (
-                        <VariantNote bl="BL-54">
-                            Nota yang sudah ada di pool dan ikut di file ini ditulis ulang, sehingga qty ambil dan TTF-nya bisa terhitung dua kali.
-                            Usulan: laporkan nota baru, sudah ada, dan berubah; nota yang berubah setelah masuk wave menjadi exception.
-                        </VariantNote>
+                    {Boolean(hasilUnggah.notaSelisih?.length) && (
+                        <MessageStrip tone="warn" title={`${hasilUnggah.notaSelisih!.length} nota berubah setelah masuk wave.`}>
+                            Wave tetap memakai isi lama; selisihnya dicatat sebagai exception “Selisih dengan file”:{" "}
+                            {[...new Map(hasilUnggah.notaSelisih!.map((s) => [s.waveId, s])).values()].map((s, i) => (
+                                <span key={s.waveId}>{i ? ", " : ""}<Link href={`/rekapan-nota/wave/${s.waveId}`}>Wave {s.wave}</Link></span>
+                            ))}
+                            {" "}({hasilUnggah.notaSelisih!.map((s) => s.noNota).join(", ")}).
+                        </MessageStrip>
                     )}
                 </>
             )}
@@ -178,7 +188,8 @@ export default function RekapanNota({ permKeys }: { permKeys: string[] }) {
 
             <ConfirmDialog open={dialog === "unggah"} onClose={() => setDialog(null)} title="Unggah file export ke pool" tag="Unggah" confirmLabel="Unggah ke pool"
                 confirmDisabled={berkas ? undefined : "Pilih berkas dulu"} onConfirm={unggah}
-                facts={[["Yang masuk", "Hanya baris Penjualan Bruto bertanggal ini; retur dibuang"], ["File yang sama", "Tidak diunggah dua kali; pool tidak digandakan"]]}>
+                facts={[["Yang masuk", "Hanya baris Penjualan Bruto bertanggal ini; retur dibuang"], ["File yang sama", "Tidak diunggah dua kali; pool tidak digandakan"],
+                    ["Nota yang sudah ada", "Tidak ditulis ulang; yang berubah setelah masuk wave dicatat sebagai exception"]]}>
                 <FormField label="Tanggal data" required help="Satu file bisa memuat beberapa hari; hanya baris tanggal ini yang masuk pool.">
                     {(a11y) => <input {...a11y} className="fi-input" type="date" value={tanggalBerkas} onChange={(e) => { if (e.target.value) setTanggalBerkas(e.target.value); }} />}
                 </FormField>
