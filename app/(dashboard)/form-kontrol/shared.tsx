@@ -8,7 +8,7 @@
  */
 "use client";
 
-import { createContext, useCallback, useContext } from "react";
+import { createContext, useCallback, useContext, useEffect } from "react";
 import { useLoad, type Load } from "@/components/fiori/interactive";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -190,15 +190,24 @@ export async function ambilFk<T>(url: string, pick: (json: Record<string, unknow
     }
 }
 
+/** Event window: NOO berubah (setuju/tolak/tautkan) → lencana "N menunggu" dimuat ulang (peninjau B R-b1). */
+export const NOO_BERUBAH = "fk:noo-berubah";
+
 /**
  * Jumlah NOO (toko baru) yang menunggu keputusan AKUN INI (`row.boleh.putuskan` dari server) — lencana tab Toko Baru + strip Dashboard SPV
  * (peninjau B S4). `aktif` false (salesman, Manager) = tanpa permintaan. null = belum/gagal dimuat → tanpa lencana (bukan "0").
+ * Dimuat sekali per buka halaman + setiap event NOO_BERUBAH (TabNoo sesudah aksi).
  */
 export function useNooMenunggu(aktif: boolean): number | null {
-    const [load] = useLoad(useCallback(async (): Promise<Load<number | null>> => (aktif
+    const [load, muatUlang] = useLoad(useCallback(async (): Promise<Load<number | null>> => (aktif
         ? ambilFk("/api/form-kontrol/noo?status=menunggu_spv",
             (j) => (Array.isArray(j.rows) ? j.rows as { boleh?: { putuskan?: boolean } }[] : []).filter((r) => r.boleh?.putuskan).length, "")
         : { status: "siap", data: null }), [aktif]));
+    useEffect(() => {
+        if (!aktif) return;
+        window.addEventListener(NOO_BERUBAH, muatUlang);
+        return () => window.removeEventListener(NOO_BERUBAH, muatUlang);
+    }, [aktif, muatUlang]);
     return load.status === "siap" ? load.data ?? null : null;
 }
 

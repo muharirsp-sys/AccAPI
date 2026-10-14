@@ -116,12 +116,15 @@ const jalurBerkas = (nama: string) => {
     if (!POLA_BERKAS.test(nama)) throw new Error("nama berkas NOO tidak sah");
     return path.join(NOO_DIR, nama);
 };
-/** Satu berkas bernama acak; tulis gagal (ENOSPC/EACCES) → sisa setengah-tulis di-unlink lalu galat diteruskan (peninjau A R2). */
-async function tulisBerkas(isi: Buffer): Promise<string> {
+/**
+ * Satu berkas bernama acak; tulis gagal (ENOSPC/EACCES) → sisa setengah-tulis di-unlink lalu galat diteruskan (peninjau A R2).
+ * `tulisFile` hanya untuk uji (writeFile yang gagal di tengah jalan, peninjau A R-A2).
+ */
+export async function tulisBerkas(isi: Buffer, tulisFile: typeof writeFile = writeFile): Promise<string> {
     const nama = `${randomUUID()}.jpg`;
     await mkdir(NOO_DIR, { recursive: true });
     try {
-        await writeFile(jalurBerkas(nama), isi, { flag: "wx" });
+        await tulisFile(jalurBerkas(nama), isi, { flag: "wx" });
     } catch (e) {
         await unlink(jalurBerkas(nama)).catch(() => undefined);
         throw e;
@@ -440,7 +443,7 @@ export async function lihatKtp(d: { id: string; a: AksesNoo; aktorNama: string |
     if (!hakNoo(d.a, r).ktp) {
         return galat(403, "KTP_TIDAK_BOLEH", r.dibuatOleh === d.a.userId
             ? "KTP hanya bisa dibuka pengaju selama menunggu persetujuan SPV."
-            : "KTP lengkap hanya untuk SPV tim dan Admin; tampilan NIK tetap tersamar.");
+            : "KTP lengkap hanya untuk SPV dan SM tim pengaju serta Admin; tampilan NIK tetap tersamar.");
     }
     let foto: Buffer;
     try { foto = await readFile(jalurBerkas(r.fotoKtp)); } catch { return galat(404, "BERKAS_KTP_HILANG", "Berkas foto KTP tidak ditemukan di server; hubungi Admin."); }

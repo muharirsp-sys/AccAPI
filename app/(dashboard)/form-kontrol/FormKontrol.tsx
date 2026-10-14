@@ -9,7 +9,7 @@
  */
 "use client";
 
-import { useCallback, useMemo, type ComponentType } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ComponentType } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -64,6 +64,17 @@ export default function FormKontrol({ permKeys }: { permKeys: string[] }) {
         return `${pathname}?${p}`;
     };
     const Tab = aktif ? TAB[aktif.key] : null;
+    // Peninjau B R-b2: di ponsel bilah tab tergulir mendatar — tab Toko Baru berlencana (ada NOO menunggu) atau tab aktif digeser ke layar.
+    const subnavRef = useRef<HTMLElement>(null);
+    const aktifKey = aktif?.key;
+    useEffect(() => {
+        const nav = subnavRef.current;
+        const a = nav?.querySelector<HTMLElement>(nooMenunggu ? 'a[data-tab="noo"]' : 'a[aria-current="page"]');
+        if (!nav || !a) return;
+        const n = nav.getBoundingClientRect(), r = a.getBoundingClientRect();
+        if (r.right > n.right) nav.scrollLeft += r.right - n.right + 8;
+        else if (r.left < n.left) nav.scrollLeft -= n.left - r.left + 8;
+    }, [aktifKey, nooMenunggu]);
 
     const kepala = (
         <header className="fi-page-head">
@@ -106,9 +117,9 @@ export default function FormKontrol({ permKeys }: { permKeys: string[] }) {
                     </MessageStrip>
                 )}
                 {visibleTabs.length > 1 && (
-                    <nav className="fi-subnav" aria-label="Modul Form Kontrol">
+                    <nav ref={subnavRef} className="fi-subnav" aria-label="Modul Form Kontrol">
                         {visibleTabs.map((t) => (
-                            <Link key={t.key} href={hrefTab(t.key)} replace scroll={false} aria-current={t.key === aktif?.key ? "page" : undefined}
+                            <Link key={t.key} href={hrefTab(t.key)} replace scroll={false} data-tab={t.key} aria-current={t.key === aktif?.key ? "page" : undefined}
                                 aria-label={t.key === "noo" && nooMenunggu ? `${t.label} (${nooMenunggu} menunggu persetujuan)` : undefined}>
                                 {t.label}
                                 {t.key === "noo" && nooMenunggu ? <span className="fi-count" aria-hidden>{nooMenunggu}</span> : null}

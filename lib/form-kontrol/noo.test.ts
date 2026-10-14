@@ -5,7 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
 import { galatIsianNoo, isKodeNoo, normalHp, periksaIsianNoo, periksaNik, samarkanNik } from "./noo-aturan.ts";
-import { buatKodeNoo, hakNoo, type AksesNoo } from "./noo.ts";
+import { stat, writeFile } from "node:fs/promises";
+import { buatKodeNoo, hakNoo, tulisBerkas, type AksesNoo } from "./noo.ts";
 import { BATAS_PIKSEL_FOTO, olahFoto } from "./uploads.ts";
 
 test("normalHp: seluler Indonesia → 08… kanonik; telepon rumah/pendek/panjang/08-0 ditolak", () => {
@@ -129,4 +130,16 @@ test("olahFoto: masukan > 40 MP ditolak (bom dekompresi; peninjau A R4), ≤ 40 
     const pas = await sharp({ create: { width: 6000, height: 6000, channels: 3, background: "#ffffff" } }).png().toBuffer();
     const meta = await sharp(await olahFoto(pas)).metadata();
     assert.deepEqual([meta.width, meta.height], [1600, 1600]);
+});
+
+test("tulisBerkas: tulis gagal DI TENGAH (ENOSPC) → berkas setengah-tulis di data/private/noo dibuang, galat diteruskan (peninjau A R-A2)", async () => {
+    let jalur = "";
+    const tulisPutus = (async (p: string, isi: Buffer) => {
+        jalur = p;
+        await writeFile(p, isi.subarray(0, 4), { flag: "wx" });
+        throw Object.assign(new Error("ENOSPC tiruan"), { code: "ENOSPC" });
+    }) as unknown as typeof writeFile;
+    await assert.rejects(tulisBerkas(Buffer.from("isi foto uji yang panjang"), tulisPutus), /ENOSPC/);
+    assert.match(jalur.replaceAll("\\", "/"), /\/data\/private\/noo\/[0-9a-f-]{36}\.jpg$/);
+    await assert.rejects(stat(jalur), "berkas setengah-tulis dibuang");
 });

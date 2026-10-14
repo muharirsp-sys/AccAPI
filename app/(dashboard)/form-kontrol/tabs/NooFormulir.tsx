@@ -9,12 +9,12 @@
  * Main Functions: TambahNoo, useJagaPindah.
  * Side Effects: kamera + izin lokasi peramban; HTTP POST multipart. id pengajuan (UUID) dibuat sekali per isian → kirim ulang sesudah jawaban
  *   tidak pasti = baris yang sama di server (isian diubah sesudahnya = 409 ID_BEDA_ISI). Foto diperkecil di ponsel (≤ 1600 px JPEG) sebelum
- *   dikirim. Isian hanya di memori layar ini — TIDAK disimpan ke storage; selama formulir terisi, klik tautan ke halaman/tab lain dicegat dan
- *   ditanya dulu (peninjau B S1). Galat per isian (aria-invalid + pesan di bawah isian) sesudah isian disentuh (peninjau B S2).
+ *   dikirim. Isian hanya di memori layar ini — TIDAK disimpan ke storage; selama formulir terisi, klik tautan ke halaman/tab lain DAN tombol
+ *   Kembali peramban dicegat dan ditanya dulu (peninjau B S1, S-b1). Galat per isian (aria-invalid + pesan di bawah isian) sesudah isian disentuh (peninjau B S2).
  */
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Camera, LocateFixed, Store } from "lucide-react";
 import { Button, MessageStrip, Section } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useUnsavedGuard } from "@/components/fiori/interactive";
@@ -31,13 +31,19 @@ const URUTAN_LAYAR = ["namaToko", "namaPemilik", "alamat", "noHp", "fotoToko", "
 type KunciLayar = (typeof URUTAN_LAYAR)[number];
 
 /**
- * Peninjau B S1: selama `kotor`, klik tautan ke halaman/tab lain (tab Form Kontrol, menu samping) dicegat SEBELUM Next berpindah
- * (capture di document) → dialog "Buang isian?"; "Buang" mengulang klik tautan yang sama (perilaku Link asli, termasuk replace).
- * ponytail: tombol Kembali peramban (popstate) tidak dicegat — beforeunload (useUnsavedGuard) hanya menjaga muat ulang/tutup tab.
+ * Peninjau B S1 + S-b1: selama `kotor`, (1) klik tautan ke halaman/tab lain (tab Form Kontrol, menu samping) dicegat SEBELUM Next berpindah
+ * (capture di document) dan (2) tombol Kembali peramban/Android dicegat lewat satu entri riwayat penjaga (`pushState`, salinan state Next
+ * supaya router tetap mengenalinya) + `popstate` → dialog "Buang isian?" yang sama. "Buang" mengulang klik tautan yang sama (perilaku Link asli,
+ * termasuk replace) atau mundur sekali lagi; "Tetap di sini" sesudah Kembali memasang penjaga lagi. Formulir tersimpan/dibuang (kotor → false)
+ * = penjaga dilepas dengan mundur satu langkah, kecuali sedang meninggalkan halaman.
  */
 export function useJagaPindah(kotor: boolean) {
-    const [tujuan, setTujuan] = useState<HTMLAnchorElement | null>(null);
+    const [tujuan, setTujuan] = useState<HTMLAnchorElement | "kembali" | null>(null);
     const lepas = useRef(false);
+    const pergi = useRef(false);
+    // "Buang" sesudah Kembali: beforeunload (useUnsavedGuard) dimatikan dulu lewat render ini, BARU mundur (efek di bawah).
+    const [meninggalkan, setMeninggalkan] = useState(false);
+    useEffect(() => { if (meninggalkan) history.back(); }, [meninggalkan]);
     useEffect(() => {
         if (!kotor) return;
         const cegat = (e: MouseEvent) => {
@@ -50,18 +56,35 @@ export function useJagaPindah(kotor: boolean) {
             e.stopPropagation();
             setTujuan(a);
         };
+        const pasangPenjaga = () => history.pushState({ ...(history.state ?? {}), nooJaga: true }, "", location.href);
+        // Kembali dari entri penjaga → mendarat di entri asli (URL sama): tanya dulu; pengguna belum pindah halaman.
+        const kembali = () => { if (!lepas.current) setTujuan("kembali"); };
+        pergi.current = false;
+        pasangPenjaga();
         document.addEventListener("click", cegat, true);
-        return () => document.removeEventListener("click", cegat, true);
+        window.addEventListener("popstate", kembali);
+        return () => {
+            document.removeEventListener("click", cegat, true);
+            window.removeEventListener("popstate", kembali);
+            // Masih di entri penjaga (tersimpan/dibuang di halaman ini) → lepas penjaga supaya Kembali berikutnya tidak "diam".
+            if (!pergi.current && (history.state as { nooJaga?: boolean } | null)?.nooJaga) history.back();
+        };
     }, [kotor]);
     return {
         tujuan,
-        tetap: () => setTujuan(null),
+        meninggalkan,
+        tetap: () => {
+            if (tujuan === "kembali") history.pushState({ ...(history.state ?? {}), nooJaga: true }, "", location.href);
+            setTujuan(null);
+        },
         pindah: () => {
             const a = tujuan;
             setTujuan(null);
             if (!a) return;
-            if (!a.isConnected) { location.assign(a.href); return; }
+            pergi.current = true;
             lepas.current = true;
+            if (a === "kembali") { setMeninggalkan(true); return; }
+            if (!a.isConnected) { location.assign(a.href); return; }
             try { a.click(); } finally { lepas.current = false; }
         },
     };
@@ -97,6 +120,7 @@ function FotoSlot({ label, blob, onAmbil, kunci, isian, galat }: { label: string
     const [buka, setBuka] = useState(false);
     const url = useMemo(() => (blob ? URL.createObjectURL(blob) : null), [blob]);
     const nama = label.charAt(0).toLowerCase() + label.slice(1); // "foto toko", "foto KTP"
+    const galatId = useId();
     useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
     return (
         <div className="grid gap-2">
@@ -106,11 +130,12 @@ function FotoSlot({ label, blob, onAmbil, kunci, isian, galat }: { label: string
                 <img src={url} alt={`Pratinjau ${nama}`} style={{ width: "100%", maxHeight: "10rem", objectFit: "cover", borderRadius: "var(--r-md)" }} />
             )}
             <div className="fi-btnrow">
-                <Button icon={<Camera className="fi-icon" aria-hidden />} disabled={Boolean(kunci)} disabledReason={kunci} onClick={() => setBuka(true)} data-isian={isian}>
+                <Button icon={<Camera className="fi-icon" aria-hidden />} disabled={Boolean(kunci)} disabledReason={kunci} onClick={() => setBuka(true)} data-isian={isian}
+                    aria-describedby={galat ? galatId : undefined} aria-invalid={galat ? true : undefined}>
                     {blob ? `Ambil ulang ${nama}` : `Ambil ${nama}`}
                 </Button>
             </div>
-            {galat && <p className="fi-msg">{galat}</p>}
+            {galat && <p className="fi-msg" id={galatId}>{galat}</p>}
             <CameraCapture open={buka} judul={label} onClose={() => setBuka(false)} onCapture={async (b) => { onAmbil(await kecilkan(b)); }} />
         </div>
     );
@@ -135,9 +160,10 @@ export function TambahNoo({ salesCode, principle, onDiajukan, kunci }: Props) {
     const [sukses, setSukses] = useState("");
     const [disentuh, setDisentuh] = useState<ReadonlySet<KunciLayar>>(new Set());
     const formRef = useRef<HTMLFormElement>(null);
+    const idForm = useId();
     const kotor = buka && (Object.values(isi).some(Boolean) || Boolean(fotoToko || fotoKtp || lokasi));
-    useUnsavedGuard(kotor);
     const jaga = useJagaPindah(kotor);
+    useUnsavedGuard(kotor && !jaga.meninggalkan);
     const sentuh = (...k: KunciLayar[]) => setDisentuh((p) => (k.every((x) => p.has(x)) ? p : new Set([...p, ...k])));
 
     const ubah = (k: keyof Teks) => (e: { target: { value: string } }) => {
@@ -246,9 +272,10 @@ export function TambahNoo({ salesCode, principle, onDiajukan, kunci }: Props) {
                                 </p>
                             )}
                             {galatLokasi && <MessageStrip tone="neg" title="Lokasi wajib.">{PESAN_LOKASI[galatLokasi]}</MessageStrip>}
-                            {!galatLokasi && galatDi("gps") && <p className="fi-msg">{galatDi("gps")}</p>}
+                            {!galatLokasi && galatDi("gps") && <p className="fi-msg" id={`${idForm}-gps`}>{galatDi("gps")}</p>}
                             <div className="fi-btnrow">
-                                <Button icon={<LocateFixed className="fi-icon" aria-hidden />} busy={mencariLokasi} disabled={sibuk} onClick={() => void ambilGps()} data-isian="gps">
+                                <Button icon={<LocateFixed className="fi-icon" aria-hidden />} busy={mencariLokasi} disabled={sibuk} onClick={() => void ambilGps()} data-isian="gps"
+                                    aria-describedby={!galatLokasi && galatDi("gps") ? `${idForm}-gps` : undefined} aria-invalid={galatDi("gps") ? true : undefined}>
                                     {lokasi ? "Ambil lokasi lagi" : "Ambil lokasi"}
                                 </Button>
                             </div>
@@ -286,13 +313,16 @@ export function TambahNoo({ salesCode, principle, onDiajukan, kunci }: Props) {
                             <Button type="submit" variant="primary" busy={sibuk} disabled={Boolean(alasan)} disabledReason={alasan}>Ajukan toko baru</Button>
                             <Button variant="tertiary" disabled={sibuk} onClick={() => tutup(true)}>Batal</Button>
                         </div>
-                        {alasan && !kunci && (
-                            <p className="fi-small fi-why">
-                                {alasan}{" "}
-                                {/* mousedown tidak memindah fokus: blur isian yang sedang diisi akan memunculkan galatnya dan menggeser tombol ini sebelum klik selesai. */}
-                                {pertama && <button type="button" className="fi-btn fi-btn--tertiary" onMouseDown={(e) => e.preventDefault()} onClick={keIsian}>Ke isian yang belum benar</button>}
-                            </p>
-                        )}
+                        {/* Peninjau B R-b3: wilayah live SELALU terpasang (pembaca layar mengumumkan perubahan galat pertama, bukan hanya saat fokus). */}
+                        <div aria-live="polite" data-uji="galat-live">
+                            {alasan && !kunci && (
+                                <p className="fi-small fi-why">
+                                    {alasan}{" "}
+                                    {/* mousedown tidak memindah fokus: blur isian yang sedang diisi akan memunculkan galatnya dan menggeser tombol ini sebelum klik selesai. */}
+                                    {pertama && <button type="button" className="fi-btn fi-btn--tertiary" onMouseDown={(e) => e.preventDefault()} onClick={keIsian}>Ke isian yang belum benar</button>}
+                                </p>
+                            )}
+                        </div>
                     </form>
                 )}
                 <ConfirmDialog open={jaga.tujuan !== null} onClose={jaga.tetap} title="Buang isian toko baru?" tone="negative"

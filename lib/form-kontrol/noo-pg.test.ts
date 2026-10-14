@@ -93,8 +93,13 @@ function formNoo(o: Record<string, string | null> = {}, foto: { toko?: Buffer | 
     if (foto.ktp !== null) f.set("fotoKtp", new File([new Uint8Array(foto.ktp ?? JPEG)], "ktp.jpg", { type: tipe }));
     return { f, id: isi.id as string };
 }
-const ajukan = async (u: string, f: FormData, headers?: Record<string, string>) =>
-    jawab(await sebagai(u, () => m.noo.POST(new Request("http://app.test/api/form-kontrol/noo", { method: "POST", body: f, headers }))));
+/** Seperti peramban: multipart diserialisasi lebih dulu sehingga Content-Length terpasang (route menolak kiriman tanpa ukuran, 411). */
+const ajukan = async (u: string, f: FormData, headers?: Record<string, string>) => {
+    const r0 = new Request("http://app.test/api/form-kontrol/noo", { method: "POST", body: f });
+    const isi = new Uint8Array(await r0.arrayBuffer());
+    const h = { "content-type": r0.headers.get("content-type")!, "content-length": String(isi.byteLength), ...headers };
+    return jawab(await sebagai(u, () => m.noo.POST(new Request("http://app.test/api/form-kontrol/noo", { method: "POST", body: isi, headers: h }))));
+};
 const daftar = async (u: string, q = "") => jawab(await sebagai(u, () => m.noo.GET(req(`/api/form-kontrol/noo${q}`))));
 const rinci = async (u: string, id: string, q = "") => jawab(await sebagai(u, () => m.satu.GET(req(`/api/form-kontrol/noo/${id}${q}`), ctx(id))));
 const aksi = async (u: string, id: string, isi: Record<string, unknown>) =>
@@ -282,6 +287,9 @@ test("ajukan: validasi berkode tanpa nilai pribadi di galat; bukan pemilik / SPV
     // Peninjau A R4: body jelas > 2 × 5 MB + 512 KB ditolak dari Content-Length SEBELUM dibaca; foto > 40 MP ditolak sharp.
     const batas = 10 * 1024 * 1024 + 512 * 1024;
     assert.deepEqual(kode(await ajukan("u-sla", formNoo({ nik: NIK_C, noHp: "081277770000" }).f, { "content-length": String(batas + 1) })), [413, "FOTO_TERLALU_BESAR"]);
+    // Peninjau A R-A1: tanpa Content-Length (chunked) = 411 sebelum body dibaca.
+    const tanpaUkuran = await jawab(await sebagai("u-sla", () => m.noo.POST(new Request("http://app.test/api/form-kontrol/noo", { method: "POST", body: formNoo({ nik: NIK_C, noHp: "081277770000" }).f }))));
+    assert.deepEqual(kode(tanpaUkuran), [411, "PANJANG_WAJIB"]);
     const bom = await sharp({ create: { width: 7000, height: 6000, channels: 3, background: "#ffffff" } }).png().toBuffer();
     assert.deepEqual(kode(await ajukan("u-sla", formNoo({ nik: NIK_C, noHp: "081277770000" }, { toko: bom }).f)), [400, "FOTO_TIDAK_SAH"], "42 MP ditolak");
     assert.deepEqual(kode(await ajukan("u-sla", formNoo({ principle: "PRINCIPLE Z", nik: NIK_C, noHp: "081277770000" }).f)), [403, "PRINCIPAL_LUAR_CAKUPAN"]);
@@ -383,7 +391,9 @@ test("Lihat KTP: pengaju (menunggu), SPV tim, SM pengganti, Admin = 200 + audit 
     const rows = (await pool.query(`SELECT actor_id, payload FROM kontrol_audit_log WHERE entity = 'noo' AND action = 'lihat_ktp' ORDER BY created_at`)).rows;
     assert.deepEqual(rows.map((r) => r.actor_id), ["u-sla", "u-spva", "u-sma", "u-admin"]);
     for (const r of rows) assert.deepEqual(r.payload, { kode: KODE_A }, "audit hanya kode NOO (tanpa NIK/foto)");
-    assert.deepEqual([(await lihatKtp("u-adms", ID_A)).body.kode], ["KTP_TIDAK_BOLEH"], "Admin Sales tidak melihat KTP");
+    const ktpAdms = await lihatKtp("u-adms", ID_A);
+    assert.deepEqual([ktpAdms.body.kode], ["KTP_TIDAK_BOLEH"], "Admin Sales tidak melihat KTP");
+    assert.match(String(ktpAdms.body.error), /SPV dan SM tim pengaju serta Admin/, "pesan 403 menyebut SPV, SM, dan Admin (peninjau A R-A3)");
     assert.deepEqual([(await lihatKtp("u-mgr", ID_A)).body.kode], ["KTP_TIDAK_BOLEH"], "Manager melihat NOO, KTP tidak (owner 13 Okt malam)");
     assert.equal((await lihatKtp("u-sma", ID_B)).status, 404, "SM A: NOO tim SM B tidak terlihat");
     assert.deepEqual([(await lihatKtp("u-spvb", ID_A)).status, (await lihatKtp("u-vw", ID_A)).status, (await lihatKtp("u-slb", ID_A)).status], [404, 404, 404]);

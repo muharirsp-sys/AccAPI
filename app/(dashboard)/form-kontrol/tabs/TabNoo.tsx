@@ -22,7 +22,7 @@ import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori
 import Dialog from "@/components/ui/Dialog";
 import { LABEL_STATUS_NOO, type StatusNoo } from "@/lib/form-kontrol/noo-aturan";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
-import { ambilFk, jamWita, type Scope } from "../shared";
+import { NOO_BERUBAH, ambilFk, jamWita, type Scope } from "../shared";
 import { GagalKirim, kirimFk } from "../lapangan";
 
 type Boleh = { putuskan: boolean; ktp: boolean; tautkan: boolean; kunjungi: boolean };
@@ -105,7 +105,7 @@ export default function TabNoo({ scope }: { scope: Scope }) {
                 <Button icon={<RefreshCw className="fi-icon" aria-hidden />} busy={load.status === "memuat" && Boolean(load.data)} onClick={muatUlang}>Muat ulang</Button>
             </div>
             <FlexibleColumnLayout list={daftar} detailOpen={pilihId !== null} onBack={() => setPilihId(null)} listLabel="Daftar toko baru" detailLabel="Rincian toko baru"
-                detail={pilihId ? <RincianNoo key={pilihId} id={pilihId} onBerubah={muatUlang} /> : <EmptyState title="Pilih toko baru" message="Rincian dan aksi tampil di sini." />} />
+                detail={pilihId ? <RincianNoo key={pilihId} id={pilihId} onBerubah={() => { muatUlang(); window.dispatchEvent(new Event(NOO_BERUBAH)); }} /> : <EmptyState title="Pilih toko baru" message="Rincian dan aksi tampil di sini." />} />
         </section>
     );
 }

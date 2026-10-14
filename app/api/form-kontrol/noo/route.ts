@@ -15,7 +15,7 @@
  *   - NIK/HP sama dengan NOO lain yang belum ditolak → 409 NOO_DUPLIKAT (+ `pembanding` kode/toko/status HANYA untuk NOO milik salesman
  *     sendiri; milik orang lain hanya `lain` [{cocok}] — peninjau A R3) kecuali pemilikSama=ya + alasan ≥ 10 huruf (→ tanda duplikat, pemutus
  *     WAJIB mengonfirmasi); id sama dikirim ulang dengan isian sama = baris lama (200), isian berbeda = 409 ID_BEDA_ISI;
- *   - Content-Length > 2 × 5 MB + 512 KB → 413 sebelum body dibaca; foto > 40 MP ditolak sharp (FOTO_TIDAK_SAH).
+ *   - tanpa Content-Length → 411 PANJANG_WAJIB; Content-Length > 2 × 5 MB + 512 KB → 413 sebelum body dibaca; foto > 40 MP ditolak sharp (FOTO_TIDAK_SAH).
  * GET: status aktif (menunggu/disetujui) selalu lengkap; selesai (ditolak/terdaftar) BATAS_SELESAI terbaru + `selesaiTerpotong`.
  */
 import { NextResponse } from "next/server";
@@ -59,7 +59,13 @@ export async function POST(req: Request) {
     if (gate.response) return gate.response;
     const session = gate.session;
     try {
-        if (Number(req.headers.get("content-length") ?? 0) > MAKS_BODY) {
+        // Peninjau A R-A1: tanpa Content-Length (chunked) batas di bawah tak bisa diperiksa sebelum body dibaca → 411 (peramban selalu
+        // mengirim Content-Length untuk FormData).
+        const panjang = req.headers.get("content-length");
+        if (panjang === null) {
+            return jawabGalat({ status: 411, kode: "PANJANG_WAJIB", error: "Kiriman tanpa ukuran tidak diterima; kirim ulang dari formulir." });
+        }
+        if (Number(panjang) > MAKS_BODY) {
             return jawabGalat({ status: 413, kode: "FOTO_TERLALU_BESAR", error: "Kiriman terlalu besar: tiap foto maksimal 5 MB. Ambil ulang foto." });
         }
         const form = await req.formData().catch(() => null);
