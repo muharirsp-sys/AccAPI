@@ -18,7 +18,6 @@
 import { Fragment } from "react";
 import { pool } from "@/lib/db";
 import { ambilPickGroup, buildRekapan, type WithdrawalRow } from "@/lib/rekapan-nota/query";
-import TombolCetak from "../../../../TombolCetak";
 
 export const dynamic = "force-dynamic";
 
@@ -131,8 +130,6 @@ export default async function CetakRekapanPage({
 
     return (
         <main className="cetak">
-            <div className="layar-saja"><TombolCetak /></div>
-
             {halaman.map((isi, h) => {
                 const krtHalaman = isi.reduce((a, r) => a + krtDari(r), 0);
                 const pcsHalaman = isi.reduce((a, r) => a + Number(r.total_pcs), 0);
