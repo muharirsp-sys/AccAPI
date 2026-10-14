@@ -6,7 +6,7 @@
  *   GET /api/rekapan-nota/pool;
  *   components/fiori/{core,interactive}, lib/rekapan-nota/ui.
  * Main Functions: WaveDetail.
- * Side Effects: HTTP baca/tulis di atas. BL-24/25 dijaga server (409 tampil di layar); BL-56/57 masih varian berlabel.
+ * Side Effects: HTTP baca/tulis di atas. BL-24/25 dijaga server (409 tampil di layar dan detail dimuat ulang); BL-56/57 masih varian berlabel.
  */
 "use client";
 
@@ -142,7 +142,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
         setSibuk("grup"); setGalat(null); setPesan(null);
         try {
             const r = await kirimJson(`/api/rekapan-nota/wave/${id}`, "PATCH", { aksi: "set_grup", pickGroupIds: [...grupPilih] });
-            if (!r.ok) { setGalat(r.payload.error ?? "Grup cetak tidak tersimpan."); return; }
+            if (!r.ok) { setGalat(r.payload.error ?? "Grup cetak tidak tersimpan."); muat(); return; }
             setPesan("Grup cetak tersimpan.");
             setGrupEdit(null); muat();
         } finally {
@@ -153,7 +153,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     /** Transisi lewat dialog: galat dilempar supaya tampil di dialog (isian tidak hilang). */
     async function transisi(aksi: "release" | "confirm" | "cancel", alasan?: string) {
         const r = await kirimJson(`/api/rekapan-nota/wave/${id}`, "PATCH", { aksi, alasan: alasan || undefined });
-        if (!r.ok) throw new Error(r.payload.error ?? `Aksi gagal (HTTP ${r.status}).`);
+        if (!r.ok) { muat(); throw new Error(r.payload.error ?? `Aksi gagal (HTTP ${r.status}).`); }
         setDialog(null); setGalat(null);
         setPesan(aksi === "release" ? `Wave ${wave?.nama} dirilis. Nota tidak bisa ditambah lagi; keluarkan lewat Lepas dengan alasan.`
             : aksi === "confirm" ? `Wave ${wave?.nama} dikonfirmasi. Isi dan grup cetak terkunci; kertas tetap bisa dicetak ulang.`
@@ -164,7 +164,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     /** BL-24: Selesai langsung; Abaikan lewat dialog beralasan (galat dilempar ke dialog). 409 = sudah ditutup di layar lain. */
     async function tutupException(e: Exception, aksi: "selesai" | "abaikan", alasan?: string) {
         const r = await kirimJson(`/api/rekapan-nota/wave/${id}/exception`, "PATCH", { exceptionId: e.id, aksi, alasan });
-        if (!r.ok) throw new Error(r.payload.error ?? `Exception tidak ditutup (HTTP ${r.status}).`);
+        if (!r.ok) { muat(); throw new Error(r.payload.error ?? `Exception tidak ditutup (HTTP ${r.status}).`); }
         setGalat(null);
         setPesan(`${EXCEPTION_LABEL[e.jenis] ?? e.jenis} ${e.ref_kode} ${aksi === "selesai" ? "ditandai selesai" : "diabaikan"}.`);
         muat();
@@ -177,7 +177,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     async function lepas(alasan: string) {
         if (!notaLepas) return;
         const r = await kirimJson(`/api/rekapan-nota/wave/${id}/nota`, "PATCH", { aksi: "takeout", noNota: notaLepas.no_nota, alasan });
-        if (!r.ok) throw new Error(r.payload.error ?? `Nota tidak dilepas (HTTP ${r.status}).`);
+        if (!r.ok) { muat(); throw new Error(r.payload.error ?? `Nota tidak dilepas (HTTP ${r.status}).`); }
         setDialog(null); setNotaLepas(null); setGalat(null);
         setPesan(`${notaLepas.no_nota} dilepas dan kembali ke pool.`);
         muat();
@@ -220,10 +220,10 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     const bolehTutup = bolehKelola && wave.status !== "cancelled";
     const badgeStatus = (e: Exception) => e.status === "open" ? <StatusBadge tone="neg">Terbuka</StatusBadge> : e.status === "selesai" ? <StatusBadge tone="pos">Selesai</StatusBadge> : <StatusBadge tone="neu">Diabaikan</StatusBadge>;
     const aksiException = (e: Exception) => bolehTutup && e.status === "open" ? (
-        <div className="fi-btnrow">
+        <span className="fi-btnrow">
             <Button busy={excSibuk === e.id} onClick={() => selesaikan(e)} aria-label={`Selesai ${e.ref_kode}`}>Selesai</Button>
             <Button variant="tertiary" disabled={excSibuk === e.id} onClick={() => { setExcAbaikan(e); setDialog("abaikan"); }} aria-label={`Abaikan ${e.ref_kode}`}>Abaikan…</Button>
-        </div>
+        </span>
     ) : null;
     const kolomException: Column<Exception>[] = [
         { key: "jenis", header: "Jenis", cell: (e) => <><b>{EXCEPTION_LABEL[e.jenis] ?? e.jenis}</b><span className="fi-codes">{e.jenis}</span></> },

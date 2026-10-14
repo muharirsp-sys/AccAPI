@@ -23,8 +23,8 @@ import { WAVE_STATUS, ambil, tanggalPanjang, tanggalPendek, urutanBerikutnya, ty
 type Wave = { id: number; tanggal: string; urutan: number; nama: string; tipe: string; status: WaveStatusKode; jumlah_nota: number; exception_open: number };
 type PoolRingkas = { jumlahNota: number; tanpaArea: number; disembunyikan: number; kanvasNihilOleh: string | null };
 type UploadResult = {
-    tanggal: string; jumlahNota: number; jumlahBaris: number; principal: string[]; sudahAda?: boolean; pesan?: string;
-    notaBaru?: number; notaSudahAda?: number; notaDiganti?: number; notaSelisih?: Array<{ noNota: string; waveId: number; wave: string }>;
+    tanggal: string; jumlahNota: number; jumlahBaris: number; principal: string[]; fileSama?: boolean;
+    notaBaru?: number; notaSudahAda?: number; notaLebihBaru?: number; notaDiganti?: number; notaSelisih?: Array<{ noNota: string; waveId: number; wave: string }>;
 };
 
 const TIPE_LABEL: Record<string, string> = { reguler: "Reguler", kanvas: "Kanvas" };
@@ -116,11 +116,11 @@ export default function RekapanNota({ permKeys }: { permKeys: string[] }) {
             )}
             {hasilUnggah && (
                 <>
-                    <MessageStrip tone="pos" title={hasilUnggah.sudahAda ? "File ini sudah pernah diunggah." : `${hasilUnggah.notaBaru ?? hasilUnggah.jumlahNota} nota baru masuk pool ${tanggalPendek(hasilUnggah.tanggal)}.`} onClose={() => setHasilUnggah(null)}>
-                        {hasilUnggah.sudahAda ? hasilUnggah.pesan : <>
-                            {hasilUnggah.jumlahNota} nota di file · {hasilUnggah.notaSudahAda ?? 0} sudah ada di pool, dilewati · {hasilUnggah.notaDiganti ?? 0} berubah sebelum masuk wave, diganti isi terbaru.
-                            {" "}Principal: {hasilUnggah.principal.join(", ") || "–"}.
-                        </>}
+                    <MessageStrip tone="pos" title={`${hasilUnggah.notaBaru ?? hasilUnggah.jumlahNota} nota baru masuk pool ${tanggalPendek(hasilUnggah.tanggal)}.`} onClose={() => setHasilUnggah(null)}>
+                        {hasilUnggah.fileSama && <>File ini pernah diunggah; diproses ulang per nota. </>}
+                        {hasilUnggah.jumlahNota} nota di file · {hasilUnggah.notaSudahAda ?? 0} sudah ada di pool, dilewati · {hasilUnggah.notaDiganti ?? 0} berubah sebelum masuk wave, diganti isi terbaru
+                        {hasilUnggah.notaLebihBaru ? <> · {hasilUnggah.notaLebihBaru} di pool berasal dari file yang lebih baru, tidak ditimpa</> : null}.
+                        {" "}Principal: {hasilUnggah.principal.join(", ") || "–"}.
                     </MessageStrip>
                     {Boolean(hasilUnggah.notaSelisih?.length) && (
                         <MessageStrip tone="warn" title={`${hasilUnggah.notaSelisih!.length} nota berubah setelah masuk wave.`}>
@@ -188,7 +188,7 @@ export default function RekapanNota({ permKeys }: { permKeys: string[] }) {
 
             <ConfirmDialog open={dialog === "unggah"} onClose={() => setDialog(null)} title="Unggah file export ke pool" tag="Unggah" confirmLabel="Unggah ke pool"
                 confirmDisabled={berkas ? undefined : "Pilih berkas dulu"} onConfirm={unggah}
-                facts={[["Yang masuk", "Hanya baris Penjualan Bruto bertanggal ini; retur dibuang"], ["File yang sama", "Tidak diunggah dua kali; pool tidak digandakan"],
+                facts={[["Yang masuk", "Hanya baris Penjualan Bruto bertanggal ini; retur dibuang"], ["File yang sama", "Diproses ulang per nota; pool tidak digandakan"],
                     ["Nota yang sudah ada", "Tidak ditulis ulang; yang berubah setelah masuk wave dicatat sebagai exception"]]}>
                 <FormField label="Tanggal data" required help="Satu file bisa memuat beberapa hari; hanya baris tanggal ini yang masuk pool.">
                     {(a11y) => <input {...a11y} className="fi-input" type="date" value={tanggalBerkas} onChange={(e) => { if (e.target.value) setTanggalBerkas(e.target.value); }} />}

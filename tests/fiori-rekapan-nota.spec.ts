@@ -132,7 +132,7 @@ test.describe("Wave harian", () => {
             await page.route(path("/api/rekapan-nota/pool"), (route) => route.fulfill(json(POOL)));
             await page.route(path("/api/rekapan-nota/upload"), (route) => route.fulfill(json({
                 uploadId: 9, tanggal: "2026-10-06", jumlahNota: 315, jumlahBaris: 2900, principal: ["PRINCIPLE A", "PRINCIPLE B"],
-                notaBaru: 87, notaSudahAda: 225, notaDiganti: 1, notaSelisih: [{ noNota: "INV/2610/KN01388", waveId: 317, wave: "Pagi 2" }, { noNota: "INV/2610/KN01391", waveId: 317, wave: "Pagi 2" }],
+                fileSama: true, notaBaru: 87, notaSudahAda: 225, notaLebihBaru: 2, notaDiganti: 1, notaSelisih: [{ noNota: "INV/2610/KN01388", waveId: 317, wave: "Pagi 2" }, { noNota: "INV/2610/KN01391", waveId: 317, wave: "Pagi 2" }],
             })));
             await page.setViewportSize({ width: lebar, height: 900 });
             await page.goto("/rekapan-nota", NAV);
@@ -144,6 +144,8 @@ test.describe("Wave harian", () => {
             const ok = main.getByRole("status").filter({ hasText: "87 nota baru masuk pool 06/10/2026" });
             await expect(ok).toBeVisible();
             await expect(ok).toContainText("315 nota di file · 225 sudah ada di pool, dilewati · 1 berubah sebelum masuk wave, diganti isi terbaru");
+            await expect(ok).toContainText("File ini pernah diunggah; diproses ulang per nota.");
+            await expect(ok).toContainText("2 di pool berasal dari file yang lebih baru, tidak ditimpa");
             const selisih = main.getByText("2 nota berubah setelah masuk wave.");
             await expect(selisih).toBeVisible();
             await expect(main.getByRole("link", { name: "Wave Pagi 2" }).first()).toHaveAttribute("href", "/rekapan-nota/wave/317");
@@ -230,11 +232,16 @@ test.describe("Object Page wave", () => {
     test("BL-24: Abaikan beralasan lewat dialog, Selesai langsung; 409 tampil di halaman; konfirmasi terbuka setelah KONVERSI ditutup", async ({ page }) => {
         const detail = structuredClone(DETAIL_RILIS);
         const kiriman: Array<Record<string, unknown>> = [];
-        await page.route(path("/api/rekapan-nota/wave/317"), (route) => route.fulfill(json(detail)));
+        let jumlahGet = 0;
+        await page.route(path("/api/rekapan-nota/wave/317"), (route) => { jumlahGet += 1; return route.fulfill(json(detail)); });
         await page.route(path("/api/rekapan-nota/wave/317/exception"), (route) => {
             const b = route.request().postDataJSON() as { exceptionId: number; aksi: string; alasan?: string };
             kiriman.push(b);
-            if (b.exceptionId === 3) return route.fulfill(json({ error: "Exception sudah ditandai selesai di layar lain. Muat ulang halaman." }, 409));
+            if (b.exceptionId === 3 || b.exceptionId === 4) {
+                // Layar lain lebih dulu: server sudah menutupnya -> 409; GET berikutnya memuat keadaan itu.
+                Object.assign(detail.exception.find((x) => x.id === b.exceptionId)!, { status: "selesai", resolved_at: "2026-10-06T02:04:00Z", resolved_oleh: "Admin Gudang B" });
+                return route.fulfill(json({ error: "Exception sudah ditandai selesai di layar lain. Muat ulang halaman." }, 409));
+            }
             const e = detail.exception.find((x) => x.id === b.exceptionId)!;
             Object.assign(e, { status: b.aksi === "selesai" ? "selesai" : "diabaikan", resolved_at: "2026-10-06T02:05:00Z", resolved_oleh: "Admin Gudang A", alasan: b.alasan ?? null });
             return route.fulfill(json({ ok: true, status: e.status }));
@@ -262,8 +269,24 @@ test.describe("Object Page wave", () => {
         await expect(tabel).toContainText("Diabaikan 6 Okt 10.05 · Admin Gudang A · file benar; master dikoreksi");
 
         // 409 (sudah ditutup di layar lain) tampil di halaman, bukan diam-diam.
+        // M2: sesudah 409 detail dimuat ulang -> baris menampilkan penutupan layar lain dan tombolnya hilang.
+        const sebelum = jumlahGet;
         await tabel.getByRole("button", { name: "Selesai C-MKS0418" }).click();
         await expect(main.getByRole("alert")).toContainText("sudah ditandai selesai di layar lain");
+        await expect.poll(() => jumlahGet).toBeGreaterThan(sebelum);
+        await expect(tabel.getByRole("button", { name: "Selesai C-MKS0418" })).toHaveCount(0);
+        await expect(tabel).toContainText("Selesai 6 Okt 10.04 · Admin Gudang B");
+
+        // R5: 409 di dialog Abaikan -> galat di dialog, fokus tetap di dalam dialog (bukan <body>), detail dimuat ulang.
+        const sebelum2 = jumlahGet;
+        await tabel.getByRole("button", { name: "Abaikan FORISA" }).click();
+        await page.getByRole("dialog").getByLabel(/Alasan/).fill("principal tidak kirim hari ini");
+        await page.getByRole("dialog").getByRole("button", { name: "Abaikan dengan alasan" }).click();
+        await expect(page.getByRole("dialog").getByRole("alert")).toContainText("sudah ditandai selesai di layar lain");
+        await expect(page.getByRole("dialog").getByRole("alert")).toBeFocused();
+        await expect.poll(() => jumlahGet).toBeGreaterThan(sebelum2);
+        await page.getByRole("dialog").getByRole("button", { name: "Batal" }).click();
+        await expect(tabel.getByRole("button", { name: "Abaikan FORISA" })).toHaveCount(0);
 
         // Selesai langsung; setelah dua KONVERSI ditutup, konfirmasi terbuka.
         await tabel.getByRole("button", { name: "Selesai ABC21135" }).click();
