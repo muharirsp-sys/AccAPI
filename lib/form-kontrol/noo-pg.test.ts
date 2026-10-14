@@ -1,16 +1,18 @@
 /* NOO (toko baru dari kunjungan salesman, owner 13 Okt 2026) di Postgres EVALUASI (AM040_DATABASE_URL, bukan produksi): route ASLI pada SKEMA
  * SEKALI-PAKAI (tabel disalin `LIKE public.*` + db/migrations/0033 + 0034 + 0035, search_path hanya skema itu, DROP di akhir). Sesi Better Auth
  * dipalsukan; izin dari tabel grup nyata; route memakai `headers()` -> lingkup permintaan Next tiruan (pola fk-msm2-pg.test.ts).
- * Dibuktikan: pengajuan multipart + kunjungan hari ini; cakupan per peran (salesman/SPV tim/SPV lain/SM/Admin/Admin Sales/Manager lihat-saja);
- * PRIVASI KTP (NIK tak pernah di respons daftar/rincian/galat/audit; lihat KTP dicatat; tanpa hak 403/404); duplikat + konfirmasi wajib;
- * transisi + serentak; SM pengganti; penautan pelanggan (cabang sama, sekali); ORDER NOO ditolak; kunjungan ulang; DDL_NOO 2× idempoten +
- * VERIFIKASI (+ sabotase), migrate-pg OK->SKIP, = 0035 = Drizzle; RBAC_PRESET_NOO idempoten. Berkas foto uji ditulis ke data/private/noo
+ * Dibuktikan: pengajuan multipart + kunjungan hari ini; cakupan per peran (salesman/SPV tim/SPV lain/SM/Admin/Admin Sales/Manager preset
+ * produksi/Viewer); PRIVASI KTP (NIK tak pernah di respons daftar/rincian/galat/audit; lihat KTP dicatat; tanpa hak 403/404; SM pengganti
+ * boleh); pembanding duplikat lintas tim tersamar (peninjau A R3); duplikat + konfirmasi wajib; transisi + serentak dengan KUNCI BARIS
+ * DIPEGANG (peninjau A S1); HANYA grup Admin menautkan; antrean aktif tak terpotong (> 300 selesai, peninjau A T1); foto kedua gagal tulis ->
+ * foto pertama dibuang (R2); body > 10,5 MB 413 + > 40 MP ditolak (R4); id sama isian beda 409; ORDER NOO ditolak; kunjungan ulang;
+ * DDL_NOO 2× idempoten + VERIFIKASI (+ sabotase), migrate-pg OK->SKIP, = 0035 = Drizzle; RBAC_PRESET_NOO idempoten. Berkas foto uji ditulis ke data/private/noo
  * worktree dan dihapus di akhir. Data contoh generik. Tanpa env dilewati. */
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { readFile, readdir, stat, unlink } from "node:fs/promises";
+import { readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
 import sharp from "sharp";
@@ -43,6 +45,8 @@ async function muat() {
         dbMod: await import("../db.ts"),
         noo: await r("../../app/api/form-kontrol/noo/route.ts"),
         satu: await r("../../app/api/form-kontrol/noo/[id]/route.ts"),
+        lib: await import("./noo.ts"),
+        aturan: await import("./noo-aturan.ts"),
         ktp: await r("../../app/api/form-kontrol/noo/[id]/ktp/route.ts"),
         foto: await r("../../app/api/form-kontrol/noo/[id]/foto-toko/route.ts"),
         ao: await r("../../app/api/form-kontrol/ao-control/route.ts"),
@@ -56,12 +60,14 @@ async function muat() {
 }
 let m: Awaited<ReturnType<typeof muat>>;
 
-let sesi: { id: string; name: string; role: string } | null = null;
+// Sesi per permintaan di AsyncLocalStorage (bukan variabel global): dua permintaan SERENTAK dari akun berbeda tidak saling menimpa sesi.
+type Sesi = { id: string; name: string; role: string };
+const sesiAls = new AsyncLocalStorage<Sesi | null>();
 async function sebagai<T>(userId: string, fn: () => Promise<T>): Promise<T> {
-    sesi = (await pool.query(`SELECT id, name, role FROM "user" WHERE id = $1`, [userId])).rows[0] ?? null;
+    const sesi: Sesi | null = (await pool.query(`SELECT id, name, role FROM "user" WHERE id = $1`, [userId])).rows[0] ?? null;
     const store = { route: "/uji", forceStatic: false, dynamicShouldError: false };
     const unit = { type: "private-cache", phase: "render", headers: new Headers({ host: "app.test" }) };
-    return m.workAsyncStorage.run(store as never, () => m.workUnitAsyncStorage.run(unit as never, fn));
+    return sesiAls.run(sesi, () => m.workAsyncStorage.run(store as never, () => m.workUnitAsyncStorage.run(unit as never, fn)));
 }
 const req = (url: string, method = "GET", body?: unknown) => new Request(`http://app.test${url}`, {
     method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body),
@@ -87,8 +93,8 @@ function formNoo(o: Record<string, string | null> = {}, foto: { toko?: Buffer | 
     if (foto.ktp !== null) f.set("fotoKtp", new File([new Uint8Array(foto.ktp ?? JPEG)], "ktp.jpg", { type: tipe }));
     return { f, id: isi.id as string };
 }
-const ajukan = async (u: string, f: FormData) =>
-    jawab(await sebagai(u, () => m.noo.POST(new Request("http://app.test/api/form-kontrol/noo", { method: "POST", body: f }))));
+const ajukan = async (u: string, f: FormData, headers?: Record<string, string>) =>
+    jawab(await sebagai(u, () => m.noo.POST(new Request("http://app.test/api/form-kontrol/noo", { method: "POST", body: f, headers }))));
 const daftar = async (u: string, q = "") => jawab(await sebagai(u, () => m.noo.GET(req(`/api/form-kontrol/noo${q}`))));
 const rinci = async (u: string, id: string, q = "") => jawab(await sebagai(u, () => m.satu.GET(req(`/api/form-kontrol/noo/${id}${q}`), ctx(id))));
 const aksi = async (u: string, id: string, isi: Record<string, unknown>) =>
@@ -97,6 +103,31 @@ const lihatKtp = async (u: string, id: string) => jawab(await sebagai(u, () => m
 const fotoToko = async (u: string, id: string) => jawab(await sebagai(u, () => m.foto.GET(req(`/api/form-kontrol/noo/${id}/foto-toko`), ctx(id))));
 const nAudit = async (action: string, id?: string) => (await pool.query(`SELECT count(*)::int n FROM kontrol_audit_log WHERE entity = 'noo' AND action = $1
     AND ($2::text IS NULL OR entity_id = $2)`, [action, id ?? null])).rows[0].n as number;
+/**
+ * Pegang kunci baris noo_toko `id` di koneksi lain, jalankan aksi serentak, TUNGGU sampai dua backend terbukti terhalang kunci itu
+ * (langsung atau di belakang penunggu lain), lalu lepas. Tanpa ini "serentak" praktis berurutan dan uji tidak bisa merah (peninjau A S1).
+ */
+async function denganKunciBaris(id: string, jalan: () => Promise<J>[]): Promise<J[]> {
+    const k = await pool.connect();
+    let janji: Promise<J>[] = [];
+    try {
+        await k.query("BEGIN");
+        await k.query(`SELECT 1 FROM noo_toko WHERE id = $1 FOR UPDATE`, [id]);
+        const pid = (await k.query(`SELECT pg_backend_pid() p`)).rows[0].p as number;
+        janji = jalan();
+        for (let i = 0; ; i++) {
+            const n = (await admin.query(`WITH RECURSIVE t(p) AS (SELECT $1::int UNION SELECT a.pid FROM pg_stat_activity a JOIN t ON t.p = ANY(pg_blocking_pids(a.pid)))
+                SELECT count(*)::int - 1 n FROM t`, [pid])).rows[0].n as number;
+            if (n >= 2) break;
+            assert.ok(i < 200, `dua aksi tidak pernah menunggu kunci baris (terhalang: ${n})`);
+            await new Promise((r) => setTimeout(r, 50));
+        }
+    } finally {
+        await k.query("COMMIT");
+        k.release();
+    }
+    return Promise.all(janji);
+}
 const tanpaNik = (teks: string, ...nik: string[]) => { for (const n of nik) assert.ok(!teks.includes(n), "NIK lengkap bocor di respons"); };
 
 before(async () => {
@@ -119,19 +150,24 @@ before(async () => {
         ('u-sma', 'SM A (SM)', 'sma@uji.test', true, 'sm', now(), now()),
         ('u-admin', 'Admin A', 'admin@uji.test', true, 'admin', now(), now()),
         ('u-adms', 'Admin Sales A', 'adms@uji.test', true, 'admin_sales', now(), now()),
-        ('u-mgr', 'Manager A', 'mgr@uji.test', true, 'manager', now(), now())`);
+        ('u-mgr', 'Manager A', 'mgr@uji.test', true, 'manager', now(), now()),
+        ('u-vw', 'Viewer A', 'vw@uji.test', true, 'manager', now(), now())`);
     await p.query(`INSERT INTO access_group (id, name, created_at, updated_at) VALUES ('g-sales', 'Salesman', now(), now()), ('g-spv', 'SPV', now(), now()),
-        ('g-sm', 'SM', now(), now()), ('g-admin', 'Admin', now(), now()), ('g-adms', 'Admin Sales', now(), now()), ('g-mgr', 'Viewer', now(), now())`);
+        ('g-sm', 'SM', now(), now()), ('g-admin', 'Admin', now(), now()), ('g-adms', 'Admin Sales', now(), now()), ('g-mgr', 'Manager', now(), now()),
+        ('g-vw', 'Viewer', now(), now())`);
     const izin = async (g: string, k: string[]) => p.query(`INSERT INTO group_permission (group_id, permission_key) SELECT $1, k FROM unnest($2::text[]) k`, [g, k]);
     await izin("g-sales", ["form_kontrol.view", "form_kontrol.submit", "websales.view", "websales.create"]);
     await izin("g-spv", ["form_kontrol.view", "form_kontrol.submit", "form_kontrol.noo_setujui"]);
     await izin("g-sm", ["form_kontrol.view", "form_kontrol.submit", "form_kontrol.noo_setujui"]);
     await izin("g-admin", ["form_kontrol.view", "form_kontrol.submit", "form_kontrol.manage", "form_kontrol.noo_setujui", "form_kontrol.noo_ktp",
-        "order.view", "order.create", "websales.create"]);
+        "form_kontrol.noo_tautkan", "order.view", "order.create", "websales.create"]);
     await izin("g-adms", ["form_kontrol.view", "form_kontrol.submit", "form_kontrol.manage"]);
-    await izin("g-mgr", ["form_kontrol.view"]);
+    // Manager = preset produksi (scripts/seed-rbac-presets.ts: form_kontrol view/submit/manage); Viewer = form_kontrol.view saja.
+    await izin("g-mgr", ["form_kontrol.view", "form_kontrol.submit", "form_kontrol.manage"]);
+    await izin("g-vw", ["form_kontrol.view"]);
     await p.query(`INSERT INTO user_group (user_id, group_id, assigned_at) SELECT u, g, now() FROM (VALUES ('u-sla', 'g-sales'), ('u-slb', 'g-sales'),
-        ('u-slc', 'g-sales'), ('u-spva', 'g-spv'), ('u-spvb', 'g-spv'), ('u-sma', 'g-sm'), ('u-admin', 'g-admin'), ('u-adms', 'g-adms'), ('u-mgr', 'g-mgr')) v(u, g)`);
+        ('u-slc', 'g-sales'), ('u-spva', 'g-spv'), ('u-spvb', 'g-spv'), ('u-sma', 'g-sm'), ('u-admin', 'g-admin'), ('u-adms', 'g-adms'), ('u-mgr', 'g-mgr'),
+        ('u-vw', 'g-vw')) v(u, g)`);
     // Tim A (SPV A, SM A): M-SLA + M-SLC. Tim B (SPV B, SM B): M-SLB. Semua cabang A, principal JKS "PRINCIPLE A" (M-SLA, M-SLB); M-SLC tanpa JKS.
     await p.query(`INSERT INTO sales_profile (id, user_id, sales_code, sales_name, principle, branch, channel, spv_name, sm_name, accurate_linked, created_at, updated_at) VALUES
         ('sp-a', 'u-sla', 'M-SLA', 'SALES A', 'PRINCIPLE A', 'CABANG A', 'TT', 'SPV A', 'SM A', true, now(), now()),
@@ -156,7 +192,7 @@ before(async () => {
     delete process.env.LOCAL_AUTH_BYPASS;
     m = await muat();
     Object.defineProperty(m.auth.api, "getSession", { configurable: true,
-        value: async () => (sesi ? { user: { ...sesi, email: `${sesi.id}@uji.test` }, session: { id: "s" } } : null) });
+        value: async () => { const sesi = sesiAls.getStore(); return sesi ? { user: { ...sesi, email: `${sesi.id}@uji.test` }, session: { id: "s" } } : null; } });
 });
 
 after(async () => {
@@ -214,6 +250,13 @@ test("ajukan: multipart salesman -> 201, kunjungan HARI INI bertanda luar rute (
     assert.equal((ulang.body.row as { kode: string }).kode, KODE_A);
     assert.equal((await pool.query(`SELECT count(*)::int n FROM noo_toko`)).rows[0].n, nBerkas);
     assert.equal(await nAudit("buat", id), 1);
+    // Peninjau B R6: id sama dengan isian BERBEDA (salesman mengubah isian sesudah jawaban tak pasti) = 409 ID_BEDA_ISI, bukan 200 baris lama
+    // yang diam-diam membuang perubahan.
+    const ubah = await ajukan("u-sla", formNoo({ id, namaToko: "TOKO BARU A UBAH" }).f);
+    assert.deepEqual([ubah.status, ubah.body.kode, ubah.body.kodeNoo], [409, "ID_BEDA_ISI", KODE_A]);
+    assert.ok(String(ubah.body.error).includes(KODE_A), "pesan menyebut pengajuan yang sudah tersimpan");
+    tanpaNik(ubah.teks, NIK_A);
+    assert.equal((await pool.query(`SELECT nama_toko FROM noo_toko WHERE id = $1`, [id])).rows[0].nama_toko, "TOKO BARU A", "baris lama tidak berubah");
     // id sama dari akun lain = ditolak (bukan baris orang lain).
     const curi = await ajukan("u-slc", formNoo({ id, salesCode: "M-SLC", principle: "CABANG A", nik: NIK_C, noHp: "081299990000" }).f);
     assert.deepEqual([curi.status, curi.body.kode], [409, "ID_TERPAKAI"]);
@@ -234,7 +277,13 @@ test("ajukan: validasi berkode tanpa nilai pribadi di galat; bukan pemilik / SPV
     assert.deepEqual(kode(await ajukan("u-sla", formNoo({ nik: NIK_C, noHp: "081277770000" }, { ktp: Buffer.from("bukan gambar") }).f)), [400, "FOTO_TIDAK_SAH"]);
     assert.deepEqual(kode(await ajukan("u-sla", formNoo({ salesCode: "M-SLB" }).f)), [403, "BUKAN_PEMILIK"]);
     assert.deepEqual(kode(await ajukan("u-spva", formNoo().f)), [403, "BUKAN_PEMILIK"], "SPV tidak mengajukan");
-    assert.equal((await ajukan("u-mgr", formNoo().f)).status, 403, "tanpa form_kontrol.submit");
+    assert.deepEqual(kode(await ajukan("u-mgr", formNoo().f)), [403, "BUKAN_PEMILIK"], "Manager (punya submit) bukan salesman pemilik");
+    assert.equal((await ajukan("u-vw", formNoo().f)).status, 403, "tanpa form_kontrol.submit");
+    // Peninjau A R4: body jelas > 2 × 5 MB + 512 KB ditolak dari Content-Length SEBELUM dibaca; foto > 40 MP ditolak sharp.
+    const batas = 10 * 1024 * 1024 + 512 * 1024;
+    assert.deepEqual(kode(await ajukan("u-sla", formNoo({ nik: NIK_C, noHp: "081277770000" }).f, { "content-length": String(batas + 1) })), [413, "FOTO_TERLALU_BESAR"]);
+    const bom = await sharp({ create: { width: 7000, height: 6000, channels: 3, background: "#ffffff" } }).png().toBuffer();
+    assert.deepEqual(kode(await ajukan("u-sla", formNoo({ nik: NIK_C, noHp: "081277770000" }, { toko: bom }).f)), [400, "FOTO_TIDAK_SAH"], "42 MP ditolak");
     assert.deepEqual(kode(await ajukan("u-sla", formNoo({ principle: "PRINCIPLE Z", nik: NIK_C, noHp: "081277770000" }).f)), [403, "PRINCIPAL_LUAR_CAKUPAN"]);
     assert.equal((await pool.query(`SELECT count(*)::int n FROM noo_toko`)).rows[0].n, 1, "semua penolakan tanpa baris");
     assert.equal((await pool.query(`SELECT count(*)::int n FROM kontrol_audit_log WHERE entity = 'noo'`)).rows[0].n, 1);
@@ -243,18 +292,25 @@ test("ajukan: validasi berkode tanpa nilai pribadi di galat; bukan pemilik / SPV
 let ID_DUP = "", ID_B = "";
 
 test("duplikat (owner P3): NIK atau HP sama dengan NOO belum ditolak -> 409 NOO_DUPLIKAT (pembanding tanpa NIK); ulang 'pemilik sama' + alasan -> bertanda", { skip: pgSkip }, async () => {
+    // Peninjau A R3: NOO pembanding milik salesman LAIN tidak disebut (kode/toko/status) — 409 bukan oracle NIK/HP -> toko orang lain.
     const samaNik = await ajukan("u-slb", formNoo({ salesCode: "M-SLB", noHp: "081300001111" }).f);
-    assert.deepEqual([samaNik.status, samaNik.body.kode], [409, "NOO_DUPLIKAT"]);
-    assert.deepEqual(samaNik.body.pembanding, [{ kode: KODE_A, namaToko: "TOKO BARU A", status: "menunggu_spv", cocok: ["NIK"] }]);
+    assert.deepEqual([samaNik.status, samaNik.body.kode, samaNik.body.pembanding, samaNik.body.lain], [409, "NOO_DUPLIKAT", [], [{ cocok: ["NIK"] }]]);
+    assert.ok(!samaNik.teks.includes(KODE_A) && !samaNik.teks.includes("M-SLA"), "kode NOO/salesman lain tidak bocor");
     tanpaNik(samaNik.teks, NIK_A);
     const samaHp = await ajukan("u-slb", formNoo({ salesCode: "M-SLB", nik: NIK_B, noHp: "+62 812 3456 7890" }).f);
-    assert.deepEqual([samaHp.status, (samaHp.body.pembanding as { cocok: string[] }[])[0].cocok], [409, ["No. HP"]]);
+    assert.deepEqual([samaHp.status, samaHp.body.lain], [409, [{ cocok: ["No. HP"] }]]);
+    // NOO pembanding MILIK sendiri tetap disebut lengkap (salesman tahu tokonya sendiri).
+    const milik = await ajukan("u-sla", formNoo({ namaToko: "TOKO BARU A2", noHp: "081300002222" }).f);
+    assert.deepEqual([milik.status, milik.body.pembanding, milik.body.lain],
+        [409, [{ kode: KODE_A, namaToko: "TOKO BARU A", status: "menunggu_spv", cocok: ["NIK"] }], []]);
     assert.deepEqual([(await ajukan("u-slb", formNoo({ salesCode: "M-SLB", pemilikSama: "ya", alasanDuplikat: "sama" }).f)).body.kode], ["ALASAN_DUPLIKAT_WAJIB"]);
     const { f, id } = formNoo({ salesCode: "M-SLB", namaToko: "TOKO BARU A CABANG 2", noHp: "081300001111", pemilikSama: "ya", alasanDuplikat: "Pemilik sama membuka toko kedua di pasar." });
     const ok = await ajukan("u-slb", f);
     assert.equal(ok.status, 201, ok.teks);
-    assert.deepEqual([(ok.body.row as Record<string, unknown>).duplikatDengan, (ok.body.row as Record<string, unknown>).alasanDuplikat],
-        [KODE_A, "Pemilik sama membuka toko kedua di pasar."]);
+    const okRow = ok.body.row as Record<string, unknown>;
+    assert.deepEqual([okRow.duplikat, okRow.duplikatDengan, okRow.alasanDuplikat], [true, null, "Pemilik sama membuka toko kedua di pasar."],
+        "salesman B: tanda duplikat tanpa kode NOO salesman A");
+    assert.equal((await pool.query(`SELECT duplikat_dengan FROM noo_toko WHERE id = $1`, [id])).rows[0].duplikat_dengan, KODE_A);
     ID_DUP = id;
     // NOO lain tanpa kesamaan: biasa (tanpa tanda) walau dikirim pemilikSama.
     const lain = formNoo({ salesCode: "M-SLB", namaToko: "TOKO BARU B", nik: NIK_B, noHp: "081311112222", pemilikSama: "ya", alasanDuplikat: "Siapa tahu pemiliknya sama." });
@@ -274,10 +330,12 @@ test("cakupan per peran: daftar/rincian/foto toko — salesman miliknya, SPV/SM 
     assert.deepEqual(await ids("u-sma"), [ID_A], "SM A = tim di bawah SPV A");
     assert.deepEqual(await ids("u-admin"), [ID_A, ID_B, ID_DUP].sort());
     assert.deepEqual(await ids("u-adms", "?status=menunggu_spv"), [ID_A, ID_B, ID_DUP].sort());
+    assert.deepEqual(await ids("u-mgr"), [ID_A, ID_B, ID_DUP].sort(), "Manager (preset produksi) melihat semua NOO");
     const d = await daftar("u-spva");
     const baris = (d.body.rows as Record<string, unknown>[])[0];
     for (const k of ["nik", "noHp", "nikTersamar", "namaPemilik", "namaKtp", "fotoKtp"]) assert.ok(!(k in baris), `daftar tanpa ${k}`);
-    assert.equal((await daftar("u-mgr")).status, 403, "form_kontrol.view saja tidak membuka daftar NOO");
+    assert.equal((await daftar("u-vw")).status, 403, "form_kontrol.view saja tidak membuka daftar NOO");
+    assert.equal((await daftar("u-admin")).body.selesaiTerpotong, false);
     assert.deepEqual([(await daftar("u-spva", "?salesCode=M-SLB")).body.kode], ["LUAR_CAKUPAN"]);
     assert.deepEqual([(await daftar("u-sla", "?status=hilang")).status], [400]);
 
@@ -286,37 +344,51 @@ test("cakupan per peran: daftar/rincian/foto toko — salesman miliknya, SPV/SM 
     tanpaNik(r.teks, NIK_A);
     assert.equal(r.header.get("cache-control"), "private, no-store");
     assert.deepEqual([(r.body.row as Record<string, unknown>).nikTersamar, (r.body.row as Record<string, unknown>).namaKtp, r.body.saran], ["7371••••••••0012", "PEMILIK A", null]);
-    for (const [u, id] of [["u-spvb", ID_A], ["u-slb", ID_A], ["u-mgr", ID_A], ["u-sla", ID_B]] as const) {
+    const mgr = await rinci("u-mgr", ID_A);
+    assert.equal(mgr.status, 200, mgr.teks);
+    tanpaNik(mgr.teks, NIK_A);
+    assert.deepEqual((mgr.body.row as { boleh: unknown }).boleh, { putuskan: false, ktp: false, tautkan: false, kunjungi: false }, "Manager: lihat saja");
+    for (const [u, id] of [["u-spvb", ID_A], ["u-slb", ID_A], ["u-vw", ID_A], ["u-sla", ID_B]] as const) {
         assert.deepEqual([(await rinci(u, id)).status, (await rinci(u, id)).body.kode], [404, "NOO_TIDAK_ADA"], `${u} -> ${id}`);
     }
     const ft = await fotoToko("u-sla", ID_A);
     assert.deepEqual([ft.status, ft.header.get("content-type"), ft.header.get("cache-control")], [200, "image/jpeg", "private, no-store"]);
     assert.equal((await fotoToko("u-spvb", ID_A)).status, 404);
-    assert.equal((await fotoToko("u-mgr", ID_A)).status, 404);
+    assert.equal((await fotoToko("u-mgr", ID_A)).status, 200, "Manager melihat foto toko");
+    assert.equal((await fotoToko("u-vw", ID_A)).status, 404);
     // Rincian duplikat: pembanding untuk pemutus (tanpa NIK).
     const dup = await rinci("u-spvb", ID_DUP);
     assert.deepEqual(dup.body.pembanding, { kode: KODE_A, namaToko: "TOKO BARU A", status: "menunggu_spv", salesCode: "M-SLA", alamat: "JL. CONTOH 1 CABANG A", customerNo: null });
+    assert.equal((dup.body.row as Record<string, unknown>).duplikatDengan, KODE_A);
     tanpaNik(dup.teks, NIK_A);
+    // Salesman pengaju (tim lain dari pembanding): tanda duplikat saja, tanpa kode/alamat/salesman NOO pembanding (peninjau A R3).
+    const dupSales = await rinci("u-slb", ID_DUP);
+    assert.equal(dupSales.status, 200, dupSales.teks);
+    assert.deepEqual([dupSales.body.pembanding, (dupSales.body.row as Record<string, unknown>).duplikatDengan, (dupSales.body.row as Record<string, unknown>).duplikat],
+        [null, null, true]);
+    assert.ok(!dupSales.teks.includes(KODE_A) && !dupSales.teks.includes("M-SLA"), "kode/salesman NOO pembanding tidak bocor ke salesman B");
+    assert.ok(!(await daftar("u-slb")).teks.includes(KODE_A), "daftar salesman B tanpa kode pembanding");
 });
 
-test("Lihat KTP: pengaju (menunggu), SPV tim, Admin = 200 + audit SEBELUM data; SM, Admin Sales = 403; SPV lain/Manager = 404; tanpa audit saat ditolak", { skip: pgSkip }, async () => {
+test("Lihat KTP: pengaju (menunggu), SPV tim, SM pengganti, Admin = 200 + audit SEBELUM data; Admin Sales/Manager = 403; SPV lain/Viewer = 404; tanpa audit saat ditolak", { skip: pgSkip }, async () => {
     const awal = await nAudit("lihat_ktp");
-    for (const u of ["u-sla", "u-spva", "u-admin"]) {
+    for (const u of ["u-sla", "u-spva", "u-sma", "u-admin"]) {
         const k = await lihatKtp(u, ID_A);
         assert.equal(k.status, 200, `${u}: ${k.teks}`);
         assert.deepEqual([k.body.nik, k.body.namaKtp, k.body.kode], [NIK_A, "PEMILIK A", KODE_A]);
         assert.match(String(k.body.foto), /^data:image\/jpeg;base64,\/9j\//);
         assert.match(String(k.header.get("cache-control")), /no-store/);
     }
-    assert.equal(await nAudit("lihat_ktp"), awal + 3);
+    assert.equal(await nAudit("lihat_ktp"), awal + 4);
     const rows = (await pool.query(`SELECT actor_id, payload FROM kontrol_audit_log WHERE entity = 'noo' AND action = 'lihat_ktp' ORDER BY created_at`)).rows;
-    assert.deepEqual(rows.map((r) => r.actor_id), ["u-sla", "u-spva", "u-admin"]);
+    assert.deepEqual(rows.map((r) => r.actor_id), ["u-sla", "u-spva", "u-sma", "u-admin"]);
     for (const r of rows) assert.deepEqual(r.payload, { kode: KODE_A }, "audit hanya kode NOO (tanpa NIK/foto)");
-    assert.deepEqual([(await lihatKtp("u-sma", ID_A)).body.kode], ["KTP_TIDAK_BOLEH"], "SM: setujui ya, KTP tidak");
-    assert.deepEqual([(await lihatKtp("u-adms", ID_A)).status], [403], "Admin Sales tidak melihat KTP");
-    assert.deepEqual([(await lihatKtp("u-spvb", ID_A)).status, (await lihatKtp("u-mgr", ID_A)).status, (await lihatKtp("u-slb", ID_A)).status], [404, 404, 404]);
-    for (const u of ["u-sma", "u-adms", "u-spvb", "u-mgr"]) tanpaNik((await lihatKtp(u, ID_A)).teks, NIK_A);
-    assert.equal(await nAudit("lihat_ktp"), awal + 3, "penolakan tidak tercatat sebagai lihat");
+    assert.deepEqual([(await lihatKtp("u-adms", ID_A)).body.kode], ["KTP_TIDAK_BOLEH"], "Admin Sales tidak melihat KTP");
+    assert.deepEqual([(await lihatKtp("u-mgr", ID_A)).body.kode], ["KTP_TIDAK_BOLEH"], "Manager melihat NOO, KTP tidak (owner 13 Okt malam)");
+    assert.equal((await lihatKtp("u-sma", ID_B)).status, 404, "SM A: NOO tim SM B tidak terlihat");
+    assert.deepEqual([(await lihatKtp("u-spvb", ID_A)).status, (await lihatKtp("u-vw", ID_A)).status, (await lihatKtp("u-slb", ID_A)).status], [404, 404, 404]);
+    for (const u of ["u-adms", "u-mgr", "u-spvb", "u-vw"]) tanpaNik((await lihatKtp(u, ID_A)).teks, NIK_A);
+    assert.equal(await nAudit("lihat_ktp"), awal + 4, "penolakan tidak tercatat sebagai lihat");
 });
 
 test("keputusan: salesman/SPV lain/pengaju ditolak; tolak wajib alasan; duplikat WAJIB konfirmasi (juga CHECK DB); SM pengganti; serentak satu menang", { skip: pgSkip }, async () => {
@@ -332,8 +404,10 @@ test("keputusan: salesman/SPV lain/pengaju ditolak; tolak wajib alasan; duplikat
     const dup = await aksi("u-spvb", ID_DUP, { aksi: "setujui", konfirmasiPemilikSama: true });
     assert.equal(dup.status, 200, dup.teks);
     assert.deepEqual([(dup.body.row as Record<string, unknown>).status, (dup.body.row as Record<string, unknown>).duplikatDikonfirmasi], ["disetujui", true]);
-    // SM A menyetujui NOO tim SPV A (SPV berhalangan) — serentak dengan tolak SPV A: satu menang.
-    const [x, y] = await Promise.all([aksi("u-sma", ID_A, { aksi: "setujui" }), aksi("u-spva", ID_A, { aksi: "tolak", alasan: "Lokasi tidak sesuai foto." })]);
+    // SM A menyetujui NOO tim SPV A (SPV berhalangan) — serentak dengan tolak SPV A: satu menang. Baris DIKUNCI koneksi lain sampai kedua
+    // keputusan terbukti menunggu kunci itu, lalu dilepas -> keduanya benar-benar bersaing (peninjau A S1; tanpa kunci baris DAN tanpa UPDATE
+    // bersyarat status = 200/200 + dua jejak).
+    const [x, y] = await denganKunciBaris(ID_A, () => [aksi("u-sma", ID_A, { aksi: "setujui" }), aksi("u-spva", ID_A, { aksi: "tolak", alasan: "Lokasi tidak sesuai foto." })]);
     assert.deepEqual([x.status, y.status].sort(), [200, 409]);
     const kalah = x.status === 409 ? x : y;
     assert.equal(kalah.body.kode, "SUDAH_DIPUTUSKAN");
@@ -367,27 +441,33 @@ test("NIK dari NOO ditolak boleh dipakai lagi tanpa tanda; Admin grup menyetujui
     assert.equal((await pool.query(`SELECT diputuskan_oleh FROM noo_toko WHERE id = $1`, [id])).rows[0].diputuskan_oleh, "u-admin");
 });
 
-test("tautkan (Admin): hanya disetujui; pelanggan ada, aktif, cabang sama, sekali; saran nama/alamat + cari; SPV tanpa kelola 403", { skip: pgSkip }, async () => {
+test("tautkan (HANYA grup Admin): hanya disetujui; pelanggan ada, aktif, cabang sama, sekali; serentak satu menang; saran + cari; SPV/Admin Sales/Manager 403", { skip: pgSkip }, async () => {
     const kode = (j: J) => [j.status, j.body.kode ?? j.body.error];
     // Pelanggan lama (masuk sync SEBELUM NOO diajukan) tidak disarankan otomatis; yang masuk/berubah sesudahnya (= didaftarkan Admin) disarankan.
-    assert.deepEqual((await rinci("u-adms", ID_A)).body.saran, []);
+    assert.deepEqual((await rinci("u-admin", ID_A)).body.saran, []);
+    assert.equal((await rinci("u-adms", ID_A)).body.saran, null, "Admin Sales tanpa saran penautan");
     await pool.query(`UPDATE customer SET synced_at = now() WHERE id IN (11, 12, 13, 14)`);
-    const r = await rinci("u-adms", ID_A);
+    const r = await rinci("u-admin", ID_A);
     const saran = r.body.saran as { id: number; customerNo: string; skor: number }[];
     assert.equal(saran[0]?.customerNo, "C-200011-CBA", "nama + alamat paling mirip, cabang sama");
     assert.ok(!saran.some((s) => s.customerNo === "C-200012-CBA" || s.customerNo === "C-200013-CBB"), "tanpa suspended / cabang lain");
-    const cari = await rinci("u-adms", ID_A, "?cari=lain sekali");
+    const cari = await rinci("u-admin", ID_A, "?cari=lain sekali");
     assert.deepEqual((cari.body.saran as { customerNo: string }[]).map((s) => s.customerNo), ["C-200014-CBA"]);
-    assert.equal((await aksi("u-spva", ID_A, { aksi: "tautkan", customerId: 11 })).status, 403, "SPV tanpa form_kontrol.manage");
-    assert.deepEqual(kode(await aksi("u-adms", ID_A, { aksi: "tautkan", customerId: 13 })), [409, "CABANG_BERBEDA"]);
-    assert.deepEqual(kode(await aksi("u-adms", ID_A, { aksi: "tautkan", customerId: 12 })), [409, "PELANGGAN_NONAKTIF"]);
-    assert.deepEqual(kode(await aksi("u-adms", ID_A, { aksi: "tautkan", customerId: 999 })), [404, "PELANGGAN_TIDAK_DITEMUKAN"]);
-    assert.deepEqual(kode(await aksi("u-adms", ID_A, { aksi: "tautkan", customerId: "11" })), [400, "INPUT_TIDAK_VALID"]);
-    assert.deepEqual(kode(await aksi("u-adms", ID_B, { aksi: "tautkan", customerId: 11 })), [409, "BELUM_DISETUJUI"], "ditolak tidak ditautkan");
-    const ok = await aksi("u-adms", ID_A, { aksi: "tautkan", customerId: 11 });
-    assert.equal(ok.status, 200, ok.teks);
+    // Owner 13 Okt malam: HANYA grup Admin (form_kontrol.noo_tautkan); form_kontrol.manage milik Admin Sales/Manager tidak cukup.
+    for (const u of ["u-spva", "u-adms", "u-mgr"]) assert.equal((await aksi(u, ID_A, { aksi: "tautkan", customerId: 11 })).status, 403, `${u} tidak menautkan`);
+    assert.equal((await pool.query(`SELECT status FROM noo_toko WHERE id = $1`, [ID_A])).rows[0].status, "disetujui");
+    assert.deepEqual(kode(await aksi("u-admin", ID_A, { aksi: "tautkan", customerId: 13 })), [409, "CABANG_BERBEDA"]);
+    assert.deepEqual(kode(await aksi("u-admin", ID_A, { aksi: "tautkan", customerId: 12 })), [409, "PELANGGAN_NONAKTIF"]);
+    assert.deepEqual(kode(await aksi("u-admin", ID_A, { aksi: "tautkan", customerId: 999 })), [404, "PELANGGAN_TIDAK_DITEMUKAN"]);
+    assert.deepEqual(kode(await aksi("u-admin", ID_A, { aksi: "tautkan", customerId: "11" })), [400, "INPUT_TIDAK_VALID"]);
+    assert.deepEqual(kode(await aksi("u-admin", ID_B, { aksi: "tautkan", customerId: 11 })), [409, "BELUM_DISETUJUI"], "ditolak tidak ditautkan");
+    // Dua penautan serentak NOO yang sama dengan baris dikunci koneksi lain: satu 200, satu 409, satu jejak (peninjau A S1).
+    const [p, q] = await denganKunciBaris(ID_A, () => [aksi("u-admin", ID_A, { aksi: "tautkan", customerId: 11 }), aksi("u-admin", ID_A, { aksi: "tautkan", customerId: 11 })]);
+    assert.deepEqual([p.status, q.status].sort(), [200, 409], `${p.teks} | ${q.teks}`);
+    const ok = p.status === 200 ? p : q;
+    assert.equal((p.status === 409 ? p : q).body.kode, "SUDAH_TERDAFTAR");
     assert.deepEqual([(ok.body.row as Record<string, unknown>).status, (ok.body.row as Record<string, unknown>).customerNo], ["terdaftar", "C-200011-CBA"]);
-    assert.deepEqual(kode(await aksi("u-adms", ID_A, { aksi: "tautkan", customerId: 11 })), [409, "SUDAH_TERDAFTAR"]);
+    assert.deepEqual(kode(await aksi("u-admin", ID_A, { aksi: "tautkan", customerId: 11 })), [409, "SUDAH_TERDAFTAR"]);
     assert.deepEqual(kode(await aksi("u-admin", ID_DUP, { aksi: "tautkan", customerId: 11 })), [409, "PELANGGAN_SUDAH_TERTAUT"]);
     const t = (await pool.query(`SELECT payload FROM kontrol_audit_log WHERE entity = 'noo' AND action = 'tautkan'`)).rows;
     assert.deepEqual(t.map((x) => x.payload), [{ kode: KODE_A, customerId: 11, customerNo: "C-200011-CBA" }]);
@@ -457,6 +537,57 @@ test("serentak: dua pengajuan NIK sama -> satu 201, satu 409 NOO_DUPLIKAT (kunci
     assert.equal((x.status === 409 ? x : y).body.kode, "NOO_DUPLIKAT");
     assert.equal((await pool.query(`SELECT count(*)::int n FROM noo_toko`)).rows[0].n, sebelum + 1);
     assert.equal((await readdir(NOO_DIR)).length, berkasAwal + 2, "hanya 2 foto pemenang yang tertinggal; foto pengajuan yang kalah di-unlink");
+});
+
+test("foto kedua gagal ditulis (ENOSPC) -> foto pertama yang sudah tertulis DIBUANG, tanpa baris/audit (peninjau A R2)", { skip: pgSkip }, async () => {
+    const cek = m.aturan.periksaIsianNoo((k) => ({ ...ISIAN, nik: "7371060606060012", noHp: "081344445555" } as Record<string, string>)[k]);
+    assert.ok("isian" in cek);
+    const tertulis: string[] = [];
+    let panggil = 0;
+    const tulisRusak = async (isi: Buffer) => {
+        if (++panggil === 2) throw Object.assign(new Error("ENOSPC tiruan"), { code: "ENOSPC" });
+        const nama = `${randomUUID()}.jpg`;
+        await writeFile(path.join(NOO_DIR, nama), isi, { flag: "wx" });
+        tertulis.push(nama);
+        return nama;
+    };
+    const id = randomUUID();
+    await assert.rejects(m.lib.buatNoo({ id, salesCode: "M-SLA", salesName: "SALES A", principle: "PRINCIPLE A", tanggal: HARI_INI, branchId: 201,
+        branchName: "CABANG A", isian: cek.isian, fotoToko: JPEG, fotoKtp: JPEG, duplikat: null, aktorId: "u-sla", aktorNama: "Sales A" }, tulisRusak), /ENOSPC/);
+    assert.deepEqual([panggil, tertulis.length], [2, 1]);
+    await assert.rejects(stat(path.join(NOO_DIR, tertulis[0])), "foto toko yang sudah tertulis dibuang");
+    assert.equal((await pool.query(`SELECT count(*)::int n FROM noo_toko WHERE id = $1`, [id])).rows[0].n, 0);
+    assert.equal(await nAudit("buat", id), 0);
+});
+
+test("antrean aktif TIDAK terpotong: 301 NOO selesai yang lebih baru tidak menyembunyikan NOO disetujui lama; selesai dibatasi 300 + selesaiTerpotong (peninjau A T1)", { skip: pgSkip }, async () => {
+    const lama = randomUUID();
+    await pool.query(`INSERT INTO noo_toko (id, kode, sales_code, principle, branch_id, branch_name, tanggal, nama_toko, nama_pemilik, alamat, no_hp, nik,
+            nama_ktp, foto_ktp, foto_toko, lat, lng, akurasi, status, dibuat_oleh, dibuat_pada, diputuskan_oleh, diputuskan_pada)
+        VALUES ($1, 'NOO-LAMA0001', 'M-SLA', 'PRINCIPLE A', 201, 'CABANG A', '2026-10-01', 'TOKO LAMA A', 'PEMILIK A', 'JL. CONTOH 9', '081377770001',
+            '7371090909090001', 'PEMILIK A', gen_random_uuid() || '.jpg', gen_random_uuid() || '.jpg', -5.1, 119.4, 10, 'disetujui', 'u-sla',
+            now() - interval '10 days', 'u-spva', now() - interval '9 days')`, [lama]);
+    await pool.query(`INSERT INTO noo_toko (id, kode, sales_code, principle, branch_id, branch_name, tanggal, nama_toko, nama_pemilik, alamat, no_hp, nik,
+            nama_ktp, foto_ktp, foto_toko, lat, lng, akurasi, status, dibuat_oleh, dibuat_pada, diputuskan_oleh, diputuskan_pada, alasan_tolak)
+        SELECT gen_random_uuid(), 'NOO-T' || lpad(i::text, 7, '0'), 'M-SLA', 'PRINCIPLE A', 201, 'CABANG A', '2026-10-13', 'TOKO TOLAK ' || i, 'PEMILIK A',
+            'JL. CONTOH 9', '0813' || lpad(i::text, 8, '0'), '73719' || lpad(i::text, 11, '0'), 'PEMILIK A', gen_random_uuid() || '.jpg',
+            gen_random_uuid() || '.jpg', -5.1, 119.4, 10, 'ditolak', 'u-sla', now() + i * interval '1 second', 'u-spva', now(), 'Uji antrean.'
+        FROM generate_series(1, 301) i`);
+    try {
+        for (const u of ["u-admin", "u-spva", "u-sla"]) {
+            const d = await daftar(u);
+            assert.equal(d.status, 200, d.teks);
+            const rows = d.body.rows as { id: string; status: string }[];
+            assert.ok(rows.some((r) => r.id === lama), `${u}: NOO disetujui lama tetap di antrean`);
+            assert.equal(rows.filter((r) => r.status === "ditolak").length, 300, `${u}: selesai dibatasi 300`);
+            assert.equal(d.body.selesaiTerpotong, true, `${u}: tanda terpotong`);
+        }
+        const aktif = await daftar("u-admin", "?status=menunggu_spv,disetujui");
+        assert.equal(aktif.body.selesaiTerpotong, false);
+        assert.ok((aktif.body.rows as { id: string }[]).some((r) => r.id === lama));
+    } finally {
+        await pool.query(`DELETE FROM noo_toko WHERE kode LIKE 'NOO-T%' OR id = $1`, [lama]);
+    }
 });
 
 // =========================================================================== DDL / migrasi / RBAC
@@ -553,7 +684,7 @@ test("PG NOO: DDL_NOO dua kali idempoten + VERIFIKASI (+ sabotase hak/CHECK/inde
     for (const x of [a, b, c, d]) await x.pool.end();
 });
 
-test("RBAC_PRESET_NOO: SPV/SM noo_setujui, Admin + noo_ktp; Admin Sales tidak; idempoten (jalan kedua 0/0); audit per grup", { skip: pgSkip }, async () => {
+test("RBAC_PRESET_NOO: SPV/SM noo_setujui, Admin + noo_ktp + noo_tautkan; Admin Sales/Manager tidak; idempoten (jalan kedua 0/0); audit per grup", { skip: pgSkip }, async () => {
     const sql = await berkas("../../docs/handover/RBAC_PRESET_NOO.sql");
     const k = await pool.connect();
     try {
@@ -561,12 +692,12 @@ test("RBAC_PRESET_NOO: SPV/SM noo_setujui, Admin + noo_ktp; Admin Sales tidak; i
         await k.query(`DELETE FROM group_permission WHERE permission_key LIKE 'form_kontrol.noo_%'`);
         const hasil = (r: unknown) => { const a = (Array.isArray(r) ? r : [r]) as { rows: Record<string, string>[] }[]; return a.find((x) => x.rows?.[0]?.izin_disisipkan !== undefined)!.rows[0]; };
         const satu = hasil(await k.query(sql.replace(/^BEGIN;$/m, "").replace(/^COMMIT;$/m, "")));
-        assert.deepEqual([Number(satu.izin_disisipkan), Number(satu.audit)], [4, 3]);
+        assert.deepEqual([Number(satu.izin_disisipkan), Number(satu.audit)], [5, 3]);
         const dua = hasil(await k.query(sql.replace(/^BEGIN;$/m, "").replace(/^COMMIT;$/m, "")));
         assert.deepEqual([Number(dua.izin_disisipkan), Number(dua.audit)], [0, 0]);
         const kunci = (await k.query(`SELECT g.name, array_agg(p.permission_key ORDER BY p.permission_key) k FROM group_permission p JOIN access_group g ON g.id = p.group_id
             WHERE p.permission_key LIKE 'form_kontrol.noo_%' GROUP BY g.name ORDER BY g.name`)).rows;
-        assert.deepEqual(kunci, [{ name: "Admin", k: ["form_kontrol.noo_ktp", "form_kontrol.noo_setujui"] }, { name: "SM", k: ["form_kontrol.noo_setujui"] },
+        assert.deepEqual(kunci, [{ name: "Admin", k: ["form_kontrol.noo_ktp", "form_kontrol.noo_setujui", "form_kontrol.noo_tautkan"] }, { name: "SM", k: ["form_kontrol.noo_setujui"] },
             { name: "SPV", k: ["form_kontrol.noo_setujui"] }]);
     } finally {
         await k.query("ROLLBACK");

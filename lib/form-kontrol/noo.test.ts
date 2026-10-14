@@ -1,12 +1,12 @@
 /* NOO (toko baru dari kunjungan salesman, owner 13 Okt 2026) TANPA DB: aturan isian (NIK 16 angka, HP seluler Indonesia kanonik, GPS wajib),
- * NIK tersamar, kode NOO, matriks hak (owner P2: SPV tim + grup Admin lihat KTP & setujui; SM menyetujui tanpa KTP; Admin Sales tanpa KTP),
- * dan pengolah foto (PNG beralfa → latar putih). Perilaku route ASLI pada Postgres = lib/form-kontrol/noo-pg.test.ts. Data contoh generik. */
+ * NIK tersamar, kode NOO, matriks hak (owner P2 + 13 Okt malam: SPV tim, SM pengganti, grup Admin lihat KTP & setujui; HANYA grup Admin
+ * menautkan; Manager & Admin Sales melihat tanpa KTP), galat per isian, dan pengolah foto (PNG beralfa → latar putih, batas 40 MP). Perilaku route ASLI pada Postgres = lib/form-kontrol/noo-pg.test.ts. Data contoh generik. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { isKodeNoo, normalHp, periksaIsianNoo, periksaNik, samarkanNik } from "./noo-aturan.ts";
+import { galatIsianNoo, isKodeNoo, normalHp, periksaIsianNoo, periksaNik, samarkanNik } from "./noo-aturan.ts";
 import { buatKodeNoo, hakNoo, type AksesNoo } from "./noo.ts";
-import { olahFoto } from "./uploads.ts";
+import { BATAS_PIKSEL_FOTO, olahFoto } from "./uploads.ts";
 
 test("normalHp: seluler Indonesia → 08… kanonik; telepon rumah/pendek/panjang/08-0 ditolak", () => {
     assert.equal(normalHp("0812-3456-7890"), "081234567890");
@@ -51,6 +51,17 @@ test("periksaIsianNoo: bersih + kanonik; galat berkode TANPA nilai NIK/HP yang d
     }
 });
 
+test("galatIsianNoo: SEMUA galat per isian (layar: pesan dekat isian); periksaIsianNoo = galat PERTAMA menurut urutan formulir", () => {
+    const g = galatIsianNoo((k) => ({ ...ISIAN, namaToko: "", noHp: "0211234567", nik: "123", lat: "" })[k]);
+    assert.equal(g.isian, null);
+    assert.deepEqual(Object.fromEntries(Object.entries(g.galat).map(([k, v]) => [k, v!.kode])),
+        { namaToko: "ISIAN_WAJIB", noHp: "HP_TIDAK_SAH", gps: "GPS_WAJIB", nik: "NIK_TIDAK_SAH" });
+    // Peninjau B S2: HP (isian ke-4) salah + Nama KTP (isian terakhir) kosong → yang pertama dilaporkan HP, bukan Nama KTP.
+    const r = periksa({ noHp: "0211234567", namaKtp: "" });
+    assert.ok("galat" in r && r.galat.kode === "HP_TIDAK_SAH", JSON.stringify(r));
+    assert.deepEqual(galatIsianNoo((k) => ISIAN[k]).galat, {});
+});
+
 test("kode NOO: format NOO-XXXXXXXX (Crockford), acak; isKodeNoo hanya bentuk persis", () => {
     const kode = new Set(Array.from({ length: 2000 }, buatKodeNoo));
     assert.equal(kode.size, 2000);
@@ -68,12 +79,14 @@ const SALES = akses("salesman", ["view", "submit"], { allowed: ["S-01"], salesCo
 const SPV_TIM = akses("spv", ["view", "submit", "noo_setujui"], { allowed: ["S-01", "S-02"] });
 const SPV_LAIN = akses("spv", ["view", "submit", "noo_setujui"], { allowed: ["S-09"] });
 const SM = akses("sm", ["view", "submit", "noo_setujui"], { allowed: ["S-01", "S-02", "S-03"] });
-const ADMIN = akses("admin", ["view", "submit", "manage", "noo_setujui", "noo_ktp"]);
+const ADMIN = akses("admin", ["view", "submit", "manage", "noo_setujui", "noo_ktp", "noo_tautkan"]);
 const ADMIN_SALES = akses("admin_sales", ["view", "submit", "manage"]);
+// Preset produksi Manager (scripts/seed-rbac-presets.ts): view/submit/manage — melihat NOO, tanpa KTP, tanpa menautkan (owner 13 Okt malam).
+const MANAGER = akses("manager", ["view", "submit", "manage"]);
 const MANAGER_LIHAT = akses("manager", ["view"]);
 const noo = (status: string, dibuatOleh = "u-s01") => ({ salesCode: "S-01", dibuatOleh, status });
 
-test("hakNoo: baca/putuskan/ktp/tautkan/kunjungi per peran (SPV tim + Admin lihat KTP & setujui; SM setujui tanpa KTP; Admin Sales tanpa KTP)", () => {
+test("hakNoo: baca/putuskan/ktp/tautkan/kunjungi per peran (SPV tim, SM pengganti, Admin: KTP & setujui; hanya Admin menautkan; Manager/Admin Sales lihat)", () => {
     const h = (a: AksesNoo, status = "menunggu_spv", oleh?: string) => hakNoo(a, noo(status, oleh));
     assert.deepEqual(h(SALES), { baca: true, putuskan: false, ktp: true, tautkan: false, kunjungi: true }, "pengaju selama menunggu: KTP sendiri");
     assert.deepEqual(h(SALES, "disetujui"), { baca: true, putuskan: false, ktp: false, tautkan: false, kunjungi: true }, "sesudah disetujui: KTP tertutup");
@@ -81,10 +94,13 @@ test("hakNoo: baca/putuskan/ktp/tautkan/kunjungi per peran (SPV tim + Admin liha
     assert.deepEqual(h(SPV_TIM), { baca: true, putuskan: true, ktp: true, tautkan: false, kunjungi: false });
     assert.deepEqual(h(SPV_TIM, "disetujui"), { baca: true, putuskan: false, ktp: true, tautkan: false, kunjungi: false });
     assert.deepEqual(h(SPV_LAIN), { baca: false, putuskan: false, ktp: false, tautkan: false, kunjungi: false }, "SPV tim lain: tidak terlihat");
-    assert.deepEqual(h(SM), { baca: true, putuskan: true, ktp: false, tautkan: false, kunjungi: false }, "SM pengganti: setujui tanpa KTP");
+    assert.deepEqual(h(SM), { baca: true, putuskan: true, ktp: true, tautkan: false, kunjungi: false }, "SM pengganti: setujui + KTP (owner 13 Okt malam)");
+    assert.equal(hakNoo(SM, { salesCode: "S-09", dibuatOleh: "u-x", status: "menunggu_spv" }).ktp, false, "SM: KTP hanya NOO di bawah SPV bawahannya");
     assert.deepEqual(h(ADMIN), { baca: true, putuskan: true, ktp: true, tautkan: false, kunjungi: false });
     assert.deepEqual(h(ADMIN, "disetujui"), { baca: true, putuskan: false, ktp: true, tautkan: true, kunjungi: false });
-    assert.deepEqual(h(ADMIN_SALES, "disetujui"), { baca: true, putuskan: false, ktp: false, tautkan: true, kunjungi: false }, "Admin Sales: tanpa KTP");
+    assert.deepEqual(h(ADMIN_SALES, "disetujui"), { baca: true, putuskan: false, ktp: false, tautkan: false, kunjungi: false }, "Admin Sales: tanpa KTP, tidak menautkan");
+    assert.deepEqual(h(MANAGER, "disetujui"), { baca: true, putuskan: false, ktp: false, tautkan: false, kunjungi: false }, "Manager: lihat saja (manage bukan tautkan)");
+    assert.equal(h(akses("admin", ["view", "noo_tautkan"]), "disetujui").tautkan, true, "kunci noo_tautkan = syarat penautan (bukan manage)");
     assert.deepEqual(h(MANAGER_LIHAT), { baca: false, putuskan: false, ktp: false, tautkan: false, kunjungi: false }, "form_kontrol.view saja tidak membuka NOO");
     assert.equal(h(akses("spv", ["view", "noo_setujui"], { allowed: ["S-01"], userId: "u-s01" })).putuskan, false, "pengaju tidak memutuskan sendiri");
     assert.equal(h(akses("salesman", ["view", "noo_setujui"], { allowed: ["S-01"], salesCode: "S-01", userId: "u-x" })).putuskan, false,
@@ -102,4 +118,15 @@ test("olahFoto: PNG beralfa → JPEG berlatar PUTIH (bukan hitam), ≤ 1600 px, 
     const { data: bawah } = await sharp(dicap).extract({ left: 800, top: 795, width: 1, height: 1 }).raw().toBuffer({ resolveWithObject: true });
     assert.ok(bawah[0] < 200, "pita cap gelap di kiri-bawah");
     await assert.rejects(olahFoto(Buffer.from("bukan gambar")));
+});
+
+test("olahFoto: masukan > 40 MP ditolak (bom dekompresi; peninjau A R4), ≤ 40 MP diterima", async () => {
+    assert.equal(BATAS_PIKSEL_FOTO, 40_000_000);
+    // PNG polos 7000×6000 = 42 MP hanya beberapa KB terkompresi — sharp menolak dari header sebelum dekompresi penuh.
+    const besar = await sharp({ create: { width: 7000, height: 6000, channels: 3, background: "#ffffff" } }).png().toBuffer();
+    assert.ok(besar.length < 1_000_000, `berkas kecil, piksel besar (${besar.length} B)`);
+    await assert.rejects(olahFoto(besar), /pixel limit/i);
+    const pas = await sharp({ create: { width: 6000, height: 6000, channels: 3, background: "#ffffff" } }).png().toBuffer();
+    const meta = await sharp(await olahFoto(pas)).metadata();
+    assert.deepEqual([meta.width, meta.height], [1600, 1600]);
 });

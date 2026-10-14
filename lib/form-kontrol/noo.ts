@@ -184,7 +184,7 @@ export async function buatNoo(d: {
         if (r.dibuatOleh !== d.aktorId) return galat(409, "ID_TERPAKAI", "Pengajuan ini sudah dipakai akun lain; muat ulang formulir.");
         if (sidikIsian(r) !== sidik) {
             return galat(409, "ID_BEDA_ISI", `Pengajuan ini sudah tersimpan sebelumnya sebagai ${r.kode} ${r.namaToko} dengan isian berbeda; perubahan sesudahnya tidak dikirim. `
-                + "Periksa di tab Toko Baru; bila memang toko lain, mulai pengajuan baru.", { kode: r.kode });
+                + "Periksa di tab Toko Baru; bila memang toko lain, mulai pengajuan baru.", { kodeNoo: r.kode });
         }
         return { row: r, baru: false };
     };
