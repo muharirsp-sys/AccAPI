@@ -555,6 +555,18 @@ def check_conflict_guard_per_channel():
     assert kode_bentrok(strata, meta) == set(), kode_bentrok(strata, meta)
     campur = strata + [{"pdf_key": 7, "channel": "GT", "kode_barang": "P3"}]
     assert kode_bentrok(campur, meta) == {("GT", "S3", "P3")}, kode_bentrok(campur, meta)
+
+    # Label rupiah di Form = cara mesin menghitungnya (tier_of): sekali per nota kecuali surat
+    # menyebut per satuan; "berlaku kelipatan" = per kelipatan ambang.
+    from routers.summary import label_rupiah
+    contoh = [({"ketentuan": "Beli 6 RTG UP, MIX PRODUCT"}, "3.000/NOTA"),
+              ({"ketentuan": "Beli 1 PCS (cut price per PCS)"}, "3.000/PCS"),
+              ({"ketentuan": "Beli 1 BOX, berlaku kelipatan"}, "3.000/BOX"),
+              ({"ketentuan": "Beli 6 RTG, berlaku kelipatan"}, "3.000/6 RTG"),
+              ({"ketentuan": "Minimal belanja Rp 1.000.000"}, "3.000/NOTA"),
+              ({"ketentuan": "Beli 2 PCS", "keterangan": "potongan per pcs"}, "3.000/PCS")]
+    for baris, harap in contoh:
+        assert label_rupiah(baris, "3.000") == harap, (baris, label_rupiah(baris, "3.000"))
     print("summary conflict-guard check: OK")
 
 

@@ -406,6 +406,32 @@ async def summary_syarat_claim_set(request: Request):
         return {"ok": False, "error": "Gagal menyimpan syarat klaim."}
 
 
+def label_rupiah(row, angka):
+    """Potongan rupiah di Form ditulis SEPERTI MESIN MENGHITUNGNYA (`summary_rules.tier_of`).
+
+    AMBANG RUPIAH BERARTI POTONGAN SENOTA. Program MSG "minimal belanja Rp 1.000.000 potong
+    Rp 20.000" adalah satu potongan untuk seluruh nota; "20000/PCS" menjanjikan sepuluh kali
+    lipat pada nota sepuluh baris.
+
+    AMBANG JUMLAH JUGA SENOTA, kecuali surat menyebut per satuan. Dulu semuanya dicetak
+    "/PCS", sedangkan mesin memotong SEKALI: Fonterra F149SP "Beli 6 renceng diskon Rp 3.000"
+    tercetak "3.000/PCS" padahal faktur mendapat Rp 3.000 sekali. Lembar yang diteken dan
+    aturan yang terbit harus menyatakan hal yang sama -- jadi label membaca penanda yang sama
+    (`per_unit`, "kelipatan") yang dibaca mesin.
+    """
+    from summary_rules import per_unit, threshold_of
+    ketentuan = str(row.get("ketentuan", "") or "")
+    jenis, minimum, satuan = threshold_of(ketentuan)
+    if jenis == "value":
+        return f"{angka}/NOTA"
+    satuan = satuan or "PCS"
+    if per_unit(row, satuan):
+        return f"{angka}/{satuan}"
+    if "kelipatan" in ketentuan.lower():
+        return f"{angka}/{satuan}" if minimum in ("", "1") else f"{angka}/{minimum} {satuan}"
+    return f"{angka}/NOTA"
+
+
 def kode_bentrok(excel_rows, pdf_meta):
     """(channel, surat, kode) yang diklaim lebih dari satu baris surat — penjaga V4.
 
@@ -780,18 +806,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             if bt == "DISC_RP" and re.fullmatch(r"\d{4,}", b):
                 b = _titik(b)
             if bt == "DISC_RP" and has_number(b) and "/" not in b:
-                # AMBANG RUPIAH BERARTI POTONGAN SENOTA, BUKAN PER SATUAN.
-                #
-                # Program MSG berbunyi "minimal belanja Rp 1.000.000 potong Rp 20.000" — satu
-                # potongan untuk seluruh nota. Menuliskannya "20000/PCS" di lembar yang dibaca
-                # orang berarti menjanjikan Rp 20.000 per barang; pada nota sepuluh baris itu
-                # sepuluh kali lipat dari bunyi suratnya.
-                from summary_rules import threshold_of
-                _jenis, _, _ = threshold_of(str(r.get("ketentuan", "")))
-                if _jenis == "value":
-                    return f"{b}/NOTA"
-                unit = unit_from_text(str(r.get("ketentuan", "")) + " " + b)
-                return f"{b}/{unit}"
+                return label_rupiah(r, b)
             # Pembaca surat mengeluarkan persen sebagai angka telanjang ("3"), dan angka itulah
             # yang dipakai menghitung. Di lembar yang diteken orang, "3" sendirian tidak berarti
             # apa-apa — satuannya dipasang di sini, bukan disimpan ke datanya.
