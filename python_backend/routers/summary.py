@@ -1480,6 +1480,10 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         # dari penanda barisnya. Kino dan principal lain tetap di jalur lama, tidak berubah.
         jalur_det = surat_struktur.jalur(principle_name)
         if jalur_det:
+            if surat_struktur.nomor_terbawa(result["rows"]):
+                result["warnings"] = [*(result.get("warnings") or []),
+                                      "Nomor surat diisi dari halaman sebelumnya pada baris yang halamannya "
+                                      "tidak mencetak nomor; periksa sebelum publikasi."]
             if jalur_det in ("FONTERRA", "NATUR", "ADNA", "FORISA"):
                 # Penanda distempel DI SINI, bukan oleh model: baris satu principal tidak boleh
                 # bisa nyasar ke matcher principal lain hanya karena modelnya salah menulis.

@@ -122,6 +122,108 @@ Bgt DB
 >2ctn - <=24ctn >25 ctn - <=100 ctn
 RBP"""
 
+# Surat 3 (Q4 2026): tabel produk tercetak DUA kali -- halaman 1 dan "Lampiran" -- jadi tiap
+# barcode muncul dua kali. Salinan verbatim lapisan teks (pypdf) dua halaman `Q4 2026_SKP On Faktur
+# Channel GT-Surya Perkasa-Signed.pdf` di reference_surat_program/okt26/ (berkas TIDAK ikut git).
+Q4_SURYA = """
+
+PT. Vinda International Indonesia
+Jl. M.H Thamrin No.31,Kel. Kebon Melati, Kec. Tanah Abang, Kota Jakarta Pusat DKI
+
+SURAT KESEPAKATAN PROMO
+                                              076/EXTERNAL/TRADEPROMO/GT/DISTRIBUTOR/X/2026
+
+Nama : Baskoro
+Jabatan : Sales Director
+Alamat : PT. Vinda International Indonesia - Jl. M.H Thamrin No.31,Jakarta Pusat
+Email  : baskoro@vinda.com
+Background : -Meningkatkan distribusi dan penjualan selling out distributor untuk channel GT
+Mekanisme : -Diskon on faktur untuk outlet GT
+   -Strata pengambilan 25 free 1 berlaku untuk pengambilan >25ctn
+                               -Strata Disc-1 menggantikan Disc. Strata Reguler start dari pengambilan 1-5ctn; 6-10ctn
+                                 & >10ctn
+   -Untuk strata <1 ctn - <2ctn berlaku pengambilan min. bisa memilih 1ctn SKU GT
+                                    (Classic 320; Classic 400 & Deluxe L480) dan mixed wajib dalam 1 transaksi 12pcs SKU
+                                    Vinda Deluxe Travel Pack 150ply atau 3pcs Vinda Deluxe Twinpack 2x330ply
+Periode : 01 Oct 2026 – 31 Des 2026
+Distributor : CV. Surya Perkasa
+Area : Sulawesi Selatan
+
+
+
+Kelengkapan dokumen :
+1. Klaim atas diskon on faktor (purchase order) melampirkan faktur/invoice dari distributor ke toko
+
+
+Demikian surat ini kami buat dan digunakan sebagaimana mestinya. Atas perhatiannya kami ucapkan
+terima kasih.
+
+
+PT. Vinda International Indonesia
+
+
+Jakarta, 29 September 2026
+
+
+
+
+
+
+
+                       Ivander Gervais                           Cipta Pratama                            Baskoro
+                                ASM                                          RSM     Sales Director
+Surya Perkasa - per 01 Aug
+Inc.PPn Inc.PPn Inc.PPn Inc.PPn Inc.PPn Inc.PPn Inc.PPn
+6901236334805 VINDA DELUXE FT TP 3PLY S 96x150PLY 3,917                     4,348                   96 (588)       15.0% (196)       5.0% 2,783          2,696          2,696          2,522          2,435          2,348          2,261          25 1
+6901236334812 VINDA DELUXE FT SP 3PLY L 16x(2x330PLY) 15,856                   17,600                 16 (2,378)   15.0% (793)       5.0% 10,766        10,584        10,584        10,219        9,565          9,391          9,879          25 1
+ 6901236334799 VINDA DELUXE FT SP 3PLY L 36x480PLY 9,117                     10,120                 36 (912)       10.0% (456)       5.0% 7,048          6,784          6,784          6,608          6,348          6,174          5,913          25 1
+ 6901236334836 VINDA CLASSIC FT SP 2PLY L 32x400PLY 8,324                     9,240                   32 (832)       10.0% (416)       5.0% 6,007          5,830          5,830          5,830          5,478          5,130          4,957          25 1
+ 6901236334829 VINDA CLASSIC FT SP 2PLY L 24x320PLY 6,501                     7,216                   24 (650)       10.0% (325)       5.0% 5,677          5,240          5,240          4,803          4,609          4,435          4,329          25 1
+RBP RBP RBPExc. PPN Inc. PPN RBP
+>1200ctn PROGRAM: Lock Volume
+Pembelian 25ctn FREE 1ctn
+>25 ctn -
+<=100 ctn
+>101 ctn -
+300 ctn
+>301 ctn -
+499 ctn
+RBP RBPBarcode Product
+RBP *Reguler
+Isi / Ctn Bgt DB
+>2ctn -
+<=24ctn >500ctn<1ctn -
+<2ctn
+RBPDisc-1
+
+
+
+PT. Vinda International Indonesia
+Jl. M.H Thamrin No.31,Kel. Kebon Melati, Kec. Tanah Abang, Kota Jakarta Pusat DKI
+
+Lampiran CV. Surya Perkasa
+
+
+
+
+
+Surya Perkasa - per 01 Aug
+Inc.PPn Inc.PPn Inc.PPn Inc.PPn Inc.PPn Inc.PPn Inc.PPn
+6901236334805 VINDA DELUXE FT TP 3PLY S 96x150PLY 3,917                     4,348                   96 (588)       15.0% (196)       5.0% (627)        20.0% 2,783          (705)        22.5% 2,696          (705)        22.5% 2,696          (862)        27.5% 2,522          (940)        30.0% 2,435          (1,018)    32.5% 2,348          (1,097)    35.0% 2,261          25 1
+6901236334812 VINDA DELUXE FT SP 3PLY L 16x(2x330PLY) 15,856                   17,600                 16 (2,378)   15.0% (793)       5.0% (2,985)    23.5% 10,766        (3,150)    24.8% 10,584        (3,150)    24.8% 10,584        (3,478)    27.4% 10,219        (4,067)    32.1% 9,565          (4,224)    33.3% 9,391          (3,785)    29.8% 9,879          25 1
+ 6901236334799 VINDA DELUXE FT SP 3PLY L 36x480PLY 9,117                     10,120                 36 (912)       10.0% (456)       5.0% (1,400)    18.1% 7,048          (1,638)    21.1% 6,784          (1,638)    21.1% 6,784          (1,796)    23.2% 6,608          (2,031)    26.2% 6,348          (2,187)    28.2% 6,174          (2,422)    31.3% 5,913          25 1
+ 6901236334836 VINDA CLASSIC FT SP 2PLY L 32x400PLY 8,324                     9,240                   32 (832)       10.0% (416)       5.0% (1,664)    23.5% 6,007          (1,823)    25.8% 5,830          (1,823)    25.8% 5,830          (1,823)    25.8% 5,830          (2,141)    30.3% 5,478          (2,454)    34.7% 5,130          (2,610)    36.9% 4,957          25 1
+ 6901236334829 VINDA CLASSIC FT SP 2PLY L 24x320PLY 6,501                     7,216                   24 (650)       10.0% (325)       5.0% (411)        7.4% 5,677          (805)        14.6% 5,240          (805)        14.6% 5,240          (1,198)    21.7% 4,803          (1,374)    24.9% 4,609          (1,530)    27.7% 4,435          (1,626)    29.4% 4,329          25 1
+Claim RBP Claim RBP Claim RBPExc. PPN Inc. PPN Claim RBP
+>1200ctn PROGRAM: Lock Volume
+Pembelian 25ctn FREE 1ctn
+>25 ctn - <=100 ctn >101 ctn - 300 ctn >301 ctn - 499 ctn
+Claim RBP Claim RBPBarcode Product
+RBP *Reguler
+Isi / Ctn Bgt DB
+>2ctn - <=24ctn >500ctn<1ctn - <2ctn
+Claim RBPDisc-1"""
+
 # Potongan relevan master_barang_principle/MASTER BARANG VINDA.xlsx (shape shared._parse_master_barang_xlsx
 # menghasilkan: kelompok = "KLP - SubKLP - SubKLP2", variant = Aroma/Rasa, gramasi = Gramasi).
 MASTER_ITEMS = [
@@ -199,6 +301,16 @@ def main():
     ]
     dup_row = match_items([dict(addendum["rows"][0])], ambiguous_master)[0]
     assert dup_row["_vinda_unmatched"] is True and dup_row["kode_barangs"] == "", dup_row
+
+    # ---- Surat 3: tabel produk dicetak dua kali -> tetap satu baris per barcode -------------
+    q4 = parse_text(Q4_SURYA, 2)
+    assert q4["letter"]["surat_program"] == "076/EXTERNAL/TRADEPROMO/GT/DISTRIBUTOR/X/2026", q4["letter"]
+    assert (q4["letter"]["periode_start"], q4["letter"]["periode_end"]) == ("2026-10-01", "2026-12-31"), q4["letter"]
+    assert [r["_barcode"] for r in q4["rows"]] == ["6901236334805", "6901236334812", "6901236334799",
+                                                  "6901236334836", "6901236334829"], q4["rows"]
+    # Nomor ".../GT/..." = promo channel GT; kosong berarti semua channel (ikut ke outlet MT).
+    assert all(r["channel_gtmt"] == "GT" for r in q4["rows"] + addendum["rows"]), q4["rows"]
+    assert all(r["channel_gtmt"] == "" for r in strata["rows"]), "GTLKA bukan GT saja -- jangan ditebak"
 
     print("OK -- semua self-check vinda_letter lulus")
 
