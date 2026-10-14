@@ -86,6 +86,13 @@ def main():
 
     # Satuan berbeda tidak dikonversi diam-diam.
     assert run([program()], [line(unit="CTN")])["discount"] == "0.00"
+    # Kecuali karton: surat "CTN" = faktur Accurate "KRT", dua arah; bonus keluar sebagai KRT.
+    assert run([program(unit="CTN")], [line(unit="KRT")])["discount"] == "5000.00"
+    assert run([program(unit="KRT")], [line(unit="ctn")])["discount"] == "5000.00"
+    karton = run([program(unit="CTN", tiers=[dict(minimum="10", bonus_code="A", bonus_quantity="1", bonus_unit="CTN")])],
+                 [line(unit="KRT")])
+    assert karton["bonuses"] == [dict(program_id="P1", code="A", unit="KRT", quantity="1")], karton["bonuses"]
+    assert suggestions(validate_programs([program(unit="CTN")], MASTER, 1), [line(qty="4", unit="KRT")], "2026-06-01", "GT")
 
     rejects([program(tiers=[dict(minimum="10")])], "tier tanpa benefit")
     rejects([program(tiers=[dict(minimum="20", percentages=["5"]), dict(minimum="10", percentages=["10"])])], "tier tidak urut")

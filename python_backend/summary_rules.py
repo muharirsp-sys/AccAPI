@@ -163,9 +163,15 @@ def validate_programs(raw, master_codes, page_count):
     return programs
 
 
+def satuan(unit):
+    """Karton: surat menulis CTN, faktur Accurate menulis KRT -- satu satuan, dua nama."""
+    unit = str(unit or "").strip().upper()
+    return "KRT" if unit == "CTN" else unit
+
+
 def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known_classes=()):
     """Highest qualifying tier per program; explicit priority and all-party stacking.
-    Quantities require exact units; no inferred conversion. Value = before tax.
+    Quantities require exact units (only CTN = KRT, see `satuan`); no inferred conversion. Value = before tax.
     Each percentage compounds on remaining eligible value; rupiah follows percentages.
     """
     when = date.fromisoformat(order_date)
@@ -192,7 +198,7 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
         # Batas nilai adalah soal uang, bukan satuan: program "minimal transaksi Rp X" harus
         # menghitung semua satuan barangnya, kalau tidak satu order BTL+PCS terpecah dua.
         eligible = [line for line in lines if line["code"] in program.codes
-                    and (program.threshold == "value" or line["unit"] == program.unit)
+                    and (program.threshold == "value" or satuan(line["unit"]) == satuan(program.unit))
                     and (not line["applied"] or (program.stacking and all(line["applied"]))) ]
         if not eligible:
             continue
@@ -243,10 +249,10 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
                 line["cash"] += extra
                 remaining -= extra
             if tier.bonus_scope == "purchased":
-                bonuses.append(dict(program_id=program.id, code="", unit=tier.bonus_unit, quantity=str(number(tier.bonus_quantity) * factor),
+                bonuses.append(dict(program_id=program.id, code="", unit=satuan(tier.bonus_unit), quantity=str(number(tier.bonus_quantity) * factor),
                                     eligible_codes=sorted({line["code"] for line in group})))
             elif tier.bonus_code:
-                bonuses.append(dict(program_id=program.id, code=tier.bonus_code, unit=tier.bonus_unit, quantity=str(number(tier.bonus_quantity) * factor)))
+                bonuses.append(dict(program_id=program.id, code=tier.bonus_code, unit=satuan(tier.bonus_unit), quantity=str(number(tier.bonus_quantity) * factor)))
             applications.append(dict(program_id=program.id, minimum=tier.minimum, discount=str(discount)))
     gross = sum((line["gross"] for line in lines), Decimal(0))
     net = sum((line["net"] for line in lines), Decimal(0))
@@ -550,7 +556,7 @@ def suggestions(programs, raw_lines, order_date, channel, limit=20, outlet_class
         if not outlet_allows(program, outlet_classes, known_classes)[0]:
             continue
         eligible = [line for line in lines if line["code"] in program.codes
-                    and (program.threshold == "value" or line["unit"] == program.unit)]
+                    and (program.threshold == "value" or satuan(line["unit"]) == satuan(program.unit))]
         for group in ([eligible] if (program.mix or program.threshold == "value") else [[line] for line in eligible]):
             if not group:
                 continue
