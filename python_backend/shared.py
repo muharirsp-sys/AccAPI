@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 # Modul determinisme Summary Program (FASE 1-4): cache OCR, parser tier posisional,
 # resolusi varian tabel, correction store stable-key. Lihat SYSTEM_MAP.md.
 from variant_resolver import load_variant_mapping, resolve_variant
+from priskila_matcher import load_rules
 from correction_store import load_corrections as load_stable_corrections, apply_corrections as apply_stable_corrections, save_correction, correction_key
 from tier_parser import regroup_rows_by_tier
 from golden_store import canonical_signature, golden_check_and_freeze
@@ -29,6 +30,15 @@ _VARIANT_MAPPING = load_variant_mapping()
 # Dikumpulkan sekali dari `exclude_kelompok` tiap aturan variant_mapping, dan distrip di AWAL
 # pencocokan — bukan di akhir. Baris yang tak ter-explode dulu mengembalikan kode mentahnya,
 # dan enam kode GLASS bocor ke klaim pada run live.
+_VARIANT_QUALIFIERS = tuple(load_rules().get("variant_qualifiers", ()))
+
+
+def _qualifier_of(item) -> frozenset:
+    """Qualifier sub-lini (mis. SPORT) pada nama principle barang master; kosong untuk lini biasa."""
+    kata = " ".join(str(item.get("principle") or "").split()).upper().split()
+    return frozenset(q for q in _VARIANT_QUALIFIERS if q in kata)
+
+
 _EXCLUDED_KELOMPOKS = {
     " ".join(str(_k).strip().split()).upper()
     for _rule in _VARIANT_MAPPING.values()
@@ -3990,6 +4000,12 @@ def _apply_native_kelompok(rows_to_check, master_items):
             _v_all_probe = (not _vlist_probe) or any(norm(x) == "ALL VARIANT" for x in _vlist_probe)
             if _v_all_probe:
                 _seed_keys = {(norm(it.get("kelompok")), norm(it.get("gramasi"))) for it in matched_items}
+                # Sub-lini ber-qualifier (Regazza EDT "Sport") sekelompok dengan lini biasanya, tapi
+                # programnya lain (Beli 4 vs Beli 7). Saudara hanya ditarik bila qualifier-nya sama
+                # dengan salah satu benih sekelompok -- sama seperti priskila_matcher._apply_partition.
+                _seed_qual = {}
+                for it in matched_items:
+                    _seed_qual.setdefault(norm(it.get("kelompok")), set()).add(_qualifier_of(it))
                 _seen_codes = {str(it.get("kode_barang", "")).strip() for it in matched_items}
                 # #3 (2026-07-15): kelompok yg BERPASANGAN per variant_mapping -- mis. surat
                 # "Casablanca Spray Cologne Series" = White SR + Black SR SEKALIGUS (dikonfirmasi
@@ -4021,7 +4037,7 @@ def _apply_native_kelompok(rows_to_check, master_items):
                         continue
                     if _kem and kemasan_of(it.get("nama_barang")) not in _kem:
                         continue
-                    if (norm(it.get("kelompok")), norm(it.get("gramasi"))) in _seed_keys:
+                    if (norm(it.get("kelompok")), norm(it.get("gramasi"))) in _seed_keys                             and _qualifier_of(it) in _seed_qual.get(norm(it.get("kelompok")), {_qualifier_of(it)}):
                         matched_items.append(it)
                         _seen_codes.add(_kode)
                     

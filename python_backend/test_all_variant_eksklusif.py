@@ -85,3 +85,18 @@ def test_cache_item_ikut_dipangkas():
     terapkan(rows)
     assert rows[0]["kode_barangs"] == "A"
     assert [it["kode_barang"] for it in rows[0]["_matched_items_cache"]] == ["A"]
+
+
+def test_simpan_tidak_mencampur_sub_lini_sport():
+    """Regazza EDT biasa (Beli 7) dan EDT Sport (Beli 4) sekelompok master. Saat Simpan, ekspansi
+    "All Variant" hanya menarik saudara ber-qualifier sama -- dulu baris biasa menarik 4 kode Sport."""
+    from shared import _apply_native_kelompok
+    master = [{"kode_barang": k, "kelompok": "REGAZZA FM - EDT", "gramasi": "100ML", "variant": v,
+               "nama_barang": f"REGAZZA EDT {v} 100ML", "principle": f"Regazza Femme {s}Eau De Toilette {v} 100ml"}
+              for k, v, s in (("R1", "AZZURO", "Sport "), ("R2", "BIANCO", "Sport "),
+                              ("R5", "CLASSY", ""), ("R6", "FEMININE", ""))]
+    rows = [{"no": "1", "surat_program": "002", "kelompok": "REGAZZA FM - EDT", "variant": "All Variant",
+             "gramasi": "100ML", "kode_barangs": kode, "ketentuan": ket}
+            for kode, ket in (("R5", "Beli 7 PCS"), ("R1", "Beli 4 PCS"))]
+    hasil = {r["ketentuan"]: set(r["kode_barangs"].split(",")) for r in _apply_native_kelompok(rows, master)}
+    assert hasil == {"Beli 7 PCS": {"R5", "R6"}, "Beli 4 PCS": {"R1", "R2"}}, hasil
