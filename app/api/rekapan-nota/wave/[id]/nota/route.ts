@@ -6,12 +6,16 @@
  * Dependensi: resolveRequestPermissions (otorisasi majemuk: manage vs approve_takeout), lib/db.
  * Main Functions: POST (tambah nota), PATCH (prioritas | takeout).
  * Side Effects: INSERT/UPDATE wave_assignment + wave_event.
+ * BL-25: tiap tulis membaca status wave FOR SHARE di transaksinya sendiri -- take-out/prioritas ditolak (409) pada
+ *   wave yang sudah dikonfirmasi/dibatalkan, termasuk bila itu terjadi di layar lain saat halaman ini masih terbuka.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 import { ambilSetting } from "@/lib/rekapan-nota/query";
 import { parseAreaDikecualikan } from "@/lib/rekapan-nota/classify";
+import { tolakUbahIsi, type UbahIsi, type WaveStatus } from "@/lib/rekapan-nota/wave-state";
+import type { PoolClient } from "pg";
 
 export const runtime = "nodejs";
 
@@ -23,6 +27,12 @@ async function ambilWave(id: number): Promise<WaveRow | null> {
     return r.rows[0] ?? null;
 }
 
+/** Di dalam transaksi: kunci baris wave FOR SHARE (transisi serentak menunggu) lalu periksa ulang statusnya. */
+async function tolakBila(client: PoolClient, id: number, aksi: UbahIsi): Promise<string | null> {
+    const r = await client.query<{ status: WaveStatus }>(`SELECT status::text FROM wave WHERE id = $1 FOR SHARE`, [id]);
+    return r.rows[0] ? tolakUbahIsi(r.rows[0].status, aksi) : "Wave tidak ditemukan";
+}
+
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
     const gate = await resolveRequestPermissions(req);
     if (gate.response) return gate.response;
@@ -30,6 +40,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const id = Number((await ctx.params).id);
+    if (!Number.isInteger(id)) return NextResponse.json({ error: "id tidak valid" }, { status: 400 });
     const body = await req.json().catch(() => ({})) as { noNota?: string[]; prioritas?: string };
     const noNota = (body.noNota ?? []).map((s) => String(s).trim()).filter(Boolean);
     if (!noNota.length) return NextResponse.json({ error: "noNota[] wajib." }, { status: 400 });
@@ -50,6 +61,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
+        const tolak = await tolakBila(client, id, "tambah");
+        if (tolak) {
+            await client.query("ROLLBACK");
+            return NextResponse.json({ error: tolak }, { status: 409 });
+        }
         // Snapshot klasifikasi dihitung SEKARANG dan disimpan: master boleh berubah besok,
         // rekapan hari ini tidak boleh ikut berubah (R2.2).
         const ins = await client.query<{ no_nota: string }>(
@@ -114,6 +130,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (gate.response) return gate.response;
 
     const id = Number((await ctx.params).id);
+    if (!Number.isInteger(id)) return NextResponse.json({ error: "id tidak valid" }, { status: 400 });
     const body = await req.json().catch(() => ({})) as
         { aksi?: string; noNota?: string; prioritas?: string; alasan?: string };
     const noNota = String(body.noNota ?? "").trim();
@@ -125,14 +142,16 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         const prioritas = body.prioritas === "urgent" ? "urgent" : "normal";
         // Prioritas memengaruhi URUTAN, bukan keanggotaan (R4.2): ia tidak boleh membuat
         // nota hilang dari lembar mana pun — yang persis terjadi di workbook hari ini.
-        const r = await pool.query(
-            `UPDATE wave_assignment SET prioritas = $3::wave_prioritas
-              WHERE wave_id = $1 AND no_nota = $2 AND dilepas = false`, [id, noNota, prioritas]);
-        if (!r.rowCount) return NextResponse.json({ error: "Nota tidak ada di wave ini." }, { status: 404 });
-        await pool.query(
-            `INSERT INTO wave_event (wave_id, event, aktor_id, payload) VALUES ($1,'wave.prioritas_changed',$2,$3::jsonb)`,
-            [id, gate.session!.user.id, JSON.stringify({ no_nota: noNota, ke: prioritas })]);
-        return NextResponse.json({ ok: true, prioritas });
+        return dalamTransaksi(id, "prioritas", "Gagal mengubah prioritas", async (client) => {
+            const r = await client.query(
+                `UPDATE wave_assignment SET prioritas = $3::wave_prioritas
+                  WHERE wave_id = $1 AND no_nota = $2 AND dilepas = false`, [id, noNota, prioritas]);
+            if (!r.rowCount) return NextResponse.json({ error: "Nota tidak ada di wave ini." }, { status: 404 });
+            await client.query(
+                `INSERT INTO wave_event (wave_id, event, aktor_id, payload) VALUES ($1,'wave.prioritas_changed',$2,$3::jsonb)`,
+                [id, gate.session!.user.id, JSON.stringify({ no_nota: noNota, ke: prioritas })]);
+            return NextResponse.json({ ok: true, prioritas });
+        });
     }
 
     if (body.aksi === "takeout") {
@@ -143,17 +162,40 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         const alasan = String(body.alasan ?? "").trim();
         if (alasan.length < 5) return NextResponse.json({ error: "alasan wajib diisi (min 5 karakter)." }, { status: 400 });
 
-        const r = await pool.query(
-            `UPDATE wave_assignment
-                SET dilepas = true, dilepas_alasan = $3, dilepas_at = now(), dilepas_by = $4
-              WHERE wave_id = $1 AND no_nota = $2 AND dilepas = false`,
-            [id, noNota, alasan, gate.session!.user.id]);
-        if (!r.rowCount) return NextResponse.json({ error: "Nota tidak ada / sudah dilepas." }, { status: 404 });
-        await pool.query(
-            `INSERT INTO wave_event (wave_id, event, aktor_id, payload) VALUES ($1,'wave.nota_released',$2,$3::jsonb)`,
-            [id, gate.session!.user.id, JSON.stringify({ no_nota: noNota, alasan })]);
-        return NextResponse.json({ ok: true, pesan: "Nota kembali ke pool." });
+        return dalamTransaksi(id, "takeout", "Gagal melepas nota", async (client) => {
+            const r = await client.query(
+                `UPDATE wave_assignment
+                    SET dilepas = true, dilepas_alasan = $3, dilepas_at = now(), dilepas_by = $4
+                  WHERE wave_id = $1 AND no_nota = $2 AND dilepas = false`,
+                [id, noNota, alasan, gate.session!.user.id]);
+            if (!r.rowCount) return NextResponse.json({ error: "Nota tidak ada / sudah dilepas." }, { status: 404 });
+            await client.query(
+                `INSERT INTO wave_event (wave_id, event, aktor_id, payload) VALUES ($1,'wave.nota_released',$2,$3::jsonb)`,
+                [id, gate.session!.user.id, JSON.stringify({ no_nota: noNota, alasan })]);
+            return NextResponse.json({ ok: true, pesan: "Nota kembali ke pool." });
+        });
     }
 
     return NextResponse.json({ error: "aksi harus prioritas | takeout" }, { status: 400 });
+}
+
+/** Satu transaksi: penjaga status wave (409) lalu tulis; jawaban non-2xx dari `kerja` membatalkan transaksi. */
+async function dalamTransaksi(id: number, aksi: UbahIsi, gagal: string, kerja: (c: PoolClient) => Promise<NextResponse>) {
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        const tolak = await tolakBila(client, id, aksi);
+        if (tolak) {
+            await client.query("ROLLBACK");
+            return NextResponse.json({ error: tolak }, { status: tolak === "Wave tidak ditemukan" ? 404 : 409 });
+        }
+        const res = await kerja(client);
+        await client.query(res.ok ? "COMMIT" : "ROLLBACK");
+        return res;
+    } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        return NextResponse.json({ error: gagal, detail: String(e) }, { status: 500 });
+    } finally {
+        client.release();
+    }
 }
