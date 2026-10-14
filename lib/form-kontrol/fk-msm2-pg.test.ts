@@ -17,7 +17,7 @@ const PG_URL = process.env.AM040_DATABASE_URL ?? "";
 const pgSkip = PG_URL ? false : "AM040_DATABASE_URL tidak di-set (Postgres evaluasi lokal AM-040)";
 
 const TABEL = ["user", "access_group", "user_group", "group_permission", "sales_profile", "jks_master", "ao_control_daily",
-    "salesman_daily_report", "merchandising_check", "kontrol_audit_log", "customer", "branch", "accurate_employee", "item"];
+    "salesman_daily_report", "merchandising_check", "kontrol_audit_log", "customer", "branch", "accurate_employee", "item", "no_order_reason"];
 const skema = `uji_fkmsm2_${randomUUID().slice(0, 8)}`;
 const skemaLain: string[] = [];
 let admin: Pool;
@@ -49,6 +49,7 @@ async function muat() {
         ao: await r("../../app/api/form-kontrol/ao-control/route.ts"),
         visit: await r("../../app/api/form-kontrol/visit/route.ts"),
         checkin: await r("../../app/api/form-kontrol/checkin/route.ts"),
+        merch: await r("../../app/api/form-kontrol/merchandising/route.ts"),
         jks: await r("../../app/api/form-kontrol/jks/route.ts"),
         reports: await r("../../app/api/form-kontrol/reports/route.ts"),
         spv: await r("../../app/api/form-kontrol/spv-dashboard/route.ts"),
@@ -478,6 +479,279 @@ test("paritas lintas tahun = acuan owner (12 Okt 2026 genap, selang-seling): rut
         await pool.query(`DELETE FROM kunjungan_luar_rute WHERE cust_code = 'C-100009-CBA'`);
         await pool.query(`DELETE FROM jks_master WHERE id = 'j9'`);
     }
+});
+
+// =========================================================================== FK-MSM3: tulis kunjungan hanya untuk toko di rute (peninjau A R-D1)
+
+const KUNJ = { salesCode: "M-SLA", principle: "PRINCIPLE A", date: HARI_INI };
+/** Tiga jalur tulis kunjungan (route ASLI) untuk satu toko M-SLA hari ini. */
+const tulis: Record<"checkin" | "status" | "merch", (custCode: string, u?: string) => Promise<J>> = {
+    checkin: async (custCode, u = "u-sla") => jawab(await sebagai(u, () => m.checkin.POST(req("/api/form-kontrol/checkin", "POST",
+        { ...KUNJ, custCode, photoUrl: "/api/uploads/form-kontrol/c.jpg" })))),
+    status: async (custCode, u = "u-sla") => jawab(await sebagai(u, () => m.ao.POST(req("/api/form-kontrol/ao-control", "POST", { ...KUNJ, custCode, status: "ordered" })))),
+    merch: async (custCode, u = "u-sla") => jawab(await sebagai(u, () => m.merch.POST(req("/api/form-kontrol/merchandising", "POST", { ...KUNJ, custCode, produkJelas: true })))),
+};
+const batalkan = async (id: string) => jawab(await sebagai("u-sla", () => m.batal.POST(req("/api/form-kontrol/luar-rute/batal", "POST", { id }))));
+const kodeJ = (j: J) => [j.status, j.body.kode];
+/** Baris AO + merchandising toko itu hari ini (0 = tanpa jejak kunjungan). */
+const jejakKunjungan = async (custCode: string) => Number((await pool.query(`SELECT (SELECT count(*) FROM ao_control_daily WHERE cust_code = $1 AND date = $2)
+    + (SELECT count(*) FROM merchandising_check WHERE cust_code = $1 AND date = $2) AS n`, [custCode, HARI_INI])).rows[0].n);
+const pelanggan = (dari: number, sampai: number) => pool.query(`INSERT INTO customer (id, "customerNo", name, alamat, branch_id, branch_name, category_name,
+    suspended) SELECT n, 'C-1000' || n || '-CBA', 'PELANGGAN ' || n, NULL, 201, 'CABANG A', 'TT', false FROM generate_series($1::int, $2::int) n`, [dari, sampai]);
+/** true bila sebelum `janji` selesai ada backend MENUNGGU kunci dengan kueri seperti `pola` (bukti berserialisasi, bukan kebetulan urutan). */
+async function menungguKunci(janji: Promise<unknown>, pola: string) {
+    let selesai = false;
+    void janji.then(() => { selesai = true; }, () => { selesai = true; });
+    for (let i = 0; i < 100 && !selesai; i++) {
+        if ((await pool.query(`SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE $1`, [pola])).rowCount) return true;
+        await new Promise((r) => setTimeout(r, 30));
+    }
+    return false;
+}
+
+test("FK-MSM3: sesudah Batalkan, check-in/status/merchandising dari halaman basi = 409 KUNJUNGAN_DIBATALKAN tanpa baris; toko di luar rute = 409 BUKAN_RUTE_HARI_INI; JKS hari ini tetap 200", { skip: pgSkip }, async () => {
+    await pelanggan(20, 22);
+    assert.equal((await tambah("u-sla", "C-100020-CBA")).status, 201);
+    // Halaman basi: kartu luar rute dibuka sebelum Batalkan, tulis sesudahnya (dulu 200 + baris AO yatim).
+    assert.equal((await batalkan(await idLuar("C-100020-CBA"))).status, 200);
+    for (const [apa, f] of Object.entries(tulis)) {
+        const j = await f("C-100020-CBA");
+        assert.deepEqual(kodeJ(j), [409, "KUNJUNGAN_DIBATALKAN"], apa);
+        assert.match(String(j.body.error), /Kunjungan luar rute PELANGGAN 20 pada .+ sudah dibatalkan/, apa);
+    }
+    assert.equal(await jejakKunjungan("C-100020-CBA"), 0, "tanpa baris AO/merchandising yatim");
+    // Toko yang tidak ada di rute sama sekali (dulu 200 untuk kode apa pun) dan toko JKS salesman ini pada hari LAIN.
+    for (const [apa, f] of Object.entries(tulis)) assert.deepEqual(kodeJ(await f("C-100021-CBA")), [409, "BUKAN_RUTE_HARI_INI"], apa);
+    const hariLain = await tulis.checkin("C-100004");
+    assert.deepEqual(kodeJ(hariLain), [409, "BUKAN_RUTE_HARI_INI"], "JKS hari lain bukan rute hari ini (tambahkan sebagai luar rute dulu)");
+    assert.match(String(hariLain.body.error), /PELANGGAN D \(C-100004\) tidak ada di rute M-SLA \(PRINCIPLE A\) pada .+Kunjungan luar rute/);
+    assert.deepEqual(kodeJ(await tulis.status("C-100022-CBA", "u-spva")), [409, "BUKAN_RUTE_HARI_INI"], "SPV untuk timnya: aturan sama");
+    assert.equal(await jejakKunjungan("C-100021-CBA") + await jejakKunjungan("C-100004") + await jejakKunjungan("C-100022-CBA"), 0);
+    // Regresi: toko JKS hari ini tetap tercatat (tiga jalur), juga kunjungan luar rute yang ditambah ulang sesudah batal (baris baru aktif).
+    if (HARI) {
+        for (const [apa, f] of Object.entries(tulis)) assert.deepEqual(kodeJ(await f("C-100001")), [200, undefined], `JKS hari ini: ${apa}`);
+        assert.equal(await jejakKunjungan("C-100001"), 2, "satu baris AO + satu merchandising");
+    }
+    assert.equal((await tambah("u-sla", "C-100020-CBA")).status, 201);
+    for (const [apa, f] of Object.entries(tulis)) assert.deepEqual(kodeJ(await f("C-100020-CBA")), [200, undefined], `luar rute aktif: ${apa}`);
+});
+
+test("FK-MSM3: kunci berserialisasi — batal memegang baris → check-in MENUNGGU lalu 409 KUNJUNGAN_DIBATALKAN; tulis memegang FOR SHARE → batal menunggu lalu 409 SUDAH_DIKUNJUNGI", { skip: pgSkip }, async () => {
+    await pelanggan(23, 24);
+    for (const c of ["C-100023-CBA", "C-100024-CBA"]) assert.equal((await tambah("u-sla", c)).status, 201);
+    const [id23, id24] = [await idLuar("C-100023-CBA"), await idLuar("C-100024-CBA")];
+    const k = await pool.connect();
+    try {
+        // (a) Transaksi lain sedang membatalkan (FOR UPDATE, seperti batalLuarRute): check-in harus menunggu, lalu membaca baris yang sudah batal.
+        await k.query("BEGIN");
+        await k.query("SELECT id FROM kunjungan_luar_rute WHERE id = $1 FOR UPDATE", [id23]);
+        const ci = tulis.checkin("C-100023-CBA");
+        const tunggu = await menungguKunci(ci, "%kunjungan_luar_rute%for share%");
+        await k.query("UPDATE kunjungan_luar_rute SET dibatalkan_pada = now(), dibatalkan_oleh = 'u-sla' WHERE id = $1", [id23]);
+        await k.query("COMMIT");
+        assert.deepEqual(kodeJ(await ci), [409, "KUNJUNGAN_DIBATALKAN"], "check-in tidak melewati batal yang sedang berjalan");
+        assert.equal(tunggu, true, "check-in menunggu kunci baris luar rute (FOR SHARE)");
+        assert.equal(await jejakKunjungan("C-100023-CBA"), 0);
+
+        // (b) Transaksi tulis kunjungan memegang FOR SHARE + baris AO belum commit: batal menunggu, lalu melihat check-in itu.
+        await k.query("BEGIN");
+        await k.query("SELECT id FROM kunjungan_luar_rute WHERE id = $1 AND dibatalkan_pada IS NULL FOR SHARE", [id24]);
+        await k.query(`INSERT INTO ao_control_daily (id, sales_code, cust_code, principle, date, period_month, period_year, status, checkin_at, created_at,
+            updated_at) VALUES ('ao-24', 'M-SLA', 'C-100024-CBA', 'PRINCIPLE A', $1, 10, 2026, 'not_visited', now(), now(), now())`, [HARI_INI]);
+        const b = batalkan(id24);
+        const tunggu2 = await menungguKunci(b, "%kunjungan_luar_rute%for update%");
+        await k.query("COMMIT");
+        assert.deepEqual(kodeJ(await b), [409, "SUDAH_DIKUNJUNGI"]);
+        assert.equal(tunggu2, true, "batal menunggu kunci FOR SHARE tulis kunjungan");
+    } finally {
+        await k.query("ROLLBACK").catch(() => undefined);
+        k.release();
+    }
+});
+
+test("FK-MSM3: Batalkan SERENTAK dengan check-in/status/merchandising, 15 kali → tidak pernah keduanya 200; yang kalah 409 berkode; baris konsisten", { skip: pgSkip }, async () => {
+    const N = 15;
+    await pelanggan(30, 30 + N - 1);
+    const jalur = Object.entries(tulis);
+    const sebaran: Record<string, number> = {};
+    for (let i = 0; i < N; i++) {
+        const cust = `C-1000${30 + i}-CBA`;
+        assert.equal((await tambah("u-sla", cust)).status, 201);
+        const id = await idLuar(cust);
+        const [apa, f] = jalur[i % jalur.length];
+        // Batal dimulai 0..8 ms sesudah tulis (route batal lebih pendek; di mesin uji titik silangnya +-4 ms) supaya kedua urutan DAN
+        // tumpang-tindih sungguhan terjadi — sebaran dicetak di log.
+        const [b, t] = await Promise.all([new Promise((r) => setTimeout(r, i % 9)).then(() => batalkan(id)), f(cust)]);
+        const batal = (await pool.query("SELECT dibatalkan_pada IS NOT NULL AS b FROM kunjungan_luar_rute WHERE id = $1", [id])).rows[0].b as boolean;
+        const jejak = await jejakKunjungan(cust);
+        if (b.status === 200) assert.deepEqual([kodeJ(t), batal, jejak], [[409, "KUNJUNGAN_DIBATALKAN"], true, 0], `${apa} #${i}: batal menang`);
+        else assert.deepEqual([kodeJ(b), t.status, batal, jejak], [[409, "SUDAH_DIKUNJUNGI"], 200, false, 1], `${apa} #${i}: ${apa} menang`);
+        const menang = b.status === 200 ? "batal" : apa;
+        sebaran[menang] = (sebaran[menang] ?? 0) + 1;
+    }
+    console.log(`FK-MSM3 serentak ${N}x: ${JSON.stringify(sebaran)}`);
+});
+
+// FK-MSM3 putaran 2 (tinjauan A 13 Okt): R-1 kesetaraan penjaga = rute; R-2 check-in ∥ status tanpa 500; R-3 baris AO yang sudah ada lolos;
+// R-4 kalimat penolakan menurut penulis + nama toko.
+
+test("FK-MSM3 R-1: tulis kunjungan 200 <=> toko ada di rute tanggal itu (15 tanggal x pola minggu, nonaktif, principal/salesman lain, luar rute tanggal/salesman lain)", { skip: pgSkip }, async () => {
+    // Usulan peninjau A (revfk3a/usulan-uji-kesetaraan.ts), apa adanya: mengikat pola minggu, is_active, principal & sales JKS, tanggal & sales luar rute.
+    const H = HARI ?? "SENIN";
+    await pool.query(`INSERT INTO jks_master (id, sales_code, sales_name, cust_code, cust_name, hari_kunjungan, minggu_pattern, principle, channel,
+            visit_frequency, is_active, created_at, updated_at) VALUES
+        ('e1', 'M-SLA', 'SALES A', 'C-400001', 'E1', 'SENIN', 'genap', 'PRINCIPLE A', 'TT', 2, true, now(), now()),
+        ('e2', 'M-SLA', 'SALES A', 'C-400002', 'E2', 'senin', ' Ganjil', 'PRINCIPLE A', 'TT', 2, true, now(), now()),
+        ('e3', 'M-SLA', 'SALES A', 'C-400003', 'E3', $1, 'all', 'PRINCIPLE A', 'TT', 4, false, now(), now()),
+        ('e4', 'M-SLA', 'SALES A', 'C-400004', 'E4', $1, 'all', 'PRINCIPLE B', 'TT', 4, true, now(), now()),
+        ('e5', 'M-SLB', 'SALES B', 'C-400005', 'E5', $1, 'all', 'PRINCIPLE A', 'TT', 4, true, now(), now())`, [H]);
+    await pool.query(`INSERT INTO kunjungan_luar_rute (id, sales_code, principle, tanggal, cust_code, cust_name, dibuat_oleh) VALUES
+        ('e6', 'M-SLA', 'PRINCIPLE A', $1, 'C-400006-CBA', 'E6', 'u-sla'), ('e7', 'M-SLB', 'PRINCIPLE A', $2, 'C-400007-CBA', 'E7', 'u-slb')`, [KEMARIN, HARI_INI]);
+    const kode = ["C-400001", "C-400002", "C-400003", "C-400004", "C-400005", "C-400006-CBA", "C-400007-CBA"];
+    const [yy, mm, dd] = HARI_INI.split("-").map(Number);
+    const beda: string[] = [];
+    let ok = 0;
+    for (let o = -7; o <= 7; o++) {
+        const date = new Date(Date.UTC(yy, mm - 1, dd + o)).toISOString().slice(0, 10);
+        const q = new URLSearchParams({ salesCode: "M-SLA", principle: "PRINCIPLE A", date });
+        const di = new Set(((await jawab(await sebagai("u-admin", () => m.ao.GET(req(`/api/form-kontrol/ao-control?${q}`))))).body.rows as { custCode: string }[])
+            .map((r) => r.custCode));
+        for (const custCode of kode) {
+            const t = await jawab(await sebagai("u-admin", () => m.merch.POST(req("/api/form-kontrol/merchandising", "POST",
+                { salesCode: "M-SLA", principle: "PRINCIPLE A", date, custCode, produkJelas: true }))));
+            if ((t.status === 200) !== di.has(custCode) || (t.status !== 200 && t.status !== 409)) beda.push(`${date} ${custCode} tulis=${t.status} rute=${di.has(custCode)}`);
+            if (t.status === 200) ok++;
+        }
+    }
+    assert.deepEqual(beda, []);
+    assert.ok(ok >= 3, `ada toko yang lolos (${ok})`);
+});
+
+test("FK-MSM3 R-2: check-in + status SERENTAK pada toko tanpa baris AO, 30 kali → tanpa 500; satu baris berisi check-in DAN status (tidak saling menimpa)", { skip: pgSkip }, async () => {
+    const N = 30;
+    await pool.query(`INSERT INTO kunjungan_luar_rute (id, sales_code, principle, tanggal, cust_code, cust_name, dibuat_oleh)
+        SELECT 'r2-' || n, 'M-SLA', 'PRINCIPLE A', $1, 'C-6000' || lpad(n::text, 2, '0') || '-CBA', 'R2 ' || n, 'u-sla' FROM generate_series(1, $2::int) n`, [HARI_INI, N]);
+    const hasil: string[] = [];
+    for (let i = 1; i <= N; i++) {
+        const cust = `C-6000${String(i).padStart(2, "0")}-CBA`;
+        // Check-in dimulai 0..30 ms sesudah status (route status lebih panjang): kedua sisi kebagian INSERT pertama maupun ON CONFLICT.
+        const [st, ci] = await Promise.all([tulis.status(cust), new Promise((r) => setTimeout(r, (i % 6) * 6)).then(() => tulis.checkin(cust))]);
+        hasil.push(`${ci.status}/${st.status}`);
+        const b = (await pool.query(`SELECT count(*)::int n, bool_and(checkin_at IS NOT NULL) ci, min(status) status, bool_and(is_visited) dikunjungi
+            FROM ao_control_daily WHERE cust_code = $1 AND date = $2`, [cust, HARI_INI])).rows[0];
+        assert.deepEqual(b, { n: 1, ci: true, status: "ordered", dikunjungi: true }, `#${i} (${hasil[i - 1]})`);
+    }
+    assert.deepEqual(hasil.filter((h) => h !== "200/200"), [], "tanpa 500");
+    // Berurutan status → check-in (jalur ON CONFLICT check-in pasti terlewati): check-in tidak menimpa status, status tidak menimpa check-in.
+    await pool.query(`INSERT INTO kunjungan_luar_rute (id, sales_code, principle, tanggal, cust_code, cust_name, dibuat_oleh)
+        VALUES ('r2-urut', 'M-SLA', 'PRINCIPLE A', $1, 'C-600099-CBA', 'R2 URUT', 'u-sla')`, [HARI_INI]);
+    assert.deepEqual([kodeJ(await tulis.status("C-600099-CBA")), kodeJ(await tulis.checkin("C-600099-CBA"))], [[200, undefined], [200, undefined]]);
+    assert.deepEqual((await pool.query(`SELECT status, checkin_at IS NOT NULL ci, is_visited FROM ao_control_daily WHERE cust_code = 'C-600099-CBA'`)).rows,
+        [{ status: "ordered", ci: true, is_visited: true }]);
+    // Status sesudah check-in tanpa isVisited tidak menimpa is_visited (dulu null), dan check-in sesudah status tidak menimpa status.
+    assert.equal((await pool.query(`SELECT count(*)::int n FROM ao_control_daily WHERE cust_code LIKE 'C-6000%' AND (is_visited IS NOT TRUE OR status <> 'ordered')`)).rows[0].n, 0);
+});
+
+test("FK-MSM3 R-2 (deterministik): check-in/status saat baris AO toko itu baru DIBUAT transaksi lain (belum COMMIT) → menunggu lalu 200, satu baris, kolom pihak lain utuh", { skip: pgSkip }, async () => {
+    // Uji serentak di atas bergantung jadwal (sabotase "check-in tanpa ON CONFLICT" pernah HIJAU). Di sini jendelanya dipaksa: transaksi lain
+    // memegang INSERT baris AO yang belum di-COMMIT, route harus MENUNGGU kunci indeks unik (dibuktikan lewat pg_blocking_pids) lalu memperbarui
+    // baris itu. SELECT-lalu-INSERT atau INSERT tanpa ON CONFLICT (idx_ao_unique) = 23505 → 500.
+    const kasus = [
+        { jalur: "checkin" as const, cust: "C-610001-CBA", lain: { status: "ordered", ci: false }, harap: { status: "ordered", ci: true } },
+        { jalur: "status" as const, cust: "C-610002-CBA", lain: { status: "not_visited", ci: true }, harap: { status: "ordered", ci: true } },
+    ];
+    for (const k of kasus) {
+        await pool.query(`INSERT INTO kunjungan_luar_rute (id, sales_code, principle, tanggal, cust_code, cust_name, dibuat_oleh)
+            VALUES ($1, 'M-SLA', 'PRINCIPLE A', $2, $3, 'R2 TAHAN', 'u-sla')`, [`r2t-${k.jalur}`, HARI_INI, k.cust]);
+        const lain = await pool.connect();
+        try {
+            await lain.query("BEGIN");
+            const pid = (await lain.query("SELECT pg_backend_pid() AS p")).rows[0].p as number;
+            await lain.query(`INSERT INTO ao_control_daily (id, sales_code, cust_code, principle, date, period_month, period_year, status, is_visited, checkin_at,
+                created_at, updated_at) VALUES ($1, 'M-SLA', $2, 'PRINCIPLE A', $3, 10, 2026, $4, $5, CASE WHEN $5 THEN now() END, now(), now())`,
+            [`ao-r2t-${k.jalur}`, k.cust, HARI_INI, k.lain.status, k.lain.ci]);
+            const janji = tulis[k.jalur](k.cust);
+            let tertahan = false;
+            for (let i = 0; i < 200 && !tertahan; i++) {
+                tertahan = Boolean((await pool.query(`SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`, [pid])).rowCount);
+                if (!tertahan) await new Promise((r) => setTimeout(r, 25));
+            }
+            assert.ok(tertahan, `${k.jalur}: route menunggu baris AO transaksi lain (kalau tidak, uji ini tidak menguji konflik)`);
+            await lain.query("COMMIT");
+            assert.deepEqual(kodeJ(await janji), [200, undefined], `${k.jalur}: tanpa 23505/500`);
+        } finally {
+            await lain.query("ROLLBACK").catch(() => undefined);
+            lain.release();
+        }
+        assert.deepEqual((await pool.query(`SELECT id, status, checkin_at IS NOT NULL ci FROM ao_control_daily WHERE cust_code = $1 AND date = $2`,
+            [k.cust, HARI_INI])).rows, [{ id: `ao-r2t-${k.jalur}`, ...k.harap }], k.jalur);
+    }
+});
+
+test("FK-MSM3 R-1 (peninjau B): GET visit membawa penolakan rute yang SAMA dengan tulis — layar tidak membuka wizard/foto untuk toko di luar rute", { skip: pgSkip }, async () => {
+    if (!HARI) return; // Minggu: tanpa rute JKS
+    await pool.query(`INSERT INTO jks_master (id, sales_code, sales_name, cust_code, cust_name, hari_kunjungan, minggu_pattern, principle, channel,
+            visit_frequency, is_active, created_at, updated_at) VALUES
+        ('v1', 'M-SLA', 'SALES A', 'C-720001', 'TOKO V1', $1, 'all', 'PRINCIPLE A', 'TT', 4, true, now(), now()),
+        ('v2', 'M-SLA', 'SALES A', 'C-720002', 'TOKO V2', $2, 'all', 'PRINCIPLE A', 'TT', 4, true, now(), now())`, [HARI, HARI_LAIN]);
+    const lihat = async (custCode: string) => {
+        const q = new URLSearchParams({ ...KUNJ, custCode });
+        const j = await jawab(await sebagai("u-sla", () => m.visit.GET(req(`/api/form-kontrol/visit?${q}`))));
+        assert.equal(j.status, 200, JSON.stringify(j.body));
+        return j.body.bukanRute as { kode: string; error: string } | null;
+    };
+    assert.equal(await lihat("C-720001"), null, "JKS hari ini");
+    const lain = await lihat("C-720002");
+    assert.equal(lain?.kode, "BUKAN_RUTE_HARI_INI", "JKS hari lain");
+    assert.match(lain!.error, /^TOKO V2 \(C-720002\) tidak ada di rute .+ Tambahkan dulu lewat Kunjungan luar rute/);
+    // Setara tulis: check-in juga 409 untuk toko itu.
+    assert.deepEqual(kodeJ(await tulis.checkin("C-720002")), [409, "BUKAN_RUTE_HARI_INI"]);
+    // Sudah punya baris AO (R-3) → wizard tetap terbuka.
+    await pool.query(`INSERT INTO ao_control_daily (id, sales_code, cust_code, principle, date, period_month, period_year, status, created_at, updated_at)
+        VALUES ('ao-v2', 'M-SLA', 'C-720002', 'PRINCIPLE A', $1, 10, 2026, 'not_visited', now(), now())`, [HARI_INI]);
+    assert.equal(await lihat("C-720002"), null, "sudah ber-AO");
+    // Luar rute yang dibatalkan → KUNJUNGAN_DIBATALKAN.
+    await pelanggan(95, 95);
+    assert.equal((await tambah("u-sla", "C-100095-CBA")).status, 201);
+    assert.equal(await lihat("C-100095-CBA"), null, "luar rute aktif");
+    assert.equal((await batalkan(await idLuar("C-100095-CBA"))).status, 200);
+    const q = new URLSearchParams({ ...KUNJ, custCode: "C-100095-CBA" });
+    assert.equal((await sebagai("u-sla", () => m.visit.GET(req(`/api/form-kontrol/visit?${q}`)))).status, 404, "luar rute batal tanpa JKS = toko tidak ditemukan (perilaku lama)");
+});
+
+test("FK-MSM3 R-3 (owner): toko yang SUDAH punya baris AO salesman itu pada tanggal itu tetap lolos sesudah JKS dipindah hari; yang belum = 409", { skip: pgSkip }, async () => {
+    if (!HARI) return; // Minggu: tanpa rute JKS
+    await pool.query(`INSERT INTO jks_master (id, sales_code, sales_name, cust_code, cust_name, hari_kunjungan, minggu_pattern, principle, channel,
+            visit_frequency, is_active, created_at, updated_at) VALUES
+        ('r3a', 'M-SLA', 'SALES A', 'C-700001', 'TOKO R3 A', $1, 'all', 'PRINCIPLE A', 'TT', 4, true, now(), now()),
+        ('r3b', 'M-SLA', 'SALES A', 'C-700002', 'TOKO R3 B', $1, 'all', 'PRINCIPLE A', 'TT', 4, true, now(), now())`, [HARI]);
+    assert.deepEqual(kodeJ(await tulis.checkin("C-700001")), [200, undefined]);
+    // SPV memindah kedua toko ke hari lain di tengah kunjungan.
+    await pool.query(`UPDATE jks_master SET hari_kunjungan = $1 WHERE id IN ('r3a', 'r3b')`, [HARI_LAIN]);
+    assert.deepEqual(kodeJ(await tulis.status("C-700001")), [200, undefined], "status lanjutan sesudah check-in");
+    assert.deepEqual(kodeJ(await tulis.merch("C-700001")), [200, undefined], "merchandising lanjutan");
+    assert.equal((await pool.query(`SELECT status FROM ao_control_daily WHERE cust_code = 'C-700001' AND date = $1`, [HARI_INI])).rows[0].status, "ordered");
+    for (const [apa, f] of Object.entries(tulis)) assert.deepEqual(kodeJ(await f("C-700002")), [409, "BUKAN_RUTE_HARI_INI"], `belum dikunjungi: ${apa}`);
+    // Baris AO salesman LAIN untuk toko itu tidak meloloskan M-SLA.
+    await pool.query(`INSERT INTO ao_control_daily (id, sales_code, cust_code, principle, date, period_month, period_year, status, created_at, updated_at)
+        VALUES ('ao-r3-slb', 'M-SLB', 'C-700002', 'PRINCIPLE A', $1, 10, 2026, 'not_visited', now(), now())`, [HARI_INI]);
+    assert.deepEqual(kodeJ(await tulis.checkin("C-700002")), [409, "BUKAN_RUTE_HARI_INI"], "baris AO salesman lain");
+});
+
+test("FK-MSM3 R-4: kalimat 409 menyebut nama toko; saran 'tambahkan lewat Kunjungan luar rute' hanya untuk salesman pemilik pada hari ini", { skip: pgSkip }, async () => {
+    const tulisPada = async (u: string, custCode: string, date: string) => jawab(await sebagai(u, () => m.ao.POST(req("/api/form-kontrol/ao-control", "POST",
+        { ...KUNJ, custCode, date, status: "ordered" }))));
+    const pemilik = await tulisPada("u-sla", "C-100004", HARI_INI);
+    assert.deepEqual(kodeJ(pemilik), [409, "BUKAN_RUTE_HARI_INI"]);
+    assert.match(String(pemilik.body.error), /^PELANGGAN D \(C-100004\) tidak ada di rute M-SLA \(PRINCIPLE A\) pada .+ Tambahkan dulu lewat Kunjungan luar rute/);
+    const spv = String((await tulisPada("u-spva", "C-100004", HARI_INI)).body.error);
+    assert.match(spv, /Hanya salesman pemilik rute yang bisa menambahkannya/);
+    assert.doesNotMatch(spv, /Tambahkan dulu/);
+    const lampau = String((await tulisPada("u-sla", "C-999998", KEMARIN)).body.error);
+    assert.match(lampau, /hanya bisa ditambah pada hari kunjungannya sendiri/);
+    assert.doesNotMatch(lampau, /Tambahkan dulu/);
+    // Kode tanpa nama di JKS mana pun: "Toko <kode>".
+    assert.match(String((await tulisPada("u-sla", "C-999999", HARI_INI)).body.error), /^Toko C-999999 tidak ada di rute/);
 });
 
 // =========================================================================== DDL / migrasi

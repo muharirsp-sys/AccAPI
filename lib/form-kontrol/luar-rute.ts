@@ -237,8 +237,8 @@ export async function konfirmasiLuarRute(d: {
  * (409 SUDAH_DIKONFIRMASI), dan BELUM ada catatan apa pun untuk toko itu hari itu: baris ao_control_daily apa pun (check-in, status, atau
  * "tidak dikunjungi" dari Kirim status rute) atau merchandising (409 SUDAH_DIKUNJUNGI) — jadi baris batal tidak pernah terhitung di Dashboard
  * SPV/laporan. Kunci baris FOR UPDATE: dua batal serentak = satu 200, satu 409. Jejak: kolom batal + audit `luar_rute/batal`.
- * ponytail: check-in yang SERENTAK dengan batal tidak dikunci (ao_control_daily tidak memegang kunci baris ini) — baris AO bisa tercatat
- *   untuk kunjungan yang baru dibatalkan; jendela milidetik dari satu salesman di satu ponsel. Penutupnya: check-in memeriksa rute.
+ * FK-MSM3: check-in/status/merchandising toko luar rute memegang FOR SHARE baris ini dalam transaksi tulisnya (db.ts galatBukanRute) —
+ *   batal dan tulis kunjungan berserialisasi: tulis lebih dulu → batal 409 SUDAH_DIKUNJUNGI; batal lebih dulu → tulis 409 KUNJUNGAN_DIBATALKAN.
  */
 export async function batalLuarRute(d: {
     id: string; salesCode: string; hariIni: string; aktorId: string; aktorNama: string | null;
