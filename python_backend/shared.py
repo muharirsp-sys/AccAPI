@@ -3984,7 +3984,7 @@ def _apply_native_kelompok(rows_to_check, master_items):
         # jatuh ke SELURUH master saat kelompok LLM tak persis cocok). Aturan surat: banded (BND)
         # dikecualikan dari klaim promo.
         # _variant_hit is None: JANGAN ekspansi hasil FASE 3b (variant_resolver sengaja membatasi
-        # varian, mis. Regazza EDT Sport = HANYA 4 -- ekspansi se-kelompok akan merusak batasan itu).
+        # varian, mis. Spray Cologne = WHITE SR + BLACK SR tanpa GLASS -- ekspansi se-kelompok merusaknya).
         if matched_items and _variant_hit is None:
             _vlist_probe = split_list(r.get("variant", ""))
             _v_all_probe = (not _vlist_probe) or any(norm(x) == "ALL VARIANT" for x in _vlist_probe)
