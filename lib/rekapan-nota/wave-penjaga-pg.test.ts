@@ -20,7 +20,7 @@ type Ctx = { params: Promise<{ id: string }> };
 type Handler = (req: Request, ctx: Ctx) => Promise<Response>;
 let admin: Pool;
 let db: Pool;
-let rWave: { POST: (req: Request) => Promise<Response> };
+let rWave: { GET: (req: Request) => Promise<Response>; POST: (req: Request) => Promise<Response> };
 let rWaveId: { GET: Handler; PATCH: Handler };
 let rNota: { POST: Handler; PATCH: Handler };
 let rExc: { PATCH: Handler };
@@ -289,4 +289,16 @@ test("BL-25 serentak: layar lain mengonfirmasi saat batal/lepas sedang berjalan 
     const h2 = await lepas;
     assert.equal(h2.status, 409, JSON.stringify(h2.body));
     assert.equal((await db.query(`SELECT dilepas FROM wave_assignment WHERE wave_id = $1`, [w4])).rows[0].dilepas, false);
+});
+
+test("BL-25: exception terbuka di wave batal tidak dihitung sebagai pekerjaan terbuka di daftar wave", { skip: pgSkip }, async () => {
+    const T = "2026-10-12";
+    assert.equal((await unggah(T, xlsx(T, [["N60", "BRG-C", 1, 12]]))).status, 200);
+    const w = await waveBaru(T, 1);
+    await tambah(w, ["N60"]);
+    await transisi(w, "release"); // OUTLET_TANPA_AREA terbuka (outlet uji tanpa area)
+    const daftar = async () => ((await jawab(rWave.GET(new Request(`http://app.test/api/rekapan-nota/wave?tanggal=${T}`)))).body.wave as Array<{ id: number; exception_open: number }>).find((x) => x.id === w)!;
+    assert.ok((await daftar()).exception_open > 0);
+    assert.equal((await transisi(w, "cancel", "uji daftar")).status, 200);
+    assert.equal((await daftar()).exception_open, 0);
 });
