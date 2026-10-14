@@ -141,6 +141,8 @@ export function ensureSalesHistorySchema(): Promise<void> {
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_im_tanggal ON invoice_map(tanggal DESC)`);
             // Kursor sinkron Accurate -> History (app/api/cron/sales-history-accurate): posisi terakhir (synced_at, id) sales_invoice.
             await salesClient.execute(`CREATE TABLE IF NOT EXISTS sync_cursor (name TEXT PRIMARY KEY, synced_at TEXT NOT NULL, last_id INTEGER NOT NULL)`);
+            // Faktur yang sudah disalin dari Accurate + lastUpdate-nya: faktur yang tidak berubah dilewati tanpa membaca raw_data.
+            await salesClient.execute(`CREATE TABLE IF NOT EXISTS accurate_copy (referensi TEXT PRIMARY KEY, last_update TEXT NOT NULL)`);
         })();
     }
     return schemaReady;

@@ -5,8 +5,8 @@
  * Main Functions: GET.
  * Side Effects: Tulis sales-history-inv.db: invoice_map (INSERT OR REPLACE), sales_history_item source_file='accurate'
  *   (hapus+isi ulang per faktur), sync_cursor; satukan principal ADNA -> GUMINDO. TIDAK menulis ke Accurate.
- * Catatan: kursor keyset (synced_at, id) memakai idx_sales_invoice_synced_at; synced_at hanya berubah bila raw_data berubah,
- *   jadi faktur yang disunting / baru ditambal rinciannya otomatis tersalin ulang. Faktur yang sudah punya baris dari
+ * Catatan: kursor keyset (synced_at, id) memakai idx_sales_invoice_synced_at. Faktur yang baru ditambal rinciannya atau
+ *   disunting (lastUpdate berubah) tersalin ulang; yang lastUpdate-nya sama dengan tabel accurate_copy dilewati. Faktur yang sudah punya baris dari
  *   berkas closing / CSV e-Faktur dilewati (berkas itu otoritas). raw_data diambil lewat primary key per potongan
  *   (pola aman memori: lihat promo-recap). `?limit=` = batas faktur yang diperiksa per run (bawaan 20.000).
  *   ponytail: faktur yang DIHAPUS di Accurate tetap tinggal di History; tambahkan sapuan hapus bila itu jadi masalah.
@@ -39,25 +39,37 @@ export async function GET(req: Request) {
     const principalBarang = new Map(barang.rows.map((r: Baris) => [String(r.no), String(r.principal ?? "").trim()]));
 
     const kursor = (await salesClient.execute("SELECT synced_at, last_id FROM sync_cursor WHERE name = 'accurate'")).rows[0];
-    let at = String(kursor?.synced_at ?? "1970-01-01T00:00:00Z");
-    let lastId = Number(kursor?.last_id ?? 0);
-    let diperiksa = 0, disalin = 0, barisItem = 0, dilewatiBerkas = 0, tanpaRincian = 0;
+    // Mundur 5 menit di awal run: synced_at = now() saat transaksi sync MULAI, jadi baris yang commit belakangan
+    // bisa bertanggal sebelum kursor. Membaca ulang murah karena faktur tak berubah dilewati lewat last_update.
+    let at = String((await db.execute(sql`SELECT (${String(kursor?.synced_at ?? "1970-01-01T00:05:00Z")}::timestamptz
+        - interval '5 minutes')::text AS at`)).rows[0]?.at);
+    let lastId = 0;
+    let diperiksa = 0, disalin = 0, barisItem = 0, dilewatiBerkas = 0, takBerubah = 0, tanpaRincian = 0;
 
     while (diperiksa < limit) {
         // synced_at sebagai TEKS: Date JS memotong mikrodetik, kursor bisa macet di satu milidetik.
-        const potongan = (await db.execute(sql`SELECT id, number, synced_at::text AS at FROM sales_invoice
+        const potongan = (await db.execute(sql`SELECT id, number, synced_at::text AS at, coalesce(last_update, '') AS lu FROM sales_invoice
             WHERE number LIKE 'INV/%' AND (synced_at, id) > (${at}::timestamptz, ${lastId})
             ORDER BY synced_at, id LIMIT ${POTONG}`)).rows as Baris[];
         if (potongan.length === 0) break;
         diperiksa += potongan.length;
 
         const refs = potongan.map((r) => String(r.number));
+        const tanda = refs.map(() => "?").join(",");
         const milikBerkas = new Set((await salesClient.execute({
-            sql: `SELECT DISTINCT referensi FROM sales_history_item WHERE source_file <> ? AND referensi IN (${refs.map(() => "?").join(",")})`,
+            sql: `SELECT DISTINCT referensi FROM sales_history_item WHERE source_file <> ? AND referensi IN (${tanda})`,
             args: [SUMBER_ACCURATE, ...refs],
         })).rows.map((r) => String(r.referensi)));
+        // synced_at maju di SETIAP sync list.do untuk faktur yang punya rincian (lib/sync bumpSyncedAt membandingkan
+        // dengan jawaban list.do tanpa detailItem) — ±66 rb faktur/hari. lastUpdate Accurate yang jadi penanda isi berubah.
+        const salinan = new Map((await salesClient.execute({
+            sql: `SELECT referensi, last_update FROM accurate_copy WHERE referensi IN (${tanda})`, args: refs,
+        })).rows.map((r) => [String(r.referensi), String(r.last_update)]));
+        const luRef = new Map(potongan.map((r) => [String(r.number), String(r.lu)]));
         dilewatiBerkas += milikBerkas.size;
-        const ids = potongan.filter((r) => !milikBerkas.has(String(r.number))).map((r) => Number(r.id));
+        const baru = potongan.filter((r) => !milikBerkas.has(String(r.number)) && salinan.get(String(r.number)) !== String(r.lu));
+        takBerubah += potongan.length - milikBerkas.size - baru.length;
+        const ids = baru.map((r) => Number(r.id));
 
         const tulis: Array<{ sql: string; args: Array<string | number> }> = [];
         if (ids.length > 0) {
@@ -77,6 +89,7 @@ export async function GET(req: Request) {
                             i.qty, i.satuan, i.hargaSatuan, i.hargaTotal, i.diskonRp, i.dpp, i.ppn, i.sourceFile, i.keterangan],
                     });
                 }
+                tulis.push({ sql: "INSERT OR REPLACE INTO accurate_copy (referensi, last_update) VALUES (?, ?)", args: [f.referensi, luRef.get(f.referensi) ?? ""] });
                 disalin += 1;
                 barisItem += f.items.length;
             }
@@ -91,6 +104,6 @@ export async function GET(req: Request) {
 
     const sisa = Number((await db.execute(sql`SELECT count(*)::int AS n FROM sales_invoice
         WHERE number LIKE 'INV/%' AND (synced_at, id) > (${at}::timestamptz, ${lastId})`)).rows[0]?.n ?? 0);
-    console.log(`[SALES HISTORY ACCURATE] ${diperiksa} diperiksa, ${disalin} faktur (${barisItem} baris) disalin, ${dilewatiBerkas} milik berkas, ${tanpaRincian} tanpa rincian, ${sisa} sisa`);
-    return NextResponse.json({ ok: true, diperiksa, disalin, barisItem, dilewatiBerkas, tanpaRincian, sisa, kursor: { at, lastId } });
+    console.log(`[SALES HISTORY ACCURATE] ${diperiksa} diperiksa, ${disalin} faktur (${barisItem} baris) disalin, ${takBerubah} tak berubah, ${dilewatiBerkas} milik berkas, ${tanpaRincian} tanpa rincian, ${sisa} sisa`);
+    return NextResponse.json({ ok: true, diperiksa, disalin, barisItem, takBerubah, dilewatiBerkas, tanpaRincian, sisa, kursor: { at, lastId } });
 }

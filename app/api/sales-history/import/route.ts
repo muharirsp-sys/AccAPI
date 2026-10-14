@@ -91,17 +91,19 @@ export async function POST(request: NextRequest) {
         }
         handleLine(buf.replace(/\r$/, "")); // baris terakhir tanpa newline
         await flush();
-        // Berkas menang atas salinan Accurate (cron sales-history-accurate): buang baris Accurate untuk faktur yang kini ada di berkas ini.
-        await salesClient.execute({
-            sql: "DELETE FROM sales_history_item WHERE source_file = ? AND referensi IN (SELECT referensi FROM sales_history_item WHERE source_file = ?)",
-            args: [SUMBER_ACCURATE, sourceFile],
-        });
 
         return NextResponse.json({ ok: true, sourceFile, imported: total });
     } catch (error) {
         console.error("[SALES HISTORY IMPORT ERROR]", error);
         return NextResponse.json({ ok: false, error: "Gagal mengimpor data." }, { status: 500 });
     } finally {
+        // Berkas menang atas salinan Accurate (cron sales-history-accurate): buang baris Accurate untuk faktur yang ada di berkas ini —
+        // juga bila impor gagal di tengah, supaya baris parsial tidak berdampingan dengan salinannya. Penanda accurate_copy ikut dihapus:
+        // bila berkas kelak diimpor ulang tanpa faktur itu, cron menyalinnya lagi pada sync berikutnya.
+        await salesClient.batch([
+            { sql: "DELETE FROM accurate_copy WHERE referensi IN (SELECT referensi FROM sales_history_item WHERE source_file = ?)", args: [sourceFile] },
+            { sql: "DELETE FROM sales_history_item WHERE source_file = ? AND referensi IN (SELECT referensi FROM sales_history_item WHERE source_file = ?)", args: [SUMBER_ACCURATE, sourceFile] },
+        ], "write").catch((e) => console.error("[SALES HISTORY IMPORT] gagal membersihkan salinan Accurate", e));
         inFlight.delete(sourceFile);
     }
 }
