@@ -1,10 +1,11 @@
 -- =====================================================================
--- Kunci izin NOO (toko baru) ke grup preset — jawaban owner 13 Okt 2026 (P2):
+-- Kunci izin NOO (toko baru) ke grup preset — jawaban owner 13 Okt 2026 (P2) + keputusan 13 Okt malam:
 --   SPV   : form_kontrol.noo_setujui              (setujui/tolak NOO tim + lihat KTP lengkap NOO tim)
---   SM    : form_kontrol.noo_setujui              (menyetujui bila SPV berhalangan: NOO di bawah SPV bawahannya; TIDAK lihat KTP)
---   Admin : form_kontrol.noo_setujui, form_kontrol.noo_ktp (noo_ktp = kunci KAPABILITAS: lihat KTP lengkap semua NOO, dicatat audit)
--- Admin Sales TIDAK diberi (owner: Admin Sales tidak melihat KTP); antrean "daftarkan di Accurate" + penautan memakai form_kontrol.manage
--- yang sudah dimiliki Admin/Admin Sales. Tidak ada grup yang diberi kunci lain oleh berkas ini.
+--   SM    : form_kontrol.noo_setujui              (menyetujui bila SPV berhalangan + lihat KTP lengkap: NOO di bawah SPV bawahannya)
+--   Admin : form_kontrol.noo_setujui, form_kontrol.noo_ktp, form_kontrol.noo_tautkan
+--           (noo_ktp = KAPABILITAS lihat KTP lengkap semua NOO, dicatat audit; noo_tautkan = KAPABILITAS tautkan NOO ke pelanggan Accurate)
+-- Admin Sales dan Manager TIDAK diberi (owner: Admin Sales tidak melihat KTP; HANYA grup Admin yang menautkan). Manager tetap MELIHAT
+-- daftar/rincian NOO lewat form_kontrol.manage yang sudah ada di presetnya. Tidak ada grup yang diberi kunci lain oleh berkas ini.
 --
 -- URUTAN (IT Support, D-17): SESUDAH image NOO terpasang (kunci harus sudah ada di registry aplikasi) dan SESUDAH docs/handover/DDL_NOO.sql.
 --   docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 < docs/handover/RBAC_PRESET_NOO.sql
@@ -38,7 +39,7 @@ END $$;
 WITH isi(grup, kunci) AS (VALUES
     ('SPV', 'form_kontrol.noo_setujui'),
     ('SM', 'form_kontrol.noo_setujui'),
-    ('Admin', 'form_kontrol.noo_setujui'), ('Admin', 'form_kontrol.noo_ktp')
+    ('Admin', 'form_kontrol.noo_setujui'), ('Admin', 'form_kontrol.noo_ktp'), ('Admin', 'form_kontrol.noo_tautkan')
 ),
 izin AS (
     INSERT INTO group_permission (group_id, permission_key)

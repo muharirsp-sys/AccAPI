@@ -79,7 +79,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
         name: "SM", desc: "Sales Manager — approve OPC + Form Kontrol", keys: [
             ...k("dashboard", ["view"]),
             ...k("off_program_control", ["view", "sm_approve", "sm_return", "submit_refund"]),
-            // NOO: SM menyetujui bila SPV berhalangan (tanpa KTP lengkap).
+            // NOO: SM menyetujui bila SPV berhalangan (+ lihat KTP lengkap NOO tim, owner 13 Okt malam).
             ...k("form_kontrol", ["view", "submit", "noo_setujui"]),
             ...k("insentif_sales", ["view"]),
         ],

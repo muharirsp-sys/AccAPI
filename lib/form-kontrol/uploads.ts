@@ -44,12 +44,15 @@ export function labelWaktu(timeZone: string, now = new Date()) {
     return `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}`;
 }
 
+/** Peninjau A R4: batas piksel masukan (kamera ponsel ≤ ±50 MP jarang; bawaan sharp ±268 MP = bom dekompresi di container 2 GB). */
+export const BATAS_PIKSEL_FOTO = 40_000_000;
+
 /**
  * Gambar unggahan → JPEG ≤ 1600 px (orientasi EXIF dipakai lalu metadata dibuang), latar transparan jadi PUTIH (PNG beralfa tidak jadi hitam),
- * opsional cap dua baris di kiri-bawah. Melempar bila bukan gambar yang bisa dibaca sharp.
+ * opsional cap dua baris di kiri-bawah. Melempar bila bukan gambar yang bisa dibaca sharp atau > BATAS_PIKSEL_FOTO piksel.
  */
 export async function olahFoto(masuk: Buffer, cap?: [string, string]): Promise<Buffer> {
-    const kecil = await sharp(masuk)
+    const kecil = await sharp(masuk, { limitInputPixels: BATAS_PIKSEL_FOTO })
         .rotate()
         .flatten({ background: "#ffffff" })
         .resize(1600, 1600, { fit: "inside", withoutEnlargement: true })

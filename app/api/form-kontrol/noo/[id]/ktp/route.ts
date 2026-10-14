@@ -7,8 +7,9 @@
  * Main Functions: POST.
  * Side Effects: INSERT kontrol_audit_log; baca berkas data/private/noo.
  *
- * Hak (lib/form-kontrol/noo hakNoo().ktp): form_kontrol.noo_ktp (grup Admin) · SPV pemegang noo_setujui untuk timnya · salesman pengaju
- * selama menunggu SPV. SM dan Admin Sales TIDAK. Luar cakupan = 404; dalam cakupan tanpa hak = 403 KTP_TIDAK_BOLEH.
+ * Hak (lib/form-kontrol/noo hakNoo().ktp): form_kontrol.noo_ktp (grup Admin) · SPV/SM pemegang noo_setujui untuk timnya · salesman pengaju
+ * selama menunggu SPV (SM = pengganti atas SPV bawahannya, owner 13 Okt malam). Admin Sales dan Manager TIDAK. Luar cakupan = 404; dalam
+ * cakupan tanpa hak = 403 KTP_TIDAK_BOLEH.
  */
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";

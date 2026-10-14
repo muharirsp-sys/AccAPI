@@ -1,26 +1,27 @@
 /*
  * Tujuan: Satu NOO (toko baru, owner 13 Okt 2026). GET = rincian (NIK TERSAMAR, tanpa foto KTP) + pembanding duplikat + saran pelanggan
  *   untuk penautan (Admin, status disetujui; ?cari= = cari nama/kode di cabang NOO). POST = aksi: setujui / tolak (SPV tim, SM atas SPV
- *   bawahannya, grup Admin), tautkan (Admin), kunjungi (salesman pengaju, hari ini).
+ *   bawahannya, grup Admin), tautkan (grup Admin), kunjungi (salesman pengaju, hari ini).
  * Caller: app/(dashboard)/form-kontrol/tabs/TabNoo.tsx.
  * Dependensi: lib/form-kontrol/noo, lib/form-kontrol (getJksPrinciples), lib/order-cabang (cakupanCabang, jawabGalat), lib/beranda (witaToday).
  * Main Functions: GET, POST { aksi: "setujui", konfirmasiPemilikSama? } | { aksi: "tolak", alasan } | { aksi: "tautkan", customerId } |
  *   { aksi: "kunjungi", principle }.
  * Side Effects: POST = UPDATE noo_toko / INSERT kunjungan_luar_rute + kontrol_audit_log (lib/form-kontrol/noo).
  *
- * Izin per aksi (gerbang + hakNoo): setujui/tolak = form_kontrol.noo_setujui; tautkan = form_kontrol.manage; kunjungi = form_kontrol.submit.
+ * Izin per aksi (gerbang + hakNoo): setujui/tolak = form_kontrol.noo_setujui; tautkan = form_kontrol.noo_tautkan (HANYA grup Admin, owner
+ * 13 Okt malam); kunjungi = form_kontrol.submit.
  * NOO di luar cakupan = 404 NOO_TIDAK_ADA (keberadaannya tidak dibuka).
  */
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import { getJksPrinciples } from "@/lib/form-kontrol";
-import { aksesNoo, ambilNoo, hakNoo, kunjungiNoo, putuskanNoo, ringkasPembanding, saranPelanggan, tampilanNoo, tautkanNoo } from "@/lib/form-kontrol/noo";
+import { aksesNoo, ambilNoo, hakNoo, kunjungiNoo, lihatPembanding, putuskanNoo, ringkasPembanding, saranPelanggan, tampilanNoo, tautkanNoo } from "@/lib/form-kontrol/noo";
 import { cakupanCabang, jawabGalat } from "@/lib/order-cabang";
 import { witaToday } from "@/lib/beranda";
 
 type Konteks = { params: Promise<{ id: string }> };
 const TIDAK_ADA = { status: 404, kode: "NOO_TIDAK_ADA", error: "Pengajuan toko baru ini tidak ditemukan dalam cakupan Anda; muat ulang daftarnya." };
-const IZIN_AKSI = { setujui: "form_kontrol.noo_setujui", tolak: "form_kontrol.noo_setujui", tautkan: "form_kontrol.manage", kunjungi: "form_kontrol.submit" } as const;
+const IZIN_AKSI = { setujui: "form_kontrol.noo_setujui", tolak: "form_kontrol.noo_setujui", tautkan: "form_kontrol.noo_tautkan", kunjungi: "form_kontrol.submit" } as const;
 
 export async function GET(req: Request, { params }: Konteks) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -32,7 +33,8 @@ export async function GET(req: Request, { params }: Konteks) {
         if (!r || !hakNoo(a, r).baca) return jawabGalat(TIDAK_ADA);
         const cari = new URL(req.url).searchParams.get("cari") ?? "";
         return NextResponse.json({
-            ok: true, row: tampilanNoo(r, a, true), pembanding: await ringkasPembanding(r.duplikatDengan),
+            // Peninjau A R3: NOO pembanding (toko, alamat, salesman) hanya untuk non-salesman / salesman pemilik pembanding itu.
+            ok: true, row: tampilanNoo(r, a, true), pembanding: lihatPembanding(a, r.duplikatSalesCode) ? await ringkasPembanding(r.duplikatDengan) : null,
             saran: hakNoo(a, r).tautkan ? await saranPelanggan(r, cari) : null,
         }, { headers: { "Cache-Control": "private, no-store" } });
     } catch {

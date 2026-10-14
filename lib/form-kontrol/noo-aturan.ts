@@ -4,7 +4,7 @@
  * Caller: lib/form-kontrol/noo.ts, app/api/form-kontrol/noo/**, app/api/form-kontrol/ao-control (lewat noo.ts),
  *   app/(dashboard)/form-kontrol/tabs/{TabNoo,NooFormulir,TabAo}.tsx, visit/[custCode]/Kunjungan.tsx, spv-dashboard/DashboardSpv.tsx.
  * Dependensi: tidak ada (aman di klien).
- * Main Functions: isKodeNoo, normalHp, periksaNik, samarkanNik, periksaIsianNoo, LABEL_STATUS_NOO.
+ * Main Functions: isKodeNoo, normalHp, periksaNik, samarkanNik, galatIsianNoo (semua galat per isian), periksaIsianNoo (galat pertama), LABEL_STATUS_NOO.
  * Side Effects: Tidak ada.
  */
 
@@ -58,28 +58,40 @@ const angka = (v: unknown): number | null => {
     return Number.isFinite(n) ? n : null;
 };
 
+/** Urutan isian = urutan di formulir (peninjau B S2): galat pertama = isian pertama yang salah dari atas. */
+export const URUTAN_ISIAN = ["namaToko", "namaPemilik", "alamat", "noHp", "gps", "nik", "namaKtp"] as const;
+export type KunciIsian = (typeof URUTAN_ISIAN)[number];
+
 /**
- * Isian formulir NOO (FormData atau objek; nilai teks) → isian bersih, atau galat berkode berkalimat Indonesia.
+ * SEMUA galat isian formulir NOO per isian (layar: pesan di dekat isian + aria-invalid) dan isian bersih bila tanpa galat.
  * Galat TIDAK pernah memuat nilai NIK/HP yang diketik (data pribadi tidak masuk pesan galat).
  */
-export function periksaIsianNoo(ambil: (k: string) => unknown): { isian: IsianNoo } | { galat: GalatIsian } {
+export function galatIsianNoo(ambil: (k: string) => unknown): { isian: IsianNoo | null; galat: Partial<Record<KunciIsian, GalatIsian>> } {
+    const galat: Partial<Record<KunciIsian, GalatIsian>> = {};
     const teks = {} as Record<keyof typeof BATAS, string>;
     for (const k of Object.keys(BATAS) as (keyof typeof BATAS)[]) {
         const v = String(ambil(k) ?? "").replace(/\s+/g, " ").trim();
-        if (!v) return { galat: { kode: "ISIAN_WAJIB", error: `${LABEL[k]} wajib diisi.` } };
-        if (v.length > BATAS[k]) return { galat: { kode: "ISIAN_TERLALU_PANJANG", error: `${LABEL[k]} maksimal ${BATAS[k]} karakter.` } };
+        if (!v) galat[k] = { kode: "ISIAN_WAJIB", error: `${LABEL[k]} wajib diisi.` };
+        else if (v.length > BATAS[k]) galat[k] = { kode: "ISIAN_TERLALU_PANJANG", error: `${LABEL[k]} maksimal ${BATAS[k]} karakter.` };
         teks[k] = v;
     }
     const noHp = normalHp(ambil("noHp"));
-    if (!noHp) return { galat: { kode: "HP_TIDAK_SAH", error: "No. HP pemilik harus nomor seluler Indonesia (08…, +62…), 10–13 angka." } };
+    if (!noHp) galat.noHp = { kode: "HP_TIDAK_SAH", error: "No. HP pemilik harus nomor seluler Indonesia (08…, +62…), 10–13 angka." };
     const nik = periksaNik(ambil("nik"));
-    if (!nik) return { galat: { kode: "NIK_TIDAK_SAH", error: "NIK harus tepat 16 angka sesuai KTP." } };
+    if (!nik) galat.nik = { kode: "NIK_TIDAK_SAH", error: "NIK harus tepat 16 angka sesuai KTP." };
     const lat = angka(ambil("lat")), lng = angka(ambil("lng")), akurasi = angka(ambil("akurasi"));
     if (lat === null || lng === null || akurasi === null) {
-        return { galat: { kode: "GPS_WAJIB", error: "Lokasi GPS toko wajib. Nyalakan izin lokasi di peramban lalu ambil lokasi lagi." } };
+        galat.gps = { kode: "GPS_WAJIB", error: "Lokasi GPS toko wajib. Nyalakan izin lokasi di peramban lalu ambil lokasi lagi." };
+    } else if (lat < -90 || lat > 90 || lng < -180 || lng > 180 || akurasi < 0) {
+        galat.gps = { kode: "GPS_TIDAK_SAH", error: "Koordinat GPS tidak sah; ambil lokasi lagi." };
     }
-    if (lat < -90 || lat > 90 || lng < -180 || lng > 180 || akurasi < 0) {
-        return { galat: { kode: "GPS_TIDAK_SAH", error: "Koordinat GPS tidak sah; ambil lokasi lagi." } };
-    }
-    return { isian: { ...teks, noHp, nik, lat, lng, akurasi } };
+    const ada = URUTAN_ISIAN.some((k) => galat[k]);
+    return { galat, isian: ada ? null : { ...teks, noHp: noHp!, nik: nik!, lat: lat!, lng: lng!, akurasi: akurasi! } };
+}
+
+/** Isian formulir NOO → isian bersih, atau galat PERTAMA (urutan formulir) berkode berkalimat Indonesia (server). */
+export function periksaIsianNoo(ambil: (k: string) => unknown): { isian: IsianNoo } | { galat: GalatIsian } {
+    const r = galatIsianNoo(ambil);
+    const pertama = URUTAN_ISIAN.find((k) => r.galat[k]);
+    return pertama ? { galat: r.galat[pertama]! } : { isian: r.isian! };
 }

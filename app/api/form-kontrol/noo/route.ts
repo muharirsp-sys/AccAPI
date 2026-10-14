@@ -12,13 +12,16 @@
  *   - izin form_kontrol.submit; HANYA akun salesman pemilik kode sales itu → 403 BUKAN_PEMILIK; tanggal = hari ini WITA server;
  *   - isian wajib + format (NIK 16 angka, HP seluler Indonesia, GPS wajib) → 400; dua foto wajib gambar ≤ 5 MB → 400 FOTO_*;
  *   - cabang = cabang karyawan Accurate salesman (O1; galat tautan diteruskan); principal = JKS aktif / cabang (sama dengan luar rute);
- *   - NIK/HP sama dengan NOO lain yang belum ditolak → 409 NOO_DUPLIKAT (+ pembanding kode/toko/status) kecuali pemilikSama=ya + alasan
- *     ≥ 10 huruf (→ tanda duplikat, pemutus WAJIB mengonfirmasi); id sama dikirim ulang = baris lama (200).
+ *   - NIK/HP sama dengan NOO lain yang belum ditolak → 409 NOO_DUPLIKAT (+ `pembanding` kode/toko/status HANYA untuk NOO milik salesman
+ *     sendiri; milik orang lain hanya `lain` [{cocok}] — peninjau A R3) kecuali pemilikSama=ya + alasan ≥ 10 huruf (→ tanda duplikat, pemutus
+ *     WAJIB mengonfirmasi); id sama dikirim ulang dengan isian sama = baris lama (200), isian berbeda = 409 ID_BEDA_ISI;
+ *   - Content-Length > 2 × 5 MB + 512 KB → 413 sebelum body dibaca; foto > 40 MP ditolak sharp (FOTO_TIDAK_SAH).
+ * GET: status aktif (menunggu/disetujui) selalu lengkap; selesai (ditolak/terdaftar) BATAS_SELESAI terbaru + `selesaiTerpotong`.
  */
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import { getJksPrinciples } from "@/lib/form-kontrol";
-import { aksesNoo, bolehBacaNoo, buatNoo, daftarNoo, tampilanNoo } from "@/lib/form-kontrol/noo";
+import { BATAS_SELESAI, aksesNoo, bolehBacaNoo, buatNoo, daftarNoo, tampilanNoo } from "@/lib/form-kontrol/noo";
 import { periksaIsianNoo, type StatusNoo } from "@/lib/form-kontrol/noo-aturan";
 import { cakupanCabang, jawabGalat } from "@/lib/order-cabang";
 import { witaToday } from "@/lib/beranda";
@@ -26,6 +29,8 @@ import { witaToday } from "@/lib/beranda";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const STATUS: readonly StatusNoo[] = ["menunggu_spv", "disetujui", "ditolak", "terdaftar"];
 const MAKS_FOTO = 5 * 1024 * 1024;
+// Peninjau A R4: body ditolak SEBELUM dibaca bila Content-Length jelas melebihi dua foto 5 MB + isian (req.formData membaca seluruh body).
+const MAKS_BODY = 2 * MAKS_FOTO + 512 * 1024;
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -41,8 +46,9 @@ export async function GET(req: Request) {
         if (a.scope.allowedSalesCodes === null ? !bolehBacaNoo(a, "") : salesCode && !bolehBacaNoo(a, salesCode)) {
             return jawabGalat({ status: 403, kode: "LUAR_CAKUPAN", error: "Daftar toko baru di luar cakupan akun Anda." });
         }
-        const rows = await daftarNoo(a, { status: status as StatusNoo[], salesCode: salesCode || undefined });
-        return NextResponse.json({ ok: true, rows: rows.map((r) => tampilanNoo(r, a)) }, { headers: { "Cache-Control": "private, no-store" } });
+        const { rows, selesaiTerpotong } = await daftarNoo(a, { status: status as StatusNoo[], salesCode: salesCode || undefined });
+        return NextResponse.json({ ok: true, rows: rows.map((r) => tampilanNoo(r, a)), selesaiTerpotong, batasSelesai: BATAS_SELESAI },
+            { headers: { "Cache-Control": "private, no-store" } });
     } catch {
         return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });
     }
@@ -53,6 +59,9 @@ export async function POST(req: Request) {
     if (gate.response) return gate.response;
     const session = gate.session;
     try {
+        if (Number(req.headers.get("content-length") ?? 0) > MAKS_BODY) {
+            return jawabGalat({ status: 413, kode: "FOTO_TERLALU_BESAR", error: "Kiriman terlalu besar: tiap foto maksimal 5 MB. Ambil ulang foto." });
+        }
         const form = await req.formData().catch(() => null);
         if (!form) return jawabGalat({ status: 400, kode: "INPUT_TIDAK_VALID", error: "Formulir toko baru tidak terbaca; kirim ulang." });
         const teks = (k: string) => { const v = form.get(k); return typeof v === "string" ? v.trim() : ""; };
