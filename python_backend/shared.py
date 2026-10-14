@@ -4037,7 +4037,8 @@ def _apply_native_kelompok(rows_to_check, master_items):
                         continue
                     if _kem and kemasan_of(it.get("nama_barang")) not in _kem:
                         continue
-                    if (norm(it.get("kelompok")), norm(it.get("gramasi"))) in _seed_keys                             and _qualifier_of(it) in _seed_qual.get(norm(it.get("kelompok")), {_qualifier_of(it)}):
+                    if ((norm(it.get("kelompok")), norm(it.get("gramasi"))) in _seed_keys
+                            and _qualifier_of(it) in _seed_qual.get(norm(it.get("kelompok")), {_qualifier_of(it)})):
                         matched_items.append(it)
                         _seen_codes.add(_kode)
                     
@@ -4241,7 +4242,9 @@ def _terapkan_all_variant_eksklusif(rows):
     Itu bukan kekhawatiran teoretis: 13 aturan Excel `BP2609007713` yang sudah hidup di produksi
     melanggarnya hari ini. Keputusan pengguna 16 September 2026 menutupnya, dan ini penegakannya.
 
-    Lingkupnya SEMPIT dengan sengaja: hanya baris dengan NOMOR SURAT dan KELOMPOK yang sama.
+    Lingkupnya SEMPIT dengan sengaja: hanya baris dengan NOMOR SURAT, CHANNEL, dan KELOMPOK yang
+    sama. Channel berbeda = program berbeda; satu nomor surat Priskila dibawa ke blok MTI/Grosir/
+    Star Outlet (`surat_struktur.nomor_terbawa`), dan tanpa channel baris MTI kehilangan kodenya.
     Dua surat berbeda boleh memberi bonus pada barang yang sama — itu keputusan principal, bukan
     kekeliruan pembacaan. Dan hanya varian BERNAMA yang mencabut; dua baris yang sama-sama
     "ALL VARIANT" tidak saling mencabut, karena tidak ada yang bisa dikatakan lebih spesifik.
@@ -4255,6 +4258,7 @@ def _terapkan_all_variant_eksklusif(rows):
         if not v or v == "ALL VARIANT":
             continue
         kunci = (str(r.get("surat_program", "") or "").strip().upper(),
+                 str(r.get("channel_gtmt", "") or "").strip().upper(),
                  str(r.get("kelompok", "") or "").strip().upper())
         for kode in str(r.get("kode_barangs", "") or "").split(","):
             if kode.strip():
@@ -4266,6 +4270,7 @@ def _terapkan_all_variant_eksklusif(rows):
         if _norm_var(r.get("variant")) not in ("", "ALL VARIANT"):
             continue
         kunci = (str(r.get("surat_program", "") or "").strip().upper(),
+                 str(r.get("channel_gtmt", "") or "").strip().upper(),
                  str(r.get("kelompok", "") or "").strip().upper())
         milik_lain = diklaim.get(kunci)
         if not milik_lain:

@@ -100,3 +100,12 @@ def test_simpan_tidak_mencampur_sub_lini_sport():
             for kode, ket in (("R5", "Beli 7 PCS"), ("R1", "Beli 4 PCS"))]
     hasil = {r["ketentuan"]: set(r["kode_barangs"].split(",")) for r in _apply_native_kelompok(rows, master)}
     assert hasil == {"Beli 7 PCS": {"R5", "R6"}, "Beli 4 PCS": {"R1", "R2"}}, hasil
+
+
+def test_channel_berbeda_tidak_saling_mencabut():
+    """Satu nomor surat Priskila dibawa ke semua blok channel. Baris Grosir "Sport & All Variant"
+    tidak boleh mencabut kode baris MTI berkelompok sama -- dulu MTI kehilangan 19 SKU diam-diam."""
+    grosir = dict(_baris("002", "REGAZZA FM - EDT", "Sport & All Variant", "R1,R5"), channel_gtmt="GT GROSIR")
+    mti = dict(_baris("002", "REGAZZA FM - EDT", "ALL VARIANT", "R1,R5,R6"), channel_gtmt="MT")
+    terapkan([grosir, mti])
+    assert mti["kode_barangs"] == "R1,R5,R6", mti
