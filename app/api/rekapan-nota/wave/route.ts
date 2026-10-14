@@ -23,8 +23,9 @@ export async function GET(req: NextRequest) {
         `SELECT w.id::int AS id, w.tanggal::text, w.urutan, w.nama, w.tipe::text, w.status::text,
                 w.created_at, w.released_at,
                 count(wa.id) FILTER (WHERE wa.dilepas = false)::int AS jumlah_nota,
+                -- Wave batal tidak punya pekerjaan lagi (BL-25: exception-nya tidak bisa ditutup) -> tidak dihitung terbuka.
                 (SELECT count(*)::int FROM wave_exception e
-                  WHERE e.wave_id = w.id AND e.status = 'open')     AS exception_open
+                  WHERE e.wave_id = w.id AND e.status = 'open' AND w.status <> 'cancelled') AS exception_open
            FROM wave w
            LEFT JOIN wave_assignment wa ON wa.wave_id = w.id
           WHERE w.tanggal = $1::date

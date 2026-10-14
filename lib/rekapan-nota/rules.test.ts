@@ -11,7 +11,7 @@ import {
     resolveKlasifikasi, isAreaDikecualikan, parseAreaDikecualikan,
     hitungPareto, klasifikasiSirup, isiPerKarton, GRUP_DEFAULT,
 } from "@/lib/rekapan-nota/classify";
-import { transisiWave } from "@/lib/rekapan-nota/wave-state";
+import { tolakUbahIsi, transisiWave } from "@/lib/rekapan-nota/wave-state";
 
 test("outlet tak terdaftar jatuh ke Gabung, area dinormalkan", () => {
     assert.deepEqual(resolveKlasifikasi(null), { area: null, grupAll: GRUP_DEFAULT, grupGdi: GRUP_DEFAULT });
@@ -69,4 +69,17 @@ test("wave kosong tidak bisa dirilis, wave selesai tidak bisa mundur", () => {
     assert.equal(transisiWave("confirmed", "release", { jumlahNota: 5, konversiOpen: 0 }).ok, false);
     assert.equal(transisiWave("cancelled", "confirm", { jumlahNota: 5, konversiOpen: 0 }).ok, false);
     assert.equal(transisiWave("released", "cancel", { jumlahNota: 5, konversiOpen: 9 }).ok, true);
+});
+
+test("BL-25: isi wave tertutup tidak bisa diubah; exception masih bisa ditutup setelah konfirmasi", () => {
+    for (const aksi of ["takeout", "prioritas", "set_grup"] as const) {
+        assert.equal(tolakUbahIsi("draft", aksi), null);
+        assert.equal(tolakUbahIsi("released", aksi), null);
+        assert.match(tolakUbahIsi("confirmed", aksi) ?? "", /sudah dikonfirmasi/);
+        assert.match(tolakUbahIsi("cancelled", aksi) ?? "", /sudah dibatalkan/);
+    }
+    assert.equal(tolakUbahIsi("draft", "tambah"), null);
+    assert.match(tolakUbahIsi("released", "tambah") ?? "", /tidak bisa ditambah/);
+    assert.equal(tolakUbahIsi("confirmed", "tutup_exception"), null, "selisih file (BL-54) bisa muncul sesudah konfirmasi");
+    assert.match(tolakUbahIsi("cancelled", "tutup_exception") ?? "", /tidak bisa ditutup/);
 });

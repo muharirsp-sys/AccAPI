@@ -19,6 +19,7 @@ import { aoControlDaily, jksMaster, kontrolAuditLog, kunjunganLuarRute, merchand
 import { cocokKodeRute, type GalatOrder } from "@/lib/order-cabang";
 import { DAY_TO_HARI, MINGGU_PATTERNS, hariBaku, kodeJksUntuk, kunciHari, paritasMinggu } from "./constants";
 import { parseDateString } from "./db";
+import { POLA_KODE_NOO, isKodeNoo } from "./noo-aturan";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 
 // ---------------------------------------------------------------- murni
@@ -125,7 +126,10 @@ export async function daftarLuarRute(salesCode: string, tanggal: string) {
         k, status: ao.status, noOrderReasonCode: ao.noOrderReasonCode, checkinAt: ao.checkinAt, checkoutAt: ao.checkoutAt,
     }).from(k).leftJoin(ao, and(eq(ao.salesCode, k.salesCode), eq(ao.custCode, k.custCode), eq(ao.principle, k.principle), eq(ao.date, k.tanggal)))
         .where(and(eq(k.salesCode, salesCode), isNull(k.dibatalkanPada), or(eq(k.tanggal, tanggal),
-            and(eq(k.konfirmasi, "menunggu"), isNotNull(ao.checkinAt), sql`${k.tanggal} < ${tanggal}`))))
+            and(eq(k.konfirmasi, "menunggu"), isNotNull(ao.checkinAt), sql`${k.tanggal} < ${tanggal}`)),
+            // NOO (13 Okt): kunjungan toko baru (customer_id NULL + cust_code berbentuk kode NOO) tidak dikonfirmasi masuk JKS — belum ada
+            // pelanggan Accurate. Tanpa membaca tabel noo_toko (alur luar rute tidak bergantung DDL NOO); tambahLuarRute SELALU mengisi customer_id.
+            sql`NOT (${k.customerId} IS NULL AND ${k.custCode} ~ ${POLA_KODE_NOO.source})`))
         .orderBy(desc(k.tanggal), asc(k.custName));
     const kandidat = [...new Set(rows.flatMap((r) => kodeJksUntuk(r.k.custCode)))];
     const principals = [...new Set(rows.map((r) => r.k.principle))];
@@ -170,6 +174,7 @@ export async function konfirmasiLuarRute(d: {
         if (k.dibatalkanPada) return galat(409, "SUDAH_DIBATALKAN", `Kunjungan ${k.custName} sudah dibatalkan; muat ulang daftarnya.`);
         if (k.konfirmasi === "jks") return galat(409, "SUDAH_DIKONFIRMASI", `${k.custName} sudah masuk JKS Anda (${jadwal({ hariKunjungan: k.hari, mingguPattern: k.mingguPattern })}).`);
         if (k.konfirmasi === "sudah_jks") return galat(409, "SUDAH_DI_JKS", `${k.custName} sudah ada di JKS Anda pada hari lain; tidak perlu dikonfirmasi.`);
+        if (k.customerId === null && isKodeNoo(k.custCode)) return galat(409, "NOO_BELUM_TERDAFTAR", `${k.custName} adalah toko baru (NOO) tanpa kode pelanggan Accurate; masuk JKS sesudah terdaftar, lewat kunjungan luar rute berkode pelanggan.`);
         const now = new Date();
         const jejak = { dikonfirmasiOleh: d.aktorId, dikonfirmasiOlehNama: d.aktorNama, dikonfirmasiPada: now };
         const audit = (action: string, payload: Record<string, unknown>) => tx.insert(kontrolAuditLog).values({ id: randomUUID(), entity: "luar_rute",
@@ -237,8 +242,8 @@ export async function konfirmasiLuarRute(d: {
  * (409 SUDAH_DIKONFIRMASI), dan BELUM ada catatan apa pun untuk toko itu hari itu: baris ao_control_daily apa pun (check-in, status, atau
  * "tidak dikunjungi" dari Kirim status rute) atau merchandising (409 SUDAH_DIKUNJUNGI) — jadi baris batal tidak pernah terhitung di Dashboard
  * SPV/laporan. Kunci baris FOR UPDATE: dua batal serentak = satu 200, satu 409. Jejak: kolom batal + audit `luar_rute/batal`.
- * ponytail: check-in yang SERENTAK dengan batal tidak dikunci (ao_control_daily tidak memegang kunci baris ini) — baris AO bisa tercatat
- *   untuk kunjungan yang baru dibatalkan; jendela milidetik dari satu salesman di satu ponsel. Penutupnya: check-in memeriksa rute.
+ * FK-MSM3: check-in/status/merchandising toko luar rute memegang FOR SHARE baris ini dalam transaksi tulisnya (db.ts galatBukanRute) —
+ *   batal dan tulis kunjungan berserialisasi: tulis lebih dulu → batal 409 SUDAH_DIKUNJUNGI; batal lebih dulu → tulis 409 KUNJUNGAN_DIBATALKAN.
  */
 export async function batalLuarRute(d: {
     id: string; salesCode: string; hariIni: string; aktorId: string; aktorNama: string | null;

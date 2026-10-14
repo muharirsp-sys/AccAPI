@@ -1,21 +1,24 @@
 /*
  * Tujuan: Modal kamera langsung untuk mengambil, meninjau, dan mempersistenkan foto bukti kunjungan sebelum ditutup.
- * Caller: app/(dashboard)/form-kontrol/visit/[custCode]/page.tsx (PhotoInput).
+ * Caller: app/(dashboard)/form-kontrol/visit/[custCode]/FotoBukti.tsx, app/(dashboard)/form-kontrol/tabs/NooFormulir.tsx (foto toko + KTP;
+ *   `judul` sendiri — peninjau B NOO R1: judul bawaan "Foto Bukti Kunjungan", id judul unik per instans).
  * Dependensi: getUserMedia native browser, `Dialog` native bersama, lucide-react ikon.
  * Main Functions: CameraCapture (default export).
  * Side Effects: Membuka stream kamera, membuat object URL pratinjau, menunggu callback persistence, dan menghentikan stream saat modal ditutup.
  */
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Camera, X, RotateCcw, Check, Loader2, ImageUp, SwitchCamera } from "lucide-react";
 import Dialog from "@/components/ui/Dialog";
 
-export default function CameraCapture({ open, onClose, onCapture }: {
+export default function CameraCapture({ open, onClose, onCapture, judul = "Foto Bukti Kunjungan" }: {
     open: boolean;
     onClose: () => void;
     onCapture: (blob: Blob) => Promise<void>;
+    judul?: string;
 }) {
+    const judulId = useId();
     const videoRef  = useRef<HTMLVideoElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const fileRef   = useRef<HTMLInputElement>(null);
@@ -108,11 +111,11 @@ export default function CameraCapture({ open, onClose, onCapture }: {
         <Dialog
             open={open}
             onClose={() => { if (!submitting) { stopStream(); onClose(); } }}
-            labelledBy="camera-capture-title"
+            labelledBy={judulId}
             className="m-0 h-dvh w-screen max-h-none max-w-none bg-black text-white flex-col open:flex"
         >
             <div className="flex items-center justify-between px-4 py-3 text-white">
-                <span id="camera-capture-title" className="text-sm font-semibold">Foto Bukti Kunjungan</span>
+                <span id={judulId} className="text-sm font-semibold">{judul}</span>
                 <button disabled={submitting} onClick={() => { stopStream(); onClose(); }} className="p-1.5 rounded-lg bg-white/10 disabled:opacity-40" aria-label="Tutup kamera">
                     <X size={18} />
                 </button>

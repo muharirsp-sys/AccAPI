@@ -2,14 +2,14 @@
  * Tujuan: Tipe, konstanta, dan helper bersama Form Kontrol (shell, tab tim, tab salesman, kunjungan).
  * Caller: form-kontrol/FormKontrol.tsx (shell), tabs/*, spv-dashboard/DashboardSpv.tsx, visit/[custCode]/*.
  * Dependensi: React (context izin), components/fiori/interactive (tipe Load).
- * Main Functions: TABS, hariIniWita, jamWita, IzinFkCtx/useIzinFk/alasanIzinFk, ambilFk, tulisFk, principalAwal, penjelasanTanpaJks,
+ * Main Functions: TABS, hariIniWita, jamWita, IzinFkCtx/useIzinFk/alasanIzinFk, ambilFk, tulisFk, useNooMenunggu, principalAwal, penjelasanTanpaJks,
  *   compareRoute, visitDurationMin.
  * Side Effects: ambilFk/tulisFk melakukan HTTP ke /api/form-kontrol/*; sisanya pure.
  */
 "use client";
 
-import { createContext, useContext } from "react";
-import type { Load } from "@/components/fiori/interactive";
+import { createContext, useCallback, useContext, useEffect } from "react";
+import { useLoad, type Load } from "@/components/fiori/interactive";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -85,7 +85,7 @@ export interface FreqRow {
     overVisit: boolean;
 }
 
-export type TabKey = "jks" | "ao" | "no-order" | "laporan" | "briefing" | "sm-control" | "frekuensi" | "hierarki";
+export type TabKey = "jks" | "ao" | "no-order" | "laporan" | "briefing" | "sm-control" | "frekuensi" | "hierarki" | "noo";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -99,6 +99,8 @@ export const TABS: { key: TabKey; label: string; roles: string[] }[] = [
     { key: "sm-control", label: "Kontrol SM", roles: ["sm", "admin", "manager"] },
     { key: "frekuensi", label: "Frekuensi Kunjungan", roles: ["admin", "manager", "admin_sales", "sm"] },
     { key: "hierarki", label: "Hierarki Sales", roles: ["admin", "manager"] },
+    // NOO (owner 13 Okt 2026): isi per hak dari server (pengajuan saya / persetujuan SPV-SM / antrean Admin).
+    { key: "noo", label: "Toko Baru (NOO)", roles: ["salesman", "spv", "sm", "admin", "manager", "admin_sales"] },
 ];
 
 /**
@@ -186,6 +188,27 @@ export async function ambilFk<T>(url: string, pick: (json: Record<string, unknow
     } catch {
         return { status: "galat", error: `${umum} Server tidak terjangkau — periksa sinyal atau koneksi, lalu coba lagi.` };
     }
+}
+
+/** Event window: NOO berubah (setuju/tolak/tautkan) → lencana "N menunggu" dimuat ulang (peninjau B R-b1). */
+export const NOO_BERUBAH = "fk:noo-berubah";
+
+/**
+ * Jumlah NOO (toko baru) yang menunggu keputusan AKUN INI (`row.boleh.putuskan` dari server) — lencana tab Toko Baru + strip Dashboard SPV
+ * (peninjau B S4). `aktif` false (salesman, Manager) = tanpa permintaan. null = belum/gagal dimuat → tanpa lencana (bukan "0").
+ * Dimuat sekali per buka halaman + setiap event NOO_BERUBAH (TabNoo sesudah aksi).
+ */
+export function useNooMenunggu(aktif: boolean): number | null {
+    const [load, muatUlang] = useLoad(useCallback(async (): Promise<Load<number | null>> => (aktif
+        ? ambilFk("/api/form-kontrol/noo?status=menunggu_spv",
+            (j) => (Array.isArray(j.rows) ? j.rows as { boleh?: { putuskan?: boolean } }[] : []).filter((r) => r.boleh?.putuskan).length, "")
+        : { status: "siap", data: null }), [aktif]));
+    useEffect(() => {
+        if (!aktif) return;
+        window.addEventListener(NOO_BERUBAH, muatUlang);
+        return () => window.removeEventListener(NOO_BERUBAH, muatUlang);
+    }, [aktif, muatUlang]);
+    return load.status === "siap" ? load.data ?? null : null;
 }
 
 export const PESAN_TIDAK_PASTI = "Server tidak memberi jawaban yang pasti — hasilnya belum pasti; muat ulang untuk memeriksa sebelum mengulang.";

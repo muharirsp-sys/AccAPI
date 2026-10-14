@@ -19,6 +19,7 @@ import { Button, MessageStrip, Section, StatusBadge } from "@/components/fiori/c
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelanggan";
 import { kodeJksUntuk, paritasMinggu } from "@/lib/form-kontrol/constants";
+import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { HARI, jamWita, useIzinFk } from "../shared";
 import { GagalKirim, bacaFk, kirimFk } from "../lapangan";
@@ -49,6 +50,14 @@ export function TambahLuarRute({ salesCode, principle, tanggal, ruteKode, onDita
     const sudah = p !== null && ruteKode.some((k) => kodeJksUntuk(p.customerNo).includes(k.trim().toUpperCase()));
     const alasan = kunci ?? (!p ? "Pilih pelanggan dulu" : sudah ? `${p.name} sudah ada di rute hari ini — buka dari daftar Toko di rute.` : undefined);
 
+    // FK-MSM3 (peninjau B S-2): datang dari Kunjungan yang ditolak (`#luar-rute`) → bagian ini langsung tampil, tombolnya terfokus.
+    useEffect(() => {
+        if (window.location.hash !== "#luar-rute") return;
+        const sek = document.getElementById("luar-rute");
+        sek?.scrollIntoView({ block: "start" });
+        sek?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus({ preventScroll: true });
+    }, []);
+
     async function tambah() {
         if (!p || alasan || sibuk) return;
         setSibuk(true);
@@ -67,7 +76,7 @@ export function TambahLuarRute({ salesCode, principle, tanggal, ruteKode, onDita
     }
 
     return (
-        <Section title="Kunjungan luar rute" subtitle="toko di luar JKS hari ini">
+        <Section id="luar-rute" title="Kunjungan luar rute" subtitle="toko di luar JKS hari ini">
             <div className="fi-sect-in">
                 <p className="fi-small fi-muted">
                     Toko yang tidak ada di rute hari ini tetap boleh dikunjungi: cari nama atau kode pelanggan cabang Anda lalu tambahkan. Kunjungannya
@@ -109,13 +118,17 @@ export function BatalkanLuarRute({ id, custName, custCode, kunci, onBatal, onTak
     id: string; custName: string; custCode: string; kunci?: string; onBatal: () => void; onTakPasti: () => void;
 }) {
     const [buka, setBuka] = useState(false);
+    const noo = isKodeNoo(custCode);
     return (
         <>
             <Button variant="tertiary" style={{ minHeight: 44 }} icon={<Undo2 className="fi-icon" aria-hidden />} aria-label={`Batalkan kunjungan ${custName}`}
                 disabled={Boolean(kunci)} disabledReason={kunci} onClick={() => setBuka(true)}>Batalkan</Button>
             <ConfirmDialog open={buka} onClose={() => setBuka(false)} title={`Batalkan kunjungan ${custName}?`} tone="negative"
-                description="Untuk toko yang salah ditambahkan: toko keluar dari kunjungan hari ini. Jejak penambahan dan pembatalan tetap tercatat; toko bisa ditambah lagi bila perlu."
-                facts={[["Toko", `${custName} · ${custCode}`], ["Jenis", "Luar rute · hari ini"]]}
+                description={noo
+                    // Peninjau B NOO R3: membatalkan KUNJUNGAN tidak membatalkan pengajuan toko baru; jalan kembali disebut.
+                    ? "Toko keluar dari kunjungan hari ini; pengajuan toko baru TETAP menunggu SPV. Untuk mengunjunginya lagi: tab Toko Baru (NOO) → pilih toko → Kunjungi hari ini."
+                    : "Untuk toko yang salah ditambahkan: toko keluar dari kunjungan hari ini. Jejak penambahan dan pembatalan tetap tercatat; toko bisa ditambah lagi bila perlu."}
+                facts={[["Toko", `${custName} · ${custCode}`], ["Jenis", noo ? "Toko baru (NOO) · hari ini" : "Luar rute · hari ini"]]}
                 confirmLabel="Batalkan kunjungan" cancelLabel="Kembali" confirmDisabled={kunci}
                 onConfirm={async () => {
                     try {
