@@ -287,9 +287,11 @@ test("ajukan: validasi berkode tanpa nilai pribadi di galat; bukan pemilik / SPV
     // Peninjau A R4: body jelas > 2 × 5 MB + 512 KB ditolak dari Content-Length SEBELUM dibaca; foto > 40 MP ditolak sharp.
     const batas = 10 * 1024 * 1024 + 512 * 1024;
     assert.deepEqual(kode(await ajukan("u-sla", formNoo({ nik: NIK_C, noHp: "081277770000" }).f, { "content-length": String(batas + 1) })), [413, "FOTO_TERLALU_BESAR"]);
-    // Peninjau A R-A1: tanpa Content-Length (chunked) = 411 sebelum body dibaca.
-    const tanpaUkuran = await jawab(await sebagai("u-sla", () => m.noo.POST(new Request("http://app.test/api/form-kontrol/noo", { method: "POST", body: formNoo({ nik: NIK_C, noHp: "081277770000" }).f }))));
-    assert.deepEqual(kode(tanpaUkuran), [411, "PANJANG_WAJIB"]);
+    // Peninjau A R-A1: tanpa Content-Length (chunked; header bisa hilang di balik proxy) body kecil TETAP diproses (sampai cek principal,
+    // sesudah formData) — bukan 411; body > batas diputus 413 oleh penghitung byte.
+    const tanpaUkuran = (f: FormData) => sebagai("u-sla", () => m.noo.POST(new Request("http://app.test/api/form-kontrol/noo", { method: "POST", body: f }))).then(jawab);
+    assert.deepEqual(kode(await tanpaUkuran(formNoo({ principle: "PRINCIPLE Z", nik: NIK_C, noHp: "081277770000" }).f)), [403, "PRINCIPAL_LUAR_CAKUPAN"]);
+    assert.deepEqual(kode(await tanpaUkuran(formNoo({ nik: NIK_C, noHp: "081277770000" }, { toko: Buffer.alloc(11 * 1024 * 1024, 1) }).f)), [413, "FOTO_TERLALU_BESAR"]);
     const bom = await sharp({ create: { width: 7000, height: 6000, channels: 3, background: "#ffffff" } }).png().toBuffer();
     assert.deepEqual(kode(await ajukan("u-sla", formNoo({ nik: NIK_C, noHp: "081277770000" }, { toko: bom }).f)), [400, "FOTO_TIDAK_SAH"], "42 MP ditolak");
     assert.deepEqual(kode(await ajukan("u-sla", formNoo({ principle: "PRINCIPLE Z", nik: NIK_C, noHp: "081277770000" }).f)), [403, "PRINCIPAL_LUAR_CAKUPAN"]);

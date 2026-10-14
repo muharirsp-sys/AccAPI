@@ -15,7 +15,7 @@
  *   - NIK/HP sama dengan NOO lain yang belum ditolak → 409 NOO_DUPLIKAT (+ `pembanding` kode/toko/status HANYA untuk NOO milik salesman
  *     sendiri; milik orang lain hanya `lain` [{cocok}] — peninjau A R3) kecuali pemilikSama=ya + alasan ≥ 10 huruf (→ tanda duplikat, pemutus
  *     WAJIB mengonfirmasi); id sama dikirim ulang dengan isian sama = baris lama (200), isian berbeda = 409 ID_BEDA_ISI;
- *   - tanpa Content-Length → 411 PANJANG_WAJIB; Content-Length > 2 × 5 MB + 512 KB → 413 sebelum body dibaca; foto > 40 MP ditolak sharp (FOTO_TIDAK_SAH).
+ *   - Content-Length > 2 × 5 MB + 512 KB → 413 sebelum body dibaca; tanpa Content-Length → body dibaca bertahap, putus 413 di batas yang sama; foto > 40 MP ditolak sharp (FOTO_TIDAK_SAH).
  * GET: status aktif (menunggu/disetujui) selalu lengkap; selesai (ditolak/terdaftar) BATAS_SELESAI terbaru + `selesaiTerpotong`.
  */
 import { NextResponse } from "next/server";
@@ -54,21 +54,39 @@ export async function GET(req: Request) {
     }
 }
 
+/** Body tanpa Content-Length dibaca per potongan; lewat `batas` byte → null (pembacaan dibatalkan). */
+async function bacaBerbatas(req: Request, batas: number): Promise<Uint8Array | null> {
+    const pembaca = req.body?.getReader();
+    if (!pembaca) return new Uint8Array();
+    const potong: Uint8Array[] = [];
+    let n = 0;
+    for (;;) {
+        const { done, value } = await pembaca.read();
+        if (done) break;
+        n += value.byteLength;
+        if (n > batas) { await pembaca.cancel().catch(() => undefined); return null; }
+        potong.push(value);
+    }
+    return Buffer.concat(potong);
+}
+
 export async function POST(req: Request) {
     const gate = await requirePermissionH("form_kontrol.submit");
     if (gate.response) return gate.response;
     const session = gate.session;
     try {
-        // Peninjau A R-A1: tanpa Content-Length (chunked) batas di bawah tak bisa diperiksa sebelum body dibaca → 411 (peramban selalu
-        // mengirim Content-Length untuk FormData).
+        const terlaluBesar = () => jawabGalat({ status: 413, kode: "FOTO_TERLALU_BESAR", error: "Kiriman terlalu besar: tiap foto maksimal 5 MB. Ambil ulang foto." });
+        // Peninjau A R-A1 + keputusan orkestrator: Content-Length ada → 413 sebelum body dibaca; TIDAK ada (chunked; header bisa hilang di
+        // balik proxy/HTTP/2) → body dibaca BERTAHAP dengan penghitung byte, putus 413 begitu melewati MAKS_BODY (tidak pernah memuat lebih).
         const panjang = req.headers.get("content-length");
+        if (panjang !== null && Number(panjang) > MAKS_BODY) return terlaluBesar();
+        let isi: Uint8Array | null = null;
         if (panjang === null) {
-            return jawabGalat({ status: 411, kode: "PANJANG_WAJIB", error: "Kiriman tanpa ukuran tidak diterima; kirim ulang dari formulir." });
+            isi = await bacaBerbatas(req, MAKS_BODY);
+            if (!isi) return terlaluBesar();
         }
-        if (Number(panjang) > MAKS_BODY) {
-            return jawabGalat({ status: 413, kode: "FOTO_TERLALU_BESAR", error: "Kiriman terlalu besar: tiap foto maksimal 5 MB. Ambil ulang foto." });
-        }
-        const form = await req.formData().catch(() => null);
+        const form = await (isi ? new Response(isi as BodyInit, { headers: { "content-type": req.headers.get("content-type") ?? "" } }).formData() : req.formData())
+            .catch(() => null);
         if (!form) return jawabGalat({ status: 400, kode: "INPUT_TIDAK_VALID", error: "Formulir toko baru tidak terbaca; kirim ulang." });
         const teks = (k: string) => { const v = form.get(k); return typeof v === "string" ? v.trim() : ""; };
         const id = teks("id").toLowerCase(), salesCode = teks("salesCode"), principle = teks("principle");
