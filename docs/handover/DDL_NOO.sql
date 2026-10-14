@@ -17,8 +17,8 @@
 -- KUNCI: tabel baru saja — tidak mengunci tabel lama (kunjungan_luar_rute tidak diubah bentuknya; kunjungan NOO = baris biasanya).
 --
 -- DATA PRIBADI: kolom nik + foto_ktp (nama berkas; berkasnya di volume /app/data/private/noo/, BUKAN public/ dan BUKAN data/uploads/). Metabase
---   TIDAK diberi tabel ini (db/metabase_readonly.sql = whitelist eksplisit; JANGAN ditambahkan). Retensi = TERBUKA (owner); belum ada hapus
---   otomatis.
+--   TIDAK diberi tabel ini (db/metabase_readonly.sql = whitelist eksplisit; JANGAN ditambahkan). Retensi: foto KTP DISIMPAN
+--   SELAMANYA (owner 14 Okt 2026) — tidak ada hapus otomatis, juga sesudah terdaftar/ditolak.
 --
 -- ISI (nama tabel TANPA skema = public pada search_path bawaan; agar uji PG bisa memakai skema sekali-pakai):
 --   1. CREATE TABLE IF NOT EXISTS noo_toko (PK id; UNIQUE kode; UNIQUE customer_id WHERE NOT NULL = satu pelanggan satu NOO; 7 CHECK: status,

@@ -8,8 +8,8 @@
 --              status: menunggu_spv -> disetujui | ditolak (final) ; disetujui -> terdaftar.
 --              duplikat_dengan/alasan_duplikat = pengajuan ulang "pemilik sama" (NIK/No. HP sama dengan NOO lain yang belum ditolak);
 --              menyetujuinya WAJIB konfirmasi eksplisit pemutus (duplikat_dikonfirmasi).
---              DATA PRIBADI: nik + foto_ktp (nama berkas acak di data/private/noo/, BUKAN folder publik). Retensi = TERBUKA (owner); satu
---              kolom nama berkas per foto supaya mudah dipindah/dihapus nanti.
+--              DATA PRIBADI: nik + foto_ktp (nama berkas acak di data/private/noo/, BUKAN folder publik). Retensi: SIMPAN SELAMANYA
+--              (owner 14 Okt 2026; tanpa hapus otomatis); satu kolom nama berkas per foto.
 --   Kunjungan NOO = baris kunjungan_luar_rute BIASA (cust_code = kode NOO, customer_id NULL) -> tabel lama TIDAK diubah bentuknya.
 -- Tabel BARU saja (EXPAND): tanpa trigger, tanpa data, tanpa pembaca lama. Hak accapi_app (SELECT/INSERT/UPDATE, TANPA DELETE: jejak) di
 -- docs/handover/DDL_NOO.sql. Metabase TIDAK diberi (whitelist eksplisit db/metabase_readonly.sql).
