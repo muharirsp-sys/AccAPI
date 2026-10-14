@@ -1,9 +1,9 @@
 /*
  * Tujuan: State machine wave rekapan — draft -> released -> confirmed | cancelled.
  *         Aturan gerbangnya di satu tempat, bukan tersebar di route handler.
- * Caller: app/api/rekapan-nota/wave/[id]/route.ts, rules.test.ts.
+ * Caller: app/api/rekapan-nota/wave/[id]/{route,nota/route,exception/route}.ts, rules.test.ts.
  * Dependensi: Tidak ada. Pure.
- * Main Functions: transisiWave.
+ * Main Functions: transisiWave, tolakUbahIsi.
  * Side Effects: Tidak ada.
  */
 
@@ -46,4 +46,27 @@ export function transisiWave(dari: WaveStatus, aksi: WaveAksi, ctx: KonteksTrans
         };
 
     return { ok: true, status: izin.ke, event: izin.event };
+}
+
+/** Perubahan isi yang bukan transisi status. Penjagaan server, bukan hanya tombol yang dimatikan (BL-25). */
+export type UbahIsi = "tambah" | "takeout" | "prioritas" | "set_grup" | "tutup_exception";
+
+const BOLEH_UBAH: Record<UbahIsi, { dari: WaveStatus[]; akibat: string }> = {
+    tambah: { dari: ["draft"], akibat: "nota tidak bisa ditambah" },
+    // Wave tertutup = kertasnya final: lepas nota / ubah prioritas / grup cetak tidak boleh lagi.
+    takeout: { dari: ["draft", "released"], akibat: "nota tidak bisa dilepas" },
+    prioritas: { dari: ["draft", "released"], akibat: "prioritas tidak bisa diubah" },
+    set_grup: { dari: ["draft", "released"], akibat: "grup cetak tidak bisa diubah" },
+    // Selisih file (BL-54) bisa muncul setelah konfirmasi dan tetap perlu ditutup; wave batal tidak punya pekerjaan lagi.
+    tutup_exception: { dari: ["draft", "released", "confirmed"], akibat: "exception tidak bisa ditutup" },
+};
+
+const STATUS_KATA: Record<WaveStatus, string> = {
+    draft: "masih draf", released: "sudah dirilis", confirmed: "sudah dikonfirmasi", cancelled: "sudah dibatalkan",
+};
+
+/** null = boleh; selain itu alasan 409 yang dibaca pengguna. */
+export function tolakUbahIsi(status: WaveStatus, aksi: UbahIsi): string | null {
+    const b = BOLEH_UBAH[aksi];
+    return b.dari.includes(status) ? null : `Wave ${STATUS_KATA[status] ?? status}; ${b.akibat}. Muat ulang halaman.`;
 }

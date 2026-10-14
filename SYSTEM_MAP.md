@@ -530,9 +530,19 @@ UI /rekapan-nota -> upload "Rincian Faktur Penjualan" (.xlsx dari Accurate)
           * filter JENIS_TRANSAKSI = "1. Penjualan Bruto"   (retur tidak masuk)
           * filter TANGGAL yang dipilih   (satu file memuat rentang, bukan 1 hari)
           * agregasi per (NO_NOTA, KODE_BARANG); turunkan konv_tersirat = QTY_SATUANKECIL / QTY
-     -> sha256 file -> uq_rekap_upload_sha (upload ulang file sama = ditolak, pool tidak ganda)
-     -> tulis rekap_upload + wave_line_pool + upsert pick_group dimensi jenis_produk
-  <- { uploadId, tanggal, jumlahNota, jumlahBaris, principal[], tanggalTersedia[] }
+     -> satu transaksi, pg_advisory_xact_lock per tanggal (dua unggah serentak tanggal sama diserialkan)
+     -> INSERT rekap_upload ... ON CONFLICT (sha256) DO NOTHING; file sama TIDAK ditolak: baris lamanya dipakai ulang
+        dan file diproses ulang per nota (idempoten). Pool dari unggahan lebih baru (id lebih besar) tidak ditimpa
+        file lama (kelas lebih_baru -> notaLebihBaru)
+     -> BL-54: per nota vs pool tanggal itu (sidik = kode_cust + baris kode_barang/qty/satuan/qty_pcs/konv):
+          belum ada            -> ditulis
+          isi sama             -> dilewati (file sore memuat nota pagi; tidak ditulis ulang)
+          berubah, belum wave  -> baris lama DIHAPUS, diganti isi terbaru
+          berubah, di wave aktif -> pool TIDAK diubah; wave_exception REKONSILIASI_SELISIH (ref nota; "[sidik x]" di
+                                    keterangan: selisih sama tidak membuka ulang, selisih BARU membuka lagi yang sudah ditutup)
+     -> tulis wave_line_pool + upsert pick_group dimensi jenis_produk
+  <- { uploadId, tanggal, jumlahNota, jumlahBaris, principal[], tanggalTersedia[],
+       fileSama, notaBaru, notaSudahAda, notaLebihBaru, notaDiganti, notaSelisih[{noNota, waveId, wave}] }
 
 --- 8.2 Menyusun & merilis wave ---
 UI /rekapan-nota/wave/[id]
@@ -541,10 +551,23 @@ UI /rekapan-nota/wave/[id]
   -> POST /api/rekapan-nota/wave/[id]/nota     INSERT ... ON CONFLICT DO NOTHING RETURNING
        * uq_nota_aktif menolak nota yang sudah aktif di wave lain -> 409 + identitas pemiliknya
        * simpan snapshot: snap_grup_all, snap_grup_gdi, snap_area, snap_pareto, snap_total_krt
+       * pg_advisory_xact_lock_shared per tanggal (unggah = eksklusif): snapshot dibaca sesudah unggah yang
+         sedang mengganti isi nota selesai
   -> PATCH /api/rekapan-nota/wave/[id] { aksi: "release" }
        -> lib/rekapan-nota/exception.ts : deteksiException()  (set-based, ON CONFLICT DO NOTHING)
        -> lib/rekapan-nota/wave-state.ts : transisiWave()     (release boleh dengan exception open;
                                                                confirm ditolak selama KONVERSI_* open)
+       -> UPDATE wave ... WHERE id AND status = <lama>  (0 baris = layar lain lebih dulu -> 409; BL-25)
+  -> PATCH /api/rekapan-nota/wave/[id] { aksi: "cancel", alasan }
+       -> transaksi sama: UPDATE wave_assignment SET dilepas=true, dilepas_alasan='wave dibatalkan', at/by
+          (semua nota aktif kembali ke pool; wave_event.payload.nota_kembali)
+  -> PATCH /api/rekapan-nota/wave/[id]/exception { exceptionId, aksi: selesai|abaikan, alasan }   (BL-24)
+       -> rekapan_nota.manage; abaikan wajib alasan >= 5 karakter; ditolak 409 pada wave batal
+       -> UPDATE wave_exception SET status, resolved_at/by WHERE ... AND status='open' (0 baris -> 409)
+       -> wave_event wave.exception_resolved {exception_id, jenis, ref_kode, status, alasan}
+       -> GET detail menampilkan nilai master saat ini (item.isi_per_karton / customer.area) + penutupan
+  * Penjaga isi (BL-25): tambah (draft), take-out / prioritas / set_grup (draft|released), tutup exception
+    (bukan cancelled) membaca status wave FOR SHARE di transaksinya -> lib/rekapan-nota/wave-state.ts : tolakUbahIsi() -> 409
 
 --- 8.3 Cetak (menggantikan 29+ sheet Print) ---
 UI pilih pick_group -> /rekapan-nota/wave/[id]/cetak?grup=...   (server component, grup (cetak))
@@ -1010,13 +1033,15 @@ AccAPI/_github_clean/
 | `lib/rekapan-nota/query.ts` | `buildRekapan`, `buildTtf`, `notaPool`, `ambilPickGroup`, `ambilSetting` | Satu CTE, dua proyeksi (withdrawal + allocation); pool anti-join; TTF |
 | `lib/rekapan-nota/exception.ts` | `deteksiException`, `hitungExceptionOpen` | Deteksi set-based sekali per release, idempoten lewat `uq_wave_exception` |
 | `lib/rekapan-nota/area-suggest.ts` | `parseKelKec`, `bangunIndeks`, `usulkanArea`, `usulkanSemua` | Usulan area; memakai `lib/sales-history/fuzzy.ts`, tidak menulis matcher baru |
-| `lib/rekapan-nota/wave-state.ts` | `transisiWave` | State machine draft->released->confirmed/cancelled. Pure |
+| `lib/rekapan-nota/wave-state.ts` | `transisiWave`, `tolakUbahIsi` | State machine draft->released->confirmed/cancelled + penjaga ubah isi per status (BL-25). Pure |
+| `lib/rekapan-nota/wave-penjaga-pg.test.ts` | 10 uji PG | BL-24/25/54 pada route asli di skema sekali-pakai (migrasi 0002), termasuk 409 serentak deterministik; dilewati tanpa `AM040_DATABASE_URL` |
 | `lib/rekapan-nota/parse.test.ts` + `rules.test.ts` + `area-suggest.test.ts` | 13 self-check | `npm run test:rekapan`. Uji file-based SKIP (bukan lulus diam-diam) kalau sumbernya tidak ada |
-| `app/api/rekapan-nota/upload/route.ts` | `POST` | Upload + parse + isi pool, idempoten per sha256. Guard `rekapan_nota.manage` |
+| `app/api/rekapan-nota/upload/route.ts` | `POST` | Upload + parse + isi pool, idempoten per sha256; nota yang sudah ada dilewati/diganti/jadi exception selisih (BL-54). Guard `rekapan_nota.manage` |
 | `app/api/rekapan-nota/pool/route.ts` | `GET` | Nota tersedia per tanggal. Guard `rekapan_nota.view` |
 | `app/api/rekapan-nota/wave/route.ts` | `GET`,`POST` | Daftar wave per tanggal; buat wave (N wave/hari, bukan 2 hardcode) |
-| `app/api/rekapan-nota/wave/[id]/route.ts` | `GET`,`PATCH` | Detail wave; release/confirm/cancel; pilih pick_group |
-| `app/api/rekapan-nota/wave/[id]/nota/route.ts` | `POST`,`PATCH` | Tambah nota (409 + identitas pemilik), ubah prioritas, take-out berapproval |
+| `app/api/rekapan-nota/wave/[id]/route.ts` | `GET`,`PATCH` | Detail wave; release/confirm/cancel bersyarat status lama (409); cancel melepas semua nota; pilih pick_group (409 pada wave tertutup) |
+| `app/api/rekapan-nota/wave/[id]/nota/route.ts` | `POST`,`PATCH` | Tambah nota (409 + identitas pemilik), ubah prioritas, take-out berapproval; semua 409 pada wave tertutup |
+| `app/api/rekapan-nota/wave/[id]/exception/route.ts` | `PATCH` | Tutup exception: Selesai / Abaikan + alasan (BL-24); 409 bila sudah ditutup |
 | `app/api/rekapan-nota/area/route.ts` | `GET`,`POST` | Antrean mapping area + usulan; terima satuan/massal |
 | `app/(dashboard)/rekapan-nota/page.tsx` | `RekapanNotaPage` | Wave monitor + upload export |
 | `app/(dashboard)/rekapan-nota/wave/[id]/page.tsx` | `WavePage` | Susun wave dari pool, pilih grup cetak, rilis/konfirmasi |
@@ -1432,7 +1457,9 @@ Full rebuild besar memakai `scripts/build-sales-history-staging.mjs`: strategi l
 | `lib/sales-history/search.ts` | `searchSalesHistoryRefsWithElasticsearch`, `ensureSalesHistoryElasticsearchIndex`, `bulkIndexSalesHistoryDocuments`, `getSalesHistoryElasticsearchStatus` | Adapter product search + backend indexing Elasticsearch via REST; **dormant** bila `ELASTICSEARCH_URL` unset → jatuh ke fuzzy SQLite |
 | `lib/sales-history/fuzzy.ts` | `damerau`, `wordMatches`, `resolveFuzzyProduct`, `invalidateProductVocabulary` | Fuzzy product search toleran-typo (Damerau-Levenshtein di kamus nama unik ~11rb) pengganti Elasticsearch; dipakai `service.ts` via IN-clause berindeks. Self-check: `node lib/sales-history/fuzzy.ts` (#5) |
 | `app/api/sales-history/route.ts` | `GET` | Root status backend: kesiapan DB, count customer/faktur/item, tahun, dan status Elasticsearch. Guard `sales_history.view` |
-| `app/api/sales-history/import/route.ts` | `POST` | Impor CSV streaming (memori terbatas), idempotent per `source_file`. Guard `sales_history.manage` |
+| `app/api/sales-history/import/route.ts` | `POST` | Impor CSV streaming (memori terbatas), idempotent per `source_file`; membuang salinan Accurate untuk faktur yang sama. Nama berkas `accurate` ditolak. Guard `sales_history.manage` |
+| `lib/sales-history/accurate.ts` | `fakturKeHistory`, `namaPrincipal` | Pemeta murni faktur Accurate (`sales_invoice.raw_data` detail.do) -> baris History; principal = `charField1` master barang; ADNA SENTRAL NIAGA -> GUMINDO BOGAMANIS. Uji: `lib/sales-history/accurate.test.ts` |
+| `app/api/cron/sales-history-accurate/route.ts` | `GET` | Cron (CRON_SECRET): salin faktur INV Postgres -> SQLite History, kursor keyset `(synced_at,id)` di tabel `sync_cursor`; `source_file='accurate'`; faktur yang sudah punya baris berkas closing/CSV dilewati. Tidak menulis ke Accurate |
 | `app/api/sales-history/years/route.ts` | `GET` | Daftar Tahun (cascade L1) dari invoice_map. Guard `sales_history.view` |
 | `app/api/sales-history/principals/route.ts` | `GET` | Daftar Principal (cascade L2), opsional filter tahun. Guard `sales_history.view` |
 | `app/api/sales-history/customers/route.ts` | `GET` | Customer per Tahun/Principal (cascade L3), join customer_map (nama/alamat fresh). Guard `sales_history.view` |
