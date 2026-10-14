@@ -531,15 +531,18 @@ UI /rekapan-nota -> upload "Rincian Faktur Penjualan" (.xlsx dari Accurate)
           * filter TANGGAL yang dipilih   (satu file memuat rentang, bukan 1 hari)
           * agregasi per (NO_NOTA, KODE_BARANG); turunkan konv_tersirat = QTY_SATUANKECIL / QTY
      -> satu transaksi, pg_advisory_xact_lock per tanggal (dua unggah serentak tanggal sama diserialkan)
-     -> INSERT rekap_upload ... ON CONFLICT (sha256) DO NOTHING (file sama = "sudah ada", juga bila serentak)
+     -> INSERT rekap_upload ... ON CONFLICT (sha256) DO NOTHING; file sama TIDAK ditolak: baris lamanya dipakai ulang
+        dan file diproses ulang per nota (idempoten). Pool dari unggahan lebih baru (id lebih besar) tidak ditimpa
+        file lama (kelas lebih_baru -> notaLebihBaru)
      -> BL-54: per nota vs pool tanggal itu (sidik = kode_cust + baris kode_barang/qty/satuan/qty_pcs/konv):
           belum ada            -> ditulis
           isi sama             -> dilewati (file sore memuat nota pagi; tidak ditulis ulang)
           berubah, belum wave  -> baris lama DIHAPUS, diganti isi terbaru
-          berubah, di wave aktif -> pool TIDAK diubah; wave_exception REKONSILIASI_SELISIH (ref nota, ON CONFLICT DO NOTHING)
+          berubah, di wave aktif -> pool TIDAK diubah; wave_exception REKONSILIASI_SELISIH (ref nota; "[sidik x]" di
+                                    keterangan: selisih sama tidak membuka ulang, selisih BARU membuka lagi yang sudah ditutup)
      -> tulis wave_line_pool + upsert pick_group dimensi jenis_produk
   <- { uploadId, tanggal, jumlahNota, jumlahBaris, principal[], tanggalTersedia[],
-       notaBaru, notaSudahAda, notaDiganti, notaSelisih[{noNota, waveId, wave}] }
+       fileSama, notaBaru, notaSudahAda, notaLebihBaru, notaDiganti, notaSelisih[{noNota, waveId, wave}] }
 
 --- 8.2 Menyusun & merilis wave ---
 UI /rekapan-nota/wave/[id]
@@ -548,6 +551,8 @@ UI /rekapan-nota/wave/[id]
   -> POST /api/rekapan-nota/wave/[id]/nota     INSERT ... ON CONFLICT DO NOTHING RETURNING
        * uq_nota_aktif menolak nota yang sudah aktif di wave lain -> 409 + identitas pemiliknya
        * simpan snapshot: snap_grup_all, snap_grup_gdi, snap_area, snap_pareto, snap_total_krt
+       * pg_advisory_xact_lock_shared per tanggal (unggah = eksklusif): snapshot dibaca sesudah unggah yang
+         sedang mengganti isi nota selesai
   -> PATCH /api/rekapan-nota/wave/[id] { aksi: "release" }
        -> lib/rekapan-nota/exception.ts : deteksiException()  (set-based, ON CONFLICT DO NOTHING)
        -> lib/rekapan-nota/wave-state.ts : transisiWave()     (release boleh dengan exception open;
@@ -1028,7 +1033,7 @@ AccAPI/_github_clean/
 | `lib/rekapan-nota/exception.ts` | `deteksiException`, `hitungExceptionOpen` | Deteksi set-based sekali per release, idempoten lewat `uq_wave_exception` |
 | `lib/rekapan-nota/area-suggest.ts` | `parseKelKec`, `bangunIndeks`, `usulkanArea`, `usulkanSemua` | Usulan area; memakai `lib/sales-history/fuzzy.ts`, tidak menulis matcher baru |
 | `lib/rekapan-nota/wave-state.ts` | `transisiWave`, `tolakUbahIsi` | State machine draft->released->confirmed/cancelled + penjaga ubah isi per status (BL-25). Pure |
-| `lib/rekapan-nota/wave-penjaga-pg.test.ts` | 7 uji PG | BL-24/25/54 pada route asli di skema sekali-pakai (migrasi 0002), termasuk 409 serentak deterministik; dilewati tanpa `AM040_DATABASE_URL` |
+| `lib/rekapan-nota/wave-penjaga-pg.test.ts` | 10 uji PG | BL-24/25/54 pada route asli di skema sekali-pakai (migrasi 0002), termasuk 409 serentak deterministik; dilewati tanpa `AM040_DATABASE_URL` |
 | `lib/rekapan-nota/parse.test.ts` + `rules.test.ts` + `area-suggest.test.ts` | 13 self-check | `npm run test:rekapan`. Uji file-based SKIP (bukan lulus diam-diam) kalau sumbernya tidak ada |
 | `app/api/rekapan-nota/upload/route.ts` | `POST` | Upload + parse + isi pool, idempoten per sha256; nota yang sudah ada dilewati/diganti/jadi exception selisih (BL-54). Guard `rekapan_nota.manage` |
 | `app/api/rekapan-nota/pool/route.ts` | `GET` | Nota tersedia per tanggal. Guard `rekapan_nota.view` |
