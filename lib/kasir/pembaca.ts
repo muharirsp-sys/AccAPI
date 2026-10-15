@@ -205,7 +205,9 @@ export function uraiDetail(d: unknown, tanggal: string, harap: { id: number; nom
     if (!Array.isArray(r.detailInvoice)) return { ok: false, sebab: "bentuk", pesan: `detail ${nomor}: detailInvoice bukan larik` };
 
     // Baris dibulatkan KUMULATIF (baris i = sen(Σ tepat s.d. i) − sen(Σ tepat s.d. i−1)): Σ baris = sen(Σ tepat), jadi pelunasan yang klop
-    // di Accurate tetap klop dalam sen — tanpa ember tak teralokasi semu 1 sen; selisih nyata tetap terlihat. Tiap baris meleset < 1 sen.
+    // di Accurate tetap klop dalam sen — tanpa ember tak teralokasi semu 1 sen; selisih nyata tetap terlihat. Tiap baris meleset ≤ 1 sen.
+    // ponytail: sen sisa jatuh ke baris yang melewati setengah sen, bukan ke orang tertentu — multi-salesman bisa bergeser 1 sen antarorang
+    // (ditangkap klop/penjelasan, tidak diam-diam). Jalan naik: bulatkan kumulatif berurutan masterSalesmanId bila keluhan muncul.
     let kumulatif = BigInt(0);
     let senSebelum = 0;
     const faktur = new Map<number, PelunasanFaktur>();
@@ -229,8 +231,9 @@ export function uraiDetail(d: unknown, tanggal: string, harap: { id: number; nom
         if (lama && lama.masterSalesmanId !== masterSalesmanId) {
             return { ok: false, sebab: "bentuk", pesan: `${di}: faktur ${fakturId} muncul dua kali dengan salesman berbeda` };
         }
-        faktur.set(fakturId, { fakturId, nomorFaktur: lama?.nomorFaktur ?? (teks(inv?.number) || null), masterSalesmanId,
-            invoicePayment: (lama?.invoicePayment ?? 0) + ip });
+        const jumlahFaktur = (lama?.invoicePayment ?? 0) + ip;
+        if (!Number.isSafeInteger(ip) || !Number.isSafeInteger(jumlahFaktur)) return { ok: false, sebab: "nominal", pesan: `${di} invoicePayment: Nominal di luar batas` };
+        faktur.set(fakturId, { fakturId, nomorFaktur: lama?.nomorFaktur ?? (teks(inv?.number) || null), masterSalesmanId, invoicePayment: jumlahFaktur });
     }
     return { ok: true, pelunasan: { id: harap.id, nomor, tanggal: tgl, metode, chequeAmount: cheque, faktur: [...faktur.values()] } };
 }

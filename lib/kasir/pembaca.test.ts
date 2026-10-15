@@ -150,6 +150,8 @@ test("uraiDetail: rusak DITOLAK terlihat — bukan angka desimal polos, invoiceP
     assert.equal(sebab(detail({ chequeAmount: Number.NaN })), "nominal");
     assert.equal(sebab(detail({ chequeAmount: 1e17 })), "nominal", "di luar bilangan bulat aman (sen)");
     assert.equal(sebab(detail({ detailInvoice: [{ invoice: { id: 1 }, invoicePayment: "0.1.2" }] })), "nominal");
+    assert.equal(sebab(detail({ detailInvoice: ["90000000000000", "-180000000000000", "90000000000000"]
+        .map((v, i) => ({ invoice: { id: i + 1 }, invoicePayment: v })) })), "nominal", "baris di luar batas walau kumulatif aman");
     assert.equal(sebab(detail({ detailInvoice: [{ invoice: { id: 1 }, paymentAmount: 500 }] })), "bentuk", "invoicePayment absen, paymentAmount TIDAK dipakai");
     assert.equal(sebab(detail({ chequeAmount: undefined })), "bentuk");
     assert.equal(sebab(detail({ paymentMethod: { name: "Tunai" } })), "bentuk");
