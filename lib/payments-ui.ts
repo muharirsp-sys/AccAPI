@@ -1,11 +1,11 @@
 /*
  * Tujuan: Helper murni layar Pembayaran & SPPD (Fiori S6a, it08): status rekaman untuk tile/badge, isian yang kurang sebelum
- *   diajukan (cermin validasi /payments/cart/create), izin aksi → alasan nonaktif, angka ketat, tanggal WITA, dan pratinjau nomor
- *   SPPD. Tidak ada logic bisnis baru — server tetap penentu (kunci `locked_reason`, validasi, nomor).
+ *   diajukan (cermin validasi /payments/cart/create), izin aksi → alasan nonaktif, angka ketat, tanggal WITA, saringan rentang
+ *   tanggal, dan pratinjau nomor SPPD. Tidak ada logic bisnis baru — server tetap penentu (kunci `locked_reason`, validasi, nomor).
  * Caller: app/(dashboard)/payments/**, payments-ui.test.ts.
  * Dependensi: lib/insentif-sales-excel (parseLocaleNumber = cermin parse_number_strict), lib/dateFilter (parseAnyDate).
  * Main Functions: statusRekaman, STATUS_REKAMAN, kurangLengkap, bisaDiajukan, angka, ISIAN, nilaiAwal, galatIsian, izinPembayaran,
- *   tanggalTampil, keYmd, hariIniWita, besokWita, namaAkun, pratinjauNomor, galatTemplat, statusFinance.
+ *   tanggalTampil, keYmd, dalamRentang, hariIniWita, besokWita, namaAkun, pratinjauNomor, galatTemplat, statusFinance.
  * Side Effects: Tidak ada.
  */
 import type { Tone } from "@/components/fiori/core";
@@ -122,7 +122,8 @@ export const ISIAN: Array<{ key: Isian; label: string; jenis: "teks" | "tanggal"
     { key: "jenis_dokumen", label: "Jenis dokumen", jenis: "teks" },
     { key: "nomor_dokumen", label: "Nomor dokumen", jenis: "teks" },
     { key: "actual_date", label: "Actual date", jenis: "tanggal" },
-    { key: "tgl_pembayaran", label: "Tanggal bayar pusat", jenis: "tanggal" },
+    // Label tampilan saja (owner 13 Okt: "pusat" → "pabrik"); kunci data & kolom Excel "Tgl Pembayaran" tetap.
+    { key: "tgl_pembayaran", label: "Tanggal bayar pabrik", jenis: "tanggal" },
 ];
 export type Draf = Record<string, Partial<Record<Isian, string>>>;
 
@@ -184,6 +185,26 @@ export function tanggalTampil(v: unknown): string {
 export function keYmd(v: unknown): string {
     const p = parseAnyDate(v);
     return p ? `${p.y}-${p.m}-${p.d}` : "";
+}
+
+/**
+ * Saringan rentang tanggal (Actual date / Tanggal bayar pabrik): `dari`/`sampai` = YYYY-MM-DD dari <input type="date">, kosong = terbuka.
+ * Tidak aktif = semua lolos. Aktif = tanggal tersimpan harus terbaca DAN dari ≤ tgl ≤ sampai (inklusif); baris tanpa tanggal, teks
+ * bukan tanggal, atau tanggal mustahil tidak lolos. Dibandingkan sebagai tanggal kalender YYYY-MM-DD (bukan teks mentah "15/10/2026");
+ * tanggal tanpa jam, jadi tidak ada geser zona waktu (WITA tidak berperan).
+ * Format KETAT (bukan keYmd/parseAnyDate, yang jatuh ke `new Date`: "0" → 2000, "12" → 2001, "10/15/26" → 15 Okt): hanya
+ * YYYY-MM-DD (boleh diikuti jam) dan DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY. keYmd/tanggalTampil tidak diubah (dipakai layar lain).
+ */
+export function dalamRentang(v: unknown, { dari, sampai }: { dari: string; sampai: string }): boolean {
+    if (!dari && !sampai) return true;
+    const x = String(v ?? "").trim();
+    const a = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ]|$)/.exec(x);
+    const b = a ? null : /^(\d{1,2})([-/.])(\d{1,2})\2(\d{4})$/.exec(x);
+    const [y, m, d] = a ? [a[1], a[2], a[3]] : b ? [b[4], b[3], b[1]] : ["", "", ""];
+    const ymd = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    const t = Date.parse(`${ymd}T00:00:00Z`); // tak dikenal / bulan 13 / hari 45 = NaN; 30 Feb bergulir ke Maret → ditolak bolak-balik
+    const nyata = Boolean(y) && Number.isFinite(t) && new Date(t).toISOString().startsWith(ymd);
+    return nyata && (!dari || ymd >= dari) && (!sampai || ymd <= sampai);
 }
 
 export const hariIniWita = (now: Date = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(now);

@@ -111,6 +111,8 @@ export const permissionActions = [
     "manage_payment",
     "manage_hierarchy",
     "kirim",
+    // NOO toko baru (owner 13 Okt 2026) — label saja (registry form_kontrol; form_kontrol bukan AppModule, preset role lama tidak berubah).
+    "noo_setujui", "noo_ktp", "noo_tautkan",
     // Aksi OPC granular (registry off_program_control, alur SPV→SM→Claim→OM→Finance). Hanya untuk LABEL (S7-1): moduleActions
     // legacy OPC tetap 5 aksi, jadi preset role lama tidak berubah.
     "create_batch", "edit_returned_batch", "submit_batch", "sm_approve", "sm_return", "claim_review", "claim_final",
@@ -159,6 +161,9 @@ export const actionLabels: Record<PermissionAction, string> = {
     sync: "Sync",
     manage: "Manage",
     kirim: "Kirim ke Accurate",
+    noo_setujui: "Setujui/Tolak NOO",
+    noo_ktp: "Lihat KTP NOO",
+    noo_tautkan: "Tautkan NOO ke Pelanggan",
     create_batch: "Buat Batch",
     edit_returned_batch: "Edit Batch Dikembalikan",
     submit_batch: "Ajukan Batch",
@@ -208,6 +213,9 @@ export const auditActionLabels: Record<string, string> = {
     "group.update": "Grup diubah",
     "group.delete": "Grup dihapus",
     "group_permission.sync": "Izin grup diubah",
+    // O1 (owner 12 Okt 2026): tautan akun salesman <-> karyawan salesman Accurate (app/api/admin/users/[id]/salesman).
+    "salesman.link": "Salesman Accurate ditautkan",
+    "salesman.unlink": "Tautan salesman Accurate dilepas",
 };
 
 export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {

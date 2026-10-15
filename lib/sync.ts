@@ -12,6 +12,7 @@ import { parseAccurateDateTime } from "./accurate-invoice";
 import { matchBranchAutoNumbers } from "./branch-auto-number";
 import { eq, sql } from "drizzle-orm";
 import { recordInvoiceRealization } from "./program-realization-store";
+import { cabangDariTag, normalNama, petaCabang } from "./order-cabang";
 import { redactAccurateSecrets } from "./accurate-redact";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -112,12 +113,54 @@ export function alamatAccurate(row: Record<string, unknown>): string | null {
 const bumpSyncedAt = (table: string) =>
     sql.raw(`CASE WHEN ${table}.raw_data IS DISTINCT FROM excluded.raw_data THEN now() ELSE ${table}.synced_at END`);
 
+// `suspended` hanya ditimpa bila jawaban Accurate MEMBAWA field itu: list.do memintanya eksplisit, tetapi detail.do (jalur webhook)
+// bentuknya lain. Field absen = "tidak tahu", bukan "aktif" — pola yang sama dengan cabang pelanggan di bawah.
+// raw_data bertipe jsonb tetapi ISINYA STRING JSON (lib/promo-recap, produksi 2026-09-12: jsonb_typeof = "string") -> diurai dulu
+// (`#>> '{}'` lalu ::jsonb; berlaku juga bila suatu hari isinya objek).
+const suspendedBila = (table: string) =>
+    sql.raw(`CASE WHEN (excluded.raw_data #>> '{}')::jsonb -> 'suspended' IS NOT NULL THEN excluded."suspended" ELSE ${table}."suspended" END`);
+// Tag divisi barang (cabang order) dengan aturan yang SAMA (O1 putaran 1, butir 10): list.do memintanya eksplisit dan detail.do webhook
+// MEMBAWA charField1/2 (probe produksi 12 Okt 2026), tetapi bentuk jawaban tanpa key `charField2` = "tidak tahu" -> cabang lama
+// DIPERTAHANKAN, bukan dikosongkan. Key ada (termasuk null/"") = ditimpa: tag dikosongkan di Accurate = tanpa cabang = tak bisa diorder.
+const tagBila = (kolom: "branch_id" | "char_field2") =>
+    sql.raw(`CASE WHEN (excluded.raw_data #>> '{}')::jsonb -> 'charField2' IS NOT NULL THEN excluded."${kolom}" ELSE item."${kolom}" END`);
+
+/**
+ * Satu baris item/list.do (atau detail.do webhook) -> kolom tabel `item`. Murni supaya pemetaan tag divisi bisa diuji tanpa DB.
+ * O1 (owner 12 Okt 2026): `charField2` = tag divisi -> cabang (lib/order-cabang). Tag absen/kosong/tak dikenal = branch_id NULL =
+ * barang TIDAK bisa diorder (gagal tertutup) — tak dikenal/kosong dihitung pemanggil supaya tidak diam.
+ */
+export function barisItem(row: Record<string, unknown>, peta: ReadonlyMap<string, number>) {
+    const tag = cabangDariTag(row.charField2, peta);
+    return {
+        jenis: tag.jenis,
+        // Key absen = jawaban tanpa tag (cabang lama dipertahankan saat upsert) — tidak dihitung "(kosong)".
+        adaTag: "charField2" in row,
+        tag: normalNama(row.charField2) || "(kosong)",
+        payload: {
+            id: Number(row.id),
+            no: String(row.no ?? ""),
+            name: String(row.name ?? ""),
+            itemType: str(row.itemType),
+            unitPrice: num(row.unitPrice),
+            branchId: tag.branchId,
+            suspended: row.suspended === true,
+            charField2: str(row.charField2),
+            rawData: JSON.stringify(row),
+            lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
+        },
+    };
+}
+
+/** Hitungan tag yang membuat barang tak bisa diorder padahal bukan non-jual (tak dikenal / kosong). */
+export type TagTakDikenal = Record<string, number>;
+
 // 2. Registry modul sync: endpoint + fields (WAJIB — list.do tanpa `fields` hanya
 // mengembalikan { id }, dibuktikan live production 2026-07-13) + upsert per halaman.
 const SYNC_MODULES: Record<SyncModuleName, {
     endpoint: string;
     fields: string;
-    upsertPage: (rows: Array<Record<string, unknown>>) => Promise<void>;
+    upsertPage: (rows: Array<Record<string, unknown>>) => Promise<void | TagTakDikenal>;
 }> = {
     // Cabang: 22 baris, satu halaman. Kecil tapi WAJIB — penomoran faktur Accurate berjalan
     // per cabang, jadi order tanpa branchId yang benar akan masuk urutan cabang default.
@@ -237,17 +280,18 @@ const SYNC_MODULES: Record<SyncModuleName, {
         endpoint: "/item/list.do",
         // "id" wajib eksplisit — Accurate TIDAK menyertakannya otomatis saat fields diisi
         // (dibuktikan live 2026-07-13: tanpa "id" → NaN saat insert, primary key gagal).
-        fields: "id,no,name,unitPrice,itemType,lastUpdate",
+        // O1 (probe produksi 12 Okt 2026): charField2 = tag divisi (-> cabang), charField1 = perusahaan principal, preferedVendor =
+        // pemasok utama (dua terakhir hanya di raw_data). itemCategory TIDAK dipakai (4.087 barang "Umum").
+        fields: "id,no,name,unitPrice,itemType,charField1,charField2,suspended,preferedVendor,lastUpdate",
         upsertPage: async (rows) => {
-            const payloads = rows.map((row) => ({
-                id: Number(row.id),
-                no: String(row.no ?? ""),
-                name: String(row.name ?? ""),
-                itemType: str(row.itemType),
-                unitPrice: num(row.unitPrice),
-                rawData: JSON.stringify(row),
-                lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
-            }));
+            // 22 baris; dibaca per halaman supaya cabang yang baru tersinkron langsung terpakai. Modul branch berjalan lebih dulu di cron.
+            const peta = petaCabang(await db.select({ id: branch.id, name: branch.name }).from(branch));
+            const takDikenal: TagTakDikenal = {};
+            const payloads = rows.map((row) => {
+                const b = barisItem(row, peta);
+                if (b.adaTag && (b.jenis === "tak_dikenal" || b.jenis === "kosong")) takDikenal[b.tag] = (takDikenal[b.tag] ?? 0) + 1;
+                return b.payload;
+            });
             await db.insert(item).values(payloads).onConflictDoUpdate({
                 target: item.id,
                 set: {
@@ -255,11 +299,16 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     name: sql`excluded."name"`,
                     itemType: sql`excluded."itemType"`,
                     unitPrice: sql`excluded."unitPrice"`,
+                    // Tag divisi ditimpa bila jawaban MEMBAWA key charField2 (lihat tagBila); key absen = cabang lama tetap.
+                    branchId: tagBila("branch_id"),
+                    charField2: tagBila("char_field2"),
+                    suspended: suspendedBila("item"),
                     rawData: sql`excluded."raw_data"`,
                     lastUpdate: sql`excluded."last_update"`,
                     syncedAt: bumpSyncedAt("item"),
                 },
             });
+            return takDikenal;
         },
     },
     // Endpoint terpisah dari /item/list.do (dibuktikan live 2026-07-28) — tidak punya lastUpdate,
@@ -296,7 +345,8 @@ const SYNC_MODULES: Record<SyncModuleName, {
         // `category` = TIPE OUTLET, `branch` = cabang pemilik pelanggan; keduanya hanya datang
         // sebagai OBJEK. Varian datar (categoryId/branchId/salesman) diabaikan diam-diam oleh
         // list.do — dibuktikan probe live 2026-09-09.
-        fields: "id,customerNo,name,balance,customerLimitAmount,customerLimitAmountValue,customerLimitAge,customerLimitAgeValue,billStreet,billCity,billProvince,priceCategory,category,branch,lastUpdate",
+        // `suspended` (O1, 12 Okt 2026): pelanggan suspended tidak bisa dipilih untuk order baru (lib/order-cabang).
+        fields: "id,customerNo,name,balance,customerLimitAmount,customerLimitAmountValue,customerLimitAge,customerLimitAgeValue,billStreet,billCity,billProvince,priceCategory,category,branch,suspended,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
@@ -323,6 +373,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
                 // sesuai" padahal harga di Accurate sudah benar.
                 branchId: num((row.branch as Record<string, unknown> | undefined)?.id ?? row.branchId),
                 branchName: str((row.branch as Record<string, unknown> | undefined)?.name) || str(row.customerBranchName),
+                suspended: row.suspended === true,
                 rawData: JSON.stringify(row),
                 lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
             }));
@@ -347,6 +398,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     branchId: sql`coalesce(excluded."branch_id", customer.branch_id)`,
                     branchName: sql`coalesce(nullif(excluded."branch_name", ''), customer.branch_name)`,
                     priceCategoryName: sql`excluded."price_category_name"`,
+                    suspended: suspendedBila("customer"),
                     // ISI KALAU KOSONG, tidak pernah menimpa. Alamat dari `Master Area Heinz`
                     // sudah dinormalkan tangan dan memuat `Kel./Kec.` yang dibaca parseKelKec();
                     // yang dari Accurate mentah dan sering tanpa keduanya. Menimpa = menukar
@@ -501,7 +553,10 @@ export async function upsertMasterById(
     const code = String((kind === "customer" ? row.customerNo : row.no) ?? "").trim();
     if (!code) throw new Error(`detail.do ${kind} ${id}: tanpa ${kind === "customer" ? "customerNo" : "no"}; tidak ditulis`);
 
-    await SYNC_MODULES[kind].upsertPage([row]);
+    const takDikenal = await SYNC_MODULES[kind].upsertPage([row]);
+    if (takDikenal && Object.keys(takDikenal).length) {
+        console.warn(`[sync] webhook item ${code}: tag charField2 tanpa cabang -> tidak bisa diorder: ${JSON.stringify(takDikenal)}`);
+    }
     return { kind, id, code };
 }
 
@@ -575,11 +630,14 @@ export async function syncModule(moduleName: SyncModuleName, creds: AccurateCred
 
     const startedAt = Date.now();
     let totalRows = 0;
+    // O1: tag barang yang tak bisa dipetakan ke cabang — dicatat (log + hasil), tidak diam.
+    const tagTakDikenal: TagTakDikenal = {};
     try {
         const paginator = AccuratePaginator(mod.endpoint, creds, state.lastPage ?? 1, mod.fields);
         for await (const chunk of paginator) {
             if (chunk.data.length > 0) {
-                await mod.upsertPage(chunk.data);
+                const catat = await mod.upsertPage(chunk.data);
+                for (const [tag, n] of Object.entries(catat ?? {})) tagTakDikenal[tag] = (tagTakDikenal[tag] ?? 0) + n;
                 totalRows += chunk.data.length;
             }
             // Checkpoint per halaman — run terputus bisa dilanjutkan.
@@ -600,7 +658,9 @@ export async function syncModule(moduleName: SyncModuleName, creds: AccurateCred
             updatedAt: new Date(),
         }).where(eq(syncState.module, moduleName));
 
-        return { success: true, message: `Sync ${moduleName} selesai`, rows: totalRows, durationMs: Date.now() - startedAt, ...(matched ? { branchAutoNumberLinked: matched } : {}) };
+        const takDikenal = Object.keys(tagTakDikenal).length ? { tagTakDikenal } : {};
+        if (takDikenal.tagTakDikenal) console.warn(`[sync] ${moduleName}: tag charField2 tanpa cabang -> tidak bisa diorder: ${JSON.stringify(tagTakDikenal)}`);
+        return { success: true, message: `Sync ${moduleName} selesai`, rows: totalRows, durationMs: Date.now() - startedAt, ...(matched ? { branchAutoNumberLinked: matched } : {}), ...takDikenal };
     } catch (e) {
         await db.update(syncState).set({ status: "error", updatedAt: new Date() }).where(eq(syncState.module, moduleName));
         return { success: false, message: e instanceof Error ? e.message : String(e), rows: totalRows, durationMs: Date.now() - startedAt };

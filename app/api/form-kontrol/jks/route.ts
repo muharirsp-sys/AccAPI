@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import * as XLSX from "xlsx";
-import { getJksList, upsertJksRows } from "@/lib/form-kontrol";
+import { canAccessSales, getJksList, resolveScope, upsertJksRows } from "@/lib/form-kontrol";
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -17,7 +17,12 @@ export async function GET(req: Request) {
         const limit         = Math.min(200, parseInt(searchParams.get("limit") ?? "50", 10));
         const offset        = (page - 1) * limit;
 
-        const result = await getJksList({ salesCode, principle, hariKunjungan, isActive: true }, limit, offset);
+        // FK-MSM butir 4: cakupan dari server (parameter `salesCodes` klien diabaikan) — SPV hanya timnya, salesman hanya miliknya,
+        // admin/manager/admin_sales semua. Kode sales di luar cakupan = 403 (bukan daftar kosong yang menyesatkan).
+        const scope = await resolveScope(gate.session);
+        if (salesCode && !canAccessSales(scope, salesCode)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        const salesCodes = scope.allowedSalesCodes ?? undefined;
+        const result = await getJksList({ salesCode, salesCodes, principle, hariKunjungan, isActive: true }, limit, offset);
         return NextResponse.json({ ...result, page, limit });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -67,8 +72,9 @@ export async function POST(req: Request) {
     try {
         const contentType = req.headers.get("content-type") ?? "";
         let rows: Record<string, unknown>[] = [];
+        const excel = contentType.includes("multipart/form-data");
 
-        if (contentType.includes("multipart/form-data")) {
+        if (excel) {
             // Import Excel dari UI (TabJks kirim file .xlsx via FormData).
             const form = await req.formData();
             const file = form.get("file");
@@ -88,8 +94,10 @@ export async function POST(req: Request) {
         if (!Array.isArray(rows) || rows.length === 0) {
             return NextResponse.json({ error: "Tidak ada baris untuk diimport" }, { status: 400 });
         }
-        const result = await upsertJksRows(rows as Parameters<typeof upsertJksRows>[0]);
-        return NextResponse.json({ success: true, ...result });
+        const { ditolak, ...result } = await upsertJksRows(rows as Parameters<typeof upsertJksRows>[0]);
+        // Nomor baris seperti yang dilihat pengunggah: Excel = baris sheet (baris 1 = judul kolom); JSON = urutan ke-n.
+        return NextResponse.json({ success: true, ...result,
+            ditolak: ditolak.map((d) => ({ baris: d.indeks + (excel ? 2 : 1), custCode: d.custCode, hari: d.hari })) });
     } catch (e: unknown) {
         return NextResponse.json({ error: e instanceof Error ? e.message : "Gagal import" }, { status: 500 });
     }

@@ -32,6 +32,9 @@ export type PriceResult = {
     source: "tier" | "standard" | "missing";
     priceCategoryName?: string;
     branchName?: string;
+    /** Cabang baris harga terpilih (hanya `tier`) — dipakai jalur order untuk menolak harga cabang LAIN (lib/order-cabang hargaSah). */
+    branchId?: number;
+    defaultBranch?: boolean;
     effectiveDate?: string;
     // Satuan diminta tidak ada di daftar harga padahal satuan lain ada: tanda kuat satuannya
     // salah. Harga standar tetap dipakai (aturan fallback), tapi jangan sampai tidak terlihat —
@@ -58,7 +61,7 @@ export async function itemUnits(codes: string[]): Promise<Map<string, string[]>>
 
 type LineContext = {
     // Kunci `${code}|${unit}` -> baris harga terpilih untuk kategori pelanggan.
-    bestTier: Map<string, { price: number; priceCategoryName: string; branchName: string; effectiveDate: string }>;
+    bestTier: Map<string, { price: number; priceCategoryName: string; branchName: string; effectiveDate: string; branchId?: number; defaultBranch?: boolean }>;
     standard: Map<string, number | null>;
     unitsByCode: Map<string, string[]>;
     categoryName?: string;
@@ -77,6 +80,7 @@ export function priceForLine(line: PriceRequest, ctx: LineContext): PriceResult 
             code, unit, price: tier.price, source: "tier",
             priceCategoryName: tier.priceCategoryName || ctx.categoryName,
             branchName: tier.branchName, effectiveDate: tier.effectiveDate,
+            ...(tier.branchId === undefined ? {} : { branchId: Number(tier.branchId), defaultBranch: tier.defaultBranch === true }),
         };
     }
     const fallback = ctx.standard.get(code);

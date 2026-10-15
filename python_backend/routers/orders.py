@@ -1,26 +1,38 @@
 """Tujuan: Order masuk dengan aturan promo terbit yang dibekukan pada saat pengiriman.
-Caller: halaman order internal; Web Sales terpisah akan memakai endpoint yang sama.
-Dependensi: shared auth/RBAC, summary_store, summary_rules (Program, calculate), websales_store.
-Main Functions: published_rules, preview_order, create_order, pull_requests, list_orders, order_detail (termasuk aturan beku untuk faktur).
-Side Effects: SQLite read/write; tidak menulis faktur Accurate dan tidak memanggil AI.
+Caller: halaman order internal; routers/websales (simpan Order Sales memakai `hitung_order` + `cocokkan` yang sama).
+Dependensi: shared auth/RBAC, summary_store, summary_rules (Program, calculate), websales_store, order_cabang, outlet_channel, outlet_class.
+Main Functions: published_rules, hitung_promo, hitung_order, cocokkan, preview_order, create_order, pull_once, list_orders, order_detail.
+Side Effects: SQLite read/write; HTTP baca ke Next (outlet_channel, order_cabang); tidak menulis faktur Accurate dan tidak memanggil AI.
+
+PRATINJAU = TERSIMPAN (owner 12 Okt 2026, O1 putaran 1; kontrak docs/handover/O1-KONTRAK-ORDER-CABANG.md §4). SATU hitungan promo
+(`hitung_promo`) untuk pratinjau, simpan Order Baru, simpan Order Sales, dan tarik; masukannya sama (pelanggan -> cabang/harga/kelas
+outlet, channel master, tanggal order, baris berharga dari Next `periksaOrder`). Pratinjau mengembalikan `sidik` angka yang dilihat
+pemakai; simpan menghitung ulang dan MENOLAK bila sidiknya beda (`PRATINJAU_BERUBAH`) — tidak pernah menyimpan angka lain diam-diam.
 """
+import hashlib
 import hmac
 import json
 import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from order_duplicate import duplicate_message, find_duplicate
 from pydantic import ValidationError
 from shared import get_current_user, user_has_permission, validate_csrf_request
 from summary_store import JsonStore, connect, identity
 from summary_rules import Program, calculate, suggestions
+import order_cabang
 import outlet_class
 import outlet_channel
 import websales_store
 
 router = APIRouter(prefix="/orders")
+
+Ditolak = order_cabang.OrderCabangDitolak
+TidakPasti = order_cabang.OrderCabangTidakPasti
 
 
 def require_user(request, create=False):
@@ -51,8 +63,14 @@ def published_rules():
             continue
         sources.append({"draft_id": row["id"], "revision": row["revision"]})
         for program in sorted(stored, key=lambda item: (item["priority"], item["id"])):
-            programs.append(Program.model_validate({**program, "priority": len(programs) + 1,
-                                                    "id": f"{row['id'][:8]}:{program['id']}"[:80]}))
+            try:
+                programs.append(Program.model_validate({**program, "priority": len(programs) + 1,
+                                                        "id": f"{row['id'][:8]}:{program['id']}"[:80]}))
+            except (ValidationError, KeyError, TypeError) as error:
+                # Keadaan SERVER (aturan terbit rusak), bukan kesalahan order: galat berkode GLOBAL — tarikan berhenti dan permintaan
+                # tetap pending, bukan ditolak permanen satu per satu sebagai DATA_TIDAK_VALID (putaran 2, butir 6).
+                raise Ditolak(409, "ATURAN_TERBIT_RUSAK", f"Aturan terbit {row['id'][:8]} program {program.get('id', '?')} tidak lolos "
+                              f"validasi: {public_error(error)[:300]}. Tarik/perbaiki publikasinya di Summary.") from None
     return programs, sources
 
 
@@ -86,55 +104,100 @@ def duplicate_check(owner, outlet, channel, order_date, lines):
     return find_duplicate(candidate, existing)
 
 
-def store_order(owner, outlet, channel, order_date, note, lines, request_id=None, customer_no="",
-                confirm_duplicate=False):
-    """Hitung dengan aturan terbit lalu bekukan aturan, sumber, dan hasilnya pada order.
+def _angka(nilai):
+    """Angka dinormalkan untuk sidik: "1000" == "1000.00" == "1000.0"."""
+    return format(Decimal(str(nilai).strip()).normalize(), "f")
 
-    Baris tanpa harga (permintaan dari Web Sales) TIDAK dihitung sebagai uang: order
-    masuk berstatus `needs_price` dengan aturan belum dibekukan, supaya nilai transaksi
-    tidak pernah ditentukan oleh klien. Harga diisi internal (tahap Accurate).
+
+def sidik_order(customer_no, channel, order_date, lines, result):
+    """Sidik angka yang DILIHAT pemakai: baris berharga + hasil promo (per baris, bonus, program tertahan).
+
+    Bukan rahasia dan bukan tanda tangan: yang disimpan selalu hitungan server; sidik hanya membuktikan hitungan itu SAMA dengan yang
+    sudah diperlihatkan. Aturan yang tidak menyentuh order ini boleh berubah tanpa membatalkan pratinjau (aturannya tidak ikut disidik).
+    """
+    isi = {"customer_no": str(customer_no or "").strip(), "channel": str(channel or "").strip().upper(), "order_date": str(order_date),
+           "lines": [[str(line["code"]).strip(), str(line["unit"]).strip().upper(), _angka(line["quantity"]), _angka(line["price"])]
+                     for line in lines],
+           "result": result}
+    return hashlib.sha256(json.dumps(isi, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def hitung_promo(customer_no, channel, order_date, lines, saran=False):
+    """SATU-SATUNYA hitungan promo order: aturan terbit + kelas outlet pelanggan + channel + tanggal, atas baris BERHARGA.
+
+    Dipakai pratinjau dan setiap jalur simpan/tarik, jadi angka pratinjau = angka beku. Program principal lain tidak bisa kena:
+    semua baris = barang cabang pelanggan (Next `BARANG_BEDA_CABANG`), dan program hanya berlaku pada kode di `codes`-nya.
+    """
+    programs, sources = published_rules()
+    if not programs:
+        raise Ditolak(409, "ATURAN_BELUM_TERBIT", "Belum ada aturan promo terbit; terbitkan Summary sebelum order dihitung")
+    kelas, tahu = outlet_class.classes_of(customer_no), outlet_class.known()
+    result = calculate(programs, lines, order_date, channel, outlet_classes=kelas, known_classes=tahu)
+    hasil = {"rules": [program.model_dump(mode="json") for program in programs], "sources": sources, "result": result,
+             "sidik": sidik_order(customer_no, channel, order_date, lines, result)}
+    if saran:
+        hasil["suggestions"] = suggestions(programs, lines, order_date, channel, outlet_classes=kelas, known_classes=tahu)
+    return hasil
+
+
+def hitung_order(customer_no, channel, order_date, lines, cookie=None):
+    """Hitungan SIMPAN (Order Baru, Order Sales, tarik): channel = master, cabang + harga dari Next, lalu `hitung_promo`.
+
+    CHANNEL DIPASTIKAN KE MASTER, bukan dipercaya dari yang mengirim: surat "KHUSUS CHANNEL GT" tidak boleh jatuh ke outlet yang master
+    kita sebut MT (HINDA MART C-HIL009, jalur principal). Ditanyakan ke Next (`outlet_channel`), gagal tertutup, diperiksa SEBELUM apa
+    pun dihitung. Jawaban pasti master -> `CHANNEL_BEDA_MASTER` (422, order itu saja); jaringan -> tidak pasti (503, ditahan).
+    ATURAN CABANG + HARGA (O1; BL-18): `order_cabang.periksa` — baris tanpa harga diberi harga master server per cabang pelanggan
+    (sumber yang sama dengan pratinjau), baris berharga petugas tidak ditimpa. `cookie` = sesi sales (cakupan cabangnya); None = layanan.
+    """
+    try:
+        outlet_channel.verify(customer_no, channel)
+    except outlet_channel.ChannelBedaMaster as error:
+        raise Ditolak(422, "CHANNEL_BEDA_MASTER", str(error)) from None
+    except outlet_channel.ChannelTidakPasti as error:
+        # Konfigurasi (CRON_SECRET kosong/ditolak) = KONFIGURASI_SERVER, sama dengan jembatan harga (putaran 2, butir 8).
+        kode = "KONFIGURASI_SERVER" if isinstance(error, outlet_channel.ChannelKonfigurasi) else "LAYANAN_TIDAK_PASTI"
+        raise TidakPasti(str(error), kode=kode) from None
+    berharga = order_cabang.periksa(customer_no, order_date, lines, cookie=cookie)
+    hasil = {"lines": berharga, **hitung_promo(customer_no, channel, order_date, berharga)}
+    # Barang BONUS wajib bisa diorder untuk pelanggan ini (cabang, suspended, non-jual) — keputusan Next yang sama dengan pratinjau
+    # (putaran 2, butir 7). Gagal = order DITOLAK berkode, bonus tidak dibuang diam-diam.
+    order_cabang.periksa_bonus(customer_no, order_date, [bonus.get("code", "") for bonus in hasil["result"].get("bonuses", [])], cookie=cookie)
+    return hasil
+
+
+def cocokkan(hasil, sidik):
+    """Pratinjau = tersimpan: sidik pratinjau WAJIB sama dengan hitungan simpan. Beda -> ditolak, pratinjau baru ikut dikirim."""
+    sidik = str(sidik or "").strip()
+    if not sidik:
+        raise Ditolak(400, "SIDIK_WAJIB", "Hitung pratinjau order dulu; order disimpan hanya bila angkanya sama dengan pratinjau.")
+    if not hmac.compare_digest(sidik.encode("utf-8"), hasil["sidik"].encode("utf-8")):
+        raise Ditolak(409, "PRATINJAU_BERUBAH",
+                      "Harga atau promo berubah sejak pratinjau (aturan terbit, harga master, atau kelas outlet). Periksa angka baru lalu simpan ulang.",
+                      {"pratinjau": {key: hasil[key] for key in ("lines", "result", "sources", "sidik")}})
+
+
+def store_order(owner, outlet, channel, order_date, note, lines, request_id=None, customer_no="",
+                confirm_duplicate=False, sidik=""):
+    """Hitung (`hitung_order`), cocokkan dengan pratinjau (`sidik`), lalu bekukan aturan, sumber, baris berharga, dan hasilnya.
+
+    Ditolak -> `OrderCabangDitolak` berkode (pemanggil melaporkannya); Next tak pasti -> `OrderCabangTidakPasti` (503, tidak disimpan).
 
     GERBANG ORDER GANDA: order yang outletnya sama dan barangnya MIRIP dengan order lain pada
-    tanggal yang sama DITOLAK, sampai ada manusia yang menyatakan sudah memeriksanya lewat
-    `confirm_duplicate`. Ditolak, bukan disimpan dengan tanda — order yang tersimpan akan
+    tanggal yang sama DITOLAK (`ORDER_GANDA`), sampai ada manusia yang menyatakan sudah memeriksanya
+    lewat `confirm_duplicate`. Ditolak, bukan disimpan dengan tanda — order yang tersimpan akan
     terlihat seperti order biasa oleh setiap layar yang membacanya, dan tandanya akan terlewat.
     Yang datang dari Web Sales tidak hilang: permintaannya tetap `pending` dan dilaporkan sebagai
     `failed`, jadi ia menunggu keputusan manusia alih-alih ikut terproses.
     """
-    # CHANNEL DIPASTIKAN KE MASTER, bukan dipercaya dari yang mengirim.
-    #
-    # `calculate` di bawah menyaring promo dengan `program.channel`, tetapi channel yang
-    # dipakainya selama ini datang dari badan permintaan — diketik pengirim order. Yang
-    # diperiksa jadi channel yang DIAKUI, bukan yang TERBUKTI, dan surat "KHUSUS CHANNEL GT"
-    # bisa jatuh ke outlet yang master kita sendiri menyebutnya MT. Sudah ada contohnya di
-    # jalur principal: HINDA MART (C-HIL009) disebut General Trade oleh Kino, master kita MT.
-    #
-    # Ditanyakan ke Next, bukan dibaca dari salinan lokal — lihat `outlet_channel`. Gagal
-    # tertutup: tidak ada jawaban berarti ordernya ditahan. Diperiksa SEBELUM apa pun dihitung,
-    # karena hasil hitungan dengan channel yang salah tidak layak disimpan meski cuma draft.
-    try:
-        outlet_channel.verify(customer_no, channel)
-    except outlet_channel.ChannelTidakPasti as error:
-        raise HTTPException(422, str(error)) from None
-
-    priced = all(str(line.get("price", "")).strip() for line in lines)
-    programs, sources = published_rules()
-    if not programs:
-        raise HTTPException(409, "Belum ada aturan promo terbit; terbitkan Summary sebelum order dihitung")
-    if priced:
-        result = calculate(programs, lines, order_date, channel,
-                           outlet_classes=outlet_class.classes_of(customer_no), known_classes=outlet_class.known())
-        frozen = [program.model_dump(mode="json") for program in programs]
-        status = "draft"
-    else:
-        result, frozen, status = {"pending_price": True, "lines": lines}, [], "needs_price"
+    hasil = hitung_order(customer_no, channel, order_date, lines)
+    cocokkan(hasil, sidik)
     # Gerbang ganda diperiksa SETELAH ordernya terbukti sah, bukan sebelum: order yang isinya
     # tidak valid harus ditolak karena tidak valid, bukan karena mirip. Meminta manusia
     # mengonfirmasi order yang toh tidak bisa disimpan hanya melatihnya menekan tombol.
     if not confirm_duplicate:
-        hit = duplicate_check(owner, outlet, channel, order_date, lines)
+        hit = duplicate_check(owner, outlet, channel, order_date, hasil["lines"])
         if hit:
-            raise HTTPException(409, duplicate_message(hit))
+            raise Ditolak(409, "ORDER_GANDA", duplicate_message(hit))
 
     order_id = str(uuid.uuid4())
     # Jejak konfirmasi ikut pada catatan ordernya: siapa pun yang membuka order ini nanti harus
@@ -144,9 +207,9 @@ def store_order(owner, outlet, channel, order_date, note, lines, request_id=None
     with connect() as db:
         db.execute("INSERT INTO sales_order(id,owner,outlet,channel,order_date,status,note,lines,rules,sources,"
                    "result,request_id,customer_no) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                   (order_id, owner, outlet[:160], channel[:80], order_date, status, note,
-                    json.dumps(lines, ensure_ascii=False), json.dumps(frozen, ensure_ascii=False),
-                    json.dumps(sources, ensure_ascii=False), json.dumps(result, ensure_ascii=False), request_id,
+                   (order_id, owner, outlet[:160], channel[:80], order_date, "draft", note,
+                    json.dumps(hasil["lines"], ensure_ascii=False), json.dumps(hasil["rules"], ensure_ascii=False),
+                    json.dumps(hasil["sources"], ensure_ascii=False), json.dumps(hasil["result"], ensure_ascii=False), request_id,
                     customer_no[:80]))
     return order_id
 
@@ -155,6 +218,19 @@ def public_error(error):
     if isinstance(error, ValidationError):
         return "; ".join(".".join(map(str, entry["loc"])) + ": " + entry["msg"] for entry in error.errors()[:8])
     return str(error)
+
+
+def jawab(error):
+    """Galat berkode -> jawaban JSON `{ ok:false, detail, kode, ... }`; tidak pasti = 503 (TIDAK tersimpan, bukan "sesi berakhir")."""
+    return JSONResponse(status_code=503 if isinstance(error, TidakPasti) else error.status, content=error.isi())
+
+
+def baris_bersih(line):
+    """Baris masukan pratinjau/Order Baru dalam bentuk SAMA dengan yang diperiksa Next (satuan huruf besar): `calculate` mencocokkan
+    satuan program apa adanya, jadi "pcs" vs "PCS" antara pratinjau dan simpan akan membuat angka (dan sidik) berbeda."""
+    clean = {key: str(line.get(key, "") or "").strip() for key in ("code", "unit", "quantity", "price")}
+    clean["unit"] = clean["unit"].upper()
+    return clean
 
 
 async def read_order_body(request, limit):
@@ -178,16 +254,17 @@ async def read_order_body(request, limit):
     for line in lines:
         if not isinstance(line, dict):
             raise HTTPException(400, "Baris order tidak valid")
-        clean.append({key: str(line.get(key, "")).strip() for key in ("code", "unit", "quantity", "price")})
+        clean.append(baris_bersih(line))
     return body, channel, order_date, clean
 
 
 @router.post("/preview")
 async def preview_order(request: Request):
-    """Nilai transaksi dan saran "kurang berapa lagi" sebelum order dikirim.
+    """Nilai transaksi, promo, saran "kurang berapa lagi", dan `sidik` sebelum order disimpan. Tidak menyimpan apa pun.
 
-    Harga WAJIB datang dari pemanggil sisi server (hasil sinkronisasi Accurate),
-    bukan dari perangkat sales. Tidak menyimpan apa pun.
+    Harga datang dari Next (`/api/orders/preview` -> `periksaOrder`, harga master per cabang pelanggan atau harga petugas Order Baru),
+    bukan dari perangkat sales. Pemanggil langsung yang mengirim harga karangan hanya mendapat pratinjau atas angka karangannya:
+    simpan menghitung ulang dari server dan sidiknya tidak akan cocok.
 
     Boleh dipakai petugas internal (`order.create`) maupun sales (`websales.create`):
     sales HARUS melihat nilai transaksi dan promo yang berlaku; yang tidak boleh adalah
@@ -203,11 +280,9 @@ async def preview_order(request: Request):
     body, channel, order_date, clean = await read_order_body(request, 512 * 1024)
     if any(not line["price"] for line in clean):
         raise HTTPException(400, "Setiap baris pratinjau butuh harga dari server")
-    programs, sources = published_rules()
-    # Kelayakan outlet ikut dihitung di pratinjau: sales harus melihat angka yang sama
+    # Kelayakan outlet ikut dihitung di pratinjau (customer_no diteruskan Next): sales harus melihat angka yang sama
     # dengan yang nanti dibekukan pada order, termasuk promo yang TIDAK berlaku untuknya.
     customer_no = str(body.get("customer_no", "")).strip()
-    outlets, tahu = outlet_class.classes_of(customer_no), outlet_class.known()
     # Channel dilaporkan, TIDAK dilemparkan sebagai galat, di pratinjau: sales sedang mengetik,
     # dan angka harganya tetap berguna sambil ia membetulkan channelnya. Yang tidak boleh adalah
     # ia baru tahu ordernya akan ditolak setelah seluruh baris diketik — jadi sebabnya muncul
@@ -218,16 +293,19 @@ async def preview_order(request: Request):
     except outlet_channel.ChannelTidakPasti as error:
         channel_masalah = str(error)
     try:
-        result = calculate(programs, clean, order_date, channel, outlet_classes=outlets, known_classes=tahu) if programs else None
-        advice = suggestions(programs, clean, order_date, channel, outlet_classes=outlets, known_classes=tahu) if programs else []
+        hasil = hitung_promo(customer_no, channel, order_date, clean, saran=True)
+    except Ditolak as error:
+        return jawab(error)
     except (ValueError, KeyError, TypeError) as error:
         raise HTTPException(400, public_error(error)) from None
-    return {"ok": True, "result": result, "suggestions": advice, "sources": sources,
-            "channel_masalah": channel_masalah}
+    return {"ok": True, "result": hasil["result"], "suggestions": hasil["suggestions"], "sources": hasil["sources"],
+            "sidik": hasil["sidik"], "channel_masalah": channel_masalah}
 
 
 @router.post("")
 async def create_order(request: Request):
+    """Order Baru (petugas internal, `order.create`). Baris boleh membawa harga PETUGAS (menang, > 0); kosong = harga master server.
+    WAJIB `sidik` pratinjau (kontrak §4.3)."""
     user = require_user(request, True)
     raw = await request.body()
     if len(raw) > 512 * 1024:
@@ -254,14 +332,24 @@ async def create_order(request: Request):
     for line in lines:
         if not isinstance(line, dict):
             raise HTTPException(400, "Baris order tidak valid")
-        clean.append({key: str(line.get(key, "")).strip() for key in ("code", "unit", "quantity", "price")})
+        clean.append(baris_bersih(line))
     try:
         order_id = store_order(identity(user), outlet, channel, order_date, note, clean,
-                               customer_no=customer_no,
+                               customer_no=customer_no, sidik=body.get("sidik"),
                                confirm_duplicate=body.get("confirm_duplicate") is True)
+    except (Ditolak, TidakPasti) as error:
+        return jawab(error)
     except (ValueError, KeyError, TypeError) as error:
         raise HTTPException(400, public_error(error)) from None
     return {"ok": True, "order": order_detail_row(order_id, user)}
+
+
+# Galat yang BUKAN soal satu permintaan: menghentikan seluruh tarikan (tidak ada yang ditolak), bukan menolak permintaan satu per satu.
+GLOBAL = {"ATURAN_BELUM_TERBIT", "ATURAN_TERBIT_RUSAK"}
+# Satu tarikan memproses paling banyak BATAS_HALAMAN x HALAMAN permintaan.
+# ponytail: halaman keyset, bukan antrean berprioritas — permintaan DITAHAN (dugaan ganda, BL-20) tidak lagi menyumbat 200 baris pertama;
+# batasnya hanya waktu satu tarikan. Naikkan ke kolom "dicoba_at" bila yang ditahan pernah ribuan.
+HALAMAN, BATAS_HALAMAN = 200, 10
 
 
 def pull_once(owner, confirm_duplicate=False):
@@ -272,45 +360,59 @@ def pull_once(owner, confirm_duplicate=False):
     Bila penandaan gagal, pull berikutnya menabrak kunci unik dan permintaan itu
     hanya ditandai, bukan digandakan. Karena itu dua pull yang jalan bersamaan pun
     tidak menggandakan order — kunci unik yang menjaga, bukan penjadwalannya.
+
+    Nasib tiap permintaan (O1 putaran 1): masuk (`imported`); sudah pernah masuk (`already_imported`); DITAHAN dugaan ganda (`failed`,
+    tetap pending, menunggu manusia); DITOLAK PERMANEN (`rejected`: status `rejected` + kode + sebab — aturan cabang/harga, channel
+    beda master, angka beda dengan pratinjau sales, data rusak; tidak dicoba lagi selamanya). Next tak pasti / konfigurasi / aturan
+    belum terbit = tarikan BERHENTI (dilempar ke endpoint), tidak ada yang ditolak.
     """
-    imported, duplicated, failed = [], [], []
-    for entry in websales_store.pending():
-        # SUDAH DITARIK diperiksa LEBIH DULU, bukan diserahkan ke kunci unik.
-        #
-        # Selama ini jaminannya dipegang `sales_order_request`: pull kedua menabrak kunci unik,
-        # permintaannya ditandai, dan tidak ada order kedua. Gerbang order ganda yang datang
-        # kemudian menahan permintaan itu lebih awal dengan HTTP 409, jadi kunci uniknya tidak
-        # pernah sempat berbunyi — permintaan yang ordernya SUDAH ADA masuk ke `failed`, TIDAK
-        # ditandai `pulled`, dan muncul lagi sebagai "dugaan order ganda" pada setiap tarikan
-        # berikutnya. Yang ia gandakan memang dirinya sendiri; itu bukan pertanyaan untuk orang.
-        with connect() as db:
-            sudah = db.execute("SELECT id FROM sales_order WHERE request_id=?", (entry["id"],)).fetchone()
-        if sudah:
-            duplicated.append(entry["id"])
-            continue
-        try:
-            order_id = store_order(owner, entry["outlet"], entry["channel"], entry["order_date"],
-                                   entry["note"], entry["lines"], request_id=entry["id"],
-                                   customer_no=entry.get("customer_no", ""),
-                                   confirm_duplicate=confirm_duplicate)
-            imported.append({"request_id": entry["id"], "order_id": order_id})
-        except sqlite3.IntegrityError:
-            duplicated.append(entry["id"])
-        except HTTPException as error:
-            # Dugaan order ganda hanya menahan permintaan ITU; permintaan lain pada tarikan yang
-            # sama tetap diproses. Galat lain (mis. aturan promo belum terbit) memang menghentikan
-            # seluruh tarikan, karena ia bukan soal satu permintaan.
-            if error.status_code != 409:
-                raise
-            failed.append({"request_id": entry["id"], "error": error.detail, "duplicate": True})
-            continue
-        except (ValueError, KeyError, TypeError) as error:
-            failed.append({"request_id": entry["id"], "error": public_error(error)})
-            continue
-        websales_store.mark_pulled(entry["id"])
+    imported, duplicated, failed, rejected = [], [], [], []
+    setelah = None
+    for _ in range(BATAS_HALAMAN):
+        batch = websales_store.pending(HALAMAN, setelah)
+        if batch and setelah is None:
+            # Aturan terbit diperiksa SEKALI sebelum permintaan disentuh (butir 6): rusak/kosong = galat GLOBAL, tarikan berhenti,
+            # semua tetap pending — bukan Next ditanya lalu tiap permintaan ditolak karena keadaan server.
+            if not published_rules()[0]:
+                raise Ditolak(409, "ATURAN_BELUM_TERBIT", "Belum ada aturan promo terbit; terbitkan Summary sebelum order dihitung")
+        for entry in batch:
+            # SUDAH DITARIK diperiksa LEBIH DULU, bukan diserahkan ke kunci unik: gerbang order ganda menahan permintaan
+            # yang ordernya SUDAH ADA dengan 409 sebelum kunci unik sempat berbunyi — ia lalu muncul lagi sebagai "dugaan
+            # order ganda" pada setiap tarikan berikutnya, padahal yang ia gandakan dirinya sendiri.
+            with connect() as db:
+                sudah = db.execute("SELECT id FROM sales_order WHERE request_id=?", (entry["id"],)).fetchone()
+            if sudah:
+                duplicated.append(entry["id"])
+                continue
+            try:
+                order_id = store_order(owner, entry["outlet"], entry["channel"], entry["order_date"],
+                                       entry["note"], entry["lines"], request_id=entry["id"],
+                                       customer_no=entry.get("customer_no", ""), sidik=entry.get("sidik", ""),
+                                       confirm_duplicate=confirm_duplicate)
+                imported.append({"request_id": entry["id"], "order_id": order_id})
+            except sqlite3.IntegrityError:
+                duplicated.append(entry["id"])
+                continue
+            except Ditolak as error:
+                if error.kode in GLOBAL:
+                    raise
+                if error.kode == "ORDER_GANDA":
+                    failed.append({"request_id": entry["id"], "error": error.pesan, "kode": error.kode, "duplicate": True})
+                    continue
+                websales_store.mark_rejected(entry["id"], error.kode, error.pesan)
+                rejected.append({"request_id": entry["id"], "kode": error.kode, "error": error.pesan})
+                continue
+            except (ValueError, KeyError, TypeError) as error:
+                websales_store.mark_rejected(entry["id"], "DATA_TIDAK_VALID", public_error(error))
+                rejected.append({"request_id": entry["id"], "kode": "DATA_TIDAK_VALID", "error": public_error(error)})
+                continue
+            websales_store.mark_pulled(entry["id"])
+        if len(batch) < HALAMAN:
+            break
+        setelah = (batch[-1]["created_at"], batch[-1]["id"])
     for request_id in duplicated:
         websales_store.mark_pulled(request_id)
-    return {"imported": imported, "already_imported": duplicated, "failed": failed}
+    return {"imported": imported, "already_imported": duplicated, "failed": failed, "rejected": rejected}
 
 
 @router.post("/pull")
@@ -319,7 +421,10 @@ async def pull_requests(request: Request):
     user = require_user(request, True)
     if not user_has_permission(user, "order", "edit"):
         raise HTTPException(403, "Hanya petugas yang boleh menarik order Web Sales")
-    return {"ok": True, **pull_once(identity(user))}
+    try:
+        return {"ok": True, **pull_once(identity(user))}
+    except (Ditolak, TidakPasti) as error:
+        return jawab(error)
 
 
 # Koneksi Web Sales: petugas menyalakan, penarikan berjalan sampai dinonaktifkan.
@@ -389,10 +494,13 @@ async def pull_cron(request: Request):
     state = connection_state()
     if not state["enabled"]:
         return {"ok": True, "skipped": "koneksi Web Sales dimatikan", "imported": [],
-                "already_imported": [], "failed": []}
+                "already_imported": [], "failed": [], "rejected": []}
     if not state["owner"]:
         raise HTTPException(409, "Koneksi aktif tanpa pemilik; nyalakan ulang dari halaman Order Masuk")
-    result = pull_once(state["owner"])
+    try:
+        result = pull_once(state["owner"])
+    except (Ditolak, TidakPasti) as error:
+        return jawab(error)
     state.update(last_run_at=now_iso(),
                  last_result={key: len(value) for key, value in result.items()})
     CONNECTION["state"] = state

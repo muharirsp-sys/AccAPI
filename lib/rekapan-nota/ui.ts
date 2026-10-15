@@ -25,6 +25,7 @@ export const EXCEPTION_LABEL: Record<string, string> = {
     SATUAN_TIDAK_KONSISTEN: "Satuan tidak konsisten",
     OUTLET_TANPA_AREA: "Outlet tanpa area",
     PRINCIPAL_BELUM_MASUK: "Principal tidak ada di file",
+    REKONSILIASI_SELISIH: "Selisih dengan file",
 };
 
 /** Hanya exception KONVERSI_* yang menahan konfirmasi (lib/rekapan-nota/exception.ts, R1.4). */
@@ -87,7 +88,8 @@ export function labelEvent(event: string, payload: EventPayload = {}): { apa: st
         case "wave.groups_selected": return { apa: "Memilih grup cetak", ubah: `${n(payload.pick_group_ids)} grup` };
         case "wave.released": return { apa: "Merilis wave", ubah: `${n(payload.jumlah_nota)} nota · ${n(payload.exception_open)} exception terdeteksi` };
         case "wave.confirmed": return { apa: "Mengonfirmasi wave", ubah: `${n(payload.jumlah_nota)} nota` };
-        case "wave.cancelled": return { apa: "Membatalkan wave", ubah: payload.alasan ? String(payload.alasan) : undefined };
+        case "wave.cancelled": return { apa: "Membatalkan wave", ubah: [payload.nota_kembali ? `${n(payload.nota_kembali)} nota kembali ke pool` : "", payload.alasan ? String(payload.alasan) : ""].filter(Boolean).join(" · ") || undefined };
+        case "wave.exception_resolved": return { apa: payload.status === "selesai" ? "Menandai exception selesai" : "Mengabaikan exception", ubah: [String(payload.ref_kode ?? ""), payload.alasan ? String(payload.alasan) : ""].filter(Boolean).join(" · ") };
         case "wave.nota_released": return { apa: `Melepas ${String(payload.no_nota ?? "")}`, ubah: payload.alasan ? String(payload.alasan) : undefined };
         case "wave.prioritas_changed": return { apa: `Mengubah prioritas ${String(payload.no_nota ?? "")}`, ubah: `ke ${String(payload.ke ?? "")}` };
         default: return { apa: event };

@@ -21,7 +21,8 @@ import { CheckCheck, RefreshCw, Undo2 } from "lucide-react";
 import { Button, EmptyState, ErrorState, KeyValues, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
-import { alasanIzinFk, ambilFk, hariIniWita, jamWita, tulisFk, type Scope } from "../shared";
+import { alasanIzinFk, ambilFk, hariIniWita, jamWita, tulisFk, useNooMenunggu, type Scope } from "../shared";
+import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
 
 interface VisitRow {
     custCode: string; custName: string; status: string;
@@ -30,6 +31,8 @@ interface VisitRow {
     gpsFlag: string | null; durFlag: string | null;
     checkinPhotoUrl: string | null; checkoutPhotoUrl: string | null;
     merchDone: number; merchTotal: number;
+    /** FK-MSM2: kunjungan luar rute (toko tidak di JKS hari itu). */
+    luarRute?: boolean;
 }
 interface SalesmanRow {
     salesCode: string; salesName: string;
@@ -41,7 +44,7 @@ interface SalesmanRow {
 }
 type DataDashboard = { rows: SalesmanRow[]; spvName: string; diperbarui: string };
 
-/** Route spv-dashboard menerima `spvName` hanya untuk peran ini (route:16-17); peran lain memakai profilnya sendiri. */
+/** Route spv-dashboard menerima `spvName` hanya untuk peran ini; SPV memakai nama akunnya sendiri (cakupan server). */
 const PERAN_PILIH_SPV = ["admin", "manager", "admin_sales"];
 const GAGAL_DASHBOARD = "Dashboard gagal dimuat.";
 const FLAG_LABEL: Record<string, string> = {
@@ -84,13 +87,15 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
         () => ambilFk("/api/form-kontrol/my-scope", (j) => j as unknown as Scope, "Akses Form Kontrol belum dapat diverifikasi."), []));
     const peran = scopeLoad.status === "siap" ? scopeLoad.data?.role ?? "" : null;
     const pemilih = peran !== null && PERAN_PILIH_SPV.includes(peran);
+    // Peninjau B S4: NOO menunggu keputusan akun ini (server menghitung hak per baris) → strip + tautan ke tab Toko Baru.
+    const nooMenunggu = useNooMenunggu(peran === "spv" || peran === "sm" || peran === "admin");
 
     // Daftar SPV untuk admin = nama SPV unik di Hierarki Sales (endpoint yang sudah ada; butuh form_kontrol.manage).
     const [spvLoad] = useLoad(useCallback(async (): Promise<Load<string[]>> => {
         if (!pemilih) return { status: "siap", data: [] };
         return ambilFk("/api/form-kontrol/sales-profiles", (j) => {
             const rows = (j.rows ?? []) as Array<{ spvName?: string | null }>;
-            return [...new Set(rows.map((r) => r.spvName ?? "").filter(Boolean))].sort((a, b) => a.localeCompare(b));
+            return [...new Set(rows.map((r) => (r.spvName ?? "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
         }, "Daftar SPV belum berhasil dimuat.");
     }, [pemilih]));
 
@@ -99,7 +104,7 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
         if (pemilih && !spvDipilih) return { status: "siap", data: null };
         const p = new URLSearchParams({ date });
         if (pemilih) p.set("spvName", spvDipilih);
-        // 400 "SPV name not found" (akun belum tertaut ke profil sales) diterjemahkan ambilFk.
+        // SPV = timnya sendiri dari nama akun (tanpa perlu profil sales); 400 "SPV name not found" / 403 diterjemahkan ambilFk.
         return ambilFk(`/api/form-kontrol/spv-dashboard?${p}`, (j) => ({
             rows: (j.rows ?? []) as SalesmanRow[],
             spvName: typeof j.spvName === "string" ? j.spvName : spvDipilih,
@@ -241,6 +246,12 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                 )}
             </div>
             {sukses && <MessageStrip tone="pos" title={sukses} onClose={() => setSukses("")} />}
+            {nooMenunggu ? (
+                <MessageStrip tone="warn" title={`${nooMenunggu} toko baru (NOO) menunggu persetujuan Anda.`}>
+                    Salesman belum bisa order di toko itu sampai disetujui dan didaftarkan Admin.{" "}
+                    <Link className="fi-btn fi-btn--tertiary" href="/form-kontrol?tab=noo">Buka Toko Baru (NOO)</Link>
+                </MessageStrip>
+            ) : null}
             {isi}
             <VariantNote bl="BL-28">
                 Tanggal &quot;hari ini&quot; dihitung di perangkat dalam WITA; penetapan tanggal oleh server menunggu BL-28. Cap waktu yang tercetak
@@ -353,7 +364,7 @@ function KartuSalesman({ r, kunci, onTandai, onBatal }: { r: SalesmanRow; kunci?
                                         ))}
                                     </span>
                                     <span className="min-w-0">
-                                        <b>{v.custName}</b>
+                                        <b>{v.custName}</b>{v.luarRute && <> <StatusBadge tone="info">{isKodeNoo(v.custCode) ? "Toko baru (NOO)" : "Luar rute"}</StatusBadge></>}
                                         <span className="fi-sub">
                                             {jamWita(v.checkinAt)}–{jamWita(v.checkoutAt)} WITA · {v.durationMinutes !== null ? `${v.durationMinutes} mnt` : "—"} · Merch {v.merchDone}/{v.merchTotal}
                                             {" · "}{flags.length === 0 ? "tanpa tanda" : flags.map((f) => FLAG_LABEL[f] ?? f).join(", ")}

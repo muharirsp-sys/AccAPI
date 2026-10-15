@@ -37,8 +37,10 @@ test("all existing modules appear exactly once across six groups", () => {
     // dan tidak pernah membaca `promo_rule`, jadi ia tak pernah memeriksa aturan yang berlaku.
     // 26 sejak Normalisasi Diskon (24 Sep 2026). 27 sejak Penerima laporan (Fiori S3, 7 Okt 2026).
     // 28 sejak wizard Pelunasan (Fiori S6e-2, 10 Okt 2026): Admin Incaso mengirim pelunasan tanpa Konsol AOL.
-    assert.equal(items.length, 28);
+    // 29 sejak Kasir ↔ Incaso (Fiori K2b, 15 Okt 2026): Kasir mencatat setoran dan menutup hari terhadap pelunasan Incaso.
+    assert.equal(items.length, 29);
     assert.ok(items.some(item => item.href === "/pelunasan"));
+    assert.equal(WORKSPACE_GROUPS.find(group => group.id === "finance")?.items.find(item => item.href === "/kasir")?.name, "Kasir ↔ Incaso");
     // Master Barang ikut katalog: ia yang MEMBUAT master principal baru, dan matcher
     // deterministik jalur Summary menuntut master berpola `BRAND - JENIS`. Tanpa layar ini
     // satu-satunya cara menambah principal adalah menyusun berkasnya di luar sistem.

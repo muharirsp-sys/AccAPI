@@ -1,5 +1,6 @@
 /** Client-safe Excel helpers for target input — no server-only imports. */
 import * as XLSX from "xlsx";
+import { parseLocaleNumber } from "./angka-lokal";
 
 /** Buat template Excel untuk input target. */
 export function generateTargetTemplate() {
@@ -32,43 +33,10 @@ export function generateTargetTemplate() {
  *     desimal ("204,8", "0,125", "533000000,50", "250000000.000"); dua jenis pemisah = yang terakhir desimal;
  *   - sel galat Excel (#DIV/0!, #N/A) di kolom angka = NaN (lihat tandaiGalat), bukan 0.
  */
-/** Batas panjang teks angka, sama dengan _STRICT_MAX_LEN Python: pagar backtracking regex dan teks catatan. */
-const ANGKA_MAKS = 40;
-const AMPLOP = /^-?\s*(?:rp\.?|idr)?\s*-?\s*[0-9][0-9.,\s]*(?:,-)?$/i;
-const RIBUAN: Record<"." | ",", RegExp> = { ".": /^[1-9]\d{0,2}(?:\.\d{3})+$/, ",": /^[1-9]\d{0,2}(?:,\d{3})+$/ };
+// Parser angka sel ada di lib/angka-lokal.ts (tanpa SheetJS: dipakai juga layar klien /kasir); diekspor ulang supaya pemanggil lama tak berubah.
+export { parseLocaleNumber } from "./angka-lokal";
 /** Penanda sel galat Excel. SheetJS menjadikan sel galat `undefined` (= kosong = 0); tandaiGalat menggantinya dengan teks ini. */
 export const GALAT_EXCEL = "#GALAT_EXCEL";
-
-/** Badan angka tanpa tanda/prefix (hanya digit . ,) → nilai, atau NaN bila pengelompokannya tidak sah. */
-function intiAngka(b: string): number {
-    if (/^\d+$/.test(b)) return Number(b);
-    const titik = b.includes("."), koma = b.includes(",");
-    if (titik && koma) {
-        const des = b.lastIndexOf(",") > b.lastIndexOf(".") ? "," : ".";
-        const grup = des === "," ? "." : ",";
-        const i = b.lastIndexOf(des);
-        const bulat = b.slice(0, i), pecahan = b.slice(i + 1);
-        if (!/^\d+$/.test(pecahan) || !(/^\d+$/.test(bulat) || RIBUAN[grup].test(bulat))) return NaN;
-        return Number(`${bulat.split(grup).join("")}.${pecahan}`);
-    }
-    const sep = titik ? "." : ",";
-    if (RIBUAN[sep].test(b)) return Number(b.split(sep).join(""));
-    const bagian = b.split(sep);
-    return bagian.length === 2 && /^\d+$/.test(bagian[0]) && /^\d+$/.test(bagian[1]) ? Number(`${bagian[0]}.${bagian[1]}`) : NaN;
-}
-
-/** Angka dari teks sel menurut aturan di atas; NaN = bukan angka (pemanggil wajib menolak, bukan menjadikannya 0). */
-export function parseLocaleNumber(text: string): number {
-    const t = text.trim();
-    if (t === "" || t === "-") return 0;
-    if (t.length > ANGKA_MAKS || !AMPLOP.test(t) || (t.replace(/,-$/, "").match(/-/g) ?? []).length > 1) return NaN;
-    let b = t.replace(/(rp|idr)\.?/gi, "").replace(/[^0-9.,-]/g, "").replace(/[,.]-+$/, "");
-    const negatif = b.startsWith("-");
-    if (negatif) b = b.slice(1);
-    if (b.includes("-")) return NaN;
-    const v = intiAngka(b);
-    return negatif ? -v : v;
-}
 
 /** Nilai mentah sel (sheet_to_json raw) → angka: number apa adanya, teks lewat parseLocaleNumber, selain itu (bool, Date, galat) NaN. */
 export function angkaSel(v: unknown): number {

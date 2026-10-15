@@ -6,7 +6,7 @@
  * Side Effects: Tidak ada; tidak mengubah hak akses.
  */
 import {
-    FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, ClipboardList, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, PackageSearch, HandCoins, type LucideIcon } from "lucide-react";
+    FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, ClipboardList, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, PackageSearch, HandCoins, Banknote, type LucideIcon } from "lucide-react";
 
 /** `short` = label navigasi bawah ponsel (≤ 10 huruf); bawaan kata pertama `name`. */
 export type WorkspaceItem = { name: string; href: string; icon: LucideIcon; short?: string };
@@ -37,6 +37,8 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
         { name: "Finance", href: "/finance", icon: DollarSign },
         // Wizard Pelunasan (S6e-2): kirim sales-receipt ke Accurate; dibuka pemegang `pelunasan.kirim` (Admin Incaso, Finance).
         { name: "Pelunasan", href: "/pelunasan", icon: HandCoins },
+        // Kasir ↔ Incaso (K2b, BL-59): setoran Kasir per orang per hari lawan pelunasan Incaso; dibuka pemegang `kasir.view` (Kasir, OM, Admin).
+        { name: "Kasir ↔ Incaso", href: "/kasir", icon: Banknote, short: "Kasir" },
         { name: "Pembayaran / SPPD", href: "/payments", icon: Wallet, short: "Pembayaran" },
         { name: "Format SPPD", href: "/payments/sppd", icon: FileText },
         { name: "Rekonsiliasi", href: "/reconciliation", icon: GitCompareArrows },

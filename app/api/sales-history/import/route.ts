@@ -9,7 +9,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { requirePermissionH } from "@/lib/rbac/resolve";
-import { ensureSalesHistorySchema, salesDb, salesHistoryItem } from "@/lib/sales-history/db";
+import { ensureSalesHistorySchema, salesClient, salesDb, salesHistoryItem } from "@/lib/sales-history/db";
+import { SUMBER_ACCURATE } from "@/lib/sales-history/accurate";
 import {
     parseFkContext,
     parseOfItem,
@@ -31,6 +32,9 @@ export async function POST(request: NextRequest) {
     if (gate.response) return gate.response;
 
     const sourceFile = (request.headers.get("x-filename") || "upload.csv").replace(/[^\w.\-]/g, "_");
+    if (sourceFile === SUMBER_ACCURATE) {
+        return NextResponse.json({ ok: false, error: "Nama berkas dicadangkan untuk salinan Accurate. Ganti nama berkas." }, { status: 400 });
+    }
     if (!request.body) {
         return NextResponse.json({ ok: false, error: "Body kosong." }, { status: 400 });
     }
@@ -93,6 +97,13 @@ export async function POST(request: NextRequest) {
         console.error("[SALES HISTORY IMPORT ERROR]", error);
         return NextResponse.json({ ok: false, error: "Gagal mengimpor data." }, { status: 500 });
     } finally {
+        // Berkas menang atas salinan Accurate (cron sales-history-accurate): buang baris Accurate untuk faktur yang ada di berkas ini —
+        // juga bila impor gagal di tengah, supaya baris parsial tidak berdampingan dengan salinannya. Penanda accurate_copy ikut dihapus:
+        // bila berkas kelak diimpor ulang tanpa faktur itu, cron menyalinnya lagi pada sync berikutnya.
+        await salesClient.batch([
+            { sql: "DELETE FROM accurate_copy WHERE referensi IN (SELECT referensi FROM sales_history_item WHERE source_file = ?)", args: [sourceFile] },
+            { sql: "DELETE FROM sales_history_item WHERE source_file = ? AND referensi IN (SELECT referensi FROM sales_history_item WHERE source_file = ?)", args: [SUMBER_ACCURATE, sourceFile] },
+        ], "write").catch((e) => console.error("[SALES HISTORY IMPORT] gagal membersihkan salinan Accurate", e));
         inFlight.delete(sourceFile);
     }
 }

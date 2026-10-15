@@ -46,6 +46,7 @@ export default function HistoryPenjualan({ permKeys }: { permKeys: string[] }) {
     const produkQ = useDebounced(produk.trim(), 450);
     const customerQ = useDebounced(cariCustomer.trim(), 350);
 
+    const [rentang] = useLoad(useCallback(() => ambil<{ firstDate: string; lastDate: string }>("/api/sales-history", (j) => (j as { database: { firstDate: string; lastDate: string } }).database), []));
     const [tahunOpts] = useLoad(useCallback(() => ambil<Opt[]>("/api/sales-history/years", (j) => ((j as { years: Array<{ year: number; invoices: number }> }).years ?? []).map((y) => ({ value: String(y.year), label: `${y.year} (${y.invoices.toLocaleString("id-ID")} faktur)` }))), []));
     const [principalOpts] = useLoad(useCallback(() => ambil<Opt[]>(`/api/sales-history/principals${tahun ? `?year=${tahun}` : ""}`, (j) => ((j as { principals: Array<{ principal: string; invoices: number }> }).principals ?? []).map((p) => ({ value: p.principal, label: `${p.principal} (${p.invoices.toLocaleString("id-ID")})` }))), [tahun]));
     // Principal yang tidak ada di tahun baru diabaikan di semua kueri (perilaku lama melepasnya).
@@ -95,6 +96,8 @@ export default function HistoryPenjualan({ permKeys }: { permKeys: string[] }) {
         { key: "harga", header: "Harga satuan", align: "end", cell: (r) => <span className="fi-tnum">{rp(r.hargaSatuan)}</span> },
         { key: "total", header: "Total bruto", align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{rp(r.hargaTotal)}</span> },
         { key: "diskon", header: "Diskon", align: "end", cell: (r) => <span className="fi-tnum"><b className="fi-why">{pct(r.diskonRp, r.hargaTotal)}%</b><span className="fi-sub">{rp(r.diskonRp)}</span></span> },
+        // Kolom REM sumber (referensi PO/SO, format bebas per principal); hilang saat redesign S3, dikembalikan 14 Okt.
+        { key: "ket", header: "Keterangan", cell: (r) => r.keterangan || "—" },
     ];
 
     return (
@@ -106,7 +109,7 @@ export default function HistoryPenjualan({ permKeys }: { permKeys: string[] }) {
                     <span className="fi-spacer" />
                     {bolehImpor && <Button icon={<Upload className="fi-icon" aria-hidden />} onClick={() => setDialog(true)}>Impor CSV e-Faktur…</Button>}
                 </div>
-                <p>Riwayat item faktur dari data e-Faktur, untuk melihat harga dan diskon yang pernah diberikan ke toko. Pencarian dimulai dari nama produk.</p>
+                <p>Riwayat item faktur dari data e-Faktur, untuk melihat harga dan diskon yang pernah diberikan ke toko. Pencarian dimulai dari nama produk.{rentang.data?.lastDate && <> Data tersedia {rentang.data.firstDate} s.d. <b>{rentang.data.lastDate}</b>.</>}</p>
             </header>
 
             {pesanImpor && <MessageStrip tone="pos" title={pesanImpor} onClose={() => setPesanImpor(null)} />}

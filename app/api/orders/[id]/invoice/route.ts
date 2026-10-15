@@ -19,7 +19,7 @@ import { antrekan, pencariPenekan } from "@/lib/invoice-outbox-actions";
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 import { buildInvoicePayload, type InvoiceOrder } from "@/lib/accurate-invoice-write";
 import { accurateUnits } from "@/lib/accurate-units";
-import { salesmanOrder } from "@/lib/order-salesman";
+import { salesmanBedaCabang, salesmanOrder } from "@/lib/order-salesman";
 import { resolveOrderBranch } from "@/lib/order-branch";
 import { programSnapshot } from "@/lib/program-realization";
 
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const kodeSalesman = typeof body?.salesman === "string" ? body.salesman.trim().toUpperCase() : "";
     const pegawai = kodeSalesman
         ? await db.select({ id: accurateEmployee.id, number: accurateEmployee.number, name: accurateEmployee.name,
-            salesman: accurateEmployee.salesman, suspended: accurateEmployee.suspended })
+            salesman: accurateEmployee.salesman, suspended: accurateEmployee.suspended, branchId: accurateEmployee.branchId })
             .from(accurateEmployee).where(sql`upper(trim(${accurateEmployee.number})) = ${kodeSalesman}`)
         : [];
     const salesman = salesmanOrder({ queue: wantQueue, kode: kodeSalesman, pegawai });
@@ -80,6 +80,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         return NextResponse.json({ ok: false, error: resolvedBranch.error }, { status: 409 });
     }
     const orderBranch = resolvedBranch.branch;
+    // Butir 4 (O1 putaran 1): salesman faktur = salesman CABANG PELANGGAN (cabang faktur), juga di pratinjau.
+    const bedaCabang = salesmanBedaCabang(salesman, orderBranch.branchId, orderBranch.branchName);
+    if (bedaCabang && !bedaCabang.ok) {
+        return NextResponse.json({ ok: false, kode: bedaCabang.kode, error: bedaCabang.error }, { status: bedaCabang.status });
+    }
 
     const salesmanInfo = salesman.opsi ? { number: salesman.opsi.salesmanNumber, id: salesman.opsi.masterSalesmanId, name: salesman.nama ?? "" } : null;
     let payload;

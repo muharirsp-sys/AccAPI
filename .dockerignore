@@ -22,6 +22,9 @@ docker-compose*.yaml
 
 # Runtime data must live in persistent Docker volumes, not in the image.
 runtime
+# Foto kunjungan + DATA PRIBADI NOO (foto KTP) lokal tidak boleh masuk build context/image.
+data/uploads
+data/private
 python_backend/data
 python_backend/output
 python_backend/__pycache__

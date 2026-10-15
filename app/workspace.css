@@ -37,6 +37,6 @@ html[data-theme="surya"] :is(.ui-tab-button[data-state="active"],.ui-pill-tab[da
 html[data-theme="surya"] :is(.ui-button-primary,.btn-primary) { background: #17694f !important; color: white !important; border-color: #17694f !important; }
 html[data-theme="surya"] [data-accapi-date-picker-calendar="true"] { background: white !important; }
 html[data-theme="surya"] ::selection { background: #cbe6d7; color: #123d2c; }
-html[data-theme="surya"] input[type="file"] { color: var(--luxury-muted) !important; max-width: 100%; }
-html[data-theme="surya"] input[type="file"]::file-selector-button { background: var(--btn-primary-bg) !important; color: var(--btn-primary-text) !important; border: 1px solid var(--btn-primary-border); border-radius: 6px; padding: 8px 12px; margin-right: 12px; font: inherit; font-weight: 600; cursor: pointer; }
-html[data-theme="surya"] input[type="file"]:not(:disabled):hover::file-selector-button { background: #11513d !important; }
+html[data-theme="surya"] input[type="file"]:not(.fi-input) { color: var(--luxury-muted) !important; max-width: 100%; }
+html[data-theme="surya"] input[type="file"]:not(.fi-input)::file-selector-button { background: var(--btn-primary-bg) !important; color: var(--btn-primary-text) !important; border: 1px solid var(--btn-primary-border); border-radius: 6px; padding: 8px 12px; margin-right: 12px; font: inherit; font-weight: 600; cursor: pointer; }
+html[data-theme="surya"] input[type="file"]:not(.fi-input):not(:disabled):hover::file-selector-button { background: #11513d !important; }
