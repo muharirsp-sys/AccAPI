@@ -36,4 +36,6 @@ test("fakturSudahTiada: hanya bukti hapus yang dianggap tiada", () => {
     assert.equal(fakturSudahTiada({ s: false, d: ["Pelanggan tidak tepat"] }), false);
     assert.equal(fakturSudahTiada({ s: false }), false, "s:false tanpa pesan = ragu");
     assert.equal(fakturSudahTiada(null), false);
+    assert.equal(fakturSudahTiada({ s: true, d: [] }), false, "d array kosong = jawaban ada");
+    assert.equal(fakturSudahTiada({ s: false, d: "Faktur Penjualan tidak tepat" }), false, "bentuk tak terbukti = ragu");
 });

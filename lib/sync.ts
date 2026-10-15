@@ -585,10 +585,17 @@ export async function upsertSalesInvoiceById(id: number, creds: AccurateCredenti
     // menghapus baris, jadi tanpa ini faktur hantu tinggal selamanya — tampil ganda di /faktur
     // ("Belum Lunas"), ikut Rekap Promo, riwayat beli, dan feed Web Sales. Accurate sumber kebenaran;
     // baris yang ternyata masih hidup kembali lewat sync list.do berikutnya.
+    // Pagar: hanya bila sesi terbuka pada database faktur (ACCURATE_INVOICE_DB_ID, pagar yang sama dengan kirim
+    // faktur). Sesi di database lain juga menjawab "tidak tepat" untuk faktur sah — itu bukan bukti hapus.
     if (fakturSudahTiada(body)) {
-        const dibuang = await db.delete(salesInvoiceCache).where(eq(salesInvoiceCache.id, id))
-            .returning({ number: salesInvoiceCache.number, outstanding: salesInvoiceCache.outstanding });
-        if (dibuang.length) console.log(`[sync] faktur ${id} ${dibuang[0].number ?? "-"} (sisa ${dibuang[0].outstanding ?? "-"}) tidak ada di Accurate -> cache dibuang`);
+        const dbFaktur = String(process.env.ACCURATE_INVOICE_DB_ID || "").trim();
+        if (dbFaktur && String(creds.databaseId ?? "") === dbFaktur) {
+            const dibuang = await db.delete(salesInvoiceCache).where(eq(salesInvoiceCache.id, id))
+                .returning({ number: salesInvoiceCache.number, outstanding: salesInvoiceCache.outstanding });
+            if (dibuang.length) console.log(`[sync] faktur ${id} ${dibuang[0].number ?? "-"} (sisa ${dibuang[0].outstanding ?? "-"}) tidak ada di Accurate -> cache dibuang`);
+        } else {
+            console.warn(`[sync] faktur ${id} tidak ada di Accurate, cache TIDAK dibuang: database sesi ${creds.databaseId ?? "?"} bukan ACCURATE_INVOICE_DB_ID (${dbFaktur || "kosong"})`);
+        }
         if (creds.databaseId) await recordInvoiceRealization(creds.databaseId, String(id), null);
         throw new AccurateInvoiceGoneError(id);
     }

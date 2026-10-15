@@ -63,15 +63,18 @@ export async function GET(req: Request) {
     // Probe 15 Okt 2026: 164 baris (55 DFT Agu–Sep + 6 id INV lama), sisa ±Rp 86 jt. Jalankan `?check=1` dulu.
     // ponytail: calon dipilih dari pola, bukan dari selisih sapuan list.do penuh — paging offset Accurate
     // bisa melompati baris saat data berubah, jadi "tidak terlihat di sync" bukan bukti terhapus.
+    // Calon yang hidup (RJN, draf aktif) tetap calon di setiap run -> `?after=<id>` (dari `nextAfter`) melanjutkan.
     if (searchParams.get("hantu") === "1") {
+        const after = Math.max(Number(searchParams.get("after")) || 0, 0);
         const rows = await db.execute(sql`SELECT id FROM sales_invoice
-            WHERE number IS NULL OR number NOT LIKE 'INV/%'
-               OR number IN (SELECT number FROM sales_invoice WHERE number LIKE 'INV/%' GROUP BY number HAVING count(*) > 1)
+            WHERE id > ${after} AND (number IS NULL OR number NOT LIKE 'INV/%'
+               OR number IN (SELECT number FROM sales_invoice WHERE number LIKE 'INV/%' GROUP BY number HAVING count(*) > 1))
             ORDER BY id`);
         const ids = (rows.rows as Array<{ id: number | string }>).map((row) => Number(row.id));
-        if (checkOnly || ids.length === 0) return NextResponse.json({ ok: true, checkOnly, hantu: true, calon: ids.length, calonIds: ids.slice(0, 200) });
+        if (checkOnly || ids.length === 0) return NextResponse.json({ ok: true, checkOnly, hantu: true, after, calon: ids.length, calonIds: ids.slice(0, 200) });
         const hasil = await tambal(ids, limit, jedaMs);
-        return NextResponse.json({ hantu: true, ...hasil }, { status: "error" in hasil ? 503 : 200 });
+        const nextAfter = ids.length > limit ? ids[limit - 1] : null;
+        return NextResponse.json({ hantu: true, after, nextAfter, ...hasil }, { status: "error" in hasil ? 503 : 200 });
     }
 
     const from = searchParams.get("from") ?? "";

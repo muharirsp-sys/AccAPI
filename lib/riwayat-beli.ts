@@ -28,12 +28,9 @@ export function jendelaRiwayat(sampai: string, bulan: number): { dari: string; s
  *   Batas: bulan kalender & musiman tidak dibedakan; retur (sales_return) TIDAK dikurangkan; baris harga 0 (bonus promo) tidak dihitung;
  *   faktur tanpa rincian barang (masuk lewat list.do, bukan detail.do) tidak bisa dihitung per barang — jumlahnya dilaporkan (`tanpaRincian`)
  *   sehingga rata-rata bisa lebih kecil dari kenyataan. Jalan naik: backfill rincian lewat detail.do, lalu kurangi retur per barang.
- * ponytail: faktur yang DIHAPUS di Accurate MASIH IKUT TERHITUNG — cache `sales_invoice` tidak punya penanda andal: sync hanya upsert
- *   (list.do tidak melaporkan faktur hilang; synced_at hanya bergerak bila isi berubah), dan webhook DELETE / penambal yang mendapat detail.do
- *   kosong (AccurateInvoiceGoneError, lib/sync.ts) tidak menyentuh barisnya. lib/invoice-search.ts mengenalinya hanya dengan SATU detail.do
- *   per hit cache — di sini itu = satu panggilan Accurate per faktur per buka panel (route ini baca-DB saja), jadi tidak dipakai. Batas:
- *   rata-rata bisa lebih besar dari kenyataan bila toko punya faktur yang dihapus dalam jendela. Jalan naik: tandai/hapus baris cache saat
- *   AccurateInvoiceGoneError (webhook + penambal), lalu saring di kueri route.
+ * Faktur yang DIHAPUS di Accurate: sejak PR #185 baris cache-nya dibuang saat detail.do membuktikan hapus (webhook + penambal,
+ *   lib/sync.ts fakturSudahTiada). Batas: faktur terhapus yang belum pernah diperiksa detail.do (tanpa event webhook) tetap terhitung
+ *   sampai disapu `cron/webhook-backfill?hantu=1` atau penambal; rata-rata bisa sedikit lebih besar.
  */
 export function bulanTeramati(o: { dari: string; sampai: string; bulan: number; palingAwal: string | null }): number {
     if (!o.palingAwal || o.palingAwal <= o.dari) return o.bulan;
