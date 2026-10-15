@@ -110,11 +110,46 @@ test("uraiDetail: nominal lewat keSen (sen tepat), fakturId invoice.id ?? invoic
     assert.ok(kosong.ok && kosong.pelunasan.faktur.length === 0, "tanpa baris faktur = sah (ember tanpa_baris_faktur di lib)");
 });
 
-test("uraiDetail: rusak DITOLAK terlihat — desimal 3, invoicePayment absen (tanpa cadangan paymentAmount), faktur ganda, bentuk", () => {
+test("uraiDetail: > 2 desimal Accurate (produksi 10–15 Okt: ±40 % pelunasan) -> sen dibulatkan setengah menjauhi nol, bukan ditolak", () => {
+    const satu = (cheque: unknown, ip: unknown) => urai(detail({ chequeAmount: cheque, detailInvoice: [{ invoice: { id: 1 }, invoicePayment: ip }] }));
+    const h = satu(82250.0988, 82250.0988);
+    assert.ok(h.ok);
+    assert.equal(h.pelunasan.chequeAmount, 8225010);
+    assert.equal(h.pelunasan.faktur[0].invoicePayment, 8225010);
+    const sen = (v: unknown) => { const r = satu(v, v); return r.ok ? r.pelunasan.chequeAmount : r.sebab; };
+    assert.equal(sen(1695228.659414), 169522866);
+    assert.equal(sen(1.0001), 100);
+    assert.equal(sen(0.125), 13, "tepat setengah -> menjauhi nol");
+    assert.equal(sen(0.124999), 12);
+    assert.equal(sen(-0.125), -13);
+    assert.equal(sen("27447491.598839"), 2744749160);
+    assert.equal(sen(0.1 + 0.2), 30, "galat floating JSON (0.30000000000000004)");
+});
+
+test("uraiDetail: baris faktur dibulatkan KUMULATIF — Σ baris = cheque bila Accurate klop, selisih nyata tetap terlihat", () => {
+    const tiga = (cheque: unknown, ip: unknown[]) => urai(detail({ chequeAmount: cheque,
+        detailInvoice: ip.map((v, i) => ({ invoice: { id: i + 1, masterSalesmanId: i + 1 }, invoicePayment: v })) }));
+    // Dibulatkan sendiri-sendiri: 3333 × 3 = 9999 ≠ 10000 -> ember tak teralokasi semu 1 sen (multi-salesman ±2 % pelunasan).
+    const klop = tiga(99.999999, [33.333333, 33.333333, 33.333333]);
+    assert.ok(klop.ok);
+    assert.equal(klop.pelunasan.chequeAmount, 10000);
+    assert.deepEqual(klop.pelunasan.faktur.map((f) => f.invoicePayment), [3333, 3334, 3333]);
+    const beda = tiga(120.5, [50.123, 50.124]);
+    assert.ok(beda.ok);
+    assert.deepEqual([beda.pelunasan.chequeAmount, ...beda.pelunasan.faktur.map((f) => f.invoicePayment)], [12050, 5012, 5013]);
+    const ganda = urai(detail({ chequeAmount: 30.00003, detailInvoice: [10.00001, 10.00001, 10.00001].map((v) => ({ invoice: { id: 5 }, invoicePayment: v })) }));
+    assert.ok(ganda.ok);
+    assert.deepEqual(ganda.pelunasan.faktur.map((f) => f.invoicePayment), [3000], "faktur sama dua kali tetap dijumlah");
+});
+
+test("uraiDetail: rusak DITOLAK terlihat — bukan angka desimal polos, invoicePayment absen (tanpa cadangan paymentAmount), faktur ganda, bentuk", () => {
     const sebab = (d: unknown) => { const h = urai(d); return h.ok ? "ok" : h.sebab; };
-    assert.equal(sebab(detail({ chequeAmount: 108741.152 })), "nominal");
     assert.equal(sebab(detail({ chequeAmount: "1.234.567" })), "nominal");
-    assert.equal(sebab(detail({ detailInvoice: [{ invoice: { id: 1 }, invoicePayment: 0.125 }] })), "nominal");
+    assert.equal(sebab(detail({ chequeAmount: "12,5" })), "nominal");
+    assert.equal(sebab(detail({ chequeAmount: 1e-7 })), "nominal", "notasi e");
+    assert.equal(sebab(detail({ chequeAmount: Number.NaN })), "nominal");
+    assert.equal(sebab(detail({ chequeAmount: 1e17 })), "nominal", "di luar bilangan bulat aman (sen)");
+    assert.equal(sebab(detail({ detailInvoice: [{ invoice: { id: 1 }, invoicePayment: "0.1.2" }] })), "nominal");
     assert.equal(sebab(detail({ detailInvoice: [{ invoice: { id: 1 }, paymentAmount: 500 }] })), "bentuk", "invoicePayment absen, paymentAmount TIDAK dipakai");
     assert.equal(sebab(detail({ chequeAmount: undefined })), "bentuk");
     assert.equal(sebab(detail({ paymentMethod: { name: "Tunai" } })), "bentuk");

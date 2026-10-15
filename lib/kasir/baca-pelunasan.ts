@@ -10,7 +10,7 @@
  * Side Effects: GET Accurate sales-receipt/list.do + detail.do (BACA-SAJA, identitas sinkron); tulis kasir_pelunasan,
  *   kasir_pelunasan_faktur, kasir_pelunasan_baca. TIDAK pernah menulis ke Accurate dan tidak menyimpan raw_data.
  *
- * Aturan (KASIR-KONTRAK §4 + brief K1b): nominal lewat keSen (rusak = pelunasan DITOLAK, terlihat di status, tidak dilewati diam-diam);
+ * Aturan (KASIR-KONTRAK §4 + brief K1b): nominal Accurate > 2 desimal dibulatkan ke sen di pembaca (15 Okt; rusak = pelunasan DITOLAK, terlihat di status, tidak dilewati diam-diam);
  * 401/403 = BERHENTI seketika tanpa ulang; galat TIDAK pernah menghapus cache atau memundurkan lengkap_pada; `last_update` yang disimpan
  * = nilai list.do yang dibaca SEBELUM detail (berubah di antaranya -> putaran berikut membaca ulang: boleh lebih, tak pernah terlewat).
  */

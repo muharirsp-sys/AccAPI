@@ -199,13 +199,13 @@ test("401 di tengah -> BERHENTI seketika tanpa ulang, status gagal/sesi_sinkron,
     assert.equal(x.t.cache.size, 30, "galat daftar tidak menghapus apa pun");
 });
 
-test("403 = hak_akses berhenti tanpa ulang; detail s:false = ditolak terlihat; nominal 3 desimal = DITOLAK (K-3: tak pernah lengkap)", async () => {
+test("403 = hak_akses berhenti tanpa ulang; detail s:false = ditolak terlihat; nominal rusak (pemisah ribuan) = DITOLAK (K-3: tak pernah lengkap)", async () => {
     const h403 = siapkan(hari(3), (p) => (p.jenis === "detail" ? new Response("{}", { status: 403 }) : undefined));
     const a = await h403.baca();
     assert.deepEqual([status(a).sebab, h403.s.detail().length <= 3], ["hak_akses", true]);
     assert.ok(!h403.tidur.some((ms) => ms !== 150), "tanpa jeda ulang");
 
-    const data: PelSim[] = [...hari(3), { id: 50, lastUpdate: lu(50), cheque: 1000.125 }];
+    const data: PelSim[] = [...hari(3), { id: 50, lastUpdate: lu(50), cheque: "1.000,13" }];
     const x = siapkan(data, (p) => (p.jenis === "detail" && p.id === 2 ? new Response(JSON.stringify({ s: false, d: ["Token TOKEN-RAHASIA-1 tidak berhak"] })) : undefined));
     const h = await x.baca();
     assert.deepEqual([status(h).status, status(h).sebab, status(h).sisaDetail], ["gagal", "ditolak", 2]);
