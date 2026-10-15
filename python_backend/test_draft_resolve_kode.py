@@ -101,3 +101,27 @@ def test_kelompok_yang_bukan_kelompok_master_juga_tidak_mencocok_semuanya():
     """
     hasil = resolve_kode_barangs([_baris(kelompok="OVALE FACIAL LOTIONN", kode_barangs="")], MASTER)
     assert len(hasil) == 1 and hasil[0]["kode_barangs"] == "", hasil
+
+
+def test_simpan_ulang_pasangan_spray_cologne_tidak_beranak():
+    """Spray Cologne Series = WHITE SR (FM) + BLACK SR (HM), dan pasangannya beda merek.
+
+    Separuh pasangan menarik separuh lainnya ke baris pecahan sendiri -- benar sekali. Tetapi
+    hasil pecahan itu, disimpan lagi, dulu menarik pasangannya LAGI dan melahirkan kembaran tiap
+    Simpan: golden Priskila 53 -> 61 -> 77 -> 109 baris (15 Okt 2026).
+    """
+    master = {"master": {"items": [
+        {"kode_barang": "P2049101010010", "nama_barang": "CSBNCA HM SPRAY COLG BLACK SR BLACK 100ML X 72 BTL",
+         "kelompok": "CSBNCA HM - SPRAY COLG - BLACK SR", "variant": "BLACK", "gramasi": "100ML"},
+        {"kode_barang": "P2038101010010", "nama_barang": "CSBNCA FM SPRAY COL WHITE SR WHITE 100ML X 72 BTL",
+         "kelompok": "CSBNCA FM - SPRAY COL - WHITE SR", "variant": "WHITE", "gramasi": "100ML"},
+        # Kelompok ketiga: tanpa ini barisnya mencakup SELURUH master dan jadi ALL KELOMPOK BARANG.
+        {"kode_barang": "P2044001010010", "nama_barang": "CSBNCA HM EDP ROYAL 100ML X 24 BTL",
+         "kelompok": "CSBNCA HM - EDP", "variant": "ROYAL", "gramasi": "100ML"},
+    ]}}
+    satu = resolve_kode_barangs(
+        [_baris(kelompok="CSBNCA HM - SPRAY COLG - BLACK SR", kode_barangs="P2049101010010")], master)
+    dua = resolve_kode_barangs(satu, master)
+    bentuk = lambda rows: [(r["id"], r["kelompok"], r["kode_barangs"]) for r in rows]
+    assert [r["kode_barangs"] for r in satu] == ["P2049101010010", "P2038101010010"], bentuk(satu)
+    assert bentuk(dua) == bentuk(satu), bentuk(dua)

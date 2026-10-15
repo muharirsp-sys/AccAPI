@@ -3945,6 +3945,16 @@ def _apply_native_kelompok(rows_to_check, master_items):
     _excluded_codes = {str(it.get("kode_barang", "")).strip() for it in master_items
                        if norm(it.get("kelompok")) in _EXCLUDED_KELOMPOKS} if _EXCLUDED_KELOMPOKS else set()
 
+    # Kelompok yang SUDAH dipegang baris-baris satu program (surat, channel, ketentuan, benefit).
+    # Dipakai pasangan #3 di bawah: pasangan yang sudah punya barisnya sendiri tidak ditarik lagi.
+    def _kunci_program(row):
+        return tuple(norm(row.get(k)) for k in ("surat_program", "channel_gtmt", "ketentuan", "benefit"))
+    _kel_of = {str(it.get("kode_barang", "")).strip(): norm(it.get("kelompok")) for it in master_items}
+    _kel_program = {}
+    for r in rows_to_check:
+        _kel_program.setdefault(_kunci_program(r), set()).update(
+            _kel_of[k.strip()] for k in str(r.get("kode_barangs", "")).split(",") if k.strip() in _kel_of)
+
     for r in rows_to_check:
         if _excluded_codes:
             _kb = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
@@ -4016,12 +4026,18 @@ def _apply_native_kelompok(rows_to_check, master_items):
                 # kehilangan kelompok lain (beda dgn kalau resolve_variant yg fire).
                 _seed_kels = {norm(it.get("kelompok")) for it in matched_items}
                 _seed_grams = {norm(it.get("gramasi")) for it in matched_items}
+                # Pasangan yang sudah dipegang baris LAIN dari program yang sama tidak ditarik.
+                # Pasangannya selalu beda merek (WHITE SR = FM, BLACK SR = HM), jadi menariknya
+                # pasti melahirkan baris pecahan baru di bawah. Baris yang sudah dipecah HM/FM
+                # (oleh Priskila, atau oleh simpan sebelumnya) lalu saling melahirkan kembaran
+                # tiap Simpan: golden Priskila 53 -> 61 -> 77 -> 109 baris (15 Okt 2026).
+                _dipegang_lain = _kel_program.get(_kunci_program(r), set()) - _seed_kels
                 for _rule in _VARIANT_MAPPING.values():
                     _rk = {norm(k) for k in _rule.get("resolve_to_kelompok", [])}
                     if not _rk or not (_seed_kels & _rk):
                         continue
                     _excl = {norm(k) for k in _rule.get("exclude_kelompok", [])}
-                    for _k in _rk - _excl:
+                    for _k in _rk - _excl - _dipegang_lain:
                         for _g in _seed_grams:
                             _seed_keys.add((_k, _g))
                 # Kemasan baris tetap mengikat di sini. Tanpa ini, baris "ELLIPS ... BLR" yang
