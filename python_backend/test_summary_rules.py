@@ -310,6 +310,11 @@ def check_compiler():
     programs, _ = compiled([row(keterangan="Hanya PO pertama (listing) per outlet"), row(no="2")])
     assert sorted(p.first_po for p in programs) == [False, True], programs
 
+    # "Berlaku kelipatan" mengulang bonus; penyangkalannya tidak (Dahlia F617TK, 15 Okt).
+    assert [compiled([row(ketentuan=f"Beli 12 PCS UP, {text}", benefit_type="BONUS_QTY", benefit="1 PCS")])[0][0].tiers[0].repeat
+            for text in ("Berlaku Kelipatan", "Maks. Bonus 1 PCS (Tidak Kelipatan)", "Tanpa Kelipatan", "Bukan Kelipatan",
+                         "Tidak Berlaku Kelipatan")] == [True, False, False, False, False]
+
     # Nilai rupiah minimum menjadi batas nilai, bukan kuantitas.
     programs, _ = compiled([row(ketentuan="Pembelian Rp 5.000.000", benefit_type="DISC_RP", benefit="100000")])
     assert programs[0].threshold == "value" and programs[0].tiers[0].minimum == "5000000", programs[0]
