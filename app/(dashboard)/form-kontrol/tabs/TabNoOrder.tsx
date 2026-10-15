@@ -3,9 +3,11 @@
  *   per toko, disimpan per baris; galat muat ≠ kosong.
  * Caller: form-kontrol/page.tsx (shell tab, default export `({ scope })`).
  * Dependensi: GET /api/form-kontrol/ao-control + /reasons, POST /api/form-kontrol/ao-control; ../shared (Scope, AoRow, Reason,
- *   PRINCIPLES, hariIniWita); ../lapangan (bacaFk, kirimFk, keBarisRute); components/fiori/*; lib/rekapan-nota/ui (tanggalPanjang).
+ *   principalAwal, penjelasanTanpaJks, hariIniWita); ../lapangan (bacaFk, kirimFk, keBarisRute); components/fiori/*; lib/rekapan-nota/ui (tanggalPanjang).
  * Main Functions: TabNoOrder.
  * Side Effects: HTTP GET; POST ao-control (status not_order + alasan) per toko — payload sama dengan kode lama.
+ * FK-MSM3 (peninjau B S-1): 409 toko tidak lagi di rute → daftar dimuat ulang, penolakannya tampil di strip tingkat tab bernama toko (bertahan
+ *   melewati muat ulang, tidak lenyap bersama barisnya); isian belum disimpan toko yang MASIH ada ikut terbawa melewati muat ulang.
  */
 "use client";
 
@@ -15,15 +17,21 @@ import { Button, EmptyState, ErrorState, MessageStrip, Section, Skeleton, Status
 import { FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { TOKO_TUTUP_CODE } from "@/lib/form-kontrol/constants";
-import { type Scope, type AoRow, type Reason, PRINCIPLES, useIzinFk } from "../shared";
-import { bacaFk, keBarisRute, kirimFk, useHariBeku } from "../lapangan";
+import { type Scope, type AoRow, type Reason, penjelasanTanpaJks, principalAwal, useIzinFk } from "../shared";
+import { bacaFk, ditolakBukanRute, keBarisRute, kirimFk, useHariBeku } from "../lapangan";
 
 type Alasan = { reasonCode: string; note: string };
 type Data = { rows: AoRow[]; reasons: Reason[] };
-type Isian = { dari?: Data; ubah: Record<string, Alasan>; simpan: Record<string, Alasan> };
+type Isian = { dari?: Data; kunci?: string; ubah: Record<string, Alasan>; simpan: Record<string, Alasan> };
 
-/** Isian milik data yang sedang tampil; data baru (muat ulang) = isian kosong. */
-const dasar = (i: Isian, data: Data | undefined): Isian => (data && i.dari === data ? i : { dari: data, ubah: {}, simpan: {} });
+/**
+ * Isian milik data yang sedang tampil. Muat ulang daftar yang SAMA (salesman|principal|tanggal): ketikan belum disimpan untuk toko yang masih
+ * ada ikut terbawa (FK-MSM3), alasan tersimpan sesi ini diganti data server. Daftar lain (kunci berganti) = isian kosong.
+ */
+const dasar = (i: Isian, data: Data | undefined, kunci: string): Isian => (data && i.dari === data ? i : {
+    dari: data, kunci, simpan: {},
+    ubah: i.kunci === kunci && data ? Object.fromEntries(Object.entries(i.ubah).filter(([c]) => data.rows.some((r) => r.custCode === c))) : {},
+});
 const tersimpanDi = (i: Isian, r: AoRow): Alasan => i.simpan[r.custCode] ?? { reasonCode: r.noOrderReasonCode ?? "", note: r.noOrderNote ?? "" };
 
 export default function TabNoOrder({ scope }: { scope: Scope }) {
@@ -34,12 +42,15 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
     const beku = useHariBeku();
     const [tanggalPilih, setTanggalPilih] = useState(beku.hari);
     const tanggal = salesman ? beku.hari : tanggalPilih;
-    const [principle, setPrinciple] = useState(scope.principle ?? PRINCIPLES[0]);
+    // Principal = JKS aktif cakupan (FK-MSM butir 1); satu = langsung terpilih.
+    const daftarPrincipal = scope.principles ?? [];
+    const tanpaJks = penjelasanTanpaJks(scope);
+    const [principle, setPrinciple] = useState(() => principalAwal(scope));
     const [salesCode, setSalesCode] = useState(scope.salesCode ?? "");
     const tanpaIzin = useIzinFk("submit");
 
     const loader = useCallback(async (): Promise<Load<Data>> => {
-        if (!salesCode) return { status: "siap", data: { rows: [], reasons: [] } };
+        if (!salesCode || !principle) return { status: "siap", data: { rows: [], reasons: [] } };
         const p = new URLSearchParams({ date: tanggal, principle });
         p.set("salesCode", salesCode);
         const [ao, alasan] = await Promise.all([
@@ -57,7 +68,11 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
     // Semua pembaruan lewat setter fungsional dari state TERBARU (bukan `sesi` hasil render): simpan toko A yang selesai sesudah await
     // tidak boleh membuang ketikan toko B yang diisi selama menunggu (temuan peninjau P2).
     const [isian, setIsian] = useState<Isian>({ ubah: {}, simpan: {} });
-    const sesi = useMemo(() => dasar(isian, data), [data, isian]);
+    const kunciDaftar = `${salesCode}|${principle}|${tanggal}`;
+    const sesi = useMemo(() => dasar(isian, data, kunciDaftar), [data, isian, kunciDaftar]);
+    // Penolakan "toko tidak lagi di rute" per daftar — barisnya hilang saat dimuat ulang, kalimatnya tidak.
+    const [ditolak, setDitolak] = useState<{ kunci: string; daftar: { nama: string; pesan: string }[] }>({ kunci: "", daftar: [] });
+    const ditolakIni = ditolak.kunci === kunciDaftar ? ditolak.daftar : [];
     const [menyimpan, setMenyimpan] = useState<string | null>(null);
     const [galat, setGalat] = useState<Record<string, string>>({});
 
@@ -72,7 +87,7 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
     const ketik = (cust: string, patch: Partial<Alasan>, r: AoRow) => {
         setGalat((g) => ({ ...g, [cust]: "" }));
         setIsian((prev) => {
-            const b = dasar(prev, data);
+            const b = dasar(prev, data, kunciDaftar);
             return { ...b, ubah: { ...b.ubah, [cust]: { ...(b.ubah[cust] ?? tersimpanDi(b, r)), ...patch } } };
         });
     };
@@ -93,7 +108,7 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
                 noOrderNote: a.note,
             }, { ulangAman: true });
             setIsian((prev) => {
-                const b = dasar(prev, data);
+                const b = dasar(prev, data, kunciDaftar);
                 const ubah = { ...b.ubah };
                 // Isian toko ini yang diubah lagi selama menunggu tetap jadi draf; yang sama dengan kiriman dibersihkan.
                 const kini = ubah[r.custCode];
@@ -102,16 +117,28 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
             });
         } catch (e) {
             setGalat((g) => ({ ...g, [r.custCode]: `Alasan belum tersimpan. ${e instanceof Error ? e.message : ""}`.trim() }));
+            // FK-MSM3: toko tidak lagi di rute tanggal ini (409 berkode) → daftar dimuat ulang dari server; kalimatnya bertahan di strip tab.
+            if (ditolakBukanRute(e)) {
+                const pesan = e.message;
+                setDitolak((d) => ({ kunci: kunciDaftar, daftar: [...(d.kunci === kunciDaftar ? d.daftar : []).filter((x) => x.nama !== r.custName),
+                    { nama: r.custName, pesan }] }));
+                muatUlang();
+            }
         } finally {
             setMenyimpan(null);
         }
     }
 
     let isi: ReactNode;
-    if (!salesCode) {
+    if (!salesCode && tim !== null && tim.length === 0) {
+        isi = <EmptyState title="Belum ada salesman di tim Anda" message="Salesman muncul setelah Admin Sales mengisi SPV/SM mereka di Hierarki Sales." />;
+    } else if (tanpaJks) {
+        isi = <EmptyState title={tanpaJks.title} message={tanpaJks.message} />;
+    } else if (!salesCode) {
         isi = tim === null ? <EmptyState title="Isi kode salesman" message="Toko tidak order tampil per salesman." />
-            : tim.length === 0 ? <EmptyState title="Belum ada salesman di tim Anda" message="Salesman muncul setelah Admin Sales mengisi SPV/SM mereka di Hierarki Sales." />
-                : <EmptyState title="Pilih salesman tim Anda" message="Toko tidak order tampil per salesman." />;
+            : <EmptyState title="Pilih salesman tim Anda" message="Toko tidak order tampil per salesman." />;
+    } else if (!principle) {
+        isi = <EmptyState title="Pilih principal" message={`JKS dalam cakupan Anda memuat ${daftarPrincipal.length} principal; toko tidak order tampil per principal.`} />;
     } else if (load.status === "galat" && rows.length === 0) {
         isi = <ErrorState title="Data gagal dimuat" message={`${load.error} Ini bukan daftar kosong.`} onRetry={muatUlang} />;
     } else if (!data) {
@@ -180,21 +207,24 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
     return (
         <section aria-labelledby={judulId} className="grid gap-4">
             <div className="grid gap-1">
-                <h2 id={judulId} className="fi-title-2">Toko tidak order</h2>
+                <h2 id={judulId} className="fi-title-2" tabIndex={-1}>Toko tidak order</h2>
                 <p className="fi-small fi-muted flex flex-wrap items-center gap-x-2">
                     <CalendarDays className="fi-icon" aria-hidden /><span>{tanggalPanjang(tanggal)} · WITA</span>
-                    {salesCode && <span>· <span className="fi-mono">{salesCode}</span> · {principle}</span>}
+                    {salesCode && <span>· <span className="fi-mono">{salesCode}</span>{principle ? ` · ${principle}` : ""}</span>}
                 </p>
                 <p className="fi-small fi-muted">Tidak boleh ada toko tanpa alasan — setiap toko tidak order wajib terdokumentasi.</p>
             </div>
             <div className="fi-formgrid">
-                <FormField label="Principal">
-                    {(a) => (
-                        <select {...a} className="fi-input" value={principle} onChange={(e) => setPrinciple(e.target.value)}>
-                            {PRINCIPLES.map((p) => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                    )}
-                </FormField>
+                {daftarPrincipal.length > 1 && (
+                    <FormField label="Principal">
+                        {(a) => (
+                            <select {...a} className="fi-input" value={principle} onChange={(e) => setPrinciple(e.target.value)}>
+                                {!principle && <option value="">Pilih principal</option>}
+                                {daftarPrincipal.map((p) => <option key={p} value={p}>{p}</option>)}
+                            </select>
+                        )}
+                    </FormField>
+                )}
                 {!salesman && tim === null && (
                     <FormField label="Kode salesman">
                         {(a) => <input {...a} className="fi-input fi-mono" value={salesCode} placeholder="mis. S01" onChange={(e) => setSalesCode(e.target.value)} />}
@@ -215,7 +245,7 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
                         {(a) => <input {...a} type="date" className="fi-input" value={tanggalPilih} onChange={(e) => { if (e.target.value) setTanggalPilih(e.target.value); }} />}
                     </FormField>
                 )}
-                {salesCode && (
+                {salesCode && principle && (
                     <div className="flex items-end">
                         <Button icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang} busy={load.status === "memuat" && Boolean(data)}>Muat ulang</Button>
                     </div>
@@ -225,6 +255,12 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
                 <MessageStrip tone="warn" title="Tanggal sudah berganti.">
                     Toko dan isian yang tampil masih untuk {tanggalPanjang(tanggal)}; tidak ada yang dibuang.{" "}
                     <button type="button" className="fi-btn fi-btn--tertiary" onClick={beku.pakaiHariBaru}>Muat {tanggalPanjang(beku.hariBaru)}</button>
+                </MessageStrip>
+            )}
+            {ditolakIni.length > 0 && (
+                <MessageStrip tone="warn" title={`Alasan ${ditolakIni.length} toko tidak tersimpan.`}
+                    onClose={() => { setDitolak({ kunci: "", daftar: [] }); document.getElementById(judulId)?.focus(); }}>
+                    {ditolakIni.map((x) => <span key={x.nama} className="block">{x.nama}: {x.pesan}</span>)}
                 </MessageStrip>
             )}
             {nDraf > 0 && <p className="fi-draft" role="status">{nDraf} alasan belum disimpan.</p>}

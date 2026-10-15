@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
-import { getFrequencyData } from "@/lib/form-kontrol";
+import { canAccessSales, getFrequencyData, resolveScope } from "@/lib/form-kontrol";
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -13,6 +13,8 @@ export async function GET(req: Request) {
         const today = new Date();
         const periodMonth = parseInt(searchParams.get("month") ?? String(today.getMonth() + 1), 10);
         const periodYear  = parseInt(searchParams.get("year")  ?? String(today.getFullYear()), 10);
+        // Baris frekuensi = baris JKS: cakupan sama dengan GET jks (FK-MSM butir 4).
+        if (!canAccessSales(await resolveScope(gate.session), salesCode)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
         const result = await getFrequencyData(salesCode, principle, periodMonth, periodYear);
         return NextResponse.json(result);

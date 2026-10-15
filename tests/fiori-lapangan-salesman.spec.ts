@@ -24,7 +24,8 @@ const HARI_INI = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" })
 // PNG 1×1 untuk foto unggahan dan berkas "kamera".
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 
-const SCOPE = { role: "salesman", salesCode: "S-01", salesName: "SALES A", spvName: "SPV A", allowedSalesCodes: ["S-01"] };
+// `principles` = principal JKS aktif milik salesman (my-scope, FK-MSM butir 1): satu = langsung terpilih tanpa pilihan.
+const SCOPE = { role: "salesman", salesCode: "S-01", salesName: "SALES A", spvName: "SPV A", allowedSalesCodes: ["S-01"], principles: ["GODREJ"] };
 const jam = (hhmm: string) => `${HARI_INI}T${hhmm}:00+08:00`;
 const rute = (custCode: string, custName: string, over: Record<string, unknown>) => ({
     id: `a-${custCode}`, salesCode: "S-01", custCode, custName, principle: "GODREJ", aoStatus: null, noOrderReasonCode: null, noOrderNote: null,
@@ -219,7 +220,7 @@ test("Kirim status (P6): rute dibaca ulang sebelum dikirim — status kunjungan 
 });
 
 test("Kirim status hanya untuk salesman pemilik rute: SPV memilih salesman timnya dan melihat baca-saja", async ({ page }) => {
-    const m = await mockFk(page, { scope: { role: "spv", salesName: "SPV A", spvName: "SPV A", allowedSalesCodes: ["S-01", "S-02"] } });
+    const m = await mockFk(page, { scope: { role: "spv", salesName: "SPV A", spvName: "SPV A", allowedSalesCodes: ["S-01", "S-02"], principles: ["GODREJ"] } });
     await page.goto("/form-kontrol?tab=ao", NAV);
     const r = page.getByRole("region", { name: "Rute hari ini" });
     await r.getByLabel("Salesman tim").selectOption("S-01", NAV);

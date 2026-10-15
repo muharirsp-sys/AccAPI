@@ -3,10 +3,13 @@
  *   lewat dialog "Terapkan" berisi pratinjau ringan (nama berkas, baris terbaca, kolom dikenali/tidak) — BERKAS YANG SAMA dikirim
  *   ke server yang memetakan kolom (HEADER_MAP di route jks) — lalu hasil `imported` DAN `skipped`; templat kolom diunduh dari klien.
  * Caller: form-kontrol/FormKontrol.tsx (tab "jks").
- * Dependensi: ../shared (Scope, PRINCIPLES, HARI, JksRow, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive},
+ * Dependensi: ../shared (Scope [principles], HARI, JksRow, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive},
  *   xlsx (dimuat saat dipakai: pratinjau + templat).
  * Main Functions: TabJks (default), bacaPratinjau, unduhTemplat.
  * Side Effects: GET /api/form-kontrol/jks; POST /api/form-kontrol/jks (FormData `file`) lewat ConfirmDialog; unduh templat-jks.xlsx.
+ * FK-MSM2: kolom Asal — baris hasil konfirmasi kunjungan luar rute bertanda "Ditambahkan salesman" (siapa, kapan, dari kunjungan tanggal
+ * berapa; server `tambahanSalesman`); hasil impor melaporkan baris tambahan salesman yang DINONAKTIFKAN karena tokonya ada di berkas dengan
+ * kode JKS lain (`digantikan`).
  */
 "use client";
 
@@ -14,7 +17,8 @@ import { useCallback, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Download, RefreshCw, Upload } from "lucide-react";
 import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Skeleton, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
-import { HARI, PRINCIPLES, ambilFk, tulisFk, useIzinFk, type JksRow, type Scope } from "../shared";
+import { HARI, ambilFk, hariIniWita, jamWita, tulisFk, useIzinFk, type JksRow, type Scope } from "../shared";
+import { tanggalPendek } from "@/lib/rekapan-nota/ui";
 
 /**
  * Kolom templat + header yang dikenali server. ponytail: `alias` = salinan kunci HEADER_MAP di app/api/form-kontrol/jks/route.ts
@@ -31,7 +35,7 @@ const KOLOM: { field: string; header: string; isi: string; alias: string[] }[] =
     { field: "channel", header: "Channel", isi: "Wajib diisi: GT, TT, atau MT (sel kosong tersimpan tanpa channel)", alias: ["channel"] },
     { field: "alamat", header: "Alamat", isi: "", alias: ["alamat", "address"] },
     { field: "kota", header: "Kota", isi: "", alias: ["kota", "city"] },
-    { field: "hariKunjungan", header: "Hari", isi: "Senin, Selasa, Rabu, Kamis, Jumat, atau Sabtu", alias: ["hari", "harikunjungan", "day"] },
+    { field: "hariKunjungan", header: "Hari", isi: "Senin, Selasa, Rabu, Kamis, Jumat, atau Sabtu (huruf besar/kecil bebas; Jum'at = Jumat). Hari lain ditolak per baris", alias: ["hari", "harikunjungan", "day"] },
     { field: "mingguPattern", header: "Pola", isi: "ganjil, genap, atau all; isian lain dibaca all", alias: ["pola", "polaminggu", "minggupattern", "pattern"] },
     { field: "area", header: "Area", isi: "", alias: ["area"] },
     { field: "rayon", header: "Rayon", isi: "", alias: ["rayon"] },
@@ -45,6 +49,17 @@ const LIMIT = 50; // bawaan route GET jks
 /** `channelKosong` = jumlah baris dengan sel Channel kosong; null bila berkas tanpa kolom Channel (server memakai TT). */
 type Pratinjau = { baris: number; dikenali: string[]; asing: string[]; wajibHilang: string[]; channelKosong: number | null };
 type DataJks = { rows: JksRow[]; total: number };
+/** Baris berkas yang ditolak server karena hari kunjungan tidak dikenal (tidak ditulis). */
+type Ditolak = { baris: number; custCode: string; hari: string };
+/** Baris tambahan salesman (kode lengkap) yang dinonaktifkan karena tokonya ada di berkas dengan kode JKS lain (FK-MSM2). */
+type Digantikan = { salesCode: string; principle: string; custCode: string; custName: string; kodeBerkas: string };
+
+/** "oleh SALES A · 12/10/2026 17.05 · kunjungan 12/10/2026" — jejak baris JKS tambahan salesman. */
+function jejak(t: NonNullable<JksRow["tambahanSalesman"]>): string {
+    const pada = new Date(t.pada);
+    const kapan = Number.isNaN(pada.getTime()) ? "" : ` · ${tanggalPendek(hariIniWita(pada))} ${jamWita(t.pada)}`;
+    return `oleh ${t.oleh || "salesman"}${kapan} · kunjungan ${tanggalPendek(t.dariKunjungan)}`;
+}
 
 /** Baca ringan di peramban: baris dan header sheet pertama, persis cara server membacanya (sheet_to_json, defval ""). */
 async function bacaPratinjau(file: File): Promise<Pratinjau> {
@@ -93,15 +108,14 @@ export default function TabJks({ scope }: { scope: Scope }) {
     const saring = (f: () => void) => { f(); setPage(1); };
 
     const [load, muatUlang] = useLoad(useCallback(async (): Promise<Load<DataJks>> => {
-        // Query sama dengan hari ini (+ `page`, parameter route yang sudah ada).
+        // Cakupan (tim SPV / milik salesman) ditegakkan server dari sesi (FK-MSM butir 4), tidak dikirim dari sini.
         const p = new URLSearchParams();
         if (principle) p.set("principle", principle);
         if (hari) p.set("hari", hari);
         if (sales.trim()) p.set("salesCode", sales.trim());
-        if (scope.allowedSalesCodes) p.set("salesCodes", scope.allowedSalesCodes.join(","));
         if (page > 1) p.set("page", String(page));
         return ambilFk(`/api/form-kontrol/jks?${p}`, (j) => ({ rows: (j.rows ?? []) as JksRow[], total: Number(j.total ?? 0) }), "Data JKS belum berhasil dimuat.");
-    }, [principle, hari, sales, page, scope.allowedSalesCodes]), { pertahankan: true });
+    }, [principle, hari, sales, page]), { pertahankan: true });
 
     const rows = load.data?.rows ?? [];
     const total = load.data?.total ?? 0;
@@ -113,7 +127,7 @@ export default function TabJks({ scope }: { scope: Scope }) {
     const [impor, setImpor] = useState(false);
     const [berkas, setBerkas] = useState<File | null>(null);
     const [pratinjau, setPratinjau] = useState<{ status: "kosong" | "membaca" | "siap" | "galat"; data?: Pratinjau }>({ status: "kosong" });
-    const [hasil, setHasil] = useState<{ nama: string; imported: number; skipped: number } | null>(null);
+    const [hasil, setHasil] = useState<{ nama: string; imported: number; skipped: number; ditolak: Ditolak[]; digantikan: Digantikan[] } | null>(null);
     const [galatTemplat, setGalatTemplat] = useState("");
 
     const giliran = useRef(0); // pratinjau berkas yang sudah diganti tidak boleh menimpa pratinjau berkas terbaru
@@ -145,6 +159,9 @@ export default function TabJks({ scope }: { scope: Scope }) {
         { key: "rayon", header: "Rayon", secondary: true, cell: (r) => r.rayon || "—" },
         { key: "principle", header: "Principal", cell: (r) => r.principle },
         { key: "freq", header: "Frekuensi", align: "end", cell: (r) => <span className="fi-tnum">{r.visitFrequency}×/bln</span> },
+        { key: "asal", header: "Asal", cell: (r) => r.tambahanSalesman
+            ? <span className="grid gap-1"><StatusBadge tone="info">Ditambahkan salesman</StatusBadge><span className="fi-small fi-muted">{jejak(r.tambahanSalesman)}</span></span>
+            : "Unggahan" },
     ];
 
     return (
@@ -173,7 +190,7 @@ export default function TabJks({ scope }: { scope: Scope }) {
                         <FormField label="Principal">{(a) => (
                             <select {...a} className="fi-input" value={principle} onChange={(e) => saring(() => setPrinciple(e.target.value))}>
                                 <option value="">Semua principal</option>
-                                {PRINCIPLES.map((p) => <option key={p} value={p}>{p}</option>)}
+                                {(scope.principles ?? []).map((p) => <option key={p} value={p}>{p}</option>)}
                             </select>
                         )}</FormField>
                         <FormField label="Hari kunjungan">{(a) => (
@@ -189,7 +206,22 @@ export default function TabJks({ scope }: { scope: Scope }) {
             {hasil && (
                 <MessageStrip tone="pos" title="Impor JKS diterapkan." onClose={() => setHasil(null)}>
                     {hasil.nama}: {hasil.imported} baris ditulis, {hasil.skipped} baris dilewati
-                    {hasil.skipped > 0 ? " (tanpa kode sales, kode toko, atau principal)" : ""}.
+                    {hasil.skipped > 0 ? " (tanpa kode sales, kode toko, atau principal)" : ""}
+                    {hasil.ditolak.length > 0 ? `, ${hasil.ditolak.length} baris ditolak` : ""}.
+                </MessageStrip>
+            )}
+            {hasil && hasil.ditolak.length > 0 && (
+                <MessageStrip tone="warn" title={`${hasil.ditolak.length} baris tidak ditulis: hari kunjungan tidak dikenal.`}>
+                    Isi Senin–Sabtu, perbaiki barisnya di berkas lalu impor ulang:{" "}
+                    {hasil.ditolak.slice(0, 20).map((d) => `baris ${d.baris} (${d.custCode}: "${d.hari}")`).join("; ")}
+                    {hasil.ditolak.length > 20 ? `; dan ${hasil.ditolak.length - 20} baris lain` : ""}.
+                </MessageStrip>
+            )}
+            {hasil && hasil.digantikan.length > 0 && (
+                <MessageStrip tone="info" title={`${hasil.digantikan.length} baris tambahan salesman dinonaktifkan: tokonya ada di berkas dengan kode JKS lain.`}>
+                    Supaya toko yang sama tidak dua kali di rute, baris berkas yang dipakai (jejak penambahannya tetap tersimpan):{" "}
+                    {hasil.digantikan.slice(0, 20).map((d) => `${d.custName} (${d.custCode} → ${d.kodeBerkas}, ${d.salesCode})`).join("; ")}
+                    {hasil.digantikan.length > 20 ? `; dan ${hasil.digantikan.length - 20} baris lain` : ""}.
                 </MessageStrip>
             )}
             {tanpaHari > 0 && (
@@ -197,12 +229,7 @@ export default function TabJks({ scope }: { scope: Scope }) {
                     Wajib dilengkapi: perbaiki kolom Hari di berkas JKS lalu impor ulang.
                 </MessageStrip>
             )}
-            {!semuaSales && (
-                <VariantNote bl="BL-32">
-                    Server belum membatasi JKS ke tim Anda: kode sales tim ikut dikirim tetapi belum dipakai, jadi daftar ini bisa memuat toko
-                    salesman lain.
-                </VariantNote>
-            )}
+            {!semuaSales && <p className="fi-small fi-muted">Hanya JKS salesman dalam cakupan Anda.</p>}
             <ResponsiveTable
                 title="JKS aktif"
                 count={total}
@@ -218,8 +245,8 @@ export default function TabJks({ scope }: { scope: Scope }) {
                 mobileItem={(r) => (
                     <ListItem doc={<span className="fi-mono">{r.custCode}</span>} amount={<span className="fi-tnum">{r.visitFrequency}×/bln</span>}
                         title={r.custName}
-                        meta={`${r.salesCode} · ${r.hariKunjungan || "Hari belum diisi"} · ${r.mingguPattern} · ${r.principle}`}
-                        badge={r.hariKunjungan ? undefined : <StatusBadge tone="warn">Belum diisi</StatusBadge>} />
+                        meta={`${r.salesCode} · ${r.hariKunjungan || "Hari belum diisi"} · ${r.mingguPattern} · ${r.principle}${r.tambahanSalesman ? ` · ditambahkan salesman ${jejak(r.tambahanSalesman)}` : ""}`}
+                        badge={!r.hariKunjungan ? <StatusBadge tone="warn">Belum diisi</StatusBadge> : r.tambahanSalesman ? <StatusBadge tone="info">Tambahan salesman</StatusBadge> : undefined} />
                 )}
             />
             {halaman > 1 && (
@@ -242,7 +269,8 @@ export default function TabJks({ scope }: { scope: Scope }) {
                     fd.append("file", berkas!);
                     try {
                         const d = await tulisFk("/api/form-kontrol/jks", { body: fd, gagal: "Impor JKS gagal." });
-                        setHasil({ nama: berkas!.name, imported: Number(d.imported ?? 0), skipped: Number(d.skipped ?? 0) });
+                        setHasil({ nama: berkas!.name, imported: Number(d.imported ?? 0), skipped: Number(d.skipped ?? 0),
+                            ditolak: Array.isArray(d.ditolak) ? d.ditolak as Ditolak[] : [], digantikan: Array.isArray(d.digantikan) ? d.digantikan as Digantikan[] : [] });
                         setImpor(false);
                         muatUlang();
                     } catch (e) {

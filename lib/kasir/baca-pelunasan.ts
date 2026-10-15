@@ -6,11 +6,12 @@
  * Caller: app/api/kasir/segarkan (POST/GET), app/api/cron/kasir-pelunasan; K2 (GET /api/kasir), K3 (Beranda) membaca cache saja.
  * Dependensi: lib/kasir/pembaca (murni), lib/kasir/rekonsiliasi (keSen/senKeTeks, tipe Pelunasan), lib/accurate-session
  *   (resolveSyncCredentials, pickSyncUserId — berkas itu TIDAK diubah), lib/sync (accurateHeaders), lib/db, db/schema.
- * Main Functions: bacaPelunasanHari, tokoPg, muatPelunasanHari, statusBaca, databaseIdSinkron, jawabanSegarkan.
+ * Main Functions: bacaPelunasanHari, tokoPg, muatPelunasanHari, muatPelunasanDalam (K2a: di transaksi pemanggil), statusBaca,
+ *   databaseIdSinkron, jawabanSegarkan.
  * Side Effects: GET Accurate sales-receipt/list.do + detail.do (BACA-SAJA, identitas sinkron); tulis kasir_pelunasan,
  *   kasir_pelunasan_faktur, kasir_pelunasan_baca. TIDAK pernah menulis ke Accurate dan tidak menyimpan raw_data.
  *
- * Aturan (KASIR-KONTRAK §4 + brief K1b): nominal lewat keSen (rusak = pelunasan DITOLAK, terlihat di status, tidak dilewati diam-diam);
+ * Aturan (KASIR-KONTRAK §4 + brief K1b): nominal Accurate > 2 desimal dibulatkan ke sen di pembaca (15 Okt; rusak = pelunasan DITOLAK, terlihat di status, tidak dilewati diam-diam);
  * 401/403 = BERHENTI seketika tanpa ulang; galat TIDAK pernah menghapus cache atau memundurkan lengkap_pada; `last_update` yang disimpan
  * = nilai list.do yang dibaca SEBELUM detail (berubah di antaranya -> putaran berikut membaca ulang: boleh lebih, tak pernah terlewat).
  */
@@ -452,29 +453,35 @@ export function statusBaca(databaseId: string, tanggal: string, d: Db = db): Pro
  * baca-saja). K2: total hanya boleh tampil sebagai lengkap & Tutup hanya bila `status.status === "lengkap"`. Nominal = sen (keSen).
  */
 export function muatPelunasanHari(databaseId: string, tanggal: string, d: Db = db): Promise<{ status: StatusBaca; pelunasan: Pelunasan[] }> {
-    return d.transaction(async (tx) => {
-        const status = await bacaStatus(tx, databaseId, tanggal);
-        const kepala = await tx.select().from(kasirPelunasan).where(diKepala(databaseId, tanggal)).orderBy(asc(kasirPelunasan.pelunasanId));
-        const baris = await tx.select({ pelunasanId: kasirPelunasanFaktur.pelunasanId, fakturId: kasirPelunasanFaktur.fakturId,
-            nomorFaktur: kasirPelunasanFaktur.nomorFaktur, masterSalesmanId: kasirPelunasanFaktur.masterSalesmanId,
-            invoicePayment: kasirPelunasanFaktur.invoicePayment })
-            .from(kasirPelunasanFaktur)
-            .innerJoin(kasirPelunasan, and(eq(kasirPelunasan.databaseId, kasirPelunasanFaktur.databaseId), eq(kasirPelunasan.pelunasanId, kasirPelunasanFaktur.pelunasanId)))
-            .where(diKepala(databaseId, tanggal))
-            .orderBy(asc(kasirPelunasanFaktur.pelunasanId), asc(kasirPelunasanFaktur.fakturId));
-        const per = new Map<number, Pelunasan["faktur"][number][]>();
-        for (const b of baris) {
-            const xs = per.get(Number(b.pelunasanId)) ?? [];
-            xs.push({ fakturId: Number(b.fakturId), nomorFaktur: b.nomorFaktur, masterSalesmanId: b.masterSalesmanId === null ? null : Number(b.masterSalesmanId),
-                invoicePayment: keSen(b.invoicePayment) });
-            per.set(Number(b.pelunasanId), xs);
-        }
-        return {
-            status,
-            pelunasan: kepala.map((k) => ({ id: Number(k.pelunasanId), nomor: k.nomor, tanggal: k.tanggal, metode: k.metode,
-                chequeAmount: keSen(k.chequeAmount), faktur: per.get(Number(k.pelunasanId)) ?? [] })),
-        };
-    }, { isolationLevel: "repeatable read", accessMode: "read only" });
+    return d.transaction((tx) => muatPelunasanDalam(tx, databaseId, tanggal), { isolationLevel: "repeatable read", accessMode: "read only" });
+}
+
+/**
+ * Isi muatPelunasanHari di dalam transaksi PEMANGGIL (K2a: transaksi Tutup READ COMMITTED yang sudah memegang kunci hari + `FOR SHARE`
+ * baris status — cache diam selama transaksi itu; GET hari: transaksi REPEATABLE READ baca-saja miliknya). Tanpa transaksi sendiri.
+ */
+export async function muatPelunasanDalam(tx: Db | Tx, databaseId: string, tanggal: string): Promise<{ status: StatusBaca; pelunasan: Pelunasan[] }> {
+    const status = await bacaStatus(tx, databaseId, tanggal);
+    const kepala = await tx.select().from(kasirPelunasan).where(diKepala(databaseId, tanggal)).orderBy(asc(kasirPelunasan.pelunasanId));
+    const baris = await tx.select({ pelunasanId: kasirPelunasanFaktur.pelunasanId, fakturId: kasirPelunasanFaktur.fakturId,
+        nomorFaktur: kasirPelunasanFaktur.nomorFaktur, masterSalesmanId: kasirPelunasanFaktur.masterSalesmanId,
+        invoicePayment: kasirPelunasanFaktur.invoicePayment })
+        .from(kasirPelunasanFaktur)
+        .innerJoin(kasirPelunasan, and(eq(kasirPelunasan.databaseId, kasirPelunasanFaktur.databaseId), eq(kasirPelunasan.pelunasanId, kasirPelunasanFaktur.pelunasanId)))
+        .where(diKepala(databaseId, tanggal))
+        .orderBy(asc(kasirPelunasanFaktur.pelunasanId), asc(kasirPelunasanFaktur.fakturId));
+    const per = new Map<number, Pelunasan["faktur"][number][]>();
+    for (const b of baris) {
+        const xs = per.get(Number(b.pelunasanId)) ?? [];
+        xs.push({ fakturId: Number(b.fakturId), nomorFaktur: b.nomorFaktur, masterSalesmanId: b.masterSalesmanId === null ? null : Number(b.masterSalesmanId),
+            invoicePayment: keSen(b.invoicePayment) });
+        per.set(Number(b.pelunasanId), xs);
+    }
+    return {
+        status,
+        pelunasan: kepala.map((k) => ({ id: Number(k.pelunasanId), nomor: k.nomor, tanggal: k.tanggal, metode: k.metode,
+            chequeAmount: keSen(k.chequeAmount), faktur: per.get(Number(k.pelunasanId)) ?? [] })),
+    };
 }
 
 /** Status untuk klien: akun sinkron & pemicu manual sebagai NAMA (bukan user.id); nama tak terbaca = "(akun tak dikenal)". */

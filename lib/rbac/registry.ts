@@ -52,7 +52,11 @@ export const PERMISSION_REGISTRY = {
     // S7-1b: create_user/edit_user/delete_user/set_role/set_permission DIPENSIUNKAN -> users.manage (KUNCI_PENSIUN).
     users: ["view", "manage"],
     // Modul yang sebelumnya TIDAK terdaftar di RBAC (temuan Fase 3 — page-guard gap):
-    form_kontrol: ["view", "submit", "manage"],
+    // NOO toko baru (owner 13 Okt 2026, P2 + keputusan 13 Okt malam): noo_setujui = setujui/tolak NOO dalam cakupan (SPV tim, SM atas SPV
+    //   bawahannya, grup Admin); SPV/SM pemegangnya juga melihat KTP lengkap NOO timnya. noo_ktp = lihat KTP lengkap semua NOO (grup Admin;
+    //   KAPABILITAS, tiap buka dicatat kontrol_audit_log). noo_tautkan = tautkan NOO ke pelanggan Accurate (HANYA grup Admin; KAPABILITAS —
+    //   form_kontrol.manage milik Manager/Admin Sales tidak cukup). Ke grup lewat docs/handover/RBAC_PRESET_NOO.sql.
+    form_kontrol: ["view", "submit", "manage", "noo_setujui", "noo_ktp", "noo_tautkan"],
     // view          = boleh membuka halaman & membaca angkanya (dipakai semua GET modul ini)
     // view_dashboard= tab Dashboard SM. Terpisah dari `view` supaya Finance yang cuma
     //                 memverifikasi pembayaran tidak ikut melihat layar performa tim.
@@ -111,12 +115,13 @@ export const KUNCI_PENSIUN: ReadonlySet<string> = new Set([
 ]);
 
 /** Kunci kapabilitas yang membuka kiriman ulang ke Accurate (D-14/D-15/D-18), menetapkan nasib faktur
- * tidak pasti (order.resolve_unknown, S6-0d E6), atau membuka kembali hari Kasir yang terkunci (kasir.buka, K1a).
+ * tidak pasti (order.resolve_unknown, S6-0d E6), membuka kembali hari Kasir yang terkunci (kasir.buka, K1a), atau membuka DATA PRIBADI
+ * KTP semua NOO (form_kontrol.noo_ktp, owner 13 Okt 2026), atau menautkan NOO ke pelanggan Accurate (form_kontrol.noo_tautkan, hanya grup Admin).
  * UI grup tidak menyalakannya lewat centang modul — harus dicentang satu per satu (AM-057). UI bukan otoritas;
  * backend tetap menegakkan. */
 export const CAPABILITY_KEYS: ReadonlySet<string> = new Set([
     "finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment", "order.resolve_unknown",
-    "kasir.buka",
+    "kasir.buka", "form_kontrol.noo_ktp", "form_kontrol.noo_tautkan",
 ]);
 
 const moduleKeys = (mod: PermissionModule) => PERMISSION_REGISTRY[mod].map((a) => `${mod}.${a}`);

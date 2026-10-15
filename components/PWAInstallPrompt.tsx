@@ -21,7 +21,9 @@ export default function PWAInstallPrompt() {
 
   useEffect(() => {
     // Jangan tampilkan kalau user sudah dismiss sebelumnya
-    const dismissed = localStorage.getItem("pwa-install-dismissed");
+    // localStorage bisa melempar (izin situs/mode privat) — tanpa try/catch seluruh layout dashboard jatuh ke global-error (peninjau B FK-MSM3 R-6).
+    let dismissed: string | null = null;
+    try { dismissed = localStorage.getItem("pwa-install-dismissed"); } catch { /* anggap belum dismiss */ }
     if (dismissed) return;
 
     // Jangan tampilkan kalau sudah dalam mode standalone
@@ -49,7 +51,7 @@ export default function PWAInstallPrompt() {
 
   const handleDismiss = () => {
     setShowPrompt(false);
-    localStorage.setItem("pwa-install-dismissed", "true");
+    try { localStorage.setItem("pwa-install-dismissed", "true"); } catch { /* tidak tersimpan: banner bisa muncul lagi */ }
   };
 
   if (!showPrompt) return null;

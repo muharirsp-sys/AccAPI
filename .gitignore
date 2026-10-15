@@ -67,6 +67,9 @@ python_backend/data/*.bak
 !python_backend/data/manual_cache/master_cache.json
 
 # generated outputs, uploads, and runtime logs
+# Berkas runtime aplikasi di volume /app/data: foto kunjungan (data/uploads) dan DATA PRIBADI NOO — foto KTP (data/private). JANGAN di-commit.
+data/uploads/
+data/private/
 python_backend/output/
 python_backend/output/payments/
 python_backend/output/payments/proofs/
