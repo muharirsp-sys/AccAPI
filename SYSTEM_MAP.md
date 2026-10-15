@@ -1170,6 +1170,11 @@ kasir_pelunasan_baca (database_id + tanggal; status berjalan|lengkap|sebagian|ga
       tulis = transaksiHari: READ COMMITTED -> pg_advisory_xact_lock(hashtextextended('kasir:'||tanggal,0)) -> [tutup: SELECT kasir_pelunasan_baca FOR SHARE]
         -> muatDalam -> pastikanKunci (event kunci 'sistem' bila otomatis_20) -> bolehDiubah/statusHari -> hitung ulang -> INSERT (append-only)
         galat di dalam = rollback (pasti) | galat sesudah callback = 502 TIDAK_PASTI
+  UI K2b /kasir (menu Keuangan › Kasir ↔ Incaso; app/(dashboard)/kasir: Kasir.tsx FCL + DialogKasir.tsx + bersama.ts):
+    GET /api/kasir (hari) + ?orang= (rincian faktur) -> KPI/daftar orang/ember/non-kas; angka Incaso null = "belum terbaca" (bukan 0)
+    Setoran… (JSON | multipart data+bukti) / Jelaskan… / Buka kembali… -> POST route K2a; jawaban PASTI vs TIDAK PASTI menurut §8.2 (bersama.nilaiJawab)
+    Tutup hari… -> [!segarUntukTutup] POST /api/kasir/segarkan berulang (jeda 6 dtk, maks 20, Batal) -> GET -> dialog hanya bila penghalang kosong -> POST tutup {sidik}
+    tidak pasti -> muat ulang + banding revisi/penjelasan/event, tanpa ulang otomatis; lewat kunciBerikutnya -> muat ulang sendiri
 ```
 
 **Status Lifecycle offBatch:**
