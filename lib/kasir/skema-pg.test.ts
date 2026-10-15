@@ -21,10 +21,10 @@ const NAMA_ENTRI = "kasir (setoran, catatan, hari, cache pelunasan)";
 const TABEL = ["kasir_setoran", "kasir_selisih_catatan", "kasir_hari_event", "kasir_tak_teralokasi_catatan", "kasir_pelunasan", "kasir_pelunasan_faktur"];
 const JEJAK = ["kasir_setoran", "kasir_selisih_catatan", "kasir_hari_event", "kasir_tak_teralokasi_catatan"];
 
-async function entri(): Promise<Migration> {
+async function entri(nama = NAMA_ENTRI): Promise<Migration> {
     const mod = await import(new URL("../../scripts/migrate-pg.mjs", import.meta.url).href) as { migrations: Migration[] };
-    const m = mod.migrations.find((x) => x.nama === NAMA_ENTRI);
-    assert.ok(m, `entri migrate-pg ${NAMA_ENTRI}`);
+    const m = mod.migrations.find((x) => x.nama === nama);
+    assert.ok(m, `entri migrate-pg ${nama}`);
     return m;
 }
 const berkas = (rel: string) => readFile(new URL(rel, import.meta.url), "utf8");
@@ -113,9 +113,13 @@ test("PG K1a: DDL_K1A.sql dua kali idempoten + VERIFIKASI; sesudahnya migrate-pg
     const m = await entri();
     const ddl = await ddlK1a();
     let bentuk: Awaited<ReturnType<typeof katalog>> | undefined;
+    let bentukK2a: Awaited<ReturnType<typeof katalog>> | undefined;
     await denganSkema(async (pool) => {
         await migrasi(pool, m);
         bentuk = await katalog(pool);
+        // Drizzle kasirSetoran = K1a + kolom giro K2a (owner 12 Okt; entri migrate-pg sendiri, diuji lib/kasir/hari-pg.test.ts).
+        await migrasi(pool, await entri("kasir_setoran giro (K2a)"));
+        bentukK2a = await katalog(pool);
     });
     await denganSkema(async (pool) => {
         for (let i = 0; i < 2; i++) {
@@ -128,7 +132,7 @@ test("PG K1a: DDL_K1A.sql dua kali idempoten + VERIFIKASI; sesudahnya migrate-pg
         await pool.query(await berkas("../../db/migrations/0029_kasir.sql"));
         assert.deepEqual(await katalog(pool), bentuk, "db/migrations = entri migrate-pg");
     });
-    const k = bentuk!;
+    const k = bentukK2a!;
     const tabelDrizzle: [string, PgTable][] = [["kasir_setoran", kasirSetoran], ["kasir_selisih_catatan", kasirSelisihCatatan],
         ["kasir_hari_event", kasirHariEvent], ["kasir_tak_teralokasi_catatan", kasirTakTeralokasiCatatan], ["kasir_pelunasan", kasirPelunasan],
         ["kasir_pelunasan_faktur", kasirPelunasanFaktur]];

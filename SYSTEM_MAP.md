@@ -1145,7 +1145,7 @@ principal_log [append-only (trigger + REVOKE di DDL_S7_2): satu baris per buat/a
   Pemakai belum beralih (S7-2b).
 
 # Kasir ↔ Incaso (K1a BL-59; skema + lib murni lib/kasir/rekonsiliasi.ts; pembaca K1b, UI K2; DDL manual docs/handover/DDL_K1A.sql SEBELUM image; kontrak docs/handover/KASIR-KONTRAK.md)
-kasir_setoran [append-only; (tanggal, salesman_kode=ORANG, revisi) unik; revisi n+1 -> revisi n (FK komposit); tunai/transfer/giro >= 0]
+kasir_setoran [append-only; (tanggal, salesman_kode=ORANG, revisi) unik; revisi n+1 -> revisi n (FK komposit); tunai/transfer/giro >= 0; K2a: giro_nomor/giro_jatuh_tempo, bukti_transfer = nama berkas <uuid>.<jpg|png|pdf>]
 kasir_selisih_catatan [append-only; angka pelunasan/setoran saat dijelaskan; '' = Tanpa salesman] · kasir_tak_teralokasi_catatan [append-only; per pelunasan, angka sisa]
 kasir_hari_event [append-only; tutup (snapshot.terhalang WAJIB [] — owner T2) | kunci (otomatis 20.00 WITA, boleh terhalang) | buka(alasan >= 15)]
   izin ke grup: docs/handover/RBAC_PRESET_KASIR.sql SESUDAH RBAC_PRESET_BL37.sql (S7-1)
@@ -1160,6 +1160,21 @@ kasir_pelunasan_baca (database_id + tanggal; status berjalan|lengkap|sebagian|ga
       -> lease (INSERT .. ON CONFLICT .. WHERE lease basi) -> sales-receipt/list.do filter transDate (fail-closed pageCount/rowCount) -> detail.do HANYA id baru/lastUpdate beda
          (≤ 4 serentak, 429 -> 2) -> upsert kasir_pelunasan + ganti _faktur per pelunasan (token FOR SHARE) -> hapus id hilang (daftar lengkap saja) -> status
     GET /api/kasir/segarkan?tanggal= (status tanpa Accurate) | muatPelunasanHari(databaseIdSinkron(), tanggal) -> Pelunasan[] untuk K2/K3 (Tutup hanya bila lengkap)
+  server K2a (lib/kasir/hari.ts; kontrak KASIR-KONTRAK §8; DDL_K2A = kolom giro_nomor/giro_jatuh_tempo SESUDAH DDL_K1B; 0032):
+    GET /api/kasir?tanggal=&orang= (kasir.view) -> [kunci 20.00 belum dicatat? catatKunciOtomatis] -> snapshot REPEATABLE READ: event + setoran + catatan
+        + muatPelunasanDalam (cache sinkron) + muatPetaOrang -> rekonsiliasiHari -> bentukJawabanHari (angka Incaso HANYA bila status baca lengkap)
+    POST /api/kasir/setoran (kasir.catat; JSON | multipart data+bukti; bacaBadanTerbatas ≤ 6 MB, chunked diputus -> 413) -> uraiSetoran (kolom ≤ Rp 100 miliar)
+      -> [bukti: magic bytes, ≤ 5 MB -> normalkanBukti (sharp: gambar -> alfa diratakan putih -> JPEG ≤ 2000 px tanpa EXIF; PDF apa adanya) -> simpanBukti data/uploads/kasir-bukti/<uuid>]
+      -> catatSetoran (total hari ≤ Rp 10 triliun sebelum INSERT; CHECK DB giro_wajib/bukti_wajib/form_wajib = jaring kedua)
+    POST /api/kasir/jelaskan (kasir.catat) | POST /api/kasir/tutup (kasir.tutup) | POST /api/kasir/buka (kasir.buka) | GET /api/kasir/bukti?id= (kasir.view)
+      tulis = transaksiHari: READ COMMITTED -> pg_advisory_xact_lock(hashtextextended('kasir:'||tanggal,0)) -> [tutup: SELECT kasir_pelunasan_baca FOR SHARE]
+        -> muatDalam -> pastikanKunci (event kunci 'sistem' bila otomatis_20) -> bolehDiubah/statusHari -> hitung ulang -> INSERT (append-only)
+        galat di dalam = rollback (pasti) | galat sesudah callback = 502 TIDAK_PASTI
+  UI K2b /kasir (menu Keuangan › Kasir ↔ Incaso; app/(dashboard)/kasir: Kasir.tsx FCL + DialogKasir.tsx + bersama.ts):
+    GET /api/kasir (hari) + ?orang= (rincian faktur) -> KPI/daftar orang/ember/non-kas; angka Incaso null = "belum terbaca" (bukan 0)
+    Setoran… (JSON | multipart data+bukti) / Jelaskan… / Buka kembali… -> POST route K2a; jawaban PASTI vs TIDAK PASTI menurut §8.2 (bersama.nilaiJawab)
+    Tutup hari… -> [!segarUntukTutup] POST /api/kasir/segarkan berulang (jeda 6 dtk, maks 20, Batal) -> GET -> dialog hanya bila penghalang kosong -> POST tutup {sidik}
+    tidak pasti -> muat ulang + banding revisi/penjelasan/event, tanpa ulang otomatis; lewat kunciBerikutnya -> muat ulang sendiri
 ```
 
 **Status Lifecycle offBatch:**
@@ -1228,6 +1243,7 @@ Status Lifecycle wave:
 | `runtime/off-program-control/` | PDF pengajuan OPC |
 | `runtime/claim-workflow/` | PDF surat klaim, summary, kwitansi, per-submission |
 | `runtime_logs/` | Log runtime (dipakai Python backend) |
+| `data/uploads/kasir-bukti/` | Bukti setoran Transfer Kasir (K2a; `<uuid>.<jpg\|png\|pdf>`, volume data frontend, retensi permanen — cron cleanup-uploads tidak menyentuh) |
 | `webhook_events.log` | Log event webhook Accurate (append-only) |
 
 ---
