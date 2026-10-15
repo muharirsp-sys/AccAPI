@@ -3,7 +3,7 @@
  * Caller: App Router dashboard `app/(dashboard)/api-wrapper/page.tsx` dan interaksi user di halaman API Wrapper.
  * Dependensi: `accurateRoutes`, `accurateFetch`, parser workbook per-route, Accurate OAuth/session dari browser, parser `xlsx`, toast `sonner`, route idempotency Next, `DatePickerField`, `Dialog` native bersama, `lib/pelunasan/*` (parser Format Pelunasan, retur, cari faktur, alokasi, payload, pratinjau duplikat — dipindah dari halaman ini di S6e-1; kirim sales-receipt `lib/pelunasan/kirim.ts`, S6e-2).
  * Main Functions: `Home`, `terapkanSesi` (kartu `SesiAccurate` bersama /sesi-accurate: masuk ber-`state`, pilih database, keluar — S7-sesi), `handleDownloadTemplate`, `handleExecute`.
- * Side Effects: HTTP call ke Accurate route handler/proxy, baca file Excel lokal, dispatch parser workbook khusus per route, deteksi format pelunasan walau `Total.Trx` kosong, normalisasi lookup invoice/retur termasuk variasi SRB tanpa spasi, susun payload bulk-save, keluarkan laporan manual follow-up untuk retur/pot.lain yang gagal diproses, preview/lock idempotency SQLite, cek histori sales receipt Accurate, konfirmasi hasil error ke histori Accurate, tampilkan review duplicate, logging debug ke response UI.
+ * Side Effects: HTTP call ke Accurate route handler/proxy, baca file Excel lokal, dispatch parser workbook khusus per route, deteksi format pelunasan walau `Total.Trx` kosong, normalisasi lookup invoice/retur termasuk variasi SRB tanpa spasi, susun payload bulk-save, keluarkan laporan manual follow-up untuk retur/pot.lain yang gagal diproses, preview/lock idempotency SQLite, cek histori sales receipt Accurate, konfirmasi hasil error ke histori Accurate HANYA untuk jenis dokumen yang sama (`pemastiRiwayatTulis`; jenis lain tetap TIDAK DIKETAHUI), tampilkan review duplicate, logging debug ke response UI.
  */
 "use client";
 
@@ -20,7 +20,7 @@ import DatePickerField from "@/components/ui/DatePickerField";
 import Dialog from "@/components/ui/Dialog";
 import { deteksiFormatPelunasan, parsePelunasan } from "@/lib/pelunasan/parser";
 import { normalizePayloadMoney, tanggalKemarin } from "@/lib/pelunasan/payload";
-import { pratinjauDuplikat, pratinjauRiwayatAccurate, type DuplicateConflictReason, type DuplicateReviewEntry } from "@/lib/pelunasan/pratinjau-ganda";
+import { pemastiRiwayatTulis, pratinjauDuplikat, pratinjauRiwayatAccurate, type DuplicateConflictReason, type DuplicateReviewEntry } from "@/lib/pelunasan/pratinjau-ganda";
 import { workbookRouteParsers } from "./parsers";
 import { FioriScope } from "@/components/fiori/Scope";
 import { SesiAccurate, type StatusSesi } from "@/components/accurate/SesiAccurate";
@@ -588,11 +588,14 @@ export default function Home() {
       } catch (e) {}
     };
 
+    // Review S7-1b: riwayat hanya bukti untuk jenis dokumen yang SAMA dengan endpoint tulis — retur/PO/dll. tidak punya
+    // pencocok (null) sehingga barisnya tetap TIDAK DIKETAHUI/Gagal, tak pernah "TERKONFIRMASI" dari riwayat sales-receipt.
+    const cariRiwayatSejenis = pemastiRiwayatTulis(routeConfig.path, accurateFetch);
     const confirmRowsPostedInAccurate = async (rowsToCheck: any[]) => {
       const uncheckedRows = rowsToCheck.filter((row) => !confirmedReceiptNumbersByKey.has(buildSalesReceiptIdempotencyPayload(row).key));
-      if (uncheckedRows.length === 0) return confirmedReceiptNumbersByKey;
+      if (!cariRiwayatSejenis || uncheckedRows.length === 0) return confirmedReceiptNumbersByKey;
 
-      const matchedMap = await previewAccurateSalesReceiptHistory(uncheckedRows);
+      const matchedMap = await cariRiwayatSejenis(uncheckedRows);
       uncheckedRows.forEach((row) => {
         const rowKey = buildSalesReceiptIdempotencyPayload(row).key;
         confirmedReceiptNumbersByKey.set(rowKey, matchedMap.get(rowKey) || []);
