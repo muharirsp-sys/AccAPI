@@ -118,7 +118,7 @@ dibaca SEBELUM detail. `penuh` = tandai `last_update` tanggal itu NULL (isi teta
 Daftar fail-closed: `s:true` + `d` larik; `sp.pageCount` sah (0 hanya bila kosong) dan tidak turun; halaman kosong sebelum halaman terakhir = gagal;
 `sp.rowCount` wajib; `rowCount` berubah antarhalaman / id unik ≠ `rowCount` → daftar diulang SEKALI lalu `terpotong`; `transDate` baris ≠ tanggal
 = `bentuk` (filter diabaikan, tidak membaca seluruh riwayat); > 50 halaman = `terpotong`. Detail: `invoicePayment` absen = `bentuk` (TANPA
-cadangan `paymentAmount`), > 2 desimal = `nominal`, faktur sama dua kali = dijumlah (salesman beda = `bentuk`), `transDate` pindah = tidak ditulis.
+cadangan `paymentAmount`), > 2 desimal dibulatkan ke sen setengah menjauhi nol, baris faktur KUMULATIF (Σ baris = cheque bila Accurate klop; 15 Okt, produksi ±40 % pelunasan 6 desimal); bukan desimal polos = `nominal`, faktur sama dua kali = dijumlah (salesman beda = `bentuk`), `transDate` pindah = tidak ditulis.
 
 **Status `kasir_pelunasan_baca`** (PK `database_id, tanggal`):
 
