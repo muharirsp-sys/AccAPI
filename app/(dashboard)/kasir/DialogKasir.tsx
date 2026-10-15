@@ -40,7 +40,10 @@ const isiDari = (b: BarisOrang | null) => ({
     giro: b?.setoran ? tampilAngka(b.setoran.giro) : "", form: b?.setoranTerakhir?.noFormKasir ?? "", bg: b?.setoranTerakhir?.giroNomor ?? "",
     tempo: b?.setoranTerakhir?.giroJatuhTempo ?? "", catatan: "",
 });
-const BUKTI_TIPE = /\.(jpe?g|png|pdf)$/i;
+/** Klien tidak lebih ketat dari server (server memeriksa MAGIC BYTES): tipe ATAU ekstensi yang dikenal cukup. */
+const BUKTI_TIPE = /\.(jpe?g|jpe|jfif|png|pdf)$/i;
+const BUKTI_MIME = new Set(["image/jpeg", "image/png", "application/pdf"]);
+const tglId = (ymd: string) => ymd.split("-").reverse().join("/");
 const MAKS_BUKTI = 5 * 1024 * 1024;
 
 // ── Setoran ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -74,8 +77,10 @@ export function DialogSetoran({ hari, tanggal, kunci, kabar, orangAwal }: Umum &
     const buktiLama = !bukti && sen("transfer") > 0 && Boolean(revLama?.buktiUrl) && senDari(revLama?.transfer) === sen("transfer");
     const bawah = geserHari(tanggal, -7);
     const atas = `${Number(tanggal.slice(0, 4)) + 1}${tanggal.slice(4)}`;
-    const galatBukti = bukti && !BUKTI_TIPE.test(bukti.name) ? "Bukti harus foto JPG/PNG atau PDF."
-        : bukti && bukti.size > MAKS_BUKTI ? "Berkas bukti maksimal 5 MB." : undefined;
+    // Berkas hanya berarti bila Transfer > 0 (selain itu tidak dikirim): galatnya tidak boleh mengunci Simpan dari kolom yang tersembunyi.
+    const buktiDipakai = sen("transfer") > 0 ? bukti : null;
+    const galatBukti = buktiDipakai && !BUKTI_MIME.has(buktiDipakai.type) && !BUKTI_TIPE.test(buktiDipakai.name) ? "Bukti harus foto JPG/PNG atau PDF."
+        : buktiDipakai && buktiDipakai.size > MAKS_BUKTI ? "Berkas bukti maksimal 5 MB." : undefined;
 
     const blok = kunci
         ?? (!terpilih ? "Pilih pegawai dulu"
@@ -88,7 +93,7 @@ export function DialogSetoran({ hari, tanggal, kunci, kabar, orangAwal }: Umum &
             ?? (sen("giro") > 0 && !isi.bg.trim() ? "Isi nomor BG (wajib untuk setoran Giro)"
                 : sen("giro") > 0 && panjang(isi.bg) > 100 ? "Nomor BG maksimal 100 karakter"
                 : sen("giro") > 0 && !isi.tempo ? "Isi tanggal jatuh tempo Giro"
-                : sen("giro") > 0 && (isi.tempo < bawah || isi.tempo > atas) ? `Jatuh tempo Giro harus antara ${bawah} dan ${atas}`
+                : sen("giro") > 0 && (isi.tempo < bawah || isi.tempo > atas) ? `Jatuh tempo Giro harus antara ${tglId(bawah)} dan ${tglId(atas)}`
                 : panjang(isi.catatan) > 500 ? "Catatan maksimal 500 karakter" : undefined));
 
     async function simpan() {
@@ -186,14 +191,14 @@ export function DialogSetoran({ hari, tanggal, kunci, kabar, orangAwal }: Umum &
             {sen("transfer") > 0 && (
                 <FormField label="Bukti transfer" required error={galatBukti}
                     help={buktiLama ? `Bukti revisi ${revLama?.revisi} dipakai lagi (transfer sama). Pilih berkas untuk menggantinya.` : "Foto JPG/PNG atau PDF, maksimal 5 MB."}>
-                    {(a) => <input {...a} className="fi-input" type="file" accept="image/jpeg,image/png,application/pdf,.jpg,.jpeg,.png,.pdf"
+                    {(a) => <input {...a} className="fi-input" type="file" accept="image/jpeg,image/png,application/pdf,.jpg,.jpeg,.jpe,.jfif,.png,.pdf"
                         onChange={(e) => setBukti(e.target.files?.[0] ?? null)} />}
                 </FormField>
             )}
             {sen("giro") > 0 && (
                 <div className="fi-formgrid">
                     <FormField label="Nomor BG" required>{(a) => <input {...a} className="fi-input" value={isi.bg} onChange={(e) => ubah("bg")(e.target.value)} />}</FormField>
-                    <FormField label="Jatuh tempo Giro" required help={`Antara ${bawah} dan ${atas}.`}>
+                    <FormField label="Jatuh tempo Giro" required help={`Antara ${tglId(bawah)} dan ${tglId(atas)}.`}>
                         {(a) => <input {...a} className="fi-input" type="date" min={bawah} max={atas} value={isi.tempo} onChange={(e) => ubah("tempo")(e.target.value)} />}
                     </FormField>
                 </div>

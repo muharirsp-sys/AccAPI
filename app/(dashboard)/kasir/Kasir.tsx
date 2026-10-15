@@ -82,31 +82,39 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
     const [ragu, setRagu] = useState<Ragu | null>(null);
     const [proses, setProses] = useState<Proses | null>(null);
     const [pesanBaca, setPesanBaca] = useState<Pesan | null>(null);
-    const [lewat, setLewat] = useState<string | null>(null);
+    /** Kunci yang terlewat menurut timer + `sekarang` server data saat itu (pulih bila GET baru menyatakan server belum sampai kunci itu). */
+    const [lewat, setLewat] = useState<{ kb: string; sekarang: string } | null>(null);
     const token = useRef<{ batal: boolean } | null>(null);
+    /** Naik tiap kali pemeriksaan "belum pasti" dimulai atau tanggal diganti: hasil pemeriksaan lama diabaikan. */
+    const raguKe = useRef(0);
     const muatRef = useRef(muatUlang);
     useEffect(() => { muatRef.current = muatUlang; });
     useEffect(() => () => { if (token.current) token.current.batal = true; }, []);
 
-    // Lewat kunciBerikutnya (20.00 WITA / akhir jendela buka) -> tulis dikunci dan data dimuat ulang sendiri.
+    // Lewat kunciBerikutnya (20.00 WITA / akhir jendela buka) -> tulis dikunci dan data dimuat ulang sendiri. Jeda dihitung dari jam SERVER
+    // (`sekarang` jawaban GET; efek berjalan sesaat sesudah data tiba), bukan jam peramban yang bisa miring. Tiap GET baru menjadwalkan ulang.
     const kb = h?.hari.kunciBerikutnya ?? null;
+    const sekarangServer = h?.sekarang ?? null;
     useEffect(() => {
-        if (!kb) return;
-        const ms = Date.parse(kb) - Date.now();
+        if (!kb || !sekarangServer) return;
+        const ms = Date.parse(kb) - Date.parse(sekarangServer);
         if (!Number.isFinite(ms)) return;
-        const t = setTimeout(() => { setLewat(kb); muatRef.current(); }, Math.min(Math.max(ms, 0) + 1_000, 2_147_000_000));
+        const t = setTimeout(() => { setLewat({ kb, sekarang: sekarangServer }); muatRef.current(); }, Math.min(Math.max(ms, 0) + 1_000, 2_147_000_000));
         return () => clearTimeout(t);
-    }, [kb]);
+    }, [kb, sekarangServer]);
 
     const gantiTanggal = (t: string) => {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(t) || t > hariIni) return;
         if (token.current) token.current.batal = true;
+        raguKe.current += 1;
         setTanggal(t); setPilih(null); setDialog(null); setSukses(null); setRagu(null); setProses(null); setPesanBaca(null);
     };
 
     async function periksaRagu(aksi: string, periksa: (x: Hari) => string) {
+        const ke = ++raguKe.current;
         setRagu({ aksi, periksa, status: "memeriksa" });
         const l = await bacaHari(tanggal);
+        if (ke !== raguKe.current) return; // tanggal sudah diganti: hasil ini milik tanggal lain
         muatRef.current();
         setRagu(l.status === "siap" && l.data ? { aksi, periksa, status: "selesai", teks: periksa(l.data) } : { aksi, periksa, status: "gagal", teks: l.error });
     }
@@ -170,7 +178,8 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
     const batalBaca = () => { if (token.current) token.current.batal = true; setProses(null); muatUlang(); };
 
     // ── Kunci tulis (alasan TERLIHAT, tanpa nama kunci mentah) ─────────────────────────────────────────────
-    const usang = Boolean(h && lewat && lewat === h.hari.kunciBerikutnya);
+    // Usang = timer kunci berbunyi dan belum ada GET baru, ATAU GET baru pun menyatakan jam server sudah melewati kunci itu.
+    const usang = Boolean(h && lewat && lewat.kb === h.hari.kunciBerikutnya && (lewat.sekarang === h.sekarang || Date.parse(h.sekarang) >= Date.parse(lewat.kb)));
     const kunciUmum = load.status === "memuat" ? (h ? "Data hari sedang dimuat ulang…" : "Data hari sedang dimuat…")
         : load.status === "galat" ? "Data hari gagal dimuat ulang; muat ulang dulu."
             : usang ? "Pukul 20.00 WITA terlewati; data dimuat ulang…"
@@ -381,7 +390,8 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
                 ))}
             </div>
             <FlexibleColumnLayout list={daftar} detail={detail} detailOpen={baris !== null} onBack={() => setPilih(null)} listLabel="Daftar orang dan uang" detailLabel="Rincian orang" />
-            <FooterToolbar message={[kunciTutup ?? `Klop ${h.total.klop ?? 0} dari ${h.total.jumlahOrang} · siap ditutup`,
+            <FooterToolbar message={[kunciTutup ?? (!L ? "Angka Incaso belum terbaca — Tutup hari… akan menyegarkan pelunasan dulu"
+                : `Klop ${h.total.klop} dari ${h.total.jumlahOrang} · ${h.segarUntukTutup ? "siap ditutup" : "pelunasan akan disegarkan dulu sebelum ditutup"}`),
                 kunciSetoran && kunciSetoran !== kunciTutup ? `Setoran: ${kunciSetoran}` : null].filter(Boolean).join(" · ")}>
                 <Button icon={<HandCoins className="fi-icon" aria-hidden />} disabled={Boolean(kunciSetoran)} disabledReason={kunciSetoran}
                     onClick={() => setDialog({ jenis: "setoran", orang: null })}>Setoran…</Button>
