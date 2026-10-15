@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { jamWita, menahanKonfirmasi, saringPool, tanggalPanjang, tanggalPendek, urutanBerikutnya } from "@/lib/rekapan-nota/ui";
+import { EXCEPTION_LABEL, jamWita, labelEvent, menahanKonfirmasi, saringPool, tanggalPanjang, tanggalPendek, urutanBerikutnya } from "@/lib/rekapan-nota/ui";
 
 const POOL = [
     { no_nota: "INV/2610/KN01381", customer: "TK HARAPAN BARU", salesman: "Yusuf", area: "4", pareto: false },
@@ -46,4 +46,13 @@ test("hanya exception KONVERSI_* berstatus open yang menahan konfirmasi", () => 
     assert.equal(menahanKonfirmasi("KONVERSI_TIDAK_ADA", "open"), true);
     assert.equal(menahanKonfirmasi("KONVERSI_BEDA_DENGAN_EXPORT", "diabaikan"), false);
     assert.equal(menahanKonfirmasi("OUTLET_TANPA_AREA", "open"), false);
+});
+
+test("riwayat BL-24/25: penutupan exception dan jumlah nota yang kembali saat batal; selisih file berlabel", () => {
+    assert.deepEqual(labelEvent("wave.exception_resolved", { status: "diabaikan", ref_kode: "BRG-A", alasan: "file benar" }),
+        { apa: "Mengabaikan exception", ubah: "BRG-A · file benar" });
+    assert.equal(labelEvent("wave.exception_resolved", { status: "selesai", ref_kode: "BRG-A" }).apa, "Menandai exception selesai");
+    assert.equal(labelEvent("wave.cancelled", { nota_kembali: ["N1", "N2"], alasan: "mobil rusak" }).ubah, "2 nota kembali ke pool · mobil rusak");
+    assert.equal(labelEvent("wave.cancelled", {}).ubah, undefined);
+    assert.equal(EXCEPTION_LABEL.REKONSILIASI_SELISIH, "Selisih dengan file");
 });

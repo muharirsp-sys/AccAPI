@@ -6,7 +6,6 @@ Yang dibuktikan di sini bukan rumusnya (itu urusan `test_order_duplicate.py`), m
 gerbangnya BENAR-BENAR menahan pada jalur yang dipakai orang — dan bahwa konfirmasi manusia
 meloloskannya, bukan menyiasatinya.
 """
-import json
 import os
 import tempfile
 
@@ -15,6 +14,7 @@ os.environ["SUMMARY_STORE_PATH"] = os.path.join(tempfile.mkdtemp(prefix="dupe-ch
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+import order_cabang  # noqa: E402
 import outlet_channel  # noqa: E402
 from routers import orders  # noqa: E402
 from summary_store import connect, create_draft  # noqa: E402
@@ -44,10 +44,25 @@ def line(code, qty="10"):
     return dict(code=code, unit="PCS", quantity=qty, price="1000")
 
 
+def periksa_internal(customer_no, order_date, lines, cookie=None):
+    assert cookie is None and all(line.get("price") for line in lines), "input internal berharga petugas, jalur layanan"
+    return [{**line, "sumber_harga": "petugas"} for line in lines]
+
+
+def simpan(client, body):
+    """Alur layar Order Baru: pratinjau dulu, simpan membawa sidiknya (O1 putaran 1: pratinjau = tersimpan)."""
+    lihat = client.post("/orders/preview", json=body, headers=USER)
+    assert lihat.status_code == 200, lihat.text
+    return client.post("/orders", json={**body, "sidik": lihat.json()["sidik"]}, headers=USER)
+
+
 def main():
     # Channel outlet ditanyakan ke Next sejak PR #64. Self-check tidak boleh menuntut layanan
     # hidup: yang diuji di sini alur order, bukan jembatan channelnya (itu `test_outlet_channel`).
     outlet_channel.verify = lambda customer_no, channel: channel
+    # Aturan cabang + harga ditanyakan ke Next sejak O1 (`test_order_cabang`). Input internal membawa harga petugas: barisnya kembali
+    # dengan harga yang sama — harga petugas TIDAK ditimpa.
+    order_cabang.periksa = periksa_internal
     orders.get_current_user = lambda request: request.headers.get("X-Test-User") or None
     orders.user_has_permission = lambda user, area, action: True
     orders.validate_csrf_request = lambda request, token: True
@@ -57,33 +72,30 @@ def main():
     client = TestClient(app)
 
     # Order pertama lolos: belum ada bandingannya.
-    first = client.post("/orders", json=order([line("A"), line("B"), line("C")]), headers=USER)
+    first = simpan(client, order([line("A"), line("B"), line("C")]))
     assert first.status_code == 200, first.text
 
     # Order kedua MIRIP tapi tidak sama persis (satu barang ditambah, jumlahnya diubah) —
     # justru bentuk ketikan ulang yang paling sering lolos. Wajib ditahan.
-    mirip = client.post("/orders", json=order([line("A", "5"), line("B", "5"), line("C", "5"), line("D")]),
-                        headers=USER)
+    mirip = simpan(client, order([line("A", "5"), line("B", "5"), line("C", "5"), line("D")]))
     assert mirip.status_code == 409, mirip.text
-    assert "bukan order ganda" in mirip.json()["detail"], mirip.text
+    assert "bukan order ganda" in mirip.json()["detail"] and mirip.json()["kode"] == "ORDER_GANDA", mirip.text
 
     # Konfirmasi manusia meloloskannya, dan jejaknya ikut tersimpan pada catatan ordernya.
-    ok = client.post("/orders", json=order([line("A", "5"), line("B", "5"), line("C", "5"), line("D")],
-                                           confirm_duplicate=True), headers=USER)
+    ok = simpan(client, order([line("A", "5"), line("B", "5"), line("C", "5"), line("D")], confirm_duplicate=True))
     assert ok.status_code == 200, ok.text
     assert "dikonfirmasi BUKAN order ganda" in ok.json()["order"]["note"], ok.text
 
     # Outlet lain pada tanggal yang sama bukan order ganda.
-    lain = client.post("/orders", json=order([line("A"), line("B"), line("C")], outlet="TOKO LAIN"), headers=USER)
+    lain = simpan(client, order([line("A"), line("B"), line("C")], outlet="TOKO LAIN"))
     assert lain.status_code == 200, lain.text
 
     # Tanggal lain juga bukan: outlet memang wajar memesan barang yang sama di hari berbeda.
-    besok = client.post("/orders", json=order([line("A"), line("B"), line("C")], order_date="2026-06-16"),
-                        headers=USER)
+    besok = simpan(client, order([line("A"), line("B"), line("C")], order_date="2026-06-16"))
     assert besok.status_code == 200, besok.text
 
     # Order yang isinya jauh berbeda tetap lolos tanpa konfirmasi.
-    beda = client.post("/orders", json=order([line("D")], order_date="2026-06-17"), headers=USER)
+    beda = simpan(client, order([line("D")], order_date="2026-06-17"))
     assert beda.status_code == 200, beda.text
 
     print("ok - gerbang order ganda menahan yang mirip, meloloskan yang bukan, dan menghormati konfirmasi")

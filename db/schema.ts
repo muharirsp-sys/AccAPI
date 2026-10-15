@@ -108,6 +108,11 @@ export const item = pgTable("item", {
     ratio4: doublePrecision("ratio4"),
     ratio5: doublePrecision("ratio5"),
     hasMultiUnit: boolean("has_multi_unit"),
+    // O1 (owner 12 Okt 2026, db/migrations/0033): cabang barang dari tag divisi Accurate `charField2` lewat lib/order-cabang
+    // (TAG_KE_CABANG). NULL = tidak bisa diorder (non-jual / tanpa tag / tag tak dikenal). charField2 = teks tag asli (audit).
+    branchId: bigint("branch_id", { mode: "number" }),
+    suspended: boolean("suspended").notNull().default(false),
+    charField2: text("char_field2"),
     rawData: jsonb("raw_data"), // Complete unprocessed payload
     lastUpdate: text("last_update"), // Accurate's modified timestamp
     // Watermark LOKAL untuk delta feed ke Web Sales. lastUpdate tidak bisa dipakai:
@@ -626,6 +631,8 @@ export const customer = pgTable("customer", {
     // order harus memakai customerNo cabang yang benar.
     branchId: bigint("branch_id", { mode: "number" }),
     branchName: text("branch_name"),
+    // O1 (db/migrations/0033): pelanggan suspended di Accurate tidak bisa dipilih untuk order baru.
+    suspended: boolean("suspended").notNull().default(false),
     rawData: jsonb("raw_data"), // Complete unprocessed payload
     lastUpdate: text("last_update"), // Accurate's modified timestamp
     syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow()
@@ -1266,10 +1273,13 @@ export const salesProfile = pgTable("sales_profile", {
     channel: text("channel").notNull().default("TT"),
     spvName: text("spv_name"),
     smName: text("sm_name"),
-    // Cabang Accurate penjual ini. `branch` di atas adalah teks bebas warisan modul insentif
-    // (isinya sudah tercampur nama principal di produksi); yang menentukan penomoran faktur
-    // dan harga adalah kolom ini. NULL = belum dipetakan, dan jalur order menolaknya.
+    // O1 (owner 12 Okt 2026): `sales_code` = nomor karyawan Accurate (`accurate_employee.number`) = TAUTAN akun salesman <->
+    // karyawan, ditetapkan admin lewat /api/admin/users/[id]/salesman. Cabang salesman = `accurate_employee.branch_id` (lib/order-cabang
+    // cakupanCabang). Kolom ini TIDAK dibaca dan tidak diisi: salinan cabang akan basi saat karyawan dipindah cabang di Accurate.
     accurateBranchId: bigint("accurate_branch_id", { mode: "number" }),
+    // O1 putaran 1 (butir 12): tautan AKTIF ke karyawan Accurate. true = ditautkan admin (PUT); "lepas" (DELETE) = false — baris, kode,
+    // dan hierarki Form Kontrol (spv/sm, laporan per sales_code) TETAP. Bawaan false: profil lama/seed tidak membuka order tanpa admin.
+    accurateLinked: boolean("accurate_linked").notNull().default(false),
     createdAt: timestamp("created_at").notNull(),
     updatedAt: timestamp("updated_at").notNull(),
 }, (t) => ({
@@ -1536,6 +1546,129 @@ export const jksMaster = pgTable("jks_master", {
     custCodeIdx: index("idx_jks_cust_code").on(t.custCode),
     principleHariIdx: index("idx_jks_principle_hari").on(t.principle, t.hariKunjungan),
     uniqueEntry: uniqueIndex("idx_jks_unique").on(t.salesCode, t.custCode, t.principle),
+}));
+
+/**
+ * Kunjungan LUAR RUTE (FK-MSM2, owner 12 Okt 2026): toko yang tidak ada di rute JKS hari itu, dicari salesman (pelanggan Accurate cabangnya)
+ * lalu dikunjungi dengan alur yang sama (check-in, status, merchandising, check-out tetap di ao_control_daily/merchandising_check per
+ * cust_code). Di akhir sesi salesman memutuskan: masuk JKS miliknya (hari + pola minggu) / tidak / nanti (= tetap `menunggu`).
+ * JEJAK baris JKS hasil konfirmasi = baris ini (`jks_id` -> jks_master.id; siapa/kapan `dikonfirmasi_*`; tanggal kunjungan `tanggal`) —
+ * jks_master sendiri TIDAK diberi kolom baru. `sudah_jks` = toko sudah di JKS salesman ini pada hari lain (tidak perlu konfirmasi).
+ * DDL produksi: docs/handover/DDL_FK_MSM2.sql (role pemilik; accapi_app SELECT/INSERT/UPDATE tanpa DELETE).
+ */
+export const kunjunganLuarRute = pgTable("kunjungan_luar_rute", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    principle: text("principle").notNull(),
+    /** YYYY-MM-DD WITA, sama dengan ao_control_daily.date. */
+    tanggal: text("tanggal").notNull(),
+    /** customerNo Accurate LENGKAP (mis. C-100001-CBA), = cust_code baris JKS hasil konfirmasi. */
+    custCode: text("cust_code").notNull(),
+    custName: text("cust_name").notNull(),
+    alamat: text("alamat"),
+    customerId: bigint("customer_id", { mode: "number" }),
+    dibuatOleh: text("dibuat_oleh").notNull(),
+    dibuatOlehNama: text("dibuat_oleh_nama"),
+    dibuatPada: timestamp("dibuat_pada", { withTimezone: true }).notNull().defaultNow(),
+    konfirmasi: text("konfirmasi").notNull().default("menunggu"),
+    hari: text("hari"),
+    mingguPattern: text("minggu_pattern"),
+    jksId: text("jks_id"),
+    dikonfirmasiOleh: text("dikonfirmasi_oleh"),
+    dikonfirmasiOlehNama: text("dikonfirmasi_oleh_nama"),
+    dikonfirmasiPada: timestamp("dikonfirmasi_pada", { withTimezone: true }),
+    /** Batal LUNAK (owner 13 Okt): kunjungan salah tambah dibatalkan salesman pemilik; baris tetap sebagai jejak. */
+    dibatalkanPada: timestamp("dibatalkan_pada", { withTimezone: true }),
+    dibatalkanOleh: text("dibatalkan_oleh"),
+}, (t) => ({
+    /** Satu toko luar rute AKTIF per salesman/principal/hari; baris batal tidak menghalangi tambah ulang. */
+    unik: uniqueIndex("idx_klr_unik").on(t.salesCode, t.custCode, t.principle, t.tanggal).where(sql`${t.dibatalkanPada} IS NULL`),
+    jksIdx: index("idx_klr_jks").on(t.jksId),
+    konfirmasiCek: check("kunjungan_luar_rute_konfirmasi", sql`${t.konfirmasi} IN ('menunggu', 'jks', 'tidak', 'sudah_jks')`),
+    isiCek: check("kunjungan_luar_rute_isi", sql`btrim(${t.salesCode}) <> '' AND btrim(${t.principle}) <> '' AND btrim(${t.custCode}) <> ''
+        AND ${t.tanggal} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'`),
+    jadwalCek: check("kunjungan_luar_rute_jadwal", sql`(${t.hari} IS NULL OR ${t.hari} IN ('Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'))
+        AND (${t.mingguPattern} IS NULL OR ${t.mingguPattern} IN ('ganjil', 'genap', 'all'))`),
+    jksCek: check("kunjungan_luar_rute_jks", sql`${t.konfirmasi} <> 'jks' OR (${t.jksId} IS NOT NULL AND ${t.hari} IS NOT NULL
+        AND ${t.mingguPattern} IS NOT NULL AND ${t.dikonfirmasiPada} IS NOT NULL)`),
+    batalCek: check("kunjungan_luar_rute_batal", sql`(${t.dibatalkanPada} IS NULL) = (${t.dibatalkanOleh} IS NULL)
+        AND (${t.dibatalkanPada} IS NULL OR ${t.konfirmasi} <> 'jks')`),
+}));
+
+/**
+ * NOO — toko baru dari kunjungan salesman (owner 13 Okt 2026): pengajuan toko yang BELUM ada di Accurate. SPV tim / SM di atasnya / grup Admin
+ * menyetujui atau menolak; Admin mendaftarkan pelanggan di Accurate SECARA MANUAL lalu menautkan pelanggan hasil sync (`terdaftar`).
+ * Kunjungan NOO = baris kunjungan_luar_rute biasa (cust_code = `kode`, customer_id NULL). DATA PRIBADI: `nik` + `foto_ktp` (berkas privat
+ * data/private/noo/) — tidak pernah di log, audit, atau respons daftar. DDL produksi: docs/handover/DDL_NOO.sql (accapi_app tanpa DELETE).
+ */
+export const nooToko = pgTable("noo_toko", {
+    /** UUID dari klien = kunci idempoten kirim ulang. */
+    id: text("id").primaryKey(),
+    /** NOO-XXXXXXXX: rujukan untuk orang + cust_code kunjungan NOO. */
+    kode: text("kode").notNull(),
+    salesCode: text("sales_code").notNull(),
+    principle: text("principle").notNull(),
+    /** Cabang Accurate salesman saat pengajuan (cakupan O1); pelanggan yang ditautkan WAJIB cabang ini. */
+    branchId: bigint("branch_id", { mode: "number" }).notNull(),
+    branchName: text("branch_name"),
+    /** YYYY-MM-DD WITA hari pengajuan. */
+    tanggal: text("tanggal").notNull(),
+    namaToko: text("nama_toko").notNull(),
+    namaPemilik: text("nama_pemilik").notNull(),
+    alamat: text("alamat").notNull(),
+    /** Kanonik 08… (lib/form-kontrol/noo-aturan normalHp). */
+    noHp: text("no_hp").notNull(),
+    nik: text("nik").notNull(),
+    namaKtp: text("nama_ktp").notNull(),
+    fotoKtp: text("foto_ktp").notNull(),
+    fotoToko: text("foto_toko").notNull(),
+    lat: doublePrecision("lat").notNull(),
+    lng: doublePrecision("lng").notNull(),
+    akurasi: doublePrecision("akurasi").notNull(),
+    gpsFlag: text("gps_flag"),
+    status: text("status").notNull().default("menunggu_spv"),
+    duplikatDengan: text("duplikat_dengan"),
+    alasanDuplikat: text("alasan_duplikat"),
+    duplikatDikonfirmasi: boolean("duplikat_dikonfirmasi").notNull().default(false),
+    dibuatOleh: text("dibuat_oleh").notNull(),
+    dibuatOlehNama: text("dibuat_oleh_nama"),
+    dibuatPada: timestamp("dibuat_pada", { withTimezone: true }).notNull().defaultNow(),
+    diputuskanOleh: text("diputuskan_oleh"),
+    diputuskanOlehNama: text("diputuskan_oleh_nama"),
+    diputuskanPada: timestamp("diputuskan_pada", { withTimezone: true }),
+    alasanTolak: text("alasan_tolak"),
+    customerId: bigint("customer_id", { mode: "number" }),
+    customerNo: text("customer_no"),
+    ditautkanOleh: text("ditautkan_oleh"),
+    ditautkanOlehNama: text("ditautkan_oleh_nama"),
+    ditautkanPada: timestamp("ditautkan_pada", { withTimezone: true }),
+}, (t) => ({
+    kodeUnik: uniqueIndex("idx_noo_kode").on(t.kode),
+    /** Satu pelanggan Accurate satu NOO. */
+    customerUnik: uniqueIndex("idx_noo_customer").on(t.customerId).where(sql`${t.customerId} IS NOT NULL`),
+    salesIdx: index("idx_noo_sales").on(t.salesCode, t.status),
+    antreanIdx: index("idx_noo_antrean").on(t.status, t.branchId),
+    nikIdx: index("idx_noo_nik").on(t.nik).where(sql`${t.status} <> 'ditolak'`),
+    hpIdx: index("idx_noo_hp").on(t.noHp).where(sql`${t.status} <> 'ditolak'`),
+    statusCek: check("noo_toko_status", sql`${t.status} IN ('menunggu_spv', 'disetujui', 'ditolak', 'terdaftar')`),
+    isiCek: check("noo_toko_isi", sql`${t.kode} ~ '^NOO-[0-9A-Z]{8}$' AND btrim(${t.salesCode}) <> '' AND btrim(${t.principle}) <> ''
+        AND ${t.tanggal} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND btrim(${t.namaToko}) <> '' AND btrim(${t.namaPemilik}) <> '' AND btrim(${t.alamat}) <> ''
+        AND btrim(${t.namaKtp}) <> ''`),
+    pribadiCek: check("noo_toko_pribadi", sql`${t.nik} ~ '^[0-9]{16}$' AND ${t.noHp} ~ '^08[1-9][0-9]{7,10}$'
+        AND ${t.fotoKtp} ~ '^[0-9a-f-]{36}[.]jpg$' AND ${t.fotoToko} ~ '^[0-9a-f-]{36}[.]jpg$' AND ${t.fotoKtp} <> ${t.fotoToko}`),
+    gpsCek: check("noo_toko_gps", sql`${t.lat} BETWEEN -90 AND 90 AND ${t.lng} BETWEEN -180 AND 180 AND ${t.akurasi} >= 0`),
+    duplikatCek: check("noo_toko_duplikat", sql`(${t.duplikatDengan} IS NULL) = (${t.alasanDuplikat} IS NULL)
+        AND (${t.alasanDuplikat} IS NULL OR btrim(${t.alasanDuplikat}) <> '')
+        AND (NOT ${t.duplikatDikonfirmasi} OR ${t.duplikatDengan} IS NOT NULL)
+        AND (${t.duplikatDengan} IS NULL OR ${t.status} IN ('menunggu_spv', 'ditolak') OR ${t.duplikatDikonfirmasi})`),
+    keputusanCek: check("noo_toko_keputusan", sql`(${t.status} = 'menunggu_spv') = (${t.diputuskanPada} IS NULL)
+        AND (${t.diputuskanPada} IS NULL) = (${t.diputuskanOleh} IS NULL)
+        AND (${t.status} = 'ditolak') = (${t.alasanTolak} IS NOT NULL)
+        AND (${t.alasanTolak} IS NULL OR btrim(${t.alasanTolak}) <> '')`),
+    tautanCek: check("noo_toko_tautan", sql`(${t.status} = 'terdaftar') = (${t.customerId} IS NOT NULL)
+        AND (${t.customerId} IS NULL) = (${t.customerNo} IS NULL)
+        AND (${t.customerId} IS NULL) = (${t.ditautkanPada} IS NULL)
+        AND (${t.ditautkanPada} IS NULL) = (${t.ditautkanOleh} IS NULL)`),
 }));
 
 export const salesOutletTxn = pgTable("sales_outlet_txn", {

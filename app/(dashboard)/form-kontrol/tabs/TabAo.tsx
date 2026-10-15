@@ -2,30 +2,53 @@
  * Tujuan: "Rute hari ini" (Fiori S5, it05, ponsel dulu): toko JKS hari ini (WITA) dengan kunjungan yang belum selesai paling atas,
  *   progres kunjungan, tanda prioritas, dan "Kirim status rute hari ini" lewat dialog (pengganti tombol Submit AO).
  * Caller: form-kontrol/page.tsx (shell tab, default export `({ scope })`).
- * Dependensi: GET/POST /api/form-kontrol/ao-control, ../shared (Scope, AoRow, PRINCIPLES, compareRoute, hariIniWita, jamWita, useIzinFk),
+ * Dependensi: GET/POST /api/form-kontrol/ao-control, ../shared (Scope, AoRow, principalAwal, penjelasanTanpaJks, compareRoute, hariIniWita,
+ *   jamWita, useIzinFk),
  *   ../lapangan (bacaFk, kirimFk, keBarisRute, simpanRute, useHariBeku), components/fiori/*, lib/rekapan-nota/ui (tanggalPanjang).
  * Main Functions: TabAo, badgeToko, susunKiriman.
  * Side Effects: HTTP GET rute; GET ulang + POST ao-control per toko saat Kirim status; sessionStorage daftar toko rute (Order Sales).
+ *
+ * FK-MSM2: kunjungan LUAR RUTE (./LuarRute TambahLuarRute) — salesman pemilik menambah pelanggan cabangnya ke kunjungan HARI INI; baris itu
+ * ikut rute (server, `luarRute`) dengan penanda "Luar rute". Salesman TANPA JKS memakai principal cabang Accurate (my-scope
+ * `principalCabang`): rute tidak buntu, penjelasan tetap tampil; tanpa principal cabang = penjelasan + alasan dari server.
  *
  * Kirim status TIDAK dihapus (keputusan orkestrator S5): kunjungan sudah menulis check-in/status/merch/check-out per toko, TETAPI tanda
  * prioritas dan baris "tidak dikunjungi" hanya tertulis lewat kiriman ini, dan Dashboard SPV menghitung "Rute" dari baris AO.
  * Payload per toko sama dengan Submit AO lama (urut, berhenti di galat pertama). Dua penjaga (temuan peninjau S5): hanya salesman
  * pemilik rute yang mengirim (peran lain baca-saja), dan rute DIBACA ULANG sesaat sebelum mengirim — status dari bacaan terbaru, hanya
  * tanda bintang sesi ini di atasnya — supaya status kunjungan yang tersimpan sesudah layar dimuat tidak tertimpa.
+ * FK-MSM3: tanda yang belum dikirim bertahan melewati muat ulang rute (peninjau B R-7) dan membuka Kunjungan lalu kembali (sessionStorage per
+ *   salesman|principal|tanggal, S-3); toko yang hilang dari rute disebut, tandanya dibuang.
+ *   Server menolak status untuk toko yang tidak lagi di rute (409 KUNJUNGAN_DIBATALKAN / BUKAN_RUTE_HARI_INI) → rute dimuat ulang.
  */
 "use client";
 
-import { useCallback, useId, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
+// NOO (owner 13 Okt 2026): toko baru (belum di Accurate) diajukan dari sini; kunjungannya bertanda NOO dan tidak masuk daftar Order Sales.
+import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
+import { TambahNoo } from "./NooFormulir";
 import { CalendarDays, FileText, RefreshCw, Send, Star } from "lucide-react";
 import { Button, EmptyState, ErrorState, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
-import { type Scope, type AoRow, PRINCIPLES, compareRoute, hariIniWita, jamWita, useIzinFk, visitDurationMin } from "../shared";
+import { type Scope, type AoRow, compareRoute, hariIniWita, jamWita, penjelasanTanpaJks, principalAwal, useIzinFk, visitDurationMin } from "../shared";
 import { adaHasilKunjungan, statusBintang } from "@/lib/form-kontrol/constants";
-import { bacaFk, keBarisRute, kirimFk, simpanRute, useHariBeku } from "../lapangan";
+import { bacaFk, ditolakBukanRute, keBarisRute, kirimFk, simpanRute, useHariBeku } from "../lapangan";
+import { BatalkanLuarRute, TambahLuarRute } from "./LuarRute";
 
 type Saring = "semua" | "belum" | "tidak" | "perhatian";
+/**
+ * Draf tanda prioritas: kunci rute (salesman|principal|tanggal) → toko → keinginan. `gugur` = dibuang saat rute termuat (toko hilang dari rute /
+ * sudah punya hasil kunjungan): tidak berlaku lagi walau toko itu muncul kembali, disebut di strip sampai strip ditutup (peninjau B R-4).
+ */
+type TandaDraf = { prioritas: boolean; nama: string; gugur?: "hilang" | "hasil" };
+type DrafBintang = Record<string, Record<string, TandaDraf>>;
+const DRAF_BINTANG = "fk-draf-prioritas";
+/** ponytail: sessionStorage tab ini (pola simpanRute); tidak tersedia = draf hanya hidup selama layar ini terbuka. */
+function bacaDrafBintang(): DrafBintang {
+    try { const v: unknown = JSON.parse(sessionStorage.getItem(DRAF_BINTANG) ?? "{}"); return v && typeof v === "object" ? v as DrafBintang : {}; } catch { return {}; }
+}
 const sedang = (r: AoRow) => Boolean(r.checkinAt && !r.checkoutAt);
 
 /** Satu badge dominan per toko: ikon + label + warna, tidak pernah warna saja. */
@@ -41,6 +64,7 @@ function badgeToko(r: AoRow): { tone: Tone; label: string } {
 
 function metaToko(r: AoRow): string {
     const bagian: string[] = [];
+    if (r.luarRute) bagian.push(isKodeNoo(r.custCode) ? "Toko baru (NOO) · tanpa order" : "Luar rute");
     // #3: angka ini menghitung HARI dengan status order/aktif bulan ini (db.ts getTodayRoute), bukan jumlah kunjungan.
     if (r.monthlyOrderCount > 0) bagian.push(`${r.monthlyOrderCount} hari order bulan ini`);
     if (r.needsAttention) bagian.push("≥ 2× tidak order bulan ini");
@@ -81,44 +105,85 @@ export default function TabAo({ scope }: { scope: Scope }) {
     const beku = useHariBeku();
     const [tanggalPilih, setTanggalPilih] = useState(beku.hari);
     const tanggal = salesman ? beku.hari : tanggalPilih;
-    // ponytail: my-scope belum mengirim principal (#2) → bawaan GODREJ seperti hari ini; usulan di VariantNote.
-    const [principle, setPrinciple] = useState(scope.principle ?? PRINCIPLES[0]);
+    // Principal = JKS aktif cakupan (my-scope, FK-MSM butir 1): satu = langsung terpilih tanpa pilihan; lebih dari satu = dipilih.
+    // FK-MSM2: salesman TANPA JKS = principal cabang Accurate-nya (hanya untuk kunjungan luar rute).
+    const principalCabang = salesman && !scope.principles?.length ? scope.principalCabang ?? null : null;
+    const daftarPrincipal = scope.principles?.length ? scope.principles : principalCabang ? [principalCabang] : [];
+    const tanpaJks = penjelasanTanpaJks(scope);
+    const [principle, setPrinciple] = useState(() => principalAwal(scope) || principalCabang || "");
     const [salesCode, setSalesCode] = useState(scope.salesCode ?? "");
     const [saring, setSaring] = useState<Saring>("semua");
     const [dialog, setDialog] = useState(false);
     const [sukses, setSukses] = useState("");
+    // Hasil "Batalkan" luar rute terakhir tidak pasti → semua Batalkan dikunci sampai rute dimuat ulang (cegah keputusan dari daftar usang).
+    const [batalTakPasti, setBatalTakPasti] = useState(false);
     const tanpaIzin = useIzinFk("submit");
     // Hanya salesman pemilik rute yang mengirim status (perilaku lama untuk peran salesman); SPV/SM/admin baca-saja.
     const bukanPemilik = salesman && salesCode === scope.salesCode ? undefined
         : "Hanya salesman pemilik rute yang mengirim status rute; tampilan ini baca-saja.";
 
+    const [draf, setDraf] = useState<DrafBintang>(bacaDrafBintang);
     const loader = useCallback(async (): Promise<Load<AoRow[]>> => {
-        // Tanpa salesman terpilih tidak ada permintaan: server menjawab baris AO lintas salesman (admin) atau kosong (SPV) — bukan rute.
-        if (!salesCode) return { status: "siap", data: [] };
+        // Tanpa salesman/principal terpilih tidak ada permintaan: server menjawab baris AO lintas salesman (admin) atau kosong — bukan rute.
+        if (!salesCode || !principle) return { status: "siap", data: [] };
         const p = new URLSearchParams({ date: tanggal, principle });
         p.set("salesCode", salesCode);
         const hasil = await bacaFk(`/api/form-kontrol/ao-control?${p}`, (d) => keBarisRute(d.rows, principle));
-        if (hasil.status === "siap" && tanggal === hariIniWita()) simpanRute(tanggal, salesCode, hasil.data!.map((r) => ({ kode: r.custCode, nama: r.custName })));
+        if (hasil.status === "siap" && tanggal === hariIniWita()) {
+            simpanRute(tanggal, salesCode, hasil.data!.filter((r) => !isKodeNoo(r.custCode)).map((r) => ({ kode: r.custCode, nama: r.custName })));
+        }
+        if (hasil.status === "siap") {
+            // Tanda untuk toko yang hilang dari rute / sudah punya hasil kunjungan gugur SEKARANG (bukan saat strip ditutup).
+            const kini = new Map(hasil.data!.map((r) => [r.custCode, r]));
+            const k = `${salesCode}|${principle}|${tanggal}`;
+            setDraf((prev) => {
+                const gugur = (c: string, m: TandaDraf) => m.gugur ?? (!kini.has(c) ? "hilang" : adaHasilKunjungan(kini.get(c)!.status) ? "hasil" : undefined);
+                const mau = Object.entries(prev[k] ?? {});
+                if (!mau.some(([c, m]) => gugur(c, m) !== m.gugur)) return prev;
+                return { ...prev, [k]: Object.fromEntries(mau.map(([c, m]) => [c, { ...m, gugur: gugur(c, m) }])) };
+            });
+        }
         return hasil;
     }, [tanggal, principle, salesCode]);
     const [load, muatUlang] = useLoad(loader);
 
     const asal = load.data;
-    const [ubah, setUbah] = useState<{ dari?: AoRow[]; baris: Record<string, AoRow> }>({ baris: {} });
-    const ubahan = useMemo(() => (asal && ubah.dari === asal ? ubah.baris : {}), [asal, ubah]);
+    // Tanda prioritas yang belum dikirim = keinginan per toko (prioritas ya/tidak) untuk rute salesman|principal|tanggal ini. Peninjau B R-7:
+    // bertahan melewati muat ulang rute (Tambah luar rute, Batalkan, Muat ulang) dan diterapkan ke baris TERBARU; tidak berlaku untuk toko
+    // yang sudah punya hasil kunjungan atau sudah berstatus itu. Toko yang hilang dari rute: tanda dibuang dan disebut (strip), tidak diam.
+    const kunciRute = `${salesCode}|${principle}|${tanggal}`;
+    // Bertahan juga saat salesman membuka Kunjungan lalu kembali (peninjau B S-3); yang disimpan hanya draf tanggal ini.
+    useEffect(() => {
+        try {
+            sessionStorage.setItem(DRAF_BINTANG, JSON.stringify(Object.fromEntries(Object.entries(draf).filter(([k]) => k.endsWith(`|${tanggal}`)))));
+        } catch { /* penyimpanan tidak tersedia: draf hanya di layar ini */ }
+    }, [draf, tanggal]);
+    const ubahan = useMemo(() => {
+        const mau = draf[kunciRute] ?? {};
+        return Object.fromEntries((asal ?? []).flatMap((r) => {
+            const m = mau[r.custCode];
+            return m && !m.gugur && !adaHasilKunjungan(r.status) && r.isPriority !== m.prioritas ? [[r.custCode, bintang(r)] as const] : [];
+        }));
+    }, [asal, draf, kunciRute]);
+    const gugur = Object.values(draf[kunciRute] ?? {}).filter((m) => m.gugur);
     const rows = useMemo(() => (asal ?? []).map((r) => ubahan[r.custCode] ?? r), [asal, ubahan]);
     const nUbah = Object.keys(ubahan).length;
     useUnsavedGuard(nUbah > 0);
 
     function tandai(r: AoRow) {
         setSukses("");
-        setUbah((prev) => {
-            const baris = asal && prev.dari === asal ? { ...prev.baris } : {};
-            if (baris[r.custCode]) delete baris[r.custCode];
-            else baris[r.custCode] = bintang(r);
-            return { dari: asal, baris };
+        setDraf((prev) => {
+            const mau = { ...prev[kunciRute] };
+            // Membatalkan tanda sesi ini mengembalikan baris semula.
+            if (ubahan[r.custCode]) delete mau[r.custCode];
+            else mau[r.custCode] = { prioritas: !r.isPriority, nama: r.custName };
+            return { ...prev, [kunciRute]: mau };
         });
     }
+    const buangHilang = () => {
+        setDraf((prev) => ({ ...prev, [kunciRute]: Object.fromEntries(Object.entries(prev[kunciRute] ?? {}).filter(([, m]) => !m.gugur)) }));
+        document.getElementById(judulId)?.focus(); // fokus tidak jatuh ke BODY saat strip ditutup
+    };
 
     const n = {
         order: rows.filter((r) => r.status === "ordered").length,
@@ -160,12 +225,16 @@ export default function TabAo({ scope }: { scope: Scope }) {
                 }, { ulangAman: true });
             } catch (e) {
                 const sebab = e instanceof Error ? e.message : "Gagal mengirim.";
-                throw new Error(`${sebab} Berhenti di ${row.custName}: ${terkirim} dari ${kiriman.length} toko sudah terkirim. Kirim ulang membaca rute lagi dari server.`);
+                // FK-MSM3: toko tidak lagi di rute (mis. kunjungan luar rute dibatalkan di layar lain) → rute dimuat ulang; kirim ulang memakai rute baru.
+                if (ditolakBukanRute(e)) muatUlang();
+                const belum = kiriman.slice(terkirim + 1).map((r) => r.custName);
+                throw new Error(`${sebab} Berhenti di ${row.custName}: ${terkirim} dari ${kiriman.length} toko sudah terkirim.${belum.length
+                    ? ` Belum dikirim: ${belum.join(", ")}.` : ""} Tekan Kirim status lagi untuk melanjutkan dari rute terbaru di server.`);
             }
             terkirim++;
         }
         setDialog(false);
-        setUbah({ baris: {} });
+        setDraf((prev) => { const sisa = { ...prev }; delete sisa[kunciRute]; return sisa; });
         setSukses(`Status ${terkirim} toko terkirim untuk ${tanggalPanjang(tanggal)} dari rute terbaru di server.${dilewati
             ? ` ${dilewati} tanda prioritas tidak dikirim karena status tokonya berubah sejak layar dimuat.` : ""}`);
         muatUlang();
@@ -174,12 +243,16 @@ export default function TabAo({ scope }: { scope: Scope }) {
     const hariLabel = tanggalPanjang(tanggal);
     const judulHari = tanggal === hariIniWita() ? "hari ini" : hariLabel;
     let isi: ReactNode;
-    if (!salesCode) {
+    if (!salesCode && tim !== null && tim.length === 0) {
+        isi = <EmptyState title="Belum ada salesman di tim Anda" message="Salesman muncul setelah Admin Sales mengisi SPV/SM mereka di Hierarki Sales." />;
+    } else if (tanpaJks && !principalCabang) {
+        isi = <EmptyState title={tanpaJks.title} message={`${tanpaJks.message}${scope.alasanCabang ? ` Kunjungan luar rute juga belum bisa: ${scope.alasanCabang}` : ""}`} />;
+    } else if (!salesCode) {
         isi = tim === null
             ? <EmptyState title="Isi kode salesman" message="Rute tampil per salesman. Ketik kode salesman di atas." />
-            : tim.length === 0
-                ? <EmptyState title="Belum ada salesman di tim Anda" message="Salesman muncul setelah Admin Sales mengisi SPV/SM mereka di Hierarki Sales." />
-                : <EmptyState title="Pilih salesman tim Anda" message="Rute tampil per salesman." />;
+            : <EmptyState title="Pilih salesman tim Anda" message="Rute tampil per salesman." />;
+    } else if (!principle) {
+        isi = <EmptyState title="Pilih principal" message={`JKS dalam cakupan Anda memuat ${daftarPrincipal.length} principal; rute tampil per principal.`} />;
     } else if (load.status === "galat" && rows.length === 0) {
         // Juga saat muat ulang gagal sesudah hasil kosong: galat tidak pernah tampil sebagai rute kosong.
         isi = <ErrorState title="Rute gagal dimuat" message={`${load.error} Ini bukan rute kosong; kunjungan yang sudah tersimpan tidak hilang.`} onRetry={muatUlang} />;
@@ -187,7 +260,8 @@ export default function TabAo({ scope }: { scope: Scope }) {
         isi = <><Skeleton rows={2} label="Memuat rute" /><Skeleton rows={5} label="Memuat rute" /></>;
     } else if (rows.length === 0) {
         isi = <EmptyState title={tanggal === hariIniWita() ? "Tidak ada rute terjadwal hari ini" : "Tidak ada rute terjadwal pada tanggal ini"}
-            message={`JKS ${salesCode} tidak punya toko ${principle} untuk ${hariLabel}. Bila ini keliru, minta SPV memeriksa JKS atau pilih principal lain.`} />;
+            message={principalCabang ? "Belum ada toko di kunjungan ini. Tambahkan toko lewat Kunjungan luar rute di bawah."
+                : `JKS ${salesCode} tidak punya toko ${principle} untuk ${hariLabel}. Bila ini keliru, minta SPV memeriksa JKS${daftarPrincipal.length > 1 ? " atau pilih principal lain" : ""}.`} />;
     } else {
         const lebar = (k: number) => `${rows.length ? (k / rows.length) * 100 : 0}%`;
         const nOrder = n.order + n.aktif;
@@ -223,6 +297,9 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                 const b = badgeToko(r);
                                 const q = new URLSearchParams({ salesCode: r.salesCode, principle, date: tanggal });
                                 const alasanBintang = bukanPemilik ?? (adaHasilKunjungan(r.status) ? "Toko ini sudah punya hasil kunjungan" : undefined);
+                                // Owner 13 Okt: kunjungan luar rute salah tambah boleh dibatalkan pemiliknya hari itu, selama belum ada check-in/status
+                                // APA PUN (juga "tidak dikunjungi" dari Kirim status rute — server menolaknya, peninjau B R-3).
+                                const bisaBatal = r.luarRute && salesman && !bukanPemilik && tanggal === hariIniWita() && !r.checkinAt && !r.adaStatus;
                                 return (
                                     <li key={r.id ?? r.custCode} className="fi-wl-row" style={{ gridTemplateColumns: "auto minmax(0,1fr)", paddingLeft: 4 }}>
                                         <Button variant="icon" aria-pressed={r.isPriority} aria-label={`Prioritas ${r.custName}`} title="Tandai prioritas"
@@ -231,6 +308,16 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                         </Button>
                                         <ListItem href={`/form-kontrol/visit/${encodeURIComponent(r.custCode)}?${q}`} doc={r.custCode} title={r.custName}
                                             meta={metaToko(r)} badge={<StatusBadge tone={b.tone}>{b.label}</StatusBadge>} />
+                                        {bisaBatal && (
+                                            // Di baris bawah kartu (kolom isi), tidak memeras nama toko panjang di 390 px (peninjau B R-6).
+                                            <div style={{ gridColumn: 2, justifySelf: "start" }}>
+                                            <BatalkanLuarRute id={r.id} custName={r.custName} custCode={r.custCode}
+                                                kunci={tanpaIzin ?? (batalTakPasti ? "Hasil pembatalan terakhir belum pasti; muat ulang rute dulu."
+                                                    : load.status !== "siap" ? "Menunggu rute selesai dimuat" : undefined)}
+                                                onTakPasti={() => setBatalTakPasti(true)}
+                                                onBatal={() => { setSukses(`Kunjungan luar rute ${r.custName} dibatalkan.`); muatUlang(); }} />
+                                            </div>
+                                        )}
                                     </li>
                                 );
                             })}
@@ -244,22 +331,25 @@ export default function TabAo({ scope }: { scope: Scope }) {
     return (
         <section aria-labelledby={judulId} className="grid gap-4">
             <div className="grid gap-1">
-                <h2 id={judulId} className="fi-title-2">Rute hari ini</h2>
+                <h2 id={judulId} className="fi-title-2" tabIndex={-1}>Rute hari ini</h2>
                 <p className="fi-small fi-muted flex flex-wrap items-center gap-x-2">
                     <CalendarDays className="fi-icon" aria-hidden />
                     <span>{hariLabel} · WITA</span>
-                    {salesCode && <span>· <span className="fi-mono">{salesCode}</span>{scope.salesName && salesman ? ` ${scope.salesName}` : ""} · {principle}</span>}
+                    {salesCode && <span>· <span className="fi-mono">{salesCode}</span>{scope.salesName && salesman ? ` ${scope.salesName}` : ""}{principle ? ` · ${principle}` : ""}</span>}
                 </p>
             </div>
 
             <div className="fi-formgrid">
-                <FormField label="Principal">
-                    {(a) => (
-                        <select {...a} className="fi-input" value={principle} onChange={(e) => { setPrinciple(e.target.value); setSukses(""); }}>
-                            {PRINCIPLES.map((p) => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                    )}
-                </FormField>
+                {daftarPrincipal.length > 1 && (
+                    <FormField label="Principal">
+                        {(a) => (
+                            <select {...a} className="fi-input" value={principle} onChange={(e) => { setPrinciple(e.target.value); setSukses(""); }}>
+                                {!principle && <option value="">Pilih principal</option>}
+                                {daftarPrincipal.map((p) => <option key={p} value={p}>{p}</option>)}
+                            </select>
+                        )}
+                    </FormField>
+                )}
                 {!salesman && tim === null && (
                     <FormField label="Kode salesman">
                         {(a) => <input {...a} className="fi-input fi-mono" value={salesCode} placeholder="mis. S01" onChange={(e) => { setSalesCode(e.target.value); setSukses(""); }} />}
@@ -280,7 +370,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
                         {(a) => <input {...a} type="date" className="fi-input" value={tanggalPilih} onChange={(e) => { if (e.target.value) setTanggalPilih(e.target.value); setSukses(""); }} />}
                     </FormField>
                 )}
-                {salesCode && (
+                {salesCode && principle && (
                     <div className="flex items-end">
                         <Button icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang} busy={load.status === "memuat" && Boolean(asal)}>Muat ulang</Button>
                     </div>
@@ -289,14 +379,43 @@ export default function TabAo({ scope }: { scope: Scope }) {
 
             {salesman && beku.berganti && (
                 <MessageStrip tone="warn" title="Tanggal sudah berganti.">
-                    Rute dan isian yang tampil masih untuk {hariLabel}; tidak ada yang dibuang.{" "}
+                    Rute dan isian yang tampil masih untuk {hariLabel}.{" "}
+                    {nUbah > 0 ? `${nUbah} tanda prioritas belum dikirim untuk ${hariLabel} tidak dibawa ke hari baru — kirim dulu bila masih perlu. ` : "Tidak ada yang dibuang. "}
                     <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => { setSukses(""); beku.pakaiHariBaru(); }}>Muat rute {tanggalPanjang(beku.hariBaru)}</button>
                 </MessageStrip>
             )}
+            {tanpaJks && principalCabang && (
+                <MessageStrip tone="info" title={`${tanpaJks.title}.`}>
+                    Rute terjadwal kosong sampai Admin Sales mengimpor JKS Anda. Anda tetap bisa menambah kunjungan luar rute (principal {principalCabang},
+                    cabang Accurate Anda); di Laporan harian toko itu bisa Anda masukkan ke JKS.
+                </MessageStrip>
+            )}
             {sukses && <MessageStrip tone="pos" title="Terkirim.">{sukses}</MessageStrip>}
+            {batalTakPasti && (
+                <MessageStrip tone="warn" title="Hasil pembatalan terakhir belum pasti.">
+                    Muat ulang rute untuk melihat apakah kunjungan itu sudah batal; Batalkan dikunci sampai rute dimuat ulang.{" "}
+                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => { setBatalTakPasti(false); setSukses(""); muatUlang(); }}>Muat ulang</button>
+                </MessageStrip>
+            )}
+            {gugur.length > 0 && (
+                <MessageStrip tone="warn" title={`${gugur.length} tanda prioritas dibuang.`} onClose={buangHilang}>
+                    {[["hilang", "tidak lagi ada di rute ini"], ["hasil", "sudah punya hasil kunjungan"]].map(([g, sebab]) => {
+                        const nama = gugur.filter((m) => m.gugur === g).map((m) => m.nama);
+                        return nama.length ? `${nama.join(", ")} ${sebab}, jadi tandanya tidak dikirim. ` : "";
+                    })}
+                </MessageStrip>
+            )}
             {nUbah > 0 && <p className="fi-draft" role="status">{nUbah} tanda prioritas belum dikirim — kirim lewat “Kirim status rute {judulHari}”.</p>}
 
             {isi}
+
+            {salesman && salesCode === scope.salesCode && principle && tanggal === hariIniWita() && asal && (
+                <TambahLuarRute salesCode={salesCode} principle={principle} tanggal={tanggal} ruteKode={rows.map((r) => r.custCode)}
+                    onDitambah={muatUlang} kunci={tanpaIzin} />
+            )}
+            {salesman && salesCode === scope.salesCode && principle && tanggal === hariIniWita() && asal && (
+                <TambahNoo salesCode={salesCode} principle={principle} onDiajukan={muatUlang} kunci={tanpaIzin} />
+            )}
 
             <Section title="Akhir hari" subtitle="setelah kunjungan terakhir">
                 <div className="fi-sect-in">
@@ -319,10 +438,6 @@ export default function TabAo({ scope }: { scope: Scope }) {
             </Section>
 
             <VariantNote bl="BL-28">Tanggal “hari ini” dihitung di ponsel dalam WITA. Usulan: server yang menetapkan tanggal dan cap foto WITA.</VariantNote>
-            <VariantNote bl="BL-32">
-                Principal dipilih manual (bawaan GODREJ) karena profil belum mengirim principal salesman. Usulan: principal dari profil; pilihan
-                hanya muncul bila salesman memegang lebih dari satu.
-            </VariantNote>
 
             <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`Kirim status ${rows.length} toko rute ${judulHari}?`}
                 description="Rute dibaca ulang dari server sesaat sebelum dikirim; status setiap toko dikirim dari bacaan itu, satu per satu, ditambah tanda prioritas dari layar ini. Toko yang belum disentuh tercatat “tidak dikunjungi”; Dashboard SPV menghitung rute dari kiriman ini."

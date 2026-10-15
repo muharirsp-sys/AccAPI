@@ -60,6 +60,9 @@ type BodyProps = ConfirmDialogProps & { titleId: string; busy: boolean; setBusy:
 function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmLabel, cancelLabel = "Batal", tone = "primary", error, children, confirmDisabled, alasanTerlihat, onConfirm, titleId, busy, setBusy }: BodyProps) {
     const [text, setText] = useState("");
     const [failure, setFailure] = useState<string>();
+    const alertRef = useRef<HTMLParagraphElement>(null);
+    // Tombol konfirmasi nonaktif selama sibuk -> fokus hilang ke <body>; kembalikan ke pesan galat yang bermakna.
+    useEffect(() => { if (failure) alertRef.current?.focus(); }, [failure]);
     const inFlight = useRef(false); // disabled baru berlaku sesudah render; ref menahan klik ganda.
     const reasonId = useId();
     const whyId = useId();
@@ -104,7 +107,7 @@ function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmL
                         {min > 1 && <p className="fi-help" id={`${reasonId}-min`}>Minimal {min} karakter; tersimpan bersama aksi ini.</p>}
                     </div>
                 )}
-                {(error || failure) && <p className="fi-msg" role="alert">{error || failure}</p>}
+                {(error || failure) && <p ref={alertRef} tabIndex={-1} className="fi-msg" role="alert">{error || failure}</p>}
             </div>
             <footer>
                 {alasanTerlihat && blocked && !busy && <span id={whyId} className="fi-small fi-why" style={{ marginRight: "auto", alignSelf: "center" }}>{blocked}</span>}

@@ -22,9 +22,9 @@ export type UserBaris = {
 };
 export type GrupRingkas = { id: string; name: string; description: string | null; isPreset: boolean; permCount: number; memberCount: number };
 
-/** Galat tulis. `muatUlang` = data penentu harus dibaca ulang (tidak pasti, data berubah, izin berubah). */
+/** Galat tulis. `muatUlang` = data penentu harus dibaca ulang (tidak pasti, data berubah, izin berubah). `data` = badan jawaban server (mis. `laporan`). */
 export class GalatAdmin extends Error {
-    constructor(message: string, readonly muatUlang: boolean, readonly belumPasti: boolean, readonly code?: string) {
+    constructor(message: string, readonly muatUlang: boolean, readonly belumPasti: boolean, readonly code?: string, readonly data?: Record<string, unknown>) {
         super(message);
     }
 }
@@ -51,7 +51,7 @@ export async function tulisAdmin<T>(url: string, method: "POST" | "PUT" | "PATCH
     });
     if (status >= 200 && status < 300 && data && data.ok !== false) return data as T;
     const g = pesanGalat(status, data, konteks);
-    throw new GalatAdmin(g.pesan, g.muatUlang, g.belumPasti, g.code);
+    throw new GalatAdmin(g.pesan, g.muatUlang, g.belumPasti, g.code, data ?? undefined);
 }
 
 /** Baca API admin -> Load. Galat (izin, putus, server) tampil sebagai galat, tidak pernah sebagai daftar kosong. */

@@ -19,7 +19,6 @@
 import { pool } from "@/lib/db";
 import { buildTtf } from "@/lib/rekapan-nota/query";
 import { bagiHalamanTtf } from "@/lib/rekapan-nota/ttf-paginasi";
-import TombolCetak from "../../../../TombolCetak";
 
 export const dynamic = "force-dynamic";
 
@@ -56,7 +55,6 @@ export default async function CetakTtfPage({ params }: { params: Promise<{ id: s
 
     return (
         <main className="cetak ttf">
-            <div className="layar-saja"><TombolCetak /></div>
             <style>{`
                 .ttf tbody td { padding: 2.1mm 1.5mm; }        /* ruang untuk tulisan tangan */
                 .ttf .isian { border-bottom: none; background: none !important; }
