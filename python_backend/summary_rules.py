@@ -6,7 +6,7 @@ Side Effects: Tidak ada I/O; uang dibulatkan dua desimal, tidak memakai float un
 import re
 from datetime import date
 from fractions import Fraction
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, ROUND_UP
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -207,9 +207,10 @@ def desimal(nilai):
     return Decimal(nilai.numerator) / Decimal(nilai.denominator) if isinstance(nilai, Fraction) else nilai
 
 
-def angka_teks(nilai):
-    """Jumlah hasil konversi bisa pecahan (100 PCS = 0,83 KRT): dua desimal, tanpa nol di belakang."""
-    return format(desimal(nilai).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP).normalize(), "f")
+def angka_teks(nilai, naik=False):
+    """Jumlah hasil konversi bisa pecahan (100 PCS = 0,83 KRT): dua desimal, tanpa nol di belakang.
+    `naik` untuk kekurangan: kurang 1 PCS dari karton isi 240 tertulis 0,01, bukan "Tambah 0"."""
+    return format(desimal(nilai).quantize(Decimal("0.01"), rounding=ROUND_UP if naik else ROUND_HALF_UP).normalize(), "f")
 
 
 def kelompok_baris(program, eligible):
@@ -673,7 +674,7 @@ def suggestions(programs, raw_lines, order_date, channel, limit=20, outlet_class
                 continue
             gap = Fraction(number(nearest.minimum)) - metric
             if program.threshold == "quantity":
-                message = f"Tambah {angka_teks(gap)} {program.unit} lagi untuk {benefit_text(nearest)}"
+                message = f"Tambah {angka_teks(gap, naik=True)} {program.unit} lagi untuk {benefit_text(nearest)}"
             else:
                 message = f"Tambah {rupiah(desimal(gap))} lagi untuk {benefit_text(nearest)}"
             found.append(dict(program_id=program.id, program_name=program.name, threshold=program.threshold,

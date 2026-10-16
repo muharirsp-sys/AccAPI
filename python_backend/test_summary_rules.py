@@ -309,6 +309,9 @@ def check_konversi_satuan():
     dua_satuan = [dict(line("A", "4", "120000", "KRT"), rasio=rasio), dict(line("A", "120", "1000"), rasio=rasio)]
     assert [row["percents"] for row in calculate(programs, dua_satuan, "2026-06-15", "GT")["lines"]] == [["5"], ["5"]]
     assert not suggestions(programs, dua_satuan, "2026-06-15", "GT")
+    # Kurang 1 PCS dari 5 KRT isi 240: saran menulis 0,01 (dibulatkan naik), bukan "Tambah 0".
+    kurang_satu = [dict(line("A", "1199", "1000"), rasio={"PCS": 1, "KRT": 240})]
+    assert suggestions(programs, kurang_satu, "2026-06-15", "GT")[0]["message"].startswith("Tambah 0.01 KRT"), suggestions(programs, kurang_satu, "2026-06-15", "GT")
     # Per barang juga: 600 PCS satu barang = 5 KRT.
     programs, _ = compiled([row(ketentuan="Beli 5 KRT")])
     assert calculate(programs, [dict(line("A", "600", "1000"), rasio=rasio)], "2026-06-15", "GT")["discount"] == "30000.00"
