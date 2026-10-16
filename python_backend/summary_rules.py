@@ -5,6 +5,7 @@ Side Effects: Tidak ada I/O; uang dibulatkan dua desimal, tidak memakai float un
 """
 import re
 from datetime import date
+from fractions import Fraction
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -201,18 +202,36 @@ def rasio_baris(line):
     return hasil
 
 
+def desimal(nilai):
+    """Fraction/Decimal -> Decimal (untuk rupiah dan teks), hanya di ujung hitungan."""
+    return Decimal(nilai.numerator) / Decimal(nilai.denominator) if isinstance(nilai, Fraction) else nilai
+
+
 def angka_teks(nilai):
     """Jumlah hasil konversi bisa pecahan (100 PCS = 0,83 KRT): dua desimal, tanpa nol di belakang."""
-    return format(nilai.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP).normalize(), "f")
+    return format(desimal(nilai).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP).normalize(), "f")
+
+
+def kelompok_baris(program, eligible):
+    """Mix/nilai = sekeranjang; per barang = per KODE, bukan per baris -- 4 KRT + 120 PCS barang A = 5 KRT barang A."""
+    if program.mix or program.threshold == "value":
+        return [eligible]
+    per_kode = {}
+    for line in eligible:
+        per_kode.setdefault(line["code"], []).append(line)
+    return list(per_kode.values())
 
 
 def jumlah_dalam(line, program_unit):
-    """Jumlah baris dalam satuan program: 120 PCS = 1 KRT bila isi karton 120. None = tidak bisa dikonversi."""
+    """Jumlah baris dalam satuan program: 120 PCS = 1 KRT bila isi karton 120. None = tidak bisa dikonversi.
+
+    Pecahan EKSAK (Fraction): 3 x 40 PCS isi 120 harus tepat 1 KRT, bukan 0,999... yang jatuh di bawah ambang.
+    """
     if satuan_cocok(line["unit"], program_unit):
-        return line["quantity"]
+        return Fraction(line["quantity"])
     rasio = line["rasio"] or {}
     asal, tujuan = rasio.get(satuan(line["unit"])), rasio.get(satuan(program_unit))
-    return line["quantity"] * asal / tujuan if asal and tujuan else None
+    return Fraction(line["quantity"]) * Fraction(asal) / Fraction(tujuan) if asal and tujuan else None
 
 
 def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known_classes=()):
@@ -249,7 +268,7 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
         for line in lines:
             if line["code"] not in program.codes or (line["applied"] and not (program.stacking and all(line["applied"]))):
                 continue
-            banyak = line["quantity"] if program.threshold == "value" else jumlah_dalam(line, program.unit)
+            banyak = Fraction(line["quantity"]) if program.threshold == "value" else jumlah_dalam(line, program.unit)
             if banyak is not None:
                 jumlah[id(line)] = banyak
             elif line["rasio"] is not None:
@@ -271,20 +290,20 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
         # Batas nilai selalu dihitung sekeranjang. "Minimal transaksi Rp 1 juta" adalah syarat
         # belanja, bukan syarat per baris; menghitungnya per baris membuat order Rp 9 juta
         # jatuh ke tier Rp 1 juta berkali-kali.
-        groups = [eligible] if (program.mix or program.threshold == "value") else [[line] for line in eligible]
+        groups = kelompok_baris(program, eligible)
         for group in groups:
             if not group:
                 continue
-            metric = sum((jumlah[id(line)] for line in group), Decimal(0)) if program.threshold == "quantity" else sum((line[program.basis] for line in (lines if program.value_scope == "order" else group)), Decimal(0))
-            tier = next((tier for tier in reversed(program.tiers) if metric >= number(tier.minimum)), None)
+            metric = sum((jumlah[id(line)] for line in group), Fraction(0)) if program.threshold == "quantity" else Fraction(sum((line[program.basis] for line in (lines if program.value_scope == "order" else group)), Decimal(0)))
+            tier = next((tier for tier in reversed(program.tiers) if metric >= Fraction(number(tier.minimum))), None)
             if tier is None:
                 continue
-            factor = int(metric // number(tier.minimum)) if tier.repeat else 1
+            factor = int(metric // Fraction(number(tier.minimum))) if tier.repeat else 1
             before = sum((line["net"] for line in group), Decimal(0))
             after = before
             for percentage in tier.percentages:
                 after = money(after * (1 - number(percentage) / 100))
-            units = sum((jumlah[id(line)] for line in group), Decimal(0)) if tier.rupiah_mode == "per_unit" else Decimal(1)
+            units = desimal(sum((jumlah[id(line)] for line in group), Fraction(0))) if tier.rupiah_mode == "per_unit" else Decimal(1)
             # Bagian persen dan bagian rupiah dicatat terpisah karena faktur Accurate harus
             # MENAMPILKAN keduanya: `itemDiscPercent` untuk rantai persennya, `itemCashDiscount`
             # untuk potongan rupiahnya. Totalnya tetap satu angka yang sama seperti sebelumnya.
@@ -640,23 +659,23 @@ def suggestions(programs, raw_lines, order_date, channel, limit=20, outlet_class
         if not outlet_allows(program, outlet_classes, known_classes)[0]:
             continue
         # Sama dengan kalkulator: satuan lain dihitung lewat rasio; yang tak bisa dikonversi dilewati (kalkulator yang menahannya).
-        jumlah = {id(line): (line["quantity"] if program.threshold == "value" else jumlah_dalam(line, program.unit))
+        jumlah = {id(line): (Fraction(line["quantity"]) if program.threshold == "value" else jumlah_dalam(line, program.unit))
                   for line in lines if line["code"] in program.codes}
         eligible = [line for line in lines if jumlah.get(id(line)) is not None]
-        for group in ([eligible] if (program.mix or program.threshold == "value") else [[line] for line in eligible]):
+        for group in kelompok_baris(program, eligible):
             if not group:
                 continue
             counted = lines if (program.threshold == "value" and program.value_scope == "order") else group
-            metric = (sum((jumlah[id(line)] for line in group), Decimal(0)) if program.threshold == "quantity"
-                      else sum((line["gross"] for line in counted), Decimal(0)))
-            nearest = next((tier for tier in program.tiers if number(tier.minimum) > metric), None)
+            metric = (sum((jumlah[id(line)] for line in group), Fraction(0)) if program.threshold == "quantity"
+                      else Fraction(sum((line["gross"] for line in counted), Decimal(0))))
+            nearest = next((tier for tier in program.tiers if Fraction(number(tier.minimum)) > metric), None)
             if nearest is None:
                 continue
-            gap = number(nearest.minimum) - metric
+            gap = Fraction(number(nearest.minimum)) - metric
             if program.threshold == "quantity":
                 message = f"Tambah {angka_teks(gap)} {program.unit} lagi untuk {benefit_text(nearest)}"
             else:
-                message = f"Tambah {rupiah(gap)} lagi untuk {benefit_text(nearest)}"
+                message = f"Tambah {rupiah(desimal(gap))} lagi untuk {benefit_text(nearest)}"
             found.append(dict(program_id=program.id, program_name=program.name, threshold=program.threshold,
                               codes=sorted({line["code"] for line in group}), minimum=nearest.minimum,
                               current=angka_teks(metric), gap=angka_teks(gap), message=message))

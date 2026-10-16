@@ -296,6 +296,19 @@ def check_konversi_satuan():
     hasil = calculate(programs, order, "2026-06-15", "GT")
     assert [row["percents"] for row in hasil["lines"]] == [["5"], ["5"], ["5"]], hasil["lines"]
     assert hasil["discount"] == "300000.00" and "rasio" not in hasil["lines"][0], hasil
+    # Pecahan eksak: 3 x 40 PCS isi 120 = TEPAT 1 KRT (Decimal 1/3 x 3 = 0,999... dulu jatuh di bawah ambang).
+    programs, _ = compiled([row(ketentuan="Beli 1 KRT, mix variant dan mix gramasi", kode_barangs="A,B,C")])
+    sepertiga = [dict(line(kode, "40", "1000"), rasio=rasio) for kode in "ABC"]
+    assert [row["percents"] for row in calculate(programs, sepertiga, "2026-06-15", "GT")["lines"]] == [["5"]] * 3
+    programs, _ = compiled([row(ketentuan="Beli 1 KRT, mix variant dan mix gramasi, berlaku kelipatan", kode_barangs="A,B,C",
+                                benefit_type="BONUS_QTY", benefit="1 PCS")])
+    dua_krt = [dict(line("A", "1", "120000", "KRT"), rasio=rasio)] + sepertiga
+    assert calculate(programs, dua_krt, "2026-06-15", "GT")["bonuses"][0]["quantity"] == "2"
+    # Per barang = per KODE: 4 KRT + 120 PCS barang A = 5 KRT barang A, kedua baris dapat.
+    programs, _ = compiled([row(ketentuan="Beli 5 KRT")])
+    dua_satuan = [dict(line("A", "4", "120000", "KRT"), rasio=rasio), dict(line("A", "120", "1000"), rasio=rasio)]
+    assert [row["percents"] for row in calculate(programs, dua_satuan, "2026-06-15", "GT")["lines"]] == [["5"], ["5"]]
+    assert not suggestions(programs, dua_satuan, "2026-06-15", "GT")
     # Per barang juga: 600 PCS satu barang = 5 KRT.
     programs, _ = compiled([row(ketentuan="Beli 5 KRT")])
     assert calculate(programs, [dict(line("A", "600", "1000"), rasio=rasio)], "2026-06-15", "GT")["discount"] == "30000.00"
