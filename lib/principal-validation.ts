@@ -292,9 +292,38 @@ export function outletAllowed(
     // Daftar kosong bukan berarti "tidak ada yang dikecualikan"; ia berarti KITA TIDAK TAHU
     // siapa yang dikecualikan. Yang tidak diketahui ditahan, bukan diloloskan.
     if (anggota.size === 0) return false;
-    const no = String(customerNo ?? "").trim().toUpperCase();
-    const peserta = Boolean(no) && [...anggota].some((kode) => no === kode || no.startsWith(`${kode}-`));
+    const peserta = pesertaDi(anggota, customerNo);
     return String(rule.outletListMode ?? "").trim().toUpperCase() === "EXCLUDE" ? !peserta : peserta;
+}
+
+const pesertaDi = (anggota: Iterable<string>, customerNo: string | null | undefined) => {
+    const no = String(customerNo ?? "").trim().toUpperCase();
+    return Boolean(no) && [...anggota].some((kode) => no === kode || no.startsWith(`${kode}-`));
+};
+
+/**
+ * Kalimat SEBAB `outletAllowed` menolak, dinilai per daftar — bukan per nama gabungan.
+ *
+ * Sebelum ini pemanggil mencari "CONTRACTUAL,LOYALTY" utuh sebagai satu nama daftar, yang tentu
+ * tidak pernah ada, lalu melapor "daftar tidak punya anggota" — padahal LOYALTY berisi 41 outlet
+ * dan sebab sebenarnya: outlet ini ANGGOTA LOYALTY yang dikecualikan (SO 260014607, 13 Okt 2026).
+ */
+export function sebabDaftar(
+    rule: { outletList?: string; outletListMode?: string; suratProgram?: string },
+    customerNo: string | null | undefined,
+    lists: Map<string, Set<string>>,
+): string {
+    const daftar = String(rule.outletList ?? "").trim().toUpperCase().split(",").map((x) => x.trim()).filter(Boolean);
+    const terisi = daftar.filter((satu) => (lists.get(satu)?.size ?? 0) > 0);
+    const sebut = (nama: string[]) => nama.map((satu) => `"${satu}"`).join(" dan ");
+    if (terisi.length === 0) return `Aturan ${rule.suratProgram} menunjuk daftar ${sebut(daftar)} yang tidak punya anggota pada tanggal ini.`;
+    const kosong = daftar.filter((satu) => !terisi.includes(satu));
+    const catatan = kosong.length ? ` (Daftar ${sebut(kosong)} belum punya anggota, jadi dilewati.)` : "";
+    if (String(rule.outletListMode ?? "").trim().toUpperCase() === "EXCLUDE") {
+        const di = terisi.filter((satu) => pesertaDi(lists.get(satu)!, customerNo));
+        return `Outlet ini anggota daftar ${sebut(di)}, yang DIKECUALIKAN aturan ${rule.suratProgram}.${catatan}`;
+    }
+    return `Outlet ini bukan anggota daftar ${sebut(terisi)}, yang DISYARATKAN aturan ${rule.suratProgram}.${catatan}`;
 }
 
 /**

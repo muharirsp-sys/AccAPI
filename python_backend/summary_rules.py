@@ -379,7 +379,10 @@ def tier_of(row, codes, minimum, unit="PCS"):
         return None, "benefit_type harus DISC_PCT, DISC_RP, atau BONUS_QTY"
     # "berlaku kelipatan" pada surat = tier berulang. Persen dan potongan per satuan sudah
     # naik sendiri mengikuti belanja, jadi mengulangnya lagi akan menghitung ganda.
-    if "kelipatan" in str(row.get("ketentuan", "")).lower() and not tier["percentages"] and tier["rupiah_mode"] != "per_unit":
+    # "Tidak/tanpa/bukan (berlaku) kelipatan" adalah penyangkalan, bukan tier berulang (Dahlia F617TK, 15 Okt).
+    ketentuan = str(row.get("ketentuan", "")).lower()
+    if ("kelipatan" in ketentuan and not re.search(r"\b(?:tidak|tanpa|bukan)\s+(?:berlaku\s+)?kelipatan", ketentuan)
+            and not tier["percentages"] and tier["rupiah_mode"] != "per_unit"):
         tier["repeat"] = True
     return tier, ""
 

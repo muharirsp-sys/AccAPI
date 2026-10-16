@@ -59,9 +59,8 @@ const NASIB: Array<{ no: string; kunci: string; nasib: Nasib; di?: string[]; ala
 const DI_LUAR_31: Record<string, string> = {
     "dashboard.view": "gerbang halaman bawaan '/' (pagePermissions, lib/rbac.ts)",
     "api_wrapper.view": "gerbang halaman Konsol & Sesi Accurate (pagePermissions); GET /api/proxy sengaja cukup sesi (S7-1b)",
-    // kasir.view & kasir.buka ditegakkan K1b (app/api/kasir/segarkan) — keluar dari daftar ini (tripwire "basi").
-    "kasir.catat": "K1a: route catat setoran menyusul (K2)",
-    "kasir.tutup": "K1a: route tutup hari menyusul (K2)",
+    // kasir.view & kasir.buka ditegakkan K1b (app/api/kasir/segarkan); kasir.catat & kasir.tutup ditegakkan K2a (app/api/kasir/{setoran,
+    // jelaskan,tutup}) — keluar dari daftar ini (tripwire "basi").
 };
 
 function walk(dir: string, ok: (f: string) => boolean): string[] {

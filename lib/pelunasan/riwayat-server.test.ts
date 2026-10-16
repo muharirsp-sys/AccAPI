@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buatEmulator } from "./uji/emulator-accurate.ts";
 import { fixturePratinjau } from "./uji/fixture.ts";
-import { periksaRiwayatAccurate, pratinjauRiwayatAccurate, targetRiwayat } from "./pratinjau-ganda.ts";
+import { pemastiRiwayatTulis, periksaRiwayatAccurate, pratinjauRiwayatAccurate, targetRiwayat } from "./pratinjau-ganda.ts";
 import type { AccurateFetch } from "./retur.ts";
 import type { Bebas } from "./sel.ts";
 
@@ -280,4 +280,17 @@ test("Susulan S6e (A, RENDAH): jumlah halaman tidak boleh menyusut; halaman koso
     // Kontrol: halaman TERAKHIR yang diumumkan kosong tetap sah (daftar menyusut sesudah halaman 1 dibaca).
     const akhir = await jalan((p) => ({ s: true, d: p === 1 ? seratus : [], sp: { pageCount: p === 1 ? 2 : 1 } }));
     assert.deepEqual([akhir.gagal, akhir.halaman], [undefined, [1, 2]]);
+});
+
+// Review S7-1b (12 Okt): Konsol memastikan kiriman retur 504 lewat riwayat SALES-RECEIPT -> retur bisa "TERKONFIRMASI" tanpa bukti.
+test("Konsol: riwayat pemasti hanya jenis dokumen yang sama — retur/PO/faktur tidak dicek (tetap TIDAK PASTI)", async () => {
+    const dipanggil: string[] = [];
+    const f: AccurateFetch = async (path) => { dipanggil.push(path); return { s: true, d: [], sp: { pageCount: 0 } }; };
+    for (const tulis of ["/api/sales-return/bulk-save.do", "/api/purchase-order/bulk-save.do", "/api/sales-invoice/bulk-save.do", "/api/sales-receipt/list.do"]) {
+        assert.equal(pemastiRiwayatTulis(tulis, f), null, tulis);
+    }
+    const cek = pemastiRiwayatTulis("/api/sales-receipt/bulk-save.do", f);
+    assert.ok(cek, "sales-receipt punya pencocok sidik jari");
+    await cek([{ customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "I1", paymentAmount: 1 }] }]);
+    assert.ok(dipanggil.length > 0 && dipanggil.every((p) => p.startsWith("/api/sales-receipt/")), dipanggil.join());
 });
