@@ -127,7 +127,7 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
                                     <td>{g.promoGroup}</td>
                                     <td className="fi-tnum">{manfaat(g.benefitType, g.benefitValue)}<span className="fi-sub">tingkat {g.tierNo}</span></td>
                                     <td><StatusBadge tone={BEBAN[bebanDari(g.benefitBeban)].tone}>{BEBAN[bebanDari(g.benefitBeban)].label}</StatusBadge></td>
-                                    <td className="fi-tnum">{Number(g.triggerQty) > 0 ? `${Number(g.triggerQty).toLocaleString("id-ID")} ${g.triggerUnit}` : "tanpa syarat"}</td>
+                                    <td className="fi-tnum">{Number(g.triggerQty) > 0 && g.triggerUnit !== "SEMUA" ? `${Number(g.triggerQty).toLocaleString("id-ID")} ${g.triggerUnit}` : "tanpa syarat"}</td>
                                     <td className="fi-small">{tgl(g.periodStart)} – {tgl(g.periodEnd)}</td>
                                     <td className="fi-small">{g.channel || "semua channel"}{g.outletList && <span className="fi-sub">{g.outletListMode === "EXCLUDE" ? "kecuali" : "hanya"} {g.outletList}</span>}</td>
                                     <td className="fi-tnum">{g.itemCodes.length || "—"}</td>

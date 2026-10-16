@@ -9,7 +9,7 @@ from decimal import Decimal
 
 os.environ["SUMMARY_STORE_PATH"] = os.path.join(tempfile.mkdtemp(prefix="summary-check-"), "summary.sqlite3")
 
-from summary_rules import calculate, compile_programs, suggestions, validate_programs  # noqa: E402
+from summary_rules import calculate, compile_programs, suggestions, threshold_of, validate_programs  # noqa: E402
 from summary_store import create_draft, get_draft, identity  # noqa: E402
 
 MASTER = {"A", "B", "C"}
@@ -263,9 +263,23 @@ def check_tanpa_minimum():
     # Angka setelah "pengambilan" tetap ambang, bukan tanpa minimum.
     programs, _ = compiled([row(ketentuan="Setiap pengambilan 30 PCS", benefit="20")])
     assert (programs[0].unit, programs[0].tiers[0].minimum) == ("PCS", "30"), programs
-    # Potongan per satuan tanpa satuan ambang tidak ditebak.
-    _, issues = compile_programs([row(ketentuan="Setiap Pengambilan", benefit_type="DISC_RP", benefit="500 per PCS")])
-    assert issues, "potongan per satuan pada program tanpa minimum harus ditahan"
+    # Tanda baca tidak menggagalkan frasanya.
+    assert threshold_of("Setiap Pengambilan.") == ("quantity", "1", "SEMUA")
+    # Ambang yang tertulis di luar "Beli N" BUKAN tanpa minimum: ditahan atau dibaca sebagai rupiah.
+    for frasa in ("Setiap pengambilan minimal 5 KRT", "Setiap pengambilan (min. 3 KRT)", "Tiap pengambilan >= 10 DUS"):
+        assert threshold_of(frasa)[1] == "", frasa
+    assert threshold_of("Setiap pengambilan minimal Rp 5.000.000") == ("value", "5000000", "PCS")
+    # Rupiah dan bonus butuh satuan: lintas satuan, barang yang sama di baris KRT dan PCS terhitung dua kali.
+    for benefit_type, benefit, keterangan in (("DISC_RP", "500", "per pcs"), ("DISC_RP", "50000", ""), ("BONUS_QTY", "1 PCS", "")):
+        _, issues = compile_programs([row(ketentuan="Setiap Pengambilan", benefit_type=benefit_type, benefit=benefit, keterangan=keterangan)])
+        assert issues, (benefit_type, benefit, keterangan)
+    # Tanpa minimum + strata bersatuan, barang sama = SATU program bertingkat, di urutan baris mana pun.
+    for urut in (1, -1):
+        dasar_strata = [row(ketentuan="Setiap Pengambilan", benefit="2"), row(no="2", ketentuan="Beli 5 KRT", benefit="5")][::urut]
+        programs, issues = compiled(dasar_strata)
+        assert issues == [] and len(programs) == 1 and programs[0].unit == "KRT", (issues, programs)
+        hasil = calculate(programs, [line(qty="5", price="100000", unit="KRT")], "2026-06-15", "GT")
+        assert hasil["discount"] == "25000.00", hasil
 
 
 def check_compiler():

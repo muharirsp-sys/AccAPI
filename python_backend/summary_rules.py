@@ -297,7 +297,10 @@ def clean_number(raw):
 
 # Trigger kuantitas diperiksa lebih dulu: "Beli 1 ... potongan Rp 4.700" adalah trigger 1 PCS,
 # bukan belanja Rp 4.700. Nilai rupiah hanya menjadi batas bila frasanya memang frasa pembelian.
-QUANTITY_TRIGGER = re.compile(r"(?:beli|pembelian|pengambilan|kelipatan|setiap)\s*([\d.,]+)\s*([A-Za-z]*)", re.I)
+QUANTITY_TRIGGER = re.compile(r"(?:beli|pembelian|pengambilan|kelipatan|setiap)\s*(\d[\d.,]*)\s*([A-Za-z]*)", re.I)
+# Ambang yang tertulis di luar pola "Beli N" ("minimal 5 KRT", "min. 10", "lebih dari 3", ">= 10",
+# "Rp 5.000.000"): kalimat yang memuatnya BUKAN tanpa minimum walau diawali "setiap pengambilan".
+ADA_AMBANG = re.compile(r"(?:\bmin(?:imal|imum)?\b\.?|lebih\s+dari|[>≥]|\brp\b\.?)\s*=?\s*\d", re.I)
 VALUE_TRIGGER = re.compile(r"(?:pembelian|belanja|minimal|minimum|min\.?|nilai|senilai|omz?et)\s*(?:sebesar\s*)?rp\.?\s*([\d.,]+)", re.I)
 PER_UNIT_MARKS = ("per satuan", "per unit", "per pcs", "/pcs", "per pc", "masing-masing")
 NO_MINIMUM_MARKS = ("tidak ada minimum", "tanpa minimum", "tidak ada pembatasan", "tanpa pembatasan",
@@ -324,12 +327,12 @@ def threshold_of(ketentuan):
     if quantity:
         unit = quantity.group(2).upper()
         return "quantity", clean_number(quantity.group(1)), unit if unit in UNITS else "PCS"
-    lowered = ketentuan.lower()
-    if any(mark in lowered for mark in NO_MINIMUM_MARKS):
-        return "quantity", "1", SEMUA_SATUAN
     money = VALUE_TRIGGER.search(ketentuan)
     if money:
         return "value", clean_number(money.group(1)), "PCS"
+    lowered = ketentuan.lower()
+    if any(mark in lowered for mark in NO_MINIMUM_MARKS) and not ADA_AMBANG.search(ketentuan):
+        return "quantity", "1", SEMUA_SATUAN
     return "", "", ""
 
 
@@ -366,8 +369,6 @@ def tier_of(row, codes, minimum, unit="PCS"):
             return None, "potongan rupiah tidak terbaca; tulis angka polos tanpa teks"
         tier["rupiah"] = amount
         tier["rupiah_mode"] = "per_unit" if per_unit(row, unit) else "once"
-        if tier["rupiah_mode"] == "per_unit" and unit == SEMUA_SATUAN:
-            return None, "potongan per satuan butuh satuannya; tulis 'Beli 1 PCS', bukan tanpa minimum"
     elif kind == "BONUS_QTY":
         found = re.match(r"([\d.,]+)\s*([A-Za-z]*)", benefit)
         quantity = clean_number(found.group(1)) if found else ""
@@ -384,6 +385,10 @@ def tier_of(row, codes, minimum, unit="PCS"):
     if ("kelipatan" in ketentuan and not re.search(r"\b(?:tidak|tanpa|bukan)\s+(?:berlaku\s+)?kelipatan", ketentuan)
             and not tier["percentages"] and tier["rupiah_mode"] != "per_unit"):
         tier["repeat"] = True
+    # Tanpa minimum menghitung barang lintas satuan; hanya persen yang benar tanpa tahu satuannya.
+    # Rupiah dan bonus terhitung per baris faktur (KRT dan PCS barang yang sama = dua kali).
+    if unit == SEMUA_SATUAN and (tier["rupiah"] != "0" or tier["bonus_quantity"] != "0"):
+        return None, "tanpa minimum hanya untuk diskon persen; untuk potongan rupiah/bonus tulis satuannya, mis. 'Beli 1 PCS'"
     return tier, ""
 
 
@@ -433,7 +438,9 @@ def compile_programs(rows, period=None, items=None):
     """
     fallback_start, fallback_end = (str(period[0]).strip(), str(period[1]).strip()) if period else ("", "")
     groups, issues = {}, []
-    for index, row in enumerate(rows):
+    # Baris tanpa minimum (SEMUA) diproses TERAKHIR supaya bisa menumpang ke program saudaranya.
+    urutan = sorted(enumerate(rows), key=lambda baris: threshold_of(str(baris[1].get("ketentuan", "")))[2] == SEMUA_SATUAN)
+    for index, row in urutan:
         label = f"Baris {str(row.get('no') or index + 1)}"
         ketentuan = str(row.get("ketentuan", ""))
         codes = [code.strip() for code in str(row.get("kode_barangs", "")).split(",") if code.strip()]
@@ -448,10 +455,6 @@ def compile_programs(rows, period=None, items=None):
             continue
         if not minimum:
             issues.append(f"{label}: ketentuan belum menyebut 'Beli N' atau nilai rupiah minimum.")
-            continue
-        tier, problem = tier_of(row, codes, minimum, unit)
-        if problem:
-            issues.append(f"{label}: {problem}")
             continue
         outlet, problem = outlet_rule_of(row)
         if problem:
@@ -469,6 +472,17 @@ def compile_programs(rows, period=None, items=None):
                str(row.get("channel_gtmt", "")).strip().upper() or "ALL", start, end, unit, kind,
                mix, any(mark in blob for mark in STACK_MARKS), tuple(sorted(codes)), outlet,
                any(mark in blob for mark in FIRST_PO_MARKS), lintas)
+        if unit == SEMUA_SATUAN:
+            # "Setiap pembelian 2%" + "Beli 30 PCS 5%" barang yang sama = SATU program bertingkat.
+            # Dua program terpisah berebut baris faktur: yang lebih dulu menang, strata atas mati.
+            saudara = {k[4] for k in groups if k[:4] + k[5:] == key[:4] + key[5:] and k[4] != SEMUA_SATUAN}
+            if len(saudara) == 1:
+                unit = saudara.pop()
+                key = key[:4] + (unit,) + key[5:]
+        tier, problem = tier_of(row, codes, minimum, unit)
+        if problem:
+            issues.append(f"{label}: {problem}")
+            continue
         group = groups.setdefault(key, {"rows": [], "tiers": {}})
         group["rows"].append(row)
         if minimum in group["tiers"]:
