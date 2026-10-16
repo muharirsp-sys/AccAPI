@@ -28,6 +28,8 @@ const STATUS: Record<StatusToko, { warna: string; label: string }> = {
     belum: { warna: "#c62828", label: "Terjadwal, belum dikunjungi" },
     faktur_tanpa_checkin: { warna: "#6a1b9a", label: "Berfaktur, tanpa check-in" },
 };
+/** Status di luar kontrak (data baru / rusak): tetap digambar abu-abu, tidak boleh membuat peta gagal. */
+const LAIN = { warna: "#9e9e9e", label: "Status tidak dikenal", kelas: "lain" };
 const URUT: StatusToko[] = ["ec", "tanpa_ec", "belum", "faktur_tanpa_checkin"];
 const BIRU = "#1565c0";
 
@@ -69,40 +71,44 @@ export default function Peta({ penanda, kunjungan, salesCodeTerpilih }: PetaProp
         if (!el) return; // tanpa titik: wadah tidak dirender (EmptyState)
         let batal = false;
         let bersih = () => {};
+        setGalat(false);
         import("leaflet").then((L) => {
             if (batal) return;
             const peta = L.map(el);
-            L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-                maxZoom: 19,
-                attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
-            }).addTo(peta);
+            try {
+                L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                    maxZoom: 19,
+                    attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
+                }).addTo(peta);
 
-            // circleMarker (vektor): ikon gambar bawaan Leaflet pecah di bundler.
-            for (const p of data.pen) {
-                L.circleMarker([p.lat, p.lng], { radius: 9, color: "#1f2937", weight: 1.5, fillColor: STATUS[p.status].warna, fillOpacity: 0.9, className: `peta-${p.status}` })
-                    .bindPopup(popup(p.namaToko, STATUS[p.status].label, p.salesCode)).addTo(peta);
-            }
-            for (const k of data.titik) {
-                const jauh = k.jarakKeTokoM != null && k.jarakKeTokoM > JARAK_JAUH_M;
-                L.circleMarker([k.lat!, k.lng!], { radius: 5, color: BIRU, weight: 2.5, fillColor: "#ffffff", fillOpacity: 1, className: "peta-checkin" })
-                    .bindPopup(popup(k.namaToko, `Check-in ${jam(k.mulai)}`, ...(jauh ? [`Jauh dari toko (${Math.round(k.jarakKeTokoM!)} m)`] : []))).addTo(peta);
-            }
-            if (data.garis && data.titik.length > 1) {
-                L.polyline(data.titik.map((k) => [k.lat!, k.lng!] as [number, number]), { color: BIRU, weight: 3, opacity: 0.7, dashArray: "6 6", className: "peta-garis" }).addTo(peta);
-            }
+                // circleMarker (vektor): ikon gambar bawaan Leaflet pecah di bundler.
+                for (const p of data.pen) {
+                    const st = STATUS[p.status] ? { ...STATUS[p.status], kelas: p.status } : LAIN;
+                    L.circleMarker([p.lat, p.lng], { radius: 9, color: "#1f2937", weight: 1.5, fillColor: st.warna, fillOpacity: 0.9, className: `peta-${st.kelas}` })
+                        .bindPopup(popup(p.namaToko, st.label, p.salesCode)).addTo(peta);
+                }
+                for (const k of data.titik) {
+                    const jauh = k.jarakKeTokoM != null && k.jarakKeTokoM > JARAK_JAUH_M;
+                    L.circleMarker([k.lat!, k.lng!], { radius: 5, color: BIRU, weight: 2.5, fillColor: "#ffffff", fillOpacity: 1, className: "peta-checkin" })
+                        .bindPopup(popup(k.namaToko, `Check-in ${jam(k.mulai)}`, ...(jauh ? [`Jauh dari toko (${Math.round(k.jarakKeTokoM!)} m)`] : []))).addTo(peta);
+                }
+                if (data.garis && data.titik.length > 1) {
+                    L.polyline(data.titik.map((k) => [k.lat!, k.lng!] as [number, number]), { color: BIRU, weight: 3, opacity: 0.7, dashArray: "6 6", className: "peta-garis" }).addTo(peta);
+                }
 
-            const semua = [...data.pen, ...data.titik].map((t) => [t.lat!, t.lng!] as [number, number]);
-            peta.setView(semua[0], 13); // pandangan awal: wadah tersembunyi tak boleh membiarkan peta tanpa pusat
-            const pas = () => { if (el.clientWidth && el.clientHeight) peta.fitBounds(L.latLngBounds(semua), { padding: [24, 24], maxZoom: 17 }); };
-            pas();
-            // Wadah tersembunyi saat dibuat (tab Peta di ponsel): ukurannya baru ada belakangan → hitung ulang ukuran lalu pas sekali.
-            let perluPas = !el.clientWidth || !el.clientHeight;
-            const ro = new ResizeObserver(() => {
-                peta.invalidateSize();
-                if (perluPas && el.clientWidth && el.clientHeight) { perluPas = false; pas(); }
-            });
-            ro.observe(el);
-            bersih = () => { ro.disconnect(); peta.remove(); };
+                const semua = [...data.pen, ...data.titik].map((t) => [t.lat!, t.lng!] as [number, number]);
+                peta.setView(semua[0], 13); // pandangan awal: wadah tersembunyi tak boleh membiarkan peta tanpa pusat
+                const pas = () => { if (el.clientWidth && el.clientHeight) peta.fitBounds(L.latLngBounds(semua), { padding: [24, 24], maxZoom: 17 }); };
+                pas();
+                // Wadah tersembunyi saat dibuat (tab Peta di ponsel): ukurannya baru ada belakangan → hitung ulang ukuran lalu pas sekali.
+                let perluPas = !el.clientWidth || !el.clientHeight;
+                const ro = new ResizeObserver(() => {
+                    peta.invalidateSize();
+                    if (perluPas && el.clientWidth && el.clientHeight) { perluPas = false; pas(); }
+                });
+                ro.observe(el);
+                bersih = () => { ro.disconnect(); peta.remove(); };
+            } catch { peta.remove(); setGalat(true); } // data aneh tidak boleh meninggalkan peta setengah jadi tanpa kabar
         }).catch(() => { if (!batal) setGalat(true); });
         return () => { batal = true; bersih(); };
     }, [data]);

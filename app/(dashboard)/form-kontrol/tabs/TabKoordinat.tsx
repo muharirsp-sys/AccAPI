@@ -15,7 +15,7 @@ import { Download, RefreshCw, Upload } from "lucide-react";
 import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, ErrorState, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import type { JawabanUnggahKoordinat, RingkasanKoordinat } from "@/lib/supervisor-review/kontrak";
-import { ambilFk, tulisFk, useIzinFk } from "../shared";
+import { TulisTidakPasti, ambilFk, tulisFk, useIzinFk } from "../shared";
 
 const URL_API = "/api/supervisor-review/koordinat";
 type Ditolak = JawabanUnggahKoordinat["ditolak"][number];
@@ -106,7 +106,7 @@ export default function TabKoordinat() {
         try { baca = { status: "siap", data: await bacaPratinjau(file) }; } catch { baca = { status: "galat" }; }
         if (ini === giliran.current) setPratinjau(baca);
     };
-    const bukaDialog = () => { setBerkas(null); setPratinjau({ status: "kosong" }); setDialog(true); };
+    const bukaDialog = () => { giliran.current++; setBerkas(null); setPratinjau({ status: "kosong" }); setDialog(true); };
 
     const blokir = !berkas ? "Pilih berkas dulu"
         : pratinjau.status === "membaca" ? "Tunggu pratinjau selesai"
@@ -181,7 +181,8 @@ export default function TabKoordinat() {
                         setDialog(false);
                         muatUlang();
                     } catch (e) {
-                        // 4xx = tidak ada yang ditulis; 500 bisa berarti sebagian baris sudah tersimpan.
+                        // 4xx = tidak ada yang ditulis; 500 bisa berarti sebagian baris sudah tersimpan; 502/504 (TulisTidakPasti) = hasil tak diketahui.
+                        if (e instanceof TulisTidakPasti) muatUlang();
                         if ((e as { status?: number }).status === 500) {
                             muatUlang();
                             throw new Error("Unggahan berhenti di tengah jalan; sebagian koordinat mungkin sudah tersimpan. Periksa ringkasan sebelum mengulang.");

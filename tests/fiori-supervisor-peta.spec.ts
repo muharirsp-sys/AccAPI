@@ -135,6 +135,35 @@ test.describe("Peta (halaman uji)", () => {
         await expect(page.getByRole("region", { name: "Peta toko dan titik check-in" })).toHaveCount(0);
     });
 
+    test("nama toko berisi HTML tampil sebagai TEKS di popup (tanpa skrip jalan)", async ({ page }) => {
+        const XSS = "<img src=x onerror=window.__xss=1>";
+        await mockPeta(page, { salesman: DATA.salesman, penanda: [{ ...pen("C-1", "S-01", "ec", -5.1477, 119.4327), namaToko: XSS }], kunjungan: [] });
+        await page.goto("/supervisor-review/uji-peta", NAV);
+        await jumlah(page, "ec").click(NAV);
+        const popup = page.locator(".leaflet-popup-content");
+        await expect(popup).toContainText(XSS, NAV);
+        await expect(popup.locator("img")).toHaveCount(0);
+        expect(await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)).toBeUndefined();
+    });
+
+    test("tepat satu titik: peta tampil tanpa galat, penanda ada", async ({ page }) => {
+        await mockPeta(page, { salesman: DATA.salesman, penanda: [pen("C-1", "S-01", "ec", -5.1477, 119.4327)], kunjungan: [] });
+        await page.goto("/supervisor-review/uji-peta", NAV);
+        await expect(jumlah(page, "ec")).toHaveCount(1, NAV);
+        await expect(page.locator(".leaflet-container")).toBeVisible();
+        await expect(page.getByText("Peta gagal dimuat.")).toHaveCount(0);
+        await expect(legenda(page).getByRole("listitem").filter({ hasText: "Dikunjungi, EC" })).toHaveText(/Dikunjungi, EC\s*1/);
+    });
+
+    test("status toko di luar kontrak: digambar abu-abu, peta tidak gagal, penanda lain tetap ada", async ({ page }) => {
+        await mockPeta(page, { salesman: DATA.salesman, penanda: [pen("C-1", "S-01", "ec", -5.1477, 119.4327), pen("C-2", "S-01", "status_baru", -5.15, 119.43)], kunjungan: [] });
+        await page.goto("/supervisor-review/uji-peta", NAV);
+        await expect(jumlah(page, "ec")).toHaveCount(1, NAV);
+        await expect(jumlah(page, "lain")).toHaveCount(1);
+        await expect(jumlah(page, "lain")).toHaveAttribute("fill", "#9e9e9e");
+        await expect(page.getByText("Peta gagal dimuat.")).toHaveCount(0);
+    });
+
     test.describe("ponsel 390 px", () => {
         test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
         test("peta 300 px, legenda terbaca, tanpa luapan mendatar", async ({ page }) => {
@@ -159,7 +188,7 @@ const RINGKASAN = {
 };
 const TOLAK = { disimpan: 1, ditolak: [{ baris: 3, kode: "C-100003", pesan: "Latitude di luar rentang -90 s.d. 90" }] };
 
-async function mockTab(page: Page, scope: unknown = ADMIN) {
+async function mockTab(page: Page, scope: unknown = ADMIN, opsi: { postStatus?: number; baca?: string[] } = {}) {
     const unggah: { tipe: string; badan: string }[] = [];
     await page.route("**/api/form-kontrol/**", (route) => {
         const p = new URL(route.request().url()).pathname.replace("/api/form-kontrol/", "");
@@ -167,7 +196,8 @@ async function mockTab(page: Page, scope: unknown = ADMIN) {
     });
     await page.route("**/api/supervisor-review/koordinat", (route) => {
         const req = route.request();
-        if (req.method() === "POST") { unggah.push({ tipe: req.headers()["content-type"] ?? "", badan: req.postDataBuffer()?.toString("latin1") ?? "" }); return route.fulfill(json(TOLAK)); }
+        if (req.method() === "POST") { unggah.push({ tipe: req.headers()["content-type"] ?? "", badan: req.postDataBuffer()?.toString("latin1") ?? "" }); return route.fulfill(json(opsi.postStatus ? {} : TOLAK, opsi.postStatus ?? 200)); }
+        opsi.baca?.push(req.url());
         return route.fulfill(json(RINGKASAN));
     });
     return unggah;
@@ -223,6 +253,21 @@ test.describe("Tab Koordinat Toko", () => {
         const tabel = page.getByRole("table", { name: "Baris ditolak" });
         await expect(tabel.getByRole("row").filter({ hasText: "C-100003" })).toContainText("Latitude di luar rentang -90 s.d. 90");
         await expect(tabel.getByRole("row").filter({ hasText: "C-100003" }).getByRole("cell").first()).toHaveText("3");
+    });
+
+    test("jawaban unggah tidak pasti (502): dialog memberi tahu dan ringkasan dimuat ulang", async ({ page }) => {
+        const baca: string[] = [];
+        await mockTab(page, ADMIN, { postStatus: 502, baca });
+        await page.goto("/form-kontrol?tab=koordinat", NAV);
+        await expect(page.getByRole("region", { name: "Koordinat Toko" }).first()).toContainText("Toko JKS aktif", NAV);
+        await page.getByRole("button", { name: "Unggah koordinat" }).click();
+        const dlg = page.getByRole("dialog");
+        await dlg.locator('input[type="file"]').setInputFiles(berkasXlsx([["Kode Toko", "Latitude", "Longitude"], ["C-100001", -5.1, 119.4]]));
+        await expect(dlg.getByText("Baris terbaca", { exact: true })).toBeVisible(NAV);
+        const sebelum = baca.length;
+        await dlg.getByRole("button", { name: "Terapkan" }).click();
+        await expect(dlg.getByRole("alert")).toContainText("belum pasti", NAV);
+        await expect.poll(() => baca.length, NAV).toBeGreaterThan(sebelum);
     });
 
     test("berkas tanpa kolom wajib: peringatan di pratinjau", async ({ page }) => {
