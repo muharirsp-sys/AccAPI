@@ -214,6 +214,13 @@ test("PG koordinat: unggah xlsx -> tolak per baris Excel (kode bukan JKS, bukan 
         [{ cust_code: "C-1", lat: -5.1477, lng: 119.4327, diperbarui_oleh: "u-admin" }]);
     assert.equal((await unggah("u-admin", xlsx([["Toko", "X"], ["C-1", 1]]))).body.kode, "KOLOM_TIDAK_LENGKAP");
     assert.equal((await unggah("u-spva", xlsx([["Kode Toko", "Latitude", "Longitude"]]))).status, 403, "SPV tanpa form_kontrol.manage");
+    // Tinjauan A #191: content-length > 5 MB ditolak SEBELUM body dibaca; > 20.000 baris data ditolak utuh (tanpa menyimpan sebagian).
+    const besar = await jawab(await sebagai("u-admin", () => m.koord.POST(new Request("http://app.test/api/supervisor-review/koordinat",
+        { method: "POST", headers: { "content-type": "multipart/form-data; boundary=x", "content-length": String(5 * 1024 * 1024 + 1) }, body: "--x--" }))));
+    assert.deepEqual([besar.status, besar.body.kode], [413, "BERKAS_TERLALU_BESAR"]);
+    const banyak = await unggah("u-admin", xlsx([["Kode Toko", "Latitude", "Longitude"], ...Array.from({ length: 20_001 }, () => ["C-2", -5.15, 119.44])]));
+    assert.deepEqual([banyak.status, banyak.body.kode], [400, "BARIS_TERLALU_BANYAK"]);
+    assert.equal((await pool.query(`SELECT count(*)::int n FROM toko_koordinat`)).rows[0].n, 1, "tidak ada yang tersimpan dari berkas yang ditolak");
     const g = await jawab(await sebagai("u-admin", () => m.koord.GET(new Request("http://app.test/api/supervisor-review/koordinat"))));
     assert.deepEqual(g.body, { tokoJks: 3, berKoordinat: 1, contohTanpaKoordinat: [{ custCode: "C-2", namaToko: "TOKO B" }, { custCode: "C-20", namaToko: "TOKO E" }] });
 });
@@ -313,6 +320,7 @@ test("PG DDL_SUPERVISOR_REVIEW dua kali idempoten + VERIFIKASI (+ sabotase hak/C
     const entri = migrations.find((x) => x.nama === "supervisor review (SR-1)");
     assert.ok(entri, "entri migrate-pg");
     assert.equal(migrations.at(-1), entri, "entri terakhir (sesudah noo_toko)");
+    assert.match(entri.sql, /^\s*SET lock_timeout = '5s';/, "tinjauan A #191: ALTER sales_invoice dari migrate-pg tidak menunggu kunci tanpa batas");
     const migrasi = async (p: Pool) => ((await p.query(entri.sudahAda)).rowCount ? "SKIP" : (await p.query(entri.sql), "OK"));
 
     const a = await skemaBaru();
@@ -366,7 +374,22 @@ test("PG DDL_SUPERVISOR_REVIEW dua kali idempoten + VERIFIKASI (+ sabotase hak/C
         await k.query("ROLLBACK");
         k.release();
     }
-    for (const x of [a, b, c]) await x.pool.end();
+    // Tinjauan A #191: migrate-pg (DATABASE_MIGRATION_URL = pemilik) juga memberi hak toko_koordinat setara DDL bila role aplikasi ada.
+    const d = await skemaBaru();
+    const kd = await d.pool.connect();
+    try {
+        await kd.query("BEGIN");
+        await kd.query(`CREATE ROLE ${PERAN_UJI} NOLOGIN`);
+        await kd.query(entri.sql.replaceAll("accapi_app", PERAN_UJI));
+        const hak = (await kd.query(`SELECT p, has_table_privilege($1, 'toko_koordinat', p) ok FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p`,
+            [PERAN_UJI])).rows.map((r) => [r.p, r.ok]);
+        assert.deepEqual(hak, [["SELECT", true], ["INSERT", true], ["UPDATE", true], ["DELETE", false], ["TRUNCATE", false]]);
+        assert.equal((await kd.query("SHOW lock_timeout")).rows[0].lock_timeout, "0", "lock_timeout dikembalikan untuk entri sesudahnya");
+    } finally {
+        await kd.query("ROLLBACK");
+        kd.release();
+    }
+    for (const x of [a, b, c, d]) await x.pool.end();
 });
 
 test("RBAC_PRESET_SUPERVISOR_REVIEW: SPV/SM/Manager/Admin supervisor_review.view; Viewer tidak; idempoten (jalan kedua 0/0); audit per grup", { skip: pgSkip }, async () => {

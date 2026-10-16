@@ -10,13 +10,16 @@
 --
 -- Sesudah image: scripts/backfill-ringkas-faktur.mjs (60 hari, luar jam sibuk), lalu docs/handover/RBAC_PRESET_SUPERVISOR_REVIEW.sql.
 --
--- KENAPA SEBELUM: migrate-pg (container start) tanpa DATABASE_MIGRATION_URL berjalan sebagai accapi_app (bukan pemilik) -> ALTER/CREATE ditolak
---   -> container crash loop. Sesudah berkas ini entri migrate-pg di-SKIP (sudahAda lewat katalog pg_attribute + pg_constraint, tanpa hak tabel).
---   Image BARU membaca kolom ini (Drizzle memilih semua kolom sales_profile/sales_invoice) -> DDL WAJIB lebih dulu.
+-- KENAPA SEBELUM: di produksi DATABASE_MIGRATION_URL (role PEMILIK) ADA -> bila berkas ini terlewat, migrate-pg MENERAPKAN SENDIRI ALTER/CREATE
+--   (+ hak toko_koordinat) saat container start, dengan lock_timeout 5 dtk: ALTER sales_invoice bersaing dengan kunci kueri/webhook yang sedang
+--   berjalan saat deploy, dan bila tertahan > 5 dtk container gagal start. Jalankan berkas ini LEBIH DULU (luar jam sibuk) supaya entri
+--   migrate-pg "supervisor review (SR-1)" di-SKIP (sudahAda lewat katalog pg_attribute + pg_constraint, tanpa hak tabel).
+--   Klaim "ALTER ditolak -> container crash loop" HANYA berlaku TANPA DATABASE_MIGRATION_URL (migrate-pg sebagai accapi_app, bukan pemilik).
+--   Image BARU membaca kolom ini (Drizzle memilih semua kolom sales_profile/sales_invoice) -> kolom WAJIB ada sebelum image melayani.
 --   Image LAMA tidak terganggu: semua perubahan EXPAND (kolom nullable tanpa default, CHECK hanya membatasi no_hp yang belum ditulis siapa pun,
 --   tabel baru tanpa pembaca lama).
--- JALUR DATABASE_MIGRATION_URL: migrate-pg membuat kolom + tabel TETAPI tanpa GRANT -> berkas ini TETAP WAJIB (idempoten) dan VERIFIKASI-nya
---   diperiksa: semua `ok` true.
+-- JALUR DATABASE_MIGRATION_URL: migrate-pg menjalankan SQL yang sama + REVOKE/GRANT toko_koordinat bila accapi_app ada; berkas ini tetap aman
+--   (idempoten) dan VERIFIKASI-nya diperiksa: semua `ok` true.
 -- KUNCI: ALTER sales_invoice (±2,3 GB) = satu pernyataan, kolom nullable TANPA default -> hanya katalog (tidak menulis ulang tabel), tetapi
 --   butuh ACCESS EXCLUSIVE sesaat. lock_timeout 5 dtk: bila tertahan kueri panjang / webhook, berkas gagal + ROLLBACK seluruhnya -> jalankan
 --   ulang di luar jam sibuk (tidak ada yang setengah jadi). CHECK sales_profile memindai sales_profile (kecil).

@@ -890,7 +890,10 @@ export const migrations = [
     // default di sales_invoice (hanya katalog), sales_profile.no_hp + CHECK, tabel baru toko_koordinat. ALTER/CREATE butuh role PEMILIK:
     // tanpa DATABASE_MIGRATION_URL jalankan docs/handover/DDL_SUPERVISOR_REVIEW.sql SEBELUM image (sesudahnya entri ini SKIP); hak accapi_app
     // (toko_koordinat SELECT/INSERT/UPDATE) HANYA di DDL itu. sudahAda lewat katalog (pg_attribute + pg_constraint), bukan information_schema
-    // (tanpa hak tabel kosong -> ALTER 42501 -> crash loop). SQL = db/migrations/0036_supervisor_review.sql.
+    // (tanpa hak tabel kosong -> ALTER 42501 -> crash loop). SQL = db/migrations/0036_supervisor_review.sql + (tinjauan A #191) lock_timeout
+    // 5 dtk (ALTER sales_invoice ±2,3 GB tidak menunggu kunci kueri/webhook tanpa batas; tertahan = container gagal start, jalankan DDL dulu)
+    // + hak toko_koordinat setara DDL bila role aplikasi ada. Produksi PUNYA DATABASE_MIGRATION_URL: tanpa DDL entri ini yang menerapkan.
+    // SET/RESET (bukan SET LOCAL): satu koneksi dipakai semua entri; RESET mengembalikan bawaan untuk entri sesudahnya.
     nama: "supervisor review (SR-1)",
     sudahAda: `SELECT 1 WHERE (SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('sales_invoice') AND NOT attisdropped
                  AND attname IN ('salesman_id', 'qty_total', 'jumlah_item', 'dpp')) = 4
@@ -898,6 +901,7 @@ export const migrations = [
                AND (SELECT count(*) FROM pg_constraint WHERE (conrelid = to_regclass('sales_profile') AND conname = 'sales_profile_no_hp')
                  OR (conrelid = to_regclass('toko_koordinat') AND conname = 'toko_koordinat_wilayah')) = 2`,
     sql: `
+      SET lock_timeout = '5s';
       ALTER TABLE IF EXISTS sales_invoice ADD COLUMN IF NOT EXISTS salesman_id bigint, ADD COLUMN IF NOT EXISTS qty_total numeric,
           ADD COLUMN IF NOT EXISTS jumlah_item integer, ADD COLUMN IF NOT EXISTS dpp numeric(18,2);
       ALTER TABLE sales_profile ADD COLUMN IF NOT EXISTS no_hp text;
@@ -914,6 +918,13 @@ export const migrations = [
           diperbarui_oleh text NOT NULL,
           CONSTRAINT toko_koordinat_wilayah CHECK (lat BETWEEN -11 AND 6 AND lng BETWEEN 95 AND 141)
       );
+      DO $sr1hak$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
+          REVOKE DELETE, TRUNCATE ON toko_koordinat FROM accapi_app;
+          GRANT SELECT, INSERT, UPDATE ON toko_koordinat TO accapi_app;
+        END IF;
+      END $sr1hak$;
+      RESET lock_timeout;
     `,
   },
 ];

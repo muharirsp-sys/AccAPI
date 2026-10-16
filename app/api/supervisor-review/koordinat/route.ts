@@ -12,6 +12,8 @@ import { requirePermissionH } from "@/lib/rbac/resolve";
 import { ringkasanKoordinat, simpanKoordinat } from "@/lib/supervisor-review/db";
 
 const MAKS_BERKAS = 5 * 1024 * 1024;
+// ponytail: satu berkas = maks 20.000 baris data (seluruh toko JKS muat); lebih = ditolak utuh, pecah berkasnya.
+const MAKS_BARIS = 20_000;
 // Judul kolom (ID/EN, huruf/spasi/tanda diabaikan) -> isian.
 const KOLOM: Record<string, "kode" | "lat" | "lng"> = {
     kodetoko: "kode", kode: "kode", kodejks: "kode", custcode: "kode", kodepelanggan: "kode", kodecustomer: "kode",
@@ -33,6 +35,10 @@ export async function POST(req: Request) {
     const gate = await requirePermissionH("form_kontrol.manage");
     if (gate.response) return gate.response;
     try {
+        // Tolak SEBELUM body dibaca (formData memuat semuanya ke memori). Tanpa content-length tetap dicek file.size di bawah.
+        if (Number(req.headers.get("content-length") ?? 0) > MAKS_BERKAS) {
+            return NextResponse.json({ kode: "BERKAS_TERLALU_BESAR", error: "Berkas maksimal 5 MB." }, { status: 413 });
+        }
         const form = await req.formData().catch(() => null);
         const file = form?.get("file");
         if (!(file instanceof File)) return NextResponse.json({ kode: "BERKAS_TIDAK_ADA", error: "Berkas xlsx (field `file`) tidak ditemukan." }, { status: 400 });
@@ -40,6 +46,9 @@ export async function POST(req: Request) {
         const wb = XLSX.read(Buffer.from(await file.arrayBuffer()), { type: "buffer" });
         const sheet = wb.Sheets[wb.SheetNames[0]];
         const mentah = sheet ? XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" }) : [];
+        if (mentah.length > MAKS_BARIS) {
+            return NextResponse.json({ kode: "BARIS_TERLALU_BANYAK", error: `Maksimal ${MAKS_BARIS.toLocaleString("id-ID")} baris per berkas; pecah berkasnya.` }, { status: 400 });
+        }
         const baris = mentah.map((r) => {
             const isi: { baris: number; kode: unknown; lat: unknown; lng: unknown } = {
                 // __rowNum__ (SheetJS, 0-based, tak terhitung) = baris Excel sebenarnya walau ada baris kosong di antaranya.
