@@ -169,6 +169,15 @@ def satuan(unit):
     return "KRT" if unit == "CTN" else unit
 
 
+# Program tanpa minimum ("Setiap Pengambilan"): beli berapa pun, satuan apa pun, sudah berlaku.
+# Dulu terkunci ke 1 PCS, jadi faktur ber-KRT tidak pernah dipotong (URC, MSM, Puratos Okt 2026).
+SEMUA_SATUAN = "SEMUA"
+
+
+def satuan_cocok(line_unit, program_unit):
+    return program_unit == SEMUA_SATUAN or satuan(line_unit) == satuan(program_unit)
+
+
 def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known_classes=()):
     """Highest qualifying tier per program; explicit priority and all-party stacking.
     Quantities require exact units (only CTN = KRT, see `satuan`); no inferred conversion. Value = before tax.
@@ -198,7 +207,7 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
         # Batas nilai adalah soal uang, bukan satuan: program "minimal transaksi Rp X" harus
         # menghitung semua satuan barangnya, kalau tidak satu order BTL+PCS terpecah dua.
         eligible = [line for line in lines if line["code"] in program.codes
-                    and (program.threshold == "value" or satuan(line["unit"]) == satuan(program.unit))
+                    and (program.threshold == "value" or satuan_cocok(line["unit"], program.unit))
                     and (not line["applied"] or (program.stacking and all(line["applied"]))) ]
         if not eligible:
             continue
@@ -288,11 +297,12 @@ def clean_number(raw):
 
 # Trigger kuantitas diperiksa lebih dulu: "Beli 1 ... potongan Rp 4.700" adalah trigger 1 PCS,
 # bukan belanja Rp 4.700. Nilai rupiah hanya menjadi batas bila frasanya memang frasa pembelian.
-QUANTITY_TRIGGER = re.compile(r"(?:beli|pembelian|kelipatan|setiap)\s*([\d.,]+)\s*([A-Za-z]*)", re.I)
+QUANTITY_TRIGGER = re.compile(r"(?:beli|pembelian|pengambilan|kelipatan|setiap)\s*([\d.,]+)\s*([A-Za-z]*)", re.I)
 VALUE_TRIGGER = re.compile(r"(?:pembelian|belanja|minimal|minimum|min\.?|nilai|senilai|omz?et)\s*(?:sebesar\s*)?rp\.?\s*([\d.,]+)", re.I)
 PER_UNIT_MARKS = ("per satuan", "per unit", "per pcs", "/pcs", "per pc", "masing-masing")
 NO_MINIMUM_MARKS = ("tidak ada minimum", "tanpa minimum", "tidak ada pembatasan", "tanpa pembatasan",
-                    "tidak ada minimal", "tanpa minimal", "setiap pembelian", "tiap pembelian", "semua pembelian")
+                    "tidak ada minimal", "tanpa minimal", "setiap pembelian", "tiap pembelian", "semua pembelian",
+                    "setiap pengambilan", "tiap pengambilan", "semua pengambilan")
 
 
 PACKAGE_CELL = re.compile(r"^\s*(\d{1,5})\s*\+\s*(\d{1,5})\s*([A-Za-z]*)\s*$")
@@ -316,7 +326,7 @@ def threshold_of(ketentuan):
         return "quantity", clean_number(quantity.group(1)), unit if unit in UNITS else "PCS"
     lowered = ketentuan.lower()
     if any(mark in lowered for mark in NO_MINIMUM_MARKS):
-        return "quantity", "1", "PCS"
+        return "quantity", "1", SEMUA_SATUAN
     money = VALUE_TRIGGER.search(ketentuan)
     if money:
         return "value", clean_number(money.group(1)), "PCS"
@@ -356,6 +366,8 @@ def tier_of(row, codes, minimum, unit="PCS"):
             return None, "potongan rupiah tidak terbaca; tulis angka polos tanpa teks"
         tier["rupiah"] = amount
         tier["rupiah_mode"] = "per_unit" if per_unit(row, unit) else "once"
+        if tier["rupiah_mode"] == "per_unit" and unit == SEMUA_SATUAN:
+            return None, "potongan per satuan butuh satuannya; tulis 'Beli 1 PCS', bukan tanpa minimum"
     elif kind == "BONUS_QTY":
         found = re.match(r"([\d.,]+)\s*([A-Za-z]*)", benefit)
         quantity = clean_number(found.group(1)) if found else ""
@@ -556,7 +568,7 @@ def suggestions(programs, raw_lines, order_date, channel, limit=20, outlet_class
         if not outlet_allows(program, outlet_classes, known_classes)[0]:
             continue
         eligible = [line for line in lines if line["code"] in program.codes
-                    and (program.threshold == "value" or satuan(line["unit"]) == satuan(program.unit))]
+                    and (program.threshold == "value" or satuan_cocok(line["unit"], program.unit))]
         for group in ([eligible] if (program.mix or program.threshold == "value") else [[line] for line in eligible]):
             if not group:
                 continue

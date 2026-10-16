@@ -120,6 +120,7 @@ def main():
     assert get_draft(draft["id"], "lain@example.com") is None
     print("summary rules check: OK")
     check_compiler()
+    check_tanpa_minimum()
     check_codes()
     check_suggestions()
     check_outlet()
@@ -251,6 +252,20 @@ def row(**overrides):
 def compiled(rows, pages=1):
     programs, issues = compile_programs(rows)
     return validate_programs(programs, MASTER, pages), issues
+
+
+def check_tanpa_minimum():
+    # "Setiap Pengambilan" = tanpa minimum, satuan apa pun -- faktur ber-KRT ikut dipotong.
+    programs, issues = compiled([row(ketentuan="Setiap Pengambilan", benefit="20")])
+    assert issues == [] and programs[0].unit == "SEMUA", (issues, programs)
+    hasil = calculate(programs, [line(qty="1", price="10000", unit="KRT")], "2026-06-15", "GT")
+    assert hasil["discount"] == "2000.00", hasil
+    # Angka setelah "pengambilan" tetap ambang, bukan tanpa minimum.
+    programs, _ = compiled([row(ketentuan="Setiap pengambilan 30 PCS", benefit="20")])
+    assert (programs[0].unit, programs[0].tiers[0].minimum) == ("PCS", "30"), programs
+    # Potongan per satuan tanpa satuan ambang tidak ditebak.
+    _, issues = compile_programs([row(ketentuan="Setiap Pengambilan", benefit_type="DISC_RP", benefit="500 per PCS")])
+    assert issues, "potongan per satuan pada program tanpa minimum harus ditahan"
 
 
 def check_compiler():
