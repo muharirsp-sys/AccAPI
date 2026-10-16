@@ -94,7 +94,7 @@ export interface JawabanSupervisorReview {
     penanda: PenandaToko[];
     /** Toko JKS dalam cakupan yang belum punya toko_koordinat. */
     tokoTanpaKoordinat: number;
-    /** Faktur hari itu yang rinciannya belum terbaca (salesman_id NULL), per cabang. */
+    /** Faktur hari itu yang rinciannya belum terbaca (qty_total NULL = ringkasan rincian belum terisi), per cabang. */
     fakturBelumTerbaca: { cabang: string; jumlah: number }[];
     /** Isi bila tabel sengaja kosong, mis. "HIERARKI_BELUM_TERTAUT" (akun SPV/SM tak cocok Hierarki). */
     pesan?: { kode: string; teks: string };

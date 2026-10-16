@@ -179,7 +179,7 @@ Satu berkas `docs/handover/DDL_SUPERVISOR_REVIEW.sql` (role pemilik `accapi`, **
 ## 5. Galat dan data tak lengkap
 
 Semua kondisi ini terlihat di layar, tidak pernah diam-diam:
-- **Faktur hari itu dengan `salesman_id IS NULL`** (rincian belum masuk): tampil "N faktur cabang ini belum terbaca rinciannya". Cron `webhook-backfill` mengisinya.
+- **Faktur hari itu dengan `qty_total IS NULL`** (rincian belum masuk): tampil "N faktur cabang ini belum terbaca rinciannya". Cron `webhook-backfill` mengisinya.
 - **`masterSalesmanId` tanpa kode:** masuk ke baris "Tanpa salesman terpetakan" per cabang.
 - **Akun SPV/SM tanpa kecocokan Hierarki:** pesan "Akun belum tertaut ke hierarki — hubungi Admin" (bukan tabel kosong).
 - **Faktur terhapus di Accurate** (cache hantu, PR #185) dapat ikut terhitung. Dampaknya per 15 Okt hanya 6 INV lama. Ini ketergantungan yang dicatat, bukan diperbaiki di sini.
