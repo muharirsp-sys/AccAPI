@@ -521,9 +521,24 @@ export const SYNC_MODULE_NAMES = Object.keys(SYNC_MODULES) as SyncModuleName[];
 // (kondisi normal, tidak perlu dicoba lagi) dari kegagalan nyata seperti timeout atau sesi mati.
 export class AccurateInvoiceGoneError extends Error {
     constructor(public readonly invoiceId: number) {
-        super(`Faktur ${invoiceId} tidak ada lagi di Accurate (detail.do: respons tanpa data)`);
+        super(`Faktur ${invoiceId} tidak ada lagi di Accurate (detail.do)`);
         this.name = "AccurateInvoiceGoneError";
     }
+}
+
+/**
+ * Jawaban detail.do faktur yang MEMBUKTIKAN fakturnya sudah tidak ada di Accurate. Dua bentuk:
+ * - `s:true` dengan `d` kosong — dibuktikan live 2026-08-21 pada 20 id dari webhook_events.log.
+ * - `s:false` dengan `d: ["Faktur Penjualan tidak tepat"]` — faktur dihapus (sebagian dibuat ulang
+ *   dengan nomor sama, id baru), probe produksi 15 Okt 2026: 164 baris hantu, sisa ±Rp 86 jt.
+ * Selain itu (sesi mati, galat lain, `s:false` tanpa pesan) BUKAN bukti: pemanggil menghapus baris
+ * cache atas dasar ini, jadi yang ragu jatuh ke galat biasa dan dicoba lagi.
+ */
+export function fakturSudahTiada(body: unknown): boolean {
+    const b = body as { s?: unknown; d?: unknown } | null;
+    if (b?.s === true && !b.d) return true;
+    return b?.s === false && Array.isArray(b.d)
+        && b.d.some((m) => typeof m === "string" && /^Faktur Penjualan tidak tepat\.?$/i.test(m.trim()));
 }
 
 /**
@@ -566,10 +581,22 @@ export async function upsertSalesInvoiceById(id: number, creds: AccurateCredenti
     if (!res.ok) throw new Error(`detail.do faktur ${id}: HTTP ${res.status}`);
 
     const body = await res.json();
-    // Accurate menjawab 200 dengan d kosong untuk faktur yang sudah dihapus — dibuktikan live
-    // 2026-08-21 pada 20 id dari webhook_events.log yang semuanya sudah tidak ada di Accurate.
-    if (!body?.d) {
-        if (body?.s === true && creds.databaseId) await recordInvoiceRealization(creds.databaseId, String(id), null);
+    // Faktur yang sudah dihapus di Accurate: buang juga salinannya. list.do (cron) tidak pernah
+    // menghapus baris, jadi tanpa ini faktur hantu tinggal selamanya — tampil ganda di /faktur
+    // ("Belum Lunas"), ikut Rekap Promo, riwayat beli, dan feed Web Sales. Accurate sumber kebenaran;
+    // baris yang ternyata masih hidup kembali lewat sync list.do berikutnya.
+    // Pagar: hanya bila sesi terbuka pada database faktur (ACCURATE_INVOICE_DB_ID, pagar yang sama dengan kirim
+    // faktur). Sesi di database lain juga menjawab "tidak tepat" untuk faktur sah — itu bukan bukti hapus.
+    if (fakturSudahTiada(body)) {
+        const dbFaktur = String(process.env.ACCURATE_INVOICE_DB_ID || "").trim();
+        if (dbFaktur && String(creds.databaseId ?? "") === dbFaktur) {
+            const dibuang = await db.delete(salesInvoiceCache).where(eq(salesInvoiceCache.id, id))
+                .returning({ number: salesInvoiceCache.number, outstanding: salesInvoiceCache.outstanding });
+            if (dibuang.length) console.log(`[sync] faktur ${id} ${dibuang[0].number ?? "-"} (sisa ${dibuang[0].outstanding ?? "-"}) tidak ada di Accurate -> cache dibuang`);
+        } else {
+            console.warn(`[sync] faktur ${id} tidak ada di Accurate, cache TIDAK dibuang: database sesi ${creds.databaseId ?? "?"} bukan ACCURATE_INVOICE_DB_ID (${dbFaktur || "kosong"})`);
+        }
+        if (creds.databaseId) await recordInvoiceRealization(creds.databaseId, String(id), null);
         throw new AccurateInvoiceGoneError(id);
     }
     // Accurate menaruh pesan galatnya di `d` (daftar kalimat), bukan di `m`: 31 faktur September

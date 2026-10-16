@@ -11,7 +11,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { resolveSyncCredentials } from '@/lib/accurate-session';
-import { upsertMasterById, upsertSalesInvoiceById } from '@/lib/sync';
+import { AccurateInvoiceGoneError, upsertMasterById, upsertSalesInvoiceById } from '@/lib/sync';
 import { flattenCustomerIds, flattenItemIds, flattenSalesInvoiceIds } from '@/lib/accurate-webhook';
 
 const MAX_LOG_BYTES = 20 * 1024 * 1024;
@@ -92,6 +92,12 @@ export async function POST(request: Request) {
                 console.log(`[+] Faktur tersimpan: ${summary.number ?? id} | ${summary.customerName ?? '-'} | total ${summary.totalAmount} | sisa ${summary.outstanding} | ${summary.status ?? '-'}`);
                 processed.push(summary);
             } catch (e) {
+                // Faktur dihapus di Accurate (event hapus): cache sudah dibuang di upsertSalesInvoiceById.
+                // Bukan kegagalan — 502 hanya membuat Accurate mengirim ulang event yang hasilnya sama.
+                if (e instanceof AccurateInvoiceGoneError) {
+                    console.log(`[-] Faktur ${id} tidak ada lagi di Accurate; cache dibuang`);
+                    continue;
+                }
                 const message = e instanceof Error ? e.message : String(e);
                 console.error(`[WEBHOOK] Gagal proses faktur ${id}: ${message}`);
                 failed.push({ id, error: message });
