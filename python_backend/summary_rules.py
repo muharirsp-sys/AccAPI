@@ -300,7 +300,8 @@ def clean_number(raw):
 QUANTITY_TRIGGER = re.compile(r"(?:beli|pembelian|pengambilan|kelipatan|setiap)\s*(\d[\d.,]*)\s*([A-Za-z]*)", re.I)
 # Ambang yang tertulis di luar pola "Beli N" ("minimal 5 KRT", "min. 10", "lebih dari 3", ">= 10",
 # "Rp 5.000.000"): kalimat yang memuatnya BUKAN tanpa minimum walau diawali "setiap pengambilan".
-ADA_AMBANG = re.compile(r"(?:\bmin(?:imal|imum)?\b\.?|lebih\s+dari|[>≥]|\brp\b\.?)\s*=?\s*\d", re.I)
+ADA_AMBANG = re.compile(r"\bmin(?:imal|imum)?\b|lebih\s+dari|paling\s+sedikit|sedikitnya|sebanyak|di\s+atas|ke\s+atas"
+                        r"|\bmulai\b|[>≥]|\brp\b\.?\s*\d", re.I)
 VALUE_TRIGGER = re.compile(r"(?:pembelian|belanja|minimal|minimum|min\.?|nilai|senilai|omz?et)\s*(?:sebesar\s*)?rp\.?\s*([\d.,]+)", re.I)
 PER_UNIT_MARKS = ("per satuan", "per unit", "per pcs", "/pcs", "per pc", "masing-masing")
 NO_MINIMUM_MARKS = ("tidak ada minimum", "tanpa minimum", "tidak ada pembatasan", "tanpa pembatasan",
@@ -331,7 +332,10 @@ def threshold_of(ketentuan):
     if money:
         return "value", clean_number(money.group(1)), "PCS"
     lowered = ketentuan.lower()
-    if any(mark in lowered for mark in NO_MINIMUM_MARKS) and not ADA_AMBANG.search(ketentuan):
+    sisa = lowered
+    for mark in NO_MINIMUM_MARKS:  # "tanpa minimum" sendiri bukan ambang
+        sisa = sisa.replace(mark, " ")
+    if any(mark in lowered for mark in NO_MINIMUM_MARKS) and not ADA_AMBANG.search(sisa):
         return "quantity", "1", SEMUA_SATUAN
     return "", "", ""
 

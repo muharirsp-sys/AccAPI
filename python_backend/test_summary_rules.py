@@ -266,7 +266,9 @@ def check_tanpa_minimum():
     # Tanda baca tidak menggagalkan frasanya.
     assert threshold_of("Setiap Pengambilan.") == ("quantity", "1", "SEMUA")
     # Ambang yang tertulis di luar "Beli N" BUKAN tanpa minimum: ditahan atau dibaca sebagai rupiah.
-    for frasa in ("Setiap pengambilan minimal 5 KRT", "Setiap pengambilan (min. 3 KRT)", "Tiap pengambilan >= 10 DUS"):
+    for frasa in ("Setiap pengambilan minimal 5 KRT", "Setiap pengambilan (min. 3 KRT)", "Tiap pengambilan >= 10 DUS",
+                  "Setiap pengambilan minimal order 5 KRT", "Setiap pengambilan paling sedikit 5 KRT",
+                  "Setiap pengambilan sebanyak 5 KRT", "Setiap pengambilan di atas 3 KRT"):
         assert threshold_of(frasa)[1] == "", frasa
     assert threshold_of("Setiap pengambilan minimal Rp 5.000.000") == ("value", "5000000", "PCS")
     # Rupiah dan bonus butuh satuan: lintas satuan, barang yang sama di baris KRT dan PCS terhitung dua kali.
