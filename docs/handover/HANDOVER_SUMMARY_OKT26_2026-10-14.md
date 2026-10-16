@@ -103,3 +103,10 @@ Aturannya ada di `BRIEF_SUMMARY.md` bagian "FORMAT RINGKAS":
 - **CTN = KRT (6ce41767, 3978ebd4).** `summary_rules.satuan()` di `calculate`/`suggestions`/unit bonus; `triggerReached` (TS) memperlakukan CTN seperti KRT (gagal tertutup, bukan 5 PCS = 5 karton). Sejak deploy, aturan terbit ber-CTN yang selama ini mati akan mulai memotong order baru.
 - **Format ringkas 7 principal.** Isi angka dibuktikan sama (bukti kode 0 beda + program `compile_programs` identik); rincian kolom pindah ke bagian "Format ringkas (14 Okt)" di tiap CATATAN. Pertanyaan baru: Vinda benefit berantai seperti Juni?; Vinda/Fonterra halaman terakhir pendek cukup?; Puratos "(tanpa minimum)"?; Dahlia P11 Core+Heritage boleh campur?
 - **Temuan terbuka (belum dikerjakan):** `tier_of` membaca "tidak kelipatan" sebagai kelipatan (Dahlia F617TK, belum berdampak); baris Casablanca "Spray Cologne Series" menggandakan diri tiap Simpan (53 → 61 → 77 di simulasi golden).
+
+## 8. Keputusan pemilik 16 Okt
+- **Judul di setiap halaman** (semua principal, `350d09e9`): "SUMMARY PROGRAM ON FAKTUR BEBAN PRINCIPLE (COKLAT)" / "PRINCIPLE <NAMA> PERIODE <PERIODE>" / "CV. SURYA PERKASA". Halaman terakhir pendek boleh, asal tidak terpotong.
+- **"Setiap Pengambilan" = tanpa minimum, satuan apa pun** (`605c915e`). Puratos memakainya; URC/MSM "Tidak ada minimum pembelian" ikut terbaca SEMUA satuan (dulu terkunci 1 PCS sehingga faktur KRT tidak terpotong).
+- **Vinda:** benefit = rantai Disc-1 + Bgt DB + Claim (mis. "15+5+20"); Bgt DB beban distributor (Keterangan). Rincian dan selisih hitungan rantai vs lampiran di `VINDA/CATATAN.md`.
+- **Dahlia:** Core/Fresh Signature tidak boleh dicampur dengan Heritage (baris tetap terpisah).
+- Ke-9 Form dibangun ulang (`skrip/bangun_semua_16okt.sh`), semua lulus gerbang. Dataset vs sebelumnya: hanya TRIGGER_UNIT tanpa-minimum (URC 66, MSM 8, Puratos 30 baris -> SEMUA) dan benefit Vinda (35 baris) yang berubah; 5 principal lain identik.
