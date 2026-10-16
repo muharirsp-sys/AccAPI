@@ -668,7 +668,15 @@ export const salesInvoiceCache = pgTable("sales_invoice", {
     // hanya terisi lewat jalur webhook, dan faktur lama tetap NULL. Dipakai /faktur sebagai dasar
     // urutan utama, karena lastUpdateAt ikut berubah saat faktur dilunasi.
     createdAt: timestamp("created_at", { withTimezone: true }),
-    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow()
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+    // Supervisor Review (owner 16 Okt 2026; spec docs/superpowers/specs/2026-10-16-supervisor-review-design.md §3.2): ringkasan rincian
+    // faktur — masterSalesmanId, Σ qty satuan terkecil, jumlah baris, Σ DPP — diisi lib/sync.ts (ringkasFaktur, lib/supervisor-review/
+    // ringkas-faktur.ts) saat upsert + scripts/backfill-ringkas-faktur.mjs. NULL = rincian (detailItem) belum terbaca; list.do tidak
+    // mengosongkannya (penjaga di set{}). DDL: docs/handover/DDL_SUPERVISOR_REVIEW.sql (nullable tanpa default = instan).
+    salesmanId: bigint("salesman_id", { mode: "number" }),
+    qtyTotal: numeric("qty_total", { mode: "number" }),
+    jumlahItem: integer("jumlah_item"),
+    dpp: numeric("dpp", { precision: 18, scale: 2, mode: "number" }),
 }, (t) => [
     index("idx_sales_invoice_last_update_at").on(t.lastUpdateAt, t.id),
     index("idx_sales_invoice_created_at").on(t.createdAt, t.id),
@@ -1282,9 +1290,13 @@ export const salesProfile = pgTable("sales_profile", {
     accurateLinked: boolean("accurate_linked").notNull().default(false),
     createdAt: timestamp("created_at").notNull(),
     updatedAt: timestamp("updated_at").notNull(),
+    // Supervisor Review (owner 16 Okt 2026): No HP salesman untuk tombol WhatsApp (wa.me). Bentuk kanonik 08… sama dengan NOO (normalHp,
+    // lib/form-kontrol/noo-aturan.ts); diisi Admin di tab Hierarki. DDL: docs/handover/DDL_SUPERVISOR_REVIEW.sql.
+    noHp: text("no_hp"),
 }, (t) => ({
     codeIdx: index("idx_sales_profile_code").on(t.salesCode),
     userIdx: index("idx_sales_profile_user").on(t.userId),
+    noHpSah: check("sales_profile_no_hp", sql`${t.noHp} ~ '^08[1-9][0-9]{7,10}$'`),
 }));
 
 /**
@@ -1695,6 +1707,21 @@ export const noOrderReason = pgTable("no_order_reason", {
     sortOrder: integer("sort_order").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
 });
+
+/**
+ * Koordinat toko per KODE JKS (= kode pelanggan Accurate tanpa akhiran cabang), diunggah Admin (owner 16 Okt 2026, Supervisor Review §3.3):
+ * penanda peta + jarak check-in ke toko. Tidak ada di customer/jks_master/Accurate. DDL: docs/handover/DDL_SUPERVISOR_REVIEW.sql
+ * (accapi_app SELECT/INSERT/UPDATE, tanpa DELETE). CHECK = wilayah Indonesia.
+ */
+export const tokoKoordinat = pgTable("toko_koordinat", {
+    custCode: text("cust_code").primaryKey(),
+    lat: doublePrecision("lat").notNull(),
+    lng: doublePrecision("lng").notNull(),
+    diperbaruiPada: timestamp("diperbarui_pada", { withTimezone: true }).notNull().defaultNow(),
+    diperbaruiOleh: text("diperbarui_oleh").notNull(),
+}, (t) => [
+    check("toko_koordinat_wilayah", sql`${t.lat} BETWEEN -11 AND 6 AND ${t.lng} BETWEEN 95 AND 141`),
+]);
 
 export const aoControlDaily = pgTable("ao_control_daily", {
     id: text("id").primaryKey(),

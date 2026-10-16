@@ -702,12 +702,17 @@ export async function getAllSalesProfiles() {
     return db.select().from(salesProfile).orderBy(asc(salesProfile.salesName));
 }
 
-/** false = tidak ada profil berkode sales itu (tidak ada yang ditulis). */
-export async function updateSalesHierarchy(salesCode: string, spvName: string | null, smName: string | null): Promise<boolean> {
+/**
+ * false = tidak ada profil berkode sales itu (tidak ada yang ditulis). `undefined` = kolom tidak diubah (Supervisor Review 16 Okt: tab
+ * Hierarki boleh mengirim No HP saja). noHp sudah kanonik 08… (normalHp) atau null = hapus; CHECK sales_profile_no_hp menjaga di DB.
+ */
+export async function updateSalesHierarchy(salesCode: string, spvName: string | null | undefined, smName: string | null | undefined,
+    noHp?: string | null): Promise<boolean> {
     // Disimpan ter-trim (butir 5); isian bukan teks/kosong = null.
     const bersih = (v: unknown) => (typeof v === "string" ? v.trim() : "") || null;
     const ditulis = await db.update(salesProfile)
-        .set({ spvName: bersih(spvName), smName: bersih(smName), updatedAt: new Date() })
+        .set({ ...(spvName !== undefined && { spvName: bersih(spvName) }), ...(smName !== undefined && { smName: bersih(smName) }),
+            ...(noHp !== undefined && { noHp }), updatedAt: new Date() })
         .where(eq(salesProfile.salesCode, salesCode)).returning({ id: salesProfile.id });
     return ditulis.length > 0;
 }

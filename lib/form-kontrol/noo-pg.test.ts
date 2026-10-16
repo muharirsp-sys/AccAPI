@@ -145,6 +145,8 @@ before(async () => {
     await pool.query(await berkas("../../db/migrations/0033_order_cabang.sql"));
     await pool.query(await berkas("../../db/migrations/0034_kunjungan_luar_rute.sql"));
     await pool.query(await berkas("../../db/migrations/0035_noo_toko.sql"));
+    // Supervisor Review (SR-1): sales_profile.no_hp — Drizzle memilih semua kolom sales_profile.
+    await pool.query(await berkas("../../db/migrations/0036_supervisor_review.sql"));
     const p = pool;
     await p.query(`INSERT INTO "user" (id, name, email, "emailVerified", role, "createdAt", "updatedAt") VALUES
         ('u-sla', 'Sales A', 'sla@uji.test', true, 'staff', now(), now()),
