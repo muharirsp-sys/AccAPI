@@ -13,6 +13,7 @@ import { ambilFk } from "../form-kontrol/shared";
 
 export const TANPA_HP = "No HP belum diisi — Admin: tab Hierarki";
 export const TANPA_SALESMAN = "Tanpa salesman terpetakan";
+export const TANPA_RINCIAN = "Faktur tanpa salesman terpetakan tidak dipecah per toko — periksa kode salesman faktur di Accurate.";
 
 const NF = [0, 1, 2].map((maks) => new Intl.NumberFormat("id-ID", { maximumFractionDigits: maks }));
 /** 1234.5 → "1.234,5" (maks. `maks` desimal, koma desimal). */

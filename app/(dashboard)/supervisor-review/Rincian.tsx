@@ -8,6 +8,7 @@
  */
 "use client";
 
+import type { Ref } from "react";
 import { MessageCircle } from "lucide-react";
 import { Button, EmptyState, StatusBadge } from "@/components/fiori/core";
 import { JARAK_JAUH_M, type BarisSalesman, type Kunjungan } from "@/lib/supervisor-review/kontrak";
@@ -32,10 +33,11 @@ export function Wa({ b, petunjuk }: { b: BarisSalesman; petunjuk?: boolean }) {
     );
 }
 
-export function KepalaSalesman({ b }: { b: BarisSalesman }) {
+/** `judulRef` (opsional): pemanggil memfokuskan judul saat rincian dibuka (ponsel: pembaca layar + gulir ke atas). */
+export function KepalaSalesman({ b, judulRef }: { b: BarisSalesman; judulRef?: Ref<HTMLHeadingElement> }) {
     return (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-3">
-            <b>{namaBaris(b)}</b>
+            <h2 ref={judulRef} tabIndex={-1} style={{ font: "inherit", fontWeight: 700 }}>{namaBaris(b)}</h2>
             <LabelStatus status={b.status} />
             <span style={{ flex: 1 }} />
             <Wa b={b} petunjuk />
@@ -47,14 +49,21 @@ const jumlah = (rows: Kunjungan[], f: (k: Kunjungan) => number | null) => rows.r
 const strip = (v: number | null, fmt: (n: number) => string = angka) => (v === null ? "—" : fmt(v));
 
 function LabelKunjungan({ k }: { k: Kunjungan }) {
-    const jauh = k.jarakKeTokoM !== null && k.jarakKeTokoM > JARAK_JAUH_M;
-    if (k.jenis === "rute" && !k.belumDifakturkan && !jauh) return null;
+    const m = k.jarakKeTokoM;
+    const jauh = m !== null && m > JARAK_JAUH_M;
+    // Jarak tak boleh hilang diam-diam: ada jarak = "N m"; titik check-in ada tetapi toko tanpa koordinat; check-in tanpa GPS sama sekali.
+    const tanpaKoordinat = k.lat !== null && m === null;
+    const tanpaGps = k.jenis !== "tanpa_checkin" && k.lat === null;
+    if (k.jenis === "rute" && !k.belumDifakturkan && m === null && !tanpaKoordinat && !tanpaGps) return null;
     return (
-        <span className="mt-1 flex flex-wrap gap-1">
+        <span className="mt-1 flex flex-wrap items-center gap-1">
             {k.jenis === "tanpa_checkin" && <StatusBadge tone="neu">tanpa check-in</StatusBadge>}
             {k.jenis === "luar_rute" && <StatusBadge tone="info">luar rute</StatusBadge>}
             {k.belumDifakturkan && <StatusBadge tone="warn">belum difakturkan</StatusBadge>}
-            {jauh && <StatusBadge tone="warn">jauh dari toko ({angka(k.jarakKeTokoM!)} m)</StatusBadge>}
+            {jauh && <StatusBadge tone="warn">jauh dari toko ({angka(m)} m)</StatusBadge>}
+            {m !== null && !jauh && <span className="fi-small fi-subtle">{angka(m)} m dari toko</span>}
+            {tanpaKoordinat && <StatusBadge tone="neu">toko tanpa koordinat</StatusBadge>}
+            {tanpaGps && <StatusBadge tone="neu">tanpa GPS</StatusBadge>}
         </span>
     );
 }

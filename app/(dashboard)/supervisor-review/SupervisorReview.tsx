@@ -11,13 +11,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { useCallback, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { ChevronLeft, RefreshCw } from "lucide-react";
 import { Button, EmptyState, ErrorState, ListItem, MessageStrip, Section, Skeleton } from "@/components/fiori/core";
 import { FormField, useLoad } from "@/components/fiori/interactive";
 import type { BarisSalesman } from "@/lib/supervisor-review/kontrak";
 import { jamWita } from "../form-kontrol/shared";
-import { angka, bacaSupervisorReview, KOLOM, kunciBaris, namaBaris, rp, tanggalPanjang } from "./bersama";
+import { angka, bacaSupervisorReview, KOLOM, kunciBaris, namaBaris, rp, tanggalPanjang, TANPA_RINCIAN } from "./bersama";
 import { DaftarKunjungan, KepalaSalesman, LabelStatus, Wa } from "./Rincian";
 
 const Peta = dynamic(() => import("./Peta"), { ssr: false, loading: () => <Skeleton rows={3} label="Memuat peta" /> });
@@ -43,6 +43,13 @@ export default function SupervisorReview({ hariIni }: { hariIni: string }) {
     const [load, muatUlang] = useLoad(useCallback(() => bacaSupervisorReview({ tanggal, cabang, principle }), [tanggal, cabang, principle]), { pertahankan: true });
     const desktop = useDesktop();
     const h = load.data;
+    // Rincian ponsel dibuka: gulir ke atas (jendela DAN <main>, wadah gulir shell) lalu fokus judul. Ref stabil = hanya saat rincian terpasang, bukan tiap render (ganti tab tak merebut fokus).
+    const fokusJudul = useCallback((el: HTMLHeadingElement | null) => {
+        if (!el) return;
+        window.scrollTo({ top: 0 });
+        el.closest("main")?.scrollTo({ top: 0 });
+        el.focus({ preventScroll: true });
+    }, []);
 
     const gantiTanggal = (t: string) => { if (/^\d{4}-\d{2}-\d{2}$/.test(t) && t <= hariIni) { setTanggal(t); setPilih(null); } };
     const pilihSalesman = (b: BarisSalesman | null) => { setPilih(b ? kunciBaris(b) : null); setTab("kunjungan"); };
@@ -117,9 +124,12 @@ export default function SupervisorReview({ hariIni }: { hariIni: string }) {
     for (const b of h.salesman) grup.set(b.cabang, [...(grup.get(b.cabang) ?? []), b]);
     const total = new Map(h.totalCabang.map((t) => [t.cabang, t]));
     const terpilih = h.salesman.find((b) => kunciBaris(b) === pilih) ?? null;
-    // ponytail: baris "Tanpa salesman terpetakan" (salesCode "") ada satu per cabang, tetapi Kunjungan tak membawa cabang → keduanya menampilkan kunjungan salesCode "" yang sama.
-    const kunjunganDari = (b: BarisSalesman) => h.kunjungan.filter((k) => k.salesCode === b.salesCode);
-    const petaUntuk = (b: BarisSalesman | null) => <div style={MIN_PETA}><Peta penanda={h.penanda} kunjungan={h.kunjungan} salesCodeTerpilih={b ? b.salesCode : null} /></div>;
+    // Baris "Tanpa salesman terpetakan" (salesCode "") = faktur tanpa kode salesman: tidak dipecah per toko, jadi tak ada rincian, dan peta menampilkan semua (bukan salesCode "").
+    const kodePeta = terpilih && terpilih.salesCode !== "" ? terpilih.salesCode : null;
+    const petaUntuk = <div style={MIN_PETA}><Peta penanda={h.penanda} kunjungan={h.kunjungan} salesCodeTerpilih={kodePeta} /></div>;
+    const rincianUntuk = (b: BarisSalesman, kartu: boolean): ReactNode => b.salesCode === ""
+        ? <div className="px-4 py-3"><MessageStrip tone="info">{TANPA_RINCIAN}</MessageStrip></div>
+        : <DaftarKunjungan rows={h.kunjungan.filter((k) => k.salesCode === b.salesCode)} kartu={kartu} />;
 
     let isi;
     if (h.salesman.length === 0) {
@@ -144,7 +154,7 @@ export default function SupervisorReview({ hariIni }: { hariIni: string }) {
                                 const t = total.get(nmCabang);
                                 return (
                                     <tbody key={nmCabang}>
-                                        <tr><th scope="rowgroup" style={TEMPEL_TH}>{nmCabang}</th><th colSpan={KOLOM.length + 2} /></tr>
+                                        <tr><th scope="rowgroup" style={TEMPEL_TH}>{nmCabang}</th><td colSpan={KOLOM.length + 2} style={{ background: "var(--surface-2)" }} /></tr>
                                         {rows.map((b) => {
                                             const sel = kunciBaris(b) === pilih;
                                             return (
@@ -174,13 +184,13 @@ export default function SupervisorReview({ hariIni }: { hariIni: string }) {
                     </div>
                 </Section>
                 <div className="grid grid-cols-2 gap-3">
-                    <Section title="Peta kunjungan" subtitle={terpilih ? namaBaris(terpilih) : "semua salesman dalam cakupan"}
+                    <Section title="Peta kunjungan" subtitle={kodePeta ? namaBaris(terpilih!) : "semua salesman dalam cakupan"}
                         actions={terpilih && <Button variant="tertiary" onClick={() => pilihSalesman(null)}>Lihat semua salesman</Button>}>
-                        {petaUntuk(terpilih)}
+                        {petaUntuk}
                     </Section>
                     <Section title="Rincian kunjungan">
                         {terpilih
-                            ? <><KepalaSalesman b={terpilih} /><DaftarKunjungan rows={kunjunganDari(terpilih)} kartu={false} /></>
+                            ? <><KepalaSalesman b={terpilih} />{rincianUntuk(terpilih, false)}</>
                             : <EmptyState title="Pilih salesman" message="Klik nama salesman di tabel untuk melihat rincian kunjungannya." />}
                     </Section>
                 </div>
@@ -191,7 +201,7 @@ export default function SupervisorReview({ hariIni }: { hariIni: string }) {
             <div className="grid gap-3">
                 <div><Button variant="tertiary" icon={<ChevronLeft className="fi-icon" aria-hidden />} onClick={() => pilihSalesman(null)}>Kembali ke daftar</Button></div>
                 <section className="fi-sect" aria-label={`Rincian ${namaBaris(terpilih)}`}>
-                    <KepalaSalesman b={terpilih} />
+                    <KepalaSalesman b={terpilih} judulRef={fokusJudul} />
                     <div className="px-4 py-3"><dl className="fi-attrs">{KOLOM.map((c) => <div key={c.key}><dt>{c.header}</dt><dd>{c.teks(terpilih)}</dd></div>)}</dl></div>
                     <div role="tablist" aria-label="Rincian salesman" className="flex gap-2 px-4 pb-3">
                         {(["kunjungan", "peta"] as const).map((t) => (
@@ -199,7 +209,7 @@ export default function SupervisorReview({ hariIni }: { hariIni: string }) {
                         ))}
                     </div>
                     <div role="tabpanel" aria-label={tab === "kunjungan" ? "Kunjungan" : "Peta"}>
-                        {tab === "kunjungan" ? <DaftarKunjungan rows={kunjunganDari(terpilih)} kartu /> : petaUntuk(terpilih)}
+                        {tab === "kunjungan" ? rincianUntuk(terpilih, true) : petaUntuk}
                     </div>
                 </section>
             </div>

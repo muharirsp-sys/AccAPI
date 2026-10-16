@@ -19,6 +19,7 @@ const PNG_1PX = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUl
 const WA_A = "https://wa.me/6281234567890?text=Ringkasan%20SALES%20A";
 const WA_C = "https://wa.me/6281234567891?text=Ringkasan%20SALES%20C";
 const TANPA_HP = "No HP belum diisi — Admin: tab Hierarki";
+const TANPA_RINCIAN = "Faktur tanpa salesman terpetakan tidak dipecah per toko — periksa kode salesman faktur di Accurate.";
 
 const angka = (o: Partial<Angka> = {}): Angka => ({
     registeredOutlet: 40, callPlan: 12, callRute: 9, callNonRute: 2, ec: 4, noo: 1, quantity: 120.5, itemPerEc: 2.5,
@@ -42,7 +43,7 @@ const KUNJUNGAN: Kunjungan[] = [
     K({ custCode: "C-02", namaToko: "TOKO B", jenis: "luar_rute", mulai: WITA("09:20"), selesai: WITA("09:50"), menitDiToko: 30, menitTempuh: 20, qty: 12.5, item: 2, nilai: 900_000, jarakKeTokoM: 420 }),
     K({ custCode: "C-03", namaToko: "TOKO C", mulai: WITA("10:05"), selesai: null, menitDiToko: null, menitTempuh: 15, qty: null, item: null, nilai: null, belumDifakturkan: true, jarakKeTokoM: null }),
     K({ custCode: "C-04", namaToko: "TOKO D", jenis: "tanpa_checkin", mulai: null, selesai: null, menitDiToko: null, menitTempuh: null, qty: 6, item: 1, nilai: 150_000, lat: null, lng: null, jarakKeTokoM: null }),
-    K({ salesCode: "S-03", custCode: "C-05", namaToko: "TOKO E" }),
+    K({ salesCode: "S-03", custCode: "C-05", namaToko: "TOKO E", lat: null, lng: null, jarakKeTokoM: null }), // check-in tanpa GPS
 ];
 
 function jawaban(o: Partial<JawabanSupervisorReview> = {}): JawabanSupervisorReview {
@@ -123,7 +124,7 @@ test("Desktop: tabel per cabang + TOTAL, status ikon dan teks, tanpa salesman te
     const geser = await page.evaluate(() => {
         const wadah = document.querySelector(".fi-tablescroll") as HTMLElement;
         const th = wadah.querySelector("thead th") as HTMLElement;
-        const td = wadah.querySelector("tbody td") as HTMLElement;
+        const td = wadah.querySelector("tbody tr:nth-child(2) > td:first-child") as HTMLElement; // sel nama salesman pertama (baris 1 = judul cabang)
         const lebar = wadah.scrollWidth > wadah.clientWidth + 100;
         wadah.scrollLeft = 400;
         const kiri = wadah.getBoundingClientRect().left;
@@ -159,21 +160,26 @@ test("Desktop: pilih salesman → rincian kunjungan (belum difakturkan, tanpa ch
     await expect(tabel.getByRole("row")).toHaveCount(5); // kepala + 4 kunjungan S-01 (TOKO E milik S-03 tidak ikut)
 
     const a = tabel.getByRole("row").filter({ hasText: "TOKO A" });
-    await expect(a.getByRole("cell")).toHaveText(["TOKO AC-01", "08.10", "09.00", "50", "—", "24", "3", "✓"]);
-    await expect(a).not.toContainText("jauh dari toko"); // 35 m ≤ ambang
+    await expect(a.getByRole("cell")).toHaveText(["TOKO AC-0135 m dari toko", "08.10", "09.00", "50", "—", "24", "3", "✓"]);
+    await expect(a).not.toContainText("jauh dari toko"); // 35 m ≤ ambang: jarak tampil biasa, bukan penanda jauh
     await expect(a).not.toContainText("belum difakturkan");
     const b = tabel.getByRole("row").filter({ hasText: "TOKO B" });
     await expect(b).toContainText("luar rute");
     await expect(b).toContainText("jauh dari toko (420 m)");
+    await expect(b).not.toContainText("m dari toko"); // satu penanda saja, bukan dua
     await expect(b.getByRole("cell").nth(4)).toHaveText("20");
     await expect(b.getByRole("cell").nth(5)).toHaveText("12,5");
     const c = tabel.getByRole("row").filter({ hasText: "TOKO C" });
     await expect(c).toContainText("belum difakturkan");
+    await expect(c).toContainText("toko tanpa koordinat"); // ada titik check-in, jarak null
+    await expect(c).not.toContainText("tanpa GPS");
     await expect(c.getByRole("cell").nth(2)).toHaveText("—"); // masih di toko: belum check-out
     await expect(c.getByRole("cell").nth(5)).toHaveText("—"); // EC tanpa qty
     await expect(c.getByRole("img", { name: "EC" })).toBeVisible();
     const d = tabel.getByRole("row").filter({ hasText: "TOKO D" });
     await expect(d).toContainText("tanpa check-in");
+    await expect(d).not.toContainText("tanpa GPS"); // tanpa check-in memang tanpa titik
+    await expect(d).not.toContainText("tanpa koordinat");
     await expect(d.getByRole("cell").nth(1)).toHaveText("—"); // tanpa jam
 
     // Subtotal di bawah tabel.
@@ -194,6 +200,19 @@ test("Desktop: pilih salesman → rincian kunjungan (belum difakturkan, tanpa ch
     // Salesman tanpa kunjungan: kosong yang dijelaskan, bukan tabel kosong.
     await baris(page, "S-02").getByRole("button", { name: "SALES B", exact: true }).click();
     await expect(rincian.getByText("Belum ada kunjungan")).toBeVisible();
+
+    // Check-in tanpa GPS tidak diam: berlabel, tanpa jarak.
+    await baris(page, "S-03").getByRole("button", { name: "SALES C", exact: true }).click();
+    const e = rincian.getByRole("table", { name: "Rincian kunjungan" }).getByRole("row").filter({ hasText: "TOKO E" });
+    await expect(e).toContainText("tanpa GPS");
+    await expect(e).not.toContainText("m dari toko");
+
+    // Baris "Tanpa salesman terpetakan": tanpa rincian per toko, penjelasan; peta tetap semua salesman.
+    await baris(page, "Tanpa salesman terpetakan").getByRole("button", { name: "Tanpa salesman terpetakan", exact: true }).click();
+    await expect(rincian.getByText(TANPA_RINCIAN)).toBeVisible();
+    await expect(rincian.getByRole("table")).toHaveCount(0);
+    await expect(rincian.getByRole("group", { name: "Subtotal kunjungan" })).toHaveCount(0);
+    await expect(peta).toContainText("semua salesman dalam cakupan");
 });
 
 test("WhatsApp: href wa.me di tab baru; waUrl null = tombol nonaktif + petunjuk terlihat", async ({ page }) => {
@@ -236,6 +255,21 @@ test("Ponsel 390 px: kartu per salesman → rincian dengan tab Kunjungan | Peta;
     await expect(main.getByRole("region", { name: "CABANG A" })).toContainText("Total: EC 5 / Call Plan 22 · Rp 3.600.000");
     expect(await noOverflow(page)).toBe(true);
     await page.screenshot({ path: "test-results/sr2/ponsel-daftar.png", fullPage: true });
+
+    // Ketuk kartu di bagian bawah daftar: rincian terbuka dari atas (gulir <main> kembali 0) dan judul rincian terfokus.
+    const gulir = () => main.evaluate((m) => m.scrollTop);
+    await main.evaluate((m) => { m.scrollTop = m.scrollHeight; });
+    await expect.poll(gulir).toBeGreaterThan(0);
+    await main.getByRole("list", { name: "Salesman CABANG B" }).getByRole("listitem").filter({ hasText: "SALES C" }).getByRole("button").first().click();
+    await expect.poll(gulir).toBe(0);
+    await expect(main.getByRole("heading", { name: "SALES C" })).toBeFocused();
+    await main.getByRole("button", { name: "Kembali ke daftar" }).click();
+
+    // Baris "Tanpa salesman terpetakan": penjelasan, bukan kunjungan.
+    await main.getByRole("list", { name: "Salesman CABANG A" }).getByRole("listitem").filter({ hasText: "Tanpa salesman terpetakan" }).getByRole("button").first().click();
+    await expect(main.getByText(TANPA_RINCIAN)).toBeVisible();
+    await expect(main.getByRole("list", { name: "Kunjungan" })).toHaveCount(0);
+    await main.getByRole("button", { name: "Kembali ke daftar" }).click();
 
     await kartuA.getByRole("button").first().click();
     await expect(main.getByRole("button", { name: "Kembali ke daftar" })).toBeVisible();
