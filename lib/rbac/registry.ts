@@ -84,6 +84,10 @@ export const PERMISSION_REGISTRY = {
     //   buka = buka kembali hari terkunci (alasan tercatat) — kunci KAPABILITAS untuk OM/Admin (CAPABILITY_KEYS). Kasir/Incaso tidak
     //   memegang buka (D-01). Ke grup lewat docs/handover/RBAC_PRESET_KASIR.sql (sesudah RBAC_PRESET_BL37.sql S7-1).
     kasir: ["view", "catat", "tutup", "buka"],
+    // Supervisor Review (owner 16 Okt 2026; spec docs/superpowers/specs/2026-10-16-supervisor-review-design.md §3.4): ringkasan harian per
+    //   salesman + rincian kunjungan + peta, cakupan hierarki (resolveScope). Ke grup SPV/SM/Manager/Admin lewat
+    //   docs/handover/RBAC_PRESET_SUPERVISOR_REVIEW.sql (sesudah image).
+    supervisor_review: ["view"],
 } as const;
 
 export type PermissionModule = keyof typeof PERMISSION_REGISTRY;

@@ -38,7 +38,9 @@ test("all existing modules appear exactly once across six groups", () => {
     // 26 sejak Normalisasi Diskon (24 Sep 2026). 27 sejak Penerima laporan (Fiori S3, 7 Okt 2026).
     // 28 sejak wizard Pelunasan (Fiori S6e-2, 10 Okt 2026): Admin Incaso mengirim pelunasan tanpa Konsol AOL.
     // 29 sejak Kasir ↔ Incaso (Fiori K2b, 15 Okt 2026): Kasir mencatat setoran dan menutup hari terhadap pelunasan Incaso.
-    assert.equal(items.length, 29);
+    // 30 sejak Supervisor Review (16 Okt 2026): SPV/SM/Admin melihat ringkasan harian per salesman (supervisor_review.view).
+    assert.equal(items.length, 30);
+    assert.equal(WORKSPACE_GROUPS.find(group => group.id === "operations")?.items.find(item => item.href === "/supervisor-review")?.name, "Supervisor Review");
     assert.ok(items.some(item => item.href === "/pelunasan"));
     assert.equal(WORKSPACE_GROUPS.find(group => group.id === "finance")?.items.find(item => item.href === "/kasir")?.name, "Kasir ↔ Incaso");
     // Master Barang ikut katalog: ia yang MEMBUAT master principal baru, dan matcher
