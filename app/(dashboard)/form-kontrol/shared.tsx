@@ -85,12 +85,14 @@ export interface FreqRow {
     overVisit: boolean;
 }
 
-export type TabKey = "jks" | "ao" | "no-order" | "laporan" | "briefing" | "sm-control" | "frekuensi" | "hierarki" | "noo";
+export type TabKey = "jks" | "koordinat" | "ao" | "no-order" | "laporan" | "briefing" | "sm-control" | "frekuensi" | "hierarki" | "noo";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
 export const TABS: { key: TabKey; label: string; roles: string[] }[] = [
     { key: "jks", label: "Kontrol JKS", roles: ["admin", "manager", "admin_sales", "sm", "spv"] },
+    // Supervisor Review (SR-3): titik koordinat toko untuk peta; sumbernya berkas yang diunggah admin, bukan JKS.
+    { key: "koordinat", label: "Koordinat Toko", roles: ["admin", "manager", "admin_sales"] },
     { key: "ao", label: "Form AO Harian", roles: ["salesman", "spv", "staff", "admin", "manager"] },
     { key: "no-order", label: "Toko Tidak Order", roles: ["salesman", "spv", "sm", "staff", "admin", "manager"] },
     // Tab Merchandising lama dihapus (S5): merch bagian wizard kunjungan (ber-foto/GPS); SPV melihat hasilnya di Dashboard SPV.
