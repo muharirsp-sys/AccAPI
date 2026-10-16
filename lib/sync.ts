@@ -14,6 +14,7 @@ import { eq, sql } from "drizzle-orm";
 import { recordInvoiceRealization } from "./program-realization-store";
 import { cabangDariTag, normalNama, petaCabang } from "./order-cabang";
 import { redactAccurateSecrets } from "./accurate-redact";
+import { ringkasFaktur } from "./supervisor-review/ringkas-faktur";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -425,6 +426,9 @@ const SYNC_MODULES: Record<SyncModuleName, {
         fields: "id,number,customerNo,customer,totalAmount,transDate,dueDate,statusName,age,lastUpdate,primeOwing,primeReceipt",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
+                // Supervisor Review (spec 2026-10-16 §3.2): salesman header, Σ qty satuan terkecil, jumlah baris, Σ DPP. list.do tanpa
+                // detailItem -> semuanya null -> penjaga di set{} mempertahankan ringkasan dari detail.do.
+                ...ringkasFaktur(row),
                 id: Number(row.id),
                 number: str(row.number ?? row.no),
                 transDate: str(row.transDate),
@@ -470,6 +474,13 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     // jangan hapus nilai yang sudah benar (pelajaran dari raw_data yang tertimpa).
                     lastUpdateAt: sql`coalesce(excluded."last_update_at", sales_invoice.last_update_at)`,
                     createdAt: sql`coalesce(excluded."created_at", sales_invoice.created_at)`,
+                    // Ringkasan Supervisor Review mengikuti aturan raw_data di atas: jawaban TANPA rincian (list.do -> null) tidak
+                    // mengosongkan; jawaban BER-rincian (qty_total terisi) menang utuh — termasuk salesman yang dikosongkan di Accurate,
+                    // yang dengan coalesce polos akan tertinggal salesman lama.
+                    salesmanId: sql`case when excluded."qty_total" is not null then excluded."salesman_id" else sales_invoice.salesman_id end`,
+                    qtyTotal: sql`coalesce(excluded."qty_total", sales_invoice.qty_total)`,
+                    jumlahItem: sql`coalesce(excluded."jumlah_item", sales_invoice.jumlah_item)`,
+                    dpp: sql`coalesce(excluded."dpp", sales_invoice.dpp)`,
                     syncedAt: bumpSyncedAt("sales_invoice"),
                 },
             });

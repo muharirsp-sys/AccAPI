@@ -187,6 +187,8 @@ before(async () => {
     admin = new Pool({ connectionString: PG_URL, max: 1 });
     utama = await skemaBaru();
     semuaOk(barisTerakhir(await utama.pool.query(await berkas("../docs/handover/DDL_O1.sql"))));
+    // Supervisor Review (SR-1): sales_profile.no_hp — Drizzle memilih semua kolom sales_profile.
+    await utama.pool.query(await berkas("../db/migrations/0036_supervisor_review.sql"));
     const p = utama.pool;
     for (const [id, name, def] of CABANG) await p.query("INSERT INTO branch (id, name, default_branch) VALUES ($1, $2, $3)", [id, name, def]);
     await p.query(`INSERT INTO accurate_employee (id, number, name, branch_id, salesman, suspended) VALUES

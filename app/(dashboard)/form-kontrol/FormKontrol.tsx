@@ -22,6 +22,7 @@ const MemuatTab = () => <Skeleton rows={4} label="Memuat modul" />;
 // next/dynamic mewajibkan objek opsi literal per panggilan. Tab L (ao, no-order, laporan) dan tab T dirender dengan kontrak yang sama: default export `({ scope }: { scope: Scope })`.
 const TAB: Record<TabKey, ComponentType<{ scope: Scope }>> = {
     jks: dynamic(() => import("./tabs/TabJks"), { ssr: false, loading: MemuatTab }),
+    koordinat: dynamic(() => import("./tabs/TabKoordinat"), { ssr: false, loading: MemuatTab }),
     ao: dynamic(() => import("./tabs/TabAo"), { ssr: false, loading: MemuatTab }),
     "no-order": dynamic(() => import("./tabs/TabNoOrder"), { ssr: false, loading: MemuatTab }),
     laporan: dynamic(() => import("./tabs/TabLaporan"), { ssr: false, loading: MemuatTab }),

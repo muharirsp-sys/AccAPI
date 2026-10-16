@@ -45,6 +45,8 @@ export const appModules = [
     "pelunasan",
     // Kasir ↔ Incaso (K1a BL-59): setoran per orang per hari lawan pelunasan Accurate; kunci di lib/rbac/registry.ts.
     "kasir",
+    // Supervisor Review (owner 16 Okt 2026): ringkasan harian per salesman; kunci di lib/rbac/registry.ts, preset grup = docs/handover/RBAC_PRESET_SUPERVISOR_REVIEW.sql.
+    "supervisor_review",
 ] as const;
 export type AppModule = (typeof appModules)[number];
 
@@ -69,6 +71,7 @@ export const moduleLabels: Record<AppModule, string> = {
     websales: "Order Sales (Web Sales)",
     pelunasan: "Pelunasan",
     kasir: "Kasir ↔ Incaso",
+    supervisor_review: "Supervisor Review",
 };
 
 export const permissionActions = [
@@ -247,6 +250,7 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     pelunasan: ["kirim"],
     // buka = kunci kapabilitas (lib/rbac/registry.ts CAPABILITY_KEYS) — hanya preset admin (semua) yang memuatnya.
     kasir: ["view", "catat", "tutup", "buka"],
+    supervisor_review: ["view"],
 };
 
 export type PermissionMap = Partial<Record<AppModule, PermissionAction[]>>;
@@ -406,6 +410,8 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/laporan-harian", module: "laporan_harian", action: "view" },
     { prefix: "/rekapan-nota", module: "rekapan_nota", action: "view" },
     { prefix: "/insentif-sales", module: "insentif_sales", action: "view" },
+    // Supervisor Review (owner 16 Okt 2026). Tanpa entri ini /supervisor-review jatuh ke "/" = dashboard.view.
+    { prefix: "/supervisor-review", module: "supervisor_review", action: "view" },
     { prefix: "/", module: "dashboard", action: "view" },
 ];
 

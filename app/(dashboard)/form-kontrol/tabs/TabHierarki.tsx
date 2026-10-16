@@ -3,6 +3,8 @@
  *   baris lewat dialog (lama → baru dan akibatnya pada cakupan). Simpan dikunci bila daftar usang (muat ulang gagal/berjalan).
  *   Owner 13 Okt 2026: SPV/SM DIPILIH dari nama akun aktif ber-role itu (GET spvOptions/smOptions), bukan diketik — cakupan SPV/SM
  *   mencocokkan nama akun. Nilai tersimpan yang tidak cocok dengan akun mana pun tetap tampil sebagai opsi bertanda + peringatan baris.
+ *   SR-2 (16 Okt 2026): kolom No HP per salesman (tujuan tombol WhatsApp Supervisor Review). PUT mengirim `noHp` HANYA bila diubah; server
+ *   menormalkan dan menolak yang tidak sah dengan 400 NO_HP_TIDAK_SAH (kalimatnya tampil di dialog).
  * Caller: form-kontrol/FormKontrol.tsx (tab "hierarki"; peran admin/manager).
  * Dependensi: ../shared (Scope, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive}.
  * Main Functions: TabHierarki (default).
@@ -16,10 +18,11 @@ import { Pencil, RefreshCw, Save } from "lucide-react";
 import { Button, EmptyState, ErrorState, MessageStrip, Skeleton } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { kunciNama } from "@/lib/form-kontrol/constants";
+import { normalHp } from "@/lib/form-kontrol/noo-aturan";
 import { ambilFk, tulisFk, useIzinFk, type Scope } from "../shared";
 
-interface Profile { salesCode: string; salesName: string; principle: string; branch: string; spvName: string | null; smName: string | null }
-type Edit = { spvName: string; smName: string };
+interface Profile { salesCode: string; salesName: string; principle: string; branch: string; spvName: string | null; smName: string | null; noHp?: string | null }
+type Edit = { spvName: string; smName: string; noHp: string };
 type Data = { rows: Profile[]; spv: string[]; sm: string[] };
 const TANPA_SPV = "Belum diatur";
 const PERAN = ["spv", "sm"] as const;
@@ -27,6 +30,8 @@ const NAMA = { spv: "spvName", sm: "smName" } as const;
 const LABEL = { spv: "SPV", sm: "SM" } as const;
 const teks = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 /** Opsi akun yang cocok (kunciNama) dengan nilai; "" = kosong; undefined = nilai tidak cocok dengan akun mana pun. */
+/** No HP dibandingkan dalam bentuk kanonik server (08…); isian tak sah dibandingkan apa adanya (server yang menolaknya). */
+const hpKanonik = (v: string) => normalHp(v) ?? v.trim();
 const cocokAkun = (v: string, opsi: string[]) => (!v.trim() ? "" : opsi.find((o) => kunciNama(o) === kunciNama(v)));
 
 export default function TabHierarki({ scope }: { scope: Scope }) {
@@ -41,10 +46,11 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
 
     const profiles = load.data?.rows ?? [];
     const opsi = { spv: load.data?.spv ?? [], sm: load.data?.sm ?? [] };
-    const nilai = (p: Profile): Edit => edits[p.salesCode] ?? { spvName: p.spvName ?? "", smName: p.smName ?? "" };
+    const nilai = (p: Profile): Edit => edits[p.salesCode] ?? { spvName: p.spvName ?? "", smName: p.smName ?? "", noHp: p.noHp ?? "" };
     // Nama dibandingkan lewat kunciNama (trim + tanpa beda huruf), sama dengan server: ejaan lama "adnan" yang disimpan server sebagai ejaan
     // akun "ADNAN" bukan perubahan (peninjau B R-2 — tanpa ini baris tetap "Draf" sesudah tersimpan).
-    const berubah = (p: Profile) => { const e = edits[p.salesCode]; return Boolean(e) && (kunciNama(e.spvName) !== kunciNama(p.spvName) || kunciNama(e.smName) !== kunciNama(p.smName)); };
+    const noHpBerubah = (p: Profile, e: Edit) => hpKanonik(e.noHp) !== (p.noHp ?? "");
+    const berubah = (p: Profile) => { const e = edits[p.salesCode]; return Boolean(e) && (kunciNama(e.spvName) !== kunciNama(p.spvName) || kunciNama(e.smName) !== kunciNama(p.smName) || noHpBerubah(p, e)); };
     const nDraf = profiles.filter(berubah).length;
     useUnsavedGuard(nDraf > 0);
     const kunci = izin ?? (load.status !== "siap" ? "Tunggu daftar selesai dimuat ulang." : undefined);
@@ -81,7 +87,7 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                                 const e = nilai(p);
                                 const draf = berubah(p);
                                 return (
-                                    <li key={p.salesCode} className="grid items-end gap-3 border-t px-4 py-3 sm:grid-cols-[minmax(10rem,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" style={{ borderColor: "var(--line)" }}>
+                                    <li key={p.salesCode} className="grid items-end gap-3 border-t px-4 py-3 sm:grid-cols-[minmax(10rem,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" style={{ borderColor: "var(--line)" }}>
                                         <div className="min-w-0">
                                             <b className="fi-small">{p.salesName}</b>
                                             <span className="fi-codes">{p.salesCode} · {p.principle}</span>
@@ -101,6 +107,10 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                                                 )}</FormField>
                                             );
                                         })}
+                                        <FormField label={`No HP ${p.salesName}`}>{(a) => (
+                                            <input {...a} className="fi-input" style={{ minHeight: 44 }} type="tel" inputMode="tel" autoComplete="off" placeholder="08…"
+                                                value={e.noHp} onChange={(ev) => ubah(p, { noHp: ev.target.value })} />
+                                        )}</FormField>
                                         <Button variant={draf ? "primary" : "secondary"} style={{ minHeight: 44 }} icon={<Save className="fi-icon" aria-hidden />}
                                             disabled={!draf || Boolean(kunci)} disabledReason={kunci ?? "Belum ada perubahan"} onClick={() => setSimpan(p)}>
                                             Simpan
@@ -143,17 +153,27 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                     ["Salesman", `${simpan.salesName} · ${simpan.salesCode}`],
                     ["SPV", `${simpan.spvName ?? "—"} → ${target.spvName.trim() || "—"}`],
                     ["SM", `${simpan.smName ?? "—"} → ${target.smName.trim() || "—"}`],
+                    ...(noHpBerubah(simpan, target) ? [["No HP", `${simpan.noHp ?? "—"} → ${target.noHp.trim() || "—"}`] as [string, string]] : []),
                 ] : []}
                 confirmLabel="Simpan hierarki"
                 confirmDisabled={kunci}
                 onConfirm={async () => {
                     const p = simpan!;
                     const e = nilai(p);
-                    await tulisFk("/api/form-kontrol/sales-profiles", {
-                        method: "PUT",
-                        body: { salesCode: p.salesCode, spvName: e.spvName.trim() || null, smName: e.smName.trim() || null },
-                        gagal: "Hierarki belum tersimpan.",
-                    });
+                    const gagal = "Hierarki belum tersimpan.";
+                    const hp = noHpBerubah(p, e);
+                    try {
+                        await tulisFk("/api/form-kontrol/sales-profiles", {
+                            method: "PUT",
+                            // noHp hanya dikirim bila diubah: menyimpan SPV/SM tidak menyentuh nomor; "" = hapus (server: null).
+                            body: { salesCode: p.salesCode, spvName: e.spvName.trim() || null, smName: e.smName.trim() || null, ...(hp ? { noHp: e.noHp.trim() || null } : {}) },
+                            gagal,
+                        });
+                    } catch (err) {
+                        // 400 tanpa kalimat dari server (hanya kode NO_HP_TIDAK_SAH) tetap harus terbaca di dialog.
+                        if (hp && (err as { status?: number }).status === 400 && (err as Error).message === gagal) throw new Error(`${gagal} No HP tidak sah: tulis nomor seluler Indonesia berbentuk 08… (10–13 angka).`);
+                        throw err;
+                    }
                     setSimpan(null);
                     // Isian tidak dibuang: sampai daftar termuat ulang baris tetap menampilkan nilai baru (lalu tidak lagi "Draf").
                     setSukses(`Hierarki ${p.salesName} tersimpan.`);
