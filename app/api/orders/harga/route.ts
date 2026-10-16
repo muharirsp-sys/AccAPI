@@ -13,7 +13,7 @@
  * Badan: { customer_no, order_date: YYYY-MM-DD, lines: [{code, unit, quantity?, price?}] }. `price` = harga PETUGAS (Order Baru) — hanya
  * layanan atau sesi `order.create`, HANYA untuk baris TANPA harga master sah (owner sesi 13; baris berharga master + `price` = 409
  * `HARGA_PETUGAS_TIDAK_DIIZINKAN`); dikembalikan APA ADANYA. Tanpa `price` = harga master SAH cabang pelanggan.
- * Jawaban 200: { ok, pelanggan: {customerNo, name, branchId, branchName}, lines: [{code, unit, quantity, price, sumber_harga}] } (urutan =
+ * Jawaban 200: { ok, pelanggan: {customerNo, name, branchId, branchName}, lines: [{code, unit, quantity, price, sumber_harga, rasio}] } (urutan =
  * masukan; `sumber_harga` "master" | "master_default" | "petugas"). Galat: { ok:false, kode, error, ... } — kode di
  * docs/handover/O1-KONTRAK-ORDER-CABANG.md.
  * Putaran 2 (butir 7): `bonus: [kode]` (maks 50) = barang bonus promo yang diperiksa syarat order (cabang/suspended/bisa diorder) ->
@@ -71,6 +71,7 @@ export async function POST(request: NextRequest) {
             code: l.code, unit: l.unit, quantity: l.quantity,
             price: l.price !== "" ? l.price : String(cek.harga[i].price),
             sumber_harga: sumberHarga(cek.harga[i]),
+            rasio: cek.harga[i].rasio ?? {},
         })),
         bonus,
     });

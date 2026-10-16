@@ -9,7 +9,7 @@ from decimal import Decimal
 
 os.environ["SUMMARY_STORE_PATH"] = os.path.join(tempfile.mkdtemp(prefix="summary-check-"), "summary.sqlite3")
 
-from summary_rules import calculate, compile_programs, suggestions, threshold_of, validate_programs  # noqa: E402
+from summary_rules import RasioKosong, calculate, compile_programs, suggestions, threshold_of, validate_programs  # noqa: E402
 from summary_store import create_draft, get_draft, identity  # noqa: E402
 
 MASTER = {"A", "B", "C"}
@@ -121,6 +121,7 @@ def main():
     print("summary rules check: OK")
     check_compiler()
     check_tanpa_minimum()
+    check_konversi_satuan()
     check_codes()
     check_suggestions()
     check_outlet()
@@ -282,6 +283,50 @@ def check_tanpa_minimum():
         assert issues == [] and len(programs) == 1 and programs[0].unit == "KRT", (issues, programs)
         hasil = calculate(programs, [line(qty="5", price="100000", unit="KRT")], "2026-06-15", "GT")
         assert hasil["discount"] == "25000.00", hasil
+
+
+def check_konversi_satuan():
+    # Owner 16 Okt: "Beli 1 CTN s/d 5 CTN 5%", mix variant + mix gramasi, isi karton 120.
+    # A 4 KRT + B 20 PCS + C 100 PCS = 5 KRT -> KETIGA baris dapat 5%.
+    programs, issues = compiled([row(ketentuan="Beli 1 CTN s/d 5 CTN, mix variant dan mix gramasi", kode_barangs="A,B,C")])
+    assert issues == [], issues
+    rasio = {"PCS": 1, "KRT": 120}
+    order = [dict(line("A", "4", "1200000", "KRT"), rasio=rasio), dict(line("B", "20", "10000"), rasio=rasio),
+             dict(line("C", "100", "10000"), rasio=rasio)]
+    hasil = calculate(programs, order, "2026-06-15", "GT")
+    assert [row["percents"] for row in hasil["lines"]] == [["5"], ["5"], ["5"]], hasil["lines"]
+    assert hasil["discount"] == "300000.00" and "rasio" not in hasil["lines"][0], hasil
+    # Pecahan eksak: 3 x 40 PCS isi 120 = TEPAT 1 KRT (Decimal 1/3 x 3 = 0,999... dulu jatuh di bawah ambang).
+    programs, _ = compiled([row(ketentuan="Beli 1 KRT, mix variant dan mix gramasi", kode_barangs="A,B,C")])
+    sepertiga = [dict(line(kode, "40", "1000"), rasio=rasio) for kode in "ABC"]
+    assert [row["percents"] for row in calculate(programs, sepertiga, "2026-06-15", "GT")["lines"]] == [["5"]] * 3
+    programs, _ = compiled([row(ketentuan="Beli 1 KRT, mix variant dan mix gramasi, berlaku kelipatan", kode_barangs="A,B,C",
+                                benefit_type="BONUS_QTY", benefit="1 PCS")])
+    dua_krt = [dict(line("A", "1", "120000", "KRT"), rasio=rasio)] + sepertiga
+    assert calculate(programs, dua_krt, "2026-06-15", "GT")["bonuses"][0]["quantity"] == "2"
+    # Per barang = per KODE: 4 KRT + 120 PCS barang A = 5 KRT barang A, kedua baris dapat.
+    programs, _ = compiled([row(ketentuan="Beli 5 KRT")])
+    dua_satuan = [dict(line("A", "4", "120000", "KRT"), rasio=rasio), dict(line("A", "120", "1000"), rasio=rasio)]
+    assert [row["percents"] for row in calculate(programs, dua_satuan, "2026-06-15", "GT")["lines"]] == [["5"], ["5"]]
+    assert not suggestions(programs, dua_satuan, "2026-06-15", "GT")
+    # Kurang 1 PCS dari 5 KRT isi 240: saran menulis 0,01 (dibulatkan naik), bukan "Tambah 0".
+    kurang_satu = [dict(line("A", "1199", "1000"), rasio={"PCS": 1, "KRT": 240})]
+    assert suggestions(programs, kurang_satu, "2026-06-15", "GT")[0]["message"].startswith("Tambah 0.01 KRT"), suggestions(programs, kurang_satu, "2026-06-15", "GT")
+    # Per barang juga: 600 PCS satu barang = 5 KRT.
+    programs, _ = compiled([row(ketentuan="Beli 5 KRT")])
+    assert calculate(programs, [dict(line("A", "600", "1000"), rasio=rasio)], "2026-06-15", "GT")["discount"] == "30000.00"
+    # Potongan per satuan dihitung dalam satuan program: 240 PCS = 2 KRT x Rp 1.000.
+    programs, _ = compiled([row(ketentuan="Beli 1 KRT", benefit_type="DISC_RP", benefit="1000", keterangan="per KRT")])
+    assert calculate(programs, [dict(line("A", "240", "1000"), rasio=rasio)], "2026-06-15", "GT")["discount"] == "2000.00"
+    # Rasio yang dibutuhkan tidak ada di master -> order DITAHAN (owner 16 Okt), bukan baris diam-diam tak dihitung.
+    programs, _ = compiled([row(ketentuan="Beli 5 KRT")])
+    try:
+        calculate(programs, [dict(line("A", "600", "1000"), rasio={"PCS": 1})], "2026-06-15", "GT")
+        raise AssertionError("baris tanpa rasio karton harus menahan order")
+    except RasioKosong:
+        pass
+    # Pemanggil tanpa data satuan (simulasi Summary) tetap seperti dulu: hanya satuan yang sama.
+    assert calculate(programs, [line("A", "600", "1000")], "2026-06-15", "GT")["discount"] == "0.00"
 
 
 def check_compiler():
