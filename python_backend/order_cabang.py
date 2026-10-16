@@ -152,5 +152,8 @@ def periksa(customer_no, order_date, lines, cookie=None):
             # Harga master 0/kosong/negatif tidak pernah boleh menjadi order: faktur Rp 0 tidak bisa ditarik (butir 3).
             raise OrderCabangDitolak(409, "HARGA_BELUM_ADA", f"Harga {dikirim['code']} {dikirim['unit']} dari master tidak sah ({price or 'kosong'}).",
                                      {"missing": [dikirim["code"]]})
-        hasil.append({**line, "price": price, "sumber_harga": sumber})
+        # Rasio satuan barang dari master Accurate (Next): mesin promo menghitung ambang lintas satuan (owner 16 Okt 2026).
+        # Tanpa `rasio` (Next versi lama saat deploy bergiliran) = None: perilaku lama, satuan sama saja, tidak menahan order.
+        rasio = item.get("rasio") if isinstance(item.get("rasio"), dict) else None
+        hasil.append({**line, "price": price, "sumber_harga": sumber, "rasio": rasio})
     return hasil

@@ -72,6 +72,12 @@ def main():
     assert [line["price"] for line in hasil] == ["456000", "1200.5"], hasil
     assert [line["sumber_harga"] for line in hasil] == ["master", "master"], hasil
     assert hasil[0]["quantity"] == "2" and hasil[0]["unit"] == "krt", hasil
+    # Rasio satuan dari master Accurate ikut diteruskan ke mesin promo; Next lama tanpa `rasio` = None (perilaku lama).
+    assert [line["rasio"] for line in hasil] == [None, None], hasil
+    pasang(200, {"ok": True, "lines": [{**OK["lines"][0], "rasio": {"PCS": 1, "KRT": 24}}, OK["lines"][1]]})
+    hasil = order_cabang.periksa("C-1", "2026-10-12", LINES)
+    assert hasil[0]["rasio"] == {"PCS": 1, "KRT": 24} and hasil[1]["rasio"] is None, hasil
+    pasang(200, OK)
 
     # Harga PETUGAS (Order Baru): dikirim per baris, kembali SAMA, bertanda petugas; baris lain harga master.
     campur = [{**LINES[0], "price": " 450000 "}, LINES[1]]
