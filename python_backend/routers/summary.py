@@ -692,8 +692,26 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         print_date = f"{now.month}/{now.day}/{now.year}"
         dibuat_date = f"{now.day:02d} {months[now.month - 1]} {now.year}"
 
+        # Judul di SETIAP halaman (permintaan pemilik 16 Okt): halaman lanjutan harus tetap
+        # terbaca principal dan periodenya tanpa membalik ke halaman 1.
+        from shared import _label_periode
+        _mulai = [str(r.get("periode_start") or "") for r in rows if r.get("periode_start")]
+        _akhir = [str(r.get("periode_end") or "") for r in rows if r.get("periode_end")]
+        global_period = ((_label_periode(min(_mulai), max(_akhir)) if _mulai and _akhir else "")
+                         or (rows[0].get("periode", "") if rows else ""))
+        nama_principal = (principle_for_claim or (str(rows[0].get("principle", "")) if rows else "")).strip().upper()
+        baris_principal = " ".join(x for x in (f"PRINCIPLE {nama_principal}" if nama_principal else "",
+                                                f"PERIODE {global_period.upper()}" if global_period else "") if x)
+
         def my_canvas(canvas_obj, doc_obj):
             canvas_obj.saveState()
+            lebar, tinggi = landscape(A4)
+            canvas_obj.setFont('Helvetica-Bold', 12)
+            canvas_obj.drawCentredString(lebar / 2, tinggi - 1.1*cm, "SUMMARY PROGRAM ON FAKTUR BEBAN PRINCIPLE (COKLAT)")
+            canvas_obj.setFont('Helvetica', 10)
+            if baris_principal:
+                canvas_obj.drawCentredString(lebar / 2, tinggi - 1.6*cm, baris_principal)
+            canvas_obj.drawCentredString(lebar / 2, tinggi - 2.05*cm, "CV. SURYA PERKASA")
             canvas_obj.setFont('Helvetica-Bold', 7)
             # Top Left
             canvas_obj.drawString(doc_obj.leftMargin, landscape(A4)[1] - 0.5*cm, f"Di Print Tgl : {print_date}")
@@ -703,35 +721,20 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             
             # Bottom of Header (Before Table Starts)
             canvas_obj.setFont('Helvetica', 8)
-            canvas_obj.drawString(doc_obj.leftMargin, landscape(A4)[1] - 2*cm, f"Dibuat Tanggal : {dibuat_date}")
+            canvas_obj.drawString(doc_obj.leftMargin, tinggi - 2.55*cm, f"Dibuat Tanggal : {dibuat_date}")
             canvas_obj.setFont('Helvetica-Bold', 8)
-            canvas_obj.drawRightString(landscape(A4)[0] - doc_obj.rightMargin, landscape(A4)[1] - 2*cm, "(ON PRINCIPLE COKLAT)")
+            canvas_obj.drawRightString(lebar - doc_obj.rightMargin, tinggi - 2.55*cm, "(ON PRINCIPLE COKLAT)")
             
             canvas_obj.restoreState()
 
         # FASE 6: PDF reproducible (CreationDate/ModDate/doc-id tetap) -> byte-identik antar-run
         enable_pdf_determinism()
         # Update margins to give space for the custom canvas headers
-        doc = SimpleDocTemplate(form_path, pagesize=landscape(A4), rightMargin=0.5*cm, leftMargin=0.5*cm, topMargin=2.2*cm, bottomMargin=0.5*cm)
+        doc = SimpleDocTemplate(form_path, pagesize=landscape(A4), rightMargin=0.5*cm, leftMargin=0.5*cm, topMargin=2.75*cm, bottomMargin=0.5*cm)
         elements = []
         styles = getSampleStyleSheet()
 
-        # Add Title and Subtitle properly centered
-        title_style = styles["Heading3"].clone("TitleStyle")
-        title_style.alignment = TA_CENTER
-        title_style.fontSize = 12
-        elements.append(Paragraph("<b>SUMMARY PROGRAM ON FAKTUR BEBAN PRINCIPLE (COKLAT)</b>", title_style))
-        
-        sub_style = styles["Normal"].clone("SubStyle")
-        sub_style.alignment = TA_CENTER
-        sub_style.fontSize = 11
-        sub_style.fontName = 'Helvetica'
-        
-        # Determine Period globally from the first row if available
-        global_period = rows[0].get("periode", "") if rows else ""
-        period_text = f" PERIODE {global_period.upper()}" if global_period else ""
-        elements.append(Paragraph(f"CV. SURYA PERKASA {period_text}", sub_style))
-        elements.append(Spacer(1, 15))
+        elements.append(Spacer(1, 4))
 
         # KEPALA DUA BARIS. "Channel Outlet" memayungi dua kolom: channelnya (GT/MT) dan
         # ada-tidaknya daftar outlet peserta. Keduanya dipisah karena menjawab pertanyaan yang
