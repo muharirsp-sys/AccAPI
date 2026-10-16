@@ -216,7 +216,23 @@ export type BarisOrder = { code: string; unit: string; price?: string };
 export type PelangganOrder = { id: number; customerNo: string; name: string; branchId: number; branchName: string; categoryName: string | null };
 /** Harga terpakai per baris: master sah (`tier`) atau petugas (`petugas` — hanya baris tanpa harga master sah, jadi `hargaMaster` selalu null).
  * `hargaDefault` = harga master dari cabang DEFAULT karena cabang pelanggan tak punya baris berlaku (fallback; putaran 2 butir 9). */
-export type HargaBaris = Omit<PriceResult, "price" | "source"> & { price: number; source: "tier" | "petugas"; hargaMaster?: number | null; hargaDefault?: boolean };
+export type HargaBaris = Omit<PriceResult, "price" | "source"> & { price: number; source: "tier" | "petugas"; hargaMaster?: number | null; hargaDefault?: boolean;
+    /** Isi tiap satuan barang dalam satuan dasar (master Accurate), mis. { PCS: 1, KRT: 120 }: mesin promo menghitung ambang lintas satuan. */
+    rasio?: Record<string, number> };
+
+type SatuanBarang = { unit1Name: string | null; unit2Name: string | null; unit3Name: string | null; unit4Name: string | null; unit5Name: string | null;
+    ratio2: number | null; ratio3: number | null; ratio4: number | null; ratio5: number | null };
+/** unit1 = satuan dasar (isi 1); unit2..5 = kelipatannya lewat ratio. Satuan tanpa nama/rasio sah dilewati — mesin promo menahan
+ * order yang butuh rasio itu (owner 16 Okt 2026), jadi yang tak pasti tidak pernah ditebak. */
+export function rasioSatuan(b: SatuanBarang): Record<string, number> {
+    const pasang: Array<[string | null, number | null]> = [[b.unit1Name, 1], [b.unit2Name, b.ratio2], [b.unit3Name, b.ratio3], [b.unit4Name, b.ratio4], [b.unit5Name, b.ratio5]];
+    const hasil: Record<string, number> = {};
+    for (const [nama, isi] of pasang) {
+        const kunci = String(nama ?? "").trim().toUpperCase();
+        if (kunci && typeof isi === "number" && Number.isFinite(isi) && isi > 0) hasil[kunci] = isi;
+    }
+    return hasil;
+}
 /** `sumber_harga` jawaban pratinjau/harga + baris beku: "master" | "master_default" (fallback cabang default) | "petugas". */
 export const sumberHarga = (h: HargaBaris) => (h.source === "petugas" ? "petugas" : h.hargaDefault ? "master_default" : "master");
 
@@ -290,6 +306,8 @@ export async function periksaOrder(input: { customerNo: string; orderDate: strin
     const codes = [...new Set(input.lines.map((l) => l.code.trim()).filter(Boolean))];
     const rows = codes.length ? await db.select({
         no: item.no, name: item.name, branchId: item.branchId, suspended: item.suspended, tag: item.charField2, branchName: branch.name,
+        unit1Name: item.unit1Name, unit2Name: item.unit2Name, unit3Name: item.unit3Name, unit4Name: item.unit4Name, unit5Name: item.unit5Name,
+        ratio2: item.ratio2, ratio3: item.ratio3, ratio4: item.ratio4, ratio5: item.ratio5,
     }).from(item).leftJoin(branch, eq(branch.id, item.branchId)).where(inArray(item.no, codes)) : [];
     const barang = new Map(rows.map((r) => [r.no, r]));
     const tidakAda = codes.filter((c) => !barang.has(c));
@@ -341,9 +359,10 @@ export async function periksaOrder(input: { customerNo: string; orderDate: strin
         ok: true, pelanggan,
         harga: harga.map((row, i): HargaBaris => {
             const x = putusan[i];
+            const rasio = rasioSatuan(barang.get(row.code)!);
             return x.jenis === "petugas"
-                ? { code: row.code, unit: row.unit, price: x.price, source: "petugas", hargaMaster: null }
-                : { ...row, price: (x as { price: number }).price, source: "tier", hargaDefault: row.branchId !== pelanggan.branchId };
+                ? { code: row.code, unit: row.unit, price: x.price, source: "petugas", hargaMaster: null, rasio }
+                : { ...row, price: (x as { price: number }).price, source: "tier", hargaDefault: row.branchId !== pelanggan.branchId, rasio };
         }),
     };
 }

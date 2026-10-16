@@ -746,6 +746,11 @@ test("baris BONUS tidak ikut dihitung sebagai pembelian", () => {
     assert.equal(triggerReached(rules[0], belanja.get(triggerGroupKey(rules[0]))).ok, false);
 });
 
+test("ambang CTN = KRT: tidak dipenuhi oleh jumlah satuan terkecil yang kebetulan sama", () => {
+    const rule = aturanAmbang({ triggerQty: 5, triggerUnit: "CTN" });
+    assert.equal(triggerReached(rule, { qty: 5, value: 50_000 }).ok, false);
+});
+
 test("ambang RUPIAH dinilai TERMASUK PPN, mengikuti bukti program MSG", () => {
     const rule = aturanAmbang({ triggerQty: 1_000_000, triggerUnit: "RP" });
     // DPP 910.000 -> dengan PPN 1.010.100, melewati ambang sejuta.

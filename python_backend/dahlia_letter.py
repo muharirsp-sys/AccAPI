@@ -358,7 +358,10 @@ def _parse_grup_produk(lines, blob, page_count):
         if not found:
             continue
         nama = flatten(found.group(2))
-        if len(nama) < 4 or nama.lower().startswith(("melampirkan", "distributor", "program", "wajib", "faktur")):
+        # "1 Lusin* (Boleh Campur ...)" adalah strata grup di atasnya (surat Oktober 2026), bukan
+        # grup baru -- tanpa ini manfaat dan "WAJIB ada K316EU" pindah ke grup yang salah.
+        if len(nama) < 4 or nama.lower().startswith(("melampirkan", "distributor", "program", "wajib", "faktur",
+                                                     "lusin", "karton")):
             continue
         groups.append((index, nama))
 

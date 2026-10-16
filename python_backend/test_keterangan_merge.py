@@ -86,7 +86,20 @@ def main():
     assert teks2.count("beban distributor") == 1, (
         f"boilerplate identik tercetak {teks2.count('beban distributor')}x, seharusnya sekali")
 
-    print("OK -- keterangan baris yang dilebur ikut tergabung; yang identik tidak diulang")
+    # Judul tiga baris ada di SETIAP halaman, bukan hanya halaman 1 (pemilik 16 Okt).
+    banyak = [dict(baris(n, ""), ketentuan=f"Beli {n} LSN (Boleh Campur)") for n in range(1, 41)]
+    hasil3 = backend.summary_manual_generate(FakeRequest(), token=TOKEN, rows_json=json.dumps(banyak))
+    assert hasil3.get("ok"), f"generate ketiga gagal: {hasil3}"
+    import pypdf
+    with open(MANUAL_OUTPUTS[hasil3["file_id"]]["form"], "rb") as f:
+        halaman = [" ".join((h.extract_text() or "").split()) for h in pypdf.PdfReader(f).pages]
+    assert len(halaman) >= 2, "uji butuh lebih dari satu halaman"
+    for n, isi in enumerate(halaman, 1):
+        for judul in ("SUMMARY PROGRAM ON FAKTUR BEBAN PRINCIPLE (COKLAT)",
+                      "PRINCIPLE UJI PERIODE SEPTEMBER 2026", "CV. SURYA PERKASA"):
+            assert judul in isi, f"halaman {n} tanpa judul '{judul}'"
+
+    print("OK -- keterangan baris yang dilebur ikut tergabung; yang identik tidak diulang; judul di tiap halaman")
 
 
 if __name__ == "__main__":

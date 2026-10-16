@@ -406,6 +406,32 @@ async def summary_syarat_claim_set(request: Request):
         return {"ok": False, "error": "Gagal menyimpan syarat klaim."}
 
 
+def label_rupiah(row, angka):
+    """Potongan rupiah di Form ditulis SEPERTI MESIN MENGHITUNGNYA (`summary_rules.tier_of`).
+
+    AMBANG RUPIAH BERARTI POTONGAN SENOTA. Program MSG "minimal belanja Rp 1.000.000 potong
+    Rp 20.000" adalah satu potongan untuk seluruh nota; "20000/PCS" menjanjikan sepuluh kali
+    lipat pada nota sepuluh baris.
+
+    AMBANG JUMLAH JUGA SENOTA, kecuali surat menyebut per satuan. Dulu semuanya dicetak
+    "/PCS", sedangkan mesin memotong SEKALI: Fonterra F149SP "Beli 6 renceng diskon Rp 3.000"
+    tercetak "3.000/PCS" padahal faktur mendapat Rp 3.000 sekali. Lembar yang diteken dan
+    aturan yang terbit harus menyatakan hal yang sama -- jadi label membaca penanda yang sama
+    (`per_unit`, "kelipatan") yang dibaca mesin.
+    """
+    from summary_rules import per_unit, threshold_of
+    ketentuan = str(row.get("ketentuan", "") or "")
+    jenis, minimum, satuan = threshold_of(ketentuan)
+    if jenis == "value":
+        return f"{angka}/NOTA"
+    satuan = satuan or "PCS"
+    if per_unit(row, satuan):
+        return f"{angka}/{satuan}"
+    if "kelipatan" in ketentuan.lower():
+        return f"{angka}/{satuan}" if minimum in ("", "1") else f"{angka}/{minimum} {satuan}"
+    return f"{angka}/NOTA"
+
+
 def kode_bentrok(excel_rows, pdf_meta):
     """(channel, surat, kode) yang diklaim lebih dari satu baris surat — penjaga V4.
 
@@ -415,13 +441,21 @@ def kode_bentrok(excel_rows, pdf_meta):
     bulanan Oktober 2026 mencetak 8707 Indomaret DAN baris ULTRA LIGHT 8789 MTI sebagai
     "(TIDAK ADA ITEM COCOK DI MASTER)": keduanya MT, keduanya menyebut ELLIPS H.VIT ULTRA LIGHT
     45ML, dan penjaga membuang kode itu dari keduanya.
+
+    STRATA JUMLAH JUGA BUKAN BENTROK. "Beli 70 DUS s/d 499 DUS 2%, 500 s/d 999 3%, 1000 UP 4%"
+    (MSM 223, September 2026) menyentuh kode yang sama tiga kali dan dulu tercetak "(TIDAK ADA
+    ITEM COCOK DI MASTER)". Baris strata ditulis dengan rentangnya (`s/d` / `UP`, checklist S);
+    paket yang bentrok ("4+1" dan "7+1" untuk barang yang sama) tidak. Satu kode bentrok bila
+    salah satu baris yang mengklaimnya BUKAN baris strata.
     """
-    peta: Dict[Tuple[str, str, str], set] = {}
+    peta: Dict[Tuple[str, str, str], Dict[int, bool]] = {}
     for er in excel_rows:
         if er["kode_barang"] and str(er.get("trig_unit", "")).upper() != "RP":
-            surat = str(pdf_meta.get(er["pdf_key"], {}).get("surat_program", "") or "").strip()
-            peta.setdefault((er["channel"], surat, er["kode_barang"]), set()).add(er["pdf_key"])
-    return {k for k, v in peta.items() if len(v) > 1}
+            meta = pdf_meta.get(er["pdf_key"], {})
+            surat = str(meta.get("surat_program", "") or "").strip()
+            strata = bool(re.search(r"\bs/d\b|\bUP\b", str(meta.get("ketentuan", "") or ""), re.I))
+            peta.setdefault((er["channel"], surat, er["kode_barang"]), {})[er["pdf_key"]] = strata
+    return {k for k, v in peta.items() if len(v) > 1 and not all(v.values())}
 
 
 @router.post("/summary/manual/generate")
@@ -658,8 +692,26 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         print_date = f"{now.month}/{now.day}/{now.year}"
         dibuat_date = f"{now.day:02d} {months[now.month - 1]} {now.year}"
 
+        # Judul di SETIAP halaman (permintaan pemilik 16 Okt): halaman lanjutan harus tetap
+        # terbaca principal dan periodenya tanpa membalik ke halaman 1.
+        from shared import _label_periode
+        _mulai = [str(r.get("periode_start") or "") for r in rows if r.get("periode_start")]
+        _akhir = [str(r.get("periode_end") or "") for r in rows if r.get("periode_end")]
+        global_period = ((_label_periode(min(_mulai), max(_akhir)) if _mulai and _akhir else "")
+                         or (rows[0].get("periode", "") if rows else ""))
+        nama_principal = (principle_for_claim or (str(rows[0].get("principle", "")) if rows else "")).strip().upper()
+        baris_principal = " ".join(x for x in (f"PRINCIPLE {nama_principal}" if nama_principal else "",
+                                                f"PERIODE {global_period.upper()}" if global_period else "") if x)
+
         def my_canvas(canvas_obj, doc_obj):
             canvas_obj.saveState()
+            lebar, tinggi = landscape(A4)
+            canvas_obj.setFont('Helvetica-Bold', 12)
+            canvas_obj.drawCentredString(lebar / 2, tinggi - 1.1*cm, "SUMMARY PROGRAM ON FAKTUR BEBAN PRINCIPLE (COKLAT)")
+            canvas_obj.setFont('Helvetica', 10)
+            if baris_principal:
+                canvas_obj.drawCentredString(lebar / 2, tinggi - 1.6*cm, baris_principal)
+            canvas_obj.drawCentredString(lebar / 2, tinggi - 2.05*cm, "CV. SURYA PERKASA")
             canvas_obj.setFont('Helvetica-Bold', 7)
             # Top Left
             canvas_obj.drawString(doc_obj.leftMargin, landscape(A4)[1] - 0.5*cm, f"Di Print Tgl : {print_date}")
@@ -669,35 +721,20 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             
             # Bottom of Header (Before Table Starts)
             canvas_obj.setFont('Helvetica', 8)
-            canvas_obj.drawString(doc_obj.leftMargin, landscape(A4)[1] - 2*cm, f"Dibuat Tanggal : {dibuat_date}")
+            canvas_obj.drawString(doc_obj.leftMargin, tinggi - 2.55*cm, f"Dibuat Tanggal : {dibuat_date}")
             canvas_obj.setFont('Helvetica-Bold', 8)
-            canvas_obj.drawRightString(landscape(A4)[0] - doc_obj.rightMargin, landscape(A4)[1] - 2*cm, "(ON PRINCIPLE COKLAT)")
+            canvas_obj.drawRightString(lebar - doc_obj.rightMargin, tinggi - 2.55*cm, "(ON PRINCIPLE COKLAT)")
             
             canvas_obj.restoreState()
 
         # FASE 6: PDF reproducible (CreationDate/ModDate/doc-id tetap) -> byte-identik antar-run
         enable_pdf_determinism()
         # Update margins to give space for the custom canvas headers
-        doc = SimpleDocTemplate(form_path, pagesize=landscape(A4), rightMargin=0.5*cm, leftMargin=0.5*cm, topMargin=2.2*cm, bottomMargin=0.5*cm)
+        doc = SimpleDocTemplate(form_path, pagesize=landscape(A4), rightMargin=0.5*cm, leftMargin=0.5*cm, topMargin=2.75*cm, bottomMargin=0.5*cm)
         elements = []
         styles = getSampleStyleSheet()
 
-        # Add Title and Subtitle properly centered
-        title_style = styles["Heading3"].clone("TitleStyle")
-        title_style.alignment = TA_CENTER
-        title_style.fontSize = 12
-        elements.append(Paragraph("<b>SUMMARY PROGRAM ON FAKTUR BEBAN PRINCIPLE (COKLAT)</b>", title_style))
-        
-        sub_style = styles["Normal"].clone("SubStyle")
-        sub_style.alignment = TA_CENTER
-        sub_style.fontSize = 11
-        sub_style.fontName = 'Helvetica'
-        
-        # Determine Period globally from the first row if available
-        global_period = rows[0].get("periode", "") if rows else ""
-        period_text = f" PERIODE {global_period.upper()}" if global_period else ""
-        elements.append(Paragraph(f"CV. SURYA PERKASA {period_text}", sub_style))
-        elements.append(Spacer(1, 15))
+        elements.append(Spacer(1, 4))
 
         # KEPALA DUA BARIS. "Channel Outlet" memayungi dua kolom: channelnya (GT/MT) dan
         # ada-tidaknya daftar outlet peserta. Keduanya dipisah karena menjawab pertanyaan yang
@@ -772,18 +809,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             if bt == "DISC_RP" and re.fullmatch(r"\d{4,}", b):
                 b = _titik(b)
             if bt == "DISC_RP" and has_number(b) and "/" not in b:
-                # AMBANG RUPIAH BERARTI POTONGAN SENOTA, BUKAN PER SATUAN.
-                #
-                # Program MSG berbunyi "minimal belanja Rp 1.000.000 potong Rp 20.000" — satu
-                # potongan untuk seluruh nota. Menuliskannya "20000/PCS" di lembar yang dibaca
-                # orang berarti menjanjikan Rp 20.000 per barang; pada nota sepuluh baris itu
-                # sepuluh kali lipat dari bunyi suratnya.
-                from summary_rules import threshold_of
-                _jenis, _, _ = threshold_of(str(r.get("ketentuan", "")))
-                if _jenis == "value":
-                    return f"{b}/NOTA"
-                unit = unit_from_text(str(r.get("ketentuan", "")) + " " + b)
-                return f"{b}/{unit}"
+                return label_rupiah(r, b)
             # Pembaca surat mengeluarkan persen sebagai angka telanjang ("3"), dan angka itulah
             # yang dipakai menghitung. Di lembar yang diteken orang, "3" sendirian tidak berarti
             # apa-apa — satuannya dipasang di sini, bukan disimpan ke datanya.
@@ -1458,7 +1484,10 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
     if not owned(master, user):
         return JSONResponse(status_code=404, content={"ok": False, "error": "Master tidak tersedia. Muat master kembali."})
     try:
-        raw = await read_upload_file_limited(pdf, max_bytes=MAX_PDF_UPLOAD_BYTES, allowed_exts=(".pdf",), label="PDF Program")
+        from summary_mistral import foto_ke_pdf
+        raw = foto_ke_pdf(await read_upload_file_limited(pdf, max_bytes=MAX_PDF_UPLOAD_BYTES,
+                                                         allowed_exts=(".pdf", ".jpg", ".jpeg", ".png"),
+                                                         label="Surat program"))
         result = (kino_extraction(raw, master) or deterministic_extraction(raw, master)
                   or await extract_mistral(raw, master, user, principle_name))
         # Yang jawabannya sudah pasti tidak perlu ditanyakan kepada peninjau: principal yang
@@ -1480,6 +1509,10 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         # dari penanda barisnya. Kino dan principal lain tetap di jalur lama, tidak berubah.
         jalur_det = surat_struktur.jalur(principle_name)
         if jalur_det:
+            if surat_struktur.nomor_terbawa(result["rows"]):
+                result["warnings"] = [*(result.get("warnings") or []),
+                                      "Nomor surat diisi dari halaman sebelumnya pada baris yang halamannya "
+                                      "tidak mencetak nomor; periksa sebelum publikasi."]
             if jalur_det in ("FONTERRA", "NATUR", "ADNA", "FORISA"):
                 # Penanda distempel DI SINI, bukan oleh model: baris satu principal tidak boleh
                 # bisa nyasar ke matcher principal lain hanya karena modelnya salah menulis.

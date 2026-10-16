@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
-import { alasanBonus, alasanHarga, angkaQuery, cabangDariTag, hargaPetugasSah, hargaSah, normalNama, petaCabang, polaLike, putusanHarga, sumberHarga,
+import { alasanBonus, alasanHarga, angkaQuery, cabangDariTag, hargaPetugasSah, hargaSah, normalNama, petaCabang, polaLike, putusanHarga, rasioSatuan, sumberHarga,
     TAG_KE_CABANG, TAG_NON_JUAL, tolakCabangLain, tripwireIzin } from "./order-cabang.ts";
 import { requireCronSecret, samaRahasia } from "./api-security.ts";
 import { barisItem } from "./sync.ts";
@@ -285,4 +285,11 @@ test("putaran 2 butir 9: sumberHarga — master / master_default (fallback caban
     assert.equal(sumberHarga({ ...dasar, source: "tier", hargaDefault: true }), "master_default");
     assert.equal(sumberHarga({ ...dasar, source: "tier" }), "master");
     assert.equal(sumberHarga({ ...dasar, source: "petugas", hargaMaster: null }), "petugas");
+});
+
+test("rasioSatuan: satuan dasar = 1, kelipatan dari ratio Accurate; nama/rasio kosong atau tak sah dilewati (mesin promo yang menahan)", () => {
+    const kosong = { unit1Name: null, unit2Name: null, unit3Name: null, unit4Name: null, unit5Name: null, ratio2: null, ratio3: null, ratio4: null, ratio5: null };
+    assert.deepEqual(rasioSatuan({ ...kosong, unit1Name: "pcs", unit2Name: "KRT", ratio2: 120 }), { PCS: 1, KRT: 120 });
+    assert.deepEqual(rasioSatuan({ ...kosong, unit1Name: "PCS", unit2Name: "KRT", ratio2: 0, unit3Name: " ", ratio3: 12 }), { PCS: 1 });
+    assert.deepEqual(rasioSatuan(kosong), {});
 });
