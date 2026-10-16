@@ -78,7 +78,8 @@ export function artinya(rule: RuleLike): string {
         ? "termasuk klaim principal — bisa ditagihkan"
         : "termasuk beban distributor — jadi biaya sendiri";
     const n = (v: string | undefined) => Number(v || 0).toLocaleString("id-ID");
-    const ambang = Number(rule.triggerQty) > 0
+    // "SEMUA" = program tanpa minimum (Setiap Pengambilan): tidak ada ambang untuk diceritakan.
+    const ambang = Number(rule.triggerQty) > 0 && rule.triggerUnit !== "SEMUA"
         ? rule.triggerUnit === "RP" ? ` kalau belanjanya minimal Rp ${n(rule.triggerQty)},` : ` kalau beli minimal ${n(rule.triggerQty)} ${rule.triggerUnit},`
         : "";
     if (rule.benefitType === "DISC_RP") return `${siapa}${ambang} dapat potongan ${rupiah(rule.benefitValue ?? 0)} untuk seluruh nota. Potongan ini ${beban}.`;

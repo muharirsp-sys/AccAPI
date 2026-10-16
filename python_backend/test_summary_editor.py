@@ -44,6 +44,18 @@ def main():
     os.environ["SUMMARY_EDITOR_MODEL"] = "other"
     fail = asyncio.run(run("u|a"))
     assert fail["rows"][0]["paket"] == "4+1" and any("Editor QA tidak berjalan" in w for w in fail["warnings"]), fail["warnings"]
+    # Foto surat (WhatsApp) masuk jalur yang sama: dibungkus PDF satu halaman, byte-nya tetap
+    # sama untuk foto yang sama (cache OCR), dan berkas palsu berekstensi .jpg ditolak.
+    gambar = fitz.open(); gambar.new_page(width=60, height=40)
+    png = gambar[0].get_pixmap().tobytes("png")
+    jadi = summary_mistral.foto_ke_pdf(png)
+    assert jadi.startswith(b"%PDF-") and fitz.open(stream=jadi, filetype="pdf").page_count == 1
+    assert summary_mistral.foto_ke_pdf(png) == jadi and summary_mistral.foto_ke_pdf(raw) is raw
+    try:
+        summary_mistral.foto_ke_pdf(b"<html>bukan foto</html>")
+        raise AssertionError("berkas palsu lolos sebagai foto")
+    except ValueError:
+        pass
     print("smoke editor PASSED")
 
 

@@ -211,6 +211,38 @@ PROMPT["FORISA"] = PROMPT["FONTERRA"]
 BIDANG["FORISA"] = BIDANG["FONTERRA"]
 
 
+def nomor_terbawa(rows):
+    """Satu unggahan, satu nomor surat per halaman yang tak mencetaknya.
+
+    Halaman diminta satu per satu, dan halaman tanpa kop nomor membuat model MENGARANG: Trade GT
+    Priskila Oktober 2026 pulang dengan "2", "M 9.15", dan kosong untuk blok MTI, Star Outlet,
+    dan Grosir. Nilai yang bukan bentuk nomor surat diganti nomor asli terakhir dari halaman
+    sebelumnya (nomor asli pertama di halaman itu sendiri didahulukan). Nomor asli tidak pernah
+    ditimpa, jadi PDF berisi beberapa surat tetap terpisah. Mengembalikan jumlah baris yang
+    diisi, supaya pemanggil menampilkannya sebagai peringatan -- isian bukan bacaan.
+    ponytail: "bentuk nomor" = >= 2 '/' dan ada huruf ("002/PPM/NSPM/X/2026", bukan "01/10/2026");
+    nomor tanpa '/' (Fonterra "F149SP") tidak dibawa -- tambah pola bila suratnya berhalaman banyak.
+    """
+    def nyata(nomor):
+        return nomor.count("/") >= 2 and any(c.isalpha() for c in nomor)
+
+    def halaman(row):
+        return row.get("source_page") or 0
+
+    pertama = {}
+    for row in rows:
+        nomor = str(row.get("surat_program") or "").strip()
+        if nyata(nomor):
+            pertama.setdefault(halaman(row), nomor)
+    asli, diisi = "", 0
+    for row in sorted(rows, key=halaman):
+        asli = pertama.get(halaman(row), asli)
+        if asli and not nyata(str(row.get("surat_program") or "").strip()):
+            row["surat_program"] = asli
+            diisi += 1
+    return diisi
+
+
 def kontrak(nama_jalur, principle_name):
     """(daftar field, teks perintah) untuk jalur ini."""
     teks = PROMPT[nama_jalur].replace("{principle_name.upper()}", str(principle_name or "").upper())

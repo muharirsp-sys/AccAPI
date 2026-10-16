@@ -544,8 +544,10 @@ export function triggerReached(
     const sebut = `${rule.suratProgram ?? ""} ${rule.promoGroup ?? ""}`.trim() || "aturan ini";
     const beli = bought ?? { qty: 0, value: 0 };
 
-    if (unit === "KRT") {
-        return { ok: false, reason: `Ambang ${sebut} tertulis ${ambang} KRT, dan isi karton berbeda tiap barang `
+    // CTN (bahasa surat) = KRT (bahasa faktur Accurate): satu karton. Dulu CTN jatuh ke perbandingan
+    // satuan terkecil di bawah, jadi "Beli 5 CTN" dianggap terpenuhi oleh 5 PCS.
+    if (unit === "KRT" || unit === "CTN") {
+        return { ok: false, reason: `Ambang ${sebut} tertulis ${ambang} ${unit}, dan isi karton berbeda tiap barang `
             + "jadi tidak bisa diubah ke satuan terkecil tanpa menebak. Tulis ambangnya dalam satuan terkecil (PCS) "
             + "di Aturan Promo supaya bisa ditegakkan." };
     }

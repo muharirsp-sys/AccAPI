@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 # Modul determinisme Summary Program (FASE 1-4): cache OCR, parser tier posisional,
 # resolusi varian tabel, correction store stable-key. Lihat SYSTEM_MAP.md.
 from variant_resolver import load_variant_mapping, resolve_variant
+from priskila_matcher import load_rules
 from correction_store import load_corrections as load_stable_corrections, apply_corrections as apply_stable_corrections, save_correction, correction_key
 from tier_parser import regroup_rows_by_tier
 from golden_store import canonical_signature, golden_check_and_freeze
@@ -29,6 +30,15 @@ _VARIANT_MAPPING = load_variant_mapping()
 # Dikumpulkan sekali dari `exclude_kelompok` tiap aturan variant_mapping, dan distrip di AWAL
 # pencocokan — bukan di akhir. Baris yang tak ter-explode dulu mengembalikan kode mentahnya,
 # dan enam kode GLASS bocor ke klaim pada run live.
+_VARIANT_QUALIFIERS = tuple(load_rules().get("variant_qualifiers", ()))
+
+
+def _qualifier_of(item) -> frozenset:
+    """Qualifier sub-lini (mis. SPORT) pada nama principle barang master; kosong untuk lini biasa."""
+    kata = " ".join(str(item.get("principle") or "").split()).upper().split()
+    return frozenset(q for q in _VARIANT_QUALIFIERS if q in kata)
+
+
 _EXCLUDED_KELOMPOKS = {
     " ".join(str(_k).strip().split()).upper()
     for _rule in _VARIANT_MAPPING.values()
@@ -3935,6 +3945,16 @@ def _apply_native_kelompok(rows_to_check, master_items):
     _excluded_codes = {str(it.get("kode_barang", "")).strip() for it in master_items
                        if norm(it.get("kelompok")) in _EXCLUDED_KELOMPOKS} if _EXCLUDED_KELOMPOKS else set()
 
+    # Kelompok yang SUDAH dipegang baris-baris satu program (surat, channel, ketentuan, benefit).
+    # Dipakai pasangan #3 di bawah: pasangan yang sudah punya barisnya sendiri tidak ditarik lagi.
+    def _kunci_program(row):
+        return tuple(norm(row.get(k)) for k in ("surat_program", "channel_gtmt", "ketentuan", "benefit"))
+    _kel_of = {str(it.get("kode_barang", "")).strip(): norm(it.get("kelompok")) for it in master_items}
+    _kel_program = {}
+    for r in rows_to_check:
+        _kel_program.setdefault(_kunci_program(r), set()).update(
+            _kel_of[k.strip()] for k in str(r.get("kode_barangs", "")).split(",") if k.strip() in _kel_of)
+
     for r in rows_to_check:
         if _excluded_codes:
             _kb = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
@@ -3984,12 +4004,18 @@ def _apply_native_kelompok(rows_to_check, master_items):
         # jatuh ke SELURUH master saat kelompok LLM tak persis cocok). Aturan surat: banded (BND)
         # dikecualikan dari klaim promo.
         # _variant_hit is None: JANGAN ekspansi hasil FASE 3b (variant_resolver sengaja membatasi
-        # varian, mis. Regazza EDT Sport = HANYA 4 -- ekspansi se-kelompok akan merusak batasan itu).
+        # varian, mis. Spray Cologne = WHITE SR + BLACK SR tanpa GLASS -- ekspansi se-kelompok merusaknya).
         if matched_items and _variant_hit is None:
             _vlist_probe = split_list(r.get("variant", ""))
             _v_all_probe = (not _vlist_probe) or any(norm(x) == "ALL VARIANT" for x in _vlist_probe)
             if _v_all_probe:
                 _seed_keys = {(norm(it.get("kelompok")), norm(it.get("gramasi"))) for it in matched_items}
+                # Sub-lini ber-qualifier (Regazza EDT "Sport") sekelompok dengan lini biasanya, tapi
+                # programnya lain (Beli 4 vs Beli 7). Saudara hanya ditarik bila qualifier-nya sama
+                # dengan salah satu benih sekelompok -- sama seperti priskila_matcher._apply_partition.
+                _seed_qual = {}
+                for it in matched_items:
+                    _seed_qual.setdefault(norm(it.get("kelompok")), set()).add(_qualifier_of(it))
                 _seen_codes = {str(it.get("kode_barang", "")).strip() for it in matched_items}
                 # #3 (2026-07-15): kelompok yg BERPASANGAN per variant_mapping -- mis. surat
                 # "Casablanca Spray Cologne Series" = White SR + Black SR SEKALIGUS (dikonfirmasi
@@ -4000,12 +4026,18 @@ def _apply_native_kelompok(rows_to_check, master_items):
                 # kehilangan kelompok lain (beda dgn kalau resolve_variant yg fire).
                 _seed_kels = {norm(it.get("kelompok")) for it in matched_items}
                 _seed_grams = {norm(it.get("gramasi")) for it in matched_items}
+                # Pasangan yang sudah dipegang baris LAIN dari program yang sama tidak ditarik.
+                # Pasangannya selalu beda merek (WHITE SR = FM, BLACK SR = HM), jadi menariknya
+                # pasti melahirkan baris pecahan baru di bawah. Baris yang sudah dipecah HM/FM
+                # (oleh Priskila, atau oleh simpan sebelumnya) lalu saling melahirkan kembaran
+                # tiap Simpan: golden Priskila 53 -> 61 -> 77 -> 109 baris (15 Okt 2026).
+                _dipegang_lain = _kel_program.get(_kunci_program(r), set()) - _seed_kels
                 for _rule in _VARIANT_MAPPING.values():
                     _rk = {norm(k) for k in _rule.get("resolve_to_kelompok", [])}
                     if not _rk or not (_seed_kels & _rk):
                         continue
                     _excl = {norm(k) for k in _rule.get("exclude_kelompok", [])}
-                    for _k in _rk - _excl:
+                    for _k in _rk - _excl - _dipegang_lain:
                         for _g in _seed_grams:
                             _seed_keys.add((_k, _g))
                 # Kemasan baris tetap mengikat di sini. Tanpa ini, baris "ELLIPS ... BLR" yang
@@ -4021,7 +4053,8 @@ def _apply_native_kelompok(rows_to_check, master_items):
                         continue
                     if _kem and kemasan_of(it.get("nama_barang")) not in _kem:
                         continue
-                    if (norm(it.get("kelompok")), norm(it.get("gramasi"))) in _seed_keys:
+                    if ((norm(it.get("kelompok")), norm(it.get("gramasi"))) in _seed_keys
+                            and _qualifier_of(it) in _seed_qual.get(norm(it.get("kelompok")), {_qualifier_of(it)})):
                         matched_items.append(it)
                         _seen_codes.add(_kode)
                     
@@ -4225,7 +4258,9 @@ def _terapkan_all_variant_eksklusif(rows):
     Itu bukan kekhawatiran teoretis: 13 aturan Excel `BP2609007713` yang sudah hidup di produksi
     melanggarnya hari ini. Keputusan pengguna 16 September 2026 menutupnya, dan ini penegakannya.
 
-    Lingkupnya SEMPIT dengan sengaja: hanya baris dengan NOMOR SURAT dan KELOMPOK yang sama.
+    Lingkupnya SEMPIT dengan sengaja: hanya baris dengan NOMOR SURAT, CHANNEL, dan KELOMPOK yang
+    sama. Channel berbeda = program berbeda; satu nomor surat Priskila dibawa ke blok MTI/Grosir/
+    Star Outlet (`surat_struktur.nomor_terbawa`), dan tanpa channel baris MTI kehilangan kodenya.
     Dua surat berbeda boleh memberi bonus pada barang yang sama — itu keputusan principal, bukan
     kekeliruan pembacaan. Dan hanya varian BERNAMA yang mencabut; dua baris yang sama-sama
     "ALL VARIANT" tidak saling mencabut, karena tidak ada yang bisa dikatakan lebih spesifik.
@@ -4239,6 +4274,7 @@ def _terapkan_all_variant_eksklusif(rows):
         if not v or v == "ALL VARIANT":
             continue
         kunci = (str(r.get("surat_program", "") or "").strip().upper(),
+                 str(r.get("channel_gtmt", "") or "").strip().upper(),
                  str(r.get("kelompok", "") or "").strip().upper())
         for kode in str(r.get("kode_barangs", "") or "").split(","):
             if kode.strip():
@@ -4250,6 +4286,7 @@ def _terapkan_all_variant_eksklusif(rows):
         if _norm_var(r.get("variant")) not in ("", "ALL VARIANT"):
             continue
         kunci = (str(r.get("surat_program", "") or "").strip().upper(),
+                 str(r.get("channel_gtmt", "") or "").strip().upper(),
                  str(r.get("kelompok", "") or "").strip().upper())
         milik_lain = diklaim.get(kunci)
         if not milik_lain:

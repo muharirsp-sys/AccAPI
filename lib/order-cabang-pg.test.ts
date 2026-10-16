@@ -500,10 +500,12 @@ test("PG O1 pratinjau: harga dari cabang PELANGGAN (branch_id badan diabaikan); 
 test("PG O1 /api/orders/harga: CRON = semua cabang + harga beku -> payload faktur; harga petugas per baris (harga:false lama tidak berlaku); sesi sales tercakup", { skip: pgSkip }, async () => {
     sebagai(null);
     const cron = { authorization: "Bearer rahasia-o1" };
+    // Satuan hanya datang dari item/detail.do (list.do tiruan tidak membawanya): isi langsung, lalu rasionya ikut dijawab ke mesin promo.
+    await utama.pool.query("UPDATE item SET unit1_name = 'PCS', unit2_name = 'KRT', ratio2 = 24 WHERE no = 'H-01'");
     const hz = await panggil(m.hargaRoute.POST(req("POST", "/api/orders/harga", { customer_no: "C-C003-HZ", order_date: "2026-10-12",
         lines: [{ code: "H-01", unit: "pcs", quantity: "3" }] }, cron)));
     assert.equal(hz.status, 200, JSON.stringify(hz.body));
-    assert.deepEqual(hz.body.lines, [{ code: "H-01", unit: "PCS", quantity: "3", price: "12000", sumber_harga: "master" }]);
+    assert.deepEqual(hz.body.lines, [{ code: "H-01", unit: "PCS", quantity: "3", price: "12000", sumber_harga: "master", rasio: { PCS: 1, KRT: 24 } }]);
     // Putaran 1: `harga:false` (bentuk lama) TIDAK lagi melewati harga master — baris tanpa harga petugas wajib harga master sah.
     const lama = await panggil(m.hargaRoute.POST(req("POST", "/api/orders/harga", { customer_no: "C-A001-KN", order_date: "2026-10-12", harga: false,
         lines: [{ code: "K-04", unit: "PCS", quantity: "1" }] }, cron)));
@@ -512,8 +514,8 @@ test("PG O1 /api/orders/harga: CRON = semua cabang + harga beku -> payload faktu
     const campur = await panggil(m.hargaRoute.POST(req("POST", "/api/orders/harga", { customer_no: "C-A001-KN", order_date: "2026-10-12",
         lines: [{ code: "K-04", unit: "PCS", quantity: "1", price: "9000.50" }, { code: "K-01", unit: "PCS", quantity: "2" }] }, cron)));
     assert.equal(campur.status, 200, JSON.stringify(campur.body));
-    assert.deepEqual(campur.body.lines, [{ code: "K-04", unit: "PCS", quantity: "1", price: "9000.50", sumber_harga: "petugas" },
-        { code: "K-01", unit: "PCS", quantity: "2", price: "7207", sumber_harga: "master" }]);
+    assert.deepEqual(campur.body.lines, [{ code: "K-04", unit: "PCS", quantity: "1", price: "9000.50", sumber_harga: "petugas", rasio: {} },
+        { code: "K-01", unit: "PCS", quantity: "2", price: "7207", sumber_harga: "master", rasio: {} }]);
     for (const buruk of ["0", "-1", "1e3"]) {
         const r = await panggil(m.hargaRoute.POST(req("POST", "/api/orders/harga", { customer_no: "C-A001-KN", order_date: "2026-10-12",
             lines: [{ code: "K-04", unit: "PCS", price: buruk }] }, cron)));

@@ -23,7 +23,7 @@ from order_duplicate import duplicate_message, find_duplicate
 from pydantic import ValidationError
 from shared import get_current_user, user_has_permission, validate_csrf_request
 from summary_store import JsonStore, connect, identity
-from summary_rules import Program, calculate, suggestions
+from summary_rules import Program, RasioKosong, calculate, suggestions
 import order_cabang
 import outlet_class
 import outlet_channel
@@ -132,7 +132,11 @@ def hitung_promo(customer_no, channel, order_date, lines, saran=False):
     if not programs:
         raise Ditolak(409, "ATURAN_BELUM_TERBIT", "Belum ada aturan promo terbit; terbitkan Summary sebelum order dihitung")
     kelas, tahu = outlet_class.classes_of(customer_no), outlet_class.known()
-    result = calculate(programs, lines, order_date, channel, outlet_classes=kelas, known_classes=tahu)
+    try:
+        result = calculate(programs, lines, order_date, channel, outlet_classes=kelas, known_classes=tahu)
+    except RasioKosong as error:
+        # Owner 16 Okt 2026: rasio satuan yang dibutuhkan program tidak ada -> order DITAHAN, bukan baris diam-diam tak dihitung.
+        raise Ditolak(409, "RASIO_SATUAN_KOSONG", str(error)) from None
     hasil = {"rules": [program.model_dump(mode="json") for program in programs], "sources": sources, "result": result,
              "sidik": sidik_order(customer_no, channel, order_date, lines, result)}
     if saran:
@@ -230,6 +234,10 @@ def baris_bersih(line):
     satuan program apa adanya, jadi "pcs" vs "PCS" antara pratinjau dan simpan akan membuat angka (dan sidik) berbeda."""
     clean = {key: str(line.get(key, "") or "").strip() for key in ("code", "unit", "quantity", "price")}
     clean["unit"] = clean["unit"].upper()
+    # Rasio satuan pratinjau datang dari Next (`periksaOrder`); simpan memakai rasio jawaban Next lagi (order_cabang.periksa),
+    # jadi rasio karangan pemanggil langsung hanya mengubah pratinjaunya sendiri dan sidiknya tidak akan cocok.
+    if isinstance(line.get("rasio"), dict):
+        clean["rasio"] = {str(unit)[:20]: nilai for unit, nilai in list(line["rasio"].items())[:10]}
     return clean
 
 

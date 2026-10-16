@@ -9,7 +9,7 @@ from decimal import Decimal
 
 os.environ["SUMMARY_STORE_PATH"] = os.path.join(tempfile.mkdtemp(prefix="summary-check-"), "summary.sqlite3")
 
-from summary_rules import calculate, compile_programs, suggestions, validate_programs  # noqa: E402
+from summary_rules import RasioKosong, calculate, compile_programs, suggestions, threshold_of, validate_programs  # noqa: E402
 from summary_store import create_draft, get_draft, identity  # noqa: E402
 
 MASTER = {"A", "B", "C"}
@@ -86,6 +86,13 @@ def main():
 
     # Satuan berbeda tidak dikonversi diam-diam.
     assert run([program()], [line(unit="CTN")])["discount"] == "0.00"
+    # Kecuali karton: surat "CTN" = faktur Accurate "KRT", dua arah; bonus keluar sebagai KRT.
+    assert run([program(unit="CTN")], [line(unit="KRT")])["discount"] == "5000.00"
+    assert run([program(unit="KRT")], [line(unit="ctn")])["discount"] == "5000.00"
+    karton = run([program(unit="CTN", tiers=[dict(minimum="10", bonus_code="A", bonus_quantity="1", bonus_unit="CTN")])],
+                 [line(unit="KRT")])
+    assert karton["bonuses"] == [dict(program_id="P1", code="A", unit="KRT", quantity="1")], karton["bonuses"]
+    assert suggestions(validate_programs([program(unit="CTN")], MASTER, 1), [line(qty="4", unit="KRT")], "2026-06-01", "GT")
 
     rejects([program(tiers=[dict(minimum="10")])], "tier tanpa benefit")
     rejects([program(tiers=[dict(minimum="20", percentages=["5"]), dict(minimum="10", percentages=["10"])])], "tier tidak urut")
@@ -113,6 +120,8 @@ def main():
     assert get_draft(draft["id"], "lain@example.com") is None
     print("summary rules check: OK")
     check_compiler()
+    check_tanpa_minimum()
+    check_konversi_satuan()
     check_codes()
     check_suggestions()
     check_outlet()
@@ -244,6 +253,80 @@ def row(**overrides):
 def compiled(rows, pages=1):
     programs, issues = compile_programs(rows)
     return validate_programs(programs, MASTER, pages), issues
+
+
+def check_tanpa_minimum():
+    # "Setiap Pengambilan" = tanpa minimum, satuan apa pun -- faktur ber-KRT ikut dipotong.
+    programs, issues = compiled([row(ketentuan="Setiap Pengambilan", benefit="20")])
+    assert issues == [] and programs[0].unit == "SEMUA", (issues, programs)
+    hasil = calculate(programs, [line(qty="1", price="10000", unit="KRT")], "2026-06-15", "GT")
+    assert hasil["discount"] == "2000.00", hasil
+    # Angka setelah "pengambilan" tetap ambang, bukan tanpa minimum.
+    programs, _ = compiled([row(ketentuan="Setiap pengambilan 30 PCS", benefit="20")])
+    assert (programs[0].unit, programs[0].tiers[0].minimum) == ("PCS", "30"), programs
+    # Tanda baca tidak menggagalkan frasanya.
+    assert threshold_of("Setiap Pengambilan.") == ("quantity", "1", "SEMUA")
+    # Ambang yang tertulis di luar "Beli N" BUKAN tanpa minimum: ditahan atau dibaca sebagai rupiah.
+    for frasa in ("Setiap pengambilan minimal 5 KRT", "Setiap pengambilan (min. 3 KRT)", "Tiap pengambilan >= 10 DUS",
+                  "Setiap pengambilan minimal order 5 KRT", "Setiap pengambilan paling sedikit 5 KRT",
+                  "Setiap pengambilan sebanyak 5 KRT", "Setiap pengambilan di atas 3 KRT"):
+        assert threshold_of(frasa)[1] == "", frasa
+    assert threshold_of("Setiap pengambilan minimal Rp 5.000.000") == ("value", "5000000", "PCS")
+    # Rupiah dan bonus butuh satuan: lintas satuan, barang yang sama di baris KRT dan PCS terhitung dua kali.
+    for benefit_type, benefit, keterangan in (("DISC_RP", "500", "per pcs"), ("DISC_RP", "50000", ""), ("BONUS_QTY", "1 PCS", "")):
+        _, issues = compile_programs([row(ketentuan="Setiap Pengambilan", benefit_type=benefit_type, benefit=benefit, keterangan=keterangan)])
+        assert issues, (benefit_type, benefit, keterangan)
+    # Tanpa minimum + strata bersatuan, barang sama = SATU program bertingkat, di urutan baris mana pun.
+    for urut in (1, -1):
+        dasar_strata = [row(ketentuan="Setiap Pengambilan", benefit="2"), row(no="2", ketentuan="Beli 5 KRT", benefit="5")][::urut]
+        programs, issues = compiled(dasar_strata)
+        assert issues == [] and len(programs) == 1 and programs[0].unit == "KRT", (issues, programs)
+        hasil = calculate(programs, [line(qty="5", price="100000", unit="KRT")], "2026-06-15", "GT")
+        assert hasil["discount"] == "25000.00", hasil
+
+
+def check_konversi_satuan():
+    # Owner 16 Okt: "Beli 1 CTN s/d 5 CTN 5%", mix variant + mix gramasi, isi karton 120.
+    # A 4 KRT + B 20 PCS + C 100 PCS = 5 KRT -> KETIGA baris dapat 5%.
+    programs, issues = compiled([row(ketentuan="Beli 1 CTN s/d 5 CTN, mix variant dan mix gramasi", kode_barangs="A,B,C")])
+    assert issues == [], issues
+    rasio = {"PCS": 1, "KRT": 120}
+    order = [dict(line("A", "4", "1200000", "KRT"), rasio=rasio), dict(line("B", "20", "10000"), rasio=rasio),
+             dict(line("C", "100", "10000"), rasio=rasio)]
+    hasil = calculate(programs, order, "2026-06-15", "GT")
+    assert [row["percents"] for row in hasil["lines"]] == [["5"], ["5"], ["5"]], hasil["lines"]
+    assert hasil["discount"] == "300000.00" and "rasio" not in hasil["lines"][0], hasil
+    # Pecahan eksak: 3 x 40 PCS isi 120 = TEPAT 1 KRT (Decimal 1/3 x 3 = 0,999... dulu jatuh di bawah ambang).
+    programs, _ = compiled([row(ketentuan="Beli 1 KRT, mix variant dan mix gramasi", kode_barangs="A,B,C")])
+    sepertiga = [dict(line(kode, "40", "1000"), rasio=rasio) for kode in "ABC"]
+    assert [row["percents"] for row in calculate(programs, sepertiga, "2026-06-15", "GT")["lines"]] == [["5"]] * 3
+    programs, _ = compiled([row(ketentuan="Beli 1 KRT, mix variant dan mix gramasi, berlaku kelipatan", kode_barangs="A,B,C",
+                                benefit_type="BONUS_QTY", benefit="1 PCS")])
+    dua_krt = [dict(line("A", "1", "120000", "KRT"), rasio=rasio)] + sepertiga
+    assert calculate(programs, dua_krt, "2026-06-15", "GT")["bonuses"][0]["quantity"] == "2"
+    # Per barang = per KODE: 4 KRT + 120 PCS barang A = 5 KRT barang A, kedua baris dapat.
+    programs, _ = compiled([row(ketentuan="Beli 5 KRT")])
+    dua_satuan = [dict(line("A", "4", "120000", "KRT"), rasio=rasio), dict(line("A", "120", "1000"), rasio=rasio)]
+    assert [row["percents"] for row in calculate(programs, dua_satuan, "2026-06-15", "GT")["lines"]] == [["5"], ["5"]]
+    assert not suggestions(programs, dua_satuan, "2026-06-15", "GT")
+    # Kurang 1 PCS dari 5 KRT isi 240: saran menulis 0,01 (dibulatkan naik), bukan "Tambah 0".
+    kurang_satu = [dict(line("A", "1199", "1000"), rasio={"PCS": 1, "KRT": 240})]
+    assert suggestions(programs, kurang_satu, "2026-06-15", "GT")[0]["message"].startswith("Tambah 0.01 KRT"), suggestions(programs, kurang_satu, "2026-06-15", "GT")
+    # Per barang juga: 600 PCS satu barang = 5 KRT.
+    programs, _ = compiled([row(ketentuan="Beli 5 KRT")])
+    assert calculate(programs, [dict(line("A", "600", "1000"), rasio=rasio)], "2026-06-15", "GT")["discount"] == "30000.00"
+    # Potongan per satuan dihitung dalam satuan program: 240 PCS = 2 KRT x Rp 1.000.
+    programs, _ = compiled([row(ketentuan="Beli 1 KRT", benefit_type="DISC_RP", benefit="1000", keterangan="per KRT")])
+    assert calculate(programs, [dict(line("A", "240", "1000"), rasio=rasio)], "2026-06-15", "GT")["discount"] == "2000.00"
+    # Rasio yang dibutuhkan tidak ada di master -> order DITAHAN (owner 16 Okt), bukan baris diam-diam tak dihitung.
+    programs, _ = compiled([row(ketentuan="Beli 5 KRT")])
+    try:
+        calculate(programs, [dict(line("A", "600", "1000"), rasio={"PCS": 1})], "2026-06-15", "GT")
+        raise AssertionError("baris tanpa rasio karton harus menahan order")
+    except RasioKosong:
+        pass
+    # Pemanggil tanpa data satuan (simulasi Summary) tetap seperti dulu: hanya satuan yang sama.
+    assert calculate(programs, [line("A", "600", "1000")], "2026-06-15", "GT")["discount"] == "0.00"
 
 
 def check_compiler():
@@ -549,6 +632,29 @@ def check_conflict_guard_per_channel():
     ]
     bentrok = kode_bentrok(excel_rows, meta)
     assert bentrok == {("MTI", "S1", "P1")}, bentrok
+
+    # Strata jumlah (MSM 223: 70 s/d 499 DUS, 500 s/d 999, 1000 UP) bukan bentrok; tetapi satu
+    # baris tanpa rentang di antara klaimnya ("4+1" lawan "7+1") tetap bentrok.
+    meta.update({4: {"surat_program": "S3", "ketentuan": "Beli 70 DUS s/d 499 DUS per PO"},
+                 5: {"surat_program": "S3", "ketentuan": "Beli 500 DUS s/d 999 DUS per PO"},
+                 6: {"surat_program": "S3", "ketentuan": "Beli 1000 DUS UP per PO"},
+                 7: {"surat_program": "S3", "ketentuan": "Beli 4 PCS"}})
+    strata = [{"pdf_key": k, "channel": "GT", "kode_barang": "P3"} for k in (4, 5, 6)]
+    assert kode_bentrok(strata, meta) == set(), kode_bentrok(strata, meta)
+    campur = strata + [{"pdf_key": 7, "channel": "GT", "kode_barang": "P3"}]
+    assert kode_bentrok(campur, meta) == {("GT", "S3", "P3")}, kode_bentrok(campur, meta)
+
+    # Label rupiah di Form = cara mesin menghitungnya (tier_of): sekali per nota kecuali surat
+    # menyebut per satuan; "berlaku kelipatan" = per kelipatan ambang.
+    from routers.summary import label_rupiah
+    contoh = [({"ketentuan": "Beli 6 RTG UP, MIX PRODUCT"}, "3.000/NOTA"),
+              ({"ketentuan": "Beli 1 PCS (cut price per PCS)"}, "3.000/PCS"),
+              ({"ketentuan": "Beli 1 BOX, berlaku kelipatan"}, "3.000/BOX"),
+              ({"ketentuan": "Beli 6 RTG, berlaku kelipatan"}, "3.000/6 RTG"),
+              ({"ketentuan": "Minimal belanja Rp 1.000.000"}, "3.000/NOTA"),
+              ({"ketentuan": "Beli 2 PCS", "keterangan": "potongan per pcs"}, "3.000/PCS")]
+    for baris, harap in contoh:
+        assert label_rupiah(baris, "3.000") == harap, (baris, label_rupiah(baris, "3.000"))
     print("summary conflict-guard check: OK")
 
 
