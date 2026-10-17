@@ -32,7 +32,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
             ...k("sppd", ["view", "generate", "download"]),
             ...k("finance", ["view", "approve", "export", "update", "post_accurate", "upload_proof", "transfer"]),
             ...k("principles", ["view"]), ...k("summary", ["view", "export"]),
-            ...k("off_program_control", ["view", "approve"]),
+            ...k("off_program_control", ["view"]),
             ...k("claim_workflow", ["view", "approve", "export"]),
             ...k("form_kontrol", ["view", "submit", "manage"]),
             ...k("insentif_sales", ["view", "upload_target", "upload_progress"]),

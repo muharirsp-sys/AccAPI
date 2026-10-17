@@ -27,7 +27,7 @@ const NASIB: Array<{ no: string; kunci: string; nasib: Nasib; di?: string[]; ala
     { no: "3", kunci: "off_program_control.create", nasib: "pensiun", alasan: "diganti kunci granular OPC (create_batch, …); tidak dipetakan" },
     { no: "4", kunci: "off_program_control.update", nasib: "pensiun", alasan: "diganti kunci granular OPC; tidak dipetakan" },
     { no: "5", kunci: "off_program_control.export", nasib: "pensiun", alasan: "diganti audit_export; tidak dipetakan" },
-    { no: "6", kunci: "off_program_control.approve", nasib: "pensiun-s7-3", alasan: "profil Beranda SM (config/workspace-navigation.ts) pindah ke bintang di S7-3 (PK-O2)" },
+    { no: "6", kunci: "off_program_control.approve", nasib: "pensiun", alasan: "S7-3: profil Beranda dari ★ grup utama; tebakan SM = sm_approve (PK-O2)" },
     { no: "7", kunci: "users.create_user", nasib: "pensiun", alasan: "-> users.manage (D-01 §E)" },
     { no: "8", kunci: "users.edit_user", nasib: "pensiun", alasan: "-> users.manage" },
     { no: "9", kunci: "users.delete_user", nasib: "pensiun", alasan: "-> users.manage" },

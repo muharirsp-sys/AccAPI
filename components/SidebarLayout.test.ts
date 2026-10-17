@@ -12,7 +12,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
-import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigationItem, roleProfile, roleShortcuts } from "../config/workspace-navigation";
+import { WORKSPACE_GROUPS, HOME_ITEM, ROLE_PROFILES, navigationForPermissions, activeNavigationItem, profileFor, roleProfile, roleShortcuts } from "../config/workspace-navigation";
+import { canAccessPathWithKeys } from "../lib/rbac";
 
 // ponytail: next/font/google kosong di luar kompilator Next, padahal Scope.tsx memanggilnya saat dimuat → stub di cache require
 // SEBELUM SidebarLayout dimuat. Plafon: konteks router diambil dari jalur internal next/dist; bila Next memindahkannya, uji ini
@@ -20,12 +21,12 @@ import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigation
 require.cache[require.resolve("next/font/google")] = { exports: { Plus_Jakarta_Sans: () => ({ variable: "" }), Geist_Mono: () => ({ variable: "" }) } } as never;
 
 /** Render shell pada URL `pathname` dengan kunci `permKeys` — seperti sesudah navigasi klien atau pemasangan ulang, tanpa layout server. */
-async function shell(pathname: string, permKeys: string[]) {
+async function shell(pathname: string, permKeys: string[], primaryGroup?: string | null) {
     const { default: SidebarLayout } = await import("./SidebarLayout");
     const router = { push() {}, replace() {}, refresh() {}, back() {}, forward() {}, prefetch() {}, hmrRefresh() {} };
     return renderToStaticMarkup(createElement(AppRouterContext.Provider, { value: router },
         createElement(PathnameContext.Provider, { value: pathname },
-            createElement(SidebarLayout, { permKeys }, createElement("p", null, "ISI-HALAMAN")))));
+            createElement(SidebarLayout, { permKeys, primaryGroup }, createElement("p", null, "ISI-HALAMAN")))));
 }
 /** Isi <main> saja: pesan gagal tetap pendek. */
 const isiMain = (html: string) => html.slice(html.indexOf("<main"), html.indexOf("</main>"));
@@ -96,11 +97,65 @@ test("bottom-nav shortcuts follow the role guessed from permissions and never le
     assert.equal(roleProfile(new Set(["pelunasan.kirim", "finance.transfer"]))?.id, "finance");
     // Susulan S6e (tinjauan 2b): incaso SESUDAH peran utama — pemegang peran lain yang juga diberi pelunasan.kirim tetap
     // mendapat Beranda perannya sendiri, bukan Beranda Admin Incaso.
-    for (const [kunci, id] of [["websales.create", "salesman"], ["off_program_control.approve", "sm"], ["claim_workflow.create", "claim"],
+    for (const [kunci, id] of [["websales.create", "salesman"], ["off_program_control.sm_approve", "sm"], ["claim_workflow.create", "claim"],
         ["order.create", "fakturist"], ["rekapan_nota.manage", "gudang"], ["users.manage", "admin"]]) {
         assert.equal(roleProfile(new Set(["pelunasan.kirim", kunci]))?.id, id, kunci);
     }
     assert.deepEqual(roleShortcuts(new Set(), []), []);
+});
+test("S7-3 (owner 17 Okt): profil Beranda dari nama ★ grup utama, tahan huruf besar/kecil & spasi; Staff/Viewer/custom/tanpa bintang = tebakan kunci lama", () => {
+    const PRESET: Array<[string, string]> = [["Admin", "admin"], ["Finance", "finance"], ["Salesman", "salesman"], ["SM", "sm"], ["Manager", "sm"],
+        ["SPV", "spv"], ["OM", "om"], ["Kasir", "kasir"], ["Claim", "claim"], ["Fakturist", "fakturist"], ["Admin Sales", "fakturist"],
+        ["Admin Gudang", "gudang"], ["Admin Incaso", "incaso"]];
+    const kosong = new Set<string>();
+    for (const [grup, id] of PRESET) assert.equal(profileFor(grup, kosong)?.id, id, grup);
+    for (const grup of ["admin gudang", "  ADMIN   GUDANG ", "AdminGudang", "admin	gudang"]) assert.equal(profileFor(grup, kosong)?.id, "gudang", grup);
+    assert.equal(profileFor(" spv ", kosong)?.id, "spv");
+    assert.equal(profileFor("manager", kosong)?.id, "sm");
+    // Grup utama menang atas tebakan kunci (izin tetap gabungan semua grup): Kasir yang juga memegang users.manage = Beranda Kasir.
+    assert.equal(profileFor("Kasir", new Set(["users.manage"]))?.id, "kasir");
+    // Staff, Viewer, grup custom (walau namanya memuat kata preset), tanpa bintang -> tebakan kunci lama.
+    for (const grup of ["Staff", "Viewer", "Gudang CABANG A", "SPV CABANG A", null, undefined, ""]) {
+        assert.equal(profileFor(grup, new Set(["off_program_control.sm_approve"]))?.id, "sm", String(grup));
+        assert.equal(profileFor(grup, new Set(["users.manage", "order.create"]))?.id, "admin", String(grup));
+        assert.equal(profileFor(grup, kosong), undefined, String(grup));
+    }
+    // Profil baru hanya lewat grup utama: kunci Kasir/OM/SPV tidak mengubah tebakan lama.
+    assert.equal(roleProfile(new Set(["kasir.view", "supervisor_review.view", "off_program_control.om_approve", "off_program_control.create_batch"])), undefined);
+});
+test("S7-3: pintasan profil = daftar owner, semuanya ada di katalog, dan tidak pernah ke halaman tanpa izin", () => {
+    const pintasan = (id: string) => ROLE_PROFILES.find(p => p.id === id)?.shortcuts;
+    assert.deepEqual(pintasan("spv"), ["/supervisor-review", "/form-kontrol", "/insentif-sales"]);
+    assert.deepEqual(pintasan("om"), ["/kasir", "/pelunasan", "/finance"]);
+    assert.deepEqual(pintasan("kasir"), ["/kasir"]);
+    assert.deepEqual(pintasan("sm"), ["/off-program-control", "/form-kontrol", "/insentif-sales", "/supervisor-review"]);
+    const katalog = new Set(WORKSPACE_GROUPS.flatMap(g => g.items.map(i => i.href)));
+    for (const p of ROLE_PROFILES) for (const href of p.shortcuts) assert.ok(katalog.has(href), `${p.id}: ${href} tidak di katalog`);
+    const izinkan = (keys: string[]) => {
+        const set = new Set(keys);
+        return { set, allowed: navigationForPermissions(href => canAccessPathWithKeys(href, set)).flatMap(g => g.items) };
+    };
+    for (const keys of [[], ["dashboard.view"], ["kasir.view"], ["dashboard.view", "supervisor_review.view", "pelunasan.kirim"], ["dashboard.view", "off_program_control.view", "finance.view"]]) {
+        const { set, allowed } = izinkan(keys);
+        for (const p of ROLE_PROFILES) {
+            for (const item of roleShortcuts(set, allowed, 4, p)) assert.ok(canAccessPathWithKeys(item.href, set), `${p.id}: ${item.href} tanpa izin [${keys.join(", ")}]`);
+        }
+    }
+    // OM tanpa pelunasan.kirim: Pelunasan tidak muncul; kekurangan diisi halaman lain yang boleh dibuka.
+    const om = izinkan(["dashboard.view", "kasir.view", "finance.view"]);
+    assert.deepEqual(roleShortcuts(om.set, om.allowed, 3, profileFor("OM", om.set)).map(i => i.href), ["/kasir", "/finance", "/form-kontrol"]);
+    const spv = izinkan(["dashboard.view", "supervisor_review.view", "insentif_sales.view"]);
+    assert.deepEqual(roleShortcuts(spv.set, spv.allowed, 3, profileFor("SPV", spv.set)).map(i => i.href), ["/supervisor-review", "/form-kontrol", "/insentif-sales"]);
+});
+test("S7-3: shell memakai profil grup utama untuk label peran dan navigasi bawah; tanpa grup utama = tebakan kunci", async () => {
+    const keys = ["dashboard.view", "kasir.view", "users.manage", "finance.view"];
+    const bnav = (html: string) => [...html.slice(html.indexOf('aria-label="Navigasi utama"')).matchAll(/href="([^"]+)"/g)].map(m => m[1]);
+    const kasir = await shell("/", keys, " kasir ");
+    assert.match(kasir, /<small>Kasir<\/small>/);
+    assert.deepEqual(bnav(kasir).slice(0, 2), ["/", "/kasir"]);
+    const tebak = await shell("/", keys, null);
+    assert.match(tebak, /<small>Admin<\/small>/);
+    assert.deepEqual(bnav(tebak).slice(0, 2), ["/", "/admin/groups"]);
 });
 test("bottom-nav labels are unique across the whole catalog", () => {
     const labels = [HOME_ITEM, ...WORKSPACE_GROUPS.flatMap(group => group.items)].map(item => item.short ?? item.name.split(" ")[0]);

@@ -1,6 +1,6 @@
 /*
  * Tujuan: Shell Fiori ruang kerja: shell bar (logo resmi, cari menu Ctrl K, menu profil), navigasi samping dari izin,
- *   drawer + navigasi bawah ponsel per peran.
+ *   drawer + navigasi bawah ponsel per peran (profil dari ★ grup utama, fallback tebakan izin — S7-3).
  * Caller: app/(dashboard)/layout.tsx.
  * Dependensi: Better Auth client, RBAC, katalog workspace-navigation, components/fiori (token, SchemeSwitcher), ChatWidget (Bantuan).
  * Main Functions: SidebarLayout, useLocalAuthRole; drawer menutup saat kembali ke desktop.
@@ -13,7 +13,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { KeyRound, LifeBuoy, LogOut, Menu, Search, X } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { canAccessPathWithKeys } from "@/lib/rbac";
-import { HOME_ITEM, activeNavigationItem, navigationForPermissions, roleProfile, roleShortcuts, type WorkspaceGroup, type WorkspaceItem } from "@/config/workspace-navigation";
+import { HOME_ITEM, activeNavigationItem, navigationForPermissions, profileFor, roleShortcuts, type WorkspaceGroup, type WorkspaceItem } from "@/config/workspace-navigation";
 import { fioriClass } from "@/components/fiori/Scope";
 import { SchemeSwitcher } from "@/components/fiori/interactive";
 import Dialog from "@/components/ui/Dialog";
@@ -26,9 +26,10 @@ export function useLocalAuthRole() { return useContext(LocalAuthRoleContext); }
 const PermKeysContext = createContext<ReadonlySet<string>>(new Set());
 export function usePermKeys() { return useContext(PermKeysContext); }
 
-type ShellProps = { children: React.ReactNode; localAuthRole?: string | null; permKeys: string[]; userName?: string; userId?: string };
+/** `primaryGroup` = nama ★ grup utama (getPrimaryGroup); menentukan label peran + navigasi bawah, izin tetap `permKeys`. */
+type ShellProps = { children: React.ReactNode; localAuthRole?: string | null; permKeys: string[]; primaryGroup?: string | null; userName?: string; userId?: string };
 
-export default function SidebarLayout({ children, localAuthRole, permKeys, userName = "Akun" }: ShellProps) {
+export default function SidebarLayout({ children, localAuthRole, permKeys, primaryGroup, userName = "Akun" }: ShellProps) {
     const pathname = usePathname();
     const keys = useMemo(() => new Set(permKeys), [permKeys]);
     const groups = navigationForPermissions(href => canAccessPathWithKeys(href, keys));
@@ -42,7 +43,8 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
     // Konsekuensi untuk spec Playwright yang memalsukan `permKeys` di payload RSC (mode bypass): kunci GERBANG halaman yang diuji harus
     // tetap ada — membuangnya kini menampilkan Akses ditolak, sama seperti server menolak halaman itu untuk akun nyata.
     const pathDiizinkan = canAccessPathWithKeys(pathname, keys);
-    const roleLabel = roleProfile(keys)?.label ?? "CV. Surya Perkasa";
+    const profile = profileFor(primaryGroup, keys);
+    const roleLabel = profile?.label ?? "CV. Surya Perkasa";
     const [drawerOpen, setDrawerOpen] = useState(false);
     // Tutup drawer pada setiap pindah rute (klik tautan, Back, router.push) — disesuaikan saat render, bukan di effect.
     const [drawerPath, setDrawerPath] = useState(pathname);
@@ -116,7 +118,7 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
             <LocalAuthRoleContext.Provider value={localAuthRole ?? null}><PermKeysContext.Provider value={keys}>{pathDiizinkan ? children : <AccessDenied />}</PermKeysContext.Provider></LocalAuthRoleContext.Provider>
         </main>
         <nav className={`${fioriClass} fi-bnav`} aria-label="Navigasi utama">
-            {[...home, ...roleShortcuts(keys, items)].map(item => {
+            {[...home, ...roleShortcuts(keys, items, 3, profile)].map(item => {
                 const Icon = item.icon;
                 return <Link key={item.href} href={item.href} prefetch={false} title={item.name} aria-current={active?.href === item.href ? "page" : undefined}>
                     <Icon className="fi-icon" aria-hidden /><span>{item.short ?? item.name.split(" ")[0]}</span>

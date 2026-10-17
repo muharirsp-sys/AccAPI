@@ -142,6 +142,10 @@ export const PROFILE_TILES: Record<string, TileId[]> = {
     fakturist: ["antrean", "batchTinjau", "selisih"],
     gudang: ["wave", "exception", "kanvas"],
     incaso: ["pelunasanTidakPasti", "pelunasanGagal"],
+    // S7-3: profil dari grup utama; kosong (bukan gabungan) supaya tidak memuat tugas peran lain. Tile Kasir = K3.
+    spv: [],
+    om: [],
+    kasir: [],
 };
 
 /** Tile tanpa angka per peran (pintasan / aplikasi luar). Tanpa `href` = informasi saja (bukan tautan). */
