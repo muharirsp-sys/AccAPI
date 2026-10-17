@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server";
 import { GET as getHari } from "../../app/api/kasir/route.ts";
+import { GET as getRingkasan } from "../../app/api/kasir/ringkasan/route.ts";
 import { POST as postSetoran } from "../../app/api/kasir/setoran/route.ts";
 import { POST as postJelaskan } from "../../app/api/kasir/jelaskan/route.ts";
 import { POST as postTutup } from "../../app/api/kasir/tutup/route.ts";
@@ -500,4 +501,21 @@ test("jawabanGalat: galat tak dikenal -> 500 GALAT_INTERNAL tanpa pesan mentah",
     } finally {
         console.error = asli;
     }
+});
+
+// --- K3: GET /api/kasir/ringkasan (tile Beranda) ---
+test("K3 GET ringkasan: 401 tanpa sesi; 403 tanpa kasir.view (catat/tutup/buka saja tidak cukup); 400 tanggal; galat DB = 500 (bukan nol); tanpa jaringan", async () => {
+    const panggil = (q: string) => () => getRingkasan(new NextRequest(`http://app.test/api/kasir/ringkasan${q}`));
+    assert.equal((await dengan({ sesi: false }, panggil(`?tanggal=${D}`))).status, 401);
+    assert.equal((await dengan({ izin: ["kasir.catat", "kasir.tutup", "kasir.buka"] }, panggil(`?tanggal=${D}`))).status, 403);
+    for (const q of ["", "?tanggal=", "?tanggal=05/10/2026", "?tanggal=2026-02-30", "?tanggal=2026-10-06"]) {
+        const r = await dengan({ izin: ["kasir.view"] }, panggil(q));
+        assert.equal(r.status, 400, q);
+        const b = await r.json() as Badan;
+        assert.deepEqual([b.ok, b.kode, b.field], [false, "INPUT_SALAH", "tanggal"], q);
+    }
+    // Transaksi DB gagal: jawaban galat berkode, TIDAK PERNAH 200 dengan angka nol. (fetch dipalsukan melempar: Accurate tak tersentuh.)
+    const g = await dengan({ izin: ["kasir.view"] }, panggil(`?tanggal=${D}`));
+    const b = await g.json() as Badan;
+    assert.deepEqual([g.status, b.ok, b.kode], [500, false, "GALAT_INTERNAL"]);
 });

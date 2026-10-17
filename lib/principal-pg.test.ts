@@ -428,7 +428,7 @@ const SUMBER = `
     CREATE TABLE principal_mapping (principal text NOT NULL, kind text NOT NULL, source_code text NOT NULL, PRIMARY KEY (principal, kind, source_code));
     CREATE TABLE no_claim_template (principle_code text NOT NULL, variant_key text NOT NULL DEFAULT '', PRIMARY KEY (principle_code, variant_key));
     CREATE TABLE off_batch (id text PRIMARY KEY, principle_code text NOT NULL, principle_name text NOT NULL);
-    INSERT INTO master_barang VALUES ('m1', 'K1', 'KINO INDONESIA. TBK, PT'), ('m2', 'K1', 'KINO INDONESIA. TBK, PT'), ('m3', 'KN', 'KINO NON FOOD'),
+    INSERT INTO master_barang VALUES ('m1', 'K1', 'KINO INDONESIA TBK, PT'), ('m2', 'K1', 'KINO INDONESIA TBK, PT'), ('m3', 'KN', 'KINO NON FOOD'),
         ('m4', 'GD', 'GODREJ'), ('m5', 'P1', 'PT. PRISKILA PRIMA MAKMUR'), ('m6', 'UR', 'URC INDONESIA, PTMIX FOOD'), ('m7', 'AC', 'ABC INDONESIA'),
         ('m8', 'XX', 'PT MAJU JAYA'), ('m9', 'P2', '**PT.PRISKILA PRIMA MAKMUR**'), ('m10', 'HB', 'HEINZ HZ/BS');
     INSERT INTO principal_mapping VALUES ('KINO NON FOOD', 'item', 'A1'), ('KINO NON FOOD', 'customer', 'C1'), ('KINO NON FOOD-KN', 'item', 'A2'),
@@ -501,7 +501,7 @@ test("PG S7-2: laporan BACA-SAJA pada data sintetis (ejaan nyata) — sumber hil
         // ke target nonaktif (= API PRINCIPAL_NONAKTIF / VARIAN_NONAKTIF), dan VERIFIKASI menandai baris itu false (tidak diam-diam).
         const basi = await skemaBaru("s72");
         await basi.pool.query(`INSERT INTO principal (code, name, is_active) VALUES ('GDI', 'GODREJ DISTRIBUSI INDONESIA, PT', false),
-            ('FRS', 'FORISA NUSAPERSADA, PT', false), ('KINO', 'KINO INDONESIA. TBK, PT', true);
+            ('FRS', 'FORISA NUSAPERSADA, PT', false), ('KINO', 'KINO INDONESIA TBK, PT', true);
             INSERT INTO principal_variant (principal_id, variant_key, name, is_active) SELECT id, 'NON_FOOD', 'KINO NON FOOD', false FROM principal WHERE code = 'KINO'`);
         const vb = verifikasi(await basi.pool.query(benih));
         const salah = vb.filter((x) => x.ok === false).map((x) => x.cek);

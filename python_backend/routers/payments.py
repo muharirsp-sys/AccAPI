@@ -139,6 +139,8 @@ def payments_export(request: Request):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "payments", "view"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not user_has_permission(user, "payments", "export"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.export"})
 
     db = load_payments_db()
     rows: List[Dict[str, Any]] = []
@@ -215,6 +217,8 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "payments", "edit"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not user_has_permission(user, "payments", "upload"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.upload"})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
@@ -299,6 +303,8 @@ async def payments_manual_add(request: Request):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "payments", "edit"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not user_has_permission(user, "payments", "create"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.create"})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
@@ -588,6 +594,8 @@ async def payments_cart_create(request: Request):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "payments", "edit"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not user_has_permission(user, "payments", "create"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.create"})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
@@ -771,6 +779,8 @@ async def payments_cart_submit(request: Request):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "payments", "edit"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not user_has_permission(user, "payments", "submit"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.submit"})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
@@ -817,6 +827,8 @@ async def payments_cart_submit(request: Request):
         method = s(draft.get("method", ""))
         if method not in ["NON_PANIN", "BANK_PANIN"]:
             return JSONResponse(status_code=400, content={"ok": False, "error": "Metode pembayaran tidak valid."})
+        if method == "BANK_PANIN" and not user_has_permission(user, "sppd", "generate"):  # S7-1c: SPPD dirender = payments.edit ∧ sppd.generate
+            return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.generate"})
         if not target_payment_date:
             target_payment_date = _normalize_yyyy_mm_dd(s(draft.get("target_payment_date", "")))
         if not target_payment_date:
@@ -1012,6 +1024,8 @@ async def payments_submit(request: Request):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "payments", "edit"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not user_has_permission(user, "payments", "submit"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.submit"})
     return JSONResponse(status_code=400, content={"ok": False, "error": "Gunakan keranjang dulu sebelum diajukan ke finance."})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
@@ -1024,6 +1038,8 @@ async def payments_submit(request: Request):
     no_lpbs = payload.get("no_lpbs", [])
     if method not in ["NON_PANIN", "BANK_PANIN"]:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Metode pembayaran tidak valid."})
+    if method == "BANK_PANIN" and not user_has_permission(user, "sppd", "generate"):  # S7-1c: SPPD dirender = payments.edit ∧ sppd.generate
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.generate"})
     if not isinstance(no_lpbs, list) or not no_lpbs:
         return JSONResponse(status_code=400, content={"ok": False, "error": "LPB belum dipilih."})
 
