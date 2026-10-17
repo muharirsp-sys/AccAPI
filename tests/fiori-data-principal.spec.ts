@@ -327,6 +327,34 @@ test("Tambah principal: kode huruf besar, terpilih sesudahnya; KODE_SUDAH_ADA ta
     await expect(page.getByRole("heading", { name: "PRINCIPLE C", exact: true })).toBeVisible(); // principal baru langsung terpilih
 });
 
+test("Kode dan kode varian > 20 karakter TIDAK dipotong di kolom; server yang menolak dan pesannya tampil", async ({ page }) => {
+    const PANJANG = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; // 26 karakter
+    const c = await pasang(page, {
+        tulis: (t) => (String(t.body?.code ?? "").length > 20 ? json({ ok: false, code: "KODE_TIDAK_SAH", error: "Kode 1–20 karakter: huruf besar, angka, _ atau - (mis. KINO, GDI)." }, 400)
+            : String(t.body?.variantKey ?? "").length > 20 ? json({ ok: false, code: "VARIAN_TIDAK_SAH", error: "Kode varian 1–20 karakter: huruf besar, angka, _ atau - (mis. NON_FOOD, HZ); varian dasar = \"\" persis." }, 400)
+            : undefined),
+    });
+    await page.goto("/data-principal", NAV);
+    await page.getByRole("button", { name: "Tambah principal…" }).click();
+    const d = dialog(page, "Tambah principal");
+    await d.getByRole("textbox", { name: "Kode", exact: true }).fill(PANJANG.toLowerCase());
+    await expect(d.getByRole("textbox", { name: "Kode", exact: true })).toHaveValue(PANJANG); // utuh, bukan 20 huruf pertama
+    await d.getByRole("textbox", { name: "Nama resmi" }).fill("PRINCIPLE C");
+    await d.getByRole("button", { name: "Tambah principal", exact: true }).click();
+    await expect(d.getByRole("alert")).toContainText("Kode 1–20 karakter");
+    expect(c.tulis.at(-1)?.body).toEqual({ code: PANJANG, name: "PRINCIPLE C" }); // yang dikirim = yang diketik
+    await d.getByRole("button", { name: "Batal" }).click();
+
+    await pilih(page, "PRINCIPLE A");
+    await page.getByRole("button", { name: "Tambah varian…" }).click();
+    const v = dialog(page, "Tambah varian ke PRINCIPLE A");
+    await v.getByRole("textbox", { name: "Kode varian" }).fill(PANJANG);
+    await expect(v.getByRole("textbox", { name: "Kode varian" })).toHaveValue(PANJANG);
+    await v.getByRole("button", { name: "Tambah varian", exact: true }).click();
+    await expect(v.getByRole("alert")).toContainText("Kode varian 1–20 karakter");
+    expect(c.tulis.at(-1)?.body).toEqual({ variantKey: PANJANG });
+});
+
 test("Galat 409 ALIAS_TABRAKAN dan 403 tampil dengan kalimat server di dialog; 409 memuat ulang data di belakang", async ({ page }) => {
     const c = await pasang(page, {
         tulis: (t) => t.path.endsWith("/aliases") ? json({ ok: false, code: "ALIAS_TABRAKAN", error: "Ejaan \"PRINSIP B\" sudah dipakai principal PB — tidak ditimpa.", pemilik: { code: "PB" } }, 409)

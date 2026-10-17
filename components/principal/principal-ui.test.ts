@@ -1,5 +1,5 @@
 /* S7b: uji logika murni layar Data Principal — saringan daftar (termasuk lewat ejaan alias), ringkasan riwayat (isi baris + kunci
- * varian), dan tulis (403 diberi petunjuk izin, jawaban hilang/502 = belum pasti, 409 membawa kalimat + kode server). */
+ * varian), dan tulis (401/403 diberi petunjuk, jawaban hilang/502 = belum pasti, 409 membawa kalimat + kode server). */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { aktorTeks, GalatTulis, ringkasLog, saring, tulis, type Log, type Principal } from "./principal-ui.ts";
@@ -40,6 +40,9 @@ test("tulis: sukses; 403 + petunjuk izin; 409 berkode; 502 / bukan JSON / putus 
 
     jawab(403, { error: "Forbidden" });
     await assert.rejects(tulis("/x", "POST", {}), (e: unknown) => e instanceof GalatTulis && !e.belumPasti && /^Forbidden — akun Anda belum berhak/.test(e.message));
+
+    jawab(401, { error: "Unauthorized" });
+    await assert.rejects(tulis("/x", "POST", {}), (e: unknown) => e instanceof GalatTulis && e.message === "Unauthorized. Sesi login berakhir; masuk ulang lalu coba lagi.");
 
     jawab(409, { ok: false, code: "ALIAS_TABRAKAN", error: "Ejaan \"X\" sudah dipakai principal PB — tidak ditimpa." });
     await assert.rejects(tulis("/x", "POST", {}), (e: unknown) => e instanceof GalatTulis && e.status === 409 && e.code === "ALIAS_TABRAKAN" && /sudah dipakai principal PB/.test(e.message));

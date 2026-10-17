@@ -69,7 +69,7 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
     function buka(d: Dialog) { setF(FORM_KOSONG); setDialog(d); }
 
     /** Sukses = tutup dialog + pesan + muat ulang. Jawaban belum pasti = tutup + pesan peringatan + muat ulang. Galat lain (403/409/400) dilempar
-     * ke dialog dengan kalimat server; 409 juga memuat ulang data di belakang (bentrok = data layar mungkin usang). */
+     * ke dialog dengan kalimat server; 409/404 juga memuat ulang data di belakang (bentrok / sudah hilang = data layar usang). */
     async function jalankan(fn: () => Promise<string>) {
         try {
             const teks = await fn();
@@ -78,7 +78,7 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
             segarkan();
         } catch (e) {
             if (e instanceof GalatTulis && e.belumPasti) { setDialog(null); setPesan({ tone: "warn", teks: e.message }); segarkan(); return; }
-            if (e instanceof GalatTulis && e.status === 409) segarkan();
+            if (e instanceof GalatTulis && (e.status === 409 || e.status === 404)) segarkan();
             throw e;
         }
     }
@@ -114,7 +114,9 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
     const dipakai = DIPAKAI.filter((x) => canAccessPathWithKeys(x.href, keys));
     const terkunci = (alasan: string | undefined) => (alasan ? <p className="fi-small fi-why">Terkunci: {alasan}.</p> : null);
     const detail = !p ? (
-        pilihId && daftar.data
+        pilihId && daftar.status === "memuat"
+            ? <div className="fi-sect-in"><Skeleton rows={5} label="Memuat principal" /></div> // pilihan baru (mis. principal yang baru dibuat) belum ada di data lama
+            : pilihId && daftar.data
             ? <EmptyState title="Principal tidak ada di daftar" message="Mungkin sudah tidak terdaftar. Pilih principal lain." />
             : <EmptyState title="Pilih principal di daftar" message="Varian, alias, riwayat, dan pemakainya tampil di sini." />
     ) : (
@@ -252,10 +254,10 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
                 })}>
                 <div className="fi-formgrid">
                     <FormField label="Kode" required help="1–20 karakter: huruf besar, angka, _ atau -.">
-                        {(a11y) => <input {...a11y} className="fi-input" autoComplete="off" maxLength={20} value={f.kode} onChange={(e) => set({ kode: e.target.value.toUpperCase() })} />}
+                        {(a11y) => <input {...a11y} className="fi-input" autoComplete="off" value={f.kode} onChange={(e) => set({ kode: e.target.value.toUpperCase() })} />}
                     </FormField>
                     <FormField label="Nama resmi" required>
-                        {(a11y) => <input {...a11y} className="fi-input" autoComplete="off" maxLength={200} value={f.nama} onChange={(e) => set({ nama: e.target.value })} />}
+                        {(a11y) => <input {...a11y} className="fi-input" autoComplete="off" value={f.nama} onChange={(e) => set({ nama: e.target.value })} />}
                     </FormField>
                 </div>
             </ConfirmDialog>
@@ -283,10 +285,10 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
                 })}>
                 <div className="fi-formgrid">
                     <FormField label="Kode varian" required={!f.dasar} help="Huruf besar, angka, _ atau - (maks. 20), mis. NON_FOOD; tanpa spasi.">
-                        {(a11y) => <input {...a11y} className="fi-input" autoComplete="off" maxLength={20} disabled={f.dasar} value={f.dasar ? "" : f.key} onChange={(e) => set({ key: e.target.value.toUpperCase() })} />}
+                        {(a11y) => <input {...a11y} className="fi-input" autoComplete="off" disabled={f.dasar} value={f.dasar ? "" : f.key} onChange={(e) => set({ key: e.target.value.toUpperCase() })} />}
                     </FormField>
                     <FormField label="Nama varian (opsional)">
-                        {(a11y) => <input {...a11y} className="fi-input" autoComplete="off" maxLength={200} value={f.nama} onChange={(e) => set({ nama: e.target.value })} />}
+                        {(a11y) => <input {...a11y} className="fi-input" autoComplete="off" value={f.nama} onChange={(e) => set({ nama: e.target.value })} />}
                     </FormField>
                 </div>
                 <label className="fi-chip" style={{ justifySelf: "start" }}>
@@ -314,7 +316,7 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
                 })}>
                 <div className="fi-formgrid">
                     <FormField label="Ejaan alias" required>
-                        {(a11y) => <input {...a11y} className="fi-input" autoComplete="off" maxLength={200} value={f.alias} onChange={(e) => set({ alias: e.target.value })} />}
+                        {(a11y) => <input {...a11y} className="fi-input" autoComplete="off" value={f.alias} onChange={(e) => set({ alias: e.target.value })} />}
                     </FormField>
                     <FormField label="Jenis" required help={f.jenis === "kode_master_barang" ? "Kode Master Barang = tepat 2 huruf/angka." : undefined}>
                         {(a11y) => <select {...a11y} className="fi-input" value={f.jenis} onChange={(e) => set({ jenis: e.target.value })}>{JENIS_ALIAS.map((j) => <option key={j} value={j}>{LABEL_JENIS[j]}</option>)}</select>}

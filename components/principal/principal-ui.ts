@@ -106,7 +106,7 @@ export async function tulis(url: string, method: "POST" | "PATCH" | "DELETE", bo
     if (status >= 200 && status < 300 && data?.ok === true) return data;
     if (status === 0 || status === 502 || status === 504 || data === null) throw new GalatTulis(BELUM_PASTI, status, true);
     const pesan = pesanServer(data) || "Server menolak permintaan.";
-    const teks = status === 401 ? `${pesan} Sesi login berakhir; masuk ulang lalu coba lagi.`
+    const teks = status === 401 ? `${pesan.replace(/[.\s]+$/, "")}. Sesi login berakhir; masuk ulang lalu coba lagi.`
         : status === 403 ? `${pesan} — akun Anda belum berhak atas aksi ini; minta admin menambahkan izinnya.` : pesan;
     throw new GalatTulis(teks, status, false, typeof data.code === "string" ? data.code : undefined);
 }
