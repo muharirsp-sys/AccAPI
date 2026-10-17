@@ -6,7 +6,7 @@
  * boleh); pembanding duplikat lintas tim tersamar (peninjau A R3); duplikat + konfirmasi wajib; transisi + serentak dengan KUNCI BARIS
  * DIPEGANG (peninjau A S1); HANYA grup Admin menautkan; antrean aktif tak terpotong (> 300 selesai, peninjau A T1); foto kedua gagal tulis ->
  * foto pertama dibuang (R2); body > 10,5 MB 413 + > 40 MP ditolak (R4); id sama isian beda 409; ORDER NOO ditolak; kunjungan ulang;
- * DDL_NOO 2× idempoten + VERIFIKASI (+ sabotase), migrate-pg OK->SKIP, = 0035 = Drizzle; RBAC_PRESET_NOO idempoten. Berkas foto uji ditulis ke data/private/noo
+ * DDL_NOO 2× idempoten + VERIFIKASI (+ sabotase), migrate-pg OK->SKIP, = 0035 = Drizzle; RBAC_PRESET_NOO idempoten; R4 status pengajuan NOO di baris rute (nooStatus/alasan tolak, satu query, tanpa data pribadi). Berkas foto uji ditulis ke data/private/noo
  * worktree dan dihapus di akhir. Data contoh generik. Tanpa env dilewati. */
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
@@ -537,6 +537,53 @@ test("kunjungi ulang: pemilik (menunggu/disetujui) hari ini, sama = baris sama, 
     assert.deepEqual(g(await aksi("u-slc", id, { aksi: "kunjungi", principle: "CABANG A" })), [404, "NOO_TIDAK_ADA"]);
     assert.deepEqual(g(await aksi("u-spva", id, { aksi: "kunjungi", principle: "PRINCIPLE A" })), [403, "BUKAN_PEMILIK"]);
     assert.deepEqual(g(await aksi("u-sla", id, { aksi: "kunjungi", principle: "PRINCIPLE Z" })), [403, "PRINCIPAL_LUAR_CAKUPAN"]);
+});
+
+test("R4 kartu rute NOO: nooStatus + alasan tolak ikut baris rute lewat SATU query noo_toko; toko ditolak TETAP di rute; pelanggan biasa tanpa tanda; tanpa data pribadi", { skip: pgSkip }, async () => {
+    const rute = async (u: string, salesCode: string) => jawab(await sebagai(u, () => m.ao.GET(req(`/api/form-kontrol/ao-control?${new URLSearchParams({
+        salesCode, principle: "PRINCIPLE A", date: HARI_INI })}`))));
+    type Kartu = { custCode: string; luarRute: boolean; nooStatus: string | null; nooAlasanTolak: string | null };
+    const kodeD = (await pool.query(`SELECT kode FROM noo_toko WHERE nama_toko = 'TOKO BARU D'`)).rows[0].kode as string;
+    const kodeB = (await pool.query(`SELECT kode FROM noo_toko WHERE id = $1`, [ID_B])).rows[0].kode as string;
+    // Pelanggan biasa luar rute (C-200014-CBA ditambah di uji ORDER NOO) membuktikan baris non-NOO tidak ikut ditandai.
+    // Hitung query yang menyentuh noo_toko selama SATU muat rute: tiga baris NOO (terdaftar, menunggu, + kode lain) harus tetap = 1 query (bukan N+1).
+    const pool2 = m.dbMod.pool as unknown as { query: (...a: unknown[]) => unknown };
+    const asli = pool2.query;
+    let nQuery = 0;
+    pool2.query = function (this: unknown, ...a: unknown[]) {
+        const q = a[0] as { text?: string } | string;
+        if (String(typeof q === "string" ? q : q?.text).includes('"noo_toko"')) nQuery++;
+        return asli.apply(this, a);
+    };
+    let a: J;
+    try { a = await rute("u-sla", "M-SLA"); } finally { pool2.query = asli; }
+    assert.equal(a.status, 200, a.teks);
+    const kartuA = new Map((a.body.rows as Kartu[]).map((r) => [r.custCode, r]));
+    assert.deepEqual([kartuA.get(KODE_A)?.nooStatus, kartuA.get(KODE_A)?.nooAlasanTolak], ["terdaftar", null]);
+    assert.deepEqual([kartuA.get(kodeD)?.nooStatus, kartuA.get(kodeD)?.nooAlasanTolak], ["menunggu_spv", null]);
+    assert.deepEqual([kartuA.get("C-200014-CBA")?.luarRute, kartuA.get("C-200014-CBA")?.nooStatus, kartuA.get("C-200014-CBA")?.nooAlasanTolak], [true, null, null],
+        "pelanggan biasa: tanpa status NOO");
+    assert.equal(nQuery, 1, `status NOO dicari dengan satu query per muat rute (dapat ${nQuery})`);
+    // Ditolak SPV: kunjungan hari itu TETAP di rute (sudah terjadi), kini bertanda + alasan.
+    const b = await rute("u-slb", "M-SLB");
+    const kartuB = (b.body.rows as Kartu[]).find((r) => r.custCode === kodeB);
+    assert.deepEqual([kartuB?.luarRute, kartuB?.nooStatus, kartuB?.nooAlasanTolak], [true, "ditolak", "Toko ternyata cabang pelanggan lama."]);
+    // Privasi: tak ada NIK/HP/nama pemilik/nama berkas foto di muatan rute, dan baris NOO tidak membawa kolom pribadi.
+    const foto = (await pool.query(`SELECT foto_toko, foto_ktp FROM noo_toko`)).rows.flatMap((r) => [r.foto_toko, r.foto_ktp]) as string[];
+    for (const teks of [a.teks, b.teks]) {
+        tanpaNik(teks, NIK_A, NIK_B);
+        for (const rahasia of ["081234567890", "0812-3456-7890", "PEMILIK A", ...foto]) assert.ok(!teks.includes(rahasia), `data pribadi bocor di rute: ${rahasia}`);
+    }
+    for (const kolom of ["nik", "noHp", "fotoKtp", "fotoToko", "namaPemilik", "namaKtp"]) assert.ok(!(kolom in (kartuB as object)), `kolom ${kolom} ada di baris rute`);
+    // Tanpa baris NOO di rute: tidak ada query noo_toko sama sekali.
+    nQuery = 0;
+    pool2.query = function (this: unknown, ...x: unknown[]) {
+        const q = x[0] as { text?: string } | string;
+        if (String(typeof q === "string" ? q : q?.text).includes('"noo_toko"')) nQuery++;
+        return asli.apply(this, x);
+    };
+    try { assert.equal((await rute("u-slc", "M-SLC")).status, 200); } finally { pool2.query = asli; }
+    assert.equal(nQuery, 0, "rute tanpa baris NOO tidak menyentuh noo_toko");
 });
 
 test("serentak: dua pengajuan NIK sama -> satu 201, satu 409 NOO_DUPLIKAT (kunci advisory); berkas yang kalah dibuang", { skip: pgSkip }, async () => {

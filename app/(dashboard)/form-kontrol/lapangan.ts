@@ -15,6 +15,7 @@
  */
 import { useEffect, useState } from "react";
 import type { Load } from "@/components/fiori/interactive";
+import { LABEL_STATUS_NOO, type StatusNoo } from "@/lib/form-kontrol/noo-aturan";
 import { hariIniWita, type AoRow } from "./shared";
 
 export const PESAN_SINYAL = "Ponsel tidak tersambung ke server (tanpa sinyal).";
@@ -111,6 +112,9 @@ export function keBarisRute(rows: unknown, principle: string): AoRow[] {
         checkoutAt: (r.checkoutAt as string) ?? null,
         luarRute: r.luarRute === true,
         adaStatus: r.aoStatus != null,
+        // R4: status pengajuan NOO dari server (nilai tak dikenal / server lama = null → kartu seperti semula); alasan hanya bila ditolak.
+        nooStatus: typeof r.nooStatus === "string" && Object.keys(LABEL_STATUS_NOO).includes(r.nooStatus) ? r.nooStatus as StatusNoo : null,
+        nooAlasanTolak: r.nooStatus === "ditolak" && typeof r.nooAlasanTolak === "string" && r.nooAlasanTolak.trim() ? r.nooAlasanTolak : null,
     }));
 }
 

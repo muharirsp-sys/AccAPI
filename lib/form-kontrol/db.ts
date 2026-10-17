@@ -4,11 +4,12 @@ import { db } from "@/lib/db";
 import {
     jksMaster, aoControlDaily, noOrderReason,
     merchandisingCheck, salesmanDailyReport,
-    spvBriefing, smControl, kontrolAuditLog, salesProfile, kunjunganLuarRute,
+    spvBriefing, smControl, kontrolAuditLog, salesProfile, kunjunganLuarRute, nooToko,
 } from "@/db/schema";
 import { cocokKodeRute, type GalatOrder } from "@/lib/order-cabang";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { DAY_TO_HARI, NO_ORDER_REASONS, hariBaku, kunciHari, kunciNama, paritasMinggu } from "./constants";
+import { isKodeNoo, type StatusNoo } from "./noo-aturan";
 import type { AoStatus, TodayRouteRow } from "./types";
 
 // Paritas minggu = paritasMinggu (constants.ts, acuan owner 12 Okt 2026), dihitung dari string tanggal WITA yang dikirim layar.
@@ -226,8 +227,16 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
     ).groupBy(aoControlDaily.custCode);
     const attentionSet = new Set(notOrderCounts.filter(r => r.count >= 2).map(r => r.custCode));
 
+    // R4: status pengajuan untuk baris ber-kode NOO — SATU query IN (bukan per baris), hanya kolom non-pribadi (tanpa NIK/KTP/foto/No. HP).
+    // Toko DITOLAK tetap di rute (kunjungannya sudah terjadi); alasan tolak hanya dibawa bila status = ditolak.
+    const kodeNoo = custCodes.filter(isKodeNoo);
+    const nooRows = kodeNoo.length === 0 ? [] : await db.select({ kode: nooToko.kode, status: nooToko.status, alasanTolak: nooToko.alasanTolak })
+        .from(nooToko).where(inArray(nooToko.kode, kodeNoo));
+    const nooMap = new Map(nooRows.map(r => [r.kode, r]));
+
     return jksRows.map(j => {
         const ao = aoMap.get(j.custCode);
+        const noo = nooMap.get(j.custCode);
         return {
             ...j,
             mingguPattern: j.mingguPattern as "ganjil" | "genap" | "all",
@@ -242,6 +251,8 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
             monthlyOrderCount: monthlyMap.get(j.custCode) ?? 0,
             needsAttention: attentionSet.has(j.custCode),
             luarRute: j.luarRute === true,
+            nooStatus: (noo?.status as StatusNoo | undefined) ?? null,
+            nooAlasanTolak: noo?.status === "ditolak" ? noo.alasanTolak : null,
         };
     });
 }

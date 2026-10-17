@@ -1,3 +1,5 @@
+import type { StatusNoo } from "./noo-aturan";
+
 export type AoStatus = "ordered" | "active" | "not_order" | "not_visited" | "priority";
 export type MingguPattern = "ganjil" | "genap" | "all";
 export type BriefingSession = "pagi" | "sore";
@@ -77,6 +79,10 @@ export interface TodayRouteRow extends JksMasterRow {
     needsAttention: boolean;
     /** FK-MSM2: kunjungan luar rute (toko tidak di JKS hari itu), bukan baris JKS. */
     luarRute: boolean;
+    /** R4: status pengajuan toko baru untuk baris ber-kode NOO (noo_toko.status); null = bukan NOO. Tanpa NIK/KTP/foto/No. HP. */
+    nooStatus: StatusNoo | null;
+    /** R4: alasan tolak SPV — hanya bila nooStatus = "ditolak". */
+    nooAlasanTolak: string | null;
 }
 
 export interface VisitDetail {
