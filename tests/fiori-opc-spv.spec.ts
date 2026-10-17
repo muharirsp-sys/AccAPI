@@ -325,7 +325,7 @@ test("Batch baru di kolom kedua: nomor otomatis per principal, validasi kode lam
     await expect(detail.getByRole("heading", { level: 1, name: "Batch baru" })).toBeVisible(NAV);
     const setup = detail.getByRole("region", { name: "Setup batch" });
     await expect(setup).toContainText(`004/RB/${MM}/${YYYY}`);
-    await setup.getByLabel("Principal", { exact: true }).selectOption("KINO INDONESIA. TBK, PT");
+    await setup.getByLabel("Principal", { exact: true }).selectOption("KINO INDONESIA TBK, PT");
     await expect(setup).toContainText(`004/KINO/${MM}/${YYYY}`);
     await expect(setup.getByLabel("Nama supervisor")).toHaveValue("Rahmat Hidayat");
     await expect(detail.locator(".fi-ftb")).toContainText("Tipe program pada baris 1 wajib dipilih");
@@ -363,7 +363,7 @@ test("Batch baru di kolom kedua: nomor otomatis per principal, validasi kode lam
     await expect(detail.getByRole("region", { name: "Setup batch" })).toBeVisible();
     expect(tulis.map((t) => `${t.method} ${t.path}`)).toEqual(["POST /api/off-program-control/batches", "POST /api/off-program-control/batches"]);
     expect(tulis[1].body).toMatchObject({
-        supervisorName: "Rahmat Hidayat", principleCode: "KINO", principleName: "KINO INDONESIA. TBK, PT", bulan: MM, tahun: YYYY, forceDuplicateNoSurat: false,
+        supervisorName: "Rahmat Hidayat", principleCode: "KINO", principleName: "KINO INDONESIA TBK, PT", bulan: MM, tahun: YYYY, forceDuplicateNoSurat: false,
         items: [{ noSurat: "KINO/PRG/1001", toko: "TK Baru", nominal: "Rp 750.000", caraBayar: "Tunai", noRekening: "", type: "Event", originalType: "Event", periode: "" }],
     });
 });
@@ -425,7 +425,7 @@ test("Diskon SPV: daftar, galat ≠ kosong, catat lewat dialog (FormData kode la
     const form = main.getByRole("region", { name: "Catat pengajuan diskon" });
     await expect(form.getByRole("button", { name: "Catat pengajuan diskon…" })).toBeDisabled();
     await form.getByLabel("Toko / customer").fill("TK Diskon");
-    await form.getByLabel("Principal").selectOption("KINO INDONESIA. TBK, PT");
+    await form.getByLabel("Principal").selectOption("KINO INDONESIA TBK, PT");
     await form.getByLabel("Nominal diskon").fill("Rp 125.000");
     await form.getByRole("button", { name: "Catat pengajuan diskon…" }).click();
     const dlg = page.getByRole("dialog", { name: "Catat pengajuan diskon untuk TK Diskon?" });
@@ -434,7 +434,7 @@ test("Diskon SPV: daftar, galat ≠ kosong, catat lewat dialog (FormData kode la
     await expect(main.getByText("Pengajuan diskon tercatat sebagai jejak digital.")).toBeVisible();
     expect(tulis).toHaveLength(1);
     const fd = String(tulis[0].body);
-    for (const [k, v] of [["toko", "TK Diskon"], ["principleName", "KINO INDONESIA. TBK, PT"], ["principleCode", "KINO"], ["nominal", "Rp 125.000"]]) {
+    for (const [k, v] of [["toko", "TK Diskon"], ["principleName", "KINO INDONESIA TBK, PT"], ["principleCode", "KINO"], ["nominal", "Rp 125.000"]]) {
         expect(fd).toContain(`name="${k}"\r\n\r\n${v}\r\n`);
     }
     // Ctrl K dari Diskon membuka batch di kolom kedua; tombol Diskon menutup batch dan kembali ke Diskon.
