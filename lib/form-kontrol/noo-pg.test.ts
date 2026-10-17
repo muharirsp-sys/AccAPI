@@ -546,7 +546,7 @@ test("R4 kartu rute NOO: nooStatus + alasan tolak ikut baris rute lewat SATU que
     const kodeD = (await pool.query(`SELECT kode FROM noo_toko WHERE nama_toko = 'TOKO BARU D'`)).rows[0].kode as string;
     const kodeB = (await pool.query(`SELECT kode FROM noo_toko WHERE id = $1`, [ID_B])).rows[0].kode as string;
     // Pelanggan biasa luar rute (C-200014-CBA ditambah di uji ORDER NOO) membuktikan baris non-NOO tidak ikut ditandai.
-    // Hitung query yang menyentuh noo_toko selama SATU muat rute: tiga baris NOO (terdaftar, menunggu, + kode lain) harus tetap = 1 query (bukan N+1).
+    // Hitung query yang menyentuh noo_toko selama SATU muat rute: dua baris NOO di rute M-SLA (terdaftar, menunggu_spv) harus tetap = 1 query (bukan N+1).
     const pool2 = m.dbMod.pool as unknown as { query: (...a: unknown[]) => unknown };
     const asli = pool2.query;
     let nQuery = 0;
@@ -568,6 +568,18 @@ test("R4 kartu rute NOO: nooStatus + alasan tolak ikut baris rute lewat SATU que
     const b = await rute("u-slb", "M-SLB");
     const kartuB = (b.body.rows as Kartu[]).find((r) => r.custCode === kodeB);
     assert.deepEqual([kartuB?.luarRute, kartuB?.nooStatus, kartuB?.nooAlasanTolak], [true, "ditolak", "Toko ternyata cabang pelanggan lama."]);
+    // Lapis kedua (salesCode): baris rute M-SLA yang kebetulan berkode NOO milik salesman LAIN (M-SLB, ditolak + beralasan) TIDAK ikut terbawa
+    // statusnya/alasan tolaknya. Kode NOO unik, jadi baris rute ini disisipkan langsung (data rusak/ulah) — tanpa saringan salesCode status B bocor ke A.
+    await pool.query(`INSERT INTO kunjungan_luar_rute (id, sales_code, principle, tanggal, cust_code, cust_name, dibuat_oleh)
+        VALUES ('klr-r4-lain', 'M-SLA', 'PRINCIPLE A', $1, $2, 'TOKO ORANG LAIN', 'u-sla')`, [HARI_INI, kodeB]);
+    try {
+        const silang = (await rute("u-sla", "M-SLA")).body.rows as Kartu[];
+        const kartuSilang = silang.find((r) => r.custCode === kodeB);
+        assert.deepEqual([kartuSilang?.luarRute, kartuSilang?.nooStatus, kartuSilang?.nooAlasanTolak], [true, null, null],
+            "NOO milik salesman lain tidak ikut terbawa ke rute salesman ini");
+    } finally {
+        await pool.query(`DELETE FROM kunjungan_luar_rute WHERE id = 'klr-r4-lain'`);
+    }
     // Privasi: tak ada NIK/HP/nama pemilik/nama berkas foto di muatan rute, dan baris NOO tidak membawa kolom pribadi.
     const foto = (await pool.query(`SELECT foto_toko, foto_ktp FROM noo_toko`)).rows.flatMap((r) => [r.foto_toko, r.foto_ktp]) as string[];
     for (const teks of [a.teks, b.teks]) {

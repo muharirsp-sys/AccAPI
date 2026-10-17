@@ -228,10 +228,11 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
     const attentionSet = new Set(notOrderCounts.filter(r => r.count >= 2).map(r => r.custCode));
 
     // R4: status pengajuan untuk baris ber-kode NOO — SATU query IN (bukan per baris), hanya kolom non-pribadi (tanpa NIK/KTP/foto/No. HP).
-    // Toko DITOLAK tetap di rute (kunjungannya sudah terjadi); alasan tolak hanya dibawa bila status = ditolak.
+    // Toko DITOLAK tetap di rute (kunjungannya sudah terjadi); alasan tolak hanya dibawa bila status = ditolak. Kode NOO unik; saringan salesCode =
+    // lapis kedua supaya NOO milik salesman lain (baris rute berkode tak lazim) tidak membocorkan status/alasan ke rute ini.
     const kodeNoo = custCodes.filter(isKodeNoo);
     const nooRows = kodeNoo.length === 0 ? [] : await db.select({ kode: nooToko.kode, status: nooToko.status, alasanTolak: nooToko.alasanTolak })
-        .from(nooToko).where(inArray(nooToko.kode, kodeNoo));
+        .from(nooToko).where(and(inArray(nooToko.kode, kodeNoo), eq(nooToko.salesCode, salesCode)));
     const nooMap = new Map(nooRows.map(r => [r.kode, r]));
 
     return jksRows.map(j => {

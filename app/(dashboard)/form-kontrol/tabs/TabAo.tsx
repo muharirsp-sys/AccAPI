@@ -316,7 +316,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                             <Star className="fi-icon" aria-hidden style={r.isPriority ? { fill: "var(--warn-solid)", color: "var(--warn-solid)" } : undefined} />
                                         </Button>
                                         <ListItem href={`/form-kontrol/visit/${encodeURIComponent(r.custCode)}?${q}`} doc={r.custCode} title={r.custName}
-                                            meta={<>{metaToko(r)}{r.nooAlasanTolak && <span className="block">Alasan ditolak: {r.nooAlasanTolak}</span>}</>}
+                                            meta={<>{metaToko(r)}{r.nooAlasanTolak && <span className="block" style={{ overflowWrap: "anywhere" }}>Alasan ditolak: {r.nooAlasanTolak}</span>}</>}
                                             badge={r.nooStatus
                                                 ? <span className="flex flex-wrap items-center gap-1">{badgeNoo(r)}<StatusBadge tone={b.tone}>{b.label}</StatusBadge></span>
                                                 : <StatusBadge tone={b.tone}>{b.label}</StatusBadge>} />
