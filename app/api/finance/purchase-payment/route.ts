@@ -25,10 +25,13 @@ import {
 const ENDPOINT = "/api/purchase-payment/bulk-save.do";
 
 export async function POST(request: Request) {
-    // ponytail: finance.update = gate yang sama dengan pencatatan status di FastAPI hari ini.
-    // finance.post_accurate terdaftar tapi belum ditegakkan di mana pun — pemetaannya D-01/AM-042.
+    // S7-1c (PK-2 owner 12 Okt): posting = finance.update ∧ finance.post_accurate. Pemegang finance.update diberi post_accurate lewat
+    // docs/handover/RBAC_S7_1C_KUNCI.sql SEBELUM image ini. Ditolak sebelum klaim = pasti tidak terkirim.
     const gate = await requirePermission(request, "finance.update");
     if (gate.response) return gate.response;
+    if (!gate.perms!.has("finance.post_accurate")) {
+        return NextResponse.json({ error: "Forbidden: butuh permission finance.post_accurate", claimed: false }, { status: 403 });
+    }
 
     const body = await request.json().catch(() => null) as { clientRef?: unknown; payload?: unknown; expectedDatabaseId?: unknown } | null;
     const normalized = normalizePurchasePaymentPayload(body?.payload);

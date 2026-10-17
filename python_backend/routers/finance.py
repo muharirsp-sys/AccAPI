@@ -237,6 +237,8 @@ def payments_finance_export(request: Request):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "finance", "view"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not user_has_permission(user, "finance", "export"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission finance.export"})
 
     from_q = s(request.query_params.get("from", ""))
     to_q = s(request.query_params.get("to", ""))
@@ -395,6 +397,8 @@ async def payments_finance_proof_upload(request: Request, file: UploadFile = Fil
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "finance", "update"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not user_has_permission(user, "finance", "upload_proof"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission finance.upload_proof"})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
@@ -436,7 +440,8 @@ async def payments_finance_update(request: Request):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     # S6-0e butir 7 (paritas dengan route Next /resolve): pemegang finance.resolve_unknown TANPA finance.update boleh
     # menuntaskan ledger untuk posting TIDAK PASTI saja — dulu attempt server selesai tetapi ledger 403 (terbelah).
-    can_update = user_has_permission(user, "finance", "update")
+    # S7-1c (PK-2): jalur ubah umum = finance.update ∧ finance.transfer; jalur resolve_only tetap (finance.resolve_unknown).
+    can_update = user_has_permission(user, "finance", "update") and user_has_permission(user, "finance", "transfer")
     resolve_only = not can_update and user_has_permission(user, "finance", "resolve_unknown")
     if not can_update and not resolve_only:
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
@@ -452,7 +457,7 @@ async def payments_finance_update(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "error": "Format data tidak valid."})
     if not items:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Data finance yang akan diupdate tidak boleh kosong."})
-    resolve_only_error = ("Tanpa finance.update hanya boleh menyelesaikan posting TIDAK PASTI: status Sudah Transfer, "
+    resolve_only_error = ("Tanpa finance.update + finance.transfer hanya boleh menyelesaikan posting TIDAK PASTI: status Sudah Transfer, "
                           "hasil posted/failed, dan catatan pemeriksaan minimal 15 karakter.")
     if resolve_only and any(not isinstance(it, dict) or s(it.get("status_pembayaran", "")) != "Sudah Transfer"
                             or s(it.get("accurate_post_status", "")) not in ("posted", "failed")

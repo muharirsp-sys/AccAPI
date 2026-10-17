@@ -63,7 +63,7 @@ test("tinjauan S6-0a: POST /api/finance/purchase-payment tanpa finance.update ->
 
 test("tinjauan S6-0a: galat SEBELUM klaim (baca sesi Accurate melempar) -> 503 {claimed:false}, tidak dikirim", async () => {
     // asUserWith: select().from().where() tanpa .limit -> getAccurateSession melempar (mis. DB putus saat baca sesi).
-    const res = await asUserWith(["finance.update"], () => postPurchasePayment(jsonPost("/api/finance/purchase-payment", { clientRef: "k", expectedDatabaseId: "DB-1", payload: PP_PAYLOAD })));
+    const res = await asUserWith(["finance.update", "finance.post_accurate"], () => postPurchasePayment(jsonPost("/api/finance/purchase-payment", { clientRef: "k", expectedDatabaseId: "DB-1", payload: PP_PAYLOAD })));
     assert.equal(res.status, 503);
     const body = await res.json() as { claimed?: boolean; error?: string };
     assert.equal(body.claimed, false);

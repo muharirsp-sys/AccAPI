@@ -113,9 +113,12 @@ function PilihBanyak({ label, baris, options, value, onChange, kunci }: { label:
 export default function Summary({ permKeys }: { permKeys: string[] }) {
     const keys = useMemo(() => new Set(permKeys), [permKeys]);
     const bolehUbah = keys.has("summary.edit");
-    // FastAPI menuntut summary.edit untuk baca surat, master, Summary final, email, simulasi, dan koreksi.
-    const bolehUnggah = bolehUbah;
-    const bolehBuat = bolehUbah;
+    // FastAPI menuntut summary.edit untuk baca surat, simulasi, dan koreksi; S7-1c (PK-2): unggah master = edit ∧ upload,
+    // Summary final = edit ∧ generate, email = edit ∧ email, unduh = view ∧ export.
+    const bolehUnggah = bolehUbah && keys.has("summary.upload");
+    const bolehBuat = bolehUbah && keys.has("summary.generate");
+    const bolehEmail = bolehUbah && keys.has("summary.email");
+    const bolehEkspor = keys.has("summary.export");
 
     const [principles] = useLoad(useCallback(async (): Promise<Load<Principles>> => {
         const r = await send("GET", "/api/principles");
@@ -471,7 +474,7 @@ export default function Summary({ permKeys }: { permKeys: string[] }) {
                 <div className="fi-sect-in">
                     {!draft && !rows.length && <EmptyState title={`Belum ada draf Summary${principleName ? ` ${principleName}` : ""}`} message="Pilih principal dan pakai master barangnya, lalu pilih surat promo (PDF). Surat berikutnya di bulan yang sama disusulkan ke Summary yang sama selama belum terbit." />}
                     {suratUnik.length > 0 && <ul className="fi-chips" aria-label="Surat di draf">{suratUnik.map((s) => <li key={s} className="fi-chip fi-mono">{s}</li>)}</ul>}
-                    {bolehUnggah && (masterToken ? (
+                    {bolehUbah && (masterToken ? (
                         <div className="fi-page-bar">
                             <FormField label="Surat promo (PDF atau foto JPG/PNG)" help="Semua halaman dibaca otomatis menjadi draf yang wajib ditinjau. Nilai transaksi dihitung aturan terbit, bukan pembaca surat.">{(a11y) => <input {...a11y} className="fi-input" type="file" accept="application/pdf,image/jpeg,image/png" disabled={membaca || st === "published"} onChange={(e) => setPdfFile(e.target.files?.[0] || null)} />}</FormField>
                             <Button variant="primary" icon={<Upload className="fi-icon" aria-hidden />} busy={membaca} disabled={!pdfFile || st === "published" || (dirty && Boolean(draft))} disabledReason={st === "published" ? "Draf sudah terbit" : dirty && draft ? "Simpan atau buang perubahan dulu" : "Pilih surat dulu"} onClick={() => void bacaSurat()} style={{ alignSelf: "end" }}>{draft ? "Susulkan surat" : "Baca surat"}</Button>
@@ -571,14 +574,14 @@ export default function Summary({ permKeys }: { permKeys: string[] }) {
                         </div>
                         {hasilFinal && (
                             <>
-                                <div className="fi-btnrow">
+                                {bolehEkspor && <div className="fi-btnrow">
                                     <Button icon={<Download className="fi-icon" aria-hidden />} onClick={() => void unduh(unduhUrl(hasilFinal.fid, "form"), "Form_Summary_Program.pdf")}>Form PDF</Button>
                                     <Button icon={<Download className="fi-icon" aria-hidden />} onClick={() => void unduh(unduhUrl(hasilFinal.fid, "dataset"), "Dataset_Diskon_With_Channel.xlsx")}>Excel untuk impor</Button>
-                                </div>
-                                <div className="fi-page-bar">
+                                </div>}
+                                {bolehEmail && <div className="fi-page-bar">
                                     <FormField label="Kirim lewat email">{(a11y) => <input {...a11y} className="fi-input" type="email" placeholder="email divisi" value={emailTarget} onChange={(e) => setEmailTarget(e.target.value)} />}</FormField>
                                     <Button style={{ alignSelf: "end" }} icon={<Send className="fi-icon" aria-hidden />} busy={sibuk === "email"} disabled={!emailTarget} disabledReason="Isi alamat email dulu" onClick={() => void kirimEmail()}>Kirim</Button>
-                                </div>
+                                </div>}
                             </>
                         )}
                     </div>

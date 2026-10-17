@@ -55,13 +55,27 @@ test("angka dari jawaban server: null/kosong/bukan angka = tidak terbaca (bukan 
 });
 
 test("izin: tanpa kunci = alasan terlihat tanpa nama kunci mentah", () => {
-    const iz = izinPembayaran(["payments.view", "payments.edit", "sppd.view"]);
+    const iz = izinPembayaran(["payments.view", "payments.edit", "payments.create", "payments.upload", "payments.submit", "sppd.view"]);
     assert.equal(iz.keranjang, undefined);
     assert.equal(iz.unggah, undefined);
     assert.match(iz.ubah ?? "", /belum punya izin mengubah isian rekaman/);
     assert.match(iz.restore ?? "", /memulihkan backup/);
     assert.match(iz.setelan ?? "", /setelan dan nomor SPPD/);
     for (const alasan of Object.values(iz)) assert.doesNotMatch(alasan ?? "", /payments\.|sppd\./);
+});
+
+test("S7-1c: unggah/manual/keranjang/ekspor = kunci lama ∧ kunci baru (PK-2)", () => {
+    const penuh = ["payments.view", "payments.edit", "payments.create", "payments.upload", "payments.submit", "payments.export"];
+    const iz = izinPembayaran(penuh);
+    for (const a of ["unggah", "manual", "keranjang", "ekspor"] as const) assert.equal(iz[a], undefined, a);
+    const tanpa = (k: string) => izinPembayaran(penuh.filter((x) => x !== k));
+    assert.ok(tanpa("payments.edit").unggah && tanpa("payments.edit").manual && tanpa("payments.edit").keranjang, "kunci lama tetap wajib");
+    assert.ok(tanpa("payments.upload").unggah);
+    assert.ok(tanpa("payments.create").manual);
+    assert.ok(tanpa("payments.create").keranjang);
+    assert.ok(tanpa("payments.submit").keranjang);
+    assert.ok(tanpa("payments.export").ekspor);
+    assert.ok(tanpa("payments.view").ekspor);
 });
 
 test("tanggal: tampil dd/mm/yyyy, isian YYYY-MM-DD, besok menurut WITA (bukan UTC)", () => {
