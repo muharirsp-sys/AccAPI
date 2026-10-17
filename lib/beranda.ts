@@ -165,7 +165,9 @@ export const TILES = {
         const hariIni = tanggal.includes(str(d.tanggal));
         // Hanya hari ini yang terbuka itu normal (belum waktunya tutup): info. Ada hari lampau belum ditutup: warn.
         if (num(hari.jumlah) === 1 && hariIni) return { value: 1, unit: "hari", tone: "info", footer: "Hanya hari ini" };
-        return count(num(hari.jumlah), "hari", `${hariIni ? "Termasuk hari ini · terlama" : "Terlama"} ${tanggal[0] ? tanggalPendek(tanggal[0]) : "—"}`, "warn");
+        // Hari lampau terkunci otomatis 20.00 dan Kasir tidak bisa menutupnya sendiri: OM/Admin (kasir.buka) yang membuka kembali.
+        const lampau = tanggal.some((t) => t !== str(d.tanggal));
+        return count(num(hari.jumlah), "hari", `${hariIni ? "Termasuk hari ini · terlama" : "Terlama"} ${tanggal[0] ? tanggalPendek(tanggal[0]) : "—"}${lampau ? " · hari lampau terkunci, minta OM/Admin membuka kembali" : ""}`, "warn");
     } },
     userTanpaGrup: { title: "User tanpa grup", subtitle: "Masih memakai akses role lama", href: "/admin/users", source: "users", icon: "users", pick: (data) =>
         count(rows(obj(data).users).filter((u) => !u.groupId && !u.banned).length, "user", "Tetapkan grup akses", "info") },

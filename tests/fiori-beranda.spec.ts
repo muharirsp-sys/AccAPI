@@ -134,6 +134,7 @@ test("K3: profil Kasir — tiga tile dari ringkasan; belum terbaca bukan 0 dan b
     await expect(tile(/Salesman belum menyetor/)).toContainText("4");
     await expect(tile(/Salesman belum menyetor/)).toContainText("3 belum dijelaskan");
     await expect(tile(/Hari belum ditutup/)).toContainText("Termasuk hari ini · terlama 14 Okt");
+    await expect(tile(/Hari belum ditutup/)).toContainText("minta OM/Admin membuka kembali");
     for (const nama of [/Selisih belum dijelaskan/, /Salesman belum menyetor/, /Hari belum ditutup/]) await expect(tile(nama)).toHaveAttribute("href", "/kasir");
     await expect(tugas.getByRole("link")).toHaveCount(3);
     // Satu sumber bersama untuk ketiga tile (bukan satu permintaan per tile; dev StrictMode boleh menggandakan efek menjadi 2), tanggal = hari ini WITA.

@@ -433,7 +433,7 @@ berbeda dari GET `/api/kasir`, ia TIDAK mencatat `kunci` otomatis 20.00 (uji PG:
   `total.takTeralokasiBelumDijelaskan` layar. Tile 1 = jumlahnya.
 - `belumSetor.jumlah` = SEMUA orang ber-pelunasan tanpa setoran (status `belum_setor`, termasuk yang sudah dijelaskan: mereka tetap belum
   menyetor); `belumDijelaskan` = `nBelum` layar. Tile 2 = `jumlah`, kakinya `belumDijelaskan`.
-- `hariBelumDitutup`: `jendela` = hari ini (`tanggal`) + 7 hari kerja (Senin–Sabtu, `hariKerja`) SEBELUMNYA; belum ditutup =
+- `hariBelumDitutup`: `jendela` = hari ini (`tanggal`, bila hari kerja; §9.2a) + 7 hari kerja (Senin–Sabtu, `hariKerja`) SEBELUMNYA; belum ditutup =
   `statusHari(...).sebab !== "tutup"` (fungsi yang sama dengan `hari.sebab` layar). Kunci otomatis 20.00 dan hari yang dibuka kembali lalu terkunci
   lagi = BELUM ditutup (kunci ≠ tutup). Tidak bergantung pada status baca Incaso.
 - **Incaso belum `lengkap`** (belum dibaca / berjalan / sebagian / gagal / sesi sinkron tanpa database): `selisih` dan `belumSetor` = `null`,
@@ -441,14 +441,18 @@ berbeda dari GET `/api/kasir`, ia TIDAK mencatat `kunci` otomatis 20.00 (uji PG:
   lengkap ⇒ semua angka `number`; belum lengkap ⇒ `selisih`/`belumSetor` `null`; bentuk lain = galat sumber.
 - Umur `lengkap` bebas (sama dengan layar): hanya Tutup yang menuntut ≤ 15 menit.
 
-### 9.2 Catatan keputusan / yang perlu dikonfirmasi owner
+### 9.2 Keputusan (tinjauan PR #200)
 
-- **Minggu**: hari ini selalu ikut jendela (bunyi keputusan harfiah). Bila hari ini Minggu (tak ada hari kerja) tile 3 memuat Minggu itu sebagai belum
-  ditutup — usul: kecualikan hari ini bila `!hariKerja(hari ini)` (satu baris di `jendelaTutup`).
-- Hari ini hampir selalu "belum ditutup" sepanjang hari; karena itu nada tile 3 = info bila HANYA hari ini yang terbuka, warn bila ada hari
-  lampau belum ditutup.
-- KPI "Selisih" layar `/kasir` memang tidak menghitung `setoran_tanpa_pelunasan` (belum dijelaskan) walau ia menghalangi Tutup; tile mengikuti layar
-  ("identik"). Menambahkannya = ubah rumus layar dan tile bersamaan.
+- **(a) Minggu / bukan hari kerja dikecualikan**: `jendelaTutup(tanggal)` hanya memuat hari ini bila `hariKerja(tanggal)` (Senin–Sabtu); selalu
+  memuat 7 hari kerja sebelumnya. Hari ini hampir selalu "belum ditutup" sepanjang hari kerja, karena itu nada tile 3 = info bila HANYA hari ini yang
+  terbuka, warn bila ada hari lampau belum ditutup.
+- **Hari lampau**: terkunci otomatis 20.00 dan Kasir tidak bisa menutupnya sendiri; footer tile 3 menyebut "minta OM/Admin membuka kembali"
+  (`kasir.buka`). Pengecualian langka: hari lampau yang sudah dibuka kembali dan belum lewat 20.00 berikutnya masih bisa ditutup Kasir; ringkasan belum
+  membawa status kunci per tanggal.
+- **(b) `setoran_tanpa_pelunasan` tetap mengikuti layar `/kasir`**: KPI "Selisih" layar tidak menghitungnya (belum dijelaskan) walau ia menghalangi
+  Tutup; tile mengikuti layar ("identik"). Kandidat tiket terpisah: layar dan tile diubah bersamaan.
+- **(c) Tile 2 tetap menghitung SEMUA yang belum setor** (juga yang sudah dijelaskan; mereka tetap belum menyetor); footer memisahkan yang belum
+  dijelaskan (= `nBelum` layar).
 
 **Plafon (ponytail)**: tiap muat Beranda profil Kasir = satu `muatDalam` (beban sama dengan satu GET `/api/kasir`) + satu SELECT event; tanpa cache.
 Jalan naik bila berat: kueri hitung khusus (tanpa memuat seluruh hari) — tetapi angkanya harus tetap identik dengan layar.

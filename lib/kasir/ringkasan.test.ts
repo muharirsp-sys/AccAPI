@@ -52,8 +52,8 @@ test("jendelaTutup: hari ini + 7 hari kerja terakhir (Senin–Sabtu), Minggu dil
     assert.deepEqual(jendelaTutup("2026-10-17"), ["2026-10-09", "2026-10-10", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17"]);
     // Senin 12 Okt: Sabtu 10 mundur sampai Sabtu 3 (Minggu 11 dan 4 dilewati).
     assert.deepEqual(jendelaTutup("2026-10-12"), ["2026-10-03", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-12"]);
-    // Minggu 18 Okt: hari ini tetap ikut (kontrak K3 harfiah), lalu 7 hari kerja sebelumnya.
-    assert.deepEqual(jendelaTutup("2026-10-18"), ["2026-10-10", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17", "2026-10-18"]);
+    // Minggu 18 Okt (bukan hari kerja): hari ini DIKECUALIKAN; tinggal 7 hari kerja sebelumnya (Sabtu 17 s/d Sabtu 10).
+    assert.deepEqual(jendelaTutup("2026-10-18"), ["2026-10-10", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17"]);
     // Lintas bulan/tahun: tanggal sah tetap (tanpa 31 Feb dsb).
     assert.deepEqual(jendelaTutup("2027-01-04"), ["2026-12-26", "2026-12-28", "2026-12-29", "2026-12-30", "2026-12-31", "2027-01-01", "2027-01-02", "2027-01-04"]);
 });

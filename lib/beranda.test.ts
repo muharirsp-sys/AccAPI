@@ -132,9 +132,9 @@ test("K3: angka tile Kasir dari ringkasan; nol benar-benar nol; Incaso belum len
     assert.deepEqual(TILES.kasirBelumSetor.pick({ ...RINGKASAN, belumSetor: { jumlah: 2, belumDijelaskan: 0 } }),
         { value: 2, unit: "orang", tone: "warn", footer: "Semuanya sudah dijelaskan" });
     // Hari belum ditutup: ada hari lampau = warn; hanya hari ini = info (normal sampai hari itu ditutup); nol = semua beres.
-    assert.deepEqual(TILES.kasirBelumTutup.pick(RINGKASAN), { value: 3, unit: "hari", tone: "warn", footer: "Termasuk hari ini · terlama 14 Okt" });
+    assert.deepEqual(TILES.kasirBelumTutup.pick(RINGKASAN), { value: 3, unit: "hari", tone: "warn", footer: "Termasuk hari ini · terlama 14 Okt · hari lampau terkunci, minta OM/Admin membuka kembali" });
     assert.deepEqual(TILES.kasirBelumTutup.pick({ ...RINGKASAN, hariBelumDitutup: { jumlah: 2, tanggal: ["2026-10-14", "2026-10-16"], jendela: [] } }),
-        { value: 2, unit: "hari", tone: "warn", footer: "Terlama 14 Okt" });
+        { value: 2, unit: "hari", tone: "warn", footer: "Terlama 14 Okt · hari lampau terkunci, minta OM/Admin membuka kembali" });
     assert.deepEqual(TILES.kasirBelumTutup.pick({ ...RINGKASAN, hariBelumDitutup: { jumlah: 1, tanggal: ["2026-10-17"], jendela: [] } }),
         { value: 1, unit: "hari", tone: "info", footer: "Hanya hari ini" });
     assert.deepEqual(TILES.kasirBelumTutup.pick({ ...RINGKASAN, hariBelumDitutup: { jumlah: 0, tanggal: [], jendela: [] } }),

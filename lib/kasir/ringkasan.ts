@@ -21,14 +21,14 @@ export type EventJendela = EventHari & { tanggal: string };
 
 const geser = (t: string, n: number) => new Date(Date.parse(`${t}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 
-/** Hari ini (`tanggal`, selalu ikut) + 7 hari kerja Senin–Sabtu sebelumnya, urut lama -> baru. */
+/** Hari ini (`tanggal`, ikut bila hari kerja Senin–Sabtu; Minggu dikecualikan, keputusan owner) + 7 hari kerja sebelumnya, urut lama -> baru. */
 export function jendelaTutup(tanggal: string): string[] {
     const mundur: string[] = [];
     for (let n = 1; mundur.length < HARI_KERJA_MUNDUR; n++) {
         const t = geser(tanggal, -n);
         if (hariKerja(t)) mundur.push(t);
     }
-    return [...mundur.reverse(), tanggal];
+    return [...mundur.reverse(), ...(hariKerja(tanggal) ? [tanggal] : [])];
 }
 
 /**
