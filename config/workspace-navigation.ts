@@ -82,7 +82,6 @@ export const ROLE_PROFILES: Array<{ id: string; label: string; when?: string; sh
     { id: "incaso", label: "Admin Incaso", when: "pelunasan.kirim", shortcuts: ["/pelunasan"] },
     { id: "spv", label: "Supervisor", shortcuts: ["/supervisor-review", "/form-kontrol", "/insentif-sales"] },
     { id: "om", label: "Operational Manager", shortcuts: ["/kasir", "/pelunasan", "/finance"] },
-    // Tile Kasir menyusul di K3.
     { id: "kasir", label: "Kasir", shortcuts: ["/kasir"] },
 ];
 
