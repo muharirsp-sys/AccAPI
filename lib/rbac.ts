@@ -391,6 +391,8 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/principal-mapping", module: "principles", action: "view" },
     { prefix: "/master-barang", module: "master_barang", action: "view" },
     { prefix: "/principles", module: "principles", action: "view" },
+    // Data Principal (S7b). Tanpa entri ini /data-principal jatuh ke "/" = dashboard.view.
+    { prefix: "/data-principal", module: "principles", action: "view" },
     // /sales sebelum /orders TIDAK relevan (prefix beda), tapi urutannya tetap dijaga:
     // pencocokan memakai prefix terpanjang.
     { prefix: "/sales", module: "websales", action: "create" },

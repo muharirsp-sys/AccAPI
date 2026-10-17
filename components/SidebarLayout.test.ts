@@ -12,8 +12,13 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
+<<<<<<< HEAD
 import { WORKSPACE_GROUPS, HOME_ITEM, ROLE_PROFILES, navigationForPermissions, activeNavigationItem, profileFor, roleProfile, roleShortcuts } from "../config/workspace-navigation";
 import { canAccessPathWithKeys } from "../lib/rbac";
+=======
+import { canAccessPathWithKeys } from "../lib/rbac";
+import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigationItem, roleProfile, roleShortcuts } from "../config/workspace-navigation";
+>>>>>>> origin/feat/s7b-data-principal-ui
 
 // ponytail: next/font/google kosong di luar kompilator Next, padahal Scope.tsx memanggilnya saat dimuat → stub di cache require
 // SEBELUM SidebarLayout dimuat. Plafon: konteks router diambil dari jalur internal next/dist; bila Next memindahkannya, uji ini
@@ -40,7 +45,9 @@ test("all existing modules appear exactly once across six groups", () => {
     // 28 sejak wizard Pelunasan (Fiori S6e-2, 10 Okt 2026): Admin Incaso mengirim pelunasan tanpa Konsol AOL.
     // 29 sejak Kasir ↔ Incaso (Fiori K2b, 15 Okt 2026): Kasir mencatat setoran dan menutup hari terhadap pelunasan Incaso.
     // 30 sejak Supervisor Review (16 Okt 2026): SPV/SM/Admin melihat ringkasan harian per salesman (supervisor_review.view).
-    assert.equal(items.length, 30);
+    // 31 sejak Data Principal (S7b, 17 Okt 2026): daftar resmi principal + varian + alias (principles.view; tulis principles.upload).
+    assert.equal(items.length, 31);
+    assert.equal(WORKSPACE_GROUPS.find(group => group.id === "settings")?.items.find(item => item.href === "/data-principal")?.name, "Data Principal");
     assert.equal(WORKSPACE_GROUPS.find(group => group.id === "operations")?.items.find(item => item.href === "/supervisor-review")?.name, "Supervisor Review");
     assert.ok(items.some(item => item.href === "/pelunasan"));
     assert.equal(WORKSPACE_GROUPS.find(group => group.id === "finance")?.items.find(item => item.href === "/kasir")?.name, "Kasir ↔ Incaso");
@@ -67,6 +74,10 @@ test("all existing modules appear exactly once across six groups", () => {
     // Halaman sales ikut katalog supaya filter izin (`websales.create`) yang menentukan
     // siapa melihatnya — bukan hard-code di dua tempat.
     assert.ok(items.some(item => item.href === "/sales"));
+});
+test("Data Principal dibuka principles.view, bukan dashboard.view (tanpa entri jatuh ke '/')", () => {
+    assert.equal(canAccessPathWithKeys("/data-principal", ["principles.view"]), true);
+    assert.equal(canAccessPathWithKeys("/data-principal", ["dashboard.view"]), false);
 });
 test("navigation is default-deny and removes empty groups", () => {
     assert.deepEqual(navigationForPermissions(() => false), []);

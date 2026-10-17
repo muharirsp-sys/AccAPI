@@ -55,6 +55,8 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
         { name: "AOL Form Engine", href: "/api-wrapper", icon: Settings2, short: "AOL" },
         { name: "Master Barang", href: "/master-barang", icon: PackageSearch, short: "Barang" },
         { name: "Master Principle", href: "/principles", icon: Database, short: "Master" },
+        // Data Principal (S7b): daftar resmi principal + varian + alias; dibuka pemegang `principles.view`, tulis `principles.upload`.
+        { name: "Data Principal", href: "/data-principal", icon: Database, short: "Principal" },
         { name: "Mapping Principal", href: "/principal-mapping", icon: Database },
         { name: "User & RBAC", href: "/admin/users", icon: Shield },
         { name: "Kelola Akses Group", href: "/admin/groups", icon: ShieldCheck, short: "Akses" },
