@@ -1,9 +1,13 @@
 /*
  * Tujuan: Baca, ubah, dan hapus satu baris terjemahan kode principal -> kode internal.
  * Caller: halaman Mapping Principal.
- * Dependensi: db/schema (principalMapping), lib/rbac/resolve, drizzle.
+ * Dependensi: db/schema (principalMapping), lib/rbac/resolve, drizzle, lib/principal/pemakai (S7-2b).
  * Main Functions: GET (daftar + cari), PUT (tambah/ubah satu baris), DELETE (satu baris).
- * Side Effects: DB read/write pada `principal_mapping`.
+ * Side Effects: DB read/write pada `principal_mapping`; DB read tabel principal resmi.
+ *
+ * S7-2b: principal WAJIB dikenal Data Principal (alias -> principal/varian aktif) dan disimpan dengan NAMA RESMI-nya (nama varian,
+ * mis. "KINO NON FOOD", atau nama principal), jadi ejaan lain tidak membuat set mapping kedua. Tak dikenal = 400
+ * PRINCIPAL_TIDAK_DIKENAL, nonaktif = 409 PRINCIPAL_NONAKTIF (kontrak: docs/handover/S7-2-KONTRAK-PRINCIPAL-API.md).
  *
  * Izin memakai modul `principles` yang sudah ada: ini master data principal, bukan modul baru.
  * `view` untuk membaca, `upload` untuk mengubah, `delete` untuk menghapus.
@@ -14,6 +18,8 @@ import { db } from "@/lib/db";
 import { principalMapping } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { KINDS, type MappingKind } from "@/lib/principal-mapping";
+import { muatDataResmi, periksaPrincipal, wajibPrincipal } from "@/lib/principal/pemakai";
+import { jawabGalat } from "@/lib/principal/tulis";
 
 export const runtime = "nodejs";
 
@@ -22,6 +28,12 @@ const MAX_LIMIT = 200;
 
 function kindOf(raw: string | null): MappingKind | null {
     return KIND_NAMES.includes(raw as MappingKind) ? (raw as MappingKind) : null;
+}
+
+/** Baca/hapus: ejaan yang dikenal -> nama resmi (set yang sama dengan simpan); tak dikenal -> apa adanya (data lama tetap terbaca). */
+async function namaBaca(teks: string) {
+    const h = periksaPrincipal(teks, await muatDataResmi());
+    return h.status === "tak_dikenal" ? teks : h.principal.nama;
 }
 
 export async function GET(request: NextRequest) {
@@ -33,8 +45,14 @@ export async function GET(request: NextRequest) {
     const params = request.nextUrl.searchParams;
     const kind = kindOf(params.get("kind"));
     if (!kind) return NextResponse.json({ ok: false, error: `kind harus salah satu dari ${KIND_NAMES.join(", ")}` }, { status: 400 });
-    const principal = (params.get("principal") ?? "").trim();
-    if (!principal) return NextResponse.json({ ok: false, error: "Parameter principal wajib diisi" }, { status: 400 });
+    const teks = (params.get("principal") ?? "").trim();
+    if (!teks) return NextResponse.json({ ok: false, error: "Parameter principal wajib diisi" }, { status: 400 });
+    let principal: string;
+    try {
+        principal = await namaBaca(teks);
+    } catch (error) {
+        return jawabGalat(error, "MAPPING");
+    }
 
     const search = (params.get("q") ?? "").trim();
     const limit = Math.min(Number(params.get("limit")) || 50, MAX_LIMIT);
@@ -49,7 +67,7 @@ export async function GET(request: NextRequest) {
         db.select().from(principalMapping).where(where).orderBy(asc(principalMapping.sourceCode)).limit(limit).offset(offset),
         db.select({ value: count() }).from(principalMapping).where(where),
     ]);
-    return NextResponse.json({ ok: true, rows, total: total[0]?.value ?? 0, limit, offset });
+    return NextResponse.json({ ok: true, principal, rows, total: total[0]?.value ?? 0, limit, offset });
 }
 
 export async function PUT(request: NextRequest) {
@@ -61,11 +79,11 @@ export async function PUT(request: NextRequest) {
     const body = await request.json().catch(() => null);
     if (!body || typeof body !== "object") return NextResponse.json({ ok: false, error: "Body tidak valid" }, { status: 400 });
 
-    const principal = String(body.principal ?? "").trim();
+    const teks = String(body.principal ?? "").trim();
     const kind = kindOf(String(body.kind ?? ""));
     const sourceCode = String(body.sourceCode ?? "").trim();
     const targetCode = String(body.targetCode ?? "").trim();
-    if (!principal || !kind || !sourceCode || !targetCode) {
+    if (!teks || !kind || !sourceCode || !targetCode) {
         return NextResponse.json({ ok: false, error: "principal, kind, sourceCode, dan targetCode wajib diisi" }, { status: 400 });
     }
     // ISI wajib untuk barang: aturan satuan menaikkan baris ke KRT hanya bila QTY habis
@@ -77,6 +95,12 @@ export async function PUT(request: NextRequest) {
     const unit = String(body.unit ?? "").trim().toUpperCase() || null;
     if (kind === "item" && !unit) {
         return NextResponse.json({ ok: false, error: "Satuan wajib diisi untuk mapping barang" }, { status: 400 });
+    }
+    let principal: string;
+    try {
+        principal = wajibPrincipal(teks, await muatDataResmi()).nama;
+    } catch (error) {
+        return jawabGalat(error, "MAPPING");
     }
 
     await db.insert(principalMapping).values({
@@ -95,7 +119,7 @@ export async function PUT(request: NextRequest) {
             updatedBy: gate.session?.user?.email ?? "", updatedAt: new Date(),
         },
     });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, principal });
 }
 
 export async function DELETE(request: NextRequest) {
@@ -106,10 +130,16 @@ export async function DELETE(request: NextRequest) {
     }
     const params = request.nextUrl.searchParams;
     const kind = kindOf(params.get("kind"));
-    const principal = (params.get("principal") ?? "").trim();
+    const teks = (params.get("principal") ?? "").trim();
     const sourceCode = (params.get("sourceCode") ?? "").trim();
-    if (!kind || !principal || !sourceCode) {
+    if (!kind || !teks || !sourceCode) {
         return NextResponse.json({ ok: false, error: "principal, kind, dan sourceCode wajib diisi" }, { status: 400 });
+    }
+    let principal: string;
+    try {
+        principal = await namaBaca(teks);
+    } catch (error) {
+        return jawabGalat(error, "MAPPING");
     }
     const removed = await db.delete(principalMapping).where(and(
         eq(principalMapping.principal, principal),

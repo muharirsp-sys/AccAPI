@@ -1153,7 +1153,10 @@ principal_log [append-only (trigger + REVOKE di DDL_S7_2): satu baris per buat/a
   Resolver lib/principal/resolver.ts (ruang WAJIB nama | kode_master_barang; alias saja: cocok | tak_dikenal | ambigu; GET /api/principals/resolve).
   Laporan + benih: docs/handover/PRINCIPAL_EKSPOR.sql (psql -qAt di VPS, baca-saja -> 1 baris JSON) lalu OFFLINE npx tsx scripts/principal-laporan.mjs
   --dari-json (atau DATABASE_URL langsung, berkas SQL yang sama) -> laporan.md/json + benih.sql (INSERT ... ON CONFLICT DO NOTHING) untuk ditinjau owner.
-  Pemakai belum beralih (S7-2b).
+  Pemakai S7-2b (lib/principal/pemakai.ts): Mapping Principal (PUT/impor/GET/DELETE app/api/principal-mapping/**) + Master Barang
+  (createMaster/adapt_legacy) WAJIB principal dikenal alias (400 PRINCIPAL_TIDAK_DIKENAL + saran / 409 PRINCIPAL_NONAKTIF), disimpan dengan
+  NAMA RESMI (nama varian | nama principal); kode Master Barang 2 karakter = alias kode_master_barang (400 KODE_MB_TIDAK_COCOK; tanpa kode
+  otomatis). Python Master Principle, OPC/Klaim, Finance/SPPD belum beralih (langkah 3–5).
 
 # Kasir ↔ Incaso (K1a BL-59; skema + lib murni lib/kasir/rekonsiliasi.ts; pembaca K1b, UI K2; DDL manual docs/handover/DDL_K1A.sql SEBELUM image; kontrak docs/handover/KASIR-KONTRAK.md)
 kasir_setoran [append-only; (tanggal, salesman_kode=ORANG, revisi) unik; revisi n+1 -> revisi n (FK komposit); tunai/transfer/giro >= 0; K2a: giro_nomor/giro_jatuh_tempo, bukti_transfer = nama berkas <uuid>.<jpg|png|pdf>]

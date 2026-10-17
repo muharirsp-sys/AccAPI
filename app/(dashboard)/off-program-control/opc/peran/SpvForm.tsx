@@ -18,6 +18,7 @@ import { Pencil, Plus, Send, Trash2 } from "lucide-react";
 import { Button, ListItem, MessageStrip, ResponsiveTable, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { offPaymentMethods, offPrinciples } from "@/lib/off-program-control/constants";
+import { getPrincipleByName } from "@/lib/off-program-control/helpers";
 import { SLA_DAYS } from "@/lib/off-program-control/problematic";
 import { OFF_PROGRAM_TYPES, resolveProgramType } from "@/lib/off-program-control/program-type";
 import { kelengkapanItem, labelStatus, tanggalOpc, type BatchOpc, type ItemOpc } from "@/lib/opc-ui";
@@ -43,8 +44,8 @@ type Isi = { setup: Setup; rows: Baris[] };
 
 // ── Helper murni (salinan kode lama) ────────────────────────────────────────────────────────────────────
 
-/** getPrincipleCode (old 331). */
-export const kodePrincipal = (name: string) => offPrinciples.find((p) => p.name === name)?.code || "";
+/** getPrincipleCode (old 331). Lewat getPrincipleByName: batch KINO lama berejaan bertitik tetap ber-kode (S7-2b). */
+export const kodePrincipal = (name: string) => getPrincipleByName(name)?.code || "";
 
 /** getGelombangFromNoPengajuan (old 335). */
 export function gelombangDariNomor(no: string) {
