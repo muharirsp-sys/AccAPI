@@ -103,7 +103,7 @@ O3 riwayat beli toko (12 Okt 2026 sesi 13): panel "Biasa diambil toko ini" `comp
 DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)
   -> config/workspace-navigation.ts: 18 modul dalam 6 kelompok + Beranda
   -> navigasi samping Fiori (kelompok dari izin) + cari menu Ctrl K; favorit/rail lama dihapus (S1a)
-Beranda (Fiori, S1b) -> profil peran dari izin -> tile tugas (lib/beranda.ts, GET endpoint yang ada) + Pintasan + Pantauan + Semua aplikasi
+Beranda (Fiori, S1b) -> profil peran dari izin -> tile tugas (lib/beranda.ts, GET endpoint yang ada; profil kasir: /api/kasir/ringkasan, K3) + Pintasan + Pantauan + Semua aplikasi
   -> Admin Incaso (pelunasan.kirim, S6e-2b): tile Tidak pasti/Gagal + Pantauan dari GET /api/idempotency/summary?rows=1 (perDatabase,
      database aktif dari /api/auth/accurate-session); jawaban tanpa angka/daftar = galat, bukan 0
 RootLayout -> html[data-theme="surya"] statis (Office Calm/Neon/iOS pensiun, Okt 2026)
@@ -1186,6 +1186,10 @@ kasir_pelunasan_baca (database_id + tanggal; status berjalan|lengkap|sebagian|ga
     Setoran… (JSON | multipart data+bukti) / Jelaskan… / Buka kembali… -> POST route K2a; jawaban PASTI vs TIDAK PASTI menurut §8.2 (bersama.nilaiJawab)
     Tutup hari… -> [!segarUntukTutup] POST /api/kasir/segarkan berulang (jeda 6 dtk, maks 20, Batal) -> GET -> dialog hanya bila penghalang kosong -> POST tutup {sidik}
     tidak pasti -> muat ulang + banding revisi/penjelasan/event, tanpa ulang otomatis; lewat kunciBerikutnya -> muat ulang sendiri
+  K3 tile Beranda Kasir (profil kasir saja, ★ grup utama; kontrak KASIR-KONTRAK §9; lib/kasir/ringkasan.ts):
+    GET /api/kasir/ringkasan?tanggal= (kasir.view, BACA-SAJA: tanpa Accurate, tanpa catat kunci otomatis) -> muatDalam (muatan sama dengan GET /api/kasir)
+        + event Tutup jendela (hari ini + 7 hari kerja) -> bentukRingkasan: selisih (orang + ember belum dijelaskan), belumSetor, hariBelumDitutup (statusHari.sebab != tutup)
+        Incaso belum lengkap -> selisih/belumSetor null -> tile "belum terbaca" (lib/beranda.ts SOURCES.kasir.valid wajib; bukan 0, bukan semua beres)
 ```
 
 **Status Lifecycle offBatch:**

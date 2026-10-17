@@ -194,7 +194,7 @@ async function angkaAman<T>(apa: string, fn: () => Promise<T>): Promise<T> {
 }
 
 /** Semua bahan satu hari dibaca dari `tx` (kunci hari / FOR SHARE dipegang pemanggil) + rekonsiliasi. */
-async function muatDalam(tx: Db | Tx, tanggal: string, databaseId: string): Promise<Muatan> {
+export async function muatDalam(tx: Db | Tx, tanggal: string, databaseId: string): Promise<Muatan> {
     const ev = await tx.select().from(kasirHariEvent).where(eq(kasirHariEvent.tanggal, tanggal)).orderBy(asc(kasirHariEvent.id));
     const st = await tx.select().from(kasirSetoran).where(eq(kasirSetoran.tanggal, tanggal)).orderBy(asc(kasirSetoran.salesmanKode), asc(kasirSetoran.revisi));
     const ct = await tx.select().from(kasirSelisihCatatan).where(eq(kasirSelisihCatatan.tanggal, tanggal)).orderBy(asc(kasirSelisihCatatan.id));

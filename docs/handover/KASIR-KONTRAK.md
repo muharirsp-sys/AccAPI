@@ -76,7 +76,7 @@ database). Penjelasan tak teralokasi = TABEL SENDIRI, bukan perluasan `kasir_sel
   23505 -> 409 (baca ulang, susun rencana lagi). Spec it11: Nomor Form Kasir wajib dan
   bukti wajib bila transfer > 0 — skema membiarkan nullable agar perubahan keputusan tidak butuh DDL; K2 menegakkan. Event `kunci` ditulis sistem
   (best effort, `oleh = 'sistem'`) saat pertama kali melihat hari terkunci otomatis tanpa event — kunci tidak bergantung pada baris itu.
-- **K3**: Beranda hanya membaca cache + tabel ini (tidak pernah memicu Accurate).
+- **K3** (SELESAI, §9): Beranda hanya membaca cache + tabel ini (tidak pernah memicu Accurate).
 - **Izin**: `kasir.view/catat/tutup/buka` terdaftar (`lib/rbac/registry.ts`), `kasir.buka` di `CAPABILITY_KEYS`; `/kasir` -> `kasir.view`. Kunci ke grup =
   `docs/handover/RBAC_PRESET_KASIR.sql` (Kasir: view/catat/tutup; OM & Admin: view/buka; lewat NAMA grup, INSERT ON CONFLICT DO NOTHING, grup absen =
   NOTICE, jejak `group_permission.sync`, laporan baca-saja di akhir). `scripts/seed-rbac-presets.ts` yang dijalankan ulang mengosongkan kasir.* grup OM ->
@@ -405,3 +405,50 @@ cache tanggal itu pernah dibaca (kunci tetap berlaku dari jam).
 **Catatan IT (tanpa kode, putaran perbaikan 12 Okt)**: cadangan volume `/app/data` (runbook sudah `tar`) kini memuat bukti setoran
 `data/uploads/kasir-bukti` — retensi permanen; pantau ruang disk volume itu. Slice O1 memakai migrasi **0033** (entri `migrate-pg.mjs`
 K2a = 0032; konflik teks di daftar `migrations` saat merge = urutkan K2a lebih dulu).
+
+## 9. K3 — tile Beranda Kasir (17 Okt 2026)
+
+Keputusan owner 17 Okt: TIGA tile, HANYA profil `kasir` (★ grup utama "Kasir", S7-3). OM, Admin, Finance memegang `kasir.view` tetapi TIDAK
+mendapat tile ini (`PROFILE_TILES.kasir`; profil lain dan gabungan tanpa profil tidak memuatnya). Berkas: `lib/kasir/ringkasan.ts`,
+`app/api/kasir/ringkasan/route.ts`, `lib/beranda.ts` (`SOURCES.kasir`, tiga tile), `lib/kasir/hari.ts` (hanya `muatDalam` di-`export`).
+
+### 9.1 `GET /api/kasir/ringkasan?tanggal=` (`kasir.view`, TANPA Accurate, BACA-SAJA)
+
+`tanggal` WAJIB (aturan §8.1: `YYYY-MM-DD`, ada, ≤ hari ini WITA; selain itu 400 `INPUT_SALAH` `field: "tanggal"`); Beranda mengirim hari ini WITA.
+Satu snapshot REPEATABLE READ baca-saja: `muatDalam` (muatan hari yang SAMA dengan GET `/api/kasir`) + event Tutup jendela. TIDAK menulis apa pun —
+berbeda dari GET `/api/kasir`, ia TIDAK mencatat `kunci` otomatis 20.00 (uji PG: event tak bertambah sesudah 20.00). Galat = bentuk §8.1
+(400/422 `ANGKA_TIDAK_SAH`/500); Beranda menampilkannya sebagai galat tile (Coba lagi), TIDAK PERNAH nol.
+
+```
+{ ok: true, tanggal, sekarang,
+  incaso: { lengkap, sebab: null|"SESI_SINKRON"|"BACA_BELUM_LENGKAP", pesan },          // = GET /api/kasir `incaso`
+  baca: { status, lengkapPada: ISO|null } | null,                                         // null = sesi sinkron tanpa database
+  selisih:   { orang, takTeralokasi, jumlah } | null,                                     // jumlah = orang + takTeralokasi
+  belumSetor: { jumlah, belumDijelaskan } | null,
+  hariBelumDitutup: { jumlah, tanggal: string[] /* lama -> baru */, jendela: string[] } }
+```
+
+**Definisi angka** (dihitung dari `JawabanHari` yang sama dengan layar — rumus KPI `app/(dashboard)/kasir/Kasir.tsx`, tanpa logika baru):
+- `selisih.orang` = orang berstatus `selisih` ∧ belum dijelaskan (= `nSelisih` layar); `selisih.takTeralokasi` =
+  `total.takTeralokasiBelumDijelaskan` layar. Tile 1 = jumlahnya.
+- `belumSetor.jumlah` = SEMUA orang ber-pelunasan tanpa setoran (status `belum_setor`, termasuk yang sudah dijelaskan: mereka tetap belum
+  menyetor); `belumDijelaskan` = `nBelum` layar. Tile 2 = `jumlah`, kakinya `belumDijelaskan`.
+- `hariBelumDitutup`: `jendela` = hari ini (`tanggal`) + 7 hari kerja (Senin–Sabtu, `hariKerja`) SEBELUMNYA; belum ditutup =
+  `statusHari(...).sebab !== "tutup"` (fungsi yang sama dengan `hari.sebab` layar). Kunci otomatis 20.00 dan hari yang dibuka kembali lalu terkunci
+  lagi = BELUM ditutup (kunci ≠ tutup). Tidak bergantung pada status baca Incaso.
+- **Incaso belum `lengkap`** (belum dibaca / berjalan / sebagian / gagal / sesi sinkron tanpa database): `selisih` dan `belumSetor` = `null`,
+  tile 1–2 menampilkan "— belum terbaca" (`TileValue.value = null`), TIDAK PERNAH 0 dan TIDAK PERNAH "semua beres". `SOURCES.kasir.valid` wajib:
+  lengkap ⇒ semua angka `number`; belum lengkap ⇒ `selisih`/`belumSetor` `null`; bentuk lain = galat sumber.
+- Umur `lengkap` bebas (sama dengan layar): hanya Tutup yang menuntut ≤ 15 menit.
+
+### 9.2 Catatan keputusan / yang perlu dikonfirmasi owner
+
+- **Minggu**: hari ini selalu ikut jendela (bunyi keputusan harfiah). Bila hari ini Minggu (tak ada hari kerja) tile 3 memuat Minggu itu sebagai belum
+  ditutup — usul: kecualikan hari ini bila `!hariKerja(hari ini)` (satu baris di `jendelaTutup`).
+- Hari ini hampir selalu "belum ditutup" sepanjang hari; karena itu nada tile 3 = info bila HANYA hari ini yang terbuka, warn bila ada hari
+  lampau belum ditutup.
+- KPI "Selisih" layar `/kasir` memang tidak menghitung `setoran_tanpa_pelunasan` (belum dijelaskan) walau ia menghalangi Tutup; tile mengikuti layar
+  ("identik"). Menambahkannya = ubah rumus layar dan tile bersamaan.
+
+**Plafon (ponytail)**: tiap muat Beranda profil Kasir = satu `muatDalam` (beban sama dengan satu GET `/api/kasir`) + satu SELECT event; tanpa cache.
+Jalan naik bila berat: kueri hitung khusus (tanpa memuat seluruh hari) — tetapi angkanya harus tetap identik dengan layar.
