@@ -109,21 +109,3 @@ def test_channel_berbeda_tidak_saling_mencabut():
     mti = dict(_baris("002", "REGAZZA FM - EDT", "ALL VARIANT", "R1,R5,R6"), channel_gtmt="MT")
     terapkan([grosir, mti])
     assert mti["kode_barangs"] == "R1,R5,R6", mti
-
-
-def test_mix_merek_satu_baris_satu_divisi():
-    """ABC PI Okt 2026: strata Beverages = NU + KIN DAIRY kumulatif. "Mix Merek" -> SATU baris (satu ambang);
-    tanpa penanda, baris lintas merek tetap dipecah per merek seperti biasa."""
-    from shared import _apply_native_kelompok
-    master = [{"kode_barang": "N1", "kelompok": "NU - GTEA", "gramasi": "330ML", "variant": "ORI", "nama_barang": "NU GTEA ORI"},
-              {"kode_barang": "K1", "kelompok": "KIN - DAIRY", "gramasi": "200ML", "variant": "BLACK", "nama_barang": "KIN DAIRY BLACK"},
-              {"kode_barang": "M1", "kelompok": "NDB", "gramasi": "70GR", "variant": "GORENG", "nama_barang": "NDB GORENG"}]
-
-    def baris(ketentuan):
-        return [{"no": "1", "surat_program": "550", "kelompok": "NU - GTEA & KIN - DAIRY", "variant": "ORI, BLACK",
-                 "gramasi": "200ML, 330ML", "kode_barangs": "N1,K1", "ketentuan": ketentuan}]
-
-    satu = _apply_native_kelompok(baris("Beli 2 KRT s/d 9 KRT, Mix Merek dan Variant, Beda Gramasi"), master)
-    assert [set(r["kode_barangs"].split(",")) for r in satu] == [{"N1", "K1"}], satu
-    pecah = _apply_native_kelompok(baris("Beli 2 KRT s/d 9 KRT, Mix Variant, Beda Gramasi"), master)
-    assert sorted(r["kode_barangs"] for r in pecah) == ["K1", "N1"], pecah

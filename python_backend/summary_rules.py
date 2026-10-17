@@ -343,6 +343,19 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
 UNITS = {"PCS", "PC", "CTN", "DUS", "BOX", "PAK", "PACK", "RTG", "KRT", "LSN", "BAL", "SET", "KG", "GR", "LTR", "ML", "BTL", "SCH", "REN"}
 DATE_TEXT = re.compile(r"\d{4}-\d{2}-\d{2}")
 MIX_MARKS = ("mix", "campur")
+# "Mix Merek" = strata SATU DIVISI lintas merek (ABC PI Okt 2026: Beverages = NU + KIN DAIRY, kumulatif). Resolver
+# tetap memecah baris per merek (Form, verifier, aturan P per kelompok); di sini baris-baris itu menjadi SATU program.
+LINTAS_MEREK = re.compile(r"\b(?:mix|campur|lintas|beda)\s+merek\b", re.I)
+# Larangan bukan izin: "tidak boleh campur merek", "beda merek tidak dapat digabung" -> per merek (gagal tertutup).
+NEGASI_MEREK = re.compile(r"\b(?:tidak|tanpa|bukan|jangan)\b[^.,;]{0,25}?\b(?:mix|campur|lintas|beda)\s+merek\b"
+                          r"|\b(?:mix|campur|lintas|beda)\s+merek\b[^.,;]{0,25}?\b(?:tidak|tanpa|bukan|jangan)\b", re.I)
+
+
+MIX_MEREK_KUNCI = "*MIX MEREK*"
+
+
+def mix_merek(ketentuan):
+    return bool(LINTAS_MEREK.search(ketentuan)) and not NEGASI_MEREK.search(ketentuan)
 # "MIX VARIANT" = campur varian DALAM GRAMASI YANG SAMA — keputusan pengguna 7 Okt 2026, berlaku
 # SEMUA principal. 10 pcs 70ML + 20 pcs 900ML bukan 30 pcs; bonusnya pun "produk dengan harga yang
 # sama". Lintas gramasi hanya bila ketentuannya menyebut (LINTAS_GRAMASI); ketentuan mix yang
@@ -543,9 +556,11 @@ def compile_programs(rows, period=None, items=None):
             continue
         # Nomor surat ikut jadi kunci: dua surat yang kebetulan menyebut barang, periode, dan
         # channel yang sama bukan satu program — menggabungkannya membuat salah satunya hilang.
+        # "Mix Merek": baris pecahan resolver (satu per merek) berbagi SATU kunci -> satu program, kodenya digabung.
+        campur = mix and mix_merek(ketentuan)
         key = (str(row.get("surat_program", "")).strip(),
                str(row.get("channel_gtmt", "")).strip().upper() or "ALL", start, end, unit, kind,
-               mix, any(mark in blob for mark in STACK_MARKS), tuple(sorted(codes)), outlet,
+               mix, any(mark in blob for mark in STACK_MARKS), (MIX_MEREK_KUNCI,) if campur else tuple(sorted(codes)), outlet,
                any(mark in blob for mark in FIRST_PO_MARKS), lintas)
         if unit == SEMUA_SATUAN:
             # "Setiap pembelian 2%" + "Beli 30 PCS 5%" barang yang sama = SATU program bertingkat.
@@ -558,17 +573,37 @@ def compile_programs(rows, period=None, items=None):
         if problem:
             issues.append(f"{label}: {problem}")
             continue
-        group = groups.setdefault(key, {"rows": [], "tiers": {}})
+        group = groups.setdefault(key, {"rows": [], "tiers": {}, "codes": []})
         group["rows"].append(row)
-        if minimum in group["tiers"]:
+        group["codes"] += [code for code in codes if code not in group["codes"]]
+        if minimum in group["tiers"] and campur:
+            # Pecahan per merek dari SATU baris surat membawa tier yang sama: satu tier, bukan dua persen bertumpuk.
+            sama = lambda t: {k: v for k, v in t.items() if k not in ("bonus_code", "bonus_scope")}
+            if sama(group["tiers"][minimum]) != sama(tier):
+                issues.append(f"{label}: baris 'Mix Merek' dengan ketentuan sama harus berbenefit sama.")
+        elif minimum in group["tiers"]:
             conflict = merge_tier(group["tiers"][minimum], tier)
             if conflict:
                 issues.append(f"{label}: {conflict}")
         else:
             group["tiers"][minimum] = tier
+    # Strata satu divisi yang hanya SEBAGIAN barisnya bertanda "Mix Merek" akan terbelah diam-diam
+    # (tier bertanda sekeranjang, sisanya per merek, berebut kode yang sama) -> tahan dengan sebabnya.
+    for key, group in groups.items():
+        if key[8] != (MIX_MEREK_KUNCI,):
+            continue
+        for lain, isi in groups.items():
+            if lain[8] != key[8] and lain[:8] + lain[9:] == key[:8] + key[9:] and set(isi["codes"]) & set(group["codes"]):
+                issues.append(f"Surat {key[0]}: tulis 'Mix Merek' di SEMUA baris strata barang yang sama, atau di tidak satu pun.")
+                break
     programs, used = [], set()
     for index, (key, group) in enumerate(groups.items()):
         surat, channel, start, end, unit, kind, mix, stacking, codes, outlet, first_po, lintas = key
+        codes = tuple(sorted(group["codes"]))
+        if codes and key[8] == (MIX_MEREK_KUNCI,):
+            for tier in group["tiers"].values():
+                if number(tier["bonus_quantity"]):
+                    tier.update(**bonus_target(list(codes)))
         first = group["rows"][0]
         identifier = str(first.get("promo_group_id", "")).strip() or f"P{index + 1}"
         if identifier in used:
