@@ -122,6 +122,7 @@ def main():
     check_compiler()
     check_tanpa_minimum()
     check_konversi_satuan()
+    check_mix_merek()
     check_codes()
     check_suggestions()
     check_outlet()
@@ -327,6 +328,40 @@ def check_konversi_satuan():
         pass
     # Pemanggil tanpa data satuan (simulasi Summary) tetap seperti dulu: hanya satuan yang sama.
     assert calculate(programs, [line("A", "600", "1000")], "2026-06-15", "GT")["discount"] == "0.00"
+
+
+def check_mix_merek():
+    # ABC PI Okt 2026: strata Beverages = NU + KIN, kumulatif. Resolver memecah per merek; baris "Mix Merek"
+    # yang sama ketentuannya menjadi SATU program (kode digabung, satu persen per tier -- bukan 1%+1%).
+    ket = lambda n, m: f"Beli {n} KRT s/d {m} KRT, Mix Merek dan Variant, Beda Gramasi"
+    pecahan = [row(no=f"{n}{kode}", ketentuan=ket(n, m), benefit=b, kode_barangs=kode)
+               for n, m, b in (("2", "9", "1"), ("10", "49", "2")) for kode in ("A", "B")]
+    programs, issues = compiled(pecahan)
+    assert issues == [] and len(programs) == 1, (issues, programs)
+    assert programs[0].codes == ["A", "B"] and [t.percentages for t in programs[0].tiers] == [["1"], ["2"]], programs[0]
+    campur = [line("A", "1", "1000", "KRT"), line("B", "1", "1000", "KRT")]
+    assert [r["percents"] for r in calculate(programs, campur, "2026-06-15", "GT")["lines"]] == [["1"], ["1"]]
+    # Label program = semua kelompok yang digabung (jembatan/rekap), bukan merek baris pertama saja.
+    berlabel = [dict(r, kelompok=f"MEREK {r['kode_barangs']}") for r in pecahan]
+    assert compiled(berlabel)[0][0].kelompok == "MEREK A & MEREK B", compiled(berlabel)[0][0].kelompok
+    # Dua DIVISI bermix-merek berketentuan+benefit sama dalam satu surat tetap dua program (sidik baris asal beda).
+    dua_divisi = [row(no=f"{d}{k}", ketentuan=ket("2", "9"), benefit="1", kode_barangs=k, variant=f"VARIAN {d}")
+                  for d, kodes in (("BEV", "AB"), ("SNK", "C")) for k in kodes]
+    programs, issues = compiled(dua_divisi)
+    assert issues == [] and sorted(p.codes for p in programs) == [["A", "B"], ["C"]], (issues, programs)
+    lintas_divisi = [line("A", "1", "1000", "KRT"), line("C", "1", "1000", "KRT")]
+    assert calculate(programs, lintas_divisi, "2026-06-15", "GT")["discount"] == "0.00"
+    # Dua divisi sama-sama "All Variant" (sidik sama) tapi dari dua baris surat (kutipan beda) -> ditahan, tidak melebur.
+    kembar = [dict(r, variant="All Variant", source_quote=f"baris surat {r['no'][:3]}") for r in dua_divisi]
+    assert any("melebur" in issue for issue in compile_programs(kembar)[1]), compile_programs(kembar)[1]
+    # Larangan bukan izin: tetap per merek.
+    programs, _ = compiled([row(no=k, ketentuan="Beli 2 KRT, Mix Variant Beda Gramasi, tidak boleh campur merek", kode_barangs=k)
+                            for k in "AB"])
+    assert len(programs) == 2, programs
+    # Hanya sebagian baris strata bertanda -> ditahan dengan sebabnya, bukan terbelah diam-diam.
+    _, issues = compile_programs(pecahan[:2] + [row(no="x", ketentuan="Beli 10 KRT s/d 49 KRT, Mix Variant, Beda Gramasi",
+                                                    benefit="2", kode_barangs="A")])
+    assert any("Mix Merek" in issue for issue in issues), issues
 
 
 def check_compiler():
