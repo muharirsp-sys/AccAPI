@@ -25,12 +25,15 @@ import {
 const ENDPOINT = "/api/purchase-payment/bulk-save.do";
 
 export async function POST(request: Request) {
-    // S7-1c (PK-2 owner 12 Okt): posting = finance.update ∧ finance.post_accurate. Pemegang finance.update diberi post_accurate lewat
-    // docs/handover/RBAC_S7_1C_KUNCI.sql SEBELUM image ini. Ditolak sebelum klaim = pasti tidak terkirim.
+    // S7-1c (PK-2 owner 12 Okt): posting = finance.update ∧ post_accurate, DAN kunci SELURUH alur dicek SEBELUM Accurate (tinjauan A):
+    // bukti /payments/finance/proof (upload_proof) dan catatan ledger sesudahnya /payments/finance/update (transfer). Tanpa itu Accurate
+    // bisa terposting lalu ledger 403 = jejak uang terbelah. Kunci diberikan lewat docs/handover/RBAC_S7_1C_KUNCI.sql SEBELUM image ini.
+    // Ditolak sebelum klaim = pasti tidak terkirim.
     const gate = await requirePermission(request, "finance.update");
     if (gate.response) return gate.response;
-    if (!gate.perms!.has("finance.post_accurate")) {
-        return NextResponse.json({ error: "Forbidden: butuh permission finance.post_accurate", claimed: false }, { status: 403 });
+    const kurang = ["finance.post_accurate", "finance.upload_proof", "finance.transfer"].filter((k) => !gate.perms!.has(k));
+    if (kurang.length) {
+        return NextResponse.json({ error: `Forbidden: butuh permission ${kurang.join(", ")}`, claimed: false }, { status: 403 });
     }
 
     const body = await request.json().catch(() => null) as { clientRef?: unknown; payload?: unknown; expectedDatabaseId?: unknown } | null;

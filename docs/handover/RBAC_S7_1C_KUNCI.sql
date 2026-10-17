@@ -23,7 +23,7 @@
 -- TERAPKAN:
 --   docker exec -i -e PGOPTIONS='-c rbac.terapkan=1' accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 < docs/handover/RBAC_S7_1C_KUNCI.sql
 --
--- Jaminan: HANYA INSERT ... ON CONFLICT DO NOTHING (tidak menghapus/mengubah kunci lain, tidak membuat grup, tidak menyentuh
+-- Jaminan: VERIFIKASI ≠ 0 = RAISE (ROLLBACK, juga saat terapkan); HANYA INSERT ... ON CONFLICT DO NOTHING (tidak menghapus/mengubah kunci lain, tidak membuat grup, tidak menyentuh
 -- api_wrapper.* — PK-1); idempoten (jalan kedua 0 izin, 0 audit); satu baris permission_audit_log `group_permission.sync`
 -- {added, removed: [], sumber} per grup yang benar-benar bertambah. Uji: lib/rbac/s7-1c-pg.test.ts.
 -- =====================================================================
@@ -79,6 +79,29 @@ FROM (VALUES
     ('summary.view', 'summary.export')
 ) AS p(lama, baru)
 ORDER BY 2;
+
+-- Penjaga VERIFIKASI (tinjauan A): ada pemegang kunci lama tanpa kunci barunya = GAGAL -> transaksi DIBATALKAN, juga dalam mode
+-- terapkan (tidak ada COMMIT setengah benar).
+DO $$
+DECLARE
+    n bigint;
+BEGIN
+    SELECT count(*) INTO n
+    FROM group_permission r
+    JOIN (VALUES
+        ('finance.update', 'finance.post_accurate'), ('finance.update', 'finance.upload_proof'), ('finance.update', 'finance.transfer'),
+        ('finance.view', 'finance.export'),
+        ('payments.edit', 'payments.create'), ('payments.edit', 'payments.upload'), ('payments.edit', 'payments.submit'),
+        ('payments.edit', 'sppd.generate'),
+        ('payments.view', 'payments.export'),
+        ('summary.edit', 'summary.upload'), ('summary.edit', 'summary.generate'), ('summary.edit', 'summary.email'),
+        ('summary.view', 'summary.export')
+    ) AS p(lama, baru) ON p.lama = r.permission_key
+    WHERE NOT EXISTS (SELECT 1 FROM group_permission e WHERE e.group_id = r.group_id AND e.permission_key = p.baru);
+    IF n > 0 THEN
+        RAISE EXCEPTION 'S7-1c VERIFIKASI GAGAL: % (grup, kunci baru) masih kurang — semua perubahan DIBATALKAN (ROLLBACK).', n;
+    END IF;
+END $$;
 
 -- Pengaman mode cek: tanpa rbac.terapkan=1 transaksi DIBATALKAN (COMMIT di bawah tidak tercapai / menjadi ROLLBACK).
 DO $$

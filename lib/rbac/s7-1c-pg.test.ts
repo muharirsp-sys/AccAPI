@@ -64,14 +64,14 @@ async function denganSkema(fn: (pool: pg.Pool) => Promise<void>) {
 }
 
 /** Jalankan berkas apa adanya. Mode cek: galat "MODE CEK" ditangkap, koneksi di-ROLLBACK. */
-async function jalan(pool: pg.Pool, terapkan: boolean) {
+async function jalan(pool: pg.Pool, terapkan: boolean, sql = SQL) {
     const c = await pool.connect();
     const notice: string[] = [];
     c.on("notice", (n) => notice.push(String(n.message)));
     try {
         if (terapkan) await c.query("SET rbac.terapkan = '1'");
         try {
-            return { hasil: await c.query(SQL) as unknown as Hasil[], notice, galat: null as string | null };
+            return { hasil: await c.query(sql) as unknown as Hasil[], notice, galat: null as string | null };
         } catch (e) {
             await c.query("ROLLBACK");
             return { hasil: [] as Hasil[], notice, galat: e instanceof Error ? e.message : String(e) };
@@ -96,9 +96,26 @@ test("RBAC_S7_1C_KUNCI.sql statik: pasangan = brief, semua kunci terdaftar, hany
     const verif = aktif.indexOf("SELECT 'VERIFIKASI'");
     assert.ok(verif > 0, "bagian VERIFIKASI ada");
     assert.deepEqual(pasanganSql(aktif.slice(0, verif)), harap, "pasangan bagian tulis = brief");
-    assert.deepEqual(pasanganSql(aktif.slice(verif)), harap, "pasangan VERIFIKASI = brief");
+    const jaga = aktif.indexOf("DO $$", verif);
+    const modeCek = aktif.indexOf("DO $$", jaga + 1);
+    assert.ok(jaga > verif && modeCek > jaga, "penjaga VERIFIKASI (DO) ada sebelum penjaga mode cek");
+    assert.deepEqual(pasanganSql(aktif.slice(verif, jaga)), harap, "pasangan VERIFIKASI = brief");
+    assert.deepEqual(pasanganSql(aktif.slice(jaga, modeCek)), harap, "pasangan penjaga VERIFIKASI = brief");
+    assert.match(aktif.slice(jaga, modeCek), /RAISE EXCEPTION 'S7-1c VERIFIKASI GAGAL/);
     assert.doesNotMatch(aktif, /api_wrapper/);
     assert.doesNotMatch(aktif, /\b(DELETE\s+FROM|UPDATE\s+"?\w+"?\s+SET)\b|(^|;)\s*(TRUNCATE|ALTER|DROP|CREATE)\b/im, "data saja, hanya INSERT");
+});
+
+test("RBAC_S7_1C_KUNCI.sql: VERIFIKASI ≠ 0 = RAISE (ROLLBACK) walau mode terapkan — tidak ada COMMIT setengah benar", { skip: pgSkip }, async () => {
+    await denganSkema(async (pool) => {
+        const sebelum = await keadaan(pool);
+        // Bagian tulis (DO pertama) dibuang -> pemegang kunci lama tetap tanpa kunci baru -> penjaga harus menggagalkan.
+        const tanpaTulis = SQL.replace(/DO \$\$[\s\S]*?END \$\$;/, "");
+        assert.notEqual(tanpaTulis, SQL);
+        const r = await jalan(pool, true, tanpaTulis);
+        assert.match(String(r.galat), /S7-1c VERIFIKASI GAGAL: 21 /);
+        assert.deepEqual(await keadaan(pool), sebelum, "tidak ada yang tersimpan");
+    });
 });
 
 test("RBAC_S7_1C_KUNCI.sql: mode cek 0 perubahan; terapkan = hanya pemegang kunci lama; audit per grup; VERIFIKASI 0; jalan kedua 0", { skip: pgSkip }, async () => {

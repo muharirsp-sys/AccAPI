@@ -68,6 +68,8 @@ async function kirim(keys: string[], dbId: string, body: Record<string, unknown>
 const PAYLOAD = [{ bankNo: "1102-03", vendorNo: "V-0012", chequeAmount: 1000, transDate: "10/10/2026", chequeDate: "10/10/2026",
     paymentMethod: "BANK_TRANSFER", description: "SPPD: 031", detailInvoice: [{ invoiceNo: "LPB-A/0918", paymentAmount: 1000 }] }];
 const BODY = { clientRef: "DRAFT-0418|-|PRINCIPLE A|LPB", payload: PAYLOAD };
+/** Kunci SELURUH alur posting (S7-1c, tinjauan A #2): bukti + Accurate + catatan ledger sesudahnya. */
+const ALUR = ["finance.update", "finance.post_accurate", "finance.upload_proof", "finance.transfer"];
 
 test("A-1: izin tetap finance.update — tanpa izin 403 sebelum sesi/klaim", async () => {
     const r = await kirim(["finance.view", "finance.resolve_unknown"], "1001", { ...BODY, expectedDatabaseId: "1001" });
@@ -83,8 +85,17 @@ test("S7-1c (PK-2): finance.update tanpa finance.post_accurate -> 403 claimed:fa
     assert.match(String(r.body.error), /finance\.post_accurate/);
 });
 
+test("S7-1c tinjauan A #2: post_accurate TANPA kunci langkah ledger (transfer / upload_proof) -> 403 sebelum Accurate, tanpa klaim", async () => {
+    for (const kurang of ["finance.transfer", "finance.upload_proof"]) {
+        const r = await kirim(ALUR.filter((k) => k !== kurang), "1001", { ...BODY, expectedDatabaseId: "1001" });
+        assert.equal(r.status, 403, kurang);
+        assert.deepEqual([r.klaim, r.jaringan, r.body.claimed], [0, 0, false], kurang);
+        assert.match(String(r.body.error), new RegExp(kurang.replace(".", "\\.")), kurang);
+    }
+});
+
 test("A-1: database sesi saat POST berbeda dari yang dilihat Finance -> 409 database_changed, claimed:false, tanpa klaim", async () => {
-    const r = await kirim(["finance.update", "finance.post_accurate"], "2002", { ...BODY, expectedDatabaseId: "1001" });
+    const r = await kirim(ALUR, "2002", { ...BODY, expectedDatabaseId: "1001" });
     assert.equal(r.status, 409);
     assert.equal(r.body.code, "database_changed");
     assert.equal(r.body.claimed, false);
@@ -95,7 +106,7 @@ test("A-1: database sesi saat POST berbeda dari yang dilihat Finance -> 409 data
 });
 
 test("A-1: kontrol positif — database sama (angka vs teks) lolos ke klaim attempt", async () => {
-    const r = await kirim(["finance.update", "finance.post_accurate"], "1001", { ...BODY, expectedDatabaseId: 1001 });
+    const r = await kirim(ALUR, "1001", { ...BODY, expectedDatabaseId: 1001 });
     assert.equal(r.klaim, 1, "database sama harus sampai klaim");
     assert.equal(r.status, 503); // klaim dihentikan uji = galat sebelum kirim
     assert.equal(r.body.claimed, false);
@@ -103,7 +114,7 @@ test("A-1: kontrol positif — database sama (angka vs teks) lolos ke klaim atte
 
 test("A-1: tanpa expectedDatabaseId (klien lama / kiriman buatan) -> 400 claimed:false, tanpa klaim", async () => {
     for (const expectedDatabaseId of [undefined, "", "  ", null]) {
-        const r = await kirim(["finance.update", "finance.post_accurate"], "1001", { ...BODY, expectedDatabaseId });
+        const r = await kirim(ALUR, "1001", { ...BODY, expectedDatabaseId });
         assert.equal(r.status, 400, `expectedDatabaseId=${JSON.stringify(expectedDatabaseId)}`);
         assert.equal(r.body.claimed, false);
         assert.equal(r.klaim, 0);
@@ -111,7 +122,7 @@ test("A-1: tanpa expectedDatabaseId (klien lama / kiriman buatan) -> 400 claimed
 });
 
 test("Putaran 2 B-6: subjek dibuka ulang (reopened_use_repost) -> 409 claimed:false; klaim tidak menyisipkan apa pun, tidak ada kiriman", async () => {
-    const r = await kirim(["finance.update", "finance.post_accurate"], "1001", { ...BODY, expectedDatabaseId: "1001" }, { reopened: true });
+    const r = await kirim(ALUR, "1001", { ...BODY, expectedDatabaseId: "1001" }, { reopened: true });
     assert.equal(r.status, 409);
     assert.equal(r.body.code, "reopened_use_repost");
     assert.equal(r.body.claimed, false, "tidak ada attempt yang diklaim/dikirim di jalur ini");

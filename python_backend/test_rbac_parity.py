@@ -344,6 +344,7 @@ def check_s7_1c():
         ("post", "/payments/submit", {"json": {}}, "payments.edit", "payments.submit"),
         ("post", "/summary/manual/master/upload", {"files": {"master": ("m.xlsx", b"x", xlsx)}}, "summary.edit", "summary.upload"),
         ("post", "/summary/manual/generate", {"data": {"token": "-", "rows_json": "[]"}}, "summary.edit", "summary.generate"),
+        ("post", "/summary/manual", {"data": {"engine": "manual"}}, "summary.edit", "summary.generate"),  # tinjauan A #1
         ("post", "/summary/manual/email", {"data": {"email": "a@x.test", "file_id": "S71C"}}, "summary.edit", "summary.email"),
         ("get", "/summary_download/S71C", {}, "summary.view", "summary.export"),
         ("get", "/summary/manual/download/S71C/dataset", {}, "summary.view", "summary.export"),

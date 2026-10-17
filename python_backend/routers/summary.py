@@ -213,6 +213,8 @@ async def summary_manual_auto_generate(
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "summary", "edit"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not user_has_permission(user, "summary", "generate"):  # S7-1c: lama ∧ baru (PK-2; tinjauan A #1)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission summary.generate"})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})

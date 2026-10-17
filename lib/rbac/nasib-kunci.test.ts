@@ -43,7 +43,7 @@ const NASIB: Array<{ no: string; kunci: string; nasib: Nasib; di?: string[]; ala
     { no: "19", kunci: "payments.export", nasib: "tegakkan", di: ["python_backend/routers/payments.py"], alasan: "Py GET /payments/export = payments.view ∧ export (S7-1c)" },
     { no: "20", kunci: "sppd.generate", nasib: "tegakkan", di: ["python_backend/routers/payments.py"], alasan: "Py dua route render SPPD (cart/submit, submit) bila BANK_PANIN = payments.edit ∧ sppd.generate (S7-1c)" },
     { no: "21", kunci: "summary.upload", nasib: "tegakkan", di: ["python_backend/routers/summary.py"], alasan: "Py /summary/manual/master/upload = summary.edit ∧ upload (S7-1c)" },
-    { no: "22", kunci: "summary.generate", nasib: "tegakkan", di: ["python_backend/routers/summary.py"], alasan: "Py /summary/manual/generate (+ /summary/library/bulanan lewat fungsi itu) = summary.edit ∧ generate (S7-1c)" },
+    { no: "22", kunci: "summary.generate", nasib: "tegakkan", di: ["python_backend/routers/summary.py"], alasan: "Py /summary/manual/generate (+ /summary/library/bulanan lewat fungsi itu) dan POST /summary/manual = summary.edit ∧ generate (S7-1c)" },
     { no: "23", kunci: "summary.email", nasib: "tegakkan", di: ["python_backend/routers/summary.py"], alasan: "Py /summary/manual/email = summary.edit ∧ email (S7-1c)" },
     { no: "24", kunci: "summary.export", nasib: "tegakkan", di: ["python_backend/routers/summary.py"], alasan: "Py /summary_download, /summary/manual/download = summary.view (require_user) ∧ export (S7-1c)" },
     { no: "25", kunci: "insentif_sales.view_dashboard", nasib: "tunda", alasan: "PK-5: /api/insentif-sales/dashboard juga dipakai 'Insentif saya' & SPV/SM" },
