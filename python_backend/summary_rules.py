@@ -577,20 +577,25 @@ def compile_programs(rows, period=None, items=None):
         if problem:
             issues.append(f"{label}: {problem}")
             continue
-        group = groups.setdefault(key, {"rows": [], "tiers": {}, "codes": []})
+        group = groups.setdefault(key, {"rows": [], "tiers": {}, "codes": [], "kutipan": {}})
         group["rows"].append(row)
         group["codes"] += [code for code in codes if code not in group["codes"]]
+        kutipan = str(row.get("source_quote", "")).strip()
         if minimum in group["tiers"] and campur:
             # Pecahan per merek dari SATU baris surat membawa tier yang sama: satu tier, bukan dua persen bertumpuk.
             sama = lambda t: {k: v for k, v in t.items() if k not in ("bonus_code", "bonus_scope")}
             if sama(group["tiers"][minimum]) != sama(tier):
                 issues.append(f"{label}: baris 'Mix Merek' dengan ketentuan sama harus berbenefit sama.")
+            elif kutipan and group["kutipan"].get(minimum) and kutipan != group["kutipan"][minimum]:
+                # Kutipan surat beda = dua baris surat (dua divisi, mis. sama-sama "All Variant"), bukan pecahan satu baris.
+                issues.append(f"{label}: dua baris surat 'Mix Merek' berketentuan sama melebur; sebut varian/gramasi divisinya.")
         elif minimum in group["tiers"]:
             conflict = merge_tier(group["tiers"][minimum], tier)
             if conflict:
                 issues.append(f"{label}: {conflict}")
         else:
             group["tiers"][minimum] = tier
+            group["kutipan"][minimum] = kutipan
     # Strata satu divisi yang terbelah (sebagian baris tanpa "Mix Merek", atau varian/gramasi baris strata
     # berbeda) membuat dua program berebut kode yang sama diam-diam -> tahan dengan sebabnya.
     bertanda = lambda k: k[8][:1] == (MIX_MEREK_KUNCI,)
@@ -625,7 +630,7 @@ def compile_programs(rows, period=None, items=None):
             source_page=page if isinstance(page, int) and page >= 1 else 1,
             source_quote=(str(first.get("source_quote", "")).strip() or str(first.get("ketentuan", "")).strip() or "-")[:4000],
             _lintas=lintas))
-    return split_per_gramasi(programs, items), issues
+    return split_per_gramasi(programs, items), list(dict.fromkeys(issues))
 
 
 def split_per_gramasi(programs, items):

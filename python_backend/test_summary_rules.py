@@ -351,6 +351,9 @@ def check_mix_merek():
     assert issues == [] and sorted(p.codes for p in programs) == [["A", "B"], ["C"]], (issues, programs)
     lintas_divisi = [line("A", "1", "1000", "KRT"), line("C", "1", "1000", "KRT")]
     assert calculate(programs, lintas_divisi, "2026-06-15", "GT")["discount"] == "0.00"
+    # Dua divisi sama-sama "All Variant" (sidik sama) tapi dari dua baris surat (kutipan beda) -> ditahan, tidak melebur.
+    kembar = [dict(r, variant="All Variant", source_quote=f"baris surat {r['no'][:3]}") for r in dua_divisi]
+    assert any("melebur" in issue for issue in compile_programs(kembar)[1]), compile_programs(kembar)[1]
     # Larangan bukan izin: tetap per merek.
     programs, _ = compiled([row(no=k, ketentuan="Beli 2 KRT, Mix Variant Beda Gramasi, tidak boleh campur merek", kode_barangs=k)
                             for k in "AB"])
