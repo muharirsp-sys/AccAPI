@@ -341,6 +341,16 @@ def check_mix_merek():
     assert programs[0].codes == ["A", "B"] and [t.percentages for t in programs[0].tiers] == [["1"], ["2"]], programs[0]
     campur = [line("A", "1", "1000", "KRT"), line("B", "1", "1000", "KRT")]
     assert [r["percents"] for r in calculate(programs, campur, "2026-06-15", "GT")["lines"]] == [["1"], ["1"]]
+    # Label program = semua kelompok yang digabung (jembatan/rekap), bukan merek baris pertama saja.
+    berlabel = [dict(r, kelompok=f"MEREK {r['kode_barangs']}") for r in pecahan]
+    assert compiled(berlabel)[0][0].kelompok == "MEREK A & MEREK B", compiled(berlabel)[0][0].kelompok
+    # Dua DIVISI bermix-merek berketentuan+benefit sama dalam satu surat tetap dua program (sidik baris asal beda).
+    dua_divisi = [row(no=f"{d}{k}", ketentuan=ket("2", "9"), benefit="1", kode_barangs=k, variant=f"VARIAN {d}")
+                  for d, kodes in (("BEV", "AB"), ("SNK", "C")) for k in kodes]
+    programs, issues = compiled(dua_divisi)
+    assert issues == [] and sorted(p.codes for p in programs) == [["A", "B"], ["C"]], (issues, programs)
+    lintas_divisi = [line("A", "1", "1000", "KRT"), line("C", "1", "1000", "KRT")]
+    assert calculate(programs, lintas_divisi, "2026-06-15", "GT")["discount"] == "0.00"
     # Larangan bukan izin: tetap per merek.
     programs, _ = compiled([row(no=k, ketentuan="Beli 2 KRT, Mix Variant Beda Gramasi, tidak boleh campur merek", kode_barangs=k)
                             for k in "AB"])

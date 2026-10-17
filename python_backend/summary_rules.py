@@ -558,9 +558,13 @@ def compile_programs(rows, period=None, items=None):
         # channel yang sama bukan satu program — menggabungkannya membuat salah satunya hilang.
         # "Mix Merek": baris pecahan resolver (satu per merek) berbagi SATU kunci -> satu program, kodenya digabung.
         campur = mix and mix_merek(ketentuan)
+        # Sidik baris surat asal: pecahan resolver mewarisi varian+gramasi baris aslinya, divisi lain tidak --
+        # dua divisi bermix-merek berketentuan sama dalam satu surat tetap dua program.
+        sidik = (MIX_MEREK_KUNCI, " ".join(str(row.get("variant", "")).upper().split()),
+                 " ".join(str(row.get("gramasi", "")).upper().split()))
         key = (str(row.get("surat_program", "")).strip(),
                str(row.get("channel_gtmt", "")).strip().upper() or "ALL", start, end, unit, kind,
-               mix, any(mark in blob for mark in STACK_MARKS), (MIX_MEREK_KUNCI,) if campur else tuple(sorted(codes)), outlet,
+               mix, any(mark in blob for mark in STACK_MARKS), sidik if campur else tuple(sorted(codes)), outlet,
                any(mark in blob for mark in FIRST_PO_MARKS), lintas)
         if unit == SEMUA_SATUAN:
             # "Setiap pembelian 2%" + "Beli 30 PCS 5%" barang yang sama = SATU program bertingkat.
@@ -587,20 +591,21 @@ def compile_programs(rows, period=None, items=None):
                 issues.append(f"{label}: {conflict}")
         else:
             group["tiers"][minimum] = tier
-    # Strata satu divisi yang hanya SEBAGIAN barisnya bertanda "Mix Merek" akan terbelah diam-diam
-    # (tier bertanda sekeranjang, sisanya per merek, berebut kode yang sama) -> tahan dengan sebabnya.
-    for key, group in groups.items():
-        if key[8] != (MIX_MEREK_KUNCI,):
-            continue
-        for lain, isi in groups.items():
-            if lain[8] != key[8] and lain[:8] + lain[9:] == key[:8] + key[9:] and set(isi["codes"]) & set(group["codes"]):
-                issues.append(f"Surat {key[0]}: tulis 'Mix Merek' di SEMUA baris strata barang yang sama, atau di tidak satu pun.")
-                break
+    # Strata satu divisi yang terbelah (sebagian baris tanpa "Mix Merek", atau varian/gramasi baris strata
+    # berbeda) membuat dua program berebut kode yang sama diam-diam -> tahan dengan sebabnya.
+    bertanda = lambda k: k[8][:1] == (MIX_MEREK_KUNCI,)
+    terbelah = {key[0] for key, group in groups.items() if bertanda(key) for lain, isi in groups.items()
+                if lain[8] != key[8] and lain[:8] + lain[9:] == key[:8] + key[9:] and set(isi["codes"]) & set(group["codes"])}
+    issues += [f"Surat {surat}: strata 'Mix Merek' terbelah -- tulis 'Mix Merek' serta varian dan gramasi yang sama di SEMUA "
+               "baris strata barang itu." for surat in sorted(terbelah)]
     programs, used = [], set()
     for index, (key, group) in enumerate(groups.items()):
         surat, channel, start, end, unit, kind, mix, stacking, codes, outlet, first_po, lintas = key
         codes = tuple(sorted(group["codes"]))
-        if codes and key[8] == (MIX_MEREK_KUNCI,):
+        if bertanda(key):
+            # Label jujur untuk jembatan/rekap: semua kelompok yang digabung, bukan merek baris pertama saja.
+            group["kelompok"] = " & ".join(dict.fromkeys(str(r.get("kelompok", "")).strip() for r in group["rows"]))
+        if codes and bertanda(key):
             for tier in group["tiers"].values():
                 if number(tier["bonus_quantity"]):
                     tier.update(**bonus_target(list(codes)))
@@ -612,7 +617,7 @@ def compile_programs(rows, period=None, items=None):
         page = first.get("source_page")
         programs.append(dict(
             id=identifier[:80], name=(str(first.get("nama_program", "")).strip() or str(first.get("kelompok", "")).strip() or identifier)[:160],
-            surat_program=surat[:80], kelompok=str(first.get("kelompok", "")).strip()[:160],
+            surat_program=surat[:80], kelompok=(group.get("kelompok") or str(first.get("kelompok", "")).strip())[:160],
             start=start, end=end, codes=list(codes), channel=channel, unit=unit, mix=mix, threshold=kind,
             outlet_mode=outlet[0], outlet_classes=list(outlet[1]),
             value_scope="eligible", basis="gross", stacking=stacking, first_po=first_po, priority=index + 1,
