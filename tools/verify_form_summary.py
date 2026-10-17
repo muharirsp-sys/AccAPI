@@ -77,8 +77,13 @@ PAGE_LABEL_RE = re.compile(r"\bHal\s*(\d+)\b", re.IGNORECASE)
 # kandidat dari surat, keputusan akhir selalu lewat perbandingan ke master.
 CODE_CANDIDATE_RE = re.compile(r"\b[A-Z]{1,3}\d{3,4}[A-Z0-9]{0,4}(?:-[A-Z]{2,4})?\b")
 
-# Pemisah antar tail kelompok / antar gramasi pada satu sel.
+# Pemisah longgar: dipakai C9 untuk mencari satu gramasi di sel Gramasi (C7/C8 memakai JOIN_SPLIT_RE).
 TAIL_SPLIT_RE = re.compile(r"\s*(?:,|&|\bdan\b)\s*", re.IGNORECASE)
+
+# Pemisah yang dipakai GENERATOR (`join_human` di routers/summary.py): ', ' dan ' & '. Koma tanpa
+# spasi memisahkan gramasi DALAM satu kelompok ('330ML,450ML'), dan '&' tanpa spasi bagian dari
+# nama master ('B&B - POWDER', 'MIE KREMEZZ - MIX&SHAKE') — keduanya bukan batas antar kelompok.
+JOIN_SPLIT_RE = re.compile(r",\s+|\s+&\s+")
 
 DEFAULT_X_TOLERANCE = 1.5      # pt, toleransi pergeseran kolom antar halaman
 DEFAULT_EDGE_MARGIN = 6.0      # pt, batas minimum tepi kanan/bawah
@@ -190,6 +195,7 @@ def load_master(paths: list[Path]) -> Master:
             i_sub = col("nama sub klp")
             i_sub2 = col("nama sub klp2")
             i_gram = col("gramasi")
+            i_kode = col("kode barang")
             if i_nama is None or i_klp is None:
                 continue
 
@@ -229,6 +235,12 @@ def load_master(paths: list[Path]) -> Master:
                         m.code_to_kelompok[code] = group
                     if gram:
                         m.code_to_gramasi[code] = gram
+                # Kode INTERNAL ('Kode Barang', 14 digit) dipakai sidecar bila 'Nama Barang' tidak
+                # diawali kode pendek (ABCPI, PRISKILA). Hanya untuk C12 — sengaja tidak masuk
+                # `codes`, yang menjadi kosakata kode SURAT (C9).
+                kode = cell(i_kode).upper()
+                if kode and group:
+                    m.code_to_kelompok[kode] = group
             # Token pertama dianggap kode barang hanya kalau mayoritas baris begitu.
             if n_rows and n_coded / n_rows > 0.5:
                 m.has_short_codes = True
@@ -523,49 +535,72 @@ HELD_SENTINELS = {
 }
 
 
-def expand_group_cell(cell: str) -> tuple[str, list[str]]:
-    """Pecah sel Kelompok jadi (base, daftar ekor).
+def expand_group_cell(cell: str, names: set[str] = frozenset()) -> list[tuple[str, list[str]]]:
+    """Pecah sel Kelompok jadi [(induk, [ekor...]), ...] — kebalikan generator
+    (`format_kelompoks_human_readable` di routers/summary.py).
 
-    Ekor yang diperluas selalu SEGMEN TERAKHIR, supaya kelompok tiga tingkat
-    ikut tertangani:
+    Generator mencetak tiap induk sebagai 'INDUK - e1, e2 & e3' (kelompok datar: 'INDUK' saja) lalu
+    menyambung bagian-bagian itu dengan ', ' / ' & ' yang sama. Potongan yang memuat ' - ' membuka
+    induk baru (induk = semua segmen kecuali yang terakhir, supaya tiga tingkat ikut tertangani);
+    potongan tanpa ' - ' adalah ekor induk yang berjalan, atau kelompok datar — `resolve_group`
+    memutuskannya lewat master. Segmen nama di `names` yang sendiri memuat ', ' / ' & ' (URC
+    'PIATTOS - BIG & CRISPY') tidak dipecah.
 
       'DH KAMPER - RUANGAN AS, TOILET 3P & TOILET 5P'
-          -> base 'DH KAMPER',        ekor [RUANGAN AS, TOILET 3P, TOILET 5P]
+          -> [('DH KAMPER', [RUANGAN AS, TOILET 3P, TOILET 5P])]
       'DH AEROSOL - MTC - HER & AER'
-          -> base 'DH AEROSOL - MTC', ekor [HER, AER]
-      'BLAGIO HM - EDP, CLAY'
-          -> base 'BLAGIO HM',        ekor [EDP, CLAY]
+          -> [('DH AEROSOL - MTC', [HER, AER])]
+      'NDB & NDB - GURIMI'                       (format ringkas, owner 14 Okt 2026)
+          -> [('', [NDB]), ('NDB', [GURIMI])]
     """
-    cell = _norm(cell).upper()
-    if not cell:
-        return "", []
-    if " - " not in cell:
-        return "", [cell]
-    parts = [p.strip() for p in cell.split(" - ")]
-    base = " - ".join(parts[:-1])
-    return base, split_tails(parts[-1])
+    text = _norm(cell).upper()
+    for seg in {s for n in names for s in n.split(" - ") if JOIN_SPLIT_RE.search(s)}:
+        text = re.sub(rf"(?<![A-Z0-9]){re.escape(seg)}(?![A-Z0-9])", seg.replace(" ", "\0"), text)
+    parts: list[tuple[str, list[str]]] = []
+    for piece in JOIN_SPLIT_RE.split(text):
+        piece = piece.replace("\0", " ").strip()
+        if not piece:
+            continue
+        if " - " in piece:
+            base, tail = piece.rsplit(" - ", 1)
+            parts.append((base, [tail]))
+        elif parts and parts[-1][0]:
+            parts[-1][1].append(piece)
+        else:
+            parts.append(("", [piece]))
+    return parts
 
 
 def resolve_group(cell: str, master: Master) -> tuple[list[str], list[str]]:
-    """-> (nama_kelompok_penuh_yang_cocok, ekor_yang_tidak_terpetakan).
+    """-> (nama_kelompok_penuh_yang_cocok, ekor_yang_tidak_terpetakan), urut seperti tercetak.
 
-    Dicoba dua perangkai, karena principal menyimpannya berbeda:
-      DAHLIA   komposit dengan ' - '  ('DH AIR F - RD DIFSR')
-      PRISKILA datar dengan spasi     ('BLAGIO HM BODY SPRAY')
+    Ekor dicoba sebagai komposit induk (DAHLIA 'DH AIR F - RD DIFSR'), sebagai nama datar berspasi
+    (PRISKILA lama 'BLAGIO HM BODY SPRAY'), lalu sebagai kelompok datar tersendiri — generator
+    mencetak 'NU - TEA & NDB' bila kelompok datar NDB menyusul induk lain.
     """
     universe = master.groups or master.kelompok
     cell_u = _norm(cell).upper()
     if cell_u in universe:
         return [cell_u], []
-    base, tails = expand_group_cell(cell)
-    if not tails:
-        return [], []
     matched, missing = [], []
-    for t in tails:
-        cands = [t] if not base else [f"{base} - {t}", f"{base} {t}"]
-        hit = next((c for c in cands if c in universe), None)
-        (matched.append(hit) if hit else missing.append(t))
+    for base, tails in expand_group_cell(cell, universe):
+        for t in tails:
+            cands = ([f"{base} - {t}", f"{base} {t}"] if base else []) + [t]
+            hit = next((c for c in cands if c in universe), None)
+            (matched.append(hit) if hit else missing.append(t))
     return matched, missing
+
+
+def split_gramasi(entry: str, known: set[str]) -> list[str]:
+    """Gramasi SATU kelompok ('330ML,450ML') -> nilai-nilainya. Koma desimal ('3,8GR') disambung
+    lagi selama potongan sebelumnya bukan gramasi master."""
+    out: list[str] = []
+    for piece in (p.strip() for p in entry.split(",")):
+        if out and out[-1] not in known:
+            out[-1] += "," + piece
+        else:
+            out.append(piece)
+    return out
 
 
 def check_semantics(rows: list[dict] | None, master: Master) -> list[Check]:
@@ -624,16 +659,18 @@ def check_semantics(rows: list[dict] | None, master: Master) -> list[Check]:
             continue
 
         n_tails = len(matched) + len(missing)
-        grams = split_tails(gram_cell)
+        # Satu entri per kelompok (generator: ',' di dalam entri, ', ' / ' & ' antar entri).
+        grams = [g for g in JOIN_SPLIT_RE.split(gram_cell.upper()) if g.strip()]
         if len(grams) != n_tails:
             c8.fail(f"baris {no}: {n_tails} ekor kelompok pada '{kel_cell}' tapi "
-                    f"{len(grams)} nilai gramasi ('{gram_cell}') — pembaca tidak "
+                    f"{len(grams)} entri gramasi ('{gram_cell}') — pembaca tidak "
                     f"bisa tahu gramasi mana milik kelompok mana")
         elif len(matched) == n_tails:
             for full, g in zip(matched, grams):
                 known = master.kelompok_to_gramasi.get(full, set())
-                if known and _norm(g).upper() not in known:
-                    c8.fail(f"baris {no}: gramasi '{g}' tidak ada untuk kelompok "
+                bad = [x for x in split_gramasi(_norm(g), known) if x not in known]
+                if known and bad:
+                    c8.fail(f"baris {no}: gramasi {bad} tidak ada untuk kelompok "
                             f"'{full}' di master (yang ada: {sorted(known)})")
 
         for code in codes:
