@@ -992,7 +992,7 @@ AccAPI/_github_clean/
 |---|---|---|
 | `lib/sync.ts` | `AccuratePaginator`, `syncModule` | Sync paginated data Accurate ke SQLite lokal (item/customer) dengan checkpoint |
 | `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment & sales-invoice; sales-receipt = `pelunasan.kirim`; tulis lain = `api_wrapper.execute` + katalog Konsol (S7-1b) |
-| `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance: database sesi wajib = `expectedDatabaseId` (409 `database_changed`), klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
+| `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance (`finance.update` ∧ `finance.post_accurate`, S7-1c): database sesi wajib = `expectedDatabaseId` (409 `database_changed`), klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
 | `app/api/finance/purchase-payment/resolve/route.ts` | `POST` | Atestasi manual attempt purchase-payment tidak pasti (alasan + sumber pemeriksaan) |
 | `app/api/finance/purchase-payment/attempts/route.ts` | `GET` | Baca-saja status attempt terbaru per kelompok faktur (S6-0e; kontrak `docs/handover/S6-0e-KONTRAK-API.md`) |
 | `app/api/auth/accurate-login/route.ts` | `GET` | Mulai OAuth2 Accurate: `state` acak + `returnTo` daftar putih di cookie httpOnly berumur 10 menit, 307 ke authorize (scope tetap) |
@@ -1162,6 +1162,8 @@ kasir_hari_event [append-only; tutup (snapshot.terhalang WAJIB [] — owner T2) 
   S7-1b (urutan di header SQL): RBAC_S7_1B_CEK.sql baca-saja -> PK-1 owner (12 Okt: biarkan — KUNCI tidak menulis api_wrapper.*;
   Admin/Fakturist/Manager sudah memegang execute) -> RBAC_S7_1B_KUNCI.sql SEBELUM image -> image ->
   RBAC_S7_1B_PENSIUN.sql SESUDAH image -> CEK ulang (mode cek bawaan = ROLLBACK; terapkan PGOPTIONS='-c rbac.terapkan=1')
+  S7-1c (PK-2: tegakkan = kunci lama ∧ baru di Python finance/payments/summary + POST /api/finance/purchase-payment):
+  cadangan -> RBAC_S7_1C_KUNCI.sql (mode cek -> terapkan) SEBELUM image -> image (pasangan: lib/rbac/s7-1c-pg.test.ts)
 kasir_pelunasan (database_id + pelunasan_id; chequeAmount, metode, last_update) ── kasir_pelunasan_faktur (faktur_id, master_salesman_id, invoice_payment) [cache K1b, TANPA raw_data]
   masterSalesmanId -> accurate_employee.number -> sales_code_merge (merge, per bulan) -> ORANG; OTHERS dikeluarkan; Σ invoicePayment ≠ chequeAmount -> ember tak teralokasi; cheque uang < 0 -> ember nominal_negatif (K-1 a)
 kasir_pelunasan_baca (database_id + tanggal; status berjalan|lengkap|sebagian|gagal, sebab (+hapus_massal), sisa_detail, ditolak, token lease 2 mnt, lengkap_pada, akun_sinkron, penuh_tertunda_pada) [K1b; DDL_K1A -> DDL_S7_2 -> DDL_K1B SEBELUM image; 0031 sesudah 0030]

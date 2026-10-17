@@ -18,21 +18,24 @@ const BUTUH_UBAH = "Akun Anda belum berwenang mengubah data Finance; minta admin
 
 /**
  * SATU tempat izin tombol Finance (D-01: owner setuju Claude menyusun draf matriks — ubah pemetaan di sini saja). Mengikuti
- * gerbang server HARI INI, bukan kunci yang terdaftar tetapi belum ditegakkan (finance.post_accurate, upload_proof, export):
- * - posting = command /api/finance/purchase-payment + simpan tujuan + unggah bukti + catatan FastAPI → finance.update;
- * - tujuan (pemasok/rekening) dan bukti = FastAPI /payments/finance/mapping, /proof → finance.update;
- * - status (Belum transfer / Kembalikan ke Pembayaran) = FastAPI /payments/finance/update → finance.update;
+ * gerbang server (S7-1c, PK-2: kunci lama ∧ kunci baru):
+ * - posting = command /api/finance/purchase-payment (update ∧ post_accurate) + unggah bukti /proof (update ∧ upload_proof) + catatan
+ *   FastAPI /payments/finance/update (update ∧ transfer);
+ * - tujuan (pemasok/rekening) = FastAPI /payments/finance/mapping → finance.update;
+ * - status (Belum transfer / Kembalikan ke Pembayaran) = FastAPI /payments/finance/update → finance.update ∧ finance.transfer;
  * - selesaikan (posting tidak pasti) = /api/finance/purchase-payment/resolve → finance.resolve_unknown (D-14, hanya Finance);
- * - ekspor = FastAPI /payments/finance/export → finance.view.
+ * - ekspor = FastAPI /payments/finance/export → finance.view ∧ finance.export.
  */
 export function izinFinance(keys: ReadonlySet<string>): IzinFinance {
     const ubah = keys.has("finance.update") ? undefined : BUTUH_UBAH;
+    const transfer = ubah ?? (keys.has("finance.transfer") ? undefined : "Akun Anda belum berwenang mencatat status transfer; minta admin menambahkan izin transfer Finance.");
+    const posting = ubah || transfer || !keys.has("finance.post_accurate") || !keys.has("finance.upload_proof");
     return {
-        posting: ubah && "Akun Anda belum berwenang mencatat transfer dan memposting ke Accurate; minta admin menambahkan izin ubah Finance.",
+        posting: posting ? "Akun Anda belum berwenang mencatat transfer dan memposting ke Accurate; minta admin menambahkan izin posting Finance." : undefined,
         tujuan: ubah,
-        status: ubah,
+        status: transfer,
         selesaikan: keys.has("finance.resolve_unknown") ? undefined : "Hanya Finance yang berwenang menyelesaikan posting tidak pasti.",
-        ekspor: keys.has("finance.view") ? undefined : "Akun Anda belum berwenang melihat data Finance.",
+        ekspor: keys.has("finance.view") && keys.has("finance.export") ? undefined : "Akun Anda belum berwenang mengekspor data Finance.",
     };
 }
 

@@ -25,10 +25,16 @@ import {
 const ENDPOINT = "/api/purchase-payment/bulk-save.do";
 
 export async function POST(request: Request) {
-    // ponytail: finance.update = gate yang sama dengan pencatatan status di FastAPI hari ini.
-    // finance.post_accurate terdaftar tapi belum ditegakkan di mana pun — pemetaannya D-01/AM-042.
+    // S7-1c (PK-2 owner 12 Okt): posting = finance.update ∧ post_accurate, DAN kunci SELURUH alur dicek SEBELUM Accurate (tinjauan A):
+    // bukti /payments/finance/proof (upload_proof) dan catatan ledger sesudahnya /payments/finance/update (transfer). Tanpa itu Accurate
+    // bisa terposting lalu ledger 403 = jejak uang terbelah. Kunci diberikan lewat docs/handover/RBAC_S7_1C_KUNCI.sql SEBELUM image ini.
+    // Ditolak sebelum klaim = pasti tidak terkirim.
     const gate = await requirePermission(request, "finance.update");
     if (gate.response) return gate.response;
+    const kurang = ["finance.post_accurate", "finance.upload_proof", "finance.transfer"].filter((k) => !gate.perms!.has(k));
+    if (kurang.length) {
+        return NextResponse.json({ error: `Forbidden: butuh permission ${kurang.join(", ")}`, claimed: false }, { status: 403 });
+    }
 
     const body = await request.json().catch(() => null) as { clientRef?: unknown; payload?: unknown; expectedDatabaseId?: unknown } | null;
     const normalized = normalizePurchasePaymentPayload(body?.payload);

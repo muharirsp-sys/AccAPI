@@ -236,7 +236,7 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
                 <div className="fi-sect-in">
                     <div className="fi-btnrow">
                         {operasi.map((o) => <Button key={o.k} icon={o.ikon} disabled={Boolean(o.alasan) || opTerkunci} disabledReason={o.alasan ?? KUNCI_OP} onClick={() => { setNamaLama(""); setDialog(o.k); }}>{o.label}</Button>)}
-                        <a className="fi-btn fi-btn--tertiary" href={unduhUrl("/payments/export")} target="_blank" rel="noopener noreferrer"><Download className="fi-icon" aria-hidden />Unduh backup</a>
+                        {!izin.ekspor && <a className="fi-btn fi-btn--tertiary" href={unduhUrl("/payments/export")} target="_blank" rel="noopener noreferrer"><Download className="fi-icon" aria-hidden />Unduh backup</a>}
                     </div>
                     {operasi.filter((o) => o.alasan).map((o) => <p key={o.k} className="fi-small fi-subtle">{o.label.replace("…", "")}: {o.alasan}</p>)}
                     {opTerkunci && <p className="fi-small fi-why">{KUNCI_OP}</p>}
