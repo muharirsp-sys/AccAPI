@@ -232,8 +232,8 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     principles: ["view", "upload", "delete"],
     master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
-    // S7-1b: create/update/export dipensiunkan (KUNCI_PENSIUN, lib/rbac/registry.ts); approve sampai S7-3.
-    off_program_control: ["view", "approve"],
+    // S7-1b: create/update/export dipensiunkan (KUNCI_PENSIUN, lib/rbac/registry.ts); S7-3: approve ikut.
+    off_program_control: ["view"],
     reconciliation: ["view", "run", "manage"],
     claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export"],
     users: ["view", "manage"],
@@ -324,7 +324,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("finance", ["view", "approve", "export", "update"]),
         pick("principles", ["view"]),
         pick("summary", ["view", "export"]),
-        pick("off_program_control", ["view", "approve"]),
+        pick("off_program_control", ["view"]),
         pick("reconciliation", ["view"]),
         pick("claim_workflow", ["view", "approve", "export"]),
         pick("sales_history", ["view", "export", "manage"]),

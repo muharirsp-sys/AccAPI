@@ -11,7 +11,7 @@
 --   2b per USER aktif (gabungan semua grupnya): memegang api_wrapper.view TANPA api_wrapper.execute = kehilangan tulis Konsol saat rilis.
 --   3  user AKTIF tanpa grup: akses = preset role lama (lib/rbac.ts), TIDAK terjangkau SQL (role admin/manager = execute legacy).
 --   4  isi grup Manager (semua kunci) + apakah sudah memegang audit_read / audit_export (§C).
---   5  grup pemegang kunci pensiun (RBAC_S7_1B_PENSIUN.sql menghapusnya SESUDAH image; off_program_control.approve menunggu S7-3).
+--   5  grup pemegang kunci pensiun (RBAC_S7_1B_PENSIUN.sql menghapusnya SESUDAH image; off_program_control.approve sejak S7-3).
 --   6  pasangan PK-2 (kunci gerbang lama -> kunci baru): grup yang akan mendapat kunci baru (1b = RBAC_S7_1B_KUNCI.sql, 1c = slice S7-1c).
 -- Hasil = bahan keputusan owner (PK-1); JANGAN ubah massal dari kueri ini.
 -- =====================================================================
@@ -84,7 +84,7 @@ SELECT '4 isi grup Manager' AS cek, n.nama AS grup, ag.id IS NOT NULL AS ada, ag
 FROM (VALUES ('Manager')) AS n(nama)
 LEFT JOIN access_group ag ON ag.name = n.nama;
 
--- 5. Grup pemegang kunci pensiun (= KUNCI_PENSIUN lib/rbac/registry.ts + off_program_control.approve sesudah S7-3).
+-- 5. Grup pemegang kunci pensiun (= KUNCI_PENSIUN lib/rbac/registry.ts, termasuk off_program_control.approve sejak S7-3).
 WITH p(kunci) AS (VALUES
     ('off_program_control.create'), ('off_program_control.update'), ('off_program_control.export'), ('off_program_control.approve'),
     ('users.create_user'), ('users.edit_user'), ('users.delete_user'), ('users.set_role'), ('users.set_permission')

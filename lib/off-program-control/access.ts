@@ -266,8 +266,8 @@ export function getOffRoleBadgeLabel(
   return resolutionOrRole.role;
 }
 
-// S7-1b: create/update/export dipensiunkan dari registry (KUNCI_PENSIUN) tetapi bisa masih ada di DB sampai RBAC_S7_1B_PENSIUN.sql —
-// tetap dihitung "dasar" (bukan granular) agar tebakan di bawah tidak berubah karena baris lama.
+// S7-1b: create/update/export (S7-3: + approve) dipensiunkan dari registry (KUNCI_PENSIUN) tetapi bisa masih ada di DB sampai
+// RBAC_S7_1B_PENSIUN.sql — tetap dihitung "dasar" (bukan granular) agar tebakan di bawah tidak berubah karena baris lama.
 const AKSI_DASAR_OPC = new Set(["view", "create", "update", "approve", "export"]);
 
 /**

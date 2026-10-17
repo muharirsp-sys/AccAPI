@@ -93,7 +93,7 @@ Breakpoint: S < 600 · M 600–1023 · L 1024–1439 · XL ≥ 1440. Tabel memak
 Shell (`components/SidebarLayout.tsx`, S1a): shell bar dengan logo resmi (lockup; tanda SP di ponsel; versi putih di mode gelap
 lewat token `--logo-full`/`--logo-mark`), cari menu (Ctrl K; OPC tetap memakai quick jump sendiri), menu profil (Mode, Density,
 Bantuan = chat asisten, Keluar), navigasi samping berkelompok dari izin, drawer ponsel, navigasi bawah = Beranda + 3 pintasan
-profil peran (`ROLE_PROFILES` di `config/workspace-navigation.ts`, ditebak dari izin sampai grup utama BL-37 ada) + Menu.
+profil peran (`ROLE_PROFILES` di `config/workspace-navigation.ts`; `profileFor` = ★ grup utama, fallback tebakan izin, S7-3) + Menu.
 Belum: pencarian nomor dokumen lintas modul (BL-38) dan lonceng Kotak Tugas (BL-34) — menunggu logic di tracker AM.
 Favorit menu dan sidebar ciut (rail) dari shell lama tidak ada di desain yang disetujui dan dihapus.
 
