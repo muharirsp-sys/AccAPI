@@ -11,8 +11,9 @@
 -- KAPAN: HANYA bila rilis Fiori di-ROLLBACK ke image lama SESUDAH kunci pensiun terlanjur hilang (runbook §7 butir c). Image lama masih
 --   membaca kunci pensiun (off_program_control.create/update/export di OPC lama, users.* lama di layar User lama). JANGAN dijalankan selama
 --   image S7-1b hidup: registry baru tidak mengenal kunci ini dan layar baru membuangnya lagi saat grup disimpan.
--- Dibatasi ke daftar kunci pensiun S7-1b + off_program_control.approve (dipensiunkan S7-3), dan grup yang masih ada. Rollback ke image
---   sebelum S7-3 memerlukan approve kembali (profil Beranda SM ditebak dari kunci itu).
+-- Dibatasi ke daftar kunci pensiun S7-1b + off_program_control.approve (dipensiunkan S7-3), dan grup yang masih ada.
+-- Rollback S7-3 TIDAK memerlukan PULIH: approve hanya dipakai image lama untuk tebakan label Beranda SM, bukan gerbang akses; dan PULIH
+--   juga akan memulihkan kunci pensiun S7-1b yang sudah diterapkan 15 Okt. PULIH hanya untuk rollback ke image SEBELUM S7-1b.
 -- BATAS: created_at bertipe timestamp tanpa zona; jejak SQL memakai now() pada zona sesi Postgres, jejak aplikasi memakai waktu UTC dari
 --   Node. Pada server ber-TimeZone UTC (bawaan image postgres) keduanya sama; NOTICE mencetak TimeZone. Bila bukan UTC dan siklus ulang
 --   terjadi < 8 jam sesudah PULIH sebelumnya, periksa daftar NOTICE secara manual.

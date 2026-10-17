@@ -13,7 +13,7 @@ import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
 import { FioriScope } from "@/components/fiori/Scope";
 import Beranda from "./Beranda";
 
-export default async function DashboardLanding({ searchParams }: { searchParams: Promise<{ peran?: string; grup?: string }> }) {
+export default async function DashboardLanding({ searchParams }: { searchParams: Promise<{ peran?: string | string[]; grup?: string | string[] }> }) {
     const requestHeaders = await headers();
     const session = await auth.api.getSession({ headers: requestHeaders }).catch(() => null);
     const userId = String(session?.user?.id || "");
@@ -28,10 +28,12 @@ export default async function DashboardLanding({ searchParams }: { searchParams:
     const dateLabel = `${new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Makassar" }).format(now)} · ${new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Makassar" }).format(now)} WITA`;
     const firstName = (session?.user?.name || "").trim().split(/\s+/)[0] || "Tim";
     // Pratinjau Beranda peran lain (?peran=id profil) atau grup utama lain (?grup=nama) hanya di development (izin tetap milik user yang masuk).
+    // Parameter ganda (?grup=a&grup=b) = string[] -> diabaikan.
     const { peran, grup } = process.env.NODE_ENV !== "production" ? await searchParams : {};
+    const satu = (v: string | string[] | undefined) => (typeof v === "string" ? v : undefined);
     return (
         <FioriScope>
-            <Beranda permKeys={[...permKeys]} primaryGroup={grup ?? utama?.name ?? null} firstName={firstName} greeting={greeting} dateLabel={dateLabel} previewProfile={peran} />
+            <Beranda permKeys={[...permKeys]} primaryGroup={satu(grup) ?? utama?.name ?? null} firstName={firstName} greeting={greeting} dateLabel={dateLabel} previewProfile={satu(peran)} />
         </FioriScope>
     );
 }
