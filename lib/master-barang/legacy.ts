@@ -12,7 +12,7 @@ import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { masterBarang } from "@/db/schema";
 import { codebookKey, normalizePrincipleName, type CodebookEntry, type CodebookLevel, type SourceItem } from "@/lib/master-barang/engine";
-import { appendSource, createMaster, getMasterDetail, updateCodebook } from "@/lib/master-barang/service";
+import { appendSource, createMaster, getMasterDetail, principalMasterBarang, updateCodebook } from "@/lib/master-barang/service";
 
 const clean = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
 const upper = (value: unknown) => clean(value).toUpperCase();
@@ -214,7 +214,7 @@ export function parseLegacyWorkbook(bytes: Buffer, fileName: string): ParsedLega
     }
     if (!items.length) throw new Error(`Tidak ada item terbaca dari sheet ${selected.sheetName}.`);
     principleName ||= principleFromFile(fileName);
-    return { principleName, principleCode, items, codebook: [...codebook.values()].filter((entry) => entry.name || entry.code), sheetName: selected.sheetName, headerRow: selected.header.row + 1, warnings: principleCode ? [] : ["Kode principal Win tidak ditemukan; AccAPI akan membuat kode otomatis."] };
+    return { principleName, principleCode, items, codebook: [...codebook.values()].filter((entry) => entry.name || entry.code), sheetName: selected.sheetName, headerRow: selected.header.row + 1, warnings: principleCode ? [] : ["Kode principal Win tidak ditemukan; kode diambil dari alias kode Master Barang di Data Principal."] };
 }
 
 export async function adaptLegacyDirectory(directory: string, actorId: string) {
@@ -229,9 +229,11 @@ export async function adaptLegacyDirectory(directory: string, actorId: string) {
         try {
             const bytes = await readFile(/*turbopackIgnore: true*/ filePath);
             const parsed = parseLegacyWorkbook(bytes, entry.name);
-            const norm = normalizePrincipleName(parsed.principleName);
+            // S7-2b: master disimpan dengan nama principal RESMI -> cari master yang ada lewat nama resmi, bukan ejaan berkas.
+            const resmi = await principalMasterBarang({ principleName: parsed.principleName, principleCode: parsed.principleCode || undefined });
+            const norm = normalizePrincipleName(resmi.principleName);
             const [existing] = await db.select({ id: masterBarang.id }).from(masterBarang).where(eq(masterBarang.principleNameNorm, norm)).limit(1);
-            const master = existing ? await getMasterDetail(existing.id) : await createMaster({ principleName: parsed.principleName, principleCode: parsed.principleCode || undefined, legacyFileName: entry.name }, actorId, true);
+            const master = existing ? await getMasterDetail(existing.id) : await createMaster({ principleName: parsed.principleName, principleCode: resmi.principleCode, legacyFileName: entry.name }, actorId, true);
             if (!master) throw new Error("Gagal membuat/memuat master hasil adaptasi.");
             let detail;
             try {
