@@ -2,7 +2,7 @@
 /*
  * Tujuan: peta Supervisor Review (SR-3) — Leaflet + ubin OpenStreetMap, dipakai langsung tanpa pembungkus React. Penanda toko berkoordinat
  *   (warna per StatusToko) + titik check-in dari kunjungan ber-GPS; memilih satu salesman menyaring keduanya dan menggambar garis urutan check-in.
- * Caller: SR-2 supervisor-review layar (dynamic import ssr:false) lewat `PetaProps` — props TIDAK boleh berubah; uji-peta/page.tsx (halaman uji).
+ * Caller: SR-2 supervisor-review layar (dynamic import ssr:false) lewat `PetaProps` — props TIDAK boleh berubah.
  * Dependensi: leaflet (JS dimuat di useEffect karena butuh window; CSS diimpor statis — aman, modul ini hanya dimuat tanpa SSR),
  *   components/fiori/core, lib/supervisor-review/kontrak.
  * Main Functions: Peta (default), PetaProps.
