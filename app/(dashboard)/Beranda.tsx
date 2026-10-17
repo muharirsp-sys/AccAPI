@@ -70,7 +70,7 @@ export default function Beranda({ permKeys, primaryGroup, firstName, greeting, d
     const allClear = tileIds.length > 0 && tileIds.every((id) => {
         if (status(TILES[id].source) !== "siap") return false;
         const value: TileValue = TILES[id].pick(loads[TILES[id].source]?.data);
-        return value.value === 0 && !value.more;
+        return value.value === 0 && !value.more; // null (belum terbaca) bukan nol: tidak pernah "semua beres"
     });
 
     return (
@@ -181,7 +181,7 @@ function TaskTile({ id, load, onRetry }: { id: TileId; load?: Load; onRetry: () 
         </button>;
     }
     const value: TileValue = spec.pick(load.data);
-    return <Tile title={spec.title} subtitle={spec.subtitle} icon={<Icon className="fi-icon" />} value={value.more ? `${value.value}+` : value.value} unit={value.unit} tone={value.tone} footer={value.footer} href={spec.href} />;
+    return <Tile title={spec.title} subtitle={spec.subtitle} icon={<Icon className="fi-icon" />} value={value.value === null ? "—" : value.more ? `${value.value}+` : value.value} unit={value.unit} tone={value.tone} footer={value.footer} href={spec.href} />;
 }
 
 function CardRows({ kind, rows }: { kind: "list" | "kv"; rows: ReturnType<NonNullable<ReturnType<typeof cardFor>>["rows"]> }) {
