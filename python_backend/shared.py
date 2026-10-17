@@ -39,6 +39,10 @@ def _qualifier_of(item) -> frozenset:
     return frozenset(q for q in _VARIANT_QUALIFIERS if q in kata)
 
 
+# "Mix merek" pada ketentuan = strata SATU DIVISI lintas merek (ABC PI Okt 2026: Beverages = NU + KIN DAIRY,
+# kumulatif). Baris seperti itu tidak dipecah per merek, supaya ambangnya dihitung sekeranjang.
+LINTAS_MEREK = re.compile(r"\b(?:mix|campur|lintas|beda)\s+merek\b", re.I)
+
 _EXCLUDED_KELOMPOKS = {
     " ".join(str(_k).strip().split()).upper()
     for _rule in _VARIANT_MAPPING.values()
@@ -4198,12 +4202,13 @@ def _apply_native_kelompok(rows_to_check, master_items):
         # we must split it into separate rows so the frontend and generator handle them cleanly!
         from collections import defaultdict
         groups_by_prefix = defaultdict(list)
-        
+        satu_divisi = bool(LINTAS_MEREK.search(str(r.get("ketentuan", ""))))
+
         for it in matched_items:
             real_kelompok = str(it.get("kelompok", "")).strip()
             if real_kelompok and real_kelompok.lower() not in ("nan", "null", "none"):
                 # Extract prefix to group strictly by Nama KLP
-                prefix = real_kelompok.split(" - ")[0] if " - " in real_kelompok else real_kelompok
+                prefix = "*" if satu_divisi else (real_kelompok.split(" - ")[0] if " - " in real_kelompok else real_kelompok)
                 groups_by_prefix[prefix].append(it)
                 
         if not groups_by_prefix:
