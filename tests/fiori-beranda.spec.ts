@@ -1,8 +1,10 @@
 /*
  * Tujuan: Beranda per peran (S1b): tile dari endpoint yang ada, galat per sumber, semua beres, memuat, ponsel.
- * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin); peran lain lewat ?peran= (hanya development).
+ * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin); peran lain lewat ?peran= (id profil) atau ?grup= (nama ★ grup utama,
+ *   S7-3) — keduanya hanya development.
  * Dependensi: halaman /, respons endpoint di-mock dengan page.route (tidak menyentuh DB/Accurate).
- * Main Functions: fakturist (tile, pantauan, galat per sumber, coba lagi), gudang (tanggal WITA), semua beres, memuat, ponsel.
+ * Main Functions: fakturist (tile, pantauan, galat per sumber, coba lagi), gudang (tanggal WITA), semua beres, memuat, ponsel,
+ *   profil dari ★ grup utama (SPV, OM, Kasir, Manager, fallback).
  * Side Effects: Tangkapan di test-results.
  */
 import { expect, test, type Page } from "@playwright/test";
@@ -80,4 +82,35 @@ test("mobile: two-column tiles, shortcuts and no horizontal scroll", async ({ pa
     await expect(page.getByRole("region", { name: "Pintasan" }).getByRole("link")).toHaveCount(4);
     expect(await page.evaluate(() => { const main = document.querySelector("main")!; return document.documentElement.scrollWidth <= innerWidth && main.scrollWidth <= main.clientWidth + 1; })).toBe(true);
     await page.screenshot({ path: "test-results/fiori-beranda-fakturist-390.png", fullPage: true });
+});
+
+test("S7-3: profil Beranda mengikuti ★ grup utama (SPV, OM, Kasir, Manager); grup custom / tanpa grup = tebakan izin", async ({ page }) => {
+    await page.route("**/api/off-program-control/batches", (route) => route.fulfill(json({ batches: [{ noPengajuan: "OFF-A-1", principleName: "PRINCIPLE A", supervisorName: "SPV A", status: "Submitted to SM", smStatus: "Waiting Review" }] })));
+    await page.route("**/api/admin/users/permissions", (route) => route.fulfill(json({ users: [] })));
+    const tugas = page.getByRole("region", { name: /Perlu tindakan/ });
+    const buka = async (query: string) => {
+        await page.goto(`/${query}`);
+        await expect(page.getByRole("heading", { level: 1, name: /^Selamat (pagi|siang|sore|malam), / })).toBeVisible();
+        const links = page.getByRole("region", { name: "Pintasan" }).getByRole("link");
+        await expect(links).toHaveCount(4); // izin admin (bypass): kekurangan diisi halaman lain yang boleh dibuka
+        return links.evaluateAll((els) => els.map((el) => el.getAttribute("href")));
+    };
+
+    expect((await buka("?grup=SPV")).slice(0, 3)).toEqual(["/supervisor-review", "/form-kontrol", "/insentif-sales"]);
+    await expect(tugas).toHaveCount(0); // profil baru tidak memuat tugas peran lain
+    await page.screenshot({ path: "test-results/fiori-beranda-s73-spv.png", fullPage: true });
+    expect((await buka("?grup=om")).slice(0, 3)).toEqual(["/kasir", "/pelunasan", "/finance"]);
+    await expect(tugas).toHaveCount(0);
+    expect((await buka("?grup=%20KASIR%20"))[0]).toBe("/kasir");
+    await expect(tugas).toHaveCount(0); // tile Kasir menyusul di K3
+
+    expect(await buka("?grup=Manager")).toEqual(["/off-program-control", "/form-kontrol", "/insentif-sales", "/supervisor-review"]);
+    await expect(tugas.getByRole("link", { name: /Persetujuan OFF/ })).toContainText("1");
+    await expect(page.getByRole("region", { name: "Pantauan" })).toContainText("OFF-A-1");
+
+    // Fallback: tanpa grup utama dan grup custom (nama memuat kata preset) = tebakan izin (bypass = admin).
+    for (const query of ["", "?grup=Gudang%20CABANG%20A", "?grup=Staff"]) {
+        expect((await buka(query)).slice(0, 3), query).toEqual(["/admin/groups", "/api-wrapper", "/principles"]);
+        await expect(tugas.getByRole("link", { name: /User tanpa grup/ })).toBeVisible();
+    }
 });

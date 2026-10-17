@@ -91,6 +91,12 @@ test("tiles and cards never appear without the endpoint permission", () => {
     // Tanpa profil: gabungan tugas dari izin, dibatasi 6.
     assert.deepEqual(tilesFor(undefined, new Set(["claim_workflow.view"])), ["outstanding", "siapTutup"]);
     assert.ok(tilesFor(undefined, new Set(["order.view", "rekapan_nota.view", "off_program_control.view", "claim_workflow.view"])).length <= 6);
+    // S7-3: profil baru (grup utama) tidak jatuh ke gabungan tugas peran lain — OM pemegang OPC tidak melihat "Persetujuan OFF" milik SM.
+    // Tile Kasir menyusul di K3.
+    for (const id of ["spv", "om", "kasir"]) {
+        assert.deepEqual(tilesFor(id, new Set(["off_program_control.view", "kasir.view", "claim_workflow.view", "order.view"])), [], id);
+        assert.equal(cardFor(id, new Set(["off_program_control.view"])), undefined, id);
+    }
     assert.equal(cardFor("sm", new Set()), undefined);
     assert.equal(cardFor("sm", new Set(["off_program_control.view"]))?.source, "opc");
 });

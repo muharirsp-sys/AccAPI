@@ -11,7 +11,8 @@
 -- KAPAN: HANYA bila rilis Fiori di-ROLLBACK ke image lama SESUDAH kunci pensiun terlanjur hilang (runbook §7 butir c). Image lama masih
 --   membaca kunci pensiun (off_program_control.create/update/export di OPC lama, users.* lama di layar User lama). JANGAN dijalankan selama
 --   image S7-1b hidup: registry baru tidak mengenal kunci ini dan layar baru membuangnya lagi saat grup disimpan.
--- Dibatasi ke daftar kunci pensiun S7-1b + off_program_control.approve (hanya pernah dihapus bila S7-3 ikut), dan grup yang masih ada.
+-- Dibatasi ke daftar kunci pensiun S7-1b + off_program_control.approve (dipensiunkan S7-3), dan grup yang masih ada. Rollback ke image
+--   sebelum S7-3 memerlukan approve kembali (profil Beranda SM ditebak dari kunci itu).
 -- BATAS: created_at bertipe timestamp tanpa zona; jejak SQL memakai now() pada zona sesi Postgres, jejak aplikasi memakai waktu UTC dari
 --   Node. Pada server ber-TimeZone UTC (bawaan image postgres) keduanya sama; NOTICE mencetak TimeZone. Bila bukan UTC dan siklus ulang
 --   terjadi < 8 jam sesudah PULIH sebelumnya, periksa daftar NOTICE secara manual.
@@ -87,17 +88,17 @@ BEGIN
 END $$;
 
 -- VERIFIKASI (di dalam transaksi; mode cek = keadaan yang AKAN tersimpan).
--- Baris 2 sengaja TANPA off_program_control.approve: tanpa S7-3 kunci itu tidak dipensiunkan dan sah dipegang banyak grup (profil Beranda,
--- OPC), jadi mencantumkannya hanya menambah derau; bila S7-3 pernah ikut, kembalinya approve tetap terhitung di baris 1.
+-- Baris 2 memuat off_program_control.approve sejak S7-3 (kunci pensiun penuh; image sebelum S7-3 memakainya untuk profil Beranda SM).
 SELECT 'VERIFIKASI' AS bagian, 'pasangan grup-kunci siklus terakhir yang belum kembali (harus 0)' AS cek,
        count(*)::text AS nilai
 FROM (SELECT DISTINCT group_id, kunci FROM pulih_target) t
 WHERE NOT EXISTS (SELECT 1 FROM group_permission gp WHERE gp.group_id = t.group_id AND gp.permission_key = t.kunci)
 UNION ALL
-SELECT 'VERIFIKASI', 'grup yang memegang kunci pensiun (tanpa approve) sesudah berkas ini',
+SELECT 'VERIFIKASI', 'grup yang memegang kunci pensiun sesudah berkas ini',
        coalesce((SELECT string_agg(DISTINCT ag.name, ', ') FROM group_permission gp JOIN access_group ag ON ag.id = gp.group_id
                  WHERE gp.permission_key IN ('off_program_control.create', 'off_program_control.update', 'off_program_control.export',
-                                             'users.create_user', 'users.edit_user', 'users.delete_user', 'users.set_role', 'users.set_permission')), '-');
+                                             'users.create_user', 'users.edit_user', 'users.delete_user', 'users.set_role', 'users.set_permission',
+                                             'off_program_control.approve')), '-');
 
 -- Pengaman mode cek: tanpa rbac.terapkan=1 transaksi DIBATALKAN (COMMIT di bawah tidak tercapai / menjadi ROLLBACK).
 DO $$
