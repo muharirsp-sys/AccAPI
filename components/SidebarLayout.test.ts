@@ -12,13 +12,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
-<<<<<<< HEAD
 import { WORKSPACE_GROUPS, HOME_ITEM, ROLE_PROFILES, navigationForPermissions, activeNavigationItem, profileFor, roleProfile, roleShortcuts } from "../config/workspace-navigation";
 import { canAccessPathWithKeys } from "../lib/rbac";
-=======
-import { canAccessPathWithKeys } from "../lib/rbac";
-import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigationItem, roleProfile, roleShortcuts } from "../config/workspace-navigation";
->>>>>>> origin/feat/s7b-data-principal-ui
 
 // ponytail: next/font/google kosong di luar kompilator Next, padahal Scope.tsx memanggilnya saat dimuat → stub di cache require
 // SEBELUM SidebarLayout dimuat. Plafon: konteks router diambil dari jalur internal next/dist; bila Next memindahkannya, uji ini
