@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 import shared  # noqa: E402
 from routers import payments, sppd  # noqa: E402
 
-ALLOW = {"payments.view", "payments.edit", "sppd.edit_settings"}
+ALLOW = {"payments.view", "payments.export", "payments.edit", "payments.upload", "sppd.edit_settings"}  # S7-1c: lama ∧ baru
 CSRF_OK = [True]
 for mod in (payments, sppd):
     mod.get_current_user = lambda request: "betterauth|admin|uji@x.test"

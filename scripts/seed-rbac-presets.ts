@@ -15,6 +15,7 @@
  * Preset diturunkan dari rolePermissionPresets (lib/rbac.ts) + allowedActions OPC
  * (lib/off-program-control/access.ts), dinyatakan sebagai permission key registry.
  * S7-1b: kunci pensiun (KUNCI_PENSIUN, lib/rbac/registry.ts) dibuang dari preset — preset TIDAK diperluas ke kunci pengganti.
+ * S7-1c (PK-2): pemegang kunci lama juga memegang kunci barunya (sama dengan docs/handover/RBAC_S7_1C_KUNCI.sql).
  */
 import pg from "pg";
 import { randomUUID } from "node:crypto";
@@ -27,9 +28,9 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
     {
         name: "Manager", desc: "Manajer lintas modul", keys: [
             ...k("dashboard", ["view"]), ...k("api_wrapper", ["view", "execute"]),
-            ...k("payments", ["view", "export", "submit", "edit", "update"]),
+            ...k("payments", ["view", "export", "submit", "edit", "update", "create", "upload"]),
             ...k("sppd", ["view", "generate", "download"]),
-            ...k("finance", ["view", "approve", "export", "update"]),
+            ...k("finance", ["view", "approve", "export", "update", "post_accurate", "upload_proof", "transfer"]),
             ...k("principles", ["view"]), ...k("summary", ["view", "export"]),
             ...k("off_program_control", ["view", "approve"]),
             ...k("claim_workflow", ["view", "approve", "export"]),
@@ -51,19 +52,19 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
     {
         name: "Staff", desc: "Staf input operasional", keys: [
             ...k("dashboard", ["view"]),
-            ...k("payments", ["view", "create", "edit", "upload", "submit"]),
+            ...k("payments", ["view", "create", "edit", "upload", "submit", "export"]),
             ...k("sppd", ["view", "generate", "download"]),
             ...k("principles", ["view"]),
-            ...k("summary", ["view", "upload", "generate", "export", "edit", "update"]),
+            ...k("summary", ["view", "upload", "generate", "export", "edit", "update", "email"]),
             ...k("off_program_control", ["view"]),
             ...k("claim_workflow", ["view"]),
         ],
     },
     {
         name: "Viewer", desc: "Hanya lihat", keys: [
-            ...k("dashboard", ["view"]), ...k("payments", ["view"]), ...k("sppd", ["view"]),
-            ...k("finance", ["view"]), ...k("off_program_control", ["view"]),
-            ...k("claim_workflow", ["view"]), ...k("summary", ["view"]),
+            ...k("dashboard", ["view"]), ...k("payments", ["view", "export"]), ...k("sppd", ["view"]),
+            ...k("finance", ["view", "export"]), ...k("off_program_control", ["view"]),
+            ...k("claim_workflow", ["view"]), ...k("summary", ["view", "export"]),
         ],
     },
     {

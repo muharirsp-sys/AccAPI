@@ -1156,12 +1156,14 @@ def user_has_permission(username: Optional[str], module: str, action: str) -> bo
     module = s(module).lower()
     action = s(action).lower()
     role = get_user_role(username)
+    # S7-1c (PK-2): preset yang memegang kunci lama juga memegang kunci barunya (finance.update -> post_accurate/upload_proof/transfer,
+    # *.view -> *.export, payments.edit -> create/upload/submit + sppd.generate, summary.edit -> upload/generate/email).
     role_permissions = {
         "admin": {mod: set(PERMISSION_ACTIONS) for mod in PERMISSION_MODULES},
         "manager": {
             "dashboard": {"view"},
             "api_wrapper": {"view", "execute"},
-            "payments": {"view", "export", "submit", "edit", "update"},
+            "payments": {"view", "export", "submit", "edit", "update", "create", "upload"},
             "sppd": {"view", "generate", "download"},
             "finance": {"view", "approve", "export"},
             "principles": {"view"},
@@ -1179,19 +1181,19 @@ def user_has_permission(username: Optional[str], module: str, action: str) -> bo
         "staff": {
             "dashboard": {"view"},
             "order": {"view", "create"},
-            "payments": {"view", "create", "edit", "update", "upload", "submit"},
+            "payments": {"view", "create", "edit", "update", "upload", "submit", "export"},
             "sppd": {"view", "generate", "download"},
             "principles": {"view"},
-            "summary": {"view", "upload", "generate", "export", "edit", "update"},
+            "summary": {"view", "upload", "generate", "export", "edit", "update", "email"},
             "validator": {"view", "upload", "run", "download", "edit"},
         },
         "viewer": {
             "dashboard": {"view"},
             "validator": {"view"},
-            "summary": {"view"},
-            "payments": {"view"},
+            "summary": {"view", "export"},
+            "payments": {"view", "export"},
             "sppd": {"view"},
-            "finance": {"view"},
+            "finance": {"view", "export"},
         },
     }
     perms, defined = get_user_permissions_info(username)

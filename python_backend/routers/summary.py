@@ -213,6 +213,8 @@ async def summary_manual_auto_generate(
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "summary", "edit"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not user_has_permission(user, "summary", "generate"):  # S7-1c: lama ∧ baru (PK-2; tinjauan A #1)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission summary.generate"})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
@@ -264,6 +266,8 @@ async def summary_manual_auto_generate(
 def summary_download(request: Request, file_id: str):
     from routers.summary_library import require_user
     user = require_user(request)
+    if not user_has_permission(user, "summary", "export"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission summary.export"})
     output = MANUAL_OUTPUTS.get(file_id)
     if not owned(output, user):
         return JSONResponse(status_code=404, content={"ok": False, "error": "File tidak ditemukan"})
@@ -290,6 +294,8 @@ async def summary_manual_master_upload(
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "summary", "edit"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not user_has_permission(user, "summary", "upload"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission summary.upload"})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
@@ -466,6 +472,8 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "summary", "edit"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not user_has_permission(user, "summary", "generate"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission summary.generate"})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
@@ -1448,6 +1456,8 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
 def summary_manual_download(request: Request, file_id: str, kind: str, dummy: str = None):
     from routers.summary_library import require_user
     user = require_user(request)
+    if not user_has_permission(user, "summary", "export"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission summary.export"})
     if not owned(MANUAL_OUTPUTS.get(file_id), user):
         return JSONResponse({"ok": False, "error": "File tidak ditemukan"}, status_code=404)
     if kind not in ["form","dataset"]:
@@ -1604,6 +1614,8 @@ async def summary_manual_email(
     
     if not user_has_permission(user, "summary", "edit") or not owned(MANUAL_OUTPUTS.get(file_id), user):
         return JSONResponse(status_code=404, content={"ok": False, "error": "Generated files not found."})
+    if not user_has_permission(user, "summary", "email"):  # S7-1c: lama ∧ baru (PK-2)
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission summary.email"})
 
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):

@@ -319,9 +319,10 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("dashboard", ["view"]),
         pick("order", ["view", "create", "edit", "export"]),
         pick("api_wrapper", ["view", "execute"]),
-        pick("payments", ["view", "export", "submit", "edit", "update"]),
+        // S7-1c (PK-2): pemegang kunci lama juga memegang kunci barunya (lib/rbac/nasib-kunci.test.ts PASANGAN_1C).
+        pick("payments", ["view", "export", "submit", "edit", "update", "create", "upload"]),
         pick("sppd", ["view", "generate", "download"]),
-        pick("finance", ["view", "approve", "export", "update"]),
+        pick("finance", ["view", "approve", "export", "update", "post_accurate", "upload_proof", "transfer"]),
         pick("principles", ["view"]),
         pick("summary", ["view", "export"]),
         pick("off_program_control", ["view", "approve"]),
@@ -343,10 +344,10 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
     staff: mergePermissionMaps(
         pick("dashboard", ["view"]),
         pick("order", ["view", "create"]),
-        pick("payments", ["view", "create", "edit", "upload", "submit"]),
+        pick("payments", ["view", "create", "edit", "upload", "submit", "export"]),
         pick("sppd", ["view", "generate", "download"]),
         pick("principles", ["view"]),
-        pick("summary", ["view", "upload", "generate", "export", "edit", "update"]),
+        pick("summary", ["view", "upload", "generate", "export", "edit", "update", "email"]),
         pick("off_program_control", ["view"]),
         pick("reconciliation", ["view", "run"]),
         // Claim Workflow guardrail: staff hanya boleh membaca daftar / detail
@@ -358,12 +359,12 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
     viewer: mergePermissionMaps(
         pick("dashboard", ["view"]),
         pick("order", ["view"]),
-        pick("payments", ["view"]),
+        pick("payments", ["view", "export"]),
         pick("sppd", ["view"]),
-        pick("finance", ["view"]),
+        pick("finance", ["view", "export"]),
         pick("off_program_control", ["view"]),
         pick("claim_workflow", ["view"]),
-        pick("summary", ["view"]),
+        pick("summary", ["view", "export"]),
         pick("sales_history", ["view"])
     ),
 };
