@@ -1150,6 +1150,8 @@ principal_log [append-only (trigger + REVOKE di DDL_S7_2): satu baris per buat/a
   API app/api/principals/** (lib/principal/tulis.ts; kontrak docs/handover/S7-2-KONTRAK-PRINCIPAL-API.md): GET daftar/riwayat
   (principles.view), tulis (principles.upload; hapus alias principles.delete) — 409 berkode tanpa menimpa, 503 tanpa trigger penjaga.
   Resolver lib/principal/resolver.ts (ruang WAJIB nama | kode_master_barang; alias saja: cocok | tak_dikenal | ambigu; GET /api/principals/resolve).
+  Layar S7b /data-principal (components/principal/*; menu Pengaturan; pagePermissions principles.view; tombol tulis disembunyikan tanpa principles.upload / principles.delete):
+  daftar + Object Page (varian, alias, riwayat, Dipakai di = tautan). Rute lama (/principles, /principal-mapping) TIDAK dialihkan (menyusul).
   Laporan + benih: docs/handover/PRINCIPAL_EKSPOR.sql (psql -qAt di VPS, baca-saja -> 1 baris JSON) lalu OFFLINE npx tsx scripts/principal-laporan.mjs
   --dari-json (atau DATABASE_URL langsung, berkas SQL yang sama) -> laporan.md/json + benih.sql (INSERT ... ON CONFLICT DO NOTHING) untuk ditinjau owner.
   Pemakai belum beralih (S7-2b).
