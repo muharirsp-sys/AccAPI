@@ -142,6 +142,8 @@ export type NotaPool = {
     area: string | null; grup_all: string; grup_gdi: string;
     jumlah_baris: number; total_pcs: number; total_krt: number | null;
     pareto: boolean | null; kanvas: boolean;
+    /** Nota memuat HEINZ ABC — hanya nota ini yang butuh area (lembar HNZ1-5). */
+    heinz: boolean;
 };
 
 /**
@@ -171,7 +173,8 @@ export async function notaPool(
                 sum(p.qty_pcs)::float8           AS total_pcs,
                 sum(p.qty_pcs / NULLIF(coalesce(p.konv_tersirat, i.isi_per_karton), 0))::float8 AS total_krt,
                 (sum(p.qty_pcs / NULLIF(coalesce(p.konv_tersirat, i.isi_per_karton), 0)) >= $2)  AS pareto,
-                (k.no_nota IS NOT NULL)          AS kanvas
+                (k.no_nota IS NOT NULL)          AS kanvas,
+                bool_or(upper(coalesce(p.jenisproduk,'')) = 'HEINZ ABC') AS heinz
            FROM wave_line_pool p
            LEFT JOIN customer c ON c."customerNo" = p.kode_cust
            LEFT JOIN item i     ON i.no = p.kode_barang

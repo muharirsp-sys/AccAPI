@@ -56,12 +56,15 @@ const DETEKSI: Deteksi[] = [
     {
         // Per CUSTOMER, bukan per baris nota: ~168 vs ~2.900. Daftar yang menyusut kalau
         // dikerjakan itulah bentuk antrean kerja yang benar (Q2).
+        // Hanya nota HEINZ ABC: hanya Heinz yang dibagi per area (HNZ1-5); outlet principal lain
+        // memang tidak punya area dan berjalan seperti biasa (owner 19 Okt 2026).
         jenis: "OUTLET_TANPA_AREA",
         sql: `SELECT DISTINCT 'customer'::text, p.kode_cust,
-                     'Outlet belum ada di master area; notanya tidak masuk lembar area mana pun'
+                     'Outlet Heinz belum ada di master area; notanya tidak masuk lembar HNZ area mana pun'
                 FROM wave_assignment wa
                 JOIN wave_line_pool p ON p.no_nota = wa.no_nota AND p.tanggal = wa.tanggal_wave
-               WHERE wa.wave_id = $1 AND wa.dilepas = false AND wa.snap_area IS NULL`,
+               WHERE wa.wave_id = $1 AND wa.dilepas = false AND wa.snap_area IS NULL
+                 AND upper(coalesce(p.jenisproduk,'')) = 'HEINZ ABC'`,
     },
     {
         // Penjaga kelengkapan upload: principal yang 30 hari terakhir selalu ada, hari ini tidak.

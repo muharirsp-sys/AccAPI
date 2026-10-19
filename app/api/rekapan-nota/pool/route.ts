@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
         tanggal, tipe, jumlahNota: rows.length,
         kanvasNihilOleh: nihil.rows[0]?.oleh ?? null,
-        tanpaArea: rows.filter((r) => !r.area).length,
+        tanpaArea: rows.filter((r) => r.heinz && !r.area).length,
         disembunyikan: lawan.length,
         nota: rows,
     });

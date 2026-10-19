@@ -602,7 +602,8 @@ UI /rekapan-nota/kanvas -> GET /api/rekapan-nota/kanvas?tanggal=...
     penyusunan wave supaya hilangnya tidak diam-diam
 
 --- 8.6 Usulan mapping area ---
-GET /api/rekapan-nota/area
+GET /api/rekapan-nota/area   (antrean = outlet tanpa area yang punya nota HEINZ ABC saja; hanya Heinz dibagi
+                              per area. Exception OUTLET_TANPA_AREA + kartu "Outlet tanpa area" ikut aturan sama — owner 19 Okt 2026)
   -> lib/rekapan-nota/area-suggest.ts : usulkanArea()
        1. Kel./Kec. di alamat -> area mayoritas di master  (LOO terukur 87,1%)
        2. fallback kemiripan token alamat+nama -> memakai damerau() dari lib/sales-history/fuzzy.ts

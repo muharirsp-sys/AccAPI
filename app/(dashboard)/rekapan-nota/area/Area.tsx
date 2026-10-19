@@ -108,7 +108,7 @@ export default function Area({ permKeys }: { permKeys: string[] }) {
             ) : data.status === "galat" && !data.data ? (
                 <div className="fi-panel"><ErrorState title="Antrean gagal dimuat" message={`${data.error}. Tidak ada yang berubah. Coba lagi; bila berulang, isi area lewat master outlet.`} onRetry={muat} /></div>
             ) : outlet.length === 0 ? (
-                <div className="fi-panel"><EmptyState title="Semua outlet di nota sudah punya area" message="Outlet baru muncul di sini saat notanya masuk pool tanpa area. Area menentukan lembar picking per area." /></div>
+                <div className="fi-panel"><EmptyState title="Semua outlet Heinz di nota sudah punya area" message="Outlet baru muncul di sini saat nota Heinz-nya masuk pool tanpa area. Area menentukan lembar HNZ per area; principal lain tidak memakai area." /></div>
             ) : (
                 <>
                     <div className="fi-panel" style={{ padding: 0, overflow: "clip" }}>
