@@ -7,9 +7,9 @@
  * Side Effects: DB read-only.
  *
  * Kontrak: getScopeForUser mengembalikan:
- *   - null        -> TIDAK ADA scoping. User lihat semua row (perilaku default/existing,
- *                    berlaku untuk semua user yang belum di-set hierarchyRole — termasuk
- *                    Admin/OM/Finance sekarang, tanpa perlu permission baru apapun).
+ *   - null        -> TIDAK ADA scoping (seluruh perusahaan) — HANYA untuk pemegang izin kelola
+ *                    (`canSeeAllInsentif`: Admin/Finance dsb.). User tanpa izin kelola DAN tanpa
+ *                    identitas hierarki mendapat Set KOSONG (BL-26), bukan null.
  *   - Set<string> -> scoped. Hanya salesCode di dalam Set ini yang boleh tampil (Set kosong
  *                    = scoped tapi belum ada bawahan sama sekali, bukan "lihat semua").
  *   hierarchyRole diisi TAPI bukan "spv"/"sm" yang valid -> fail-CLOSED (Set kosong), bukan
@@ -141,7 +141,6 @@ export async function getSpvOwnerMap(period?: Period): Promise<Map<string, strin
     return effectiveSpvBySalesCode(period);
 }
 
-/** null = tidak ada scoping (lihat semua) — default untuk semua user yang belum di-assign. */
 /**
  * Izin yang berarti "boleh melihat seluruh perusahaan". Sengaja diturunkan dari izin KELOLA yang
  * sudah dimiliki Admin/Finance, bukan permission baru — menambah key baru berarti tidak ada satu
@@ -182,7 +181,9 @@ export async function getScopeForUser(
         .from(user)
         .where(eq(user.id, userId))
         .limit(1);
-    if (!row?.hierarchyRole || !row.hierarchyName) return null;
+    // BL-26 (19 Okt): dulu `return null` = SELURUH perusahaan — fail-open yang bertentangan dengan kontrak FAIL-CLOSED di atas.
+    // Akun salesman/SPV baru yang belum ditautkan langsung melihat insentif semua orang. Sekarang kosong; penautan di Kelola Hierarki membukanya.
+    if (!row?.hierarchyRole || !row.hierarchyName) return new Set<string>();
 
     const spvOf = await effectiveSpvBySalesCode(period);
 

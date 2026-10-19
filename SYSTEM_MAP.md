@@ -1288,10 +1288,11 @@ Status Lifecycle wave:
 > [docs/handover/AUDIT_INSENTIF_SALES_2026-08-28.md](docs/handover/AUDIT_INSENTIF_SALES_2026-08-28.md).
 > Sebelumnya tertulis "MT belum ada aturan insentif" dan "SPV belum di-wire" — keduanya sudah tidak benar.
 >
+> **Diperbaiki 19 Okt 2026 (BL-26):** `getScopeForUser` kini fail-closed: tanpa izin kelola dan tanpa `hierarchyRole` = cakupan kosong, Dashboard menampilkan "belum ditautkan" (C3).
+>
 > **Belum diperbaiki (menunggu persetujuan, lihat dokumen audit):** filter Principal/Cabang mengubah
 > nominal mix (C1); default demo `NESTLE`/`BANDUNG` masih dipasang klien di `page.tsx:1250` sehingga
-> M10 terbuka lagi untuk jalur upload Excel (C2); `getScopeForUser` fail-open untuk user tanpa
-> `hierarchyRole` (C3); dan 4 endpoint uang tanpa row-level scope pada jalur tulis.
+> M10 terbuka lagi untuk jalur upload Excel (C2); dan 4 endpoint uang tanpa row-level scope pada jalur tulis.
 
 ### Peta layer (trace-by-flow)
 

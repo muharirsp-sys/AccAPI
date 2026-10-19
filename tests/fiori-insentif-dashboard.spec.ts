@@ -211,6 +211,16 @@ test("Dashboard kosong: target belum diunggah (tautan Data periode) ≠ tidak co
     await expect(page).toHaveURL(/\/insentif-sales\?month=9&year=2026$/, NAV);
 });
 
+test("Dashboard: akun tanpa tautan hierarki (BL-26) → 'belum ditautkan', tanpa banner lama", async ({ page }) => {
+    await mock(page, { dash: () => json(dashboard([], { cakupan: { dibatasi: true, jumlahKode: 0, identitas: null } })) });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales?month=9&year=2026", NAV);
+    const main = page.locator("main");
+    await expect(main.getByRole("heading", { name: "Akun Anda belum ditautkan ke hierarki insentif" })).toBeVisible(NAV);
+    await expect(main.getByText("Kelola Hierarki", { exact: false })).toBeVisible();
+    await expect(main.getByText("seluruh perusahaan", { exact: false })).toHaveCount(0);
+});
+
 test("Dashboard saringan SM: disaring di klien, tabel SPV/SM tidak ikut disaring", async ({ page }) => {
     const diminta = await mock(page);
     await page.setViewportSize({ width: 1366, height: 900 });
