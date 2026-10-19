@@ -9,10 +9,26 @@ const attempt = (over: Partial<AttemptFinance>): AttemptFinance => ({
     ageSeconds: 30, createdAt: "2026-10-10T01:00:00.000Z", updatedAt: "2026-10-10T01:00:00.000Z", createdAtWita: "2026-10-10 09:00:00", updatedAtWita: "2026-10-10 09:00:00", message: "", ...over,
 });
 
+/** Pemegang kunci Finance lengkap sesudah RBAC_S7_1C_KUNCI.sql (kunci lama + kunci baru S7-1c). */
+const PENUH = ["finance.view", "finance.update", "finance.resolve_unknown", "finance.post_accurate", "finance.upload_proof", "finance.transfer", "finance.export"];
+
+test("S7-1c: posting = update ∧ post_accurate ∧ upload_proof ∧ transfer; status = update ∧ transfer; ekspor = view ∧ export; tujuan tetap update", () => {
+    const tanpa = (k: string) => izinFinance(new Set(PENUH.filter((x) => x !== k)));
+    for (const k of ["finance.update", "finance.post_accurate", "finance.upload_proof", "finance.transfer"]) assert.ok(tanpa(k).posting, `posting tanpa ${k}`);
+    assert.ok(tanpa("finance.transfer").status, "status tanpa transfer");
+    assert.equal(tanpa("finance.post_accurate").status, undefined, "status tidak butuh post_accurate");
+    assert.equal(tanpa("finance.transfer").tujuan, undefined, "tujuan (mapping) tetap finance.update");
+    assert.ok(tanpa("finance.export").ekspor, "ekspor tanpa export");
+    assert.ok(tanpa("finance.view").ekspor, "ekspor tanpa view");
+    for (const k of ["finance.post_accurate", "finance.transfer", "finance.export"]) {
+        for (const v of Object.values(tanpa(k))) assert.doesNotMatch(v ?? "", /finance\.|post_accurate|upload_proof/, "tanpa nama kunci mentah");
+    }
+});
+
 test("izin: satu fungsi; tanpa kunci = alasan terlihat tanpa nama kunci mentah", () => {
-    const semua = izinFinance(new Set(["finance.view", "finance.update", "finance.resolve_unknown"]));
+    const semua = izinFinance(new Set(PENUH));
     assert.deepEqual(semua, { posting: undefined, tujuan: undefined, status: undefined, selesaikan: undefined, ekspor: undefined });
-    const lihat = izinFinance(new Set(["finance.view"]));
+    const lihat = izinFinance(new Set(["finance.view", "finance.export"]));
     for (const k of ["posting", "tujuan", "status", "selesaikan"] as const) {
         assert.ok(lihat[k], `${k} harus nonaktif tanpa izin ubah/selesaikan`);
         assert.doesNotMatch(lihat[k]!, /finance\.|resolve_unknown|\.update/, `${k} menyebut kunci mentah`);
@@ -61,7 +77,7 @@ test("B-3: status posting server tak terbaca = 'tidak terbaca' (bukan 'belum'); 
     assert.equal(statusPosting({ accurate_post_status: "posted", accurate_purchase_payment_number: "PP/1" }, null, tak).kode, "terposting");
     assert.equal(statusPosting({ accurate_post_status: "unknown" }, null, tak).kode, "tidak_pasti");
     assert.equal(LABEL_POSTING.tak_terbaca.label, "Status posting tidak terbaca");
-    const izin = izinFinance(new Set(["finance.view", "finance.update", "finance.resolve_unknown"]));
+    const izin = izinFinance(new Set(PENUH));
     const k = kunciBaris({ posting: { kode: "tak_terbaca", nomor: "", catatanTertinggal: false }, izin });
     assert.match(k.posting!, /tidak terbaca/);
     assert.match(k.status!, /tidak terbaca/);
@@ -69,7 +85,7 @@ test("B-3: status posting server tak terbaca = 'tidak terbaca' (bukan 'belum'); 
 });
 
 test("kunci baris: terposting/tidak pasti/sedang/data usang mengunci; gagal jelas boleh dikirim ulang", () => {
-    const izin = izinFinance(new Set(["finance.view", "finance.update", "finance.resolve_unknown"]));
+    const izin = izinFinance(new Set(PENUH));
     const k = (kode: Parameters<typeof kunciBaris>[0]["posting"]["kode"], over: Partial<Parameters<typeof kunciBaris>[0]> = {}) =>
         kunciBaris({ posting: { kode, nomor: "", catatanTertinggal: false }, izin, ...over });
     assert.match(k("terposting").posting!, /Sudah terposting/);
@@ -92,7 +108,7 @@ test("kunci baris: terposting/tidak pasti/sedang/data usang mengunci; gagal jela
 });
 
 test("A-2/B-2: kunci lokal hanya untuk belum/gagal — hasil terposting (catatan tertinggal) tetap bisa dicatat di tab yang sama", () => {
-    const izin = izinFinance(new Set(["finance.view", "finance.update", "finance.resolve_unknown"]));
+    const izin = izinFinance(new Set(PENUH));
     assert.equal(kodeTampil("belum", true), "tidak_pasti");
     assert.equal(kodeTampil("gagal", true), "tidak_pasti");
     for (const kode of ["terposting", "sedang", "tidak_pasti", "belum"] as const) assert.equal(kodeTampil(kode, false), kode);
@@ -109,15 +125,15 @@ test("Putaran 2 B-1: catatan Finance unknown + attempt posted milik sendiri — 
     const tidakPasti = statusPosting({ accurate_post_status: "unknown" }, posted, MILIK);
     assert.equal(tidakPasti.kode, "terposting");
     assert.equal(tidakPasti.catatanTertinggal, true);
-    const tanpaSelesai = kunciBaris({ posting: tidakPasti, izin: izinFinance(new Set(["finance.view", "finance.update"])) });
+    const tanpaSelesai = kunciBaris({ posting: tidakPasti, izin: izinFinance(new Set(PENUH.filter((k) => k !== "finance.resolve_unknown"))) });
     assert.match(tanpaSelesai.posting!, /^Catatan Finance pengajuan ini masih Tidak pasti/);
     assert.doesNotMatch(tanpaSelesai.posting!, /finance\.|resolve_unknown/, "tanpa kunci mentah");
     assert.doesNotMatch(tanpaSelesai.posting!, /tekan/i, "tidak menyuruh menekan tombol yang ditolak");
-    const finance = izinFinance(new Set(["finance.view", "finance.update", "finance.resolve_unknown"]));
+    const finance = izinFinance(new Set(PENUH));
     assert.equal(kunciBaris({ posting: tidakPasti, izin: finance }).posting, undefined, "Finance boleh mencatat");
     // Catatan Finance kosong (bukan unknown): pencatatan posted tidak butuh izin selesaikan.
     const kosong = statusPosting({ accurate_post_status: "" }, posted, MILIK);
-    assert.equal(kunciBaris({ posting: kosong, izin: izinFinance(new Set(["finance.view", "finance.update"])) }).posting, undefined);
+    assert.equal(kunciBaris({ posting: kosong, izin: izinFinance(new Set(PENUH.filter((k) => k !== "finance.resolve_unknown"))) }).posting, undefined);
     // Galat server yang memuat nama kunci izin tidak menampilkannya.
     assert.equal(saringCatatan("Penyelesaian status posting TIDAK PASTI hanya untuk kewenangan Finance (finance.resolve_unknown)."),
         "Penyelesaian status posting TIDAK PASTI hanya untuk kewenangan Finance.");

@@ -51,6 +51,7 @@ export const jsonPost = (url: string, body: unknown) => new NextRequest(`http://
 
 /** Semua kunci finance KECUALI `except` — membuktikan kapabilitas tidak saling menggantikan. */
 const financeAllBut = (except: string) => ["finance.view", "finance.update", "finance.retry_post", "finance.resolve_unknown",
+    "finance.post_accurate", "finance.upload_proof", "finance.transfer",
     "finance.override_duplicate", "finance.repost_payment", "api_wrapper.view", "api_wrapper.execute", "pelunasan.kirim"].filter((k) => k !== except);
 
 const PP_PAYLOAD = [{ bankNo: "1101", vendorNo: "V-01", chequeAmount: 1000, transDate: "29/09/2026", chequeDate: "29/09/2026",
@@ -61,9 +62,16 @@ test("tinjauan S6-0a: POST /api/finance/purchase-payment tanpa finance.update ->
     assert.equal(denied.status, 403);
 });
 
+test("S7-1c (tinjauan A): POST /api/finance/purchase-payment tanpa post_accurate / upload_proof / transfer -> 403 sebelum sesi/DB/jaringan", async () => {
+    for (const k of ["finance.post_accurate", "finance.upload_proof", "finance.transfer"]) {
+        const denied = await asUserWith(financeAllBut(k), () => postPurchasePayment(jsonPost("/api/finance/purchase-payment", { clientRef: "k", expectedDatabaseId: "DB-1", payload: PP_PAYLOAD })));
+        assert.equal(denied.status, 403, k);
+    }
+});
+
 test("tinjauan S6-0a: galat SEBELUM klaim (baca sesi Accurate melempar) -> 503 {claimed:false}, tidak dikirim", async () => {
     // asUserWith: select().from().where() tanpa .limit -> getAccurateSession melempar (mis. DB putus saat baca sesi).
-    const res = await asUserWith(["finance.update"], () => postPurchasePayment(jsonPost("/api/finance/purchase-payment", { clientRef: "k", expectedDatabaseId: "DB-1", payload: PP_PAYLOAD })));
+    const res = await asUserWith(["finance.update", "finance.post_accurate", "finance.upload_proof", "finance.transfer"], () => postPurchasePayment(jsonPost("/api/finance/purchase-payment", { clientRef: "k", expectedDatabaseId: "DB-1", payload: PP_PAYLOAD })));
     assert.equal(res.status, 503);
     const body = await res.json() as { claimed?: boolean; error?: string };
     assert.equal(body.claimed, false);

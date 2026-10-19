@@ -2,7 +2,7 @@
  * Tujuan: Katalog navigasi berkelompok yang sama untuk sidebar dan Beranda.
  * Caller: SidebarLayout (shell Fiori), DashboardLanding, pengujian navigasi.
  * Dependensi: lucide-react; caller menyaring href menggunakan RBAC.
- * Main Functions: WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, roleProfile, roleShortcuts.
+ * Main Functions: WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, ROLE_PROFILES, profileFor (★ grup utama), roleProfile, roleShortcuts.
  * Side Effects: Tidak ada; tidak mengubah hak akses.
  */
 import {
@@ -55,6 +55,8 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
         { name: "AOL Form Engine", href: "/api-wrapper", icon: Settings2, short: "AOL" },
         { name: "Master Barang", href: "/master-barang", icon: PackageSearch, short: "Barang" },
         { name: "Master Principle", href: "/principles", icon: Database, short: "Master" },
+        // Data Principal (S7b): daftar resmi principal + varian + alias; dibuka pemegang `principles.view`, tulis `principles.upload`.
+        { name: "Data Principal", href: "/data-principal", icon: Database, short: "Principal" },
         { name: "Mapping Principal", href: "/principal-mapping", icon: Database },
         { name: "User & RBAC", href: "/admin/users", icon: Shield },
         { name: "Kelola Akses Group", href: "/admin/groups", icon: ShieldCheck, short: "Akses" },
@@ -65,23 +67,38 @@ export function navigationForPermissions(canAccess: (href: string) => boolean): 
     return WORKSPACE_GROUPS.map(group => ({ ...group, items: group.items.filter(item => canAccess(item.href)) })).filter(group => group.items.length > 0);
 }
 
-// ponytail: grup utama per user (BL-37) belum ada; profil ditebak dari izin, profil pertama yang cocok menang.
-// Ganti dengan grup utama saat BL-37 masuk lewat tracker AM.
-export const ROLE_PROFILES: Array<{ id: string; label: string; when: string; shortcuts: string[] }> = [
+// Profil Beranda. `when` = tebakan dari izin (fallback, profil pertama yang cocok menang); profil tanpa `when` hanya lewat ★ grup utama.
+// S7-3 (owner 17 Okt): `when` sm = sm_approve (kunci approve OPC lama dipensiunkan); spv/om/kasir baru, hanya lewat grup utama.
+export const ROLE_PROFILES: Array<{ id: string; label: string; when?: string; shortcuts: string[] }> = [
     { id: "admin", label: "Admin", when: "users.manage", shortcuts: ["/admin/groups", "/api-wrapper", "/principles"] },
     { id: "finance", label: "Finance", when: "finance.transfer", shortcuts: ["/finance", "/payments", "/off-program-control"] },
     { id: "salesman", label: "Salesman", when: "websales.create", shortcuts: ["/form-kontrol", "/sales", "/insentif-sales"] },
-    { id: "sm", label: "Sales Manager", when: "off_program_control.approve", shortcuts: ["/off-program-control", "/form-kontrol", "/insentif-sales"] },
+    { id: "sm", label: "Sales Manager", when: "off_program_control.sm_approve", shortcuts: ["/off-program-control", "/form-kontrol", "/insentif-sales", "/supervisor-review"] },
     { id: "claim", label: "Claim", when: "claim_workflow.create", shortcuts: ["/off-program-control", "/claim-workflow", "/rekap-promo"] },
     { id: "fakturist", label: "Fakturist", when: "order.create", shortcuts: ["/principal-order", "/antrean-faktur", "/faktur"] },
     { id: "gudang", label: "Admin Gudang", when: "rekapan_nota.manage", shortcuts: ["/rekapan-nota"] },
     // TERAKHIR (susulan S6e, tinjauan 2b): pelunasan.kirim juga diberikan ke Finance (owner #1) dan bisa ke peran lain; profil
     // utama mereka menang, Admin Incaso hanya bila tidak ada peran lain yang cocok.
     { id: "incaso", label: "Admin Incaso", when: "pelunasan.kirim", shortcuts: ["/pelunasan"] },
+    { id: "spv", label: "Supervisor", shortcuts: ["/supervisor-review", "/form-kontrol", "/insentif-sales"] },
+    { id: "om", label: "Operational Manager", shortcuts: ["/kasir", "/pelunasan", "/finance"] },
+    { id: "kasir", label: "Kasir", shortcuts: ["/kasir"] },
 ];
 
 export function roleProfile(permKeys: ReadonlySet<string>) {
-    return ROLE_PROFILES.find(profile => permKeys.has(profile.when));
+    return ROLE_PROFILES.find(profile => profile.when && permKeys.has(profile.when));
+}
+
+/** Nama grup preset (huruf kecil, tanpa spasi) -> profil (owner 17 Okt). Staff, Viewer, grup custom: tidak ada = tebakan kunci. */
+const PROFIL_GRUP: Record<string, string> = {
+    admin: "admin", finance: "finance", salesman: "salesman", sm: "sm", manager: "sm", spv: "spv", om: "om", kasir: "kasir", claim: "claim",
+    fakturist: "fakturist", adminsales: "fakturist", admingudang: "gudang", adminincaso: "incaso",
+};
+
+/** BL-63 (owner 11 Okt): ★ grup utama menentukan Beranda; tanpa grup utama / grup di luar peta = tebakan dari izin. */
+export function profileFor(primaryGroup: string | null | undefined, permKeys: ReadonlySet<string>) {
+    const id = PROFIL_GRUP[(primaryGroup ?? "").replace(/\s+/g, "").toLowerCase()];
+    return ROLE_PROFILES.find(profile => profile.id === id) ?? roleProfile(permKeys);
 }
 
 /** Pintasan peran yang boleh dibuka (bawaan 3 untuk navigasi bawah); kekurangan diisi item lain sesuai urutan katalog. */

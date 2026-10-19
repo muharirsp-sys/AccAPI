@@ -103,13 +103,14 @@ O3 riwayat beli toko (12 Okt 2026 sesi 13): panel "Biasa diambil toko ini" `comp
 DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)
   -> config/workspace-navigation.ts: 18 modul dalam 6 kelompok + Beranda
   -> navigasi samping Fiori (kelompok dari izin) + cari menu Ctrl K; favorit/rail lama dihapus (S1a)
-Beranda (Fiori, S1b) -> profil peran dari izin -> tile tugas (lib/beranda.ts, GET endpoint yang ada) + Pintasan + Pantauan + Semua aplikasi
+Beranda (Fiori, S1b) -> profil peran dari izin -> tile tugas (lib/beranda.ts, GET endpoint yang ada; profil kasir: /api/kasir/ringkasan, K3) + Pintasan + Pantauan + Semua aplikasi
   -> Admin Incaso (pelunasan.kirim, S6e-2b): tile Tidak pasti/Gagal + Pantauan dari GET /api/idempotency/summary?rows=1 (perDatabase,
      database aktif dari /api/auth/accurate-session); jawaban tanpa angka/daftar = galat, bukan 0
 RootLayout -> html[data-theme="surya"] statis (Office Calm/Neon/iOS pensiun, Okt 2026)
   -> app/workspace.css: remap Surya untuk isi halaman yang belum dimigrasi
 SidebarLayout (shell Fiori, S1a) -> shell bar: logo resmi, cari menu Ctrl K, menu profil (Mode/Density, Bantuan -> ChatWidget, Keluar)
-  -> navigasi samping dari izin; drawer ponsel (Dialog native); navigasi bawah = Beranda + 3 pintasan ROLE_PROFILES + Menu
+  -> navigasi samping dari izin; drawer ponsel (Dialog native); navigasi bawah = Beranda + 3 pintasan ROLE_PROFILES + Menu;
+     profil = ★ grup utama (`profileFor`, peta nama preset S7-3), fallback tebakan izin (`roleProfile`)
 ```
 Validasi: `npx tsx --test components/SidebarLayout.test.ts` dan
 `npx playwright test tests/workspace-redesign.spec.ts tests/sidebar-tooltip-contrast.spec.ts`
@@ -889,7 +890,7 @@ AccAPI/_github_clean/
 | `lib/accurate-oauth.ts` | `urlAuthorize`, `returnToAman`, `halamanMendarat`, `kabarAccurate`, `GALAT_ACCURATE` | Bagian murni OAuth Accurate (server+klien): scope tetap, daftar putih returnTo, kode galat → kalimat |
 | `components/accurate/SesiAccurate.tsx` | `SesiAccurate` | Kartu Sesi Accurate bersama `/sesi-accurate` dan Konsol: status, Masuk, daftar/buka database, Keluar, kabar callback |
 | `lib/rbac/registry.ts` | `PERMISSION_REGISTRY`, `allPermissionKeys`, `isValidPermissionKey`, `KUNCI_PENSIUN` | **Sumber tunggal** 111 permission key (`module.action`); `KUNCI_PENSIUN` (S7-1b) dibuang PATCH grup tanpa 400 + dihapus RBAC_S7_1B_PENSIUN.sql. Zero import — pure data. Test-guard scan semua route.ts saat CI |
-| `lib/rbac/resolve.ts` | `getUserPermissions`, `getPrimaryGroup`, `requirePermission`, `requirePermissionH`, `resolveRequestPermissions`, `resolveRequestPermissionsH` | Resolver: grup (otoritatif) / legacy role bila tanpa grup. Guard endpoint default-deny. `getPrimaryGroup` (BL-63) = grup berbintang atau satu-satunya grup |
+| `lib/rbac/resolve.ts` | `getUserPermissions`, `getPrimaryGroup`, `requirePermission`, `requirePermissionH`, `resolveRequestPermissions`, `resolveRequestPermissionsH` | Resolver: grup (otoritatif) / legacy role bila tanpa grup. Guard endpoint default-deny. `getPrimaryGroup` (BL-63) = grup berbintang atau satu-satunya grup; dipakai layout + Beranda untuk profil (S7-3) |
 | `lib/rbac/otorisasi.ts` | `transaksiOtorisasi`, `adminAktif`, `evaluasiPenjaga`, `mulaiUtama`/`selesaiUtama`, `pasangBintang`, `roleTurunan`, `GROUP_NAME_TO_ROLE` | S7-1: SATU penjaga BL-61 (admin = aktif + `users.manage` efektif; 409 `ADMIN_TERAKHIR`/`AKSES_SENDIRI`/`GRUP_TERAKHIR`) di dalam transaksi + `pg_advisory_xact_lock`; grup utama + penurunan `user.role` dari grup preset di transaksi yang sama. Kontrak `docs/handover/S7-KONTRAK-ADMIN-API.md` |
 | `lib/rbac/riwayat.ts` | `jawabRiwayat` | Riwayat `permission_audit_log` per user/grup, keyset presisi mikrodetik |
 | `lib/rbac/registry.test.ts` | self-check script | Validasi integritas registry + scan semua route.ts: gagal jika ada key tidak terdaftar. Jalankan: `node --experimental-strip-types lib/rbac/registry.test.ts` |
@@ -992,7 +993,7 @@ AccAPI/_github_clean/
 |---|---|---|
 | `lib/sync.ts` | `AccuratePaginator`, `syncModule` | Sync paginated data Accurate ke SQLite lokal (item/customer) dengan checkpoint |
 | `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment & sales-invoice; sales-receipt = `pelunasan.kirim`; tulis lain = `api_wrapper.execute` + katalog Konsol (S7-1b) |
-| `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance: database sesi wajib = `expectedDatabaseId` (409 `database_changed`), klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
+| `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance (`finance.update` ∧ `finance.post_accurate`, S7-1c): database sesi wajib = `expectedDatabaseId` (409 `database_changed`), klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
 | `app/api/finance/purchase-payment/resolve/route.ts` | `POST` | Atestasi manual attempt purchase-payment tidak pasti (alasan + sumber pemeriksaan) |
 | `app/api/finance/purchase-payment/attempts/route.ts` | `GET` | Baca-saja status attempt terbaru per kelompok faktur (S6-0e; kontrak `docs/handover/S6-0e-KONTRAK-API.md`) |
 | `app/api/auth/accurate-login/route.ts` | `GET` | Mulai OAuth2 Accurate: `state` acak + `returnTo` daftar putih di cookie httpOnly berumur 10 menit, 307 ke authorize (scope tetap) |
@@ -1150,9 +1151,14 @@ principal_log [append-only (trigger + REVOKE di DDL_S7_2): satu baris per buat/a
   API app/api/principals/** (lib/principal/tulis.ts; kontrak docs/handover/S7-2-KONTRAK-PRINCIPAL-API.md): GET daftar/riwayat
   (principles.view), tulis (principles.upload; hapus alias principles.delete) — 409 berkode tanpa menimpa, 503 tanpa trigger penjaga.
   Resolver lib/principal/resolver.ts (ruang WAJIB nama | kode_master_barang; alias saja: cocok | tak_dikenal | ambigu; GET /api/principals/resolve).
+  Layar S7b /data-principal (components/principal/*; menu Pengaturan; pagePermissions principles.view; tombol tulis disembunyikan tanpa principles.upload / principles.delete):
+  daftar + Object Page (varian, alias, riwayat, Dipakai di = tautan). Rute lama (/principles, /principal-mapping) TIDAK dialihkan (menyusul).
   Laporan + benih: docs/handover/PRINCIPAL_EKSPOR.sql (psql -qAt di VPS, baca-saja -> 1 baris JSON) lalu OFFLINE npx tsx scripts/principal-laporan.mjs
   --dari-json (atau DATABASE_URL langsung, berkas SQL yang sama) -> laporan.md/json + benih.sql (INSERT ... ON CONFLICT DO NOTHING) untuk ditinjau owner.
-  Pemakai belum beralih (S7-2b).
+  Pemakai S7-2b (lib/principal/pemakai.ts): Mapping Principal (PUT/impor/GET/DELETE app/api/principal-mapping/**) + Master Barang
+  (createMaster/adapt_legacy) WAJIB principal dikenal alias (400 PRINCIPAL_TIDAK_DIKENAL + saran / 409 PRINCIPAL_NONAKTIF), disimpan dengan
+  NAMA RESMI (nama varian | nama principal); kode Master Barang 2 karakter = alias kode_master_barang (400 KODE_MB_TIDAK_COCOK; tanpa kode
+  otomatis). Python Master Principle, OPC/Klaim, Finance/SPPD belum beralih (langkah 3–5).
 
 # Kasir ↔ Incaso (K1a BL-59; skema + lib murni lib/kasir/rekonsiliasi.ts; pembaca K1b, UI K2; DDL manual docs/handover/DDL_K1A.sql SEBELUM image; kontrak docs/handover/KASIR-KONTRAK.md)
 kasir_setoran [append-only; (tanggal, salesman_kode=ORANG, revisi) unik; revisi n+1 -> revisi n (FK komposit); tunai/transfer/giro >= 0; K2a: giro_nomor/giro_jatuh_tempo, bukti_transfer = nama berkas <uuid>.<jpg|png|pdf>]
@@ -1162,6 +1168,8 @@ kasir_hari_event [append-only; tutup (snapshot.terhalang WAJIB [] — owner T2) 
   S7-1b (urutan di header SQL): RBAC_S7_1B_CEK.sql baca-saja -> PK-1 owner (12 Okt: biarkan — KUNCI tidak menulis api_wrapper.*;
   Admin/Fakturist/Manager sudah memegang execute) -> RBAC_S7_1B_KUNCI.sql SEBELUM image -> image ->
   RBAC_S7_1B_PENSIUN.sql SESUDAH image -> CEK ulang (mode cek bawaan = ROLLBACK; terapkan PGOPTIONS='-c rbac.terapkan=1')
+  S7-1c (PK-2: tegakkan = kunci lama ∧ baru di Python finance/payments/summary + POST /api/finance/purchase-payment):
+  cadangan -> RBAC_S7_1C_KUNCI.sql (mode cek -> terapkan) SEBELUM image -> image (pasangan: lib/rbac/s7-1c-pg.test.ts)
 kasir_pelunasan (database_id + pelunasan_id; chequeAmount, metode, last_update) ── kasir_pelunasan_faktur (faktur_id, master_salesman_id, invoice_payment) [cache K1b, TANPA raw_data]
   masterSalesmanId -> accurate_employee.number -> sales_code_merge (merge, per bulan) -> ORANG; OTHERS dikeluarkan; Σ invoicePayment ≠ chequeAmount -> ember tak teralokasi; cheque uang < 0 -> ember nominal_negatif (K-1 a)
 kasir_pelunasan_baca (database_id + tanggal; status berjalan|lengkap|sebagian|gagal, sebab (+hapus_massal), sisa_detail, ditolak, token lease 2 mnt, lengkap_pada, akun_sinkron, penuh_tertunda_pada) [K1b; DDL_K1A -> DDL_S7_2 -> DDL_K1B SEBELUM image; 0031 sesudah 0030]
@@ -1185,6 +1193,10 @@ kasir_pelunasan_baca (database_id + tanggal; status berjalan|lengkap|sebagian|ga
     Setoran… (JSON | multipart data+bukti) / Jelaskan… / Buka kembali… -> POST route K2a; jawaban PASTI vs TIDAK PASTI menurut §8.2 (bersama.nilaiJawab)
     Tutup hari… -> [!segarUntukTutup] POST /api/kasir/segarkan berulang (jeda 6 dtk, maks 20, Batal) -> GET -> dialog hanya bila penghalang kosong -> POST tutup {sidik}
     tidak pasti -> muat ulang + banding revisi/penjelasan/event, tanpa ulang otomatis; lewat kunciBerikutnya -> muat ulang sendiri
+  K3 tile Beranda Kasir (profil kasir saja, ★ grup utama; kontrak KASIR-KONTRAK §9; lib/kasir/ringkasan.ts):
+    GET /api/kasir/ringkasan?tanggal= (kasir.view, BACA-SAJA: tanpa Accurate, tanpa catat kunci otomatis) -> muatDalam (muatan sama dengan GET /api/kasir)
+        + event Tutup jendela (hari ini + 7 hari kerja) -> bentukRingkasan: selisih (orang + ember belum dijelaskan), belumSetor, hariBelumDitutup (statusHari.sebab != tutup)
+        Incaso belum lengkap -> selisih/belumSetor null -> tile "belum terbaca" (lib/beranda.ts SOURCES.kasir.valid wajib; bukan 0, bukan semua beres)
 ```
 
 **Status Lifecycle offBatch:**
@@ -1276,10 +1288,11 @@ Status Lifecycle wave:
 > [docs/handover/AUDIT_INSENTIF_SALES_2026-08-28.md](docs/handover/AUDIT_INSENTIF_SALES_2026-08-28.md).
 > Sebelumnya tertulis "MT belum ada aturan insentif" dan "SPV belum di-wire" — keduanya sudah tidak benar.
 >
+> **Diperbaiki 19 Okt 2026 (BL-26):** `getScopeForUser` kini fail-closed: tanpa izin kelola dan tanpa `hierarchyRole` = cakupan kosong, Dashboard menampilkan "belum ditautkan" (C3).
+>
 > **Belum diperbaiki (menunggu persetujuan, lihat dokumen audit):** filter Principal/Cabang mengubah
 > nominal mix (C1); default demo `NESTLE`/`BANDUNG` masih dipasang klien di `page.tsx:1250` sehingga
-> M10 terbuka lagi untuk jalur upload Excel (C2); `getScopeForUser` fail-open untuk user tanpa
-> `hierarchyRole` (C3); dan 4 endpoint uang tanpa row-level scope pada jalur tulis.
+> M10 terbuka lagi untuk jalur upload Excel (C2); dan 4 endpoint uang tanpa row-level scope pada jalur tulis.
 
 ### Peta layer (trace-by-flow)
 

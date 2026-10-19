@@ -18,6 +18,7 @@ os.environ["AUDIT_LOG_PATH"] = os.path.join(TMP, "audit.jsonl")
 os.environ["ERROR_LOG_PATH"] = os.path.join(TMP, "error.jsonl")
 os.environ["PAYMENTS_DB_PATH"] = os.path.join(TMP, "payments.json")
 os.environ["PAYMENTS_FILES_DIR"] = os.path.join(TMP, "files")
+os.environ["SUMMARY_STORE_PATH"] = os.path.join(TMP, "summary.sqlite3")  # MANUAL_OUTPUTS uji S7-1c, bukan data/
 os.environ["AUTH_VERIFY_URL"] = "http://verify.invalid/api/auth/verify"
 
 VERIFY = {}  # token -> payload /api/auth/verify palsu
@@ -290,6 +291,100 @@ def check_sppd_download():
     assert client.get("/payments/files/sppd_P1.docx").status_code == 200, "pemegang sppd.download ditolak"
 
 
+# S7-1c (PK-2 owner 12 Okt): kunci lama -> kunci baru. Sama dengan docs/handover/RBAC_S7_1C_KUNCI.sql & lib/rbac/nasib-kunci.test.ts.
+PASANGAN_1C = [
+    ("finance.update", ["finance.post_accurate", "finance.upload_proof", "finance.transfer"]),
+    ("finance.view", ["finance.export"]),
+    ("payments.edit", ["payments.create", "payments.upload", "payments.submit", "sppd.generate"]),
+    ("payments.view", ["payments.export"]),
+    ("summary.edit", ["summary.upload", "summary.generate", "summary.email"]),
+    ("summary.view", ["summary.export"]),
+]
+
+
+def check_s7_1c():
+    """S7-1c: route Python = kunci LAMA ∧ kunci BARU (PK-2). Tiap route: lama saja ditolak, baru saja ditolak, keduanya lolos
+    gerbang (payload sengaja tidak sah -> 4xx bukan izin); penolakan tidak menulis ledger. sppd.generate hanya diminta bila SPPD
+    benar-benar dirender (BANK_PANIN). Preset legacy: pemegang kunci lama juga memegang kunci baru (tak ada yang kehilangan akses)."""
+    import itertools
+    import json
+    import main
+    from routers import finance, payments, summary, summary_library
+
+    client = TestClient(main.app)
+    urut = itertools.count()
+    email = "s71c@x.test"
+    user = f"betterauth|viewer|{email}"
+
+    def sebagai(keys):
+        token = f"s71c{next(urut)}"  # token baru tiap set izin: cache verify per token tidak menahan izin lama
+        fn = lambda request: identity(token, email=email, role="viewer", permissions="{}", effectivePermissions=list(keys))
+        for mod in (finance, payments, summary, summary_library):
+            mod.get_current_user = fn
+
+    dataset = os.path.join(TMP, "s71c.xlsx")
+    open(dataset, "wb").write(b"x")
+    summary.MANUAL_OUTPUTS["S71C"] = {"owner": email, "dataset": dataset, "form": dataset}
+    shared.EMAIL_USER, shared.EMAIL_PASSWORD, shared.send_email_background = "", "", None  # rute email: tanpa kirim nyata
+    draft = {"created_by": user, "target_payment_date": "2026-10-20", "items": {}}
+    with open(shared.PAYMENTS_DB_PATH, "w", encoding="utf-8") as f:
+        json.dump({"lpb": {}, "drafts": {"DP": {**draft, "method": "BANK_PANIN"}, "DN": {**draft, "method": "NON_PANIN"}}}, f)
+    before = open(shared.PAYMENTS_DB_PATH, encoding="utf-8").read()
+
+    xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    kasus = [
+        ("get", "/payments/finance/export", {}, "finance.view", "finance.export"),
+        ("post", "/payments/finance/proof", {}, "finance.update", "finance.upload_proof"),
+        ("post", "/payments/finance/update", {"json": {"items": []}}, "finance.update", "finance.transfer"),
+        ("get", "/payments/export", {}, "payments.view", "payments.export"),
+        ("post", "/payments/upload", {}, "payments.edit", "payments.upload"),
+        ("post", "/payments/manual/add", {"json": {}}, "payments.edit", "payments.create"),
+        ("post", "/payments/cart/create", {"json": {}}, "payments.edit", "payments.create"),
+        ("post", "/payments/cart/submit", {"json": {}}, "payments.edit", "payments.submit"),
+        ("post", "/payments/submit", {"json": {}}, "payments.edit", "payments.submit"),
+        ("post", "/summary/manual/master/upload", {"files": {"master": ("m.xlsx", b"x", xlsx)}}, "summary.edit", "summary.upload"),
+        ("post", "/summary/manual/generate", {"data": {"token": "-", "rows_json": "[]"}}, "summary.edit", "summary.generate"),
+        ("post", "/summary/manual", {"data": {"engine": "manual"}}, "summary.edit", "summary.generate"),  # tinjauan A #1
+        ("post", "/summary/manual/email", {"data": {"email": "a@x.test", "file_id": "S71C"}}, "summary.edit", "summary.email"),
+        ("get", "/summary_download/S71C", {}, "summary.view", "summary.export"),
+        ("get", "/summary/manual/download/S71C/dataset", {}, "summary.view", "summary.export"),
+    ]
+    for metode, path, kw, lama, baru in kasus:
+        for keys in ([lama], [baru]):
+            sebagai(keys)
+            r = getattr(client, metode)(path, **kw)
+            # 404 = pola rute email/unduhan Summary yang sudah ada untuk "tanpa kunci lama" (tidak membocorkan berkas).
+            assert r.status_code in (403, 404), f"{path} dengan {keys} saja lolos: {r.status_code} {r.text[:160]}"
+        sebagai([lama, baru])
+        r = getattr(client, metode)(path, **kw)
+        assert r.status_code not in (403, 404), f"{path} dengan {lama}+{baru} ditolak: {r.status_code} {r.text[:160]}"
+        sebagai([lama])
+        r = getattr(client, metode)(path, **kw)
+        assert r.status_code == 403 and (baru in r.text or r.json().get("error") == "Forbidden"), f"{path}: {r.status_code} {r.text[:160]}"
+    assert open(shared.PAYMENTS_DB_PATH, encoding="utf-8").read() == before, "penolakan izin menulis ledger"
+
+    # sppd.generate: hanya saat SPPD dirender (draf BANK_PANIN), dicek sebelum nomor SPPD diambil.
+    panin = {"json": {"draft_id": "DP", "items": [], "target_payment_date": "2026-10-20"}}
+    sebagai(["payments.edit", "payments.submit"])
+    r = client.post("/payments/cart/submit", **panin)
+    assert r.status_code == 403 and "sppd.generate" in r.text, f"SPPD dirender tanpa sppd.generate: {r.status_code} {r.text[:160]}"
+    assert open(shared.PAYMENTS_DB_PATH, encoding="utf-8").read() == before
+    sebagai(["payments.edit", "payments.submit", "sppd.generate"])
+    r = client.post("/payments/cart/submit", **panin)
+    assert r.status_code != 403, f"pemegang sppd.generate ditolak: {r.status_code} {r.text[:160]}"
+    sebagai(["payments.edit", "payments.submit"])
+    r = client.post("/payments/cart/submit", json={"draft_id": "DN", "items": [], "target_payment_date": "2026-10-20"})
+    assert r.status_code != 403, f"Non Panin (tanpa SPPD) menuntut sppd.generate: {r.status_code} {r.text[:160]}"
+
+    has = shared.user_has_permission
+    for role in ("manager", "finance", "staff", "viewer"):
+        u = identity(f"s71c-{role}", role=role, permissions="{}")  # tanpa effectivePermissions = jalur preset legacy
+        for lama, baru in PASANGAN_1C:
+            if has(u, *lama.split(".")):
+                kurang = [k for k in baru if not has(u, *k.split("."))]
+                assert not kurang, f"preset legacy {role}: {lama} tanpa {kurang}"
+
+
 def main_check():
     check_policy()
     check_fail_closed()
@@ -298,6 +393,7 @@ def main_check():
     check_csrf_bank_data()
     check_resolve_parity()
     check_sppd_download()
+    check_s7_1c()
     print("OK test_rbac_parity")
 
 
