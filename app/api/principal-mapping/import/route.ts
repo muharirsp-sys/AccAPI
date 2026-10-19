@@ -1,9 +1,13 @@
 /*
  * Tujuan: Muat tiga sheet terjemahan principal (KINO.xlsx) sekaligus ke `principal_mapping`.
  * Caller: halaman Mapping Principal, tombol "Impor berkas".
- * Dependensi: xlsx, lib/principal-mapping, db/schema, lib/rbac/resolve.
+ * Dependensi: xlsx, lib/principal-mapping, db/schema, lib/rbac/resolve, lib/principal/pemakai (S7-2b).
  * Main Functions: POST.
- * Side Effects: DB write (upsert) HANYA bila `apply=true`; tanpa itu murni pratinjau.
+ * Side Effects: DB write (upsert) HANYA bila `apply=true`; tanpa itu murni pratinjau. DB read tabel principal resmi.
+ *
+ * S7-2b: principal SATU per berkas (field form `principal`; sheet tidak punya kolom principal). WAJIB dikenal Data Principal,
+ * diperiksa SEBELUM berkas dibaca (pratinjau juga): tak dikenal = 400 PRINCIPAL_TIDAK_DIKENAL, nonaktif = 409 PRINCIPAL_NONAKTIF.
+ * Set yang diganti = nama resmi (mis. "Kino Non Food" -> "KINO NON FOOD"), bukan ejaan ketikan — menutup "Muat menulis ke principal lain".
  *
  * Default pratinjau, sama seperti importir kelas outlet: berkas principal sering salah versi,
  * dan menimpa mapping dengan berkas yang keliru membuat setiap baris faktur salah barang.
@@ -17,6 +21,8 @@ import { db } from "@/lib/db";
 import { principalMapping } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { KINDS, readMappingSheet, type MappingKind } from "@/lib/principal-mapping";
+import { muatDataResmi, wajibPrincipal } from "@/lib/principal/pemakai";
+import { jawabGalat } from "@/lib/principal/tulis";
 
 export const runtime = "nodejs";
 
@@ -35,8 +41,14 @@ export async function POST(request: NextRequest) {
     if (!(file instanceof File)) return NextResponse.json({ ok: false, error: "Pilih berkas xlsx terlebih dahulu" }, { status: 400 });
     if (file.size > MAX_BYTES) return NextResponse.json({ ok: false, error: "Berkas maksimal 10 MB" }, { status: 413 });
 
-    const principal = String(form?.get("principal") ?? "").trim();
-    if (!principal) return NextResponse.json({ ok: false, error: "Nama principal wajib diisi" }, { status: 400 });
+    const teks = String(form?.get("principal") ?? "").trim();
+    if (!teks) return NextResponse.json({ ok: false, error: "Nama principal wajib diisi" }, { status: 400 });
+    let principal: string;
+    try {
+        principal = wajibPrincipal(teks, await muatDataResmi()).nama;
+    } catch (error) {
+        return jawabGalat(error, "MAPPING IMPOR");
+    }
     const apply = String(form?.get("apply") ?? "") === "true";
     const picked = String(form?.get("kinds") ?? "").split(",").map((k) => k.trim()).filter(Boolean) as MappingKind[];
     const kinds = picked.length ? picked.filter((k) => KIND_NAMES.includes(k)) : KIND_NAMES;

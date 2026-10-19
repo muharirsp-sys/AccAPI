@@ -1,7 +1,7 @@
 /*
  * Tujuan: Beranda per peran (Launchpad Fiori): Perlu tindakan (tile dari endpoint yang ada), Pintasan, Pantauan, Semua aplikasi.
  * Caller: app/(dashboard)/page.tsx.
- * Dependensi: lib/beranda (katalog tile), config/workspace-navigation (profil peran, katalog menu), lib/rbac, components/fiori/core.
+ * Dependensi: lib/beranda (katalog tile), config/workspace-navigation (profil dari ★ grup utama / izin, katalog menu), lib/rbac, components/fiori/core.
  * Main Functions: Beranda.
  * Side Effects: GET ke endpoint sumber tile (sekali per sumber per muat, ulang per sumber lewat Coba lagi); tidak menulis data.
  */
@@ -14,7 +14,7 @@ import {
     type LucideIcon,
 } from "lucide-react";
 import { canAccessPathWithKeys } from "@/lib/rbac";
-import { ROLE_PROFILES, navigationForPermissions, roleProfile, roleShortcuts } from "@/config/workspace-navigation";
+import { ROLE_PROFILES, navigationForPermissions, profileFor, roleShortcuts } from "@/config/workspace-navigation";
 import { SOURCES, TILES, cardFor, linksFor, sourceValid, tilesFor, witaToday, type SourceKey, type SourceLoad, type TileId, type TileValue } from "@/lib/beranda";
 import { MessageStrip, Skeleton, StatusBadge, Tile } from "@/components/fiori/core";
 
@@ -25,13 +25,14 @@ const ICONS: Record<string, LucideIcon> = {
 
 type Load = SourceLoad;
 
-export default function Beranda({ permKeys, firstName, greeting, dateLabel, previewProfile }: {
-    permKeys: string[]; firstName: string; greeting: string; dateLabel: string;
+export default function Beranda({ permKeys, primaryGroup, firstName, greeting, dateLabel, previewProfile }: {
+    /** Nama ★ grup utama (S7-3): menentukan profil; null = tebakan dari izin. */
+    permKeys: string[]; primaryGroup: string | null; firstName: string; greeting: string; dateLabel: string;
     /** Hanya development: pratinjau Beranda peran lain (?peran=). */
     previewProfile?: string;
 }) {
     const keys = useMemo(() => new Set(permKeys), [permKeys]);
-    const profile = (previewProfile && ROLE_PROFILES.find((p) => p.id === previewProfile)) || roleProfile(keys);
+    const profile = (previewProfile && ROLE_PROFILES.find((p) => p.id === previewProfile)) || profileFor(primaryGroup, keys);
     const tileIds = tilesFor(profile?.id, keys);
     const links = linksFor(profile?.id, keys);
     const card = cardFor(profile?.id, keys);
@@ -69,7 +70,7 @@ export default function Beranda({ permKeys, firstName, greeting, dateLabel, prev
     const allClear = tileIds.length > 0 && tileIds.every((id) => {
         if (status(TILES[id].source) !== "siap") return false;
         const value: TileValue = TILES[id].pick(loads[TILES[id].source]?.data);
-        return value.value === 0 && !value.more;
+        return value.value === 0 && !value.more; // null (belum terbaca) bukan nol: tidak pernah "semua beres"
     });
 
     return (
@@ -180,7 +181,7 @@ function TaskTile({ id, load, onRetry }: { id: TileId; load?: Load; onRetry: () 
         </button>;
     }
     const value: TileValue = spec.pick(load.data);
-    return <Tile title={spec.title} subtitle={spec.subtitle} icon={<Icon className="fi-icon" />} value={value.more ? `${value.value}+` : value.value} unit={value.unit} tone={value.tone} footer={value.footer} href={spec.href} />;
+    return <Tile title={spec.title} subtitle={spec.subtitle} icon={<Icon className="fi-icon" />} value={value.value === null ? "—" : value.more ? `${value.value}+` : value.value} unit={value.unit} tone={value.tone} footer={value.footer} href={spec.href} />;
 }
 
 function CardRows({ kind, rows }: { kind: "list" | "kv"; rows: ReturnType<NonNullable<ReturnType<typeof cardFor>>["rows"]> }) {

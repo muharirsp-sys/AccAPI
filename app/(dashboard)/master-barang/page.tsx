@@ -195,7 +195,7 @@ export default function MasterBarangPage() {
                     <h2 className="mb-3 text-sm font-semibold text-[color:var(--luxury-text)]">Buat principal baru</h2>
                     <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Nama Principle" className={`mb-2 ${INPUT}`} />
                     <div className="flex gap-2">
-                        <input value={newCode} onChange={(event) => setNewCode(event.target.value.toUpperCase().slice(0, 2))} placeholder="Kode 2 digit (opsional)" className={`min-w-0 flex-1 ${INPUT}`} />
+                        <input value={newCode} onChange={(event) => setNewCode(event.target.value.toUpperCase().slice(0, 2))} placeholder="Kode MB 2 karakter (dari Data Principal)" className={`min-w-0 flex-1 ${INPUT}`} />
                         <button onClick={create} disabled={busy === "create"} className="btn-primary inline-flex items-center justify-center rounded-lg px-3 disabled:opacity-50" aria-label="Buat principal"><Plus size={18} /></button>
                     </div>
                     <div className="my-4 h-px bg-[color:var(--border-soft)]" />

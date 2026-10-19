@@ -10,6 +10,7 @@
 
 import { createContext, useCallback, useContext, useEffect } from "react";
 import { useLoad, type Load } from "@/components/fiori/interactive";
+import type { StatusNoo } from "@/lib/form-kontrol/noo-aturan";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -67,6 +68,10 @@ export interface AoRow {
     luarRute?: boolean;
     /** Ada baris AO untuk toko ini (status apa pun, juga "tidak dikunjungi" dari Kirim status rute) — `status` default "not_visited" tidak membedakan. */
     adaStatus?: boolean;
+    /** R4: status pengajuan toko baru untuk baris ber-kode NOO; null/tak ada = bukan NOO (atau server lama). */
+    nooStatus?: StatusNoo | null;
+    /** R4: alasan tolak SPV — hanya bila nooStatus = "ditolak". */
+    nooAlasanTolak?: string | null;
 }
 
 export interface Reason {

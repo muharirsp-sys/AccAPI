@@ -5,7 +5,7 @@
  * Dependensi: GET/POST /api/form-kontrol/ao-control, ../shared (Scope, AoRow, principalAwal, penjelasanTanpaJks, compareRoute, hariIniWita,
  *   jamWita, useIzinFk),
  *   ../lapangan (bacaFk, kirimFk, keBarisRute, simpanRute, useHariBeku), components/fiori/*, lib/rekapan-nota/ui (tanggalPanjang).
- * Main Functions: TabAo, badgeToko, susunKiriman.
+ * Main Functions: TabAo, badgeToko, badgeNoo, susunKiriman.
  * Side Effects: HTTP GET rute; GET ulang + POST ao-control per toko saat Kirim status; sessionStorage daftar toko rute (Order Sales).
  *
  * FK-MSM2: kunjungan LUAR RUTE (./LuarRute TambahLuarRute) — salesman pemilik menambah pelanggan cabangnya ke kunjungan HARI INI; baris itu
@@ -26,7 +26,7 @@
 import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 // NOO (owner 13 Okt 2026): toko baru (belum di Accurate) diajukan dari sini; kunjungannya bertanda NOO dan tidak masuk daftar Order Sales.
-import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
+import { isKodeNoo, LABEL_STATUS_NOO, type StatusNoo } from "@/lib/form-kontrol/noo-aturan";
 import { TambahNoo } from "./NooFormulir";
 import { CalendarDays, FileText, RefreshCw, Send, Star } from "lucide-react";
 import { Button, EmptyState, ErrorState, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Tone } from "@/components/fiori/core";
@@ -60,6 +60,15 @@ function badgeToko(r: AoRow): { tone: Tone; label: string } {
     if (r.isPriority) return { tone: "warn", label: "Prioritas" };
     if (r.needsAttention) return { tone: "warn", label: "Perhatian" };
     return { tone: "neu", label: "Belum" };
+}
+
+/**
+ * R4: status PENGAJUAN toko baru (NOO) di kartu rute, terpisah dari badge kunjungan di atas; label = LABEL_STATUS_NOO. Toko yang DITOLAK SPV tetap
+ * di rute (kunjungannya sudah terjadi) dan diberi tanda jelas + alasan di teks kecil (alasanTolakToko). Tanpa status (bukan NOO / server lama) = null.
+ */
+const TONE_NOO: Record<StatusNoo, Tone> = { menunggu_spv: "warn", disetujui: "info", ditolak: "neg", terdaftar: "pos" };
+function badgeNoo(r: AoRow): ReactNode {
+    return r.nooStatus ? <StatusBadge tone={TONE_NOO[r.nooStatus]}><span className="sr-only">Status pengajuan: </span>{LABEL_STATUS_NOO[r.nooStatus]}</StatusBadge> : null;
 }
 
 function metaToko(r: AoRow): string {
@@ -307,7 +316,10 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                             <Star className="fi-icon" aria-hidden style={r.isPriority ? { fill: "var(--warn-solid)", color: "var(--warn-solid)" } : undefined} />
                                         </Button>
                                         <ListItem href={`/form-kontrol/visit/${encodeURIComponent(r.custCode)}?${q}`} doc={r.custCode} title={r.custName}
-                                            meta={metaToko(r)} badge={<StatusBadge tone={b.tone}>{b.label}</StatusBadge>} />
+                                            meta={<>{metaToko(r)}{r.nooAlasanTolak && <span className="block" style={{ overflowWrap: "anywhere" }}>Alasan ditolak: {r.nooAlasanTolak}</span>}</>}
+                                            badge={r.nooStatus
+                                                ? <span className="flex flex-wrap items-center gap-1">{badgeNoo(r)}<StatusBadge tone={b.tone}>{b.label}</StatusBadge></span>
+                                                : <StatusBadge tone={b.tone}>{b.label}</StatusBadge>} />
                                         {bisaBatal && (
                                             // Di baris bawah kartu (kolom isi), tidak memeras nama toko panjang di 390 px (peninjau B R-6).
                                             <div style={{ gridColumn: 2, justifySelf: "start" }}>

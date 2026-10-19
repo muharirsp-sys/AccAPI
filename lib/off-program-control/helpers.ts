@@ -1,8 +1,12 @@
 import { offPrinciples } from "./constants";
 import type { OffBatchRow, OffItemRow, OffPaymentRow } from "./types";
 
+// ponytail: ejaan lama KINO (dikoreksi S7-2b, 17 Okt 2026) masih tersimpan di off_batch lama; menyunting batch itu menyimpan
+// ulang nama resmi (principleName = nextPrinciple.name). Hapus entri ini bila tak ada lagi batch Draft/Returned berejaan lama.
+const EJAAN_LAMA: Record<string, string> = { "KINO INDONESIA. TBK, PT": "KINO" };
+
 export function getPrincipleByName(name: string) {
-    return offPrinciples.find((item) => item.name === name);
+    return offPrinciples.find((item) => item.name === name) ?? (Object.hasOwn(EJAAN_LAMA, name) ? getPrincipleByCode(EJAAN_LAMA[name]) : undefined);
 }
 
 export function getPrincipleByCode(code: string) {

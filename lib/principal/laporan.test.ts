@@ -13,7 +13,7 @@ const kosong = { ok: true as const, rows: [] };
 export function dataSintetis(over: Partial<DataDb> = {}): DataDb {
     return {
         masterBarang: { ok: true, rows: [
-            { principleCode: "K1", principleName: "KINO INDONESIA. TBK, PT", n: 10 },
+            { principleCode: "K1", principleName: "KINO INDONESIA TBK, PT", n: 10 },
             { principleCode: "KN", principleName: "KINO NON FOOD", n: 4 },
             { principleCode: "GD", principleName: "GODREJ", n: 7 },
             { principleCode: "P1", principleName: "PT. PRISKILA PRIMA MAKMUR", n: 3 },
@@ -29,7 +29,7 @@ export function dataSintetis(over: Partial<DataDb> = {}): DataDb {
             { principal: "PRISKILA'S PRIMA MAKMUR", kind: "brand", n: 1 },
         ] },
         noClaimTemplate: { ok: true, rows: [{ principleCode: "HEINZ", variantKey: "HZ" }, { principleCode: "KINO", variantKey: "" }, { principleCode: "ZZZ", variantKey: "" }] },
-        offBatch: { ok: true, rows: [{ principleCode: "KINO", principleName: "KINO INDONESIA. TBK, PT", n: 5 }, { principleCode: "XYZ", principleName: "XYZ, PT", n: 1 }] },
+        offBatch: { ok: true, rows: [{ principleCode: "KINO", principleName: "KINO INDONESIA TBK, PT", n: 5 }, { principleCode: "XYZ", principleName: "XYZ, PT", n: 1 }] },
         claimWorkflow: { ok: false, galat: "42P01 relation \"claim_workflow\" does not exist" },
         principal: kosong, principalVariant: kosong, principalAlias: kosong,
         ...over,
@@ -50,7 +50,7 @@ test("token longgar membuang tanda baca + badan hukum (hanya laporan)", () => {
 test("klasifikasi per sumber: persis / longgar / ambiguous / unmatched; sumber gagal = GAGAL, bukan kosong", () => {
     const lap = susunLaporan(dataSintetis(), "2026-10-11T00:00:00.000Z");
     const nama = baris(lap, "master_barang — nama");
-    assert.deepEqual([nama.get("KINO INDONESIA. TBK, PT")?.status, nama.get("KINO INDONESIA. TBK, PT")?.cara], ["matched", "persis"]);
+    assert.deepEqual([nama.get("KINO INDONESIA TBK, PT")?.status, nama.get("KINO INDONESIA TBK, PT")?.cara], ["matched", "persis"]);
     assert.deepEqual(nama.get("KINO NON FOOD")?.target, { code: "KINO", variantKey: "NON_FOOD" });
     assert.deepEqual([nama.get("GODREJ")?.cara, nama.get("GODREJ")?.target?.code], ["persis", "GDI"], "label No Claim 'Godrej'");
     assert.deepEqual([nama.get("PT. PRISKILA PRIMA MAKMUR")?.cara, nama.get("PT. PRISKILA PRIMA MAKMUR")?.target?.code], ["longgar", "PRISKILA"]);
@@ -110,7 +110,7 @@ test("benih SQL: hanya INSERT ... ON CONFLICT DO NOTHING (tanpa UPDATE), penjaga
 
 test("isi DB yang sudah ada: tidak diusulkan ulang; ejaan menunjuk target lain = KONFLIK, tidak diusulkan", () => {
     const lap = susunLaporan(dataSintetis({
-        principal: { ok: true, rows: [{ code: "KINO", name: "KINO INDONESIA. TBK, PT", isActive: true }] },
+        principal: { ok: true, rows: [{ code: "KINO", name: "KINO INDONESIA TBK, PT", isActive: true }] },
         principalAlias: { ok: true, rows: [
             { code: "KINO", variantKey: null, aliasNorm: "KINO", aliasAsli: "KINO", jenis: "nama", sumber: "kode_principal" },
             { code: "KINO", variantKey: null, aliasNorm: "KINO NON FOOD", aliasAsli: "KINO NON FOOD", jenis: "label_mapping", sumber: "manual" },
@@ -119,7 +119,7 @@ test("isi DB yang sudah ada: tidak diusulkan ulang; ejaan menunjuk target lain =
     assert.deepEqual(lap.registri.konflik, [{ ruang: "NAMA", aliasNorm: "KINO NON FOOD", target: ["KINO/NON_FOOD", "KINO"] }]);
     assert.equal(baris(lap, "principal_mapping").get("KINO NON FOOD")?.status, "ambiguous");
     const sql = benihSql(lap);
-    assert.doesNotMatch(sql, /\('KINO', 'KINO INDONESIA\. TBK, PT'/, "principal yang sudah ada tidak diusulkan ulang");
+    assert.doesNotMatch(sql, /\('KINO', 'KINO INDONESIA TBK, PT'/, "principal yang sudah ada tidak diusulkan ulang");
     assert.doesNotMatch(sql, /^ {4}\('KINO', NULL::text, 'KINO', 'KINO'/m, "alias yang sudah ada tidak diusulkan ulang");
     assert.doesNotMatch(sql, /^ {4}\('KINO', 'NON_FOOD', 'KINO NON FOOD', 'KINO NON FOOD', 'nama'/m, "alias konflik tidak diusulkan");
     assert.match(laporanMarkdown(lap), /KONFLIK registri/);
@@ -144,7 +144,7 @@ test("benih tidak menambah varian/alias ke principal/varian NONAKTIF (= API PRIN
         principal: { ok: true, rows: [
             { code: "GDI", name: "GODREJ DISTRIBUSI INDONESIA, PT", isActive: false },
             { code: "FRS", name: "FORISA NUSAPERSADA, PT", isActive: false },
-            { code: "KINO", name: "KINO INDONESIA. TBK, PT", isActive: true },
+            { code: "KINO", name: "KINO INDONESIA TBK, PT", isActive: true },
         ] },
         principalVariant: { ok: true, rows: [{ code: "KINO", variantKey: "NON_FOOD", name: "KINO NON FOOD", isActive: false }] },
     }), "2026-10-11T00:00:00.000Z");
@@ -185,7 +185,7 @@ test("berkas ekspor (PRINCIPAL_EKSPOR.sql, psql -qAt) -> DataDb: baris JSON tera
     assert.ok(sql.includes(`'${FORMAT_EKSPOR}'`));
 
     const isi = { format: FORMAT_EKSPOR, dibaca: "2026-10-11T07:00:00.000Z", data: {
-        masterBarang: { ok: true, rows: [{ principleCode: "K1", principleName: "KINO INDONESIA. TBK, PT", n: 2 }] },
+        masterBarang: { ok: true, rows: [{ principleCode: "K1", principleName: "KINO INDONESIA TBK, PT", n: 2 }] },
         claimWorkflow: { ok: false, galat: "42P01 relation \"claim_workflow\" does not exist" },
     } };
     const { dibaca, data } = uraiEkspor(`SET\nBEGIN\n${JSON.stringify({ ...isi, dibaca: "lama" })}\n${JSON.stringify(isi)}\r\nROLLBACK\n`);

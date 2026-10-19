@@ -22,6 +22,7 @@ import {
     updateCodebook,
 } from "@/lib/master-barang/service";
 import type { CodebookEntry, SourceItem } from "@/lib/master-barang/engine";
+import { GalatPrincipal, jawabGalat } from "@/lib/principal/tulis";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -31,6 +32,8 @@ function fastapiBase(): string {
 }
 
 function errorResponse(error: unknown, status = 400) {
+    // S7-2b: galat principal resmi berkode (PRINCIPAL_TIDAK_DIKENAL / PRINCIPAL_NONAKTIF / KODE_MB_TIDAK_COCOK) + detailnya.
+    if (error instanceof GalatPrincipal) return jawabGalat(error, "MASTER BARANG");
     const message = error instanceof Error ? error.message : String(error);
     console.error("[MASTER BARANG]", error);
     return NextResponse.json({ ok: false, error: message }, { status });

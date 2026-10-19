@@ -240,7 +240,7 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
                     {nIsian > 0 && <span className="fi-draft">Draf belum disimpan</span>}
                     <Button icon={<Upload className="fi-icon" aria-hidden />} disabled={Boolean(izin.unggah)} disabledReason={izin.unggah} onClick={() => setDialog("unggah")}>Unggah LPB</Button>
                     <Button icon={<Plus className="fi-icon" aria-hidden />} disabled={Boolean(izin.manual)} disabledReason={izin.manual} onClick={() => setDialog("manual")}>Tambah manual</Button>
-                    <a className="fi-btn fi-btn--tertiary" href={unduhUrl("/payments/export")} target="_blank" rel="noopener noreferrer"><Download className="fi-icon" aria-hidden />Unduh backup</a>
+                    {!izin.ekspor && <a className="fi-btn fi-btn--tertiary" href={unduhUrl("/payments/export")} target="_blank" rel="noopener noreferrer"><Download className="fi-icon" aria-hidden />Unduh backup</a>}
                     <Button variant="icon" aria-label="Muat ulang" icon={<RefreshCw className="fi-icon" aria-hidden />} busy={load.status === "memuat" && rows.length > 0} onClick={muat} />
                 </>
             }

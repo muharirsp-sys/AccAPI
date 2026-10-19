@@ -154,13 +154,13 @@ test("RBAC_S7_1B_KUNCI.sql: mode cek 0 perubahan; terapkan = hanya pemegang audi
     });
 });
 
-test("RBAC_S7_1B_PENSIUN.sql: daftar = KUNCI_PENSIUN; mode cek 0; terapkan menghapus persis kunci itu (approve & kunci lain utuh) + audit removed; jalan kedua 0", { skip: pgSkip }, async () => {
+test("RBAC_S7_1B_PENSIUN.sql: daftar = KUNCI_PENSIUN; mode cek 0; terapkan menghapus persis kunci itu (S7-3: termasuk approve; kunci lain utuh) + audit removed; jalan kedua 0", { skip: pgSkip }, async () => {
     const sql = berkas("RBAC_S7_1B_PENSIUN.sql");
     const aktif = sql.replace(/--.*$/gm, "");
     const daftar = (potong: string) => [...potong.matchAll(/'([a-z_]+\.[a-z_]+)'/g)].map((m) => m[1]).sort();
     const cte = aktif.slice(aktif.indexOf("pensiun(kunci) AS (VALUES"), aktif.indexOf("hapus AS"));
     const verif = aktif.slice(aktif.indexOf("permission_key IN ("), aktif.indexOf("DO $$"));
-    assert.deepEqual(daftar(cte), [...KUNCI_PENSIUN].sort(), "daftar hapus = KUNCI_PENSIUN (approve hanya ber-komentar sampai S7-3)");
+    assert.deepEqual(daftar(cte), [...KUNCI_PENSIUN].sort(), "daftar hapus = KUNCI_PENSIUN (S7-3: approve aktif)");
     assert.deepEqual(daftar(verif), [...KUNCI_PENSIUN].sort(), "daftar VERIFIKASI = KUNCI_PENSIUN");
     await denganSkema(async (pool) => {
         const sebelum = await keadaan(pool);
@@ -171,16 +171,16 @@ test("RBAC_S7_1B_PENSIUN.sql: daftar = KUNCI_PENSIUN; mode cek 0; terapkan mengh
         const r1 = await jalan(pool, sql, true);
         assert.equal(r1.galat, null);
         const ringkas = r1.hasil.find((h) => h.fields?.some((f) => f.name === "izin_dihapus"))!.rows[0];
-        assert.deepEqual([Number(ringkas.izin_dihapus), Number(ringkas.audit)], [6, 4]);
+        assert.deepEqual([Number(ringkas.izin_dihapus), Number(ringkas.audit)], [7, 4]);
         const terhapus = sebelum.izin.filter((k) => !(KUNCI_PENSIUN.has(k.split(":")[1])));
         assert.deepEqual((await keadaan(pool)).izin, terhapus, "hanya KUNCI_PENSIUN yang hilang");
-        assert.ok((await kunciGrup(pool, "g-mgr")).includes("off_program_control.approve"), "approve menunggu S7-3");
+        assert.deepEqual(await kunciGrup(pool, "g-mgr"), ["api_wrapper.execute", "api_wrapper.view", "finance.update", "off_program_control.view"], "S7-3: approve ikut terhapus, kunci lain Manager utuh");
         const audit = (await pool.query(`SELECT target_group_id, detail->'removed' AS removed, detail->'added' AS added FROM permission_audit_log ORDER BY 1`)).rows;
         assert.deepEqual(audit, [
             { target_group_id: "g-claim", removed: ["off_program_control.create", "off_program_control.update"], added: [] },
             { target_group_id: "g-fin", removed: ["off_program_control.update"], added: [] },
             { target_group_id: "g-konsol", removed: ["users.create_user", "users.set_permission"], added: [] },
-            { target_group_id: "g-mgr", removed: ["off_program_control.export"], added: [] },
+            { target_group_id: "g-mgr", removed: ["off_program_control.approve", "off_program_control.export"], added: [] },
         ]);
         const sesudah = await keadaan(pool);
         const r2 = await jalan(pool, sql, true);

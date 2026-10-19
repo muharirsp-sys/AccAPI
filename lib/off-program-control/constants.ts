@@ -17,7 +17,7 @@ export const offPrinciples = [
     { name: "PRISKILA PRIMA MAKMUR, PT", code: "PRISKILA" },
     { name: "UNITAMA SARI MAS, PT", code: "USM" },
     { name: "VINDA INTERNATIONAL INDONESIA, PT", code: "VINDA" },
-    { name: "KINO INDONESIA. TBK, PT", code: "KINO" },
+    { name: "KINO INDONESIA TBK, PT", code: "KINO" },
     { name: "ABC PRESIDENT INDONESIA, PT", code: "ABC" },
     { name: "PZ CUSSONS INDONESIA, PT", code: "CUSSONS" },
     { name: "FOKUS RITEL NUSAPRIMA, PT", code: "SHINZUI" },
