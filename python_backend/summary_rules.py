@@ -345,7 +345,8 @@ UNITS = {"PCS", "PC", "CTN", "DUS", "BOX", "PAK", "PACK", "RTG", "KRT", "LSN", "
 DATE_TEXT = re.compile(r"\d{4}-\d{2}-\d{2}")
 MIX_MARKS = ("mix", "campur")
 # "Mix Merek"/"Mix Produk" = boleh campur lintas merek (ABC PI Beverages = NU + KIN; Fonterra "MIX PRODUCT ..."). Resolver
-# tetap memecah baris per merek (Form, verifier, aturan P per kelompok); di sini baris-baris itu menjadi SATU program.
+# tidak memecah baris bertanda (satu baris Form); bila baris datang sudah terpecah per merek (draft lama, pipeline lain),
+# kunci bersama di compile_programs menyatukannya kembali menjadi SATU program.
 LINTAS_MEREK = re.compile(r"\b(?:mix|campur|lintas|beda)\s+(?:merek|produk)\b", re.I)
 # Larangan bukan izin: "tidak boleh campur merek", "beda merek tidak dapat digabung" -> per merek (gagal tertutup).
 NEGASI_MEREK = re.compile(r"\b(?:tidak|tanpa|bukan|jangan)\b[^.,;]{0,25}?\b(?:mix|campur|lintas|beda)\s+(?:merek|produk)\b"
@@ -588,7 +589,8 @@ def compile_programs(rows, period=None, items=None):
             # Pecahan per merek dari SATU baris surat membawa tier yang sama: satu tier, bukan dua persen bertumpuk.
             sama = lambda t: {k: v for k, v in t.items() if k not in ("bonus_code", "bonus_scope")}
             if sama(group["tiers"][minimum]) != sama(tier):
-                issues.append(f"{label}: baris 'Mix Merek' dengan ketentuan sama harus berbenefit sama.")
+                issues.append(f"{label}: dua promo 'Mix Merek/Produk' berbeda benefit pada ambang yang sama untuk barang yang sama; "
+                              "samakan benefitnya atau bedakan barang/outlet/periodenya.")
             elif kutipan and group["kutipan"].get(minimum) and kutipan != group["kutipan"][minimum]:
                 # Kutipan surat beda = dua baris surat (dua divisi, mis. sama-sama "All Variant"), bukan pecahan satu baris.
                 issues.append(f"{label}: dua baris surat 'Mix Merek' berketentuan sama melebur; sebut varian/gramasi divisinya.")

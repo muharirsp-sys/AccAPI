@@ -616,7 +616,10 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 tanpa_identitas,
                 norm(r.get("ketentuan", "")),
                 norm(r.get("benefit", "")),
-                norm(r.get("benefit_type", ""))
+                norm(r.get("benefit_type", "")),
+                # Baris berlabel tidak boleh melebur dengan baris lain: label pertama akan menempel ke barang yang bukan
+                # cakupannya (mis. sachet di bawah "KECUALI SACHET"), atau hilang diam-diam bila urutannya terbalik.
+                norm(r.get("label_kelompok", "")), norm(r.get("label_gramasi", "")),
             )
             
             if merge_key not in consolidated_rows_dict:

@@ -134,3 +134,13 @@ def test_aturan_p_per_kelompok_pada_baris_lintas_merek():
                      _baris("F149SP", "ANLENE ACTIFIT", "VANILA", "A2")]
     terapkan(terapkan_rows)
     assert terapkan_rows[0]["kode_barangs"] == "A1,G1", terapkan_rows
+
+
+def test_label_dibuang_dari_pecahan_per_merek():
+    """Label sel menggambarkan baris utuh; bila baris tetap dipecah per merek, pecahannya tidak membawa label."""
+    from shared import _apply_native_kelompok
+    baris = [{"no": "1", "surat_program": "F149SP", "kelompok": "ANLENE ACTIFIT & ANCHOR BONEETO", "variant": "All Variant",
+              "gramasi": "25GR", "kode_barangs": "A1,B1", "ketentuan": "Beli 6 RTG UP Mix Variant Beda Gramasi",
+              "label_kelompok": "LABEL PEMILIK"}]
+    hasil = _apply_native_kelompok(baris, _master_tiga_merek())
+    assert len(hasil) == 2 and not any(r.get("label_kelompok") for r in hasil), hasil

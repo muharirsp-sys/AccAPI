@@ -4234,6 +4234,10 @@ def _apply_native_kelompok(rows_to_check, master_items):
                 new_row["kelompok"] = " & ".join(k_list)
                 new_row["kode_barangs"] = ",".join(k_codes)
                 new_row["_matched_items_cache"] = its
+                if len(groups_by_prefix) > 1:
+                    # Label sel menggambarkan baris UTUH; pecahan per merek dicetak dengan teks hasil master.
+                    new_row.pop("label_kelompok", None)
+                    new_row.pop("label_gramasi", None)
                 
                 # Baris hasil PECAHAN dapat id sendiri supaya tidak bertabrakan. Baris PERTAMA
                 # mempertahankan id aslinya — dulu ia ikut diberi id baru karena `is_first`
