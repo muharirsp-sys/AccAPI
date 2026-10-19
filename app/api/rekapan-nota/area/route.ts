@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
                 count(DISTINCT p.no_nota)::int             AS jumlah_nota
            FROM wave_line_pool p
            LEFT JOIN customer c ON c."customerNo" = p.kode_cust
-          WHERE c.area IS NULL
+          WHERE c.area IS NULL AND upper(coalesce(p.jenisproduk,'')) = 'HEINZ ABC' -- hanya Heinz dibagi per area
           GROUP BY p.kode_cust
           ORDER BY count(DISTINCT p.no_nota) DESC, p.kode_cust`);
 

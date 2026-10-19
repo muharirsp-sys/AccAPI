@@ -47,9 +47,9 @@ const statusWave = async (id: number) => (await db.query(`SELECT status::text FR
 
 const KOLOM = ["NO_NOTA", "TANGGAL", "KODE PELANGGAN INDUK", "NAMA PELANGGAN FAKTUR PENJUALAN", "KODE_BARANG", "NAMA_BARANG",
     "QTY", "SATUAN", "QTY_SATUANKECIL", "SATUAN_KECIL", "JENIS PRODUK", "PRINCIPLE"];
-/** baris: [nota, kode barang, qty, pcs, satuan (bawaan CTN)]; isi per karton tersirat = pcs/qty bila satuan bukan PCS. */
-function xlsx(tanggal: string, baris: Array<[string, string, number, number, string?]>, ekstra = ""): Buffer {
-    const rows = baris.map(([n, b, q, p, sat = "CTN"]) => [n, tanggal, `C-${n}`, `TOKO ${n}${ekstra}`, b, `BARANG ${b}`, q, sat, p, "PCS", "PRINCIPLE A", "PRINCIPLE A"]);
+/** baris: [nota, kode barang, qty, pcs, satuan (bawaan CTN), jenis produk (bawaan PRINCIPLE A)]; isi per karton tersirat = pcs/qty bila satuan bukan PCS. */
+function xlsx(tanggal: string, baris: Array<[string, string, number, number, string?, string?]>, ekstra = ""): Buffer {
+    const rows = baris.map(([n, b, q, p, sat = "CTN", jenis = "PRINCIPLE A"]) => [n, tanggal, `C-${n}`, `TOKO ${n}${ekstra}`, b, `BARANG ${b}`, q, sat, p, "PCS", jenis, jenis]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([KOLOM, ...rows]), "Rincian");
     return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
@@ -310,10 +310,10 @@ test("BL-25 serentak: layar lain mengonfirmasi saat batal/lepas sedang berjalan 
 
 test("BL-25: exception terbuka di wave batal tidak dihitung sebagai pekerjaan terbuka di daftar wave", T_UJI, async () => {
     const T = "2026-10-12";
-    assert.equal((await unggah(T, xlsx(T, [["N60", "BRG-C", 1, 12]]))).status, 200);
+    assert.equal((await unggah(T, xlsx(T, [["N60", "BRG-C", 1, 12, "CTN", "HEINZ ABC"]]))).status, 200);
     const w = await waveBaru(T, 1);
     await tambah(w, ["N60"]);
-    await transisi(w, "release"); // OUTLET_TANPA_AREA terbuka (outlet uji tanpa area)
+    await transisi(w, "release"); // OUTLET_TANPA_AREA terbuka (outlet Heinz uji tanpa area)
     const daftar = async () => ((await jawab(rWave.GET(new Request(`http://app.test/api/rekapan-nota/wave?tanggal=${T}`)))).body.wave as Array<{ id: number; exception_open: number }>).find((x) => x.id === w)!;
     assert.ok((await daftar()).exception_open > 0);
     assert.equal((await transisi(w, "cancel", "uji daftar")).status, 200);
@@ -391,4 +391,16 @@ test("NON / LUAR KOTA: nota outlet ber-area itu ikut pool dan bisa masuk wave, s
     const r = await tambah(w, ["NK1", "NK2"]);
     assert.equal(r.status, 200);
     assert.deepEqual((r.body.masuk as string[]).sort(), ["NK1", "NK2"]);
+});
+
+test("Tanpa area hanya menandai outlet Heinz; outlet principal lain tanpa area berjalan biasa (owner 19 Okt 2026)", T_UJI, async () => {
+    const T = "2026-10-17";
+    assert.equal((await unggah(T, xlsx(T, [["TA1", "BRG-C", 1, 12], ["TA2", "BRG-C", 1, 12, "CTN", "HEINZ ABC"]]))).status, 200);
+    const pool = await notaPool(T) as Array<{ no_nota: string; heinz: boolean }>;
+    assert.deepEqual(pool.map((n) => [n.no_nota, n.heinz]), [["TA1", false], ["TA2", true]]);
+    const w = await waveBaru(T, 1);
+    assert.equal((await tambah(w, ["TA1", "TA2"])).status, 200);
+    assert.equal((await transisi(w, "release")).status, 200);
+    const exc = await db.query(`SELECT ref_kode FROM wave_exception WHERE wave_id = $1 AND jenis = 'OUTLET_TANPA_AREA'`, [w]);
+    assert.deepEqual(exc.rows.map((r) => r.ref_kode), ["C-TA2"]);
 });

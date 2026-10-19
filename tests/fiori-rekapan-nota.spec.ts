@@ -446,9 +446,9 @@ test.describe("Mapping area", () => {
         await expect(main.getByRole("status").filter({ hasText: "Bisa sampai 2 menit" })).toBeVisible(NAV);
         release();
         await expect(main.getByRole("alert")).toContainText("Antrean gagal dimuat");
-        await expect(main.getByText("Semua outlet di nota sudah punya area")).toHaveCount(0);
+        await expect(main.getByText("Semua outlet Heinz di nota sudah punya area")).toHaveCount(0);
         gagal = false;
         await main.getByRole("button", { name: "Coba lagi" }).click();
-        await expect(main.getByText("Semua outlet di nota sudah punya area")).toBeVisible();
+        await expect(main.getByText("Semua outlet Heinz di nota sudah punya area")).toBeVisible();
     });
 });

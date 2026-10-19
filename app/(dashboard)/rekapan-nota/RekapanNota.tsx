@@ -163,7 +163,7 @@ export default function RekapanNota({ permKeys }: { permKeys: string[] }) {
                         {waveException
                             ? <Link href={`/rekapan-nota/wave/${waveException.id}`} className="fi-kc" data-tone="neg"><span>Exception terbuka</span><b>{exceptionTerbuka}</b><small>di Wave {waveException.nama}{daftar.filter((w) => w.exception_open > 0).length > 1 ? " dan lainnya" : ""}</small></Link>
                             : <div className="fi-kc"><span>Exception terbuka</span><b>{exceptionTerbuka}</b><small>tidak ada yang menahan konfirmasi</small></div>}
-                        <Link href="/rekapan-nota/area" className="fi-kc" data-tone={pool.data?.tanpaArea ? "warn" : undefined}><span>Outlet tanpa area</span><b>{pool.status === "galat" ? "–" : pool.data?.tanpaArea ?? "…"}</b><small>di pool tanggal ini, belum dipetakan</small></Link>
+                        <Link href="/rekapan-nota/area" className="fi-kc" data-tone={pool.data?.tanpaArea ? "warn" : undefined}><span>Outlet tanpa area</span><b>{pool.status === "galat" ? "–" : pool.data?.tanpaArea ?? "…"}</b><small>nota Heinz di pool tanggal ini, belum dipetakan</small></Link>
                     </div>
                     <ResponsiveTable<Wave>
                         title="Wave" count={daftar.length} columns={kolom} rows={daftar} rowKey={(w) => String(w.id)}
