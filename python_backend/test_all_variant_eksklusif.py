@@ -109,3 +109,28 @@ def test_channel_berbeda_tidak_saling_mencabut():
     mti = dict(_baris("002", "REGAZZA FM - EDT", "ALL VARIANT", "R1,R5,R6"), channel_gtmt="MT")
     terapkan([grosir, mti])
     assert mti["kode_barangs"] == "R1,R5,R6", mti
+
+
+def _master_tiga_merek():
+    return [{"kode_barang": k, "kelompok": kel, "gramasi": "25GR", "variant": v, "nama_barang": f"{kel} {v}"}
+            for k, kel, v in (("A1", "ANLENE ACTIFIT", "COKLAT"), ("A2", "ANLENE ACTIFIT", "VANILA"),
+                              ("G1", "ANLENE GOLD", "COKLAT"), ("B1", "ANCHOR BONEETO", "COKLAT"), ("X1", "ANMUM", "COKLAT"))]
+
+
+def test_mix_produk_satu_baris_lintas_merek():
+    """Owner 19 Okt 2026 (Fonterra provision): "Boleh Mix Produk" -> SATU baris lintas merek; tanpa penanda tetap dipecah."""
+    from shared import _apply_native_kelompok
+    baris = lambda ket: [{"no": "1", "surat_program": "F149SP", "kelompok": "ANLENE ACTIFIT & ANLENE GOLD & ANCHOR BONEETO",
+                          "variant": "All Variant", "gramasi": "25GR", "kode_barangs": "A1,A2,G1,B1", "ketentuan": ket}]
+    satu = _apply_native_kelompok(baris("Beli 6 RTG UP Boleh Mix Produk Beda Gramasi"), _master_tiga_merek())
+    assert [set(r["kode_barangs"].split(",")) for r in satu] == [{"A1", "A2", "G1", "B1"}], satu
+    pecah = _apply_native_kelompok(baris("Beli 6 RTG UP Mix Variant Beda Gramasi"), _master_tiga_merek())
+    assert len(pecah) == 3, pecah
+
+
+def test_aturan_p_per_kelompok_pada_baris_lintas_merek():
+    """Varian bernama di SATU kelompok tetap mencabut kodenya dari baris "ALL VARIANT" lintas merek."""
+    terapkan_rows = [_baris("F149SP", "ANLENE ACTIFIT & ANLENE GOLD", "ALL VARIANT", "A1,A2,G1"),
+                     _baris("F149SP", "ANLENE ACTIFIT", "VANILA", "A2")]
+    terapkan(terapkan_rows)
+    assert terapkan_rows[0]["kode_barangs"] == "A1,G1", terapkan_rows

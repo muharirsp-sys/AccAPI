@@ -143,8 +143,9 @@ class Program(StrictModel):
                 raise ValueError("Sebutkan kelas outlet, tanpa duplikat")
             # Nomor surat sendiri = nama daftar outlet yang dilampirkan surat itu, bukan kelas.
             # Lihat alasan lengkapnya di `outlet_rule_of`.
+            sendiri = self.surat_program.strip().upper()
             unknown = [c for c in self.outlet_classes
-                       if c not in OUTLET_CLASSES and c != self.surat_program.strip().upper()]
+                       if c not in OUTLET_CLASSES and c != sendiri and not (sendiri and c.startswith(sendiri + "-"))]
             if unknown:
                 raise ValueError("Kelas outlet tidak dikenal: " + ", ".join(unknown) + "; pilihan: " + ", ".join(OUTLET_CLASSES))
         return self
@@ -343,12 +344,12 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
 UNITS = {"PCS", "PC", "CTN", "DUS", "BOX", "PAK", "PACK", "RTG", "KRT", "LSN", "BAL", "SET", "KG", "GR", "LTR", "ML", "BTL", "SCH", "REN"}
 DATE_TEXT = re.compile(r"\d{4}-\d{2}-\d{2}")
 MIX_MARKS = ("mix", "campur")
-# "Mix Merek" = strata SATU DIVISI lintas merek (ABC PI Okt 2026: Beverages = NU + KIN DAIRY, kumulatif). Resolver
+# "Mix Merek"/"Mix Produk" = boleh campur lintas merek (ABC PI Beverages = NU + KIN; Fonterra "MIX PRODUCT ..."). Resolver
 # tetap memecah baris per merek (Form, verifier, aturan P per kelompok); di sini baris-baris itu menjadi SATU program.
-LINTAS_MEREK = re.compile(r"\b(?:mix|campur|lintas|beda)\s+merek\b", re.I)
+LINTAS_MEREK = re.compile(r"\b(?:mix|campur|lintas|beda)\s+(?:merek|produk)\b", re.I)
 # Larangan bukan izin: "tidak boleh campur merek", "beda merek tidak dapat digabung" -> per merek (gagal tertutup).
-NEGASI_MEREK = re.compile(r"\b(?:tidak|tanpa|bukan|jangan)\b[^.,;]{0,25}?\b(?:mix|campur|lintas|beda)\s+merek\b"
-                          r"|\b(?:mix|campur|lintas|beda)\s+merek\b[^.,;]{0,25}?\b(?:tidak|tanpa|bukan|jangan)\b", re.I)
+NEGASI_MEREK = re.compile(r"\b(?:tidak|tanpa|bukan|jangan)\b[^.,;]{0,25}?\b(?:mix|campur|lintas|beda)\s+(?:merek|produk)\b"
+                          r"|\b(?:mix|campur|lintas|beda)\s+(?:merek|produk)\b[^.,;]{0,25}?\b(?:tidak|tanpa|bukan|jangan)\b", re.I)
 
 
 MIX_MEREK_KUNCI = "*MIX MEREK*"
@@ -493,8 +494,10 @@ def outlet_rule_of(row):
     # kelas — satu-satunya nama di luar kosakata tetap yang diterima, dan hanya nomor suratnya
     # sendiri, supaya aturannya TETAP BISA DIMUAT sementara daftarnya belum diunggah.
     # Yang menahannya saat faktur adalah `outlet_allows`: daftar belum dimuat = tidak berlaku.
+    # Satu surat bisa punya beberapa daftar (Fonterra F148SP: MTI LSM dan MTI LMM, owner 19 Okt 2026):
+    # "<nomor surat>-<nama>", mis. "F148SP-LSM" -- tetap milik surat itu sendiri.
     sendiri = str(row.get("surat_program", "")).strip().upper()
-    unknown = [c for c in classes if c not in OUTLET_CLASSES and c != sendiri]
+    unknown = [c for c in classes if c not in OUTLET_CLASSES and c != sendiri and not (sendiri and c.startswith(sendiri + "-"))]
     if unknown:
         return (), "kelas outlet tidak dikenal: " + ", ".join(unknown) + "; pilihan: " + ", ".join(OUTLET_CLASSES)
     return (mode, classes), ""

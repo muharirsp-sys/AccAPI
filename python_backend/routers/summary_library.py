@@ -23,7 +23,8 @@ from summary_mistral import FIELDS, status
 # ke pembaca surat, dan kemasan bukan hasil membaca surat melainkan PILIHAN OPERATOR di layar
 # — sama seperti kelompok. Menaruhnya di `FIELDS` akan mengubah kontrak ekstraksi semua
 # principal demi satu dimensi yang tidak pernah diisi mesin.
-BARIS_DRAFT = [*FIELDS, "kemasan", "outlet_mode", "outlet_classes", "id", "no", "source_page"]
+# label_kelompok/label_gramasi: teks sel Form pilihan pemilik (mis. "ALL KELOMPOK BARANG POWDER BOX, KECUALI SACHET").
+BARIS_DRAFT = [*FIELDS, "kemasan", "outlet_mode", "outlet_classes", "id", "no", "source_page", "label_kelompok", "label_gramasi"]
 
 router = APIRouter(prefix="/summary/library")
 

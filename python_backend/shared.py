@@ -4200,12 +4200,16 @@ def _apply_native_kelompok(rows_to_check, master_items):
         # we must split it into separate rows so the frontend and generator handle them cleanly!
         from collections import defaultdict
         groups_by_prefix = defaultdict(list)
-        
+        # "Mix Produk/Mix Merek" (owner 19 Okt 2026: Fonterra "MIX PRODUCT ACTIFIT - GOLD - JAHE & BONEETO SACHET",
+        # ABC PI Beverages = NU + KIN): surat membolehkan campur lintas merek -> SATU baris, satu ambang.
+        from summary_rules import mix_merek
+        satu_baris = mix_merek(str(r.get("ketentuan", "")))
+
         for it in matched_items:
             real_kelompok = str(it.get("kelompok", "")).strip()
             if real_kelompok and real_kelompok.lower() not in ("nan", "null", "none"):
                 # Extract prefix to group strictly by Nama KLP
-                prefix = real_kelompok.split(" - ")[0] if " - " in real_kelompok else real_kelompok
+                prefix = "*" if satu_baris else (real_kelompok.split(" - ")[0] if " - " in real_kelompok else real_kelompok)
                 groups_by_prefix[prefix].append(it)
                 
         if not groups_by_prefix:
@@ -4270,27 +4274,28 @@ def _terapkan_all_variant_eksklusif(rows):
     def _norm_var(x):
         return " ".join(str(x or "").strip().upper().split())
 
+    # Kunci per KELOMPOK MASTER, bukan per teks sel: baris "Mix Produk" memuat beberapa kelompok sekaligus
+    # ("ANLENE ACTIFIT & ANLENE GOLD & ANCHOR BONEETO"), dan varian bernama di salah satunya tetap harus mencabut.
+    def _kunci(r):
+        dasar = (str(r.get("surat_program", "") or "").strip().upper(), str(r.get("channel_gtmt", "") or "").strip().upper())
+        return [dasar + (" ".join(k.split()).upper(),) for k in re.split(r"\s+&\s+", str(r.get("kelompok", "") or "")) if k.strip()]
+
     diklaim = {}
     for r in rows:
         v = _norm_var(r.get("variant"))
         if not v or v == "ALL VARIANT":
             continue
-        kunci = (str(r.get("surat_program", "") or "").strip().upper(),
-                 str(r.get("channel_gtmt", "") or "").strip().upper(),
-                 str(r.get("kelompok", "") or "").strip().upper())
-        for kode in str(r.get("kode_barangs", "") or "").split(","):
-            if kode.strip():
-                diklaim.setdefault(kunci, set()).add(kode.strip())
+        for kunci in _kunci(r):
+            for kode in str(r.get("kode_barangs", "") or "").split(","):
+                if kode.strip():
+                    diklaim.setdefault(kunci, set()).add(kode.strip())
     if not diklaim:
         return
 
     for r in rows:
         if _norm_var(r.get("variant")) not in ("", "ALL VARIANT"):
             continue
-        kunci = (str(r.get("surat_program", "") or "").strip().upper(),
-                 str(r.get("channel_gtmt", "") or "").strip().upper(),
-                 str(r.get("kelompok", "") or "").strip().upper())
-        milik_lain = diklaim.get(kunci)
+        milik_lain = set().union(*(diklaim.get(kunci, set()) for kunci in _kunci(r)))
         if not milik_lain:
             continue
         semula = [k.strip() for k in str(r.get("kode_barangs", "") or "").split(",") if k.strip()]

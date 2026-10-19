@@ -354,6 +354,11 @@ def check_mix_merek():
     # Dua divisi sama-sama "All Variant" (sidik sama) tapi dari dua baris surat (kutipan beda) -> ditahan, tidak melebur.
     kembar = [dict(r, variant="All Variant", source_quote=f"baris surat {r['no'][:3]}") for r in dua_divisi]
     assert any("melebur" in issue for issue in compile_programs(kembar)[1]), compile_programs(kembar)[1]
+    # Satu surat bisa punya beberapa daftar peserta: "<nomor surat>-<nama>"; nama asing tetap ditolak.
+    _, issues = compile_programs([row(surat_program="F148SP", ketentuan="Beli 1 BOX", outlet_mode="only", outlet_classes="F148SP-LMM,F148SP-LSM")])
+    assert issues == [], issues
+    _, issues = compile_programs([row(surat_program="F148SP", ketentuan="Beli 1 BOX", outlet_mode="only", outlet_classes="F999-LSM")])
+    assert issues, "daftar milik surat lain harus ditolak"
     # Larangan bukan izin: tetap per merek.
     programs, _ = compiled([row(no=k, ketentuan="Beli 2 KRT, Mix Variant Beda Gramasi, tidak boleh campur merek", kode_barangs=k)
                             for k in "AB"])
