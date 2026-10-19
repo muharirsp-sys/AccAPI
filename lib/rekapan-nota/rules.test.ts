@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    resolveKlasifikasi, isAreaDikecualikan, parseAreaDikecualikan,
+    resolveKlasifikasi,
     hitungPareto, klasifikasiSirup, isiPerKarton, GRUP_DEFAULT,
 } from "@/lib/rekapan-nota/classify";
 import { tolakUbahIsi, transisiWave } from "@/lib/rekapan-nota/wave-state";
@@ -19,16 +19,6 @@ test("outlet tak terdaftar jatuh ke Gabung, area dinormalkan", () => {
         resolveKlasifikasi({ area: " pgu ", grupAll: "IDM & IDG", grupGdi: null }),
         { area: "PGU", grupAll: "IDM & IDG", grupGdi: GRUP_DEFAULT },
     );
-});
-
-test("NON & LUAR KOTA dikecualikan; area kosong TIDAK dikecualikan", () => {
-    assert.equal(isAreaDikecualikan("NON"), true);
-    assert.equal(isAreaDikecualikan(" luar kota "), true);
-    assert.equal(isAreaDikecualikan("PGU"), false);
-    // Yang belum dipetakan harus tetap masuk pool + memunculkan exception, bukan hilang.
-    assert.equal(isAreaDikecualikan(null), false);
-    assert.deepEqual(parseAreaDikecualikan("NON, LUAR KOTA"), ["NON", "LUAR KOTA"]);
-    assert.deepEqual(parseAreaDikecualikan(""), ["NON", "LUAR KOTA"]);
 });
 
 test("pareto memakai ambang parameter, bukan konstanta", () => {

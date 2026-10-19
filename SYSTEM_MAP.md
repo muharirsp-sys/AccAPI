@@ -549,7 +549,7 @@ UI /rekapan-nota -> upload "Rincian Faktur Penjualan" (.xlsx dari Accurate)
 --- 8.2 Menyusun & merilis wave ---
 UI /rekapan-nota/wave/[id]
   -> GET  /api/rekapan-nota/pool?tanggal=...   (anti-join ke wave_assignment)
-       * buang outlet ber-area NON / LUAR KOTA, buang nota bertanda kanvas
+       * buang nota bertanda kanvas (outlet ber-area NON / LUAR KOTA IKUT, seperti TTF Excel — owner 19 Okt 2026)
   -> POST /api/rekapan-nota/wave/[id]/nota     INSERT ... ON CONFLICT DO NOTHING RETURNING
        * uq_nota_aktif menolak nota yang sudah aktif di wave lain -> 409 + identitas pemiliknya
        * simpan snapshot: snap_grup_all, snap_grup_gdi, snap_area, snap_pareto, snap_total_krt
@@ -1032,7 +1032,7 @@ AccAPI/_github_clean/
 | File | Fungsi Utama | Peran |
 |---|---|---|
 | `lib/rekapan-nota/parse.ts` | `parseAccurateExport`, `normalizeHeader`, `deriveKonvTersirat` | Parser export Accurate, pure. Uji regresi: 131 nota HEINZ ABC 21 Agu 2026 vs `Paste Data Sore` -> 131/131 nota, 776 baris, nol selisih |
-| `lib/rekapan-nota/classify.ts` | `resolveKlasifikasi`, `isAreaDikecualikan`, `hitungPareto`, `klasifikasiSirup`, `isiPerKarton` | Aturan grup/area/pareto/sirup + eksklusi NON/LUAR KOTA. Pure |
+| `lib/rekapan-nota/classify.ts` | `resolveKlasifikasi`, `hitungPareto`, `klasifikasiSirup`, `isiPerKarton` | Aturan grup/area/pareto/sirup. Pure (eksklusi NON/LUAR KOTA dihapus 19 Okt 2026) |
 | `lib/rekapan-nota/query.ts` | `buildRekapan`, `buildTtf`, `notaPool`, `ambilPickGroup`, `ambilSetting` | Satu CTE, dua proyeksi (withdrawal + allocation); pool anti-join; TTF |
 | `lib/rekapan-nota/exception.ts` | `deteksiException`, `hitungExceptionOpen` | Deteksi set-based sekali per release, idempoten lewat `uq_wave_exception` |
 | `lib/rekapan-nota/area-suggest.ts` | `parseKelKec`, `bangunIndeks`, `usulkanArea`, `usulkanSemua` | Usulan area; memakai `lib/sales-history/fuzzy.ts`, tidak menulis matcher baru |
@@ -1232,7 +1232,7 @@ Kolom tambahan pada tabel existing (aditif):
 Parameter di app_setting (tabel existing, bukan tabel baru):
   rekapan.ambang_pareto_karton    = 50
   rekapan.baris_per_lembar_faktur = 13
-  rekapan.area_dikecualikan       = NON,LUAR KOTA
+  (rekapan.area_dikecualikan masih ada di tabel tetapi TIDAK dibaca lagi sejak 19 Okt 2026)
 
 Status Lifecycle wave:
   Draft -> Released -> Confirmed / Cancelled

@@ -381,3 +381,14 @@ test("M1 serentak: nota ditambah ke wave saat unggah sedang mengganti isinya -> 
     const selisih = (await db.query(`SELECT count(*)::int n FROM wave_exception WHERE wave_id = $1 AND jenis = 'REKONSILIASI_SELISIH'`, [w])).rows[0].n;
     assert.ok(snap === poolKrt || selisih === 1, `snapshot ${snap} krt vs pool ${poolKrt} krt tanpa exception (tambah tertahan: ${tahanTambah})`);
 });
+
+test("NON / LUAR KOTA: nota outlet ber-area itu ikut pool dan bisa masuk wave, seperti TTF Excel (owner 19 Okt 2026)", T_UJI, async () => {
+    const T = "2026-10-16";
+    await db.query(`INSERT INTO customer (id, "customerNo", name, area) VALUES (9101, 'C-NK1', 'TOKO A', 'NON'), (9102, 'C-NK2', 'TOKO B', 'LUAR KOTA')`);
+    assert.equal((await unggah(T, xlsx(T, [["NK1", "BRG-C", 1, 12], ["NK2", "BRG-C", 1, 12]]))).status, 200);
+    assert.deepEqual((await notaPool(T)).map((n) => n.no_nota).sort(), ["NK1", "NK2"]);
+    const w = await waveBaru(T, 1);
+    const r = await tambah(w, ["NK1", "NK2"]);
+    assert.equal(r.status, 200);
+    assert.deepEqual((r.body.masuk as string[]).sort(), ["NK1", "NK2"]);
+});
