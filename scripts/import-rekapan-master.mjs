@@ -52,7 +52,7 @@ export function bacaMaster(workbookPath) {
         // dan alamat outlet ter-mapping-lah yang jadi bahan indeks kelurahan.
         if (no && alm) alamat.set(no, alm);
         if (!no || !nilai) continue;
-        area.set(no, nilai); // termasuk NON / LUAR KOTA: disimpan apa adanya, difilter di parser (R2.5)
+        area.set(no, nilai); // termasuk NON / LUAR KOTA: disimpan apa adanya; notanya tetap masuk pool (owner 19 Okt 2026)
     }
 
     // Pemisah: blok A:C (Pemisahan All) dan blok E:G (Pemisah GDI) dalam satu sheet

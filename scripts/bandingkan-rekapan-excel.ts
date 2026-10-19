@@ -144,17 +144,15 @@ async function main() {
     }
 
     // Nasib tiap nota pada tanggal ini, langsung dari DB. Dipakai supaya "nota tidak ada di
-    // wave ini" harus DIBUKTIKAN (ada di wave lain / ditandai kanvas / area dikecualikan),
+    // wave ini" harus DIBUKTIKAN (ada di wave lain / ditandai kanvas),
     // bukan diterima sebagai alasan gratis yang menelan kelalaian nyata.
     const nasib = await pool.query<{ no_nota: string; nasib: string }>(
         `SELECT p.no_nota,
                 CASE WHEN k.no_nota IS NOT NULL                    THEN 'kanvas'
-                     WHEN upper(coalesce(c.area,'')) IN ('NON','LUAR KOTA') THEN 'area dikecualikan'
                      WHEN wa.wave_id IS NOT NULL AND wa.wave_id <> $2 THEN 'wave lain (#'||wa.wave_id||')'
                      WHEN wa.wave_id = $2                          THEN 'di wave ini'
                      ELSE 'BELUM DISUSUN' END AS nasib
            FROM (SELECT DISTINCT no_nota, kode_cust FROM wave_line_pool WHERE tanggal = $1::date) p
-           LEFT JOIN customer c    ON c."customerNo" = p.kode_cust
            LEFT JOIN nota_kanvas k ON k.no_nota = p.no_nota
            LEFT JOIN wave_assignment wa ON wa.no_nota = p.no_nota AND wa.dilepas = false`,
         [wave.tanggal, waveId]);
