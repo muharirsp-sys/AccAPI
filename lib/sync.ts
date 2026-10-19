@@ -605,7 +605,9 @@ export async function upsertSalesInvoiceById(id: number, creds: AccurateCredenti
                 .returning({ number: salesInvoiceCache.number, outstanding: salesInvoiceCache.outstanding });
             if (dibuang.length) console.log(`[sync] faktur ${id} ${dibuang[0].number ?? "-"} (sisa ${dibuang[0].outstanding ?? "-"}) tidak ada di Accurate -> cache dibuang`);
         } else {
-            console.warn(`[sync] faktur ${id} tidak ada di Accurate, cache TIDAK dibuang: database sesi ${creds.databaseId ?? "?"} bukan ACCURATE_INVOICE_DB_ID (${dbFaktur || "kosong"})`);
+            // Galat biasa, BUKAN Gone: webhook menganggap Gone sukses (200, tanpa kirim ulang), jadi env hilang saat deploy
+            // atau sesi di database lain akan menelan diam-diam event faktur sah (tinjauan akhir PR #185, M1).
+            throw new Error(`detail.do faktur ${id}: tidak ada di Accurate, tetapi database sesi ${creds.databaseId ?? "?"} bukan ACCURATE_INVOICE_DB_ID (${dbFaktur || "kosong"}) — cache tidak dibuang`);
         }
         if (creds.databaseId) await recordInvoiceRealization(creds.databaseId, String(id), null);
         throw new AccurateInvoiceGoneError(id);
