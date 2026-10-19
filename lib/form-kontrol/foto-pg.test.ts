@@ -40,6 +40,8 @@ before(async () => {
     pool = new Pool({ connectionString: u.toString(), max: 2 });
     // sales_profile.accurate_linked = migrasi repo 0033 (DB evaluasi bisa tertinggal).
     await pool.query(await readFile(new URL("../../db/migrations/0033_order_cabang.sql", import.meta.url), "utf8"));
+    // Supervisor Review (SR-1): sales_profile.no_hp — Drizzle memilih semua kolom sales_profile.
+    await pool.query(await readFile(new URL("../../db/migrations/0036_supervisor_review.sql", import.meta.url), "utf8"));
     await pool.query(`INSERT INTO "user" (id, name, email, "emailVerified", role, "createdAt", "updatedAt") VALUES
         ('u-sla', 'Sales A', 'sla@uji.test', true, 'staff', now(), now()),
         ('u-slb', 'Sales B', 'slb@uji.test', true, 'staff', now(), now()),

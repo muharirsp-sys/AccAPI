@@ -22,7 +22,7 @@ import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { syncItemPrices } from "@/lib/item-price-sync";
 import { aturanBerlaku, bonusQuota, channelAllowed, channelOutlet, checkLine, checkSoPromo, daftarKosong,
     isBonusLine, JARINGAN_POSISI_BEBAS, matchItemRule, needsTriggerCheck, normalisasiJaringan, outletAllowed, outletListsOn, purchaseByGroup,
-    splitDiscounts, triggerGroupKey, triggerReached,
+    sebabDaftar, splitDiscounts, triggerGroupKey, triggerReached,
     type DiscountAt, type Normalisasi, type PublishedRule, type TriggerBuy } from "@/lib/principal-validation";
 import { duplicateFinding, findDuplicate, type OrderFingerprint } from "@/lib/order-duplicate";
 import { invoiceKey } from "@/lib/principal-invoice";
@@ -183,10 +183,7 @@ export async function POST(request: NextRequest) {
                 sebab.add(`Aturan ${rule.suratProgram} dibatasi channel ${rule.channel}, sedangkan outlet ini `
                     + `${chan ? `ber-channel ${chan}` : "belum punya kategori di master Accurate"}.`);
             } else if (!outletAllowed(rule, customerNo, listsOn(date))) {
-                const isi = listsOn(date).get(String(rule.outletList ?? "").toUpperCase())?.size ?? 0;
-                sebab.add(isi === 0
-                    ? `Aturan ${rule.suratProgram} menunjuk daftar "${rule.outletList}" yang tidak punya anggota pada ${date}.`
-                    : `Outlet ini tidak memenuhi syarat daftar "${rule.outletList}" (${rule.outletListMode}) pada aturan ${rule.suratProgram}.`);
+                sebab.add(sebabDaftar(rule, customerNo, listsOn(date)));
             } else if (needsTriggerCheck(rule)) {
                 const ambang = triggerReached(rule, belanjaOn(String(soNo ?? ""), rule));
                 if (!ambang.ok) sebab.add(ambang.reason);

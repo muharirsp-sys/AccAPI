@@ -1,6 +1,6 @@
 # ======================================================================================
 # Tujuan: Resolusi VARIAN (mis. "Casablanca Spray Cologne Series" -> White SR + Black SR;
-#         "Regazza EDT Sport" -> 4 varian Azzuro/Bianco/Nero/Rosso) via LOOKUP TABEL
+#         pola wajib menyebut merek) via LOOKUP TABEL
 #         DEKLARATIF (variant_mapping.json), BUKAN tebakan LLM. Dicoba SEBELUM fuzzy-match
 #         LLM/native_kelompok apa pun -- kalau ketemu rule, hasil deterministik & final.
 # Caller: python_backend/main.py (rencana integrasi FASE 3b, sebelum _apply_native_kelompok).
@@ -101,13 +101,11 @@ if __name__ == "__main__":
         cologne = resolve_variant("Casablanca Spray Cologne Series 100ml", master, mapping)
         assert {it["kode_barang"] for it in cologne} == {"W1", "W2", "B1", "B2"}, cologne
 
-        sport = resolve_variant("Regazza EDT Sport 100ml", master, mapping)
-        assert {it["kode_barang"] for it in sport} == {"R1", "R2", "R3", "R4"}, sport
-
-        regular = resolve_variant("Regazza Eau de Toilette 100ml", master, mapping)
-        assert {it["kode_barang"] for it in regular} == {"R5", "R6"}, regular
-
-        no_match = resolve_variant("Marie Jose Body Mist 100ml", master, mapping)
-        assert no_match is None, no_match
+        # Baris berkelompok master membawa kodenya sendiri: tak ada aturan yang boleh menggantinya
+        # (dulu pola `\bedt\b` mengganti baris Bellagio/Casablanca EDT dengan kode Regazza).
+        for teks in ("BLAGIO HM - EDT", "CSBNCA HM - EDT", "REGAZZA FM - EDT & REGAZZA FM - EDP",
+                     "Bellagio Eau de Toilette Sport 100ml", "Bellagio Spray Cologne 100ml",
+                     "Marie Jose Body Mist 100ml"):
+            assert resolve_variant(teks, master, mapping) is None, teks
 
     print("variant_resolver self-check PASSED (10x run, resolusi 100% identik)")

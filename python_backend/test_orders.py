@@ -183,6 +183,7 @@ def main():
 
     check_harga_petugas(client, body)
     check_kelas_outlet(client, body)
+    check_rasio_kosong()
     print("order freeze check: OK")
 
 
@@ -239,6 +240,29 @@ def check_kelas_outlet(client, body):
     beda = client.post("/orders", headers=SALES, json={**isi, "sidik": lama["sidik"]})
     assert beda.status_code == 409 and beda.json()["kode"] == "PRATINJAU_BERUBAH", beda.text
     assert beda.json()["pratinjau"]["result"]["discount"] == "70.00", beda.json()["pratinjau"]
+
+
+def check_rasio_kosong():
+    """Owner 16 Okt 2026: program "Beli N KRT", baris PCS, isi karton barang tak ada di master -> order DITAHAN berkode."""
+    from summary_rules import Program
+    program = Program(id="K1", name="Karton", start="2026-06-01", end="2026-06-30", codes=["A"], channel="GT", unit="KRT",
+                      mix=False, threshold="quantity", value_scope="eligible", basis="gross", stacking=False, priority=1,
+                      source_page=1, source_quote="kutipan",
+                      tiers=[dict(minimum="1", percentages=["5"], rupiah="0", rupiah_mode="once", bonus_code="",
+                                  bonus_quantity="0", bonus_unit="PCS", bonus_scope="code", repeat=False)])
+    asli = orders.published_rules
+    orders.published_rules = lambda: ([program], [])
+    try:
+        baris = [{"code": "A", "unit": "PCS", "quantity": "24", "price": "1000", "rasio": {"PCS": 1}}]
+        try:
+            orders.hitung_promo("C-1", "GT", "2026-06-15", baris)
+            raise AssertionError("rasio karton kosong harus menahan order")
+        except orders.Ditolak as error:
+            assert (error.status, error.kode) == (409, "RASIO_SATUAN_KOSONG"), (error.status, error.kode)
+        baris[0]["rasio"] = {"PCS": 1, "KRT": 24}
+        assert orders.hitung_promo("C-1", "GT", "2026-06-15", baris)["result"]["discount"] == "1200.00"
+    finally:
+        orders.published_rules = asli
 
 
 if __name__ == "__main__":

@@ -99,7 +99,8 @@ export async function POST(request: NextRequest) {
                 ...(request.headers.get("x-csrf-token") ? { "X-CSRF-Token": request.headers.get("x-csrf-token") as string } : {}),
             },
             body: JSON.stringify({ channel, order_date: orderDate, customer_no: cek.pelanggan.customerNo,
-                lines: lines.map(({ code, unit, quantity, price }) => ({ code, unit, quantity, price })) }),
+                // `rasio` (isi satuan dari master Accurate) = sama dengan yang dijawab /api/orders/harga saat simpan.
+                lines: lines.map(({ code, unit, quantity, price }, i) => ({ code, unit, quantity, price, rasio: resolved[i].rasio ?? {} })) }),
             signal: AbortSignal.timeout(20_000),
         });
     } catch {

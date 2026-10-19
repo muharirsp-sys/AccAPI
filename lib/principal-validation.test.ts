@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { aturanBerlaku, bonusQuota, channelAllowed, channelLaporan, channelOutlet, checkLine, checkSoPromo,
-    daftarKosong, JARINGAN_POSISI_BEBAS, needsTriggerCheck, normalisasiJaringan, outletAllowed, outletListsOn, purchaseByGroup, splitDiscounts, triggerGroupKey,
+    daftarKosong, JARINGAN_POSISI_BEBAS, needsTriggerCheck, normalisasiJaringan, outletAllowed, outletListsOn, purchaseByGroup, sebabDaftar, splitDiscounts, triggerGroupKey,
     triggerReached,
     type LineInput, type PublishedRule } from "./principal-validation.ts";
 
@@ -451,6 +451,16 @@ test("daftar outlet peserta: INCLUDE hanya peserta, EXCLUDE justru sebaliknya", 
     assert.equal(outletAllowed(duaHanya, "C-WIN013-KN", lists), true);
     assert.equal(outletAllowed(duaHanya, "C-NOV009-KN", lists), false);
 
+    // Sebabnya dinilai PER DAFTAR, bukan per nama gabungan (SO 260014607, 13 Okt 2026: layar
+    // melapor "CONTRACTUAL,LOYALTY tidak punya anggota" padahal outletnya anggota LOYALTY).
+    const msg = { ...duaKecuali, suratProgram: "BP-MSG" };
+    assert.equal(sebabDaftar(msg, "C-WIN013-KN", lists),
+        'Outlet ini anggota daftar "LOYALTY", yang DIKECUALIKAN aturan BP-MSG. (Daftar "CONTRACTUAL" belum punya anggota, jadi dilewati.)');
+    assert.equal(sebabDaftar({ ...duaHanya, suratProgram: "BP-B" }, "C-NOV009-KN", lists),
+        'Outlet ini bukan anggota daftar "LOYALTY", yang DISYARATKAN aturan BP-B. (Daftar "CONTRACTUAL" belum punya anggota, jadi dilewati.)');
+    assert.equal(sebabDaftar({ outletList: "CONTRACTUAL,HYBRID", outletListMode: "EXCLUDE", suratProgram: "BP-C" }, "C-NOV009-KN", lists),
+        'Aturan BP-C menunjuk daftar "CONTRACTUAL" dan "HYBRID" yang tidak punya anggota pada tanggal ini.');
+
     // TETAPI kalau TIDAK SATU PUN daftarnya terisi, gagal-tertutup tetap berlaku: kita tidak tahu
     // apa-apa tentang siapa, jadi tidak ada yang diloloskan. Ini yang menahan aturan ON PO selama
     // daftar pesertanya belum diunggah.
@@ -734,6 +744,11 @@ test("baris BONUS tidak ikut dihitung sebagai pembelian", () => {
     // 25 beli + 10 bonus = 35, tetapi bonusnya hadiah — bukan belanja yang memenuhi syaratnya sendiri.
     assert.equal(belanja.get(triggerGroupKey(rules[0]))?.qty, 25);
     assert.equal(triggerReached(rules[0], belanja.get(triggerGroupKey(rules[0]))).ok, false);
+});
+
+test("ambang CTN = KRT: tidak dipenuhi oleh jumlah satuan terkecil yang kebetulan sama", () => {
+    const rule = aturanAmbang({ triggerQty: 5, triggerUnit: "CTN" });
+    assert.equal(triggerReached(rule, { qty: 5, value: 50_000 }).ok, false);
 });
 
 test("ambang RUPIAH dinilai TERMASUK PPN, mengikuti bukti program MSG", () => {

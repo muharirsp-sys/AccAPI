@@ -3,7 +3,7 @@
  *   halaman kosong, rowCount bergeser, id ganda), urai detail.do -> Pelunasan (lib/kasir/rekonsiliasi), rencana baca inkremental
  *   PER ID (lastUpdate teks list.do), kelas galat + jadwal ulang, status akhir putaran (lengkap/sebagian/gagal), tanggal cron.
  * Caller: lib/kasir/baca-pelunasan.ts (pelaksana server), app/api/cron/kasir-pelunasan; uji lib/kasir/pembaca.test.ts.
- * Dependensi: lib/kasir/rekonsiliasi (keSen, hariKerja, tipe Pelunasan) — murni.
+ * Dependensi: lib/kasir/rekonsiliasi (hariKerja, tipe Pelunasan) — murni.
  * Main Functions: kueriDaftar, uraiHalamanDaftar, bacaDaftar (ambil halaman DISUNTIK), uraiDetail, rencanaBaca, kelasGalat,
  *   saringPesan, tundaUlang, bacaRetryAfter, statusAkhir, tanggalCron, keTanggalAccurate, tanggalSah.
  * Side Effects: tidak ada (tanpa I/O dan tanpa jam sistem; `bacaDaftar` memanggil fungsi ambil yang disuntik).
@@ -12,7 +12,7 @@
  * 9 halaman, lastUpdate ada) + S6e2-BUKTI-DETAIL-DO-2026-10-10.md (detail: transDate dd/MM/yyyy, paymentMethod, chequeAmount,
  * detailInvoice[].invoice.{id,number,masterSalesmanId}, invoiceId, invoicePayment).
  */
-import { hariKerja, keSen, type Pelunasan, type PelunasanFaktur } from "./rekonsiliasi.ts";
+import { hariKerja, type Pelunasan, type PelunasanFaktur } from "./rekonsiliasi.ts";
 
 /** Kelas galat pembaca (kolom kasir_pelunasan_baca.sebab; CHECK di DDL = daftar ini). */
 export const KELAS_GALAT = ["sesi_sinkron", "hak_akses", "batas_laju", "accurate_5xx", "jaringan", "tidak_pasti", "ditolak", "bentuk",
@@ -157,19 +157,31 @@ export async function bacaDaftar(tanggal: string, ambil: (halaman: number) => Pr
 
 export type HasilDetail = { ok: true; pelunasan: Pelunasan } | { ok: false; sebab: "bentuk" | "nominal" | "berubah"; pesan: string };
 
-/** Nominal Accurate -> sen; rusak (> 2 desimal, bukan angka) = galat `nominal`, absen = galat `bentuk`. */
-function sen(v: unknown, apa: string): number | HasilDetail {
+/** Skala nilai TEPAT: 1e-20 Rp (BigInt). Accurate mengirim nominal hasil hitung diskon hingga 6 desimal (82250.0988, 1695228.659414). */
+const SKALA = 20;
+const SATU_SEN = BigInt(`1${"0".repeat(SKALA - 2)}`);
+
+/** Nominal Accurate -> nilai TEPAT berskala SKALA; rusak (bukan desimal polos, notasi e, pemisah ribuan) = galat `nominal`, absen = `bentuk`. */
+function tepat(v: unknown, apa: string): bigint | HasilDetail {
     if (v === undefined || v === null || v === "") return { ok: false, sebab: "bentuk", pesan: `${apa} absen` };
     if (typeof v !== "number" && typeof v !== "string") return { ok: false, sebab: "bentuk", pesan: `${apa} bukan angka` };
-    try {
-        return keSen(v);
-    } catch (e) {
-        return { ok: false, sebab: "nominal", pesan: `${apa}: ${e instanceof Error ? e.message : String(e)}` };
-    }
+    const t = typeof v === "number" ? (Number.isFinite(v) ? String(v) : "") : v.trim();
+    const m = new RegExp(`^(-?)(\\d+)(?:\\.(\\d{1,${SKALA}}))?$`).exec(t);
+    if (!m) return { ok: false, sebab: "nominal", pesan: `${apa}: Nominal tidak sah: ${JSON.stringify(v)} (desimal polos, tanpa pemisah ribuan)` };
+    const n = BigInt(m[2] + (m[3] ?? "").padEnd(SKALA, "0"));
+    return m[1] ? -n : n;
+}
+
+/** Nilai tepat -> sen, dibulatkan setengah menjauhi nol; di luar bilangan bulat aman = galat `nominal`. */
+function keSenBulat(x: bigint, apa: string): number | HasilDetail {
+    const neg = x < BigInt(0);
+    const s = Number(((neg ? -x : x) + SATU_SEN / BigInt(2)) / SATU_SEN);
+    if (!Number.isSafeInteger(s)) return { ok: false, sebab: "nominal", pesan: `${apa}: Nominal di luar batas` };
+    return neg && s ? -s : s;
 }
 
 /**
- * (c) detail.do `d` -> Pelunasan. chequeAmount / invoicePayment lewat keSen (> 2 desimal = `nominal`); fakturId = invoice.id ?? invoiceId;
+ * (c) detail.do `d` -> Pelunasan. chequeAmount / invoicePayment dibaca TEPAT lalu sen (setengah menjauhi nol; baris KUMULATIF); fakturId = invoice.id ?? invoiceId;
  * nomorFaktur = invoice.number; salesman = invoice.masterSalesmanId (boleh null). invoicePayment absen = `bentuk` TANPA cadangan
  * paymentAmount (bruto = tunai + retur + diskon: lib/pelunasan/alokasi.ts:391-392). Faktur sama dua kali dalam satu pelunasan =
  * dijumlah (PK cache per faktur); salesman berbeda = `bentuk`. transDate ≠ tanggal diminta = `berubah` (tidak lengkap; tidak ditulis).
@@ -186,10 +198,18 @@ export function uraiDetail(d: unknown, tanggal: string, harap: { id: number; nom
     if (tgl !== tanggal) return { ok: false, sebab: "berubah", pesan: `detail ${nomor}: transDate ${tgl} ≠ ${tanggal} (berubah sesudah daftar)` };
     const metode = typeof r.paymentMethod === "string" ? r.paymentMethod : "";
     if (!metode.trim()) return { ok: false, sebab: "bentuk", pesan: `detail ${nomor}: paymentMethod kosong / bukan teks` };
-    const cheque = sen(r.chequeAmount, `detail ${nomor} chequeAmount`);
+    const chequeTepat = tepat(r.chequeAmount, `detail ${nomor} chequeAmount`);
+    if (typeof chequeTepat !== "bigint") return chequeTepat;
+    const cheque = keSenBulat(chequeTepat, `detail ${nomor} chequeAmount`);
     if (typeof cheque !== "number") return cheque;
     if (!Array.isArray(r.detailInvoice)) return { ok: false, sebab: "bentuk", pesan: `detail ${nomor}: detailInvoice bukan larik` };
 
+    // Baris dibulatkan KUMULATIF (baris i = sen(Σ tepat s.d. i) − sen(Σ tepat s.d. i−1)): Σ baris = sen(Σ tepat), jadi pelunasan yang klop
+    // di Accurate tetap klop dalam sen — tanpa ember tak teralokasi semu 1 sen; selisih nyata tetap terlihat. Tiap baris meleset ≤ 1 sen.
+    // ponytail: sen sisa jatuh ke baris yang melewati setengah sen, bukan ke orang tertentu — multi-salesman bisa bergeser 1 sen antarorang
+    // (ditangkap klop/penjelasan, tidak diam-diam). Jalan naik: bulatkan kumulatif berurutan masterSalesmanId bila keluhan muncul.
+    let kumulatif = BigInt(0);
+    let senSebelum = 0;
     const faktur = new Map<number, PelunasanFaktur>();
     for (const [i, x] of r.detailInvoice.entries()) {
         const baris = obj(x);
@@ -200,14 +220,20 @@ export function uraiDetail(d: unknown, tanggal: string, harap: { id: number; nom
         const ms = inv?.masterSalesmanId;
         const masterSalesmanId = ms === undefined || ms === null ? null : idSah(ms);
         if (Number.isNaN(masterSalesmanId)) return { ok: false, sebab: "bentuk", pesan: `${di}: masterSalesmanId ${JSON.stringify(ms)} tidak sah` };
-        const ip = sen(baris.invoicePayment, `${di} invoicePayment`);
-        if (typeof ip !== "number") return ip;
+        const ipTepat = tepat(baris.invoicePayment, `${di} invoicePayment`);
+        if (typeof ipTepat !== "bigint") return ipTepat;
+        kumulatif += ipTepat;
+        const senKini = keSenBulat(kumulatif, `${di} invoicePayment`);
+        if (typeof senKini !== "number") return senKini;
+        const ip = senKini - senSebelum;
+        senSebelum = senKini;
         const lama = faktur.get(fakturId);
         if (lama && lama.masterSalesmanId !== masterSalesmanId) {
             return { ok: false, sebab: "bentuk", pesan: `${di}: faktur ${fakturId} muncul dua kali dengan salesman berbeda` };
         }
-        faktur.set(fakturId, { fakturId, nomorFaktur: lama?.nomorFaktur ?? (teks(inv?.number) || null), masterSalesmanId,
-            invoicePayment: (lama?.invoicePayment ?? 0) + ip });
+        const jumlahFaktur = (lama?.invoicePayment ?? 0) + ip;
+        if (!Number.isSafeInteger(ip) || !Number.isSafeInteger(jumlahFaktur)) return { ok: false, sebab: "nominal", pesan: `${di} invoicePayment: Nominal di luar batas` };
+        faktur.set(fakturId, { fakturId, nomorFaktur: lama?.nomorFaktur ?? (teks(inv?.number) || null), masterSalesmanId, invoicePayment: jumlahFaktur });
     }
     return { ok: true, pelunasan: { id: harap.id, nomor, tanggal: tgl, metode, chequeAmount: cheque, faktur: [...faktur.values()] } };
 }

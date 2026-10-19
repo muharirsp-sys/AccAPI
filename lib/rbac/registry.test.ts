@@ -109,6 +109,16 @@ assert.deepEqual([...kasirOn].sort(), ["kasir.catat", "kasir.tutup", "kasir.view
 for (const role of ["manager", "staff", "viewer", "finance"] as const) assert.ok(!rolePermissionPresets[role].kasir, `preset ${role} memuat kasir`);
 assert.deepEqual(rolePermissionPresets.admin.kasir, ["view", "catat", "tutup", "buka"]);
 assert.deepEqual(getPagePermission("/kasir"), { prefix: "/kasir", module: "kasir", action: "view" });
+// Supervisor Review (owner 16 Okt 2026): supervisor_review.view = kunci biasa yang membuka /supervisor-review (bukan jatuh ke "/" =
+// dashboard.view); preset role lama non-admin tidak memuatnya (preset grup SPV/SM/Manager/Admin = docs/handover/RBAC_PRESET_SUPERVISOR_REVIEW.sql).
+assert.ok(isValidPermissionKey("supervisor_review.view") && !CAPABILITY_KEYS.has("supervisor_review.view"), "supervisor_review.view wajib terdaftar");
+assert.deepEqual(getPagePermission("/supervisor-review"), { prefix: "/supervisor-review", module: "supervisor_review", action: "view" });
+assert.ok(canAccessPathWithKeys("/supervisor-review", ["supervisor_review.view"]));
+assert.ok(!canAccessPathWithKeys("/supervisor-review", ["dashboard.view", "form_kontrol.view", "form_kontrol.manage"]));
+for (const role of ["manager", "staff", "viewer", "finance"] as const) {
+    assert.ok(!(rolePermissionPresets[role] as Record<string, unknown>).supervisor_review, `preset ${role} memuat supervisor_review`);
+}
+assert.equal(permissionKeyLabel("supervisor_review.view"), "Supervisor Review · Lihat");
 // NOO (owner 13 Okt 2026, P2): form_kontrol.noo_ktp = kapabilitas DATA PRIBADI (centang modul Form Kontrol tidak menyalakannya); noo_setujui
 // kunci biasa (SPV/SM/Admin lewat RBAC_PRESET_NOO.sql). Preset role lama tidak memuat keduanya.
 assert.ok(isValidPermissionKey("form_kontrol.noo_setujui") && !CAPABILITY_KEYS.has("form_kontrol.noo_setujui"));

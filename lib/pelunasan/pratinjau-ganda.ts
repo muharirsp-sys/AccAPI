@@ -3,7 +3,8 @@
  *   `app/(dashboard)/api-wrapper/page.tsx` basis 5d6cc936 (S6e-1): duplikat dalam unggahan, kunci yang diblokir lock
  *   idempotency (pratinjau), dan kemiripan histori sales-receipt Accurate. Perilaku dikunci golden.
  * Caller: app/(dashboard)/api-wrapper/page.tsx (previewSalesReceiptDuplicates, executeBulkPayload); S6e-2.
- * Main Functions: pratinjauRiwayatAccurate, pratinjauDuplikat, periksaRiwayatAccurate (server), targetRiwayat, strukDariDetail.
+ * Main Functions: pratinjauRiwayatAccurate, pemastiRiwayatTulis (Konsol: riwayat hanya jenis dokumen yang sama), pratinjauDuplikat,
+ *   periksaRiwayatAccurate (server), targetRiwayat, strukDariDetail.
  * Side Effects: GET Accurate sales-receipt/list.do & detail.do lewat `accurateFetch` DIINJEKSI; pratinjau lock lewat
  *   `pratinjauKunci` DIINJEKSI (halaman: POST /api/idempotency/lock {preview:true}); console.error saat histori galat.
  */
@@ -241,6 +242,12 @@ export const pratinjauRiwayatAccurate = async (rows: Bebas[], accurateFetch: Acc
     }
     return Object.assign(matchedReceiptsByKey, { tidakTerbaca });
 };
+
+/** Review S7-1b: pemasti kiriman TULIS Konsol yang gagal/tanpa jawaban lewat riwayat Accurate — HANYA jenis dokumen yang sama.
+ * ponytail: pencocok andal baru ada untuk sales-receipt (sidik jari pelanggan+tanggal+faktur+nilai); jenis lain (retur, PO, …)
+ * → null = tidak dicek, baris tanpa jawaban tetap TIDAK PASTI. Tambah pencocok per jenis bila memang dibutuhkan. */
+export const pemastiRiwayatTulis = (writePath: string, accurateFetch: AccurateFetch) =>
+    writePath === "/api/sales-receipt/bulk-save.do" ? (rows: Bebas[]) => pratinjauRiwayatAccurate(rows, accurateFetch) : null;
 
 /**
  * S6e-2 (owner #6): pemeriksaan riwayat di SERVER, fail-closed. Logika = pratinjau (riwayatKelompok, mode ketat). `cocok` =

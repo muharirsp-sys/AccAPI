@@ -5,7 +5,8 @@ Side Effects: Tidak ada I/O; uang dibulatkan dua desimal, tidak memakai float un
 """
 import re
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from fractions import Fraction
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, ROUND_UP
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -163,9 +164,82 @@ def validate_programs(raw, master_codes, page_count):
     return programs
 
 
+def satuan(unit):
+    """Karton: surat menulis CTN, faktur Accurate menulis KRT -- satu satuan, dua nama."""
+    unit = str(unit or "").strip().upper()
+    return "KRT" if unit == "CTN" else unit
+
+
+# Program tanpa minimum ("Setiap Pengambilan"): beli berapa pun, satuan apa pun, sudah berlaku.
+# Dulu terkunci ke 1 PCS, jadi faktur ber-KRT tidak pernah dipotong (URC, MSM, Puratos Okt 2026).
+SEMUA_SATUAN = "SEMUA"
+
+
+def satuan_cocok(line_unit, program_unit):
+    return program_unit == SEMUA_SATUAN or satuan(line_unit) == satuan(program_unit)
+
+
+class RasioKosong(ValueError):
+    """Baris bersatuan lain dari program, tetapi isi satuannya tidak ada di master: order DITAHAN (owner 16 Okt 2026)."""
+
+
+def rasio_baris(line):
+    """`rasio` baris dari master barang Accurate: {satuan: isi dalam satuan dasar}, mis. {"PCS": 1, "KRT": 120}.
+
+    None = pemanggil tanpa data satuan (simulasi Summary): hanya baris bersatuan sama yang dihitung, seperti dulu.
+    """
+    mentah = line.get("rasio")
+    if not isinstance(mentah, dict):
+        return None
+    hasil = {}
+    for unit, nilai in list(mentah.items())[:10]:
+        try:
+            angka = Decimal(str(nilai))
+        except (InvalidOperation, ValueError):
+            continue
+        if angka.is_finite() and angka > 0:
+            hasil[satuan(unit)] = angka
+    return hasil
+
+
+def desimal(nilai):
+    """Fraction/Decimal -> Decimal (untuk rupiah dan teks), hanya di ujung hitungan."""
+    return Decimal(nilai.numerator) / Decimal(nilai.denominator) if isinstance(nilai, Fraction) else nilai
+
+
+def angka_teks(nilai, naik=False):
+    """Jumlah hasil konversi bisa pecahan (100 PCS = 0,83 KRT): dua desimal, tanpa nol di belakang.
+    `naik` untuk kekurangan: kurang 1 PCS dari karton isi 240 tertulis 0,01, bukan "Tambah 0"."""
+    return format(desimal(nilai).quantize(Decimal("0.01"), rounding=ROUND_UP if naik else ROUND_HALF_UP).normalize(), "f")
+
+
+def kelompok_baris(program, eligible):
+    """Mix/nilai = sekeranjang; per barang = per KODE, bukan per baris -- 4 KRT + 120 PCS barang A = 5 KRT barang A."""
+    if program.mix or program.threshold == "value":
+        return [eligible]
+    per_kode = {}
+    for line in eligible:
+        per_kode.setdefault(line["code"], []).append(line)
+    return list(per_kode.values())
+
+
+def jumlah_dalam(line, program_unit):
+    """Jumlah baris dalam satuan program: 120 PCS = 1 KRT bila isi karton 120. None = tidak bisa dikonversi.
+
+    Pecahan EKSAK (Fraction): 3 x 40 PCS isi 120 harus tepat 1 KRT, bukan 0,999... yang jatuh di bawah ambang.
+    """
+    if satuan_cocok(line["unit"], program_unit):
+        return Fraction(line["quantity"])
+    rasio = line["rasio"] or {}
+    asal, tujuan = rasio.get(satuan(line["unit"])), rasio.get(satuan(program_unit))
+    return Fraction(line["quantity"]) * Fraction(asal) / Fraction(tujuan) if asal and tujuan else None
+
+
 def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known_classes=()):
     """Highest qualifying tier per program; explicit priority and all-party stacking.
-    Quantities require exact units; no inferred conversion. Value = before tax.
+    Quantity thresholds count every line in the program's unit: CTN = KRT (see `satuan`), and other units
+    convert through the line's `rasio` (owner 16 Okt 2026: 4 KRT + 20 PCS + 100 PCS isi 120 = 5 KRT, all lines
+    get the tier). A line that needs a missing ratio holds the order (`RasioKosong`). Value = before tax.
     Each percentage compounds on remaining eligible value; rupiah follows percentages.
     """
     when = date.fromisoformat(order_date)
@@ -184,17 +258,24 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
             raise ValueError("Jumlah barang harus lebih dari nol")
         gross = money(qty * price)
         lines.append(dict(code=code, unit=unit, quantity=qty, gross=gross, net=gross, applied=[],
-                          percents=[], cash=Decimal(0)))
+                          percents=[], cash=Decimal(0), rasio=rasio_baris(line)))
     applications, bonuses, blocked = [], [], []
     for program in sorted(programs, key=lambda p: (p.priority, p.id)):
         if not program.start <= when <= program.end or program.channel not in ("ALL", channel):
             continue
         # Batas nilai adalah soal uang, bukan satuan: program "minimal transaksi Rp X" harus
         # menghitung semua satuan barangnya, kalau tidak satu order BTL+PCS terpecah dua.
-        eligible = [line for line in lines if line["code"] in program.codes
-                    and (program.threshold == "value" or line["unit"] == program.unit)
-                    and (not line["applied"] or (program.stacking and all(line["applied"]))) ]
-        if not eligible:
+        jumlah, tanpa_rasio = {}, []
+        for line in lines:
+            if line["code"] not in program.codes or (line["applied"] and not (program.stacking and all(line["applied"]))):
+                continue
+            banyak = Fraction(line["quantity"]) if program.threshold == "value" else jumlah_dalam(line, program.unit)
+            if banyak is not None:
+                jumlah[id(line)] = banyak
+            elif line["rasio"] is not None:
+                tanpa_rasio.append(line)
+        eligible = [line for line in lines if id(line) in jumlah]
+        if not eligible and not tanpa_rasio:
             continue
         # Kelayakan outlet diperiksa setelah barangnya cocok supaya yang dilaporkan hanya
         # program yang benar-benar hampir berlaku, bukan seluruh isi pustaka aturan.
@@ -202,23 +283,28 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
         if not allowed:
             blocked.append(dict(program_id=program.id, program_name=program.name, reason=reason))
             continue
+        if tanpa_rasio:
+            contoh = tanpa_rasio[0]
+            raise RasioKosong(f"Isi satuan {contoh['unit']} -> {program.unit} untuk barang {contoh['code']} belum ada di master Accurate, "
+                              f"padahal program {program.name} menghitung ambangnya dalam {program.unit}. Lengkapi satuan barang itu di "
+                              "Accurate, sync, lalu hitung ulang order.")
         # Batas nilai selalu dihitung sekeranjang. "Minimal transaksi Rp 1 juta" adalah syarat
         # belanja, bukan syarat per baris; menghitungnya per baris membuat order Rp 9 juta
         # jatuh ke tier Rp 1 juta berkali-kali.
-        groups = [eligible] if (program.mix or program.threshold == "value") else [[line] for line in eligible]
+        groups = kelompok_baris(program, eligible)
         for group in groups:
             if not group:
                 continue
-            metric = sum((line["quantity"] for line in group), Decimal(0)) if program.threshold == "quantity" else sum((line[program.basis] for line in (lines if program.value_scope == "order" else group)), Decimal(0))
-            tier = next((tier for tier in reversed(program.tiers) if metric >= number(tier.minimum)), None)
+            metric = sum((jumlah[id(line)] for line in group), Fraction(0)) if program.threshold == "quantity" else Fraction(sum((line[program.basis] for line in (lines if program.value_scope == "order" else group)), Decimal(0)))
+            tier = next((tier for tier in reversed(program.tiers) if metric >= Fraction(number(tier.minimum))), None)
             if tier is None:
                 continue
-            factor = int(metric // number(tier.minimum)) if tier.repeat else 1
+            factor = int(metric // Fraction(number(tier.minimum))) if tier.repeat else 1
             before = sum((line["net"] for line in group), Decimal(0))
             after = before
             for percentage in tier.percentages:
                 after = money(after * (1 - number(percentage) / 100))
-            units = sum((line["quantity"] for line in group), Decimal(0)) if tier.rupiah_mode == "per_unit" else Decimal(1)
+            units = desimal(sum((jumlah[id(line)] for line in group), Fraction(0))) if tier.rupiah_mode == "per_unit" else Decimal(1)
             # Bagian persen dan bagian rupiah dicatat terpisah karena faktur Accurate harus
             # MENAMPILKAN keduanya: `itemDiscPercent` untuk rantai persennya, `itemCashDiscount`
             # untuk potongan rupiahnya. Totalnya tetap satu angka yang sama seperti sebelumnya.
@@ -243,15 +329,15 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
                 line["cash"] += extra
                 remaining -= extra
             if tier.bonus_scope == "purchased":
-                bonuses.append(dict(program_id=program.id, code="", unit=tier.bonus_unit, quantity=str(number(tier.bonus_quantity) * factor),
+                bonuses.append(dict(program_id=program.id, code="", unit=satuan(tier.bonus_unit), quantity=str(number(tier.bonus_quantity) * factor),
                                     eligible_codes=sorted({line["code"] for line in group})))
             elif tier.bonus_code:
-                bonuses.append(dict(program_id=program.id, code=tier.bonus_code, unit=tier.bonus_unit, quantity=str(number(tier.bonus_quantity) * factor)))
+                bonuses.append(dict(program_id=program.id, code=tier.bonus_code, unit=satuan(tier.bonus_unit), quantity=str(number(tier.bonus_quantity) * factor)))
             applications.append(dict(program_id=program.id, minimum=tier.minimum, discount=str(discount)))
     gross = sum((line["gross"] for line in lines), Decimal(0))
     net = sum((line["net"] for line in lines), Decimal(0))
     return dict(gross=str(gross), discount=str(gross-net), net=str(net), bonuses=bonuses, applications=applications, blocked=blocked,
-                lines=[{k: str(v) if isinstance(v, Decimal) else v for k, v in line.items() if k != "applied"} for line in lines])
+                lines=[{k: str(v) if isinstance(v, Decimal) else v for k, v in line.items() if k not in ("applied", "rasio")} for line in lines])
 
 
 UNITS = {"PCS", "PC", "CTN", "DUS", "BOX", "PAK", "PACK", "RTG", "KRT", "LSN", "BAL", "SET", "KG", "GR", "LTR", "ML", "BTL", "SCH", "REN"}
@@ -282,11 +368,16 @@ def clean_number(raw):
 
 # Trigger kuantitas diperiksa lebih dulu: "Beli 1 ... potongan Rp 4.700" adalah trigger 1 PCS,
 # bukan belanja Rp 4.700. Nilai rupiah hanya menjadi batas bila frasanya memang frasa pembelian.
-QUANTITY_TRIGGER = re.compile(r"(?:beli|pembelian|kelipatan|setiap)\s*([\d.,]+)\s*([A-Za-z]*)", re.I)
+QUANTITY_TRIGGER = re.compile(r"(?:beli|pembelian|pengambilan|kelipatan|setiap)\s*(\d[\d.,]*)\s*([A-Za-z]*)", re.I)
+# Ambang yang tertulis di luar pola "Beli N" ("minimal 5 KRT", "min. 10", "lebih dari 3", ">= 10",
+# "Rp 5.000.000"): kalimat yang memuatnya BUKAN tanpa minimum walau diawali "setiap pengambilan".
+ADA_AMBANG = re.compile(r"\bmin(?:imal|imum)?\b|lebih\s+dari|paling\s+sedikit|sedikitnya|sebanyak|di\s+atas|ke\s+atas"
+                        r"|\bmulai\b|[>≥]|\brp\b\.?\s*\d", re.I)
 VALUE_TRIGGER = re.compile(r"(?:pembelian|belanja|minimal|minimum|min\.?|nilai|senilai|omz?et)\s*(?:sebesar\s*)?rp\.?\s*([\d.,]+)", re.I)
 PER_UNIT_MARKS = ("per satuan", "per unit", "per pcs", "/pcs", "per pc", "masing-masing")
 NO_MINIMUM_MARKS = ("tidak ada minimum", "tanpa minimum", "tidak ada pembatasan", "tanpa pembatasan",
-                    "tidak ada minimal", "tanpa minimal", "setiap pembelian", "tiap pembelian", "semua pembelian")
+                    "tidak ada minimal", "tanpa minimal", "setiap pembelian", "tiap pembelian", "semua pembelian",
+                    "setiap pengambilan", "tiap pengambilan", "semua pengambilan")
 
 
 PACKAGE_CELL = re.compile(r"^\s*(\d{1,5})\s*\+\s*(\d{1,5})\s*([A-Za-z]*)\s*$")
@@ -308,12 +399,15 @@ def threshold_of(ketentuan):
     if quantity:
         unit = quantity.group(2).upper()
         return "quantity", clean_number(quantity.group(1)), unit if unit in UNITS else "PCS"
-    lowered = ketentuan.lower()
-    if any(mark in lowered for mark in NO_MINIMUM_MARKS):
-        return "quantity", "1", "PCS"
     money = VALUE_TRIGGER.search(ketentuan)
     if money:
         return "value", clean_number(money.group(1)), "PCS"
+    lowered = ketentuan.lower()
+    sisa = lowered
+    for mark in NO_MINIMUM_MARKS:  # "tanpa minimum" sendiri bukan ambang
+        sisa = sisa.replace(mark, " ")
+    if any(mark in lowered for mark in NO_MINIMUM_MARKS) and not ADA_AMBANG.search(sisa):
+        return "quantity", "1", SEMUA_SATUAN
     return "", "", ""
 
 
@@ -361,8 +455,15 @@ def tier_of(row, codes, minimum, unit="PCS"):
         return None, "benefit_type harus DISC_PCT, DISC_RP, atau BONUS_QTY"
     # "berlaku kelipatan" pada surat = tier berulang. Persen dan potongan per satuan sudah
     # naik sendiri mengikuti belanja, jadi mengulangnya lagi akan menghitung ganda.
-    if "kelipatan" in str(row.get("ketentuan", "")).lower() and not tier["percentages"] and tier["rupiah_mode"] != "per_unit":
+    # "Tidak/tanpa/bukan (berlaku) kelipatan" adalah penyangkalan, bukan tier berulang (Dahlia F617TK, 15 Okt).
+    ketentuan = str(row.get("ketentuan", "")).lower()
+    if ("kelipatan" in ketentuan and not re.search(r"\b(?:tidak|tanpa|bukan)\s+(?:berlaku\s+)?kelipatan", ketentuan)
+            and not tier["percentages"] and tier["rupiah_mode"] != "per_unit"):
         tier["repeat"] = True
+    # Tanpa minimum menghitung barang lintas satuan; hanya persen yang benar tanpa tahu satuannya.
+    # Rupiah dan bonus terhitung per baris faktur (KRT dan PCS barang yang sama = dua kali).
+    if unit == SEMUA_SATUAN and (tier["rupiah"] != "0" or tier["bonus_quantity"] != "0"):
+        return None, "tanpa minimum hanya untuk diskon persen; untuk potongan rupiah/bonus tulis satuannya, mis. 'Beli 1 PCS'"
     return tier, ""
 
 
@@ -412,7 +513,9 @@ def compile_programs(rows, period=None, items=None):
     """
     fallback_start, fallback_end = (str(period[0]).strip(), str(period[1]).strip()) if period else ("", "")
     groups, issues = {}, []
-    for index, row in enumerate(rows):
+    # Baris tanpa minimum (SEMUA) diproses TERAKHIR supaya bisa menumpang ke program saudaranya.
+    urutan = sorted(enumerate(rows), key=lambda baris: threshold_of(str(baris[1].get("ketentuan", "")))[2] == SEMUA_SATUAN)
+    for index, row in urutan:
         label = f"Baris {str(row.get('no') or index + 1)}"
         ketentuan = str(row.get("ketentuan", ""))
         codes = [code.strip() for code in str(row.get("kode_barangs", "")).split(",") if code.strip()]
@@ -427,10 +530,6 @@ def compile_programs(rows, period=None, items=None):
             continue
         if not minimum:
             issues.append(f"{label}: ketentuan belum menyebut 'Beli N' atau nilai rupiah minimum.")
-            continue
-        tier, problem = tier_of(row, codes, minimum, unit)
-        if problem:
-            issues.append(f"{label}: {problem}")
             continue
         outlet, problem = outlet_rule_of(row)
         if problem:
@@ -448,6 +547,17 @@ def compile_programs(rows, period=None, items=None):
                str(row.get("channel_gtmt", "")).strip().upper() or "ALL", start, end, unit, kind,
                mix, any(mark in blob for mark in STACK_MARKS), tuple(sorted(codes)), outlet,
                any(mark in blob for mark in FIRST_PO_MARKS), lintas)
+        if unit == SEMUA_SATUAN:
+            # "Setiap pembelian 2%" + "Beli 30 PCS 5%" barang yang sama = SATU program bertingkat.
+            # Dua program terpisah berebut baris faktur: yang lebih dulu menang, strata atas mati.
+            saudara = {k[4] for k in groups if k[:4] + k[5:] == key[:4] + key[5:] and k[4] != SEMUA_SATUAN}
+            if len(saudara) == 1:
+                unit = saudara.pop()
+                key = key[:4] + (unit,) + key[5:]
+        tier, problem = tier_of(row, codes, minimum, unit)
+        if problem:
+            issues.append(f"{label}: {problem}")
+            continue
         group = groups.setdefault(key, {"rows": [], "tiers": {}})
         group["rows"].append(row)
         if minimum in group["tiers"]:
@@ -541,7 +651,7 @@ def suggestions(programs, raw_lines, order_date, channel, limit=20, outlet_class
     for line in raw_lines:
         quantity, price = number(line["quantity"]), number(line["price"])
         lines.append(dict(code=str(line["code"]), unit=str(line["unit"]), quantity=quantity,
-                          gross=money(quantity * price), price=price))
+                          gross=money(quantity * price), price=price, rasio=rasio_baris(line)))
     found = []
     for program in sorted(programs, key=lambda item: (item.priority, item.id)):
         if not program.start <= when <= program.end or program.channel not in ("ALL", channel):
@@ -549,25 +659,27 @@ def suggestions(programs, raw_lines, order_date, channel, limit=20, outlet_class
         # Jangan menjanjikan potongan yang tidak akan dihitung kalkulator untuk outlet ini.
         if not outlet_allows(program, outlet_classes, known_classes)[0]:
             continue
-        eligible = [line for line in lines if line["code"] in program.codes
-                    and (program.threshold == "value" or line["unit"] == program.unit)]
-        for group in ([eligible] if (program.mix or program.threshold == "value") else [[line] for line in eligible]):
+        # Sama dengan kalkulator: satuan lain dihitung lewat rasio; yang tak bisa dikonversi dilewati (kalkulator yang menahannya).
+        jumlah = {id(line): (Fraction(line["quantity"]) if program.threshold == "value" else jumlah_dalam(line, program.unit))
+                  for line in lines if line["code"] in program.codes}
+        eligible = [line for line in lines if jumlah.get(id(line)) is not None]
+        for group in kelompok_baris(program, eligible):
             if not group:
                 continue
             counted = lines if (program.threshold == "value" and program.value_scope == "order") else group
-            metric = (sum((line["quantity"] for line in group), Decimal(0)) if program.threshold == "quantity"
-                      else sum((line["gross"] for line in counted), Decimal(0)))
-            nearest = next((tier for tier in program.tiers if number(tier.minimum) > metric), None)
+            metric = (sum((jumlah[id(line)] for line in group), Fraction(0)) if program.threshold == "quantity"
+                      else Fraction(sum((line["gross"] for line in counted), Decimal(0))))
+            nearest = next((tier for tier in program.tiers if Fraction(number(tier.minimum)) > metric), None)
             if nearest is None:
                 continue
-            gap = number(nearest.minimum) - metric
+            gap = Fraction(number(nearest.minimum)) - metric
             if program.threshold == "quantity":
-                message = f"Tambah {gap.quantize(Decimal('1'))} {program.unit} lagi untuk {benefit_text(nearest)}"
+                message = f"Tambah {angka_teks(gap, naik=True)} {program.unit} lagi untuk {benefit_text(nearest)}"
             else:
-                message = f"Tambah {rupiah(gap)} lagi untuk {benefit_text(nearest)}"
+                message = f"Tambah {rupiah(desimal(gap))} lagi untuk {benefit_text(nearest)}"
             found.append(dict(program_id=program.id, program_name=program.name, threshold=program.threshold,
                               codes=sorted({line["code"] for line in group}), minimum=nearest.minimum,
-                              current=str(metric), gap=str(gap), message=message))
+                              current=angka_teks(metric), gap=angka_teks(gap), message=message))
     # Yang paling mudah dicapai lebih dulu supaya tampilan tidak penuh saran mustahil.
     found.sort(key=lambda item: (Decimal(item["gap"]), item["program_id"]))
     return found[:limit]

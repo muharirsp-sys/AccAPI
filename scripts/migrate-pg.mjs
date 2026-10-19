@@ -713,6 +713,37 @@ export const migrations = [
     `,
   },
   {
+    // 2026-10-12 (K2a, BL-59; owner 12 Okt: setoran Giro WAJIB nomor BG + tanggal jatuh tempo). Dua kolom nullable di kasir_setoran +
+    // CHECK aturan owner JUGA di DB (keputusan orkestrator sesudah tinjauan B: tabel belum ada di produksi -> murah): Giro > 0 -> nomor BG +
+    // jatuh tempo; Transfer > 0 -> bukti_transfer; nominal > 0 -> no_form_kasir. Tabel kasir_setoran KOSONG sampai K2a (tak ada route tulis
+    // sebelumnya) -> ADD CONSTRAINT aman. SESUDAH entri kasir K1a. Lihat db/migrations/0032_kasir_setoran_giro.sql + docs/handover/DDL_K2A.sql
+    // (pemilik, SEBELUM image: accapi_app bukan pemilik). sudahAda lewat katalog pg_attribute/pg_constraint (tanpa hak tabel
+    // information_schema kosong -> ALTER 42501 -> crash loop).
+    nama: "kasir_setoran giro (K2a)",
+    sudahAda: `SELECT 1 WHERE (SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('kasir_setoran') AND NOT attisdropped
+                 AND attname IN ('giro_nomor', 'giro_jatuh_tempo')) = 2
+               AND (SELECT count(*) FROM pg_constraint WHERE conrelid = to_regclass('kasir_setoran') AND conname IN ('kasir_setoran_giro_nomor',
+                 'kasir_setoran_giro_wajib', 'kasir_setoran_bukti_wajib', 'kasir_setoran_form_wajib')) = 4`,
+    sql: `
+      ALTER TABLE kasir_setoran ADD COLUMN IF NOT EXISTS giro_nomor text;
+      ALTER TABLE kasir_setoran ADD COLUMN IF NOT EXISTS giro_jatuh_tempo date;
+      DO $k2a$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'kasir_setoran'::regclass AND conname = 'kasir_setoran_giro_nomor') THEN
+          ALTER TABLE kasir_setoran ADD CONSTRAINT kasir_setoran_giro_nomor CHECK (btrim(giro_nomor) <> '');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'kasir_setoran'::regclass AND conname = 'kasir_setoran_giro_wajib') THEN
+          ALTER TABLE kasir_setoran ADD CONSTRAINT kasir_setoran_giro_wajib CHECK (giro = 0 OR (giro_nomor IS NOT NULL AND giro_jatuh_tempo IS NOT NULL));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'kasir_setoran'::regclass AND conname = 'kasir_setoran_bukti_wajib') THEN
+          ALTER TABLE kasir_setoran ADD CONSTRAINT kasir_setoran_bukti_wajib CHECK (transfer = 0 OR bukti_transfer IS NOT NULL);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'kasir_setoran'::regclass AND conname = 'kasir_setoran_form_wajib') THEN
+          ALTER TABLE kasir_setoran ADD CONSTRAINT kasir_setoran_form_wajib CHECK ((tunai + transfer + giro) = 0 OR no_form_kasir IS NOT NULL);
+        END IF;
+      END $k2a$;
+    `,
+  },
+  {
     // 2026-10-12 (O1 order per cabang Accurate; DRAFT — zona skema + jalur order, butuh review manusia). EXPAND KOLOM saja pada tabel
     // lama (item, customer, sales_profile) — ALTER butuh role PEMILIK: tanpa DATABASE_MIGRATION_URL jalankan docs/handover/DDL_O1.sql
     // SEBELUM image (sesudahnya entri ini SKIP). sudahAda lewat pg_attribute (tanpa hak tabel information_schema kosong -> ALTER 42501 ->
@@ -852,6 +883,48 @@ export const migrations = [
       CREATE INDEX IF NOT EXISTS idx_noo_antrean ON noo_toko (status, branch_id);
       CREATE INDEX IF NOT EXISTS idx_noo_nik ON noo_toko (nik) WHERE status <> 'ditolak';
       CREATE INDEX IF NOT EXISTS idx_noo_hp ON noo_toko (no_hp) WHERE status <> 'ditolak';
+    `,
+  },
+  {
+    // 2026-10-16 (Supervisor Review SR-1; zona §3 skema + jalur sinkron — butuh review manusia). EXPAND saja: 4 kolom ringkas nullable TANPA
+    // default di sales_invoice (hanya katalog), sales_profile.no_hp + CHECK, tabel baru toko_koordinat. ALTER/CREATE butuh role PEMILIK:
+    // tanpa DATABASE_MIGRATION_URL jalankan docs/handover/DDL_SUPERVISOR_REVIEW.sql SEBELUM image (sesudahnya entri ini SKIP); hak accapi_app
+    // (toko_koordinat SELECT/INSERT/UPDATE) HANYA di DDL itu. sudahAda lewat katalog (pg_attribute + pg_constraint), bukan information_schema
+    // (tanpa hak tabel kosong -> ALTER 42501 -> crash loop). SQL = db/migrations/0036_supervisor_review.sql + (tinjauan A #191) lock_timeout
+    // 5 dtk (ALTER sales_invoice ±2,3 GB tidak menunggu kunci kueri/webhook tanpa batas; tertahan = container gagal start, jalankan DDL dulu)
+    // + hak toko_koordinat setara DDL bila role aplikasi ada. Produksi PUNYA DATABASE_MIGRATION_URL: tanpa DDL entri ini yang menerapkan.
+    // SET/RESET (bukan SET LOCAL): satu koneksi dipakai semua entri; RESET mengembalikan bawaan untuk entri sesudahnya.
+    nama: "supervisor review (SR-1)",
+    sudahAda: `SELECT 1 WHERE (SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('sales_invoice') AND NOT attisdropped
+                 AND attname IN ('salesman_id', 'qty_total', 'jumlah_item', 'dpp')) = 4
+               AND (SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('sales_profile') AND NOT attisdropped AND attname = 'no_hp') = 1
+               AND (SELECT count(*) FROM pg_constraint WHERE (conrelid = to_regclass('sales_profile') AND conname = 'sales_profile_no_hp')
+                 OR (conrelid = to_regclass('toko_koordinat') AND conname = 'toko_koordinat_wilayah')) = 2`,
+    sql: `
+      SET lock_timeout = '5s';
+      ALTER TABLE IF EXISTS sales_invoice ADD COLUMN IF NOT EXISTS salesman_id bigint, ADD COLUMN IF NOT EXISTS qty_total numeric,
+          ADD COLUMN IF NOT EXISTS jumlah_item integer, ADD COLUMN IF NOT EXISTS dpp numeric(18,2);
+      ALTER TABLE sales_profile ADD COLUMN IF NOT EXISTS no_hp text;
+      DO $sr1$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'sales_profile'::regclass AND conname = 'sales_profile_no_hp') THEN
+          ALTER TABLE sales_profile ADD CONSTRAINT sales_profile_no_hp CHECK (no_hp ~ '^08[1-9][0-9]{7,10}$');
+        END IF;
+      END $sr1$;
+      CREATE TABLE IF NOT EXISTS toko_koordinat (
+          cust_code       text PRIMARY KEY,
+          lat             double precision NOT NULL,
+          lng             double precision NOT NULL,
+          diperbarui_pada timestamptz NOT NULL DEFAULT now(),
+          diperbarui_oleh text NOT NULL,
+          CONSTRAINT toko_koordinat_wilayah CHECK (lat BETWEEN -11 AND 6 AND lng BETWEEN 95 AND 141)
+      );
+      DO $sr1hak$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
+          REVOKE DELETE, TRUNCATE ON toko_koordinat FROM accapi_app;
+          GRANT SELECT, INSERT, UPDATE ON toko_koordinat TO accapi_app;
+        END IF;
+      END $sr1hak$;
+      RESET lock_timeout;
     `,
   },
 ];

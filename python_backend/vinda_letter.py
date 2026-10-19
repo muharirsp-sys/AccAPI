@@ -100,6 +100,10 @@ def _common(text):
         "principle": "VINDA",
         "periode_start": start,
         "periode_end": end,
+        # Nomor SKP menamai channel-nya sebagai satu segmen: ".../TRADEPROMO/GT/DISTRIBUTOR/...".
+        # Kosong = semua channel, jadi tanpa ini promo GT ikut jatuh ke outlet MT. Segmen lain
+        # ("GTLKA" pada surat strata nasional) sengaja tidak ditebak.
+        "channel_gtmt": "GT" if nomor and "/GT/" in nomor.group(1).upper() else "",
         "channel_list": area.group(1).strip() if area else "",
         "syarat_claim": "",
         "keterangan": "",
@@ -181,7 +185,10 @@ def parse_text(text, page_count=1):
                 "mechanism": "STRATA_DISC_PCT_UNNAMED_SKU"}
 
     bonus = LOCK_VOLUME_RE.search(blob)
-    products = list(PRODUCT_LINE_RE.finditer(blob))
+    # Surat Q4 2026 mencetak tabel produk dua kali (halaman 1 dan "Lampiran"), jadi tiap
+    # barcode muncul dua kali. Satu barcode = satu baris (urutan kemunculan pertama; isi
+    # tangkapannya identik di kedua salinan karena pola hanya menangkap identitas produk).
+    products = list({m.group(1): m for m in PRODUCT_LINE_RE.finditer(blob)}.values())
     if not products:
         warnings.append("Tidak ada baris produk (barcode+nama+pack) yang terbaca dari surat; "
                          "isi baris manual dari lampiran.")
