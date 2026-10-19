@@ -404,3 +404,13 @@ test("Tanpa area hanya menandai outlet Heinz; outlet principal lain tanpa area b
     const exc = await db.query(`SELECT ref_kode FROM wave_exception WHERE wave_id = $1 AND jenis = 'OUTLET_TANPA_AREA'`, [w]);
     assert.deepEqual(exc.rows.map((r) => r.ref_kode), ["C-TA2"]);
 });
+
+test("Detail wave: riwayat berisi event wave dan grup tersedia berisi pick_group (urutan kueri tidak tertukar)", T_UJI, async () => {
+    const w = await waveBaru("2026-10-18", 1);
+    const d = (await jawab(rWaveId.GET(new Request(`http://app.test/x/${w}`), ctx(w)))).body as {
+        riwayat: Array<{ event: string; created_at: string }>; pickGroupTersedia: Array<{ kode: string; dimensi: string }>;
+    };
+    assert.deepEqual(d.riwayat.map((r) => r.event), ["wave.created"]);
+    assert.ok(d.riwayat[0].created_at, "riwayat punya waktu");
+    assert.ok(d.pickGroupTersedia.length > 0 && d.pickGroupTersedia.every((g) => g.kode && g.dimensi), "grup tersedia = pick_group");
+});
