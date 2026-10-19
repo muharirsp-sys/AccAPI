@@ -13,7 +13,7 @@
 import { useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { RefreshCw } from "lucide-react";
-import { Button, EmptyState, ErrorState, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, VariantNote, type Column } from "@/components/fiori/core";
+import { Button, EmptyState, ErrorState, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, type Column } from "@/components/fiori/core";
 import { FormField, type Load } from "@/components/fiori/interactive";
 import { DEFAULT_KONSTANTA, type Konstanta } from "@/lib/insentif-konstanta";
 import { HALAMAN, halamanTerlihat, sebabNol, formatPctText, formatQty, formatRatio, type ApiRow } from "@/lib/insentif-ui";
@@ -24,8 +24,6 @@ import {
     sebabNolSm, sebabNolSpv, strataSm, useInsentifSm, useInsentifSpv, type SmIncentiveRow, type SpvIncentiveRow,
 } from "./Rincian";
 
-/** Izin yang membuat server menampilkan seluruh perusahaan (lib/insentif-hierarchy-scope LIHAT_SEMUA_KEYS). */
-const LIHAT_SEMUA = ["view_all", "manage", "manage_payment", "manage_hierarchy"];
 const jumlah = <T,>(xs: T[], f: (x: T) => number) => xs.reduce((a, x) => a + f(x), 0);
 
 export default function Dashboard({ permKeys }: { permKeys: string[] }) {
@@ -121,12 +119,6 @@ export default function Dashboard({ permKeys }: { permKeys: string[] }) {
                 }
                 aksi={<Button icon={<RefreshCw className="fi-icon" aria-hidden />} busy={dash.status === "memuat" && Boolean(d)} onClick={muatSemua}>Muat ulang</Button>}
             >
-                {d && !d.cakupan.dibatasi && !LIHAT_SEMUA.some((k) => perms.has(`insentif_sales.${k}`)) && (
-                    <VariantNote bl="BL-26">
-                        Akun Anda belum ditautkan ke hierarki insentif, dan hari ini server tetap menampilkan data seluruh perusahaan. Bila BL-26
-                        masuk, akun tanpa tautan melihat pesan &ldquo;belum ditautkan&rdquo; alih-alih data siapa pun.
-                    </VariantNote>
-                )}
                 {isi}
             </InsentifRangka>
         </KonstantaCtx.Provider>
@@ -139,6 +131,11 @@ function Kosong({ d, label, saringanAktif, hrefData, reset }: { d: DashboardData
     const { cakupan, progressFeed } = d;
     // Tabel kosong karena "bukan cakupan Anda" dulu terlihat persis sama dengan "target belum diunggah". Nama identitas disebutkan karena
     // penyebab paling sering adalah bedanya penulisan nama ("Marten" vs "MARTEN").
+    if (cakupan.dibatasi && !cakupan.identitas) {
+        // BL-26: tanpa tautan hierarki server memberi cakupan kosong (dulu: seluruh perusahaan).
+        return <EmptyState title="Akun Anda belum ditautkan ke hierarki insentif"
+            message="Minta Admin menautkan akun Anda di Kelola Hierarki. Sampai itu, data insentif siapa pun tidak ditampilkan." />;
+    }
     if (cakupan.dibatasi && !cakupan.jumlahKode) {
         return <EmptyState title="Belum ada salesman dalam cakupan Anda"
             message={`Identitas hierarki Anda: ${cakupan.identitas?.role?.toUpperCase() ?? "-"} "${cakupan.identitas?.name ?? "belum diisi"}". Tidak ada kode sales yang cocok untuk periode ini — pastikan penulisannya sama persis dengan kolom SPV/SM di file target.`} />;
