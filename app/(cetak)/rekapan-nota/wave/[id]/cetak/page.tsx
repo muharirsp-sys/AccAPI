@@ -15,12 +15,28 @@
  * <tr> dan hanya sejajar karena kebetulan urutan array — tampilan yang menyiratkan hubungan
  * yang tidak ada adalah kelas kesalahan yang sama dengan yang diperbaiki modul ini.
  */
+import type { Metadata } from "next";
 import { Fragment } from "react";
 import { pool } from "@/lib/db";
 import { ambilPickGroup, buildRekapan, type WithdrawalRow } from "@/lib/rekapan-nota/query";
-import { hariIniWita, jamWita, nomorLembar } from "@/lib/rekapan-nota/ui";
+import { hariIniWita, jamWita, judulBerkas, nomorLembar } from "@/lib/rekapan-nota/ui";
 
 export const dynamic = "force-dynamic";
+
+type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ grup?: string }> };
+const grupDari = async (searchParams: Props["searchParams"]) =>
+    String((await searchParams).grup ?? "").split(",").map(Number).filter(Number.isInteger);
+
+/** Judul = nama berkas PDF saat disimpan: nomor lembar + tanggal-jam cetak (owner 20 Okt 2026). */
+export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
+    const id = Number((await params).id);
+    const [w, grup] = await Promise.all([
+        pool.query<{ tanggal: string }>(`SELECT tanggal::text FROM wave WHERE id = $1`, [id]),
+        grupDari(searchParams).then(ambilPickGroup),
+    ]);
+    if (!w.rowCount) return {};
+    return { title: judulBerkas(nomorLembar("RKP", w.rows[0].tanggal, id, grup.map((g) => g.kode).join("+") || "ALL")) };
+}
 
 const ID = (v: number, d = 0) =>
     v.toLocaleString("id-ID", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -83,15 +99,9 @@ function bagiHalaman(baris: Baris[]): Baris[][] {
     return halaman.length ? halaman : [[]];
 }
 
-export default async function CetakRekapanPage({
-    params, searchParams,
-}: {
-    params: Promise<{ id: string }>;
-    searchParams: Promise<{ grup?: string }>;
-}) {
+export default async function CetakRekapanPage({ params, searchParams }: Props) {
     const id = Number((await params).id);
-    const grupIds = String((await searchParams).grup ?? "")
-        .split(",").map(Number).filter(Number.isInteger);
+    const grupIds = await grupDari(searchParams);
 
     const w = await pool.query<{ nama: string; tanggal: string; urutan: number; status: string }>(
         `SELECT nama, tanggal::text, urutan, status::text FROM wave WHERE id = $1`, [id]);
@@ -264,7 +274,7 @@ export default async function CetakRekapanPage({
                             </span>
                             <span>
                                 Halaman {h + 1} dari {totalHalaman} &middot; dicetak{" "}
-                                {sekarang.toLocaleString("id-ID")}
+                                {dicetak} WITA
                             </span>
                         </div>
                     </section>
@@ -331,7 +341,7 @@ export default async function CetakRekapanPage({
                             </span>
                             <span>
                                 Halaman {nomor} dari {totalHalaman} &middot; dicetak{" "}
-                                {sekarang.toLocaleString("id-ID")}
+                                {dicetak} WITA
                             </span>
                         </div>
                     </section>

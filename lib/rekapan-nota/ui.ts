@@ -4,7 +4,7 @@
  * Caller: app/(dashboard)/rekapan-nota/*.tsx, ui.test.ts.
  * Dependensi: Tidak ada. Pure.
  * Main Functions: WAVE_STATUS, EXCEPTION_LABEL, menahanKonfirmasi, tanggalPanjang, tanggalPendek, jamWita,
- *   saringPool, urutanBerikutnya, formatKarton, labelEvent, nomorLembar, hariIniWita, ambil.
+ *   saringPool, urutanBerikutnya, formatKarton, labelEvent, nomorLembar, judulBerkas, hariIniWita, ambil.
  * Side Effects: `ambil` melakukan GET (dipakai komponen klien); sisanya pure.
  */
 import type { Tone } from "@/components/fiori/core";
@@ -63,6 +63,16 @@ export const hariIniWita = (d = new Date()) => new Intl.DateTimeFormat("en-CA", 
  */
 export function nomorLembar(jenis: "RKP" | "TTF", tanggalWave: string, waveId: number, kode?: string) {
     return [jenis, tanggalWave.slice(2, 4) + tanggalWave.slice(5, 7), String(waveId).padStart(4, "0"), kode].filter(Boolean).join("/");
+}
+
+/**
+ * Judul halaman cetak = nama berkas bawaan "Save as PDF" (owner 20 Okt 2026): nomor lembar tanpa "/" + tanggal-jam cetak WITA,
+ * mis. RKP-2610-0002-JP-FKS_20261020-0940. Jam = saat halaman dimuat (sama dengan "dicetak" di kop); muat ulang untuk jam baru.
+ */
+export function judulBerkas(noLembar: string, d = new Date()) {
+    const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar", year: "numeric", month: "2-digit",
+        day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d).map((x) => [x.type, x.value]));
+    return `${noLembar.replaceAll("/", "-")}_${p.year}${p.month}${p.day}-${p.hour}${p.minute}`;
 }
 
 export const formatKarton = (krt: number | null | undefined) =>
