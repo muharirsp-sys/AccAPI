@@ -579,6 +579,9 @@ UI pilih pick_group -> /rekapan-nota/wave/[id]/cetak?grup=...   (server componen
          allocation : GROUP BY no_nota      -> Nomor Nota & Rayon
        (balance dijamin struktural: sumbernya satu)
        grup sedimensi di-OR, antar-dimensi di-AND (HNZ1 = Area 1/10/PGU DAN Non Pareto)
+  -> DUA PANEL per halaman (owner 20 Okt 2026): withdrawal kiri, allocation (nota + rayon) kanan, dipaginasi
+     sendiri-sendiri & bernomor sendiri (baris kanan tidak sejajar kiri); kop: No. RKP/<yymm>/<wave>/<grup> + jam cetak WITA;
+     judul halaman = nama PDF (RKP-...-<grup>_<yyyymmdd-HHmm>)
   -> window.print(); kaki halaman memuat wave, grup, jumlah SKU, total pcs, waktu cetak
 
 --- 8.4 TTF (Tanda Terima Faktur) ---

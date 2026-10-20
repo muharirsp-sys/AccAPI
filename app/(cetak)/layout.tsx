@@ -126,13 +126,13 @@ const GAYA = `
 
 /* Jumlah ambil: pahlawan barisnya. Angka dan satuan punya kolom sendiri supaya SEJAJAR
    ke bawah -- deretan angka yang rata bisa dipindai sekali lihat, yang gerigi tidak. */
-.ambil { width: 38mm; background: var(--tint); white-space: nowrap; text-align: right; }
+.ambil { width: 33mm; background: var(--tint); white-space: nowrap; text-align: right; }
 .ambil span { display: inline-block; vertical-align: baseline; }
 .ambil .n  { width: 11mm; text-align: right; font-size: 11.5pt; font-weight: 700; letter-spacing: -0.01em; }
-.ambil .u  { width: 7mm;  text-align: left;  font-size: 7pt;  font-weight: 700; padding-left: 0.7mm; }
-.ambil .n2 { width: 9mm;  text-align: right; font-size: 8pt; font-weight: 600; }
-.ambil .u2 { width: 6mm;  text-align: left;  font-size: 6.5pt; font-weight: 600; color: var(--samar); padding-left: 0.7mm; }
-.audit { width: 24mm; text-align: right; font-size: 6.5pt; color: var(--samar); white-space: nowrap; }
+.ambil .u  { width: 6mm;  text-align: left;  font-size: 7pt;  font-weight: 700; padding-left: 0.7mm; }
+.ambil .n2 { width: 8mm;  text-align: right; font-size: 8pt; font-weight: 600; }
+.ambil .u2 { width: 5mm;  text-align: left;  font-size: 6.5pt; font-weight: 600; color: var(--samar); padding-left: 0.7mm; }
+.audit { width: 15mm; text-align: right; font-size: 6.5pt; color: var(--samar); white-space: nowrap; }
 
 /* Exception harus KELIHATAN salah, bukan disamarkan jadi tanda tanya. */
 td.ambil.cacat { background: #dcdcdc; text-align: center; }
@@ -156,17 +156,26 @@ tr.keluarga td { border: none; height: 3mm; padding: 0; background: none !import
 .paraf span { display: block; font-size: 6.5pt; text-transform: uppercase; letter-spacing: 0.08em; color: var(--samar); }
 .paraf u { display: block; margin-top: 9mm; border-top: 0.75pt solid var(--tinta); text-decoration: none; }
 
-/* ---------- Blok nota (allocation) ---------- */
-.blok-nota { margin-top: 7mm; break-inside: auto; }
-.blok-nota h2 { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
-    border-bottom: 0.75pt solid var(--garis-tegas); padding-bottom: 1mm; margin: 0 0 2mm; }
-.grid-nota { columns: 3; column-gap: 6mm; font-size: 7pt; }
-.grid-nota div { break-inside: avoid; padding: 0.7mm 0; border-bottom: 0.3pt dotted var(--garis); display: flex; justify-content: space-between; gap: 2mm; }
-.grid-nota b { font-weight: 600; font-family: "Consolas", ui-monospace, monospace; }
-.grid-nota i { font-style: normal; color: var(--samar); text-align: right; }
-.grid-nota .urgent { font-weight: 700; }
-.grid-nota .urgent b::before { content: "\\25B2\\00A0"; }
-
+/* ---------- Dua panel: barang kiri, nota & rayon kanan (owner 20 Okt 2026) ---------- */
+/* Garis tegak tebal + nomor sendiri di kanan: dua daftar berdampingan, BUKAN satu tabel --
+   baris kanan tidak sejajar dengan baris kiri dan tidak boleh terbaca sebagai pasangannya. */
+.dua-panel { display: grid; grid-template-columns: minmax(0, 1fr) 64mm; gap: 3mm; margin-top: 1mm; }
+.panel-nota { border-left: 1.5pt solid var(--tinta); padding-left: 2.5mm; font-size: 7pt; min-width: 0; }
+.judul-kolom-nota { display: flex; justify-content: space-between; gap: 2mm; font-size: 6.5pt; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--samar); padding: 1.5mm 0 1mm;
+    border-bottom: 0.75pt solid var(--garis-tegas); }
+.panel-nota .nota { display: grid; grid-template-columns: 6mm 25mm minmax(0, 1fr); gap: 1mm; align-items: baseline;
+    padding: 0.9mm 0; border-bottom: 0.3pt dotted var(--garis); white-space: nowrap; }
+.panel-nota .nota i { font-style: normal; color: var(--samar); text-align: right; font-size: 6.5pt; }
+.panel-nota .nota b { font-weight: 600; font-family: "Consolas", ui-monospace, monospace; font-size: 7pt; }
+.panel-nota .nota span { overflow: hidden; text-overflow: ellipsis; color: var(--samar); font-size: 6.5pt; }
+.panel-nota .nota em { font-style: normal; font-weight: 700; color: var(--tinta); }
+.panel-nota .urgent b::before { content: "\\25B2\\00A0"; }
+.panel-habis { margin: 3mm 0; font-size: 7pt; color: var(--samar); }
+/* Paraf ringkas di samping empat angka halaman 1 -- tidak memakan tinggi halaman. */
+.angka-utama .paraf-ringkas { flex: 1; display: flex; gap: 4mm; margin-left: 4mm; }
+.angka-utama .paraf-ringkas div { flex: 1; }
+.angka-utama .paraf-ringkas u { display: block; margin-top: 5mm; border-top: 0.75pt solid var(--tinta); text-decoration: none; }
 /* ---------- Jejak cetakan ---------- */
 .jejak { margin-top: 6mm; padding-top: 1.5mm; border-top: 0.4pt solid var(--garis);
     font-size: 6pt; color: var(--samar); display: flex; justify-content: space-between; gap: 4mm; }
