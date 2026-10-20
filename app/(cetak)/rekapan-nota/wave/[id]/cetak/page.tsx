@@ -18,6 +18,7 @@
 import { Fragment } from "react";
 import { pool } from "@/lib/db";
 import { ambilPickGroup, buildRekapan, type WithdrawalRow } from "@/lib/rekapan-nota/query";
+import { hariIniWita, jamWita, nomorLembar } from "@/lib/rekapan-nota/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -103,13 +104,15 @@ export default async function CetakRekapanPage({
     const krtDari = (r: WithdrawalRow) => Math.floor(Number(r.sat_bsr) || 0);
     const totalKarton = withdrawal.reduce((a, r) => a + krtDari(r), 0);
     const kodeGrup = grup.map((g) => g.kode).join("+") || "ALL";
+    const noLembar = nomorLembar("RKP", wave.tanggal, id, kodeGrup);
     const tanggal = new Date(wave.tanggal + "T00:00:00").toLocaleDateString("id-ID",
         { day: "numeric", month: "long", year: "numeric" });
 
     const sekarang = new Date();
     // Dicetak di hari yang berbeda dari tanggal wave = besar kemungkinan cetak ulang, dan
     // lembar lama mungkin masih beredar di gudang. Dua lembar sama = risiko ambil dobel.
-    const cetakUlang = sekarang.toISOString().slice(0, 10) !== wave.tanggal;
+    const cetakUlang = hariIniWita(sekarang) !== wave.tanggal;
+    const dicetak = jamWita(sekarang);
     const adaUrgent = allocation.some((a) => a.prioritas === "urgent");
 
     const baris: Baris[] = withdrawal.map((r, i) => ({
@@ -146,6 +149,7 @@ export default async function CetakRekapanPage({
                                         {wave.status !== "released" && ` · ${wave.status.toUpperCase()}`}
                                         {cetakUlang && <b className="ulang">Cetak ulang</b>}
                                     </div>
+                                    <div className="kop-sub">No. <b>{noLembar}</b> &middot; dicetak {dicetak} WITA</div>
                                 </div>
                                 <div className="kop-kanan">
                                     <div className="kop-kode">{kodeGrup}</div>
@@ -286,6 +290,7 @@ export default async function CetakRekapanPage({
                                         {" · "}{wave.nama.toUpperCase()} &middot; {tanggal} &middot; Wave #{id}
                                         {cetakUlang && <b className="ulang">Cetak ulang</b>}
                                     </div>
+                                    <div className="kop-sub">No. <b>{noLembar}</b> &middot; dicetak {dicetak} WITA</div>
                                 </div>
                                 <div className="kop-kanan">
                                     <div className="kop-kode">{kodeGrup}</div>

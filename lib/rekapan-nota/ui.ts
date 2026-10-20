@@ -4,7 +4,7 @@
  * Caller: app/(dashboard)/rekapan-nota/*.tsx, ui.test.ts.
  * Dependensi: Tidak ada. Pure.
  * Main Functions: WAVE_STATUS, EXCEPTION_LABEL, menahanKonfirmasi, tanggalPanjang, tanggalPendek, jamWita,
- *   saringPool, urutanBerikutnya, formatKarton, labelEvent, ambil.
+ *   saringPool, urutanBerikutnya, formatKarton, labelEvent, nomorLembar, hariIniWita, ambil.
  * Side Effects: `ambil` melakukan GET (dipakai komponen klien); sisanya pure.
  */
 import type { Tone } from "@/components/fiori/core";
@@ -52,6 +52,17 @@ export function jamWita(iso: string | Date) {
     const tgl = new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short", timeZone: "Asia/Makassar" }).format(d);
     const jam = new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Makassar" }).format(d);
     return `${tgl} ${jam}`;
+}
+
+/** Tanggal hari ini (yyyy-mm-dd) dalam WITA — bukan UTC, yang masih "kemarin" sampai 08.00 WITA. */
+export const hariIniWita = (d = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(d);
+
+/**
+ * Nomor lembar TETAP per wave + lembar (owner 20 Okt 2026), gaya nomor Accurate: RKP/2610/0002/ALL, TTF/2610/0002.
+ * Cetak ulang = nomor sama; jam cetak di kop yang membedakan dua cetakan. Wave id unik global, jadi nomornya unik.
+ */
+export function nomorLembar(jenis: "RKP" | "TTF", tanggalWave: string, waveId: number, kode?: string) {
+    return [jenis, tanggalWave.slice(2, 4) + tanggalWave.slice(5, 7), String(waveId).padStart(4, "0"), kode].filter(Boolean).join("/");
 }
 
 export const formatKarton = (krt: number | null | undefined) =>
