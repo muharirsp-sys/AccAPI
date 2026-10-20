@@ -126,12 +126,15 @@ const GAYA = `
 
 /* Jumlah ambil: pahlawan barisnya. Angka dan satuan punya kolom sendiri supaya SEJAJAR
    ke bawah -- deretan angka yang rata bisa dipindai sekali lihat, yang gerigi tidak. */
-.ambil { width: 33mm; background: var(--tint); white-space: nowrap; text-align: right; }
+.ambil { width: 17mm; background: var(--tint); white-space: nowrap; text-align: right; }
 .ambil span { display: inline-block; vertical-align: baseline; }
-.ambil .n  { width: 11mm; text-align: right; font-size: 11.5pt; font-weight: 700; letter-spacing: -0.01em; }
-.ambil .u  { width: 6mm;  text-align: left;  font-size: 7pt;  font-weight: 700; padding-left: 0.7mm; }
-.ambil .n2 { width: 8mm;  text-align: right; font-size: 8pt; font-weight: 600; }
-.ambil .u2 { width: 5mm;  text-align: left;  font-size: 6.5pt; font-weight: 600; color: var(--samar); padding-left: 0.7mm; }
+/* Sat. besar | Sat. kecil: dua kolom sejajar ke bawah, angka sama besar -- kolom mana yang dibaca
+   ditentukan pekerjaannya (ambil karton vs ambil pcs), bukan oleh ukuran huruf. */
+.ambil .n { width: 10mm; text-align: right; font-size: 11pt; font-weight: 700; letter-spacing: -0.01em; }
+.ambil .u { width: 5mm;  text-align: left;  font-size: 6.5pt; font-weight: 700; padding-left: 0.6mm; }
+.ambil.kecil { border-left: 0.75pt solid #fff; }
+.cetak tbody td.ambil { padding-left: 1mm; padding-right: 1mm; }
+.ambil .nol { color: #b0b0b0; font-size: 9pt; padding-right: 2mm; }
 .audit { width: 15mm; text-align: right; font-size: 6.5pt; color: var(--samar); white-space: nowrap; }
 
 /* Exception harus KELIHATAN salah, bukan disamarkan jadi tanda tanya. */

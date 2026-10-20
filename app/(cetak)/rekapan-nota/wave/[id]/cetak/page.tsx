@@ -204,14 +204,16 @@ export default async function CetakRekapanPage({ params, searchParams }: Props) 
                                         <colgroup>
                                             <col style={{ width: "6mm" }} />
                                             <col />
-                                            <col style={{ width: "33mm" }} />
+                                            <col style={{ width: "17mm" }} />
+                                            <col style={{ width: "17mm" }} />
                                             <col style={{ width: "15mm" }} />
                                         </colgroup>
                                         <thead>
                                             <tr className="judul-kolom">
                                                 <th className="centang" />
                                                 <th>Nama barang</th>
-                                                <th className="kanan ambil">Ambil</th>
+                                                <th className="kanan ambil">Sat. besar</th>
+                                                <th className="kanan ambil">Sat. kecil</th>
                                                 <th className="kanan audit">Pcs / isi</th>
                                             </tr>
                                         </thead>
@@ -226,7 +228,7 @@ export default async function CetakRekapanPage({ params, searchParams }: Props) 
 
                                                 return (
                                                     <Fragment key={r.kode_barang}>
-                                                        {r.pisah && <tr className="keluarga"><td colSpan={4} /></tr>}
+                                                        {r.pisah && <tr className="keluarga"><td colSpan={5} /></tr>}
                                                         <tr>
                                                             <td className="centang"><i /></td>
                                                             <td className="nama">
@@ -236,30 +238,28 @@ export default async function CetakRekapanPage({ params, searchParams }: Props) 
                                                                 <span className="spek">{spek}</span>
                                                                 {kode && <span className="kode-internal">{kode}</span>}
                                                             </td>
+                                                            {/* Dua kolom TETAP (owner 20 Okt 2026): kiri selalu satuan besar, kanan
+                                                                selalu satuan kecil. Pengambil karton cukup membaca kolom kiri ke bawah,
+                                                                pengambil pcs kolom kanan; nol = "–" samar, bukan angka. */}
                                                             {tanpaKonversi ? (
-                                                                <td className="ambil cacat"><b>KONVERSI BELUM ADA</b></td>
+                                                                <td colSpan={2} className="ambil cacat"><b>KONVERSI BELUM ADA</b></td>
                                                             ) : (
-                                                                <td className="ambil">
-                                                                    {/* Nol karton tidak boleh jadi angka terbesar:
-                                                                        mata mendarat di "0" padahal yang diambil
-                                                                        justru satuan kecilnya. */}
-                                                                    {krt > 0 ? (
-                                                                        <>
+                                                                <>
+                                                                    <td className="ambil besar">
+                                                                        {krt > 0 ? <>
                                                                             <span className="n">{ID(krt)}</span>
                                                                             {/* isi 1 = barang tidak dikarton (jerigen,
                                                                                 drum). Menyebutnya KRT menyesatkan. */}
                                                                             <span className="u">{konv === 1 ? kecil : "KRT"}</span>
-                                                                            <span className="n2">{kcl > 0 ? `+${ID(kcl)}` : ""}</span>
-                                                                            <span className="u2">{kcl > 0 ? kecil : ""}</span>
-                                                                        </>
-                                                                    ) : (
-                                                                        <>
+                                                                        </> : <span className="nol">–</span>}
+                                                                    </td>
+                                                                    <td className="ambil kecil">
+                                                                        {kcl > 0 ? <>
                                                                             <span className="n">{ID(kcl)}</span>
                                                                             <span className="u">{kecil}</span>
-                                                                            <span className="n2" /><span className="u2" />
-                                                                        </>
-                                                                    )}
-                                                                </td>
+                                                                        </> : <span className="nol">–</span>}
+                                                                    </td>
+                                                                </>
                                                             )}
                                                             <td className="audit">
                                                                 {ID(Number(r.total_pcs))} / {tanpaKonversi ? "?" : ID(konv!)}
@@ -276,9 +276,10 @@ export default async function CetakRekapanPage({ params, searchParams }: Props) 
                                                 <td colSpan={2} className="label">
                                                     Subtotal hal. {h + 1} &middot; {ID(isi.length)} jenis barang
                                                 </td>
-                                                <td className="ambil nilai">
+                                                <td className="ambil besar nilai">
                                                     {ID(krtHalaman)} <span className="satuan">KRT</span>
                                                 </td>
+                                                <td className="ambil kecil" />
                                                 <td className="audit kuat">{ID(pcsHalaman)} pcs</td>
                                             </tr>
                                         </tfoot>
