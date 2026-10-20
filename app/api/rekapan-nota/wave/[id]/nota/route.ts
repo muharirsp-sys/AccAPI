@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
-import { ambilSetting } from "@/lib/rekapan-nota/query";
+import { ambilSetting, masterOutletSql } from "@/lib/rekapan-nota/query";
 import { tolakUbahIsi, type UbahIsi, type WaveStatus } from "@/lib/rekapan-nota/wave-state";
 import type { PoolClient } from "pg";
 
@@ -67,14 +67,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         // Snapshot klasifikasi dihitung SEKARANG dan disimpan: master boleh berubah besok,
         // rekapan hari ini tidak boleh ikut berubah (R2.2).
         const ins = await client.query<{ no_nota: string }>(
-            `WITH src AS (
+            `WITH mo AS (${masterOutletSql(`k.kunci IN (SELECT upper(kode_cust) FROM wave_line_pool
+                                                     WHERE tanggal = $2::date AND no_nota = ANY($3::text[]))`)}),
+             src AS (
                 SELECT p.no_nota,
                        max(upper(c.area))                  AS area,
                        coalesce(max(c.grup_all), 'Gabung') AS grup_all,
                        coalesce(max(c.grup_gdi), 'Gabung') AS grup_gdi,
                        sum(p.qty_pcs / NULLIF(coalesce(p.konv_tersirat, i.isi_per_karton), 0)) AS total_krt
                   FROM wave_line_pool p
-                  LEFT JOIN customer c ON c."customerNo" = p.kode_cust
+                  LEFT JOIN mo c       ON c.kunci = upper(p.kode_cust)
                   LEFT JOIN item i     ON i.no = p.kode_barang
                  WHERE p.tanggal = $2::date AND p.no_nota = ANY($3::text[])
                  GROUP BY p.no_nota)

@@ -550,6 +550,8 @@ UI /rekapan-nota -> upload "Rincian Faktur Penjualan" (.xlsx dari Accurate)
 UI /rekapan-nota/wave/[id]
   -> GET  /api/rekapan-nota/pool?tanggal=...   (anti-join ke wave_assignment)
        * buang nota bertanda kanvas (outlet ber-area NON / LUAR KOTA IKUT, seperti TTF Excel — owner 19 Okt 2026)
+       * area/grup outlet dari masterOutletSql(): kode outlet export (C-500003) cocok dengan customer persis ATAU
+         berakhiran principal (C-500003-HZ, -KN, ...) — sama dengan COCOK_OUTLET impor master (20 Okt 2026)
   -> POST /api/rekapan-nota/wave/[id]/nota     INSERT ... ON CONFLICT DO NOTHING RETURNING
        * uq_nota_aktif menolak nota yang sudah aktif di wave lain -> 409 + identitas pemiliknya
        * simpan snapshot: snap_grup_all, snap_grup_gdi, snap_area, snap_pareto, snap_total_krt
