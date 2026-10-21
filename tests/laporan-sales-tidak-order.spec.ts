@@ -124,7 +124,7 @@ test("galat dengan data lama: ganti bulan gagal -> SATU strip 'Gagal memuat ulan
     await expect(main.getByText("8 dari 24 kunjungan tidak order (33,3%)")).toBeVisible(NAV);
     await main.getByLabel("Bulan").fill("2020-01");
     await expect(main.getByText("Gagal memuat ulang.")).toHaveCount(1, NAV);
-    await expect(main.getByText("Yang tampil adalah hasil sebelumnya.")).toBeVisible();
+    await expect(main.getByText(/Yang tampil adalah hasil sebelumnya \(bulan \d{4}-\d{2}\)\./)).toBeVisible();
     await expect(main.getByText("8 dari 24 kunjungan tidak order (33,3%)")).toBeVisible();
     await expect(main.getByRole("table", { name: "Alasan tidak order" }).locator("tbody tr")).toHaveCount(4);
 });
