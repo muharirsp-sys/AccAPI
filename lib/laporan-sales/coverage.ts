@@ -2,13 +2,16 @@
  * Tujuan: Laporan Sales — tab "Coverage Ganda" (padanan EskaLink Compare/Double Coverage): toko JKS aktif yang dilayani > 1 salesman
  *   untuk principal yang sama, lengkap dengan hari + pola minggu tiap salesman. Kontrak: lib/laporan-sales/kontrak.ts (JawabanCoverage).
  * Caller: app/api/laporan-sales/coverage/route.ts (GET).
- * Dependensi: lib/db, db/schema (jks_master), lib/form-kontrol/scope (UserScope, tipe saja), ./kontrak (tipe jawaban).
+ * Dependensi: lib/db, db/schema (jks_master), lib/form-kontrol/constants (kodeJksUntuk), lib/form-kontrol/scope (UserScope, tipe saja),
+ *   ./kontrak (tipe jawaban).
  * Main Functions: susunCoverage (MURNI: pengelompokan + normalisasi + cakupan), muatCoverage (satu kueri baris JKS aktif -> susunCoverage).
  * Side Effects: Tidak ada (baca saja).
  *
  * Aturan:
  * - Ganda = (cust_code, principle) dengan > 1 sales_code BERBEDA. Kode dibandingkan dengan trim + huruf besar ("c-1 " = "C-1");
  *   satu salesman dengan dua baris JKS untuk toko yang sama (hari berbeda / beda huruf) BUKAN ganda — barisnya digabung.
+ * - Kode pelanggan Accurate LENGKAP (C-100001-CBA, ditulis konfirmasi luar rute) = kode JKS PENDEK (C-100001, unggahan JKS): disamakan lewat
+ *   kodeJksUntuk (semantik cocokKodeRute) HANYA bila kode pendek itu ada di JKS aktif principal yang sama; yang tampil kode pendek itu.
  * - Cakupan: global = semua. Non-global = kelompok yang SALAH SATU salesman-nya ada di allowedSalesCodes; kelompok itu tampil UTUH
  *   (semua salesman, juga yang di luar cakupan) supaya SPV tahu bentrok dengan siapa. Kelompok tanpa salesman dalam cakupan disembunyikan.
  *   Karena itu pengelompokan memakai SEMUA baris JKS aktif, bukan hanya baris cakupan (kalau tidak, bentrok dengan salesman luar tak terlihat).
@@ -18,6 +21,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jksMaster } from "@/db/schema";
+import { kodeJksUntuk } from "@/lib/form-kontrol/constants";
 import type { UserScope } from "@/lib/form-kontrol/scope";
 import type { BarisCoverage, JawabanCoverage, SalesmanCoverage } from "./kontrak";
 
@@ -37,6 +41,19 @@ const unik = (xs: (string | null | undefined)[]) => {
 };
 
 /**
+ * Pemeta kode toko untuk pengelompokan: kode lengkap -> kode pendek (kodeJksUntuk) hanya bila kode pendek itu ada di antara kode JKS aktif
+ * principal yang sama. Penjagaan itu mencegah "C-100001" runtuh ke "C" dan toko tanpa padanan pendek tetap berkode lengkap.
+ * ponytail: tanpa pengetahuan format akhiran cabang, "C-2000-01" bisa disamakan dengan toko "C-2000" bila keduanya ada di principal yang sama.
+ */
+function pemetaKodeToko(rows: BarisJks[]): (r: BarisJks) => string {
+    const ada = new Set(rows.map((r) => `${kodeBaku(r.principle)}\u0000${kodeBaku(r.custCode)}`));
+    return (r) => {
+        const [lengkap = "", pendek] = kodeJksUntuk(r.custCode);
+        return pendek && ada.has(`${kodeBaku(r.principle)}\u0000${pendek}`) ? pendek : lengkap;
+    };
+}
+
+/**
  * Murni. `rows` = SEMUA baris JKS aktif; `allowedSalesCodes` null = global; `principle` null/"" = semua principal.
  * Urutan baris: principal, nama toko, kode toko; salesman per kelompok: kode salesman.
  */
@@ -44,6 +61,7 @@ export function susunCoverage(rows: BarisJks[], allowedSalesCodes: string[] | nu
     const boleh = allowedSalesCodes === null ? null : new Set(allowedSalesCodes.map(kodeBaku));
     const dalamCakupan = (r: BarisJks) => boleh === null || boleh.has(kodeBaku(r.salesCode));
     const pilih = kodeBaku(principle);
+    const kodeToko = pemetaKodeToko(rows);
 
     const kelompok = new Map<string, BarisJks[]>();
     const tokoCakupan = new Set<string>();
@@ -51,10 +69,10 @@ export function susunCoverage(rows: BarisJks[], allowedSalesCodes: string[] | nu
     for (const r of rows) {
         if (dalamCakupan(r)) {
             principalCakupan.add(kodeBaku(r.principle));
-            if (!pilih || kodeBaku(r.principle) === pilih) tokoCakupan.add(kodeBaku(r.custCode));
+            if (!pilih || kodeBaku(r.principle) === pilih) tokoCakupan.add(kodeToko(r));
         }
         if (pilih && kodeBaku(r.principle) !== pilih) continue;
-        const kunci = `${kodeBaku(r.custCode)}\u0000${kodeBaku(r.principle)}`;
+        const kunci = `${kodeToko(r)}\u0000${kodeBaku(r.principle)}`;
         kelompok.set(kunci, [...(kelompok.get(kunci) ?? []), r]);
     }
 
@@ -68,7 +86,7 @@ export function susunCoverage(rows: BarisJks[], allowedSalesCodes: string[] | nu
             hari: unik(rs.map((r) => r.hariKunjungan)).join(", "), minggu: unik(rs.map((r) => (r.mingguPattern ?? "").toLowerCase())).join(", "),
         }));
         const pertama = [...anggota].sort((a, b) => urut(kodeBaku(a.salesCode), kodeBaku(b.salesCode)));
-        baris.push({ custCode: kodeBaku(anggota[0].custCode), custName: unik(pertama.map((r) => r.custName))[0] ?? "", principle: kodeBaku(anggota[0].principle), salesman });
+        baris.push({ custCode: kodeToko(anggota[0]), custName: unik(pertama.map((r) => r.custName))[0] ?? "", principle: kodeBaku(anggota[0].principle), salesman });
     }
     baris.sort((a, b) => urut(a.principle, b.principle) || urut(a.custName, b.custName) || urut(a.custCode, b.custCode));
     return { pilihanPrincipal: [...principalCakupan].filter(Boolean).sort(urut), totalToko: tokoCakupan.size, baris };

@@ -17,12 +17,18 @@ const TOKO_A = { custCode: "C-A1", custName: "TOKO A", principle: "PRINCIPLE A",
     { salesCode: "SALES A", salesNama: "SALES A", hari: "Senin", minggu: "all" },
     { salesCode: "SALES B", salesNama: "Nama SALES B", hari: "Kamis", minggu: "1,3" },
 ] };
+// Toko yang sama ganda di DUA principal: ringkasan menghitung toko (2), judul tabel menghitung toko × principal (3).
+const TOKO_A_B = { custCode: "C-A1", custName: "TOKO A", principle: "PRINCIPLE B", salesman: [
+    { salesCode: "SALES C", salesNama: "SALES C", hari: "Jumat", minggu: "genap" },
+    { salesCode: "SALES E", salesNama: "SALES E", hari: "Sabtu", minggu: "all" },
+] };
 const TOKO_B = { custCode: "C-B1", custName: "TOKO B", principle: "PRINCIPLE B", salesman: [
     { salesCode: "SALES A", salesNama: "SALES A", hari: "", minggu: "ganjil" },
     { salesCode: "SALES C", salesNama: "SALES C", hari: "Selasa", minggu: "genap" },
     { salesCode: "SALES D", salesNama: "SALES D", hari: "Rabu", minggu: "all, genap" },
 ] };
-const DATA = { pilihanPrincipal: ["PRINCIPLE A", "PRINCIPLE B"], totalToko: 40, baris: [TOKO_A, TOKO_B] };
+const DATA = { pilihanPrincipal: ["PRINCIPLE A", "PRINCIPLE B"], totalToko: 40, baris: [TOKO_A, TOKO_A_B, TOKO_B] };
+const NAMA_TABEL = "Toko × principal dilayani lebih dari satu salesman";
 
 async function noOverflow(page: Page) {
     expect(await page.evaluate(() => { const m = document.querySelector("main"); return document.documentElement.scrollWidth <= innerWidth && (!m || m.scrollWidth <= m.clientWidth + 1); })).toBe(true);
@@ -45,23 +51,25 @@ test("siap: ringkasan, tabel Toko/Principal/Salesman, saringan principal memuat 
     await page.goto("/laporan-sales#coverage", NAV);
     const main = page.locator("main");
     await expect(main.getByRole("tab", { name: "Coverage Ganda" })).toHaveAttribute("aria-selected", "true", NAV);
-    const tabel = main.getByRole("table", { name: "Toko dilayani lebih dari satu salesman" });
+    const tabel = main.getByRole("table", { name: NAMA_TABEL });
     await expect(tabel).toBeVisible(NAV);
     await expect(main.locator("p[aria-live=polite]")).toHaveText("2 toko dilayani lebih dari satu salesman dari 40 toko JKS.");
     await expect(tabel.locator("thead th")).toHaveText(["Toko", "Principal", "Salesman"]);
-    await expect(tabel.locator("tbody tr")).toHaveCount(2);
-    const barisA = tabel.locator("tbody tr").filter({ hasText: "C-A1" });
+    await expect(tabel.locator("tbody tr")).toHaveCount(3);
+    const barisA = tabel.locator("tbody tr").nth(0);
     await expect(barisA).toContainText("TOKO A");
     await expect(barisA).toContainText("PRINCIPLE A");
     await expect(barisA).toContainText("SALES A · Senin · setiap minggu");
     await expect(barisA).toContainText("Nama SALES B (SALES B) · Kamis · minggu 1,3");
-    const barisB = tabel.locator("tbody tr").filter({ hasText: "C-B1" });
+    await expect(tabel.locator("tbody tr").nth(1)).toContainText("SALES E · Sabtu · setiap minggu");
+    const barisB = tabel.locator("tbody tr").nth(2);
+    await expect(barisB).toContainText("C-B1");
     await expect(barisB).toContainText("SALES A · hari belum diisi · minggu ganjil");
     await expect(barisB).toContainText("SALES D · Rabu · setiap minggu, minggu genap");
-    await expect(main.getByRole("heading", { level: 2, name: /Toko dilayani lebih dari satu salesman \(2\)/ })).toBeVisible();
+    await expect(main.getByRole("heading", { level: 2, name: /Toko × principal dilayani lebih dari satu salesman \(3\)/ })).toBeVisible();
     await page.screenshot({ path: "test-results/laporan-sales-coverage-siap.png", fullPage: true });
 
-    const pilih = main.getByLabel("Principal");
+    const pilih = main.getByLabel("Principal", { exact: true });
     await expect(pilih.locator("option")).toHaveText(["Semua principal", "PRINCIPLE A", "PRINCIPLE B"]);
     await pilih.selectOption("PRINCIPLE A");
     await expect(tabel.locator("tbody tr")).toHaveCount(1, NAV);
@@ -76,6 +84,29 @@ test("siap: ringkasan, tabel Toko/Principal/Salesman, saringan principal memuat 
     await page.waitForTimeout(400);
     expect(diminta).toHaveLength(sebelum);
     expect(diminta.every((d) => d.bulan === null)).toBe(true);
+});
+
+test("ringkasan aria-live: label principal ikut DATA, bukan pilihan baru (selagi memuat dan saat muat ulang gagal)", async ({ page }) => {
+    let lepas = () => {};
+    const tahan = new Promise<void>((r) => { lepas = r; });
+    await page.route(API, async (r) => {
+        if (new URL(r.request().url()).searchParams.get("principle") !== "PRINCIPLE B") return r.fulfill(json(DATA));
+        await tahan;
+        return r.fulfill(json({ error: "boom" }, 500));
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/laporan-sales#coverage", NAV);
+    const main = page.locator("main");
+    const ringkasan = main.locator("p[aria-live=polite]");
+    const SEMUA = "2 toko dilayani lebih dari satu salesman dari 40 toko JKS.";
+    await expect(ringkasan).toHaveText(SEMUA, NAV);
+    const dikirim = page.waitForRequest((q) => q.url().includes("principle=PRINCIPLE"));
+    await main.getByLabel("Principal", { exact: true }).selectOption("PRINCIPLE B");
+    await dikirim;
+    await expect(ringkasan).toHaveText(SEMUA);          // permintaan PRINCIPLE B masih tertahan: angka lama, tanpa label baru
+    lepas();
+    await expect(main.getByRole("alert")).toContainText("Yang tampil adalah hasil sebelumnya", NAV);
+    await expect(ringkasan).toHaveText(SEMUA);          // gagal: data lama dipertahankan, label tetap milik data itu
 });
 
 test("kosong: 'tidak ada toko ganda' (ada toko JKS) berbeda dari 'belum ada toko JKS' (cakupan tanpa toko)", async ({ page }) => {
@@ -106,7 +137,7 @@ test("galat: 500 tampil sebagai galat (bukan kosong), tanpa detail server; Coba 
     await page.screenshot({ path: "test-results/laporan-sales-coverage-galat.png" });
     gagal = false;
     await galat.getByRole("button", { name: "Coba lagi" }).click();
-    await expect(main.getByRole("table", { name: "Toko dilayani lebih dari satu salesman" }).locator("tbody tr")).toHaveCount(2, NAV);
+    await expect(main.getByRole("table", { name: NAMA_TABEL }).locator("tbody tr")).toHaveCount(3, NAV);
     await expect(main.getByRole("alert")).toHaveCount(0);
 });
 
@@ -116,12 +147,12 @@ test("galat dengan data lama: muat ulang gagal → tabel lama tetap tampil + str
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/laporan-sales#coverage", NAV);
     const main = page.locator("main");
-    const tabel = main.getByRole("table", { name: "Toko dilayani lebih dari satu salesman" });
-    await expect(tabel.locator("tbody tr")).toHaveCount(2, NAV);
+    const tabel = main.getByRole("table", { name: NAMA_TABEL });
+    await expect(tabel.locator("tbody tr")).toHaveCount(3, NAV);
     gagal = true;
     await main.getByRole("button", { name: "Muat ulang" }).click();
     await expect(main.getByRole("alert")).toContainText("Yang tampil adalah hasil sebelumnya", NAV);
-    await expect(tabel.locator("tbody tr")).toHaveCount(2);
+    await expect(tabel.locator("tbody tr")).toHaveCount(3);
     await page.screenshot({ path: "test-results/laporan-sales-coverage-galat-data-lama.png", fullPage: true });
 });
 
@@ -145,11 +176,11 @@ test("ponsel 390 px: daftar ListItem per toko (salesman terbaca utuh), tanpa gul
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/laporan-sales#coverage", NAV);
     const main = page.locator("main");
-    const daftar = main.getByRole("list", { name: "Toko dilayani lebih dari satu salesman" });
+    const daftar = main.getByRole("list", { name: NAMA_TABEL });
     await expect(daftar).toBeVisible(NAV);
-    await expect(daftar.locator("li")).toHaveCount(2);
+    await expect(daftar.locator("li")).toHaveCount(3);
     await expect(main.getByRole("table")).toBeHidden();
-    const itemA = daftar.locator("li").filter({ hasText: "C-A1" });
+    const itemA = daftar.locator("li").filter({ hasText: "C-A1 · PRINCIPLE A" });
     await expect(itemA).toContainText("TOKO A");
     await expect(itemA).toContainText("2 salesman");
     await expect(itemA).toContainText("C-A1 · PRINCIPLE A");

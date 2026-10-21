@@ -20,8 +20,11 @@ const angka = (n: number) => new Intl.NumberFormat("id-ID").format(n);
 // ponytail: penolakan dikenali dari kalimat ambilFk (403 tanpa izin / HIERARKI_BELUM_TERTAUT) — mengulang tidak membantu, jadi tanpa "Coba lagi".
 const DITOLAK = /tidak punya izin|belum tertaut ke hierarki/;
 
-async function baca(principle: string): Promise<Load<JawabanCoverage>> {
-    const l = await ambilFk(`/api/laporan-sales/coverage${principle ? `?principle=${encodeURIComponent(principle)}` : ""}`, (j) => j as unknown as JawabanCoverage, UMUM);
+/** Jawaban + principal yang diminta: label ringkasan harus ikut DATA-nya, bukan pilihan terbaru (data lama dipertahankan selagi memuat/galat). */
+type Hasil = JawabanCoverage & { principle: string };
+
+async function baca(principle: string): Promise<Load<Hasil>> {
+    const l = await ambilFk(`/api/laporan-sales/coverage${principle ? `?principle=${encodeURIComponent(principle)}` : ""}`, (j) => ({ ...(j as unknown as JawabanCoverage), principle }), UMUM);
     return l.status === "siap" && !Array.isArray(l.data?.baris) ? { status: "galat", error: `${UMUM} Jawaban server tidak dikenali.` } : l;
 }
 
@@ -52,10 +55,10 @@ export default function Coverage() {
                 </FormField>
                 <Button icon={<RefreshCw className="fi-icon" aria-hidden />} busy={load.status === "memuat"} onClick={muatUlang}>Muat ulang</Button>
             </div>
-            {h && <p aria-live="polite"><b>{angka(toko)}</b> toko dilayani lebih dari satu salesman dari <b>{angka(h.totalToko)}</b> toko JKS{principle ? ` ${principle}` : ""}.</p>}
+            {h && <p aria-live="polite"><b>{angka(toko)}</b> toko dilayani lebih dari satu salesman dari <b>{angka(h.totalToko)}</b> toko JKS{h.principle ? ` ${h.principle}` : ""}.</p>}
             {ditolak ? <EmptyState title="Coverage Ganda tidak bisa dibuka" message={load.error} /> : (
                 <ResponsiveTable<BarisCoverage>
-                    title="Toko dilayani lebih dari satu salesman" count={h?.baris.length}
+                    title="Toko × principal dilayani lebih dari satu salesman" count={h?.baris.length}
                     rows={h?.baris ?? []} rowKey={(b) => `${b.custCode}|${b.principle}`}
                     status={load.status} error={load.error} onRetry={muatUlang}
                     empty={h && h.totalToko === 0

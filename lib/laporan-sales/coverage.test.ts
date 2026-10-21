@@ -108,3 +108,32 @@ test("urutan baris: principal, nama toko, kode toko", () => {
 test("tanpa baris JKS: jawaban kosong", () => {
     assert.deepEqual(susunCoverage([], null, null), { pilihanPrincipal: [], totalToko: 0, baris: [] });
 });
+
+test("kode lengkap Accurate (luar rute) = kode pendek JKS (unggahan): satu toko, ganda terdeteksi, totalToko tidak dihitung dua kali", () => {
+    const r = susunCoverage([j("SALES A", "C-1"), j("SALES B", "c-1-cba ")], null, null);
+    assert.equal(r.baris.length, 1);
+    assert.equal(r.baris[0].custCode, "C-1", "yang tampil kode pendek");
+    assert.deepEqual(r.baris[0].salesman.map((s) => s.salesCode), ["SALES A", "SALES B"]);
+    assert.equal(r.totalToko, 1);
+    // cakupan hanya SALES B (kode lengkap): kelompok tetap tampil UTUH lewat kunci gabungan, toko dihitung sekali
+    const b = susunCoverage([j("SALES A", "C-1"), j("SALES B", "C-1-CBA")], ["SALES B"], null);
+    assert.deepEqual(b.baris.map((x) => x.salesman.map((s) => s.salesCode)), [["SALES A", "SALES B"]]);
+    assert.equal(b.totalToko, 1);
+    // salesman yang sama menulis dua gaya kode = bukan ganda
+    assert.deepEqual(susunCoverage([j("SALES A", "C-1"), j("SALES A", "C-1-CBA")], null, null).baris, []);
+    // saringan principal tetap bekerja pada kunci gabungan
+    assert.equal(susunCoverage([j("SALES A", "C-1"), j("SALES B", "C-1-CBA")], null, "principle a").baris.length, 1);
+    assert.equal(susunCoverage([j("SALES A", "C-1"), j("SALES B", "C-1-CBA")], null, "PRINCIPLE B").baris.length, 0);
+});
+
+test("penyamaan kode HANYA bila kode pendek ada di JKS aktif principal yang sama; kode tanpa akhiran tak runtuh", () => {
+    // kode pendek tak ada di JKS: dua kode lengkap beda akhiran tidak disamakan
+    const tanpa = susunCoverage([j("SALES A", "C-1-CBA"), j("SALES B", "C-1-MKS")], null, null);
+    assert.deepEqual(tanpa.baris, []);
+    assert.equal(tanpa.totalToko, 2);
+    // kode pendek hanya ada di principal lain: tidak disamakan
+    assert.deepEqual(susunCoverage([j("SALES A", "C-1", "PRINCIPLE B"), j("SALES B", "C-1-CBA", "PRINCIPLE A")], null, null).baris, []);
+    // "C-100001" tidak runtuh ke "C" (tak ada toko berkode "C"): tampil utuh
+    const utuh = susunCoverage([j("SALES A", "C-100001"), j("SALES B", "C-100001")], null, null);
+    assert.equal(utuh.baris[0].custCode, "C-100001");
+});
