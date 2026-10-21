@@ -1,12 +1,13 @@
 /*
- * Tujuan: Tab "Top 30" /laporan-sales: dua tabel (30 produk, 30 pelanggan teratas sebulan) menurut nilai DPP atau qty, disaring per principal.
+ * Tujuan: Tab "Top 30" /laporan-sales: dua tabel (30 produk, 30 pelanggan teratas sebulan) menurut nilai DPP atau qty (setara KRT), disaring per principal faktur.
  *   Berdampingan di layar ≥ 1536 px, bertumpuk di bawahnya; di ponsel tiap tabel menjadi daftar. Enam keadaan: memuat, siap, kosong,
  *   galat, galat dengan data lama (strip + hasil sebelumnya), tanpa izin (403 → kalimat izin dari ambilFk).
  * Caller: app/(dashboard)/laporan-sales/LaporanSales.tsx (tab "top30", bulan dari pemilih bulan kerangka).
  * Dependensi: lib/laporan-sales/{kontrak,top30} (hanya tipe), ../../form-kontrol/shared (ambilFk), components/fiori/{core,interactive}.
  * Main Functions: Top30 (default).
  * Side Effects: GET /api/laporan-sales/top30?bulan&urut&principle?.
- * Qty: baris yang memuat lebih dari satu satuan (KRT + PCS …) menampilkan "campur (daftar satuan)", bukan jumlah lintas satuan.
+ * Qty: server mengonversi ke KRT lewat master barang ("123,5 KRT"). Baris yang tak setara KRT (barang tanpa KRT / satuan tak dikenal) tampil apa adanya
+ *   (satu satuan: "N PCS"; beberapa: "campur (…)") dan tidak ikut urut Qty; jumlahnya dijelaskan di strip.
  */
 "use client";
 
@@ -23,8 +24,7 @@ const bulanTeks = (bulan: string) => {
     const [t, b] = bulan.split("-").map(Number);
     return new Date(Date.UTC(t, b - 1)).toLocaleDateString("id-ID", { month: "long", year: "numeric", timeZone: "UTC" });
 };
-const campur = (r: BarisTop30Satuan) => r.satuan.length > 1;
-const qtyTeks = (r: BarisTop30Satuan) => campur(r) ? `campur (${r.satuan.join(", ")})` : `${angka(r.qty)} ${r.satuan[0] ?? ""}`.trim();
+const qtyTeks = (r: BarisTop30Satuan) => r.satuan.length > 1 ? `campur (${r.satuan.join(", ")})` : `${angka(r.qty)} ${r.satuan[0] ?? ""}`.trim();
 
 const kolom = (judulKode: string): Column<BarisTop30Satuan>[] => [
     { key: "no", header: "Peringkat", cell: (r) => <span className="fi-tnum">{r.peringkat}</span> },
@@ -59,7 +59,7 @@ export default function Top30({ bulan }: PropsTab) {
     const daftar = principle && !opsi.includes(principle) ? [principle, ...opsi] : opsi;
     const saring = (
         <div className="flex flex-wrap items-end gap-3">
-            <FormField label="Principal">{(a) => (
+            <FormField label="Principal faktur">{(a) => (
                 <select {...a} className="fi-input" value={principle} onChange={(e) => setPrinciple(e.target.value)}>
                     <option value="">Semua principal</option>
                     {daftar.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -77,7 +77,7 @@ export default function Top30({ bulan }: PropsTab) {
     if (load.status === "galat" && !data) return <div className="space-y-4">{saring}<ErrorState message={load.error} onRetry={muatUlang} /></div>;
 
     const kosong = data && data.produk.length === 0 && data.pelanggan.length === 0;
-    const adaCampur = data && [...data.produk, ...data.pelanggan].some(campur);
+    const tidakSetara = data ? data.tidakSetaraKrt.produk + data.tidakSetaraKrt.pelanggan : 0;
     const memuat = load.status === "memuat";
     return (
         <div className="space-y-4" aria-busy={memuat || undefined}>
@@ -87,10 +87,11 @@ export default function Top30({ bulan }: PropsTab) {
                     {load.error} Yang tampil adalah hasil sebelumnya. <Button variant="tertiary" onClick={muatUlang}>Coba lagi</Button>
                 </MessageStrip>
             )}
-            {adaCampur && (
-                <MessageStrip tone="info" title="Qty tidak dijumlah lintas satuan">
-                    Baris yang memuat lebih dari satu satuan (mis. KRT dan PCS) ditulis &quot;campur&quot; karena satuan berbeda tidak setara.
-                    Urut Qty tetap menjumlah apa adanya, jadi baca bersama satuannya.
+            {principle && <p className="fi-help">Principal faktur: faktur campur principal dihitung utuh pada satu principal, jadi produk principal lain di faktur yang sama ikut terhitung.</p>}
+            {data && tidakSetara > 0 && (
+                <MessageStrip tone="info" title="Sebagian qty belum setara KRT">
+                    Qty dikonversi ke KRT memakai satuan master barang Accurate. {angka(data.tidakSetaraKrt.produk)} produk dan {angka(data.tidakSetaraKrt.pelanggan)} pelanggan
+                    tidak punya satuan KRT atau satuannya tak dikenal di master, jadi qty-nya apa adanya dan tidak ikut urut Qty.
                 </MessageStrip>
             )}
             {kosong ? (

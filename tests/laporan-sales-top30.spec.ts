@@ -1,7 +1,7 @@
 /*
- * Tujuan: Laporan Sales › Top 30 — siap (dua tabel berdampingan, rupiah id-ID, qty satuan tunggal vs campur), urut/principal dikirim ke API,
- *   kosong (semua vs per principal), galat ≠ kosong (+ Coba lagi), galat dengan data lama, tanpa izin (403), ponsel 390 px tanpa gulir
- *   menyamping halaman. Tanpa dialog native.
+ * Tujuan: Laporan Sales › Top 30 — siap (dua tabel berdampingan, rupiah id-ID, qty setara KRT vs baris tak setara + strip jumlahnya), urut/principal
+ *   dikirim ke API (label "Principal faktur" + catatan faktur campur), kosong (semua vs per principal), galat ≠ kosong (+ Coba lagi), galat dengan
+ *   data lama, tanpa izin (403), ponsel 390 px tanpa gulir menyamping halaman. Tanpa dialog native.
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
  *   `npx playwright test tests/laporan-sales-top30.spec.ts --config playwright.lap-top30.config.ts` (config sementara, tidak di-commit).
  * Dependensi: /api/laporan-sales/top30 di-mock dengan page.route (tidak menyentuh DB). Data contoh generik.
@@ -13,18 +13,20 @@ const json = (body: unknown, status = 200) => ({ status, contentType: "applicati
 const NAV = { timeout: 60_000 } as const;
 const API = (url: URL) => url.pathname === "/api/laporan-sales/top30";
 
-const b = (peringkat: number, kode: string, nama: string, nilai: number, qty: number, faktur: number, satuan: string[]) => ({ peringkat, kode, nama, nilai, qty, faktur, satuan });
+const b = (peringkat: number, kode: string, nama: string, nilai: number, qty: number, faktur: number, satuan: string[], setaraKrt = satuan.length === 1 && satuan[0] === "KRT") =>
+    ({ peringkat, kode, nama, nilai, qty, faktur, satuan, setaraKrt });
 const PRODUK = [
-    b(1, "P-A1", "PRODUK A1", 1_568_088_288, 145_851, 1850, ["KRT", "SCH"]),
+    b(1, "P-A1", "PRODUK A1", 1_568_088_288, 123.5, 1850, ["KRT"]),
     b(2, "P-A2", "PRODUK A2", 711_501_203, 87_397, 1310, ["KRT"]),
-    b(3, "P-A3", "PRODUK A3", 399_364_317, 1_234.5, 998, ["PCS"]),
+    b(3, "P-A3", "PRODUK A3", 399_364_317, 1_234.5, 998, ["PCS"]), // barang tanpa satuan KRT → satuan dasar, tak setara
 ];
 const PELANGGAN = [
-    b(1, "C-A01", "TOKO A1", 250_000_000, 9_000, 40, ["BTL", "KRT", "PCS"]),
+    b(1, "C-A01", "TOKO A1", 250_000_000, 9_000, 40, ["KRT", "PCS"]), // campur barang ber-KRT dan tanpa KRT
     b(2, "C-A02", "TOKO A2", 90_000_000, 120, 12, ["KRT"]),
 ];
 const jawaban = (over: Record<string, unknown> = {}) => ({
-    bulan: "2026-10", principle: null, urut: "nilai", pilihanPrincipal: ["PRINCIPLE A", "PRINCIPLE B"], produk: PRODUK, pelanggan: PELANGGAN, ...over,
+    bulan: "2026-10", principle: null, urut: "nilai", pilihanPrincipal: ["PRINCIPLE A", "PRINCIPLE B"], produk: PRODUK, pelanggan: PELANGGAN,
+    tidakSetaraKrt: { produk: 1, pelanggan: 1 }, ...over,
 });
 
 async function tanpaGulirMenyamping(page: Page) {
@@ -42,7 +44,7 @@ test.beforeEach(async ({ page }) => {
     page.on("dialog", (d) => { throw new Error(`window.${d.type()} masih dipakai: ${d.message()}`); });
 });
 
-test("siap: dua tabel berdampingan, rupiah id-ID, qty satuan tunggal vs campur, tanpa gulir menyamping", async ({ page }) => {
+test("siap: dua tabel berdampingan, rupiah id-ID, qty setara KRT vs baris tak setara, strip jumlah tak setara, tanpa gulir menyamping", async ({ page }) => {
     const diminta = await mock(page);
     await page.setViewportSize({ width: 1700, height: 900 });
     await page.goto("/laporan-sales", NAV);
@@ -53,12 +55,16 @@ test("siap: dua tabel berdampingan, rupiah id-ID, qty satuan tunggal vs campur, 
     await expect(pelanggan.locator("tbody tr")).toHaveCount(2);
 
     await expect(produk.locator("tbody tr").filter({ hasText: "PRODUK A1" })).toContainText("Rp 1.568.088.288");
+    await expect(produk.locator("tbody tr").filter({ hasText: "PRODUK A1" })).toContainText("123,5 KRT");
     await expect(produk.locator("tbody tr").filter({ hasText: "PRODUK A2" })).toContainText("87.397 KRT");
-    await expect(produk.locator("tbody tr").filter({ hasText: "PRODUK A3" })).toContainText("1.234,5 PCS");
-    await expect(produk.locator("tbody tr").filter({ hasText: "PRODUK A1" })).toContainText("campur (KRT, SCH)");
-    await expect(produk.locator("tbody tr").filter({ hasText: "PRODUK A1" })).not.toContainText("145.851");
-    await expect(pelanggan.locator("tbody tr").filter({ hasText: "TOKO A1" })).toContainText("campur (BTL, KRT, PCS)");
-    await expect(page.getByText("Qty tidak dijumlah lintas satuan")).toBeVisible();
+    await expect(produk.locator("tbody tr").filter({ hasText: "PRODUK A3" })).toContainText("1.234,5 PCS"); // apa adanya, bukan KRT
+    await expect(pelanggan.locator("tbody tr").filter({ hasText: "TOKO A1" })).toContainText("campur (KRT, PCS)");
+    await expect(pelanggan.locator("tbody tr").filter({ hasText: "TOKO A2" })).toContainText("120 KRT");
+    const strip = page.getByText("Sebagian qty belum setara KRT").locator("..");
+    await expect(strip).toContainText("1 produk dan 1 pelanggan tidak punya satuan KRT");
+    await expect(strip).toContainText("tidak ikut urut Qty");
+    await expect(page.getByLabel("Principal faktur")).toBeVisible();
+    await expect(page.getByText("produk principal lain di faktur yang sama ikut terhitung")).toHaveCount(0); // catatan hanya saat principal dipilih
     await expect(page.getByRole("heading", { name: /Top 30 produk/ })).toContainText("(3)");
 
     // berdampingan: tinggi atas sama, pelanggan di kanan produk
@@ -89,9 +95,10 @@ test("urut Qty dan principal dikirim ke API; urutan jawaban server dipakai apa a
     await expect(produk.locator("tbody tr").first()).toContainText("PRODUK A3");
     expect(diminta.at(-1)?.searchParams.get("urut")).toBe("qty");
 
-    await page.getByLabel("Principal").selectOption("PRINCIPLE B");
+    await page.getByLabel("Principal faktur").selectOption("PRINCIPLE B");
     await expect.poll(() => diminta.at(-1)?.searchParams.get("principle")).toBe("PRINCIPLE B");
     expect(diminta.at(-1)?.searchParams.get("urut")).toBe("qty");
+    await expect(page.getByText("faktur campur principal dihitung utuh pada satu principal, jadi produk principal lain di faktur yang sama ikut terhitung")).toBeVisible();
 });
 
 test("kosong: pesan berbeda untuk 'belum ada penjualan' dan 'principal ini tidak ada penjualan'", async ({ page }) => {
@@ -100,7 +107,7 @@ test("kosong: pesan berbeda untuk 'belum ada penjualan' dan 'principal ini tidak
     await page.goto("/laporan-sales", NAV);
     await expect(page.getByRole("status").filter({ hasText: "Belum ada penjualan" })).toBeVisible(NAV);
     await expect(page.getByRole("table")).toHaveCount(0);
-    await page.getByLabel("Principal").selectOption("PRINCIPLE B");
+    await page.getByLabel("Principal faktur").selectOption("PRINCIPLE B");
     await expect(page.getByRole("status").filter({ hasText: "Tidak ada penjualan PRINCIPLE B" })).toBeVisible(NAV);
 });
 
@@ -126,7 +133,7 @@ test("galat dengan data lama: strip 'hasil sebelumnya' di atas tabel yang tetap 
     await page.goto("/laporan-sales", NAV);
     const produk = page.getByRole("table", { name: "Top 30 produk" });
     await expect(produk.locator("tbody tr")).toHaveCount(3, NAV);
-    await page.getByLabel("Principal").selectOption("PRINCIPLE A");
+    await page.getByLabel("Principal faktur").selectOption("PRINCIPLE A");
     await expect(page.getByText("Gagal memuat ulang.")).toBeVisible(NAV);
     await expect(page.getByText("Yang tampil adalah hasil sebelumnya.")).toBeVisible();
     await expect(produk.locator("tbody tr")).toHaveCount(3);
@@ -150,11 +157,20 @@ test("ponsel 390 px: tabel menjadi daftar bertumpuk, tanpa gulir menyamping hala
     await expect(daftarProduk.getByRole("listitem")).toHaveCount(3, NAV);
     await expect(daftarProduk).toContainText("#1 · P-A1");
     await expect(daftarProduk).toContainText("Rp 1.568.088.288");
-    await expect(daftarProduk).toContainText("campur (KRT, SCH)");
+    await expect(daftarProduk).toContainText("123,5 KRT");
+    await expect(daftarProduk).toContainText("1.234,5 PCS");
     await expect(page.getByRole("list", { name: "Top 30 pelanggan" }).getByRole("listitem")).toHaveCount(2);
     const y1 = (await daftarProduk.boundingBox())?.y ?? 0;
     const y2 = (await page.getByRole("list", { name: "Top 30 pelanggan" }).boundingBox())?.y ?? 0;
     expect(y2).toBeGreaterThan(y1); // bertumpuk
     await tanpaGulirMenyamping(page);
     await page.screenshot({ path: "test-results/laporan-sales-top30-ponsel.png", fullPage: true });
+});
+
+test("semua qty setara KRT: strip 'belum setara KRT' tidak tampil", async ({ page }) => {
+    await mock(page, () => json(jawaban({ produk: PRODUK.slice(0, 2), pelanggan: PELANGGAN.slice(1), tidakSetaraKrt: { produk: 0, pelanggan: 0 } })));
+    await page.setViewportSize({ width: 1700, height: 900 });
+    await page.goto("/laporan-sales", NAV);
+    await expect(page.getByRole("table", { name: "Top 30 produk" }).locator("tbody tr")).toHaveCount(2, NAV);
+    await expect(page.getByText("Sebagian qty belum setara KRT")).toHaveCount(0);
 });
