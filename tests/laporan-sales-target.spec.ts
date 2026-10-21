@@ -1,6 +1,7 @@
 /*
- * Tujuan: Laporan Sales › Target vs Realisasi (tab #target): siap (baris per cabang × principal + Total, lencana capaian per nada), kosong
- *   (strip "belum diunggah" + pilih bulan lain lewat pemilih Bulan halaman), tanpa target (strip peringatan), galat (≠ kosong, Coba lagi),
+ * Tujuan: Laporan Sales › Target vs Realisasi (tab #target): siap (baris per cabang × principal + Total, lencana capaian per nada, strip info
+ *   "N kombinasi belum punya target — realisasi Rp X tidak dihitung" = padanan dashboard), kosong (strip "belum diunggah" + pilih bulan lain
+ *   lewat pemilih Bulan halaman), semua target 0 (strip peringatan), galat (≠ kosong, Coba lagi),
  *   tanpa izin (403), ponsel 390 px (daftar, tanpa gulir menyamping halaman). Tanpa dialog native.
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
  *   `npx playwright test tests/laporan-sales-target.spec.ts --config playwright.lap-target.config.ts` (config sementara, tidak di-commit).
@@ -20,7 +21,11 @@ const BARIS = [
     baris("CABANG B", "PRINCIPLE A", 3, 80_000_000, 68_000_000, 85),
     baris("Tanpa cabang", "PRINCIPLE C", 0, 0, 3_000_000, null),
 ];
-const jawaban = (bulan: string, rows: ReturnType<typeof baris>[], total = { target: 270_000_000, realisasi: 241_000_000, persen: 89.3 as number | null }) => ({ bulan, baris: rows, total });
+const jawaban = (
+    bulan: string, rows: ReturnType<typeof baris>[],
+    total = { target: 270_000_000, realisasi: 241_000_000, persen: 89.3 as number | null },
+    tanpaTarget = { kombinasi: 0, realisasi: 0 },
+) => ({ bulan, baris: rows, total, tanpaTarget });
 
 /** Mock endpoint; `isi` memilih jawaban per bulan yang diminta. Mengembalikan daftar bulan yang diminta klien. */
 async function mock(page: Page, isi: (bulan: string) => ReturnType<typeof json>) {
@@ -43,11 +48,12 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("siap: baris per cabang × principal, lencana capaian per nada, baris Total di bawah", async ({ page }) => {
-    const diminta = await mock(page, (b) => json(jawaban(b, BARIS)));
+    const diminta = await mock(page, (b) => json(jawaban(b, BARIS, undefined, { kombinasi: 2, realisasi: 36_000_000 })));
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/laporan-sales#target", NAV);
     const main = page.locator("main");
     await expect(main.getByRole("tab", { name: "Target vs Realisasi" })).toHaveAttribute("aria-selected", "true", NAV);
+    await expect(main.getByRole("status").filter({ hasText: "2 kombinasi salesman × principal belum punya target — realisasi Rp 36.000.000 tidak dihitung (sama dengan dashboard Insentif)." })).toBeVisible(NAV);
     const tabel = main.getByRole("table", { name: "Target vs Realisasi per cabang" });
     await expect(tabel).toBeVisible(NAV);
     expect(diminta[0]).toMatch(/^\d{4}-(0[1-9]|1[0-2])$/);
@@ -72,6 +78,7 @@ test("siap: baris per cabang × principal, lencana capaian per nada, baris Total
     await expect(total).toContainText("Rp 241.000.000");
     await expect(total).toContainText("89,3%");
     await expect(main.getByRole("status").filter({ hasText: "belum diunggah" })).toHaveCount(0);
+    await expect(main.getByText("Semua target bulan ini bernilai 0.")).toHaveCount(0);
     await page.screenshot({ path: "test-results/laporan-sales-target.png", fullPage: true });
 });
 
@@ -88,15 +95,16 @@ test("kosong: strip 'belum diunggah' + keadaan kosong; pilih bulan lain lewat pe
     await main.getByLabel("Bulan").fill("2026-09");
     await expect(main.getByRole("table", { name: "Target vs Realisasi per cabang" }).locator("tbody tr")).toHaveCount(5, NAV);
     await expect(main.getByText("Target/progres bulan ini belum diunggah.")).toHaveCount(0);
+    await expect(main.getByText("belum punya target")).toHaveCount(0); // tanpaTarget.kombinasi = 0 → tanpa strip
     expect(diminta).toContain("2026-09");
 });
 
-test("tanpa target: hanya realisasi → strip peringatan + lencana 'Tanpa target', bukan 0%", async ({ page }) => {
+test("semua target 0 → strip peringatan + lencana 'Tanpa target', bukan 0%", async ({ page }) => {
     await mock(page, (b) => json(jawaban(b, [baris("CABANG A", "PRINCIPLE A", 0, 0, 5_000_000, null)], { target: 0, realisasi: 5_000_000, persen: null })));
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/laporan-sales#target", NAV);
     const main = page.locator("main");
-    await expect(main.getByRole("status").filter({ hasText: "Target bulan ini belum diunggah." })).toBeVisible(NAV);
+    await expect(main.getByRole("status").filter({ hasText: "Semua target bulan ini bernilai 0." })).toBeVisible(NAV);
     const rows = main.getByRole("table", { name: "Target vs Realisasi per cabang" }).locator("tbody tr");
     await expect(rows).toHaveCount(2);
     await expect(rows.nth(0)).toContainText("Tanpa target");

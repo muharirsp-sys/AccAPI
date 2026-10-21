@@ -1,6 +1,7 @@
 /*
  * Tujuan: Tab "Target vs Realisasi" /laporan-sales — target insentif vs realisasi DPP MTD per cabang × principal untuk bulan yang dipilih
- *   di halaman (padanan EskaLink "Target vs Realization Monthly"). Angka = dashboard Insentif Sales (hitungan server lib/laporan-sales/target).
+ *   di halaman (padanan EskaLink "Target vs Realization Monthly"). Angka = dashboard Insentif Sales (hitungan server lib/laporan-sales/target):
+ *   realisasi hanya untuk salesman × principal bertarget; sisanya satu strip info (`tanpaTarget`), tidak masuk baris/Total.
  * Caller: app/(dashboard)/laporan-sales/LaporanSales.tsx.
  * Dependensi: GET /api/laporan-sales/target?bulan, lib/laporan-sales/kontrak (JawabanTarget), Fiori kit, form-kontrol/shared (ambilFk).
  * Main Functions: Target.
@@ -45,15 +46,20 @@ export default function Target({ bulan }: PropsTab) {
     const data = load.data;
     // Bulan tanpa baris = tanpa baris Total juga (keadaan kosong, bukan tabel berisi nol).
     const rows: Baris[] = data && data.baris.length > 0 ? [...data.baris, { cabang: "Total", principle: "", salesman: 0, ...data.total, total: true }] : [];
-    const tanpaTarget = data !== undefined && data.baris.length > 0 && data.total.target === 0;
+    const semuaNol = data !== undefined && data.baris.length > 0 && data.total.target === 0;
 
     return (
         <div className="space-y-3">
             {load.status === "siap" && data && data.baris.length === 0 && (
                 <MessageStrip tone="info" title="Target/progres bulan ini belum diunggah.">Pilih bulan lain di kolom Bulan.</MessageStrip>
             )}
-            {load.status === "siap" && tanpaTarget && (
-                <MessageStrip tone="warn" title="Target bulan ini belum diunggah.">Hanya realisasi yang tampil; persen tidak bisa dihitung.</MessageStrip>
+            {load.status === "siap" && semuaNol && (
+                <MessageStrip tone="warn" title="Semua target bulan ini bernilai 0.">Persen tidak bisa dihitung.</MessageStrip>
+            )}
+            {load.status === "siap" && data && data.tanpaTarget.kombinasi > 0 && (
+                <MessageStrip tone="info">
+                    {NF.format(data.tanpaTarget.kombinasi)} kombinasi salesman × principal belum punya target — realisasi {rupiah(data.tanpaTarget.realisasi)} tidak dihitung (sama dengan dashboard Insentif).
+                </MessageStrip>
             )}
             <ResponsiveTable
                 title="Target vs Realisasi per cabang"
