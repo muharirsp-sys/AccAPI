@@ -51,7 +51,7 @@ export default function Target({ bulan }: PropsTab) {
     return (
         <div className="space-y-3">
             {load.status === "siap" && data && data.baris.length === 0 && (
-                <MessageStrip tone="info" title="Target/progres bulan ini belum diunggah.">Pilih bulan lain di kolom Bulan.</MessageStrip>
+                <MessageStrip tone="info" title={data.tanpaTarget.kombinasi > 0 ? "Target bulan ini belum diunggah." : "Target/progres bulan ini belum diunggah."}>Pilih bulan lain di kolom Bulan.</MessageStrip>
             )}
             {load.status === "siap" && semuaNol && (
                 <MessageStrip tone="warn" title="Semua target bulan ini bernilai 0.">Persen tidak bisa dihitung.</MessageStrip>
