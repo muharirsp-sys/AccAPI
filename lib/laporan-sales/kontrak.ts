@@ -50,7 +50,11 @@ export type JawabanHarian = { bulan: string; hari: number; pilihanCabang: string
 
 /** GET /api/laporan-sales/target?bulan — target insentif vs realisasi DPP per cabang × principal (hitungan lib/insentif-sales). */
 export type BarisTarget = { cabang: string; principle: string; salesman: number; target: number; realisasi: number; persen: number | null };
-export type JawabanTarget = { bulan: string; baris: BarisTarget[]; total: { target: number; realisasi: number; persen: number | null } };
+/** Sama dengan dashboard Insentif: realisasi HANYA untuk salesman × principal bertarget (bukan kantor); sisanya di `tanpaTarget`, tidak di baris/total. */
+export type JawabanTarget = {
+    bulan: string; baris: BarisTarget[]; total: { target: number; realisasi: number; persen: number | null };
+    tanpaTarget: { kombinasi: number; realisasi: number };
+};
 
 /** GET /api/laporan-sales/drop-size?bulan&cabang? — nilai per faktur per tipe outlet (customer.category_name). */
 export type BarisDropSize = { tipe: string; toko: number; faktur: number; nilai: number; dropSize: number; nilaiPerToko: number };
