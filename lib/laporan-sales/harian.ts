@@ -8,9 +8,9 @@
  * Main Functions: hitungHarian (murni, tanpa DB), muatHarian.
  * Side Effects: SELECT saja (tanpa tulisan, tanpa raw_data).
  */
-import { and, inArray, like } from "drizzle-orm";
+import { and, eq, inArray, like } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { customer, salesInvoiceCache, salesProfile } from "@/db/schema";
+import { accurateEmployee, branch, customer, salesInvoiceCache, salesProfile } from "@/db/schema";
 import { muatPetaOrang } from "@/lib/kasir/hari";
 import { orangDariSalesmanId, type PetaOrang } from "@/lib/kasir/rekonsiliasi";
 import type { UserScope } from "@/lib/form-kontrol/scope";
@@ -25,17 +25,25 @@ export type ProfilSales = { kode: string; nama: string };
 const besar = (v: string) => v.trim().toUpperCase();
 const urut = (a: string, b: string) => a.localeCompare(b, "id");
 
+/** Semua tanggal bulan itu dalam format Accurate dd/MM/yyyy (berindeks lewat IN pada trans_date, bukan LIKE berawalan %). */
+export function daftarTanggal(bulan: string): string[] {
+    const { tahun, bulan: b, hari } = rentangBulan(bulan);
+    return Array.from({ length: hari }, (_, i) => `${String(i + 1).padStart(2, "0")}/${String(b).padStart(2, "0")}/${tahun}`);
+}
+
 /**
  * Agregasi murni. `profil` = sales_profile dalam cakupan (kunci = kode huruf besar); non-global HANYA baris salesman berprofil itu (faktur
  * tanpa salesman terpetakan / salesman di luar cakupan tidak tampil), global = semua + baris "tanpa salesman" (salesCode null). Satu baris
  * per (pelanggan, salesman). Nilai dijumlah dalam sen bulat (tanpa drift floating). Faktur dpp null tidak dijumlah, dihitung terpisah:
- * global = semuanya; non-global (salesman faktur itu memang tak terbaca) = yang cabangnya muncul di baris cakupan, seperti Supervisor Review.
+ * global = semuanya; non-global (salesman faktur itu memang tak terbaca) = yang cabangnya ada di `cabangCakupan` (cabang SALESMAN dalam cakupan:
+ * accurate_employee.branch_id, cadangan sales_profile.branch — persis lib/supervisor-review/db.ts `cabangTerpilih`) atau muncul di baris
+ * cakupan. Cabang salesman ada walau semua fakturnya belum terbaca, jadi SPV tak melihat "tidak ada faktur" tanpa tanda.
  * `cabang` menyaring baris & hitungan, TIDAK pilihanCabang (agar pilihan tidak menyusut sendiri).
  * ponytail: tanggal di luar bulan / tak sah (hari 31 di bulan 30 hari) dibuang diam-diam; SQL sudah menyaring bulan, ini hanya penjaga.
  */
 export function hitungHarian(m: {
     bulan: string; faktur: readonly FakturHarian[]; peta: PetaOrang; profil: ReadonlyMap<string, ProfilSales>; namaKode: ReadonlyMap<string, string>;
-    global: boolean; cabang?: string | null;
+    global: boolean; cabang?: string | null; cabangCakupan: ReadonlySet<string>;
 }): JawabanHarian {
     const { hari } = rentangBulan(m.bulan);
     const tanggal = `${m.bulan}-01`; // gabungan kode dipetakan per BULAN: tanggal mana pun di bulan itu sama
@@ -68,24 +76,28 @@ export function hitungHarian(m: {
     }
     const hasil = [...baris.values()].map(({ b, sen }) => ({ ...b, perHari: sen.map((s) => s / 100), mtd: sen.reduce((a, s) => a + s, 0) / 100 }))
         .sort((a, b) => b.mtd - a.mtd || urut(a.custNama, b.custNama) || urut(a.salesCode ?? "", b.salesCode ?? ""));
-    const fakturTanpaDpp = kosong.filter((c) => (m.global || pilihan.has(c)) && (!m.cabang || c === m.cabang)).length;
+    const fakturTanpaDpp = kosong.filter((c) => (m.global || m.cabangCakupan.has(c) || pilihan.has(c)) && (!m.cabang || c === m.cabang)).length;
     return { bulan: m.bulan, hari, pilihanCabang: [...pilihan].sort(urut), baris: hasil, fakturTanpaDpp };
 }
 
 /**
- * Muat faktur INV bulan itu (±12 rb baris, kolom perlu saja) + profil cakupan + peta orang, lalu hitungHarian. `scope.allowedSalesCodes` kosong
- * (non-global) harus ditolak pemanggil (route 403) — inArray([]) tidak bermakna.
+ * Muat faktur INV bulan itu (±12 rb baris, kolom perlu saja; trans_date IN daftarTanggal = berindeks) + profil cakupan + peta orang + (non-global)
+ * cabang karyawan Accurate, lalu hitungHarian. `scope.allowedSalesCodes` kosong (non-global) harus ditolak pemanggil (route 403) — inArray([]) tidak bermakna.
  */
 export async function muatHarian(scope: UserScope, opsi: { bulan: string; cabang?: string | null }): Promise<JawabanHarian> {
     const global = scope.allowedSalesCodes === null;
-    const [profilDb, { peta, namaKode }, fakturDb] = await Promise.all([
-        db.select({ kode: salesProfile.salesCode, nama: salesProfile.salesName }).from(salesProfile)
+    const [profilDb, { peta, namaKode }, fakturDb, pegawai] = await Promise.all([
+        db.select({ kode: salesProfile.salesCode, nama: salesProfile.salesName, cabang: salesProfile.branch }).from(salesProfile)
             .where(global ? undefined : inArray(salesProfile.salesCode, scope.allowedSalesCodes!)),
         muatPetaOrang(db, `${opsi.bulan}-01`),
         db.select({ transDate: salesInvoiceCache.transDate, customerNo: salesInvoiceCache.customerNo, customerName: salesInvoiceCache.customerName,
             salesmanId: salesInvoiceCache.salesmanId, dpp: salesInvoiceCache.dpp }).from(salesInvoiceCache)
-            .where(and(like(salesInvoiceCache.number, "INV%"), like(salesInvoiceCache.transDate, rentangBulan(opsi.bulan).polaTransDate))),
+            .where(and(like(salesInvoiceCache.number, "INV%"), inArray(salesInvoiceCache.transDate, daftarTanggal(opsi.bulan)))),
+        // Sama dengan lib/supervisor-review/db.ts: cabang salesman = accurate_employee.branch_id -> branch.name (global tak memerlukannya).
+        global ? [] : db.select({ number: accurateEmployee.number, cabang: branch.name }).from(accurateEmployee).leftJoin(branch, eq(branch.id, accurateEmployee.branchId)),
     ]);
+    const cabangPegawai = new Map<string, string>();
+    for (const e of pegawai) if (e.cabang && !cabangPegawai.has(besar(e.number))) cabangPegawai.set(besar(e.number), e.cabang);
     const nomor = [...new Set(fakturDb.map((f) => f.customerNo).filter((n): n is string => Boolean(n)))];
     const cabangPelanggan = new Map<string, string>();
     if (nomor.length) {
@@ -95,6 +107,7 @@ export async function muatHarian(scope: UserScope, opsi: { bulan: string; cabang
     }
     return hitungHarian({
         bulan: opsi.bulan, peta, namaKode, global, cabang: opsi.cabang,
+        cabangCakupan: new Set(profilDb.map((p) => cabangPegawai.get(besar(p.kode)) || p.cabang || TANPA_CABANG)),
         profil: new Map(profilDb.map((p) => [besar(p.kode), { kode: p.kode, nama: p.nama }])),
         faktur: fakturDb.map((f) => ({ ...f, cabang: cabangPelanggan.get(f.customerNo ?? "") ?? TANPA_CABANG })),
     });

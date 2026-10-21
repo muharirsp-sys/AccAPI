@@ -2,7 +2,8 @@
  * Tujuan: Tab "Monitoring Harian" /laporan-sales (padanan EskaLink "Daily Monitoring Sales/Customer"): tabel per (pelanggan, salesman) —
  *   MTD lalu D1…Dn (nilai DPP faktur INV per tanggal; sel 0 = "–"). Gulir menyamping HANYA di dalam tabel (kolom Pelanggan menempel di
  *   kiri). Cari pelanggan/salesman + saringan cabang; paginasi klien 50 baris. Ponsel = daftar (pelanggan, salesman, MTD).
- *   Keadaan: memuat, siap, kosong (belum ada faktur ≠ tidak cocok), galat bisa diulang, galat dengan data lama, tanpa izin (403 = galat berpesan).
+ *   Keadaan: memuat, siap, kosong (belum ada faktur ≠ belum terbaca rinciannya ≠ tidak cocok), galat bisa diulang, galat dengan data lama
+ *   (judul menyebut bulan data lama bila bulan terpilih sudah berganti), tanpa izin (403 = galat berpesan).
  * Caller: app/(dashboard)/laporan-sales/LaporanSales.tsx.
  * Dependensi: GET /api/laporan-sales/harian (kontrak lib/laporan-sales/kontrak.ts JawabanHarian), ambilFk (form-kontrol/shared), Fiori kit.
  * Main Functions: Harian (default).
@@ -50,9 +51,12 @@ export default function Harian({ bulan }: PropsTab) {
         { key: "mtd", header: "MTD", align: "end", cell: (b) => <b>{rupiah(Math.round(b.mtd))}</b> },
         ...Array.from({ length: hari }, (_, i): Column<BarisHarian> => ({ key: `d${i + 1}`, header: `D${i + 1}`, align: "end", cell: (b) => b.perHari[i] ? NF.format(b.perHari[i]) : "–" })),
     ];
-    const kosong = d && d.baris.length === 0 && !cabang
-        ? { title: "Belum ada faktur bulan ini", message: "Tidak ada faktur penjualan (INV) pada bulan ini dalam cakupan Anda." }
-        : { title: "Tidak ada yang cocok", message: "Ubah kata pencarian atau pilihan cabang." };
+    // Judul kosong tidak boleh bertentangan dengan strip: ada faktur yang belum terbaca ≠ "tidak ada faktur".
+    const kosong = d && d.baris.length === 0 && d.fakturTanpaDpp > 0
+        ? { title: "Belum ada faktur yang terbaca rinciannya", message: "Nilainya muncul setelah rincian faktur tersinkron dari Accurate." }
+        : d && d.baris.length === 0 && !cabang
+            ? { title: "Belum ada faktur bulan ini", message: "Tidak ada faktur penjualan (INV) pada bulan ini dalam cakupan Anda." }
+            : { title: "Tidak ada yang cocok", message: "Ubah kata pencarian atau pilihan cabang." };
 
     return (
         <div className="lap-harian space-y-3">
@@ -76,7 +80,7 @@ export default function Harian({ bulan }: PropsTab) {
                     {NF.format(d.fakturTanpaDpp)} faktur belum terbaca rinciannya (DPP kosong); nilainya belum masuk tabel.
                 </MessageStrip>
             )}
-            <ResponsiveTable title="Monitoring harian" count={tersaring.length} columns={kolom} rows={tersaring.slice(awal, awal + PER_HALAMAN)}
+            <ResponsiveTable title={d && d.bulan !== bulan ? `Monitoring harian (${d.bulan})` : "Monitoring harian"} count={tersaring.length} columns={kolom} rows={tersaring.slice(awal, awal + PER_HALAMAN)}
                 rowKey={(b) => `${b.custNo}|${b.salesCode ?? ""}`} status={load.status} error={load.error} onRetry={muatUlang} empty={kosong}
                 mobileItem={(b) => <ListItem doc={b.custNama} amount={rupiah(Math.round(b.mtd))} title={salesman(b)} meta={b.cabang} />} />
             {tersaring.length > PER_HALAMAN && (

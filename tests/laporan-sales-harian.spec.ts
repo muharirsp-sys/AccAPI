@@ -1,7 +1,8 @@
 /*
  * Tujuan: Laporan Sales › Monitoring Harian (/laporan-sales#harian) — desktop 1366 px: tabel per (pelanggan, salesman) dengan MTD + D1…Dn
  *   (sel 0 = "–", gulir menyamping HANYA di dalam tabel, kolom Pelanggan menempel), paginasi klien 50 baris, cari, saringan cabang -> query,
- *   strip "faktur belum lengkap"; kosong (belum ada faktur ≠ tidak cocok), galat bisa diulang, galat dengan data lama, tanpa izin (403);
+ *   strip "faktur belum lengkap"; kosong (belum ada faktur ≠ belum terbaca rinciannya ≠ tidak cocok), galat bisa diulang, galat dengan data lama
+ *   (+ judul menyebut bulannya bila bulan terpilih berganti), tanpa izin (403 Forbidden) dan akun belum tertaut (403 HIERARKI_BELUM_TERTAUT);
  *   ponsel 390 px: daftar pelanggan/salesman/MTD tanpa gulir menyamping halaman.
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
  *   `npx playwright test tests/laporan-sales-harian.spec.ts --config playwright.lap-harian.config.ts` (config sementara, tidak di-commit).
@@ -143,6 +144,15 @@ test("kosong: belum ada faktur ≠ tidak cocok dengan cabang", async ({ page }) 
     await page.screenshot({ path: "test-results/laporan-sales-harian-kosong.png" });
 });
 
+test("kosong tetapi ada faktur belum terbaca: judul tidak membantah strip", async ({ page }) => {
+    await pasang(page, (_, u) => json(jawaban(u, 0, { fakturTanpaDpp: 2 })));
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await buka(page);
+    await expect(page.getByRole("heading", { name: "Belum ada faktur yang terbaca rinciannya" })).toBeVisible(NAV);
+    await expect(page.getByRole("status").filter({ hasText: "Faktur belum lengkap." })).toContainText("2 faktur belum terbaca rinciannya");
+    await expect(page.getByRole("heading", { name: "Belum ada faktur bulan ini" })).toHaveCount(0);
+});
+
 test("galat: 500 tampil berpesan (bukan kosong), Coba lagi memuat ulang", async ({ page }) => {
     let gagal = true; // sakelar, bukan hitungan panggilan: React StrictMode (dev) memuat dua kali saat dipasang
     await pasang(page, (_, u) => (gagal ? json({ error: "Internal server error: detail rahasia" }, 500) : json(jawaban(u, 3))));
@@ -171,6 +181,31 @@ test("galat memuat ulang: data lama tetap tampil + strip 'hasil sebelumnya'", as
     await expect(strip).toContainText("hasil sebelumnya");
     await expect(tabel(page).locator("tbody tr")).toHaveCount(3);
     await page.screenshot({ path: "test-results/laporan-sales-harian-galat-ulang.png" });
+});
+
+test("galat ganti bulan: data bulan lama tetap tampil tetapi judul menyebut bulannya", async ({ page }) => {
+    let gagal = false;
+    await pasang(page, (_, u) => (gagal ? json({ error: "x" }, 500) : json(jawaban(u, 3))));
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await buka(page);
+    await expect(tabel(page).locator("tbody tr")).toHaveCount(3, NAV);
+    await expect(page.locator("h2", { hasText: "Monitoring harian" })).not.toContainText("(20"); // bulan sama: tanpa keterangan
+    const awal = await page.getByLabel("Bulan").inputValue();
+    gagal = true;
+    await page.getByLabel("Bulan").fill(awal === "2026-09" ? "2026-08" : "2026-09");
+    await expect(page.getByRole("alert").filter({ hasText: "Gagal memuat ulang." })).toBeVisible();
+    await expect(page.locator("h2", { hasText: "Monitoring harian" })).toContainText(`(${awal})`);
+    await expect(tabel(page).locator("tbody tr")).toHaveCount(3);
+    await page.screenshot({ path: "test-results/laporan-sales-harian-galat-bulan.png" });
+});
+
+test("akun belum tertaut hierarki: 403 berkode menampilkan pesan server, bukan tabel kosong", async ({ page }) => {
+    await pasang(page, () => json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki — hubungi Admin." }, 403));
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await buka(page);
+    const galat = page.getByRole("alert").filter({ hasText: "Monitoring Harian belum berhasil dimuat." });
+    await expect(galat).toContainText("Akun belum tertaut ke hierarki — hubungi Admin.", NAV);
+    await expect(page.getByRole("heading", { name: "Belum ada faktur bulan ini" })).toHaveCount(0);
 });
 
 test("tanpa izin: 403 tampil sebagai pesan izin, bukan tabel kosong", async ({ page }) => {

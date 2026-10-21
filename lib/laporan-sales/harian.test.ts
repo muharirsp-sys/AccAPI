@@ -1,12 +1,12 @@
 /*
  * Tujuan: Uji agregasi murni Monitoring Harian (hitungHarian): penjumlahan per hari, panjang 31 vs 30 hari, pemisahan per (pelanggan, salesman),
- *   gabungan kode salesman, dpp null, saringan cakupan, saringan cabang, urutan.
+ *   gabungan kode salesman, dpp null (juga cabang cakupan non-global), saringan cakupan, saringan cabang, urutan, daftarTanggal.
  * Caller: `npx tsx --test lib/laporan-sales/harian.test.ts` (juga `npm test`).
  * Dependensi: node:test, ./harian (hitungHarian). Tanpa DB.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { hitungHarian, type FakturHarian, type ProfilSales } from "./harian";
+import { daftarTanggal, hitungHarian, type FakturHarian, type ProfilSales } from "./harian";
 import type { PetaOrang } from "../kasir/rekonsiliasi";
 
 // id Accurate 1,2,3 = kode S-01, S-02, S-09; S-09 digabung ke S-01 pada 2026-10 saja.
@@ -18,7 +18,7 @@ const PROFIL = new Map<string, ProfilSales>([["S-01", { kode: "S-01", nama: "SAL
 const NAMA_KODE = new Map([["S-09", "SALES I"]]);
 const F = (o: Partial<FakturHarian> = {}): FakturHarian => ({ transDate: "05/10/2026", customerNo: "C-01", customerName: "TOKO A", salesmanId: 1, dpp: 1000, cabang: "CABANG A", ...o });
 const hitung = (faktur: FakturHarian[], o: Partial<Parameters<typeof hitungHarian>[0]> = {}) =>
-    hitungHarian({ bulan: "2026-10", faktur, peta: PETA, profil: PROFIL, namaKode: NAMA_KODE, global: true, ...o });
+    hitungHarian({ bulan: "2026-10", faktur, peta: PETA, profil: PROFIL, namaKode: NAMA_KODE, global: true, cabangCakupan: new Set<string>(), ...o });
 
 test("per hari dijumlah per tanggal, MTD = Σ, panjang = jumlah hari bulan (31), sen tanpa drift floating", () => {
     const j = hitung([F({ dpp: 0.1 }), F({ dpp: 0.2 }), F({ transDate: "31/10/2026", dpp: 500 }), F({ transDate: "01/10/2026", dpp: 250.5 }), F({ dpp: -100 })]);
@@ -84,6 +84,24 @@ test("dpp null untuk cakupan non-global hanya dihitung bila cabangnya muncul di 
     const faktur = [F({ dpp: 100 }), F({ dpp: null, salesmanId: null }), F({ dpp: null, salesmanId: null, cabang: "CABANG B" })];
     assert.equal(hitung(faktur, { global: false }).fakturTanpaDpp, 1);
     assert.equal(hitung(faktur).fakturTanpaDpp, 2);
+});
+
+test("non-global: SEMUA faktur cakupan belum terbaca -> tanpa baris tetapi fakturTanpaDpp > 0 (cabang salesman cakupan), cabang lain tidak dihitung", () => {
+    const faktur = [F({ dpp: null, salesmanId: null }), F({ dpp: null, salesmanId: null, customerNo: "C-02" }), F({ dpp: null, salesmanId: null, cabang: "CABANG B" })];
+    const j = hitung(faktur, { global: false, cabangCakupan: new Set(["CABANG A"]) });
+    assert.deepEqual(j.baris, []);
+    assert.equal(j.fakturTanpaDpp, 2);
+    assert.equal(hitung(faktur, { global: false }).fakturTanpaDpp, 0); // tanpa cabang cakupan dan tanpa baris terbaca: tak ada dasar menghitung
+    assert.equal(hitung(faktur, { global: false, cabangCakupan: new Set(["CABANG A"]), cabang: "CABANG B" }).fakturTanpaDpp, 0); // saringan cabang tetap berlaku
+});
+
+test("daftarTanggal: semua tanggal bulan dd/MM/yyyy berawalan nol (31, 30, 29 hari)", () => {
+    const okt = daftarTanggal("2026-10");
+    assert.equal(okt.length, 31);
+    assert.deepEqual([okt[0], okt[8], okt[30]], ["01/10/2026", "09/10/2026", "31/10/2026"]);
+    assert.equal(daftarTanggal("2026-09").length, 30);
+    assert.equal(daftarTanggal("2028-02").at(-1), "29/02/2028");
+    assert.equal(new Set(daftarTanggal("2026-02")).size, 28);
 });
 
 test("saringan cabang: baris + hitungan dpp null tersaring, pilihanCabang tidak menyusut; tanpa cabang = 'Tanpa cabang'", () => {
