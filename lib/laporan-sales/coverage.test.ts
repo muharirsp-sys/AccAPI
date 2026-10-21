@@ -113,6 +113,8 @@ test("kode lengkap Accurate (luar rute) = kode pendek JKS (unggahan): satu toko,
     const r = susunCoverage([j("SALES A", "C-1"), j("SALES B", "c-1-cba ")], null, null);
     assert.equal(r.baris.length, 1);
     assert.equal(r.baris[0].custCode, "C-1", "yang tampil kode pendek");
+    // urutan masukan dibalik: tetap kode pendek (D2 tinjauan #215)
+    assert.equal(susunCoverage([j("SALES B", "C-1-CBA"), j("SALES A", "C-1")], null, null).baris[0].custCode, "C-1");
     assert.deepEqual(r.baris[0].salesman.map((s) => s.salesCode), ["SALES A", "SALES B"]);
     assert.equal(r.totalToko, 1);
     // cakupan hanya SALES B (kode lengkap): kelompok tetap tampil UTUH lewat kunci gabungan, toko dihitung sekali
@@ -133,6 +135,8 @@ test("penyamaan kode HANYA bila kode pendek ada di JKS aktif principal yang sama
     assert.equal(tanpa.totalToko, 2);
     // kode pendek hanya ada di principal lain: tidak disamakan
     assert.deepEqual(susunCoverage([j("SALES A", "C-1", "PRINCIPLE B"), j("SALES B", "C-1-CBA", "PRINCIPLE A")], null, null).baris, []);
+    // dua kode lengkap di PRINCIPLE A + kode pendek hanya di PRINCIPLE B: bukan ganda (D1 tinjauan #215)
+    assert.deepEqual(susunCoverage([j("X", "C-1-CBA", "PRINCIPLE A"), j("Y", "C-1-MKS", "PRINCIPLE A"), j("Z", "C-1", "PRINCIPLE B")], null, null).baris, []);
     // "C-100001" tidak runtuh ke "C" (tak ada toko berkode "C"): tampil utuh
     const utuh = susunCoverage([j("SALES A", "C-100001"), j("SALES B", "C-100001")], null, null);
     assert.equal(utuh.baris[0].custCode, "C-100001");
