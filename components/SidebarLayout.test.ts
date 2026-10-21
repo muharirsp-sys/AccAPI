@@ -41,7 +41,8 @@ test("all existing modules appear exactly once across six groups", () => {
     // 29 sejak Kasir ↔ Incaso (Fiori K2b, 15 Okt 2026): Kasir mencatat setoran dan menutup hari terhadap pelunasan Incaso.
     // 30 sejak Supervisor Review (16 Okt 2026): SPV/SM/Admin melihat ringkasan harian per salesman (supervisor_review.view).
     // 31 sejak Data Principal (S7b, 17 Okt 2026): daftar resmi principal + varian + alias (principles.view; tulis principles.upload).
-    assert.equal(items.length, 31);
+    // 32 sejak Laporan Sales (20 Okt 2026): 6 laporan padanan EskaLink, tiap tab dijaga kunci lamanya sendiri.
+    assert.equal(items.length, 32);
     assert.equal(WORKSPACE_GROUPS.find(group => group.id === "settings")?.items.find(item => item.href === "/data-principal")?.name, "Data Principal");
     assert.equal(WORKSPACE_GROUPS.find(group => group.id === "operations")?.items.find(item => item.href === "/supervisor-review")?.name, "Supervisor Review");
     assert.ok(items.some(item => item.href === "/pelunasan"));
