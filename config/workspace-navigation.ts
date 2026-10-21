@@ -6,7 +6,7 @@
  * Side Effects: Tidak ada; tidak mengubah hak akses.
  */
 import {
-    FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, ClipboardList, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, MapPinned, PackageSearch, HandCoins, Banknote, type LucideIcon } from "lucide-react";
+    FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, ClipboardList, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, MapPinned, PackageSearch, HandCoins, Banknote, ChartColumn, type LucideIcon } from "lucide-react";
 
 /** `short` = label navigasi bawah ponsel (≤ 10 huruf); bawaan kata pertama `name`. */
 export type WorkspaceItem = { name: string; href: string; icon: LucideIcon; short?: string };
@@ -47,6 +47,8 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
         { name: "Form Kontrol", href: "/form-kontrol", icon: ClipboardList, short: "Kontrol" },
         // Supervisor Review (owner 16 Okt 2026): ringkasan harian per salesman + peta kunjungan; dibuka pemegang `supervisor_review.view`.
         { name: "Supervisor Review", href: "/supervisor-review", icon: MapPinned, short: "Supervisor" },
+        // Laporan Sales (owner 20 Okt 2026): Top 30, Monitoring Harian, Target vs Realisasi, Drop Size, Coverage Ganda, Tidak Order.
+        { name: "Laporan Sales", href: "/laporan-sales", icon: ChartColumn, short: "Lap. Sales" },
         { name: "Insentif Sales", href: "/insentif-sales", icon: Trophy },
         { name: "Laporan Harian", href: "/laporan-harian", icon: Send },
         { name: "Penerima laporan", href: "/laporan-harian/mapping", icon: Users, short: "Penerima" },
