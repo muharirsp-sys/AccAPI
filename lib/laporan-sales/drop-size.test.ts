@@ -60,3 +60,10 @@ test("nilai dibulatkan 2 desimal (hindari 0.1+0.2) dan urutan seri stabil menuru
     assert.equal(baris.find((b) => b.tipe === "TT")?.nilai, 0.3);
     assert.deepEqual(baris.map((b) => b.tipe), ["MT", "TT", "Umum"]);
 });
+
+test("tipe/cabang ber-spasi dirapikan: masuk \"Tanpa tipe\" dan cabang tanpa spasi tepi", () => {
+    const r = susunDropSize([k(" CABANG A ", "  ", 1, 1, 10)], null);
+    assert.deepEqual(r.pilihanCabang, ["CABANG A"]);
+    assert.deepEqual(r.baris.map((b) => [b.tipe, b.nilai]), [["Tanpa tipe", 10]]);
+    assert.deepEqual(susunDropSize([k(" CABANG A ", "TT", 1, 1, 10)], "CABANG A").baris.map((b) => b.nilai), [10]);
+});

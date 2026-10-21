@@ -22,6 +22,7 @@ export async function GET(req: Request) {
     const cabang = q.get("cabang")?.trim().slice(0, 120) || null;
     try {
         // DISTINCT ON: customerNo tidak dijamin unik di tabel (hanya indeks biasa); tanpa ini JOIN menggandakan nilai faktur.
+        // id DESC = baris TERBARU menang: cache customer hanya di-upsert (lib/sync.ts), baris tertua paling mungkin pelanggan yang sudah dihapus.
         // toko/faktur/nilai hanya dari faktur ber-dpp (dpp null = belum terbaca, dihitung terpisah di tanpa_dpp).
         const res = await db.execute(sql`
             SELECT c.branch_name AS cabang, c.category_name AS tipe,
@@ -30,7 +31,7 @@ export async function GET(req: Request) {
                    COALESCE(SUM(si.dpp), 0)::float8 AS nilai,
                    (COUNT(*) FILTER (WHERE si.dpp IS NULL))::int AS tanpa_dpp
             FROM sales_invoice si
-            LEFT JOIN (SELECT DISTINCT ON ("customerNo") "customerNo" AS no, branch_name, category_name FROM customer ORDER BY "customerNo", id) c
+            LEFT JOIN (SELECT DISTINCT ON ("customerNo") "customerNo" AS no, branch_name, category_name FROM customer ORDER BY "customerNo", id DESC) c
                 ON c.no = si.customer_no
             WHERE si.number LIKE 'INV%' AND si.trans_date LIKE ${rentangBulan(bulan).polaTransDate}
             GROUP BY c.branch_name, c.category_name`);
