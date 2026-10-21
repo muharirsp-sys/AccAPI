@@ -124,7 +124,8 @@ async function petaRasio(kodes: string[]): Promise<Map<string, Record<string, nu
 
 // ponytail: tiga pindaian sebulan berjalan BERURUTAN dan SINKRON (libsql lokal, satu proses node): memblokir proses selama kueri, dan
 // mengganti "Urut" mengulang pindaian yang sama (hanya sort JS yang beda). Terukur Mei 2026, DB lokal 2,8 GB, cache hangat: tanpa principal
-// ±1,9 dtk (detail 97 rb baris 1,0 + produk 0,4 + pelanggan 0,5), HEINZ ABC ±0,9 dtk. Ceiling: beberapa pengguna bersamaan / VPS 2 core / bulan
+// ±1,9–3,2 dtk (detail 97 rb baris 1,0 + produk 0,4 + pelanggan 0,5; peninjau 3,2), HEINZ ABC ±0,9 dtk. PRODUKSI 21 Okt (container, Okt 2026):
+// tanpa principal 1,5–2,1 dtk, HEINZ 0,4 dtk. Ceiling: beberapa pengguna bersamaan / VPS 2 core / bulan
 // lebih besar. Jalan naik: memo agregasi (detail+info+rasio) per (bulan, principal) ±60 dtk dalam Map, atau kueri di worker/proses sendiri.
 export async function laporanTop30(bulan: string, principle: string | null, urut: "nilai" | "qty"): Promise<JawabanTop30Satuan> {
     const { ensureSalesHistorySchema, salesClient } = await import("@/lib/sales-history/db");

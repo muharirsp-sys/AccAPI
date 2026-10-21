@@ -94,7 +94,10 @@ export default function Top30({ bulan }: PropsTab) {
                     tidak punya satuan KRT atau satuannya tak dikenal di master, jadi qty-nya apa adanya dan tidak ikut urut Qty.
                 </MessageStrip>
             )}
-            {kosong ? (
+            {kosong && urut === "qty" && tidakSetara > 0 ? (
+                // R1 tinjauan #214: urut Qty kosong karena tak ada baris setara KRT, bukan karena tak ada faktur.
+                <EmptyState title="Tidak ada qty yang setara KRT" message="Semua baris bulan ini memuat barang tanpa satuan KRT di master barang. Pilih Urut Nilai." />
+            ) : kosong ? (
                 <EmptyState
                     title={principle ? `Tidak ada penjualan ${principle}` : "Belum ada penjualan"}
                     message={principle ? `Tidak ada faktur ${principle} pada ${bulanTeks(bulan)}. Pilih "Semua principal" atau principal lain.` : `Tidak ada faktur penjualan pada ${bulanTeks(bulan)} di History Penjualan.`} />
