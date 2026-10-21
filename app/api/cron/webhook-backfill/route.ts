@@ -57,6 +57,26 @@ export async function GET(req: Request) {
     // Rekap Promo, dan 57 di antaranya tidak tercatat di log webhook sama sekali.
     // ponytail: rentang dibatasi 93 hari; faktur lama banyak yang sudah dihapus di Accurate dan
     // hanya membakar panggilan API. Perlebar bila memang perlu menambal satu kuartal lebih.
+    // `?hantu=1`: periksa ulang calon faktur hantu — semua yang bukan INV/ (draf DFT.*, RJN/) dan
+    // nomor INV yang tersimpan di lebih dari satu id (dihapus lalu dibuat ulang dengan nomor sama).
+    // detail.do per id; yang terbukti tiada dibuang oleh upsertSalesInvoiceById, yang hidup disegarkan.
+    // Probe 15 Okt 2026: 164 baris (55 DFT Agu–Sep + 6 id INV lama), sisa ±Rp 86 jt. Jalankan `?check=1` dulu.
+    // ponytail: calon dipilih dari pola, bukan dari selisih sapuan list.do penuh — paging offset Accurate
+    // bisa melompati baris saat data berubah, jadi "tidak terlihat di sync" bukan bukti terhapus.
+    // Calon yang hidup (RJN, draf aktif) tetap calon di setiap run -> `?after=<id>` (dari `nextAfter`) melanjutkan.
+    if (searchParams.get("hantu") === "1") {
+        const after = Math.max(Number(searchParams.get("after")) || 0, 0);
+        const rows = await db.execute(sql`SELECT id FROM sales_invoice
+            WHERE id > ${after} AND (number IS NULL OR number NOT LIKE 'INV/%'
+               OR number IN (SELECT number FROM sales_invoice WHERE number LIKE 'INV/%' GROUP BY number HAVING count(*) > 1))
+            ORDER BY id`);
+        const ids = (rows.rows as Array<{ id: number | string }>).map((row) => Number(row.id));
+        if (checkOnly || ids.length === 0) return NextResponse.json({ ok: true, checkOnly, hantu: true, after, calon: ids.length, calonIds: ids.slice(0, 200) });
+        const hasil = await tambal(ids, limit, jedaMs);
+        const nextAfter = ids.length > limit ? ids[limit - 1] : null;
+        return NextResponse.json({ hantu: true, after, nextAfter, ...hasil }, { status: "error" in hasil ? 503 : 200 });
+    }
+
     const from = searchParams.get("from") ?? "";
     const to = searchParams.get("to") ?? "";
     if (from || to) {
