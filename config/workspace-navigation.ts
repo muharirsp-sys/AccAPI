@@ -48,7 +48,7 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
         // Supervisor Review (owner 16 Okt 2026): ringkasan harian per salesman + peta kunjungan; dibuka pemegang `supervisor_review.view`.
         { name: "Supervisor Review", href: "/supervisor-review", icon: MapPinned, short: "Supervisor" },
         // Laporan Sales (owner 20 Okt 2026): Top 30, Monitoring Harian, Target vs Realisasi, Drop Size, Coverage Ganda, Tidak Order.
-        { name: "Laporan Sales", href: "/laporan-sales", icon: ChartColumn, short: "Laporan" },
+        { name: "Laporan Sales", href: "/laporan-sales", icon: ChartColumn, short: "Lap. Sales" },
         { name: "Insentif Sales", href: "/insentif-sales", icon: Trophy },
         { name: "Laporan Harian", href: "/laporan-harian", icon: Send },
         { name: "Penerima laporan", href: "/laporan-harian/mapping", icon: Users, short: "Penerima" },
