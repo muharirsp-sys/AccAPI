@@ -232,8 +232,8 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     principles: ["view", "upload", "delete"],
     master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
-    // S7-1b: create/update/export dipensiunkan (KUNCI_PENSIUN, lib/rbac/registry.ts); approve sampai S7-3.
-    off_program_control: ["view", "approve"],
+    // S7-1b: create/update/export dipensiunkan (KUNCI_PENSIUN, lib/rbac/registry.ts); S7-3: approve ikut.
+    off_program_control: ["view"],
     reconciliation: ["view", "run", "manage"],
     claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export"],
     users: ["view", "manage"],
@@ -319,12 +319,13 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("dashboard", ["view"]),
         pick("order", ["view", "create", "edit", "export"]),
         pick("api_wrapper", ["view", "execute"]),
-        pick("payments", ["view", "export", "submit", "edit", "update"]),
+        // S7-1c (PK-2): pemegang kunci lama juga memegang kunci barunya (lib/rbac/nasib-kunci.test.ts PASANGAN_1C).
+        pick("payments", ["view", "export", "submit", "edit", "update", "create", "upload"]),
         pick("sppd", ["view", "generate", "download"]),
-        pick("finance", ["view", "approve", "export", "update"]),
+        pick("finance", ["view", "approve", "export", "update", "post_accurate", "upload_proof", "transfer"]),
         pick("principles", ["view"]),
         pick("summary", ["view", "export"]),
-        pick("off_program_control", ["view", "approve"]),
+        pick("off_program_control", ["view"]),
         pick("reconciliation", ["view"]),
         pick("claim_workflow", ["view", "approve", "export"]),
         pick("sales_history", ["view", "export", "manage"]),
@@ -343,10 +344,10 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
     staff: mergePermissionMaps(
         pick("dashboard", ["view"]),
         pick("order", ["view", "create"]),
-        pick("payments", ["view", "create", "edit", "upload", "submit"]),
+        pick("payments", ["view", "create", "edit", "upload", "submit", "export"]),
         pick("sppd", ["view", "generate", "download"]),
         pick("principles", ["view"]),
-        pick("summary", ["view", "upload", "generate", "export", "edit", "update"]),
+        pick("summary", ["view", "upload", "generate", "export", "edit", "update", "email"]),
         pick("off_program_control", ["view"]),
         pick("reconciliation", ["view", "run"]),
         // Claim Workflow guardrail: staff hanya boleh membaca daftar / detail
@@ -358,12 +359,12 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
     viewer: mergePermissionMaps(
         pick("dashboard", ["view"]),
         pick("order", ["view"]),
-        pick("payments", ["view"]),
+        pick("payments", ["view", "export"]),
         pick("sppd", ["view"]),
-        pick("finance", ["view"]),
+        pick("finance", ["view", "export"]),
         pick("off_program_control", ["view"]),
         pick("claim_workflow", ["view"]),
-        pick("summary", ["view"]),
+        pick("summary", ["view", "export"]),
         pick("sales_history", ["view"])
     ),
 };
@@ -390,6 +391,8 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/principal-mapping", module: "principles", action: "view" },
     { prefix: "/master-barang", module: "master_barang", action: "view" },
     { prefix: "/principles", module: "principles", action: "view" },
+    // Data Principal (S7b). Tanpa entri ini /data-principal jatuh ke "/" = dashboard.view.
+    { prefix: "/data-principal", module: "principles", action: "view" },
     // /sales sebelum /orders TIDAK relevan (prefix beda), tapi urutannya tetap dijaga:
     // pencocokan memakai prefix terpanjang.
     { prefix: "/sales", module: "websales", action: "create" },

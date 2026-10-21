@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EXCEPTION_LABEL, jamWita, labelEvent, menahanKonfirmasi, saringPool, tanggalPanjang, tanggalPendek, urutanBerikutnya } from "@/lib/rekapan-nota/ui";
+import { EXCEPTION_LABEL, hariIniWita, jamWita, judulBerkas, labelEvent, menahanKonfirmasi, nomorLembar, saringPool, tanggalPanjang, tanggalPendek, urutanBerikutnya } from "@/lib/rekapan-nota/ui";
 
 const POOL = [
     { no_nota: "INV/2610/KN01381", customer: "TK HARAPAN BARU", salesman: "Yusuf", area: "4", pareto: false },
@@ -55,4 +55,17 @@ test("riwayat BL-24/25: penutupan exception dan jumlah nota yang kembali saat ba
     assert.equal(labelEvent("wave.cancelled", { nota_kembali: ["N1", "N2"], alasan: "mobil rusak" }).ubah, "2 nota kembali ke pool · mobil rusak");
     assert.equal(labelEvent("wave.cancelled", {}).ubah, undefined);
     assert.equal(EXCEPTION_LABEL.REKONSILIASI_SELISIH, "Selisih dengan file");
+});
+
+test("nomor lembar tetap per wave + lembar; hari cetak dihitung WITA", () => {
+    assert.equal(nomorLembar("RKP", "2026-10-19", 2, "ALL"), "RKP/2610/0002/ALL");
+    assert.equal(nomorLembar("RKP", "2026-10-19", 2, "AREA-1+VOL-NONPARETO"), "RKP/2610/0002/AREA-1+VOL-NONPARETO");
+    assert.equal(nomorLembar("TTF", "2026-10-19", 12345), "TTF/2610/12345");
+    assert.equal(hariIniWita(new Date("2026-10-19T23:30:00Z")), "2026-10-20"); // 07.30 WITA = sudah tanggal 20
+});
+
+test("judul berkas PDF = nomor lembar tanpa garis miring + tanggal-jam WITA", () => {
+    const pukul = new Date("2026-10-20T01:40:33Z"); // 09.40 WITA
+    assert.equal(judulBerkas("RKP/2610/0002/JP-FKS", pukul), "RKP-2610-0002-JP-FKS_20261020-0940");
+    assert.equal(judulBerkas("TTF/2610/0002", new Date("2026-10-19T16:05:00Z")), "TTF-2610-0002_20261020-0005"); // lewat tengah malam WITA
 });

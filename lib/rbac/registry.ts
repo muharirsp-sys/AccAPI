@@ -38,10 +38,10 @@ export const PERMISSION_REGISTRY = {
     master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
     reconciliation: ["view", "run", "manage"],
-    // S7-1b (AM-042, D-01 §D): create/update/export DIPENSIUNKAN (KUNCI_PENSIUN di bawah) — diganti kunci granular; approve menyusul
-    //   sesudah profil Beranda pindah ke bintang (S7-3, PK-O2).
+    // S7-1b (AM-042, D-01 §D): create/update/export DIPENSIUNKAN (KUNCI_PENSIUN di bawah) — diganti kunci granular; approve ikut di
+    //   S7-3 (profil Beranda dari ★ grup utama, PK-O2; persetujuan SM = sm_approve/sm_return).
     off_program_control: [
-        "view", "approve",
+        "view",
         // workflow granular (mirror OffAction) — chain SPV→SM→Claim→OM→Finance:
         "create_batch", "edit_returned_batch", "submit_batch", "sm_approve", "sm_return",
         "claim_review", "claim_final", "om_approve", "om_cancel", "finance_payment",
@@ -111,10 +111,10 @@ export function isValidPermissionKey(key: string): boolean {
  * S7-1b (AM-042, D-01 §D "Pensiunkan"): kunci yang dihapus dari registry. Masih bisa tersimpan di group_permission sampai
  * docs/handover/RBAC_S7_1B_PENSIUN.sql dijalankan (SESUDAH image) — PATCH grup membuangnya dari kiriman tanpa 400 dan mencatatnya
  * di `removed` audit `group_permission.sync`. TIDAK dipetakan ke kunci granular (memetakan = memperluas akses).
- * off_program_control.approve menyusul di S7-3 (profil Beranda, PK-O2).
+ * S7-3: + off_program_control.approve (dulu hanya penanda profil Beranda SM; kini ★ grup utama, PK-O2).
  */
 export const KUNCI_PENSIUN: ReadonlySet<string> = new Set([
-    "off_program_control.create", "off_program_control.update", "off_program_control.export",
+    "off_program_control.create", "off_program_control.update", "off_program_control.export", "off_program_control.approve",
     "users.create_user", "users.edit_user", "users.delete_user", "users.set_role", "users.set_permission",
 ]);
 

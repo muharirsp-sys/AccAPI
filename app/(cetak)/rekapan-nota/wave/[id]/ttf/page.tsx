@@ -16,11 +16,20 @@
  * lebih tinggi: satu lembar hilang dari 49 lembar = ~20 nota lenyap tanpa jejak, dan tidak ada
  * yang bisa membuktikannya karena kertasnya tidak bernomor.
  */
+import type { Metadata } from "next";
 import { pool } from "@/lib/db";
 import { buildTtf } from "@/lib/rekapan-nota/query";
 import { bagiHalamanTtf } from "@/lib/rekapan-nota/ttf-paginasi";
+import { jamWita, judulBerkas, nomorLembar } from "@/lib/rekapan-nota/ui";
 
 export const dynamic = "force-dynamic";
+
+/** Judul = nama berkas PDF saat disimpan: nomor TTF + tanggal-jam cetak (owner 20 Okt 2026). */
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+    const id = Number((await params).id);
+    const w = await pool.query<{ tanggal: string }>(`SELECT tanggal::text FROM wave WHERE id = $1`, [id]);
+    return w.rowCount ? { title: judulBerkas(nomorLembar("TTF", w.rows[0].tanggal, id)) } : {};
+}
 
 const ID = (v: number) => v.toLocaleString("id-ID");
 
@@ -52,6 +61,8 @@ export default async function CetakTtfPage({ params }: { params: Promise<{ id: s
     const halaman = bagiHalamanTtf(rows);
     const totalHalaman = halaman.length;
     const sekarang = new Date();
+    const noLembar = nomorLembar("TTF", wave.tanggal, id);
+    const dicetak = jamWita(sekarang);
 
     return (
         <main className="cetak ttf">
@@ -90,6 +101,7 @@ export default async function CetakTtfPage({ params }: { params: Promise<{ id: s
                                         {wave.nama.toUpperCase()} &middot; {tanggal} &middot; Wave #{id}
                                         {wave.tipe === "kanvas" && " · KANVAS"}
                                     </div>
+                                    <div className="kop-sub">No. <b>{noLembar}</b> &middot; dicetak {dicetak} WITA</div>
                                 </div>
                                 <div className="kop-kanan">
                                     <div className="kop-kode">TTF</div>
@@ -180,7 +192,7 @@ export default async function CetakTtfPage({ params }: { params: Promise<{ id: s
                             </span>
                             <span>
                                 Halaman {h + 1} dari {totalHalaman} &middot; dicetak{" "}
-                                {sekarang.toLocaleString("id-ID")}
+                                {dicetak} WITA
                             </span>
                         </div>
                     </section>

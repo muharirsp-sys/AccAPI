@@ -142,19 +142,21 @@ export type NotaPool = {
     area: string | null; grup_all: string; grup_gdi: string;
     jumlah_baris: number; total_pcs: number; total_krt: number | null;
     pareto: boolean | null; kanvas: boolean;
+    /** Nota memuat HEINZ ABC — hanya nota ini yang butuh area (lembar HNZ1-5). */
+    heinz: boolean;
 };
 
 /**
  * Pool nota yang tersedia untuk wave berikutnya = ANTI-JOIN ke wave_assignment, bukan
  * pencocokan daftar manual (R3.2). File sore memuat nota pagi + sore sekaligus; yang
  * memisahkan mana yang sudah turun adalah keanggotaan wave, bukan isi file (R3.7).
+ * Outlet ber-area NON / LUAR KOTA IKUT, sama seperti TTF di Excel (owner 19 Okt 2026; menggantikan R2.5).
  */
 export async function notaPool(
     tanggal: string,
-    opts: { tipe?: "reguler" | "kanvas"; areaDikecualikan?: string[]; ambangPareto?: number } = {},
+    opts: { tipe?: "reguler" | "kanvas"; ambangPareto?: number } = {},
 ): Promise<NotaPool[]> {
     const tipe = opts.tipe ?? "reguler";
-    const dikecualikan = (opts.areaDikecualikan ?? ["NON", "LUAR KOTA"]).map((a) => a.toUpperCase());
     const ambang = opts.ambangPareto ?? 50;
 
     const r = await pool.query<NotaPool>(
@@ -170,8 +172,9 @@ export async function notaPool(
                 count(*)::int                    AS jumlah_baris,
                 sum(p.qty_pcs)::float8           AS total_pcs,
                 sum(p.qty_pcs / NULLIF(coalesce(p.konv_tersirat, i.isi_per_karton), 0))::float8 AS total_krt,
-                (sum(p.qty_pcs / NULLIF(coalesce(p.konv_tersirat, i.isi_per_karton), 0)) >= $3)  AS pareto,
-                (k.no_nota IS NOT NULL)          AS kanvas
+                (sum(p.qty_pcs / NULLIF(coalesce(p.konv_tersirat, i.isi_per_karton), 0)) >= $2)  AS pareto,
+                (k.no_nota IS NOT NULL)          AS kanvas,
+                bool_or(upper(coalesce(p.jenisproduk,'')) = 'HEINZ ABC') AS heinz
            FROM wave_line_pool p
            LEFT JOIN customer c ON c."customerNo" = p.kode_cust
            LEFT JOIN item i     ON i.no = p.kode_barang
@@ -179,11 +182,10 @@ export async function notaPool(
           WHERE p.tanggal = $1::date
             AND NOT EXISTS (SELECT 1 FROM wave_assignment wa
                              WHERE wa.no_nota = p.no_nota AND wa.dilepas = false)
-            AND (k.no_nota IS NOT NULL) = $4
+            AND (k.no_nota IS NOT NULL) = $3
           GROUP BY p.no_nota, k.no_nota
-         HAVING coalesce(max(upper(c.area)), '') <> ALL ($2::text[])
           ORDER BY p.no_nota`,
-        [tanggal, dikecualikan, ambang, tipe === "kanvas"]);
+        [tanggal, ambang, tipe === "kanvas"]);
     return r.rows;
 }
 

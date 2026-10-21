@@ -13,7 +13,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 import { ambilSetting } from "@/lib/rekapan-nota/query";
-import { parseAreaDikecualikan } from "@/lib/rekapan-nota/classify";
 import { tolakUbahIsi, type UbahIsi, type WaveStatus } from "@/lib/rekapan-nota/wave-state";
 import type { PoolClient } from "pg";
 
@@ -52,11 +51,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
     const prioritas = body.prioritas === "urgent" ? "urgent" : "normal";
     const kanvas = wave.tipe === "kanvas";
-    const [ambangRaw, dikecualikanRaw] = await Promise.all([
-        ambilSetting("rekapan.ambang_pareto_karton", "50"),
-        ambilSetting("rekapan.area_dikecualikan", "NON,LUAR KOTA"),
-    ]);
-    const dikecualikan = parseAreaDikecualikan(dikecualikanRaw).map((a) => a.toUpperCase());
+    const ambangRaw = await ambilSetting("rekapan.ambang_pareto_karton", "50");
 
     const client = await pool.connect();
     try {
@@ -90,11 +85,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
                     (src.total_krt >= $4), src.total_krt, $7::boolean, $8
                FROM src
               WHERE EXISTS (SELECT 1 FROM nota_kanvas k WHERE k.no_nota = src.no_nota) = $7
-                AND coalesce(src.area, '') <> ALL ($9::text[])
              ON CONFLICT DO NOTHING
              RETURNING no_nota`,
             [id, wave.tanggal, noNota, Number(ambangRaw) || 50, prioritas,
-                wave.tipe, kanvas, gate.session!.user.id, dikecualikan]);
+                wave.tipe, kanvas, gate.session!.user.id]);
 
         const masuk = ins.rows.map((r) => r.no_nota);
         const ditolak = noNota.filter((n) => !masuk.includes(n));

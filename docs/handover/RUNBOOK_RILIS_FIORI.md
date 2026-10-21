@@ -305,6 +305,8 @@ Yang TIDAK kembali sendiri:
   lalu `terapkan RBAC_S7_1B_PULIH.sql`. Berkas ini memulihkan pasangan grup-kunci dari jejak `permission_audit_log` kedua sebab itu, hanya untuk
   **siklus rilis terakhir** (jejak sesudah PULIH sebelumnya). Jadi kunci yang sengaja dicabut admin di antara dua siklus tidak ikut kembali.
   VERIFIKASI "belum kembali" harus 0. Batas: NOTICE mencetak TimeZone DB; bila bukan UTC dan rilis ulang terjadi < 8 jam sesudah PULIH sebelumnya, periksa NOTICE manual.
+  **Rollback S7-3 tidak memerlukan PULIH.** `off_program_control.approve` (dipensiunkan S7-3) hanya dipakai image lama untuk tebakan label Beranda SM,
+  bukan gerbang akses; PULIH juga akan ikut memulihkan kunci pensiun S7-1b yang diterapkan 15 Okt.
 - (d) Kunci D-01 (`RBAC_D01_KUNCI`) dan kunci baru lain hanya berupa teks yang diabaikan image lama. Efek sampingnya: layar Akses Group lama menolak menyimpan
   grup Finance/Admin/Manager ("Key tidak valid"). Bila grup itu harus disunting sebelum rilis berikutnya, ORK menyiapkan SQL terarah untuk mencabut
   kunci tersebut (**PERLU KONFIRMASI**). `DATABASE_MIGRATION_URL` aman bagi image lama, karena migrate-pg lama hanya mencetak SKIP.

@@ -1,14 +1,13 @@
 /*
- * Tujuan: Aturan klasifikasi baris/nota rekapan — grup outlet, area, pareto, sirup, eksklusi.
+ * Tujuan: Aturan klasifikasi baris/nota rekapan — grup outlet, area, pareto, sirup.
  *         Semuanya pure supaya bisa diuji tanpa DB dan dipakai ulang di parser maupun cetak.
  * Caller: app/api/rekapan-nota/** , lib/rekapan-nota/query.ts, classify.test.ts.
  * Dependensi: Tidak ada.
- * Main Functions: resolveKlasifikasi, isAreaDikecualikan, hitungPareto, klasifikasiSirup.
+ * Main Functions: resolveKlasifikasi, hitungPareto, klasifikasiSirup.
  * Side Effects: Tidak ada.
  */
 
 export const GRUP_DEFAULT = "Gabung";
-export const AREA_DIKECUALIKAN_DEFAULT = ["NON", "LUAR KOTA"];
 
 export type MasterOutlet = {
     area: string | null;
@@ -33,23 +32,6 @@ export function resolveKlasifikasi(master: MasterOutlet | null | undefined): Kla
         grupAll: master?.grupAll?.trim() || GRUP_DEFAULT,
         grupGdi: master?.grupGdi?.trim() || GRUP_DEFAULT,
     };
-}
-
-/**
- * R2.5 (Q3): outlet ber-area NON / LUAR KOTA dikeluarkan dari pool SEJAK AWAL — difilter di
- * jalur masuk, bukan di lembar cetak, supaya tidak ada jalan ia menyelinap ke lembar `Gabung`.
- * Outlet yang areanya belum dipetakan (null) TIDAK dikecualikan: ia tetap masuk pool dan
- * memunculkan exception OUTLET_TANPA_AREA — hilang diam-diam justru masalah yang sedang dibereskan.
- */
-export function isAreaDikecualikan(area: string | null | undefined, daftar: string[] = AREA_DIKECUALIKAN_DEFAULT): boolean {
-    if (!area) return false;
-    const a = area.trim().toUpperCase();
-    return daftar.some((d) => d.trim().toUpperCase() === a);
-}
-
-export function parseAreaDikecualikan(setting: string | null | undefined): string[] {
-    const raw = (setting ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-    return raw.length ? raw : AREA_DIKECUALIKAN_DEFAULT;
 }
 
 /** Pareto = volume, bukan area: total karton per NOTA >= ambang (app_setting, default 50). */

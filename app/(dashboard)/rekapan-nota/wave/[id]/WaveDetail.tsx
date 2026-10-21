@@ -335,7 +335,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
 
             {draft && (
                 <Section id="pool" title={`Pool nota ${TIPE_LABEL[wave.tipe]?.toLowerCase() ?? wave.tipe} ${tanggalPendek(wave.tanggal)}`}
-                    subtitle={pool.data ? `${poolRows.length} nota belum masuk wave · area NON dan LUAR KOTA tidak ikut · ${wave.tipe === "kanvas" ? "hanya nota bertanda kanvas" : "nota bertanda kanvas masuk wave kanvas"}` : undefined}>
+                    subtitle={pool.data ? `${poolRows.length} nota belum masuk wave · ${wave.tipe === "kanvas" ? "hanya nota bertanda kanvas" : "nota bertanda kanvas masuk wave kanvas"}` : undefined}>
                     <div className="fi-sect-in">
                         {pool.data && wave.tipe === "reguler" && (
                             <p className="fi-small fi-subtle">

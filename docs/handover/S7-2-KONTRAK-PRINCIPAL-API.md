@@ -110,10 +110,47 @@ akan ikut cocok di teks bebas. Hasil: `cocok { norm, principalId, code, variantK
 Untuk pemakai luar (Python tahap 2) agar SATU normalizer dipakai. `200 { ok, hasil }` (bentuk hasil di atas). 400 `RUANG_TIDAK_SAH`
 (ruang absen/lain), `TEKS_KOSONG` (kosong sesudah dinormalkan), `TIDAK_SAH` (> 200 karakter).
 
+## Pemakai S7-2b — Mapping Principal + Master Barang (galat bersama)
+
+Logika: `lib/principal/pemakai.ts` (`wajibPrincipal`, `kodeMasterBarang`; resolver ruang `"nama"`, tak pernah menebak). Jawaban galat
+lewat `jawabGalat` (bentuk `{ ok: false, code, error, ...detail }` seperti di atas). Tidak ada yang ditulis bila ditolak.
+
+- **400 `PRINCIPAL_TIDAK_DIKENAL`** — teks principal bukan alias principal/varian mana pun.
+  ```
+  { ok: false, code: "PRINCIPAL_TIDAK_DIKENAL", error,
+    ditolak: [{ nilai: string,                                   // teks persis yang dikirim
+                saran: { code, variantKey: string|null, nama }[] }] }   // maks 5, bisa kosong
+  ```
+  `saran` = principal/varian AKTIF yang aliasnya berbagi token (≥ 3 huruf; tanda baca & badan hukum PT/TBK/INDONESIA dibuang) —
+  petunjuk untuk manusia, **tidak pernah dipakai otomatis**. Jalan keluar di UI: pilih saran (kirim ulang dengan `nama`-nya) atau
+  tambahkan ejaan itu sebagai alias di Data Principal (`POST /api/principals/{id}/aliases`). `ditolak` selalu satu entri: impor Mapping
+  memakai SATU principal per berkas (field form `principal`); sheet Mapping_Prd/Customer/Sls tidak punya kolom principal (diperiksa
+  pada berkas nyata Mapping Item/Customer Kino), jadi **tidak ada nomor baris** — principal diperiksa SEBELUM berkas dibaca.
+- **409 `PRINCIPAL_NONAKTIF`** `{ nilai, principal: { code, variantKey } }` — dikenal, tetapi principal/varian nonaktif.
+- **400 `KODE_MB_TIDAK_COCOK`** (Master Barang saja) `{ kodeMb: string|null, principal: { code, variantKey }, pilihan: string[] }` —
+  kode 2 karakter Master Barang = alias `kode_master_barang` milik principal itu (alias utuh berlaku juga untuk variannya; alias varian
+  hanya untuk varian itu). `pilihan` kosong = principal belum punya kode MB → tambahkan alias `kode_master_barang` di Data Principal;
+  `kodeMb` null + `pilihan` > 1 = wajib memilih; `kodeMb` diisi tetapi bukan milik principal = ditolak. Tidak ada lagi kode otomatis.
+- `503 PRINCIPAL_SKEMA_BELUM` / `500 GAGAL` seperti aturan bersama.
+
+**Nama yang disimpan** = nama resmi target: nama varian (mis. `KINO NON FOOD`) atau nama principal (mis. `KINO INDONESIA TBK, PT`);
+varian tanpa nama → `KODE/VARIAN`. Ejaan lain yang dikenal (`kino non food`, alias label) masuk ke set yang SAMA, bukan set baru.
+
+| Pemakai | Perubahan |
+|---|---|
+| `PUT /api/principal-mapping` | principal wajib dikenal; disimpan dengan nama resmi; `200 { ok, principal }` (nama yang disimpan). |
+| `POST /api/principal-mapping/import` | sama, untuk pratinjau DAN muat; set yang diganti = nama resmi; jawaban `principal` = nama resmi. |
+| `GET` / `DELETE /api/principal-mapping` | ejaan dikenal → nama resmi; tak dikenal → teks apa adanya (data lama tetap terbaca). `GET` menjawab `principal`. |
+| `POST /api/master-barang` `action: "create"` | `principleName` → principal resmi (nama resmi disimpan, huruf besar); `principleCode` opsional → `KODE_MB_TIDAK_COCOK` bila bukan milik principal. Audit `master.create` mencatat `principal: { code, variantKey }`. |
+| `adapt_legacy` (Master Barang lama) | per berkas: nama/kode berkas wajib dikenal; master yang ada dicari lewat nama resmi; gagal = baris `failed` berisi pesan galat. |
+
+Data lama tidak diubah: `principal_mapping` produksi hanya berisi `KINO NON FOOD` (= nama varian KINO/NON_FOOD, sama persis);
+tabel `master_barang` produksi kosong. Master Barang disimpan di Postgres `master_barang` (Next); FastAPI hanya mengekstrak sumber
+(`/master-barang/extract`, tanpa tulis DB) — Python tidak diubah.
+
 ## TERBUKA
 
-- Izin: slice ini memakai `principles.upload` / `principles.delete` yang sudah ada. Kunci `principals.manage` untuk membuat /
-  menonaktifkan principal resmi = keputusan owner / matriks D-01.
+- Izin: owner 17 Okt — mengelola Data Principal memakai kunci `principles.*` yang sudah ada; **tidak** ada kunci `principals.manage`.
 - Ganti nama resmi principal / nama varian: belum ada jalur.
 
 ## Runbook laporan + benih (produksi, BACA-SAJA lalu ditinjau owner)

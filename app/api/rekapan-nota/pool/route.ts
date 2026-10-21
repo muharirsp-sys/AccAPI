@@ -9,7 +9,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { pool } from "@/lib/db";
 import { notaPool, ambilSetting } from "@/lib/rekapan-nota/query";
-import { parseAreaDikecualikan } from "@/lib/rekapan-nota/classify";
 
 export const runtime = "nodejs";
 
@@ -24,11 +23,7 @@ export async function GET(req: NextRequest) {
     }
     const tipe = url.searchParams.get("tipe") === "kanvas" ? "kanvas" : "reguler";
 
-    const [ambangRaw, dikecualikanRaw] = await Promise.all([
-        ambilSetting("rekapan.ambang_pareto_karton", "50"),
-        ambilSetting("rekapan.area_dikecualikan", "NON,LUAR KOTA"),
-    ]);
-    const opts = { ambangPareto: Number(ambangRaw) || 50, areaDikecualikan: parseAreaDikecualikan(dikecualikanRaw) };
+    const opts = { ambangPareto: Number(await ambilSetting("rekapan.ambang_pareto_karton", "50")) || 50 };
     const rows = await notaPool(tanggal, { ...opts, tipe });
     // Nota kanvas hilang dari pool reguler secara sengaja (R3.5). Yang berbahaya adalah
     // hilang DIAM-DIAM: kalau salah tandai, tak ada yang tahu sampai kertas keluar.
@@ -42,7 +37,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
         tanggal, tipe, jumlahNota: rows.length,
         kanvasNihilOleh: nihil.rows[0]?.oleh ?? null,
-        tanpaArea: rows.filter((r) => !r.area).length,
+        tanpaArea: rows.filter((r) => r.heinz && !r.area).length,
         disembunyikan: lawan.length,
         nota: rows,
     });

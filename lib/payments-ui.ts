@@ -146,30 +146,31 @@ export function galatIsian(k: Isian, v: string): string | undefined {
 // ── Izin (BL-31): tombol tulis mengikuti izin endpoint-nya; tanpa izin = nonaktif dengan alasan terlihat ──
 export type AksiPembayaran =
     | "lihat" | "ubah" | "hapus" | "unggah" | "manual" | "keranjang"
-    | "lihatSppd" | "setelan" | "restore" | "excelSppd" | "gantiNama" | "unduhSppd";
+    | "lihatSppd" | "setelan" | "restore" | "excelSppd" | "gantiNama" | "unduhSppd" | "ekspor";
 
-/** Kunci izin per aksi = yang ditegakkan FastAPI (routers/payments.py, routers/sppd.py, main.py). */
-const KUNCI: Record<AksiPembayaran, [string, string]> = {
+/** Kunci izin per aksi = yang ditegakkan FastAPI (routers/payments.py, routers/sppd.py, main.py); daftar = SEMUA wajib (S7-1c: lama ∧ baru). */
+const KUNCI: Record<AksiPembayaran, [string | string[], string]> = {
     lihat: ["payments.view", "melihat rekaman pembayaran"],
     ubah: ["payments.update", "mengubah isian rekaman pembayaran"],
     hapus: ["payments.delete", "menghapus rekaman pembayaran"],
-    unggah: ["payments.edit", "mengunggah LPB"],
-    manual: ["payments.edit", "menambah pengajuan manual"],
-    keranjang: ["payments.edit", "membuat dan mengajukan keranjang"],
+    unggah: [["payments.edit", "payments.upload"], "mengunggah LPB"],
+    manual: [["payments.edit", "payments.create"], "menambah pengajuan manual"],
+    keranjang: [["payments.edit", "payments.create", "payments.submit"], "membuat dan mengajukan keranjang"],
     lihatSppd: ["sppd.view", "melihat Format SPPD dan data rekening"],
     setelan: ["sppd.edit_settings", "mengubah setelan dan nomor SPPD"],
     restore: ["sppd.edit_settings", "memulihkan backup (ikut menaikkan nomor SPPD)"],
     excelSppd: ["sppd.upload_excel", "mengunggah Excel data SPPD"],
     gantiNama: ["payments.edit", "mengganti nama principal di rekaman"],
     unduhSppd: ["sppd.download", "mengunduh dokumen SPPD"],
+    ekspor: [["payments.view", "payments.export"], "mengunduh backup pembayaran"],
 };
 
 /** Alasan nonaktif per aksi (undefined = boleh). Kalimat tugas, tanpa nama kunci mentah. */
 export function izinPembayaran(permKeys: Iterable<string>): Record<AksiPembayaran, string | undefined> {
     const punya = new Set(permKeys);
     const out = {} as Record<AksiPembayaran, string | undefined>;
-    for (const [aksi, [kunci, kalimat]] of Object.entries(KUNCI) as [AksiPembayaran, [string, string]][]) {
-        out[aksi] = punya.has(kunci) ? undefined : `Akun Anda belum punya izin ${kalimat}. Minta admin menambahkannya ke grup Anda.`;
+    for (const [aksi, [kunci, kalimat]] of Object.entries(KUNCI) as [AksiPembayaran, [string | string[], string]][]) {
+        out[aksi] = [kunci].flat().every((k) => punya.has(k)) ? undefined : `Akun Anda belum punya izin ${kalimat}. Minta admin menambahkannya ke grup Anda.`;
     }
     return out;
 }

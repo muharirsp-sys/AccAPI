@@ -33,7 +33,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const wave = await ambilWave(id);
     if (!wave) return NextResponse.json({ error: "Wave tidak ditemukan" }, { status: 404 });
 
-    const [nota, exception, grup, tersedia, riwayat] = await Promise.all([
+    // Urutan nama WAJIB sama dengan urutan kueri di bawah (tertukar 7-19 Okt 2026: halaman wave galat getTime).
+    const [nota, exception, grup, riwayat, tersedia] = await Promise.all([
         pool.query(
             `SELECT wa.no_nota, wa.prioritas::text, wa.snap_area, wa.snap_grup_all, wa.snap_grup_gdi,
                     wa.snap_pareto, wa.snap_total_krt::float8, wa.dilepas, wa.dilepas_alasan, wa.dilepas_at,

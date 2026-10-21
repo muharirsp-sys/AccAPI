@@ -1,10 +1,10 @@
 /*
  * S7-1b (AM-042, D-01 §D disetujui owner 11 Okt; keputusan PK 12 Okt): nasib 31 kunci yang dulu tidak ditegakkan server + penjaga
  * statik route tulis. Tabel = brief S7-1b (literal, bukan dihitung) — mengubah nasib = mengubah baris di sini dengan alasan.
- *   tegakkan     = literal kunci muncul di route yang disebut (slice ini);
+ *   tegakkan     = literal kunci muncul di route yang disebut (berkas .py: pola user_has_permission(u, "modul", "aksi"); S7-1b/S7-1c);
  *   pensiun      = tidak ada di registry, ada di KUNCI_PENSIUN, tidak dirujuk di app/lib/components/config/scripts/python_backend
  *                  (kecuali SQL docs/handover/ dan berkas uji);
- *   daftar tunggu (tegakkan-1c / pensiun-s7-3 / tunda / tetap) = masih terdaftar, beralasan.
+ *   daftar tunggu (pensiun-s7-3 / tunda / tetap) = masih terdaftar, beralasan. S7-1c (17 Okt): baris 12–24 tegakkan-1c -> tegakkan.
  * Tripwire: kunci registry yang tidak dirujuk server mana pun WAJIB punya baris di sini (atau DI_LUAR_31) — kunci baru tanpa
  * penegakan dan tanpa nasib = merah. Heuristik rujukan = Lampiran A S7-EKSPLORASI (literal "modul.aksi" / Python
  * user_has_permission(user, "modul", "aksi" [if … else "aksi"])).
@@ -20,32 +20,32 @@ import { KUNCI_PENSIUN, PERMISSION_REGISTRY, allPermissionKeys, isValidPermissio
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const baca = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
-type Nasib = "tegakkan" | "pensiun" | "tegakkan-1c" | "pensiun-s7-3" | "tunda" | "tetap";
+type Nasib = "tegakkan" | "pensiun" | "pensiun-s7-3" | "tunda" | "tetap";
 const NASIB: Array<{ no: string; kunci: string; nasib: Nasib; di?: string[]; alasan: string }> = [
     { no: "1", kunci: "api_wrapper.execute", nasib: "tegakkan", di: ["app/api/proxy/route.ts"], alasan: "tulis /api/proxy non-sales-receipt (AM-024; PK-1..3)" },
     { no: "2", kunci: "off_program_control.audit_export", nasib: "tegakkan", di: ["app/api/off-program-control/audit/route.ts"], alasan: "GET audit?format=csv = audit_read ∧ audit_export" },
     { no: "3", kunci: "off_program_control.create", nasib: "pensiun", alasan: "diganti kunci granular OPC (create_batch, …); tidak dipetakan" },
     { no: "4", kunci: "off_program_control.update", nasib: "pensiun", alasan: "diganti kunci granular OPC; tidak dipetakan" },
     { no: "5", kunci: "off_program_control.export", nasib: "pensiun", alasan: "diganti audit_export; tidak dipetakan" },
-    { no: "6", kunci: "off_program_control.approve", nasib: "pensiun-s7-3", alasan: "profil Beranda SM (config/workspace-navigation.ts) pindah ke bintang di S7-3 (PK-O2)" },
+    { no: "6", kunci: "off_program_control.approve", nasib: "pensiun", alasan: "S7-3: profil Beranda dari ★ grup utama; tebakan SM = sm_approve (PK-O2)" },
     { no: "7", kunci: "users.create_user", nasib: "pensiun", alasan: "-> users.manage (D-01 §E)" },
     { no: "8", kunci: "users.edit_user", nasib: "pensiun", alasan: "-> users.manage" },
     { no: "9", kunci: "users.delete_user", nasib: "pensiun", alasan: "-> users.manage" },
     { no: "10", kunci: "users.set_role", nasib: "pensiun", alasan: "-> users.manage" },
     { no: "11", kunci: "users.set_permission", nasib: "pensiun", alasan: "-> users.manage" },
-    { no: "12", kunci: "finance.post_accurate", nasib: "tegakkan-1c", alasan: "POST /api/finance/purchase-payment finance.update ∧ post_accurate — S7-1c (PK-O1, zona uang)" },
-    { no: "13", kunci: "finance.upload_proof", nasib: "tegakkan-1c", alasan: "Py POST /payments/finance/proof — S7-1c" },
-    { no: "14", kunci: "finance.transfer", nasib: "tegakkan-1c", alasan: "Py POST /payments/finance/update jalur can_update — S7-1c" },
-    { no: "15", kunci: "finance.export", nasib: "tegakkan-1c", alasan: "Py GET /payments/finance/export — S7-1c" },
-    { no: "16", kunci: "payments.create", nasib: "tegakkan-1c", alasan: "Py /payments/manual/add, /payments/cart/create — S7-1c" },
-    { no: "17", kunci: "payments.upload", nasib: "tegakkan-1c", alasan: "Py /payments/upload — S7-1c" },
-    { no: "18", kunci: "payments.submit", nasib: "tegakkan-1c", alasan: "Py /payments/cart/submit, /payments/submit — S7-1c" },
-    { no: "19", kunci: "payments.export", nasib: "tegakkan-1c", alasan: "Py GET /payments/export — S7-1c" },
-    { no: "20", kunci: "sppd.generate", nasib: "tegakkan-1c", alasan: "Py dua route render SPPD — S7-1c" },
-    { no: "21", kunci: "summary.upload", nasib: "tegakkan-1c", alasan: "Py summary.py — S7-1c" },
-    { no: "22", kunci: "summary.generate", nasib: "tegakkan-1c", alasan: "Py summary.py — S7-1c" },
-    { no: "23", kunci: "summary.email", nasib: "tegakkan-1c", alasan: "Py summary.py — S7-1c" },
-    { no: "24", kunci: "summary.export", nasib: "tegakkan-1c", alasan: "Py /summary_download, /summary/manual/download — S7-1c" },
+    { no: "12", kunci: "finance.post_accurate", nasib: "tegakkan", di: ["app/api/finance/purchase-payment/route.ts"], alasan: "POST /api/finance/purchase-payment = finance.update ∧ post_accurate (S7-1c, PK-2)" },
+    { no: "13", kunci: "finance.upload_proof", nasib: "tegakkan", di: ["python_backend/routers/finance.py"], alasan: "Py POST /payments/finance/proof = finance.update ∧ upload_proof (S7-1c)" },
+    { no: "14", kunci: "finance.transfer", nasib: "tegakkan", di: ["python_backend/routers/finance.py"], alasan: "Py POST /payments/finance/update jalur can_update = finance.update ∧ transfer; resolve_only tetap (S7-1c)" },
+    { no: "15", kunci: "finance.export", nasib: "tegakkan", di: ["python_backend/routers/finance.py"], alasan: "Py GET /payments/finance/export = finance.view ∧ export (S7-1c)" },
+    { no: "16", kunci: "payments.create", nasib: "tegakkan", di: ["python_backend/routers/payments.py"], alasan: "Py /payments/manual/add, /payments/cart/create = payments.edit ∧ create (S7-1c)" },
+    { no: "17", kunci: "payments.upload", nasib: "tegakkan", di: ["python_backend/routers/payments.py"], alasan: "Py /payments/upload = payments.edit ∧ upload (S7-1c)" },
+    { no: "18", kunci: "payments.submit", nasib: "tegakkan", di: ["python_backend/routers/payments.py"], alasan: "Py /payments/cart/submit, /payments/submit = payments.edit ∧ submit (S7-1c)" },
+    { no: "19", kunci: "payments.export", nasib: "tegakkan", di: ["python_backend/routers/payments.py"], alasan: "Py GET /payments/export = payments.view ∧ export (S7-1c)" },
+    { no: "20", kunci: "sppd.generate", nasib: "tegakkan", di: ["python_backend/routers/payments.py"], alasan: "Py dua route render SPPD (cart/submit, submit) bila BANK_PANIN = payments.edit ∧ sppd.generate (S7-1c)" },
+    { no: "21", kunci: "summary.upload", nasib: "tegakkan", di: ["python_backend/routers/summary.py"], alasan: "Py /summary/manual/master/upload = summary.edit ∧ upload (S7-1c)" },
+    { no: "22", kunci: "summary.generate", nasib: "tegakkan", di: ["python_backend/routers/summary.py"], alasan: "Py /summary/manual/generate (+ /summary/library/bulanan lewat fungsi itu) dan POST /summary/manual = summary.edit ∧ generate (S7-1c)" },
+    { no: "23", kunci: "summary.email", nasib: "tegakkan", di: ["python_backend/routers/summary.py"], alasan: "Py /summary/manual/email = summary.edit ∧ email (S7-1c)" },
+    { no: "24", kunci: "summary.export", nasib: "tegakkan", di: ["python_backend/routers/summary.py"], alasan: "Py /summary_download, /summary/manual/download = summary.view (require_user) ∧ export (S7-1c)" },
     { no: "25", kunci: "insentif_sales.view_dashboard", nasib: "tunda", alasan: "PK-5: /api/insentif-sales/dashboard juga dipakai 'Insentif saya' & SPV/SM" },
     { no: "26", kunci: "finance.approve", nasib: "tetap", alasan: "PK-4: tidak ada route/aksi terpisah — tetap berlabel" },
     { no: "27", kunci: "finance.retry_post", nasib: "tetap", alasan: "PK-4: kunci lama, tidak memberi kapabilitas apa pun" },
@@ -86,7 +86,13 @@ test("nasib 31 kunci: tabel lengkap & unik; tegakkan = literal di route yang dis
         if (r.nasib === "pensiun") continue;
         assert.ok(isValidPermissionKey(r.kunci), `baris ${r.no} ${r.kunci} (${r.nasib}) harus masih terdaftar`);
         if (r.nasib === "tegakkan") {
-            for (const f of r.di ?? []) assert.match(baca(f), new RegExp(`["'\`]${esc(r.kunci)}["'\`]`), `${r.kunci} tidak ditegakkan di ${f}`);
+            const [mod, act] = r.kunci.split(".");
+            for (const f of r.di ?? []) {
+                const pola = f.endsWith(".py")
+                    ? new RegExp(`user_has_permission\\(\\s*\\w+\\s*,\\s*"${mod}"\\s*,\\s*"${act}"\\s*\\)`)
+                    : new RegExp(`["'\`]${esc(r.kunci)}["'\`]`);
+                assert.match(baca(f), pola, `${r.kunci} tidak ditegakkan di ${f}`);
+            }
         }
     }
 });
@@ -286,4 +292,23 @@ test("PK-1 (owner 12 Okt: biarkan): tidak ada SQL handover yang menulis api_wrap
     const { rolePermissionPresets } = await import("../rbac.ts");
     assert.deepEqual(rolePermissionPresets.manager.api_wrapper, ["view", "execute"], "preset lama Manager tetap execute");
     assert.match(baca("scripts/seed-rbac-presets.ts"), /k\("api_wrapper", \["view", "execute"\]\)/, "seed Manager tetap execute");
+});
+
+/** S7-1c PK-2 (owner 12 Okt): kunci lama -> kunci baru. Sama dengan docs/handover/RBAC_S7_1C_KUNCI.sql & python_backend/test_rbac_parity.py. */
+const PASANGAN_1C: ReadonlyArray<readonly [string, readonly string[]]> = [
+    ["finance.update", ["finance.post_accurate", "finance.upload_proof", "finance.transfer"]],
+    ["finance.view", ["finance.export"]],
+    ["payments.edit", ["payments.create", "payments.upload", "payments.submit", "sppd.generate"]],
+    ["payments.view", ["payments.export"]],
+    ["summary.edit", ["summary.upload", "summary.generate", "summary.email"]],
+    ["summary.view", ["summary.export"]],
+];
+
+test("S7-1c PK-2: preset legacy (fallback user TANPA grup) yang memegang kunci lama juga memegang kunci barunya", async () => {
+    const { rolePermissionPresets } = await import("../rbac.ts");
+    const kurang = Object.entries(rolePermissionPresets).flatMap(([role, map]) => {
+        const punya = new Set(Object.entries(map).flatMap(([m, a]) => (a ?? []).map((x) => `${m}.${x}`)));
+        return PASANGAN_1C.flatMap(([lama, baru]) => (punya.has(lama) ? baru.filter((k) => !punya.has(k)).map((k) => `${role}: ${lama} tanpa ${k}`) : []));
+    });
+    assert.deepEqual(kurang, []);
 });

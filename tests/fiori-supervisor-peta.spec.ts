@@ -1,33 +1,40 @@
 /*
- * Tujuan: SR-3 Supervisor Review — (1) komponen Peta (Leaflet + OSM): jumlah penanda per status + legenda teks, garis urutan check-in saat
- *   satu salesman dipilih, EmptyState tanpa titik, peta tidak dibangun ulang bila induk mengirim array baru; (2) tab Koordinat Toko di
- *   /form-kontrol: ringkasan, unduh templat, pratinjau + unggah -> tabel baris ditolak, tab hanya untuk admin/manager/admin_sales. 390 px.
- *   Data generik (SALES A, CABANG A, PRINCIPLE A).
+ * Tujuan: SR-3 Supervisor Review — (1) komponen Peta (Leaflet + OSM) di layar asli /supervisor-review: jumlah penanda per status + legenda teks,
+ *   garis urutan check-in saat satu salesman dipilih, EmptyState tanpa titik, peta tidak dibangun ulang saat "Muat ulang" mengirim array baru
+ *   berisi sama; (2) tab Koordinat Toko di /form-kontrol: ringkasan, unduh templat, pratinjau + unggah -> tabel baris ditolak, tab hanya untuk
+ *   admin/manager/admin_sales. 390 px. Data generik (SALES A, CABANG A, PRINCIPLE A).
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true), config sementara port 3062:
  *   `npx playwright test tests/fiori-supervisor-peta.spec.ts --config playwright.sr3-local.config.ts --workers=1`.
- * Dependensi: halaman uji app/(dashboard)/supervisor-review/uji-peta; SEMUA endpoint (/api/supervisor-review*, /api/form-kontrol/*) dan ubin
- *   OSM di-mock (page.route) — tanpa jaringan, tanpa DB.
+ * Dependensi: layar app/(dashboard)/supervisor-review (SR-2); SEMUA endpoint (/api/supervisor-review*, /api/form-kontrol/*) dan ubin
+ *   OSM di-mock (page.route) — tanpa jaringan, tanpa DB. Bentuk jawaban = JawabanSupervisorReview (lib/supervisor-review/kontrak.ts).
  * Side Effects: Tangkapan di test-results/sr3.
  */
 import { expect, test, type Page } from "@playwright/test";
 import * as XLSX from "xlsx";
+import type { Angka, BarisSalesman, JawabanSupervisorReview, Kunjungan, PenandaToko } from "../lib/supervisor-review/kontrak";
 
 const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 const NAV = { timeout: 90_000 } as const;
 // PNG 1x1 transparan.
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64");
 
-const pen = (custCode: string, salesCode: string, status: string, lat: number, lng: number) =>
-    ({ custCode, namaToko: `TOKO ${custCode}`, salesCode, lat, lng, status });
-const kun = (salesCode: string, custCode: string, mulai: string | null, lat: number | null, lng: number | null, extra = {}) => ({
+const ANGKA: Angka = { registeredOutlet: 0, callPlan: 0, callRute: 0, callNonRute: 0, ec: 0, noo: 0, quantity: 0, itemPerEc: 0, nilaiOrder: 0, omzetPerEc: 0, jamDiToko: 0, jamPerjalanan: 0 };
+// `status` string: uji status di luar kontrak menyelundupkan "status_baru".
+const pen = (custCode: string, salesCode: string, status: string, lat: number, lng: number): PenandaToko =>
+    ({ custCode, namaToko: `TOKO ${custCode}`, salesCode, lat, lng, status: status as PenandaToko["status"] });
+const kun = (salesCode: string, custCode: string, mulai: string | null, lat: number | null, lng: number | null, extra: Partial<Kunjungan> = {}): Kunjungan => ({
     salesCode, custCode, namaToko: `TOKO ${custCode}`, jenis: mulai ? "rute" : "tanpa_checkin", mulai, selesai: null, menitDiToko: null, menitTempuh: null,
     qty: null, item: null, nilai: null, ec: false, belumDifakturkan: false, lat, lng, jarakKeTokoM: null, ...extra,
 });
-const SALESMAN = (salesCode: string, nama: string) => ({ cabang: "CABANG A", salesCode, nama });
+const SALESMAN = (salesCode: string, nama: string): BarisSalesman => ({ cabang: "CABANG A", salesCode, nama, status: "sudah", waUrl: null, ...ANGKA });
+const jawaban = (o: Partial<JawabanSupervisorReview> = {}): JawabanSupervisorReview => ({
+    tanggal: "2026-10-16", diperbaruiPada: "2026-10-16T09:40:00+08:00", cakupan: "global", pilihanCabang: ["CABANG A"], pilihanPrinciple: [],
+    salesman: [SALESMAN("S-01", "SALES A"), SALESMAN("S-02", "SALES B")], totalCabang: [{ cabang: "CABANG A", ...ANGKA }],
+    kunjungan: [], penanda: [], tokoTanpaKoordinat: 0, fakturBelumTerbaca: [], ...o,
+});
 
 /** S-01: ec 1, tanpa_ec 1, belum 1 · S-02: ec 1, belum 1, faktur_tanpa_checkin 1. */
-const DATA = {
-    salesman: [SALESMAN("S-01", "SALES A"), SALESMAN("S-02", "SALES B")],
+const DATA: Partial<JawabanSupervisorReview> = {
     penanda: [
         pen("C-1", "S-01", "ec", -5.1477, 119.4327), pen("C-2", "S-01", "tanpa_ec", -5.15, 119.41), pen("C-3", "S-01", "belum", -5.16, 119.43),
         pen("C-4", "S-02", "ec", -5.14, 119.45), pen("C-5", "S-02", "belum", -5.13, 119.46), pen("C-6", "S-02", "faktur_tanpa_checkin", -5.12, 119.47),
@@ -44,14 +51,27 @@ const DATA = {
     ],
 };
 
-async function mockPeta(page: Page, data: unknown) {
+/**
+ * Mock GET /api/supervisor-review (+ ubin OSM). `o` = isian jawaban, atau fungsi nomor permintaan -> isian. Menit `diperbaruiPada` = 40 + nomor
+ * permintaan, jadi "data per 09.NN WITA" membuktikan jawaban ke-NN sudah dipakai layar.
+ */
+async function mockPeta(page: Page, o: Partial<JawabanSupervisorReview> | ((n: number) => Partial<JawabanSupervisorReview>)) {
     const ubin: string[] = [];
+    const log: URL[] = [];
     await page.route("https://tile.openstreetmap.org/**", (route) => { ubin.push(route.request().url()); return route.fulfill({ status: 200, contentType: "image/png", body: PNG }); });
-    await page.route("**/api/supervisor-review**", (route) => route.fulfill(json(data)));
-    return ubin;
+    await page.route((u) => u.pathname === "/api/supervisor-review", (route) => {
+        log.push(new URL(route.request().url()));
+        const n = log.length;
+        return route.fulfill(json(jawaban({ diperbaruiPada: `2026-10-16T09:${40 + n}:00+08:00`, ...(typeof o === "function" ? o(n) : o) })));
+    });
+    return { ubin, log };
 }
 const jumlah = (page: Page, kelas: string) => page.locator(`path.peta-${kelas}`);
 const legenda = (page: Page) => page.getByRole("list", { name: "Legenda peta" });
+const petaRegion = (page: Page) => page.getByRole("region", { name: "Peta toko dan titik check-in" });
+/** Desktop: klik nama salesman di tabel ringkasan. */
+const pilihSales = (page: Page, kode: string, nama: string) =>
+    page.getByRole("table", { name: "Ringkasan per salesman, per cabang" }).getByRole("row").filter({ hasText: kode }).getByRole("button", { name: nama, exact: true }).click();
 async function noOverflow(page: Page) {
     expect(await page.evaluate(() => { const m = document.querySelector("main"); return document.documentElement.scrollWidth <= innerWidth && (!m || m.scrollWidth <= m.clientWidth + 1); })).toBe(true);
 }
@@ -62,11 +82,11 @@ test.beforeEach(async ({ page }) => {
     page.on("dialog", (d) => { throw new Error(`window.${d.type()} masih dipakai: ${d.message()}`); });
 });
 
-test.describe("Peta (halaman uji)", () => {
+test.describe("Peta (/supervisor-review)", () => {
     test("penanda per status + legenda teks + atribusi + ubin; memilih satu salesman menyaring dan menggambar garis urut waktu", async ({ page }) => {
-        const ubin = await mockPeta(page, DATA);
-        await page.goto("/supervisor-review/uji-peta", NAV);
-        const peta = page.getByRole("region", { name: "Peta toko dan titik check-in" });
+        const { ubin } = await mockPeta(page, DATA);
+        await page.goto("/supervisor-review", NAV);
+        const peta = petaRegion(page);
         await expect(peta).toBeVisible(NAV);
 
         // Semua salesman: 6 penanda toko (2 ec, 1 tanpa_ec, 2 belum, 1 faktur_tanpa_checkin) + 5 titik check-in ber-GPS, tanpa garis.
@@ -92,8 +112,8 @@ test.describe("Peta (halaman uji)", () => {
         expect(ubin.every((u) => /^https:\/\/tile\.openstreetmap\.org\/\d+\/\d+\/\d+\.png$/.test(u))).toBe(true);
         await page.screenshot({ path: "test-results/sr3/peta-desktop-semua.png", fullPage: true });
 
-        // Pilih SALES A: hanya miliknya (3 toko, 3 titik GPS dari 4 kunjungan), garis muncul.
-        await page.getByLabel("Salesman").selectOption("S-01");
+        // Pilih SALES A (klik namanya di tabel): hanya miliknya (3 toko, 3 titik GPS dari 4 kunjungan), garis muncul.
+        await pilihSales(page, "S-01", "SALES A");
         await expect(jumlah(page, "garis")).toHaveCount(1, NAV);
         await expect(jumlah(page, "ec")).toHaveCount(1);
         await expect(jumlah(page, "tanpa_ec")).toHaveCount(1);
@@ -111,44 +131,51 @@ test.describe("Peta (halaman uji)", () => {
         expect(xs[1]).toBeLessThan(xs[2]);
 
         // Kembali ke semua salesman: garis hilang lagi.
-        await page.getByLabel("Salesman").selectOption("");
+        await page.getByRole("button", { name: "Lihat semua salesman" }).click();
         await expect(jumlah(page, "garis")).toHaveCount(0, NAV);
         await expect(jumlah(page, "checkin")).toHaveCount(5);
     });
 
-    test("induk yang mengirim array baru (isi sama) tidak membangun ulang peta", async ({ page }) => {
-        await mockPeta(page, DATA);
-        await page.goto("/supervisor-review/uji-peta", NAV);
+    test("Muat ulang (jawaban baru, isi sama) tidak membangun ulang peta", async ({ page }) => {
+        const { log } = await mockPeta(page, DATA);
+        await page.goto("/supervisor-review", NAV);
         await expect(jumlah(page, "ec")).toHaveCount(2, NAV);
         await page.evaluate(() => { (window as unknown as { __pane: Element | null }).__pane = document.querySelector(".leaflet-map-pane"); });
-        await page.getByRole("button", { name: "Render ulang" }).click();
-        await page.getByRole("button", { name: "Render ulang" }).click();
+        for (let i = 0; i < 2; i++) {
+            // Mode dev (StrictMode) memuat dua kali saat mount: tunggu jawaban permintaan berikutnya (menitnya = 40 + nomor), bukan jumlah tetap.
+            const berikut = log.length + 1;
+            await page.getByRole("button", { name: "Muat ulang" }).click();
+            await expect(page.getByText(`data per 09.${40 + berikut} WITA`)).toBeVisible(NAV);
+        }
         expect(await page.evaluate(() => document.querySelector(".leaflet-map-pane") === (window as unknown as { __pane: Element | null }).__pane)).toBe(true);
         await expect(jumlah(page, "ec")).toHaveCount(2);
     });
 
     test("tanpa titik (tak ada toko berkoordinat, kunjungan tanpa GPS): EmptyState, tanpa peta", async ({ page }) => {
-        await mockPeta(page, { salesman: DATA.salesman, penanda: [], kunjungan: [kun("S-01", "C-9", "2026-10-16T12:00:00+08:00", null, null)] });
-        await page.goto("/supervisor-review/uji-peta", NAV);
+        await mockPeta(page, { penanda: [], kunjungan: [kun("S-01", "C-9", "2026-10-16T12:00:00+08:00", null, null)] });
+        await page.goto("/supervisor-review", NAV);
         await expect(page.getByText("Belum ada toko berkoordinat / check-in ber-GPS")).toBeVisible(NAV);
         await expect(page.locator(".leaflet-container")).toHaveCount(0);
-        await expect(page.getByRole("region", { name: "Peta toko dan titik check-in" })).toHaveCount(0);
+        await expect(petaRegion(page)).toHaveCount(0);
     });
 
     test("nama toko berisi HTML tampil sebagai TEKS di popup (tanpa skrip jalan)", async ({ page }) => {
         const XSS = "<img src=x onerror=window.__xss=1>";
-        await mockPeta(page, { salesman: DATA.salesman, penanda: [{ ...pen("C-1", "S-01", "ec", -5.1477, 119.4327), namaToko: XSS }], kunjungan: [] });
-        await page.goto("/supervisor-review/uji-peta", NAV);
-        await jumlah(page, "ec").click(NAV);
+        await mockPeta(page, { penanda: [{ ...pen("C-1", "S-01", "ec", -5.1477, 119.4327), namaToko: XSS }], kunjungan: [] });
+        await page.goto("/supervisor-review", NAV);
         const popup = page.locator(".leaflet-popup-content");
-        await expect(popup).toContainText(XSS, NAV);
+        // Leaflet menganimasikan zoom awal (fitBounds) sesudah penanda muncul: tekan dan lepas bisa terpisah oleh animasi → ulangi klik sampai popup terbuka.
+        await expect(async () => {
+            await jumlah(page, "ec").click({ timeout: 5_000 });
+            await expect(popup).toContainText(XSS, { timeout: 3_000 });
+        }).toPass(NAV);
         await expect(popup.locator("img")).toHaveCount(0);
         expect(await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)).toBeUndefined();
     });
 
     test("tepat satu titik: peta tampil tanpa galat, penanda ada", async ({ page }) => {
-        await mockPeta(page, { salesman: DATA.salesman, penanda: [pen("C-1", "S-01", "ec", -5.1477, 119.4327)], kunjungan: [] });
-        await page.goto("/supervisor-review/uji-peta", NAV);
+        await mockPeta(page, { penanda: [pen("C-1", "S-01", "ec", -5.1477, 119.4327)], kunjungan: [] });
+        await page.goto("/supervisor-review", NAV);
         await expect(jumlah(page, "ec")).toHaveCount(1, NAV);
         await expect(page.locator(".leaflet-container")).toBeVisible();
         await expect(page.getByText("Peta gagal dimuat.")).toHaveCount(0);
@@ -156,8 +183,8 @@ test.describe("Peta (halaman uji)", () => {
     });
 
     test("status toko di luar kontrak: digambar abu-abu, peta tidak gagal, penanda lain tetap ada", async ({ page }) => {
-        await mockPeta(page, { salesman: DATA.salesman, penanda: [pen("C-1", "S-01", "ec", -5.1477, 119.4327), pen("C-2", "S-01", "status_baru", -5.15, 119.43)], kunjungan: [] });
-        await page.goto("/supervisor-review/uji-peta", NAV);
+        await mockPeta(page, { penanda: [pen("C-1", "S-01", "ec", -5.1477, 119.4327), pen("C-2", "S-01", "status_baru", -5.15, 119.43)], kunjungan: [] });
+        await page.goto("/supervisor-review", NAV);
         await expect(jumlah(page, "ec")).toHaveCount(1, NAV);
         await expect(jumlah(page, "lain")).toHaveCount(1);
         await expect(jumlah(page, "lain")).toHaveAttribute("fill", "#9e9e9e");
@@ -166,12 +193,16 @@ test.describe("Peta (halaman uji)", () => {
 
     test.describe("ponsel 390 px", () => {
         test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-        test("peta 300 px, legenda terbaca, tanpa luapan mendatar", async ({ page }) => {
+        test("kartu salesman -> tab Peta: peta 300 px, legenda terbaca, tanpa luapan mendatar", async ({ page }) => {
             await mockPeta(page, DATA);
-            await page.goto("/supervisor-review/uji-peta", NAV);
-            const peta = page.getByRole("region", { name: "Peta toko dan titik check-in" });
-            await expect(jumlah(page, "ec")).toHaveCount(2, NAV);
-            expect((await peta.boundingBox())?.height).toBe(300);
+            await page.goto("/supervisor-review", NAV);
+            const main = page.locator("main");
+            // Ponsel: tak ada peta di daftar; Peta ada di tab rincian salesman terpilih (S-01: 1 ec, 1 tanpa_ec, 1 belum, 3 titik check-in).
+            await main.getByRole("list", { name: "Salesman CABANG A" }).getByRole("listitem").filter({ hasText: "SALES A" }).getByRole("button").first().click();
+            await main.getByRole("tab", { name: "Peta" }).click();
+            await expect(jumlah(page, "ec")).toHaveCount(1, NAV);
+            await expect(jumlah(page, "checkin")).toHaveCount(3);
+            expect((await petaRegion(page).boundingBox())?.height).toBe(300);
             await expect(legenda(page).getByRole("listitem").filter({ hasText: "Terjadwal, belum dikunjungi" })).toBeVisible();
             await noOverflow(page);
             await page.screenshot({ path: "test-results/sr3/peta-ponsel.png", fullPage: true });

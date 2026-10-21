@@ -47,9 +47,9 @@ const statusWave = async (id: number) => (await db.query(`SELECT status::text FR
 
 const KOLOM = ["NO_NOTA", "TANGGAL", "KODE PELANGGAN INDUK", "NAMA PELANGGAN FAKTUR PENJUALAN", "KODE_BARANG", "NAMA_BARANG",
     "QTY", "SATUAN", "QTY_SATUANKECIL", "SATUAN_KECIL", "JENIS PRODUK", "PRINCIPLE"];
-/** baris: [nota, kode barang, qty, pcs, satuan (bawaan CTN)]; isi per karton tersirat = pcs/qty bila satuan bukan PCS. */
-function xlsx(tanggal: string, baris: Array<[string, string, number, number, string?]>, ekstra = ""): Buffer {
-    const rows = baris.map(([n, b, q, p, sat = "CTN"]) => [n, tanggal, `C-${n}`, `TOKO ${n}${ekstra}`, b, `BARANG ${b}`, q, sat, p, "PCS", "PRINCIPLE A", "PRINCIPLE A"]);
+/** baris: [nota, kode barang, qty, pcs, satuan (bawaan CTN), jenis produk (bawaan PRINCIPLE A)]; isi per karton tersirat = pcs/qty bila satuan bukan PCS. */
+function xlsx(tanggal: string, baris: Array<[string, string, number, number, string?, string?]>, ekstra = ""): Buffer {
+    const rows = baris.map(([n, b, q, p, sat = "CTN", jenis = "PRINCIPLE A"]) => [n, tanggal, `C-${n}`, `TOKO ${n}${ekstra}`, b, `BARANG ${b}`, q, sat, p, "PCS", jenis, jenis]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([KOLOM, ...rows]), "Rincian");
     return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
@@ -310,10 +310,10 @@ test("BL-25 serentak: layar lain mengonfirmasi saat batal/lepas sedang berjalan 
 
 test("BL-25: exception terbuka di wave batal tidak dihitung sebagai pekerjaan terbuka di daftar wave", T_UJI, async () => {
     const T = "2026-10-12";
-    assert.equal((await unggah(T, xlsx(T, [["N60", "BRG-C", 1, 12]]))).status, 200);
+    assert.equal((await unggah(T, xlsx(T, [["N60", "BRG-C", 1, 12, "CTN", "HEINZ ABC"]]))).status, 200);
     const w = await waveBaru(T, 1);
     await tambah(w, ["N60"]);
-    await transisi(w, "release"); // OUTLET_TANPA_AREA terbuka (outlet uji tanpa area)
+    await transisi(w, "release"); // OUTLET_TANPA_AREA terbuka (outlet Heinz uji tanpa area)
     const daftar = async () => ((await jawab(rWave.GET(new Request(`http://app.test/api/rekapan-nota/wave?tanggal=${T}`)))).body.wave as Array<{ id: number; exception_open: number }>).find((x) => x.id === w)!;
     assert.ok((await daftar()).exception_open > 0);
     assert.equal((await transisi(w, "cancel", "uji daftar")).status, 200);
@@ -380,4 +380,37 @@ test("M1 serentak: nota ditambah ke wave saat unggah sedang mengganti isinya -> 
     const poolKrt = (await db.query(`SELECT sum(qty_pcs)::float8 / 12 k FROM wave_line_pool WHERE tanggal = $1 AND no_nota = 'N70'`, [T])).rows[0].k;
     const selisih = (await db.query(`SELECT count(*)::int n FROM wave_exception WHERE wave_id = $1 AND jenis = 'REKONSILIASI_SELISIH'`, [w])).rows[0].n;
     assert.ok(snap === poolKrt || selisih === 1, `snapshot ${snap} krt vs pool ${poolKrt} krt tanpa exception (tambah tertahan: ${tahanTambah})`);
+});
+
+test("NON / LUAR KOTA: nota outlet ber-area itu ikut pool dan bisa masuk wave, seperti TTF Excel (owner 19 Okt 2026)", T_UJI, async () => {
+    const T = "2026-10-16";
+    await db.query(`INSERT INTO customer (id, "customerNo", name, area) VALUES (9101, 'C-NK1', 'TOKO A', 'NON'), (9102, 'C-NK2', 'TOKO B', 'LUAR KOTA')`);
+    assert.equal((await unggah(T, xlsx(T, [["NK1", "BRG-C", 1, 12], ["NK2", "BRG-C", 1, 12]]))).status, 200);
+    assert.deepEqual((await notaPool(T)).map((n) => n.no_nota).sort(), ["NK1", "NK2"]);
+    const w = await waveBaru(T, 1);
+    const r = await tambah(w, ["NK1", "NK2"]);
+    assert.equal(r.status, 200);
+    assert.deepEqual((r.body.masuk as string[]).sort(), ["NK1", "NK2"]);
+});
+
+test("Tanpa area hanya menandai outlet Heinz; outlet principal lain tanpa area berjalan biasa (owner 19 Okt 2026)", T_UJI, async () => {
+    const T = "2026-10-17";
+    assert.equal((await unggah(T, xlsx(T, [["TA1", "BRG-C", 1, 12], ["TA2", "BRG-C", 1, 12, "CTN", "HEINZ ABC"]]))).status, 200);
+    const pool = await notaPool(T) as Array<{ no_nota: string; heinz: boolean }>;
+    assert.deepEqual(pool.map((n) => [n.no_nota, n.heinz]), [["TA1", false], ["TA2", true]]);
+    const w = await waveBaru(T, 1);
+    assert.equal((await tambah(w, ["TA1", "TA2"])).status, 200);
+    assert.equal((await transisi(w, "release")).status, 200);
+    const exc = await db.query(`SELECT ref_kode FROM wave_exception WHERE wave_id = $1 AND jenis = 'OUTLET_TANPA_AREA'`, [w]);
+    assert.deepEqual(exc.rows.map((r) => r.ref_kode), ["C-TA2"]);
+});
+
+test("Detail wave: riwayat berisi event wave dan grup tersedia berisi pick_group (urutan kueri tidak tertukar)", T_UJI, async () => {
+    const w = await waveBaru("2026-10-18", 1);
+    const d = (await jawab(rWaveId.GET(new Request(`http://app.test/x/${w}`), ctx(w)))).body as {
+        riwayat: Array<{ event: string; created_at: string }>; pickGroupTersedia: Array<{ kode: string; dimensi: string }>;
+    };
+    assert.deepEqual(d.riwayat.map((r) => r.event), ["wave.created"]);
+    assert.ok(d.riwayat[0].created_at, "riwayat punya waktu");
+    assert.ok(d.pickGroupTersedia.length > 0 && d.pickGroupTersedia.every((g) => g.kode && g.dimensi), "grup tersedia = pick_group");
 });
