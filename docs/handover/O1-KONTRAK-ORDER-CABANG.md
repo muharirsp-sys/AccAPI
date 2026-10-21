@@ -275,6 +275,5 @@ rejected: [{request_id, kode, error}] }`. `failed` = DITAHAN (tetap `pending`, m
 - O3 riwayat beli: faktur yang masuk lewat `list.do` (cron) tidak punya `detailItem` — probe 12 Okt: MSM 201 dari 1.603 faktur sejak 24 Jul
   (13%), semua cabang 3 bulan 27.393 dari 70.546 (39%). Backfill rincian lewat `sales-invoice/detail.do` (satu panggilan per faktur, baca-saja
   Accurate) BELUM dikerjakan; sampai itu rata-rata toko bisa lebih kecil dari kenyataan (panel menyebut jumlah faktur tanpa rincian).
-- O3 riwayat beli: faktur yang dihapus di Accurate tetap di cache `sales_invoice` (sync hanya upsert; webhook DELETE / penambal dengan detail.do
-  kosong = `AccurateInvoiceGoneError`, baris cache tidak disentuh) → ikut terhitung, rata-rata bisa lebih besar. Jalan naik: tandai/hapus baris
-  cache saat `AccurateInvoiceGoneError` (lib/sync.ts, jalur webhook + penambal), lalu saring di kueri riwayat-beli.
+- O3 riwayat beli: faktur yang dihapus di Accurate dulu tetap di cache `sales_invoice`. Sejak PR #185 baris dibuang saat detail.do membuktikan
+  hapus (`fakturSudahTiada`, jalur webhook + penambal, hanya bila sesi = `ACCURATE_INVOICE_DB_ID`); sisa lama disapu `cron/webhook-backfill?hantu=1`.
