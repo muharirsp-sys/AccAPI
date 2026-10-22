@@ -43,6 +43,31 @@ export async function ambilPickGroup(ids: number[]): Promise<PickGroupRow[]> {
     return r.rows;
 }
 
+/**
+ * Master outlet per KODE OUTLET fisik. Export Accurate menulis kode outlet ("C-500003"), sedangkan
+ * customer.customerNo memakai akhiran principal ("C-500003-HZ", "-KN", ...). Pencocokan persis tidak pernah
+ * kena, jadi area dan grup outlet selalu kosong di produksi (diukur 20 Okt 2026: 26/26 outlet "tanpa area"
+ * hanya punya baris berakhiran, 22 di antaranya sudah berarea). Cocok = sama persis ATAU kode + "-" + akhiran,
+ * sama dengan COCOK_OUTLET di scripts/import-rekapan-master.mjs. Kunci dibangkitkan dari sisi customer (awalan
+ * sampai tiap "-") lalu equi-join, bukan LIKE bersarang ratusan kode x puluhan ribu baris.
+ * @param saring kondisi SQL atas `k.kunci` (huruf besar) untuk membatasi ke kode yang dibutuhkan.
+ * ponytail: membangkitkan kunci dari SEMUA customer tiap panggilan, ~1 dtk di produksi (20 Okt 2026, 32 rb baris,
+ *   pool 189 outlet). Bila terasa lambat: kolom kode_outlet terindeks di customer (migrasi, zona AGENTS.md §3).
+ */
+export const masterOutletSql = (saring: string) => `
+    SELECT k.kunci, max(upper(c.area)) AS area, max(c.grup_all) AS grup_all, max(c.grup_gdi) AS grup_gdi,
+           max(c.name) AS nama, max(c.alamat) AS alamat
+      FROM customer c
+     CROSS JOIN LATERAL (SELECT upper(c."customerNo") AS kunci
+                         UNION SELECT upper(left(c."customerNo", g - 1)) FROM generate_series(2, length(c."customerNo")) g
+                          WHERE substr(c."customerNo", g, 1) = '-') k
+     WHERE ${saring}
+     GROUP BY k.kunci`;
+
+/** Kondisi SQL: baris customer milik kode outlet di kolom/ekspresi `kode` (persis atau kode + "-" + akhiran). */
+export const cocokOutletSql = (kode: string) =>
+    `(upper(c."customerNo") = upper(${kode}) OR upper(c."customerNo") LIKE upper(${kode}) || '-%')`;
+
 /** Ekspresi SRP/NON di SQL — satu-satunya salinan aturan R6.5 di sisi query. */
 const EKSPRESI_SIRUP = `CASE WHEN upper(coalesce(p.jenisproduk,'')) <> 'HEINZ ABC' THEN NULL
         WHEN upper(coalesce(p.kode_barang,'')) LIKE 'A1092%'
@@ -160,7 +185,8 @@ export async function notaPool(
     const ambang = opts.ambangPareto ?? 50;
 
     const r = await pool.query<NotaPool>(
-        `SELECT p.no_nota,
+        `WITH mo AS (${masterOutletSql(`k.kunci IN (SELECT upper(kode_cust) FROM wave_line_pool WHERE tanggal = $1::date)`)})
+         SELECT p.no_nota,
                 min(p.kode_cust)                 AS kode_cust,
                 min(p.customer)                  AS customer,
                 min(p.kode_salesman)             AS kode_salesman,
@@ -176,7 +202,7 @@ export async function notaPool(
                 (k.no_nota IS NOT NULL)          AS kanvas,
                 bool_or(upper(coalesce(p.jenisproduk,'')) = 'HEINZ ABC') AS heinz
            FROM wave_line_pool p
-           LEFT JOIN customer c ON c."customerNo" = p.kode_cust
+           LEFT JOIN mo c       ON c.kunci = upper(p.kode_cust)
            LEFT JOIN item i     ON i.no = p.kode_barang
            LEFT JOIN nota_kanvas k ON k.no_nota = p.no_nota
           WHERE p.tanggal = $1::date

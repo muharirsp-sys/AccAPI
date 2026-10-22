@@ -28,6 +28,7 @@ let rWaveId: { GET: Handler; PATCH: Handler };
 let rNota: { POST: Handler; PATCH: Handler };
 let rExc: { PATCH: Handler };
 let rUpload: { POST: (req: Request) => Promise<Response> };
+let rArea: { POST: (req: Request) => Promise<Response> };
 let notaPool: (tanggal: string) => Promise<Array<{ no_nota: string }>>;
 
 let sesi: { id: string; name: string; role: string } | null = null;
@@ -114,6 +115,7 @@ before(async () => {
     rNota = await import("../../app/api/rekapan-nota/wave/[id]/nota/route.ts") as unknown as typeof rNota;
     rExc = await import("../../app/api/rekapan-nota/wave/[id]/exception/route.ts") as unknown as typeof rExc;
     rUpload = await import("../../app/api/rekapan-nota/upload/route.ts") as unknown as typeof rUpload;
+    rArea = await import("../../app/api/rekapan-nota/area/route.ts") as unknown as typeof rArea;
     notaPool = (await import("./query.ts")).notaPool;
     await sebagai("u-gudang");
 });
@@ -413,4 +415,21 @@ test("Detail wave: riwayat berisi event wave dan grup tersedia berisi pick_group
     assert.deepEqual(d.riwayat.map((r) => r.event), ["wave.created"]);
     assert.ok(d.riwayat[0].created_at, "riwayat punya waktu");
     assert.ok(d.pickGroupTersedia.length > 0 && d.pickGroupTersedia.every((g) => g.kode && g.dimensi), "grup tersedia = pick_group");
+});
+
+test("Kode outlet export (C-SF1) cocok dengan customer berakhiran principal (C-SF1-HZ): area & grup terbaca, Mapping area menulis semua akhiran", T_UJI, async () => {
+    const T = "2026-10-19";
+    await db.query(`INSERT INTO customer (id, "customerNo", name, area, grup_all) VALUES
+        (9201, 'C-SF1-HZ', 'TOKO SF1', '3', 'SATU SAMA'), (9202, 'C-SF1-KN', 'TOKO SF1', '3', 'SATU SAMA'),
+        (9203, 'C-SF2-HZ', 'TOKO SF2', NULL, NULL), (9204, 'C-SF2-MS', 'TOKO SF2', NULL, NULL), (9205, 'C-SF20-HZ', 'TOKO SF20', NULL, NULL)`);
+    assert.equal((await unggah(T, xlsx(T, [["SF1", "BRG-C", 1, 12, "CTN", "HEINZ ABC"], ["SF2", "BRG-C", 1, 12, "CTN", "HEINZ ABC"]]))).status, 200);
+    const pool = await notaPool(T) as Array<{ no_nota: string; area: string | null; grup_all: string }>;
+    assert.deepEqual(pool.map((n) => [n.no_nota, n.area, n.grup_all]), [["SF1", "3", "SATU SAMA"], ["SF2", null, "Gabung"]]);
+    const w = await waveBaru(T, 1);
+    assert.equal((await tambah(w, ["SF1"])).status, 200);
+    assert.equal((await db.query(`SELECT snap_area FROM wave_assignment WHERE wave_id = $1 AND no_nota = 'SF1'`, [w])).rows[0].snap_area, "3");
+    const simpan = await jawab(rArea.POST(jsonReq("/api/rekapan-nota/area", "POST", { terima: [{ kode: "C-SF2", area: "5" }] })));
+    assert.deepEqual(simpan.body, { tersimpan: 1, gagal: [] });
+    const area = (await db.query(`SELECT "customerNo" k, area FROM customer WHERE "customerNo" LIKE 'C-SF2%' ORDER BY "customerNo" COLLATE "C"`)).rows;
+    assert.deepEqual(area, [{ k: "C-SF2-HZ", area: "5" }, { k: "C-SF2-MS", area: "5" }, { k: "C-SF20-HZ", area: null }], "C-SF20 bukan milik C-SF2");
 });

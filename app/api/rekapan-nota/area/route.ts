@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { usulkanArea, bangunIndeks, type Outlet, type OutletTerpetakan } from "@/lib/rekapan-nota/area-suggest";
+import { cocokOutletSql, masterOutletSql } from "@/lib/rekapan-nota/query";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -34,12 +35,13 @@ export async function GET(req: NextRequest) {
     // Antrean kerja = outlet yang benar-benar berjualan tapi belum dipetakan. Outlet yang
     // tidak pernah muncul di nota bukan pekerjaan siapa-siapa hari ini.
     const target = await pool.query<{ kode: string; nama: string; alamat: string | null; jumlah_nota: number }>(
-        `SELECT p.kode_cust AS kode,
-                coalesce(max(c.name), max(p.customer))     AS nama,
+        `WITH mo AS (${masterOutletSql(`k.kunci IN (SELECT upper(kode_cust) FROM wave_line_pool)`)})
+         SELECT p.kode_cust AS kode,
+                coalesce(max(c.nama), max(p.customer))     AS nama,
                 coalesce(max(c.alamat), max(p.alamat))     AS alamat,
                 count(DISTINCT p.no_nota)::int             AS jumlah_nota
            FROM wave_line_pool p
-           LEFT JOIN customer c ON c."customerNo" = p.kode_cust
+           LEFT JOIN mo c ON c.kunci = upper(p.kode_cust)
           WHERE c.area IS NULL AND upper(coalesce(p.jenisproduk,'')) = 'HEINZ ABC' -- hanya Heinz dibagi per area
           GROUP BY p.kode_cust
           ORDER BY count(DISTINCT p.no_nota) DESC, p.kode_cust`);
@@ -71,13 +73,14 @@ export async function POST(req: NextRequest) {
         .filter((t) => t.kode && t.area);
     if (!terima.length) return NextResponse.json({ error: "terima[] {kode, area} wajib." }, { status: 400 });
 
+    // Satu kode outlet = semua baris customer berakhiran principal-nya (C-500003-HZ, -KN, ...): area lokasi toko.
     const r = await pool.query<{ kode: string }>(
         `UPDATE customer c SET area = v.area
            FROM jsonb_to_recordset($1::jsonb) AS v(kode text, area text)
-          WHERE c."customerNo" = v.kode
-        RETURNING c."customerNo" AS kode`, [JSON.stringify(terima)]);
+          WHERE ${cocokOutletSql("v.kode")}
+        RETURNING v.kode AS kode`, [JSON.stringify(terima)]);
 
-    const tersimpan = r.rows.map((x) => x.kode);
+    const tersimpan = [...new Set(r.rows.map((x) => x.kode))];
     return NextResponse.json({
         tersimpan: tersimpan.length,
         gagal: terima.filter((t) => !tersimpan.includes(t.kode)).map((t) => t.kode),
