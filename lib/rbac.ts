@@ -7,6 +7,7 @@
  */
 import { defaultAc } from "better-auth/plugins/admin/access";
 import type { PermissionModule } from "./rbac/registry";
+import { IZIN_HALAMAN as IZIN_LAPORAN_SALES } from "./laporan-sales/kontrak";
 
 export const appRoles = ["admin", "manager", "finance", "staff", "viewer"] as const;
 export type AppRole = (typeof appRoles)[number];
@@ -415,6 +416,8 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/insentif-sales", module: "insentif_sales", action: "view" },
     // Supervisor Review (owner 16 Okt 2026). Tanpa entri ini /supervisor-review jatuh ke "/" = dashboard.view.
     { prefix: "/supervisor-review", module: "supervisor_review", action: "view" },
+    // Laporan Sales (owner 20 Okt 2026): tiap tab dijaga kuncinya sendiri (lib/laporan-sales/kontrak.ts TAB); halaman = salah satunya.
+    { prefix: "/laporan-sales", module: "sales_history", action: "view", anyOf: IZIN_LAPORAN_SALES },
     { prefix: "/", module: "dashboard", action: "view" },
 ];
 
