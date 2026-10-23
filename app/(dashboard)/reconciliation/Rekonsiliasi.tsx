@@ -18,7 +18,7 @@ import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactiv
 import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
 import { RECONCILIATION_CONFIG, getReconciliationConfig, type ReconciliationInputConfig } from "@/lib/off-program-control/reconciliation-config";
 import type { ReconciliationOutput, ReconciliationResult } from "@/lib/off-program-control/sales-reconciliation";
-import type { ReturnReconciliationOutput, ReturnReconciliationResult } from "@/lib/off-program-control/return-reconciliation";
+import type { IgnoredReturnLine, ReturnReconciliationOutput, ReturnReconciliationResult } from "@/lib/off-program-control/return-reconciliation";
 import {
     RETURN_STATUSES, SALES_STATUSES, causeLines, currency, exportSheets, fileSize, number, returnCauseLines, statusLabel, statusTone,
     type Division, type UiStatus,
@@ -29,7 +29,7 @@ type MappingResponse = { active: MappingVersion | null; versions: MappingVersion
 type HistoryRun = {
     id: string; mappingVersionId: string; status: "processing" | "success" | "failed"; uploadedByName: string;
     inputFiles: { role: string; name: string }[]; summary: Record<string, number> | null;
-    issues: (ReconciliationResult | ReturnReconciliationResult)[] | null; error: string | null; durationMs: number | null; startedAt: string;
+    issues: (ReconciliationResult | ReturnReconciliationResult | IgnoredReturnLine)[] | null; error: string | null; durationMs: number | null; startedAt: string;
 };
 type Output = ReconciliationOutput | ReturnReconciliationOutput;
 type Row = ReconciliationResult | ReturnReconciliationResult;
@@ -79,7 +79,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
             const payload = (await res.json().catch(() => ({}))) as Output & { error?: string };
             if (!res.ok) throw new Error(payload.error || "Rekonsiliasi gagal diproses.");
             setHasil({ ...payload, versi: mapping.data?.active?.version, jam: jamWita(new Date()) });
-            setSaring(payload.results.some((r) => r.status !== "MATCH") ? "ISSUES_ONLY" : "ALL");
+            setSaring(payload.results.some((r) => r.status === "KOREKSI") ? "ALL" : payload.results.some((r) => r.status !== "MATCH") ? "ISSUES_ONLY" : "ALL");
             setHistPage(1); muatRiwayat();
         } catch (e) {
             setGalat(e instanceof Error ? e.message : "Rekonsiliasi gagal diproses.");
@@ -105,10 +105,11 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
         setGalat(null);
         try {
             const XLSX = await import("xlsx");
-            const { ringkasan, detail, fileName } = exportSheets(division, principal, hasil.summary as Record<string, number>, hasil.results);
+            const { ringkasan, detail, diabaikan, fileName } = exportSheets(division, principal, hasil.summary as Record<string, number>, hasil.results, "ignoredLines" in hasil ? hasil.ignoredLines : []);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ringkasan), "Ringkasan");
             XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail), "Detail");
+            if (diabaikan.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(diabaikan), "Diabaikan");
             XLSX.writeFile(wb, fileName);
         } catch {
             setGalat("File hasil gagal diekspor. Coba lagi.");
@@ -119,15 +120,17 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
     const summary = (hasil?.summary ?? {}) as Partial<Record<UiStatus, number>>;
     const count = (s: UiStatus) => summary[s] ?? 0;
     const total = hasil?.results.length ?? 0;
+    const ignoredLines = hasil && "ignoredLines" in hasil ? hasil.ignoredLines ?? [] : [];
     const cocok = count("MATCH");
-    const masalah = total - cocok;
+    const koreksi = count("KOREKSI");
+    const masalah = total - cocok - koreksi;
     const selisih = count("QTY_MISMATCH") + count("VALUE_MISMATCH") + count("QTY_AND_VALUE_MISMATCH");
     const hilang = count("MISSING_PRINCIPAL") + (division === "FAKTUR" ? count("MISSING_INTERNAL") : count("MISSING_ACCURATE"));
     const rows: Row[] = useMemo(() => {
         const all = hasil?.results ?? [];
         if (saring === "ALL") return all;
         if (saring === "MATCH_ONLY") return all.filter((r) => r.status === "MATCH");
-        if (saring === "ISSUES_ONLY") return all.filter((r) => r.status !== "MATCH");
+        if (saring === "ISSUES_ONLY") return all.filter((r) => r.status !== "MATCH" && r.status !== "KOREKSI");
         return all.filter((r) => r.status === saring);
     }, [hasil, saring]);
     const penyebab = (r: Row) => division === "FAKTUR" ? causeLines(r as ReconciliationResult, principal) : returnCauseLines(r as ReturnReconciliationResult, principal);
@@ -138,10 +141,10 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
         { key: "dok", header: division === "FAKTUR" ? "Order" : division === "PEMBELIAN" ? "Dokumen Pembelian" : "Invoice", cell: (r) => <span className="fi-mono">{dokumen(r)}</span> },
         ...(division !== "FAKTUR" ? [{ key: "cust", header: division === "PEMBELIAN" ? "Supplier" : "Pelanggan", cell: (r: Row) => (r as ReturnReconciliationResult).customerCode } as Column<Row>] : []),
         { key: "produk", header: "Produk", cell: (r) => <span className="fi-mono fi-small">{produk(r)}</span> },
-        { key: "sebab", header: "Penyebab selisih", cell: (r) => <ul className="fi-small" style={{ margin: 0, paddingLeft: "1rem", minWidth: "16rem" }}>{penyebab(r).map((c) => <li key={c}>{c}</li>)}</ul> },
+        { key: "sebab", header: "Keterangan", cell: (r) => <ul className="fi-small" style={{ margin: 0, paddingLeft: "1rem", minWidth: "16rem" }}>{penyebab(r).map((c) => <li key={c}>{c}</li>)}</ul> },
         { key: "qty", header: `Qty Accurate / ${principal}`, align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{number.format(r.accurateQuantity)} / {number.format(r.principalQuantity)}</span> },
         { key: "nilai", header: division === "FAKTUR" ? `Net Accurate / ${principal}` : `DPP Accurate / ${principal}`, align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{"accurateNet" in r ? `${currency.format(r.accurateNet)} / ${currency.format(r.principalNet)}` : `${currency.format(r.accurateDpp)} / ${currency.format(r.principalDpp)}`}</span> },
-        { key: "selisih", header: division === "FAKTUR" ? "Selisih net" : "Selisih DPP", align: "end", cell: (r) => { const v = "valueDifference" in r ? r.valueDifference : r.dppDifference; return <span className={`fi-tnum${v < 0 ? " fi-why" : ""}`}>{currency.format(v)}</span>; } },
+        { key: "selisih", header: division === "FAKTUR" ? "Selisih net" : "Selisih DPP", align: "end", cell: (r) => { if (r.status === "KOREKSI") return <span>–</span>; const v = "valueDifference" in r ? r.valueDifference : r.dppDifference; return <span className={`fi-tnum${v < 0 ? " fi-why" : ""}`}>{currency.format(v)}</span>; } },
     ];
     const langkah: FlowStep[] = [
         { label: "Jenis", state: "done" },
@@ -218,9 +221,14 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                 <Section id="hasil" title="4 · Hasil" subtitle={`${labelJenis} ${principal} · mapping v${hasil.versi ?? "?"} · ${hasil.jam}`}
                     actions={<Button variant="tertiary" icon={<Download className="fi-icon" aria-hidden />} onClick={ekspor}>Ekspor XLSX</Button>}>
                     <div className="fi-sect-in" aria-label="Ringkasan hasil">
+                        {ignoredLines.length > 0 && <details className="fi-panel" aria-label="Baris diabaikan">
+                            <summary>{number.format(ignoredLines.length)} baris KINO diabaikan — PAJAK_NO berawalan INV</summary>
+                            <p className="fi-small">Koreksi/retur ini tidak termasuk pencocokan dan total rekonsiliasi. Rincian ikut dalam lembar Diabaikan pada ekspor XLSX.</p>
+                            <ul className="fi-small">{ignoredLines.map((line) => <li key={line.sourceRowNumber}>Baris {line.sourceRowNumber}: {line.invoiceNumber} · {line.taxNumber} · {line.principalProductCode}</li>)}</ul>
+                        </details>}
                         <div className="fi-kcards">
-                            <div className="fi-kc"><span>Baris</span><b>{number.format(total)}</b><small>dibandingkan</small></div>
-                            <div className="fi-kc" data-tone="pos"><span>Cocok</span><b>{number.format(cocok)}</b><small>{total ? `${number.format((cocok / total) * 100)}%` : "–"}</small></div>
+                            <div className="fi-kc"><span>Baris</span><b>{number.format(total)}</b><small>termasuk koreksi</small></div>
+                            <div className="fi-kc" data-tone="pos"><span>Cocok</span><b>{number.format(cocok)}</b><small>{total ? `${number.format((cocok / Math.max(1, total - koreksi)) * 100)}%` : "–"}</small></div>
                             <div className="fi-kc" data-tone={selisih ? "warn" : undefined}><span>Selisih</span><b>{number.format(selisih)}</b><small>jumlah atau nilai</small></div>
                             <div className="fi-kc" data-tone={hilang ? "neg" : undefined}><span>Tidak ditemukan</span><b>{number.format(hilang)}</b><small>di salah satu sisi</small></div>
                         </div>
@@ -229,6 +237,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                                 <button type="button" aria-pressed={saring === "ISSUES_ONLY"} onClick={() => setSaring("ISSUES_ONLY")}>Masalah saja {number.format(masalah)}</button>
                                 <button type="button" aria-pressed={saring === "ALL"} onClick={() => setSaring("ALL")}>Semua {number.format(total)}</button>
                                 <button type="button" aria-pressed={saring === "MATCH_ONLY"} onClick={() => setSaring("MATCH_ONLY")}>Cocok {number.format(cocok)}</button>
+                                {koreksi > 0 && <button type="button" aria-pressed={saring === "KOREKSI"} onClick={() => setSaring("KOREKSI")}>Koreksi {number.format(koreksi)}</button>}
                             </div>
                             <FormField label="Filter status">{(a11y) => <select {...a11y} className="fi-input" value={saring} onChange={(e) => setSaring(e.target.value as Saring)}>
                                 <option value="ISSUES_ONLY">Hanya bermasalah</option><option value="ALL">Semua status</option><option value="MATCH_ONLY">Hanya cocok</option>
@@ -236,8 +245,8 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                             </select>}</FormField>
                         </div>
                     </div>
-                    <ResponsiveTable<Row> title="Hasil rekonsiliasi" count={rows.length} columns={kolom} rows={rows} rowKey={(r) => `${dokumen(r)}|${produk(r)}|${"transactionClass" in r ? r.transactionClass : r.customerCode}|${r.status}`}
-                        empty={{ title: masalah === 0 && saring === "ISSUES_ONLY" ? "Semua data cocok" : "Tidak ada hasil untuk saringan ini", message: masalah === 0 && saring === "ISSUES_ONLY" ? `Seluruh ${number.format(total)} baris cocok.` : "Ubah saringan status." }}
+                    <ResponsiveTable<Row> title="Hasil rekonsiliasi" count={rows.length} columns={kolom} rows={rows} rowKey={(r) => `${dokumen(r)}|${produk(r)}|${"transactionClass" in r ? r.transactionClass : r.customerCode}|${r.status}|${r.status === "KOREKSI" && "principalSourceRows" in r ? r.principalSourceRows.join(",") : ""}`}
+                        empty={{ title: total === 0 ? "Tidak ada baris untuk dibandingkan" : masalah === 0 && saring === "ISSUES_ONLY" ? "Tidak ada masalah rekonsiliasi" : "Tidak ada hasil untuk saringan ini", message: total === 0 ? "Periksa berkas sumber dan daftar baris yang diabaikan." : masalah === 0 && saring === "ISSUES_ONLY" ? `${number.format(cocok)} baris cocok dan ${number.format(koreksi)} baris koreksi.` : "Ubah saringan status." }}
                         mobileItem={(r) => <ListItem doc={dokumen(r)} title={produk(r)} meta={penyebab(r).join(" · ")} badge={<StatusBadge tone={statusTone(r.status)}>{statusLabel(r.status, principal)}</StatusBadge>} />} />
                     <div className="fi-sect-in"><p className="fi-small fi-subtle">Kolom kelas transaksi, peringatan, pajak/total, dan baris sumber ikut di Ekspor XLSX.</p></div>
                 </Section>
@@ -259,11 +268,13 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                                             <li key={run.id}>
                                                 <time dateTime={run.startedAt}>{jamWita(run.startedAt)}</time>
                                                 <span><b>{run.uploadedByName}</b> · <span>{v ? `Versi ${v}` : "Versi tidak tersedia"}</span> · <StatusBadge tone={tone}>{label}</StatusBadge></span>
-                                                <span className="fi-chg">{run.inputFiles.map((f) => f.name).join(", ")} · {run.durationMs === null ? "Durasi -" : `${number.format(run.durationMs / 1000)} detik`} · <span>Total {tot}</span> · <span>Cocok {match}</span> · <span>Masalah {tot - match}</span></span>
+                                                <span className="fi-chg">{run.inputFiles.map((f) => f.name).join(", ")} · {run.durationMs === null ? "Durasi -" : `${number.format(run.durationMs / 1000)} detik`} · <span>Total {tot}</span> · <span>Cocok {match}</span> · <span>Koreksi {run.summary?.KOREKSI ?? 0}</span> · <span>Masalah {tot - match - (run.summary?.KOREKSI ?? 0)}</span></span>
                                                 {(run.error || run.issues?.length) ? (
                                                     <details className="fi-chg"><summary aria-label={`Lihat rincian ${run.id}`} style={{ cursor: "pointer" }}>Lihat penyebab</summary>
                                                         {run.error && <p>{run.error}</p>}
-                                                        {run.issues?.map((issue, i) => <div key={`${run.id}-${i}`}><b>{statusLabel(issue.status as UiStatus, principal)}</b><ul style={{ paddingLeft: "1rem" }}>{penyebab(issue).map((c) => <li key={c}>{c}</li>)}</ul></div>)}
+                                                        {run.issues?.map((issue, i) => issue.status === "IGNORED"
+                                                            ? <div key={`${run.id}-${i}`}><b>Diabaikan — baris KINO {issue.sourceRowNumber}</b><p>{issue.invoiceNumber} · {issue.taxNumber} · {issue.principalProductCode}: {issue.reason}</p></div>
+                                                            : <div key={`${run.id}-${i}`}><b>{statusLabel(issue.status, principal)}</b><ul style={{ paddingLeft: "1rem" }}>{penyebab(issue).map((c) => <li key={c}>{c}</li>)}</ul></div>)}
                                                     </details>
                                                 ) : null}
                                             </li>
