@@ -159,6 +159,15 @@ async function main() {
   assert.deepEqual(success?.issues, [{ status: "VALUE_MISMATCH", invoice: "INV-BAD" }]);
   assert.equal(success?.status, "success");
   assert.equal(success?.durationMs, 42);
+  const ignored = { status: "IGNORED", sourceRowNumber: 6, invoiceNumber: "1671-SRI-1", taxNumber: "INV/1", principalProductCode: "P1", reason: "Koreksi/retur" };
+  await store.completeReconciliationRun(successId, {
+    summary: { MATCH: 1, VALUE_MISMATCH: 1 },
+    results: [{ status: "MATCH" }, { status: "VALUE_MISMATCH", invoice: "INV-BAD" }],
+    ignoredLines: [ignored],
+  }, 42);
+  const audited = fakeDb.runs.find((row) => row.id === successId);
+  assert.deepEqual(audited?.summary, { MATCH: 1, VALUE_MISMATCH: 1 });
+  assert.deepEqual(audited?.issues, [{ status: "VALUE_MISMATCH", invoice: "INV-BAD" }, ignored]);
 
   const failedId = await store.startReconciliationRun({
     division: "returns",
