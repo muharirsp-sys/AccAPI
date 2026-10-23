@@ -114,7 +114,7 @@ upsertSalesInvoiceById:
   faktur sudah tiada? → (pagar ACCURATE_INVOICE_DB_ID tetap seperti sekarang)
                        BEGIN; kunci; DELETE … RETURNING raw_data; SAVEPOINT; INSERT deletedInvoiceLines(raw lama); COMMIT
   selain itu         → BEGIN
-                         pg_advisory_xact_lock(hashtext('sales_invoice:change'), id::int)
+                         pg_advisory_xact_lock(hashtextextended('sales_invoice:' || id, 0))
                          SELECT raw_data FROM sales_invoice WHERE id = $1           (lewat primary key)
                          upsertPage([row], tx)                                      (perilaku sama dengan sekarang)
                          SAVEPOINT → INSERT diffInvoiceLines(raw lama, row, ctx)    (gagal → ROLLBACK TO SAVEPOINT + log)
@@ -127,12 +127,14 @@ upsertSalesInvoiceById:
 - **Hanya faktur INV.** Dicatat bila nomor (baru, atau lama untuk penghapusan) diawali `INV/`. Draf `DFT.*` dilewati.
 - **Butuh isi lama berincian.** Bila baris cache belum ada atau `raw_data` lamanya tanpa `detailItem` (faktur pertama kali
   terbaca), tidak ada yang dicatat.
-- **Kunci baris = `detailItem[].id`.**
+- **Kunci baris = `detailItem[].id` + kode barang.**
   - Ada di lama, tidak ada di baru → `removed`.
   - Ada di baru, tidak ada di lama → `added`.
   - Ada di keduanya dan salah satu kolom pembanding berbeda → `changed`.
+  - Baris yang barangnya diganti (id sama, kode lain) → `removed` barang lama + `added` barang baru, supaya kueri per barang
+    melihat keduanya.
   - Baris tanpa `id` dianggap tak berpasangan (jadi `removed` + `added`).
-- **Kolom pembanding:** kode barang, `quantity`, `itemUnit.name`, `unitRatio`, `unitPrice`, `itemDiscPercent`, `itemCashDiscount`,
+- **Kolom pembanding:** `quantity`, `itemUnit.name`, `unitRatio`, `unitPrice`, `itemDiscPercent`, `itemCashDiscount`,
   `warehouse.name`. Angka dibandingkan dengan toleransi 1e-6.
 - **Diabaikan:** `deliveredQuantity`, `returnQuantity`, `availableQuantity`, `shipQuantity` (berubah karena retur/pengiriman, bukan
   suntingan), salesman per baris, catatan baris, dan semua kolom kepala.
@@ -156,9 +158,9 @@ upsertSalesInvoiceById:
   jalan, atau data aneh), savepoint dibatalkan, galat dicatat ke log `[perubahan-faktur]`, dan upsert cache tetap di-commit.
   Webhook tetap 200 dan Accurate tidak mengirim ulang.
 - **Pembanding melempar galat** (bentuk `raw_data` tak terduga) → ditangkap, dicatat di log, tidak ada yang di-INSERT, upsert jalan.
-- **Dua webhook untuk faktur yang sama bersamaan:** `pg_advisory_xact_lock(hashtext('sales_invoice:change'), id)` membuat yang kedua
+- **Dua webhook untuk faktur yang sama bersamaan:** `pg_advisory_xact_lock(hashtextextended('sales_invoice:' || id, 0))` membuat yang kedua
   menunggu. Saat dapat giliran, ia membaca isi yang sudah ditulis yang pertama, jadi perubahan tidak tercatat ganda.
-  Pola kunci sama dengan `lib/kasir/hari.ts` dan `lib/rbac/otorisasi.ts`.
+  Pola kunci sama dengan `lib/kasir/hari.ts`.
 - **Pengiriman ulang webhook** (502 → Accurate kirim ulang): isi lama sudah sama dengan yang baru, jadi tidak ada baris baru.
 - **Beban tambahan:** satu `SELECT raw_data` lewat primary key per webhook (±1.800 per hari). Tidak ada pindaian tabel.
 
