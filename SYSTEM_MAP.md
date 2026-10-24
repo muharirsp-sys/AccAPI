@@ -595,7 +595,9 @@ UI pilih pick_group -> /rekapan-nota/wave/[id]/cetak?grup=...   (server componen
   -> window.print(); kaki halaman memuat wave, grup, jumlah SKU, total pcs, waktu cetak
   CETAK SEMUA (owner 24 Okt 2026): /rekapan-nota/wave/[id]/cetak-semua -> lembarCetakSemua(): satu lembar per divisi
      (jenis produk; grup JP-* dibuat otomatis saat unggah), HEINZ ABC = HNZ1..n per grup area (non-pareto), HNZ(n+1) pareto,
-     HNZ-ALL tanpa area; lalu TTF. Tiap lembar nomor & halaman sendiri; tombol aktif sesudah Rilis.
+     HNZ-ALL tanpa area; lalu key account (outlet_all selain Gabung) & MT GDI (outlet_gdi) lembar sendiri lintas divisi
+     (nota itu keluar dari lembar divisi; outlet_all menang atas MT GDI); lalu TTF. Tiap lembar nomor & halaman sendiri;
+     tombol aktif sesudah Rilis.
      Komponen bersama: app/(cetak)/rekapan-nota/LembarRekapan.tsx + LembarTtf.tsx.
   Isi per karton = ISI_SQL: konv dari transaksi > item.isi_per_karton (lembar Konversi) > rasio satuan karton Accurate.
 

@@ -447,24 +447,30 @@ test("Isi per karton dari satuan Accurate bila master kosong: karton terhitung, 
     assert.deepEqual(rek.withdrawal.map((r) => [r.kode_barang, r.isi_per_karton, r.sat_bsr, r.sat_kcl]), [["BRG-K", 24, 1, 6]]);
 });
 
-test("Cetak semua: satu lembar per divisi, Heinz per area/pareto/tanpa area, nota dua divisi di dua lembar; grup divisi otomatis dari unggah", T_UJI, async () => {
+test("Cetak semua: per divisi, Heinz per area/pareto/tanpa area, key account & MT GDI lembar sendiri (keluar dari divisi), nota dua divisi di dua lembar", T_UJI, async () => {
     const T = "2026-10-21";
     await db.query(`INSERT INTO customer (id, "customerNo", name, area) VALUES (9301, 'C-H1-HZ', 'TOKO H1', '1'), (9302, 'C-H5', 'TOKO H5', '7')`);
+    // Key account: KS1 Sat & Midi (outlet_all), KG1 MT GDI (outlet_gdi), KB keduanya -> outlet_all menang (satu lembar saja).
+    await db.query(`INSERT INTO customer (id, "customerNo", name, grup_all, grup_gdi) VALUES
+        (9311, 'C-KS1-KN', 'ALFAMIDI A', 'SAT & MIDI', NULL), (9312, 'C-KG1-HZ', 'TOKO MT A', NULL, 'MT GDI'),
+        (9313, 'C-KB-MS', 'ALFAMIDI B', 'SAT & MIDI', 'MT GDI')`);
     const H = "HEINZ ABC";
     assert.equal((await unggah(T, xlsx(T, [
         ["NA", "BRG-C", 1, 12, "CTN", "PRINCIPLE A"], ["NB", "BRG-C", 1, 12, "CTN", "PRINCIPLE B"],
         ["NAB", "BRG-C", 1, 12, "CTN", "PRINCIPLE A"], ["NAB", "BRG-A", 1, 12, "CTN", "PRINCIPLE B"],
         ["H1", "BRG-C", 1, 12, "CTN", H], ["H5", "BRG-C", 1, 12, "CTN", H], ["HX", "BRG-C", 1, 12, "CTN", H],
         ["HP", "BRG-C", 60, 720, "CTN", H],
+        ["KS1", "BRG-C", 1, 12, "CTN", "PRINCIPLE A"], ["KG1", "BRG-C", 1, 12, "CTN", H], ["KB", "BRG-A", 1, 12, "CTN", "PRINCIPLE B"],
     ]))).status, 200);
     const w = await waveBaru(T, 1);
-    assert.equal((await tambah(w, ["NA", "NB", "NAB", "H1", "H5", "HX", "HP"])).status, 200);
+    assert.equal((await tambah(w, ["NA", "NB", "NAB", "H1", "H5", "HX", "HP", "KS1", "KG1", "KB"])).status, 200);
     const q = await import("./query.ts");
     await db.query(`UPDATE pick_group SET aktif = false WHERE kode = 'JP-PRINCIPLE B'`); // grup nonaktif: lembarnya tetap dicetak
     const lembar = await q.lembarCetakSemua(w);
     assert.deepEqual(lembar.map((l) => [l.kode, l.terdaftar, l.rekapan.allocation.map((a) => a.no_nota).join(",")]), [
         ["HNZ1", true, "H1"], ["HNZ5", true, "H5"], ["HNZ6", true, "HP"], ["HNZ-ALL", true, "HX"],
         ["JP-PRINCIPLE A", true, "NA,NAB"], ["JP-PRINCIPLE B", false, "NAB,NB"],
+        ["OA-SM", true, "KB,KS1"], ["OG-MTGDI", true, "KG1"],
     ]);
     const nab = lembar.find((l) => l.kode === "JP-PRINCIPLE B")!.rekapan.withdrawal.map((r) => r.kode_barang);
     assert.deepEqual(nab, ["BRG-A", "BRG-C"], "lembar B hanya barang divisi B (BRG-A milik NAB, BRG-C milik NB)");
