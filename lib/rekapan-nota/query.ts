@@ -191,7 +191,9 @@ const JENIS_SQL = `upper(coalesce(p.jenisproduk, ''))`;
 const DIVISI_HEINZ = "HEINZ ABC";
 
 /**
- * Cetak semua (owner 24 Okt 2026): SATU lembar per DIVISI (jenis produk) yang ada di wave, urut nama. HEINZ ABC dipecah:
+ * Cetak semua (owner 24 Okt 2026): nota KEY ACCOUNT (grup outlet_all selain Gabung: Alfa & Indo, Sat & Midi, IDM & IDG, Satu Sama,
+ * Ektong) dan MT GDI (outlet_gdi) dapat lembar sendiri lintas divisi, urut cetak grup, SESUDAH lembar divisi; nota itu tidak
+ * muncul di lembar divisi (tiap baris tepat satu lembar). Sisanya (Gabungan): SATU lembar per DIVISI, urut nama. HEINZ ABC dipecah:
  * HNZ1..n = grup cetak dimensi area (urut cetak) untuk nota NON pareto, HNZ(n+1) = nota pareto (seperti HNZ6 Excel),
  * HNZ-ALL = Heinz non-pareto yang areanya kosong atau di luar semua grup area. Area/pareto = SNAPSHOT wave.
  * Lembar kosong tidak dibuat. Nota dua divisi muncul di kedua lembar dengan barang divisinya saja.
@@ -199,7 +201,7 @@ const DIVISI_HEINZ = "HEINZ ABC";
  * (kode JP-<divisi>, terdaftar=false): tidak ada nota yang hilang.
  */
 export async function lembarCetakSemua(waveId: number): Promise<LembarTipe[]> {
-    const [divisi, terdaftar, area] = await Promise.all([
+    const [divisi, terdaftar, area, ka] = await Promise.all([
         pool.query<{ jenis: string }>(
             `SELECT DISTINCT ${JENIS_SQL} AS jenis
                FROM wave_assignment wa JOIN wave_line_pool p ON p.no_nota = wa.no_nota AND p.tanggal = wa.tanggal_wave
@@ -210,29 +212,51 @@ export async function lembarCetakSemua(waveId: number): Promise<LembarTipe[]> {
         pool.query<{ nama: string; nilai: string[] }>(
             `SELECT g.nama, array_agg(upper(m.nilai)) AS nilai FROM pick_group g JOIN pick_group_member m ON m.pick_group_id = g.id
               WHERE g.aktif AND g.dimensi = 'area' GROUP BY g.id ORDER BY g.urutan_cetak, g.kode`),
+        // Key account (owner 24 Okt 2026): grup outlet_all / outlet_gdi selain "Gabung" -- Alfa & Indo, Sat & Midi, IDM & IDG,
+        // Satu Sama, Ektong, MT GDI. Nilai "Gabung" = outlet biasa, bukan key account.
+        pool.query<{ kode: string; nama: string; dimensi: string; nilai: string[] }>(
+            `SELECT g.kode, g.nama, g.dimensi::text, array_agg(upper(m.nilai)) AS nilai
+               FROM pick_group g JOIN pick_group_member m ON m.pick_group_id = g.id
+              WHERE g.aktif AND g.dimensi IN ('outlet_all', 'outlet_gdi') AND upper(m.nilai) <> 'GABUNG'
+              GROUP BY g.id ORDER BY g.urutan_cetak, g.kode`),
     ]);
     const grupDivisi = new Map(terdaftar.rows.map((r) => [r.nilai, r]));
     const semuaArea = area.rows.flatMap((g) => g.nilai);
-    const rencana: { kode: string; judul: string; terdaftar: boolean; filter: string; nilai: unknown[] }[] = [];
+    const kaAll = ka.rows.filter((g) => g.dimensi === "outlet_all").flatMap((g) => g.nilai);
+    const kaGdi = ka.rows.filter((g) => g.dimensi === "outlet_gdi").flatMap((g) => g.nilai);
+    const GRUP_ALL = `upper(coalesce(wa.snap_grup_all, ''))`;
+    const GRUP_GDI = `upper(coalesce(wa.snap_grup_gdi, ''))`;
+
+    // Tiap baris nota masuk TEPAT SATU lembar: key account outlet_all lebih dulu, lalu MT GDI (outlet_gdi), sisanya
+    // (Gabungan) per divisi -- Heinz per area. `saring` menambah parameternya sendiri lewat p() supaya nomor $n benar.
+    type P = (v: unknown) => string;
+    const rencana: { kode: string; judul: string; terdaftar: boolean; saring: (p: P) => string }[] = [];
+    const bukanKa = (p: P) => `AND ${GRUP_ALL} <> ALL(${p(kaAll)}::text[]) AND ${GRUP_GDI} <> ALL(${p(kaGdi)}::text[])`;
     for (const { jenis } of [...divisi.rows].sort((a, b) => a.jenis.localeCompare(b.jenis))) {
         if (jenis !== DIVISI_HEINZ) {
             const g = grupDivisi.get(jenis);
             rencana.push({ kode: g?.kode ?? `JP-${jenis || "TANPA DIVISI"}`, judul: g?.nama ?? (jenis || "TANPA DIVISI"),
-                terdaftar: Boolean(g), filter: `AND ${JENIS_SQL} = $2`, nilai: [jenis] });
+                terdaftar: Boolean(g), saring: (p) => `${bukanKa(p)} AND ${JENIS_SQL} = ${p(jenis)}` });
             continue;
         }
-        const heinz = `AND ${JENIS_SQL} = $2`;
+        const heinz = (p: P) => `${bukanKa(p)} AND ${JENIS_SQL} = ${p(jenis)}`;
         area.rows.forEach((g, i) => rencana.push({ kode: `HNZ${i + 1}`, judul: `${DIVISI_HEINZ} · ${g.nama}`, terdaftar: true,
-            filter: `${heinz} AND wa.snap_pareto IS NOT TRUE AND upper(coalesce(wa.snap_area, '')) = ANY($3::text[])`, nilai: [jenis, g.nilai] }));
+            saring: (p) => `${heinz(p)} AND wa.snap_pareto IS NOT TRUE AND upper(coalesce(wa.snap_area, '')) = ANY(${p(g.nilai)}::text[])` }));
         rencana.push({ kode: `HNZ${area.rows.length + 1}`, judul: `${DIVISI_HEINZ} · Pareto`, terdaftar: true,
-            filter: `${heinz} AND wa.snap_pareto IS TRUE`, nilai: [jenis] });
+            saring: (p) => `${heinz(p)} AND wa.snap_pareto IS TRUE` });
         rencana.push({ kode: "HNZ-ALL", judul: `${DIVISI_HEINZ} · Tanpa area`, terdaftar: true,
-            filter: `${heinz} AND wa.snap_pareto IS NOT TRUE AND NOT (upper(coalesce(wa.snap_area, '')) = ANY($3::text[]))`,
-            nilai: [jenis, semuaArea] });
+            saring: (p) => `${heinz(p)} AND wa.snap_pareto IS NOT TRUE AND NOT (upper(coalesce(wa.snap_area, '')) = ANY(${p(semuaArea)}::text[]))` });
+    }
+    for (const g of ka.rows) {
+        rencana.push({ kode: g.kode, judul: g.nama, terdaftar: true, saring: g.dimensi === "outlet_all"
+            ? (p) => `AND ${GRUP_ALL} = ANY(${p(g.nilai)}::text[])`
+            : (p) => `AND ${GRUP_GDI} = ANY(${p(g.nilai)}::text[]) AND ${GRUP_ALL} <> ALL(${p(kaAll)}::text[])` });
     }
     const hasil: LembarTipe[] = [];
     for (const r of rencana) {
-        const rekapan = await rekapanDari(r.filter, [waveId, ...r.nilai]);
+        const params: unknown[] = [waveId];
+        const filter = r.saring((v) => { params.push(v); return `$${params.length}`; });
+        const rekapan = await rekapanDari(filter, params);
         if (rekapan.allocation.length) hasil.push({ kode: r.kode, judul: r.judul, terdaftar: r.terdaftar, rekapan });
     }
     return hasil;

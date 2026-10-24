@@ -338,7 +338,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                             {draft
                                 ? <Button variant="primary" disabled disabledReason="Rilis wave dulu"><Printer className="fi-icon" aria-hidden />Cetak semua rekapan + TTF</Button>
                                 : <Link className="fi-btn fi-btn--primary" href={`/rekapan-nota/wave/${id}/cetak-semua`} target="_blank"><Printer className="fi-icon" aria-hidden />Cetak semua rekapan + TTF<ExternalLink className="fi-icon" aria-hidden /></Link>}
-                            <span className="fi-small fi-subtle">Satu lembar per divisi · Heinz per area (HNZ1–6) dan tanpa area (HNZ-ALL) · TTF di akhir</span>
+                            <span className="fi-small fi-subtle">Satu lembar per divisi · Heinz per area (HNZ1–6) dan tanpa area (HNZ-ALL) · key account & MT GDI lembar sendiri · TTF di akhir</span>
                         </div>
                     )}
                     <p className="fi-small fi-subtle">Kode lembar <span className="fi-mono">{kodeLembar}</span> · dimensi berbeda digabung DAN, sedimensi ATAU · tanpa pilihan = semua nota di wave.</p>
