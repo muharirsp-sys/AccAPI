@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Catatan 24 Okt:** blok kode di rencana ini adalah DRAF AWAL. Sesudah tinjauan, kode final berbeda (mis. nomor lama juga wajib `INV/`, `isolationLevel: "read committed"`, `SET LOCAL lock_timeout`, pesan log, jumlah uji). Kode di cabang `feat/perubahan-rincian-faktur` = sumber kebenaran.
+
 **Goal:** Setiap kali isi faktur INV berubah di Accurate, catat baris yang hilang/bertambah/berubah ke tabel `sales_invoice_line_change`, lengkap dengan manusia/aplikasi, jam simpan, dan status sesudah cetak.
 
 **Architecture:** Pembanding murni (`lib/sales-invoice-change.ts`) menghitung selisih antara `raw_data` lama di cache dan jawaban `detail.do` baru. `upsertSalesInvoiceById` (`lib/sync.ts`) membaca isi lama, menimpa cache, dan menyimpan selisih dalam SATU transaksi berkunci per faktur; INSERT perubahan berada di SAVEPOINT supaya kegagalannya tidak pernah menahan cache. Webhook meneruskan `appKey` + `timestamp` amplop lewat `salesInvoiceEvents` (`lib/accurate-webhook.ts`).

@@ -1,6 +1,6 @@
 # Pencatat perubahan rincian faktur — desain
 
-Tanggal: 23 Okt 2026. Status: rancangan disetujui owner (sesi 23 Okt); spec ini menunggu tinjauan owner sebelum rencana implementasi.
+Tanggal: 23 Okt 2026. Status: disetujui owner 23 Okt; DIIMPLEMENTASI 24 Okt di cabang `feat/perubahan-rincian-faktur` (belum di-push). Bila spec dan kode berbeda, kode yang benar.
 Zona §3 AGENTS.md: skema baru + jalur sinkron faktur → review manusia, merge atas perintah owner.
 
 ## 1. Tujuan dan lingkup
@@ -99,7 +99,7 @@ Volume: satu baris per baris faktur yang berubah, perkiraan ratusan per hari. Di
 | `lib/accurate-webhook.ts` → `salesInvoiceEvents(payload)` | Amplop webhook → `[{id, action, appKey, savedAt}]`. `appKey` = `''` bila tidak ada, `savedAt` = `timestamp` dibaca WIB. | — (murni) |
 | `lib/sales-invoice-change.ts` → `diffInvoiceLines(oldRaw, newRaw, ctx)` dan `deletedInvoiceLines(oldRaw, ctx)` | Bandingkan dua `detail.do` → baris siap-INSERT. | — (murni) |
 | `lib/sync.ts` → `upsertSalesInvoiceById(id, creds, ctx?)` | Ambil `detail.do`, lalu dalam satu transaksi: kunci, baca lama, upsert, catat. | Postgres |
-| `SYNC_MODULES.sales_invoice.upsertPage(rows, q = db)` | Sama seperti sekarang, tetapi bisa memakai transaksi pemanggil. | Postgres |
+| `upsertSalesInvoiceRows(rows, q = db)` (dipakai `SYNC_MODULES.sales_invoice.upsertPage` dan jalur webhook) | Badan upsert lama, kini bisa memakai transaksi pemanggil. | Postgres |
 
 `ctx = { source: 'webhook' | 'backfill' | 'send', appKey: string | null, savedAt: Date | null }`.
 Bawaan `{ source: 'backfill', appKey: null, savedAt: null }`, jadi pemanggil lama (penambal, uji PG Supervisor Review) tidak berubah.
@@ -116,7 +116,7 @@ upsertSalesInvoiceById:
   selain itu         → BEGIN
                          pg_advisory_xact_lock(hashtextextended('sales_invoice:' || id, 0))
                          SELECT raw_data FROM sales_invoice WHERE id = $1           (lewat primary key)
-                         upsertPage([row], tx)                                      (perilaku sama dengan sekarang)
+                         upsertSalesInvoiceRows([row], tx)                           (perilaku sama dengan sekarang)
                          SAVEPOINT → INSERT diffInvoiceLines(raw lama, row, ctx)    (gagal → ROLLBACK TO SAVEPOINT + log)
                        COMMIT
   recordInvoiceRealization tetap di luar transaksi, seperti sekarang.
@@ -177,7 +177,7 @@ upsertSalesInvoiceById:
     perubahan semu V2 → V1 dan menulis V1 ke cache (cache basi ini sudah terjadi sebelum fitur ini; baris semunya baru). Butuh
     suntingan nyata dalam ±1 detik dari pengambilan serentak, jadi jarang; `detail.do` tidak membawa `lastUpdate`, jadi tidak ada
     penjaga versi yang murah.
-  - Satu amplop webhook bisa memuat dua event untuk faktur yang sama; selisihnya dicatat dengan `app_key` event pertama.
+  - Selisih selalu = isi cache vs `detail.do` terkini, dicatat atas nama event yang lebih dulu diproses. Dua simpan beruntun, atau event yang terlambat/dikirim ulang, bisa membawa `app_key`/`saved_at` event lain (termasuk dua event satu faktur dalam satu amplop).
 
 ## 9. Cara membaca
 
@@ -216,7 +216,7 @@ itu TIDAK tercatat sebagai `added` (faktur baru pertama kali terbaca tanpa isi l
   - Faktur tiada → baris `invoice_deleted` + cache terhapus.
   - Dua panggilan bersamaan → tidak ganda.
   - Migrasi 0037 = entri migrate-pg = Drizzle; dijalankan 2× idempoten.
-- **Gerbang:** `npm run gate` hijau. `npm test` hijau.
+- **Gerbang (24 Okt):** `npm run lint` 0 error, `npx tsc --noEmit` 0, `npm run build` 0. `npm test` dengan Postgres evaluasi: 1.273 uji, 34 gagal — empat berkas yang sama gagal 34 juga di `origin/main` tanpa perubahan (lingkungan DB evaluasi), jadi bukan dari cabang ini. Uji fitur ini: 26 murni + 5 PG + Supervisor Review 7, semuanya lulus, 0 dilewati.
 
 ## 11. Temuan sampingan (bukan bagian spec ini)
 
