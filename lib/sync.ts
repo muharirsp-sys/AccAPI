@@ -602,6 +602,9 @@ const kunciFaktur = (tx: Tx, id: number) =>
  * Simpan baris perubahan rincian di SAVEPOINT (drizzle tx.transaction bersarang). Gagal (tabel belum ada karena migrasi belum jalan,
  * data aneh) TIDAK membatalkan upsert cache di transaksi yang sama: pencatatan tidak boleh menahan faktur (spec 2026-10-23 §8).
  */
+/** Alasan Postgres (cause) tanpa pesan Drizzle "Failed query ... params:" yang memuat data faktur/pelanggan ke log. */
+const sebab = (e: unknown) => e instanceof Error ? ((e.cause instanceof Error ? e.cause.message : "") || e.name) : String(e);
+
 async function catatPerubahan(tx: Tx, id: number, hitung: () => LineChangeRow[]) {
     let baris: LineChangeRow[];
     try {
@@ -615,7 +618,7 @@ async function catatPerubahan(tx: Tx, id: number, hitung: () => LineChangeRow[])
         await tx.transaction(async (sp) => { await sp.insert(salesInvoiceLineChange).values(baris); });
         console.log(`[perubahan-faktur] ${baris[0].invoiceNumber}: ${baris.length} baris (${[...new Set(baris.map((b) => b.kind))].join(", ")})`);
     } catch (e) {
-        console.error(`[perubahan-faktur] ${id}: gagal dicatat, cache tetap diperbarui: ${e instanceof Error ? e.message : e}`);
+        console.error(`[perubahan-faktur] ${id}: gagal dicatat, cache tetap diperbarui: ${sebab(e)}`);
     }
 }
 
