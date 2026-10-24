@@ -43,6 +43,27 @@ export async function ambilPickGroup(ids: number[]): Promise<PickGroupRow[]> {
     return r.rows;
 }
 
+/** Nama satuan yang dihitung "karton" di master satuan Accurate (dipakai bila master Rekapan kosong). */
+const SATUAN_KARTON = `('KRT','CTN','KARTON','DUS','BOX','BAL','PAK','PACK','SAK','BALL')`;
+
+/**
+ * Rasio satuan karton barang di Accurate (item.unit2..5 + ratio2..5, disinkron dari item/detail.do): satuan TERBESAR
+ * yang namanya satuan karton. Butuh alias `i` (item). Diukur 24 Okt 2026: 3.761 dari 3.767 barang yang punya master
+ * Rekapan DAN rasio ini bernilai sama; 193 dari 352 barang tanpa master punya rasio ini.
+ */
+export const RASIO_KARTON_ACCURATE_SQL = `NULLIF(round(CASE
+        WHEN upper(i.unit5_name) IN ${SATUAN_KARTON} THEN i.ratio5
+        WHEN upper(i.unit4_name) IN ${SATUAN_KARTON} THEN i.ratio4
+        WHEN upper(i.unit3_name) IN ${SATUAN_KARTON} THEN i.ratio3
+        WHEN upper(i.unit2_name) IN ${SATUAN_KARTON} THEN i.ratio2 END)::int, 0)`;
+
+/**
+ * Isi per karton satu baris (owner 24 Okt 2026: "langsung dari Accurate"): konversi yang dibawa transaksinya >
+ * master Rekapan (lembar Konversi) > rasio satuan karton Accurate. Butuh alias `p` (wave_line_pool) dan `i` (item).
+ * Satu-satunya salinan aturan ini -- pool, snapshot wave, exception dan lembar cetak memakainya.
+ */
+export const ISI_SQL = `coalesce(p.konv_tersirat, i.isi_per_karton, ${RASIO_KARTON_ACCURATE_SQL})`;
+
 /**
  * Master outlet per KODE OUTLET fisik. Export Accurate menulis kode outlet ("C-500003"), sedangkan
  * customer.customerNo memakai akhiran principal ("C-500003-HZ", "-KN", ...). Pencocokan persis tidak pernah
@@ -117,12 +138,15 @@ function bangunFilter(groups: PickGroupRow[], params: unknown[]): string {
 export async function buildRekapan(waveId: number, groupIds: number[]): Promise<Rekapan> {
     const groups = await ambilPickGroup(groupIds);
     const params: unknown[] = [waveId];
-    const filter = bangunFilter(groups, params);
+    return rekapanDari(bangunFilter(groups, params), params);
+}
 
+/** @param filter klausa "AND ..." atas alias wa/p (boleh kosong); params[0] WAJIB waveId. */
+async function rekapanDari(filter: string, params: unknown[]): Promise<Rekapan> {
     const cte = `
         WITH baris AS (
             SELECT p.no_nota, p.customer, p.region, p.kode_barang, p.nama_barang,
-                   coalesce(p.konv_tersirat, i.isi_per_karton) AS isi_per_karton,
+                   ${ISI_SQL} AS isi_per_karton,
                    p.qty_pcs, wa.prioritas
               FROM wave_assignment wa
               JOIN wave_line_pool p ON p.no_nota = wa.no_nota AND p.tanggal = wa.tanggal_wave
@@ -161,6 +185,59 @@ export async function buildRekapan(waveId: number, groupIds: number[]): Promise<
     };
 }
 
+export type LembarTipe = { kode: string; judul: string; terdaftar: boolean; rekapan: Rekapan };
+
+const JENIS_SQL = `upper(coalesce(p.jenisproduk, ''))`;
+const DIVISI_HEINZ = "HEINZ ABC";
+
+/**
+ * Cetak semua (owner 24 Okt 2026): SATU lembar per DIVISI (jenis produk) yang ada di wave, urut nama. HEINZ ABC dipecah:
+ * HNZ1..n = grup cetak dimensi area (urut cetak) untuk nota NON pareto, HNZ(n+1) = nota pareto (seperti HNZ6 Excel),
+ * HNZ-ALL = Heinz non-pareto yang areanya kosong atau di luar semua grup area. Area/pareto = SNAPSHOT wave.
+ * Lembar kosong tidak dibuat. Nota dua divisi muncul di kedua lembar dengan barang divisinya saja.
+ * Grup jenis_produk dibuat OTOMATIS saat unggah (upload/route.ts); divisi yang grupnya tidak ada/nonaktif tetap DICETAK
+ * (kode JP-<divisi>, terdaftar=false): tidak ada nota yang hilang.
+ */
+export async function lembarCetakSemua(waveId: number): Promise<LembarTipe[]> {
+    const [divisi, terdaftar, area] = await Promise.all([
+        pool.query<{ jenis: string }>(
+            `SELECT DISTINCT ${JENIS_SQL} AS jenis
+               FROM wave_assignment wa JOIN wave_line_pool p ON p.no_nota = wa.no_nota AND p.tanggal = wa.tanggal_wave
+              WHERE wa.wave_id = $1 AND wa.dilepas = false`, [waveId]),
+        pool.query<{ kode: string; nama: string; nilai: string }>(
+            `SELECT g.kode, g.nama, upper(m.nilai) AS nilai FROM pick_group g JOIN pick_group_member m ON m.pick_group_id = g.id
+              WHERE g.aktif AND g.dimensi = 'jenis_produk' ORDER BY g.urutan_cetak, g.kode`),
+        pool.query<{ nama: string; nilai: string[] }>(
+            `SELECT g.nama, array_agg(upper(m.nilai)) AS nilai FROM pick_group g JOIN pick_group_member m ON m.pick_group_id = g.id
+              WHERE g.aktif AND g.dimensi = 'area' GROUP BY g.id ORDER BY g.urutan_cetak, g.kode`),
+    ]);
+    const grupDivisi = new Map(terdaftar.rows.map((r) => [r.nilai, r]));
+    const semuaArea = area.rows.flatMap((g) => g.nilai);
+    const rencana: { kode: string; judul: string; terdaftar: boolean; filter: string; nilai: unknown[] }[] = [];
+    for (const { jenis } of [...divisi.rows].sort((a, b) => a.jenis.localeCompare(b.jenis))) {
+        if (jenis !== DIVISI_HEINZ) {
+            const g = grupDivisi.get(jenis);
+            rencana.push({ kode: g?.kode ?? `JP-${jenis || "TANPA DIVISI"}`, judul: g?.nama ?? (jenis || "TANPA DIVISI"),
+                terdaftar: Boolean(g), filter: `AND ${JENIS_SQL} = $2`, nilai: [jenis] });
+            continue;
+        }
+        const heinz = `AND ${JENIS_SQL} = $2`;
+        area.rows.forEach((g, i) => rencana.push({ kode: `HNZ${i + 1}`, judul: `${DIVISI_HEINZ} · ${g.nama}`, terdaftar: true,
+            filter: `${heinz} AND wa.snap_pareto IS NOT TRUE AND upper(coalesce(wa.snap_area, '')) = ANY($3::text[])`, nilai: [jenis, g.nilai] }));
+        rencana.push({ kode: `HNZ${area.rows.length + 1}`, judul: `${DIVISI_HEINZ} · Pareto`, terdaftar: true,
+            filter: `${heinz} AND wa.snap_pareto IS TRUE`, nilai: [jenis] });
+        rencana.push({ kode: "HNZ-ALL", judul: `${DIVISI_HEINZ} · Tanpa area`, terdaftar: true,
+            filter: `${heinz} AND wa.snap_pareto IS NOT TRUE AND NOT (upper(coalesce(wa.snap_area, '')) = ANY($3::text[]))`,
+            nilai: [jenis, semuaArea] });
+    }
+    const hasil: LembarTipe[] = [];
+    for (const r of rencana) {
+        const rekapan = await rekapanDari(r.filter, [waveId, ...r.nilai]);
+        if (rekapan.allocation.length) hasil.push({ kode: r.kode, judul: r.judul, terdaftar: r.terdaftar, rekapan });
+    }
+    return hasil;
+}
+
 export type NotaPool = {
     no_nota: string; kode_cust: string; customer: string | null;
     kode_salesman: string | null; salesman: string | null; region: string | null;
@@ -197,8 +274,8 @@ export async function notaPool(
                 coalesce(max(c.grup_gdi), 'Gabung') AS grup_gdi,
                 count(*)::int                    AS jumlah_baris,
                 sum(p.qty_pcs)::float8           AS total_pcs,
-                sum(p.qty_pcs / NULLIF(coalesce(p.konv_tersirat, i.isi_per_karton), 0))::float8 AS total_krt,
-                (sum(p.qty_pcs / NULLIF(coalesce(p.konv_tersirat, i.isi_per_karton), 0)) >= $2)  AS pareto,
+                sum(p.qty_pcs / NULLIF(${ISI_SQL}, 0))::float8 AS total_krt,
+                (sum(p.qty_pcs / NULLIF(${ISI_SQL}, 0)) >= $2)  AS pareto,
                 (k.no_nota IS NOT NULL)          AS kanvas,
                 bool_or(upper(coalesce(p.jenisproduk,'')) = 'HEINZ ABC') AS heinz
            FROM wave_line_pool p

@@ -593,6 +593,11 @@ UI pilih pick_group -> /rekapan-nota/wave/[id]/cetak?grup=...   (server componen
      sendiri-sendiri & bernomor sendiri (baris kanan tidak sejajar kiri); kop: No. RKP/<yymm>/<wave>/<grup> + jam cetak WITA;
      judul halaman = nama PDF (RKP-...-<grup>_<yyyymmdd-HHmm>)
   -> window.print(); kaki halaman memuat wave, grup, jumlah SKU, total pcs, waktu cetak
+  CETAK SEMUA (owner 24 Okt 2026): /rekapan-nota/wave/[id]/cetak-semua -> lembarCetakSemua(): satu lembar per divisi
+     (jenis produk; grup JP-* dibuat otomatis saat unggah), HEINZ ABC = HNZ1..n per grup area (non-pareto), HNZ(n+1) pareto,
+     HNZ-ALL tanpa area; lalu TTF. Tiap lembar nomor & halaman sendiri; tombol aktif sesudah Rilis.
+     Komponen bersama: app/(cetak)/rekapan-nota/LembarRekapan.tsx + LembarTtf.tsx.
+  Isi per karton = ISI_SQL: konv dari transaksi > item.isi_per_karton (lembar Konversi) > rasio satuan karton Accurate.
 
 --- 8.4 TTF (Tanda Terima Faktur) ---
 /rekapan-nota/wave/[id]/ttf  -> lib/rekapan-nota/query.ts : buildTtf()
