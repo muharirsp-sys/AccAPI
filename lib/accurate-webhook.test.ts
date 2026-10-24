@@ -3,7 +3,7 @@
    dikenali wajib dilewati, bukan ditebak. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractLoggedInvoiceIdsSince, flattenCustomerIds, flattenItemIds, flattenSalesInvoiceIds } from "./accurate-webhook.ts";
+import { extractLoggedInvoiceIdsSince, flattenCustomerIds, flattenItemIds, flattenSalesInvoiceIds, salesInvoiceEvents } from "./accurate-webhook.ts";
 
 test("envelope faktur dibaca seperti bentuk nyata produksi", () => {
     const payload = [{
@@ -48,4 +48,25 @@ test("penambal log melewati faktur yang aksi terakhirnya DELETE, dan jendela wak
         '{"receivedAt":"2026-09-25T04:00:00.000Z","payload":[{"data":[{"salesInvoiceId":6,"salesInv',
     ].join("\n");
     assert.deepEqual(extractLoggedInvoiceIdsSince(log, Date.parse("2026-09-24T00:00:00.000Z")).sort(), [1, 4, 6]);
+});
+
+test("event faktur membawa appKey dan jam simpan amplopnya (timestamp = WIB)", () => {
+    // Bentuk amplop nyata produksi: appKey hanya ada bila disimpan aplikasi; timestamp "dd/MM/yyyy HH:mm:ss" WIB
+    // (receivedAt 05:58:34Z <-> timestamp 12:58:34, spec 2026-10-23 §2).
+    const payload = [
+        { type: "SALES_INVOICE", timestamp: "17/10/2026 12:58:34", data: [{ salesInvoiceId: 101, action: "WRITE" }] },
+        { type: "SALES_INVOICE", timestamp: "22/10/2026 13:49:06", appKey: "APP-A",
+          data: [{ salesInvoiceId: 102, action: "WRITE" }, { salesInvoiceId: 103, action: "DELETE" }] },
+        { type: "CUSTOMER", data: [{ customerId: 5 }] },
+    ];
+    assert.deepEqual(salesInvoiceEvents(payload).map((e) => [e.id, e.action, e.appKey, e.savedAt?.toISOString()]), [
+        [101, "WRITE", "", "2026-10-17T05:58:34.000Z"],
+        [102, "WRITE", "APP-A", "2026-10-22T06:49:06.000Z"],
+        [103, "DELETE", "APP-A", "2026-10-22T06:49:06.000Z"],
+    ]);
+    // Tanpa timestamp/action: savedAt null, action WRITE. Id tidak sah dilewati.
+    assert.deepEqual(salesInvoiceEvents([{ type: "SALES_INVOICE", data: [{ salesInvoiceId: 7 }, { salesInvoiceId: "x" }] }])
+        .map((e) => [e.id, e.action, e.savedAt]), [[7, "WRITE", null]]);
+    assert.deepEqual(flattenSalesInvoiceIds(payload), [101, 102, 103]);
+    assert.deepEqual(salesInvoiceEvents(null), []);
 });
