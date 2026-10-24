@@ -110,3 +110,92 @@ test("parseRaw menerima string sekali/dua kali dienkode dan objek; parsePrintedV
     assert.equal(parsePrintedView("Belum cetak/email"), null);
     assert.equal(parsePrintedView(undefined), null);
 });
+
+// ---- Perketatan hasil tinjauan (Task 2) ----
+
+test("tiap kolom pembanding yang berubah sendirian = tepat satu 'changed'", () => {
+    const kasus: [string, Record<string, unknown>][] = [
+        ["satuan", { itemUnit: { name: "KRT" } }],
+        ["rasio", { unitRatio: 2 }],
+        ["harga", { unitPrice: 4700 }],
+        ["diskon persen", { itemDiscPercent: "3" }],
+        ["diskon rupiah", { itemCashDiscount: 500 }],
+        ["gudang", { warehouse: { name: "GUDANG B" } }],
+    ];
+    for (const [nama, ubah] of kasus) {
+        const r = diffInvoiceLines(lama(faktur([brs(11, "BARANG A", 6)])), faktur([brs(11, "BARANG A", 6, ubah)]), WEBHOOK, KINI);
+        assert.deepEqual(r.map((x) => x.kind), ["changed"], nama);
+    }
+});
+
+test("derau pecahan pada harga (4610.0000000001) bukan perubahan", () => {
+    const r = diffInvoiceLines(lama(faktur([brs(11, "BARANG A", 6)])), faktur([brs(11, "BARANG A", 6, { unitPrice: 4610.0000000001 })]), WEBHOOK, KINI);
+    assert.deepEqual(r, []);
+});
+
+test("dicetak tepat pada detik simpan = sesudah cetak (batas inklusif)", () => {
+    // 22 Oct 2026 13:49:06 WIB = 06:49:06Z = savedAt WEBHOOK.
+    const [r] = diffInvoiceLines(lama(faktur([brs(11, "BARANG A", 72)])),
+        faktur([brs(11, "BARANG A", 6)], { printedTimeView: "22 Oct 2026 13:49:06" }), WEBHOOK, KINI);
+    assert.equal(r.printedAt?.toISOString(), "2026-10-22T06:49:06.000Z");
+    assert.equal(r.afterPrint, true);
+});
+
+test("rasio satuan 0 dianggap tidak ada: delta dasar null", () => {
+    const r = diffInvoiceLines(lama(faktur([brs(11, "BARANG A", 6, { unitRatio: 0 })])),
+        faktur([brs(11, "BARANG A", 5, { unitRatio: 0 })]), WEBHOOK, KINI);
+    assert.deepEqual(r.map((x) => [x.kind, x.oldLine?.ratio, x.newLine?.ratio, x.baseQtyDelta]), [["changed", null, null, null]]);
+});
+
+test("draf (DFT) yang baru terbit jadi INV: nomor LAMA bukan INV -> tidak ada baris", () => {
+    const r = diffInvoiceLines(lama(faktur([brs(11, "BARANG A", 72)], { number: "DFT.1001" })),
+        faktur([brs(11, "BARANG A", 6)], { number: "INV/2610/AA00001" }), WEBHOOK, KINI);
+    assert.deepEqual(r, []);
+});
+
+test("parsePrintedView: bulan 3-4 huruf (Sept), Agt, jam 1 digit; detik tetap wajib", () => {
+    assert.equal(parsePrintedView("17 Sept 2026 15:23:23")?.toISOString(), "2026-09-17T08:23:23.000Z");
+    assert.equal(parsePrintedView("17 Agt 2026 15:23:23")?.toISOString(), "2026-08-17T08:23:23.000Z");
+    assert.equal(parsePrintedView("7 Oct 2026 5:23:23")?.toISOString(), "2026-10-06T22:23:23.000Z");
+    assert.equal(parsePrintedView("17 Oct 2026 15:23"), null);
+});
+
+test("printedTimeView tak terbaca: printedAt null tapi printedBy tetap terisi (kegagalan tampak), afterPrint false", () => {
+    const isiLama = lama(faktur([brs(11, "BARANG A", 72)]));
+    const [rusak] = diffInvoiceLines(isiLama, faktur([brs(11, "BARANG A", 6)], { printedTimeView: "rusak", printUserName: "FAKTURIS A" }), WEBHOOK, KINI);
+    assert.deepEqual([rusak.printedAt, rusak.printedBy, rusak.afterPrint], [null, "FAKTURIS A", false]);
+    // Penanda "belum cetak" tidak dianggap nama pencetak, huruf besar/kecil tidak berpengaruh.
+    const [belum] = diffInvoiceLines(isiLama, faktur([brs(11, "BARANG A", 6)], { printedTimeView: null, printUserName: "BELUM CETAK/email" }), WEBHOOK, KINI);
+    assert.deepEqual([belum.printedAt, belum.printedBy, belum.afterPrint], [null, "", false]);
+});
+
+test("kunci baris kembar (id + kode barang sama): tidak ada baris lama yang hilang diam-diam", () => {
+    const r = diffInvoiceLines(lama(faktur([brs(11, "BARANG A", 5), brs(11, "BARANG A", 7)])),
+        faktur([brs(11, "BARANG A", 7)]), WEBHOOK, KINI);
+    // Baris lama pertama berpasangan dengan baris baru (5 -> 7); yang kembar (qty 7) tidak berpasangan -> removed.
+    assert.deepEqual(r.map((x) => [x.kind, x.oldLine?.qty, x.newLine?.qty]), [["changed", 5, 7], ["removed", 7, undefined]]);
+    // Jumlah selisih dasar = qty baru (7) - total qty lama (12) = -5: tidak ada qty yang lolos dari catatan.
+    assert.equal(r.reduce((s, x) => s + (x.baseQtyDelta ?? 0), 0), -5);
+});
+
+test("diskon persen kosong, '0', '0.0', 0 = nilai kosong yang sama", () => {
+    for (const baru of ["0", "0.0", 0, ""]) {
+        assert.deepEqual(diffInvoiceLines(lama(faktur([brs(11, "BARANG A", 6, { itemDiscPercent: "" })])),
+            faktur([brs(11, "BARANG A", 6, { itemDiscPercent: baru })]), WEBHOOK, KINI), [], String(baru));
+        assert.deepEqual(diffInvoiceLines(lama(faktur([brs(11, "BARANG A", 6, { itemDiscPercent: baru })])),
+            faktur([brs(11, "BARANG A", 6, { itemDiscPercent: "" })]), WEBHOOK, KINI), [], `balik ${String(baru)}`);
+    }
+});
+
+test("id faktur 0/hilang, newRow null, entri bukan objek di detailItem: tidak melempar dan tidak ada baris palsu", () => {
+    const isiLama = lama(faktur([brs(11, "BARANG A", 72)]));
+    assert.deepEqual(diffInvoiceLines(isiLama, faktur([brs(11, "BARANG A", 6)], { id: 0 }), WEBHOOK, KINI), []);
+    assert.deepEqual(diffInvoiceLines(isiLama, faktur([brs(11, "BARANG A", 6)], { id: undefined }), WEBHOOK, KINI), []);
+    assert.deepEqual(deletedInvoiceLines(lama(faktur([brs(11, "BARANG A", 6)], { id: 0 })), BACKFILL, KINI), []);
+    assert.deepEqual(diffInvoiceLines(isiLama, null as never, WEBHOOK, KINI), []);
+    assert.deepEqual(diffInvoiceLines(isiLama, undefined as never, WEBHOOK, KINI), []);
+    const r = diffInvoiceLines(lama(faktur([null, brs(11, "BARANG A", 72), "x", 5])), faktur([brs(11, "BARANG A", 6), null]), WEBHOOK, KINI);
+    assert.deepEqual(r.map((x) => [x.kind, x.lineId, x.itemNo]), [["changed", 11, "BARANG A"]]);
+    const h = deletedInvoiceLines(lama(faktur([null, brs(11, "BARANG A", 6)])), BACKFILL, KINI);
+    assert.deepEqual(h.map((x) => [x.kind, x.itemNo]), [["invoice_deleted", "BARANG A"]]);
+});
