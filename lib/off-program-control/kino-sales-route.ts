@@ -282,6 +282,7 @@ export function safeParserMessage(error: unknown): string | null {
 type ReconciliationOutput = {
   summary: Record<string, number>;
   results: ReconciliationIssue[];
+  ignoredLines?: ReconciliationIssue[];
 };
 
 interface CommonHandlerDependencies {

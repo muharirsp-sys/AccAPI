@@ -5,6 +5,7 @@ import {
 } from "./sales-reconciliation";
 
 export type ReturnStatus =
+  | "KOREKSI"
   | "MATCH"
   | "QTY_MISMATCH"
   | "VALUE_MISMATCH"
@@ -19,6 +20,8 @@ export interface CanonicalReturnLine {
   sourceRowNumber: number;
   invoiceNumber: string;
   customerCode: string;
+  customerCodeRaw?: string;
+  correctionInvoiceReferences?: string[];
   accurateProductCode: string | null;
   principalProductCode: string | null;
   quantity: number;
@@ -54,8 +57,19 @@ export interface ReturnReconciliationOutput {
   accurateLines: CanonicalReturnLine[];
   principalLines: CanonicalReturnLine[];
   results: ReturnReconciliationResult[];
-  summary: Record<ReturnStatus, number>;
+  summary: Record<Exclude<ReturnStatus, "KOREKSI">, number> & { KOREKSI?: number };
+  ignoredLines?: IgnoredReturnLine[];
 }
+
+export type IgnoredReturnLine = {
+  status: "IGNORED";
+  sourceRowNumber: number;
+  invoiceNumber: string;
+  taxNumber: string;
+  principalProductCode: string;
+  reason: string;
+  accurateSourceRows?: number[];
+};
 
 type Row = unknown[];
 type Aggregate = {
@@ -120,7 +134,7 @@ function requiredSigned(value: unknown, label: string, row: number): number {
   return signed(value, label, row);
 }
 
-function readRows(buffer: Buffer | Uint8Array, sheetName: string): Row[] {
+function readRows(buffer: Buffer | Uint8Array, sheetName: string, preserveBlankRows = false): Row[] {
   if (!buffer?.byteLength) throw new Error("File XLSX kosong");
   let workbook: XLSX.WorkBook;
   try {
@@ -139,7 +153,7 @@ function readRows(buffer: Buffer | Uint8Array, sheetName: string): Row[] {
     header: 1,
     raw: true,
     defval: null,
-    blankrows: false,
+    blankrows: preserveBlankRows,
   }) as Row[];
 }
 
@@ -486,8 +500,10 @@ function parsePrincipal(buffer: Buffer | Uint8Array): CanonicalReturnLine[] {
 function parseKinoPrincipal(
   buffer: Buffer | Uint8Array,
   mappings: Map<string, string>,
+  ignoredLines: IgnoredReturnLine[],
+  correctionLines: CanonicalReturnLine[],
 ): CanonicalReturnLine[] {
-  const rows = readRows(buffer, "Sheet1"),
+  const rows = readRows(buffer, "Sheet1", true),
     required = [
       "INVOICE_NO",
       "CUSTCODE2",
@@ -509,6 +525,17 @@ function parseKinoPrincipal(
     const invoice = text(cell(row, header.columns, "INVOICE_NO"));
     if (invoice.startsWith("TOTAL FOR") || invoice === "GRAND TOTAL") continue;
     if (text(cell(row, header.columns, "INVOICE_TYPE")) !== "RET01") continue;
+    const taxNumber = text(cell(row, header.columns, "PAJAK_NO"));
+    if (taxNumber.startsWith("INV")) {
+      ignoredLines.push({
+        status: "IGNORED",
+        sourceRowNumber,
+        invoiceNumber: invoice,
+        taxNumber,
+        principalProductCode: text(cell(row, header.columns, "PRODUCT_CODE")),
+        reason: "Koreksi/retur KINO dengan PAJAK_NO berawalan INV; tidak termasuk pencocokan dan total rekonsiliasi.",
+      });
+    }
     const principalProductCode = requiredText(
         row,
         header.columns,
@@ -535,7 +562,7 @@ function parseKinoPrincipal(
         "INVOICE_CASHDISC",
         sourceRowNumber,
       );
-    lines.push({
+    (taxNumber.startsWith("INV") ? correctionLines : lines).push({
       source: "PRINCIPAL",
       sourceRowNumber,
       invoiceNumber: requiredText(
@@ -544,12 +571,8 @@ function parseKinoPrincipal(
         "INVOICE_NO",
         sourceRowNumber,
       ),
-      customerCode: requiredText(
-        row,
-        header.columns,
-        "CUSTCODE2",
-        sourceRowNumber,
-      ),
+      customerCode: requiredText(row, header.columns, "CUSTCODE2", sourceRowNumber),
+      customerCodeRaw: text(cell(row, header.columns, "CUSTCODE2")),
       accurateProductCode: mappings.get(principalProductCode) ?? null,
       principalProductCode,
       quantity: requiredFinite(
@@ -626,6 +649,7 @@ function parseKinoAccurate(
         sourceRowNumber,
         invoiceNumber,
         customerCode,
+        correctionInvoiceReferences: text(cell(row, header.columns, "REM")).match(/INV\/\d+\/[A-Z0-9]+/g) ?? [],
         accurateProductCode,
         principalProductCode: null,
         quantity: requiredFinite(
@@ -1589,19 +1613,52 @@ export function reconcileKinoReturns(
   const dppTolerance = options.dppTolerance ?? 1;
   if (!Number.isFinite(dppTolerance) || dppTolerance < 0)
     throw new Error("Toleransi DPP tidak valid");
+  const ignoredLines: IgnoredReturnLine[] = [];
+  const correctionLines: CanonicalReturnLine[] = [];
+  const customerAliases: Record<string, string> = {
+    "C-IN0050": "C-IN0087",
+    "C-AL0063": "C-ALF052",
+    "C-HE0027": "C-MIT058",
+    "322630771184": "C-CIT780",
+  };
   const mappings = parseKinoReturnMappings(mappingBuffer),
-    principalLines = parseKinoPrincipal(principalBuffer, mappings),
     parsedAccurate = parseKinoAccurate(accurateBuffer),
-    accurateLines = [...parsedAccurate.lines, ...parsedAccurate.invalidLines],
+    accurateScopes = new Set(parsedAccurate.lines.map(line => `${line.invoiceNumber}|${line.customerCode}`)),
+    principalLines = parseKinoPrincipal(principalBuffer, mappings, ignoredLines, correctionLines).map(line => {
+      // PERLU PERSETUJUAN PEMILIK sebelum rilis. Alias terkonfirmasi hanya fallback:
+      // pasangan kode asli pada invoice yang sama selalu didahulukan.
+      const alias = customerAliases[line.customerCode];
+      if (alias
+        && !accurateScopes.has(`${line.invoiceNumber}|${line.customerCode}`)
+        && accurateScopes.has(`${line.invoiceNumber}|${alias}`)) {
+        return { ...line, customerCode: alias };
+      }
+      return line;
+    }),
+    retainedAccurate = parsedAccurate.lines.filter((line) => {
+      // PERLU PERSETUJUAN PEMILIK sebelum rilis. Jangan mengecualikan seluruh invoice:
+      // perlu referensi INV eksplisit di REM, invoice KINO, dan mapping produk.
+      if (principalLines.some((principal) => principal.invoiceNumber === line.invoiceNumber
+        && principal.accurateProductCode === line.accurateProductCode)) return true;
+      const excluded = ignoredLines.filter((ignored) => ignored.invoiceNumber === line.invoiceNumber
+        && mappings.get(ignored.principalProductCode) === line.accurateProductCode
+        && line.correctionInvoiceReferences?.includes(ignored.taxNumber));
+      if (!excluded.length) return true;
+      for (const ignored of excluded) {
+        (ignored.accurateSourceRows ??= []).push(line.sourceRowNumber);
+      }
+      return false;
+    }),
+    accurateLines = [...retainedAccurate, ...parsedAccurate.invalidLines],
     mappedAccurateCodes = new Set(mappings.values()),
     principalScopes = new Set(
       principalLines.map(
         (line) => `${line.invoiceNumber}|${line.customerCode}`,
       ),
     );
-  return reconcileParsedReturns({
+  const output = reconcileParsedReturns({
     accurateLines,
-    matchableAccurateLines: parsedAccurate.lines,
+    matchableAccurateLines: retainedAccurate,
     principalLines,
     matchablePrincipalLines: principalLines.filter(
       (line) => line.accurateProductCode !== null,
@@ -1620,6 +1677,29 @@ export function reconcileKinoReturns(
         ? "UNMAPPED"
         : "MISSING_PRINCIPAL",
   });
+  const correctionGroups = new Map<string, IgnoredReturnLine[]>();
+  for (const ignored of ignoredLines) {
+    const line = correctionLines.find((entry) => entry.sourceRowNumber === ignored.sourceRowNumber)!;
+    const id = `${line.invoiceNumber}|${line.customerCode}|${line.accurateProductCode ?? line.principalProductCode}|${ignored.taxNumber}`;
+    correctionGroups.set(id, [...(correctionGroups.get(id) ?? []), ignored]);
+  }
+  const assignedAccurateRows = new Set<number>();
+  for (const group of correctionGroups.values()) {
+    const sourceRows = new Set(group.map((line) => line.sourceRowNumber));
+    const pairedRows = new Set(group.flatMap((line) => line.accurateSourceRows ?? []).filter((row) => !assignedAccurateRows.has(row)));
+    for (const row of pairedRows) assignedAccurateRows.add(row);
+    const principal = [...aggregate(correctionLines.filter((line) => sourceRows.has(line.sourceRowNumber)), () => "KOREKSI").values()][0];
+    const accurate = [...aggregate(parsedAccurate.lines.filter((line) => pairedRows.has(line.sourceRowNumber)), () => "KOREKSI", () => "KOREKSI").values()][0];
+    const matches = accurate !== undefined && accurate.quantity === principal.quantity
+      && Math.abs(accurate.dpp - principal.dpp) <= dppTolerance + 1e-9;
+    const correction = result(accurate, principal, matches ? "MATCH" : "KOREKSI");
+    if (!matches) correction.warnings = [`Koreksi — PAJAK_NO ${group[0].taxNumber} berawalan INV.`,
+      accurate ? `Pasangan ditemukan tetapi belum cocok. Qty Accurate ${accurate.quantity}, KINO ${principal.quantity}; DPP Accurate ${accurate.dpp}, KINO ${principal.dpp}.` : "Pasangan Accurate belum terverifikasi; tidak dipaksakan cocok."];
+    output.results.push(correction);
+    if (matches) output.summary.MATCH++;
+    else output.summary.KOREKSI = (output.summary.KOREKSI ?? 0) + 1;
+  }
+  return { ...output, ignoredLines: [] };
 }
 
 export function reconcileGodrejReturns(

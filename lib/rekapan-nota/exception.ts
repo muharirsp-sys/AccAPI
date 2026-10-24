@@ -7,6 +7,7 @@
  * Side Effects: INSERT ke wave_exception (idempoten lewat ON CONFLICT DO NOTHING).
  */
 import { pool } from "@/lib/db";
+import { ISI_SQL } from "@/lib/rekapan-nota/query";
 
 type Deteksi = { jenis: string; sql: string };
 
@@ -20,13 +21,13 @@ const DETEKSI: Deteksi[] = [
         // baris ber-konv_tersirat sudah cukup membuat kolom Konv terisi (R1.7). Versi per
         // baris berbunyi untuk SKU yang sebenarnya bisa dihitung -- alarm yang salah menyala.
         sql: `SELECT 'item'::text, p.kode_barang,
-                     'Item tidak punya isi per karton; Sat Bsr/Sat Kcl tidak dapat dihitung'
+                     'Item tidak punya isi per karton (master maupun satuan karton Accurate); Sat Bsr/Sat Kcl tidak dapat dihitung'
                 FROM wave_assignment wa
                 JOIN wave_line_pool p ON p.no_nota = wa.no_nota AND p.tanggal = wa.tanggal_wave
                 LEFT JOIN item i ON i.no = p.kode_barang
                WHERE wa.wave_id = $1 AND wa.dilepas = false
                GROUP BY p.kode_barang
-              HAVING count(coalesce(p.konv_tersirat, i.isi_per_karton)) = 0`,
+              HAVING count(${ISI_SQL}) = 0`, // termasuk rasio karton Accurate (owner 24 Okt 2026)
     },
     {
         // R1.6: faktor konversi yang dibawa transaksinya sendiri vs master. Baseline uji
@@ -51,7 +52,7 @@ const DETEKSI: Deteksi[] = [
                 LEFT JOIN item i ON i.no = p.kode_barang
                WHERE wa.wave_id = $1 AND wa.dilepas = false
                  AND upper(coalesce(p.satuan,'')) IN ('CTN','KRT')
-                 AND p.qty_pcs < coalesce(p.konv_tersirat, i.isi_per_karton)`,
+                 AND p.qty_pcs < ${ISI_SQL}`,
     },
     {
         // Per CUSTOMER, bukan per baris nota: ~168 vs ~2.900. Daftar yang menyusut kalau

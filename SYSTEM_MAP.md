@@ -46,6 +46,14 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 
 ## Core Logic Flow (Function-Level Flowchart)
 
+### Rekonsiliasi Return KINO — koreksi dengan PAJAK_NO INV
+Pasangan tambahan dikonfirmasi pengguna: KINO `C-AL0063` → Accurate `C-ALF052`, dengan aturan fallback yang sama (kode asli pada invoice yang sama selalu didahulukan).
+Pasangan tambahan lain: KINO `C-HE0027` → Accurate `C-MIT058` dan KINO `322630771184` → Accurate `C-CIT780`, menggunakan fallback yang sama. Semua pasangan hanya berlaku pada Return KINO.
+Mapping pelanggan lokal yang dikonfirmasi pengguna 22 Okt 2026: KINO `C-IN0050` → Accurate `C-IN0087` hanya sebagai fallback lintas invoice Return KINO. Pasangan `C-IN0050` pada invoice yang sama selalu diprioritaskan; alias hanya dipakai bila kode asli tidak ada dan `C-IN0087` ada pada invoice tersebut di Accurate. `customerCodeRaw` menyimpan kode sumber; kode pelanggan lain dan data Accurate tidak berubah. PERLU PERSETUJUAN PEMILIK sebelum rilis.
+`/reconciliation` → `/api/reconciliation/kino/returns` → `reconcileKinoReturns` di `lib/off-program-control/return-reconciliation.ts`.
+Baris Sales Detail `RET01` dengan `PAJAK_NO` berawalan `INV` (abaikan besar/kecil huruf dan spasi tepi) dicocokkan dengan pasangan Accurate terverifikasi. Jika qty sama dan selisih DPP dalam toleransi, hasilnya `MATCH` dengan keterangan Tidak ada selisih. Jika belum cocok atau belum ada pasangan, hasilnya `KOREKSI` dengan penyebab; KOREKSI tidak dihitung sebagai masalah. Pasangan Accurate hanya disertakan jika invoice KINO, mapping produk, dan referensi INV lengkap di REM cocok; retur aktif dengan invoice/produk yang sama tetap diperiksa. Kolom PAJAK_NO tidak ada/kosong mengikuti aturan biasa. Nomor baris sumber, invoice, referensi INV, produk, nilai, dan keterangan tetap tersedia untuk audit.
+Layar menampilkan KOREKSI di tabel hasil dan filter; ekspor XLSX menaruhnya pada lembar `Detail` dengan keterangan koreksi dan selisih kosong. `reconciliation-store.ts` menyimpan hasil koreksi di JSON riwayat yang sudah ada; hitungan masalah mengecualikan KOREKSI. Riwayat lama dengan `ignoredLines` tetap terbaca. Tidak mengubah skema atau mapping. Uji: `kino-return-validation.test.ts`, `reconciliation-store.test.ts`, `tests/kino-return-inv.spec.ts`. Tidak memanggil Accurate.
+
 ### Detail Pengaturan Summary dan realisasi program (September 2026)
 `/summary` -> `/summary/settings` -> API `/summary/review` -> `summary_review.py`
 -> tabel SQLite `summary_review_package` pada volume Summary yang sama.
@@ -585,6 +593,11 @@ UI pilih pick_group -> /rekapan-nota/wave/[id]/cetak?grup=...   (server componen
      sendiri-sendiri & bernomor sendiri (baris kanan tidak sejajar kiri); kop: No. RKP/<yymm>/<wave>/<grup> + jam cetak WITA;
      judul halaman = nama PDF (RKP-...-<grup>_<yyyymmdd-HHmm>)
   -> window.print(); kaki halaman memuat wave, grup, jumlah SKU, total pcs, waktu cetak
+  CETAK SEMUA (owner 24 Okt 2026): /rekapan-nota/wave/[id]/cetak-semua -> lembarCetakSemua(): satu lembar per divisi
+     (jenis produk; grup JP-* dibuat otomatis saat unggah), HEINZ ABC = HNZ1..n per grup area (non-pareto), HNZ(n+1) pareto,
+     HNZ-ALL tanpa area; lalu TTF. Tiap lembar nomor & halaman sendiri; tombol aktif sesudah Rilis.
+     Komponen bersama: app/(cetak)/rekapan-nota/LembarRekapan.tsx + LembarTtf.tsx.
+  Isi per karton = ISI_SQL: konv dari transaksi > item.isi_per_karton (lembar Konversi) > rasio satuan karton Accurate.
 
 --- 8.4 TTF (Tanda Terima Faktur) ---
 /rekapan-nota/wave/[id]/ttf  -> lib/rekapan-nota/query.ts : buildTtf()

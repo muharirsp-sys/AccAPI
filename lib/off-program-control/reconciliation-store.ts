@@ -231,11 +231,11 @@ export function createReconciliationStore(database: ReconciliationDatabase) {
       return id;
     },
 
-    completeReconciliationRun(id: string, output: { summary: Record<string, number>; results: ReconciliationIssue[] }, durationMs: number) {
+    completeReconciliationRun(id: string, output: { summary: Record<string, number>; results: ReconciliationIssue[]; ignoredLines?: ReconciliationIssue[] }, durationMs: number) {
       return database.updateRun(id, {
         status: "success",
         summary: Object.fromEntries(Object.entries(output.summary)),
-        issues: output.results.filter((row) => row.status !== "MATCH"),
+        issues: [...output.results.filter((row) => row.status !== "MATCH"), ...(output.ignoredLines ?? [])],
         error: null,
         durationMs,
         finishedAt: new Date(),

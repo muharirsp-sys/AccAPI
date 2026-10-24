@@ -8,7 +8,7 @@
  */
 import type { Tone } from "@/components/fiori/core";
 import type { ReconciliationResult, ReconciliationStatus } from "@/lib/off-program-control/sales-reconciliation";
-import type { ReturnReconciliationResult, ReturnStatus } from "@/lib/off-program-control/return-reconciliation";
+import type { IgnoredReturnLine, ReturnReconciliationResult, ReturnStatus } from "@/lib/off-program-control/return-reconciliation";
 
 export type Division = "FAKTUR" | "PEMBELIAN" | "RETURN";
 export type UiStatus = ReconciliationStatus | ReturnStatus;
@@ -18,6 +18,7 @@ export const SALES_STATUSES: ReconciliationStatus[] = [
     "UNMAPPED_SKU", "UNIT_CONVERSION_ERROR", "INVALID_DATA",
 ];
 export const RETURN_STATUSES: ReturnStatus[] = [
+    "KOREKSI",
     "MATCH", "QTY_MISMATCH", "VALUE_MISMATCH", "QTY_AND_VALUE_MISMATCH", "MISSING_ACCURATE", "MISSING_PRINCIPAL", "UNMAPPED", "INVALID_DATA",
 ];
 
@@ -41,6 +42,7 @@ export function statusLabel(status: UiStatus, principal: string): string {
 }
 
 export function statusTone(status: UiStatus): Tone {
+    if (status === "KOREKSI") return "info";
     if (status === "MATCH") return "pos";
     if (status === "QTY_MISMATCH" || status === "VALUE_MISMATCH" || status === "QTY_AND_VALUE_MISMATCH") return "warn";
     return "neg";
@@ -63,6 +65,7 @@ export function causeLines(row: ReconciliationResult, principal: string): string
 }
 
 export function returnCauseLines(row: ReturnReconciliationResult, principal: string): string[] {
+    if (row.status === "KOREKSI") return row.warnings.length ? row.warnings : ["Koreksi — PAJAK_NO berawalan INV."];
     if (row.status === "MATCH") return ["Tidak ada selisih."];
     if (row.status === "INVALID_DATA") return row.invalidReason ? [row.invalidReason] : row.warnings.length ? row.warnings : ["Data tidak valid."];
     const causes: string[] = [];
@@ -88,7 +91,7 @@ export function fileSize(bytes: number): string {
 }
 
 /** Lembar Ringkasan + Detail untuk ekspor; kolom lengkap meski layar menyembunyikan sebagian. */
-export function exportSheets(division: Division, principal: string, summary: Record<string, number>, results: Array<ReconciliationResult | ReturnReconciliationResult>) {
+export function exportSheets(division: Division, principal: string, summary: Record<string, number>, results: Array<ReconciliationResult | ReturnReconciliationResult>, ignoredLines: IgnoredReturnLine[] = []) {
     const statuses: UiStatus[] = division === "FAKTUR" ? SALES_STATUSES : RETURN_STATUSES;
     const ringkasan = statuses.map((status) => ({ Status: excelText(status), Jumlah: summary[status] ?? 0 }));
     const detail = division !== "FAKTUR"
@@ -97,8 +100,8 @@ export function exportSheets(division: Division, principal: string, summary: Rec
             [division === "PEMBELIAN" ? "Dokumen Pembelian" : "Invoice"]: excelText(row.invoiceNumber),
             [division === "PEMBELIAN" ? "Supplier" : "Pelanggan"]: excelText(row.customerCode),
             "Produk Accurate": excelText(row.accurateProductCode ?? ""), [`Produk ${principal}`]: excelText(row.principalProductCode ?? ""),
-            "Qty Accurate": row.accurateQuantity, [`Qty ${principal}`]: row.principalQuantity, "Selisih Qty": row.quantityDifference,
-            "DPP Accurate": row.accurateDpp, [`DPP ${principal}`]: row.principalDpp, "Selisih DPP": row.dppDifference,
+            "Qty Accurate": row.accurateQuantity, [`Qty ${principal}`]: row.principalQuantity, "Selisih Qty": row.status === "KOREKSI" ? null : row.quantityDifference,
+            "DPP Accurate": row.accurateDpp, [`DPP ${principal}`]: row.principalDpp, "Selisih DPP": row.status === "KOREKSI" ? null : row.dppDifference,
             "Pajak Accurate": row.accurateTax, [`Pajak ${principal}`]: row.principalTax,
             "Total Accurate": row.accurateTotal, [`Total ${principal}`]: row.principalTotal,
             "Penyebab selisih": excelText(returnCauseLines(row, principal).join("\n")),
@@ -114,5 +117,11 @@ export function exportSheets(division: Division, principal: string, summary: Rec
     const prefix = division === "RETURN"
         ? principal === "SHINZUI" ? "hasil-rekonsiliasi-return-shinzui" : `rekonsiliasi-return-${principal.toLowerCase()}`
         : division === "PEMBELIAN" ? `rekonsiliasi-pembelian-${principal.toLowerCase()}` : `hasil-rekonsiliasi-${principal.toLowerCase()}`;
-    return { ringkasan, detail, fileName: `${prefix}-${new Date().toISOString().slice(0, 10)}.xlsx` };
+    const diabaikan = ignoredLines.map((line) => ({
+        "Baris KINO": line.sourceRowNumber, Invoice: excelText(line.invoiceNumber),
+        "Baris Accurate diabaikan": (line.accurateSourceRows ?? []).join(", "),
+        PAJAK_NO: excelText(line.taxNumber), "Produk KINO": excelText(line.principalProductCode),
+        Alasan: excelText(line.reason),
+    }));
+    return { ringkasan, detail, diabaikan, fileName: `${prefix}-${new Date().toISOString().slice(0, 10)}.xlsx` };
 }

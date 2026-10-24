@@ -12,7 +12,7 @@ import { pool } from "@/lib/db";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { tolakUbahIsi, transisiWave, type WaveAksi, type WaveStatus } from "@/lib/rekapan-nota/wave-state";
 import { deteksiException, hitungExceptionOpen } from "@/lib/rekapan-nota/exception";
-import { cocokOutletSql } from "@/lib/rekapan-nota/query";
+import { RASIO_KARTON_ACCURATE_SQL, cocokOutletSql } from "@/lib/rekapan-nota/query";
 
 export const runtime = "nodejs";
 
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
             `SELECT e.id::int, e.jenis::text, e.ref_tipe, e.ref_kode, e.keterangan, e.status::text,
                     e.resolved_at, coalesce(u.name, e.resolved_by) AS resolved_oleh,
                     CASE e.ref_tipe
-                        WHEN 'item' THEN (SELECT max(i.isi_per_karton)::text FROM item i WHERE i.no = e.ref_kode)
+                        WHEN 'item' THEN (SELECT max(coalesce(i.isi_per_karton, ${RASIO_KARTON_ACCURATE_SQL}))::text FROM item i WHERE i.no = e.ref_kode)
                         WHEN 'customer' THEN (SELECT max(c.area) FROM customer c WHERE ${cocokOutletSql("e.ref_kode")})
                     END AS master_saat_ini,
                     (SELECT ev.payload->>'alasan' FROM wave_event ev
