@@ -469,3 +469,24 @@ test("Cetak semua: satu lembar per divisi, Heinz per area/pareto/tanpa area, not
     const nab = lembar.find((l) => l.kode === "JP-PRINCIPLE B")!.rekapan.withdrawal.map((r) => r.kode_barang);
     assert.deepEqual(nab, ["BRG-A", "BRG-C"], "lembar B hanya barang divisi B (BRG-A milik NAB, BRG-C milik NB)");
 });
+
+test("Simpan isi per karton dari baris exception: master kosong terisi, exception selesai, tidak menimpa master", T_UJI, async () => {
+    const T = "2026-10-22";
+    await db.query(`INSERT INTO item (id, no, name, isi_per_karton) VALUES (41, 'BRG-Z', 'BARANG Z 60 PCS X 180G', NULL), (42, 'BRG-Y', 'BARANG Y', NULL)`);
+    assert.equal((await unggah(T, xlsx(T, [["Z1", "BRG-Z", 30, 30, "PCS"], ["Y1", "BRG-Y", 5, 5, "PCS"]]))).status, 200);
+    const w = await waveBaru(T, 1);
+    assert.equal((await tambah(w, ["Z1", "Y1"])).status, 200);
+    assert.equal((await transisi(w, "release")).status, 200);
+    const exc = async (kode: string) => (await db.query(`SELECT id::int, status::text FROM wave_exception WHERE wave_id = $1 AND jenis::text = 'KONVERSI_TIDAK_ADA' AND ref_kode = $2`, [w, kode])).rows[0];
+    const ez = await exc("BRG-Z");
+    const isi = (exceptionId: number, n: unknown) => jawab(rExc.PATCH(jsonReq(`/x/${w}/exception`, "PATCH", { exceptionId, aksi: "isi", isi: n }), ctx(w)));
+    assert.equal((await isi(ez.id, 0)).status, 400, "isi harus 1-10000");
+    assert.equal((await isi(ez.id, 60)).status, 200);
+    assert.equal((await exc("BRG-Z")).status, "selesai");
+    assert.equal((await db.query(`SELECT isi_per_karton FROM item WHERE no = 'BRG-Z'`)).rows[0].isi_per_karton, 60);
+    assert.equal((await isi(ez.id, 24)).status, 409, "sudah selesai");
+    // Master yang sudah terisi (layar lain lebih dulu) tidak ditimpa; exception tetap ditutup.
+    await db.query(`UPDATE item SET isi_per_karton = 12 WHERE no = 'BRG-Y'`);
+    assert.equal((await isi((await exc("BRG-Y")).id, 99)).status, 200);
+    assert.equal((await db.query(`SELECT isi_per_karton FROM item WHERE no = 'BRG-Y'`)).rows[0].isi_per_karton, 12);
+});
