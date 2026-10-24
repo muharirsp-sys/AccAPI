@@ -3,6 +3,8 @@
  * Caller: app/api/webhook/accurate/route.ts, tests/webhook-payload-parse.spec.ts.
  */
 
+import { parseAccurateDateTime } from "./accurate-invoice";
+
 // Bentuk payload dibuktikan live 2026-08-11 (webhook_events.log production): array envelope
 // { databaseId, type: "SALES_INVOICE", timestamp, uuid, data: [{ salesInvoiceId, salesInvoiceNo,
 // isDownPayment, salesInvoiceTotalAmount, action: "WRITE" }] } — BUKAN { eventType, module, id }
@@ -42,20 +44,34 @@ export function flattenItemIds(payload: unknown): number[] {
     return flattenEventIds(payload, "ITEM", ["itemId", "id"]);
 }
 
-export function flattenSalesInvoiceIds(payload: unknown): number[] {
+/** Satu event faktur dari amplop webhook. `appKey` '' = disimpan orang di layar Accurate (amplop tanpa appKey). */
+export type SalesInvoiceEvent = { id: number; action: string; appKey: string; savedAt: Date | null };
+
+/**
+ * Amplop SALES_INVOICE -> satu event per baris `data`, membawa appKey dan `timestamp` amplopnya — dipakai pencatat
+ * perubahan rincian (spec docs/superpowers/specs/2026-10-23-perubahan-rincian-faktur-design.md §7).
+ * `timestamp` = WIB (UTC+7), sama dengan yang dibaca parseAccurateDateTime.
+ */
+export function salesInvoiceEvents(payload: unknown): SalesInvoiceEvent[] {
     const envelopes = (Array.isArray(payload) ? payload : [payload]) as Array<{
-        type?: string;
-        data?: Array<{ salesInvoiceId?: unknown }>;
+        type?: string; appKey?: unknown; timestamp?: unknown;
+        data?: Array<{ salesInvoiceId?: unknown; action?: unknown }>;
     }>;
-    const ids: number[] = [];
+    const events: SalesInvoiceEvent[] = [];
     for (const envelope of envelopes) {
         if (envelope?.type !== "SALES_INVOICE") continue;
-        for (const record of envelope?.data ?? []) {
+        const appKey = typeof envelope.appKey === "string" ? envelope.appKey : "";
+        const savedAt = parseAccurateDateTime(envelope.timestamp);
+        for (const record of envelope.data ?? []) {
             const id = Number(record?.salesInvoiceId);
-            if (Number.isFinite(id) && id > 0) ids.push(id);
+            if (Number.isFinite(id) && id > 0) events.push({ id, action: String(record?.action ?? "WRITE"), appKey, savedAt });
         }
     }
-    return ids;
+    return events;
+}
+
+export function flattenSalesInvoiceIds(payload: unknown): number[] {
+    return salesInvoiceEvents(payload).map((e) => e.id);
 }
 
 // ponytail: regex global, BUKAN JSON.parse per baris. Alasannya bukan kemalasan — route webhook

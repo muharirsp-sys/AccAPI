@@ -19,7 +19,7 @@ const obj = (v: unknown): Record<string, unknown> =>
 //  2. Zonanya UTC+7, BUKAN UTC dan bukan WITA — dibuktikan dari webhook_events.log:
 //     receivedAt "2026-08-19T09:07:44Z" berpasangan dengan timestamp "19/08/2026 16:07:43".
 //     Tanpa offset eksplisit, nilainya ikut zona server (UTC di container) dan geser 7 jam.
-const ACCURATE_UTC_OFFSET = "+07:00";
+export const ACCURATE_UTC_OFFSET = "+07:00";
 
 export const parseAccurateDateTime = (value: unknown): Date | null => {
     const raw = typeof value === "string" ? value.trim() : "";

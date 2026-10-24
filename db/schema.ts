@@ -7,6 +7,7 @@
  */
 import { sql } from "drizzle-orm";
 import { pgTable, text, integer, bigint, bigserial, smallint, numeric, date, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, unique, foreignKey, primaryKey, check, customType, pgEnum } from "drizzle-orm/pg-core";
+import type { ChangeKind, ChangeSource, LineSnapshot } from "../lib/sales-invoice-change";
 
 export const user = pgTable("user", {
     id: text("id").primaryKey(),
@@ -683,6 +684,41 @@ export const salesInvoiceCache = pgTable("sales_invoice", {
     index("idx_sales_invoice_trans_date").on(t.transDate),
     index("idx_sales_invoice_customer_no").on(t.customerNo),
     index("idx_sales_invoice_synced_at").on(t.syncedAt, t.id)
+]);
+
+// Perubahan rincian faktur INV yang terlihat saat cache faktur diperbarui (owner 23 Okt 2026; spec
+// docs/superpowers/specs/2026-10-23-perubahan-rincian-faktur-design.md §4). Satu baris per baris faktur yang hilang/bertambah/
+// berubah/ikut faktur yang dihapus; diisi lib/sync.ts upsertSalesInvoiceById. Tanpa FK ke sales_invoice: faktur yang dihapus tetap
+// tercatat. DDL: db/migrations/0037_sales_invoice_line_change.sql (= entri migrate-pg "sales_invoice_line_change").
+export const salesInvoiceLineChange = pgTable("sales_invoice_line_change", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    invoiceId: bigint("invoice_id", { mode: "number" }).notNull(),
+    invoiceNumber: text("invoice_number").notNull(),
+    transDate: text("trans_date").notNull(),
+    customerNo: text("customer_no").notNull().default(""),
+    kind: text("kind").$type<ChangeKind>().notNull(),
+    lineId: bigint("line_id", { mode: "number" }),
+    itemNo: text("item_no").notNull(),
+    itemName: text("item_name").notNull().default(""),
+    oldLine: jsonb("old_line").$type<LineSnapshot>(),
+    newLine: jsonb("new_line").$type<LineSnapshot>(),
+    // qty×rasio baru − lama; negatif = stok Accurate naik. NULL bila rasio satuan tidak ada.
+    baseQtyDelta: numeric("base_qty_delta", { mode: "number" }),
+    totalBefore: numeric("total_before", { precision: 18, scale: 2, mode: "number" }),
+    totalAfter: numeric("total_after", { precision: 18, scale: 2, mode: "number" }),
+    // '' = orang di layar Accurate; terisi = aplikasi (70a5d9f9… = AccAPI); NULL = tidak diketahui (penambal, kirim faktur).
+    appKey: text("app_key"),
+    source: text("source").$type<ChangeSource>().notNull(),
+    savedAt: timestamp("saved_at", { withTimezone: true }),
+    printedAt: timestamp("printed_at", { withTimezone: true }),
+    printedBy: text("printed_by").notNull().default(""),
+    afterPrint: boolean("after_print").notNull(),
+    detectedAt: timestamp("detected_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_silc_item_no").on(t.itemNo, t.detectedAt),
+    index("idx_silc_invoice_id").on(t.invoiceId),
+    check("sales_invoice_line_change_kind", sql`${t.kind} IN ('removed', 'added', 'changed', 'invoice_deleted')`),
+    check("sales_invoice_line_change_source", sql`${t.source} IN ('webhook', 'backfill', 'send')`),
 ]);
 
 // Audit F3 / PRD 03: cache retur penjualan dari Accurate (bahan claim retur).
