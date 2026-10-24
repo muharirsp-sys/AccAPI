@@ -54,7 +54,7 @@ dengan jawaban `detail.do`, dan hanya baris yang berbeda yang disimpan. Satu tit
 ## 4. Skema
 
 Berkas `db/migrations/0037_sales_invoice_line_change.sql`, didaftarkan di `scripts/migrate-pg.mjs` (entri baru, `sudahAda` lewat
-`to_regclass`). Produksi punya `DATABASE_MIGRATION_URL`, jadi entri ini yang menerapkan saat container start. EXPAND saja: tabel baru,
+`pg_indexes`: kedua indeks ada di `current_schema()`). Produksi punya `DATABASE_MIGRATION_URL`, jadi entri ini yang menerapkan saat container start. EXPAND saja: tabel baru,
 tidak menyentuh tabel lain, idempoten. Drizzle: `salesInvoiceLineChange` di `db/schema.ts`.
 
 ```sql
@@ -168,6 +168,16 @@ upsertSalesInvoiceById:
   Pola kunci sama dengan `lib/kasir/hari.ts`.
 - **Pengiriman ulang webhook** (502 → Accurate kirim ulang): isi lama sudah sama dengan yang baru, jadi tidak ada baris baru.
 - **Beban tambahan:** satu `SELECT raw_data` lewat primary key per webhook (±1.800 per hari). Tidak ada pindaian tabel.
+- **Pengerasan (tinjauan 24 Okt):** transaksi dipaku `READ COMMITTED` (SELECT sesudah kunci melihat commit pemegang sebelumnya);
+  INSERT perubahan memakai `SET LOCAL lock_timeout = '2s'` di savepoint, supaya kunci/DDL kelak pada tabel perubahan tidak membuat
+  webhook menunggu sampai `statement_timeout` sambil memegang baris `sales_invoice`. Log galat hanya memuat pesan Postgres, tanpa
+  parameter INSERT (data pelanggan).
+- **Batas yang diketahui:**
+  - `detail.do` diambil SEBELUM kunci. Bila panggilan A mengambil versi V1, lalu B mengambil V2 dan commit lebih dulu, A mencatat
+    perubahan semu V2 → V1 dan menulis V1 ke cache (cache basi ini sudah terjadi sebelum fitur ini; baris semunya baru). Butuh
+    suntingan nyata dalam ±1 detik dari pengambilan serentak, jadi jarang; `detail.do` tidak membawa `lastUpdate`, jadi tidak ada
+    penjaga versi yang murah.
+  - Satu amplop webhook bisa memuat dua event untuk faktur yang sama; selisihnya dicatat dengan `app_key` event pertama.
 
 ## 9. Cara membaca
 
@@ -181,6 +191,10 @@ FROM sales_invoice_line_change WHERE item_no = 'K1102007000110' ORDER BY detecte
 -- Dampak koreksi sesudah cetak ke stok Accurate, per barang
 SELECT item_no, sum(base_qty_delta) FROM sales_invoice_line_change WHERE after_print GROUP BY item_no;
 ```
+
+Catatan membaca `invoice_deleted`: faktur yang dihapus lalu dibuat ulang dengan nomor sama mendapat id baru, dan isi faktur baru
+itu TIDAK tercatat sebagai `added` (faktur baru pertama kali terbaca tanpa isi lama). Penjumlahan dampak stok yang memasukkan
+`invoice_deleted` akan berlebih ke arah negatif untuk kasus itu — cocokkan nomor faktur yang masih hidup, atau pisahkan per `kind`.
 
 ## 10. Uji
 
