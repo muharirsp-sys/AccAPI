@@ -635,6 +635,12 @@ def check_semantics(rows: list[dict] | None, master: Master) -> list[Check]:
         codes = [str(c).upper() for c in (row.get("kode_barangs") or [])]
         held = bool(row.get("held"))
 
+        if row.get("label") or kel_cell.upper() == "ALL KELOMPOK BARANG":
+            # Teks sel pilihan pemilik (label_kelompok/label_gramasi), atau penanda seluruh katalog yang ditulis
+            # generator sendiri (keputusan 17 Sep 2026) -- bukan nama kelompok master. Kodenya sudah diperiksa
+            # gerbang Summary (semua kode ada di master).
+            continue
+
         if held or not kel_cell:
             # Baris tertahan tidak boleh diberi kelompok hasil tebakan, TAPI
             # penanda eksplisit justru lebih jujur daripada sel kosong yang

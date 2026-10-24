@@ -134,6 +134,12 @@ def semantik() -> None:
     # Bentuk lama tiga tingkat tetap.
     assert cek("DH AEROSOL - MTC - HER & AER", "200ML & 300ML", ["HR1", "AE1"]) == lulus
 
+    # Label pemilik (sidecar "label") dan penanda seluruh katalog generator bukan nama kelompok master: dilewati.
+    hasil = v.check_semantics([{"no": "1", "kelompok": "ALL KELOMPOK BARANG POWDER BOX, KECUALI SACHET",
+                                "gramasi": "ALL GRAMASI, KECUALI SACHET", "kode_barangs": ["GT330"], "label": True}], m)
+    assert {c.id[:3].rstrip("_"): c.status for c in hasil} == lulus, [(c.id, c.status) for c in hasil]
+    assert cek("ALL KELOMPOK BARANG", "ALL GRAMASI", ["GT330", "ND65"]) == lulus
+
     # Kegagalan nyata tetap tertangkap.
     assert cek("NU - GTEA, MTEA & KOPI", "330ML, 330ML & 200ML", ["GT330", "MT330"])["C7"] == "FAIL"
     assert cek("NU - GTEA & TEA", "330ML & 330ML", ["GT330", "KD200"])["C12"] == "FAIL"

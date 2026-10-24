@@ -616,7 +616,10 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 tanpa_identitas,
                 norm(r.get("ketentuan", "")),
                 norm(r.get("benefit", "")),
-                norm(r.get("benefit_type", ""))
+                norm(r.get("benefit_type", "")),
+                # Baris berlabel tidak boleh melebur dengan baris lain: label pertama akan menempel ke barang yang bukan
+                # cakupannya (mis. sachet di bawah "KECUALI SACHET"), atau hilang diam-diam bila urutannya terbalik.
+                norm(r.get("label_kelompok", "")), norm(r.get("label_gramasi", "")),
             )
             
             if merge_key not in consolidated_rows_dict:
@@ -861,6 +864,10 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 promo_group_id = promo_group
 
             pdf_meta[i] = {
+                # Label tampilan pilihan pemilik (19 Okt 2026, Fonterra apotik: "ALL KELOMPOK BARANG POWDER BOX,
+                # KECUALI SACHET"): mengganti TEKS sel saja; barang, Dataset, dan aturan tetap dari kode_barangs.
+                "label_kelompok": " ".join(str(r.get("label_kelompok", "") or "").split()),
+                "label_gramasi": " ".join(str(r.get("label_gramasi", "") or "").split()),
                 "no": i + 1, "surat_program": r.get("surat_program",""), "nama_program": promo_label,
                 "channel_gtmt": promo_group, "periode": periode, "ketentuan": ket,
                 "benefit_type": r.get("benefit_type",""), "benefit": r.get("benefit",""),
@@ -1118,6 +1125,10 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 if gram_for_k:
                     gramasi_parts.append(",".join(gram_for_k))
             gramasi_display = join_human(gramasi_parts)
+            if meta.get("label_kelompok") and items_in_row:
+                kelompok_display = meta["label_kelompok"]
+            if meta.get("label_gramasi") and items_in_row:
+                gramasi_display = meta["label_gramasi"]
 
             baris_teks.append([
                 str(meta["no"]),
@@ -1410,6 +1421,8 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 # keterangan barisnya, tempat parser menuliskannya secara literal.
                 "kode_ditahan": kode_ditahan_re.findall(ket),
                 "held": not kodes,
+                # Sel berlabel bukan nama kelompok master: verifier tidak mencocokkannya ke master (C7/C8/C12).
+                "label": bool(pdf_meta.get(i, {}).get("label_kelompok") or pdf_meta.get(i, {}).get("label_gramasi")),
             })
         with open(sidecar_path, "w", encoding="utf-8") as sidecar_file:
             json.dump({"principal": principle_for_claim, "rows": sidecar_rows},

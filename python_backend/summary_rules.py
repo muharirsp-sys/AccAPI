@@ -143,8 +143,9 @@ class Program(StrictModel):
                 raise ValueError("Sebutkan kelas outlet, tanpa duplikat")
             # Nomor surat sendiri = nama daftar outlet yang dilampirkan surat itu, bukan kelas.
             # Lihat alasan lengkapnya di `outlet_rule_of`.
+            sendiri = self.surat_program.strip().upper()
             unknown = [c for c in self.outlet_classes
-                       if c not in OUTLET_CLASSES and c != self.surat_program.strip().upper()]
+                       if c not in OUTLET_CLASSES and c != sendiri and not (sendiri and c.startswith(sendiri + "-"))]
             if unknown:
                 raise ValueError("Kelas outlet tidak dikenal: " + ", ".join(unknown) + "; pilihan: " + ", ".join(OUTLET_CLASSES))
         return self
@@ -343,6 +344,20 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
 UNITS = {"PCS", "PC", "CTN", "DUS", "BOX", "PAK", "PACK", "RTG", "KRT", "LSN", "BAL", "SET", "KG", "GR", "LTR", "ML", "BTL", "SCH", "REN"}
 DATE_TEXT = re.compile(r"\d{4}-\d{2}-\d{2}")
 MIX_MARKS = ("mix", "campur")
+# "Mix Merek"/"Mix Produk" = boleh campur lintas merek (ABC PI Beverages = NU + KIN; Fonterra "MIX PRODUCT ..."). Resolver
+# tidak memecah baris bertanda (satu baris Form); bila baris datang sudah terpecah per merek (draft lama, pipeline lain),
+# kunci bersama di compile_programs menyatukannya kembali menjadi SATU program.
+LINTAS_MEREK = re.compile(r"\b(?:mix|campur|lintas|beda)\s+(?:merek|produk)\b", re.I)
+# Larangan bukan izin: "tidak boleh campur merek", "beda merek tidak dapat digabung" -> per merek (gagal tertutup).
+NEGASI_MEREK = re.compile(r"\b(?:tidak|tanpa|bukan|jangan)\b[^.,;]{0,25}?\b(?:mix|campur|lintas|beda)\s+(?:merek|produk)\b"
+                          r"|\b(?:mix|campur|lintas|beda)\s+(?:merek|produk)\b[^.,;]{0,25}?\b(?:tidak|tanpa|bukan|jangan)\b", re.I)
+
+
+MIX_MEREK_KUNCI = "*MIX MEREK*"
+
+
+def mix_merek(ketentuan):
+    return bool(LINTAS_MEREK.search(ketentuan)) and not NEGASI_MEREK.search(ketentuan)
 # "MIX VARIANT" = campur varian DALAM GRAMASI YANG SAMA — keputusan pengguna 7 Okt 2026, berlaku
 # SEMUA principal. 10 pcs 70ML + 20 pcs 900ML bukan 30 pcs; bonusnya pun "produk dengan harga yang
 # sama". Lintas gramasi hanya bila ketentuannya menyebut (LINTAS_GRAMASI); ketentuan mix yang
@@ -480,8 +495,10 @@ def outlet_rule_of(row):
     # kelas — satu-satunya nama di luar kosakata tetap yang diterima, dan hanya nomor suratnya
     # sendiri, supaya aturannya TETAP BISA DIMUAT sementara daftarnya belum diunggah.
     # Yang menahannya saat faktur adalah `outlet_allows`: daftar belum dimuat = tidak berlaku.
+    # Satu surat bisa punya beberapa daftar (Fonterra F148SP: MTI LSM dan MTI LMM, owner 19 Okt 2026):
+    # "<nomor surat>-<nama>", mis. "F148SP-LSM" -- tetap milik surat itu sendiri.
     sendiri = str(row.get("surat_program", "")).strip().upper()
-    unknown = [c for c in classes if c not in OUTLET_CLASSES and c != sendiri]
+    unknown = [c for c in classes if c not in OUTLET_CLASSES and c != sendiri and not (sendiri and c.startswith(sendiri + "-"))]
     if unknown:
         return (), "kelas outlet tidak dikenal: " + ", ".join(unknown) + "; pilihan: " + ", ".join(OUTLET_CLASSES)
     return (mode, classes), ""
@@ -543,9 +560,15 @@ def compile_programs(rows, period=None, items=None):
             continue
         # Nomor surat ikut jadi kunci: dua surat yang kebetulan menyebut barang, periode, dan
         # channel yang sama bukan satu program — menggabungkannya membuat salah satunya hilang.
+        # "Mix Merek": baris pecahan resolver (satu per merek) berbagi SATU kunci -> satu program, kodenya digabung.
+        campur = mix and mix_merek(ketentuan)
+        # Sidik baris surat asal: pecahan resolver mewarisi varian+gramasi baris aslinya, divisi lain tidak --
+        # dua divisi bermix-merek berketentuan sama dalam satu surat tetap dua program.
+        sidik = (MIX_MEREK_KUNCI, " ".join(str(row.get("variant", "")).upper().split()),
+                 " ".join(str(row.get("gramasi", "")).upper().split()))
         key = (str(row.get("surat_program", "")).strip(),
                str(row.get("channel_gtmt", "")).strip().upper() or "ALL", start, end, unit, kind,
-               mix, any(mark in blob for mark in STACK_MARKS), tuple(sorted(codes)), outlet,
+               mix, any(mark in blob for mark in STACK_MARKS), sidik if campur else tuple(sorted(codes)), outlet,
                any(mark in blob for mark in FIRST_PO_MARKS), lintas)
         if unit == SEMUA_SATUAN:
             # "Setiap pembelian 2%" + "Beli 30 PCS 5%" barang yang sama = SATU program bertingkat.
@@ -558,17 +581,44 @@ def compile_programs(rows, period=None, items=None):
         if problem:
             issues.append(f"{label}: {problem}")
             continue
-        group = groups.setdefault(key, {"rows": [], "tiers": {}})
+        group = groups.setdefault(key, {"rows": [], "tiers": {}, "codes": [], "kutipan": {}})
         group["rows"].append(row)
-        if minimum in group["tiers"]:
+        group["codes"] += [code for code in codes if code not in group["codes"]]
+        kutipan = str(row.get("source_quote", "")).strip()
+        if minimum in group["tiers"] and campur:
+            # Pecahan per merek dari SATU baris surat membawa tier yang sama: satu tier, bukan dua persen bertumpuk.
+            sama = lambda t: {k: v for k, v in t.items() if k not in ("bonus_code", "bonus_scope")}
+            if sama(group["tiers"][minimum]) != sama(tier):
+                issues.append(f"{label}: dua promo 'Mix Merek/Produk' berbeda benefit pada ambang yang sama untuk barang yang sama; "
+                              "samakan benefitnya atau bedakan barang/outlet/periodenya.")
+            elif kutipan and group["kutipan"].get(minimum) and kutipan != group["kutipan"][minimum]:
+                # Kutipan surat beda = dua baris surat (dua divisi, mis. sama-sama "All Variant"), bukan pecahan satu baris.
+                issues.append(f"{label}: dua baris surat 'Mix Merek' berketentuan sama melebur; sebut varian/gramasi divisinya.")
+        elif minimum in group["tiers"]:
             conflict = merge_tier(group["tiers"][minimum], tier)
             if conflict:
                 issues.append(f"{label}: {conflict}")
         else:
             group["tiers"][minimum] = tier
+            group["kutipan"][minimum] = kutipan
+    # Strata satu divisi yang terbelah (sebagian baris tanpa "Mix Merek", atau varian/gramasi baris strata
+    # berbeda) membuat dua program berebut kode yang sama diam-diam -> tahan dengan sebabnya.
+    bertanda = lambda k: k[8][:1] == (MIX_MEREK_KUNCI,)
+    terbelah = {key[0] for key, group in groups.items() if bertanda(key) for lain, isi in groups.items()
+                if lain[8] != key[8] and lain[:8] + lain[9:] == key[:8] + key[9:] and set(isi["codes"]) & set(group["codes"])}
+    issues += [f"Surat {surat}: strata 'Mix Merek' terbelah -- tulis 'Mix Merek' serta varian dan gramasi yang sama di SEMUA "
+               "baris strata barang itu." for surat in sorted(terbelah)]
     programs, used = [], set()
     for index, (key, group) in enumerate(groups.items()):
         surat, channel, start, end, unit, kind, mix, stacking, codes, outlet, first_po, lintas = key
+        codes = tuple(sorted(group["codes"]))
+        if bertanda(key):
+            # Label jujur untuk jembatan/rekap: semua kelompok yang digabung, bukan merek baris pertama saja.
+            group["kelompok"] = " & ".join(dict.fromkeys(str(r.get("kelompok", "")).strip() for r in group["rows"]))
+        if codes and bertanda(key):
+            for tier in group["tiers"].values():
+                if number(tier["bonus_quantity"]):
+                    tier.update(**bonus_target(list(codes)))
         first = group["rows"][0]
         identifier = str(first.get("promo_group_id", "")).strip() or f"P{index + 1}"
         if identifier in used:
@@ -577,7 +627,7 @@ def compile_programs(rows, period=None, items=None):
         page = first.get("source_page")
         programs.append(dict(
             id=identifier[:80], name=(str(first.get("nama_program", "")).strip() or str(first.get("kelompok", "")).strip() or identifier)[:160],
-            surat_program=surat[:80], kelompok=str(first.get("kelompok", "")).strip()[:160],
+            surat_program=surat[:80], kelompok=(group.get("kelompok") or str(first.get("kelompok", "")).strip())[:160],
             start=start, end=end, codes=list(codes), channel=channel, unit=unit, mix=mix, threshold=kind,
             outlet_mode=outlet[0], outlet_classes=list(outlet[1]),
             value_scope="eligible", basis="gross", stacking=stacking, first_po=first_po, priority=index + 1,
@@ -585,7 +635,7 @@ def compile_programs(rows, period=None, items=None):
             source_page=page if isinstance(page, int) and page >= 1 else 1,
             source_quote=(str(first.get("source_quote", "")).strip() or str(first.get("ketentuan", "")).strip() or "-")[:4000],
             _lintas=lintas))
-    return split_per_gramasi(programs, items), issues
+    return split_per_gramasi(programs, items), list(dict.fromkeys(issues))
 
 
 def split_per_gramasi(programs, items):
