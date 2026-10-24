@@ -4,7 +4,7 @@
  * Caller: app/(dashboard)/rekapan-nota/*.tsx, ui.test.ts.
  * Dependensi: Tidak ada. Pure.
  * Main Functions: WAVE_STATUS, EXCEPTION_LABEL, menahanKonfirmasi, tanggalPanjang, tanggalPendek, jamWita,
- *   saringPool, urutanBerikutnya, formatKarton, labelEvent, nomorLembar, judulBerkas, hariIniWita, ambil.
+ *   saringPool, urutanBerikutnya, formatKarton, labelEvent, nomorLembar, judulBerkas, usulIsiDariNama, hariIniWita, ambil.
  * Side Effects: `ambil` melakukan GET (dipakai komponen klien); sisanya pure.
  */
 import type { Tone } from "@/components/fiori/core";
@@ -73,6 +73,23 @@ export function judulBerkas(noLembar: string, d = new Date()) {
     const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar", year: "numeric", month: "2-digit",
         day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d).map((x) => [x.type, x.value]));
     return `${noLembar.replaceAll("/", "-")}_${p.year}${p.month}${p.day}-${p.hour}${p.minute}`;
+}
+
+const SATUAN_KECIL = "P|PC|PCS|BTL|PCH|SCH|SACHET|RCG|BOX|DUS|PACK|PAK|TUBE|BAG|CUP|KLG|BKS|LBR|ROLL|POT|JRG|PAIL|GLN|TIN";
+
+/**
+ * Usulan isi per karton dari NAMA barang (owner 24 Okt 2026): "... 55GR X 24P" -> 24, "... 60 PCS X 180G" -> 60,
+ * "... 280ML X 24 PCH" -> 24. Hanya usulan yang dicek admin sebelum disimpan. Lebih dari satu kandidat
+ * ("15/18 GR X 24 RCG PCSX12") atau tidak ada -> null: lebih baik kosong daripada menebak.
+ */
+export function usulIsiDariNama(nama: string | null | undefined): number | null {
+    const n = String(nama ?? "").toUpperCase();
+    const kandidat = new Set<number>();
+    for (const m of n.matchAll(new RegExp(`\\bX\\s*(\\d+)\\s*(?:${SATUAN_KECIL})?(?=\\s|$)`, "g"))) kandidat.add(Number(m[1]));
+    for (const m of n.matchAll(new RegExp(`(\\d+)\\s*(?:PCS|PC)\\s*X\\b`, "g"))) kandidat.add(Number(m[1]));
+    for (const m of n.matchAll(/(?:PCS|PC|P)X(\d+)\b/g)) kandidat.add(Number(m[1]));
+    const v = [...kandidat].filter((x) => x > 1 && x <= 10000);
+    return v.length === 1 ? v[0] : null;
 }
 
 export const formatKarton = (krt: number | null | undefined) =>

@@ -19,7 +19,7 @@ import {
 } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import {
-    EXCEPTION_LABEL, WAVE_STATUS, ambil, formatKarton, jamWita, labelEvent, menahanKonfirmasi, saringPool, tanggalPendek,
+    EXCEPTION_LABEL, WAVE_STATUS, ambil, formatKarton, jamWita, labelEvent, menahanKonfirmasi, saringPool, tanggalPendek, usulIsiDariNama,
     type PoolFilter, type WaveStatusKode,
 } from "@/lib/rekapan-nota/ui";
 
@@ -33,6 +33,7 @@ type NotaPool = { no_nota: string; kode_cust: string; customer: string | null; s
 type Exception = {
     id: number; jenis: string; ref_tipe: string; ref_kode: string; keterangan: string | null; status: string;
     master_saat_ini?: string | null; resolved_at?: string | null; resolved_oleh?: string | null; alasan?: string | null;
+    nama_ref?: string | null;
 };
 type PickGroup = { id: number; kode: string; nama: string; dimensi: string };
 type Riwayat = { event: string; created_at: string; payload: Record<string, unknown>; aktor: string };
@@ -83,6 +84,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     const [notaLepas, setNotaLepas] = useState<NotaWave | null>(null);
     const [excAbaikan, setExcAbaikan] = useState<Exception | null>(null);
     const [excSibuk, setExcSibuk] = useState<number | null>(null);
+    const [isiKetik, setIsiKetik] = useState<Record<number, string>>({});
     const [pesan, setPesan] = useState<string | null>(null);
     const [galat, setGalat] = useState<string | null>(null);
     const [sibuk, setSibuk] = useState<"tambah" | "urgent" | "grup" | null>(null);
@@ -169,6 +171,17 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
         setPesan(`${EXCEPTION_LABEL[e.jenis] ?? e.jenis} ${e.ref_kode} ${aksi === "selesai" ? "ditandai selesai" : "diabaikan"}.`);
         muat();
     }
+    async function simpanIsi(e: Exception, isi: number) {
+        setExcSibuk(e.id); setPesan(null); setGalat(null);
+        try {
+            const r = await kirimJson(`/api/rekapan-nota/wave/${id}/exception`, "PATCH", { exceptionId: e.id, aksi: "isi", isi });
+            if (!r.ok) { setGalat(r.payload.error ?? `Isi per karton tidak tersimpan (HTTP ${r.status}).`); muat(); return; }
+            setPesan(`Isi per karton ${e.ref_kode} disimpan: ${isi}. Cetak ulang lembar untuk melihat kartonnya.`);
+            muat();
+        } finally {
+            setExcSibuk(null);
+        }
+    }
     async function selesaikan(e: Exception) {
         setExcSibuk(e.id); setPesan(null);
         try { await tutupException(e, "selesai"); } catch (err) { setGalat(err instanceof Error ? err.message : String(err)); } finally { setExcSibuk(null); }
@@ -221,6 +234,20 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     const badgeStatus = (e: Exception) => e.status === "open" ? <StatusBadge tone="neg">Terbuka</StatusBadge> : e.status === "selesai" ? <StatusBadge tone="pos">Selesai</StatusBadge> : <StatusBadge tone="neu">Diabaikan</StatusBadge>;
     const aksiException = (e: Exception) => bolehTutup && e.status === "open" ? (
         <span className="fi-btnrow">
+            {/* Isi per karton langsung di baris exception (owner 24 Okt 2026), usulan dari nama barang. */}
+            {e.jenis === "KONVERSI_TIDAK_ADA" && (() => {
+                const usul = usulIsiDariNama(e.nama_ref);
+                const teks = isiKetik[e.id] ?? (usul ? String(usul) : "");
+                const n = Number(teks);
+                const sah = Number.isInteger(n) && n >= 1 && n <= 10000;
+                return <>
+                    <input className="fi-input" style={{ width: "6.5rem" }} type="number" min={1} max={10000} inputMode="numeric"
+                        aria-label={`Isi per karton ${e.ref_kode}`} placeholder="Isi/karton" value={teks}
+                        onChange={(ev) => setIsiKetik((s) => ({ ...s, [e.id]: ev.target.value }))} />
+                    <Button variant="primary" busy={excSibuk === e.id} disabled={!sah} disabledReason="Isi bilangan bulat 1-10000"
+                        onClick={() => simpanIsi(e, n)} aria-label={`Simpan isi per karton ${e.ref_kode}`}>Simpan isi</Button>
+                </>;
+            })()}
             <Button busy={excSibuk === e.id} onClick={() => selesaikan(e)} aria-label={`Selesai ${e.ref_kode}`}>Selesai</Button>
             <Button variant="tertiary" disabled={excSibuk === e.id} onClick={() => { setExcAbaikan(e); setDialog("abaikan"); }} aria-label={`Abaikan ${e.ref_kode}`}>Abaikan…</Button>
         </span>

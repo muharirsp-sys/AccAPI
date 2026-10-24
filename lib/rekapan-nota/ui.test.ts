@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EXCEPTION_LABEL, hariIniWita, jamWita, judulBerkas, labelEvent, menahanKonfirmasi, nomorLembar, saringPool, tanggalPanjang, tanggalPendek, urutanBerikutnya } from "@/lib/rekapan-nota/ui";
+import { EXCEPTION_LABEL, hariIniWita, jamWita, judulBerkas, labelEvent, usulIsiDariNama, menahanKonfirmasi, nomorLembar, saringPool, tanggalPanjang, tanggalPendek, urutanBerikutnya } from "@/lib/rekapan-nota/ui";
 
 const POOL = [
     { no_nota: "INV/2610/KN01381", customer: "TK HARAPAN BARU", salesman: "Yusuf", area: "4", pareto: false },
@@ -68,4 +68,14 @@ test("judul berkas PDF = nomor lembar tanpa garis miring + tanggal-jam WITA", ()
     const pukul = new Date("2026-10-20T01:40:33Z"); // 09.40 WITA
     assert.equal(judulBerkas("RKP/2610/0002/JP-FKS", pukul), "RKP-2610-0002-JP-FKS_20261020-0940");
     assert.equal(judulBerkas("TTF/2610/0002", new Date("2026-10-19T16:05:00Z")), "TTF-2610-0002_20261020-0005"); // lewat tengah malam WITA
+});
+
+test("usulan isi per karton dari nama barang; ragu = kosong", () => {
+    assert.equal(usulIsiDariNama("PC BODY SERUM OSMANTHUS MILKTEA 60 PCS X 180G"), 60);
+    assert.equal(usulIsiDariNama("F601LV DH AIR F GEL LAVENDER BLISS 55GR X 24P"), 24);
+    assert.equal(usulIsiDariNama("KISPRAY AMORIS 280ML X 24 PCH"), 24);
+    assert.equal(usulIsiDariNama("POP ICE COKLAT 250 PCS X 25G"), 250);
+    assert.equal(usulIsiDariNama("ABC KECAP MANIS SACH 15/18 GR X 24 RCG PCSX12"), null, "dua kandidat (24 dan 12)");
+    assert.equal(usulIsiDariNama("ABC KECAP MANIS 6 KG X 1 JRG"), null, "isi 1 bukan karton");
+    assert.equal(usulIsiDariNama("BARANG TANPA ANGKA"), null);
 });
