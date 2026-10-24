@@ -598,13 +598,13 @@ export async function upsertMasterById(
 const kunciFaktur = (tx: Tx, id: number) =>
     tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`sales_invoice:${id}`}, 0))`);
 
+/** Alasan galat untuk log: cause (alasan Postgres) didahulukan, karena pesan Drizzle sendiri ("Failed query ... params:") memuat data faktur/pelanggan. */
+const sebab = (e: unknown) => e instanceof Error ? (e.cause instanceof Error ? e.cause.message : e.message) : String(e);
+
 /**
  * Simpan baris perubahan rincian di SAVEPOINT (drizzle tx.transaction bersarang). Gagal (tabel belum ada karena migrasi belum jalan,
  * data aneh) TIDAK membatalkan upsert cache di transaksi yang sama: pencatatan tidak boleh menahan faktur (spec 2026-10-23 §8).
  */
-/** Alasan Postgres (cause) tanpa pesan Drizzle "Failed query ... params:" yang memuat data faktur/pelanggan ke log. */
-const sebab = (e: unknown) => e instanceof Error ? ((e.cause instanceof Error ? e.cause.message : "") || e.name) : String(e);
-
 async function catatPerubahan(tx: Tx, id: number, hitung: () => LineChangeRow[]) {
     let baris: LineChangeRow[];
     try {
@@ -615,10 +615,16 @@ async function catatPerubahan(tx: Tx, id: number, hitung: () => LineChangeRow[])
     }
     if (!baris.length) return;
     try {
-        await tx.transaction(async (sp) => { await sp.insert(salesInvoiceLineChange).values(baris); });
+        await tx.transaction(async (sp) => {
+            // DDL/kunci di masa depan pada tabel perubahan tidak boleh membuat webhook menunggu sampai statement_timeout sambil
+            // memegang baris sales_invoice + kunci advisory (spec 2026-10-23 §8). Gagal -> ikut dibatalkan bersama SAVEPOINT;
+            // berhasil -> hanya berlaku sampai akhir transaksi ini (tidak ada perintah lain sesudahnya).
+            await sp.execute(sql`SET LOCAL lock_timeout = '2s'`);
+            await sp.insert(salesInvoiceLineChange).values(baris);
+        });
         console.log(`[perubahan-faktur] ${baris[0].invoiceNumber}: ${baris.length} baris (${[...new Set(baris.map((b) => b.kind))].join(", ")})`);
     } catch (e) {
-        console.error(`[perubahan-faktur] ${id}: gagal dicatat, cache tetap diperbarui: ${sebab(e)}`);
+        console.error(`[perubahan-faktur] ${id}: gagal dicatat, upsert dilanjutkan: ${sebab(e)}`);
     }
 }
 
@@ -644,7 +650,7 @@ export async function upsertSalesInvoiceById(id: number, creds: AccurateCredenti
                     .returning({ number: salesInvoiceCache.number, outstanding: salesInvoiceCache.outstanding, raw: salesInvoiceCache.rawData });
                 if (hapus.length) await catatPerubahan(tx, id, () => deletedInvoiceLines(hapus[0].raw, ctx));
                 return hapus;
-            });
+            }, { isolationLevel: "read committed" }); // dipatok: baca sesudah kunci advisory harus melihat commit pemegang sebelumnya
             if (dibuang.length) console.log(`[sync] faktur ${id} ${dibuang[0].number ?? "-"} (sisa ${dibuang[0].outstanding ?? "-"}) tidak ada di Accurate -> cache dibuang`);
         } else {
             // Galat biasa, BUKAN Gone: webhook menganggap Gone sukses (200, tanpa kirim ulang), jadi env hilang saat deploy
@@ -670,7 +676,7 @@ export async function upsertSalesInvoiceById(id: number, creds: AccurateCredenti
             .where(eq(salesInvoiceCache.id, id)).limit(1);
         await upsertSalesInvoiceRows([row], tx);
         if (lama) await catatPerubahan(tx, id, () => diffInvoiceLines(lama.raw, row, ctx));
-    });
+    }, { isolationLevel: "read committed" }); // dipatok: SELECT sesudah kunci advisory harus melihat commit pemegang sebelumnya
     if (creds.databaseId) await recordInvoiceRealization(creds.databaseId, String(id), row);
 
     // Ringkasan untuk log/response — bukti cepat bahwa baris yang benar yang tersimpan.

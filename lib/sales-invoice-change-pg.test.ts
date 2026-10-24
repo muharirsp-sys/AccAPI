@@ -110,14 +110,29 @@ test("PG faktur tiada di Accurate -> invoice_deleted dicatat dan cache dibuang",
 
 test("PG dua webhook serentak untuk faktur yang sama tidak mencatat ganda", { skip: pgSkip }, async () => {
     await simpan(FAKTUR(104, 72));
-    // Dua koneksi siap di pool: tanpa ini transaksi kedua menunggu koneksi baru (TCP+auth) sampai yang pertama selesai, balapan
-    // tak terpicu dan uji lulus walau kunci dicopot (dibuktikan 24 Okt).
-    for (const c of await Promise.all([m.dbMod.pool.connect(), m.dbMod.pool.connect()])) c.release();
+    // Sesi lain memegang kunci advisory yang SAMA: kedua panggilan wajib antre di kunciFaktur. Tanpa kunci di kode keduanya lolos
+    // (penunggu 0) -> uji gagal pasti, tidak bergantung pada untung-untungan balapan (tinjauan 24 Okt).
+    const kunci = `hashtextextended('sales_invoice:104', 0)`;
+    const penunggu = async () => (await pool.query(`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+        AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`)).rows[0].n as number;
+    const pemegang = await admin.connect();
+    await pemegang.query(`SELECT pg_advisory_lock(${kunci})`);
     palsukan({ s: true, d: FAKTUR(104, 6) });
+    let antre = 0;
     try {
-        await Promise.all([m.sync.upsertSalesInvoiceById(104, CREDS, WEBHOOK), m.sync.upsertSalesInvoiceById(104, CREDS, WEBHOOK)]);
+        const dua = Promise.allSettled([m.sync.upsertSalesInvoiceById(104, CREDS, WEBHOOK), m.sync.upsertSalesInvoiceById(104, CREDS, WEBHOOK)]);
+        try {
+            for (let i = 0; i < 100 && (antre = await penunggu()) < 2; i++) await new Promise((r) => setTimeout(r, 50)); // <= ~5 dtk
+        } finally {
+            await pemegang.query(`SELECT pg_advisory_unlock(${kunci})`);
+            pemegang.release();
+        }
+        for (const h of await dua) if (h.status === "rejected") throw h.reason;
     } finally { globalThis.fetch = fetchAsli; }
-    assert.equal((await perubahan(104)).length, 1);
+    assert.equal(antre, 2, "kedua panggilan menunggu kunci advisory faktur yang sama");
+    assert.deepEqual((await perubahan(104)).map(({ kind, lama, baru, delta }) => ({ kind, lama, baru, delta })),
+        [{ kind: "changed", lama: 72, baru: 6, delta: -66 }]);
+    assert.equal(await totalCache(104), 6 * 4610 + 13830);
 });
 
 test("PG 0037 = entri migrate-pg = Drizzle; idempoten; migrate-pg jalan lalu SKIP", { skip: pgSkip }, async () => {
