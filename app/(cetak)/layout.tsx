@@ -126,12 +126,12 @@ const GAYA = `
 
 /* Jumlah ambil: pahlawan barisnya. Angka dan satuan punya kolom sendiri supaya SEJAJAR
    ke bawah -- deretan angka yang rata bisa dipindai sekali lihat, yang gerigi tidak. */
-.ambil { width: 17mm; background: var(--tint); white-space: nowrap; text-align: right; }
+.ambil { width: 18mm; background: var(--tint); white-space: nowrap; text-align: right; }
 .ambil span { display: inline-block; vertical-align: baseline; }
 /* Sat. besar | Sat. kecil: dua kolom sejajar ke bawah, angka sama besar -- kolom mana yang dibaca
    ditentukan pekerjaannya (ambil karton vs ambil pcs), bukan oleh ukuran huruf. */
 .ambil .n { width: 10mm; text-align: right; font-size: 11pt; font-weight: 700; letter-spacing: -0.01em; }
-.ambil .u { width: 5mm;  text-align: left;  font-size: 6.5pt; font-weight: 700; padding-left: 0.6mm; }
+.ambil .u { width: 6mm;  text-align: left;  font-size: 6.5pt; font-weight: 700; padding-left: 0.6mm; }
 .ambil.kecil { border-left: 0.75pt solid #fff; }
 .cetak tbody td.ambil { padding-left: 1mm; padding-right: 1mm; }
 .ambil .nol { color: #b0b0b0; font-size: 9pt; padding-right: 2mm; }
@@ -191,6 +191,8 @@ tr.keluarga td { border: none; height: 3mm; padding: 0; background: none !import
 .bingkai-cetak h1 { font: 650 .9375rem/1.2 var(--font-sans); color: var(--ink); margin: 0; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .bingkai-cetak h1 span { font-weight: 500; color: var(--ink-muted); }
 @media screen { .cetak-akar { min-height: calc(100vh - var(--shell-h, 52px)) !important; } }
+/* Cetak semua: tiap tipe rekapan (dan TTF) mulai di kertas baru. */
+.cetak-semua > div + div { break-before: page; page-break-before: always; }
 @media print { .layar-saja { display: none !important; } }
 `;
 
