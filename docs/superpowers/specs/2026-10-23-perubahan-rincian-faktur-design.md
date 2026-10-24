@@ -124,7 +124,7 @@ upsertSalesInvoiceById:
 
 ## 6. Aturan perbandingan
 
-- **Hanya faktur INV.** Dicatat bila nomor (baru, atau lama untuk penghapusan) diawali `INV/`. Draf `DFT.*` dilewati.
+- **Hanya faktur INV.** Dicatat bila nomor LAMA dan BARU (atau nomor lama untuk penghapusan) sama-sama diawali `INV/`. Draf `DFT.*` dan draf yang baru terbit (lama `DFT.*`, baru `INV/`) dilewati: penerbitan draf bukan suntingan rincian.
 - **Butuh isi lama berincian.** Bila baris cache belum ada atau `raw_data` lamanya tanpa `detailItem` (faktur pertama kali
   terbaca), tidak ada yang dicatat.
 - **Kunci baris = `detailItem[].id` + kode barang.**
@@ -135,7 +135,7 @@ upsertSalesInvoiceById:
     melihat keduanya.
   - Baris tanpa `id` dianggap tak berpasangan (jadi `removed` + `added`).
 - **Kolom pembanding:** `quantity`, `itemUnit.name`, `unitRatio`, `unitPrice`, `itemDiscPercent`, `itemCashDiscount`,
-  `warehouse.name`. Angka dibandingkan dengan toleransi 1e-6.
+  `warehouse.name`. Angka dibandingkan dengan toleransi 1e-6; diskon persen kosong, "0", dan "0.0" dianggap sama. Id baris kembar dalam satu faktur diberi kunci unik supaya tidak ada baris yang tertimpa.
 - **Diabaikan:** `deliveredQuantity`, `returnQuantity`, `availableQuantity`, `shipQuantity` (berubah karena retur/pengiriman, bukan
   suntingan), salesman per baris, catatan baris, dan semua kolom kepala.
 - **`base_qty_delta`** = `quantity × unitRatio` baru − lama. `removed` / `invoice_deleted` = −lama; `added` = +baru.
@@ -149,8 +149,13 @@ upsertSalesInvoiceById:
 - **`printed_at` / `printed_by`:** dari `printedTimeView` (dibaca `+07:00`, berdetik) dan `printUserName` pada `detail.do` baru.
   Untuk penghapusan, dari isi lama. Nilai "Belum cetak/email" atau kosong → NULL / `''`.
 - **`after_print`** = `printed_at IS NOT NULL AND printed_at <= coalesce(saved_at, detected_at)`.
-  Batas yang diketahui: bila faktur dicetak ulang SESUDAH diubah tetapi sebelum `detail.do` kita terbaca (hitungan detik), cetakan
-  ulang itu yang terbaca.
+  Batas yang diketahui:
+  - Bila faktur dicetak ulang SESUDAH diubah tetapi sebelum `detail.do` kita terbaca (hitungan detik), cetakan ulang itu yang terbaca.
+  - Di jalur penambal (`saved_at` NULL) pembandingnya jam deteksi, yang bisa berjam-jam sesudah simpan sebenarnya; cetakan di antara
+    keduanya membuat `after_print` benar padahal simpannya sebelum cetak. `detail.do` tidak membawa `lastUpdate`, jadi tidak ada
+    jam simpan yang lebih baik di jalur itu.
+- **`printed_by`** tetap diisi dari `printUserName` (kecuali "Belum cetak/email") walau `printedTimeView` gagal dibaca, supaya
+  kegagalan baca jam cetak terlihat di data (`printed_at` NULL tetapi `printed_by` terisi).
 
 ## 8. Galat dan konkurensi
 
