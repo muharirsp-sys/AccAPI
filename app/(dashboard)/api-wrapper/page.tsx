@@ -1,14 +1,16 @@
 /**
- * Tujuan: UI API Wrapper Accurate termasuk parser Excel bulk yang membentuk payload transaksi manual/bulk-save.
+ * Tujuan: UI API Wrapper Accurate (Konsol) termasuk parser Excel bulk yang membentuk payload transaksi manual/bulk-save.
+ *   Tampilan Fiori (audit desain 001 M1): tiap kiriman tulis lewat ConfirmDialog (endpoint, jumlah baris, database aktif),
+ *   hasil analisis berkas dibedakan dari jawaban Accurate, override duplikat lewat ConfirmDialog beralasan (min 15).
  * Caller: App Router dashboard `app/(dashboard)/api-wrapper/page.tsx` dan interaksi user di halaman API Wrapper.
- * Dependensi: `accurateRoutes`, `accurateFetch`, parser workbook per-route, Accurate OAuth/session dari browser, parser `xlsx`, toast `sonner`, route idempotency Next, `DatePickerField`, `Dialog` native bersama, `lib/pelunasan/*` (parser Format Pelunasan, retur, cari faktur, alokasi, payload, pratinjau duplikat — dipindah dari halaman ini di S6e-1; kirim sales-receipt `lib/pelunasan/kirim.ts`, S6e-2).
- * Main Functions: `Home`, `terapkanSesi` (kartu `SesiAccurate` bersama /sesi-accurate: masuk ber-`state`, pilih database, keluar — S7-sesi), `handleDownloadTemplate`, `handleExecute`.
- * Side Effects: HTTP call ke Accurate route handler/proxy, baca file Excel lokal, dispatch parser workbook khusus per route, deteksi format pelunasan walau `Total.Trx` kosong, normalisasi lookup invoice/retur termasuk variasi SRB tanpa spasi, susun payload bulk-save, keluarkan laporan manual follow-up untuk retur/pot.lain yang gagal diproses, preview/lock idempotency SQLite, cek histori sales receipt Accurate, konfirmasi hasil error ke histori Accurate HANYA untuk jenis dokumen yang sama (`pemastiRiwayatTulis`; jenis lain tetap TIDAK DIKETAHUI), tampilkan review duplicate, logging debug ke response UI.
+ * Dependensi: `accurateRoutes`, `accurateFetch`, parser workbook per-route, Accurate OAuth/session dari browser, parser `xlsx`, toast `sonner`, route idempotency Next, `Dialog` native bersama, komponen Fiori (`components/fiori/*`), `lib/tampil` (KOSONG), `lib/pelunasan/*` (parser Format Pelunasan, retur, cari faktur, alokasi, payload, pratinjau duplikat — dipindah dari halaman ini di S6e-1; kirim sales-receipt `lib/pelunasan/kirim.ts`, S6e-2).
+ * Main Functions: `Home`, `terapkanSesi` (kartu `SesiAccurate` bersama /sesi-accurate: masuk ber-`state`, pilih database, keluar — S7-sesi), `handleDownloadTemplate`, `handleExecute` (dipanggil sesudah `bukaKirim` + ConfirmDialog), `handleConfirmDuplicateReview` + `kirimHasilTinjauan`.
+ * Side Effects: HTTP call ke Accurate route handler/proxy, baca file Excel lokal, dispatch parser workbook khusus per route, deteksi format pelunasan walau `Total.Trx` kosong, normalisasi lookup invoice/retur termasuk variasi SRB tanpa spasi, susun payload bulk-save, keluarkan laporan manual follow-up untuk retur/pot.lain yang gagal diproses, preview/lock idempotency SQLite, cek histori sales receipt Accurate, konfirmasi hasil error ke histori Accurate HANYA untuk jenis dokumen yang sama (`pemastiRiwayatTulis`; jenis lain tetap TIDAK DIKETAHUI), tampilkan review duplicate, unduh Excel log galat (otomatis + tombol unduh ulang), logging debug ke response UI.
  */
 "use client";
 
-import { useState, useEffect } from "react";
-import { Upload, FileJson, Play, ServerCrash, ExternalLink, Settings2, Database, FileSpreadsheet, CheckCircle2, Loader2, CalendarIcon } from "lucide-react";
+import { useState, useEffect, useId } from "react";
+import { Download, FileJson, FileSpreadsheet, Send, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { accurateRoutes } from "@/config/accurateRoutes";
 import { accurateFetch, classifyWriteError } from "@/lib/apiFetcher";
@@ -16,14 +18,16 @@ import { buildSalesReceiptIdempotencyPayload } from "@/lib/sales-receipt-fingerp
 import { overrideKeysNeeded } from "@/lib/sales-receipt-upload";
 import { kirimPelunasan, type BarisHasil, type OverrideKirim } from "@/lib/pelunasan/kirim";
 import type { Bebas } from "@/lib/pelunasan/sel";
-import DatePickerField from "@/components/ui/DatePickerField";
 import Dialog from "@/components/ui/Dialog";
 import { deteksiFormatPelunasan, parsePelunasan } from "@/lib/pelunasan/parser";
 import { normalizePayloadMoney, tanggalKemarin } from "@/lib/pelunasan/payload";
 import { pemastiRiwayatTulis, pratinjauDuplikat, pratinjauRiwayatAccurate, type DuplicateConflictReason, type DuplicateReviewEntry } from "@/lib/pelunasan/pratinjau-ganda";
 import { workbookRouteParsers } from "./parsers";
 import { FioriScope } from "@/components/fiori/Scope";
+import { Button, EmptyState, KeyValues, MessageStrip, Section, Skeleton, StatusBadge } from "@/components/fiori/core";
+import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { SesiAccurate, type StatusSesi } from "@/components/accurate/SesiAccurate";
+import { KOSONG } from "@/lib/tampil";
 
 type RouteKey = keyof typeof accurateRoutes;
 
@@ -41,6 +45,21 @@ type DuplicateReviewState = {
   reviewRows: DuplicateReviewEntry[];
   selections: Record<string, boolean>;
 };
+
+/** Fakta dialog Kirim, dihitung dari payload yang akan dipakai `handleExecute` (hanya tampilan). */
+type KonfirmasiKirim = { path: string; baris: number; massal: boolean; contohBawaan: boolean; pelunasan: boolean };
+
+/** Override duplikat menunggu alasan (D-18): hasil hitung `handleConfirmDuplicateReview` yang dulu dipakai sesudah window.prompt. */
+type OverrideTertunda = {
+  finalRows: Record<string, unknown>[];
+  keys: { allowDuplicateKeys: string[]; allowLockedKeys: string[]; allowHistoryKeys: string[] };
+  blok: number;
+  baris: DuplicateReviewEntry[];
+};
+
+const rupiah = (n: number) => `Rp ${n.toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const daftarRingkas = (xs: string[], maks = 5) => (xs.length <= maks ? xs.join(", ") : `${xs.slice(0, maks).join(", ")} dan ${xs.length - maks} lainnya`);
+const selTeks = (v: unknown) => (v === undefined || v === null || v === "" ? KOSONG : typeof v === "object" ? JSON.stringify(v) : String(v));
 
 export default function Home() {
 
@@ -74,6 +93,16 @@ export default function Home() {
 
   const [trxDate, setTrxDate] = useState<string>(tanggalKemarin());
 
+  // State tampilan (audit desain 001 M1). Tidak ikut dikirim ke Accurate.
+  const [openDbAlias, setOpenDbAlias] = useState(""); // nama database aktif dari kartu SesiAccurate, untuk dialog Kirim
+  const [sesiDibaca, setSesiDibaca] = useState(false); // strip "masuk dulu" baru tampil sesudah kartu selesai membaca sesi
+  const [konfirmasiKirim, setKonfirmasiKirim] = useState<KonfirmasiKirim | null>(null);
+  const [galatPayload, setGalatPayload] = useState<string | null>(null);
+  const [override, setOverride] = useState<OverrideTertunda | null>(null);
+  const [galatTinjau, setGalatTinjau] = useState<string | null>(null);
+  const [logGalat, setLogGalat] = useState<Record<string, unknown>[] | null>(null);
+  const idTinjau = useId();
+
   // Initial Load & OAuth Callback handler
   useEffect(() => {
     setIsMounted(true); // Ensure client-side only rendering for heavy interactive parts
@@ -88,6 +117,8 @@ export default function Home() {
   const terapkanSesi = (sesi: StatusSesi | null) => {
     setIsKeySaved(Boolean(sesi?.databaseConnected));
     setOpenDbId(sesi?.databaseId ?? "");
+    setOpenDbAlias(sesi?.databaseAlias ?? "");
+    setSesiDibaca(true);
   };
 
   const handleChangeRoute = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -95,6 +126,8 @@ export default function Home() {
     setSelectedRoute(route);
     setPayloadStr(JSON.stringify(accurateRoutes[route].samplePayload, null, 2));
     setResponseLog(null);
+    setLogGalat(null);
+    setGalatPayload(null);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -449,12 +482,12 @@ export default function Home() {
   };
 
   const getDuplicateReasonLabel = (reason: DuplicateConflictReason) => {
-    if (reason === "DUPLICATE_IN_UPLOAD") return "Duplikat dalam upload ini";
-    if (reason === "ALREADY_SUCCESS") return "Sudah pernah sukses diupload";
-    if (reason === "ACCURATE_HISTORY") return "Mirip histori Accurate";
-    if (reason === "ACCURATE_HISTORY_UNREADABLE") return "Histori Accurate tidak terbaca — belum tentu aman";
+    if (reason === "DUPLICATE_IN_UPLOAD") return "Ganda dalam unggahan ini";
+    if (reason === "ALREADY_SUCCESS") return "Sudah pernah terkirim";
+    if (reason === "ACCURATE_HISTORY") return "Mirip riwayat Accurate";
+    if (reason === "ACCURATE_HISTORY_UNREADABLE") return "Riwayat Accurate tidak terbaca, belum tentu aman";
     // AM-025: kiriman sebelumnya macet >15 menit atau tak diketahui hasilnya — mungkin SUDAH masuk Accurate.
-    if (reason === "UNKNOWN_OUTCOME") return "Hasil kiriman sebelumnya tidak diketahui — cek Accurate dulu";
+    if (reason === "UNKNOWN_OUTCOME") return "Hasil kiriman sebelumnya tidak diketahui. Cek Accurate dulu";
     return "Masih diproses dalam 15 menit terakhir";
   };
 
@@ -517,13 +550,14 @@ export default function Home() {
     const errorCount = paketGagal.size;
     if (errorCount === 0) {
       setResponseLog({ status: "success", data: { s: true, d: combinedResults, _note: "Digabung dari beberapa request otomatis." } });
-      toast.success(`Eksekusi brutal berhasil! ${combinedResults.length} data telah terposting.`, { id: 'exec' });
+      toast.success(`${combinedResults.length} data terkirim ke Accurate.`, { id: 'exec' });
       return;
     }
-    setResponseLog({ status: "error", message: `Selesai dengan ${errorCount} error tahap. Periksa console log untuk rincian error di beberapa baris. Data yang berhasil: ${combinedResults.length}` });
-    toast.error(`Selesai dengan peringatan (${errorCount} Tahap Gagal).`, { id: 'exec' });
+    setResponseLog({ status: "error", message: `Selesai dengan ${errorCount} tahap gagal. Rincian per baris ada di Excel log galat yang diunduh otomatis. Data yang berhasil: ${combinedResults.length}` });
+    toast.error(`Selesai dengan ${errorCount} tahap gagal.`, { id: 'exec' });
+    setLogGalat(errorLogForExcel);
     setTimeout(async () => {
-      toast("Mengunduh Excel Log Error...", { icon: "📥" });
+      toast("Mengunduh Excel log galat...");
       try {
         const XLSX = await import("xlsx");
         const wsErr = XLSX.utils.json_to_sheet(errorLogForExcel);
@@ -657,7 +691,7 @@ export default function Home() {
             });
           }
           errorCount += totalChunks - i;
-          dihentikan = `Dihentikan di tahap ${i + 1}: ${chunkErr.message} Tahap ${i + 1}–${totalChunks} TIDAK terkirim.`;
+          dihentikan = `Dihentikan di tahap ${i + 1}: ${chunkErr.message} Tahap ${i + 1} sampai ${totalChunks} TIDAK terkirim.`;
           break;
         }
         let chunkHadUnresolvedFailure = false;
@@ -684,7 +718,7 @@ export default function Home() {
             const singleResult = chunkErr.rawDetails[0];
             const reasonStr = extractReasonStr(singleResult, chunkErr.message);
 
-            toast.loading(`Tahap ${i+1} dicekal keseluruhan. Mulai Mode Penguraian Individu...`, { id: 'exec' });
+            toast.loading(`Tahap ${i+1} ditolak utuh. Mengirim ulang per baris...`, { id: 'exec' });
 
             for (let idx = 0; idx < chunkPayload.length; idx++) {
               const row = chunkPayload[idx];
@@ -731,7 +765,7 @@ export default function Home() {
             let repostAttempted = false;
 
             if (failedInvoiceNo && reasonStr.includes("melebihi nilai piutang")) {
-              toast.loading(`Mencoba Auto-Correction untuk ${failedInvoiceNo}...`, { id: `heal-${failedInvoiceNo}` });
+              toast.loading(`Mencoba koreksi otomatis untuk ${failedInvoiceNo}...`, { id: `heal-${failedInvoiceNo}` });
               try {
                 const invoiceCheck = await accurateFetch('/api/sales-invoice/list.do', 'GET', {
                   fields: "id,number,primeOwing",
@@ -776,7 +810,7 @@ export default function Home() {
                       isHealed = true;
                       combinedResults.push(retryItem);
                       markIdempotency(row, true);
-                      toast.success(`Self-Healing Berhasil! ${failedInvoiceNo} dikoreksi ke ${actualPrimeOwing}`, { id: `heal-${failedInvoiceNo}` });
+                      toast.success(`Koreksi otomatis berhasil: ${failedInvoiceNo} dikoreksi ke ${actualPrimeOwing}`, { id: `heal-${failedInvoiceNo}` });
 
                       errorLogForExcel.push({
                         "Paket/Batch": `Tahap ${chunkIdx+1}`,
@@ -786,10 +820,10 @@ export default function Home() {
                         "Pesan Error Accurate": `Awalnya gagal selisih Rp ${normalizePayloadMoney(diff)} (Tertulis: ${normalizePayloadMoney(userAmount)}, AOL: ${normalizePayloadMoney(actualPrimeOwing)}). Dikoreksi PWA.`
                       });
                     } else {
-                      toast.error(`Auto-Correct gagal diposting ulang untuk ${failedInvoiceNo}`, { id: `heal-${failedInvoiceNo}` });
+                      toast.error(`Koreksi otomatis ditolak Accurate untuk ${failedInvoiceNo}`, { id: `heal-${failedInvoiceNo}` });
                     }
                   } else {
-                    toast.error(`Selisih terlalu besar (Rp ${normalizePayloadMoney(diff)}) untuk ${failedInvoiceNo}. Batal Auto-Correct.`, { id: `heal-${failedInvoiceNo}` });
+                    toast.error(`Selisih terlalu besar (Rp ${normalizePayloadMoney(diff)}) untuk ${failedInvoiceNo}. Koreksi otomatis dibatalkan.`, { id: `heal-${failedInvoiceNo}` });
                   }
                 }
               } catch (healErr) {
@@ -880,20 +914,21 @@ export default function Home() {
 
     if (errorCount === 0) {
       setResponseLog({ status: "success", data: { s: true, d: combinedResults, _note: "Digabung dari beberapa request otomatis." } });
-      toast.success(`Eksekusi brutal berhasil! ${combinedResults.length} data telah terposting.`, { id: 'exec' });
+      toast.success(`${combinedResults.length} data terkirim ke Accurate.`, { id: 'exec' });
     } else {
       // Baris yang hasilnya tak diketahui (tanpa jawaban Accurate) WAJIB terlihat di layar, bukan hanya di Excel: kirim ulang buta = ganda.
       const tidakPasti = errorLogForExcel.filter((r) => String(r.Status).startsWith("TIDAK DIKETAHUI")).length;
       setResponseLog({ status: "error", message: [
         dihentikan,
-        `Selesai dengan ${errorCount} error tahap. Periksa console log untuk rincian error di beberapa baris. Data yang berhasil: ${combinedResults.length}.`,
-        tidakPasti ? `${tidakPasti} baris TIDAK DIKETAHUI — cek di Accurate sebelum kirim ulang (lihat Excel log error).` : "",
+        `Selesai dengan ${errorCount} tahap gagal. Rincian per baris ada di Excel log galat yang diunduh otomatis. Data yang berhasil: ${combinedResults.length}.`,
+        tidakPasti ? `${tidakPasti} baris TIDAK DIKETAHUI. Cek di Accurate sebelum kirim ulang (lihat Excel log galat).` : "",
       ].filter(Boolean).join("\n") });
-      toast.error(`Selesai dengan peringatan (${errorCount} Tahap Gagal)${tidakPasti ? ` — ${tidakPasti} baris TIDAK DIKETAHUI` : ""}.`, { id: 'exec' });
+      toast.error(`Selesai dengan ${errorCount} tahap gagal${tidakPasti ? `, ${tidakPasti} baris TIDAK DIKETAHUI` : ""}.`, { id: 'exec' });
 
       if (errorLogForExcel.length > 0) {
+        setLogGalat(errorLogForExcel);
         setTimeout(async () => {
-          toast("Mengunduh Excel Log Error...", { icon: "📥" });
+          toast("Mengunduh Excel log galat...");
           try {
             const XLSX = await import("xlsx");
             const wsErr = XLSX.utils.json_to_sheet(errorLogForExcel);
@@ -931,9 +966,10 @@ export default function Home() {
       .map((item) => item.row);
 
     if (finalRows.length === 0) {
-      toast.error("Tidak ada baris yang dipilih untuk diproses.");
+      setGalatTinjau("Belum ada baris yang dipilih. Tidak ada yang dikirim.");
       return;
     }
+    setGalatTinjau(null);
 
     // Tinjauan S6-0a: hanya override yang BENAR-BENAR dipakai server — baris pertama duplikat-dalam-unggahan
     // (pilihan bawaan) tidak butuh alasan; baris riwayat Accurate memakai override ACCURATE_HISTORY (S6e-2).
@@ -948,22 +984,29 @@ export default function Home() {
 
     // D-18 (owner): override = membuka kiriman ulang ke Accurate — hanya Finance (server menolak 403 tanpa
     // finance.override_duplicate) dan alasan wajib tercatat di jejak override.
-    let overrideReason = "";
+    // Audit desain 001 No 8: alasan diminta lewat ConfirmDialog (dulu window.prompt) dengan syarat sama (trim, min 15);
+    // kirimHasilTinjauan dijalankan dari onConfirm dengan alasan itu sebagai overrideReason. Batal = tidak ada yang dikirim.
     if (allowDuplicateKeys.length > 0 || allowLockedKeys.length > 0 || allowHistoryKeys.length > 0) {
-      const typed = window.prompt(`Alasan meng-override ${allowDuplicateKeys.length + allowLockedKeys.length + allowHistoryKeys.length} blok duplikat (min. 15 karakter). Hanya kewenangan Finance.`);
-      if (!typed || typed.trim().length < 15) {
-        toast.error("Alasan override minimal 15 karakter. Tidak ada yang dikirim.");
-        return;
-      }
-      overrideReason = typed.trim();
+      setOverride({
+        finalRows,
+        keys: { allowDuplicateKeys, allowLockedKeys, allowHistoryKeys },
+        blok: allowDuplicateKeys.length + allowLockedKeys.length + allowHistoryKeys.length,
+        baris: duplicateReview.reviewRows.filter((item) => duplicateReview.selections[item.reviewId]),
+      });
+      return;
     }
+    await kirimHasilTinjauan(finalRows, { allowDuplicateKeys, allowLockedKeys, allowHistoryKeys, overrideReason: "" });
+  };
 
+  // Lanjutan handleConfirmDuplicateReview (dipisah untuk ConfirmDialog override); isi sama dengan kode sesudah window.prompt dulu.
+  const kirimHasilTinjauan = async (finalRows: Record<string, unknown>[], duplicateOptions: Required<OverrideKirim>) => {
+    if (!duplicateReview) return;
     const routeConfig = accurateRoutes[duplicateReview.routeKey];
     setDuplicateReview(null);
     setIsLoading(true);
 
     try {
-      await executeBulkPayload(finalRows, routeConfig, { allowDuplicateKeys, allowLockedKeys, allowHistoryKeys, overrideReason });
+      await executeBulkPayload(finalRows, routeConfig, duplicateOptions);
     } catch (err: unknown) {
       if (err instanceof Error) {
         setResponseLog({ status: "error", message: err.message });
@@ -1027,413 +1070,415 @@ export default function Home() {
     }
   };
 
-  // SSR strictly returns loading state to prevent hydration error
+  // Audit desain 001 No 2: tulis ke Accurate hanya sesudah ConfirmDialog. Fakta dialog dihitung dari payload yang sama dengan yang
+  // dipakai handleExecute (editor JSON; contoh bawaan endpoint bila tab Unggah Excel aktif). handleExecute sendiri tidak berubah.
+  // Cek JSON di sini memakai aturan yang sama (JSON.parse) supaya galatnya tampil di halaman, bukan toast (No 7).
+  const bukaKirim = () => {
+    const routeConfig = accurateRoutes[selectedRoute];
+    let payload: unknown;
+    if (inputMode === "manual") {
+      try {
+        payload = JSON.parse(payloadStr);
+      } catch (e) {
+        setGalatPayload(e instanceof Error ? e.message : String(e));
+        return;
+      }
+    } else {
+      payload = routeConfig.samplePayload;
+    }
+    setGalatPayload(null);
+    if (routeConfig.method === "GET") {
+      setLogGalat(null);
+      void handleExecute();
+      return;
+    }
+    const massal = routeConfig.path.includes('bulk-save') && Array.isArray(payload);
+    setKonfirmasiKirim({
+      path: routeConfig.path,
+      baris: massal ? (payload as unknown[]).length : 1,
+      massal,
+      contohBawaan: inputMode !== "manual",
+      pelunasan: massal && routeConfig.path.includes('/sales-receipt/'),
+    });
+  };
+
+  // Unduh ulang Excel log galat terakhir; isi dan nama berkas sama dengan unduhan otomatis sesudah kirim.
+  const unduhLogGalat = async () => {
+    if (!logGalat) return;
+    const XLSX = await import("xlsx");
+    const wbErr = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbErr, XLSX.utils.json_to_sheet(logGalat), "Error Log");
+    XLSX.writeFile(wbErr, `Laporan_Error_Upload_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
+  };
+
+  // Hidrasi: halaman baru dirender penuh di klien (isMounted); sebelum itu cukup kerangka memuat.
   if (!isMounted) {
     return (
-      <div className="min-h-screen bg-[#0f1015] flex items-center justify-center font-sans">
-        <div className="flex flex-col items-center gap-3 text-indigo-400">
-          <Loader2 className="w-8 h-8 animate-spin" />
-          <p className="text-sm border border-white/10 bg-white/5 backdrop-blur-md px-4 py-2 rounded-full font-medium text-slate-300 animate-pulse shadow-[0_0_15px_rgba(79,70,229,0.2)]">Menghubungkan ke Workspace...</p>
-        </div>
-      </div>
+      <FioriScope>
+        <div className="fi-page"><Skeleton rows={8} label="Memuat API Wrapper Accurate" /></div>
+      </FioriScope>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-transparent p-4 md:p-8 font-sans">
-      <div className="max-w-6xl mx-auto space-y-6">
+  const route = accurateRoutes[selectedRoute];
+  const menulis = route.method !== "GET";
+  const adaTemplat = Boolean((route as { templateHeaders?: unknown[] }).templateHeaders?.length);
+  const adaParser = Boolean(workbookRouteParsers[selectedRoute]);
+  const terkunci = !isKeySaved;
+  const dbTampil = openDbAlias || (openDbId ? `Tanpa nama (id ${openDbId})` : KOSONG);
 
-        {/* Header Section */}
-        <header className="flex items-center justify-between pb-6 border-b border-white/10">
-          <div>
-            <h1 className="text-3xl font-extrabold text-white tracking-tight flex items-center gap-2 drop-shadow-md">
-              <Database className="w-8 h-8 text-indigo-400 drop-shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
-              AOL API Wrapper
-            </h1>
-            <p className="text-sm text-slate-400 mt-1">SaaS & Internal IT Execution Dashboard</p>
-          </div>
+  // Log hasil (No 1): hasil parser workbook (handleFileUpload) satu-satunya yang membawa kunci `_meta`; jawaban Accurate dan
+  // ringkasan kirim tidak. Label sukses hanya untuk jawaban Accurate ber-s:true; objek log sendiri tidak diubah.
+  const data = responseLog?.status === "success" ? responseLog.data : undefined;
+  const hasilAnalisis = data != null && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, "_meta");
+  const catatan = typeof data?._note === "string" && data._note.trim() ? data._note : null;
+  const peringatan: string[] = Array.isArray(data?._warnings) ? data._warnings : [];
+  const barisD: Record<string, unknown>[] | null = Array.isArray(data?.d) && data.d.length > 0 ? data.d : null;
+  const kolomD = barisD ? Array.from(new Set(barisD.flatMap((row) => Object.keys(row || {})))) : [];
+  const ditolakD = !hasilAnalisis && barisD ? barisD.filter((row) => row && typeof row === "object" && row.s === false).length : 0;
+
+  const k = konfirmasiKirim;
+  const tinjau = duplicateReview;
+  const dipilihTinjau = tinjau ? Object.values(tinjau.selections).filter(Boolean).length : 0;
+  const totalTinjau = tinjau ? tinjau.passthroughRows.length + tinjau.reviewRows.filter((item) => tinjau.selections[item.reviewId]).length : 0;
+  const tutupTinjau = () => { setDuplicateReview(null); setGalatTinjau(null); };
+
+  return (
+    <FioriScope>
+      <div className="fi-page">
+        <header className="fi-page-head">
+          <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Pengaturan</span></li><li><span aria-current="page">API Wrapper Accurate</span></li></ol></nav>
+          <h1>API Wrapper Accurate</h1>
+          <p>Alat admin: kirim payload dan unggah massal ke Accurate. Kiriman yang diterima Accurate menjadi jurnal nyata dan tidak bisa ditarik dari aplikasi ini.</p>
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="grid items-start gap-4 lg:grid-cols-12">
+          <div className="grid min-w-0 content-start gap-4 lg:col-span-4">
+            {/* Kartu Sesi Accurate: komponen yang sama dengan /sesi-accurate (masuk, pilih database, keluar). */}
+            <SesiAccurate returnTo="/api-wrapper" kabar={kabarUrl} onStatus={terapkanSesi} />
 
-          {/* Left Column - Configuration */}
-          <div className="lg:col-span-4 space-y-6">
-
-            {/* Kartu Sesi Accurate — komponen yang sama dengan /sesi-accurate (masuk, pilih database, keluar). */}
-            <FioriScope>
-              <SesiAccurate returnTo="/api-wrapper" kabar={kabarUrl} onStatus={terapkanSesi} />
-            </FioriScope>
-
-            {/* Route Selector Card */}
-            <div className={`bg-[#1e1f29]/40 backdrop-blur-xl rounded-2xl p-6 shadow-2xl border border-white/10 transition-opacity ${!isKeySaved ? "opacity-40 pointer-events-none grayscale blur-[1px]" : ""}`}>
-              <h2 className="text-lg font-semibold flex items-center gap-2 mb-4 text-white">
-                <Settings2 className="w-5 h-5 text-indigo-400 drop-shadow-[0_0_8px_rgba(99,102,241,0.8)]" />
-                Modul Endpoint
-              </h2>
-              <div className="space-y-5">
-                <div>
-                  <label className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2 block">Pilih Endpoint API</label>
-                  <select
-                    value={selectedRoute}
-                    onChange={handleChangeRoute}
-                    className="w-full px-4 py-3 text-sm rounded-xl border border-white/10 bg-black/40 hover:bg-black/60 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all text-white cursor-pointer appearance-none shadow-inner"
-                    style={{ backgroundImage: `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%23ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>')`, backgroundPosition: 'right 16px center', backgroundRepeat: 'no-repeat', paddingRight: '40px' }}
-                  >
-                    {(Object.keys(accurateRoutes) as RouteKey[]).map((key) => (
-                      <option key={key} value={key} className="bg-[#1e1f29] text-white">
-                        {accurateRoutes[key].label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="bg-indigo-500/10 rounded-xl p-4 border border-indigo-500/20 shadow-inner">
-                  <p className="text-xs text-indigo-300 font-medium break-all flex justify-between items-center">
-                    <span className="opacity-90 font-bold bg-indigo-500/20 px-2 py-1 rounded">{accurateRoutes[selectedRoute].method}</span>
-                    <span className="font-mono opacity-80">{accurateRoutes[selectedRoute].path}</span>
-                  </p>
-                  <p className="text-xs text-white/60 mt-3 italic">{accurateRoutes[selectedRoute].description}</p>
-                </div>
+            <Section title="Endpoint" subtitle={menulis ? <StatusBadge tone="warn">Menulis ke Accurate</StatusBadge> : <StatusBadge tone="neu">Hanya membaca</StatusBadge>}>
+              <div className="fi-sect-in" inert={terkunci}>
+                <FormField label="Endpoint API">
+                  {(a11y) => (
+                    <select {...a11y} className="fi-input" value={selectedRoute} onChange={handleChangeRoute}>
+                      {(Object.keys(accurateRoutes) as RouteKey[]).map((key) => (
+                        <option key={key} value={key}>{accurateRoutes[key].label}</option>
+                      ))}
+                    </select>
+                  )}
+                </FormField>
+                <KeyValues items={[["Alamat", <span key="alamat" className="fi-mono">{route.path}</span>]]} />
               </div>
-            </div>
-
+            </Section>
           </div>
 
-          {/* Right Column - Input & Execution */}
-          <div className={`lg:col-span-8 flex flex-col gap-6 transition-opacity ${!isKeySaved ? "opacity-50 pointer-events-none grayscale" : ""}`}>
+          <div className="grid min-w-0 content-start gap-4 lg:col-span-8">
+            {sesiDibaca && terkunci && (
+              <MessageStrip tone="warn" title="Masuk Accurate dan buka database dulu.">
+                Endpoint, isi kiriman, dan unggah berkas terkunci sampai database aktif di kartu Sesi Accurate.
+              </MessageStrip>
+            )}
 
-            {/* Input Mode Tabs & Payload Area */}
-            <div className="bg-[#1e1f29]/40 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/10 flex flex-col overflow-hidden">
-              <div className="flex items-center border-b border-white/10 bg-black/20 px-2 py-2">
-                <button
-                  onClick={() => setInputMode("manual")}
-                  className={`flex-1 flex justify-center items-center gap-2 py-2.5 text-sm font-medium rounded-xl transition-all ${inputMode === "manual" ? "bg-indigo-600 text-white shadow-[0_0_15px_rgba(79,70,229,0.3)] border border-transparent" : "text-white/50 hover:text-white hover:bg-white/5"}`}
-                >
-                  <FileJson className="w-4 h-4" />
-                  JSON / Parameter Manual
-                </button>
-                <button
-                  onClick={() => setInputMode("excel")}
-                  className={`flex-1 flex justify-center items-center gap-2 py-2.5 text-sm font-medium rounded-xl transition-all ${inputMode === "excel" ? "bg-indigo-600 text-white shadow-[0_0_15px_rgba(79,70,229,0.3)] border border-transparent" : "text-white/50 hover:text-white hover:bg-white/5"}`}
-                >
-                  <FileSpreadsheet className="w-4 h-4" />
-                  Excel Import (Batch)
-                </button>
+            {/* Terkunci = `inert` hanya pada isian; tombol Kirim (nonaktif + alasan) dan Hasil tetap terbaca. */}
+            <Section title="Isi kiriman" actions={
+              <div className="fi-segs" role="group" aria-label="Cara mengisi" inert={terkunci}>
+                <button type="button" aria-pressed={inputMode === "manual"} onClick={() => setInputMode("manual")}><FileJson className="fi-icon" aria-hidden />Payload JSON</button>
+                <button type="button" aria-pressed={inputMode === "excel"} onClick={() => setInputMode("excel")}><FileSpreadsheet className="fi-icon" aria-hidden />Unggah Excel</button>
               </div>
-
-              <div className="p-0 flex-1 flex flex-col">
+            }>
+              <div className="fi-sect-in" inert={terkunci}>
+                {galatPayload && (
+                  <MessageStrip tone="neg" title="Payload JSON tidak valid." onClose={() => setGalatPayload(null)}>
+                    Perbaiki di editor. Tidak ada yang dikirim.
+                    <span className="fi-codes">{galatPayload}</span>
+                  </MessageStrip>
+                )}
                 {inputMode === "manual" ? (
-                  <textarea
-                    value={payloadStr}
-                    onChange={(e) => setPayloadStr(e.target.value)}
-                    className="w-full flex-1 p-6 text-sm font-mono text-emerald-300 bg-black/20 focus:outline-none focus:ring-inset focus:ring-1 focus:ring-indigo-500/50 resize-y min-h-[300px]"
-                    spellCheck={false}
-                  />
+                  <FormField label="Payload JSON" help="Isi permintaan apa adanya ke Accurate. Hasil unggah Excel juga dimuat ke sini untuk diperiksa sebelum dikirim.">
+                    {(a11y) => <textarea {...a11y} className="fi-input fi-mono" rows={16} value={payloadStr} onChange={(e) => setPayloadStr(e.target.value)} spellCheck={false} />}
+                  </FormField>
                 ) : (
-                  <>
-                  <div className="mx-6 mt-6 p-5 bg-[#1e1f29]/80 shadow-inner border border-white/10 rounded-2xl flex flex-col sm:flex-row sm:items-center gap-4">
-                     <div>
-                       <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                          <CalendarIcon className="w-4 h-4 text-emerald-400" />
-                          Tanggal Transaksi Default
-                       </h3>
-                       <p className="text-xs text-white/50 mt-1">Tanggal H-1 secara default. Akan disuntikkan ke seluruh tagihan dari Excel.</p>
-                     </div>
-                     <div className="sm:ml-auto">
-                        <DatePickerField
-                           value={trxDate}
-                           onChange={setTrxDate}
-                           ariaLabel="Tanggal transaksi default"
-                           className="w-[180px] py-2 text-white focus:border-indigo-500"
-                        />
-                     </div>
-                  </div>
+                  <div className="grid gap-4">
+                    <div className="max-w-60">
+                      <FormField label="Tanggal transaksi" help="Bawaan H-1 (WITA). Dipakai untuk semua tagihan dari berkas.">
+                        {(a11y) => <input {...a11y} type="date" className="fi-input" value={trxDate} onChange={(e) => setTrxDate(e.target.value)} />}
+                      </FormField>
+                    </div>
 
-                  {selectedRoute === "salesReceiptBulkSave" && (
-                     <div className="mx-6 mt-6 p-5 bg-indigo-900/20 shadow-inner border border-indigo-500/30 rounded-2xl">
-                        <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-                           <Settings2 className="w-4 h-4 text-indigo-400" />
-                           Mapping Format Pelunasan Internal (Hanya Berlaku Excel Internal)
-                        </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                           <div className="space-y-2">
-                              <label className="text-xs text-white/50 font-medium">Tunai (No Kas/Bank & Penomoran)</label>
-                              <div className="flex gap-2">
-                                 <input type="text" placeholder="ID/No Akun Bank" value={mapTunaiBank} onChange={e => setMapTunaiBank(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                                 <input type="text" placeholder="ID AutoNumber" value={mapTunaiAutoNum} onChange={e => setMapTunaiAutoNum(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                              </div>
-                           </div>
-                           <div className="space-y-2">
-                              <label className="text-xs text-white/50 font-medium">Trf (No Kas/Bank & Penomoran)</label>
-                              <div className="flex gap-2">
-                                 <input type="text" placeholder="ID/No Akun Bank" value={mapTrfBank} onChange={e => setMapTrfBank(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                                 <input type="text" placeholder="ID AutoNumber" value={mapTrfAutoNum} onChange={e => setMapTrfAutoNum(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                              </div>
-                           </div>
-                           <div className="space-y-2">
-                              <label className="text-xs text-white/50 font-medium">BG (No Kas/Bank & Penomoran)</label>
-                              <div className="flex gap-2">
-                                 <input type="text" placeholder="ID/No Akun Bank" value={mapBgBank} onChange={e => setMapBgBank(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                                 <input type="text" placeholder="ID AutoNumber" value={mapBgAutoNum} onChange={e => setMapBgAutoNum(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                              </div>
-                           </div>
+                    {selectedRoute === "salesReceiptBulkSave" && (
+                      <div className="grid gap-3">
+                        <div className="grid gap-1">
+                          <h3 className="fi-title-3">Mapping Format Pelunasan internal</h3>
+                          <p className="fi-small fi-muted">Hanya dipakai untuk berkas Format Pelunasan internal.</p>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-white/10">
-                           <div className="space-y-2">
-                              <label className="text-xs text-white/50 font-medium">Pot.1 (Akun GL Diskon)</label>
-                              <input type="text" placeholder="No. Akun GL (Biarkan kosong bila tdk digunakan)" value={mapPot1Account} onChange={e => setMapPot1Account(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                           </div>
-                           <div className="space-y-2">
-                              <label className="text-xs text-white/50 font-medium">Pot.2 (Akun GL Diskon)</label>
-                              <input type="text" placeholder="No. Akun GL" value={mapPot2Account} onChange={e => setMapPot2Account(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                           </div>
-                           <div className="space-y-2">
-                              <label className="text-xs text-white/50 font-medium">Pot.3 (Akun GL Diskon)</label>
-                              <input type="text" placeholder="No. Akun GL" value={mapPot3Account} onChange={e => setMapPot3Account(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                           </div>
+                        <div className="fi-formgrid">
+                          <FormField label="Akun kas/bank Tunai" help="ID atau nomor akun.">{(a11y) => <input {...a11y} type="text" className="fi-input" value={mapTunaiBank} onChange={(e) => setMapTunaiBank(e.target.value)} />}</FormField>
+                          <FormField label="ID penomoran Tunai">{(a11y) => <input {...a11y} type="text" className="fi-input" value={mapTunaiAutoNum} onChange={(e) => setMapTunaiAutoNum(e.target.value)} />}</FormField>
+                          <FormField label="Akun kas/bank Transfer" help="ID atau nomor akun.">{(a11y) => <input {...a11y} type="text" className="fi-input" value={mapTrfBank} onChange={(e) => setMapTrfBank(e.target.value)} />}</FormField>
+                          <FormField label="ID penomoran Transfer">{(a11y) => <input {...a11y} type="text" className="fi-input" value={mapTrfAutoNum} onChange={(e) => setMapTrfAutoNum(e.target.value)} />}</FormField>
+                          <FormField label="Akun kas/bank BG" help="ID atau nomor akun.">{(a11y) => <input {...a11y} type="text" className="fi-input" value={mapBgBank} onChange={(e) => setMapBgBank(e.target.value)} />}</FormField>
+                          <FormField label="ID penomoran BG">{(a11y) => <input {...a11y} type="text" className="fi-input" value={mapBgAutoNum} onChange={(e) => setMapBgAutoNum(e.target.value)} />}</FormField>
+                          <FormField label="Akun GL Pot.1" help="Akun diskon. Kosongkan bila tidak dipakai.">{(a11y) => <input {...a11y} type="text" className="fi-input" value={mapPot1Account} onChange={(e) => setMapPot1Account(e.target.value)} />}</FormField>
+                          <FormField label="Akun GL Pot.2" help="Akun diskon. Kosongkan bila tidak dipakai.">{(a11y) => <input {...a11y} type="text" className="fi-input" value={mapPot2Account} onChange={(e) => setMapPot2Account(e.target.value)} />}</FormField>
+                          <FormField label="Akun GL Pot.3" help="Akun diskon. Kosongkan bila tidak dipakai.">{(a11y) => <input {...a11y} type="text" className="fi-input" value={mapPot3Account} onChange={(e) => setMapPot3Account(e.target.value)} />}</FormField>
                         </div>
-                     </div>
-                  )}
-                  <div className="p-12 flex flex-col items-center justify-center text-center min-h-[300px] bg-black/20 border-2 border-dashed border-white/10 m-6 rounded-2xl">
-                    <div className="w-16 h-16 bg-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center mb-4 shadow-[0_0_15px_rgba(99,102,241,0.2)]">
-                      <Upload className="w-8 h-8 drop-shadow-[0_0_8px_currentColor]" />
-                    </div>
-                    <h3 className="text-sm font-semibold text-white">Pilih File Excel Anda</h3>
-                    <p className="text-xs text-white/50 mt-1 mb-6">Pastikan nama kolom Excel di Baris Pertama (Header) PERSIS sama persis dengan nama parameter API Accurate.</p>
-                    <div className="flex items-center gap-3">
-                      <button onClick={handleDownloadTemplate} className="px-5 py-2.5 bg-indigo-900/40 border border-indigo-500/30 rounded-xl text-sm font-medium text-indigo-300 hover:bg-indigo-800/60 hover:text-indigo-200 transition-all shadow-[0_0_15px_rgba(79,70,229,0.1)] inline-flex items-center gap-2">
-                        <FileSpreadsheet className="w-4 h-4" />
-                        Download Template Excel
-                      </button>
-                      <label className="px-5 py-2.5 bg-[#ffffff]/10 backdrop-blur-md border border-white/20 rounded-xl text-sm font-medium text-white hover:bg-white/20 transition-all cursor-pointer inline-flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.05)]">
-                        <input type="file" className="hidden" accept=".xlsx, .xls, .csv" onChange={handleFileUpload} />
-                        Upload Data (.xlsx)
-                      </label>
+                      </div>
+                    )}
+
+                    <div className="grid gap-3 rounded-[var(--r-md)] border border-dashed border-line-strong p-4 sm:p-6">
+                      <div className="grid gap-1">
+                        <h3 className="fi-title-3">Berkas Excel atau CSV</h3>
+                        <p className="fi-small fi-muted">
+                          {adaParser
+                            ? "Endpoint ini punya pembaca berkas khusus. Hasilnya dimuat ke Payload JSON untuk diperiksa; belum ada yang dikirim."
+                            : "Baris pertama berisi nama kolom yang sama persis dengan nama parameter API Accurate (pakai templat). Isi berkas dimuat ke Payload JSON untuk diperiksa; belum ada yang dikirim."}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button icon={<Download className="fi-icon" aria-hidden />} disabled={!adaTemplat} disabledReason="Endpoint ini belum punya templat Excel." onClick={handleDownloadTemplate}>Unduh templat Excel</Button>
+                        <label className="fi-btn fi-btn--secondary">
+                          <Upload className="fi-icon" aria-hidden />Unggah berkas
+                          <input type="file" className="sr-only" accept=".xlsx, .xls, .csv" onChange={(e) => { setLogGalat(null); handleFileUpload(e); }} />
+                        </label>
+                      </div>
+                      {!adaTemplat && <p className="fi-small fi-why">Endpoint ini belum punya templat Excel; susun kolom sesuai parameter API.</p>}
                     </div>
                   </div>
-                  </>
                 )}
               </div>
-
-              <div className="p-5 border-t border-white/5 bg-black/20 flex justify-end">
-                <button
-                  disabled={isLoading || !isKeySaved}
-                  onClick={handleExecute}
-                  className={`px-8 py-3 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${isLoading ? "bg-indigo-900/50 cursor-not-allowed text-white/50" : "bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.4)] hover:shadow-[0_0_30px_rgba(99,102,241,0.6)]"}`}
-                >
-                  <Play className={`w-4 h-4 ${isLoading ? "animate-pulse" : "fill-current"}`} />
-                  {isLoading ? "Mengeksekusi..." : "Eksekusi Endpoint"}
-                </button>
+              <div className="fi-sect-in border-t border-line">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <p className="fi-small fi-subtle mr-auto">{menulis ? "Ringkasan kiriman ditampilkan untuk dikonfirmasi sebelum terkirim." : "Hanya membaca dari Accurate, tidak mengubah data."}</p>
+                  <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} busy={isLoading} disabled={terkunci} disabledReason="Masuk Accurate dan buka database dulu." onClick={bukaKirim}>
+                    {isLoading ? "Memproses…" : menulis ? "Kirim ke Accurate…" : "Baca dari Accurate"}
+                  </Button>
+                </div>
               </div>
-            </div>
+            </Section>
 
-            {/* Response Viewer */}
-            <div className="bg-[#1e1f29]/30 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/10 overflow-hidden flex flex-col min-h-[300px]">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-black/20">
-                <h3 className="text-sm font-semibold text-white/80 flex items-center gap-2">
-                  <ExternalLink className="w-4 h-4 text-emerald-400 drop-shadow-[0_0_5px_currentColor]" />
-                  Terminal Log & Response Viewer
-                </h3>
-              </div>
-              <div className="p-5 overflow-auto flex-1 font-mono text-xs text-slate-300 bg-black/10">
+            <Section title="Hasil">
+              <div className="fi-sect-in">
                 {!responseLog ? (
-                  <div className="h-full flex flex-col opacity-50 items-center justify-center text-white/40">
-                    <p>Menunggu eksekusi endpoint...</p>
-                  </div>
+                  <EmptyState title="Belum ada hasil" message="Hasil analisis berkas dan jawaban Accurate tampil di sini." />
+                ) : responseLog.status === "error" ? (
+                  <>
+                    <MessageStrip tone="neg" title="Ada yang gagal.">
+                      <span className="whitespace-pre-wrap break-words">{responseLog.message}</span>
+                    </MessageStrip>
+                    {logGalat && (
+                      <div><Button icon={<Download className="fi-icon" aria-hidden />} onClick={() => void unduhLogGalat()}>Unduh ulang log galat</Button></div>
+                    )}
+                  </>
                 ) : (
-                  responseLog.status === "error" ? (
-                    <div className="text-red-400 flex flex-col gap-2">
-                      <div className="flex items-center gap-2 font-semibold">
-                        <ServerCrash className="w-4 h-4" /> Error Eksekusi:
-                      </div>
-                      <pre className="whitespace-pre overflow-x-auto bg-red-950/20 p-4 rounded-xl border border-red-500/20 shadow-inner text-red-300">
-                        {responseLog.message}
-                      </pre>
-                    </div>
-                  ) : (
-                    <div className="text-emerald-400 flex flex-col gap-2">
-                      <div className="flex items-center gap-2 font-semibold text-emerald-300 mb-2 drop-shadow-[0_0_5px_currentColor]">
-                        <CheckCircle2 className="w-4 h-4" /> Eksekusi Sukses
-                      </div>
-                      {typeof responseLog.data?._note === "string" && responseLog.data._note.trim() ? (
-                        <div className="rounded-xl border border-emerald-500/20 bg-emerald-950/10 px-4 py-3 text-emerald-300">
-                          {responseLog.data._note}
-                        </div>
-                      ) : null}
-                      {Array.isArray(responseLog.data?._warnings) && responseLog.data._warnings.length > 0 ? (
-                        <div className="rounded-xl border border-amber-500/20 bg-amber-950/10 px-4 py-3 text-amber-200">
-                          <p className="font-semibold text-amber-300">Peringatan Parser / Eksekusi</p>
-                          <div className="mt-2 flex flex-col gap-1 text-[11px]">
-                            {responseLog.data._warnings.slice(0, 20).map((warning: string, index: number) => (
-                              <p key={`${warning}-${index}`}>{warning}</p>
-                            ))}
-                            {responseLog.data._warnings.length > 20 ? (
-                              <p className="text-amber-300/80">
-                                +{responseLog.data._warnings.length - 20} peringatan lain.
-                              </p>
-                            ) : null}
-                          </div>
-                        </div>
-                      ) : null}
-                      {Array.isArray(responseLog.data?.d) && responseLog.data.d.length > 0 ? (
-                        <div className="overflow-x-auto border border-emerald-500/20 rounded-xl mt-2 mb-2 pb-2 bg-black/20 shadow-inner">
-                          <table className="w-full text-left text-emerald-400 border-collapse">
-                            <thead className="bg-emerald-900/30 text-emerald-300 border-b border-emerald-500/20">
-                              <tr>
-                                {Array.from(new Set(responseLog.data.d.flatMap((row: any) => Object.keys(row || {})))).map(key => (
-                                  <th key={key as string} className="px-5 py-3 font-semibold border-b border-emerald-900/50 whitespace-nowrap">{String(key)}</th>
-                                ))}
-                              </tr>
+                  <>
+                    {hasilAnalisis ? (
+                      <MessageStrip tone="info" title="Berkas dianalisis, belum dikirim ke Accurate.">
+                        Hasilnya sudah dimuat ke Payload JSON. Periksa, lalu tekan Kirim ke Accurate.
+                      </MessageStrip>
+                    ) : data?.s === true ? (
+                      <MessageStrip tone="pos" title={menulis ? "Accurate menerima kiriman." : "Accurate menjawab."}>{catatan}</MessageStrip>
+                    ) : (
+                      <MessageStrip tone="info" title="Jawaban Accurate.">Periksa isinya di bawah.</MessageStrip>
+                    )}
+                    {hasilAnalisis && catatan && <p className="fi-small">{catatan}</p>}
+                    {ditolakD > 0 && (
+                      <MessageStrip tone="warn" title={`${ditolakD} baris ditolak Accurate.`}>Baris dengan kolom s bernilai false di tabel tidak tersimpan. Periksa sebelum mengirim ulang.</MessageStrip>
+                    )}
+                    {peringatan.length > 0 && (
+                      <MessageStrip tone="warn" title={hasilAnalisis ? "Peringatan dari pembaca berkas." : "Peringatan."}>
+                        <ul className="mt-1 grid gap-1">
+                          {peringatan.slice(0, 20).map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
+                        </ul>
+                        {peringatan.length > 20 && <p className="mt-1">dan {peringatan.length - 20} peringatan lain.</p>}
+                      </MessageStrip>
+                    )}
+                    {barisD ? (
+                      <div className="grid gap-2">
+                        <div className="fi-tablescroll max-h-[480px] rounded-[var(--r-md)] border border-line">
+                          <table className="fi-table">
+                            <caption className="sr-only">{hasilAnalisis ? "Ringkasan analisis berkas" : "Jawaban Accurate per baris"}</caption>
+                            <thead>
+                              <tr>{kolomD.map((key) => <th key={key} scope="col">{key}</th>)}</tr>
                             </thead>
                             <tbody>
-                              {responseLog.data.d.slice(0, 50).map((row: any, i: number) => (
-                                <tr key={i} className="hover:bg-emerald-900/20 transition-colors border-b border-emerald-900/20 last:border-0">
-                                  {Array.from(new Set(responseLog.data.d.flatMap((row: any) => Object.keys(row || {})))).map(key => {
-                                    const k = key as string;
-                                    return (
-                                    <td key={k} className="px-5 py-2.5 opacity-90 whitespace-nowrap" title={typeof row[k] === "object" ? JSON.stringify(row[k]) : String(row[k])}>
-                                      {typeof row[k] === "object" ? JSON.stringify(row[k]) : String(row[k])}
-                                    </td>
-                                  )})}
+                              {barisD.slice(0, 50).map((row, i) => (
+                                <tr key={i}>
+                                  {kolomD.map((key) => {
+                                    const teks = selTeks(row?.[key]);
+                                    return <td key={key} className="max-w-[24rem] truncate" title={teks}>{teks}</td>;
+                                  })}
                                 </tr>
                               ))}
                             </tbody>
                           </table>
-                          <p className="mt-3 text-emerald-500/70 text-[10px] text-center italic w-full">
-                            Menampilkan mode Tabel ({responseLog.data.d.length} Baris Data). Filter kolom terbatas 50 row visualisasi.
-                          </p>
                         </div>
-                      ) : (
-                        <pre className="whitespace-pre overflow-x-auto text-emerald-400 bg-emerald-950/10 p-4 rounded-xl border border-emerald-500/20 shadow-inner">
-                          {JSON.stringify(responseLog.data, null, 2)}
-                        </pre>
-                      )}
-                    </div>
-                  )
+                        <p className="fi-small fi-subtle">
+                          {barisD.length > 50 ? `Menampilkan 50 dari ${barisD.length} baris.` : `${barisD.length} baris.`}
+                        </p>
+                      </div>
+                    ) : (
+                      <pre className="fi-mono max-h-[480px] overflow-auto whitespace-pre rounded-[var(--r-md)] border border-line bg-surface-2 p-3">
+                        {JSON.stringify(responseLog.data, null, 2)}
+                      </pre>
+                    )}
+                  </>
                 )}
               </div>
-            </div>
-
+            </Section>
           </div>
         </div>
 
-        <Dialog
-          open={Boolean(duplicateReview)}
-          onClose={() => setDuplicateReview(null)}
-          labelledBy="duplicate-review-title"
-          describedBy="duplicate-review-description"
-          className="w-full max-w-5xl overflow-hidden rounded-2xl border border-amber-400/20 bg-[#15161f] shadow-2xl"
-        >
-          {duplicateReview && (
+        <ConfirmDialog
+          open={Boolean(k)}
+          onClose={() => setKonfirmasiKirim(null)}
+          tag="Tulis ke Accurate"
+          title={k?.massal ? `Kirim ${k.baris} baris ke Accurate?` : "Kirim ke Accurate?"}
+          description={
             <>
-              <div className="px-6 py-4 border-b border-white/10 bg-amber-500/10">
-                <h3 id="duplicate-review-title" tabIndex={-1} autoFocus className="text-lg font-semibold text-white">Tinjau Potensi Pembayaran Ganda</h3>
-                <p id="duplicate-review-description" className="text-sm text-white/60 mt-1">
-                  Sistem menemukan baris yang mirip dengan upload lain atau muncul lebih dari sekali di batch ini.
-                  Centang baris yang tetap ingin diproses.
+              Kiriman yang diterima Accurate menjadi jurnal nyata dan tidak bisa ditarik dari aplikasi ini.
+              {k?.pelunasan && " Pelunasan diperiksa dulu terhadap kiriman sebelumnya dan riwayat Accurate; baris yang mirip ditampilkan untuk ditinjau sebelum dikirim."}
+            </>
+          }
+          facts={k ? [
+            ["Endpoint", <span key="endpoint" className="fi-mono">{k.path}</span>],
+            ["Isi", k.massal ? `${k.baris} baris, ${Math.ceil(k.baris / 100)} tahap (maks. 100 baris per tahap)` : "1 permintaan"],
+            ["Sumber", k.contohBawaan ? "Contoh payload bawaan endpoint" : "Payload JSON di editor"],
+            ["Database aktif", dbTampil],
+          ] : undefined}
+          confirmLabel={k?.massal ? `Kirim ${k.baris} baris` : "Kirim ke Accurate"}
+          onConfirm={() => {
+            setKonfirmasiKirim(null);
+            setLogGalat(null);
+            void handleExecute();
+          }}
+        >
+          {k?.contohBawaan && (
+            <MessageStrip tone="warn" title="Tab Unggah Excel aktif tanpa berkas termuat.">
+              Yang dikirim adalah contoh payload bawaan endpoint, bukan isi berkas. Batalkan, lalu unggah berkas bila itu maksud Anda.
+            </MessageStrip>
+          )}
+        </ConfirmDialog>
+
+        <Dialog
+          open={Boolean(tinjau)}
+          onClose={tutupTinjau}
+          labelledBy={`${idTinjau}-judul`}
+          describedBy={`${idTinjau}-ket`}
+          // ponytail: lebar dialog lewat utilitas `!` karena dialog.fi-dialog mengunci 560 px; permintaan modifier lebar ke fondasi.
+          className="fi-dialog w-[min(1040px,calc(100vw-32px))]!"
+        >
+          {tinjau && (
+            <>
+              <header>
+                <div>
+                  <span className="fi-tag" data-tone="warn">Pelunasan ganda</span>
+                  <h2 id={`${idTinjau}-judul`}>Kirim pelunasan yang mirip kiriman lain?</h2>
+                </div>
+                <Button variant="icon" aria-label="Tutup" onClick={tutupTinjau}><X className="fi-icon" aria-hidden /></Button>
+              </header>
+              <div className="fi-dialog-body">
+                <p id={`${idTinjau}-ket`} className="fi-small fi-muted">
+                  Baris ini mirip unggahan lain, riwayat Accurate, atau muncul lebih dari sekali di batch ini. Centang yang tetap ingin dikirim;
+                  yang tidak dicentang tidak dikirim.
                 </p>
-              </div>
-              <div className="px-6 py-4 text-xs text-white/60 border-b border-white/10 bg-black/20 flex items-center justify-between">
-                <span>{duplicateReview.reviewRows.length} kandidat perlu direview</span>
-                <span>{Object.values(duplicateReview.selections).filter(Boolean).length} dipilih untuk lanjut</span>
-              </div>
-              <div className="max-h-[60vh] overflow-auto">
-                <table className="w-full text-left text-sm text-slate-200">
-                  <thead className="sticky top-0 bg-[#1b1c26] border-b border-white/10 text-white/70">
-                    <tr>
-                      <th className="px-4 py-3">Pilih</th>
-                      <th className="px-4 py-3">Customer</th>
-                      <th className="px-4 py-3">Invoice</th>
-                          <th className="px-4 py-3">Tanggal</th>
-                          <th className="px-4 py-3">Nilai</th>
-                          <th className="px-4 py-3">Alasan</th>
-                          <th className="px-4 py-3">Referensi</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {duplicateReview.reviewRows
-                      .sort((a, b) => a.originalIndex - b.originalIndex)
-                      .map((item) => (
-                        <tr key={item.reviewId} className="border-b border-white/5 hover:bg-white/[0.03]">
-                          <td className="px-4 py-3 align-top">
-                            <input
-                              type="checkbox"
-                              checked={!!duplicateReview.selections[item.reviewId]}
-                              onChange={(e) => handleDuplicateSelectionChange(item.reviewId, e.target.checked)}
-                              aria-label={`Pilih ${item.customerNo || "customer tanpa kode"}, invoice ${item.invoiceNo || "tanpa nomor"}`}
-                              className="h-4 w-4 rounded border-white/20 bg-black/40 text-amber-400 focus:ring-amber-400"
-                            />
-                          </td>
-                          <td className="px-4 py-3 align-top">
-                            <div className="font-medium text-white">{item.customerNo || "-"}</div>
-                            <div className="text-xs text-white/45">{item.paymentMethod}</div>
-                          </td>
-                          <td className="px-4 py-3 align-top">
-                            <div className="font-mono text-xs break-all">{item.invoiceNo || "-"}</div>
-                            {item.recommended && (
-                              <div className="mt-2 inline-flex rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300 neon-text-success">
-                                Rekomendasi
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 align-top">{item.transDate || "-"}</td>
-                          <td className="px-4 py-3 align-top">{item.amount.toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                          <td className="px-4 py-3 align-top">
-                            <div className="flex flex-wrap gap-2">
-                              {item.reasons.map((reason) => (
-                                <span key={`${item.reviewId}-${reason}`} className="rounded-full border border-amber-400/20 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-300 neon-text-warn">
-                                  {getDuplicateReasonLabel(reason)}
-                                </span>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 align-top">
-                            {item.matchedReceiptNumbers.length > 0 ? (
-                              <div className="space-y-1">
-                                {item.matchedReceiptNumbers.slice(0, 5).map((receiptNo) => (
-                                  <div key={`${item.reviewId}-${receiptNo}`} className="font-mono text-[11px] text-white/75 break-all">
-                                    {receiptNo}
-                                  </div>
-                                ))}
-                                {item.matchedReceiptNumbers.length > 5 && (
-                                  <div className="text-[10px] text-white/45">
-                                    +{item.matchedReceiptNumbers.length - 5} receipt lain
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <span className="text-white/35">Log lokal saja</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex items-center justify-between gap-3 border-t border-white/10 bg-black/20 px-6 py-4">
-                <p className="text-xs text-white/45">
-                  Baris yang tidak dicentang tidak akan diproses pada eksekusi ini.
+                <p className="fi-small">
+                  {tinjau.reviewRows.length} kandidat perlu ditinjau, {dipilihTinjau} dipilih. {tinjau.passthroughRows.length} baris lain tanpa tanda ganda ikut dikirim.
                 </p>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => setDuplicateReview(null)}
-                    className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-white/70 hover:bg-white/5"
-                  >
-                    Tutup
-                  </button>
-                  <button
-                    onClick={handleConfirmDuplicateReview}
-                    className="rounded-xl bg-amber-500 px-5 py-2 text-sm font-bold text-slate-950 hover:bg-amber-400"
-                  >
-                    Lanjutkan Yang Dicentang
-                  </button>
+                {galatTinjau && <MessageStrip tone="neg">{galatTinjau}</MessageStrip>}
+                <div className="fi-tablescroll max-h-[55vh] rounded-[var(--r-md)] border border-line">
+                  <table className="fi-table">
+                    <caption className="sr-only">Kandidat pelunasan ganda</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col" className="fi-sel"><span className="sr-only">Pilih</span></th>
+                        <th scope="col">Pelanggan</th>
+                        <th scope="col">Invoice</th>
+                        <th scope="col">Tanggal</th>
+                        <th scope="col" className="fi-end">Nilai</th>
+                        <th scope="col">Alasan</th>
+                        <th scope="col">Referensi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tinjau.reviewRows
+                        .sort((a, b) => a.originalIndex - b.originalIndex)
+                        .map((item) => (
+                          <tr key={item.reviewId} data-selected={tinjau.selections[item.reviewId] || undefined}>
+                            <td className="fi-sel">
+                              <label className="fi-check min-w-[var(--ctl-h)] justify-center">
+                                <input
+                                  type="checkbox"
+                                  checked={!!tinjau.selections[item.reviewId]}
+                                  onChange={(e) => { setGalatTinjau(null); handleDuplicateSelectionChange(item.reviewId, e.target.checked); }}
+                                  aria-label={`Pilih ${item.customerNo || "pelanggan tanpa kode"}, invoice ${item.invoiceNo || "tanpa nomor"}`}
+                                />
+                              </label>
+                            </td>
+                            <td>
+                              <div className="fi-mono">{item.customerNo || KOSONG}</div>
+                              <div className="fi-small fi-subtle">{item.paymentMethod || KOSONG}</div>
+                            </td>
+                            <td>
+                              <div className="fi-mono break-all">{item.invoiceNo || KOSONG}</div>
+                              {item.recommended && <div className="mt-1"><StatusBadge tone="info">Disarankan</StatusBadge></div>}
+                            </td>
+                            <td className="fi-tnum whitespace-nowrap">{item.transDate || KOSONG}</td>
+                            <td className="fi-end">{item.amount.toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td>
+                              <div className="flex flex-wrap gap-1">
+                                {item.reasons.map((reason) => <StatusBadge key={`${item.reviewId}-${reason}`} tone="warn">{getDuplicateReasonLabel(reason)}</StatusBadge>)}
+                              </div>
+                            </td>
+                            <td>
+                              {item.matchedReceiptNumbers.length > 0 ? (
+                                <div className="grid gap-1">
+                                  {item.matchedReceiptNumbers.slice(0, 5).map((receiptNo) => <div key={`${item.reviewId}-${receiptNo}`} className="fi-mono break-all">{receiptNo}</div>)}
+                                  {item.matchedReceiptNumbers.length > 5 && <div className="fi-small fi-subtle">dan {item.matchedReceiptNumbers.length - 5} pelunasan lain</div>}
+                                </div>
+                              ) : (
+                                <span className="fi-small fi-muted">Catatan lokal saja</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
+              <footer>
+                <Button onClick={tutupTinjau}>Batal</Button>
+                <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} onClick={() => void handleConfirmDuplicateReview()}>Kirim {totalTinjau} baris ke Accurate</Button>
+              </footer>
             </>
           )}
         </Dialog>
 
+        <ConfirmDialog
+          open={Boolean(override)}
+          onClose={() => setOverride(null)}
+          tone="negative"
+          tag="Override duplikat, kewenangan Finance"
+          title={`Kirim ulang ${override?.blok ?? 0} blok yang ditandai ganda?`}
+          description="Baris ini mirip kiriman sebelumnya atau riwayat Accurate. Mengirimnya bisa membuat pelunasan ganda di Accurate. Alasan tercatat di jejak override."
+          facts={override ? [
+            ["Blok di-override", String(override.blok)],
+            ["Baris bertanda yang dipilih", String(override.baris.length)],
+            ["Nilai baris itu", rupiah(override.baris.reduce((jumlah, item) => jumlah + item.amount, 0))],
+            ["Invoice", daftarRingkas(override.baris.map((item) => item.invoiceNo || KOSONG))],
+            ["Pelanggan", daftarRingkas(Array.from(new Set(override.baris.map((item) => item.customerNo || KOSONG))), 3)],
+            ["Total dikirim", `${override.finalRows.length} baris`],
+          ] : undefined}
+          reason={{ label: "Alasan override", min: 15 }}
+          confirmLabel="Override dan kirim"
+          onConfirm={(alasan) => {
+            const o = override;
+            if (!o) return;
+            setOverride(null);
+            void kirimHasilTinjauan(o.finalRows, { ...o.keys, overrideReason: alasan });
+          }}
+        />
       </div>
-    </div>
+    </FioriScope>
   );
 }
