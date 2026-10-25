@@ -178,7 +178,7 @@ test.describe("Rekonsiliasi", () => {
         await expect(hasil.getByRole("row")).toHaveCount(3); // 2 masalah (saringan bawaan)
         await expect(hasil).toContainText("Data KINO tidak ditemukan");
         await expect(hasil).not.toContainText("KN01387");
-        await expect(main.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+        await expect(main.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
         await main.getByRole("group", { name: "Saring hasil" }).getByRole("button", { name: /^Semua/ }).click();
         await expect(hasil.getByRole("row")).toHaveCount(4);
         await page.screenshot({ path: "test-results/fiori-rekonsiliasi-hasil.png", fullPage: true });
@@ -202,7 +202,7 @@ test.describe("Rekonsiliasi", () => {
         await expect(main.getByRole("alert").filter({ hasText: "Riwayat belum termuat" })).toBeVisible();
         await expect(main.getByText("Belum pernah dijalankan")).toHaveCount(0);
         await main.getByRole("group", { name: "Jenis Rekonsiliasi" }).getByRole("button", { name: "Pembelian" }).click();
-        await expect(main.getByLabel("Prinsipal")).toHaveValue("GODREJ");
+        await expect(main.getByLabel("Principal", { exact: true })).toHaveValue("GODREJ");
         await expect(main.getByText("Belum ada file dipilih")).toHaveCount(2);
     });
 });

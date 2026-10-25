@@ -119,13 +119,15 @@ test("Pembayaran: ubin 12 bulan + total, pilih semua yang belum dibayar, Tandai 
     await expect(sep).toHaveAttribute("aria-pressed", "true");
     await expect(sep).toContainText("Rp 9,4 Jt");
     await expect(sep).toContainText("belum: Rp 8,6 Jt");
-    await expect(ubin.getByRole("button", { name: /Agustus/ })).toContainText("Lunas");
+    // Bulan non-terpilih hanya tahu catatan yang ada: jumlah catatan lunas, bukan badge Lunas (audit desain 001 No 12).
+    await expect(ubin.getByRole("button", { name: /Agustus/ })).toContainText("Catatan: 1 dari 1 lunas");
+    await expect(ubin.getByRole("button", { name: /Agustus/ }).locator(".fi-badge")).toHaveCount(0);
     await expect(ubin.getByRole("button", { name: /Juli/ })).toContainText("belum dihitung");
 
     await expect(tabel.locator("tbody tr").filter({ hasText: "Rizal Fahmi" })).toContainText("Lunas");
     await expect(tabel.locator("tbody tr").filter({ hasText: "Rizal Fahmi" })).toContainText("03/10/2026 · Dewi Lestari");
     await expect(tabel.locator("tbody tr").filter({ hasText: "Rudi Hartono" })).toContainText("Rp 0 · belum 90,0%");
-    await expect(tabel.locator("tbody tr").filter({ hasText: "Sinta Dewi" })).toContainText("tercatat Rp 900.000 — nominal ini yang ditandai lunas");
+    await expect(tabel.locator("tbody tr").filter({ hasText: "Sinta Dewi" })).toContainText("tercatat Rp 900.000; nominal ini yang ditandai lunas");
     await expect(main.getByRole("checkbox", { name: "Pilih Rudi Hartono GODREJ" })).toBeDisabled();
     await expect(main.getByRole("checkbox", { name: "Pilih Rizal Fahmi URC" })).toBeDisabled();
     await expect(main.getByText("Upload")).toHaveCount(0);
@@ -148,8 +150,10 @@ test("Pembayaran: ubin 12 bulan + total, pilih semua yang belum dibayar, Tandai 
     await expect(dlg).toContainText("Sinta Dewi tercatat Rp 900.000, hitung ulang Rp 941.000");
     await expect(dlg.getByLabel("Tanggal bayar")).toHaveValue(HARI_INI); // bawaan hari ini WITA (owner 8 Okt)
     await expect(dlg).toContainText(`${tampil(HARI_INI)} (WITA) · dicatat bersama nama Anda`);
-    await expect(dlg.getByText("usulan BL-27")).toBeVisible();
-    await expect(dlg.getByText("usulan BL-47")).toBeVisible();
+    // VariantNote tidak lagi di dalam dialog tulis uang (No 80); perilaku hari ini tampil sebagai fakta.
+    await expect(dlg.getByRole("complementary")).toHaveCount(0);
+    await expect(dlg).toContainText("yang sudah punya catatan memakai nominal tercatat");
+    await expect(dlg).toContainText("Belum disimpan dari layar ini.");
     await page.screenshot({ path: "test-results/fiori-insentif-bayar-dialog.png" });
     await dlg.getByRole("button", { name: "Tandai lunas" }).click();
     await expect(dlg).toBeHidden();
@@ -287,7 +291,7 @@ test("Pembayaran: galat pembayaran/SPV bukan kosong dan mengunci penandaan; pons
     await expect(main.getByRole("table", { name: "Insentif September 2026" }).locator("tbody tr").filter({ hasText: "ANI" })).toHaveCount(0);
     // Sumber gagal → kotak pilih dan Tandai lunas terkunci; ubin bulan ini "Belum lengkap", bukan Lunas.
     await expect(main.getByRole("checkbox", { name: "Pilih Andi Pratama KINO" })).toBeDisabled();
-    await expect(main.locator(".fi-ftb")).toContainText("Data insentif SPV gagal dimuat — muat ulang dulu sebelum menandai");
+    await expect(main.locator(".fi-ftb")).toContainText("Data insentif SPV gagal dimuat; muat ulang dulu sebelum menandai");
     await expect(main.locator(".fi-ftb").getByRole("button", { name: "Tandai lunas…" })).toBeDisabled();
     await expect(main.getByRole("group", { name: "Pilih bulan 2026" }).getByRole("button", { name: /September/ })).toContainText("Belum lengkap");
 
@@ -446,7 +450,7 @@ test("Support: galat 400 server tampil di dialog dan halaman, tidak ada yang ber
     putus = true;
     await main.locator(".fi-ftb").getByRole("button", { name: "Simpan & hitung ulang…" }).click();
     await dlg.getByRole("button", { name: "Simpan & hitung ulang" }).click();
-    await expect(dlg.getByRole("alert")).toContainText("hasilnya tidak pasti — muat ulang untuk memeriksa");
+    await expect(dlg.getByRole("alert")).toContainText("hasilnya tidak pasti. Muat ulang untuk memeriksa");
     await expect(dlg.getByRole("alert")).not.toContainText("Tidak ada yang diubah");
     await expect(dlg.getByRole("alert")).not.toContainText("Failed to fetch");
     expect(kirim.map((k) => k.url)).toEqual(["/api/insentif-sales/support", "/api/insentif-sales/support"]);

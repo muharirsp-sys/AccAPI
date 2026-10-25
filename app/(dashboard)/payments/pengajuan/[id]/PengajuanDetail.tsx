@@ -4,7 +4,7 @@
  *   transfer/posting/Ajukan Ulang tetap di halaman Finance.
  * Caller: app/(dashboard)/payments/pengajuan/[id]/page.tsx (props id, permKeys).
  * Dependensi: ../../bersama (baca, unduhUrl), ../Pengajuan (RingkasPengajuan, STATUS_PENGAJUAN, jamTampil), components/fiori/*,
- *   lib/payments-ui, lib/promo-ui (rupiah).
+ *   lib/payments-ui, lib/promo-ui (rupiah), lib/tampil (KOSONG).
  * Main Functions: PengajuanDetail (default).
  * Side Effects: GET /payments/submissions/{id} (payments.view; dokumen SPPD hanya tercantum dengan sppd.download).
  */
@@ -21,6 +21,7 @@ import { izinPembayaran, namaAkun, statusFinance, tanggalTampil } from "@/lib/pa
 import { rupiah } from "@/lib/promo-ui";
 import { baca, unduhUrl } from "../../bersama";
 import { STATUS_PENGAJUAN, jamTampil, type RingkasPengajuan } from "../Pengajuan";
+import { KOSONG } from "@/lib/tampil";
 
 type BarisFinance = {
     record_id: string; no_lpb: string; tipe_pengajuan: string; principle: string; invoice_no: string; nilai_invoice: number; potongan: number;
@@ -48,7 +49,7 @@ export default function PengajuanDetail({ id, permKeys }: { id: string; permKeys
         return (
             <div className="fi-page">
                 <ObjectPageHeader breadcrumbs={jejak} title={`Pengajuan ${id}`} />
-                <EmptyState title="Pengajuan tidak ditemukan" message="Nomor pengajuan ini tidak ada. Kembali ke daftar Pengajuan & SPPD dan cari dengan nomor SPPD atau principal." action={kembali} />
+                <EmptyState title="Pengajuan tidak ditemukan" message="Nomor pengajuan ini tidak ada. Kembali ke daftar Pengajuan & SPPD lalu pilih pengajuannya." action={kembali} />
             </div>
         );
     }
@@ -58,8 +59,8 @@ export default function PengajuanDetail({ id, permKeys }: { id: string; permKeys
     const dikembalikan = d.transfer["Ajukan Ulang"] ?? 0;
     const kolom: Column<BarisFinance>[] = [
         { key: "rekaman", header: "Rekaman", cell: (r) => <span className="grid"><span className="fi-mono">{nama(r)}</span><span className="fi-small fi-subtle">{r.tipe_pengajuan}</span></span> },
-        { key: "principal", header: "Principal", cell: (r) => r.principle || "—" },
-        { key: "invoice", header: "Invoice", secondary: true, cell: (r) => r.invoice_no || "—" },
+        { key: "principal", header: "Principal", cell: (r) => r.principle || KOSONG },
+        { key: "invoice", header: "Invoice", secondary: true, cell: (r) => r.invoice_no || KOSONG },
         { key: "bayar", header: "Nilai bayar", align: "end", cell: (r) => <span className="grid justify-items-end"><span className="fi-tnum">{rupiah(r.nilai_pembayaran)}</span>{r.potongan > 0 && <span className="fi-small fi-subtle fi-tnum">potongan {rupiah(r.potongan)}</span>}</span> },
         { key: "status", header: "Status di Finance", cell: (r) => {
             const st = statusFinance(r.status_pembayaran, r.accurate_post_status);
@@ -71,7 +72,7 @@ export default function PengajuanDetail({ id, permKeys }: { id: string; permKeys
                 </span>
             );
         } },
-        { key: "pp", header: "Purchase Payment", cell: (r) => <span className="fi-mono">{r.accurate_purchase_payment_number || "—"}</span> },
+        { key: "pp", header: "Purchase Payment", cell: (r) => <span className="fi-mono">{r.accurate_purchase_payment_number || KOSONG}</span> },
     ];
     const keranjang = Object.entries(d.cart_items ?? {});
     const berkasHilang = Math.max(0, d.file_count - d.files.length);
@@ -82,10 +83,10 @@ export default function PengajuanDetail({ id, permKeys }: { id: string; permKeys
                 status={<StatusBadge tone={STATUS_PENGAJUAN[d.status] ?? "neu"}>{d.status_label}</StatusBadge>}
                 attributes={[
                     { label: "Pengajuan", value: <span className="fi-mono">{d.id}</span> },
-                    { label: "Rute", value: d.route_label || "—" },
+                    { label: "Rute", value: d.route_label || KOSONG },
                     { label: "Tanggal bayar Finance", value: tanggalTampil(d.target_payment_date) },
                     { label: "Nilai bayar", value: rupiah(d.total_pembayaran) },
-                    { label: "Diajukan (WITA)", value: `${namaAkun(d.created_by) || "—"} · ${jamTampil(d.created_at_wita)}` },
+                    { label: "Diajukan (WITA)", value: `${namaAkun(d.created_by) || KOSONG} · ${jamTampil(d.created_at_wita)}` },
                 ]} />
             <AnchorBar anchors={[{ id: "baris", label: "Baris Finance" }, { id: "berkas", label: "Berkas" }, { id: "alur", label: "Alur dokumen" }, { id: "keranjang", label: "Keranjang" }, { id: "riwayat", label: "Riwayat" }]} />
             {load.status === "galat" && <MessageStrip tone="neg" title="Gagal memuat ulang.">{load.error} Yang tampil adalah hasil sebelumnya.</MessageStrip>}
@@ -103,7 +104,7 @@ export default function PengajuanDetail({ id, permKeys }: { id: string; permKeys
                     }} />
                 <p className="fi-small fi-subtle" style={{ padding: "8px 16px 12px" }}>
                     Transfer, posting Purchase Payment, dan Ajukan Ulang dilakukan di <Link href="/finance">halaman Finance</Link>. Server menolak Ajukan Ulang
-                    bila Purchase Payment sudah terposting atau posting masih tidak pasti (BL-49).
+                    bila Purchase Payment sudah terposting atau posting masih tidak pasti.
                 </p>
             </Section>
 
@@ -120,7 +121,7 @@ export default function PengajuanDetail({ id, permKeys }: { id: string; permKeys
                 </div>
             </Section>
 
-            <Section id="alur" title="Alur dokumen" subtitle="BL-35">
+            <Section id="alur" title="Alur dokumen">
                 <div className="fi-dflow">
                     <Link className="fi-dnode" href="/payments"><b>{d.record_count} rekaman</b><span>Pembayaran</span></Link>
                     <span aria-hidden>→</span>
@@ -138,9 +139,9 @@ export default function PengajuanDetail({ id, permKeys }: { id: string; permKeys
                         : keranjang.map(([k, it]) => (
                             <KeyValues key={k} items={[
                                 ["Principal", `${it.principle ?? k.split("||")[0]} · ${it.tipe_pengajuan ?? ""}`],
-                                ["Jenis · potongan", `${it.jenis_pembayaran || "—"} · ${rupiah(Number(it.potongan ?? 0))}`],
+                                ["Jenis · potongan", `${it.jenis_pembayaran || KOSONG} · ${rupiah(Number(it.potongan ?? 0))}`],
                                 ["Nilai bayar", rupiah(Number(it.nilai_pembayaran ?? 0))],
-                                ["Keterangan", it.keterangan || "—"],
+                                ["Keterangan", it.keterangan || KOSONG],
                             ]} />
                         ))}
                 </div>

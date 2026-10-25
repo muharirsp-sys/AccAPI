@@ -18,11 +18,11 @@ import { useCallback, useMemo, useRef, useState, type ChangeEvent, type ReactNod
 import Link from "next/link";
 import { Check, Download, Pencil, RefreshCw, Upload } from "lucide-react";
 import { toast } from "sonner";
-import { Button, EmptyState, ErrorState, FooterToolbar, MessageStrip, ResponsiveTable, Section, Skeleton, VariantNote, type Column } from "@/components/fiori/core";
+import { Button, EmptyState, ErrorState, FooterToolbar, MessageStrip, ResponsiveTable, Section, Skeleton, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
 import { DEFAULT_KONSTANTA } from "@/lib/insentif-konstanta";
 import type { SupportTemplateRow } from "@/lib/insentif-sales-excel";
-import { HALAMAN, LABEL_STATUS, STATUS_INSENTIF_OPSI, formatQty, halamanTerlihat, readApi, sebabNol, type ApiRow } from "@/lib/insentif-ui";
+import { HALAMAN, LABEL_STATUS, STATUS_INSENTIF_OPSI, formatQty, halamanTerlihat, labelTipe, readApi, sebabNol, type ApiRow } from "@/lib/insentif-ui";
 import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
 import { MONTH_LABELS, formatRp } from "./data";
 import { InsentifRangka, useDashboard, usePeriode } from "./Rangka";
@@ -68,14 +68,14 @@ const sebabMuat = (e?: string) => (e && !/^HTTP \d+$/.test(e) ? e : "Server tida
 /** Akibat tiap Status Insentif (pesan konfirmasi lama): efeknya bukan cuma baris itu. */
 const EFEK_STATUS: Record<string, string> = {
     principle: "Principle: insentif baris itu jadi Rp 0 dan keluar dari penyebut mix, sehingga nominal principal LAIN pada salesman yang sama ikut naik.",
-    distributor: "Distributor: support principle diabaikan untuk baris itu — distributor bayar penuh.",
+    distributor: "Distributor: support principle diabaikan untuk baris itu; distributor bayar penuh.",
     distributor_principle: "Distributor + Principle: baris itu ikut skema dan support principle dikurangkan dari pool.",
 };
 
 /** Server MENJAWAB menolak: endpoint memvalidasi seluruh payload sebelum menulis, jadi tidak ada yang berubah. */
 class Ditolak extends Error {}
 /** Tanpa jawaban (jaringan putus): permintaan mungkin sudah sampai dan tertulis — hasilnya tidak pasti. */
-const PUTUS = "Koneksi ke server terputus sebelum ada jawaban; hasilnya tidak pasti — muat ulang untuk memeriksa sebelum menyimpan lagi.";
+const PUTUS = "Koneksi ke server terputus sebelum ada jawaban; hasilnya tidak pasti. Muat ulang untuk memeriksa sebelum menyimpan lagi.";
 
 async function kirim(url: string, method: "POST" | "PATCH", body: unknown, cadangan: string) {
     const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
@@ -145,7 +145,7 @@ function ExcelSupport({ kind, templateRows, fileName, knownKeys, disabledReason,
             onLoaded(values);
             onPesan({
                 tone: "info",
-                teks: `${Object.keys(values).length} baris support ${apa} terisi dari Excel sebagai draf — periksa lalu Simpan & hitung ulang.`
+                teks: `${Object.keys(values).length} baris support ${apa} terisi dari Excel sebagai draf; periksa lalu Simpan & hitung ulang.`
                     + (unknown.length ? ` ${unknown.length} baris dilewati (tidak ada di periode ini).` : ""),
             });
         } catch (err) {
@@ -249,7 +249,7 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
             : memuat || ikutLoad.status === "memuat" ? tunggu : undefined;
     const isianSalah = gtRows.filter((r) => Number.isNaN(angka(nilaiSupport(r)))).length + pairs.filter((p) => Number.isNaN(angka(nilaiSpv(p)))).length;
     const alasanSimpan = nPerubahan === 0 ? "Belum ada perubahan"
-        : isianSalah ? `${isianSalah} isian support bukan angka — perbaiki atau kosongkan (= Rp 0) dulu`
+        : isianSalah ? `${isianSalah} isian support bukan angka; perbaiki atau kosongkan (= Rp 0) dulu`
             : memuat || spvLoad.status === "memuat" ? tunggu : undefined;
 
     const [dlgSimpan, setDlgSimpan] = useState(false);
@@ -311,7 +311,7 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
         }
         setDlgSimpan(false);
         setPesan(tidakDitemukan > 0
-            ? { tone: "warn", teks: `Tersimpan ${jamWita(new Date())}, tetapi ${tidakDitemukan} baris tidak punya target periode ini — statusnya tidak tersimpan. Insentif ${label} dihitung ulang.` }
+            ? { tone: "warn", teks: `Tersimpan ${jamWita(new Date())}, tetapi ${tidakDitemukan} baris tidak punya target periode ini; statusnya tidak tersimpan. Insentif ${label} dihitung ulang.` }
             : { tone: "pos", teks: `${n} perubahan tersimpan ${jamWita(new Date())}; insentif ${label} dihitung ulang.` });
         toast.success("Support tersimpan, dihitung ulang");
         muatDash();
@@ -379,7 +379,7 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
                         )}
         </>
     );
-    const insentif = (r: ApiRow) => { const s = sebabNol(r, k); return <><b>{formatRp(r.incentive.total)}</b>{s && <span className="fi-sub">{s}</span>}</>; };
+    const insentif = (r: ApiRow) => { const s = sebabNol(r, k); return <><b className="fi-tnum">{formatRp(r.incentive.total)}</b>{s && <span className="fi-sub">{s}</span>}</>; };
     const ketikSpv = (p: Pasangan, el: HTMLInputElement) => { const v = isiInput(el); ubahDraf((x) => ({ ...x, spv: { ...x.spv, [keySpv(p)]: v } })); };
     const isiSpv = (p: Pasangan) => (
         <>
@@ -407,9 +407,9 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
     const kolomSales: Column<ApiRow>[] = [
         { key: "sales", header: "Salesman", cell: (r) => <><span className="fi-mono">{r.salesCode}</span>{(supportBerubah(r) || statusBerubah(r)) && <> {diubah}</>}<span className="fi-sub">{r.salesName}</span></> },
         { key: "principal", header: "Principal", cell: (r) => r.principle },
-        { key: "tipe", header: "Tipe", secondary: true, cell: (r) => r.tipeSales ?? "-" },
+        { key: "tipe", header: "Tipe", secondary: true, cell: (r) => labelTipe(r.tipeSales) },
         { key: "status", header: "Status insentif", cell: selStatus },
-        { key: "ao", header: "Penyebut AO", cell: penyebutAo },
+        { key: "ao", header: "Penyebut Aktif Outlet (AO)", cell: penyebutAo },
         { key: "support", header: "Support (Rp)", align: "end", cell: isiSupport },
         { key: "insentif", header: "Insentif (hitung terakhir)", align: "end", cell: insentif },
     ];
@@ -422,12 +422,12 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
     const ponselSales = (r: ApiRow) => (
         <div className="grid gap-2 px-4 py-3">
             <div className="flex items-start justify-between gap-2">
-                <span><span className="fi-mono">{r.salesCode}</span>{(supportBerubah(r) || statusBerubah(r)) && <> {diubah}</>}<span className="fi-sub">{r.salesName} · {r.principle} · {r.tipeSales ?? "-"}</span></span>
+                <span><span className="fi-mono">{r.salesCode}</span>{(supportBerubah(r) || statusBerubah(r)) && <> {diubah}</>}<span className="fi-sub">{r.salesName} · {r.principle} · {labelTipe(r.tipeSales)}</span></span>
                 <span className="text-right">{insentif(r)}</span>
             </div>
             <label className="fi-field"><span className="fi-label">Status insentif</span>{selStatus(r)}</label>
             <label className="fi-field"><span className="fi-label">Support (Rp)</span>{isiSupport(r)}</label>
-            <div className="fi-small">Penyebut AO {penyebutAo(r)}</div>
+            <div className="fi-small">Penyebut Aktif Outlet (AO) {penyebutAo(r)}</div>
         </div>
     );
     const ponselSpv = (p: Pasangan) => (
@@ -458,6 +458,12 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
     } else {
         isi = (
             <>
+                {/* No 50: alasan isian nonaktif karena izin TERLIHAT, bukan hanya di title kontrol. */}
+                {(!izinSupport || !izinTarget) && (
+                    <MessageStrip tone="info" title="Sebagian isian baca saja.">
+                        {[!izinSupport && "Support: butuh izin isi support.", !izinTarget && "Status insentif dan penyebut AO: butuh izin unggah target."].filter(Boolean).join(" ")}
+                    </MessageStrip>
+                )}
                 <Section title="Support sales" subtitle={`${gtRows.length} baris · ${terisi} bersupport · support memotong pool insentif sebelum persentase pencapaian dikalikan`}
                     actions={
                         <ExcelSupport kind="sales" fileName={`support_sales_${month}_${year}.xlsx`} knownKeys={kunciSales} disabledReason={kunciIsiSupport} onPesan={setPesan}
@@ -569,14 +575,11 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
                     ["Dikirim", dikirim],
                     ["Bila ditolak", "Server memeriksa seluruh angka sebelum menulis; langkah yang ditolak tidak mengubah apa pun dan isiannya tetap draf."],
                     ["Akibat", `Insentif ${label} dihitung ulang. Pembayaran yang sudah lunas tetap memakai nominal yang dibayar; selisihnya ditandai di Pembayaran.`],
+                    // Fakta hari ini (dulu VariantNote BL-33 di dalam dialog; No 80).
+                    ["Riwayat", "Hanya nilai terakhir dan pengisinya yang tersimpan; nilai lama tidak dicatat."],
                 ]}
                 onConfirm={simpan}
-            >
-                <VariantNote bl="BL-33">
-                    Hari ini server menyimpan nilai terakhir dan pengisinya saja. Bila BL-33 masuk, setiap perubahan support dan status tercatat di
-                    riwayat dengan nilai lama dan baru.
-                </VariantNote>
-            </ConfirmDialog>
+            />
 
             <ConfirmDialog
                 open={ao !== null}

@@ -4,20 +4,13 @@
  * Caller: Dashboard.tsx, Saya.tsx, Pembayaran.tsx.
  * Dependensi: components/fiori/{core,interactive}, lib/insentif-ui, lib/insentif-pph, lib/insentif-konstanta (tipe), lib/rekapan-nota/ui (ambil),
  *   ./data (formatRp, paceStatus), ./Rangka (useKonstanta).
- * Main Functions: Laju, LegendaLaju, CatatanTimeGone, StatusBayar, labelPph, kolomPph, kakiPph, itemsPph, SalesBreakdown, SpvBreakdown, SmBreakdown, strataSm,
+ * Main Functions: Laju, LegendaLaju, CatatanTimeGone, KeteranganTimeGone, StatusBayar, labelPph, kolomPph, kakiPph, itemsPph, SalesBreakdown, SpvBreakdown, SmBreakdown, strataSm,
  *   sebabNolSpv, sebabNolSm, useExpandableRows, TabelRincian, useInsentifSpv, useInsentifSm.
  * Side Effects: GET /api/insentif-sales/spv-dashboard dan /sm-dashboard (useInsentifSpv/useInsentifSm); lainnya murni tampilan.
  *
- * Cara memakai (mis. Pembayaran, pengganti FinanceView lama):
- *  - Bungkus layar dengan <KonstantaCtx.Provider value={konstanta dari useDashboard}>: rincian dan PPh membaca konstanta yang dipakai server.
- *  - `<PphHeads/>` + `<PphCells bruto={x}/>` lama → kolom `...kolomPph(k, (row) => row.total)` (dua kolom: PPh, Netto dibayar);
- *    baris total → `foot={{ label: "Total", cells: { total: …, ...kakiPph(k, grand) } }}`.
- *  - `useExpandableRows()` + `<tr {...rowProps(key)}>` + `<ExpandCell/>` lama → `<TabelRincian rincian={(row) => …} rowLabel={(row) => nama} …/>`.
- *    Props sama dengan ResponsiveTable (title, columns, rows, rowKey, mobileItem, status, error, onRetry, empty, selected/onSelectedChange/
- *    selectableRow) + `rincian`, `rowLabel`, `foot`. Tombol Rincian terpisah dari kotak pilih: satu klik di kotak pilih hanya memilih.
- *    `useExpandableRows()` tetap diekspor ({ open, toggle }) bila butuh tata letak sendiri.
- *  - Isi rincian: <SalesBreakdown r={apiRow} semuaBaris={apiRows}/>, <SpvBreakdown rincian={spvRow.rincian}/>, <SmBreakdown r={smRow}/>.
- *  - Data SPV/SM: `const [spv, muatSpv] = useInsentifSpv(month, year)` → Load<SpvIncentiveRow[]>; galat TIDAK pernah jadi daftar kosong.
+ * Cara memakai: bungkus layar dengan <KonstantaCtx.Provider> (rincian dan PPh membaca konstanta server); kolom PPh = `...kolomPph(k, bruto)`,
+ * baris total = `foot={{ label, cells: { total, ...kakiPph(k, grand) } }}`; tabel dengan rincian = <TabelRincian rincian={…} rowLabel={…}/>
+ * (props ResponsiveTable + `rincian`, `rowLabel`, `foot`). Data SPV/SM lewat useInsentifSpv/useInsentifSm; galat tidak pernah jadi daftar kosong.
  */
 "use client";
 
@@ -28,7 +21,7 @@ import { useLoad, type Load } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
 import { nettoInsentif, pphInsentif } from "@/lib/insentif-pph";
 import type { Konstanta } from "@/lib/insentif-konstanta";
-import { LABEL_STATUS, formatPctText, formatQty, formatRatio, type ApiRow } from "@/lib/insentif-ui";
+import { formatPctText, formatQty, formatRatio, labelStatus, labelTipe, type ApiRow } from "@/lib/insentif-ui";
 import { formatRp, paceStatus, type PaceLevel, type WorkdayProgress } from "./data";
 import { useKonstanta } from "./Rangka";
 
@@ -56,7 +49,7 @@ export function Laju({ nilai, timeGone, teks }: { nilai: number; timeGone: numbe
 export function LegendaLaju({ timeGone }: { timeGone: number }) {
     return (
         <div className="fi-small fi-muted flex flex-wrap items-center gap-2">
-            <span>Warna = capaian dibanding Time Gone {timeGone}%:</span>
+            <span>Warna = capaian dibanding waktu berjalan (Time Gone) {timeGone}%:</span>
             {(["green", "yellow", "red"] as const).map((lvl) => {
                 const l = LAJU[lvl];
                 return <span key={lvl} className="fi-badge" data-tone={l.tone}><l.Icon className="fi-icon" aria-hidden />{l.teks} ({l.rentang})</span>;
@@ -65,14 +58,19 @@ export function LegendaLaju({ timeGone }: { timeGone: number }) {
     );
 }
 
-/** Time Gone hari ini = data.getPeriodWorkdayProgress (Senin–Jumat tanpa libur nasional); usulan BL-48 belum masuk. */
+/** Time Gone hari ini = data.getPeriodWorkdayProgress (Senin sampai Jumat, tanpa libur nasional); usulan Senin sampai Sabtu belum masuk. */
 export function CatatanTimeGone({ tg, label }: { tg: WorkdayProgress; label: string }) {
     return (
         <VariantNote bl="BL-48">
-            Time Gone {label}: {tg.passed} dari {tg.total} hari kerja ({tg.pct}%), dihitung Senin–Jumat tanpa libur nasional. Bila BL-48 masuk
-            (jawaban owner 7 Okt: Senin–Sabtu), Sabtu ikut dihitung dan libur nasional dikecualikan — persen Time Gone dan warna laju ikut bergeser.
+            Time Gone {label}: {tg.passed} dari {tg.total} hari kerja ({tg.pct}%), dihitung Senin sampai Jumat tanpa libur nasional. Usulan: Sabtu ikut
+            dihitung dan libur nasional dikecualikan; persen Time Gone dan warna laju akan bergeser.
         </VariantNote>
     );
+}
+
+/** Keterangan Time Gone untuk layar salesman: fakta hari ini saja, tanpa catatan usulan (audit desain 001 No 80). */
+export function KeteranganTimeGone({ tg, label }: { tg: WorkdayProgress; label: string }) {
+    return <p className="fi-small fi-muted">Time Gone {label}: {tg.passed} dari {tg.total} hari kerja ({tg.pct}%), dihitung Senin sampai Jumat tanpa libur nasional.</p>;
 }
 
 const STATUS_BAYAR: Record<string, { tone: Tone; label: string }> = {
@@ -96,9 +94,9 @@ export function kolomPph<T>(k: Konstanta, bruto: (row: T) => number): Column<T>[
     return [
         {
             key: "pph", header: labelPph(k.pph.rate), align: "end", secondary: true,
-            cell: (row) => { const b = bruto(row); return b > 0 ? `-${formatRp(pphInsentif(b, k.pph.rate))}` : formatRp(0); },
+            cell: (row) => { const b = bruto(row); return <span className="fi-tnum">{b > 0 ? `-${formatRp(pphInsentif(b, k.pph.rate))}` : formatRp(0)}</span>; },
         },
-        { key: "netto", header: "Netto dibayar", align: "end", cell: (row) => <b>{formatRp(nettoInsentif(bruto(row), k.pph.rate))}</b> },
+        { key: "netto", header: "Netto dibayar", align: "end", cell: (row) => <b className="fi-tnum">{formatRp(nettoInsentif(bruto(row), k.pph.rate))}</b> },
     ];
 }
 
@@ -207,9 +205,7 @@ export function SalesBreakdown({ r, semuaBaris }: { r: ApiRow; semuaBaris?: ApiR
     // Menebaknya ulang di sini dari setelan global membuat layar membantah nominalnya sendiri.
     const ambangAo = r.ambangAo;
 
-    // MT membayar 4 KPI (Value, EC, OA, IA, nominal tetap); GT/TT hanya 2 (Value + AO berbobot). Menampilkan dua komponen untuk semua
-    // channel membuat baris MT memperlihatkan Rp 500.000 di bawah total Rp 986.403 — rincian yang tidak menjumlah ke totalnya sendiri
-    // (dilaporkan user 2026-08-26).
+    // MT membayar 4 KPI bernominal tetap, GT/TT 2 (Value + AO berbobot): komponen harus menjumlah ke total baris itu.
     const komponen: Array<[string, ReactNode]> = isMt
         ? [
             [`Value (bobot ${formatRp(k.mt.bobotValue)})`, formatRp(r.incentive.value)],
@@ -226,8 +222,7 @@ export function SalesBreakdown({ r, semuaBaris }: { r: ApiRow; semuaBaris?: ApiR
             ...itemsPph(r.incentive.total, k),
         ];
 
-    // Sales "mix": komponen Value dinilai dari GABUNGAN seluruh principal yang ikut skema, lalu dibagi ke tiap principal menurut porsi
-    // targetnya. Tanpa angka gabungan ini, baris dengan pencapaian 55% terlihat dibayar tanpa sebab (dilaporkan user 2026-08-26).
+    // Sales "mix": Value dinilai dari GABUNGAN principal yang ikut skema lalu dibagi menurut porsi target; angka gabungan menjelaskan nominalnya.
     const gabungan = (() => {
         if (r.tipeSales !== "mix" || !semuaBaris) return null;
         const anggota = semuaBaris.filter((x) => x.salesCode === r.salesCode && x.statusInsentif !== "principle");
@@ -256,7 +251,7 @@ export function SalesBreakdown({ r, semuaBaris }: { r: ApiRow; semuaBaris?: ApiR
                     ["Pencapaian dibayar", formatPctText(ambangAo > 0 ? (r.real.ao / ambangAo) * 100 : 0)] as [string, ReactNode],
                 ]),
             ]} />
-            <Grup title="EC & ISQ" items={[
+            <Grup title="Effective Call (EC) dan Item Aktif per outlet (ISQ)" items={[
                 ["Target EC", formatQty(r.target.ec)],
                 ["Realisasi EC", formatQty(r.real.ec)],
                 ["Pencapaian EC", formatPctText(r.pct.ec)],
@@ -265,8 +260,8 @@ export function SalesBreakdown({ r, semuaBaris }: { r: ApiRow; semuaBaris?: ApiR
                 ["Pencapaian ISQ", formatPctText(r.pct.isq)],
             ]} />
             <Grup title="Dasar perhitungan" items={[
-                ["Tipe sales", redup(r.tipeSales ?? "-")],
-                ["Status insentif", redup(LABEL_STATUS[r.statusInsentif ?? ""] ?? r.statusInsentif ?? "-")],
+                ["Tipe sales", redup(labelTipe(r.tipeSales))],
+                ["Status insentif", redup(labelStatus(r.statusInsentif))],
                 ["Support principle", formatRp(r.support ?? 0)],
             ]} />
             <Grup title={isMt ? "Komponen insentif (MT)" : "Komponen insentif"} items={komponen} />

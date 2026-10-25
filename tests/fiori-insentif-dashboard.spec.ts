@@ -181,7 +181,7 @@ test("Dashboard: ganti ke periode yang gagal → galat, tidak pernah angka perio
     await expect(spv.getByRole("alert")).toContainText("Insentif SPV belum berhasil dimuat", NAV);
     await expect(spv.locator("tbody tr").filter({ hasText: "ANI" })).toHaveCount(0);
     const taksiran = main.locator(".fi-kc").filter({ hasText: "Taksiran" });
-    await expect(taksiran).toContainText("SPV gagal dimuat — angka tidak lengkap");
+    await expect(taksiran).toContainText("SPV gagal dimuat; angka tidak lengkap");
     await expect(taksiran).toHaveAttribute("data-tone", "warn");
     await expect(taksiran).not.toContainText("SPV Rp");
 

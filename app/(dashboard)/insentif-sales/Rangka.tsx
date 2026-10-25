@@ -3,7 +3,7 @@
  *   saringan periode/principal/cabang di URL (satu periode untuk semua halaman, BL-36 tanpa simpan per pengguna),
  *   pemuat GET dashboard, dan konstanta server lewat context.
  * Caller: Dashboard.tsx, Saya.tsx, Pembayaran.tsx, DataPeriode.tsx, Support.tsx, Pengaturan.tsx.
- * Dependensi: components/fiori/{core,interactive}, lib/insentif-ui, lib/insentif-konstanta, lib/rekapan-nota/ui (ambil).
+ * Dependensi: components/fiori/{core,interactive}, lib/insentif-ui, lib/insentif-konstanta, lib/rekapan-nota/ui (ambil), ./data (bulan WITA).
  * Main Functions: InsentifRangka, usePeriode, useDashboard, KonstantaCtx/useKonstanta.
  * Side Effects: router.replace saat saringan berubah; GET /api/insentif-sales/dashboard.
  */
@@ -17,22 +17,25 @@ import { FilterBar, FormField, useLoad, type Load } from "@/components/fiori/int
 import { ambil } from "@/lib/rekapan-nota/ui";
 import { DEFAULT_KONSTANTA, parseKonstanta, type Konstanta } from "@/lib/insentif-konstanta";
 import { HALAMAN, halamanTerlihat, type ApiRow, type Cakupan, type HalamanKey, type PeranHierarki, type ProgressFeedStatus } from "@/lib/insentif-ui";
-import { MONTH_LABELS } from "./data";
+import { MONTH_LABELS, bulanIniWita } from "./data";
 
 /** Kunci URL yang dibawa antarhalaman; `sm` hanya bermakna di Dashboard. */
 const DIBAWA = ["month", "year", "principle", "branch"] as const;
 type Ubah = Partial<Record<(typeof DIBAWA)[number] | "sm", string>>;
 
-/** Periode + saringan dari URL. Bulan/tahun tidak valid jatuh ke bulan berjalan. */
+/**
+ * Periode + saringan dari URL. Bulan/tahun tidak valid jatuh ke bulan berjalan menurut WITA (audit desain 001 No 31); untuk perangkat
+ * berzona WITA hasilnya sama dengan jam perangkat yang dipakai sebelumnya.
+ */
 export function usePeriode() {
     const sp = useSearchParams();
     const router = useRouter();
     const pathname = usePathname();
-    const now = new Date();
+    const kini = bulanIniWita();
     const m = Number(sp.get("month"));
     const y = Number(sp.get("year"));
-    const month = Number.isInteger(m) && m >= 1 && m <= 12 ? m : now.getMonth() + 1;
-    const year = Number.isInteger(y) && y >= 2020 && y <= 2100 ? y : now.getFullYear();
+    const month = Number.isInteger(m) && m >= 1 && m <= 12 ? m : kini.month;
+    const year = Number.isInteger(y) && y >= 2020 && y <= 2100 ? y : kini.year;
     const principle = sp.get("principle") || "ALL";
     const branch = sp.get("branch") || "ALL";
     const sm = sp.get("sm") || "ALL";

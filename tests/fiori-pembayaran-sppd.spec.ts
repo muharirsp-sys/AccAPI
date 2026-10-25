@@ -59,7 +59,7 @@ test("Format SPPD: gagal muat = Simpan terkunci; nomor tidak boleh turun; Simpan
     const main = page.locator("main");
     await expect(main.getByRole("heading", { level: 1, name: "Format SPPD Bank Panin" })).toBeVisible(NAV);
     await expect(main.getByText("Setelan SPPD gagal dimuat")).toBeVisible(NAV);
-    await expect(main.locator(".fi-ftb")).toContainText("Setelan SPPD belum berhasil dimuat — muat ulang dulu agar urutan nomor tidak mundur.");
+    await expect(main.locator(".fi-ftb")).toContainText("Setelan SPPD belum berhasil dimuat; muat ulang dulu agar urutan nomor tidak mundur.");
     await expect(main.getByRole("button", { name: "Simpan…" })).toBeDisabled();
     await expect(main.getByLabel("Nomor surat terakhir")).toHaveCount(0); // nilai bawaan tidak ditampilkan sebagai nilai tersimpan
 
@@ -116,14 +116,14 @@ test("Format SPPD: restore backup pratinjau → pulihkan (nomor naik); ganti nam
     const main = page.locator("main");
     await expect(main.getByLabel("Nomor surat terakhir")).toHaveValue("31", NAV);
 
-    await main.getByRole("button", { name: "Restore backup…" }).click();
+    await main.getByRole("button", { name: "Pulihkan cadangan…" }).click();
     let dlg = page.getByRole("dialog");
     await expect(dlg.getByRole("button", { name: "Pulihkan" })).toBeDisabled();
-    await dlg.getByLabel("Berkas backup PAYMENTS (.xlsx)").setInputFiles({ name: "backup_payments.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("x") });
-    await expect(dlg.getByText("terakhir 30 → 45 (tertinggi di berkas 45); berikutnya 046/SPA/PDSB/X/2026 — tidak pernah turun")).toBeVisible();
+    await dlg.getByLabel("Berkas cadangan PAYMENTS (.xlsx)").setInputFiles({ name: "backup_payments.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("x") });
+    await expect(dlg.getByText("terakhir 30 → 45 (tertinggi di berkas 45); berikutnya 046/SPA/PDSB/X/2026; tidak pernah turun")).toBeVisible();
     expect(kirim.filter((k) => k.path === "/payments/sppd/restore-backup").map((k) => k.search)).toEqual(["?dry_run=1"]);
     await dlg.getByRole("button", { name: "Pulihkan 3 rekaman" }).click();
-    await expect(main.getByText("Restore backup berhasil: 3 rekaman ditambahkan.")).toBeVisible();
+    await expect(main.getByText("Cadangan dipulihkan: 3 rekaman ditambahkan.")).toBeVisible();
     expect(kirim.filter((k) => k.path === "/payments/sppd/restore-backup").map((k) => k.search)).toEqual(["?dry_run=1", "?dry_run=0"]);
 
     await main.getByRole("button", { name: "Samakan nama…" }).click();
@@ -143,7 +143,7 @@ test("Format SPPD: restore backup pratinjau → pulihkan (nomor naik); ganti nam
     dlg = page.getByRole("dialog");
     await dlg.getByLabel("Berkas Excel data SPPD (.xlsx/.xls)").setInputFiles({ name: "Data_SPPD_Okt.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("x") });
     await expect(dlg.getByText("LPB-B-007 (sudah ditransfer)")).toBeVisible();
-    await expect(dlg.getByText("nilai_invoice Rp 1.000 → Rp 1.500", { exact: false })).toBeVisible();
+    await expect(dlg.getByText("Nilai invoice Rp 1.000 → Rp 1.500", { exact: false })).toBeVisible();
     await expect(dlg.getByRole("button", { name: "Terapkan 1 perubahan" })).toBeDisabled();
     expect(kirim.filter((k) => k.path === "/payments/sppd/upload").map((k) => k.search)).toEqual(["?dry_run=1"]);
     await page.screenshot({ path: "test-results/s6a-format-excel-terkunci.png", fullPage: true });

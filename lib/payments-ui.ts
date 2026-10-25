@@ -3,7 +3,7 @@
  *   diajukan (cermin validasi /payments/cart/create), izin aksi → alasan nonaktif, angka ketat, tanggal WITA, saringan rentang
  *   tanggal, dan pratinjau nomor SPPD. Tidak ada logic bisnis baru — server tetap penentu (kunci `locked_reason`, validasi, nomor).
  * Caller: app/(dashboard)/payments/**, payments-ui.test.ts.
- * Dependensi: lib/insentif-sales-excel (parseLocaleNumber = cermin parse_number_strict), lib/dateFilter (parseAnyDate).
+ * Dependensi: lib/insentif-sales-excel (parseLocaleNumber = cermin parse_number_strict), lib/dateFilter (parseAnyDate), lib/tampil (KOSONG).
  * Main Functions: statusRekaman, STATUS_REKAMAN, kurangLengkap, bisaDiajukan, angka, ISIAN, nilaiAwal, galatIsian, izinPembayaran,
  *   tanggalTampil, keYmd, dalamRentang, hariIniWita, besokWita, namaAkun, pratinjauNomor, galatTemplat, statusFinance.
  * Side Effects: Tidak ada.
@@ -11,6 +11,7 @@
 import type { Tone } from "@/components/fiori/core";
 import { parseAnyDate } from "@/lib/dateFilter";
 import { parseLocaleNumber } from "@/lib/insentif-sales-excel";
+import { KOSONG } from "@/lib/tampil";
 
 /** Baris GET /payments/data (payments.json bagian lpb). Angka uang datang sebagai teks rupiah ("12.500.000") atau angka. */
 export type Rekaman = {
@@ -158,11 +159,11 @@ const KUNCI: Record<AksiPembayaran, [string | string[], string]> = {
     keranjang: [["payments.edit", "payments.create", "payments.submit"], "membuat dan mengajukan keranjang"],
     lihatSppd: ["sppd.view", "melihat Format SPPD dan data rekening"],
     setelan: ["sppd.edit_settings", "mengubah setelan dan nomor SPPD"],
-    restore: ["sppd.edit_settings", "memulihkan backup (ikut menaikkan nomor SPPD)"],
+    restore: ["sppd.edit_settings", "memulihkan cadangan (ikut menaikkan nomor SPPD)"],
     excelSppd: ["sppd.upload_excel", "mengunggah Excel data SPPD"],
     gantiNama: ["payments.edit", "mengganti nama principal di rekaman"],
     unduhSppd: ["sppd.download", "mengunduh dokumen SPPD"],
-    ekspor: [["payments.view", "payments.export"], "mengunduh backup pembayaran"],
+    ekspor: [["payments.view", "payments.export"], "mengunduh cadangan pembayaran"],
 };
 
 /** Alasan nonaktif per aksi (undefined = boleh). Kalimat tugas, tanpa nama kunci mentah. */
@@ -176,10 +177,10 @@ export function izinPembayaran(permKeys: Iterable<string>): Record<AksiPembayara
 }
 
 // ── Tanggal (WITA) ──
-/** dd/mm/yyyy dari tanggal tersimpan (YYYY-MM-DD, dd/mm/yyyy, dll.); teks lain apa adanya; kosong = "—". */
+/** dd/mm/yyyy dari tanggal tersimpan (YYYY-MM-DD, dd/mm/yyyy, dll.); teks lain apa adanya; kosong = KOSONG. */
 export function tanggalTampil(v: unknown): string {
     const p = parseAnyDate(v);
-    return p ? `${p.d}/${p.m}/${p.y}` : t(v) || "—";
+    return p ? `${p.d}/${p.m}/${p.y}` : t(v) || KOSONG;
 }
 
 /** Nilai <input type="date"> (YYYY-MM-DD) dari tanggal tersimpan; "" bila tidak terbaca. */

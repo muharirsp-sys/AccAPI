@@ -4,7 +4,7 @@
  *   503 SESI_SINKRON = pasti), isian Rupiah manusia -> teks desimal, format Rupiah/WITA, label status & alasan.
  * Caller: Kasir.tsx, DialogKasir.tsx.
  * Dependensi: form-kontrol/lapangan (ambilJson), principal-order/bersama (baca, sebab, waktuWita), lib/angka-lokal (angkaLokalTeks, tanpa SheetJS),
- *   lib/kasir/rekonsiliasi (keSen — murni), lib/promo-ui (rupiah).
+ *   lib/kasir/rekonsiliasi (keSen — murni), lib/promo-ui (rupiah), lib/tampil (KOSONG untuk nilai kosong).
  * Main Functions: bacaHari, bacaRincian, kirimKasir, nominalKeTeks, rp, jamWita, segarkan, ALASAN, LABEL_*.
  * Side Effects: fetch (bacaHari/bacaRincian/kirimKasir/segarkan); sisanya murni.
  */
@@ -15,6 +15,7 @@ import { baca } from "@/app/(dashboard)/principal-order/bersama";
 import { angkaLokalTeks } from "@/lib/angka-lokal";
 import { keSen } from "@/lib/kasir/rekonsiliasi";
 import { rupiah } from "@/lib/promo-ui";
+import { KOSONG } from "@/lib/tampil";
 
 export { waktuWita } from "@/app/(dashboard)/principal-order/bersama";
 
@@ -151,11 +152,11 @@ export function senDari(t: Uang | null | undefined): number | null {
     try { return keSen(t); } catch { return null; }
 }
 
-/** "Rp 1.250.000"; negatif = "−Rp 400.000". */
+/** "Rp 1.250.000"; negatif = "−Rp 400.000"; kosong/rusak = KOSONG. */
 export function rp(t: Uang | number | null | undefined): string {
-    if (t == null || t === "") return "—";
+    if (t == null || t === "") return KOSONG;
     const n = Number(t);
-    if (!Number.isFinite(n)) return "—";
+    if (!Number.isFinite(n)) return KOSONG;
     return `${n < 0 ? "−" : ""}${rupiah(Math.abs(n))}`;
 }
 export const rpSen = (sen: number) => rp(sen / 100);
@@ -200,5 +201,5 @@ export const ALASAN = {
     catat: "Akun Anda belum berhak mencatat setoran atau penjelasan Kasir; minta admin menambahkan izin Catat Kasir ke grup Anda.",
     tutup: "Akun Anda belum berhak menutup hari Kasir; minta admin menambahkan izin Tutup hari Kasir ke grup Anda.",
     buka: "Membuka kembali hari yang terkunci hanya untuk OM/Admin.",
-    hapus: "Minta OM/Admin mengonfirmasi penghapusan ini — hanya mereka yang boleh.",
+    hapus: "Minta OM/Admin mengonfirmasi penghapusan ini; hanya mereka yang berwenang.",
 };
