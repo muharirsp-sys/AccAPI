@@ -141,3 +141,5 @@ python_backend/api_key_mistral.txt
 
 # Laporan ABCPI: arsip, log, dan config.json berisi kata sandi FTP (volume produksi)
 data/abcpi/
+# Laporan Enigma: arsip, log, dan config.json berisi password portal (volume produksi)
+data/enigma/
