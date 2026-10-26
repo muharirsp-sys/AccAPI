@@ -12,7 +12,8 @@ import { useCallback, useState } from "react";
 import { Download, Send } from "lucide-react";
 import { Button, ListItem, MessageStrip, ResponsiveTable, Section, StatusBadge, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactive";
-import { ambil, hariIniWita, jamWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { ambil, hariIniWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { waktuWita } from "@/lib/tampil";
 
 type Hasil = {
     waktu?: string; tanggal: string; sumber: string; status: string; baris?: { sales: number; stok?: number };
@@ -22,7 +23,7 @@ const NADA: Record<string, "pos" | "neg" | "warn" | "info"> = { terkirim: "pos",
 const ringkas = (r: Hasil) => [r.portal, r.ftp && `FTP ${r.ftp}`, r.email && `email ${r.email}`, ...r.galat, ...r.peringatan].filter(Boolean).join(" · ");
 
 const kolom: Column<Hasil>[] = [
-    { key: "waktu", header: "Waktu", cell: (r) => (r.waktu ? jamWita(r.waktu) : "") },
+    { key: "waktu", header: "Waktu", cell: (r) => (r.waktu ? waktuWita(r.waktu) : "") },
     { key: "tanggal", header: "Tanggal laporan", cell: (r) => tanggalPendek(r.tanggal) },
     { key: "sumber", header: "Sumber", cell: (r) => r.sumber },
     { key: "status", header: "Status", cell: (r) => <StatusBadge tone={NADA[r.status] ?? "neu"}>{r.status}</StatusBadge> },
@@ -62,7 +63,7 @@ export default function KirimPrincipal({ kode, judul, subjudul, keterangan, tomb
             </div>
             <ResponsiveTable<Hasil> title={`Riwayat ${judul}`} columns={kolom} rows={riwayat.data ?? []} rowKey={(r) => `${r.waktu}-${r.tanggal}`}
                 status={riwayat.status} error={riwayat.error} onRetry={muat} empty={{ title: "Belum ada kiriman", message: "Riwayat terisi setelah kiriman pertama." }}
-                mobileItem={(r) => <ListItem doc={tanggalPendek(r.tanggal)} title={`${r.waktu ? jamWita(r.waktu) : ""} · ${r.sumber}`} meta={r.galat.join(" · ")} badge={<StatusBadge tone={NADA[r.status] ?? "neu"}>{r.status}</StatusBadge>} />} />
+                mobileItem={(r) => <ListItem doc={tanggalPendek(r.tanggal)} title={`${r.waktu ? waktuWita(r.waktu) : ""} · ${r.sumber}`} meta={r.galat.join(" · ")} badge={<StatusBadge tone={NADA[r.status] ?? "neu"}>{r.status}</StatusBadge>} />} />
             <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`${konfirmasi} ${tanggalPendek(tanggal)}?`} tag="Kirim" confirmLabel={tombol}
                 onConfirm={kirim} facts={[["Data", `Bulan berjalan s.d. ${tanggalPendek(tanggal)}, ditarik ulang dari Accurate sekarang (±1–5 menit)`], ...fakta]} />
         </Section>
