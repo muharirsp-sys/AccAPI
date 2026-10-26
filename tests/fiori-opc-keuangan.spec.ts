@@ -172,7 +172,7 @@ test("Catat pembayaran: pilih item satu cara bayar, draf, dialog dengan FormData
     const main = page.locator("main");
     const detail = main.getByRole("region", { name: "Batch terbuka" });
     await expect(detail.getByRole("heading", { level: 1, name: "004/URC/09/2026" })).toBeVisible(NAV);
-    await expect(main.getByText("Peran OFF: Keuangan.")).toBeVisible();
+    await expect(main.getByText("Peran Anda: Keuangan.")).toBeVisible();
     const footer = detail.locator(".fi-ftb");
     const catat = footer.getByRole("button", { name: "Catat pembayaran…" });
     await expect(catat).toBeDisabled();
@@ -207,7 +207,7 @@ test("Catat pembayaran: pilih item satu cara bayar, draf, dialog dengan FormData
     await antrean(page).getByRole("button", { name: /012\/KINO\/10\/2026/ }).click();
     const tinggal = page.getByRole("dialog", { name: "Tinggalkan perubahan yang belum disimpan?" });
     await expect(tinggal).toBeVisible();
-    await tinggal.getByRole("button", { name: "Batal" }).click();
+    await tinggal.getByRole("button", { name: "Tetap di sini" }).click();
     await expect(page).toHaveURL(/batch=b-bayar(&|$)/);
     await expect(tabel.getByRole("checkbox", { name: /TK Mulia/ })).toBeChecked();
 
@@ -215,7 +215,7 @@ test("Catat pembayaran: pilih item satu cara bayar, draf, dialog dengan FormData
     const dlg = page.getByRole("dialog", { name: "Catat pembayaran 004/URC/09/2026?" });
     await expect(dlg).toBeVisible();
     for (const t of ["1 dari 2 item yang belum dibayar", "Transfer", "Rp 2.200.000", "06/10/2026", "BCA", "bukti_urc.pdf · divalidasi, tidak disimpan", "Rp 4.300.000"]) await expect(dlg).toContainText(t);
-    await expect(dlg.getByLabel("Usulan BL-08")).toBeVisible();
+    await expect(detail.getByLabel("Usulan BL-08")).toBeVisible();
     await page.screenshot({ path: "test-results/fiori-opc-keuangan-dialog.png" });
     await dlg.getByRole("button", { name: "Batal" }).click();
     await expect(dlg).toBeHidden();

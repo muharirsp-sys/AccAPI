@@ -175,7 +175,7 @@ test("Default → Draf (konfirmasi keluar) → Kirim ke SM: dialog ringkasan, PA
     await expect(form2.getByText('Tipe lama "Promo" perlu dipilih ulang.')).toBeVisible();
     const kirim = detail.getByRole("button", { name: "Kirim ke SM…" });
     await expect(kirim).toBeDisabled();
-    await expect(detail.locator(".fi-ftb")).toContainText("Tipe program pada baris 2 wajib dipilih dari dropdown (Display/Visibility/Promo On Store/Event/Sample) sebelum dikirim ke Sales Manager.");
+    await expect(detail.locator(".fi-ftb")).toContainText("Tipe program pada item 2 wajib dipilih dari daftar (Display/Visibility/Promo On Store/Event/Sample) sebelum dikirim ke Sales Manager.");
     await expect(detail.getByRole("button", { name: "Simpan draf" })).toBeDisabled();
     await page.screenshot({ path: "test-results/fiori-opc-spv-default.png", fullPage: true });
 
@@ -191,7 +191,7 @@ test("Default → Draf (konfirmasi keluar) → Kirim ke SM: dialog ringkasan, PA
     await antrean(page).getByRole("button", { name: /009\/KINO\/10\/2026/ }).click();
     const tinggal = page.getByRole("dialog", { name: "Tinggalkan perubahan yang belum disimpan?" });
     await expect(tinggal).toBeVisible();
-    await tinggal.getByRole("button", { name: "Batal" }).click();
+    await tinggal.getByRole("button", { name: "Tetap di sini" }).click();
     await expect(page).toHaveURL(/batch=b-ret/);
     await expect(form1.getByLabel("Nominal")).toHaveValue("Rp 1.000.000");
     await page.screenshot({ path: "test-results/fiori-opc-spv-draf.png", fullPage: true });
@@ -202,7 +202,7 @@ test("Default → Draf (konfirmasi keluar) → Kirim ke SM: dialog ringkasan, PA
     await expect(dlg).toContainText("Item 1 nominal: Rp 2.200.000 → Rp 1.000.000");
     await expect(dlg).toContainText("Item 2 tipe: kosong → Display");
     await expect(dlg).toContainText("2 · Rp 3.100.000");
-    await expect(dlg.getByLabel("Usulan BL-09")).toBeVisible();
+    await expect(detail.getByLabel("Usulan BL-09")).toBeVisible();
     await page.screenshot({ path: "test-results/fiori-opc-spv-kirimsm.png" });
     await dlg.getByRole("button", { name: "Kirim ke SM" }).click();
     await expect(dlg).toBeHidden(NAV);
@@ -328,14 +328,14 @@ test("Batch baru di kolom kedua: nomor otomatis per principal, validasi kode lam
     await setup.getByLabel("Principal", { exact: true }).selectOption("KINO INDONESIA TBK, PT");
     await expect(setup).toContainText(`004/KINO/${MM}/${YYYY}`);
     await expect(setup.getByLabel("Nama supervisor")).toHaveValue("Rahmat Hidayat");
-    await expect(detail.locator(".fi-ftb")).toContainText("Tipe program pada baris 1 wajib dipilih");
+    await expect(detail.locator(".fi-ftb")).toContainText("Tipe program pada item 1 wajib dipilih");
 
     const form = detail.getByRole("region", { name: "Ubah item 1" });
     await form.getByLabel("No Surat").fill("KINO/PRG/1001");
     await form.getByLabel("Toko").fill("TK Baru");
     await form.getByLabel("Nominal").fill("Rp 750.000");
     await form.getByLabel("Tipe program").selectOption("Event");
-    await expect(detail.locator(".fi-ftb")).toContainText("No Rekening pada baris 1 wajib diisi karena Cara Bayar adalah Transfer.");
+    await expect(detail.locator(".fi-ftb")).toContainText("No Rekening pada item 1 wajib diisi karena Cara Bayar adalah Transfer.");
     await expect(form.getByText("Wajib diisi karena cara bayar Transfer.")).toBeVisible();
     await form.getByLabel("Cara bayar").selectOption("Tunai");
     await expect(detail.getByRole("button", { name: "Simpan draf" })).toBeEnabled();
@@ -393,11 +393,11 @@ test("Data selisih: ajukan pengembalian lewat dialog (payload kode lama); PDF su
     await refund.getByLabel("Tanggal pengembalian").fill("2026-10-07");
     await refund.getByLabel("Bank penerima").fill("BCA");
     await ajukan.click();
-    const dlg = page.getByRole("dialog", { name: "Ajukan pengembalian Rp 450.000?" });
+    const dlg = page.getByRole("dialog", { name: "Ajukan pengembalian Rp 450.000 untuk 008/HEINZ/09/2026?" });
     await expect(dlg).toContainText("07/10/2026");
     await dlg.getByRole("button", { name: "Ajukan pengembalian" }).click();
     await expect(dlg).toBeHidden(NAV);
-    await expect(detail.getByText("Pengembalian dana #1 sebesar Rp 450.000 berhasil disubmit. Menunggu verifikasi Finance.")).toBeVisible();
+    await expect(detail.getByText("Pengembalian Rp 450.000 untuk 008/HEINZ/09/2026 diajukan; menunggu verifikasi Keuangan.")).toBeVisible();
     expect(tulis).toEqual([{ method: "POST", path: "/api/off-program-control/batches/b-sel/refund",
         body: { refundAmount: 450000, refundMethod: "Transfer", refundDate: "2026-10-07", senderName: "", receiverBank: "BCA", note: "" } }]);
 

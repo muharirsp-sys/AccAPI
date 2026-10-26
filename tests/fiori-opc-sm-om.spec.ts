@@ -136,7 +136,7 @@ test("SM: ringkasan, kelengkapan awal, catatan = draf (penjaga pindah batch), Se
     const detail = detailOf(page);
     await expect(detail.getByRole("heading", { level: 1, name: "007/KINO/10/2026" })).toBeVisible(NAV);
     const angka = main.getByRole("group", { name: "Ringkasan Sales Manager" });
-    await expect(angka.locator(".fi-kc").filter({ hasText: "Menunggu tinjauan" })).toContainText("2");
+    await expect(angka.locator(".fi-kc").filter({ hasText: "Menunggu Anda" })).toContainText("2");
     await expect(angka.locator(".fi-kc").filter({ hasText: "Total batch" })).toContainText("7");
     await expect(main.getByRole("region", { name: "Pengingat kelengkapan belum lengkap" })).toContainText("010/GDI/09/2026");
     await expect(main.getByRole("region", { name: "Pengingat kelengkapan belum lengkap" })).toContainText("Faktur pajak toko belum ada.");
@@ -144,9 +144,9 @@ test("SM: ringkasan, kelengkapan awal, catatan = draf (penjaga pindah batch), Se
     await expect(lengkap.getByRole("table")).toContainText("KWT, SKP, Foto, Rekap, Lainnya");
     await expect(lengkap.getByRole("table")).toContainText("Surat pernyataan toko");
     // Aksi utama di kanan, tolak negatif di kirinya.
-    await expect(footer(page).getByRole("button")).toHaveText(["Kembalikan ke SPV…", "Setujui & teruskan ke Klaim…"], { useInnerText: true });
+    await expect(footer(page).getByRole("button")).toHaveText(["Kembalikan ke SPV…", "Setujui…"], { useInnerText: true });
     await expect(footer(page).getByRole("button", { name: "Kembalikan ke SPV…" })).toHaveClass(/fi-btn--negative/);
-    await expect(footer(page).getByRole("button", { name: "Setujui & teruskan ke Klaim…" })).toHaveClass(/fi-btn--primary/);
+    await expect(footer(page).getByRole("button", { name: "Setujui…" })).toHaveClass(/fi-btn--primary/);
     await expect(detail.getByLabel("Usulan BL-06")).toBeVisible();
 
     // Draf: catatan diketik belum dikirim → indikator + penjaga pindah batch.
@@ -157,23 +157,23 @@ test("SM: ringkasan, kelengkapan awal, catatan = draf (penjaga pindah batch), Se
     await antrean(page).getByRole("button", { name: /011\/HEINZ/ }).click();
     const tinggal = page.getByRole("dialog", { name: "Tinggalkan perubahan yang belum disimpan?" });
     await expect(tinggal).toBeVisible();
-    await tinggal.getByRole("button", { name: "Batal" }).click();
+    await tinggal.getByRole("button", { name: "Tetap di sini" }).click();
     await expect(page).toHaveURL(/batch=b-sm1/);
 
-    await footer(page).getByRole("button", { name: "Setujui & teruskan ke Klaim…" }).click();
+    await footer(page).getByRole("button", { name: "Setujui…" }).click();
     const dlg = page.getByRole("dialog", { name: "Setujui 007/KINO/10/2026 dan teruskan ke Klaim?" });
     await expect(dlg).toContainText("Cek ulang nominal TK Mulia");
     await expect(dlg).toContainText("Validasi Klaim, batas 2 hari kerja");
     await expect(dlg).toContainText("4.300.000");
     await page.screenshot({ path: "test-results/fiori-opc-sm-smok.png" });
-    await dlg.getByRole("button", { name: "Setujui & teruskan" }).click();
+    await dlg.getByRole("button", { name: "Setujui", exact: true }).click();
     await expect(dlg).toBeHidden();
     expect(tulis).toEqual([{ method: "POST", path: "/api/off-program-control/batches/b-sm1/sm-approve", body: { note: "Cek ulang nominal TK Mulia" } }]);
     await expect(main.getByText("007/KINO/10/2026 disetujui dan diteruskan ke Klaim.")).toBeVisible();
-    await expect(detail.getByText("Notifikasi untuk OM dibuat.")).toBeVisible();
+    await expect(detail.getByText("Notifikasi OM belum terkirim (tiruan).")).toBeVisible();
     await expect(detail.getByText(/tiruan, tidak dikirim lewat email/)).toBeVisible();
     await expect(detail.getByText("Menunggu Klaim").first()).toBeVisible(NAV);
-    await expect(detail.getByRole("button", { name: /Setujui & teruskan/ })).toHaveCount(0);
+    await expect(detail.getByRole("button", { name: /Setujui…/ })).toHaveCount(0);
     await expect(detail.getByText("Draf belum disimpan")).toHaveCount(0);
     await expect(antrean(page).getByRole("button")).toHaveCount(1);
     await page.screenshot({ path: "test-results/fiori-opc-sm-sukses.png", fullPage: true });
@@ -339,11 +339,11 @@ test("peran Sales Manager dari sesi: hanya antrean SM, tombol aktif", async ({ p
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/off-program-control?tab=om&batch=b-sm1", NAV);
     const main = page.locator("main");
-    await expect(main.getByText("Peran OFF: Sales Manager.")).toBeVisible(NAV);
+    await expect(main.getByText("Peran Anda: Sales Manager.")).toBeVisible(NAV);
     await expect(main.getByRole("navigation", { name: "Antrean OFF Program Control" })).toHaveCount(0);
     await expect(antrean(page).getByRole("button")).toHaveCount(2, NAV);
     await expect(detailOf(page).getByRole("heading", { level: 1, name: "007/KINO/10/2026" })).toBeVisible(NAV);
-    await expect(footer(page).getByRole("button", { name: "Setujui & teruskan ke Klaim…" })).toBeEnabled();
+    await expect(footer(page).getByRole("button", { name: "Setujui…" })).toBeEnabled();
     await expect(footer(page).getByRole("button", { name: "Kembalikan ke SPV…" })).toBeEnabled();
 });
 
@@ -355,13 +355,13 @@ test("AM-026 peran Manager dari sesi: 7 tab baca, tombol tulis nonaktif beralasa
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/off-program-control?tab=sales&batch=b-sm1", NAV);
     const main = page.locator("main");
-    await expect(main.getByText("Peran OFF: Manager.")).toBeVisible(NAV);
+    await expect(main.getByText("Peran Anda: Manager.")).toBeVisible(NAV);
     await expect(main.getByText(/Baca semua antrean dan log audit/)).toBeVisible();
     await expect(main.getByRole("navigation", { name: "Antrean OFF Program Control" }).getByRole("link"))
         .toHaveText([/^Ringkasan/, /^Supervisor/, /^Sales Manager/, /^Klaim/, /^Operational Manager/, /^Keuangan/, /^Log audit/]);
     await expect(detailOf(page).getByRole("heading", { level: 1, name: "007/KINO/10/2026" })).toBeVisible(NAV);
     const alasan = /Manager hanya membaca OFF Program Control/;
-    for (const nama of ["Setujui & teruskan ke Klaim…", "Kembalikan ke SPV…"]) {
+    for (const nama of ["Setujui…", "Kembalikan ke SPV…"]) {
         await expect(footer(page).getByRole("button", { name: nama })).toBeDisabled();
         await expect(footer(page).getByRole("button", { name: nama })).toHaveAttribute("title", alasan);
     }
