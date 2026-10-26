@@ -4,7 +4,7 @@
  *   setiap barisnya membuka klaimnya. Galat muat tidak pernah tampil sebagai kosong.
  * Caller: app/(dashboard)/claim-workflow/page.tsx.
  * Dependensi: GET /api/claim-workflow, GET /api/claim-workflow/outstanding; components/fiori/{core,interactive}; lib/claim-workflow-ui,
- *   lib/rekapan-nota/ui (ambil), lib/promo-ui (rupiah).
+ *   lib/rekapan-nota/ui (ambil), lib/promo-ui (rupiah), lib/tampil (KOSONG).
  * Main Functions: ClaimList.
  * Side Effects: HTTP baca saja. Saringan dan pencarian di klien (BL-13 belum: varian berlabel bila daftar terpotong).
  */
@@ -17,6 +17,7 @@ import { ListItem, MessageStrip, ResponsiveTable, Skeleton, StatusBadge, Variant
 import { FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
 import { rupiah } from "@/lib/promo-ui";
+import { KOSONG } from "@/lib/tampil";
 import { pesanGalat, statusKlaim, tahapKlaim, tanggalWita, umurHari, type TahapKey } from "@/lib/claim-workflow-ui";
 
 type Row = {
@@ -47,7 +48,7 @@ const noClaimDari = (r: Row) => {
     const daftar = r.noClaimList?.length ? r.noClaimList : r.noClaim ? [r.noClaim] : [];
     return daftar.length === 0 ? "" : daftar.length === 1 ? daftar[0] : `${daftar[0]} +${daftar.length - 1} lainnya`;
 };
-const umurTeks = (hari: number | null | undefined) => (hari == null ? "–" : `${hari} hari`);
+const umurTeks = (hari: number | null | undefined) => (hari == null ? KOSONG : `${hari} hari`);
 const umurBaris = (r: Row) => (["dikirim", "sebagian", "lunas"].includes(tahapKlaim(r.status)) ? umurHari(r.submittedToPrincipalAt) : null);
 const cocokTindakan = (r: Row, t: Tindakan) =>
     !t || (t === "ready_no_claim" ? r.canGenerateNoClaim === true : t === "waiting_finance" ? r.offFinanceStatus !== "Paid" : r.documentStatus === "none" || r.documentStatus === "partial");
@@ -108,13 +109,13 @@ export default function ClaimList({ permKeys, ditutup }: { permKeys: string[]; d
     const kolomKlaim: Column<Row>[] = [
         { key: "klaim", header: "Klaim", cell: (r) => <><Link className="fi-mono" href={`/claim-workflow/${r.id}`}>{r.claimWorkflowNo}</Link><span className="fi-sub">{r.principleName}</span></> },
         { key: "noclaim", header: "No Claim", cell: (r) => noClaimDari(r) ? <span className="fi-mono">{noClaimDari(r)}</span> : <span className="fi-subtle">Belum ada</span> },
-        { key: "off", header: "OFF / No Pengajuan", secondary: true, cell: (r) => r.offNoPengajuan || "–" },
+        { key: "off", header: "OFF / No Pengajuan", secondary: true, cell: (r) => r.offNoPengajuan || KOSONG },
         { key: "total", header: "Total", align: "end", cell: (r) => rupiah(r.totalClaim) },
         { key: "dibayar", header: "Dibayar", align: "end", secondary: true, cell: (r) => rupiah(r.totalPaid) },
         { key: "sisa", header: "Sisa", align: "end", cell: (r) => rupiah(r.remainingAmount) },
         { key: "status", header: "Status", cell: (r) => <StatusBadge tone={statusKlaim(r.status).tone}>{statusKlaim(r.status).label}</StatusBadge> },
-        { key: "finance", header: "Finance OFF", secondary: true, cell: (r) => r.offFinanceStatus === "Paid" ? "Lunas" : <span className="fi-why" title={r.noClaimGateReason ?? undefined}>{FINANCE_OFF[r.offFinanceStatus ?? ""] ?? "Menunggu"}</span> },
-        { key: "umur", header: "Umur", secondary: true, cell: (r) => { const u = umurBaris(r); return <span className={u != null && u > 30 ? "fi-why fi-tnum" : "fi-tnum"}>{umurTeks(u)}</span>; } },
+        { key: "finance", header: "Finance OFF", secondary: true, cell: (r) => r.offFinanceStatus === "Paid" ? "Lunas" : <><span className="fi-why">{FINANCE_OFF[r.offFinanceStatus ?? ""] ?? "Menunggu"}</span>{r.noClaimGateReason && <span className="fi-sub">{r.noClaimGateReason}</span>}</> },
+        { key: "umur", header: "Umur", secondary: true, cell: (r) => { const u = umurBaris(r); return u != null && u > 30 ? <><span className="fi-tnum">{umurTeks(u)}</span> <StatusBadge tone="warn">Lewat 30 hari</StatusBadge></> : <span className="fi-tnum">{umurTeks(u)}</span>; } },
         { key: "dibuat", header: "Dibuat", secondary: true, cell: (r) => tanggalWita(r.createdAt) },
         { key: "aksi", header: "Tindakan", cell: (r) => r.canGenerateNoClaim ? <Link className="fi-btn fi-btn--tertiary" href={`/claim-workflow/${r.id}?focus=no-claim`}>Isi No Claim</Link> : null },
     ];
@@ -125,7 +126,7 @@ export default function ClaimList({ permKeys, ditutup }: { permKeys: string[]; d
         { key: "dibayar", header: "Dibayar", align: "end", secondary: true, cell: (r) => rupiah(r.totalPaid) },
         { key: "sisa", header: "Sisa", align: "end", cell: (r) => rupiah(r.remainingAmount) },
         { key: "status", header: "Status", cell: (r) => <StatusBadge tone={statusKlaim(r.status).tone}>{statusKlaim(r.status).label}</StatusBadge> },
-        { key: "umur", header: "Umur", cell: (r) => <span className={(r.daysOutstanding ?? 0) > 30 ? "fi-why fi-tnum" : "fi-tnum"}>{umurTeks(r.daysOutstanding)}</span> },
+        { key: "umur", header: "Umur", cell: (r) => (r.daysOutstanding ?? 0) > 30 ? <><span className="fi-tnum">{umurTeks(r.daysOutstanding)}</span> <StatusBadge tone="warn">Lewat 30 hari</StatusBadge></> : <span className="fi-tnum">{umurTeks(r.daysOutstanding)}</span> },
     ];
 
     const kosongKlaim = semua.length === 0
@@ -161,7 +162,7 @@ export default function ClaimList({ permKeys, ditutup }: { permKeys: string[]; d
                         return (
                             <button key={k.key} type="button" className="fi-kc" aria-pressed={saring === k.key} data-tone={waspada ? "warn" : undefined} onClick={() => setSaring(k.key)}>
                                 <span>{k.label}</span>
-                                <b>{nilai ?? "–"}</b>
+                                <b>{nilai ?? KOSONG}</b>
                                 {kecil && <small>{kecil}</small>}
                             </button>
                         );
@@ -199,7 +200,7 @@ export default function ClaimList({ permKeys, ditutup }: { permKeys: string[]; d
             )}
             <p className="fi-small fi-subtle">Umur = hari sejak dikirim ke principal. Setiap baris membuka klaimnya. Belum lunas dihitung per No Claim dari ringkasan server.</p>
             {daftar.data?.hasMore && (
-                <VariantNote bl="BL-13">Yang tampil adalah {semua.length} klaim terbaru; kartu (selain Belum lunas) dan pencarian hanya menghitung klaim yang tampil. Usulan: saring, cari, dan halaman di database.</VariantNote>
+                <VariantNote bl="BL-13">Yang tampil adalah {semua.length} klaim terbaru; kartu (selain Belum lunas) dan pencarian hanya menghitung klaim yang tampil. Saringan, pencarian, dan halaman belum dikerjakan di database.</VariantNote>
             )}
         </div>
     );

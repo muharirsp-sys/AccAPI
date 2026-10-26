@@ -192,7 +192,7 @@ test("Object Page: kepala (kode tetap), Varian, Alias (alias kode tanpa Hapus), 
     await expect(v.nth(1)).toContainText("VARIAN_A");
     const a = page.getByRole("list", { name: "Alias PRINCIPLE A" }).getByRole("listitem");
     await expect(a).toHaveCount(3);
-    await expect(a.filter({ hasText: "alias kode — tetap" })).toHaveCount(1);
+    await expect(a.filter({ hasText: "alias kode, tetap" })).toHaveCount(1);
     await expect(page.getByRole("button", { name: /^Hapus alias/ })).toHaveCount(2); // alias kode tidak punya tombol hapus
     await expect(page.getByRole("button", { name: "Hapus alias PA", exact: true })).toHaveCount(0);
 
@@ -212,7 +212,7 @@ test("Object Page: kepala (kode tetap), Varian, Alias (alias kode tanpa Hapus), 
     expect(lama[0]).toMatch(/sebelum=7$/); // kursor = id baris ke-20 yang dikembalikan (7)
 
     const dipakai = page.locator("#p-dipakai");
-    for (const [nama, href] of [["Master Barang", "/master-barang"], ["Mapping Principal", "/principal-mapping"], ["Master Principle", "/principles"], ["Claim Workflow", "/claim-workflow"]]) {
+    for (const [nama, href] of [["Master Barang", "/master-barang"], ["Mapping Principal", "/principal-mapping"], ["Master Principal", "/principles"], ["Claim Workflow", "/claim-workflow"]]) {
         await expect(dipakai.getByRole("link", { name: new RegExp(nama) })).toHaveAttribute("href", href);
     }
     await page.screenshot({ path: "test-results/fiori-s7b-01-detail.png", fullPage: true });
@@ -302,7 +302,7 @@ test("Nonaktif principal: dialog menyebut nama; batal tidak mengirim; sesudahnya
     await expect(page.locator(".fi-oph").getByRole("button", { name: "Aktifkan…" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Tambah varian…" })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Tambah alias…" })).toBeDisabled();
-    await expect(page.locator("#p-varian")).toContainText("Terkunci: Principal nonaktif — aktifkan dulu.");
+    await expect(page.locator("#p-varian")).toContainText("Terkunci: Principal nonaktif, aktifkan dulu.");
     await expect(daftar(page).getByRole("button", { name: /PRINCIPLE A/ })).toContainText("Nonaktif");
     await expect(page.getByRole("list", { name: "Riwayat principal" }).getByRole("listitem").first()).toContainText("Principal dinonaktifkan");
 });
@@ -376,7 +376,7 @@ test("Galat 409 ALIAS_TABRAKAN dan 403 tampil dengan kalimat server di dialog; 4
 
     await page.locator(".fi-oph").getByRole("button", { name: "Nonaktifkan…" }).click();
     await dialog(page).getByRole("button", { name: "Nonaktifkan", exact: true }).click();
-    await expect(dialog(page).getByRole("alert")).toContainText("Forbidden — akun Anda belum berhak atas aksi ini");
+    await expect(dialog(page).getByRole("alert")).toContainText("Forbidden. Akun Anda belum berhak atas aksi ini");
     await expect(dialog(page)).toBeVisible();
     expect(c.get).toBe(sesudah409); // 403 tidak memuat ulang
 });

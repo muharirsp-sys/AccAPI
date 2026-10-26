@@ -1,17 +1,18 @@
 /*
  * Tujuan: Helper murni layar Claim Workflow (Fiori S4b): satu set badge status, alur tahap, umur sejak dikirim ke principal,
  *   pratinjau pajak dengan pembulatan yang sama dengan server, daftar periksa penutupan, kalimat riwayat, pola No Claim terbaca,
- *   dan pesan galat muat. Tidak ada logic bisnis baru — hanya penyajian.
+ *   dan pesan galat muat. Tidak ada logic bisnis baru, hanya penyajian.
  * Caller: app/(dashboard)/claim-workflow/ClaimList.tsx, app/(dashboard)/claim-workflow/[id]/ClaimDetail.tsx, claim-workflow-ui.test.ts.
- * Dependensi: lib/claim-workflow/{constants,calculations} (pure).
+ * Dependensi: lib/claim-workflow/{constants,calculations} (pure); lib/tampil (tanggalWita, sebabHttp).
  * Main Functions: statusKlaim, tahapKlaim, alurKlaim, umurHari, hitungBaris, syaratTutup, kalimatAudit, polaTerbaca, labelLingkup,
- *   tanggalWita, pesanGalat, DOKUMEN.
+ *   tanggalWita (= lib/tampil), pesanGalat, DOKUMEN.
  * Side Effects: Tidak ada.
  */
 import type { FlowStep, Tone } from "@/components/fiori/core";
 import { claimWorkflowStatuses as S, isLegacyPekaStatus } from "@/lib/claim-workflow/constants";
 import { calculateClaimAmount } from "@/lib/claim-workflow/calculations";
 import { rupiah } from "@/lib/promo-ui";
+import { sebabHttp, tanggalWita as tanggalWitaBersama } from "@/lib/tampil";
 
 /** Satu set badge (A3): Dibayar sebagian kuning, Lunas hijau, Ditutup netral. Kode status mentah tidak tampil. */
 const STATUS_KLAIM: Record<string, { label: string; tone: Tone }> = {
@@ -150,21 +151,17 @@ export const polaTerbaca = (pattern: string) =>
 const LINGKUP: Record<string, string> = { per_pengajuan: "Per pengajuan", per_program: "Per program", per_toko: "Per toko", per_item: "Per item", custom: "Kustom" };
 export const labelLingkup = (scope: string | null | undefined) => (scope ? LINGKUP[scope] ?? "Berkas klaim" : "Berkas klaim");
 
-/** Timestamp → dd/mm/yyyy menurut WITA. */
-export function tanggalWita(iso: string | Date | null | undefined) {
-    if (!iso) return "";
-    const d = iso instanceof Date ? iso : new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    return new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Asia/Makassar" }).format(d);
-}
+/** Timestamp → dd/mm/yyyy menurut WITA; kosong atau tidak terbaca → "-". Satu sumber dengan lib/tampil. */
+export const tanggalWita = tanggalWitaBersama;
 
 /**
- * Galat muat yang bisa dibaca: respons kosong/bukan JSON atau hanya kode HTTP → kalimat umum (+ kode), bukan
- * "Unexpected end of JSON input". Pesan server yang bermakna dipertahankan.
+ * Galat muat yang bisa dibaca: respons kosong/bukan JSON → kalimat umum, hanya kode HTTP → kalimat umum + sebab dari status
+ * (bukan kode mentah), bukan "Unexpected end of JSON input". Pesan server yang bermakna dipertahankan.
  */
 export function pesanGalat(umum: string, galat?: string | null): string {
     if (!galat) return umum;
-    if (/^HTTP \d+$/.test(galat)) return `${umum} Server menjawab ${galat}.`;
+    const kode = /^HTTP (\d+)$/.exec(galat);
+    if (kode) return `${umum} ${sebabHttp(Number(kode[1]))}`;
     if (/JSON|Unexpected (end|token)/i.test(galat)) return umum;
     return galat;
 }

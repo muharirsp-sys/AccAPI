@@ -63,7 +63,8 @@ export function ringkasLog(l: Log): { apa: string; rinci: string } {
     return { apa: `Alias ${kata}`, rinci: `“${teksDari(isi.aliasAsli) || l.kunci}” · ${labelJenis(teksDari(isi.jenis))}${varian}` };
 }
 
-/** Aktor = id akun sesi (tanpa nama di API); benih memakai `benih:S7-2`. */
+/** Aktor = id akun sesi (tanpa nama di API); benih memakai `benih:S7-2`.
+ *  TODO: tampilkan nama pelaku bila API riwayat menyertakan `actorName` (audit desain 001, No 87); butuh perubahan API, bukan layar. */
 export const aktorTeks = (aktor: string) => (aktor.startsWith("benih:") ? `benih ${aktor.slice(6)}` : aktor);
 
 // ---------------------------------------------------------------------------------------------------------- jaringan
@@ -93,7 +94,7 @@ export async function baca<T>(url: string, pick: (j: Record<string, unknown>) =>
     return { status: "galat", error: `${umum} ${sebab}` };
 }
 
-export const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas, jadi perubahan mungkin sudah tersimpan. Data dimuat ulang — periksa dulu sebelum mengulang.";
+export const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas, jadi perubahan mungkin sudah tersimpan. Data dimuat ulang. Periksa dulu sebelum mengulang.";
 
 /** `belumPasti` = jawaban hilang/tidak terbaca (hasil tulis tidak diketahui); lainnya = server menolak dan tidak menulis apa pun. */
 export class GalatTulis extends Error {
@@ -107,6 +108,6 @@ export async function tulis(url: string, method: "POST" | "PATCH" | "DELETE", bo
     if (status === 0 || status === 502 || status === 504 || data === null) throw new GalatTulis(BELUM_PASTI, status, true);
     const pesan = pesanServer(data) || "Server menolak permintaan.";
     const teks = status === 401 ? `${pesan.replace(/[.\s]+$/, "")}. Sesi login berakhir; masuk ulang lalu coba lagi.`
-        : status === 403 ? `${pesan} — akun Anda belum berhak atas aksi ini; minta admin menambahkan izinnya.` : pesan;
+        : status === 403 ? `${pesan.replace(/[.\s]+$/, "")}. Akun Anda belum berhak atas aksi ini; minta admin menambahkan izinnya.` : pesan;
     throw new GalatTulis(teks, status, false, typeof data.code === "string" ? data.code : undefined);
 }
