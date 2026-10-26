@@ -1,6 +1,6 @@
 # Tujuan: Sumber audit email aktif untuk laporan harian berbasis keyword SPV, SM, dan principal.
 # Caller: Operator/migration script saat sinkronisasi report_recipient.
-# Dependensi: Resolver target python_backend/laporan_harian_targets.py.
+# Dependensi: REPORT_KEYWORDS di python_backend/laporan_harian_pq.py (keyword lain tidak dibuatkan laporan).
 # Main Functions: Kolom Keyword dan Email; keyword duplikat digabung saat seed.
 # Side Effects: Tidak ada; perubahan baru aktif setelah sinkronisasi ke database.
 Keyword,Email

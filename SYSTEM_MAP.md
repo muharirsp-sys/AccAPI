@@ -150,14 +150,17 @@ Status: UI redesign tervalidasi lokal. Audit build menemukan tracing `webhook-ba
 ```
 UI upload laporan harian
   -> python_backend/routers/laporan_harian.py
-  -> laporan_harian.build_fix_from_accurate() -> build_salesbase()
-  -> laporan_harian.build_stock_frame()
-       -> alias Stock Accurate: Nama Gudang=kode, Deskripsi Gudang=nama, Nama Satuan=satuan
-       -> mapping Principal sumber ke SPV/SM (fallback item penjualan bila Principal kosong)
-  -> laporan_harian.write_report_files() -> XLSX per SPV, SM, dan Principal
-       -> laporan_harian_layout.py + laporan_harian_layouts.json: posisi kolom, sheet, font, format tanggal/angka, lebar arsip, relasi styles/theme paket XLSX
+  -> laporan_harian.load_inputs() -> laporan_harian_pq.build_fix()  (replika query "2. To Format Laporan")
+       penjualan = Rincian Faktur Penjualan / "1. Paste Data" (Paste Acc); retur = Laporan Retur (No.Retur) / Rincian RJN
+       atau FIX LAP PENJ jadi (fix_from_table)
+  -> laporan_harian_pq.SalesBase  (replika query SalesBase "2.3 To SPV dan SM New": flag AO/EC/IA/Nota Retur/Batal)
+  -> laporan_harian.load_stock() -> master_stock()  ("3. Stock" Sheet1; export Accurate dipetakan)
+  -> laporan_harian.write_report_files() -> laporan_harian_pq.build_report() + write_workbook()
+       -> 22 keyword LaporanAuto, sama persis dengan arsip (nilai, kolom, urutan baris, nama sheet, format)
   -> laporan_harian_manager.write_manager_report() -> Excel + HTML Pak Fahdhar untuk unduhan/screenshot
        -> agregasi JUMLAH net retur sekali, mapping cabang/principal -> SPV/SM; target periode belum tersedia tetap kosong
+Paritas: laporan_harian_bandingkan.py <hasil> <arsip LaporanAuto> (sel demi sel); test_laporan_harian_pq.py
+  (fixture + acuan dari Excel via laporan_harian_excel_pq.py)
 ```
 
 ### 1. Autentikasi & Guard Halaman
@@ -1558,32 +1561,25 @@ UI: modul /laporan-harian
   -> POST /api/laporan-harian/upload  (multipart: penjualan wajib, retur dan stock opsional)
      -> requirePermission("laporan_harian.upload")
      -> teruskan ke python_backend FastAPI: POST /laporan-harian/process
-        -> pandas replika logika Power Query SalesBase:
-           merge flag AO/EC/IA, Nota Retur/Batal, map Golongan(SPV)+NAMA SM, Kategori Baru
-        -> output: (a) rows per SPV & per SM, (b) rows stock per SPV, (c) agregat progress harian
-     -> susun output 1:1 sesuai `REPORT_COLUMNS` (tanpa duplikasi `GOLONGAN`/pergeseran AO-EC-IA)
-     -> resolve keyword aktif dari `report_recipient`: SPV (`GOLONGAN`), SM (`NAMA_SM`),
-        atau alias principal (`REPORT_TARGETS` di `laporan_harian_targets.py`)
-     -> untuk target Principal, terapkan parity Power Query di `laporan_harian_principal.py`:
-        FONTERRA exclude `C-TUN020` + stock `GD01`; MOTASA 1/2 berdasarkan prefix salesman;
-        RECKITT tambah `Devisi`; MUSTIKA RATU menghasilkan format khusus 20 kolom dengan
-        Market/HET/NET/DISC/BA; GODREJ/ENERGIZER/ABC/URC memakai filter Principal kanonik;
-        HEINZ penjualan memakai GOLONGAN=ZUL & ARUL, stok memakai PRINCIPAL;
-        SAHAR mengambil salesman _MT/_OFFICE lintas principal dan pengecualian stok sesuai query;
-        YUDI menambah VOLUME_KG Puratos pada kolom ke-51
-     -> referensi `PL_MR` dan `RECKITT LIST` disimpan sebagai CSV read-only di `python_backend/`;
-        Principal asli file stock dipertahankan agar item tanpa penjualan harian tidak hilang
-     -> nama customer memakai `Nama Pelanggan Faktur Penjualan` (fallback kode hanya bila nama kosong)
+        -> laporan_harian_pq.py = replika SETIA Power Query "2. To Format Laporan" + "2.3 To SPV dan SM New"
+           (dibuktikan 26 Okt 2026: FIX tersimpan + 3. Stock -> 22 berkas = arsip LaporanAuto 24 Okt, 0 selisih):
+           - urutan baris meniru mesin Power Query: Table.NestedJoin (baca kiri/kanan bergantian, baris tertampung
+             keluar menurut kemunculan pertama kunci), Table.Sort = introsort .NET (tidak stabil), filter kolom
+             sumber didorong ke bawah join (filter Mapping_PIC/ANI/prefix salesman MOTASA tidak)
+           - "" vs null dipertahankan (Qty Los/Value Los baris INV kosong karena Number.From("") error)
+           - tabel master (GOLONGAN, JENIS PRODUK, Mapping_PIC) di `laporan_harian_lookups.json`; PL_MR dan RECKITT
+             LIST di CSV read-only `python_backend/`
+        -> output: (a) berkas per keyword, (b) agregat progress harian (salesDailyProgress), (c) ringkasan per SPV
+     -> keyword aktif `report_recipient` dicocokkan PERSIS ke 22 laporan LaporanAuto (`REPORT_KEYWORDS`):
+        SUMARTONO, MARTEN(+VOLUME_KG), SOFYAN, HEINZ(GOLONGAN ZUL & ARUL), SYAMSUL, STANLEY, YARMAN, RAMLY,
+        RECKIT(+Devisi), ADNAN/IRMAN (NAMA SM; ADNAN menetapkan ulang GOLONGAN JONAL/ANI), ANI (principal MT/OFFICE),
+        MUSTIKA RATU (format 20 kolom; stok diurutkan Nama Gudang = sortState tabel Excel), MOTASA MKS 1/2,
+        FONTERRA (tanpa C-TUN020, stok GD01), URC, ABCPI, ENERGIZER, GODREJJ, MSM/DOLPHIN (= ADNAN difilter principal);
+        keyword lain dilaporkan `unmatched_report_keywords`
      -> tanggal run/nama file/subject memakai tanggal transaksi penjualan terakhir; retur lebih baru tidak menggesernya
-     -> mapping `GOLONGAN`/`NAMA_SM` pada Stock hanya dipakai untuk filter; output akhir mengikuti
-        `Table.SelectColumns` Power Query 2.3: `Kode`, `Nama Barang`, `Kode Gudang`, `Nama Gudang`,
-        `Satuan`, `Principal`, `Saldo Akhir`
-     -> tulis file per keyword ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
-        nama sheet persis arsip (`<Keyword>` + `<Keyword> STOCK`; MSM/MOTASA `Sheet1` + `Sheet2`)
-        -> `laporan_harian_layout.py` menerapkan profil `laporan_harian_layouts.json` tanpa menyalin transaksi;
-           tanggal tetap nilai Excel dengan format sumber, NPWP teks; FIX lama dinormalisasi sebelum format khusus
-        -> mapping `stock_spv_map` dari Mapping PIC terpisah dari conca sales (FORISA stok -> YUDI)
-        -> MSM ikut dibuat untuk unduhan walaupun tidak tercantum pada mapping email
+     -> tulis file per keyword ke `LH_RUNTIME_DIR/<runId>/` (sheet `<Keyword>` + `<Keyword> STOCK`, TANGGAL format
+        `yyyy-mm-dd h:mm:ss`, TGL_JT tanggal hanya FONTERRA/URC; MSM/DOLPHIN/MOTASA MKS 1/2 meniru arsip manual:
+        `Sheet1`/`Sheet2`, tanggal angka seri). MSM ikut dibuat untuk unduhan walaupun tidak tercantum pada mapping email
         (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
      -> tulis juga download-only `<tanggal>_2.To Format Laporan.xlsx` (snapshot FIX LAP PENJ, tidak
         pernah dikirim email; 63 kolom + sheet lookup JENIS PRODUK/GOLONGAN)
@@ -1649,20 +1645,21 @@ UI /laporan-harian bagian "Laporan Enigma" (KirimPrincipal.tsx kode "enigma") ->
 
 Admin mapping: `/laporan-harian/mapping` -> `app/api/laporan-harian/mapping/route.ts` -> CRUD
 `report_recipient` (keyword/emails/active) langsung dari Next.js, tanpa FastAPI. Permission
-`laporan_harian.manage`. Keyword tetap diresolusi otomatis ke SPV/SM/Principal oleh
-`resolve_report_groups` di backend -- halaman ini hanya mengatur siapa menerima email per keyword.
+`laporan_harian.manage`. Keyword harus salah satu `REPORT_KEYWORDS` di `laporan_harian_pq.py` (nama laporan
+LaporanAuto) -- halaman ini hanya mengatur siapa menerima email per keyword.
 
 State machine pure: `lib/laporan-harian/send-state.ts`; self-check:
 `node --experimental-strip-types lib/laporan-harian/send-state.test.ts`.
 Normalisasi progress pure: `lib/laporan-harian/progress-normalize.ts`; self-check:
 `node --experimental-strip-types lib/laporan-harian/progress-normalize.test.ts`.
-Alias Principal disimpan di `python_backend/laporan_harian_targets.py`; filter/formatter khusus ada di
-`python_backend/laporan_harian_principal.py`. Sumber audit penerima ada di
+Definisi laporan per keyword ada di `python_backend/laporan_harian_pq.py` (`build_report`). Sumber audit penerima ada di
 `config/mapping_laporan.csv`; sinkronkan secara transaksional dengan
 `node scripts/sync-laporan-recipients.mjs` agar tepat 20 keyword aktif dan keyword lama dinonaktifkan.
 
-Validasi paritas 14 September 2026 dilakukan di worktree/DB lokal terpisah, tanpa pengiriman email
-atau perubahan production. Self-check: `python python_backend/test_laporan_harian_parity.py`.
+Validasi paritas 26 Oktober 2026 (masukan + arsip LaporanAuto 24 Okt, salinan lokal, tanpa email/produksi):
+`python python_backend/laporan_harian_bandingkan.py <folder hasil> <folder arsip> --tanggal 2026-10-24` -> 0 selisih.
+Self-check: `python python_backend/test_laporan_harian_pq.py` (fixture `python_backend/fixtures/laporan_harian/`,
+acuan dibuat Excel menjalankan query M owner lewat `laporan_harian_excel_pq.py`).
 Simulasi menu web dengan tiga ekspor asli: `tests/laporan-harian-parity.spec.ts`, opt-in
 `LAPORAN_PARITY_FILES=1`, `LAPORAN_PARITY_SOURCE_DIR`, dan `PLAYWRIGHT_BASE_URL` lokal.
 File transaksi/bukti simulasi berada di `outputs/parity/` lokal dan tidak untuk disertakan ke Git.
