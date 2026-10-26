@@ -3,10 +3,10 @@
  *   dari API Accurate, susun format template ABCPI, simpan arsip, unggah FTP ABC, email penerima "ABCPI" (Laporan Harian),
  *   kabari admin. Akhir bulan dari cron = DITAHAN (owner 26 Okt 2026): admin dikirimi berkasnya, kirim manual dari web.
  * Caller: app/api/cron/abcpi-harian (20.00 WITA, cron VPS), app/api/laporan-harian/abcpi (pratinjau/kirim manual).
- * Dependensi: lib/abcpi/{laporan,ftp}, resolveSyncCredentials, lib/email, report_recipient, item, xlsx.
+ * Dependensi: lib/abcpi/{laporan,ftp}, lib/accurate-baca (jatah laju bersama), resolveSyncCredentials, lib/email, report_recipient, item, xlsx.
  *   Konfigurasi di volume data (bukan env Coolify, tertimpa tiap deploy): data/abcpi/config.json
  *   { "ftp": { "host", "port", "user", "password", "dir" }, "adminEmail" }.
- * Main Functions: jalankanAbcpi, riwayatAbcpi, hariIniWita.
+ * Main Functions: jalankanAbcpi, riwayatAbcpi (hariIniWita diekspor ulang dari lib/accurate-baca).
  * Side Effects: HTTP baca Accurate (list.do/detail.do/list-stock.do, tanpa tulis); tulis data/abcpi/<YYYY-MM>/*,
  *   data/abcpi/log.jsonl; unggah FTP; kirim email.
  */
@@ -17,8 +17,7 @@ import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { item, reportRecipient } from "@/db/schema";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
-import { accurateHeaders, type AccurateCredentials } from "@/lib/sync";
-import { redactAccurateSecrets } from "@/lib/accurate-redact";
+import { daftar, hariIniWita, keAccurate, rincian } from "@/lib/accurate-baca";
 import { sendEmail } from "@/lib/email";
 import { unggahFtp, type FtpConfig } from "./ftp";
 import { akhirBulan, barangAbc, barisSales, barisStok, keCsv, KOLOM_SO, KOLOM_STOK, petaDari, type Baris } from "./laporan";
@@ -27,65 +26,9 @@ const CABANG_ABC = "550"; // branch "ABC" di Accurate (probe 26 Okt 2026); faktu
 const GUDANG_BS = "GD0BS";
 const DIR = path.join(/*turbopackIgnore: true*/ process.cwd(), "data", "abcpi");
 const WEB = "https://web-super.online/laporan-harian";
+export { hariIniWita };
 
-export const hariIniWita = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date());
-const keAccurate = (iso: string) => iso.split("-").reverse().join("/");
-const jeda = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type Obj = Record<string, unknown>;
-
-// Batas Accurate: 8 request/detik dan 8 proses paralel per token — token ini dipakai juga oleh sinkron & webhook,
-// jadi putaran ABCPI dijatah ≤4 request/detik (jarak awal request ≥250 ms; uji 26 Okt: 953 dokumen ±4 menit) dan "melebihi toleransi" dicoba ulang.
-let giliranBerikut = 0;
-const giliran = async () => {
-    const t = Math.max(Date.now(), giliranBerikut);
-    giliranBerikut = t + 250;
-    await jeda(t - Date.now());
-};
-
-async function ambil(creds: AccurateCredentials, jalur: string, params: Record<string, string>) {
-    const url = new URL(`${creds.sessionHost}/accurate/api${jalur}`);
-    for (const [k, v] of Object.entries(params)) url.searchParams.append(k, v);
-    for (let coba = 1; ; coba++) {
-        await giliran();
-        const res = await fetch(url, { headers: accurateHeaders(creds), signal: AbortSignal.timeout(60_000) }).catch((e: Error) => e);
-        const body = res instanceof Error ? null : await res.json().catch(() => null) as { s?: boolean; d?: unknown; m?: unknown; sp?: Obj } | null;
-        const pesan = res instanceof Error ? res.message : `HTTP ${res.status} ${String(body?.m ?? body?.d ?? "")}`;
-        if (res instanceof Error || res.status === 429 || res.status >= 500 || /melebihi toleransi|request per detik/i.test(pesan)) {
-            if (coba < 6) { await jeda(2000 * coba); continue; }
-            throw new Error(redactAccurateSecrets(`Accurate ${jalur}: ${pesan}`).slice(0, 300));
-        }
-        if (!res.ok || !body?.s) throw new Error(redactAccurateSecrets(`Accurate ${jalur}: ${pesan}`).slice(0, 300));
-        return body;
-    }
-}
-
-/** Semua halaman list.do (urut id naik: baris baru jatuh di halaman akhir); jumlah wajib sama dengan sp.rowCount. */
-async function daftar(creds: AccurateCredentials, jalur: string, params: Record<string, string>): Promise<Obj[]> {
-    for (let coba = 1; ; coba++) {
-        const rows: Obj[] = [];
-        let pageCount = 1, rowCount = 0;
-        for (let page = 1; page <= pageCount; page++) {
-            const b = await ambil(creds, jalur, { ...params, "sp.page": String(page), "sp.pageSize": "100", "sp.sort": "id|asc" });
-            pageCount = Number(b.sp?.pageCount ?? 0);
-            rowCount = Number(b.sp?.rowCount ?? 0);
-            rows.push(...(b.d as Obj[]));
-        }
-        if (rows.length === rowCount && new Set(rows.map((r) => r.id)).size === rowCount) return rows;
-        if (coba === 3) throw new Error(`Accurate ${jalur}: terbaca ${rows.length} dari ${rowCount} baris (data berubah saat dibaca)`);
-    }
-}
-
-/** detail.do per dokumen, 4 sekaligus di bawah jatah giliran(). ponytail: ±1.000 panggilan di akhir bulan (±4,5 menit); pakai cache sales_invoice bila jadi beban. */
-async function rincian(creds: AccurateCredentials, jalur: string, ids: unknown[]) {
-    const hasil: unknown[] = new Array(ids.length);
-    let i = 0, berhenti = false;
-    await Promise.all(Array.from({ length: 4 }, async () => {
-        for (let k = i++; k < ids.length && !berhenti; k = i++) {
-            try { hasil[k] = (await ambil(creds, jalur, { id: String(ids[k]) })).d; } catch (e) { berhenti = true; throw e; }
-        }
-    }));
-    return hasil;
-}
 
 async function konfigurasi(): Promise<{ ftp: FtpConfig; adminEmail: string }> {
     const c = JSON.parse(await readFile(path.join(DIR, "config.json"), "utf8")) as { ftp?: FtpConfig; adminEmail?: string };
