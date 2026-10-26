@@ -54,7 +54,11 @@ function sesi(dasar: string) {
                 headers: { ...(opsi.headers as Record<string, string> | undefined), cookie: [...kue].map(([k, v]) => `${k}=${v}`).join("; ") } });
             for (const c of res.headers.getSetCookie()) { const [kv] = c.split(";"); const i = kv.indexOf("="); if (i > 0) kue.set(kv.slice(0, i).trim(), kv.slice(i + 1).trim()); }
             const lokasi = res.headers.get("location");
-            if (res.status >= 300 && res.status < 400 && lokasi) { url = new URL(lokasi, url); opsi = { method: "GET" }; await res.arrayBuffer(); continue; }
+            if (res.status >= 300 && res.status < 400 && lokasi) {
+                url = new URL(lokasi, url);
+                if (url.origin !== new URL(dasar).origin) throw new Error(`Enigma: redirect ke situs lain ditolak (${url.origin})`); // cookie sesi tidak boleh keluar
+                opsi = { method: "GET" }; await res.arrayBuffer(); continue;
+            }
             return { res, html: await res.text(), url };
         }
         throw new Error(`Enigma: redirect berputar di ${jalur}`);
@@ -63,7 +67,7 @@ function sesi(dasar: string) {
 
 /** Login → unggah → tunggu status final (default ≤15 menit) → baca Detail. Galat = belum pasti terunggah, dilaporkan ke admin. */
 export async function unggahEnigma(akun: { id: string; password: string }, berkas: Buffer, namaBerkas: string,
-    opsi: { dasar?: string; tungguMs?: number; selaMs?: number } = {}): Promise<HasilUnggah> {
+    opsi: { dasar?: string; tungguMs?: number; selaMs?: number; diterima?: () => Promise<void> } = {}): Promise<HasilUnggah> {
     const { dasar = "https://enigma.enesis.com", tungguMs = 15 * 60_000, selaMs = 15_000 } = opsi;
     const minta = sesi(dasar);
     const halamanLogin = await minta("/login");
@@ -78,9 +82,12 @@ export async function unggahEnigma(akun: { id: string; password: string }, berka
     form.append("excel_file", new Blob([new Uint8Array(berkas)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), namaBerkas);
     const kirim = await minta("/", { method: "POST", body: form });
     if (kirim.res.status >= 400) throw new Error(`Enigma: unggah ditolak HTTP ${kirim.res.status}`);
+    await opsi.diterima?.();
 
+    // Galat jaringan sesaat saat menunggu tidak menggagalkan: berkas sudah diterima, terus baca sampai batas waktu.
     for (const batas = Date.now() + tungguMs; ;) {
-        const baru = uraiRiwayat((await minta("/")).html).filter((r) => r.id > sebelum).sort((a, b) => b.id - a.id)[0];
+        const beranda = await minta("/").catch(() => null);
+        const baru = beranda ? uraiRiwayat(beranda.html).filter((r) => r.id > sebelum).sort((a, b) => b.id - a.id)[0] : undefined;
         if (baru && FINAL(baru.status)) {
             const detail = uraiDetail((await minta(`/upload_detail/${baru.id}`)).html);
             return { id: baru.id, status: baru.status, keterangan: detail.keterangan, log: detail.log };

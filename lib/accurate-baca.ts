@@ -1,14 +1,13 @@
 /*
  * Tujuan: Pembaca API Accurate untuk laporan principal terjadwal (ABCPI, Enigma/Marketama) — list.do lengkap, detail.do
- *   paralel terbatas, dan faktur yang memakai salinan detail.do di cache sales_invoice bila belum berubah.
+ *   paralel terbatas di bawah satu jatah laju bersama.
  * Caller: lib/abcpi/jalankan.ts, lib/enigma/jalankan.ts.
- * Dependensi: lib/sync (accurateHeaders), lib/accurate-redact, lib/db + sales_invoice.
- * Main Functions: ambil, daftar, rincian, rincianFaktur, hariIniWita, keAccurate.
- * Side Effects: HTTP GET ke Accurate (baca saja); baca tabel sales_invoice.
+ * Dependensi: lib/sync (accurateHeaders), lib/accurate-redact.
+ * Main Functions: ambil, daftar, rincian, hariIniWita, keAccurate.
+ * Catatan: cache sales_invoice TIDAK dipakai — sync list.do memperbarui last_update tanpa mengganti rincian, dan list.do tidak
+ *   memberi optLock/versi (probe 26 Okt 2026), jadi salinan lama tak bisa dibedakan dari yang terbaru.
+ * Side Effects: HTTP GET ke Accurate (baca saja).
  */
-import { inArray } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { salesInvoiceCache } from "@/db/schema";
 import { accurateHeaders, type AccurateCredentials } from "@/lib/sync";
 import { redactAccurateSecrets } from "@/lib/accurate-redact";
 
@@ -69,27 +68,4 @@ export async function rincian(creds: AccurateCredentials, jalur: string, ids: un
         }
     }));
     return hasil;
-}
-
-/**
- * Faktur dari list.do (`id`, `lastUpdate`) → detail lengkap, 100 per potong agar memori tetap kecil. Cache sales_invoice berisi
- * jawaban detail.do (webhook + penambal tiap menit); dipakai hanya bila lastUpdate-nya sama persis dengan list.do, sisanya detail.do.
- */
-export async function rincianFaktur(creds: AccurateCredentials, faktur: Obj[], olah: (dokumen: unknown[]) => void) {
-    let dariCache = 0, dariApi = 0;
-    for (let i = 0; i < faktur.length; i += 100) {
-        const potong = faktur.slice(i, i + 100);
-        const cache = new Map((await db.select({ id: salesInvoiceCache.id, lastUpdate: salesInvoiceCache.lastUpdate, raw: salesInvoiceCache.rawData })
-            .from(salesInvoiceCache).where(inArray(salesInvoiceCache.id, potong.map((r) => Number(r.id))))).map((c) => [c.id, c]));
-        const siap: unknown[] = [], ulang: unknown[] = [];
-        for (const r of potong) {
-            const c = cache.get(Number(r.id));
-            const dok = c && c.lastUpdate === r.lastUpdate ? (typeof c.raw === "string" ? JSON.parse(c.raw) : c.raw) as Obj : null;
-            if (dok && Array.isArray(dok.detailItem)) siap.push(dok); else ulang.push(r.id);
-        }
-        dariCache += siap.length;
-        dariApi += ulang.length;
-        olah([...siap, ...await rincian(creds, "/sales-invoice/detail.do", ulang)]);
-    }
-    return { dariCache, dariApi };
 }

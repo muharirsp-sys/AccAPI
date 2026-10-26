@@ -12,7 +12,7 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import * as XLSX from "xlsx";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
-import { daftar, hariIniWita, keAccurate, rincian, rincianFaktur } from "@/lib/accurate-baca";
+import { daftar, hariIniWita, keAccurate, rincian } from "@/lib/accurate-baca";
 import { sendEmail } from "@/lib/email";
 import { barisEnigma, KOLOM_ENIGMA, type BarisEnigma } from "./laporan";
 import { unggahEnigma } from "./portal";
@@ -23,7 +23,8 @@ const WEB = "https://web-super.online/laporan-harian";
 const urai = <T>(teks: string, cadangan: T): T => { try { return JSON.parse(teks) as T; } catch { return cadangan; } };
 
 async function konfigurasi() {
-    const c = JSON.parse(await readFile(path.join(DIR, "config.json"), "utf8")) as { subdistId?: string; password?: string; adminEmail?: string };
+    // Pesan JSON.parse memuat potongan isi berkas (bisa password) — jangan diteruskan ke log/email.
+    const c = urai<{ subdistId?: string; password?: string; adminEmail?: string }>(await readFile(path.join(DIR, "config.json"), "utf8").catch(() => ""), {});
     if (!c.subdistId || !c.password || !c.adminEmail) throw new Error("data/enigma/config.json belum lengkap (subdistId, password, adminEmail)");
     return { akun: { id: String(c.subdistId), password: c.password }, adminEmail: c.adminEmail };
 }
@@ -35,7 +36,7 @@ async function susun(tanggal: string) {
     const creds = accurate.creds;
     const periode = { "filter.branchId": CABANG_MIX_FOOD, "filter.transDate.op": "BETWEEN",
         "filter.transDate.val[0]": keAccurate(`${tanggal.slice(0, 8)}01`), "filter.transDate.val[1]": keAccurate(tanggal) };
-    const fakturList = (await daftar(creds, "/sales-invoice/list.do", { fields: "id,number,lastUpdate", ...periode })).filter((r) => String(r.number).startsWith("INV/"));
+    const fakturList = (await daftar(creds, "/sales-invoice/list.do", { fields: "id,number", ...periode })).filter((r) => String(r.number).startsWith("INV/"));
     const returList = (await daftar(creds, "/sales-return/list.do", { fields: "id,number", ...periode })).filter((r) => !String(r.number).toUpperCase().startsWith("RSJ"));
     const baris: BarisEnigma[] = [];
     const lewat = new Map<string, string>(), outletBaru = new Map<string, string>(), galat = new Set<string>();
@@ -45,10 +46,12 @@ async function susun(tanggal: string) {
         h.outletBaru.forEach((v, k) => outletBaru.set(k, v));
         h.galat.forEach((g) => galat.add(g));
     };
-    const sumber = await rincianFaktur(creds, fakturList, (dok) => tampung(barisEnigma(dok, false)));
-    // ponytail: retur tidak punya rincian di cache → detail.do semua retur MIX FOOD (±850/bulan, ±3,5 menit); simpan rincian retur bila jadi beban.
-    tampung(barisEnigma(await rincian(creds, "/sales-return/detail.do", returList.map((r) => r.id)), true));
-    return { baris, lewat, outletBaru, galat: [...galat], dokumen: { faktur: fakturList.length, retur: returList.length, ...sumber } };
+    // detail.do semua faktur & retur MIX FOOD, 200 per potong agar memori kecil. ponytail: ±2.500 panggilan di akhir bulan (±10 menit
+    // pada 4 req/dtk); cache sales_invoice tidak bisa dipakai (lihat lib/accurate-baca) — tambah versi/optLock di cache bila jadi beban.
+    for (const [daftarDok, jalur, retur] of [[fakturList, "/sales-invoice/detail.do", false], [returList, "/sales-return/detail.do", true]] as const) {
+        for (let i = 0; i < daftarDok.length; i += 200) tampung(barisEnigma(await rincian(creds, jalur, daftarDok.slice(i, i + 200).map((r) => r.id)), retur));
+    }
+    return { baris, lewat, outletBaru, galat: [...galat], dokumen: { faktur: fakturList.length, retur: returList.length } };
 }
 
 /** Satu sheet seperti template_enigma.xlsx; DATE_INVOICE = tanggal Excel (yyyymmdd), sisanya nilai apa adanya. */
@@ -107,7 +110,11 @@ export async function jalankanEnigma({ tanggal, kirim, sumber }: { tanggal: stri
         if (!baris.length) throw new Error("Tidak ada baris Marketama bulan ini — tidak diunggah (cek sesi/database Accurate)");
 
         await writeFile(path.join(folder, `ENIGMA_${ymd}.xlsx`), buku);
-        const h = await unggahEnigma(cfg.akun, buku, "template_enigma.xlsx");
+        // Begitu portal menerima berkas, tandai "diproses": galat sesudahnya (status tak terbaca) tidak memicu unggah ulang oleh cron.
+        const h = await unggahEnigma(cfg.akun, buku, "template_enigma.xlsx", { diterima: async () => {
+            status.unggah = { waktu: new Date().toISOString(), id: 0, status: "diproses" };
+            await writeFile(berkasStatus, JSON.stringify(status, null, 1));
+        } });
         status.unggah = { waktu: new Date().toISOString(), id: h.id, status: h.status };
         await writeFile(berkasStatus, JSON.stringify(status, null, 1));
         hasil.portal = `unggahan ${h.id}: ${h.status}${h.keterangan ? ` — ${h.keterangan}` : ""}`;

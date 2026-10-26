@@ -48,8 +48,10 @@ function portalTiruan(statusAkhir: string) {
 
 test("login → unggah (dengan __ncforminfo) → tunggu status final → baca Detail log", async () => {
     const p = await portalTiruan("validation_error");
-    const h = await unggahEnigma({ id: "1000718", password: "rahasia" }, Buffer.from("xlsx"), "template_enigma.xlsx", { dasar: p.dasar, selaMs: 10, tungguMs: 5000 });
+    let diterima = 0;
+    const h = await unggahEnigma({ id: "1000718", password: "rahasia" }, Buffer.from("xlsx"), "template_enigma.xlsx", { dasar: p.dasar, selaMs: 10, tungguMs: 5000, diterima: async () => { diterima++; } });
     p.tutup();
+    assert.equal(diterima, 1); // status "diproses" ditulis sebelum menunggu → cron tidak mengunggah ulang
     assert.equal(h.id, 266600);
     assert.equal(h.status, "validation_error");
     assert.equal(p.diterima.berkas, "template_enigma.xlsx");

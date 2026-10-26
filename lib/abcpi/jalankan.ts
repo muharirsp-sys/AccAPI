@@ -30,14 +30,15 @@ export { hariIniWita };
 
 type Obj = Record<string, unknown>;
 
+/** JSON.parse yang tidak menjatuhkan fitur karena satu berkas/baris rusak (mis. tulisan terpotong saat deploy). */
+const urai = <T>(teks: string, cadangan: T): T => { try { return JSON.parse(teks) as T; } catch { return cadangan; } };
+
 async function konfigurasi(): Promise<{ ftp: FtpConfig; adminEmail: string }> {
-    const c = JSON.parse(await readFile(path.join(DIR, "config.json"), "utf8")) as { ftp?: FtpConfig; adminEmail?: string };
+    // Pesan JSON.parse memuat potongan isi berkas (bisa kata sandi FTP) — jangan diteruskan ke log/email.
+    const c = urai<{ ftp?: FtpConfig; adminEmail?: string }>(await readFile(path.join(DIR, "config.json"), "utf8").catch(() => ""), {});
     if (!c.ftp?.host || !c.ftp.user || !c.ftp.password || !c.adminEmail) throw new Error("data/abcpi/config.json belum lengkap (ftp.host/user/password, adminEmail)");
     return { ftp: c.ftp, adminEmail: c.adminEmail };
 }
-
-/** JSON.parse yang tidak menjatuhkan fitur karena satu berkas/baris rusak (mis. tulisan terpotong saat deploy). */
-const urai = <T>(teks: string, cadangan: T): T => { try { return JSON.parse(teks) as T; } catch { return cadangan; } };
 
 async function penerimaAbcpi() {
     const [r] = await db.select({ emails: reportRecipient.emails }).from(reportRecipient)
