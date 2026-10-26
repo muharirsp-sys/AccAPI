@@ -190,6 +190,7 @@ select.fi-input { appearance:none; background-image:linear-gradient(45deg, trans
 .fi-oph { background:var(--surface); border-bottom:1px solid var(--line); padding:14px 20px; display:grid; gap:10px; }
 .fi-crumb { font:var(--fs-small); color:var(--ink-subtle); display:flex; gap:6px; flex-wrap:wrap; list-style:none; padding:0; }
 .fi-crumb a { text-decoration:none; }
+@media (pointer: coarse) { .fi-crumb a { display:inline-block; padding:13px 0; margin:-13px 0; } } /* sasaran sentuh ≥ 44 px (18 + 26) tanpa menggeser tata letak; audit desain 001 No 45 */
 .fi-crumb li + li::before { content:"/"; margin-right:6px; color:var(--ink-disabled); }
 .fi-oph-title { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
 .fi-oph-title :is(h1,h2) { font:var(--fs-title-1); letter-spacing:var(--ls-title); overflow-wrap:anywhere; }
