@@ -722,6 +722,11 @@ test("Ponsel 390 px: daftar ↔ detail tanpa gulir menyamping; draf tujuan ditan
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: "test-results/fiori-finance-ponsel.png", fullPage: true });
     await detail.getByRole("button", { name: "Simpan tujuan" }).click();
+    // Audit desain 001 No 11: simpan tujuan lewat ConfirmDialog; tidak ada tulis sebelum dikonfirmasi.
+    const konfirmTujuan = page.getByRole("dialog", { name: "Simpan tujuan pembayaran PRINCIPLE B?" });
+    await expect(konfirmTujuan).toBeVisible();
+    expect(m.mapping).toEqual([]);
+    await konfirmTujuan.getByRole("button", { name: "Simpan tujuan" }).click();
     await expect(main.getByRole("status").filter({ hasText: "Tujuan PRINCIPLE B tersimpan." })).toBeVisible(NAV);
     expect(m.mapping).toEqual([{ principle: "PRINCIPLE B", vendorNo: "V-0031", vendorName: "PRINCIPLE B", bankNo: "1101-01", bankName: "KAS BESAR" }]);
     await expect(detail.getByText("Draf belum disimpan")).toHaveCount(0, NAV);

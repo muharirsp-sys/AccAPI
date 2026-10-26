@@ -83,7 +83,7 @@ test("Dashboard: Taksiran sales+SPV+SM, capaian per SPV berwarna laju, alasan Rp
     const taksiran = main.locator(".fi-kc").filter({ hasText: "Taksiran insentif" });
     await expect(taksiran).toContainText("Rp 9,6 Jt");
     await expect(taksiran).toContainText("Sales Rp 2,9 Jt · SPV Rp 5,2 Jt · SM Rp 1,5 Jt");
-    await expect(main.getByText("usulan BL-48")).toBeVisible();
+    await expect(main.getByRole("complementary", { name: "Usulan BL-48" })).toBeVisible(); // kode BL hanya di nama aksesibel (No 32)
 
     const capaian = main.getByRole("region", { name: "Capaian per SPV" });
     await expect(capaian.getByText("di atas laju (≥ 100%)")).toBeVisible();

@@ -317,7 +317,7 @@ test("Format SPPD: operasi data tidak pasti mengunci semua operasi di halaman sa
     // Data terbaca ulang (referensi baru) = kunci dibuka.
     putus = false;
     await main.getByRole("button", { name: "Muat ulang" }).click();
-    for (const nama of ["Unggah Excel data SPPD…", "Restore backup…"]) await expect(main.getByRole("button", { name: nama })).toBeEnabled();
+    for (const nama of ["Unggah Excel data SPPD…", "Pulihkan cadangan…"]) await expect(main.getByRole("button", { name: nama })).toBeEnabled();
 });
 
 

@@ -8,7 +8,7 @@
  */
 "use client";
 
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Monitor, Moon, SlidersHorizontal, Sun, TriangleAlert, X } from "lucide-react";
 import Dialog from "@/components/ui/Dialog";
 import { Button, KeyValues } from "@/components/fiori/core";
@@ -36,7 +36,8 @@ type ConfirmDialogProps = {
     children?: ReactNode;
     /** Alasan tombol konfirmasi nonaktif (mis. "Pilih berkas dulu"); tampil sebagai title dan teks di kaki dialog. */
     confirmDisabled?: string;
-    /** Alasan nonaktif TERLIHAT sebagai teks di kaki dialog (dan aria-describedby tombol). Bawaan: ya; `false` = hanya title. */
+    /** Alasan nonaktif TERLIHAT sebagai teks di kaki dialog (dan aria-describedby tombol). Bawaan: ya; `false` = hanya title.
+     *  Bila teks yang sama sudah ada di isi dialog (pemanggil menulisnya sendiri), kaki dialog tidak mengulanginya. */
     alasanTerlihat?: boolean;
     /** "start" bila nilai `facts` berupa kalimat panjang (dibaca dari kiri). Bawaan: rata kanan (angka). */
     factsAlign?: "start";
@@ -72,6 +73,15 @@ function ConfirmBody({ onClose, title, tag, description, facts, factsAlign, reas
     const pendek = Boolean(reason) && text.trim().length < min;
     const blocked = !pendek ? confirmDisabled
         : text.trim() && min > 1 ? `${reason?.label} minimal ${min} karakter` : `Isi ${reason?.label.toLowerCase()} dulu`;
+    // ponytail: banyak pemanggil sudah menulis alasan yang sama di isi dialog; kaki dialog tidak mengulanginya (audit desain 001,
+    // alasan ganda sesudah No 120). Batas: hanya kecocokan substring persis; teks yang diparafrasekan tetap tampil dua kali.
+    const isiRef = useRef<HTMLDivElement>(null);
+    const [sudahTertulis, setSudahTertulis] = useState(false);
+    useLayoutEffect(() => {
+        const ada = Boolean(blocked && isiRef.current?.textContent?.includes(blocked));
+        if (ada !== sudahTertulis) setSudahTertulis(ada);
+    });
+    const alasanKaki = alasanTerlihat && blocked && !busy && !sudahTertulis;
 
     const confirm = async () => {
         if (inFlight.current || blocked) return;
@@ -97,7 +107,7 @@ function ConfirmBody({ onClose, title, tag, description, facts, factsAlign, reas
                 </div>
                 <button type="button" className="fi-btn fi-btn--icon" aria-label="Tutup" disabled={busy} onClick={onClose}><X className="fi-icon" aria-hidden /></button>
             </header>
-            <div className="fi-dialog-body">
+            <div className="fi-dialog-body" ref={isiRef}>
                 {description && <div className="fi-muted">{description}</div>}
                 {children}
                 {facts?.length ? <KeyValues items={facts} align={factsAlign} /> : null}
@@ -112,10 +122,10 @@ function ConfirmBody({ onClose, title, tag, description, facts, factsAlign, reas
                 {(error || failure) && <p ref={alertRef} tabIndex={-1} className="fi-msg" role="alert"><TriangleAlert className="fi-icon" aria-hidden />{error || failure}</p>}
             </div>
             <footer>
-                {alasanTerlihat && blocked && !busy && <span id={whyId} className="fi-small fi-why" style={{ marginRight: "auto", alignSelf: "center" }}>{blocked}</span>}
+                {alasanKaki && <span id={whyId} className="fi-small fi-why" style={{ marginRight: "auto", alignSelf: "center" }}>{blocked}</span>}
                 <Button onClick={onClose} disabled={busy}>{cancelLabel}</Button>
                 <Button variant={tone} busy={busy} disabled={Boolean(blocked)} disabledReason={blocked} onClick={confirm}
-                    aria-describedby={alasanTerlihat && blocked && !busy ? whyId : undefined}>
+                    aria-describedby={alasanKaki ? whyId : undefined}>
                     {confirmLabel}
                 </Button>
             </footer>

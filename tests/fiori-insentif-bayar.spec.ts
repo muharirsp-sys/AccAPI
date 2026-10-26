@@ -131,7 +131,7 @@ test("Pembayaran: ubin 12 bulan + total, pilih semua yang belum dibayar, Tandai 
     await expect(main.getByRole("checkbox", { name: "Pilih Rudi Hartono GODREJ" })).toBeDisabled();
     await expect(main.getByRole("checkbox", { name: "Pilih Rizal Fahmi URC" })).toBeDisabled();
     await expect(main.getByText("Upload")).toHaveCount(0);
-    await expect(main.getByText("usulan BL-27")).toBeVisible();
+    await expect(main.getByRole("complementary", { name: "Usulan BL-27" })).toBeVisible(); // kode BL hanya di nama aksesibel (audit desain 001 No 32)
 
     const footer = main.locator(".fi-ftb");
     await expect(footer.getByRole("button", { name: "Tandai lunas…" })).toBeDisabled();
@@ -410,7 +410,7 @@ test("Support: draf per baris → Simpan & hitung ulang lewat dialog (payload su
     await expect(dlg).toContainText("Support Rp 0 → Rp 250.000");
     await expect(dlg).toContainText("Status Distributor → Distributor + Principle");
     await expect(dlg).toContainText("support principle dikurangkan dari pool");
-    await expect(dlg.getByText("usulan BL-33")).toBeVisible();
+    await expect(dlg).toContainText("Hanya nilai terakhir dan pengisinya yang tersimpan; nilai lama tidak dicatat."); // fakta pengganti VariantNote BL-33 (No 80)
     await page.screenshot({ path: "test-results/fiori-insentif-support-dialog.png" });
     await dlg.getByRole("button", { name: "Simpan & hitung ulang" }).click();
     await expect(dlg).toBeHidden();

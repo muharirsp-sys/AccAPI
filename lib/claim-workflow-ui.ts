@@ -154,14 +154,18 @@ export const labelLingkup = (scope: string | null | undefined) => (scope ? LINGK
 /** Timestamp → dd/mm/yyyy menurut WITA; kosong atau tidak terbaca → "-". Satu sumber dengan lib/tampil. */
 export const tanggalWita = tanggalWitaBersama;
 
+// Kalimat sebabHttp tanpa konteks (helper muat seperti `ambil` sudah menerjemahkan status); butuh "apa yang gagal" di depannya.
+const SEBAB_TANPA_KONTEKS = new Set([0, 400, 401, 403, 404, 409, 413, 429, 500].map(sebabHttp));
+
 /**
- * Galat muat yang bisa dibaca: respons kosong/bukan JSON → kalimat umum, hanya kode HTTP → kalimat umum + sebab dari status
- * (bukan kode mentah), bukan "Unexpected end of JSON input". Pesan server yang bermakna dipertahankan.
+ * Galat muat yang bisa dibaca: respons kosong/bukan JSON → kalimat umum, hanya kode HTTP atau kalimat sebabHttp → kalimat umum
+ * + sebab dari status (bukan kode mentah), bukan "Unexpected end of JSON input". Pesan server yang bermakna dipertahankan.
  */
 export function pesanGalat(umum: string, galat?: string | null): string {
     if (!galat) return umum;
     const kode = /^HTTP (\d+)$/.exec(galat);
     if (kode) return `${umum} ${sebabHttp(Number(kode[1]))}`;
+    if (SEBAB_TANPA_KONTEKS.has(galat)) return `${umum} ${galat}`;
     if (/JSON|Unexpected (end|token)/i.test(galat)) return umum;
     return galat;
 }

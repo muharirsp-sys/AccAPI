@@ -630,7 +630,7 @@ test("Daftar Perlu tindakan: galat ≠ kosong; baris lama tanpa database tidak m
         await expect(sel.getByRole("radio", { name: /Tetapkan tidak ada/ })).toBeDisabled();
         await sel.getByRole("radio", { name: /Tetapkan terposting sebagai PR.2026.10.00009/ }).check();
         await expect(sel).toContainText("Pelunasan PR.2026.10.00009 Rp 80.000 ≠ baris ini Rp 90.000; bisa jadi cicilan lain.");
-        await expect(sel).toContainText("Akun Anda tidak berhak mengizinkannya; minta Finance yang berhak mengizinkan baris ganda.");
+        await expect(sel).toContainText("Akun Anda tidak berhak mengizinkannya; minta Finance yang berhak.");
         await sel.getByRole("checkbox", { name: /PR.2026.10.00009 adalah kiriman baris ini/ }).check();
         await sel.getByLabel("Diperiksa di").fill("Accurate › Penerimaan Penjualan, PELANGGAN-Y 08/10/2026");
         await sel.getByRole("textbox", { name: "Alasan", exact: true }).fill("Pelunasan terbentuk di Accurate, nilai dan faktur cocok.");
@@ -639,7 +639,7 @@ test("Daftar Perlu tindakan: galat ≠ kosong; baris lama tanpa database tidak m
     await sel.getByRole("button", { name: "Tetapkan terposting" }).click();
     await expect(sel.getByRole("alert")).toContainText("Server menolak: akun Anda tidak (lagi) berhak menyelesaikan");
     await expect(sel.getByRole("button", { name: "Tetapkan terposting" })).toBeDisabled();
-    await expect(sel.locator("footer .fi-why")).toContainText("minta admin menambahkan izinnya");
+    await expect(sel).toContainText("minta admin menambahkan izinnya"); // alasan sudah di isi dialog; kaki tidak mengulang (alasan ganda)
     await sel.getByRole("button", { name: "Batal" }).click();
     await isiY();
     const sebelum = log.summary.length;
@@ -728,7 +728,7 @@ test("Susulan 2b #2/#8: POST Selesaikan 500 berbadan kosong = belum pasti + cari
     await expect(sel.getByRole("button", { name: "Coba lagi" })).toHaveCount(0);
     await expect(sel.getByRole("button", { name: "Cari lagi" })).toHaveCount(0);
     await sel.getByRole("textbox", { name: "Alasan", exact: true }).fill("Tidak ada pelunasan untuk faktur ini di Accurate.");
-    await expect(sel.locator("footer .fi-why")).toContainText("Server menolak");
+    await expect(sel).toContainText("Server menolak"); // alasan sudah di isi dialog; kaki tidak mengulang (alasan ganda)
 });
 
 test("Susulan 2b #4/#8: database berganti SELAMA pratinjau = pratinjau dibuang beralasan; Ulangi pratinjau saat sesi tak terbaca = alasan, bukan diam", async ({ page }) => {

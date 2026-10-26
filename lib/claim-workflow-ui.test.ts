@@ -68,6 +68,8 @@ test("pola No Claim terbaca; tanggal WITA; galat muat tanpa pesan parser", () =>
     assert.equal(tanggalWita(null), "-");
     assert.equal(pesanGalat("Gagal memuat Claim Workflow.", "HTTP 502"), "Gagal memuat Claim Workflow. Server sedang bermasalah. Coba lagi beberapa saat lagi.");
     assert.equal(pesanGalat("Gagal memuat Claim Workflow.", "Unexpected end of JSON input"), "Gagal memuat Claim Workflow.");
+    assert.equal(pesanGalat("Gagal memuat Claim Workflow.", "Server sedang bermasalah. Coba lagi beberapa saat lagi."),
+        "Gagal memuat Claim Workflow. Server sedang bermasalah. Coba lagi beberapa saat lagi."); // keluaran `ambil` sesudah sebabHttp
     assert.equal(pesanGalat("Gagal memuat Claim Workflow.", "Unauthorized"), "Unauthorized");
     assert.equal(pesanGalat("Gagal memuat Claim Workflow.", undefined), "Gagal memuat Claim Workflow.");
 });
