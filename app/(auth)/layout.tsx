@@ -6,7 +6,6 @@
  * Side Effects: Tidak ada; tidak membaca sesi (halaman publik).
  */
 import type { ReactNode } from "react";
-import { CircleCheck } from "lucide-react";
 import { FioriScope } from "@/components/fiori/Scope";
 
 const POKOK = [
@@ -22,7 +21,8 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
             <div className="fi-auth-brand">
                 <span className="fi-auth-brandlogo" aria-hidden />
                 <ul>
-                    {POKOK.map((teks) => <li key={teks}><CircleCheck className="fi-icon" aria-hidden />{teks}</li>)}
+                    {/* Tanpa ikon centang: tiga centang identik hanya hiasan (audit No 128). */}
+                    {POKOK.map((teks) => <li key={teks}>{teks}</li>)}
                 </ul>
                 <small>CV. Surya Perkasa · Makassar</small>
             </div>

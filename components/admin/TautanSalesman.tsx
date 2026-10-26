@@ -9,7 +9,7 @@
  *   `users.view` = baca-saja; `users.manage` = tulis.
  * Caller: app/(dashboard)/admin/users/Pengguna.tsx (dipasang ulang dengan `key` per user + versi muat ulang).
  * Dependensi: GET|PUT|DELETE /api/admin/users/[id]/salesman (kontrak docs/handover/O1-KONTRAK-ORDER-CABANG.md §3); components/admin/{Bersama,admin-ui};
- *   components/fiori/*.
+ *   lib/tampil (KOSONG); components/fiori/*.
  * Main Functions: TautanSalesman.
  * Side Effects: HTTP tulis ke API admin (PUT/DELETE) lewat `tulisAdmin`; audit salesman.link / salesman.unlink dicatat server.
  */
@@ -17,6 +17,7 @@
 
 import { useCallback, useState } from "react";
 import { Link2, Link2Off, RefreshCw } from "lucide-react";
+import { KOSONG } from "@/lib/tampil";
 import { Button, EmptyState, ErrorState, KeyValues, ListItem, MessageStrip, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactive";
 import { GalatAdmin, muatAdmin, tulisAdmin } from "./Bersama";
@@ -63,7 +64,7 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
     const [d, muat] = useLoad(useCallback(() => muatAdmin<Data>(`/api/admin/users/${user.id}/salesman`), [user.id]));
     const [cari, setCari] = useState("");
     const [dialog, setDialog] = useState<Dialog>(null);
-    const kunci = kunciTulis ?? (d.status === "memuat" ? "Menunggu data karyawan dimuat" : d.status === "galat" ? "Data tautan gagal dimuat — muat ulang dulu" : undefined);
+    const kunci = kunciTulis ?? (d.status === "memuat" ? "Menunggu data karyawan dimuat" : d.status === "galat" ? "Data tautan gagal dimuat; muat ulang dulu" : undefined);
     const url = `/api/admin/users/${user.id}/salesman`;
 
     if (d.status === "memuat" && !d.data) return <div className="fi-sect-in"><Skeleton rows={3} label="Memuat tautan karyawan Accurate" /></div>;
@@ -92,7 +93,7 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
             await jalankan(async () => {
                 const r = await tulisAdmin<TulisHasil>(url, "PUT", { employeeNumber: p.number, ...(konfirmasiGantiKode ? { konfirmasiGantiKode: true } : {}), ...(pindahkanProfil ? { pindahkanProfil: true } : {}) });
                 return r.changed
-                    ? `${user.name} ditautkan ke ${r.tautan?.employeeName ?? p.name} (${r.tautan?.salesCode ?? p.number}), cabang ${r.tautan?.branchName ?? p.branchName ?? "—"}.`
+                    ? `${user.name} ditautkan ke ${r.tautan?.employeeName ?? p.name} (${r.tautan?.salesCode ?? p.number}), cabang ${r.tautan?.branchName ?? p.branchName ?? KOSONG}.`
                     : `${user.name} sudah tertaut ke ${p.name}; tidak ada yang berubah.`;
             });
         } catch (e) {
@@ -161,16 +162,19 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
                                     const lama = Boolean(lain && lain.terhubung === false);
                                     return (
                                         <li key={p.id}>
-                                            <ListItem doc={p.number} title={p.name} meta={`Cabang ${p.branchName ?? "belum ada"}`}
+                                            {/* Badge pendek; rinciannya di meta supaya tidak melebar di 360 px (audit No 112). */}
+                                            <ListItem doc={p.number} title={p.name}
+                                                meta={`Cabang ${p.branchName ?? "belum ada"}${lain ? ` · ${lama ? `Kode dipegang profil lama ${lain.name ?? "akun lain"} (tautan dilepas)` : `Sudah ditautkan ke ${lain.name ?? "akun lain"}`}` : ""}`}
                                                 badge={lain
-                                                    ? <StatusBadge tone="warn">{lama ? `Kode dipegang profil lama ${lain.name ?? "akun lain"} (tautan dilepas) — bisa dipindahkan` : `Sudah ditautkan ke ${lain.name ?? "akun lain"}`}</StatusBadge>
+                                                    ? <StatusBadge tone="warn" wrap>{lama ? "Bisa dipindahkan" : "Dipegang akun lain"}</StatusBadge>
                                                     : ini ? <StatusBadge tone="pos">Tertaut ke akun ini</StatusBadge> : undefined}
                                                 onClick={(lain && !lama) || ini || kunci ? undefined : () => setDialog({ jenis: "tautkan", p })} />
                                         </li>
                                     );
                                 })}
                             </ul>
-                            {cocok.length > tampil.length && <p className="fi-small fi-muted">Tampil {tampil.length} dari {cocok.length} — persempit pencarian.</p>}
+                            {cocok.length > tampil.length && <p className="fi-small fi-muted">Tampil {tampil.length} dari {cocok.length}. Persempit pencarian.</p>}
+
                         </>
                     )}
                     {kunci && !kunciTulis && <p className="fi-small fi-why">Memilih karyawan terkunci: {kunci}.</p>}
@@ -225,7 +229,7 @@ export function TautanSalesman({ user, bolehKelola, kunciTulis, jalankan }: Prop
             <ConfirmDialog open={dialog?.jenis === "lepas"} onClose={() => setDialog(null)} tag="Lepas" tone="negative" confirmLabel="Lepas tautan"
                 title={`Lepas tautan ${user.name} dari karyawan Accurate?`} confirmDisabled={kunci} alasanTerlihat
                 facts={[
-                    ["Karyawan", sekarang ? `${sekarang.employeeName ?? sekarang.salesName} · ${sekarang.salesCode}` : "—"],
+                    ["Karyawan", sekarang ? `${sekarang.employeeName ?? sekarang.salesName} · ${sekarang.salesCode}` : KOSONG],
                     ["Akibat", `${user.name} tidak bisa memakai Order Sales sampai ditautkan lagi (cabangnya tidak diketahui)`],
                     ["Tetap ada", "Profil sales, kode, dan hierarki Form Kontrol tidak dihapus; hanya tautan ke karyawan Accurate yang dimatikan"],
                     ["Data lain", "Order yang sudah dikirim tidak terpengaruh"],

@@ -1,7 +1,8 @@
 /*
  * Tujuan: Tipe jawaban API antrean faktur + helper penyajian layar Antrean Faktur (Fiori S6c): label status, kalimat jawaban
  *   Accurate yang terbaca (bukan JSON mentah), umur, dan tulis dengan deteksi jawaban TIDAK PASTI.
- * Caller: app/(dashboard)/antrean-faktur/{AntreanFaktur,Dialog,VerifikasiBalik}.tsx.
+ * Caller: app/(dashboard)/antrean-faktur/{AntreanFaktur,Dialog,VerifikasiBalik}.tsx; app/(dashboard)/orders/{OrderMasuk,OrderDetail}.tsx
+ *   (kalimatAccurate).
  * Dependensi: components/fiori/core (Tone), API /api/invoice-outbox/** dan /api/invoice-verify (bentuk jawaban).
  * Main Functions: STATUS, kalimatAccurate, usia, hariIniWita, tulis, pesanGagal, TidakPasti, BELUM_PASTI.
  * Side Effects: `tulis` melakukan POST/DELETE (dipakai komponen klien); sisanya pure.
@@ -72,17 +73,18 @@ export function kalimatAccurate(teks: string): string {
         // Daftar pesan yang terpotong (hasil Kirim memotong 200 karakter) tidak lagi JSON sah: buang kurung/kutipnya saja.
         if (t.startsWith('["')) return t.replace(/^\["/, "").replace(/"?\]?$/, "").split('","').join("; ");
     }
+    // Kode HTTP mentah tidak ditulis di kalimat (audit No 30); catatan aslinya tetap tersimpan di riwayat/title pemanggil.
     const http = /^HTTP (\d{3})/.exec(t)?.[1];
-    if (http === "429") return "Accurate membatasi jumlah permintaan (HTTP 429) — belum terbukti tidak diproses.";
-    if (http === "401" || http === "403") return `Accurate menolak sesi atau izin (HTTP ${http}) — belum terbukti tidak diproses.`;
-    if (http?.startsWith("5")) return `Server Accurate bermasalah (HTTP ${http}) — fakturnya mungkin sudah terbentuk.`;
+    if (http === "429") return "Accurate membatasi jumlah permintaan; belum terbukti tidak diproses.";
+    if (http === "401" || http === "403") return "Accurate menolak sesi atau izin; belum terbukti tidak diproses.";
+    if (http?.startsWith("5")) return "Server Accurate bermasalah; fakturnya mungkin sudah terbentuk.";
     const nonJson = /^respons non-JSON \((\d+)\)/.exec(t)?.[1];
-    if (nonJson) return `Jawaban bukan dari Accurate (HTTP ${nonJson}, mis. halaman gateway) — fakturnya mungkin sudah terbentuk.`;
-    if (t.startsWith("respons tanpa amplop")) return "Jawaban tanpa format Accurate (mungkin dari gateway) — fakturnya mungkin sudah terbentuk.";
-    if (t.startsWith("penolakan tanpa daftar pesan")) return "Accurate menolak tanpa pesan yang jelas — fakturnya mungkin sudah terbentuk.";
-    if (t.startsWith("sukses tanpa id")) return "Accurate menjawab berhasil tanpa nomor faktur yang sah — periksa di Accurate.";
-    if (/timeout|timed out|aborted/i.test(t)) return "Accurate tidak menjawab dalam 60 detik — fakturnya mungkin sudah terbentuk.";
-    if (/fetch failed|ECONN|socket|network/i.test(t)) return "Koneksi ke Accurate terputus — fakturnya mungkin sudah terbentuk.";
+    if (nonJson) return "Jawaban bukan dari Accurate (mis. halaman gateway); fakturnya mungkin sudah terbentuk.";
+    if (t.startsWith("respons tanpa amplop")) return "Jawaban tanpa format Accurate (mungkin dari gateway); fakturnya mungkin sudah terbentuk.";
+    if (t.startsWith("penolakan tanpa daftar pesan")) return "Accurate menolak tanpa pesan yang jelas; fakturnya mungkin sudah terbentuk.";
+    if (t.startsWith("sukses tanpa id")) return "Accurate menjawab berhasil tanpa nomor faktur yang sah; periksa di Accurate.";
+    if (/timeout|timed out|aborted/i.test(t)) return "Accurate tidak menjawab dalam 60 detik; fakturnya mungkin sudah terbentuk.";
+    if (/fetch failed|ECONN|socket|network/i.test(t)) return "Koneksi ke Accurate terputus; fakturnya mungkin sudah terbentuk.";
     return t;
 }
 
@@ -95,7 +97,7 @@ export function kalimatPencarian(p: Pencarian | undefined | null): string {
 }
 
 export const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas (koneksi putus atau jawaban bukan data). "
-    + "Antrean dimuat ulang — periksa baris Mengirim dan Tidak pasti sebelum mengulang.";
+    + "Antrean dimuat ulang. Periksa baris Mengirim dan Tidak pasti sebelum mengulang.";
 /**
  * Dilempar `tulis` bila jawaban TIDAK PASTI: koneksi putus / batas waktu, badan bukan JSON (mis. HTML "504 Gateway Time-out"), atau
  * status ≥ 502 tanpa amplop galat aplikasi ini (`{ok:false, error}`) — 503 berbadan amplop itu = penolakan PASTI dari route sendiri
@@ -134,7 +136,8 @@ export async function tulis(url: string, body: Record<string, unknown>, opsi: { 
 export function pesanGagal(status: number, data: Record<string, unknown>, umum: string): string {
     const e = typeof data.error === "string" && data.error !== "Forbidden" && data.error !== "Unauthorized" ? data.error : "";
     if (e) return e;
-    if (status === 401) return "Sesi login berakhir — muat ulang halaman lalu masuk lagi.";
+    if (status === 401) return "Sesi login berakhir; muat ulang halaman lalu masuk lagi.";
+
     if (status === 403) return "Akun Anda belum punya izin untuk tindakan ini.";
     return umum;
 }

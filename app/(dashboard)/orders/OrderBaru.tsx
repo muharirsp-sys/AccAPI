@@ -1,21 +1,17 @@
 /*
- * Tujuan: Form Order baru (Fiori S6d + O2): pelanggan DICARI dari master (nama/kode, semua cabang, saringan cabang opsional; kartu menampilkan
- *   cabang + channel + kategori harga), barang DICARI hanya dari barang cabang pelanggan (satuan + harga per cabang). Harga = MASTER cabang
- *   pelanggan (baca-saja, dengan sumbernya: kategori · cabang · tanggal berlaku); HANYA baris yang harga masternya belum ada boleh diisi
- *   harga petugas (wajib > 0, tercatat "harga petugas"). Promo (diskon/bonus/net per baris + ringkasan) dihitung server dan dibekukan saat
- *   disimpan: pratinjau = tersimpan — simpan membawa `sidik` pratinjau terakhir; angka berubah (PRATINJAU_BERUBAH) = belum tersimpan, angka baru
- *   ditampilkan dan simpan meminta konfirmasi ulang. Ganti pelanggan ke cabang lain dengan baris terisi = konfirmasi (baris cabang lama dibuang,
- *   tidak diam). Simpan lewat dialog, lalu lanjut ke halaman order.
- * Caller: ./baru/page.tsx (/orders/baru). Simpan butuh `order.create` (FastAPI POST /orders).
- * Dependensi: /api/customers/search, /api/items/search, /api/orders/preview (components/order/*), FastAPI POST /orders; ./order-ui;
- *   ../form-kontrol/lapangan (useHariBeku); components/fiori/*; lib/promo-ui (rupiah); lib/rekapan-nota/ui (tanggalPendek).
+ * Tujuan: Form Order baru (Fiori S6d + O2). Pelanggan dicari dari master (semua cabang, saringan cabang opsional); barang hanya dari cabang
+ *   pelanggan. Harga = master cabang pelanggan, baca-saja dengan sumbernya; harga petugas (> 0) hanya untuk baris tanpa harga master sah
+ *   (keputusan owner 12 Okt; `price` tidak pernah dikirim untuk baris berharga master). Promo dihitung server dan dibekukan saat disimpan:
+ *   simpan membawa `sidik` pratinjau terakhir; PRATINJAU_BERUBAH = belum tersimpan, angka baru tampil, simpan minta konfirmasi ulang.
+ *   Ganti pelanggan ke cabang lain dan Batal dengan isian terisi lewat dialog. Tanggal order bawaan = hari ini WITA.
+ * Caller: ./baru/page.tsx (/orders/baru). Simpan butuh `order.create`.
+ * Dependensi: /api/customers/search, /api/items/search, /api/orders/preview, GET /api/customers/riwayat-beli (components/order/*), FastAPI
+ *   POST /orders; ./order-ui; ../form-kontrol/lapangan (useHariBeku); lib/riwayat-beli (sisipkanBaris); components/fiori/*;
+ *   lib/promo-ui (rupiah); lib/tampil (KOSONG, tanggalWita).
  * Main Functions: OrderBaru, sumberHarga.
- * Side Effects: HTTP; menyimpan order internal (FastAPI). Tidak ada tulis ke Accurate.
- *
- * Keputusan owner 12 Okt (sesi 13): harga petugas HANYA untuk baris tanpa harga master sah; baris berharga master tidak bisa diubah. Layar tidak
- * pernah mengirim `price` untuk baris berharga master (server menolaknya). Tanggal order bawaan = hari ini WITA (bukan UTC).
- * O3: panel "Biasa diambil toko ini" (components/order/RiwayatBeli; GET /api/customers/riwayat-beli) — Tambah mengisi baris order
- *   (lib/riwayat-beli sisipkanBaris; harga master tetap baca-saja) lalu pratinjau dihitung ulang seperti biasa.
+ * Side Effects:
+ *   - HTTP baca (pencarian, pratinjau, riwayat beli).
+ *   - Menyimpan order internal (FastAPI POST /orders). Tidak ada tulis ke Accurate.
  */
 "use client";
 
@@ -33,7 +29,7 @@ import { hitungPratinjau, type Pratinjau } from "@/components/order/order-cabang
 import { rupiah } from "@/lib/promo-ui";
 import { sisipkanBaris } from "@/lib/riwayat-beli";
 import { RiwayatBeli } from "@/components/order/RiwayatBeli";
-import { tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { KOSONG, tanggalWita } from "@/lib/tampil";
 import { useHariBeku } from "../form-kontrol/lapangan";
 import { BELUM_PASTI, fastapi, pesanJawaban, sukses, type PriceInfo } from "./order-ui";
 
@@ -48,7 +44,7 @@ const satuanAwal = (b: BarangPilih, lama: string) => (b.units.some((u) => u.unit
 function sumberHarga(p: PriceInfo): string {
     if (p.source === "petugas") return "diisi petugas (harga master belum ada)";
     if (p.source !== "tier") return "harga standar (kategori pelanggan belum tersedia)";
-    return [p.priceCategoryName ?? "kategori", p.branchName, p.effectiveDate ? `berlaku ${tanggalPendek(p.effectiveDate)}` : null].filter(Boolean).join(" · ");
+    return [p.priceCategoryName ?? "kategori", p.branchName, p.effectiveDate ? `berlaku ${tanggalWita(p.effectiveDate)}` : null].filter(Boolean).join(" · ");
 }
 
 export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
@@ -80,6 +76,8 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     const [ganda, setGanda] = useState(false);
     const [bukanGanda, setBukanGanda] = useState(false);
     const [tersimpan, setTersimpan] = useState(false);
+    // Batal / jejak halaman dengan isian terisi: dialog dulu, isian tidak dibuang diam-diam (audit No 61).
+    const [tanyaBuang, setTanyaBuang] = useState(false);
     const ubahIsian = () => { setRagu(false); setGanda(false); setBukanGanda(false); };
 
     const filled = lines.filter((line) => line.code.trim());
@@ -176,16 +174,17 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                                             : hargaBelumSah >= 0 ? (lines[hargaBelumSah].price === null
                                                 ? `Isi harga barang ${hargaBelumSah + 1} (harga master belum ada)`
                                                 : `Harga barang ${hargaBelumSah + 1} harus angka lebih dari 0 (desimal pakai titik, maksimal 4 digit)`)
-                                                : pratinjau?.status === "galat" ? (pratinjau.galat.menolak ? `${pratinjau.galat.judul}. ${pratinjau.galat.tindakan}` : "Perkiraan harga dan promo belum tersedia — hitung ulang dulu")
+                                                : pratinjau?.status === "galat" ? (pratinjau.galat.menolak ? `${pratinjau.galat.judul}. ${pratinjau.galat.tindakan}` : "Perkiraan harga dan promo belum tersedia; hitung ulang dulu")
                                                     : pratinjau?.status === "memuat" ? "Menunggu harga dihitung"
                                                         : pratinjau?.status === "siap" && pratinjau.tanpaHarga.length > 0 ? `Isi harga barang ${lines.findIndex((l) => pratinjau.tanpaHarga.includes(l.code.trim())) + 1} (harga master belum ada)`
                                                             : pratinjau?.status === "siap" && pratinjau.channelMasalah ? pratinjau.channelMasalah
-                                                                : pratinjau?.status === "siap" && !pratinjau.sidik ? "Pratinjau lengkap belum tersedia — hitung ulang dulu" : undefined;
+                                                                : pratinjau?.status === "siap" && !pratinjau.sidik ? "Pratinjau lengkap belum tersedia; hitung ulang dulu" : undefined;
     // Sesudah tersimpan halaman masih tampil sampai halaman order terbuka: Simpan terkunci supaya order tidak tersimpan dua kali.
     const sudahTersimpan = tersimpan ? "Order sudah tersimpan; membuka halaman order…" : undefined;
-    const terkunci = sudahTersimpan ?? (ragu ? "Periksa Order Masuk dulu — order terakhir mungkin sudah tersimpan" : terkunciIsian);
+    const terkunci = sudahTersimpan ?? (ragu ? "Periksa Order Masuk dulu; order terakhir mungkin sudah tersimpan" : terkunciIsian);
     const draf = !tersimpan && Boolean(note.trim() || filled.length > 0);
     useUnsavedGuard(draf);
+    const tahanKeluar = (e: { preventDefault: () => void }) => { if (draf) { e.preventDefault(); setTanyaBuang(true); } };
 
     const net = pratinjau?.status === "siap" && pratinjau.result ? Number(pratinjau.result.net) : null;
     const nTanpaHarga = pratinjau?.status === "siap" ? pratinjau.tanpaHarga.length : 0;
@@ -237,26 +236,26 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
         <div>
             <div className="fi-page" style={{ maxWidth: "60rem" }}>
                 <header className="fi-page-head">
-                    <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><Link href="/orders">Order Masuk</Link></li><li><span aria-current="page">Order baru</span></li></ol></nav>
+                    <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><Link href="/orders" onClick={tahanKeluar}>Order Masuk</Link></li><li><span aria-current="page">Order baru</span></li></ol></nav>
                     <div className="fi-page-bar"><h1>Order baru</h1></div>
                     <p>Harga terisi dari master Accurate menurut kategori dan cabang pelanggan (baca-saja). Diskon dan bonus dihitung server dari aturan promo terbit; angka yang tampil di pratinjau = angka yang dibekukan saat disimpan.</p>
                 </header>
                 {!bolehBuat && <MessageStrip tone="warn" title="Akun Anda tidak berhak membuat order.">Minta admin menambahkan izin buat order ke grup akses Anda.</MessageStrip>}
                 {ragu && (
                     <MessageStrip tone="warn" title="Hasil simpan belum pasti.">
-                        {BELUM_PASTI} Order mungkin sudah tersimpan — periksa <Link href="/orders">Order Masuk</Link>; isian tidak dihapus.{" "}
+                        {BELUM_PASTI} Order mungkin sudah tersimpan; periksa <Link href="/orders">Order Masuk</Link>. Isian tidak dihapus.{" "}
                         <Button variant="tertiary" disabled={Boolean(terkunciIsian)} disabledReason={terkunciIsian} onClick={() => setDialog("ulang")}>Simpan lagi…</Button>
                     </MessageStrip>
                 )}
                 {berganti && tanggalIsi === null && (
                     <MessageStrip tone="info" title="Hari sudah berganti.">
-                        Tanggal order tetap {tanggalPendek(hariIni)} (hari form ini dibuka).{" "}
-                        <Button variant="tertiary" onClick={pakaiHariBaru}>Pakai {tanggalPendek(hariBaru)}</Button>
+                        Tanggal order tetap {tanggalWita(hariIni)} (hari form ini dibuka).{" "}
+                        <Button variant="tertiary" onClick={pakaiHariBaru}>Pakai {tanggalWita(hariBaru)}</Button>
                     </MessageStrip>
                 )}
                 {berubahKini && (
-                    <MessageStrip tone="warn" title="Hitungan berubah sejak pratinjau — order BELUM tersimpan.">
-                        Netto estimasi {berubahKini.lama !== null ? rupiah(berubahKini.lama) : "—"} menjadi {rupiah(berubahKini.baru)} (harga atau promo berubah). Periksa angka baru di bawah, lalu simpan lagi.
+                    <MessageStrip tone="warn" title="Hitungan berubah sejak pratinjau. Order belum tersimpan.">
+                        Netto estimasi {berubahKini.lama !== null ? rupiah(berubahKini.lama) : KOSONG} menjadi {rupiah(berubahKini.baru)} (harga atau promo berubah). Periksa angka baru di bawah, lalu simpan lagi.
                     </MessageStrip>
                 )}
                 {draf && nPetugas > 0 && <MessageStrip tone="info" title="Belum disimpan.">{nPetugas} barang memakai harga petugas (harga master belum ada).</MessageStrip>}
@@ -328,7 +327,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                                                 {(a) => <input {...a} className="fi-input fi-tnum" inputMode="numeric" value={line.quantity} placeholder="0" onChange={(e) => ubah(index, "quantity", e.target.value)} />}
                                             </FormField>
                                             <FormField label="Harga"
-                                                help={perluPetugas ? "Harga master belum ada — isi harga petugas (lebih dari 0)." : "Harga master; tidak bisa diubah."}
+                                                help={perluPetugas ? "Harga master belum ada. Isi harga petugas (lebih dari 0)." : "Harga master; tidak bisa diubah."}
                                                 error={perluPetugas && line.price !== null && !petugasSah ? "Isi angka lebih dari 0 (desimal pakai titik, maksimal 4 digit)." : undefined}>
                                                 {(a) => <input {...a} className="fi-input fi-tnum" inputMode="decimal" value={hargaTampil(line)} readOnly={!perluPetugas} required={perluPetugas}
                                                     placeholder={perluPetugas ? "isi harga" : pratinjau?.status === "memuat" && lengkapBaris ? "menghitung…" : "harga master"}
@@ -380,14 +379,14 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                 )}
             </div>
             <FooterToolbar message={terkunci ?? `${lengkap.length} barang${net !== null ? ` · netto estimasi ${rupiah(net)} sebelum PPN` : ""}${nPetugas ? ` · ${nPetugas} harga petugas` : ""}`}>
-                <Link className="fi-btn fi-btn--tertiary" href="/orders">Batal</Link>
+                <Link className="fi-btn fi-btn--tertiary" href="/orders" onClick={tahanKeluar}>Batal</Link>
                 <Button variant="primary" icon={<Save className="fi-icon" aria-hidden />} disabled={Boolean(terkunci)} disabledReason={terkunci} onClick={() => setDialog("biasa")}>Simpan order…</Button>
             </FooterToolbar>
             <ConfirmDialog open={calon !== null && bedaCabang !== null} onClose={() => setCalon(null)} tone="negative" tag="Ganti pelanggan"
                 title={`Ganti pelanggan ke ${calon?.name ?? ""}?`}
                 description={`${calon?.name ?? "Pelanggan ini"} ada di cabang ${calon?.branchName ?? ""}. Pelanggan hanya bisa dipesankan barang cabangnya sendiri, jadi barang di order ini yang bukan milik cabang ${calon?.branchName ?? ""} dibuang. Yang sudah diisi di barisnya hilang.`}
                 facts={[
-                    ["Pelanggan sekarang", pelanggan ? `${pelanggan.name} · cabang ${pelanggan.branchName}` : "–"],
+                    ["Pelanggan sekarang", pelanggan ? `${pelanggan.name} · cabang ${pelanggan.branchName}` : KOSONG],
                     ["Barang dibuang", `${bedaCabang?.dibuang.length ?? 0} baris`],
                     ...(bedaCabang?.dibuang.map((l, i): [string, string] => [`Barang ${i + 1}`, `${l.barang?.name ?? l.code} (${l.code}${l.barang?.branchName ? ` · cabang ${l.barang.branchName}` : ""})`]) ?? []),
                 ]}
@@ -396,15 +395,15 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                 title={dialog === "ulang" ? `Simpan lagi order untuk ${outlet || kodePel}?` : `Simpan order untuk ${outlet || kodePel}?`}
                 tone={dialog === "ulang" ? "negative" : "primary"}
                 description={dialog === "ulang"
-                    ? "Jawaban simpan sebelumnya tidak pasti. Bila order itu sudah tersimpan (periksa Order Masuk), simpanan ini bisa ditolak sebagai dugaan order ganda — atau tercatat dua kali bila barangnya berbeda."
+                    ? "Jawaban simpan sebelumnya tidak pasti. Bila order itu sudah tersimpan (periksa Order Masuk), simpanan ini bisa ditolak sebagai dugaan order ganda, atau tercatat dua kali bila barangnya berbeda."
                     : berubahKini
-                        ? `Angka berubah sejak pratinjau sebelumnya: netto ${berubahKini.lama !== null ? rupiah(berubahKini.lama) : "—"} menjadi ${rupiah(berubahKini.baru)}. Simpan hanya bila angka baru ini sudah Anda periksa. Diskon dan bonus dibekukan pada order; faktur belum dibuat.`
+                        ? `Angka berubah sejak pratinjau sebelumnya: netto ${berubahKini.lama !== null ? rupiah(berubahKini.lama) : KOSONG} menjadi ${rupiah(berubahKini.baru)}. Simpan hanya bila angka baru ini sudah Anda periksa. Diskon dan bonus dibekukan pada order; faktur belum dibuat.`
                         : "Diskon dan bonus dihitung server dari aturan promo terbit lalu dibekukan pada order, sama dengan pratinjau. Faktur belum dibuat; order diantrekan dari halamannya."}
                 facts={[
                     ["Pelanggan", `${kodePel.trim()}${pelanggan ? ` · ${pelanggan.name}` : ""}`],
-                    ["Cabang", pelanggan?.branchName ?? "–"],
+                    ["Cabang", pelanggan?.branchName ?? KOSONG],
                     ["Channel", channel],
-                    ["Tanggal order", tanggalPendek(orderDate)],
+                    ["Tanggal order", tanggalWita(orderDate)],
                     ["Barang", `${lengkap.length} baris`],
                     ["Netto estimasi (sebelum PPN)", net !== null ? rupiah(net) : "dihitung saat disimpan"],
                     ...(nPetugas ? [["Harga petugas", `${nPetugas} barang (harga master belum ada)`] as [string, string]] : []),
@@ -418,6 +417,14 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                     </label>
                 )}
             </ConfirmDialog>
+            <ConfirmDialog open={tanyaBuang} onClose={() => setTanyaBuang(false)} tone="negative" title="Buang isian order ini?"
+                description="Order belum tersimpan. Pelanggan, barang, harga petugas, dan catatan yang sudah diisi hilang bila Anda keluar."
+                facts={[
+                    ["Pelanggan", pelanggan ? `${pelanggan.name} · ${pelanggan.customerNo}` : KOSONG],
+                    ["Barang terisi", `${filled.length} baris`],
+                ]}
+                confirmLabel="Buang isian" cancelLabel="Lanjutkan mengisi" onConfirm={() => { router.push("/orders"); }} />
+
         </div>
     );
 }

@@ -4,8 +4,8 @@
  *   alasan wajib di layar), dan Riwayat per order (BL-17). Menggantikan window.confirm/prompt halaman lama.
  * Caller: app/(dashboard)/antrean-faktur/AntreanFaktur.tsx.
  * Dependensi: GET /api/invoice-outbox/send/preview, POST /api/invoice-outbox/send, GET+POST /api/invoice-outbox/resolve,
- *   POST /api/invoice-outbox (resend/discard), GET /api/invoice-outbox/riwayat; components/fiori/*; ./bersama; lib/rekapan-nota/ui;
- *   lib/promo-ui (rupiah).
+ *   POST /api/invoice-outbox (resend/discard), GET /api/invoice-outbox/riwayat; components/fiori/*; ./bersama; lib/rekapan-nota/ui (ambil);
+ *   lib/tampil (KOSONG, tanggalWita, waktuWita); lib/promo-ui (rupiah).
  * Main Functions: KirimDialog, SelesaikanDialog, AntreUlangDialog, BuangDialog, RiwayatDialog.
  * Side Effects: Kirim MENULIS FAKTUR DI ACCURATE (lewat server, sesi penekan). Selesaikan/Antre ulang/Buang mengubah antrean + riwayat.
  *   Pencarian faktur = GET baca-saja ke Accurate oleh server.
@@ -17,10 +17,11 @@ import { X } from "lucide-react";
 import Dialog from "@/components/ui/Dialog";
 import { Button, EmptyState, ErrorState, KeyValues, MessageStrip, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { ConfirmDialog, useLoad, type Load } from "@/components/fiori/interactive";
-import { ambil, jamWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { ambil } from "@/lib/rekapan-nota/ui";
 import { rupiah } from "@/lib/promo-ui";
+import { KOSONG, tanggalWita, waktuWita } from "@/lib/tampil";
 import {
-    STATUS, TidakPasti, kalimatAccurate, kalimatPencarian, nomorSo, pesanGagal, tulis, usia,
+    SAPU_MENIT, STATUS, TidakPasti, kalimatAccurate, kalimatPencarian, nomorSo, pesanGagal, tulis, usia,
     type Pencarian, type Row,
 } from "./bersama";
 
@@ -47,9 +48,9 @@ export type HasilKirim = {
 
 /** Kalimat database tanpa nama env/endpoint (aturan: istilah internal tidak tampil). */
 function kalimatSesi(db: Pratinjau["database"]): string {
-    if (!db.tujuan) return "Database tujuan faktur belum diatur di server — hubungi IT. Kirim akan ditolak.";
-    if (!db.sesiPenekan.id) return "Sesi Accurate Anda belum lengkap — masuk Accurate dan buka database dulu di halaman Sesi Accurate, lalu buka dialog ini lagi.";
-    return `Sesi Accurate Anda terbuka pada database ${db.sesiPenekan.alias || db.sesiPenekan.id}, bukan database faktur ${db.tujuan} — ganti database di halaman Sesi Accurate.`;
+    if (!db.tujuan) return "Database tujuan faktur belum diatur di server; hubungi IT. Kirim akan ditolak.";
+    if (!db.sesiPenekan.id) return "Sesi Accurate Anda belum lengkap. Masuk Accurate dan buka database dulu di halaman Sesi Accurate, lalu buka dialog ini lagi.";
+    return `Sesi Accurate Anda terbuka pada database ${db.sesiPenekan.alias || db.sesiPenekan.id}, bukan database faktur ${db.tujuan}. Ganti database di halaman Sesi Accurate.`;
 }
 
 function rentangTanggal(orders: OrderPratinjau[]): string {
@@ -84,9 +85,9 @@ export function KirimDialog({ dipilih, tanggal, saringanAktif, onClose, onTerkir
     const keluar = p && dipilih.length && !lebih ? dipilih.length - p.orders.length : 0;
 
     const blok = !p && pratinjau.status === "memuat" ? "Menyiapkan ringkasan kiriman…"
-        : !p ? "Ringkasan kiriman gagal dimuat — coba lagi"
+        : !p ? "Ringkasan kiriman gagal dimuat; coba lagi"
             : !p.database.cocok ? "Sesi Accurate Anda tidak cocok dengan database tujuan"
-                : p.ditolak ? "Ada faktur yang tidak bisa dikirim — lihat pesan"
+                : p.ditolak ? "Ada faktur yang tidak bisa dikirim; lihat pesan"
                     : p.jumlah === 0 ? "Tidak ada faktur antre untuk dikirim" : undefined;
 
     const kirim = async () => {
@@ -96,7 +97,7 @@ export function KirimDialog({ dipilih, tanggal, saringanAktif, onClose, onTerkir
         if (cek.status !== "siap" || !cek.data) throw new Error(`Pratinjau tidak bisa diperiksa ulang (${cek.error ?? "tanpa jawaban"}); tidak ada faktur dikirim.`);
         if (sidikPratinjau(cek.data) !== sidikPratinjau(p)) {
             setBaru(cek.data);
-            throw new Error("Pratinjau berubah sejak dialog dibuka — periksa lagi isi di atas, lalu tekan Kirim. Tidak ada faktur dikirim.");
+            throw new Error("Pratinjau berubah sejak dialog dibuka. Periksa lagi isi di atas, lalu tekan Kirim. Tidak ada faktur dikirim.");
         }
         // Server memperlakukan orderIds kosong sebagai "semua yang antre": jangan pernah mengirimnya kosong.
         if (cek.data.orders.length === 0) throw new Error("Tidak ada faktur antre untuk dikirim; tidak ada yang dikirim.");
@@ -113,7 +114,7 @@ export function KirimDialog({ dipilih, tanggal, saringanAktif, onClose, onTerkir
     };
 
     return (
-        <ConfirmDialog open onClose={onClose} tag="BL-39" title={p ? `Kirim ${p.jumlah} faktur ke Accurate?` : "Kirim faktur ke Accurate?"}
+        <ConfirmDialog open onClose={onClose} tag="Kirim ke Accurate" title={p ? `Kirim ${p.jumlah} faktur ke Accurate?` : "Kirim faktur ke Accurate?"}
             confirmLabel={p ? `Kirim ${p.jumlah} faktur` : "Kirim"} confirmDisabled={blok} onConfirm={kirim}>
             {!p && pratinjau.status === "memuat" && <Skeleton rows={5} label="Menyiapkan ringkasan kiriman" />}
             {!p && pratinjau.status === "galat" && <ErrorState title="Ringkasan kiriman gagal dimuat" message={pratinjau.error} onRetry={() => { setBaru(null); muatUlang(); }} />}
@@ -127,17 +128,18 @@ export function KirimDialog({ dipilih, tanggal, saringanAktif, onClose, onTerkir
                         ["Faktur", `${p.jumlah} (maks. ${p.maksPerTekan} per tekan)`],
                         ["Per principal", p.perPrincipal.length
                             ? <span>{p.perPrincipal.map((x) => <span key={x.principal} className="fi-sub">{x.principal} · {x.jumlah} · {rupiah(x.total)}</span>)}</span>
-                            : "–"],
-                        ["Nilai (DPP + PPN 11%)", <span key="n">{rupiah(p.total.total)}<span className="fi-sub">DPP {rupiah(p.total.dpp)} · PPN {rupiah(p.total.ppn)} · perkiraan, Accurate membulatkan PPN sendiri</span></span>],
-                        ["Tanggal faktur", tanggal ? `${tanggalPendek(tanggal)} untuk semua faktur` : rentangTanggal(p.orders)],
+                            : KOSONG],
+                        // PPN dari jawaban pratinjau server (p.total.ppn), bukan tarif yang ditulis di layar (audit No 126).
+                        ["Nilai (DPP + PPN)", <span key="n">{rupiah(p.total.total)}<span className="fi-sub">DPP {rupiah(p.total.dpp)} · PPN {rupiah(p.total.ppn)} · perkiraan, Accurate membulatkan PPN sendiri</span></span>],
+                        ["Tanggal faktur", tanggal ? `${tanggalWita(tanggal)} untuk semua faktur` : rentangTanggal(p.orders)],
                     ]} />
                     {!p.database.cocok && <MessageStrip tone="neg" title="Kirim akan ditolak.">{kalimatSesi(p.database)}{p.database.tujuan && <>{" "}
                         <a href="/sesi-accurate?returnTo=/antrean-faktur" target="_blank" rel="noopener">Buka Sesi Accurate (tab baru)</a></>}</MessageStrip>}
                     {p.ditolak && <MessageStrip tone="neg" title="Tidak ada faktur dikirim.">{p.ditolak}</MessageStrip>}
-                    {lebih > 0 && <MessageStrip tone="info">Anda memilih {dipilih.length} baris; maks. {p.maksPerTekan} per tekan — {lebih} sisanya tidak ikut kali ini.</MessageStrip>}
+                    {lebih > 0 && <MessageStrip tone="info">Anda memilih {dipilih.length} baris; maks. {p.maksPerTekan} per tekan, jadi {lebih} sisanya tidak ikut kali ini.</MessageStrip>}
                     {keluar > 0 && <MessageStrip tone="info">{keluar} baris pilihan tidak lagi berstatus Antre dan tidak ikut dikirim.</MessageStrip>}
                     {!dipilih.length && saringanAktif && (
-                        <MessageStrip tone="info" title="Saringan di layar tidak membatasi Kirim.">Tanpa pilihan, yang antre paling lama ikut — periksa daftar di bawah, atau batalkan lalu pilih barisnya.</MessageStrip>
+                        <MessageStrip tone="info" title="Saringan di layar tidak membatasi Kirim.">Tanpa pilihan, yang antre paling lama ikut. Periksa daftar di bawah, atau batalkan lalu pilih barisnya.</MessageStrip>
                     )}
                     {!dipilih.length && p.antreanMenunggu > p.jumlah && (
                         <MessageStrip tone="info">{p.antreanMenunggu - p.jumlah} faktur lainnya tetap antre (maks. {p.maksPerTekan} per tekan).</MessageStrip>
@@ -182,10 +184,10 @@ function BlokPencarian({ cari }: { cari: HasilCari }) {
                 <KeyValues items={[
                     ["Tanggal faktur", cari.faktur?.tanggal || "belum tersalin ke aplikasi"],
                     ["Total di Accurate", cari.faktur?.total != null ? rupiah(cari.faktur.total) : "belum tersalin ke aplikasi"],
-                    ["Nilai yang dikirim", cari.dikirim ? rupiah(cari.dikirim.total) : "–"],
+                    ["Nilai yang dikirim", cari.dikirim ? rupiah(cari.dikirim.total) : KOSONG],
                 ]} />
                 {p.semua.length > 1 && (
-                    <MessageStrip tone="neg" title={`${p.semua.length} faktur membawa kunci SO ini — kemungkinan faktur ganda.`}>
+                    <MessageStrip tone="neg" title={`${p.semua.length} faktur membawa kunci SO ini: kemungkinan faktur ganda.`}>
                         {p.semua.map((f) => f.number || f.id).join(", ")}. Tetapkan terposting memakai {p.number || p.id}; faktur lainnya dibereskan di Accurate.
                     </MessageStrip>
                 )}
@@ -197,14 +199,14 @@ function BlokPencarian({ cari }: { cari: HasilCari }) {
             <b>Tidak ditemukan di Accurate</b>
             <span className="fi-small fi-subtle">
                 {p.diperiksa} faktur pelanggan ini sejak SO masuk antrean diperiksa satu per satu; tidak satu pun membawa kunci SO ini.
-                Ini bukan bukti mutlak — faktur yang kuncinya terhapus tidak dikenali.
+                Ini bukan bukti mutlak: faktur yang kuncinya terhapus tidak dikenali.
             </span>
             {p.calon_tanpa_kunci.length > 0 && (
                 <>
                     <MessageStrip tone="warn" title={`${p.calon_tanpa_kunci.length} faktur pelanggan ini tanpa kunci antrean.`}>
                         Periksa di Accurate apakah salah satunya SO ini sebelum menetapkan tidak terposting.
                     </MessageStrip>
-                    <KeyValues items={p.calon_tanpa_kunci.map((c) => [c.number || `id ${c.id}`, `${c.transDate || "tanggal ?"} · ${c.totalAmount != null ? rupiah(c.totalAmount) : "total ?"}`])} />
+                    <KeyValues items={p.calon_tanpa_kunci.map((c) => [c.number || `id ${c.id}`, `${c.transDate || "tanggal tidak terbaca"} · ${c.totalAmount != null ? rupiah(c.totalAmount) : "total tidak terbaca"}`])} />
                 </>
             )}
             {cari.dikirim && <span className="fi-small">Nilai yang dikirim: {rupiah(cari.dikirim.total)}</span>}
@@ -232,13 +234,13 @@ export function SelesaikanDialog({ row, onClose, onSelesai, onTidakPasti }: {
     const keputusan: Keputusan | "" = pilih;
 
     const alasanTidak = !p ? "Menunggu hasil pencarian"
-        : p.hasil === "ketemu" ? "Tidak tersedia: faktur ditemukan — mengirim ulang akan membuat faktur ganda."
+        : p.hasil === "ketemu" ? "Tidak tersedia: faktur ditemukan, jadi mengirim ulang akan membuat faktur ganda."
             : p.hasil === "gagal_cek" ? "Tidak tersedia: pencarian tidak bisa memastikan."
                 : cari!.sisaMenit > 0 ? `Tersedia ${cari!.sisaMenit} menit lagi: kiriman terakhir mungkin masih diproses Accurate.` : "";
     const alasanYa = !p ? "Menunggu hasil pencarian" : p.hasil === "ketemu" ? ""
         : p.hasil === "gagal_cek" ? "Tidak tersedia: pencarian tidak bisa memastikan." : "Tidak tersedia: faktur tidak ditemukan oleh pencarian.";
     const blok = load.status === "memuat" ? "Menunggu hasil pencarian"
-        : !cari ? "Pencarian belum berhasil — cari lagi"
+        : !cari ? "Pencarian belum berhasil; cari lagi"
             : !keputusan ? "Pilih hasil dulu"
                 : keputusan === "terposting" ? alasanYa || undefined : alasanTidak || undefined;
 
@@ -274,8 +276,8 @@ export function SelesaikanDialog({ row, onClose, onSelesai, onTidakPasti }: {
     ];
 
     return (
-        <ConfirmDialog open onClose={onClose} tag="BL-16" title="Selesaikan faktur tidak pasti"
-            description={<>SO <span className="fi-mono">{nomorSo(row)}</span> · {row.outlet || row.customerNo} · dicoba {row.attempts}×, terakhir {jamWita(row.updatedAt)} WITA.
+        <ConfirmDialog open onClose={onClose} tag="Selesaikan tidak pasti" title="Selesaikan faktur tidak pasti ini?"
+            description={<>SO <span className="fi-mono">{nomorSo(row)}</span> · {row.outlet || row.customerNo} · dicoba {row.attempts}×, terakhir {waktuWita(row.updatedAt)} WITA.
                 {row.lastError ? ` ${kalimatAccurate(row.lastError)}` : ""}</>}
             reason={{ label: "Alasan", min: 15, placeholder: "Apa yang diperiksa dan di mana, mis. dicek di Accurate › Faktur Penjualan, pelanggan dan tanggal yang sama" }}
             confirmLabel={keputusan === "tidak_terposting" ? "Tetapkan tidak terposting" : keputusan === "terposting" ? "Tetapkan terposting" : "Simpan penyelesaian"}
@@ -333,8 +335,8 @@ export function AntreUlangDialog({ row, onClose, onSelesai, onTidakPasti }: {
             const calon = p?.hasil === "tidak_ketemu_dicek" ? p.calon_tanpa_kunci : [];
             onSelesai({
                 tone: calon.length ? "warn" : "pos", judul: `SO ${nomorSo(row)} kembali ke antrean.`,
-                isi: <>Pencarian: {kalimatPencarian(p)}. Belum dikirim — kirim lewat tombol Kirim.
-                    {calon.length > 0 && <> Perhatian: {calon.length} faktur pelanggan ini tanpa kunci antrean ({calon.map((c) => `${c.number || c.id}${c.totalAmount != null ? ` ${rupiah(c.totalAmount)}` : ""}`).join(", ")}) — periksa di Accurate sebelum Kirim.</>}</>,
+                isi: <>Pencarian: {kalimatPencarian(p)}. Belum dikirim; kirim lewat tombol Kirim.
+                    {calon.length > 0 && <> Perhatian: {calon.length} faktur pelanggan ini tanpa kunci antrean ({calon.map((c) => `${c.number || c.id}${c.totalAmount != null ? ` ${rupiah(c.totalAmount)}` : ""}`).join(", ")}). Periksa di Accurate sebelum Kirim.</>}</>,
             });
         } catch (e) {
             if (e instanceof TidakPasti) { onTidakPasti(e.message); return; }
@@ -363,8 +365,8 @@ export function BuangDialog({ row, onClose, onSelesai, onTidakPasti }: {
         }
     };
     return (
-        <ConfirmDialog open onClose={onClose} tone="negative" tag="BL-17" title="Buang 1 baris dari antrean?" facts={faktaBaris(row)}
-            description="Fakturnya belum ada di Accurate. Baris dihapus dari antrean; isinya dan alasan Anda tersimpan di riwayat. SO bisa diantrekan lagi dari Order Principal setelah angkanya diperbaiki — saat itu server mencari fakturnya di Accurate dulu."
+        <ConfirmDialog open onClose={onClose} tone="negative" tag="Buang baris" title="Buang 1 baris dari antrean?" facts={faktaBaris(row)}
+            description="Fakturnya belum ada di Accurate. Baris dihapus dari antrean; isinya dan alasan Anda tersimpan di riwayat. SO bisa diantrekan lagi dari Order Principal setelah angkanya diperbaiki; saat itu server mencari fakturnya di Accurate dulu."
             reason={{ label: "Alasan buang", placeholder: "mis. harga kategori di batch salah; diunggah ulang setelah diperbaiki" }}
             confirmLabel="Buang baris" onConfirm={jalankan} />
     );
@@ -388,13 +390,14 @@ function kalimatEvent(e: Event): { apa: string; ubah?: string } {
             ? { apa: `Terposting${d.number ? ` sebagai ${String(d.number)}` : ""}` }
             : { apa: "Ditandai terposting tanpa dikirim", ubah: e.reason || kalimatPencarian(p) };
         case "rejected": return { apa: "Ditolak Accurate", ubah: kalimatAccurate(e.reason) };
-        case "unknown": return { apa: "Tidak pasti", ubah: kalimatAccurate(e.reason) || (e.errorCode ? `galat ${e.errorCode}` : undefined) };
+        // Kode galat teknis tidak ditulis di kalimat; tetap tercatat di riwayat server (audit No 30).
+        case "unknown": return { apa: "Tidak pasti", ubah: kalimatAccurate(e.reason) || (e.errorCode ? "Jawaban Accurate tidak terbaca." : undefined) };
         case "buang": return { apa: "Dibuang dari antrean", ubah: e.reason ? `Alasan: ${e.reason}` : "tanpa alasan tercatat" };
         case "antre_ulang": return { apa: "Antre ulang", ubah: p ? `Pencarian: ${kalimatPencarian(p)}` : undefined };
         case "selesaikan": return { apa: e.stateTo === "posted" ? "Diselesaikan: ditetapkan terposting" : "Diselesaikan: ditetapkan tidak terposting",
             ubah: [e.reason ? `Alasan: ${e.reason}` : "", p ? `pencarian: ${kalimatPencarian(p)}` : ""].filter(Boolean).join(" · ") };
-        case "sapu": return { apa: `Mengirim lebih dari 15 menit → Tidak pasti (otomatis)` };
-        default: return { apa: e.jenis };
+        case "sapu": return { apa: `Mengirim lebih dari ${SAPU_MENIT} menit → Tidak pasti (otomatis)` };
+        default: return { apa: "Catatan lain", ubah: e.reason || undefined };
     }
 }
 
@@ -405,11 +408,11 @@ export function RiwayatDialog({ row, onClose }: { row: Row; onClose: () => void 
     return (
         <Dialog open onClose={onClose} labelledBy={judul} className="fi-dialog" closeOnBackdrop>
             <header>
-                <div><span className="fi-tag" data-tone="info">BL-17</span><h2 id={judul}>Riwayat SO {nomorSo(row)}</h2></div>
+                <div><span className="fi-tag" data-tone="info">Riwayat</span><h2 id={judul}>Riwayat SO {nomorSo(row)}</h2></div>
                 <button type="button" className="fi-btn fi-btn--icon" aria-label="Tutup" onClick={onClose}><X className="fi-icon" aria-hidden /></button>
             </header>
             <div className="fi-dialog-body">
-                <p className="fi-small fi-subtle">Catatan tidak bisa diubah atau dihapus. Masuk antrean {jamWita(row.createdAt)} WITA · umur {usia(row.ageMinutes)}.</p>
+                <p className="fi-small fi-subtle">Catatan tidak bisa diubah atau dihapus. Masuk antrean {waktuWita(row.createdAt)} WITA · umur {usia(row.ageMinutes)}.</p>
                 {load.status === "memuat" && <Skeleton rows={4} label="Memuat riwayat" />}
                 {load.status === "galat" && <ErrorState title="Riwayat gagal dimuat" message={load.error} onRetry={muatUlang} />}
                 {load.data?.terpotong && <MessageStrip tone="info">Menampilkan 200 catatan terbaru; catatan yang lebih tua tidak ditampilkan.</MessageStrip>}
@@ -419,8 +422,10 @@ export function RiwayatDialog({ row, onClose }: { row: Row; onClose: () => void 
                             const k = kalimatEvent(e);
                             return (
                                 <li key={e.id}>
-                                    <time dateTime={e.createdAt}>{jamWita(e.createdAt)}</time>
-                                    <span><b>{k.apa}</b> · {e.actor || "sistem"}{e.httpStatus ? ` · HTTP ${e.httpStatus}` : ""}</span>
+                                    <time dateTime={e.createdAt}>{waktuWita(e.createdAt)}</time>
+                                    {/* Kode status HTTP hanya di title untuk penelusuran, bukan di kalimat (audit No 30). */}
+                                    <span title={e.httpStatus ? `HTTP ${e.httpStatus}` : undefined}><b>{k.apa}</b> · {e.actor || "sistem"}</span>
+
                                     {k.ubah && <span className="fi-chg">{k.ubah}</span>}
                                 </li>
                             );
