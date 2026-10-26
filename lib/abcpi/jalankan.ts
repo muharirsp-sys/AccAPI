@@ -33,17 +33,28 @@ const keAccurate = (iso: string) => iso.split("-").reverse().join("/");
 const jeda = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type Obj = Record<string, unknown>;
 
+// Batas Accurate: 8 request/detik dan 8 proses paralel per token — token ini dipakai juga oleh sinkron & webhook,
+// jadi putaran ABCPI dijatah ≤4 request/detik (jarak awal request ≥250 ms; uji 26 Okt: 953 dokumen ±4 menit) dan "melebihi toleransi" dicoba ulang.
+let giliranBerikut = 0;
+const giliran = async () => {
+    const t = Math.max(Date.now(), giliranBerikut);
+    giliranBerikut = t + 250;
+    await jeda(t - Date.now());
+};
+
 async function ambil(creds: AccurateCredentials, jalur: string, params: Record<string, string>) {
     const url = new URL(`${creds.sessionHost}/accurate/api${jalur}`);
     for (const [k, v] of Object.entries(params)) url.searchParams.append(k, v);
     for (let coba = 1; ; coba++) {
+        await giliran();
         const res = await fetch(url, { headers: accurateHeaders(creds), signal: AbortSignal.timeout(60_000) }).catch((e: Error) => e);
-        if (res instanceof Error || res.status === 429 || res.status >= 500) {
-            if (coba < 4) { await jeda(3000 * coba); continue; }
-            throw new Error(`Accurate ${jalur}: ${res instanceof Error ? res.message : `HTTP ${res.status}`}`);
+        const body = res instanceof Error ? null : await res.json().catch(() => null) as { s?: boolean; d?: unknown; m?: unknown; sp?: Obj } | null;
+        const pesan = res instanceof Error ? res.message : `HTTP ${res.status} ${String(body?.m ?? body?.d ?? "")}`;
+        if (res instanceof Error || res.status === 429 || res.status >= 500 || /melebihi toleransi|request per detik/i.test(pesan)) {
+            if (coba < 6) { await jeda(2000 * coba); continue; }
+            throw new Error(redactAccurateSecrets(`Accurate ${jalur}: ${pesan}`).slice(0, 300));
         }
-        const body = await res.json().catch(() => null) as { s?: boolean; d?: unknown; m?: unknown; sp?: Obj } | null;
-        if (!res.ok || !body?.s) throw new Error(redactAccurateSecrets(`Accurate ${jalur}: HTTP ${res.status} ${String(body?.m ?? body?.d ?? "")}`).slice(0, 300));
+        if (!res.ok || !body?.s) throw new Error(redactAccurateSecrets(`Accurate ${jalur}: ${pesan}`).slice(0, 300));
         return body;
     }
 }
@@ -64,7 +75,7 @@ async function daftar(creds: AccurateCredentials, jalur: string, params: Record<
     }
 }
 
-/** detail.do per dokumen, 4 sekaligus. ponytail: ±1.000 panggilan di akhir bulan (±2 menit); pakai cache sales_invoice bila jadi beban. */
+/** detail.do per dokumen, 4 sekaligus di bawah jatah giliran(). ponytail: ±1.000 panggilan di akhir bulan (±4,5 menit); pakai cache sales_invoice bila jadi beban. */
 async function rincian(creds: AccurateCredentials, jalur: string, ids: unknown[]) {
     const hasil: unknown[] = new Array(ids.length);
     let i = 0, berhenti = false;
