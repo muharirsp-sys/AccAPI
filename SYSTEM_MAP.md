@@ -1615,6 +1615,38 @@ UI: review file opsional -> GET /api/laporan-harian/[runId]/preview?file=...
         UI otomatis menyediakan tombol screenshot dan unduhan Excel Pak Fahdhar sesudah generate
 ```
 
+Laporan ABCPI otomatis (FTP + email, 26 Okt 2026; pengganti otomasi Excel/FTP-ABC.exe di laptop):
+```
+cron VPS 20.00/21.00/22.00 WITA -> GET /api/cron/abcpi-harian (CRON_SECRET; ?tanggal= opsional)
+UI /laporan-harian bagian "Laporan ABCPI" (AbcpiKirim.tsx) -> GET/POST /api/laporan-harian/abcpi
+     (view: riwayat + ?pratinjau=YYYY-MM-DD xlsx tanpa kirim; send: {tanggal, confirm:true})
+  -> lib/abcpi/jalankan.ts jalankanAbcpi: API Accurate BACA-SAJA (sesi sinkron) cabang ABC (branchId 550),
+     transDate 1..tanggal: sales-invoice list+detail (INV/ saja), sales-return list+detail (tanpa RSJ),
+     item/list-stock.do semua gudang + GD0BS
+  -> lib/abcpi/laporan.ts: template ABCPI.xlsx 41 kolom (diskon bertingkat -> Disc1..5_Ext, EC=1 baris pertama
+     tiap faktur, retur negatif, freegoods B bernilai 0) + stok (Baik = semua − GD0BS); kode principle dari
+     lib/abcpi/peta-barang.json (daftar harga ABC PI), cadangan charField3 barang; barang tanpa kode = tidak dikirim
+  -> arsip data/abcpi/<YYYY-MM>/SP_<tgl>_{SALES,STOCK}.csv + ABCPI_SP_<tgl>.xlsx, status per tanggal, log.jsonl
+  -> lib/abcpi/ftp.ts unggah CSV pipe ke FTP ABC (dicek SIZE) + email xlsx + CSV ke report_recipient keyword ABCPI; stok pakai asOfDate = tanggal laporan
+  -> email ringkasan/galat ke admin. Akhir bulan dari cron = DITAHAN (berkas ke admin), kirim dari UI.
+  Konfigurasi: data/abcpi/config.json {ftp:{host,port,user,password,dir}, adminEmail} di volume data (bukan env).
+```
+
+Laporan Enigma / Enesis — PT Marketama Indah (portal enigma.enesis.com, 26 Okt 2026; pengganti workbook "Format Report Enigma Enesis.xlsx"):
+```
+cron VPS 20.30/21.30/22.30 WITA -> GET /api/cron/enigma-harian (CRON_SECRET; ?tanggal= opsional)
+UI /laporan-harian bagian "Laporan Enigma" (KirimPrincipal.tsx kode "enigma") -> GET/POST /api/laporan-harian/enigma
+  -> lib/enigma/jalankan.ts: Accurate cabang MIX FOOD (150) 1..tanggal; faktur INV + retur tanpa RSJ via detail.do per 200
+     (cache sales_invoice TIDAK dipakai: list.do menaikkan last_update tanpa mengganti rincian); jatah laju bersama ABCPI (≤4 req/dtk)
+  -> lib/enigma/laporan.ts: baris barang preferedVendorId 14150 (PT Marketama Indah), 33 kolom template_enigma.xlsx;
+     PRICE_JUAL = Tabel1 (KRT harga karton, selain itu harga pcs), BRUTO = harga × qty, DISC_RUTIN = potongan × (1+PPN),
+     NETTO = BRUTO − DISC; kode MI + harga + TYPE_OUTLET dari lib/enigma/peta.json (barang tanpa kode dilewati + peringatan)
+  -> lib/enigma/portal.ts: login {subdist_id,password}, POST / multipart excel_file + __ncforminfo, tunggu status Riwayat Upload,
+     baca /upload_detail/<id> -> email admin (success / validation_error + Detail log ringkas / gagal)
+  Arsip + status + log.jsonl: data/enigma; konfigurasi data/enigma/config.json {subdistId, password, adminEmail} (volume).
+  Cron hanya mengulang gagal teknis; validation_error tidak diunggah ulang otomatis.
+```
+
 Admin mapping: `/laporan-harian/mapping` -> `app/api/laporan-harian/mapping/route.ts` -> CRUD
 `report_recipient` (keyword/emails/active) langsung dari Next.js, tanpa FastAPI. Permission
 `laporan_harian.manage`. Keyword tetap diresolusi otomatis ke SPV/SM/Principal oleh
