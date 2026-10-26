@@ -2,7 +2,7 @@
  * Tujuan: Root layout Next.js: font isi lama (Geist), tema Surya untuk halaman yang belum dimigrasi + token Fiori, metadata.
  * Caller: Next.js App Router root.
  * Dependensi: next/font, fiori/scheme, globals.css, workspace.css, fiori.css.
- * Main Functions: RootLayout, metadata (judul bawaan; SidebarLayout menyetel judul per menu aktif), viewport.
+ * Main Functions: RootLayout, metadata (judul bawaan; judul per menu aktif dari generateMetadata di app/(dashboard)/layout.tsx), viewport.
  * Side Effects: Inject script mode/density Fiori dari localStorage sebelum paint. Toaster ada di app/(dashboard)/layout.tsx
  *   (satu-satunya grup rute yang memakai toast), supaya font Fiori tidak ikut dimuat di rute cetak.
  */

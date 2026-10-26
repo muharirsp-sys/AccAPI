@@ -32,7 +32,8 @@ const TOAST_TOKEN = {
     "--success-bg": "var(--pos-bg)", "--success-text": "var(--pos)", "--success-border": "var(--pos-bg)",
     "--error-bg": "var(--neg-bg)", "--error-text": "var(--neg)", "--error-border": "var(--neg-bg)",
     "--warning-bg": "var(--warn-bg)", "--warning-text": "var(--warn)", "--warning-border": "var(--warn-bg)",
-    "--info-bg": "var(--info-bg)", "--info-text": "var(--info)", "--info-border": "var(--info-bg)",
+    // ponytail: nama --info-bg dipakai sonner DAN token Fiori; var(--info-bg) di sini merujuk dirinya sendiri (nilai kosong), jadi diturunkan dari --info.
+    "--info-bg": "color-mix(in srgb, var(--info) 10%, var(--surface))", "--info-text": "var(--info)", "--info-border": "color-mix(in srgb, var(--info) 10%, var(--surface))",
     fontFamily: "var(--font-sans)", // sonner memasang font sistem sendiri pada toaster
 } as CSSProperties;
 
