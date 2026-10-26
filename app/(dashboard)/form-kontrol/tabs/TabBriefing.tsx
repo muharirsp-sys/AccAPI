@@ -15,6 +15,7 @@ import { Pencil, Save } from "lucide-react";
 import { Button, MessageStrip, Section, Skeleton } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { KOSONG as TANDA_KOSONG } from "@/lib/tampil";
 import { BRIEFING_AGENDA, TulisTidakPasti, ambilFk, hariIniWita, jamWita, tulisFk, useIzinFk, type Scope } from "../shared";
 
 type Sesi = "pagi" | "sore";
@@ -74,13 +75,13 @@ export default function TabBriefing({ scope }: { scope: Scope }) {
             )}
             <Section
                 title="Briefing Wajib SPV"
-                subtitle={`Tugas SPV bukan menerima laporan, tetapi mengendalikan lapangan · ${tanggalPendek(date)}`}
+                subtitle={tanggalPendek(date)}
                 actions={dirty ? <span className="fi-draft"><Pencil className="fi-icon" aria-hidden />Draf belum disimpan</span> : undefined}
             >
                 <div className="fi-sect-in">
                     <div className="fi-segs" role="group" aria-label="Sesi briefing">
                         {(["pagi", "sore"] as const).map((s) => (
-                            <button key={s} type="button" aria-pressed={sesi === s} style={{ height: 44, paddingInline: 20 }} onClick={() => gantiSesi(s)}>{LABEL[s]}</button>
+                            <button key={s} type="button" aria-pressed={sesi === s} style={{ paddingInline: 20 }} onClick={() => gantiSesi(s)}>{LABEL[s]}</button>
                         ))}
                     </div>
                     {load.status === "memuat" && !load.data ? <Skeleton rows={1} label="Memuat briefing tersimpan" />
@@ -116,7 +117,7 @@ export default function TabBriefing({ scope }: { scope: Scope }) {
                     <div className="fi-btnrow">
                         {blokir && <span className="fi-small fi-subtle">{blokir}</span>}
                         <span className="fi-spacer" style={{ flex: 1 }} />
-                        <Button variant="primary" style={{ minHeight: 44 }} icon={<Save className="fi-icon" aria-hidden />} disabled={Boolean(blokir)} disabledReason={blokir}
+                        <Button variant="primary" icon={<Save className="fi-icon" aria-hidden />} disabled={Boolean(blokir)} disabledReason={blokir}
                             onClick={() => { setSukses(""); setDialog(true); }}>
                             Simpan briefing {LABEL[sesi].toLowerCase()}
                         </Button>
@@ -131,8 +132,8 @@ export default function TabBriefing({ scope }: { scope: Scope }) {
                     ["SPV", spvName],
                     ["Tanggal", tanggalPendek(date)],
                     ["Agenda selesai", `${selesai} dari ${items.length}`],
-                    ["Toko dibahas", isi.toko || "—"],
-                    ...(sesiIni.length ? [["Sudah tersimpan", `${sesiIni.length}× (terakhir ${jamWita(terakhir)} WITA) — menyimpan lagi menambah catatan baru`] as [string, string]] : []),
+                    ["Toko dibahas", isi.toko || TANDA_KOSONG],
+                    ...(sesiIni.length ? [["Sudah tersimpan", `${sesiIni.length}× (terakhir ${jamWita(terakhir)} WITA); menyimpan lagi menambah catatan baru`] as [string, string]] : []),
                 ]}
                 confirmLabel="Simpan briefing"
                 confirmDisabled={blokir}

@@ -3,7 +3,7 @@
  *   lewat dialog "Terapkan" berisi pratinjau ringan (nama berkas, baris terbaca, kolom dikenali/tidak) — BERKAS YANG SAMA dikirim
  *   ke server yang memetakan kolom (HEADER_MAP di route jks) — lalu hasil `imported` DAN `skipped`; templat kolom diunduh dari klien.
  * Caller: form-kontrol/FormKontrol.tsx (tab "jks").
- * Dependensi: ../shared (Scope [principles], HARI, JksRow, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive},
+ * Dependensi: ../shared (Scope [principles], HARI, JksRow, ambilFk, tulisFk, useIzinFk, labelPola), components/fiori/{core,interactive}, lib/tampil,
  *   xlsx (dimuat saat dipakai: pratinjau + templat).
  * Main Functions: TabJks (default), bacaPratinjau, unduhTemplat.
  * Side Effects: GET /api/form-kontrol/jks; POST /api/form-kontrol/jks (FormData `file`) lewat ConfirmDialog; unduh templat-jks.xlsx.
@@ -17,8 +17,9 @@ import { useCallback, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Download, RefreshCw, Upload } from "lucide-react";
 import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Skeleton, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
-import { HARI, ambilFk, hariIniWita, jamWita, tulisFk, useIzinFk, type JksRow, type Scope } from "../shared";
+import { HARI, ambilFk, labelPola, tulisFk, useIzinFk, type JksRow, type Scope } from "../shared";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 
 /**
  * Kolom templat + header yang dikenali server. ponytail: `alias` = salinan kunci HEADER_MAP di app/api/form-kontrol/jks/route.ts
@@ -54,11 +55,10 @@ type Ditolak = { baris: number; custCode: string; hari: string };
 /** Baris tambahan salesman (kode lengkap) yang dinonaktifkan karena tokonya ada di berkas dengan kode JKS lain (FK-MSM2). */
 type Digantikan = { salesCode: string; principle: string; custCode: string; custName: string; kodeBerkas: string };
 
-/** "oleh SALES A · 12/10/2026 17.05 · kunjungan 12/10/2026" — jejak baris JKS tambahan salesman. */
+/** "oleh SALES A · 12/10/2026 17.05 · kunjungan 12/10/2026": jejak baris JKS tambahan salesman. */
 function jejak(t: NonNullable<JksRow["tambahanSalesman"]>): string {
-    const pada = new Date(t.pada);
-    const kapan = Number.isNaN(pada.getTime()) ? "" : ` · ${tanggalPendek(hariIniWita(pada))} ${jamWita(t.pada)}`;
-    return `oleh ${t.oleh || "salesman"}${kapan} · kunjungan ${tanggalPendek(t.dariKunjungan)}`;
+    const kapan = waktuWita(t.pada);
+    return `oleh ${t.oleh || "salesman"}${kapan !== KOSONG ? ` · ${kapan}` : ""} · kunjungan ${tanggalPendek(t.dariKunjungan)}`;
 }
 
 /** Baca ringan di peramban: baris dan header sheet pertama, persis cara server membacanya (sheet_to_json, defval ""). */
@@ -151,12 +151,12 @@ export default function TabJks({ scope }: { scope: Scope }) {
         { key: "cust", header: "Kode toko", cell: (r) => <span className="fi-mono">{r.custCode}</span> },
         { key: "nama", header: "Nama toko", cell: (r) => r.custName },
         { key: "sales", header: "Salesman", secondary: true, cell: (r) => <><span className="fi-mono">{r.salesCode}</span>{r.salesName ? ` · ${r.salesName}` : ""}</> },
-        { key: "market", header: "Market", secondary: true, cell: (r) => r.market || "—" },
-        { key: "kota", header: "Kota", secondary: true, cell: (r) => r.kota || "—" },
+        { key: "market", header: "Market", secondary: true, cell: (r) => r.market || KOSONG },
+        { key: "kota", header: "Kota", secondary: true, cell: (r) => r.kota || KOSONG },
         { key: "hari", header: "Hari", cell: (r) => r.hariKunjungan || <StatusBadge tone="warn">Belum diisi</StatusBadge> },
-        { key: "pola", header: "Pola minggu", cell: (r) => r.mingguPattern },
-        { key: "area", header: "Area", secondary: true, cell: (r) => r.area || "—" },
-        { key: "rayon", header: "Rayon", secondary: true, cell: (r) => r.rayon || "—" },
+        { key: "pola", header: "Pola minggu", cell: (r) => labelPola(r.mingguPattern) },
+        { key: "area", header: "Area", secondary: true, cell: (r) => r.area || KOSONG },
+        { key: "rayon", header: "Rayon", secondary: true, cell: (r) => r.rayon || KOSONG },
         { key: "principle", header: "Principal", cell: (r) => r.principle },
         { key: "freq", header: "Frekuensi", align: "end", cell: (r) => <span className="fi-tnum">{r.visitFrequency}×/bln</span> },
         { key: "asal", header: "Asal", cell: (r) => r.tambahanSalesman
@@ -245,7 +245,7 @@ export default function TabJks({ scope }: { scope: Scope }) {
                 mobileItem={(r) => (
                     <ListItem doc={<span className="fi-mono">{r.custCode}</span>} amount={<span className="fi-tnum">{r.visitFrequency}×/bln</span>}
                         title={r.custName}
-                        meta={`${r.salesCode} · ${r.hariKunjungan || "Hari belum diisi"} · ${r.mingguPattern} · ${r.principle}${r.tambahanSalesman ? ` · ditambahkan salesman ${jejak(r.tambahanSalesman)}` : ""}`}
+                        meta={`${r.salesCode} · ${r.hariKunjungan || "Hari belum diisi"} · ${labelPola(r.mingguPattern)} · ${r.principle}${r.tambahanSalesman ? ` · ditambahkan salesman ${jejak(r.tambahanSalesman)}` : ""}`}
                         badge={!r.hariKunjungan ? <StatusBadge tone="warn">Belum diisi</StatusBadge> : r.tambahanSalesman ? <StatusBadge tone="info">Tambahan salesman</StatusBadge> : undefined} />
                 )}
             />
@@ -291,10 +291,10 @@ export default function TabJks({ scope }: { scope: Scope }) {
                 {pratinjau.status === "siap" && pratinjau.data && (
                     <>
                         <KeyValues items={[
-                            ["Berkas", berkas?.name ?? "—"],
+                            ["Berkas", berkas?.name ?? KOSONG],
                             ["Baris terbaca", <span key="b" className="fi-tnum">{pratinjau.data.baris}</span>],
-                            ["Kolom dikenali", pratinjau.data.dikenali.length ? `${pratinjau.data.dikenali.length}: ${pratinjau.data.dikenali.join(", ")}` : "—"],
-                            ["Kolom tidak dikenali", pratinjau.data.asing.length ? `${pratinjau.data.asing.join(", ")} (diabaikan)` : "—"],
+                            ["Kolom dikenali", pratinjau.data.dikenali.length ? `${pratinjau.data.dikenali.length}: ${pratinjau.data.dikenali.join(", ")}` : KOSONG],
+                            ["Kolom tidak dikenali", pratinjau.data.asing.length ? `${pratinjau.data.asing.join(", ")} (diabaikan)` : KOSONG],
                         ]} />
                         {(pratinjau.data.channelKosong ?? 0) > 0 && (
                             <MessageStrip tone="warn" title={`Kolom Channel kosong di ${pratinjau.data.channelKosong} baris.`}>

@@ -4,7 +4,7 @@
  *   kontrak #132): Tidak order + alasan R15 → merchandising DILEWATI → foto bukti toko tutup (= foto check-out, wajib) → selesai tanpa order.
  * Caller: ./page.tsx (rute /form-kontrol/visit/[custCode]?salesCode&principle&date).
  * Dependensi: GET /api/form-kontrol/visit + /reasons; POST /api/form-kontrol/checkin, /ao-control, /merchandising, /checkout;
- *   ./FotoBukti; ../../lapangan (ambilJson, kirimFk, sebabGagal, PESAN_SINYAL), ../../shared (alasanIzinFk, jamWita); components/fiori/*; lib/rekapan-nota/ui.
+ *   ./FotoBukti; ../../lapangan (ambilJson, kirimFk, sebabGagal, PESAN_SINYAL), ../../shared (alasanIzinFk, jamWita); components/fiori/*; lib/rekapan-nota/ui; lib/tampil (KOSONG).
  * Main Functions: Kunjungan (muat/kosong/galat), Wizard (langkah), MERCH_STEPS.
  * Side Effects: HTTP baca/tulis kunjungan; kamera/lokasi lewat FotoBukti. Langkah hanya maju setelah simpan sukses. Payload sama dengan
  *   wizard lama. FK-MSM3: 409 KUNJUNGAN_DIBATALKAN / BUKAN_RUTE_HARI_INI (toko tidak lagi di rute) → wizard diganti penjelasan (judul per kode,
@@ -27,6 +27,7 @@ import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { TOKO_TUTUP_CODE } from "@/lib/form-kontrol/constants";
 import type { GeoCoords } from "@/lib/form-kontrol/location";
 import { PESAN_SINYAL, ambilJson, ditolakBukanRute, kirimFk, sebabGagal } from "../../lapangan";
+import { KOSONG } from "@/lib/tampil";
 import { alasanIzinFk, hariIniWita, jamWita } from "../../shared";
 import FotoBukti from "./FotoBukti";
 
@@ -264,7 +265,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
         label: tutup && i === 2 ? "Merchandising dilewati" : tutup && i === 3 ? "Foto bukti & check-out" : label,
         state: i < maks && i !== step ? "done" : i === step ? "current" : "todo",
     }));
-    const statusTeks = (s: string | null | undefined) => s === "ordered" || s === "active" ? "ORDER" : s ? "TIDAK ORDER" : "—";
+    const statusTeks = (s: string | null | undefined) => s === "ordered" || s === "active" ? "ORDER" : s ? "TIDAK ORDER" : KOSONG;
     const alasanLabel = (code: string) => { const r = data.reasons.find((x) => x.reasonCode === code); return r ? `${r.reasonCode} · ${r.label}` : code; };
     const kartuCheckin = (
         <KeyValues items={[
@@ -378,7 +379,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                                     onChange={() => { setMerchPersisted(false); setGalat(""); setMerch((p) => ({ ...p, [key]: !p[key] })); }}
                                     style={{ width: 24, height: 24, minHeight: 0, margin: 0, accentColor: "var(--primary)" }} />
                                 <label htmlFor={id} style={{ minHeight: 44, display: "flex", alignItems: "center", cursor: "pointer", overflowWrap: "anywhere" }}>{label}</label>
-                                <FotoBukti kecil label="Foto" judulGagal="Foto bukti belum terkirim." akibat="Butir ini belum berfoto."
+                                <FotoBukti kecil label="Foto" butir={label} judulGagal="Foto bukti belum terkirim." akibat="Butir ini belum berfoto."
                                     existingUrl={stepPhotos[key]} salesName={store.salesName} custName={store.custName} disabledReason={tanpaIzin}
                                     onPersist={async (url) => {
                                         setMerchPersisted(false);

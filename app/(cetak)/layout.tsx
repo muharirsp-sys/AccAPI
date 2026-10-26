@@ -1,6 +1,6 @@
 /*
  * Tujuan: Layout + seluruh gaya cetak lembar gudang. Dirancang untuk dibaca sambil jalan,
- *         satu tangan memegang kertas, di bawah tekanan waktu — bukan untuk dibaca di layar.
+ *         satu tangan memegang kertas, di bawah tekanan waktu, bukan untuk dibaca di layar.
  * Caller: app/(cetak)/** (lembar picking & TTF).
  * Dependensi: requirePermissionH (grup ini di luar (dashboard) yang biasa menjaga), BingkaiCetak (bilah Fiori hanya di layar).
  * Main Functions: CetakLayout.
@@ -13,7 +13,8 @@
  *   faktor konversi) tetap ada, tapi dikecilkan supaya tidak bersaing.
  * - Tanpa garis vertikal. Kolom dipisah oleh ruang dan perataan, bukan oleh kisi; kisi
  *   menambah tinta tanpa menambah keterbacaan.
- * - Zebra tipis + garis tegas tiap 5 baris: mata bisa menyeberang satu baris tanpa tersesat.
+ * - Garis baris seragam di <tr> (tanpa zebra): mata bisa menyeberang satu baris tanpa tersesat; pemisah keluarga produk yang mengelompokkan.
+ * - Ukuran terkecil 7pt dan tinta tidak lebih terang dari #767676: kertas sering difotokopi atau dibaca di gudang yang remang.
  * - Bekerja penuh dalam hitam-putih. Tidak ada informasi yang hanya disampaikan oleh warna.
  */
 import { redirect } from "next/navigation";
@@ -36,12 +37,14 @@ const GAYA = `
         display: none !important;
     }
 }
-.cetak-akar { background: #fff; }
+/* Tepi layar 8mm; di kertas tepi sudah dari @page (12mm 10mm), jadi padding dibuang saat cetak (bukan margin ganda yang menyempitkan isi). */
+.cetak-akar { background: #fff; padding: 8mm; }
+@media print { .cetak-akar { padding: 0 !important; } }
 
 .cetak {
     --tinta: #111;
     --samar: #6b6b6b;
-    --garis: #d4d4d4;
+    --garis: #8a8a8a;
     --garis-tegas: #9a9a9a;
     --tint: #f2f2f2;
     font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
@@ -68,7 +71,7 @@ const GAYA = `
 .angka-utama { display: flex; gap: 8mm; margin-top: 2.5mm; }
 .angka-utama div { line-height: 1.05; }
 .angka-utama b { display: block; font-size: 13pt; font-weight: 700; }
-.angka-utama span { font-size: 6.5pt; color: var(--samar); text-transform: uppercase; letter-spacing: 0.08em; }
+.angka-utama span { font-size: 7pt; color: var(--samar); text-transform: uppercase; letter-spacing: 0.08em; }
 
 /* ---------- Tabel ---------- */
 .cetak table { width: 100%; border-collapse: collapse; table-layout: fixed; }
@@ -81,29 +84,25 @@ const GAYA = `
 .halaman { break-after: page; page-break-after: always; }
 .halaman:last-of-type { break-after: auto; page-break-after: auto; }
 .kop-kanan { flex: none; text-align: right; }
-.kop-hal { margin-top: 1.5mm; font-size: 6.5pt; color: var(--samar);
+.kop-hal { margin-top: 1.5mm; font-size: 7pt; color: var(--samar);
     text-transform: uppercase; letter-spacing: 0.08em; }
 .ulang { margin-left: 2mm; padding: 0.3mm 1.5mm; border: 0.75pt solid var(--tinta);
     border-radius: 1mm; font-size: 7pt; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.06em; color: var(--tinta); }
 
 .judul-kolom th {
-    font-size: 6.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+    font-size: 7pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
     color: var(--samar); text-align: left; padding: 1.5mm 1.5mm 1mm;
     border-bottom: 0.75pt solid var(--garis-tegas);
 }
 .judul-kolom th.kanan { text-align: right; }
 
-/* Garis di <tr>, bukan di tiap <td>. Dengan border-collapse, garis per sel jadi lima
-   persegi terisi per baris; di lembar 276 baris itu ribuan objek gambar yang harus
-   diproses pembaca PDF sebelum halaman muncul. Zebra dibuang sekalian: garis tiap
-   5 baris sudah cukup menuntun mata, dan dua-duanya bersamaan cuma menambah tinta. */
-/* Garis di <tr>, bukan di tiap <td>. Semua baris bergaris SAMA: versi sebelumnya menebalkan
-   tiap baris ke-5 dihitung dari urutan data, padahal di kertas ada baris pemisah keluarga
-   yang menyela -- ritmenya pecah dan garis tebalnya terbaca sebagai cacat cetak. Pengelompokan
-   diserahkan sepenuhnya ke pemisah keluarga, yang punya arti (satu keluarga = satu area rak). */
+/* Garis di <tr>, bukan di tiap <td>: dengan border-collapse, garis per sel jadi lima persegi terisi per baris, dan di lembar 276 baris
+   itu ribuan objek gambar yang harus diproses pembaca PDF sebelum halaman muncul. Semua baris bergaris SAMA (tanpa zebra, tanpa garis
+   tebal tiap 5 baris: ritmenya pecah oleh pemisah keluarga). Pengelompokan diserahkan ke pemisah keluarga, yang punya arti
+   (satu keluarga = satu area rak). Garis cukup gelap (#8a8a8a) supaya tetap terlihat di fotokopi. */
 .cetak tbody td { padding: 1.1mm 1.5mm; vertical-align: top; }
-.cetak tbody tr { border-bottom: 0.4pt solid var(--garis); }
+.cetak tbody tr { border-bottom: 0.5pt solid var(--garis); }
 
 /* Kotak centang: picking tanpa tempat mencentang = jalan menghitung ulang. */
 .centang { width: 7mm; }
@@ -121,7 +120,7 @@ const GAYA = `
     /* Spasi akhir merek hilang di batas flex item -- jaraknya dikembalikan lewat padding. */
     padding-right: 1.1mm; }
 .nama .spek { font-weight: 700; flex: 0 0 auto; }        /* pembeda: tidak pernah dipotong */
-.nama .kode-internal { color: #9a9a9a; font-size: 7pt; flex: 0 1 auto; min-width: 0;
+.nama .kode-internal { color: #595959; font-size: 7.5pt; flex: 0 1 auto; min-width: 0;
     padding-left: 1.2mm; overflow: hidden; text-overflow: ellipsis; }
 
 /* Jumlah ambil: pahlawan barisnya. Angka dan satuan punya kolom sendiri supaya SEJAJAR
@@ -131,11 +130,11 @@ const GAYA = `
 /* Sat. besar | Sat. kecil: dua kolom sejajar ke bawah, angka sama besar -- kolom mana yang dibaca
    ditentukan pekerjaannya (ambil karton vs ambil pcs), bukan oleh ukuran huruf. */
 .ambil .n { width: 10mm; text-align: right; font-size: 11pt; font-weight: 700; letter-spacing: -0.01em; }
-.ambil .u { width: 6mm;  text-align: left;  font-size: 6.5pt; font-weight: 700; padding-left: 0.6mm; }
-.ambil.kecil { border-left: 0.75pt solid #fff; }
+.ambil .u { width: 6mm;  text-align: left;  font-size: 8pt; font-weight: 700; padding-left: 0.4mm; }
+.ambil.kecil { border-left: 0.75pt solid #555; }
 .cetak tbody td.ambil { padding-left: 1mm; padding-right: 1mm; }
-.ambil .nol { color: #b0b0b0; font-size: 9pt; padding-right: 2mm; }
-.audit { width: 15mm; text-align: right; font-size: 6.5pt; color: var(--samar); white-space: nowrap; }
+.ambil .nol { color: #767676; font-size: 9pt; padding-right: 2mm; }
+.audit { width: 15mm; text-align: right; font-size: 7pt; color: var(--samar); white-space: nowrap; }
 
 /* Exception harus KELIHATAN salah, bukan disamarkan jadi tanda tanya. */
 td.ambil.cacat { background: #dcdcdc; text-align: center; }
@@ -156,7 +155,7 @@ tr.keluarga td { border: none; height: 3mm; padding: 0; background: none !import
 
 .paraf { display: flex; gap: 10mm; margin-top: 8mm; break-inside: avoid; }
 .paraf div { flex: 1; }
-.paraf span { display: block; font-size: 6.5pt; text-transform: uppercase; letter-spacing: 0.08em; color: var(--samar); }
+.paraf span { display: block; font-size: 7pt; text-transform: uppercase; letter-spacing: 0.08em; color: var(--samar); }
 .paraf u { display: block; margin-top: 9mm; border-top: 0.75pt solid var(--tinta); text-decoration: none; }
 
 /* ---------- Dua panel: barang kiri, nota & rayon kanan (owner 20 Okt 2026) ---------- */
@@ -164,14 +163,14 @@ tr.keluarga td { border: none; height: 3mm; padding: 0; background: none !import
    baris kanan tidak sejajar dengan baris kiri dan tidak boleh terbaca sebagai pasangannya. */
 .dua-panel { display: grid; grid-template-columns: minmax(0, 1fr) 64mm; gap: 3mm; margin-top: 1mm; }
 .panel-nota { border-left: 1.5pt solid var(--tinta); padding-left: 2.5mm; font-size: 7pt; min-width: 0; }
-.judul-kolom-nota { display: flex; justify-content: space-between; gap: 2mm; font-size: 6.5pt; font-weight: 700;
+.judul-kolom-nota { display: flex; justify-content: space-between; gap: 2mm; font-size: 7pt; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.08em; color: var(--samar); padding: 1.5mm 0 1mm;
     border-bottom: 0.75pt solid var(--garis-tegas); }
 .panel-nota .nota { display: grid; grid-template-columns: 6mm 25mm minmax(0, 1fr); gap: 1mm; align-items: baseline;
     padding: 0.9mm 0; border-bottom: 0.3pt dotted var(--garis); white-space: nowrap; }
-.panel-nota .nota i { font-style: normal; color: var(--samar); text-align: right; font-size: 6.5pt; }
+.panel-nota .nota i { font-style: normal; color: var(--samar); text-align: right; font-size: 7pt; }
 .panel-nota .nota b { font-weight: 600; font-family: "Consolas", ui-monospace, monospace; font-size: 7pt; }
-.panel-nota .nota span { overflow: hidden; text-overflow: ellipsis; color: var(--samar); font-size: 6.5pt; }
+.panel-nota .nota span { overflow: hidden; text-overflow: ellipsis; color: var(--samar); font-size: 7pt; }
 .panel-nota .nota em { font-style: normal; font-weight: 700; color: var(--tinta); }
 .panel-nota .urgent b::before { content: "\\25B2\\00A0"; }
 .panel-habis { margin: 3mm 0; font-size: 7pt; color: var(--samar); }
@@ -181,7 +180,7 @@ tr.keluarga td { border: none; height: 3mm; padding: 0; background: none !import
 .angka-utama .paraf-ringkas u { display: block; margin-top: 5mm; border-top: 0.75pt solid var(--tinta); text-decoration: none; }
 /* ---------- Jejak cetakan ---------- */
 .jejak { margin-top: 6mm; padding-top: 1.5mm; border-top: 0.4pt solid var(--garis);
-    font-size: 6pt; color: var(--samar); display: flex; justify-content: space-between; gap: 4mm; }
+    font-size: 7pt; color: var(--samar); display: flex; justify-content: space-between; gap: 4mm; }
 
 /* ---------- Hanya layar ---------- */
 .layar-saja { margin-bottom: 6mm; }
@@ -204,7 +203,7 @@ export default async function CetakLayout({ children }: { children: React.ReactN
         <>
             <style>{GAYA}</style>
             <FioriScope className="layar-saja bingkai-cetak-akar"><BingkaiCetak /></FioriScope>
-            <div className="cetak-akar" style={{ color: "#111", minHeight: "100vh", padding: "8mm" }}>
+            <div className="cetak-akar" style={{ color: "#111", minHeight: "100vh" }}>
                 {children}
             </div>
         </>

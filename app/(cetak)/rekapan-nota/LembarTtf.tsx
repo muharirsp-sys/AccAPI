@@ -53,9 +53,9 @@ export function LembarTtf({ id, wave, ttf, sekarang }: {
     return (
         <div className="ttf">
             <style>{`
-                .ttf tbody td { padding: 2.1mm 1.5mm; }        /* ruang untuk tulisan tangan */
+                .ttf tbody td { padding: 2mm 1.5mm; }          /* ruang untuk tulisan tangan; tinggi baris tetap <= 11mm (TINGGI_BARIS_MM di ttf-paginasi) sesudah sub-baris 7pt */
                 .ttf .isian { border-bottom: none; background: none !important; }
-                .ttf .isian-kotak { border-left: 0.4pt solid var(--garis); }
+                .ttf .isian-kotak { border-left: 0.75pt solid #555; }
                 .ttf .no { width: 8mm; text-align: right; color: var(--samar); font-size: 7pt; }
                 .ttf .faktur { width: 34mm; font-family: "Consolas", ui-monospace, monospace; font-size: 8pt; font-weight: 600; }
                 .ttf .lembar { width: 14mm; text-align: center; font-size: 11pt; font-weight: 700; background: var(--tint); }
@@ -64,7 +64,7 @@ export function LembarTtf({ id, wave, ttf, sekarang }: {
                    ttf-paginasi.ts (yang menghasilkan "Halaman X dari Y") jadi bohong. */
                 .ttf .outlet { font-size: 8pt; overflow: hidden;
                     white-space: nowrap; text-overflow: ellipsis; }
-                .ttf .outlet i { display: block; font-style: normal; font-size: 6.5pt; color: var(--samar);
+                .ttf .outlet i { display: block; font-style: normal; font-size: 7pt; color: var(--samar);
                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
                 .ttf .tulis { width: 16mm; }
                 .ttf .tulis-lebar { width: 22mm; }

@@ -10,7 +10,7 @@
  * Side Effects: kamera + izin lokasi peramban; HTTP POST multipart. id pengajuan (UUID) dibuat sekali per isian → kirim ulang sesudah jawaban
  *   tidak pasti = baris yang sama di server (isian diubah sesudahnya = 409 ID_BEDA_ISI). Foto diperkecil di ponsel (≤ 1600 px JPEG) sebelum
  *   dikirim. Isian hanya di memori layar ini — TIDAK disimpan ke storage; selama formulir terisi, klik tautan ke halaman/tab lain DAN tombol
- *   Kembali peramban dicegat dan ditanya dulu (peninjau B S1, S-b1). Galat per isian (aria-invalid + pesan di bawah isian) sesudah isian disentuh (peninjau B S2).
+ *   Kembali peramban dicegat dan ditanya dulu; tombol Batal pada formulir terisi memakai dialog yang sama. Galat per isian (aria-invalid + pesan di bawah isian) sesudah isian disentuh.
  */
 "use client";
 
@@ -31,7 +31,7 @@ const URUTAN_LAYAR = ["namaToko", "namaPemilik", "alamat", "noHp", "fotoToko", "
 type KunciLayar = (typeof URUTAN_LAYAR)[number];
 
 /**
- * Peninjau B S1 + S-b1: selama `kotor`, (1) klik tautan ke halaman/tab lain (tab Form Kontrol, menu samping) dicegat SEBELUM Next berpindah
+ * Selama `kotor`, (1) klik tautan ke halaman/tab lain (tab Form Kontrol, menu samping) dicegat SEBELUM Next berpindah
  * (capture di document) dan (2) tombol Kembali peramban/Android dicegat lewat satu entri riwayat penjaga (`pushState`, salinan state Next
  * supaya router tetap mengenalinya) + `popstate` → dialog "Buang isian?" yang sama. "Buang" mengulang klik tautan yang sama (perilaku Link asli,
  * termasuk replace) atau mundur sekali lagi; "Tetap di sini" sesudah Kembali memasang penjaga lagi. Formulir tersimpan/dibuang (kotor → false)
@@ -158,6 +158,8 @@ export function TambahNoo({ salesCode, principle, onDiajukan, kunci }: Props) {
     const [pemilikSama, setPemilikSama] = useState(false);
     const [alasanDuplikat, setAlasanDuplikat] = useState("");
     const [sukses, setSukses] = useState("");
+    // Batal pada formulir terisi minta konfirmasi lewat dialog yang sama dengan penjaga pindah halaman.
+    const [buangMinta, setBuangMinta] = useState(false);
     const [disentuh, setDisentuh] = useState<ReadonlySet<KunciLayar>>(new Set());
     const formRef = useRef<HTMLFormElement>(null);
     const idForm = useId();
@@ -183,9 +185,9 @@ export function TambahNoo({ salesCode, principle, onDiajukan, kunci }: Props) {
     // Galat di bawah isian hanya sesudah isian itu disentuh (keluar dari isian / ambil foto / ambil lokasi) atau "Ke isian" diketuk.
     const galatDi = (k: KunciLayar) => (disentuh.has(k) ? galatLayar[k] : undefined);
     const alasan = kunci ?? (pertama ? galatLayar[pertama]
-        : pembanding && !pemilikSama ? "NIK/No. HP sama dengan NOO lain — perbaiki isian, atau ajukan sebagai pemilik sama"
+        : pembanding && !pemilikSama ? "NIK/No. HP sama dengan NOO lain. Perbaiki isian, atau ajukan sebagai pemilik sama."
             : pemilikSama && alasanDuplikat.trim().length < 10 ? "Tulis alasan pemilik sama untuk SPV (minimal 10 huruf)" : undefined);
-    /** Peninjau B S2: tampilkan SEMUA galat isian lalu fokus ke isian salah paling atas. */
+    /** Tampilkan SEMUA galat isian lalu fokus ke isian salah paling atas. */
     function keIsian() {
         sentuh(...URUTAN_LAYAR);
         // Sesudah render galat (dan sesudah peramban sentuh memindah fokus ke tombol yang diketuk) — fokus pindah ke isian salah paling atas.
@@ -232,7 +234,7 @@ export function TambahNoo({ salesCode, principle, onDiajukan, kunci }: Props) {
                 return;
             }
             if (j.status === 0 || j.status >= 502 || !d) {
-                setGalat(`${j.status === 0 ? PESAN_SINYAL : "Server tidak memberi jawaban yang pasti."} Pengajuan belum dipastikan tersimpan; kirim lagi — mengulang aman (pengajuan yang sama tidak menjadi dua).`);
+                setGalat(`${j.status === 0 ? PESAN_SINYAL : "Server tidak memberi jawaban yang pasti."} Pengajuan belum dipastikan tersimpan; kirim lagi. Mengulang aman: pengajuan yang sama tidak menjadi dua.`);
                 return;
             }
             if (d.kode === "NOO_DUPLIKAT" && Array.isArray(d.pembanding)) setPembanding(d.pembanding as Pembanding[]);
@@ -251,7 +253,7 @@ export function TambahNoo({ salesCode, principle, onDiajukan, kunci }: Props) {
                 {!buka ? (
                     <div className="fi-btnrow">
                         <Button icon={<Store className="fi-icon" aria-hidden />} disabled={Boolean(kunci)} disabledReason={kunci}
-                            onClick={() => { setBuka(true); setSukses(""); }}>Toko baru (belum ada di Accurate)</Button>
+                            onClick={() => { setBuka(true); setSukses(""); }}>Tambah toko baru</Button>
                         {kunci && <span className="fi-small fi-why">{kunci}</span>}
                     </div>
                 ) : (
@@ -268,7 +270,7 @@ export function TambahNoo({ salesCode, principle, onDiajukan, kunci }: Props) {
                             {lokasi && (
                                 <p className="fi-small fi-tnum" role="status">
                                     {lokasi.lat.toFixed(6)}, {lokasi.lng.toFixed(6)} · akurasi ± {Math.round(lokasi.accuracy)} m
-                                    {lokasi.accuracy > 1000 && " — akurasi rendah, tetap tercatat dan ditandai untuk SPV"}
+                                    {lokasi.accuracy > 1000 && ". Akurasi rendah, tetap tercatat dan ditandai untuk SPV."}
                                 </p>
                             )}
                             {galatLokasi && <MessageStrip tone="neg" title="Lokasi wajib.">{PESAN_LOKASI[galatLokasi]}</MessageStrip>}
@@ -311,9 +313,9 @@ export function TambahNoo({ salesCode, principle, onDiajukan, kunci }: Props) {
                         {galat && <MessageStrip tone="neg" title="Belum diajukan.">{galat}</MessageStrip>}
                         <div className="fi-btnrow">
                             <Button type="submit" variant="primary" busy={sibuk} disabled={Boolean(alasan)} disabledReason={alasan}>Ajukan toko baru</Button>
-                            <Button variant="tertiary" disabled={sibuk} onClick={() => tutup(true)}>Batal</Button>
+                            <Button variant="tertiary" disabled={sibuk} onClick={() => (kotor ? setBuangMinta(true) : tutup(true))}>Batal</Button>
                         </div>
-                        {/* Peninjau B R-b3: wilayah live SELALU terpasang (pembaca layar mengumumkan perubahan galat pertama, bukan hanya saat fokus). */}
+                        {/* Wilayah live SELALU terpasang (pembaca layar mengumumkan perubahan galat pertama, bukan hanya saat fokus). */}
                         <div aria-live="polite" data-uji="galat-live">
                             {alasan && !kunci && (
                                 <p className="fi-small fi-why">
@@ -325,9 +327,10 @@ export function TambahNoo({ salesCode, principle, onDiajukan, kunci }: Props) {
                         </div>
                     </form>
                 )}
-                <ConfirmDialog open={jaga.tujuan !== null} onClose={jaga.tetap} title="Buang isian toko baru?" tone="negative"
-                    description="Isian, foto toko, foto KTP, dan lokasi belum diajukan. Bila pindah halaman, semuanya hilang dan harus diambil ulang."
-                    confirmLabel="Buang isian dan pindah" cancelLabel="Tetap di sini" onConfirm={jaga.pindah} />
+                <ConfirmDialog open={jaga.tujuan !== null || buangMinta} onClose={buangMinta ? () => setBuangMinta(false) : jaga.tetap} title="Buang isian toko baru?" tone="negative"
+                    description={`Isian, foto toko, foto KTP, dan lokasi belum diajukan. ${buangMinta ? "Bila dibuang" : "Bila pindah halaman"}, semuanya hilang dan harus diambil ulang.`}
+                    confirmLabel={buangMinta ? "Buang isian" : "Buang isian dan pindah"} cancelLabel="Tetap di sini"
+                    onConfirm={buangMinta ? () => { setBuangMinta(false); tutup(true); } : jaga.pindah} />
             </div>
         </Section>
     );
