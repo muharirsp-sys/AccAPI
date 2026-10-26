@@ -15,7 +15,7 @@
  */
 import { Fragment } from "react";
 import type { Rekapan, WithdrawalRow } from "@/lib/rekapan-nota/query";
-import { hariIniWita, jamWita, nomorLembar } from "@/lib/rekapan-nota/ui";
+import { WAVE_STATUS, hariIniWita, jamWita, nomorLembar, type WaveStatusKode } from "@/lib/rekapan-nota/ui";
 
 const ID = (v: number, d = 0) =>
     v.toLocaleString("id-ID", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -145,7 +145,7 @@ export function LembarRekapan({ id, wave, judul, kodeGrup, rekapan, sekarang, ca
                                     </div>
                                     <div className="kop-sub">
                                         {wave.nama.toUpperCase()} &middot; {tanggal} &middot; Wave #{id}
-                                        {wave.status !== "released" && ` · ${wave.status.toUpperCase()}`}
+                                        {wave.status !== "released" && ` · ${(WAVE_STATUS[wave.status as WaveStatusKode]?.label ?? "Status tidak dikenal").toUpperCase()}`}
                                         {cetakUlang && <b className="ulang">Cetak ulang</b>}
                                     </div>
                                     <div className="kop-sub">No. <b>{noLembar}</b> &middot; dicetak {dicetak} WITA</div>

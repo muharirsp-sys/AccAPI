@@ -1,18 +1,20 @@
 "use client";
 /*
  * Tujuan: peta Supervisor Review (SR-3) — Leaflet + ubin OpenStreetMap, dipakai langsung tanpa pembungkus React. Penanda toko berkoordinat
- *   (warna per StatusToko) + titik check-in dari kunjungan ber-GPS; memilih satu salesman menyaring keduanya dan menggambar garis urutan check-in.
+ *   (cincin warna token per StatusToko + HURUF status di tengahnya, jadi status tidak hanya terbaca lewat warna) + titik check-in dari kunjungan
+ *   ber-GPS; memilih satu salesman menyaring keduanya dan menggambar garis urutan check-in. Daftar teks "Lihat toko dan check-in sebagai daftar"
+ *   memberi jalan bagi papan ketik dan pembaca layar (penanda peta sendiri tidak bisa difokus).
  * Caller: SR-2 supervisor-review layar (dynamic import ssr:false) lewat `PetaProps` — props TIDAK boleh berubah.
  * Dependensi: leaflet (JS dimuat di useEffect karena butuh window; CSS diimpor statis — aman, modul ini hanya dimuat tanpa SSR),
- *   components/fiori/core, lib/supervisor-review/kontrak.
+ *   components/fiori/core, lib/supervisor-review/kontrak, lib/tampil (KOSONG).
  * Main Functions: Peta (default), PetaProps.
  * Side Effects: Permintaan ubin https://tile.openstreetmap.org; map.remove() saat unmount / data berubah.
- * ponytail: penanda (SVG path) tidak bisa difokus papan ketik — teks alternatifnya legenda berhitung di bawah peta + daftar kunjungan SR-2.
  */
 import "leaflet/dist/leaflet.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState, MessageStrip } from "@/components/fiori/core";
 import { JARAK_JAUH_M, type Kunjungan, type PenandaToko, type StatusToko } from "@/lib/supervisor-review/kontrak";
+import { KOSONG } from "@/lib/tampil";
 
 export interface PetaProps {
     penanda: PenandaToko[];
@@ -21,17 +23,20 @@ export interface PetaProps {
     salesCodeTerpilih: string | null;
 }
 
-/** Warna + teks legenda; kelas `peta-<status>` melekat pada path SVG (dipakai uji dan gaya). */
-const STATUS: Record<StatusToko, { warna: string; label: string }> = {
-    ec: { warna: "#2e7d32", label: "Dikunjungi, EC" },
-    tanpa_ec: { warna: "#f9a825", label: "Dikunjungi, tanpa EC" },
-    belum: { warna: "#c62828", label: "Terjadwal, belum dikunjungi" },
-    faktur_tanpa_checkin: { warna: "#6a1b9a", label: "Berfaktur, tanpa check-in" },
+/**
+ * Warna = token Fiori (var() dibaca browser, ikut mode gelap); huruf = isyarat kedua untuk pengguna buta warna. Kelas `peta-<status>` melekat
+ * pada path SVG (dipakai uji dan gaya). Warna cincin: ec hijau, tanpa_ec jingga, belum merah, faktur_tanpa_checkin nila (bukan ungu dekoratif).
+ */
+const STATUS: Record<StatusToko, { warna: string; huruf: string; label: string }> = {
+    ec: { warna: "var(--pos-solid)", huruf: "E", label: "Dikunjungi, EC" },
+    tanpa_ec: { warna: "var(--warn-solid)", huruf: "T", label: "Dikunjungi, tanpa EC" },
+    belum: { warna: "var(--neg-solid)", huruf: "B", label: "Terjadwal, belum dikunjungi" },
+    faktur_tanpa_checkin: { warna: "var(--info-solid)", huruf: "F", label: "Berfaktur, tanpa check-in" },
 };
 /** Status di luar kontrak (data baru / rusak): tetap digambar abu-abu, tidak boleh membuat peta gagal. */
-const LAIN = { warna: "#9e9e9e", label: "Status tidak dikenal", kelas: "lain" };
+const LAIN = { warna: "var(--neu-solid)", huruf: "?", label: "Status tidak dikenal", kelas: "lain" };
 const URUT: StatusToko[] = ["ec", "tanpa_ec", "belum", "faktur_tanpa_checkin"];
-const BIRU = "#1565c0";
+const TITIK_CHECKIN = "var(--primary)";
 
 interface Gambar {
     pen: PenandaToko[];
@@ -56,7 +61,12 @@ function popup(judul: string, ...baris: string[]): HTMLElement {
     return el;
 }
 
-const jam = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString("id-ID", { timeZone: "Asia/Makassar", hour: "2-digit", minute: "2-digit" }) : "—");
+const jam = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString("id-ID", { timeZone: "Asia/Makassar", hour: "2-digit", minute: "2-digit" }) : KOSONG);
+const infoStatus = (s: string) => (STATUS[s as StatusToko] ? { ...STATUS[s as StatusToko], kelas: s } : LAIN);
+
+/** Huruf status di tengah cincin: tinta di atas isi permukaan (kontras terjaga di mode terang dan gelap); `huruf` konstanta di atas, bukan data pengguna. */
+const cakram = (huruf: string, ukuran: number) =>
+    `<span style="display:flex;align-items:center;justify-content:center;width:${ukuran}px;height:${ukuran}px;font:700 ${Math.round(ukuran * 0.55)}px/1 var(--font-sans);color:var(--ink)">${huruf}</span>`;
 
 export default function Peta({ penanda, kunjungan, salesCodeTerpilih }: PetaProps) {
     // Kunci teks: induk yang mengirim array baru tiap render tidak membangun ulang peta (kedip + zoom hilang) selama isinya sama.
@@ -65,6 +75,8 @@ export default function Peta({ penanda, kunjungan, salesCodeTerpilih }: PetaProp
     const ada = data.pen.length + data.titik.length > 0;
     const wadah = useRef<HTMLDivElement>(null);
     const [galat, setGalat] = useState(false);
+    // Isi daftar teks baru dirender saat dibuka: ribuan toko tidak perlu masuk DOM selama peta saja yang dilihat.
+    const [daftarBuka, setDaftarBuka] = useState(false);
 
     useEffect(() => {
         const el = wadah.current;
@@ -81,19 +93,25 @@ export default function Peta({ penanda, kunjungan, salesCodeTerpilih }: PetaProp
                     attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
                 }).addTo(peta);
 
-                // circleMarker (vektor): ikon gambar bawaan Leaflet pecah di bundler.
+                // circleMarker (vektor): ikon gambar bawaan Leaflet pecah di bundler. Huruf status = divIcon non-interaktif di atasnya
+                // (klik tetap sampai ke circleMarker di bawahnya yang membuka popup).
                 for (const p of data.pen) {
-                    const st = STATUS[p.status] ? { ...STATUS[p.status], kelas: p.status } : LAIN;
-                    L.circleMarker([p.lat, p.lng], { radius: 9, color: "#1f2937", weight: 1.5, fillColor: st.warna, fillOpacity: 0.9, className: `peta-${st.kelas}` })
-                        .bindPopup(popup(p.namaToko, st.label, p.salesCode)).addTo(peta);
+                    const st = infoStatus(p.status);
+                    L.circleMarker([p.lat, p.lng], { radius: 10, color: st.warna, weight: 4, fillColor: "var(--surface)", fillOpacity: 1, className: `peta-${st.kelas}` })
+                        .bindPopup(popup(p.namaToko, `${st.huruf}: ${st.label}`, p.salesCode)).addTo(peta);
+                    const huruf = L.marker([p.lat, p.lng], {
+                        icon: L.divIcon({ className: "peta-huruf", html: cakram(st.huruf, 20), iconSize: [20, 20], iconAnchor: [10, 10] }),
+                        interactive: false, keyboard: false,
+                    }).addTo(peta);
+                    huruf.getElement()?.setAttribute("aria-hidden", "true");
                 }
                 for (const k of data.titik) {
                     const jauh = k.jarakKeTokoM != null && k.jarakKeTokoM > JARAK_JAUH_M;
-                    L.circleMarker([k.lat!, k.lng!], { radius: 5, color: BIRU, weight: 2.5, fillColor: "#ffffff", fillOpacity: 1, className: "peta-checkin" })
+                    L.circleMarker([k.lat!, k.lng!], { radius: 5, color: TITIK_CHECKIN, weight: 2.5, fillColor: "var(--surface)", fillOpacity: 1, className: "peta-checkin" })
                         .bindPopup(popup(k.namaToko, `Check-in ${jam(k.mulai)}`, ...(jauh ? [`Jauh dari toko (${Math.round(k.jarakKeTokoM!)} m)`] : []))).addTo(peta);
                 }
                 if (data.garis && data.titik.length > 1) {
-                    L.polyline(data.titik.map((k) => [k.lat!, k.lng!] as [number, number]), { color: BIRU, weight: 3, opacity: 0.7, dashArray: "6 6", className: "peta-garis" }).addTo(peta);
+                    L.polyline(data.titik.map((k) => [k.lat!, k.lng!] as [number, number]), { color: TITIK_CHECKIN, weight: 3, opacity: 0.7, dashArray: "6 6", className: "peta-garis" }).addTo(peta);
                 }
 
                 const semua = [...data.pen, ...data.titik].map((t) => [t.lat!, t.lng!] as [number, number]);
@@ -124,16 +142,36 @@ export default function Peta({ penanda, kunjungan, salesCodeTerpilih }: PetaProp
             <ul aria-label="Legenda peta" className="flex flex-wrap gap-x-4 gap-y-1 fi-small" style={{ listStyle: "none", margin: 0, padding: 0 }}>
                 {URUT.map((s) => (
                     <li key={s} className="flex items-center gap-1">
-                        <span aria-hidden className="inline-block w-3 h-3 rounded-full" style={{ background: STATUS[s].warna, border: "1.5px solid #1f2937" }} />
+                        <span aria-hidden className="inline-flex h-5 w-5 items-center justify-center rounded-full" style={{ border: `3px solid ${STATUS[s].warna}`, background: "var(--surface)", font: "700 .6875rem/1 var(--font-sans)", color: "var(--ink)" }}>{STATUS[s].huruf}</span>
                         {STATUS[s].label} <b className="fi-tnum">{jumlah(s)}</b>
                     </li>
                 ))}
                 <li className="flex items-center gap-1">
-                    <span aria-hidden className="inline-block w-3 h-3 rounded-full" style={{ background: "#fff", border: `2.5px solid ${BIRU}` }} />
+                    <span aria-hidden className="inline-block w-3 h-3 rounded-full" style={{ background: "var(--surface)", border: `2.5px solid ${TITIK_CHECKIN}` }} />
                     Titik check-in <b className="fi-tnum">{data.titik.length}</b>
                 </li>
                 {data.garis && <li>Garis putus-putus: urutan check-in salesman terpilih</li>}
             </ul>
+            <details onToggle={(e) => setDaftarBuka(e.currentTarget.open)}>
+                <summary className="fi-small" style={{ cursor: "pointer", minHeight: "var(--ctl-h)", display: "flex", alignItems: "center" }}>
+                    Lihat toko dan check-in sebagai daftar ({data.pen.length + data.titik.length})
+                </summary>
+                {daftarBuka && (
+                    <div role="region" aria-label="Daftar toko dan check-in" tabIndex={0} className="fi-small" style={{ maxHeight: "16rem", overflow: "auto" }}>
+                        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                            {data.pen.map((p) => {
+                                const st = infoStatus(p.status);
+                                return <li key={`t-${p.custCode}-${p.salesCode}`} style={{ padding: "4px 0" }}><b>{p.namaToko}</b> · {st.huruf}: {st.label} · {p.salesCode}</li>;
+                            })}
+                            {data.titik.map((k, i) => (
+                                <li key={`c-${k.custCode}-${k.mulai ?? i}`} style={{ padding: "4px 0" }}>
+                                    Check-in <b>{k.namaToko}</b> · {jam(k.mulai)} WITA{k.jarakKeTokoM != null ? ` · ${Math.round(k.jarakKeTokoM)} m dari toko${k.jarakKeTokoM > JARAK_JAUH_M ? " (jauh)" : ""}` : ""}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+            </details>
         </div>
     );
 }

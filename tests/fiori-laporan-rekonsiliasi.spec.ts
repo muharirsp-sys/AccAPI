@@ -62,9 +62,9 @@ test.describe("Laporan harian", () => {
         const riwayat = main.getByRole("table", { name: "Riwayat kirim" });
         await expect(riwayat.getByRole("row", { name: /05\/10\/2026/ })).toContainText("Gagal");
         await expect(riwayat.getByRole("row", { name: /01\/10\/2026/ })).toContainText("Macet");
-        await expect(main.getByText("usulan BL-29")).toBeVisible();
+        await expect(main.getByLabel("Usulan BL-29")).toBeAttached(); // kotak varian hanya terlihat oleh Admin; kode BL ada di nama aksesibelnya
         const footer = main.locator(".fi-ftb");
-        await expect(footer.getByRole("button", { name: "Proses dan perbarui dashboard" })).toBeDisabled();
+        await expect(footer.getByRole("button", { name: "Proses berkas" })).toBeDisabled();
         await page.screenshot({ path: "test-results/fiori-laporan-harian-awal.png", fullPage: true });
 
         // Kirim ulang run gagal → dialog, bukan langsung.
@@ -77,7 +77,7 @@ test.describe("Laporan harian", () => {
 
         // Proses → langkah 2–3 → footer Kirim → dialog menyebut penerima yang tidak dikirim.
         await main.locator("#laporan-penjualan").setInputFiles(xlsx("Penjualan 06-10.xlsx"));
-        await footer.getByRole("button", { name: "Proses dan perbarui dashboard" }).click();
+        await footer.getByRole("button", { name: "Proses berkas" }).click();
         await expect(main.getByRole("heading", { level: 1 })).toContainText("data Selasa, 6 Okt 2026", NAV);
         await expect(main.getByText("Pencapaian tersambung ke Insentif Sales.")).toBeVisible();
         await expect(main.getByText("Berkas SPV BARU tidak punya penerima.")).toBeVisible();
@@ -85,7 +85,7 @@ test.describe("Laporan harian", () => {
         await main.getByRole("group", { name: "Penerima" }).getByRole("button", { name: "Pilih tertentu" }).click();
         await main.getByRole("table", { name: "Penerima email" }).getByLabel("Pilih SM_HENDRIK_06-10.xlsx\u0000om@contoh.id").uncheck();
         await expect(main.getByText("1 penerima yang tidak dipilih akan berstatus dilewati")).toBeVisible();
-        await expect(main.getByText("usulan BL-58")).toBeVisible();
+        await expect(main.getByLabel("Usulan BL-58")).toBeAttached();
         await footer.getByRole("button", { name: "4 · Kirim 2 email…" }).click();
         const dlg = page.getByRole("dialog");
         await expect(dlg).toContainText("Kirim 2 email laporan 06/10/2026?");
@@ -104,8 +104,8 @@ test.describe("Laporan harian", () => {
         await page.goto("/laporan-harian", NAV);
         const main = page.locator("main");
         await main.locator("#laporan-penjualan").setInputFiles(xlsx("Penjualan.xlsx"));
-        await main.locator(".fi-ftb").getByRole("button", { name: "Proses dan perbarui dashboard" }).click();
-        await expect(main.getByRole("alert")).toContainText("Tidak bisa menghubungi FastAPI backend");
+        await main.locator(".fi-ftb").getByRole("button", { name: "Proses berkas" }).click();
+        await expect(main.getByRole("alert")).toContainText("Server sedang bermasalah");
         await expect(main.getByRole("alert")).toContainText("Dashboard dan progres insentif tidak berubah");
         await expect(main.getByRole("table", { name: "Riwayat kirim" }).getByRole("row")).toHaveCount(4);
     });

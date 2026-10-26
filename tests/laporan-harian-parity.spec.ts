@@ -23,7 +23,7 @@ test("file asli menghasilkan 21 laporan dan rekap Pak Fahdhar melalui menu web",
     await page.locator("#laporan-retur").setInputFiles(path.join(root, "rincian_faktur_penjualan_cvsuryaperkasa_260914105019.xlsx"));
     await page.locator("#laporan-stock").setInputFiles(path.join(root, "kuantitas_barang_per_gudang_cvsuryaperkasa_260914105049.xlsx"));
     const responsePromise = page.waitForResponse(r => r.url().endsWith("/api/laporan-harian/upload"), { timeout: 300_000 });
-    await page.getByRole("button", { name: "Proses dan perbarui dashboard" }).click();
+    await page.getByRole("button", { name: "Proses berkas" }).click();
     const response = await responsePromise;
     const result = await response.json();
     await fs.mkdir("outputs/parity", { recursive: true });

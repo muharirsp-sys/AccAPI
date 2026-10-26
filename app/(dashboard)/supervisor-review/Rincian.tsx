@@ -1,8 +1,8 @@
 /*
- * Tujuan: Potongan layar Supervisor Review yang dipakai tabel desktop dan kartu ponsel: label status, tombol WhatsApp, kepala salesman,
+ * Tujuan: Potongan layar Supervisor Review yang dipakai tabel desktop dan kartu ponsel: badge status, tombol WhatsApp, kepala salesman,
  *   dan rincian kunjungan salesman terpilih (tabel di desktop, daftar kartu di ponsel) + subtotal.
  * Caller: ./SupervisorReview.tsx.
- * Dependensi: components/fiori/core, lib/supervisor-review/kontrak (JARAK_JAUH_M), ./bersama, ../form-kontrol/shared (jamWita WITA).
+ * Dependensi: components/fiori/core, lib/supervisor-review/kontrak (JARAK_JAUH_M), ./bersama, ../form-kontrol/shared (jamWita WITA), lib/tampil (KOSONG).
  * Main Functions: LabelStatus, Wa, KepalaSalesman, DaftarKunjungan.
  * Side Effects: Tidak ada (tautan WhatsApp dibuka pengguna di tab baru).
  */
@@ -12,17 +12,18 @@ import type { Ref } from "react";
 import { MessageCircle } from "lucide-react";
 import { Button, EmptyState, StatusBadge } from "@/components/fiori/core";
 import { JARAK_JAUH_M, type BarisSalesman, type Kunjungan } from "@/lib/supervisor-review/kontrak";
+import { KOSONG } from "@/lib/tampil";
 import { jamWita } from "../form-kontrol/shared";
 import { angka, namaBaris, rp, STATUS, TANPA_HP } from "./bersama";
 
 export function LabelStatus({ status }: { status: BarisSalesman["status"] }) {
     const s = STATUS[status];
-    return <span className="whitespace-nowrap"><span aria-hidden>{s.ikon}</span> {s.label}</span>;
+    return <StatusBadge tone={s.tone}>{s.label}</StatusBadge>;
 }
 
 /** Tautan wa.me (tab baru); tanpa nomor = tombol nonaktif berpetunjuk (`petunjuk` = petunjuk juga TERLIHAT, bukan hanya title). Baris "Tanpa salesman terpetakan" tak punya tombol. */
 export function Wa({ b, petunjuk }: { b: BarisSalesman; petunjuk?: boolean }) {
-    if (b.salesCode === "") return <span className="fi-subtle" aria-hidden>—</span>;
+    if (b.salesCode === "") return <span className="fi-subtle">{KOSONG}</span>;
     const label = `WhatsApp ke ${namaBaris(b)}`;
     if (b.waUrl) return <a className="fi-btn fi-btn--secondary" href={b.waUrl} target="_blank" rel="noopener noreferrer" aria-label={label}><MessageCircle className="fi-icon" aria-hidden />WhatsApp</a>;
     return (
@@ -46,7 +47,7 @@ export function KepalaSalesman({ b, judulRef }: { b: BarisSalesman; judulRef?: R
 }
 
 const jumlah = (rows: Kunjungan[], f: (k: Kunjungan) => number | null) => rows.reduce((a, k) => a + (f(k) ?? 0), 0);
-const strip = (v: number | null, fmt: (n: number) => string = angka) => (v === null ? "—" : fmt(v));
+const strip = (v: number | null, fmt: (n: number) => string = angka) => (v === null ? KOSONG : fmt(v));
 
 function LabelKunjungan({ k }: { k: Kunjungan }) {
     const m = k.jarakKeTokoM;
@@ -69,16 +70,16 @@ function LabelKunjungan({ k }: { k: Kunjungan }) {
 }
 
 const Toko = ({ k }: { k: Kunjungan }) => <><b className="fi-small">{k.namaToko}</b><span className="fi-codes">{k.custCode}</span><LabelKunjungan k={k} /></>;
-const Ec = ({ k }: { k: Kunjungan }) => (k.ec ? <span role="img" aria-label="EC">✓</span> : <span className="fi-subtle">—</span>);
+const Ec = ({ k }: { k: Kunjungan }) => (k.ec ? <span role="img" aria-label="EC">✓</span> : <span className="fi-subtle">{KOSONG}</span>);
 
 /** Rincian kunjungan satu salesman: tabel (desktop) atau kartu (ponsel) + subtotal. `rows` sudah disaring per salesCode. */
 export function DaftarKunjungan({ rows, kartu }: { rows: Kunjungan[]; kartu: boolean }) {
     if (rows.length === 0) return <EmptyState title="Belum ada kunjungan" message="Salesman ini belum check-in dan tidak punya faktur pada tanggal ini." />;
     const sub: [string, string][] = [
         ["Kunjungan", angka(rows.length)],
-        ["Menit di toko", angka(jumlah(rows, (k) => k.menitDiToko))],
+        ["Waktu di toko (mnt)", angka(jumlah(rows, (k) => k.menitDiToko))],
         ["Waktu tempuh (mnt)", angka(jumlah(rows, (k) => k.menitTempuh))],
-        ["Qty", angka(jumlah(rows, (k) => k.qty), 2)],
+        ["Jumlah", angka(jumlah(rows, (k) => k.qty), 2)],
         ["Item", angka(jumlah(rows, (k) => k.item))],
         ["EC", angka(rows.filter((k) => k.ec).length)],
         ["Nilai", rp(jumlah(rows, (k) => k.nilai))],
@@ -93,7 +94,7 @@ export function DaftarKunjungan({ rows, kartu }: { rows: Kunjungan[]; kartu: boo
                             <span className="fi-li-r1"><span><Toko k={k} /></span><Ec k={k} /></span>
                             <span className="fi-li-r3">
                                 <span>{jamWita(k.mulai)}–{jamWita(k.selesai)} · {strip(k.menitDiToko)} mnt di toko · tempuh {strip(k.menitTempuh)} mnt</span>
-                                <span>Qty {strip(k.qty, (n) => angka(n, 2))} · Item {strip(k.item)}</span>
+                                <span>Jumlah {strip(k.qty, (n) => angka(n, 2))} · Item {strip(k.item)}</span>
                             </span>
                         </li>
                     ))}
@@ -105,8 +106,8 @@ export function DaftarKunjungan({ rows, kartu }: { rows: Kunjungan[]; kartu: boo
                         <thead>
                             <tr>
                                 <th scope="col">Toko</th><th scope="col">Mulai</th><th scope="col">Selesai</th>
-                                <th scope="col" className="fi-end">Menit di toko</th><th scope="col" className="fi-end">Waktu tempuh (mnt)</th>
-                                <th scope="col" className="fi-end">Qty</th><th scope="col" className="fi-end">Item</th><th scope="col">EC</th>
+                                <th scope="col" className="fi-end">Waktu di toko (mnt)</th><th scope="col" className="fi-end">Waktu tempuh (mnt)</th>
+                                <th scope="col" className="fi-end">Jumlah</th><th scope="col" className="fi-end">Item</th><th scope="col">EC</th>
                             </tr>
                         </thead>
                         <tbody>

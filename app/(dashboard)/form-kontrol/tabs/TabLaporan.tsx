@@ -1,9 +1,9 @@
 /*
- * Tujuan: "Laporan harian" salesman (Fiori S5, it05): lima angka otomatis dari Form AO (WITA) + tindak lanjut, dikirim ke SPV lewat
+ * Tujuan: "Laporan kunjungan" salesman (Fiori S5, it05): lima angka otomatis dari Form AO (WITA) + tindak lanjut, dikirim ke SPV lewat
  *   dialog; status dibaca SPV. Tanggal = Hari ini atau Kemarin (laporan yang terlewat), tanpa pemilih tanggal bebas. Galat muat ≠ nol.
- * Caller: form-kontrol/page.tsx (shell tab, default export `({ scope })`).
+ * Caller: form-kontrol/FormKontrol.tsx (shell tab, default export `({ scope })`). Bukan modul Laporan Harian (email ekspor Accurate).
  * Dependensi: GET/POST /api/form-kontrol/reports; ../shared (Scope, jamWita, useIzinFk); ../lapangan (bacaFk, kirimFk, useHariBeku,
- *   kemarinDari); components/fiori/*; lib/rekapan-nota/ui (tanggalPanjang).
+ *   kemarinDari); components/fiori/*; lib/rekapan-nota/ui (tanggalPanjang); lib/tampil (KOSONG, waktuWita).
  * Main Functions: TabLaporan, keLaporan.
  * Side Effects: HTTP GET laporan hari ini + kemarin; POST laporan {salesCode, date, tindakLanjut} (payload sama dengan kode lama) lalu
  *   muat ulang.
@@ -21,7 +21,8 @@ import { CalendarDays, Send } from "lucide-react";
 import { Button, EmptyState, ErrorState, MessageStrip, Section, Skeleton, VariantNote } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
-import { type Scope, jamWita, useIzinFk } from "../shared";
+import { KOSONG, waktuWita } from "@/lib/tampil";
+import { type Scope, useIzinFk } from "../shared";
 import { bacaFk, kemarinDari, kirimFk, useHariBeku } from "../lapangan";
 import { KonfirmasiLuarRute } from "./LuarRute";
 
@@ -100,7 +101,7 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
     let isi: ReactNode;
     if (!salesCode) {
         isi = <EmptyState title="Akun belum tertaut ke profil salesman"
-            message="Laporan harian dikirim oleh salesman. SPV membaca dan menandai laporan di Dashboard SPV. Hubungi admin bila akun ini seharusnya salesman." />;
+            message="Laporan kunjungan dikirim oleh salesman. SPV membaca dan menandai laporan di Dashboard SPV. Hubungi admin bila akun ini seharusnya salesman." />;
     } else if (load.status === "galat" && !data) {
         isi = <ErrorState title="Laporan gagal dimuat" message={`${load.error} Angka tidak ditampilkan agar tidak terbaca sebagai nol.`} onRetry={muatUlang} />;
     } else if (!data) {
@@ -119,17 +120,18 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
                     </MessageStrip>
                 )}
                 {terkirim && (
-                    <MessageStrip tone="pos" title={`Laporan harian terkirim ke SPV${lap.submittedAt ? ` ${jamWita(lap.submittedAt)}` : ""}.`}>
-                        {lap.spvAck ? `Sudah dibaca SPV${lap.spvAckAt ? ` ${jamWita(lap.spvAckAt)}` : ""}.` : "Menunggu dibaca SPV."}
+                    <MessageStrip tone="pos" title={`Laporan kunjungan terkirim ke SPV${lap.submittedAt ? ` ${waktuWita(lap.submittedAt)} WITA` : ""}.`}>
+                        {lap.spvAck ? `Sudah dibaca SPV${lap.spvAckAt ? ` ${waktuWita(lap.spvAckAt)} WITA` : ""}.` : "Menunggu dibaca SPV."}
                     </MessageStrip>
                 )}
-                <div className="fi-kcards">
-                    {([["Total toko JKS", lap.totalJks], ["Luar rute dikunjungi", luarDikunjungi ?? "—"], ["Order", lap.order], ["Aktif", lap.aktif],
+                {/* Dua kolom di ponsel dengan angka sedang: enam kartu satu kolom menumpuk jauh sebelum Tindak lanjut. */}
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {([["Total toko JKS", lap.totalJks], ["Luar rute dikunjungi", luarDikunjungi ?? KOSONG], ["Order", lap.order], ["Aktif", lap.aktif],
                         ["Tidak order", lap.notOrder], ["Tidak dikunjungi", lap.notVisited]] as const).map(([l, v]) => (
-                        <div key={l} className="fi-kc"><span>{l}</span><b className="fi-tnum">{v}</b></div>
+                        <div key={l} className="fi-kc"><span>{l}</span><b className="fi-tnum" style={{ font: "var(--fs-title-2)" }}>{v}</b></div>
                     ))}
                 </div>
-                <p className="fi-small fi-muted">{terkirim ? "Angka saat laporan dikirim." : "Angka terisi otomatis dan langsung dari Form AO; dihitung ulang server saat dikirim."}
+                <p className="fi-small fi-muted">{terkirim ? "Angka saat laporan dikirim." : "Angka terisi otomatis dan langsung dari Rute hari ini; dihitung ulang server saat dikirim."}
                     {" "}Order, Aktif, Tidak order, dan Tidak dikunjungi termasuk kunjungan luar rute; Total toko JKS hanya toko terjadwal JKS.</p>
                 <KonfirmasiLuarRute salesCode={salesCode} tanggal={tanggal} onMenunggu={setLuarMenunggu} onDikunjungi={setLuarDikunjungi} />
                 <Section title="Tindak lanjut" subtitle="wajib">
@@ -154,7 +156,7 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
     return (
         <section aria-labelledby={judulId} className="grid gap-4">
             <div className="grid gap-1">
-                <h2 id={judulId} className="fi-title-2">Laporan harian</h2>
+                <h2 id={judulId} className="fi-title-2">Laporan kunjungan</h2>
                 <p className="fi-small fi-muted flex flex-wrap items-center gap-x-2">
                     <CalendarDays className="fi-icon" aria-hidden /><span>{tanggalPanjang(tanggal)} · WITA</span>
                     {salesCode && <span>· <span className="fi-mono">{salesCode}</span>{scope.salesName ? ` ${scope.salesName}` : ""}</span>}
@@ -182,7 +184,7 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
             {isi}
             <VariantNote bl="BL-28">Tanggal laporan = hari ini atau kemarin dalam WITA menurut jam ponsel. Usulan: server yang menetapkan tanggal laporan.</VariantNote>
             {lap && (
-                <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`Kirim laporan harian ${pilih === "hari" ? "hari ini" : "kemarin"} ke SPV?`}
+                <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`Kirim laporan kunjungan ${pilih === "hari" ? "hari ini" : "kemarin"} ke SPV?`}
                     description="Laporan tanggal ini dikirim sekali; kelima angka dihitung ulang server dari status kunjungan terakhir."
                     facts={[
                         ["Tanggal", `${tanggalPanjang(tanggal)} · WITA`],

@@ -1,7 +1,7 @@
 /*
  * Tujuan: "Rute hari ini" (Fiori S5, it05, ponsel dulu): toko JKS hari ini (WITA) dengan kunjungan yang belum selesai paling atas,
  *   progres kunjungan, tanda prioritas, dan "Kirim status rute hari ini" lewat dialog (pengganti tombol Submit AO).
- * Caller: form-kontrol/page.tsx (shell tab, default export `({ scope })`).
+ * Caller: form-kontrol/FormKontrol.tsx (shell tab, default export `({ scope })`).
  * Dependensi: GET/POST /api/form-kontrol/ao-control, ../shared (Scope, AoRow, principalAwal, penjelasanTanpaJks, compareRoute, hariIniWita,
  *   jamWita, useIzinFk),
  *   ../lapangan (bacaFk, kirimFk, keBarisRute, simpanRute, useHariBeku), components/fiori/*, lib/rekapan-nota/ui (tanggalPanjang).
@@ -14,10 +14,10 @@
  *
  * Kirim status TIDAK dihapus (keputusan orkestrator S5): kunjungan sudah menulis check-in/status/merch/check-out per toko, TETAPI tanda
  * prioritas dan baris "tidak dikunjungi" hanya tertulis lewat kiriman ini, dan Dashboard SPV menghitung "Rute" dari baris AO.
- * Payload per toko sama dengan Submit AO lama (urut, berhenti di galat pertama). Dua penjaga (temuan peninjau S5): hanya salesman
+ * Payload per toko sama dengan Submit AO lama (urut, berhenti di galat pertama). Dua penjaga: hanya salesman
  * pemilik rute yang mengirim (peran lain baca-saja), dan rute DIBACA ULANG sesaat sebelum mengirim — status dari bacaan terbaru, hanya
  * tanda bintang sesi ini di atasnya — supaya status kunjungan yang tersimpan sesudah layar dimuat tidak tertimpa.
- * FK-MSM3: tanda yang belum dikirim bertahan melewati muat ulang rute (peninjau B R-7) dan membuka Kunjungan lalu kembali (sessionStorage per
+ * FK-MSM3: tanda yang belum dikirim bertahan melewati muat ulang rute dan membuka Kunjungan lalu kembali (sessionStorage per
  *   salesman|principal|tanggal, S-3); toko yang hilang dari rute disebut, tandanya dibuang.
  *   Server menolak status untuk toko yang tidak lagi di rute (409 KUNJUNGAN_DIBATALKAN / BUKAN_RUTE_HARI_INI) → rute dimuat ulang.
  */
@@ -40,7 +40,7 @@ import { BatalkanLuarRute, TambahLuarRute } from "./LuarRute";
 type Saring = "semua" | "belum" | "tidak" | "perhatian";
 /**
  * Draf tanda prioritas: kunci rute (salesman|principal|tanggal) → toko → keinginan. `gugur` = dibuang saat rute termuat (toko hilang dari rute /
- * sudah punya hasil kunjungan): tidak berlaku lagi walau toko itu muncul kembali, disebut di strip sampai strip ditutup (peninjau B R-4).
+ * sudah punya hasil kunjungan): tidak berlaku lagi walau toko itu muncul kembali, disebut di strip sampai strip ditutup.
  */
 type TandaDraf = { prioritas: boolean; nama: string; gugur?: "hilang" | "hasil" };
 type DrafBintang = Record<string, Record<string, TandaDraf>>;
@@ -78,7 +78,10 @@ function metaToko(r: AoRow): string {
     if (r.monthlyOrderCount > 0) bagian.push(`${r.monthlyOrderCount} hari order bulan ini`);
     if (r.needsAttention) bagian.push("≥ 2× tidak order bulan ini");
     if (sedang(r)) bagian.push(`Sedang dikunjungi · check-in ${jamWita(r.checkinAt)}`);
-    else if (r.checkoutAt) bagian.push(`Selesai ${jamWita(r.checkinAt)}–${jamWita(r.checkoutAt)} (${visitDurationMin(r) ?? "—"} menit)`);
+    else if (r.checkoutAt) {
+        const menit = visitDurationMin(r);
+        bagian.push(`Selesai ${jamWita(r.checkinAt)}–${jamWita(r.checkoutAt)}${menit !== null ? ` (${menit} menit)` : ""}`);
+    }
     else bagian.push("Belum dikunjungi");
     return bagian.join(" · ");
 }
@@ -157,11 +160,11 @@ export default function TabAo({ scope }: { scope: Scope }) {
     const [load, muatUlang] = useLoad(loader);
 
     const asal = load.data;
-    // Tanda prioritas yang belum dikirim = keinginan per toko (prioritas ya/tidak) untuk rute salesman|principal|tanggal ini. Peninjau B R-7:
+    // Tanda prioritas yang belum dikirim = keinginan per toko (prioritas ya/tidak) untuk rute salesman|principal|tanggal ini.
     // bertahan melewati muat ulang rute (Tambah luar rute, Batalkan, Muat ulang) dan diterapkan ke baris TERBARU; tidak berlaku untuk toko
     // yang sudah punya hasil kunjungan atau sudah berstatus itu. Toko yang hilang dari rute: tanda dibuang dan disebut (strip), tidak diam.
     const kunciRute = `${salesCode}|${principle}|${tanggal}`;
-    // Bertahan juga saat salesman membuka Kunjungan lalu kembali (peninjau B S-3); yang disimpan hanya draf tanggal ini.
+    // Bertahan juga saat salesman membuka Kunjungan lalu kembali; yang disimpan hanya draf tanggal ini.
     useEffect(() => {
         try {
             sessionStorage.setItem(DRAF_BINTANG, JSON.stringify(Object.fromEntries(Object.entries(draf).filter(([k]) => k.endsWith(`|${tanggal}`)))));
@@ -300,14 +303,17 @@ export default function TabAo({ scope }: { scope: Scope }) {
                     ))}
                 </div>
                 <Section title="Toko di rute" subtitle={`${shown.length} toko`}>
-                    {shown.length === 0 ? <EmptyState title="Tidak ada toko pada saringan ini" message="Pilih saringan lain untuk melihat toko lainnya." /> : (
+                    {shown.length === 0 ? <EmptyState title="Tidak ada toko pada saringan ini" message="Pilih saringan lain untuk melihat toko lainnya." /> : (<>
+                        <p className="fi-small fi-muted" style={{ padding: "8px 16px 0" }}>
+                            Bintang menandai toko prioritas; toko yang sudah punya hasil kunjungan tidak bisa ditandai.{bukanPemilik ? ` ${bukanPemilik}` : ""}
+                        </p>
                         <ul aria-label="Toko di rute" style={{ listStyle: "none", padding: 0 }}>
                             {shown.map((r) => {
                                 const b = badgeToko(r);
                                 const q = new URLSearchParams({ salesCode: r.salesCode, principle, date: tanggal });
                                 const alasanBintang = bukanPemilik ?? (adaHasilKunjungan(r.status) ? "Toko ini sudah punya hasil kunjungan" : undefined);
                                 // Owner 13 Okt: kunjungan luar rute salah tambah boleh dibatalkan pemiliknya hari itu, selama belum ada check-in/status
-                                // APA PUN (juga "tidak dikunjungi" dari Kirim status rute — server menolaknya, peninjau B R-3).
+                                // APA PUN (juga "tidak dikunjungi" dari Kirim status rute; server menolaknya).
                                 const bisaBatal = r.luarRute && salesman && !bukanPemilik && tanggal === hariIniWita() && !r.checkinAt && !r.adaStatus;
                                 return (
                                     <li key={r.id ?? r.custCode} className="fi-wl-row" style={{ gridTemplateColumns: "auto minmax(0,1fr)", paddingLeft: 4 }}>
@@ -321,7 +327,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                                 ? <span className="flex flex-wrap items-center gap-1">{badgeNoo(r)}<StatusBadge tone={b.tone}>{b.label}</StatusBadge></span>
                                                 : <StatusBadge tone={b.tone}>{b.label}</StatusBadge>} />
                                         {bisaBatal && (
-                                            // Di baris bawah kartu (kolom isi), tidak memeras nama toko panjang di 390 px (peninjau B R-6).
+                                            // Di baris bawah kartu (kolom isi), tidak memeras nama toko panjang di 390 px.
                                             <div style={{ gridColumn: 2, justifySelf: "start" }}>
                                             <BatalkanLuarRute id={r.id} custName={r.custName} custCode={r.custCode}
                                                 kunci={tanpaIzin ?? (batalTakPasti ? "Hasil pembatalan terakhir belum pasti; muat ulang rute dulu."
@@ -334,7 +340,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                 );
                             })}
                         </ul>
-                    )}
+                    </>)}
                 </Section>
             </div>
         );
@@ -392,7 +398,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
             {salesman && beku.berganti && (
                 <MessageStrip tone="warn" title="Tanggal sudah berganti.">
                     Rute dan isian yang tampil masih untuk {hariLabel}.{" "}
-                    {nUbah > 0 ? `${nUbah} tanda prioritas belum dikirim untuk ${hariLabel} tidak dibawa ke hari baru — kirim dulu bila masih perlu. ` : "Tidak ada yang dibuang. "}
+                    {nUbah > 0 ? `${nUbah} tanda prioritas belum dikirim untuk ${hariLabel} tidak dibawa ke hari baru. Kirim dulu bila masih perlu. ` : "Tidak ada yang dibuang. "}
                     <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => { setSukses(""); beku.pakaiHariBaru(); }}>Muat rute {tanggalPanjang(beku.hariBaru)}</button>
                 </MessageStrip>
             )}
@@ -417,7 +423,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
                     })}
                 </MessageStrip>
             )}
-            {nUbah > 0 && <p className="fi-draft" role="status">{nUbah} tanda prioritas belum dikirim — kirim lewat “Kirim status rute {judulHari}”.</p>}
+            {nUbah > 0 && <p className="fi-draft" role="status">{nUbah} tanda prioritas belum dikirim. Kirim lewat “Kirim status rute”.</p>}
 
             {isi}
 
@@ -433,12 +439,12 @@ export default function TabAo({ scope }: { scope: Scope }) {
                 <div className="fi-sect-in">
                     <p className="fi-small fi-muted">
                         Kirim status rute mengirim status setiap toko di daftar ini apa adanya, termasuk tanda prioritas. Toko yang belum disentuh
-                        tercatat “tidak dikunjungi”. Laporan harian (tindak lanjut untuk SPV) dikirim di tab Laporan Harian.
+                        tercatat “tidak dikunjungi”. Laporan kunjungan (tindak lanjut untuk SPV) dikirim di tab Laporan Kunjungan.
                     </p>
                     <div className="fi-btnrow">
                         <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} disabled={Boolean(kirimTerkunci)} disabledReason={kirimTerkunci}
-                            onClick={() => setDialog(true)}>Kirim status rute {judulHari}…</Button>
-                        <Link className="fi-btn fi-btn--secondary" href="/form-kontrol?tab=laporan"><FileText className="fi-icon" aria-hidden />Buka laporan harian</Link>
+                            onClick={() => setDialog(true)}>Kirim status rute…</Button>
+                        <Link className="fi-btn fi-btn--secondary" href="/form-kontrol?tab=laporan"><FileText className="fi-icon" aria-hidden />Buka laporan ke SPV</Link>
                     </div>
                     {kirimTerkunci && rows.length > 0 && <p className="fi-small fi-why">{kirimTerkunci}</p>}
                     <VariantNote bl="it05 #4">

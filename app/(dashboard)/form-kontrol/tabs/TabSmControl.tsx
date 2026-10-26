@@ -107,7 +107,6 @@ export default function TabSmControl({ scope }: { scope: Scope }) {
                     {smName} · {tanggalPendek(date)} · {tersimpanJam ? `tersimpan ${jamWita(tersimpanJam)} WITA` : "belum disimpan hari ini"}
                 </span>
             </div>
-            <p className="fi-small fi-muted">Tugas SM bukan mengontrol salesman langsung, tetapi memastikan SPV benar-benar mengontrol salesmannya.</p>
 
             <Section title="Kontrol harian">
                 <div className="fi-sect-in">
@@ -146,7 +145,7 @@ export default function TabSmControl({ scope }: { scope: Scope }) {
                                     </p>
                                 )}
                                 <FormField label={`Catatan coaching ${spv.name}`}>{(a) => (
-                                    <input {...a} className="fi-input" style={{ minHeight: 44 }} value={spv.note} placeholder="Kosongkan bila tidak ada"
+                                    <input {...a} className="fi-input" value={spv.note} placeholder="Kosongkan bila tidak ada"
                                         onChange={(e) => set((v) => ({ ...v, spvList: v.spvList.map((s, j) => (j === i ? { ...s, note: e.target.value } : s)) }))} />
                                 )}</FormField>
                             </div>
@@ -156,22 +155,22 @@ export default function TabSmControl({ scope }: { scope: Scope }) {
             </Section>
 
             <Section title="Penyimpangan & keterlambatan" subtitle={`${form.deviasi.length} catatan`}
-                actions={<Button icon={<Plus className="fi-icon" aria-hidden />} style={{ minHeight: 44 }} onClick={() => set((v) => ({ ...v, deviasi: [...v.deviasi, { spv: "", catatan: "" }] }))}>Tambah</Button>}>
+                actions={<Button icon={<Plus className="fi-icon" aria-hidden />} onClick={() => set((v) => ({ ...v, deviasi: [...v.deviasi, { spv: "", catatan: "" }] }))}>Tambah</Button>}>
                 <div className="fi-sect-in">
                     {form.deviasi.length === 0 && <p className="fi-small fi-subtle">Belum ada penyimpangan dicatat.</p>}
                     {form.deviasi.map((d, i) => (
                         <div key={i} className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
                             <FormField label={`SPV (baris ${i + 1})`}>{(a) => (
-                                <input {...a} className="fi-input" style={{ minHeight: 44 }} value={d.spv}
+                                <input {...a} className="fi-input" value={d.spv}
                                     onChange={(e) => set((v) => ({ ...v, deviasi: v.deviasi.map((x, j) => (j === i ? { ...x, spv: e.target.value } : x)) }))} />
                             )}</FormField>
                             <div className="col-span-2 row-start-2 sm:col-span-1 sm:row-start-auto">
                                 <FormField label={`Catatan (baris ${i + 1})`}>{(a) => (
-                                    <input {...a} className="fi-input" style={{ minHeight: 44 }} value={d.catatan} placeholder="Penyimpangan / keterlambatan"
+                                    <input {...a} className="fi-input" value={d.catatan} placeholder="Penyimpangan / keterlambatan"
                                         onChange={(e) => set((v) => ({ ...v, deviasi: v.deviasi.map((x, j) => (j === i ? { ...x, catatan: e.target.value } : x)) }))} />
                                 )}</FormField>
                             </div>
-                            <Button variant="icon" aria-label={`Hapus penyimpangan baris ${i + 1}`} style={{ width: 44, height: 44 }}
+                            <Button variant="icon" aria-label={`Hapus penyimpangan baris ${i + 1}`}
                                 className="col-start-2 row-start-1 sm:col-start-auto sm:row-start-auto"
                                 onClick={() => set((v) => ({ ...v, deviasi: v.deviasi.filter((_, j) => j !== i) }))}>
                                 <Trash2 className="fi-icon" aria-hidden />
@@ -181,7 +180,7 @@ export default function TabSmControl({ scope }: { scope: Scope }) {
                 </div>
             </Section>
 
-            <Section title="Follow-up SM">
+            <Section title="Tindak lanjut SM">
                 <div className="fi-sect-in">
                     <FormField label="Tindak lanjut SM hari ini">{(a) => (
                         <textarea {...a} className="fi-input" rows={3} value={form.followUp} placeholder="Tindak lanjut SM terhadap kondisi lapangan hari ini"
@@ -190,7 +189,7 @@ export default function TabSmControl({ scope }: { scope: Scope }) {
                     <div className="fi-btnrow">
                         {blokir && <span className="fi-small fi-subtle">{blokir}</span>}
                         <span style={{ flex: 1 }} />
-                        <Button variant="primary" style={{ minHeight: 44 }} icon={<Save className="fi-icon" aria-hidden />} disabled={Boolean(blokir)} disabledReason={blokir}
+                        <Button variant="primary" icon={<Save className="fi-icon" aria-hidden />} disabled={Boolean(blokir)} disabledReason={blokir}
                             onClick={() => { setSukses(""); setDialog(true); }}>
                             Simpan Kontrol SM
                         </Button>
@@ -199,7 +198,7 @@ export default function TabSmControl({ scope }: { scope: Scope }) {
             </Section>
             <VariantNote bl="BL-32">
                 Kontrol SM dibaca dan ditulis per nama SM tanpa cek cakupan di server. Setiap simpan menambah catatan baru; bila disimpan lebih
-                dari sekali sehari, yang dimuat saat halaman dibuka bisa catatan pertama — lihat jam &quot;tersimpan&quot; di atas.
+                dari sekali sehari, yang dimuat saat halaman dibuka bisa catatan pertama; lihat jam &quot;tersimpan&quot; di atas.
             </VariantNote>
             <ConfirmDialog
                 open={dialog}
@@ -212,7 +211,7 @@ export default function TabSmControl({ scope }: { scope: Scope }) {
                     ["Foto dimonitor", form.fotoChecked ? "Ya" : "Belum"],
                     ["Catatan coaching", `${form.spvList.filter((s) => s.note.trim()).length} dari ${form.spvList.length} SPV`],
                     ["Penyimpangan", `${form.deviasi.length} catatan`],
-                    ...(tersimpanJam ? [["Sudah tersimpan", `${jamWita(tersimpanJam)} WITA — menyimpan lagi menambah catatan baru`] as [string, string]] : []),
+                    ...(tersimpanJam ? [["Sudah tersimpan", `${jamWita(tersimpanJam)} WITA; menyimpan lagi menambah catatan baru`] as [string, string]] : []),
                 ]}
                 confirmLabel="Simpan"
                 confirmDisabled={blokir}
