@@ -135,6 +135,13 @@ Halaman yang dimigrasi -> <FioriScope> (components/fiori/Scope.tsx: Plus Jakarta
 ```
 Validasi: `npx playwright test tests/fiori-ui-kit.spec.ts` pada server development lokal (LOCAL_AUTH_BYPASS);
 baseline di `tests/fiori-ui-kit.spec.ts-snapshots/`. Aturan: `docs/UI_DESIGN_SYSTEM.md`.
+Arah visual tunggal untuk agen/skill desain: `DESIGN.md` (token + aturan, format design.md) dan `PRODUCT.md` (pengguna, prinsip).
+Audit desain 001 (25 Okt 2026, 151 temuan + laporan akhir): `docs/audit/audit-desain-001-2026-10-25.md`. Semua halaman dashboard
+kini Fiori (enam halaman lama master data/klaim/summary dimigrasi; spec `tests/fiori-master-lama.spec.ts`).
+Format tampilan bersama: `lib/tampil.ts` (`KOSONG`, `tanggalWita`, `waktuWita` dd/mm/yyyy hh.mm WITA, `hariIniWita`, `sebabHttp`);
+helper tanggal lokal per modul mendelegasikan ke sini. Hanya teks tampilan, tidak untuk nilai yang dikirim ke server.
+ConfirmDialog menulis alasan nonaktif di kaki dialog kecuali teks yang sama sudah ada di isi dialog; Button `disabledReason` =
+`aria-disabled` (tetap bisa di-Tab) + gelembung alasan, klik/submit ditahan.
 Hasil browser desktop/mobile: `docs/design/surya-workspace-desktop.png`, `docs/design/surya-workspace-mobile.png`.
 Checkpoint implementasi dan instruksi resume: `docs/SURYA_IMPLEMENTATION.md` (keputusan, bukti validasi, file yang disentuh, lingkungan uji, dan langkah berikutnya).
 Status: UI redesign tervalidasi lokal. Audit build menemukan tracing `webhook-backfill -> next.config.ts` memasukkan kunci OCR lokal; pengemasan dihentikan dan salinan kunci di artefak dihapus. Lihat handover sebelum deployment.
@@ -811,8 +818,9 @@ AccAPI/_github_clean/
 │   ├── off-program-control/
 │   │   ├── OffGlobalSearch.tsx
 │   │   └── OffNotificationBell.tsx
-│   └── ui/                             # Input, Select, DatePickerField (dialog kalender + keyboard), AsyncSearchSelect, Dialog native, AsyncState bersama
+│   └── ui/                             # Input, Select, DatePickerField (dialog kalender + keyboard), Dialog native, AsyncState bersama
 ├── lib/
+│   ├── tampil.ts                       # Format tampilan bersama: KOSONG, tanggal/waktu WITA, hariIniWita, sebabHttp (+ tampil.test.ts)
 │   ├── auth.ts                         # Konfigurasi Better Auth server
 │   ├── auth-client.ts                  # Better Auth client (browser)
 │   ├── rbac.ts                         # RBAC legacy (union layer selama transisi)
