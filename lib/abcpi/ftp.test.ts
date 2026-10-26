@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import net from "node:net";
 import { unggahFtp } from "./ftp.ts";
 
-function serverPalsu(tolakPass = false) {
+function serverPalsu(tolakPass = false, jawabSize = "") {
     const diterima: Record<string, Buffer> = {};
     const perintah: string[] = [];
     const srv = net.createServer((c) => {
@@ -24,7 +24,7 @@ function serverPalsu(tolakPass = false) {
                     data = net.createServer((s) => { isi = []; s.on("data", (x) => isi.push(x)); s.on("end", () => { diterima[nama] = Buffer.concat(isi); c.write("226 selesai\r\n"); data?.close(); }); });
                     data.listen(0, "127.0.0.1", () => { const p = (data!.address() as net.AddressInfo).port; c.write(`227 Entering Passive Mode (10,0,0,9,${p >> 8},${p & 255})\r\n`); });
                 } else if (cmd === "STOR") { nama = arg.join(" "); c.write("150 buka data\r\n"); }
-                else if (cmd === "SIZE") c.write(`213 ${diterima[arg.join(" ")]?.length ?? 0}\r\n`);
+                else if (cmd === "SIZE") c.write(jawabSize ? `${jawabSize}\r\n` : `213 ${diterima[arg.join(" ")]?.length ?? 0}\r\n`);
                 else if (cmd === "QUIT") { c.write("221 bye\r\n"); c.end(); }
             }
         });
@@ -42,6 +42,12 @@ test("unggah dua berkas: isi tiba utuh, IP PASV diabaikan, SIZE dicek", async ()
     assert.ok(s.diterima["SP_1_SALES.csv"].equals(a));
     assert.ok(s.diterima["SP_1_STOCK.csv"].equals(b));
     assert.deepEqual(s.perintah.slice(0, 4), ["USER", "PASS", "TYPE", "CWD"]);
+});
+
+test("SIZE 550 sesudah STOR = galat (berkas tidak terbukti ada)", async () => {
+    const s = await serverPalsu(false, "550 No such file");
+    await assert.rejects(unggahFtp({ host: "127.0.0.1", port: s.port, user: "u", password: "p" }, [{ nama: "hilang", isi: Buffer.from("1") }], 5000), /tidak terbukti/);
+    s.tutup();
 });
 
 test("login ditolak = galat, tidak diam", async () => {

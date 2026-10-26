@@ -21,7 +21,7 @@ import { accurateHeaders, type AccurateCredentials } from "@/lib/sync";
 import { redactAccurateSecrets } from "@/lib/accurate-redact";
 import { sendEmail } from "@/lib/email";
 import { unggahFtp, type FtpConfig } from "./ftp";
-import { akhirBulan, barisSales, barisStok, keCsv, KOLOM_SO, KOLOM_STOK, petaDari, type Baris } from "./laporan";
+import { akhirBulan, barangAbc, barisSales, barisStok, keCsv, KOLOM_SO, KOLOM_STOK, petaDari, type Baris } from "./laporan";
 
 const CABANG_ABC = "550"; // branch "ABC" di Accurate (probe 26 Okt 2026); faktur INV/…/AB & retur RJN/…/AB
 const GUDANG_BS = "GD0BS";
@@ -67,9 +67,11 @@ async function daftar(creds: AccurateCredentials, jalur: string, params: Record<
 /** detail.do per dokumen, 4 sekaligus. ponytail: ±1.000 panggilan di akhir bulan (±2 menit); pakai cache sales_invoice bila jadi beban. */
 async function rincian(creds: AccurateCredentials, jalur: string, ids: unknown[]) {
     const hasil: unknown[] = new Array(ids.length);
-    let i = 0;
+    let i = 0, berhenti = false;
     await Promise.all(Array.from({ length: 4 }, async () => {
-        for (let k = i++; k < ids.length; k = i++) hasil[k] = (await ambil(creds, jalur, { id: String(ids[k]) })).d;
+        for (let k = i++; k < ids.length && !berhenti; k = i++) {
+            try { hasil[k] = (await ambil(creds, jalur, { id: String(ids[k]) })).d; } catch (e) { berhenti = true; throw e; }
+        }
     }));
     return hasil;
 }
@@ -79,6 +81,16 @@ async function konfigurasi(): Promise<{ ftp: FtpConfig; adminEmail: string }> {
     if (!c.ftp?.host || !c.ftp.user || !c.ftp.password || !c.adminEmail) throw new Error("data/abcpi/config.json belum lengkap (ftp.host/user/password, adminEmail)");
     return { ftp: c.ftp, adminEmail: c.adminEmail };
 }
+
+/** JSON.parse yang tidak menjatuhkan fitur karena satu berkas/baris rusak (mis. tulisan terpotong saat deploy). */
+const urai = <T>(teks: string, cadangan: T): T => { try { return JSON.parse(teks) as T; } catch { return cadangan; } };
+
+/** Baris CSV arsip → objek (angka dikembalikan ke angka) untuk lembar xlsx. */
+const dariCsv = (csv: string): Baris[] => {
+    const [kepala, ...isi] = csv.trim().split("\r\n");
+    const k = kepala.split("|");
+    return isi.map((l) => Object.fromEntries(l.split("|").map((v, i) => [k[i], k[i].startsWith("Stock_") ? Number(v) : v])));
+};
 
 async function penerimaAbcpi() {
     const [r] = await db.select({ emails: reportRecipient.emails }).from(reportRecipient)
@@ -108,7 +120,7 @@ async function susun(tanggal: string) {
     const masterDok = new Map<string, Obj>();
     for (const f of [...faktur, ...retur]) for (const d of ((f as Obj).detailItem as Obj[] | undefined) ?? []) masterDok.set(String((d.item as Obj)?.no), d.item as Obj);
     const stok = barisStok(tanggal, stokSemua
-        .filter((r) => masterAbc.has(String(r.no)) || petaDari(String(r.no), {}) !== undefined || masterDok.has(String(r.no)))
+        .filter((r) => masterAbc.has(String(r.no)) || barangAbc(String(r.no), masterDok.get(String(r.no)) ?? {}))
         .map((r) => ({ no: String(r.no), nama: String(r.name ?? ""), total: Number(r.quantity) || 0, bs: stokBs.get(String(r.no)) ?? 0,
             peta: petaDari(String(r.no), masterDok.get(String(r.no)) ?? {}) })));
     return { sales, stok, dokumen: { faktur: fakturList.length, retur: returList.length } };
@@ -144,28 +156,38 @@ export async function jalankanAbcpi({ tanggal, kirim, sumber }: { tanggal: strin
     let adminEmail = "";
     try {
         await mkdir(folder, { recursive: true });
-        const status = JSON.parse(await readFile(berkasStatus, "utf8").catch(() => "{}")) as Status;
-        const ulang = sumber === "cron"; // cron: kanal yang sudah sukses tidak diulang
+        const status = urai<Status>(await readFile(berkasStatus, "utf8").catch(() => "{}"), {});
+        const ulang = sumber === "cron";
+        // Cron hanya melewati kanal yang sukses SESUDAH jadwal 20.00 WITA (12.00 UTC): kiriman manual siang hari tidak
+        // membekukan laporan malam itu, tetapi perbaikan manual sesudah 20.00 tidak dikirim ulang oleh putaran 21.00/22.00.
+        const sesudahJadwal = (w?: string) => Boolean(w && w >= `${tanggal}T12:00:00.000Z`);
         const tahan = kirim && ulang && akhirBulan(tanggal);
-        if (kirim && ulang && (tahan ? status.ditahan : status.ftp && status.email)) {
+        if (kirim && ulang && (tahan ? status.ditahan : sesudahJadwal(status.ftp?.waktu) && sesudahJadwal(status.email?.waktu))) {
             hasil.status = "dilewati";
             return hasil;
         }
         const cfg = kirim ? await konfigurasi() : null;
         adminEmail = cfg?.adminEmail ?? "";
 
+        const nama = { sales: `SP_${ymd}_SALES.csv`, stok: `SP_${ymd}_STOCK.csv`, xlsx: `ABCPI_SP_${ymd}.xlsx` };
         const { sales, stok, dokumen } = await susun(tanggal);
-        hasil.baris = { sales: sales.baris.length, stok: stok.baris.length, ...dokumen };
+        // Tanggal lampau (closing yang ditahan, kirim ulang): stok memakai arsip putaran tanggal itu, bukan stok hari ini.
+        const stokArsip = tanggal < hariIniWita() ? await readFile(path.join(folder, nama.stok), "utf8").catch(() => null) : null;
+        const barisStokFinal = stokArsip ? dariCsv(stokArsip) : stok.baris;
+        hasil.baris = { sales: sales.baris.length, stok: barisStokFinal.length, ...dokumen };
         hasil.galat = sales.galat;
-        if (stok.lewat.length) hasil.peringatan.push(`Stok tanpa kode principle tidak dilaporkan: ${stok.lewat.join(", ")}`);
+        if (stokArsip) hasil.peringatan.push(`Stok memakai arsip ${nama.stok} (posisi saat putaran tanggal itu)`);
+        else if (stok.lewat.length) hasil.peringatan.push(`Stok tanpa kode principle tidak dilaporkan: ${stok.lewat.join(", ")}`);
+        if (!sales.baris.length) hasil.peringatan.push("Tidak ada faktur/retur ABC bulan ini sampai tanggal laporan");
         const csvSales = Buffer.from(keCsv(KOLOM_SO, sales.baris));
-        const csvStok = Buffer.from(keCsv(KOLOM_STOK, stok.baris));
-        const buku = xlsx(sales.baris, stok.baris);
+        const csvStok = Buffer.from(stokArsip ?? keCsv(KOLOM_STOK, stok.baris));
+        const buku = xlsx(sales.baris, barisStokFinal);
         if (!cfg) { hasil.status = "pratinjau"; return { ...hasil, xlsx: buku }; }
         if (sales.galat.length) throw new Error("Validasi gagal — tidak dikirim ke FTP maupun email ABCPI");
+        if (!barisStokFinal.length) throw new Error("Stok barang ABC kosong — sesi Accurate membuka database yang salah? Tidak dikirim");
 
-        const nama = { sales: `SP_${ymd}_SALES.csv`, stok: `SP_${ymd}_STOCK.csv`, xlsx: `ABCPI_SP_${ymd}.xlsx` };
         await Promise.all([writeFile(path.join(folder, nama.sales), csvSales), writeFile(path.join(folder, nama.stok), csvStok), writeFile(path.join(folder, nama.xlsx), buku)]);
+        const simpanStatus = () => writeFile(berkasStatus, JSON.stringify(status, null, 1));
         const lampiran = [{ filename: nama.xlsx, content: buku, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }];
         const tgl = tanggal.split("-").reverse().join("/");
         const periode = `01–${tgl}`;
@@ -174,34 +196,36 @@ export async function jalankanAbcpi({ tanggal, kirim, sumber }: { tanggal: strin
             const ok = await sendEmail({ to: cfg.adminEmail, subject: `[ABCPI] Closing ${tgl} DITAHAN — kirim manual`, attachments: [...lampiran,
                 { filename: nama.sales, content: csvSales, contentType: "text/csv" }, { filename: nama.stok, content: csvStok, contentType: "text/csv" }],
                 text: [`Laporan closing ABCPI ${periode} (${hasil.baris.sales} baris penjualan, ${hasil.baris.stok} baris stok) sudah disusun tetapi BELUM dikirim ke FTP maupun email ABCPI.`,
-                    `Periksa lampiran, lalu kirim dari ${WEB} (bagian "Laporan ABCPI", tanggal ${tgl}, tombol Kirim). Data ditarik ulang dari Accurate saat tombol ditekan.`,
+                    `Periksa lampiran, lalu kirim dari ${WEB} (bagian "Laporan ABCPI", tanggal ${tgl}, tombol Kirim). Penjualan ditarik ulang dari Accurate saat tombol ditekan; stok memakai posisi pukul 20.00 di lampiran ini.`,
                     ...hasil.peringatan.map((p) => `Peringatan: ${p}`)].join("\n\n") });
             if (!ok) throw new Error("Email pemberitahuan closing ke admin gagal (cek SMTP)");
             status.ditahan = new Date().toISOString();
-            await writeFile(berkasStatus, JSON.stringify(status, null, 1));
+            await simpanStatus();
             hasil.status = "ditahan";
             return hasil;
         }
 
-        let ftpOk = ulang && !!status.ftp, emailOk = ulang && !!status.email;
+        // Status disimpan segera sesudah tiap kanal sukses: putaran yang terputus (deploy) tidak mengirim ulang kanal itu.
+        let ftpOk = ulang && sesudahJadwal(status.ftp?.waktu), emailOk = ulang && sesudahJadwal(status.email?.waktu);
         if (!ftpOk) {
             try {
                 status.ftp = { waktu: new Date().toISOString(), berkas: await unggahFtp(cfg.ftp, [{ nama: nama.sales, isi: csvSales }, { nama: nama.stok, isi: csvStok }]) };
                 ftpOk = true;
+                await simpanStatus();
             } catch (e) { hasil.galat.push(`FTP: ${(e as Error).message}`); }
         }
         if (!emailOk) {
-            const ke = await penerimaAbcpi();
-            if (!ke.length) hasil.galat.push("Email: penerima keyword ABCPI (Laporan Harian › Penerima laporan) kosong/nonaktif");
-            else if (await sendEmail({ to: ke, subject: `Laporan Harian ABCPI - CV Surya Perkasa - ${tgl}`, attachments: lampiran,
+            const ke = await penerimaAbcpi().catch((e: Error) => { hasil.galat.push(`Email: penerima tidak terbaca (${e.message})`); return null; });
+            if (ke && !ke.length) hasil.galat.push("Email: penerima keyword ABCPI (Laporan Harian › Penerima laporan) kosong/nonaktif");
+            else if (ke && await sendEmail({ to: ke, subject: `Laporan Harian ABCPI - CV Surya Perkasa - ${tgl}`, attachments: lampiran,
                 text: [`Yth. Tim ABC President Indonesia,`,
                     `Terlampir laporan penjualan (faktur dan retur) periode ${periode} serta stok per ${tgl} dari CV Surya Perkasa dalam format template ABCPI.\nBerkas yang sama telah diunggah ke FTP: ${nama.sales}, ${nama.stok}.`,
                     `Dikirim otomatis oleh sistem AccAPI.`, `Terima kasih.`].join("\n\n") })) {
                 status.email = { waktu: new Date().toISOString(), ke: ke.length };
                 emailOk = true;
-            } else hasil.galat.push("Email ke ABCPI gagal terkirim (cek SMTP)");
+                await simpanStatus();
+            } else if (ke) hasil.galat.push("Email ke ABCPI gagal terkirim (cek SMTP)");
         }
-        await writeFile(berkasStatus, JSON.stringify(status, null, 1));
         hasil.ftp = ftpOk && status.ftp ? `${status.ftp.berkas.map((b) => `${b.nama} ${b.bytes} byte`).join(", ")} (${status.ftp.waktu})` : "gagal";
         hasil.email = emailOk && status.email ? `${status.email.ke} alamat (${status.email.waktu})` : "gagal";
         hasil.status = ftpOk && emailOk ? "terkirim" : ftpOk || emailOk ? "sebagian" : "gagal";
@@ -234,5 +258,6 @@ async function catat(hasil: HasilAbcpi, adminEmail: string) {
 /** 20 putaran terakhir (log.jsonl) untuk riwayat di layar. */
 export async function riwayatAbcpi() {
     const teks = await readFile(path.join(DIR, "log.jsonl"), "utf8").catch(() => "");
-    return teks.trim().split("\n").filter(Boolean).slice(-20).reverse().map((l) => JSON.parse(l) as HasilAbcpi & { waktu: string });
+    return teks.trim().split("\n").filter(Boolean).slice(-20).reverse()
+        .map((l) => urai<(HasilAbcpi & { waktu: string }) | null>(l, null)).filter((r) => r !== null);
 }

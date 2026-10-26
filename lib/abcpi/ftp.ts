@@ -75,9 +75,10 @@ export async function unggahFtp(cfg: FtpConfig, berkas: Array<{ nama: string; is
             await harap("1", await perintah(`STOR ${f.nama}`));
             await new Promise<void>((ok, gagal) => { data.once("close", (salah) => (salah ? gagal(new Error(`FTP ${cfg.host}: data ${f.nama} terputus`)) : ok())); data.end(f.isi); });
             await harap("2");
+            // 213 = ukuran wajib sama; 500–502 = server tak mendukung SIZE; selain itu (mis. 550) = berkas tidak ada → gagal.
             const size = await perintah(`SIZE ${f.nama}`);
-            if (size.kode === 213 && Number(size.teks.split(" ").pop()) !== f.isi.length) {
-                throw new Error(`FTP ${cfg.host}: ${f.nama} di server ${size.teks.split(" ").pop()} byte, dikirim ${f.isi.length}`);
+            if (size.kode === 213 ? Number(size.teks.split(" ").pop()) !== f.isi.length : ![500, 501, 502].includes(size.kode)) {
+                throw new Error(`FTP ${cfg.host}: ${f.nama} tidak terbukti utuh di server (${size.teks}; dikirim ${f.isi.length} byte)`);
             }
             hasil.push({ nama: f.nama, bytes: f.isi.length });
         }
