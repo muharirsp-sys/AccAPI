@@ -257,7 +257,8 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
                         <button key={k.key} type="button" className="fi-kc" aria-pressed={saring === k.key} data-tone={k.tone} onClick={() => ganti(k.key)}>
                             <span>{k.label}</span>
                             <b>{k.nilai ?? KOSONG}</b>
-                            {(k.kecil || (!data && list.status === "galat")) && <small>{!data && list.status === "galat" ? "gagal dimuat" : k.kecil}</small>}
+                            {/* Galat muat pertama cukup sekali, di tabel (dengan Coba lagi); kartu "-" tanpa keterangan (bukan 0, bukan "belum terposting"). */}
+                            {data && k.kecil && <small>{k.kecil}</small>}
                         </button>
                     ))}
                 </div>

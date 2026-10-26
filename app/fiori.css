@@ -236,7 +236,7 @@ select.fi-input { appearance:none; background-image:linear-gradient(45deg, trans
 /* ===== Filter bar + bottom sheet ===== */
 .fi-fbar { background:var(--surface); border-bottom:1px solid var(--line); padding:12px 20px 14px; display:grid; gap:12px; }
 .fi-fbar-top { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
-.fi-fbar-top h2 { font:var(--fs-title-2); margin-right:auto; }
+.fi-fbar-top h2 { font:var(--fs-title-3); margin-right:auto; }
 .fi-fbar-fields { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; align-items:end; }
 /* Pasangan isian (mis. tanggal dari–sampai) = satu sel 2 kolom; di bar saringan selebar dua sel agar tidak terpisah baris. */
 .fi-fpair { display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:start; min-width:0; }

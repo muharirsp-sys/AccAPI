@@ -160,7 +160,9 @@ test("Daftar: kartu = saringan, jawaban Accurate terbaca, mengirim > 15 mnt, gal
     await page.goto("/antrean-faktur", NAV);
     await expect(main.getByRole("alert").filter({ hasText: "Antrean gagal dimuat: Server antrean tidak menjawab." })).toBeVisible(NAV);
     await expect(main.getByText("Tidak ada faktur yang menggantung")).toHaveCount(0);
-    await expect(main.getByRole("button", { name: /Menggantung/ })).toContainText("gagal dimuat");
+    // Satu galat (di tabel), tidak diulang di tujuh kartu; kartu "-", bukan 0.
+    await expect(kartu).not.toContainText("gagal dimuat");
+    await expect(kartu.getByRole("button", { name: /Menggantung/ }).locator("b")).toHaveText("-");
 
     // Kosong: kalimat kosong + Kirim nonaktif dengan alasan.
     opsi.list = (r) => r.fulfill(json(antrean([], { summary: {}, overdue: 0, overdueQueue: 0, overdueBatches: 0, pendingBatches: [] })));
