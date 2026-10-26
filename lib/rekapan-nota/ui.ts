@@ -3,10 +3,10 @@
  *   penyaringan pool, dan urutan wave berikutnya. Tidak ada logic bisnis baru — hanya penyajian.
  * Caller: app/(dashboard)/rekapan-nota/*.tsx, ui.test.ts.
  * Dependensi: lib/tampil (KOSONG, sebabHttp). Pure kecuali `ambil`.
- * Main Functions: WAVE_STATUS, EXCEPTION_LABEL, menahanKonfirmasi, tanggalPanjang, tanggalPendek, jamWita,
+ * Main Functions: WAVE_STATUS, EXCEPTION_LABEL, menahanKonfirmasi, tanggalPanjang, tanggalPendek,
  *   saringPool, urutanBerikutnya, formatKarton, labelEvent, nomorLembar, judulBerkas, usulIsiDariNama, hariIniWita, ambil.
  * Side Effects: `ambil` melakukan GET (dipakai komponen klien); sisanya pure.
- *   `jamWita` ("6 Okt 09.40") tetap untuk kop lembar cetak dan pemanggil lintas area; layar baru memakai `waktuWita` (lib/tampil, dd/mm/yyyy hh.mm).
+ *   Tanggal + jam (layar dan kop cetak) memakai `waktuWita` lib/tampil ("dd/mm/yyyy hh.mm"), tidak ada format jam sendiri di sini.
  */
 import type { Tone } from "@/components/fiori/core";
 import { KOSONG, sebabHttp } from "@/lib/tampil";
@@ -45,15 +45,6 @@ export function tanggalPanjang(ymd: string) {
 export function tanggalPendek(ymd: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
     return new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" }).format(utcNoon(ymd));
-}
-
-/** "6 Okt 09.40" dari timestamp, dalam WITA. Dipakai kop cetak (nilai tercetak); tampilan layar: `waktuWita` di lib/tampil. */
-export function jamWita(iso: string | Date) {
-    const d = typeof iso === "string" ? new Date(iso) : iso;
-    if (Number.isNaN(d.getTime())) return "";
-    const tgl = new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short", timeZone: "Asia/Makassar" }).format(d);
-    const jam = new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Makassar" }).format(d);
-    return `${tgl} ${jam}`;
 }
 
 /** Tanggal hari ini (yyyy-mm-dd) dalam WITA — bukan UTC, yang masih "kemarin" sampai 08.00 WITA. */

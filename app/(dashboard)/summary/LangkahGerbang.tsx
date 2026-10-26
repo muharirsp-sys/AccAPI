@@ -182,7 +182,7 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
                 <ConfirmDialog open={dialog === "muat"} onClose={() => setDialog(null)} tag="Gerbang faktur" title={`Muat ${s?.ruleCount ?? 0} aturan ${buka.entry.surat_program} ke gerbang faktur?`}
                     confirmLabel={entri?.sudahDimuat ? "Muat ulang" : "Muat aturan"} onConfirm={() => muat(buka.entry)}
                     description={entri?.sudahDimuat ? <MessageStrip tone="warn" title="Surat ini sudah pernah dimuat.">Muat ulang MENGGANTI aturan dari surat ini; aturan dari Excel, tarif outlet, dan yang diketik tangan tidak tersentuh. Aturan surat yang diubah manual membuat muat ulang gagal.</MessageStrip> : undefined}
-                    facts={[["Aturan", String(s?.ruleCount ?? 0)], ["Ditolak", s?.refused.length ? `${s.refused.length} program (tidak dimuat)` : "Tidak ada"], ["Berlaku", "Gerbang faktur, Rekap promo, dan Normalisasi diskon memakainya mulai sekarang"]]} />
+                    facts={[["Aturan", String(s?.ruleCount ?? 0)], ["Ditolak", s?.refused.length ? `${s.refused.length} program (tidak dimuat)` : "Tidak ada"], ["Berlaku", "Gerbang faktur, Rekap Promo, dan Normalisasi Diskon memakainya mulai sekarang"]]} />
             )}
         </Section>
     );

@@ -3,7 +3,7 @@
  *   penyebab, solusi; simpan lewat dialog. Menampilkan briefing yang sudah tersimpan hari ini (GET briefing) supaya simpan ulang
  *   tidak diam-diam menambah catatan ganda. Tanggal = hari ini WITA.
  * Caller: form-kontrol/FormKontrol.tsx (tab "briefing").
- * Dependensi: ../shared (Scope, BRIEFING_AGENDA, hariIniWita, jamWita, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive},
+ * Dependensi: ../shared (Scope, BRIEFING_AGENDA, hariIniWita, ambilFk, tulisFk, useIzinFk), lib/tampil (waktuWita), components/fiori/{core,interactive},
  *   lib/rekapan-nota/ui (tanggalPendek).
  * Main Functions: TabBriefing (default).
  * Side Effects: GET /api/form-kontrol/briefing?spvName&date; POST /api/form-kontrol/briefing (payload sama dengan hari ini).
@@ -15,8 +15,8 @@ import { Pencil, Save } from "lucide-react";
 import { Button, MessageStrip, Section, Skeleton } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
-import { KOSONG as TANDA_KOSONG } from "@/lib/tampil";
-import { BRIEFING_AGENDA, TulisTidakPasti, ambilFk, hariIniWita, jamWita, tulisFk, useIzinFk, type Scope } from "../shared";
+import { KOSONG as TANDA_KOSONG, waktuWita } from "@/lib/tampil";
+import { BRIEFING_AGENDA, TulisTidakPasti, ambilFk, hariIniWita, tulisFk, useIzinFk, type Scope } from "../shared";
 
 type Sesi = "pagi" | "sore";
 type Tersimpan = { session: string; createdAt: string | null };
@@ -133,7 +133,7 @@ export default function TabBriefing({ scope }: { scope: Scope }) {
                     ["Tanggal", tanggalPendek(date)],
                     ["Agenda selesai", `${selesai} dari ${items.length}`],
                     ["Toko dibahas", isi.toko || TANDA_KOSONG],
-                    ...(sesiIni.length ? [["Sudah tersimpan", `${sesiIni.length}× (terakhir ${jamWita(terakhir)} WITA); menyimpan lagi menambah catatan baru`] as [string, string]] : []),
+                    ...(sesiIni.length ? [["Sudah tersimpan", `${sesiIni.length}× (terakhir ${waktuWita(terakhir)} WITA); menyimpan lagi menambah catatan baru`] as [string, string]] : []),
                 ]}
                 confirmLabel="Simpan briefing"
                 confirmDisabled={blokir}

@@ -1058,7 +1058,7 @@ test("Order baru: ringkasan 'sebelum PPN' + PPN 11% + total faktur; BONUS_TIDAK_
     const strip = main.getByRole("alert").filter({ hasText: "Program promo tidak bisa dipakai." });
     await expect(strip).toBeVisible(NAV);
     await expect(strip).toContainText("Program promo untuk barang bonus G-9 BARANG G (barang cabang CABANG B) tidak bisa dipakai");
-    await expect(strip).toContainText("Hubungi Admin untuk memeriksa barang bonus di Summary promo");
+    await expect(strip).toContainText("Hubungi Admin untuk memeriksa barang bonus di Summary Promo");
     await expect(strip).not.toContainText("BONUS_TIDAK_BISA_DIORDER");
     await expect(simpan).toBeDisabled();
 });

@@ -93,7 +93,7 @@ test.describe("Wave harian", () => {
         await page.setViewportSize({ width: 1366, height: 900 });
         await page.goto("/rekapan-nota", NAV);
         const main = page.locator("main");
-        await expect(main.getByRole("heading", { level: 1 })).toContainText("Wave", NAV);
+        await expect(main.getByRole("heading", { level: 1 })).toContainText("Rekapan Nota", NAV);
         await expect(main.getByText("Pool reguler")).toBeVisible();
         await expect(main.getByRole("link", { name: /Exception terbuka/ })).toContainText("4");
         await expect(main.getByRole("link", { name: /Outlet tanpa area/ })).toContainText("19");

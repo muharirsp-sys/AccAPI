@@ -54,7 +54,7 @@ test("kartu rute NOO: badge status pengajuan + alasan tolak; ditolak tetap di ru
     const badge = (nama: string, label: string) => kartu(nama).locator(".fi-badge", { hasText: label });
 
     await expect(badge("TOKO BARU A", "Menunggu SPV")).toHaveCount(1);
-    await expect(badge("TOKO BARU C", "Disetujui — menunggu didaftarkan")).toHaveCount(1);
+    await expect(badge("TOKO BARU C", "Disetujui, menunggu didaftarkan")).toHaveCount(1);
     await expect(badge("TOKO BARU D", "Terdaftar")).toHaveCount(1);
     // Ditolak: tetap di rute (kunjungan sudah terjadi), bertanda + alasan; badge kunjungan tetap ada (Tidak order).
     await expect(badge("TOKO BARU B", "Ditolak")).toHaveCount(1);

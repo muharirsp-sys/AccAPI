@@ -399,7 +399,7 @@ test("Pengaturan: Default — anchor bar, konstanta, hierarki, akun belum ditaut
     await expect(main.getByRole("button", { name: "Simpan", exact: true })).toBeDisabled();
     await expect(main.locator(".fi-ftb")).toContainText("Belum ada perubahan konstanta");
     // AM-045 sudah ada: versi = waktu simpan terakhir (WITA), bukan catatan usulan lagi. BL-33 (riwayat) tetap usulan.
-    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 2 Sep 14.05 WITA");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 02/09/2026 14.05 WITA");
     await expect(main.getByRole("complementary", { name: "Usulan AM-045" })).toHaveCount(0);
     await expect(main.getByRole("complementary", { name: "Usulan BL-33" })).toBeVisible();
     await page.screenshot({ path: "test-results/data/atur-default.png", fullPage: true });
@@ -464,7 +464,7 @@ test("Pengaturan (b): PATCH 409 → dialog konflik, draf basi tidak terkirim lag
     await expect(main.getByRole("spinbutton", { name: "Pool 1 principle" })).toHaveValue("1250000");
     expect(opsi.getSettings).toBeGreaterThan(getSebelum);
     await expect(page.locator(".fi-draft")).toHaveCount(0);
-    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.20 WITA");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 09/10/2026 10.20 WITA");
     expect(tulis.filter((r) => r.method() === "PATCH")).toHaveLength(1);
 });
 
@@ -479,7 +479,7 @@ test("Pengaturan (skenario 1): draf dari versi lama tetap membawa versi DASAR wa
     opsi.adminLainSebelumPatch = true;
     await main.getByRole("group", { name: "Penyebut AO GT/TT" }).getByRole("button", { name: "Target AO dari berkas" }).click();
     await page.getByRole("dialog", { name: /Ubah penyebut AO GT\/TT ke Target AO/ }).getByRole("button", { name: "Ubah penyebut AO" }).click();
-    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.20 WITA");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 09/10/2026 10.20 WITA");
     await main.locator(".fi-ftb").getByRole("button", { name: /^Simpan \d+ perubahan…$/ }).click();
     await page.getByRole("dialog", { name: /^Simpan \d+ perubahan konstanta\?$/ }).getByRole("button", { name: "Simpan", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Konstanta sudah diubah admin lain" })).toBeVisible();
@@ -506,7 +506,7 @@ test("Pengaturan (skenario 2): PATCH konstanta tanpa jawaban → hasilnya belum 
     await simpan.getByRole("button", { name: "Batal" }).click();
     // Setelah dimuat ulang: draf tetap terlihat untuk diperiksa, tetapi dasarnya tetap versi lama — bukan versi hasil muat ulang.
     await expect(main.getByRole("spinbutton", { name: "Pool 1 principle" })).toHaveValue("1100000");
-    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.20 WITA");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 09/10/2026 10.20 WITA");
     expect(tulis.filter((r) => r.method() === "PATCH")).toHaveLength(1);
     await main.locator(".fi-ftb").getByRole("button", { name: /^Simpan \d+ perubahan…$/ }).click();
     await page.getByRole("dialog", { name: /^Simpan \d+ perubahan konstanta\?$/ }).getByRole("button", { name: "Simpan", exact: true }).click();
@@ -532,7 +532,7 @@ test("Pengaturan: PATCH konstanta tertulis tetapi jawabannya hilang → muat ula
     await expect(simpan.getByRole("alert")).toContainText("Hasilnya belum pasti");
     await simpan.getByRole("button", { name: "Batal" }).click();
     // Setelah dimuat ulang angka tersimpan = draf (permintaan tadi ternyata tertulis): tidak ada perubahan tersisa.
-    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.30 WITA");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 09/10/2026 10.30 WITA");
     await expect(main.locator(".fi-ftb")).toContainText("Belum ada perubahan konstanta");
     await pool.fill("1200000");
     await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
@@ -564,7 +564,7 @@ test("Pengaturan: simpan konstanta lewat dialog (payload diperiksa) dan tautkan 
     // (c) AM-045: PATCH konstanta membawa versi yang dimuat GET; route menolak 400 tanpa versi.
     expect(patch!.postDataJSON()).toEqual({ konstanta: { ...KONSTANTA, gt: { ...KONSTANTA.gt, pool1: 1_100_000 } }, konstantaVersi: VERSI });
     // Versi berikutnya diambil dari jawaban PATCH, bukan versi lama (kalau tidak, simpan kedua selalu 409).
-    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.30 WITA");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 09/10/2026 10.30 WITA");
     await main.getByRole("spinbutton", { name: "Pool 1 principle" }).fill("1200000");
     await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
     await page.getByRole("dialog", { name: "Simpan 1 perubahan konstanta?" }).getByRole("button", { name: "Simpan", exact: true }).click();

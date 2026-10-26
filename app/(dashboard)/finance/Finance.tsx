@@ -317,7 +317,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
             <header className="fi-page-head">
                 <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Keuangan</span></li><li><span aria-current="page">Finance</span></li></ol></nav>
                 <div className="fi-page-bar">
-                    <h1>Transfer &amp; posting</h1>
+                    <h1>Finance</h1>
                     {sesi?.tersambung
                         ? <StatusBadge tone="info">Database Accurate: {sesi.alias || `ID ${sesi.id}`}</StatusBadge>
                         : data ? <StatusBadge tone="warn">{sesi ? "Belum terhubung ke database Accurate" : "Sesi Accurate tidak terbaca"}</StatusBadge> : null}

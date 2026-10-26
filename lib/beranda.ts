@@ -109,7 +109,7 @@ export const TILES = {
         const d = obj(data);
         return count(num(obj(d.summary).selisih), "faktur", `Dari ${num(d.checked)} faktur terbaru`, "neg");
     } },
-    wave: { title: "Wave hari ini", subtitle: "Rekapan nota", href: "/rekapan-nota", source: "wave", icon: "box", pick: (data) => {
+    wave: { title: "Wave hari ini", subtitle: "Rekapan Nota", href: "/rekapan-nota", source: "wave", icon: "box", pick: (data) => {
         const waves = rows(obj(data).wave);
         const nota = waves.reduce((total, w) => total + num(w.jumlah_nota), 0);
         return { value: waves.length, unit: "wave", tone: "info", footer: waves.length ? `${nota} nota di wave` : "Belum ada wave hari ini" };

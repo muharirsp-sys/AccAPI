@@ -5,7 +5,7 @@
  *   hanya menerima `spvName` untuk peran itu; daftar SPV dari GET sales-profiles (bila gagal: isian teks + VariantNote).
  *   Tanggal "hari ini" = WITA (hariIniWita, dikirim ke server); jam tampil WITA.
  * Caller: app/(dashboard)/form-kontrol/spv-dashboard/page.tsx.
- * Dependensi: ../shared (Scope, hariIniWita, jamWita, ambilFk, tulisFk), components/fiori/{core,interactive},
+ * Dependensi: ../shared (Scope, hariIniWita, rentangWita, ambilFk, tulisFk), components/fiori/{core,interactive},
  *   lib/rekapan-nota/ui (tanggalPanjang, tanggalPendek), lib/tampil (KOSONG, waktuWita).
  * Main Functions: DashboardSpv (default), KartuSalesman.
  * Side Effects: GET my-scope, GET sales-profiles (pemilih SPV), GET spv-dashboard; POST reports/ack (dialog; batal = `ack: false`,
@@ -21,7 +21,7 @@ import { CheckCheck, RefreshCw, Undo2 } from "lucide-react";
 import { Button, EmptyState, ErrorState, KeyValues, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
-import { alasanIzinFk, ambilFk, hariIniWita, jamWita, tulisFk, useNooMenunggu, type Scope } from "../shared";
+import { alasanIzinFk, ambilFk, hariIniWita, rentangWita, tulisFk, useNooMenunggu, type Scope } from "../shared";
 import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
 import { KOSONG, waktuWita } from "@/lib/tampil";
 
@@ -372,7 +372,7 @@ function KartuSalesman({ r, kunci, onTandai, onBatal }: { r: SalesmanRow; kunci?
                                     <span className="min-w-0">
                                         <b>{v.custName}</b>{v.luarRute && <> <StatusBadge tone="info">{isKodeNoo(v.custCode) ? "Toko baru (NOO)" : "Luar rute"}</StatusBadge></>}
                                         <span className="fi-sub">
-                                            {jamWita(v.checkinAt)}–{jamWita(v.checkoutAt)} WITA · {v.durationMinutes !== null ? `${v.durationMinutes} mnt` : KOSONG} · Merch {v.merchDone}/{v.merchTotal}
+                                            {rentangWita(v.checkinAt, v.checkoutAt)} WITA · {v.durationMinutes !== null ? `${v.durationMinutes} mnt` : KOSONG} · Merch {v.merchDone}/{v.merchTotal}
                                             {" · "}{flags.length === 0 ? "tanpa tanda" : flags.map((f) => FLAG_LABEL[f] ?? f).join(", ")}
                                         </span>
                                     </span>

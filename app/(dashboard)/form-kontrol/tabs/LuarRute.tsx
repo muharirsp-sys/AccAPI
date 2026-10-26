@@ -7,7 +7,7 @@
  *   (3) BatalkanLuarRute di kartu toko Rute hari ini (owner 13 Okt): kunjungan salah tambah dibatalkan (batal lunak di server).
  * Caller: ./TabAo.tsx (TambahLuarRute, BatalkanLuarRute), ./TabLaporan.tsx (KonfirmasiLuarRute).
  * Dependensi: components/order/PemilihPelanggan (GET /api/customers/search), POST/GET /api/form-kontrol/luar-rute(+/konfirmasi, /batal),
- *   lib/form-kontrol/constants (kodeJksUntuk, paritasMinggu), ../lapangan (bacaFk, kirimFk), ../shared (HARI, jamWita, useIzinFk), components/fiori/*.
+ *   lib/form-kontrol/constants (kodeJksUntuk, paritasMinggu), ../lapangan (bacaFk, kirimFk), ../shared (HARI, rentangWita, useIzinFk), components/fiori/*.
  * Main Functions: TambahLuarRute, KonfirmasiLuarRute, BatalkanLuarRute, labelJadwal.
  * Side Effects: HTTP baca/tulis di atas; hash #luar-rute dibuang dari URL sesudah bagian ini difokuskan. Server menegakkan semua aturan (pemilik, cabang, hari ini, principal, ganda); layar hanya mencegah
  *   kiriman yang pasti ditolak dan menampilkan kalimat penolakan server.
@@ -22,7 +22,7 @@ import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelang
 import { kodeJksUntuk, paritasMinggu } from "@/lib/form-kontrol/constants";
 import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
-import { HARI, jamWita, useIzinFk } from "../shared";
+import { HARI, rentangWita, useIzinFk } from "../shared";
 import { GagalKirim, bacaFk, kirimFk } from "../lapangan";
 
 const MINGGU: [string, string][] = [["ganjil", "Minggu ganjil"], ["genap", "Minggu genap"], ["all", "Setiap minggu"]];
@@ -248,7 +248,7 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjung
                                     <b style={{ overflowWrap: "anywhere" }}>{r.custName}</b>
                                     <span className="fi-small fi-muted">
                                         <span className="fi-mono">{r.custCode}</span>
-                                        {r.tanggal !== tanggal ? ` · Kunjungan ${tanggalPendek(r.tanggal)}` : ""} · {hasil(r.status)} · {jamWita(r.checkinAt)}–{jamWita(r.checkoutAt)} WITA
+                                        {r.tanggal !== tanggal ? ` · Kunjungan ${tanggalPendek(r.tanggal)}` : ""} · {hasil(r.status)} · {rentangWita(r.checkinAt, r.checkoutAt)} WITA
                                     </span>
                                 </div>
                                 {r.jksLain.length > 0 && r.konfirmasi === "menunggu" && (

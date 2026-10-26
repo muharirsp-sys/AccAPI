@@ -238,7 +238,7 @@ export default function Normalisasi({ permKeys, awal }: { permKeys: string[]; aw
         <div className="fi-page" style={{ paddingBottom: 0 }}>
             <header className="fi-page-head">
                 <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Promo &amp; Klaim</span></li><li><span aria-current="page">Normalisasi Diskon</span></li></ol></nav>
-                <h1>Normalisasi diskon</h1>
+                <h1>Normalisasi Diskon</h1>
                 <p className="fi-small fi-tnum">Faktur {tgl(from)} sampai {tgl(to)}{principal ? `, ${principal}` : ""}.</p>
                 <p>Potongan tak bertuan pada faktur Accurate, termasuk yang terbit lewat web. Satu baris = satu faktur, satu posisi. Golongkan sebagai Klaim principal atau Beban distributor dengan menunjuk aturan promo dasarnya. Faktur di Accurate tidak diubah; bila faktur atau aturannya berubah sesudah diputuskan, keputusannya tidak dipakai lagi dan muncul di Perlu diputuskan ulang.</p>
             </header>
@@ -263,7 +263,7 @@ export default function Normalisasi({ permKeys, awal }: { permKeys: string[]; aw
                     {([["takBertuan", `Tak bertuan ${takBertuan.length}`], ["ulang", `Perlu diputuskan ulang ${ulang.length}`], ["sudah", `Sudah digolongkan ${sudah.length}`]] as const)
                         .map(([k, label]) => <button key={k} type="button" aria-pressed={tab === k} onClick={() => { setTab(k); setPilih(new Set()); }}>{label}</button>)}
                 </div>
-                {data.data && <span className="fi-small fi-subtle">Tak bertuan {rupiah(totalTakBertuan)} · <Link href={`/rekap-promo`}>Lihat Rekap promo</Link></span>}
+                {data.data && <span className="fi-small fi-subtle">Tak bertuan {rupiah(totalTakBertuan)} · <Link href={`/rekap-promo`}>Lihat Rekap Promo</Link></span>}
             </div>
 
             <ResponsiveTable<Grup> title={tab === "sudah" ? "Sudah digolongkan" : tab === "ulang" ? "Perlu diputuskan ulang" : "Tak bertuan"} count={daftar.length}
@@ -300,7 +300,7 @@ export default function Normalisasi({ permKeys, awal }: { permKeys: string[]; aw
 
             <ConfirmDialog open={dialog === "batalkan"} onClose={() => setDialog(null)} tag="Normalisasi" tone="negative"
                 title={`Batalkan ${terpilihGrup.length} penggolongan?`} confirmLabel="Batalkan penggolongan" onConfirm={batalkan}
-                facts={[["Potongan", `${barisTerpilih.length} baris · ${rupiah(totalTerpilih)}`], ["Akibat", "Kembali tak bertuan di Rekap promo sampai digolongkan lagi"]]} />
+                facts={[["Potongan", `${barisTerpilih.length} baris · ${rupiah(totalTerpilih)}`], ["Akibat", "Kembali tak bertuan di Rekap Promo sampai digolongkan lagi"]]} />
         </div>
     );
 }

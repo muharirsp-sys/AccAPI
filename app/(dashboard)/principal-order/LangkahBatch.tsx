@@ -55,7 +55,7 @@ export function Kepala({ langkah, batch, status, aksi, draf }: { langkah: number
             </div>
             <p>
                 {batch
-                    ? <><b className="fi-mono">{batch.fileName}</b> · {batch.principal} · {batch.branch || "cabang tidak terbaca"} · periode {tanggalSo(batch.period) || "tidak terbaca"} · diunggah {waktuWita(batch.uploadedAt)}{batch.uploadedBy ? ` oleh ${batch.uploadedBy}` : ""}</>
+                    ? <><b className="fi-mono">{batch.fileName}</b> · {batch.principal} · {batch.branch || "cabang tidak terbaca"} · periode {tanggalSo(batch.period) || "tidak terbaca"} · diunggah {waktuWita(batch.uploadedAt)} WITA{batch.uploadedBy ? ` oleh ${batch.uploadedBy}` : ""}</>
                     : "Unggah laporan integrasi dari sistem principal (Order Detail), validasi, siapkan calon faktur, lalu antrekan. Satuan, harga, dan posisi diskon dinormalkan mengikuti aturan yang selama ini dipakai."}
             </p>
             <Flow steps={steps} label="Langkah Order Principal" />
@@ -357,7 +357,7 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
             <div className={sibuk && sibuk !== "cabut" ? "fi-busy" : undefined} style={{ display: "grid", gap: 16 }}>
                 <div className="fi-kcards" aria-label="Ringkasan validasi" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 150px), 1fr))" }}>
                     <div className="fi-kc"><span>Baris</span><b>{angka(batch.lineCount)}</b><small>{soDiBatch.size} SO di batch</small></div>
-                    <div className="fi-kc" data-tone={batch.validatedAt ? "pos" : undefined}><span>Cocok</span><b>{batch.validatedAt ? angka(batch.okCount) : KOSONG}</b><small>{batch.validatedAt ? `divalidasi ${waktuWita(batch.validatedAt)}` : "belum divalidasi"}</small></div>
+                    <div className="fi-kc" data-tone={batch.validatedAt ? "pos" : undefined}><span>Cocok</span><b>{batch.validatedAt ? angka(batch.okCount) : KOSONG}</b><small>{batch.validatedAt ? `divalidasi ${waktuWita(batch.validatedAt)} WITA` : "belum divalidasi"}</small></div>
                     <div className="fi-kc" data-tone={batch.reviewCount > 0 ? "warn" : undefined}><span>Ditinjau</span><b>{batch.validatedAt ? angka(batch.reviewCount) : KOSONG}</b><small>{soReview} SO tidak ikut jadi faktur{dupes.size ? ` · ${dupes.size} order ganda` : ""}</small></div>
                     <div className="fi-kc" data-tone={batch.skipped > 0 ? "warn" : undefined}><span>Dilewati</span><b>{angka(batch.skipped)}</b><small>baris saat dibaca{held.length ? ` · ${held.length} SO ditahan utuh` : ""}</small></div>
                 </div>
@@ -402,7 +402,7 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                                 <ul className="fi-hist" aria-label="Konfirmasi bukan order ganda yang tercatat">
                                     {acksDiBatch.map((ack) => (
                                         <li key={ack.soNo}>
-                                            <time>{waktuWita(ack.confirmedAt)}</time>
+                                            <time>{waktuWita(ack.confirmedAt)} WITA</time>
                                             <span><b className="fi-mono">SO {ack.soNo}</b> dikonfirmasi {ack.confirmedBy || KOSONG}{ack.note ? ` · ${ack.note}` : ""}{" "}
                                                 <Button variant="tertiary" icon={<ShieldOff className="fi-icon" aria-hidden />} busy={sibuk === "cabut"} disabled={Boolean(kunciAck)} disabledReason={kunciAck}
                                                     aria-label={`Cabut konfirmasi SO ${ack.soNo}`} onClick={() => setDialog({ jenis: "cabut", ack })}>Cabut…</Button>
@@ -652,7 +652,7 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                 facts={dialog?.jenis === "cabut" ? [
                     ["SO", dialog.ack.soNo],
                     ["Principal", principal],
-                    ["Dikonfirmasi", `${dialog.ack.confirmedBy || KOSONG} · ${waktuWita(dialog.ack.confirmedAt) || KOSONG}`],
+                    ["Dikonfirmasi", `${dialog.ack.confirmedBy || KOSONG} · ${dialog.ack.confirmedAt ? `${waktuWita(dialog.ack.confirmedAt)} WITA` : KOSONG}`],
                     ["Catatan", dialog.ack.note || KOSONG],
                 ] : []}
                 factsAlign="start"

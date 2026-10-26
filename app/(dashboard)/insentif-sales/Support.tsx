@@ -6,7 +6,7 @@
  *   SupportExcelBar di page.tsx lama (dulu di tab Dashboard SM, tidak terbuka untuk Finance).
  * Caller: app/(dashboard)/insentif-sales/support/page.tsx (default export, prop permKeys).
  * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard), ./data (formatRp), components/fiori/*, lib/insentif-ui,
- *   lib/insentif-sales-excel (impor dinamis), lib/rekapan-nota/ui (ambil, jamWita), sonner.
+ *   lib/insentif-sales-excel (impor dinamis), lib/rekapan-nota/ui (ambil), lib/tampil (waktuWita), sonner.
  * Main Functions: Support (default), ExcelSupport.
  * Side Effects: GET dashboard, spv-support, spv-ikut. Simpan (berurutan): POST support → POST spv-support → PATCH targets/status;
  *   per baris: PATCH targets/ao-file, PATCH spv-ikut. Semuanya MENGUBAH NOMINAL insentif periode itu. Unduh template XLSX.
@@ -23,7 +23,8 @@ import { ConfirmDialog, useLoad, useUnsavedGuard } from "@/components/fiori/inte
 import { DEFAULT_KONSTANTA } from "@/lib/insentif-konstanta";
 import type { SupportTemplateRow } from "@/lib/insentif-sales-excel";
 import { HALAMAN, LABEL_STATUS, STATUS_INSENTIF_OPSI, formatQty, halamanTerlihat, labelTipe, readApi, sebabNol, type ApiRow } from "@/lib/insentif-ui";
-import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
+import { ambil } from "@/lib/rekapan-nota/ui";
+import { waktuWita } from "@/lib/tampil";
 import { MONTH_LABELS, formatRp } from "./data";
 import { InsentifRangka, useDashboard, usePeriode } from "./Rangka";
 
@@ -311,8 +312,8 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
         }
         setDlgSimpan(false);
         setPesan(tidakDitemukan > 0
-            ? { tone: "warn", teks: `Tersimpan ${jamWita(new Date())}, tetapi ${tidakDitemukan} baris tidak punya target periode ini; statusnya tidak tersimpan. Insentif ${label} dihitung ulang.` }
-            : { tone: "pos", teks: `${n} perubahan tersimpan ${jamWita(new Date())}; insentif ${label} dihitung ulang.` });
+            ? { tone: "warn", teks: `Tersimpan ${waktuWita(new Date())} WITA, tetapi ${tidakDitemukan} baris tidak punya target periode ini; statusnya tidak tersimpan. Insentif ${label} dihitung ulang.` }
+            : { tone: "pos", teks: `${n} perubahan tersimpan ${waktuWita(new Date())} WITA; insentif ${label} dihitung ulang.` });
         toast.success("Support tersimpan, dihitung ulang");
         muatDash();
         if (ubahSpv.length) muatSpvSup();

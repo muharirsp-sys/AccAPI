@@ -182,7 +182,7 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
             <header className="fi-page-head">
                 <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Operasional Sales</span></li><li><span aria-current="page">Laporan Harian</span></li></ol></nav>
                 <div className="fi-page-bar">
-                    <h1>{hasil ? `Laporan harian · data ${tanggalPanjang(hasil.reportDate)}` : "Laporan harian"}</h1>
+                    <h1>{hasil ? `Laporan Harian · data ${tanggalPanjang(hasil.reportDate)}` : "Laporan Harian"}</h1>
                     {hasil && (sudahDikirim ? <StatusBadge tone="pos">Terkirim</StatusBadge> : hasilKirim?.runId === hasil.runId && hasilKirim?.emailsFailed ? <StatusBadge tone="neg">{hasilKirim.emailsFailed} email gagal</StatusBadge> : <StatusBadge tone="neu">Belum dikirim</StatusBadge>)}
                     <span className="fi-spacer" />
                     {bolehKelola && <Link href="/laporan-harian/mapping" className="fi-btn fi-btn--secondary"><Users className="fi-icon" aria-hidden />Penerima laporan</Link>}

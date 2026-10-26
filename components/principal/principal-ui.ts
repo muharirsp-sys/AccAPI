@@ -2,7 +2,7 @@
  * Tujuan: Bagian bersama layar Data Principal (Fiori S7b): bentuk jawaban /api/principals/**, label jenis alias, saringan daftar,
  *   ringkasan baris riwayat, serta baca/tulis yang membedakan galat PASTI dari jawaban TIDAK PASTI.
  * Caller: components/principal/DataPrincipal.tsx, components/principal/RiwayatPrincipal.tsx, principal-ui.test.ts.
- * Dependensi: lib/principal/resolver (JENIS_ALIAS, SUMBER_KODE — murni), components/admin/admin-ui (waktuWita). Kontrak:
+ * Dependensi: lib/principal/resolver (JENIS_ALIAS, SUMBER_KODE — murni), lib/tampil (waktuWita). Kontrak:
  *   docs/handover/S7-2-KONTRAK-PRINCIPAL-API.md.
  * Main Functions: saring, ringkasLog, aktorTeks, labelJenis, labelVarian, baca, tulis, GalatTulis.
  * Side Effects: baca/tulis melakukan fetch ke /api/principals/**; sisanya murni.
@@ -13,7 +13,7 @@ import type { Load } from "@/components/fiori/interactive";
 import { JENIS_ALIAS, SUMBER_KODE, type JenisAlias } from "@/lib/principal/resolver";
 
 export { JENIS_ALIAS, SUMBER_KODE };
-export { waktuWita } from "@/components/admin/admin-ui";
+export { waktuWita } from "@/lib/tampil";
 
 export type Varian = { principalId: string; variantKey: string; name: string | null; isActive: boolean; createdBy: string | null; createdAt: string };
 export type Alias = {

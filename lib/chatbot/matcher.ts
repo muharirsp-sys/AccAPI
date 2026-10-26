@@ -20,22 +20,22 @@ const NAV_MAP: Record<string, { label: string; href: string }[]> = {
   insentif: [{ label: "Insentif Sales", href: "/insentif-sales" }],
   "form-kontrol": [{ label: "Form Kontrol", href: "/form-kontrol" }],
   "form kontrol": [{ label: "Form Kontrol", href: "/form-kontrol" }],
-  admin: [{ label: "User & RBAC", href: "/admin/users" }, { label: "Kelola Akses Group", href: "/admin/groups" }],
-  user: [{ label: "User & RBAC", href: "/admin/users" }],
-  rbac: [{ label: "Kelola Akses Group", href: "/admin/groups" }],
-  principle: [{ label: "Master Principle", href: "/principles" }],
-  principal: [{ label: "Master Principle", href: "/principles" }],
+  admin: [{ label: "Pengguna dan Izin", href: "/admin/users" }, { label: "Kelola Akses Grup", href: "/admin/groups" }],
+  user: [{ label: "Pengguna dan Izin", href: "/admin/users" }],
+  rbac: [{ label: "Kelola Akses Grup", href: "/admin/groups" }],
+  principle: [{ label: "Master Principal", href: "/principles" }],
+  principal: [{ label: "Master Principal", href: "/principles" }],
   summary: [{ label: "Summary Promo", href: "/summary" }],
   finance: [{ label: "Finance", href: "/finance" }],
   accurate: [{ label: "Sesi Accurate", href: "/sesi-accurate" }],
-  aol: [{ label: "AOL Form Engine", href: "/api-wrapper" }],
-  dashboard: [{ label: "Dashboard", href: "/" }],
+  aol: [{ label: "Formulir Accurate (AOL)", href: "/api-wrapper" }],
+  dashboard: [{ label: "Beranda", href: "/" }],
 };
 
 const CONVERSATIONAL: [RegExp, () => BotResponse][] = [
   [/^(terima ?kasih|makasih|thanks|thx|ty)/i, () => ({ text: "Sama-sama! Ada yang bisa saya bantu lagi? Ketik 'menu' untuk panduan." })],
   [/^(oke|ok|siap|paham|mengerti|baik|noted)/i, () => ({ text: "Baik! Jika butuh bantuan lagi, ketik 'menu' atau tanya langsung." })],
-  [/^(siapa kamu|kamu siapa|apa ini|chatbot|bot)/i, () => ({ text: "Saya AI Assistant — chatbot rule-based yang membantu navigasi Smart ERP CV. Surya Perkasa. Saya bisa:\n\n- Menjawab pertanyaan tentang modul ERP\n- Memberikan panduan navigasi\n- Mengambil data dari database\n\nKetik 'menu' untuk panduan lengkap." })],
+  [/^(siapa kamu|kamu siapa|apa ini|chatbot|bot)/i, () => ({ text: "Saya Asisten Bantuan: menjawab dari daftar panduan (bukan AI) untuk navigasi Ruang Kerja CV. Surya Perkasa. Saya bisa:\n\n- Menjawab pertanyaan tentang modul ERP\n- Memberikan panduan navigasi\n- Mengambil data dari database\n\nKetik 'menu' untuk panduan lengkap." })],
 ];
 
 function normalize(s: string): string {
@@ -126,7 +126,7 @@ export function matchFaq(input: string): BotResponse {
   }
 
   if (best && bestScore >= 1) {
-    return { text: best.answer + "\n\n_(Pertanyaan Anda mungkin terkait topik ini — ketik 'menu' untuk panduan lengkap)_", links: best.links };
+    return { text: best.answer + "\n\n_(Pertanyaan Anda mungkin terkait topik ini. Ketik 'menu' untuk panduan lengkap.)_", links: best.links };
   }
 
   return getFallback();

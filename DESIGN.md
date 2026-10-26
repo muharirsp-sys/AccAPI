@@ -283,7 +283,7 @@ layar; implementasinya `components/fiori/core.tsx` dan `components/fiori/interac
 - **Focus:** garis + cincin 1 px Biru SP. **Error:** garis merah + garis bawah 2 px + pesan berikon.
 
 ### Navigation
-- Shell bar 52/56 px dengan logo resmi, cari menu (Ctrl K), menu profil (Mode, Density, Bantuan, Keluar); navigasi
+- Shell bar 52/56 px dengan logo resmi, cari menu (Ctrl K), menu profil (Mode, Kerapatan, Bantuan, Keluar); navigasi
   samping berkelompok dari izin; ponsel: drawer + navigasi bawah (Beranda + 3 pintasan peran + Menu).
 
 ### Message Strip (signature)

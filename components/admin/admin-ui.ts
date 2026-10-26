@@ -2,14 +2,16 @@
  * Tujuan: Logika murni layar User & Akses Group (Fiori S7a): kalimat galat dari `code` kontrak S7-1 (+ jawaban tidak pasti),
  *   selisih izin, perkiraan role identitas (cermin roleTurunan/roleSisa server), pemeriksa sandi bertopeng, status akun, riwayat.
  * Caller: components/admin/Bersama.tsx, app/(dashboard)/admin/users/Pengguna.tsx, app/(dashboard)/admin/groups/AksesGrup.tsx.
- * Dependensi: lib/rbac (label satu sumber: auditActionLabels, permissionKeyLabel), lib/tampil (KOSONG, sebabHttp), components/fiori/core
+ * Dependensi: lib/rbac (label satu sumber: auditActionLabels, permissionKeyLabel), lib/tampil (KOSONG, sebabHttp, waktuWita), components/fiori/core
  *   (tipe Tone).
  * Main Functions: pesanGalat, selisihIzin, utamaEfektif, perkiraanRole, roleDariGrup, labelRole, alasanSandi, statusAkun, ringkasRiwayat,
- *   waktuWita.
+ *   waktuWita (ekspor ulang lib/tampil).
  * Side Effects: Tidak ada. Kontrak: docs/handover/S7-KONTRAK-ADMIN-API.md.
  */
 import { auditActionLabels, permissionKeyLabel } from "@/lib/rbac";
 import { KOSONG, sebabHttp } from "@/lib/tampil";
+
+export { waktuWita } from "@/lib/tampil";
 import type { Tone } from "@/components/fiori/core";
 
 export const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas, jadi perubahan mungkin sudah tersimpan. Data dimuat ulang. Periksa hasilnya sebelum mengulang.";
@@ -191,13 +193,4 @@ export function ringkasRiwayat(item: ItemRiwayat, sudut: "user" | "grup"): { apa
     if (teks(d.roleAfter) || teks(d.roleBefore)) bagian.push(`role identitas ${labelRole(teks(d.roleBefore))} → ${labelRole(teks(d.roleAfter))}`);
 
     return { apa: auditActionLabels[item.action] ?? item.action, rinci: bagian.join(" · ") };
-}
-
-/** "11 Okt 2026 09.40" WITA. */
-export function waktuWita(iso: string | undefined): string {
-    const d = iso ? new Date(iso) : null;
-    if (!d || Number.isNaN(d.getTime())) return "";
-    const tgl = new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Makassar" }).format(d);
-    const jam = new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Makassar" }).format(d);
-    return `${tgl} ${jam}`;
 }

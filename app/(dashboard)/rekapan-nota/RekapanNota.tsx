@@ -100,7 +100,7 @@ export default function RekapanNota({ permKeys }: { permKeys: string[] }) {
         <div className="fi-page">
             <header className="fi-page-head">
                 <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Gudang</span></li><li><span aria-current="page">Rekapan Nota</span></li></ol></nav>
-                <h1>Wave {tanggalPanjang(tanggal)}</h1>
+                <h1>Rekapan Nota · {tanggalPanjang(tanggal)}</h1>
                 <p>Susun nota hari ini ke wave picking, lalu cetak lembar rekapan dan TTF. Satu nota hanya bisa berada di satu wave.</p>
                 <div className="fi-page-bar">
                     <FormField label="Tanggal">{(a11y) => <input {...a11y} className="fi-input" type="date" value={tanggal} onChange={(e) => { if (e.target.value) setTanggal(e.target.value); }} />}</FormField>

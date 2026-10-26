@@ -165,7 +165,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
             : <EmptyState title="Pilih user di daftar" message="Grup, keamanan, dan riwayat tampil di sini." />
     ) : (
         <div style={{ display: "grid", gap: 12 }}>
-            {/* h2: halaman sudah punya h1 "User" (audit No 140a). */}
+            {/* h2: halaman sudah punya h1 "Pengguna dan Izin" (audit No 140a). */}
             <ObjectPageHeader title={u.name} headingLevel={2} status={st && <StatusBadge tone={st.tone}>{st.label}</StatusBadge>}
                 attributes={[
                     { label: "Email", value: u.email },
@@ -264,14 +264,14 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
     return (
         <div className="fi-page" style={{ paddingBottom: 0 }}>
             <header className="fi-page-head">
-                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Pengaturan</span></li><li><span aria-current="page">User</span></li></ol></nav>
+                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Pengaturan</span></li><li><span aria-current="page">Pengguna dan Izin</span></li></ol></nav>
                 <div className="fi-page-bar">
-                    <h1>User</h1>
+                    <h1>Pengguna dan Izin</h1>
                     <span className="fi-spacer" />
-                    {bolehKelola && <Link className="fi-btn fi-btn--secondary" href="/admin/groups">Akses Grup</Link>}
+                    {bolehKelola && <Link className="fi-btn fi-btn--secondary" href="/admin/groups">Kelola Akses Grup</Link>}
                     <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} disabled={Boolean(kunciGrup)} disabledReason={kunciGrup} onClick={() => buka({ jenis: "buat" })}>Buat user…</Button>
                 </div>
-                <p>Satu tempat per orang: semua grup (★ grup utama menentukan Beranda), keamanan akun, dan riwayat. Izin per grup diatur di Akses Grup.</p>
+                <p>Satu tempat per orang: semua grup (★ grup utama menentukan Beranda), keamanan akun, dan riwayat. Izin per grup diatur di Kelola Akses Grup.</p>
             </header>
             {!bolehKelola && (
                 <MessageStrip tone="info" title="Baca-saja.">

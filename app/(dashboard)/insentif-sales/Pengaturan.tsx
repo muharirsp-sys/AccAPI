@@ -9,7 +9,7 @@
  *   Jawaban PATCH tidak pasti (putus, ≥ 502, bukan JSON) → "hasilnya belum pasti" + muat ulang; tulis terkunci selama memuat ulang.
  * Caller: app/(dashboard)/insentif-sales/pengaturan/page.tsx.
  * Dependensi: ./Rangka (InsentifRangka), ./PengaturanHierarki, ./data (formatRp), components/fiori/{core,interactive},
- *   lib/insentif-konstanta, lib/insentif-ui (readApi), lib/rekapan-nota/ui (ambil, jamWita).
+ *   lib/insentif-konstanta, lib/insentif-ui (readApi), lib/rekapan-nota/ui (ambil), lib/tampil (KOSONG, waktuWita).
  * Main Functions: Pengaturan (default).
  * Side Effects: GET /api/insentif-sales/settings; PATCH settings (konstanta, gtAoMode, branchNilaiJual, smBerhak) lewat ConfirmDialog —
  *   MENGUBAH NOMINAL insentif setiap perhitungan berikutnya. beforeunload saat ada draf. Kaki menyebut draf daftar yang belum disimpan di
@@ -21,11 +21,11 @@ import { useCallback, useMemo, useState } from "react";
 import { Pencil, RefreshCw, RotateCcw } from "lucide-react";
 import { AnchorBar, Button, ErrorState, FooterToolbar, MessageStrip, Section, Skeleton, VariantNote } from "@/components/fiori/core";
 import { ConfirmDialog, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
-import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
+import { ambil } from "@/lib/rekapan-nota/ui";
 import { readApi } from "@/lib/insentif-ui";
 import { DEFAULT_KONSTANTA, KONSTANTA_FIELDS, getField, parseKonstanta, setField, type Konstanta, type KonstantaKind } from "@/lib/insentif-konstanta";
 import { formatRp } from "./data";
-import { KOSONG } from "@/lib/tampil";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 import { InsentifRangka } from "./Rangka";
 import { AkunTautan, Hierarki } from "./PengaturanHierarki";
 
@@ -176,7 +176,7 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
         : gagalBacaKonst ? "Editor konstanta terkunci: konstanta tersimpan gagal dibaca"
             : alasanKunci ?? (konflik ? "Konstanta sudah diubah admin lain; muat ulang dulu" : undefined);
     const alasanSimpan = alasanKonst ?? tanpaIzin ?? (berubah.length ? undefined : "Belum ada perubahan konstanta");
-    const teksVersi = (v: string | null | undefined) => (v ? `tersimpan ${jamWita(v)} WITA` : "belum pernah disimpan");
+    const teksVersi = (v: string | null | undefined) => (v ? `tersimpan ${waktuWita(v)} WITA` : "belum pernah disimpan");
     const versiTeks = gagalBacaKonst ? "gagal dibaca" : teksVersi(setelan?.konstantaVersi);
     const dlgDaftar = dialog?.kind === "daftar" ? DAFTAR.find((x) => x.field === dialog.field) : undefined;
     const tambah = dlgDaftar && setelan ? daftarNilai(dlgDaftar.field).filter((v) => !setelan[dlgDaftar.field].includes(v)) : [];

@@ -267,7 +267,7 @@ export default function AturanPromo({ permKeys }: { permKeys: string[] }) {
             <header className="fi-page-head">
                 <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Promo &amp; Klaim</span></li><li><span aria-current="page">Aturan Promo</span></li></ol></nav>
                 <div className="fi-page-bar">
-                    <h1>Aturan promo</h1>
+                    <h1>Aturan Promo</h1>
                     <span className="fi-spacer" />
                     {bolehUbah && tab === "aturan" && <Button icon={<Upload className="fi-icon" aria-hidden />} onClick={() => { setImpor({ principal: principal || "", file: null, pratinjau: null }); setDialog("impor"); }}>Impor Excel…</Button>}
                     {bolehUbah && tab === "aturan" && <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} onClick={() => buka("baru")}>Aturan baru</Button>}

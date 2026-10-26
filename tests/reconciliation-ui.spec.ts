@@ -159,7 +159,7 @@ test("uses the registry and shows mapping access plus paginated persisted histor
   await expect(history.getByText("Cocok 18", { exact: true }).first()).toBeVisible();
   await expect(history.getByText("Masalah 2", { exact: true }).first()).toBeVisible();
   await history.locator('summary[aria-label="Lihat rincian run-1"]').click();
-  await expect(history.getByText("Jumlah: Accurate 3, KINO 6 — Accurate kurang 3", { exact: true }).first()).toBeVisible();
+  await expect(history.getByText("Jumlah: Accurate 3, KINO 6 (Accurate kurang 3)", { exact: true }).first()).toBeVisible();
   expect(historyRequests).toContain("1:20");
   await history.getByRole("button", { name: "Halaman berikutnya" }).click();
   await expect.poll(() => historyRequests).toContain("2:20");
@@ -796,13 +796,13 @@ test("shows the progressive reconciliation workflow", async ({
   ).toBeVisible();
   await expect(page.getByText("KINO-OK", { exact: true })).toHaveCount(0);
   await expect(
-    page.getByText("Jumlah: Accurate 3, KINO 6 — Accurate kurang 3", {
+    page.getByText("Jumlah: Accurate 3, KINO 6 (Accurate kurang 3)", {
       exact: true,
     }),
   ).toBeVisible();
   await expect(
     page.getByText(
-      "Nilai bersih: Accurate Rp60.000, KINO Rp120.000 — Accurate kurang Rp60.000",
+      "Nilai bersih: Accurate Rp60.000, KINO Rp120.000 (Accurate kurang Rp60.000)",
       { exact: true },
     ),
   ).toBeVisible();
@@ -938,7 +938,7 @@ test("shows the progressive reconciliation workflow", async ({
   ).toBeVisible();
   await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(
-    page.getByText("Jumlah: Accurate 3, MOTASA 6 — Accurate kurang 3", {
+    page.getByText("Jumlah: Accurate 3, MOTASA 6 (Accurate kurang 3)", {
       exact: true,
     }),
   ).toBeVisible();

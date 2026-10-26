@@ -3,7 +3,7 @@
  *   membedakan penolakan server dari jawaban TIDAK PASTI, pemilah "SO ditahan utuh", label status antrean, dan format angka/waktu.
  * Caller: OrderPrincipal.tsx, LangkahBatch.tsx.
  * Dependensi: app/(dashboard)/form-kontrol/lapangan (ambilJson), components/fiori (tipe Load, Tone), lib/rekapan-nota/ui (tanggalPendek),
- *   lib/tampil (waktuWita, KOSONG).
+ *   lib/tampil (waktuWita diekspor ulang; pemanggil menulis " WITA" sendiri).
  * Main Functions: baca, tulis, TidakPasti, PESAN_TIDAK_PASTI, ditahanUtuh, LABEL_ANTREAN, angka, waktuWita, tanggalSo, ALASAN_IZIN.
  * Side Effects: baca/tulis melakukan fetch; sisanya murni.
  */
@@ -11,7 +11,7 @@ import type { Tone } from "@/components/fiori/core";
 import type { Load } from "@/components/fiori/interactive";
 import { ambilJson } from "@/app/(dashboard)/form-kontrol/lapangan";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
-import { KOSONG, waktuWita as waktuTampil } from "@/lib/tampil";
+export { waktuWita } from "@/lib/tampil";
 
 export type Batch = {
     id: string; principal: string; fileName: string; branch: string; period: string;
@@ -149,13 +149,6 @@ export const labelAntrean = (state: string) => LABEL_ANTREAN[state] ?? { label: 
 export const soDariKunci = (key: string) => key.slice(key.indexOf(":") + 1);
 
 export const angka = (value: string | number) => Number(value).toLocaleString("id-ID", { maximumFractionDigits: 2 });
-
-/** "05/10/2026 16.20 WITA" (format lib/tampil); kosong/tak terbaca → "" supaya kalimat pemanggil tetap utuh. */
-export function waktuWita(iso: string | null | undefined) {
-    const t = waktuTampil(iso);
-    return t === KOSONG ? "" : `${t} WITA`;
-}
-
 
 /** Tanggal SO/periode: setiap YYYY-MM-DD (juga cap waktu ISO) → dd/mm/yyyy; teks lain apa adanya. */
 export const tanggalSo = (teks: string | null | undefined) =>

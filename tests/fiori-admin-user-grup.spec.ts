@@ -167,7 +167,7 @@ async function izinBisaDicabut(page: Page, path: string, kunci: string) {
 const daftarUser = (page: Page) => page.getByRole("list", { name: "Daftar user" });
 async function bukaUser(page: Page, nama: string) {
     await daftarUser(page).getByRole("button", { name: new RegExp(`${nama}\\b`) }).click();
-    await expect(page.getByRole("heading", { level: 2, name: nama })).toBeVisible(); // Object Page di kolom kedua: h2 (halaman punya h1 "User")
+    await expect(page.getByRole("heading", { level: 2, name: nama })).toBeVisible(); // Object Page di kolom kedua: h2 (halaman punya h1 "Pengguna dan Izin")
 }
 
 test("Buat user: grup awal wajib, sandi bertopeng ketik dua kali (tidak di DOM/URL), satu permintaan atomik, user baru terpilih", async ({ page }) => {
@@ -385,9 +385,9 @@ test("Gerbang halaman: pemegang users.manage SAJA (tanpa users.view) tetap masuk
     await expect(page.getByRole("list", { name: "Daftar grup" })).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Menu ruang kerja" }).getByRole("link", { name: "Pengguna dan Izin" })).toBeVisible();
     // Navigasi klien: layout server TIDAK dijalankan ulang; gerbang klien SidebarLayout menilai /admin/users dengan kunci yang sama.
-    await page.locator("main").getByRole("link", { name: "User", exact: true }).click();
+    await page.locator("main").getByRole("link", { name: "Pengguna dan Izin", exact: true }).click();
     await expect(page).toHaveURL(/\/admin\/users$/);
-    await expect(page.getByRole("heading", { level: 1, name: "User" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Pengguna dan Izin" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Akses ditolak" })).toHaveCount(0);
     await expect(daftarUser(page).getByRole("button", { name: /USER A/ })).toBeVisible();
 });
@@ -643,7 +643,7 @@ test("Draf izin: tautan dalam aplikasi (header, menu samping) tidak membuang dra
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(page).toHaveURL(/#g-anggota$/);
 
-    await page.locator("main").getByRole("link", { name: "User", exact: true }).click(); // tautan header halaman
+    await page.locator("main").getByRole("link", { name: "Pengguna dan Izin", exact: true }).click(); // tautan header halaman
     await expect(dlg).toBeVisible();
     await expect(page).toHaveURL(/\/admin\/groups(#g-anggota)?$/);
     await expect(dlg).toContainText("Pengguna dan Izin"); // nama menu tujuan, bukan path mentah (audit desain 001 No 30)
@@ -655,7 +655,7 @@ test("Draf izin: tautan dalam aplikasi (header, menu samping) tidak membuang dra
     await expect(page).toHaveURL(/\/admin\/groups(#g-anggota)?$/);
     await dlg.getByRole("button", { name: "Buang perubahan" }).click();
     await expect(page).toHaveURL(/\/admin\/users$/);
-    await expect(page.getByRole("heading", { level: 1, name: "User" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Pengguna dan Izin" })).toBeVisible();
 });
 
 test("User 'Sedang disiapkan' (pembuatan gagal sebagian): tidak bisa diaktifkan, alasan terbaca — IT Support menghapusnya", async ({ page }) => {

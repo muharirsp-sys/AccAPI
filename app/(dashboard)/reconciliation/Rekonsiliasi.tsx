@@ -3,7 +3,7 @@
  *   dengan saringan status + ekspor XLSX), plus Riwayat run berhalaman. Mapping/riwayat yang gagal dimuat tampil sebagai galat, bukan kosong.
  * Caller: app/(dashboard)/reconciliation/page.tsx.
  * Dependensi: GET|POST /api/reconciliation/mappings, GET /api/reconciliation/history, POST /{config.endpoint} per kontrak;
- *   lib/off-program-control/{reconciliation-config,reconciliation-ui}; components/fiori/{core,interactive}; lib/tampil (KOSONG).
+ *   lib/off-program-control/{reconciliation-config,reconciliation-ui}; components/fiori/{core,interactive}; lib/tampil (KOSONG, waktuWita).
  *   Tanpa izin jalankan: input berkas nonaktif dengan alasan terlihat dan kaki tetap tampil dengan tombol nonaktif beralasan.
  * Main Functions: Rekonsiliasi.
  * Side Effects: HTTP baca/tulis mapping; menjalankan rekonsiliasi (tidak menulis ke Accurate); ekspor XLSX di peramban.
@@ -16,7 +16,7 @@ import {
     Button, EmptyState, ErrorState, Flow, FooterToolbar, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, type Column, type FlowStep,
 } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactive";
-import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
+import { ambil } from "@/lib/rekapan-nota/ui";
 import { RECONCILIATION_CONFIG, getReconciliationConfig, type ReconciliationInputConfig } from "@/lib/off-program-control/reconciliation-config";
 import type { ReconciliationOutput, ReconciliationResult } from "@/lib/off-program-control/sales-reconciliation";
 import type { IgnoredReturnLine, ReturnReconciliationOutput, ReturnReconciliationResult } from "@/lib/off-program-control/return-reconciliation";
@@ -24,7 +24,7 @@ import {
     RETURN_STATUSES, SALES_STATUSES, causeLines, currency, exportSheets, fileSize, number, returnCauseLines, statusLabel, statusTone,
     type Division, type UiStatus,
 } from "@/lib/off-program-control/reconciliation-ui";
-import { KOSONG } from "@/lib/tampil";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 
 type MappingVersion = { id: string; version: number; originalName: string; uploadedByName: string; createdAt: string; isActive?: boolean };
 type MappingResponse = { active: MappingVersion | null; versions: MappingVersion[]; canManage: boolean };
@@ -81,7 +81,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
             const res = await fetch(`/${config.endpoint}`, { method: "POST", body: form });
             const payload = (await res.json().catch(() => ({}))) as Output & { error?: string };
             if (!res.ok) throw new Error(payload.error || "Rekonsiliasi gagal diproses.");
-            setHasil({ ...payload, versi: mapping.data?.active?.version, jam: jamWita(new Date()) });
+            setHasil({ ...payload, versi: mapping.data?.active?.version, jam: `${waktuWita(new Date())} WITA` });
             setSaring(payload.results.some((r) => r.status === "KOREKSI") ? "ALL" : payload.results.some((r) => r.status !== "MATCH") ? "ISSUES_ONLY" : "ALL");
             setHistPage(1); muatRiwayat();
         } catch (e) {
@@ -99,7 +99,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
         const payload = (await res.json().catch(() => ({}))) as MappingVersion & { error?: string };
         if (!res.ok) throw new Error(payload.error || "Mapping gagal diaktifkan.");
         setDialog(false); setMappingFile(null);
-        setPesan(`Mapping v${payload.version} aktif ${jamWita(new Date())} untuk semua pengguna ${DIVISI.find((x) => x[0] === division)![1]} ${principal}. Jalankan ulang untuk memakainya; riwayat sebelumnya tetap tercatat dengan versi lama.`);
+        setPesan(`Mapping v${payload.version} aktif ${waktuWita(new Date())} WITA untuk semua pengguna ${DIVISI.find((x) => x[0] === division)![1]} ${principal}. Jalankan ulang untuk memakainya; riwayat sebelumnya tetap tercatat dengan versi lama.`);
         muatMapping(); muatRiwayat();
     }
 
@@ -187,12 +187,12 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                     {mapping.status === "memuat" && !mapping.data ? <Skeleton rows={2} label="Memuat mapping" />
                         : mapping.status === "galat" && !mapping.data ? <ErrorState title={`Mapping ${labelJenis} ${principal} gagal dimuat`} message={`${mapping.error}. Rekonsiliasi belum bisa dijalankan tanpa mapping.`} onRetry={muatMapping} />
                         : mapping.data?.active ? (
-                            <p className="fi-small" aria-label="Stempel versi mapping">Mapping aktif <b>Versi {mapping.data.active.version}</b> · <span>{mapping.data.active.originalName}</span> · <span>{mapping.data.active.uploadedByName}</span> · <span className="fi-subtle">{jamWita(mapping.data.active.createdAt)}</span></p>
+                            <p className="fi-small" aria-label="Stempel versi mapping">Mapping aktif <b>Versi {mapping.data.active.version}</b> · <span>{mapping.data.active.originalName}</span> · <span>{mapping.data.active.uploadedByName}</span> · <span className="fi-subtle">{waktuWita(mapping.data.active.createdAt)}</span></p>
                         ) : <p className="fi-small fi-subtle">Belum ada mapping aktif.</p>}
                     {mapping.data && mapping.data.versions.length > 1 && (
                         <details className="fi-small" aria-label="Riwayat versi mapping">
                             <summary style={{ cursor: "pointer" }}>Riwayat versi ({mapping.data.versions.length}) <ChevronDown className="fi-icon" aria-hidden style={{ display: "inline", verticalAlign: "-3px" }} /></summary>
-                            <ul className="fi-hist" style={{ marginTop: 6 }}>{mapping.data.versions.map((v) => <li key={v.id}><time dateTime={v.createdAt}>{jamWita(v.createdAt)}</time><span><b>Versi {v.version}</b> · {v.originalName} · {v.uploadedByName}{v.isActive ? " · aktif" : ""}</span></li>)}</ul>
+                            <ul className="fi-hist" style={{ marginTop: 6 }}>{mapping.data.versions.map((v) => <li key={v.id}><time dateTime={v.createdAt}>{waktuWita(v.createdAt)}</time><span><b>Versi {v.version}</b> · {v.originalName} · {v.uploadedByName}{v.isActive ? " · aktif" : ""}</span></li>)}</ul>
                         </details>
                     )}
                     {canManage && (
@@ -270,7 +270,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                                         const v = versiDari(run.mappingVersionId); const [label, tone] = HIST_STATUS[run.status];
                                         return (
                                             <li key={run.id}>
-                                                <time dateTime={run.startedAt}>{jamWita(run.startedAt)}</time>
+                                                <time dateTime={run.startedAt}>{waktuWita(run.startedAt)}</time>
                                                 <span><b>{run.uploadedByName}</b> · <span>{v ? `Versi ${v}` : "Versi tidak tersedia"}</span> · <StatusBadge tone={tone}>{label}</StatusBadge></span>
                                                 <span className="fi-chg">{run.inputFiles.map((f) => f.name).join(", ")} · {run.durationMs === null ? "Durasi -" : `${number.format(run.durationMs / 1000)} detik`} · <span>Total {tot}</span> · <span>Cocok {match}</span> · <span>Koreksi {run.summary?.KOREKSI ?? 0}</span> · <span>Masalah {tot - match - (run.summary?.KOREKSI ?? 0)}</span></span>
                                                 {(run.error || run.issues?.length) ? (

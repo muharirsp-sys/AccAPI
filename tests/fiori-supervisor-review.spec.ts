@@ -160,7 +160,7 @@ test("Desktop: pilih salesman → rincian kunjungan (belum difakturkan, tanpa ch
     await expect(tabel.getByRole("row")).toHaveCount(5); // kepala + 4 kunjungan S-01 (TOKO E milik S-03 tidak ikut)
 
     const a = tabel.getByRole("row").filter({ hasText: "TOKO A" });
-    await expect(a.getByRole("cell")).toHaveText(["TOKO AC-0135 m dari toko", "08.10", "09.00", "50", "-", "24", "3", "✓"]);
+    await expect(a.getByRole("cell")).toHaveText(["TOKO AC-0135 m dari toko", "16/10/2026 08.10", "16/10/2026 09.00", "50", "-", "24", "3", "✓"]);
     await expect(a).not.toContainText("jauh dari toko"); // 35 m ≤ ambang: jarak tampil biasa, bukan penanda jauh
     await expect(a).not.toContainText("belum difakturkan");
     const b = tabel.getByRole("row").filter({ hasText: "TOKO B" });

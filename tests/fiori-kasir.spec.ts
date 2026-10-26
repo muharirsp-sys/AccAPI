@@ -163,7 +163,7 @@ test("Default: KPI, daftar orang (Tanpa salesman terlihat), tak teralokasi, non-
     const log = await pasang(page);
     await page.goto("/kasir", NAV);
     const m = main(page);
-    await expect(m.getByRole("heading", { name: "Kasir ↔ Incaso", level: 1 })).toBeVisible(NAV);
+    await expect(m.getByRole("heading", { name: "Kasir dan Incaso", level: 1 })).toBeVisible(NAV);
     await expect(m.locator(".fi-page-head")).toContainText("Terbuka sampai");
     await expect(m.locator(".fi-page-head")).toContainText("Lengkap");
     await expect(m.locator(".fi-page-head")).toContainText("akun sinkron ADMIN SINKRON");
@@ -451,7 +451,7 @@ test("Terkunci 20.00 WITA (page.clock): lewat kunciBerikutnya → muat ulang sen
     await page.goto("/kasir", NAV);
     await expect(page.getByRole("button", { name: "Setoran…" })).toBeEnabled(NAV);
     await page.getByLabel("Tanggal").fill("2026-10-05");
-    await expect(main(page).locator(".fi-page-head")).toContainText("Terbuka sampai 20.00 WITA");
+    await expect(main(page).locator(".fi-page-head")).toContainText("Terbuka sampai 05/10/2026 20.00 WITA");
     await expect(page.getByRole("button", { name: "Setoran…" })).toBeEnabled();
     await page.clock.runFor(62_000);
     await expect(main(page).locator(".fi-page-head")).toContainText("Terkunci otomatis 20.00 WITA");
@@ -566,7 +566,7 @@ test("Jam peramban 6 menit lebih cepat dari server (page.clock): tulis TIDAK ter
     await page.goto("/kasir", NAV);
     await expect(footer(page).getByRole("button", { name: "Catat setoran…", exact: true })).toBeEnabled(NAV);
     await page.getByLabel("Tanggal").fill("2026-10-05");
-    await expect(main(page).locator(".fi-page-head")).toContainText("Terbuka sampai 20.00 WITA");
+    await expect(main(page).locator(".fi-page-head")).toContainText("Terbuka sampai 05/10/2026 20.00 WITA");
     await page.clock.runFor(5 * 60_000); // peramban 20.01, server 19.55
     await expect(footer(page).getByRole("button", { name: "Catat setoran…", exact: true })).toBeEnabled();
     await expect(footer(page)).not.toContainText("20.00 WITA terlewati");

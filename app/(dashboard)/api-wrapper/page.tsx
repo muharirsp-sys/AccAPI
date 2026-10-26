@@ -1115,7 +1115,7 @@ export default function Home() {
   if (!isMounted) {
     return (
       <FioriScope>
-        <div className="fi-page"><Skeleton rows={8} label="Memuat API Wrapper Accurate" /></div>
+        <div className="fi-page"><Skeleton rows={8} label="Memuat Formulir Accurate (AOL)" /></div>
       </FioriScope>
     );
   }
@@ -1147,8 +1147,8 @@ export default function Home() {
     <FioriScope>
       <div className="fi-page">
         <header className="fi-page-head">
-          <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Pengaturan</span></li><li><span aria-current="page">API Wrapper Accurate</span></li></ol></nav>
-          <h1>API Wrapper Accurate</h1>
+          <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Pengaturan</span></li><li><span aria-current="page">Formulir Accurate (AOL)</span></li></ol></nav>
+          <h1>Formulir Accurate (AOL)</h1>
           <p>Alat admin: kirim payload dan unggah massal ke Accurate. Kiriman yang diterima Accurate menjadi jurnal nyata dan tidak bisa ditarik dari aplikasi ini.</p>
         </header>
 

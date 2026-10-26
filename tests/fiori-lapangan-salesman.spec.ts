@@ -162,7 +162,7 @@ test("Rute hari ini: kunjungan berjalan paling atas, hari order, tautan bertangg
     await expect(daftar.getByRole("listitem")).toHaveCount(4, NAV);
     // Sedang dikunjungi → tidak order → belum → selesai.
     await expect(daftar.getByRole("listitem")).toHaveText([/TOKO D/, /TOKO C/, /TOKO B/, /TOKO A/]);
-    await expect(daftar.getByRole("listitem").first()).toContainText("Sedang dikunjungi · check-in 08.10");
+    await expect(daftar.getByRole("listitem").first()).toContainText(`Sedang dikunjungi · check-in ${HARI_INI.split("-").reverse().join("/")} 08.10`);
     await expect(daftar.getByRole("listitem").first()).toContainText("Lanjutkan");
     await expect(r.getByText(/4 hari order bulan ini/)).toBeVisible();
     await expect(r.getByText(/≥ 2× tidak order bulan ini/)).toBeVisible();
@@ -605,7 +605,7 @@ test("Order Sales: toko rute, harga per baris, satuan salah + harga belum ada di
     // O1: server menolak simpan tanpa harga, jadi Kirim terkunci selama ada barang tanpa harga.
     const kirim = main.getByRole("button", { name: "Kirim order…" });
     await expect(kirim).toBeDisabled();
-    await expect(kirim).toHaveAttribute("title", "Harga barang 2 belum ada di Accurate untuk cabang ini — belum bisa dikirim");
+    await expect(kirim).toHaveAttribute("title", "Harga barang 2 belum ada di Accurate untuk cabang ini; belum bisa dikirim");
     await page.screenshot({ path: "test-results/salesman/order-harga.png", fullPage: true });
     await b2.getByRole("button", { name: "Hapus barang 2" }).click();
 
@@ -660,7 +660,7 @@ test("Order Sales (P1): jawaban tidak pasti menahan Kirim → tepat 1 POST; Kiri
     await expect(strip).toBeVisible();
     await expect(main.getByRole("list", { name: "Order saya" })).toContainText("#3f2a9c1e"); // order sudah masuk
     await expect(kirim).toBeDisabled();
-    await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu — order terakhir mungkin sudah masuk");
+    await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu; order terakhir mungkin sudah masuk");
     expect(m.kirim).toHaveLength(1);
     // Kirim lagi = pilihan eksplisit dengan peringatan order ganda; Batal tidak mengirim apa pun.
     await strip.getByRole("button", { name: "Kirim lagi…" }).click();
@@ -712,7 +712,7 @@ test("Order Sales (owner 8 Okt): draf di ponsel — muat ulang menawarkan Pulihk
     await tawaran.getByRole("button", { name: "Pulihkan draf" }).click();
     await expect(b1.getByRole("group", { name: "Barang 1 terpilih" })).toContainText("A-1", NAV);
     await expect(kirim).toBeDisabled();
-    await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu — order terakhir mungkin sudah masuk");
+    await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu; order terakhir mungkin sudah masuk");
     expect(m.kirim).toHaveLength(1);
 
     // Terkirim → draf dihapus dari ponsel; muat ulang tidak menawarkan apa pun.

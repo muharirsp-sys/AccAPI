@@ -109,7 +109,7 @@ export default function RekapPromo() {
         <div className="fi-page">
             <header className="fi-page-head">
                 <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Promo &amp; Klaim</span></li><li><span aria-current="page">Rekap Promo</span></li></ol></nav>
-                <h1>Rekap promo {tgl(from)} – {tgl(to)}</h1>
+                <h1>Rekap Promo {tgl(from)} – {tgl(to)}</h1>
                 <p>Diskon yang benar-benar keluar dari Accurate pada periode ini, dibaca dari faktur yang dikirim lewat sinkronisasi (bukan dari hitungan kita), lalu dipilah siapa menanggungnya. Aturan promo diimpor dan diubah di Aturan Promo.</p>
             </header>
 
@@ -144,7 +144,7 @@ export default function RekapPromo() {
                                 <div className="fi-kc"><span>Bruto faktur</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(r.gross)}</b><small>{r.invoices} faktur · {r.lines} baris</small></div>
                                 <button type="button" className="fi-kc" data-tone="pos" aria-pressed={buka?.nilai === "principal"} onClick={() => setBuka(buka?.nilai === "principal" ? null : { jenis: "bucket", nilai: "principal" })}><span>{BEBAN.principal.label}</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(r.principal)}</b><small>cocok aturan principal, bisa ditagihkan · lihat rincian</small></button>
                                 <button type="button" className="fi-kc" aria-pressed={buka?.nilai === "distributor"} onClick={() => setBuka(buka?.nilai === "distributor" ? null : { jenis: "bucket", nilai: "distributor" })}><span>{BEBAN.distributor.label}</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(r.distributor)}</b><small>cocok aturan distributor, biaya sendiri · lihat rincian</small></button>
-                                <Link href={`/normalisasi-diskon${normQuery}`} className="fi-kc" data-tone={r.unowned ? "neg" : "pos"}><span>Tak bertuan</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(r.unowned)}</b><small>{r.unowned ? "tidak sesuai promo yang berlaku · golongkan di Normalisasi diskon" : "semua potongan punya aturan"}</small></Link>
+                                <Link href={`/normalisasi-diskon${normQuery}`} className="fi-kc" data-tone={r.unowned ? "neg" : "pos"}><span>Tak bertuan</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(r.unowned)}</b><small>{r.unowned ? "tidak sesuai promo yang berlaku · golongkan di Normalisasi Diskon" : "semua potongan punya aturan"}</small></Link>
                             </div>
                             {r.unowned === 0
                                 ? <MessageStrip tone="pos" title="Periode ini bersih:">setiap potongan cocok dengan aturan promo yang berlaku.</MessageStrip>

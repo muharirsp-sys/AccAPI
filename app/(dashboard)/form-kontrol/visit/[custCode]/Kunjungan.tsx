@@ -4,7 +4,7 @@
  *   kontrak #132): Tidak order + alasan R15 → merchandising DILEWATI → foto bukti toko tutup (= foto check-out, wajib) → selesai tanpa order.
  * Caller: ./page.tsx (rute /form-kontrol/visit/[custCode]?salesCode&principle&date).
  * Dependensi: GET /api/form-kontrol/visit + /reasons; POST /api/form-kontrol/checkin, /ao-control, /merchandising, /checkout;
- *   ./FotoBukti; ../../lapangan (ambilJson, kirimFk, sebabGagal, PESAN_SINYAL), ../../shared (alasanIzinFk, jamWita); components/fiori/*; lib/rekapan-nota/ui; lib/tampil (KOSONG).
+ *   ./FotoBukti; ../../lapangan (ambilJson, kirimFk, sebabGagal, PESAN_SINYAL), ../../shared (alasanIzinFk, rentangWita); components/fiori/*; lib/rekapan-nota/ui; lib/tampil (KOSONG, waktuWita).
  * Main Functions: Kunjungan (muat/kosong/galat), Wizard (langkah), MERCH_STEPS.
  * Side Effects: HTTP baca/tulis kunjungan; kamera/lokasi lewat FotoBukti. Langkah hanya maju setelah simpan sukses. Payload sama dengan
  *   wizard lama. FK-MSM3: 409 KUNJUNGAN_DIBATALKAN / BUKAN_RUTE_HARI_INI (toko tidak lagi di rute) → wizard diganti penjelasan (judul per kode,
@@ -27,8 +27,8 @@ import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { TOKO_TUTUP_CODE } from "@/lib/form-kontrol/constants";
 import type { GeoCoords } from "@/lib/form-kontrol/location";
 import { PESAN_SINYAL, ambilJson, ditolakBukanRute, kirimFk, sebabGagal } from "../../lapangan";
-import { KOSONG } from "@/lib/tampil";
-import { alasanIzinFk, hariIniWita, jamWita } from "../../shared";
+import { KOSONG, waktuWita } from "@/lib/tampil";
+import { alasanIzinFk, hariIniWita, rentangWita } from "../../shared";
 import FotoBukti from "./FotoBukti";
 
 interface StoreInfo {
@@ -269,7 +269,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
     const alasanLabel = (code: string) => { const r = data.reasons.find((x) => x.reasonCode === code); return r ? `${r.reasonCode} · ${r.label}` : code; };
     const kartuCheckin = (
         <KeyValues items={[
-            ["Check-in", checkinAt ? `${jamWita(checkinAt)} WITA` : "Tercatat"],
+            ["Check-in", checkinAt ? `${waktuWita(checkinAt)} WITA` : "Tercatat"],
             ...(checkinPhoto ? [["Foto", "tersimpan · lokasi dan waktu dicap server"] as [string, ReactNode]] : []),
         ]} />
     );
@@ -407,7 +407,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                 <div className="fi-panel">
                     <h2 className="fi-title-3">Ringkasan kunjungan</h2>
                     <KeyValues items={[
-                        ["Check-in", checkinAt ? `${jamWita(checkinAt)} WITA` : "Tercatat"],
+                        ["Check-in", checkinAt ? `${waktuWita(checkinAt)} WITA` : "Tercatat"],
                         ["Status", ao?.status === "not_order" && ao.noOrderReasonCode ? `TIDAK ORDER · ${alasanLabel(ao.noOrderReasonCode)}` : statusTeks(ao?.status)],
                         ["Merchandising", tutup ? "Dilewati (toko tutup)" : `${nMerch} dari ${MERCH_STEPS.length} · ${Object.keys(stepPhotos).length} foto`],
                     ]} />
@@ -433,7 +433,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                 <MessageStrip tone="pos" title="Kunjungan selesai.">Tersimpan di server; SPV melihatnya di dashboard.</MessageStrip>
                 <div className="fi-panel">
                     <KeyValues items={[
-                        ["Waktu", checkinAt && checkoutAt ? `${jamWita(checkinAt)}–${jamWita(checkoutAt)} WITA (${durasi} menit)` : "Tercatat"],
+                        ["Waktu", checkinAt && checkoutAt ? `${rentangWita(checkinAt, checkoutAt)} WITA (${durasi} menit)` : "Tercatat"],
                         ["Status", tutup ? `TIDAK ORDER · ${alasanLabel(TOKO_TUTUP_CODE)}` : statusTeks(ao?.status)],
                         ["Merchandising", tutup ? "Dilewati (toko tutup) · foto bukti tersimpan" : `${nMerch} dari ${MERCH_STEPS.length}`],
                     ]} />

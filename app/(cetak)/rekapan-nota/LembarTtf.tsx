@@ -18,7 +18,8 @@
  */
 import type { buildTtf } from "@/lib/rekapan-nota/query";
 import { bagiHalamanTtf } from "@/lib/rekapan-nota/ttf-paginasi";
-import { jamWita, nomorLembar } from "@/lib/rekapan-nota/ui";
+import { nomorLembar } from "@/lib/rekapan-nota/ui";
+import { waktuWita } from "@/lib/tampil";
 
 const ID = (v: number) => v.toLocaleString("id-ID");
 
@@ -48,7 +49,7 @@ export function LembarTtf({ id, wave, ttf, sekarang }: {
     const halaman = bagiHalamanTtf(rows);
     const totalHalaman = halaman.length;
     const noLembar = nomorLembar("TTF", wave.tanggal, id);
-    const dicetak = jamWita(sekarang);
+    const dicetak = waktuWita(sekarang);
 
     return (
         <div className="ttf">

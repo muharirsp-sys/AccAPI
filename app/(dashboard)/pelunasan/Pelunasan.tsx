@@ -40,9 +40,9 @@ function Kepala({ langkah, sesi, onPeriksa }: { langkah: number; sesi: Load<Sesi
                     : <StatusBadge tone="info">Database: {namaDatabase(s)}</StatusBadge>;
     return (
         <header className="fi-page-head">
-            <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Keuangan</span></li><li><span aria-current="page">Pelunasan penjualan</span></li></ol></nav>
+            <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Keuangan</span></li><li><span aria-current="page">Pelunasan</span></li></ol></nav>
             <div className="fi-page-bar">
-                <h1>Pelunasan penjualan</h1>
+                <h1>Pelunasan</h1>
                 <span aria-live="polite">{badge}</span>
                 <span className="fi-spacer" />
                 <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} busy={sesi.status === "memuat" && Boolean(s)} onClick={onPeriksa}>Periksa ulang sesi</Button>

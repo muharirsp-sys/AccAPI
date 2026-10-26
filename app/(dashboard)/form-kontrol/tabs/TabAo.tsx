@@ -3,7 +3,7 @@
  *   progres kunjungan, tanda prioritas, dan "Kirim status rute hari ini" lewat dialog (pengganti tombol Submit AO).
  * Caller: form-kontrol/FormKontrol.tsx (shell tab, default export `({ scope })`).
  * Dependensi: GET/POST /api/form-kontrol/ao-control, ../shared (Scope, AoRow, principalAwal, penjelasanTanpaJks, compareRoute, hariIniWita,
- *   jamWita, useIzinFk),
+ *   rentangWita, useIzinFk), lib/tampil (waktuWita),
  *   ../lapangan (bacaFk, kirimFk, keBarisRute, simpanRute, useHariBeku), components/fiori/*, lib/rekapan-nota/ui (tanggalPanjang).
  * Main Functions: TabAo, badgeToko, badgeNoo, susunKiriman.
  * Side Effects: HTTP GET rute; GET ulang + POST ao-control per toko saat Kirim status; sessionStorage daftar toko rute (Order Sales).
@@ -32,7 +32,8 @@ import { CalendarDays, FileText, RefreshCw, Send, Star } from "lucide-react";
 import { Button, EmptyState, ErrorState, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
-import { type Scope, type AoRow, compareRoute, hariIniWita, jamWita, penjelasanTanpaJks, principalAwal, useIzinFk, visitDurationMin } from "../shared";
+import { waktuWita } from "@/lib/tampil";
+import { type Scope, type AoRow, compareRoute, hariIniWita, rentangWita, penjelasanTanpaJks, principalAwal, useIzinFk, visitDurationMin } from "../shared";
 import { adaHasilKunjungan, statusBintang } from "@/lib/form-kontrol/constants";
 import { bacaFk, ditolakBukanRute, keBarisRute, kirimFk, simpanRute, useHariBeku } from "../lapangan";
 import { BatalkanLuarRute, TambahLuarRute } from "./LuarRute";
@@ -77,10 +78,10 @@ function metaToko(r: AoRow): string {
     // #3: angka ini menghitung HARI dengan status order/aktif bulan ini (db.ts getTodayRoute), bukan jumlah kunjungan.
     if (r.monthlyOrderCount > 0) bagian.push(`${r.monthlyOrderCount} hari order bulan ini`);
     if (r.needsAttention) bagian.push("≥ 2× tidak order bulan ini");
-    if (sedang(r)) bagian.push(`Sedang dikunjungi · check-in ${jamWita(r.checkinAt)}`);
+    if (sedang(r)) bagian.push(`Sedang dikunjungi · check-in ${waktuWita(r.checkinAt)}`);
     else if (r.checkoutAt) {
         const menit = visitDurationMin(r);
-        bagian.push(`Selesai ${jamWita(r.checkinAt)}–${jamWita(r.checkoutAt)}${menit !== null ? ` (${menit} menit)` : ""}`);
+        bagian.push(`Selesai ${rentangWita(r.checkinAt, r.checkoutAt)}${menit !== null ? ` (${menit} menit)` : ""}`);
     }
     else bagian.push("Belum dikunjungi");
     return bagian.join(" · ");
@@ -405,7 +406,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
             {tanpaJks && principalCabang && (
                 <MessageStrip tone="info" title={`${tanpaJks.title}.`}>
                     Rute terjadwal kosong sampai Admin Sales mengimpor JKS Anda. Anda tetap bisa menambah kunjungan luar rute (principal {principalCabang},
-                    cabang Accurate Anda); di Laporan harian toko itu bisa Anda masukkan ke JKS.
+                    cabang Accurate Anda); di Laporan Kunjungan toko itu bisa Anda masukkan ke JKS.
                 </MessageStrip>
             )}
             {sukses && <MessageStrip tone="pos" title="Terkirim.">{sukses}</MessageStrip>}

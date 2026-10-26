@@ -1,8 +1,8 @@
 /*
  * Tujuan: Tipe, konstanta, dan helper bersama Form Kontrol (shell, tab tim, tab salesman, kunjungan).
  * Caller: form-kontrol/FormKontrol.tsx (shell), tabs/*, spv-dashboard/DashboardSpv.tsx, visit/[custCode]/*, supervisor-review/*.
- * Dependensi: React (context izin), components/fiori/interactive (tipe Load), lib/tampil (KOSONG).
- * Main Functions: TABS, hariIniWita, jamWita, IzinFkCtx/useIzinFk/alasanIzinFk, ambilFk, tulisFk, useNooMenunggu, principalAwal, penjelasanTanpaJks,
+ * Dependensi: React (context izin), components/fiori/interactive (tipe Load), lib/tampil (KOSONG, waktuWita).
+ * Main Functions: TABS, hariIniWita, rentangWita, IzinFkCtx/useIzinFk/alasanIzinFk, ambilFk, tulisFk, useNooMenunggu, principalAwal, penjelasanTanpaJks,
  *   labelPola, compareRoute, visitDurationMin.
  * Side Effects: ambilFk/tulisFk melakukan HTTP ke /api/form-kontrol/*; sisanya pure.
  */
@@ -11,7 +11,7 @@
 import { createContext, useCallback, useContext, useEffect } from "react";
 import { useLoad, type Load } from "@/components/fiori/interactive";
 import type { StatusNoo } from "@/lib/form-kontrol/noo-aturan";
-import { KOSONG } from "@/lib/tampil";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -121,12 +121,14 @@ export function hariIniWita(now: Date = new Date()): string {
     return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(now);
 }
 
-/** "09.40" dalam WITA dari ISO; KOSONG bila kosong/tidak valid. Jam saja, untuk kunjungan hari yang sudah jelas dari judul; tanggal + jam pakai waktuWita. */
-export function jamWita(iso: string | null | undefined): string {
-    if (!iso) return KOSONG;
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return KOSONG;
-    return new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Makassar" }).format(d);
+/**
+ * Rentang check-in–check-out dalam format lib/tampil: "06/10/2026 09.40–10.10" (tanggal sekali bila sama), beda tanggal → tanggal di kedua
+ * ujung, ujung kosong → KOSONG. Satu waktu pakai `waktuWita`; jam tanpa tanggal tidak dipakai karena layar ini bisa membuka tanggal lain.
+ */
+export function rentangWita(mulai: string | null | undefined, selesai: string | null | undefined): string {
+    const a = waktuWita(mulai), b = waktuWita(selesai);
+    // "dd/mm/yyyy hh.mm": 10 karakter pertama = tanggal, sesudah spasi = jam.
+    return a !== KOSONG && b !== KOSONG && a.slice(0, 10) === b.slice(0, 10) ? `${a}–${b.slice(11)}` : `${a}–${b}`;
 }
 
 /** Pola minggu JKS dari server (ganjil, genap, all) dalam bahasa tugas; nilai di luar daftar tidak ditampilkan mentah. */

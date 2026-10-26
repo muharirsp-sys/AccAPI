@@ -203,7 +203,7 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                 confirmLabel="Ganti batch" confirmDisabled={kunciGanti}
                 description="Batch lama beserta hasil validasinya dihapus dan diganti batch baru; batch baru perlu divalidasi ulang."
                 facts={dup && pratinjau ? [
-                    ["Batch lama", `${dup.fileName} · diunggah ${waktuWita(dup.uploadedAt)}`],
+                    ["Batch lama", `${dup.fileName} · diunggah ${waktuWita(dup.uploadedAt)} WITA`],
                     ["Di Antrean Faktur", statusCek],
                     ["Berkas baru", `${pratinjau.fileName} · ${angka(pratinjau.lineCount)} baris siap disimpan`],
                     ["Konfirmasi order ganda", "tetap berlaku (dicatat per SO)"],
@@ -241,7 +241,7 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
         { key: "baris", header: "Baris", align: "end", cell: (b) => <span className="fi-tnum">{angka(b.lineCount)}</span> },
         { key: "lewat", header: "Dilewati", align: "end", secondary: true, cell: (b) => <span className="fi-tnum">{b.skipped || KOSONG}</span> },
         { key: "validasi", header: "Validasi", cell: (b) => <BadgeValidasi batch={b} /> },
-        { key: "unggah", header: "Diunggah", secondary: true, cell: (b) => <span className="fi-small">{waktuWita(b.uploadedAt)}{b.uploadedBy ? ` · ${b.uploadedBy}` : ""}</span> },
+        { key: "unggah", header: "Diunggah", secondary: true, cell: (b) => <span className="fi-small">{waktuWita(b.uploadedAt)} WITA{b.uploadedBy ? ` · ${b.uploadedBy}` : ""}</span> },
         { key: "aksi", header: "Tindakan", cell: (b) => aksiBatch(b) },
     ];
     const aksiBatch = (batch: Batch) => {
@@ -292,7 +292,7 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                         </div>
                         {dup && (
                             <MessageStrip tone="warn" title="Berkas ini sudah pernah diunggah.">
-                                {dup.fileName}, {waktuWita(dup.uploadedAt)}. Simpan dinonaktifkan; pilih Ganti batch lama bila memang mau diulang.{" "}
+                                {dup.fileName}, {waktuWita(dup.uploadedAt)} WITA. Simpan dinonaktifkan; pilih Ganti batch lama bila memang mau diulang.{" "}
                                 <Link href={`/principal-order?batch=${encodeURIComponent(dup.id)}`}>Buka batch lama</Link>
                             </MessageStrip>
                         )}

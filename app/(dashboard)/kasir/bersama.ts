@@ -3,9 +3,9 @@
  *   PASTI dari TIDAK PASTI menurut §8.2 (BUKAN `tulis()` principal-order: di sana semua ≥ 502 dianggap tidak pasti, padahal 502 BACA_GAGAL /
  *   503 SESI_SINKRON = pasti), isian Rupiah manusia -> teks desimal, format Rupiah/WITA, label status & alasan.
  * Caller: Kasir.tsx, DialogKasir.tsx.
- * Dependensi: form-kontrol/lapangan (ambilJson), principal-order/bersama (baca, sebab, waktuWita), lib/angka-lokal (angkaLokalTeks, tanpa SheetJS),
- *   lib/kasir/rekonsiliasi (keSen — murni), lib/promo-ui (rupiah), lib/tampil (KOSONG untuk nilai kosong).
- * Main Functions: bacaHari, bacaRincian, kirimKasir, nominalKeTeks, rp, jamWita, segarkan, ALASAN, LABEL_*.
+ * Dependensi: form-kontrol/lapangan (ambilJson), principal-order/bersama (baca, sebab), lib/angka-lokal (angkaLokalTeks, tanpa SheetJS),
+ *   lib/kasir/rekonsiliasi (keSen — murni), lib/promo-ui (rupiah), lib/tampil (KOSONG untuk nilai kosong, waktuWita diekspor ulang).
+ * Main Functions: bacaHari, bacaRincian, kirimKasir, nominalKeTeks, rp, waktuWita, segarkan, ALASAN, LABEL_*.
  * Side Effects: fetch (bacaHari/bacaRincian/kirimKasir/segarkan); sisanya murni.
  */
 import type { Tone } from "@/components/fiori/core";
@@ -17,7 +17,7 @@ import { keSen } from "@/lib/kasir/rekonsiliasi";
 import { rupiah } from "@/lib/promo-ui";
 import { KOSONG } from "@/lib/tampil";
 
-export { waktuWita } from "@/app/(dashboard)/principal-order/bersama";
+export { waktuWita } from "@/lib/tampil";
 
 /** Uang dari server = teks desimal ("1250000.00"); null = angka Incaso belum terbaca (BUKAN 0). */
 export type Uang = string;
@@ -163,13 +163,6 @@ export const rpSen = (sen: number) => rp(sen / 100);
 
 /** Klop = sama persis ATAU sama dengan pelunasan dibulatkan ke atas ke kelipatan Rp 100 (owner 7 Okt). */
 export const bulatAtas100 = (sen: number) => Math.ceil(sen / 10_000) * 10_000;
-
-/** "16.20" WITA. */
-export function jamWita(iso: string | null | undefined) {
-    if (!iso) return "";
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? "" : new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Makassar", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
-}
 
 /** YYYY-MM-DD -> "Senin, 5 Okt 2026". */
 export function tanggalPanjang(ymd: string) {

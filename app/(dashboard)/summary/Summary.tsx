@@ -416,7 +416,7 @@ export default function Summary({ permKeys }: { permKeys: string[] }) {
         <div className="fi-page" style={{ paddingBottom: 0 }}>
             <ObjectPageHeader
                 breadcrumbs={[{ label: "Promo & Klaim" }, { label: "Summary Promo" }]}
-                title={draft ? draft.title || `Summary ${principleName}` : `Summary promo${principleName ? ` · ${principleName}` : ""}`}
+                title={draft ? draft.title || `Summary ${principleName}` : `Summary Promo${principleName ? ` · ${principleName}` : ""}`}
                 status={draft ? <StatusBadge tone={STATUS_DRAF[st]?.tone ?? "neu"}>{STATUS_DRAF[st]?.label ?? st}{st === "draft" ? ` · revisi ${draft.revision}` : ` versi ${draft.revision}`}</StatusBadge> : <StatusBadge tone="neu">Belum ada draf</StatusBadge>}
                 draft={dirty}
                 attributes={draft ? [{ label: "Surat", value: suratUnik.length }, { label: "Aturan tersusun", value: rules.length }, { label: "Periode", value: draftPeriod[0] ? `${tanggalWita(draftPeriod[0])} – ${tanggalWita(draftPeriod[1])}` : "dari baris" }, { label: "Draf", value: <span className="fi-mono">{draft.id.slice(0, 8)}</span> }] : undefined}

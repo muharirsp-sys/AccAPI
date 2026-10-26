@@ -2,7 +2,7 @@
  * Tujuan: "Laporan kunjungan" salesman (Fiori S5, it05): lima angka otomatis dari Form AO (WITA) + tindak lanjut, dikirim ke SPV lewat
  *   dialog; status dibaca SPV. Tanggal = Hari ini atau Kemarin (laporan yang terlewat), tanpa pemilih tanggal bebas. Galat muat ≠ nol.
  * Caller: form-kontrol/FormKontrol.tsx (shell tab, default export `({ scope })`). Bukan modul Laporan Harian (email ekspor Accurate).
- * Dependensi: GET/POST /api/form-kontrol/reports; ../shared (Scope, jamWita, useIzinFk); ../lapangan (bacaFk, kirimFk, useHariBeku,
+ * Dependensi: GET/POST /api/form-kontrol/reports; ../shared (Scope, useIzinFk); ../lapangan (bacaFk, kirimFk, useHariBeku,
  *   kemarinDari); components/fiori/*; lib/rekapan-nota/ui (tanggalPanjang); lib/tampil (KOSONG, waktuWita).
  * Main Functions: TabLaporan, keLaporan.
  * Side Effects: HTTP GET laporan hari ini + kemarin; POST laporan {salesCode, date, tindakLanjut} (payload sama dengan kode lama) lalu

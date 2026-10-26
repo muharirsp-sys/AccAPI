@@ -14,7 +14,7 @@ import { useState, type ReactNode } from "react";
 import { MessageStrip } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useUnsavedGuard } from "@/components/fiori/interactive";
 import {
-    bulatAtas100, jamWita, kirimKasir, LABEL_STATUS, LABEL_TINDAK, labelEmber, namaTampil, nominalKeTeks, panjang, rp, rpSen, senDari,
+    bulatAtas100, kirimKasir, LABEL_STATUS, LABEL_TINDAK, labelEmber, namaTampil, nominalKeTeks, panjang, rp, rpSen, senDari,
     tanggalPanjang, waktuWita, type BarisOrang, type Ember, type Hari, type Jawab, type TindakLanjut,
 } from "./bersama";
 import { KOSONG } from "@/lib/tampil";
@@ -297,7 +297,7 @@ export function DialogTutup({ hari, tanggal, kunci, kabar, onBasi }: Umum & { on
         if (j.jenis === "ragu") {
             return kabar.ragu(`tutup hari ${tanggalPanjang(tanggal)}`, (h) => {
                 const e = h.hari.event.at(-1);
-                return e && e.id > akhir && e.jenis === "tutup" ? `Tersimpan: hari ditutup ${jamWita(e.pada)} WITA oleh ${e.oleh}.` : "Belum tersimpan: hari belum ditutup. Tutup lagi bila perlu.";
+                return e && e.id > akhir && e.jenis === "tutup" ? `Tersimpan: hari ditutup ${waktuWita(e.pada)} WITA oleh ${e.oleh}.` : "Belum tersimpan: hari belum ditutup. Tutup lagi bila perlu.";
             });
         }
         if (j.kode === "BACA_BELUM_SEGAR") return onBasi();
@@ -313,7 +313,7 @@ export function DialogTutup({ hari, tanggal, kunci, kabar, onBasi }: Umum & { on
                 ["Uang tak teralokasi dijelaskan", `${ember}`],
                 ["Pelunasan Incaso", rp(hari.total.pelunasan)],
                 ["Setoran Kasir", rp(hari.total.setoran)],
-                ["Pelunasan dibaca lengkap", hari.baca?.lengkapPada ? `pukul ${jamWita(hari.baca.lengkapPada)} WITA${hari.baca.akun ? ` · akun sinkron ${hari.baca.akun}` : ""}` : KOSONG],
+                ["Pelunasan dibaca lengkap", hari.baca?.lengkapPada ? `${waktuWita(hari.baca.lengkapPada)} WITA${hari.baca.akun ? ` · akun sinkron ${hari.baca.akun}` : ""}` : KOSONG],
                 ["Sesudah ditutup", "Setoran dan penjelasan terkunci; membuka kembali hanya OM/Admin dengan alasan."],
             ]} />
     );

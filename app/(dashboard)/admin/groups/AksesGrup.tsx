@@ -207,7 +207,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
         : !det || !nilai ? <ErrorState title="Detail grup gagal dimuat" message={detailL.error ?? "Grup tidak ditemukan. Mungkin sudah dihapus."} onRetry={muatDetail} />
         : (
             <div style={{ display: "grid", gap: 12 }}>
-                {/* h2: halaman sudah punya h1 "Akses Grup" (audit No 140a). */}
+                {/* h2: halaman sudah punya h1 "Kelola Akses Grup" (audit No 140a). */}
                 <ObjectPageHeader title={det.group.name} draft={berubah} headingLevel={2}
                     actions={
                         // Aksi destruktif di header objek (bukan footer): footer Draf hanya memuat Batal + Simpan, selalu muat 390 px (tinjauan S7a #1).
@@ -340,11 +340,11 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
     return (
         <div className="fi-page" style={{ paddingBottom: 0 }}>
             <header className="fi-page-head">
-                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Pengaturan</span></li><li><span aria-current="page">Akses Grup</span></li></ol></nav>
+                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Pengaturan</span></li><li><span aria-current="page">Kelola Akses Grup</span></li></ol></nav>
                 <div className="fi-page-bar">
-                    <h1>Akses Grup</h1>
+                    <h1>Kelola Akses Grup</h1>
                     <span className="fi-spacer" />
-                    <Link className="fi-btn fi-btn--secondary" href="/admin/users">User</Link>
+                    <Link className="fi-btn fi-btn--secondary" href="/admin/users">Pengguna dan Izin</Link>
                     <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} onClick={() => { setBaru({ nama: "", deskripsi: "" }); setDialog("baru"); }}>Grup baru…</Button>
                 </div>
                 <p>Izin per modul untuk setiap grup. Izin user = gabungan semua grupnya. Selisih izin ditampilkan sebelum disimpan dan tercatat di riwayat.</p>

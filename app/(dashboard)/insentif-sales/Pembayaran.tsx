@@ -5,7 +5,7 @@
  * Caller: app/(dashboard)/insentif-sales/pembayaran/page.tsx (default export, prop permKeys).
  * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard, KonstantaCtx), ./Rincian (TabelRincian, rincian, PPh, StatusBayar,
  *   pemuat SPV/SM), ./data (format, MONTH_LABELS), components/fiori/*, lib/insentif-ui, lib/insentif-payee, lib/insentif-pph, lib/insentif-payment-date,
- *   lib/rekapan-nota/ui (ambil, jamWita), lib/tampil (tanggalWita, KOSONG), sonner.
+ *   lib/rekapan-nota/ui (ambil), lib/tampil (tanggalWita, waktuWita, KOSONG), sonner.
  * Main Functions: Pembayaran (default), barisBulan, ringkasan12Bulan, UbinBulan.
  * Side Effects: GET dashboard (tanpa saringan), spv-dashboard, sm-dashboard, payments?year. Tandai lunas: per penerima terpilih,
  *   paralel, POST /api/insentif-sales/payments (belum tercatat) atau PATCH /payments/[id] (sudah tercatat) — MENCATAT UANG DIBAYAR,
@@ -24,8 +24,8 @@ import { parsePaymentDate, todayWita } from "@/lib/insentif-payment-date";
 import { nettoInsentif } from "@/lib/insentif-pph";
 import { payeeCode, PAYEE_PRINCIPLE_ALL, type PayeeRole } from "@/lib/insentif-payee";
 import { paymentSelectionKey, readApi, sebabNol, type ApiRow, type PaymentRow } from "@/lib/insentif-ui";
-import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
-import { KOSONG as NILAI_KOSONG, tanggalWita } from "@/lib/tampil";
+import { ambil } from "@/lib/rekapan-nota/ui";
+import { KOSONG as NILAI_KOSONG, tanggalWita, waktuWita } from "@/lib/tampil";
 import { MONTH_LABELS, formatRp, formatShortRp } from "./data";
 import { InsentifRangka, KonstantaCtx, useDashboard, usePeriode } from "./Rangka";
 import {
@@ -282,7 +282,7 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
         setPilihan((p) => ({ periode: p.periode, keys: new Set([...p.keys].filter((key) => !berhasil.has(key))) }));
         muatBayar();
         const nettoOk = daftar.filter((r) => berhasil.has(paymentSelectionKey(r))).reduce((a, r) => a + nettoInsentif(nominalLunas(r), k.pph.rate), 0);
-        if (berhasil.size > 0) setPesan(`${berhasil.size} pembayaran ${label} ditandai lunas ${jamWita(new Date())} · netto ${formatRp(nettoOk)} · tanggal bayar ${ymdTampil(paymentDate)}.`);
+        if (berhasil.size > 0) setPesan(`${berhasil.size} pembayaran ${label} ditandai lunas ${waktuWita(new Date())} WITA · netto ${formatRp(nettoOk)} · tanggal bayar ${ymdTampil(paymentDate)}.`);
         if (gagal.length === 0) {
             setDialog(false);
             toast.success(`${berhasil.size} pembayaran ditandai lunas.`);

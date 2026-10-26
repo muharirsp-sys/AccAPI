@@ -115,7 +115,7 @@ export default function HistoryPenjualan({ permKeys }: { permKeys: string[] }) {
             <header className="fi-page-head">
                 <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Penjualan</span></li><li><span aria-current="page">History Penjualan</span></li></ol></nav>
                 <div className="fi-page-bar">
-                    <h1>History penjualan</h1>
+                    <h1>History Penjualan</h1>
                     <span className="fi-spacer" />
                     {bolehImpor && <Button icon={<Upload className="fi-icon" aria-hidden />} onClick={() => setDialog(true)}>Impor CSV e-Faktur…</Button>}
                 </div>

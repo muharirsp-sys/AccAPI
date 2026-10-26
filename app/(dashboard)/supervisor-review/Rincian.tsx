@@ -2,7 +2,7 @@
  * Tujuan: Potongan layar Supervisor Review yang dipakai tabel desktop dan kartu ponsel: badge status, tombol WhatsApp, kepala salesman,
  *   dan rincian kunjungan salesman terpilih (tabel di desktop, daftar kartu di ponsel) + subtotal.
  * Caller: ./SupervisorReview.tsx.
- * Dependensi: components/fiori/core, lib/supervisor-review/kontrak (JARAK_JAUH_M), ./bersama, ../form-kontrol/shared (jamWita WITA), lib/tampil (KOSONG).
+ * Dependensi: components/fiori/core, lib/supervisor-review/kontrak (JARAK_JAUH_M), ./bersama, ../form-kontrol/shared (rentangWita), lib/tampil (KOSONG, waktuWita).
  * Main Functions: LabelStatus, Wa, KepalaSalesman, DaftarKunjungan.
  * Side Effects: Tidak ada (tautan WhatsApp dibuka pengguna di tab baru).
  */
@@ -12,8 +12,8 @@ import type { Ref } from "react";
 import { MessageCircle } from "lucide-react";
 import { Button, EmptyState, StatusBadge } from "@/components/fiori/core";
 import { JARAK_JAUH_M, type BarisSalesman, type Kunjungan } from "@/lib/supervisor-review/kontrak";
-import { KOSONG } from "@/lib/tampil";
-import { jamWita } from "../form-kontrol/shared";
+import { KOSONG, waktuWita } from "@/lib/tampil";
+import { rentangWita } from "../form-kontrol/shared";
 import { angka, namaBaris, rp, STATUS, TANPA_HP } from "./bersama";
 
 export function LabelStatus({ status }: { status: BarisSalesman["status"] }) {
@@ -93,7 +93,7 @@ export function DaftarKunjungan({ rows, kartu }: { rows: Kunjungan[]; kartu: boo
                         <li key={kunci(k, i)} className="fi-li" style={{ cursor: "default" }}>
                             <span className="fi-li-r1"><span><Toko k={k} /></span><Ec k={k} /></span>
                             <span className="fi-li-r3">
-                                <span>{jamWita(k.mulai)}–{jamWita(k.selesai)} · {strip(k.menitDiToko)} mnt di toko · tempuh {strip(k.menitTempuh)} mnt</span>
+                                <span>{rentangWita(k.mulai, k.selesai)} · {strip(k.menitDiToko)} mnt di toko · tempuh {strip(k.menitTempuh)} mnt</span>
                                 <span>Jumlah {strip(k.qty, (n) => angka(n, 2))} · Item {strip(k.item)}</span>
                             </span>
                         </li>
@@ -114,7 +114,7 @@ export function DaftarKunjungan({ rows, kartu }: { rows: Kunjungan[]; kartu: boo
                             {rows.map((k, i) => (
                                 <tr key={kunci(k, i)}>
                                     <td><Toko k={k} /></td>
-                                    <td className="fi-tnum">{jamWita(k.mulai)}</td><td className="fi-tnum">{jamWita(k.selesai)}</td>
+                                    <td className="fi-tnum">{waktuWita(k.mulai)}</td><td className="fi-tnum">{waktuWita(k.selesai)}</td>
                                     <td className="fi-end">{strip(k.menitDiToko)}</td><td className="fi-end">{strip(k.menitTempuh)}</td>
                                     <td className="fi-end">{strip(k.qty, (n) => angka(n, 2))}</td><td className="fi-end">{strip(k.item)}</td>
                                     <td><Ec k={k} /></td>
