@@ -156,7 +156,7 @@ UI upload laporan harian
   -> laporan_harian_pq.SalesBase  (replika query SalesBase "2.3 To SPV dan SM New": flag AO/EC/IA/Nota Retur/Batal)
   -> laporan_harian.load_stock() -> master_stock()  ("3. Stock" Sheet1; export Accurate dipetakan)
   -> laporan_harian.write_report_files() -> laporan_harian_pq.build_report() + write_workbook()
-       -> 22 keyword LaporanAuto, sama persis dengan arsip (nilai, kolom, urutan baris, nama sheet, format)
+       -> 22 keyword LaporanAuto + JONAL, sama persis dengan arsip/sheet 2.3 (nilai, kolom, urutan baris, nama sheet, format)
   -> laporan_harian_manager.write_manager_report() -> Excel + HTML Pak Fahdhar untuk unduhan/screenshot
        -> agregasi JUMLAH net retur sekali, mapping cabang/principal -> SPV/SM; target periode belum tersedia tetap kosong
 Paritas: laporan_harian_bandingkan.py <hasil> <arsip LaporanAuto> (sel demi sel); test_laporan_harian_pq.py
@@ -1570,11 +1570,12 @@ UI: modul /laporan-harian
            - tabel master (GOLONGAN, JENIS PRODUK, Mapping_PIC) di `laporan_harian_lookups.json`; PL_MR dan RECKITT
              LIST di CSV read-only `python_backend/`
         -> output: (a) berkas per keyword, (b) agregat progress harian (salesDailyProgress), (c) ringkasan per SPV
-     -> keyword aktif `report_recipient` dicocokkan PERSIS ke 22 laporan LaporanAuto (`REPORT_KEYWORDS`):
+     -> keyword aktif `report_recipient` dicocokkan PERSIS ke 23 laporan (`REPORT_KEYWORDS`):
         SUMARTONO, MARTEN(+VOLUME_KG), SOFYAN, HEINZ(GOLONGAN ZUL & ARUL), SYAMSUL, STANLEY, YARMAN, RAMLY,
         RECKIT(+Devisi), ADNAN/IRMAN (NAMA SM; ADNAN menetapkan ulang GOLONGAN JONAL/ANI), ANI (principal MT/OFFICE),
         MUSTIKA RATU (format 20 kolom; stok diurutkan Nama Gudang = sortState tabel Excel), MOTASA MKS 1/2,
-        FONTERRA (tanpa C-TUN020, stok GD01), URC, ABCPI, ENERGIZER, GODREJJ, MSM/DOLPHIN (= ADNAN difilter principal);
+        FONTERRA (tanpa C-TUN020, stok GD01), URC, ABCPI, ENERGIZER, GODREJJ, MSM/DOLPHIN (= ADNAN difilter principal),
+        JONAL (MT Jonal: principal kelompok Jonal, salesman _MT/OFFICE; sheet JONAL di 2.3);
         keyword lain dilaporkan `unmatched_report_keywords`
      -> tanggal run/nama file/subject memakai tanggal transaksi penjualan terakhir; retur lebih baru tidak menggesernya
      -> tulis file per keyword ke `LH_RUNTIME_DIR/<runId>/` (sheet `<Keyword>` + `<Keyword> STOCK`, TANGGAL format
@@ -1654,7 +1655,8 @@ Normalisasi progress pure: `lib/laporan-harian/progress-normalize.ts`; self-chec
 `node --experimental-strip-types lib/laporan-harian/progress-normalize.test.ts`.
 Definisi laporan per keyword ada di `python_backend/laporan_harian_pq.py` (`build_report`). Sumber audit penerima ada di
 `config/mapping_laporan.csv`; sinkronkan secara transaksional dengan
-`node scripts/sync-laporan-recipients.mjs` agar tepat 20 keyword aktif dan keyword lama dinonaktifkan.
+`node scripts/sync-laporan-recipients.mjs` agar tepat 21 keyword aktif dan keyword lama dinonaktifkan
+(26 Okt 2026, keputusan owner: HENDRIK->IRMAN, YUDI->MARTEN, DENNY->STANLEY, SAHAR->ANI, tambah JONAL = MT Jonal).
 
 Validasi paritas 26 Oktober 2026 (masukan + arsip LaporanAuto 24 Okt, salinan lokal, tanpa email/produksi):
 `python python_backend/laporan_harian_bandingkan.py <folder hasil> <folder arsip> --tanggal 2026-10-24` -> 0 selisih.

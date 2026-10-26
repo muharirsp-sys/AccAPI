@@ -81,6 +81,11 @@ def main():
             assert isinstance(row[1], float if serial else dt.date), (keyword, row[1])
             assert isinstance(row[2], dt.date if keyword == "FONTERRA" else float), (keyword, row[2])
     assert pq.report_keyword(" motasa  mks 1 ") == "MOTASA MKS 1" and pq.report_keyword("HENDRIK") is None
+    csv_path = Path(__file__).resolve().parents[1] / "config" / "mapping_laporan.csv"
+    keywords = [line.split(",", 1)[0] for line in csv_path.read_text(encoding="utf-8").splitlines()[1:]
+                if line and not line.startswith("#") and not line.startswith("Keyword,")]
+    unknown = [k for k in keywords if pq.report_keyword(k) is None]
+    assert not unknown, f"keyword mapping_laporan.csv tanpa laporan: {unknown}"
     check_manager(lk)
     print(f"OK: FIX {len(fix)} baris + {len(acuan['sheets']) + 2} laporan identik dengan Power Query Excel")
 

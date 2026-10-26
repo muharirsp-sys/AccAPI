@@ -590,6 +590,12 @@ def _ani(t) -> bool:
     return p in ANI_PRINCIPALS and (is_mt or is_office) and (p != "FORISA NUSAPERSADA, PT" or is_mt)
 
 
+def _jonal(principal, salesman) -> bool:
+    """Query JONAL (MT Jonal): principal kelompok Jonal dengan salesman _MT/OFFICE."""
+    s = normalize(salesman)
+    return principal_key(principal) in JONAL_PRINCIPALS and ("_MT" in s or "OFFICE" in s)
+
+
 def _motasa(keyword):
     def keep(t):
         if t["PRINCIPAL"] != "MOTASA INDONESIA, PT":
@@ -820,13 +826,13 @@ SM_TARGETS = {"ADNAN": "ADNAN", "IRMAN": "IRMAN"}
 MANUAL_FORMAT = frozenset({"MSM", "DOLPHIN", "MOTASA MKS 1", "MOTASA MKS 2"})
 # Kolom TGL_JT sheet FONTERRA dan URC di workbook 2.3 berformat tanggal (sel lain: angka seri).
 TGL_JT_AS_DATE = frozenset({"FONTERRA", "URC"})
-REPORT_KEYWORDS = tuple(sorted({*GOLONGAN_TARGETS, *PRINCIPAL_TARGETS, *SM_TARGETS, "ANI"}))
+REPORT_KEYWORDS = tuple(sorted({*GOLONGAN_TARGETS, *PRINCIPAL_TARGETS, *SM_TARGETS, "ANI", "JONAL"}))
 
 
 def group_type(keyword: str) -> str:
     if keyword in SM_TARGETS:
         return "sm"
-    return "spv" if keyword in GOLONGAN_TARGETS or keyword == "ANI" else "principal"
+    return "spv" if keyword in GOLONGAN_TARGETS or keyword in ("ANI", "JONAL") else "principal"
 
 
 def report_keyword(keyword: str):
@@ -855,6 +861,8 @@ def build_report(keyword: str, sb: SalesBase, fix_rows: list, stock: list | None
         rows = sb.table(after=lambda r: r[SX["Mapping_PIC.NAMA SM"]] == sm)
     elif keyword == "ANI":  # predikat berfungsi kustom tidak didorong ke bawah join oleh Power Query
         rows = sb.table(after=lambda r: _ani({"PRINCIPAL": r[SX["PRINCIPAL"]], "SALESMAN": r[SX["SALESMAN"]]}))
+    elif keyword == "JONAL":  # sama seperti ANI: fungsi kustom dievaluasi setelah rantai penuh
+        rows = sb.table(after=lambda r: _jonal(r[SX["PRINCIPAL"]], r[SX["SALESMAN"]]))
     elif keyword == "MUSTIKA RATU":
         header, rows = list(MUSTIKA_COLUMNS), mustika_rows(fix_rows, lk)
     elif keyword in ("MSM", "DOLPHIN"):
@@ -892,6 +900,8 @@ def _stock_for(keyword: str, stock: list, lk: Lookups) -> list:
         return stock_table(stock, lk, after=lambda _, s: s == sm)
     if keyword == "ANI":  # fungsi kustom: dievaluasi setelah join Mapping_PIC (tidak didorong ke bawah)
         return [r for r in stock_table(stock, lk) if principal_key(r[5]) in ANI_PRINCIPALS]
+    if keyword == "JONAL":
+        return [r for r in stock_table(stock, lk) if principal_key(r[5]) in JONAL_PRINCIPALS]
     principal = PRINCIPAL_TARGETS[keyword]
     if keyword == "FONTERRA":
         return stock_table(stock, lk, keep=lambda r: r[5] == principal and r[2] == "GD01")
