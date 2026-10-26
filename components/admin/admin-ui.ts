@@ -2,14 +2,17 @@
  * Tujuan: Logika murni layar User & Akses Group (Fiori S7a): kalimat galat dari `code` kontrak S7-1 (+ jawaban tidak pasti),
  *   selisih izin, perkiraan role identitas (cermin roleTurunan/roleSisa server), pemeriksa sandi bertopeng, status akun, riwayat.
  * Caller: components/admin/Bersama.tsx, app/(dashboard)/admin/users/Pengguna.tsx, app/(dashboard)/admin/groups/AksesGrup.tsx.
- * Dependensi: lib/rbac (label satu sumber: auditActionLabels, permissionKeyLabel), components/fiori/core (tipe Tone).
- * Main Functions: pesanGalat, selisihIzin, utamaEfektif, perkiraanRole, roleDariGrup, alasanSandi, statusAkun, ringkasRiwayat, waktuWita.
+ * Dependensi: lib/rbac (label satu sumber: auditActionLabels, permissionKeyLabel), lib/tampil (KOSONG, sebabHttp), components/fiori/core
+ *   (tipe Tone).
+ * Main Functions: pesanGalat, selisihIzin, utamaEfektif, perkiraanRole, roleDariGrup, labelRole, alasanSandi, statusAkun, ringkasRiwayat,
+ *   waktuWita.
  * Side Effects: Tidak ada. Kontrak: docs/handover/S7-KONTRAK-ADMIN-API.md.
  */
 import { auditActionLabels, permissionKeyLabel } from "@/lib/rbac";
+import { KOSONG, sebabHttp } from "@/lib/tampil";
 import type { Tone } from "@/components/fiori/core";
 
-export const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas, jadi perubahan mungkin sudah tersimpan. Data dimuat ulang — periksa hasilnya sebelum mengulang.";
+export const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas, jadi perubahan mungkin sudah tersimpan. Data dimuat ulang. Periksa hasilnya sebelum mengulang.";
 
 export type Galat = { pesan: string; muatUlang: boolean; belumPasti: boolean; code?: string };
 type Jawaban = Record<string, unknown> | null;
@@ -36,9 +39,10 @@ const KODE: Record<string, (body: Jawaban, k: { aktivasi?: boolean }) => [string
     SANDI_TERLALU_PENDEK: () => ["Sandi terlalu pendek: minimal 6 karakter.", false],
     SANDI_TERLALU_PANJANG: () => ["Sandi terlalu panjang: maksimal 128 karakter.", false],
     EMAIL_TIDAK_VALID: () => ["Format email tidak valid.", false],
-    KUNCI_TIDAK_VALID: (b) => [`Server menolak simpan: kunci izin tidak dikenal (${Array.isArray(b?.invalid) ? (b.invalid as string[]).join(", ") : "?"}). Tidak ada yang berubah; muat ulang halaman — daftar izin mungkin berubah sesudah pembaruan aplikasi.`, false],
-    USER_TIDAK_ADA: () => ["User tidak ditemukan — mungkin sudah dihapus. Data dimuat ulang.", true],
-    GRUP_TIDAK_ADA: () => ["Grup tidak ditemukan — mungkin sudah dihapus. Data dimuat ulang.", true],
+    // Kunci tak dikenal tetap disebut: layar ini khusus Admin dan kuncinya yang perlu dicari (admin-ui.test.ts menguncinya).
+    KUNCI_TIDAK_VALID: (b) => [`Server menolak simpan: kunci izin tidak dikenal (${Array.isArray(b?.invalid) ? (b.invalid as string[]).join(", ") : "?"}). Tidak ada yang berubah; muat ulang halaman, karena daftar izin mungkin berubah sesudah pembaruan aplikasi.`, false],
+    USER_TIDAK_ADA: () => ["User tidak ditemukan. Mungkin sudah dihapus. Data dimuat ulang.", true],
+    GRUP_TIDAK_ADA: () => ["Grup tidak ditemukan. Mungkin sudah dihapus. Data dimuat ulang.", true],
     BUKAN_ANGGOTA: () => ["User sudah bukan anggota grup itu. Data dimuat ulang.", true],
     USER_SETENGAH_JADI: (b) => [`User terbuat sebagian dan dibiarkan NONAKTIF ("sedang disiapkan", tidak bisa masuk). Minta IT Support menghapusnya${typeof b?.userId === "string" ? ` (id ${b.userId})` : ""}, lalu ulangi.`, true],
     GAGAL_SIMPAN: () => ["Gagal menyimpan; tidak ada yang berubah. Coba lagi.", false],
@@ -73,7 +77,7 @@ export function pesanGalat(status: number, body: Jawaban, konteks: { aktivasi?: 
     }
     if (status === 401) return { pesan: "Sesi Anda berakhir. Masuk lagi, lalu ulangi.", muatUlang: false, belumPasti: false };
     if (status === 403) return { pesan: "Akun Anda tidak berizin untuk aksi ini (butuh Kelola user, users.manage). Izin dimuat ulang; minta admin bila perlu.", muatUlang: true, belumPasti: false, code: "forbidden" };
-    const teks = typeof body.error === "string" && body.error ? body.error : `Gagal (HTTP ${status}).`;
+    const teks = typeof body.error === "string" && body.error ? body.error : `Gagal. ${sebabHttp(status)}`;
     return { pesan: teks, muatUlang: false, belumPasti: false, code };
 }
 
@@ -93,6 +97,9 @@ export type GrupU = { id: string; name: string; isPreset: boolean; isPrimary: bo
 export type Perubahan = { tambah: GrupU } | { keluar: string } | { bintang: string | null };
 
 export const roleDariGrup = (g: Pick<GrupU, "name" | "isPreset"> | null) => (g?.isPreset ? ROLE_PRESET[g.name] ?? null : null);
+/** Role identitas untuk tampilan: nama grup presetnya ("admin_sales" → "Admin Sales"), bukan nilai enum mentah (audit No 30). */
+const NAMA_ROLE: Readonly<Record<string, string>> = Object.fromEntries(Object.entries(ROLE_PRESET).map(([nama, role]) => [role, nama]));
+export const labelRole = (role: string | null | undefined) => (role ? NAMA_ROLE[role] ?? role : KOSONG);
 /** Grup utama efektif (kontrak §4): berbintang; tanpa bintang & tepat 1 grup -> grup itu; selain itu null. */
 export const utamaEfektif = <T extends { isPrimary: boolean }>(gs: readonly T[]): T | null => gs.find((g) => g.isPrimary) ?? (gs.length === 1 ? gs[0] : null);
 const normal = (gs: GrupU[]) => (gs.length === 1 && !gs[0].isPrimary ? [{ ...gs[0], isPrimary: true }] : gs);
@@ -168,12 +175,12 @@ export function ringkasRiwayat(item: ItemRiwayat, sudut: "user" | "grup"): { apa
         const sesudah = (d.sesudah ?? null) as Record<string, unknown> | null;
         const sebelum = (d.sebelum ?? null) as Record<string, unknown> | null;
         const dari = (d.dipindahDari ?? null) as Record<string, unknown> | null;
-        bagian.push(`${sebelum ? `${nama(sebelum) ?? "—"} → ` : ""}${nama(sesudah) ?? "—"}${sesudah && teks(sesudah.branchName) ? ` · cabang ${sesudah.branchName}` : ""}`);
+        bagian.push(`${sebelum ? `${nama(sebelum) ?? KOSONG} → ` : ""}${nama(sesudah) ?? KOSONG}${sesudah && teks(sesudah.branchName) ? ` · cabang ${sesudah.branchName}` : ""}`);
         if (dari) bagian.push(`profil dipindah dari akun ${teks(dari.name) ?? teks(dari.userId) ?? "lain"}${teks(dari.salesCode) ? ` (kode ${dari.salesCode} tetap)` : ""}`);
     }
     // Kunci mengikuti yang ditulis server (`salesman/route.ts`: detail.dilepas = profil yang tautannya dimatikan).
     if (item.action === "salesman.unlink" && Array.isArray(d.dilepas)) {
-        bagian.push(`dilepas: ${(d.dilepas as Array<Record<string, unknown>>).map((x) => `${teks(x.salesName) ?? "—"} (${teks(x.salesCode) ?? "—"})`).join(", ")}`);
+        bagian.push(`dilepas: ${(d.dilepas as Array<Record<string, unknown>>).map((x) => `${teks(x.salesName) ?? KOSONG} (${teks(x.salesCode) ?? KOSONG})`).join(", ")}`);
     }
     if (item.action === "user.create" && Array.isArray(d.groupNames)) bagian.push(`grup ${(d.groupNames as string[]).filter(Boolean).join(", ")}`);
     if (item.action === "group.update" && teks(d.name)) bagian.push(`nama ${d.name}${teks(d.description) ? ` · ${d.description}` : ""}`);
@@ -181,7 +188,8 @@ export function ringkasRiwayat(item: ItemRiwayat, sudut: "user" | "grup"): { apa
     if (item.action === "user.deactivate" && teks(d.reason)) bagian.push(`alasan: ${d.reason}`);
     if (typeof d.sessionsRevoked === "number" && d.sessionsRevoked > 0) bagian.push(`${d.sessionsRevoked} sesi diakhiri`);
     if (d.via === "group.delete") bagian.push("karena grup dihapus");
-    if (teks(d.roleAfter) || teks(d.roleBefore)) bagian.push(`role identitas ${d.roleBefore ?? "—"} → ${d.roleAfter ?? "—"}`);
+    if (teks(d.roleAfter) || teks(d.roleBefore)) bagian.push(`role identitas ${labelRole(teks(d.roleBefore))} → ${labelRole(teks(d.roleAfter))}`);
+
     return { apa: auditActionLabels[item.action] ?? item.action, rinci: bagian.join(" · ") };
 }
 

@@ -132,9 +132,9 @@ test("Daftar: kartu = saringan, jawaban Accurate terbaca, mengirim > 15 mnt, gal
     // Kalimat, bukan JSON mentah / catatan teknis.
     // Kolom Jawaban Accurate (salinan pop-in tersembunyi di kolom pertama tidak dihitung).
     await expect(tabel.getByRole("cell", { name: "Pelanggan C-B-009 tidak ditemukan", exact: true })).toBeVisible();
-    await expect(tabel.getByRole("cell", { name: /^Accurate menolak sesi atau izin \(HTTP 401\)/ })).toBeVisible();
+    await expect(tabel.getByRole("cell", { name: /^Accurate menolak sesi atau izin; belum terbukti tidak diproses/ })).toBeVisible();
     await expect(tabel).not.toContainText("[\"");
-    await expect(tabel.getByText(/lebih dari 15 menit — menjadi Tidak pasti otomatis/)).toBeVisible();
+    await expect(tabel.getByText(/lebih dari 15 menit, menjadi Tidak pasti otomatis/)).toBeVisible();
     await expect(tabel.getByRole("cell", { name: /2 jam 14 mnt/ })).toBeVisible();
     // Hanya baris Antre yang bisa dipilih.
     await expect(tabel.getByRole("checkbox", { name: "Pilih SO SO-A-003" })).toBeDisabled();
@@ -329,7 +329,7 @@ test("Hasil Kirim: 503 JSON server = pasti (galat di dialog); ditolak, berhenti 
     panel = main.getByRole("region", { name: /Hasil kiriman/ });
     await expect(panel.getByRole("status")).toContainText("Sebagian ditolak Accurate");
     per = panel.getByRole("list", { name: "Hasil per faktur" });
-    await expect(per.getByRole("listitem").filter({ hasText: "SO-A-002" })).toContainText("tidak lagi Antre saat Kirim — muat ulang");
+    await expect(per.getByRole("listitem").filter({ hasText: "SO-A-002" })).toContainText("tidak lagi Antre saat Kirim. Muat ulang");
     expect(tulisKe(log, "/api/invoice-outbox/send")).toHaveLength(5);
 });
 
@@ -345,7 +345,7 @@ test("Kirim: lebih dari 50 pilihan = disebut sisanya tidak ikut (bukan 'tidak la
     await main.getByRole("checkbox", { name: "Pilih semua baris" }).check(NAV);
     await main.getByRole("button", { name: "Kirim 52 terpilih…" }).click();
     const dlg = page.getByRole("dialog", { name: "Kirim 50 faktur ke Accurate?" });
-    await expect(dlg).toContainText("Anda memilih 52 baris; maks. 50 per tekan — 2 sisanya tidak ikut kali ini.");
+    await expect(dlg).toContainText("Anda memilih 52 baris; maks. 50 per tekan, jadi 2 sisanya tidak ikut kali ini.");
     await expect(dlg).not.toContainText("tidak lagi berstatus Antre");
 });
 
@@ -358,7 +358,7 @@ test("Kirim: sesi tidak cocok = nonaktif berlasan; 502 HTML = 'belum pasti' + mu
     await main.getByRole("button", { name: "Kirim 2 faktur…" }).click(NAV);
     let dlg = page.getByRole("dialog");
     // S7-sesi: Fakturist tidak memegang Konsol — arahan ke halaman Sesi Accurate (tab baru, kembali ke Antrean).
-    await expect(dlg).toContainText("bukan database faktur 1001 — ganti database di halaman Sesi Accurate");
+    await expect(dlg).toContainText("bukan database faktur 1001. Ganti database di halaman Sesi Accurate");
     await expect(dlg.getByRole("link", { name: "Buka Sesi Accurate (tab baru)" })).toHaveAttribute("href", "/sesi-accurate?returnTo=/antrean-faktur");
     await expect(dlg).not.toContainText("ACCURATE_INVOICE_DB_ID");
     await expect(dlg.getByRole("button", { name: "Kirim 2 faktur" })).toBeDisabled();
@@ -407,7 +407,7 @@ test("Selesaikan: hasil pencarian tampil DULU; ketemu → terposting; tidak kete
     await expect(dlg).toContainText("Total di AccurateRp 111.000");
     expect(getKe(log, "/api/invoice-outbox/resolve").at(-1)?.query).toBe("?orderId=PRINCIPLE-A%3ASO-A-003");
     await expect(dlg.getByRole("radio", { name: /Tetapkan tidak terposting/ })).toBeDisabled();
-    await expect(dlg.getByRole("radiogroup")).toContainText("faktur ditemukan — mengirim ulang akan membuat faktur ganda");
+    await expect(dlg.getByRole("radiogroup")).toContainText("faktur ditemukan, jadi mengirim ulang akan membuat faktur ganda");
     await expect(dlg.getByRole("radio", { name: /Tetapkan terposting sebagai INV\/A\/0009/ })).not.toBeChecked(); // tidak dipilih otomatis
     await dlg.getByRole("radio", { name: /Tetapkan terposting sebagai INV\/A\/0009/ }).check();
     await dlg.getByLabel("Alasan").fill("sudah ada");
@@ -617,7 +617,12 @@ test("Verifikasi balik: selisih terbuka terlihat; Terima sales/Cabut tetap; draf
     await expect(r9).toContainText("2 selisih belum dijelaskan");
     await expect(r9).toContainText("baris 3 · qty: dikirim 24, di Accurate 20");
     await expect(sek.getByRole("article", { name: "Verifikasi SO SO-A-008" })).toHaveCount(0); // cocok hanya bila diminta
+    // Terima sales lewat dialog (audit desain 001 No 6): POST baru terkirim sesudah konfirmasi; body tetap sama.
     await r9.getByRole("button", { name: "Terima sales di Accurate" }).click();
+    const dlgSales = page.getByRole("dialog", { name: "Terima sales di Accurate untuk SO SO-A-009?" });
+    await expect(dlgSales).toBeVisible();
+    expect(tulisKe(log, "/api/invoice-verify")).toHaveLength(0);
+    await dlgSales.getByRole("button", { name: "Terima sales", exact: true }).click();
     await expect.poll(() => tulisKe(log, "/api/invoice-verify").length).toBe(1);
     expect(tulisKe(log, "/api/invoice-verify")[0].body).toEqual({ orderId: "PRINCIPLE-A:SO-A-009", jenis: "sales", sidik: "[\"s\"]", note: "" });
     await r9.getByLabel("Penjelasan selisih isi SO SO-A-009").fill("Koreksi qty saat bongkar: 4 karton rusak");
@@ -635,6 +640,9 @@ test("Verifikasi balik: selisih terbuka terlihat; Terima sales/Cabut tetap; draf
         : r.fulfill(json({ ok: true }));
     await sek.getByRole("button", { name: "Muat ulang" }).click();
     await sek.getByRole("button", { name: "Cabut" }).click();
+    const dlgCabut = page.getByRole("dialog", { name: /^Cabut penjelasan sales SO SO-A-009\?/ });
+    expect(tulisKe(log, "/api/invoice-verify", "DELETE")).toHaveLength(0);
+    await dlgCabut.getByRole("button", { name: "Cabut penjelasan", exact: true }).click();
     await expect.poll(() => tulisKe(log, "/api/invoice-verify", "DELETE").length).toBe(1);
 
     // Galat verifikasi terpisah: antrean tetap tampil, verifikasi menampilkan galat (bukan kosong).

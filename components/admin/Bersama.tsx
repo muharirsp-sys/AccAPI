@@ -14,7 +14,7 @@ import { useCallback, useRef, useState, type RefObject } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button, EmptyState, ErrorState, MessageStrip, Skeleton } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
-import { alasanSandi, pesanGalat, perkiraanRole, ringkasRiwayat, waktuWita, type GrupU, type ItemRiwayat } from "./admin-ui";
+import { alasanSandi, labelRole, pesanGalat, perkiraanRole, ringkasRiwayat, waktuWita, type GrupU, type ItemRiwayat } from "./admin-ui";
 
 export type UserBaris = {
     id: string; name: string; email: string; role: string | null; banned: boolean | null; banReason: string | null;
@@ -140,8 +140,9 @@ export function Riwayat({ url, sudut }: { url: string; sudut: "user" | "grup" })
 /** Peringatan WAJIB kontrak §4: perubahan grup utama menurunkan role identitas lama. */
 export function PeringatanRole({ dari, ke }: { dari: string | null; ke: string | null }) {
     return (
-        <MessageStrip tone="warn" title={`Role identitas lama akan menjadi ${ke ?? "—"} (sekarang ${dari ?? "—"}).`}>
-            Gerbang berbasis role (OPC/Klaim/Form Kontrol, sinkron Accurate tanpa ACCURATE_SYNC_USER_ID) ikut berubah. Izin grup tidak berubah.
+        <MessageStrip tone="warn" title={`Role identitas lama akan menjadi ${labelRole(ke)} (sekarang ${labelRole(dari)}).`}>
+            {/* Nama variabel lingkungan tidak ditulis di layar (audit No 30). */}
+            Gerbang berbasis role (OPC, Klaim, Form Kontrol, dan sinkron Accurate bila akun sinkron khusus belum diatur) ikut berubah. Izin grup tidak berubah.
         </MessageStrip>
     );
 }
@@ -162,7 +163,7 @@ export function DialogKeluarkan({ target, aktorId, kunci, onClose, jalankan }: K
     const sisa = u && g ? u.groups.filter((x) => x.id !== g.id) : [];
     const pr = u && g ? perkiraanRole(u.groups, u.role, { keluar: g.id }) : null;
     const tunggal = u && g && sisa.length === 0
-        ? `${u.name} hanya punya grup ini. User tidak boleh tanpa grup — tambahkan ke grup lain dulu, atau Nonaktifkan untuk mencabut akses.`
+        ? `${u.name} hanya punya grup ini. User tidak boleh tanpa grup; tambahkan ke grup lain dulu, atau Nonaktifkan untuk mencabut akses.`
         : undefined;
     return (
         <ConfirmDialog open={Boolean(target)} onClose={onClose} tag="Anggota" tone="negative" confirmLabel="Keluarkan"
@@ -171,13 +172,14 @@ export function DialogKeluarkan({ target, aktorId, kunci, onClose, jalankan }: K
             facts={u && g && pr ? [
                 ["Izin yang hilang", `Izin ${g.name} yang tidak dimiliki grup lain ${u.name}`],
                 ["Grup tersisa", sisa.length ? sisa.map((x) => x.name).join(", ") : "Tidak ada"],
-                ["Grup utama sesudahnya", pr.utama ? pr.utama.name : "Belum ada — Beranda gabungan izin"],
+                ["Grup utama sesudahnya", pr.utama ? pr.utama.name : "Belum ada (Beranda gabungan izin)"],
                 ["Riwayat", "Tercatat di riwayat user dan grup"],
             ] : undefined}
             onConfirm={() => jalankan(async () => {
                 if (!u || !g) return "";
                 const r = await tulisAdmin<{ role?: string | null; primaryGroupId?: string | null }>(`/api/admin/groups/${g.id}/members`, "DELETE", { userId: u.id });
-                const role = r.role !== undefined && r.role !== u.role ? ` Role identitas kini ${r.role ?? "—"}.` : "";
+                const role = r.role !== undefined && r.role !== u.role ? ` Role identitas kini ${labelRole(r.role)}.` : "";
+
                 return `${u.name} dikeluarkan dari ${g.name}.${role}`;
             })}>
             {pr?.berubah && <PeringatanRole dari={u?.role ?? null} ke={pr.role} />}

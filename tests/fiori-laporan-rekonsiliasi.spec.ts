@@ -230,12 +230,14 @@ test.describe("History penjualan", () => {
         await expect(main.getByRole("alert").filter({ hasText: "Gagal memuat item." })).toBeVisible();
         await expect(main.getByLabel("Produk").first()).toHaveValue("sleek baby"); // saringan tidak berubah
         gagal = false;
+        // Catatan varian BL-60 di badan halaman, tidak di dalam dialog impor (audit desain 001 No 80).
+        await expect(main.getByRole("complementary", { name: /BL-60/ })).toBeVisible();
         await main.getByRole("button", { name: "Impor CSV e-Faktur…" }).click();
         const dlg = page.getByRole("dialog");
         await expect(dlg.getByRole("button", { name: "Impor" })).toBeDisabled();
         await dlg.getByLabel(/Berkas CSV/).setInputFiles({ name: "efaktur_sep_2026.csv", mimeType: "text/csv", buffer: Buffer.from("FK;1") });
         await expect(dlg).toContainText("Impor efaktur_sep_2026.csv?");
-        await expect(dlg).toContainText("usulan BL-60");
+        await expect(dlg.getByRole("complementary")).toHaveCount(0);
         await dlg.getByRole("button", { name: "Impor" }).click();
         await expect(main.getByRole("status").filter({ hasText: "17.940 item diimpor" })).toBeVisible();
         expect(imporHeader).toBe("efaktur_sep_2026.csv");

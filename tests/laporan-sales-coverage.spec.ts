@@ -50,7 +50,7 @@ test("siap: ringkasan, tabel Toko/Principal/Salesman, saringan principal memuat 
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/laporan-sales#coverage", NAV);
     const main = page.locator("main");
-    await expect(main.getByRole("tab", { name: "Coverage Ganda" })).toHaveAttribute("aria-selected", "true", NAV);
+    await expect(main.getByRole("navigation", { name: "Jenis laporan" }).getByRole("link", { name: "Coverage Ganda" })).toHaveAttribute("aria-current", "page", NAV);
     const tabel = main.getByRole("table", { name: NAMA_TABEL });
     await expect(tabel).toBeVisible(NAV);
     await expect(main.locator("p[aria-live=polite]")).toHaveText("2 toko dilayani lebih dari satu salesman dari 40 toko JKS.");

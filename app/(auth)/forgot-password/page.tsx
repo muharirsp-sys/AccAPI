@@ -54,9 +54,10 @@ export default function ForgotPasswordPage() {
         return (
             <>
                 <h1 ref={judulRef} tabIndex={-1} className="fi-title-1">Permintaan diterima</h1>
+                {/* ponytail: "1 jam" = masa berlaku token atur ulang bawaan Better Auth (lib/auth.ts tidak mengubahnya); ubah bersama bila diatur. */}
                 <MessageStrip tone="info">Bila email terdaftar, tautan dikirim. Tautan berlaku 1 jam.</MessageStrip>
                 {/* Owner 11 Okt: email akun belum tentu alamat nyata; admin mengatur sandi lewat dialog di halaman User. */}
-                <p className="fi-small fi-muted">Tidak menerima surel? Minta admin mengatur sandi Anda.</p>
+                <p className="fi-small fi-muted">Tidak menerima email? Minta admin mengatur sandi Anda.</p>
                 <Link href="/login" className="fi-btn fi-btn--secondary">Kembali ke halaman masuk</Link>
             </>
         );

@@ -10,7 +10,7 @@
 
 import { useCallback, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { Button, EmptyState, ListItem, ResponsiveTable } from "@/components/fiori/core";
+import { Button, ErrorState, ListItem, ResponsiveTable } from "@/components/fiori/core";
 import { FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import type { BarisCoverage, JawabanCoverage, SalesmanCoverage } from "@/lib/laporan-sales/kontrak";
 import { ambilFk } from "../../form-kontrol/shared";
@@ -56,7 +56,8 @@ export default function Coverage() {
                 <Button icon={<RefreshCw className="fi-icon" aria-hidden />} busy={load.status === "memuat"} onClick={muatUlang}>Muat ulang</Button>
             </div>
             {h && <p aria-live="polite"><b>{angka(toko)}</b> toko dilayani lebih dari satu salesman dari <b>{angka(h.totalToko)}</b> toko JKS{h.principle ? ` ${h.principle}` : ""}.</p>}
-            {ditolak ? <EmptyState title="Coverage Ganda tidak bisa dibuka" message={load.error} /> : (
+            {/* Penolakan izin = galat (role alert), bukan keadaan kosong (audit No 127); tanpa Coba lagi karena mengulang tidak membantu. */}
+            {ditolak ? <ErrorState title="Coverage Ganda tidak bisa dibuka" message={load.error} /> : (
                 <ResponsiveTable<BarisCoverage>
                     title="Toko × principal dilayani lebih dari satu salesman" count={h?.baris.length}
                     rows={h?.baris ?? []} rowKey={(b) => `${b.custCode}|${b.principle}`}

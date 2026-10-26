@@ -118,7 +118,8 @@ export function PemilihPelanggan({ state, peran, onPilih, onLepas, onBacaUlang, 
         : cabang !== null ? `Cabang ${dikenal.get(cabang) ?? cabang}.` : "Semua cabang.";
     return (
         <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
-            <FormField label="Cari pelanggan" required help={`Ketik nama atau kode, minimal ${MIN_HURUF} huruf. ${lingkup}`}>
+            {/* Alasan terkunci ditulis di bantuan isian (terbaca di layar sentuh dan pembaca layar), bukan hanya title (audit No 50). */}
+            <FormField label="Cari pelanggan" required help={kunci ? `Pencarian terkunci: ${kunci}.` : `Ketik nama atau kode, minimal ${MIN_HURUF} huruf. ${lingkup}`}>
                 {(a) => (
                     <input {...a} type="search" className="fi-input" autoComplete="off" value={q} placeholder="mis. PELANGGAN A atau C-01" disabled={Boolean(kunci)} title={kunci}
                         onChange={(e) => setQ(e.target.value)}
@@ -126,7 +127,7 @@ export function PemilihPelanggan({ state, peran, onPilih, onLepas, onBacaUlang, 
                 )}
             </FormField>
             {mengganti && state.jenis === "siap" && (
-                <div><Button variant="tertiary" onClick={() => { setMengganti(false); setQ(""); }}>Batal ganti — tetap {state.p.name}</Button></div>
+                <div><Button variant="tertiary" onClick={() => { setMengganti(false); setQ(""); }}>Batal ganti, tetap {state.p.name}</Button></div>
             )}
             {saringCabang && (
                 <FormField label="Saring cabang" help={dikenal.size ? undefined : "Pilihan cabang muncul dari hasil pencarian."}>
@@ -161,7 +162,8 @@ export function PemilihPelanggan({ state, peran, onPilih, onLepas, onBacaUlang, 
                         ))}
                     </ul>
                 )}
-                {hasil.jenis === "siap" && items.length >= BATAS_HASIL && <p className="fi-small fi-muted">Menampilkan {BATAS_HASIL} teratas — persempit pencarian dengan nama atau kode yang lebih lengkap.</p>}
+                {hasil.jenis === "siap" && items.length >= BATAS_HASIL && <p className="fi-small fi-muted">Menampilkan {BATAS_HASIL} teratas. Persempit pencarian dengan nama atau kode yang lebih lengkap.</p>}
+
                 {hasil.jenis === "diam" && <p className="fi-small fi-muted"><Search className="fi-icon" aria-hidden style={{ verticalAlign: "-0.15em" }} /> Hasil muncul setelah {MIN_HURUF} huruf pertama.</p>}
             </div>
         </div>

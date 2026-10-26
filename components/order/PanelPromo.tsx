@@ -5,13 +5,14 @@
  *   Memakai bentuk respons pratinjau yang ADA SEKARANG (result.lines/applications/bonuses/blocked); dipisah dari layar supaya mudah disesuaikan
  *   bila bentuk respons promo O1 berubah.
  * Caller: app/(dashboard)/sales/OrderSales.tsx, app/(dashboard)/orders/OrderBaru.tsx.
- * Dependensi: ./order-cabang (promoBaris, ringkasPromo), lib/promo-ui (rupiah, persen), components/fiori/core.
+ * Dependensi: ./order-cabang (promoBaris, ringkasPromo), lib/promo-ui (rupiah, persen), lib/principal-validation (PPN), components/fiori/core.
  * Main Functions: PromoBarisInfo, KartuPromoBaris, PanelPromo.
  * Side Effects: Tidak ada.
  */
 import type { ReactNode } from "react";
-import { Lightbulb, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Button, KeyValues, StatusBadge } from "@/components/fiori/core";
+import { PPN } from "@/lib/principal-validation";
 import { persen, rupiah } from "@/lib/promo-ui";
 import { bacaSaran, namaProgramTerpakai, promoBaris, ringkasPromo, type KartuSaran, type Result, type Suggestion } from "./order-cabang";
 
@@ -43,8 +44,9 @@ const angka = (n: number) => n.toLocaleString("id-ID", { maximumFractionDigits: 
 function KartuSaranIsi({ k, saran, namaBarang, onTambah }: { k: KartuSaran; saran: Suggestion; namaBarang: (code: string) => string; onTambah?: (n: number) => void }) {
     const teks = k.tipe === "nilai" ? `${rupiah(k.sekarang)} / ${rupiah(k.target)}` : `${angka(k.sekarang)} / ${angka(k.target)}${k.unit ? ` ${k.unit}` : ""}`;
     return (
-        <div style={{ border: "1px solid var(--line)", borderLeft: "3px solid var(--warn)", borderRadius: "var(--r-md)", padding: "var(--sp-3)", display: "grid", gap: 6, background: "var(--surface)", minWidth: 0 }}>
-            <p className="fi-small" style={{ display: "flex", gap: 6, alignItems: "center", margin: 0 }}><Lightbulb className="fi-icon" aria-hidden /><b style={{ overflowWrap: "anywhere" }}>{k.nama}</b></p>
+        // Garis rambut saja (tanpa tepi tebal satu sisi); nadanya dari badge (audit No 106).
+        <div style={{ border: "1px solid var(--line)", borderRadius: "var(--r-md)", padding: "var(--sp-3)", display: "grid", gap: 6, background: "var(--surface)", minWidth: 0 }}>
+            <p className="fi-small" style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", margin: 0 }}><StatusBadge tone="warn">Hampir dapat promo</StatusBadge><b style={{ overflowWrap: "anywhere" }}>{k.nama}</b></p>
             <div role="progressbar" aria-label={`Kemajuan ${k.nama}`} aria-valuemin={0} aria-valuemax={k.target} aria-valuenow={Math.min(k.sekarang, k.target)} aria-valuetext={teks}
                 style={{ height: 6, borderRadius: "var(--r-pill)", background: "var(--surface-3)", overflow: "hidden" }}>
                 <i style={{ display: "block", height: "100%", width: `${k.persen}%`, background: "var(--brand)" }} />
@@ -81,7 +83,7 @@ type PanelProps = {
     suggestions?: Suggestion[];
     /** Jumlah barang tanpa harga (tidak ikut dihitung). */
     nTanpaHarga?: number;
-    /** Tambahkan baris PPN 11% + total faktur (petugas internal). Tanpa ini angka tetap berlabel "sebelum PPN": PPN ditambahkan saat faktur. */
+    /** Tambahkan baris PPN + total faktur (petugas internal). Tanpa ini angka tetap berlabel "sebelum PPN": PPN ditambahkan saat faktur. */
     ppn?: boolean;
     /** Catatan kaki. */
     catatan?: ReactNode;
@@ -90,7 +92,7 @@ type PanelProps = {
     namaBarang?: (code: string) => string;
 };
 
-const PPN = 0.11;
+const PPN_TEKS = `PPN ${Math.round(PPN * 100)}%`;
 
 /** Ringkasan per order. `aria-label="Perkiraan nilai order"` dipakai uji dan pembaca layar. */
 export function PanelPromo({ result, suggestions = [], nTanpaHarga = 0, ppn, catatan, saranRingkasan = [], namaBarang = (code) => code }: PanelProps) {
@@ -102,13 +104,13 @@ export function PanelPromo({ result, suggestions = [], nTanpaHarga = 0, ppn, cat
                 [nTanpaHarga ? "Bruto (yang sudah ada harganya)" : "Bruto", rupiah(r.gross)],
                 ["Diskon promo", rupiah(r.diskon)],
                 ["Netto estimasi (sebelum PPN)", rupiah(r.net)],
-                ...(ppn ? [["PPN 11%", rupiah(Math.round(r.net * PPN))], ["Total faktur (estimasi)", rupiah(Math.round(r.net * (1 + PPN)))]] as Array<[string, string]> : []),
+                ...(ppn ? [[PPN_TEKS, rupiah(Math.round(r.net * PPN))], ["Total faktur (estimasi)", rupiah(Math.round(r.net * (1 + PPN)))]] as Array<[string, string]> : []),
             ]} />
             {r.program.length > 0 && (
                 <div>
                     <p className="fi-small"><b>Program promo yang berlaku</b></p>
                     <ul className="fi-small fi-muted" aria-label="Program promo yang berlaku" style={{ margin: 0, paddingLeft: "1.1rem" }}>
-                        {r.program.map((p) => <li key={p.id}>{p.nama} — potongan {rupiah(p.diskon)}</li>)}
+                        {r.program.map((p) => <li key={p.id}>{p.nama}: potongan {rupiah(p.diskon)}</li>)}
                     </ul>
                 </div>
             )}
@@ -120,7 +122,7 @@ export function PanelPromo({ result, suggestions = [], nTanpaHarga = 0, ppn, cat
             )}
             {r.bonusLain.length > 0 && (
                 <ul className="fi-small fi-muted" aria-label="Bonus barang" style={{ margin: 0, paddingLeft: "1.1rem" }}>
-                    {r.bonusLain.map((b, i) => <li key={i}>Bonus {b.jumlah} {b.unit} {b.kode} — {b.nama}</li>)}
+                    {r.bonusLain.map((b, i) => <li key={i}>Bonus {b.jumlah} {b.unit} {b.kode} ({b.nama})</li>)}
                 </ul>
             )}
             {r.tidakBerlaku.length > 0 && (
@@ -128,7 +130,8 @@ export function PanelPromo({ result, suggestions = [], nTanpaHarga = 0, ppn, cat
                     {r.tidakBerlaku.map((b, i) => <li key={i}>Tidak berlaku untuk outlet ini: {b.nama} ({b.alasan})</li>)}
                 </ul>
             )}
-            {!ppn && <p className="fi-small fi-subtle">Angka di atas sebelum PPN; PPN 11% ditambahkan saat faktur.</p>}
+            {!ppn && <p className="fi-small fi-subtle">Angka di atas sebelum PPN; {PPN_TEKS} ditambahkan saat faktur.</p>}
+
             {nTanpaHarga > 0 && <p className="fi-small fi-why">{nTanpaHarga} barang belum berharga tidak ikut dihitung.</p>}
             {catatan && <p className="fi-small fi-subtle">{catatan}</p>}
         </div>

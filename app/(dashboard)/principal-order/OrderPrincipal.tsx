@@ -5,9 +5,10 @@
  * Dependensi: GET/POST/DELETE /api/principal-order, GET /api/principal-order/queue (cek antrean sebelum hapus/ganti);
  *   components/fiori/{core,interactive}; ./LangkahBatch; ./bersama.
  * Main Functions: OrderPrincipal.
- * Side Effects: router.replace (`?batch=`); HTTP unggah (pratinjau tidak menulis; simpan/ganti menulis batch), hapus batch.
- *   BL-21: server menolak hapus/ganti (409) bila ada SO batch di Antrean Faktur dan Ganti butuh izin ubah order; layar memeriksa juga
- *   (saat dialog dibuka dan lagi tepat sebelum menulis). Alasan hapus yang tercatat dan BL-44 belum ada di server → VariantNote.
+ * Side Effects: router.replace (`?batch=`); HTTP unggah (pratinjau tidak menulis; simpan/ganti menulis batch, keduanya lewat dialog),
+ *   hapus batch (dialog). BL-21: server menolak hapus/ganti (409) bila ada SO batch di Antrean Faktur dan Ganti butuh izin ubah order;
+ *   layar memeriksa juga (saat dialog dibuka dan lagi tepat sebelum menulis). Alasan hapus yang tercatat dan BL-44 belum ada di server
+ *   → VariantNote di badan halaman.
  */
 "use client";
 
@@ -16,16 +17,17 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FileSpreadsheet, FolderOpen, Replace, Search, Trash2, TriangleAlert, Upload } from "lucide-react";
 import {
-    Button, FooterToolbar, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, VariantNote, type Column,
+    Button, FooterToolbar, KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, VariantNote, type Column,
 } from "@/components/fiori/core";
-import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
+import { KOSONG } from "@/lib/tampil";
+import { ConfirmDialog, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import LangkahBatch, { Kepala, type Pesan } from "./LangkahBatch";
 import {
     ALASAN_IZIN, DitolakBerkode, PESAN_TIDAK_PASTI, PRINCIPAL_DIDUKUNG, TidakPasti, angka, baca, ditahanUtuh, tanggalSo, tulis, waktuWita,
     type BarisAntrean, type Batch, type Pratinjau,
 } from "./bersama";
 
-type Dialog = { jenis: "hapus"; batch: Batch } | { jenis: "ganti" } | null;
+type Dialog = { jenis: "hapus"; batch: Batch } | { jenis: "ganti" } | { jenis: "simpan" } | null;
 
 const pesanDari = (e: unknown, umum: string) => (e instanceof Error && e.message ? e.message : umum);
 
@@ -133,7 +135,7 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
         if (r.status === "galat") throw new Error(`${r.error} Batch tidak ${apa}.`);
         if ((r.data ?? 0) > 0) {
             muatCek();
-            throw new Error(`${r.data} SO batch ${apa === "diganti" ? "lama" : "ini"} sudah di Antrean Faktur; batch tidak bisa ${apa} (BL-21). Buang dulu di Antrean Faktur bila memang harus diulang.`);
+            throw new Error(`${r.data} SO batch ${apa === "diganti" ? "lama" : "ini"} sudah di Antrean Faktur; batch tidak bisa ${apa}. Buang dulu di Antrean Faktur bila memang harus diulang.`);
         }
     }
 
@@ -170,14 +172,14 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
     const nCek = cek.data ?? 0;
     const kunciCek = (apa: string) => cek.status === "memuat" ? `Memeriksa status antrean batch ${apa}…`
         : cek.status === "galat" ? `Status antrean batch ${apa} belum terbaca; aksi dinonaktifkan.`
-            : nCek > 0 ? `${nCek} SO batch ${apa} sudah di Antrean Faktur; batch tidak bisa ${apa === "lama" ? "diganti" : "dihapus"} (BL-21). Buang dulu di Antrean Faktur bila memang harus diulang.` : undefined;
+            : nCek > 0 ? `${nCek} SO batch ${apa} sudah di Antrean Faktur; batch tidak bisa ${apa === "lama" ? "diganti" : "dihapus"}. Buang dulu di Antrean Faktur bila memang harus diulang.` : undefined;
     const kunciHapus = !bolehUbah ? ALASAN_IZIN.ubah : kunciCek("ini");
     const kunciGanti = !bolehUbah ? ALASAN_IZIN.ganti : basi ? "Hasil sebelumnya belum pasti; tutup, periksa Batch terakhir, lalu Pratinjau ulang." : kunciCek("lama");
     const kunciDaftar = daftar.status === "memuat" ? "Daftar batch sedang dimuat ulang." : daftar.status === "galat" ? "Daftar batch belum terbaca." : undefined;
 
     const dialogHapus = dialog?.jenis === "hapus" ? dialog.batch : null;
     const dup = pratinjau?.duplicateOf ?? null;
-    const statusCek = cek.status === "memuat" ? "memeriksa…" : cek.status === "galat" ? "belum terbaca" : nCek > 0 ? `${nCek} SO — dikunci` : "0 SO";
+    const statusCek = cek.status === "memuat" ? "memeriksa…" : cek.status === "galat" ? "belum terbaca" : nCek > 0 ? `${nCek} SO, dikunci` : "0 SO";
     const galatCek = cek.status === "galat" && (
         <MessageStrip tone="neg" title="Status antrean belum terbaca.">
             {cek.error}{" "}<button type="button" className="fi-btn fi-btn--tertiary" onClick={muatCek}>Coba lagi</button>
@@ -189,14 +191,13 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                 confirmLabel="Hapus batch" confirmDisabled={kunciHapus}
                 description="Batch beserta seluruh baris dan hasil validasinya dihapus. Konfirmasi bukan order ganda tetap tercatat per SO."
                 facts={dialogHapus ? [
-                    ["Batch", `${dialogHapus.fileName} · ${angka(dialogHapus.lineCount)} baris · periode ${tanggalSo(dialogHapus.period) || "—"}`],
+                    ["Batch", `${dialogHapus.fileName} · ${angka(dialogHapus.lineCount)} baris · periode ${tanggalSo(dialogHapus.period) || KOSONG}`],
                     ["Di Antrean Faktur", statusCek],
                     ["Pembanding order ganda", "SO batch ini tidak lagi dipakai sebagai pembanding batch lain"],
                 ] : []}
                 onConfirm={() => (dialogHapus ? hapusBatch(dialogHapus) : undefined)}>
                 {galatCek}
                 {kunciHapus && cek.status !== "galat" && <p className="fi-small fi-why">{kunciHapus}</p>}
-                <VariantNote bl="BL-21">Server menolak penghapusan bila ada SO batch ini di Antrean Faktur, tetapi alasan penghapusan belum bisa dikirim dan belum tercatat. Usulan: penghapusan beralasan dan tercatat di riwayat.</VariantNote>
             </ConfirmDialog>
             <ConfirmDialog open={dialog?.jenis === "ganti"} onClose={() => setDialog(null)} title={`Ganti batch ${dup?.fileName ?? ""} dengan berkas ini?`} tag="Ganti batch"
                 confirmLabel="Ganti batch" confirmDisabled={kunciGanti}
@@ -210,7 +211,6 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                 onConfirm={gantiBatch}>
                 {galatCek}
                 {kunciGanti && cek.status !== "galat" && <p className="fi-small fi-why">{kunciGanti}</p>}
-                <VariantNote bl="BL-21">Server menolak penggantian bila ada SO batch lama di Antrean Faktur, tetapi penggantian belum tercatat beralasan. Usulan: penggantian beralasan dan tercatat di riwayat.</VariantNote>
             </ConfirmDialog>
         </>
     );
@@ -237,9 +237,9 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
 
     const kolomBatch: Column<Batch>[] = [
         { key: "berkas", header: "Berkas", cell: (b) => <><b className="fi-mono">{b.fileName}</b><span className="fi-codes">{b.principal}</span></> },
-        { key: "periode", header: "Periode", cell: (b) => tanggalSo(b.period) || "—" },
+        { key: "periode", header: "Periode", cell: (b) => tanggalSo(b.period) || KOSONG },
         { key: "baris", header: "Baris", align: "end", cell: (b) => <span className="fi-tnum">{angka(b.lineCount)}</span> },
-        { key: "lewat", header: "Dilewati", align: "end", secondary: true, cell: (b) => <span className="fi-tnum">{b.skipped || "—"}</span> },
+        { key: "lewat", header: "Dilewati", align: "end", secondary: true, cell: (b) => <span className="fi-tnum">{b.skipped || KOSONG}</span> },
         { key: "validasi", header: "Validasi", cell: (b) => <BadgeValidasi batch={b} /> },
         { key: "unggah", header: "Diunggah", secondary: true, cell: (b) => <span className="fi-small">{waktuWita(b.uploadedAt)}{b.uploadedBy ? ` · ${b.uploadedBy}` : ""}</span> },
         { key: "aksi", header: "Tindakan", cell: (b) => aksiBatch(b) },
@@ -263,14 +263,12 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
             <Section title="Berkas" subtitle="pratinjau dulu; tidak ada yang tersimpan sebelum ringkasannya dilihat">
                 <div className="fi-sect-in">
                     <div className="fi-formgrid">
-                        <FormField label="Principal" help="Hanya principal yang formatnya terbaca yang bisa dipilih; hari ini parser hanya mengenal Order Detail Kino.">
-                            {(a11y) => (
-                                <select {...a11y} className="fi-input" defaultValue={PRINCIPAL_DIDUKUNG} disabled={!bolehBuat}>
-                                    <option value={PRINCIPAL_DIDUKUNG}>{PRINCIPAL_DIDUKUNG} · format Order Detail Kino</option>
-                                    <option value="" disabled>Principal lain — format belum didukung</option>
-                                </select>
-                            )}
-                        </FormField>
+                        {/* Satu-satunya principal yang terbaca ditulis sebagai teks, bukan pilihan berisi satu opsi sah (audit No 127). Nilai
+                            yang dikirim tetap PRINCIPAL_DIDUKUNG di kirimBerkas. */}
+                        <div>
+                            <KeyValues align="start" items={[["Principal", `${PRINCIPAL_DIDUKUNG} · format Order Detail Kino`]]} />
+                            <p className="fi-small fi-subtle">Principal lain belum didukung: hari ini pembaca berkas hanya mengenal Order Detail Kino.</p>
+                        </div>
                         <div className="fi-dropzone" data-ok={berkas ? "true" : undefined}>
                             <label className="fi-label" htmlFor="order-principal-berkas">Berkas Order Detail<span className="fi-req" aria-hidden>*</span></label>
                             <span>{berkas ? <><FileSpreadsheet className="fi-icon" aria-hidden style={{ display: "inline", verticalAlign: "-3px" }} /> <b>{berkas.name}</b></> : "Laporan integrasi principal · .xlsx atau .xls · maks. 20 MB"}</span>
@@ -299,16 +297,16 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                             </MessageStrip>
                         )}
                         {held.length > 0 && (
-                            <MessageStrip tone="warn" title={`${held.length} SO ditahan utuh — tidak disimpan, tidak jadi faktur.`}>
-                                <ul style={{ paddingLeft: "1rem", listStyle: "disc" }}>{held.map((h) => <li key={h.so}><span className="fi-mono">SO {h.so}</span> · kode produk <span className="fi-mono">{h.kode || "—"}</span></li>)}</ul>
+                            <MessageStrip tone="warn" title={`${held.length} SO ditahan utuh: tidak disimpan, tidak jadi faktur.`}>
+                                <ul style={{ paddingLeft: "1rem", listStyle: "disc" }}>{held.map((h) => <li key={h.so}><span className="fi-mono">SO {h.so}</span> · kode produk <span className="fi-mono">{h.kode || KOSONG}</span></li>)}</ul>
                                 Tambahkan mapping-nya di <Link href="/principal-mapping">Mapping Principal</Link>, lalu unggah ulang berkas ini dan pilih Ganti batch lama.
                             </MessageStrip>
                         )}
                         {belum.length > 0 && (
-                            <MessageStrip tone="warn" title="Belum termapping — lengkapi di Mapping Principal.">
+                            <MessageStrip tone="warn" title="Belum termapping. Lengkapi di Mapping Principal.">
                                 <ul style={{ paddingLeft: "1rem", listStyle: "disc" }}>
                                     {belum.map(([label, k, akibat]) => (
-                                        <li key={label}><b>{label} ({pratinjau[k].length}):</b> <span className="fi-mono">{pratinjau[k].slice(0, 12).join(", ")}{pratinjau[k].length > 12 && ` … (+${pratinjau[k].length - 12})`}</span> — {akibat}</li>
+                                        <li key={label}><b>{label} ({pratinjau[k].length}):</b> <span className="fi-mono">{pratinjau[k].slice(0, 12).join(", ")}{pratinjau[k].length > 12 && ` … (+${pratinjau[k].length - 12})`}</span>. {akibat}</li>
                                     ))}
                                 </ul>
                                 <Link href="/principal-mapping">Buka Mapping Principal</Link>
@@ -323,9 +321,6 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                                 </ul>
                             </div>
                         )}
-                        {(dup || held.length > 0) && (
-                            <VariantNote bl="BL-44">SO yang ditahan utuh hanya bisa dilepas lewat Ganti batch lama selama belum ada SO batch itu di Antrean Faktur; sesudahnya tidak ada jalan di layar. Usulan: Tambahkan SO yang tertahan ke batch yang sama tanpa mengganti batch.</VariantNote>
-                        )}
                     </div>
                 </Section>
             )}
@@ -334,17 +329,23 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                 <ResponsiveTable<Batch> title="Batch terakhir" count={daftar.data?.length} columns={kolomBatch} rows={daftar.data ?? []} rowKey={(b) => b.id}
                     status={daftar.status} error={daftar.error} onRetry={muatDaftar}
                     empty={{ title: "Belum ada batch", message: "Unggah berkas Order Detail di atas." }}
-                    mobileItem={(b) => <ListItem doc={b.fileName} amount={`${angka(b.lineCount)} baris`} title={`${b.principal} · periode ${tanggalSo(b.period) || "—"}`}
+                    mobileItem={(b) => <ListItem doc={b.fileName} amount={`${angka(b.lineCount)} baris`} title={`${b.principal} · periode ${tanggalSo(b.period) || KOSONG}`}
                         meta={aksiBatch(b)} badge={<BadgeValidasi batch={b} />} />} />
                 {!bolehUbah && <p className="fi-small fi-why" style={{ padding: "8px 16px" }}>Hapus batch nonaktif: {ALASAN_IZIN.ubah}</p>}
             </Section>
+            {/* Satu catatan varian per layar, di luar dialog tulis (audit No 80); kode BL di nama aksesibelnya. */}
+            <VariantNote bl={pratinjau && (dup || held.length > 0) ? "BL-21, BL-44" : "BL-21"}>
+                Server menolak hapus dan ganti batch bila ada SO batch itu di Antrean Faktur, tetapi alasan hapus atau ganti belum bisa dikirim dan
+                belum tercatat di riwayat.
+                {pratinjau && (dup || held.length > 0) && " SO yang ditahan utuh hanya bisa dilepas lewat Ganti batch lama selama belum ada SO batch itu di Antrean Faktur; sesudahnya tidak ada jalan di layar."}
+            </VariantNote>
 
             <FooterToolbar message={kunciPratinjau ?? (pratinjau ? (dup ? (kunciGantiTombol ? `Berkas sama dengan batch yang sudah ada. ${kunciGantiTombol}` : "Berkas sama dengan batch yang sudah ada") : kunciSimpan ?? `${angka(pratinjau.lineCount)} baris akan disimpan`) : "Pratinjau berkas dulu")}>
                 <Button variant={pratinjau ? "secondary" : "primary"} icon={<Search className="fi-icon" aria-hidden />} busy={proses === "pratinjau"}
                     disabled={Boolean(kunciPratinjau)} disabledReason={kunciPratinjau} onClick={() => void pratinjauBerkas()}>{pratinjau ? "Pratinjau ulang" : "Pratinjau"}</Button>
                 {pratinjau && !dup && (
                     <Button variant="primary" icon={<Upload className="fi-icon" aria-hidden />} busy={proses === "simpan"} disabled={Boolean(kunciSimpan)} disabledReason={kunciSimpan}
-                        onClick={() => void simpanBatch()}>Simpan batch</Button>
+                        onClick={() => setDialog({ jenis: "simpan" })}>Simpan batch…</Button>
                 )}
                 {pratinjau && dup && (
                     <Button variant="primary" icon={<Replace className="fi-icon" aria-hidden />} disabled={Boolean(kunciGantiTombol)}
@@ -353,9 +354,23 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                 )}
             </FooterToolbar>
             {dialogs}
+            {pratinjau && (
+                <ConfirmDialog open={dialog?.jenis === "simpan"} onClose={() => setDialog(null)} title={`Simpan ${angka(pratinjau.lineCount)} baris dari ${pratinjau.fileName}?`}
+                    confirmLabel="Simpan batch" confirmDisabled={kunciSimpan}
+                    description="Batch tersimpan untuk divalidasi. Belum ada faktur atau baris antrean yang dibuat."
+                    facts={[
+                        ["Principal", `${PRINCIPAL_DIDUKUNG}${pratinjau.branch ? ` · ${pratinjau.branch}` : ""}`],
+                        ["Periode", tanggalSo(pratinjau.period) || "tidak terbaca"],
+                        ["Disimpan", `${angka(pratinjau.lineCount)} baris`],
+                        ["Tidak disimpan", `${held.length} SO ditahan utuh · ${angka(pratinjau.skipped)} baris dilewati`],
+                    ]}
+                    // Badan tulis tetap simpanBatch (FormData apply=true, replace=false); hasil dan galatnya tampil di halaman.
+                    onConfirm={async () => { setDialog(null); await simpanBatch(); }} />
+            )}
         </div>
     );
 }
+
 
 function BadgeValidasi({ batch }: { batch: Batch }) {
     return batch.validatedAt

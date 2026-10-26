@@ -1,5 +1,5 @@
 /*
- * Tujuan: User (Fiori S7a, FCL): daftar (cari, grup, status) → Object Page user dengan Grup (semua grup + ★ utama: tambah,
+ * Tujuan: User (Fiori S7a, FCL): daftar (cari, grup, status) → Object Page user dengan Grup (semua grup + ★ utama: tambah lewat dialog,
  *   keluarkan, tandai/lepas bintang dengan peringatan role), Salesman (O2: tautan ke karyawan salesman Accurate = cabang order), Keamanan
  *   (atur sandi bertopeng, aktif/nonaktif), Riwayat (kursor).
  *   Dialog `buatUser`, `sandi`, `nonaktif`, bintang, `keluarkan`. Menggantikan UserManagement.tsx (window.prompt/confirm).
@@ -22,10 +22,10 @@ import {
 } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { DialogKeluarkan, GalatAdmin, PeringatanRole, Riwayat, izinPerluDisegarkan, SandiGanda, muatAdmin, tulisAdmin, type GrupRingkas, type UserBaris } from "@/components/admin/Bersama";
-import { perkiraanRole, roleDariGrup, statusAkun } from "@/components/admin/admin-ui";
+import { labelRole, perkiraanRole, roleDariGrup, statusAkun } from "@/components/admin/admin-ui";
 import { TautanSalesman } from "@/components/admin/TautanSalesman";
 
-type Dialog = { jenis: "buat" | "sandi" | "status" } | { jenis: "bintang"; grupId: string | null } | { jenis: "keluar"; grupId: string };
+type Dialog = { jenis: "buat" | "sandi" | "status" | "tambah" } | { jenis: "bintang"; grupId: string | null } | { jenis: "keluar"; grupId: string };
 type SaringStatus = "aktif" | "nonaktif" | "semua";
 
 const BACA_SAJA = "Baca-saja: butuh izin Kelola user (users.manage)";
@@ -62,14 +62,14 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
     const u = users.find((x) => x.id === pilihId) ?? null;
     const st = u ? statusAkun(u) : null;
     // User setengah jadi (buat user gagal sebagian, kontrak USER_SETENGAH_JADI) dibiarkan nonaktif: tidak boleh diaktifkan, IT Support menghapusnya.
-    const kunciSetengah = st?.setengah ? "User ini setengah jadi (pembuatannya gagal sebagian) — minta IT Support menghapusnya, jangan diaktifkan" : undefined;
+    const kunciSetengah = st?.setengah ? "User ini setengah jadi (pembuatannya gagal sebagian); minta IT Support menghapusnya, jangan diaktifkan" : undefined;
 
     // Aksi tulis terkunci saat data penentu memuat / galat / usang (gagal dimuat ulang).
     const kunciData = daftar.status === "memuat" ? "Menunggu data user dimuat ulang"
-        : daftar.status === "galat" ? "Data user gagal dimuat — muat ulang dulu" : undefined;
+        : daftar.status === "galat" ? "Data user gagal dimuat; muat ulang dulu" : undefined;
     const kunciTulis = !bolehKelola ? BACA_SAJA : kunciData;
     const kunciGrup = kunciTulis ?? (grupL.status === "memuat" ? "Menunggu daftar grup dimuat"
-        : grupL.status === "galat" ? "Daftar grup gagal dimuat — muat ulang dulu" : undefined);
+        : grupL.status === "galat" ? "Daftar grup gagal dimuat; muat ulang dulu" : undefined);
 
     function muatSemua() { muatDaftar(); if (bolehKelola) muatGrup(); setVersi((v) => v + 1); }
     /** Coba lagi sesudah galat baca: izin bisa saja yang berubah, jadi izin halaman dibaca ulang bersama datanya. */
@@ -109,7 +109,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
         try {
             await jalankan(async () => {
                 const r = await tulisAdmin<{ added: boolean; role?: string | null }>(`/api/admin/groups/${tambahId}/members`, "POST", { userId: u.id });
-                const role = r.role !== undefined && r.role !== u.role ? ` Role identitas kini ${r.role ?? "—"}.` : "";
+                const role = r.role !== undefined && r.role !== u.role ? ` Role identitas kini ${labelRole(r.role)}.` : "";
                 return r.added ? `${u.name} ditambahkan ke ${g?.name ?? "grup"}.${role}` : `${u.name} sudah anggota ${g?.name ?? "grup itu"}; tidak ada yang berubah.`;
             });
             setTambahId("");
@@ -165,11 +165,12 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
             : <EmptyState title="Pilih user di daftar" message="Grup, keamanan, dan riwayat tampil di sini." />
     ) : (
         <div style={{ display: "grid", gap: 12 }}>
-            <ObjectPageHeader title={u.name} status={st && <StatusBadge tone={st.tone}>{st.label}</StatusBadge>}
+            {/* h2: halaman sudah punya h1 "User" (audit No 140a). */}
+            <ObjectPageHeader title={u.name} headingLevel={2} status={st && <StatusBadge tone={st.tone}>{st.label}</StatusBadge>}
                 attributes={[
                     { label: "Email", value: u.email },
-                    { label: "Grup utama", value: u.primaryGroupName ? `★ ${u.primaryGroupName}` : "Belum ada — Beranda gabungan izin" },
-                    { label: "Role identitas", value: u.role ?? "—" },
+                    { label: "Grup utama", value: u.primaryGroupName ? `★ ${u.primaryGroupName}` : "Belum ada (Beranda gabungan izin)" },
+                    { label: "Role identitas", value: labelRole(u.role) },
                 ]} />
             <AnchorBar anchors={[{ id: "u-grup", label: "Grup" }, { id: "u-salesman", label: "Salesman" }, { id: "u-keamanan", label: "Keamanan" }, { id: "u-riwayat", label: "Riwayat" }]} />
 
@@ -177,7 +178,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
                 <div className="fi-sect-in">
                     {terkunci(kunciTulis)}
                     {u.groups.length === 0 ? (
-                        <MessageStrip tone="warn" title="Belum punya grup.">Akses mengikuti role lama ({u.role ?? "—"}). Tambahkan ke grup agar izinnya dari grup.</MessageStrip>
+                        <MessageStrip tone="warn" title="Belum punya grup.">Akses mengikuti role lama ({labelRole(u.role)}). Tambahkan ke grup agar izinnya dari grup.</MessageStrip>
                     ) : (
                         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }} aria-label={`Grup ${u.name}`}>
                             {u.groups.map((g) => (
@@ -188,7 +189,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
                                     <span className="fi-spacer" style={{ flex: 1 }} />
                                     {u.groups.length > 1 && !g.isPrimary && (
                                         <Button variant="tertiary" icon={<Star className="fi-icon" aria-hidden />} disabled={Boolean(kunciTulis)} disabledReason={kunciTulis}
-                                            aria-label={`Jadikan ${g.name} grup utama`} onClick={() => buka({ jenis: "bintang", grupId: g.id })}>Jadikan utama…</Button>
+                                            aria-label={`Jadikan utama: ${g.name}`} onClick={() => buka({ jenis: "bintang", grupId: g.id })}>Jadikan utama…</Button>
                                     )}
                                     {u.groups.length > 1 && g.isPrimary && (
                                         <Button variant="tertiary" icon={<StarOff className="fi-icon" aria-hidden />} disabled={Boolean(kunciTulis)} disabledReason={kunciTulis}
@@ -211,7 +212,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
                                 )}
                             </FormField>
                             <Button icon={<Plus className="fi-icon" aria-hidden />} busy={menambah} disabled={Boolean(kunciGrup) || !tambahId}
-                                disabledReason={kunciGrup ?? "Pilih grup dulu"} onClick={tambahKeGrup}>Tambah ke grup</Button>
+                                disabledReason={kunciGrup ?? "Pilih grup dulu"} onClick={() => buka({ jenis: "tambah" })}>Tambah ke grup…</Button>
                         </div>
                     )}
                     {bolehKelola && grupL.status === "galat" && <MessageStrip tone="neg" title="Daftar grup gagal dimuat.">{grupL.error} <Button variant="tertiary" onClick={muatGrup}>Coba lagi</Button></MessageStrip>}
@@ -245,7 +246,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
                 </div>
             </Section>
 
-            <Section id="u-riwayat" title="Riwayat" subtitle="grup, bintang, sandi, dan status — terbaru dulu">
+            <Section id="u-riwayat" title="Riwayat" subtitle="grup, bintang, sandi, dan status; terbaru dulu">
                 <Riwayat key={`${u.id}-${versi}`} url={`/api/admin/users/${u.id}/history`} sudut="user" />
             </Section>
         </div>
@@ -267,14 +268,14 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
                 <div className="fi-page-bar">
                     <h1>User</h1>
                     <span className="fi-spacer" />
-                    {bolehKelola && <Link className="fi-btn fi-btn--secondary" href="/admin/groups">Akses Group</Link>}
+                    {bolehKelola && <Link className="fi-btn fi-btn--secondary" href="/admin/groups">Akses Grup</Link>}
                     <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} disabled={Boolean(kunciGrup)} disabledReason={kunciGrup} onClick={() => buka({ jenis: "buat" })}>Buat user…</Button>
                 </div>
-                <p>Satu tempat per orang: semua grup (★ grup utama menentukan Beranda), keamanan akun, dan riwayat. Izin per grup diatur di Akses Group.</p>
+                <p>Satu tempat per orang: semua grup (★ grup utama menentukan Beranda), keamanan akun, dan riwayat. Izin per grup diatur di Akses Grup.</p>
             </header>
             {!bolehKelola && (
                 <MessageStrip tone="info" title="Baca-saja.">
-                    Akun Anda punya izin Lihat user (users.view). Membuat user, mengubah grup, sandi, dan status butuh Kelola user (users.manage) — tombolnya terkunci.
+                    Akun Anda punya izin Lihat user (users.view). Membuat user, mengubah grup, sandi, dan status butuh Kelola user (users.manage); tombolnya terkunci.
                 </MessageStrip>
             )}
             {pesan && <MessageStrip tone={pesan.tone} title={pesan.teks} onClose={() => setPesan(null)} />}
@@ -328,7 +329,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
                     <ul className="fi-chips" style={{ margin: "6px 0 0" }}>
                         {grupList.map((g) => (
                             <li key={g.id}>
-                                <label className="fi-chip">
+                                <label className="fi-chip pointer-coarse:min-h-11">
                                     <input type="checkbox" checked={buat.grupIds.includes(g.id)} onChange={(e) => {
                                         const grupIds = e.target.checked ? [...buat.grupIds, g.id] : buat.grupIds.filter((x) => x !== g.id);
                                         setBuat({ ...buat, grupIds, utamaId: grupIds.includes(buat.utamaId) ? buat.utamaId : "" });
@@ -363,7 +364,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
                     const r = await tulisAdmin<{ sessionsRevoked: number }>(`/api/admin/users/${u.id}/password`, "POST", { password: sandiRef.current?.value ?? "" });
                     return `Sandi ${u.name} diatur; ${r.sessionsRevoked} sesi diakhiri. Beri tahu sandinya langsung ke ${u.name}.`;
                 })}>
-                {diriSendiri && <MessageStrip tone="warn" title="Ini akun Anda sendiri.">Sesi Anda juga diakhiri — Anda harus masuk lagi dengan sandi baru.</MessageStrip>}
+                {diriSendiri && <MessageStrip tone="warn" title="Ini akun Anda sendiri.">Sesi Anda juga diakhiri. Anda harus masuk lagi dengan sandi baru.</MessageStrip>}
                 <SandiGanda masuk={sandiRef} onUbah={setAlasanSandi} />
             </ConfirmDialog>
 
@@ -401,7 +402,7 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
                 facts={prBintang ? [
                     ["Beranda", prBintang.utama ? `Mengikuti ${prBintang.utama.name}` : "Gabungan izin (tanpa grup utama)"],
                     ["Izin", "Tidak berubah: tetap gabungan semua grup"],
-                    ["Role identitas", prBintang.berubah ? `${u?.role ?? "—"} → ${prBintang.role ?? "—"}` : "Tidak berubah"],
+                    ["Role identitas", prBintang.berubah ? `${labelRole(u?.role)} → ${labelRole(prBintang.role)}` : "Tidak berubah"],
                 ] : undefined}
                 onConfirm={() => jalankan(async () => {
                     if (!u || dialog?.jenis !== "bintang") return "";
@@ -410,13 +411,25 @@ export default function Pengguna({ permKeys, aktorId }: { permKeys: string[]; ak
                         ? await tulisAdmin<{ changed: boolean; role: string | null; roleChanged: boolean }>(url, "PUT", { groupId: dialog.grupId })
                         : await tulisAdmin<{ changed: boolean; role: string | null; roleChanged: boolean }>(url, "DELETE");
                     if (!r.changed) return "Tidak ada yang berubah.";
-                    const role = r.roleChanged ? ` Role identitas kini ${r.role ?? "—"}.` : "";
+                    const role = r.roleChanged ? ` Role identitas kini ${labelRole(r.role)}.` : "";
                     return dialog.grupId ? `Grup utama ${u.name}: ${dGrup?.name ?? ""}.${role}` : `Bintang ${bintangLama?.name ?? ""} dilepas dari ${u.name}.${role}`;
                 })}>
                 {prBintang?.berubah && <PeringatanRole dari={u?.role ?? null} ke={prBintang.role} />}
             </ConfirmDialog>
 
+            {/* Tambah ke grup memberi izin (dan bisa mengubah role identitas): lewat dialog (audit No 5); fungsi tulis tetap tambahKeGrup. */}
+            <ConfirmDialog open={dialog?.jenis === "tambah" && Boolean(u && calonPilih)} onClose={() => setDialog(null)} tag="Grup"
+                title={`Tambahkan ${u?.name ?? ""} ke ${calonPilih?.name ?? ""}?`} confirmLabel="Tambahkan" confirmDisabled={kunciGrup} alasanTerlihat
+                facts={u && calonPilih ? [
+                    ["Grup", `${calonPilih.name}${calonPilih.isPreset ? " (preset)" : ""}`],
+                    ["Izin yang didapat", `${calonPilih.permCount} kunci izin grup ini; izin user = gabungan semua grupnya`],
+                    ["Role identitas", prTambah?.berubah ? `${labelRole(u.role)} → ${labelRole(prTambah.role)}` : "Tidak berubah"],
+                    ["Berlaku", "Pada permintaan berikutnya; tidak perlu masuk ulang"],
+                    ["Riwayat", "Tercatat di riwayat user dan grup"],
+                ] : undefined}
+                onConfirm={async () => { await tambahKeGrup(); setDialog(null); }} />
             <DialogKeluarkan target={dialog?.jenis === "keluar" && u && dGrup ? { user: u, grup: dGrup } : null} aktorId={aktorId} kunci={kunciTulis}
+
                 onClose={() => setDialog(null)} jalankan={jalankan} />
         </div>
     );

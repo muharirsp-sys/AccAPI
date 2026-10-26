@@ -267,7 +267,7 @@ const ATURAN: Record<string, Aturan> = {
     // Harga petugas HANYA untuk baris tanpa harga master sah (owner sesi 13): 409 `barang: [{code, unit, hargaMaster}]`.
     HARGA_PETUGAS_TIDAK_DIIZINKAN: {
         judul: "Harga petugas tidak diizinkan", pesan: (d) => dariServer(d, "Barang ini sudah punya harga master; harga petugas hanya untuk barang tanpa harga master."),
-        tindakan: "Kosongkan harga di barisnya — harga master dipakai dan tidak bisa diubah.", menolak: true,
+        tindakan: "Kosongkan harga di barisnya; harga master dipakai dan tidak bisa diubah.", menolak: true,
     },
     // Keadaan SERVER (aturan promo terbit rusak), bukan kesalahan order — global: tarikan berhenti, permintaan tetap menunggu.
     ATURAN_TERBIT_RUSAK: {

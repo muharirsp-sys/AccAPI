@@ -1,6 +1,5 @@
 /*
- * Tujuan: Rute /antrean-faktur (Fiori S6c, it02): izin dari server, lalu worklist Antrean Faktur di dalam FioriScope. Menggantikan
- *   halaman satu berkas lama (window.confirm untuk Kirim/Buang, tanpa jalan keluar untuk baris tidak pasti).
+ * Tujuan: Rute /antrean-faktur (Fiori S6c, it02): izin dari server, lalu worklist Antrean Faktur di dalam FioriScope.
  * Caller: menu Penjualan › Antrean Faktur; kartu Beranda (lib/beranda.ts). Guard halaman: layout dashboard (order.view, lib/rbac.ts).
  * Dependensi: resolveRequestPermissionsH, FioriScope, AntreanFaktur (klien).
  * Main Functions: AntreanFakturPage.

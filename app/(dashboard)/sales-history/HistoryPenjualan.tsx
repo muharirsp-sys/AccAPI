@@ -1,8 +1,10 @@
 /*
  * Tujuan: List Report History penjualan (Fiori S3): saringan Tahun → Principal → Customer + cari produk (wajib), tabel item per halaman,
- *   galat pencarian di halaman (bukan toast), impor CSV e-Faktur lewat dialog (pengganti pilih berkas langsung mengimpor).
+ *   galat pencarian di halaman (bukan toast), galat daftar pilihan saringan sebagai strip (bukan pilihan kosong), impor CSV e-Faktur lewat
+ *   dialog (pengganti pilih berkas langsung mengimpor).
  * Caller: app/(dashboard)/sales-history/page.tsx.
- * Dependensi: /api/sales-history/{years,principals,customers,item-search,import}; components/fiori/{core,interactive}.
+ * Dependensi: /api/sales-history/{years,principals,customers,item-search,import}; components/fiori/{core,interactive};
+ *   lib/rekapan-nota/ui (ambil); lib/tampil (KOSONG, waktuWita, sebabHttp).
  * Main Functions: HistoryPenjualan.
  * Side Effects: GET pencarian; POST impor (sales_history.manage). Logic BL-60 tidak ditulis (varian berlabel).
  */
@@ -12,7 +14,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Upload } from "lucide-react";
 import { Button, EmptyState, ErrorState, ListItem, MessageStrip, ResponsiveTable, Skeleton, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad } from "@/components/fiori/interactive";
-import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
+import { ambil } from "@/lib/rekapan-nota/ui";
+import { KOSONG, sebabHttp, waktuWita } from "@/lib/tampil";
 
 type Opt = { value: string; label: string };
 type Customer = { kode: string; nama: string; invoices: number };
@@ -47,14 +50,14 @@ export default function HistoryPenjualan({ permKeys }: { permKeys: string[] }) {
     const customerQ = useDebounced(cariCustomer.trim(), 350);
 
     const [rentang] = useLoad(useCallback(() => ambil<{ firstDate: string; lastDate: string }>("/api/sales-history", (j) => (j as { database: { firstDate: string; lastDate: string } }).database), []));
-    const [tahunOpts] = useLoad(useCallback(() => ambil<Opt[]>("/api/sales-history/years", (j) => ((j as { years: Array<{ year: number; invoices: number }> }).years ?? []).map((y) => ({ value: String(y.year), label: `${y.year} (${y.invoices.toLocaleString("id-ID")} faktur)` }))), []));
-    const [principalOpts] = useLoad(useCallback(() => ambil<Opt[]>(`/api/sales-history/principals${tahun ? `?year=${tahun}` : ""}`, (j) => ((j as { principals: Array<{ principal: string; invoices: number }> }).principals ?? []).map((p) => ({ value: p.principal, label: `${p.principal} (${p.invoices.toLocaleString("id-ID")})` }))), [tahun]));
+    const [tahunOpts, muatTahun] = useLoad(useCallback(() => ambil<Opt[]>("/api/sales-history/years", (j) => ((j as { years: Array<{ year: number; invoices: number }> }).years ?? []).map((y) => ({ value: String(y.year), label: `${y.year} (${y.invoices.toLocaleString("id-ID")} faktur)` }))), []));
+    const [principalOpts, muatPrincipal] = useLoad(useCallback(() => ambil<Opt[]>(`/api/sales-history/principals${tahun ? `?year=${tahun}` : ""}`, (j) => ((j as { principals: Array<{ principal: string; invoices: number }> }).principals ?? []).map((p) => ({ value: p.principal, label: `${p.principal} (${p.invoices.toLocaleString("id-ID")})` }))), [tahun]));
     // Principal yang tidak ada di tahun baru diabaikan di semua kueri (perilaku lama melepasnya).
     const principalValid = !principal || !principalOpts.data || principalOpts.data.some((p) => p.value === principal);
     const principalAktif = principalValid ? principal : "";
     const halaman = hal.q === produkQ ? hal.n : 1;
     const setHalaman = (f: (n: number) => number) => setHal((h) => ({ q: produkQ, n: f(h.q === produkQ ? h.n : 1) }));
-    const [customerOpts] = useLoad(useCallback(() => {
+    const [customerOpts, muatCustomer] = useLoad(useCallback(() => {
         const params = new URLSearchParams({ q: customerQ, limit: "30" });
         if (tahun) params.set("year", tahun);
         if (principalAktif) params.set("principal", principalAktif);
@@ -81,9 +84,9 @@ export default function HistoryPenjualan({ permKeys }: { permKeys: string[] }) {
         if (!berkas) return;
         const res = await fetch("/api/sales-history/import", { method: "POST", headers: { "x-filename": berkas.name, "content-type": "text/csv" }, body: berkas });
         const d = (await res.json().catch(() => ({}))) as { ok?: boolean; imported?: number; sourceFile?: string; error?: string };
-        if (!res.ok || !d.ok) throw new Error(d.error ?? `Impor gagal (HTTP ${res.status}).`);
+        if (!res.ok || !d.ok) throw new Error(d.error ?? `Impor gagal. ${sebabHttp(res.status)}`);
         setDialog(false); setBerkas(null);
-        setPesanImpor(`${(d.imported ?? 0).toLocaleString("id-ID")} item diimpor dari ${d.sourceFile ?? berkas.name} ${jamWita(new Date())}. Data dari berkas bernama sama sebelumnya diganti.`);
+        setPesanImpor(`${(d.imported ?? 0).toLocaleString("id-ID")} item diimpor dari ${d.sourceFile ?? berkas.name} ${waktuWita(new Date())} WITA. Data dari berkas bernama sama sebelumnya diganti.`);
         if (kunciCari) muatHasil();
     }
 
@@ -97,8 +100,15 @@ export default function HistoryPenjualan({ permKeys }: { permKeys: string[] }) {
         { key: "total", header: "Total bruto", align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{rp(r.hargaTotal)}</span> },
         { key: "diskon", header: "Diskon", align: "end", cell: (r) => <span className="fi-tnum"><b className="fi-why">{pct(r.diskonRp, r.hargaTotal)}%</b><span className="fi-sub">{rp(r.diskonRp)}</span></span> },
         // Kolom REM sumber (referensi PO/SO, format bebas per principal); hilang saat redesign S3, dikembalikan 14 Okt.
-        { key: "ket", header: "Keterangan", cell: (r) => r.keterangan || "—" },
+        { key: "ket", header: "Keterangan", cell: (r) => r.keterangan || KOSONG },
     ];
+    // Galat daftar pilihan saringan tampil sebagai galat, bukan pilihan kosong (audit No 66).
+    const opsiGagal = ([
+        [tahunOpts.status === "galat", "Daftar tahun", muatTahun],
+        [principalOpts.status === "galat", "Daftar principal", muatPrincipal],
+        [customerOpts.status === "galat", "Daftar customer", muatCustomer],
+    ] as const).filter(([gagal]) => gagal);
+    const customerBelumDipilih = Boolean(cariCustomer.trim()) && !customer;
 
     return (
         <div className="fi-page">
@@ -122,7 +132,8 @@ export default function HistoryPenjualan({ permKeys }: { permKeys: string[] }) {
                     fields={<>
                         <FormField label="Tahun">{(a11y) => <select {...a11y} className="fi-input" value={tahun} onChange={(e) => { setTahun(e.target.value); setHal({ q: produkQ, n: 1 }); }}><option value="">Semua tahun</option>{(tahunOpts.data ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>}</FormField>
                         <FormField label="Principal">{(a11y) => <select {...a11y} className="fi-input" value={principalAktif} onChange={(e) => { setPrincipal(e.target.value); setHal({ q: produkQ, n: 1 }); }}><option value="">Semua principal</option>{(principalOpts.data ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>}</FormField>
-                        <FormField label="Customer" help={customer ? `${customer.nama} · ${customer.kode}` : "Ketik nama atau kode, lalu pilih."}>
+                        <FormField label="Customer" help={customer ? `${customer.nama} · ${customer.kode}`
+                            : customerBelumDipilih ? "Belum dipilih: pilih salah satu dari daftar. Saringan customer belum aktif." : "Ketik nama atau kode, lalu pilih."}>
                             {(a11y) => <>
                                 <input {...a11y} className="fi-input" list="fi-hist-customer" placeholder="Nama atau kode toko" value={cariCustomer}
                                     onChange={(e) => { const v = e.target.value; setCariCustomer(v); const hit = (customerOpts.data ?? []).find((c) => `${c.nama} · ${c.kode}` === v || c.kode === v); setCustomer(hit ?? null); setHal({ q: produkQ, n: 1 }); }} />
@@ -136,6 +147,11 @@ export default function HistoryPenjualan({ permKeys }: { permKeys: string[] }) {
                         ...(customer ? [{ label: `Customer: ${customer.nama}`, onRemove: () => { setCustomer(null); setCariCustomer(""); } }] : []),
                     ]} />
             </div>
+            {opsiGagal.map(([, nama, coba]) => (
+                <MessageStrip key={nama} tone="warn" title={`${nama} gagal dimuat.`}>
+                    Pilihan yang kosong bukan berarti tidak ada data.{" "}<Button variant="tertiary" onClick={coba}>Coba lagi</Button>
+                </MessageStrip>
+            ))}
 
             {!kunciCari ? (
                 <div className="fi-panel"><EmptyState title="Ketik nama produk untuk menampilkan item" message="Saringan Tahun, Principal, dan Customer boleh diisi lebih dulu. Pencarian dimulai dari nama produk, minimal 2 huruf." /></div>
@@ -160,13 +176,15 @@ export default function HistoryPenjualan({ permKeys }: { permKeys: string[] }) {
                 </>
             )}
 
-            <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={berkas ? `Impor ${berkas.name}?` : "Impor CSV e-Faktur"} tag="Impor" confirmLabel="Impor"
+            {/* Catatan varian di badan halaman, bukan di dalam dialog tulis (audit No 80). */}
+            {bolehImpor && <VariantNote bl="BL-60">Impor belum menampilkan pratinjau jumlah faktur, item, dan rentang tanggal; berkas berisi sama di bawah nama lain belum dikenali.</VariantNote>}
+            <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={berkas ? `Impor ${berkas.name}?` : "Impor CSV e-Faktur?"} tag="Impor" confirmLabel="Impor"
                 confirmDisabled={berkas ? undefined : "Pilih berkas dulu"} onConfirm={impor}
                 description={<MessageStrip tone="warn" title="Data dari berkas bernama sama yang pernah diimpor dihapus lebih dulu,">lalu diganti isi berkas ini.</MessageStrip>}
                 facts={[["Berkas", berkas ? `${berkas.name} · ${fmtMB(berkas.size)}` : "belum dipilih"], ["Format", "CSV e-Faktur (baris FK dan OF)"]]}>
                 <FormField label="Berkas CSV" required>{(a11y) => <input {...a11y} className="fi-input" type="file" accept=".csv,text/csv" onChange={(e) => setBerkas(e.target.files?.[0] ?? null)} />}</FormField>
-                <VariantNote bl="BL-60">Usulan: pratinjau jumlah faktur, item, dan rentang tanggal sebelum impor; berkas berisi sama di bawah nama lain dikenali.</VariantNote>
             </ConfirmDialog>
+
         </div>
     );
 }

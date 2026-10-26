@@ -73,9 +73,9 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
     const cabang = pelanggan?.branchName ?? "";
     return (
         <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
-            <FormField label="Cari barang" help={pelanggan
-                ? `Ketik kode atau nama, minimal ${MIN_HURUF} huruf. Hanya barang cabang ${cabang}; harga mengikuti pelanggan.`
-                : "Pilih pelanggan dulu — barang mengikuti cabang pelanggan."}>
+            <FormField label="Cari barang" help={!pelanggan ? "Pilih pelanggan dulu; barang mengikuti cabang pelanggan."
+                : kunci ? `Pencarian terkunci: ${kunci}.`
+                    : `Ketik kode atau nama, minimal ${MIN_HURUF} huruf. Hanya barang cabang ${cabang}; harga mengikuti pelanggan.`}>
                 {(a) => (
                     <input {...a} type="search" className="fi-input" autoComplete="off" value={q} placeholder="mis. BARANG A atau A-1"
                         disabled={!pelanggan || Boolean(kunci)} title={!pelanggan ? "Pilih pelanggan dulu" : kunci} onChange={(e) => setQ(e.target.value)} />
@@ -112,7 +112,8 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
                         })}
                     </ul>
                 )}
-                {hasil.jenis === "siap" && items.length >= BATAS_HASIL && <p className="fi-small fi-muted">Menampilkan {BATAS_HASIL} teratas — persempit pencarian dengan kode atau nama yang lebih lengkap.</p>}
+                {hasil.jenis === "siap" && items.length >= BATAS_HASIL && <p className="fi-small fi-muted">Menampilkan {BATAS_HASIL} teratas. Persempit pencarian dengan kode atau nama yang lebih lengkap.</p>}
+
             </div>
         </div>
     );

@@ -216,9 +216,9 @@ test("List Report: galat ≠ kosong; kosong; status antrean gagal ≠ belum antr
     await expect(m.locator("table tr", { hasText: "TOKO A" })).toContainText("status antrean belum terbaca");
     await expect(m.locator("table tr", { hasText: "TOKO A" })).not.toContainText("Siap diantrekan");
     const kartuGalat = m.getByRole("group", { name: "Saring menurut status" });
-    await expect(kartuGalat.getByRole("button", { name: /Difakturkan\s*–\s*gagal dimuat/ })).toBeVisible();
+    await expect(kartuGalat.getByRole("button", { name: /Difakturkan\s*-\s*gagal dimuat/ })).toBeVisible();
     // Order tersimpan yang status antreannya tidak terbaca TIDAK dihitung Siap diantrekan.
-    await expect(kartuGalat.getByRole("button", { name: /Siap diantrekan\s*–\s*gagal dimuat/ })).toBeVisible();
+    await expect(kartuGalat.getByRole("button", { name: /Siap diantrekan\s*-\s*gagal dimuat/ })).toBeVisible();
 });
 
 test("List Report: selama status antrean dimuat kartu antrean bertanda “–” (bukan 0) dan order tidak tampil Siap diantrekan", async ({ page }) => {
@@ -228,13 +228,22 @@ test("List Report: selama status antrean dimuat kartu antrean bertanda “–”
     await page.goto("/orders");
     const m = main(page);
     const kartu = m.getByRole("group", { name: "Saring menurut status" });
-    await expect(kartu.getByRole("button", { name: /Siap diantrekan\s*–\s*memuat…/ })).toBeVisible(NAV);
-    await expect(kartu.getByRole("button", { name: /Di antrean\s*–\s*memuat…/ })).toBeVisible();
+    await expect(kartu.getByRole("button", { name: /Siap diantrekan\s*-\s*memuat…/ })).toBeVisible(NAV);
+    await expect(kartu.getByRole("button", { name: /Di antrean\s*-\s*memuat…/ })).toBeVisible();
     await expect(m.locator("table tr", { hasText: "TOKO A" })).toContainText("Memeriksa Antrean Faktur…");
     lepas();
     await expect(kartu.getByRole("button", { name: /Siap diantrekan\s*1$/ })).toBeVisible();
     await expect(m.locator("table tr", { hasText: "TOKO A" })).toContainText("Siap diantrekan");
 });
+
+/** Tarik sekarang membuka dialog (audit desain 001 No 15); POST /orders/pull baru terkirim sesudah "Tarik permintaan". */
+async function tarikLewatDialog(page: Page) {
+    await main(page).getByRole("button", { name: "Tarik sekarang…" }).click(NAV);
+    const dlg = page.getByRole("dialog", { name: "Tarik permintaan Order Sales sekarang?" });
+    await expect(dlg).toContainText("permintaan yang sudah pernah masuk tidak digandakan");
+    await dlg.getByRole("button", { name: "Tarik permintaan" }).click();
+    await expect(dlg).toBeHidden();
+}
 
 test("Tarik Order Sales: hasil tarikan tampil; jawaban tidak pasti = belum pasti; koneksi lewat dialog", async ({ page }) => {
     let pull: Opsi["pull"] = { body: { ok: true, imported: [{ request_id: "a", order_id: "x" }, { request_id: "b", order_id: "y" }], already_imported: [], failed: [{ request_id: "c0c0c0c0-1", error: "Order serupa sudah ada", kode: "ORDER_GANDA", duplicate: true },
@@ -245,21 +254,21 @@ test("Tarik Order Sales: hasil tarikan tampil; jawaban tidak pasti = belum pasti
     const m = main(page);
     await expect(m.getByRole("button", { name: "Tarik sekarang" })).toBeEnabled(NAV);
     const sebelum = log.listCalls;
-    await m.getByRole("button", { name: "Tarik sekarang" }).click();
+    await tarikLewatDialog(page);
     await expect(m.getByText("2 order baru ditarik dari Order Sales.")).toBeVisible();
-    await expect(m.getByText(/2 tertahan: #c0c0c0c0 — Diduga order ganda\. Order serupa sudah ada .*; #d1d1d1d1 — Barang bukan milik cabang pelanggan\. Barang bukan barang cabang CABANG A/)).toBeVisible();
+    await expect(m.getByText(/2 tertahan: #c0c0c0c0: Diduga order ganda\. Order serupa sudah ada .*; #d1d1d1d1: Barang bukan milik cabang pelanggan\. Barang bukan barang cabang CABANG A/)).toBeVisible();
     // Putaran 1 peninjau #2: ORDER_GANDA pada permintaan TERTAHAN tidak punya dialog konfirmasi di layar tarik — tindakannya khusus konteks tarik.
     await expect(m.getByText(/Permintaan ini tetap menunggu keputusan Anda\. Periksa order serupa di daftar ini/)).toBeVisible();
     await expect(m.getByText(/centang konfirmasi di dialog lalu simpan lagi/)).toHaveCount(0);
     await expect(m.getByText(/Hapus barang itu, lalu cari barang yang milik cabang pelanggan\./)).toBeVisible(); // kode O1 -> kalimat + tindakan
     await expect(m.getByText(/BARANG_BEDA_CABANG/)).toHaveCount(0);
     // O1 putaran 1: `rejected` = DITOLAK PERMANEN (tidak dicoba lagi), terpisah dari `failed` (ditahan), dengan kalimat dari kodenya.
-    await expect(m.getByText(/1 ditolak permanen \(tidak dicoba lagi; sales perlu mengirim ulang\): #e2e2e2e2 — Hitungan berubah sejak pratinjau\./)).toBeVisible();
+    await expect(m.getByText(/1 ditolak permanen \(tidak dicoba lagi; sales perlu mengirim ulang\): #e2e2e2e2: Hitungan berubah sejak pratinjau\./)).toBeVisible();
     await expect(m.getByText(/PRATINJAU_BERUBAH/)).toHaveCount(0);
     await expect.poll(() => log.listCalls).toBeGreaterThan(sebelum);
 
     pull = { status: 502, html: HTML_502 };
-    await m.getByRole("button", { name: "Tarik sekarang" }).click();
+    await tarikLewatDialog(page);
     await expect(m.getByText("Hasil tarik belum pasti.")).toBeVisible();
     await expect(m.getByText(/502 Bad Gateway/)).toHaveCount(0);
 
@@ -276,7 +285,7 @@ test("Tarik Order Sales: 503 KONFIGURASI_SERVER = galat konfigurasi (tarikan ber
     await pasang(page, { pull: { status: 503, body: { ok: false, detail: "CRON_SECRET belum di-set", kode: "KONFIGURASI_SERVER" } } });
     await page.goto("/orders");
     const m = main(page);
-    await m.getByRole("button", { name: "Tarik sekarang" }).click();
+    await tarikLewatDialog(page);
     const galat = m.getByRole("alert").filter({ hasText: "Tarik Order Sales gagal." });
     await expect(galat).toBeVisible(NAV);
     await expect(galat).toContainText("Konfigurasi server bermasalah.");
@@ -337,7 +346,7 @@ test("Order baru: harga master baca-saja + sumbernya; harga petugas hanya baris 
     await m.getByRole("button", { name: "Tambah barang" }).click();
     const b3 = m.getByRole("listitem", { name: "Barang 3" });
     await pilihBarang(b3, "A-2", "BARANG A2");
-    await expect(b3).toContainText("Harga master belum ada — isi harga petugas (lebih dari 0).");
+    await expect(b3).toContainText("Harga master belum ada. Isi harga petugas (lebih dari 0).");
     await b3.getByLabel("Harga").fill("15000");
     await expect(b3).toContainText("Harga petugas", NAV);
     await expect(m.locator(".fi-strip").getByText("1 barang memakai harga petugas (harga master belum ada).")).toBeVisible();
@@ -498,7 +507,7 @@ test("Object Page: harga order vs master; Antrekan WAJIB salesman dan payload me
     await expect(m.locator(".fi-oph")).toContainText("Siap diantrekan");
     await expect(m.locator("table tr", { hasText: "BRG-A2" })).toContainText("Beda master");
     await expect(m.locator("table tr", { hasText: "BRG-A1" })).toContainText("Sama dengan master");
-    await expect(m.getByText("1 barang beda dari master (belum menahan antre — usulan BL-19)")).toBeVisible();
+    await expect(m.getByText("1 barang beda dari master (belum menahan antre)")).toBeVisible();
     await page.getByRole("button", { name: "Antrekan faktur…" }).click();
     const dlg = page.getByRole("dialog", { name: "Antrekan faktur untuk Order 8f1c0000?" });
     const tombolAntre = dlg.getByRole("button", { name: "Antrekan", exact: true });
@@ -513,7 +522,7 @@ test("Object Page: harga order vs master; Antrekan WAJIB salesman dan payload me
     await expect(dlg).toContainText("Netto Rp 3.411.600 + PPN 11% = Rp 3.786.876 (estimasi)");
     await expect(dlg).toContainText("1 barang beda dari master");
     await dlg.getByLabel("Salesman").selectOption("M-SLA");
-    await expect(dlg).toContainText("M-SLA · SALES A — di setiap baris faktur");
+    await expect(dlg).toContainText("M-SLA · SALES A, di setiap baris faktur");
     await expect(tombolAntre).toBeEnabled();
     expect(log.invoicePosts.at(-1)).toEqual({ queue: false, salesman: "M-SLA" });
     await tombolAntre.click();

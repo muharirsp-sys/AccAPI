@@ -1,21 +1,22 @@
 /*
  * Tujuan: Dialog "Antrekan faktur untuk Order …?" (it06 `antre1`, pengganti JSON payload + "Masukkan ke antrean faktur"): pelanggan,
  *   cabang/seri faktur, tanggal faktur, nilai + PPN, hasil cek harga, dan SALESMAN WAJIB dipilih (C7: satu per order, disalin ke setiap
- *   baris faktur). Payload teknis tetap ada di bagian terlipat.
+ *   baris faktur). Payload teknis di bagian terlipat hanya untuk Admin (pemegang users.manage, sama dengan catatan varian).
  * Caller: ./OrderDetail.tsx (dipasang hanya saat dibuka, sehingga setiap pembukaan memuat ulang pratinjau).
  * Dependensi: GET /api/orders/salesmen?branchId= (O2: hanya salesman cabang PELANGGAN order, cabangnya dari `branch.branchId` pratinjau),
  *   POST /api/orders/[id]/invoice (pratinjau `queue:false`, antre `queue:true` + `salesman`); ./order-ui; components/order/order-cabang;
- *   components/fiori/*; lib/promo-ui (rupiah); lib/rekapan-nota/ui (tanggalPendek).
+ *   components/fiori/*; lib/promo-ui (rupiah); lib/principal-validation (PPN); lib/tampil (KOSONG, tanggalWita).
  * Main Functions: AntreFaktur.
  * Side Effects: HTTP; `queue:true` menulis satu baris Antrean Faktur (tanpa tulis ke Accurate — faktur dibuat saat Kirim di Antrean Faktur).
  */
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, MessageStrip, Skeleton, VariantNote } from "@/components/fiori/core";
+import { Button, MessageStrip, Skeleton } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, type Load } from "@/components/fiori/interactive";
+import { PPN } from "@/lib/principal-validation";
 import { rupiah } from "@/lib/promo-ui";
-import { tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { KOSONG, tanggalWita } from "@/lib/tampil";
 import { galatDariJawaban, kodeDikenal, urlSalesmanCabang } from "@/components/order/order-cabang";
 import { nextApi, nomorOrder, pesanJawaban, sukses, tidakPasti, type OrderFull } from "./order-ui";
 
@@ -24,8 +25,6 @@ type Pratinjau = { payload: Record<string, unknown>; branch: { branchId?: number
 /** Kode penolakan server (mis. salesman bukan cabang pelanggan) ikut dibawa supaya layar menyebut sebabnya, bukan "payload gagal". */
 type Cek = { untuk: string; load: Load<Pratinjau>; kode?: string };
 export type HasilAntre = { jenis: "antre" | "terposting" | "ragu"; pesan?: string };
-
-const PPN = 0.11;
 
 /** Pratinjau payload (dry-run): menyentuh master satuan, cabang, dan — bila dipilih — salesman; tidak menulis apa pun. */
 async function pratinjau(id: string, salesman: string): Promise<{ load: Load<Pratinjau>; kode?: string }> {
@@ -37,8 +36,10 @@ async function pratinjau(id: string, salesman: string): Promise<{ load: Load<Pra
     return { load: { status: "siap", data: { payload: (j.data.payload ?? {}) as Record<string, unknown>, branch: (j.data.branch ?? null) as Pratinjau["branch"], salesman: (j.data.salesman ?? null) as Pratinjau["salesman"] } } };
 }
 
-export function AntreFaktur({ order, hargaBeda, onClose, onSelesai, onMuatUlang }: {
+export function AntreFaktur({ order, hargaBeda, admin = false, onClose, onSelesai, onMuatUlang }: {
     order: OrderFull;
+    /** Admin (users.manage) melihat payload teknis; pengguna lain cukup fakta dialog. */
+    admin?: boolean;
     /** Jumlah barang yang harganya beda dari master; null = harga master tidak terbaca. */
     hargaBeda: number | null;
     onClose: () => void;
@@ -109,11 +110,11 @@ export function AntreFaktur({ order, hargaBeda, onClose, onSelesai, onMuatUlang 
             description="Faktur belum dibuat. Fakturist mengirimnya dari Antrean Faktur; sebelum dikirim barisnya masih bisa dibuang di sana."
             facts={[
                 ["Pelanggan", `${order.outlet} · ${order.customer_no}`],
-                ["Cabang", terakhir?.branch?.branchName ? `${terakhir.branch.branchName} · seri faktur cabang ini` : cekKini.status === "memuat" ? "memeriksa…" : "—"],
-                ["Tanggal faktur", `${tanggalPendek(order.order_date)} (tanggal order; bisa diganti saat Kirim)`],
-                ["Nilai", Number.isFinite(net) ? `Netto ${rupiah(net)} + PPN 11% = ${rupiah(Math.round(net * (1 + PPN)))} (estimasi)` : "—"],
-                ["Harga", hargaBeda === null ? "harga master tidak terbaca" : hargaBeda === 0 ? "sama dengan master" : `${hargaBeda} barang beda dari master — tetap diantrekan hari ini`],
-                ["Salesman", cekKini.status === "siap" && cekKini.data?.salesman ? `${cekKini.data.salesman.number} · ${cekKini.data.salesman.name} — di setiap baris faktur` : salesman ? "memeriksa…" : "belum dipilih"],
+                ["Cabang", terakhir?.branch?.branchName ? `${terakhir.branch.branchName} · seri faktur cabang ini` : cekKini.status === "memuat" ? "memeriksa…" : KOSONG],
+                ["Tanggal faktur", `${tanggalWita(order.order_date)} (tanggal order; bisa diganti saat Kirim)`],
+                ["Nilai", Number.isFinite(net) ? `Netto ${rupiah(net)} + PPN ${Math.round(PPN * 100)}% = ${rupiah(Math.round(net * (1 + PPN)))} (estimasi)` : KOSONG],
+                ["Harga", hargaBeda === null ? "harga master tidak terbaca" : hargaBeda === 0 ? "sama dengan master" : `${hargaBeda} barang beda dari master, tetap diantrekan`],
+                ["Salesman", cekKini.status === "siap" && cekKini.data?.salesman ? `${cekKini.data.salesman.number} · ${cekKini.data.salesman.name}, di setiap baris faktur` : salesman ? "memeriksa…" : "belum dipilih"],
             ]}
             confirmLabel="Antrekan" confirmDisabled={tutupAlasan} onConfirm={antrekan}>
             <FormField label="Salesman" required help={`${cabangNama ? `Hanya salesman cabang ${cabangNama} (cabang pelanggan order ini). ` : ""}Satu salesman untuk seluruh order, disalin ke setiap baris faktur (Accurate menyimpan sales per baris).`}>
@@ -133,9 +134,9 @@ export function AntreFaktur({ order, hargaBeda, onClose, onSelesai, onMuatUlang 
             {cekKini.status === "galat" && (cek?.kode
                 ? <MessageStrip tone="neg" title="Salesman ini ditolak server.">{cekKini.error}</MessageStrip>
                 : <MessageStrip tone="neg" title="Payload faktur belum lulus pemeriksaan.">{cekKini.error}</MessageStrip>)}
-            {hargaBeda !== null && hargaBeda > 0 && <VariantNote bl="BL-19">Harga beda master belum menahan antrean. Usulan: ditahan di sini sampai ditinjau.</VariantNote>}
-            <VariantNote bl="BL-23">Limit kredit dan stok belum diperiksa sebelum antre; penolakannya baru ketahuan saat Kirim. Usulan: peringatan di dialog ini, tidak memblokir.</VariantNote>
-            {terakhir && (
+            {/* Catatan varian BL-19/BL-23 dipindah ke badan halaman order (audit No 80: tidak di dalam dialog tulis). */}
+            {admin && terakhir && (
+
                 <details className="fi-small">
                     <summary>Lihat payload teknis</summary>
                     <pre className="fi-mono" style={{ maxHeight: "16rem", overflow: "auto", whiteSpace: "pre", maxWidth: "100%" }}>{JSON.stringify(terakhir.payload, null, 2)}</pre>
