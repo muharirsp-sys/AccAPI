@@ -19,6 +19,7 @@ import {
 import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactive";
 import { ambil, jamWita, tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { modeDariNote, rupiah, statusRun } from "@/lib/laporan-harian/ui";
+import AbcpiKirim from "./AbcpiKirim";
 
 type Summary = { spv: string; rows: number; dpp: number; ao: number; ec: number; ia: number };
 type Recipient = { keyword: string; groupType: string; fileName: string; emails: string[] };
@@ -270,6 +271,8 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
                     </Section>
                 </>
             )}
+
+            {bolehKirim && <AbcpiKirim />}
 
             <Section id="riwayat" title="Riwayat kirim" subtitle={`run per unggahan · run macet lebih dari 10 menit belum bisa dilanjutkan`}>
                 <ResponsiveTable<Run> title="Riwayat kirim" columns={kolomRun} rows={riwayat.data ?? []} rowKey={(r) => r.id}

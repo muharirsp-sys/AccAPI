@@ -1607,6 +1607,23 @@ UI: review file opsional -> GET /api/laporan-harian/[runId]/preview?file=...
         UI otomatis menyediakan tombol screenshot dan unduhan Excel Pak Fahdhar sesudah generate
 ```
 
+Laporan ABCPI otomatis (FTP + email, 26 Okt 2026; pengganti otomasi Excel/FTP-ABC.exe di laptop):
+```
+cron VPS 20.00/21.00/22.00 WITA -> GET /api/cron/abcpi-harian (CRON_SECRET; ?tanggal= opsional)
+UI /laporan-harian bagian "Laporan ABCPI" (AbcpiKirim.tsx) -> GET/POST /api/laporan-harian/abcpi
+     (view: riwayat + ?pratinjau=YYYY-MM-DD xlsx tanpa kirim; send: {tanggal, confirm:true})
+  -> lib/abcpi/jalankan.ts jalankanAbcpi: API Accurate BACA-SAJA (sesi sinkron) cabang ABC (branchId 550),
+     transDate 1..tanggal: sales-invoice list+detail (INV/ saja), sales-return list+detail (tanpa RSJ),
+     item/list-stock.do semua gudang + GD0BS
+  -> lib/abcpi/laporan.ts: template ABCPI.xlsx 41 kolom (diskon bertingkat -> Disc1..5_Ext, EC=1 baris pertama
+     tiap faktur, retur negatif, freegoods B bernilai 0) + stok (Baik = semua − GD0BS); kode principle dari
+     lib/abcpi/peta-barang.json (daftar harga ABC PI), cadangan charField3 barang; barang tanpa kode = tidak dikirim
+  -> arsip data/abcpi/<YYYY-MM>/SP_<tgl>_{SALES,STOCK}.csv + ABCPI_SP_<tgl>.xlsx, status per tanggal, log.jsonl
+  -> lib/abcpi/ftp.ts unggah CSV pipe ke FTP ABC (dicek SIZE) + email xlsx + CSV ke report_recipient keyword ABCPI; stok pakai asOfDate = tanggal laporan
+  -> email ringkasan/galat ke admin. Akhir bulan dari cron = DITAHAN (berkas ke admin), kirim dari UI.
+  Konfigurasi: data/abcpi/config.json {ftp:{host,port,user,password,dir}, adminEmail} di volume data (bukan env).
+```
+
 Admin mapping: `/laporan-harian/mapping` -> `app/api/laporan-harian/mapping/route.ts` -> CRUD
 `report_recipient` (keyword/emails/active) langsung dari Next.js, tanpa FastAPI. Permission
 `laporan_harian.manage`. Keyword tetap diresolusi otomatis ke SPV/SM/Principal oleh

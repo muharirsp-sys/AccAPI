@@ -138,3 +138,6 @@ ponytail/
 # Kunci API Mistral lokal — pernah ikut terbungkus ke .next (temuan 2026-09-07).
 # Jangan pernah masuk repo; pakai secret server di produksi.
 python_backend/api_key_mistral.txt
+
+# Laporan ABCPI: arsip, log, dan config.json berisi kata sandi FTP (volume produksi)
+data/abcpi/
