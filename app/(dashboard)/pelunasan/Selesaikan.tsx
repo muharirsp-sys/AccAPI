@@ -4,7 +4,7 @@
  *   (kode 409) tidak ditawarkan lagi; jawaban tidak pasti = "hasilnya belum pasti" + pencarian diulang (simpan terkunci selama itu).
  *   Daftar "Perlu tindakan" (GET summary ?rows=1) membuka dialog yang sama untuk baris dari kiriman sesi lain (Finance).
  * Caller: LangkahKirim.tsx (LangkahHasil), Pelunasan.tsx (langkah Jenis).
- * Dependensi: ./bersama (cariPenyelesaian, simpanPenyelesaian, muatRingkasan, labelDatabase), lib/pelunasan-wizard, components/fiori.
+ * Dependensi: ./bersama (cariPenyelesaian, simpanPenyelesaian, muatRingkasan, labelDatabase), lib/pelunasan-wizard, components/fiori, lib/tampil (KOSONG).
  * Main Functions: SelesaikanDialog, DaftarTindakan.
  * Side Effects: GET /api/idempotency/resolve (baca Accurate dengan sesi pemanggil), POST /api/idempotency/resolve (catat keputusan; TIDAK
  *   menulis ke Accurate), GET /api/idempotency/summary?rows=1.
@@ -19,12 +19,13 @@ import { rupiah } from "@/lib/promo-ui";
 import { LABEL_STATUS_SERVER, type Penyelesaian } from "@/lib/pelunasan-wizard";
 import { waktuWita } from "@/app/(dashboard)/principal-order/bersama";
 import { ALASAN, cariPenyelesaian, labelDatabase, muatRingkasan, namaDatabase, simpanPenyelesaian, type BarisRingkasan, type Ringkasan, type Sesi } from "./bersama";
+import { KOSONG } from "@/lib/tampil";
 
 type Keputusan = "terposting" | "tidak_ada";
 const TETAP = " Tidak ada yang diubah.";
 
 /** Kontrak §5 `hint:"takeover"`: cicilan yang BELUM terkirim tidak diselesaikan di sini, melainkan dikirim ulang terkendali dari Tinjau. */
-const arahTakeover = (izin: boolean) => `Bila baris ini cicilan yang BELUM terkirim, jangan diselesaikan di sini: tutup dialog lalu kirim ulang terkendali — unggah ulang baris ini lewat Pelunasan baru; di Tinjau baris tertahan sebagai kiriman sebelumnya belum pasti, centang lalu Izinkan yang dicentang… dengan alasan minimal 15 karakter (takeover Finance, tercatat).${izin ? "" : " Akun Anda tidak berhak mengizinkannya; minta Finance yang berhak mengizinkan baris ganda."}`;
+const arahTakeover = (izin: boolean) => `Bila baris ini cicilan yang BELUM terkirim, jangan diselesaikan di sini: tutup dialog, lalu unggah ulang baris ini lewat Mulai pelunasan baru. Di Tinjau, centang baris yang tertahan lalu Izinkan yang dicentang… dengan alasan minimal 15 karakter (kirim ulang terkendali, tercatat).${izin ? "" : " Akun Anda tidak berhak mengizinkannya; minta Finance yang berhak."}`;
 type SelisihServer = { nomor: string; kandidat: number | null; baris: number | null; beda: number | null };
 
 /**
@@ -71,14 +72,14 @@ export function SelesaikanDialog({ kunci, ringkas, lockDb, izinTakeover, onClose
     // Dari jawaban server (status, eligible, found, database lock) — klien tidak menebak aturan umur.
     const umum = !r ? "Menunggu hasil pencarian."
         : sudah ? `Baris ini ${sudah.pesan}`
-            : !r.eligible ? `Status aplikasi ${LABEL_STATUS_SERVER[r.status] ?? r.status}: kiriman masih berjalan atau baru saja berubah; cari lagi beberapa menit lagi.`
+            : !r.eligible ? `Status aplikasi ${LABEL_STATUS_SERVER[r.status] ?? "tidak dikenal"}: kiriman masih berjalan atau baru saja berubah; cari lagi beberapa menit lagi.`
                 : r.found === null ? `Riwayat Accurate gagal dibaca${r.readError ? ` (${r.readError})` : ""}; cari lagi.` : "";
     const tidak: Record<Keputusan, string> = {
         terposting: umum || ditolak.terposting || (nomorOpsi.length ? ""
             : r?.found ? "Pelunasan yang menyentuh faktur ini tidak bernomor di jawaban Accurate; periksa nomornya di Accurate lalu Cari lagi."
                 : "Tidak ada pelunasan di Accurate yang menyentuh faktur ini; server hanya menerima nomor dari pencarian."),
         tidak_ada: umum || ditolak.tidak_ada || (r?.found
-            ? "Ada pelunasan di Accurate yang menyentuh faktur ini; bandingkan nominalnya — bila itu kiriman ini, tetapkan terposting dengan nomornya. Mengirim ulang bisa membuat pelunasan ganda."
+            ? "Ada pelunasan di Accurate yang menyentuh faktur ini; bandingkan nominalnya. Bila itu kiriman ini, tetapkan terposting dengan nomornya. Mengirim ulang bisa membuat pelunasan ganda."
             : target.id === null ? "Database kiriman tidak tercatat (baris sebelum pembaruan): tidak ditemukan di database ini bisa berarti terposting di database lain." : ""),
     };
     /** GET pencarian 403 (izin dicabut sesudah halaman dibuka): tanpa "Coba lagi"/"cari lagi" — mengulang tidak menolong. */
@@ -87,7 +88,7 @@ export function SelesaikanDialog({ kunci, ringkas, lockDb, izinTakeover, onClose
         ? `Baris ini dikirim ke ${target.label}; sesi Anda membuka ${namaDatabase(db)}. Buka database itu di halaman Sesi Accurate lalu Cari lagi.` : "";
     const blok = load.status === "memuat" ? "Menunggu hasil pencarian di Accurate"
         : izinDitolak || cariDitolak ? ALASAN.selesaikanDitolak
-            : !r ? "Pencarian belum berhasil — cari lagi"
+            : !r ? "Pencarian belum berhasil; cari lagi"
                 : !db?.databaseId ? "Sesi Accurate tanpa database terbuka; buka database di halaman Sesi Accurate lalu Cari lagi"
                     : dbBeda || (!keputusan ? "Pilih hasil pemeriksaan dulu" : tidak[keputusan])
                         || (keputusan === "terposting" && !nomorPilih ? "Pilih nomor pelunasan" : "")
@@ -110,12 +111,12 @@ export function SelesaikanDialog({ kunci, ringkas, lockDb, izinTakeover, onClose
             }
             onClose(j.status === "SUCCESS"
                 ? { status: "SUCCESS", nomor: [nomorPilih], pesan: `ditetapkan terposting ${nomorPilih}.` }
-                : { status: "FAILED", nomor: [], pesan: "ditetapkan tidak ada di Accurate; boleh dikirim ulang lewat Pelunasan baru." });
+                : { status: "FAILED", nomor: [], pesan: "ditetapkan tidak ada di Accurate; boleh dikirim ulang lewat Mulai pelunasan baru." });
             return;
         }
         if (j.jenis === "ragu") {
             cariLagi();
-            throw new Error("Server tidak memberi jawaban yang pasti — hasilnya belum pasti: penyelesaian mungkin sudah tercatat, mungkin belum. Pencarian dimuat ulang; periksa status baris sebelum menyimpan lagi.");
+            throw new Error("Server tidak memberi jawaban yang pasti, jadi hasilnya belum pasti: penyelesaian mungkin sudah tercatat, mungkin belum. Pencarian dimuat ulang; periksa status baris sebelum menyimpan lagi.");
         }
         const pesan = j.pesan ? `${j.pesan}.`.replace(/\.\.$/, ".") : "";
         switch (j.code) {
@@ -180,13 +181,13 @@ export function SelesaikanDialog({ kunci, ringkas, lockDb, izinTakeover, onClose
                 <>
                     <div className="fi-panel" style={{ padding: 12 }} role="status" aria-label="Hasil pencarian">
                         <b>{r.found === true ? `Ada ${r.candidates.length || r.receiptNumbers.length} pelunasan di Accurate yang menyentuh faktur ini` : r.found === false ? "Tidak ada pelunasan di Accurate yang menyentuh faktur ini" : "Riwayat Accurate gagal dibaca"}</b>
-                        <p className="fi-small">Pelanggan {r.customerNo}, tanggal {r.transDate}, faktur {r.invoiceNo}, nilai {rupiah(r.amount)} · status aplikasi {LABEL_STATUS_SERVER[r.status] ?? r.status}
+                        <p className="fi-small">Pelanggan {r.customerNo}, tanggal {r.transDate}, faktur {r.invoiceNo}, nilai {rupiah(r.amount)} · status aplikasi {LABEL_STATUS_SERVER[r.status] ?? "tidak dikenal"}
                             {r.readError ? ` · ${r.readError}` : ""} · dicari di {namaDatabase(db)}.</p>
                         {r.candidates.length > 0 && (
                             <ul className="fi-small" aria-label="Pelunasan yang menyentuh faktur ini" style={{ margin: "6px 0 0", paddingLeft: "1.25rem", listStyle: "disc" }}>
                                 {r.candidates.map((k, i) => (
                                     <li key={`${k.receiptNumber}-${i}`}>
-                                        <b className="fi-mono">{k.receiptNumber || "tanpa nomor"}</b>{k.transDate ? ` · ${k.transDate}` : ""} · faktur {k.invoiceNos.join(", ") || "—"}
+                                        <b className="fi-mono">{k.receiptNumber || "tanpa nomor"}</b>{k.transDate ? ` · ${k.transDate}` : ""} · faktur {k.invoiceNos.join(", ") || KOSONG}
                                         {k.amount !== null ? ` · ${rupiah(k.amount)} (${k.amount === r.amount ? "nominal sama dengan baris" : `baris ${rupiah(r.amount)}`})` : ""}
                                     </li>
                                 ))}
@@ -214,9 +215,9 @@ export function SelesaikanDialog({ kunci, ringkas, lockDb, izinTakeover, onClose
                     )}
                     {perluYakin && (
                         <MessageStrip tone="warn" title={tidakIdentikServer && tidakIdentikServer.kandidat !== null && tidakIdentikServer.baris !== null && tidakIdentikServer.beda
-                            ? `Pelunasan ${nomorPilih} ${rupiah(tidakIdentikServer.kandidat)} ≠ baris ini ${rupiah(tidakIdentikServer.baris)} (selisih ${rupiah(Math.abs(tidakIdentikServer.beda))}) — bisa jadi cicilan lain.`
-                            : selisih !== null ? `Pelunasan ${nomorPilih} ${rupiah(selisih)} ≠ baris ini ${rupiah(r.amount)} — bisa jadi cicilan lain.`
-                                : `Pelunasan ${nomorPilih} tidak identik dengan baris ini (faktur atau nominal per faktur berbeda) — bisa jadi cicilan lain.`}>
+                            ? `Pelunasan ${nomorPilih} ${rupiah(tidakIdentikServer.kandidat)} ≠ baris ini ${rupiah(tidakIdentikServer.baris)} (selisih ${rupiah(Math.abs(tidakIdentikServer.beda))}); bisa jadi cicilan lain.`
+                            : selisih !== null ? `Pelunasan ${nomorPilih} ${rupiah(selisih)} ≠ baris ini ${rupiah(r.amount)}; bisa jadi cicilan lain.`
+                                : `Pelunasan ${nomorPilih} tidak identik dengan baris ini (faktur atau nominal per faktur berbeda); bisa jadi cicilan lain.`}>
                             Tetapkan terposting hanya bila pelunasan itu memang kiriman baris ini. {arahTakeover(izinTakeover)}
                             <label className="fi-check" style={{ marginTop: 8 }}>
                                 <input type="checkbox" checked={yakin} onChange={(e) => setYakin(e.target.checked)} />
@@ -252,7 +253,7 @@ export function DaftarTindakan({ izinSelesaikan, izinTakeover, sesi, sesiMemuat 
     const [pesan, setPesan] = useState<string | null>(null);
     const rows = load.data?.rows ?? [];
     const nRagu = rows.filter((r) => !gagal(r)).length;
-    const faktur = (r: BarisRingkasan) => r.invoiceNo || "—";
+    const faktur = (r: BarisRingkasan) => r.invoiceNo || KOSONG;
     // Tombol tulis mengikuti data penentu: daftar memuat ulang / gagal dimuat ulang = baris yang tampil mungkin usang.
     const kunci = !izinSelesaikan ? ALASAN.selesaikan
         : load.status === "memuat" ? "Daftar sedang dimuat ulang."
@@ -263,7 +264,7 @@ export function DaftarTindakan({ izinSelesaikan, izinTakeover, sesi, sesiMemuat 
             onClick={() => { setPesan(null); setBuka(r); }}>Selesaikan…</Button>
         : <span className="fi-small">Unggah ulang lewat wizard</span>;
     const kolom: Column<BarisRingkasan>[] = [
-        { key: "faktur", header: "Faktur / outlet", cell: (r) => <><b className="fi-mono">{faktur(r)}</b><span className="fi-codes">{r.customerNo ?? "—"} · {r.transDate ?? "—"}</span></> },
+        { key: "faktur", header: "Faktur / outlet", cell: (r) => <><b className="fi-mono">{faktur(r)}</b><span className="fi-codes">{r.customerNo ?? KOSONG} · {r.transDate ?? KOSONG}</span></> },
         { key: "nilai", header: "Nilai", align: "end", cell: (r) => <span className="fi-tnum">{rupiah(r.amount ?? 0)}</span> },
         { key: "db", header: "Database", secondary: true, cell: (r) => <span className="fi-small">{labelDatabase(r.databaseId, sesi)}</span> },
         { key: "status", header: "Status", cell: (r) => <><Badge r={r} /><span className="fi-codes">{waktuWita(r.updatedAt)} WITA</span></> },
@@ -284,7 +285,7 @@ export function DaftarTindakan({ izinSelesaikan, izinTakeover, sesi, sesiMemuat 
             <ResponsiveTable<BarisRingkasan> title="Perlu tindakan" count={rows.length} columns={kolom} rows={rows} rowKey={(r) => r.key}
                 status={load.status} error={load.error} onRetry={muatUlang}
                 empty={{ title: "Tidak ada pelunasan yang tidak pasti atau gagal", message: "Kiriman yang belum pasti atau tidak terkirim muncul di sini." }}
-                mobileItem={(r) => <ListItem doc={faktur(r)} amount={rupiah(r.amount ?? 0)} title={`${r.customerNo ?? "—"} · ${labelDatabase(r.databaseId, sesi)}`}
+                mobileItem={(r) => <ListItem doc={faktur(r)} amount={rupiah(r.amount ?? 0)} title={`${r.customerNo ?? KOSONG} · ${labelDatabase(r.databaseId, sesi)}`}
                     meta={tombol(r)} badge={<Badge r={r} />} />} />
             {load.data?.rowsTruncated && <p className="fi-small fi-why" style={{ padding: "8px 16px" }}>Daftar dipotong: 200 baris terbaru ditampilkan.</p>}
             {kunci && nRagu > 0 && <p className="fi-small fi-why" style={{ padding: "8px 16px" }}>Selesaikan nonaktif: {kunci}</p>}

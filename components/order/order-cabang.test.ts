@@ -193,7 +193,7 @@ test("BONUS_TIDAK_BISA_DIORDER: kalimat menyebut kode barang bonus + alasan; tan
     const g = galatDariJawaban(jawab(409, { ok: false, kode: "BONUS_TIDAK_BISA_DIORDER", error: "x", bonus: [{ code: "G-9", name: "BARANG G", alasan: "barang cabang CABANG B" }, { code: "G-8", name: null, alasan: "nonaktif (suspended) di Accurate" }] }));
     assert.match(g.pesan, /barang bonus G-9 BARANG G \(barang cabang CABANG B\); G-8 \(nonaktif \(suspended\) di Accurate\) tidak bisa dipakai/);
     assert.deepEqual(g.perBarang, {}); // barang bonus bukan baris order
-    assert.match(g.tindakan, /Hubungi Admin.*Summary promo/);
+    assert.match(g.tindakan, /Hubungi Admin.*Summary Promo/);
     assert.equal(g.menolak, true);
     assert.equal(galatDariJawaban(jawab(409, { kode: "BONUS_TIDAK_BISA_DIORDER", error: "Teks server bonus" })).pesan, "Teks server bonus");
 });

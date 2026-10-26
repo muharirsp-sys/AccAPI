@@ -53,7 +53,7 @@ const DATA: Partial<JawabanSupervisorReview> = {
 
 /**
  * Mock GET /api/supervisor-review (+ ubin OSM). `o` = isian jawaban, atau fungsi nomor permintaan -> isian. Menit `diperbaruiPada` = 40 + nomor
- * permintaan, jadi "data per 09.NN WITA" membuktikan jawaban ke-NN sudah dipakai layar.
+ * permintaan, jadi "data per 16/10/2026 09.NN WITA" membuktikan jawaban ke-NN sudah dipakai layar.
  */
 async function mockPeta(page: Page, o: Partial<JawabanSupervisorReview> | ((n: number) => Partial<JawabanSupervisorReview>)) {
     const ubin: string[] = [];
@@ -145,7 +145,7 @@ test.describe("Peta (/supervisor-review)", () => {
             // Mode dev (StrictMode) memuat dua kali saat mount: tunggu jawaban permintaan berikutnya (menitnya = 40 + nomor), bukan jumlah tetap.
             const berikut = log.length + 1;
             await page.getByRole("button", { name: "Muat ulang" }).click();
-            await expect(page.getByText(`data per 09.${40 + berikut} WITA`)).toBeVisible(NAV);
+            await expect(page.getByText(`data per 16/10/2026 09.${40 + berikut} WITA`)).toBeVisible(NAV);
         }
         expect(await page.evaluate(() => document.querySelector(".leaflet-map-pane") === (window as unknown as { __pane: Element | null }).__pane)).toBe(true);
         await expect(jumlah(page, "ec")).toHaveCount(2);
@@ -187,8 +187,23 @@ test.describe("Peta (/supervisor-review)", () => {
         await page.goto("/supervisor-review", NAV);
         await expect(jumlah(page, "ec")).toHaveCount(1, NAV);
         await expect(jumlah(page, "lain")).toHaveCount(1);
-        await expect(jumlah(page, "lain")).toHaveAttribute("fill", "#9e9e9e");
+        // Warna penanda dari token Fiori (No 41): status tak dikenal = cincin abu-abu netral, bukan heksa tetap.
+        await expect(jumlah(page, "lain")).toHaveAttribute("stroke", "var(--neu-solid)");
         await expect(page.getByText("Peta gagal dimuat.")).toHaveCount(0);
+    });
+
+    test("penanda berhuruf dan daftar teks: status tidak hanya lewat warna; daftar bisa difokus papan ketik (audit desain 001 No 56)", async ({ page }) => {
+        await mockPeta(page, { penanda: [pen("C-1", "S-01", "ec", -5.1477, 119.4327), pen("C-2", "S-01", "belum", -5.15, 119.43)], kunjungan: [] });
+        await page.goto("/supervisor-review", NAV);
+        await expect(jumlah(page, "ec")).toHaveCount(1, NAV);
+        await expect(page.locator(".peta-huruf")).toHaveText(["E", "B"]);
+        await page.getByText(/Lihat toko dan check-in sebagai daftar/).click();
+        const daftar = page.getByRole("region", { name: "Daftar toko dan check-in" });
+        await expect(daftar).toBeVisible();
+        await expect(daftar).toContainText("E: Dikunjungi, EC");
+        await expect(daftar).toContainText("B: Terjadwal, belum dikunjungi");
+        await daftar.focus();
+        await expect(daftar).toBeFocused();
     });
 
     test.describe("ponsel 390 px", () => {
@@ -199,7 +214,7 @@ test.describe("Peta (/supervisor-review)", () => {
             const main = page.locator("main");
             // Ponsel: tak ada peta di daftar; Peta ada di tab rincian salesman terpilih (S-01: 1 ec, 1 tanpa_ec, 1 belum, 3 titik check-in).
             await main.getByRole("list", { name: "Salesman CABANG A" }).getByRole("listitem").filter({ hasText: "SALES A" }).getByRole("button").first().click();
-            await main.getByRole("tab", { name: "Peta" }).click();
+            await main.getByRole("group", { name: "Tampilan rincian salesman" }).getByRole("button", { name: "Peta" }).click();
             await expect(jumlah(page, "ec")).toHaveCount(1, NAV);
             await expect(jumlah(page, "checkin")).toHaveCount(3);
             expect((await petaRegion(page).boundingBox())?.height).toBe(300);

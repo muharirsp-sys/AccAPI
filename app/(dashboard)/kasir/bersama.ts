@@ -3,9 +3,9 @@
  *   PASTI dari TIDAK PASTI menurut §8.2 (BUKAN `tulis()` principal-order: di sana semua ≥ 502 dianggap tidak pasti, padahal 502 BACA_GAGAL /
  *   503 SESI_SINKRON = pasti), isian Rupiah manusia -> teks desimal, format Rupiah/WITA, label status & alasan.
  * Caller: Kasir.tsx, DialogKasir.tsx.
- * Dependensi: form-kontrol/lapangan (ambilJson), principal-order/bersama (baca, sebab, waktuWita), lib/angka-lokal (angkaLokalTeks, tanpa SheetJS),
- *   lib/kasir/rekonsiliasi (keSen — murni), lib/promo-ui (rupiah).
- * Main Functions: bacaHari, bacaRincian, kirimKasir, nominalKeTeks, rp, jamWita, segarkan, ALASAN, LABEL_*.
+ * Dependensi: form-kontrol/lapangan (ambilJson), principal-order/bersama (baca, sebab), lib/angka-lokal (angkaLokalTeks, tanpa SheetJS),
+ *   lib/kasir/rekonsiliasi (keSen — murni), lib/promo-ui (rupiah), lib/tampil (KOSONG untuk nilai kosong, waktuWita diekspor ulang).
+ * Main Functions: bacaHari, bacaRincian, kirimKasir, nominalKeTeks, rp, waktuWita, segarkan, ALASAN, LABEL_*.
  * Side Effects: fetch (bacaHari/bacaRincian/kirimKasir/segarkan); sisanya murni.
  */
 import type { Tone } from "@/components/fiori/core";
@@ -15,8 +15,9 @@ import { baca } from "@/app/(dashboard)/principal-order/bersama";
 import { angkaLokalTeks } from "@/lib/angka-lokal";
 import { keSen } from "@/lib/kasir/rekonsiliasi";
 import { rupiah } from "@/lib/promo-ui";
+import { KOSONG } from "@/lib/tampil";
 
-export { waktuWita } from "@/app/(dashboard)/principal-order/bersama";
+export { waktuWita } from "@/lib/tampil";
 
 /** Uang dari server = teks desimal ("1250000.00"); null = angka Incaso belum terbaca (BUKAN 0). */
 export type Uang = string;
@@ -151,24 +152,17 @@ export function senDari(t: Uang | null | undefined): number | null {
     try { return keSen(t); } catch { return null; }
 }
 
-/** "Rp 1.250.000"; negatif = "−Rp 400.000". */
+/** "Rp 1.250.000"; negatif = "−Rp 400.000"; kosong/rusak = KOSONG. */
 export function rp(t: Uang | number | null | undefined): string {
-    if (t == null || t === "") return "—";
+    if (t == null || t === "") return KOSONG;
     const n = Number(t);
-    if (!Number.isFinite(n)) return "—";
+    if (!Number.isFinite(n)) return KOSONG;
     return `${n < 0 ? "−" : ""}${rupiah(Math.abs(n))}`;
 }
 export const rpSen = (sen: number) => rp(sen / 100);
 
 /** Klop = sama persis ATAU sama dengan pelunasan dibulatkan ke atas ke kelipatan Rp 100 (owner 7 Okt). */
 export const bulatAtas100 = (sen: number) => Math.ceil(sen / 10_000) * 10_000;
-
-/** "16.20" WITA. */
-export function jamWita(iso: string | null | undefined) {
-    if (!iso) return "";
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? "" : new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Makassar", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
-}
 
 /** YYYY-MM-DD -> "Senin, 5 Okt 2026". */
 export function tanggalPanjang(ymd: string) {
@@ -200,5 +194,5 @@ export const ALASAN = {
     catat: "Akun Anda belum berhak mencatat setoran atau penjelasan Kasir; minta admin menambahkan izin Catat Kasir ke grup Anda.",
     tutup: "Akun Anda belum berhak menutup hari Kasir; minta admin menambahkan izin Tutup hari Kasir ke grup Anda.",
     buka: "Membuka kembali hari yang terkunci hanya untuk OM/Admin.",
-    hapus: "Minta OM/Admin mengonfirmasi penghapusan ini — hanya mereka yang boleh.",
+    hapus: "Minta OM/Admin mengonfirmasi penghapusan ini; hanya mereka yang berwenang.",
 };

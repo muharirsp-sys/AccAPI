@@ -2,12 +2,14 @@
  * Tujuan: Helper murni layar Rekapan Nota (Fiori S2): label status/exception dalam bahasa tugas, tanggal WITA,
  *   penyaringan pool, dan urutan wave berikutnya. Tidak ada logic bisnis baru — hanya penyajian.
  * Caller: app/(dashboard)/rekapan-nota/*.tsx, ui.test.ts.
- * Dependensi: Tidak ada. Pure.
- * Main Functions: WAVE_STATUS, EXCEPTION_LABEL, menahanKonfirmasi, tanggalPanjang, tanggalPendek, jamWita,
+ * Dependensi: lib/tampil (KOSONG, sebabHttp). Pure kecuali `ambil`.
+ * Main Functions: WAVE_STATUS, EXCEPTION_LABEL, menahanKonfirmasi, tanggalPanjang, tanggalPendek,
  *   saringPool, urutanBerikutnya, formatKarton, labelEvent, nomorLembar, judulBerkas, usulIsiDariNama, hariIniWita, ambil.
  * Side Effects: `ambil` melakukan GET (dipakai komponen klien); sisanya pure.
+ *   Tanggal + jam (layar dan kop cetak) memakai `waktuWita` lib/tampil ("dd/mm/yyyy hh.mm"), tidak ada format jam sendiri di sini.
  */
 import type { Tone } from "@/components/fiori/core";
+import { KOSONG, sebabHttp } from "@/lib/tampil";
 
 export type WaveStatusKode = "draft" | "released" | "confirmed" | "cancelled";
 
@@ -43,15 +45,6 @@ export function tanggalPanjang(ymd: string) {
 export function tanggalPendek(ymd: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
     return new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" }).format(utcNoon(ymd));
-}
-
-/** "6 Okt 09.40" dari timestamp, dalam WITA. */
-export function jamWita(iso: string | Date) {
-    const d = typeof iso === "string" ? new Date(iso) : iso;
-    if (Number.isNaN(d.getTime())) return "";
-    const tgl = new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short", timeZone: "Asia/Makassar" }).format(d);
-    const jam = new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Makassar" }).format(d);
-    return `${tgl} ${jam}`;
 }
 
 /** Tanggal hari ini (yyyy-mm-dd) dalam WITA — bukan UTC, yang masih "kemarin" sampai 08.00 WITA. */
@@ -93,7 +86,7 @@ export function usulIsiDariNama(nama: string | null | undefined): number | null 
 }
 
 export const formatKarton = (krt: number | null | undefined) =>
-    krt == null ? "–" : new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(krt);
+    krt == null ? KOSONG : new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(krt);
 
 export type PoolFilter = { cari: string; salesman: string; area: string; pareto: boolean };
 export type PoolRow = { no_nota: string; customer: string | null; salesman: string | null; area: string | null; pareto: boolean | null };
@@ -143,10 +136,11 @@ export async function ambil<T>(url: string, pick: (json: unknown) => T = (j) => 
         const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) });
         if (!res.ok) {
             const body = (await res.json().catch(() => ({}))) as { error?: string };
-            return { status: "galat", error: body.error ?? `HTTP ${res.status}` };
+            return { status: "galat", error: body.error ?? sebabHttp(res.status) };
         }
         return { status: "siap", data: pick(await res.json()) };
     } catch (e) {
-        return { status: "galat", error: e instanceof DOMException && e.name === "TimeoutError" ? "Server tidak menjawab tepat waktu" : e instanceof Error ? e.message : String(e) };
+        // TypeError = fetch gagal tersambung (pesan peramban "Failed to fetch" tidak boleh sampai ke pengguna).
+        return { status: "galat", error: e instanceof DOMException && e.name === "TimeoutError" ? "Server tidak menjawab tepat waktu" : e instanceof TypeError ? sebabHttp(0) : e instanceof Error ? e.message : sebabHttp(500) };
     }
 }

@@ -1,9 +1,9 @@
 /*
  * Tujuan: Aturan promo (Fiori S4a): List Report di kiri (status Aktif/Nonaktif/Berakhir/Belum mulai, asal, beban) + Object Page di kanan
- *   (kalimat "artinya", formulir ubah). Dialog Hapus, Salin tarif ke outlet, dan Impor Excel (dipindah dari Rekap; principal wajib,
- *   selalu pratinjau dulu). Tab kedua: Daftar outlet peserta. Persetujuan dan Muat dari Summary pindah ke halaman Summary.
+ *   (kalimat "artinya", formulir ubah). Dialog Hapus, Salin tarif ke outlet, dan Impor Excel (principal wajib, selalu pratinjau dulu).
+ *   Tab kedua: Daftar outlet peserta. Persetujuan dan Muat dari Summary ada di halaman Summary.
  * Caller: app/(dashboard)/aturan-promo/page.tsx.
- * Dependensi: GET|POST|PATCH|PUT|DELETE /api/promo-rule, POST /api/promo-recap (impor, apply=false|true); components/fiori/*; lib/promo-ui; DaftarOutlet.
+ * Dependensi: GET|POST|PATCH|PUT|DELETE /api/promo-rule, POST /api/promo-recap (impor, apply=false|true); components/fiori/*; lib/promo-ui; lib/tampil; lib/claim-workflow-ui (pesanGalat); DaftarOutlet.
  * Main Functions: AturanPromo, Formulir.
  * Side Effects: HTTP; setiap simpan menulis `promo_rule` (izin summary.edit). Logic BL-52/33 tidak ditulis (varian berlabel).
  *
@@ -19,6 +19,8 @@ import {
 import { ConfirmDialog, FilterBar, FormField, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
 import { witaToday } from "@/lib/beranda";
+import { sebabHttp } from "@/lib/tampil";
+import { pesanGalat } from "@/lib/claim-workflow-ui";
 import { BEBAN, STATUS_ATURAN, artinya, bebanDari, bentukAturan, manfaat, statusAturan, tgl, type StatusAturanKey } from "@/lib/promo-ui";
 import DaftarOutlet from "./daftar-outlet";
 
@@ -44,6 +46,9 @@ const ASAL: Record<string, string> = { surat: "Surat", excel: "Impor Excel", man
 const asalLabel = (r: Partial<Rule>) => `${ASAL[r.source ?? ""] ?? "Manual"}${r.suratProgram ? ` · ${r.suratProgram}` : ""}`;
 const sama = (a: Partial<Rule>, b: Partial<Rule>) => JSON.stringify(a) === JSON.stringify(b);
 
+/** Jaringan putus menjadi kalimat sebab, bukan "Failed to fetch". */
+const minta = (url: string, init?: RequestInit) => fetch(url, init).catch(() => { throw new Error(sebabHttp(0)); });
+
 function useDebounced(value: string, ms: number) {
     const [v, setV] = useState(value);
     useEffect(() => { const t = setTimeout(() => setV(value), ms); return () => clearTimeout(t); }, [value, ms]);
@@ -68,17 +73,17 @@ function Formulir({ d, set, kunci }: { d: Partial<Rule>; set: (patch: Partial<Ru
     return (
         <>
             <Grup title="Asal aturan" help="Tanpa ini tidak ada yang bisa menjawab “kenapa boleh potong?”">
-                <FormField label="Principal" required>{inp("principal", "mis. KINO NON FOOD")}</FormField>
+                <FormField label="Principal" required>{inp("principal", "mis. PRINCIPLE A")}</FormField>
                 <FormField label="Surat / program" help="Asal aturannya.">{inp("suratProgram")}</FormField>
                 <FormField label="Kelompok" help="Pengelompokan di dalam surat.">{inp("promoGroup")}</FormField>
                 <FormField label="Nama program" help="Untuk dibaca manusia saja.">{inp("promoLabel")}</FormField>
                 <FormField label="Nama barang" help="Tidak dipakai mencocokkan.">{inp("itemName")}</FormField>
             </Grup>
             <Grup title="Berlaku untuk" help="Dikosongkan berarti “semua”. Daftar peserta menyempitkannya lagi.">
-                <FormField label="Kode outlet" help="Kode internal tanpa akhiran cabang, mis. C-AL0063.">{inp("customerCode", "kosong = semua outlet")}</FormField>
+                <FormField label="Kode outlet" help="Kode internal tanpa akhiran cabang, mis. C-KODE-A.">{inp("customerCode", "kosong = semua outlet")}</FormField>
                 <FormField label="Kode barang">{inp("itemCode", "kosong = semua barang")}</FormField>
                 <FormField label="Channel (Type Of Promo)" help="GT dicocokkan dengan outlet berkategori TT di Accurate.">{(a11y) => <select {...a11y} className="fi-input" disabled={kunci} value={d.channel ?? ""} onChange={(e) => set({ channel: e.target.value })}><option value="">Semua channel</option><option value="GT">GT (outlet TT)</option><option value="MT">MT</option><option value="NKA">NKA</option></select>}</FormField>
-                <FormField label="Daftar peserta" help="Nama daftar di tab Daftar outlet peserta, mis. LOYALTY.">{(a11y) => <input {...a11y} className="fi-input" disabled={kunci} placeholder="kosong = semua outlet" value={d.outletList ?? ""} onChange={(e) => set({ outletList: e.target.value.toUpperCase(), outletListMode: e.target.value ? d.outletListMode || "INCLUDE" : "" })} />}</FormField>
+                <FormField label="Daftar peserta" help="Nama daftar di tab Daftar outlet peserta, mis. DAFTAR A.">{(a11y) => <input {...a11y} className="fi-input" disabled={kunci} placeholder="kosong = semua outlet" value={d.outletList ?? ""} onChange={(e) => set({ outletList: e.target.value.toUpperCase(), outletListMode: e.target.value ? d.outletListMode || "INCLUDE" : "" })} />}</FormField>
                 <FormField label="Arah daftar">{(a11y) => <select {...a11y} className="fi-input" disabled={kunci || !d.outletList} value={d.outletListMode ?? ""} onChange={(e) => set({ outletListMode: e.target.value })}><option value="">Tanpa daftar</option><option value="INCLUDE">Hanya peserta daftar</option><option value="EXCLUDE">Semua KECUALI peserta daftar</option></select>}</FormField>
             </Grup>
             <Grup title="Potongan" help="Berapa, dalam bentuk apa, di kolom mana, dan siapa yang menanggung.">
@@ -152,24 +157,24 @@ export default function AturanPromo({ permKeys }: { permKeys: string[] }) {
         if (!tampil) return;
         setMenyimpan(true); setGalatSimpan(null); setPesan(null);
         try {
-            const res = await fetch("/api/promo-rule", { method: tampil.id ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(tampil) });
+            const res = await minta("/api/promo-rule", { method: tampil.id ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(tampil) });
             const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; rule?: { id: number }; id?: number };
-            if (!res.ok || !body.ok) { setGalatSimpan(body.error ?? `Tidak tersimpan (HTTP ${res.status}).`); return; }
+            if (!res.ok || !body.ok) { setGalatSimpan(body.error ?? `Aturan belum tersimpan. ${sebabHttp(res.status)}`); return; }
             setPesan(tampil.id ? `Aturan #${tampil.id} tersimpan. Gerbang faktur dan Rekap memakainya mulai sekarang.` : "Aturan baru tersimpan.");
             setDraf(null);
             if (!tampil.id) setTerpilihId(body.rule?.id ?? body.id ?? null);
             muat();
         } catch (e) {
-            setGalatSimpan(e instanceof Error ? e.message : String(e));
+            setGalatSimpan(e instanceof Error ? e.message : sebabHttp(0));
         } finally {
             setMenyimpan(false);
         }
     }
 
     async function hapus(ids: number[]) {
-        const res = await fetch(`/api/promo-rule?ids=${ids.join(",")}`, { method: "DELETE" });
+        const res = await minta(`/api/promo-rule?ids=${ids.join(",")}`, { method: "DELETE" });
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; deleted?: number; error?: string };
-        if (!res.ok || !body.ok) throw new Error(body.error ?? `Gagal menghapus (HTTP ${res.status}).`);
+        if (!res.ok || !body.ok) throw new Error(body.error ?? `Aturan belum terhapus. ${sebabHttp(res.status)}`);
         setDialog(null); setPilih(new Set());
         if (typeof terpilihId === "number" && ids.includes(terpilihId)) { setTerpilihId(null); setDraf(null); }
         setPesan(`${body.deleted ?? ids.length} aturan dihapus. Potongan yang tadinya dijelaskan aturan itu kembali tertahan gerbang validasi.`);
@@ -178,9 +183,9 @@ export default function AturanPromo({ permKeys }: { permKeys: string[] }) {
 
     async function salin() {
         if (!asli) return;
-        const res = await fetch("/api/promo-rule", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: asli.id, customerCodes: salinKode }) });
+        const res = await minta("/api/promo-rule", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: asli.id, customerCodes: salinKode }) });
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; outlets?: number; error?: string };
-        if (!res.ok || !body.ok) throw new Error(body.error ?? `Gagal menyalin (HTTP ${res.status}).`);
+        if (!res.ok || !body.ok) throw new Error(body.error ?? `Tarif belum tersalin. ${sebabHttp(res.status)}`);
         setDialog(null); setSalinKode("");
         setPesan(`Tarif ${manfaat(asli.benefitType, asli.benefitValue)} (kolom DISC_${asli.tierNo}) disalin ke ${body.outlets ?? 0} outlet.`);
         muat();
@@ -192,9 +197,9 @@ export default function AturanPromo({ permKeys }: { permKeys: string[] }) {
         const apply = Boolean(impor.pratinjau);
         const form = new FormData();
         form.append("file", impor.file); form.append("principal", impor.principal); form.append("apply", String(apply));
-        const res = await fetch("/api/promo-recap", { method: "POST", credentials: "include", body: form });
+        const res = await minta("/api/promo-recap", { method: "POST", credentials: "include", body: form });
         const body = (await res.json().catch(() => ({}))) as Pratinjau & { ok?: boolean; error?: string };
-        if (!res.ok || !body.ok) throw new Error(body.error ?? `Impor gagal (HTTP ${res.status}).`);
+        if (!res.ok || !body.ok) throw new Error(body.error ?? `Impor belum berhasil. ${sebabHttp(res.status)}`);
         if (!apply) { setImpor((s) => ({ ...s, pratinjau: body })); return; }
         const bagian = [body.rows > 0 ? `${body.rows} aturan surat (${body.programs} program)` : "", body.tarifOutlet > 0 ? `${body.tarifOutlet} tarif untuk ${body.outlet} outlet` : ""].filter(Boolean);
         setDialog(null); setImpor({ principal: "", file: null, pratinjau: null });
@@ -210,7 +215,7 @@ export default function AturanPromo({ permKeys }: { permKeys: string[] }) {
         <div className="fi-sect" style={{ borderRadius: 0, boxShadow: "none" }}>
             <header>{bolehUbah && rules.length > 0 && <input type="checkbox" aria-label="Pilih semua aturan yang tampil" checked={rules.every((r) => pilih.has(r.id))} onChange={(e) => setPilih(e.target.checked ? new Set(rules.map((r) => r.id)) : new Set())} />}<h2>Aturan</h2><span>{rules.length}{data.data?.truncated ? ` dari ${data.data.total}+` : ""}{data.status === "memuat" && data.data ? " · memperbarui…" : ""}</span></header>
             {memuatAwal ? <div className="fi-sect-in"><Skeleton rows={6} label="Memuat aturan promo" /></div>
-                : data.status === "galat" && !data.data ? <ErrorState message={data.error} onRetry={muat} />
+                : data.status === "galat" && !data.data ? <ErrorState message={pesanGalat("Aturan promo gagal dimuat.", data.error)} onRetry={muat} />
                 : rules.length === 0 ? <EmptyState title={cari ? `Tidak ada aturan untuk “${cari}”` : "Tidak ada aturan yang sesuai saringan"} message="Coba kode outlet tanpa akhiran cabang, atau ubah saringan status." />
                 : (
                     <ul className="fi-list" style={{ display: "block" }} aria-label="Daftar aturan">
@@ -241,7 +246,7 @@ export default function AturanPromo({ permKeys }: { permKeys: string[] }) {
             {ubahAsalSurat && (
                 <>
                     <MessageStrip tone="warn" title="Mengubah aturan asal surat menjadikannya aturan manual.">Muat ulang {asli?.suratProgram} dari Summary akan gagal selama aturan manual ini ada.</MessageStrip>
-                    <VariantNote bl="BL-52">Usulan: aturan tetap tercatat asal suratnya dengan tanda “diubah manual”; muat ulang melewatinya dan melaporkannya.</VariantNote>
+                    <VariantNote bl="BL-52">Aturan belum mencatat bahwa ia diubah manual, dan muat ulang dari Summary belum bisa melewatinya.</VariantNote>
                 </>
             )}
             <MessageStrip tone="info" title="Artinya:">{artinya(tampil)}{tampil.id && asli && !asli.active ? " Aturan ini nonaktif, jadi gerbang faktur mengabaikannya dan potongannya terhitung tak bertuan." : ""}</MessageStrip>
@@ -262,7 +267,7 @@ export default function AturanPromo({ permKeys }: { permKeys: string[] }) {
             <header className="fi-page-head">
                 <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Promo &amp; Klaim</span></li><li><span aria-current="page">Aturan Promo</span></li></ol></nav>
                 <div className="fi-page-bar">
-                    <h1>Aturan promo</h1>
+                    <h1>Aturan Promo</h1>
                     <span className="fi-spacer" />
                     {bolehUbah && tab === "aturan" && <Button icon={<Upload className="fi-icon" aria-hidden />} onClick={() => { setImpor({ principal: principal || "", file: null, pratinjau: null }); setDialog("impor"); }}>Impor Excel…</Button>}
                     {bolehUbah && tab === "aturan" && <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} onClick={() => buka("baru")}>Aturan baru</Button>}
@@ -277,7 +282,7 @@ export default function AturanPromo({ permKeys }: { permKeys: string[] }) {
             {tab === "outlet" ? <DaftarOutlet bolehUbah={bolehUbah} /> : (
                 <>
                     {pesan && <MessageStrip tone="pos" title={pesan} onClose={() => setPesan(null)} />}
-                    {data.status === "galat" && data.data && <MessageStrip tone="neg" title="Gagal memperbarui aturan promo.">{data.error} Daftar masih hasil sebelumnya. <Button variant="tertiary" onClick={muat}>Coba lagi</Button></MessageStrip>}
+                    {data.status === "galat" && data.data && <MessageStrip tone="neg" title="Gagal memperbarui aturan promo.">{pesanGalat("Aturan promo gagal dimuat.", data.error)} Daftar masih hasil sebelumnya. <Button variant="tertiary" onClick={muat}>Coba lagi</Button></MessageStrip>}
                     <div className="fi-panel" style={{ padding: 0, overflow: "clip" }}>
                         <FilterBar title="Saringan" activeCount={saringAktif} onReset={() => { setPrincipal(""); setJenis(""); setBeban(""); setStatus("hidup"); setDari(""); setSampai(""); }}
                             search={<FormField label="Cari">{(a11y) => <input {...a11y} className="fi-input" type="search" placeholder="Kode outlet, barang, atau surat" value={cari} onChange={(e) => setCari(e.target.value)} />}</FormField>}
@@ -320,7 +325,7 @@ export default function AturanPromo({ permKeys }: { permKeys: string[] }) {
             <ConfirmDialog open={dialog === "salin"} onClose={() => setDialog(null)} tag="Salin tarif" title={asli ? `Salin tarif ${manfaat(asli.benefitType, asli.benefitValue)} dari ${asli.customerCode} ke outlet lain?` : "Salin tarif"}
                 confirmLabel="Salin tarif" confirmDisabled={salinKode.trim() ? undefined : "Isi kode outlet dulu"} onConfirm={salin}
                 facts={[["Disimpan", "Satu baris per kode outlet; pencocokan per pelanggan"], ["Kolom", asli ? `DISC_${asli.tierNo} · ${BEBAN[bebanDari(asli.benefitBeban)].label}` : ""]]}>
-                <FormField label="Kode outlet tujuan" required help="Pisahkan dengan koma, spasi, atau baris baru, mis. C-SAT015, C-SAT016.">{(a11y) => <textarea {...a11y} className="fi-input" rows={3} value={salinKode} onChange={(e) => setSalinKode(e.target.value)} />}</FormField>
+                <FormField label="Kode outlet tujuan" required help="Pisahkan dengan koma, spasi, atau baris baru, mis. C-KODE-A, C-KODE-B.">{(a11y) => <textarea {...a11y} className="fi-input" rows={3} value={salinKode} onChange={(e) => setSalinKode(e.target.value)} />}</FormField>
             </ConfirmDialog>
             <ConfirmDialog open={dialog === "impor"} onClose={() => setDialog(null)} tag="Impor"
                 title={impor.pratinjau ? `Muat aturan ke ${impor.principal}?` : "Impor aturan dari Excel"} confirmLabel={impor.pratinjau ? "Muat aturan" : "Pratinjau"}

@@ -1,12 +1,12 @@
 /*
  * Tujuan: "Toko tidak order" (Fiori S5, it05, ponsel dulu): toko berstatus tidak order pada tanggal rute, alasan dari server (R01–R15) + catatan
  *   per toko, disimpan per baris; galat muat ≠ kosong.
- * Caller: form-kontrol/page.tsx (shell tab, default export `({ scope })`).
+ * Caller: form-kontrol/FormKontrol.tsx (shell tab, default export `({ scope })`).
  * Dependensi: GET /api/form-kontrol/ao-control + /reasons, POST /api/form-kontrol/ao-control; ../shared (Scope, AoRow, Reason,
  *   principalAwal, penjelasanTanpaJks, hariIniWita); ../lapangan (bacaFk, kirimFk, keBarisRute); components/fiori/*; lib/rekapan-nota/ui (tanggalPanjang).
  * Main Functions: TabNoOrder.
  * Side Effects: HTTP GET; POST ao-control (status not_order + alasan) per toko — payload sama dengan kode lama.
- * FK-MSM3 (peninjau B S-1): 409 toko tidak lagi di rute → daftar dimuat ulang, penolakannya tampil di strip tingkat tab bernama toko (bertahan
+ * FK-MSM3: 409 toko tidak lagi di rute → daftar dimuat ulang, penolakannya tampil di strip tingkat tab bernama toko (bertahan
  *   melewati muat ulang, tidak lenyap bersama barisnya); isian belum disimpan toko yang MASIH ada ikut terbawa melewati muat ulang.
  */
 "use client";
@@ -66,7 +66,7 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
 
     // Isian per toko + alasan yang sudah tersimpan sesi ini; keduanya kembali ke data server saat data dimuat ulang.
     // Semua pembaruan lewat setter fungsional dari state TERBARU (bukan `sesi` hasil render): simpan toko A yang selesai sesudah await
-    // tidak boleh membuang ketikan toko B yang diisi selama menunggu (temuan peninjau P2).
+    // tidak boleh membuang ketikan toko B yang diisi selama menunggu.
     const [isian, setIsian] = useState<Isian>({ ubah: {}, simpan: {} });
     const kunciDaftar = `${salesCode}|${principle}|${tanggal}`;
     const sesi = useMemo(() => dasar(isian, data, kunciDaftar), [data, isian, kunciDaftar]);
@@ -195,6 +195,7 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
                                             disabledReason={tanpaIzin ?? (!a.reasonCode ? "Pilih alasan dulu" : "Menunggu simpanan lain selesai")}
                                             onClick={() => void simpan(r)}>Simpan alasan</Button>
                                     </div>
+                                    {(tanpaIzin || (menyimpan !== null && menyimpan !== r.custCode)) && <p className="fi-small fi-why">{tanpaIzin ?? "Menunggu simpanan toko lain selesai."}</p>}
                                 </li>
                             );
                         })}
@@ -212,7 +213,7 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
                     <CalendarDays className="fi-icon" aria-hidden /><span>{tanggalPanjang(tanggal)} · WITA</span>
                     {salesCode && <span>· <span className="fi-mono">{salesCode}</span>{principle ? ` · ${principle}` : ""}</span>}
                 </p>
-                <p className="fi-small fi-muted">Tidak boleh ada toko tanpa alasan — setiap toko tidak order wajib terdokumentasi.</p>
+                <p className="fi-small fi-muted">Tidak boleh ada toko tanpa alasan. Setiap toko tidak order wajib terdokumentasi.</p>
             </div>
             <div className="fi-formgrid">
                 {daftarPrincipal.length > 1 && (
@@ -266,7 +267,7 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
             {nDraf > 0 && <p className="fi-draft" role="status">{nDraf} alasan belum disimpan.</p>}
             {isi}
             {/* Owner 8 Okt (#132): "Toko tutup" kini kode R15 sendiri; foto buktinya diambil di wizard Kunjungan (check-out), bukan di daftar ini. */}
-            <p className="fi-small fi-subtle">Toko tutup (R15): selesaikan lewat Kunjungan tokonya — foto bukti toko tutup wajib, tanpa merchandising.</p>
+            <p className="fi-small fi-subtle">Toko tutup (R15): selesaikan lewat Kunjungan tokonya. Foto bukti toko tutup wajib, tanpa merchandising.</p>
         </section>
     );
 }

@@ -52,7 +52,7 @@ test("profile menu switches the Fiori mode and opens Bantuan", async ({ page }) 
     await expect(page.locator("html")).not.toHaveAttribute("data-scheme", /.+/);
     await profile.getByRole("button", { name: /Bantuan/ }).click();
     await expect(profile).toBeHidden();
-    const chat = page.getByRole("dialog", { name: "AI Assistant" });
+    const chat = page.getByRole("dialog", { name: "Asisten Bantuan" });
     await expect(chat).toBeVisible();
     await chat.getByRole("button", { name: "Tutup chat" }).click();
     await expect(chat).toBeHidden();
@@ -85,7 +85,7 @@ test("mobile: drawer, role bottom navigation, and chat stay usable", async ({ pa
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.getByRole("button", { name: /^Menu profil/ }).click();
     await page.getByRole("dialog", { name: "Menu profil" }).getByRole("button", { name: /Bantuan/ }).click();
-    const chat = page.getByRole("dialog", { name: "AI Assistant" });
+    const chat = page.getByRole("dialog", { name: "Asisten Bantuan" });
     await expect(chat).toBeVisible();
     await expect.poll(() => overlaps(bottomNav, chat)).toBe(false);
     await page.screenshot({ path: "test-results/fiori-shell-mobile.png" });

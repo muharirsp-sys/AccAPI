@@ -48,7 +48,7 @@ test("siap: dua tabel berdampingan, rupiah id-ID, qty setara KRT vs baris tak se
     const diminta = await mock(page);
     await page.setViewportSize({ width: 1700, height: 900 });
     await page.goto("/laporan-sales", NAV);
-    await expect(page.getByRole("tab", { name: "Top 30" })).toHaveAttribute("aria-selected", "true", NAV);
+    await expect(page.getByRole("navigation", { name: "Jenis laporan" }).getByRole("link", { name: "Top 30" })).toHaveAttribute("aria-current", "page", NAV);
     const produk = page.getByRole("table", { name: "Top 30 produk" });
     const pelanggan = page.getByRole("table", { name: "Top 30 pelanggan" });
     await expect(produk.locator("tbody tr")).toHaveCount(3, NAV);

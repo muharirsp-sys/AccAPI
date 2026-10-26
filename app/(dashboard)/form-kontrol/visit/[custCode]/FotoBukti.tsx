@@ -3,7 +3,7 @@
  *   ambil foto → unggah → simpan lewat pemanggil; bila gagal (tanpa sinyal/server), foto TETAP di layar dengan Coba lagi dan Ambil ulang.
  * Caller: ./Kunjungan.tsx.
  * Dependensi: components/form-kontrol/camera-capture (kamera), lib/form-kontrol/location (GPS), ../../lapangan (kirimFk, GagalKirim),
- *   components/fiori/*.
+ *   components/fiori/*. `butir` (nama butir merchandising) dipakai sebagai nama aksesibel tombol supaya enam tombol "Foto" tidak kembar.
  * Main Functions: FotoBukti.
  * Side Effects: kamera + izin lokasi; POST /api/upload/form-kontrol (FormData sama dengan kode lama: file, salesName, custName, lat, lng);
  *   object URL pratinjau (dicabut setelah tersimpan); beforeunload selama foto belum tersimpan.
@@ -30,6 +30,8 @@ type Props = {
     /** Akibat bila gagal, mis. "Langkah ini belum maju." */
     akibat: string;
     existingUrl?: string | null;
+    /** Nama butir yang difoto (mis. "Produk terlihat jelas"); masuk ke nama aksesibel tombol ambil foto. */
+    butir?: string;
     salesName?: string;
     custName?: string;
     /** Menyimpan url foto (mis. POST check-in). Melempar bila gagal; foto tetap tertunda untuk Coba lagi. */
@@ -44,7 +46,7 @@ function pesanGagal(e: unknown): string {
     return e instanceof Error ? e.message : "Foto belum tersimpan.";
 }
 
-export default function FotoBukti({ label, judulGagal, akibat, existingUrl, salesName, custName, onPersist, disabledReason, kecil }: Props) {
+export default function FotoBukti({ label, judulGagal, akibat, existingUrl, butir, salesName, custName, onPersist, disabledReason, kecil }: Props) {
     const [kamera, setKamera] = useState(false);
     const [tunda, setTunda] = useState<Tunda | null>(null);
     const [status, setStatus] = useState<"kirim" | "galat" | null>(null);
@@ -56,7 +58,7 @@ export default function FotoBukti({ label, judulGagal, akibat, existingUrl, sale
         setPesan("");
         let { coords, url } = t;
         try {
-            // ponytail: GPS diambil bersamaan dengan foto — di-stamp server + di-FLAG bila mencurigakan (kode lama).
+            // ponytail: GPS diambil bersamaan dengan foto; server men-stamp dan menandai (FLAG) bila mencurigakan (kode lama).
             if (coords === undefined) coords = await getCurrentCoords();
             if (!url) {
                 const fd = new FormData();
@@ -95,7 +97,8 @@ export default function FotoBukti({ label, judulGagal, akibat, existingUrl, sale
     const gambar = tunda?.preview ?? existingUrl ?? null;
     const tombolAmbil = (
         <Button variant={existingUrl || tunda ? (kecil ? "secondary" : "tertiary") : kecil ? "secondary" : "primary"} icon={<Camera className="fi-icon" aria-hidden />}
-            disabled={Boolean(disabledReason) || sibuk} disabledReason={disabledReason} onClick={() => setKamera(true)}>
+            disabled={Boolean(disabledReason) || sibuk} disabledReason={disabledReason} onClick={() => setKamera(true)}
+            aria-label={butir ? `${tunda ? "Ambil ulang foto" : existingUrl ? "Ganti foto" : "Foto"} bukti: ${butir}` : undefined}>
             {tunda ? "Ambil ulang" : existingUrl ? "Ganti foto" : label}
         </Button>
     );
@@ -122,6 +125,7 @@ export default function FotoBukti({ label, judulGagal, akibat, existingUrl, sale
                 )}
                 {tombolAmbil}
             </div>
+            {!kecil && disabledReason && <p className="fi-small fi-why">{disabledReason}</p>}
             {!kecil && <p className="fi-small fi-subtle">Foto langsung dari kamera · lokasi dan waktu tercatat otomatis.</p>}
             <CameraCapture open={kamera} onClose={() => setKamera(false)} onCapture={async (blob) => ambil(blob)} />
         </div>

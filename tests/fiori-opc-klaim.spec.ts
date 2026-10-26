@@ -169,7 +169,7 @@ test("Validasi setelah SM: isian + draf, Setujui klaim lewat dialog (payload cla
     await expect(isi.getByRole("radio", { name: "Lengkap" })).toBeChecked();
     await expect(isi.getByLabel("Usulan BL-06")).toBeVisible();
     const footer = detail.locator(".fi-ftb");
-    const setuju = footer.getByRole("button", { name: "Setujui klaim…" });
+    const setuju = footer.getByRole("button", { name: "Setujui…" });
     await expect(setuju).toBeDisabled();
     await expect(footer).toContainText("Setujui nonaktif: Isi tanggal diajukan ke principal dulu.");
     await expect(footer.getByRole("button", { name: "Kembalikan…" })).toBeEnabled();
@@ -194,9 +194,9 @@ test("Validasi setelah SM: isian + draf, Setujui klaim lewat dialog (payload cla
     await expect(dlg).toContainText("06/11/2026");
     await expect(dlg).toContainText("2 item · Rp 4.300.000");
     await expect(dlg).toContainText("Persetujuan Operational Manager");
-    await expect(dlg.getByLabel("Usulan BL-11")).toBeVisible();
+    await expect(detail.getByLabel("Usulan BL-11")).toBeVisible();
     await page.screenshot({ path: "test-results/fiori-opc-klaim-claimok.png" });
-    await dlg.getByRole("button", { name: "Setujui klaim" }).click();
+    await dlg.getByRole("button", { name: "Setujui", exact: true }).click();
     await expect(dlg).toBeHidden();
 
     expect(kirim).toEqual([{
@@ -206,8 +206,8 @@ test("Validasi setelah SM: isian + draf, Setujui klaim lewat dialog (payload cla
     }]);
     await expect(main.getByRole("status").filter({ hasText: "Klaim 005/GDI/10/2026 disetujui dan diteruskan ke OM." })).toBeVisible();
     await expect(detail.getByText("Menunggu OM").first()).toBeVisible(NAV);
-    await expect(detail.getByText("Baca-saja.")).toBeVisible();
-    await expect(detail.getByRole("button", { name: "Setujui klaim…" })).toHaveCount(0);
+    await expect(detail.getByText("Baca-saja:")).toBeVisible();
+    await expect(detail.getByRole("button", { name: "Setujui…" })).toHaveCount(0);
     await expect(detail.getByText("Draf belum disimpan")).toHaveCount(0);
     await expect(antrean(page).getByRole("button")).toHaveCount(1);
     await expect(antrean(page)).not.toContainText("005/GDI/10/2026");
@@ -234,7 +234,7 @@ test("Kembalikan: alasan wajib di dialog, galat server tampil di dialog tanpa me
     await antrean(page).getByRole("button", { name: /001\/CLM\/GDI\/10\/2026/ }).click();
     const tinggal = page.getByRole("dialog");
     await expect(tinggal.getByRole("heading", { name: "Tinggalkan perubahan yang belum disimpan?" })).toBeVisible();
-    await tinggal.getByRole("button", { name: "Batal" }).click();
+    await tinggal.getByRole("button", { name: "Tetap di sini" }).click();
     await expect(page).toHaveURL(/batch=b-klaim/);
     await expect(isi.getByLabel("Keterangan kelengkapan")).toHaveValue("Faktur pajak item 2 belum ada");
 
@@ -281,14 +281,14 @@ test("Setujui batch buatan sendiri (BL-10, #132): alasan wajib ≥ 5 karakter �
     await isi.getByLabel("Tanggal diajukan ke principal").fill("2026-10-07", NAV);
     await isi.getByLabel("Deadline klaim").fill("2026-11-07");
     await isi.getByLabel("Keterangan kelengkapan").fill("Data direksi lengkap.");
-    await detail.locator(".fi-ftb").getByRole("button", { name: "Setujui klaim…" }).click();
+    await detail.locator(".fi-ftb").getByRole("button", { name: "Setujui…" }).click();
     const dlg = page.getByRole("dialog");
     await expect(dlg.getByRole("heading", { name: "Setujui batch yang Anda buat sendiri?" })).toBeVisible();
     await expect(dlg).toContainText("Anda (Rina Amalia)");
     await expect(dlg).toContainText("001/CLM/GDI/10/2026");
     await expect(dlg).toContainText("persetujuan dan alasannya tersimpan di Riwayat batch ini");
     await expect(dlg.getByLabel("Usulan BL-10")).toHaveCount(0);
-    const tombol = dlg.getByRole("button", { name: "Setujui klaim" });
+    const tombol = dlg.getByRole("button", { name: "Setujui", exact: true });
     const alasan = dlg.getByLabel("Alasan setuju sendiri");
     await expect(tombol).toBeDisabled();
     await alasan.fill(" abcd ");
@@ -325,7 +325,7 @@ test("Selesaikan verifikasi final batch buatan sendiri (BL-10, #132): alasan waj
     await expect(detail.getByRole("heading", { level: 1, name: "001/CLM/PRA/09/2026" })).toBeVisible(NAV);
     const riwayat = detail.getByRole("list", { name: "Riwayat aksi" });
     await expect(riwayat).toContainText("Alasan setuju sendiri: Tim Klaim hanya satu orang");
-    await expect(riwayat).toContainText("Disetujui sendiri tanpa alasan (layar lama)");
+    await expect(riwayat).toContainText("Disetujui sendiri tanpa alasan (sebelum alasan diwajibkan)");
 
     const final = detail.getByRole("region", { name: "Verifikasi final" });
     for (const n of [1, 2]) {
@@ -360,8 +360,8 @@ test("Batch terminal tanpa aksi Klaim (BL-06): disetujui OM, dibayar, dibatalkan
     for (const [id, no] of [["b-om", "002/KINO/10/2026"], ["b-bayar", "004/URC/09/2026"], ["b-batal", "008/KINO/10/2026"], ["b-selesai", "003/GDI/09/2026"]]) {
         await page.goto(`/off-program-control?tab=claim&batch=${id}`, NAV);
         await expect(detail.getByRole("heading", { level: 1, name: no })).toBeVisible(NAV);
-        await expect(detail.getByText("Baca-saja.")).toBeVisible();
-        for (const nama of ["Setujui klaim…", "Kembalikan…", "Selesaikan…", "Ingatkan kelengkapan…", "Kirim ke SM…"]) {
+        await expect(detail.getByText("Baca-saja:")).toBeVisible();
+        for (const nama of ["Setujui…", "Kembalikan…", "Selesaikan…", "Ingatkan kelengkapan…", "Kirim ke SM…"]) {
             await expect(detail.getByRole("button", { name: nama })).toHaveCount(0);
         }
         await expect(detail.getByRole("region", { name: "Isi validasi" })).toHaveCount(0);
@@ -394,7 +394,7 @@ test("Detail usang (BL-06): daftar terbaru menunjukkan batch sudah lewat tahap �
     await expect(detail.getByRole("heading", { level: 1, name: "005/GDI/10/2026" })).toBeVisible(NAV);
     const usang = detail.getByRole("status").filter({ hasText: "Status batch berubah." });
     await expect(usang).toContainText("Daftar terbaru menunjukkan batch ini di tahap Verifikasi final");
-    for (const nama of ["Setujui klaim…", "Kembalikan…"]) await expect(detail.getByRole("button", { name: nama })).toHaveCount(0);
+    for (const nama of ["Setujui…", "Kembalikan…"]) await expect(detail.getByRole("button", { name: nama })).toHaveCount(0);
     await expect(detail.getByRole("region", { name: "Isi validasi" })).toHaveCount(0);
     await expect(usang.getByRole("button", { name: "Muat ulang" })).toBeVisible();
     await page.screenshot({ path: "test-results/fiori-opc-klaim-usang.png", fullPage: true });
@@ -521,17 +521,17 @@ test("Batch CLM: form di kolom kedua (clm=baru), nomor otomatis, Simpan draf lew
     const simpan = footer.getByRole("button", { name: "Simpan sebagai draf…" });
     await expect(simpan).toBeDisabled();
 
-    const b1 = form.getByRole("group", { name: "Baris 1" });
+    const b1 = form.getByRole("group", { name: "Item 1" });
     await b1.getByLabel("No Surat").fill("GDI/DIR/01");
     await b1.getByLabel("Nama program").fill("Insentif Q3");
     await b1.getByLabel("Toko").fill("TK Mulia");
     await b1.getByLabel("Nominal").fill("1.500.000");
-    await expect(footer).toContainText("Simpan nonaktif: Tipe program baris 1 belum dipilih.");
+    await expect(footer).toContainText("Simpan nonaktif: Tipe program item 1 belum dipilih.");
     await b1.getByLabel("Tipe program (CLM)").selectOption("Insentif");
-    await expect(footer).toContainText("No Rekening baris 1 wajib diisi untuk Transfer.");
+    await expect(footer).toContainText("No Rekening item 1 wajib diisi untuk Transfer.");
     await b1.getByLabel("No rekening").fill("BRI 0231");
-    await form.getByRole("button", { name: "Tambah baris" }).click();
-    const b2 = form.getByRole("group", { name: "Baris 2" });
+    await form.getByRole("button", { name: "Tambah item" }).click();
+    const b2 = form.getByRole("group", { name: "Item 2" });
     await b2.getByLabel("Tipe program (CLM)").selectOption("Retur");
     await b2.getByLabel("Cara bayar").selectOption("Tunai");
     await expect(b2.getByLabel("No rekening")).toHaveAttribute("readonly", "");
@@ -595,10 +595,10 @@ test("ponsel 390 px: validasi Klaim + dialog dan form CLM tanpa gulir menyamping
     await isi.getByLabel("Tanggal diajukan ke principal").fill("2026-10-06", NAV);
     await isi.getByLabel("Deadline klaim").fill("2026-11-06");
     await isi.getByLabel("Keterangan kelengkapan").fill("Lengkap.");
-    await expect(detail.locator(".fi-ftb").getByRole("button", { name: "Setujui klaim…" })).toBeVisible();
+    await expect(detail.locator(".fi-ftb").getByRole("button", { name: "Setujui…" })).toBeVisible();
     await noOverflow(page);
     await page.screenshot({ path: "test-results/fiori-opc-klaim-ponsel.png", fullPage: true });
-    await detail.locator(".fi-ftb").getByRole("button", { name: "Setujui klaim…" }).click();
+    await detail.locator(".fi-ftb").getByRole("button", { name: "Setujui…" }).click();
     await expect(page.getByRole("dialog").getByRole("heading", { name: "Setujui klaim 005/GDI/10/2026?" })).toBeVisible();
     await noOverflow(page);
     await page.getByRole("dialog").getByRole("button", { name: "Batal" }).click();

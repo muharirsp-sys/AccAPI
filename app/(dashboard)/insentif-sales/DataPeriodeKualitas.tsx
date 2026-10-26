@@ -3,7 +3,8 @@
  *   antara target dan laporan penjualan, kombinasi penjualan tanpa target (dimuat saat dibuka), dan "Tambah salesman ke tim
  *   saya" untuk SPV tanpa izin kelola hierarki (dulu di tab Input Penjualan). Semua keputusan lewat ConfirmDialog (it07 #19).
  * Caller: DataPeriode.tsx (dipasang ulang lewat `key` setelah data periode berubah).
- * Dependensi: components/fiori/{core,interactive}, lib/rekapan-nota/ui (ambil, tanggalPendek), lib/promo-ui (rupiah), lib/insentif-ui (readApi, formatQty).
+ * Dependensi: components/fiori/{core,interactive}, lib/rekapan-nota/ui (ambil, tanggalPendek), lib/promo-ui (rupiah), lib/insentif-ui (readApi, formatQty),
+ *   lib/tampil (KOSONG).
  * Main Functions: KualitasData.
  * Side Effects: GET code-merge, spv-mismatch, unmatched (saat dibuka), hierarchy/my-identity; POST code-merge, POST spv-mismatch,
  *   POST hierarchy/spv-sales (SPV mandiri); clipboard (Salin daftar tanpa target).
@@ -17,6 +18,7 @@ import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori
 import { ambil, tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { rupiah } from "@/lib/promo-ui";
 import { formatQty, readApi } from "@/lib/insentif-ui";
+import { KOSONG } from "@/lib/tampil";
 
 // Konfirmasi penggabungan kode sales (pergantian orang di tengah bulan). Prefiks rute sama + kode beda. TIDAK otomatis:
 // FS1_GITO (GT) vs FS1_MT_SYAHRUL (MT) prefiksnya sama tapi orang & channel beda — user yang memutuskan.
@@ -112,11 +114,11 @@ export function KualitasData({ month, year, label, bolehHierarki, onBerubah }: P
         const to = tujuan[g.prefix] ?? "";
         return (
             <div className="grid gap-2" style={{ minWidth: 0 }}>
-                {/* Lebar 100% (bukan auto): select selebar opsi terpanjang meluap di ponsel 390 px. */}
+                {/* minWidth 10rem: kode tujuan tetap terbaca di kolom sempit; lebar mengikuti wadah (fi-input) supaya tidak meluap di ponsel. */}
                 <select className="fi-input" aria-label={`Kode tujuan ${g.prefix}`} style={{ minWidth: "10rem" }} value={to} disabled={!bolehHierarki}
                     onChange={(e) => setTujuan((prev) => ({ ...prev, [g.prefix]: e.target.value }))}>
                     <option value="">Gabung ke…</option>
-                    {g.members.map((m) => <option key={m.salesCode} value={m.salesCode}>{m.salesCode} — {m.salesName}</option>)}
+                    {g.members.map((m) => <option key={m.salesCode} value={m.salesCode}>{m.salesCode} · {m.salesName}</option>)}
                 </select>
                 <div className="fi-btnrow">
                     <Button disabled={Boolean(tanpaIzin) || !to} disabledReason={tanpaIzin ?? "Pilih kode tujuan dulu"} onClick={() => setDialog({ kind: "gabung", g, to })}>Gabungkan…</Button>
@@ -151,7 +153,7 @@ export function KualitasData({ month, year, label, bolehHierarki, onBerubah }: P
         { key: "dpp", header: "Nilai (DPP)", align: "end", cell: (r) => <span className="fi-tnum">{rupiah(Math.round(r.dpp))}</span> },
         { key: "baris", header: "Baris", align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{formatQty(r.baris)}</span> },
         { key: "tgl", header: "Tanggal", secondary: true, cell: (r) => <span className="fi-tnum">{tanggalPendek(r.tanggalAwal)} s/d {tanggalPendek(r.tanggalAkhir)}</span> },
-        { key: "nota", header: "Contoh nota", secondary: true, cell: (r) => <span className="fi-mono">{r.contohNota.join(", ") || "—"}</span> },
+        { key: "nota", header: "Contoh nota", secondary: true, cell: (r) => <span className="fi-mono">{r.contohNota.join(", ") || KOSONG}</span> },
     ];
 
     const d = dialog;
@@ -170,6 +172,8 @@ export function KualitasData({ month, year, label, bolehHierarki, onBerubah }: P
                         Pilih kode tujuan bila pencapaiannya harus digabung (pergantian orang di tengah bulan, atau satu orang dua kode),
                         atau tandai Orang berbeda. Tidak ada yang digabung otomatis.
                     </p>
+                    {/* No 50: alasan pilihan nonaktif terlihat, bukan hanya di title tombol. */}
+                    {tanpaIzin && <p className="fi-small fi-why">Gabung dan pisah kode: {tanpaIzin.toLowerCase()}.</p>}
                 </div>
                 <ResponsiveTable<MergeGroup> title="Kode sales mirip" count={merge.data?.length} columns={kolomMerge} rows={merge.data ?? []} rowKey={(g) => g.prefix}
                     status={merge.status} error={merge.error ? `Kandidat gabung belum berhasil dimuat (${merge.error}).` : undefined} onRetry={muatMerge}
@@ -178,6 +182,7 @@ export function KualitasData({ month, year, label, bolehHierarki, onBerubah }: P
             </Section>
 
             <Section id="spv-sinkron" title="SPV tidak sinkron" subtitle="SPV di target berbeda dengan kolom GOLONGAN di laporan penjualan">
+                {tanpaIzin && <div className="fi-sect-in"><p className="fi-small fi-why">Memilih SPV: {tanpaIzin.toLowerCase()}.</p></div>}
                 <ResponsiveTable<SpvMismatchRow> title="SPV tidak sinkron" count={mismatch.data?.length} columns={kolomSpv} rows={mismatch.data ?? []} rowKey={(r) => `${r.salesCode}|${r.principle}`}
                     status={mismatch.status} error={mismatch.error ? `Data SPV belum berhasil dimuat (${mismatch.error}).` : undefined} onRetry={muatMismatch}
                     empty={{ title: "SPV target dan laporan sudah sinkron", message: `Tidak ada perbedaan SPV di ${label}.` }}

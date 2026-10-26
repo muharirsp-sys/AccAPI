@@ -6,8 +6,8 @@
 import type { BotResponse } from "./types";
 
 const GREETINGS = [
-  "Halo! Saya AI Assistant. Ada yang bisa saya bantu?",
-  "Selamat datang di Smart ERP! Ketik 'menu' untuk panduan, atau tanya langsung.",
+  "Halo! Saya Asisten Bantuan. Ada yang bisa saya bantu?",
+  "Selamat datang di Ruang Kerja! Ketik 'menu' untuk panduan, atau tanya langsung.",
   "Hai! Saya siap membantu navigasi sistem. Apa yang Anda cari?",
 ];
 
@@ -19,12 +19,12 @@ const FALLBACKS = [
 
 const MENU_RESPONSE: BotResponse = {
   text: "Berikut yang bisa saya bantu:\n\n" +
-    "📋 **FAQ** — Ketik 'faq' untuk pertanyaan umum\n" +
-    "🧭 **Navigasi** — Tanya lokasi menu (misal: 'di mana OPC?')\n" +
-    "📊 **Data** — Tanya data (misal: 'total klaim bulan ini')\n" +
-    "🔧 **Modul** — Tanya tentang modul spesifik\n" +
-    "👤 **Role** — Tanya berdasarkan role Anda\n" +
-    "❓ **Bantuan** — Ketik 'bantuan' untuk panduan ini lagi\n\n" +
+    "📋 **FAQ**: Ketik 'faq' untuk pertanyaan umum\n" +
+    "🧭 **Navigasi**: Tanya lokasi menu (misal: 'di mana OPC?')\n" +
+    "📊 **Data**: Tanya data (misal: 'total klaim bulan ini')\n" +
+    "🔧 **Modul**: Tanya tentang modul spesifik\n" +
+    "👤 **Role**: Tanya berdasarkan role Anda\n" +
+    "❓ **Bantuan**: Ketik 'bantuan' untuk panduan ini lagi\n\n" +
     "**Contoh pertanyaan:**\n" +
     "- \"bagaimana cara submit OPC?\"\n" +
     "- \"apa yang bisa dilakukan supervisor?\"\n" +
@@ -34,7 +34,7 @@ const MENU_RESPONSE: BotResponse = {
     "- \"bagaimana cara mengelola pembayaran?\"\n" +
     "- \"apa itu Form Kontrol?\"",
   links: [
-    { label: "Dashboard", href: "/" },
+    { label: "Beranda", href: "/" },
     { label: "OFF Program Control", href: "/off-program-control" },
     { label: "Claim Workflow", href: "/claim-workflow" },
     { label: "Pembayaran", href: "/payments" },

@@ -3,7 +3,7 @@
  *   dan halaman Cetak semua (owner 24 Okt 2026). Tiap lembar membawa kop, nomor (RKP/<yymm>/<wave>/<kode>) dan
  *   "Halaman X dari Y"-nya SENDIRI, jadi beberapa lembar boleh dicetak berurutan dalam satu PDF.
  * Caller: app/(cetak)/rekapan-nota/wave/[id]/cetak/page.tsx, .../cetak-semua/page.tsx.
- * Dependensi: lib/rekapan-nota/query (tipe Rekapan), lib/rekapan-nota/ui (nomorLembar, jamWita, hariIniWita).
+ * Dependensi: lib/rekapan-nota/query (tipe Rekapan), lib/rekapan-nota/ui (nomorLembar, hariIniWita), lib/tampil (waktuWita).
  * Main Functions: LembarRekapan, pecahNama, satuanKecil, bagiHalaman.
  * Side Effects: Tidak ada (render saja).
  *
@@ -15,7 +15,8 @@
  */
 import { Fragment } from "react";
 import type { Rekapan, WithdrawalRow } from "@/lib/rekapan-nota/query";
-import { hariIniWita, jamWita, nomorLembar } from "@/lib/rekapan-nota/ui";
+import { WAVE_STATUS, hariIniWita, nomorLembar, type WaveStatusKode } from "@/lib/rekapan-nota/ui";
+import { waktuWita } from "@/lib/tampil";
 
 const ID = (v: number, d = 0) =>
     v.toLocaleString("id-ID", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -106,7 +107,7 @@ export function LembarRekapan({ id, wave, judul, kodeGrup, rekapan, sekarang, ca
     // Dicetak di hari yang berbeda dari tanggal wave = besar kemungkinan cetak ulang, dan
     // lembar lama mungkin masih beredar di gudang. Dua lembar sama = risiko ambil dobel.
     const cetakUlang = hariIniWita(sekarang) !== wave.tanggal;
-    const dicetak = jamWita(sekarang);
+    const dicetak = waktuWita(sekarang);
     const adaUrgent = allocation.some((a) => a.prioritas === "urgent");
 
     const baris: Baris[] = withdrawal.map((r, i) => ({
@@ -145,7 +146,7 @@ export function LembarRekapan({ id, wave, judul, kodeGrup, rekapan, sekarang, ca
                                     </div>
                                     <div className="kop-sub">
                                         {wave.nama.toUpperCase()} &middot; {tanggal} &middot; Wave #{id}
-                                        {wave.status !== "released" && ` · ${wave.status.toUpperCase()}`}
+                                        {wave.status !== "released" && ` · ${(WAVE_STATUS[wave.status as WaveStatusKode]?.label ?? "Status tidak dikenal").toUpperCase()}`}
                                         {cetakUlang && <b className="ulang">Cetak ulang</b>}
                                     </div>
                                     <div className="kop-sub">No. <b>{noLembar}</b> &middot; dicetak {dicetak} WITA</div>

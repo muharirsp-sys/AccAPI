@@ -29,7 +29,7 @@ const BACA_MS = 45_000;
 const TULIS_MS = 180_000;
 
 export const PESAN_PUTUS = "Server pembayaran tidak terhubung (koneksi putus atau terlalu lama menjawab).";
-export const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas (koneksi putus, server sibuk, atau jawaban rusak). Data dimuat ulang — periksa hasilnya sebelum mengulang.";
+export const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas (koneksi putus, server sibuk, atau jawaban rusak). Data dimuat ulang; periksa hasilnya sebelum mengulang.";
 
 type Jawab = { status: number; data: Record<string, unknown> | null };
 
@@ -60,7 +60,7 @@ async function csrf(segar = false): Promise<string> {
 export function sebab(j: Jawab, umum: string): string {
     if (j.status === 0) return `${PESAN_PUTUS} Coba lagi.`;
     if (j.status === 401) return "Sesi login berakhir; masuk ulang lalu coba lagi.";
-    if (j.status === 403) return "Server menolak: akun Anda tidak berhak atas aksi ini, atau sesi keamanan halaman kedaluwarsa — muat ulang halaman lalu coba lagi.";
+    if (j.status === 403) return "Server menolak: akun Anda tidak berhak atas aksi ini, atau sesi keamanan halaman kedaluwarsa. Muat ulang halaman lalu coba lagi.";
     const err = typeof j.data?.error === "string" ? j.data.error.trim() : "";
     return err || umum;
 }
@@ -147,8 +147,8 @@ export function PeringatanTanggalLampau({ tanggal }: { tanggal: string }) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal) || tanggal >= hariIni) return null;
     return (
         <MessageStrip tone="warn" title={`Tanggal bayar sudah lewat (${tanggalTampil(tanggal)}).`}>
-            Halaman Finance membuka tanggal hari ini ({tanggalTampil(hariIni)} WITA) dan hanya menampilkan pengajuan bertanggal sama — pengajuan ini
-            tidak muncul di antrean Finance kecuali Finance memilih tanggal itu. Pakai hari ini atau tanggal sesudahnya.
+            Halaman Finance membuka tanggal hari ini ({tanggalTampil(hariIni)} WITA) dan hanya menampilkan pengajuan bertanggal sama. Pengajuan ini
+            tidak muncul di antrean Finance kecuali Finance memilih tanggal itu; pakai hari ini atau tanggal sesudahnya.
         </MessageStrip>
     );
 }

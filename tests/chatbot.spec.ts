@@ -37,9 +37,9 @@ test.describe("Chatbot E2E", () => {
   test("chat dialog opens with welcome", async ({ page }) => {
     if (page.url().includes("/login")) { test.skip(); return; }
     await openChat(page);
-    const dialog = page.locator('[role="dialog"][aria-label="AI Assistant"]');
+    const dialog = page.locator('[role="dialog"][aria-label="Asisten Bantuan"]');
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("AI Assistant");
+    await expect(dialog).toContainText("Asisten Bantuan");
   });
 
   test("send menu and get response", async ({ page }) => {
@@ -49,14 +49,14 @@ test.describe("Chatbot E2E", () => {
     await input.fill("menu");
     await page.locator('button[aria-label="Kirim pesan"]').click();
     await page.waitForTimeout(3000);
-    const dialog = page.locator('[role="dialog"][aria-label="AI Assistant"]');
+    const dialog = page.locator('[role="dialog"][aria-label="Asisten Bantuan"]');
     await expect(dialog).toContainText("Berikut yang bisa saya bantu");
   });
 
   test("escape closes dialog", async ({ page }) => {
     if (page.url().includes("/login")) { test.skip(); return; }
     await openChat(page);
-    const dialog = page.locator('[role="dialog"][aria-label="AI Assistant"]');
+    const dialog = page.locator('[role="dialog"][aria-label="Asisten Bantuan"]');
     await expect(dialog).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(dialog).not.toBeVisible();

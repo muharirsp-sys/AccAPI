@@ -40,9 +40,9 @@ function Kepala({ langkah, sesi, onPeriksa }: { langkah: number; sesi: Load<Sesi
                     : <StatusBadge tone="info">Database: {namaDatabase(s)}</StatusBadge>;
     return (
         <header className="fi-page-head">
-            <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Keuangan</span></li><li><span aria-current="page">Pelunasan penjualan</span></li></ol></nav>
+            <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Keuangan</span></li><li><span aria-current="page">Pelunasan</span></li></ol></nav>
             <div className="fi-page-bar">
-                <h1>Pelunasan penjualan</h1>
+                <h1>Pelunasan</h1>
                 <span aria-live="polite">{badge}</span>
                 <span className="fi-spacer" />
                 <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} busy={sesi.status === "memuat" && Boolean(s)} onClick={onPeriksa}>Periksa ulang sesi</Button>
@@ -56,12 +56,22 @@ function Kepala({ langkah, sesi, onPeriksa }: { langkah: number; sesi: Load<Sesi
     );
 }
 
-/** Kartu jenis dokumen yang tidak dikerjakan di wizard ini: tautan Konsol (Admin/IT) atau nonaktif dengan alasan terlihat. */
+/**
+ * Kartu jenis dokumen yang tidak dikerjakan di wizard ini: tautan Konsol (Admin/IT) atau nonaktif dengan alasan terlihat. Nonaktif hanya
+ * meredupkan ikon dan judul; alasan tetap berwarna penuh supaya terbaca (audit desain 001 No 37).
+ */
 function JenisLain({ judul, isi, alasan, href, ikon }: { judul: string; isi: string; alasan: string; href?: string; ikon: ReactNode }) {
-    const badan = <><span className="fi-tile-ico" aria-hidden>{ikon}</span><span className="fi-tile-t">{judul}</span><span className="fi-tile-s">{isi}</span><span className="fi-tile-f">{alasan}</span></>;
+    const mati = !href;
+    const badan = (
+        <>
+            <span className="fi-tile-ico" aria-hidden style={mati ? { opacity: 0.5 } : undefined}>{ikon}</span>
+            <span className="fi-tile-t" style={mati ? { color: "var(--ink-muted)" } : undefined}>{judul}</span>
+            <span className="fi-tile-s">{isi}</span><span className="fi-tile-f">{alasan}</span>
+        </>
+    );
     return href
         ? <a className="fi-tile" href={href} target="_blank" rel="noopener">{badan}</a>
-        : <button type="button" className="fi-tile" disabled style={{ opacity: 0.62, cursor: "not-allowed", transform: "none" }}>{badan}</button>;
+        : <button type="button" className="fi-tile" disabled style={{ cursor: "not-allowed", transform: "none" }}>{badan}</button>;
 }
 
 export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
@@ -180,19 +190,19 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
         return (
             <div className="fi-page" style={{ paddingBottom: 0 }}>
                 {kepala}
-                <Section title="Pilih jenis dokumen" subtitle="menggantikan pilihan 231 endpoint Konsol">
+                <Section title="Pilih jenis dokumen">
                     <div className="fi-sect-in">
                         <div className="fi-tiles">
                             <button type="button" className="fi-tile" onClick={() => setLangkah(1)}>
                                 <span className="fi-tile-ico" aria-hidden><HandCoins className="fi-icon" /></span>
                                 <span className="fi-tile-t">Pelunasan penjualan</span>
                                 <span className="fi-tile-s">Format Pelunasan Internal: Tunai, Transfer, BG, potongan. Cek ganda dan retur manual.</span>
-                                <span className="fi-tile-f">sales-receipt · diinput Admin Incaso</span>
+                                <span className="fi-tile-f">Penerimaan Penjualan di Accurate · diinput Admin Incaso</span>
                             </button>
                             <JenisLain judul="Retur pembelian" isi="Berkas retur dari principal. Belum menjadi wizard." ikon={<Undo2 className="fi-icon" />}
                                 href={bisaKonsol ? "/api-wrapper" : undefined} alasan={bisaKonsol ? "Lewat Konsol AOL (tab baru)" : `Nonaktif: ${ALASAN.konsol}`} />
                             <JenisLain judul="Pembayaran pembelian" isi="Pembayaran ke principal dikunci dan dicatat per percobaan di Finance." ikon={<Wallet className="fi-icon" />}
-                                alasan="Nonaktif: diposting dari Finance, tidak tersedia di sini (D-06)." />
+                                alasan="Nonaktif: diposting dari Finance, tidak tersedia di sini." />
                             <JenisLain judul="Lainnya dari templat Excel" isi="Konsol endpoint untuk Admin/IT: templat 3 sheet, kolom = nama parameter API." ikon={<Code2 className="fi-icon" />}
                                 href={bisaKonsol ? "/api-wrapper" : undefined} alasan={bisaKonsol ? "Konsol AOL (tab baru)" : `Nonaktif: ${ALASAN.konsol}`} />
                         </div>
@@ -237,7 +247,7 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
                 {berkas && (
                     <Section title="Isi berkas" subtitle={`${berkas.nama} · sheet ${berkas.sheet}`}>
                         <div className="fi-sect-in">
-                            <div className="fi-kcards" aria-label="Ringkasan berkas" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 150px), 1fr))" }}>
+                            <div className="fi-kcards" role="group" aria-label="Ringkasan berkas" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 150px), 1fr))" }}>
                                 <div className="fi-kc"><span>Baris dibaca</span><b>{berkas.isi.baris}</b><small>berisi Code Outlet atau No. Nota</small></div>
                                 <div className="fi-kc"><span>Berisi BG</span><b>{berkas.isi.bg}</b><small>{berkas.isi.bg ? "rekening BG wajib di langkah Akun" : "rekening BG tidak dipakai"}</small></div>
                                 <div className="fi-kc"><span>Berisi potongan</span><b>{berkas.isi.pot.reduce((a, b) => a + b, 0)}</b><small>Pot.1 {berkas.isi.pot[0]} · Pot.2 {berkas.isi.pot[1]} · Pot.3 {berkas.isi.pot[2]}</small></div>

@@ -134,17 +134,17 @@ test("Rekaman: simpan PER REKAMAN — satu rekaman ditolak server (409 terkunci)
         return dlg;
     };
     let dlg = await ubah("LPB-A-003", "No. invoice", "INV-A-3");
-    await dlg.getByRole("button", { name: "Selesai" }).click();
+    await dlg.getByRole("button", { name: "Terapkan ke draf" }).click();
     dlg = await ubah("LPB-A-001", "Nilai invoice", "17.750.00O");
     await expect(dlg.getByText("“17.750.00O” bukan angka rupiah")).toBeVisible();
-    await dlg.getByRole("button", { name: "Selesai" }).click();
+    await dlg.getByRole("button", { name: "Terapkan ke draf" }).click();
     await expect(main.getByText("Perbaiki isian yang bukan angka dulu.")).toBeVisible();
     await expect(main.getByRole("button", { name: /Simpan \d perubahan/ })).toBeDisabled();
     dlg = await ubah("LPB-A-001", "Nilai invoice", "12.450.000");
     await expect(dlg.getByText("Sebelumnya: 12.400.000")).toBeVisible();
-    await dlg.getByRole("button", { name: "Selesai" }).click();
+    await dlg.getByRole("button", { name: "Terapkan ke draf" }).click();
     dlg = await ubah("CBD_1A2B3C4D", "Nilai invoice", "12.600.000");
-    await dlg.getByRole("button", { name: "Selesai" }).click();
+    await dlg.getByRole("button", { name: "Terapkan ke draf" }).click();
     await expect(main.getByText("3 isian di 3 rekaman belum disimpan.", { exact: false })).toBeVisible();
     await expect(main.getByText("Simpan atau batalkan perubahan isian dulu.")).toHaveCount(0); // footer simpan menggantikan footer keranjang
     await main.getByRole("button", { name: "Simpan 3 perubahan" }).click();
@@ -258,7 +258,7 @@ test("Rekaman: saringan rentang Actual date & Tanggal bayar pabrik — batas ink
     const dlg = page.getByRole("dialog");
     await expect(dlg.getByLabel("Tanggal bayar pabrik", { exact: true })).toHaveValue("2026-10-20");
     await expect(page.getByText(/bayar pusat/i)).toHaveCount(0);
-    await dlg.getByRole("button", { name: "Selesai" }).click();
+    await dlg.getByRole("button", { name: "Terapkan ke draf" }).click();
 
     // Dari > sampai: galat di isian, tidak ada baris (bukan diam-diam semua).
     await bar.getByLabel("Actual date dari").fill("2026-11-01");

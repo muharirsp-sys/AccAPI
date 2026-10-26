@@ -4,7 +4,7 @@
  *   `hapus` (satu rekaman tanpa kunci). Pengganti form unggah/manual, window.confirm/prompt, dan Hapus Ceklis di page.tsx lama.
  * Caller: app/(dashboard)/payments/Rekaman.tsx.
  * Dependensi: ./bersama (tulis, unduhUrl), components/fiori/*, components/ui/Dialog, lib/payments-ui (ISIAN, nilaiAwal, galatIsian, …),
- *   lib/promo-ui (rupiah).
+ *   lib/promo-ui (rupiah), lib/tampil (KOSONG).
  * Main Functions: DialogUnggah, DialogManual, DialogKeranjang, RincianRekaman, DialogHapus.
  * Side Effects: POST /payments/upload?dry_run=1|0 (payments.edit), /payments/manual/add (payments.edit), /payments/cart/create
  *   (payments.edit), /payments/delete (payments.delete) — semua dengan CSRF lewat ./bersama.
@@ -16,7 +16,7 @@
 
 import { useId, useRef, useState } from "react";
 import { Lock, Trash2, X } from "lucide-react";
-import { Button, KeyValues, MessageStrip, StatusBadge, VariantNote } from "@/components/fiori/core";
+import { Button, KeyValues, MessageStrip, StatusBadge } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import Dialog from "@/components/ui/Dialog";
 import {
@@ -25,10 +25,11 @@ import {
 } from "@/lib/payments-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { PeringatanTanggalLampau, tulis, unduhUrl } from "./bersama";
+import { KOSONG } from "@/lib/tampil";
 
 type Selesai = (p: { pesan: string }) => void;
 const nama = (r: Baris) => r.no_lpb || r.record_id;
-const KUNCI_PASTI = "Hasil sebelumnya belum pasti — tutup dialog dan periksa daftar dulu sebelum mengulang.";
+const KUNCI_PASTI = "Hasil sebelumnya belum pasti; tutup dialog dan periksa daftar dulu sebelum mengulang.";
 
 type LaporanLpb = { rows?: number; total_nilai_win?: number; total_nilai_invoice?: number; duplicates?: string[]; duplicates_in_file?: string[]; invalid?: string[]; error?: string; can_apply?: boolean; added?: number };
 /** Pratinjau selalu terikat ke berkasnya (`untuk`): laporan berkas lain tidak pernah dipasangkan dengan Simpan. */
@@ -67,7 +68,7 @@ export function DialogUnggah({ open, onClose, izin, kunci, onSelesai, onTidakPas
     const alasan = izin ?? kunci ?? (belumPasti ? KUNCI_PASTI : !berkas ? "Pilih berkas LPB dulu."
         : !segar || segar.status === "memuat" ? "Pratinjau sedang dibuat."
             : !lap ? "Pratinjau gagal; berkas ini belum bisa disimpan."
-                : !lap.can_apply ? "Perbaiki masalah di pratinjau dulu — satu masalah membatalkan seluruh berkas." : undefined);
+                : !lap.can_apply ? "Perbaiki masalah di pratinjau dulu; satu masalah membatalkan seluruh berkas." : undefined);
 
     async function simpan() {
         if (!berkas) return;
@@ -98,7 +99,7 @@ export function DialogUnggah({ open, onClose, izin, kunci, onSelesai, onTidakPas
                 ["Baris tidak valid", daftar(lap.invalid, 3)],
             ] : undefined}
         >
-            <FormField label="Berkas LPB (.xlsx/.xls)" required help="Pratinjau dibuat otomatis tanpa menulis apa pun. Berkas backup pembayaran tidak diunggah dari sini — pemulihan backup ada di Format SPPD.">
+            <FormField label="Berkas LPB (.xlsx/.xls)" required help="Pratinjau dibuat otomatis tanpa menulis apa pun. Berkas cadangan pembayaran tidak diunggah dari sini; pemulihan cadangan ada di Format SPPD.">
                 {(a) => <input key={kunciInput} {...a} className="fi-input" type="file" accept=".xlsx,.xls" onChange={(e) => void pilih(e.target.files?.[0] ?? null)} />}
             </FormField>
             <p className="fi-small"><a href={unduhUrl("/payments/template")} target="_blank" rel="noopener noreferrer">Unduh templat LPB</a></p>
@@ -187,9 +188,9 @@ export function DialogKeranjang({ open, onClose, dipilih, total, alasan, onSeles
             <div className="fi-field" role="radiogroup" aria-labelledby={idRute} aria-required>
                 <span id={idRute} className="fi-label">Rute pembayaran<span className="fi-req" aria-hidden>*</span></span>
                 <label className="fi-check"><input type="radio" name={idRute} checked={rute === "BANK_PANIN"} onChange={() => setRute("BANK_PANIN")} />
-                    <span><b>Bank Panin (SPPD)</b> — dana ditarik dari fasilitas Bank Panin; satu SPPD untuk semua principal di keranjang.</span></label>
+                    <span><b>Bank Panin (SPPD)</b>: dana ditarik dari fasilitas Bank Panin; satu SPPD untuk semua principal di keranjang.</span></label>
                 <label className="fi-check"><input type="radio" name={idRute} checked={rute === "NON_PANIN"} onChange={() => setRute("NON_PANIN")} />
-                    <span><b>Non Panin</b> — tanpa SPPD; hanya berkas invoice per principal.</span></label>
+                    <span><b>Non Panin</b>: tanpa SPPD; hanya berkas invoice per principal.</span></label>
             </div>
             <FormField label="Tanggal bayar Finance" required error={tanggal ? galatTanggal : undefined}
                 help={`Finance melihat pengajuan ini di halaman Finance pada tanggal ini (bawaan besok WITA; Finance membuka tanggal hari ini ${tanggalTampil(hariIniWita())}). Bisa diubah lagi di langkah Tinjau.`}>
@@ -231,10 +232,10 @@ export function RincianRekaman({ baris, onClose, draf, galat, izinUbah, izinHapu
                         <KeyValues items={[
                             ["Tanggal setor", tanggalTampil(r.tgl_setor)],
                             ["Tanggal WIN · JT", `${tanggalTampil(r.tgl_win)} · ${tanggalTampil(r.tgl_jtempo_win || r.jt_win)}`],
-                            ["Nilai WIN", r.nilai_win_display ? `Rp ${r.nilai_win_display}` : "—"],
+                            ["Nilai WIN", r.nilai_win_display ? `Rp ${r.nilai_win_display}` : KOSONG],
                             ["Terima barang", tanggalTampil(r.tgl_terima_barang)],
-                            ["Pengajuan · SPPD", [r.submission_id, r.sppd_no].filter(Boolean).join(" · ") || "—"],
-                            ["Purchase Payment", r.accurate_purchase_payment_number || "—"],
+                            ["Pengajuan · SPPD", [r.submission_id, r.sppd_no].filter(Boolean).join(" · ") || KOSONG],
+                            ["Purchase Payment", r.accurate_purchase_payment_number || KOSONG],
                         ]} />
                         <div className="fi-formgrid">
                             {ISIAN.filter((i) => tipe === "NON_LPB" || (i.key !== "jenis_dokumen" && i.key !== "nomor_dokumen") || nilaiAwal(r, i.key)).map((i) => {
@@ -248,12 +249,13 @@ export function RincianRekaman({ baris, onClose, draf, galat, izinUbah, izinHapu
                                 );
                             })}
                         </div>
-                        {bisaUbah && <p className="fi-small fi-subtle">Perubahan menjadi draf di halaman ini; simpan lewat tombol Simpan perubahan di bawah daftar.</p>}
+                        {bisaUbah && <p className="fi-small fi-subtle">Perubahan langsung menjadi draf di halaman ini; simpan lewat tombol Simpan perubahan di bawah daftar.</p>}
                     </div>
                     <footer>
                         <Button variant="negative" icon={terkunci ? <Lock className="fi-icon" aria-hidden /> : <Trash2 className="fi-icon" aria-hidden />}
                             disabled={Boolean(alasanHapus)} disabledReason={alasanHapus} onClick={onHapus}>Hapus rekaman…</Button>
-                        <Button variant="primary" onClick={onClose}>Selesai</Button>
+                        {/* Isian sudah masuk draf saat diketik; tombol ini hanya menutup (pola Draf, No 64). */}
+                        <Button variant="primary" onClick={onClose}>{bisaUbah ? "Terapkan ke draf" : "Selesai"}</Button>
                     </footer>
                     {alasanHapus && <p className="fi-small fi-subtle" style={{ padding: "0 20px 12px" }}>Hapus nonaktif: {alasanHapus}</p>}
                 </>
@@ -282,14 +284,13 @@ export function DialogHapus({ baris, onClose, kunci, onSelesai, onTidakPasti }: 
         throw new Error(res.error);
     }
     return (
-        <ConfirmDialog alasanTerlihat open={Boolean(r)} onClose={tutup} title="Hapus 1 rekaman draf?" tag="BL-05" tone="negative" confirmLabel="Hapus"
+        <ConfirmDialog alasanTerlihat open={Boolean(r)} onClose={tutup} title="Hapus 1 rekaman draf?" tag="Hapus rekaman" tone="negative" confirmLabel="Hapus"
             confirmDisabled={kunci ?? (belumPasti ? KUNCI_PASTI : r?.locked_reason ? `Terkunci: ${r.locked_reason}` : undefined)} onConfirm={hapus}
             facts={r ? [
-                ["Dihapus", `${nama(r)} · ${r.principle || "—"} · ${Number.isNaN(angka(r.nilai_invoice)) ? String(r.nilai_invoice) : rupiah(angka(r.nilai_invoice))} · ${STATUS_REKAMAN[statusRekaman(r)].label}`],
+                ["Dihapus", `${nama(r)} · ${r.principle || KOSONG} · ${Number.isNaN(angka(r.nilai_invoice)) ? String(r.nilai_invoice) : rupiah(angka(r.nilai_invoice))} · ${STATUS_REKAMAN[statusRekaman(r)].label}`],
                 ["Tidak bisa dihapus", "Rekaman yang sudah diajukan, ditransfer, atau terposting (dikunci server)."],
                 ["Akibat", "Permanen; rekaman hilang dari daftar dan tidak bisa diajukan."],
-            ] : undefined}>
-            <VariantNote bl="BL-33">Server belum menyimpan alasan penghapusan, jadi dialog ini tidak memintanya. Bila riwayat bersama (nilai lama → baru) masuk, alasan wajib dan tercatat.</VariantNote>
-        </ConfirmDialog>
+                ["Alasan", "Tidak diminta; server belum menyimpan alasan penghapusan."],
+            ] : undefined} />
     );
 }

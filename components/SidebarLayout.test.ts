@@ -46,7 +46,7 @@ test("all existing modules appear exactly once across six groups", () => {
     assert.equal(WORKSPACE_GROUPS.find(group => group.id === "settings")?.items.find(item => item.href === "/data-principal")?.name, "Data Principal");
     assert.equal(WORKSPACE_GROUPS.find(group => group.id === "operations")?.items.find(item => item.href === "/supervisor-review")?.name, "Supervisor Review");
     assert.ok(items.some(item => item.href === "/pelunasan"));
-    assert.equal(WORKSPACE_GROUPS.find(group => group.id === "finance")?.items.find(item => item.href === "/kasir")?.name, "Kasir ↔ Incaso");
+    assert.equal(WORKSPACE_GROUPS.find(group => group.id === "finance")?.items.find(item => item.href === "/kasir")?.name, "Kasir dan Incaso");
     // Master Barang ikut katalog: ia yang MEMBUAT master principal baru, dan matcher
     // deterministik jalur Summary menuntut master berpola `BRAND - JENIS`. Tanpa layar ini
     // satu-satunya cara menambah principal adalah menyusun berkasnya di luar sistem.

@@ -4,9 +4,13 @@
  * Dependensi: React, next/link, lucide-react, kelas `fi-*` di app/fiori.css.
  * Main Functions: Button, StatusBadge, MessageStrip, Tile, ListItem, ObjectPageHeader, Flow, AnchorBar, FooterToolbar,
  *   KeyValues, EmptyState, ErrorState, Skeleton, ResponsiveTable, FlexibleColumnLayout, Section, VariantNote.
- * Side Effects: Tidak ada; aksi diteruskan ke callback pemanggil.
+ * Side Effects: Tidak ada; aksi diteruskan ke callback pemanggil. Button nonaktif beralasan hanya menampilkan gelembung alasan.
  */
-import { Fragment, type ButtonHTMLAttributes, type ReactNode } from "react";
+// Modul klien: Button memegang state gelembung alasan. Semua pemakai sudah komponen klien; komponen server boleh merender
+// komponen di sini selama props-nya bisa diserialisasi (tanpa fungsi).
+"use client";
+
+import { Fragment, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import Link from "next/link";
 import {
     ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronLeft, ChevronRight, CircleCheck, CircleDashed, CircleX,
@@ -21,28 +25,50 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
     variant?: "primary" | "secondary" | "tertiary" | "negative" | "icon";
     icon?: ReactNode;
     busy?: boolean;
-    /** Alasan tombol nonaktif; tampil sebagai title. Tampilkan juga sebagai teks di FooterToolbar bila itu aksi utama. */
+    /**
+     * Alasan tombol nonaktif. Tombol tetap bisa difokus (`aria-disabled`) sehingga alasan terbaca pembaca layar (dari `title`);
+     * diketuk/Enter menampilkan alasan sebagai gelembung, `onClick` tidak dipanggil. Tulis juga di FooterToolbar bila itu aksi utama.
+     */
     disabledReason?: string;
     count?: number;
 };
 
 /** Label kata kerja. Varian `icon` wajib `aria-label`. Satu `primary` per kelompok aksi. */
-export function Button({ variant = "secondary", icon, busy, disabledReason, count, className = "", children, disabled, type = "button", title, ...rest }: ButtonProps) {
+export function Button({ variant = "secondary", icon, busy, disabledReason, count, className = "", children, disabled, type = "button", title, onClick, ...rest }: ButtonProps) {
     const off = Boolean(disabled || busy);
+    // Sibuk tetap `disabled` asli (penjaga kirim ganda). Nonaktif beralasan memakai aria-disabled: tetap di urutan Tab.
+    const beralasan = off && !busy && Boolean(disabledReason);
+    const [why, setWhy] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
     return (
-        <button {...rest} type={type} className={`fi-btn fi-btn--${variant} ${className}`} disabled={off} aria-busy={busy || undefined}
-            title={off && disabledReason ? disabledReason : title}>
-            {busy ? <LoaderCircle className="fi-icon fi-spin" aria-hidden /> : icon}
-            {children}
-            {count != null && <span className="fi-count">{count}</span>}
-        </button>
+        <>
+            <button {...rest} type={type} className={`fi-btn fi-btn--${variant} ${className}`} disabled={off && !beralasan}
+                aria-disabled={beralasan || undefined} aria-busy={busy || undefined}
+                title={off && disabledReason ? disabledReason : title}
+                onBlur={(e) => { setWhy(null); rest.onBlur?.(e); }}
+                onClick={(e) => {
+                    if (!beralasan) { onClick?.(e); return; }
+                    e.preventDefault(); // juga menahan submit form dan popovertarget
+                    // Alasan yang sudah tertulis di dekat tombol (pemanggil mengikatnya lewat aria-describedby) tidak diulang.
+                    if (rest["aria-describedby"]) return;
+                    const r = e.currentTarget.getBoundingClientRect();
+                    const left = Math.max(8, Math.min(r.left, window.innerWidth - 296));
+                    setWhy(r.bottom + 64 > window.innerHeight ? { left, bottom: window.innerHeight - r.top + 6 } : { left, top: r.bottom + 6 });
+                    window.setTimeout(() => setWhy(null), 4000); // iOS tidak memfokus tombol yang diketuk, jadi blur tidak datang
+                }}>
+                {busy ? <LoaderCircle className="fi-icon fi-spin" aria-hidden /> : icon}
+                {children}
+                {count != null && <span className="fi-count">{count}</span>}
+            </button>
+            {/* Pembaca layar sudah mendapat alasan dari title (deskripsi aksesibel); gelembung ini untuk mata, terutama layar sentuh. */}
+            {beralasan && why && <span className="fi-whypop" style={why} aria-hidden>{disabledReason}</span>}
+        </>
     );
 }
 
-/** Status selalu ikon + label + warna semantik; tidak pernah warna saja. */
-export function StatusBadge({ tone, busy, children }: { tone: Tone; busy?: boolean; children: ReactNode }) {
+/** Status selalu ikon + label + warna semantik; tidak pernah warna saja. `wrap`: label panjang boleh turun baris (kolom sempit). */
+export function StatusBadge({ tone, busy, wrap, children }: { tone: Tone; busy?: boolean; wrap?: boolean; children: ReactNode }) {
     const Icon = busy ? LoaderCircle : TONE_ICON[tone];
-    return <span className="fi-badge" data-tone={tone}><Icon className={`fi-icon${busy ? " fi-spin" : ""}`} aria-hidden />{children}</span>;
+    return <span className="fi-badge" data-tone={tone} data-wrap={wrap || undefined}><Icon className={`fi-icon${busy ? " fi-spin" : ""}`} aria-hidden />{children}</span>;
 }
 
 /** Pesan di halaman. `neg` = role alert (galat); lainnya = role status. Galat validasi tidak memakai toast. */
@@ -97,17 +123,18 @@ export function ListItem({ doc, amount, title, meta, badge, current, href, onCli
     return <div className="fi-li">{inner}</div>;
 }
 
-export function KeyValues({ items }: { items: Array<[string, ReactNode]> }) {
-    return <dl className="fi-kv">{items.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}</dl>;
+/** Nilai rata kanan tabular (angka). `align="start"` untuk nilai berupa kalimat, mis. fakta ConfirmDialog. */
+export function KeyValues({ items, align }: { items: Array<[string, ReactNode]>; align?: "start" }) {
+    return <dl className="fi-kv" data-align={align}>{items.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}</dl>;
 }
 
 export type FlowStep = { label: string; state: "done" | "current" | "late" | "stop" | "todo" };
 const STEP_SR: Record<FlowStep["state"], string> = { done: "selesai", current: "", late: "terlambat", stop: "berhenti", todo: "belum" };
 
-/** Langkah status dokumen; langkah aktif memakai aria-current="step". */
+/** Langkah status dokumen; langkah aktif memakai aria-current="step". Bisa difokus: di layar sempit alurnya digulir menyamping. */
 export function Flow({ steps, label = "Tahap dokumen" }: { steps: FlowStep[]; label?: string }) {
     return (
-        <ol className="fi-flow" aria-label={label}>
+        <ol className="fi-flow" aria-label={label} tabIndex={0}>
             {steps.map((step, index) => (
                 <li key={step.label} data-state={step.state} aria-current={step.state === "current" || step.state === "late" ? "step" : undefined}>
                     <span className="fi-step" aria-hidden>{step.state === "done" ? <Check size={12} /> : index + 1}</span>
@@ -124,10 +151,13 @@ type ObjectPageHeaderProps = {
     title: ReactNode; status?: ReactNode; draft?: boolean; actions?: ReactNode;
     attributes?: Array<{ label: string; value: ReactNode }>;
     flow?: ReactNode;
+    /** 2 bila halaman sudah punya h1 (mis. detail di kolom kedua FCL); bawaan 1. */
+    headingLevel?: 1 | 2;
 };
 
 // ponytail: header tidak menciut saat digulir (dynamic page penuh); AnchorBar yang sticky. Tambah menciut bila Object Page panjang butuh.
-export function ObjectPageHeader({ breadcrumbs, title, status, draft, actions, attributes, flow }: ObjectPageHeaderProps) {
+export function ObjectPageHeader({ breadcrumbs, title, status, draft, actions, attributes, flow, headingLevel = 1 }: ObjectPageHeaderProps) {
+    const Judul = headingLevel === 2 ? "h2" : "h1";
     return (
         <header className="fi-oph">
             {breadcrumbs?.length ? (
@@ -138,7 +168,7 @@ export function ObjectPageHeader({ breadcrumbs, title, status, draft, actions, a
                 </nav>
             ) : null}
             <div className="fi-oph-title">
-                <h1>{title}</h1>
+                <Judul>{title}</Judul>
                 {status}
                 {draft && <span className="fi-draft"><Pencil className="fi-icon" aria-hidden />Draf belum disimpan</span>}
                 {actions && <div className="fi-oph-acts">{actions}</div>}
@@ -238,22 +268,25 @@ export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
     else if (rows.length === 0) body = <EmptyState {...empty} />;
     else body = (
         <div className={status === "memuat" ? "fi-busy" : undefined}>
-            <div className="fi-tablescroll">
+            {/* Wadah gulir menyamping bisa difokus supaya tabel lebar bisa digulir dengan kibor. Tanpa role region: nama tabel sudah di caption. */}
+            <div className="fi-tablescroll" tabIndex={0}>
                 <table className="fi-table">
                     <caption className="sr-only">{title}</caption>
                     <thead>
                         <tr>
                             {selectable && (
                                 <th className="fi-sel">
-                                    <input type="checkbox" aria-label="Pilih semua baris" disabled={pickableKeys.length === 0}
-                                        checked={pickableKeys.length > 0 && nSelected === pickableKeys.length}
-                                        ref={(el) => { if (el) el.indeterminate = nSelected > 0 && nSelected < pickableKeys.length; }}
-                                        onChange={() => {
-                                            // Hanya baris yang terlihat; pilihan di luar saringan tidak ikut berubah.
-                                            const next = new Set(selected);
-                                            for (const k of pickableKeys) { if (nSelected === pickableKeys.length) next.delete(k); else next.add(k); }
-                                            onSelectedChange!(next);
-                                        }} />
+                                    <label className="fi-selhit">
+                                        <input type="checkbox" aria-label="Pilih semua baris" disabled={pickableKeys.length === 0}
+                                            checked={pickableKeys.length > 0 && nSelected === pickableKeys.length}
+                                            ref={(el) => { if (el) el.indeterminate = nSelected > 0 && nSelected < pickableKeys.length; }}
+                                            onChange={() => {
+                                                // Hanya baris yang terlihat; pilihan di luar saringan tidak ikut berubah.
+                                                const next = new Set(selected);
+                                                for (const k of pickableKeys) { if (nSelected === pickableKeys.length) next.delete(k); else next.add(k); }
+                                                onSelectedChange!(next);
+                                            }} />
+                                    </label>
                                 </th>
                             )}
                             {columns.map((c) => {
@@ -276,7 +309,7 @@ export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
                             const isSel = selectable && selected!.has(key);
                             return (
                                 <tr key={key} data-selected={isSel || undefined}>
-                                    {selectable && <td className="fi-sel"><input type="checkbox" aria-label={rowLabel ? rowLabel(row) : `Pilih ${key}`} checked={isSel} disabled={!pickable[i]} onChange={() => toggle(key)} /></td>}
+                                    {selectable && <td className="fi-sel"><label className="fi-selhit"><input type="checkbox" aria-label={rowLabel ? rowLabel(row) : `Pilih ${key}`} checked={isSel} disabled={!pickable[i]} onChange={() => toggle(key)} /></label></td>}
                                     {columns.map((c, ci) => (
                                         <td key={c.key} className={`${c.align === "end" ? "fi-end" : ""} ${c.secondary ? "fi-secondary" : ""}`}>
                                             {c.cell(row)}
@@ -347,9 +380,10 @@ export function Section({ id, title, subtitle, actions, children, className = ""
 
 /** Catatan "varian berlabel": logic BL yang belum ada di main; layar menampilkan perilaku hari ini dan menyebut usulannya. */
 export function VariantNote({ bl, children }: { bl: string; children: ReactNode }) {
+    // Hanya Admin yang melihat kotak ini (fiori.css); kode BL tinggal di nama aksesibel untuk menelusuri usulannya.
     return (
         <aside className="fi-varbox" aria-label={`Usulan ${bl}`}>
-            <span className="fi-tag" data-tone="info">Perilaku hari ini · usulan {bl} lewat tracker AM</span>
+            <span className="fi-tag" data-tone="info">Perilaku hari ini</span>
             <p>{children}</p>
         </aside>
     );

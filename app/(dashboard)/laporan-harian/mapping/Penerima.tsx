@@ -4,15 +4,18 @@
  * Caller: app/(dashboard)/laporan-harian/mapping/page.tsx.
  * Dependensi: GET/PUT /api/laporan-harian/mapping (laporan_harian.manage); components/fiori/{core,interactive}.
  * Main Functions: Penerima.
- * Side Effects: HTTP baca/tulis report_recipient. PUT menyimpan SEMUA baris (perilaku API hari ini).
+ * Side Effects: HTTP baca/tulis report_recipient. PUT menyimpan SEMUA baris (perilaku API hari ini): pesan footer menyebut ringkasan perubahan lama → baru
+ *   (pola Draf, bukan dialog) dan bahwa simpan menggantikan seluruh daftar.
  */
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import Link from "next/link";
 import { Plus } from "lucide-react";
 import { Button, EmptyState, ErrorState, FooterToolbar, ListItem, MessageStrip, ResponsiveTable, Skeleton, StatusBadge, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
-import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
+import { ambil } from "@/lib/rekapan-nota/ui";
+import { sebabHttp, waktuWita } from "@/lib/tampil";
 
 type Recipient = { keyword: string; emails: string; active: boolean };
 type Row = Recipient & { id: string };
@@ -40,6 +43,17 @@ export default function Penerima({ permKeys }: { permKeys: string[] }) {
     const rows = draf ?? server;
     const berubah = draf !== null && !sama(draf.map(strip), server.map(strip));
     const nBerubah = draf ? draf.filter((r) => { const s = server.find((x) => x.id === r.id); return !s || s.keyword !== r.keyword || s.emails !== r.emails || s.active !== r.active; }).length : 0;
+    // Ringkasan lama → baru untuk footer (tampilan saja): apa yang berubah dibanding daftar tersimpan.
+    const ringkasan = (() => {
+        if (!draf) return "";
+        const lama = (r: Row) => server.find((x) => x.id === r.id);
+        const ditambah = draf.filter((r) => !lama(r)).length;
+        const diganti = draf.filter((r) => { const s = lama(r); return s && (s.keyword !== r.keyword || s.emails !== r.emails); }).length;
+        const dinonaktifkan = draf.filter((r) => !r.active && lama(r)?.active).length;
+        const diaktifkan = draf.filter((r) => r.active && lama(r)?.active === false).length;
+        const bagian = [ditambah && `${ditambah} ditambah`, diganti && `${diganti} diganti`, dinonaktifkan && `${dinonaktifkan} dinonaktifkan`, diaktifkan && `${diaktifkan} diaktifkan`].filter(Boolean);
+        return `${bagian.join(" · ")}${bagian.length ? " · " : ""}penerima aktif ${server.filter((x) => x.active).length} → ${draf.filter((x) => x.active).length}`;
+    })();
     useUnsavedGuard(berubah);
     // Nama aksesibel isian tidak berubah saat diketik: pakai keyword tersimpan, "baru" untuk baris baru.
     const labelRow = (r: Row) => server.find((s) => s.id === r.id)?.keyword || "baru";
@@ -55,13 +69,13 @@ export default function Penerima({ permKeys }: { permKeys: string[] }) {
         try {
             const res = await fetch("/api/laporan-harian/mapping", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ recipients: draf.map(strip) }) });
             const p = (await res.json().catch(() => ({}))) as { error?: string };
-            if (!res.ok) { setGalat(`Tidak tersimpan: ${p.error ?? `HTTP ${res.status}`}.`); return; }
+            if (!res.ok) { setGalat(`Tidak tersimpan: ${p.error ?? sebabHttp(res.status)}`); return; }
             const ditambah = draf.filter((r) => !server.some((s) => s.id === r.id)).length;
             const dinonaktifkan = draf.filter((r) => !r.active && server.find((s) => s.id === r.id)?.active).length;
-            setPesan(`Tersimpan ${jamWita(new Date())}.${ditambah ? ` ${ditambah} penerima ditambah.` : ""}${dinonaktifkan ? ` ${dinonaktifkan} dinonaktifkan.` : ""} Berlaku untuk unggahan berikutnya; run yang sudah dibuat tetap memakai penerima lamanya.`);
+            setPesan(`Tersimpan ${waktuWita(new Date())}.${ditambah ? ` ${ditambah} penerima ditambah.` : ""}${dinonaktifkan ? ` ${dinonaktifkan} dinonaktifkan.` : ""} Berlaku untuk unggahan berikutnya; run yang sudah dibuat tetap memakai penerima lamanya.`);
             setDraf(null); muat();
         } catch (e) {
-            setGalat(`Tidak tersimpan: ${e instanceof Error ? e.message : String(e)}.`);
+            setGalat(`Tidak tersimpan: ${e instanceof TypeError ? sebabHttp(0) : e instanceof Error ? e.message : sebabHttp(500)}`);
         } finally {
             setMenyimpan(false);
         }
@@ -78,7 +92,7 @@ export default function Penerima({ permKeys }: { permKeys: string[] }) {
     return (
         <div className="fi-page" style={{ paddingBottom: 0 }}>
             <header className="fi-page-head">
-                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><a href="/laporan-harian">Laporan Harian</a></li><li><span aria-current="page">Penerima laporan</span></li></ol></nav>
+                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><Link href="/laporan-harian">Laporan Harian</Link></li><li><span aria-current="page">Penerima laporan</span></li></ol></nav>
                 <div className="fi-page-bar">
                     <h1>Penerima laporan</h1>
                     <span className="fi-spacer" />
@@ -114,7 +128,7 @@ export default function Penerima({ permKeys }: { permKeys: string[] }) {
                 )}
 
             {bolehKelola && data.data && (
-                <FooterToolbar message={berubah ? <span className="fi-sum"><b>{nBerubah} baris diubah</b> · belum disimpan{kosongKeyword ? ` · ${kosongKeyword} baris belum lengkap` : ""}</span> : undefined}>
+                <FooterToolbar message={berubah ? <span className="fi-sum"><b>{nBerubah} baris diubah</b> · belum disimpan · {ringkasan}{kosongKeyword ? ` · ${kosongKeyword} baris belum lengkap` : ""}. Simpan menggantikan seluruh daftar penerima.</span> : undefined}>
                     {berubah && <Button variant="tertiary" onClick={() => setDraf(null)}>Batal</Button>}
                     <Button variant="primary" busy={menyimpan} disabled={!berubah || kosongKeyword > 0} disabledReason={!berubah ? "Belum ada perubahan" : "Isi keyword dan email di semua baris"} onClick={simpan}>Simpan perubahan</Button>
                 </FooterToolbar>

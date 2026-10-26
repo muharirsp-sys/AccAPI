@@ -21,11 +21,12 @@ export default async function DashboardLanding({ searchParams }: { searchParams:
     const [permKeys, utama] = bypass
         ? [new Set(Object.entries(rolePermissionPresets.admin).flatMap(([moduleName, actions]) => (actions || []).map(action => `${moduleName}.${action}`))), null]
         : userId ? await Promise.all([getUserPermissions(userId), getPrimaryGroup(userId)]) : [new Set<string>(), null];
-    // Sapaan dan tanggal dihitung di server (WITA) supaya tidak berbeda dengan render klien.
+    // Sapaan dan tanggal dihitung di server (WITA) supaya tidak berbeda dengan render klien; jamnya ditulis "per hh.mm" karena
+    // tidak diperbarui selama halaman terbuka (audit No 137).
     const now = new Date();
     const hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hourCycle: "h23", timeZone: "Asia/Makassar" }).format(now));
     const greeting = hour < 11 ? "Selamat pagi" : hour < 15 ? "Selamat siang" : hour < 19 ? "Selamat sore" : "Selamat malam";
-    const dateLabel = `${new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Makassar" }).format(now)} · ${new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Makassar" }).format(now)} WITA`;
+    const dateLabel = `${new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Makassar" }).format(now)} · per ${new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Makassar" }).format(now)} WITA`;
     const firstName = (session?.user?.name || "").trim().split(/\s+/)[0] || "Tim";
     // Pratinjau Beranda peran lain (?peran=id profil) atau grup utama lain (?grup=nama) hanya di development (izin tetap milik user yang masuk).
     // Parameter ganda (?grup=a&grup=b) = string[] -> diabaikan.

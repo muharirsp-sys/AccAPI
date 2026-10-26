@@ -3,7 +3,7 @@
  *   Beban distributor DENGAN aturan promo dasarnya. Tiga kelompok (Tak bertuan, Perlu diputuskan ulang, Sudah digolongkan);
  *   pilih baris lalu Golongkan… / Batalkan… lewat dialog (pengganti window.confirm dan formulir di atas tabel).
  * Caller: app/(dashboard)/normalisasi-diskon/page.tsx.
- * Dependensi: GET /api/promo-recap (baris + calon aturan), POST|DELETE /api/promo-recap/normalisasi; components/fiori/*; lib/promo-ui.
+ * Dependensi: GET /api/promo-recap (baris + calon aturan), POST|DELETE /api/promo-recap/normalisasi; components/fiori/*; lib/promo-ui; lib/tampil; lib/claim-workflow-ui (pesanGalat).
  * Main Functions: Normalisasi, otomatisPerBaris, calonSurat, labelCalon, kelompokkan.
  * Side Effects: HTTP; menulis `discount_normalization`. TIDAK menulis ke Accurate.
  *
@@ -21,6 +21,8 @@ import { Button, FooterToolbar, ListItem, MessageStrip, ResponsiveTable, StatusB
 import { ConfirmDialog, FilterBar, FormField, useLoad } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
 import { BEBAN, persen, rupiah, tgl, type BebanKey } from "@/lib/promo-ui";
+import { KOSONG, sebabHttp } from "@/lib/tampil";
+import { pesanGalat } from "@/lib/claim-workflow-ui";
 
 type Golongan = BebanKey;
 type Row = {
@@ -109,7 +111,7 @@ export function kelompokkan(rows: Row[]): Grup[] {
     return [...map.values()].sort((a, b) => a.customerName.localeCompare(b.customerName) || a.transDate.localeCompare(b.transDate) || a.invoiceNo.localeCompare(b.invoiceNo));
 }
 
-const posisiLabel = (p: string) => (p === "faktur" ? "tingkat faktur" : `D${p.replace(/\+/g, "+D")}`);
+const posisiLabel = (p: string) => (p === "faktur" ? "tingkat faktur" : `kolom ${p}`);
 
 export default function Normalisasi({ permKeys, awal }: { permKeys: string[]; awal: { from?: string; to?: string; principal?: string } }) {
     const keys = useMemo(() => new Set(permKeys), [permKeys]);
@@ -165,13 +167,13 @@ export default function Normalisasi({ permKeys, awal }: { permKeys: string[]; aw
 
     const petunjuk = !golongan ? "Pilih beban dulu."
         : modeOtomatis ? `Otomatis per baris: ${otomatis!.pilihan.size} potongan memakai aturan yang nilainya sama persis (surat ${otomatis!.surat.join(", ")})`
-            + (otomatis!.lewat ? `; ${otomatis!.lewat} dilewati karena tidak ada atau ada lebih dari satu aturan bernilai sama — tetap tak bertuan.` : ".")
+            + (otomatis!.lewat ? `; ${otomatis!.lewat} dilewati karena tidak ada atau ada lebih dari satu aturan bernilai sama, jadi tetap tak bertuan.` : ".")
         : !adaPilihan ? (terpilihGrup.length > 1
             ? `Tidak ada satu surat yang berlaku untuk semua ${terpilihGrup.length} potongan terpilih. Pilih lebih sedikit, atau tambahkan aturannya di Aturan Promo.`
             : "Tidak ada aturan promo yang berlaku untuk potongan ini. Tambahkan aturannya di Aturan Promo bila memang ada dasarnya.")
-        : !calonAturan.length && !dipilih ? "Tidak ada satu surat untuk semua potongan terpilih — pilih “Otomatis per baris”."
+        : !calonAturan.length && !dipilih ? "Tidak ada satu surat untuk semua potongan terpilih. Pilih “Otomatis per baris”."
         : !dipilih ? "Pilih surat yang menjadi dasar keputusan."
-        : `Dasar: surat ${dipilih.surat}${dipilihAturan[0].promoLabel ? ` — ${dipilihAturan[0].promoLabel}` : ""}, ${dipilihAturan.length > 1 ? `${dipilihAturan.length} aturan, masing-masing untuk barangnya` : "1 aturan"}.`;
+        : `Dasar: surat ${dipilih.surat}${dipilihAturan[0].promoLabel ? ` (${dipilihAturan[0].promoLabel})` : ""}, ${dipilihAturan.length > 1 ? `${dipilihAturan.length} aturan, masing-masing untuk barangnya` : "1 aturan"}.`;
     const bisaSimpan = Boolean(barisKirim.length && golongan && (dipilih || modeOtomatis));
 
     function bukaGolongkan() { setGolongan(""); setSuratDipilih(""); setCariAturan(""); setNote(""); setDialog("golongkan"); }
@@ -189,7 +191,7 @@ export default function Normalisasi({ permKeys, awal }: { permKeys: string[]; aw
                 customerNo: row.customerNo, itemCode: row.itemCode })) }),
         });
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; disimpan?: number; error?: string };
-        if (!res.ok || !body.ok) throw new Error(body.error ?? `Tidak tersimpan (HTTP ${res.status}).`);
+        if (!res.ok || !body.ok) throw new Error(body.error ?? `Penggolongan belum tersimpan. ${sebabHttp(res.status)}`);
         setDialog(null); setPilih(new Set());
         setPesan(`${body.disimpan ?? barisKirim.length} potongan digolongkan sebagai ${BEBAN[golongan].label}${dilewati ? `; ${dilewati} dilewati, tetap tak bertuan` : ""}.`);
         muat();
@@ -201,7 +203,7 @@ export default function Normalisasi({ permKeys, awal }: { permKeys: string[]; aw
             body: JSON.stringify({ keys: barisTerpilih.map((row) => ({ lineKey: row.lineKey, positions: row.positions })) }),
         });
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; dicabut?: number; error?: string };
-        if (!res.ok || !body.ok) throw new Error(body.error ?? `Gagal membatalkan (HTTP ${res.status}).`);
+        if (!res.ok || !body.ok) throw new Error(body.error ?? `Penggolongan belum dibatalkan. ${sebabHttp(res.status)}`);
         setDialog(null); setPilih(new Set());
         setPesan(`${body.dicabut ?? barisTerpilih.length} penggolongan dibatalkan; potongannya kembali tak bertuan.`);
         muat();
@@ -211,10 +213,10 @@ export default function Normalisasi({ permKeys, awal }: { permKeys: string[]; aw
         { key: "faktur", header: "Faktur", cell: (g) => <><span className="fi-mono">{g.invoiceNo}</span>{g.rows[0].web && <> <StatusBadge tone="info">web</StatusBadge></>}<span className="fi-sub">{tgl(g.transDate)}</span></> },
         { key: "outlet", header: "Outlet", cell: (g) => <>{g.customerName}<span className="fi-codes">{g.customerNo}</span></> },
         { key: "posisi", header: "Posisi", cell: (g) => <span className="fi-mono fi-small">{posisiLabel(g.positions)}</span> },
-        { key: "persen", header: "Persen", align: "end", cell: (g) => <span className="fi-tnum">{g.percent ? persen(g.percent) : "—"}</span> },
+        { key: "persen", header: "Persen", align: "end", cell: (g) => <span className="fi-tnum">{g.percent ? persen(g.percent) : KOSONG}</span> },
         { key: "barang", header: "Barang", secondary: true, cell: (g) => (
             <details className="fi-small"><summary style={{ cursor: "pointer" }}>{g.rows.length} baris</summary>
-                <ul style={{ margin: "4px 0 0", paddingLeft: 0, listStyle: "none" }}>{g.rows.map((r) => <li key={r.lineKey}><span className="fi-mono">{r.itemCode || "—"}</span> {r.itemName} · <span className="fi-tnum">{rupiah(r.amount)}</span></li>)}</ul>
+                <ul style={{ margin: "4px 0 0", paddingLeft: 0, listStyle: "none" }}>{g.rows.map((r) => <li key={r.lineKey}><span className="fi-mono">{r.itemCode || KOSONG}</span> {r.itemName} · <span className="fi-tnum">{rupiah(r.amount)}</span></li>)}</ul>
             </details>) },
         { key: "nominal", header: "Nominal", align: "end", cell: (g) => <span className="fi-tnum">{rupiah(g.amount)}</span> },
         { key: "sebab", header: tab === "sudah" ? "Digolongkan" : "Sebab", cell: (g) => {
@@ -236,18 +238,21 @@ export default function Normalisasi({ permKeys, awal }: { permKeys: string[]; aw
         <div className="fi-page" style={{ paddingBottom: 0 }}>
             <header className="fi-page-head">
                 <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Promo &amp; Klaim</span></li><li><span aria-current="page">Normalisasi Diskon</span></li></ol></nav>
-                <h1>Normalisasi diskon</h1>
+                <h1>Normalisasi Diskon</h1>
+                <p className="fi-small fi-tnum">Faktur {tgl(from)} sampai {tgl(to)}{principal ? `, ${principal}` : ""}.</p>
                 <p>Potongan tak bertuan pada faktur Accurate, termasuk yang terbit lewat web. Satu baris = satu faktur, satu posisi. Golongkan sebagai Klaim principal atau Beban distributor dengan menunjuk aturan promo dasarnya. Faktur di Accurate tidak diubah; bila faktur atau aturannya berubah sesudah diputuskan, keputusannya tidak dipakai lagi dan muncul di Perlu diputuskan ulang.</p>
             </header>
 
             {pesan && <MessageStrip tone="pos" title={pesan} onClose={() => setPesan(null)} />}
-            {data.status === "galat" && data.data && <MessageStrip tone="neg" title="Gagal memuat ulang.">{data.error} Yang tampil adalah hasil sebelumnya. <Button variant="tertiary" onClick={muat}>Coba lagi</Button></MessageStrip>}
+            {data.status === "galat" && data.data && <MessageStrip tone="neg" title="Gagal memuat ulang.">{pesanGalat("Data normalisasi gagal dimuat.", data.error)} Yang tampil adalah hasil sebelumnya. <Button variant="tertiary" onClick={muat}>Coba lagi</Button></MessageStrip>}
 
             <div className="fi-panel" style={{ padding: 0, overflow: "clip" }}>
                 <FilterBar title="Periode faktur" activeCount={principal ? 1 : 0} onReset={() => setPrincipal("")}
-                    search={<FormField label="Dari">{(a11y) => <input {...a11y} className="fi-input" type="date" value={from} max={to} onChange={(e) => { if (e.target.value) { setFrom(e.target.value); setPilih(new Set()); } }} />}</FormField>}
                     fields={<>
-                        <FormField label="Sampai">{(a11y) => <input {...a11y} className="fi-input" type="date" value={to} min={from} onChange={(e) => { if (e.target.value) { setTo(e.target.value); setPilih(new Set()); } }} />}</FormField>
+                        <div className="fi-fpair">
+                            <FormField label="Dari">{(a11y) => <input {...a11y} className="fi-input" type="date" value={from} max={to} onChange={(e) => { if (e.target.value) { setFrom(e.target.value); setPilih(new Set()); } }} />}</FormField>
+                            <FormField label="Sampai">{(a11y) => <input {...a11y} className="fi-input" type="date" value={to} min={from} onChange={(e) => { if (e.target.value) { setTo(e.target.value); setPilih(new Set()); } }} />}</FormField>
+                        </div>
                         <FormField label="Principal">{(a11y) => <select {...a11y} className="fi-input" value={principal} onChange={(e) => { setPrincipal(e.target.value); setPilih(new Set()); }}><option value="">Semua principal</option>{(data.data?.principals ?? []).map((p) => <option key={p}>{p}</option>)}</select>}</FormField>
                     </>}
                     chips={principal ? [{ label: `Principal: ${principal}`, onRemove: () => setPrincipal("") }] : undefined} />
@@ -258,11 +263,11 @@ export default function Normalisasi({ permKeys, awal }: { permKeys: string[]; aw
                     {([["takBertuan", `Tak bertuan ${takBertuan.length}`], ["ulang", `Perlu diputuskan ulang ${ulang.length}`], ["sudah", `Sudah digolongkan ${sudah.length}`]] as const)
                         .map(([k, label]) => <button key={k} type="button" aria-pressed={tab === k} onClick={() => { setTab(k); setPilih(new Set()); }}>{label}</button>)}
                 </div>
-                {data.data && <span className="fi-small fi-subtle">Tak bertuan {rupiah(totalTakBertuan)} · <Link href={`/rekap-promo`}>Lihat Rekap promo</Link></span>}
+                {data.data && <span className="fi-small fi-subtle">Tak bertuan {rupiah(totalTakBertuan)} · <Link href={`/rekap-promo`}>Lihat Rekap Promo</Link></span>}
             </div>
 
             <ResponsiveTable<Grup> title={tab === "sudah" ? "Sudah digolongkan" : tab === "ulang" ? "Perlu diputuskan ulang" : "Tak bertuan"} count={daftar.length}
-                columns={kolom} rows={daftar} rowKey={(g) => g.key} status={memuatAwal ? "memuat" : data.status} error={data.error} onRetry={muat}
+                columns={kolom} rows={daftar} rowKey={(g) => g.key} status={memuatAwal ? "memuat" : data.status} error={data.error ? pesanGalat("Data normalisasi gagal dimuat.", data.error) : undefined} onRetry={muat}
                 selected={bolehUbah ? pilih : undefined} onSelectedChange={bolehUbah ? setPilih : undefined} rowLabel={(g) => `Pilih ${g.invoiceNo} posisi ${g.positions}`}
                 empty={tab === "sudah" ? { title: "Belum ada yang digolongkan pada periode ini" } : tab === "ulang" ? { title: "Tidak ada keputusan lama yang perlu diulang" } : { title: "Tidak ada potongan tak bertuan pada periode ini", message: "Semua potongan punya aturan promo yang berlaku." }}
                 mobileItem={(g) => <ListItem doc={bolehUbah ? <label className="fi-check"><input type="checkbox" aria-label={`Pilih ${g.invoiceNo} posisi ${g.positions}`} checked={pilih.has(g.key)} onChange={() => setPilih((s) => { const n = new Set(s); if (n.has(g.key)) n.delete(g.key); else n.add(g.key); return n; })} />{g.invoiceNo}</label> : g.invoiceNo}
@@ -279,23 +284,23 @@ export default function Normalisasi({ permKeys, awal }: { permKeys: string[]; aw
 
             <ConfirmDialog open={dialog === "golongkan"} onClose={() => setDialog(null)} tag="Normalisasi"
                 title={golongan ? `Golongkan ${modeOtomatis ? barisKirim.length : terpilihGrup.length} potongan sebagai ${BEBAN[golongan].label}?` : `Golongkan ${terpilihGrup.length} potongan?`}
-                confirmLabel={golongan ? `Golongkan sebagai ${BEBAN[golongan].label}` : "Golongkan"} confirmDisabled={bisaSimpan ? undefined : petunjuk} onConfirm={simpan}
+                confirmLabel={golongan ? `Golongkan sebagai ${BEBAN[golongan].label}` : "Golongkan"} confirmDisabled={bisaSimpan ? undefined : petunjuk} alasanTerlihat={false} onConfirm={simpan}
                 facts={[["Potongan", `${modeOtomatis ? barisKirim.length : barisTerpilih.length} baris · ${rupiah(modeOtomatis ? totalKirim : totalTerpilih)}`], ["Faktur Accurate", "Tidak diubah"]]}>
                 <FormField label="Beban" required>{(a11y) => <select {...a11y} className="fi-input" value={golongan} onChange={(e) => { setGolongan(e.target.value as Golongan | ""); setSuratDipilih(""); }}>
-                    <option value="">— pilih beban —</option><option value="principal">Klaim principal (ditagihkan ke principal)</option><option value="distributor">Beban distributor (biaya sendiri)</option>
+                    <option value="">Pilih beban</option><option value="principal">Klaim principal (ditagihkan ke principal)</option><option value="distributor">Beban distributor (biaya sendiri)</option>
                 </select>}</FormField>
                 {calonAturan.length > 8 && <FormField label="Cari aturan">{(a11y) => <input {...a11y} className="fi-input" type="search" placeholder="Surat, kelompok, barang" value={cariAturan} onChange={(e) => setCariAturan(e.target.value)} />}</FormField>}
                 <FormField label="Aturan promo dasar (surat)" required help={petunjuk}>{(a11y) => <select {...a11y} className="fi-input" value={dipilih || modeOtomatis ? suratDipilih : ""} disabled={!golongan || !adaPilihan} onChange={(e) => setSuratDipilih(e.target.value)}>
-                    <option value="">{!golongan ? "Pilih beban dulu" : calonAturan.length ? `— pilih dari ${calonAturan.length} surat yang berlaku —` : adaPilihan ? "— pilih “Otomatis per baris” —" : "Tidak ada aturan yang berlaku"}</option>
-                    {!!otomatis?.pilihan.size && <option value={OTOMATIS}>Otomatis per baris — {otomatis.pilihan.size} dari {barisTerpilih.length} potongan punya tepat satu aturan bernilai sama</option>}
-                    {calonTampil.map((c) => <option key={c.surat} value={c.surat}>{labelCalon(c)}{c.sama ? " — nilai sama" : ""}</option>)}
+                    <option value="">{!golongan ? "Pilih beban dulu" : calonAturan.length ? `Pilih dari ${calonAturan.length} surat yang berlaku` : adaPilihan ? "Pilih “Otomatis per baris”" : "Tidak ada aturan yang berlaku"}</option>
+                    {!!otomatis?.pilihan.size && <option value={OTOMATIS}>Otomatis per baris: {otomatis.pilihan.size} dari {barisTerpilih.length} potongan punya tepat satu aturan bernilai sama</option>}
+                    {calonTampil.map((c) => <option key={c.surat} value={c.surat}>{labelCalon(c)}{c.sama ? " (nilai sama)" : ""}</option>)}
                 </select>}</FormField>
                 <FormField label="Catatan" help="Opsional, mis. dasar keputusannya.">{(a11y) => <input {...a11y} className="fi-input" maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />}</FormField>
             </ConfirmDialog>
 
             <ConfirmDialog open={dialog === "batalkan"} onClose={() => setDialog(null)} tag="Normalisasi" tone="negative"
                 title={`Batalkan ${terpilihGrup.length} penggolongan?`} confirmLabel="Batalkan penggolongan" onConfirm={batalkan}
-                facts={[["Potongan", `${barisTerpilih.length} baris · ${rupiah(totalTerpilih)}`], ["Akibat", "Kembali tak bertuan di Rekap promo sampai digolongkan lagi"]]} />
+                facts={[["Potongan", `${barisTerpilih.length} baris · ${rupiah(totalTerpilih)}`], ["Akibat", "Kembali tak bertuan di Rekap Promo sampai digolongkan lagi"]]} />
         </div>
     );
 }

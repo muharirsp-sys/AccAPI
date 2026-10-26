@@ -9,7 +9,7 @@
  *   Kontrak: docs/handover/S7-2-KONTRAK-PRINCIPAL-API.md.
  * Main Functions: DataPrincipal.
  * Side Effects: HTTP tulis ke API principal (zona master data; alias baru memengaruhi resolver S7-2b).
- * Rute lama (/principles, /principal-mapping, /master-barang) TIDAK dialihkan di slice ini; bagian "Dipakai di" hanya menautkannya.
+ * Rute lama (/principles, /principal-mapping, /master-barang) tetap berdiri sendiri (sudah bergaya Fiori); bagian "Dipakai di" menautkannya.
  */
 "use client";
 
@@ -33,13 +33,13 @@ type Dialog =
 type Pesan = { tone: "pos" | "warn" | "neg"; teks: string };
 
 const FORM_KOSONG = { kode: "", nama: "", key: "", dasar: false, alias: "", jenis: "nama" as string, untuk: "*" };
-const NONAKTIF = "Principal nonaktif — aktifkan dulu";
+const NONAKTIF = "Principal nonaktif, aktifkan dulu";
 const BARIS = { borderBottom: "1px solid var(--line)", paddingBottom: 8 } as const;
 // Layar yang memakai data principal. Belum satu pun menerima saringan principal lewat URL, jadi tautannya polos.
 const DIPAKAI = [
     { href: "/master-barang", judul: "Master Barang", ket: "Master per principal dan kode Master Barang 2 karakter" },
     { href: "/principal-mapping", judul: "Mapping Principal", ket: "Kode barang, pelanggan, dan salesman principal → kode internal" },
-    { href: "/principles", judul: "Master Principle", ket: "Berkas master principle dan daftar master aktif" },
+    { href: "/principles", judul: "Master Principal", ket: "Berkas master principal dan daftar master aktif" },
     { href: "/claim-workflow", judul: "Claim Workflow", ket: "Klaim dan No Claim per principal" },
 ];
 
@@ -62,7 +62,7 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
     const nAktif = semua.filter((x) => x.isActive).length;
     const memuatAwal = daftar.status === "memuat" && !daftar.data;
     // Tulis terkunci saat data penentu memuat / gagal dimuat ulang (isi layar bisa usang).
-    const kunciData = daftar.status === "memuat" ? "Menunggu data dimuat ulang" : daftar.status === "galat" ? "Data gagal dimuat — muat ulang dulu" : undefined;
+    const kunciData = daftar.status === "memuat" ? "Menunggu data dimuat ulang" : daftar.status === "galat" ? "Data gagal dimuat, muat ulang dulu" : undefined;
     const kunciPrincipal = kunciData ?? (p && !p.isActive ? NONAKTIF : undefined);
 
     function segarkan() { muatUlang(); setVersi((v) => v + 1); }
@@ -158,7 +158,7 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
                 </div>
             </Section>
 
-            <Section id="p-alias" title="Alias" subtitle="ejaan yang dikenali resolver; satu ejaan = satu principal"
+            <Section id="p-alias" title="Alias" subtitle="ejaan yang dikenali sistem sebagai nama principal; satu ejaan = satu principal"
                 actions={bolehTulis ? <Button icon={<Plus className="fi-icon" aria-hidden />} disabled={Boolean(kunciPrincipal)} disabledReason={kunciPrincipal} onClick={() => buka({ jenis: "alias-baru" })}>Tambah alias…</Button> : undefined}>
                 <div className="fi-sect-in">
                     {p.aliases.length === 0 ? <p className="fi-muted">Belum ada alias.</p> : (
@@ -168,7 +168,7 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
                                     <b>{a.aliasAsli}</b>
                                     <span className="fi-tag">{labelJenis(a.jenis)}</span>
                                     {a.variantKey !== null && <span className="fi-tag">Varian {labelVarian(a.variantKey)}</span>}
-                                    {a.sumber === SUMBER_KODE && <span className="fi-small fi-subtle">alias kode — tetap</span>}
+                                    {a.sumber === SUMBER_KODE && <span className="fi-small fi-subtle">alias kode, tetap</span>}
                                     <span className="fi-spacer" style={{ flex: 1 }} />
                                     {bolehHapus && a.sumber !== SUMBER_KODE && (
                                         <Button variant="tertiary" icon={<Trash2 className="fi-icon" aria-hidden />} disabled={Boolean(kunciData)} disabledReason={kunciData}
@@ -181,7 +181,7 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
                 </div>
             </Section>
 
-            <Section id="p-riwayat" title="Riwayat" subtitle="pembuatan, aktif/nonaktif, dan penghapusan alias — terbaru dulu">
+            <Section id="p-riwayat" title="Riwayat" subtitle="pembuatan, aktif/nonaktif, dan penghapusan alias, terbaru dulu">
                 <RiwayatPrincipal key={`${p.id}-${versi}`} id={p.id} />
             </Section>
 
@@ -243,7 +243,7 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
             </div>
             <FlexibleColumnLayout list={daftarEl} detail={detail} detailOpen={pilihId !== null} onBack={() => setPilihId(null)} listLabel="Daftar principal" detailLabel="Detail principal" />
 
-            <ConfirmDialog open={dialog?.jenis === "buat"} onClose={() => setDialog(null)} tag="Tambah" title="Tambah principal" confirmLabel="Tambah principal"
+            <ConfirmDialog open={dialog?.jenis === "buat"} onClose={() => setDialog(null)} tag="Tambah" title="Tambah principal baru?" confirmLabel="Tambah principal"
                 confirmDisabled={alasanBuat} alasanTerlihat
                 facts={[["Otomatis", "Alias kode dan alias nama resmi ikut dibuat"], ["Kode", "Tidak bisa diubah sesudah dibuat"], ["Riwayat", "Pembuatan tercatat"]]}
                 onConfirm={() => jalankan(async () => {
@@ -266,7 +266,7 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
                 title={p?.isActive ? `Nonaktifkan ${nama}?` : `Aktifkan ${nama}?`} confirmLabel={p?.isActive ? "Nonaktifkan" : "Aktifkan"} confirmDisabled={kunciData} alasanTerlihat
                 facts={[
                     ["Principal", p ? `${p.code} · ${p.name}` : ""],
-                    p?.isActive ? ["Akibat", "Resolver menandainya nonaktif; varian dan alias baru tidak bisa ditambahkan"] : ["Akibat", "Varian dan alias baru bisa ditambahkan lagi"],
+                    p?.isActive ? ["Akibat", "Nama principal ini ditandai nonaktif; varian dan alias baru tidak bisa ditambahkan"] : ["Akibat", "Varian dan alias baru bisa ditambahkan lagi"],
                     ["Data", "Varian dan alias tidak dihapus; bisa dikembalikan kapan saja"],
                 ]}
                 onConfirm={() => jalankan(() => {
@@ -274,7 +274,7 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
                     return ubahAktif(`/api/principals/${p.id}`, { isActive: !p.isActive }, `Principal ${p.name}`, !p.isActive);
                 })} />
 
-            <ConfirmDialog open={dialog?.jenis === "varian-baru" && Boolean(p)} onClose={() => setDialog(null)} tag="Tambah" title={`Tambah varian ke ${nama}`} confirmLabel="Tambah varian"
+            <ConfirmDialog open={dialog?.jenis === "varian-baru" && Boolean(p)} onClose={() => setDialog(null)} tag="Tambah" title={`Tambah varian ke ${nama}?`} confirmLabel="Tambah varian"
                 confirmDisabled={alasanVarian} alasanTerlihat
                 facts={[["Principal", p ? `${p.code} · ${p.name}` : ""], ["Nama varian", "Bila diisi, ikut menjadi alias varian"]]}
                 onConfirm={() => jalankan(async () => {
@@ -305,7 +305,7 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
                     return ubahAktif(`/api/principals/${p.id}/variants`, { variantKey: dv.variantKey, isActive: !dv.isActive }, `Varian ${labelVarian(dv.variantKey)} ${p.name}`, !dv.isActive);
                 })} />
 
-            <ConfirmDialog open={dialog?.jenis === "alias-baru" && Boolean(p)} onClose={() => setDialog(null)} tag="Tambah" title={`Tambah alias ke ${nama}`} confirmLabel="Tambah alias"
+            <ConfirmDialog open={dialog?.jenis === "alias-baru" && Boolean(p)} onClose={() => setDialog(null)} tag="Tambah" title={`Tambah alias ke ${nama}?`} confirmLabel="Tambah alias"
                 confirmDisabled={alasanAlias} alasanTerlihat
                 facts={[["Principal", p ? `${p.code} · ${p.name}` : ""], ["Penulisan", "Huruf besar-kecil dan tanda baca OCR dirapikan server"], ["Bentrok", "Ejaan yang sudah dipakai principal lain ditolak, tidak ditimpa"]]}
                 onConfirm={() => jalankan(async () => {

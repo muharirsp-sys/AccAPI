@@ -1,7 +1,8 @@
 /*
  * Tujuan: Beranda per peran (Launchpad Fiori): Perlu tindakan (tile dari endpoint yang ada), Pintasan, Pantauan, Semua aplikasi.
  * Caller: app/(dashboard)/page.tsx.
- * Dependensi: lib/beranda (katalog tile), config/workspace-navigation (profil dari ★ grup utama / izin, katalog menu), lib/rbac, components/fiori/core.
+ * Dependensi: lib/beranda (katalog tile), config/workspace-navigation (profil dari ★ grup utama / izin, katalog menu), lib/rbac,
+ *   lib/tampil (KOSONG), components/fiori/core.
  * Main Functions: Beranda.
  * Side Effects: GET ke endpoint sumber tile (sekali per sumber per muat, ulang per sumber lewat Coba lagi); tidak menulis data.
  */
@@ -17,6 +18,7 @@ import { canAccessPathWithKeys } from "@/lib/rbac";
 import { ROLE_PROFILES, navigationForPermissions, profileFor, roleShortcuts } from "@/config/workspace-navigation";
 import { SOURCES, TILES, cardFor, linksFor, sourceValid, tilesFor, witaToday, type SourceKey, type SourceLoad, type TileId, type TileValue } from "@/lib/beranda";
 import { MessageStrip, Skeleton, StatusBadge, Tile } from "@/components/fiori/core";
+import { KOSONG } from "@/lib/tampil";
 
 const ICONS: Record<string, LucideIcon> = {
     send: Send, file: FileText, alert: TriangleAlert, box: Package, cart: ShoppingCart, clipboard: ClipboardCheck,
@@ -76,7 +78,7 @@ export default function Beranda({ permKeys, primaryGroup, firstName, greeting, d
     return (
         <div className="fi-home">
             <div className="fi-home-greet">
-                <h1 className="fi-title-1">{greeting}, {firstName}</h1>
+                <h1 className="fi-display">{greeting}, {firstName}</h1>
                 <span className="fi-small fi-subtle"><CalendarDays className="fi-icon" aria-hidden />{dateLabel}</span>
             </div>
 
@@ -91,7 +93,7 @@ export default function Beranda({ permKeys, primaryGroup, firstName, greeting, d
                 <section className="fi-home-blk" aria-labelledby="beranda-tugas">
                     <div className="fi-home-head">
                         <h2 id="beranda-tugas" className="fi-title-3">Perlu tindakan</h2>
-                        <span className="fi-small fi-subtle" aria-live="polite">{loading ? "memuat…" : allClear ? "semua beres" : ""}</span>
+                        <span className="fi-small fi-subtle" aria-live="polite">{loading ? "Memuat…" : allClear ? "Semua beres" : ""}</span>
                     </div>
                     {allClear && (
                         <div className="fi-panel fi-home-clear" role="status">
@@ -181,7 +183,7 @@ function TaskTile({ id, load, onRetry }: { id: TileId; load?: Load; onRetry: () 
         </button>;
     }
     const value: TileValue = spec.pick(load.data);
-    return <Tile title={spec.title} subtitle={spec.subtitle} icon={<Icon className="fi-icon" />} value={value.value === null ? "—" : value.more ? `${value.value}+` : value.value} unit={value.unit} tone={value.tone} footer={value.footer} href={spec.href} />;
+    return <Tile title={spec.title} subtitle={spec.subtitle} icon={<Icon className="fi-icon" />} value={value.value === null ? KOSONG : value.more ? `${value.value}+` : value.value} unit={value.unit} tone={value.tone} footer={value.footer} href={spec.href} />;
 }
 
 function CardRows({ kind, rows }: { kind: "list" | "kv"; rows: ReturnType<NonNullable<ReturnType<typeof cardFor>>["rows"]> }) {

@@ -1,14 +1,16 @@
 /*
- * Tujuan: Bagian periode di Ringkasan OFF Program Control (Fiori S4d): "Tutup periode" (port PeriodClosurePanel old-opc.tsx 1908–2210:
- *   principal/bulan/tahun, angka diajukan vs diklaim, detail rekonsiliasi per batch, unduh PDF rekonsiliasi, dialog `tutup` dan
- *   dialog buka kunci menggantikan confirm peramban) dan "Diajukan vs diklaim" per principal untuk bulan terpilih
- *   (computeClaimComparison 697–732, dulu ClaimComparisonSummary non-admin).
+ * Tujuan: Bagian periode di Ringkasan OFF Program Control (Fiori S4d): "Tutup periode" (port PeriodClosurePanel kode lama:
+ *   principal/bulan/tahun, angka diajukan vs diklaim, status penutupan yang diketahui di sesi ini, detail rekonsiliasi per batch, unduh
+ *   PDF rekonsiliasi, dialog tutup dan buka kunci menggantikan confirm peramban) dan "Diajukan vs diklaim" per principal untuk bulan
+ *   terpilih (computeClaimComparison kode lama). Bila daftar mencapai 200 batch, kedua bagian memberi peringatan bahwa angkanya dari
+ *   200 batch terbaru (rumus tidak berubah).
  * Caller: opc/peran/Ringkasan.tsx (IkhtisarTahap); computeClaimComparison juga dipakai opc/peran/RingkasanAdmin.tsx.
- * Dependensi: opc/Bersama (tulisOpc, kontrak), components/fiori/{core,interactive}, lib/opc-ui, lib/promo-ui (rupiah), sonner.
+ * Dependensi: opc/Bersama (tulisOpc, TulisTidakPasti, pesanTidakPasti, kontrak), components/fiori/{core,interactive}, lib/opc-ui,
+ *   lib/promo-ui (rupiah), lib/tampil (KOSONG), sonner.
  * Main Functions: BagianPeriode, computeClaimComparison, usePeriode.
- * Side Effects: POST /api/off-program-control/periods {action close|unlock, principleCode, bulan, tahun} — satu principal = satu
+ * Side Effects: POST /api/off-program-control/periods {action close|unlock, principleCode, bulan, tahun}: satu principal = satu
  *   panggilan; "Semua principal" = satu panggilan per principal paralel (payload dan urutan sama dengan kode lama). Tautan unduh
- *   GET /periods/reconciliation (tab baru). Muat ulang daftar batch setelah ada yang berhasil.
+ *   GET /periods/reconciliation (tab baru). Muat ulang daftar batch setelah ada yang berhasil atau hasilnya tidak pasti.
  */
 "use client";
 
@@ -17,14 +19,15 @@ import { Download, Lock, LockOpen } from "lucide-react";
 import { toast } from "sonner";
 import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
-import { OPSI_TAHAP, PREDIKAT, opsiPrincipal, tahapBatch, type BatchOpc } from "@/lib/opc-ui";
+import { BATAS_DAFTAR, OPSI_TAHAP, PREDIKAT, opsiPrincipal, tahapBatch, type BatchOpc } from "@/lib/opc-ui";
 import { alasanTutupPeriode } from "@/lib/off-program-control/access";
 import { rupiah } from "@/lib/promo-ui";
-import { tulisOpc, type PeranProps } from "../Bersama";
+import { KOSONG } from "@/lib/tampil";
+import { TulisTidakPasti, pesanTidakPasti, tulisOpc, type PeranProps } from "../Bersama";
 
-// ── Logic lama (salinan apa adanya) ─────────────────────────────────────────────────────────────────────
+// Logic kode lama (salinan apa adanya).
 
-/** computeClaimComparison old-opc.tsx 697: diajukan = summary.totalNominal; diklaim = totalPaid || verifiedAmount || paidAmount. */
+/** computeClaimComparison kode lama: diajukan = summary.totalNominal; diklaim = totalPaid || verifiedAmount || paidAmount. */
 export function computeClaimComparison(batches: BatchOpc[]) {
     const totalSubmitted = batches.reduce((total, b) => total + Number(b.summary?.totalNominal || 0), 0);
     const totalClaimed = batches.reduce((total, b) => total + Number(b.paymentSummary?.totalPaid || b.verifiedAmount || b.paidAmount || 0), 0);
@@ -41,9 +44,9 @@ export function computeClaimComparison(batches: BatchOpc[]) {
 const nilaiKlaim = (b: BatchOpc) => Number(b.paymentSummary?.totalPaid || b.verifiedAmount || b.paidAmount || 0);
 const nilaiAju = (b: BatchOpc) => Number(b.summary?.totalNominal || 0);
 
-// ── Keadaan periode (dipegang Ringkasan supaya tidak hilang saat pindah ke "Semua pengajuan") ───────────
+// Keadaan periode (dipegang Ringkasan supaya tidak hilang saat pindah ke "Semua pengajuan").
 
-/** `null` = belum diisi; diisi SEKALI dari batch terbaru pertama yang tersedia, lalu beku (kode lama 1924–1938). */
+/** `null` = belum diisi; diisi SEKALI dari batch terbaru pertama yang tersedia, lalu beku (kode lama). */
 type Pilihan = { principal: string; bulan: string | null; tahun: string | null };
 /** Status periode yang diketahui DI SESI INI (tidak ada endpoint baca status periode; kode lama juga hanya state lokal). */
 type StatusSesi = Record<string, { status: string; jam: string }>;
@@ -83,9 +86,9 @@ function ringkasPeriode(batches: BatchOpc[], principal: string, bulan: string, t
     const labelPeriode = bulan && tahun ? `${namaBulan(bulan)} ${tahun}` : "";
     const target = batches.filter((b) => (!principal || b.principleCode === principal) && (!bulan || b.bulan === bulan) && (!tahun || b.tahun === tahun));
     const banding = computeClaimComparison(target);
-    // Mode massal ("Semua principal"): satu POST per principal yang punya batch di periode ini (kode lama 1976).
+    // Mode massal ("Semua principal"): satu POST per principal yang punya batch di periode ini (kode lama).
     const principals = [...new Set(target.map((b) => b.principleCode).filter(Boolean))];
-    // Syarat kode lama (canClosePeriod 1957): bulan+tahun, ada batch, diajukan = diklaim. Peran tidak dicek di klien (sama dengan kode
+    // Syarat kode lama (canClosePeriod): bulan+tahun, ada batch, diajukan = diklaim. Peran tidak dicek di klien (sama dengan kode
     // lama); izin grup akses `period_close` ditegakkan server dan galatnya tampil di dialog.
     const alasanTutup = !bulan || !tahun ? "Pilih bulan dan tahun dulu."
         : target.length === 0 ? "Tidak ada batch pada principal dan periode ini."
@@ -99,12 +102,11 @@ function ringkasPeriode(batches: BatchOpc[], principal: string, bulan: string, t
 type RingkasPeriode = ReturnType<typeof ringkasPeriode>;
 
 const faktaUmum = (r: RingkasPeriode): Array<[string, ReactNode]> => [
-    ["Principal", r.principal ? r.namaPrincipal : `Semua principal (${r.principals.length}): ${r.principals.join(", ") || "–"}`],
-    ["Periode", r.labelPeriode || "–"],
+    ["Principal", r.principal ? r.namaPrincipal : `Semua principal (${r.principals.length}): ${r.principals.join(", ") || KOSONG}`],
+    ["Periode", r.labelPeriode || KOSONG],
     ["Batch", r.target.length ? `${r.target.length} · ${rincianTahap(r.target)}` : "0"],
 ];
 
-// ── Bagian ──────────────────────────────────────────────────────────────────────────────────────────────
 
 export function BagianPeriode({ ctx, daftar, periode }: PeranProps & { periode: PeriodeState }) {
     const { batches } = daftar;
@@ -112,6 +114,9 @@ export function BagianPeriode({ ctx, daftar, periode }: PeranProps & { periode: 
     // Dialog membawa potret angka saat dibuka: muat ulang daftar di latar tidak mengubah fakta yang dikonfirmasi maupun isi POST.
     const [dialog, setDialog] = useState<{ jenis: "close" | "unlock"; r: RingkasPeriode } | null>(null);
     const [pesan, setPesan] = useState<{ judul: string; isi: string } | null>(null);
+    const [tidakPasti, setTidakPasti] = useState<string | null>(null);
+    // Daftar dari server dibatasi 200 batch terbaru (BL-13): total periode bisa tidak lengkap. Hanya keterangan; rumus tidak berubah.
+    const terpotong = batches.length >= BATAS_DAFTAR;
 
     const kini = ringkasPeriode(batches, pilihan.principal, pilihan.bulan ?? "", pilihan.tahun ?? "");
     const { opsi, principal, bulan, tahun, namaPrincipal, labelPeriode, target, banding, refundTertunda } = kini;
@@ -119,8 +124,10 @@ export function BagianPeriode({ ctx, daftar, periode }: PeranProps & { periode: 
     const alasanTutup = alasanTutupPeriode(ctx.perms) ?? kini.alasanTutup;
     const status = sesi[kini.kunci];
     const ditutup = status?.status === "Ditutup" || status?.status === "Dikunci";
-    // Buka kunci hanya admin (canUnlock kode lama 1953) dan hanya setelah periode ditutup di sesi ini (isPeriodClosed 1962).
+    // Buka kunci hanya admin (canUnlock kode lama) dan hanya setelah periode ditutup di sesi ini (isPeriodClosed kode lama).
     const alasanBuka = ctx.izin("period_unlock");
+    // Status penutupan tidak dibaca dari server (tidak ada endpoint baca): tanpa catatan sesi ini statusnya belum diketahui.
+    const statusPenutupan = ditutup ? `Ditutup di sesi ini (${status?.jam})` : status ? `Dibuka di sesi ini (${status.jam})` : "Belum diketahui (tidak dibaca dari server)";
 
     async function jalankan(action: "close" | "unlock", r: RingkasPeriode) {
         const kata = action === "close" ? "ditutup" : "dibuka kuncinya";
@@ -128,26 +135,38 @@ export function BagianPeriode({ ctx, daftar, periode }: PeranProps & { periode: 
         const body = (principleCode: string) => ({ action, principleCode, bulan: r.bulan, tahun: r.tahun });
         let isi: string;
         let statusBaru = action === "close" ? "Ditutup" : "Terbuka";
+        const putus = pesanTidakPasti(action === "close" ? "penutupan periode ini" : "pembukaan kunci periode ini", "status periode dan Riwayat batch");
         if (r.principal) {
-            const data = await tulisOpc(URL_PERIODE, { body: body(r.principal), gagal: "Periode belum berhasil diproses." });
+            const data = await tulisOpc(URL_PERIODE, { body: body(r.principal), gagal: "Periode belum berhasil diproses.", putus }).catch((e: unknown) => {
+                // Hasil tidak pasti: strip bertahan + muat ulang daftar; pesan tetap tampil di dialog.
+                if (e instanceof TulisTidakPasti) { setTidakPasti(e.message); daftar.muatUlang(); }
+                throw e;
+            });
             statusBaru = String(data.status || statusBaru);
             catat([r.kunci], statusBaru);
             isi = `${r.namaPrincipal}. ${String(data.message || "Periode berhasil diproses.")}`;
         } else {
-            const hasil = await Promise.all(r.principals.map((pc) => tulisOpc(URL_PERIODE, { body: body(pc), gagal: "Periode belum berhasil diproses." })
-                .then(() => ({ pc, galat: "" }), (e: unknown) => ({ pc, galat: e instanceof Error ? e.message : String(e) }))));
+            const hasil = await Promise.all(r.principals.map((pc) => tulisOpc(URL_PERIODE, { body: body(pc), gagal: "Periode belum berhasil diproses.", putus })
+                .then(() => ({ pc, galat: "", pasti: true }), (e: unknown) => ({ pc, galat: e instanceof Error ? e.message : String(e), pasti: !(e instanceof TulisTidakPasti) }))));
             const berhasil = hasil.filter((h) => !h.galat).map((h) => h.pc);
-            const gagal = hasil.filter((h) => h.galat);
+            const gagal = hasil.filter((h) => h.galat && h.pasti);
+            // Jawaban tidak pasti bukan "gagal": principal itu mungkin sudah berubah di server.
+            const belumPasti = hasil.filter((h) => h.galat && !h.pasti).map((h) => h.pc);
             // Principal yang berhasil sudah berubah di server walau yang lain gagal: catat per principal dan muat ulang daftar.
-            catat([...berhasil.map((pc) => kunciPeriode(pc, r.bulan, r.tahun)), ...(gagal.length ? [] : [r.kunci])], statusBaru);
-            if (gagal.length) {
-                if (berhasil.length) daftar.muatUlang();
-                throw new Error(`${gagal.length} principal gagal diproses: ${gagal.map((g) => `${g.pc} (${g.galat})`).join("; ")}.`
-                    + (berhasil.length ? ` ${berhasil.length} principal lain sudah ${kata}: ${berhasil.join(", ")}.` : ""));
+            catat([...berhasil.map((pc) => kunciPeriode(pc, r.bulan, r.tahun)), ...(gagal.length || belumPasti.length ? [] : [r.kunci])], statusBaru);
+            if (gagal.length || belumPasti.length) {
+                if (berhasil.length || belumPasti.length) daftar.muatUlang();
+                if (belumPasti.length) setTidakPasti(`Hasil untuk ${belumPasti.join(", ")} belum pasti. ${putus}`);
+                throw new Error([
+                    gagal.length ? `${gagal.length} principal gagal diproses: ${gagal.map((g) => `${g.pc} (${g.galat})`).join("; ")}.` : "",
+                    belumPasti.length ? `Hasil ${belumPasti.length} principal belum pasti: ${belumPasti.join(", ")}.` : "",
+                    berhasil.length ? `${berhasil.length} principal lain sudah ${kata}: ${berhasil.join(", ")}.` : "",
+                ].filter(Boolean).join(" "));
             }
             isi = `Semua ${r.principals.length} principal berhasil ${kata} untuk periode ${r.labelPeriode}.`;
         }
         setDialog(null);
+        setTidakPasti(null);
         setPesan({ judul, isi });
         toast.success(judul);
         daftar.muatUlang();
@@ -158,17 +177,26 @@ export function BagianPeriode({ ctx, daftar, periode }: PeranProps & { periode: 
         { key: "no", header: "No pengajuan", cell: (b) => <span className="fi-mono">{b.noPengajuan}</span> },
         { key: "principal", header: "Principal", secondary: true, cell: (b) => b.principleName },
         { key: "aju", header: "Nilai pengajuan", align: "end", cell: (b) => <span className="fi-tnum">{rupiah(nilaiAju(b))}</span> },
-        { key: "noklaim", header: "No klaim", secondary: true, cell: (b) => (b.noClaim ? <span className="fi-mono">{b.noClaim}</span> : "–") },
+        { key: "noklaim", header: "No klaim", secondary: true, cell: (b) => (b.noClaim ? <span className="fi-mono">{b.noClaim}</span> : KOSONG) },
         { key: "klaim", header: "Nilai klaim", align: "end", cell: (b) => <span className="fi-tnum">{rupiah(nilaiKlaim(b))}</span> },
         { key: "selisih", header: "Selisih", align: "end", cell: (b) => <Selisih nilai={nilaiAju(b) - nilaiKlaim(b)} /> },
     ];
 
     return (
         <>
-            <Section id="periode" title="Tutup periode" subtitle={labelPeriode ? `${namaPrincipal} · ${labelPeriode}` : "Pilih principal dan periode"}
-                actions={ditutup ? <StatusBadge tone="neu">{`Ditutup ${status?.jam}`}</StatusBadge> : status ? <StatusBadge tone="info">{`Dibuka ${status.jam}`}</StatusBadge> : undefined}>
+            <Section id="periode" title="Tutup periode"
+                subtitle={labelPeriode ? `${namaPrincipal} · ${labelPeriode}${terpotong ? ` · dari ${BATAS_DAFTAR} batch terbaru` : ""}` : "Pilih principal dan periode"}
+                actions={ditutup ? <StatusBadge tone="neu">{`Ditutup ${status?.jam}`}</StatusBadge>
+                    : status ? <StatusBadge tone="info">{`Dibuka ${status.jam}`}</StatusBadge>
+                        : <StatusBadge tone="neu">Status penutupan belum diketahui</StatusBadge>}>
                 <div className="fi-sect-in">
                     {pesan && <MessageStrip tone="pos" title={pesan.judul} onClose={() => setPesan(null)}>{pesan.isi}</MessageStrip>}
+                    {tidakPasti && <MessageStrip tone="warn" title="Hasil aksi periode terakhir belum pasti." onClose={() => setTidakPasti(null)}>{tidakPasti}</MessageStrip>}
+                    {terpotong && (
+                        <MessageStrip tone="warn" title={`Dihitung dari ${BATAS_DAFTAR} batch terbaru.`}>
+                            Batch lama di periode ini tidak ikut terhitung, jadi total pengajuan, total klaim, dan syarat Tutup periode bisa keliru.
+                        </MessageStrip>
+                    )}
                     <div className="fi-formgrid">
                         <FormField label="Principal">{(a) => (
                             <select {...a} className="fi-input" value={principal} onChange={(e) => setPilihan({ principal: e.target.value, bulan, tahun })}>
@@ -195,6 +223,7 @@ export function BagianPeriode({ ctx, daftar, periode }: PeranProps & { periode: 
                             ["Selisih", rupiah(Math.abs(banding.difference))],
                             ["Kesesuaian data", <StatusBadge key="k" tone={banding.isMatched ? "pos" : banding.submittedCount ? "warn" : "neu"}>{banding.status}</StatusBadge>],
                             ["Refund tertunda", refundTertunda.length ? `${refundTertunda.length} · ${refundTertunda.slice(0, 3).map((b) => b.noPengajuan).join(", ")}` : "0"],
+                            ["Status penutupan", statusPenutupan],
                         ]} />
                     </div>
                     {!banding.isMatched && target.length > 0 && (
@@ -234,11 +263,11 @@ export function BagianPeriode({ ctx, daftar, periode }: PeranProps & { periode: 
                 </div>
             </Section>
 
-            <PerPrincipal batches={batches} bulan={bulan} tahun={tahun} labelPeriode={labelPeriode} />
+            <PerPrincipal batches={batches} bulan={bulan} tahun={tahun} labelPeriode={labelPeriode} terpotong={terpotong} />
 
             <ConfirmDialog open={dialog?.jenis === "close"} onClose={() => setDialog(null)} tag="Tutup periode"
                 title={`Tutup periode ${d.labelPeriode}${d.principal ? ` untuk ${d.namaPrincipal}` : ""}?`}
-                description="Setelah dikunci, data periode ini tidak bisa diubah lagi."
+                description="Setelah ditutup, data periode ini terkunci. Hanya admin yang dapat membuka kuncinya lagi."
                 facts={[
                     ...faktaUmum(d),
                     ["Total diajukan", rupiah(d.banding.totalSubmitted)],
@@ -275,7 +304,7 @@ function Selisih({ nilai }: { nilai: number }) {
 type BarisPrincipal = { kode: string; nama: string } & ReturnType<typeof computeClaimComparison>;
 
 /** Diajukan vs diklaim per principal pada bulan/tahun terpilih (tanpa saringan principal, supaya terlihat principal mana yang belum cocok). */
-function PerPrincipal({ batches, bulan, tahun, labelPeriode }: { batches: BatchOpc[]; bulan: string; tahun: string; labelPeriode: string }) {
+function PerPrincipal({ batches, bulan, tahun, labelPeriode, terpotong }: { batches: BatchOpc[]; bulan: string; tahun: string; labelPeriode: string; terpotong: boolean }) {
     const diPeriode = batches.filter((b) => (!bulan || b.bulan === bulan) && (!tahun || b.tahun === tahun));
     const grup = new Map<string, BatchOpc[]>();
     for (const b of diPeriode) {
@@ -296,7 +325,15 @@ function PerPrincipal({ batches, bulan, tahun, labelPeriode }: { batches: BatchO
         { key: "status", header: "Kesesuaian", cell: status },
     ];
     return (
-        <Section title="Diajukan vs diklaim" subtitle={labelPeriode ? `${labelPeriode} · ${semua.status}` : "Pilih bulan dan tahun"}>
+        <Section title="Diajukan vs diklaim"
+            subtitle={labelPeriode ? `${labelPeriode} · ${semua.status}${terpotong ? ` · dari ${BATAS_DAFTAR} batch terbaru` : ""}` : "Pilih bulan dan tahun"}>
+            {terpotong && (
+                <div className="fi-sect-in">
+                    <MessageStrip tone="warn" title={`Dihitung dari ${BATAS_DAFTAR} batch terbaru.`}>
+                        Batch lama tidak ikut terhitung; principal yang tampil sesuai bisa saja belum sesuai di data lengkap.
+                    </MessageStrip>
+                </div>
+            )}
             <ResponsiveTable title="Diajukan vs diklaim per principal" count={rows.length} columns={kolom} rows={rows} rowKey={(r) => r.kode}
                 empty={{ title: labelPeriode ? `Belum ada pengajuan pada ${labelPeriode}` : "Pilih bulan dan tahun di Tutup periode" }}
                 mobileItem={(r) => <ListItem doc={r.kode} amount={`Selisih ${rupiah(Math.abs(r.difference))}`} title={r.nama}

@@ -1,10 +1,10 @@
 /*
  * Tujuan: Bagian "Verifikasi balik" layar Antrean Faktur (Fiori S6c, it02 #6): faktur yang sudah ada di salinan Accurate
  *   disandingkan dengan payload yang dikirim; selisih terbuka langsung terlihat (tidak terlipat); "Terima sales / Cabut" dari main
- *   dipertahankan (C6); penjelasan selisih isi ditulis di baris (Draf = sudah diketik, belum disimpan).
+ *   dipertahankan (C6), kini lewat dialog konfirmasi; penjelasan selisih isi ditulis di baris (Draf = sudah diketik, belum disimpan).
  * Caller: app/(dashboard)/antrean-faktur/AntreanFaktur.tsx.
  * Dependensi: GET/POST/DELETE /api/invoice-verify (baca salinan lokal; tulis hanya invoice_verify_note), components/fiori/*,
- *   ./bersama (tulis), lib/rekapan-nota/ui (ambil, jamWita).
+ *   ./bersama (tulis), lib/rekapan-nota/ui (ambil), lib/tampil (KOSONG, waktuWita).
  * Main Functions: VerifikasiBalik.
  * Side Effects: POST/DELETE penjelasan selisih (tidak menyentuh Accurate, tidak mengubah antrean).
  *
@@ -16,8 +16,9 @@
 import { useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button, EmptyState, ErrorState, MessageStrip, Section, Skeleton, StatusBadge } from "@/components/fiori/core";
-import { useUnsavedGuard, type Load } from "@/components/fiori/interactive";
-import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
+import { ConfirmDialog, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
+import { ambil } from "@/lib/rekapan-nota/ui";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 import { TidakPasti, pesanGagal, tulis } from "./bersama";
 
 type Jenis = "sales" | "isi";
@@ -33,12 +34,17 @@ export type Verif = { checked: number; summary: Record<string, number>; cacheTer
 export const muatVerifikasi = (): Promise<Load<Verif>> => ambil<Verif>("/api/invoice-verify", (j) => j as Verif);
 
 const JENIS: Jenis[] = ["sales", "isi"];
+/** "sales (masterSalesmanId)" → "sales": nama field API tidak tampil di kalimat (audit No 30); teks lengkap di title. */
+const labelField = (field: string) => field.replace(/ \([A-Za-z][A-Za-z0-9]*\)$/, "");
 
 export default function VerifikasiBalik({ bolehUbah, load, muatUlang }: { bolehUbah: boolean; load: Load<Verif>; muatUlang: () => void }) {
     const [semua, setSemua] = useState(false);
     const [catatan, setCatatan] = useState<Record<string, string>>({});
     const [sibuk, setSibuk] = useState("");
     const [pesan, setPesan] = useState<{ tone: "pos" | "neg" | "warn"; teks: string } | null>(null);
+    // Terima sales dan Cabut lewat dialog (audit No 6). Tanpa isian alasan: body `jelaskan` tidak diubah (sales mengirim note kosong,
+    // DELETE tidak menerima alasan), jadi alasan tertulis menunggu keputusan owner.
+    const [tanya, setTanya] = useState<{ r: Baris; jenis: Jenis; cabut: boolean } | null>(null);
     const draf = Object.values(catatan).some((v) => v.trim());
     useUnsavedGuard(draf);
 
@@ -105,13 +111,13 @@ export default function VerifikasiBalik({ bolehUbah, load, muatUlang }: { bolehU
                                 {r.invoiceDate ? ` · tgl ${r.invoiceDate}` : ""}{r.salesman ? ` · sales ${r.salesman}` : " · tanpa sales"} · {r.customerNo}
                             </span>
                             {r.status === "tak-terperiksa" && <span className="fi-small fi-why">{r.reason}</span>}
-                            {r.foundWhileUnknown && <span className="fi-small fi-why">Fakturnya ada — selesaikan baris Tidak pasti di antrean (Selesaikan…).</span>}
+                            {r.foundWhileUnknown && <span className="fi-small fi-why">Fakturnya ada. Selesaikan baris Tidak pasti di antrean (Selesaikan…).</span>}
                             {r.findings.length > 0 && (
                                 <ul className="fi-small" style={{ margin: 0, paddingLeft: 18 }}>
                                     {r.findings.map((f, i) => (
                                         <li key={i} className={f.dijelaskan ? "fi-subtle" : undefined}>
-                                            {f.line ? `baris ${f.line} · ` : ""}{f.field}: dikirim <span className="fi-mono">{f.expected}</span>, di Accurate <span className="fi-mono">{f.actual}</span>
-                                            {f.jenis === null && <b className="fi-why"> — bereskan di Accurate, tidak bisa dijelaskan</b>}
+                                            {f.line ? `baris ${f.line} · ` : ""}<span title={f.field}>{labelField(f.field)}</span>: dikirim <span className="fi-mono">{f.expected}</span>, di Accurate <span className="fi-mono">{f.actual}</span>
+                                            {f.jenis === null && <b className="fi-why">. Bereskan di Accurate; tidak bisa dijelaskan di sini.</b>}
                                         </li>
                                     ))}
                                 </ul>
@@ -124,14 +130,17 @@ export default function VerifikasiBalik({ bolehUbah, load, muatUlang }: { bolehU
                                         {sudah ? (
                                             <>
                                                 <StatusBadge tone="pos">{j === "sales" ? "Sales di Accurate diterima" : "Isi dijelaskan"}</StatusBadge>
-                                                <span className="fi-small">{j === "isi" ? `${sudah.note} · ` : ""}{sudah.by} · {jamWita(sudah.at)}</span>
+                                                <span className="fi-small">{j === "isi" ? `${sudah.note} · ` : ""}{sudah.by} · {waktuWita(sudah.at)} WITA</span>
                                                 <Button variant="tertiary" busy={sibuk === id} disabled={Boolean(tolak) || Boolean(sibuk)} disabledReason={tolak || undefined}
-                                                    onClick={() => void jelaskan(r, j, true)}>Cabut</Button>
+                                                    onClick={() => setTanya({ r, jenis: j, cabut: true })}>Cabut…</Button>
                                             </>
                                         ) : j === "sales" ? (
-                                            <Button busy={sibuk === id} disabled={Boolean(tolak) || Boolean(sibuk)} disabledReason={tolak || undefined}
-                                                title="Sales sudah diganti di Accurate (mis. sales lama pindah divisi). Selisih isi, bila ada, tetap terbuka."
-                                                onClick={() => void jelaskan(r, "sales")}>Terima sales di Accurate</Button>
+                                            <>
+                                                <Button busy={sibuk === id} disabled={Boolean(tolak) || Boolean(sibuk)} disabledReason={tolak || undefined}
+                                                    onClick={() => setTanya({ r, jenis: "sales", cabut: false })}>Terima sales di Accurate…</Button>
+                                                {/* Kapan dipakai, sebagai teks terlihat (dulu hanya title; audit No 50). */}
+                                                <span className="fi-small fi-subtle">Pakai bila sales sudah diganti di Accurate (mis. sales lama pindah divisi); selisih isi tetap terbuka.</span>
+                                            </>
                                         ) : (
                                             <>
                                                 <input className="fi-input" style={{ flex: "1 1 14rem", width: "auto" }} value={ketik} maxLength={500}
@@ -149,6 +158,24 @@ export default function VerifikasiBalik({ bolehUbah, load, muatUlang }: { bolehU
                     );
                 })}
             </div>
+            <ConfirmDialog open={tanya !== null} onClose={() => setTanya(null)} tone={tanya?.cabut ? "negative" : "primary"}
+                title={!tanya ? "" : tanya.cabut
+                    ? `Cabut penjelasan ${tanya.jenis === "sales" ? "sales" : "selisih isi"} SO ${tanya.r.soNo ?? tanya.r.orderId}?`
+                    : `Terima sales di Accurate untuk SO ${tanya.r.soNo ?? tanya.r.orderId}?`}
+                description={tanya?.cabut
+                    ? "Selisihnya terbuka lagi dan kembali dihitung sebagai belum dijelaskan. Tidak ada yang berubah di Accurate."
+                    : "Sales di faktur Accurate dianggap benar dan selisih sales ditandai dijelaskan atas nama Anda. Selisih isi, bila ada, tetap terbuka. Tidak ada yang berubah di Accurate."}
+                facts={!tanya ? [] : [
+                    ["Faktur", tanya.r.invoiceNumber || "belum ketemu di salinan"],
+                    ["SO", tanya.r.soNo ?? tanya.r.orderId],
+                    ...(tanya.cabut
+                        ? [["Penjelasan", `${tanya.r.penjelasan[tanya.jenis]?.note || KOSONG} · ${tanya.r.penjelasan[tanya.jenis]?.by || KOSONG}`] as [string, string]]
+                        : tanya.r.findings.filter((f) => f.jenis === "sales").map((f): [string, string] => [labelField(f.field), `dikirim ${f.expected}, di Accurate ${f.actual}`])),
+                ]}
+                factsAlign="start" confirmLabel={tanya?.cabut ? "Cabut penjelasan" : "Terima sales"}
+                // Fungsi tulis tetap `jelaskan` (body, method, sidik sama); hasilnya tampil sebagai strip di bagian ini.
+                onConfirm={async () => { if (!tanya) return; const t = tanya; setTanya(null); await jelaskan(t.r, t.jenis, t.cabut); }} />
         </Section>
     );
 }
+

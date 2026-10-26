@@ -3,17 +3,18 @@
  *   tabel, baris TOTAL, dan rincian ponsel), label status, dan GET /api/supervisor-review.
  * Caller: ./SupervisorReview.tsx, ./Rincian.tsx.
  * Dependensi: lib/supervisor-review/kontrak (tipe jawaban), lib/promo-ui (rupiah), ../form-kontrol/shared (ambilFk: galat berkalimat Indonesia).
- * Main Functions: bacaSupervisorReview, KOLOM, STATUS, angka, rp, tanggalPanjang, namaBaris, kunciBaris.
+ * Main Functions: bacaSupervisorReview, KOLOM, STATUS (nada + label), angka, rp, tanggalPanjang, namaBaris, kunciBaris.
  * Side Effects: bacaSupervisorReview melakukan fetch GET; sisanya pure.
  */
+import type { Tone } from "@/components/fiori/core";
 import type { Load } from "@/components/fiori/interactive";
 import { rupiah } from "@/lib/promo-ui";
 import type { Angka, BarisSalesman, JawabanSupervisorReview, StatusSalesman } from "@/lib/supervisor-review/kontrak";
 import { ambilFk } from "../form-kontrol/shared";
 
-export const TANPA_HP = "No HP belum diisi — Admin: tab Hierarki";
+export const TANPA_HP = "No HP belum diisi. Admin mengisinya di tab Hierarki Sales.";
 export const TANPA_SALESMAN = "Tanpa salesman terpetakan";
-export const TANPA_RINCIAN = "Faktur tanpa salesman terpetakan tidak dipecah per toko — periksa kode salesman faktur di Accurate.";
+export const TANPA_RINCIAN = "Faktur tanpa salesman terpetakan tidak dipecah per toko. Periksa kode salesman faktur di Accurate.";
 
 const NF = [0, 1, 2].map((maks) => new Intl.NumberFormat("id-ID", { maximumFractionDigits: maks }));
 /** 1234.5 → "1.234,5" (maks. `maks` desimal, koma desimal). */
@@ -26,25 +27,25 @@ export const tanggalPanjang = (ymd: string) =>
 
 /** Kolom ringkasan spec §2 — satu daftar untuk baris salesman, baris TOTAL cabang, dan rincian ponsel. */
 export const KOLOM: { key: keyof Angka; header: string; teks: (a: Angka) => string }[] = [
-    { key: "registeredOutlet", header: "Registered Outlet", teks: (a) => angka(a.registeredOutlet) },
+    { key: "registeredOutlet", header: "Outlet Terdaftar", teks: (a) => angka(a.registeredOutlet) },
     { key: "callPlan", header: "Call Plan", teks: (a) => angka(a.callPlan) },
     { key: "callRute", header: "Call Rute", teks: (a) => angka(a.callRute) },
     { key: "callNonRute", header: "Call Non Rute", teks: (a) => angka(a.callNonRute) },
     { key: "ec", header: "EC", teks: (a) => angka(a.ec) },
     { key: "noo", header: "NOO", teks: (a) => angka(a.noo) },
-    { key: "quantity", header: "Quantity", teks: (a) => angka(a.quantity, 2) },
+    { key: "quantity", header: "Jumlah", teks: (a) => angka(a.quantity, 2) },
     { key: "itemPerEc", header: "Item/EC", teks: (a) => angka(a.itemPerEc, 1) },
     { key: "nilaiOrder", header: "Nilai Order", teks: (a) => rp(a.nilaiOrder) },
     { key: "omzetPerEc", header: "Omzet/EC", teks: (a) => rp(a.omzetPerEc) },
-    { key: "jamDiToko", header: "Time at Outlet (jam)", teks: (a) => angka(a.jamDiToko, 2) },
-    { key: "jamPerjalanan", header: "Time Travel (jam)", teks: (a) => angka(a.jamPerjalanan, 2) },
+    { key: "jamDiToko", header: "Waktu di Toko (jam)", teks: (a) => angka(a.jamDiToko, 2) },
+    { key: "jamPerjalanan", header: "Waktu Tempuh (jam)", teks: (a) => angka(a.jamPerjalanan, 2) },
 ];
 
-/** Status = ikon + teks (bukan warna saja). */
-export const STATUS: Record<StatusSalesman, { ikon: string; label: string }> = {
-    belum: { ikon: "⚪", label: "Belum check-in" },
-    di_toko: { ikon: "🟢", label: "Di toko" },
-    sudah: { ikon: "🔵", label: "Sudah berkunjung" },
+/** Status salesman = nada + label untuk StatusBadge (ikon Lucide + teks, bukan warna saja; Brand ≠ Status, jadi "sudah" hijau). */
+export const STATUS: Record<StatusSalesman, { tone: Tone; label: string }> = {
+    belum: { tone: "neu", label: "Belum check-in" },
+    di_toko: { tone: "info", label: "Di toko" },
+    sudah: { tone: "pos", label: "Sudah berkunjung" },
 };
 
 /** salesCode "" = baris "Tanpa salesman terpetakan" (satu per cabang), jadi kunci baris memuat cabang. */

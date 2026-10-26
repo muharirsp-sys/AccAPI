@@ -6,7 +6,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EXCEPTION_LABEL, hariIniWita, jamWita, judulBerkas, labelEvent, usulIsiDariNama, menahanKonfirmasi, nomorLembar, saringPool, tanggalPanjang, tanggalPendek, urutanBerikutnya } from "@/lib/rekapan-nota/ui";
+import { EXCEPTION_LABEL, hariIniWita, judulBerkas, labelEvent, usulIsiDariNama, menahanKonfirmasi, nomorLembar, saringPool, tanggalPanjang, tanggalPendek, urutanBerikutnya } from "@/lib/rekapan-nota/ui";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 
 const POOL = [
     { no_nota: "INV/2610/KN01381", customer: "TK HARAPAN BARU", salesman: "Yusuf", area: "4", pareto: false },
@@ -37,9 +38,9 @@ test("tanggal YYYY-MM-DD tidak bergeser hari dan jam tampil WITA", () => {
     assert.equal(tanggalPendek("2026-10-06"), "06/10/2026");
     assert.match(tanggalPanjang("2026-10-06"), /^Selasa, 6 Okt 2026$/);
     assert.equal(tanggalPendek("bukan tanggal"), "bukan tanggal");
-    // 01.40 UTC = 09.40 WITA.
-    assert.equal(jamWita("2026-10-06T01:40:00Z"), "6 Okt 09.40");
-    assert.equal(jamWita("rusak"), "");
+    // 01.40 UTC = 09.40 WITA. Kop cetak dan layar Rekapan memakai satu format lib/tampil (audit desain No 31).
+    assert.equal(waktuWita("2026-10-06T01:40:00Z"), "06/10/2026 09.40");
+    assert.equal(waktuWita("rusak"), KOSONG);
 });
 
 test("hanya exception KONVERSI_* berstatus open yang menahan konfirmasi", () => {

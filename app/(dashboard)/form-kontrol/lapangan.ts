@@ -85,7 +85,7 @@ export async function kirimFk(url: string, body: Record<string, unknown> | FormD
         body: isForm ? body : JSON.stringify(body),
     });
     if (sukses(j)) return j.data;
-    const ulang = opsi.ulangAman ? " — mengulang aman, isian yang sama ditimpa" : "";
+    const ulang = opsi.ulangAman ? "; mengulang aman, isian yang sama ditimpa" : "";
     if (j.status === 0) throw new GagalKirim(`${PESAN_SINYAL} Belum dipastikan tersimpan; tekan Coba lagi saat ada sinyal${ulang}.`, true);
     if (j.status >= 502 || j.data === null) throw new GagalKirim(`Server tidak memberi jawaban yang pasti; belum dipastikan tersimpan. Coba lagi${ulang}.`, true, j.status);
     // Penolakan BERKODE (`{ kode, error }`, mis. luar rute FK-MSM2) membawa kalimat Indonesia dari server — diteruskan apa adanya.

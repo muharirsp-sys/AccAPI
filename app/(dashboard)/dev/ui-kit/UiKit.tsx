@@ -22,16 +22,16 @@ const KEADAAN: Array<[Keadaan, string]> = [["default", "Default"], ["memuat", "M
 
 type Faktur = { no: string; outlet: string; salesman: string; tanggal: string; total: number; status: [Tone, string] };
 const FAKTUR: Faktur[] = [
-    { no: "INV/2610/KN01412", outlet: "TK Sinar Jaya", salesman: "MKS-07", tanggal: "06/10/2026", total: 4_312_500, status: ["info", "Siap kirim"] },
-    { no: "INV/2610/KN01413", outlet: "TK Berkah Abadi", salesman: "MKS-03", tanggal: "06/10/2026", total: 1_875_000, status: ["info", "Siap kirim"] },
-    { no: "INV/2610/KN01414", outlet: "UD Maju Bersama", salesman: "MKS-05", tanggal: "06/10/2026", total: 12_640_000, status: ["warn", "Perlu ditinjau"] },
-    { no: "INV/2610/KN01415", outlet: "TK Cahaya Baru", salesman: "MKS-07", tanggal: "05/10/2026", total: 960_000, status: ["neg", "Gagal kirim"] },
-    { no: "INV/2610/KN01411", outlet: "TK Rezeki", salesman: "MKS-03", tanggal: "05/10/2026", total: 2_205_000, status: ["pos", "Terposting"] },
+    { no: "INV/XXXX/0002", outlet: "OUTLET A", salesman: "SALES A", tanggal: "06/10/2026", total: 4_312_500, status: ["info", "Siap kirim"] },
+    { no: "INV/XXXX/0003", outlet: "OUTLET B", salesman: "SALES B", tanggal: "06/10/2026", total: 1_875_000, status: ["info", "Siap kirim"] },
+    { no: "INV/XXXX/0004", outlet: "OUTLET C", salesman: "SALES C", tanggal: "06/10/2026", total: 12_640_000, status: ["warn", "Perlu ditinjau"] },
+    { no: "INV/XXXX/0005", outlet: "OUTLET D", salesman: "SALES A", tanggal: "05/10/2026", total: 960_000, status: ["neg", "Gagal kirim"] },
+    { no: "INV/XXXX/0001", outlet: "OUTLET E", salesman: "SALES B", tanggal: "05/10/2026", total: 2_205_000, status: ["pos", "Terposting"] },
 ];
 const OPC = [
-    { no: "007/KINO/10/2026", principal: "KINO", nilai: 48_200_000, status: ["warn", "Menunggu Finance"] as [Tone, string] },
-    { no: "006/KINO/10/2026", principal: "KINO", nilai: 12_750_000, status: ["pos", "Dibayar"] as [Tone, string] },
-    { no: "003/GDI/10/2026", principal: "GODREJ", nilai: 31_750_000, status: ["info", "Diajukan"] as [Tone, string] },
+    { no: "07/KODE-A/10/2026", principal: "PRINCIPLE A", nilai: 48_200_000, status: ["warn", "Menunggu Finance"] as [Tone, string] },
+    { no: "06/KODE-A/10/2026", principal: "PRINCIPLE A", nilai: 12_750_000, status: ["pos", "Dibayar"] as [Tone, string] },
+    { no: "03/KODE-B/10/2026", principal: "PRINCIPLE B", nilai: 31_750_000, status: ["info", "Diajukan"] as [Tone, string] },
 ];
 
 const rupiah = (n: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
@@ -93,9 +93,8 @@ export default function UiKit() {
             <div className="mx-auto grid max-w-[1440px] grid-cols-1 gap-10 px-4 py-6 md:px-6">
                 <header className="grid grid-cols-1 gap-4">
                     <div className="grid gap-1">
-                        <p className="fi-caption">Internal · hanya development · S0</p>
                         <h1 className="fi-title-1">UI kit Fiori</h1>
-                        <p className="fi-muted max-w-[80ch]">Komponen inti dari UI kit Tahap 2 (aksen Biru SP) di enam keadaan layar. Data contoh, bukan data nyata. Halaman ini dipakai Playwright sebagai baseline visual.</p>
+                        <p className="fi-muted max-w-[80ch]">Komponen inti dari UI kit Tahap 2 (aksen Biru SP) di enam keadaan layar. Halaman internal, hanya di development. Data contoh generik, bukan data nyata. Halaman ini dipakai Playwright sebagai baseline visual.</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
                         <SchemeSwitcher />
@@ -136,7 +135,7 @@ export default function UiKit() {
                         <MessageStrip tone="warn" title="Perlu ditinjau.">1 faktur memakai harga yang berbeda dari daftar harga Accurate.</MessageStrip>
                         {(keadaan === "galat" || strip) && (
                             <MessageStrip tone="neg" title="Gagal kirim." onClose={keadaan === "galat" ? undefined : () => setStrip(false)}>
-                                INV/2610/KN01415 ditolak Accurate: pelanggan tidak ditemukan.
+                                INV/XXXX/0005 ditolak Accurate: pelanggan tidak ditemukan.
                             </MessageStrip>
                         )}
                     </div>
@@ -213,14 +212,14 @@ export default function UiKit() {
                 <Section id="objek" title="Object Page: header, alur, anchor bar, form, footer" note="Draf: indikator di header, alasan di footer, peringatan peramban saat meninggalkan halaman.">
                     <div className="fi-panel" style={{ padding: 0, overflow: "clip" }}>
                         <ObjectPageHeader
-                            breadcrumbs={[{ label: "Antrean faktur", href: "#daftar" }, { label: "INV/2610/KN01412" }]}
-                            title="INV/2610/KN01412"
+                            breadcrumbs={[{ label: "Antrean faktur", href: "#daftar" }, { label: "INV/XXXX/0002" }]}
+                            title="INV/XXXX/0002"
                             status={<StatusBadge tone={sukses ? "pos" : "info"}>{sukses ? "Terposting" : "Siap kirim"}</StatusBadge>}
                             draft={draf}
                             actions={<Button icon={<History className="fi-icon" aria-hidden />}>Riwayat</Button>}
                             attributes={[
-                                { label: "Outlet", value: "TK Sinar Jaya" },
-                                { label: "Salesman", value: "MKS-07 Andi Pratama" },
+                                { label: "Outlet", value: "OUTLET A" },
+                                { label: "Salesman", value: "SALES A" },
                                 { label: "Tanggal faktur", value: "06/10/2026" },
                                 { label: "Total", value: rupiah(4_312_500) },
                             ]}
@@ -243,14 +242,14 @@ export default function UiKit() {
                             <div id="objek-kirim" className="fi-section grid gap-2">
                                 <h3 className="fi-title-3">Pengiriman</h3>
                                 <div className="fi-formgrid">
-                                    <FormField label="Tanggal kirim" required help="Tanggal WITA." error={keadaan === "galat" ? "Tanggal kirim tidak boleh sebelum tanggal faktur." : undefined}>
-                                        {(a11y) => <input {...a11y} className="fi-input" type="date" defaultValue={keadaan === "galat" ? "2026-10-05" : "2026-10-07"} />}
+                                    <FormField label="Tanggal kirim" required help="Format dd/mm/yyyy, WITA." error={keadaan === "galat" ? "Tanggal kirim tidak boleh sebelum tanggal faktur." : undefined}>
+                                        {(a11y) => <input {...a11y} className="fi-input fi-tnum" inputMode="numeric" placeholder="dd/mm/yyyy" defaultValue={keadaan === "galat" ? "05/10/2026" : "07/10/2026"} />}
                                     </FormField>
                                     <FormField label="Gudang" required>
-                                        {(a11y) => <select {...a11y} className="fi-input" defaultValue="MKS"><option value="MKS">Gudang Makassar</option><option value="PRE">Gudang Parepare</option></select>}
+                                        {(a11y) => <select {...a11y} className="fi-input" defaultValue="MKS"><option value="MKS">Gudang CABANG A</option><option value="PRE">Gudang CABANG B</option></select>}
                                     </FormField>
                                     <FormField label="Nomor faktur" help="Diberikan saat order divalidasi.">
-                                        {(a11y) => <input {...a11y} className="fi-input fi-mono" readOnly value="INV/2610/KN01412" />}
+                                        {(a11y) => <input {...a11y} className="fi-input fi-mono" readOnly value="INV/XXXX/0002" />}
                                     </FormField>
                                 </div>
                                 <FormField label="Catatan pengiriman">
@@ -326,7 +325,7 @@ export default function UiKit() {
                 title={`Tolak ${terpilih.length} faktur?`}
                 description="Faktur kembali ke Order Masuk dan tidak dikirim ke Accurate."
                 facts={[["Jumlah faktur", String(terpilih.length)]]}
-                reason={{ label: "Alasan penolakan", placeholder: "Contoh: harga belum disetujui principal" }}
+                reason={{ label: "Alasan penolakan", placeholder: "Contoh: harga belum disetujui PRINCIPLE A" }}
                 confirmLabel="Tolak faktur"
                 onConfirm={() => { setRejectOpen(false); setSelected(new Set()); toast(`${terpilih.length} faktur ditolak.`); }}
             />

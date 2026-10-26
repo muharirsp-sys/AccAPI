@@ -9,8 +9,8 @@
  * Caller: app/(dashboard)/insentif-sales/data-periode/page.tsx.
  * Dependensi: ./Rangka (InsentifRangka, usePeriode), ./DataPeriodeKualitas, components/fiori/{core,interactive},
  *   lib/insentif-sales-excel (parseTargetExcel) dan xlsx — dimuat saat dipakai, lib/excel-date, lib/insentif-value-source,
- *   lib/insentif-ui (readApi, formatQty, LABEL_STATUS, halamanTerlihat), lib/rekapan-nota/ui (ambil, tanggalPendek),
- *   lib/promo-ui (rupiah).
+ *   lib/insentif-ui (readApi, formatQty, LABEL_STATUS/LABEL_TIPE + labelStatus/labelTipe, halamanTerlihat), lib/rekapan-nota/ui (ambil, tanggalPendek),
+ *   lib/promo-ui (rupiah), lib/tampil (KOSONG, sebabHttp).
  * Main Functions: DataPeriode (default), bacaTarget, bacaProgres, ringkasProgres.
  * Side Effects: GET targets/progress/settings/targets/template; POST /targets atau /progress (Terapkan), DELETE /progress
  *   (hapus realisasi periode, body `{ alasan }` wajib ≥ 5 karakter), DELETE /targets (satu baris). Semua tulis lewat ConfirmDialog.
@@ -29,7 +29,8 @@ import { ambil, tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { rupiah } from "@/lib/promo-ui";
 import { excelDateToIso } from "@/lib/excel-date";
 import { realisasiValue } from "@/lib/insentif-value-source";
-import { LABEL_STATUS, formatQty, halamanTerlihat, readApi } from "@/lib/insentif-ui";
+import { LABEL_STATUS, LABEL_TIPE, formatQty, halamanTerlihat, labelStatus, labelTipe, readApi } from "@/lib/insentif-ui";
+import { KOSONG, sebabHttp } from "@/lib/tampil";
 import { InsentifRangka, usePeriode } from "./Rangka";
 import { KualitasData } from "./DataPeriodeKualitas";
 
@@ -70,8 +71,6 @@ type Pratinjau = { month: number; year: number; fileName: string; masalah: strin
 );
 type Hasil = { jenis: Jenis; month: number; year: number; judul: string; isi: string };
 type Dlg = { kind: "terapkan" } | { kind: "hapusReal" } | { kind: "hapusTarget"; row: TargetRow } | null;
-
-const LABEL_TIPE: Record<string, string> = { exclusive: "Exclusive", mix: "Mix" };
 
 const PUTUS_HAPUS = "Server tidak menjawab dengan jelas; periksa Realisasi di Data tersimpan sebelum mengulang.";
 const kunciTarget = (r: { salesCode: string; principle: string }) => `${r.salesCode}|${r.principle}`;
@@ -159,7 +158,7 @@ async function bacaTarget(file: File): Promise<{ rows: TargetRow[]; masalah: str
     }
     // Kalau SEMUA baris bertarget 0, hampir pasti header kolomnya tidak terbaca —
     // bukan target yang benar-benar nol. Tolak daripada menimpa target lama dengan nol.
-    if (rows.every((r) => !r.targetValue)) return { rows, masalah: "Semua baris bertarget 0 — cek nama kolom 'Target Value (Rp)' di berkas." };
+    if (rows.every((r) => !r.targetValue)) return { rows, masalah: "Semua baris bertarget 0; cek nama kolom 'Target Value (Rp)' di berkas." };
     return { rows, masalah: null };
 }
 
@@ -484,7 +483,7 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
             const res = await fetch("/api/insentif-sales/targets/template");
             if (!res.ok) {
                 const data = await readApi(res).catch((): Record<string, unknown> => ({}));
-                throw new Error(String(data.error ?? `HTTP ${res.status}`));
+                throw new Error(String(data.error ?? `Templat gagal diunduh. ${sebabHttp(res.status)}`));
             }
             const url = URL.createObjectURL(await res.blob());
             const a = document.createElement("a");
@@ -505,16 +504,17 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
     const alasanHapusReal = !bolehProgres ? "Butuh izin unggah progres" : progres.data && progres.data.length === 0 ? `Belum ada realisasi ${label}` : undefined;
 
     const kolomTarget: Column<BarisTarget>[] = [
-        { key: "sales", header: "Salesman", cell: ({ r }) => <><span className="fi-mono">{r.salesCode || "—"}</span> · {r.salesName || "—"}</> },
+        { key: "sales", header: "Salesman", cell: ({ r }) => <><span className="fi-mono">{r.salesCode || KOSONG}</span> · {r.salesName || KOSONG}</> },
         { key: "principle", header: "Principal", cell: ({ r }) => r.principle || <span className="fi-why">kosong</span> },
         { key: "branch", header: "Cabang", secondary: true, cell: ({ r }) => r.branch || <span className="fi-why">kosong</span> },
         { key: "channel", header: "Channel", secondary: true, cell: ({ r }) => r.channel },
-        { key: "spv", header: "SPV / SM", secondary: true, cell: ({ r }) => `${r.spvName || "—"} / ${r.smName || "—"}` },
+        { key: "spv", header: "SPV / SM", secondary: true, cell: ({ r }) => `${r.spvName || KOSONG} / ${r.smName || KOSONG}` },
         { key: "value", header: "Target Value", align: "end", cell: ({ r }) => <span className="fi-tnum">{rupiah(r.targetValue)}</span> },
         { key: "kpi", header: "EC · AO · IA", align: "end", secondary: true, cell: ({ r }) => <span className="fi-tnum">{formatQty(r.targetEc)} · {formatQty(r.targetAo)} · {formatQty(r.targetIa)}</span> },
         { key: "splm", header: "SPLM", align: "end", secondary: true, cell: ({ r }) => <span className="fi-tnum">{rupiah(r.splmValue)}</span> },
-        { key: "tipe", header: "Tipe · status", secondary: true, cell: ({ r }) => `${r.tipeSales} · ${r.statusInsentif}` },
-        { key: "ket", header: "Keterangan", cell: ({ r }) => targets.data ? (tersimpanKeys.has(kunciTarget(r)) ? <StatusBadge tone="info">Mengganti</StatusBadge> : <StatusBadge tone="pos">Baru</StatusBadge>) : "—" },
+        // Isi berkas: kunci yang dikenal → label; teks lain ditampilkan seperti tertulis di berkas (bukan enum aplikasi), server yang memvalidasi.
+        { key: "tipe", header: "Tipe · status", secondary: true, cell: ({ r }) => `${LABEL_TIPE[r.tipeSales ?? ""] ?? r.tipeSales} · ${LABEL_STATUS[r.statusInsentif ?? ""] ?? r.statusInsentif}` },
+        { key: "ket", header: "Keterangan", cell: ({ r }) => targets.data ? (tersimpanKeys.has(kunciTarget(r)) ? <StatusBadge tone="info">Mengganti</StatusBadge> : <StatusBadge tone="pos">Baru</StatusBadge>) : KOSONG },
     ];
     const kolomProgres: Column<RingkasProgres>[] = [
         { key: "sales", header: "Salesman", cell: (r) => <><span className="fi-mono">{r.salesCode}</span>{r.salesName ? ` · ${r.salesName}` : ""}</> },
@@ -527,7 +527,7 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
     ];
     const aksiTarget = (r: TargetRow) => (
         <div className="fi-btnrow">
-            <Button variant="tertiary" disabled={!bolehTarget} disabledReason="Butuh izin unggah target" onClick={() => setDialog({ kind: "hapusTarget", row: r })}>Hapus…</Button>
+            <Button variant="negative" disabled={!bolehTarget} disabledReason="Butuh izin unggah target" onClick={() => setDialog({ kind: "hapusTarget", row: r })}>Hapus…</Button>
         </div>
     );
     const kolomTersimpan: Column<TargetRow>[] = [
@@ -535,9 +535,9 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
         { key: "principle", header: "Principal", cell: (r) => r.principle },
         { key: "branch", header: "Cabang", secondary: true, cell: (r) => r.branch },
         { key: "channel", header: "Channel", secondary: true, cell: (r) => r.channel },
-        { key: "spv", header: "SPV / SM", secondary: true, cell: (r) => `${r.spvName || "—"} / ${r.smName || "—"}` },
-        { key: "tipe", header: "Tipe", secondary: true, cell: (r) => LABEL_TIPE[r.tipeSales ?? ""] ?? r.tipeSales ?? "—" },
-        { key: "status", header: "Status insentif", secondary: true, cell: (r) => LABEL_STATUS[r.statusInsentif ?? ""] ?? r.statusInsentif ?? "—" },
+        { key: "spv", header: "SPV / SM", secondary: true, cell: (r) => `${r.spvName || KOSONG} / ${r.smName || KOSONG}` },
+        { key: "tipe", header: "Tipe", secondary: true, cell: (r) => labelTipe(r.tipeSales) },
+        { key: "status", header: "Status insentif", secondary: true, cell: (r) => labelStatus(r.statusInsentif) },
         { key: "value", header: "Target Value", align: "end", cell: (r) => <span className="fi-tnum">{rupiah(r.targetValue)}</span> },
         { key: "kpi", header: "EC · AO · IA", align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{formatQty(r.targetEc)} · {formatQty(r.targetAo)} · {formatQty(r.targetIa)}</span> },
         { key: "aksi", header: "Tindakan", cell: aksiTarget },
@@ -569,10 +569,10 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
                     <>
                         <div className="fi-kcards">
                             <div className="fi-kc"><span>Baris berkas</span><b>{n(p.rows.length)}</b><small>{p.fileName}</small></div>
-                            <div className="fi-kc"><span>Baru</span><b>{targets.data ? n(baru) : "—"}</b><small>belum ada di {label}</small></div>
-                            <div className="fi-kc"><span>Mengganti</span><b>{targets.data ? n(p.rows.length - baru) : "—"}</b><small>salesman × principal yang sudah tersimpan</small></div>
-                            <div className="fi-kc"><span>Tetap tersimpan</span><b>{targets.data ? n(tetap) : "—"}</b><small>tidak ada di berkas, tidak dihapus</small></div>
-                            <div className="fi-kc"><span>Target Value</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(p.rows.reduce((a, b) => a + b.r.targetValue, 0))}</b><small>jumlah berkas</small></div>
+                            <div className="fi-kc"><span>Baru</span><b>{targets.data ? n(baru) : KOSONG}</b><small>belum ada di {label}</small></div>
+                            <div className="fi-kc"><span>Mengganti</span><b>{targets.data ? n(p.rows.length - baru) : KOSONG}</b><small>salesman × principal yang sudah tersimpan</small></div>
+                            <div className="fi-kc"><span>Tetap tersimpan</span><b>{targets.data ? n(tetap) : KOSONG}</b><small>tidak ada di berkas, tidak dihapus</small></div>
+                            <div className="fi-kc"><span>Target Value</span><b className="fi-tnum" style={{ font: "var(--fs-title-2)" }}>{rupiah(p.rows.reduce((a, b) => a + b.r.targetValue, 0))}</b><small>jumlah berkas</small></div>
                         </div>
                         {targets.status === "galat" && !targets.data && <MessageStrip tone="warn" title="Target tersimpan gagal dimuat.">Jumlah baru dan mengganti belum diketahui; unggahan tetap menimpa per salesman × principal.</MessageStrip>}
                         {tetap > 0 && <MessageStrip tone="info" title={`${n(tetap)} baris target tersimpan tidak ada di berkas.`}>Unggahan tidak menghapusnya; baris itu tetap dihitung. Hapus lewat tabel Target tersimpan bila memang tidak berlaku.</MessageStrip>}
@@ -582,9 +582,9 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
                         <div className="fi-kcards">
                             <div className="fi-kc"><span>Baris berkas</span><b>{n(p.barisBerkas)}</b><small>{p.fileName}</small></div>
                             <div className="fi-kc"><span>Diringkas</span><b>{n(p.payload.length)}</b><small>baris harian</small></div>
-                            <div className="fi-kc"><span>Tanggal</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{tanggal ? `${tanggalPendek(tanggal[0])}–${tanggalPendek(tanggal[1])}` : "—"}</b><small>harus di {label}</small></div>
+                            <div className="fi-kc"><span>Tanggal</span><b className="fi-tnum" style={{ font: "var(--fs-title-2)" }}>{tanggal ? `${tanggalPendek(tanggal[0])}–${tanggalPendek(tanggal[1])}` : KOSONG}</b><small>harus di {label}</small></div>
                             <div className="fi-kc"><span>Dilewati</span><b>{n(p.dibuang)}</b><small>{p.dibuang ? rupiah(Math.round(p.nilaiDibuang)) : "baris tanpa kode/principal/cabang"}</small></div>
-                            <div className="fi-kc"><span>Realisasi tersimpan</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{progres.data ? rupiah(Math.round(totalProgres)) : "—"}</b><small>baris bertanggal sama diganti; tanggal lain tetap</small></div>
+                            <div className="fi-kc"><span>Realisasi tersimpan</span><b className="fi-tnum" style={{ font: "var(--fs-title-2)" }}>{progres.data ? rupiah(Math.round(totalProgres)) : KOSONG}</b><small>baris bertanggal sama diganti; tanggal lain tetap</small></div>
                         </div>
                         {p.dibuang > 0 && <MessageStrip tone="warn" title={`${n(p.dibuang)} baris dilewati (kode sales/principal/cabang kosong),`}>total nilai {rupiah(Math.round(p.nilaiDibuang))}.</MessageStrip>}
                         {p.ambigu.length > 0 && <MessageStrip tone="warn" title="Cabang diturunkan dari principal yang punya lebih dari satu cabang:">{p.ambigu.join(", ")}. Periksa hasilnya.</MessageStrip>}
@@ -602,6 +602,10 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
                     <button type="button" aria-pressed={jenis === "target"} disabled={!bolehTarget} title={bolehTarget ? undefined : "Butuh izin unggah target"} onClick={() => pilihJenis("target")}>Target bulanan</button>
                     <button type="button" aria-pressed={jenis === "progres"} disabled={!bolehProgres} title={bolehProgres ? undefined : "Butuh izin unggah progres"} onClick={() => pilihJenis("progres")}>Progres harian</button>
                 </div>
+                {/* No 50: alasan pilihan nonaktif TERLIHAT, bukan hanya di title. */}
+                {(!bolehTarget || !bolehProgres) && (
+                    <p className="fi-small fi-why">{[!bolehTarget && "Target bulanan: butuh izin unggah target.", !bolehProgres && "Progres harian: butuh izin unggah progres."].filter(Boolean).join(" ")}</p>
+                )}
                 <p className="fi-small fi-subtle">
                     {jenis === "target" ? "Satu baris per salesman × principal × cabang: target Value, EC, AO, IA, tipe sales, dan status insentif. Menimpa baris tersimpan dengan salesman dan principal yang sama."
                         : jenis === "progres" ? "Laporan penjualan (XLSX/CSV) diringkas per salesman × principal × cabang × tanggal; mengganti progres bertanggal sama di periode ini."
@@ -618,9 +622,16 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
                         <KeyValues items={jenis === "target" ? KOLOM_TARGET : KOLOM_PROGRES} />
                         <p className="fi-small fi-subtle">
                             {jenis === "target"
-                                ? "Baris pertama = judul kolom; huruf besar/kecil dan spasi di judul diabaikan. Angka boleh 1.250.000; sel kosong atau \"-\" dibaca 0, tetapi teks lain yang bukan angka membatalkan seluruh impor. Satu baris yang ditolak server (channel, tipe, atau status tak dikenal; angka negatif; salesman × principal ganda; tipe berbeda dalam satu kode) membatalkan seluruh impor."
-                                : `Judul kolom tidak peka huruf besar/kecil. Angka 1,234,567.89 maupun 1.234.567,89 terbaca; sel kosong atau "-" dibaca 0, teks lain yang bukan angka membatalkan seluruh impor. Tanggal harus di ${label} (tanggal 1 bulan berikutnya juga diterima); satu baris yang ditolak server membatalkan seluruh impor.`}
+                                ? "Baris pertama = judul kolom (huruf besar/kecil diabaikan). Angka boleh 1.250.000; sel kosong atau \"-\" dibaca 0, teks lain yang bukan angka membatalkan seluruh impor."
+                                : `Angka 1,234,567.89 maupun 1.234.567,89 terbaca; sel kosong atau "-" dibaca 0, teks lain yang bukan angka membatalkan seluruh impor. Tanggal harus di ${label}.`}
                         </p>
+                        {/* No 83: rincian aturan dipindah ke pengungkapan supaya paragraf utama ≤ 2 kalimat. */}
+                        <details className="fi-small fi-subtle">
+                            <summary style={{ cursor: "pointer" }}>Penjelasan</summary>
+                            {jenis === "target"
+                                ? "Spasi di judul kolom juga diabaikan. Satu baris yang ditolak server (channel, tipe, atau status tak dikenal; angka negatif; salesman × principal ganda; tipe berbeda dalam satu kode) membatalkan seluruh impor."
+                                : `Judul kolom tidak peka huruf besar/kecil. Tanggal 1 bulan sesudah ${label} juga diterima; satu baris yang ditolak server membatalkan seluruh impor.`}
+                        </details>
                         {jenis === "target" && (
                             <>
                                 <div className="fi-btnrow">
@@ -680,7 +691,7 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
                 {p?.jenis === "target" && !membaca && !h && (
                     <ResponsiveTable<BarisTarget> title={`Pratinjau target ${label}`} count={p.rows.length} columns={kolomTarget} rows={p.rows} rowKey={(b) => String(b.no)}
                         empty={{ title: "Berkas tidak berisi baris target" }}
-                        mobileItem={({ r }) => <ListItem doc={r.salesCode || "—"} amount={rupiah(r.targetValue)} title={r.salesName} meta={`${r.principle || "principal kosong"} · ${r.branch || "cabang kosong"} · ${r.channel}`}
+                        mobileItem={({ r }) => <ListItem doc={r.salesCode || KOSONG} amount={rupiah(r.targetValue)} title={r.salesName} meta={`${r.principle || "principal kosong"} · ${r.branch || "cabang kosong"} · ${r.channel}`}
                             badge={targets.data ? (tersimpanKeys.has(kunciTarget(r)) ? <StatusBadge tone="info">Mengganti</StatusBadge> : <StatusBadge tone="pos">Baru</StatusBadge>) : undefined} />} />
                 )}
                 {p?.jenis === "progres" && !membaca && !h && (
@@ -691,11 +702,11 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
             </Section>
 
             <Section id="tersimpan" title={`Data tersimpan ${label}`} subtitle="yang dipakai dashboard dan pembayaran saat ini"
-                actions={<Button variant="tertiary" icon={<Trash2 className="fi-icon" aria-hidden />} disabled={Boolean(alasanHapusReal)} disabledReason={alasanHapusReal} onClick={() => setDialog({ kind: "hapusReal" })}>Hapus realisasi {label}…</Button>}>
+                actions={<Button variant="negative" icon={<Trash2 className="fi-icon" aria-hidden />} disabled={Boolean(alasanHapusReal)} disabledReason={alasanHapusReal} onClick={() => setDialog({ kind: "hapusReal" })}>Hapus realisasi {label}…</Button>}>
                 <div className="fi-sect-in">
                     <KeyValues items={[["Target", ringkasTarget], ["Realisasi", ringkasRealisasi]]} />
                     <p className="fi-small fi-subtle">
-                        Hapus realisasi dulu bila closing periode ini pernah diunggah dengan aturan berbeda — unggah ulang hanya menimpa baris bertanggal
+                        Hapus realisasi dulu bila closing periode ini pernah diunggah dengan aturan berbeda: unggah ulang hanya menimpa baris bertanggal
                         sama, sisanya ikut terhitung dua kali. Target dan catatan pembayaran tidak ikut terhapus.
                     </p>
                     {progres.status === "galat" && <MessageStrip tone="neg" title="Realisasi gagal dimuat.">{progres.error} <Button variant="tertiary" onClick={muatProgres}>Coba lagi</Button></MessageStrip>}
@@ -707,7 +718,7 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
                     status={targets.status} error={targets.error ? `Target belum berhasil dimuat (${targets.error}).` : undefined} onRetry={muatTargets}
                     empty={{ title: `Target ${label} belum diunggah`, message: "Pilih Target bulanan di langkah 1 untuk mengunggah." }}
                     mobileItem={(r) => <ListItem doc={r.salesCode} amount={rupiah(r.targetValue)} title={r.salesName}
-                        meta={<>{r.principle} · {r.branch} · {r.channel} · {LABEL_STATUS[r.statusInsentif ?? ""] ?? r.statusInsentif}{aksiTarget(r)}</>} />} />
+                        meta={<>{r.principle} · {r.branch} · {r.channel} · {labelStatus(r.statusInsentif)}{aksiTarget(r)}</>} />} />
             </Section>
 
             <KualitasData key={versiKualitas} month={month} year={year} label={label} bolehHierarki={bolehHierarki}
@@ -721,7 +732,7 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
                 facts={!p ? [] : p.jenis === "target" ? [
                     ["Berkas", p.fileName],
                     ["Ditulis", `${n(p.rows.length)} baris target${targets.data ? ` (${n(baru)} baru, ${n(p.rows.length - baru)} mengganti)` : ""}`],
-                    ["Tetap tersimpan", targets.data ? `${n(tetap)} baris yang tidak ada di berkas — tidak dihapus` : "belum diketahui"],
+                    ["Tetap tersimpan", targets.data ? `${n(tetap)} baris yang tidak ada di berkas; tidak dihapus` : "belum diketahui"],
                     ["Target Value", rupiah(p.rows.reduce((a, b) => a + b.r.targetValue, 0))],
                     ["Ikut berubah", `Dashboard, Support principal, dan Pembayaran ${label} pada hitungan berikutnya`],
                 ] : [

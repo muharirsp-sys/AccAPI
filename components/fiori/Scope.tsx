@@ -1,6 +1,6 @@
 /*
  * Tujuan: Pembungkus `.fiori` (font + token design system Fiori) untuk halaman yang sudah dimigrasi.
- * Caller: Halaman yang sudah dimigrasi ke design system Fiori (mulai app/(dashboard)/dev/ui-kit).
+ * Caller: Halaman yang sudah dimigrasi ke Fiori; shell (SidebarLayout), AccessDenied, loading dashboard, toaster, ChatWidget, PWAInstallPrompt.
  * Dependensi: next/font/google (Plus Jakarta Sans, Geist Mono), app/fiori.css.
  * Main Functions: FioriScope, fioriClass.
  * Side Effects: Memuat font hanya di rute yang memakai FioriScope.

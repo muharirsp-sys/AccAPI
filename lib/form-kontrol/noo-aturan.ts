@@ -17,7 +17,7 @@ export const isKodeNoo = (kode: unknown): boolean => typeof kode === "string" &&
 export type StatusNoo = "menunggu_spv" | "disetujui" | "ditolak" | "terdaftar";
 export const LABEL_STATUS_NOO: Record<StatusNoo, string> = {
     menunggu_spv: "Menunggu SPV",
-    disetujui: "Disetujui — menunggu didaftarkan",
+    disetujui: "Disetujui, menunggu didaftarkan",
     ditolak: "Ditolak",
     terdaftar: "Terdaftar",
 };

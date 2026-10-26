@@ -52,8 +52,8 @@ test("siap: baris per cabang × principal, lencana capaian per nada, baris Total
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/laporan-sales#target", NAV);
     const main = page.locator("main");
-    await expect(main.getByRole("tab", { name: "Target vs Realisasi" })).toHaveAttribute("aria-selected", "true", NAV);
-    await expect(main.getByRole("status").filter({ hasText: "2 kombinasi salesman × principal belum punya target — realisasi Rp 36.000.000 tidak dihitung (sama dengan dashboard Insentif)." })).toBeVisible(NAV);
+    await expect(main.getByRole("navigation", { name: "Jenis laporan" }).getByRole("link", { name: "Target vs Realisasi" })).toHaveAttribute("aria-current", "page", NAV);
+    await expect(main.getByRole("status").filter({ hasText: "2 kombinasi salesman × principal belum punya target. Realisasi Rp 36.000.000 tidak dihitung (sama dengan dashboard Insentif)." })).toBeVisible(NAV);
     const tabel = main.getByRole("table", { name: "Target vs Realisasi per cabang" });
     await expect(tabel).toBeVisible(NAV);
     expect(diminta[0]).toMatch(/^\d{4}-(0[1-9]|1[0-2])$/);

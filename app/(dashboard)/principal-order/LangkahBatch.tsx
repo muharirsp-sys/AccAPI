@@ -5,10 +5,11 @@
  * Caller: OrderPrincipal.tsx.
  * Dependensi: GET /api/principal-order?id=, POST /api/principal-order/validate (+prices=1), GET/POST/DELETE /api/principal-order/dupe-ack,
  *   GET/POST /api/principal-order/queue; components/fiori/{core,interactive}; lib/order-duplicate (isDuplicateFinding); lib/promo-ui (rupiah);
- *   ./bersama.
+ *   lib/principal-validation (PPN, teks estimasi); lib/tampil (KOSONG); ./bersama.
  * Main Functions: LangkahBatch, Kepala.
- * Side Effects: HTTP baca/tulis DB lokal (validasi, konfirmasi order ganda, baris invoice_outbox). TIDAK ada tulis ke Accurate di sini:
- *   faktur dibuat saat Kirim di Antrean Faktur. BL-21 ditegakkan server (route principal-order); logic BL-23/35/44/45 tidak ditulis (VariantNote).
+ * Side Effects: HTTP baca/tulis DB lokal (validasi, konfirmasi dan cabut konfirmasi order ganda, baris invoice_outbox), semuanya lewat
+ *   dialog. TIDAK ada tulis ke Accurate di sini: faktur dibuat saat Kirim di Antrean Faktur. BL-21 ditegakkan server (route
+ *   principal-order); logic BL-23/35/44/45 tidak ditulis (VariantNote).
  */
 "use client";
 
@@ -21,7 +22,9 @@ import {
 } from "@/components/fiori/core";
 import { ConfirmDialog, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { isDuplicateFinding } from "@/lib/order-duplicate";
+import { PPN } from "@/lib/principal-validation";
 import { rupiah } from "@/lib/promo-ui";
+import { KOSONG } from "@/lib/tampil";
 import {
     ALASAN_IZIN, DitolakDenganDaftar, PESAN_TIDAK_PASTI, TidakPasti, angka, baca, ditahanUtuh, labelAntrean, soDariKunci, tanggalSo, tulis,
     waktuWita, type Ack, type BarisAntrean, type Batch, type CalonFaktur, type HasilAntre, type Line, type Rencana, type SoTidakIkut, type StatusAntrean,
@@ -52,7 +55,7 @@ export function Kepala({ langkah, batch, status, aksi, draf }: { langkah: number
             </div>
             <p>
                 {batch
-                    ? <><b className="fi-mono">{batch.fileName}</b> · {batch.principal} · {batch.branch || "cabang tidak terbaca"} · periode {tanggalSo(batch.period) || "tidak terbaca"} · diunggah {waktuWita(batch.uploadedAt)}{batch.uploadedBy ? ` oleh ${batch.uploadedBy}` : ""}</>
+                    ? <><b className="fi-mono">{batch.fileName}</b> · {batch.principal} · {batch.branch || "cabang tidak terbaca"} · periode {tanggalSo(batch.period) || "tidak terbaca"} · diunggah {waktuWita(batch.uploadedAt)} WITA{batch.uploadedBy ? ` oleh ${batch.uploadedBy}` : ""}</>
                     : "Unggah laporan integrasi dari sistem principal (Order Detail), validasi, siapkan calon faktur, lalu antrekan. Satuan, harga, dan posisi diskon dinormalkan mengikuti aturan yang selama ini dipakai."}
             </p>
             <Flow steps={steps} label="Langkah Order Principal" />
@@ -68,7 +71,7 @@ type Props = {
     /** Daftar batch di langkah 1 perlu dimuat ulang (hitungan validasi berubah). */
     onBerubah: () => void;
 };
-type Dialog = { jenis: "ganda"; soNo: string; finding: string } | { jenis: "antre" } | null;
+type Dialog = { jenis: "ganda"; soNo: string; finding: string } | { jenis: "antre" } | { jenis: "validasi"; harga: boolean } | { jenis: "cabut"; ack: Ack } | null;
 
 const pesanDari = (e: unknown, umum: string) => (e instanceof Error && e.message ? e.message : umum);
 /** SO yang tidak ikut, satu kalimat per alasan: "alasan (SO a, b)". */
@@ -149,7 +152,7 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
         ?? (acks.status === "memuat" ? "Konfirmasi yang tercatat sedang dimuat ulang." : acks.status === "galat" ? "Konfirmasi yang tercatat belum terbaca; coba lagi dulu." : undefined);
     const kunciHapus = !bolehUbah ? ALASAN_IZIN.ubah : antrean.status === "memuat" ? "Status antrean batch ini sedang dimuat."
         : antrean.status === "galat" ? "Status antrean batch ini belum terbaca; hapus dinonaktifkan."
-            : antreRows.length > 0 ? `${antreRows.length} SO batch ini ada di Antrean Faktur; batch tidak bisa dihapus (BL-21).` : undefined;
+            : antreRows.length > 0 ? `${antreRows.length} SO batch ini ada di Antrean Faktur; batch tidak bisa dihapus.` : undefined;
     const kunciAntre = !bolehUbah ? ALASAN_IZIN.ubah : rencanaBasi ? "Hasil antre sebelumnya belum pasti; siapkan ulang calon faktur dulu."
         : menyiapkan ? "Calon faktur sedang disiapkan." : !rencana?.ready.length ? "Tidak ada SO yang siap jadi faktur." : undefined;
 
@@ -186,12 +189,8 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
     }
 
     /**
-     * Melepas satu SO dari gerbang order ganda. Yang dikirim bukan hanya "saya menekan tombol" melainkan ALASAN yang sedang menahan SO
-     * itu saat ini (`reason` = temuannya) beserta catatan pemeriksaannya (`note`, wajib di layar): yang membaca jejaknya nanti perlu tahu
-     * APA yang sudah diperiksa orang tersebut, dan tanda tangan tanpa isi tidak bisa dipertanggungjawabkan.
-     *
-     * Batch divalidasi ulang sesudahnya. Status baris di basis data masih memuat temuan lama sampai dihitung ulang — tanpa validasi
-     * ulang, tombolnya ditekan dan layarnya tidak berubah apa pun, yang akan dibaca sebagai "tombolnya rusak".
+     * Melepas satu SO dari gerbang order ganda: `reason` = temuan yang sedang menahannya, `note` = catatan pemeriksaan (wajib), supaya
+     * jejaknya menyebut apa yang diperiksa. Batch divalidasi ulang sesudahnya; tanpa itu status baris masih memuat temuan lama.
      */
     async function konfirmasiGanda(soNo: string, finding: string, note: string) {
         try {
@@ -205,10 +204,9 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
     }
 
     /**
-     * Mencabut konfirmasi: SO-nya kembali ditahan gerbang order ganda pada validasi ulang yang langsung dijalankan. Sengaja TANPA dialog
-     * "yakin?": terhadap gerbang order ganda ia mengembalikan penahanan, bukan melepaskannya, dan salah tekan diperbaiki dengan satu
-     * tombol di sebelahnya. TETAPI bukan tanpa akibat: SO yang sudah antre/terposting lalu ditahan lagi berhenti jadi calon faktur —
-     * karena itu status antrean batch (penjaga Hapus/Ganti, BL-21) dihitung server dari SEMUA nomor SO batch, bukan dari kandidat.
+     * Mencabut konfirmasi (dipanggil dari dialog): SO-nya kembali ditahan gerbang order ganda pada validasi ulang yang langsung dijalankan.
+     * SO yang sudah antre/terposting lalu ditahan lagi berhenti jadi calon faktur; status antrean batch (penjaga Hapus/Ganti, BL-21)
+     * dihitung server dari SEMUA nomor SO batch. DELETE tidak menerima alasan, jadi dialognya tanpa isian alasan.
      */
     async function cabut(soNo: string) {
         setSibuk("cabut");
@@ -304,11 +302,11 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
         { key: "outlet", header: "Outlet", secondary: true, cell: (l) => <><span className="fi-mono">{l.customerCode}</span> {l.customerName}</> },
         { key: "qty", header: "Qty faktur", align: "end", cell: (l) => <span className="fi-tnum">{angka(l.qty)} {l.unit}<span className="fi-codes">lap. {angka(l.reportQty)}</span></span> },
         { key: "harga", header: "Harga laporan", align: "end", cell: (l) => <span className="fi-tnum">{angka(l.price)}</span> },
-        { key: "akurat", header: "Harga Accurate", align: "end", cell: (l) => <span className="fi-tnum">{l.expectedPrice == null ? "—" : angka(l.expectedPrice)}</span> },
+        { key: "akurat", header: "Harga Accurate", align: "end", cell: (l) => <span className="fi-tnum">{l.expectedPrice == null ? KOSONG : angka(l.expectedPrice)}</span> },
         {
             key: "selisih", header: "Selisih", align: "end", cell: (l) => {
                 const s = selisihOf(l);
-                return s == null ? "—" : <span className={`fi-tnum${Math.abs(s) > 1 ? " fi-why" : ""}`}>{s > 0 ? "+" : ""}{angka(s)}</span>;
+                return s == null ? KOSONG : <span className={`fi-tnum${Math.abs(s) > 1 ? " fi-why" : ""}`}>{s > 0 ? "+" : ""}{angka(s)}</span>;
             },
         },
         {
@@ -316,12 +314,13 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                 <>
                     {l.bonus && <span className="fi-tag" data-tone="pos">Bonus </span>}
                     {l.discounts.map((d) => (
+                        // Arti "(lap. Dn)" tertulis di keterangan bawah tabel, bukan hanya title (audit No 50).
                         <span key={d.position} className="fi-tag" data-tone={d.position <= 3 ? "neu" : d.position <= 5 ? "info" : "neg"}
-                            title={d.reportPosition ? `Dilaporkan principal di DISC_${d.reportPosition}; dipindah ke posisi ${d.position} sesuai tarif outlet (tanggungan distributor).` : undefined}>
+                            title={d.reportPosition ? `Dilaporkan principal di posisi ${d.reportPosition}; dipindah ke posisi ${d.position} sesuai tarif outlet (tanggungan distributor).` : undefined}>
                             D{d.position} {d.amount !== undefined ? rupiah(d.amount) : `${d.percent}%`}{d.reportPosition ? ` (lap. D${d.reportPosition})` : ""}{" "}
                         </span>
                     ))}
-                    {!l.discounts.length && !l.bonus && "—"}
+                    {!l.discounts.length && !l.bonus && KOSONG}
                 </>
             ),
         },
@@ -358,8 +357,8 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
             <div className={sibuk && sibuk !== "cabut" ? "fi-busy" : undefined} style={{ display: "grid", gap: 16 }}>
                 <div className="fi-kcards" aria-label="Ringkasan validasi" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 150px), 1fr))" }}>
                     <div className="fi-kc"><span>Baris</span><b>{angka(batch.lineCount)}</b><small>{soDiBatch.size} SO di batch</small></div>
-                    <div className="fi-kc" data-tone={batch.validatedAt ? "pos" : undefined}><span>Cocok</span><b>{batch.validatedAt ? angka(batch.okCount) : "—"}</b><small>{batch.validatedAt ? `divalidasi ${waktuWita(batch.validatedAt)}` : "belum divalidasi"}</small></div>
-                    <div className="fi-kc" data-tone={batch.reviewCount > 0 ? "warn" : undefined}><span>Ditinjau</span><b>{batch.validatedAt ? angka(batch.reviewCount) : "—"}</b><small>{soReview} SO tidak ikut jadi faktur{dupes.size ? ` · ${dupes.size} order ganda` : ""}</small></div>
+                    <div className="fi-kc" data-tone={batch.validatedAt ? "pos" : undefined}><span>Cocok</span><b>{batch.validatedAt ? angka(batch.okCount) : KOSONG}</b><small>{batch.validatedAt ? `divalidasi ${waktuWita(batch.validatedAt)} WITA` : "belum divalidasi"}</small></div>
+                    <div className="fi-kc" data-tone={batch.reviewCount > 0 ? "warn" : undefined}><span>Ditinjau</span><b>{batch.validatedAt ? angka(batch.reviewCount) : KOSONG}</b><small>{soReview} SO tidak ikut jadi faktur{dupes.size ? ` · ${dupes.size} order ganda` : ""}</small></div>
                     <div className="fi-kc" data-tone={batch.skipped > 0 ? "warn" : undefined}><span>Dilewati</span><b>{angka(batch.skipped)}</b><small>baris saat dibaca{held.length ? ` · ${held.length} SO ditahan utuh` : ""}</small></div>
                 </div>
 
@@ -370,14 +369,13 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                                 {held.map((h) => (
                                     <li key={h.so} data-ok="false">
                                         <TriangleAlert className="fi-icon" aria-hidden />
-                                        <span><b className="fi-mono">SO {h.so}</b> · kode produk <span className="fi-mono">{h.kode || "—"}</span>{" "}
+                                        <span><b className="fi-mono">SO {h.so}</b> · kode produk <span className="fi-mono">{h.kode || KOSONG}</span>{" "}
                                             <Link href="/principal-mapping"><Plug className="fi-icon" aria-hidden style={{ display: "inline", verticalAlign: "-3px" }} /> Mapping Principal</Link>
                                             <span className="fi-codes" style={{ fontFamily: "inherit" }}>{h.teks}</span></span>
                                     </li>
                                 ))}
                             </ul>
                             <p className="fi-small fi-subtle">Setelah mapping ditambah, unggah ulang berkas ini dan pilih Ganti batch lama. Itu hanya bisa selama belum ada SO batch ini di Antrean Faktur.</p>
-                            <VariantNote bl="BL-44">SO yang tertahan hanya bisa dilepas lewat Ganti batch lama, dan begitu ada SO batch ini di antrean tidak ada jalan lain di layar. Usulan: tombol Tambahkan SO yang tertahan — hanya SO yang belum ada di batch ditambahkan lalu divalidasi; SO yang sudah antre tidak disentuh.</VariantNote>
                         </div>
                     </Section>
                 )}
@@ -391,7 +389,6 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                                     <p className="fi-small">{finding}</p>
                                     <div className="fi-btnrow">
                                         <Button icon={<ShieldCheck className="fi-icon" aria-hidden />} disabled={Boolean(kunciAck)} disabledReason={kunciAck}
-                                            title="Catat bahwa SO ini sudah diperiksa manusia dan BUKAN order ganda, lalu validasi ulang batch ini"
                                             onClick={() => setDialog({ jenis: "ganda", soNo, finding })}>Bukan order ganda…</Button>
                                     </div>
                                 </div>
@@ -405,18 +402,18 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                                 <ul className="fi-hist" aria-label="Konfirmasi bukan order ganda yang tercatat">
                                     {acksDiBatch.map((ack) => (
                                         <li key={ack.soNo}>
-                                            <time>{waktuWita(ack.confirmedAt)}</time>
-                                            <span><b className="fi-mono">SO {ack.soNo}</b> dikonfirmasi {ack.confirmedBy || "—"}{ack.note ? ` · ${ack.note}` : ""}{" "}
+                                            <time>{waktuWita(ack.confirmedAt)} WITA</time>
+                                            <span><b className="fi-mono">SO {ack.soNo}</b> dikonfirmasi {ack.confirmedBy || KOSONG}{ack.note ? ` · ${ack.note}` : ""}{" "}
                                                 <Button variant="tertiary" icon={<ShieldOff className="fi-icon" aria-hidden />} busy={sibuk === "cabut"} disabled={Boolean(kunciAck)} disabledReason={kunciAck}
-                                                    aria-label={`Cabut konfirmasi SO ${ack.soNo}`} onClick={() => void cabut(ack.soNo)}>Cabut</Button>
+                                                    aria-label={`Cabut konfirmasi SO ${ack.soNo}`} onClick={() => setDialog({ jenis: "cabut", ack })}>Cabut…</Button>
                                             </span>
                                         </li>
                                     ))}
                                 </ul>
                             )}
                             <p className="fi-small fi-subtle">
-                                Konfirmasi BERTAHAN: batch boleh divalidasi ulang berapa kali pun tanpa harus mengonfirmasi lagi. Yang tercatat bukan hanya
-                                siapa menekan tombol, melainkan alasan yang sedang menahan SO itu saat ditekan. Mencabut mengembalikan penahanannya.
+                                Bukan order ganda: tercatat siapa yang memeriksa dan alasan yang sedang menahan SO itu, lalu batch divalidasi ulang.
+                                Konfirmasi bertahan: batch boleh divalidasi ulang berapa kali pun tanpa harus mengonfirmasi lagi. Mencabut mengembalikan penahanannya.
                             </p>
                         </div>
                     </Section>
@@ -445,8 +442,13 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                             Harga Accurate dicari per pelanggan dan cabang pelanggan dengan tanggal awal periode batch ({tanggalSo(String(batch.period).slice(0, 10)) || "tanggal hari ini bila periode tidak terbaca"}).
                             Selisih harga sampai Rp 1 dianggap pembulatan; di atas itu baris ditahan, baik lebih tinggi maupun lebih rendah. Posisi diskon
                             menentukan siapa menanggung: D1–D3 distributor, D4–D5 klaim principal, D6–D8 tidak punya pemilik dan wajib ditinjau.
+                            Tanda &quot;(lap. Dn)&quot; = principal melaporkannya di posisi n, lalu dipindah ke posisi tarif outlet (tanggungan distributor).
                         </p>
-                        <VariantNote bl="BL-45">Berkas yang memuat lebih dari satu tanggal SO dinilai dengan harga per tanggal awal periode. Usulan: Harga Accurate dicari per tanggal SO dan kolomnya menyebut tanggal berlakunya.</VariantNote>
+                        {/* Satu catatan varian per langkah (audit No 80); kode BL di nama aksesibelnya. */}
+                        <VariantNote bl={held.length > 0 ? "BL-44, BL-45" : "BL-45"}>
+                            Berkas yang memuat lebih dari satu tanggal SO dinilai dengan harga per tanggal awal periode; Harga Accurate belum dicari per tanggal SO.
+                            {held.length > 0 && " SO yang ditahan utuh hanya bisa dilepas lewat Ganti batch lama, dan begitu ada SO batch ini di antrean tidak ada jalan lain di layar."}
+                        </VariantNote>
                         {lain.length > 0 && (
                             <details>
                                 <summary className="fi-small">{lain.length} temuan saat berkas dibaca (baris dilewati)</summary>
@@ -460,13 +462,12 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
             <FooterToolbar message={kunciLanjut ?? `${batch.okCount} baris cocok · ${soReview} SO tidak ikut`}>
                 <Link href="/principal-order" className="fi-btn fi-btn--tertiary"><ArrowLeft className="fi-icon" aria-hidden />Unggah</Link>
                 <Button icon={<RefreshCw className="fi-icon" aria-hidden />} busy={sibuk === "harga"} disabled={Boolean(kunciValidasi)} disabledReason={kunciValidasi}
-                    title="Tarik ulang daftar harga Accurate untuk barang pada batch ini, lalu validasi. Pakai setelah harga diperbaiki di Accurate."
-                    onClick={() => void validasi(true)}>Segarkan harga</Button>
+                    onClick={() => setDialog({ jenis: "validasi", harga: true })}>Segarkan harga…</Button>
                 <Button variant={batch.validatedAt ? "secondary" : "primary"} icon={<ShieldCheck className="fi-icon" aria-hidden />} busy={sibuk === "validasi"}
-                    disabled={Boolean(kunciValidasi)} disabledReason={kunciValidasi} onClick={() => void validasi()}>{batch.validatedAt ? "Validasi ulang" : "Validasi"}</Button>
+                    disabled={Boolean(kunciValidasi)} disabledReason={kunciValidasi} onClick={() => setDialog({ jenis: "validasi", harga: false })}>{batch.validatedAt ? "Validasi ulang…" : "Validasi…"}</Button>
                 {batch.validatedAt && (
                     <Button variant="primary" icon={<ArrowRight className="fi-icon" aria-hidden />} disabled={Boolean(kunciLanjut)} disabledReason={kunciLanjut}
-                        title="Siapkan faktur dari SO yang seluruh barisnya lolos" onClick={() => void siapkan()}>Lanjut ke calon faktur</Button>
+                        onClick={() => void siapkan()}>Lanjut ke calon faktur</Button>
                 )}
             </FooterToolbar>
         </>
@@ -478,7 +479,7 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
     const tanpaSales = siap.filter((c) => !c.salesmanId);
     const dibuang = siap.filter((c) => c.pernahDibuang);
     const kolomCalon: Column<CalonFaktur>[] = [
-        { key: "so", header: "SO", cell: (c) => <><b className="fi-mono">{c.soNo}</b>{c.pernahDibuang && <span className="fi-codes">pernah dibuang — dicari dulu di Accurate saat diantrekan</span>}</> },
+        { key: "so", header: "SO", cell: (c) => <><b className="fi-mono">{c.soNo}</b>{c.pernahDibuang && <span className="fi-codes">pernah dibuang; dicari dulu di Accurate saat diantrekan</span>}</> },
         { key: "cust", header: "Pelanggan", cell: (c) => <span className="fi-mono">{c.customerNo}</span> },
         { key: "cabang", header: "Cabang", secondary: true, cell: (c) => c.branch },
         // Pratinjau harus menyebut sales yang TIDAK ketemu, bukan diam: itulah faktur yang nanti terbit tanpa sales.
@@ -500,8 +501,8 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
             {!menyiapkan && rencana && (
                 <>
                     {tanpaSales.length > 0 && (
-                        <MessageStrip tone="warn" title={`${tanpaSales.length} faktur akan terbit TANPA sales`}>
-                            — kodenya belum termapping, atau pegawainya tidak ada/nonaktif di Accurate. Lihat kolom Sales; lengkapi mapping salesman bila faktur ini perlu sales.
+                        <MessageStrip tone="warn" title={`${tanpaSales.length} faktur akan terbit TANPA sales.`}>
+                            Kodenya belum termapping, atau pegawainya tidak ada/nonaktif di Accurate. Lihat kolom Sales; lengkapi mapping salesman bila faktur ini perlu sales.
                         </MessageStrip>
                     )}
                     <Section title={`${siap.length} calon faktur`} subtitle={`1 SO = 1 faktur · tanggal faktur = tanggal SO · netto ${rupiah(netto)}`}>
@@ -510,7 +511,7 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                             mobileItem={(c) => <ListItem doc={c.soNo} amount={rupiah(c.net)} title={`${c.customerNo} · ${c.branch} · ${c.lineCount} baris`} meta={tanggalSo(c.orderDate)}
                                 badge={c.salesmanId ? undefined : <StatusBadge tone="warn">Tanpa sales</StatusBadge>} />} />
                         <div className="fi-sect-in">
-                            <VariantNote bl="BL-23">Limit kredit dan stok cabang belum diperiksa sebelum antre; penolakannya baru ketahuan saat Kirim di Antrean Faktur. Usulan: peringatan limit kredit dan stok (cache Accurate) di tabel ini, tidak memblokir.</VariantNote>
+                            <VariantNote bl="BL-23">Limit kredit dan stok cabang belum diperiksa sebelum antre; penolakannya baru ketahuan saat Kirim di Antrean Faktur.</VariantNote>
                         </div>
                     </Section>
                 </>
@@ -519,7 +520,7 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                 <Section title="Tidak ikut" subtitle={`${tidakIkut.length} SO`}>
                     <div className="fi-sect-in">
                         {tidakIkut.length
-                            ? <ul className="fi-chkl" style={{ gridTemplateColumns: "minmax(0,1fr)" }}>{tidakIkut.map((s) => <li key={`${s.soNo}-${s.reason}`} data-ok="false"><TriangleAlert className="fi-icon" aria-hidden /><span><b className="fi-mono">{s.soNo}</b> — {s.reason}</span></li>)}</ul>
+                            ? <ul className="fi-chkl" style={{ gridTemplateColumns: "minmax(0,1fr)" }}>{tidakIkut.map((s) => <li key={`${s.soNo}-${s.reason}`} data-ok="false"><TriangleAlert className="fi-icon" aria-hidden /><span><b className="fi-mono">{s.soNo}</b>: {s.reason}</span></li>)}</ul>
                             : <p className="fi-small fi-subtle">Semua SO yang lolos validasi ikut jadi calon faktur.</p>}
                         {held.length > 0 && <p className="fi-small fi-subtle">Ditambah {held.length} SO yang ditahan utuh dan tidak tersimpan di batch.</p>}
                     </div>
@@ -542,8 +543,8 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
     const kolomAntre: Column<BarisAntrean>[] = [
         { key: "so", header: "SO", cell: (r) => <b className="fi-mono">{soDariKunci(r.orderId)}</b> },
         { key: "status", header: "Status", cell: (r) => { const s = labelAntrean(r.state); return <StatusBadge tone={s.tone}>{s.label}</StatusBadge>; } },
-        { key: "nomor", header: "Nomor faktur", cell: (r) => (r.number ? <span className="fi-mono">{r.number}</span> : "—") },
-        { key: "galat", header: "Catatan", secondary: true, cell: (r) => <span className="fi-small">{r.error || "—"}</span> },
+        { key: "nomor", header: "Nomor faktur", cell: (r) => (r.number ? <span className="fi-mono">{r.number}</span> : KOSONG) },
+        { key: "galat", header: "Catatan", secondary: true, cell: (r) => <span className="fi-small">{r.error || KOSONG}</span> },
     ];
     const halamanAntre = (
         <>
@@ -561,9 +562,9 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
             <Section title="Batch ini">
                 <div className="fi-sect-in">
                     <KeyValues items={[
-                        ["Lolos validasi", `${antrean.data?.candidates ?? "—"} SO bisa jadi faktur`],
+                        ["Lolos validasi", `${antrean.data?.candidates ?? KOSONG} SO bisa jadi faktur`],
                         ["Di Antrean Faktur", antrean.status === "galat" && !antrean.data ? "belum terbaca" : `${antreRows.length} SO · ${terkirim} sudah terposting`],
-                        ...(hasilAntre ? [["Tidak ikut saat diantrekan", hasilAntre.skipped.length ? hasilAntre.skipped.map((s) => `${s.soNo} — ${s.reason}`).join("; ") : "tidak ada"] as [string, ReactNode]] : []),
+                        ...(hasilAntre ? [["Tidak ikut saat diantrekan", hasilAntre.skipped.length ? hasilAntre.skipped.map((s) => `${s.soNo}: ${s.reason}`).join("; ") : "tidak ada"] as [string, ReactNode]] : []),
                         ["Ditahan utuh", held.length ? `${held.length} SO, tidak tersimpan di batch` : "tidak ada"],
                         ["Validasi ulang", "Masih boleh; SO yang sudah antre dilewati saat diantrekan lagi"],
                     ]} />
@@ -585,7 +586,7 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                     <span role="listitem" className="fi-dnode" data-off={terkirim === 0}><b>Faktur</b><span>{terkirim} terbit</span></span>
                 </div>
                 <div className="fi-sect-in">
-                    <VariantNote bl="BL-35">Alur dibangun dari status antrean batch ini saja. Usulan: tiap simpul menaut ke dokumennya (faktur di Faktur Penjualan) dan bisa ditelusuri balik dari faktur ke batch.</VariantNote>
+                    <VariantNote bl="BL-35">Alur dibangun dari status antrean batch ini saja; simpulnya belum menaut ke dokumen (faktur di Faktur Penjualan) dan belum bisa ditelusuri balik dari faktur ke batch.</VariantNote>
                 </div>
             </Section>
             <FooterToolbar message={kunciHapus}>
@@ -622,12 +623,41 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                 facts={[
                     ["Principal", `${batch.principal}${batch.branch ? ` · ${batch.branch}` : ""}`],
                     ["Faktur", `${siap.length} SO = ${siap.length} faktur · tanggal faktur = tanggal SO masing-masing`],
-                    ["Nilai", <>Netto {rupiah(netto)} + PPN 11% ≈ <b>{rupiah(Math.round(netto * 1.11))}</b> (estimasi; angka akhir dihitung Accurate)</>],
+                    ["Nilai", <>Netto {rupiah(netto)} + PPN {Math.round(PPN * 100)}% ≈ <b>{rupiah(Math.round(netto * (1 + PPN)))}</b> (estimasi; angka akhir dihitung Accurate)</>],
                     ["Tanpa sales", tanpaSales.length ? `${tanpaSales.length} faktur (${tanpaSales.map((c) => c.soNo).join(", ")})` : "tidak ada"],
                     ...(dibuang.length ? [["Pernah dibuang", `${dibuang.length} SO dicari dulu di Accurate; bila fakturnya sudah ada, ditandai terposting tanpa dikirim`] as [string, ReactNode]] : []),
                     ["Tidak ikut", tidakIkut.length ? `${tidakIkut.length} SO (lihat daftar Tidak ikut)` : "tidak ada"],
                 ]}
                 onConfirm={antrekan} />
+
+            {/* Validasi menulis hasil per baris ke DB lokal (bukan Accurate); dialog ringan menyebut jumlah dan akibatnya (audit No 18). */}
+            <ConfirmDialog open={dialog?.jenis === "validasi"} onClose={() => setDialog(null)}
+                title={dialog?.jenis === "validasi" && dialog.harga ? `Segarkan harga Accurate lalu validasi ${angka(batch.lineCount)} baris?` : `Validasi ${angka(batch.lineCount)} baris batch ${batch.fileName}?`}
+                confirmLabel={dialog?.jenis === "validasi" && dialog.harga ? "Segarkan dan validasi" : "Validasi"} confirmDisabled={kunciValidasi}
+                description={dialog?.jenis === "validasi" && dialog.harga
+                    ? "Daftar harga Accurate untuk barang batch ini ditarik ulang, lalu batch divalidasi. Pakai setelah harga diperbaiki di Accurate. Tidak ada yang dikirim ke Accurate."
+                    : "Mapping, harga Accurate per pelanggan dan cabang, aturan promo per tanggal SO, dan order ganda diperiksa ulang. Tidak ada yang dikirim ke Accurate."}
+                facts={[
+                    ["Baris", `${angka(batch.lineCount)} baris · ${soDiBatch.size} SO`],
+                    ...(dialog?.jenis === "validasi" && dialog.harga ? [["Barang", `${new Set(lines.map((l) => l.productCode)).size} kode produk`] as [string, ReactNode]] : []),
+                    ["Akibat", `Status Cocok/Ditinjau tiap baris dihitung ulang${rencana ? "; calon faktur yang sudah disiapkan dibuang" : ""}`],
+                ]}
+                factsAlign="start"
+                // Fungsi validasi() dipanggil apa adanya; dialog ditutup dulu supaya kemajuan dan hasilnya terbaca di halaman.
+                onConfirm={() => { const harga = dialog?.jenis === "validasi" && dialog.harga; setDialog(null); void validasi(harga); }} />
+
+            <ConfirmDialog open={dialog?.jenis === "cabut"} onClose={() => setDialog(null)} tone="negative"
+                title={`Cabut konfirmasi SO ${dialog?.jenis === "cabut" ? dialog.ack.soNo : ""}?`} confirmLabel="Cabut konfirmasi" confirmDisabled={kunciAck}
+                description="SO ini kembali ditahan gerbang order ganda, lalu batch divalidasi ulang. Bila SO-nya sudah antre atau terposting, ia berhenti jadi calon faktur."
+                facts={dialog?.jenis === "cabut" ? [
+                    ["SO", dialog.ack.soNo],
+                    ["Principal", principal],
+                    ["Dikonfirmasi", `${dialog.ack.confirmedBy || KOSONG} · ${dialog.ack.confirmedAt ? `${waktuWita(dialog.ack.confirmedAt)} WITA` : KOSONG}`],
+                    ["Catatan", dialog.ack.note || KOSONG],
+                ] : []}
+                factsAlign="start"
+                onConfirm={async () => { if (dialog?.jenis !== "cabut") return; const so = dialog.ack.soNo; setDialog(null); await cabut(so); }} />
         </div>
     );
 }
+

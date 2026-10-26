@@ -1,9 +1,10 @@
 /*
  * Tujuan: Object Page batch OPC (kolom kedua FCL, Fiori S4d): header (nomor, principal, periode, total, badge tahap, Flow 7 tahap,
- *   tanda lewat SLA), AnchorBar, dan bagian BACA bersama — Item, Validasi klaim, Pembayaran dan refund, Riwayat (log aksi + alasan setuju
- *   sendiri dari metadata audit + enam sumbu status), Alur dokumen — plus SLOT untuk agen peran (bagian, gantiItem, strip, aksi, pesanFooter, draf).
- * Caller: opc/Bersama.tsx (DetailBacaSaja) dan komponen Detail di opc/peran/*.tsx. Kontrak slot: header opc/Bersama.tsx.
- * Dependensi: components/fiori/core, lib/opc-ui, lib/promo-ui (rupiah), lib/claim-workflow-ui (statusKlaim), next/link.
+ *   tanda lewat SLA), AnchorBar, dan bagian BACA bersama (Item, Validasi klaim, Pembayaran dan refund, Riwayat dengan alasan setuju
+ *   sendiri + enam sumbu status, Alur dokumen), strip hasil tidak pasti dari KolomDetail, plus slot modul peran (bagian, gantiItem,
+ *   strip, aksi, pesanFooter, draf).
+ * Caller: opc/Bersama.tsx (DetailBacaSaja) dan komponen Detail di opc/peran/*.tsx. Cara pakai: header opc/Bersama.tsx.
+ * Dependensi: components/fiori/core, lib/opc-ui, lib/promo-ui (rupiah), lib/claim-workflow-ui (statusKlaim), lib/tampil (KOSONG), next/link.
  * Main Functions: ObjectPageBatch, BagianTambahan.
  * Side Effects: Tidak ada; muat ulang lewat callback `muatUlang`.
  */
@@ -18,6 +19,7 @@ import {
 } from "@/components/fiori/core";
 import { statusKlaim } from "@/lib/claim-workflow-ui";
 import { rupiah } from "@/lib/promo-ui";
+import { KOSONG } from "@/lib/tampil";
 import {
     alurBatch, catatanSendiri, infoTahap, jumlahItem, kelengkapanItem, labelAksiAudit, labelPeranAktor, labelStatus, pdfBoleh, periodeBatch, tahapBatch, tanggalOpc, totalBatch,
     waktuWita, type AuditOpc, type BatchOpc, type ItemOpc, type PembayaranOpc, type RefundOpc,
@@ -38,15 +40,19 @@ export type ObjectPageBatchProps = DetailProps & {
     draf?: boolean;
 };
 
-const BREAD = [{ label: "OFF Program Control" }, { label: "Batch" }];
-
+// Jejak halaman cukup satu (kepala halaman OPC); Object Page di kolom kedua tidak mengulangnya.
 export function ObjectPageBatch(props: ObjectPageBatchProps) {
-    const { ringkas, detail, muatUlang, masalah, bagian = [], gantiItem, strip, aksi, pesanFooter, draf } = props;
+    const { ringkas, detail, muatUlang, masalah, bagian = [], gantiItem, strip, aksi, pesanFooter, draf, tidakPasti, tutupTidakPasti } = props;
+    // Hasil tulis tidak pasti (KolomDetail): bertahan walau dialog ditutup dan detail dimuat ulang.
+    const stripTidakPasti = tidakPasti
+        ? <MessageStrip tone="warn" title="Hasil aksi terakhir belum pasti." onClose={tutupTidakPasti}>{tidakPasti}</MessageStrip>
+        : null;
     if (!detail.data) {
         return (
             <div style={{ display: "grid", gap: 12 }}>
-                <ObjectPageHeader breadcrumbs={BREAD} title={ringkas?.noPengajuan ? <span className="fi-mono">{ringkas.noPengajuan}</span> : "Batch"}
+                <ObjectPageHeader title={ringkas?.noPengajuan ? <span className="fi-mono">{ringkas.noPengajuan}</span> : "Batch"}
                     status={ringkas ? <StatusBadge tone={infoTahap(ringkas).tone}>{infoTahap(ringkas).label}</StatusBadge> : undefined} />
+                {stripTidakPasti && <div style={{ padding: "0 12px" }}>{stripTidakPasti}</div>}
                 {detail.status === "galat"
                     ? <ErrorState title="Detail batch gagal dimuat" message={detail.error} onRetry={muatUlang} />
                     : <div style={{ padding: "0 16px" }}><Skeleton rows={6} label="Memuat detail batch" /></div>}
@@ -78,8 +84,7 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
     return (
         <div className={detail.status === "memuat" ? "fi-busy" : undefined} style={{ display: "grid", gap: 12 }} aria-busy={detail.status === "memuat" || undefined}>
             <ObjectPageHeader
-                breadcrumbs={BREAD}
-                title={b.noPengajuan}
+                title={<span className="fi-mono">{b.noPengajuan}</span>}
                 status={<StatusBadge tone={info.tone}>{info.label}</StatusBadge>}
                 draft={draf}
                 attributes={[
@@ -87,8 +92,8 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
                     { label: "Periode", value: periodeBatch(b) },
                     { label: "Total", value: <span className="fi-tnum">{rupiah(total)}</span> },
                     { label: "Item", value: <span className="fi-tnum">{nItem}</span> },
-                    { label: b.createdByRole === "claim" ? "Dibuat Klaim" : "SPV", value: b.supervisorName || "–" },
-                    { label: "Pemilik tahap", value: info.pemilik ?? "–" },
+                    { label: b.createdByRole === "claim" ? "Dibuat Klaim" : "SPV", value: b.supervisorName || KOSONG },
+                    { label: "Pemilik tahap", value: info.pemilik ?? KOSONG },
                     { label: "Diperbarui", value: waktuWita(b.updatedAt) },
                 ]}
                 flow={
@@ -114,6 +119,7 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
                     <MessageStrip tone="neg" title={`${info.label}:`}>{catatanKembali || "Tanpa catatan pengembalian."}</MessageStrip>
                 )}
                 {tahap === "dibatalkan" && <MessageStrip tone="neg" title="Dibatalkan:">{b.cancelNote || b.omNote || "Tanpa catatan pembatalan."}</MessageStrip>}
+                {stripTidakPasti}
                 {strip}
                 {tampilBagian(di("awal"))}
                 <Section id="opc-item" title="Item" subtitle={`${nItem} item · ${rupiah(total)}`}>
@@ -127,10 +133,10 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
                             ["Deadline klaim", tanggalOpc(b.claimDeadline)],
                             ["No Claim", b.noClaim ? <span className="fi-mono">{b.noClaim}</span> : "Belum ada"],
                             ["Kelengkapan berkas", b.completenessStatus || "Belum tercatat"],
-                            ["Catatan SM", b.smNote || "–"],
-                            ["Catatan Klaim", b.claimNote || "–"],
-                            ["Catatan OM", b.omNote || "–"],
-                            ["Catatan verifikasi final", b.finalClaimNote || "–"],
+                            ["Catatan SM", b.smNote || KOSONG],
+                            ["Catatan Klaim", b.claimNote || KOSONG],
+                            ["Catatan OM", b.omNote || KOSONG],
+                            ["Catatan verifikasi final", b.finalClaimNote || KOSONG],
                         ]} />
                         <VariantNote bl="BL-11">Kelengkapan yang dipilih Klaim saat menyetujui belum tersimpan di batch, jadi di sini tampil &quot;Belum tercatat&quot;. Usulan: tersimpan saat Setujui klaim dan dipakai peringatan berkas.</VariantNote>
                     </div>
@@ -177,13 +183,13 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
 function TabelItem({ items, uji }: { items: ItemOpc[]; uji: boolean }) {
     const dibayar = (i: ItemOpc) => i.financePaymentStatus === "paid";
     const kolom: Column<ItemOpc>[] = [
-        { key: "surat", header: "No Surat · program", cell: (i) => <><span className="fi-mono">{i.noSurat || "–"}</span><br />{i.namaProgram || "–"}</> },
-        { key: "toko", header: "Toko", cell: (i) => i.toko || "–" },
+        { key: "surat", header: "No Surat · program", cell: (i) => <><span className="fi-mono">{i.noSurat || KOSONG}</span><br />{i.namaProgram || KOSONG}</> },
+        { key: "toko", header: "Toko", cell: (i) => i.toko || KOSONG },
         { key: "nominal", header: "Nominal", align: "end", cell: (i) => <span className="fi-tnum">{rupiah(i.nominal)}</span> },
-        { key: "bayar", header: "Cara bayar", secondary: true, cell: (i) => i.caraBayar || "–" },
+        { key: "bayar", header: "Cara bayar", secondary: true, cell: (i) => i.caraBayar || KOSONG },
         { key: "no", header: "Item ke", secondary: true, cell: (i) => <span className="fi-tnum">{i.itemNo}</span> },
-        { key: "tipe", header: "Tipe", secondary: true, cell: (i) => i.type || "–" },
-        { key: "periode", header: "Periode", secondary: true, cell: (i) => i.periode || "–" },
+        { key: "tipe", header: "Tipe", secondary: true, cell: (i) => i.type || KOSONG },
+        { key: "periode", header: "Periode", secondary: true, cell: (i) => i.periode || KOSONG },
         { key: "deadline", header: "Deadline", secondary: true, cell: (i) => tanggalOpc(i.deadline) },
         { key: "lengkap", header: "Kelengkapan awal", secondary: true, cell: (i) => kelengkapanItem(i) },
         { key: "status", header: "Keuangan", secondary: true, cell: (i) => (dibayar(i) ? <StatusBadge tone="pos">Dibayar</StatusBadge> : "Belum dibayar") },
@@ -192,7 +198,7 @@ function TabelItem({ items, uji }: { items: ItemOpc[]; uji: boolean }) {
         <ResponsiveTable title="Item batch" columns={kolom} rows={items} rowKey={(i) => i.id}
             empty={{ title: uji ? "Item tidak dimuat untuk data uji" : "Batch ini tidak punya item" }}
             mobileItem={(i) => (
-                <ListItem doc={i.noSurat || `Item ${i.itemNo}`} amount={rupiah(i.nominal)} title={i.toko || "–"}
+                <ListItem doc={i.noSurat || `Item ${i.itemNo}`} amount={rupiah(i.nominal)} title={i.toko || KOSONG}
                     meta={[i.namaProgram, i.caraBayar, i.type].filter(Boolean).join(" · ")}
                     badge={dibayar(i) ? <StatusBadge tone="pos">Dibayar</StatusBadge> : undefined} />
             )} />
@@ -205,11 +211,11 @@ function BagianBayar({ total, payments, totalPaid, sisa, refund, muatUlang }: {
     const kolom: Column<PembayaranOpc>[] = [
         { key: "no", header: "Pembayaran", cell: (p) => <span className="fi-tnum">Ke-{p.paymentNo}</span> },
         { key: "tgl", header: "Tanggal", cell: (p) => tanggalOpc(p.paymentDate) },
-        { key: "metode", header: "Cara bayar", cell: (p) => p.paymentMethod || "–" },
+        { key: "metode", header: "Cara bayar", cell: (p) => p.paymentMethod || KOSONG },
         { key: "jumlah", header: "Jumlah", align: "end", cell: (p) => <span className="fi-tnum">{rupiah(p.paidAmount)}</span> },
-        { key: "bank", header: "Bank pengirim", secondary: true, cell: (p) => p.senderBank || p.paymentSenderBank || "–" },
-        { key: "bukti", header: "Bukti", secondary: true, cell: (p) => (p.proofUrl ? <a href={p.proofUrl} target="_blank" rel="noreferrer">{p.paymentProofName || "Buka bukti"}</a> : "–") },
-        { key: "catatan", header: "Catatan", secondary: true, cell: (p) => p.note || "–" },
+        { key: "bank", header: "Bank pengirim", secondary: true, cell: (p) => p.senderBank || p.paymentSenderBank || KOSONG },
+        { key: "bukti", header: "Bukti", secondary: true, cell: (p) => (p.proofUrl ? <a href={p.proofUrl} target="_blank" rel="noreferrer">{p.paymentProofName || "Buka bukti"}</a> : KOSONG) },
+        { key: "catatan", header: "Catatan", secondary: true, cell: (p) => p.note || KOSONG },
     ];
     const r = refund.data;
     const kolomRefund: Column<RefundOpc>[] = [
@@ -217,10 +223,10 @@ function BagianBayar({ total, payments, totalPaid, sisa, refund, muatUlang }: {
         { key: "tgl", header: "Tanggal", cell: (x) => tanggalOpc(x.refundDate) },
         { key: "jumlah", header: "Jumlah", align: "end", cell: (x) => <span className="fi-tnum">{rupiah(x.refundAmount)}</span> },
         { key: "status", header: "Status", cell: (x) => <StatusBadge tone={x.status === "Verified" ? "pos" : x.status === "Rejected" ? "neg" : "warn"}>{labelStatus(x.status)}</StatusBadge> },
-        { key: "cara", header: "Cara", secondary: true, cell: (x) => x.refundMethod || "–" },
-        { key: "pengirim", header: "Pengirim", secondary: true, cell: (x) => x.senderName || "–" },
-        // Sama dengan RefundPanel lama (8105–8129): catatan pengajuan, bila kosong catatan verifikasi.
-        { key: "catatan", header: "Catatan", secondary: true, cell: (x) => x.note || x.verificationNote || "–" },
+        { key: "cara", header: "Cara", secondary: true, cell: (x) => x.refundMethod || KOSONG },
+        { key: "pengirim", header: "Pengirim", secondary: true, cell: (x) => x.senderName || KOSONG },
+        // Sama dengan RefundPanel kode lama: catatan pengajuan, bila kosong catatan verifikasi.
+        { key: "catatan", header: "Catatan", secondary: true, cell: (x) => x.note || x.verificationNote || KOSONG },
     ];
     return (
         <>

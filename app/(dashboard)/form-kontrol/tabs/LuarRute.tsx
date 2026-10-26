@@ -1,14 +1,15 @@
 /*
  * Tujuan: Kunjungan LUAR RUTE di layar salesman (FK-MSM2, owner 12 Okt 2026): (1) TambahLuarRute di Rute hari ini — cari pelanggan cabang
  *   salesman (pemilih O2: jeda 300 ms, minimal 2 huruf, permintaan lama dibatalkan) lalu tambahkan ke kunjungan HARI INI; toko yang sudah
- *   di rute tidak bisa ditambah ganda. (2) KonfirmasiLuarRute di Laporan harian — per toko luar rute yang DIKUNJUNGI: masuk JKS (hari +
- *   minggu) / jangan masukkan JKS / biarkan "nanti" (tetap menunggu; laporan tetap bisa dikirim); peringatan bila toko ada di JKS salesman lain.
+ *   di rute tidak bisa ditambah ganda. (2) KonfirmasiLuarRute di Laporan kunjungan — per toko luar rute yang DIKUNJUNGI: masuk JKS (hari +
+ *   minggu, lewat dialog konfirmasi karena menulis data induk JKS) / jangan masukkan JKS / biarkan "nanti" (tetap menunggu; laporan tetap bisa dikirim);
+ *   peringatan bila toko ada di JKS salesman lain.
  *   (3) BatalkanLuarRute di kartu toko Rute hari ini (owner 13 Okt): kunjungan salah tambah dibatalkan (batal lunak di server).
  * Caller: ./TabAo.tsx (TambahLuarRute, BatalkanLuarRute), ./TabLaporan.tsx (KonfirmasiLuarRute).
  * Dependensi: components/order/PemilihPelanggan (GET /api/customers/search), POST/GET /api/form-kontrol/luar-rute(+/konfirmasi, /batal),
- *   lib/form-kontrol/constants (kodeJksUntuk, paritasMinggu), ../lapangan (bacaFk, kirimFk), ../shared (HARI, jamWita, useIzinFk), components/fiori/*.
+ *   lib/form-kontrol/constants (kodeJksUntuk, paritasMinggu), ../lapangan (bacaFk, kirimFk), ../shared (HARI, rentangWita, useIzinFk), components/fiori/*.
  * Main Functions: TambahLuarRute, KonfirmasiLuarRute, BatalkanLuarRute, labelJadwal.
- * Side Effects: HTTP baca/tulis di atas. Server menegakkan semua aturan (pemilik, cabang, hari ini, principal, ganda); layar hanya mencegah
+ * Side Effects: HTTP baca/tulis di atas; hash #luar-rute dibuang dari URL sesudah bagian ini difokuskan. Server menegakkan semua aturan (pemilik, cabang, hari ini, principal, ganda); layar hanya mencegah
  *   kiriman yang pasti ditolak dan menampilkan kalimat penolakan server.
  */
 "use client";
@@ -21,11 +22,11 @@ import { PemilihPelanggan, usePelanggan } from "@/components/order/PemilihPelang
 import { kodeJksUntuk, paritasMinggu } from "@/lib/form-kontrol/constants";
 import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
-import { HARI, jamWita, useIzinFk } from "../shared";
+import { HARI, rentangWita, useIzinFk } from "../shared";
 import { GagalKirim, bacaFk, kirimFk } from "../lapangan";
 
 const MINGGU: [string, string][] = [["ganjil", "Minggu ganjil"], ["genap", "Minggu genap"], ["all", "Setiap minggu"]];
-const labelMinggu = (m: string | null | undefined) => (m === "all" ? "setiap minggu" : m === "ganjil" ? "minggu ganjil" : m === "genap" ? "minggu genap" : "—");
+const labelMinggu = (m: string | null | undefined) => (m === "all" ? "setiap minggu" : m === "ganjil" ? "minggu ganjil" : m === "genap" ? "minggu genap" : "minggu belum diisi");
 export const labelJadwal = (hari: string | null | undefined, minggu: string | null | undefined) => `${hari || "hari belum diisi"} · ${labelMinggu(minggu)}`;
 
 // ── Tambah (Rute hari ini) ─────────────────────────────────────────────────
@@ -48,14 +49,16 @@ export function TambahLuarRute({ salesCode, principle, tanggal, ruteKode, onDita
     const p = pel.state.jenis === "siap" ? pel.state.p : null;
     // Sama dengan server (cocokKodeRute): kode JKS "C-1" = pelanggan "C-1-CBA"; kode lengkap = dirinya.
     const sudah = p !== null && ruteKode.some((k) => kodeJksUntuk(p.customerNo).includes(k.trim().toUpperCase()));
-    const alasan = kunci ?? (!p ? "Pilih pelanggan dulu" : sudah ? `${p.name} sudah ada di rute hari ini — buka dari daftar Toko di rute.` : undefined);
+    const alasan = kunci ?? (!p ? "Pilih pelanggan dulu" : sudah ? `${p.name} sudah ada di rute hari ini. Buka dari daftar Toko di rute.` : undefined);
 
-    // FK-MSM3 (peninjau B S-2): datang dari Kunjungan yang ditolak (`#luar-rute`) → bagian ini langsung tampil, tombolnya terfokus.
+    // FK-MSM3: datang dari Kunjungan yang ditolak (`#luar-rute`) → bagian ini langsung tampil, tombolnya terfokus. Hash dibuang sesudahnya
+    // supaya tidak menetap di URL dan memicu gulir/fokus lagi saat dimuat ulang atau dibagikan.
     useEffect(() => {
         if (window.location.hash !== "#luar-rute") return;
         const sek = document.getElementById("luar-rute");
         sek?.scrollIntoView({ block: "start" });
         sek?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus({ preventScroll: true });
+        window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
     }, []);
 
     async function tambah() {
@@ -80,7 +83,7 @@ export function TambahLuarRute({ salesCode, principle, tanggal, ruteKode, onDita
             <div className="fi-sect-in">
                 <p className="fi-small fi-muted">
                     Toko yang tidak ada di rute hari ini tetap boleh dikunjungi: cari nama atau kode pelanggan cabang Anda lalu tambahkan. Kunjungannya
-                    sama dengan toko rute; di Laporan harian Anda memutuskan toko itu masuk JKS (hari + minggu) atau tidak.
+                    sama dengan toko rute; di Laporan kunjungan Anda memutuskan toko itu masuk JKS (hari + minggu) atau tidak.
                 </p>
                 {sukses && <MessageStrip tone="pos" onClose={() => setSukses("")}>{sukses}</MessageStrip>}
                 {!buka ? (
@@ -94,7 +97,7 @@ export function TambahLuarRute({ salesCode, principle, tanggal, ruteKode, onDita
                         <PemilihPelanggan state={pel.state} peran="sales" onPilih={(x) => { pel.pilih(x); setGalat(""); }} onLepas={pel.lepas} kunci={sibuk ? "Sedang menambah" : undefined} />
                         {galat && <MessageStrip tone="neg" title="Belum ditambahkan.">{galat}</MessageStrip>}
                         <div className="fi-btnrow">
-                            <Button variant="primary" busy={sibuk} disabled={Boolean(alasan)} disabledReason={alasan} onClick={() => void tambah()}>Tambah ke kunjungan hari ini</Button>
+                            <Button variant="primary" busy={sibuk} disabled={Boolean(alasan)} disabledReason={alasan} onClick={() => void tambah()}>Tambah ke kunjungan</Button>
                             <Button variant="tertiary" disabled={sibuk} onClick={() => { setBuka(false); pel.lepas(); setGalat(""); }}>Batal</Button>
                         </div>
                         {p && alasan && <p className="fi-small fi-why">{alasan}</p>}
@@ -107,7 +110,7 @@ export function TambahLuarRute({ salesCode, principle, tanggal, ruteKode, onDita
 
 // ── Batalkan (Rute hari ini, owner 13 Okt) ─────────────────────────────────
 
-export const PESAN_BATAL_TAK_PASTI = "Server tidak memberi jawaban yang pasti — hasil pembatalan belum pasti; muat ulang rute untuk memeriksa sebelum mengulang.";
+export const PESAN_BATAL_TAK_PASTI = "Server tidak memberi jawaban yang pasti, jadi hasil pembatalan belum pasti. Muat ulang rute untuk memeriksa sebelum mengulang.";
 
 /**
  * Tombol "Batalkan" kunjungan luar rute yang salah tambah + dialog. Pemanggil hanya menampilkannya untuk kunjungan luar rute hari ini milik
@@ -121,11 +124,11 @@ export function BatalkanLuarRute({ id, custName, custCode, kunci, onBatal, onTak
     const noo = isKodeNoo(custCode);
     return (
         <>
-            <Button variant="tertiary" style={{ minHeight: 44 }} icon={<Undo2 className="fi-icon" aria-hidden />} aria-label={`Batalkan kunjungan ${custName}`}
+            <Button variant="tertiary" icon={<Undo2 className="fi-icon" aria-hidden />} aria-label={`Batalkan kunjungan ${custName}`}
                 disabled={Boolean(kunci)} disabledReason={kunci} onClick={() => setBuka(true)}>Batalkan</Button>
             <ConfirmDialog open={buka} onClose={() => setBuka(false)} title={`Batalkan kunjungan ${custName}?`} tone="negative"
                 description={noo
-                    // Peninjau B NOO R3: membatalkan KUNJUNGAN tidak membatalkan pengajuan toko baru; jalan kembali disebut.
+                    // Membatalkan KUNJUNGAN tidak membatalkan pengajuan toko baru; jalan kembali disebut.
                     ? "Toko keluar dari kunjungan hari ini; pengajuan toko baru TETAP menunggu SPV. Untuk mengunjunginya lagi: tab Toko Baru (NOO) → pilih toko → Kunjungi hari ini."
                     : "Untuk toko yang salah ditambahkan: toko keluar dari kunjungan hari ini. Jejak penambahan dan pembatalan tetap tercatat; toko bisa ditambah lagi bila perlu."}
                 facts={[["Toko", `${custName} · ${custCode}`], ["Jenis", noo ? "Toko baru (NOO) · hari ini" : "Luar rute · hari ini"]]}
@@ -144,7 +147,7 @@ export function BatalkanLuarRute({ id, custName, custCode, kunci, onBatal, onTak
     );
 }
 
-// ── Konfirmasi (Laporan harian) ────────────────────────────────────────────
+// ── Konfirmasi (Laporan kunjungan) ────────────────────────────────────────────
 
 type JksTerkait = { salesCode: string; salesName: string; custCode: string; hariKunjungan: string | null; mingguPattern: string };
 type BarisLuar = {
@@ -160,7 +163,7 @@ const hasil = (s: string | null) => (s === "ordered" || s === "active" ? "order"
 /**
  * Toko luar rute yang sudah DIKUNJUNGI (check-in) pada `tanggal` + yang masih menunggu dari hari sebelumnya. `onMenunggu` = jumlah yang belum
  * diputuskan (untuk dialog kirim laporan; tidak menahan kiriman). `onDikunjungi` = jumlah kunjungan luar rute pada `tanggal` (null = daftar
- * belum terbaca) — Laporan harian menampilkannya terpisah dari Total toko JKS (peninjau A R-4).
+ * belum terbaca): Laporan kunjungan menampilkannya terpisah dari Total toko JKS.
  */
 export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjungi }: {
     salesCode: string; tanggal: string; onMenunggu: (n: number) => void; onDikunjungi?: (n: number | null) => void;
@@ -183,7 +186,8 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjung
     const mingguIni = paritasMinggu(tanggal);
     useEffect(() => { onMenunggu(menunggu); }, [menunggu, onMenunggu]);
 
-    async function putuskan(r: BarisLuar, isi: { keputusan: "jks"; hari: string; mingguPattern: string } | { keputusan: "tidak" }) {
+    /** Mengembalikan pesan galat (null = tersimpan) supaya dialog konfirmasi bisa menampilkannya; isi kiriman dan urutan panggilan tidak berubah. */
+    async function putuskan(r: BarisLuar, isi: { keputusan: "jks"; hari: string; mingguPattern: string } | { keputusan: "tidak" }): Promise<string | null> {
         setSibuk(r.id);
         setGalat((g) => ({ ...g, [r.id]: "" }));
         try {
@@ -191,13 +195,18 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjung
             setPutus((x) => ({ ...x, [r.id]: isi.keputusan === "jks"
                 ? { konfirmasi: "jks", hari: isi.hari, mingguPattern: isi.mingguPattern } : { konfirmasi: "tidak", hari: null, mingguPattern: null } }));
             muatUlang();
+            return null;
         } catch (e) {
-            setGalat((g) => ({ ...g, [r.id]: e instanceof Error ? e.message : "Keputusan belum tersimpan." }));
-            // Peninjau B: 404/409 (server sudah mengubah/menolak baris, mis. jadi "sudah di JKS") atau jawaban tak pasti → daftar dimuat
+            const pesan = e instanceof Error ? e.message : "Keputusan belum tersimpan.";
+            setGalat((g) => ({ ...g, [r.id]: pesan }));
+            // 404/409 (server sudah mengubah/menolak baris, mis. jadi "sudah di JKS") atau jawaban tak pasti → daftar dimuat
             // ulang supaya layar = keadaan server; selama memuat semua keputusan dikunci.
             if (e instanceof GagalKirim && (e.tidakPasti || e.status === 404 || e.status === 409)) muatUlang();
+            return pesan;
         } finally { setSibuk(""); }
     }
+    // Memasukkan toko ke JKS menulis data induk (rute salesman), jadi lewat dialog; "Jangan masukkan" dan "nanti" tidak menulis JKS.
+    const [masukJks, setMasukJks] = useState<{ r: BarisLuar; hari: string; minggu: string } | null>(null);
     const kunciMuat = load.status === "memuat" ? "Menunggu daftar dimuat ulang"
         : load.status === "galat" ? "Daftar gagal dimuat ulang; tekan Coba lagi dulu" : undefined;
 
@@ -218,7 +227,7 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjung
         <Section title="Toko luar rute" subtitle={menunggu ? `${menunggu} menunggu keputusan` : "semua sudah diputuskan"}>
             <div className="fi-sect-in">
                 <p className="fi-small fi-muted">
-                    Putuskan per toko: masukkan ke JKS Anda (hari + minggu) atau tidak. Boleh dibiarkan untuk nanti — tetap menunggu dan laporan tetap bisa dikirim.
+                    Putuskan per toko: masukkan ke JKS Anda (hari + minggu) atau tidak. Boleh dibiarkan untuk nanti; toko tetap menunggu dan laporan tetap bisa dikirim.
                 </p>
                 {tanpaIzin && <p className="fi-small fi-why">{tanpaIzin}</p>}
                 {load.status === "galat" && (
@@ -239,13 +248,13 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjung
                                     <b style={{ overflowWrap: "anywhere" }}>{r.custName}</b>
                                     <span className="fi-small fi-muted">
                                         <span className="fi-mono">{r.custCode}</span>
-                                        {r.tanggal !== tanggal ? ` · Kunjungan ${tanggalPendek(r.tanggal)}` : ""} · {hasil(r.status)} · {jamWita(r.checkinAt)}–{jamWita(r.checkoutAt)} WITA
+                                        {r.tanggal !== tanggal ? ` · Kunjungan ${tanggalPendek(r.tanggal)}` : ""} · {hasil(r.status)} · {rentangWita(r.checkinAt, r.checkoutAt)} WITA
                                     </span>
                                 </div>
                                 {r.jksLain.length > 0 && r.konfirmasi === "menunggu" && (
                                     <MessageStrip tone="warn" title="Sudah di JKS salesman lain:">
                                         {r.jksLain.map((j) => `${j.salesCode} ${j.salesName} (${labelJadwal(j.hariKunjungan, j.mingguPattern)})`).join("; ")}. Bila dimasukkan, toko ini
-                                        juga ada di JKS Anda — pastikan dengan SPV.
+                                        juga ada di JKS Anda. Pastikan dengan SPV.
                                     </MessageStrip>
                                 )}
                                 {r.konfirmasi === "jks" && <div><StatusBadge tone="pos">Masuk JKS: {labelJadwal(r.hari, r.mingguPattern)}</StatusBadge></div>}
@@ -279,7 +288,7 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjung
                                         <div className="fi-btnrow">
                                             <Button variant="primary" busy={sibuk === r.id} disabled={Boolean(kurang) || Boolean(sibuk)} disabledReason={kurang}
                                                 aria-label={`Masukkan ke JKS: ${r.custName}`}
-                                                onClick={() => void putuskan(r, { keputusan: "jks", hari: pl.hari, mingguPattern: pl.minggu })}>Masukkan ke JKS</Button>
+                                                onClick={() => setMasukJks({ r, hari: pl.hari, minggu: pl.minggu })}>Masukkan ke JKS</Button>
                                             <Button variant="secondary" disabled={Boolean(kunciTidak) || Boolean(sibuk)} disabledReason={kunciTidak}
                                                 aria-label={`Jangan masukkan JKS: ${r.custName}`}
                                                 onClick={() => void putuskan(r, { keputusan: "tidak" })}>Jangan masukkan JKS</Button>
@@ -293,6 +302,21 @@ export function KonfirmasiLuarRute({ salesCode, tanggal, onMenunggu, onDikunjung
                     })}
                 </ul>
             </div>
+            <ConfirmDialog open={masukJks !== null} onClose={() => setMasukJks(null)} title={`Masukkan ${masukJks?.r.custName ?? "toko"} ke JKS?`}
+                description="Toko ditambahkan ke JKS Anda dan tampil di rute pada hari dan minggu yang dipilih. Keputusan ini tidak bisa diubah dari layar ini."
+                facts={masukJks ? [
+                    ["Toko", `${masukJks.r.custName} · ${masukJks.r.custCode}`],
+                    ["Jadwal", labelJadwal(masukJks.hari, masukJks.minggu)],
+                    ["Salesman · principal", `${salesCode} · ${masukJks.r.principle}`],
+                    ...(masukJks.r.jksLain.length ? [["Juga ada di JKS", masukJks.r.jksLain.map((j) => `${j.salesCode} ${j.salesName}`).join("; ")] as [string, string]] : []),
+                ] : []}
+                factsAlign="start" confirmLabel="Masukkan ke JKS" cancelLabel="Kembali" confirmDisabled={tanpaIzin ?? kunciMuat}
+                onConfirm={async () => {
+                    const d = masukJks!;
+                    const galatSimpan = await putuskan(d.r, { keputusan: "jks", hari: d.hari, mingguPattern: d.minggu });
+                    if (galatSimpan) throw new Error(galatSimpan);
+                    setMasukJks(null);
+                }} />
         </Section>
     );
 }

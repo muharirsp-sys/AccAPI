@@ -1,11 +1,12 @@
 /*
  * Tujuan: Layar Finance Fiori (S6b, it02 bagian Finance; ZONA AGENTS §3 TULIS ACCURATE + UANG): worklist pengajuan per tanggal bayar
  *   (WITA) + panel detail per pengajuan, status transfer terpisah dari status posting, tujuan pemasok/rekening dari master Accurate,
- *   dialog `pp` (Transfer & posting), `selesaipp` (Selesaikan posting tidak pasti, hanya Finance), dan dialog status transfer.
+ *   dialog `pp` (Transfer & posting), `selesaipp` (Selesaikan posting tidak pasti, hanya Finance), dialog status transfer, dan dialog
+ *   Simpan tujuan (pemasok/rekening lama → baru; pemetaan lokal per principal, bukan posting ke Accurate).
  * Caller: app/(dashboard)/finance/page.tsx.
  * Dependensi: ./posting (HTTP + orkestrasi tulis), lib/finance-ui (izin & keputusan murni), components/fiori/*, lib/promo-ui,
- *   lib/rekapan-nota/ui (tanggalPanjang), lib/fuzzySearch, lucide-react.
- * Main Functions: Finance (default), Detail, DialogSelesai.
+ *   lib/rekapan-nota/ui (tanggalPanjang), lib/tampil (KOSONG), lib/fuzzySearch, lucide-react.
+ * Main Functions: Finance (default), Detail, DialogPosting, DialogSelesai.
  * Side Effects: Lewat ./posting: FastAPI /payments/finance/*, command /api/finance/purchase-payment (kirim purchase-payment ke
  *   Accurate), /resolve, /attempts, /api/proxy GET list.do; window.open ekspor Excel; beforeunload saat ada draf.
  */
@@ -20,11 +21,12 @@ import {
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
 import {
-    LABEL_POSTING, alasanFaktur, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, lepasKunciLokal, statusPosting, statusTransfer, tandaSelesai,
+    LABEL_POSTING, alasanFaktur, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, lepasKunciLokal, saringCatatan, statusPosting, statusTransfer, tandaSelesai,
     type AttemptFinance, type StatusPosting,
 } from "@/lib/finance-ui";
 import { rupiah, tgl } from "@/lib/promo-ui";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
+import { KOSONG } from "@/lib/tampil";
 import {
     SeparuhJalan, TidakPasti, bacaSesi, muatFinance, muatMaster, postingPurchasePayment, recordKey, selesaikanTidakPasti, simpanTujuan, ubahStatusTransfer, urlBerkas,
     type DataFinance, type FinanceMapping, type FinanceRecord, type MasterAccurate, type SesiAccurate,
@@ -177,9 +179,9 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
                 const catat = izin.selesaikan
                     ? "setelah dimuat ulang, hasil ini dicatat lewat Catat hasil posting tanpa kiriman baru; bila catatan Finance sudah Tidak pasti, hanya Finance yang berwenang mencatatnya."
                     : "setelah dimuat ulang, tekan Catat hasil posting.";
-                setHasil({ tone: "warn", judul: `Hasilnya belum pasti — ${b.r.draft_label} dikunci.`, isi: `Accurate menjawab Purchase Payment ${h.nomor}, tetapi catatan Finance belum tersimpan (${h.pesan}). Jangan posting ulang: ${catat}` });
+                setHasil({ tone: "warn", judul: `Hasilnya belum pasti: ${b.r.draft_label} dikunci.`, isi: `Accurate menjawab Purchase Payment ${h.nomor}, tetapi catatan Finance belum tersimpan (${h.pesan}). Jangan posting ulang: ${catat}` });
             } else if (h.jenis === "tidak_pasti") {
-                setHasil({ tone: "warn", judul: `Hasilnya belum pasti — ${b.r.draft_label} dikunci.`, isi: `${h.pesan} Jangan posting ulang: Finance memeriksa Purchase Payment di Accurate lalu menyelesaikannya.` });
+                setHasil({ tone: "warn", judul: `Hasilnya belum pasti: ${b.r.draft_label} dikunci.`, isi: `${h.pesan} Jangan posting ulang: Finance memeriksa Purchase Payment di Accurate lalu menyelesaikannya.` });
             } else if (h.jenis === "gagal") {
                 // C11: Accurate tidak pernah "menolak" di sini — `gagal` = koneksi ke Accurate tak pernah terbentuk (not_sent).
                 setHasil({ tone: "neg", judul: `Posting ${b.r.draft_label} tidak sampai ke Accurate.`, isi: `${h.pesan} Tidak ada yang tersimpan di Accurate; boleh diposting ulang setelah diperbaiki.` });
@@ -200,7 +202,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
         } catch (e) {
             if (!(e instanceof TidakPasti)) throw e;
             setDialog(null);
-            setHasil({ tone: "warn", judul: "Hasil ubah status belum pasti.", isi: `${e.message} Data dimuat ulang — periksa statusnya sebelum mengulang.` });
+            setHasil({ tone: "warn", judul: "Hasil ubah status belum pasti.", isi: `${e.message} Data dimuat ulang; periksa statusnya sebelum mengulang.` });
             muatUlang();
             return;
         }
@@ -224,7 +226,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
             }
             if (!(e instanceof TidakPasti)) throw e;
             setDialog(null);
-            setHasil({ tone: "warn", judul: "Hasil penyelesaian belum pasti.", isi: `${e.message} Data dimuat ulang — periksa statusnya sebelum mengulang.` });
+            setHasil({ tone: "warn", judul: "Hasil penyelesaian belum pasti.", isi: `${e.message} Data dimuat ulang; periksa statusnya sebelum mengulang.` });
             muatUlang();
             return;
         }
@@ -299,7 +301,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
             onTujuan={(t) => setDrafTujuan((s) => ({ ...s, [terpilih.key]: { ...tujuanDari(terpilih), ...t } }))}
             onTanggal={(v) => setDrafTanggal((s) => ({ ...s, [terpilih.key]: v }))}
             onBukti={(f) => setBukti((s) => ({ ...s, [terpilih.key]: f }))}
-            onSimpanTujuan={() => void simpanTujuanBaris(terpilih)} onMuatMaster={muatUlangMaster}
+            onSimpanTujuan={() => simpanTujuanBaris(terpilih)} onMuatMaster={muatUlangMaster}
             onDialog={(jenis) => setDialog({ jenis, key: terpilih.key, pada: Date.now() })} />
     );
 
@@ -315,7 +317,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
             <header className="fi-page-head">
                 <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Keuangan</span></li><li><span aria-current="page">Finance</span></li></ol></nav>
                 <div className="fi-page-bar">
-                    <h1>Transfer &amp; posting</h1>
+                    <h1>Finance</h1>
                     {sesi?.tersambung
                         ? <StatusBadge tone="info">Database Accurate: {sesi.alias || `ID ${sesi.id}`}</StatusBadge>
                         : data ? <StatusBadge tone="warn">{sesi ? "Belum terhubung ke database Accurate" : "Sesi Accurate tidak terbaca"}</StatusBadge> : null}
@@ -338,7 +340,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
                 <div className="fi-kcards" role="group" aria-label="Saring menurut status">
                     {kartu.map((k) => (
                         <button key={k.k} type="button" className="fi-kc" aria-pressed={saring === k.k} data-tone={k.tone} onClick={() => setSaring(k.k)}>
-                            <span>{k.label}</span><b>{k.n ?? "–"}</b>{k.kecil && <small>{k.kecil}</small>}
+                            <span>{k.label}</span><b>{k.n ?? KOSONG}</b>{k.kecil && <small>{k.kecil}</small>}
                         </button>
                     ))}
                 </div>
@@ -378,7 +380,7 @@ type DetailProps = {
     tujuan: FinanceMapping; tujuanBerubah: boolean; tanggalTransfer: string; bukti: File | null;
     master: Load<MasterAccurate>; masterAktif: boolean; izin: ReturnType<typeof izinFinance>; menyimpan: boolean; galatTujuan?: string;
     onTujuan: (t: FinanceMapping) => void; onTanggal: (v: string) => void; onBukti: (f: File | null) => void;
-    onSimpanTujuan: () => void; onMuatMaster: () => void; onDialog: (jenis: "pp" | "selesai" | "belum" | "ulang") => void;
+    onSimpanTujuan: () => Promise<void>; onMuatMaster: () => void; onDialog: (jenis: "pp" | "selesai" | "belum" | "ulang") => void;
 };
 
 /** Panel detail satu pengajuan (Object Page ringkas): ringkasan, tagihan, tujuan, transfer, posting, aksi. */
@@ -390,8 +392,12 @@ function Detail(p: DetailProps) {
     const pt = LABEL_POSTING[kode];
     const a = b.attempt;
     const sesi = data.sesi;
-    const db = (id: string) => (id && sesi?.id === id ? sesi.alias || `ID ${id}` : id ? `ID ${id}` : "–");
+    const db = (id: string) => (id && sesi?.id === id ? sesi.alias || `ID ${id}` : id ? `ID ${id}` : KOSONG);
     const tujuanTerkunci = kunci.tujuan;
+    const [konfirmTujuan, setKonfirmTujuan] = useState(false);
+    const lama = r.mapping ?? KOSONG_MAP;
+    const pemasokTeks = (m: FinanceMapping) => (m.vendorNo ? `${m.vendorNo} · ${m.vendorName || ""}` : "Belum dipetakan");
+    const rekeningTeks = (m: FinanceMapping) => (m.bankNo ? `${m.bankNo} · ${m.bankName || ""}` : "Belum dipetakan");
     const alasanSimpan = tujuanTerkunci ?? (!p.tujuanBerubah ? "belum ada perubahan tujuan." : !p.tujuan.vendorNo || !p.tujuan.bankNo ? "pilih pemasok dan rekening dulu." : undefined);
     const postingTerkunci = Boolean(kunci.posting) && !(kode === "terposting" && b.posting.catatanTertinggal);
     const catatan = catatanPosting(kode, r.accurate_post_error || a?.message || "", r.accurate_post_status_raw || "");
@@ -423,7 +429,7 @@ function Detail(p: DetailProps) {
             </>
         );
     } else if (p.master.status === "galat" && !p.master.data) {
-        tujuanIsi = <ErrorState title="Daftar pemasok/rekening Accurate gagal dimuat" message={`${p.master.error ?? ""} Tujuan tersimpan: ${p.tujuan.vendorNo || "–"} / ${p.tujuan.bankNo || "–"}.`} onRetry={p.onMuatMaster} />;
+        tujuanIsi = <ErrorState title="Daftar pemasok/rekening Accurate gagal dimuat" message={`${p.master.error ?? ""} Tujuan tersimpan: ${p.tujuan.vendorNo || KOSONG} / ${p.tujuan.bankNo || KOSONG}.`} onRetry={p.onMuatMaster} />;
     } else if (!p.master.data) {
         tujuanIsi = <Skeleton rows={2} label="Memuat daftar pemasok dan rekening Accurate" />;
     } else {
@@ -444,12 +450,22 @@ function Detail(p: DetailProps) {
                         {opsi(m.rekening, p.tujuan.bankNo, p.tujuan.bankName)}</select>}
                 </FormField>
                 {m.terpotong && <p className="fi-small fi-subtle">Daftar Accurate dipotong pada 10.000 baris; pilihan di luar daftar tidak diperiksa.</p>}
-                {p.galatTujuan && <MessageStrip tone="neg" title={p.galatTujuan} />}
+                {p.galatTujuan && <MessageStrip tone="neg" title={saringCatatan(p.galatTujuan) || "Tujuan gagal disimpan."} />}
                 <div className="fi-btnrow">
-                    <Button icon={<Save className="fi-icon" aria-hidden />} busy={p.menyimpan} disabled={Boolean(alasanSimpan)} disabledReason={alasanSimpan} onClick={p.onSimpanTujuan}>Simpan tujuan</Button>
+                    <Button icon={<Save className="fi-icon" aria-hidden />} busy={p.menyimpan} disabled={Boolean(alasanSimpan)} disabledReason={alasanSimpan} onClick={() => setKonfirmTujuan(true)}>Simpan tujuan…</Button>
                     <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={p.onMuatMaster}>Muat ulang daftar</Button>
                 </div>
                 {alasanSimpan && !p.menyimpan && <p className="fi-small fi-why">Simpan tujuan: {alasanSimpan}</p>}
+                {/* No 11: pemetaan berlaku untuk semua pengajuan principal ini, jadi nilai lama → baru dikonfirmasi dulu. */}
+                <ConfirmDialog open={konfirmTujuan} onClose={() => setKonfirmTujuan(false)} tag="Tujuan pembayaran"
+                    title={`Simpan tujuan pembayaran ${r.principle}?`} confirmLabel="Simpan tujuan" confirmDisabled={alasanSimpan}
+                    facts={[
+                        ["Pemasok", `${pemasokTeks(lama)} → ${pemasokTeks(p.tujuan)}`],
+                        ["Rekening bank", `${rekeningTeks(lama)} → ${rekeningTeks(p.tujuan)}`],
+                        ["Berlaku untuk", `Semua pengajuan ${r.principle} berikutnya`],
+                        ["Accurate", "Tidak ada yang dikirim ke Accurate; posting tetap lewat Transfer & posting."],
+                    ]}
+                    onConfirm={async () => { await p.onSimpanTujuan(); setKonfirmTujuan(false); }} />
             </>
         );
     }
@@ -459,13 +475,13 @@ function Detail(p: DetailProps) {
             <ObjectPageHeader title={`${r.draft_label} · ${r.principle}`} draft={p.tujuanBerubah}
                 status={<><StatusBadge tone={tr.tone}>{tr.label}</StatusBadge> <StatusBadge tone={pt.tone} busy={kode === "sedang"}>{pt.label}{b.posting.nomor ? ` ${b.posting.nomor}` : ""}</StatusBadge></>}
                 attributes={[
-                    { label: "SPPD", value: r.sppd_no || "–" },
+                    { label: "SPPD", value: r.sppd_no || KOSONG },
                     { label: "Jenis", value: `${r.tipe_pengajuan}${r.payment_method ? ` · ${r.payment_method}` : ""}` },
                     { label: "Tanggal bayar", value: tgl(r.submitted_date) },
                 ]} />
 
             {kode === "tidak_pasti" && (
-                <MessageStrip tone="warn" title="Posting tidak pasti — pengajuan dikunci.">
+                <MessageStrip tone="warn" title="Posting tidak pasti; pengajuan dikunci.">
                     {catatan || "Hasil posting terakhir belum pasti."} Jangan posting ulang sebelum Finance memeriksa Purchase Payment di Accurate.
                 </MessageStrip>
             )}
@@ -525,10 +541,10 @@ function Detail(p: DetailProps) {
                         <KeyValues items={[
                             ...(b.posting.nomor ? [["Purchase Payment", <span key="n" className="fi-mono">{b.posting.nomor}</span>] as [string, ReactNode]] : []),
                             ...(kode === "terposting" ? [
-                                ["Oleh", (b.posting.catatanTertinggal ? a?.actorName : orang(r.accurate_posted_by)) || a?.actorName || "–"],
-                                ["Kapan", b.posting.catatanTertinggal ? `${a?.updatedAtWita ?? ""} WITA` : r.accurate_posted_at ? `${r.accurate_posted_at} WITA` : "–"],
+                                ["Oleh", (b.posting.catatanTertinggal ? a?.actorName : orang(r.accurate_posted_by)) || a?.actorName || KOSONG],
+                                ["Kapan", b.posting.catatanTertinggal ? `${a?.updatedAtWita ?? ""} WITA` : r.accurate_posted_at ? `${r.accurate_posted_at} WITA` : KOSONG],
                             ] as Array<[string, ReactNode]> : []),
-                            ...(a ? [["Percobaan terakhir", `${a.createdAtWita} WITA · ${a.actorName || "–"} · database ${db(a.targetDbId)}`] as [string, ReactNode]] : []),
+                            ...(a ? [["Percobaan terakhir", `${a.createdAtWita} WITA · ${a.actorName || KOSONG} · database ${db(a.targetDbId)}`] as [string, ReactNode]] : []),
                             ...(b.posting.catatanTertinggal ? [["Catatan Finance", p.alasanPosting
                                 ? `Belum mencatat hasil ini. ${p.alasanPosting}`
                                 : "Belum mencatat hasil ini; tekan Catat hasil posting (tidak mengirim ulang)."] as [string, ReactNode]] : []),
@@ -585,12 +601,12 @@ function DialogPosting(p: {
             confirmLabel={catatHasil ? "Catat hasil posting" : `Posting ${rupiah(r.total_nilai)}`}
             facts={[
                 ["Database", namaDb],
-                ["Pemasok", `${p.tujuan.vendorNo || "–"} · ${p.tujuan.vendorName || ""}`],
-                ["Rekening bank", `${p.tujuan.bankNo || "–"} · ${p.tujuan.bankName || ""}`],
+                ["Pemasok", `${p.tujuan.vendorNo || KOSONG} · ${p.tujuan.vendorName || ""}`],
+                ["Rekening bank", `${p.tujuan.bankNo || KOSONG} · ${p.tujuan.bankName || ""}`],
                 ["Faktur dibayar", `${faktur.length} · ${faktur.slice(0, 4).join(", ")}${faktur.length > 4 ? ` dan ${faktur.length - 4} lain` : ""}`],
                 ["Nilai", <b key="n" className="fi-tnum">{rupiah(r.total_nilai)}</b>],
-                ["Tanggal transfer", p.tanggalTransfer ? tanggalPanjang(p.tanggalTransfer) : "–"],
-                ["Bukti", r.transfer_proof?.proof_id ? `${r.transfer_proof.original_filename || r.transfer_proof.stored_filename} (tersimpan)` : p.bukti?.name || "–"],
+                ["Tanggal transfer", p.tanggalTransfer ? tanggalPanjang(p.tanggalTransfer) : KOSONG],
+                ["Bukti", r.transfer_proof?.proof_id ? `${r.transfer_proof.original_filename || r.transfer_proof.stored_filename} (tersimpan)` : p.bukti?.name || KOSONG],
             ]}>
             {catatHasil
                 ? <MessageStrip tone="info" title={`Server sudah mencatat posting ${p.b.posting.nomor}.`}>Tombol ini hanya mencatat hasilnya ke Finance; server menolak kiriman kedua.</MessageStrip>
@@ -643,14 +659,14 @@ function DialogSelesai(p: {
     return (
         <ConfirmDialog open={p.open} onClose={p.onClose} tag="Hanya Finance" title="Selesaikan posting tidak pasti" confirmLabel="Simpan penyelesaian"
             reason={{ label: "Alasan", min: 15, placeholder: "Apa yang Anda lihat di Accurate dan mengapa" }} confirmDisabled={blokir}
-            description={`${r.draft_label} · ${r.principle} · ${rupiah(r.total_nilai)} · ${a ? `dicoba ${a.createdAtWita} WITA oleh ${a.actorName || "–"}` : "tanpa catatan percobaan di server (status lama)"}.`}
+            description={`${r.draft_label} · ${r.principle} · ${rupiah(r.total_nilai)} · ${a ? `dicoba ${a.createdAtWita} WITA oleh ${a.actorName || KOSONG}` : "tanpa catatan percobaan di server (status lama)"}.`}
             onConfirm={(alasan) => p.onConfirm({ ada: hasil === "ada", nomor, sumber, alasan })}>
             <fieldset className="fi-field" style={{ border: 0, padding: 0, margin: 0 }}>
                 <legend className="fi-label">Hasil pemeriksaan<span className="fi-req" aria-hidden>*</span></legend>
                 <label className="fi-check"><input type="radio" name={nama} checked={hasil === "ada"} onChange={() => setHasil("ada")} /> Ada di Accurate</label>
                 {hasil === "ada" && (
                     <FormField label="Nomor Purchase Payment" required>
-                        {(a11y) => <input {...a11y} className="fi-input fi-mono" value={nomor} onChange={(e) => setNomor(e.target.value)} placeholder="mis. PP/2610/0030" />}
+                        {(a11y) => <input {...a11y} className="fi-input fi-mono" value={nomor} onChange={(e) => setNomor(e.target.value)} placeholder="mis. PP/XXXX/0001" />}
                     </FormField>
                 )}
                 <label className="fi-check" title={tidakAda}><input type="radio" name={nama} checked={hasil === "tidak_ada"} disabled={Boolean(tidakAda)} onChange={() => setHasil("tidak_ada")} /> Tidak ada di Accurate</label>

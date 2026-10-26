@@ -1,9 +1,9 @@
 /*
  * Tujuan: Tipe, konstanta, dan helper bersama Form Kontrol (shell, tab tim, tab salesman, kunjungan).
- * Caller: form-kontrol/FormKontrol.tsx (shell), tabs/*, spv-dashboard/DashboardSpv.tsx, visit/[custCode]/*.
- * Dependensi: React (context izin), components/fiori/interactive (tipe Load).
- * Main Functions: TABS, hariIniWita, jamWita, IzinFkCtx/useIzinFk/alasanIzinFk, ambilFk, tulisFk, useNooMenunggu, principalAwal, penjelasanTanpaJks,
- *   compareRoute, visitDurationMin.
+ * Caller: form-kontrol/FormKontrol.tsx (shell), tabs/*, spv-dashboard/DashboardSpv.tsx, visit/[custCode]/*, supervisor-review/*.
+ * Dependensi: React (context izin), components/fiori/interactive (tipe Load), lib/tampil (KOSONG, waktuWita).
+ * Main Functions: TABS, hariIniWita, rentangWita, IzinFkCtx/useIzinFk/alasanIzinFk, ambilFk, tulisFk, useNooMenunggu, principalAwal, penjelasanTanpaJks,
+ *   labelPola, compareRoute, visitDurationMin.
  * Side Effects: ambilFk/tulisFk melakukan HTTP ke /api/form-kontrol/*; sisanya pure.
  */
 "use client";
@@ -11,6 +11,7 @@
 import { createContext, useCallback, useContext, useEffect } from "react";
 import { useLoad, type Load } from "@/components/fiori/interactive";
 import type { StatusNoo } from "@/lib/form-kontrol/noo-aturan";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -98,10 +99,11 @@ export const TABS: { key: TabKey; label: string; roles: string[] }[] = [
     { key: "jks", label: "Kontrol JKS", roles: ["admin", "manager", "admin_sales", "sm", "spv"] },
     // Supervisor Review (SR-3): titik koordinat toko untuk peta; sumbernya berkas yang diunggah admin, bukan JKS.
     { key: "koordinat", label: "Koordinat Toko", roles: ["admin", "manager", "admin_sales"] },
-    { key: "ao", label: "Form AO Harian", roles: ["salesman", "spv", "staff", "admin", "manager"] },
+    { key: "ao", label: "Rute Hari Ini", roles: ["salesman", "spv", "staff", "admin", "manager"] },
     { key: "no-order", label: "Toko Tidak Order", roles: ["salesman", "spv", "sm", "staff", "admin", "manager"] },
     // Tab Merchandising lama dihapus (S5): merch bagian wizard kunjungan (ber-foto/GPS); SPV melihat hasilnya di Dashboard SPV.
-    { key: "laporan", label: "Laporan Harian", roles: ["salesman", "spv", "staff", "admin", "manager"] },
+    // Bukan modul Laporan Harian (email ekspor Accurate): ini laporan kunjungan salesman ke SPV.
+    { key: "laporan", label: "Laporan Kunjungan", roles: ["salesman", "spv", "staff", "admin", "manager"] },
     { key: "briefing", label: "Briefing SPV", roles: ["spv", "sm", "admin", "manager"] },
     { key: "sm-control", label: "Kontrol SM", roles: ["sm", "admin", "manager"] },
     { key: "frekuensi", label: "Frekuensi Kunjungan", roles: ["admin", "manager", "admin_sales", "sm"] },
@@ -119,13 +121,19 @@ export function hariIniWita(now: Date = new Date()): string {
     return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(now);
 }
 
-/** "09.40" dalam WITA dari ISO; "—" bila kosong/tidak valid. Jam di layar selalu WITA (bukan Asia/Jakarta). */
-export function jamWita(iso: string | null | undefined): string {
-    if (!iso) return "—";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "—";
-    return new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Makassar" }).format(d);
+/**
+ * Rentang check-in–check-out dalam format lib/tampil: "06/10/2026 09.40–10.10" (tanggal sekali bila sama), beda tanggal → tanggal di kedua
+ * ujung, ujung kosong → KOSONG. Satu waktu pakai `waktuWita`; jam tanpa tanggal tidak dipakai karena layar ini bisa membuka tanggal lain.
+ */
+export function rentangWita(mulai: string | null | undefined, selesai: string | null | undefined): string {
+    const a = waktuWita(mulai), b = waktuWita(selesai);
+    // "dd/mm/yyyy hh.mm": 10 karakter pertama = tanggal, sesudah spasi = jam.
+    return a !== KOSONG && b !== KOSONG && a.slice(0, 10) === b.slice(0, 10) ? `${a}–${b.slice(11)}` : `${a}–${b}`;
 }
+
+/** Pola minggu JKS dari server (ganjil, genap, all) dalam bahasa tugas; nilai di luar daftar tidak ditampilkan mentah. */
+export const LABEL_MINGGU: Record<string, string> = { ganjil: "Minggu ganjil", genap: "Minggu genap", all: "Setiap minggu" };
+export const labelPola = (m: string | null | undefined): string => LABEL_MINGGU[m ?? ""] ?? "Tidak dikenal";
 
 // ── Izin & HTTP (S5) ───────────────────────────────────────────────────────
 
@@ -193,19 +201,20 @@ export async function ambilFk<T>(url: string, pick: (json: Record<string, unknow
         if (!res.ok || data === null) return { status: "galat", error: `${umum}${pesanServer(res, data)}` };
         return { status: "siap", data: pick(data) };
     } catch {
-        return { status: "galat", error: `${umum} Server tidak terjangkau — periksa sinyal atau koneksi, lalu coba lagi.` };
+        return { status: "galat", error: `${umum} Server tidak terjangkau. Periksa sinyal atau koneksi, lalu coba lagi.` };
     }
 }
 
-/** Event window: NOO berubah (setuju/tolak/tautkan) → lencana "N menunggu" dimuat ulang (peninjau B R-b1). */
+/** Event window: NOO berubah (setuju/tolak/tautkan) → lencana "N menunggu" dimuat ulang. */
 export const NOO_BERUBAH = "fk:noo-berubah";
 
 /**
- * Jumlah NOO (toko baru) yang menunggu keputusan AKUN INI (`row.boleh.putuskan` dari server) — lencana tab Toko Baru + strip Dashboard SPV
- * (peninjau B S4). `aktif` false (salesman, Manager) = tanpa permintaan. null = belum/gagal dimuat → tanpa lencana (bukan "0").
+ * Jumlah NOO (toko baru) yang menunggu keputusan AKUN INI (`row.boleh.putuskan` dari server) untuk lencana tab Toko Baru dan strip Dashboard SPV.
+ * `aktif` false (salesman, Manager) = tanpa permintaan. null = belum dimuat atau tidak berlaku (tanpa lencana, bukan "0").
+ * "galat" = jumlah gagal dimuat: layar menandainya supaya pengajuan tidak terlewat diam-diam (audit desain 001 No 69).
  * Dimuat sekali per buka halaman + setiap event NOO_BERUBAH (TabNoo sesudah aksi).
  */
-export function useNooMenunggu(aktif: boolean): number | null {
+export function useNooMenunggu(aktif: boolean): number | "galat" | null {
     const [load, muatUlang] = useLoad(useCallback(async (): Promise<Load<number | null>> => (aktif
         ? ambilFk("/api/form-kontrol/noo?status=menunggu_spv",
             (j) => (Array.isArray(j.rows) ? j.rows as { boleh?: { putuskan?: boolean } }[] : []).filter((r) => r.boleh?.putuskan).length, "")
@@ -215,10 +224,11 @@ export function useNooMenunggu(aktif: boolean): number | null {
         window.addEventListener(NOO_BERUBAH, muatUlang);
         return () => window.removeEventListener(NOO_BERUBAH, muatUlang);
     }, [aktif, muatUlang]);
+    if (aktif && load.status === "galat") return "galat";
     return load.status === "siap" ? load.data ?? null : null;
 }
 
-export const PESAN_TIDAK_PASTI = "Server tidak memberi jawaban yang pasti — hasilnya belum pasti; muat ulang untuk memeriksa sebelum mengulang.";
+export const PESAN_TIDAK_PASTI = "Server tidak memberi jawaban yang pasti, jadi hasilnya belum pasti. Muat ulang untuk memeriksa sebelum mengulang.";
 /** Dilempar tulisFk bila hasil tulis TIDAK PASTI (koneksi putus, status ≥ 502, badan bukan JSON). */
 export class TulisTidakPasti extends Error {}
 

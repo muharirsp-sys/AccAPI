@@ -1,11 +1,12 @@
 /*
- * Tujuan: Akses Group (Fiori S7a, FCL): daftar grup (preset terkunci nama) → Object Page dengan Izin per modul (20 modul, label satu
- *   sumber lib/rbac; kunci kapabilitas dicentang satu per satu), Anggota (tambah, keluarkan), Info, Riwayat; footer Simpan → dialog
+ * Tujuan: Akses Grup (Fiori S7a, FCL): daftar grup (preset terkunci nama) → Object Page dengan Izin per modul (20 modul, label satu
+ *   sumber lib/rbac; kunci kapabilitas dicentang satu per satu), Anggota (tambah dan keluarkan lewat dialog), Info, Riwayat; footer Simpan → dialog
  *   SELISIH izin (ditambah/dicabut, anggota terkena; mencabut users.manage = peringatan + tombol tegas); Hapus grup custom; Grup baru.
  *   Menggantikan GroupManagement.tsx (gaya inline + hex, confirm, simpan langsung).
  * Caller: app/(dashboard)/admin/groups/page.tsx (gerbang users.manage).
  * Dependensi: GET|POST /api/admin/groups, GET|PATCH|DELETE /api/admin/groups/[id], POST|DELETE /api/admin/groups/[id]/members,
- *   GET /api/admin/groups/[id]/history, GET /api/admin/users/permissions; lib/rbac(/registry); components/admin/*, components/fiori/*.
+ *   GET /api/admin/groups/[id]/history, GET /api/admin/users/permissions; lib/rbac(/registry); config/workspace-navigation (nama halaman
+ *   tujuan); lib/tampil (KOSONG); components/admin/*, components/fiori/*.
  * Main Functions: AksesGrup.
  * Side Effects: HTTP tulis ke API admin (zona auth). beforeunload saat ada draf izin/info.
  * TERBUKA (server): PATCH grup tidak menerima/mencatat alasan cabut users.manage (kontrak §5.8) — karena itu dialog TIDAK meminta
@@ -22,18 +23,23 @@ import {
 } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { DialogKeluarkan, GalatAdmin, PeringatanRole, Riwayat, izinPerluDisegarkan, muatAdmin, tulisAdmin, type GrupRingkas, type UserBaris } from "@/components/admin/Bersama";
-import { perkiraanRole, selisihIzin } from "@/components/admin/admin-ui";
+import { labelRole, perkiraanRole, selisihIzin } from "@/components/admin/admin-ui";
+import { HOME_ITEM, WORKSPACE_GROUPS, activeNavigationItem } from "@/config/workspace-navigation";
 import { actionLabels, permissionKeyLabel, permissionModuleLabels } from "@/lib/rbac";
+import { KOSONG as KOSONG_TEKS } from "@/lib/tampil";
 import { CAPABILITY_KEYS, PERMISSION_MODULES, PERMISSION_REGISTRY, isValidPermissionKey, moduleAllOn, toggleModuleKeys, type PermissionModule } from "@/lib/rbac/registry";
 
 type Anggota = { userId: string; userName: string; userEmail: string; isPrimary: boolean };
 type DetailGrup = { group: { id: string; name: string; description: string | null; isPreset: boolean }; permissions: string[]; members: Anggota[] };
 type Draf = { name: string; description: string; perms: Set<string> };
-type Dialog = "simpan" | "hapus" | "baru" | "buang" | { keluar: string };
+type Dialog = "simpan" | "hapus" | "baru" | "buang" | "tambah" | { keluar: string };
 
 const AKSI = actionLabels as Record<string, string>;
 const KOSONG: Load<DetailGrup | null> = { status: "siap", data: null };
 const daftarNama = (nama: string[], maks = 5) => nama.slice(0, maks).join(", ") + (nama.length > maks ? ` dan ${nama.length - maks} lain` : "");
+/** Nama menu untuk tautan tujuan yang ditahan (bukan path mentah; audit No 30). */
+const SEMUA_MENU = [HOME_ITEM, ...WORKSPACE_GROUPS.flatMap((g) => g.items)];
+const namaHalaman = (tujuan: string) => activeNavigationItem(tujuan.split(/[?#]/)[0], SEMUA_MENU)?.name ?? "Halaman lain";
 
 export default function AksesGrup({ aktorId }: { aktorId: string }) {
     const router = useRouter();
@@ -90,9 +96,9 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
 
     // Aksi tulis terkunci saat data penentu (detail grup; untuk anggota juga daftar user) memuat / galat / usang.
     const kunciSimpan = !pilihId ? undefined : detailL.status === "memuat" ? "Menunggu detail grup dimuat ulang"
-        : detailL.status === "galat" ? "Detail grup gagal dimuat — muat ulang dulu" : undefined;
+        : detailL.status === "galat" ? "Detail grup gagal dimuat; muat ulang dulu" : undefined;
     const kunciAnggota = kunciSimpan ?? (userL.status === "memuat" ? "Menunggu daftar user dimuat"
-        : userL.status === "galat" ? "Daftar user gagal dimuat — muat ulang dulu" : undefined);
+        : userL.status === "galat" ? "Daftar user gagal dimuat; muat ulang dulu" : undefined);
 
     function muatSemua() { muatGrup(); muatUser(); muatDetail(); setVersi((v) => v + 1); }
     /** Coba lagi sesudah galat baca: izin bisa saja yang berubah, jadi izin halaman dibaca ulang bersama datanya. */
@@ -140,7 +146,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
         try {
             await jalankan(async () => {
                 const r = await tulisAdmin<{ added: boolean; role?: string | null }>(`/api/admin/groups/${det.group.id}/members`, "POST", { userId: tambahId });
-                const role = u && r.role !== undefined && r.role !== u.role ? ` Role identitas ${u.name} kini ${r.role ?? "—"}.` : "";
+                const role = u && r.role !== undefined && r.role !== u.role ? ` Role identitas ${u.name} kini ${labelRole(r.role)}.` : "";
                 return r.added ? `${u?.name ?? "User"} ditambahkan ke ${det.group.name}.${role}` : `${u?.name ?? "User"} sudah anggota ${det.group.name}; tidak ada yang berubah.`;
             });
             setTambahId("");
@@ -189,7 +195,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
     const perubahanRole = det ? anggotaUser.flatMap(({ m, u }) => {
         if (!u) return [];
         const p = perkiraanRole(u.groups, u.role, { keluar: det.group.id });
-        return p.berubah ? [`${m.userName}: ${u.role ?? "—"} → ${p.role ?? "—"}`] : [];
+        return p.berubah ? [`${m.userName}: ${labelRole(u.role)} → ${labelRole(p.role)}`] : [];
     }) : [];
     const keluarTarget = dialog && typeof dialog === "object" && det ? (() => {
         const u = users.find((x) => x.id === dialog.keluar);
@@ -198,10 +204,11 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
 
     const detail = !pilihId ? <EmptyState title="Pilih grup di daftar" message="Izin per modul, anggota, dan riwayat tampil di sini." />
         : detailL.status === "memuat" && !det ? <div className="fi-sect-in"><Skeleton rows={8} label="Memuat detail grup" /></div>
-        : !det || !nilai ? <ErrorState title="Detail grup gagal dimuat" message={detailL.error ?? "Grup tidak ditemukan — mungkin sudah dihapus."} onRetry={muatDetail} />
+        : !det || !nilai ? <ErrorState title="Detail grup gagal dimuat" message={detailL.error ?? "Grup tidak ditemukan. Mungkin sudah dihapus."} onRetry={muatDetail} />
         : (
             <div style={{ display: "grid", gap: 12 }}>
-                <ObjectPageHeader title={det.group.name} draft={berubah}
+                {/* h2: halaman sudah punya h1 "Kelola Akses Grup" (audit No 140a). */}
+                <ObjectPageHeader title={det.group.name} draft={berubah} headingLevel={2}
                     actions={
                         // Aksi destruktif di header objek (bukan footer): footer Draf hanya memuat Batal + Simpan, selalu muat 390 px (tinjauan S7a #1).
                         <Button variant="tertiary" icon={<Trash2 className="fi-icon" aria-hidden />} disabled={det.group.isPreset || Boolean(kunciAnggota)}
@@ -249,9 +256,10 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                                                 const kunciAdmin = adminPreset && key === "users.manage" && nilai.perms.has(key);
                                                 return (
                                                     <li key={key}>
-                                                        <label className="fi-chip" title={kunciAdmin ? "Tidak bisa dicabut dari grup preset Admin" : key} data-tone={tanda ? "warn" : undefined}
+                                                        {/* Target sentuh 44 px di pointer kasar (audit No 45); tanda +/− juga terbaca pembaca layar (No 140d). */}
+                                                        <label className="fi-chip pointer-coarse:min-h-11" title={kunciAdmin ? "Tidak bisa dicabut dari grup preset Admin" : key} data-tone={tanda ? "warn" : undefined}
                                                             style={cap ? { borderStyle: "dashed" } : undefined}>
-                                                            <input type="checkbox" aria-label={permissionKeyLabel(key)} checked={nilai.perms.has(key)}
+                                                            <input type="checkbox" aria-label={`${permissionKeyLabel(key)}${tanda === "+" ? " (akan ditambah)" : tanda ? " (akan dicabut)" : ""}`} checked={nilai.perms.has(key)}
                                                                 disabled={Boolean(kunciSimpan) || kunciAdmin} onChange={() => toggleKunci(key)} />
                                                             {tanda && <span aria-hidden>{tanda}</span>}{AKSI[a] ?? a}
                                                             {cap && <span className="sr-only"> (kunci kapabilitas)</span>}
@@ -295,7 +303,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                                 )}
                             </FormField>
                             <Button icon={<UserPlus className="fi-icon" aria-hidden />} busy={menambah} disabled={Boolean(kunciAnggota) || !tambahId}
-                                disabledReason={kunciAnggota ?? "Pilih user dulu"} onClick={tambahAnggota}>Tambah anggota</Button>
+                                disabledReason={kunciAnggota ?? "Pilih user dulu"} onClick={() => setDialog("tambah")}>Tambah anggota…</Button>
                         </div>
                         {prTambah?.berubah && <PeringatanRole dari={calonPilih?.role ?? null} ke={prTambah.role} />}
                         {userL.status === "galat" && <MessageStrip tone="neg" title="Daftar user gagal dimuat.">{userL.error} <Button variant="tertiary" onClick={muatUser}>Coba lagi</Button></MessageStrip>}
@@ -315,7 +323,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                     </div>
                 </Section>
 
-                <Section id="g-riwayat" title="Riwayat" subtitle="izin ditambah/dicabut, anggota, info — terbaru dulu">
+                <Section id="g-riwayat" title="Riwayat" subtitle="izin ditambah/dicabut, anggota, info; terbaru dulu">
                     <Riwayat key={`${det.group.id}-${versi}`} url={`/api/admin/groups/${det.group.id}/history`} sudut="grup" />
                 </Section>
 
@@ -332,11 +340,11 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
     return (
         <div className="fi-page" style={{ paddingBottom: 0 }}>
             <header className="fi-page-head">
-                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Pengaturan</span></li><li><span aria-current="page">Akses Group</span></li></ol></nav>
+                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Pengaturan</span></li><li><span aria-current="page">Kelola Akses Grup</span></li></ol></nav>
                 <div className="fi-page-bar">
-                    <h1>Akses Group</h1>
+                    <h1>Kelola Akses Grup</h1>
                     <span className="fi-spacer" />
-                    <Link className="fi-btn fi-btn--secondary" href="/admin/users">User</Link>
+                    <Link className="fi-btn fi-btn--secondary" href="/admin/users">Pengguna dan Izin</Link>
                     <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} onClick={() => { setBaru({ nama: "", deskripsi: "" }); setDialog("baru"); }}>Grup baru…</Button>
                 </div>
                 <p>Izin per modul untuk setiap grup. Izin user = gabungan semua grupnya. Selisih izin ditampilkan sebelum disimpan dan tercatat di riwayat.</p>
@@ -351,7 +359,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                 confirmDisabled={kunciSimpan} alasanTerlihat
                 facts={det && nilai && asli ? [
                     ...(nilai.name.trim() !== asli.name ? [["Nama", `${asli.name} → ${nilai.name.trim()}`] as [string, string]] : []),
-                    ...(nilai.description.trim() !== asli.description ? [["Deskripsi", `${asli.description || "—"} → ${nilai.description.trim() || "—"}`] as [string, string]] : []),
+                    ...(nilai.description.trim() !== asli.description ? [["Deskripsi", `${asli.description || KOSONG_TEKS} → ${nilai.description.trim() || KOSONG_TEKS}`] as [string, string]] : []),
                     ["Terkena", det.members.length ? `${det.members.length} anggota: ${daftarNama(det.members.map((m) => m.userName))}` : "Belum ada anggota"],
                     ["Berlaku", "Pada permintaan berikutnya; tidak perlu masuk ulang"],
                     ["Riwayat", "Kunci yang ditambah dan dicabut tercatat"],
@@ -417,12 +425,12 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                 {perubahanRole.length > 0 && (
                     <MessageStrip tone="warn" title={`Role identitas lama berubah untuk ${perubahanRole.length} anggota.`}>
                         <ul aria-label="Role identitas berubah" style={{ margin: "4px 0", paddingLeft: 18, listStyle: "disc" }}>{perubahanRole.map((t) => <li key={t}>{t}</li>)}</ul>
-                        Gerbang berbasis role (OPC/Klaim/Form Kontrol, sinkron Accurate tanpa ACCURATE_SYNC_USER_ID) ikut berubah. Izin dari grup lain tidak berubah.
+                        Gerbang berbasis role (OPC, Klaim, Form Kontrol, dan sinkron Accurate bila akun sinkron khusus belum diatur) ikut berubah. Izin dari grup lain tidak berubah.
                     </MessageStrip>
                 )}
             </ConfirmDialog>
 
-            <ConfirmDialog open={dialog === "baru"} onClose={() => setDialog(null)} tag="Buat" title="Grup baru" confirmLabel="Buat grup"
+            <ConfirmDialog open={dialog === "baru"} onClose={() => setDialog(null)} tag="Buat" title="Buat grup baru?" confirmLabel="Buat grup"
                 confirmDisabled={baru.nama.trim() ? undefined : "Isi nama grup"} alasanTerlihat
                 facts={[["Isi awal", "Tanpa izin dan anggota; centang izin lalu Simpan"]]}
                 onConfirm={() => jalankan(async () => {
@@ -438,7 +446,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                 title={`Buang perubahan pada grup ${asli?.name ?? ""}?`} confirmLabel="Buang perubahan"
                 facts={[
                     ["Akibat", `${sel.ditambah.length + sel.dicabut.length} perubahan izin${infoBerubah ? " dan info grup" : ""} dikembalikan ke nilai tersimpan`],
-                    ...(tujuan ? [["Pindah ke", tujuan] as [string, string]] : []),
+                    ...(tujuan ? [["Pindah ke", namaHalaman(tujuan)] as [string, string]] : []),
                 ]}
                 onConfirm={() => {
                     const ke = tujuan;
@@ -449,7 +457,19 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                     setPindahKe(undefined);
                 }} />
 
+            {/* Tambah anggota memberi izin (dan bisa mengubah role identitas): lewat dialog (audit No 5); fungsi tulis tetap tambahAnggota. */}
+            <ConfirmDialog open={dialog === "tambah" && Boolean(det && calonPilih)} onClose={() => setDialog(null)} tag="Anggota"
+                title={`Tambahkan ${calonPilih?.name ?? ""} ke ${det?.group.name ?? ""}?`} confirmLabel="Tambahkan" confirmDisabled={kunciAnggota} alasanTerlihat
+                facts={det && calonPilih ? [
+                    ["User", `${calonPilih.name} (${calonPilih.email})`],
+                    ["Izin yang didapat", `${det.permissions.length} kunci izin grup ${det.group.name}; izin user = gabungan semua grupnya`],
+                    ["Role identitas", prTambah?.berubah ? `${labelRole(calonPilih.role)} → ${labelRole(prTambah.role)}` : "Tidak berubah"],
+                    ["Berlaku", "Pada permintaan berikutnya; tidak perlu masuk ulang"],
+                    ["Riwayat", "Tercatat di riwayat user dan grup"],
+                ] : undefined}
+                onConfirm={async () => { await tambahAnggota(); setDialog(null); }} />
             <DialogKeluarkan target={keluarTarget} aktorId={aktorId} kunci={kunciAnggota} onClose={() => setDialog(null)} jalankan={jalankan} />
+
         </div>
     );
 }

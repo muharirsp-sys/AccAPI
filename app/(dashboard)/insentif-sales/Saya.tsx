@@ -2,8 +2,8 @@
  * Tujuan: Layar "Insentif saya" (Fiori S4c, salesman, ponsel dulu): capaian periode berjalan dibanding Time Gone, cara insentif dihitung
  *   (ambang dan bobot dari konstanta server), dan insentif bulan lalu dengan bruto/PPh/netto + status bayar.
  * Caller: app/(dashboard)/insentif-sales/saya/page.tsx (default export, prop permKeys).
- * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard, KonstantaCtx), ./Rincian (Laju, LegendaLaju, CatatanTimeGone, StatusBayar,
- *   itemsPph), ./data (Time Gone, format, MONTH_LABELS), components/fiori/*, lib/insentif-ui.
+ * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard, KonstantaCtx), ./Rincian (Laju, LegendaLaju, KeteranganTimeGone, StatusBayar,
+ *   itemsPph), ./data (Time Gone, bulan WITA, format, MONTH_LABELS), components/fiori/*, lib/insentif-ui, lib/tampil (KOSONG).
  * Main Functions: Saya, CapaianBaris, CaraDihitung, BulanLalu.
  * Side Effects: GET /api/insentif-sales/dashboard dua kali (periode berjalan dan bulan sebelumnya).
  *
@@ -20,9 +20,10 @@ import { EmptyState, ErrorState, KeyValues, MessageStrip, Section, Skeleton } fr
 import type { Load } from "@/components/fiori/interactive";
 import { DEFAULT_KONSTANTA } from "@/lib/insentif-konstanta";
 import { halamanTerlihat, sebabNol, formatPctText, formatQty, formatRatio, type ApiRow } from "@/lib/insentif-ui";
-import { MONTH_LABELS, formatRp, getPeriodWorkdayProgress, type WorkdayProgress } from "./data";
+import { MONTH_LABELS, bulanIniWita, formatRp, getPeriodWorkdayProgress, type WorkdayProgress } from "./data";
+import { KOSONG } from "@/lib/tampil";
 import { InsentifRangka, KonstantaCtx, useDashboard, useKonstanta, usePeriode, type DashboardData } from "./Rangka";
-import { CatatanTimeGone, Laju, LegendaLaju, StatusBayar, itemsPph, labelPph } from "./Rincian";
+import { KeteranganTimeGone, Laju, LegendaLaju, StatusBayar, itemsPph, labelPph } from "./Rincian";
 
 const SEMUA = { principle: "ALL", branch: "ALL" } as const;
 
@@ -36,8 +37,8 @@ export default function Saya({ permKeys }: { permKeys: string[] }) {
     const perms = useMemo(() => new Set(permKeys), [permKeys]);
     const terlihat = halamanTerlihat(perms);
     const tg = getPeriodWorkdayProgress(year, month);
-    const now = new Date();
-    const berjalan = year * 12 + month >= now.getFullYear() * 12 + now.getMonth() + 1;
+    const bulanKini = bulanIniWita();
+    const berjalan = year * 12 + month >= bulanKini.year * 12 + bulanKini.month;
     const d = kini.data;
     const identitas = d?.cakupan.identitas ?? null;
     const sales = identitas?.role === "sales";
@@ -69,12 +70,12 @@ export default function Saya({ permKeys }: { permKeys: string[] }) {
         kiniBagian = (
             <>
                 <div className="fi-kcards">
-                    <div className="fi-kc"><span>Time Gone</span><b>{tg.pct}%</b><small>{tg.passed} dari {tg.total} hari kerja</small></div>
+                    <div className="fi-kc"><span>Waktu berjalan (Time Gone)</span><b>{tg.pct}%</b><small>{tg.passed} dari {tg.total} hari kerja</small></div>
                     {/* Owner 8 Okt: yang sudah mencapai ambang langsung terhitung walau nilainya masih bisa berubah. */}
                     <div className="fi-kc"><span>{berjalan ? "Insentif sementara" : "Insentif"}</span><b>{formatRp(rows.reduce((a, r) => a + r.incentive.total, 0))}</b>
                         <small>{berjalan ? "bila ditutup hari ini · bisa berubah setiap hari sampai akhir bulan" : "bruto, sebelum PPh"}</small></div>
                 </div>
-                <CatatanTimeGone tg={tg} label={label} />
+                <KeteranganTimeGone tg={tg} label={label} />
                 <Section title={`Capaian ${label}`} subtitle="dihitung untuk insentif">
                     <div className="fi-sect-in">
                         <LegendaLaju timeGone={tg.pct} />
@@ -193,7 +194,7 @@ function BulanLalu({ load, onRetry, label }: { load: Load<DashboardData>; onRetr
                         <KeyValues items={[
                             ["Bruto", <span key="b">{formatRp(r.incentive.total)}{sebab && <span className="fi-sub">{sebab}</span>}</span>],
                             ...itemsPph(r.incentive.total, k),
-                            ["Status", r.incentive.total > 0 || r.paymentStatus !== "belum" ? <StatusBayar status={r.paymentStatus} /> : <span className="fi-subtle">—</span>],
+                            ["Status", r.incentive.total > 0 || r.paymentStatus !== "belum" ? <StatusBayar status={r.paymentStatus} /> : <span className="fi-subtle">{KOSONG}</span>],
                         ]} />
                     </div>
                 );

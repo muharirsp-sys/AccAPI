@@ -3,7 +3,8 @@
  *   (No Claim per item, checklist final, catatan, nilai fix), ringkasan uang final, syarat Selesaikan (salinan cek klien kode lama),
  *   payload POST /final-claim action=complete (SAMA dengan completeFinalClaim kode lama), dan bagian form/baca di Object Page.
  * Caller: opc/peran/Klaim.tsx (DetailKlaim).
- * Dependensi: components/fiori/{core,interactive}, lib/off-program-control/workflow (hasMinimalFinalChecklist), lib/opc-ui, lib/promo-ui.
+ * Dependensi: components/fiori/{core,interactive}, lib/off-program-control/workflow (hasMinimalFinalChecklist), lib/opc-ui, lib/promo-ui,
+ *   lib/tampil (KOSONG).
  * Main Functions: awalFinal, uangFinal, kekuranganFinal, payloadSelesai, perkiraanSelisih, BagianFinal.
  * Side Effects: Tidak ada; tulis dilakukan Klaim.tsx lewat dialog.
  */
@@ -14,6 +15,7 @@ import { FormField } from "@/components/fiori/interactive";
 import { hasMinimalFinalChecklist } from "@/lib/off-program-control/workflow";
 import { rupiah } from "@/lib/promo-ui";
 import { tanggalOpc, type BatchOpc, type ItemOpc } from "@/lib/opc-ui";
+import { KOSONG } from "@/lib/tampil";
 import type { DetailBatch } from "../Bersama";
 
 const CEKLIS = [
@@ -23,7 +25,7 @@ type KunciCeklis = (typeof CEKLIS)[number][0];
 export type CeklisFinal = Record<KunciCeklis, boolean> & { finalOthersText: string; finalCompletenessNote: string };
 export type IsianFinal = { refs: Record<string, string>; ceklis: Record<string, CeklisFinal>; catatan: string; nilaiFix: string };
 
-/** Nilai awal form dari detail (loadFinalDetail kode lama 5372–5398). */
+/** Nilai awal form dari detail (loadFinalDetail kode lama). */
 export function awalFinal({ batch, items }: DetailBatch): IsianFinal {
     return {
         refs: Object.fromEntries(items.map((i) => [i.id, i.noClaim || ""])),
@@ -44,7 +46,7 @@ const metode = (v: string | null) => {
 };
 const jumlah = (xs: ItemOpc[]) => xs.reduce((t, i) => t + Number(i.nominal || 0), 0);
 
-/** Ringkasan uang final (kode lama 5259–5291): total/transfer/tunai dari ringkasan server atau item; dibayar & sisa dari pembayaran. */
+/** Ringkasan uang final (kode lama): total/transfer/tunai dari ringkasan server atau item; dibayar & sisa dari pembayaran. */
 export function uangFinal({ batch, items, summary, paymentSummary }: DetailBatch) {
     const total = Number(summary?.totalNominal || jumlah(items));
     const dibayar = Number(paymentSummary?.totalPaid ?? batch.paidAmount ?? 0);
@@ -57,7 +59,7 @@ export function uangFinal({ batch, items, summary, paymentSummary }: DetailBatch
     };
 }
 
-/** Alasan Selesaikan belum bisa — urutan dan kalimat cek klien kode lama 5717–5758 (server memeriksa ulang). */
+/** Alasan Selesaikan belum bisa: urutan dan kalimat cek klien kode lama (server memeriksa ulang). */
 export function kekuranganFinal(data: DetailBatch, isian: IsianFinal): string[] {
     const kurang: string[] = [];
     if (uangFinal(data).sisa > 0) kurang.push("Pembayaran belum lunas, belum bisa disetujui Klaim.");
@@ -70,7 +72,7 @@ export function kekuranganFinal(data: DetailBatch, isian: IsianFinal): string[] 
 }
 
 /**
- * Body POST /final-claim action=complete — SAMA dengan completeFinalClaim kode lama 5760–5797, plus `alasanSendiri` (BL-10, #132):
+ * Body POST /final-claim action=complete: SAMA dengan completeFinalClaim kode lama, plus `alasanSendiri` (BL-10, #132):
  * layar Fiori SELALU mengirimnya (kosong bila pelaku bukan pembuat batch) supaya server tidak memakai jalur transisi tanpa alasan.
  */
 export function payloadSelesai(data: DetailBatch, isian: IsianFinal, alasanSendiri: string) {
@@ -99,7 +101,7 @@ export function perkiraanSelisih(dibayar: number, nilaiFix: string) {
     return Math.max(0, dibayar - (fix ?? dibayar));
 }
 
-const labelCeklis = (cl: Partial<Record<KunciCeklis, boolean | null>>) => CEKLIS.filter(([k]) => cl[k]).map(([, l]) => l).join(", ") || "–";
+const labelCeklis = (cl: Partial<Record<KunciCeklis, boolean | null>>) => CEKLIS.filter(([k]) => cl[k]).map(([, l]) => l).join(", ") || KOSONG;
 const periodeItem = (p: string | null) => {
     const [awal = "", akhir = ""] = String(p || "").split(" - ");
     return awal || akhir ? `${tanggalOpc(awal || null)} – ${tanggalOpc(akhir || null)}` : "";
@@ -119,7 +121,7 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
             ["Dibayar Keuangan", <span key="d" className="fi-tnum">{rupiah(u.dibayar)}</span>],
             ["Sisa pembayaran", <span key="s" className="fi-tnum">{rupiah(u.sisa)}</span>],
             ["Tanggal bayar", tanggalOpc(b.paymentDate)],
-            ["Catatan Keuangan", b.financeNote || "–"],
+            ["Catatan Keuangan", b.financeNote || KOSONG],
             ["Diajukan ke principal", tanggalOpc(b.claimSubmittedDate)],
             ["Deadline klaim", tanggalOpc(b.claimDeadline)],
         ]} />
@@ -127,11 +129,11 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
 
     if (!ubah) {
         const kolom: Column<ItemOpc>[] = [
-            { key: "surat", header: "No Surat", cell: (i) => <span className="fi-mono">{i.noSurat || "–"}</span> },
+            { key: "surat", header: "No Surat", cell: (i) => <span className="fi-mono">{i.noSurat || KOSONG}</span> },
             { key: "claim", header: "No Claim", cell: (i) => (i.noClaim ? <span className="fi-mono">{i.noClaim}</span> : "Belum ada") },
             { key: "ceklis", header: "Kelengkapan final", cell: (i) => labelCeklis(i) },
-            { key: "lain", header: "Keterangan lainnya", secondary: true, cell: (i) => i.finalOthersText || "–" },
-            { key: "catatan", header: "Catatan", secondary: true, cell: (i) => i.finalCompletenessNote || "–" },
+            { key: "lain", header: "Keterangan lainnya", secondary: true, cell: (i) => i.finalOthersText || KOSONG },
+            { key: "catatan", header: "Catatan", secondary: true, cell: (i) => i.finalCompletenessNote || KOSONG },
         ];
         return (
             <>
@@ -139,7 +141,7 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
                     {ringkas}
                     <KeyValues items={[
                         ["Nilai fix (realisasi klaim)", b.verifiedAmount != null ? <span className="fi-tnum">{rupiah(b.verifiedAmount)}</span> : "Belum diverifikasi"],
-                        ["Catatan verifikasi final", b.finalClaimNote || "–"],
+                        ["Catatan verifikasi final", b.finalClaimNote || KOSONG],
                     ]} />
                 </div>
                 <ResponsiveTable title="Hasil verifikasi final per item" columns={kolom} rows={data.items} rowKey={(i) => i.id}
@@ -173,7 +175,7 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
                         <li key={i.id} className="fi-sect-in" style={{ borderTop: "1px solid var(--line)" }}>
                             <div role="group" aria-label={`Item ${i.itemNo}`} style={{ display: "grid", gap: 10 }}>
                                 <p className="fi-small">
-                                    <b>Item {i.itemNo}</b> · <span className="fi-mono">{i.noSurat || "tanpa No Surat"}</span> · {i.toko || "–"} · <span className="fi-tnum">{rupiah(i.nominal)}</span>
+                                    <b>Item {i.itemNo}</b> · <span className="fi-mono">{i.noSurat || "tanpa No Surat"}</span> · {i.toko || KOSONG} · <span className="fi-tnum">{rupiah(i.nominal)}</span>
                                 </p>
                                 <p className="fi-small fi-subtle">
                                     {[i.namaProgram, periodeItem(i.periode), i.barang, i.caraBayar, i.type, i.deadline ? `deadline ${tanggalOpc(i.deadline)}` : ""].filter(Boolean).join(" · ")}
@@ -189,7 +191,8 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
                                     )}</FormField>
                                 </div>
                                 <div className="fi-field">
-                                    <span className="fi-label" id={idCek}>Kelengkapan final{i.noSurat && <span className="fi-req" aria-hidden>*</span>}</span>
+                                    {/* Grup checkbox tidak mengenal aria-required: wajibnya diucapkan lewat teks tersembunyi. */}
+                                    <span className="fi-label" id={idCek}>Kelengkapan final{i.noSurat && <><span className="fi-req" aria-hidden>*</span><span className="sr-only"> (wajib, minimal satu)</span></>}</span>
                                     <div role="group" aria-labelledby={idCek} className="fi-btnrow">
                                         {CEKLIS.map(([k, label]) => (
                                             <label key={k} className="fi-check">
@@ -214,10 +217,11 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
                         <b className="fi-tnum">{rupiah(u.dibayar)}</b>
                     </div>
                     <FormField label="Nilai fix (isi bila berbeda)"
-                        help="Isi bila realisasi klaim berbeda dari total yang sudah dibayar Keuangan; kosongkan bila sama persis. Selisih masuk Data Selisih dan dikembalikan SPV/SM.">
+                        help={`Isi bila realisasi klaim berbeda dari total yang sudah dibayar Keuangan. Kosong berarti sama dengan ${rupiah(u.dibayar)}. Selisih masuk Data Selisih dan dikembalikan SPV/SM.`}>
                         {(a) => (
+                            // Roda mouse tidak boleh mengubah nilai yang menentukan selisih: isian dilepas fokusnya saat digulir.
                             <input {...a} className="fi-input fi-tnum" type="number" min={0} inputMode="numeric" value={isian.nilaiFix}
-                                placeholder={`Kosong = sama dengan ${rupiah(u.dibayar)}`} onChange={(e) => { const v = e.target.value; ubah((x) => ({ ...x, nilaiFix: v })); }} />
+                                onWheel={(e) => e.currentTarget.blur()} onChange={(e) => { const v = e.target.value; ubah((x) => ({ ...x, nilaiFix: v })); }} />
                         )}
                     </FormField>
                 </div>

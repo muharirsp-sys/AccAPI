@@ -5,7 +5,7 @@
  * Caller: app/(dashboard)/faktur/page.tsx (permKeys dari server). Tautan masuk: Order Masuk `?q=<nomor faktur>` (isi awal pencarian),
  *   Realisasi Summary `?invoiceId=&databaseId=` (detail langsung, kepala dari detail).
  * Dependensi: GET /api/faktur (daftar cache), GET /api/faktur/[id] (detail live Accurate, opsional `?databaseId=`); components/fiori/*;
- *   lib/promo-ui (rupiah); form-kontrol/lapangan (ambilJson).
+ *   lib/promo-ui (rupiah); lib/tampil (KOSONG, waktuWita); form-kontrol/lapangan (ambilJson).
  * Main Functions: FakturPenjualan, ObjekFaktur, baca, sebab.
  * Side Effects: HTTP baca saja; window.history.replaceState untuk `?id=`/`?q=` (Next ikut memperbarui useSearchParams tanpa memuat ulang
  *   rute server). Logic BL-22/35/36 belum ada di server → varian berlabel.
@@ -23,6 +23,7 @@ import {
 import { FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { salesFaktur, type FakturDetail, type FakturItem } from "@/lib/accurate-invoice";
 import { rupiah } from "@/lib/promo-ui";
+import { KOSONG, waktuWita as waktuTampil } from "@/lib/tampil";
 import { ambilJson, type Jawaban } from "../form-kontrol/lapangan";
 
 type Baris = {
@@ -34,13 +35,10 @@ type Daftar = { rows: Baris[]; hasMore: boolean; pageSize: number };
 type Pilihan = { id: number; databaseId?: string };
 type BarisItem = FakturItem & { urut: number };
 
-const dash = (v: string | null | undefined) => (v && v.trim() ? v.trim() : "—");
+const dash = (v: string | null | undefined) => (v && v.trim() ? v.trim() : KOSONG);
 const angka = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
-const jamWita = new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Makassar" });
-const waktuWita = (iso: string | null) => {
-    const d = iso ? new Date(iso) : null;
-    return d && !Number.isNaN(d.getTime()) ? `${jamWita.format(d)} WITA` : "—";
-};
+/** "06/10/2026 10.10 WITA" (format bersama lib/tampil); kosong → KOSONG. */
+const waktuWita = (iso: string | null) => { const t = waktuTampil(iso); return t === KOSONG ? KOSONG : `${t} WITA`; };
 /** Sama dengan validasi tautan realisasi lama: bilangan bulat positif yang aman. */
 const idSah = (v: string | null) => (v && /^[1-9]\d*$/.test(v) && Number.isSafeInteger(Number(v)) ? Number(v) : null);
 const PESAN_ANTREAN = "Akun Anda tidak berhak membuka Antrean Faktur.";
@@ -48,7 +46,7 @@ const PESAN_ANTREAN = "Akun Anda tidak berhak membuka Antrean Faktur.";
 /** Sales faktur: kepala, atau dari baris bila kepala kosong (faktur Antrean Faktur menyimpan sales per baris). */
 function teksSales(d: FakturDetail): string {
     const s = salesFaktur(d);
-    return s.sumber === "kepala" ? s.teks : s.sumber === "baris" ? `${s.teks} (per baris; tidak tercatat di kepala faktur)` : "— (tidak tercatat di kepala maupun baris faktur)";
+    return s.sumber === "kepala" ? s.teks : s.sumber === "baris" ? `${s.teks} (per baris; tidak tercatat di kepala faktur)` : "Tidak tercatat di kepala maupun baris faktur";
 }
 
 /** Kalimat galat baca — tanpa kode status mentah dan tanpa HTML halaman galat proxy. Pesan server (mis. penolakan Accurate) tampil apa adanya. */
@@ -85,7 +83,7 @@ const KOLOM_BARANG: Column<BarisItem>[] = [
     { key: "itemName", header: "Nama barang", cell: (i) => dash(i.itemName) },
     { key: "quantity", header: "Qty", align: "end", cell: (i) => <span className="fi-tnum">{angka.format(i.quantity)} {i.unit}</span> },
     { key: "unitPrice", header: "Harga", align: "end", cell: (i) => <span className="fi-tnum">{rupiah(i.unitPrice)}</span> },
-    { key: "discount", header: "Diskon", align: "end", cell: (i) => <span className="fi-tnum">{i.discount ? rupiah(i.discount) : "—"}</span> },
+    { key: "discount", header: "Diskon", align: "end", cell: (i) => <span className="fi-tnum">{i.discount ? rupiah(i.discount) : KOSONG}</span> },
     { key: "total", header: "Total", align: "end", cell: (i) => <span className="fi-tnum">{rupiah(i.total)}</span> },
 ];
 
@@ -171,7 +169,7 @@ export default function FakturPenjualan({ permKeys }: { permKeys: string[] }) {
                     onClick={() => setPage((p) => p + 1)}>Berikutnya<ChevronRight className="fi-icon" aria-hidden /></Button>
             </div>
             <div className="fi-sect-in">
-                <VariantNote bl="BL-36">Hari ini daftar hanya bisa dicari menurut nomor atau pelanggan dan dibatasi ke nomor INV. Usulan: saringan periode, status (termasuk Dihapus di Accurate), dan asal faktur, tersimpan per pengguna.</VariantNote>
+                <VariantNote bl="BL-36">Hari ini daftar hanya bisa dicari menurut nomor atau pelanggan dan dibatasi ke nomor INV. Saringan periode, status (termasuk Dihapus di Accurate), dan asal faktur yang tersimpan per pengguna belum ada.</VariantNote>
             </div>
         </>
     );
@@ -225,8 +223,8 @@ function ObjekFaktur({ pilihan, baris, bolehAntrean }: { pilihan: Pilihan; baris
         { label: "Total", value: rupiah(baris.totalAmount ?? 0) },
         // Terisi dari primeOwing lewat cron/webhook. Faktur lama yang belum kena sync sejak 2026-08-19 masih null — tampilkan "—",
         // jangan Rp 0 yang menyesatkan sebagai lunas.
-        { label: "Sisa tagihan", value: baris.outstanding === null || baris.outstanding === undefined ? "—" : rupiah(baris.outstanding) },
-        { label: "Umur", value: baris.age === null || baris.age === undefined ? "—" : `${baris.age} hari` },
+        { label: "Sisa tagihan", value: baris.outstanding === null || baris.outstanding === undefined ? KOSONG : rupiah(baris.outstanding) },
+        { label: "Umur", value: baris.age === null || baris.age === undefined ? KOSONG : `${baris.age} hari` },
     ] : d ? [
         { label: "Pelanggan", value: <>{dash(d.customerName)} · <span className="fi-mono">{dash(d.customerNo)}</span></> },
         { label: "Tanggal", value: dash(d.transDate) },
@@ -261,9 +259,6 @@ function ObjekFaktur({ pilihan, baris, bolehAntrean }: { pilihan: Pilihan; baris
                     {galat ? (
                         <>
                             <ErrorState title="Barang dan ringkasan gagal diambil dari Accurate" message={detail.error} onRetry={muat} />
-                            <div className="fi-sect-in">
-                                <VariantNote bl="BL-22">Hari ini faktur yang sudah dihapus di Accurate tetap ada di daftar, dan detailnya gagal dengan pesan Accurate seperti di atas. Usulan: label Dihapus di Accurate di daftar dan di sini; faktur itu tidak dihitung di piutang, verifikasi balik, dan Rekap Promo.</VariantNote>
-                            </div>
                         </>
                     ) : (
                         <ResponsiveTable title="Barang faktur" columns={KOLOM_BARANG} rows={items} rowKey={(i) => `${i.itemNo}-${i.urut}`}
@@ -284,7 +279,7 @@ function ObjekFaktur({ pilihan, baris, bolehAntrean }: { pilihan: Pilihan; baris
                                     ["Subtotal", rupiah(d.subTotal)], ["Diskon", rupiah(d.totalDiscount)], ["Pajak", rupiah(d.tax)],
                                     ["Total", rupiah(d.totalAmount)], ["Dibayar", rupiah(d.paid)], ["Sisa tagihan", rupiah(d.owing)],
                                 ]} />
-                            ) : <p className="fi-small fi-subtle">Belum terbaca — detail faktur gagal diambil dari Accurate.</p>}
+                            ) : <p className="fi-small fi-subtle">Belum terbaca. Detail faktur gagal diambil dari Accurate.</p>}
                     </div>
                 </Section>
 
@@ -295,7 +290,12 @@ function ObjekFaktur({ pilihan, baris, bolehAntrean }: { pilihan: Pilihan; baris
                         <span role="listitem" className="fi-dnode" data-off={!lunas && !(d && d.paid > 0)}><b>Pelunasan</b><span>{pelunasan}</span></span>
                     </div>
                     <div className="fi-sect-in">
-                        <VariantNote bl="BL-35">Hari ini asal faktur (Order Sales, Order Masuk, atau SO Order Principal lewat Antrean Faktur) belum terbaca di layar ini. Usulan: alur menaut ke order asal dan baris antreannya lewat kunci antrean yang tersimpan di faktur, sampai pelunasannya.</VariantNote>
+                        {/* Satu catatan varian di Object Page (audit No 80); BL-22 ikut bila detail gagal dibaca. */}
+                        <VariantNote bl={galat ? "BL-22, BL-35" : "BL-35"}>
+                            Hari ini asal faktur (Order Sales, Order Masuk, atau SO Order Principal lewat Antrean Faktur) belum terbaca di layar ini, dan
+                            alurnya belum menaut ke order asal sampai pelunasan.
+                            {galat && " Faktur yang sudah dihapus di Accurate tetap ada di daftar dan detailnya gagal dengan pesan Accurate seperti di atas; belum ada label Dihapus di Accurate."}
+                        </VariantNote>
                         <div><TautanAntrean boleh={bolehAntrean}>Buka Antrean Faktur</TautanAntrean></div>
                     </div>
                 </Section>
@@ -310,7 +310,8 @@ function ObjekFaktur({ pilihan, baris, bolehAntrean }: { pilihan: Pilihan; baris
                             ["Bayar terakhir", dariDetail(d?.lastPaymentDate)],
                             ["Keterangan", dariDetail(d?.description)],
                             // Dasar urutan daftar. Hanya terisi untuk faktur yang masuk lewat webhook — list.do tidak mengirim createDate,
-                            // jadi faktur lama menampilkan "—".
+                            // jadi faktur lama menampilkan KOSONG.
+
                             ...(baris ? [["Dibuat di Accurate", waktuWita(baris.createdAt)] as [string, ReactNode]] : []),
                             // BUKAN waktu faktur dibuat: nilainya ikut berubah saat faktur dilunasi.
                             ...(baris ? [["Perubahan terakhir", waktuWita(baris.lastUpdateAt)] as [string, ReactNode]] : []),

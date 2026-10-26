@@ -5,12 +5,12 @@
  *   izin, verifikasi balik dan batch belum diantrekan dimuat terpisah. Galat tidak pernah tampil sebagai kosong.
  * Caller: app/(dashboard)/antrean-faktur/page.tsx (permKeys dari server).
  * Dependensi: GET /api/invoice-outbox; ./Dialog (semua aksi tulis), ./VerifikasiBalik, ./bersama; components/fiori/*;
- *   lib/rekapan-nota/ui (ambil, jamWita, tanggalPendek).
+ *   lib/rekapan-nota/ui (ambil); lib/tampil (KOSONG, tanggalWita, waktuWita).
  * Main Functions: AntreanFaktur.
  * Side Effects: HTTP baca; aksi tulis hanya lewat dialog di ./Dialog.
  *
- * Laporan OM bukan halaman terpisah: kartu "Lewat 2 jam" pada layar ini adalah laporannya — daftar yang sama, isian yang sama
- * (faktur, sales, jenis masalah, umurnya), dan tidak ada angka kedua yang bisa berbeda dari layar admin.
+ * Laporan OM bukan halaman terpisah: kartu "Lewat N jam" (N dari `escalateAfterMinutes` server) pada layar ini adalah laporannya —
+ * daftar yang sama, isian yang sama, dan tidak ada angka kedua yang bisa berbeda dari layar admin.
  * Umur dihitung sejak masuk antrean (server), bukan sejak percobaan terakhir: Antre ulang tidak menyetel ulang jam eskalasi.
  */
 "use client";
@@ -22,7 +22,8 @@ import {
     Button, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, type Column, type Tone,
 } from "@/components/fiori/core";
 import { FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
-import { ambil, jamWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { ambil } from "@/lib/rekapan-nota/ui";
+import { KOSONG, tanggalWita, waktuWita } from "@/lib/tampil";
 import {
     SAPU_MENIT, STATUS, hariIniWita, kalimatAccurate, nomorSo, principalDari, usia,
     type Antrean, type Batch, type Row, type State,
@@ -35,6 +36,8 @@ type DialogAktif = { jenis: "kirim" } | { jenis: "selesai" | "antreUlang" | "bua
 type Kiriman = { hasil: HasilKirim; urutan: OrderPratinjau[]; tanggal: string; jam: string };
 
 const MAKS_KIRIM = 50;
+/** "2 jam" / "90 menit" dari ambang eskalasi server; sebelum antrean terbaca: "batas". */
+const ambang = (menit: number | undefined) => (menit === undefined ? "batas" : menit % 60 === 0 ? `${menit / 60} jam` : `${menit} menit`);
 
 function kueri(saring: Saring) {
     if (saring === "menggantung") return "";
@@ -47,18 +50,19 @@ function hasilOrder(k: Kiriman, orderId: string): { tone: Tone; label: string; t
     // Tidak ada di hasil: berhenti setelah tidak pasti (tetap antre), atau sudah tidak Antre saat Kirim (dibuang/diambil proses lain).
     if (!r) return { tone: "neu", label: "Tidak dikirim", teks: k.hasil.unknown
         ? "Pengiriman berhenti setelah hasil tidak pasti; tetap antre."
-        : "Baris tidak lagi Antre saat Kirim — muat ulang." };
+        : "Baris tidak lagi Antre saat Kirim. Muat ulang." };
     if (r.state === "posted") {
         const v = k.hasil.verified.find((x) => x.orderId === orderId);
         const no = r.number || r.accurateId || "";
         if (v?.status === "cocok") return { tone: "pos", label: "Terposting", teks: `${no} · cocok per baris dengan yang dikirim.` };
-        if (v?.status === "selisih") return { tone: "neg", label: "Terposting, berselisih", teks: `${no} · isinya berbeda dengan yang dikirim — lihat Verifikasi balik.` };
+        if (v?.status === "selisih") return { tone: "neg", label: "Terposting, berselisih", teks: `${no} · isinya berbeda dengan yang dikirim; lihat Verifikasi balik.` };
         return { tone: "warn", label: "Terposting, belum terbaca", teks: `${no} · ${v?.reason || "belum bisa dibaca balik dari Accurate"}.` };
     }
     if (r.state === "rejected") return { tone: "neg", label: "Ditolak", teks: kalimatAccurate(r.error ?? "") || "Accurate menolak." };
     if (r.state === "unknown") return { tone: "warn", label: "Tidak pasti", teks: `${kalimatAccurate(r.error ?? "")} Jangan kirim ulang; selesaikan dari baris di antrean.`.trim() };
-    if (r.state === "dilewati") return { tone: "neu", label: "Dilewati", teks: r.error || "berubah sejak pratinjau — muat ulang." };
-    return { tone: "neu", label: r.state, teks: r.error ?? "" };
+    if (r.state === "dilewati") return { tone: "neu", label: "Dilewati", teks: r.error || "berubah sejak pratinjau; muat ulang." };
+    // Status di luar daftar tidak ditampilkan mentah (kode tetap di data jawaban).
+    return { tone: "neu", label: "Status tidak dikenal", teks: kalimatAccurate(r.error ?? "") };
 }
 
 function PanelKiriman({ k, onClose }: { k: Kiriman; onClose: () => void }) {
@@ -68,13 +72,13 @@ function PanelKiriman({ k, onClose }: { k: Kiriman; onClose: () => void }) {
         ...h.results.filter((r) => !k.urutan.some((o) => o.orderId === r.orderId)).map((r) => ({ orderId: r.orderId, so: r.orderId }))];
     const [tone, judul]: [Exclude<Tone, "neu">, string] = h.unknown > 0 ? ["warn", "Pengiriman berhenti: ada faktur yang hasilnya tidak pasti."]
         : h.mismatched > 0 ? ["neg", "Ada faktur terkirim yang isinya berselisih dengan yang dikirim."]
-            : h.rejected > 0 ? ["warn", "Sebagian ditolak Accurate — perbaiki penyebabnya lalu Antre ulang."]
+            : h.rejected > 0 ? ["warn", "Sebagian ditolak Accurate. Perbaiki penyebabnya lalu Antre ulang."]
             : h.results.length === 0 ? ["warn", "Tidak ada faktur yang terkirim."]
                 : h.sent > 0 && h.sent === h.verifiedOk && h.rejected === 0 && dilewati === 0 ? ["pos", "Faktur terkirim dan terverifikasi cocok per baris."]
-                    : ["info", "Kiriman selesai — tidak semua terposting dan cocok; periksa hasil per baris."];
+                    : ["info", "Kiriman selesai. Tidak semua terposting dan cocok; periksa hasil per baris."];
     return (
-        <Section id="hasil-kiriman" title={`Hasil kiriman ${jamWita(k.jam)} WITA`}
-            subtitle={`oleh ${h.sentBy || "Anda"} · tanggal faktur ${k.tanggal ? tanggalPendek(k.tanggal) : "= tanggal SO"}`}
+        <Section id="hasil-kiriman" title={`Hasil kiriman ${waktuWita(k.jam)} WITA`}
+            subtitle={`oleh ${h.sentBy || "Anda"} · tanggal faktur ${k.tanggal ? tanggalWita(k.tanggal) : "= tanggal SO"}`}
             actions={<Button variant="tertiary" onClick={onClose}>Tutup hasil</Button>}>
             <div className="fi-sect-in">
                 <MessageStrip tone={tone} title={judul}>
@@ -138,12 +142,12 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
     const nKirim = dipilihSah.length || Math.min(antre, MAKS_KIRIM);
 
     const alasanKirim = !bolehUbah ? "Hanya petugas berizin ubah order yang boleh mengirim faktur ke Accurate"
-        : terkunci ? "Hasil tindakan terakhir belum pasti — tunggu antrean selesai dimuat ulang"
+        : terkunci ? "Hasil tindakan terakhir belum pasti; tunggu antrean selesai dimuat ulang"
             : list.status === "galat" ? "Muat ulang dulu: antrean belum terbaru"
                 : list.status === "memuat" ? "Memuat antrean…"
                     : antre === 0 ? "Tidak ada faktur antre" : "";
     const alasanTulis = !bolehUbah ? "Hanya petugas berizin ubah order yang boleh mengubah antrean" : !segar ? "Muat ulang dulu: antrean belum terbaru" : "";
-    const alasanSelesai = !bolehSelesai ? "Hanya pemegang izin Selesaikan posting tidak pasti yang boleh menyelesaikan — minta IT Support menambahkannya ke grup Anda"
+    const alasanSelesai = !bolehSelesai ? "Hanya pemegang izin Selesaikan posting tidak pasti yang boleh menyelesaikan; minta IT Support menambahkannya ke grup Anda"
         : !segar ? "Muat ulang dulu: antrean belum terbaru" : "";
 
     // Saringan berubah = pilihan dikosongkan (yang dipilih selalu yang terlihat).
@@ -172,26 +176,29 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
     );
     const macet = (r: Row) => r.state === "sending" && data !== undefined && data.diambil - Date.parse(r.updatedAt) > SAPU_MENIT * 60_000;
     const badge = (r: Row) => <StatusBadge tone={STATUS[r.state].tone} busy={r.state === "sending"}>{STATUS[r.state].label}</StatusBadge>;
+    // Ambang eskalasi dari jawaban server (bukan angka tetap di layar); dipakai di kartu, kolom, strip, dan daftar ponsel.
+    const lewat = `lewat ${ambang(data?.escalateAfterMinutes)}`;
+    const Lewat = `Lewat ${ambang(data?.escalateAfterMinutes)}`;
 
     const kolom: Column<Row>[] = [
         { key: "so", header: "SO / sumber", cell: (r) => <><span className="fi-mono">{nomorSo(r)}</span><span className="fi-sub">{principalDari(r.orderId)} · {r.source}{r.accurateNumber ? ` · ${r.accurateNumber}` : ""}</span></> },
-        { key: "outlet", header: "Outlet", secondary: true, cell: (r) => <>{r.outlet || "–"}<span className="fi-sub">{r.customerNo}{r.salesman ? ` · ${r.salesman}` : ""}</span></> },
-        { key: "tgl", header: "Tgl SO", secondary: true, cell: (r) => <span className="fi-tnum">{tanggalPendek(r.orderDate)}</span> },
-        { key: "status", header: "Status", cell: (r) => <>{badge(r)}{macet(r) && <span className="fi-sub fi-why">lebih dari {SAPU_MENIT} menit — menjadi Tidak pasti otomatis</span>}</> },
-        { key: "umur", header: "Umur", cell: (r) => r.state === "posted" ? "–" : <>
+        { key: "outlet", header: "Outlet", secondary: true, cell: (r) => <>{r.outlet || KOSONG}<span className="fi-sub">{r.customerNo}{r.salesman ? ` · ${r.salesman}` : ""}</span></> },
+        { key: "tgl", header: "Tgl SO", secondary: true, cell: (r) => <span className="fi-tnum">{tanggalWita(r.orderDate)}</span> },
+        { key: "status", header: "Status", cell: (r) => <>{badge(r)}{macet(r) && <span className="fi-sub fi-why">lebih dari {SAPU_MENIT} menit, menjadi Tidak pasti otomatis</span>}</> },
+        { key: "umur", header: "Umur", cell: (r) => r.state === "posted" ? KOSONG : <>
             <span className={`fi-tnum${r.overdue ? " fi-why" : ""}`} style={{ whiteSpace: "nowrap" }}>{usia(r.ageMinutes)}</span>
-            {r.overdue && <span className="fi-sub fi-why">lewat 2 jam</span>}
+            {r.overdue && <span className="fi-sub fi-why">{lewat}</span>}
             {r.attempts > 0 && <span className="fi-sub">dicoba {r.attempts}×</span>}
         </> },
-        { key: "jawaban", header: "Jawaban Accurate", secondary: true, cell: (r) => <span className="fi-small">{kalimatAccurate(r.lastError) || "–"}</span> },
+        { key: "jawaban", header: "Jawaban Accurate", secondary: true, cell: (r) => <span className="fi-small">{kalimatAccurate(r.lastError) || KOSONG}</span> },
         { key: "aksi", header: "Tindakan", align: "end", cell: aksiBaris },
     ];
     const kolomBatch: Column<Batch>[] = [
         { key: "berkas", header: "Berkas", cell: (b) => <>{b.fileName}<span className="fi-sub">{b.principal}</span></> },
         { key: "baris", header: "Baris", align: "end", cell: (b) => <span className="fi-tnum">{b.lineCount}</span> },
         { key: "tinjau", header: "Perlu ditinjau", align: "end", cell: (b) => <span className="fi-tnum fi-why">{b.reviewCount}</span> },
-        { key: "umur", header: "Umur", cell: (b) => b.overdue ? <StatusBadge tone="warn">{usia(b.ageMinutes)} · lewat 2 jam</StatusBadge> : <span className="fi-tnum">{usia(b.ageMinutes)}</span> },
-        { key: "unggah", header: "Diunggah", secondary: true, cell: (b) => `${jamWita(b.uploadedAt)}${b.uploadedBy ? ` · ${b.uploadedBy}` : ""}` },
+        { key: "umur", header: "Umur", cell: (b) => b.overdue ? <StatusBadge tone="warn">{usia(b.ageMinutes)} · {lewat}</StatusBadge> : <span className="fi-tnum">{usia(b.ageMinutes)}</span> },
+        { key: "unggah", header: "Diunggah", secondary: true, cell: (b) => `${waktuWita(b.uploadedAt)} WITA${b.uploadedBy ? ` · ${b.uploadedBy}` : ""}` },
         { key: "buka", header: "Tindakan", align: "end", cell: () => <Link className="fi-btn fi-btn--tertiary" href="/principal-order">Buka Order Principal</Link> },
     ];
 
@@ -201,7 +208,7 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
         { key: "sending", label: "Mengirim", nilai: data ? ringkas.sending ?? 0 : undefined },
         { key: "unknown", label: "Tidak pasti", nilai: data ? ringkas.unknown ?? 0 : undefined, tone: ringkas.unknown ? "warn" : undefined },
         { key: "rejected", label: "Ditolak", nilai: data ? ringkas.rejected ?? 0 : undefined, tone: ringkas.rejected ? "neg" : undefined },
-        { key: "lewat", label: "Lewat 2 jam", nilai: data?.overdue, tone: data?.overdue ? "warn" : undefined, kecil: data ? `${data.overdueQueue} faktur · ${data.overdueBatches} batch` : undefined },
+        { key: "lewat", label: Lewat, nilai: data?.overdue, tone: data?.overdue ? "warn" : undefined, kecil: data ? `${data.overdueQueue} faktur · ${data.overdueBatches} batch` : undefined },
         { key: "posted", label: "Terposting", nilai: data ? ringkas.posted ?? 0 : undefined, kecil: "semua waktu" },
     ];
     const label = KARTU.find((k) => k.key === saring)?.label ?? "";
@@ -220,13 +227,13 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
                     <span className="fi-spacer" />
                     <Button icon={<RefreshCw className="fi-icon" aria-hidden />} busy={list.status === "memuat" && Boolean(data)} onClick={muatSemua}>Muat ulang</Button>
                 </div>
-                <p>Faktur yang menunggu dikirim ke Accurate, ditolak, atau belum pasti hasilnya. Umur dihitung sejak masuk antrean; lewat {data ? data.escalateAfterMinutes / 60 : 2} jam masuk laporan OM.</p>
+                <p>Faktur yang menunggu dikirim ke Accurate, ditolak, atau belum pasti hasilnya. Umur dihitung sejak masuk antrean; {lewat} masuk laporan OM.</p>
             </header>
 
             {!bolehUbah && <MessageStrip tone="info" title="Anda hanya bisa melihat antrean.">Mengirim, antre ulang, dan buang butuh izin ubah order.</MessageStrip>}
             {!bolehSelesai && (ringkas.unknown ?? 0) > 0 && (
                 <MessageStrip tone="warn" title={`${ringkas.unknown} faktur Tidak pasti menunggu penyelesaian.`}>
-                    Menyelesaikannya butuh izin Selesaikan posting tidak pasti — minta IT Support menambahkannya ke grup yang berwenang.
+                    Menyelesaikannya butuh izin Selesaikan posting tidak pasti; minta IT Support menambahkannya ke grup yang berwenang.
                 </MessageStrip>
             )}
             {tidakPasti && <MessageStrip tone="warn" title="Hasil tindakan terakhir belum pasti." onClose={() => setTidakPasti(null)}>{tidakPasti}</MessageStrip>}
@@ -236,9 +243,9 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
                 </MessageStrip>
             )}
             {data && data.overdue > 0 && saring !== "lewat" && (
-                <MessageStrip tone="warn" title={`${data.overdue} masalah lewat 2 jam:`}>
+                <MessageStrip tone="warn" title={`${data.overdue} masalah ${lewat}:`}>
                     {data.overdueQueue} faktur di antrean{data.overdueBatches > 0 ? ` dan ${data.overdueBatches} batch belum diantrekan (${data.reviewLinesOverdue} baris perlu ditinjau)` : ""}. Masuk laporan OM.{" "}
-                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => ganti("lewat")}>Tampilkan saja yang lewat 2 jam</button>
+                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => ganti("lewat")}>Tampilkan saja yang {lewat}</button>
                 </MessageStrip>
             )}
             {kiriman && <PanelKiriman k={kiriman} onClose={() => setKiriman(null)} />}
@@ -249,7 +256,7 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
                     {KARTU.map((k) => (
                         <button key={k.key} type="button" className="fi-kc" aria-pressed={saring === k.key} data-tone={k.tone} onClick={() => ganti(k.key)}>
                             <span>{k.label}</span>
-                            <b>{k.nilai ?? "–"}</b>
+                            <b>{k.nilai ?? KOSONG}</b>
                             {(k.kecil || (!data && list.status === "galat")) && <small>{!data && list.status === "galat" ? "gagal dimuat" : k.kecil}</small>}
                         </button>
                     ))}
@@ -287,14 +294,14 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
                 mobileItem={(r) => (
                     <div>
                         <ListItem doc={nomorSo(r)} amount={r.state === "posted" ? undefined : usia(r.ageMinutes)} title={r.outlet || r.customerNo}
-                            meta={`${principalDari(r.orderId)} · ${tanggalPendek(r.orderDate)}${r.overdue ? " · lewat 2 jam" : ""}${r.lastError ? ` · ${kalimatAccurate(r.lastError)}` : ""}`}
+                            meta={`${principalDari(r.orderId)} · ${tanggalWita(r.orderDate)}${r.overdue ? ` · ${lewat}` : ""}${r.lastError ? ` · ${kalimatAccurate(r.lastError)}` : ""}`}
                             badge={badge(r)} />
                         <div style={{ padding: "0 14px 10px" }}>{aksiBaris(r)}</div>
                     </div>
                 )} />
             <p className="fi-small fi-subtle">
                 Hanya baris Antre yang bisa dipilih; tanpa pilihan, Kirim mengambil yang antre paling lama (maks. {MAKS_KIRIM} per tekan). Tidak pasti berarti
-                Accurate tidak memberi jawaban yang pasti — fakturnya mungkin sudah terbentuk, jadi baris itu tidak pernah dikirim ulang; selesaikan lewat pencarian.
+                Accurate tidak memberi jawaban yang pasti; fakturnya mungkin sudah terbentuk, jadi baris itu tidak pernah dikirim ulang; selesaikan lewat pencarian.
                 Mengirim lebih dari {SAPU_MENIT} menit otomatis menjadi Tidak pasti.
             </p>
 
@@ -304,7 +311,8 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
                 <ResponsiveTable<Batch> title="Batch belum diantrekan" count={data.pendingBatches.length} columns={kolomBatch} rows={data.pendingBatches} rowKey={(b) => b.id}
                     empty={{ title: "Tidak ada batch tertahan" }}
                     mobileItem={(b) => <ListItem href="/principal-order" doc={b.fileName} amount={usia(b.ageMinutes)} title={`${b.principal} · ${b.lineCount} baris · ${b.reviewCount} perlu ditinjau`}
-                        meta={`diunggah ${jamWita(b.uploadedAt)}`} badge={b.overdue ? <StatusBadge tone="warn">Lewat 2 jam</StatusBadge> : undefined} />} />
+                        meta={`diunggah ${waktuWita(b.uploadedAt)} WITA`} badge={b.overdue ? <StatusBadge tone="warn">{Lewat}</StatusBadge> : undefined} />} />
+
             )}
 
             {dialog?.jenis === "kirim" && (

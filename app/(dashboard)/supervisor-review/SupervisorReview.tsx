@@ -1,7 +1,7 @@
 /*
  * Tujuan: Layar Supervisor Review (SR-2): ringkasan harian per salesman untuk satu tanggal WITA. Desktop = tabel per cabang (kolom salesman
  *   tetap saat digulir menyamping) + baris TOTAL cabang, lalu Peta (kiri) dan rincian kunjungan salesman terpilih (kanan). Ponsel (< 1024 px) =
- *   kartu per salesman; ketuk kartu → rincian dengan tab Kunjungan | Peta. Tombol WhatsApp per salesman (waUrl dari server).
+ *   kartu per salesman; ketuk kartu → rincian dengan tombol Kunjungan | Peta (segmen aria-pressed). Tombol WhatsApp per salesman (waUrl dari server).
  *   Data tak lengkap TERLIHAT: memuat / galat bisa diulang / kosong berpesan / "N faktur cabang X belum terbaca rinciannya" / "N toko JKS belum punya koordinat".
  * Caller: app/(dashboard)/supervisor-review/page.tsx.
  * Dependensi: GET /api/supervisor-review (kontrak lib/supervisor-review/kontrak.ts), ./bersama, ./Rincian, ./Peta (SR-3, dimuat dinamis), components/fiori.
@@ -16,7 +16,7 @@ import { ChevronLeft, RefreshCw } from "lucide-react";
 import { Button, EmptyState, ErrorState, ListItem, MessageStrip, Section, Skeleton } from "@/components/fiori/core";
 import { FormField, useLoad } from "@/components/fiori/interactive";
 import type { BarisSalesman } from "@/lib/supervisor-review/kontrak";
-import { jamWita } from "../form-kontrol/shared";
+import { waktuWita } from "@/lib/tampil";
 import { angka, bacaSupervisorReview, KOLOM, kunciBaris, namaBaris, rp, tanggalPanjang, TANPA_RINCIAN } from "./bersama";
 import { DaftarKunjungan, KepalaSalesman, LabelStatus, Wa } from "./Rincian";
 
@@ -82,7 +82,7 @@ export default function SupervisorReview({ hariIni }: { hariIni: string }) {
                         </select>
                     )}
                 </FormField>
-                {h && <span className="fi-small fi-muted" aria-live="polite">{tanggalPanjang(h.tanggal)} · data per {jamWita(h.diperbaruiPada)} WITA</span>}
+                {h && <span className="fi-small fi-muted" aria-live="polite">{tanggalPanjang(h.tanggal)} · data per {waktuWita(h.diperbaruiPada)} WITA</span>}
             </div>
         </header>
     );
@@ -110,7 +110,7 @@ export default function SupervisorReview({ hariIni }: { hariIni: string }) {
             {belumTerbaca.length > 0 && (
                 <MessageStrip tone="warn" title="Faktur belum lengkap.">
                     <ul className="list-disc pl-5">
-                        {belumTerbaca.map((f) => <li key={f.cabang}>{angka(f.jumlah)} faktur cabang {f.cabang} belum terbaca rinciannya; angka Quantity, Item, dan Nilai cabang ini belum lengkap.</li>)}
+                        {belumTerbaca.map((f) => <li key={f.cabang}>{angka(f.jumlah)} faktur cabang {f.cabang} belum terbaca rinciannya; angka Jumlah, Item, dan Nilai cabang ini belum lengkap.</li>)}
                     </ul>
                 </MessageStrip>
             )}
@@ -182,8 +182,12 @@ export default function SupervisorReview({ hariIni }: { hariIni: string }) {
                             })}
                         </table>
                     </div>
+                    {h.salesman.some((b) => b.salesCode !== "" && !b.waUrl) && (
+                        <p className="fi-small fi-why" style={{ padding: "8px 16px" }}>WhatsApp nonaktif untuk salesman yang No HP-nya belum diisi. Admin mengisinya di tab Hierarki Sales.</p>
+                    )}
                 </Section>
-                <div className="grid grid-cols-2 gap-3">
+                {/* Bertumpuk di bawah 1280 px: rincian 8 kolom dan peta masing-masing butuh lebar penuh. */}
+                <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
                     <Section title="Peta kunjungan" subtitle={kodePeta ? namaBaris(terpilih!) : "semua salesman dalam cakupan"}
                         actions={terpilih && <Button variant="tertiary" onClick={() => pilihSalesman(null)}>Lihat semua salesman</Button>}>
                         {petaUntuk}
@@ -203,12 +207,15 @@ export default function SupervisorReview({ hariIni }: { hariIni: string }) {
                 <section className="fi-sect" aria-label={`Rincian ${namaBaris(terpilih)}`}>
                     <KepalaSalesman b={terpilih} judulRef={fokusJudul} />
                     <div className="px-4 py-3"><dl className="fi-attrs">{KOLOM.map((c) => <div key={c.key}><dt>{c.header}</dt><dd>{c.teks(terpilih)}</dd></div>)}</dl></div>
-                    <div role="tablist" aria-label="Rincian salesman" className="flex gap-2 px-4 pb-3">
-                        {(["kunjungan", "peta"] as const).map((t) => (
-                            <Button key={t} role="tab" aria-selected={tab === t} variant={tab === t ? "primary" : "secondary"} onClick={() => setTab(t)}>{t === "kunjungan" ? "Kunjungan" : "Peta"}</Button>
-                        ))}
+                    {/* Dua tampilan bergantian: tombol tekan (aria-pressed), bukan pola tab ARIA tanpa panah dan id penghubung. */}
+                    <div className="px-4 pb-3">
+                        <div className="fi-segs" role="group" aria-label="Tampilan rincian salesman">
+                            {(["kunjungan", "peta"] as const).map((t) => (
+                                <button key={t} type="button" aria-pressed={tab === t} onClick={() => setTab(t)}>{t === "kunjungan" ? "Kunjungan" : "Peta"}</button>
+                            ))}
+                        </div>
                     </div>
-                    <div role="tabpanel" aria-label={tab === "kunjungan" ? "Kunjungan" : "Peta"}>
+                    <div role="region" aria-label={tab === "kunjungan" ? "Kunjungan" : "Peta"}>
                         {tab === "kunjungan" ? rincianUntuk(terpilih, true) : petaUntuk}
                     </div>
                 </section>

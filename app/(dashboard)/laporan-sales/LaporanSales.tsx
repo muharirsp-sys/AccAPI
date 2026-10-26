@@ -1,7 +1,8 @@
 /*
- * Tujuan: Kerangka klien /laporan-sales: pilihan bulan + tab (hanya tab yang izinnya dipegang, dari server). Isi tab = tab/<Tab>.tsx (satu slice per tab).
+ * Tujuan: Kerangka klien /laporan-sales: kepala halaman Fiori (jejak, judul, pilihan bulan) + navigasi jenis laporan (hanya tab yang izinnya
+ *   dipegang, dari server). Isi tab = tab/<Tab>.tsx (satu slice per tab).
  * Caller: app/(dashboard)/laporan-sales/page.tsx.
- * Dependensi: lib/laporan-sales/kontrak (TAB), komponen tab, Fiori kit.
+ * Dependensi: lib/laporan-sales/kontrak (TAB), komponen tab, Fiori kit (fi-page, fi-subnav, FormField).
  * Main Functions: LaporanSales.
  * Side Effects: Tab aktif disimpan di hash URL (#top30 …) agar bisa dibagikan/dimuat ulang.
  */
@@ -28,22 +29,24 @@ export default function LaporanSales({ tab, bulanAwal }: { tab: TabId[]; bulanAw
     const Isi = ISI[aktif];
     const daftar = TAB.filter((t) => tab.includes(t.id));
     return (
-        <div className="space-y-4 p-4">
-            <div className="flex flex-wrap items-end justify-between gap-3">
-                <h1 className="text-xl font-semibold">Laporan Sales</h1>
-                <FormField label="Bulan">
-                    {(a) => <input {...a} type="month" value={bulan} max={bulanAwal} onChange={(e) => e.target.value && setBulan(e.target.value)} className="rounded border px-2 py-1" />}
-                </FormField>
-            </div>
-            <div role="tablist" aria-label="Jenis laporan" className="flex gap-1 overflow-x-auto border-b">
+        <div className="fi-page">
+            <header className="fi-page-head">
+                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Operasional Sales</span></li><li><span aria-current="page">Laporan Sales</span></li></ol></nav>
+                <div className="fi-page-bar">
+                    <h1>Laporan Sales</h1>
+                    <span className="fi-spacer" />
+                    <FormField label="Bulan">
+                        {(a) => <input {...a} type="month" value={bulan} max={bulanAwal} onChange={(e) => e.target.value && setBulan(e.target.value)} className="fi-input" />}
+                    </FormField>
+                </div>
+            </header>
+            {/* Tautan biasa + aria-current (audit No 118): pola tab ARIA butuh tombol panah dan roving tabindex yang tidak ada di sini. */}
+            <nav className="fi-subnav" aria-label="Jenis laporan">
                 {daftar.map((t) => (
-                    <a key={t.id} role="tab" href={`#${t.id}`} aria-selected={t.id === aktif} aria-controls="isi-laporan"
-                        className={`whitespace-nowrap px-3 py-2 text-sm ${t.id === aktif ? "border-b-2 border-current font-semibold" : "opacity-70"}`}>
-                        {t.label}
-                    </a>
+                    <a key={t.id} href={`#${t.id}`} aria-current={t.id === aktif ? "page" : undefined}>{t.label}</a>
                 ))}
-            </div>
-            <div id="isi-laporan" role="tabpanel"><Isi bulan={bulan} /></div>
+            </nav>
+            <div id="isi-laporan"><Isi bulan={bulan} /></div>
         </div>
     );
 }

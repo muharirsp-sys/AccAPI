@@ -11,7 +11,7 @@ test("Return KINO: koreksi tampil di hasil dan ekspor tanpa menjadi masalah", as
   await page.goto("/reconciliation");
   const main = page.locator("main");
   await main.getByRole("group", { name: "Jenis Rekonsiliasi" }).getByRole("button", { name: "Return", exact: true }).click();
-  await main.getByLabel("Prinsipal", { exact: true }).selectOption("KINO");
+  await main.getByLabel("Principal", { exact: true }).selectOption("KINO");
   await expect(main.getByRole("heading", { level: 1 })).toHaveText("Rekonsiliasi Return KINO");
   const upload = { name: "contoh.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("PK") };
   await main.locator('input[type="file"]').nth(0).setInputFiles(upload);
@@ -22,7 +22,7 @@ test("Return KINO: koreksi tampil di hasil dan ekspor tanpa menjadi masalah", as
   await expect(main.getByRole("group", { name: "Saring hasil" })).toContainText("Masalah saja 0");
   await main.getByRole("button", { name: "Masalah saja 0" }).click();
   await expect(main.getByText("Tidak ada masalah rekonsiliasi", { exact: true })).toBeVisible();
-  await main.getByLabel("Filter status").selectOption("KOREKSI");
+  await main.getByLabel("Saring status").selectOption("KOREKSI");
   await expect(main.locator("#hasil")).toContainText(correction.warnings[0]);
   const history = main.getByRole("region", { name: "Riwayat rekonsiliasi" });
   await expect(history).toContainText("Total 1");
