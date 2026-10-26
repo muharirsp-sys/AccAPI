@@ -1,18 +1,29 @@
+/*
+ * Tujuan: Panel Asisten Bantuan: penjawab berbasis daftar panduan (kata kunci, bukan AI) yang dibuka dari menu profil shell.
+ * Caller: app/(dashboard)/layout.tsx (dirender sekali); SidebarLayout memicu lewat OPEN_HELP_EVENT.
+ * Dependensi: POST /api/chatbot, lib/chatbot/types, canAccessPathWithKeys (menyaring tautan), komponen Fiori (Button, token).
+ * Main Functions: ChatWidget, OPEN_HELP_EVENT.
+ * Side Effects: Mengirim pertanyaan ke /api/chatbot; mengembalikan fokus ke pemicu saat ditutup.
+ */
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { X, Send, Bot, User, ExternalLink } from "lucide-react";
+import Link from "next/link";
+import { LifeBuoy, LoaderCircle, Send, User, X } from "lucide-react";
 import type { ChatMessage } from "@/lib/chatbot/types";
+import { canAccessPathWithKeys } from "@/lib/rbac";
+import { fioriClass } from "@/components/fiori/Scope";
+import { Button } from "@/components/fiori/core";
 
 const WELCOME: ChatMessage = {
   id: "welcome",
   role: "bot",
-  text: "Halo! Saya AI Assistant. Ketik 'menu' untuk panduan, atau tanya langsung.",
+  text: "Halo. Ketik 'menu' untuk melihat panduan, atau tulis pertanyaan Anda.",
   timestamp: Date.now(),
   links: [
-    { label: "Dashboard", href: "/" },
-    { label: "OPC", href: "/off-program-control" },
-    { label: "Claim", href: "/claim-workflow" },
+    { label: "Beranda", href: "/" },
+    { label: "OFF Program Control", href: "/off-program-control" },
+    { label: "Claim Workflow", href: "/claim-workflow" },
     { label: "Pembayaran", href: "/payments" },
     { label: "Insentif Sales", href: "/insentif-sales" },
     { label: "Form Kontrol", href: "/form-kontrol" },
@@ -23,7 +34,8 @@ const WELCOME: ChatMessage = {
 /** Dibuka dari menu profil shell (Bantuan); tombol chat mengambang dihapus karena menutupi konten dan navigasi bawah. */
 export const OPEN_HELP_EVENT = "accapi:open-help";
 
-export default function ChatWidget() {
+/** `permKeys`: tautan bantuan hanya ditampilkan bila halamannya boleh dibuka akun ini (bukan pengganti cek izin server). */
+export default function ChatWidget({ permKeys = [] }: { permKeys?: string[] }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
   const [input, setInput] = useState("");
@@ -79,7 +91,7 @@ export default function ChatWidget() {
       if (res.status === 401) {
         setMessages((prev) => [
           ...prev,
-          { id: crypto.randomUUID(), role: "bot", text: "Anda belum login. Silakan login terlebih dahulu untuk menggunakan chatbot.", timestamp: Date.now(), links: [{ label: "Login", href: "/login" }] },
+          { id: crypto.randomUUID(), role: "bot", text: "Sesi login berakhir. Masuk ulang untuk memakai Asisten Bantuan.", timestamp: Date.now(), links: [{ label: "Masuk", href: "/login" }] },
         ]);
         return;
       }
@@ -88,7 +100,7 @@ export default function ChatWidget() {
       const botMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: "bot",
-        text: reply.text ?? "Maaf, terjadi kesalahan.",
+        text: reply.text ?? "Maaf, jawaban tidak tersedia. Coba tulis dengan kata lain.",
         timestamp: Date.now(),
         links: reply.links,
       };
@@ -96,124 +108,96 @@ export default function ChatWidget() {
     } catch {
       setMessages((prev) => [
         ...prev,
-        { id: crypto.randomUUID(), role: "bot", text: "Gagal menghubungi server. Coba lagi.", timestamp: Date.now() },
+        { id: crypto.randomUUID(), role: "bot", text: "Server tidak menjawab. Periksa koneksi, lalu kirim lagi.", timestamp: Date.now() },
       ]);
     } finally {
       setLoading(false);
     }
   }, [input, loading]);
 
+  if (!open) return null;
+  // /login selalu boleh; halaman lain hanya bila izin akun membukanya (tautan ke Akses ditolak tidak membantu).
+  const bolehBuka = (href: string) => href === "/login" || canAccessPathWithKeys(href, permKeys);
+
   return (
-    <>
-      {/* Chat window */}
-      {open && (
-        <div
-          role="dialog"
-          aria-label="AI Assistant"
-          aria-modal="false"
-          className="fixed bottom-44 right-4 z-[100] flex w-[360px] max-w-[calc(100vw-32px)] [--chat-panel-gap:192px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] text-[var(--luxury-text)] shadow-[var(--luxury-shadow)] backdrop-blur-xl sm:right-6 md:bottom-24 md:[--chat-panel-gap:140px]"
-          style={{
-            height: "min(500px, calc(100dvh - var(--chat-panel-gap)))",
-            background: "color-mix(in srgb, var(--surface) 92%, var(--app-bg))",
-          }}
-        >
-          {/* Header */}
-          <div className="flex items-center gap-2 border-b border-[var(--border-soft)] bg-[var(--surface-2)] px-4 py-3">
-            <Bot size={18} className="text-[var(--luxury-soft)]" />
-            <span className="text-sm font-semibold text-[var(--luxury-text)]">AI Assistant</span>
-            <span className="ml-auto text-[10px] text-[var(--luxury-subtle)]">Rule-Based</span>
-            <button type="button" onClick={close} aria-label="Tutup chat" className="rounded-md p-1 text-[var(--luxury-muted)] hover:bg-[var(--surface)]">
-              <X size={16} />
-            </button>
-          </div>
-
-          {/* Messages */}
-          <div ref={listRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3 scrollbar-thin">
-            {messages.map((msg) => (
-              <div key={msg.id} className={`flex gap-2 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                {msg.role === "bot" && (
-                  <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--surface-2)]">
-                    <Bot size={14} className="text-[var(--luxury-soft)]" />
-                  </div>
-                )}
-                <div
-                  className={`max-w-[80%] rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap ${
-                    msg.role === "user"
-                      ? "border border-[var(--border-strong)] text-[var(--btn-primary-text)] [background:var(--btn-primary-bg)]"
-                      : "border border-[var(--border-soft)] bg-[var(--surface-2)] text-[var(--luxury-text)]"
-                  }`}
-                >
-                  {msg.text}
-                  {msg.links && msg.links.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {msg.links.map((link) => (
-                        <a
-                          key={link.href}
-                          href={link.href}
-                          className="inline-flex items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--luxury-soft)] transition-colors hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--luxury-gold)]"
-                        >
-                          {link.label}
-                          <ExternalLink size={10} />
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                {msg.role === "user" && (
-                  <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--surface-2)]">
-                    <User size={14} className="text-[var(--luxury-muted)]" />
-                  </div>
-                )}
-              </div>
-            ))}
-            {loading && (
-              <div className="flex gap-2">
-                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--surface-2)]">
-                  <Bot size={14} className="text-[var(--luxury-soft)]" />
-                </div>
-                <div className="rounded-xl border border-[var(--border-soft)] bg-[var(--surface-2)] px-3 py-2">
-                  <div className="flex gap-1">
-                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:0ms]" />
-                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:150ms]" />
-                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:300ms]" />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Input */}
-          <div className="border-t border-[var(--border-soft)] bg-[var(--surface-2)] px-3 py-2">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                send();
-              }}
-              className="flex gap-2"
-            >
-              <input
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Ketik pesan..."
-                maxLength={500}
-                disabled={loading}
-                className="flex-1 rounded-lg border border-[var(--control-border,var(--border-strong))] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--luxury-text)] outline-none transition-colors placeholder:text-[var(--luxury-subtle)] focus:border-[var(--luxury-gold)] focus:ring-2 focus:ring-[var(--luxury-gold)]/20 disabled:opacity-50"
-                aria-label="Pesan chatbot"
-              />
-              <button
-                type="submit"
-                disabled={!input.trim() || loading}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--btn-primary-border,var(--border-strong))] text-[var(--btn-primary-text)] shadow-sm transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--luxury-gold)] disabled:opacity-30"
-                style={{ background: "var(--btn-primary-bg)" }}
-                aria-label="Kirim pesan"
-              >
-                <Send size={16} />
-              </button>
-            </form>
-          </div>
+    <div
+      role="dialog"
+      aria-label="Asisten Bantuan"
+      aria-modal="false"
+      className={`${fioriClass} fixed bottom-44 right-4 z-[100] flex w-[360px] max-w-[calc(100vw-32px)] [--chat-panel-gap:192px] flex-col overflow-hidden rounded-[var(--r-lg)] sm:right-6 md:bottom-24 md:[--chat-panel-gap:140px]`}
+      style={{ height: "min(500px, calc(100dvh - var(--chat-panel-gap)))", background: "var(--surface)", boxShadow: "var(--shadow-2)" }}
+    >
+      <div className="flex items-center gap-2 border-b border-line bg-surface-2 py-1 pl-4 pr-1">
+        <LifeBuoy className="fi-icon text-ink-muted" aria-hidden />
+        <div className="grid min-w-0 flex-1">
+          <span className="fi-title-3">Asisten Bantuan</span>
+          <span className="fi-small text-ink-muted">Menjawab dari daftar panduan, bukan AI</span>
         </div>
-      )}
-    </>
+        <Button variant="icon" onClick={close} aria-label="Tutup chat"><X className="fi-icon" aria-hidden /></Button>
+      </div>
+
+      <div ref={listRef} role="log" aria-live="polite" aria-label="Percakapan bantuan" className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+        {messages.map((msg) => {
+          const links = msg.links?.filter((link) => bolehBuka(link.href)) ?? [];
+          return (
+            <div key={msg.id} className={`flex gap-2 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              {msg.role === "bot" && (
+                <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-2" aria-hidden>
+                  <LifeBuoy size={14} className="text-ink-muted" />
+                </div>
+              )}
+              <div
+                className={`max-w-[80%] whitespace-pre-wrap rounded-[var(--r-lg)] border px-3 py-2 ${msg.role === "user" ? "border-transparent bg-primary text-on-primary" : "border-line bg-surface-2 text-ink"}`}
+              >
+                {msg.role === "user" ? <span className="sr-only">Anda: </span> : <span className="sr-only">Asisten: </span>}
+                {msg.text}
+                {links.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {links.map((link) => (
+                      <Link key={link.href} href={link.href} prefetch={false} onClick={close} className="fi-btn fi-btn--secondary">
+                        {link.label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {msg.role === "user" && (
+                <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-2" aria-hidden>
+                  <User size={14} className="text-ink-muted" />
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {loading && (
+          <p className="fi-small flex items-center gap-2 text-ink-muted">
+            <LoaderCircle className="fi-icon fi-spin" aria-hidden />Menyiapkan jawaban
+          </p>
+        )}
+      </div>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          send();
+        }}
+        className="flex gap-2 border-t border-line bg-surface-2 px-3 py-2"
+      >
+        <input
+          ref={inputRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Tulis pertanyaan"
+          maxLength={500}
+          disabled={loading}
+          className="fi-input flex-1"
+          aria-label="Pesan chatbot"
+        />
+        {/* Tombol utama berbentuk ikon: lebar = tinggi kontrol (44 px di layar sentuh). */}
+        <Button type="submit" variant="primary" disabled={!input.trim() || loading} aria-label="Kirim pesan" style={{ width: "var(--ctl-h)", padding: 0 }}>
+          <Send className="fi-icon" aria-hidden />
+        </Button>
+      </form>
+    </div>
   );
 }

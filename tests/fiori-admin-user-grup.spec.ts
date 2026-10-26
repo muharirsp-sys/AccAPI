@@ -382,7 +382,7 @@ test("Gerbang halaman: pemegang users.manage SAJA (tanpa users.view) tetap masuk
     await pasang(page);
     await page.goto("/admin/groups", NAV);
     await expect(page.getByRole("list", { name: "Daftar grup" })).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Menu ruang kerja" }).getByRole("link", { name: "User & RBAC" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Menu ruang kerja" }).getByRole("link", { name: "Pengguna dan Izin" })).toBeVisible();
     // Navigasi klien: layout server TIDAK dijalankan ulang; gerbang klien SidebarLayout menilai /admin/users dengan kunci yang sama.
     await page.locator("main").getByRole("link", { name: "User", exact: true }).click();
     await expect(page).toHaveURL(/\/admin\/users$/);
@@ -638,7 +638,7 @@ test("Draf izin: tautan dalam aplikasi (header, menu samping) tidak membuang dra
     await dlg.getByRole("button", { name: "Batal", exact: true }).click();
     await expect(page.getByText("+1 −0 belum disimpan")).toBeVisible(); // draf utuh
 
-    await page.getByRole("navigation", { name: "Menu ruang kerja" }).getByRole("link", { name: "User & RBAC" }).click(); // menu samping
+    await page.getByRole("navigation", { name: "Menu ruang kerja" }).getByRole("link", { name: "Pengguna dan Izin" }).click(); // menu samping
     await expect(dlg).toBeVisible();
     await expect(page).toHaveURL(/\/admin\/groups(#g-anggota)?$/);
     await dlg.getByRole("button", { name: "Buang perubahan" }).click();

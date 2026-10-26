@@ -1,34 +1,32 @@
-import Link from "next/link";
-import { ShieldAlert } from "lucide-react";
-
 /*
  * Tujuan: Pesan "Akses ditolak" eksplisit pengganti redirect senyap ke "/".
- * Caller: app/(dashboard)/layout.tsx (guard path), admin/groups & admin/users (guard permission).
- * Dependensi: next/link, lucide-react.
+ * Caller: app/(dashboard)/layout.tsx (guard path), SidebarLayout (gerbang klien), admin/groups, admin/users, laporan-sales (guard permission).
+ * Dependensi: next/link, lucide-react, FioriScope + kelas fi-* (pola ErrorState).
+ * Main Functions: AccessDenied.
+ * Side Effects: Tidak ada.
  */
+import Link from "next/link";
+import { House, LockKeyhole } from "lucide-react";
+import { FioriScope } from "@/components/fiori/Scope";
+
+// Kunci izin mentah ("users.manage") di dalam kurung pesan pemanggil: dipindah ke title, bukan kalimat yang dibaca semua orang.
+const KUNCI = /\s*\(([a-z_]+\.[a-z_]+)\)/g;
+
 export default function AccessDenied({
     message = "Anda tidak memiliki izin untuk membuka halaman ini.",
 }: {
     message?: string;
 }) {
+    const kunci = [...message.matchAll(KUNCI)].map((m) => m[1]);
     return (
-        <div className="flex min-h-[60vh] items-center justify-center px-4">
-            <div className="max-w-md w-full rounded-2xl border border-amber-500/30 bg-amber-500/5 p-8 text-center shadow-xl">
-                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/15 text-amber-400">
-                    <ShieldAlert size={28} />
-                </div>
-                <h2 className="text-xl font-black text-white">Akses ditolak</h2>
-                <p className="mt-2 text-sm text-slate-400">{message}</p>
-                <p className="mt-1 text-xs text-slate-500">
-                    Hubungi admin bila Anda merasa seharusnya punya akses.
-                </p>
-                <Link
-                    href="/"
-                    className="mt-6 inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-5 py-2.5 text-sm font-bold text-slate-200 hover:bg-white/10"
-                >
-                    Kembali ke Dashboard
-                </Link>
+        <FioriScope className="fi-page">
+            <div className="fi-state" role="alert">
+                <span className="fi-state-ico" aria-hidden><LockKeyhole className="fi-icon" /></span>
+                <h1 className="fi-title-2">Akses ditolak</h1>
+                <p title={kunci.length ? `Izin: ${kunci.join(", ")}` : undefined}>{message.replace(KUNCI, "")}</p>
+                <p>Hubungi admin bila Anda merasa seharusnya punya akses.</p>
+                <Link href="/" className="fi-btn fi-btn--secondary"><House className="fi-icon" aria-hidden />Ke Beranda</Link>
             </div>
-        </div>
+        </FioriScope>
     );
 }

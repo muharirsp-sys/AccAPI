@@ -50,7 +50,7 @@ export function LoadingState({
 export function ErrorState({
   title,
   message,
-  actionLabel = "Coba Lagi",
+  actionLabel = "Coba lagi",
   onAction,
   embedded = false,
 }: ActionStateProps) {
