@@ -70,6 +70,11 @@ const GULIR_TABEL = { overflow: "auto", maxHeight: "68vh", position: "relative" 
 async function jsonFetch(url: string, init?: RequestInit) {
     const response = await fetch(url, { credentials: "include", ...init }).catch(() => { throw new Error(sebabHttp(0)); });
     const data = await response.json().catch(() => ({}));
+    if (response.status >= 500) {
+        // Galat 5xx dari route bisa berisi teks teknis (mis. query SQL): rincian ke konsol, layar memakai kalimat sebab (audit desain 001, Fase 3).
+        if (data.error) console.error(`master-barang ${url}:`, data.error);
+        throw new Error(sebabHttp(response.status));
+    }
     if (!response.ok || !data.ok) throw new Error(data.error || sebabHttp(response.status));
     return data;
 }

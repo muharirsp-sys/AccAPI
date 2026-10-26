@@ -408,7 +408,7 @@ export function RiwayatDialog({ row, onClose }: { row: Row; onClose: () => void 
     return (
         <Dialog open onClose={onClose} labelledBy={judul} className="fi-dialog" closeOnBackdrop>
             <header>
-                <div><span className="fi-tag" data-tone="info">Riwayat</span><h2 id={judul}>Riwayat SO {nomorSo(row)}</h2></div>
+                <div><h2 id={judul}>Riwayat SO {nomorSo(row)}</h2></div>
                 <button type="button" className="fi-btn fi-btn--icon" aria-label="Tutup" onClick={onClose}><X className="fi-icon" aria-hidden /></button>
             </header>
             <div className="fi-dialog-body">

@@ -505,6 +505,7 @@ details.fi-apps a { display:block; font:500 .8125rem/1.75rem var(--font-sans); t
   .fi-home .fi-tiles, .fi-shortcuts { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
   .fi-home .fi-tile { min-height:120px; padding:12px; }
   .fi-home .fi-tile-v { font-size:1.75rem; line-height:2rem; }
+  .fi-home .fi-tile--err .fi-tile-v { font-size:1rem; line-height:1.5rem; } /* kalimat galat bukan angka KPI (Fase 3 audit desain 001) */
   .fi-shortcut small { display:none; }
 }
 

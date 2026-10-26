@@ -286,7 +286,9 @@ test("Master Barang: galat bukan kosong, kosong, memuat; Finalisasi, Kamus Kode,
     mode = "kosong"; await page.reload();
     await expect(main.getByRole("heading", { name: "Belum ada master", exact: true })).toBeVisible(NAV);
     mode = "galat"; await page.reload();
-    await expect(main.getByRole("alert").filter({ hasText: "koneksi database putus" })).toBeVisible(NAV);
+    // Galat 5xx: kalimat sebab di layar, teks teknis server hanya di konsol (Fase 3 audit desain 001).
+    await expect(main.getByRole("alert").filter({ hasText: "Server sedang bermasalah" })).toBeVisible(NAV);
+    await expect(main.getByText("koneksi database putus")).toHaveCount(0);
     await expect(main.getByText("Belum ada master", { exact: true })).toHaveCount(0); // galat tidak tampil sebagai kosong
     mode = "data"; await main.getByRole("button", { name: "Coba lagi" }).click();
     await expect(main.getByRole("heading", { level: 2, name: "PRINCIPLE A" })).toBeVisible(NAV);
