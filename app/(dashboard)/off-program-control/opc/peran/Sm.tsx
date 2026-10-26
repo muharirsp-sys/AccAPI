@@ -4,14 +4,12 @@
  *   batch dengan tinjauan SM: catatan untuk SPV (draf), kelengkapan awal dari SPV, Setujui & teruskan ke Klaim (dialog `smok`) dan
  *   Kembalikan ke SPV (dialog `kembali`, alasan wajib), notifikasi OM hasil persetujuan, dan pengajuan pengembalian selisih.
  * Caller: OpcApp.tsx (MODUL.sales).
- * Dependensi: opc/Bersama (KerjaPeran, tulisOpc, kontrak), opc/ObjectPageBatch (slot), opc/peran/SmRefund, components/fiori,
- *   lib/opc-ui (TAMPILAN, PREDIKAT), lib/off-program-control/problematic (SLA_DAYS), lib/promo-ui (rupiah).
+ * Dependensi: opc/Bersama (KerjaPeran, tulisOpc, tanganiTulis, kontrak), opc/ObjectPageBatch (slot), opc/peran/SmRefund, components/fiori,
+ *   lib/opc-ui (TAMPILAN, PREDIKAT), lib/off-program-control/problematic (SLA_DAYS), lib/promo-ui (rupiah), lib/tampil (KOSONG).
  * Main Functions: Sm, DetailSm, RingkasanSm, KelengkapanAwal.
- * Side Effects: POST /api/off-program-control/batches/[id]/sm-approve {note} dan /sm-return {note} (payload sama dengan kode lama
- *   old-opc.tsx 4620–4704); POST /refund lewat SmRefund. Setelah berhasil: muat ulang daftar dan detail.
- *
- * Asal fitur (old-opc.tsx): approveBatch 4667–4704, returnToSupervisor 4620–4665, tombol 4977–5008, Kelengkapan Awal 5010–5103,
- *   Pratinjau Notifikasi 5104–5133, RefundPanel 5134–5142, metrik 4725–4754, IncompleteDocumentsReminderPanel 2740–2804 (dipakai 4766).
+ * Side Effects: POST /api/off-program-control/batches/[id]/sm-approve {note} dan /sm-return {note} (payload sama dengan approveBatch dan
+ *   returnToSupervisor kode lama); POST /refund lewat SmRefund. Setelah berhasil: muat ulang daftar dan detail; hasil tidak pasti:
+ *   strip bertahan + muat ulang (laporTidakPasti).
  */
 "use client";
 
@@ -22,7 +20,8 @@ import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { SLA_DAYS } from "@/lib/off-program-control/problematic";
 import { PREDIKAT, TAMPILAN, jumlahItem, labelStatus, totalBatch, waktuWita, type ItemOpc } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
-import { KerjaPeran, tulisOpc, type DetailProps, type PeranProps } from "../Bersama";
+import { KOSONG } from "@/lib/tampil";
+import { KerjaPeran, tanganiTulis, tulisOpc, type DetailProps, type PeranProps } from "../Bersama";
 import { ObjectPageBatch, type BagianTambahan } from "../ObjectPageBatch";
 import { AjukanRefund } from "./SmRefund";
 
@@ -55,6 +54,10 @@ function DetailSm(props: DetailProps) {
     const alasanUji = data.uji ? "Batch data uji (mock) tidak bisa diproses." : undefined;
     const alasanSetuju = alasanUji ?? ctx.izin("sm_approve");
     const alasanKembali = alasanUji ?? ctx.izin("sm_return");
+    // Dialog yang masih terbuka sesudah hasil tidak pasti: konfirmasi terkunci selama detail dimuat ulang atau bila batch sudah pindah tahap.
+    const kunciDialog = detail.status === "memuat" ? "Menunggu detail batch selesai dimuat ulang."
+        : detail.status === "galat" ? "Detail batch gagal dimuat ulang; status di layar bisa usang. Muat ulang dulu."
+            : !bisa ? "Batch tidak lagi menunggu tinjauan Sales Manager." : undefined;
     const n = data.items.length || jumlahItem(b);
     const total = Number(data.summary?.totalNominal ?? totalBatch(b));
     const sisaRefund = data.refund.data?.summary?.remainingRefund ?? 0;
@@ -84,7 +87,7 @@ function DetailSm(props: DetailProps) {
             id: "opc-sm-refund", label: "Ajukan pengembalian selisih", letak: "akhir",
             isi: (
                 <AjukanRefund batchId={batchId} no={no} ringkasan={data.refund.data!.summary!} alasan={alasanUji ?? ctx.izin("submit_refund")}
-                    onDraf={setRefundDraf} onSelesai={(p) => { setPesan(p); props.muatUlang(); daftar.muatUlang(); }} />
+                    onDraf={setRefundDraf} onSelesai={(p) => { setPesan(p); props.muatUlang(); daftar.muatUlang(); }} onTidakPasti={props.laporTidakPasti} />
             ),
         });
     }
@@ -98,7 +101,7 @@ function DetailSm(props: DetailProps) {
                 <Button variant="negative" icon={<RotateCcw className="fi-icon" aria-hidden />} disabled={Boolean(alasanKembali)} disabledReason={alasanKembali}
                     aria-label="Kembalikan ke SPV…" onClick={() => setDialog("kembali")}>{labelPonsel("Kembalikan ke SPV…", "Kembalikan…")}</Button>
                 <Button variant="primary" icon={<Check className="fi-icon" aria-hidden />} disabled={Boolean(alasanSetuju)} disabledReason={alasanSetuju}
-                    aria-label="Setujui & teruskan ke Klaim…" onClick={() => setDialog("smok")}>{labelPonsel("Setujui & teruskan ke Klaim…", "Setujui…")}</Button>
+                    onClick={() => setDialog("smok")}>Setujui…</Button>
             </>
         );
     } else {
@@ -113,7 +116,8 @@ function DetailSm(props: DetailProps) {
         <>
             {pesan && <MessageStrip tone="pos" title={pesan} onClose={() => setPesan(null)} />}
             {notif && (
-                <MessageStrip tone="info" title="Notifikasi untuk OM dibuat." onClose={() => setNotif(null)}>
+                // Pemberitahuan tiruan (sent_mock): OM belum menerima apa pun, jadi bukan nada sukses.
+                <MessageStrip tone="warn" title="Notifikasi OM belum terkirim (tiruan)." onClose={() => setNotif(null)}>
                     {[notif.subject, notif.to && `ke ${notif.to}`, notif.status === "sent_mock" ? "tiruan, tidak dikirim lewat email" : labelStatus(notif.status)].filter(Boolean).join(" · ")}.
                     {notif.message ? ` ${notif.message}` : ""}
                 </MessageStrip>
@@ -122,7 +126,7 @@ function DetailSm(props: DetailProps) {
     );
 
     const faktaBatch: Array<[string, string]> = [
-        ["SPV", b.supervisorName || "–"],
+        ["SPV", b.supervisorName || KOSONG],
         ["Principal", `${b.principleName} (${b.principleCode})`],
         ["Item", `${n} · ${rupiah(total)}`],
     ];
@@ -140,12 +144,14 @@ function DetailSm(props: DetailProps) {
                     ...faktaBatch,
                     ["Catatan SM", catatan.trim() || "Tanpa catatan"],
                     ["Langkah berikutnya", `Validasi Klaim, batas ${SLA_DAYS.claimApproval} hari kerja`],
-                    ["Notifikasi", "Pemberitahuan untuk Operational Manager dibuat otomatis (tiruan, tidak dikirim lewat email)"],
+                    ["Notifikasi", "Dicatat sebagai tiruan untuk Operational Manager; tidak dikirim lewat email"],
                 ]}
-                confirmLabel="Setujui & teruskan"
+                confirmLabel="Setujui"
+                confirmDisabled={kunciDialog}
                 onConfirm={async () => {
                     // Payload sama dengan approveBatch lama: catatan apa adanya (boleh kosong).
-                    const hasil = await tulisOpc(`/api/off-program-control/batches/${enc(batchId)}/sm-approve`, { body: { note: catatan }, gagal: "Gagal menyetujui batch." });
+                    const hasil = await tulisOpc(`/api/off-program-control/batches/${enc(batchId)}/sm-approve`, { body: { note: catatan }, gagal: "Gagal menyetujui batch." })
+                        .catch(tanganiTulis(props.laporTidakPasti));
                     setNotif((hasil.notification as Notifikasi | undefined) ?? null);
                     setCatatan("");
                     setDialog(null);
@@ -161,10 +167,11 @@ function DetailSm(props: DetailProps) {
                 description="Batch dibuka lagi untuk SPV pembuatnya. Alasan tampil di atas batch dan tercatat di Riwayat."
                 facts={faktaBatch}
                 confirmLabel="Kembalikan ke SPV"
-                confirmDisabled={catatan.trim() ? undefined : "Isi alasan pengembalian dulu"}
+                confirmDisabled={kunciDialog ?? (catatan.trim() ? undefined : "Isi alasan pengembalian dulu")}
                 onConfirm={async () => {
                     // returnToSupervisor lama: catatan wajib, dikirim setelah trim (server juga menolak catatan kosong).
-                    await tulisOpc(`/api/off-program-control/batches/${enc(batchId)}/sm-return`, { body: { note: catatan.trim() }, gagal: "Gagal mengembalikan batch ke Supervisor." });
+                    await tulisOpc(`/api/off-program-control/batches/${enc(batchId)}/sm-return`, { body: { note: catatan.trim() }, gagal: "Gagal mengembalikan batch ke Supervisor." })
+                        .catch(tanganiTulis(props.laporTidakPasti));
                     setCatatan("");
                     setNotif(null);
                     setDialog(null);
@@ -181,15 +188,15 @@ function DetailSm(props: DetailProps) {
 }
 
 const DOK = [["kwt", "KWT"], ["skp", "SKP"], ["fp", "FP"], ["pc", "PC"], ["foto", "Foto"], ["rekap", "Rekap"], ["others", "Lainnya"]] as const;
-const dokumen = (i: ItemOpc, ada: boolean) => DOK.filter(([k]) => Boolean(i[k]) === ada).map(([, l]) => l).join(", ") || "–";
+const dokumen = (i: ItemOpc, ada: boolean) => DOK.filter(([k]) => Boolean(i[k]) === ada).map(([, l]) => l).join(", ") || KOSONG;
 
 /** Kelengkapan awal per item dari SPV (baca-saja). Validasi kelengkapan tetap dilakukan Klaim. */
 function KelengkapanAwal({ items, uji }: { items: ItemOpc[]; uji: boolean }) {
     const kolom: Column<ItemOpc>[] = [
-        { key: "item", header: "No Surat · toko", cell: (i) => <><span className="fi-mono">{i.noSurat || `Item ${i.itemNo}`}</span><br />{i.toko || "–"}</> },
+        { key: "item", header: "No Surat · toko", cell: (i) => <><span className="fi-mono">{i.noSurat || `Item ${i.itemNo}`}</span><br />{i.toko || KOSONG}</> },
         { key: "ada", header: "Ada", cell: (i) => dokumen(i, true) },
         { key: "belum", header: "Belum ada", cell: (i) => dokumen(i, false) },
-        { key: "lain", header: "Keterangan lainnya", secondary: true, cell: (i) => i.othersText || "–" },
+        { key: "lain", header: "Keterangan lainnya", secondary: true, cell: (i) => i.othersText || KOSONG },
     ];
     return (
         <>
@@ -197,20 +204,20 @@ function KelengkapanAwal({ items, uji }: { items: ItemOpc[]; uji: boolean }) {
             <ResponsiveTable title="Kelengkapan awal per item" columns={kolom} rows={items} rowKey={(i) => i.id}
                 empty={{ title: uji ? "Item tidak dimuat untuk data uji" : "Batch ini tidak punya item" }}
                 mobileItem={(i) => (
-                    <ListItem doc={i.noSurat || `Item ${i.itemNo}`} title={i.toko || "–"}
+                    <ListItem doc={i.noSurat || `Item ${i.itemNo}`} title={i.toko || KOSONG}
                         meta={[`Ada: ${dokumen(i, true)}`, `Belum: ${dokumen(i, false)}`, i.othersText].filter(Boolean).join(" · ")} />
                 )} />
         </>
     );
 }
 
-/** Angka SM (metrik lama 4725–4754) + pengingat kelengkapan belum lengkap (2740–2804). Tidak tampil sebelum daftar termuat (galat ≠ nol). */
+/** Angka SM (metrik kode lama) + pengingat kelengkapan belum lengkap. Tidak tampil sebelum daftar termuat (galat ≠ nol). */
 function RingkasanSm({ ctx, daftar }: PeranProps) {
     if (!daftar.load.data) return null;
     const lewat = daftar.batches.filter(PREDIKAT.smPantau);
     const kurang = lewat.filter((b) => b.finalStatus === "Incomplete Documents");
     const angka: Array<[string, number]> = [
-        ["Menunggu tinjauan", lewat.filter(PREDIKAT.smAntrean).length],
+        ["Menunggu Anda", lewat.filter(PREDIKAT.smAntrean).length], // kata yang sama dengan pilihan antrean (audit No 130)
         ["Disetujui SM", lewat.filter((b) => b.smStatus === "Approved by SM").length],
         ["Dikembalikan SM", lewat.filter((b) => b.smStatus === "Returned").length],
         ["Total batch", lewat.length],

@@ -177,6 +177,6 @@ test("saringan klien: cari, principal, tahap, periode bulan dan rentang", () => 
 
 test("format tanggal dd/mm/yyyy dan jam WITA", () => {
     assert.equal(tanggalOpc("2026-10-06"), "06/10/2026");
-    assert.equal(tanggalOpc(null), "–");
+    assert.equal(tanggalOpc(null), "-");
     assert.equal(waktuWita("2026-10-06T01:40:00Z"), "06/10/2026 09.40");
 });

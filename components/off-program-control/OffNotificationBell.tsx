@@ -1,7 +1,7 @@
 /*
- * Tujuan: Lonceng "Pengajuan bermasalah" OFF Program Control (Fiori S4d): tombol berjumlah + popover daftar masalah SLA;
- *   "Buka pengajuan" membuka batch di kolom kedua untuk peran apa pun (perubahan #2 it03). Daftar gagal dimuat tampil sebagai galat,
- *   bukan "tidak ada masalah".
+ * Tujuan: Lonceng "Lewat SLA" OFF Program Control (Fiori S4d): tombol berjumlah + popover daftar batch lewat SLA (nama sama dengan
+ *   daftar "Lewat SLA" di Ringkasan); "Buka pengajuan" membuka batch di kolom kedua untuk peran apa pun (perubahan #2 it03). Daftar gagal
+ *   dimuat tampil sebagai galat, bukan "tidak ada masalah". Di ponsel tombol tinggal ikon + jumlah (label tetap untuk pembaca layar).
  * Caller: app/(dashboard)/off-program-control/OpcApp.tsx.
  * Dependensi: components/fiori/core, lucide-react, lib/off-program-control/problematic (tipe), lib/opc-ui (label/tone severity).
  * Main Functions: OffNotificationBell.
@@ -54,10 +54,10 @@ export default function OffNotificationBell({ problems, onSelectBatch, muat }: O
         <>
             <Button icon={<Bell className="fi-icon" aria-hidden />} count={gagalTotal ? undefined : visible.length || undefined} aria-haspopup="dialog"
                 popoverTarget={id} onClick={(e) => letakkan(e.currentTarget)}>
-                Pengajuan bermasalah
+                <span className="max-sm:sr-only">Lewat SLA</span>
             </Button>
-            <div id={id} ref={ref} popover="auto" role="dialog" aria-label="Pengajuan bermasalah" className="fi-menu">
-                <h2>Pengajuan bermasalah{gagalTotal || memuatAwal ? "" : ` (${visible.length})`}</h2>
+            <div id={id} ref={ref} popover="auto" role="dialog" aria-label="Lewat SLA" className="fi-menu">
+                <h2>Lewat SLA{gagalTotal || memuatAwal ? "" : ` (${visible.length})`}</h2>
                 {gagalTotal ? (
                     <p className="fi-menu-row fi-small" role="alert">
                         Daftar pengajuan gagal dimuat, jadi peringatan SLA belum bisa dihitung. Ini bukan berarti tidak ada masalah. {muat?.error}
@@ -78,7 +78,8 @@ export default function OffNotificationBell({ problems, onSelectBatch, muat }: O
                                 <span className="fi-small fi-subtle">{problem.message} · {problem.principleName}</span>
                                 <span className="fi-btnrow">
                                     {onSelectBatch && (
-                                        <Button variant="primary" onClick={() => { ref.current?.hidePopover(); onSelectBatch(problem.batchId); }}>Buka pengajuan</Button>
+                                        <Button aria-label={`Buka pengajuan ${problem.noPengajuan}`}
+                                            onClick={() => { ref.current?.hidePopover(); onSelectBatch(problem.batchId); }}>Buka pengajuan</Button>
                                     )}
                                     <Button variant="tertiary" aria-label={`Sembunyikan peringatan ${problem.noPengajuan}`} onClick={() => dismiss(problem)}>Sembunyikan</Button>
                                 </span>

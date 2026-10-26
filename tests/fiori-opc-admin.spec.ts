@@ -116,7 +116,7 @@ test("Ringkasan admin: kesehatan proses, per tahap, per divisi, bermasalah, akti
     await expect(perhatian).toContainText("Terlalu lama diproses"); // 009/KINO tidak berubah 10 hari
     await expect(perhatian).toContainText("Pengajuan dan klaim belum sesuai");
     // Bagian di kolom kartu (< 600 px) tampil sebagai daftar (ResponsiveTable, container query).
-    const bermasalah = main.getByRole("list", { name: "Pengajuan bermasalah" });
+    const bermasalah = main.getByRole("list", { name: "Perlu ditinjau admin" });
     await expect(bermasalah).toContainText("004/URC/09/2026");
     await expect(bermasalah.getByRole("button", { name: /006\/ENI\/10\/2026/ })).toContainText("Dikembalikan");
     await expect(main.getByRole("list", { name: "Batch lewat SLA" })).toContainText("007/KINO/10/2026");
@@ -344,7 +344,7 @@ test("Log audit: alasan setuju sendiri (BL-10, #132) dan penanda tanpa alasan ta
     await page.goto("/off-program-control?tab=audit", NAV);
     const log = page.locator("main").getByRole("table", { name: "Log audit OFF Program Control" });
     await expect(log.getByRole("row", { name: /Menyelesaikan verifikasi final/ })).toContainText("Alasan setuju sendiri: Tim Klaim hanya satu orang · Lengkap.", NAV);
-    await expect(log.getByRole("row", { name: /Menyetujui klaim/ })).toContainText("Disetujui sendiri tanpa alasan (layar lama)");
+    await expect(log.getByRole("row", { name: /Menyetujui klaim/ })).toContainText("Disetujui sendiri tanpa alasan (sebelum alasan diwajibkan)");
 });
 
 test("Log audit: galat daftar tidak tampil sebagai kosong; kosong dan saringan berbeda", async ({ page }) => {

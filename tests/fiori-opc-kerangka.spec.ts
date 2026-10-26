@@ -215,7 +215,7 @@ test("peran dari sesi: Klaim hanya Klaim + Log audit; claimView=after (Claim Wor
     const main = page.locator("main");
     const nav = main.getByRole("navigation", { name: "Antrean OFF Program Control" });
     await expect(nav.getByRole("link")).toHaveText([/^Klaim/, /^Log audit/], NAV);
-    await expect(main.getByText("Peran OFF: Klaim.")).toBeVisible();
+    await expect(main.getByText("Peran Anda: Klaim.")).toBeVisible();
     await expect(main.getByRole("group", { name: "Tampilan antrean" }).getByRole("button", { name: /Verifikasi final/ })).toHaveAttribute("aria-pressed", "true");
     await expect(antrean(page).getByRole("button")).toHaveCount(1);
     await expect(antrean(page)).toContainText("001/RB/09/2026");
@@ -238,8 +238,8 @@ test("galat daftar dan detail tidak tampil sebagai kosong; kosong dan saringan p
     await expect(main.getByText("Ini bukan daftar kosong.")).toBeVisible();
     await expect(main.getByText("Tidak ada batch yang menunggu tinjauan Anda.")).toHaveCount(0);
     // Lonceng dan pencarian juga tidak membaca galat sebagai kosong.
-    await main.getByRole("button", { name: /Pengajuan bermasalah/ }).click();
-    const lonceng = page.getByRole("dialog", { name: "Pengajuan bermasalah" });
+    await main.getByRole("button", { name: /Lewat SLA/ }).click();
+    const lonceng = page.getByRole("dialog", { name: "Lewat SLA" });
     await expect(lonceng).toContainText("Daftar pengajuan gagal dimuat");
     await expect(lonceng).not.toContainText("Tidak ada pengajuan yang lewat SLA");
     await page.keyboard.press("Escape");
@@ -247,7 +247,9 @@ test("galat daftar dan detail tidak tampil sebagai kosong; kosong dan saringan p
     await page.keyboard.press("Control+k");
     const cari = main.getByRole("combobox", { name: "Cari pengajuan OFF" });
     await cari.fill("KINO");
-    await expect(main.getByRole("listbox", { name: "Hasil pencarian pengajuan OFF" })).toContainText("Daftar pengajuan gagal dimuat, jadi pencarian belum bisa dipakai.");
+    // Pesan galat di luar listbox (audit desain No 143): listbox hanya berisi opsi.
+    await expect(main.getByRole("alert").filter({ hasText: "Daftar pengajuan gagal dimuat, jadi pencarian belum bisa dipakai." })).toBeVisible();
+    await expect(main.getByRole("listbox", { name: "Hasil pencarian pengajuan OFF" })).toHaveCount(0);
     await expect(main.getByText("Tidak ditemukan batch yang cocok.")).toHaveCount(0);
     await cari.press("Escape");
     gagal = false;
@@ -285,13 +287,13 @@ test("lonceng dan pencarian (Ctrl K) membuka batch di kolom kedua untuk peran ap
     await page.goto("/off-program-control?tab=finance", NAV);
     const main = page.locator("main");
     await expect(antrean(page).getByRole("button")).toHaveCount(1, NAV);
-    await main.getByRole("button", { name: /Pengajuan bermasalah/ }).click();
-    const lonceng = page.getByRole("dialog", { name: "Pengajuan bermasalah" });
+    await main.getByRole("button", { name: /Lewat SLA/ }).click();
+    const lonceng = page.getByRole("dialog", { name: "Lewat SLA" });
     await expect(lonceng).toContainText("007/KINO/10/2026");
     await expect(lonceng).toContainText("Sales Manager belum review");
     await page.screenshot({ path: "test-results/fiori-opc-lonceng.png" });
     // Popover di bawah tombol, tidak menutupinya: klik kedua menutup, klik ketiga membuka lagi.
-    const tombolLonceng = main.getByRole("button", { name: /Pengajuan bermasalah/ });
+    const tombolLonceng = main.getByRole("button", { name: /Lewat SLA/ });
     await tombolLonceng.click();
     await expect(lonceng).toBeHidden();
     await tombolLonceng.click();
@@ -346,7 +348,7 @@ test("penjaga draf: tujuan sama tanpa dialog; Tinggalkan tidak mematikan penjaga
     expect(await dicegah()).toBe(true);
     await antrean(page).getByRole("button", { name: /001\/RB\/09\/2026/ }).click();
     await expect(tinggal).toBeVisible(); // penjaga masih bekerja
-    await tinggal.getByRole("button", { name: "Batal" }).click();
+    await tinggal.getByRole("button", { name: "Tetap di sini" }).click();
     await expect(page).toHaveURL(/batch=b-klaim/);
     await expect(ket).toHaveValue("Faktur pajak item 2 menyusul");
 
@@ -364,15 +366,15 @@ test("tulisOpc: 504 HTML dari proxy = hasil tidak pasti tanpa HTML mentah; 4xx J
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/off-program-control?tab=sales&batch=b-sm1", NAV);
     const main = page.locator("main");
-    await main.getByRole("button", { name: "Setujui & teruskan ke Klaim…" }).click(NAV);
+    await main.getByRole("button", { name: "Setujui…" }).click(NAV);
     const dlg = page.getByRole("dialog");
-    await dlg.getByRole("button", { name: "Setujui & teruskan", exact: true }).click();
+    await dlg.getByRole("button", { name: "Setujui", exact: true }).click();
     const galat = dlg.getByRole("alert");
-    await expect(galat).toHaveText("Server tidak memberi jawaban yang pasti — hasilnya belum pasti; muat ulang untuk memeriksa sebelum mengulang.");
+    await expect(galat).toHaveText("Server tidak memberi jawaban yang pasti, jadi aksi ini mungkin sudah tersimpan atau belum. Periksa Riwayat batch sebelum mencoba lagi.");
     await expect(dlg).not.toContainText("Gateway");
     await expect(dlg).not.toContainText("<html");
     respon = json({ ok: false, error: "Batch tidak sedang menunggu tinjauan SM." }, 409);
-    await dlg.getByRole("button", { name: "Setujui & teruskan", exact: true }).click();
+    await dlg.getByRole("button", { name: "Setujui", exact: true }).click();
     await expect(galat).toHaveText("Batch tidak sedang menunggu tinjauan SM.");
     expect(tulis).toEqual(["POST /api/off-program-control/batches/b-sm1/sm-approve", "POST /api/off-program-control/batches/b-sm1/sm-approve"]);
 });
