@@ -58,7 +58,7 @@
 
 /* ===== Token: gelap (sistem, kecuali dipaksa terang) ===== */
 @media (prefers-color-scheme: dark) { html:not([data-scheme="light"]) .fiori {
-  --primary:#2f6fc4; --primary-hover:#3b7fd6; --primary-active:#2a62ad; --on-primary:#ffffff;
+  --primary:#2f6fc4; --primary-hover:#2c6abd; --primary-active:#2a62ad; --on-primary:#ffffff;
   --brand:#7cb2f2; --brand-tint:#16273d; --brand-tint-strong:#1d3352; --link:#7cb2f2; --focus:#7cb2f2;
   --bg:#0e141c; --surface:#151d28; --surface-2:#1b2532; --surface-3:#222e3d;
   --line:#263243; --line-strong:#33425a; --field-border:#6c7a8d; --field-bg:#111821;
@@ -71,7 +71,7 @@
   color-scheme: dark; } }
 /* ===== Token: gelap (dipilih) ===== */
 html[data-scheme="dark"] .fiori {
-  --primary:#2f6fc4; --primary-hover:#3b7fd6; --primary-active:#2a62ad; --on-primary:#ffffff;
+  --primary:#2f6fc4; --primary-hover:#2c6abd; --primary-active:#2a62ad; --on-primary:#ffffff;
   --brand:#7cb2f2; --brand-tint:#16273d; --brand-tint-strong:#1d3352; --link:#7cb2f2; --focus:#7cb2f2;
   --bg:#0e141c; --surface:#151d28; --surface-2:#1b2532; --surface-3:#222e3d;
   --line:#263243; --line-strong:#33425a; --field-border:#6c7a8d; --field-bg:#111821;
@@ -134,6 +134,10 @@ html[data-density="cozy"] .fiori {
 .fi-btn--icon { width:var(--ctl-h); padding:0; color:var(--ink-muted); }
 .fi-btn--icon:hover { background:var(--surface-2); color:var(--ink); }
 .fi-btn:disabled, .fi-btn[aria-disabled="true"] { opacity:.45; cursor:not-allowed; transform:none; }
+/* Input berkas `sr-only` di dalam label.fi-btn: cincin fokus pindah ke labelnya supaya posisi fokus kibor terlihat. */
+.fi-btn:has(input:focus-visible) { outline:2px solid var(--focus); outline-offset:2px; }
+/* Alasan tombol nonaktif (Button disabledReason): muncul saat tombol diketuk/ditekan, di lapisan atas sehingga tata letak tidak bergeser. */
+.fi-whypop { position:fixed; z-index:var(--z-toast); max-width:min(18rem, calc(100vw - 16px)); padding:6px 10px; border-radius:var(--r-md); background:var(--ink); color:var(--surface); font:var(--fs-small); box-shadow:var(--shadow-2); white-space:normal; pointer-events:none; }
 .fi-btn .fi-count, .fi-subnav .fi-count { min-width:18px; height:18px; border-radius:9px; background:color-mix(in srgb, currentColor 18%, transparent); font:700 .6875rem/18px var(--font-sans); padding:0 5px; }
 .fi-subnav .fi-count { display:inline-block; margin-left:6px; text-align:center; }
 .fi-btnrow { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
@@ -143,6 +147,8 @@ html[data-density="cozy"] .fiori {
 /* ===== Badge status ===== */
 .fi-badge { display:inline-flex; align-items:center; gap:5px; height:var(--badge-h); padding:0 9px 0 7px; border-radius:var(--r-pill); font:600 .75rem/1 var(--font-sans); white-space:nowrap; background:var(--tb); color:var(--tf); }
 .fi-badge .fi-icon { width:13px; height:13px; }
+/* Label badge panjang di kolom sempit (StatusBadge wrap): boleh turun baris, tidak melewati lebar wadahnya. */
+.fi-badge[data-wrap="true"] { white-space:normal; height:auto; min-height:var(--badge-h); max-width:100%; padding-block:3px; line-height:1.25; }
 [data-tone="pos"] { --tb:var(--pos-bg); --tf:var(--pos); --ts:var(--pos-solid); }
 [data-tone="warn"] { --tb:var(--warn-bg); --tf:var(--warn); --ts:var(--warn-solid); }
 [data-tone="neg"] { --tb:var(--neg-bg); --tf:var(--neg); --ts:var(--neg-solid); }
@@ -172,10 +178,13 @@ select.fi-input { appearance:none; background-image:linear-gradient(45deg, trans
 @media (pointer: coarse) { .fi-input, .fiori .fi-input { font-size:16px; } } /* < 16 px membuat Safari iOS memperbesar halaman saat fokus. `.fiori .fi-input` (0,2,0) SESUDAH `.fiori .fi-mono` (0,2,0, ±14,7 px) supaya kolom ber-fi-mono ikut 16 px */
 .fi-help { font:var(--fs-small); color:var(--ink-subtle); }
 .fi-msg { font:var(--fs-small); display:flex; gap:6px; align-items:flex-start; color:var(--neg); }
-.fi-msg .fi-icon { width:14px; height:14px; margin-top:2px; }
+.fi-msg .fi-icon { width:14px; height:14px; margin-top:2px; flex:0 0 auto; }
 .fi-formgrid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap:var(--stack) 20px; }
 .fi-check { display:inline-flex; align-items:center; gap:8px; cursor:pointer; min-height:var(--ctl-h); }
 .fi-check input, .fi-table input[type="checkbox"] { width:16px; height:16px; min-width:0; min-height:0; accent-color:var(--primary); margin:0; }
+/* Kotak pilih baris ResponsiveTable dibungkus label: di layar sentuh labelnya 44 px (margin negatif = tinggi baris tetap). */
+.fi-selhit { display:inline-grid; place-items:center; cursor:pointer; vertical-align:middle; }
+@media (pointer: coarse) { .fi-selhit { min-width:44px; min-height:44px; margin:-10px -14px; } }
 
 /* ===== Object Page: header, alur, anchor bar ===== */
 .fi-oph { background:var(--surface); border-bottom:1px solid var(--line); padding:14px 20px; display:grid; gap:10px; }
@@ -183,7 +192,7 @@ select.fi-input { appearance:none; background-image:linear-gradient(45deg, trans
 .fi-crumb a { text-decoration:none; }
 .fi-crumb li + li::before { content:"/"; margin-right:6px; color:var(--ink-disabled); }
 .fi-oph-title { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
-.fi-oph-title h1 { font:var(--fs-title-1); letter-spacing:var(--ls-title); overflow-wrap:anywhere; }
+.fi-oph-title :is(h1,h2) { font:var(--fs-title-1); letter-spacing:var(--ls-title); overflow-wrap:anywhere; }
 .fi-oph-acts { margin-left:auto; display:flex; flex-wrap:wrap; gap:8px; }
 .fi-draft { display:inline-flex; align-items:center; gap:6px; font:var(--fs-small); color:var(--warn); }
 .fi-attrs { display:flex; flex-wrap:wrap; gap:6px 24px; }
@@ -212,8 +221,11 @@ select.fi-input { appearance:none; background-image:linear-gradient(45deg, trans
 /* Layar sentuh: globals.css memberi a { min-width:44px } sehingga tautan (flex-shrink 1) menyusut ke 44 px dan labelnya bertumpuk (tab Form Kontrol
    admin/SPV). flex:none = lebar isi + gulir menyamping (sama dengan layar non-sentuh); padding 8 px di ponsel agar 3 tab salesman tetap muat. */
 @media (pointer: coarse) and (max-width:599px) { .fi-subnav a { padding:10px 8px; } }
+@media (pointer: coarse) { .fi-subnav a { display:inline-flex; align-items:center; min-height:44px; } }
+/* Ponsel: scrollbar disembunyikan, jadi tepi kanan memudar sebagai tanda masih ada tab. Padding kanan = zona pudar, tab terakhir utuh di ujung gulir. */
+@media (max-width:599px) { .fi-subnav { padding-right:32px; mask-image:linear-gradient(to right, #000 calc(100% - 32px), transparent); } }
 .fi-section { scroll-margin-top:56px; }
-@media (max-width:599px) { .fi-oph { padding:12px 14px; } .fi-oph-title h1 { font:var(--fs-title-2); } }
+@media (max-width:599px) { .fi-oph { padding:12px 14px; } .fi-oph-title :is(h1,h2) { font:var(--fs-title-2); } }
 
 /* ===== Footer toolbar ===== */
 .fi-ftb { position:sticky; bottom:0; z-index:var(--z-sticky); background:var(--surface); box-shadow:var(--shadow-bar); display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 16px calc(8px + env(safe-area-inset-bottom, 0px)); }
@@ -234,6 +246,8 @@ select.fi-input { appearance:none; background-image:linear-gradient(45deg, trans
 .fi-chip button { all:unset; cursor:pointer; display:grid; place-items:center; width:18px; height:18px; border-radius:50%; }
 .fi-chip button:hover { background:var(--brand-tint-strong); }
 .fi-chip button:focus-visible { outline:2px solid var(--focus); }
+/* `all:unset` membuang min-height sentuh; area ketuk 44 px lewat ::after tanpa membesarkan chip. */
+@media (pointer: coarse) { .fi-chip button { position:relative; } .fi-chip button::after { content:""; position:absolute; inset:-13px; } }
 @media (max-width:599px) {
   .fi-fbar { padding:12px 14px; }
   .fi-fbar .fi-fbar-fields { display:none; }
@@ -255,6 +269,7 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-kv { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 16px; }
 .fi-kv dt { color:var(--ink-muted); }
 .fi-kv dd { font-weight:600; text-align:right; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.fi-kv[data-align="start"] dd { text-align:left; } /* nilai berupa kalimat (fakta dialog) dibaca dari kiri */
 
 /* ===== Tabel responsif + list item ===== */
 .fi-tablebox { container-type:inline-size; background:var(--surface); min-width:0; }
@@ -283,7 +298,7 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-li > * { min-width:0; overflow-wrap:anywhere; }
 .fi-li:hover { background:var(--surface-2); }
 .fi-li:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
-.fi-li[aria-current="true"] { background:var(--brand-tint); box-shadow:inset 3px 0 0 var(--brand); }
+.fi-li[aria-current="true"] { background:var(--brand-tint); }
 .fi-li-r1 { display:flex; justify-content:space-between; gap:8px; grid-column:1; }
 .fi-li-doc { font:500 .8125rem/1.25rem var(--font-mono); }
 .fi-li-amt { font:700 .9375rem/1.25rem var(--font-sans); font-variant-numeric:tabular-nums; white-space:nowrap; }
@@ -293,8 +308,8 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 
 /* ===== Tile ===== */
 .fi-tiles { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 160px), 1fr)); gap:12px; }
-.fi-tile { box-sizing:border-box; text-decoration:none; color:inherit; background:var(--surface); border:0; border-radius:var(--r-lg); box-shadow:var(--shadow-1); padding:14px; display:flex; flex-direction:column; gap:6px; min-height:148px; text-align:left; font:inherit; cursor:pointer; transition:box-shadow var(--dur-fast), transform var(--dur-fast); }
-.fi-tile:hover { box-shadow:var(--shadow-2); transform:translateY(-1px); }
+.fi-tile { box-sizing:border-box; text-decoration:none; color:inherit; background:var(--surface); border:0; border-radius:var(--r-lg); box-shadow:var(--shadow-1); padding:14px; display:flex; flex-direction:column; gap:6px; min-height:148px; text-align:left; font:inherit; cursor:pointer; transition:background var(--dur-fast); }
+.fi-tile:hover { background:var(--surface-2); } /* Flat-At-Rest: hover tidak mengangkat */
 .fi-tile-t { font:600 .875rem/1.25rem var(--font-sans); }
 .fi-tile-s { font:var(--fs-small); color:var(--ink-subtle); }
 .fi-tile-v { margin-top:auto; display:flex; align-items:baseline; gap:6px; font:var(--fs-kpi); font-variant-numeric:tabular-nums; }
@@ -329,13 +344,15 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
   .fi-fcl { grid-template-columns:minmax(0, 1fr); }
   .fi-fcl[data-detail-open="true"] .fi-fcl-list, .fi-fcl[data-detail-open="false"] .fi-fcl-detail { display:none; }
   .fi-fcl-back { display:inline-flex; align-self:flex-start; margin:8px 8px 0; }
+  /* Isi di atas FCL (KPI, strip, saringan) bertanda .fi-fcl-atas disembunyikan saat detail terbuka, supaya detail langsung terlihat di ponsel. */
+  :has(> .fi-fcl[data-detail-open="true"]) > .fi-fcl-atas { display:none; }
 }
 
 /* ===== Segmented (pengalih tema/kerapatan) ===== */
 .fi-segs { display:inline-flex; flex-wrap:wrap; max-width:100%; border:1px solid var(--line-strong); border-radius:var(--r-md); background:var(--surface); padding:2px; gap:2px; }
 .fi-segs button { font:600 .8125rem/1 var(--font-sans); color:var(--ink-muted); background:transparent; border:0; border-radius:var(--r-sm); padding:0 10px; height:28px; min-height:0; min-width:0; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:background var(--dur-fast) var(--ease-standard), color var(--dur-fast); }
 .fi-segs button[aria-pressed="true"] { background:var(--brand-tint-strong); color:var(--brand); }
-@media (pointer: coarse) { .fi-segs button { height:40px; } }
+@media (pointer: coarse) { .fi-segs button { height:44px; } }
 .fi-scheme { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 12px; align-items:center; justify-items:start; }
 
 /* ===== Halaman modul (S2+): kepala halaman, kartu ringkas, bagian, riwayat, catatan varian ===== */
@@ -348,8 +365,10 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-page-bar .fi-input { width:auto; min-width:10rem; }
 .fi-page-bar > .fi-spacer { flex:1; }
 .fi-kcards { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 180px), 1fr)); gap:12px; }
-.fi-kc { display:grid; gap:2px; padding:12px 14px; border-radius:var(--r-lg); background:var(--surface); box-shadow:var(--shadow-1); color:var(--ink); text-decoration:none; text-align:left; font:inherit; border:0; cursor:pointer; min-width:0; }
-.fi-kc:hover { box-shadow:var(--shadow-2); }
+.fi-kc { display:grid; gap:2px; padding:12px 14px; border-radius:var(--r-lg); background:var(--surface); box-shadow:var(--shadow-1); color:var(--ink); text-decoration:none; text-align:left; font:inherit; border:0; min-width:0; }
+/* Hanya kartu yang benar-benar beraksi (tautan/tombol) yang berpenunjuk dan berubah saat hover; <div> ringkasan tetap diam. */
+:is(a, button).fi-kc { cursor:pointer; }
+:is(a, button).fi-kc:hover { background:var(--surface-2); }
 .fi-kc > span { font:var(--fs-small); color:var(--ink-subtle); }
 .fi-kc > b { font:var(--fs-kpi); font-variant-numeric:tabular-nums; color:var(--tf, var(--ink)); }
 .fi-kc > small { font:var(--fs-caption); color:var(--ink-subtle); overflow-wrap:anywhere; }
@@ -407,7 +426,7 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-chip[data-tone="warn"] { background:var(--warn-bg); color:var(--warn); border-color:color-mix(in srgb, var(--warn) 35%, transparent); }
 button.fi-chip { cursor:pointer; font:600 .75rem/1.2 var(--font-sans); height:auto; min-height:28px; padding:4px 10px; text-align:left; }
 .fi-dropzone .fi-label { margin:0; }
-.fi-table tr[data-out="true"] td { color:var(--ink-disabled); }
+.fi-table tr[data-out="true"] td { color:var(--ink-muted); } /* tetap terbaca (7,25:1); keluar ditandai coret + badge di kolom status */
 .fi-table tr[data-out="true"] .fi-mono { text-decoration:line-through; }
 @media (max-width:767px) { .fi-page { padding:16px 16px 24px; } .fi-hist li { grid-template-columns:minmax(0,1fr); } .fi-hist .fi-chg { grid-column:1; } .fi-chipgrid > div { grid-template-columns:minmax(0,1fr); } }
 /* Claim Workflow (S4b): kartu ringkas sebagai saringan, berkas No Claim, dokumen, daftar periksa, alur dokumen, isian di sel tabel */
@@ -453,8 +472,8 @@ button.fi-chip { cursor:pointer; font:600 .75rem/1.2 var(--font-sans); height:au
 .fi-home-clear b { display:block; font:var(--fs-title-3); }
 .fi-home-clear span { font:var(--fs-small); color:var(--ink-muted); }
 .fi-shortcuts { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap:12px; }
-.fi-shortcut { display:flex; align-items:center; gap:12px; min-height:64px; padding:12px; border-radius:var(--r-lg); background:var(--surface); box-shadow:var(--shadow-1); color:var(--ink); text-decoration:none; transition:box-shadow var(--dur-fast); }
-.fi-shortcut:hover { box-shadow:var(--shadow-2); }
+.fi-shortcut { display:flex; align-items:center; gap:12px; min-height:64px; padding:12px; border-radius:var(--r-lg); background:var(--surface); box-shadow:var(--shadow-1); color:var(--ink); text-decoration:none; transition:background var(--dur-fast); }
+.fi-shortcut:hover { background:var(--surface-2); }
 .fi-shortcut b { display:block; font:600 .875rem/1.25rem var(--font-sans); }
 .fi-shortcut small { display:block; font:var(--fs-small); color:var(--ink-subtle); }
 .fi-card { background:var(--surface); border-radius:var(--r-lg); box-shadow:var(--shadow-1); display:flex; flex-direction:column; min-width:0; max-width:720px; }
@@ -508,6 +527,7 @@ html[data-scheme="dark"] .fiori { --logo-full:url("/brand/logo_SP_lockup_white.p
 .fi-btn--avatar { width:auto; padding:0 2px; }
 .fi-sidenav { background:var(--surface); border-right:1px solid var(--line); overflow:auto; padding:12px 10px; display:flex; flex-direction:column; gap:2px; min-height:0; }
 .fi-sidenav-grp { font:var(--fs-caption); color:var(--ink-subtle); text-transform:uppercase; letter-spacing:.08em; padding:12px 10px 4px; }
+.fi-sidenav ul { list-style:none; margin:0; padding:0; display:grid; gap:2px; }
 .fi-sidenav a { display:flex; align-items:center; gap:10px; padding:0 10px; min-height:var(--ctl-h); border-radius:var(--r-md); color:var(--ink); text-decoration:none; font:500 .8125rem/1.2 var(--font-sans); }
 .fi-sidenav a:hover { background:var(--surface-2); }
 .fi-sidenav a[aria-current="page"] { background:var(--brand-tint); color:var(--brand); font-weight:650; }

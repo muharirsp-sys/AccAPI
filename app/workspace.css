@@ -2,7 +2,7 @@
  * Tujuan: Remap tema Surya untuk isi halaman yang BELUM dimigrasi ke design system Fiori (kelas Tailwind lama).
  * Caller: app/layout.tsx (html[data-theme="surya"] statis).
  * Dependensi: token globals.css, Geist (--font-workspace).
- * Main Functions: tema Surya, unggah dengan kontras jelas.
+ * Main Functions: tema Surya, tombol utama lama = Biru SP, latar/teks status sukses dan info terpisah, unggah dengan kontras jelas.
  * Side Effects: Tampilan isi halaman lama; tidak ada I/O. Shell dan Beranda sudah Fiori (app/fiori.css).
  */
 html[data-theme="surya"] {
@@ -19,9 +19,12 @@ html[data-theme="surya"] {
   --ui-radius-panel: .75rem;
 }
 html[data-theme="surya"] body { background: var(--app-bg); color: var(--foreground); font-family: var(--font-workspace), "Segoe UI", sans-serif; }
-html[data-theme="surya"] body > .fixed.-z-10 { display: none; }
 html[data-theme="surya"] :is(.bg-black\/20,.bg-black\/25,.bg-black\/30,.bg-black\/40,.bg-black\/50) { background-color: #edf3ef !important; }
-html[data-theme="surya"] :is(.bg-indigo-500\/10,.bg-indigo-500\/20,.bg-blue-500\/10,.bg-blue-500\/20,.bg-emerald-500\/10,.bg-emerald-500\/20,.bg-sky-500\/10,.bg-sky-500\/20,.bg-purple-500\/10,.bg-purple-500\/20) { background-color: #e8f2ec !important; }
+html[data-theme="surya"] :is(.bg-indigo-500\/10,.bg-indigo-500\/20,.bg-blue-500\/10,.bg-blue-500\/20,.bg-purple-500\/10,.bg-purple-500\/20) { background-color: #e8f2ec !important; }
+/* Sukses (emerald) dan info (sky) dulu sama-sama hijau; kini token status sendiri-sendiri (globals.css). */
+html[data-theme="surya"] :is(.bg-emerald-500\/10,.bg-emerald-500\/20) { background-color: var(--status-ok-bg) !important; }
+html[data-theme="surya"] :is(.bg-sky-500\/10,.bg-sky-500\/20) { background-color: var(--status-info-bg) !important; }
+html[data-theme="surya"] :is(.text-sky-200,.text-sky-300,.text-sky-400) { color: var(--status-info) !important; }
 html[data-theme="surya"] :is(.bg-\[\#101219\],.bg-\[\#15161f\],.bg-\[\#101217\]) { background-color: #ffffff !important; }
 /* Garis pinggir putih-transparan lahir dari tema gelap; di atas panel putih tema Surya ia
    praktis tidak terlihat, sehingga kotak input tampak tanpa batas dan kartu menyatu dengan
@@ -34,7 +37,9 @@ html[data-theme="surya"] :is(.text-indigo-300,.text-indigo-400,.text-blue-300,.t
 html[data-theme="surya"] .text-slate-300 { color: var(--luxury-text) !important; }
 html[data-theme="surya"] .text-slate-600 { color: var(--luxury-muted) !important; }
 html[data-theme="surya"] :is(.ui-tab-button[data-state="active"],.ui-pill-tab[data-state="active"]) { color: #11513d; background: #e8f2ec; border-color: #b8d2c4; }
-html[data-theme="surya"] :is(.ui-button-primary,.btn-primary) { background: #17694f !important; color: white !important; border-color: #17694f !important; }
+/* Tombol utama halaman lama ikut aksen tunggal Biru SP (DESIGN.md One Voice), sama dengan shell dan halaman Fiori. */
+html[data-theme="surya"] :is(.ui-button-primary,.btn-primary) { background: #004c97 !important; color: white !important; border-color: #004c97 !important; }
+html[data-theme="surya"] :is(.ui-button-primary,.btn-primary):not(:disabled):hover { background: #003f7e !important; border-color: #003f7e !important; }
 html[data-theme="surya"] [data-accapi-date-picker-calendar="true"] { background: white !important; }
 html[data-theme="surya"] ::selection { background: #cbe6d7; color: #123d2c; }
 html[data-theme="surya"] input[type="file"]:not(.fi-input) { color: var(--luxury-muted) !important; max-width: 100%; }

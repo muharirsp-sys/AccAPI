@@ -248,7 +248,7 @@ test.describe("kartu (LOCAL_AUTH_BYPASS)", () => {
         await expect(eksekusi).toHaveCount(0);
         await expect.poll(async () => {
             await page.evaluate(() => window.dispatchEvent(new Event("beforeinstallprompt", { cancelable: true })));
-            return page.getByText("Install Smart ERP").isVisible();
+            return page.getByText("Pasang Ruang Kerja di perangkat").isVisible();
         }).toBe(true);
     });
 

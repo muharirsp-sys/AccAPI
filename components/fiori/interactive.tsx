@@ -9,7 +9,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Monitor, Moon, SlidersHorizontal, Sun, X } from "lucide-react";
+import { Monitor, Moon, SlidersHorizontal, Sun, TriangleAlert, X } from "lucide-react";
 import Dialog from "@/components/ui/Dialog";
 import { Button, KeyValues } from "@/components/fiori/core";
 import { FIORI_DENSITY_KEY, FIORI_SCHEME_KEY } from "@/components/fiori/scheme";
@@ -34,10 +34,12 @@ type ConfirmDialogProps = {
     error?: string;
     /** Isian tambahan milik pemanggil (FormField), tampil sebelum `facts`; pemanggil memegang nilainya. */
     children?: ReactNode;
-    /** Alasan tombol konfirmasi nonaktif (mis. "Pilih berkas dulu"); tampil sebagai title. */
+    /** Alasan tombol konfirmasi nonaktif (mis. "Pilih berkas dulu"); tampil sebagai title dan teks di kaki dialog. */
     confirmDisabled?: string;
-    /** Opsional: alasan nonaktif juga TERLIHAT sebagai teks di kaki dialog (dan aria-describedby tombol). Bawaan: hanya title. */
+    /** Alasan nonaktif TERLIHAT sebagai teks di kaki dialog (dan aria-describedby tombol). Bawaan: ya; `false` = hanya title. */
     alasanTerlihat?: boolean;
+    /** "start" bila nilai `facts` berupa kalimat panjang (dibaca dari kiri). Bawaan: rata kanan (angka). */
+    factsAlign?: "start";
     onConfirm: (reason: string) => Promise<void> | void;
 };
 
@@ -57,7 +59,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
 
 type BodyProps = ConfirmDialogProps & { titleId: string; busy: boolean; setBusy: (busy: boolean) => void };
 
-function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmLabel, cancelLabel = "Batal", tone = "primary", error, children, confirmDisabled, alasanTerlihat, onConfirm, titleId, busy, setBusy }: BodyProps) {
+function ConfirmBody({ onClose, title, tag, description, facts, factsAlign, reason, confirmLabel, cancelLabel = "Batal", tone = "primary", error, children, confirmDisabled, alasanTerlihat = true, onConfirm, titleId, busy, setBusy }: BodyProps) {
     const [text, setText] = useState("");
     const [failure, setFailure] = useState<string>();
     const alertRef = useRef<HTMLParagraphElement>(null);
@@ -98,7 +100,7 @@ function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmL
             <div className="fi-dialog-body">
                 {description && <div className="fi-muted">{description}</div>}
                 {children}
-                {facts?.length ? <KeyValues items={facts} /> : null}
+                {facts?.length ? <KeyValues items={facts} align={factsAlign} /> : null}
                 {reason && (
                     <div className="fi-field">
                         <label className="fi-label" htmlFor={reasonId}>{reason.label}<span className="fi-req" aria-hidden>*</span></label>
@@ -107,7 +109,7 @@ function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmL
                         {min > 1 && <p className="fi-help" id={`${reasonId}-min`}>Minimal {min} karakter; tersimpan bersama aksi ini.</p>}
                     </div>
                 )}
-                {(error || failure) && <p ref={alertRef} tabIndex={-1} className="fi-msg" role="alert">{error || failure}</p>}
+                {(error || failure) && <p ref={alertRef} tabIndex={-1} className="fi-msg" role="alert"><TriangleAlert className="fi-icon" aria-hidden />{error || failure}</p>}
             </div>
             <footer>
                 {alasanTerlihat && blocked && !busy && <span id={whyId} className="fi-small fi-why" style={{ marginRight: "auto", alignSelf: "center" }}>{blocked}</span>}
@@ -131,7 +133,7 @@ export function FormField({ label, required, help, error, children }: { label: s
         <div className="fi-field">
             <label className="fi-label" htmlFor={id}>{label}{required && <span className="fi-req" aria-hidden>*</span>}</label>
             {children({ id, "aria-describedby": describedBy, "aria-invalid": error ? true : undefined, required })}
-            {error && <p className="fi-msg" id={`${id}-err`}>{error}</p>}
+            {error && <p className="fi-msg" id={`${id}-err`}><TriangleAlert className="fi-icon" aria-hidden />{error}</p>}
             {help && <p className="fi-help" id={`${id}-help`}>{help}</p>}
         </div>
     );
@@ -216,9 +218,10 @@ function savePref(attr: string, key: string, value: string, fallback: string) {
 }
 
 const SCHEMES = [["system", "Sistem", Monitor], ["light", "Terang", Sun], ["dark", "Gelap", Moon]] as const;
-const DENSITIES = [["auto", "Otomatis"], ["compact", "Compact"], ["cozy", "Cozy"]] as const;
+// Label tampil Indonesia; nilai atribut tetap compact/cozy (html[data-density], localStorage fiori-density).
+const DENSITIES = [["auto", "Otomatis"], ["compact", "Padat"], ["cozy", "Lega"]] as const;
 
-/** Mode Sistem/Terang/Gelap + density Otomatis/Compact/Cozy. Menggantikan ThemeSwitcher lama saat shell dimigrasi (S1). */
+/** Mode Sistem/Terang/Gelap + kerapatan Otomatis/Padat/Lega (density compact/cozy). */
 export function SchemeSwitcher() {
     const scheme = useHtmlAttr("data-scheme", "system");
     const density = useHtmlAttr("data-density", "auto");
@@ -233,7 +236,7 @@ export function SchemeSwitcher() {
                     </button>
                 ))}
             </div>
-            <span id={`${id}-density`} className="fi-caption">Density</span>
+            <span id={`${id}-density`} className="fi-caption">Kerapatan</span>
             <div className="fi-segs" role="group" aria-labelledby={`${id}-density`}>
                 {DENSITIES.map(([value, label]) => (
                     <button key={value} type="button" aria-pressed={density === value} onClick={() => savePref("data-density", FIORI_DENSITY_KEY, value, "auto")}>{label}</button>

@@ -1,13 +1,13 @@
 /*
- * Tujuan: Root layout Next.js untuk font, tema Surya (isi lama) + token Fiori, dan toaster aplikasi.
+ * Tujuan: Root layout Next.js: font isi lama (Geist), tema Surya untuk halaman yang belum dimigrasi + token Fiori, metadata.
  * Caller: Next.js App Router root.
- * Dependensi: next/font, sonner, fiori/scheme, globals.css, workspace.css dan fiori.css.
- * Main Functions: RootLayout, metadata, ambient background layer, suppress theme hydration warning.
- * Side Effects: Inject script mode/density Fiori dari localStorage sebelum paint dan render toaster global.
+ * Dependensi: next/font, fiori/scheme, globals.css, workspace.css, fiori.css.
+ * Main Functions: RootLayout, metadata (judul bawaan; judul per menu aktif dari generateMetadata di app/(dashboard)/layout.tsx), viewport.
+ * Side Effects: Inject script mode/density Fiori dari localStorage sebelum paint. Toaster ada di app/(dashboard)/layout.tsx
+ *   (satu-satunya grup rute yang memakai toast), supaya font Fiori tidak ikut dimuat di rute cetak.
  */
 import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
-import { Toaster } from "sonner";
 import { applyStoredSchemeScript } from "@/components/fiori/scheme";
 import "./globals.css";
 import "./workspace.css";
@@ -24,13 +24,13 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Smart ERP - Accurate Online",
-  description: "Headless Accurate Frontend - Dynamic execution of Accurate Online endpoints",
+  title: "Ruang Kerja CV. Surya Perkasa",
+  description: "Ruang kerja operasional CV. Surya Perkasa: order, faktur, promo, klaim, dan pembayaran di atas Accurate Online.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Smart ERP",
+    title: "Ruang Kerja",
   },
   icons: {
     icon: [
@@ -55,14 +55,8 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: applyStoredSchemeScript }} />
       </head>
-      <body
-        className={`${geist.variable} antialiased bg-[#0f1015] text-slate-200 min-h-screen selection:bg-indigo-500/30 selection:text-indigo-200 overflow-x-hidden`}
-      >
-        <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_70%_60%_at_50%_-15%,rgba(242,210,138,0.34),rgba(255,255,255,0))]"></div>
-        <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_760px_at_100%_180px,rgba(199,154,63,0.18),transparent)]"></div>
-        <div className="fixed inset-0 -z-10 bg-[linear-gradient(180deg,rgba(255,255,255,0.28),rgba(255,255,255,0)_42%)]"></div>
-        <Toaster position="top-right" richColors theme="light" toastOptions={{ className: 'bg-[#1a1c23]/90 backdrop-blur-xl border-white/10 text-slate-200 shadow-2xl' }} />
-          {children}
+      <body className={`${geist.variable} antialiased min-h-screen overflow-x-hidden`}>
+        {children}
       </body>
     </html>
   );

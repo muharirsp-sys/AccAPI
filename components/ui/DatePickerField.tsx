@@ -3,7 +3,8 @@
  * Caller: Halaman dashboard yang membutuhkan tanggal konsisten tanpa manual typing/paste.
  * Dependensi: date-fns, lucide-react, helper lib/date/indonesiaHolidays.
  * Main Functions: DatePickerField.
- * Side Effects: Render portal dialog kalender ke document.body, memindahkan fokus saat dibuka, dan memasang listener posisi/klik-luar.
+ * Side Effects: Render portal dialog kalender ke document.body, memindahkan fokus saat dibuka (dan kembali ke isian saat memilih/Escape),
+ *   memasang listener posisi/klik-luar. Kalender dibuka lewat klik, Enter, Spasi, atau Panah bawah; fokus Tab saja tidak membukanya.
  */
 
 "use client";
@@ -60,9 +61,9 @@ export default function DatePickerField({
         if (!rect) return;
         const width = Math.min(372, window.innerWidth - 24);
         const gap = 8;
-        // Estimated calendar height: header + weekday row + 6 day-rows + footer ≈ 340px.
-        // Flip upward when there is not enough space below the anchor.
-        const estimatedCalendarHeight = 340;
+        // Tinggi nyata panel (±440 px: kepala, hari, 6 baris tanggal, keterangan); perkiraan hanya sebelum panel terpasang.
+        // Balik ke atas bila ruang di bawah isian tidak cukup.
+        const estimatedCalendarHeight = panelRef.current?.offsetHeight || 440;
         const spaceBelow = window.innerHeight - rect.bottom - gap;
         const top =
             spaceBelow >= estimatedCalendarHeight
@@ -123,7 +124,7 @@ export default function DatePickerField({
                         inputRef.current?.focus();
                     }
                 }}
-                className="fixed z-[9999] rounded-xl border p-3 shadow-2xl"
+                className="fixed z-[9999] rounded-xl border p-3"
                 style={{ top: panelPosition.top, left: panelPosition.left, width: panelPosition.width, background: 'var(--surface)', borderColor: 'var(--control-border, var(--border-strong))', boxShadow: 'var(--luxury-shadow)' }}
             >
                 <div className="mb-3 flex items-center justify-between">
@@ -149,9 +150,9 @@ export default function DatePickerField({
                         <ChevronRight size={16} />
                     </button>
                 </div>
-                <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold uppercase" style={{ color: 'var(--luxury-muted)' }}>
+                <div className="grid grid-cols-7 gap-1 text-center text-xs font-semibold" style={{ color: 'var(--luxury-muted)' }}>
                     {weekdays.map((day) => (
-                        <div key={day} style={day === "Min" ? { color: '#dc2626' } : undefined}>{day}</div>
+                        <div key={day} style={day === "Min" ? { color: 'var(--status-danger)' } : undefined}>{day}</div>
                     ))}
                 </div>
                 <div className="mt-1 grid grid-cols-7 gap-1">
@@ -165,37 +166,33 @@ export default function DatePickerField({
                         const redDate = isRedDate(day);
                         const holidayName = getHolidayName(day);
 
-                        // Build inline styles for proper theme-aware contrast
+                        // Warna dari token tema (--status-danger untuk tanggal merah). Luar bulan dibedakan lewat bobot normal dan garis
+                        // samar, bukan teks pudar: angkanya tetap terbaca penuh (≥ 4,5:1).
+                        const merah = 'var(--status-danger)';
+                        const merahSamar = (persen: number) => `color-mix(in srgb, var(--status-danger) ${persen}%, transparent)`;
                         let btnStyle: React.CSSProperties = {};
                         let btnClass = "relative flex h-11 items-center justify-center rounded-lg border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-45";
 
                         if (selected && redDate) {
-                            btnStyle = { background: '#dc2626', borderColor: '#fca5a5', color: '#ffffff', boxShadow: '0 4px 12px rgba(220, 38, 38, 0.3)' };
-                            btnClass += " ring-2 ring-red-300/80";
-                        } else if (selected && !redDate) {
-                            btnStyle = { background: 'var(--luxury-gold)', borderColor: 'var(--luxury-gold-2)', color: '#ffffff', boxShadow: '0 4px 12px rgba(199, 154, 63, 0.35)' };
-                        } else if (outside && redDate) {
-                            btnStyle = { borderColor: 'rgba(220, 38, 38, 0.25)', background: 'rgba(220, 38, 38, 0.06)', color: 'rgba(220, 38, 38, 0.55)' };
+                            btnStyle = { background: merah, borderColor: merah, color: '#ffffff' };
                             btnClass += " font-bold";
+                        } else if (selected && !redDate) {
+                            btnStyle = { background: 'var(--luxury-gold)', borderColor: 'var(--luxury-gold)', color: '#ffffff' };
+                        } else if (outside && redDate) {
+                            btnStyle = { borderColor: merahSamar(20), background: 'transparent', color: merah };
                         } else if (outside && !redDate) {
                             btnStyle = { borderColor: 'var(--control-border, var(--border-soft))', color: 'var(--luxury-subtle)' };
                         } else if (redDate && !selected) {
-                            btnStyle = { borderColor: 'rgba(220, 38, 38, 0.5)', background: 'rgba(220, 38, 38, 0.08)', color: '#dc2626' };
+                            btnStyle = { borderColor: merahSamar(50), background: merahSamar(8), color: merah };
                             btnClass += " font-bold hover:opacity-80";
                         } else {
                             btnStyle = { borderColor: 'var(--control-border, var(--border-soft))', color: 'var(--luxury-text)' };
                             btnClass += " hover:opacity-75";
                         }
 
-                        if (today && !selected && !redDate) {
-                            btnClass += " ring-2";
-                            btnStyle = { ...btnStyle, outlineColor: 'var(--luxury-gold)', boxShadow: `0 0 0 2px var(--luxury-gold)` };
-                        } else if (today && !selected && redDate) {
-                            btnClass += " ring-2";
-                            btnStyle = { ...btnStyle, boxShadow: '0 0 0 2px rgba(220, 38, 38, 0.5)' };
+                        if (today && !selected) {
+                            btnStyle = { ...btnStyle, boxShadow: `0 0 0 2px ${redDate ? merahSamar(50) : 'var(--luxury-gold)'}` };
                         }
-
-                        if (redDate) btnClass += " font-bold";
 
                         return (
                             <button
@@ -221,6 +218,7 @@ export default function DatePickerField({
                                 onClick={() => {
                                     onChange(dayValue);
                                     setOpen(false);
+                                    inputRef.current?.focus(); // fokus kembali ke isian, bukan jatuh ke <body>
                                 }}
                                 className={btnClass}
                                 style={btnStyle}
@@ -230,21 +228,21 @@ export default function DatePickerField({
                                     <span
                                         aria-hidden="true"
                                         className="absolute bottom-1 h-1.5 w-1.5 rounded-full"
-                                        style={{ background: selected ? '#ffffff' : '#dc2626' }}
+                                        style={{ background: selected ? '#ffffff' : merah }}
                                     />
                                 )}
                                 {holiday && (
                                     <span
                                         aria-hidden="true"
                                         className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full"
-                                        style={{ background: selected ? '#fecaca' : '#ef4444' }}
+                                        style={{ background: selected ? '#ffffff' : merah }}
                                     />
                                 )}
                             </button>
                         );
                     })}
                 </div>
-                <div className="mt-3 rounded-lg px-3 py-2 text-[11px] font-medium" style={{ border: '1px solid rgba(220, 38, 38, 0.3)', background: 'rgba(220, 38, 38, 0.06)', color: '#dc2626' }}>
+                <div className="mt-3 rounded-lg px-3 py-2 text-xs font-medium" style={{ border: '1px solid color-mix(in srgb, var(--status-danger) 30%, transparent)', background: 'color-mix(in srgb, var(--status-danger) 6%, transparent)', color: 'var(--status-danger)' }}>
                     Tanggal merah: libur nasional/cuti bersama Indonesia. Hari Minggu otomatis merah.
                 </div>
             </div>,
@@ -254,7 +252,7 @@ export default function DatePickerField({
 
     return (
         <div ref={anchorRef} data-accapi-date-picker="true" className="relative">
-            <Calendar size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+            <Calendar size={15} aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--luxury-subtle)' }} />
             <input
                 ref={inputRef}
                 type="text"
@@ -270,7 +268,6 @@ export default function DatePickerField({
                 placeholder={placeholder}
                 disabled={disabled}
                 onClick={openPicker}
-                onFocus={openPicker}
                 onBeforeInput={(event) => event.preventDefault()}
                 onPaste={(event) => event.preventDefault()}
                 onDrop={(event) => event.preventDefault()}
@@ -283,7 +280,7 @@ export default function DatePickerField({
                     if (["Enter", " ", "ArrowDown"].includes(event.key)) openPicker();
                 }}
                 className={cn(
-                    "min-h-11 w-full cursor-pointer rounded-lg border border-white/5 bg-black/40 py-2 pl-8 pr-12 text-sm text-slate-200 shadow-sm outline-none placeholder:text-slate-600 focus:border-emerald-500/60 disabled:cursor-not-allowed disabled:opacity-50",
+                    "min-h-11 w-full cursor-pointer rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] py-2 pl-8 pr-12 text-sm text-[var(--luxury-text)] placeholder:text-[var(--luxury-subtle)] disabled:cursor-not-allowed disabled:opacity-50",
                     className
                 )}
             />
@@ -292,9 +289,9 @@ export default function DatePickerField({
                     type="button"
                     aria-label="Kosongkan tanggal"
                     onClick={() => onChange("")}
-                    className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 hover:bg-white/10 hover:text-slate-200"
+                    className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-md text-[var(--luxury-subtle)] hover:bg-[var(--surface-2)] hover:text-[var(--luxury-text)]"
                 >
-                    <X size={14} />
+                    <X size={14} aria-hidden />
                 </button>
             )}
             {calendar}
