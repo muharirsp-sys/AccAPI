@@ -39,7 +39,7 @@ test("tulis: sukses; 403 + petunjuk izin; 409 berkode; 502 / bukan JSON / putus 
     assert.deepEqual((await tulis("/x", "POST", {})).principal, { id: "PA" });
 
     jawab(403, { error: "Forbidden" });
-    await assert.rejects(tulis("/x", "POST", {}), (e: unknown) => e instanceof GalatTulis && !e.belumPasti && /^Forbidden — akun Anda belum berhak/.test(e.message));
+    await assert.rejects(tulis("/x", "POST", {}), (e: unknown) => e instanceof GalatTulis && !e.belumPasti && /^Forbidden\. Akun Anda belum berhak/.test(e.message));
 
     jawab(401, { error: "Unauthorized" });
     await assert.rejects(tulis("/x", "POST", {}), (e: unknown) => e instanceof GalatTulis && e.message === "Unauthorized. Sesi login berakhir; masuk ulang lalu coba lagi.");

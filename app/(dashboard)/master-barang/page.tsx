@@ -1,17 +1,21 @@
 /*
- * Tujuan: Workspace Master Barang per principal dengan tab Form Fix, Sumber PDF, Kamus Kode, dan QC.
+ * Tujuan: Master Barang per principal (Fiori): satu ruang kerja dengan bagian Form Fix, Sumber, Kamus Kode, dan QC.
+ *   Finalisasi, adaptasi master lama, dan simpan Kamus Kode lewat dialog konfirmasi yang menyebut jumlah dan akibatnya.
  * Caller: Route dashboard /master-barang melalui SidebarLayout/RBAC.
- * Dependensi: /api/master-barang, sonner, lucide-react, dan React state/effects.
+ * Dependensi: /api/master-barang (GET daftar/detail/ekspor/sumber, POST aksi + unggah), komponen Fiori, lib/tampil, lucide-react.
  * Main Functions: MasterBarangPage.
- * Side Effects: Fetch API, upload/download file, adaptasi master legacy, update Kamus Kode, dan konfirmasi 3 tahap.
- * Catatan tema: warna via token globals.css (--surface, --foreground, --luxury-*, --border-*) + kelas ui-* dan btn-primary
- *   supaya konsisten di ketiga tema (office-calm/neon/ios). Jangan hardcode warna slate/white/indigo lagi.
+ * Side Effects: Fetch API, unggah/unduh berkas, adaptasi master lama (menulis ulang banyak berkas), update Kamus Kode, konfirmasi 3 tahap.
  */
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, BookOpen, CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, PackagePlus, Plus, RefreshCcw, Save, ShieldAlert, Upload } from "lucide-react";
-import { toast } from "sonner";
+import { useEffect, useState } from "react";
+import { Download, PackagePlus, RefreshCcw, Save, TriangleAlert, Upload, CircleCheck } from "lucide-react";
+import { FioriScope } from "@/components/fiori/Scope";
+import {
+    Button, EmptyState, ErrorState, ListItem, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge, type Tone,
+} from "@/components/fiori/core";
+import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
+import { sebabHttp } from "@/lib/tampil";
 
 type MasterListItem = { id: string; principleCode: string; principleName: string; status: string; revision: number; itemCount: number; errors: number; warnings: number; over50: number; updatedAt: string };
 type SourceItem = { sourceRow?: number; sourcePage?: number; kodePcpl?: string; kelompokPcpl?: string; namaBarang: string; isiCtn?: string | number; satuan?: string; gramasi?: string; kemasan?: string; confidence?: number; reviewNotes?: string[] };
@@ -26,6 +30,8 @@ type MasterDetail = MasterListItem & {
 };
 type Confirmation = { count: number; complete: boolean; bulk?: boolean; candidates?: Array<{ id: string; principleName: string; score: number }> };
 type Tab = "form" | "source" | "codebook" | "qc";
+type Dialog = "adaptasi" | "finalisasi" | "kamus" | null;
+type Pesan = { tone: "pos" | "warn" | "neg"; teks: string };
 
 // Samakan dengan NAMA_WIN_MAX di lib/master-barang/engine.ts (engine tidak diimpor ke
 // client karena memakai node:crypto).
@@ -46,25 +52,25 @@ const FORM_COLUMNS: Array<[string, string]> = [
     ["hargaSupermarketInclude", "Harga Supermarket (Incl)"], ["hargaSupermarketExclude", "Harga Supermarket (Excl)"],
     ["hargaBujInclude", "Harga BUJ (Incl)"], ["hargaBujExclude", "Harga BUJ (Excl)"], ["marginPersen", "Margin %"],
 ];
+// Kolom angka rata kanan dan tabular supaya bisa dibandingkan antarbaris.
+const KOLOM_ANGKA = new Set(["no", "isiCtn", "len15", "len50", "marginPersen", ...FORM_COLUMNS.map(([key]) => key).filter((key) => key.startsWith("harga"))]);
 
-// Status badge: teks -600 + tint -500/12 supaya lolos kontras di tema terang (cream) maupun gelap (neon).
-const statusStyle: Record<string, string> = {
-    ready: "border-emerald-500/40 bg-emerald-500/12 text-emerald-600", review: "border-amber-500/40 bg-amber-500/12 text-amber-600",
-    blocked_similarity: "border-rose-500/40 bg-rose-500/12 text-rose-600", draft: "border-[color:var(--border-strong)] bg-[var(--surface-2)] text-[color:var(--luxury-muted)]",
+// Status master: ikon + label + nada (bukan warna saja). Status di luar daftar tampil sebagai "tidak dikenal", bukan disamarkan jadi Draf.
+const STATUS_MASTER: Record<string, { label: string; tone: Tone }> = {
+    ready: { label: "Siap", tone: "pos" }, review: { label: "Perlu tinjau", tone: "warn" },
+    blocked_similarity: { label: "Nama mirip", tone: "neg" }, draft: { label: "Draf", tone: "neu" },
 };
-const tabs: Array<{ key: Tab; label: string; icon: typeof FileSpreadsheet }> = [
-    { key: "form", label: "Form Fix", icon: FileSpreadsheet }, { key: "source", label: "Sumber PDF", icon: FileText },
-    { key: "codebook", label: "Kamus Kode", icon: BookOpen }, { key: "qc", label: "QC", icon: CheckCircle2 },
+const statusMaster = (status: string) => STATUS_MASTER[status] ?? { label: "Status tidak dikenal", tone: "neu" as Tone };
+const TABS: Array<{ key: Tab; label: string }> = [
+    { key: "form", label: "Form Fix" }, { key: "source", label: "Sumber" }, { key: "codebook", label: "Kamus Kode" }, { key: "qc", label: "QC" },
 ];
-
-// Kelas yang dipakai berulang — token-driven, aman di 3 tema.
-const INPUT = "w-full rounded-lg border border-[color:var(--border-strong)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--luxury-teal)] placeholder:text-[color:var(--luxury-muted)]";
-const MUTED = "text-[color:var(--luxury-muted)]";
+// position:relative supaya teks sr-only di dalam tabel lebar terpotong wadah gulir, bukan melebarkan halaman.
+const GULIR_TABEL = { overflow: "auto", maxHeight: "68vh", position: "relative" } as const;
 
 async function jsonFetch(url: string, init?: RequestInit) {
-    const response = await fetch(url, { credentials: "include", ...init });
-    const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error(data.error || "Permintaan gagal.");
+    const response = await fetch(url, { credentials: "include", ...init }).catch(() => { throw new Error(sebabHttp(0)); });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.error || sebabHttp(response.status));
     return data;
 }
 
@@ -79,6 +85,12 @@ export default function MasterBarangPage() {
     const [newCode, setNewCode] = useState("");
     const [codebookDraft, setCodebookDraft] = useState<CodebookEntry[]>([]);
     const [manual, setManual] = useState({ namaBarang: "", kodePcpl: "", kelompokPcpl: "", isiCtn: "", gramasi: "", kemasan: "" });
+    const [galatMuat, setGalatMuat] = useState<string | null>(null);
+    const [galatDetail, setGalatDetail] = useState<string | null>(null);
+    const [galatBuat, setGalatBuat] = useState<string | null>(null);
+    const [galatManual, setGalatManual] = useState<string | null>(null);
+    const [pesan, setPesan] = useState<Pesan | null>(null);
+    const [dialog, setDialog] = useState<Dialog>(null);
 
     const loadList = async (preferId?: string) => {
         const data = await jsonFetch("/api/master-barang");
@@ -95,13 +107,13 @@ export default function MasterBarangPage() {
     };
     const refresh = async (id?: string) => {
         setLoading(true);
-        try { const next = await loadList(id); if (next) await loadDetail(next); }
-        catch (error) { toast.error(error instanceof Error ? error.message : "Gagal memuat Master Barang."); }
+        try { const next = await loadList(id); if (next) await loadDetail(next); setGalatMuat(null); }
+        catch (error) { setGalatMuat(error instanceof Error ? error.message : "Master barang gagal dimuat."); }
         finally { setLoading(false); }
     };
 
     useEffect(() => { void refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-    useEffect(() => { if (selectedId) void loadDetail(selectedId).catch((error) => toast.error(error.message)); }, [selectedId]);
+    useEffect(() => { if (selectedId) void loadDetail(selectedId).then(() => setGalatDetail(null)).catch((error) => setGalatDetail(error.message)); }, [selectedId]);
 
     const post = async (action: string, payload: Record<string, unknown> = {}) => {
         setBusy(action);
@@ -113,121 +125,332 @@ export default function MasterBarangPage() {
     };
 
     const create = async () => {
-        if (!newName.trim()) return toast.error("Nama Principle wajib diisi.");
+        setGalatBuat(null);
+        if (!newName.trim()) { setGalatBuat("Nama principal wajib diisi."); return; }
         try {
             const data = await post("create", { principleName: newName, principleCode: newCode });
             setNewName(""); setNewCode(""); setSelectedId(data.master.id);
-            toast.success(data.master.status === "blocked_similarity" ? "Nama mirip ditemukan. Selesaikan 3 konfirmasi." : "Draft Master Barang dibuat.");
-        } catch (error) { toast.error(error instanceof Error ? error.message : "Gagal membuat master."); }
+            setPesan(data.master.status === "blocked_similarity"
+                ? { tone: "warn", teks: "Nama mirip ditemukan. Selesaikan 3 konfirmasi." }
+                : { tone: "pos", teks: "Draf master barang dibuat." });
+        } catch (error) { setGalatBuat(error instanceof Error ? error.message : "Master belum terbuat."); }
     };
 
     const upload = async (file: File | null) => {
         if (!file || !detail) return;
         setBusy("upload");
+        setPesan(null);
         const form = new FormData(); form.append("masterId", detail.id); form.append("file", file);
         try {
             const data = await jsonFetch("/api/master-barang", { method: "POST", body: form });
             setDetail(data.master); setCodebookDraft(data.master.codebook || []); await loadList(detail.id);
-            toast.success(`${data.extracted} item diekstrak. Review Kamus Kode dan QC.`);
-        } catch (error) { toast.error(error instanceof Error ? error.message : "Upload gagal."); }
+            setPesan({ tone: "pos", teks: `${data.extracted} item diekstrak. Tinjau Kamus Kode dan QC.` });
+        } catch (error) { setPesan({ tone: "neg", teks: `Berkas belum terunggah. ${error instanceof Error ? error.message : sebabHttp(0)}` }); }
         finally { setBusy(""); }
     };
 
     const addManual = async () => {
-        if (!detail || !manual.namaBarang.trim()) return toast.error("Nama Barang wajib diisi.");
+        setGalatManual(null);
+        if (!detail || !manual.namaBarang.trim()) { setGalatManual("Nama barang wajib diisi."); return; }
         try {
             await post("manual_items", { masterId: detail.id, items: [{ ...manual, confidence: 1 }] });
             setManual({ namaBarang: "", kodePcpl: "", kelompokPcpl: "", isiCtn: "", gramasi: "", kemasan: "" });
-            toast.success("Item manual ditambahkan.");
-        } catch (error) { toast.error(error instanceof Error ? error.message : "Gagal menambah item."); }
+            setPesan({ tone: "pos", teks: "Item manual ditambahkan." });
+        } catch (error) { setGalatManual(error instanceof Error ? error.message : "Item belum tertambah."); }
     };
 
-    const confirm = async (kind: "similarity" | "len50" | "gramasi") => {
+    const catatKonfirmasi = async (kind: "similarity" | "len50" | "gramasi") => {
         if (!detail) return;
         try {
             const action = kind === "similarity" ? "confirm_similarity" : kind === "len50" ? "confirm_len50" : "confirm_gramasi";
             const data = await post(action, { masterId: detail.id });
             await loadDetail(detail.id); await loadList(detail.id);
-            toast.success(`Konfirmasi ${data.confirmation.count}/3 dicatat${data.confirmation.complete ? ". Selesai." : "."}`);
-        } catch (error) { toast.error(error instanceof Error ? error.message : "Konfirmasi gagal."); }
+            setPesan({ tone: "pos", teks: `Konfirmasi ${data.confirmation.count} dari 3 dicatat${data.confirmation.complete ? ". Selesai." : "."}` });
+        } catch (error) { setPesan({ tone: "neg", teks: `Konfirmasi belum tercatat. ${error instanceof Error ? error.message : sebabHttp(0)}` }); }
     };
 
     const saveCodebook = async () => {
         if (!detail) return;
-        try { await post("update_codebook", { masterId: detail.id, codebook: codebookDraft }); toast.success("Kamus Kode disimpan; Form Fix dan QC dibuat ulang."); }
-        catch (error) { toast.error(error instanceof Error ? error.message : "Gagal menyimpan Kamus Kode."); }
+        await post("update_codebook", { masterId: detail.id, codebook: codebookDraft });
+        setDialog(null);
+        setPesan({ tone: "pos", teks: "Kamus Kode disimpan; Form Fix dan QC dibuat ulang." });
     };
 
     const finalize = async () => {
         if (!detail) return;
-        try { await post("finalize", { masterId: detail.id }); toast.success("Master Barang berstatus Ready."); }
-        catch (error) { toast.error(error instanceof Error ? error.message : "Finalisasi gagal."); }
+        await post("finalize", { masterId: detail.id });
+        setDialog(null);
+        setPesan({ tone: "pos", teks: "Master barang berstatus Siap." });
     };
 
     const adaptLegacy = async () => {
         setBusy("adapt_legacy");
         try {
             const data = await jsonFetch("/api/master-barang", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "adapt_legacy" }) });
-            toast.success(`Adaptasi selesai: ${data.report.adapted} file, ${data.report.unchanged} tetap, ${data.report.failed} gagal.`);
+            setDialog(null);
+            setPesan({ tone: data.report.failed > 0 ? "warn" : "pos", teks: `Adaptasi selesai: ${data.report.adapted} file diadaptasi, ${data.report.unchanged} tetap, ${data.report.failed} gagal.` });
             await refresh();
-        } catch (error) { toast.error(error instanceof Error ? error.message : "Adaptasi gagal."); }
-        finally { setBusy(""); }
+        } finally { setBusy(""); }
     };
 
     const similarity = detail?.confirmationState.similarity;
     const len50 = detail?.confirmationState.len50;
     const gramasi = detail?.confirmationState.gramasi;
-    const selectedSummary = useMemo(() => masters.find((item) => item.id === selectedId), [masters, selectedId]);
+    const status = detail ? statusMaster(detail.status) : null;
+    const tidakBisaUnggah = busy === "upload" || detail?.status === "blocked_similarity";
+    const kartuQc: Array<[string, number, Tone]> = detail ? [
+        ["Error", detail.qc.errors, "neg"], ["Peringatan", detail.qc.warnings, "warn"], [`Nama lebih dari ${NAMA_WIN_MAX} karakter`, detail.qc.over50, "warn"],
+        ["Kode tidak 15 karakter", detail.qc.invalidCodeLength, "info"], ["Keyakinan baca rendah", detail.qc.lowConfidence, "warn"], ["Gramasi mirip", detail.qc.gramasiNearDup ?? 0, "warn"],
+    ] : [];
+    const nadaTemuan: Record<QcIssue["severity"], { tone: Tone; label: string }> = { error: { tone: "neg", label: "Error" }, warning: { tone: "warn", label: "Peringatan" }, info: { tone: "info", label: "Info" } };
 
     return (
-        <div className="min-h-full pb-12 text-[color:var(--foreground)]">
-            <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-                <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--luxury-teal)]">Data Management</p>
-                    <h1 className="mt-1 text-3xl font-bold tracking-tight text-[color:var(--luxury-text)]">Master Barang</h1>
-                    <p className={`mt-2 max-w-3xl text-sm ${MUTED}`}>Satu principal, satu workspace. Form Fix selalu turunan read-only dari sumber dan Kamus Kode.</p>
-                </div>
-                <button onClick={adaptLegacy} disabled={Boolean(busy)} className="ui-button-secondary inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium disabled:opacity-50"><RefreshCcw size={16} className={busy === "adapt_legacy" ? "animate-spin" : ""} />Adaptasi Semua Master Lama</button>
-            </div>
-
-            <div className="grid gap-5 xl:grid-cols-[310px_minmax(0,1fr)]">
-                <aside className="ui-surface-panel h-fit p-4">
-                    <h2 className="mb-3 text-sm font-semibold text-[color:var(--luxury-text)]">Buat principal baru</h2>
-                    <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Nama Principle" className={`mb-2 ${INPUT}`} />
-                    <div className="flex gap-2">
-                        <input value={newCode} onChange={(event) => setNewCode(event.target.value.toUpperCase().slice(0, 2))} placeholder="Kode MB 2 karakter (dari Data Principal)" className={`min-w-0 flex-1 ${INPUT}`} />
-                        <button onClick={create} disabled={busy === "create"} className="btn-primary inline-flex items-center justify-center rounded-lg px-3 disabled:opacity-50" aria-label="Buat principal"><Plus size={18} /></button>
+        <FioriScope>
+            <div className="fi-page">
+                <header className="fi-page-head">
+                    <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Pengaturan</span></li><li><span aria-current="page">Master Barang</span></li></ol></nav>
+                    <div className="fi-page-bar">
+                        <h1>Master Barang</h1>
+                        <span className="fi-spacer" />
+                        <Button icon={<RefreshCcw className="fi-icon" aria-hidden />} disabled={Boolean(busy)} disabledReason="Tunggu proses yang sedang berjalan" onClick={() => setDialog("adaptasi")}>Adaptasi master lama…</Button>
                     </div>
-                    <div className="my-4 h-px bg-[color:var(--border-soft)]" />
-                    <div className="max-h-[64vh] space-y-2 overflow-y-auto pr-1">
-                        {masters.map((master) => <button key={master.id} onClick={() => setSelectedId(master.id)} className={`w-full rounded-xl border p-3 text-left transition ${selectedId === master.id ? "border-[color:var(--luxury-teal)] bg-[color:var(--luxury-teal)]/10" : "border-[color:var(--border-soft)] bg-[var(--surface-2)] hover:border-[color:var(--border-strong)]"}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-medium text-[color:var(--luxury-text)]">{master.principleName}</p><p className={`mt-1 text-xs ${MUTED}`}>{master.principleCode} · {master.itemCount} item · rev {master.revision}</p></div><span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] uppercase ${statusStyle[master.status] || statusStyle.draft}`}>{master.status.replace("blocked_similarity", "mirip")}</span></div>{(master.errors > 0 || master.warnings > 0) && <p className="mt-2 text-xs text-amber-600">{master.errors} error · {master.warnings} warning</p>}</button>)}
-                        {!loading && !masters.length && <p className={`py-8 text-center text-sm ${MUTED}`}>Belum ada master.</p>}
+                    <p>Satu principal, satu ruang kerja. Form Fix selalu turunan dari sumber dan Kamus Kode, jadi tidak diubah langsung.</p>
+                </header>
+
+                {pesan && <MessageStrip tone={pesan.tone} title={pesan.teks} onClose={() => setPesan(null)} />}
+                {galatMuat && masters.length > 0 && (
+                    <MessageStrip tone="neg" title="Gagal memuat ulang. Yang tampil adalah hasil sebelumnya.">{galatMuat} <Button variant="tertiary" onClick={() => void refresh()}>Coba lagi</Button></MessageStrip>
+                )}
+
+                {galatMuat && masters.length === 0 && !loading ? (
+                    <div className="fi-panel"><ErrorState title="Daftar master barang gagal dimuat" message={galatMuat} onRetry={() => void refresh()} /></div>
+                ) : (
+                    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
+                        <div className="grid gap-4">
+                            <Section title="Buat principal baru">
+                                <div className="fi-sect-in">
+                                    <FormField label="Nama principal" required error={galatBuat ?? undefined}>
+                                        {(a11y) => <input {...a11y} className="fi-input" value={newName} placeholder="mis. PRINCIPLE A" onChange={(event) => setNewName(event.target.value)} />}
+                                    </FormField>
+                                    <FormField label="Kode Master Barang" help="2 karakter, sesuai Data Principal.">
+                                        {(a11y) => <input {...a11y} className="fi-input fi-mono" value={newCode} maxLength={2} onChange={(event) => setNewCode(event.target.value.toUpperCase().slice(0, 2))} />}
+                                    </FormField>
+                                    <div className="fi-btnrow">
+                                        <Button variant="primary" icon={<PackagePlus className="fi-icon" aria-hidden />} busy={busy === "create"} onClick={create}>Buat principal</Button>
+                                    </div>
+                                </div>
+                            </Section>
+
+                            <Section title="Master tersimpan" subtitle={masters.length ? `${masters.length} master` : undefined}>
+                                {loading && masters.length === 0 ? <div className="fi-sect-in"><Skeleton rows={4} label="Memuat daftar master" /></div>
+                                    : masters.length === 0 ? <EmptyState title="Belum ada master" message="Buat principal pertama lewat formulir di atas." />
+                                    : (
+                                        <ul className="fi-list" style={{ display: "block", maxHeight: "64vh", overflowY: "auto" }} aria-label="Daftar master barang">
+                                            {masters.map((master) => {
+                                                const s = statusMaster(master.status);
+                                                return (
+                                                    <li key={master.id} className="fi-wl-row">
+                                                        <ListItem doc={master.principleCode} title={master.principleName}
+                                                            meta={`${master.itemCount} item · revisi ${master.revision}${master.errors > 0 || master.warnings > 0 ? ` · ${master.errors} error, ${master.warnings} peringatan` : ""}`}
+                                                            badge={<StatusBadge tone={s.tone} wrap>{s.label}</StatusBadge>} current={selectedId === master.id} onClick={() => setSelectedId(master.id)} />
+                                                    </li>
+                                                );
+                                            })}
+                                        </ul>
+                                    )}
+                            </Section>
+                        </div>
+
+                        <div className="grid min-w-0 gap-4">
+                            {loading && !detail ? <div className="fi-panel"><Skeleton rows={6} label="Memuat master barang" /></div>
+                                : galatDetail ? <MessageStrip tone="neg" title="Master ini gagal dimuat.">{galatDetail} <Button variant="tertiary" onClick={() => void loadDetail(selectedId).then(() => setGalatDetail(null)).catch((error) => setGalatDetail(error.message))}>Coba lagi</Button></MessageStrip>
+                                : !detail || !status ? <div className="fi-panel"><EmptyState title="Belum ada master yang dipilih" message="Pilih master di daftar, atau buat principal baru." /></div>
+                                : (
+                                    <>
+                                        <ObjectPageHeader headingLevel={2} title={detail.principleName} status={<StatusBadge tone={status.tone}>{status.label}</StatusBadge>}
+                                            attributes={[
+                                                { label: "Kode", value: <span className="fi-mono">{detail.principleCode}</span> },
+                                                { label: "Item", value: detail.formRows.length }, { label: "Revisi", value: detail.revision }, { label: "Sumber", value: detail.sources.length },
+                                            ]}
+                                            actions={<>
+                                                <label className="fi-btn fi-btn--secondary" aria-disabled={tidakBisaUnggah || undefined} title={detail.status === "blocked_similarity" ? "Selesaikan 3 konfirmasi nama mirip dulu" : undefined}>
+                                                    <Upload className="fi-icon" aria-hidden />{busy === "upload" ? "Memproses…" : "Unggah sumber"}
+                                                    <input type="file" className="sr-only" disabled={tidakBisaUnggah} accept=".pdf,.xlsx,.xls,.csv,.tsv,.png,.jpg,.jpeg,.webp" onChange={(event) => { void upload(event.target.files?.[0] || null); event.target.value = ""; }} />
+                                                </label>
+                                                <a className="fi-btn fi-btn--secondary" href={`/api/master-barang?id=${detail.id}&export=1`}><Download className="fi-icon" aria-hidden />Unduh Excel 4 sheet</a>
+                                                <Button variant="primary" icon={<CircleCheck className="fi-icon" aria-hidden />} onClick={() => setDialog("finalisasi")}>Finalisasi…</Button>
+                                            </>} />
+
+                                        {detail.status === "blocked_similarity" && similarity && (
+                                            <MessageStrip tone="neg" title="Nama principal mirip master yang sudah ada.">
+                                                {similarity.candidates?.map((item) => `${item.principleName} (${Math.round(item.score * 100)}%)`).join(", ")}. Unggah sumber terkunci sampai 3 konfirmasi selesai. Konfirmasi {similarity.count} dari 3; tiap klik dicatat di audit.{" "}
+                                                <Button variant="negative" busy={busy === "confirm_similarity"} onClick={() => void catatKonfirmasi("similarity")}>{`Saya tetap lanjut, tahap ${Math.min(3, similarity.count + 1)} dari 3`}</Button>
+                                            </MessageStrip>
+                                        )}
+
+                                        <div className="fi-segs" role="group" aria-label="Bagian master">
+                                            {TABS.map((item) => (
+                                                <button key={item.key} type="button" aria-pressed={tab === item.key} onClick={() => setTab(item.key)}>
+                                                    {item.label}{item.key === "qc" && detail.qc.warnings + detail.qc.errors > 0 ? ` (${detail.qc.warnings + detail.qc.errors})` : ""}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        {tab === "form" && (
+                                            <Section title="Form Fix" subtitle="hanya baca; ubah struktur lewat Kamus Kode">
+                                                {detail.formRows.length === 0 ? <EmptyState title="Form Fix masih kosong" message="Unggah sumber atau tambah item manual di bagian Sumber." /> : (
+                                                    <div className="fi-tablescroll" tabIndex={0} style={GULIR_TABEL}>
+                                                        <table className="fi-table">
+                                                            <caption className="sr-only">Form Fix</caption>
+                                                            <thead><tr>{FORM_COLUMNS.map(([key, label]) => <th key={key} scope="col" className={KOLOM_ANGKA.has(key) ? "fi-end" : undefined}>{label}</th>)}</tr></thead>
+                                                            <tbody>{detail.formRows.map((row, index) => (
+                                                                <tr key={`${row.kodeBarangWin2 || index}-${index}`}>
+                                                                    {FORM_COLUMNS.map(([key]) => {
+                                                                        const nilai = String(row[key] ?? "");
+                                                                        const lewat = key === "len50" && Number(row[key]) > NAMA_WIN_MAX;
+                                                                        return (
+                                                                            <td key={key} className={KOLOM_ANGKA.has(key) ? "fi-end" : undefined} title={nilai.length > 40 ? nilai : undefined}
+                                                                                style={{ maxWidth: 280, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...(lewat ? { background: "var(--warn-bg)", color: "var(--warn)", fontWeight: 600 } : null) }}>
+                                                                                {lewat && <TriangleAlert className="fi-icon" aria-hidden style={{ width: 12, height: 12, marginRight: 4, verticalAlign: "-1px" }} />}
+                                                                                {nilai}{lewat && <span className="sr-only"> (melebihi {NAMA_WIN_MAX} karakter)</span>}
+                                                                            </td>
+                                                                        );
+                                                                    })}
+                                                                </tr>
+                                                            ))}</tbody>
+                                                        </table>
+                                                    </div>
+                                                )}
+                                            </Section>
+                                        )}
+
+                                        {tab === "source" && (
+                                            <>
+                                                <Section title="Sumber" subtitle={`${detail.sources.length} berkas`}>
+                                                    {detail.sources.length === 0 ? <EmptyState title="Belum ada sumber" message="Unggah PDF, Excel, atau foto lewat tombol Unggah sumber di atas." /> : (
+                                                        <div className="fi-dflow">
+                                                            {detail.sources.map((source) => (
+                                                                <a key={source.id} className="fi-dnode" href={`/api/master-barang?id=${detail.id}&sourceId=${source.id}`} title={`Pembaca: ${String(source.extraction.engine || "adapter")}`}>
+                                                                    <b>{source.fileName}</b>
+                                                                    <span>{source.sourceKind} · {(source.fileSize / 1024).toFixed(1)} KB</span>
+                                                                </a>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </Section>
+
+                                                <Section title="Tambah item manual" subtitle="untuk barang yang tidak ada di sumber">
+                                                    <div className="fi-sect-in">
+                                                        {galatManual && <MessageStrip tone="neg" title={galatManual} onClose={() => setGalatManual(null)} />}
+                                                        <div className="fi-formgrid">
+                                                            {([["namaBarang", "Nama barang", true], ["kodePcpl", "Kode principal", false], ["kelompokPcpl", "Kelompok principal", false], ["isiCtn", "ISI per karton", false], ["gramasi", "Gramasi", false], ["kemasan", "Kemasan", false]] as const).map(([key, label, wajib]) => (
+                                                                <FormField key={key} label={label} required={wajib} help={key === "kodePcpl" ? "Opsional." : undefined}>
+                                                                    {(a11y) => <input {...a11y} className="fi-input" value={manual[key]} onChange={(event) => setManual((current) => ({ ...current, [key]: event.target.value }))} />}
+                                                                </FormField>
+                                                            ))}
+                                                        </div>
+                                                        <div className="fi-btnrow"><Button variant="primary" icon={<PackagePlus className="fi-icon" aria-hidden />} busy={busy === "manual_items"} onClick={addManual}>Tambahkan</Button></div>
+                                                    </div>
+                                                </Section>
+
+                                                <Section title="Item dari sumber" subtitle={`${detail.sourceItems.length} item`}>
+                                                    {detail.sourceItems.length === 0 ? <EmptyState title="Belum ada item dari sumber" message="Item muncul setelah sumber diunggah atau item manual ditambahkan." /> : (
+                                                        <div className="fi-tablescroll" tabIndex={0} style={GULIR_TABEL}>
+                                                            <table className="fi-table">
+                                                                <caption className="sr-only">Item dari sumber</caption>
+                                                                <thead><tr><th scope="col">Sumber</th><th scope="col">Nama barang</th><th scope="col">Isi</th><th scope="col">Gramasi</th><th scope="col">Kemasan</th><th scope="col" className="fi-end">Keyakinan baca</th></tr></thead>
+                                                                <tbody>{detail.sourceItems.map((item, index) => (
+                                                                    <tr key={index}>
+                                                                        <td>{item.sourcePage ? `Hal. ${item.sourcePage}` : item.sourceRow ? `Baris ${item.sourceRow}` : "Manual"}</td>
+                                                                        <td>{item.namaBarang}</td><td>{item.isiCtn || ""}</td><td>{item.gramasi || ""}</td><td>{item.kemasan || ""}</td>
+                                                                        <td className="fi-end">{Math.round(Number(item.confidence ?? 1) * 100)}%</td>
+                                                                    </tr>
+                                                                ))}</tbody>
+                                                            </table>
+                                                        </div>
+                                                    )}
+                                                </Section>
+                                            </>
+                                        )}
+
+                                        {tab === "codebook" && (
+                                            <Section title="Kamus Kode" subtitle="kemasan selalu mulai dari 1 per KLP"
+                                                actions={<Button variant="primary" icon={<Save className="fi-icon" aria-hidden />} onClick={() => setDialog("kamus")}>Simpan kamus…</Button>}>
+                                                <div className="fi-sect-in"><p className="fi-small fi-muted">Menyimpan kamus membuat ulang Form Fix dan membatalkan konfirmasi nama lebih dari {NAMA_WIN_MAX} karakter yang lama.</p></div>
+                                                {codebookDraft.length === 0 ? <EmptyState title="Kamus Kode masih kosong" message="Kamus terisi setelah sumber diunggah." /> : (
+                                                    <div className="fi-tablescroll" tabIndex={0} style={GULIR_TABEL}>
+                                                        <table className="fi-table">
+                                                            <caption className="sr-only">Kamus Kode</caption>
+                                                            <thead><tr><th scope="col">Tingkat</th><th scope="col">Cakupan</th><th scope="col">Nama sumber</th><th scope="col">Nama hasil</th><th scope="col">Kode</th></tr></thead>
+                                                            <tbody>{codebookDraft.map((entry, index) => (
+                                                                <tr key={entry.key}>
+                                                                    <td><span className="fi-mono">{entry.level}</span></td>
+                                                                    <td className="fi-small">{entry.scope || "Tanpa induk"}</td>
+                                                                    <td className="fi-small">{entry.sourceName || "Kosong"}</td>
+                                                                    <td><input className="fi-input" style={{ minWidth: "9rem" }} aria-label={`Nama hasil baris ${index + 1}`} value={entry.name} onChange={(event) => setCodebookDraft((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, name: event.target.value.toUpperCase() } : row))} /></td>
+                                                                    <td><input className="fi-input fi-mono" style={{ width: "5.5rem" }} aria-label={`Kode baris ${index + 1}`} value={entry.code} onChange={(event) => setCodebookDraft((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, code: event.target.value.replace(/\D/g, "").slice(0, 4) } : row))} /></td>
+                                                                </tr>
+                                                            ))}</tbody>
+                                                        </table>
+                                                    </div>
+                                                )}
+                                            </Section>
+                                        )}
+
+                                        {tab === "qc" && (
+                                            <Section title="Pemeriksaan QC" subtitle={detail.qc.issues.length ? `${detail.qc.issues.length} temuan` : undefined}>
+                                                <div className="fi-sect-in">
+                                                    <div className="fi-kcards">
+                                                        {kartuQc.map(([label, nilai, tone]) => (
+                                                            <div key={label} className="fi-kc" data-tone={nilai > 0 ? tone : undefined}><span>{label}</span><b style={{ fontSize: "1.25rem" }}>{nilai}</b></div>
+                                                        ))}
+                                                    </div>
+                                                    {detail.qc.gramasiNearDup > 0 && (
+                                                        <MessageStrip tone="warn" title="Gramasi mirip perlu dikonfirmasi.">
+                                                            {detail.qc.gramasiNearDup} pasangan item punya nama sama tetapi gramasinya beda kurang dari 30% (mis. 850 vs 825 GR). Kemungkinan itu perubahan gramasi produk yang sama, bukan SKU baru. Konfirmasi berlaku untuk seluruh revisi; beda 30% atau lebih tidak ditandai. Konfirmasi {gramasi?.count || 0} dari 3.{" "}
+                                                            <Button variant="secondary" disabled={Boolean(gramasi?.complete)} busy={busy === "confirm_gramasi"} onClick={() => void catatKonfirmasi("gramasi")}>{gramasi?.complete ? "Konfirmasi selesai" : `Terapkan ke seluruh revisi, tahap ${Math.min(3, (gramasi?.count || 0) + 1)} dari 3`}</Button>
+                                                        </MessageStrip>
+                                                    )}
+                                                    {detail.qc.over50 > 0 && (
+                                                        <MessageStrip tone="warn" title={`Batas ${NAMA_WIN_MAX} karakter hanya untuk ditinjau, bukan pemotongan otomatis.`}>
+                                                            {detail.qc.over50} item lebih dari {NAMA_WIN_MAX} karakter. Konfirmasi berlaku untuk seluruh revisi, bukan per item. Konfirmasi {len50?.count || 0} dari 3.{" "}
+                                                            <Button variant="secondary" disabled={Boolean(len50?.complete)} busy={busy === "confirm_len50"} onClick={() => void catatKonfirmasi("len50")}>{len50?.complete ? "Konfirmasi selesai" : `Terapkan ke seluruh revisi, tahap ${Math.min(3, (len50?.count || 0) + 1)} dari 3`}</Button>
+                                                        </MessageStrip>
+                                                    )}
+                                                </div>
+                                                {detail.qc.issues.length === 0 ? <div className="fi-sect-in"><MessageStrip tone="pos" title="Tidak ada temuan QC." /></div> : (
+                                                    <div className="fi-tablescroll" tabIndex={0} style={GULIR_TABEL}>
+                                                        <table className="fi-table">
+                                                            <caption className="sr-only">Temuan QC</caption>
+                                                            <thead><tr><th scope="col">Tingkat</th><th scope="col" className="fi-end">Baris</th><th scope="col">Penjelasan</th></tr></thead>
+                                                            <tbody>{detail.qc.issues.map((issue, index) => (
+                                                                <tr key={`${issue.code}-${index}`}>
+                                                                    <td><span title={issue.code}><StatusBadge tone={nadaTemuan[issue.severity].tone}>{nadaTemuan[issue.severity].label}</StatusBadge></span></td>
+                                                                    <td className="fi-end">{issue.row || ""}</td>
+                                                                    <td style={{ whiteSpace: "normal" }}>{issue.message}</td>
+                                                                </tr>
+                                                            ))}</tbody>
+                                                        </table>
+                                                    </div>
+                                                )}
+                                            </Section>
+                                        )}
+                                    </>
+                                )}
+                        </div>
                     </div>
-                </aside>
+                )}
 
-                <main className="min-w-0">
-                    {loading ? <div className="ui-surface-panel flex h-72 items-center justify-center"><Loader2 className="animate-spin text-[color:var(--luxury-teal)]" /></div> : !detail ? <div className={`rounded-2xl border border-dashed border-[color:var(--border-strong)] p-16 text-center ${MUTED}`}>Buat atau pilih Master Barang.</div> : <>
-                        <section className="ui-surface-panel mb-4 p-5">
-                            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h2 className="text-2xl font-bold text-[color:var(--luxury-text)]">{detail.principleName}</h2><span className="rounded-md border border-[color:var(--border-strong)] bg-[var(--surface-2)] px-2 py-1 font-mono text-sm text-[color:var(--luxury-teal)]">{detail.principleCode}</span><span className={`rounded border px-2 py-1 text-xs uppercase ${statusStyle[detail.status] || statusStyle.draft}`}>{detail.status}</span></div><p className={`mt-2 text-sm ${MUTED}`}>{detail.formRows.length} item · revisi {detail.revision} · {detail.sources.length} sumber</p></div><div className="flex flex-wrap gap-2"><label className={`btn-primary inline-flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium ${busy === "upload" || detail.status === "blocked_similarity" ? "pointer-events-none opacity-50" : ""}`}><Upload size={15} />{busy === "upload" ? "Memproses..." : "Upload Sumber"}<input type="file" className="hidden" accept=".pdf,.xlsx,.xls,.csv,.tsv,.png,.jpg,.jpeg,.webp" onChange={(event) => { void upload(event.target.files?.[0] || null); event.target.value = ""; }} /></label><button onClick={() => window.location.assign(`/api/master-barang?id=${detail.id}&export=1`)} className="ui-button-secondary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"><Download size={15} />Excel 4 Sheet</button><button onClick={finalize} disabled={busy === "finalize"} className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/12 px-3 py-2 text-sm font-medium text-emerald-600 transition hover:bg-emerald-500/20 disabled:opacity-50"><CheckCircle2 size={15} />Finalisasi</button></div></div>
-                        </section>
-
-                        {detail.status === "blocked_similarity" && similarity && <section className="mb-4 rounded-2xl border border-rose-500/40 bg-rose-500/12 p-5"><div className="flex gap-3"><ShieldAlert className="mt-0.5 shrink-0 text-rose-600" /><div className="flex-1"><h3 className="font-semibold text-rose-700">Nama principal mirip master yang sudah ada</h3><p className="mt-1 text-sm text-rose-600/90">{similarity.candidates?.map((item) => `${item.principleName} (${Math.round(item.score * 100)}%)`).join(", ")}</p><p className="mt-2 text-sm text-[color:var(--foreground)]">Konfirmasi {similarity.count}/3. Tiap klik dicatat di audit.</p><button onClick={() => void confirm("similarity")} disabled={busy === "confirm_similarity"} className="mt-3 rounded-lg border border-rose-500/50 bg-rose-500/20 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-500/30 disabled:opacity-50">Saya tetap lanjut · tahap {Math.min(3, similarity.count + 1)}/3</button></div></div></section>}
-
-                        <nav className="ui-surface-panel mb-4 flex gap-1 overflow-x-auto p-1">{tabs.map((item) => { const Icon = item.icon; return <button key={item.key} onClick={() => setTab(item.key)} className={`flex min-w-fit items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${tab === item.key ? "bg-[color:var(--luxury-teal)]/15 text-[color:var(--luxury-text)]" : `${MUTED} hover:bg-[var(--surface-2)] hover:text-[color:var(--luxury-text)]`}`}><Icon size={15} />{item.label}{item.key === "qc" && detail.qc.warnings + detail.qc.errors > 0 ? <span className="rounded bg-amber-500/20 px-1.5 text-xs text-amber-600">{detail.qc.warnings + detail.qc.errors}</span> : null}</button>; })}</nav>
-
-                        <section className="ui-surface-panel overflow-hidden">
-                            {tab === "form" && <div><div className="border-b border-[color:var(--border-soft)] px-5 py-4"><h3 className="font-semibold text-[color:var(--luxury-text)]">Form Fix</h3><p className={`mt-1 text-xs ${MUTED}`}>Read-only. Ubah struktur melalui Kamus Kode.</p></div><div className="max-h-[68vh] overflow-auto"><table className="min-w-max text-xs"><thead className="sticky top-0 z-10 bg-[var(--surface-2)]"><tr>{FORM_COLUMNS.map(([key, label]) => <th key={key} className="whitespace-nowrap border-b border-r border-[color:var(--border-soft)] px-3 py-2 text-left font-semibold text-[color:var(--luxury-text)]">{label}</th>)}</tr></thead><tbody>{detail.formRows.map((row, index) => <tr key={`${row.kodeBarangWin2 || index}-${index}`} className="hover:bg-[color:var(--luxury-teal)]/5">{FORM_COLUMNS.map(([key]) => <td key={key} className={`max-w-[280px] whitespace-nowrap border-b border-r border-[color:var(--border-soft)] px-3 py-2 ${key === "len50" && Number(row[key]) > NAMA_WIN_MAX ? "bg-amber-500/15 font-medium text-amber-600" : "text-[color:var(--foreground)]"}`}>{String(row[key] ?? "")}</td>)}</tr>)}</tbody></table>{!detail.formRows.length && <p className={`p-12 text-center ${MUTED}`}>Upload sumber atau tambah item manual.</p>}</div></div>}
-
-                            {tab === "source" && <div className="p-5"><h3 className="font-semibold text-[color:var(--luxury-text)]">Sumber PDF / File</h3><div className="mt-4 grid gap-3 lg:grid-cols-2">{detail.sources.map((source) => <a key={source.id} href={`/api/master-barang?id=${detail.id}&sourceId=${source.id}`} className="rounded-xl border border-[color:var(--border-soft)] bg-[var(--surface-2)] p-3 transition hover:border-[color:var(--border-strong)]"><div className="flex items-center gap-3"><FileText className="shrink-0 text-[color:var(--luxury-teal)]" size={20} /><div className="min-w-0"><p className="truncate text-sm font-medium text-[color:var(--luxury-text)]">{source.fileName}</p><p className={`text-xs ${MUTED}`}>{source.sourceKind} · {(source.fileSize / 1024).toFixed(1)} KB · {String(source.extraction.engine || "adapter")}</p></div></div></a>)}</div><div className="mt-6 rounded-xl border border-[color:var(--border-soft)] p-4"><h4 className="text-sm font-semibold text-[color:var(--luxury-text)]">Tambah item manual</h4><div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{([['namaBarang','Nama Barang *'],['kodePcpl','Kode Pcpl (opsional)'],['kelompokPcpl','Kelompok Principle'],['isiCtn','ISI/CTN'],['gramasi','Gramasi'],['kemasan','Kemasan']] as const).map(([key, label]) => <input key={key} value={manual[key]} onChange={(event) => setManual((current) => ({ ...current, [key]: event.target.value }))} placeholder={label} className={INPUT} />)}</div><button onClick={addManual} className="btn-primary mt-3 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium"><PackagePlus size={15} />Tambahkan</button></div><div className="mt-6 overflow-auto"><table className="min-w-full text-sm"><thead><tr className={`text-left text-xs ${MUTED}`}><th className="px-3 py-2 font-semibold">Sumber</th><th className="px-3 py-2 font-semibold">Nama Barang</th><th className="px-3 py-2 font-semibold">Isi</th><th className="px-3 py-2 font-semibold">Gramasi</th><th className="px-3 py-2 font-semibold">Kemasan</th><th className="px-3 py-2 font-semibold">Confidence</th></tr></thead><tbody>{detail.sourceItems.map((item, index) => <tr key={index} className="border-t border-[color:var(--border-soft)] text-[color:var(--foreground)]"><td className={`px-3 py-2 ${MUTED}`}>{item.sourcePage ? `Hal. ${item.sourcePage}` : item.sourceRow ? `Baris ${item.sourceRow}` : "Manual"}</td><td className="px-3 py-2">{item.namaBarang}</td><td className="px-3 py-2">{item.isiCtn || ""}</td><td className="px-3 py-2">{item.gramasi || ""}</td><td className="px-3 py-2">{item.kemasan || ""}</td><td className="px-3 py-2">{Math.round(Number(item.confidence ?? 1) * 100)}%</td></tr>)}</tbody></table></div></div>}
-
-                            {tab === "codebook" && <div><div className="flex items-center justify-between border-b border-[color:var(--border-soft)] px-5 py-4"><div><h3 className="font-semibold text-[color:var(--luxury-text)]">Kamus Kode</h3><p className={`mt-1 text-xs ${MUTED}`}>Kemasan selalu mulai 1 per KLP. Menyimpan kamus membuat ulang Form Fix dan membatalkan konfirmasi LEN 50 lama.</p></div><button onClick={saveCodebook} disabled={busy === "update_codebook"} className="btn-primary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50"><Save size={15} />Simpan</button></div><div className="max-h-[68vh] overflow-auto"><table className="min-w-full text-sm"><thead className="sticky top-0 bg-[var(--surface-2)]"><tr className={`text-left text-xs ${MUTED}`}><th className="px-3 py-2 font-semibold">Level</th><th className="px-3 py-2 font-semibold">Scope</th><th className="px-3 py-2 font-semibold">Nama sumber</th><th className="px-3 py-2 font-semibold">Nama hasil</th><th className="px-3 py-2 font-semibold">Kode</th></tr></thead><tbody>{codebookDraft.map((entry, index) => <tr key={entry.key} className="border-t border-[color:var(--border-soft)]"><td className="px-3 py-2 font-mono text-xs text-[color:var(--luxury-teal)]">{entry.level}</td><td className={`px-3 py-2 text-xs ${MUTED}`}>{entry.scope || "(root)"}</td><td className="px-3 py-2 text-xs text-[color:var(--foreground)]">{entry.sourceName || "(kosong)"}</td><td className="px-3 py-2"><input value={entry.name} onChange={(event) => setCodebookDraft((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, name: event.target.value.toUpperCase() } : row))} className={`min-w-36 ${INPUT} px-2 py-1.5`} /></td><td className="px-3 py-2"><input value={entry.code} onChange={(event) => setCodebookDraft((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, code: event.target.value.replace(/\D/g, "").slice(0, 4) } : row))} className={`w-20 ${INPUT} px-2 py-1.5 font-mono`} /></td></tr>)}</tbody></table></div></div>}
-
-                            {tab === "qc" && <div className="p-5"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">{[["Error", detail.qc.errors, "text-rose-600"], ["Warning", detail.qc.warnings, "text-amber-600"], [`Nama >${NAMA_WIN_MAX}`, detail.qc.over50, "text-amber-600"], ["Kode ≠15", detail.qc.invalidCodeLength, "text-sky-600"], ["Low confidence", detail.qc.lowConfidence, "text-violet-600"], ["Gramasi mirip", detail.qc.gramasiNearDup ?? 0, "text-orange-600"]].map(([label, value, color]) => <div key={String(label)} className="rounded-xl border border-[color:var(--border-soft)] bg-[var(--surface-2)] p-4"><p className={`text-xs ${MUTED}`}>{label}</p><p className={`mt-1 text-2xl font-bold ${color}`}>{value}</p></div>)}</div>{detail.qc.gramasiNearDup > 0 && <div className="mt-5 rounded-xl border border-orange-500/40 bg-orange-500/12 p-4"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 shrink-0 text-orange-600" /><div><h4 className="font-semibold text-[color:var(--luxury-text)]">Gramasi mirip perlu dikonfirmasi</h4><p className={`mt-1 text-sm ${MUTED}`}>{detail.qc.gramasiNearDup} pasangan item dengan nama sama tapi gramasi beda &lt;30% (mis. 850 vs 825 GR). Kemungkinan perubahan gramasi produk yang sama, bukan SKU baru. Konfirmasi bulk untuk seluruh revisi. Beda &ge;30% tidak diflag.</p><p className="mt-2 text-sm text-[color:var(--foreground)]">Konfirmasi {gramasi?.count || 0}/3.</p><button onClick={() => void confirm("gramasi")} disabled={Boolean(gramasi?.complete)} className="mt-3 rounded-lg border border-orange-500/50 bg-orange-500/20 px-3 py-2 text-sm font-medium text-orange-700 transition hover:bg-orange-500/30 disabled:opacity-50">{gramasi?.complete ? "Konfirmasi bulk selesai" : `Terapkan bulk · tahap ${Math.min(3, (gramasi?.count || 0) + 1)}/3`}</button></div></div></div>}{detail.qc.over50 > 0 && <div className="mt-5 rounded-xl border border-amber-500/40 bg-amber-500/12 p-4"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 shrink-0 text-amber-600" /><div><h4 className="font-semibold text-[color:var(--luxury-text)]">LEN {NAMA_WIN_MAX} hanya review, bukan pemotongan otomatis</h4><p className={`mt-1 text-sm ${MUTED}`}>{detail.qc.over50} item lebih dari {NAMA_WIN_MAX} karakter. Override ini berlaku bulk untuk seluruh revisi, bukan per item.</p><p className="mt-2 text-sm text-[color:var(--foreground)]">Konfirmasi {len50?.count || 0}/3.</p><button onClick={() => void confirm("len50")} disabled={Boolean(len50?.complete)} className="mt-3 rounded-lg border border-amber-500/50 bg-amber-500/20 px-3 py-2 text-sm font-medium text-amber-700 transition hover:bg-amber-500/30 disabled:opacity-50">{len50?.complete ? "Konfirmasi bulk selesai" : `Terapkan bulk · tahap ${Math.min(3, (len50?.count || 0) + 1)}/3`}</button></div></div></div>}<div className="mt-5 overflow-auto"><table className="min-w-full text-sm"><thead><tr className={`text-left text-xs ${MUTED}`}><th className="px-3 py-2 font-semibold">Severity</th><th className="px-3 py-2 font-semibold">Kode</th><th className="px-3 py-2 font-semibold">Baris</th><th className="px-3 py-2 font-semibold">Penjelasan</th></tr></thead><tbody>{detail.qc.issues.map((issue, index) => <tr key={`${issue.code}-${index}`} className="border-t border-[color:var(--border-soft)] text-[color:var(--foreground)]"><td className={`px-3 py-2 font-medium ${issue.severity === "error" ? "text-rose-600" : issue.severity === "warning" ? "text-amber-600" : "text-sky-600"}`}>{issue.severity}</td><td className="px-3 py-2 font-mono text-xs">{issue.code}</td><td className="px-3 py-2">{issue.row || ""}</td><td className="px-3 py-2">{issue.message}</td></tr>)}</tbody></table>{!detail.qc.issues.length && <p className="py-12 text-center font-medium text-emerald-600">Tidak ada temuan QC.</p>}</div></div>}
-                        </section>
-                    </>}
-                </main>
+                <ConfirmDialog open={dialog === "adaptasi"} onClose={() => setDialog(null)} tag="Adaptasi" tone="negative" title="Adaptasi semua master lama?" confirmLabel="Adaptasi semua master"
+                    facts={[["Cakupan", `${masters.length} master`], ["Akibat", "Banyak berkas master ditulis ulang sekaligus"], ["Hasil", "Jumlah file yang diadaptasi, tetap, dan gagal ditampilkan sesudahnya"]]}
+                    factsAlign="start" onConfirm={adaptLegacy} />
+                <ConfirmDialog open={dialog === "finalisasi" && Boolean(detail)} onClose={() => setDialog(null)} tag="Finalisasi" title={`Finalisasi master ${detail?.principleName ?? ""}?`} confirmLabel="Finalisasi master"
+                    facts={detail ? [["Master", `${detail.principleCode} · ${detail.principleName}`], ["Item", `${detail.formRows.length}`], ["Temuan QC", `${detail.qc.errors} error, ${detail.qc.warnings} peringatan`], ["Akibat", "Status master menjadi Siap"]] : []}
+                    factsAlign="start" onConfirm={finalize} />
+                <ConfirmDialog open={dialog === "kamus" && Boolean(detail)} onClose={() => setDialog(null)} tag="Kamus Kode" title="Simpan Kamus Kode?" confirmLabel="Simpan kamus"
+                    facts={detail ? [["Master", `${detail.principleCode} · ${detail.principleName}`], ["Entri", `${codebookDraft.length}`], ["Akibat", "Form Fix dan QC dibuat ulang dari kamus ini"], ["Konfirmasi", `Konfirmasi nama lebih dari ${NAMA_WIN_MAX} karakter yang sudah dicatat dibatalkan`]] : []}
+                    factsAlign="start" onConfirm={saveCodebook} />
             </div>
-            {selectedSummary && <span className="sr-only">Master terpilih {selectedSummary.principleName}</span>}
-        </div>
+        </FioriScope>
     );
 }

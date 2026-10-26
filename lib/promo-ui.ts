@@ -75,8 +75,8 @@ export function artinya(rule: RuleLike): string {
     const siapa = rule.customerCode ? `Outlet ${rule.customerCode}` : `Semua outlet${chan}${daftar}`;
     const barang = rule.itemCode ? `barang ${rule.itemCode}` : "semua barang";
     const beban = bebanDari(rule.benefitBeban ?? "") === "principal"
-        ? "termasuk klaim principal — bisa ditagihkan"
-        : "termasuk beban distributor — jadi biaya sendiri";
+        ? "termasuk klaim principal, bisa ditagihkan"
+        : "termasuk beban distributor, jadi biaya sendiri";
     const n = (v: string | undefined) => Number(v || 0).toLocaleString("id-ID");
     // "SEMUA" = program tanpa minimum (Setiap Pengambilan): tidak ada ambang untuk diceritakan.
     const ambang = Number(rule.triggerQty) > 0 && rule.triggerUnit !== "SEMUA"
