@@ -1619,7 +1619,7 @@ UI /laporan-harian bagian "Laporan ABCPI" (AbcpiKirim.tsx) -> GET/POST /api/lapo
      tiap faktur, retur negatif, freegoods B bernilai 0) + stok (Baik = semua − GD0BS); kode principle dari
      lib/abcpi/peta-barang.json (daftar harga ABC PI), cadangan charField3 barang; barang tanpa kode = tidak dikirim
   -> arsip data/abcpi/<YYYY-MM>/SP_<tgl>_{SALES,STOCK}.csv + ABCPI_SP_<tgl>.xlsx, status per tanggal, log.jsonl
-  -> lib/abcpi/ftp.ts unggah CSV pipe ke FTP ABC (dicek SIZE) + email xlsx ke report_recipient keyword ABCPI
+  -> lib/abcpi/ftp.ts unggah CSV pipe ke FTP ABC (dicek SIZE) + email xlsx + CSV ke report_recipient keyword ABCPI; stok pakai asOfDate = tanggal laporan
   -> email ringkasan/galat ke admin. Akhir bulan dari cron = DITAHAN (berkas ke admin), kirim dari UI.
   Konfigurasi: data/abcpi/config.json {ftp:{host,port,user,password,dir}, adminEmail} di volume data (bukan env).
 ```

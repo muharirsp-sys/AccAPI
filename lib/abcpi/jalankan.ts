@@ -85,13 +85,6 @@ async function konfigurasi(): Promise<{ ftp: FtpConfig; adminEmail: string }> {
 /** JSON.parse yang tidak menjatuhkan fitur karena satu berkas/baris rusak (mis. tulisan terpotong saat deploy). */
 const urai = <T>(teks: string, cadangan: T): T => { try { return JSON.parse(teks) as T; } catch { return cadangan; } };
 
-/** Baris CSV arsip → objek (angka dikembalikan ke angka) untuk lembar xlsx. */
-const dariCsv = (csv: string): Baris[] => {
-    const [kepala, ...isi] = csv.trim().split("\r\n");
-    const k = kepala.split("|");
-    return isi.map((l) => Object.fromEntries(l.split("|").map((v, i) => [k[i], k[i].startsWith("Stock_") ? Number(v) : v])));
-};
-
 async function penerimaAbcpi() {
     const [r] = await db.select({ emails: reportRecipient.emails }).from(reportRecipient)
         .where(and(eq(reportRecipient.keyword, "ABCPI"), eq(reportRecipient.active, true))).limit(1);
@@ -112,8 +105,10 @@ async function susun(tanggal: string) {
     const retur = await rincian(creds, "/sales-return/detail.do", returList.map((r) => r.id));
     const sales = barisSales(faktur, retur);
 
-    const stokSemua = await daftar(creds, "/item/list-stock.do", { fields: "id,no,name,quantity" });
-    const stokBs = new Map((await daftar(creds, "/item/list-stock.do", { fields: "id,no,quantity", warehouseName: GUDANG_BS })).map((r) => [String(r.no), Number(r.quantity) || 0]));
+    // asOfDate = posisi stok pada tanggal laporan (probe 26 Okt 2026: 24/10 ≠ hari ini ≠ 01/09), jadi closing/kirim ulang tetap tepat.
+    const perTanggal = { asOfDate: keAccurate(tanggal) };
+    const stokSemua = await daftar(creds, "/item/list-stock.do", { fields: "id,no,name,quantity", ...perTanggal });
+    const stokBs = new Map((await daftar(creds, "/item/list-stock.do", { fields: "id,no,quantity", warehouseName: GUDANG_BS, ...perTanggal })).map((r) => [String(r.no), Number(r.quantity) || 0]));
     // Barang ABC = ada di peta, atau charField1 master barang (cache sync) = ABC PRESIDENT; master dari rincian dokumen bulan ini
     // membawa charField3 (kode principle) untuk barang yang belum ada di daftar harga.
     const masterAbc = new Set((await db.select({ no: item.no }).from(item).where(sql`(${item.rawData} #>> '{}') ilike '%ABC PRESIDENT%'`)).map((r) => r.no));
@@ -171,32 +166,29 @@ export async function jalankanAbcpi({ tanggal, kirim, sumber }: { tanggal: strin
 
         const nama = { sales: `SP_${ymd}_SALES.csv`, stok: `SP_${ymd}_STOCK.csv`, xlsx: `ABCPI_SP_${ymd}.xlsx` };
         const { sales, stok, dokumen } = await susun(tanggal);
-        // Tanggal lampau (closing yang ditahan, kirim ulang): stok memakai arsip putaran tanggal itu, bukan stok hari ini.
-        const stokArsip = tanggal < hariIniWita() ? await readFile(path.join(folder, nama.stok), "utf8").catch(() => null) : null;
-        const barisStokFinal = stokArsip ? dariCsv(stokArsip) : stok.baris;
-        hasil.baris = { sales: sales.baris.length, stok: barisStokFinal.length, ...dokumen };
+        hasil.baris = { sales: sales.baris.length, stok: stok.baris.length, ...dokumen };
         hasil.galat = sales.galat;
-        if (stokArsip) hasil.peringatan.push(`Stok memakai arsip ${nama.stok} (posisi saat putaran tanggal itu)`);
-        else if (stok.lewat.length) hasil.peringatan.push(`Stok tanpa kode principle tidak dilaporkan: ${stok.lewat.join(", ")}`);
+        if (stok.lewat.length) hasil.peringatan.push(`Stok tanpa kode principle tidak dilaporkan: ${stok.lewat.join(", ")}`);
         if (!sales.baris.length) hasil.peringatan.push("Tidak ada faktur/retur ABC bulan ini sampai tanggal laporan");
         const csvSales = Buffer.from(keCsv(KOLOM_SO, sales.baris));
-        const csvStok = Buffer.from(stokArsip ?? keCsv(KOLOM_STOK, stok.baris));
-        const buku = xlsx(sales.baris, barisStokFinal);
+        const csvStok = Buffer.from(keCsv(KOLOM_STOK, stok.baris));
+        const buku = xlsx(sales.baris, stok.baris);
         if (!cfg) { hasil.status = "pratinjau"; return { ...hasil, xlsx: buku }; }
         if (sales.galat.length) throw new Error("Validasi gagal — tidak dikirim ke FTP maupun email ABCPI");
-        if (!barisStokFinal.length) throw new Error("Stok barang ABC kosong — sesi Accurate membuka database yang salah? Tidak dikirim");
+        if (!stok.baris.length) throw new Error("Stok barang ABC kosong — sesi Accurate membuka database yang salah? Tidak dikirim");
 
         await Promise.all([writeFile(path.join(folder, nama.sales), csvSales), writeFile(path.join(folder, nama.stok), csvStok), writeFile(path.join(folder, nama.xlsx), buku)]);
         const simpanStatus = () => writeFile(berkasStatus, JSON.stringify(status, null, 1));
-        const lampiran = [{ filename: nama.xlsx, content: buku, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }];
+        // Owner 26 Okt: email ABCPI membawa Excel (template) + kedua CSV; FTP tetap CSV saja (yang dibaca sistem ABC).
+        const lampiran = [{ filename: nama.xlsx, content: buku, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+            { filename: nama.sales, content: csvSales, contentType: "text/csv" }, { filename: nama.stok, content: csvStok, contentType: "text/csv" }];
         const tgl = tanggal.split("-").reverse().join("/");
         const periode = `01–${tgl}`;
 
         if (tahan) {
-            const ok = await sendEmail({ to: cfg.adminEmail, subject: `[ABCPI] Closing ${tgl} DITAHAN — kirim manual`, attachments: [...lampiran,
-                { filename: nama.sales, content: csvSales, contentType: "text/csv" }, { filename: nama.stok, content: csvStok, contentType: "text/csv" }],
+            const ok = await sendEmail({ to: cfg.adminEmail, subject: `[ABCPI] Closing ${tgl} DITAHAN — kirim manual`, attachments: lampiran,
                 text: [`Laporan closing ABCPI ${periode} (${hasil.baris.sales} baris penjualan, ${hasil.baris.stok} baris stok) sudah disusun tetapi BELUM dikirim ke FTP maupun email ABCPI.`,
-                    `Periksa lampiran, lalu kirim dari ${WEB} (bagian "Laporan ABCPI", tanggal ${tgl}, tombol Kirim). Penjualan ditarik ulang dari Accurate saat tombol ditekan; stok memakai posisi pukul 20.00 di lampiran ini.`,
+                    `Periksa lampiran, lalu kirim dari ${WEB} (bagian "Laporan ABCPI", tanggal ${tgl}, tombol Kirim). Data ditarik ulang dari Accurate saat tombol ditekan (stok tetap posisi per ${tgl}).`,
                     ...hasil.peringatan.map((p) => `Peringatan: ${p}`)].join("\n\n") });
             if (!ok) throw new Error("Email pemberitahuan closing ke admin gagal (cek SMTP)");
             status.ditahan = new Date().toISOString();
@@ -219,7 +211,7 @@ export async function jalankanAbcpi({ tanggal, kirim, sumber }: { tanggal: strin
             if (ke && !ke.length) hasil.galat.push("Email: penerima keyword ABCPI (Laporan Harian › Penerima laporan) kosong/nonaktif");
             else if (ke && await sendEmail({ to: ke, subject: `Laporan Harian ABCPI - CV Surya Perkasa - ${tgl}`, attachments: lampiran,
                 text: [`Yth. Tim ABC President Indonesia,`,
-                    `Terlampir laporan penjualan (faktur dan retur) periode ${periode} serta stok per ${tgl} dari CV Surya Perkasa dalam format template ABCPI.\nBerkas yang sama telah diunggah ke FTP: ${nama.sales}, ${nama.stok}.`,
+                    `Terlampir laporan penjualan (faktur dan retur) periode ${periode} serta stok per ${tgl} dari CV Surya Perkasa dalam format Excel (template ABCPI) dan CSV.\nBerkas CSV yang sama telah diunggah ke FTP: ${nama.sales}, ${nama.stok}.`,
                     `Dikirim otomatis oleh sistem AccAPI.`, `Terima kasih.`].join("\n\n") })) {
                 status.email = { waktu: new Date().toISOString(), ke: ke.length };
                 emailOk = true;

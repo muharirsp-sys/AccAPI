@@ -43,7 +43,7 @@ export default function AbcpiKirim() {
     return (
         <Section id="abcpi" title="Laporan ABCPI (FTP + email)" subtitle="otomatis tiap hari 20.00 WITA · akhir bulan ditahan, kirim di sini">
             <div className="fi-sect-in">
-                <p className="fi-small fi-subtle">Faktur INV + retur RJN cabang ABC (tanpa RSJ) bulan berjalan sampai tanggal laporan dan stok saat ini, ditarik langsung dari Accurate, format template ABCPI. Terkirim ke FTP ABC dan penerima keyword ABCPI.</p>
+                <p className="fi-small fi-subtle">Faktur INV + retur RJN cabang ABC (tanpa RSJ) bulan berjalan sampai tanggal laporan dan stok per tanggal itu, ditarik langsung dari Accurate. FTP ABC menerima CSV; penerima keyword ABCPI menerima Excel (template ABCPI) + CSV.</p>
                 <div className="fi-page-bar">
                     <FormField label="Tanggal laporan">{(a11y) => <input {...a11y} type="date" className="fi-input" value={tanggal} max={hariIniWita()} onChange={(e) => setTanggal(e.target.value)} />}</FormField>
                     <a className="fi-btn fi-btn--secondary" href={`/api/laporan-harian/abcpi?pratinjau=${tanggal}`}><Download className="fi-icon" aria-hidden />Unduh pratinjau</a>
