@@ -12,7 +12,8 @@
  *   lib/insentif-konstanta, lib/insentif-ui (readApi), lib/rekapan-nota/ui (ambil, jamWita).
  * Main Functions: Pengaturan (default).
  * Side Effects: GET /api/insentif-sales/settings; PATCH settings (konstanta, gtAoMode, branchNilaiJual, smBerhak) lewat ConfirmDialog —
- *   MENGUBAH NOMINAL insentif setiap perhitungan berikutnya. beforeunload saat ada draf.
+ *   MENGUBAH NOMINAL insentif setiap perhitungan berikutnya. beforeunload saat ada draf. Kaki menyebut draf daftar yang belum disimpan di
+ *   seksinya (satu Simpan per seksi daftar, Simpan kaki hanya konstanta).
  */
 "use client";
 
@@ -24,6 +25,7 @@ import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
 import { readApi } from "@/lib/insentif-ui";
 import { DEFAULT_KONSTANTA, KONSTANTA_FIELDS, getField, parseKonstanta, setField, type Konstanta, type KonstantaKind } from "@/lib/insentif-konstanta";
 import { formatRp } from "./data";
+import { KOSONG } from "@/lib/tampil";
 import { InsentifRangka } from "./Rangka";
 import { AkunTautan, Hierarki } from "./PengaturanHierarki";
 
@@ -38,7 +40,7 @@ type FieldDaftar = "branchNilaiJual" | "smBerhak";
 
 /** PATCH konstanta dijawab 409 KONSTANTA_BERUBAH: admin lain menyimpan sejak editor dimuat (AM-045). */
 class KonstantaBerubah extends Error {}
-const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas. Setelan dimuat ulang — periksa angkanya sebelum menyimpan lagi.";
+const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas. Setelan dimuat ulang; periksa angkanya sebelum menyimpan lagi.";
 
 /**
  * Setelan berbentuk DAFTAR (cabang beracuan NILAI_JUAL, SM yang ikut skema insentif). Keduanya dulu konstanta di kode:
@@ -49,13 +51,13 @@ const DAFTAR: ReadonlyArray<{ field: FieldDaftar; id: string; judul: string; des
     {
         field: "branchNilaiJual", id: "nilai-jual", judul: "Cabang beracuan NILAI_JUAL",
         desc: "Cabang (kolom JENISPRODUK di file closing) yang realisasi Value-nya diambil dari NILAI_JUAL. Cabang di luar daftar ini memakai DPP.",
-        contoh: "VINDA\nKINO NON FOOD\nMIX NON FOOD\nABC",
+        contoh: "CABANG A\nCABANG B",
         catatan: "Berlaku untuk unggahan closing BERIKUTNYA. Periode yang sudah masuk harus dihapus lalu diunggah ulang agar angkanya ikut berubah.",
     },
     {
         field: "smBerhak", id: "sm-skema", judul: "SM yang ikut skema insentif",
-        desc: "Nama SM yang berhak atas insentif SM (strata flat berbasis Value). Dicocokkan sebagai kata utuh, jadi HENDRIK tidak akan cocok dengan HENDRIKUS.",
-        contoh: "HENDRIK",
+        desc: "Nama SM yang berhak atas insentif SM (strata flat berbasis Value). Dicocokkan sebagai kata utuh, jadi SM A tidak akan cocok dengan SM AB.",
+        contoh: "SM A",
         catatan: "Langsung mengubah nominal insentif SM periode mana pun yang dihitung setelah ini.",
     },
 ];
@@ -85,7 +87,7 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
     // Tulis hanya dari setelan segar: saat dimuat ulang atau gagal dimuat ulang (data lama tetap tampil), semua tombol simpan terkunci.
     const alasanKunci = !setelan ? "Terkunci sampai setelan berhasil dibaca"
         : baru === null && load.status === "memuat" ? "Setelan sedang dimuat ulang"
-            : baru === null && load.status === "galat" ? "Setelan gagal dimuat ulang — coba lagi dulu" : undefined;
+            : baru === null && load.status === "galat" ? "Setelan gagal dimuat ulang; coba lagi dulu" : undefined;
     const gagalBacaKonst = setelan?.konstantaSumber === "gagal_baca";
     // AM-020: angka dari "gagal_baca" adalah bawaan — bukan dasar draf, bukan "tersimpan".
     const tersimpan = useMemo(() => (setelan && setelan.konstantaSumber !== "gagal_baca" ? parseKonstanta(setelan.konstanta) : null), [setelan]);
@@ -107,7 +109,8 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
     const [teks, setTeks] = useState<Record<FieldDaftar, string | null>>({ branchNilaiJual: null, smBerhak: null });
     const daftarNilai = (f: FieldDaftar) => { const t = teks[f]; return t === null ? (setelan?.[f] ?? []) : normDaftar(t); };
     const daftarBerubah = (f: FieldDaftar) => teks[f] !== null && setelan !== null && daftarNilai(f).join("|") !== setelan[f].join("|");
-    const adaDraf = berubah.length > 0 || DAFTAR.some((d) => daftarBerubah(d.field));
+    const nDaftarDraf = DAFTAR.filter((d) => daftarBerubah(d.field)).length;
+    const adaDraf = berubah.length > 0 || nDaftarDraf > 0;
     useUnsavedGuard(adaDraf);
 
     const [dialog, setDialog] = useState<Dlg>(null);
@@ -171,7 +174,7 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
     const labelAoTetap = aoAmbang ? `${aoAmbang} (tetap)` : "Ambang tetap";
     const alasanKonst = !setelan ? "Editor konstanta terkunci"
         : gagalBacaKonst ? "Editor konstanta terkunci: konstanta tersimpan gagal dibaca"
-            : alasanKunci ?? (konflik ? "Konstanta sudah diubah admin lain — muat ulang dulu" : undefined);
+            : alasanKunci ?? (konflik ? "Konstanta sudah diubah admin lain; muat ulang dulu" : undefined);
     const alasanSimpan = alasanKonst ?? tanpaIzin ?? (berubah.length ? undefined : "Belum ada perubahan konstanta");
     const teksVersi = (v: string | null | undefined) => (v ? `tersimpan ${jamWita(v)} WITA` : "belum pernah disimpan");
     const versiTeks = gagalBacaKonst ? "gagal dibaca" : teksVersi(setelan?.konstantaVersi);
@@ -195,13 +198,13 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                 <dl className="fi-attrs">
                     <div><dt>Versi konstanta</dt><dd>{versiTeks}</dd></div>
                     <div><dt>Penyebut AO GT/TT</dt><dd>{setelan.gtAoMode === "file" ? "Target AO dari berkas" : labelAoTetap}</dd></div>
-                    <div><dt>SM dalam skema</dt><dd>{setelan.smBerhak.join(", ") || "—"}</dd></div>
+                    <div><dt>SM dalam skema</dt><dd>{setelan.smBerhak.join(", ") || KOSONG}</dd></div>
                     <div><dt>Cabang NILAI_JUAL</dt><dd>{setelan.branchNilaiJual.length} cabang</dd></div>
                 </dl>
             )}
             {pesan && <MessageStrip tone="pos" title={pesan} onClose={() => setPesan(null)} />}
             {(galatBaca || gagalBacaKonst) && (
-                <MessageStrip tone="neg" title="Konstanta tersimpan gagal dibaca — editor dikunci agar angka bawaan tidak ikut tersimpan.">
+                <MessageStrip tone="neg" title="Konstanta tersimpan gagal dibaca; editor dikunci agar angka bawaan tidak ikut tersimpan.">
                     {galatBaca ? `${galatBaca} Bagian hierarki dan akun di halaman ini tetap bisa dipakai.` : "Muat ulang nanti. Bagian lain di halaman ini tetap bisa dipakai."}
                 </MessageStrip>
             )}
@@ -222,7 +225,7 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                 actions={<Button variant="tertiary" disabled={Boolean(alasanKonst || tanpaIzin)} disabledReason={alasanKonst ?? tanpaIzin} onClick={() => setDraf(bawaan)}>Isi dengan bawaan</Button>}>
                 <div className="fi-sect-in">
                     {memuatAwal ? <Skeleton rows={6} label="Memuat konstanta" />
-                        : !nilaiK || !tersimpan ? <ErrorState title="Konstanta gagal dibaca — editor dikunci"
+                        : !nilaiK || !tersimpan ? <ErrorState title="Konstanta gagal dibaca; editor dikunci"
                             message={`${galatBaca ?? "Server hanya bisa mengirim angka bawaan, jadi angka itu tidak ditampilkan sebagai tersimpan."} Muat ulang untuk mengubah konstanta.`} onRetry={muatUlang} />
                             : GRUP.map((g) => (
                                 <div key={g} className="grid gap-2">
@@ -271,6 +274,8 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                                 <button type="button" aria-pressed={setelan.gtAoMode === "file"} disabled={Boolean(tanpaIzin || alasanKunci)} title={tanpaIzin ?? alasanKunci}
                                     onClick={() => { if (setelan.gtAoMode !== "file") setDialog({ kind: "ao", mode: "file" }); }}>Target AO dari berkas</button>
                             </div>
+                            {/* No 50: alasan pilihan nonaktif terlihat, bukan hanya di title. */}
+                            {(tanpaIzin || alasanKunci) && <p className="fi-small fi-why">Ubah penyebut AO: {tanpaIzin ?? alasanKunci}.</p>}
                             <p className="fi-small fi-subtle">
                                 {setelan.gtAoMode === "file"
                                     ? "Tiap sales GT/TT dinilai terhadap Target AO barisnya sendiri di berkas target."
@@ -318,8 +323,9 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                 </div>
             </Section>
 
+            {/* No 59: kaki hanya menyimpan konstanta; draf daftar disebut supaya tidak terbaca "tidak ada perubahan". */}
             <FooterToolbar message={alasanKonst ?? (tanpaIzin ? "Hanya pemegang izin kelola insentif yang dapat mengubah konstanta"
-                : berubah.length ? `${berubah.length} konstanta diubah, belum disimpan` : "Belum ada perubahan konstanta")}>
+                : `${berubah.length ? `${berubah.length} konstanta diubah, belum disimpan` : "Belum ada perubahan konstanta"}${nDaftarDraf ? `; ${nDaftarDraf} daftar belum disimpan di seksinya` : ""}`)}>
                 {berubah.length > 0 && <Button variant="tertiary" icon={<RotateCcw className="fi-icon" aria-hidden />} onClick={() => setDraf(null)}>Batalkan perubahan</Button>}
                 <Button variant="primary" disabled={Boolean(alasanSimpan)} disabledReason={alasanSimpan} onClick={() => setDialog({ kind: "simpanKonst" })}>
                     {berubah.length ? `Simpan ${berubah.length} perubahan…` : "Simpan"}
@@ -330,8 +336,8 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                 title={`Simpan ${berubah.length} perubahan konstanta?`} confirmLabel="Simpan" confirmDisabled={alasanSimpan} onConfirm={simpanKonst}
                 facts={[
                     ...berubah.map((f): [string, string] => [`${f.grup} · ${f.label}`, `${tampil(getField(tersimpan ?? DEFAULT_KONSTANTA, f.path), f.kind)} → ${tampil(getField(draf ?? DEFAULT_KONSTANTA, f.path), f.kind)}`]),
-                    ["Versi dasar", `${drafDasar ? teksVersi(drafDasar.versi) : versiTeks} — ditolak bila admin lain menyimpan sesudahnya`],
-                    ["Berlaku untuk", "Setiap perhitungan sesudah disimpan — semua sales, SPV, dan SM, termasuk periode lampau yang belum dibayar"],
+                    ["Versi dasar", `${drafDasar ? teksVersi(drafDasar.versi) : versiTeks}; ditolak bila admin lain menyimpan sesudahnya`],
+                    ["Berlaku untuk", "Setiap perhitungan sesudah disimpan: semua sales, SPV, dan SM, termasuk periode lampau yang belum dibayar"],
                     ["Tidak berubah", "Pembayaran yang sudah tercatat tetap memakai bruto tersimpan"],
                 ]} />
             <ConfirmDialog open={dialog?.kind === "konflik"} onClose={() => setDialog(null)} tag="Konstanta"
@@ -345,8 +351,8 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                 title={`Simpan perubahan ${dlgDaftar?.judul ?? ""}?`} confirmLabel="Simpan"
                 onConfirm={() => (dialog?.kind === "daftar" ? simpanDaftar(dialog.field) : undefined)}
                 facts={dlgDaftar ? [
-                    ["Ditambah", tambah.join(", ") || "—"],
-                    ["Dihapus", hilang.join(", ") || "—"],
+                    ["Ditambah", tambah.join(", ") || KOSONG],
+                    ["Dihapus", hilang.join(", ") || KOSONG],
                     ["Jumlah entri", String(daftarNilai(dlgDaftar.field).length)],
                     ["Akibat", dlgDaftar.catatan],
                 ] : []} />

@@ -2,11 +2,12 @@
  * Tujuan: Layar "Rekaman pembayaran" (Fiori S6a, it08 List Report): tile status sekaligus saringan, FilterBar (cari, principal, tipe,
  *   rentang Actual date & Tanggal bayar pabrik = `actual_date` / `tgl_pembayaran`; disaring di klien karena /payments/data memuat semua),
  *   tabel 8 kolom dengan kunci per baris dari server (`locked_reason`), pilihan HANYA di layar (tidak disimpan, tidak menyeberangi
- *   saringan, hanya baris Siap diajukan), draf isian per rekaman yang disimpan SATU PERMINTAAN PER REKAMAN (hasil per baris), lalu
- *   Buat keranjang. Pengganti grid 18 kolom + "Hapus Ceklis" + "Clear Semua" di page.tsx lama.
+ *   saringan, hanya baris Siap diajukan), draf isian per rekaman yang disimpan SATU PERMINTAAN PER REKAMAN (hasil per baris; kaki
+ *   menyebut nilai lama → baru, audit desain 001 No 64 pola Draf), lalu Buat keranjang. Pengganti grid 18 kolom + "Hapus Ceklis" +
+ *   "Clear Semua" di page.tsx lama.
  * Caller: app/(dashboard)/payments/page.tsx (prop permKeys).
  * Dependensi: ./bersama (baca, tulis, RangkaPembayaran), ./RekamanDialog (dialog unggah/manual/keranjang/rincian/hapus),
- *   components/fiori/*, lib/payments-ui, lib/promo-ui (rupiah), next/navigation.
+ *   components/fiori/*, lib/payments-ui, lib/promo-ui (rupiah), lib/tampil (KOSONG), next/navigation.
  * Main Functions: Rekaman (default), simpanDraf.
  * Side Effects: GET /payments/data; POST /payments/update per rekaman berubah (izin payments.update). Dialog: upload, manual/add,
  *   cart/create, delete (lihat RekamanDialog). beforeunload selama ada draf.
@@ -23,10 +24,11 @@ import { Download, Lock, Plus, RefreshCw, ShoppingCart, Upload } from "lucide-re
 import { Button, FooterToolbar, ListItem, MessageStrip, ResponsiveTable, StatusBadge, type Column } from "@/components/fiori/core";
 import { FilterBar, FormField, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
 import {
-    STATUS_REKAMAN, angka, bisaDiajukan, dalamRentang, galatIsian, izinPembayaran, kurangLengkap, nilaiAwal, statusRekaman, tanggalTampil, tipeRekaman,
+    ISIAN, STATUS_REKAMAN, angka, bisaDiajukan, dalamRentang, galatIsian, izinPembayaran, kurangLengkap, nilaiAwal, statusRekaman, tanggalTampil, tipeRekaman,
     type Draf, type Isian, type Rekaman as Baris, type StatusRekaman,
 } from "@/lib/payments-ui";
 import { rupiah } from "@/lib/promo-ui";
+import { KOSONG as NILAI_KOSONG } from "@/lib/tampil";
 import { BELUM_PASTI, RangkaPembayaran, baca, tulis, unduhUrl } from "./bersama";
 import { DialogHapus, DialogKeranjang, DialogManual, DialogUnggah, RincianRekaman } from "./RekamanDialog";
 
@@ -139,7 +141,7 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
             for (const [k, v] of Object.entries(isi)) item[k] = k === "nilai_invoice" ? String(v).trim() : v;
             const res = await tulis("/payments/update", { items: [item] });
             if (res.ok) { sukses.push(id); continue; }
-            if (res.tidakPasti) { tidakPasti = true; gagal[id] = "Hasil simpan belum pasti — periksa nilainya setelah dimuat ulang."; break; }
+            if (res.tidakPasti) { tidakPasti = true; gagal[id] = "Hasil simpan belum pasti; periksa nilainya setelah dimuat ulang."; break; }
             gagal[id] = res.error;
         }
         setDraf((prev) => { const next = { ...prev }; for (const id of sukses) delete next[id]; return next; });
@@ -147,7 +149,7 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
         const nGagal = Object.keys(gagal).length;
         const contoh = Object.entries(gagal).slice(0, 3).map(([id, e]) => `${nama(byId.get(id)!)}: ${e}`).join(" · ");
         if (tidakPasti) setRingkasSimpan({ tone: "warn", judul: `${sukses.length} dari ${ids.length} rekaman tersimpan; hasil sisanya belum pasti.`, isi: `${BELUM_PASTI} ${contoh}` });
-        else if (nGagal) setRingkasSimpan({ tone: "neg", judul: `${sukses.length} dari ${ids.length} rekaman tersimpan.`, isi: `${nGagal} ditolak server — ${contoh}. Isian yang ditolak tetap di layar; perbaiki lalu simpan lagi. Perubahan lain sudah aman.` });
+        else if (nGagal) setRingkasSimpan({ tone: "neg", judul: `${sukses.length} dari ${ids.length} rekaman tersimpan.`, isi: `${nGagal} ditolak server: ${contoh}. Isian yang ditolak tetap di layar; perbaiki lalu simpan lagi. Perubahan lain sudah aman.` });
         else setRingkasSimpan({ tone: "pos", judul: `${sukses.length} rekaman tersimpan.` });
         if (tidakPasti) setKunciPada(load.data ?? null);
         setMenyimpan(false);
@@ -177,14 +179,30 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
     const nilaiTampil = (r: Baris) => {
         const v = tampil(r, "nilai_invoice");
         const n = angka(v);
-        return v.trim() === "" ? "—" : Number.isNaN(n) ? <span className="fi-why">{v}</span> : rupiah(n);
+        return v.trim() === "" ? NILAI_KOSONG : Number.isNaN(n) ? <span className="fi-why">{v}</span> : rupiah(n);
     };
     const selisih = (r: Baris) => {
         const win = typeof r.nilai_win === "number" ? r.nilai_win : angka(r.nilai_win_display ?? r.nilai_win);
         const inv = angka(tampil(r, "nilai_invoice"));
-        if (!tampil(r, "nilai_invoice").trim() || Number.isNaN(inv) || Number.isNaN(win)) return "—";
+        if (!tampil(r, "nilai_invoice").trim() || Number.isNaN(inv) || Number.isNaN(win)) return NILAI_KOSONG;
         return rupiah(win - inv);
     };
+    // Kaki pola Draf (No 64): perubahan pertama ditulis nilai lama → baru; sisanya dihitung.
+    const tampilIsian = (k: Isian, v: string) => {
+        if (!v.trim()) return "(kosong)";
+        const jenis = ISIAN.find((i) => i.key === k)?.jenis;
+        if (jenis === "tanggal") return tanggalTampil(v);
+        const n = angka(v);
+        return jenis === "angka" && !Number.isNaN(n) ? rupiah(n) : v;
+    };
+    const perubahan = idDraf.flatMap((id) => Object.entries(draf[id]).map(([k, v]) => ({ id, k: k as Isian, v: v ?? "" })));
+    const contohUbah = (() => {
+        const p = perubahan[0];
+        const r = p && byId.get(p.id);
+        if (!p || !r) return "";
+        const label = ISIAN.find((i) => i.key === p.k)?.label ?? p.k;
+        return `${nama(r)} · ${label}: ${tampilIsian(p.k, nilaiAwal(r, p.k))} → ${tampilIsian(p.k, p.v)}${perubahan.length > 1 ? ` · +${perubahan.length - 1} lainnya` : ""}`;
+    })();
 
     const kolom: Column<Baris>[] = [
         { key: "rekaman", header: "Rekaman", cell: (r) => (
@@ -193,8 +211,8 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
                 <span className="fi-small fi-subtle">{tipeRekaman(r)}</span>
             </span>
         ) },
-        { key: "principal", header: "Principal", cell: (r) => tampil(r, "principle") || "—" },
-        { key: "invoice", header: "Invoice", cell: (r) => (tipeRekaman(r) === "NON_LPB" ? [tampil(r, "nomor_dokumen"), tampil(r, "jenis_dokumen")].filter(Boolean).join(" · ") : tampil(r, "invoice_no")) || "—" },
+        { key: "principal", header: "Principal", cell: (r) => tampil(r, "principle") || NILAI_KOSONG },
+        { key: "invoice", header: "Invoice", cell: (r) => (tipeRekaman(r) === "NON_LPB" ? [tampil(r, "nomor_dokumen"), tampil(r, "jenis_dokumen")].filter(Boolean).join(" · ") : tampil(r, "invoice_no")) || NILAI_KOSONG },
         // Saringan tanggal aktif → tanggal yang disaring ikut tampil (teks sebaris, juga di pop-in sempit) agar hasilnya bisa diperiksa.
         { key: "tanggal", header: "Tanggal · JT", secondary: true, cell: (r) => [
             `${tanggalTampil(tampil(r, "tgl_invoice"))} · JT ${tanggalTampil(tampil(r, "jt_invoice"))}`,
@@ -205,9 +223,12 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
         { key: "status", header: "Status", cell: statusSel },
     ];
 
+    // Daftar ponsel: kotak pilih dibungkus label fi-check (tinggi = --ctl-h, 44 px di layar sentuh) supaya mudah disentuh (No 48).
     const kotak = (r: Baris) => (
-        <input type="checkbox" aria-label={`Pilih ${nama(r)}`} checked={pilihan.has(r.record_id) && bolehPilih(r)} disabled={!bolehPilih(r)}
-            onChange={() => setPilihan((prev) => { const n = new Set(prev); if (n.has(r.record_id)) n.delete(r.record_id); else n.add(r.record_id); return n; })} />
+        <label className="fi-check" style={{ minWidth: "var(--ctl-h)", justifyContent: "center" }}>
+            <input type="checkbox" aria-label={`Pilih ${nama(r)}`} checked={pilihan.has(r.record_id) && bolehPilih(r)} disabled={!bolehPilih(r)}
+                onChange={() => setPilihan((prev) => { const n = new Set(prev); if (n.has(r.record_id)) n.delete(r.record_id); else n.add(r.record_id); return n; })} />
+        </label>
     );
 
     const status = load.status;
@@ -240,7 +261,7 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
                     {nIsian > 0 && <span className="fi-draft">Draf belum disimpan</span>}
                     <Button icon={<Upload className="fi-icon" aria-hidden />} disabled={Boolean(izin.unggah)} disabledReason={izin.unggah} onClick={() => setDialog("unggah")}>Unggah LPB</Button>
                     <Button icon={<Plus className="fi-icon" aria-hidden />} disabled={Boolean(izin.manual)} disabledReason={izin.manual} onClick={() => setDialog("manual")}>Tambah manual</Button>
-                    {!izin.ekspor && <a className="fi-btn fi-btn--tertiary" href={unduhUrl("/payments/export")} target="_blank" rel="noopener noreferrer"><Download className="fi-icon" aria-hidden />Unduh backup</a>}
+                    {!izin.ekspor && <a className="fi-btn fi-btn--tertiary" href={unduhUrl("/payments/export")} target="_blank" rel="noopener noreferrer"><Download className="fi-icon" aria-hidden />Unduh cadangan</a>}
                     <Button variant="icon" aria-label="Muat ulang" icon={<RefreshCw className="fi-icon" aria-hidden />} busy={load.status === "memuat" && rows.length > 0} onClick={muat} />
                 </>
             }
@@ -256,7 +277,7 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
                         <button key={s} type="button" className="fi-kc" aria-pressed={tile === s} onClick={() => ubahSaring(() => setTile(tile === s ? null : s))}
                             style={STATUS_REKAMAN[s].tone === "warn" ? ({ "--tf": "var(--warn)" } as CSSProperties) : undefined}>
                             <span>{STATUS_REKAMAN[s].label}</span>
-                            <b>{load.data === undefined ? "–" : jumlahTile[s]}</b>
+                            <b>{load.data === undefined ? NILAI_KOSONG : jumlahTile[s]}</b>
                             <small>{STATUS_REKAMAN[s].catatan}</small>
                         </button>
                     ))}
@@ -280,7 +301,7 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
                         </FormField>
                         <FormField label="Tipe">
                             {(a) => <select {...a} className="fi-input" value={tipe} onChange={(e) => ubahSaring(() => setTipe(e.target.value))}>
-                                <option value="">LPB, CBD, NON_LPB</option><option value="LPB">LPB</option><option value="CBD">CBD</option><option value="NON_LPB">NON_LPB</option>
+                                <option value="">Semua tipe</option><option value="LPB">LPB</option><option value="CBD">CBD</option><option value="NON_LPB">NON_LPB</option>
                             </select>}
                         </FormField>
                         {isianRentang("Actual date", actual, setActual)}
@@ -310,7 +331,7 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
                 mobileItem={(r) => (
                     <div className="fi-wl-row">
                         {bisaDiajukan(r) && kotak(r)}
-                        <ListItem doc={nama(r)} amount={nilaiTampil(r)} title={`${tampil(r, "principle") || "—"} · ${dokumen(r) || "invoice kosong"}`}
+                        <ListItem doc={nama(r)} amount={nilaiTampil(r)} title={`${tampil(r, "principle") || NILAI_KOSONG} · ${dokumen(r) || "invoice kosong"}`}
                             meta={r.locked_reason ? `Terkunci: ${r.locked_reason}` : galatBaris[r.record_id] ? `Ditolak: ${galatBaris[r.record_id]}` : draf[r.record_id] ? "Diubah, belum disimpan"
                                 : [tanggalTampil(r.tgl_invoice), aktif(actual) && `Actual date ${tanggalTampil(r.actual_date)}`, aktif(bayar) && `Tanggal bayar pabrik ${tanggalTampil(r.tgl_pembayaran)}`].filter(Boolean).join(" · ")}
                             badge={<StatusBadge tone={STATUS_REKAMAN[statusRekaman(r)].tone}>{STATUS_REKAMAN[statusRekaman(r)].label}</StatusBadge>}
@@ -318,10 +339,11 @@ export default function Rekaman({ permKeys }: { permKeys: string[] }) {
                     </div>
                 )}
             />
+            {nIsian > 0 && <p className="fi-small fi-subtle">Tiap rekaman disimpan sendiri; isian yang ditolak server tetap di layar.</p>}
             <p className="fi-small fi-subtle">Pilih semua hanya memilih baris di halaman tabel ini yang berstatus Siap diajukan. Pilihan tidak disimpan ke rekaman dan hilang bila saringan menyembunyikannya.{disaring && dipilih.length < pilihan.size ? ` ${pilihan.size - dipilih.length} pilihan lain tidak ikut karena tersembunyi saringan.` : ""}</p>
 
             {nIsian > 0 ? (
-                <FooterToolbar message={alasanSimpan ? <span className="fi-why">{alasanSimpan}</span> : `${nIsian} isian di ${idDraf.length} rekaman belum disimpan. Tiap rekaman disimpan sendiri; yang ditolak tetap di layar.`}>
+                <FooterToolbar message={alasanSimpan ? <span className="fi-why">{alasanSimpan}</span> : `${nIsian} isian di ${idDraf.length} rekaman belum disimpan. ${contohUbah}`}>
                     <Button variant="tertiary" disabled={menyimpan} onClick={() => { setDraf({}); setGalatBaris({}); }}>Batalkan perubahan</Button>
                     <Button variant="primary" busy={menyimpan} disabled={Boolean(alasanSimpan)} disabledReason={alasanSimpan} onClick={simpanDraf}>Simpan {nIsian} perubahan</Button>
                 </FooterToolbar>

@@ -4,7 +4,7 @@
  *   Hapus hierarki dan cabut akses lewat dialog (it07 #19). Assignment additive; tautan akun mengaktifkan pembatasan
  *   "SPV/SM/sales cuma lihat timnya sendiri" per akun (lib/insentif-hierarchy-scope).
  * Caller: Pengaturan.tsx.
- * Dependensi: components/fiori/{core,interactive}, lib/rekapan-nota/ui (ambil), lib/insentif-ui (readApi).
+ * Dependensi: components/fiori/{core,interactive}, lib/rekapan-nota/ui (ambil), lib/insentif-ui (readApi), lib/tampil (KOSONG).
  * Main Functions: Hierarki, AkunTautan.
  * Side Effects: GET hierarchy/sm-spv, spv-sales, spv-sales/requests, user-identity; POST/DELETE sm-spv, spv-sales;
  *   POST spv-sales/requests (setujui/tolak); POST user-identity (tautkan/cabut).
@@ -17,6 +17,7 @@ import { Button, EmptyState, ListItem, MessageStrip, ResponsiveTable, Section, S
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
 import { readApi } from "@/lib/insentif-ui";
+import { KOSONG } from "@/lib/tampil";
 
 interface SpvSalesRow { id: string; salesCode: string; spvName: string }
 interface SmSpvRow { id: string; spvName: string; smName: string }
@@ -76,7 +77,7 @@ export function Hierarki({ bolehHierarki }: { bolehHierarki: boolean }) {
         tutup(); muatKlaim(); muatSales();
     }
 
-    const tombolHapus = (onClick: () => void) => <Button variant="tertiary" disabled={Boolean(tanpaIzin)} disabledReason={tanpaIzin} onClick={onClick}>Hapus…</Button>;
+    const tombolHapus = (onClick: () => void) => <Button variant="negative" disabled={Boolean(tanpaIzin)} disabledReason={tanpaIzin} onClick={onClick}>Hapus…</Button>;
     const kolomSm: Column<SmSpvRow>[] = [
         { key: "spv", header: "SPV", cell: (r) => <b>{r.spvName}</b> },
         { key: "sm", header: "SM", cell: (r) => r.smName },
@@ -90,12 +91,12 @@ export function Hierarki({ bolehHierarki }: { bolehHierarki: boolean }) {
     const tombolKlaim = (r: ClaimRequestRow) => (
         <div className="fi-btnrow">
             <Button onClick={() => setDialog({ kind: "klaim", row: r, decision: "approve" })}>Setujui…</Button>
-            <Button variant="tertiary" onClick={() => setDialog({ kind: "klaim", row: r, decision: "reject" })}>Tolak…</Button>
+            <Button variant="negative" onClick={() => setDialog({ kind: "klaim", row: r, decision: "reject" })}>Tolak…</Button>
         </div>
     );
     const kolomKlaim: Column<ClaimRequestRow>[] = [
         { key: "kode", header: "Salesman", cell: (r) => <span className="fi-mono">{r.salesCode}</span> },
-        { key: "lama", header: "SPV sekarang", cell: (r) => r.previousSpvName ?? "—" },
+        { key: "lama", header: "SPV sekarang", cell: (r) => r.previousSpvName ?? KOSONG },
         { key: "baru", header: "Diminta oleh", cell: (r) => <b>{r.requestedBySpvName}</b> },
         { key: "aksi", header: "Keputusan", cell: tombolKlaim },
     ];
@@ -125,7 +126,7 @@ export function Hierarki({ bolehHierarki }: { bolehHierarki: boolean }) {
                     <ResponsiveTable<ClaimRequestRow> title="Klaim salesman tertunda" count={klaim.data?.length} columns={kolomKlaim} rows={klaim.data ?? []} rowKey={(r) => r.id}
                         status={klaim.status} error={klaim.error ? `Klaim belum berhasil dimuat (${klaim.error}).` : undefined} onRetry={muatKlaim}
                         empty={{ title: "Tidak ada klaim tertunda" }}
-                        mobileItem={(r) => <ListItem doc={r.salesCode} title={`${r.previousSpvName ?? "—"} → ${r.requestedBySpvName}`} meta={tombolKlaim(r)} />} />
+                        mobileItem={(r) => <ListItem doc={r.salesCode} title={`${r.previousSpvName ?? KOSONG} → ${r.requestedBySpvName}`} meta={tombolKlaim(r)} />} />
                 )}
             </Section>
 
@@ -154,7 +155,7 @@ export function Hierarki({ bolehHierarki }: { bolehHierarki: boolean }) {
                 confirmLabel={d?.kind === "klaim" && d.decision === "reject" ? "Tolak klaim" : "Setujui klaim"}
                 onConfirm={() => (d?.kind === "klaim" ? putuskan(d.row, d.decision) : undefined)}
                 facts={d?.kind === "klaim" ? [
-                    ["SPV sekarang", d.row.previousSpvName ?? "—"],
+                    ["SPV sekarang", d.row.previousSpvName ?? KOSONG],
                     ["Diminta oleh", d.row.requestedBySpvName],
                     ["Akibat", d.decision === "approve" ? `${d.row.salesCode} pindah ke tim ${d.row.requestedBySpvName}` : `${d.row.salesCode} tetap di tim ${d.row.previousSpvName ?? "sekarang"}`],
                 ] : []} />
@@ -203,7 +204,7 @@ export function AkunTautan({ bolehHierarki }: { bolehHierarki: boolean }) {
         { key: "email", header: "Email", secondary: true, cell: (u) => u.email },
         { key: "peran", header: "Peran", cell: (u) => <StatusBadge tone="info">{LABEL_PERAN[u.hierarchyRole as Peran] ?? u.hierarchyRole}</StatusBadge> },
         { key: "identitas", header: "Identitas", cell: (u) => <span className={u.hierarchyRole === "sales" ? "fi-mono" : undefined}>{u.hierarchyName}</span> },
-        { key: "aksi", header: "Tindakan", cell: (u) => <div className="fi-btnrow"><Button variant="tertiary" onClick={() => bukaTautkan(u)}>Ubah…</Button><Button variant="tertiary" onClick={() => setDialog({ kind: "cabut", user: u })}>Cabut…</Button></div> },
+        { key: "aksi", header: "Tindakan", cell: (u) => <div className="fi-btnrow"><Button variant="tertiary" onClick={() => bukaTautkan(u)}>Ubah…</Button><Button variant="negative" onClick={() => setDialog({ kind: "cabut", user: u })}>Cabut…</Button></div> },
     ];
     const kosongCari = { title: "Tidak ada akun yang cocok dengan pencarian", message: "Ubah atau hapus kata pencarian." };
 
@@ -236,10 +237,10 @@ export function AkunTautan({ bolehHierarki }: { bolehHierarki: boolean }) {
                     status={users.status} error={users.error ? `Daftar akun belum berhasil dimuat (${users.error}).` : undefined} onRetry={muat}
                     empty={q && tertaut.length ? kosongCari : { title: "Belum ada akun yang ditautkan", message: "Secara bawaan semua akun melihat semua data." }}
                     mobileItem={(u) => <ListItem doc={u.name} title={`${LABEL_PERAN[u.hierarchyRole as Peran] ?? u.hierarchyRole} · ${u.hierarchyName}`} meta={u.email}
-                        badge={<Button variant="tertiary" onClick={() => setDialog({ kind: "cabut", user: u })}>Cabut…</Button>} />} />
+                        badge={<Button variant="negative" onClick={() => setDialog({ kind: "cabut", user: u })}>Cabut…</Button>} />} />
             </Section>
 
-            <ConfirmDialog open={d?.kind === "tautkan"} onClose={() => setDialog(null)} tag="BL-26" confirmLabel="Tautkan"
+            <ConfirmDialog open={d?.kind === "tautkan"} onClose={() => setDialog(null)} tag="Tautan akun" confirmLabel="Tautkan"
                 title={d?.kind === "tautkan" ? `Tautkan akun ${d.user.name}?` : ""}
                 confirmDisabled={nama.trim() ? undefined : "Isi identitas dulu"}
                 onConfirm={() => (d?.kind === "tautkan" ? tautkan(d.user) : undefined)}
@@ -253,7 +254,7 @@ export function AkunTautan({ bolehHierarki }: { bolehHierarki: boolean }) {
                         <option value="sales">Sales</option><option value="spv">SPV</option><option value="sm">SM</option>
                     </select>
                 )}</FormField>
-                <FormField label="Identitas" required help={peran === "sales" ? "Kode sales persis seperti di target, mis. M-FS." : `Nama ${LABEL_PERAN[peran]} persis seperti di target.`}>
+                <FormField label="Identitas" required help={peran === "sales" ? "Kode sales persis seperti di target, mis. SALES A." : `Nama ${LABEL_PERAN[peran]} persis seperti di target.`}>
                     {(a) => <input {...a} className="fi-input" value={nama} onChange={(e) => setNama(e.target.value)} />}
                 </FormField>
             </ConfirmDialog>
@@ -262,7 +263,7 @@ export function AkunTautan({ bolehHierarki }: { bolehHierarki: boolean }) {
                 onConfirm={() => (d?.kind === "cabut" ? cabut(d.user) : undefined)}
                 facts={d?.kind === "cabut" ? [
                     ["Tautan sekarang", `${LABEL_PERAN[d.user.hierarchyRole as Peran] ?? d.user.hierarchyRole} ${d.user.hierarchyName ?? ""}`],
-                    ["Akibat", "Akun kembali melihat seluruh data insentif (perilaku hari ini, BL-26)"],
+                    ["Akibat", "Akun kembali melihat seluruh data insentif (perilaku hari ini)"],
                 ] : []} />
         </>
     );

@@ -3,7 +3,7 @@
  *   potongan/jenis/keterangan per principal, rekening tiap principal dicek SEBELUM Ajukan) dan langkah 3 Diajukan (berkas + alur dokumen).
  *   Pengganti cart/[draftId]/page.tsx lama (toast, parseIdr longgar, tanggal UTC).
  * Caller: app/(dashboard)/payments/cart/[draftId]/page.tsx (props draftId, permKeys).
- * Dependensi: ../../bersama (baca, tulis, unduhUrl), components/fiori/*, lib/payments-ui, lib/promo-ui, next/link.
+ * Dependensi: ../../bersama (baca, tulis, unduhUrl), components/fiori/*, lib/payments-ui, lib/promo-ui, lib/tampil (KOSONG), next/link.
  * Main Functions: Keranjang (default), ajukan.
  * Side Effects: GET /payments/cart-info, /api/bank-data/lookup per principal (rute Bank Panin, izin sppd.view), /payments/sppd/settings
  *   (nomor berikutnya), /payments/submissions/{id} sesudah Ajukan (nilai bayar tercatat); POST /payments/cart/submit (payments.edit) — menerbitkan nomor SPPD, berkas invoice/SPPD, status Belum Transfer.
@@ -24,6 +24,7 @@ import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@
 import { angka, angkaJawaban, hariIniWita, izinPembayaran, tanggalTampil } from "@/lib/payments-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { BELUM_PASTI, PeringatanTanggalLampau, baca, tulis, unduhUrl } from "../../bersama";
+import { KOSONG } from "@/lib/tampil";
 
 type Item = {
     no?: number | string; group_key: string; principle: string; tipe_pengajuan: string; total: number; invoice_concat?: string;
@@ -34,7 +35,7 @@ type Isi = { potongan: string; jenis: string; keterangan: string };
 type Rekening = { status: string; data: { principle: string; bank: string; rekening: string; penerima: string; has_rekening: boolean } | null };
 type Berkas = { label: string; url: string };
 
-const JENIS = [["TRF", "TRF — transfer"], ["DF", "DF — Distributor Financing (DIFI)"], ["VA", "VA — virtual account"]] as const;
+const JENIS = [["TRF", "TRF: transfer"], ["DF", "DF: Distributor Financing (DIFI)"], ["VA", "VA: virtual account"]] as const;
 const isiAwal = (it: Item): Isi => ({ potongan: it.potongan ? String(it.potongan) : "", jenis: it.jenis_pembayaran ?? "", keterangan: it.keterangan ?? "" });
 
 function galatPotongan(v: string, total: number): string | undefined {
@@ -81,6 +82,8 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
     const berubah = Object.keys(isi).length > 0 || tanggal !== null;
 
     const [dialog, setDialog] = useState(false);
+    // "Wajib dipilih." baru tampil sesudah isian jenis disentuh (No 123); tanda wajib + alasan di kaki sudah ada sejak awal.
+    const [disentuh, setDisentuh] = useState<ReadonlySet<string>>(new Set());
     const [hasil, setHasil] = useState<{ id: string; files: Berkas[]; tanggal: string; tampil: number } | null>(null);
     // Server menghitung ulang nilai bayar dari rekaman TERKINI saat Ajukan (payments.py cart/submit), bukan dari angka layar:
     // langkah 3 membaca pengajuan yang tercatat dan memperingatkan bila berbeda. ponytail: pencegahan tuntas (`expected_total` + 409)
@@ -139,7 +142,7 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
     const kepala = (judul: string, n: number) => (
         <ObjectPageHeader breadcrumbs={[{ label: "Pembayaran", href: "/payments" }, { label: "Keranjang" }]} title={judul} draft={berubah && !hasil}
             status={<StatusBadge tone="neu">Draf <span className="fi-mono">{draftId}</span></StatusBadge>} flow={langkah(n)}
-            attributes={c ? [{ label: "Rute", value: c.method_label || c.method || "—" }, { label: "Nilai pembayaran", value: rupiah(totalBayar) }] : undefined} />
+            attributes={c ? [{ label: "Rute", value: c.method_label || c.method || KOSONG }, { label: "Nilai pembayaran", value: rupiah(totalBayar) }] : undefined} />
     );
 
     // ── Langkah 3: Diajukan ──
@@ -182,7 +185,7 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
                         </ul>
                     </div>
                 </Section>
-                <Section title="Alur dokumen" subtitle="BL-35">
+                <Section title="Alur dokumen">
                     <div className="fi-dflow">
                         <span className="fi-dnode"><b>{items.length} principal</b><span>Pembayaran</span></span>
                         <span aria-hidden>→</span>
@@ -239,7 +242,7 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
                 <Section title="Rute & tanggal">
                     <div className="fi-sect-in">
                         <KeyValues items={[
-                            ["Rute", panin ? "Bank Panin — satu SPPD untuk semua principal di keranjang" : "Non Panin — tanpa SPPD; berkas invoice per principal"],
+                            ["Rute", panin ? "Bank Panin: satu SPPD untuk semua principal di keranjang" : "Non Panin: tanpa SPPD; berkas invoice per principal"],
                             ...(panin ? [["Nomor SPPD bila diajukan", izin.lihatSppd ? <span key="n" className="fi-small fi-subtle">{izin.lihatSppd}</span>
                                 : nomor.status === "galat" ? <span key="n" className="fi-why">Nomor belum bisa dibaca ({nomor.error}) <Button variant="tertiary" onClick={muatNomor}>Coba lagi</Button></span>
                                     : nomor.data ? <span key="n"><b className="fi-mono">{nomor.data.preview}</b> <span className="fi-small fi-subtle">perkiraan dari Format SPPD · terakhir {String(nomor.data.terakhir).padStart(3, "0")}; nomor final ditetapkan saat diajukan</span></span>
@@ -264,15 +267,16 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
                                                 : r?.status === "matched" && r.data ? <StatusBadge tone={r.data.has_rekening ? "pos" : "warn"}>{r.data.has_rekening ? "Rekening cocok" : "Rekening kosong"}</StatusBadge>
                                                     : <StatusBadge tone="neg">Rekening tidak ditemukan</StatusBadge>)}
                                     </div>
-                                    <span className="fi-codes">{it.invoice_concat || "—"}</span>
+                                    <span className="fi-codes">{it.invoice_concat || KOSONG}</span>
                                     {panin && r?.data && <span className="fi-small fi-subtle">{[r.data.bank, r.data.rekening, r.data.penerima].filter(Boolean).join(" · ")}</span>}
                                     {panin && r && r.status !== "matched" && <span className="fi-small fi-why">{r.status === "ambiguous" ? "Ambigu: lebih dari satu rekening cocok di master." : "Nama ini tidak cocok dengan master rekening."}</span>}
                                     <div className="fi-formgrid">
-                                        <FormField label={`Potongan ${it.principle}`} error={galat} help={`Nilai invoice ${rupiah(it.total)} · nilai bayar ${Number.isNaN(bayar) ? "—" : rupiah(bayar)}`}>
+                                        <FormField label={`Potongan ${it.principle}`} error={galat} help={`Nilai invoice ${rupiah(it.total)} · nilai bayar ${Number.isNaN(bayar) ? KOSONG : rupiah(bayar)}`}>
                                             {(a) => <input {...a} className="fi-input fi-tnum" inputMode="decimal" placeholder="0" value={v.potongan} onChange={(e) => ubah(it, { potongan: e.target.value })} />}
                                         </FormField>
-                                        <FormField label={`Jenis pembayaran ${it.principle}`} required error={v.jenis ? undefined : "Wajib dipilih."}>
-                                            {(a) => <select {...a} className="fi-input" value={v.jenis} onChange={(e) => ubah(it, { jenis: e.target.value })}>
+                                        <FormField label={`Jenis pembayaran ${it.principle}`} required error={v.jenis || !disentuh.has(it.group_key) ? undefined : "Wajib dipilih."}>
+                                            {(a) => <select {...a} className="fi-input" value={v.jenis} onChange={(e) => ubah(it, { jenis: e.target.value })}
+                                                onBlur={() => setDisentuh((s) => new Set(s).add(it.group_key))}>
                                                 <option value="">Pilih…</option>{JENIS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                                             </select>}
                                         </FormField>

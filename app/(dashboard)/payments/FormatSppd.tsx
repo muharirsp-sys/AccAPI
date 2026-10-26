@@ -1,10 +1,10 @@
 /*
  * Tujuan: Object Page "Format SPPD Bank Panin" (Fiori S6a, it08): nomor berikutnya, setelan surat (validasi di layar: nomor tidak turun
  *   dalam setahun D-05, jatuh tempo 1–24, transfer per halaman 1–20, templat bernomor urut), data rekening principal (laporan cocok,
- *   Samakan nama), dan operasi data yang selalu Pratinjau → Terapkan (Excel data SPPD, ganti nama, Auto-Fix, Restore backup).
+ *   Samakan nama), dan operasi data yang selalu Pratinjau → Terapkan (Excel data SPPD, ganti nama, perbaiki nama otomatis, pulihkan cadangan).
  *   Pengganti payments/sppd/page.tsx lama (toast, Replace All langsung menulis, Simpan dari nilai bawaan saat gagal muat).
  * Caller: app/(dashboard)/payments/sppd/page.tsx (prop permKeys).
- * Dependensi: ./bersama (baca, tulis, RangkaPembayaran, unduhUrl), ./FormatSppdDialog, components/fiori/*, lib/payments-ui.
+ * Dependensi: ./bersama (baca, tulis, RangkaPembayaran, unduhUrl), ./FormatSppdDialog, components/fiori/*, lib/payments-ui, lib/tampil (KOSONG).
  * Main Functions: FormatSppd (default), simpan.
  * Side Effects: GET /payments/sppd/settings, /api/bank-data, /api/bank-data/match-report (sppd.view); POST /payments/sppd/settings
  *   (sppd.edit_settings, CSRF). Dialog operasi data: lihat FormatSppdDialog.
@@ -24,6 +24,7 @@ import {
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
 import { galatTemplat, hariIniWita, izinPembayaran, namaAkun, pratinjauNomor, tanggalTampil } from "@/lib/payments-ui";
 import { RangkaPembayaran, baca, tulis, unduhUrl } from "./bersama";
+import { KOSONG } from "@/lib/tampil";
 import { DialogAutoFix, DialogExcel, DialogGantiNama, DialogRestore } from "./FormatSppdDialog";
 
 type Setelan = { last_sequence: number; sequence_year?: number | null; number_template: string; fixed_jaminan_date: string; maturity_months: number; items_per_page: number; updated_by?: string };
@@ -62,7 +63,7 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
     if (s) {
         const no = bulat(nilai("nomor"));
         if (Number.isNaN(no)) galat.nomor = "Nomor surat terakhir harus bilangan bulat.";
-        else if (no < s.efektif) galat.nomor = `Nomor urut SPPD tidak boleh turun di dalam satu tahun: nomor terakhir ${tahun} adalah ${String(s.efektif).padStart(3, "0")}. Nomor yang sudah terbit tidak boleh terbit ulang (D-05).`;
+        else if (no < s.efektif) galat.nomor = `Nomor urut SPPD tidak boleh turun di dalam satu tahun: nomor terakhir ${tahun} adalah ${String(s.efektif).padStart(3, "0")}. Nomor yang sudah terbit tidak boleh terbit ulang.`;
         // Tahun baru: urutan tersimpan masih milik tahun lalu (efektif ≠ tersimpan). Server membuang nomor yang SAMA dengan urutan
         // tersimpan sebagai "tidak berubah" (sppd.py), jadi isian itu tidak akan pernah berlaku — tolak sebelum Simpan.
         // ponytail: perbaikan tuntas = server membandingkan dengan urutan BERLAKU tahun ini (lintas slice).
@@ -94,7 +95,7 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
     const perluKetik = lompat > LOMPAT_KETIK_ULANG;
     const alasanKetik = perluKetik && ketikUlang.trim() !== String(nomorBaru) ? `Nomor ketikan ulang belum sama dengan ${nomorBaru}.` : undefined;
 
-    const kunciMuat = set.status === "galat" ? "Setelan SPPD belum berhasil dimuat — muat ulang dulu agar urutan nomor tidak mundur."
+    const kunciMuat = set.status === "galat" ? "Setelan SPPD belum berhasil dimuat; muat ulang dulu agar urutan nomor tidak mundur."
         : set.status === "memuat" ? "Setelan sedang dimuat." : masihTerkunci ? "Hasil simpan terakhir belum pasti; tunggu setelan dimuat ulang."
             : opTerkunci ? KUNCI_OP : undefined;
     const alasanSimpan = izin.setelan ?? kunciMuat ?? (berubah.length === 0 ? "Belum ada perubahan." : adaGalat ? "Perbaiki isian yang ditandai dulu." : undefined);
@@ -135,7 +136,7 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
     };
     const tidakPasti = (nomor?: boolean) => {
         setKunciOp(nomor ? { lap: lap.data, set: set.data } : { lap: lap.data });
-        setPesan({ tone: "warn", judul: "Hasil operasi belum pasti.", isi: "Data dimuat ulang — periksa hasilnya sebelum mengulang. Operasi data dan Simpan dikunci sampai data terbaca ulang." });
+        setPesan({ tone: "warn", judul: "Hasil operasi belum pasti.", isi: "Data dimuat ulang; periksa hasilnya sebelum mengulang. Operasi data dan Simpan dikunci sampai data terbaca ulang." });
         muatLap(); if (nomor) muatSet();
     };
 
@@ -151,7 +152,7 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
     );
 
     let setelan: ReactNode;
-    if (set.status === "galat" && !s) setelan = <ErrorState title="Setelan SPPD gagal dimuat" message={`${set.error} Simpan dikunci agar nomor tidak mundur (AM-019); isian tidak ditampilkan karena bukan nilai tersimpan.`} onRetry={muatSet} />;
+    if (set.status === "galat" && !s) setelan = <ErrorState title="Setelan SPPD gagal dimuat" message={`${set.error} Simpan dikunci agar nomor tidak mundur; isian tidak ditampilkan karena bukan nilai tersimpan.`} onRetry={muatSet} />;
     else if (!s) setelan = <Skeleton rows={5} label="Memuat setelan" />;
     else setelan = (
         <div className={set.status === "memuat" ? "fi-sect-in fi-busy" : "fi-sect-in"}>
@@ -163,7 +164,7 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
                 {bidang("jatuhTempo", { help: "1–24" })}
                 {bidang("perHalaman", { help: "1–20" })}
             </div>
-            <KeyValues items={[["Pratinjau nomor berikutnya", <b key="p" className="fi-mono">{pratinjau || "—"}</b>], ["Penandatangan dan kop", "mengikuti templat DOCX Bank Panin; tidak diubah dari sini"]]} />
+            <KeyValues items={[["Pratinjau nomor berikutnya", <b key="p" className="fi-mono">{pratinjau || KOSONG}</b>], ["Penandatangan dan kop", "mengikuti templat DOCX Bank Panin; tidak diubah dari sini"]]} />
             {izin.setelan && <MessageStrip tone="info" title="Baca saja.">{izin.setelan}</MessageStrip>}
         </div>
     );
@@ -200,9 +201,9 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
             {lihatDaftar && (
                 <ResponsiveTable<BarisRekening> title="Daftar rekening" columns={[
                     { key: "p", header: "Principal", cell: (r) => r.principle },
-                    { key: "b", header: "Bank", cell: (r) => r.bank || "—" },
+                    { key: "b", header: "Bank", cell: (r) => r.bank || KOSONG },
                     { key: "r", header: "No. rekening", cell: (r) => <span className="fi-mono">{r.rekening || "(kosong)"}</span> },
-                    { key: "n", header: "Penerima", secondary: true, cell: (r) => r.penerima || "—" },
+                    { key: "n", header: "Penerima", secondary: true, cell: (r) => r.penerima || KOSONG },
                 ]} rows={bank.data} rowKey={(r) => `${r.principle}|${r.rekening}`} empty={{ title: "Kosong" }}
                     mobileItem={(r) => <ListItem doc={r.principle} title={`${r.bank} · ${r.rekening || "(kosong)"}`} meta={r.penerima} />} />
             )}
@@ -212,8 +213,8 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
     const operasi: Array<{ k: "excel" | "ganti" | "autofix" | "restore"; label: string; ikon: ReactNode; alasan?: string }> = [
         { k: "excel", label: "Unggah Excel data SPPD…", ikon: <Upload className="fi-icon" aria-hidden />, alasan: izin.excelSppd },
         { k: "ganti", label: "Ganti nama principal…", ikon: <PencilLine className="fi-icon" aria-hidden />, alasan: izin.gantiNama },
-        { k: "autofix", label: "Auto-Fix nama principal…", ikon: <Wand2 className="fi-icon" aria-hidden />, alasan: izin.lihat },
-        { k: "restore", label: "Restore backup…", ikon: <RotateCcw className="fi-icon" aria-hidden />, alasan: izin.restore },
+        { k: "autofix", label: "Perbaiki nama otomatis…", ikon: <Wand2 className="fi-icon" aria-hidden />, alasan: izin.lihat },
+        { k: "restore", label: "Pulihkan cadangan…", ikon: <RotateCcw className="fi-icon" aria-hidden />, alasan: izin.restore },
     ];
 
     return (
@@ -224,8 +225,8 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
                 <Button variant="icon" aria-label="Muat ulang" icon={<RefreshCw className="fi-icon" aria-hidden />} busy={set.status === "memuat" && Boolean(s)} onClick={() => { muatSet(); muatBank(); muatLap(); }} />
             </>}>
             <dl className="fi-attrs">
-                <div><dt>Nomor berikutnya</dt><dd className="fi-mono">{s ? (pratinjau || "—") : "—"}</dd></div>
-                <div><dt>Terakhir diubah oleh</dt><dd>{s?.settings.updated_by ? namaAkun(s.settings.updated_by) : "—"}</dd></div>
+                <div><dt>Nomor berikutnya</dt><dd className="fi-mono">{s ? (pratinjau || KOSONG) : KOSONG}</dd></div>
+                <div><dt>Terakhir diubah oleh</dt><dd>{s?.settings.updated_by ? namaAkun(s.settings.updated_by) : KOSONG}</dd></div>
             </dl>
             <AnchorBar anchors={[{ id: "nomor", label: "Nomor & surat" }, { id: "rekening", label: "Data rekening" }, { id: "operasi", label: "Operasi data" }, { id: "riwayat", label: "Riwayat" }]} />
             {pesan && <MessageStrip tone={pesan.tone} title={pesan.judul} onClose={() => setPesan(null)}>{pesan.isi}</MessageStrip>}
@@ -236,14 +237,14 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
                 <div className="fi-sect-in">
                     <div className="fi-btnrow">
                         {operasi.map((o) => <Button key={o.k} icon={o.ikon} disabled={Boolean(o.alasan) || opTerkunci} disabledReason={o.alasan ?? KUNCI_OP} onClick={() => { setNamaLama(""); setDialog(o.k); }}>{o.label}</Button>)}
-                        {!izin.ekspor && <a className="fi-btn fi-btn--tertiary" href={unduhUrl("/payments/export")} target="_blank" rel="noopener noreferrer"><Download className="fi-icon" aria-hidden />Unduh backup</a>}
+                        {!izin.ekspor && <a className="fi-btn fi-btn--tertiary" href={unduhUrl("/payments/export")} target="_blank" rel="noopener noreferrer"><Download className="fi-icon" aria-hidden />Unduh cadangan</a>}
                     </div>
                     {operasi.filter((o) => o.alasan).map((o) => <p key={o.k} className="fi-small fi-subtle">{o.label.replace("…", "")}: {o.alasan}</p>)}
                     {opTerkunci && <p className="fi-small fi-why">{KUNCI_OP}</p>}
-                    <p className="fi-small fi-subtle">Rekaman yang sudah diajukan, ditransfer, atau terposting tidak ikut diubah (BL-05/BL-49). Restore backup hanya menambah rekaman dan menaikkan nomor SPPD bila perlu — nomor tidak pernah turun.</p>
+                    <p className="fi-small fi-subtle">Rekaman yang sudah diajukan, ditransfer, atau terposting tidak ikut diubah. Pulihkan cadangan hanya menambah rekaman dan menaikkan nomor SPPD bila perlu; nomor tidak pernah turun.</p>
                 </div>
             </Section>
-            <Section id="riwayat" title="Riwayat" subtitle="nilai lama → baru (BL-33)" actions={<History className="fi-icon" aria-hidden />}>
+            <Section id="riwayat" title="Riwayat" subtitle="nilai lama → baru" actions={<History className="fi-icon" aria-hidden />}>
                 <div className="fi-sect-in">
                     <VariantNote bl="BL-33">Riwayat setelan belum disimpan server (hanya catatan audit internal). Setelah simpan, layar ini menampilkan nilai lama → baru
                         sekali di pesan sukses; bila BL-33 masuk, daftar riwayat dengan nomor lama dan baru tampil di sini.</VariantNote>
@@ -258,12 +259,12 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
             <ConfirmDialog alasanTerlihat open={dialog === "simpan"} onClose={() => setDialog(null)} title="Simpan format SPPD?" tag="Setelan" confirmLabel="Simpan" confirmDisabled={alasanSimpan ?? alasanKetik} onConfirm={simpan}
                 facts={[
                     ...berubah.map((k): [string, ReactNode] => [LABEL[k], `${k === "jaminan" ? tanggalTampil(awal?.[k]) : awal?.[k]} → ${k === "jaminan" ? tanggalTampil(nilai(k)) : nilai(k)}`]),
-                    ["Nomor berikutnya", <span key="n" className="fi-mono">{pratinjau || "—"}</span>],
+                    ["Nomor berikutnya", <span key="n" className="fi-mono">{pratinjau || KOSONG}</span>],
                 ]}>
                 {berubah.includes("nomor") && <MessageStrip tone="warn" title={`Nomor ${String((s?.efektif ?? 0) + 1).padStart(3, "0")}–${String(nomorBaru).padStart(3, "0")} tidak akan terbit.`}>Urutan dinaikkan; nomor yang dilewati tidak bisa dipakai lagi tahun ini.</MessageStrip>}
                 {perluKetik && (
                     <>
-                        <MessageStrip tone="neg" title={`Nomor naik ${lompat} sekaligus (${s?.efektif} → ${nomorBaru}).`}>Nomor tidak bisa diturunkan lagi tahun ini (D-05); pastikan ini bukan salah ketik.</MessageStrip>
+                        <MessageStrip tone="neg" title={`Nomor naik ${lompat} sekaligus (${s?.efektif} → ${nomorBaru}).`}>Nomor tidak bisa diturunkan lagi tahun ini; pastikan ini bukan salah ketik.</MessageStrip>
                         <FormField label="Ketik ulang nomor surat terakhir" required help={`Ketik ulang nomor ${nomorBaru} untuk melanjutkan.`}>
                             {(a) => <input {...a} className="fi-input fi-tnum" inputMode="numeric" autoComplete="off" value={ketikUlang} onChange={(e) => setKetikUlang(e.target.value)} />}
                         </FormField>

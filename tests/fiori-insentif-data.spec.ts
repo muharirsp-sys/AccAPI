@@ -425,7 +425,7 @@ test("Pengaturan (a): GET 200 dengan konstanta gagal_baca → editor dikunci, an
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/insentif-sales/pengaturan", NAV);
     const main = page.locator("main");
-    await expect(main.getByRole("alert").filter({ hasText: "Konstanta tersimpan gagal dibaca — editor dikunci" }).first()).toBeVisible(NAV);
+    await expect(main.getByRole("alert").filter({ hasText: "Konstanta tersimpan gagal dibaca; editor dikunci" }).first()).toBeVisible(NAV);
     await expect(main.getByRole("spinbutton", { name: "Pool 1 principle" })).toHaveCount(0);
     await expect(main.locator("#konstanta").getByRole("button", { name: "Coba lagi" })).toBeVisible();
     await expect(main.getByRole("button", { name: "Isi dengan bawaan" })).toBeDisabled();

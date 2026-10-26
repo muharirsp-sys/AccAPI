@@ -109,9 +109,9 @@ test("Restore backup: pratinjau berkas LAMA yang terlambat tidak mengaktifkan Pu
     await page.goto("/payments/sppd", NAV);
     const main = page.locator("main");
     await expect(main.getByLabel("Nomor surat terakhir")).toHaveValue("31", NAV);
-    await main.getByRole("button", { name: "Restore backup…" }).click();
+    await main.getByRole("button", { name: "Pulihkan cadangan…" }).click();
     const dlg = page.getByRole("dialog");
-    const input = dlg.getByLabel("Berkas backup PAYMENTS (.xlsx)");
+    const input = dlg.getByLabel("Berkas cadangan PAYMENTS (.xlsx)");
     await input.setInputFiles(berkas("LAMA.xlsx"));
     await input.setInputFiles(berkas("BARU.xlsx"));
     await expect(dlg.getByText("Record ID LPB-A-001 sudah ada")).toBeVisible();
@@ -208,7 +208,7 @@ test("Rekaman: jawaban 500 (JSON) saat simpan = belum pasti, tulis dikunci sampa
     const tabel = main.getByRole("table", { name: "Rekaman" });
     await tabel.getByRole("button", { name: "Buka rincian LPB-A-001" }).click(NAV);
     await page.getByRole("dialog").getByLabel("No. invoice", { exact: true }).fill("INV-A-1B");
-    await page.getByRole("dialog").getByRole("button", { name: "Selesai" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Terapkan ke draf" }).click();
     await main.getByRole("button", { name: "Simpan 1 perubahan" }).click();
     await expect(main.getByText("hasil sisanya belum pasti", { exact: false })).toBeVisible();
     await expect(main.getByText("Tidak ada yang disimpan")).toHaveCount(0);
@@ -304,13 +304,13 @@ test("Format SPPD: operasi data tidak pasti mengunci semua operasi di halaman sa
     await page.goto("/payments/sppd", NAV);
     const main = page.locator("main");
     await expect(main.getByLabel("Nomor surat terakhir")).toHaveValue("31", NAV);
-    await main.getByRole("button", { name: "Restore backup…" }).click();
+    await main.getByRole("button", { name: "Pulihkan cadangan…" }).click();
     const dlg = page.getByRole("dialog");
-    await dlg.getByLabel("Berkas backup PAYMENTS (.xlsx)").setInputFiles(berkas("backup.xlsx"));
+    await dlg.getByLabel("Berkas cadangan PAYMENTS (.xlsx)").setInputFiles(berkas("backup.xlsx"));
     await dlg.getByRole("button", { name: "Pulihkan 3 rekaman" }).click();
     await expect(dlg.getByText(/Hasilnya belum pasti/)).toBeVisible();
     await dlg.getByRole("button", { name: "Batal" }).click();
-    for (const nama of ["Unggah Excel data SPPD…", "Ganti nama principal…", "Auto-Fix nama principal…", "Restore backup…"]) {
+    for (const nama of ["Unggah Excel data SPPD…", "Ganti nama principal…", "Perbaiki nama otomatis…", "Pulihkan cadangan…"]) {
         await expect(main.getByRole("button", { name: nama })).toBeDisabled();
     }
     await expect(main.getByText("Hasil operasi terakhir belum pasti", { exact: false }).first()).toBeVisible();
@@ -368,7 +368,7 @@ test("Tulis: 403 (token kedaluwarsa) diulang SEKALI dengan token baru dari /api/
     const ubah = async (nilai: string) => {
         await tabel.getByRole("button", { name: "Buka rincian LPB-A-001" }).click(NAV);
         await page.getByRole("dialog").getByLabel("No. invoice", { exact: true }).fill(nilai);
-        await page.getByRole("dialog").getByRole("button", { name: "Selesai" }).click();
+        await page.getByRole("dialog").getByRole("button", { name: "Terapkan ke draf" }).click();
         await main.getByRole("button", { name: "Simpan 1 perubahan" }).click();
     };
     await ubah("INV-A-1B");
@@ -396,7 +396,7 @@ test("Rekaman: koneksi putus saat simpan rekaman ke-2 dari 3 — berhenti (ke-3 
     for (const id of ["LPB-A-001", "LPB-A-002", "LPB-A-003"]) {
         await tabel.getByRole("button", { name: `Buka rincian ${id}` }).click(NAV);
         await page.getByRole("dialog").getByLabel("No. invoice", { exact: true }).fill(`${id}-B`);
-        await page.getByRole("dialog").getByRole("button", { name: "Selesai" }).click();
+        await page.getByRole("dialog").getByRole("button", { name: "Terapkan ke draf" }).click();
     }
     await main.getByRole("button", { name: "Simpan 3 perubahan" }).click();
     await expect(main.getByText("1 dari 3 rekaman tersimpan; hasil sisanya belum pasti.", { exact: false })).toBeVisible();

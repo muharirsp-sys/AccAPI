@@ -4,7 +4,8 @@
  *   recordKey/clientRef SAMA dengan approveTransfer lama finance/page.tsx:385-516 — rekonsiliasi attempt lama), penyelesaian tidak
  *   pasti, ubah status transfer, simpan tujuan, master pemasok/rekening Accurate (baca-saja).
  * Caller: app/(dashboard)/finance/Finance.tsx.
- * Dependensi: lib/apiBase (FastAPI), lib/finance-post-status (certainlyNotSent, conflictNotSent, purchasePaymentConflict), lib/finance-ui.
+ * Dependensi: lib/apiBase (FastAPI), lib/finance-post-status (certainlyNotSent, conflictNotSent, purchasePaymentConflict), lib/finance-ui,
+ *   lib/tampil (sebabHttp, KOSONG: hanya untuk kalimat yang tampil, tidak untuk catatan yang ditulis ke server).
  * Main Functions: recordKey, bacaSesi, muatFinance, muatMaster, simpanTujuan, postingPurchasePayment, selesaikanTidakPasti, ubahStatusTransfer.
  * Side Effects: FastAPI /payments/finance/{data,mapping,proof,update} (payments.json); Next /api/finance/purchase-payment
  *   (klaim attempt lalu purchase-payment/bulk-save.do ke Accurate), /attempts, /resolve; /api/auth/accurate-session;
@@ -14,6 +15,7 @@ import type { Load } from "@/components/fiori/interactive";
 import { resolveApiBase } from "@/lib/apiBase";
 import { certainlyNotSent, conflictNotSent, purchasePaymentConflict } from "@/lib/finance-post-status";
 import { alasanFaktur, bedaPengajuan, potongKelompok, saringCatatan, type AttemptFinance } from "@/lib/finance-ui";
+import { KOSONG, sebabHttp } from "@/lib/tampil";
 
 export type FinanceMapping = { principle?: string; vendorNo?: string; vendorName?: string; bankNo?: string; bankName?: string };
 export type ProofMeta = { proof_id?: string; original_filename?: string; stored_filename?: string; sha256?: string; url?: string };
@@ -160,8 +162,9 @@ async function bacaFinance(date: string): Promise<Load<{ rows: FinanceRecord[]; 
     }
     const data = await bacaTeks(res);
     if (!res.ok || data?.ok !== true) {
-        const umum = data === null ? `Server Pembayaran memberi jawaban yang tidak terbaca (HTTP ${res.status})` : "Daftar pengajuan gagal dimuat";
-        return { status: "galat", error: data === null ? `${umum}.` : galatFastapi(res.status, data.error, umum) };
+        // Hanya tampil (load.error): kode HTTP disaring, sebabnya ditulis sebagai kalimat (audit desain 001 No 30).
+        return { status: "galat", error: data === null ? `Server Pembayaran memberi jawaban yang tidak terbaca. ${sebabHttp(res.status)}`
+            : saringCatatan(galatFastapi(res.status, data.error, "Daftar pengajuan gagal dimuat")) };
     }
     return {
         status: "siap",
@@ -200,7 +203,7 @@ async function bacaAttempts(rows: FinanceRecord[]): Promise<{ map: Map<string, A
             const d = await bacaTeks(res);
             const isi = d?.data as Array<{ attempt: AttemptFinance | null }> | undefined;
             if (!res.ok || d?.ok !== true || !Array.isArray(isi) || isi.length !== bagian.length) {
-                return { map, galat: saringCatatan(typeof d?.error === "string" ? d.error : "") || `Status posting dari server tidak terbaca (HTTP ${res.status}).` };
+                return { map, galat: saringCatatan(typeof d?.error === "string" ? d.error : "") || `Status posting dari server tidak terbaca. ${sebabHttp(res.status)}` };
             }
             bagian.forEach((r, j) => map.set(recordKey(r), isi[j]?.attempt ?? null));
         } catch {
@@ -387,7 +390,7 @@ export async function postingPurchasePayment(p: {
     if (!sessionData?.databaseConnected) throw new Error("Login dan buka database Accurate dulu sebelum posting. Tidak ada yang dikirim.");
     // Tinjauan A-1: sesi bisa berganti database di tab lain sejak dialog dibuka — berhenti SEBELUM simpan tujuan (belum ada yang ditulis).
     if (String(sessionData.databaseId ?? "") !== p.expectedDatabaseId) {
-        throw new Error(`Database Accurate berganti sejak dialog dibuka (sekarang ${sessionData.databaseAlias || `ID ${sessionData.databaseId ?? "–"}`}). Tidak ada yang dikirim; muat ulang lalu periksa tujuan.`);
+        throw new Error(`Database Accurate berganti sejak dialog dibuka (sekarang ${sessionData.databaseAlias || `ID ${sessionData.databaseId ?? KOSONG}`}). Tidak ada yang dikirim; muat ulang lalu periksa tujuan.`);
     }
     // Tinjauan B-5: data di layar bisa usang (tab/orang lain mengubah pengajuan). Baca ulang baris ini SEBELUM langkah tulis pertama.
     const segar = await bacaFinance(date);
@@ -484,7 +487,7 @@ export async function postingPurchasePayment(p: {
         return { jenis: "terposting", nomor: posted.number, catatan: posted.note };
     } catch (err: unknown) {
         const message = err instanceof Error && err.message ? err.message : "Gagal posting purchase-payment Accurate.";
-        const pesan = saringCatatan(message) || "Posting purchase-payment Accurate gagal.";
+        const pesan = saringCatatan(message) || "Posting Purchase Payment ke Accurate gagal.";
         // Belum sampai command, atau command menolak sebelum klaim = pasti tidak terkirim. Selain itu (jaringan putus ke command,
         // 5xx, pencatatan "posted" ke FastAPI gagal) server MUNGKIN sudah mengirim: tidak pasti, attempt server tetap memblokir.
         if (!sent || notSent) {
@@ -498,7 +501,7 @@ export async function postingPurchasePayment(p: {
 
 const PESAN_RESOLVE: Record<string, string> = {
     wrong_database: "Percobaan ini dikirim ke database Accurate lain. Buka database itu, periksa di sana, lalu selesaikan.",
-    in_flight: "Percobaan baru saja dikirim — Accurate mungkin masih memproses. Tunggu 2 menit lalu periksa lagi.",
+    in_flight: "Percobaan baru saja dikirim; Accurate mungkin masih memproses. Tunggu 2 menit lalu periksa lagi.",
     changed: "Percobaan berubah saat diselesaikan. Muat ulang lalu periksa lagi.",
     already_posted: "Server sudah mencatat percobaan ini TERPOSTING. Pilih “Ada di Accurate” dengan nomor Purchase Payment-nya.",
 };
@@ -530,7 +533,7 @@ export async function selesaikanTidakPasti(p: { record: FinanceRecord; date: str
         throw new TidakPasti("Server tidak memberi jawaban yang pasti; penyelesaian mungkin sudah tercatat.");
     }
     const out = (await bacaTeks(r)) as { code?: string; error?: string } | null;
-    if (r.status >= 502 || out === null) throw new TidakPasti(`Server tidak memberi jawaban yang pasti (HTTP ${r.status}); penyelesaian mungkin sudah tercatat.`);
+    if (r.status >= 502 || out === null) throw new TidakPasti("Server tidak memberi jawaban yang pasti; penyelesaian mungkin sudah tercatat.");
     const serverOk = r.ok || (r.status === 404 && out.code === "no_open_attempt");
     if (out.code === "already_posted" && number) {
         // Server sudah mencatat TERPOSTING: catatan Finance hanya boleh memakai nomor yang sama dengan attempt server (tinjauan A-5).
@@ -544,7 +547,7 @@ export async function selesaikanTidakPasti(p: { record: FinanceRecord; date: str
     } else if (!serverOk) {
         const pesan = r.status === 401 ? "Sesi berakhir. Masuk ulang lalu ulangi."
             : r.status === 403 ? "Hanya Finance yang berwenang menyelesaikan posting tidak pasti."
-            : (out.code && PESAN_RESOLVE[out.code]) || saringCatatan(out.error) || `Penyelesaian ditolak server (HTTP ${r.status}).`;
+            : (out.code && PESAN_RESOLVE[out.code]) || saringCatatan(out.error) || `Penyelesaian ditolak server. ${sebabHttp(r.status)}`;
         throw new Error(pesan);
     }
     // D-14: alasan dan sumber yang DIKETIK Finance ikut tersimpan di catatan FastAPI (accurate_post_resolution.note, ≥ 15 karakter).

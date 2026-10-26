@@ -178,13 +178,15 @@ export function alasanTidakAda(attempt: AttemptFinance | null | undefined, detik
 }
 
 /**
- * Catatan/galat lama untuk layar: tanpa kalimat ajakan "Coba lagi" (mengulang posting yang tidak pasti = membayar dua kali) dan tanpa
- * alamat server lokal (mis. "localhost:8000").
+ * Catatan/galat lama untuk layar: tanpa kalimat ajakan "Coba lagi" (mengulang posting yang tidak pasti = membayar dua kali), tanpa
+ * alamat server lokal (mis. "localhost:8000"), dan tanpa kode status "(HTTP nnn)". Hanya tampilan; catatan tersimpan tidak diubah.
  */
 export function saringCatatan(teks: string | null | undefined): string {
     return String(teks ?? "")
         // Nama kunci izin mentah dari galat server (mis. "(finance.resolve_unknown)") tidak ditampilkan.
         .replace(/\s*\(finance\.[a-z_]+\)/gi, "")
+        // Kode status mentah (mis. "(HTTP 409)") hanya untuk catatan/log, tidak untuk layar (audit desain 001 No 30).
+        .replace(/\s*\(HTTP \d{3}\)/g, "")
         // Alamat lokal DULU: titik di "127.0.0.1" memotong kalimat di langkah berikut (tinjauan putaran 2 B-5).
         .replace(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*/gi, "server")
         .replace(/\b(?:localhost|127\.0\.0\.1)(?::\d+)?/gi, "server")

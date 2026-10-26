@@ -230,11 +230,11 @@ test("Tinjau → izin Finance → Kirim 2 paket: paket 1 terposting, paket 2 put
     await page.screenshot({ path: "test-results/fiori-pelunasan-5-tinjau.png", fullPage: true });
 
     // Izin Finance: dialog alasan ≥ 15, baris ikut dikirim dengan override lock.
-    await expect(ganda).toContainText("= kirim ulang terkendali (takeover Finance, tercatat dengan alasan)");
+    await expect(ganda).toContainText("untuk kirim ulang terkendali (tercatat dengan alasan)");
     await ganda.getByRole("checkbox", { name: "Pilih INV/A/001" }).check();
     await ganda.getByRole("button", { name: "Izinkan yang dicentang…" }).click();
     const izinDlg = page.getByRole("dialog", { name: "Kirim ulang terkendali 1 baris?" });
-    await expect(izinDlg).toContainText("Kirim ulang terkendali (takeover) untuk 1 baris");
+    await expect(izinDlg).toContainText("Kirim ulang terkendali untuk 1 baris");
     await izinDlg.getByLabel("Alasan mengizinkan").fill("terlalu pendek");
     await expect(izinDlg.getByRole("button", { name: "Izinkan 1 baris" })).toBeDisabled();
     await expect(izinDlg).toContainText("minimal 15 karakter");
@@ -292,8 +292,8 @@ test("Tinjau → izin Finance → Kirim 2 paket: paket 1 terposting, paket 2 put
     await page.screenshot({ path: "test-results/fiori-pelunasan-8-selesaikan.png", fullPage: true });
     await simpan.click();
     await expect(sel.getByRole("alert")).toContainText("tidak identik dengan baris ini (potongan berbeda)");
-    await expect(sel).toContainText("Pelunasan PR.2026.10.00120 Rp 96.000 ≠ baris ini Rp 101.000 (selisih Rp 5.000) — bisa jadi cicilan lain.");
-    await expect(sel).toContainText("kirim ulang terkendali — unggah ulang baris ini lewat Pelunasan baru");
+    await expect(sel).toContainText("Pelunasan PR.2026.10.00120 Rp 96.000 ≠ baris ini Rp 101.000 (selisih Rp 5.000); bisa jadi cicilan lain.");
+    await expect(sel).toContainText("unggah ulang baris ini lewat Mulai pelunasan baru");
     await expect(sel).toContainText("Izinkan yang dicentang…");
     await expect(sel).not.toContainText("Akun Anda tidak berhak mengizinkannya");
     await expect(simpan).toBeDisabled();
@@ -348,7 +348,7 @@ test("409 database_changed = Gagal tidak terkirim + sesi dibaca ulang; 409 ACCUR
     await page.getByRole("button", { name: "Lanjut ke Tinjau" }).click();
     await page.getByRole("button", { name: "Kirim 4 pelunasan…" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Kirim 4 pelunasan" }).click();
-    await expect(page.getByText("Database Accurate berubah saat mengirim — hasilnya belum pasti.")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText("Database Accurate berubah saat mengirim; hasilnya belum pasti.")).toBeVisible({ timeout: 60_000 });
     await expect(page.getByLabel("Ringkasan hasil")).toContainText("Tidak pasti4");
     await expect(page.getByLabel("Ringkasan hasil")).toContainText("Gagal0");
     await expect(page.getByText("Database Accurate berubah saat mengirim.")).toHaveCount(0);
@@ -507,7 +507,7 @@ test("Selesaikan tidak_ada: 409 database_unknown = pilihan ditutup; 502 = belum 
     await expect(sel.getByRole("radio", { name: /Tetapkan tidak ada/ })).toBeDisabled();
     await sel.getByRole("radio", { name: /Tetapkan terposting sebagai PR.2026.10.00077/ }).check();
     // Nominal kandidat ≠ baris: selisih jelas + jalan lain + konfirmasi wajib (acceptSimilar).
-    await expect(sel).toContainText("Pelunasan PR.2026.10.00077 Rp 250.000 ≠ baris ini Rp 300.000 — bisa jadi cicilan lain.");
+    await expect(sel).toContainText("Pelunasan PR.2026.10.00077 Rp 250.000 ≠ baris ini Rp 300.000; bisa jadi cicilan lain.");
     await expect(sel.getByRole("button", { name: "Tetapkan terposting" })).toBeDisabled();
     await sel.getByRole("checkbox", { name: /PR.2026.10.00077 adalah kiriman baris ini/ }).check();
     await sel.getByRole("button", { name: "Tetapkan terposting" }).click();
@@ -629,7 +629,7 @@ test("Daftar Perlu tindakan: galat ≠ kosong; baris lama tanpa database tidak m
         await expect(sel.getByRole("status", { name: "Hasil pencarian" })).toContainText("Ada 1 pelunasan di Accurate yang menyentuh faktur ini");
         await expect(sel.getByRole("radio", { name: /Tetapkan tidak ada/ })).toBeDisabled();
         await sel.getByRole("radio", { name: /Tetapkan terposting sebagai PR.2026.10.00009/ }).check();
-        await expect(sel).toContainText("Pelunasan PR.2026.10.00009 Rp 80.000 ≠ baris ini Rp 90.000 — bisa jadi cicilan lain.");
+        await expect(sel).toContainText("Pelunasan PR.2026.10.00009 Rp 80.000 ≠ baris ini Rp 90.000; bisa jadi cicilan lain.");
         await expect(sel).toContainText("Akun Anda tidak berhak mengizinkannya; minta Finance yang berhak mengizinkan baris ganda.");
         await sel.getByRole("checkbox", { name: /PR.2026.10.00009 adalah kiriman baris ini/ }).check();
         await sel.getByLabel("Diperiksa di").fill("Accurate › Penerimaan Penjualan, PELANGGAN-Y 08/10/2026");

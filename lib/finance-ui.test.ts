@@ -162,6 +162,8 @@ test("catatan lama disaring: tanpa 'Coba lagi' dan tanpa alamat server lokal", (
     assert.equal(saringCatatan("127.0.0.1:8000, coba lagi"), "");
     assert.equal(saringCatatan("Server diam. Gagal menghubungi 127.0.0.1:8000, coba lagi."), "Server diam.");
     assert.equal(saringCatatan("Percobaan yang dicoba lagi tetap tercatat."), "Percobaan yang dicoba lagi tetap tercatat.", "'dicoba lagi' bukan ajakan");
+    // Audit desain 001 No 30: kode status dari catatan lama tidak tampil; kalimatnya tetap.
+    assert.equal(saringCatatan("Command posting menolak sebelum kirim (HTTP 409)."), "Command posting menolak sebelum kirim.");
     const n = catatanPosting("tidak_pasti", "Accurate tidak merespons (timeout). Coba lagi.", "failed");
     assert.match(n, /^TIDAK PASTI/);
     assert.doesNotMatch(n, /Coba lagi/);

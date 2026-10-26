@@ -1,10 +1,10 @@
 /*
  * Tujuan: Dialog operasi data Format SPPD (Fiori S6a, it08) — semuanya Pratinjau → Terapkan dengan laporan yang SAMA dari server:
  *   `excel` (Unggah Excel data SPPD: berubah/tak berubah/diblok/tidak ditemukan/ditolak terkunci), `replace` (ganti nama principal:
- *   diubah, terkunci dilewati, mapping Finance yang perlu diatur ulang), Auto-Fix nama (pratinjau confirm:false), Restore backup
+ *   diubah, terkunci dilewati, mapping Finance yang perlu diatur ulang), Perbaiki nama otomatis (pratinjau confirm:false), Pulihkan cadangan
  *   (rekaman, pengajuan, nomor SPPD sebelum → sesudah; hanya pemegang setelan SPPD).
  * Caller: app/(dashboard)/payments/FormatSppd.tsx.
- * Dependensi: ./bersama (tulis, daftarKunci), components/fiori/*, lib/promo-ui (rupiah).
+ * Dependensi: ./bersama (tulis, daftarKunci), components/fiori/*, lib/promo-ui (rupiah), lib/payments-ui (ISIAN: label kolom), lib/tampil (KOSONG).
  * Main Functions: DialogExcel, DialogGantiNama, DialogAutoFix, DialogRestore.
  * Side Effects: POST /payments/sppd/upload?dry_run (sppd.upload_excel), /api/bank-data/replace-principle-name {dry_run} (payments.edit),
  *   /api/bank-data/auto-fix-names {confirm} (pratinjau payments.view, terapkan payments.edit), /payments/sppd/restore-backup?dry_run
@@ -22,17 +22,21 @@ import { KeyValues, MessageStrip } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { rupiah } from "@/lib/promo-ui";
 import { daftarKunci, tulis, type HasilTulis } from "./bersama";
+import { ISIAN } from "@/lib/payments-ui";
+import { KOSONG } from "@/lib/tampil";
 
 type Selesai = (p: { judul: string; isi?: string }) => void;
 type Props = { open: boolean; onClose: () => void; onSelesai: Selesai; onTidakPasti: () => void };
 type Pratinjau<T> = { status: "memuat" } | { status: "siap"; data: T } | { status: "galat"; error: string } | null;
 
-const KUNCI_PASTI = "Hasil sebelumnya belum pasti — tutup dialog dan periksa data dulu sebelum mengulang.";
+const KUNCI_PASTI = "Hasil sebelumnya belum pasti; tutup dialog dan periksa data dulu sebelum mengulang.";
 const PRATINJAU_PUTUS = "Pratinjau tidak terbaca (koneksi atau server). Coba lagi; belum ada yang ditulis.";
-const daftar = (xs: string[] | undefined, n = 5) => (xs?.length ? `${xs.slice(0, n).join(", ")}${xs.length > n ? ` dan ${xs.length - n} lainnya` : ""}` : "—");
+const daftar = (xs: string[] | undefined, n = 5) => (xs?.length ? `${xs.slice(0, n).join(", ")}${xs.length > n ? ` dan ${xs.length - n} lainnya` : ""}` : KOSONG);
 const keP = <T,>(res: HasilTulis): Pratinjau<T> => (res.ok ? { status: "siap", data: res.data as T } : { status: "galat", error: res.tidakPasti ? PRATINJAU_PUTUS : res.error });
 /** Nilai lama/baru Excel SPPD: uang rupiah, selain itu teks. */
 const nilaiTampil = (field: string, v: unknown) => (typeof v === "number" && /nilai|potongan|gap/.test(field) ? rupiah(v) : String(v ?? "") || "(kosong)");
+/** Nama kolom manusia untuk field rekaman (tanpa nama field mentah, audit desain 001 No 30); field di luar ISIAN: garis bawah jadi spasi. */
+const labelField = (field: string) => ISIAN.find((i) => i.key === field)?.label ?? field.replace(/_/g, " ");
 
 /**
  * Pola bersama dialog berkas: pilih → pratinjau `?dry_run=1` → terapkan `?dry_run=0`. Pratinjau TERIKAT ke berkasnya (`untuk`) dan
@@ -78,7 +82,7 @@ export function DialogExcel({ open, onClose, onSelesai, onTidakPasti, kunci }: P
     const lap = b.p?.status === "siap" ? b.p.data : null;
     const alasan = kunci ?? (belumPasti ? KUNCI_PASTI : !b.berkas ? "Pilih berkas Excel data SPPD dulu."
         : b.p?.status === "memuat" ? "Pratinjau sedang dibuat." : !lap ? "Pratinjau gagal; berkas ini belum bisa diterapkan."
-            : lap.locked?.length ? "Ada baris rekaman terkunci yang mengubah nilai — seluruh unggahan akan ditolak. Hapus baris itu dari berkas."
+            : lap.locked?.length ? "Ada baris rekaman terkunci yang mengubah nilai; seluruh unggahan akan ditolak. Hapus baris itu dari berkas."
                 : lap.errors?.length ? "Perbaiki galat di pratinjau dulu." : !lap.can_apply ? "Tidak ada rekaman yang cocok untuk diperbarui."
                     : !lap.updated ? "Tidak ada nilai yang berubah." : undefined);
     async function terapkan() {
@@ -95,13 +99,13 @@ export function DialogExcel({ open, onClose, onSelesai, onTidakPasti, kunci }: P
         const kunciList = daftarKunci(res.data);
         throw new Error(kunciList.length ? `${res.error} Terkunci: ${kunciList.join(", ")}.` : res.error);
     }
-    const contoh = (lap?.changes ?? []).slice(0, 4).map((c) => `${c.no_lpb || c.record_id}: ${c.fields.map((f) => `${f.field} ${nilaiTampil(f.field, f.old)} → ${nilaiTampil(f.field, f.new)}`).join(", ")}`);
+    const contoh = (lap?.changes ?? []).slice(0, 4).map((c) => `${c.no_lpb || c.record_id}: ${c.fields.map((f) => `${labelField(f.field)} ${nilaiTampil(f.field, f.old)} → ${nilaiTampil(f.field, f.new)}`).join(", ")}`);
     return (
         <ConfirmDialog alasanTerlihat open={open} onClose={tutup} title={b.berkas ? `Terapkan ${b.berkas.name}?` : "Unggah Excel data SPPD"} tag="Pratinjau"
             confirmLabel={lap?.updated ? `Terapkan ${lap.updated} perubahan` : "Terapkan"} confirmDisabled={alasan} onConfirm={terapkan}
             facts={lap ? [
                 ["Cocok", `${(lap.updated ?? 0) + (lap.unchanged ?? 0)} rekaman · ${lap.updated ?? 0} berubah`],
-                ["Kolom diblok", `${daftar(lap.blocked_columns)} — ajukan, gap, status, draf/pengajuan, dan nomor SPPD tidak pernah ditulis dari Excel`],
+                ["Kolom diblok", `${daftar(lap.blocked_columns)}. Ajukan, gap, status, draf/pengajuan, dan nomor SPPD tidak pernah ditulis dari Excel`],
                 ["Tidak ditemukan", daftar(lap.not_found)],
                 ["Ditolak (terkunci)", lap.locked?.length ? daftar(lap.locked.map((x) => `${x.no_lpb || x.record_id} (${x.reason})`), 3) : "0"],
                 ...(lap.errors?.length ? [["Galat", daftar(lap.errors, 3)] as [string, string]] : []),
@@ -143,7 +147,7 @@ export function DialogGantiNama({ open, onClose, onSelesai, onTidakPasti, kunci,
         if (res.ok) {
             const remap = (res.data.finance_mapping as LaporanGanti["finance_mapping"])?.needs_remap;
             onSelesai({ judul: `${Number(res.data.replaced ?? 0)} rekaman diganti dari “${lama.trim()}” menjadi “${baru.trim()}”.`,
-                isi: `${Number(res.data.locked_skipped ?? 0)} rekaman terkunci tidak diubah.${remap ? " Mapping Accurate di Finance masih memakai nama lama — atur ulang di Finance." : ""}` });
+                isi: `${Number(res.data.locked_skipped ?? 0)} rekaman terkunci tidak diubah.${remap ? " Mapping Accurate di Finance masih memakai nama lama; atur ulang di Finance." : ""}` });
             return;
         }
         if (res.tidakPasti) { setBelumPasti(true); onTidakPasti(); }
@@ -198,7 +202,7 @@ export function DialogAutoFix({ open, onClose, onSelesai, onTidakPasti, izinLiha
         throw new Error(res.error);
     }
     return (
-        <ConfirmDialog alasanTerlihat open={open} onClose={onClose} title={n ? `Samakan ${lap?.changes?.length ?? 0} nama principal dengan master rekening?` : "Auto-Fix nama principal"} tag="Pratinjau"
+        <ConfirmDialog alasanTerlihat open={open} onClose={onClose} title={n ? `Samakan ${lap?.changes?.length ?? 0} nama principal dengan master rekening?` : "Perbaiki nama principal otomatis"} tag="Pratinjau"
             confirmLabel={n ? `Terapkan ke ${n} rekaman` : "Terapkan"} confirmDisabled={alasan} onConfirm={terapkan}>
             {!p && !izinLihat ? <MessageStrip tone="info" title="Membuat pratinjau…" /> : null}
             {p?.status === "galat" && <MessageStrip tone="neg" title="Pratinjau gagal.">{p.error}</MessageStrip>}
@@ -222,13 +226,13 @@ export function DialogRestore({ open, onClose, onSelesai, onTidakPasti, kunci }:
     const lap = b.p?.status === "siap" ? b.p.data : null;
     const alasan = kunci ?? (belumPasti ? KUNCI_PASTI : !b.berkas ? "Pilih berkas backup PAYMENTS dulu."
         : b.p?.status === "memuat" ? "Pratinjau sedang dibuat." : !lap ? "Pratinjau gagal; berkas ini belum bisa dipulihkan."
-            : lap.conflicts?.length ? "Ada konflik — tidak ada yang dipulihkan. Perbaiki berkasnya dulu." : !lap.can_apply ? "Berkas ini belum bisa dipulihkan." : undefined);
+            : lap.conflicts?.length ? "Ada konflik; tidak ada yang dipulihkan. Perbaiki berkasnya dulu." : !lap.can_apply ? "Berkas ini belum bisa dipulihkan." : undefined);
     async function terapkan() {
         const res = await b.terapkan();
         if (res.ok) {
             const sp = res.data.sppd as LaporanRestore["sppd"];
             tutup();
-            onSelesai({ judul: `Restore backup berhasil: ${Number(res.data.added ?? 0)} rekaman ditambahkan.`, isi: sp ? `Nomor SPPD terakhir ${sp.last_sequence_before} → ${sp.last_sequence_after}; berikutnya ${sp.next_number}.` : undefined });
+            onSelesai({ judul: `Cadangan dipulihkan: ${Number(res.data.added ?? 0)} rekaman ditambahkan.`, isi: sp ? `Nomor SPPD terakhir ${sp.last_sequence_before} → ${sp.last_sequence_after}; berikutnya ${sp.next_number}.` : undefined });
             return;
         }
         if (res.tidakPasti) { setBelumPasti(true); onTidakPasti(); }
@@ -237,15 +241,15 @@ export function DialogRestore({ open, onClose, onSelesai, onTidakPasti, kunci }:
     }
     const sp = lap?.sppd;
     return (
-        <ConfirmDialog alasanTerlihat open={open} onClose={tutup} title={b.berkas ? `Pulihkan ${b.berkas.name}?` : "Restore backup"} tag="Pratinjau"
+        <ConfirmDialog alasanTerlihat open={open} onClose={tutup} title={b.berkas ? `Pulihkan ${b.berkas.name}?` : "Pulihkan cadangan"} tag="Pratinjau"
             confirmLabel={lap?.records ? `Pulihkan ${lap.records} rekaman` : "Pulihkan"} confirmDisabled={alasan} onConfirm={terapkan}
             facts={lap ? [
                 ["Rekaman", `${lap.records ?? 0} ditambahkan · ${lap.draft_records ?? 0} rekaman draf (belum diajukan)`],
                 ["Pengajuan", `${lap.submissions ?? 0} di berkas · ${lap.new_submissions ?? 0} baru`],
-                ["Nomor SPPD", sp ? `terakhir ${sp.last_sequence_before} → ${sp.last_sequence_after} (tertinggi di berkas ${sp.max_restored}); berikutnya ${sp.next_number} — tidak pernah turun` : "—"],
+                ["Nomor SPPD", sp ? `terakhir ${sp.last_sequence_before} → ${sp.last_sequence_after} (tertinggi di berkas ${sp.max_restored}); berikutnya ${sp.next_number}; tidak pernah turun` : KOSONG],
                 ["Konflik", daftar(lap.conflicts, 3)],
             ] : undefined}>
-            <FormField label="Berkas backup PAYMENTS (.xlsx)" required help="Berkas dari Unduh backup. Restore hanya MENAMBAH rekaman; Record ID atau No. LPB yang sudah ada = seluruh berkas ditolak. Keranjang (draf) tidak ada di backup.">
+            <FormField label="Berkas cadangan PAYMENTS (.xlsx)" required help="Berkas dari Unduh cadangan. Pemulihan hanya MENAMBAH rekaman; Record ID atau No. LPB yang sudah ada = seluruh berkas ditolak. Keranjang (draf) tidak ada di cadangan.">
                 {(a) => <input key={b.kunciInput} {...a} className="fi-input" type="file" accept=".xlsx,.xls" onChange={(e) => void b.pilih(e.target.files?.[0] ?? null)} />}
             </FormField>
             {b.p?.status === "memuat" && <MessageStrip tone="info" title="Membuat pratinjau…" />}
