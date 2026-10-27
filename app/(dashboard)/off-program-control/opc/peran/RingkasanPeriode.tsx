@@ -174,7 +174,7 @@ export function BagianPeriode({ ctx, daftar, periode }: PeranProps & { periode: 
                 if (e instanceof TulisTidakPasti) { tidakPastiTutup(e.message); return; }
                 throw e;
             }
-            isi =`${r.namaPrincipal}. ${String(data.message || "Periode berhasil diproses.")}`;
+            isi = `${r.namaPrincipal}. ${String(data.message || "Periode berhasil diproses.")}`;
         } else {
             const hasil = await Promise.all(r.principals.map((pc) => tulisOpc(URL_PERIODE, { body: body(pc), gagal: "Periode belum berhasil diproses.", putus })
                 .then(() => ({ pc, galat: "", pasti: true }), (e: unknown) => ({ pc, galat: e instanceof Error ? e.message : String(e), pasti: !(e instanceof TulisTidakPasti) }))));

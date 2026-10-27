@@ -138,7 +138,10 @@ test("Ringkasan admin: kesehatan proses, per tahap, per divisi, bermasalah, akti
     await expect(bermasalah.getByRole("button", { name: /006\/ENI\/10\/2026/ })).toContainText("Dikembalikan");
     await expect(main.getByRole("list", { name: "Batch lewat SLA" })).toContainText("007/KINO/10/2026");
     await expect(main.getByRole("list", { name: "Aktivitas terakhir" }).getByRole("button")).toHaveCount(5);
-    for (const bl of ["BL-11", "BL-12", "BL-13"]) await expect(main.getByLabel(`Usulan ${bl}`).first()).toBeVisible();
+    for (const bl of ["BL-11", "BL-13"]) await expect(main.getByLabel(`Usulan ${bl}`).first()).toBeVisible();
+    // No 80: catatan BL-12 di Tutup periode kini keterangan biasa (catatan varian layar ini milik Ringkasan); isinya tetap terbaca.
+    await expect(main.getByLabel("Usulan BL-12")).toHaveCount(0);
+    await expect(main.getByRole("region", { name: "Tutup periode" })).toContainText("Refund tertunda belum menahan penutupan");
     // Kerangka menggulir di dalam <main>: tangkapan seluruh halaman lewat viewport tinggi.
     await page.setViewportSize({ width: 1366, height: 3000 });
     await page.screenshot({ path: "test-results/fiori-opc-admin-ringkasan.png" });
