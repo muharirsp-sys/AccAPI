@@ -274,7 +274,8 @@ function DetailKeuangan(props: DetailProps) {
         } catch (e) {
             // Tolakan server (mis. 409 item sudah dibayar orang lain, periode ditutup) atau koneksi putus: status di layar bisa usang.
             // Muat ulang detail; selama memuat tombol Catat terkunci dan item yang ternyata lunas keluar dari pilihan.
-            if (e instanceof TulisTidakPasti) props.laporTidakPasti(e.message); // strip bertahan + muat ulang daftar dan detail
+            // Tidak pasti: dialog ditutup (tidak bisa diklik ulang selagi status belum jelas), strip bertahan + muat ulang (No 22).
+            if (e instanceof TulisTidakPasti) { setDialog(false); props.laporTidakPasti(e.message); }
             else muatUlang();
             throw e;
         }

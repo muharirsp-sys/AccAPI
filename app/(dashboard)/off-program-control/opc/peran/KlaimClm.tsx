@@ -114,7 +114,7 @@ export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: Dafta
                 })),
             },
             putus: pesanTidakPasti("batch CLM ini", "daftar Batch Claim (CLM)"),
-        }).catch(tanganiTulis((pesan) => { setTidakPasti(pesan); daftar.muatUlang(); }));
+        }).catch(tanganiTulis((pesan) => { setTidakPasti(pesan); daftar.muatUlang(); }, () => setDialog(false)));
         setDialog(false);
         setTidakPasti(null);
         setTersimpan({ id: String(data.batchId || ""), no: String(data.noPengajuan || noPratinjau) });
@@ -125,7 +125,7 @@ export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: Dafta
 
     return (
         <div style={{ display: "grid", gap: 12 }}>
-            <ObjectPageHeader title="Batch CLM baru" draft={dirty}
+            <ObjectPageHeader headingLevel={2} title="Batch CLM baru" draft={dirty}
                 attributes={[
                     { label: "No Pengajuan (perkiraan)", value: <span className="fi-mono">{noTampil}</span> },
                     { label: "Item", value: <span className="fi-tnum">{rows.length}</span> },

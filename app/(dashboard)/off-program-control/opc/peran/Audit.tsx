@@ -76,7 +76,7 @@ export default function Audit({ ctx }: PeranProps) {
         if (!koreksi) return;
         await tulisOpc(`/api/off-program-control/audit/${encodeURIComponent(koreksi.id)}/correction`, {
             body: { correctionReason: alasan, note: catatan }, gagal: "Gagal menyimpan koreksi.", putus: pesanTidakPasti("koreksi ini", "daftar log"),
-        }).catch(tanganiTulis((p) => { setTidakPasti(p); muat(); }));
+        }).catch(tanganiTulis((p) => { setTidakPasti(p); muat(); }, () => setKoreksi(null)));
         setKoreksi(null);
         setTidakPasti(null);
         setPesan("Koreksi tercatat sebagai riwayat baru tanpa menghapus jejak lama.");
@@ -117,7 +117,7 @@ export default function Audit({ ctx }: PeranProps) {
                         : <a className="fi-btn fi-btn--secondary" href={`/api/off-program-control/audit?${csv}`} target="_blank" rel="noopener noreferrer">
                             <Download className="fi-icon" aria-hidden />Ekspor CSV
                         </a>}
-                    search={<FormField label="Cari">{(a) => <input {...a} className="fi-input" type="search" placeholder="Nomor, principal, catatan, pengguna" value={cari} onChange={(e) => setCari(e.target.value)} />}</FormField>}
+                    search={<FormField label="Cari">{(a) => <input {...a} className="fi-input" type="search" placeholder="Nomor, principal, catatan, user" value={cari} onChange={(e) => setCari(e.target.value)} />}</FormField>}
                     fields={<>
                         <FormField label="Bulan">{(a) => <input {...a} className="fi-input" type="month" value={bulan} onChange={(e) => { setBulan(e.target.value); setDari(""); setSampai(""); }} />}</FormField>
                         <FormField label="Dari tanggal">{(a) => <input {...a} className="fi-input" type="date" value={dari} max={sampai || undefined} onChange={(e) => { setDari(e.target.value); setBulan(""); }} />}</FormField>
@@ -134,14 +134,15 @@ export default function Audit({ ctx }: PeranProps) {
                     mobileItem={(a) => (
                         <div style={{ display: "grid" }}>
                             <ListItem doc={a.noPengajuan || KOSONG} title={labelAksiAudit(a.action)} meta={`${waktuWita(a.createdAt)} · ${a.actorName || "Sistem"}`}
-                                badge={a.parentAuditLogId ? <StatusBadge tone="warn">Koreksi</StatusBadge> : undefined} onClick={() => ctx.bukaBatch(a.batchId)} />
+                                badge={a.parentAuditLogId ? <StatusBadge tone="warn">Koreksi</StatusBadge> : undefined} href={ctx.hrefBatch(a.batchId)} onClick={() => ctx.bukaBatch(a.batchId)} />
                             {!a.parentAuditLogId && <div style={{ padding: "0 8px 6px" }}>{tombolKoreksi(a)}</div>}
                         </div>
                     )} />
             </div>
             {semua.length > BATAS_TAMPIL && <p className="fi-small fi-subtle">Ditampilkan {BATAS_TAMPIL} log terbaru dari {semua.length}; persempit dengan cari atau tanggal.</p>}
-            <VariantNote bl="BL-13">Server menyaring 5.000 log terbaru; log yang lebih lama tidak terjangkau. Usulan: saring dan paginasi di database.</VariantNote>
-            <VariantNote bl="BL-33">Log mencatat aksi dan perubahan status; nilai item atau batch sebelum → sesudah belum disimpan (hanya catatan yang dikoreksi). Usulan: riwayat nilai lama → baru bersama.</VariantNote>
+            {/* Satu catatan varian per layar (audit No 80): BL-13 dan BL-33 digabung. */}
+            <VariantNote bl="BL-13, BL-33">Server menyaring 5.000 log terbaru, jadi log yang lebih lama tidak terjangkau; log mencatat aksi dan perubahan status, belum
+                nilai item atau batch sebelum dan sesudah (hanya catatan yang dikoreksi). Usulan: saring dan paginasi di database, dan riwayat nilai lama ke baru bersama.</VariantNote>
 
             <ConfirmDialog open={koreksi !== null} onClose={() => setKoreksi(null)} tag="Koreksi audit"
                 title={`Koreksi log ${koreksi ? labelAksiAudit(koreksi.action) : ""}${koreksi?.noPengajuan ? ` pada ${koreksi.noPengajuan}` : ""}?`}

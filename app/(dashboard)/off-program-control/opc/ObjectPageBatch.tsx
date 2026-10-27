@@ -15,7 +15,7 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import {
     AnchorBar, Button, EmptyState, ErrorState, Flow, FooterToolbar, KeyValues, ListItem, MessageStrip, ObjectPageHeader, ResponsiveTable, Section,
-    Skeleton, StatusBadge, VariantNote, type Column,
+    Skeleton, StatusBadge, type Column,
 } from "@/components/fiori/core";
 import { statusKlaim } from "@/lib/claim-workflow-ui";
 import { rupiah } from "@/lib/promo-ui";
@@ -40,7 +40,8 @@ export type ObjectPageBatchProps = DetailProps & {
     draf?: boolean;
 };
 
-// Jejak halaman cukup satu (kepala halaman OPC); Object Page di kolom kedua tidak mengulangnya.
+// Jejak halaman cukup satu (kepala halaman OPC); Object Page di kolom kedua tidak mengulangnya dan judulnya h2 (halaman punya h1, No 141).
+// Batasan sistem di bagian baca tampil sebagai keterangan biasa; catatan varian (Admin) satu per layar milik modul peran (No 80).
 export function ObjectPageBatch(props: ObjectPageBatchProps) {
     const { ringkas, detail, muatUlang, masalah, bagian = [], gantiItem, strip, aksi, pesanFooter, draf, tidakPasti, tutupTidakPasti } = props;
     // Hasil tulis tidak pasti (KolomDetail): bertahan walau dialog ditutup dan detail dimuat ulang.
@@ -50,7 +51,7 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
     if (!detail.data) {
         return (
             <div style={{ display: "grid", gap: 12 }}>
-                <ObjectPageHeader title={ringkas?.noPengajuan ? <span className="fi-mono">{ringkas.noPengajuan}</span> : "Batch"}
+                <ObjectPageHeader headingLevel={2} title={ringkas?.noPengajuan ? <span className="fi-mono">{ringkas.noPengajuan}</span> : "Batch"}
                     status={ringkas ? <StatusBadge tone={infoTahap(ringkas).tone}>{infoTahap(ringkas).label}</StatusBadge> : undefined} />
                 {stripTidakPasti && <div style={{ padding: "0 12px" }}>{stripTidakPasti}</div>}
                 {detail.status === "galat"
@@ -84,6 +85,7 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
     return (
         <div className={detail.status === "memuat" ? "fi-busy" : undefined} style={{ display: "grid", gap: 12 }} aria-busy={detail.status === "memuat" || undefined}>
             <ObjectPageHeader
+                headingLevel={2}
                 title={<span className="fi-mono">{b.noPengajuan}</span>}
                 status={<StatusBadge tone={info.tone}>{info.label}</StatusBadge>}
                 draft={draf}
@@ -138,7 +140,8 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
                             ["Catatan OM", b.omNote || KOSONG],
                             ["Catatan verifikasi final", b.finalClaimNote || KOSONG],
                         ]} />
-                        <VariantNote bl="BL-11">Kelengkapan yang dipilih Klaim saat menyetujui belum tersimpan di batch, jadi di sini tampil &quot;Belum tercatat&quot;. Usulan: tersimpan saat Setujui klaim dan dipakai peringatan berkas.</VariantNote>
+                        {/* BL-11: perilaku hari ini, keterangan biasa (satu catatan varian per layar, audit No 80). */}
+                        <p className="fi-small fi-subtle">Kelengkapan yang dipilih Klaim saat menyetujui belum tersimpan di batch, jadi di sini tampil &quot;Belum tercatat&quot;.</p>
                     </div>
                 </Section>
                 <Section id="opc-bayar" title="Pembayaran dan refund">
@@ -169,7 +172,8 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
                         )}
                     </div>
                     <div className="fi-sect-in" style={{ paddingTop: 0 }}>
-                        <VariantNote bl="BL-35">Tautan ke Claim Workflow tampil bila server sudah mengirim relasinya di daftar batch; belum ada penelusuran balik dari pembayaran. Usulan: alur dokumen maju-mundur OPC → Claim → pembayaran.</VariantNote>
+                        {/* BL-35 */}
+                        <p className="fi-small fi-subtle">Tautan ke Claim Workflow muncul setelah klaimnya dibuat. Pembayaran belum bisa ditelusuri balik ke batch ini.</p>
                     </div>
                 </Section>
                 {tampilBagian(di("akhir"))}
@@ -238,7 +242,8 @@ function BagianBayar({ total, payments, totalPaid, sisa, refund, muatUlang }: {
                 mobileItem={(p) => <ListItem doc={`Pembayaran ke-${p.paymentNo}`} amount={rupiah(p.paidAmount)} title={tanggalOpc(p.paymentDate)}
                     meta={[p.paymentMethod, p.senderBank || p.paymentSenderBank, p.note].filter(Boolean).join(" · ")} />} />
             <div className="fi-sect-in">
-                <VariantNote bl="BL-07">Bukti yang bisa dibuka adalah PDF ringkasan pembayaran buatan sistem; lampiran bank yang diunggah divalidasi lalu tidak disimpan. Usulan: lampiran tersimpan dengan hash dan bisa dibuka dari riwayat ini.</VariantNote>
+                {/* BL-07 */}
+                <p className="fi-small fi-subtle">Bukti yang bisa dibuka adalah PDF ringkasan pembayaran buatan sistem; lampiran bank yang diunggah tidak disimpan.</p>
                 <h3 className="fi-caption">Pengembalian selisih</h3>
                 {refund.status === "memuat" && !r ? <Skeleton rows={2} label="Memuat pengembalian selisih" />
                     : refund.status === "galat" && !r ? (
@@ -299,7 +304,8 @@ function BagianRiwayat({ audit, b, muatUlang }: { audit: NonNullable<DetailProps
                     ["Status utama", b.status], ["Sales Manager", b.smStatus], ["Klaim", b.claimStatus], ["Operational Manager", b.omStatus],
                     ["Keuangan", b.financeStatus], ["Verifikasi final", b.finalStatus], ["Pengembalian selisih", b.refundStatus ?? ""],
                 ] as Array<[string, string]>).map(([k, v]) => [k, <Fragment key={k}>{labelStatus(v)}</Fragment>])} />
-                <VariantNote bl="BL-33">Riwayat mencatat aksi dan status, belum nilai lama → baru per isian. Usulan: riwayat perubahan bersama dengan nilai sebelum dan sesudah.</VariantNote>
+                {/* BL-33 */}
+                <p className="fi-small fi-subtle">Riwayat mencatat aksi dan status, belum nilai sebelum dan sesudah tiap isian.</p>
             </div>
         </>
     );

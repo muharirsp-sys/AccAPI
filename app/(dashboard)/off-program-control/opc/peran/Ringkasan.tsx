@@ -120,8 +120,9 @@ function IkhtisarTahap({ ctx, daftar, buka, periode }: PeranProps & { buka: (t: 
             <div style={grid}>
                 <BagianPeriode ctx={ctx} daftar={daftar} periode={periode} />
             </div>
-            <VariantNote bl="BL-11">Lewat SLA dihitung di browser dari 200 batch terbaru (hari kerja, libur nasional). Usulan: dihitung server, dipakai lonceng dan Kotak Tugas.</VariantNote>
-            <VariantNote bl="BL-13">Angka per tahap, per divisi, dan per periode hanya dari 200 batch terbaru. Usulan: satu ringkasan dari server untuk seluruh periode.</VariantNote>
+            {/* Satu catatan varian per layar (audit No 80): BL-11 dan BL-13 digabung. */}
+            <VariantNote bl="BL-11, BL-13">Lewat SLA (hari kerja, libur nasional) dan angka per tahap, per divisi, dan per periode dihitung di browser dari 200 batch
+                terbaru. Usulan: satu ringkasan dan hitungan SLA dari server untuk seluruh periode, dipakai juga lonceng dan Kotak Tugas.</VariantNote>
         </div>
     );
 }

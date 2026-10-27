@@ -244,7 +244,7 @@ type OpsiForm = {
     /** 409 dari PATCH karena status/kunci batch berubah sejak dibuka (bukan duplikat, bukan periode ditutup) — BL-09 perilaku hari ini. */
     onKonflik: (pesan: string) => void;
     onDrafTersimpan: (h: { batchId: string; noPengajuan: string }) => void;
-    /** Simpan berhasil tetapi submit gagal (`pasti`) atau jawabannya tidak pasti: batch kini draf tersimpan. Boleh melempar Error (tampil di dialog). */
+    /** Simpan berhasil tetapi submit gagal (`pasti`; boleh melempar Error, tampil di dialog) atau jawabannya tidak pasti (dialog sudah ditutup). */
     onGagalKirim: (h: { batchId: string; noPengajuan: string }, pesan: string, pasti: boolean) => void;
     /** Jawaban simpan tidak pasti (putus, ≥ 502, bukan JSON): batch mungkin sudah tersimpan. Pemanggil menampilkan strip + memuat ulang. */
     onTidakPasti: (pesan: string) => void;
@@ -327,11 +327,13 @@ export function useFormSpv(o: OpsiForm) {
                 conflicts: Array.from(new Map((data.conflicts as KonflikNoSurat[]).map((c) => [`${c.noSurat}|${c.batchId}`, c])).values()),
             }
             : null;
+    // Hasil simpan tidak pasti: dialog Kirim/duplikat ditutup supaya tidak dikirim ulang selagi status belum jelas (owner 27 Okt, No 22).
+    const tutupDialog = () => { setDialogKirim(false); setDuplikat(null); };
     const noTersimpan = (data: Record<string, unknown>) => String(data.noPengajuan || (data.batch as BatchOpc | undefined)?.noPengajuan || generatedNo);
 
     /** saveDraft (kode lama). Galat dilempar (dialog duplikat menampilkannya; tombol footer menampilkannya di strip). */
     const simpanDraf = async (force: boolean) => {
-        const { res, data } = await simpanKe(force).catch(tanganiTulis(o.onTidakPasti));
+        const { res, data } = await simpanKe(force).catch(tanganiTulis(o.onTidakPasti, tutupDialog));
         const dup = duplikatDari(res, data, "draft");
         if (dup) {
             setDuplikat(dup);
@@ -369,7 +371,7 @@ export function useFormSpv(o: OpsiForm) {
      */
     const kirim = async (force: boolean) => {
         o.onPesan(null);
-        const { res: saveRes, data: saveData, items } = await simpanKe(force).catch(tanganiTulis(o.onTidakPasti));
+        const { res: saveRes, data: saveData, items } = await simpanKe(force).catch(tanganiTulis(o.onTidakPasti, tutupDialog));
         const lokal = ringkasBayar(items);
         const dup = duplikatDari(saveRes, saveData, "submit");
         if (dup) {
@@ -403,6 +405,7 @@ export function useFormSpv(o: OpsiForm) {
                 pesanTidakPasti("pengiriman ke Sales Manager", "status batch"));
         } catch (e) {
             if (!(e instanceof TulisTidakPasti)) throw e;
+            tutupDialog();
             o.onGagalKirim({ batchId: savedBatchId, noPengajuan: savedNo }, e.message, false);
             return;
         }

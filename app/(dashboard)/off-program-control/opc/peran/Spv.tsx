@@ -199,10 +199,8 @@ function UbahBatch(props: DetailProps & Bersama) {
         onKonflik: setKonflik,
         onDrafTersimpan: ({ noPengajuan }) => { setPesan({ tone: "pos", judul: `Draf ${noPengajuan} berhasil disimpan.` }); props.muatUlang(); daftar.muatUlang(); },
         onGagalKirim: (_h, pesan, pasti) => {
-            if (!pasti) {
-                laporTidakPasti(pesan);
-                throw new Error(`Perubahan sudah tersimpan sebagai draf; hasil kirim ke Sales Manager belum pasti. ${pesan}`);
-            }
+            // Tidak pasti: dialog sudah ditutup (SpvForm); strip bertahan di Object Page + muat ulang (No 22).
+            if (!pasti) { laporTidakPasti(`Perubahan sudah tersimpan sebagai draf; hasil kirim ke Sales Manager belum pasti. ${pesan}`); return; }
             daftar.muatUlang();
             throw new Error(`Perubahan sudah tersimpan sebagai draf, tetapi batch belum terkirim ke Sales Manager: ${pesan}`);
         },
@@ -295,6 +293,7 @@ function BatchBaru({ ctx, daftar }: { ctx: OpcKonteks; daftar: DaftarOpc }) {
     return (
         <div style={{ display: "grid", gap: 12 }}>
             <ObjectPageHeader
+                headingLevel={2}
                 title="Batch baru"
                 status={<StatusBadge tone="neu">Draf</StatusBadge>}
                 draft={f.dirty}
@@ -370,7 +369,7 @@ export default function Spv(props: PeranProps) {
                                 )}
                             </MessageStrip>
                         )}
-                        <PengingatKelengkapan batches={daftar.batches} buka={ctx.bukaBatch} />
+                        <PengingatKelengkapan batches={daftar.batches} buka={ctx.bukaBatch} href={ctx.hrefBatch} />
                     </>
                 }
                 kolomKedua={baru ? { isi: <BatchBaru ctx={ctx} daftar={daftar} />, tutup: () => ctx.ubahUrl({ view: null }) } : undefined}

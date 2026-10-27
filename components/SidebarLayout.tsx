@@ -180,7 +180,7 @@ function MenuSearch({ id, groups, home }: { id: string; groups: WorkspaceGroup[]
 
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
-            // OPC punya quick jump sendiri (Ctrl K) dan memanggil preventDefault; shell mengalah di sana.
+            // Ctrl K selalu milik cari menu ini, juga di OPC (pencarian pengajuan OPC memakai "/", audit No 142).
             // Selama dialog modal terbuka, shell bar inert: popover akan tampil tapi tak bisa dipakai.
             if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "k" && !event.defaultPrevented && !document.querySelector("dialog:modal")) {
                 event.preventDefault();

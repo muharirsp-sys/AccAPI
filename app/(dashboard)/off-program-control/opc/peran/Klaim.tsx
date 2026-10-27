@@ -121,7 +121,7 @@ function DetailKlaim(props: DetailProps) {
             : detail.status === "galat" ? "Detail batch gagal dimuat ulang; status di layar bisa usang. Muat ulang dulu."
                 : undefined;
     const muatSemua = () => { daftar.muatUlang(); muatUlang(); };
-    const tangani = tanganiTulis(props.laporTidakPasti);
+    const tangani = tanganiTulis(props.laporTidakPasti, tutup); // hasil tidak pasti: dialog tertutup, strip bertahan (No 22)
     // Dialog yang masih terbuka sesudah muat ulang (mis. hasil tidak pasti): aksi hanya berlaku bila batch masih di mode yang sama.
     const bukanMode = (m: typeof mode) => (mode === m ? undefined : "Status batch sudah berubah; aksi ini tidak berlaku lagi.");
     const cwId = b.claimWorkflowId ?? ringkas?.claimWorkflowId ?? null;
