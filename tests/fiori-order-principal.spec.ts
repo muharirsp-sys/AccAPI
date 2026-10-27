@@ -86,7 +86,7 @@ async function pasang(page: Page, m: Mock = {}) {
     await page.route((u) => u.pathname === "/api/principal-order/dupe-ack", async (r) => {
         const req = r.request();
         if (req.method() === "GET") return r.fulfill(json({ ok: true, acks: ACKS }));
-        catat(req, req.method() === "POST" ? req.postDataJSON() : null);
+        catat(req, req.postData() ? req.postDataJSON() : null);
         return m.ack ? m.ack(r) : r.fulfill(json({ ok: true }));
     });
     return kirim;
@@ -297,15 +297,22 @@ test("Validasi: Ditahan utuh paling atas, harga Accurate & selisih, peringatan s
     expect(kirim.filter((k) => k.path === "/api/principal-order/validate")).toHaveLength(1);
     await expect(main.getByRole("status").filter({ hasText: "Perlu dikerjakan:" })).toContainText("LOYALTY");
 
-    // Cabut lewat dialog (audit desain 001 No 18; DELETE tidak menerima alasan, jadi tanpa isian alasan), lalu validasi ulang.
+    // Cabut lewat dialog beralasan wajib (audit desain 001 No 18, owner 27 Okt): alasan < 10 karakter menahan tombol; DELETE membawa
+    // kunci di query (tetap) dan `{ alasan }` di body; lalu validasi ulang.
     const nDelete = () => kirim.filter((k) => k.method === "DELETE" && k.path === "/api/principal-order/dupe-ack").length;
     await main.getByRole("button", { name: "Cabut konfirmasi SO 1671-SOP-260013022" }).click();
     const dlgCabut = page.getByRole("dialog", { name: "Cabut konfirmasi SO 1671-SOP-260013022?" });
-    await expect(dlgCabut.getByRole("textbox")).toHaveCount(0);
+    const cabutYakin = dlgCabut.getByRole("button", { name: "Cabut konfirmasi", exact: true });
+    await expect(cabutYakin).toBeDisabled();
+    await dlgCabut.getByLabel(/Alasan mencabut/).fill("pendek");
+    await expect(cabutYakin).toBeDisabled();
     expect(nDelete()).toBe(0);
-    await dlgCabut.getByRole("button", { name: "Cabut konfirmasi", exact: true }).click();
+    await dlgCabut.getByLabel(/Alasan mencabut/).fill("SO ini kiriman ulang order lama SALES A");
+    await cabutYakin.click();
     await expect(main.getByRole("status").filter({ hasText: "Konfirmasi SO 1671-SOP-260013022 dicabut." })).toBeVisible();
-    expect(kirim.find((k) => k.method === "DELETE" && k.path === "/api/principal-order/dupe-ack")?.query).toBe("?principal=KINO%20NON%20FOOD&soNo=1671-SOP-260013022");
+    const del = kirim.find((k) => k.method === "DELETE" && k.path === "/api/principal-order/dupe-ack");
+    expect(del?.query).toBe("?principal=KINO%20NON%20FOOD&soNo=1671-SOP-260013022");
+    expect(del?.body).toEqual({ alasan: "SO ini kiriman ulang order lama SALES A" });
 
     // Segarkan harga = prices=1; Memuat: validasi berjalan, aksi terkunci.
     lambat = true;

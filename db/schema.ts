@@ -437,6 +437,24 @@ export const orderDupeAck = pgTable("order_dupe_ack", {
     primaryKey({ columns: [t.principal, t.soNo] }),
 ]);
 
+// Jejak APPEND-ONLY pencabutan keputusan manusia (audit desain 001 No 6 dan 18, owner 27 Okt 2026): baris yang dicabut dari
+// invoice_verify_note / order_dupe_ack disalin utuh bersama alasannya, dalam transaksi yang SAMA dengan DELETE-nya. jenis = nama
+// tabel asal; kunci = "<order_id>|<jenis>" atau "<principal>|<so_no>". Tanpa FK: jejak bertahan walau barisnya sudah tidak ada.
+// Role aplikasi hanya SELECT/INSERT. SQL: migrate-pg `pencabutan_log`, db/migrations/0038_pencabutan_log.sql.
+export const pencabutanLog = pgTable("pencabutan_log", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    jenis: text("jenis").notNull(),
+    kunci: text("kunci").notNull(),
+    barisLama: jsonb("baris_lama").notNull(),
+    alasan: text("alasan").notNull(),
+    oleh: text("oleh").notNull(),
+    waktu: timestamp("waktu", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_pencabutan_log_kunci").on(t.jenis, t.kunci, t.id),
+    check("pencabutan_log_jenis", sql`${t.jenis} IN ('invoice_verify_note', 'order_dupe_ack')`),
+    check("pencabutan_log_alasan", sql`btrim(${t.alasan}) <> ''`),
+]);
+
 // Keputusan manusia atas potongan TAK BERTUAN pada faktur Accurate yang dibuat di luar web
 // (menu Normalisasi Diskon, db/migrations/0022). `amount` diadu saat rekap: faktur yang berubah
 // sesudah diputuskan membuat keputusannya tidak dipakai.

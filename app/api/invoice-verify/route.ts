@@ -3,8 +3,9 @@
  *         disandingkan dengan payload beku antrean, per baris, lalu selisihnya ditandai.
  * Caller: halaman Antrean Faktur (/antrean-faktur), bagian "Verifikasi balik".
  * Dependensi: db (invoice_outbox, sales_invoice), lib/invoice-verify, lib/accurate-invoice-write, rbac.
- * Main Functions: GET, POST (jelaskan selisih), DELETE (cabut penjelasan).
- * Side Effects: GET read-only. POST/DELETE hanya menulis `invoice_verify_note`; tidak menyentuh
+ * Main Functions: GET, POST (jelaskan selisih), DELETE (cabut penjelasan beralasan).
+ * Side Effects: GET read-only. POST menulis `invoice_verify_note`; DELETE menghapus barisnya DAN menyalinnya
+ *               + alasan ke `pencabutan_log` dalam satu transaksi (audit desain 001 No 6). Tidak menyentuh
  *               Accurate dan tidak mengubah antrean.
  *
  * Kenapa read-only meski hasilnya bisa "menyelesaikan" baris TIDAK PASTI: menemukan fakturnya
@@ -23,7 +24,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq, inArray, or, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { invoiceOutbox, invoiceVerifyNote, salesInvoiceCache } from "@/db/schema";
+import { invoiceOutbox, invoiceVerifyNote, pencabutanLog, salesInvoiceCache } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import type { InvoicePayload } from "@/lib/accurate-invoice-write";
 import { kandidatCache, readAccurateInvoice, terapkanPenjelasan, verifyInvoice, type JenisTemuan, type VerifyResult } from "@/lib/invoice-verify";
@@ -35,6 +36,8 @@ const VERIFIABLE = ["posted", "unknown"];
 /** Batas baris cache yang dibaca sekali periksa; melewatinya dilaporkan (`cacheTerpotong`), tidak diam. */
 const BATAS_CACHE = 2000;
 const JENIS: JenisTemuan[] = ["sales", "isi"];
+/** Alasan cabut minimal (sesudah trim), sama dengan dialog Cabut di layar (VerifikasiBalik.tsx). */
+const ALASAN_CABUT_MIN = 10;
 
 export async function GET(request: NextRequest) {
     const gate = await resolveRequestPermissionsH();
@@ -158,9 +161,10 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Jelaskan satu jenis selisih: `sales` cukup diterima (sales diganti di Accurate), `isi` wajib
- * disertai penjelasan (koreksi saat pengiriman). `sidik` = temuan yang dilihat penjelas; kalau
- * sudah basi, penjelasannya tersimpan tetapi tidak berlaku — gagalnya tertutup, bukan terbuka.
+ * Jelaskan satu jenis selisih: `sales` = sales di Accurate diterima (sales diganti), `isi` = koreksi saat
+ * pengiriman. Keduanya wajib disertai alasan di `note` (owner 27 Okt, audit desain 001 No 6; dulu `sales`
+ * kosong diberi kalimat bawaan). `sidik` = temuan yang dilihat penjelas; kalau sudah basi, penjelasannya
+ * tersimpan tetapi tidak berlaku — gagalnya tertutup, bukan terbuka.
  */
 export async function POST(request: NextRequest) {
     const gate = await resolveRequestPermissionsH();
@@ -176,14 +180,16 @@ export async function POST(request: NextRequest) {
     if (!orderId || !JENIS.includes(jenis) || !sidik.startsWith("[") || sidik === "[]" || sidik.length > 20_000) {
         return NextResponse.json({ ok: false, error: "orderId, jenis (sales/isi), dan temuan yang dijelaskan wajib diisi" }, { status: 400 });
     }
-    if (jenis === "isi" && !note) {
-        return NextResponse.json({ ok: false, error: "Selisih isi faktur wajib dijelaskan, mis. \"koreksi qty saat pengiriman\"" }, { status: 400 });
+    if (!note) {
+        return NextResponse.json({ ok: false, error: jenis === "isi"
+            ? "Selisih isi faktur wajib dijelaskan, mis. \"koreksi qty saat pengiriman\""
+            : "Alasan menerima sales di Accurate wajib diisi, mis. \"sales lama pindah divisi\"" }, { status: 400 });
     }
     const [ada] = await db.select({ orderId: invoiceOutbox.orderId }).from(invoiceOutbox).where(eq(invoiceOutbox.orderId, orderId));
     if (!ada) return NextResponse.json({ ok: false, error: "SO ini tidak ada di antrean faktur" }, { status: 404 });
 
     const values = {
-        orderId, jenis, sidik, note: note || "Sales diganti di Accurate sesudah terkirim",
+        orderId, jenis, sidik, note,
         decidedBy: String(gate.session?.user?.email ?? ""), decidedAt: new Date(),
     };
     await db.insert(invoiceVerifyNote).values(values).onConflictDoUpdate({
@@ -193,7 +199,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true });
 }
 
-/** Cabut penjelasan: selisihnya terbuka lagi. */
+/**
+ * Cabut penjelasan beralasan: selisihnya terbuka lagi. Baris yang dicabut + alasan disalin ke `pencabutan_log` dalam transaksi
+ * yang sama (DELETE ... RETURNING lalu INSERT): tidak ada pencabutan tanpa jejak, dan jejak tanpa pencabutan tidak tertulis.
+ */
 export async function DELETE(request: NextRequest) {
     const gate = await resolveRequestPermissionsH();
     if (gate.response) return gate.response;
@@ -203,9 +212,23 @@ export async function DELETE(request: NextRequest) {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const orderId = String(body.orderId ?? "").trim();
     const jenis = String(body.jenis ?? "") as JenisTemuan;
+    const alasan = String(body.alasan ?? "").trim().slice(0, 500);
     if (!orderId || !JENIS.includes(jenis)) {
         return NextResponse.json({ ok: false, error: "orderId dan jenis (sales/isi) wajib diisi" }, { status: 400 });
     }
-    await db.delete(invoiceVerifyNote).where(and(eq(invoiceVerifyNote.orderId, orderId), eq(invoiceVerifyNote.jenis, jenis)));
-    return NextResponse.json({ ok: true });
+    if (alasan.length < ALASAN_CABUT_MIN) {
+        return NextResponse.json({ ok: false, error: `Alasan mencabut wajib diisi, minimal ${ALASAN_CABUT_MIN} karakter.` }, { status: 400 });
+    }
+    const oleh = String(gate.session?.user?.email ?? "");
+    const dicabut = await db.transaction(async (tx) => {
+        const lama = await tx.delete(invoiceVerifyNote)
+            .where(and(eq(invoiceVerifyNote.orderId, orderId), eq(invoiceVerifyNote.jenis, jenis))).returning();
+        if (lama.length) {
+            await tx.insert(pencabutanLog).values(lama.map((baris) => ({
+                jenis: "invoice_verify_note", kunci: `${baris.orderId}|${baris.jenis}`, barisLama: baris, alasan, oleh,
+            })));
+        }
+        return lama.length;
+    });
+    return NextResponse.json({ ok: true, dicabut });
 }

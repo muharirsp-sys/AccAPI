@@ -619,14 +619,20 @@ test("Verifikasi balik: selisih terbuka terlihat; Terima sales/Cabut tetap; draf
     await expect(r9).toContainText("2 selisih belum dijelaskan");
     await expect(r9).toContainText("baris 3 · qty: dikirim 24, di Accurate 20");
     await expect(sek.getByRole("article", { name: "Verifikasi SO SO-A-008" })).toHaveCount(0); // cocok hanya bila diminta
-    // Terima sales lewat dialog (audit desain 001 No 6): POST baru terkirim sesudah konfirmasi; body tetap sama.
+    // Terima sales lewat dialog beralasan wajib (audit desain 001 No 6, owner 27 Okt): alasan < 10 karakter menahan tombol; alasan
+    // terkirim sebagai `note` (URL, method, orderId, jenis, sidik sama).
     await r9.getByRole("button", { name: "Terima sales di Accurate" }).click();
     const dlgSales = page.getByRole("dialog", { name: "Terima sales di Accurate untuk SO SO-A-009?" });
     await expect(dlgSales).toBeVisible();
+    const terima = dlgSales.getByRole("button", { name: "Terima sales", exact: true });
+    await expect(terima).toBeDisabled();
+    await dlgSales.getByLabel(/Alasan menerima sales/).fill("pindah");
+    await expect(terima).toBeDisabled();
     expect(tulisKe(log, "/api/invoice-verify")).toHaveLength(0);
-    await dlgSales.getByRole("button", { name: "Terima sales", exact: true }).click();
+    await dlgSales.getByLabel(/Alasan menerima sales/).fill("SALES A pindah divisi, dicek di Accurate");
+    await terima.click();
     await expect.poll(() => tulisKe(log, "/api/invoice-verify").length).toBe(1);
-    expect(tulisKe(log, "/api/invoice-verify")[0].body).toEqual({ orderId: "PRINCIPLE-A:SO-A-009", jenis: "sales", sidik: "[\"s\"]", note: "" });
+    expect(tulisKe(log, "/api/invoice-verify")[0].body).toEqual({ orderId: "PRINCIPLE-A:SO-A-009", jenis: "sales", sidik: "[\"s\"]", note: "SALES A pindah divisi, dicek di Accurate" });
     await r9.getByLabel("Penjelasan selisih isi SO SO-A-009").fill("Koreksi qty saat bongkar: 4 karton rusak");
     await expect(r9).toContainText("Belum disimpan");
     await expect(sek).toContainText("Penjelasan belum disimpan");
@@ -636,7 +642,7 @@ test("Verifikasi balik: selisih terbuka terlihat; Terima sales/Cabut tetap; draf
     await sek.getByLabel("Tampilkan semua").check();
     await expect(sek.getByRole("article", { name: "Verifikasi SO SO-A-008" })).toContainText("Cocok (3 baris)");
 
-    // Penjelasan yang sudah ada bisa dicabut (DELETE).
+    // Penjelasan yang sudah ada bisa dicabut (DELETE) dengan alasan wajib; alasan ikut di body DELETE.
     opsi.verif = (r) => r.request().method() === "GET"
         ? r.fulfill(json({ ...VERIF, rows: [{ ...VERIF.rows[0], terbuka: 1, penjelasan: { sales: { note: "Sales diganti", by: "admin@contoh", at: menitLalu(5) } } }] }))
         : r.fulfill(json({ ok: true }));
@@ -644,8 +650,12 @@ test("Verifikasi balik: selisih terbuka terlihat; Terima sales/Cabut tetap; draf
     await sek.getByRole("button", { name: "Cabut" }).click();
     const dlgCabut = page.getByRole("dialog", { name: /^Cabut penjelasan sales SO SO-A-009\?/ });
     expect(tulisKe(log, "/api/invoice-verify", "DELETE")).toHaveLength(0);
+    await expect(dlgCabut.getByRole("button", { name: "Cabut penjelasan", exact: true })).toBeDisabled();
+    await dlgCabut.getByLabel(/Alasan mencabut/).fill("Penjelasan keliru, sales belum diganti");
     await dlgCabut.getByRole("button", { name: "Cabut penjelasan", exact: true }).click();
     await expect.poll(() => tulisKe(log, "/api/invoice-verify", "DELETE").length).toBe(1);
+    expect(tulisKe(log, "/api/invoice-verify", "DELETE")[0].body).toEqual({
+        orderId: "PRINCIPLE-A:SO-A-009", jenis: "sales", sidik: "[\"s\"]", note: "", alasan: "Penjelasan keliru, sales belum diganti" });
 
     // Galat verifikasi terpisah: antrean tetap tampil, verifikasi menampilkan galat (bukan kosong).
     opsi.verif = (r) => r.fulfill(json({ ok: false, error: "Salinan faktur tidak terbaca" }, 500));

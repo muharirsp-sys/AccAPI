@@ -1,12 +1,13 @@
 /*
  * Tujuan: Bagian "Verifikasi balik" layar Antrean Faktur (Fiori S6c, it02 #6): faktur yang sudah ada di salinan Accurate
- *   disandingkan dengan payload yang dikirim; selisih terbuka langsung terlihat (tidak terlipat); "Terima sales / Cabut" dari main
- *   dipertahankan (C6), kini lewat dialog konfirmasi; penjelasan selisih isi ditulis di baris (Draf = sudah diketik, belum disimpan).
+ *   disandingkan dengan payload yang dikirim; selisih terbuka langsung terlihat (tidak terlipat); "Terima sales / Cabut" lewat dialog
+ *   konfirmasi beralasan wajib (audit No 6, owner 27 Okt): alasan Terima sales tersimpan sebagai `note`, alasan Cabut dikirim ke DELETE
+ *   dan tersimpan di jejak pencabutan server; penjelasan selisih isi ditulis di baris (Draf = sudah diketik, belum disimpan).
  * Caller: app/(dashboard)/antrean-faktur/AntreanFaktur.tsx.
- * Dependensi: GET/POST/DELETE /api/invoice-verify (baca salinan lokal; tulis hanya invoice_verify_note), components/fiori/*,
+ * Dependensi: GET/POST/DELETE /api/invoice-verify (baca salinan lokal; tulis invoice_verify_note + pencabutan_log), components/fiori/*,
  *   ./bersama (tulis), lib/rekapan-nota/ui (ambil), lib/tampil (KOSONG, waktuWita).
  * Main Functions: VerifikasiBalik.
- * Side Effects: POST/DELETE penjelasan selisih (tidak menyentuh Accurate, tidak mengubah antrean).
+ * Side Effects: POST/DELETE penjelasan selisih beralasan (tidak menyentuh Accurate, tidak mengubah antrean).
  *
  * Dimuat TERPISAH dari antrean (useLoad sendiri di AntreanFaktur): galat antrean tidak membuat bagian ini menunggu, dan sebaliknya
  * (celah main #12).
@@ -36,14 +37,15 @@ export const muatVerifikasi = (): Promise<Load<Verif>> => ambil<Verif>("/api/inv
 const JENIS: Jenis[] = ["sales", "isi"];
 /** "sales (masterSalesmanId)" → "sales": nama field API tidak tampil di kalimat (audit No 30); teks lengkap di title. */
 const labelField = (field: string) => field.replace(/ \([A-Za-z][A-Za-z0-9]*\)$/, "");
+/** Minimal alasan Terima sales dan Cabut; server menolak Cabut dengan alasan lebih pendek (app/api/invoice-verify). */
+const ALASAN_MIN = 10;
 
 export default function VerifikasiBalik({ bolehUbah, load, muatUlang }: { bolehUbah: boolean; load: Load<Verif>; muatUlang: () => void }) {
     const [semua, setSemua] = useState(false);
     const [catatan, setCatatan] = useState<Record<string, string>>({});
     const [sibuk, setSibuk] = useState("");
     const [pesan, setPesan] = useState<{ tone: "pos" | "neg" | "warn"; teks: string } | null>(null);
-    // Terima sales dan Cabut lewat dialog (audit No 6). Tanpa isian alasan: body `jelaskan` tidak diubah (sales mengirim note kosong,
-    // DELETE tidak menerima alasan), jadi alasan tertulis menunggu keputusan owner.
+    // Terima sales dan Cabut lewat dialog beralasan wajib (audit No 6): Terima sales mengirim alasan sebagai `note`, Cabut sebagai `alasan`.
     const [tanya, setTanya] = useState<{ r: Baris; jenis: Jenis; cabut: boolean } | null>(null);
     const draf = Object.values(catatan).some((v) => v.trim());
     useUnsavedGuard(draf);
@@ -53,12 +55,13 @@ export default function VerifikasiBalik({ bolehUbah, load, muatUlang }: { bolehU
     const segar = load.status === "siap";
     const tolak = !bolehUbah ? "Hanya petugas berizin ubah order yang boleh menjelaskan selisih" : !segar ? "Tunggu verifikasi selesai dimuat" : "";
 
-    async function jelaskan(r: Baris, jenis: Jenis, cabut = false) {
-        const note = jenis === "isi" ? (catatan[r.orderId] ?? "").trim() : "";
+    async function jelaskan(r: Baris, jenis: Jenis, cabut = false, alasan = "") {
+        const note = jenis === "isi" ? (catatan[r.orderId] ?? "").trim() : cabut ? "" : alasan;
         setSibuk(`${r.orderId}:${jenis}`);
         setPesan(null);
         try {
-            const { status, data } = await tulis("/api/invoice-verify", { orderId: r.orderId, jenis, sidik: r.sidik[jenis], note }, { method: cabut ? "DELETE" : "POST" });
+            const { status, data } = await tulis("/api/invoice-verify", { orderId: r.orderId, jenis, sidik: r.sidik[jenis], note, ...(cabut ? { alasan } : {}) },
+                { method: cabut ? "DELETE" : "POST" });
             if (status !== 200 || !data.ok) { setPesan({ tone: "neg", teks: pesanGagal(status, data, "Penjelasan gagal disimpan.") }); return; }
             if (jenis === "isi" && !cabut) setCatatan((c) => ({ ...c, [r.orderId]: "" }));
             setPesan({ tone: "pos", teks: cabut ? `Penjelasan SO ${r.soNo ?? r.orderId} dicabut; selisihnya terbuka lagi.`
@@ -130,7 +133,7 @@ export default function VerifikasiBalik({ bolehUbah, load, muatUlang }: { bolehU
                                         {sudah ? (
                                             <>
                                                 <StatusBadge tone="pos">{j === "sales" ? "Sales di Accurate diterima" : "Isi dijelaskan"}</StatusBadge>
-                                                <span className="fi-small">{j === "isi" ? `${sudah.note} · ` : ""}{sudah.by} · {waktuWita(sudah.at)} WITA</span>
+                                                <span className="fi-small">{sudah.note ? `${sudah.note} · ` : ""}{sudah.by} · {waktuWita(sudah.at)} WITA</span>
                                                 <Button variant="tertiary" busy={sibuk === id} disabled={Boolean(tolak) || Boolean(sibuk)} disabledReason={tolak || undefined}
                                                     onClick={() => setTanya({ r, jenis: j, cabut: true })}>Cabut…</Button>
                                             </>
@@ -163,8 +166,8 @@ export default function VerifikasiBalik({ bolehUbah, load, muatUlang }: { bolehU
                     ? `Cabut penjelasan ${tanya.jenis === "sales" ? "sales" : "selisih isi"} SO ${tanya.r.soNo ?? tanya.r.orderId}?`
                     : `Terima sales di Accurate untuk SO ${tanya.r.soNo ?? tanya.r.orderId}?`}
                 description={tanya?.cabut
-                    ? "Selisihnya terbuka lagi dan kembali dihitung sebagai belum dijelaskan. Tidak ada yang berubah di Accurate."
-                    : "Sales di faktur Accurate dianggap benar dan selisih sales ditandai dijelaskan atas nama Anda. Selisih isi, bila ada, tetap terbuka. Tidak ada yang berubah di Accurate."}
+                    ? "Selisihnya terbuka lagi dan kembali dihitung sebagai belum dijelaskan. Penjelasan lama dan alasan Anda tersimpan di jejak pencabutan. Tidak ada yang berubah di Accurate."
+                    : "Sales di faktur Accurate dianggap benar dan selisih sales ditandai dijelaskan atas nama Anda, dengan alasan di bawah. Selisih isi, bila ada, tetap terbuka. Tidak ada yang berubah di Accurate."}
                 facts={!tanya ? [] : [
                     ["Faktur", tanya.r.invoiceNumber || "belum ketemu di salinan"],
                     ["SO", tanya.r.soNo ?? tanya.r.orderId],
@@ -173,8 +176,11 @@ export default function VerifikasiBalik({ bolehUbah, load, muatUlang }: { bolehU
                         : tanya.r.findings.filter((f) => f.jenis === "sales").map((f): [string, string] => [labelField(f.field), `dikirim ${f.expected}, di Accurate ${f.actual}`])),
                 ]}
                 factsAlign="start" confirmLabel={tanya?.cabut ? "Cabut penjelasan" : "Terima sales"}
-                // Fungsi tulis tetap `jelaskan` (body, method, sidik sama); hasilnya tampil sebagai strip di bagian ini.
-                onConfirm={async () => { if (!tanya) return; const t = tanya; setTanya(null); await jelaskan(t.r, t.jenis, t.cabut); }} />
+                reason={tanya?.cabut
+                    ? { label: "Alasan mencabut", min: ALASAN_MIN, placeholder: "mis. penjelasan keliru; sales di Accurate ternyata belum diganti" }
+                    : { label: "Alasan menerima sales", min: ALASAN_MIN, placeholder: "mis. sales lama pindah divisi; sudah dicek di Accurate" }}
+                // Fungsi tulis tetap `jelaskan` (URL, method, orderId, jenis, sidik sama) ditambah alasan; hasilnya tampil sebagai strip di bagian ini.
+                onConfirm={async (alasan) => { if (!tanya) return; const t = tanya; setTanya(null); await jelaskan(t.r, t.jenis, t.cabut, alasan); }} />
         </Section>
     );
 }
