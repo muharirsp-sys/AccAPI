@@ -1,22 +1,22 @@
 /*
  * Tujuan: Bagian tampilan bersama Insentif Sales (Fiori S4c): warna laju (warna + ikon + teks + legenda), kolom PPh (bruto → PPh → netto
- *   dari konstanta server), rincian per baris Sales/SPV/SM, tabel dengan baris yang bisa dibuka, status bayar, dan pemuat insentif SPV/SM.
+ *   dari konstanta server), rincian per baris Sales/SPV/SM, status bayar, dan pemuat insentif SPV/SM.
  * Caller: Dashboard.tsx, Saya.tsx, Pembayaran.tsx.
  * Dependensi: components/fiori/{core,interactive}, lib/insentif-ui, lib/insentif-pph, lib/insentif-konstanta (tipe), lib/rekapan-nota/ui (ambil),
  *   ./data (formatRp, paceStatus), ./Rangka (useKonstanta).
  * Main Functions: Laju, LegendaLaju, CatatanTimeGone, KeteranganTimeGone, StatusBayar, labelPph, kolomPph, kakiPph, itemsPph, SalesBreakdown, SpvBreakdown, SmBreakdown, strataSm,
- *   sebabNolSpv, sebabNolSm, useExpandableRows, TabelRincian, useInsentifSpv, useInsentifSm.
+ *   sebabNolSpv, sebabNolSm, useInsentifSpv, useInsentifSm.
  * Side Effects: GET /api/insentif-sales/spv-dashboard dan /sm-dashboard (useInsentifSpv/useInsentifSm); lainnya murni tampilan.
  *
  * Cara memakai: bungkus layar dengan <KonstantaCtx.Provider> (rincian dan PPh membaca konstanta server); kolom PPh = `...kolomPph(k, bruto)`,
- * baris total = `foot={{ label, cells: { total, ...kakiPph(k, grand) } }}`; tabel dengan rincian = <TabelRincian rincian={…} rowLabel={…}/>
- * (props ResponsiveTable + `rincian`, `rowLabel`, `foot`). Data SPV/SM lewat useInsentifSpv/useInsentifSm; galat tidak pernah jadi daftar kosong.
+ * baris total = `foot={{ label, cells: { total, ...kakiPph(k, grand) } }}`; tabel dengan rincian = <ResponsiveTable rincian={{ isi, nama }} foot={…}/>
+ * (audit desain 001 No 135: salinan TabelRincian dihapus). Data SPV/SM lewat useInsentifSpv/useInsentifSm; galat tidak pernah jadi daftar kosong.
  */
 "use client";
 
-import { Fragment, useCallback, useId, useState, type ReactNode } from "react";
-import { Check, ChevronDown, ChevronUp, Clock, TriangleAlert } from "lucide-react";
-import { Button, EmptyState, ErrorState, KeyValues, MessageStrip, Skeleton, StatusBadge, VariantNote, type Column, type Tone } from "@/components/fiori/core";
+import { useCallback, type ReactNode } from "react";
+import { Check, Clock, TriangleAlert } from "lucide-react";
+import { KeyValues, StatusBadge, VariantNote, type Column, type Tone } from "@/components/fiori/core";
 import { useLoad, type Load } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
 import { nettoInsentif, pphInsentif } from "@/lib/insentif-pph";
@@ -89,7 +89,7 @@ export function StatusBayar({ status }: { status: string }) {
 // manual & file target, netto adalah yang dibayar. Tarif selalu dari konstanta server (KonstantaCtx), bukan salinan di klien.
 export const labelPph = (rate: number) => `PPh ${(rate * 100).toLocaleString("id-ID")}%`;
 
-/** Dua kolom berpasangan (PPh, Netto dibayar) untuk ResponsiveTable/TabelRincian; key "pph" dan "netto". */
+/** Dua kolom berpasangan (PPh, Netto dibayar) untuk ResponsiveTable; key "pph" dan "netto". */
 export function kolomPph<T>(k: Konstanta, bruto: (row: T) => number): Column<T>[] {
     return [
         {
@@ -358,168 +358,6 @@ export function SmBreakdown({ r }: { r: SmIncentiveRow }) {
             </div>
             <p className="fi-small fi-muted">Strata FLAT: nominal tidak dikali persentase. Semua status principal ikut dihitung, termasuk principle. Baris _OFFICE dibuang.</p>
         </div>
-    );
-}
-
-// ── Tabel dengan baris yang bisa dibuka ─────────────────────────────────────
-/**
- * State buka/tutup rincian per kunci baris. Pembukanya selalu tombol (bisa dicapai keyboard), bukan baris ber-onClick: di layar yang
- * dipakai Finance memverifikasi nominal, baris yang hanya bisa diklik berarti sebagian orang tidak bisa melihat dasar perhitungannya.
- */
-export function useExpandableRows() {
-    const [open, setOpen] = useState<Record<string, boolean>>({});
-    const toggle = useCallback((key: string) => setOpen((p) => ({ ...p, [key]: !p[key] })), []);
-    return { open, toggle };
-}
-
-type TabelRincianProps<T> = {
-    title: string; count?: number; actions?: ReactNode;
-    columns: Column<T>[]; rows: T[]; rowKey: (row: T) => string;
-    /** Isi satu baris di ponsel (< 600 px lebar wadah), biasanya <ListItem>; tombol Rincian ditambahkan di bawahnya. */
-    mobileItem: (row: T) => ReactNode;
-    status?: "memuat" | "siap" | "galat"; error?: string; onRetry?: () => void;
-    /** Kalimat berbeda untuk "belum ada data" dan "tidak ada yang sesuai saringan" — pemanggil yang memilih. */
-    empty: { title: string; message?: string; action?: ReactNode };
-    /** Isi baris rincian (SalesBreakdown/SpvBreakdown/SmBreakdown). Dirender hanya saat dibuka. */
-    rincian: (row: T) => ReactNode;
-    /** Nama baris untuk pembaca layar: tombol "Rincian <nama>", kotak "Pilih <nama>". */
-    rowLabel: (row: T) => string;
-    /** Baris total: isi per key kolom (kolom tanpa isi dibiarkan kosong; kolom pertama memakai `label`). Di ponsel jadi daftar label–nilai. */
-    foot?: { label: string; cells: Partial<Record<string, ReactNode>> };
-    selected?: ReadonlySet<string>; onSelectedChange?: (next: Set<string>) => void;
-    /** Baris yang boleh dipilih; lainnya kotaknya nonaktif dan tidak ikut "Pilih semua". Bawaan: semua. */
-    selectableRow?: (row: T) => boolean;
-};
-
-// ponytail: salinan pola ResponsiveTable (keadaan, pop-in, daftar ponsel, pilih massal) + baris rincian, karena ResponsiveTable tidak
-// punya baris sisipan. DOM ganda tabel + daftar sama seperti ResponsiveTable; pindahkan `rincian` ke ResponsiveTable bila slice lain butuh.
-export function TabelRincian<T>(props: TabelRincianProps<T>) {
-    const { title, count, actions, columns, rows, rowKey, mobileItem, status = "siap", error, onRetry, empty, rincian, rowLabel, foot, selected, onSelectedChange, selectableRow } = props;
-    const id = useId();
-    const { open, toggle } = useExpandableRows();
-    const selectable = Boolean(selected && onSelectedChange);
-    const keys = rows.map(rowKey);
-    const pickable = rows.map((row) => !selectableRow || selectableRow(row));
-    const pickableKeys = keys.filter((_, i) => pickable[i]);
-    const nSelected = selectable ? pickableKeys.filter((key) => selected!.has(key)).length : 0;
-    const secondaryCols = columns.filter((c) => c.secondary);
-    const nCol = columns.length + 1 + (selectable ? 1 : 0);
-    const cls = (c: Column<T>) => `${c.align === "end" ? "fi-end" : ""} ${c.secondary ? "fi-secondary" : ""}`;
-    const pilih = (key: string) => {
-        const next = new Set(selected);
-        if (next.has(key)) next.delete(key); else next.add(key);
-        onSelectedChange!(next);
-    };
-    const tombol = (row: T, key: string, target: string) => (
-        <Button variant="tertiary" aria-expanded={Boolean(open[key])} aria-controls={open[key] ? target : undefined} aria-label={`Rincian ${rowLabel(row)}`}
-            icon={open[key] ? <ChevronUp className="fi-icon" aria-hidden /> : <ChevronDown className="fi-icon" aria-hidden />} onClick={() => toggle(key)}>
-            Rincian
-        </Button>
-    );
-
-    let body: ReactNode;
-    if (rows.length === 0 && status === "memuat") body = <Skeleton />;
-    else if (rows.length === 0 && status === "galat") body = <ErrorState message={error} onRetry={onRetry} />;
-    else if (rows.length === 0) body = <EmptyState {...empty} />;
-    else body = (
-        <div className={status === "memuat" ? "fi-busy" : undefined}>
-            <div className="fi-tablescroll">
-                <table className="fi-table">
-                    <caption className="sr-only">{title}</caption>
-                    <thead>
-                        <tr>
-                            {selectable && (
-                                <th className="fi-sel">
-                                    <input type="checkbox" aria-label="Pilih semua baris" disabled={pickableKeys.length === 0}
-                                        checked={pickableKeys.length > 0 && nSelected === pickableKeys.length}
-                                        ref={(el) => { if (el) el.indeterminate = nSelected > 0 && nSelected < pickableKeys.length; }}
-                                        onChange={() => {
-                                            // Hanya baris yang terlihat; pilihan di luar saringan tidak ikut berubah.
-                                            const next = new Set(selected);
-                                            for (const key of pickableKeys) { if (nSelected === pickableKeys.length) next.delete(key); else next.add(key); }
-                                            onSelectedChange!(next);
-                                        }} />
-                                </th>
-                            )}
-                            {columns.map((c) => <th key={c.key} scope="col" className={cls(c)}>{c.header}</th>)}
-                            <th scope="col" className="fi-end"><span className="sr-only">Rincian</span></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows.map((row, i) => {
-                            const key = keys[i];
-                            const isSel = selectable && selected!.has(key);
-                            const target = `${id}-t${i}`;
-                            return (
-                                <Fragment key={key}>
-                                    <tr data-selected={isSel || undefined}>
-                                        {/* Kotak pilih TIDAK ikut membuka rincian: satu klik di kolom ini harus berarti satu hal saja. */}
-                                        {selectable && <td className="fi-sel"><input type="checkbox" aria-label={`Pilih ${rowLabel(row)}`} checked={isSel} disabled={!pickable[i]} onChange={() => pilih(key)} /></td>}
-                                        {columns.map((c, ci) => (
-                                            <td key={c.key} className={cls(c)}>
-                                                {c.cell(row)}
-                                                {ci === 0 && secondaryCols.length > 0 && (
-                                                    <span className="fi-popin">{secondaryCols.map((s) => <span key={s.key}>{s.header}: {s.cell(row)} · </span>)}</span>
-                                                )}
-                                            </td>
-                                        ))}
-                                        <td className="fi-end">{tombol(row, key, target)}</td>
-                                    </tr>
-                                    {open[key] && <tr id={target}><td colSpan={nCol}>{rincian(row)}</td></tr>}
-                                </Fragment>
-                            );
-                        })}
-                    </tbody>
-                    {foot && (
-                        <tfoot>
-                            <tr>
-                                {selectable && <td />}
-                                {columns.map((c, ci) => <td key={c.key} className={cls(c)}>{foot.cells[c.key] ?? (ci === 0 ? <b>{foot.label}</b> : null)}</td>)}
-                                <td />
-                            </tr>
-                        </tfoot>
-                    )}
-                </table>
-            </div>
-            <ul className="fi-list" aria-label={title}>
-                {rows.map((row, i) => {
-                    const target = `${id}-m${i}`;
-                    return (
-                        <li key={keys[i]}>
-                            {mobileItem(row)}
-                            <div className="px-2 pb-2">
-                                {tombol(row, keys[i], target)}
-                                {open[keys[i]] && <div id={target} className="px-2 pt-2">{rincian(row)}</div>}
-                            </div>
-                        </li>
-                    );
-                })}
-                {foot && (
-                    <li className="grid gap-2 px-4 py-3">
-                        <b>{foot.label}</b>
-                        <KeyValues items={columns.filter((c) => foot.cells[c.key] != null).map((c) => [c.header, foot.cells[c.key]])} />
-                    </li>
-                )}
-            </ul>
-        </div>
-    );
-
-    return (
-        <section className="fi-tablebox" aria-busy={(status === "memuat" && rows.length > 0) || undefined}>
-            <div className="fi-tbar">
-                <h2>{title}{count != null && <span> ({count})</span>}</h2>
-                {actions}
-            </div>
-            {status === "galat" && rows.length > 0 && (
-                <div style={{ padding: "12px 16px 0" }}>
-                    <MessageStrip tone="neg" title="Gagal memuat ulang.">
-                        {error} Yang tampil adalah hasil sebelumnya.{" "}
-                        {onRetry && <button type="button" className="fi-btn fi-btn--tertiary" onClick={onRetry}>Coba lagi</button>}
-                    </MessageStrip>
-                </div>
-            )}
-            {body}
-        </section>
     );
 }
 

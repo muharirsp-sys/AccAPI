@@ -491,7 +491,7 @@ export default function Summary({ permKeys }: { permKeys: string[] }) {
                 <Section id="baris" title="Baris Summary" subtitle={`${rows.length} baris${kunciGrid && draft ? " · terkunci setelah terbit" : ""}`}
                     actions={!kunciGrid ? <Button icon={<Plus className="fi-icon" aria-hidden />} onClick={() => { setRows((p) => [...p, barisKosong()]); setDirty(true); }}>Tambah baris</Button> : undefined}>
                     {rows.length === 0 ? <EmptyState title="Belum ada baris" message="Tambahkan baris kosong atau baca surat (PDF)." /> : (
-                        <div className="fi-tablescroll" tabIndex={0} style={{ display: "block" }}>
+                        <div className="fi-tablescroll" tabIndex={0} role="group" aria-label="Baris Summary" style={{ display: "block" }}>
                             <table className="fi-table"><caption className="sr-only">Baris Summary</caption>
                                 <thead><tr>{["No", "Principal", "Surat", "Program", "Channel", "Kelompok", "Varian", "Gramasi", "Kemasan", "Ketentuan", "Bentuk manfaat", "Nilai", "Tindakan"].map((h) => <th key={h} scope="col">{h}</th>)}</tr></thead>
                                 <tbody>{rows.map((r, i) => (

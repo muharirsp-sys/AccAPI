@@ -171,7 +171,7 @@ yang sudah dikonfirmasi owner: tema Neon, Office Calm, dan iOS pensiun (6 Okt 20
 
 **Key Characteristics:**
 - Satu aksen (Biru SP `#004c97`), semantik terpisah dari merek.
-- Padat di mouse (kontrol 32 px), lega di layar sentuh (44 px) lewat density otomatis.
+- Padat di mouse (kontrol 32 px), lega di layar sentuh (44 px) lewat kerapatan Otomatis.
 - Datar; kedalaman dari garis rambut dan permukaan berlapis, bayangan hanya untuk lapisan mengambang.
 - Angka tabular dan nomor dokumen mono; nominal rata kanan.
 - Terang dan gelap setara; mode mengikuti sistem kecuali dipilih.
@@ -238,7 +238,8 @@ Pola halaman Fiori: **List Report** (saringan + tabel), **Worklist** (tile = sar
 dengan atribut kunci, alur status, anchor bar lengket, footer aksi lengket kanan bawah), **Flexible Column Layout**
 (daftar + detail berdampingan ≥ 1024 px, satu kolom di bawahnya), **Wizard** (langkah di header, aksi di footer).
 
-Density: compact (kontrol 32 px, baris 36 px) untuk mouse; cozy (44/48 px) otomatis untuk `pointer: coarse`. Ponsel
+Kerapatan: Padat (kontrol 32 px, baris 36 px) untuk mouse; Lega (44/48 px) otomatis untuk `pointer: coarse` (pilihan Otomatis).
+Nama teknisnya `html[data-density="compact|cozy"]`; label di layar selalu Otomatis / Padat / Lega. Ponsel
 360–400 px tidak boleh menggulir menyamping; gulir menyamping hanya di dalam wadah tabel.
 
 ## Elevation & Depth
