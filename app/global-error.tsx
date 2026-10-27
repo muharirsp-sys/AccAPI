@@ -4,7 +4,8 @@
  *   Wajib me-render <html>/<body> sendiri karena menggantikan root layout saat error fatal.
  *   Tampilkan pesan rapi, JANGAN bocorkan stack/digest ke UI.
  * Caller: Next.js App Router otomatis saat error tidak tertangkap error boundary segmen.
- * Dependensi: react (useEffect), @sentry/nextjs, lib/muat-ulang-versi.
+ * Dependensi: react (useEffect), @sentry/nextjs, lib/muat-ulang-versi; fiori.css + FioriScope + ErrorState
+ *   (CSS root layout tidak ikut termuat di sini, jadi fiori.css diimpor sendiri; terang/gelap mengikuti setelan perangkat).
  * Main Functions: GlobalError.
  * Side Effects: console.error(error) dan pengiriman exception ke Sentry Cloud (instrumentation-client: tanpa userInfo/httpBodies;
  *   TANPA beforeSend — jangan taruh data pelanggan di pesan Error); galat "versi lama" = muat ulang
@@ -12,6 +13,9 @@
  */
 import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
+import { ErrorState } from "@/components/fiori/core";
+import { fioriClass } from "@/components/fiori/Scope";
+import "./fiori.css";
 import { bolehMuatUlang, galatVersiLama } from "@/lib/muat-ulang-versi";
 
 export default function GlobalError({
@@ -27,21 +31,13 @@ export default function GlobalError({
     }, [error]);
 
     return (
-        <html lang="id">
-            <body style={{ margin: 0, background: "#0f1115", color: "#e2e8f0", fontFamily: "system-ui, sans-serif" }}>
-                <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 24, textAlign: "center" }}>
-                    <div style={{ fontSize: 48 }}>⚠️</div>
-                    <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Aplikasi mengalami gangguan</h2>
-                    <p style={{ maxWidth: 420, fontSize: 14, color: "#94a3b8", margin: 0 }}>
-                        Maaf, terjadi kesalahan tak terduga. Silakan muat ulang. Jika tetap bermasalah, hubungi admin.
-                    </p>
-                    <button
-                        onClick={() => window.location.reload()}
-                        style={{ marginTop: 8, borderRadius: 8, border: "none", background: "#f59e0b", color: "#000", padding: "8px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
-                    >
-                        Coba lagi
-                    </button>
-                </div>
+        <html lang="id-ID">
+            <body className={fioriClass} style={{ margin: 0, minHeight: "100vh", display: "grid", placeItems: "center", padding: 16 }}>
+                <main className="fi-panel" style={{ width: "min(100%, 32rem)" }}>
+                    <ErrorState title="Aplikasi mengalami gangguan"
+                        message="Maaf, terjadi kesalahan tak terduga. Silakan muat ulang. Jika tetap bermasalah, hubungi admin."
+                        onRetry={() => window.location.reload()} />
+                </main>
             </body>
         </html>
     );

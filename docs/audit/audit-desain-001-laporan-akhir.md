@@ -3,7 +3,7 @@ Tujuan: Laporan akhir Fase 4 audit desain 001: Delivery Gate antislop, verifikas
 Caller: Owner (keputusan push/PR dan butir TODO); agen yang melanjutkan audit desain.
 Dependensi: docs/audit/audit-desain-001-2026-10-25.md (151 temuan), DESIGN.md, PRODUCT.md, docs/UI_DESIGN_SYSTEM.md.
 Main Functions: Ringkasan hasil, Delivery Gate 4 blok, bukti verifikasi, tabel per nomor, TODO dan usulan di luar nomor.
-Side Effects: Tidak ada; dokumen. Cabang lokal feat/desain-audit-gabungan, belum di-push.
+Side Effects: Tidak ada; dokumen. Merged ke main lewat PR #228 (26 Okt 2026); usulan A, C, E, F lewat cabang fix/desain-audit-kelompok1.
 -->
 # Audit desain 001: laporan akhir (26 Okt 2026)
 
@@ -58,10 +58,12 @@ Dial (dari DESIGN.md, mode Operate; dinyatakan di laporan ini, DESIGN.md tidak d
 - R-18 testimoni: PASS (tidak ada).
 - R-23 aset: PASS (tidak ada aset dibuat).
 - R-24 tautan ke halaman yang tidak ada: **FAIL**. `lib/chatbot/faq.json` menautkan "Buka Validator" ke `/validator` (tidak ada). Ditemukan di pass akhir; di luar 151 nomor.
+  Pembaruan kelompok 1: **PASS** (Usulan A; uji `lib/chatbot/faq.test.ts` menolak href FAQ tanpa `page.tsx`).
 - R-25 kontras: PASS. Token dihitung (`--primary-hover` gelap 5,38:1, `ink-disabled` tidak lagi untuk teks), mode gelap 12 tangkapan 0 di bawah AA, warna cetak dinaikkan.
 - R-26 kontrol mati: PASS.
 - R-27 keadaan: PASS. Memuat/kosong/galat dibedakan di halaman lama dan komponen bersama; ditegaskan spec.
 - R-28 FAQ generik: **FAIL**. `lib/chatbot/faq.json` masih memuat konten tiga tema yang sudah pensiun. Butir yang sama dengan R-24.
+  Pembaruan kelompok 1: **PASS** (jawaban tema = menu profil Mode/Kerapatan; SQLite → PostgreSQL).
 - R-32 keyboard dan fokus: PASS. Input berkas fokusable, tombol nonaktif tetap di urutan Tab dengan alasan, fokus terlihat.
 - R-33 tambalan skrip: PASS (semua di sumber).
 - R-34 tema: PASS (mode gelap 6 rute × 2 lebar).
@@ -85,6 +87,8 @@ owner (R-20, R-30); mode gelap mengikuti sistem (R-21); palet 1 aksen + semantik
 
 **Vonis: FAIL karena Blok 1 (R-02 sisa di sumber server/ekspor, R-24 dan R-28 di FAQ chatbot).** Menurut antislop, hasil dengan FAIL
 tidak dikirim sebagai selesai. Ketiganya di luar nomor yang disetujui dan/atau di zona server, jadi butuh izin owner (Usulan A dan B).
+
+**Pembaruan kelompok 1 (izin owner 26 Okt):** R-24 dan R-28 PASS lewat Usulan A. Blok 1 tinggal FAIL karena R-02 (Usulan B, zona server).
 
 ## Verifikasi
 
@@ -119,17 +123,17 @@ tidak dikirim sebagai selesai. Ketiganya di luar nomor yang disetujui dan/atau d
     satu putaran dengan akun dan data produksi (Playwright di sini tanpa DB/Accurate).
 16. Snapshot `fiori-ui-kit` 390 px yang sudah usang sebelum audit: perbarui atau biarkan.
 
-## Usulan di luar 151 nomor (butuh izin; tidak dikerjakan)
+## Usulan di luar 151 nomor (butuh izin; A, C, E, F dikerjakan di kelompok 1)
 
-- A. `lib/chatbot/faq.json`: hapus tautan `/validator` dan konten tiga tema lama (menutup FAIL R-24/R-28).
+- A. `lib/chatbot/faq.json`: hapus tautan `/validator` dan konten tiga tema lama (menutup FAIL R-24/R-28). **SELESAI (kelompok 1).**
 - B. Slice server: 46 pesan galat ber-em dash + `lib/kasir/hari.ts`, `lib/pelunasan-wizard.ts` (sebagian zona §3; menutup FAIL R-02).
-- C. `app/(dashboard)/error.tsx` dan `app/global-error.tsx` ke Fiori (emoji ⚠️, tombol amber).
+- C. `app/(dashboard)/error.tsx` dan `app/global-error.tsx` ke Fiori (emoji ⚠️, tombol amber). **SELESAI (kelompok 1).**
 - D. Hapus kode mati: `components/ui/DatePickerField|Input|Select|AsyncState` (cek pemakai dulu) dan CSS tema Surya lama di `globals.css`/`workspace.css`.
-- E. Judul panel Saringan ke `--fs-title-3` (lebih berat dari judul panel data di halaman yang sama).
-- F. Antrean Faktur: galat yang sama diulang 8× saat sumber gagal → satu strip.
+- E. Judul panel Saringan ke `--fs-title-3` (lebih berat dari judul panel data di halaman yang sama). **SELESAI (kelompok 1).**
+- F. Antrean Faktur: galat yang sama diulang 8× saat sumber gagal → satu strip. **SELESAI (kelompok 1):** galat cukup sekali di tabel (Coba lagi); kartu status hanya "-".
 - G. api-wrapper tab Excel tanpa berkas: Kirim memakai contoh payload bawaan endpoint (dialog kini menyebutnya); usulan nonaktifkan (logika → tracker AM).
 
-## Commit (cabang lokal `feat/desain-audit-gabungan`, belum di-push)
+## Commit (merged ke `main` lewat PR #228, 6da35b0e, 26 Okt 2026)
 
 1c2dcd60 dokumen + `lib/tampil.ts` · 76b15f6e M0 fondasi · 0e820a1c M1 api-wrapper · f949fb4f M3 promo/klaim/halaman lama · fc6019c7 M2 uang ·
 83151435 M4 OPC · 18fa7f22 M6 order/admin · f7c20e9c M5 lapangan · 971fa622 penyelesaian lintas area · f0e1cb4d regresi integrasi ·
