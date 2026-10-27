@@ -321,7 +321,7 @@ function buildPurchasePaymentPayload(record: FinanceRecord, mapping: FinanceMapp
         return !invoice || invoice === "BELUM ADA";
     });
     if (invalidInvoices.length > 0 || !record.detail_invoices?.length) {
-        throw new Error("No Invoice wajib valid sebelum post purchase-payment Accurate. Invoice kosong/BELUM ADA tidak boleh dipost.");
+        throw new Error("No Invoice wajib diisi sebelum posting Pembayaran ke Accurate. Invoice kosong atau BELUM ADA tidak bisa diposting.");
     }
     const accDate = toAccurateDate(transferDate);
     return [{
@@ -442,7 +442,7 @@ export async function postingPurchasePayment(p: {
         if (conflictNotSent(res.status, out)) {
             // 409 SEBELUM klaim dengan kode terdaftar (database sesi berganti, tinjauan A-1) = pasti belum terkirim; 409 lain = tidak pasti.
             notSent = true;
-            throw new Error(out?.error || "Command posting menolak sebelum kirim (HTTP 409).");
+            throw new Error(out?.error || "Server posting menolak sebelum mengirim ke Accurate.");
         }
         const conflict = res.status === 409 ? purchasePaymentConflict(out) : null;
         if (conflict === "in_flight") {
@@ -453,17 +453,19 @@ export async function postingPurchasePayment(p: {
         if (conflict === "posted" && out?.live) {
             // Attempt record INI di database INI sudah posted (mis. browser ditutup sebelum mencatat). Record/draft/database lain
             // dengan faktur yang sama TIDAK ditandai posted (review M3).
-            posted = { id: out.live.accurateId, number: out.live.accurateNumber, note: `attempt server ${out.live.attemptId} sudah posted ${out.live.accurateNumber}` };
+            posted = { id: out.live.accurateId, number: out.live.accurateNumber, note: `Percobaan server ${out.live.attemptId} sudah terposting: ${out.live.accurateNumber}` };
         } else if (res.status === 409) {
             const why = out?.live?.state === "posted"
-                ? `${out.error} Dari record/database lain (${out.live.targetDbId}) — periksa sebelum menandai apa pun.`
-                : out?.error || "attempt sebelumnya belum pasti";
+                ? `${out.error} Dari pengajuan atau database lain (${out.live.targetDbId}). Periksa sebelum menandai apa pun.`
+                : out?.error || "Percobaan posting sebelumnya belum pasti.";
             await recordNotPosted("unknown", why, out?.live);
             return { jenis: "tidak_pasti", pesan: saringCatatan(why) };
         } else if (!res.ok || !out?.state) {
             // claimed:false (validasi/izin/sesi/DB sebelum klaim) = pasti belum terkirim -> tidak dikunci.
             notSent = certainlyNotSent(res.status, out);
-            throw new Error(out?.error || `Command posting gagal (HTTP ${res.status})`);
+            // "(HTTP nnn)" tetap di catatan: python_backend/shared.py AMBIGUOUS_POST_ERROR membaca "HTTP 50x" pada catatan "failed"
+            // (5xx claimed:false) sebagai TIDAK PASTI. Layar menyaringnya lewat saringCatatan (audit desain 001 No 30).
+            throw new Error(out?.error || `Server posting tidak berhasil (HTTP ${res.status}).`);
         } else {
             accurateRes = out.response;
             if (out.state !== "posted") {
@@ -486,8 +488,11 @@ export async function postingPurchasePayment(p: {
         });
         return { jenis: "terposting", nomor: posted.number, catatan: posted.note };
     } catch (err: unknown) {
-        const message = err instanceof Error && err.message ? err.message : "Gagal posting purchase-payment Accurate.";
-        const pesan = saringCatatan(message) || "Posting Purchase Payment ke Accurate gagal.";
+        const adaPesan = err instanceof Error && Boolean(err.message);
+        // Cadangan catatan TIDAK diubah: python_backend/shared.py AMBIGUOUS_POST_ERROR mencocokkan kalimat persis ini (catatan
+        // "failed" lama = TIDAK PASTI). Layar memakai kalimat tugas (audit desain 001 No 30).
+        const message = adaPesan ? (err as Error).message : "Gagal posting purchase-payment Accurate.";
+        const pesan = (adaPesan ? saringCatatan(message) : "") || "Posting Pembayaran ke Accurate gagal.";
         // Belum sampai command, atau command menolak sebelum klaim = pasti tidak terkirim. Selain itu (jaringan putus ke command,
         // 5xx, pencatatan "posted" ke FastAPI gagal) server MUNGKIN sudah mengirim: tidak pasti, attempt server tetap memblokir.
         if (!sent || notSent) {
@@ -559,7 +564,7 @@ export async function selesaikanTidakPasti(p: { record: FinanceRecord; date: str
             proof_id: record.transfer_proof?.proof_id || "",
             accurate_post_status: number ? "posted" : "failed",
             ...(number ? { accurate_purchase_payment_number: number } : { accurate_post_error: "dicek manual: tidak ada di Accurate" }),
-            resolution_note: `${dasar} — ${p.sumber.trim()}: ${p.alasan.trim()}`.slice(0, 500),
+            resolution_note: `${dasar}. ${p.sumber.trim()}: ${p.alasan.trim()}`.slice(0, 500),
         });
     } catch (e) {
         if (e instanceof TidakPasti) throw e;
