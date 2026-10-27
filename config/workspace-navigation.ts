@@ -40,7 +40,7 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
         { name: "Pelunasan", href: "/pelunasan", icon: HandCoins },
         // Kasir dan Incaso (K2b, BL-59): setoran Kasir per orang per hari lawan pelunasan Incaso; dibuka pemegang `kasir.view` (Kasir, OM, Admin).
         { name: "Kasir dan Incaso", href: "/kasir", icon: Banknote, short: "Kasir" },
-        { name: "Pembayaran / SPPD", href: "/payments", icon: Wallet, short: "Pembayaran" },
+        { name: "Pembayaran dan SPPD", href: "/payments", icon: Wallet, short: "Pembayaran" },
         { name: "Format SPPD", href: "/payments/sppd", icon: FileText },
         { name: "Rekonsiliasi", href: "/reconciliation", icon: GitCompareArrows },
     ] },
@@ -61,7 +61,7 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
         // Data Principal (S7b): daftar resmi principal + varian + alias; dibuka pemegang `principles.view`, tulis `principles.upload`.
         { name: "Data Principal", href: "/data-principal", icon: Building2, short: "Principal" },
         { name: "Mapping Principal", href: "/principal-mapping", icon: ArrowLeftRight },
-        { name: "Pengguna dan Izin", href: "/admin/users", icon: Shield, short: "Pengguna" },
+        { name: "User dan Izin", href: "/admin/users", icon: Shield, short: "User" },
         { name: "Kelola Akses Grup", href: "/admin/groups", icon: ShieldCheck, short: "Akses" },
     ] },
 ];

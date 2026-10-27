@@ -26,7 +26,7 @@ export const SOURCES = {
     opc: { perm: "off_program_control.view", url: () => "/api/off-program-control/batches", label: "OFF Program Control" },
     claimOutstanding: { perm: "claim_workflow.view", url: () => "/api/claim-workflow/outstanding", label: "Klaim outstanding" },
     claimPaid: { perm: "claim_workflow.view", url: () => "/api/claim-workflow?status=Paid&limit=200", label: "Klaim lunas" },
-    users: { perm: "users.manage", url: () => "/api/admin/users/permissions", label: "Pengguna dan Izin" },
+    users: { perm: "users.manage", url: () => "/api/admin/users/permissions", label: "User dan Izin" },
     // BL-41 (S6e-2): ringkasan baca-saja idempotency sales-receipt + daftar baris (?rows=1, kontrak §6). Endpoint juga terbuka untuk
     // finance.resolve_unknown; Beranda memakainya hanya untuk profil Admin Incaso (pelunasan.kirim). `valid`: jawaban tanpa angka/daftar =
     // galat, tidak pernah dibaca nol.
@@ -114,8 +114,8 @@ export const TILES = {
         const nota = waves.reduce((total, w) => total + num(w.jumlah_nota), 0);
         return { value: waves.length, unit: "wave", tone: "info", footer: waves.length ? `${nota} nota di wave` : "Belum ada wave hari ini" };
     } },
-    exception: { title: "Exception terbuka", subtitle: "Wave hari ini", href: "/rekapan-nota", source: "wave", icon: "alert", pick: (data) =>
-        count(rows(obj(data).wave).reduce((total, w) => total + num(w.exception_open), 0), "exception", "Selesaikan sebelum konfirmasi wave", "warn") },
+    exception: { title: "Masalah terbuka", subtitle: "Wave hari ini", href: "/rekapan-nota", source: "wave", icon: "alert", pick: (data) =>
+        count(rows(obj(data).wave).reduce((total, w) => total + num(w.exception_open), 0), "masalah", "Selesaikan sebelum konfirmasi wave", "warn") },
     kanvas: { title: "Nota kanvas", subtitle: "Ditandai hari ini", href: "/rekapan-nota/kanvas", source: "kanvas", icon: "cart", pick: (data) => {
         const d = obj(data);
         return { value: num(d.ditandai), unit: "nota", tone: "neu", footer: `Dari ${num(d.jumlahNota)} nota hari ini` };
@@ -276,7 +276,7 @@ export const CARDS: Record<string, CardSpec> = {
     gudang: { title: "Wave hari ini", subtitle: "Urut jadwal", href: "/rekapan-nota", more: "Buka Rekapan Nota", source: "wave", kind: "list", rows: (data) =>
         rows(obj(data).wave).map((w) => ({
             title: str(w.nama) || `Wave #${num(w.id)}`,
-            meta: `${num(w.jumlah_nota)} nota${num(w.exception_open) ? ` · ${num(w.exception_open)} exception` : ""}`,
+            meta: `${num(w.jumlah_nota)} nota${num(w.exception_open) ? ` · ${num(w.exception_open)} masalah` : ""}`,
             badge: [num(w.exception_open) ? "warn" : "neu", str(w.status) || "-"],
         })) },
     sm: { title: "Persetujuan menunggu Anda", subtitle: "OFF Program Control", href: "/off-program-control?tab=sales", more: "Buka tab Sales Manager", source: "opc", kind: "list", rows: opcRows(smActionable, "Menunggu", "warn") },

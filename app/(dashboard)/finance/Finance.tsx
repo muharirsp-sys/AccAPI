@@ -269,7 +269,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
             </div>
             {memuatAwal ? <div className="fi-sect-in"><Skeleton rows={6} label="Memuat pengajuan" /></div>
                 : load.status === "galat" && !data ? <ErrorState title="Server Pembayaran tidak menjawab" message={`${load.error ?? ""} Data di Accurate tidak berubah.`} onRetry={muatUlang} />
-                : kosongHari ? <EmptyState title={`Tidak ada pengajuan untuk ${tanggalPanjang(data.date)}`} message="Pengajuan muncul di sini setelah diajukan dari Pembayaran / SPPD dengan tanggal bayar ini. Ganti tanggal untuk melihat hari lain." />
+                : kosongHari ? <EmptyState title={`Tidak ada pengajuan untuk ${tanggalPanjang(data.date)}`} message="Pengajuan muncul di sini setelah diajukan dari Pembayaran dan SPPD dengan tanggal bayar ini. Ganti tanggal untuk melihat hari lain." />
                 : tampil.length === 0 ? <EmptyState title="Tidak ada pengajuan yang sesuai saringan" message="Ubah kata kunci atau pilih kartu Semua." />
                 : (
                     <ul className="fi-list" style={{ display: "block" }} aria-label="Daftar pengajuan">
@@ -485,7 +485,7 @@ function Detail(p: DetailProps) {
                     {catatan || "Hasil posting terakhir belum pasti."} Jangan posting ulang sebelum Finance memeriksa Purchase Payment di Accurate.
                 </MessageStrip>
             )}
-            {kode === "sedang" && <MessageStrip tone="info" title="Sedang diposting dari sesi atau tab lain.">{a ? `Dimulai ${a.createdAtWita} WITA oleh ${a.actorName || "pengguna lain"}.` : ""} Muat ulang beberapa saat lagi.</MessageStrip>}
+            {kode === "sedang" && <MessageStrip tone="info" title="Sedang diposting dari sesi atau tab lain.">{a ? `Dimulai ${a.createdAtWita} WITA oleh ${a.actorName || "user lain"}.` : ""} Muat ulang beberapa saat lagi.</MessageStrip>}
             {kode === "gagal" && catatan && <MessageStrip tone="neg" title={catatan} />}
             {kode === "tak_terbaca" && <MessageStrip tone="warn" title="Status posting tidak terbaca.">Belum diketahui apakah pengajuan ini sudah diposting; posting dan ubah status dikunci sampai dimuat ulang.</MessageStrip>}
 

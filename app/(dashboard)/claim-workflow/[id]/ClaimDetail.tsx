@@ -524,7 +524,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                         const jejak = siapaUbah(konflik.itemId);
                         const kapan = konflik.at ?? jejak?.createdAt ?? null;
                         return (
-                            <MessageStrip tone="neg" title={`Item ${n}${it?.outlet ? ` (${it.outlet})` : ""} diubah ${jejak?.actorName || "pengguna lain"}${kapan ? ` pada ${waktuWita(kapan)}` : ""} sejak Anda membuka halaman ini.`}>
+                            <MessageStrip tone="neg" title={`Item ${n}${it?.outlet ? ` (${it.outlet})` : ""} diubah ${jejak?.actorName || "user lain"}${kapan ? ` pada ${waktuWita(kapan)}` : ""} sejak Anda membuka halaman ini.`}>
                                 Perubahan Anda belum disimpan; baris lain tetap seperti yang Anda lihat.{" "}
                                 <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={() => muatUlangBaris(konflik.itemId)}>Muat ulang baris itu</Button>
                             </MessageStrip>
