@@ -641,3 +641,33 @@ test("Form Kasir wajib juga untuk setoran Transfer saja dan Giro saja", async ({
     await expect(dlg).toContainText("Isi Nomor Form Kasir (wajib bila setoran lebih dari 0)");
     await expect(dlg.getByRole("button", { name: "Simpan setoran" })).toBeDisabled();
 });
+
+test("Hari aktual (owner 27 Okt, audit No 109): lewat tengah malam WITA layar di hari lama ikut pindah; dialog terbuka = strip + Pindah ke hari ini", async ({ page }) => {
+    const wita = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(d);
+    const hariIni = wita(new Date()); // sama dengan nilai awal server (todayWita)
+    const besok = wita(new Date(Date.parse(`${hariIni}T12:00:00+08:00`) + 864e5));
+    const lusa = wita(new Date(Date.parse(`${hariIni}T12:00:00+08:00`) + 2 * 864e5));
+    await page.clock.install({ time: new Date(`${hariIni}T23:59:20+08:00`) });
+    const log = await pasang(page);
+    await page.goto("/kasir", NAV);
+    const tanggal = page.getByLabel("Tanggal");
+    await expect(tanggal).toHaveValue(hariIni, NAV);
+    await expect(page.getByRole("button", { name: "Setoran…" })).toBeEnabled(NAV);
+    await page.clock.runFor(65_000); // pemeriksaan 30 dtk melewati 00.00 WITA
+    await expect(tanggal).toHaveValue(besok, NAV);
+    await expect(tanggal).toHaveAttribute("max", besok);
+    await expect.poll(() => log.get.some((q) => q.includes(`tanggal=${besok}`))).toBe(true);
+
+    // Dialog terbuka saat hari berganti lagi: tidak dipindah diam-diam.
+    await page.getByRole("button", { name: "Setoran…" }).click(NAV);
+    const dlg = page.getByRole("dialog");
+    await expect(dlg).toBeVisible();
+    await page.clock.fastForward(864e5);
+    await expect(tanggal).toHaveValue(besok);
+    await dlg.getByRole("button", { name: "Batal" }).click();
+    const strip = main(page).getByRole("status").filter({ hasText: "Hari sudah berganti ke" });
+    await expect(strip).toBeVisible(NAV);
+    await strip.getByRole("button", { name: "Pindah ke hari ini" }).click();
+    await expect(tanggal).toHaveValue(lusa);
+    await expect(strip).toBeHidden();
+});

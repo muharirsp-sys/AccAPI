@@ -171,7 +171,7 @@ test("Catat pembayaran: pilih item satu cara bayar, draf, dialog dengan FormData
     await page.goto("/off-program-control?tab=finance&batch=b-bayar", NAV);
     const main = page.locator("main");
     const detail = main.getByRole("region", { name: "Batch terbuka" });
-    await expect(detail.getByRole("heading", { level: 1, name: "004/URC/09/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "004/URC/09/2026" })).toBeVisible(NAV);
     await expect(main.getByText("Peran Anda: Keuangan.")).toBeVisible();
     const footer = detail.locator(".fi-ftb");
     const catat = footer.getByRole("button", { name: "Catat pembayaran…" });
@@ -204,7 +204,7 @@ test("Catat pembayaran: pilih item satu cara bayar, draf, dialog dengan FormData
     await expect(catat).toBeEnabled();
 
     // Draf menahan pindah batch: Batal = tetap di batch ini dengan pilihan utuh.
-    await antrean(page).getByRole("button", { name: /012\/KINO\/10\/2026/ }).click();
+    await antrean(page).getByRole("link", { name: /012\/KINO\/10\/2026/ }).click();
     const tinggal = page.getByRole("dialog", { name: "Tinggalkan perubahan yang belum disimpan?" });
     await expect(tinggal).toBeVisible();
     await tinggal.getByRole("button", { name: "Tetap di sini" }).click();
@@ -254,7 +254,7 @@ test("tolakan server tampil di dialog dan mengunci sampai detail segar; detail g
     await page.goto("/off-program-control?tab=finance&batch=b-bayar2", NAV);
     const main = page.locator("main");
     const detail = main.getByRole("region", { name: "Batch terbuka" });
-    await expect(detail.getByRole("heading", { level: 1, name: "012/KINO/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "012/KINO/10/2026" })).toBeVisible(NAV);
     const tabel = detail.getByRole("table", { name: "Item batch" });
     await tabel.getByRole("checkbox", { name: /TK Sinar Jaya/ }).check();
     await detail.getByLabel("Tanggal bayar").fill("2026-10-07");
@@ -296,9 +296,9 @@ test("pengembalian selisih: Tolak wajib alasan dan Batal tidak mengirim; Verifik
     await page.goto("/off-program-control?tab=finance&view=selisih&batch=b-lebih", NAV);
     const main = page.locator("main");
     const detail = main.getByRole("region", { name: "Batch terbuka" });
-    await expect(detail.getByRole("heading", { level: 1, name: "008/HEINZ/09/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "008/HEINZ/09/2026" })).toBeVisible(NAV);
     await expect(main.getByRole("group", { name: "Tampilan antrean" }).getByRole("button", { name: /Pengembalian selisih/ })).toHaveAttribute("aria-pressed", "true");
-    await expect(antrean(page).getByRole("button")).toHaveCount(1);
+    await expect(antrean(page).getByRole("link")).toHaveCount(1);
     await expect(detail.getByRole("button", { name: "Catat pembayaran…" })).toHaveCount(0);
     const bagian = detail.getByRole("region", { name: "Verifikasi pengembalian" });
     await expect(bagian.getByRole("list", { name: "Pengembalian menunggu verifikasi" }).getByRole("listitem")).toHaveCount(2, NAV);
@@ -384,15 +384,15 @@ test("jawaban 504 HTML proxy sesudah tersimpan = hasil tidak pasti tanpa HTML; m
     await detail.locator(".fi-ftb").getByRole("button", { name: "Catat pembayaran…" }).click();
     const dlg = page.getByRole("dialog", { name: "Catat pembayaran 004/URC/09/2026?" });
     await dlg.getByRole("button", { name: "Catat Rp 2.200.000" }).click();
-    const galat = dlg.getByRole("alert");
-    await expect(galat).toContainText("Server tidak memberi jawaban yang pasti", NAV);
-    await expect(galat).not.toContainText("<");
-    await expect(galat).not.toContainText("nginx");
+    // Hasil tidak pasti (owner 27 Okt, audit No 22): dialog tertutup, strip bertahan, muat ulang; tanpa HTML mentah.
+    await expect(dlg).toBeHidden(NAV);
+    const strip = detail.getByRole("status").filter({ hasText: "Hasil aksi terakhir belum pasti." });
+    await expect(strip).toContainText("Server tidak memberi jawaban yang pasti");
+    await expect(strip).not.toContainText("<");
+    await expect(strip).not.toContainText("nginx");
     // Server ternyata menyimpan: sesudah muat ulang TK Mulia lunas dan keluar dari pilihan → Catat tidak bisa diulang.
-    await expect(dlg.getByRole("button", { name: /^Catat Rp/ })).toHaveAttribute("title", "Pilih item yang akan dibayar dulu.", NAV);
-    await dlg.getByRole("button", { name: "Batal" }).click();
-    await expect(tabel.getByRole("row", { name: /TK Mulia/ })).toContainText("Dibayar");
-    await expect(detail.getByRole("status").filter({ hasText: "Hasil aksi terakhir belum pasti." })).toBeVisible();
+    await expect(tabel.getByRole("row", { name: /TK Mulia/ })).toContainText("Dibayar", NAV);
+    await expect(detail.locator(".fi-ftb").getByRole("button", { name: "Catat pembayaran…" })).toHaveAttribute("title", "Pilih item yang akan dibayar dulu.", NAV);
     expect(m.tulis).toEqual(["POST /api/off-program-control/batches/b-bayar/finance-payment"]);
 });
 
@@ -405,11 +405,12 @@ test("jawaban 502 HTML pada verifikasi pengembalian = hasil tidak pasti tanpa HT
     const dlg = page.getByRole("dialog", { name: "Verifikasi pengembalian Rp 450.000?" });
     const getSebelum = m.getDetail;
     await dlg.getByRole("button", { name: "Verifikasi pengembalian" }).click();
-    await expect(dlg.getByRole("alert")).toContainText("Server tidak memberi jawaban yang pasti", NAV);
-    await expect(dlg.getByRole("alert")).not.toContainText("<");
+    // Dialog tertutup, strip bertahan, detail dimuat ulang (audit No 22).
+    await expect(dlg).toBeHidden(NAV);
+    const strip = detail.getByRole("status").filter({ hasText: "Hasil aksi terakhir belum pasti." });
+    await expect(strip).toContainText("Server tidak memberi jawaban yang pasti");
+    await expect(strip).not.toContainText("<");
     await expect.poll(() => m.getDetail).toBeGreaterThan(getSebelum);
-    await dlg.getByRole("button", { name: "Batal" }).click();
-    await expect(detail.getByRole("status").filter({ hasText: "Hasil aksi terakhir belum pasti." })).toBeVisible();
     expect(m.tulis).toEqual(["PATCH /api/off-program-control/batches/b-lebih/refund"]);
 });
 
@@ -434,7 +435,7 @@ test("ponsel 390 px: pilih item di daftar, dialog bayar, tanpa gulir menyamping;
     await page.goto("/off-program-control?tab=finance&batch=b-bayar", NAV);
     const main = page.locator("main");
     const detail = main.getByRole("region", { name: "Batch terbuka" });
-    await expect(detail.getByRole("heading", { level: 1, name: "004/URC/09/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "004/URC/09/2026" })).toBeVisible(NAV);
     const daftarItem = detail.getByRole("list", { name: "Item batch" });
     await expect(daftarItem).toBeVisible();
     await expect(daftarItem.getByRole("checkbox", { name: /TK Abadi/ })).toBeDisabled();

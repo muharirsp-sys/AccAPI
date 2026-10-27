@@ -121,7 +121,8 @@ test("Ringkasan admin: kesehatan proses, per tahap, per divisi, bermasalah, akti
     await expect(bermasalah.getByRole("button", { name: /006\/ENI\/10\/2026/ })).toContainText("Dikembalikan");
     await expect(main.getByRole("list", { name: "Batch lewat SLA" })).toContainText("007/KINO/10/2026");
     await expect(main.getByRole("list", { name: "Aktivitas terakhir" }).getByRole("button")).toHaveCount(5);
-    for (const bl of ["BL-11", "BL-12", "BL-13"]) await expect(main.getByLabel(`Usulan ${bl}`).first()).toBeVisible();
+    for (const bl of ["BL-11", "BL-12", "BL-13"]) await expect(main.getByLabel(new RegExp(`^Usulan .*${bl}`)).first()).toBeVisible();
+    await expect(main.getByLabel("Usulan BL-11, BL-13")).toHaveCount(1); // BL-11 dan BL-13 satu catatan (audit No 80)
     // Kerangka menggulir di dalam <main>: tangkapan seluruh halaman lewat viewport tinggi.
     await page.setViewportSize({ width: 1366, height: 3000 });
     await page.screenshot({ path: "test-results/fiori-opc-admin-ringkasan.png" });
@@ -331,7 +332,8 @@ test("Log audit: koreksi lewat dialog (alasan wajib, payload, galat di dialog), 
     ]);
     await expect(main.getByRole("status").filter({ hasText: "Koreksi tercatat sebagai riwayat baru tanpa menghapus jejak lama." })).toBeVisible();
     await expect.poll(() => getAudit.length).toBeGreaterThan(nGet); // daftar dimuat ulang
-    await expect(main.getByLabel("Usulan BL-33")).toBeVisible();
+    await expect(main.getByLabel("Usulan BL-13, BL-33")).toBeVisible(); // satu catatan varian per layar (audit No 80)
+    await expect(main.getByRole("complementary")).toHaveCount(1);
 });
 
 test("Log audit: alasan setuju sendiri (BL-10, #132) dan penanda tanpa alasan tampil di Catatan", async ({ page }) => {

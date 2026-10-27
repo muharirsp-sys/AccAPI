@@ -176,7 +176,9 @@ test("Dashboard SPV: Default per salesman, Tandai sudah dibaca lewat dialog (pay
     await expect(andi.getByText("Akurasi GPS rendah 1")).toBeVisible();
     await expect(main.getByRole("article", { name: "SALES B" }).getByText("Belum kirim laporan")).toBeVisible();
     await expect(main.getByRole("article", { name: "SALES B" }).getByRole("button", { name: "Tandai sudah dibaca" })).toHaveCount(0);
-    await expect(main.locator('aside[aria-label="Usulan it05 #15"]')).toBeVisible();
+    // it05 #15 kini keterangan biasa; satu catatan varian per layar = BL-28 (audit No 80).
+    await expect(main.getByText("Persentase dihitung dari status rute yang tercatat hari itu")).toBeVisible();
+    await expect(main.locator("aside.fi-varbox")).toHaveCount(1);
 
     const tombol = andi.getByRole("button", { name: "Tandai sudah dibaca" });
     expect((await tombol.boundingBox())!.height).toBeGreaterThanOrEqual(32); // mouse: tinggi kontrol 32 px; 44 px hanya di layar sentuh (audit desain 001 No 107)
@@ -274,7 +276,7 @@ test("Dashboard SPV (admin): pilih SPV dari Hierarki → query spvName; daftar g
 
     opsi.profilesGagal = true;
     await page.goto("/form-kontrol/spv-dashboard", NAV);
-    await expect(main.locator('aside[aria-label="Usulan it05 #16"]')).toBeVisible(NAV);
+    await expect(main.getByText("Ketik nama SPV persis seperti di Hierarki Sales.")).toBeVisible(NAV);
     await main.getByLabel("Nama SPV").fill("SPV A");
     await main.getByRole("button", { name: "Tampilkan" }).click();
     await expect(page).toHaveURL(/spv=SPV(\+|%20)A/);

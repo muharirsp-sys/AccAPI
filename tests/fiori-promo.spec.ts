@@ -156,6 +156,8 @@ test("Daftar outlet: tali daftar terlihat; keluarkan anggota lewat dialog", asyn
     const chips = main.getByRole("list", { name: "Daftar dan tali ke aturan" });
     await expect(chips).toContainText("BP2610009097 (hanya)");
     await expect(chips).toContainText("belum dipakai aturan");
+    // Nama daftar awal = daftar pertama dari server, bukan nama bawaan literal (owner 27 Okt, audit No 79).
+    await expect(main.getByLabel("Nama daftar (berkas terpisah)")).toHaveValue("LOYALTY");
     await main.getByRole("table", { name: "Anggota daftar" }).getByRole("button", { name: "Keluarkan C-WIN013" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Keluarkan" }).click();
     expect(dihapus).toContain("ids=7");
@@ -177,6 +179,7 @@ test("Daftar outlet: unggah dua langkah (pilih berkas lalu dialog dengan berkas,
     let dlg = page.getByRole("dialog");
     await expect(dlg.getByRole("heading", { name: "Muat peserta-a.xlsx ke daftar outlet?" })).toBeVisible(NAV);
     await expect(dlg).toContainText("0000001");
+    await expect(dlg).toContainText("DAFTAR A, dipakai bila berkas bukan surat"); // daftar pertama dari server (No 79)
     await expect(dlg).toContainText("semua aturan surat itu ditunjuk ke daftarnya");
     expect(kirim).toEqual([]);
     await dlg.getByRole("button", { name: "Batal" }).click();
@@ -188,6 +191,7 @@ test("Daftar outlet: unggah dua langkah (pilih berkas lalu dialog dengan berkas,
     expect(kirim).toHaveLength(1);
     expect(kirim[0]).toContain('name="distCode"');
     expect(kirim[0]).toContain("peserta-a.xlsx");
+    expect(kirim[0]).toContain('name="listName"' + String.fromCharCode(13, 10, 13, 10) + 'DAFTAR A');
     await expect(main.getByRole("status").filter({ hasText: "4 outlet masuk daftar DAFTAR A" })).toBeVisible();
 });
 
@@ -259,7 +263,9 @@ test("Summary: buka draf, siklus, Terbitkan butuh centang; gerbang faktur menung
     const muat = gerbang.getByRole("button", { name: "Muat ke gerbang faktur…" });
     await expect(muat).toBeDisabled();
     await expect(muat).toHaveAttribute("title", "Lengkapi bukti tanda tangan dan pernyataan");
-    await expect(gerbang.getByLabel("Usulan BL-53")).toBeVisible();
+    // BL-53 kini keterangan biasa; satu catatan varian per layar = BL-51 (audit No 80).
+    await expect(gerbang.getByText("Pernyataan boleh dibuat siapa pun yang berizin ubah Summary")).toBeVisible();
+    await expect(main.getByRole("complementary")).toHaveCount(1);
 });
 
 test("Summary: Cabut publikasi (owner 8 Okt) — alasan wajib ≥ 5 karakter, payload { revision, alasan }; galat server tampil di dialog", async ({ page }) => {

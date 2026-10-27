@@ -167,7 +167,7 @@ async function izinBisaDicabut(page: Page, path: string, kunci: string) {
 const daftarUser = (page: Page) => page.getByRole("list", { name: "Daftar user" });
 async function bukaUser(page: Page, nama: string) {
     await daftarUser(page).getByRole("button", { name: new RegExp(`${nama}\\b`) }).click();
-    await expect(page.getByRole("heading", { level: 2, name: nama })).toBeVisible(); // Object Page di kolom kedua: h2 (halaman punya h1 "Pengguna dan Izin")
+    await expect(page.getByRole("heading", { level: 2, name: nama })).toBeVisible(); // Object Page di kolom kedua: h2 (halaman punya h1 "User dan Izin")
 }
 
 test("Buat user: grup awal wajib, sandi bertopeng ketik dua kali (tidak di DOM/URL), satu permintaan atomik, user baru terpilih", async ({ page }) => {
@@ -335,14 +335,14 @@ test("Simpan izin: dialog SELISIH (+/−, anggota terkena) → PATCH kunci persi
     await expect(simpan).toBeDisabled();
     await expect(page.getByRole("textbox", { name: "Nama grup" })).toBeDisabled(); // preset: nama terkunci
     await expect(page.getByRole("button", { name: "Hapus grup…" })).toBeDisabled();
-    await page.getByRole("checkbox", { name: "Payments · Hapus" }).check();
-    await page.getByRole("checkbox", { name: "Finance · Approve" }).uncheck();
+    await page.getByRole("checkbox", { name: "Pembayaran · Hapus" }).check();
+    await page.getByRole("checkbox", { name: "Finance · Setujui" }).uncheck();
     await expect(page.getByText("+1 −1 belum disimpan")).toBeVisible();
     await page.screenshot({ path: "test-results/fiori-s7a-04-draf-izin.png", fullPage: true });
     await simpan.click();
     const dlg = page.getByRole("dialog", { name: "Simpan izin grup Finance?" });
-    await expect(dlg.getByRole("list", { name: "Izin ditambah" })).toContainText("+ Payments · Hapus");
-    await expect(dlg.getByRole("list", { name: "Izin dicabut" })).toContainText("− Finance · Approve");
+    await expect(dlg.getByRole("list", { name: "Izin ditambah" })).toContainText("+ Pembayaran · Hapus");
+    await expect(dlg.getByRole("list", { name: "Izin dicabut" })).toContainText("− Finance · Setujui");
     await expect(dlg).toContainText("2 anggota: USER A, USER B");
     await dlg.getByRole("button", { name: "Simpan izin" }).click();
     await expect(page.getByRole("status").filter({ hasText: "Grup Finance tersimpan: 1 ditambah, 1 dicabut; tercatat di riwayat" })).toBeVisible();
@@ -353,7 +353,7 @@ test("Simpan izin: dialog SELISIH (+/−, anggota terkena) → PATCH kunci persi
     // Grup custom: cabut users.manage = peringatan + tombol tegas, TANPA isian alasan (server tidak mencatatnya, jadi tidak boleh
     // diwajibkan); server menolak kunci tak dikenal -> kalimat jelas, draf tetap.
     await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bPromo A\b/ }).click();
-    await page.getByRole("checkbox", { name: "Users & RBAC · Manage" }).uncheck();
+    await page.getByRole("checkbox", { name: "User dan Izin · Manage" }).uncheck();
     await page.getByRole("button", { name: "Simpan izin…" }).click();
     const d2 = page.getByRole("dialog", { name: "Simpan izin grup Promo A?" });
     await expect(d2).toContainText("Mencabut Kelola user (users.manage)");
@@ -371,23 +371,23 @@ test("Grup preset Admin: Users · Manage terkunci; centang modul tidak mencabutn
     await pasang(page);
     await page.goto("/admin/groups", NAV);
     await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bAdmin\b/ }).click();
-    await expect(page.getByRole("checkbox", { name: "Users & RBAC · Manage" })).toBeDisabled();
-    await page.getByRole("checkbox", { name: "Semua izin Users & RBAC" }).click(); // nyalakan semua
-    await page.getByRole("checkbox", { name: "Semua izin Users & RBAC" }).click(); // cabut semua
-    await expect(page.getByRole("checkbox", { name: "Users & RBAC · Manage" })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "User dan Izin · Manage" })).toBeDisabled();
+    await page.getByRole("checkbox", { name: "Semua izin User dan Izin" }).click(); // nyalakan semua
+    await page.getByRole("checkbox", { name: "Semua izin User dan Izin" }).click(); // cabut semua
+    await expect(page.getByRole("checkbox", { name: "User dan Izin · Manage" })).toBeChecked();
 });
 
-test("Gerbang halaman: pemegang users.manage SAJA (tanpa users.view) tetap masuk /admin/users lewat navigasi klien; menu User & RBAC muncul", async ({ page }) => {
+test("Gerbang halaman: pemegang users.manage SAJA (tanpa users.view) tetap masuk /admin/users lewat navigasi klien; menu User dan Izin muncul", async ({ page }) => {
     // Kunci users.view dicabut dari payload dokumen /admin/groups (kunci SidebarLayout di peramban); users.manage tetap ada.
     await tanpaIzin(page, "/admin/groups", "users.view");
     await pasang(page);
     await page.goto("/admin/groups", NAV);
     await expect(page.getByRole("list", { name: "Daftar grup" })).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Menu ruang kerja" }).getByRole("link", { name: "Pengguna dan Izin" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Menu ruang kerja" }).getByRole("link", { name: "User dan Izin" })).toBeVisible();
     // Navigasi klien: layout server TIDAK dijalankan ulang; gerbang klien SidebarLayout menilai /admin/users dengan kunci yang sama.
-    await page.locator("main").getByRole("link", { name: "Pengguna dan Izin", exact: true }).click();
+    await page.locator("main").getByRole("link", { name: "User dan Izin", exact: true }).click();
     await expect(page).toHaveURL(/\/admin\/users$/);
-    await expect(page.getByRole("heading", { level: 1, name: "Pengguna dan Izin" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "User dan Izin" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Akses ditolak" })).toHaveCount(0);
     await expect(daftarUser(page).getByRole("button", { name: /USER A/ })).toBeVisible();
 });
@@ -507,7 +507,7 @@ test("Akses Group: riwayat grup, tambah anggota, draf dibuang lewat dialog, hapu
     await expect(page.getByRole("status").filter({ hasText: "USER D ditambahkan ke Finance" })).toBeVisible();
 
     // Draf izin tidak dibuang diam-diam: pindah grup lewat dialog (Batal menahan draf, Buang membuangnya).
-    await page.getByRole("checkbox", { name: "Payments · Hapus" }).check();
+    await page.getByRole("checkbox", { name: "Pembayaran · Hapus" }).check();
     await expect(page.getByText("+1 −0 belum disimpan")).toBeVisible();
     await grupList.getByRole("button", { name: /\bPromo A\b/ }).click();
     const buang = page.getByRole("dialog", { name: "Buang perubahan pada grup Finance?" });
@@ -516,7 +516,7 @@ test("Akses Group: riwayat grup, tambah anggota, draf dibuang lewat dialog, hapu
     await grupList.getByRole("button", { name: /\bPromo A\b/ }).click();
     await buang.getByRole("button", { name: "Buang perubahan" }).click();
     await expect(page.getByText(/\+\d+ −\d+ belum disimpan/)).toHaveCount(0);
-    await expect(page.getByRole("checkbox", { name: "Users & RBAC · Manage" })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "User dan Izin · Manage" })).toBeChecked();
 
     // Hapus dicegah di layar: USER C hanya punya grup Promo A.
     await page.getByRole("button", { name: "Hapus grup…" }).click();
@@ -622,11 +622,11 @@ test("Kunci usang (ada di DB, tak ada di registry): tidak tampil tetapi diumumka
     await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bFinance\b/ }).click();
     await expect(page.getByRole("status").filter({ hasText: /memuat 1 kunci usang/ })).toContainText(USANG);
     await expect(page.getByRole("button", { name: "Simpan izin…" })).toBeDisabled(); // kunci usang saja bukan draf
-    await page.getByRole("checkbox", { name: "Payments · Hapus" }).check();
+    await page.getByRole("checkbox", { name: "Pembayaran · Hapus" }).check();
     await page.getByRole("button", { name: "Simpan izin…" }).click();
     const dlg = page.getByRole("dialog", { name: "Simpan izin grup Finance?" });
     await expect(dlg.getByRole("list", { name: "Kunci usang dibuang" })).toContainText(USANG);
-    await expect(dlg.getByRole("list", { name: "Izin ditambah" })).toContainText("+ Payments · Hapus");
+    await expect(dlg.getByRole("list", { name: "Izin ditambah" })).toContainText("+ Pembayaran · Hapus");
     await expect(dlg).toContainText("tercatat dicabut");
     await dlg.getByRole("button", { name: "Simpan izin", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "1 kunci usang dibuang" })).toBeVisible();
@@ -637,25 +637,25 @@ test("Draf izin: tautan dalam aplikasi (header, menu samping) tidak membuang dra
     await pasang(page);
     await page.goto("/admin/groups", NAV);
     await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bFinance\b/ }).click();
-    await page.getByRole("checkbox", { name: "Payments · Hapus" }).check();
+    await page.getByRole("checkbox", { name: "Pembayaran · Hapus" }).check();
     const dlg = page.getByRole("dialog", { name: "Buang perubahan pada grup Finance?" });
     await page.getByRole("link", { name: "Anggota", exact: true }).click(); // AnchorBar (#g-anggota) saat ADA draf: halaman sama, tidak ditahan
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(page).toHaveURL(/#g-anggota$/);
 
-    await page.locator("main").getByRole("link", { name: "Pengguna dan Izin", exact: true }).click(); // tautan header halaman
+    await page.locator("main").getByRole("link", { name: "User dan Izin", exact: true }).click(); // tautan header halaman
     await expect(dlg).toBeVisible();
     await expect(page).toHaveURL(/\/admin\/groups(#g-anggota)?$/);
-    await expect(dlg).toContainText("Pengguna dan Izin"); // nama menu tujuan, bukan path mentah (audit desain 001 No 30)
+    await expect(dlg).toContainText("User dan Izin"); // nama menu tujuan, bukan path mentah (audit desain 001 No 30)
     await dlg.getByRole("button", { name: "Batal", exact: true }).click();
     await expect(page.getByText("+1 −0 belum disimpan")).toBeVisible(); // draf utuh
 
-    await page.getByRole("navigation", { name: "Menu ruang kerja" }).getByRole("link", { name: "Pengguna dan Izin" }).click(); // menu samping
+    await page.getByRole("navigation", { name: "Menu ruang kerja" }).getByRole("link", { name: "User dan Izin" }).click(); // menu samping
     await expect(dlg).toBeVisible();
     await expect(page).toHaveURL(/\/admin\/groups(#g-anggota)?$/);
     await dlg.getByRole("button", { name: "Buang perubahan" }).click();
     await expect(page).toHaveURL(/\/admin\/users$/);
-    await expect(page.getByRole("heading", { level: 1, name: "Pengguna dan Izin" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "User dan Izin" })).toBeVisible();
 });
 
 test("User 'Sedang disiapkan' (pembuatan gagal sebagian): tidak bisa diaktifkan, alasan terbaca — IT Support menghapusnya", async ({ page }) => {
@@ -682,7 +682,7 @@ for (const [lebar, tinggi] of [[390, 844], [1280, 800]] as const) {
         await pasang(page);
         await page.goto("/admin/groups", NAV);
         await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bFinance\b/ }).click();
-        await page.getByRole("checkbox", { name: "Payments · Hapus" }).check();
+        await page.getByRole("checkbox", { name: "Pembayaran · Hapus" }).check();
         const footer = page.locator(".fi-ftb");
         const simpan = footer.getByRole("button", { name: "Simpan izin…" });
         const batal = footer.getByRole("button", { name: "Batal perubahan" });
@@ -716,7 +716,7 @@ test("Ponsel 390 px: daftar ↔ detail tanpa gulir menyamping halaman", async ({
     await page.screenshot({ path: "test-results/fiori-s7a-07-ponsel-user.png", fullPage: true });
     await page.goto("/admin/groups", NAV);
     await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bFinance\b/ }).click();
-    await expect(page.getByRole("checkbox", { name: "Payments · Hapus" })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: "Pembayaran · Hapus" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
     await page.screenshot({ path: "test-results/fiori-s7a-08-ponsel-grup.png", fullPage: true });
 });
