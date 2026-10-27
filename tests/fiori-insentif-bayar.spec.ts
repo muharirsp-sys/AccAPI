@@ -395,7 +395,7 @@ test("Support: draf per baris → Simpan & hitung ulang lewat dialog (payload su
     await expect(sales.locator("tbody tr").filter({ hasText: "MKS-21" })).toContainText("belum 90,0%");
     await expect(main.locator(".fi-ftb").getByRole("button", { name: "Simpan & hitung ulang…" })).toBeDisabled();
 
-    await main.getByRole("spinbutton", { name: "Support MKS-07 KINO" }).fill("250000");
+    await main.getByRole("textbox", { name: "Support MKS-07 KINO" }).fill("250000");
     await main.getByRole("combobox", { name: "Status insentif MKS-21 GODREJ" }).selectOption("distributor_principle");
     await expect(sales.locator("tbody tr").filter({ hasText: "MKS-07" })).toContainText("diubah");
     await expect(sales.locator("tbody tr").filter({ hasText: "MKS-07" })).toContainText("sebelumnya Rp 0");
@@ -434,7 +434,7 @@ test("Support: galat 400 server tampil di dialog dan halaman, tidak ada yang ber
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/insentif-sales/support?month=9&year=2026", NAV);
     const main = page.locator("main");
-    await main.getByRole("spinbutton", { name: "Support MKS-07 KINO" }).fill("-5", NAV);
+    await main.getByRole("textbox", { name: "Support MKS-07 KINO" }).fill("-5", NAV);
     await main.getByRole("combobox", { name: "Status insentif MKS-21 GODREJ" }).selectOption("distributor_principle");
     await main.locator(".fi-ftb").getByRole("button", { name: "Simpan & hitung ulang…" }).click();
     const dlg = page.getByRole("dialog");
@@ -445,7 +445,7 @@ test("Support: galat 400 server tampil di dialog dan halaman, tidak ada yang ber
     await dlg.getByRole("button", { name: "Batal" }).click();
     await expect(main.getByRole("alert").filter({ hasText: "Tidak ada yang diubah." })).toBeVisible();
     await expect(main.locator(".fi-ftb")).toContainText("2 perubahan di 2 baris belum disimpan");
-    await expect(main.getByRole("spinbutton", { name: "Support MKS-07 KINO" })).toHaveValue("-5");
+    await expect(main.getByRole("textbox", { name: "Support MKS-07 KINO" })).toHaveValue("-5");
 
     putus = true;
     await main.locator(".fi-ftb").getByRole("button", { name: "Simpan & hitung ulang…" }).click();
@@ -461,8 +461,8 @@ test("Support: isian bukan angka tidak diam-diam jadi Rp 0 — Simpan dikunci, t
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/insentif-sales/support?month=9&year=2026", NAV);
     const main = page.locator("main");
-    // MKS-21 tersimpan Rp 300.000. "1e"/"e" = isian number tak terbaca: peramban melaporkan value "" (badInput), dulu terkirim sebagai 0.
-    const isi = main.getByRole("spinbutton", { name: "Support MKS-21 GODREJ" });
+    // MKS-21 tersimpan Rp 300.000. "1e"/"e" tidak terbaca pengurai id-ID (No 122: isian teks); dulu isian number melaporkan "" dan terkirim 0.
+    const isi = main.getByRole("textbox", { name: "Support MKS-21 GODREJ" });
     const baris21 = main.getByRole("table", { name: "Support sales" }).locator("tbody tr").filter({ hasText: "MKS-21" });
     const simpan = main.locator(".fi-ftb").getByRole("button", { name: "Simpan & hitung ulang…" });
     await isi.fill("", NAV);
@@ -475,7 +475,7 @@ test("Support: isian bukan angka tidak diam-diam jadi Rp 0 — Simpan dikunci, t
     await expect(isi).toHaveAccessibleDescription(/bukan angka/);
     await isi.press("Backspace"); // "1" sah lagi
     await expect(baris21).not.toContainText("bukan angka");
-    // "" → "e": value DOM tetap "" sehingga React menahan onChange — tanpa onInput ini terkirim sebagai 0.
+    // "" → "e": tetap bukan angka, tidak terkirim sebagai 0.
     await isi.fill("");
     await isi.pressSequentially("e");
     await expect(simpan).toBeDisabled();
@@ -506,12 +506,12 @@ test("Support: Excel — baris di luar periode tidak membatalkan impor, \"-\" = 
     // S-LAIN tidak ada di periode ini → dilewati; teks tidak validnya tidak boleh membatalkan baris yang dipakai.
     await input.setInputFiles(berkas([["MKS-07", "", "KINO", 250000], ["MKS-21", "", "GODREJ", "-"], ["S-LAIN", "", "KINO", "N/A"]]));
     await expect(main.getByRole("status").filter({ hasText: "2 baris support sales terisi dari Excel" })).toContainText("1 baris dilewati");
-    await expect(main.getByRole("spinbutton", { name: "Support MKS-07 KINO" })).toHaveValue("250000");
-    await expect(main.getByRole("spinbutton", { name: "Support MKS-21 GODREJ" })).toHaveValue("0");
+    await expect(main.getByRole("textbox", { name: "Support MKS-07 KINO" })).toHaveValue("250.000"); // format ribuan id-ID (No 122)
+    await expect(main.getByRole("textbox", { name: "Support MKS-21 GODREJ" })).toHaveValue("0");
     // Baris periode dengan teks bukan angka tetap menolak seluruh berkas.
     await input.setInputFiles(berkas([["MKS-07", "", "KINO", 300000], ["MKS-12", "", "KINO", "N/A"]]));
     await expect(main.getByRole("alert").filter({ hasText: "bernilai tidak valid (mis. MKS-12/KINO)" })).toBeVisible();
-    await expect(main.getByRole("spinbutton", { name: "Support MKS-07 KINO" })).toHaveValue("250000");
+    await expect(main.getByRole("textbox", { name: "Support MKS-07 KINO" })).toHaveValue("250.000");
     expect(kirim).toHaveLength(0);
 });
 
@@ -522,7 +522,7 @@ test("Support: hitung untuk SPV dan penyebut AO lewat dialog yang menyebut akiba
     const main = page.locator("main");
     const spv = main.getByRole("table", { name: "Support SPV" });
     await expect(spv.locator("tbody tr")).toHaveCount(4, NAV); // ANI×KINO (2 sales), ANI×MOTASA, MARTEN×GODREJ, YARMAN  S×VINDA
-    await expect(main.getByRole("spinbutton", { name: "Support SPV MARTEN GODREJ" })).toHaveValue("4170000");
+    await expect(main.getByRole("textbox", { name: "Support SPV MARTEN GODREJ" })).toHaveValue("4.170.000");
     // "YARMAN  S" (spasi ganda) cocok dengan "YARMAN S|VINDA" dari server — dulu /s+/ tidak merapikan spasi.
     await expect(spv.getByRole("button", { name: /Dihitung untuk SPV: VINDA untuk YARMAN\s+S/ })).toHaveAttribute("aria-pressed", "true");
 
@@ -565,13 +565,13 @@ test("Support: kosong = target belum diunggah; galat dashboard/support SPV bukan
     mode = "isi";
     await page.reload(NAV);
     await expect(main.getByRole("alert").filter({ hasText: "Support SPV belum berhasil dimuat." })).toContainText("tidak tertimpa nol", NAV);
-    await expect(main.getByRole("spinbutton", { name: /Support SPV/ })).toHaveCount(0);
+    await expect(main.getByRole("textbox", { name: /Support SPV/ })).toHaveCount(0);
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload(NAV);
     await expect(main.getByRole("list", { name: "Support sales" })).toBeVisible(NAV);
     await noOverflow(page);
-    await main.getByRole("spinbutton", { name: "Support MKS-07 KINO" }).fill("100000");
+    await main.getByRole("textbox", { name: "Support MKS-07 KINO" }).fill("100000");
     await expect(main.locator(".fi-ftb")).toContainText("1 perubahan di 1 baris belum disimpan");
     await page.screenshot({ path: "test-results/fiori-insentif-support-ponsel.png", fullPage: true });
 });

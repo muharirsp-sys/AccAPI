@@ -3,7 +3,7 @@
  *   PASTI dari TIDAK PASTI menurut §8.2 (BUKAN `tulis()` principal-order: di sana semua ≥ 502 dianggap tidak pasti, padahal 502 BACA_GAGAL /
  *   503 SESI_SINKRON = pasti), isian Rupiah manusia -> teks desimal, format Rupiah/WITA, label status & alasan.
  * Caller: Kasir.tsx, DialogKasir.tsx.
- * Dependensi: form-kontrol/lapangan (ambilJson), principal-order/bersama (baca, sebab), lib/angka-lokal (angkaLokalTeks, tanpa SheetJS),
+ * Dependensi: form-kontrol/lapangan (ambilJson), principal-order/bersama (baca, sebab), lib/angka-lokal (nominalKeTeks, diekspor ulang),
  *   lib/kasir/rekonsiliasi (keSen — murni), lib/promo-ui (rupiah), lib/tampil (KOSONG untuk nilai kosong, waktuWita diekspor ulang).
  * Main Functions: bacaHari, bacaRincian, kirimKasir, nominalKeTeks, rp, waktuWita, segarkan, ALASAN, LABEL_*.
  * Side Effects: fetch (bacaHari/bacaRincian/kirimKasir/segarkan); sisanya murni.
@@ -12,7 +12,6 @@ import type { Tone } from "@/components/fiori/core";
 import type { Load } from "@/components/fiori/interactive";
 import { ambilJson } from "@/app/(dashboard)/form-kontrol/lapangan";
 import { baca } from "@/app/(dashboard)/principal-order/bersama";
-import { angkaLokalTeks } from "@/lib/angka-lokal";
 import { keSen } from "@/lib/kasir/rekonsiliasi";
 import { rupiah } from "@/lib/promo-ui";
 import { KOSONG } from "@/lib/tampil";
@@ -126,25 +125,8 @@ export async function kirimKasir(url: string, body: Record<string, unknown> | Fo
 export const segarkan = (tanggal: string, opsi: { penuh?: boolean; konfirmasiHapus?: boolean } = {}) =>
     kirimKasir("/api/kasir/segarkan", { tanggal, ...(opsi.penuh ? { penuh: true } : {}), ...(opsi.konfirmasiHapus ? { konfirmasiHapus: true } : {}) });
 
-/** Batas server §8.4 (Rp 100 miliar per kolom). */
-export const MAKS_NOMINAL = 100_000_000_000;
-
-/**
- * Isian manusia ("Rp 1.250.000", "1.250.000,50", kosong = 0) -> teks desimal untuk server ("1250000", "1250000.5"); galat bila tidak sah
- * (negatif, > 2 desimal — dihitung dari TEKS, bukan float — atau di luar batas). Sen bulat TEPAT (keSen), teks dibentuk dari sen.
- */
-export function nominalKeTeks(isian: string): { teks: string; sen: number } | { galat: string } {
-    const t = angkaLokalTeks(isian);
-    if (t === null) return { galat: "Isi angka rupiah yang sah, mis. 1.250.000." };
-    if (t.startsWith("-") && /[1-9]/.test(t)) return { galat: "Nominal tidak boleh negatif." };
-    const pecahan = t.split(".")[1] ?? "";
-    if (pecahan.length > 2) return { galat: "Maksimal 2 angka di belakang koma." };
-    let sen: number;
-    try { sen = Math.abs(keSen(t)); } catch { return { galat: "Nominal maksimal Rp 100.000.000.000." }; }
-    if (sen > MAKS_NOMINAL * 100) return { galat: "Nominal maksimal Rp 100.000.000.000." };
-    const sisa = sen % 100;
-    return { sen, teks: sisa === 0 ? String(sen / 100) : `${Math.trunc(sen / 100)}.${String(sisa).padStart(2, "0").replace(/0$/, "")}` };
-}
+// Pengurai isian rupiah (nominalKeTeks, MAKS_NOMINAL) dipindah UTUH ke lib/angka-lokal (audit desain 001 No 122: satu pengurai bersama).
+export { MAKS_NOMINAL, nominalKeTeks } from "@/lib/angka-lokal";
 
 /** Teks uang server -> sen (null bila kosong/rusak). */
 export function senDari(t: Uang | null | undefined): number | null {

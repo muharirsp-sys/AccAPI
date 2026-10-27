@@ -457,7 +457,15 @@ test("Verifikasi final (claimView=after): No Claim + checklist per item, Ingatka
     await item2.getByRole("checkbox", { name: "Lainnya" }).check();
     await item2.getByLabel("Keterangan lainnya").fill("Surat jalan");
     await item2.getByLabel("Catatan kelengkapan final").fill("Asli menyusul");
-    await final.getByLabel("Nilai fix (isi bila berbeda)").fill("4000000");
+    // No 122: isian teks; masukan tidak sah ditolak dengan pesan (tidak diam-diam = dibayar); "4.000.000" bernilai sama dengan "4000000".
+    const fix = final.getByLabel("Nilai fix (isi bila berbeda)");
+    await expect(fix).toHaveAttribute("type", "text");
+    await fix.fill("4.000.000,555");
+    await expect(footer).toContainText("Nilai fix belum sah: Maksimal 2 angka di belakang koma.");
+    await expect(footer.getByRole("button", { name: "Selesaikan…" })).toBeDisabled();
+    await fix.fill("4.000.000");
+    await fix.blur();
+    await expect(fix).toHaveValue("4.000.000");
     await expect(final.getByRole("status").filter({ hasText: "Selisih Rp 300.000." })).toContainText("Akan masuk Data Selisih");
     await expect(footer.getByRole("button", { name: "Selesaikan…" })).toBeEnabled();
     await page.screenshot({ path: "test-results/fiori-opc-klaim-final.png", fullPage: true });

@@ -9,7 +9,7 @@
  */
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useId, useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { EmptyState } from "@/components/fiori/core";
@@ -128,6 +128,7 @@ export function InsentifRangka({ halaman, permKeys, deskripsi, saringan, saringa
     // di navigasi hanya muncul bila akun tidak punya halaman lain.
     const ini = terlihat.find((h) => h.key === halaman) ?? HALAMAN.find((h) => h.key === halaman && h.key === "saya");
     const { month, year, principle, branch, sm, ubah, bawa } = usePeriode();
+    const idPeriode = useId();
     const judul = ini?.label ?? "Insentif Sales";
     const smAktif = Boolean(saringan && saringanLain) && sm !== "ALL";
     const aktif = saringan ? Number(principle !== "ALL") + Number(branch !== "ALL") + Number(smAktif) : 0;
@@ -137,11 +138,21 @@ export function InsentifRangka({ halaman, permKeys, deskripsi, saringan, saringa
         ...(smAktif ? [{ label: `SM: ${sm}`, onRemove: () => ubah({ sm: "ALL" }) }] : []),
     ] : [];
 
+    // Bulan + Tahun (audit No 122): `type="month"` jatuh ke kotak teks di Firefox/Safari desktop. Nilai URL sama: month 1..12, year 4 digit.
+    const tahunKini = bulanIniWita().year;
+    const opsiTahun = [...new Set([...Array.from({ length: 5 }, (_, i) => tahunKini - 3 + i), year])].sort((a, b) => a - b);
     const periode = (
-        <FormField label="Periode">{(a) => (
-            <input {...a} className="fi-input" type="month" value={`${year}-${String(month).padStart(2, "0")}`}
-                onChange={(e) => { const [y, m] = e.target.value.split("-"); if (y && m) ubah({ year: y, month: String(Number(m)) }); }} />
-        )}</FormField>
+        <div className="fi-field" role="group" aria-labelledby={idPeriode}>
+            <span className="fi-label" id={idPeriode}>Periode</span>
+            <div style={{ display: "flex", gap: 8 }}>
+                <select className="fi-input" aria-label="Bulan" value={month} onChange={(e) => ubah({ year: String(year), month: e.target.value })}>
+                    {MONTH_LABELS.map((l, i) => <option key={l} value={i + 1}>{l}</option>)}
+                </select>
+                <select className="fi-input" aria-label="Tahun" style={{ maxWidth: "7rem" }} value={year} onChange={(e) => ubah({ year: e.target.value, month: String(month) })}>
+                    {opsiTahun.map((y) => <option key={y} value={y}>{y}</option>)}
+                </select>
+            </div>
+        </div>
     );
 
     return (

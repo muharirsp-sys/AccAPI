@@ -4,17 +4,22 @@
  *   payload POST /final-claim action=complete (SAMA dengan completeFinalClaim kode lama), dan bagian form/baca di Object Page.
  * Caller: opc/peran/Klaim.tsx (DetailKlaim).
  * Dependensi: components/fiori/{core,interactive}, lib/off-program-control/workflow (hasMinimalFinalChecklist), lib/opc-ui, lib/promo-ui,
- *   lib/tampil (KOSONG).
+ *   lib/tampil (KOSONG), lib/angka-lokal (nominalKeTeks, isianNominal: pengurai rupiah bersama, audit No 122).
+ * Isian Nilai fix (No 122): teks bebas berformat ribuan id-ID; yang DISIMPAN di `nilaiFix` tetap teks desimal kanonik ("1500000",
+ *   "1250000.5") hasil pengurai bersama, jadi payloadSelesai/perkiraanSelisih dan pemakai lain (Klaim.tsx) membaca angka yang sama
+ *   seperti dulu. Masukan tidak sah disimpan apa adanya, ditandai di isian, dan menahan Selesaikan (kekuranganFinal).
  * Main Functions: awalFinal, uangFinal, kekuranganFinal, payloadSelesai, perkiraanSelisih, BagianFinal.
  * Side Effects: Tidak ada; tulis dilakukan Klaim.tsx lewat dialog.
  */
 "use client";
 
+import { useState } from "react";
 import { MessageStrip, KeyValues, ListItem, ResponsiveTable, type Column } from "@/components/fiori/core";
 import { FormField } from "@/components/fiori/interactive";
 import { hasMinimalFinalChecklist } from "@/lib/off-program-control/workflow";
 import { rupiah } from "@/lib/promo-ui";
 import { tanggalOpc, type BatchOpc, type ItemOpc } from "@/lib/opc-ui";
+import { isianNominal, nominalKeTeks } from "@/lib/angka-lokal";
 import { KOSONG } from "@/lib/tampil";
 import type { DetailBatch } from "../Bersama";
 
@@ -68,8 +73,18 @@ export function kekuranganFinal(data: DetailBatch, isian: IsianFinal): string[] 
     if (tanpaNoClaim.length) kurang.push(`No Claim wajib diisi untuk No Surat: ${tanpaNoClaim.map((i) => i.noSurat).join(", ")}.`);
     const tanpaCeklis = bersurat.filter((i) => { const cl = isian.ceklis[i.id]; return !cl || !hasMinimalFinalChecklist(cl); });
     if (tanpaCeklis.length) kurang.push(`Checklist kelengkapan final wajib diisi minimal satu untuk No Surat: ${tanpaCeklis.map((i) => i.noSurat).join(", ")}.`);
+    // No 122: nilai fix yang tidak terbaca tidak boleh diam-diam menjadi "sama dengan dibayar".
+    const fix = galatNilaiFix(isian.nilaiFix);
+    if (fix) kurang.push(`Nilai fix belum sah: ${fix}`);
     return kurang;
 }
+
+/** Galat pengurai rupiah bersama untuk isian nilai fix; kosong = sah (sama dengan dibayar). */
+const galatNilaiFix = (t: string) => { if (!t.trim()) return ""; const r = nominalKeTeks(t); return "galat" in r ? r.galat : ""; };
+/** Isian manusia -> yang disimpan di `nilaiFix`: kosong tetap kosong, sah = teks desimal kanonik, tidak sah = apa adanya (ditahan). */
+const kanonikFix = (t: string) => { if (!t.trim()) return ""; const r = nominalKeTeks(t); return "galat" in r ? t : r.teks; };
+/** Tampilan `nilaiFix` berformat ribuan id-ID; teks yang tidak bisa dibaca bolak-balik tampil apa adanya. */
+const tampilFix = (v: string) => { const r = v.trim() ? nominalKeTeks(v) : null; return r && "teks" in r ? isianNominal(Number(r.teks)) ?? v : v; };
 
 /**
  * Body POST /final-claim action=complete: SAMA dengan completeFinalClaim kode lama, plus `alasanSendiri` (BL-10, #132):
@@ -112,6 +127,8 @@ type BagianFinalProps = { data: DetailBatch; isian: IsianFinal; ubah?: (f: (x: I
 /** Bagian "Verifikasi final": form (bila `ubah`) atau baca (batch selesai / menunggu selisih / bukan antrean). */
 export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps) {
     const b: BatchOpc = data.batch;
+    // Teks yang sedang diketik tetap tampil selama masih mewakili `nilaiFix`; sesudah blur tampil berformat ribuan (No 122).
+    const [ketikFix, setKetikFix] = useState<string | null>(null);
     const u = uangFinal(data);
     const ringkas = (
         <KeyValues items={[
@@ -151,6 +168,8 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
         );
     }
 
+    const teksFix = ketikFix !== null && kanonikFix(ketikFix) === isian.nilaiFix ? ketikFix : tampilFix(isian.nilaiFix);
+    const galatFix = galatNilaiFix(isian.nilaiFix);
     const lebih = perkiraanSelisih(u.dibayar, isian.nilaiFix);
     const fixAngka = Number(isian.nilaiFix);
     const tampilSelisih = isian.nilaiFix.trim() !== "" && !Number.isNaN(fixAngka) && fixAngka !== u.dibayar;
@@ -216,12 +235,13 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
                         <span className="fi-label">Total dibayar Keuangan</span>
                         <b className="fi-tnum">{rupiah(u.dibayar)}</b>
                     </div>
-                    <FormField label="Nilai fix (isi bila berbeda)"
-                        help={`Isi bila realisasi klaim berbeda dari total yang sudah dibayar Keuangan. Kosong berarti sama dengan ${rupiah(u.dibayar)}. Selisih masuk Data Selisih dan dikembalikan SPV/SM.`}>
+                    <FormField label="Nilai fix (isi bila berbeda)" error={galatFix || undefined}
+                        help={`Isi bila realisasi klaim berbeda dari total yang sudah dibayar Keuangan, mis. 1.500.000. Kosong berarti sama dengan ${rupiah(u.dibayar)}. Selisih masuk Data Selisih dan dikembalikan SPV/SM.`}>
                         {(a) => (
-                            // Roda mouse tidak boleh mengubah nilai yang menentukan selisih: isian dilepas fokusnya saat digulir.
-                            <input {...a} className="fi-input fi-tnum" type="number" min={0} inputMode="numeric" value={isian.nilaiFix}
-                                onWheel={(e) => e.currentTarget.blur()} onChange={(e) => { const v = e.target.value; ubah((x) => ({ ...x, nilaiFix: v })); }} />
+                            // type="text": roda mouse tidak mengubah nilai yang menentukan selisih, dan "1.500.000" terbaca sebagai ribuan.
+                            <input {...a} className="fi-input fi-tnum" type="text" inputMode="numeric" autoComplete="off" value={teksFix}
+                                onChange={(e) => { const t = e.target.value; setKetikFix(t); ubah((x) => ({ ...x, nilaiFix: kanonikFix(t) })); }}
+                                onBlur={() => setKetikFix(null)} />
                         )}
                     </FormField>
                 </div>
