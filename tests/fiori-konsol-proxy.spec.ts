@@ -5,6 +5,8 @@
  *   Audit desain 001 M1: tulis hanya sesudah ConfirmDialog (Kirim = satu POST, Batal = nol POST; fakta endpoint, jumlah baris,
  *   database aktif, tidak bisa ditarik), JSON rusak = galat di halaman tanpa dialog, hasil parser berkas tidak berlabel terkirim,
  *   override duplikat pelunasan lewat dialog beralasan (min 15 sesudah trim, alasan yang sama sampai ke lock idempotency).
+ *   Audit desain 001 kelompok 3: log galat tidak diunduh otomatis (No 7, tombol "Unduh log galat"; Status tanpa em dash);
+ *   tab Unggah Excel tanpa berkas: Kirim nonaktif beralasan dan nol POST (usulan G).
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true):
  *   `npx playwright test tests/fiori-konsol-proxy.spec.ts --config playwright.fiori-local.config.ts --workers=1`.
  * Dependensi: /api/auth/accurate-session, /api/auth/db-list, /api/proxy, /api/idempotency/{lock,complete} di-mock dengan page.route
@@ -95,22 +97,28 @@ test("tinjauan A: tahap 1 = 504 (TIDAK PASTI), tahap 2 = 400 sent:false -> ringk
         if (p.method === "GET") return { status: 200, body: { s: true, d: [] } }; // riwayat Accurate: tidak ditemukan
         tulis += 1;
         return tulis === 1
-            ? { status: 504, body: { error: "Accurate tidak merespons dalam 30 detik (timeout) — status tulis TIDAK PASTI: periksa di Accurate sebelum mengirim ulang." } }
+            ? { status: 504, body: { error: "Accurate tidak merespons dalam 30 detik (timeout). Status tulis TIDAK PASTI: periksa di Accurate sebelum mengirim ulang." } }
             : { status: 400, body: { error: SESI, code: "ACCURATE_SESSION_INCOMPLETE", sent: false } };
     });
     const baris = Array.from({ length: 150 }, (_, i) => ({ customerNo: `C-${i}`, transDate: "01/10/2026", detailItem: [{ itemNo: "I1", quantity: 1 }] }));
-    const unduh = page.waitForEvent("download", { timeout: 120_000 });
+    const unduhan: string[] = [];
+    page.on("download", (d) => unduhan.push(d.suggestedFilename()));
     await eksekusi(page, "salesReturnBulkSave", baris);
     const log = hasil(page).getByRole("alert");
     await expect(log).toContainText(SESI, NAV);
     await expect(log).toContainText("100 baris TIDAK DIKETAHUI");
     await expect(log).toContainText("2 tahap gagal");
-    // Unduhan otomatis tetap; tombol unduh ulang memakai baris log yang sama.
-    await expect(hasil(page).getByRole("button", { name: "Unduh ulang log galat" })).toBeVisible();
+    await expect(log).toContainText("tekan Unduh log galat");
+    // No 7: tidak ada unduhan otomatis (dulu setTimeout 2 dtk); log galat hanya lewat tombol.
+    await page.waitForTimeout(3_000);
+    expect(unduhan).toEqual([]);
+    const unduh = page.waitForEvent("download");
+    await hasil(page).getByRole("button", { name: "Unduh log galat" }).click();
     const berkas = await (await unduh).path();
     const isi = XLSX.utils.sheet_to_json<Record<string, unknown>>(XLSX.readFile(berkas).Sheets["Error Log"]);
     const hitung = (awal: string) => isi.filter((r) => String(r.Status).startsWith(awal)).length;
-    expect([isi.length, hitung("TIDAK DIKETAHUI"), hitung("Gagal — tidak terkirim")]).toEqual([150, 100, 50]);
+    expect([isi.length, hitung("TIDAK DIKETAHUI"), hitung("Gagal: tidak terkirim")]).toEqual([150, 100, 50]);
+    expect(isi.filter((r) => String(r.Status).includes("—"))).toEqual([]);
     expect(proxy.filter((p) => p.method === "POST").map((p) => p.endpointPath)).toEqual(["/api/sales-return/bulk-save.do", "/api/sales-return/bulk-save.do"]);
 });
 
@@ -132,6 +140,27 @@ test("Kirim: dialog menyebut endpoint, jumlah baris, database aktif, tidak bisa 
     await dlg.getByRole("button", { name: "Kirim 3 baris" }).click();
     await expect(hasil(page).getByRole("status").filter({ hasText: "Accurate menerima kiriman." })).toBeVisible(NAV);
     expect(proxy).toEqual([{ endpointPath: "/api/sales-return/bulk-save.do", method: "POST" }]);
+});
+
+test("usulan G: tab Unggah Excel tanpa berkas = Kirim nonaktif dengan alasan terlihat, nol POST (tulis dan baca)", async ({ page }) => {
+    const proxy = await mockKonsol(page, () => ({ status: 200, body: { s: true, d: [] } }));
+    for (const route of ["salesReturnBulkSave", "purchaseOrder"]) {
+        await isi(page, route, [{ customerNo: "PELANGGAN-A" }]);
+        await page.getByRole("button", { name: "Unggah Excel" }).click();
+        const kirim = page.getByRole("button", { name: KIRIM });
+        await expect(kirim).toBeDisabled();
+        await expect(kirim).toHaveAttribute("aria-disabled", "true"); // tetap di urutan Tab (pola disabledReason)
+        await expect(page.getByText("Unggah berkas Excel dulu.", { exact: false }).first()).toBeVisible();
+        await kirim.click({ force: true });
+        await kirim.focus();
+        await page.keyboard.press("Enter");
+        await expect(page.getByRole("dialog", { name: /ke Accurate\?$/ })).toHaveCount(0);
+        // Kembali ke Payload JSON: Kirim aktif lagi dan memakai isi editor, bukan contoh payload bawaan.
+        await page.getByRole("button", { name: "Payload JSON" }).click();
+        await expect(kirim).toBeEnabled();
+    }
+    await page.waitForTimeout(1_000);
+    expect(proxy).toEqual([]);
 });
 
 test("JSON rusak: galat di halaman (role alert, bukan toast), dialog tidak terbuka, nol POST", async ({ page }) => {
