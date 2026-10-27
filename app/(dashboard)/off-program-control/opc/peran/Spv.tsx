@@ -22,6 +22,7 @@ import { ChevronLeft, ChevronRight, FileText, Percent, Plus } from "lucide-react
 import { Button, FooterToolbar, KeyValues, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
 import { PREDIKAT, TAMPILAN, labelStatus, tahapBatch, type Tampilan } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
+import { hariIniWita } from "@/lib/tampil";
 import { KerjaPeran, pesanTidakPasti, type DaftarOpc, type DetailProps, type OpcKonteks, type PeranProps } from "../Bersama";
 import { ObjectPageBatch, type BagianTambahan } from "../ObjectPageBatch";
 import {
@@ -175,13 +176,13 @@ function UbahBatch(props: DetailProps & Bersama) {
     const { ctx, daftar, detail, batchId, strip, konflik, setPesan, setKonflik, setHasil, laporTidakPasti } = props;
     const data = detail.data!;
     const b = data.batch;
-    // openReturnedBatch (kode lama): isian dari detail batch; nilai cadangan sama dengan kode lama.
+    // openReturnedBatch (kode lama): isian dari detail batch. Tanpa cadangan principal/bulan/tahun karangan (audit No 73): yang kosong wajib diisi.
     const [awal] = useState(() => ({
         setup: {
             supervisorName: b.supervisorName || ctx.pengguna.nama.trim() || "Supervisor",
-            principleName: b.principleName || "RECKITT BENCKISER, PT",
-            bulan: (b.bulan || "05").padStart(2, "0"),
-            tahun: b.tahun || "2026",
+            principleName: b.principleName || "",
+            bulan: b.bulan ? b.bulan.padStart(2, "0") : "",
+            tahun: b.tahun || "",
         },
         rows: data.items.length ? data.items.map(barisDariItem) : [barisKosong()],
     }));
@@ -253,13 +254,11 @@ function BatchBaru({ ctx, daftar }: { ctx: OpcKonteks; daftar: DaftarOpc }) {
     const { titip } = useContext(TitipanCtx);
     const [pesan, setPesan] = useState<Pesan | null>(null);
     const [sudahAda, setSudahAda] = useState<HasilKirim | null>(null);
+    // Tanpa principal bawaan (wajib dipilih, pola Batch CLM); bulan dan tahun = hari ini WITA, bukan jam perangkat (audit No 31, 73).
     const [awal] = useState(() => {
-        const kini = new Date();
+        const hari = hariIniWita();
         return {
-            setup: {
-                supervisorName: ctx.pengguna.nama.trim(), principleName: "RECKITT BENCKISER, PT",
-                bulan: String(kini.getMonth() + 1).padStart(2, "0"), tahun: String(kini.getFullYear()),
-            },
+            setup: { supervisorName: ctx.pengguna.nama.trim(), principleName: "", bulan: hari.slice(5, 7), tahun: hari.slice(0, 4) },
             rows: [barisKosong()],
         };
     });
@@ -301,7 +300,7 @@ function BatchBaru({ ctx, daftar }: { ctx: OpcKonteks; daftar: DaftarOpc }) {
                 draft={f.dirty}
                 attributes={[
                     { label: "No pengajuan (perkiraan)", value: <span className="fi-mono">{f.nomorTampil}</span> },
-                    { label: "Principal", value: f.setup.principleName },
+                    { label: "Principal", value: f.setup.principleName || "Belum dipilih" },
                     { label: "Item", value: <span className="fi-tnum">{f.rows.length}</span> },
                     { label: "Total", value: <span className="fi-tnum">{rupiah(f.bayar.total)}</span> },
                 ]}

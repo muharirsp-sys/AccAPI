@@ -4,7 +4,7 @@
  *   Pengganti Panel Data Klaim kode lama.
  * Caller: opc/peran/Klaim.tsx (kolomKedua KerjaPeran).
  * Dependensi: opc/Bersama (ambilOpc, tulisOpc, tanganiTulis, kontrak), components/fiori/{core,interactive}, lib/off-program-control/{constants,
- *   program-type,helpers} (daftar principal, tipe CLM, parseCurrency untuk total tampilan), lib/opc-ui, lib/promo-ui, lib/tampil (KOSONG).
+ *   program-type,helpers} (daftar principal, tipe CLM, parseCurrency untuk total tampilan), lib/opc-ui, lib/promo-ui, lib/tampil (KOSONG, hariIniWita).
  * Main Functions: FormClm.
  * Side Effects: GET /api/off-program-control/batches/next-number?source=claim; POST /api/off-program-control/batches (payload SAMA
  *   dengan submitClmBatch kode lama), lalu muat ulang daftar. Jawaban tidak pasti: strip peringatan + muat ulang daftar.
@@ -20,7 +20,7 @@ import { parseCurrency } from "@/lib/off-program-control/helpers";
 import { OFF_CLM_PROGRAM_TYPES } from "@/lib/off-program-control/program-type";
 import { periodeBatch } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
-import { KOSONG } from "@/lib/tampil";
+import { KOSONG, hariIniWita } from "@/lib/tampil";
 import { ambilOpc, pesanTidakPasti, tanganiTulis, tulisOpc, type DaftarOpc, type OpcKonteks } from "../Bersama";
 
 /** Baris form = SupervisorBulkRow kode lama (149) tanpa kolom yang tidak dipakai CLM. */
@@ -53,8 +53,9 @@ function syaratSimpan(rows: BarisClm[], tahun: string, principal: string): strin
 export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: DaftarOpc; tutup: () => void }) {
     const izinBuat = ctx.izin("create_batch");
     const [principal, setPrincipal] = useState("");
-    const [bulan, setBulan] = useState(() => String(new Date().getMonth() + 1).padStart(2, "0"));
-    const [tahun, setTahun] = useState(() => String(new Date().getFullYear()));
+    // Bulan dan tahun awal = hari ini WITA (bukan jam perangkat), audit No 31.
+    const [bulan, setBulan] = useState(() => hariIniWita().slice(5, 7));
+    const [tahun, setTahun] = useState(() => hariIniWita().slice(0, 4));
     const [rows, setRows] = useState<BarisClm[]>(() => [barisKosong("baris-1")]);
     const [segar, setSegar] = useState(0);
     const [dialog, setDialog] = useState(false);

@@ -31,9 +31,9 @@ type Laporan = { tone: "pos" | "warn" | "neg"; judul: string; rincian: string[] 
 const modeLabel = (m: string) => (m === "EXCLUDE" ? "semua KECUALI peserta" : "hanya peserta");
 
 /** Isian nama daftar yang memperlihatkan talinya ke aturan (datalist: promo berjalan bisa dipilih, daftar mandiri tetap bisa diketik). */
-function PilihDaftar({ id, label, value, onChange, lists, programs, onTunjuk, help, kunci }: {
+function PilihDaftar({ id, label, value, onChange, lists, programs, onTunjuk, help, kunci, required }: {
     id: string; label: string; value: string; onChange: (v: string) => void; lists: ListInfo[]; programs: Program[];
-    onTunjuk?: (surat: string) => void; help?: string; kunci?: boolean;
+    onTunjuk?: (surat: string) => void; help?: string; kunci?: boolean; required?: boolean;
 }) {
     const nama = value.trim().toUpperCase();
     const linked = lists.find((e) => e.name.toUpperCase() === nama)?.linked ?? [];
@@ -41,7 +41,7 @@ function PilihDaftar({ id, label, value, onChange, lists, programs, onTunjuk, he
     const pilihan = tujuan || (programs.some((p) => p.suratProgram.toUpperCase() === nama) ? nama : "");
     return (
         <div style={{ display: "grid", gap: 6 }}>
-            <FormField label={label} help={help}>{(a11y) => <input {...a11y} className="fi-input" list={id} disabled={kunci} placeholder="DAFTAR A atau nomor surat" value={value} onChange={(e) => onChange(e.target.value.toUpperCase())} />}</FormField>
+            <FormField label={label} help={help} required={required}>{(a11y) => <input {...a11y} className="fi-input" list={id} disabled={kunci} placeholder="DAFTAR A atau nomor surat" value={value} onChange={(e) => onChange(e.target.value.toUpperCase())} />}</FormField>
             <datalist id={id}>
                 {programs.map((p) => <option key={`p-${p.suratProgram}`} value={p.suratProgram}>{`promo berjalan · ${p.rules} aturan${p.promoLabel ? ` · ${p.promoLabel}` : ""}`}</option>)}
                 {lists.filter((e) => !programs.some((p) => p.suratProgram === e.name)).map((e) => <option key={`l-${e.name}`} value={e.name}>{`daftar yang sudah ada · ${e.members} toko`}</option>)}
@@ -67,7 +67,7 @@ export default function DaftarOutlet({ bolehUbah }: { bolehUbah: boolean }) {
     const [list, setList] = useState("");
     const [q, setQ] = useState("");
     const [distCodeKetik, setDistCode] = useState<string | null>(null);
-    const [listName, setListName] = useState("LOYALTY");
+    const [listNameKetik, setListName] = useState<string | null>(null);
     const [tambah, setTambah] = useState<Tambah | null>(null);
     const [ubah, setUbah] = useState<{ id: number; periodStart: string; periodEnd: string } | null>(null);
     const [periodeSemua, setPeriodeSemua] = useState<{ periodStart: string; periodEnd: string } | null>(null);
@@ -88,6 +88,9 @@ export default function DaftarOutlet({ bolehUbah }: { bolehUbah: boolean }) {
     const members = data.data?.members ?? [];
     const distCode = distCodeKetik ?? data.data?.distCode ?? "";
     const infoList = lists.find((e) => e.name === list);
+    // Nama daftar awal = daftar yang dipilih, atau daftar pertama dari server; tanpa daftar = kosong (wajib diisi untuk berkas terpisah).
+    // Tidak ada nama bawaan literal lagi (audit No 79).
+    const listName = listNameKetik ?? (list || lists[0]?.name || "");
 
     /** Galat jaringan menjadi jawaban galat biasa, supaya selalu tampil sebagai pesan (bukan penolakan promise yang sunyi). */
     async function kirim(init: RequestInit, url = "/api/promo-outlet"): Promise<{ ok: boolean; body: Record<string, unknown> & { ok?: boolean; error?: string } }> {
@@ -220,7 +223,7 @@ export default function DaftarOutlet({ bolehUbah }: { bolehUbah: boolean }) {
                     <a className="fi-btn fi-btn--tertiary" href="/api/promo-outlet?template=1"><Download className="fi-icon" aria-hidden />Template daftar</a>
                     <a className="fi-btn fi-btn--tertiary" href="/api/promo-recap?template=1"><Download className="fi-icon" aria-hidden />Template aturan &amp; tarif MT</a>
                     {bolehUbah && <label className={`fi-btn fi-btn--secondary${sibuk ? " fi-busy" : ""}`}><FileUp className="fi-icon" aria-hidden />Unggah surat / berkas<input type="file" accept=".pdf,.xlsx,.xls,.csv" disabled={sibuk} className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) setBerkas(f); }} /></label>}
-                    {bolehUbah && <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} onClick={() => setTambah({ listName: list || lists[0]?.name || "LOYALTY", codes: "", tier: "", periodStart: "", periodEnd: "", note: "" })}>Ketik manual</Button>}
+                    {bolehUbah && <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} onClick={() => setTambah({ listName: list || lists[0]?.name || "", codes: "", tier: "", periodStart: "", periodEnd: "", note: "" })}>Ketik manual</Button>}
                 </>}>
                 <div className="fi-sect-in">
                     <p className="fi-small fi-muted">Daftar yang tercetak di surat: unggah suratnya. Sistem mengambil baris milik kode distributor kita dan langsung menunjuk semua aturan surat itu ke daftarnya. Template dan berkas terpisah hanya untuk daftar yang tidak tercetak di surat (mis. peserta loyalty kuartalan). Surat hasil scan dibaca OCR berbayar per halaman, hanya bila lapisan teksnya tidak menjawab.</p>
@@ -237,7 +240,7 @@ export default function DaftarOutlet({ bolehUbah }: { bolehUbah: boolean }) {
                 <Section title="Ketik anggota manual" actions={<><Button variant="tertiary" onClick={() => setTambah(null)}>Batal</Button><Button variant="primary" busy={sibuk} disabled={!tambah.codes.trim() || !tambah.listName.trim()} disabledReason="Isi nama daftar dan kode outlet" onClick={() => void simpanTambah()}>Simpan</Button></>}>
                     <div className="fi-sect-in">
                         <div className="fi-formgrid">
-                            <PilihDaftar id="daftar-ketik" label="Nama daftar / promo" value={tambah.listName} onChange={(v) => setTambah({ ...tambah, listName: v })} lists={lists} programs={programs} onTunjuk={(s) => void tunjuk(tambah.listName, s)} />
+                            <PilihDaftar id="daftar-ketik" label="Nama daftar / promo" required value={tambah.listName} onChange={(v) => setTambah({ ...tambah, listName: v })} lists={lists} programs={programs} onTunjuk={(s) => void tunjuk(tambah.listName, s)} />
                             <FormField label="Keterangan" help="Bebas, mis. KATEGORI A; tidak dipakai memutuskan.">{(a11y) => <input {...a11y} className="fi-input" value={tambah.tier} onChange={(e) => setTambah({ ...tambah, tier: e.target.value })} />}</FormField>
                             <FormField label="Ikut mulai" help="Kosong = sejak kapan pun.">{(a11y) => <input {...a11y} className="fi-input" type="date" value={tambah.periodStart} onChange={(e) => setTambah({ ...tambah, periodStart: e.target.value })} />}</FormField>
                             <FormField label="Ikut sampai" help="Kosong = sampai dikeluarkan.">{(a11y) => <input {...a11y} className="fi-input" type="date" value={tambah.periodEnd} onChange={(e) => setTambah({ ...tambah, periodEnd: e.target.value })} />}</FormField>
