@@ -325,11 +325,11 @@ test("Batch baru di kolom kedua: nomor otomatis per principal, validasi kode lam
     await expect(detail.getByRole("heading", { level: 2, name: "Batch baru" })).toBeVisible(NAV);
     const setup = detail.getByRole("region", { name: "Setup batch" });
     // Tanpa principal bawaan (owner 27 Okt, audit No 73): wajib dipilih; bulan/tahun dari hari ini WITA (No 31).
-    await expect(setup.getByLabel("Principal", { exact: true })).toHaveValue("");
+    await expect(setup.getByLabel(/^Principal\*?$/)).toHaveValue("");
     await expect(setup.getByLabel("Bulan")).toHaveValue(MM);
     await expect(setup.getByLabel("Tahun")).toHaveValue(YYYY);
     await expect(detail.locator(".fi-ftb")).toContainText("Kirim nonaktif: Pilih principal dulu.");
-    await setup.getByLabel("Principal", { exact: true }).selectOption("KINO INDONESIA TBK, PT");
+    await setup.getByLabel(/^Principal\*?$/).selectOption("KINO INDONESIA TBK, PT");
     await expect(setup).toContainText(`004/KINO/${MM}/${YYYY}`);
     await expect(setup.getByLabel("Nama supervisor")).toHaveValue("Rahmat Hidayat");
     await expect(detail.locator(".fi-ftb")).toContainText("Tipe program pada item 1 wajib dipilih");
