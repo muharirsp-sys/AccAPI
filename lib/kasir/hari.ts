@@ -626,7 +626,7 @@ export async function catatSetoran(isian: IsianSetoran & { buktiBaru: string | n
             const sama = sekarangDasar.length === isian.dasar.length
                 && sekarangDasar.every((x) => isian.dasar.some((d) => d.kode === x.kode && d.revisi === x.revisi));
             if (!sama) {
-                throw new GalatKasir(409, "SETORAN_BERUBAH", "Setoran orang ini sudah berubah sejak halaman dimuat (klik ganda atau pengguna lain). Periksa revisi terbaru.", {
+                throw new GalatKasir(409, "SETORAN_BERUBAH", "Setoran orang ini sudah berubah sejak halaman dimuat (klik ganda atau user lain). Periksa revisi terbaru.", {
                     keadaan: { orang, dasar: sekarangDasar, setoranPerKode: baris.setoranPerKode.map((x) => ({ kode: x.kode, revisi: x.revisi, tunai: T(x.tunai),
                         transfer: T(x.transfer), giro: T(x.giro), total: T(x.total) })),
                     setoran: baris.setoran ? { tunai: T(baris.setoran.tunai), transfer: T(baris.setoran.transfer), giro: T(baris.setoran.giro),
@@ -661,7 +661,7 @@ export async function catatSetoran(isian: IsianSetoran & { buktiBaru: string | n
         });
     } catch (e) {
         if (!(e instanceof GalatKasir) && kodePg(e) === "23505") {
-            throw new GalatKasir(409, "SETORAN_BERUBAH", "Setoran orang ini baru saja dicatat pengguna lain. Muat ulang dan periksa revisi terbaru.", { keadaan: null });
+            throw new GalatKasir(409, "SETORAN_BERUBAH", "Setoran orang ini baru saja dicatat user lain. Muat ulang dan periksa revisi terbaru.", { keadaan: null });
         }
         throw e;
     }

@@ -326,7 +326,7 @@ export async function putuskanNoo(d: { id: string; keputusan: "setujui" | "tolak
             status: d.keputusan === "setujui" ? "disetujui" : "ditolak", diputuskanOleh: d.a.userId, diputuskanOlehNama: d.aktorNama, diputuskanPada: now,
             alasanTolak: d.keputusan === "tolak" ? alasan : null, duplikatDikonfirmasi: d.keputusan === "setujui" && Boolean(r.duplikatDengan),
         }).where(and(eq(nooToko.id, r.id), eq(nooToko.status, "menunggu_spv"))).returning();
-        if (!row) return galat(409, "SUDAH_DIPUTUSKAN", `${r.kode} ${r.namaToko} baru saja diputuskan pengguna lain; muat ulang daftarnya.`);
+        if (!row) return galat(409, "SUDAH_DIPUTUSKAN", `${r.kode} ${r.namaToko} baru saja diputuskan user lain; muat ulang daftarnya.`);
         await tx.insert(kontrolAuditLog).values({ id: randomUUID(), entity: "noo", entityId: r.id, action: d.keputusan, actorId: d.a.userId,
             actorName: d.aktorNama, createdAt: now, payload: { kode: r.kode, salesCode: r.salesCode, peran: d.a.scope.role,
                 duplikatDengan: r.duplikatDengan, duplikatDikonfirmasi: row.duplikatDikonfirmasi } });
@@ -362,7 +362,7 @@ export async function tautkanNoo(d: { id: string; customerId: number; a: AksesNo
             const [row] = await tx.update(nooToko).set({ status: "terdaftar", customerId: Number(c.id), customerNo: c.customerNo,
                 ditautkanOleh: d.a.userId, ditautkanOlehNama: d.aktorNama, ditautkanPada: now })
                 .where(and(eq(nooToko.id, r.id), eq(nooToko.status, "disetujui"))).returning();
-            if (!row) return galat(409, "SUDAH_TERDAFTAR", `${r.kode} baru saja ditautkan pengguna lain; muat ulang.`);
+            if (!row) return galat(409, "SUDAH_TERDAFTAR", `${r.kode} baru saja ditautkan user lain; muat ulang.`);
             await tx.insert(kontrolAuditLog).values({ id: randomUUID(), entity: "noo", entityId: r.id, action: "tautkan", actorId: d.a.userId,
                 actorName: d.aktorNama, createdAt: now, payload: { kode: r.kode, customerId: Number(c.id), customerNo: c.customerNo } });
             return { row };

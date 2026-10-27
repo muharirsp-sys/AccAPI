@@ -95,7 +95,7 @@ test("Detail draf: semua bagian + anchor bar, varian BL, Tandai siap nonaktif be
     await page.route(path("/api/claim-workflow/wf-draft/items/it-2"), (r) => {
         patch.push(r.request().postDataJSON());
         audit = [...AUDIT, { id: "a2", actorName: "Ani", actorRole: "claim", action: "update_item_tax", metadata: { itemId: "it-2", dpp: 2500000, ppnRate: 11, pphRate: 2 }, createdAt: "2026-10-07T01:12:00Z" } as never];
-        return r.fulfill(json({ ok: false, code: "CONFLICT", error: "Item ini sudah diubah pengguna lain.", currentUpdatedAt: "2026-10-07T01:12:00.000Z" }, 409));
+        return r.fulfill(json({ ok: false, code: "CONFLICT", error: "Item ini sudah diubah user lain.", currentUpdatedAt: "2026-10-07T01:12:00.000Z" }, 409));
     });
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/claim-workflow/wf-draft", NAV);
