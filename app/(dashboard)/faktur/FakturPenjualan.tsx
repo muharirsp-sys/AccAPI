@@ -169,7 +169,8 @@ export default function FakturPenjualan({ permKeys }: { permKeys: string[] }) {
                     onClick={() => setPage((p) => p + 1)}>Berikutnya<ChevronRight className="fi-icon" aria-hidden /></Button>
             </div>
             <div className="fi-sect-in">
-                <VariantNote bl="BL-36">Hari ini daftar hanya bisa dicari menurut nomor atau pelanggan dan dibatasi ke nomor INV. Saringan periode, status (termasuk Dihapus di Accurate), dan asal faktur yang tersimpan per user belum ada.</VariantNote>
+                {/* BL-36: perilaku hari ini sebagai keterangan biasa; satu catatan varian per layar milik Object Page (audit No 80). */}
+                <p className="fi-small fi-subtle">Daftar hanya bisa dicari menurut nomor atau pelanggan dan dibatasi ke nomor INV; belum ada saringan periode, status (termasuk Dihapus di Accurate), dan asal faktur.</p>
             </div>
         </>
     );

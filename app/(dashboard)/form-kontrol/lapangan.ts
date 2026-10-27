@@ -13,7 +13,7 @@
  * pasti tidak membuat baris dobel (pemanggil menandainya dengan `ulangAman`). Itu TIDAK berlaku untuk semua tulis Form Kontrol
  * (briefing, sm-control menambah baris) dan tidak untuk unggah foto (berkas baru tiap kirim).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Load } from "@/components/fiori/interactive";
 import { LABEL_STATUS_NOO, type StatusNoo } from "@/lib/form-kontrol/noo-aturan";
 import { hariIniWita, type AoRow } from "./shared";
@@ -120,15 +120,23 @@ export function keBarisRute(rows: unknown, principle: string): AoRow[] {
 
 /**
  * "Hari ini" WITA DIBEKUKAN saat layar dibuka: lewat 00.00 layar tidak diam-diam memuat tanggal baru (isian tidak hilang).
- * `berganti` = jam sudah masuk hari lain; layar menawarkan `pakaiHariBaru` (pengguna yang memilih).
+ * `berganti` = jam sudah masuk hari lain; layar menawarkan `pakaiHariBaru` (pengguna yang memilih). `onGanti(baru, lama)` dipanggil sekali
+ * tiap hari berganti (dari event, bukan render) untuk layar yang mengikuti hari aktual bila aman (Kasir, Finance; audit No 109).
  * ponytail: deteksi lewat interval 30 dtk + fokus/visibilitas; penetapan tanggal oleh server = BL-28.
  */
-export function useHariBeku() {
+export function useHariBeku(onGanti?: (baru: string, lama: string) => void) {
     const [hari, setHari] = useState(() => hariIniWita());
     const [kini, setKini] = useState(hari);
+    const onGantiRef = useRef(onGanti);
+    useEffect(() => { onGantiRef.current = onGanti; });
     useEffect(() => {
         // Diperiksa berkala dan saat ponsel kembali ke layar ini (fokus/terlihat lagi) — saat paling mungkin hari sudah berganti.
-        const cek = () => setKini(hariIniWita());
+        let terakhir = hariIniWita();
+        const cek = () => {
+            const baru = hariIniWita();
+            setKini(baru);
+            if (baru !== terakhir) { const lama = terakhir; terakhir = baru; onGantiRef.current?.(baru, lama); }
+        };
         const t = setInterval(cek, 30_000);
         window.addEventListener("focus", cek);
         document.addEventListener("visibilitychange", cek);

@@ -509,7 +509,8 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
             {detail.status === "galat" && <MessageStrip tone="neg" title="Gagal memuat ulang.">{detail.error} Yang tampil adalah hasil sebelumnya. <Button variant="tertiary" onClick={muat}>Coba lagi</Button></MessageStrip>}
             {isLegacyPekaStatus(wf.status) && <MessageStrip tone="info" title="Status lama dari alur PEKA.">Alur PEKA sudah tidak dipakai; klaim ini ditampilkan sebagai Dikirim. Pembayaran untuk status lama ini belum bisa dicatat dari layar ini.</MessageStrip>}
             {(tahap === "dikirim" || tahap === "sebagian") && (
-                <VariantNote bl="BL-14">Setelah dikirim ke principal belum ada jalan Minta revisi atau Batalkan klaim.</VariantNote>
+                // BL-14: perilaku hari ini sebagai keterangan biasa (audit No 80: satu catatan varian per layar, di akhir halaman).
+                <p className="fi-small fi-subtle">Setelah dikirim ke principal, klaim ini belum bisa diminta revisi atau dibatalkan.</p>
             )}
 
             <Section id="item" title="Item klaim" subtitle={`${items.length} item · DPP ${rupiah(wf.totalDpp)} · PPN ${rupiah(wf.totalPpn)} · PPh ${rupiah(wf.totalPph)}`}>
@@ -619,7 +620,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                             {alasanDok && <span className="fi-small fi-subtle">{alasanDok}</span>}
                         </div>
                     )}
-                    <VariantNote bl="BL-15">Keunikan No Claim antar klaim dicek aplikasi saat menyimpan, belum oleh database. No Claim yang sama di klaim ini menggabungkan berkas; layar ini meminta konfirmasi dulu.</VariantNote>
+                    <p className="fi-small fi-subtle">No Claim yang sama di klaim ini menggabungkan berkasnya; layar meminta konfirmasi dulu.</p>
                 </div>
             </Section>
 
@@ -662,7 +663,6 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                                 <Button icon={<Wallet className="fi-icon" aria-hidden />} onClick={bukaBayar}>Catat pembayaran…</Button>
                                 {bayarTerisi && <StatusBadge tone="warn">Belum dicatat</StatusBadge>}
                             </div>
-                            <VariantNote bl="BL-08">Server belum mengunci klaim saat mencatat; dua pembayaran yang dicatat bersamaan bisa membuat total melebihi nilai klaim.</VariantNote>
                         </>
                     ) : (
                         <p className="fi-small fi-subtle">
@@ -672,7 +672,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                                 : "Pembayaran bisa dicatat setelah klaim dikirim ke principal."}
                         </p>
                     )}
-                    <VariantNote bl="BL-07">Bukti bayar principal belum bisa dilampirkan; pembayaran tercatat tanpa berkas bukti.</VariantNote>
+                    <p className="fi-small fi-subtle">Bukti bayar principal belum bisa dilampirkan; pembayaran tercatat tanpa berkas bukti.</p>
                 </div>
             </Section>
 
@@ -711,7 +711,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                                     {alasanTutup && <span className="fi-small fi-subtle">{alasanTutup}</span>}
                                 </div>
                             )}
-                            {tahap === "sebagian" && <VariantNote bl="BL-42">Klaim yang dibayar kurang oleh principal tidak bisa ditutup dan tertahan di Dibayar sebagian; selisihnya (dipotong, ditolak, kompensasi) belum bisa dicatat.</VariantNote>}
+                            {tahap === "sebagian" && <p className="fi-small fi-subtle">Klaim yang dibayar kurang oleh principal tidak bisa ditutup dan tertahan di Dibayar sebagian; selisihnya (dipotong, ditolak, kompensasi) belum bisa dicatat.</p>}
                         </>
                     )}
                 </div>
@@ -732,16 +732,22 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                         </ul>
                     ) : <EmptyState title="Belum ada riwayat" />}
                 <div className="fi-sect-in">
-                    <VariantNote bl="BL-33">Riwayat mencatat aksi dan catatannya, belum nilai lama dan nilai baru untuk setiap isian.</VariantNote>
+                    <p className="fi-small fi-subtle">Riwayat mencatat aksi dan catatannya, belum nilai sebelum dan sesudah tiap isian.</p>
                 </div>
             </Section>
 
             <Section id="alur" title="Alur dokumen" subtitle="dari OFF Program Control sampai pembayaran">
                 <AlurDokumen off={wf.offNoPengajuan} no={no} noClaims={noClaims} jumlahBayar={aktifBayar.length} dibayar={wf.totalPaid} />
                 <div className="fi-sect-in">
-                    <VariantNote bl="BL-35">Alur hanya ditelusuri dari klaim ke belakang; OFF Program Control belum menautkan balik ke klaim ini.</VariantNote>
+                    <p className="fi-small fi-subtle">Alur hanya ditelusuri dari klaim ke belakang; OFF Program Control belum menautkan balik ke klaim ini.</p>
                 </div>
             </Section>
+
+            {/* Satu catatan varian per layar (audit No 80): batasan sistem yang bukan keterangan kerja; BL-07/14/33/35/42 jadi keterangan biasa di bagiannya. */}
+            <VariantNote bl="BL-15, BL-08">
+                Keunikan No Claim antar klaim dicek aplikasi saat menyimpan, belum oleh database, dan server belum mengunci klaim saat mencatat pembayaran:
+                dua pembayaran yang dicatat bersamaan bisa membuat total melebihi nilai klaim.
+            </VariantNote>
 
             {footer}
 

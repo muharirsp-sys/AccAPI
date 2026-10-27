@@ -5,7 +5,7 @@
  *   Simpan tujuan (pemasok/rekening lama → baru; pemetaan lokal per principal, bukan posting ke Accurate).
  * Caller: app/(dashboard)/finance/page.tsx.
  * Dependensi: ./posting (HTTP + orkestrasi tulis), lib/finance-ui (izin & keputusan murni), components/fiori/*, lib/promo-ui,
- *   lib/rekapan-nota/ui (tanggalPanjang), lib/tampil (KOSONG), lib/fuzzySearch, lucide-react.
+ *   lib/rekapan-nota/ui (tanggalPanjang), lib/tampil (KOSONG), lib/fuzzySearch, form-kontrol/lapangan (useHariBeku), lucide-react.
  * Main Functions: Finance (default), Detail, DialogPosting, DialogSelesai.
  * Side Effects: Lewat ./posting: FastAPI /payments/finance/*, command /api/finance/purchase-payment (kirim purchase-payment ke
  *   Accurate), /resolve, /attempts, /api/proxy GET list.do; window.open ekspor Excel; beforeunload saat ada draf.
@@ -27,6 +27,7 @@ import {
 import { rupiah, tgl } from "@/lib/promo-ui";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { KOSONG } from "@/lib/tampil";
+import { useHariBeku } from "../form-kontrol/lapangan";
 import {
     SeparuhJalan, TidakPasti, bacaSesi, muatFinance, muatMaster, postingPurchasePayment, recordKey, selesaikanTidakPasti, simpanTujuan, ubahStatusTransfer, urlBerkas,
     type DataFinance, type FinanceMapping, type FinanceRecord, type MasterAccurate, type SesiAccurate,
@@ -99,6 +100,13 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
     const drafBaris = (b: Baris) => tujuanBerubah(b) || Boolean(bukti[b.key]);
     const adaDraf = baris.some(drafBaris);
     useUnsavedGuard(adaDraf);
+    // "Hari ini" dihitung ulang di klien (WITA) saat tab fokus/terlihat lagi dan lewat tengah malam (owner 27 Okt, audit No 109): tanggal bayar
+    // yang masih hari lama ikut pindah; tanggal pilihan user tidak ditimpa; draf/dialog terbuka tidak dipindah diam-diam (strip + tombol).
+    const [tawar, setTawar] = useState<string | null>(null);
+    useHariBeku((baru, lama) => {
+        if (tanggal !== lama) return;
+        if (adaDraf || dialog) setTawar(baru); else setTanggal(baru);
+    });
 
     const hitung = useMemo(() => {
         const belum = baris.filter((b) => statusTransfer(b.r.status_pembayaran).label === "Belum transfer");
@@ -333,6 +341,12 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
             </header>
 
             {hasil && <MessageStrip tone={hasil.tone} title={hasil.judul} onClose={() => setHasil(null)}>{hasil.isi}</MessageStrip>}
+            {tawar && tawar !== tanggal && (
+                <MessageStrip tone="info" title={`Hari sudah berganti ke ${tanggalPanjang(tawar)}.`} onClose={() => setTawar(null)}>
+                    Tanggal bayar tetap {tanggalPanjang(tanggal)} karena ada isian yang belum disimpan.{" "}
+                    <Button variant="tertiary" onClick={() => { setTanggal(tawar); setTawar(null); }}>Pindah ke hari ini</Button>
+                </MessageStrip>
+            )}
             {load.status === "galat" && data && <MessageStrip tone="neg" title="Gagal memuat ulang pengajuan.">{load.error} Yang tampil hasil sebelumnya; aksi tulis dikunci. <Button variant="tertiary" onClick={muatUlang}>Coba lagi</Button></MessageStrip>}
             {data?.attemptsGalat && <MessageStrip tone="warn" title="Status posting dari server tidak terbaca.">{data.attemptsGalat} Posting dan penyelesaian dikunci sampai statusnya terbaca. <Button variant="tertiary" onClick={muatUlang}>Muat ulang</Button></MessageStrip>}
 
@@ -472,7 +486,7 @@ function Detail(p: DetailProps) {
 
     return (
         <div style={{ display: "grid", gap: 12 }}>
-            <ObjectPageHeader title={`${r.draft_label} · ${r.principle}`} draft={p.tujuanBerubah}
+            <ObjectPageHeader headingLevel={2} title={`${r.draft_label} · ${r.principle}`} draft={p.tujuanBerubah}
                 status={<><StatusBadge tone={tr.tone}>{tr.label}</StatusBadge> <StatusBadge tone={pt.tone} busy={kode === "sedang"}>{pt.label}{b.posting.nomor ? ` ${b.posting.nomor}` : ""}</StatusBadge></>}
                 attributes={[
                     { label: "SPPD", value: r.sppd_no || KOSONG },

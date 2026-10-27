@@ -606,7 +606,8 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                         </div>
                     )}
                     <div className="fi-sect-in">
-                        <VariantNote bl="BL-18">Status hanya “menunggu ditarik” atau “sudah ditarik petugas”; butuh harga, difakturkan, dan dibatalkan belum terlihat, dan salesman belum bisa membatalkan order yang belum ditarik.</VariantNote>
+                        {/* BL-18: keterangan biasa; satu catatan varian per layar = BL-32 (audit No 80). */}
+                        <p className="fi-small fi-subtle">Status hanya “menunggu ditarik” atau “sudah ditarik petugas”; butuh harga, difakturkan, dan dibatalkan belum terlihat, dan salesman belum bisa membatalkan order yang belum ditarik.</p>
                     </div>
                 </Section>
             </div>

@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { FlaskConical, ShieldCheck, Upload } from "lucide-react";
-import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
+import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, type Load } from "@/components/fiori/interactive";
 import { KOSONG, sebabHttp, waktuWita } from "@/lib/tampil";
 import { BEBAN, bebanDari, manfaat, tgl } from "@/lib/promo-ui";
@@ -166,7 +166,8 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
                             <Button variant="primary" disabled={!siapMuat} disabledReason="Lengkapi bukti tanda tangan dan pernyataan" onClick={() => setDialog("muat")}>{entri?.sudahDimuat ? "Muat ulang ke gerbang faktur…" : "Muat ke gerbang faktur…"}</Button>
                         </div>
                     )}
-                    <VariantNote bl="BL-53">Hari ini pernyataan boleh dibuat siapa pun yang berizin ubah Summary, termasuk penerbitnya sendiri. Belum ada pemeriksa kedua (orang lain, atau penerbit dengan alasan tercatat).</VariantNote>
+                    {/* BL-53: keterangan biasa; satu catatan varian per layar = BL-51 di Summary (audit No 80). */}
+                    <p className="fi-small fi-subtle">Pernyataan boleh dibuat siapa pun yang berizin ubah Summary, termasuk penerbitnya sendiri; belum ada pemeriksa kedua.</p>
                 </div>
             )}
 
