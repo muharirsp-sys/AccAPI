@@ -35,7 +35,7 @@ export async function muatSupervisorReview(scope: UserScope, opsi: { tanggal: st
     const dasar: JawabanSupervisorReview = { tanggal, diperbaruiPada: new Date().toISOString(), cakupan, pilihanCabang: [], pilihanPrinciple: [],
         salesman: [], totalCabang: [], kunjungan: [], penanda: [], tokoTanpaKoordinat: 0, fakturBelumTerbaca: [] };
     if (!global && scope.allowedSalesCodes!.length === 0) {
-        return { ...dasar, pesan: { kode: "HIERARKI_BELUM_TERTAUT", teks: "Akun belum tertaut ke hierarki — hubungi Admin." } };
+        return { ...dasar, pesan: { kode: "HIERARKI_BELUM_TERTAUT", teks: "Akun belum tertaut ke hierarki. Hubungi Admin." } };
     }
 
     const [y, m, d] = tanggal.split("-");

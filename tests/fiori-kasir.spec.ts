@@ -215,7 +215,7 @@ test("Galat: GET 500 = galat (bukan kosong) + Coba lagi; Incaso belum terbaca = 
     // Mode dev (StrictMode) memanggil GET dua kali saat pasang: gagal sampai tes menekan Coba lagi.
     let gagal = true;
     await pasang(page, { get: () => gagal ? json({ ok: false, kode: "GALAT_INTERNAL", error: "Gagal memuat hari Kasir." }, 500)
-        : json(hari({ baca: null, incaso: { lengkap: false, sebab: "SESI_SINKRON", pesan: "Sesi Accurate akun sinkron kedaluwarsa — admin login ulang di /sesi-accurate lalu pilih database" } })) });
+        : json(hari({ baca: null, incaso: { lengkap: false, sebab: "SESI_SINKRON", pesan: "Sesi Accurate akun sinkron kedaluwarsa. Admin login ulang di /sesi-accurate lalu pilih database" } })) });
     await page.goto("/kasir", NAV);
     const m = main(page);
     await expect(m.getByRole("alert").filter({ hasText: "Data Kasir belum bisa ditampilkan" })).toContainText("Gagal memuat hari Kasir.", NAV);
@@ -373,7 +373,7 @@ test("Tutup basi: segarkan berjeda ≥ 6 dtk (page.clock) dengan 'Membaca n/N', 
 test("Segarkan: SEDANG_DIBACA diulang berjeda + Batal; 502 BACA_GAGAL = jawaban PASTI (bukan 'belum pasti')", async ({ page }) => {
     await page.clock.install({ time: new Date() });
     const log = await pasang(page, {
-        segarkan: (n) => n === 1 ? json({ ok: false, kode: "SEDANG_DIBACA", error: "Pelunasan tanggal ini sedang dibaca — coba lagi sebentar.", status: BACA_LENGKAP({ status: "berjalan", aktif: true }) }, 409)
+        segarkan: (n) => n === 1 ? json({ ok: false, kode: "SEDANG_DIBACA", error: "Pelunasan tanggal ini sedang dibaca. Coba lagi sebentar.", status: BACA_LENGKAP({ status: "berjalan", aktif: true }) }, 409)
             : json({ ok: false, kode: "BACA_GAGAL", error: "Accurate menjawab 500 untuk list.do.", status: BACA_LENGKAP({ status: "gagal", sebab: "accurate_5xx" }) }, 502),
     });
     await page.goto("/kasir", NAV);

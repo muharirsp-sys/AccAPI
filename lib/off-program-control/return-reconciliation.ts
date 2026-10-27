@@ -1693,7 +1693,7 @@ export function reconcileKinoReturns(
     const matches = accurate !== undefined && accurate.quantity === principal.quantity
       && Math.abs(accurate.dpp - principal.dpp) <= dppTolerance + 1e-9;
     const correction = result(accurate, principal, matches ? "MATCH" : "KOREKSI");
-    if (!matches) correction.warnings = [`Koreksi — PAJAK_NO ${group[0].taxNumber} berawalan INV.`,
+    if (!matches) correction.warnings = [`Koreksi: PAJAK_NO ${group[0].taxNumber} berawalan INV.`,
       accurate ? `Pasangan ditemukan tetapi belum cocok. Qty Accurate ${accurate.quantity}, KINO ${principal.quantity}; DPP Accurate ${accurate.dpp}, KINO ${principal.dpp}.` : "Pasangan Accurate belum terverifikasi; tidak dipaksakan cocok."];
     output.results.push(correction);
     if (matches) output.summary.MATCH++;

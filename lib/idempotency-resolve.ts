@@ -107,7 +107,7 @@ export function nominalDariKunci(r: { key: string; customerNo: string | null; tr
 }
 
 /** Jalur yang benar untuk cicilan yang BELUM terkirim (bukan Selesaikan): override takeover Finance di lock. */
-const PETUNJUK_TAKEOVER = " Bila cicilan ini BELUM masuk Accurate, jangan diselesaikan — kirim ulang lewat override takeover Finance di lock"
+const PETUNJUK_TAKEOVER = " Bila cicilan ini BELUM masuk Accurate, jangan diselesaikan: kirim ulang lewat override takeover Finance di lock"
     + " (allowLockedKeys + alasan, izin finance.override_duplicate).";
 
 export type InputSelesaikan = { key: string; decision: "terposting" | "tidak_ada"; accurateNumber: string; reason: string; checkedSource: string;
@@ -141,7 +141,7 @@ export async function selesaikanPelunasan(db: NodePgDatabase, inp: InputSelesaik
     // Klik ganda / dua tab: keputusan yang sama sudah tercatat = sukses tanpa menulis.
     if (row.status === tujuan) return { status: 200, body: { ok: true, alreadyResolved: true, status: row.status } };
     if (!bolehDiselesaikan(row, now)) {
-        return tolak(409, "not_eligible", `Baris berstatus ${row.status} — hanya Tidak pasti (UNKNOWN, atau kiriman macet ≥ 2 menit) yang bisa diselesaikan.`);
+        return tolak(409, "not_eligible", `Baris berstatus ${row.status}. Hanya Tidak pasti (UNKNOWN, atau kiriman macet ≥ 2 menit) yang bisa diselesaikan.`);
     }
     const umur = umurMs(row, now);
     if (inp.decision === "tidak_ada" && (umur === null || umur < UMUR_SELESAIKAN_MS)) {
@@ -150,7 +150,7 @@ export async function selesaikanPelunasan(db: NodePgDatabase, inp: InputSelesaik
     if (row.databaseId === null) {
         if (inp.decision === "tidak_ada") {
             return tolak(409, "database_unknown", "Database Accurate kiriman ini tidak tercatat (baris sebelum pembaruan). "
-                + "\"Tidak ada\" di database yang terbuka bisa berarti sudah terposting di database lain — kirim ulang bisa dobel. "
+                + "\"Tidak ada\" di database yang terbuka bisa berarti sudah terposting di database lain, jadi kirim ulang bisa dobel. "
                 + "Tetapkan terposting bila ditemukan, atau pakai override Finance di tinjauan unggah.");
         }
     } else if (row.databaseId !== inp.sessionDatabaseId) {
@@ -161,18 +161,18 @@ export async function selesaikanPelunasan(db: NodePgDatabase, inp: InputSelesaik
     // Server MENCARI dulu: pelunasan pelanggan+tanggal yang menyentuh faktur baris (bukan sidik jari persis).
     const hasil = await cari(targetDariLog(row));
     const galat = hasil.gagal.get(row.key);
-    if (galat !== undefined) return tolak(409, "search_failed", `Pencarian di Accurate gagal (${galat}) — tidak ada yang diubah; coba lagi.`);
+    if (galat !== undefined) return tolak(409, "search_failed", `Pencarian di Accurate gagal (${galat}). Tidak ada yang diubah; coba lagi.`);
     const candidates = hasil.mirip.get(row.key) ?? [];
     const nomor = nomorKandidat(candidates);
     if (inp.decision === "terposting" && !nomor.includes(inp.accurateNumber)) {
         return tolak(409, "number_mismatch", nomor.length
             ? `Nomor ${inp.accurateNumber} bukan pelunasan pelanggan+tanggal ini yang menyentuh faktur baris (${nomor.join(", ")}).`
-            : `Tidak ada pelunasan pelanggan+tanggal ini yang menyentuh faktur baris — nomor ${inp.accurateNumber} tidak bisa dicocokkan.`,
+            : `Tidak ada pelunasan pelanggan+tanggal ini yang menyentuh faktur baris, jadi nomor ${inp.accurateNumber} tidak bisa dicocokkan.`,
         { receiptNumbers: nomor, candidates: candidates.map(kandidatUI) });
     }
     if (inp.decision === "tidak_ada" && candidates.length) {
         return tolak(409, "similar_found", `Ada pelunasan di Accurate untuk pelanggan+tanggal ini yang menyentuh faktur baris (${nomor.join(", ") || "tanpa nomor"})`
-            + " — periksa nominalnya; bila itu kiriman ini, tetapkan terposting. \"Tidak ada\" ditolak." + PETUNJUK_TAKEOVER,
+            + ". Periksa nominalnya; bila itu kiriman ini, tetapkan terposting. \"Tidak ada\" ditolak." + PETUNJUK_TAKEOVER,
         { receiptNumbers: nomor, candidates: candidates.map(kandidatUI), hint: "takeover" });
     }
     // Putaran 2 B-N1 (REV-B H): kandidat yang TIDAK identik kasar (faktur/nominal beda — mis. cicilan lain) hanya dengan
@@ -186,7 +186,7 @@ export async function selesaikanPelunasan(db: NodePgDatabase, inp: InputSelesaik
             const rowAmount = row.amount ?? null;
             if (!inp.acceptSimilar) {
                 return tolak(409, "similar_not_identical", `Pelunasan ${pilih.receiptNumber} (Rp${pilih.amount}) tidak identik dengan baris ini`
-                    + ` (Rp${rowAmount ?? "?"}; faktur/nominal berbeda). Bila memang kiriman ini (mis. koreksi nominal), ulangi dengan acceptSimilar — tercatat di jejak.`
+                    + ` (Rp${rowAmount ?? "?"}; faktur/nominal berbeda). Bila memang kiriman ini (mis. koreksi nominal), ulangi dengan acceptSimilar (tercatat di jejak).`
                     + PETUNJUK_TAKEOVER,
                 { receiptNumbers: nomor, candidates: candidates.map(kandidatUI), selected: pilih, rowAmount, candidateAmount: pilih.amount,
                     difference: rowAmount === null ? null : Number((rowAmount - pilih.amount).toFixed(2)), hint: "takeover" });
@@ -214,7 +214,7 @@ export async function selesaikanPelunasan(db: NodePgDatabase, inp: InputSelesaik
         // Tinjauan B4: kalah CAS dari keputusan yang SAMA (dua tab / klik ganda serentak) = sudah selesai, bukan galat.
         const [kini] = await db.select({ status: idempotencyLog.status }).from(idempotencyLog).where(eq(idempotencyLog.key, row.key)).limit(1);
         if (kini?.status === tujuan) return { status: 200, body: { ok: true, alreadyResolved: true, status: tujuan } };
-        return tolak(409, "changed", "Status baris berubah saat diselesaikan — muat ulang lalu periksa lagi.");
+        return tolak(409, "changed", "Status baris berubah saat diselesaikan. Muat ulang lalu periksa lagi.");
     }
     return { status: 200, body: { ok: true, status: tujuan, resolutionId: id, receiptNumbers: nomor } };
 }

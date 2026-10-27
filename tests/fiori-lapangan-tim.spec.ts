@@ -401,7 +401,7 @@ test.describe("layar sentuh: Hierarki", () => {
 test.use({ hasTouch: true, isMobile: true }); // target 44 px dijamin density pointer kasar, bukan override inline (No 107)
 test("Hierarki (owner 13 Okt): SPV/SM dipilih dari akun; nilai tersimpan tak cocok = opsi bertanda + peringatan; galat berkode di dialog; ponsel 390 px", async ({ page }) => {
     const opsi: Opsi = { scope: SCOPE.admin, profiles: [PROFILES[0], { ...PROFILES[2], spvName: "SYAMSUL", smName: "sm a" }],
-        putProfil: [{ status: 409, body: { ok: false, kode: "NAMA_GANDA", error: "Ada 2 akun SPV aktif bernama \"SPV B\" — cakupan akan terbagi ke semuanya; ubah nama salah satu akun dulu." } }] };
+        putProfil: [{ status: 409, body: { ok: false, kode: "NAMA_GANDA", error: "Ada 2 akun SPV aktif bernama \"SPV B\"; cakupan akan terbagi ke semuanya. Ubah nama salah satu akun dulu." } }] };
     const { tulis } = await mockApi(page, opsi);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/form-kontrol?tab=hierarki", NAV);

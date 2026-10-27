@@ -515,7 +515,7 @@ test("Validasi 409 (batch dihapus/diganti saat divalidasi) → muat ulang 404: l
 });
 
 test("Ganti/Simpan 409 BERKAS_SUDAH_DISIMPAN (unggahan lain baru menyimpan berkas sama): daftar dimuat ulang, pratinjau usang dibuang", async ({ page }) => {
-    const BENTROK = "Berkas yang sama baru saja disimpan oleh unggahan lain (mis. dua Ganti bersamaan); muat ulang daftar batch — batch terbarunya sudah ada.";
+    const BENTROK = "Berkas yang sama baru saja disimpan oleh unggahan lain (mis. dua Ganti bersamaan); muat ulang daftar batch. Batch terbarunya sudah ada.";
     let bacaDaftar = 0;
     let dup = true;
     const kirim = await pasang(page, {

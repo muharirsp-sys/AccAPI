@@ -48,7 +48,7 @@ export function halamanMendarat(returnTo: ReturnTo, kabar: Record<string, string
 export const GALAT_ACCURATE = {
     state_hilang: "Permintaan masuk sudah kedaluwarsa (lebih dari 10 menit) atau dibuka di alamat/peramban lain. Tekan Masuk Accurate lagi.",
     state_beda: "Permintaan masuk tidak dikenali (tidak dimulai dari aplikasi ini), jadi tidak dilanjutkan. Tekan Masuk Accurate lagi.",
-    tanpa_kode: "Accurate tidak memberi kode izin — izin mungkin ditolak atau dibatalkan. Tekan Masuk Accurate lagi.",
+    tanpa_kode: "Accurate tidak memberi kode izin; izin mungkin ditolak atau dibatalkan. Tekan Masuk Accurate lagi.",
     konfigurasi: "Pengaturan Accurate di server belum lengkap. Hubungi IT.",
     tukar_token_gagal: "Accurate menolak penukaran kode izin. Tekan Masuk Accurate lagi; bila berulang, hubungi IT.",
     galat_server: "Server gagal menyelesaikan masuk Accurate. Coba lagi; bila berulang, hubungi IT.",

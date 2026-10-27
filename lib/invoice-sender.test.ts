@@ -116,7 +116,7 @@ test("A-RENDAH: yang dikirim = payload HASIL KLAIM (RETURNING), dan klaim mensya
 
 test("putaran 3: klaim yang dilewati TIDAK senyap — results menyebut sebabnya, tanpa save.do", async (t) => {
     for (const [diag, pola] of [
-        [{ state: "queued", sama: false }, /payload berubah sejak diperiksa — muat ulang/],
+        [{ state: "queued", sama: false }, /payload berubah sejak diperiksa\. Muat ulang/],
         [{ state: "sending", sama: true }, /sudah diambil proses lain \(status sending\)/],
         [null, /dibuang dari antrean sejak diperiksa/],
     ] as const) {

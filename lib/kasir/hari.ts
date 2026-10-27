@@ -79,7 +79,7 @@ const salah = (field: string, pesan: string) => new GalatKasir(400, "INPUT_SALAH
 export function jawabanGalat(e: unknown, label: string): { http: number; body: Record<string, unknown> } {
     if (e instanceof GalatKasir) return { http: e.http, body: { ok: false, kode: e.kode, error: e.message, ...e.tambahan } };
     console.error(label, e);
-    return { http: 500, body: { ok: false, kode: "GALAT_INTERNAL", error: "Gagal memproses permintaan Kasir — tidak ada yang tersimpan. Coba lagi." } };
+    return { http: 500, body: { ok: false, kode: "GALAT_INTERNAL", error: "Gagal memproses permintaan Kasir. Tidak ada yang tersimpan. Coba lagi." } };
 }
 
 const kodePg = (e: unknown) => (e as { code?: string; cause?: { code?: string } })?.code ?? (e as { cause?: { code?: string } })?.cause?.code;
@@ -113,7 +113,7 @@ async function transaksiHari<T>(deps: DepsHari, tanggal: string, fn: (tx: Tx) =>
     } catch (e) {
         if (fnSelesai) {
             console.error("[KASIR] commit tidak pasti", e);
-            throw new GalatKasir(502, "TIDAK_PASTI", "Server tidak memberi jawaban yang pasti — hasilnya belum pasti. Muat ulang dan periksa dulu sebelum mengulang.");
+            throw new GalatKasir(502, "TIDAK_PASTI", "Server tidak memberi jawaban yang pasti, jadi hasilnya belum pasti. Muat ulang dan periksa dulu sebelum mengulang.");
         }
         throw e;
     }
@@ -189,7 +189,7 @@ async function angkaAman<T>(apa: string, fn: () => Promise<T>): Promise<T> {
         return await fn();
     } catch (e) {
         if (!(e instanceof RangeError)) throw e;
-        throw new GalatKasir(422, "ANGKA_TIDAK_SAH", `Nominal ${apa} tersimpan tidak sah (${e.message}) — hari ini tidak bisa dihitung. Minta IT memeriksa data tersimpan.`);
+        throw new GalatKasir(422, "ANGKA_TIDAK_SAH", `Nominal ${apa} tersimpan tidak sah (${e.message}). Hari ini tidak bisa dihitung. Minta IT memeriksa data tersimpan.`);
     }
 }
 
@@ -221,7 +221,7 @@ export async function muatDalam(tx: Db | Tx, tanggal: string, databaseId: string
         ["pelunasan (chequeAmount)", jumlah(cache.pelunasan.map((p) => p.chequeAmount))],
         ["baris faktur (invoicePayment)", jumlah(cache.pelunasan.flatMap((p) => p.faktur.map((f) => f.invoicePayment)))]] as const) {
         if (n > BATAS_HARI_SEN) {
-            throw new GalatKasir(422, "ANGKA_TIDAK_SAH", `Jumlah ${apa} tanggal ${tanggal} melebihi batas aman Rp 10 triliun — hari ini tidak bisa dihitung. `
+            throw new GalatKasir(422, "ANGKA_TIDAK_SAH", `Jumlah ${apa} tanggal ${tanggal} melebihi batas aman Rp 10 triliun. Hari ini tidak bisa dihitung. `
                 + "Minta IT memeriksa data tersimpan (tabel jejak append-only, perbaikan oleh role pemilik).");
         }
     }
@@ -306,8 +306,8 @@ const TAK_DIKENAL = "(akun tak dikenal)";
 function pesanBelumLengkap(b: StatusBaca): string {
     const n = b.jumlahDaftar !== null && b.sisaDetail !== null ? ` (${b.jumlahDaftar - b.sisaDetail}/${b.jumlahDaftar})` : "";
     const sebab = {
-        belum_dibaca: "Pelunasan Incaso tanggal ini belum pernah dibaca — tekan Segarkan.",
-        berjalan: b.aktif ? "Pelunasan Incaso sedang dibaca." : "Pembaca pelunasan Incaso terhenti — tekan Segarkan.",
+        belum_dibaca: "Pelunasan Incaso tanggal ini belum pernah dibaca. Tekan Segarkan.",
+        berjalan: b.aktif ? "Pelunasan Incaso sedang dibaca." : "Pembaca pelunasan Incaso terhenti. Tekan Segarkan.",
         sebagian: `Pelunasan Incaso baru terbaca sebagian${n}.`,
         gagal: `Pelunasan Incaso gagal dibaca${b.pesan ? `: ${b.pesan}` : "."}`,
         lengkap: "",
@@ -514,7 +514,7 @@ export function uraiSetoran(raw: unknown, sekarang: Date, adaBerkas: boolean): I
     const tanggal = uraiTanggal(r.tanggal, sekarang);
     if (typeof r.orang !== "string") throw salah("orang", "Orang (kode salesman) wajib diisi.");
     const orang = r.orang.trim();
-    if (orang === TANPA_SALESMAN) throw salah("orang", "Setoran tidak bisa dicatat untuk Tanpa salesman — pilih pegawai.");
+    if (orang === TANPA_SALESMAN) throw salah("orang", "Setoran tidak bisa dicatat untuk Tanpa salesman. Pilih pegawai.");
     if (panjang(orang) > 100) throw salah("orang", "Kode orang terlalu panjang.");
     const tunai = uraiNominal(r.tunai, "tunai", false, BATAS_KOLOM_SEN);
     const transfer = uraiNominal(r.transfer, "transfer", false, BATAS_KOLOM_SEN);
@@ -599,7 +599,7 @@ const keadaanHari = (m: Muatan, sekarang: Date) => {
 };
 const terkunci = (m: Muatan, sekarang: Date) => new GalatKasir(409, "HARI_TERKUNCI", (() => {
     const st = statusHari(m.tanggal, m.events, sekarang);
-    if (st.sebab === "tutup") return "Hari ini sudah ditutup — setoran dan penjelasan tidak bisa diubah. Minta OM/Admin membuka kembali bila perlu.";
+    if (st.sebab === "tutup") return "Hari ini sudah ditutup: setoran dan penjelasan tidak bisa diubah. Minta OM/Admin membuka kembali bila perlu.";
     if (st.sebab === "kunci" || st.sebab === "otomatis_20") return "Hari terkunci otomatis pukul 20.00 WITA. Minta OM/Admin membuka kembali bila perlu.";
     return "Hari ini belum boleh diubah.";
 })(), keadaanHari(m, sekarang));
@@ -684,7 +684,7 @@ export async function jelaskan(isian: IsianJelaskan, oleh: string, deps: DepsHar
             const orang = isian.orang ? orangDariKode(isian.orang, isian.tanggal, m.peta) : TANPA_SALESMAN;
             const b = m.hasil.baris.find((x) => x.orang === orang);
             if (!b || b.status === "klop") {
-                throw new GalatKasir(409, "TIDAK_PERLU_DIJELASKAN", "Baris ini sudah klop / tidak ada lagi — tidak perlu dijelaskan.", { keadaan: { status: b?.status ?? null } });
+                throw new GalatKasir(409, "TIDAK_PERLU_DIJELASKAN", "Baris ini sudah klop atau tidak ada lagi, jadi tidak perlu dijelaskan.", { keadaan: { status: b?.status ?? null } });
             }
             const setoran = b.setoran?.total ?? 0;
             if (b.pelunasan !== isian.pelunasan || setoran !== isian.setoran) {
@@ -700,7 +700,7 @@ export async function jelaskan(isian: IsianJelaskan, oleh: string, deps: DepsHar
             return { id: Number(r.id) };
         }
         const embers = m.hasil.takTeralokasi.filter((t) => t.pelunasanId === isian.pelunasanId);
-        if (!embers.length) throw new GalatKasir(409, "TIDAK_PERLU_DIJELASKAN", "Uang tak teralokasi pelunasan ini sudah tidak ada — tidak perlu dijelaskan.", { keadaan: null });
+        if (!embers.length) throw new GalatKasir(409, "TIDAK_PERLU_DIJELASKAN", "Uang tak teralokasi pelunasan ini sudah tidak ada, jadi tidak perlu dijelaskan.", { keadaan: null });
         if (!embers.some((t) => t.sisa === isian.sisa)) {
             throw new GalatKasir(409, "ANGKA_BERUBAH", "Sisa tak teralokasi sudah berubah sejak halaman dimuat. Periksa angka terbaru lalu jelaskan lagi.", {
                 keadaan: { angka: { sisa: embers.map((t) => T(t.sisa)) } } });
@@ -735,15 +735,15 @@ export async function tutupHari(isian: { tanggal: string; sidik: string }, oleh:
             if (!databaseId || m.baca === null) throw new GalatKasir(503, "SESI_SINKRON", PESAN_SESI_SINKRON);
             if (!segarUntukTutup(m.baca, sekarang)) {
                 throw new GalatKasir(409, "BACA_BELUM_SEGAR", m.baca.status === "lengkap"
-                    ? "Pelunasan Incaso terakhir dibaca lebih dari 15 menit lalu — segarkan dulu sebelum menutup hari."
+                    ? "Pelunasan Incaso terakhir dibaca lebih dari 15 menit lalu. Segarkan dulu sebelum menutup hari."
                     : m.baca.status === "gagal" && m.baca.ditolak.length
-                        ? "Ada pelunasan yang ditolak pembaca — perbaiki di Accurate; hari tidak bisa ditutup sampai terbaca lengkap."
-                        : "Pelunasan Incaso belum terbaca lengkap — segarkan dulu sebelum menutup hari.",
+                        ? "Ada pelunasan yang ditolak pembaca. Perbaiki di Accurate; hari tidak bisa ditutup sampai terbaca lengkap."
+                        : "Pelunasan Incaso belum terbaca lengkap. Segarkan dulu sebelum menutup hari.",
                     { keadaan: { baca: await publikkan(m.baca, { nama: deps.nama }), segarUntukTutup: false } });
             }
             await deps.jeda("tutup:sesudah-baca");
             const p = penghalangTutup(m.hasil);
-            if (!p.bisaDitutup) throw new GalatKasir(409, "TERHALANG", "Hari belum bisa ditutup — jelaskan dulu yang tersisa.", { alasan: p.alasan });
+            if (!p.bisaDitutup) throw new GalatKasir(409, "TERHALANG", "Hari belum bisa ditutup. Jelaskan dulu yang tersisa.", { alasan: p.alasan });
             const sidik = sidikHari(m.hasil);
             if (sidik !== isian.sidik) {
                 throw new GalatKasir(409, "ANGKA_BERUBAH", "Angka hari ini berubah sejak halaman dimuat. Periksa angka terbaru lalu tutup lagi.", { keadaan: { sidik } });
@@ -753,7 +753,7 @@ export async function tutupHari(isian: { tanggal: string; sidik: string }, oleh:
         });
     } catch (e) {
         if (!(e instanceof GalatKasir) && kodePg(e) === "23514" && kendalaPg(e) === "kasir_hari_event_tutup_tuntas") {
-            throw new GalatKasir(409, "TERHALANG", "Hari belum bisa ditutup — masih ada yang belum dijelaskan.", { alasan: [] });
+            throw new GalatKasir(409, "TERHALANG", "Hari belum bisa ditutup: masih ada yang belum dijelaskan.", { alasan: [] });
         }
         throw e;
     }
@@ -767,7 +767,7 @@ export async function bukaHari(isian: { tanggal: string; alasan: string }, oleh:
         const m = await muatDalam(tx, isian.tanggal, databaseId);
         await pastikanKunci(tx, m, sekarang);
         if (!statusHari(isian.tanggal, m.events, sekarang).terkunci) {
-            throw new GalatKasir(409, "TIDAK_TERKUNCI", "Hari ini sedang terbuka — tidak perlu dibuka kembali.", keadaanHari(m, sekarang));
+            throw new GalatKasir(409, "TIDAK_TERKUNCI", "Hari ini sedang terbuka, jadi tidak perlu dibuka kembali.", keadaanHari(m, sekarang));
         }
         await sisipEvent(tx, m, { jenis: "buka", alasan: isian.alasan, oleh }, sekarang);
         return { kunciBerikutnya: iso(statusHari(isian.tanggal, m.events, sekarang).kunciBerikutnya) };

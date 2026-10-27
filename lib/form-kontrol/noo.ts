@@ -474,5 +474,5 @@ export async function tolakOrderNoo(custCode: unknown, status: unknown): Promise
         ? ` Toko ini sudah terdaftar sebagai ${r.customerNo}: kunjungi lewat Kunjungan luar rute dengan kode itu untuk mencatat ORDER.`
         : " ORDER bisa dicatat sesudah toko didaftarkan Admin di Accurate dan tertaut.";
     return NextResponse.json({ ok: false, kode: "NOO_BELUM_TERDAFTAR",
-        error: `${r.namaToko} adalah toko baru (NOO) tanpa kode pelanggan Accurate — hasil kunjungan hanya "Tidak order" dengan alasan.${sesudah}` }, { status: 409 });
+        error: `${r.namaToko} adalah toko baru (NOO) tanpa kode pelanggan Accurate; hasil kunjungan hanya "Tidak order" dengan alasan.${sesudah}` }, { status: 409 });
 }

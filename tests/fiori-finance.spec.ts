@@ -260,7 +260,7 @@ const TIDAK_PASTI: Array<[string, Jawab]> = [
     ["502 HTML gateway", { status: 502, html: "<html><body><h1>502 Bad Gateway</h1>nginx</body></html>" }],
     ["koneksi putus", "putus"],
     ["200 state unknown (timeout)", { status: 200, body: { attemptId: "at-1", state: "unknown", accurateId: "", accurateNumber: "", message: "tanpa jawaban (TimeoutError). Coba lagi.", persisted: true } }],
-    ["409 unknown", { status: 409, body: { error: "Ada attempt posting yang belum pasti untuk faktur ini — periksa Accurate lalu selesaikan manual.", live: { attemptId: "at-0", state: "unknown", accurateId: "", accurateNumber: "", targetDbId: "DB-1", sameRecord: true, sameTarget: true, stale: true }, generation: 0, currentGeneration: 0 } }],
+    ["409 unknown", { status: 409, body: { error: "Ada attempt posting yang belum pasti untuk faktur ini. Periksa Accurate lalu selesaikan manual.", live: { attemptId: "at-0", state: "unknown", accurateId: "", accurateNumber: "", targetDbId: "DB-1", sameRecord: true, sameTarget: true, stale: true }, generation: 0, currentGeneration: 0 } }],
     // Putaran 2 A: claimed:false dengan kode 409 yang TIDAK terdaftar (konflik attempt kelak) tetap tidak pasti — bukan "failed".
     ["409 claimed:false kode lain", { status: 409, body: { code: "attempt_conflict", claimed: false, live: null, error: "Konflik attempt posting untuk faktur ini (uji)." } }],
 ];
@@ -286,7 +286,7 @@ for (const [nama, j] of TIDAK_PASTI) {
 
 test("Putaran 2 B-6: 409 reopened_use_repost {claimed:false} = tidak terkirim (catatan gagal, tidak dikunci) — bukan tidak pasti", async ({ page }) => {
     const m = await siapkan(page, { command: [{ status: 409, body: { code: "reopened_use_repost", claimed: false, live: null, generation: 0, currentGeneration: 1,
-        error: "Pembayaran untuk faktur ini sudah dibuka ulang untuk posting ulang (repost). Posting biasa ditolak — posting ulang belum tersedia di versi ini." } }] });
+        error: "Pembayaran untuk faktur ini sudah dibuka ulang untuk posting ulang (repost). Posting biasa ditolak: posting ulang belum tersedia di versi ini." } }] });
     const { main, detail, dlg } = await bukaDialogPosting(page);
     await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
     await expect(main.getByRole("alert").filter({ hasText: "Tidak ada yang dikirim ke Accurate untuk DRAFT-0418." })).toContainText("dibuka ulang untuk posting ulang", NAV);

@@ -208,7 +208,7 @@ test("Kirim: dialog dari pratinjau server; yang dikirim = orderIds HASIL PRATINJ
     opsi.send = async (r) => { await new Promise((ok) => setTimeout(ok, 800)); return r.fulfill(json({
         ok: true, sent: 1, verifiedOk: 1, mismatched: 0, unchecked: 0, rejected: 0, unknown: 0, remaining: 2, sentBy: "admin@contoh",
         results: [{ orderId: "PRINCIPLE-A:SO-A-001", state: "posted", accurateId: "501", number: "INV/A/0001" },
-            { orderId: "PRINCIPLE-A:SO-A-010", state: "dilewati", error: "sudah diambil proses lain (status sending) — muat ulang" }],
+            { orderId: "PRINCIPLE-A:SO-A-010", state: "dilewati", error: "sudah diambil proses lain (status sending). Muat ulang" }],
         verified: [{ orderId: "PRINCIPLE-A:SO-A-001", status: "cocok" }],
     })); };
     await main.getByRole("button", { name: "Kirim 2 faktur…" }).click();
@@ -422,7 +422,7 @@ test("Selesaikan: hasil pencarian tampil DULU; ketemu → terposting; tidak kete
 
     // Tidak ketemu: calon tanpa kunci tampil; tidak terposting dipilih → server 409 masa tunggu → sisa menit tampil, pilihan terkunci.
     opsi.cari = (r) => r.fulfill(json(TIDAK));
-    opsi.selesai = (r) => r.fulfill(json({ ok: false, sisaMenit: 12, error: "Kiriman terakhir baru 3 menit lalu — Accurate mungkin masih menyimpannya; tunggu 12 menit lagi sebelum menetapkan tidak terposting." }, 409));
+    opsi.selesai = (r) => r.fulfill(json({ ok: false, sisaMenit: 12, error: "Kiriman terakhir baru 3 menit lalu. Accurate mungkin masih menyimpannya; tunggu 12 menit lagi sebelum menetapkan tidak terposting." }, 409));
     await main.getByRole("button", { name: "Selesaikan SO SO-A-003" }).click();
     dlg = page.getByRole("dialog", { name: "Selesaikan faktur tidak pasti" });
     await expect(dlg).toContainText("Tidak ditemukan di Accurate");
@@ -456,7 +456,7 @@ test("Selesaikan: 409 yang membalik hasil pencarian TIDAK membalik keputusan dia
     const opsi: Opsi = {
         cari: (r) => r.fulfill(json({ ...TIDAK, pencarian: { ...TIDAK.pencarian, calon_tanpa_kunci: [] } })),
         selesai: (r) => r.fulfill(json({ ok: false, pencarian: KETEMU.pencarian,
-            error: "Faktur INV/A/0009 DITEMUKAN di Accurate untuk SO ini — tetapkan terposting, bukan tidak terposting." }, 409)),
+            error: "Faktur INV/A/0009 DITEMUKAN di Accurate untuk SO ini. Tetapkan terposting, bukan tidak terposting." }, 409)),
     };
     const log = await mock(page, opsi);
     await page.setViewportSize({ width: 1366, height: 900 });
@@ -535,7 +535,7 @@ test("Antre ulang menampilkan hasil pencarian server; Buang wajib alasan (502 = 
             ? r.fulfill({ status: 502, contentType: "text/html", body: "<html><body>502 Bad Gateway</body></html>" })
             : b?.action === "resend" && ++resend === 1
                 ? r.fulfill(json({ ok: false, pencarian: { hasil: "gagal_cek", alasan: "list.do HTTP 401: token habis" },
-                    error: "Pencarian faktur di Accurate tidak bisa memastikan (list.do HTTP 401: token habis). Tidak ada yang diubah — periksa manual di Accurate atau ulangi setelah sesi Accurate Anda aktif." }, 409))
+                    error: "Pencarian faktur di Accurate tidak bisa memastikan (list.do HTTP 401: token habis). Tidak ada yang diubah. Periksa manual di Accurate atau ulangi setelah sesi Accurate Anda aktif." }, 409))
             : r.fulfill(json(b?.action === "resend"
                 ? { ok: true, orderId: b.orderId, action: "resend", state: "posted", accurateId: "9005", number: "INV/B/0005",
                     pencarian: { hasil: "ketemu", sumber: "accurate", cocok: "charField1", id: "9005", number: "INV/B/0005", semua: [] } }

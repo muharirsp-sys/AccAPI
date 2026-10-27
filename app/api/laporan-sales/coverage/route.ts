@@ -18,7 +18,7 @@ export async function GET(req: Request) {
     try {
         const scope = await resolveScope(gate.session);
         if (scope.allowedSalesCodes !== null && scope.allowedSalesCodes.length === 0) {
-            return NextResponse.json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki — hubungi Admin." }, { status: 403 });
+            return NextResponse.json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki. Hubungi Admin." }, { status: 403 });
         }
         return NextResponse.json(await muatCoverage(scope, principle), { headers: { "Cache-Control": "private, no-store" } });
     } catch (e) {

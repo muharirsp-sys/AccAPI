@@ -36,7 +36,7 @@ export async function cekDdl(q: Pick<Tx, "execute">) {
     const { rows } = await q.execute(sql.raw(SQL_PENJAGA_HILANG));
     if (rows.length) {
         throw new GalatPrincipal(503, "PRINCIPAL_DDL_BELUM",
-            "Penjaga database principal belum terpasang persis (DDL_S7_0/DDL_S7_2). Hubungi IT Support — perubahan tidak disimpan.",
+            "Penjaga database principal belum terpasang persis (DDL_S7_0/DDL_S7_2). Hubungi IT Support. Perubahan tidak disimpan.",
             { kurang: rows.map((r) => (r as { nama: string }).nama) });
     }
 }
@@ -169,7 +169,7 @@ const tulisLog = (tx: Tx, aktor: string, logs: Log[]) =>
 async function kunciPrincipal(tx: Tx, id: string, wajibAktif: boolean) {
     const [p] = await tx.select().from(principal).where(eq(principal.id, id)).limit(1).for("update");
     if (!p) throw tolak(404, "PRINCIPAL_TIDAK_ADA", "Principal tidak ditemukan.");
-    if (wajibAktif && !p.isActive) throw tolak(409, "PRINCIPAL_NONAKTIF", `Principal ${p.code} nonaktif — aktifkan dulu.`);
+    if (wajibAktif && !p.isActive) throw tolak(409, "PRINCIPAL_NONAKTIF", `Principal ${p.code} nonaktif. Aktifkan dulu.`);
     return p;
 }
 
@@ -186,7 +186,7 @@ async function pastikanAliasBebas(tx: Tx, principalId: string, a: AliasBaru) {
     if (ada.principalId === principalId && ada.variantKey === a.variantKey) {
         throw tolak(409, "ALIAS_SUDAH_ADA", `Ejaan "${a.aliasNorm}" sudah menjadi alias principal ini.`, { pemilik: ada });
     }
-    throw tolak(409, "ALIAS_TABRAKAN", `Ejaan "${a.aliasNorm}" sudah dipakai principal ${ada.code}${ada.variantKey === null ? "" : ` varian "${ada.variantKey}"`} — tidak ditimpa.`, { pemilik: ada });
+    throw tolak(409, "ALIAS_TABRAKAN", `Ejaan "${a.aliasNorm}" sudah dipakai principal ${ada.code}${ada.variantKey === null ? "" : ` varian "${ada.variantKey}"`}, jadi tidak ditimpa.`, { pemilik: ada });
 }
 
 async function sisipAlias(tx: Tx, aktor: string, principalId: string, list: AliasBaru[]) {
@@ -291,7 +291,7 @@ export async function tambahAlias(principalId: string, input: Baris, aktor: stri
             const [v] = await tx.select().from(principalVariant)
                 .where(and(eq(principalVariant.principalId, p.id), eq(principalVariant.variantKey, variantKey))).limit(1);
             if (!v) throw tolak(404, "VARIAN_TIDAK_ADA", `Varian "${variantKey}" tidak ada pada ${p.code}.`);
-            if (!v.isActive) throw tolak(409, "VARIAN_NONAKTIF", `Varian "${variantKey}" nonaktif — aktifkan dulu.`);
+            if (!v.isActive) throw tolak(409, "VARIAN_NONAKTIF", `Varian "${variantKey}" nonaktif. Aktifkan dulu.`);
         }
         const alias = await sisipAlias(tx, aktor, p.id, [{ aliasNorm, aliasAsli, jenis, sumber, variantKey }]);
         await tulisLog(tx, aktor, alias.logs);

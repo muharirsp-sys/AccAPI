@@ -361,7 +361,7 @@ test("Kode dan kode varian > 20 karakter TIDAK dipotong di kolom; server yang me
 
 test("Galat 409 ALIAS_TABRAKAN dan 403 tampil dengan kalimat server di dialog; 409 memuat ulang data di belakang", async ({ page }) => {
     const c = await pasang(page, {
-        tulis: (t) => t.path.endsWith("/aliases") ? json({ ok: false, code: "ALIAS_TABRAKAN", error: "Ejaan \"PRINSIP B\" sudah dipakai principal PB — tidak ditimpa.", pemilik: { code: "PB" } }, 409)
+        tulis: (t) => t.path.endsWith("/aliases") ? json({ ok: false, code: "ALIAS_TABRAKAN", error: "Ejaan \"PRINSIP B\" sudah dipakai principal PB, jadi tidak ditimpa.", pemilik: { code: "PB" } }, 409)
             : t.method === "PATCH" ? json({ error: "Forbidden" }, 403) : undefined,
     });
     await page.goto("/data-principal", NAV);
@@ -372,7 +372,7 @@ test("Galat 409 ALIAS_TABRAKAN dan 403 tampil dengan kalimat server di dialog; 4
     const d = dialog(page, "Tambah alias ke PRINCIPLE A");
     await d.getByRole("textbox", { name: "Ejaan alias" }).fill("PRINSIP B");
     await d.getByRole("button", { name: "Tambah alias", exact: true }).click();
-    await expect(d.getByRole("alert")).toContainText("Ejaan \"PRINSIP B\" sudah dipakai principal PB — tidak ditimpa.");
+    await expect(d.getByRole("alert")).toContainText("Ejaan \"PRINSIP B\" sudah dipakai principal PB, jadi tidak ditimpa.");
     await expect(d.getByRole("textbox", { name: "Ejaan alias" })).toHaveValue("PRINSIP B"); // isian tidak dikosongkan
     await expect.poll(() => c.get).toBeGreaterThan(awal); // 409: data dimuat ulang
     await d.getByRole("button", { name: "Batal" }).click();
@@ -401,7 +401,7 @@ test("Jawaban hilang saat tulis = 'belum pasti' + muat ulang tanpa ulang otomati
 
 test("Galat muat tampil sebagai galat (bukan daftar kosong), kalimat server + Coba lagi; kosong sungguhan = Belum ada principal", async ({ page }) => {
     let gagal = true;
-    await pasang(page, { get: () => (gagal ? json({ ok: false, code: "PRINCIPAL_DDL_BELUM", error: "Penjaga database principal belum terpasang persis. Hubungi IT Support — perubahan tidak disimpan." }, 503) : undefined) });
+    await pasang(page, { get: () => (gagal ? json({ ok: false, code: "PRINCIPAL_DDL_BELUM", error: "Penjaga database principal belum terpasang persis. Hubungi IT Support. Perubahan tidak disimpan." }, 503) : undefined) });
     await page.goto("/data-principal", NAV);
     await expect(page.getByRole("alert").filter({ hasText: "Daftar principal gagal dimuat" })).toContainText("Hubungi IT Support", NAV);
     await expect(page.getByRole("heading", { name: "Belum ada principal" })).toHaveCount(0);

@@ -83,7 +83,7 @@ export function wajibPrincipal(teks: string, data: DataResmi): PrincipalResmi {
             { ditolak: [{ nilai: teks, saran: h.saran }] });
     }
     if (h.status === "nonaktif") {
-        throw new GalatPrincipal(409, "PRINCIPAL_NONAKTIF", `Principal "${h.principal.nama}" nonaktif di Data Principal — tidak bisa dipakai.`,
+        throw new GalatPrincipal(409, "PRINCIPAL_NONAKTIF", `Principal "${h.principal.nama}" nonaktif di Data Principal, jadi tidak bisa dipakai.`,
             { nilai: teks, principal: { code: h.principal.code, variantKey: h.principal.variantKey } });
     }
     return h.principal;

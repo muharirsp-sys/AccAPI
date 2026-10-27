@@ -336,12 +336,12 @@ test("Keadaan: memuat, galat bisa diulang, galat muat ulang menyisakan data lama
 });
 
 test("Keadaan kosong: pesan server tampil apa adanya (HIERARKI_BELUM_TERTAUT); tanpa pesan = kalimat umum", async ({ page }) => {
-    const pesan = { kode: "HIERARKI_BELUM_TERTAUT", teks: "Akun belum tertaut ke hierarki — hubungi Admin." };
+    const pesan = { kode: "HIERARKI_BELUM_TERTAUT", teks: "Akun belum tertaut ke hierarki. Hubungi Admin." };
     let o: Partial<JawabanSupervisorReview> = { salesman: [], totalCabang: [], kunjungan: [], penanda: [], fakturBelumTerbaca: [], tokoTanpaKoordinat: 0, pesan };
     await pasang(page, () => json(jawaban(o)));
     await page.goto("/supervisor-review", NAV);
     const main = page.locator("main");
-    await expect(main.getByText("Akun belum tertaut ke hierarki — hubungi Admin.")).toBeVisible(NAV);
+    await expect(main.getByText("Akun belum tertaut ke hierarki. Hubungi Admin.")).toBeVisible(NAV);
     await expect(main.getByText("Belum ada data untuk ditampilkan")).toBeVisible();
     await expect(tabelRingkasan(page)).toHaveCount(0);
 

@@ -187,7 +187,7 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
     if (settlement && settlement !== "on_invoice") {
         return {
             rows: [],
-            refused: [`Cara penyelesaiannya "${settlement}", bukan on faktur. Programnya nyata, tetapi ia tidak memotong faktur — memuatnya jadi aturan promo akan membenarkan potongan yang seharusnya tidak ada.`],
+            refused: [`Cara penyelesaiannya "${settlement}", bukan on faktur. Programnya nyata, tetapi ia tidak memotong faktur; memuatnya jadi aturan promo akan membenarkan potongan yang seharusnya tidak ada.`],
             notes, outletLists: [],
         };
     }
@@ -237,7 +237,7 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
         }
 
         if (program.stacking) notes.push(`${sebut}: ditandai bisa bertumpuk; gerbang memeriksa per posisi, jadi tumpukannya harus punya aturannya sendiri-sendiri`);
-        if (program.mix) notes.push(`${sebut}: ambangnya boleh dicampur antar barang, sedangkan aturan tersimpan per barang — ambangnya jadi keterangan, bukan penjaga`);
+        if (program.mix) notes.push(`${sebut}: ambangnya boleh dicampur antar barang, sedangkan aturan tersimpan per barang, jadi ambangnya hanya keterangan, bukan penjaga`);
 
         const tiers = program.tiers ?? [];
         if (!tiers.length) { tolak("tidak punya strata"); continue; }
@@ -330,7 +330,7 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
             if (isinya(kembar) === isinya(row)) {
                 notes.push(`${row.promoGroupId}: ${sebutBarang} tingkat ${row.tierNo} sudah dinyatakan `
                     + `${kembar.promoGroupId} dengan isi yang SAMA; dimuat sekali saja. Ini wajar pada `
-                    + "potongan setingkat nota — satu detail berbarang banyak memang menghasilkan satu program per barang.");
+                    + "potongan setingkat nota: satu detail berbarang banyak memang menghasilkan satu program per barang.");
             } else {
                 refused.push(`${row.promoGroupId}: barang ${sebutBarang} tingkat ${row.tierNo} sudah dinyatakan `
                     + `${kembar.promoGroupId} pada kelompok "${row.promoGroup}" dengan isi BERBEDA `

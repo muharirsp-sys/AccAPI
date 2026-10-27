@@ -99,7 +99,7 @@ export function barisSales(faktur: unknown[], retur: unknown[]) {
             if (!barangAbc(kode, item)) continue;
             const peta = petaDari(kode, item);
             if (peta === null) continue;
-            if (!peta) { galat.add(`Barang ${kode} (${teks(item.name ?? d.detailName)}) belum punya kode principle ABCPI — tambahkan di daftar harga/peta-barang`); continue; }
+            if (!peta) { galat.add(`Barang ${kode} (${teks(item.name ?? d.detailName)}) belum punya kode principle ABCPI. Tambahkan di daftar harga/peta-barang`); continue; }
             const tanda = isRetur ? -1 : 1;
             const rasio = angka(d.unitRatio) || 1;
             const qty = angka(d.quantity) * rasio;

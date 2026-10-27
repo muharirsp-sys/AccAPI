@@ -129,8 +129,8 @@ export async function jalankanAbcpi({ tanggal, kirim, sumber }: { tanggal: strin
         const csvStok = Buffer.from(keCsv(KOLOM_STOK, stok.baris));
         const buku = xlsx(sales.baris, stok.baris);
         if (!cfg) { hasil.status = "pratinjau"; return { ...hasil, xlsx: buku }; }
-        if (sales.galat.length) throw new Error("Validasi gagal — tidak dikirim ke FTP maupun email ABCPI");
-        if (!stok.baris.length) throw new Error("Stok barang ABC kosong — sesi Accurate membuka database yang salah? Tidak dikirim");
+        if (sales.galat.length) throw new Error("Validasi gagal. Tidak dikirim ke FTP maupun email ABCPI");
+        if (!stok.baris.length) throw new Error("Stok barang ABC kosong. Sesi Accurate membuka database yang salah? Tidak dikirim");
 
         await Promise.all([writeFile(path.join(folder, nama.sales), csvSales), writeFile(path.join(folder, nama.stok), csvStok), writeFile(path.join(folder, nama.xlsx), buku)]);
         const simpanStatus = () => writeFile(berkasStatus, JSON.stringify(status, null, 1));
@@ -141,7 +141,7 @@ export async function jalankanAbcpi({ tanggal, kirim, sumber }: { tanggal: strin
         const periode = `01–${tgl}`;
 
         if (tahan) {
-            const ok = await sendEmail({ to: cfg.adminEmail, subject: `[ABCPI] Closing ${tgl} DITAHAN — kirim manual`, attachments: lampiran,
+            const ok = await sendEmail({ to: cfg.adminEmail, subject: `[ABCPI] Closing ${tgl} DITAHAN: kirim manual`, attachments: lampiran,
                 text: [`Laporan closing ABCPI ${periode} (${hasil.baris.sales} baris penjualan, ${hasil.baris.stok} baris stok) sudah disusun tetapi BELUM dikirim ke FTP maupun email ABCPI.`,
                     `Periksa lampiran, lalu kirim dari ${WEB} (bagian "Laporan ABCPI", tanggal ${tgl}, tombol Kirim). Data ditarik ulang dari Accurate saat tombol ditekan (stok tetap posisi per ${tgl}).`,
                     ...hasil.peringatan.map((p) => `Peringatan: ${p}`)].join("\n\n") });
@@ -193,7 +193,7 @@ async function catat(hasil: HasilAbcpi, adminEmail: string) {
     const admin = adminEmail || await konfigurasi().then((c) => c.adminEmail, () => "");
     if (!admin || hasil.status === "ditahan") return;
     const kanal = (v?: string) => (v ? (v === "gagal" ? "gagal" : "ok") : "-");
-    await sendEmail({ to: admin, subject: `[ABCPI] ${hasil.status.toUpperCase()} ${hasil.tanggal} (${hasil.sumber}) — FTP ${kanal(hasil.ftp)}, email ${kanal(hasil.email)}`,
+    await sendEmail({ to: admin, subject: `[ABCPI] ${hasil.status.toUpperCase()} ${hasil.tanggal} (${hasil.sumber}): FTP ${kanal(hasil.ftp)}, email ${kanal(hasil.email)}`,
         text: [`Tanggal laporan: ${hasil.tanggal} (bulan berjalan s.d. tanggal ini)`, `Sumber: ${hasil.sumber}`, `Status: ${hasil.status}`,
             hasil.baris && `Baris: ${hasil.baris.sales} penjualan (${hasil.baris.faktur} faktur, ${hasil.baris.retur} retur), ${hasil.baris.stok} stok`,
             hasil.ftp && `FTP: ${hasil.ftp}`, hasil.email && `Email ABCPI: ${hasil.email}`,

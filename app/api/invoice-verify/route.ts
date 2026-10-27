@@ -115,7 +115,7 @@ export async function GET(request: NextRequest) {
             : {
                 status: "tak-terperiksa",
                 reason: row.state === "unknown"
-                    ? "Faktur dengan charField1 ini TIDAK ditemukan di cache. Belum berarti tidak ada di Accurate — cache bisa tertinggal."
+                    ? "Faktur dengan charField1 ini TIDAK ditemukan di cache. Belum berarti tidak ada di Accurate: cache bisa tertinggal."
                     : "Faktur belum ada di cache sales_invoice (webhook/sync belum menariknya)",
                 findings: [], invoiceNumber: row.accurateNumber ?? "", invoiceId: String(row.accurateId ?? ""),
                 linesChecked: 0, salesman: "", invoiceDate: "",

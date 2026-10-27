@@ -700,7 +700,7 @@ test("normalisasi WAJIB beraturan: calon, penerimaan, dan penolakan memakai satu
     assert.equal(lama.unowned, row.amount);
     assert.equal(lama.principal, 0);
     assert.equal(lama.rows[0].aturanId, undefined);
-    assert.match(lama.rows[0].reason, /TIDAK dipakai: keputusan lama tanpa aturan promo dasar — putuskan ulang/);
+    assert.match(lama.rows[0].reason, /TIDAK dipakai: keputusan lama tanpa aturan promo dasar; putuskan ulang/);
     // ...tetapi tetap MELEKAT di barisnya, supaya bisa ditemukan dan dirujukkan ulang.
     assert.equal(lama.rows[0].bekasNormalisasi, "principal");
     assert.equal(basi.rows[0].bekasNormalisasi, "principal");

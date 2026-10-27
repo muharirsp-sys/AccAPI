@@ -6,11 +6,11 @@ import { certainlyNotSent, conflictNotSent, postStatusNote, purchasePaymentConfl
 
 test("C11 tampilan: 'Accurate menolak' dibedakan dari tanpa jawaban & status lama 'gagal' yang ambigu", () => {
     assert.equal(postStatusNote("unknown", 'Accurate menolak (HTTP 200), belum terbukti tidak tersimpan: ["Vendor tidak ditemukan","Bank kosong"]'),
-        "Accurate menolak: Vendor tidak ditemukan; Bank kosong — status TIDAK PASTI (belum terbukti tidak tersimpan); cek purchase-payment di Accurate lalu selesaikan.");
+        "Accurate menolak: Vendor tidak ditemukan; Bank kosong. Status TIDAK PASTI (belum terbukti tidak tersimpan); cek purchase-payment di Accurate lalu selesaikan.");
     assert.equal(postStatusNote("unknown", "tanpa jawaban (TimeoutError: The operation was aborted due to timeout)"),
-        "TIDAK PASTI — tanpa jawaban pasti dari Accurate (tanpa jawaban (TimeoutError: The operation was aborted due to timeout)); cek purchase-payment sebelum posting ulang.");
+        "TIDAK PASTI: tanpa jawaban pasti dari Accurate (tanpa jawaban (TimeoutError: The operation was aborted due to timeout)); cek purchase-payment sebelum posting ulang.");
     assert.match(postStatusNote("unknown", "Accurate tidak merespons dalam 30 detik (timeout). Coba lagi.", "failed"),
-        /^TIDAK PASTI — tercatat "gagal" sebelum pembaruan, tetapi galatnya ambigu \(Accurate tidak merespons/);
+        /^TIDAK PASTI: tercatat "gagal" sebelum pembaruan, tetapi galatnya ambigu \(Accurate tidak merespons/);
     assert.equal(postStatusNote("failed", "dicek manual: tidak ada di Accurate"), "Post gagal: dicek manual: tidak ada di Accurate");
     assert.equal(postStatusNote("posted", ""), "");
 });

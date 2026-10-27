@@ -40,7 +40,7 @@ type SesiPenekan = { accessToken?: string | null; sessionHost?: string | null; s
 /** Sesi penekan dipakai mencari hanya bila lengkap, host-nya Accurate, dan terbuka pada database faktur. */
 export function sesiCariSah(sesi: SesiPenekan, targetDb: string): { session: SesiCari | null; catatan: string } {
     if (!sesi?.accessToken || !sesi.sessionHost || !sesi.sessionId || !isAllowedAccurateHost(sesi.sessionHost)) {
-        return { session: null, catatan: "sesi Accurate Anda tidak lengkap — masuk Accurate di /sesi-accurate" };
+        return { session: null, catatan: "sesi Accurate Anda tidak lengkap. Masuk Accurate di /sesi-accurate" };
     }
     if (!targetDb || String(sesi.databaseId ?? "") !== targetDb) {
         return { session: null, catatan: `sesi Accurate Anda terbuka pada database ${sesi.databaseId ?? "?"}, bukan database faktur ${targetDb || "(ACCURATE_INVOICE_DB_ID kosong)"}` };
@@ -75,8 +75,8 @@ const ringkasCari = (hasil: HasilCari) => hasil.hasil === "ketemu"
         : { hasil: hasil.hasil, alasan: hasil.alasan };
 
 const pesanGagalCari = (alasan: string) =>
-    `Pencarian faktur di Accurate tidak bisa memastikan (${alasan}). Tidak ada yang diubah — `
-    + "periksa manual di Accurate atau ulangi setelah sesi Accurate Anda aktif.";
+    `Pencarian faktur di Accurate tidak bisa memastikan (${alasan}). Tidak ada yang diubah. `
+    + "Periksa manual di Accurate atau ulangi setelah sesi Accurate Anda aktif.";
 
 const BERUBAH: AksiJawaban = { status: 409, body: { ok: false, error: "Status berubah sebelum tindakan dijalankan; muat ulang halaman" } };
 
@@ -147,7 +147,7 @@ export async function aksiAntrean(
             if (rows.length) {
                 await catatEvent(tx, {
                     orderId, jenis: "posted", stateFrom: "rejected", stateTo: "posted", actor,
-                    reason: `faktur ${hasil.number || hasil.id} ditemukan (${hasil.sumber}) sebelum antre ulang — tidak dikirim. ${reason}`.trim(),
+                    reason: `faktur ${hasil.number || hasil.id} ditemukan (${hasil.sumber}) sebelum antre ulang, tidak dikirim. ${reason}`.trim(),
                     detail: { pencarian, target_db: input.targetDb },
                 });
             }
@@ -155,7 +155,7 @@ export async function aksiAntrean(
         });
         return done
             ? { status: 200, body: { ok: true, orderId, action, state: "posted", accurateId: hasil.id, number: hasil.number, pencarian,
-                pesan: `Faktur ${hasil.number || hasil.id} sudah ada di Accurate — ditandai terposting, tidak dikirim ulang.` } }
+                pesan: `Faktur ${hasil.number || hasil.id} sudah ada di Accurate. Ditandai terposting, tidak dikirim ulang.` } }
             : BERUBAH;
     }
 
@@ -256,7 +256,7 @@ export async function antrekan(
             if (rows.length) {
                 await catatEvent(tx, {
                     orderId: entry.orderId, jenis: "posted", stateTo: "posted", actor: input.actor,
-                    reason: `pernah dibuang; faktur ${cari.number || cari.id} ditemukan (${cari.sumber}) sebelum antre — tidak dikirim`,
+                    reason: `pernah dibuang; faktur ${cari.number || cari.id} ditemukan (${cari.sumber}) sebelum antre, tidak dikirim`,
                     detail: { ...input.detail, pencarian, target_db: input.targetDb },
                 });
             }
@@ -333,7 +333,7 @@ export async function selesaikanTidakPasti(
         if (menit !== null && menit < SAPU_SETELAH_MENIT) {
             const sisaMenit = Math.max(1, Math.ceil(SAPU_SETELAH_MENIT - menit));
             return { status: 409, body: { ok: false, sisaMenit,
-                error: `Kiriman terakhir baru ${Math.floor(menit)} menit lalu — Accurate mungkin masih menyimpannya; `
+                error: `Kiriman terakhir baru ${Math.floor(menit)} menit lalu. Accurate mungkin masih menyimpannya; `
                     + `tunggu ${sisaMenit} menit lagi sebelum menetapkan tidak terposting.` } };
         }
     }
@@ -343,11 +343,11 @@ export async function selesaikanTidakPasti(
     if (hasil.hasil === "gagal_cek") return { status: 409, body: { ok: false, error: pesanGagalCari(hasil.alasan), pencarian } };
     if (input.keputusan === "terposting" && hasil.hasil !== "ketemu") {
         return { status: 409, body: { ok: false, pencarian,
-            error: `Pencarian langsung tidak menemukan faktur ber-charField1 ${orderId} (${hasil.diperiksa} faktur calon diperiksa) — tidak bisa ditetapkan terposting.` } };
+            error: `Pencarian langsung tidak menemukan faktur ber-charField1 ${orderId} (${hasil.diperiksa} faktur calon diperiksa), jadi tidak bisa ditetapkan terposting.` } };
     }
     if (input.keputusan === "tidak_terposting" && hasil.hasil === "ketemu") {
         return { status: 409, body: { ok: false, pencarian,
-            error: `Faktur ${hasil.number || hasil.id} DITEMUKAN di Accurate untuk SO ini — tetapkan terposting, bukan tidak terposting.` } };
+            error: `Faktur ${hasil.number || hasil.id} DITEMUKAN di Accurate untuk SO ini. Tetapkan terposting, bukan tidak terposting.` } };
     }
 
     const ketemu = hasil.hasil === "ketemu" ? hasil : null;
