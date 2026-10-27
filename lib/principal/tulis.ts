@@ -9,9 +9,9 @@
  * Side Effects: DB read/write principal, principal_variant, principal_alias, principal_log.
  */
 import { NextResponse } from "next/server";
-import { and, asc, desc, eq, lt, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, lt, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { principal, principalAlias, principalLog, principalVariant } from "@/db/schema";
+import { principal, principalAlias, principalLog, principalVariant, user } from "@/db/schema";
 import { normalisasiPrincipal, rapikanTeks } from "./normalisasi.ts";
 import { buatIndeksAlias, JENIS_ALIAS, resolvePrincipal, RUANG, ruangDari, SUMBER_KODE, type AliasTerindeks, type IndeksAlias, type JenisAlias } from "./resolver.ts";
 import { SQL_PENJAGA_HILANG } from "./penjaga.ts";
@@ -127,12 +127,14 @@ export async function daftarPrincipal(): Promise<PrincipalDaftar[]> {
     }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }
 
-/** Riwayat terbaru dulu, keyset `sebelum` (id). 404 bila principal tidak ada. */
+/** Riwayat terbaru dulu, keyset `sebelum` (id). 404 bila principal tidak ada. `actorName` = nama akun pelaku (left join `user` lewat
+ * `aktor` = id akun); null bila aktor bukan akun (mis. `benih:S7-2`) atau akunnya sudah tidak ada (audit desain 001 No 87). */
 export async function riwayatPrincipal(principalId: string, opsi: { sebelum?: number; batas?: number } = {}) {
     const batas = Math.min(Math.max(Math.trunc(opsi.batas ?? 50), 1), 200);
     const [p] = await db.select({ id: principal.id }).from(principal).where(eq(principal.id, principalId)).limit(1);
     if (!p) throw tolak(404, "PRINCIPAL_TIDAK_ADA", "Principal tidak ditemukan.");
-    const baris = await db.select().from(principalLog)
+    const baris = await db.select({ ...getTableColumns(principalLog), actorName: user.name }).from(principalLog)
+        .leftJoin(user, eq(user.id, principalLog.aktor))
         .where(opsi.sebelum ? and(eq(principalLog.principalId, principalId), lt(principalLog.id, opsi.sebelum)) : eq(principalLog.principalId, principalId))
         .orderBy(desc(principalLog.id)).limit(batas + 1);
     return { riwayat: baris.slice(0, batas), sebelum: baris.length > batas ? baris[batas - 1].id : null };

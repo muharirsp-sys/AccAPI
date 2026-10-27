@@ -1,5 +1,6 @@
 /*
- * Tujuan: Riwayat principal_log satu principal (S7-2, BL-64), terbaru dulu, keyset `?sebelum=<id>&batas=<1..200>`.
+ * Tujuan: Riwayat principal_log satu principal (S7-2, BL-64), terbaru dulu, keyset `?sebelum=<id>&batas=<1..200>`; tiap baris membawa
+ *   `actorName` (nama akun pelaku dari tabel user, null bila bukan akun; audit desain 001 No 87).
  * Caller: layar S7b Data principal (bagian Riwayat).
  * Dependensi: lib/principal/tulis.ts riwayatPrincipal, requirePermission (principles.view).
  * Main Functions: GET.

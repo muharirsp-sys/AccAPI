@@ -37,7 +37,7 @@ function benih(): Obj[] {
     ];
 }
 const log = (id: number, principalId: string, entitas: string, kunci: string, aksi: string, after: Obj | null, before: Obj | null = null) =>
-    ({ id, entitas, kunci, principalId, aksi, before, after, aktor: id === 1 ? "benih:S7-2" : "u1", waktu: T0 });
+    ({ id, entitas, kunci, principalId, aksi, before, after, aktor: id === 1 ? "benih:S7-2" : "u1", actorName: id === 1 ? null : id === 26 ? null : "USER A", waktu: T0 });
 
 type Opsi = {
     /** Jawaban GET /api/principals ke-n (1 = pertama); undefined = bawaan. */
@@ -198,6 +198,10 @@ test("Object Page: kepala (kode tetap), Varian, Alias (alias kode tanpa Hapus), 
 
     const r = page.getByRole("list", { name: "Riwayat principal" }).getByRole("listitem");
     await expect(r).toHaveCount(20, NAV);
+    // Pelaku = nama akun dari API (No 87); id hanya cadangan bila akunnya tidak ada (baris 26).
+    await expect(r.first()).toContainText("oleh akun u1");
+    await expect(r.nth(1)).toContainText("oleh USER A");
+    await expect(page.getByRole("list", { name: "Riwayat principal" })).not.toContainText("oleh u1");
     await page.getByRole("button", { name: "Muat riwayat lebih lama" }).click();
     await expect(r).toHaveCount(25);
     await expect(r.last()).toContainText("Principal dibuat");
