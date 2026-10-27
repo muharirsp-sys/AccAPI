@@ -74,6 +74,25 @@ def main():
                 assert client.post('/summary/review/import',content='{"value":NaN}',headers=headers).status_code==400
                 assert client.post('/summary/review/import',content=' '* (8*1024*1024+1),headers=headers).status_code==413
                 assert client.put('/summary/review/'+a['id']+'/details/S001',json={'revision':1,'patch':{'correction':'old'}},headers=headers).status_code==409
+                # Paket rujukan (audit desain 001 No 81): judul bulan-tahun dari `created`; GET terdaftar sebelum /{package_id}.
+                assert service.judul_paket({'created':'2026-09-10'})=='Summary September 2026'
+                assert service.judul_paket({'created':'bukan tanggal'})=='Paket Summary Program' and service.periode_paket({})is None
+                previous_ref=os.environ.get('SUMMARY_REVIEW_REFERENCE');ref=Path(temp)/'rujukan.json'
+                os.environ['SUMMARY_REVIEW_REFERENCE']=str(ref)
+                try:
+                    info=client.get('/summary/review/reference',headers={'x-test-user':'owner'})
+                    assert info.status_code==200 and info.json()['tersedia'] is False and info.json()['sebab'],info.text
+                    assert client.post('/summary/review/reference',json={},headers=headers).status_code==404
+                    ref.write_text(json.dumps({**raw,'created':'2026-10-05'}),encoding='utf8')
+                    info=client.get('/summary/review/reference',headers={'x-test-user':'owner'}).json()
+                    assert info['tersedia'] is True and info['periode']=='Oktober 2026' and info['judul']=='Summary Oktober 2026',info
+                    assert client.post('/summary/review/reference',json={},headers={'x-test-user':'owner'}).status_code==403
+                    baru=client.post('/summary/review/reference',json={},headers=headers).json()['package']
+                    lama=client.post('/summary/review/reference/september',json={},headers=headers).json()['package']
+                    assert baru['title']=='Summary Oktober 2026' and lama['id']==baru['id']
+                finally:
+                    if previous_ref is None:os.environ.pop('SUMMARY_REVIEW_REFERENCE',None)
+                    else:os.environ['SUMMARY_REVIEW_REFERENCE']=previous_ref
             finally:
                 if old_auth is None:sys.modules.pop('routers.summary_library',None)
                 else:sys.modules['routers.summary_library']=old_auth

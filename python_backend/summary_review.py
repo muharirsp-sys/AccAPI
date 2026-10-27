@@ -1,6 +1,6 @@
 """Tujuan: Paket review Summary, detail setting, dan koreksi persisten milik pengguna.
 Caller: routers.summary_review. Dependensi: summary_store SQLite dan stdlib.
-Main Functions: import_package, list_packages, get_package, save_detail, validate_package, refresh_brief.
+Main Functions: import_package, judul_paket, periode_paket, list_packages, get_package, save_detail, validate_package, refresh_brief.
 Side Effects: SQLite read/write atomik; koreksi draft tidak mengubah snapshot aturan yang sudah terbit.
 """
 import copy
@@ -115,10 +115,25 @@ def validate_package(raw):
     return raw
 
 
+BULAN=('Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember')
+
+
+def periode_paket(raw):
+    """'September 2026' dari field `created` paket (yyyy-mm-dd...); None bila tidak ada atau bukan tanggal."""
+    try:d=date.fromisoformat(str(raw.get('created') or '')[:10])
+    except ValueError:return None
+    return f'{BULAN[d.month-1]} {d.year}'
+
+
+def judul_paket(raw):
+    periode=periode_paket(raw)
+    return f'Summary {periode}' if periode else 'Paket Summary Program'
+
+
 def import_package(user,raw):
     validate_package(raw)
     value=encode(raw);source_hash=hashlib.sha256(value.encode()).hexdigest()
-    package_id=str(uuid.uuid4());title='Summary September 2026' if raw.get('created')=='2026-09-10' else 'Paket Summary Program'
+    package_id=str(uuid.uuid4());title=judul_paket(raw)
     with connect() as db:
         ensure(db)
         db.execute('INSERT OR IGNORE INTO summary_review_package(id,owner,source_hash,title,content) VALUES(?,?,?,?,?)',
