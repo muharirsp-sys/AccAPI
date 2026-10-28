@@ -27,15 +27,11 @@ export const dynamic = "force-dynamic";
 const GAYA = `
 @page { size: A4 portrait; margin: 12mm 10mm; }
 
-/* Root layout aplikasi memasang tiga lapis gradient position:fixed seukuran layar dan
-   latar gelap di <body>. Elemen fixed DIULANG di setiap halaman cetak, dan gradient tidak
-   bisa digambar sebagai vektor -- Chrome merasterisasi tiap halaman jadi bitmap A4 penuh.
-   Itu yang membuat PDF berat dibuka, bukan isi tabelnya. Halaman cetak dipaksa polos. */
+/* Halaman cetak dipaksa polos: latar berwarna atau gradient di <body> diulang di setiap halaman
+   dan membuat Chrome merasterisasi tiap halaman jadi bitmap A4 penuh (PDF berat dibuka).
+   Root layout tidak lagi memasang lapis gradient; penjaga latar putih ini tetap dipasang. */
 @media print {
     html, body { background: #fff !important; }
-    body > div.fixed, body > [class*="radial-gradient"], body > [class*="linear-gradient"] {
-        display: none !important;
-    }
 }
 /* Tepi layar 8mm; di kertas tepi sudah dari @page (12mm 10mm), jadi padding dibuang saat cetak (bukan margin ganda yang menyempitkan isi). */
 .cetak-akar { background: #fff; padding: 8mm; }
