@@ -116,10 +116,11 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
         setTanggal(t); setPilih(null); setDialog(null); setSukses(null); setRagu(null); setProses(null); setPesanBaca(null); setTawar(null);
     };
     // "Hari ini" dihitung ulang di klien (WITA) saat tab fokus/terlihat lagi dan lewat tengah malam (owner 27 Okt, audit No 109): layar yang
-    // masih di hari lama ikut pindah; tanggal pilihan user tidak ditimpa; dialog/pembacaan yang berjalan tidak dipindah diam-diam (strip).
+    // masih di hari lama ikut pindah; tanggal pilihan user tidak ditimpa; dialog, pembacaan, dan hasil tulis yang belum pasti (strip "belum
+    // pasti", juga selama diperiksa) tidak dipindah diam-diam: strip "Pindah ke hari ini" (tinjauan K2 S-1).
     const { hariBaru: hariKini } = useHariBeku((baru, lama) => {
         if (tanggal !== lama) return;
-        if (dialog || proses) setTawar(baru); else pindahKe(baru);
+        if (dialog || proses || ragu) setTawar(baru); else pindahKe(baru);
     });
     const batasHari = hariKini > hariIni ? hariKini : hariIni;
     const gantiTanggal = (t: string) => {

@@ -671,3 +671,26 @@ test("Hari aktual (owner 27 Okt, audit No 109): lewat tengah malam WITA layar di
     await expect(tanggal).toHaveValue(lusa);
     await expect(strip).toBeHidden();
 });
+
+test("Hari berganti saat hasil setoran belum pasti (tinjauan K2 S-1): strip belum pasti bertahan, layar tidak pindah diam-diam", async ({ page }) => {
+    const wita = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(d);
+    const hariIni = wita(new Date());
+    await page.clock.install({ time: new Date(`${hariIni}T23:59:20+08:00`) });
+    await pasang(page, { setoran: () => "putus" });
+    await page.goto("/kasir", NAV);
+    const tanggal = page.getByLabel("Tanggal");
+    await expect(tanggal).toHaveValue(hariIni, NAV);
+    await main(page).getByRole("list", { name: "Daftar orang" }).getByRole("button", { name: /SALES-C/ }).click(NAV);
+    await main(page).getByRole("region", { name: "Rincian orang" }).getByRole("button", { name: "Catat setoran…" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.getByLabel("Tunai").fill("3.600.000");
+    await dlg.getByLabel("Nomor Form Kasir").fill("FK-0412");
+    await dlg.getByRole("button", { name: "Simpan setoran" }).click();
+    await expect(dlg).toBeHidden();
+    const ragu = main(page).getByRole("status").filter({ hasText: "Hasil setoran SALES-C · SALES C belum pasti." });
+    await expect(ragu).toBeVisible(NAV);
+    await page.clock.runFor(65_000); // lewat 00.00 WITA
+    await expect(main(page).getByRole("status").filter({ hasText: "Hari sudah berganti ke" })).toBeVisible(NAV);
+    await expect(tanggal).toHaveValue(hariIni);
+    await expect(ragu).toBeVisible();
+});
