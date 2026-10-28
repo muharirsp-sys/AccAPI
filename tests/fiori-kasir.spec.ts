@@ -143,6 +143,17 @@ async function tanpaIzin(page: Page, buang: string[]) {
     });
 }
 
+/** Ganti cap waktu server halaman /kasir (prop jamServerMs di payload RSC; hanya di tes) supaya "hari ini" klien = jam server palsu. */
+async function jamServer(page: Page, ms: number) {
+    await page.route((u) => u.pathname === "/kasir", async (route) => {
+        const res = await route.fetch();
+        const headers = { ...res.headers() };
+        delete headers["content-length"];
+        delete headers["content-encoding"];
+        return route.fulfill({ status: res.status(), headers, body: (await res.text()).replace(/(jamServerMs\\?":)\d+/g, `$1${ms}`) });
+    });
+}
+
 const main = (page: Page) => page.locator("main");
 const footer = (page: Page) => page.locator(".fi-ftb");
 const kpi = (page: Page, label: string) => main(page).getByRole("group", { name: label, exact: true });
@@ -648,6 +659,7 @@ test("Hari aktual (owner 27 Okt, audit No 109): lewat tengah malam WITA layar di
     const besok = wita(new Date(Date.parse(`${hariIni}T12:00:00+08:00`) + 864e5));
     const lusa = wita(new Date(Date.parse(`${hariIni}T12:00:00+08:00`) + 2 * 864e5));
     await page.clock.install({ time: new Date(`${hariIni}T23:59:20+08:00`) });
+    await jamServer(page, Date.parse(`${hariIni}T23:59:20+08:00`)); // jam server = jam peramban palsu
     const log = await pasang(page);
     await page.goto("/kasir", NAV);
     const tanggal = page.getByLabel("Tanggal");
@@ -676,6 +688,7 @@ test("Hari berganti saat hasil setoran belum pasti (tinjauan K2 S-1): strip belu
     const wita = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(d);
     const hariIni = wita(new Date());
     await page.clock.install({ time: new Date(`${hariIni}T23:59:20+08:00`) });
+    await jamServer(page, Date.parse(`${hariIni}T23:59:20+08:00`));
     await pasang(page, { setoran: () => "putus" });
     await page.goto("/kasir", NAV);
     const tanggal = page.getByLabel("Tanggal");
@@ -693,4 +706,22 @@ test("Hari berganti saat hasil setoran belum pasti (tinjauan K2 S-1): strip belu
     await expect(main(page).getByRole("status").filter({ hasText: "Hari sudah berganti ke" })).toBeVisible(NAV);
     await expect(tanggal).toHaveValue(hariIni);
     await expect(ragu).toBeVisible();
+});
+
+test("Hari dari jam server, bukan jam peramban (tinjauan K2 R-1): peramban sudah lewat 00.00, server belum = tetap hari lama sampai server lewat", async ({ page }) => {
+    const wita = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(d);
+    const hariIni = wita(new Date());
+    const besok = wita(new Date(Date.parse(`${hariIni}T12:00:00+08:00`) + 864e5));
+    await page.clock.install({ time: new Date(`${besok}T00:00:30+08:00`) }); // peramban 90 dtk lebih cepat
+    await jamServer(page, Date.parse(`${hariIni}T23:59:00+08:00`));
+    const log = await pasang(page);
+    await page.goto("/kasir", NAV);
+    const tanggal = page.getByLabel("Tanggal");
+    await expect(tanggal).toHaveValue(hariIni, NAV);
+    await expect(tanggal).toHaveAttribute("max", hariIni); // tanggal yang akan ditolak server tidak bisa dipilih
+    await page.clock.runFor(31_000); // server 23.59.31
+    await expect(tanggal).toHaveValue(hariIni);
+    expect(log.get.some((q) => q.includes(`tanggal=${besok}`))).toBe(false);
+    await page.clock.runFor(60_000); // server lewat 00.00
+    await expect(tanggal).toHaveValue(besok, NAV);
 });

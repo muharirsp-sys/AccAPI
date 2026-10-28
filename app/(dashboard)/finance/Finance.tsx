@@ -47,7 +47,7 @@ function tanpa<T>(obj: Record<string, T>, key: string): Record<string, T> {
     return next;
 }
 
-export default function Finance({ permKeys, hariIni }: { permKeys: string[]; hariIni: string }) {
+export default function Finance({ permKeys, hariIni, jamServerMs }: { permKeys: string[]; hariIni: string; jamServerMs: number }) {
     const izin = useMemo(() => izinFinance(new Set(permKeys)), [permKeys]);
     const [tanggal, setTanggal] = useState(hariIni);
     const [load, muatUlang] = useLoad(useCallback(() => muatFinance(tanggal), [tanggal]));
@@ -103,10 +103,12 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
     // "Hari ini" dihitung ulang di klien (WITA) saat tab fokus/terlihat lagi dan lewat tengah malam (owner 27 Okt, audit No 109): tanggal bayar
     // yang masih hari lama ikut pindah; tanggal pilihan user tidak ditimpa; draf/dialog terbuka tidak dipindah diam-diam (strip + tombol).
     const [tawar, setTawar] = useState<string | null>(null);
+    // Hari dari jam SERVER (selisih sekali saat dibuka), bukan jam peramban (tinjauan K2 R-1).
+    const [selisihJam] = useState(() => jamServerMs - Date.now());
     useHariBeku((baru, lama) => {
         if (tanggal !== lama) return;
         if (adaDraf || dialog) setTawar(baru); else setTanggal(baru);
-    });
+    }, selisihJam);
 
     const hitung = useMemo(() => {
         const belum = baris.filter((b) => statusTransfer(b.r.status_pembayaran).label === "Belum transfer");

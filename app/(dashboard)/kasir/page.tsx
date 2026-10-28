@@ -12,6 +12,8 @@ import Kasir from "./Kasir";
 
 export default async function KasirPage() {
     const { perms } = await resolveRequestPermissionsH();
-    // Hari ini WITA menurut jam SERVER sebagai nilai awal (sama untuk render server/klien); sesudahnya Kasir menghitung ulang di klien (No 109).
-    return <FioriScope><Kasir permKeys={[...(perms ?? [])]} hariIni={todayWita(new Date())} /></FioriScope>;
+    // Hari ini WITA menurut jam SERVER sebagai nilai awal (sama untuk render server/klien); cap waktu server dikirim supaya Kasir menghitung
+    // "hari ini" berikutnya dari jam server, bukan jam peramban (No 109, tinjauan K2 R-1).
+    const kini = new Date();
+    return <FioriScope><Kasir permKeys={[...(perms ?? [])]} hariIni={todayWita(kini)} jamServerMs={kini.getTime()} /></FioriScope>;
 }

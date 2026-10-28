@@ -122,18 +122,20 @@ export function keBarisRute(rows: unknown, principle: string): AoRow[] {
  * "Hari ini" WITA DIBEKUKAN saat layar dibuka: lewat 00.00 layar tidak diam-diam memuat tanggal baru (isian tidak hilang).
  * `berganti` = jam sudah masuk hari lain; layar menawarkan `pakaiHariBaru` (pengguna yang memilih). `onGanti(baru, lama)` dipanggil sekali
  * tiap hari berganti (dari event, bukan render) untuk layar yang mengikuti hari aktual bila aman (Kasir, Finance; audit No 109).
+ * `selisihMs` = jam server − jam peramban (Kasir/Finance: route menolak tanggal di atas hari server, tinjauan K2 R-1); bawaan 0 = jam perangkat.
  * ponytail: deteksi lewat interval 30 dtk + fokus/visibilitas; penetapan tanggal oleh server = BL-28.
  */
-export function useHariBeku(onGanti?: (baru: string, lama: string) => void) {
-    const [hari, setHari] = useState(() => hariIniWita());
+export function useHariBeku(onGanti?: (baru: string, lama: string) => void, selisihMs = 0) {
+    const [hari, setHari] = useState(() => hariIniWita(new Date(Date.now() + selisihMs)));
     const [kini, setKini] = useState(hari);
     const onGantiRef = useRef(onGanti);
     useEffect(() => { onGantiRef.current = onGanti; });
     useEffect(() => {
         // Diperiksa berkala dan saat ponsel kembali ke layar ini (fokus/terlihat lagi) — saat paling mungkin hari sudah berganti.
-        let terakhir = hariIniWita();
+        const sekarang = () => hariIniWita(new Date(Date.now() + selisihMs));
+        let terakhir = sekarang();
         const cek = () => {
-            const baru = hariIniWita();
+            const baru = sekarang();
             setKini(baru);
             if (baru !== terakhir) { const lama = terakhir; terakhir = baru; onGantiRef.current?.(baru, lama); }
         };
@@ -141,7 +143,7 @@ export function useHariBeku(onGanti?: (baru: string, lama: string) => void) {
         window.addEventListener("focus", cek);
         document.addEventListener("visibilitychange", cek);
         return () => { clearInterval(t); window.removeEventListener("focus", cek); document.removeEventListener("visibilitychange", cek); };
-    }, []);
+    }, [selisihMs]);
     return { hari, berganti: kini !== hari, hariBaru: kini, pakaiHariBaru: () => setHari(kini) };
 }
 

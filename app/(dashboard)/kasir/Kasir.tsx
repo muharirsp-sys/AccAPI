@@ -76,7 +76,7 @@ const badgeOrang = (b: BarisOrang) => b.status === null ? <StatusBadge tone="neu
 
 const tunda = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariIni: string }) {
+export default function Kasir({ permKeys, hariIni, jamServerMs }: { permKeys: string[]; hariIni: string; jamServerMs: number }) {
     const keys = useMemo(() => new Set(permKeys), [permKeys]);
     const izin = { catat: keys.has("kasir.catat"), tutup: keys.has("kasir.tutup"), buka: keys.has("kasir.buka") };
     const [tanggal, setTanggal] = useState(hariIni);
@@ -118,10 +118,13 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
     // "Hari ini" dihitung ulang di klien (WITA) saat tab fokus/terlihat lagi dan lewat tengah malam (owner 27 Okt, audit No 109): layar yang
     // masih di hari lama ikut pindah; tanggal pilihan user tidak ditimpa; dialog, pembacaan, dan hasil tulis yang belum pasti (strip "belum
     // pasti", juga selama diperiksa) tidak dipindah diam-diam: strip "Pindah ke hari ini" (tinjauan K2 S-1).
+    // Hari dihitung dari jam SERVER (selisih sekali saat dibuka), bukan jam peramban yang bisa miring: route menolak tanggal di atas hari server
+    // (tinjauan K2 R-1). ponytail: selisih memuat latensi render (detik); diperbarui hanya saat halaman dimuat ulang.
+    const [selisihJam] = useState(() => jamServerMs - Date.now());
     const { hariBaru: hariKini } = useHariBeku((baru, lama) => {
         if (tanggal !== lama) return;
         if (dialog || proses || ragu) setTawar(baru); else pindahKe(baru);
-    });
+    }, selisihJam);
     const batasHari = hariKini > hariIni ? hariKini : hariIni;
     const gantiTanggal = (t: string) => {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(t) || t > batasHari) return;
