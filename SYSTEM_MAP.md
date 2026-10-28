@@ -821,7 +821,7 @@ AccAPI/_github_clean/
 │   ├── off-program-control/
 │   │   ├── OffGlobalSearch.tsx
 │   │   └── OffNotificationBell.tsx
-│   └── ui/                             # Input, Select, DatePickerField (dialog kalender + keyboard), Dialog native, AsyncState bersama
+│   └── ui/                             # Dialog native bersama
 ├── lib/
 │   ├── tampil.ts                       # Format tampilan bersama: KOSONG, tanggal/waktu WITA, hariIniWita, sebabHttp (+ tampil.test.ts)
 │   ├── auth.ts                         # Konfigurasi Better Auth server
@@ -987,7 +987,6 @@ AccAPI/_github_clean/
 | `components/off-program-control/OffNotificationBell.tsx` | `OffNotificationBell` | Tombol berjumlah + popover masalah SLA per peran; "Buka pengajuan" membuka batch di kolom kedua; Sembunyikan berlaku sampai muat ulang |
 | `app/(dashboard)/insentif-sales/**` (Fiori S4c) | `InsentifSalesPage`, `InsentifRangka`, `usePeriode`, `useDashboard`, `aksesInsentif`, `halamanTerlihat` | Enam rute (Dashboard, `/saya`, `/pembayaran`, `/data-periode`, `/support`, `/pengaturan`); navigasi dari izin + identitas hierarki (server); periode/principal/cabang di query URL untuk semua halaman; `?view=` lama dialihkan; enam keadaan per layar, aksi tulis lewat ConfirmDialog |
 | `app/globals.css` | semantic cockpit classes | Sumber token lebar halaman, spacing, radius, page hierarchy, tab, toolbar, panel, tabel, dan action hierarchy untuk route operasional |
-| `components/ui/AsyncState.tsx` | `LoadingState`, `ErrorState`, `EmptyState` | Primitive feedback async bersama; skeleton mengikuti reduced-motion, error meneruskan retry, empty state dapat membawa recovery action |
 
 ### Payments UI Safety
 
