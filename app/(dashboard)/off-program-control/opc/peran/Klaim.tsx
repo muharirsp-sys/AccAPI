@@ -19,7 +19,7 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { BellRing, Check, ExternalLink, Plus, Send, Undo2 } from "lucide-react";
-import { Button, MessageStrip, VariantNote } from "@/components/fiori/core";
+import { Button, MessageStrip } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { PREDIKAT, TAMPILAN, infoTahap, jumlahItem, periodeBatch, tahapBatch, tanggalOpc, totalBatch, type BatchOpc } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
@@ -237,10 +237,6 @@ function DetailKlaim(props: DetailProps) {
                     Batch ini di tahap {infoTahap(b).label}. Aksi Klaim hanya untuk batch yang menunggu validasi setelah SM, verifikasi final, atau draf CLM.
                 </MessageStrip>
             )}
-            {terminal && (
-                <VariantNote bl="BL-06">Untuk batch yang sudah disetujui OM, dibayar, selesai, atau dibatalkan, Kembalikan/Setujui tidak ditampilkan. Server saat ini hanya
-                    memeriksa &quot;sudah disetujui SM&quot;. Usulan: satu aturan transisi untuk UI dan server, transisi ilegal ditolak server.</VariantNote>
-            )}
         </>
     ) : stripCw ?? undefined;
 
@@ -275,8 +271,6 @@ function DetailKlaim(props: DetailProps) {
                     <FormField label="Keterangan kelengkapan" required help="Wajib diisi sebelum Setujui klaim. Saat mengembalikan, isian ini menjadi usulan alasan.">{(a) => (
                         <textarea {...a} className="fi-input" rows={3} value={nilai.catatan} onChange={(e) => ubah({ catatan: e.target.value })} />
                     )}</FormField>
-                    <VariantNote bl="BL-06">Kembalikan/Setujui hanya tampil untuk batch yang menunggu validasi Klaim. Server saat ini hanya memeriksa &quot;sudah disetujui SM&quot;.
-                        Usulan: server menolak transisi ilegal dengan aturan yang sama.</VariantNote>
                 </div>
             ),
         });
@@ -300,7 +294,13 @@ function DetailKlaim(props: DetailProps) {
 
     return (
         <>
-            <ObjectPageBatch {...props} bagian={bagian} strip={strip} aksi={aksi} pesanFooter={pesanFooter} draf={dirty} />
+            <ObjectPageBatch {...props} bagian={bagian} strip={strip} aksi={aksi} pesanFooter={pesanFooter} draf={dirty}
+                // Satu catatan varian per layar (audit No 80), digabung ke catatan Object Page.
+                varian={mode === "validasi"
+                    ? { bl: "BL-06", isi: "Kembalikan/Setujui hanya tampil untuk batch yang menunggu validasi Klaim; server saat ini hanya memeriksa \"sudah disetujui SM\". Usulan: server menolak transisi ilegal dengan aturan yang sama." }
+                    : mode === "baca" && !data.uji && terminal
+                        ? { bl: "BL-06", isi: "Untuk batch yang sudah disetujui OM, dibayar, selesai, atau dibatalkan, Kembalikan/Setujui tidak ditampilkan; server saat ini hanya memeriksa \"sudah disetujui SM\". Usulan: satu aturan transisi untuk UI dan server, transisi ilegal ditolak server." }
+                        : undefined} />
             <ConfirmDialog open={dialog === "claimok"} onClose={tutup} tag="Setujui" title={`Setujui klaim ${no}?`} confirmLabel="Setujui"
                 description="Batch dikunci dan diteruskan ke Operational Manager." facts={faktaSetuju} confirmDisabled={kunci ?? bukanMode("validasi")} onConfirm={() => setujui("")} />
             <ConfirmDialog open={dialog === "sendiri"} onClose={tutup} tag="Setuju sendiri" title="Setujui batch yang Anda buat sendiri?" confirmLabel="Setujui"

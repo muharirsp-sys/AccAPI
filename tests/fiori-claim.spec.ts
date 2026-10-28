@@ -105,11 +105,14 @@ test("Detail draf: semua bagian + anchor bar, varian BL, Tandai siap nonaktif be
         await expect(main.getByRole("region", { name: nama })).toBeVisible();
     }
     await expect(main.getByRole("navigation", { name: "Bagian halaman" }).getByRole("link")).toHaveCount(6);
-    // Satu catatan varian per layar (owner 27 Okt, audit No 80); batasan lain jadi keterangan biasa di bagiannya.
+    // Satu catatan varian per layar, hanya Admin (owner 27 Okt, audit No 80 + tinjauan K2: audiens tetap); fakta tugas No Claim tetap terlihat semua.
     await expect(main.getByRole("complementary")).toHaveCount(1);
-    await expect(main.getByLabel("Usulan BL-15, BL-08")).toBeVisible();
-    for (const teks of ["No Claim yang sama di klaim ini menggabungkan berkasnya", "Bukti bayar principal belum bisa dilampirkan",
-        "Riwayat mencatat aksi dan catatannya", "Alur hanya ditelusuri dari klaim ke belakang"]) await expect(main.getByText(teks)).toBeVisible();
+    const catatan = main.getByLabel(/^Usulan BL-15, BL-08/);
+    for (const teks of ["Bukti bayar principal belum bisa dilampirkan", "Riwayat mencatat aksi dan catatannya", "Alur hanya ditelusuri dari klaim ke belakang"]) {
+        await expect(catatan).toContainText(teks);
+    }
+    await expect(main.getByText("No Claim yang sama di klaim ini menggabungkan berkasnya")).toBeVisible(); // fakta tugas, semua akun
+    await expect(catatan).not.toContainText("No Claim yang sama di klaim ini");
     await expect(main.getByRole("list", { name: "Tahap klaim" }).locator('[aria-current="step"]')).toContainText("Draf");
     await expect(main.getByRole("region", { name: "Riwayat" })).toContainText("Membuat klaim dari OFF Program Control");
     const siap = main.getByRole("button", { name: "Tandai siap dikirim…" });
@@ -191,9 +194,11 @@ test("Menunggu bayar: dialog Catat pembayaran mengirim badan yang sama; Batalkan
     const bayar = main.getByRole("region", { name: "Pembayaran dari principal" });
     await expect(bayar).toContainText("termin 1", NAV);
     await expect(main.getByRole("complementary")).toHaveCount(1); // satu catatan varian per layar (audit No 80)
-    await expect(main.getByLabel("Usulan BL-15, BL-08")).toContainText("dua pembayaran yang dicatat bersamaan");
-    await expect(main.getByText("Setelah dikirim ke principal, klaim ini belum bisa diminta revisi atau dibatalkan.")).toBeVisible();
-    await expect(bayar).toContainText("Bukti bayar principal belum bisa dilampirkan");
+    const catatan = main.getByLabel(/^Usulan BL-15, BL-08/);
+    await expect(catatan).toHaveAttribute("aria-label", /BL-14/);
+    await expect(catatan).toContainText("dua pembayaran yang dicatat bersamaan");
+    await expect(catatan).toContainText("Setelah dikirim ke principal, klaim belum bisa diminta revisi atau dibatalkan.");
+    await expect(bayar).not.toContainText("Bukti bayar principal belum bisa dilampirkan"); // batasan hanya di catatan Admin
     await expect(main.locator(".fi-ftb")).toContainText("Dikirim 47 hari lalu");
 
     await main.locator(".fi-ftb").getByRole("button", { name: "Catat pembayaran…" }).click();

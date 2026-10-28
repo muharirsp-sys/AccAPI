@@ -264,7 +264,7 @@ test("Summary: buka draf, siklus, Terbitkan butuh centang; gerbang faktur menung
     await expect(muat).toBeDisabled();
     await expect(muat).toHaveAttribute("title", "Lengkapi bukti tanda tangan dan pernyataan");
     // BL-53 kini keterangan biasa; satu catatan varian per layar = BL-51 (audit No 80).
-    await expect(gerbang.getByText("Pernyataan boleh dibuat siapa pun yang berizin ubah Summary")).toBeVisible();
+    await expect(gerbang.getByLabel("Usulan BL-51, BL-53")).toContainText("termasuk penerbitnya sendiri; belum ada pemeriksa kedua"); // hanya Admin (tinjauan K2)
     await expect(main.getByRole("complementary")).toHaveCount(1);
 });
 

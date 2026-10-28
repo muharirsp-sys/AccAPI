@@ -17,7 +17,7 @@
 
 import { useEffect, useState } from "react";
 import { Wallet } from "lucide-react";
-import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
+import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, StatusBadge, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { canProcessFinancePayment } from "@/lib/off-program-control/workflow";
 import type { OffBatchRow } from "@/lib/off-program-control/types";
@@ -247,12 +247,6 @@ function DetailKeuangan(props: DetailProps) {
                 <FormField label="Catatan Keuangan">
                     {(a) => <textarea {...a} className="fi-input" rows={3} value={catatanNilai} disabled={Boolean(izin)} onChange={(e) => setCatatan(e.target.value)} />}
                 </FormField>
-                <VariantNote bl="BL-08, BL-07">
-                    Lampiran bank divalidasi (jenis dan ukuran) lalu tidak disimpan; yang tersimpan dan bisa dibuka dari Riwayat pembayaran adalah PDF
-                    ringkasan buatan sistem yang mencatat nama lampiran. Tombol Catat terkunci selama pencatatan berjalan dan server menolak item yang
-                    sudah tercatat dibayar, tetapi dua pencatatan yang benar-benar bersamaan belum dicegah. Usulan: lampiran tersimpan dengan hash, dan
-                    server mengunci batch sehingga pencatatan kedua ditolak.
-                </VariantNote>
             </div>
         ),
     };
@@ -307,6 +301,8 @@ function DetailKeuangan(props: DetailProps) {
             gantiItem={tabelItem}
             bagian={[bagianBayar, ...bagianSelisih]}
             strip={strip}
+            // Satu catatan varian per layar (audit No 80); lampiran bank tidak disimpan (BL-07) sudah di catatan Object Page.
+            varian={{ bl: "BL-08", isi: "Lampiran bank divalidasi (jenis dan ukuran) lalu tidak disimpan; PDF ringkasan buatan sistem mencatat nama lampirannya. Tombol Catat terkunci selama pencatatan berjalan dan server menolak item yang sudah tercatat dibayar, tetapi dua pencatatan yang benar-benar bersamaan belum dicegah. Usulan: lampiran tersimpan dengan hash, dan server mengunci batch sehingga pencatatan kedua ditolak." }}
             pesanFooter={dipilih.length > 0
                 ? <span className="fi-sum"><b>{dipilih.length} item dipilih</b> · {rupiah(total)}{metode ? ` · ${metode}` : ""}{alasan && <span className="fi-why"> · {alasan}</span>}</span>
                 : alasan}

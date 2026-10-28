@@ -1,7 +1,7 @@
 /*
  * Tujuan: Catatan "Perilaku hari ini" (VariantNote, `.fi-varbox`, satu per layar) hanya tampil untuk Admin — pemegang users.manage, definisi
  *   yang sama dengan penjaga "minimal satu admin" (lib/rbac/otorisasi). Atribut `data-admin` dipasang SSR pada <main> oleh SidebarLayout;
- *   CSS menyembunyikan kotaknya secara bawaan. Satu layar contoh (Order Sales: catatan BL-32; BL-18 keterangan biasa, audit No 80).
+ *   CSS menyembunyikan kotaknya secara bawaan. Satu layar contoh (Order Sales: satu catatan BL-32 + BL-18, audit No 80).
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
  *   `npx playwright test tests/fiori-varbox-admin.spec.ts --config <config lokal> --workers=1`.
  * Dependensi: tests/helpers/order-cabang-mock.ts (mock Order Sales). Non-admin = kunci users.manage diganti nama di payload RSC halaman
@@ -33,14 +33,14 @@ test("Catatan varian (usulan BL) hanya untuk Admin: Admin melihat, non-Admin tid
     const main = page.locator("main#workspace-content");
 
     // Admin (LOCAL_AUTH_BYPASS = semua izin, termasuk users.manage): catatan terlihat. Satu catatan per layar (owner 27 Okt, audit No 80):
-    // BL-18 kini keterangan biasa yang terlihat semua akun.
+    // BL-18 digabung ke catatan BL-32, jadi tetap hanya Admin (tinjauan K2).
     await page.goto("/sales", NAV);
     await expect(main.getByLabel("Cari pelanggan")).toBeVisible(NAV); // bagian Pelanggan (BL-32) tampil sesudah cakupan cabang terbaca
     await expect(main).toHaveAttribute("data-admin", "true");
     await expect(main.getByRole("complementary", { name: "Usulan BL-32" })).toBeVisible();
     await expect(main.getByRole("complementary", { name: "Usulan BL-32" })).toContainText("Perilaku hari ini");
     await expect(main.getByRole("complementary", { name: "Usulan BL-18" })).toHaveCount(0);
-    await expect(main.getByText("salesman belum bisa membatalkan order yang belum ditarik")).toBeVisible();
+    await expect(main.getByRole("complementary", { name: "Usulan BL-32, BL-18" })).toContainText("salesman belum bisa membatalkan order yang belum ditarik");
     await expect(main.locator("aside.fi-varbox").first()).toBeVisible();
     const nAdmin = await main.locator("aside.fi-varbox").count();
     expect(nAdmin).toBe(1);
@@ -54,5 +54,5 @@ test("Catatan varian (usulan BL) hanya untuk Admin: Admin melihat, non-Admin tid
     await expect(main.locator("aside.fi-varbox").first()).toBeHidden();
     await expect(main.getByRole("complementary", { name: /Usulan BL-/ })).toHaveCount(0);
     await expect(main.locator("aside.fi-varbox:visible")).toHaveCount(0); // satu pun tak terlihat
-    await expect(main.getByText("salesman belum bisa membatalkan order yang belum ditarik")).toBeVisible(); // keterangan biasa: semua akun
+    await expect(main.getByText("salesman belum bisa membatalkan order yang belum ditarik")).toBeHidden(); // batasan BL-18 tetap hanya Admin (tinjauan K2)
 });

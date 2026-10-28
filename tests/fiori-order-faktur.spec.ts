@@ -101,7 +101,7 @@ test("Default + Memuat: kepala dari cache tampil segera, barang dan ringkasan me
     // Satu catatan varian per layar (audit No 80): BL-35 di Object Page; batasan daftar (BL-36) jadi keterangan biasa.
     await expect(main.getByRole("complementary", { name: /BL-35/ })).toBeVisible();
     await expect(main.getByRole("complementary")).toHaveCount(1);
-    await expect(main.getByText("Daftar hanya bisa dicari menurut nomor atau pelanggan dan dibatasi ke nomor INV")).toBeVisible();
+    await expect(main.getByText("Cari menurut nomor faktur atau pelanggan; daftar memuat faktur bernomor INV.")).toBeVisible(); // fakta tugas, semua akun
     await expect(main.getByRole("complementary", { name: /BL-22/ })).toHaveCount(0);
     await expect(main.getByRole("link", { name: "Antrean Faktur", exact: true })).toHaveAttribute("href", "/antrean-faktur");
     await expect(det.getByRole("link", { name: "Buka Antrean Faktur" })).toHaveAttribute("href", "/antrean-faktur");

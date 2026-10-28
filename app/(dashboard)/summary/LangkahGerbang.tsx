@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { FlaskConical, ShieldCheck, Upload } from "lucide-react";
-import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, type Column } from "@/components/fiori/core";
+import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, type Load } from "@/components/fiori/interactive";
 import { KOSONG, sebabHttp, waktuWita } from "@/lib/tampil";
 import { BEBAN, bebanDari, manfaat, tgl } from "@/lib/promo-ui";
@@ -166,10 +166,15 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
                             <Button variant="primary" disabled={!siapMuat} disabledReason="Lengkapi bukti tanda tangan dan pernyataan" onClick={() => setDialog("muat")}>{entri?.sudahDimuat ? "Muat ulang ke gerbang faktur…" : "Muat ke gerbang faktur…"}</Button>
                         </div>
                     )}
-                    {/* BL-53: keterangan biasa; satu catatan varian per layar = BL-51 di Summary (audit No 80). */}
-                    <p className="fi-small fi-subtle">Pernyataan boleh dibuat siapa pun yang berizin ubah Summary, termasuk penerbitnya sendiri; belum ada pemeriksa kedua.</p>
                 </div>
             )}
+
+            {/* Satu catatan varian per layar Summary, hanya Admin (audit No 80 + tinjauan K2: audiens tetap): BL-51 dari Summary + BL-53. */}
+            <div className="fi-sect-in">
+                <VariantNote bl="BL-51, BL-53">
+                    Pengaturan Summary punya jalur terbit sendiri yang hanya dipakai order dan tidak masuk Summary final. Belum ada satu jalur terbit yang terbaca semua pemakai. Pernyataan &quot;program benar&quot; boleh dibuat siapa pun yang berizin ubah Summary, termasuk penerbitnya sendiri; belum ada pemeriksa kedua.
+                </VariantNote>
+            </div>
 
             {buka && st && (
                 <ConfirmDialog open={dialog === "nyatakan"} onClose={() => setDialog(null)} tag={st.dicentang ? "Cabut" : "Pernyataan"}

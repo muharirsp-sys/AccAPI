@@ -15,7 +15,7 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import {
     AnchorBar, Button, EmptyState, ErrorState, Flow, FooterToolbar, KeyValues, ListItem, MessageStrip, ObjectPageHeader, ResponsiveTable, Section,
-    Skeleton, StatusBadge, type Column,
+    Skeleton, StatusBadge, VariantNote, type Column,
 } from "@/components/fiori/core";
 import { statusKlaim } from "@/lib/claim-workflow-ui";
 import { rupiah } from "@/lib/promo-ui";
@@ -38,12 +38,14 @@ export type ObjectPageBatchProps = DetailProps & {
     aksi?: ReactNode;
     pesanFooter?: ReactNode;
     draf?: boolean;
+    /** Catatan varian milik modul peran (kode BL + kalimat, inline); digabung ke satu VariantNote Object Page. */
+    varian?: { bl: string; isi: ReactNode };
 };
 
 // Jejak halaman cukup satu (kepala halaman OPC); Object Page di kolom kedua tidak mengulangnya dan judulnya h2 (halaman punya h1, No 141).
-// Batasan sistem di bagian baca tampil sebagai keterangan biasa; catatan varian (Admin) satu per layar milik modul peran (No 80).
+// Satu catatan varian (Admin) per layar di akhir Object Page: batasan bagian baca + catatan modul peran (prop `varian`), No 80.
 export function ObjectPageBatch(props: ObjectPageBatchProps) {
-    const { ringkas, detail, muatUlang, masalah, bagian = [], gantiItem, strip, aksi, pesanFooter, draf, tidakPasti, tutupTidakPasti } = props;
+    const { ringkas, detail, muatUlang, masalah, bagian = [], gantiItem, strip, aksi, pesanFooter, draf, tidakPasti, tutupTidakPasti, varian } = props;
     // Hasil tulis tidak pasti (KolomDetail): bertahan walau dialog ditutup dan detail dimuat ulang.
     const stripTidakPasti = tidakPasti
         ? <MessageStrip tone="warn" title="Hasil aksi terakhir belum pasti." onClose={tutupTidakPasti}>{tidakPasti}</MessageStrip>
@@ -140,8 +142,6 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
                             ["Catatan OM", b.omNote || KOSONG],
                             ["Catatan verifikasi final", b.finalClaimNote || KOSONG],
                         ]} />
-                        {/* BL-11: perilaku hari ini, keterangan biasa (satu catatan varian per layar, audit No 80). */}
-                        <p className="fi-small fi-subtle">Kelengkapan yang dipilih Klaim saat menyetujui belum tersimpan di batch, jadi di sini tampil &quot;Belum tercatat&quot;.</p>
                     </div>
                 </Section>
                 <Section id="opc-bayar" title="Pembayaran dan refund">
@@ -171,12 +171,17 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
                             </>
                         )}
                     </div>
-                    <div className="fi-sect-in" style={{ paddingTop: 0 }}>
-                        {/* BL-35 */}
-                        <p className="fi-small fi-subtle">Tautan ke Claim Workflow muncul setelah klaimnya dibuat. Pembayaran belum bisa ditelusuri balik ke batch ini.</p>
-                    </div>
                 </Section>
                 {tampilBagian(di("akhir"))}
+                {/* Satu catatan varian per layar, hanya Admin (audit No 80 + tinjauan K2): catatan modul peran (`varian`) digabung dengan batasan
+                    bagian baca Object Page, supaya audiens tetap Admin dan kotaknya satu. */}
+                <VariantNote bl={[varian?.bl, "BL-07, BL-11, BL-33, BL-35"].filter(Boolean).join(", ")}>
+                    {varian && <>{varian.isi} </>}
+                    Kelengkapan yang dipilih Klaim saat menyetujui belum tersimpan di batch, jadi di Validasi klaim tampil &quot;Belum tercatat&quot;. Bukti
+                    yang bisa dibuka adalah PDF ringkasan pembayaran buatan sistem; lampiran bank yang diunggah tidak disimpan. Riwayat mencatat aksi
+                    dan status, belum nilai sebelum dan sesudah tiap isian. Tautan ke Claim Workflow muncul setelah klaimnya dibuat; pembayaran belum
+                    bisa ditelusuri balik ke batch ini.
+                </VariantNote>
             </div>
             {aksi && <FooterToolbar message={pesanFooter}>{aksi}</FooterToolbar>}
         </div>
@@ -242,8 +247,6 @@ function BagianBayar({ total, payments, totalPaid, sisa, refund, muatUlang }: {
                 mobileItem={(p) => <ListItem doc={`Pembayaran ke-${p.paymentNo}`} amount={rupiah(p.paidAmount)} title={tanggalOpc(p.paymentDate)}
                     meta={[p.paymentMethod, p.senderBank || p.paymentSenderBank, p.note].filter(Boolean).join(" · ")} />} />
             <div className="fi-sect-in">
-                {/* BL-07 */}
-                <p className="fi-small fi-subtle">Bukti yang bisa dibuka adalah PDF ringkasan pembayaran buatan sistem; lampiran bank yang diunggah tidak disimpan.</p>
                 <h3 className="fi-caption">Pengembalian selisih</h3>
                 {refund.status === "memuat" && !r ? <Skeleton rows={2} label="Memuat pengembalian selisih" />
                     : refund.status === "galat" && !r ? (
@@ -304,8 +307,6 @@ function BagianRiwayat({ audit, b, muatUlang }: { audit: NonNullable<DetailProps
                     ["Status utama", b.status], ["Sales Manager", b.smStatus], ["Klaim", b.claimStatus], ["Operational Manager", b.omStatus],
                     ["Keuangan", b.financeStatus], ["Verifikasi final", b.finalStatus], ["Pengembalian selisih", b.refundStatus ?? ""],
                 ] as Array<[string, string]>).map(([k, v]) => [k, <Fragment key={k}>{labelStatus(v)}</Fragment>])} />
-                {/* BL-33 */}
-                <p className="fi-small fi-subtle">Riwayat mencatat aksi dan status, belum nilai sebelum dan sesudah tiap isian.</p>
             </div>
         </>
     );

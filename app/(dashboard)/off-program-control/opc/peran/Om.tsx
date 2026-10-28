@@ -15,7 +15,7 @@
 
 import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
-import { Button, KeyValues, MessageStrip, Section, StatusBadge, VariantNote } from "@/components/fiori/core";
+import { Button, KeyValues, MessageStrip, Section, StatusBadge } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { SLA_DAYS } from "@/lib/off-program-control/problematic";
 import { PREDIKAT, TAMPILAN, jumlahItem, labelStatus, tanggalOpc, totalBatch, type BatchOpc, type ItemOpc } from "@/lib/opc-ui";
@@ -91,12 +91,6 @@ function DetailOm(props: DetailProps) {
                                 placeholder="Tulis alasan bila batch dibatalkan" onChange={(e) => setCatatan(e.target.value)} />}
                         </FormField>
                         {dirty && <span><StatusBadge tone="warn">Belum dikirim</StatusBadge></span>}
-                        {/* Satu catatan varian per layar (audit No 80): D-01 dan BL-06 digabung. */}
-                        <VariantNote bl="D-01, BL-06">
-                            Hari ini satu izin keputusan OM di server membolehkan Setujui dan Batalkan sekaligus; tombol keputusan hanya tampil untuk batch
-                            yang disetujui Klaim dan menunggu OM, sedangkan server memeriksa tahapnya dengan aturannya sendiri. Usulan: tiap tombol mengikuti
-                            izinnya sendiri (D-01) dan satu aturan transisi dipakai layar dan server.
-                        </VariantNote>
                     </>
                 )}
             </div>
@@ -120,6 +114,8 @@ function DetailOm(props: DetailProps) {
     return (
         <>
             <ObjectPageBatch {...props} bagian={bagian} aksi={aksi} pesanFooter={pesanFooter} draf={dirty}
+                // Satu catatan varian per layar (audit No 80), digabung ke catatan Object Page.
+                varian={bisa ? { bl: "D-01, BL-06", isi: "Hari ini satu izin keputusan OM di server membolehkan Setujui dan Batalkan sekaligus; tombol keputusan hanya tampil untuk batch yang disetujui Klaim dan menunggu OM, sedangkan server memeriksa tahapnya dengan aturannya sendiri. Usulan: tiap tombol mengikuti izinnya sendiri (D-01) dan satu aturan transisi dipakai layar dan server." } : undefined}
                 strip={pesan ? <MessageStrip tone="pos" title={pesan} onClose={() => setPesan(null)} /> : undefined} />
             <ConfirmDialog
                 open={dialog === "omok"}

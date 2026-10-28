@@ -14,7 +14,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Download, FileText, Flag, Play, Plus, Send, Trash2, Undo2, Upload } from "lucide-react";
 import {
-    AnchorBar, Button, EmptyState, Flow, FooterToolbar, ListItem, MessageStrip, ObjectPageHeader, ResponsiveTable, Section, StatusBadge, VariantNote,
+    AnchorBar, Button, EmptyState, Flow, FooterToolbar, ListItem, MessageStrip, ObjectPageHeader, ResponsiveTable, Section, StatusBadge,
     type Column, type FlowStep, type Tone,
 } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
@@ -559,7 +559,7 @@ export default function Summary({ permKeys }: { permKeys: string[] }) {
                             <div className="fi-kc" data-tone={terbitEntry?.sudahDimuat ? "pos" : undefined}><span>Gerbang faktur</span><b style={{ fontSize: "1.125rem" }}>{gerbangTeks}</b><small>{!gerbangTerbaca && publikasi.status === "galat" ? publikasi.error : st === "published" ? "Menunggu persetujuan dan muat" : "Setelah terbit, disetujui, dan dimuat"}</small></div>
                             <div className="fi-kc" data-tone={terbitEntry?.sudahDimuat ? "pos" : undefined}><span>Rekap &amp; Normalisasi</span><b style={{ fontSize: "1.125rem" }}>{gerbangTerbaca ? (terbitEntry?.sudahDimuat ? "Ya" : "Belum") : gerbangTeks}</b><small>Membaca aturan yang sama dengan gerbang faktur</small></div>
                         </div>
-                        <VariantNote bl="BL-51">Pengaturan Summary punya jalur terbit sendiri yang hanya dipakai order dan tidak masuk Summary final. Belum ada satu jalur terbit yang terbaca semua pemakai.</VariantNote>
+                        {/* BL-51 digabung ke satu catatan varian layar ini di LangkahGerbang (audit No 80). */}
                     </div>
                 </Section>
             )}

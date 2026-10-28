@@ -165,13 +165,13 @@ test("?batch= membuka Object Page di kolom kedua: header, Flow 7 tahap, lewat SL
     await expect(detail.getByText("Dikirim ke Sales Manager").first()).toBeVisible(); // enam sumbu status, label Indonesia
     await expect(detail.getByText("Belum ada pembayaran")).toBeVisible();
     await expect(detail.getByText("Tidak ada selisih yang perlu dikembalikan.")).toBeVisible();
-    // Batasan sistem di Object Page = keterangan biasa; satu catatan varian per layar milik modul peran (SM: BL-06), audit No 80.
+    // Satu catatan varian per layar, hanya Admin (audit No 80 + tinjauan K2): catatan modul peran (SM: BL-06) + batasan bagian baca Object Page.
+    await expect(main.getByRole("complementary")).toHaveCount(1);
+    const catatan = detail.getByLabel(/^Usulan BL-06/);
     for (const teks of ["Kelengkapan yang dipilih Klaim saat menyetujui belum tersimpan di batch", "Bukti yang bisa dibuka adalah PDF ringkasan pembayaran buatan sistem",
         "Riwayat mencatat aksi dan status, belum nilai sebelum dan sesudah tiap isian", "Tautan ke Claim Workflow muncul setelah klaimnya dibuat"]) {
-        await expect(detail.getByText(teks)).toBeVisible();
+        await expect(catatan).toContainText(teks);
     }
-    await expect(main.getByRole("complementary")).toHaveCount(1);
-    await expect(main.getByLabel("Usulan BL-06")).toBeVisible();
     await page.screenshot({ path: "test-results/fiori-opc-objectpage.png", fullPage: true });
 
     // Alur dokumen menaut Claim Workflow bila daftar membawa relasinya; pindah batch lewat daftar.

@@ -19,7 +19,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, FileText, Percent, Plus } from "lucide-react";
-import { Button, FooterToolbar, KeyValues, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
+import { Button, FooterToolbar, KeyValues, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { PREDIKAT, TAMPILAN, labelStatus, tahapBatch, type Tampilan } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { hariIniWita } from "@/lib/tampil";
@@ -84,6 +84,8 @@ function StripPdf({ pdfUrl, claimStatus }: { pdfUrl?: string | null; claimStatus
 }
 
 
+const KUNCI_VERSI_KONFLIK = "Hari ini belum ada kunci versi: perubahan orang lain bisa tertimpa selama batch masih boleh diubah; server hanya menolak batch yang sudah dikirim, terkunci, atau periodenya ditutup. Usulan: tolak bila batch berubah sejak dibuka (versi), simpan dan kirim dalam satu transaksi.";
+
 /** Object Page batch SPV: mode ubah bila boleh diubah; selain itu baca-saja (+ ajukan pengembalian selisih bila ada sisa). */
 function DetailSpv(props: DetailProps) {
     const { ctx, daftar, detail, batchId, muatUlang } = props;
@@ -98,6 +100,8 @@ function DetailSpv(props: DetailProps) {
     if (!data) return <ObjectPageBatch {...props} />;
     const b = data.batch;
     const bisaUbah = !data.uji && !hasil && PREDIKAT.spvBisaUbah(b) && !ctx.izin("edit_returned_batch");
+    // Satu catatan varian per layar (audit No 80), digabung ke catatan Object Page: saat konflik, kalimat konflik; mode ubah: kunci versi.
+    const varianKonflik = konflik ? { bl: "BL-09", isi: KUNCI_VERSI_KONFLIK } : undefined;
     const muatUlangKonflik = () => { setKonflik(null); muatUlang(); daftar.muatUlang(); };
     const stripUmum = (
         <>
@@ -108,7 +112,6 @@ function DetailSpv(props: DetailProps) {
                         {konflik} Status batch di server sudah berubah sejak Anda membukanya, jadi perubahan Anda belum disimpan. Muat ulang untuk melihat versi terbaru, lalu ulangi perubahan.{" "}
                         <Button variant="tertiary" onClick={muatUlangKonflik}>Muat ulang</Button>
                     </MessageStrip>
-                    <VariantNote bl="BL-09">Hari ini belum ada kunci versi: perubahan orang lain bisa tertimpa selama batch masih boleh diubah; server hanya menolak batch yang sudah dikirim, terkunci, atau periodenya ditutup. Usulan: tolak bila batch berubah sejak dibuka (versi), simpan dan kirim dalam satu transaksi.</VariantNote>
                 </>
             )}
             {hasil && <StripHasil h={hasil} />}
@@ -162,6 +165,7 @@ function DetailSpv(props: DetailProps) {
                     onClick={() => berikut && ctx.bukaBatch(berikut.id)}>Batch berikutnya</Button>
             ) : undefined}
             pesanFooter={hasil ? "Tidak ada aksi lain untuk Anda di tahap ini." : undefined}
+            varian={varianKonflik}
         />
     );
 }
@@ -225,16 +229,11 @@ function UbahBatch(props: DetailProps & Bersama) {
                             <SetupBatch f={f} catatan={dikembalikan
                                 ? "Mode revisi batch yang dikembalikan. Supervisor dapat mengubah data lalu mengirim ulang ke Sales Manager."
                                 : "Draf: ubah data lalu simpan, atau kirim ke Sales Manager. Setelah dikirim, batch baca-saja sampai dikembalikan."} />
-                            {/* Dulu di dialog Kirim ke SM; saat konflik catatan yang sama tampil di strip konflik. */}
-                            {!konflik && (
-                                <div className="fi-sect-in" style={{ paddingTop: 0 }}>
-                                    <VariantNote bl="BL-09">Belum ada kunci versi: bila orang lain mengubah batch ini sejak Anda membukanya, isian Anda menimpanya. Server hanya menolak bila batch sudah tidak boleh diubah (sudah dikirim, terkunci, atau periodenya ditutup). Usulan: kiriman ditolak bila batch berubah sejak dibuka, tanpa menimpa apa pun.</VariantNote>
-                                </div>
-                            )}
-                        </>
+                                        </>
                     ),
                 }]}
                 gantiItem={<EditorItem f={f} />}
+                varian={{ bl: "BL-09", isi: konflik ? KUNCI_VERSI_KONFLIK : "Belum ada kunci versi: bila orang lain mengubah batch ini sejak Anda membukanya, isian Anda menimpanya. Server hanya menolak bila batch sudah tidak boleh diubah (sudah dikirim, terkunci, atau periodenya ditutup). Usulan: kiriman ditolak bila batch berubah sejak dibuka, tanpa menimpa apa pun." }}
                 aksi={<AksiForm f={f} konflik={konflik} izinDraf={ctx.izin("edit_returned_batch")} izinKirim={ctx.izin("submit_batch")} />}
                 pesanFooter={pesanFooter(f, konflik)}
             />

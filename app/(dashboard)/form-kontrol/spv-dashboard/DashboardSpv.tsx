@@ -208,9 +208,10 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                     </button>
                 </p>
                 {/* it05 #15: perilaku hari ini sebagai keterangan biasa; satu catatan varian per layar (BL-28, audit No 80). */}
+                {/* Fakta tugas untuk SPV (cara membaca persentase); batasan "belum dari rute JKS" hanya di catatan varian Admin (tinjauan K2). */}
                 <p className="fi-small fi-subtle">
-                    Persentase dihitung dari status rute yang tercatat hari itu (kunjungan dan &quot;Kirim status rute hari ini&quot;), belum dari rute JKS
-                    yang direncanakan; toko yang belum disentuh dan belum dikirim statusnya tidak ikut terhitung.
+                    Persentase dihitung dari status rute yang tercatat hari itu (kunjungan dan &quot;Kirim status rute hari ini&quot;); toko yang belum disentuh
+                    dan belum dikirim statusnya tidak ikut terhitung.
                 </p>
                 {belumKirim.length === 0
                     ? <MessageStrip tone="pos" title="Semua salesman sudah mengirim laporan.">Data siap untuk briefing sore.</MessageStrip>
@@ -260,9 +261,9 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                 </MessageStrip>
             ) : null}
             {isi}
-            <VariantNote bl="BL-28">
+            <VariantNote bl="BL-28, it05 #15">
                 Tanggal &quot;hari ini&quot; dihitung di perangkat dalam WITA; penetapan tanggal oleh server menunggu BL-28. Cap waktu yang tercetak
-                di foto kunjungan masih memakai WIB.
+                di foto kunjungan masih memakai WIB. Persentase rute belum dihitung dari rute JKS yang direncanakan.
             </VariantNote>
             <ConfirmDialog
                 open={ack !== null}

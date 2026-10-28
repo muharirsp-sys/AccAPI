@@ -15,7 +15,7 @@
 
 import { useEffect, useState } from "react";
 import { Check, ChevronRight, RotateCcw } from "lucide-react";
-import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
+import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, StatusBadge, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { SLA_DAYS } from "@/lib/off-program-control/problematic";
 import { PREDIKAT, TAMPILAN, jumlahItem, labelStatus, totalBatch, waktuWita, type ItemOpc } from "@/lib/opc-ui";
@@ -73,10 +73,6 @@ function DetailSm(props: DetailProps) {
                             placeholder="Tulis alasan bila batch dikembalikan" onChange={(e) => setCatatan(e.target.value)} />}
                     </FormField>
                     {catatan.trim() && <span><StatusBadge tone="warn">Belum dikirim</StatusBadge></span>}
-                    <VariantNote bl="BL-06">
-                        Tombol tinjauan hanya tampil untuk batch yang dikirim ke SM dan masih menunggu tinjauan. Server hari ini memeriksa tahapnya
-                        dengan aturannya sendiri; usulan: satu aturan transisi dipakai layar dan server.
-                    </VariantNote>
                 </div>
             ),
         });
@@ -133,7 +129,8 @@ function DetailSm(props: DetailProps) {
 
     return (
         <>
-            <ObjectPageBatch {...props} bagian={bagian} strip={strip} aksi={aksi} pesanFooter={pesanFooter} draf={dirty} />
+            <ObjectPageBatch {...props} bagian={bagian} strip={strip} aksi={aksi} pesanFooter={pesanFooter} draf={dirty}
+                varian={bisa ? { bl: "BL-06", isi: "Tombol tinjauan hanya tampil untuk batch yang dikirim ke SM dan masih menunggu tinjauan; server memeriksa tahapnya dengan aturannya sendiri. Usulan: satu aturan transisi dipakai layar dan server." } : undefined} />
             <ConfirmDialog
                 open={dialog === "smok"}
                 onClose={() => setDialog(null)}

@@ -95,6 +95,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
     };
     const ncBerubah = (s: Submission) => { const v = drafNc[s.id]?.noClaim; return bolehNoClaim && v !== undefined && v.trim() !== (s.noClaim ?? ""); };
     const tahap = tahapKlaim(wf?.status);
+    const dikirimAtauSebagian = tahap === "dikirim" || tahap === "sebagian";
     const bayarTerisi = Boolean(bayar.paymentAmount.trim() || bayar.paymentNote.trim());
     const belumSimpan = items.some(itemBerubah) || subs.some(ncBerubah);
     const adaDraf = belumSimpan || ((tahap === "dikirim" || tahap === "sebagian") && bayarTerisi) || (tahap !== "ditutup" && catatanTutup.trim() !== "");
@@ -508,10 +509,6 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
             {strip("atas")}
             {detail.status === "galat" && <MessageStrip tone="neg" title="Gagal memuat ulang.">{detail.error} Yang tampil adalah hasil sebelumnya. <Button variant="tertiary" onClick={muat}>Coba lagi</Button></MessageStrip>}
             {isLegacyPekaStatus(wf.status) && <MessageStrip tone="info" title="Status lama dari alur PEKA.">Alur PEKA sudah tidak dipakai; klaim ini ditampilkan sebagai Dikirim. Pembayaran untuk status lama ini belum bisa dicatat dari layar ini.</MessageStrip>}
-            {(tahap === "dikirim" || tahap === "sebagian") && (
-                // BL-14: perilaku hari ini sebagai keterangan biasa (audit No 80: satu catatan varian per layar, di akhir halaman).
-                <p className="fi-small fi-subtle">Setelah dikirim ke principal, klaim ini belum bisa diminta revisi atau dibatalkan.</p>
-            )}
 
             <Section id="item" title="Item klaim" subtitle={`${items.length} item · DPP ${rupiah(wf.totalDpp)} · PPN ${rupiah(wf.totalPpn)} · PPh ${rupiah(wf.totalPph)}`}>
                 <div className="fi-sect-in">
@@ -672,7 +669,6 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                                 : "Pembayaran bisa dicatat setelah klaim dikirim ke principal."}
                         </p>
                     )}
-                    <p className="fi-small fi-subtle">Bukti bayar principal belum bisa dilampirkan; pembayaran tercatat tanpa berkas bukti.</p>
                 </div>
             </Section>
 
@@ -711,7 +707,6 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                                     {alasanTutup && <span className="fi-small fi-subtle">{alasanTutup}</span>}
                                 </div>
                             )}
-                            {tahap === "sebagian" && <p className="fi-small fi-subtle">Klaim yang dibayar kurang oleh principal tidak bisa ditutup dan tertahan di Dibayar sebagian; selisihnya (dipotong, ditolak, kompensasi) belum bisa dicatat.</p>}
                         </>
                     )}
                 </div>
@@ -731,22 +726,21 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                             })}
                         </ul>
                     ) : <EmptyState title="Belum ada riwayat" />}
-                <div className="fi-sect-in">
-                    <p className="fi-small fi-subtle">Riwayat mencatat aksi dan catatannya, belum nilai sebelum dan sesudah tiap isian.</p>
-                </div>
             </Section>
 
             <Section id="alur" title="Alur dokumen" subtitle="dari OFF Program Control sampai pembayaran">
                 <AlurDokumen off={wf.offNoPengajuan} no={no} noClaims={noClaims} jumlahBayar={aktifBayar.length} dibayar={wf.totalPaid} />
-                <div className="fi-sect-in">
-                    <p className="fi-small fi-subtle">Alur hanya ditelusuri dari klaim ke belakang; OFF Program Control belum menautkan balik ke klaim ini.</p>
-                </div>
             </Section>
 
-            {/* Satu catatan varian per layar (audit No 80): batasan sistem yang bukan keterangan kerja; BL-07/14/33/35/42 jadi keterangan biasa di bagiannya. */}
-            <VariantNote bl="BL-15, BL-08">
+            {/* Satu catatan varian per layar, hanya Admin (audit No 80 + tinjauan K2: audiens tetap). Yang tetap terlihat semua akun hanya fakta
+                tugas "No Claim yang sama ... meminta konfirmasi" di bagian No Claim. */}
+            <VariantNote bl={["BL-15, BL-08, BL-07, BL-33, BL-35", dikirimAtauSebagian && "BL-14", tahap === "sebagian" && "BL-42"].filter(Boolean).join(", ")}>
                 Keunikan No Claim antar klaim dicek aplikasi saat menyimpan, belum oleh database, dan server belum mengunci klaim saat mencatat pembayaran:
-                dua pembayaran yang dicatat bersamaan bisa membuat total melebihi nilai klaim.
+                dua pembayaran yang dicatat bersamaan bisa membuat total melebihi nilai klaim. Bukti bayar principal belum bisa dilampirkan; pembayaran
+                tercatat tanpa berkas bukti. Riwayat mencatat aksi dan catatannya, belum nilai sebelum dan sesudah tiap isian. Alur hanya ditelusuri dari
+                klaim ke belakang; OFF Program Control belum menautkan balik ke klaim ini.
+                {dikirimAtauSebagian && " Setelah dikirim ke principal, klaim belum bisa diminta revisi atau dibatalkan."}
+                {tahap === "sebagian" && " Klaim yang dibayar kurang oleh principal tidak bisa ditutup dan tertahan di Dibayar sebagian; selisihnya (dipotong, ditolak, kompensasi) belum bisa dicatat."}
             </VariantNote>
 
             {footer}
