@@ -157,10 +157,10 @@ export const actionLabels: Record<PermissionAction, string> = {
     transfer: "Transfer",
     upload_proof: "Unggah Bukti",
     post_accurate: "Posting ke Accurate",
-    retry_post: "Ulangi Posting",
+    retry_post: "Ulangi Posting (kunci lama, tanpa efek)", // tinjauan K2 R-3: lib/rbac/registry.ts, tidak ditegakkan
     resolve_unknown: "Selesaikan Posting Tidak Pasti",
     override_duplicate: "Lewati Blok Duplikat",
-    repost_payment: "Posting Ulang Pembayaran",
+    repost_payment: "Posting Ulang Pembayaran yang Dihapus/Void di Accurate", // D-15
     run: "Jalankan",
     email: "Email",
     sync: "Sinkronkan",
