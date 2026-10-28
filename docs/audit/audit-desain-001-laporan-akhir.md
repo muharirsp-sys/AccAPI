@@ -3,7 +3,8 @@ Tujuan: Laporan akhir Fase 4 audit desain 001: Delivery Gate antislop, verifikas
 Caller: Owner (keputusan push/PR dan butir TODO); agen yang melanjutkan audit desain.
 Dependensi: docs/audit/audit-desain-001-2026-10-25.md (151 temuan), DESIGN.md, PRODUCT.md, docs/UI_DESIGN_SYSTEM.md.
 Main Functions: Ringkasan hasil, Delivery Gate 4 blok, bukti verifikasi, tabel per nomor, TODO dan usulan di luar nomor.
-Side Effects: Tidak ada; dokumen. Merged ke main lewat PR #228 (26 Okt 2026); usulan A, C, E, F lewat cabang fix/desain-audit-kelompok1.
+Side Effects: Tidak ada; dokumen. Merged ke main lewat PR #228 (26 Okt 2026); usulan A, C, E, F lewat PR #229; kelompok 2-4 lewat
+cabang fix/desain-audit-kelompok2-3.
 -->
 # Audit desain 001: laporan akhir (26 Okt 2026)
 
@@ -90,6 +91,54 @@ tidak dikirim sebagai selesai. Ketiganya di luar nomor yang disetujui dan/atau d
 
 **Pembaruan kelompok 1 (izin owner 26 Okt):** R-24 dan R-28 PASS lewat Usulan A. Blok 1 tinggal FAIL karena R-02 (Usulan B, zona server).
 
+**Pembaruan kelompok 2-4 (keputusan owner 27 Okt, cabang `fix/desain-audit-kelompok2-3`):** R-02 PASS. Pemindai literal (komentar tidak
+ikut) di app/lib/components/config: em dash 196 → 24, dan 0 di string yang sampai ke user. Sisa 24 sengaja: laporan CLI
+`lib/principal/laporan.ts` (18, judul dikunci uji), isi fungsi trigger `lib/principal/penjaga.ts` (2, dibandingkan persis dengan
+`pg_proc.prosrc`), prompt OCR `lib/promo-letter-ocr.ts` (3), komentar CSS di `app/(cetak)/layout.tsx` (1). En dash tersisa = rentang
+(`1–20`, `${dari} – ${sampai}`). **Vonis Delivery Gate: PASS** (Blok 1-4).
+
+## Pembaruan kelompok 2-4 (27-28 Okt 2026)
+
+Owner menjawab semua sisa nomor pada 27 Okt ("sisanya lakukan berdasarkan keputusan terbaikmu, jangan sampai hasilnya slop") dan
+mengizinkan perubahan logika/isi khusus untuk butir di bawah (termasuk `app/api/**`, satu tabel baru, `python_backend/**`, label
+`lib/rbac.ts`, `DESIGN.md`, isi ekspor yang disebut). Empat pembuat (A1 UI, A2 kode mati, B1 endpoint, B2 server/api-wrapper), dua
+peninjau independen (masing-masing REQUEST CHANGES → diperbaiki → APPROVE).
+
+| No | Status | Sesudah |
+|---|---|---|
+| 6 | SELESAI | Terima sales dan Cabut (Verifikasi balik) wajib alasan 10-500 karakter; Cabut menyalin baris + alasan ke `pencabutan_log` dalam satu transaksi |
+| 7, 78, 29 | SELESAI | api-wrapper: teks tugas tanpa em dash; log galat dan laporan Retur Manual lewat tombol, tidak terunduh otomatis; request ke Accurate identik (sidik-request) |
+| 18 | SELESAI | Cabut konfirmasi order ganda wajib alasan (body DELETE), tercatat di `pencabutan_log` |
+| 22 | SELESAI | Semua dialog tulis OPC: hasil tidak pasti → dialog ditutup, muat ulang, strip peringatan bertahan |
+| 27 | SELESAI | GET `/api/off-program-control/periods`: status penutupan nyata (siapa, kapan WITA); Buka kunci hanya dari status segar |
+| 30 | SELESAI | Catatan posting Finance dalam kalimat tugas; penanda "(HTTP 5xx)" dan cadangan lama dipertahankan karena dibaca `AMBIGUOUS_POST_ERROR` |
+| 31 | SELESAI | Bulan/tahun yang dikirim dari WITA (`hariIniWita`) |
+| 59, 108 | SELESAI (sengaja) | Label "Simpan N perubahan…" dan kaki Rekaman panjang dipertahankan; alasan di baris tabel |
+| 65 | SELESAI | CSV Rekap Promo: Persen dan Rupiah koma desimal tanpa ribuan |
+| 73, 79 | SELESAI | Batch SPV tanpa principal bawaan (wajib pilih), tanpa cadangan RECKITT/05/2026; Principal Mapping dari `PRINCIPAL_DIDUKUNG`; daftar outlet dari server |
+| 80 | SELESAI | Satu VariantNote per layar (hanya Admin); catatan yang diturunkan tetap hanya Admin kecuali fakta tugas |
+| 81 | SELESAI | FastAPI GET/POST `/summary/review/reference` (alias lama tetap); tombol berlabel bulan dari paket, nonaktif beralasan bila tidak ada |
+| 87 | SELESAI | Riwayat principal menampilkan nama pelaku (`actorName`) |
+| 88 | SELESAI | "Pembayaran dan SPPD"; istilah "user" di layar dan pesan server; label izin seragam ("Kelola", "Ekspor Audit"), kunci tetap |
+| 91 | SELESAI | "Exception" → "Masalah" di layar dan riwayat wave |
+| 98, 99 | SELESAI | Tema Surya lama, `workspace.css`, remap warna, font Geist dihapus; 244 tangkapan sebelum/sesudah identik di luar jam |
+| 102, 112, 113, 137 | SELESAI | Dicek render 360/1280 px: tuntas |
+| 104 | SELESAI | OPC OM/SM: kartu KPI → KeyValues kecil; angka inti di pilihan antrean |
+| 109 | SELESAI | "Hari ini" Kasir/Finance dihitung ulang di klien dari jam server (WITA); tidak menimpa pilihan, draf, atau hasil belum pasti |
+| 111 | SELESAI | OPC ponsel: buka batch → gulir + fokus ke judul detail (reduced-motion dihormati) |
+| 122 | SELESAI | Isian rupiah teks + satu pengurai id-ID (mode ketat: titik hanya ribuan); angka polos saat fokus |
+| 128 | SELESAI | `DESIGN.md`: "Kerapatan: Padat/Lega" |
+| 135 | SELESAI | `TabelRincian` disatukan ke `ResponsiveTable` (`rincian`, `foot`) |
+| 136 | SELESAI | Baris batch OPC (daftar, lonceng, Ringkasan Admin, Log audit) tautan nyata `?batch=` |
+| 140, 141 | SELESAI | Wadah gulir tabel `role="group"` bernama; h1 kedua → h2 (Finance, Aturan Promo, OPC, Data Principal) |
+| 142 | SELESAI | Pencarian OPC lewat "/", Ctrl K tetap cari menu shell |
+| 390 | SELESAI | Baseline snapshot `kit-default-390` diperbarui |
+| B, D, G | SELESAI | Em dash server/ekspor/DB (R-02; kalimat order ganda TS dan Python diubah bersamaan); kode mati; Kirim tab Excel nonaktif tanpa berkas |
+
+Deploy: tabel `pencabutan_log` dibuat `scripts/migrate-pg.mjs` saat container start (butuh `DATABASE_MIGRATION_URL`, ada di produksi;
+tanpa itu jalankan `db/migrations/0038_pencabutan_log.sql` sebagai pemilik lebih dulu). Tanpa tabel itu kedua Cabut gagal 500 tanpa menghapus apa pun.
+Uji nyata (TODO 15) tetap butuh owner/lapangan.
+
 ## Verifikasi
 
 - Gate (HEAD f69badb6): tsc 0 galat; lint 0 galat / 91 peringatan; `npm test` 1.255 / 1.011 / 0 / 244.
@@ -104,6 +153,8 @@ tidak dikirim sebagai selesai. Ketiganya di luar nomor yang disetujui dan/atau d
   warna tema Surya di `globals.css`/`workspace.css` yang kini tidak dipakai halaman (Usulan D).
 
 ## TODO yang butuh keputusan atau data dari owner
+
+Diputuskan owner 27 Okt dan dikerjakan (lihat "Pembaruan kelompok 2-4"), kecuali butir 15 (uji nyata).
 
 1. No 65: format desimal CSV Rekap Promo (titik atau koma); mengubah isi ekspor.
 2. No 87: nama pelaku riwayat Data Principal; butuh API `actorName`.
@@ -126,12 +177,12 @@ tidak dikirim sebagai selesai. Ketiganya di luar nomor yang disetujui dan/atau d
 ## Usulan di luar 151 nomor (butuh izin; A, C, E, F dikerjakan di kelompok 1)
 
 - A. `lib/chatbot/faq.json`: hapus tautan `/validator` dan konten tiga tema lama (menutup FAIL R-24/R-28). **SELESAI (kelompok 1).**
-- B. Slice server: 46 pesan galat ber-em dash + `lib/kasir/hari.ts`, `lib/pelunasan-wizard.ts` (sebagian zona §3; menutup FAIL R-02).
+- B. Slice server: 46 pesan galat ber-em dash + `lib/kasir/hari.ts`, `lib/pelunasan-wizard.ts` (sebagian zona §3; menutup FAIL R-02). **SELESAI (kelompok 3).**
 - C. `app/(dashboard)/error.tsx` dan `app/global-error.tsx` ke Fiori (emoji ⚠️, tombol amber). **SELESAI (kelompok 1).**
-- D. Hapus kode mati: `components/ui/DatePickerField|Input|Select|AsyncState` (cek pemakai dulu) dan CSS tema Surya lama di `globals.css`/`workspace.css`.
+- D. Hapus kode mati: `components/ui/DatePickerField|Input|Select|AsyncState` (cek pemakai dulu) dan CSS tema Surya lama di `globals.css`/`workspace.css`. **SELESAI (kelompok 2).**
 - E. Judul panel Saringan ke `--fs-title-3` (lebih berat dari judul panel data di halaman yang sama). **SELESAI (kelompok 1).**
 - F. Antrean Faktur: galat yang sama diulang 8× saat sumber gagal → satu strip. **SELESAI (kelompok 1):** galat cukup sekali di tabel (Coba lagi); kartu status hanya "-".
-- G. api-wrapper tab Excel tanpa berkas: Kirim memakai contoh payload bawaan endpoint (dialog kini menyebutnya); usulan nonaktifkan (logika → tracker AM).
+- G. api-wrapper tab Excel tanpa berkas: Kirim memakai contoh payload bawaan endpoint (dialog kini menyebutnya); usulan nonaktifkan (logika → tracker AM). **SELESAI (kelompok 3):** Kirim nonaktif sampai berkas diunggah.
 
 ## Commit (merged ke `main` lewat PR #228, 6da35b0e, 26 Okt 2026)
 
