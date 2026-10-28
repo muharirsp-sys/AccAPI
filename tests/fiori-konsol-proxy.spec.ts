@@ -6,7 +6,8 @@
  *   database aktif, tidak bisa ditarik), JSON rusak = galat di halaman tanpa dialog, hasil parser berkas tidak berlabel terkirim,
  *   override duplikat pelunasan lewat dialog beralasan (min 15 sesudah trim, alasan yang sama sampai ke lock idempotency).
  *   Audit desain 001 kelompok 3: log galat tidak diunduh otomatis (No 7, tombol "Unduh log galat"; Status tanpa em dash);
- *   tab Unggah Excel tanpa berkas: Kirim nonaktif beralasan dan nol POST (usulan G).
+ *   tab Unggah Excel tanpa berkas: Kirim nonaktif beralasan dan nol POST (usulan G); laporan Retur Manual Format Pelunasan lewat strip
+ *   + tombol, tanpa unduhan otomatis (pola No 7).
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true):
  *   `npx playwright test tests/fiori-konsol-proxy.spec.ts --config playwright.fiori-local.config.ts --workers=1`.
  * Dependensi: /api/auth/accurate-session, /api/auth/db-list, /api/proxy, /api/idempotency/{lock,complete} di-mock dengan page.route
@@ -161,6 +162,33 @@ test("usulan G: tab Unggah Excel tanpa berkas = Kirim nonaktif dengan alasan ter
     }
     await page.waitForTimeout(1_000);
     expect(proxy).toEqual([]);
+});
+
+test("Format Pelunasan dengan retur yang tidak ketemu: strip + tombol Unduh retur manual, tanpa unduhan otomatis, nol POST", async ({ page }) => {
+    const proxy = await mockKonsol(page, () => ({ status: 200, body: { s: true, d: [], sp: { page: 1, pageCount: 1, rowCount: 0 } } }));
+    const unduhan: string[] = [];
+    page.on("download", (d) => unduhan.push(d.suggestedFilename()));
+    await page.goto("/api-wrapper", NAV);
+    await expect(page.getByRole("button", { name: KIRIM })).toBeEnabled(NAV);
+    await page.getByLabel("Endpoint API").selectOption("salesReceiptBulkSave");
+    await page.getByRole("button", { name: "Unggah Excel" }).click();
+    const ws = XLSX.utils.json_to_sheet([{ "Code Outlet": "PELANGGAN-A", "No. Nota": "INV/A/001", "Tunai": 100000, "No.SRB Rt Ktr": "SRB A.0001", "Pot.RT Ktr": 50000 }]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Pelunasan");
+    await page.locator('input[type="file"]').setInputFiles({ name: "format-pelunasan.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer });
+    const strip = page.getByRole("status").filter({ hasText: "retur atau potongan lain yang belum diproses" });
+    await expect(strip).toBeVisible(NAV);
+    await page.waitForTimeout(2_000); // dulu setTimeout 800 ms mengunduh otomatis
+    expect(unduhan).toEqual([]);
+    const unduh = page.waitForEvent("download");
+    await strip.getByRole("button", { name: "Unduh retur manual (Excel)" }).click();
+    const d = await unduh;
+    expect(d.suggestedFilename()).toMatch(/^Retur_PotLain_Manual_.*\.xlsx$/);
+    const isi = XLSX.utils.sheet_to_json<Record<string, unknown>>(XLSX.readFile(await d.path()).Sheets["Retur Manual"]);
+    expect(isi).toHaveLength(1);
+    expect(isi[0]).toMatchObject({ "Code Outlet": "PELANGGAN-A", "Referensi Retur/Pot.Lain": expect.stringContaining("SRB A.0001"), "Aksi Manual": "Retur/Pot.Lain perlu diproses manual di Accurate" });
+    expect(proxy.filter((p) => p.method !== "GET")).toEqual([]);
 });
 
 test("JSON rusak: galat di halaman (role alert, bukan toast), dialog tidak terbuka, nol POST", async ({ page }) => {

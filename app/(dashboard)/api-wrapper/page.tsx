@@ -5,7 +5,7 @@
  * Caller: App Router dashboard `app/(dashboard)/api-wrapper/page.tsx` dan interaksi user di halaman API Wrapper.
  * Dependensi: `accurateRoutes`, `accurateFetch`, parser workbook per-route, Accurate OAuth/session dari browser, parser `xlsx`, toast `sonner`, route idempotency Next, `Dialog` native bersama, komponen Fiori (`components/fiori/*`), `lib/tampil` (KOSONG), `lib/pelunasan/*` (parser Format Pelunasan, retur, cari faktur, alokasi, payload, pratinjau duplikat — dipindah dari halaman ini di S6e-1; kirim sales-receipt `lib/pelunasan/kirim.ts`, S6e-2).
  * Main Functions: `Home`, `terapkanSesi` (kartu `SesiAccurate` bersama /sesi-accurate: masuk ber-`state`, pilih database, keluar — S7-sesi), `handleDownloadTemplate`, `handleExecute` (dipanggil sesudah `bukaKirim` + ConfirmDialog), `handleConfirmDuplicateReview` + `kirimHasilTinjauan`.
- * Side Effects: HTTP call ke Accurate route handler/proxy, baca file Excel lokal, dispatch parser workbook khusus per route, deteksi format pelunasan walau `Total.Trx` kosong, normalisasi lookup invoice/retur termasuk variasi SRB tanpa spasi, susun payload bulk-save, keluarkan laporan manual follow-up untuk retur/pot.lain yang gagal diproses, preview/lock idempotency SQLite, cek histori sales receipt Accurate, konfirmasi hasil error ke histori Accurate HANYA untuk jenis dokumen yang sama (`pemastiRiwayatTulis`; jenis lain tetap TIDAK DIKETAHUI), tampilkan review duplicate, unduh Excel log galat lewat tombol "Unduh log galat" (tidak lagi otomatis, audit desain 001 No 7), logging debug ke response UI.
+ * Side Effects: HTTP call ke Accurate route handler/proxy, baca file Excel lokal, dispatch parser workbook khusus per route, deteksi format pelunasan walau `Total.Trx` kosong, normalisasi lookup invoice/retur termasuk variasi SRB tanpa spasi, susun payload bulk-save, laporan manual follow-up retur/pot.lain yang gagal diproses lewat strip + tombol "Unduh retur manual" (tidak otomatis), preview/lock idempotency SQLite, cek histori sales receipt Accurate, konfirmasi hasil error ke histori Accurate HANYA untuk jenis dokumen yang sama (`pemastiRiwayatTulis`; jenis lain tetap TIDAK DIKETAHUI), tampilkan review duplicate, unduh Excel log galat lewat tombol "Unduh log galat" (tidak lagi otomatis, audit desain 001 No 7), logging debug ke response UI.
  *   Tab Unggah Excel tanpa berkas termuat: Kirim nonaktif beralasan, tidak ada jalur yang mengirim contoh payload bawaan endpoint (audit desain 001 usulan G).
  */
 "use client";
@@ -105,6 +105,7 @@ export default function Home() {
   const [override, setOverride] = useState<OverrideTertunda | null>(null);
   const [galatTinjau, setGalatTinjau] = useState<string | null>(null);
   const [logGalat, setLogGalat] = useState<Record<string, unknown>[] | null>(null);
+  const [returManual, setReturManual] = useState<Record<string, unknown>[] | null>(null); // baris Retur Manual hasil parser Format Pelunasan
   const idTinjau = useId();
   const idAlasanKirim = useId();
 
@@ -132,6 +133,7 @@ export default function Home() {
     setPayloadStr(JSON.stringify(accurateRoutes[route].samplePayload, null, 2));
     setResponseLog(null);
     setLogGalat(null);
+    setReturManual(null);
     setGalatPayload(null);
   };
 
@@ -204,19 +206,9 @@ export default function Home() {
                 accurateFetch,
                 lapor: (jenis, pesan, opsi) => { toast[jenis](pesan, opsi); },
             });
+            // Audit desain 001 (pola No 7): laporan Retur Manual tidak lagi diunduh otomatis lewat setTimeout; strip + tombol.
             const manualRows = hasil.manualRows;
-            if (manualRows) {
-                setTimeout(() => {
-                    try {
-                        const wsManual = XLSX.utils.json_to_sheet(manualRows);
-                        const wbManual = XLSX.utils.book_new();
-                        XLSX.utils.book_append_sheet(wbManual, wsManual, "Retur Manual");
-                        XLSX.writeFile(wbManual, `Retur_PotLain_Manual_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
-                    } catch (manualErr) {
-                        console.error("Gagal membuat laporan retur manual", manualErr);
-                    }
-                }, 800);
-            }
+            if (manualRows) setReturManual(manualRows);
             setPayloadStr(JSON.stringify(hasil.payload, null, 2));
             setInputMode("manual");
             e.target.value = '';
@@ -1097,6 +1089,15 @@ export default function Home() {
     XLSX.writeFile(wbErr, `Laporan_Error_Upload_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
   };
 
+  // Unduh laporan Retur Manual lewat tombol; isi, nama sheet, dan pola nama berkas sama dengan unduhan otomatis lama.
+  const unduhReturManual = async () => {
+    if (!returManual) return;
+    const XLSX = await import("xlsx");
+    const wbManual = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbManual, XLSX.utils.json_to_sheet(returManual), "Retur Manual");
+    XLSX.writeFile(wbManual, `Retur_PotLain_Manual_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
+  };
+
   // Hidrasi: halaman baru dirender penuh di klien (isMounted); sebelum itu cukup kerangka memuat.
   if (!isMounted) {
     return (
@@ -1175,6 +1176,15 @@ export default function Home() {
               </div>
             }>
               <div className="fi-sect-in" inert={terkunci}>
+                {returManual && (
+                  <MessageStrip tone="warn" title={`${returManual.length} baris punya retur atau potongan lain yang belum diproses.`}>
+                    Referensi returnya belum ketemu di Accurate, jadi nominal retur dan potongan lainnya tidak masuk payload; tunai, transfer,
+                    dan BG tetap diproses. Unduh daftarnya untuk diproses manual di Accurate.
+                    <div className="mt-2">
+                      <Button icon={<Download className="fi-icon" aria-hidden />} onClick={() => void unduhReturManual()}>Unduh retur manual (Excel)</Button>
+                    </div>
+                  </MessageStrip>
+                )}
                 {galatPayload && (
                   <MessageStrip tone="neg" title="Payload JSON tidak valid." onClose={() => setGalatPayload(null)}>
                     Perbaiki di editor. Tidak ada yang dikirim.
@@ -1226,7 +1236,7 @@ export default function Home() {
                         <Button icon={<Download className="fi-icon" aria-hidden />} disabled={!adaTemplat} disabledReason="Endpoint ini belum punya templat Excel." onClick={handleDownloadTemplate}>Unduh templat Excel</Button>
                         <label className="fi-btn fi-btn--secondary">
                           <Upload className="fi-icon" aria-hidden />Unggah berkas
-                          <input type="file" className="sr-only" accept=".xlsx, .xls, .csv" onChange={(e) => { setLogGalat(null); handleFileUpload(e); }} />
+                          <input type="file" className="sr-only" accept=".xlsx, .xls, .csv" onChange={(e) => { setLogGalat(null); setReturManual(null); handleFileUpload(e); }} />
                         </label>
                       </div>
                       {!adaTemplat && <p className="fi-small fi-why">Endpoint ini belum punya templat Excel; susun kolom sesuai parameter API.</p>}
