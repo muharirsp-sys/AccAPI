@@ -107,7 +107,8 @@ export default function Finance({ permKeys, hariIni, jamServerMs }: { permKeys: 
     const [selisihJam] = useState(() => jamServerMs - Date.now());
     useHariBeku((baru, lama) => {
         if (tanggal !== lama) return;
-        if (adaDraf || dialog) setTawar(baru); else setTanggal(baru);
+        // Draf = tujuan/bukti, tanggal transfer yang sudah diketik, atau pengajuan yang sedang dibuka (tinjauan K2 R-2).
+        if (adaDraf || dialog || pilihKey !== null || Object.keys(drafTanggal).length > 0) setTawar(baru); else setTanggal(baru);
     }, selisihJam);
 
     const hitung = useMemo(() => {
@@ -345,7 +346,7 @@ export default function Finance({ permKeys, hariIni, jamServerMs }: { permKeys: 
             {hasil && <MessageStrip tone={hasil.tone} title={hasil.judul} onClose={() => setHasil(null)}>{hasil.isi}</MessageStrip>}
             {tawar && tawar !== tanggal && (
                 <MessageStrip tone="info" title={`Hari sudah berganti ke ${tanggalPanjang(tawar)}.`} onClose={() => setTawar(null)}>
-                    Tanggal bayar tetap {tanggalPanjang(tanggal)} karena ada isian yang belum disimpan.{" "}
+                    Tanggal bayar tetap {tanggalPanjang(tanggal)} karena ada pengajuan yang sedang dibuka atau isian yang belum disimpan.{" "}
                     <Button variant="tertiary" onClick={() => { setTanggal(tawar); setTawar(null); }}>Pindah ke hari ini</Button>
                 </MessageStrip>
             )}
