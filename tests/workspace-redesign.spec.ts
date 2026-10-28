@@ -94,22 +94,14 @@ test("mobile: drawer, role bottom navigation, and chat stay usable", async ({ pa
     await expect(drawer).toBeHidden();
 });
 
-test("legacy screens fit mobile inside the new shell and Summary upload stays readable", async ({ page }) => {
+// Keterbacaan tombol berkas .fi-input (termasuk /summary) dijaga tests/fiori-file-input.spec.ts.
+test("legacy screens fit mobile inside the new shell", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     for (const path of ["/summary", "/faktur", "/rekapan-nota", "/reconciliation"]) {
         await page.goto(path);
         const content = page.locator("#workspace-content");
         await expect(content.locator("h1")).toBeVisible();
         expect(await content.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
-        if (path === "/summary") {
-            const input = content.locator('input[type="file"]').first();
-            await expect(input).toHaveCSS("color", "rgb(82, 100, 93)");
-            const button = await input.evaluate(element => {
-                const style = getComputedStyle(element, "::file-selector-button");
-                return { background: style.backgroundColor, color: style.color };
-            });
-            expect(button).toEqual({ background: "rgb(23, 105, 79)", color: "rgb(255, 255, 255)" });
-        }
         await page.screenshot({ path: `test-results/fiori-shell-${path.slice(1)}-390.png` });
     }
 });

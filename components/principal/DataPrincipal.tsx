@@ -121,7 +121,8 @@ export default function DataPrincipal({ permKeys }: { permKeys: string[] }) {
             : <EmptyState title="Pilih principal di daftar" message="Varian, alias, riwayat, dan pemakainya tampil di sini." />
     ) : (
         <div style={{ display: "grid", gap: 12 }}>
-            <ObjectPageHeader title={p.name} status={<StatusBadge tone={p.isActive ? "pos" : "neu"}>{p.isActive ? "Aktif" : "Nonaktif"}</StatusBadge>}
+            {/* h2: halaman sudah punya h1 "Data Principal" (detail FCL kolom kedua, audit No 141). */}
+            <ObjectPageHeader headingLevel={2} title={p.name} status={<StatusBadge tone={p.isActive ? "pos" : "neu"}>{p.isActive ? "Aktif" : "Nonaktif"}</StatusBadge>}
                 actions={bolehTulis ? (
                     <Button variant={p.isActive ? "negative" : "secondary"} icon={<Power className="fi-icon" aria-hidden />} disabled={Boolean(kunciData)} disabledReason={kunciData}
                         onClick={() => buka({ jenis: "status" })}>{p.isActive ? "Nonaktifkan…" : "Aktifkan…"}</Button>

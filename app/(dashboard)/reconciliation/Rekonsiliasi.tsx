@@ -99,7 +99,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
         const payload = (await res.json().catch(() => ({}))) as MappingVersion & { error?: string };
         if (!res.ok) throw new Error(payload.error || "Mapping gagal diaktifkan.");
         setDialog(false); setMappingFile(null);
-        setPesan(`Mapping v${payload.version} aktif ${waktuWita(new Date())} WITA untuk semua pengguna ${DIVISI.find((x) => x[0] === division)![1]} ${principal}. Jalankan ulang untuk memakainya; riwayat sebelumnya tetap tercatat dengan versi lama.`);
+        setPesan(`Mapping v${payload.version} aktif ${waktuWita(new Date())} WITA untuk semua user ${DIVISI.find((x) => x[0] === division)![1]} ${principal}. Jalankan ulang untuk memakainya; riwayat sebelumnya tetap tercatat dengan versi lama.`);
         muatMapping(); muatRiwayat();
     }
 
@@ -182,7 +182,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                 </div>
             </Section>
 
-            <Section title="2 · Mapping SKU" subtitle="berlaku untuk semua pengguna jenis dan principal ini" className="fi-region-mapping">
+            <Section title="2 · Mapping SKU" subtitle="berlaku untuk semua user jenis dan principal ini" className="fi-region-mapping">
                 <div className="fi-sect-in" role="region" aria-label="Mapping aktif">
                     {mapping.status === "memuat" && !mapping.data ? <Skeleton rows={2} label="Memuat mapping" />
                         : mapping.status === "galat" && !mapping.data ? <ErrorState title={`Mapping ${labelJenis} ${principal} gagal dimuat`} message={`${mapping.error}. Rekonsiliasi belum bisa dijalankan tanpa mapping.`} onRetry={muatMapping} />
@@ -301,8 +301,8 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                     disabledReason={!bolehJalankan ? TANPA_IZIN : `Pilih ${config.inputs.length} berkas dulu`} onClick={jalankan}>{berjalan ? "Berjalan…" : hasil ? "Jalankan ulang" : "Jalankan rekonsiliasi"}</Button>
             </FooterToolbar>
 
-            <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`Aktifkan mapping baru untuk ${labelJenis} ${principal}?`} tag="Semua pengguna" confirmLabel="Aktifkan mapping" onConfirm={aktifkanMapping}
-                description={<MessageStrip tone="warn" title="Berlaku untuk semua pengguna">yang merekonsiliasi {labelJenis} {principal}, bukan hanya Anda.</MessageStrip>}
+            <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`Aktifkan mapping baru untuk ${labelJenis} ${principal}?`} tag="Semua user" confirmLabel="Aktifkan mapping" onConfirm={aktifkanMapping}
+                description={<MessageStrip tone="warn" title="Berlaku untuk semua user">yang merekonsiliasi {labelJenis} {principal}, bukan hanya Anda.</MessageStrip>}
                 facts={[
                     ["Sekarang", mapping.data?.active ? `v${mapping.data.active.version} · ${mapping.data.active.originalName} · ${mapping.data.active.uploadedByName}` : "Belum ada mapping aktif"],
                     ["Menjadi", mappingFile ? `${mappingFile.name} · ${fileSize(mappingFile.size)}` : ""],

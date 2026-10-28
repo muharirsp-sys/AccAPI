@@ -178,7 +178,7 @@ test("Object Page: kepala (kode tetap), Varian, Alias (alias kode tanpa Hapus), 
     const c = await pasang(page);
     await page.goto("/data-principal", NAV);
     await pilih(page, "PRINCIPLE A");
-    await expect(page.getByRole("heading", { name: "PRINCIPLE A", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 2, name: "PRINCIPLE A", exact: true })).toBeVisible(); // detail FCL = h2 (No 141)
     const kepala = page.locator(".fi-oph");
     await expect(kepala).toContainText("PA");
     await expect(kepala).toContainText("Tidak bisa diubah");

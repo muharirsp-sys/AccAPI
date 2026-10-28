@@ -3,10 +3,10 @@
  *   membuka batch di kolom kedua (perubahan #2 it03).
  * Caller: app/(dashboard)/off-program-control/OpcApp.tsx.
  * Dependensi: React hooks, lucide-react, lib/fuzzySearch; kelas fi-* (fi-input, fi-sect, fi-menu-item).
- * Main Functions: OffGlobalSearch, pintasan Ctrl/Cmd+K (shell mengalah karena preventDefault; keputusan S1a: OPC memakai quick jump
- *   sendiri), navigasi listbox dengan keyboard; Escape hanya saat isian fokus. Pesan memuat/galat/tidak ditemukan di luar listbox;
+ * Main Functions: OffGlobalSearch, pintasan "/" (diabaikan saat mengetik di isian; Ctrl K tetap milik cari menu shell, owner 27 Okt,
+ *   audit No 142), navigasi listbox dengan keyboard; Escape hanya saat isian fokus. Pesan memuat/galat/tidak ditemukan di luar listbox;
  *   daftar sumber gagal dimuat tampil sebagai galat, bukan "tidak ditemukan".
- * Side Effects: Listener keydown dokumen (Ctrl/Cmd+K); callback onSelect.
+ * Side Effects: Listener keydown dokumen ("/"); callback onSelect.
  */
 "use client";
 
@@ -52,18 +52,17 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
 
     const resolvedActiveIndex = filtered.length === 0 ? -1 : Math.min(activeIndex, filtered.length - 1);
 
-    // Ctrl/Cmd+K membuka quick jump tanpa mengambil alih pencarian native browser (Ctrl F).
-    // Listener di document berjalan sebelum listener shell di window; preventDefault membuat shell mengalah.
+    // "/" memfokus pencarian pengajuan (pola cari di banyak aplikasi). Diabaikan bila sedang mengetik di isian atau dialog modal terbuka,
+    // dan tidak memakai Ctrl K supaya cari menu shell tetap sama di semua halaman.
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && !e.shiftKey) {
-                if (inputRef.current) {
-                    e.preventDefault();
-                    setOpen(true);
-                    setActiveIndex(0);
-                    inputRef.current.focus();
-                }
-            }
+            if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented || !inputRef.current) return;
+            const t = e.target as HTMLElement | null;
+            if (t?.closest("input, textarea, select, [contenteditable=''], [contenteditable='true']") || document.querySelector("dialog:modal")) return;
+            e.preventDefault();
+            setOpen(true);
+            setActiveIndex(0);
+            inputRef.current.focus();
         };
         document.addEventListener("keydown", handleKeyDown);
         return () => document.removeEventListener("keydown", handleKeyDown);
@@ -118,7 +117,7 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
                 aria-controls={adaOpsi ? resultsId : undefined}
                 aria-activedescendant={adaOpsi && resolvedActiveIndex >= 0 ? `${resultsId}-option-${resolvedActiveIndex}` : undefined}
                 aria-autocomplete="list"
-                aria-keyshortcuts="Control+K Meta+K"
+                aria-keyshortcuts="/"
                 role="combobox"
                 value={query}
                 onChange={(e) => { setQuery(e.target.value); setOpen(true); setActiveIndex(0); }}

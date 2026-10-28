@@ -166,9 +166,15 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
                             <Button variant="primary" disabled={!siapMuat} disabledReason="Lengkapi bukti tanda tangan dan pernyataan" onClick={() => setDialog("muat")}>{entri?.sudahDimuat ? "Muat ulang ke gerbang faktur…" : "Muat ke gerbang faktur…"}</Button>
                         </div>
                     )}
-                    <VariantNote bl="BL-53">Hari ini pernyataan boleh dibuat siapa pun yang berizin ubah Summary, termasuk penerbitnya sendiri. Belum ada pemeriksa kedua (orang lain, atau penerbit dengan alasan tercatat).</VariantNote>
                 </div>
             )}
+
+            {/* Satu catatan varian per layar Summary, hanya Admin (audit No 80 + tinjauan K2: audiens tetap): BL-51 dari Summary + BL-53. */}
+            <div className="fi-sect-in">
+                <VariantNote bl="BL-51, BL-53">
+                    Pengaturan Summary punya jalur terbit sendiri yang hanya dipakai order dan tidak masuk Summary final. Belum ada satu jalur terbit yang terbaca semua pemakai. Pernyataan &quot;program benar&quot; boleh dibuat siapa pun yang berizin ubah Summary, termasuk penerbitnya sendiri; belum ada pemeriksa kedua.
+                </VariantNote>
+            </div>
 
             {buka && st && (
                 <ConfirmDialog open={dialog === "nyatakan"} onClose={() => setDialog(null)} tag={st.dicentang ? "Cabut" : "Pernyataan"}

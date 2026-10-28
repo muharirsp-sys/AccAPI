@@ -23,9 +23,9 @@ Contoh hidup: `/dev/ui-kit` (hanya `npm run dev`; 404 di build produksi). Baseli
 | S6–S7 | Layar sisanya per paket Tahap 4 (order, faktur, antrean, Kasir dan Incaso, pelunasan, pembayaran, Finance, admin, Data Principal, master) | selesai: semua rute `app/(dashboard)` di dalam `FioriScope` |
 | Audit desain 001 | Perbaikan lintas layar dari `docs/audit/audit-desain-001-2026-10-25.md`: satu format tanggal dan nilai kosong (`lib/tampil.ts`), nama halaman = label menu, tanpa em dash di teks UI, alasan tombol nonaktif terlihat, Toaster bertoken, `DataTable` keadaan galat, data contoh generik | cabang `feat/desain-audit-gabungan` (26 Okt 2026) |
 
-Semua halaman `app/(dashboard)` sudah Fiori. Remap tema Surya (`html[data-theme="surya"]` statis di root layout; kelas Tailwind lama
-di `app/globals.css` dan `app/workspace.css`) tinggal untuk sisa markup lama; yang diketahui: `app/(dashboard)/error.tsx`. Jangan
-mencampur: halaman Fiori tidak memakai kelas warna Tailwind lama (`text-slate-*`, `bg-white/10`, `bg-[#…]`) yang diremap tema lama.
+Semua halaman `app/(dashboard)` dan auth sudah Fiori; lembar cetak memakai gaya kertasnya sendiri dengan bilah layar Fiori. Remap tema Surya (`html[data-theme="surya"]`, `app/workspace.css`, kelas
+Tailwind lama dan primitive `ui-*` di `app/globals.css`) sudah dihapus (audit desain 001 usulan D, No 98/99). Kelas warna palet Tailwind
+(`text-slate-*`, `bg-white/10`, `bg-[#…]`) tidak lagi diremap: warna hanya lewat token Fiori.
 
 ## Cara memigrasikan satu halaman
 
@@ -64,11 +64,10 @@ Breakpoint: S < 600 · M 600–1023 · L 1024–1439 · XL ≥ 1440. Tabel memak
   `compact`/`cozy`.
 - Disimpan di localStorage `fiori-scheme` / `fiori-density`; diterapkan sebelum paint oleh skrip di `app/layout.tsx`
   (`components/fiori/scheme.ts`).
-- Atributnya `data-scheme`, bukan `data-theme`, supaya tidak bentrok dengan pilihan tema lama selama migrasi.
-- Tema Neon, Office Calm, dan iOS pensiun (keputusan owner 6 Okt 2026): pengalih tema lama dihapus di S1, `data-theme`
-  selalu `surya`. CSS ketiga tema itu sudah dihapus dari `app/globals.css` (audit desain 001 No 148).
-- Pengalih Mode/Kerapatan ada di menu profil shell (`SchemeSwitcher`). Mode mengubah semua isi di dalam `.fiori`; sisa markup
-  lama (lihat Status migrasi) tetap terang.
+- Atributnya `data-scheme` (bukan `data-theme` milik pilihan tema lama).
+- Tema Neon, Office Calm, dan iOS pensiun (keputusan owner 6 Okt 2026); CSS-nya dihapus dari `app/globals.css` (audit desain 001
+  No 148). Tema Surya dan atribut `data-theme` ikut dihapus (audit desain 001 usulan D).
+- Pengalih Mode/Kerapatan ada di menu profil shell (`SchemeSwitcher`). Mode mengubah semua isi di dalam `.fiori`.
 - Logo resmi CV. Surya Perkasa tetap (`public/brand/surya-perkasa-logo-horizontal.png`). Warna PWA: `#004c97`.
 
 ## Komponen
@@ -82,10 +81,10 @@ Breakpoint: S < 600 · M 600–1023 · L 1024–1439 · XL ≥ 1440. Tabel memak
 | `ConfirmDialog` | interactive | semua aksi tulis: judul berupa pertanyaan, `tag`, `facts` (jumlah, nilai, tujuan), `reason` bila alasan wajib (maker-checker lunak), tombol berlabel aksi; penjaga klik ganda; Escape/Tutup diabaikan selama aksi berjalan; galat tampil di dialog dan isian tidak dikosongkan; alasan tombol konfirmasi nonaktif tampil sebagai teks di kaki dialog secara bawaan (`alasanTerlihat={false}` hanya bila kalimat yang sama sudah terlihat di isian); `factsAlign="start"` untuk fakta rata kiri; dialog native `<dialog>` (`components/ui/Dialog`) |
 | `FormField` | interactive | label terikat, tanda wajib, `help`, `error` (berikon) lewat `aria-describedby`; isi = render prop yang menerima atribut a11y untuk `<input|select|textarea className="fi-input">` |
 | `FilterBar` | interactive | saringan di desktop; di ponsel `search` tetap terlihat dan sisanya pindah ke bottom sheet (tombol menyebut jumlah saringan aktif); chip saringan aktif dengan hapus per chip dan "Hapus semua". Saringan tersimpan (BL-36) belum |
-| `ResponsiveTable` | core | tabel di wadah ≥ 600 px, kolom `secondary` pindah ke bawah kolom pertama di < 760 px, `mobileItem` (biasanya `ListItem`) di < 600 px; pilih massal (hanya di tampilan tabel; daftar ponsel belum bisa memilih), urut (`aria-sort`); keadaan memuat/kosong/galat bawaan (lihat di bawah); gulir menyamping hanya di wadah tabel. Model TanStack (`DataTable`) bisa dipakai pemanggil untuk menyusun `rows` |
+| `ResponsiveTable` | core | tabel di wadah ≥ 600 px (wadah gulir bisa difokus, `role="group"` bernama caption), `rincian` = baris sisipan lewat tombol "Rincian <nama>", `foot` = baris total, kolom `secondary` pindah ke bawah kolom pertama di < 760 px, `mobileItem` (biasanya `ListItem`) di < 600 px; pilih massal (hanya di tampilan tabel; daftar ponsel belum bisa memilih), urut (`aria-sort`); keadaan memuat/kosong/galat bawaan (lihat di bawah); gulir menyamping hanya di wadah tabel. Model TanStack (`DataTable`) bisa dipakai pemanggil untuk menyusun `rows` |
 | `DataTable` | `components/DataTable.tsx` | model TanStack (urut, cari, kolom, paginasi) bergaya `.fi-table`; `error` + `onRetry` = `ErrorState` dengan Coba lagi; kosong dibedakan "Belum ada data" dan "Tidak ada baris yang cocok" |
 | Input berkas | pola, bukan komponen | `<label className="fi-btn fi-btn--secondary">` berisi ikon, label kata kerja, dan `<input type="file" className="sr-only">`; cincin fokus lewat `.fi-btn:has(input:focus-visible)`. Di dalam dialog boleh `FormField` + `<input type="file" className="fi-input">` |
-| `ListItem` | core | baris daftar ponsel dan item worklist FCL: nomor dokumen (mono), nilai, judul, meta, badge; `current` = `aria-current` |
+| `ListItem` | core | baris daftar ponsel dan item worklist FCL: nomor dokumen (mono), nilai, judul, meta, badge; `current` = `aria-current`; `href` + `onClick` = tautan nyata (tab baru bisa), klik biasa ke callback |
 | `ObjectPageHeader` + `Flow` + `AnchorBar` | core | jejak halaman, judul (`h1`; `headingLevel={2}` bila halaman sudah punya h1, mis. kolom kedua FCL), badge status, indikator "Draf belum disimpan", atribut kunci (`dl`), langkah status (`aria-current="step"`); anchor bar lengket. Header tidak menciut saat digulir (belum dibutuhkan) |
 | `FooterToolbar` | core | aksi final kanan bawah, lengket; `message` = alasan tombol nonaktif / status draf |
 | `FlexibleColumnLayout` | core | 2 kolom ≥ 1024 px; di bawahnya satu kolom daftar ↔ detail dengan tombol "Kembali ke daftar" |
@@ -95,7 +94,7 @@ Breakpoint: S < 600 · M 600–1023 · L 1024–1439 · XL ≥ 1440. Tabel memak
 | `useUnsavedGuard` | interactive | peringatan peramban saat meninggalkan halaman dengan draf |
 
 Shell (`components/SidebarLayout.tsx`, S1a): shell bar dengan logo resmi (lockup; tanda SP di ponsel; versi putih di mode gelap
-lewat token `--logo-full`/`--logo-mark`), cari menu (Ctrl K; OPC tetap memakai quick jump sendiri), menu profil (Mode, Kerapatan,
+lewat token `--logo-full`/`--logo-mark`), cari menu (Ctrl K di semua halaman; pencarian pengajuan OPC memakai "/"), menu profil (Mode, Kerapatan,
 Bantuan = Asisten Bantuan yang menjawab dari daftar panduan, bukan AI; Keluar: gagal = pesan di menu, tidak pindah halaman), navigasi samping berkelompok dari izin, drawer ponsel, navigasi bawah = Beranda + 3 pintasan
 profil peran (`ROLE_PROFILES` di `config/workspace-navigation.ts`; `profileFor` = ★ grup utama, fallback tebakan izin, S7-3) + Menu.
 Belum: pencarian nomor dokumen lintas modul (BL-38) dan lonceng Kotak Tugas (BL-34) — menunggu logic di tracker AM.

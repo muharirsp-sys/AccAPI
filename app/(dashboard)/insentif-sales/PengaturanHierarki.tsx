@@ -13,7 +13,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
-import { Button, EmptyState, ListItem, MessageStrip, ResponsiveTable, Section, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
+import { Button, EmptyState, ListItem, MessageStrip, ResponsiveTable, Section, StatusBadge, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
 import { readApi } from "@/lib/insentif-ui";
@@ -222,10 +222,8 @@ export function AkunTautan({ bolehHierarki }: { bolehHierarki: boolean }) {
             <Section id="akun" title="Akun belum ditautkan" subtitle="tanpa tautan, akun melihat seluruh data insentif (perilaku hari ini)">
                 <div className="fi-sect-in">
                     <FormField label="Cari akun">{(a) => <input {...a} className="fi-input" type="search" value={cari} placeholder="Nama, email, atau identitas" onChange={(e) => setCari(e.target.value)} />}</FormField>
-                    <VariantNote bl="BL-26">
-                        Hari ini akun tanpa tautan melihat seluruh data insentif, dan daftar ini memuat semua akun aplikasi (termasuk yang tidak memakai
-                        insentif). Usulan BL-26 + D-17: akun tanpa tautan tidak melihat data apa pun, dan daftar hanya memuat akun berizin insentif.
-                    </VariantNote>
+                    {/* BL-26: keterangan biasa (akibat tanpa tautan sudah di subjudul); satu catatan varian per layar = BL-33 Pengaturan (audit No 80). */}
+                    <p className="fi-small fi-subtle">Daftar ini memuat semua akun aplikasi, termasuk yang tidak memakai insentif.</p>
                 </div>
                 <ResponsiveTable<UserIdentityRow> title="Akun belum ditautkan" count={users.data ? belum.length : undefined} columns={kolomBelum} rows={belum.filter(cocok)} rowKey={(u) => u.id}
                     status={users.status} error={users.error ? `Daftar akun belum berhasil dimuat (${users.error}).` : undefined} onRetry={muat}

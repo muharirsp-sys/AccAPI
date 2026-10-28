@@ -258,7 +258,7 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
             <VariantNote bl={rows.length >= MAKS_FASTAPI ? "BL-18, BL-20, BL-36" : "BL-18, BL-20"}>
                 Butuh harga belum bisa diisi dan order belum bisa dibatalkan dari layar ini; server belum punya aksinya. Order yang ditahan sebagai
                 dugaan ganda (outlet sama, barang mirip, tanggal sama) ditolak saat disimpan dan belum bisa dilepas dari layar.
-                {rows.length >= MAKS_FASTAPI && " Saringan periode dan status di server, beserta pilihan tersimpan per pengguna, belum ada."}
+                {rows.length >= MAKS_FASTAPI && " Saringan periode dan status di server, beserta pilihan tersimpan per user, belum ada."}
             </VariantNote>
 
             <ConfirmDialog open={dialogTarik} onClose={() => setDialogTarik(false)} title="Tarik permintaan Order Sales sekarang?"

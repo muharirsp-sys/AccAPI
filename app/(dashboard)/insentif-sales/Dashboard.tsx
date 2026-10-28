@@ -3,7 +3,7 @@
  *   capaian per SPV dengan warna laju, dan insentif tim (sales, SPV, SM) dengan alasan Rp 0 dan rincian per baris. Hanya memantau:
  *   input support pindah ke halaman Support principal.
  * Caller: app/(dashboard)/insentif-sales/page.tsx (default export, prop permKeys).
- * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard, KonstantaCtx), ./Rincian (tabel rincian, laju, PPh, pemuat SPV/SM),
+ * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard, KonstantaCtx), ./Rincian (laju, PPh, rincian, pemuat SPV/SM),
  *   ./data (Time Gone, format), components/fiori/*, lib/insentif-ui.
  * Main Functions: Dashboard, Ringkasan, CapaianSpv, InsentifSales, InsentifSpv, InsentifSm.
  * Side Effects: GET /api/insentif-sales/dashboard, /spv-dashboard, /sm-dashboard; router.replace saat saringan SM berubah.
@@ -21,7 +21,7 @@ import { bulanIniWita, formatRp, formatShortRp, getPeriodWorkdayProgress, itemSu
 import { KOSONG } from "@/lib/tampil";
 import { InsentifRangka, KonstantaCtx, useDashboard, useKonstanta, usePeriode, type DashboardData } from "./Rangka";
 import {
-    CatatanTimeGone, Laju, LegendaLaju, SalesBreakdown, SmBreakdown, SpvBreakdown, StatusBayar, TabelRincian, capaianSm, kakiPph, kolomPph,
+    CatatanTimeGone, Laju, LegendaLaju, SalesBreakdown, SmBreakdown, SpvBreakdown, StatusBayar, capaianSm, kakiPph, kolomPph,
     sebabNolSm, sebabNolSpv, strataSm, useInsentifSm, useInsentifSpv, type SmIncentiveRow, type SpvIncentiveRow,
 } from "./Rincian";
 
@@ -277,9 +277,9 @@ function InsentifSales({ rows, total, smAktif, hapusSm }: { rows: ApiRow[]; tota
     ];
     return (
         <Section title="Insentif sales" subtitle={skemaSales(k)}>
-            <TabelRincian<ApiRow> title="Insentif sales" columns={kolom} rows={rows}
-                rowKey={(r) => `${r.salesCode}|${r.principle}`} rowLabel={(r) => `${r.salesName} ${r.principle}`}
-                rincian={(r) => <SalesBreakdown r={r} semuaBaris={rows} />}
+            <ResponsiveTable<ApiRow> title="Insentif sales" columns={kolom} rows={rows}
+                rowKey={(r) => `${r.salesCode}|${r.principle}`}
+                rincian={{ isi: (r) => <SalesBreakdown r={r} semuaBaris={rows} />, nama: (r) => `${r.salesName} ${r.principle}` }}
                 empty={{ title: "Tidak ada baris untuk SM ini", message: `${total} baris lain tersembunyi oleh saringan SM.`, action: <Button onClick={hapusSm}>Hapus saringan SM</Button> }}
                 foot={{ label: smAktif === "ALL" ? "Total" : `Total ${rows.length} dari ${total} baris`, cells: { total: <b>{formatRp(grand)}</b>, ...kakiPph(k, grand) } }}
                 mobileItem={(r) => <ListItem doc={r.salesCode} amount={formatRp(r.incentive.total)} title={`${r.salesName} · ${r.principle}`}
@@ -308,9 +308,9 @@ function InsentifSpv({ load, onRetry, label }: { load: Load<SpvIncentiveRow[]>; 
     return (
         <Section title="Insentif SPV" subtitle={`Berbasis Value, tanpa saringan; principal dibayar bila pencapaiannya ${formatPctText(k.spv.ambang * 100)} atau lebih.`}>
             <div className="fi-sect-in"><p className="fi-small fi-muted">Di bawah ambang Rp 0. Rate per principal mengikuti jumlah principal valid yang ditangani SPV.</p></div>
-            <TabelRincian<SpvIncentiveRow> title="Insentif SPV" columns={kolom} rows={rows} rowKey={(r) => r.spvName} rowLabel={(r) => r.spvName}
+            <ResponsiveTable<SpvIncentiveRow> title="Insentif SPV" columns={kolom} rows={rows} rowKey={(r) => r.spvName}
                 status={load.status} error={load.error} onRetry={onRetry}
-                rincian={(r) => <SpvBreakdown rincian={r.rincian} />}
+                rincian={{ isi: (r) => <SpvBreakdown rincian={r.rincian} />, nama: (r) => r.spvName }}
                 empty={{ title: `Belum ada insentif SPV ${label}`, message: "Belum ada baris target dengan SPV di periode ini." }}
                 foot={{ label: "Total", cells: { total: <b>{formatRp(grand)}</b>, ...kakiPph(k, grand) } }}
                 mobileItem={(r) => <ListItem doc={r.spvName} amount={formatRp(r.total)} title={`${r.jumlahValid} principal valid · rate ${formatRp(r.ratePerPrincipal)}`}
@@ -340,9 +340,9 @@ function InsentifSm({ load, onRetry, label }: { load: Load<SmIncentiveRow[]>; on
     return (
         <Section title="Insentif SM" subtitle={`Strata flat berbasis Value, tanpa saringan: ${strata}.`}>
             <div className="fi-sect-in"><p className="fi-small fi-muted">Di bawah strata terendah Rp 0. Hanya SM yang terdaftar di Pengaturan yang ikut skema.</p></div>
-            <TabelRincian<SmIncentiveRow> title="Insentif SM" columns={kolom} rows={rows} rowKey={(r) => r.smName} rowLabel={(r) => r.smName}
+            <ResponsiveTable<SmIncentiveRow> title="Insentif SM" columns={kolom} rows={rows} rowKey={(r) => r.smName}
                 status={load.status} error={load.error} onRetry={onRetry}
-                rincian={(r) => <SmBreakdown r={r} />}
+                rincian={{ isi: (r) => <SmBreakdown r={r} />, nama: (r) => r.smName }}
                 empty={{ title: `Belum ada insentif SM ${label}`, message: "Belum ada baris target dengan SM di periode ini." }}
                 foot={{ label: "Total", cells: { total: <b>{formatRp(grand)}</b>, ...kakiPph(k, grand) } }}
                 mobileItem={(r) => <ListItem doc={r.smName} amount={formatRp(r.total)} title={`Capaian ${formatPctText(capaianSm(r))} · ${r.jumlahBaris} baris sales`}

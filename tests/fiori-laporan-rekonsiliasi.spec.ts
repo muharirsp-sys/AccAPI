@@ -62,7 +62,9 @@ test.describe("Laporan harian", () => {
         const riwayat = main.getByRole("table", { name: "Riwayat kirim" });
         await expect(riwayat.getByRole("row", { name: /05\/10\/2026/ })).toContainText("Gagal");
         await expect(riwayat.getByRole("row", { name: /01\/10\/2026/ })).toContainText("Macet");
-        await expect(main.getByLabel("Usulan BL-29")).toBeAttached(); // kotak varian hanya terlihat oleh Admin; kode BL ada di nama aksesibelnya
+        // BL-29 (run macet tak bisa dilanjutkan) cukup di subjudul Riwayat kirim; satu catatan varian per layar (audit No 80).
+        await expect(main.getByRole("region", { name: "Riwayat kirim" })).toContainText("run macet lebih dari 10 menit belum bisa dilanjutkan");
+        await expect(main.getByLabel("Usulan BL-29")).toHaveCount(0);
         const footer = main.locator(".fi-ftb");
         await expect(footer.getByRole("button", { name: "Proses berkas" })).toBeDisabled();
         await page.screenshot({ path: "test-results/fiori-laporan-harian-awal.png", fullPage: true });
@@ -186,7 +188,7 @@ test.describe("Rekonsiliasi", () => {
         await main.getByLabel("Ganti mapping").setInputFiles(xlsx("KINO_mapping_SKU_v5.xlsx"));
         await main.getByRole("button", { name: "Aktifkan v5…" }).click();
         const dlg = page.getByRole("dialog");
-        await expect(dlg).toContainText("Berlaku untuk semua pengguna");
+        await expect(dlg).toContainText("Berlaku untuk semua user"); // istilah tunggal "user" (audit No 88)
         await expect(dlg).toContainText("v4 · KINO_mapping_SKU_v4.xlsx");
         await dlg.getByRole("button", { name: "Aktifkan mapping" }).click();
         await expect(main.getByRole("status").filter({ hasText: "Mapping v5 aktif" })).toBeVisible();

@@ -5,7 +5,7 @@
  *   Simpan tujuan (pemasok/rekening lama → baru; pemetaan lokal per principal, bukan posting ke Accurate).
  * Caller: app/(dashboard)/finance/page.tsx.
  * Dependensi: ./posting (HTTP + orkestrasi tulis), lib/finance-ui (izin & keputusan murni), components/fiori/*, lib/promo-ui,
- *   lib/rekapan-nota/ui (tanggalPanjang), lib/tampil (KOSONG), lib/fuzzySearch, lucide-react.
+ *   lib/rekapan-nota/ui (tanggalPanjang), lib/tampil (KOSONG), lib/fuzzySearch, form-kontrol/lapangan (useHariBeku), lucide-react.
  * Main Functions: Finance (default), Detail, DialogPosting, DialogSelesai.
  * Side Effects: Lewat ./posting: FastAPI /payments/finance/*, command /api/finance/purchase-payment (kirim purchase-payment ke
  *   Accurate), /resolve, /attempts, /api/proxy GET list.do; window.open ekspor Excel; beforeunload saat ada draf.
@@ -27,6 +27,7 @@ import {
 import { rupiah, tgl } from "@/lib/promo-ui";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { KOSONG } from "@/lib/tampil";
+import { useHariBeku } from "../form-kontrol/lapangan";
 import {
     SeparuhJalan, TidakPasti, bacaSesi, muatFinance, muatMaster, postingPurchasePayment, recordKey, selesaikanTidakPasti, simpanTujuan, ubahStatusTransfer, urlBerkas,
     type DataFinance, type FinanceMapping, type FinanceRecord, type MasterAccurate, type SesiAccurate,
@@ -46,7 +47,7 @@ function tanpa<T>(obj: Record<string, T>, key: string): Record<string, T> {
     return next;
 }
 
-export default function Finance({ permKeys, hariIni }: { permKeys: string[]; hariIni: string }) {
+export default function Finance({ permKeys, hariIni, jamServerMs }: { permKeys: string[]; hariIni: string; jamServerMs: number }) {
     const izin = useMemo(() => izinFinance(new Set(permKeys)), [permKeys]);
     const [tanggal, setTanggal] = useState(hariIni);
     const [load, muatUlang] = useLoad(useCallback(() => muatFinance(tanggal), [tanggal]));
@@ -99,6 +100,16 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
     const drafBaris = (b: Baris) => tujuanBerubah(b) || Boolean(bukti[b.key]);
     const adaDraf = baris.some(drafBaris);
     useUnsavedGuard(adaDraf);
+    // "Hari ini" dihitung ulang di klien (WITA) saat tab fokus/terlihat lagi dan lewat tengah malam (owner 27 Okt, audit No 109): tanggal bayar
+    // yang masih hari lama ikut pindah; tanggal pilihan user tidak ditimpa; draf/dialog terbuka tidak dipindah diam-diam (strip + tombol).
+    const [tawar, setTawar] = useState<string | null>(null);
+    // Hari dari jam SERVER (selisih sekali saat dibuka), bukan jam peramban (tinjauan K2 R-1).
+    const [selisihJam] = useState(() => jamServerMs - Date.now());
+    useHariBeku((baru, lama) => {
+        if (tanggal !== lama) return;
+        // Draf = tujuan/bukti, tanggal transfer yang sudah diketik, atau pengajuan yang sedang dibuka (tinjauan K2 R-2).
+        if (adaDraf || dialog || pilihKey !== null || Object.keys(drafTanggal).length > 0) setTawar(baru); else setTanggal(baru);
+    }, selisihJam);
 
     const hitung = useMemo(() => {
         const belum = baris.filter((b) => statusTransfer(b.r.status_pembayaran).label === "Belum transfer");
@@ -269,7 +280,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
             </div>
             {memuatAwal ? <div className="fi-sect-in"><Skeleton rows={6} label="Memuat pengajuan" /></div>
                 : load.status === "galat" && !data ? <ErrorState title="Server Pembayaran tidak menjawab" message={`${load.error ?? ""} Data di Accurate tidak berubah.`} onRetry={muatUlang} />
-                : kosongHari ? <EmptyState title={`Tidak ada pengajuan untuk ${tanggalPanjang(data.date)}`} message="Pengajuan muncul di sini setelah diajukan dari Pembayaran / SPPD dengan tanggal bayar ini. Ganti tanggal untuk melihat hari lain." />
+                : kosongHari ? <EmptyState title={`Tidak ada pengajuan untuk ${tanggalPanjang(data.date)}`} message="Pengajuan muncul di sini setelah diajukan dari Pembayaran dan SPPD dengan tanggal bayar ini. Ganti tanggal untuk melihat hari lain." />
                 : tampil.length === 0 ? <EmptyState title="Tidak ada pengajuan yang sesuai saringan" message="Ubah kata kunci atau pilih kartu Semua." />
                 : (
                     <ul className="fi-list" style={{ display: "block" }} aria-label="Daftar pengajuan">
@@ -333,6 +344,12 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
             </header>
 
             {hasil && <MessageStrip tone={hasil.tone} title={hasil.judul} onClose={() => setHasil(null)}>{hasil.isi}</MessageStrip>}
+            {tawar && tawar !== tanggal && (
+                <MessageStrip tone="info" title={`Hari sudah berganti ke ${tanggalPanjang(tawar)}.`} onClose={() => setTawar(null)}>
+                    Tanggal bayar tetap {tanggalPanjang(tanggal)} karena ada pengajuan yang sedang dibuka atau isian yang belum disimpan.{" "}
+                    <Button variant="tertiary" onClick={() => { setTanggal(tawar); setTawar(null); }}>Pindah ke hari ini</Button>
+                </MessageStrip>
+            )}
             {load.status === "galat" && data && <MessageStrip tone="neg" title="Gagal memuat ulang pengajuan.">{load.error} Yang tampil hasil sebelumnya; aksi tulis dikunci. <Button variant="tertiary" onClick={muatUlang}>Coba lagi</Button></MessageStrip>}
             {data?.attemptsGalat && <MessageStrip tone="warn" title="Status posting dari server tidak terbaca.">{data.attemptsGalat} Posting dan penyelesaian dikunci sampai statusnya terbaca. <Button variant="tertiary" onClick={muatUlang}>Muat ulang</Button></MessageStrip>}
 
@@ -472,7 +489,7 @@ function Detail(p: DetailProps) {
 
     return (
         <div style={{ display: "grid", gap: 12 }}>
-            <ObjectPageHeader title={`${r.draft_label} · ${r.principle}`} draft={p.tujuanBerubah}
+            <ObjectPageHeader headingLevel={2} title={`${r.draft_label} · ${r.principle}`} draft={p.tujuanBerubah}
                 status={<><StatusBadge tone={tr.tone}>{tr.label}</StatusBadge> <StatusBadge tone={pt.tone} busy={kode === "sedang"}>{pt.label}{b.posting.nomor ? ` ${b.posting.nomor}` : ""}</StatusBadge></>}
                 attributes={[
                     { label: "SPPD", value: r.sppd_no || KOSONG },
@@ -485,7 +502,7 @@ function Detail(p: DetailProps) {
                     {catatan || "Hasil posting terakhir belum pasti."} Jangan posting ulang sebelum Finance memeriksa Purchase Payment di Accurate.
                 </MessageStrip>
             )}
-            {kode === "sedang" && <MessageStrip tone="info" title="Sedang diposting dari sesi atau tab lain.">{a ? `Dimulai ${a.createdAtWita} WITA oleh ${a.actorName || "pengguna lain"}.` : ""} Muat ulang beberapa saat lagi.</MessageStrip>}
+            {kode === "sedang" && <MessageStrip tone="info" title="Sedang diposting dari sesi atau tab lain.">{a ? `Dimulai ${a.createdAtWita} WITA oleh ${a.actorName || "user lain"}.` : ""} Muat ulang beberapa saat lagi.</MessageStrip>}
             {kode === "gagal" && catatan && <MessageStrip tone="neg" title={catatan} />}
             {kode === "tak_terbaca" && <MessageStrip tone="warn" title="Status posting tidak terbaca.">Belum diketahui apakah pengajuan ini sudah diposting; posting dan ubah status dikunci sampai dimuat ulang.</MessageStrip>}
 

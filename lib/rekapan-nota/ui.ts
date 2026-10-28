@@ -117,10 +117,10 @@ export function labelEvent(event: string, payload: EventPayload = {}): { apa: st
         case "wave.nota_added": return { apa: `Menambah ${n(payload.no_nota)} nota`, ubah: payload.prioritas === "urgent" ? "sebagai urgent" : undefined };
         case "wave.nota_add_rejected": return { apa: `${n(payload.no_nota)} nota ditolak`, ubah: "sudah ada di wave lain" };
         case "wave.groups_selected": return { apa: "Memilih grup cetak", ubah: `${n(payload.pick_group_ids)} grup` };
-        case "wave.released": return { apa: "Merilis wave", ubah: `${n(payload.jumlah_nota)} nota · ${n(payload.exception_open)} exception terdeteksi` };
+        case "wave.released": return { apa: "Merilis wave", ubah: `${n(payload.jumlah_nota)} nota · ${n(payload.exception_open)} masalah terdeteksi` };
         case "wave.confirmed": return { apa: "Mengonfirmasi wave", ubah: `${n(payload.jumlah_nota)} nota` };
         case "wave.cancelled": return { apa: "Membatalkan wave", ubah: [payload.nota_kembali ? `${n(payload.nota_kembali)} nota kembali ke pool` : "", payload.alasan ? String(payload.alasan) : ""].filter(Boolean).join(" · ") || undefined };
-        case "wave.exception_resolved": return { apa: payload.status === "selesai" ? "Menandai exception selesai" : "Mengabaikan exception", ubah: [String(payload.ref_kode ?? ""), payload.alasan ? String(payload.alasan) : ""].filter(Boolean).join(" · ") };
+        case "wave.exception_resolved": return { apa: payload.status === "selesai" ? "Menandai masalah selesai" : "Mengabaikan masalah", ubah: [String(payload.ref_kode ?? ""), payload.alasan ? String(payload.alasan) : ""].filter(Boolean).join(" · ") };
         case "wave.nota_released": return { apa: `Melepas ${String(payload.no_nota ?? "")}`, ubah: payload.alasan ? String(payload.alasan) : undefined };
         case "wave.prioritas_changed": return { apa: `Mengubah prioritas ${String(payload.no_nota ?? "")}`, ubah: `ke ${String(payload.ke ?? "")}` };
         default: return { apa: event };

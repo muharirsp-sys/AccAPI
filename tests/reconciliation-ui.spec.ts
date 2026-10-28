@@ -340,8 +340,6 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await expect(page.getByText("110000077", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Jalankan rekonsiliasi" })).toBeDisabled();
-  // Tema Office Calm/Neon/iOS pensiun (Okt 2026): halaman lama hanya memakai remap Surya.
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "surya");
   await expect(types).toBeVisible();
 });
 

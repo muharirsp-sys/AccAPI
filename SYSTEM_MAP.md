@@ -119,8 +119,8 @@ DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)
 Beranda (Fiori, S1b) -> profil peran dari izin -> tile tugas (lib/beranda.ts, GET endpoint yang ada; profil kasir: /api/kasir/ringkasan, K3) + Pintasan + Pantauan + Semua aplikasi
   -> Admin Incaso (pelunasan.kirim, S6e-2b): tile Tidak pasti/Gagal + Pantauan dari GET /api/idempotency/summary?rows=1 (perDatabase,
      database aktif dari /api/auth/accurate-session); jawaban tanpa angka/daftar = galat, bukan 0
-RootLayout -> html[data-theme="surya"] statis (Office Calm/Neon/iOS pensiun, Okt 2026)
-  -> app/workspace.css: remap Surya untuk isi halaman yang belum dimigrasi
+RootLayout -> app/globals.css (dasar Tailwind: target sentuh, fokus, reduced-motion) + app/fiori.css; semua isi di dalam .fiori
+  (tema lama Office Calm/Neon/iOS/Surya pensiun, remap kelas Tailwind lama dihapus)
 SidebarLayout (shell Fiori, S1a) -> shell bar: logo resmi, cari menu Ctrl K, menu profil (Mode/Density, Bantuan -> ChatWidget, Keluar)
   -> navigasi samping dari izin; drawer ponsel (Dialog native); navigasi bawah = Beranda + 3 pintasan ROLE_PROFILES + Menu;
      profil = ★ grup utama (`profileFor`, peta nama preset S7-3), fallback tebakan izin (`roleProfile`)
@@ -835,7 +835,7 @@ AccAPI/_github_clean/
 │   ├── off-program-control/
 │   │   ├── OffGlobalSearch.tsx
 │   │   └── OffNotificationBell.tsx
-│   └── ui/                             # Input, Select, DatePickerField (dialog kalender + keyboard), Dialog native, AsyncState bersama
+│   └── ui/                             # Dialog native bersama
 ├── lib/
 │   ├── tampil.ts                       # Format tampilan bersama: KOSONG, tanggal/waktu WITA, hariIniWita, sebabHttp (+ tampil.test.ts)
 │   ├── auth.ts                         # Konfigurasi Better Auth server
@@ -998,11 +998,10 @@ AccAPI/_github_clean/
 | `lib/laporan-sales/kontrak.ts` + `app/(dashboard)/laporan-sales/{page,LaporanSales}.tsx` + `tab/*.tsx` + `app/api/laporan-sales/<tab>/route.ts` + `lib/laporan-sales/<tab>.ts` (Laporan Sales, owner 20 Okt 2026; padanan fungsi EskaLink DMS3SFA `scratch/eskalink-dms3sfa/PETA-LAYAR-2026-10-20.md`) | `TAB`, `tabTerlihat`, `bulanSah`, `rentangBulan` (murni) | Satu halaman, enam tab, satu slice per tab; izin = kunci LAMA per tab (halaman `anyOf` IZIN_HALAMAN, `lib/rbac.ts`): Top 30 + Drop Size `sales_history.view` (Top 30 = SQLite History Penjualan; Drop Size = faktur INV `sales_invoice.dpp` × `customer.category_name`), Target vs Realisasi `insentif_sales.view_all` (target + progres insentif per cabang × principal, hitungan `lib/insentif-sales`), Monitoring Harian / Coverage Ganda / Tidak Order `supervisor_review.view` + cakupan `resolveScope` (faktur INV per pelanggan D1–D31; JKS aktif dilayani > 1 salesman; `ao_control_daily` tanpa order per `no_order_reason`). `?bulan=YYYY-MM`; cabang = cabang Accurate (= divisi principal). Baca-saja. Uji: `lib/laporan-sales/*.test.ts` |
 | `components/ui/Dialog.tsx` | `Dialog` | Primitive modal native bersama: focus trap/restoration browser, Escape, label/deskripsi, dan backdrop opsional |
 | `components/DataTable.tsx` | `DataTable` | Tabel generik dengan caption, status live, loading skeleton, empty state eksplisit, sorting semantik, kontrol kolom/pagination aksesibel, sticky header, dan density baris konsisten |
-| `components/off-program-control/OffGlobalSearch.tsx` | `OffGlobalSearch` | Quick jump OFF via Ctrl/Cmd+K; combobox/listbox mendukung Arrow, Home/End, Enter, dan Escape tanpa mengambil alih Ctrl/Cmd+F browser; hasil membuka batch di kolom kedua tab aktif |
-| `components/off-program-control/OffNotificationBell.tsx` | `OffNotificationBell` | Tombol berjumlah + popover masalah SLA per peran; "Buka pengajuan" membuka batch di kolom kedua; Sembunyikan berlaku sampai muat ulang |
+| `components/off-program-control/OffGlobalSearch.tsx` | `OffGlobalSearch` | Pencarian pengajuan OFF lewat "/" (diabaikan saat mengetik di isian atau dialog modal terbuka; Ctrl K milik cari menu shell); combobox/listbox mendukung Arrow, Home/End, Enter, dan Escape (hanya saat isian fokus); hasil membuka batch di kolom kedua tab aktif |
+| `components/off-program-control/OffNotificationBell.tsx` | `OffNotificationBell` | Tombol berjumlah + popover masalah SLA per peran; "Buka pengajuan" = tautan nyata `?batch=` (tab baru bisa), klik biasa membuka batch di kolom kedua; Sembunyikan berlaku sampai muat ulang |
 | `app/(dashboard)/insentif-sales/**` (Fiori S4c) | `InsentifSalesPage`, `InsentifRangka`, `usePeriode`, `useDashboard`, `aksesInsentif`, `halamanTerlihat` | Enam rute (Dashboard, `/saya`, `/pembayaran`, `/data-periode`, `/support`, `/pengaturan`); navigasi dari izin + identitas hierarki (server); periode/principal/cabang di query URL untuk semua halaman; `?view=` lama dialihkan; enam keadaan per layar, aksi tulis lewat ConfirmDialog |
-| `app/globals.css` | semantic cockpit classes | Sumber token lebar halaman, spacing, radius, page hierarchy, tab, toolbar, panel, tabel, dan action hierarchy untuk route operasional |
-| `components/ui/AsyncState.tsx` | `LoadingState`, `ErrorState`, `EmptyState` | Primitive feedback async bersama; skeleton mengikuti reduced-motion, error meneruskan retry, empty state dapat membawa recovery action |
+| `app/globals.css` | dasar global | Tailwind + target sentuh 44 px, cincin fokus global, reduced-motion, PWA, `@theme inline` ke token Fiori; komponen dan token tampilan ada di `app/fiori.css` |
 
 ### Payments UI Safety
 

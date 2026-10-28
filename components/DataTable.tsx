@@ -169,9 +169,10 @@ export function DataTable<TData, TValue>({
             </p>
 
             <div className="fi-tablebox" style={{ borderRadius: "var(--r-lg)", boxShadow: "var(--shadow-1)", overflow: "clip" }}>
-                <div className="fi-tablescroll" tabIndex={0}>
+                {/* Wadah gulir bisa difokus dan bernama (caption), audit desain 001 No 140c. */}
+                <div className="fi-tablescroll" tabIndex={0} role="group" aria-labelledby={`${tableId}-cap`}>
                     <table aria-busy={isLoading} className="fi-table">
-                        <caption className="sr-only">{caption}</caption>
+                        <caption id={`${tableId}-cap`} className="sr-only">{caption}</caption>
                         <thead>
                             {table.getHeaderGroups().map((headerGroup) => (
                                 <tr key={headerGroup.id}>
