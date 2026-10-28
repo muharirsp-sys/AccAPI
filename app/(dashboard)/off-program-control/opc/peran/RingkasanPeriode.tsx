@@ -134,7 +134,9 @@ export function BagianPeriode({ ctx, daftar, periode }: PeranProps & { periode: 
     const [statusLoad, muatStatus] = useLoad(useCallback((): Promise<Load<StatusPeriode[]>> => (periodeSah
         ? ambilOpc(`${URL_PERIODE}?${new URLSearchParams({ bulan: bulanP, tahun: tahunP })}`, (j) => (j.periods ?? []) as StatusPeriode[], "Status penutupan periode belum terbaca.")
         : Promise.resolve({ status: "siap", data: [] })), [periodeSah, bulanP, tahunP]));
-    const st = statusLoad.data;
+    // Hanya status SEGAR yang dipakai (tinjauan K3 R-1): useLoad menyimpan data lama saat muat ulang berjalan atau gagal; dari data basi itu
+    // Buka kunci bisa tampil (dan mengirim unlock kedua) padahal strip galat berkata tidak ditampilkan.
+    const st = statusLoad.status === "siap" ? statusLoad.data : undefined;
     const statusOf = (pc: string) => st?.find((x) => x.principleCode === pc);
     // Satu principal: barisnya. Semua principal: principal yang punya batch di periode ini (yang akan dikirimi POST).
     const ditutupList = st ? kini.principals.filter((pc) => tertutup(statusOf(pc))) : [];

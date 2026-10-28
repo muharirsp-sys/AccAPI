@@ -58,6 +58,8 @@ type Opsi = {
     peran?: string;
     /** Baris off_period_closure awal untuk GET /periods (mis. ditutup sesi lain). POST periods yang sukses memperbaruinya. */
     tutup?: Over[];
+    /** true = GET /periods menjawab 500 (status penutupan tidak terbaca). */
+    bacaGagal?: () => boolean;
 };
 /** Semua endpoint OPC dimock. Mengembalikan daftar permintaan tulis (method, path, body), hitungan GET audit, dan query GET /periods. */
 async function mockOpc(page: Page, opsi: Opsi = {}) {
@@ -98,6 +100,7 @@ async function mockOpc(page: Page, opsi: Opsi = {}) {
         if (p === "/api/off-program-control/audit") { getAudit.push(url.search); return r.fulfill(opsi.audit ? opsi.audit() : json({ ok: true, audit: AUDIT })); }
         if (p === "/api/off-program-control/periods") {
             getPeriode.push(url.search);
+            if (opsi.bacaGagal?.()) return r.fulfill(json({ ok: false, error: "Status periode tidak terbaca" }, 500));
             const bulan = url.searchParams.get("bulan"), tahun = url.searchParams.get("tahun");
             return r.fulfill(json({ ok: true, bulan, tahun, periods: [...penutupan.values()].filter((t) => t.bulan === bulan && t.tahun === tahun) }));
         }
@@ -217,7 +220,9 @@ test("Tutup periode satu principal lewat dialog: refund tertunda disebut, payloa
 test("Status penutupan dari server (No 27): periode yang ditutup sesi lain terbaca, Buka kunci tampil; sebagian ditutup; hasil tidak pasti menutup dialog", async ({ page }) => {
     const tutupB = (pc: string) => ({ principleCode: pc, bulan: "08", tahun: "2026", status: "Ditutup", closedBy: "u-b", closedByName: "ADMIN B", closedAt: "2026-09-02T01:15:00.000Z" });
     let putus = false;
+    let bacaGagal = false;
     const { kirim, getPeriode } = await mockOpc(page, {
+        bacaGagal: () => bacaGagal,
         tutup: [tutupB("KINO"), tutupB("GDI"), { ...tutupB("HEINZ"), bulan: "09", closedByName: null, closedBy: "u-hilang" }],
         tulis: () => (putus ? { status: 504, contentType: "text/html", body: "<html>504 Gateway Time-out</html>" } : null),
     });
@@ -243,6 +248,7 @@ test("Status penutupan dari server (No 27): periode yang ditutup sesi lain terba
     await expect(angka).toContainText("Ditutup oleh ADMIN B");
     const nGet = getPeriode.length;
     putus = true;
+    bacaGagal = true; // muat ulang status sesudah jawaban tidak pasti ikut gagal (tinjauan K3 R-1)
     await periode.getByRole("button", { name: "Buka kunci periode…" }).click();
     const dlg = page.getByRole("dialog", { name: "Buka kunci periode Agustus 2026 untuk KINO INDONESIA. TBK, PT?" });
     await dlg.getByRole("button", { name: "Buka kunci", exact: true }).click();
@@ -250,9 +256,16 @@ test("Status penutupan dari server (No 27): periode yang ditutup sesi lain terba
     await expect(periode.getByRole("status").filter({ hasText: "Hasil aksi periode terakhir belum pasti." })).toContainText("Periksa status penutupan dan Riwayat batch");
     await expect.poll(() => getPeriode.length).toBeGreaterThan(nGet);
     expect(kirim.at(-1)).toEqual({ method: "POST", path: PERIODS, body: { action: "unlock", principleCode: "KINO", bulan: "08", tahun: "2026" } });
+    // R-1: status gagal dibaca = tidak ada Buka kunci dari data lama dan tidak ada "Ditutup oleh" basi; sama dengan kalimat strip.
+    await expect(periode.getByRole("alert").filter({ hasText: "Status penutupan belum terbaca." })).toContainText("Buka kunci tidak ditampilkan");
+    await expect(periode.getByRole("button", { name: "Buka kunci periode…" })).toHaveCount(0);
+    await expect(angka).toContainText("Belum terbaca dari server");
+    await expect(angka).not.toContainText("Ditutup oleh ADMIN B");
 
     // Server tiruan belum berubah (jawaban tadi tidak pasti): ulang berhasil, lalu sebagian ditutup (hanya GDI) = tanpa Buka kunci massal.
     putus = false;
+    bacaGagal = false;
+    await periode.getByRole("alert").filter({ hasText: "Status penutupan belum terbaca." }).getByRole("button", { name: "Coba lagi" }).click();
     await expect(angka).toContainText("Ditutup oleh ADMIN B");
     await periode.getByRole("button", { name: "Buka kunci periode…" }).click();
     await dlg.getByRole("button", { name: "Buka kunci", exact: true }).click();
