@@ -846,16 +846,8 @@ function parseGodrejPrincipal(
         ...(text(cell(row, header.columns, "BILL NO")).startsWith("FK/BFG-")
           ? { correctionBillNumber: text(cell(row, header.columns, "BILL NO")) }
           : {}),
-        invoiceNumber: exactlyOneToken(
-          cell(row, header.columns, "SALE RETURN NO."),
-          /(?<![A-Z0-9])RB\/BFG-\d+(?![A-Z0-9])/g,
-          "SALE RETURN NO.",
-          sourceRowNumber,
-        ),
-        customerCode: godrejPrincipalCustomer(
-          cell(row, header.columns, "CUSTOMER"),
-          sourceRowNumber,
-        ),
+        invoiceNumber,
+        customerCode,
         accurateProductCode,
         principalProductCode,
         quantity: godrejNumber(
