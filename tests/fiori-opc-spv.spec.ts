@@ -57,11 +57,14 @@ type Opsi = {
     post?: (body: Record<string, unknown>) => ReturnType<typeof json> | null;
     refund?: (id: string) => ReturnType<typeof json> | null;
     diskon?: () => ReturnType<typeof json>;
+    /** Ubah data awal sebelum halaman dimuat (mis. batch lama dengan bulan tak sah). */
+    ubahAwal?: (s: ReturnType<typeof awal>) => void;
 };
 
 /** Semua endpoint OPC dimock (berstatus: PATCH/POST/submit mengubah data). Mengembalikan daftar permintaan tulis berurutan. */
 async function mockSpv(page: Page, opsi: Opsi = {}) {
     const s = awal();
+    opsi.ubahAwal?.(s);
     const tulis: Tulis[] = [];
     let nPatch = 0;
     const cari = (id: string) => s.batches.find((b) => b.id === id);
@@ -476,4 +479,19 @@ test("ponsel 390 px: mode ubah sebagai daftar item + form berlabel; batch baru; 
     await expect(detail.getByRole("button", { name: "Kirim ke SM…" })).toBeVisible();
     await noOverflow(page);
     await page.screenshot({ path: "test-results/fiori-opc-spv-ponsel.png", fullPage: true });
+});
+
+test("Batch lama dengan bulan tak sah (tinjauan K2 R-4): isian Bulan/Tahun bisa diperbaiki, syarat simpan hilang sesudah diisi sah", async ({ page }) => {
+    await mockSpv(page, { ubahAwal: (s) => { (s.batches.find((b) => b.id === "b-draf") as { bulan: string }).bulan = "00"; } });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/off-program-control?batch=b-draf", NAV);
+    const detail = detailOf(page);
+    const setup = detail.getByRole("region", { name: "Setup batch" });
+    const bulan = setup.getByLabel(/^Bulan\*?$/);
+    await expect(bulan).toHaveValue("00", NAV);
+    await expect(bulan).not.toHaveAttribute("readonly", "");
+    await expect(detail.locator(".fi-ftb")).toContainText("Isi bulan (01 sampai 12) dan tahun (empat angka) batch dulu.");
+    await bulan.fill("10");
+    await expect(detail.locator(".fi-ftb")).not.toContainText("Isi bulan");
+    await expect(detail.getByRole("button", { name: "Simpan draf" })).toBeEnabled();
 });

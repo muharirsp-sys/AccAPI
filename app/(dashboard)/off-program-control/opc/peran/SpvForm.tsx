@@ -160,10 +160,13 @@ function galatIsian(rows: Baris[], mode: "draft" | "submit"): string | undefined
     return undefined;
 }
 
-/** Setup wajib (owner 27 Okt, audit No 73): principal dipilih sendiri (tanpa bawaan), bulan dan tahun batch terisi. */
+/** Bulan "01".."12" dan tahun empat angka: satu aturan untuk syarat simpan dan untuk mengunci isian periode (tinjauan K2 R-4). */
+const periodeSah = (s: Pick<Setup, "bulan" | "tahun">) => /^(0[1-9]|1[0-2])$/.test(s.bulan) && /^\d{4}$/.test(s.tahun);
+
+/** Setup wajib (owner 27 Okt, audit No 73): principal dipilih sendiri (tanpa bawaan), bulan dan tahun batch terisi sah. */
 function galatSetup(s: Setup): string | undefined {
     if (!s.principleName) return "Pilih principal dulu.";
-    if (!/^(0[1-9]|1[0-2])$/.test(s.bulan) || !/^\d{4}$/.test(s.tahun)) return "Isi bulan (01 sampai 12) dan tahun (empat angka) batch dulu.";
+    if (!periodeSah(s)) return "Isi bulan (01 sampai 12) dan tahun (empat angka) batch dulu.";
     return undefined;
 }
 
@@ -431,8 +434,8 @@ export function useFormSpv(o: OpsiForm) {
     return {
         batchId: o.batchId, setup, rows, kode, nomor, generatedNo, nomorSiap, nomorTampil, nomorTetap, dirty, perubahan, bayar, terpilih, setTerpilih,
         galatDraf: galatSetup(setup) ?? galatIsian(rows, "draft"), galatKirim: galatSetup(setup) ?? galatIsian(rows, "submit"),
-        // Bulan/tahun dari batch (atau hari ini WITA untuk batch baru) tidak diubah; kosong (data lama rusak) = wajib diisi di sini.
-        periodeTetap: Boolean(o.awal.setup.bulan && o.awal.setup.tahun),
+        // Bulan/tahun dari batch (atau hari ini WITA untuk batch baru) tidak diubah bila sah; kosong atau tak sah (mis. "00") = bisa diperbaiki di sini.
+        periodeTetap: periodeSah(o.awal.setup),
         ubahSetup, ubahBaris, ubahTipe, tambah, hapus, sibukDraf, klikSimpanDraf, simpanDraf, kirim,
         dialogKirim, setDialogKirim, duplikat, setDuplikat, onPesan: o.onPesan,
     };
