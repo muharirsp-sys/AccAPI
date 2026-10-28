@@ -1,18 +1,15 @@
 /*
- * Tujuan: Root layout Next.js: font body (Geist), CSS global + token Fiori, metadata.
+ * Tujuan: Root layout Next.js: CSS global + token Fiori, metadata, viewport. Font dimuat per pembungkus .fiori (components/fiori/Scope.tsx).
  * Caller: Next.js App Router root.
- * Dependensi: next/font, fiori/scheme, globals.css, fiori.css.
+ * Dependensi: fiori/scheme, globals.css, fiori.css.
  * Main Functions: RootLayout, metadata (judul bawaan; judul per menu aktif dari generateMetadata di app/(dashboard)/layout.tsx), viewport.
  * Side Effects: Inject script mode/density Fiori dari localStorage sebelum paint. Toaster ada di app/(dashboard)/layout.tsx
  *   (satu-satunya grup rute yang memakai toast), supaya font Fiori tidak ikut dimuat di rute cetak.
  */
 import type { Metadata, Viewport } from "next";
-import { Geist } from "next/font/google";
 import { applyStoredSchemeScript } from "@/components/fiori/scheme";
 import "./globals.css";
 import "./fiori.css";
-
-const geist = Geist({ variable: "--font-workspace", subsets: ["latin"], display: "swap" });
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -53,7 +50,7 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: applyStoredSchemeScript }} />
       </head>
-      <body className={`${geist.variable} antialiased min-h-screen overflow-x-hidden`}>
+      <body className="antialiased min-h-screen overflow-x-hidden">
         {children}
       </body>
     </html>

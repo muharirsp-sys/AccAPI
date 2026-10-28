@@ -40,7 +40,6 @@ html {
 /* Prevent pull-to-refresh on mobile when scrolled to top */
 body {
   overscroll-behavior-y: contain;
-  font-family: var(--font-workspace), "Segoe UI", system-ui, sans-serif;
 }
 
 /* Touch-friendly sizing */
