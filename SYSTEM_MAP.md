@@ -707,6 +707,7 @@ summary_manual_generate → excel_rows (single source of truth utk Excel + PDF)
 | `python_backend/self_correction.py` | `verify_and_correct_rows`, `mimo_post` | Pass 3 (arsitektur ala Reducto), dipanggil `summary_mistral.extract`: editor LLM QA PATCH-BASED via MiMo; whitelist field = field perintah, kutipan wajib ada di teks OCR, dilarang sentuh id/kode_barangs/jumlah baris; gagal apa pun → no-op + peringatan; `SUMMARY_SELF_CORRECT=0` utk nonaktifkan; uji `test_summary_editor.py` |
 | `python_backend/prompts/prompt_summary_program.md` | SYSTEM PROMPT (§1), USER MESSAGE TEMPLATE (§2), catatan untuk kode (§3: validasi, expand rule → record per kode_barang, perakitan form ringkas) | Prompt ekstraksi surat program → JSON `summary_program` (detail aturan per item untuk setting sistem + metadata Form Summary ringkas). Jalur TERPISAH dari Mistral/MiMo di atas; **belum dipanggil kode apa pun** (caller rencana: modul ekstraksi pemanggil Claude API, belum ada `ANTHROPIC_API_KEY`). Header doc = komentar HTML di atas file |
 | `python_backend/prompts/summary_program.schema.json` | objek `summary_program`: `programs` → `sections` → `kolom` (maks. 6), `item_rules` (atomik: baris produk × kolom × segmen), `flags`, `validasi` | JSON Schema 2020-12 untuk output prompt di atas: `input_schema` tool / structured output + validasi sebelum simpan. Header doc = field `$comment`. Belum dipakai kode |
+| `python_backend/prompts/summary_program_referensi.md` | L01–L22 (aturan lintas principal), satu bagian per principal | Keputusan pemilik yang mengikat, dikirim ke prompt sebagai `{{REFERENSI_KEPUTUSAN}}` (lintas principal + bagian principal yang diproses), supaya peringatan yang sudah diputuskan tidak muncul lagi. Gerbang rilis = tidak ada flag kritis/perlu_cek; jawaban pemilik atas peringatan baru ditambahkan di sini. Header doc = komentar HTML di atas file |
 
 Titik integrasi (F10: **BUKAN** `main.py`, lihat `python_backend/routers/summary.py`):
 parse = `summary_manual_parse_pdf_ai` → `summary_mistral.extract` (Pass 3 di dalamnya) →
@@ -878,7 +879,7 @@ AccAPI/_github_clean/
 │   ├── payments.py                     # Template row builder untuk Excel
 │   ├── validator_engine.py             # Engine validasi data penjualan vs diskon
 │   ├── principle_matcher.py            # Fuzzy matcher nama principal
-│   └── prompts/                        # prompt_summary_program.md + summary_program.schema.json (ekstraksi surat program → JSON; belum dipanggil kode)
+│   └── prompts/                        # prompt_summary_program.md + summary_program.schema.json + summary_program_referensi.md (ekstraksi surat program → JSON; belum dipanggil kode)
 ├── scripts/
 │   ├── init-db.mjs                     # Inisialisasi tabel SQLite pertama kali
 │   ├── migrate-local.mjs               # Migrasi lokal (dev)

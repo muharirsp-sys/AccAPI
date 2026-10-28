@@ -2,7 +2,8 @@
 Tujuan       : System prompt + template pesan untuk mengubah surat program principal (PDF/gambar/teks)
                menjadi JSON summary_program: detail aturan per item (untuk setting sistem) + metadata form ringkas.
 Caller       : Modul ekstraksi surat program (pemanggil Claude API) di aplikasi.
-Dependensi   : summary_program.schema.json (input_schema / validasi output), master barang per principal (CSV), Claude API.
+Dependensi   : summary_program.schema.json (input_schema / validasi output), summary_program_referensi.md (keputusan pemilik),
+               master barang per principal (CSV), Claude API.
 Main Functions: SYSTEM_PROMPT (bagian 1), USER_TEMPLATE (bagian 2), catatan perakitan form (bagian 3).
 Side Effects : Tidak ada (file teks). Pemanggilnya melakukan HTTP call ke Claude API.
 -->
@@ -26,6 +27,9 @@ PRINSIP UTAMA: RINGKAS DI TAMPILAN, LENGKAP DI DATA.
 
 SUMBER KEBENARAN
 - Hanya isi surat yang dilampirkan. Jangan menebak dan jangan memakai pengetahuan dari surat bulan lain.
+- REFERENSI_KEPUTUSAN (bila diberikan) = keputusan pemilik yang mengikat. Terapkan; untuk hal yang sudah diputuskan jangan
+  buat flag perlu_cek, cukup flag info yang menyebut nomor aturannya (mis. "SELESAI L08"). Bila surat jelas berbunyi lain,
+  surat menang dan buat flag tidak_konsisten.
 - Bila sebuah informasi tidak ada di surat: isi null / "TIDAK_TERCANTUM" dan buat flag data_tidak_tercantum.
 - SUMMARY_LAMA (bila diberikan) hanya pembanding. Jangan menyalin isinya; laporkan bedanya sebagai flag.
 - MASTER_BARANG hanya dipakai untuk mencocokkan kode, kelompok, variant, dan gramasi. Jangan mengarang kode.
@@ -152,6 +156,9 @@ kode_barang;nama_barang;kelompok_barang;variant;gramasi;satuan_kecil;isi_per_kar
 SUMMARY_LAMA (opsional, hanya pembanding)
 {{SUMMARY_LAMA_ATAU_KOSONG}}
 
+REFERENSI_KEPUTUSAN (keputusan pemilik yang mengikat: bagian "Lintas principal" + bagian principal ini)
+{{REFERENSI_KEPUTUSAN}}
+
 SURAT PROGRAM: terlampir ({{JUMLAH_FILE}} file).
 Buat summary_program untuk semua program di surat terlampir.
 ```
@@ -170,6 +177,8 @@ Setting sistem (detail item)
 - Expand: untuk setiap rule, buat satu record per kode_barang
   (kode_barang, program_id, segmen, ketentuan, benefit, berlaku).
   Record inilah yang di-setting ke sistem. Rule dengan kode_barang kosong jangan di-setting otomatis.
+- Jangan setting juga: benefit gimmick (L14), rule yang berlaku.selesai < TANGGAL_PROSES (L06).
+- Gerbang rilis: tidak ada flag kritis/perlu_cek. Jawaban pemilik atas peringatan -> tambahkan ke summary_program_referensi.md.
 
 Perakitan form ringkas (tampilan)
 - Per seksi: kumpulkan rule per baris produk -> vektor teks_tampilan per kolom_id ("-" untuk kolom tanpa rule).
