@@ -18,7 +18,7 @@ const PRINCIPAL = "KINO NON FOOD";
 const FILE = "OrderDetail_CABANG-A_2026-10-05.xlsx";
 const HELD = `SO 1671-SOP-260013025 ditahan utuh (2 baris lain ikut ditahan): kode produk BRG-A9 belum ada di mapping. Tambahkan mapping-nya, lalu unggah ulang berkas ini dengan "ganti batch lama".`;
 const DUPE = "SO 1671-SOP-260013030 ini mirip 83% dengan 1671-SOP-260012988 pada outlet dan tanggal yang sama (5 barang sama: BRG-A1, BRG-A2). "
-    + "Mirip tetapi tidak sama persis justru bentuk ketikan ulang yang paling sering lolos — konfirmasi dulu bahwa ini bukan order ganda.";
+    + "Mirip tetapi tidak sama persis justru bentuk ketikan ulang yang paling sering lolos. Konfirmasi dulu bahwa ini bukan order ganda.";
 
 const BATCH = {
     id: "b1", principal: PRINCIPAL, fileName: FILE, branch: "CABANG A", period: "2026-10-05", lineCount: 4, skipped: 1,
