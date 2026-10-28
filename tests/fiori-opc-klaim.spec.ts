@@ -167,7 +167,7 @@ test("Validasi setelah SM: isian + draf, Setujui klaim lewat dialog (payload cla
     await expect(isi.getByText("Checklist Supervisor bukan persetujuan.")).toBeVisible();
     await expect(isi.getByText("Foto display sudah dicek SM.")).toBeVisible();
     await expect(isi.getByRole("radio", { name: "Lengkap" })).toBeChecked();
-    await expect(isi.getByLabel("Usulan BL-06")).toBeVisible();
+    await expect(detail.getByLabel(/^Usulan BL-06/)).toBeVisible(); // satu catatan varian di akhir Object Page (audit No 80, tinjauan K2)
     const footer = detail.locator(".fi-ftb");
     const setuju = footer.getByRole("button", { name: "Setujui…" });
     await expect(setuju).toBeDisabled();
