@@ -17,7 +17,7 @@ import { Button, EmptyState, KeyValues, ListItem, MessageStrip, ResponsiveTable,
 import { ConfirmDialog, FilterBar, FormField, useLoad } from "@/components/fiori/interactive";
 import { catatanSendiri, labelAksiAudit, labelPeranAktor, labelStatus, waktuWita, type AuditOpc } from "@/lib/opc-ui";
 import { KOSONG } from "@/lib/tampil";
-import { ambilOpc, pesanTidakPasti, tanganiTulis, tulisOpc, type PeranProps } from "../Bersama";
+import { TautanBatch, ambilOpc, pesanTidakPasti, tanganiTulis, tulisOpc, type PeranProps } from "../Bersama";
 
 const BATAS_TAMPIL = 500;
 /** AUDIT_CORRECTION_WARNING kode lama. */
@@ -99,7 +99,7 @@ export default function Audit({ ctx }: PeranProps) {
         { key: "status", header: "Status", secondary: true, cell: (a) => (a.fromStatus || a.toStatus ? `${labelStatus(a.fromStatus)} → ${labelStatus(a.toStatus)}` : KOSONG) },
         { key: "oleh", header: "Oleh", cell: (a) => `${a.actorName || "Sistem"}${a.actorRole ? ` (${labelPeranAktor(a.actorRole)})` : ""}` },
         { key: "catatan", header: "Catatan", secondary: true, cell: teksCatatan },
-        { key: "buka", header: "Batch", cell: (a) => <Button variant="tertiary" aria-label={`Buka batch ${a.noPengajuan || ""}`.trim()} onClick={() => ctx.bukaBatch(a.batchId)}>Buka batch</Button> },
+        { key: "buka", header: "Batch", cell: (a) => <TautanBatch ctx={ctx} id={a.batchId} label={`Buka batch ${a.noPengajuan || ""}`.trim()}>Buka batch</TautanBatch> },
         { key: "koreksi", header: "Koreksi", cell: (a) => tombolKoreksi(a) ?? KOSONG },
     ];
 

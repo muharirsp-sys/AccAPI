@@ -12,7 +12,7 @@
 
 import { useId, useRef, useState } from "react";
 import { Bell } from "lucide-react";
-import { Button, StatusBadge } from "@/components/fiori/core";
+import { Button, StatusBadge, klikBiasa } from "@/components/fiori/core";
 import type { ProblematicBatch } from "@/lib/off-program-control/problematic";
 import { labelMasalah, toneMasalah } from "@/lib/opc-ui";
 
@@ -81,7 +81,7 @@ export default function OffNotificationBell({ problems, onSelectBatch, hrefBatch
                                 <span className="fi-btnrow">
                                     <a className="fi-btn fi-btn--secondary" href={hrefBatch(problem.batchId)} aria-label={`Buka pengajuan ${problem.noPengajuan}`}
                                         onClick={(e) => {
-                                            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // tab baru: biarkan peramban
+                                            if (!klikBiasa(e)) return; // tab baru: biarkan peramban
                                             e.preventDefault();
                                             ref.current?.hidePopover();
                                             onSelectBatch(problem.batchId);

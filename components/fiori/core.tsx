@@ -108,6 +108,10 @@ export function Tile({ title, subtitle, icon, footer, value, unit, tone, href, o
 
 type ListItemProps = { doc: ReactNode; amount?: ReactNode; title?: ReactNode; meta?: ReactNode; badge?: ReactNode; current?: boolean; href?: string; onClick?: () => void };
 
+/** Klik kiri tanpa tombol pengubah: tautan ditangani navigasi klien; klik tengah/Ctrl/Shift/Alt/Cmd dibiarkan ke peramban (tab baru). */
+export const klikBiasa = (e: { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }) =>
+    e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+
 /**
  * Baris daftar ponsel dan item worklist (kolom pertama FCL). `href` + `onClick`: tautan nyata (bisa dibuka di tab baru dengan klik
  * tengah/Ctrl), sedangkan klik biasa memanggil `onClick` (navigasi klien pemanggil, mis. penjaga draf OPC).
@@ -126,7 +130,7 @@ export function ListItem({ doc, amount, title, meta, badge, current, href, onCli
         // Tanpa prefetch: daftar bisa ratusan baris ke rute yang sama dengan kueri berbeda.
         return (
             <Link href={href} prefetch={false} className="fi-li" aria-current={ariaCurrent}
-                onClick={(e) => { if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); onClick(); }}>
+                onClick={(e) => { if (!klikBiasa(e)) return; e.preventDefault(); onClick(); }}>
                 {inner}
             </Link>
         );

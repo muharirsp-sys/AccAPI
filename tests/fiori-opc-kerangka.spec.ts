@@ -333,7 +333,9 @@ test("lonceng dan pencarian (/) membuka batch di kolom kedua untuk peran apa pun
 
     // Log audit tidak punya kolom kedua: batch dibuka di Ringkasan › Semua pengajuan.
     await page.goto("/off-program-control?tab=audit", NAV);
-    await main.getByRole("table", { name: "Log audit OFF Program Control" }).getByRole("button", { name: "Buka batch" }).first().click();
+    const bukaLog = main.getByRole("table", { name: "Log audit OFF Program Control" }).getByRole("link", { name: /^Buka batch/ }).first();
+    await expect(bukaLog).toHaveAttribute("href", /tab=overview.*batch=|batch=.*tab=overview/); // tautan nyata ke tab yang punya kolom kedua (No 136)
+    await bukaLog.click();
     await expect(page).toHaveURL(/tab=overview/);
     await expect(main.getByRole("heading", { level: 2, name: "007/KINO/10/2026" })).toBeVisible(NAV);
     await expect(main.getByRole("group", { name: "Tampilan ringkasan" }).getByRole("button", { name: /Semua pengajuan/ })).toHaveAttribute("aria-pressed", "true");

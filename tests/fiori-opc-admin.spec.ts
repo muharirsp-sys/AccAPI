@@ -118,9 +118,10 @@ test("Ringkasan admin: kesehatan proses, per tahap, per divisi, bermasalah, akti
     // Bagian di kolom kartu (< 600 px) tampil sebagai daftar (ResponsiveTable, container query).
     const bermasalah = main.getByRole("list", { name: "Perlu ditinjau admin" });
     await expect(bermasalah).toContainText("004/URC/09/2026");
-    await expect(bermasalah.getByRole("button", { name: /006\/ENI\/10\/2026/ })).toContainText("Dikembalikan");
+    await expect(bermasalah.getByRole("link", { name: /006\/ENI\/10\/2026/ })).toContainText("Dikembalikan");
+    await expect(bermasalah.getByRole("link", { name: /006\/ENI\/10\/2026/ })).toHaveAttribute("href", /[?&]batch=/); // tautan nyata (No 136)
     await expect(main.getByRole("list", { name: "Batch lewat SLA" })).toContainText("007/KINO/10/2026");
-    await expect(main.getByRole("list", { name: "Aktivitas terakhir" }).getByRole("button")).toHaveCount(5);
+    await expect(main.getByRole("list", { name: "Aktivitas terakhir" }).getByRole("link")).toHaveCount(5);
     for (const bl of ["BL-11", "BL-12", "BL-13"]) await expect(main.getByLabel(new RegExp(`^Usulan .*${bl}`)).first()).toBeVisible();
     await expect(main.getByLabel("Usulan BL-11, BL-13")).toHaveCount(1); // BL-11 dan BL-13 satu catatan (audit No 80)
     // Kerangka menggulir di dalam <main>: tangkapan seluruh halaman lewat viewport tinggi.
@@ -136,7 +137,7 @@ test("Ringkasan admin: kesehatan proses, per tahap, per divisi, bermasalah, akti
     await expect(page).toHaveURL(/claimView=after-finance/);
     // Pengajuan bermasalah membuka batch di "Semua pengajuan".
     await page.goto("/off-program-control", NAV);
-    await bermasalah.getByRole("button", { name: /004\/URC\/09\/2026/ }).click();
+    await bermasalah.getByRole("link", { name: /004\/URC\/09\/2026/ }).click();
     await expect(page).toHaveURL(/batch=b-bayar/);
     await expect(main.getByRole("group", { name: "Tampilan ringkasan" }).getByRole("button", { name: /Semua pengajuan/ })).toHaveAttribute("aria-pressed", "true");
     expect(kirim).toEqual([]);

@@ -4,7 +4,7 @@
  * Caller: OpcApp.tsx, opc/peran/*.tsx, opc/ObjectPageBatch.tsx.
  * Dependensi: components/fiori/{core,interactive}, lib/opc-ui, lib/off-program-control/{problematic,dev-fixtures,access},
  *   lib/promo-ui (rupiah), lib/claim-workflow-ui (pesanGalat), lib/tampil (sebabHttp).
- * Main Functions: useDaftarBatch, useDetailBatch, KerjaPeran, Antrean, ambilOpc, tulisOpc, kirimTulis, pesanTidakPasti, tanganiTulis.
+ * Main Functions: useDaftarBatch, useDetailBatch, KerjaPeran, Antrean, TautanBatch, ambilOpc, tulisOpc, kirimTulis, pesanTidakPasti, tanganiTulis.
  * Side Effects: GET /api/off-program-control/batches (polling 45 dtk + fokus tab), GET /batches/[id], /batches/[id]/refund,
  *   /batches/[id]/audit. Tidak ada tulis di berkas ini; tulisOpc dipanggil modul peran.
  *
@@ -17,7 +17,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { Button, EmptyState, ErrorState, FlexibleColumnLayout, ListItem, MessageStrip, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
+import { Button, EmptyState, ErrorState, FlexibleColumnLayout, ListItem, MessageStrip, Skeleton, StatusBadge, VariantNote, klikBiasa } from "@/components/fiori/core";
 import { FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import type { OffAction, OffRole, OffTab } from "@/lib/off-program-control/access";
 import { createOffDevBatches, isOffDevBatchId } from "@/lib/off-program-control/dev-fixtures";
@@ -270,6 +270,14 @@ export function useDetailBatch(batchId: string, ringkas?: BatchOpc): [Load<Detai
             },
         };
     }, [batchId, ujiSiap]));
+}
+
+/** Tombol "Buka" batch di tabel/daftar baca sebagai tautan nyata `?batch=` (tab baru bisa); klik biasa lewat ctx.bukaBatch (penjaga draf). No 136. */
+export function TautanBatch({ ctx, id, label, children }: { ctx: OpcKonteks; id: string; label: string; children: ReactNode }) {
+    return (
+        <a className="fi-btn fi-btn--tertiary" href={ctx.hrefBatch(id)} aria-label={label}
+            onClick={(e) => { if (!klikBiasa(e)) return; e.preventDefault(); ctx.bukaBatch(id); }}>{children}</a>
+    );
 }
 
 type Cakupan = "antrean" | "semua";
