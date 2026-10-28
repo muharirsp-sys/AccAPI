@@ -58,8 +58,13 @@ Layar menampilkan KOREKSI di tabel hasil dan filter; ekspor XLSX menaruhnya pada
 `/summary` -> `/summary/settings` -> API `/summary/review` -> `summary_review.py`
 -> tabel SQLite `summary_review_package` pada volume Summary yang sama.
 
-- `app/(dashboard)/summary/settings/page.tsx`: ringkasan pendek sesuai contoh URC/Priskila; buka referensi September dari volume, koreksi detail, periksa kesiapan, lalu publikasi eksplisit.
+- `app/(dashboard)/summary/settings/page.tsx`: ringkasan pendek sesuai contoh URC/Priskila; buka paket rujukan dari volume (label tombol dari
+  `GET /summary/review/reference`, nonaktif beralasan bila paket tidak ada), koreksi detail, periksa kesiapan, lalu publikasi eksplisit.
 - `python_backend/routers/summary_review.py`: auth Summary view/edit + CSRF, batas JSON 8 MB, endpoint list/import/get/update/readiness/publish.
+  Paket rujukan (audit desain 001 No 81, 27 Okt 2026): `GET /summary/review/reference` (login; baca-saja: `{tersedia, sebab, periode, judul}` dari
+  berkas env `SUMMARY_REVIEW_REFERENCE`; terdaftar SEBELUM `GET /{package_id}`), `POST /summary/review/reference` (login + CSRF; impor lewat
+  `import_package`, idempoten per owner+hash) dan alias lama `POST /reference/september` (fungsi sama). Tidak ada berkas 404, > 8 MB 413, JSON/paket
+  rusak 400. Judul paket `judul_paket(raw)` = "Summary <Bulan> <Tahun>" dari field `created` (tanpa `created` sah: "Paket Summary Program").
 - `python_backend/summary_review.py`: validasi relasi ID dan master, kepemilikan, deduplikasi `(owner, source_hash)`, revisi optimistis; nilai sumber sebelum koreksi tetap disimpan.
 - `python_backend/summary_review_publish.py`: validasi setting per faktur yang didukung -> satu transaksi `summary_review_package` + `summary_draft(status=published)`. Batas historis, grade, alokasi, wilayah, pilihan bonus mix, dan klaim di luar faktur ditahan dengan alasan; tidak diabaikan. `test_summary_review_publish.py` membuktikan publikasi -> perhitungan order.
 - `python_backend/test_summary_review.py`: runnable check impor/koreksi/auth/CAS dengan SQLite sementara; dapat diberi path paket OCR asli.
@@ -348,6 +353,15 @@ Antrean Faktur / outbox sales-invoice (S6-0d, DRAFT — zona tulis Accurate):
        (mencari ulang; keputusan selalu dipilih petugas); Antre ulang/Buang (alasan wajib di layar) = POST /api/invoice-outbox;
      jawaban tidak pasti (putus/batas waktu, bukan JSON, >= 502 tanpa amplop {ok:false,error}) = "belum pasti" + muat ulang +
        tulis terkunci; Verifikasi balik = /api/invoice-verify
+  Verifikasi balik (audit desain 001 No 6, owner 27 Okt 2026): POST /api/invoice-verify (order.edit) {orderId, jenis sales|isi, sidik, note}
+     -> note WAJIB untuk kedua jenis (Terima sales = alasan dari dialog; tanpa kalimat bawaan lagi), maks. 500 karakter (lib/pencabutan; lebih = 400,
+        tidak dipotong) -> upsert invoice_verify_note
+     DELETE /api/invoice-verify (order.edit) {orderId, jenis, alasan} -> alasan 10..500 karakter (lib/pencabutan; di luar = 400 SEBELUM DB)
+        -> db.transaction: DELETE invoice_verify_note ... RETURNING + INSERT pencabutan_log (jenis invoice_verify_note, kunci "<order_id>|<jenis>",
+           baris_lama, alasan, oleh = email sesi); log gagal = DELETE batal. Jawaban {ok, dicabut}.
+  Cabut konfirmasi order ganda (audit desain 001 No 18): DELETE /api/principal-order/dupe-ack?principal=&soNo= (order.create) + body {alasan}
+     -> aturan alasan sama -> db.transaction: DELETE order_dupe_ack ... RETURNING + INSERT pencabutan_log (jenis order_dupe_ack,
+        kunci "<principal>|<so_no>"). UI: LangkahBatch.tsx dialog Cabut (alasan wajib; batas sama ditolak di dialog). GET/POST dupe-ack tidak berubah.
 
 Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
   UI Finance (/finance, Fiori S6b: finance/posting.ts postingPurchasePayment — urutan & clientRef = recordKey lama; dialog pp)
@@ -775,7 +789,7 @@ AccAPI/_github_clean/
 │       │   │       ├── pdf/route.ts
 │       │   │       ├── kwitansi/route.ts
 │       │   │       └── audit/route.ts
-│       │   ├── periods/route.ts        # Tutup periode per principal
+│       │   ├── periods/route.ts        # Status (GET) + tutup/buka kunci (POST) periode per principal
 │       │   ├── principles/route.ts
 │       │   ├── discount/route.ts
 │       │   ├── payments/[paymentId]/proof/route.ts
@@ -961,6 +975,7 @@ AccAPI/_github_clean/
 | `app/api/off-program-control/batches/[id]/claim-review/route.ts` | `POST` | Review & approve Claim |
 | `app/api/off-program-control/batches/[id]/finance-payment/route.ts` | `POST` | Input pembayaran Finance |
 | `app/api/off-program-control/batches/[id]/refund/route.ts` | `POST` | Submit refund kelebihan bayar |
+| `app/api/off-program-control/periods/route.ts` | `GET`, `POST` | GET (audit desain 001 No 27): status penutupan `off_period_closure` per `?bulan=&tahun=[&principleCode=]` (sesi OPC + `off_program_control.view`; bulan/tahun tidak sah 400; baca-saja: status, penutup/pembuka + nama dari `user`, waktu) dipakai Ringkasan › Tutup periode (status nyata, Buka kunci untuk periode tertutup di server). POST close/unlock tidak berubah (izin `period_close`/`period_unlock`, total pengajuan = total klaim, audit per batch) |
 | `app/(dashboard)/off-program-control/page.tsx` | `OffProgramControlPage` | Rute Fiori S4d: izin server (`resolveRequestPermissionsH`) + `FioriScope` → `OpcApp` |
 | `app/(dashboard)/off-program-control/OpcApp.tsx` | `OpcApp` | Peran OPC sama dengan kode lama (sesi + `useLocalAuthRole` → `resolveOffRole`, SM hanya tab Sales Manager); navigasi `?tab=` lama; lonceng + pencarian membuka `?batch=` di kolom kedua untuk peran apa pun; `?mock=N` fixture dev; dialog "Tinggalkan perubahan?" + `useUnsavedGuard` |
 | `app/(dashboard)/off-program-control/opc/Bersama.tsx` | `useDaftarBatch`, `useDetailBatch`, `KerjaPeran`, `Antrean`, `ambilOpc`, `tulisOpc` | Satu daftar 200 batch (polling 45 dtk + fokus tab, SLA `detectProblematicBatches`), detail batch (+ refund, audit per batch), worklist + saringan + FCL; header berisi KONTRAK untuk modul peran |
@@ -1035,7 +1050,7 @@ AccAPI/_github_clean/
 | `app/api/faktur/[id]/route.ts` | `GET` | Detail 1 faktur + baris item (qty/harga) live dari `sales-invoice/detail.do`; `?raw=1` menampilkan respons Accurate mentah |
 | `app/api/webhook/accurate/route.ts` | `POST` | Terima event webhook Faktur Penjualan dari Accurate (IP whitelist fail-closed + log rotasi + upsert `sales_invoice`) |
 | `app/api/cron/webhook-backfill/route.ts` | `GET` | Membaca log hanya dari runtime path; dynamic file probe diabaikan oleh Turbopack tracing agar standalone image tidak menyalin seluruh repository |
-| `app/(dashboard)/api-wrapper/page.tsx` | UI | Antarmuka manual query/bulk-submit ke Accurate |
+| `app/(dashboard)/api-wrapper/page.tsx` | UI | Antarmuka manual query/bulk-submit ke Accurate. Audit desain 001 (No 7/78/29, usulan G, 27 Okt 2026): log galat dan laporan Retur Manual tidak lagi diunduh otomatis (strip bertahan + tombol "Unduh log galat" / "Unduh retur manual (Excel)"; isi, sheet, nama berkas sama); tab Unggah Excel = Kirim nonaktif beralasan sampai berkas diunggah (tidak ada kiriman contoh payload bawaan endpoint); jalur Payload JSON (URL, method, body, urutan, idempotensi, override duplikat) tidak berubah |
 | `app/(dashboard)/api-wrapper/parsers/` | `parsePurchaseReturnBulkSave` | Parse Excel ke payload bulk API Accurate |
 
 ### Python FastAPI Backend
@@ -1177,10 +1192,19 @@ toko_koordinat [cust_code PK = kode JKS; lat/lng NOT NULL, CHECK toko_koordinat_
   migrate-pg entri "supervisor review (SR-1)" (sudahAda pg_attribute 4 + 1 kolom + pg_constraint 2 CHECK; lock_timeout 5 dtk + hak toko_koordinat bila
     accapi_app ada — produksi PUNYA DATABASE_MIGRATION_URL, jadi DDL manual lebih dulu agar entri ini SKIP dan ALTER tidak bersaing dengan kunci saat deploy)
 
+# Jejak pencabutan (audit desain 001 No 6 dan 18, owner 27 Okt 2026; db/migrations/0038_pencabutan_log.sql = entri migrate-pg "pencabutan_log";
+#   tanpa DATABASE_MIGRATION_URL jalankan 0038 sebagai role pemilik SEBELUM image: Cabut di dua route butuh tabel ini)
+pencabutan_log [append-only: id bigserial, jenis (CHECK invoice_verify_note | order_dupe_ack), kunci, baris_lama jsonb (baris yang dicabut, kunci
+  camelCase), alasan (CHECK btrim <> '', server 10..500), oleh (email sesi), waktu; indeks (jenis, kunci, id); tanpa FK; accapi_app SELECT/INSERT
+  saja (REVOKE UPDATE/DELETE/TRUNCATE bila role ada)]
+  └── ditulis dalam transaksi yang SAMA dengan DELETE invoice_verify_note (Verifikasi balik) / order_dupe_ack (Order Principal)
+
 # Principal resmi (S7-0/S7-2 BL-64; DDL manual docs/handover/DDL_S7_0.sql lalu DDL_S7_2.sql SEBELUM image)
 principal [code unik = kode OPC/Klaim, TETAP] ── principal_variant (principal_id + variant_key; '' = varian dasar)
   └──────────── principal_alias [id; alias_norm unik per kelompok: kode Master Barang | nama/label/kode OPC -> principal (+ varian); nilai WAJIB dari normalizer baku lib/principal/normalisasi.ts]
 principal_log [append-only (trigger + REVOKE di DDL_S7_2): satu baris per buat/aktif/nonaktif/hapus, transaksi sama dengan perubahannya]
+  Riwayat GET /api/principals/{id}/history (riwayatPrincipal) LEFT JOIN "user" ON user.id = principal_log.aktor -> `actorName` per baris (null untuk
+  benih:… atau akun yang sudah tidak ada); layar Riwayat menulis nama, id akun hanya cadangan (audit desain 001 No 87).
   API app/api/principals/** (lib/principal/tulis.ts; kontrak docs/handover/S7-2-KONTRAK-PRINCIPAL-API.md): GET daftar/riwayat
   (principles.view), tulis (principles.upload; hapus alias principles.delete) — 409 berkode tanpa menimpa, 503 tanpa trigger penjaga.
   Resolver lib/principal/resolver.ts (ruang WAJIB nama | kode_master_barang; alias saja: cocok | tak_dikenal | ambigu; GET /api/principals/resolve).
