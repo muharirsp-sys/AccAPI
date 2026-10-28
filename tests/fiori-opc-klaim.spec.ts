@@ -463,7 +463,15 @@ test("Verifikasi final (claimView=after): No Claim + checklist per item, Ingatka
     await fix.fill("4.000.000,555");
     await expect(footer).toContainText("Nilai fix belum sah: Maksimal 2 angka di belakang koma.");
     await expect(footer.getByRole("button", { name: "Selesaikan…" })).toBeDisabled();
+    // Tinjauan K3 S-1: titik bukan kelompok ribuan ("4.000.00" = sisa sunting "4.000.000") ditolak dengan pesan, bukan Rp 4.000.
+    await fix.fill("4.000.00");
+    await expect(footer).toContainText("Nilai fix belum sah: Titik hanya pemisah ribuan");
+    await expect(footer.getByRole("button", { name: "Selesaikan…" })).toBeDisabled();
     await fix.fill("4.000.000");
+    await fix.blur();
+    await expect(fix).toHaveValue("4.000.000");
+    await fix.focus();
+    await expect(fix).toHaveValue("4000000"); // saat fokus angka polos
     await fix.blur();
     await expect(fix).toHaveValue("4.000.000");
     await expect(final.getByRole("status").filter({ hasText: "Selisih Rp 300.000." })).toContainText("Akan masuk Data Selisih");

@@ -4,7 +4,8 @@
  * Caller: lib/insentif-sales-excel (parseLocaleNumber, ekspor ulang), app/(dashboard)/kasir/bersama (nominalKeTeks, ekspor ulang), isian rupiah
  *   Insentif Sales (Support, Pengaturan) dan OPC (Nilai fix KlaimFinal): satu pengurai rupiah id-ID (audit desain 001 No 122).
  * Dependensi: lib/kasir/rekonsiliasi (keSen — murni).
- * Main Functions: angkaLokalTeks (teks desimal persis, tanpa float), parseLocaleNumber (angka), nominalKeTeks (isian rupiah -> teks server),
+ * Main Functions: angkaLokalTeks (teks desimal persis, tanpa float), parseLocaleNumber (angka), nominalKeTeks (isian rupiah -> teks server;
+ *   opsi `ketat` = titik hanya pemisah ribuan), isianPolos (teks isian saat fokus, tanpa pemisah ribuan),
  *   isianNominal (angka -> teks isian id-ID untuk format sesudah blur).
  * Side Effects: tidak ada.
  */
@@ -59,12 +60,37 @@ export function parseLocaleNumber(text: string): number {
 /** Batas server §8.4 (Rp 100 miliar per kolom). */
 export const MAKS_NOMINAL = 100_000_000_000;
 
+export const GALAT_TITIK = "Titik hanya pemisah ribuan (mis. 1.500.000); desimal ditulis dengan koma (mis. 1.500.000,50).";
+
+/**
+ * Isian rupiah di layar berformat ribuan id-ID (tinjauan K3 S-1): titik HANYA pemisah ribuan berkelompok 3 digit, koma satu-satunya pemisah
+ * desimal. "500.00" (sisa "500.000" yang terhapus satu digit), "50.0000", "1.50" ditolak dengan GALAT_TITIK, bukan dibaca desimal; "1,500" = 1,5.
+ * Amplop (Rp, spasi, ",-", tanda) sama dengan angkaLokalTeks. null = bukan angka.
+ */
+function teksKetat(isian: string): string | { galat: string } | null {
+    const t = isian.trim();
+    if (t === "" || t === "-") return "0";
+    if (t.length > ANGKA_MAKS || !AMPLOP.test(t) || (t.replace(/,-$/, "").match(/-/g) ?? []).length > 1) return null;
+    let b = t.replace(/(rp|idr)\.?/gi, "").replace(/[^0-9.,-]/g, "").replace(/[,.]-+$/, "");
+    const negatif = b.startsWith("-");
+    if (negatif) b = b.slice(1);
+    if (b.includes("-")) return null;
+    const [bulat, pecahan, ...lebih] = b.split(",");
+    if (lebih.length || (pecahan !== undefined && !/^\d+$/.test(pecahan))) return null;
+    if (!/^\d+$/.test(bulat) && !RIBUAN["."].test(bulat)) return { galat: GALAT_TITIK };
+    const v = `${bulat.split(".").join("")}${pecahan === undefined ? "" : `.${pecahan}`}`;
+    return negatif ? `-${v}` : v;
+}
+
 /**
  * Isian manusia ("Rp 1.250.000", "1.250.000,50", kosong = 0) -> teks desimal untuk server ("1250000", "1250000.5"); galat bila tidak sah
  * (negatif, > 2 desimal — dihitung dari TEKS, bukan float — atau di luar batas). Sen bulat TEPAT (keSen), teks dibentuk dari sen.
+ * `ketat` (isian rupiah Insentif Sales dan Nilai fix OPC): titik hanya pemisah ribuan (teksKetat). Bawaan tidak ketat = perilaku Kasir.
  */
-export function nominalKeTeks(isian: string): { teks: string; sen: number } | { galat: string } {
-    const t = angkaLokalTeks(isian);
+export function nominalKeTeks(isian: string, opsi: { ketat?: boolean } = {}): { teks: string; sen: number } | { galat: string } {
+    const baca = opsi.ketat ? teksKetat(isian) : angkaLokalTeks(isian);
+    if (baca !== null && typeof baca === "object") return baca;
+    const t = baca;
     if (t === null) return { galat: "Isi angka rupiah yang sah, mis. 1.250.000." };
     if (t.startsWith("-") && /[1-9]/.test(t)) return { galat: "Nominal tidak boleh negatif." };
     const pecahan = t.split(".")[1] ?? "";
@@ -85,3 +111,9 @@ export function isianNominal(n: number): string | null {
     if (!Number.isFinite(n) || n < 0 || n > MAKS_NOMINAL || !/^\d+(\.\d{1,2})?$/.test(String(n))) return null;
     return ISIAN_FMT.format(n);
 }
+
+/**
+ * Teks desimal kanonik ("1500000", "1250000.5") -> teks isian SAAT FOKUS: angka polos tanpa pemisah ribuan, desimal berkoma ("1250000,5").
+ * Menyunting "1500000" tidak pernah menghasilkan teks bertitik yang terbaca desimal (tinjauan K3 S-1). Teks lain dikembalikan apa adanya.
+ */
+export const isianPolos = (kanonik: string) => (/^-?\d+(\.\d+)?$/.test(kanonik) ? kanonik.replace(".", ",") : kanonik);

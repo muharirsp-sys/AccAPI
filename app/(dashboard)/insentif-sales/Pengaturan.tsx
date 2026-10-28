@@ -25,7 +25,9 @@ import { ConfirmDialog, useLoad, useUnsavedGuard } from "@/components/fiori/inte
 import { ambil } from "@/lib/rekapan-nota/ui";
 import { readApi } from "@/lib/insentif-ui";
 import { DEFAULT_KONSTANTA, KONSTANTA_FIELDS, getField, parseKonstanta, setField, type Konstanta, type KonstantaKind } from "@/lib/insentif-konstanta";
-import { isianNominal, nominalKeTeks } from "@/lib/angka-lokal";
+import { isianNominal, isianPolos, nominalKeTeks } from "@/lib/angka-lokal";
+/** Pengurai rupiah bersama mode ketat (tinjauan K3 S-1): titik hanya pemisah ribuan; "500.00" ditolak, bukan Rp 500. */
+const bacaRupiah = (t: string) => nominalKeTeks(t, { ketat: true });
 import { formatRp } from "./data";
 import { KOSONG, waktuWita } from "@/lib/tampil";
 import { InsentifRangka } from "./Rangka";
@@ -111,7 +113,9 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
     /** Teks konstanta rupiah yang sedang diketik atau belum sah, per path (No 122). Dikosongkan setiap draf diganti dari luar isian. */
     const [ketikRp, setKetikRp] = useState<Record<string, string>>({});
     const gantiDraf = (k: Konstanta | null) => { setKetikRp({}); setDraf(k); };
-    const rpSalah = Object.values(ketikRp).filter((t) => "galat" in nominalKeTeks(t)).length;
+    const rpSalah = Object.values(ketikRp).filter((t) => "galat" in bacaRupiah(t)).length;
+    /** Path konstanta rupiah yang sedang fokus: tampil angka polos tanpa titik ribuan (S-1), ribuan hanya sesudah blur. */
+    const [fokusRp, setFokusRp] = useState<string | null>(null);
 
     const [teks, setTeks] = useState<Record<FieldDaftar, string | null>>({ branchNilaiJual: null, smBerhak: null });
     const daftarNilai = (f: FieldDaftar) => { const t = teks[f]; return t === null ? (setelan?.[f] ?? []) : normDaftar(t); };
@@ -246,9 +250,10 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                                             const id = `konst-${f.path}`;
                                             // Rupiah (No 122): teks berformat ribuan lewat pengurai bersama; tidak sah = pesan + Simpan ditahan, angka draf tidak berubah.
                                             const ketik = ketikRp[f.path];
-                                            const bacaRp = ketik === undefined ? null : nominalKeTeks(ketik);
+                                            const bacaRp = ketik === undefined ? null : bacaRupiah(ketik);
                                             const galatRp = bacaRp && "galat" in bacaRp ? bacaRp.galat : "";
-                                            const nilaiRp = ketik !== undefined && (galatRp || (bacaRp && "teks" in bacaRp && Number(bacaRp.teks) === v)) ? ketik : isianNominal(v) ?? String(v);
+                                            const nilaiRp = ketik !== undefined && (galatRp || (bacaRp && "teks" in bacaRp && Number(bacaRp.teks) === v)) ? ketik
+                                                : fokusRp === f.path ? isianPolos(String(v)) : isianNominal(v) ?? String(v);
                                             return (
                                                 <div key={f.path} className="fi-field">
                                                     <label className="fi-label" htmlFor={id}>{f.label}{beda && <span className="fi-why"> · diubah</span>}</label>
@@ -259,10 +264,11 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                                                             onChange={(e) => {
                                                                 const t = e.target.value;
                                                                 setKetikRp((k) => ({ ...k, [f.path]: t }));
-                                                                const r = nominalKeTeks(t);
+                                                                const r = bacaRupiah(t);
                                                                 if ("teks" in r) setDraf(setField(nilaiK, f.path, Number(r.teks)));
                                                             }}
-                                                            onBlur={() => { if (!galatRp) setKetikRp((k) => { const n = { ...k }; delete n[f.path]; return n; }); }} />
+                                                            onFocus={() => setFokusRp(f.path)}
+                                                            onBlur={() => { setFokusRp(null); if (!galatRp) setKetikRp((k) => { const n = { ...k }; delete n[f.path]; return n; }); }} />
                                                     ) : (
                                                         <input id={id} aria-describedby={`${id}-help`} className="fi-input fi-tnum" style={{ textAlign: "end" }} type="number" inputMode="decimal"
                                                             step={f.kind === "rasio" ? "0.01" : "1"} min="0" value={String(v)} disabled={Boolean(tanpaIzin || alasanKonst)}

@@ -554,8 +554,14 @@ test("Pengaturan: simpan konstanta lewat dialog (payload diperiksa) dan tautkan 
     const main = page.locator("main");
     const pool = main.getByRole("textbox", { name: "Pool 1 principle" });
     // No 122: teks tidak sah ditolak dengan pesan dan menahan Simpan (tidak jadi 0); "1.100.000" bernilai sama dengan "1100000".
-    await pool.fill("1.100.000,555", NAV);
+    await expect(pool).toHaveValue("1.000.000", NAV);
+    await pool.focus();
+    await expect(pool).toHaveValue("1000000"); // tinjauan K3 S-1: saat fokus angka polos, ribuan sesudah blur
+    await pool.fill("1.100.000,555");
     await expect(main.getByText("Maksimal 2 angka di belakang koma.")).toBeVisible();
+    await expect(main.locator(".fi-ftb")).toContainText("1 isian rupiah belum sah; perbaiki dulu");
+    await pool.fill("1.000.00"); // sisa sunting "1.000.000": ditolak, bukan Rp 1.000
+    await expect(main.getByText("Titik hanya pemisah ribuan", { exact: false })).toBeVisible();
     await expect(main.locator(".fi-ftb")).toContainText("1 isian rupiah belum sah; perbaiki dulu");
     await pool.fill("1.100.000");
     await expect(page.locator(".fi-draft")).toContainText("Draf belum disimpan");

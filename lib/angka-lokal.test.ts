@@ -1,7 +1,7 @@
 /* Kunci angkaLokalTeks: desimal dibaca dari TEKS (bukan float) — dasar penolakan > 2 desimal di layar /kasir; nominalKeTeks + isianNominal = satu pengurai rupiah bersama (No 122). */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { angkaLokalTeks, isianNominal, nominalKeTeks, parseLocaleNumber } from "./angka-lokal.ts";
+import { GALAT_TITIK, angkaLokalTeks, isianNominal, isianPolos, nominalKeTeks, parseLocaleNumber } from "./angka-lokal.ts";
 
 test("angkaLokalTeks: teks desimal persis, tanpa pembulatan float", () => {
     assert.equal(angkaLokalTeks("Rp 1.250.000"), "1250000");
@@ -33,4 +33,23 @@ test("isianNominal: format ribuan sesudah blur dibaca balik ke angka yang SAMA; 
     }
     assert.equal(isianNominal(1_500_000), "1.500.000");
     for (const n of [123.456, -1, Number.NaN, 100_000_000_001]) assert.equal(isianNominal(n), null, String(n));
+});
+
+test("nominalKeTeks ketat (tinjauan K3 S-1): titik hanya pemisah ribuan, koma desimal; sisa sunting isian berformat ditolak, bukan diciutkan", () => {
+    const ketat = (s: string) => nominalKeTeks(s, { ketat: true });
+    const teks = (s: string) => { const r = ketat(s); assert.ok("teks" in r, `${s}: ${JSON.stringify(r)}`); return r.teks; };
+    assert.equal(teks("500.000"), "500000");
+    assert.equal(teks("1.500.000"), "1500000");
+    assert.equal(teks("1500000"), "1500000");
+    assert.equal(teks("1.500.000,50"), "1500000.5");
+    assert.equal(teks("1500000,5"), "1500000.5");
+    assert.equal(teks(""), "0");
+    // "500.000" dihapus satu digit / ditambah satu digit: dulu terbaca Rp 500 / Rp 50, kini ditolak dengan pesan.
+    for (const salah of ["500.00", "50.0000", "1.50", "1500000.5"]) assert.deepEqual(ketat(salah), { galat: GALAT_TITIK }, salah);
+    assert.ok("galat" in ketat("1,500"), "1,500 = 1,500 desimal (> 2 angka), bukan seribu lima ratus");
+    // Bawaan (Kasir) tidak berubah.
+    assert.equal((nominalKeTeks("500.00") as { teks: string }).teks, "500");
+    for (const n of [1250.5, 1_500_000]) assert.equal((ketat(isianNominal(n)!) as { teks: string }).teks, String(n), "format sesudah blur dibaca balik ketat");
+    assert.equal(isianPolos("1250000.5"), "1250000,5");
+    assert.equal(isianPolos("1500000"), "1500000");
 });

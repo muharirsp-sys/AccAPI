@@ -430,22 +430,23 @@ test("Support: draf per baris → Simpan & hitung ulang lewat dialog (payload su
 
 test("Support: galat 400 server tampil di dialog dan halaman, tidak ada yang berubah, draf tetap; jaringan putus = hasil tidak pasti", async ({ page }) => {
     let putus = false;
-    const kirim = await mockSup(page, { support: () => (putus ? "putus" : json({ error: "Support tidak valid: MKS-07/KINO (-5)" }, 400)) });
+    const kirim = await mockSup(page, { support: () => (putus ? "putus" : json({ error: "Support tidak valid: MKS-07/KINO (5)" }, 400)) });
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/insentif-sales/support?month=9&year=2026", NAV);
     const main = page.locator("main");
-    await main.getByRole("textbox", { name: "Support MKS-07 KINO" }).fill("-5", NAV);
+    // Negatif kini ditolak di layar (tinjauan K3 S-1); penolakan server diuji dengan nilai sah yang ditolak tiruan server.
+    await main.getByRole("textbox", { name: "Support MKS-07 KINO" }).fill("5", NAV);
     await main.getByRole("combobox", { name: "Status insentif MKS-21 GODREJ" }).selectOption("distributor_principle");
     await main.locator(".fi-ftb").getByRole("button", { name: "Simpan & hitung ulang…" }).click();
     const dlg = page.getByRole("dialog");
     await dlg.getByRole("button", { name: "Simpan & hitung ulang" }).click();
-    await expect(dlg.getByRole("alert")).toContainText("Support tidak valid: MKS-07/KINO (-5) Tidak ada yang diubah.");
+    await expect(dlg.getByRole("alert")).toContainText("Support tidak valid: MKS-07/KINO (5) Tidak ada yang diubah.");
     expect(kirim.map((k) => k.url)).toEqual(["/api/insentif-sales/support"]); // status tidak dikirim
     await page.screenshot({ path: "test-results/fiori-insentif-support-galat.png" });
     await dlg.getByRole("button", { name: "Batal" }).click();
     await expect(main.getByRole("alert").filter({ hasText: "Tidak ada yang diubah." })).toBeVisible();
     await expect(main.locator(".fi-ftb")).toContainText("2 perubahan di 2 baris belum disimpan");
-    await expect(main.getByRole("textbox", { name: "Support MKS-07 KINO" })).toHaveValue("-5");
+    await expect(main.getByRole("textbox", { name: "Support MKS-07 KINO" })).toHaveValue("5");
 
     putus = true;
     await main.locator(".fi-ftb").getByRole("button", { name: "Simpan & hitung ulang…" }).click();
@@ -465,25 +466,35 @@ test("Support: isian bukan angka tidak diam-diam jadi Rp 0 — Simpan dikunci, t
     const isi = main.getByRole("textbox", { name: "Support MKS-21 GODREJ" });
     const baris21 = main.getByRole("table", { name: "Support sales" }).locator("tbody tr").filter({ hasText: "MKS-21" });
     const simpan = main.locator(".fi-ftb").getByRole("button", { name: "Simpan & hitung ulang…" });
+    // Tinjauan K3 S-1: ribuan hanya sesudah blur; saat fokus angka polos. Sisa sunting berformat "300.00" ditolak, bukan Rp 300.
+    await expect(isi).toHaveValue("300.000", NAV);
+    await isi.focus();
+    await expect(isi).toHaveValue("300000");
+    await isi.fill("300.00");
+    await expect(baris21).toContainText("Titik hanya pemisah ribuan");
+    await expect(simpan).toBeDisabled();
+    await isi.fill("50.0000");
+    await expect(baris21).toContainText("Titik hanya pemisah ribuan");
+    expect(kirim).toHaveLength(0);
     await isi.fill("", NAV);
     await isi.pressSequentially("1e");
     await expect(simpan).toBeDisabled();
     await expect(simpan).toHaveAttribute("title", /bukan angka/);
-    await expect(baris21).toContainText("bukan angka");
+    await expect(baris21).toContainText("Isi angka rupiah yang sah");
     // Pembaca layar mendengar alasannya pada isian itu sendiri (7c).
     await expect(isi).toHaveAttribute("aria-invalid", "true");
-    await expect(isi).toHaveAccessibleDescription(/bukan angka/);
+    await expect(isi).toHaveAccessibleDescription(/Isi angka rupiah yang sah/);
     await isi.press("Backspace"); // "1" sah lagi
-    await expect(baris21).not.toContainText("bukan angka");
+    await expect(baris21).not.toContainText("Isi angka rupiah yang sah");
     // "" → "e": tetap bukan angka, tidak terkirim sebagai 0.
     await isi.fill("");
     await isi.pressSequentially("e");
     await expect(simpan).toBeDisabled();
-    await expect(baris21).toContainText("bukan angka");
+    await expect(baris21).toContainText("Isi angka rupiah yang sah");
     expect(kirim).toHaveLength(0);
     // Dikosongkan = 0 (kebijakan kolom kosong) tetap boleh disimpan.
     await isi.press("Backspace");
-    await expect(baris21).not.toContainText("bukan angka");
+    await expect(baris21).not.toContainText("Isi angka rupiah yang sah");
     await expect(simpan).toBeEnabled();
     await simpan.click();
     await page.getByRole("dialog").getByRole("button", { name: "Simpan & hitung ulang" }).click();
