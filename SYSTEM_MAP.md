@@ -61,8 +61,8 @@ Layar menampilkan KOREKSI di tabel hasil dan filter; ekspor XLSX menaruhnya pada
 - `app/(dashboard)/summary/settings/page.tsx`: ringkasan pendek sesuai contoh URC/Priskila; buka paket rujukan dari volume (label tombol dari
   `GET /summary/review/reference`, nonaktif beralasan bila paket tidak ada), koreksi detail, periksa kesiapan, lalu publikasi eksplisit.
 - `python_backend/routers/summary_review.py`: auth Summary view/edit + CSRF, batas JSON 8 MB, endpoint list/import/get/update/readiness/publish.
-  Paket rujukan (audit desain 001 No 81, 27 Okt 2026): `GET /summary/review/reference` (login; baca-saja: `{tersedia, sebab, periode, judul}` dari
-  berkas env `SUMMARY_REVIEW_REFERENCE`; terdaftar SEBELUM `GET /{package_id}`), `POST /summary/review/reference` (login + CSRF; impor lewat
+  Paket rujukan (audit desain 001 No 81, 27 Okt 2026): `GET /summary/review/reference` (izin `summary.view`; baca-saja: `{tersedia, sebab, periode, judul}` dari
+  berkas env `SUMMARY_REVIEW_REFERENCE`; terdaftar SEBELUM `GET /{package_id}`), `POST /summary/review/reference` (izin `summary.edit` + CSRF; impor lewat
   `import_package`, idempoten per owner+hash) dan alias lama `POST /reference/september` (fungsi sama). Tidak ada berkas 404, > 8 MB 413, JSON/paket
   rusak 400. Judul paket `judul_paket(raw)` = "Summary <Bulan> <Tahun>" dari field `created` (tanpa `created` sah: "Paket Summary Program").
 - `python_backend/summary_review.py`: validasi relasi ID dan master, kepemilikan, deduplikasi `(owner, source_hash)`, revisi optimistis; nilai sumber sebelum koreksi tetap disimpan.

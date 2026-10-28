@@ -25,7 +25,7 @@ import { isDuplicateFinding } from "@/lib/order-duplicate";
 import { PPN } from "@/lib/principal-validation";
 import { rupiah } from "@/lib/promo-ui";
 import { KOSONG } from "@/lib/tampil";
-import { ALASAN_CABUT_MAKS, ALASAN_CABUT_MIN, galatPanjangAlasan } from "@/lib/pencabutan";
+import { ALASAN_CABUT_MIN, galatPanjangAlasan } from "@/lib/pencabutan";
 import {
     ALASAN_IZIN, DitolakDenganDaftar, PESAN_TIDAK_PASTI, TidakPasti, angka, baca, ditahanUtuh, labelAntrean, soDariKunci, tanggalSo, tulis,
     waktuWita, type Ack, type BarisAntrean, type Batch, type CalonFaktur, type HasilAntre, type Line, type Rencana, type SoTidakIkut, type StatusAntrean,
@@ -660,7 +660,7 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                     ["Catatan", dialog.ack.note || KOSONG],
                 ] : []}
                 factsAlign="start"
-                reason={{ label: `Alasan mencabut (maks. ${ALASAN_CABUT_MAKS} karakter)`, min: ALASAN_CABUT_MIN, placeholder: "mis. dicek ulang ke sales, SO ini ternyata kiriman ulang order lama" }}
+                reason={{ label: "Alasan mencabut", min: ALASAN_CABUT_MIN, placeholder: "mis. dicek ulang ke sales, SO ini ternyata kiriman ulang order lama" }}
                 onConfirm={async (alasan) => {
                     if (dialog?.jenis !== "cabut") return;
                     // Batas sama dengan server (R-2): galat tampil di dialog dan alasan yang diketik tidak hilang.
