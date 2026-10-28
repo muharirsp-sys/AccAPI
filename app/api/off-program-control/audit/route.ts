@@ -65,7 +65,7 @@ export async function GET(request: Request) {
   if (format === "csv" && !gate.perms!.has("off_program_control.audit_export")) {
     return NextResponse.json({
       ok: false, code: "PERMISSION_REQUIRED", permission: "off_program_control.audit_export",
-      error: "Ekspor log audit OFF butuh izin OFF Program Control · Export Audit (off_program_control.audit_export).",
+      error: "Ekspor log audit OFF butuh izin OFF Program Control · Ekspor Audit (off_program_control.audit_export).",
     }, { status: 403 });
   }
 

@@ -353,7 +353,7 @@ test("Simpan izin: dialog SELISIH (+/−, anggota terkena) → PATCH kunci persi
     // Grup custom: cabut users.manage = peringatan + tombol tegas, TANPA isian alasan (server tidak mencatatnya, jadi tidak boleh
     // diwajibkan); server menolak kunci tak dikenal -> kalimat jelas, draf tetap.
     await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bPromo A\b/ }).click();
-    await page.getByRole("checkbox", { name: "User dan Izin · Manage" }).uncheck();
+    await page.getByRole("checkbox", { name: "User dan Izin · Kelola" }).uncheck();
     await page.getByRole("button", { name: "Simpan izin…" }).click();
     const d2 = page.getByRole("dialog", { name: "Simpan izin grup Promo A?" });
     await expect(d2).toContainText("Mencabut Kelola user (users.manage)");
@@ -367,14 +367,14 @@ test("Simpan izin: dialog SELISIH (+/−, anggota terkena) → PATCH kunci persi
     expect(log.native).toBe(0);
 });
 
-test("Grup preset Admin: Users · Manage terkunci; centang modul tidak mencabutnya", async ({ page }) => {
+test("Grup preset Admin: User dan Izin · Kelola terkunci; centang modul tidak mencabutnya", async ({ page }) => {
     await pasang(page);
     await page.goto("/admin/groups", NAV);
     await page.getByRole("list", { name: "Daftar grup" }).getByRole("button", { name: /\bAdmin\b/ }).click();
-    await expect(page.getByRole("checkbox", { name: "User dan Izin · Manage" })).toBeDisabled();
+    await expect(page.getByRole("checkbox", { name: "User dan Izin · Kelola" })).toBeDisabled();
     await page.getByRole("checkbox", { name: "Semua izin User dan Izin" }).click(); // nyalakan semua
     await page.getByRole("checkbox", { name: "Semua izin User dan Izin" }).click(); // cabut semua
-    await expect(page.getByRole("checkbox", { name: "User dan Izin · Manage" })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "User dan Izin · Kelola" })).toBeChecked();
 });
 
 test("Gerbang halaman: pemegang users.manage SAJA (tanpa users.view) tetap masuk /admin/users lewat navigasi klien; menu User dan Izin muncul", async ({ page }) => {
@@ -516,7 +516,7 @@ test("Akses Group: riwayat grup, tambah anggota, draf dibuang lewat dialog, hapu
     await grupList.getByRole("button", { name: /\bPromo A\b/ }).click();
     await buang.getByRole("button", { name: "Buang perubahan" }).click();
     await expect(page.getByText(/\+\d+ −\d+ belum disimpan/)).toHaveCount(0);
-    await expect(page.getByRole("checkbox", { name: "User dan Izin · Manage" })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "User dan Izin · Kelola" })).toBeChecked();
 
     // Hapus dicegah di layar: USER C hanya punya grup Promo A.
     await page.getByRole("button", { name: "Hapus grup…" }).click();

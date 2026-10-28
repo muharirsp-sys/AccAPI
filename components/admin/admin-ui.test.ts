@@ -117,7 +117,7 @@ test("status akun: aktif / nonaktif / sedang disiapkan", () => {
 test("ringkasan riwayat: label aksi satu sumber + rincian tanpa kunci mentah", () => {
     const sync = ringkasRiwayat({ action: "group_permission.sync", detail: { added: ["payments.delete"], removed: ["users.manage"] } }, "grup");
     assert.equal(sync.apa, "Izin grup diubah");
-    assert.equal(sync.rinci, "+ Pembayaran · Hapus · − User dan Izin · Manage");
+    assert.equal(sync.rinci, "+ Pembayaran · Hapus · − User dan Izin · Kelola");
     const star = ringkasRiwayat({ action: "user_group.unstar", targetGroupName: "Admin", detail: { roleBefore: "admin", roleAfter: "viewer" } }, "user");
     assert.equal(star.rinci, "Admin · role identitas Admin → Viewer");
     const hapus = ringkasRiwayat({ action: "user_group.remove", targetUserName: null, detail: { userName: "USER A", groupName: "Promo A", via: "group.delete" } }, "grup");
