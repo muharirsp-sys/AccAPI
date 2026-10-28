@@ -252,8 +252,9 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                                             const ketik = ketikRp[f.path];
                                             const bacaRp = ketik === undefined ? null : bacaRupiah(ketik);
                                             const galatRp = bacaRp && "galat" in bacaRp ? bacaRp.galat : "";
-                                            const nilaiRp = ketik !== undefined && (galatRp || (bacaRp && "teks" in bacaRp && Number(bacaRp.teks) === v)) ? ketik
-                                                : fokusRp === f.path ? isianPolos(String(v)) : isianNominal(v) ?? String(v);
+                                            const wakiliKetik = ketik !== undefined && (galatRp || (bacaRp && "teks" in bacaRp && Number(bacaRp.teks) === v));
+                                            const nilaiFokus = wakiliKetik ? ketik : isianPolos(String(v));
+                                            const nilaiRp = wakiliKetik || fokusRp === f.path ? nilaiFokus : isianNominal(v) ?? String(v);
                                             return (
                                                 <div key={f.path} className="fi-field">
                                                     <label className="fi-label" htmlFor={id}>{f.label}{beda && <span className="fi-why"> · diubah</span>}</label>
@@ -267,7 +268,8 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                                                                 const r = bacaRupiah(t);
                                                                 if ("teks" in r) setDraf(setField(nilaiK, f.path, Number(r.teks)));
                                                             }}
-                                                            onFocus={() => setFokusRp(f.path)}
+                                                            // Angka polos ditulis ke DOM seketika + pilih semua: ketikan berikutnya mengganti isi, tidak menempel (S-1).
+                                                            onFocus={(e) => { const el = e.currentTarget; if (el.value !== nilaiFokus) { el.value = nilaiFokus; el.select(); } setFokusRp(f.path); }}
                                                             onBlur={() => { setFokusRp(null); if (!galatRp) setKetikRp((k) => { const n = { ...k }; delete n[f.path]; return n; }); }} />
                                                     ) : (
                                                         <input id={id} aria-describedby={`${id}-help`} className="fi-input fi-tnum" style={{ textAlign: "end" }} type="number" inputMode="decimal"

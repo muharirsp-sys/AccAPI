@@ -173,8 +173,9 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
     }
 
     // Ketikan yang masih mewakili isian; teks tidak sah apa adanya; saat fokus angka polos (S-1); sesudah blur ribuan.
-    const teksFix = ketikFix !== null && bacaFix(ketikFix).nilaiFix === isian.nilaiFix ? ketikFix
-        : isian.galatFix ? isian.nilaiFix : fokusFix ? isianPolos(isian.nilaiFix) : tampilFix(isian.nilaiFix);
+    const fixFokus = ketikFix !== null && bacaFix(ketikFix).nilaiFix === isian.nilaiFix ? ketikFix
+        : isian.galatFix ? isian.nilaiFix : isianPolos(isian.nilaiFix);
+    const teksFix = fokusFix || fixFokus !== isianPolos(isian.nilaiFix) ? fixFokus : tampilFix(isian.nilaiFix);
     const galatFix = isian.galatFix ?? "";
     const lebih = perkiraanSelisih(u.dibayar, isian.nilaiFix);
     const fixAngka = Number(isian.nilaiFix);
@@ -247,7 +248,9 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
                             // type="text": roda mouse tidak mengubah nilai yang menentukan selisih, dan "1.500.000" terbaca sebagai ribuan.
                             <input {...a} className="fi-input fi-tnum" type="text" inputMode="numeric" autoComplete="off" value={teksFix}
                                 onChange={(e) => { const t = e.target.value; setKetikFix(t); ubah((x) => ({ ...x, ...bacaFix(t) })); }}
-                                onFocus={() => setFokusFix(true)} onBlur={() => { setFokusFix(false); setKetikFix(null); }} />
+                                // Angka polos ditulis ke DOM seketika + pilih semua: ketikan berikutnya mengganti isi, tidak menempel (S-1).
+                                onFocus={(e) => { const el = e.currentTarget; if (el.value !== fixFokus) { el.value = fixFokus; el.select(); } setFokusFix(true); }}
+                                onBlur={() => { setFokusFix(false); setKetikFix(null); }} />
                         )}
                     </FormField>
                 </div>

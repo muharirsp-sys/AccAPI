@@ -232,10 +232,19 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
     const lepasKetik = (id: string, nilai: string) => { if (nilai !== BUKAN_ANGKA) setKetik((k) => tanpa(k, [`${periode}|${id}`])); };
     // Saat fokus: angka polos tanpa titik ribuan (S-1), supaya menghapus satu digit tidak menghasilkan "500.00".
     const [fokus, setFokus] = useState<string | null>(null);
-    const teksIsi = (id: string, nilai: string) => {
+    const teksIsi = (id: string, nilai: string, difokus = fokus === `${periode}|${id}`) => {
         const t = ketik[`${periode}|${id}`];
         if (t !== undefined && kanonik(t) === nilai) return t;
-        return fokus === `${periode}|${id}` && nilai !== BUKAN_ANGKA ? isianPolos(nilai) : tampilIsi(nilai);
+        return difokus && nilai !== BUKAN_ANGKA ? isianPolos(nilai) : tampilIsi(nilai);
+    };
+    /**
+ * Fokus: angka polos ditulis ke DOM SEKETIKA dan seluruh isi dipilih (bukan menunggu render), supaya ketikan berikutnya (Tab lalu ketik, isi
+ * otomatis) MENGGANTI isi, bukan menempel di belakang teks lama yang baru diganti (dulu "1000000" + "1100000" = "10000001100000").
+     */
+    const masukFokus = (el: HTMLInputElement, id: string, nilai: string) => {
+        const polos = teksIsi(id, nilai, true);
+        if (el.value !== polos) { el.value = polos; el.select(); }
+        setFokus(`${periode}|${id}`);
     };
     const pesanSalah = (id: string) => galatKetik(ketik[`${periode}|${id}`]);
     const nilaiSupport = (r: ApiRow) => draf.support[keySales(r)] ?? String(r.support ?? 0);
@@ -380,7 +389,7 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
             <input type="text" inputMode="numeric" autoComplete="off" className="fi-input fi-cellin fi-tnum" aria-label={`Support ${r.salesCode} ${r.principle}`}
                 value={teksIsi(`sup|${keySales(r)}`, nilaiSupport(r))} disabled={Boolean(kunciIsiSupport)} title={kunciIsiSupport} aria-invalid={Number.isNaN(angka(nilaiSupport(r))) || undefined}
                 aria-describedby={Number.isNaN(angka(nilaiSupport(r))) ? idSalah("sup", keySales(r)) : undefined}
-                onChange={(e) => ketikSupport(r, e.target.value)} onFocus={() => setFokus(`${periode}|sup|${keySales(r)}`)}
+                onChange={(e) => ketikSupport(r, e.target.value)} onFocus={(e) => masukFokus(e.currentTarget, `sup|${keySales(r)}`, nilaiSupport(r))}
                 onBlur={() => { setFokus(null); lepasKetik(`sup|${keySales(r)}`, nilaiSupport(r)); }} />
             {Number.isNaN(angka(nilaiSupport(r))) && <span id={idSalah("sup", keySales(r))} className="fi-sub fi-why">{pesanSalah(`sup|${keySales(r)}`)}</span>}
             {supportBerubah(r) && sebelumnya(formatRp(r.support ?? 0))}
@@ -407,7 +416,7 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
             <input type="text" inputMode="numeric" autoComplete="off" className="fi-input fi-cellin fi-tnum" aria-label={`Support SPV ${p.spvName} ${p.principle}`}
                 value={teksIsi(`spv|${keySpv(p)}`, nilaiSpv(p))} disabled={Boolean(kunciIsiSpv)} title={kunciIsiSpv} aria-invalid={Number.isNaN(angka(nilaiSpv(p))) || undefined}
                 aria-describedby={Number.isNaN(angka(nilaiSpv(p))) ? idSalah("spv", keySpv(p)) : undefined}
-                onChange={(e) => ketikSpv(p, e.target.value)} onFocus={() => setFokus(`${periode}|spv|${keySpv(p)}`)}
+                onChange={(e) => ketikSpv(p, e.target.value)} onFocus={(e) => masukFokus(e.currentTarget, `spv|${keySpv(p)}`, nilaiSpv(p))}
                 onBlur={() => { setFokus(null); lepasKetik(`spv|${keySpv(p)}`, nilaiSpv(p)); }} />
             {Number.isNaN(angka(nilaiSpv(p))) && <span id={idSalah("spv", keySpv(p))} className="fi-sub fi-why">{pesanSalah(`spv|${keySpv(p)}`)}</span>}
             {spvBerubah(p) && sebelumnya(formatRp(savedSpv?.[keySpv(p)] ?? 0))}
