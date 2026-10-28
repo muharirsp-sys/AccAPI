@@ -22,6 +22,8 @@ export interface CanonicalReturnLine {
   customerCode: string;
   customerCodeRaw?: string;
   correctionInvoiceReferences?: string[];
+  correctionBillNumber?: string;
+  correctionReason?: string;
   accurateProductCode: string | null;
   principalProductCode: string | null;
   quantity: number;
@@ -366,11 +368,25 @@ function exactlyOneToken(
   return matches[0];
 }
 
+function godrejPrincipalCustomer(value: unknown, row: number): string {
+  const customer = text(value).replace(/\s+/g, " ");
+  // Confirmed exact names only: never infer a customer from partial or similar names.
+  const knownCustomers: Record<string, string> = {
+    "PT. LOTTE MART PANAKUKANG": "C-LO0013",
+    "CV.MAJU BERSAMA": "C-DU0003",
+    "JACK GROCERS": "C-JAC767",
+    "CV. MITRA BELANJA SEJAHTERA": "C-KIN009",
+    "MINASA MART": "C-MIN013",
+  };
+  if (Object.hasOwn(knownCustomers, customer)) return knownCustomers[customer];
+  return exactlyOneToken(customer, /(?<![A-Z0-9])CA?-[A-Z0-9]+(?![A-Z0-9-])/g, "CUSTOMER", row);
+}
+
 function godrejAccurateCustomer(value: unknown, row: number): string {
   const customer = text(value),
-    suffixed = customer.match(/^(C-[A-Z0-9]+)-GD$/);
+    suffixed = customer.match(/^(CA?-[A-Z0-9]+)-GD$/);
   if (suffixed) return suffixed[1];
-  if (/^C-[A-Z0-9]+$/.test(customer)) return customer;
+  if (/^CA?-[A-Z0-9]+$/.test(customer)) return customer;
   throw new Error(
     `KODE PELANGGAN INDUK harus memuat tepat satu token pada baris ${row}`,
   );
@@ -790,8 +806,18 @@ function parseGodrejPrincipal(
         sku.match(/^([A-Z0-9-]+)\s+-\s+/)?.[1] ??
         sku.match(/^[A-Z0-9]+/)?.[0] ??
         sku,
+      invoiceNumber = exactlyOneToken(cell(row, header.columns, "SALE RETURN NO."),
+        /(?<![A-Z0-9])RB\/BFG-\d+(?![A-Z0-9])/g, "SALE RETURN NO.", sourceRowNumber),
+      customerCode = godrejPrincipalCustomer(cell(row, header.columns, "CUSTOMER"), sourceRowNumber),
+      productCorrection = invoiceNumber === "RB/BFG-10000006325"
+        && customerCode === "C-AIS022" && principalProductCode === "4103927",
       name = cleanGodrejProductName(sku, principalProductCode),
-      codeCandidates = mappings.codes.get(principalProductCode) ?? [],
+      rawCodeCandidates = mappings.codes.get(principalProductCode) ?? [],
+      // 4103927 is 10S. The confirmed 4S transaction is an exception, not a global alias.
+      codeCandidates = productCorrection ? ["G1076202000410"]
+        : principalProductCode === "4103927" && rawCodeCandidates.length === 2
+          && rawCodeCandidates.includes("G1076202000410") && rawCodeCandidates.includes("G1076202001010")
+          ? ["G1076202001010"] : rawCodeCandidates,
       nameCandidates = mappings.names.get(name) ?? [],
       accurateProductCode =
         codeCandidates.length === 1
@@ -816,16 +842,18 @@ function parseGodrejPrincipal(
       line: CanonicalReturnLine = {
         source: "PRINCIPAL",
         sourceRowNumber,
+        ...(productCorrection ? { correctionReason: "Koreksi produk dikonfirmasi admin: GODREJ 4103927 (10S), Accurate G1076202000410 (4S), khusus RB/BFG-10000006325." } : {}),
+        ...(text(cell(row, header.columns, "BILL NO")).startsWith("FK/BFG-")
+          ? { correctionBillNumber: text(cell(row, header.columns, "BILL NO")) }
+          : {}),
         invoiceNumber: exactlyOneToken(
           cell(row, header.columns, "SALE RETURN NO."),
           /(?<![A-Z0-9])RB\/BFG-\d+(?![A-Z0-9])/g,
           "SALE RETURN NO.",
           sourceRowNumber,
         ),
-        customerCode: exactlyOneToken(
+        customerCode: godrejPrincipalCustomer(
           cell(row, header.columns, "CUSTOMER"),
-          /(?<![A-Z0-9])C-[A-Z0-9]+(?![A-Z0-9-])/g,
-          "CUSTOMER",
           sourceRowNumber,
         ),
         accurateProductCode,
@@ -1620,6 +1648,15 @@ export function reconcileKinoReturns(
     "C-AL0063": "C-ALF052",
     "C-HE0027": "C-MIT058",
     "322630771184": "C-CIT780",
+    "52410325906": "C-SAT307",
+    "923120291495": "C-CIT040",
+    "22120007096": "C-PRA004",
+    "52330222295": "C-BER030",
+    "322510497184": "C-SYA061",
+    "52440374771": "C-ABI010",
+    "52330224298": "C-TK0006",
+    "52430367095": "C-UKM004",
+    "322510498179": "C-DIA062",
   };
   const mappings = parseKinoReturnMappings(mappingBuffer),
     parsedAccurate = parseKinoAccurate(accurateBuffer),
@@ -1714,9 +1751,31 @@ export function reconcileGodrejReturns(
   const mappings = parseGodrejMappings(mappingBuffer),
     principal = parseGodrejPrincipal(principalBuffer, mappings),
     accurate = parseGodrejAccurate(accurateBuffer),
+    accurateScopes = new Set(accurate.lines.map((line) => `${line.invoiceNumber}|${line.customerCode}`));
+  // User-confirmed GODREJ alias; prefer an existing original customer on the same return.
+  const customerAliases: Record<string, string> = {
+    "C-GI0010": "C-MIT057",
+    "C-IN00": "C-IN0081",
+    "C-CIT0": "C-CIT002",
+    "C-SUR09": "C-SUR097",
+    "C-HE0027": "C-MIT058",
+    "C-JAS080": "C-JA0011",
+    "C-KIN009": "C-KIN012",
+    "C-JAN469": "C-ARM013",
+  };
+  for (const line of [...principal.lines, ...principal.unmappedLines]) {
+    const alias = customerAliases[line.customerCode];
+    if (alias
+      && !accurateScopes.has(`${line.invoiceNumber}|${line.customerCode}`)
+      && accurateScopes.has(`${line.invoiceNumber}|${alias}`)) {
+      line.customerCodeRaw = line.customerCode;
+      line.customerCode = alias;
+    }
+  }
+  const
     accurateLines = [...accurate.lines, ...accurate.invalidLines],
     principalLines = [...principal.lines, ...principal.unmappedLines];
-  return reconcileParsedReturns({
+  const output = reconcileParsedReturns({
     accurateLines,
     matchableAccurateLines: accurate.lines,
     principalLines,
@@ -1727,6 +1786,34 @@ export function reconcileGodrejReturns(
     isAccurateMapped: () => true,
     dppTolerance,
   });
+  const sourceLines = new Map(principalLines.map((line) => [line.sourceRowNumber, line]));
+  for (const row of output.results) {
+    const sources = row.principalSourceRows.map((number) => sourceLines.get(number));
+    if (sources.length && sources.every((line) => line?.correctionReason) && row.status !== "INVALID_DATA") {
+      output.summary[row.status]!--;
+      row.status = "KOREKSI";
+      output.summary.KOREKSI = (output.summary.KOREKSI ?? 0) + 1;
+      row.warnings = [...new Set(sources.map((line) => line!.correctionReason!)),
+        row.accurateSourceRows.length ? "Pasangan Accurate tersedia; perbedaan produk tetap dicatat sebagai koreksi."
+          : "Pasangan Accurate belum terverifikasi."];
+      continue;
+    }
+    // Only fully correction groups qualify; preserve ordinary transactions in mixed groups.
+    if (!sources.length || !sources.every((line) => line?.correctionBillNumber)) continue;
+    if (row.status === "MATCH" || row.status === "INVALID_DATA") continue;
+    const bills = [...new Set(sources.map((line) => line!.correctionBillNumber))];
+    output.summary[row.status]!--;
+    row.status = "KOREKSI";
+    output.summary.KOREKSI = (output.summary.KOREKSI ?? 0) + 1;
+    row.warnings = [
+      `Koreksi — Bill No ${bills.join(", ")} berawalan FK/BFG-.`,
+      ...row.warnings,
+      row.accurateSourceRows.length
+        ? "Pasangan ditemukan tetapi jumlah atau DPP belum cocok."
+        : "Pasangan Accurate belum terverifikasi; tidak dipaksakan cocok.",
+    ];
+  }
+  return output;
 }
 
 export function reconcileHeinzReturns(
