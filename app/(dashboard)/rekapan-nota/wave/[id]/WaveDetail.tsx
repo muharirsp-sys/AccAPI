@@ -1,10 +1,11 @@
 /*
  * Tujuan: Object Page satu wave (Fiori S2): status + alur, exception (Selesai / Abaikan… beralasan, BL-24), grup cetak dan kertas, isi wave dengan Lepas beralasan,
- *   pool dengan cari/saring (draf), riwayat, footer toolbar dengan dialog Rilis / Konfirmasi / Batalkan.
+ *   pool dengan cari/saring (draf), riwayat, footer toolbar dengan dialog Rilis / Konfirmasi / Batalkan. Simpan isi per karton dan Selesai (exception)
+ *   menulis master konversi / menutup exception, jadi keduanya lewat dialog ringkas (lama → baru); isian tetap inline di baris.
  * Caller: app/(dashboard)/rekapan-nota/wave/[id]/page.tsx.
  * Dependensi: GET|PATCH /api/rekapan-nota/wave/[id], POST|PATCH /api/rekapan-nota/wave/[id]/nota, PATCH /api/rekapan-nota/wave/[id]/exception,
  *   GET /api/rekapan-nota/pool;
- *   components/fiori/{core,interactive}, lib/rekapan-nota/ui.
+ *   components/fiori/{core,interactive}, lib/rekapan-nota/ui, lib/tampil (KOSONG, sebabHttp, waktuWita).
  * Main Functions: WaveDetail.
  * Side Effects: HTTP baca/tulis di atas. BL-24/25 dijaga server (409 tampil di layar dan detail dimuat ulang); BL-56/57 masih varian berlabel.
  */
@@ -19,9 +20,10 @@ import {
 } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import {
-    EXCEPTION_LABEL, WAVE_STATUS, ambil, formatKarton, jamWita, labelEvent, menahanKonfirmasi, saringPool, tanggalPendek,
+    EXCEPTION_LABEL, WAVE_STATUS, ambil, formatKarton, labelEvent, menahanKonfirmasi, saringPool, tanggalPendek, usulIsiDariNama,
     type PoolFilter, type WaveStatusKode,
 } from "@/lib/rekapan-nota/ui";
+import { KOSONG, sebabHttp, waktuWita } from "@/lib/tampil";
 
 type Wave = { id: number; tanggal: string; urutan: number; nama: string; tipe: string; status: WaveStatusKode };
 type NotaWave = {
@@ -33,15 +35,20 @@ type NotaPool = { no_nota: string; kode_cust: string; customer: string | null; s
 type Exception = {
     id: number; jenis: string; ref_tipe: string; ref_kode: string; keterangan: string | null; status: string;
     master_saat_ini?: string | null; resolved_at?: string | null; resolved_oleh?: string | null; alasan?: string | null;
+    nama_ref?: string | null;
 };
 type PickGroup = { id: number; kode: string; nama: string; dimensi: string };
 type Riwayat = { event: string; created_at: string; payload: Record<string, unknown>; aktor: string };
 type Detail = { wave: Wave; nota: NotaWave[]; exception: Exception[]; pickGroup: PickGroup[]; pickGroupTersedia: PickGroup[]; riwayat?: Riwayat[] };
 type Pool = { nota: NotaPool[]; disembunyikan?: number; kanvasNihilOleh?: string | null };
-type Dialog = "rilis" | "konfirmasi" | "batal" | "takeout" | "abaikan" | null;
+type Dialog = "rilis" | "konfirmasi" | "batal" | "takeout" | "abaikan" | "isi" | "selesai" | null;
 type SaringIsi = "semua" | "urgent" | "pareto" | "dilepas";
 
 const TIPE_LABEL: Record<string, string> = { reguler: "Reguler", kanvas: "Kanvas" };
+/** Jenis rujukan exception dari server dalam bahasa tugas; kode di luar daftar tidak ditampilkan mentah. */
+const REF_TIPE: Record<string, string> = { item: "Barang", customer: "Outlet", principal: "Principal" };
+const rujukan = (e: Pick<Exception, "ref_tipe" | "ref_kode">) => `${REF_TIPE[e.ref_tipe] ?? "Rujukan"} ${e.ref_kode}`;
+const jenisLabel = (jenis: string | undefined) => EXCEPTION_LABEL[jenis ?? ""] ?? "Jenis tidak dikenal";
 const sama = (a: ReadonlySet<number>, b: ReadonlySet<number>) => a.size === b.size && [...a].every((x) => b.has(x));
 
 /** Nilai master SAAT INI sebagai petunjuk (BL-24): isi per karton untuk barang, area untuk outlet. */
@@ -51,7 +58,7 @@ function petunjukMaster(e: Exception): string {
     return "";
 }
 const penutupan = (e: Exception) =>
-    [`${e.status === "selesai" ? "Selesai" : "Diabaikan"}${e.resolved_at ? ` ${jamWita(e.resolved_at)}` : ""}`, e.resolved_oleh, e.alasan].filter(Boolean).join(" · ");
+    [`${e.status === "selesai" ? "Selesai" : "Diabaikan"}${e.resolved_at ? ` ${waktuWita(e.resolved_at)}` : ""}`, e.resolved_oleh, e.alasan].filter(Boolean).join(" · ");
 
 async function kirimJson(url: string, method: string, body: unknown) {
     const res = await fetch(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -82,7 +89,11 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     const [dialog, setDialog] = useState<Dialog>(null);
     const [notaLepas, setNotaLepas] = useState<NotaWave | null>(null);
     const [excAbaikan, setExcAbaikan] = useState<Exception | null>(null);
+    // Target dialog Simpan isi (exception + isi per karton) dan Selesai (exception).
+    const [isiSimpan, setIsiSimpan] = useState<{ e: Exception; n: number } | null>(null);
+    const [excSelesai, setExcSelesai] = useState<Exception | null>(null);
     const [excSibuk, setExcSibuk] = useState<number | null>(null);
+    const [isiKetik, setIsiKetik] = useState<Record<number, string>>({});
     const [pesan, setPesan] = useState<string | null>(null);
     const [galat, setGalat] = useState<string | null>(null);
     const [sibuk, setSibuk] = useState<"tambah" | "urgent" | "grup" | null>(null);
@@ -153,7 +164,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     /** Transisi lewat dialog: galat dilempar supaya tampil di dialog (isian tidak hilang). */
     async function transisi(aksi: "release" | "confirm" | "cancel", alasan?: string) {
         const r = await kirimJson(`/api/rekapan-nota/wave/${id}`, "PATCH", { aksi, alasan: alasan || undefined });
-        if (!r.ok) { muat(); throw new Error(r.payload.error ?? `Aksi gagal (HTTP ${r.status}).`); }
+        if (!r.ok) { muat(); throw new Error(r.payload.error ?? sebabHttp(r.status)); }
         setDialog(null); setGalat(null);
         setPesan(aksi === "release" ? `Wave ${wave?.nama} dirilis. Nota tidak bisa ditambah lagi; keluarkan lewat Lepas dengan alasan.`
             : aksi === "confirm" ? `Wave ${wave?.nama} dikonfirmasi. Isi dan grup cetak terkunci; kertas tetap bisa dicetak ulang.`
@@ -164,20 +175,28 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     /** BL-24: Selesai langsung; Abaikan lewat dialog beralasan (galat dilempar ke dialog). 409 = sudah ditutup di layar lain. */
     async function tutupException(e: Exception, aksi: "selesai" | "abaikan", alasan?: string) {
         const r = await kirimJson(`/api/rekapan-nota/wave/${id}/exception`, "PATCH", { exceptionId: e.id, aksi, alasan });
-        if (!r.ok) { muat(); throw new Error(r.payload.error ?? `Exception tidak ditutup (HTTP ${r.status}).`); }
+        if (!r.ok) { muat(); throw new Error(r.payload.error ?? sebabHttp(r.status)); }
         setGalat(null);
         setPesan(`${EXCEPTION_LABEL[e.jenis] ?? e.jenis} ${e.ref_kode} ${aksi === "selesai" ? "ditandai selesai" : "diabaikan"}.`);
         muat();
     }
-    async function selesaikan(e: Exception) {
-        setExcSibuk(e.id); setPesan(null);
-        try { await tutupException(e, "selesai"); } catch (err) { setGalat(err instanceof Error ? err.message : String(err)); } finally { setExcSibuk(null); }
+    /** Dipanggil dari dialog Simpan isi: galat dilempar supaya tampil di dialog (isian tidak hilang). */
+    async function simpanIsi(e: Exception, isi: number) {
+        setExcSibuk(e.id); setPesan(null); setGalat(null);
+        try {
+            const r = await kirimJson(`/api/rekapan-nota/wave/${id}/exception`, "PATCH", { exceptionId: e.id, aksi: "isi", isi });
+            if (!r.ok) { muat(); throw new Error(r.payload.error ?? sebabHttp(r.status)); }
+            setPesan(`Isi per karton ${e.ref_kode} disimpan: ${isi}. Cetak ulang lembar untuk melihat kartonnya.`);
+            muat();
+        } finally {
+            setExcSibuk(null);
+        }
     }
 
     async function lepas(alasan: string) {
         if (!notaLepas) return;
         const r = await kirimJson(`/api/rekapan-nota/wave/${id}/nota`, "PATCH", { aksi: "takeout", noNota: notaLepas.no_nota, alasan });
-        if (!r.ok) { muat(); throw new Error(r.payload.error ?? `Nota tidak dilepas (HTTP ${r.status}).`); }
+        if (!r.ok) { muat(); throw new Error(r.payload.error ?? sebabHttp(r.status)); }
         setDialog(null); setNotaLepas(null); setGalat(null);
         setPesan(`${notaLepas.no_nota} dilepas dan kembali ke pool.`);
         muat();
@@ -221,13 +240,27 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     const badgeStatus = (e: Exception) => e.status === "open" ? <StatusBadge tone="neg">Terbuka</StatusBadge> : e.status === "selesai" ? <StatusBadge tone="pos">Selesai</StatusBadge> : <StatusBadge tone="neu">Diabaikan</StatusBadge>;
     const aksiException = (e: Exception) => bolehTutup && e.status === "open" ? (
         <span className="fi-btnrow">
-            <Button busy={excSibuk === e.id} onClick={() => selesaikan(e)} aria-label={`Selesai ${e.ref_kode}`}>Selesai</Button>
+            {/* Isi per karton langsung di baris exception (owner 24 Okt 2026), usulan dari nama barang. */}
+            {e.jenis === "KONVERSI_TIDAK_ADA" && (() => {
+                const usul = usulIsiDariNama(e.nama_ref);
+                const teks = isiKetik[e.id] ?? (usul ? String(usul) : "");
+                const n = Number(teks);
+                const sah = Number.isInteger(n) && n >= 1 && n <= 10000;
+                return <>
+                    <input className="fi-input" style={{ width: "6.5rem" }} type="number" min={1} max={10000} inputMode="numeric"
+                        aria-label={`Isi per karton ${e.ref_kode}`} placeholder="Isi/karton" value={teks}
+                        onChange={(ev) => setIsiKetik((s) => ({ ...s, [e.id]: ev.target.value }))} />
+                    <Button variant="primary" busy={excSibuk === e.id} disabled={!sah} disabledReason="Isi bilangan bulat 1-10000"
+                        onClick={() => { setIsiSimpan({ e, n }); setDialog("isi"); }} aria-label={`Simpan isi per karton ${e.ref_kode}`}>Simpan isi</Button>
+                </>;
+            })()}
+            <Button busy={excSibuk === e.id} onClick={() => { setExcSelesai(e); setDialog("selesai"); }} aria-label={`Selesai ${e.ref_kode}`}>Selesai</Button>
             <Button variant="tertiary" disabled={excSibuk === e.id} onClick={() => { setExcAbaikan(e); setDialog("abaikan"); }} aria-label={`Abaikan ${e.ref_kode}`}>Abaikan…</Button>
         </span>
     ) : null;
     const kolomException: Column<Exception>[] = [
-        { key: "jenis", header: "Jenis", cell: (e) => <><b>{EXCEPTION_LABEL[e.jenis] ?? e.jenis}</b><span className="fi-codes">{e.jenis}</span></> },
-        { key: "ref", header: "Referensi", cell: (e) => <span className="fi-mono">{e.ref_tipe} {e.ref_kode}</span> },
+        { key: "jenis", header: "Jenis", cell: (e) => <b title={e.jenis}>{jenisLabel(e.jenis)}</b> },
+        { key: "ref", header: "Referensi", cell: (e) => <span className="fi-mono">{rujukan(e)}</span> },
         { key: "ket", header: "Keterangan", secondary: true, cell: (e) => <span className="fi-small">{e.keterangan}{petunjukMaster(e) && <span className="fi-sub">{petunjukMaster(e)}</span>}</span> },
         { key: "konf", header: "Konfirmasi", cell: (e) => menahanKonfirmasi(e.jenis, e.status) ? <StatusBadge tone="warn"><Lock className="fi-icon" aria-hidden />Menahan</StatusBadge> : <span className="fi-small fi-subtle">Informasi</span> },
         { key: "status", header: "Status", cell: (e) => <>{badgeStatus(e)}{e.status !== "open" && <span className="fi-sub">{penutupan(e)}</span>}</> },
@@ -235,17 +268,17 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     ];
     const kolomIsi: Column<NotaWave>[] = [
         { key: "nota", header: "Nota", cell: (n) => <span className="fi-mono">{n.no_nota}</span> },
-        { key: "outlet", header: "Outlet", cell: (n) => <>{n.customer ?? "–"}{n.dilepas && <span className="fi-sub">Dilepas {n.dilepas_at ? jamWita(n.dilepas_at) : ""}{n.dilepas_oleh ? ` · ${n.dilepas_oleh}` : ""} · {n.dilepas_alasan}</span>}</> },
+        { key: "outlet", header: "Outlet", cell: (n) => <>{n.customer ?? KOSONG}{n.dilepas && <span className="fi-sub">Dilepas {n.dilepas_at ? waktuWita(n.dilepas_at) : ""}{n.dilepas_oleh ? ` · ${n.dilepas_oleh}` : ""} · {n.dilepas_alasan}</span>}</> },
         { key: "area", header: "Area", secondary: true, cell: (n) => n.snap_area ?? <span className="fi-why">belum ada</span> },
         { key: "krt", header: "Karton", align: "end", cell: (n) => <span className="fi-tnum">{formatKarton(n.snap_total_krt)}</span> },
-        { key: "pareto", header: "Pareto", secondary: true, cell: (n) => n.snap_pareto === null ? "–" : n.snap_pareto ? "Ya" : "—" },
+        { key: "pareto", header: "Pareto", secondary: true, cell: (n) => n.snap_pareto === null ? KOSONG : n.snap_pareto ? "Ya" : "Tidak" },
         { key: "prio", header: "Prioritas", cell: (n) => n.prioritas === "urgent" ? <StatusBadge tone="warn"><Clock className="fi-icon" aria-hidden />Urgent</StatusBadge> : "Normal" },
         { key: "aksi", header: bolehLepas && !terkunci ? "Tindakan" : "", cell: (n) => bolehLepas && !terkunci && !n.dilepas ? <Button variant="tertiary" onClick={() => { setNotaLepas(n); setDialog("takeout"); }}>Lepas…</Button> : null },
     ];
     const kolomPool: Column<NotaPool>[] = [
         { key: "nota", header: "Nota", cell: (p) => <span className="fi-mono">{p.no_nota}</span> },
-        { key: "outlet", header: "Outlet", cell: (p) => p.customer ?? "–" },
-        { key: "sales", header: "Salesman", secondary: true, cell: (p) => p.salesman ?? "–" },
+        { key: "outlet", header: "Outlet", cell: (p) => p.customer ?? KOSONG },
+        { key: "sales", header: "Salesman", secondary: true, cell: (p) => p.salesman ?? KOSONG },
         { key: "area", header: "Area", cell: (p) => p.area ?? <span className="fi-why">belum ada</span> },
         { key: "krt", header: "Karton", align: "end", cell: (p) => <span className="fi-tnum">{formatKarton(p.total_krt)}{p.pareto && <span className="fi-sub">pareto</span>}</span> },
         { key: "baris", header: "Baris", align: "end", secondary: true, cell: (p) => <span className="fi-tnum">{p.jumlah_baris}</span> },
@@ -275,7 +308,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                     subtitle={exceptionOpen.length ? `${exceptionOpen.length} terbuka · ${menahan.length} menahan konfirmasi` : `${data.exception.length} ditutup · tidak ada yang menahan konfirmasi`}>
                     <ResponsiveTable<Exception> title="Exception" columns={kolomException} rows={data.exception} rowKey={(e) => String(e.id)}
                         empty={{ title: "Tidak ada exception" }}
-                        mobileItem={(e) => <ListItem doc={`${e.ref_tipe} ${e.ref_kode}`} title={EXCEPTION_LABEL[e.jenis] ?? e.jenis}
+                        mobileItem={(e) => <ListItem doc={rujukan(e)} title={jenisLabel(e.jenis)}
                             meta={<>{e.status === "open" ? [e.keterangan, petunjukMaster(e)].filter(Boolean).join(" · ") : penutupan(e)}{aksiException(e)}</>}
                             badge={menahanKonfirmasi(e.jenis, e.status) ? <StatusBadge tone="warn">Menahan</StatusBadge> : badgeStatus(e)} />} />
                     {exceptionOpen.length > 0 && bolehTutup && (
@@ -304,6 +337,16 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                             </div>
                         ))}
                     </div>
+                    {/* Cetak semua (owner 24 Okt 2026): unggah > pilih nota > rilis > cetak semua. Aktif sesudah Rilis supaya
+                        kertas yang beredar selalu versi final; cetak per grup di bawah tetap ada untuk keperluan khusus. */}
+                    {bolehCetak && (
+                        <div className="fi-btnrow">
+                            {draft
+                                ? <Button variant="primary" disabled disabledReason="Rilis wave dulu"><Printer className="fi-icon" aria-hidden />Cetak semua</Button>
+                                : <Link className="fi-btn fi-btn--primary" href={`/rekapan-nota/wave/${id}/cetak-semua`} target="_blank"><Printer className="fi-icon" aria-hidden />Cetak semua<ExternalLink className="fi-icon" aria-hidden /></Link>}
+                            <span className="fi-small fi-subtle">Cetak semua = rekapan dan TTF. Satu lembar per divisi · Heinz per area (HNZ1–6) dan tanpa area (HNZ-ALL) · key account & MT GDI lembar sendiri · TTF di akhir</span>
+                        </div>
+                    )}
                     <p className="fi-small fi-subtle">Kode lembar <span className="fi-mono">{kodeLembar}</span> · dimensi berbeda digabung DAN, sedimensi ATAU · tanpa pilihan = semua nota di wave.</p>
                     <div className="fi-btnrow">
                         {bolehKelola && !terkunci && <Button busy={sibuk === "grup"} disabled={!grupBerubah} disabledReason="Belum ada perubahan" onClick={simpanGrup}>Simpan grup</Button>}
@@ -327,8 +370,8 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                 <ResponsiveTable<NotaWave> title="Isi wave" columns={kolomIsi} rows={isiTersaring} rowKey={(n) => n.no_nota}
                     empty={data.nota.length === 0 ? { title: "Belum ada nota di wave ini", message: draft ? "Pilih nota dari pool di bawah." : undefined } : { title: "Tidak ada nota yang sesuai saringan", message: "Ubah kata kunci atau saringan." }}
                     mobileItem={(n) => <ListItem doc={<span className={n.dilepas ? "fi-subtle" : undefined}>{n.no_nota}</span>} amount={`${formatKarton(n.snap_total_krt)} krt`}
-                        title={`${n.customer ?? "–"} · area ${n.snap_area ?? "belum ada"}${n.snap_pareto ? " · pareto" : ""}`}
-                        meta={n.dilepas ? `Dilepas ${n.dilepas_at ? jamWita(n.dilepas_at) : ""}${n.dilepas_oleh ? ` · ${n.dilepas_oleh}` : ""} · ${n.dilepas_alasan}` : bolehLepas && !terkunci ? <Button variant="tertiary" onClick={() => { setNotaLepas(n); setDialog("takeout"); }}>Lepas…</Button> : undefined}
+                        title={`${n.customer ?? KOSONG} · area ${n.snap_area ?? "belum ada"}${n.snap_pareto ? " · pareto" : ""}`}
+                        meta={n.dilepas ? `Dilepas ${n.dilepas_at ? waktuWita(n.dilepas_at) : ""}${n.dilepas_oleh ? ` · ${n.dilepas_oleh}` : ""} · ${n.dilepas_alasan}` : bolehLepas && !terkunci ? <Button variant="tertiary" onClick={() => { setNotaLepas(n); setDialog("takeout"); }}>Lepas…</Button> : undefined}
                         badge={n.prioritas === "urgent" ? <StatusBadge tone="warn">Urgent</StatusBadge> : undefined} />} />
                 {!draft && !terkunci && <div className="fi-sect-in"><p className="fi-small fi-subtle">Area dan pareto diambil saat nota masuk wave; perubahan master sesudahnya tidak mengubah rekapan ini.</p></div>}
             </Section>
@@ -363,7 +406,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                         empty={poolRows.length === 0 ? { title: "Pool kosong", message: "Semua nota tanggal ini sudah masuk wave, atau file export belum diunggah." } : { title: "Tidak ada nota yang sesuai saringan", message: "Pilih semua hanya memilih yang terlihat setelah disaring." }}
                         mobileItem={(p) => <ListItem
                             doc={bolehKelola ? <label className="fi-check"><input type="checkbox" aria-label={`Pilih ${p.no_nota}`} checked={pilih.has(p.no_nota)} onChange={() => togglePilih(p.no_nota)} />{p.no_nota}</label> : p.no_nota}
-                            amount={`${formatKarton(p.total_krt)} krt`} title={`${p.customer ?? "–"} · area ${p.area ?? "belum ada"}`} meta={`${p.salesman ?? "–"} · ${p.jumlah_baris} baris`}
+                            amount={`${formatKarton(p.total_krt)} krt`} title={`${p.customer ?? KOSONG} · area ${p.area ?? "belum ada"}`} meta={`${p.salesman ?? "–"} · ${p.jumlah_baris} baris`}
                             badge={p.pareto ? <StatusBadge tone="info">Pareto</StatusBadge> : undefined} />} />
                 </Section>
             )}
@@ -372,7 +415,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                 {data.riwayat?.length ? (
                     <ul className="fi-hist">
                         {data.riwayat.map((r, i) => { const l = labelEvent(r.event, r.payload); return (
-                            <li key={`${r.created_at}-${i}`}><time dateTime={r.created_at}>{jamWita(r.created_at)}</time><span><b>{r.aktor}</b> · {l.apa}</span>{l.ubah && <span className="fi-chg">{l.ubah}</span>}</li>
+                            <li key={`${r.created_at}-${i}`}><time dateTime={r.created_at}>{waktuWita(r.created_at)}</time><span><b>{r.aktor}</b> · {l.apa}</span>{l.ubah && <span className="fi-chg">{l.ubah}</span>}</li>
                         ); })}
                     </ul>
                 ) : <EmptyState title="Belum ada catatan" />}
@@ -420,17 +463,34 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                 reason={{ label: "Alasan (minimal 5 huruf)", placeholder: "Mis. toko minta kirim besok; gudang toko penuh" }} onConfirm={lepas}
                 description={wave.status === "released" ? <MessageStrip tone="warn" title="Wave sudah dirilis:">barangnya mungkin sudah diambil dari rak. Kembalikan barangnya sebelum nota dilepas.</MessageStrip> : undefined}
                 facts={[
-                    ["Outlet", `${notaLepas?.customer ?? "–"} · ${formatKarton(notaLepas?.snap_total_krt)} karton`],
+                    ["Outlet", `${notaLepas?.customer ?? KOSONG} · ${formatKarton(notaLepas?.snap_total_krt)} karton`],
                     ["Kembali ke", `Pool ${TIPE_LABEL[wave.tipe]?.toLowerCase() ?? wave.tipe} ${tanggalPendek(wave.tanggal)}`],
                     ["Izin", "Setujui lepas nota"],
                 ]} />
+            <ConfirmDialog open={dialog === "isi"} onClose={() => { setDialog(null); setIsiSimpan(null); }} tag="Master konversi" confirmLabel="Simpan isi" factsAlign="start"
+                title={`Simpan isi ${isiSimpan?.n ?? ""} per karton untuk ${isiSimpan?.e.ref_kode ?? "barang ini"}?`}
+                facts={isiSimpan ? [
+                    ["Barang", `${isiSimpan.e.ref_kode}${isiSimpan.e.nama_ref ? ` · ${isiSimpan.e.nama_ref}` : ""}`],
+                    ["Isi per karton", `${isiSimpan.e.master_saat_ini ?? "belum ada"} → ${isiSimpan.n}`],
+                    ["Berlaku", "Master konversi barang: semua wave berikutnya dan cetak ulang lembar memakai isi ini"],
+                ] : []}
+                onConfirm={async () => { const d = isiSimpan!; await simpanIsi(d.e, d.n); setDialog(null); setIsiSimpan(null); }} />
+            <ConfirmDialog open={dialog === "selesai"} onClose={() => { setDialog(null); setExcSelesai(null); }} tag="Selesai" confirmLabel="Tandai selesai" factsAlign="start"
+                title={`Tandai exception ${jenisLabel(excSelesai?.jenis).toLowerCase()} ${excSelesai?.ref_kode ?? ""} selesai?`}
+                facts={excSelesai ? [
+                    ["Referensi", rujukan(excSelesai)],
+                    ["Masalah", excSelesai.keterangan ?? KOSONG],
+                    ["Konfirmasi wave", menahanKonfirmasi(excSelesai.jenis, excSelesai.status) ? "Tidak lagi ditahan exception ini" : "Tidak terpengaruh (exception informasi)"],
+                    ["Dicatat", "Selesai, atas nama Anda dengan jam saat ini"],
+                ] : []}
+                onConfirm={async () => { await tutupException(excSelesai!, "selesai"); setDialog(null); setExcSelesai(null); }} />
             <ConfirmDialog open={dialog === "abaikan"} onClose={() => { setDialog(null); setExcAbaikan(null); }}
-                title={`Abaikan exception ${(EXCEPTION_LABEL[excAbaikan?.jenis ?? ""] ?? excAbaikan?.jenis ?? "").toLowerCase()}?`} tag="Abaikan" confirmLabel="Abaikan dengan alasan"
+                title={`Abaikan exception ${jenisLabel(excAbaikan?.jenis).toLowerCase()}?`} tag="Abaikan" confirmLabel="Abaikan dengan alasan"
                 reason={{ label: "Alasan", min: 5, placeholder: "Mis. file benar; master sedang dikoreksi tim master barang" }}
                 onConfirm={async (alasan) => { if (excAbaikan) await tutupException(excAbaikan, "abaikan", alasan); setDialog(null); setExcAbaikan(null); }}
                 facts={[
-                    ["Referensi", `${excAbaikan?.ref_tipe ?? ""} ${excAbaikan?.ref_kode ?? ""}`],
-                    ["Masalah", excAbaikan?.keterangan ?? "–"],
+                    ["Referensi", excAbaikan ? rujukan(excAbaikan) : ""],
+                    ["Masalah", excAbaikan?.keterangan ?? KOSONG],
                     ...(excAbaikan && petunjukMaster(excAbaikan) ? [["Petunjuk", petunjukMaster(excAbaikan)] as [string, string]] : []),
                     ["Konfirmasi", excAbaikan && menahanKonfirmasi(excAbaikan.jenis, excAbaikan.status) ? "Tidak lagi ditahan exception ini" : "Tidak terpengaruh (exception informasi)"],
                 ]} />

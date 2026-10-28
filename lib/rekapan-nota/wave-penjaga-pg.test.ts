@@ -433,3 +433,66 @@ test("Kode outlet export (C-SF1) cocok dengan customer berakhiran principal (C-S
     const area = (await db.query(`SELECT "customerNo" k, area FROM customer WHERE "customerNo" LIKE 'C-SF2%' ORDER BY "customerNo" COLLATE "C"`)).rows;
     assert.deepEqual(area, [{ k: "C-SF2-HZ", area: "5" }, { k: "C-SF2-MS", area: "5" }, { k: "C-SF20-HZ", area: null }], "C-SF20 bukan milik C-SF2");
 });
+
+test("Isi per karton dari satuan Accurate bila master kosong: karton terhitung, tidak ada exception KONVERSI_TIDAK_ADA", T_UJI, async () => {
+    const T = "2026-10-20";
+    await db.query(`INSERT INTO item (id, no, name, isi_per_karton, unit1_name, unit2_name, ratio2) VALUES (31, 'BRG-K', 'BARANG K', NULL, 'PCS', 'KRT', 24)`);
+    assert.equal((await unggah(T, xlsx(T, [["K1", "BRG-K", 30, 30, "PCS"]]))).status, 200);
+    const w = await waveBaru(T, 1);
+    assert.equal((await tambah(w, ["K1"])).status, 200);
+    assert.equal((await transisi(w, "release")).status, 200);
+    const exc = await db.query(`SELECT ref_kode FROM wave_exception WHERE wave_id = $1 AND jenis::text = 'KONVERSI_TIDAK_ADA'`, [w]);
+    assert.deepEqual(exc.rows, [], "rasio KRT Accurate menutup kekosongan master");
+    const rek = await (await import("./query.ts")).buildRekapan(w, []);
+    assert.deepEqual(rek.withdrawal.map((r) => [r.kode_barang, r.isi_per_karton, r.sat_bsr, r.sat_kcl]), [["BRG-K", 24, 1, 6]]);
+});
+
+test("Cetak semua: per divisi, Heinz per area/pareto/tanpa area, key account & MT GDI lembar sendiri (keluar dari divisi), nota dua divisi di dua lembar", T_UJI, async () => {
+    const T = "2026-10-21";
+    await db.query(`INSERT INTO customer (id, "customerNo", name, area) VALUES (9301, 'C-H1-HZ', 'TOKO H1', '1'), (9302, 'C-H5', 'TOKO H5', '7')`);
+    // Key account: KS1 Sat & Midi (outlet_all), KG1 MT GDI (outlet_gdi), KB keduanya -> outlet_all menang (satu lembar saja).
+    await db.query(`INSERT INTO customer (id, "customerNo", name, grup_all, grup_gdi) VALUES
+        (9311, 'C-KS1-KN', 'ALFAMIDI A', 'SAT & MIDI', NULL), (9312, 'C-KG1-HZ', 'TOKO MT A', NULL, 'MT GDI'),
+        (9313, 'C-KB-MS', 'ALFAMIDI B', 'SAT & MIDI', 'MT GDI')`);
+    const H = "HEINZ ABC";
+    assert.equal((await unggah(T, xlsx(T, [
+        ["NA", "BRG-C", 1, 12, "CTN", "PRINCIPLE A"], ["NB", "BRG-C", 1, 12, "CTN", "PRINCIPLE B"],
+        ["NAB", "BRG-C", 1, 12, "CTN", "PRINCIPLE A"], ["NAB", "BRG-A", 1, 12, "CTN", "PRINCIPLE B"],
+        ["H1", "BRG-C", 1, 12, "CTN", H], ["H5", "BRG-C", 1, 12, "CTN", H], ["HX", "BRG-C", 1, 12, "CTN", H],
+        ["HP", "BRG-C", 60, 720, "CTN", H],
+        ["KS1", "BRG-C", 1, 12, "CTN", "PRINCIPLE A"], ["KG1", "BRG-C", 1, 12, "CTN", H], ["KB", "BRG-A", 1, 12, "CTN", "PRINCIPLE B"],
+    ]))).status, 200);
+    const w = await waveBaru(T, 1);
+    assert.equal((await tambah(w, ["NA", "NB", "NAB", "H1", "H5", "HX", "HP", "KS1", "KG1", "KB"])).status, 200);
+    const q = await import("./query.ts");
+    await db.query(`UPDATE pick_group SET aktif = false WHERE kode = 'JP-PRINCIPLE B'`); // grup nonaktif: lembarnya tetap dicetak
+    const lembar = await q.lembarCetakSemua(w);
+    assert.deepEqual(lembar.map((l) => [l.kode, l.terdaftar, l.rekapan.allocation.map((a) => a.no_nota).join(",")]), [
+        ["HNZ1", true, "H1"], ["HNZ5", true, "H5"], ["HNZ6", true, "HP"], ["HNZ-ALL", true, "HX"],
+        ["JP-PRINCIPLE A", true, "NA,NAB"], ["JP-PRINCIPLE B", false, "NAB,NB"],
+        ["OA-SM", true, "KB,KS1"], ["OG-MTGDI", true, "KG1"],
+    ]);
+    const nab = lembar.find((l) => l.kode === "JP-PRINCIPLE B")!.rekapan.withdrawal.map((r) => r.kode_barang);
+    assert.deepEqual(nab, ["BRG-A", "BRG-C"], "lembar B hanya barang divisi B (BRG-A milik NAB, BRG-C milik NB)");
+});
+
+test("Simpan isi per karton dari baris exception: master kosong terisi, exception selesai, tidak menimpa master", T_UJI, async () => {
+    const T = "2026-10-22";
+    await db.query(`INSERT INTO item (id, no, name, isi_per_karton) VALUES (41, 'BRG-Z', 'BARANG Z 60 PCS X 180G', NULL), (42, 'BRG-Y', 'BARANG Y', NULL)`);
+    assert.equal((await unggah(T, xlsx(T, [["Z1", "BRG-Z", 30, 30, "PCS"], ["Y1", "BRG-Y", 5, 5, "PCS"]]))).status, 200);
+    const w = await waveBaru(T, 1);
+    assert.equal((await tambah(w, ["Z1", "Y1"])).status, 200);
+    assert.equal((await transisi(w, "release")).status, 200);
+    const exc = async (kode: string) => (await db.query(`SELECT id::int, status::text FROM wave_exception WHERE wave_id = $1 AND jenis::text = 'KONVERSI_TIDAK_ADA' AND ref_kode = $2`, [w, kode])).rows[0];
+    const ez = await exc("BRG-Z");
+    const isi = (exceptionId: number, n: unknown) => jawab(rExc.PATCH(jsonReq(`/x/${w}/exception`, "PATCH", { exceptionId, aksi: "isi", isi: n }), ctx(w)));
+    assert.equal((await isi(ez.id, 0)).status, 400, "isi harus 1-10000");
+    assert.equal((await isi(ez.id, 60)).status, 200);
+    assert.equal((await exc("BRG-Z")).status, "selesai");
+    assert.equal((await db.query(`SELECT isi_per_karton FROM item WHERE no = 'BRG-Z'`)).rows[0].isi_per_karton, 60);
+    assert.equal((await isi(ez.id, 24)).status, 409, "sudah selesai");
+    // Master yang sudah terisi (layar lain lebih dulu) tidak ditimpa; exception tetap ditutup.
+    await db.query(`UPDATE item SET isi_per_karton = 12 WHERE no = 'BRG-Y'`);
+    assert.equal((await isi((await exc("BRG-Y")).id, 99)).status, 200);
+    assert.equal((await db.query(`SELECT isi_per_karton FROM item WHERE no = 'BRG-Y'`)).rows[0].isi_per_karton, 12);
+});

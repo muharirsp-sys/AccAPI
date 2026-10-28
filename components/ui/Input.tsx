@@ -1,10 +1,12 @@
+/*
+ * Tujuan: Input berlabel (label terikat, galat/bantuan lewat aria-describedby) bergaya Fiori.
+ * Caller: Belum ada pemakai (per audit desain 001); dipakai di dalam FioriScope. Untuk halaman Fiori baru, utamakan FormField + `input.fi-input`.
+ * Dependensi: React, kelas fi-* di app/fiori.css (token hanya berlaku di dalam .fiori).
+ * Main Functions: Input.
+ * Side Effects: Tidak ada.
+ */
 import React, { forwardRef, useId } from "react";
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+import { TriangleAlert } from "lucide-react";
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
     label?: string;
@@ -13,7 +15,7 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-    ({ className, type = "text", label, error, helperText, id, "aria-describedby": ariaDescribedBy, ...props }, ref) => {
+    ({ className = "", type = "text", label, error, helperText, id, "aria-describedby": ariaDescribedBy, ...props }, ref) => {
         const generatedId = useId();
         const inputId = id || generatedId;
         const errorId = error ? `${inputId}-error` : undefined;
@@ -21,40 +23,15 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         const describedBy = [ariaDescribedBy, errorId, helperId].filter(Boolean).join(" ") || undefined;
 
         return (
-            <div className="flex flex-col gap-1.5 w-full">
+            <div className="fi-field">
                 {label && (
-                    <label htmlFor={inputId} className="text-sm font-medium text-slate-300">
-                        {label} {props.required && <span className="text-red-400">*</span>}
+                    <label htmlFor={inputId} className="fi-label">
+                        {label}{props.required && <span className="fi-req" aria-hidden>*</span>}
                     </label>
                 )}
-                <div className="relative">
-                    <input
-                        id={inputId}
-                        type={type}
-                        aria-invalid={error ? true : undefined}
-                        aria-describedby={describedBy}
-                        className={cn(
-                            "flex h-10 w-full rounded-md border text-sm shadow-sm transition-colors",
-                            "bg-black/20 border-white/5 text-slate-100 placeholder:text-slate-500",
-                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500",
-                            "disabled:cursor-not-allowed disabled:opacity-50",
-                            error && "border-red-500/50 focus-visible:ring-red-500/50 focus-visible:border-red-500",
-                            className
-                        )}
-                        ref={ref}
-                        {...props}
-                    />
-                </div>
-                {error && (
-                    <span id={errorId} className="text-xs text-red-400 font-medium animate-in fade-in slide-in-from-top-1">
-                        {error}
-                    </span>
-                )}
-                {helperText && !error && (
-                    <span id={helperId} className="text-xs text-slate-500">
-                        {helperText}
-                    </span>
-                )}
+                <input id={inputId} type={type} aria-invalid={error ? true : undefined} aria-describedby={describedBy} className={`fi-input ${className}`} ref={ref} {...props} />
+                {error && <p id={errorId} className="fi-msg"><TriangleAlert className="fi-icon" aria-hidden />{error}</p>}
+                {helperText && !error && <p id={helperId} className="fi-help">{helperText}</p>}
             </div>
         );
     }

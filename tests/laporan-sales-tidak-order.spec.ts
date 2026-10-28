@@ -47,7 +47,7 @@ test("siap: ringkasan 8 dari 24 (33,3%), tabel Alasan urut jumlah dengan % dari 
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto(URL_TAB, NAV);
     const main = page.locator("main");
-    await expect(main.getByRole("tab", { name: "Tidak Order" })).toHaveAttribute("aria-selected", "true", NAV);
+    await expect(main.getByRole("navigation", { name: "Jenis laporan" }).getByRole("link", { name: "Tidak Order" })).toHaveAttribute("aria-current", "page", NAV);
     await expect(main.getByText("8 dari 24 kunjungan tidak order (33,3%)")).toBeVisible(NAV);
     const alasan = main.getByRole("table", { name: "Alasan tidak order" });
     const baris = alasan.locator("tbody tr");

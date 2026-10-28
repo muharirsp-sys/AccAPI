@@ -3,7 +3,8 @@
  *   daftar & buka database, Ganti database, Keluar (dikonfirmasi); kabar callback `?accurate=connected|error&alasan=<kode>` sebagai
  *   MessageStrip (pemetaan kode, bukan teks mentah). Fokus pindah ke elemen bernama sesudah aksi (elemen yang ditekan bisa hilang).
  * Caller: app/(dashboard)/sesi-accurate/page.tsx dan Konsol app/(dashboard)/api-wrapper/page.tsx (kartu yang sama).
- * Dependensi: GET/DELETE /api/auth/accurate-session, GET /api/auth/db-list, POST /api/auth/open-db, lib/accurate-oauth, components/fiori.
+ * Dependensi: GET/DELETE /api/auth/accurate-session, GET /api/auth/db-list, POST /api/auth/open-db, lib/accurate-oauth, lib/tampil (KOSONG),
+ *   components/fiori. Atribut Database menampilkan nama; id database hanya di title (audit desain 001 No 30).
  * Main Functions: SesiAccurate, StatusSesi.
  * Side Effects: fetch route sesi; membuang `accurate`/`alasan` dari URL saat dimuat (returnTo tetap); navigasi ke halaman authorize Accurate.
  */
@@ -14,6 +15,7 @@ import { ArrowLeftRight, Database, LogIn, LogOut, RefreshCw } from "lucide-react
 import { Button, EmptyState, KeyValues, MessageStrip, Section, StatusBadge } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { kabarAccurate, type Kabar, type ReturnTo } from "@/lib/accurate-oauth";
+import { KOSONG } from "@/lib/tampil";
 
 export type StatusSesi = { connected: boolean; databaseConnected: boolean; sessionHost: string | null; databaseId: string | null; databaseAlias: string | null };
 type Db = { id: string | number; alias: string };
@@ -236,8 +238,9 @@ export function SesiAccurate({ returnTo, kabar: kabarUrl, onStatus, judul = "Ses
                             <>
                                 {s.databaseConnected && (
                                     <KeyValues items={[
-                                        ["Database", s.databaseAlias ? `${s.databaseAlias} (id ${s.databaseId ?? "?"})` : `id ${s.databaseId ?? "?"}`],
-                                        ["Host", s.sessionHost ?? "—"],
+                                        ["Database", <span key="db" title={s.databaseId ? `id ${s.databaseId}` : undefined}>
+                                            {s.databaseAlias || `Tanpa nama (id ${s.databaseId ?? KOSONG})`}</span>],
+                                        ["Host", s.sessionHost ?? KOSONG],
                                     ]} />
                                 )}
                                 {tampilDaftar ? pemilih : (

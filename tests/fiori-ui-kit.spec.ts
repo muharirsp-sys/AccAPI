@@ -73,7 +73,7 @@ test("ponsel 390 px: tanpa gulir menyamping, tabel jadi daftar, saringan di bott
     expect(await noHorizontalOverflow(page)).toBe(true);
     const daftar = page.locator("#daftar");
     await expect(daftar.locator(".fi-tablescroll")).toBeHidden();
-    await expect(daftar.getByRole("list", { name: "Faktur" }).getByText("INV/2610/KN01412")).toBeVisible();
+    await expect(daftar.getByRole("list", { name: "Faktur" }).getByText("INV/XXXX/0002")).toBeVisible();
     await daftar.getByRole("button", { name: /Saringan/ }).click();
     const sheet = page.getByRole("dialog", { name: "Saringan" });
     await expect(sheet).toBeVisible();
@@ -85,7 +85,7 @@ test("ponsel 390 px: tanpa gulir menyamping, tabel jadi daftar, saringan di bott
     await daftar.getByRole("button", { name: "Hapus semua" }).click();
     // FCL satu kolom: detail terbuka, Kembali menampilkan daftar.
     await page.locator("#fcl").getByRole("button", { name: "Kembali ke daftar" }).click();
-    await expect(page.locator("#fcl").getByRole("button", { name: /007\/KINO\/10\/2026/ })).toBeVisible();
+    await expect(page.locator("#fcl").getByRole("button", { name: /07\/KODE-A\/10\/2026/ })).toBeVisible();
     expect(await noHorizontalOverflow(page)).toBe(true);
     await shotKit(page, "kit-default-390.png");
 });
@@ -96,8 +96,8 @@ test("dialog konfirmasi: fakta, alasan wajib, tutup dengan Escape", async ({ pag
     const kirim = daftar.getByRole("button", { name: "Kirim ke Accurate" });
     await expect(kirim).toBeDisabled();
     await expect(daftar.getByText("Pilih faktur yang akan dikirim.")).toBeVisible();
-    await daftar.getByRole("checkbox", { name: "Pilih INV/2610/KN01412" }).check();
-    await daftar.getByRole("checkbox", { name: "Pilih INV/2610/KN01413" }).check();
+    await daftar.getByRole("checkbox", { name: "Pilih INV/XXXX/0002" }).check();
+    await daftar.getByRole("checkbox", { name: "Pilih INV/XXXX/0003" }).check();
     await kirim.click();
     const dialog = page.getByRole("dialog", { name: "Kirim 2 faktur ke Accurate?" });
     await expect(dialog).toBeVisible();
@@ -115,15 +115,15 @@ test("dialog konfirmasi: fakta, alasan wajib, tutup dengan Escape", async ({ pag
     await tolak.getByRole("button", { name: "Batal" }).click();
 
     // Baris yang tersembunyi saringan tidak ikut aksi massal; pilih-semua hanya menyentuh baris terlihat.
-    await daftar.getByRole("checkbox", { name: "Pilih INV/2610/KN01412" }).uncheck();
-    await daftar.getByRole("checkbox", { name: "Pilih INV/2610/KN01415" }).check();
+    await daftar.getByRole("checkbox", { name: "Pilih INV/XXXX/0002" }).uncheck();
+    await daftar.getByRole("checkbox", { name: "Pilih INV/XXXX/0005" }).check();
     await daftar.getByLabel("Status").selectOption("Siap kirim");
     await expect(daftar.getByText("1 faktur dipilih")).toBeVisible();
     await daftar.getByRole("checkbox", { name: "Pilih semua baris" }).check();
     await expect(daftar.getByText("2 faktur dipilih")).toBeVisible();
     await daftar.getByRole("button", { name: "Hapus semua" }).click();
     await expect(daftar.getByText("3 faktur dipilih")).toBeVisible();
-    await daftar.getByRole("checkbox", { name: "Pilih INV/2610/KN01415" }).uncheck();
+    await daftar.getByRole("checkbox", { name: "Pilih INV/XXXX/0005" }).uncheck();
 
     await kirim.click();
     await dialog.getByRole("button", { name: "Kirim 2 faktur" }).click();
@@ -132,7 +132,7 @@ test("dialog konfirmasi: fakta, alasan wajib, tutup dengan Escape", async ({ pag
     await page.keyboard.press("Escape");
     await expect(dialog).toBeVisible();
     await expect(dialog).toBeHidden();
-    await expect(daftar.getByRole("row", { name: /INV\/2610\/KN01412/ }).getByText("Terposting")).toBeVisible();
+    await expect(daftar.getByRole("row", { name: /INV\/XXXX\/0002/ }).getByText("Terposting")).toBeVisible();
 });
 
 test("mode gelap dan density bertahan setelah muat ulang", async ({ page }) => {
@@ -141,7 +141,7 @@ test("mode gelap dan density bertahan setelah muat ulang", async ({ page }) => {
     await page.getByRole("group", { name: "Mode" }).getByRole("button", { name: "Gelap" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
     await expect(fiori).toHaveCSS("background-color", "rgb(14, 20, 28)");
-    await page.getByRole("group", { name: "Density" }).getByRole("button", { name: "Cozy" }).click();
+    await page.getByRole("group", { name: "Kerapatan" }).getByRole("button", { name: "Lega" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-density", "cozy");
     await expect(page.locator("#tombol").getByRole("button", { name: "Ekspor" })).toHaveCSS("height", "44px");
     await page.reload();
@@ -151,7 +151,7 @@ test("mode gelap dan density bertahan setelah muat ulang", async ({ page }) => {
     await shotKit(page, "kit-default-1440-dark-cozy.png");
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.getByRole("group", { name: "Mode" }).getByRole("button", { name: "Sistem" }).click();
-    await page.getByRole("group", { name: "Density" }).getByRole("button", { name: "Otomatis" }).click();
+    await page.getByRole("group", { name: "Kerapatan" }).getByRole("button", { name: "Otomatis" }).click();
     await expect(page.locator("html")).not.toHaveAttribute("data-scheme", /.+/);
     await expect(page.locator("html")).not.toHaveAttribute("data-density", /.+/);
     await expect(fiori).toHaveCSS("background-color", "rgb(244, 246, 249)");

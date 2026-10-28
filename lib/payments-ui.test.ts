@@ -59,7 +59,7 @@ test("izin: tanpa kunci = alasan terlihat tanpa nama kunci mentah", () => {
     assert.equal(iz.keranjang, undefined);
     assert.equal(iz.unggah, undefined);
     assert.match(iz.ubah ?? "", /belum punya izin mengubah isian rekaman/);
-    assert.match(iz.restore ?? "", /memulihkan backup/);
+    assert.match(iz.restore ?? "", /memulihkan cadangan/);
     assert.match(iz.setelan ?? "", /setelan dan nomor SPPD/);
     for (const alasan of Object.values(iz)) assert.doesNotMatch(alasan ?? "", /payments\.|sppd\./);
 });
@@ -81,7 +81,7 @@ test("S7-1c: unggah/manual/keranjang/ekspor = kunci lama ∧ kunci baru (PK-2)",
 test("tanggal: tampil dd/mm/yyyy, isian YYYY-MM-DD, besok menurut WITA (bukan UTC)", () => {
     assert.equal(tanggalTampil("2026-10-06"), "06/10/2026");
     assert.equal(tanggalTampil("06/10/2026"), "06/10/2026");
-    assert.equal(tanggalTampil(""), "—");
+    assert.equal(tanggalTampil(""), "-"); // KOSONG (lib/tampil), bukan em dash
     assert.equal(keYmd("6/10/2026"), "2026-10-06");
     // 9 Okt 23.30 UTC = 10 Okt 07.30 WITA → besok = 11 Okt (UTC akan menjawab 10 Okt).
     assert.equal(besokWita(new Date("2026-10-09T23:30:00Z")), "2026-10-11");

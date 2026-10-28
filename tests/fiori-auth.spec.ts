@@ -150,7 +150,7 @@ test("lupa sandi: layar identik untuk semua jawaban server non-5xx, dengan kalim
         await page.getByLabel("Email").fill(email);
         await page.getByRole("button", { name: "Kirim tautan" }).click();
         await expect(kartu(page)).toContainText("Bila email terdaftar, tautan dikirim.");
-        await expect(kartu(page)).toContainText("Tidak menerima surel? Minta admin mengatur sandi Anda.");
+        await expect(kartu(page)).toContainText("Tidak menerima email? Minta admin mengatur sandi Anda.");
         await expect(page.getByRole("heading", { level: 1, name: "Permintaan diterima" })).toBeFocused();
         expect(r).toHaveLength(1);
         const body = r[0].postDataJSON() as { email: string; redirectTo: string };

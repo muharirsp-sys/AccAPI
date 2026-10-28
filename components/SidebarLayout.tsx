@@ -4,17 +4,19 @@
  * Caller: app/(dashboard)/layout.tsx.
  * Dependensi: Better Auth client, RBAC, katalog workspace-navigation, components/fiori (token, SchemeSwitcher), ChatWidget (Bantuan).
  * Main Functions: SidebarLayout, useLocalAuthRole; drawer menutup saat kembali ke desktop.
- * Side Effects: Navigasi, sign-out, membuka chat bantuan; preferensi mode/density lewat SchemeSwitcher.
+ * Side Effects: Navigasi, sign-out (gagal = pesan di menu profil, tanpa pindah halaman), membuka chat bantuan;
+ *   preferensi mode/kerapatan lewat SchemeSwitcher.
  */
 "use client";
-import { createContext, Fragment, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { KeyRound, LifeBuoy, LogOut, Menu, Search, X } from "lucide-react";
+import { KeyRound, LifeBuoy, LoaderCircle, LogOut, Menu, Search, X } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { canAccessPathWithKeys } from "@/lib/rbac";
 import { HOME_ITEM, activeNavigationItem, navigationForPermissions, profileFor, roleShortcuts, type WorkspaceGroup, type WorkspaceItem } from "@/config/workspace-navigation";
 import { fioriClass } from "@/components/fiori/Scope";
+import { MessageStrip } from "@/components/fiori/core";
 import { SchemeSwitcher } from "@/components/fiori/interactive";
 import Dialog from "@/components/ui/Dialog";
 import { OPEN_HELP_EVENT } from "@/components/ChatWidget";
@@ -36,12 +38,8 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, prima
     const items = groups.flatMap(group => group.items);
     const home = canAccessPathWithKeys("/", keys) ? [HOME_ITEM] : [];
     const active = activeNavigationItem(pathname, [...home, ...items]);
-    // Gerbang klien (S7-sesi): layout server TIDAK dijalankan ulang pada navigasi klien (Link/router.push) maupun saat router memasang
-    // ulang layout dari cache (Back sesudah pindah grup route), jadi URL kini SELALU dinilai di sini dengan kunci dan fungsi yang sama
-    // dengan layout — hasilnya identik untuk path yang memang dirender server. Dulu path awal dipercaya (`useState(pathname)`), dan
-    // pemasangan ulang di halaman terlarang mencatatnya sebagai "sudah digerbang" (tinjauan #159). Otoritas tetap server (layout + guard API).
-    // Konsekuensi untuk spec Playwright yang memalsukan `permKeys` di payload RSC (mode bypass): kunci GERBANG halaman yang diuji harus
-    // tetap ada — membuangnya kini menampilkan Akses ditolak, sama seperti server menolak halaman itu untuk akun nyata.
+    // Gerbang klien: layout server tidak berjalan ulang pada navigasi klien atau pemasangan ulang dari cache (Back), jadi URL selalu dinilai
+    // di sini dengan kunci yang sama (tinjauan #159). Otoritas tetap server; spec yang memalsukan permKeys harus menyisakan kunci gerbang halamannya.
     const pathDiizinkan = canAccessPathWithKeys(pathname, keys);
     const profile = profileFor(primaryGroup, keys);
     const roleLabel = profile?.label ?? "CV. Surya Perkasa";
@@ -59,6 +57,16 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, prima
         desktop.addEventListener("change", closeOnDesktop);
         return () => desktop.removeEventListener("change", closeOnDesktop);
     }, []);
+
+    // Keluar: alurnya sama (signOut lalu ke /login); gagal tidak lagi diam-diam pindah halaman karena sesi bisa masih aktif.
+    const [keluar, setKeluar] = useState<"diam" | "sibuk" | "gagal">("diam");
+    const keluarSesi = async () => {
+        if (keluar === "sibuk") return;
+        setKeluar("sibuk");
+        const hasil = await authClient.signOut().catch((galat: unknown) => ({ error: galat }));
+        if (hasil?.error) { setKeluar("gagal"); return; }
+        window.location.href = "/login";
+    };
 
     const nav = (label: string, onNavigate?: () => void) => (
         <SideNav label={label} home={home} groups={groups} activeHref={active?.href} userName={userName} roleLabel={roleLabel} onNavigate={onNavigate} />
@@ -98,9 +106,17 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, prima
                 <button type="button" className="fi-menu-item" popoverTarget="fi-menu-profile" popoverTargetAction="hide" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_HELP_EVENT, { detail: { returnFocus: avatarRef.current } }))}>
                     <LifeBuoy className="fi-icon" aria-hidden /><b>Bantuan</b><small>Asisten dan panduan</small>
                 </button>
-                <button type="button" className="fi-menu-item" onClick={async () => { await authClient.signOut().catch(() => undefined); window.location.href = "/login"; }}>
-                    <LogOut className="fi-icon" aria-hidden /><b>Keluar</b><small>Akhiri sesi</small>
+                <button type="button" className="fi-menu-item" disabled={keluar === "sibuk"} aria-busy={keluar === "sibuk" || undefined} onClick={keluarSesi}>
+                    {keluar === "sibuk" ? <LoaderCircle className="fi-icon fi-spin" aria-hidden /> : <LogOut className="fi-icon" aria-hidden />}
+                    <b>Keluar</b><small>{keluar === "sibuk" ? "Mengakhiri sesi…" : "Akhiri sesi"}</small>
                 </button>
+                {keluar === "gagal" && (
+                    <div className="fi-menu-row">
+                        <MessageStrip tone="neg" title="Keluar belum berhasil.">
+                            Sesi mungkin masih aktif. Coba lagi, atau <a href="/login">buka halaman masuk</a>.
+                        </MessageStrip>
+                    </div>
+                )}
             </div>
         </header>
         {nav("Menu ruang kerja")}
@@ -132,18 +148,20 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, prima
 function SideNav({ label, home, groups, activeHref, userName, roleLabel, onNavigate }: {
     label: string; home: WorkspaceItem[]; groups: WorkspaceGroup[]; activeHref?: string; userName: string; roleLabel: string; onNavigate?: () => void;
 }) {
+    const idPrefix = useId();
     const link = (item: WorkspaceItem) => {
         const Icon = item.icon;
-        return <Link key={item.href} href={item.href} prefetch={false} onClick={onNavigate} aria-current={activeHref === item.href ? "page" : undefined}>
+        return <li key={item.href}><Link href={item.href} prefetch={false} onClick={onNavigate} aria-current={activeHref === item.href ? "page" : undefined}>
             <Icon className="fi-icon" aria-hidden />{item.name}
-        </Link>;
+        </Link></li>;
     };
+    // Tiap kelompok = daftar bernama (aria-labelledby) supaya pembaca layar mengumumkan "Keuangan, daftar, 6 item".
     return <nav className={`${fioriClass} fi-sidenav`} aria-label={label}>
-        {home.map(link)}
-        {groups.map(group => <Fragment key={group.id}>
-            <p className="fi-sidenav-grp">{group.name}</p>
-            {group.items.map(link)}
-        </Fragment>)}
+        {home.length > 0 && <ul>{home.map(link)}</ul>}
+        {groups.map(group => <div key={group.id}>
+            <p id={`${idPrefix}-${group.id}`} className="fi-sidenav-grp">{group.name}</p>
+            <ul aria-labelledby={`${idPrefix}-${group.id}`}>{group.items.map(link)}</ul>
+        </div>)}
         {!home.length && !groups.length && <p className="fi-small fi-subtle">Belum ada modul yang dapat diakses. Hubungi admin.</p>}
         <p className="fi-sidenav-foot"><b>{userName}</b>{roleLabel}</p>
     </nav>;

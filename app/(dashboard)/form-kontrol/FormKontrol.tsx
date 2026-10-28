@@ -65,7 +65,7 @@ export default function FormKontrol({ permKeys }: { permKeys: string[] }) {
         return `${pathname}?${p}`;
     };
     const Tab = aktif ? TAB[aktif.key] : null;
-    // Peninjau B R-b2: di ponsel bilah tab tergulir mendatar — tab Toko Baru berlencana (ada NOO menunggu) atau tab aktif digeser ke layar.
+    // Di ponsel bilah tab tergulir mendatar: tab Toko Baru berlencana (ada NOO menunggu, atau jumlahnya gagal dimuat) atau tab aktif digeser ke layar.
     const subnavRef = useRef<HTMLElement>(null);
     const aktifKey = aktif?.key;
     useEffect(() => {
@@ -90,7 +90,6 @@ export default function FormKontrol({ permKeys }: { permKeys: string[] }) {
                     </Link>
                 )}
             </div>
-            <p>Sistem Kontrol SUPER — AO 240 bukan untuk ditawar, AO 240 untuk dicapai.</p>
             {scope?.allowedSalesCodes && scope.allowedSalesCodes.length > 0 && (
                 <p>Tampilan terkunci ke data Anda{scope.salesName || scope.salesCode ? ` (${scope.salesName ?? scope.salesCode})` : ""}.</p>
             )}
@@ -121,17 +120,21 @@ export default function FormKontrol({ permKeys }: { permKeys: string[] }) {
                     <nav ref={subnavRef} className="fi-subnav" aria-label="Modul Form Kontrol">
                         {visibleTabs.map((t) => (
                             <Link key={t.key} href={hrefTab(t.key)} replace scroll={false} data-tab={t.key} aria-current={t.key === aktif?.key ? "page" : undefined}
-                                aria-label={t.key === "noo" && nooMenunggu ? `${t.label} (${nooMenunggu} menunggu persetujuan)` : undefined}>
+                                aria-label={t.key !== "noo" || !nooMenunggu ? undefined
+                                    : nooMenunggu === "galat" ? `${t.label} (jumlah yang menunggu gagal dimuat)` : `${t.label} (${nooMenunggu} menunggu persetujuan)`}
+                                title={t.key === "noo" && nooMenunggu === "galat" ? "Jumlah toko baru yang menunggu persetujuan gagal dimuat. Buka tab ini untuk memeriksa." : undefined}>
                                 {t.label}
-                                {t.key === "noo" && nooMenunggu ? <span className="fi-count" aria-hidden>{nooMenunggu}</span> : null}
+                                {t.key === "noo" && nooMenunggu ? <span className="fi-count" aria-hidden>{nooMenunggu === "galat" ? "!" : nooMenunggu}</span> : null}
                             </Link>
                         ))}
                     </nav>
                 )}
                 {Tab ? (
-                    <section id="form-kontrol-panel" aria-label={aktif!.label} className="grid gap-4 min-w-0">
+                    // Bukan landmark: tiap tab punya judul h2 dan (bila perlu) section bernama sendiri. Landmark berlabel sama dengan tab (mis. "Rute Hari Ini")
+                    // di atas section "Rute hari ini" akan menjadi dua region kembar.
+                    <div id="form-kontrol-panel" className="grid gap-4 min-w-0">
                         <Tab key={aktif!.key} scope={scope} />
-                    </section>
+                    </div>
                 ) : (
                     <EmptyState title="Belum ada modul Form Kontrol untuk peran Anda" message="Hubungi admin bila ini keliru." />
                 )}

@@ -71,7 +71,7 @@ export default function TidakOrder({ bulan }: PropsTab) {
                 <div className={`space-y-3 ${status === "memuat" ? "fi-busy" : ""}`} aria-busy={status === "memuat" || undefined}>
                     <div>
                         <p className="text-lg"><strong>{angka(d.tidakOrder)}</strong> dari <strong>{angka(d.kunjungan)}</strong> kunjungan tidak order (<strong>{pct(persen(d.tidakOrder, d.kunjungan))}</strong>)</p>
-                        <p className="text-sm opacity-70">Kunjungan = toko × principal per hari yang sudah punya hasil di Form Kontrol (order atau tidak order); toko yang belum diisi hasilnya tidak dihitung.</p>
+                        <p className="fi-small fi-muted">Kunjungan = toko × principal per hari yang sudah punya hasil di Form Kontrol (order atau tidak order); toko yang belum diisi hasilnya tidak dihitung.</p>
                     </div>
                     <ResponsiveTable
                         title="Alasan tidak order" count={d.alasan.length || undefined}

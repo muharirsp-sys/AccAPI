@@ -5,16 +5,17 @@
  * Dependensi: GET|POST /api/promo-rule/from-summary, GET|POST /api/promo-rule/approval; components/fiori/*; lib/promo-ui.
  * Main Functions: LangkahGerbang, Terbit (tipe).
  * Side Effects: HTTP; Muat menulis `promo_rule` irisan surat itu; persetujuan menulis promo_letter_approval. Simulasi tidak menulis apa pun.
+ *   Galat Muat dan pernyataan tampil di dialog (dialog tetap terbuka); hasil sukses digulirkan ke strip supaya terlihat.
  *
  * Hanya publikasi yang muncul: menerbitkan adalah satu-satunya tempat seseorang menyatakan sudah memeriksa surat, dan gerbang yang menahan
  * faktur tidak boleh menerima yang belum diperiksa. Program yang tidak bisa dinyatakan utuh ditolak beserta sebabnya, bukan dimuat separuh.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FlaskConical, ShieldCheck, Upload } from "lucide-react";
 import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, type Load } from "@/components/fiori/interactive";
-import { jamWita } from "@/lib/rekapan-nota/ui";
+import { KOSONG, sebabHttp, waktuWita } from "@/lib/tampil";
 import { BEBAN, bebanDari, manfaat, tgl } from "@/lib/promo-ui";
 
 export type Terbit = {
@@ -31,6 +32,9 @@ type Simulasi = {
 type Persetujuan = { dicentang: boolean; dicentangOleh: string; dicentangPada: string | null; catatan: string; buktiNama: string; buktiUkuran: number; buktiOleh: string; buktiPada: string | null };
 type Laporan = { tone: "pos" | "warn" | "neg"; judul: string; rincian: string[] };
 
+/** Jaringan putus menjadi kalimat sebab, bukan "Failed to fetch". */
+const minta = (url: string, init?: RequestInit) => fetch(url, init).catch(() => { throw new Error(sebabHttp(0)); });
+
 export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, bolehUbah }: { publikasi: Load<Terbit[]>; muatUlang: () => void; draftAktif?: string; bolehUbah: boolean }) {
     const [buka, setBuka] = useState<{ entry: Terbit; sim: Simulasi; setuju: Persetujuan } | null>(null);
     const [catatan, setCatatan] = useState("");
@@ -38,19 +42,24 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
     const [dialog, setDialog] = useState<"nyatakan" | "muat" | null>(null);
     const [laporan, setLaporan] = useState<Laporan | null>(null);
     const daftar = publikasi.data ?? [];
+    const laporanRef = useRef<HTMLDivElement>(null);
+    // Pengguna yang sudah menggulir ke tombol aksi tetap melihat hasilnya.
+    useEffect(() => {
+        if (laporan) laporanRef.current?.scrollIntoView({ block: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    }, [laporan]);
     const urut = draftAktif ? [...daftar].sort((a, b) => Number(b.draft_id === draftAktif) - Number(a.draft_id === draftAktif)) : daftar;
 
     /** `jagaLaporan`: dipanggil sesudah aksi tulis — pesan hasil aksi itu tidak boleh terhapus. */
     async function simulasikan(entry: Terbit, jagaLaporan = false) {
         setSibuk(`sim-${entry.draft_id}`); if (!jagaLaporan) setLaporan(null);
         try {
-            const res = await fetch(`/api/promo-rule/from-summary?simulate=${encodeURIComponent(entry.draft_id)}`);
+            const res = await minta(`/api/promo-rule/from-summary?simulate=${encodeURIComponent(entry.draft_id)}`);
             const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; simulasi: Simulasi; persetujuan: Persetujuan };
-            if (!res.ok || !body.ok) throw new Error(body.error ?? "Simulasi gagal");
+            if (!res.ok || !body.ok) throw new Error(body.error ?? sebabHttp(res.status));
             setBuka({ entry, sim: body.simulasi, setuju: body.persetujuan });
             setCatatan(body.persetujuan?.catatan ?? "");
         } catch (e) {
-            setLaporan({ tone: "neg", judul: e instanceof Error ? e.message : "Simulasi gagal", rincian: [] });
+            setLaporan({ tone: "neg", judul: `Simulasi belum berhasil. ${e instanceof Error ? e.message : sebabHttp(0)}`, rincian: [] });
         } finally {
             setSibuk(null);
         }
@@ -62,9 +71,9 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
         form.append("draftId", entry.draft_id); form.append("suratProgram", entry.surat_program); form.append("principal", entry.principal); form.append("note", catatan);
         if (opsi.centang !== undefined) form.append("confirmed", String(opsi.centang));
         if (opsi.file) form.append("file", opsi.file);
-        const res = await fetch("/api/promo-rule/approval", { method: "POST", body: form });
+        const res = await minta("/api/promo-rule/approval", { method: "POST", body: form });
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
-        if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal menyimpan persetujuan");
+        if (!res.ok || !body.ok) throw new Error(body.error ?? `Persetujuan belum tersimpan. ${sebabHttp(res.status)}`);
         setLaporan({ tone: "pos", judul: opsi.file ? `Bukti “${opsi.file.name}” tersimpan.` : opsi.centang ? "Program dinyatakan benar." : "Pernyataan dicabut.", rincian: [] });
         setDialog(null);
         await simulasikan(entry, true);
@@ -72,15 +81,20 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
 
     async function unggahBukti(entry: Terbit, file: File) {
         setSibuk("bukti");
-        try { await setujui(entry, { file }); } catch (e) { setLaporan({ tone: "neg", judul: e instanceof Error ? e.message : String(e), rincian: [] }); } finally { setSibuk(null); }
+        try { await setujui(entry, { file }); } catch (e) { setLaporan({ tone: "neg", judul: e instanceof Error ? e.message : sebabHttp(0), rincian: [] }); } finally { setSibuk(null); }
     }
 
     async function muat(entry: Terbit) {
-        const res = await fetch("/api/promo-rule/from-summary", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ draftId: entry.draft_id }) });
+        const res = await minta("/api/promo-rule/from-summary", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ draftId: entry.draft_id }) });
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; ditolak?: string[]; catatan?: string[]; aturan?: number; suratProgram?: string; outlet?: number };
         // Yang DITOLAK tetap diperlihatkan meski pemuatannya gagal: sebabnya itulah yang harus diperbaiki.
         const rincian = [...(body.ditolak ?? []), ...(body.catatan ?? [])];
-        if (!res.ok || !body.ok) { setDialog(null); setLaporan({ tone: "neg", judul: body.error ?? "Gagal memuat", rincian }); return; }
+        if (!res.ok || !body.ok) {
+            // Dialog tetap terbuka dan menampilkan sebabnya; daftar yang ditolak juga ada di strip halaman.
+            const sebab = body.error ?? `Aturan belum termuat. ${sebabHttp(res.status)}`;
+            setLaporan({ tone: "neg", judul: sebab, rincian });
+            throw new Error(sebab);
+        }
         setDialog(null);
         setLaporan({ tone: rincian.length ? "warn" : "pos", judul: `${body.aturan} aturan surat ${body.suratProgram} dimuat ke gerbang faktur${body.outlet ? `; ${body.outlet} outlet peserta ikut dimuat` : ""}.`, rincian });
         muatUlang();
@@ -90,10 +104,10 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
     const kolom: Column<Terbit>[] = [
         { key: "surat", header: "Surat", cell: (e) => <><span className="fi-mono">{e.surat_program || "tanpa nomor"}</span><span className="fi-sub">{e.principal}</span></> },
         { key: "program", header: "Program", cell: (e) => <>{e.nama_program || e.title}<span className="fi-sub">{e.kelompok}</span></> },
-        { key: "periode", header: "Periode", secondary: true, cell: (e) => <span className="fi-small">{tgl(e.period?.start) || "—"} – {tgl(e.period?.end) || "—"}</span> },
+        { key: "periode", header: "Periode", secondary: true, cell: (e) => <span className="fi-small">{tgl(e.period?.start) || KOSONG} – {tgl(e.period?.end) || KOSONG}</span> },
         { key: "isi", header: "Isi", secondary: true, cell: (e) => <span className="fi-small">{e.programs} program · {e.codes.length} barang</span> },
         { key: "status", header: "Gerbang faktur", cell: (e) => e.sudahDimuat ? <StatusBadge tone="pos">Dimuat</StatusBadge> : <StatusBadge tone="neu">Belum dimuat</StatusBadge> },
-        { key: "aksi", header: "", cell: (e) => <Button variant="tertiary" icon={<FlaskConical className="fi-icon" aria-hidden />} busy={sibuk === `sim-${e.draft_id}`} onClick={() => void simulasikan(e)}>{buka?.entry.draft_id === e.draft_id ? "Muat ulang simulasi" : "Simulasikan"}</Button> },
+        { key: "aksi", header: "Tindakan", cell: (e) => <Button variant="tertiary" icon={<FlaskConical className="fi-icon" aria-hidden />} busy={sibuk === `sim-${e.draft_id}`} onClick={() => void simulasikan(e)}>{buka?.entry.draft_id === e.draft_id ? "Muat ulang simulasi" : "Simulasikan"}</Button> },
     ];
 
     const s = buka?.sim; const st = buka?.setuju;
@@ -103,7 +117,7 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
 
     return (
         <Section id="gerbang" title="Langkah berikutnya: masuk gerbang faktur" subtitle="terbit dipakai order; gerbang faktur dan Rekap baru berubah setelah disetujui dan dimuat">
-            {laporan && <div className="fi-sect-in"><MessageStrip tone={laporan.tone} title={laporan.judul} onClose={() => setLaporan(null)}>{laporan.rincian.length ? <ul style={{ margin: "4px 0 0", paddingLeft: "1rem" }}>{laporan.rincian.slice(0, 20).map((x) => <li key={x}>{x}</li>)}</ul> : null}</MessageStrip></div>}
+            {laporan && <div className="fi-sect-in" ref={laporanRef}><MessageStrip tone={laporan.tone} title={laporan.judul} onClose={() => setLaporan(null)}>{laporan.rincian.length ? <ul style={{ margin: "4px 0 0", paddingLeft: "1rem" }}>{laporan.rincian.slice(0, 20).map((x) => <li key={x}>{x}</li>)}</ul> : null}</MessageStrip></div>}
             {publikasi.status === "memuat" && !publikasi.data ? <div className="fi-sect-in"><Skeleton rows={3} label="Memuat publikasi" /></div> : (
                 <ResponsiveTable<Terbit> title="Publikasi Summary" count={daftar.length} columns={kolom} rows={urut} rowKey={(e) => e.draft_id} status={publikasi.status} error={publikasi.error} onRetry={muatUlang}
                     empty={{ title: "Belum ada publikasi Summary", message: "Terbitkan draf di atas; setelah itu ia muncul di sini untuk disetujui dan dimuat." }}
@@ -130,20 +144,20 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
                                     <td className="fi-tnum">{Number(g.triggerQty) > 0 && g.triggerUnit !== "SEMUA" ? `${Number(g.triggerQty).toLocaleString("id-ID")} ${g.triggerUnit}` : "tanpa syarat"}</td>
                                     <td className="fi-small">{tgl(g.periodStart)} – {tgl(g.periodEnd)}</td>
                                     <td className="fi-small">{g.channel || "semua channel"}{g.outletList && <span className="fi-sub">{g.outletListMode === "EXCLUDE" ? "kecuali" : "hanya"} {g.outletList}</span>}</td>
-                                    <td className="fi-tnum">{g.itemCodes.length || "—"}</td>
+                                    <td className="fi-tnum">{g.itemCodes.length || KOSONG}</td>
                                 </tr>))}</tbody>
                         </table></div>
                     )}
                     {s.refused.length > 0 && <MessageStrip tone="warn" title={`${s.refused.length} program ditolak:`}><ul style={{ margin: "4px 0 0", paddingLeft: "1rem" }}>{s.refused.map((r) => <li key={r}>{r}</li>)}</ul></MessageStrip>}
                     {s.trial.unexplained.length > 0 && (
                         <details className="fi-small"><summary style={{ cursor: "pointer" }}>{s.trial.unexplained.length} baris nyata berpotongan yang tidak dijelaskan aturan ini</summary>
-                            <ul style={{ paddingLeft: "1rem" }}>{s.trial.unexplained.slice(0, 30).map((u, i) => <li key={i}><span className="fi-mono">{u.soNo}</span> {u.itemCode} — {u.reason}</li>)}</ul>
+                            <ul style={{ paddingLeft: "1rem" }}>{s.trial.unexplained.slice(0, 30).map((u, i) => <li key={i}><span className="fi-mono">{u.soNo}</span> {u.itemCode}: {u.reason}</li>)}</ul>
                         </details>
                     )}
                     <KeyValues items={[
                         ["Simulasi atas faktur nyata", "Sudah dilihat di atas"],
                         ["Bukti tanda tangan OM dan tim (PDF)", st.buktiNama ? <a href={`/api/promo-rule/approval?draftId=${encodeURIComponent(buka.entry.draft_id)}&file=1`}>{st.buktiNama} ({Math.round(st.buktiUkuran / 1024)} KB) · {st.buktiOleh}</a> : <span className="fi-why">belum ada</span>],
-                        ["Pernyataan program benar", st.dicentang ? `dinyatakan ${st.dicentangOleh}${st.dicentangPada ? ` · ${jamWita(st.dicentangPada)}` : ""}` : <span className="fi-why">belum</span>],
+                        ["Pernyataan program benar", st.dicentang ? `dinyatakan ${st.dicentangOleh}${st.dicentangPada ? ` · ${waktuWita(st.dicentangPada)}` : ""}` : <span className="fi-why">belum</span>],
                     ]} />
                     {bolehUbah && (
                         <div className="fi-btnrow">
@@ -152,7 +166,7 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
                             <Button variant="primary" disabled={!siapMuat} disabledReason="Lengkapi bukti tanda tangan dan pernyataan" onClick={() => setDialog("muat")}>{entri?.sudahDimuat ? "Muat ulang ke gerbang faktur…" : "Muat ke gerbang faktur…"}</Button>
                         </div>
                     )}
-                    <VariantNote bl="BL-53">Hari ini pernyataan boleh dibuat siapa pun yang berizin ubah Summary, termasuk penerbitnya sendiri. Usulan: maker-checker lunak — oleh orang lain, atau oleh penerbit dengan alasan tercatat.</VariantNote>
+                    <VariantNote bl="BL-53">Hari ini pernyataan boleh dibuat siapa pun yang berizin ubah Summary, termasuk penerbitnya sendiri. Belum ada pemeriksa kedua (orang lain, atau penerbit dengan alasan tercatat).</VariantNote>
                 </div>
             )}
 
@@ -168,7 +182,7 @@ export default function LangkahGerbang({ publikasi, muatUlang, draftAktif, boleh
                 <ConfirmDialog open={dialog === "muat"} onClose={() => setDialog(null)} tag="Gerbang faktur" title={`Muat ${s?.ruleCount ?? 0} aturan ${buka.entry.surat_program} ke gerbang faktur?`}
                     confirmLabel={entri?.sudahDimuat ? "Muat ulang" : "Muat aturan"} onConfirm={() => muat(buka.entry)}
                     description={entri?.sudahDimuat ? <MessageStrip tone="warn" title="Surat ini sudah pernah dimuat.">Muat ulang MENGGANTI aturan dari surat ini; aturan dari Excel, tarif outlet, dan yang diketik tangan tidak tersentuh. Aturan surat yang diubah manual membuat muat ulang gagal.</MessageStrip> : undefined}
-                    facts={[["Aturan", String(s?.ruleCount ?? 0)], ["Ditolak", s?.refused.length ? `${s.refused.length} program (tidak dimuat)` : "Tidak ada"], ["Berlaku", "Gerbang faktur, Rekap promo, dan Normalisasi diskon memakainya mulai sekarang"]]} />
+                    facts={[["Aturan", String(s?.ruleCount ?? 0)], ["Ditolak", s?.refused.length ? `${s.refused.length} program (tidak dimuat)` : "Tidak ada"], ["Berlaku", "Gerbang faktur, Rekap Promo, dan Normalisasi Diskon memakainya mulai sekarang"]]} />
             )}
         </Section>
     );

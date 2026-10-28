@@ -3,9 +3,9 @@
  *   plus Riwayat kirim (Kirim ulang untuk run gagal; run macet berlabel BL-29). Dialog Kirim menggantikan window.confirm.
  * Caller: app/(dashboard)/laporan-harian/page.tsx.
  * Dependensi: POST /api/laporan-harian/upload, GET /api/laporan-harian/[runId]/preview, POST /api/laporan-harian/[runId]/send,
- *   GET /api/laporan-harian/runs; components/fiori/{core,interactive}; lib/laporan-harian/ui.
+ *   GET /api/laporan-harian/runs; components/fiori/{core,interactive}; lib/laporan-harian/ui; lib/tampil (KOSONG, sebabHttp, waktuWita).
  * Main Functions: LaporanHarian.
- * Side Effects: HTTP unggah/baca/kirim email. Logic BL-29/58 tidak ditulis (varian berlabel).
+ * Side Effects: HTTP unggah/baca/kirim email. Logic BL-29/58 tidak ditulis (varian berlabel). Galat jaringan dan HTTP tampil sebagai sebab + langkah (lib/tampil), tanpa kode status.
  */
 "use client";
 
@@ -17,8 +17,10 @@ import {
     type Column, type FlowStep,
 } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactive";
-import { ambil, jamWita, tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { ambil, tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { KOSONG, sebabHttp, waktuWita } from "@/lib/tampil";
 import { modeDariNote, rupiah, statusRun } from "@/lib/laporan-harian/ui";
+import KirimPrincipal from "./KirimPrincipal";
 
 type Summary = { spv: string; rows: number; dpp: number; ao: number; ec: number; ia: number };
 type Recipient = { keyword: string; groupType: string; fileName: string; emails: string[] };
@@ -41,12 +43,15 @@ const n = (v: number) => v.toLocaleString("id-ID");
 
 async function readJson<T>(response: Response): Promise<T> {
     const text = await response.text();
-    if (!text) throw new Error(`Server tidak mengirim respons (HTTP ${response.status})`);
-    try { return JSON.parse(text) as T; } catch { throw new Error(`Respons server bukan JSON (HTTP ${response.status})`); }
+    if (!text) throw new Error(sebabHttp(response.status));
+    try { return JSON.parse(text) as T; } catch { throw new Error(sebabHttp(response.status)); }
 }
 
+/** Kalimat sebab untuk galat yang ditangkap: gagal sambung (TypeError dari fetch) jadi kalimat koneksi, bukan "Failed to fetch". */
+const sebabDari = (e: unknown) => (e instanceof TypeError ? sebabHttp(0) : e instanceof Error ? e.message : sebabHttp(500));
+
 function reviewValue(value: unknown, column: string): string {
-    if (value === null || value === undefined || value === "") return "–";
+    if (value === null || value === undefined || value === "") return KOSONG;
     if (column === "DPP" && Number.isFinite(Number(value))) return rupiah(Number(value));
     if (column === "QTY" && Number.isFinite(Number(value))) return n(Number(value));
     return String(value);
@@ -91,7 +96,7 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
     const sudahDikirim = hasilKirim?.runId === hasil?.runId && hasilKirim?.status === "sent";
     const langkah: FlowStep[] = [
         { label: "Unggah", state: hasil ? "done" : "current" },
-        { label: "Tinjau", state: hasil ? (sudahDikirim ? "done" : "current") : "todo" },
+        { label: "Tinjau", state: hasil ? "done" : "todo" },
         { label: "Penerima", state: hasil ? (sudahDikirim ? "done" : "current") : "todo" },
         { label: "Kirim", state: sudahDikirim ? "done" : hasilKirim?.runId === hasil?.runId && hasilKirim ? "late" : "todo" },
     ];
@@ -106,12 +111,13 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
             if (stock) form.append("stock", stock);
             const res = await fetch("/api/laporan-harian/upload", { method: "POST", body: form });
             const data = await readJson<UploadResult & { error?: string; detail?: string }>(res);
-            if (!res.ok || !data.ok) { setGalatProses([data.error, data.detail].filter(Boolean).join(": ") || "Pengolahan gagal."); return; }
+            // 5xx = galat server/proxy: pesan teknisnya (nama layanan, batas waktu) tidak ditampilkan; 4xx membawa kalimat tugas dari server.
+            if (!res.ok || !data.ok) { setGalatProses(res.status >= 500 ? sebabHttp(res.status) : [data.error, data.detail].filter(Boolean).join(": ") || sebabHttp(res.status)); return; }
             setHasil(data);
             setPilih(new Set(data.recipientsPreview.flatMap((r) => r.emails.map((e) => recipientKey(r.fileName, e)))));
             muatRiwayat();
         } catch (e) {
-            setGalatProses(`Pengolahan gagal: ${e instanceof Error ? e.message : String(e)}`);
+            setGalatProses(sebabDari(e));
         } finally {
             setMemproses(false);
         }
@@ -126,15 +132,16 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
             if (!res.ok) { setTinjau({ fileName, status: "galat", error: data.error || "Tinjauan berkas gagal dimuat." }); return; }
             setTinjau({ fileName, status: "siap", data });
         } catch (e) {
-            setTinjau({ fileName, status: "galat", error: e instanceof Error ? e.message : String(e) });
+            setTinjau({ fileName, status: "galat", error: sebabDari(e) });
         }
     }
 
     /** Kirim run yang baru diproses (pilihan penerima dari langkah 3) atau kirim ulang run gagal dari riwayat. */
     async function kirim(runId: string, body: Record<string, unknown>) {
-        const res = await fetch(`/api/laporan-harian/${runId}/send`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true, ...body }) });
+        const res = await fetch(`/api/laporan-harian/${runId}/send`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true, ...body }) })
+            .catch(() => { throw new Error(`Pengiriman gagal. ${sebabHttp(0)}`); });
         const data = await readJson<SendResult & { error?: string }>(res);
-        if (!res.ok) throw new Error(data.error || `Pengiriman gagal (HTTP ${res.status}).`);
+        if (!res.ok) throw new Error(data.error || `Pengiriman gagal. ${sebabHttp(res.status)}`);
         setDialog(null); setRunUlang(null);
         setHasilKirim({ ...data, runId });
         if (runId !== hasil?.runId) setPesanRiwayat(`Kirim ulang selesai: ${n(data.emailsSent ?? 0)} terkirim${data.emailsFailed ? `, ${n(data.emailsFailed)} gagal` : ""}.`);
@@ -157,7 +164,7 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
     ];
     const kolomRun: Column<Run>[] = [
         { key: "tgl", header: "Tanggal laporan", cell: (r) => <b>{tanggalPendek(r.reportDate)}</b> },
-        { key: "unggah", header: "Diunggah", secondary: true, cell: (r) => `${jamWita(r.createdAt)}${r.uploadedBy ? ` · ${r.uploadedBy}` : ""}` },
+        { key: "unggah", header: "Diunggah", secondary: true, cell: (r) => `${waktuWita(r.createdAt)}${r.uploadedBy ? ` · ${r.uploadedBy}` : ""}` },
         { key: "n", header: "Berkas / email", align: "end", cell: (r) => <span className="fi-tnum">{r.fileCount} / {r.emailCount}</span> },
         { key: "status", header: "Status", cell: (r) => { const s = statusRun(r.status, r.createdAt); return <StatusBadge tone={s.tone}>{s.label}</StatusBadge>; } },
         { key: "cat", header: "Catatan", secondary: true, cell: (r) => <span className="fi-small">{catatanRun(r)}</span> },
@@ -166,7 +173,7 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
     const catatanRun = (r: Run) => {
         const p = r.penerima; const m = modeDariNote(r.note);
         const bagian = [p.sent ? `${p.sent} terkirim` : "", p.failed ? `${p.failed} gagal` : "", p.skipped ? `${p.skipped} dilewati` : "", p.pending && r.status !== "dry_run" ? `${p.pending} tertunda` : "", m === "closing" ? "closing" : ""].filter(Boolean);
-        return bagian.join(" · ") || "—";
+        return bagian.join(" · ") || KOSONG;
     };
     const macet = (riwayat.data ?? []).some((r) => statusRun(r.status, r.createdAt).kode === "macet");
     const gagalPenerima = runUlang ? (runUlang.penerima.failed ?? 0) + (runUlang.penerima.pending ?? 0) : 0;
@@ -176,31 +183,31 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
             <header className="fi-page-head">
                 <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Operasional Sales</span></li><li><span aria-current="page">Laporan Harian</span></li></ol></nav>
                 <div className="fi-page-bar">
-                    <h1>{hasil ? `Laporan harian · data ${tanggalPanjang(hasil.reportDate)}` : "Laporan harian"}</h1>
+                    <h1>{hasil ? `Laporan Harian · data ${tanggalPanjang(hasil.reportDate)}` : "Laporan Harian"}</h1>
                     {hasil && (sudahDikirim ? <StatusBadge tone="pos">Terkirim</StatusBadge> : hasilKirim?.runId === hasil.runId && hasilKirim?.emailsFailed ? <StatusBadge tone="neg">{hasilKirim.emailsFailed} email gagal</StatusBadge> : <StatusBadge tone="neu">Belum dikirim</StatusBadge>)}
                     <span className="fi-spacer" />
                     {bolehKelola && <Link href="/laporan-harian/mapping" className="fi-btn fi-btn--secondary"><Users className="fi-icon" aria-hidden />Penerima laporan</Link>}
                 </div>
-                <p>Unggah export Accurate, tinjau hasilnya, pilih penerima, lalu kirim. Tanggal laporan diambil dari tanggal penjualan terakhir di berkas.</p>
+                <p>Unggah ekspor Accurate, tinjau hasilnya, pilih penerima, lalu kirim. Tanggal laporan diambil dari tanggal penjualan terakhir di berkas.</p>
                 <Flow steps={langkah} label="Langkah laporan" />
             </header>
 
             {pesanRiwayat && <MessageStrip tone={pesanRiwayat.includes("gagal") ? "warn" : "pos"} title={pesanRiwayat} onClose={() => setPesanRiwayat(null)} />}
             {galatProses && <MessageStrip tone="neg" title="Pengolahan gagal." onClose={() => setGalatProses(null)}>{galatProses} Dashboard dan progres insentif tidak berubah.</MessageStrip>}
-            {memproses && <MessageStrip tone="info" title={`Mengolah ${[penjualan, retur, stock].filter(Boolean).length} berkas…`}>Biasanya 30–60 detik. Setelah selesai, dashboard dan progres insentif langsung diperbarui; email baru terkirim di langkah Kirim.</MessageStrip>}
+            {memproses && <MessageStrip tone="info" title={`Mengolah ${[penjualan, retur, stock].filter(Boolean).length} berkas…`}>Setelah selesai, dashboard dan progres insentif langsung diperbarui; email baru terkirim di langkah Kirim.</MessageStrip>}
             {hasilKirim && hasil && hasilKirim.runId === hasil.runId && (
                 hasilKirim.emailsFailed
                     ? <MessageStrip tone="warn" title={`${n(hasilKirim.emailsSent ?? 0)} dari ${n((hasilKirim.emailsSent ?? 0) + hasilKirim.emailsFailed)} email terkirim.`}>{hasilKirim.emailsFailed} gagal; periksa SMTP lalu Kirim ulang dari riwayat.</MessageStrip>
                     : <MessageStrip tone="pos" title={`${n(hasilKirim.emailsSent ?? 0)} email terkirim.`}>{hasilKirim.emailsSkipped ? `${hasilKirim.emailsSkipped} penerima dilewati.` : ""}</MessageStrip>
             )}
 
-            <Section title="1 · Unggah export Accurate" subtitle={hasil ? "berkas sudah diproses; unggah lagi untuk run baru" : "Penjualan wajib; retur dan stock opsional"}>
+            <Section title="1 · Unggah ekspor Accurate" subtitle={hasil ? "berkas sudah diproses; unggah lagi untuk run baru" : "Penjualan wajib; retur dan stock opsional"}>
                 <div className="fi-sect-in">
                     {memproses ? <Skeleton rows={3} label="Mengolah berkas" /> : (
                         <div className="fi-kcards">
-                            <FilePick id="laporan-penjualan" label="Penjualan (INV)" help="Rincian faktur penjualan · .xlsx · wajib" required file={penjualan} onChange={setPenjualan} disabled={!bolehUnggah} />
-                            <FilePick id="laporan-retur" label="Retur (RJN)" help="Rincian retur penjualan · .xlsx · opsional" file={retur} onChange={setRetur} disabled={!bolehUnggah} />
-                            <FilePick id="laporan-stock" label="Stock" help="Kuantitas barang per gudang · .xlsx · opsional" file={stock} onChange={setStock} disabled={!bolehUnggah} />
+                            <FilePick id="laporan-penjualan" label="Penjualan (INV)" help="Rincian faktur penjualan atau workbook 1. Paste Data · .xlsx · wajib" required file={penjualan} onChange={setPenjualan} disabled={!bolehUnggah} />
+                            <FilePick id="laporan-retur" label="Retur (RJN)" help="Laporan retur (No.Retur) atau rincian RJN · .xlsx · opsional; otomatis dari sheet Paste Lap. Retur" file={retur} onChange={setRetur} disabled={!bolehUnggah} />
+                            <FilePick id="laporan-stock" label="Stock" help="3. Stock atau kuantitas barang per gudang · .xlsx · opsional" file={stock} onChange={setStock} disabled={!bolehUnggah} />
                         </div>
                     )}
                     {!hasil && !memproses && <p className="fi-small fi-subtle">Memproses langsung memperbarui dashboard dan progres insentif. Email baru terkirim di langkah terakhir.</p>}
@@ -211,11 +218,12 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
                 <>
                     <Section id="tinjau" title="2 · Tinjau hasil" subtitle="dashboard dan progres insentif sudah diperbarui saat diproses">
                         <div className="fi-sect-in">
-                            <div className="fi-kcards">
-                                <div className="fi-kc"><span>Periode</span><b>{hasil.period.month}/{hasil.period.year}</b><small>data sampai {tanggalPendek(hasil.reportDate)}</small></div>
-                                <div className="fi-kc"><span>Baris penjualan</span><b>{n(hasil.salesRows)}</b><small>baris INV</small></div>
-                                <div className="fi-kc"><span>Net DPP</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(hasil.netDpp)}</b><small>bulan berjalan</small></div>
-                                <div className="fi-kc"><span>Progres tersimpan</span><b>{n(hasil.dashboardFed.inserted)}</b><small>baris ke dashboard insentif</small></div>
+                            {/* Dua kolom di ponsel dengan angka sedang: empat kartu satu kolom menumpuk jauh sebelum penerima. */}
+                            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                                <div className="fi-kc"><span>Periode</span><b className="fi-tnum" style={{ font: "var(--fs-title-2)" }}>{hasil.period.month}/{hasil.period.year}</b><small>data sampai {tanggalPendek(hasil.reportDate)}</small></div>
+                                <div className="fi-kc"><span>Baris penjualan</span><b className="fi-tnum" style={{ font: "var(--fs-title-2)" }}>{n(hasil.salesRows)}</b><small>baris INV</small></div>
+                                <div className="fi-kc"><span>Net DPP</span><b className="fi-tnum" style={{ font: "var(--fs-title-2)" }}>{rupiah(hasil.netDpp)}</b><small>bulan berjalan</small></div>
+                                <div className="fi-kc"><span>Progres tersimpan</span><b className="fi-tnum" style={{ font: "var(--fs-title-2)" }}>{n(hasil.dashboardFed.inserted)}</b><small>baris ke dashboard insentif</small></div>
                             </div>
                             {hasil.incentiveFeed.ready
                                 ? <MessageStrip tone="pos" title="Pencapaian tersambung ke Insentif Sales.">{n(hasil.incentiveFeed.matchedKeys)} dari {n(hasil.incentiveFeed.progressKeys)} kombinasi salesman dan principal cocok dengan target.</MessageStrip>
@@ -239,7 +247,7 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
                             {tinjau?.status === "galat" && <ErrorState title="Tinjauan berkas gagal dimuat" message={tinjau.error} onRetry={() => void muatTinjau(tinjau.fileName)} />}
                             {tinjau?.status === "siap" && tinjau.data && (
                                 <div className="fi-tablescroll" style={{ maxHeight: "28rem", overflow: "auto" }}>
-                                    <table className="fi-table" style={{ fontSize: "var(--fs-caption)" }}>
+                                    <table className="fi-table" style={{ font: "var(--fs-caption)" }}>
                                         <caption className="sr-only">25 baris pertama {tinjau.data.fileName}</caption>
                                         <thead><tr>{tinjau.data.columns.map((c) => <th key={c} scope="col">{c.replaceAll("_", " ")}</th>)}</tr></thead>
                                         <tbody>{tinjau.data.rows.map((row, i) => <tr key={i}>{tinjau.data!.columns.map((c, ci) => <td key={c} title={reviewValue(row[ci], c)}>{reviewValue(row[ci], c)}</td>)}</tr>)}</tbody>
@@ -271,11 +279,20 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
                 </>
             )}
 
+            {bolehKirim && <KirimPrincipal kode="abcpi" judul="Laporan ABCPI (FTP + email)" subjudul="otomatis tiap hari 20.00 WITA · akhir bulan ditahan, kirim di sini"
+                keterangan="Faktur INV + retur RJN cabang ABC (tanpa RSJ) bulan berjalan sampai tanggal laporan dan stok per tanggal itu, ditarik langsung dari Accurate. FTP ABC menerima CSV; penerima keyword ABCPI menerima Excel (template ABCPI) + CSV."
+                tombol="Kirim ke FTP dan email" konfirmasi="Kirim laporan ABCPI"
+                fakta={[["Tujuan", "FTP ABC (SP_…_SALES.csv & SP_…_STOCK.csv) dan email penerima keyword ABCPI"], ["Kirim ulang", "Berkas FTP bernama sama ditimpa; email terkirim lagi"]]} />}
+            {bolehKirim && <KirimPrincipal kode="enigma" judul="Laporan Enigma (Marketama Indah)" subjudul="otomatis tiap hari 20.30 WITA ke portal Enesis · validation_error dilaporkan ke email admin"
+                keterangan="Faktur INV + retur cabang MIX FOOD (tanpa RSJ) untuk barang berpemasok PT Marketama Indah, bulan berjalan sampai tanggal laporan. Harga = Tabel1 BARANG (KRT: harga karton, selain itu harga pcs), bruto = harga × qty, netto = bruto − potongan."
+                tombol="Unggah ke Enigma" konfirmasi="Unggah laporan Enigma"
+                fakta={[["Tujuan", "Portal enigma.enesis.com (ID distributor 1000718) sebagai template_enigma.xlsx"], ["Hasil", "Status success/validation_error dibaca dari Riwayat Upload dan dikirim ke email admin"]]} />}
+
             <Section id="riwayat" title="Riwayat kirim" subtitle={`run per unggahan · run macet lebih dari 10 menit belum bisa dilanjutkan`}>
                 <ResponsiveTable<Run> title="Riwayat kirim" columns={kolomRun} rows={riwayat.data ?? []} rowKey={(r) => r.id}
                     status={riwayat.status} error={riwayat.error} onRetry={muatRiwayat}
                     empty={{ title: "Belum ada run laporan", message: "Riwayat terisi setelah berkas pertama diproses." }}
-                    mobileItem={(r) => { const s = statusRun(r.status, r.createdAt); return <ListItem doc={tanggalPendek(r.reportDate)} title={`${jamWita(r.createdAt)} · ${r.fileCount} berkas / ${r.emailCount} email`} meta={bolehKirim && r.status === "failed" ? <Button variant="tertiary" onClick={() => { setRunUlang(r); setDialog("kirimUlang"); }}>Kirim ulang…</Button> : catatanRun(r)} badge={<StatusBadge tone={s.tone}>{s.label}</StatusBadge>} />; }} />
+                    mobileItem={(r) => { const s = statusRun(r.status, r.createdAt); return <ListItem doc={tanggalPendek(r.reportDate)} title={`${waktuWita(r.createdAt)} · ${r.fileCount} berkas / ${r.emailCount} email`} meta={bolehKirim && r.status === "failed" ? <Button variant="tertiary" onClick={() => { setRunUlang(r); setDialog("kirimUlang"); }}>Kirim ulang…</Button> : catatanRun(r)} badge={<StatusBadge tone={s.tone}>{s.label}</StatusBadge>} />; }} />
                 {macet && <div className="fi-sect-in"><VariantNote bl="BL-29">Run berstatus Macet terputus saat mengirim lebih dari 10 menit lalu; hari ini tidak bisa diklaim ulang dari layar. Usulan: tombol Lanjutkan yang mengirim penerima tertunda atau gagal saja.</VariantNote></div>}
             </Section>
 
@@ -284,7 +301,7 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
                     {/* Proses selalu tersedia (run baru dari berkas yang dipilih), seperti halaman lama. */}
                     {bolehUnggah && (
                         <Button variant={hasil && bolehKirim && !sudahDikirim ? "secondary" : "primary"} busy={memproses} disabled={!penjualan} disabledReason="Pilih berkas penjualan dulu" icon={<Upload className="fi-icon" aria-hidden />} onClick={proses}>
-                            {memproses ? "Memproses…" : hasil ? "Proses ulang berkas baru" : "Proses dan perbarui dashboard"}
+                            {memproses ? "Memproses…" : hasil ? "Proses ulang berkas baru" : "Proses berkas"}
                         </Button>
                     )}
                     {hasil && bolehKirim && !sudahDikirim && (

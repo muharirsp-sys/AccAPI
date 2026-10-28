@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
-import { ambilSetting, masterOutletSql } from "@/lib/rekapan-nota/query";
+import { ISI_SQL, ambilSetting, masterOutletSql } from "@/lib/rekapan-nota/query";
 import { tolakUbahIsi, type UbahIsi, type WaveStatus } from "@/lib/rekapan-nota/wave-state";
 import type { PoolClient } from "pg";
 
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
                        max(upper(c.area))                  AS area,
                        coalesce(max(c.grup_all), 'Gabung') AS grup_all,
                        coalesce(max(c.grup_gdi), 'Gabung') AS grup_gdi,
-                       sum(p.qty_pcs / NULLIF(coalesce(p.konv_tersirat, i.isi_per_karton), 0)) AS total_krt
+                       sum(p.qty_pcs / NULLIF(${ISI_SQL}, 0)) AS total_krt
                   FROM wave_line_pool p
                   LEFT JOIN mo c       ON c.kunci = upper(p.kode_cust)
                   LEFT JOIN item i     ON i.no = p.kode_barang

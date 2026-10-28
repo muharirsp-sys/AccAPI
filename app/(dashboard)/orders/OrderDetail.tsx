@@ -4,7 +4,8 @@
  *   lewat dialog (salesman wajib, C7). Bagian dimuat terpisah: galat satu bagian tidak mengganti seluruh halaman.
  * Caller: ./[id]/page.tsx (/orders/[id]); dari daftar Order Masuk dan setelah Order baru disimpan (`?baru=1`).
  * Dependensi: FastAPI GET /orders/{id}; GET /api/orders/[id]/invoice (status antrean); POST /api/orders/preview (harga master, baca saja);
- *   ./AntreFaktur; ./order-ui; components/fiori/*; lib/promo-ui (rupiah); lib/rekapan-nota/ui (tanggalPendek, jamWita).
+ *   ./AntreFaktur; ./order-ui; ../antrean-faktur/bersama (kalimatAccurate); components/fiori/*; lib/promo-ui (rupiah);
+ *   lib/tampil (KOSONG, tanggalWita, waktuWita).
  * Main Functions: OrderDetail, muatHargaMaster.
  * Side Effects: HTTP baca; Antrekan lewat ./AntreFaktur. Tidak ada tulis ke Accurate.
  */
@@ -12,14 +13,15 @@
 
 import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Check, Send, TriangleAlert } from "lucide-react";
+import { ArrowRight, Check, Info, Send, TriangleAlert } from "lucide-react";
 import {
     Button, EmptyState, ErrorState, Flow, FooterToolbar, KeyValues, ListItem, MessageStrip, ObjectPageHeader, ResponsiveTable, Section,
     Skeleton, StatusBadge, VariantNote, type Column, type FlowStep,
 } from "@/components/fiori/core";
 import { useLoad, type Load } from "@/components/fiori/interactive";
 import { rupiah } from "@/lib/promo-ui";
-import { jamWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { KOSONG, tanggalWita, waktuWita } from "@/lib/tampil";
+import { kalimatAccurate } from "../antrean-faktur/bersama";
 import { AntreFaktur, type HasilAntre } from "./AntreFaktur";
 import {
     BELUM_PASTI, fastapi, nextApi, nilai, nomorOrder, pesanJawaban, statusOrder, sukses, sumberOrder,
@@ -132,7 +134,7 @@ export default function OrderDetail({ id, baru, permKeys }: { id: string; baru: 
             : antrean.status === "memuat" ? "Status Antrean Faktur sedang dimuat"
                 : antrean.status === "galat" ? "Status Antrean Faktur belum terbaca; muat ulang dulu"
                     : outbox ? `Order ini sudah di Antrean Faktur (${status.label.toLowerCase()})`
-                        : status.key === "butuh" ? "Order masih Butuh harga; harga belum bisa diisi dari layar ini (usulan BL-18)"
+                        : status.key === "butuh" ? "Order masih Butuh harga; harga belum bisa diisi dari layar ini"
                             : status.key !== "siap" ? "Status order ini tidak bisa diantrekan" : undefined;
 
     function selesai(h: HasilAntre) {
@@ -144,9 +146,11 @@ export default function OrderDetail({ id, baru, permKeys }: { id: string; baru: 
     const kolom: Column<Baris>[] = [
         { key: "barang", header: "Barang", cell: (b) => <><span className="fi-mono">{b.code}</span>{b.bonus && <span className="fi-sub">bonus {b.bonus}</span>}</> },
         { key: "jumlah", header: "Jumlah", cell: (b) => <span className="fi-tnum">{b.quantity} {b.unit}</span> },
-        { key: "harga", header: "Harga order", align: "end", cell: (b) => <span className="fi-tnum">{b.bonus ? "—" : nilai(b.price)}</span> },
-        { key: "master", header: "Harga master", align: "end", cell: (b) => <span className="fi-tnum" title={b.master ? sumber(b.master) : undefined}>{b.bonus ? "—" : b.master ? rupiah(b.master.price ?? 0) : b.master === null ? "belum ada" : "—"}</span> },
-        { key: "diskon", header: "Diskon", secondary: true, cell: (b) => b.hasil ? diskon(b.hasil) : "—" },
+        { key: "harga", header: "Harga order", align: "end", cell: (b) => <span className="fi-tnum">{b.bonus ? KOSONG : nilai(b.price)}</span> },
+        // Sumber harga (kategori · cabang · tanggal berlaku) tampil sebagai teks, bukan hanya title (audit No 50).
+        { key: "master", header: "Harga master", align: "end", cell: (b) => <><span className="fi-tnum">{b.bonus ? KOSONG : b.master ? rupiah(b.master.price ?? 0) : b.master === null ? "belum ada" : KOSONG}</span>
+            {!b.bonus && b.master && <span className="fi-sub">{sumber(b.master)}</span>}</> },
+        { key: "diskon", header: "Diskon", secondary: true, cell: (b) => b.hasil ? diskon(b.hasil) : KOSONG },
         { key: "netto", header: "Netto", align: "end", cell: (b) => <span className="fi-tnum">{b.bonus ? rupiah(0) : nilai(b.hasil?.net)}</span> },
         { key: "cek", header: "Cek harga", cell: (b) => { const c = cekHarga(b, harga); return <StatusBadge tone={c.tone}>{c.label}</StatusBadge>; } },
     ];
@@ -161,9 +165,9 @@ export default function OrderDetail({ id, baru, permKeys }: { id: string; baru: 
                     attributes={[
                         { label: "Pelanggan", value: `${o.outlet} · ${o.customer_no || "tanpa kode"}` },
                         { label: "Channel", value: o.channel },
-                        { label: "Tanggal order", value: tanggalPendek(o.order_date) },
+                        { label: "Tanggal order", value: tanggalWita(o.order_date) },
                         { label: "Sumber", value: sumberOrder(o) },
-                        { label: "Netto", value: o.result?.pending_price ? "—" : nilai(o.result?.net) },
+                        { label: "Netto", value: o.result?.pending_price ? KOSONG : nilai(o.result?.net) },
                     ]}
                     flow={<Flow steps={steps} label="Tahap order" />} />
 
@@ -193,7 +197,7 @@ export default function OrderDetail({ id, baru, permKeys }: { id: string; baru: 
                             const c = cekHarga(b, harga);
                             return <ListItem doc={b.code} amount={b.bonus ? rupiah(0) : nilai(b.hasil?.net)}
                                 title={`${b.quantity} ${b.unit} × ${b.bonus ? "bonus" : nilai(b.price)}`}
-                                meta={b.bonus ? `bonus ${b.bonus}` : b.master ? `master ${rupiah(b.master.price ?? 0)}` : b.master === null ? "master belum ada" : "master —"}
+                                meta={b.bonus ? `bonus ${b.bonus}` : b.master ? `master ${rupiah(b.master.price ?? 0)} · ${sumber(b.master)}` : b.master === null ? "master belum ada" : "master belum terbaca"}
                                 badge={<StatusBadge tone={c.tone}>{c.label}</StatusBadge>} />;
                         }} />
                     {harga.status === "galat" && (
@@ -209,22 +213,22 @@ export default function OrderDetail({ id, baru, permKeys }: { id: string; baru: 
                 <Section id="pemeriksaan" title="Pemeriksaan sebelum antre" subtitle="dijalankan lagi di dialog Antrekan">
                     <div className="fi-sect-in">
                         <ul className="fi-chkl">
-                            <Butir ok={beda === 0} teks={beda === null ? "Harga master belum terbaca" : beda === 0 ? "Harga semua barang sama dengan master" : `${beda} barang beda dari master (belum menahan antre — usulan BL-19)`} />
+                            <Butir ok={beda === 0} teks={beda === null ? "Harga master belum terbaca" : beda === 0 ? "Harga semua barang sama dengan master" : `${beda} barang beda dari master (belum menahan antre)`} />
                             <Butir ok={antrean.status === "siap" && !outbox} teks={antrean.status !== "siap" ? "Status antrean belum terbaca" : outbox ? `Sudah di Antrean Faktur: ${status.label}` : "Belum ada di Antrean Faktur"} />
                             <Butir ok={Boolean(o.customer_no)} teks={o.customer_no ? "Pelanggan punya kode Accurate; cabang & seri faktur diperiksa di dialog" : "Order tanpa kode pelanggan tidak bisa difakturkan"} />
-                            <Butir ok teks="Salesman dipilih saat antre: satu per order, disalin ke setiap baris faktur" />
+                            {/* Bukan pemeriksaan: salesman dipilih di dialog, jadi tanpa centang hijau (audit No 62). */}
+                            <Butir teks="Salesman dipilih di dialog Antrekan: satu per order, disalin ke setiap baris faktur" />
                         </ul>
-                        <VariantNote bl="BL-20">Dugaan order ganda hari ini diperiksa saat order disimpan (outlet sama, barang mirip, tanggal sama). Usulan: kunci kode pelanggan lintas pemilik, diperiksa lagi saat antre.</VariantNote>
                     </div>
                 </Section>
 
-                <Section id="promo" title="Promo dibekukan" subtitle={`dibekukan ${jamWita(o.created_at)} WITA saat order disimpan`}>
+                <Section id="promo" title="Promo dibekukan" subtitle={`dibekukan ${waktuWita(o.created_at)} WITA saat order disimpan`}>
                     <div className="fi-sect-in">
                         {o.result?.pending_price ? <p className="fi-small fi-muted">Aturan promo belum dibekukan: order belum berharga.</p> : (
                             <KeyValues items={[
                                 ["Aturan", o.rules.length ? o.rules.map((r) => r.name || r.id).join("; ") : "Tidak ada aturan terbit saat disimpan"],
-                                ["Potongan", (o.result?.applications ?? []).length ? (o.result?.applications ?? []).map((a) => `${a.program_id}: min. ${rupiah(a.minimum)} → ${rupiah(a.discount)}`).join("; ") : "—"],
-                                ["Bonus", (o.result?.bonuses ?? []).length ? (o.result?.bonuses ?? []).map((b) => `${b.quantity} ${b.unit} ${b.code || "(pilih SKU)"} · ${b.program_id}`).join("; ") : "—"],
+                                ["Potongan", (o.result?.applications ?? []).length ? (o.result?.applications ?? []).map((a) => `${a.program_id}: min. ${rupiah(a.minimum)} → ${rupiah(a.discount)}`).join("; ") : KOSONG],
+                                ["Bonus", (o.result?.bonuses ?? []).length ? (o.result?.bonuses ?? []).map((b) => `${b.quantity} ${b.unit} ${b.code || "(pilih SKU)"} · ${b.program_id}`).join("; ") : KOSONG],
                                 ["Bruto · diskon · netto", `${nilai(o.result?.gross)} · ${nilai(o.result?.discount)} · ${nilai(o.result?.net)}`],
                             ]} />
                         )}
@@ -237,7 +241,7 @@ export default function OrderDetail({ id, baru, permKeys }: { id: string; baru: 
                         <span role="listitem" className="fi-dnode"><b className="fi-mono">{nomorOrder(o.id)}</b><span>{o.request_id ? "ditarik petugas" : `petugas · ${o.owner}`}</span></span>
                         <ArrowRight className="fi-icon" aria-hidden />
                         {outbox
-                            ? <Link role="listitem" className="fi-dnode" href="/antrean-faktur"><b>Antrean Faktur</b><span>{status.label}{outbox.updatedAt ? ` · ${jamWita(outbox.updatedAt)}` : ""}</span></Link>
+                            ? <Link role="listitem" className="fi-dnode" href="/antrean-faktur"><b>Antrean Faktur</b><span>{status.label}{outbox.updatedAt ? ` · ${waktuWita(outbox.updatedAt)} WITA` : ""}</span></Link>
                             : <span role="listitem" className="fi-dnode" data-off="true"><b>Antrean Faktur</b><span>{antrean.status === "siap" ? "belum" : "belum terbaca"}</span></span>}
                         <ArrowRight className="fi-icon" aria-hidden />
                         {outbox?.state === "posted" && outbox.accurateNumber
@@ -249,35 +253,43 @@ export default function OrderDetail({ id, baru, permKeys }: { id: string; baru: 
                 <Section id="riwayat" title="Riwayat">
                     <div className="fi-sect-in">
                         <KeyValues items={[
-                            ["Dibuat", `${jamWita(o.created_at)} WITA · ${o.owner || "—"}`],
-                            ["Catatan", o.note?.trim() || "—"],
-                            ["Antrean", outbox ? `${status.label}${outbox.updatedAt ? ` · diperbarui ${jamWita(outbox.updatedAt)} WITA` : ""}${outbox.lastError ? ` · ${outbox.lastError.slice(0, 160)}` : ""}` : antrean.status === "siap" ? "belum diantrekan" : "belum terbaca"],
-                        ]} />
-                        <VariantNote bl="BL-33">Riwayat lengkap per aksi (siapa, kapan, nilai lama → baru) belum dicatat untuk order. Usulan: riwayat bersama berupa kalimat.</VariantNote>
+                            ["Dibuat", `${waktuWita(o.created_at)} WITA · ${o.owner || KOSONG}`],
+                            ["Catatan", o.note?.trim() || KOSONG],
+                            ["Antrean", outbox ? `${status.label}${outbox.updatedAt ? ` · diperbarui ${waktuWita(outbox.updatedAt)} WITA` : ""}${outbox.lastError ? ` · ${kalimatAccurate(outbox.lastError).slice(0, 160)}` : ""}` : antrean.status === "siap" ? "belum diantrekan" : "belum terbaca"],
+                        ]} align="start" />
                     </div>
                 </Section>
-                <VariantNote bl="BL-18">Order belum bisa dibatalkan dan Butuh harga belum bisa diisi dari master di layar ini. Usulan: Batalkan beralasan dan Isi harga dari master.</VariantNote>
+                {/* Satu catatan varian per layar (audit No 80), termasuk dua yang dulu di dialog Antrekan; kode BL di nama aksesibelnya. */}
+                <VariantNote bl="BL-18, BL-19, BL-20, BL-23, BL-33">
+                    Order belum bisa dibatalkan dan Butuh harga belum bisa diisi dari master di layar ini. Dugaan order ganda (outlet sama, barang
+                    mirip, tanggal sama) hanya diperiksa saat order disimpan, belum saat antre. Harga beda master belum menahan antrean, dan limit
+                    kredit serta stok belum diperiksa sebelum antre; penolakannya baru ketahuan saat Kirim. Riwayat per aksi (siapa, kapan, nilai
+                    lama dan baru) belum dicatat untuk order.
+                </VariantNote>
             </div>
             <FooterToolbar message={kunciAntre ?? `Siap diantrekan · netto ${nilai(o.result?.net)}`}>
                 {outbox && <Link className="fi-btn fi-btn--secondary" href="/antrean-faktur">Buka Antrean Faktur</Link>}
                 <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} disabled={Boolean(kunciAntre)} disabledReason={kunciAntre} onClick={() => { setHasil(null); setDialog(true); }}>Antrekan faktur…</Button>
             </FooterToolbar>
-            {dialog && <AntreFaktur order={o} hargaBeda={beda} onClose={() => setDialog(false)} onSelesai={selesai} onMuatUlang={muatAntrean} />}
+            {dialog && <AntreFaktur order={o} hargaBeda={beda} admin={keys.has("users.manage")} onClose={() => setDialog(false)} onSelesai={selesai} onMuatUlang={muatAntrean} />}
         </div>
     );
 }
 
-function Butir({ ok, teks }: { ok: boolean; teks: string }) {
-    return <li data-ok={ok}>{ok ? <Check className="fi-icon" aria-hidden /> : <TriangleAlert className="fi-icon" aria-hidden />}<span>{teks}</span></li>;
+/** `ok` tidak diisi = keterangan, bukan hasil pemeriksaan: ikon info netral, tanpa centang. */
+function Butir({ ok, teks }: { ok?: boolean; teks: string }) {
+    const Ikon = ok === undefined ? Info : ok ? Check : TriangleAlert;
+    return <li data-ok={ok}><Ikon className="fi-icon" aria-hidden /><span>{teks}</span></li>;
 }
 
 const sumber = (p: PriceInfo) => p.source === "tier"
-    ? [p.priceCategoryName ?? "kategori", p.branchName, p.effectiveDate ? `berlaku ${tanggalPendek(p.effectiveDate)}` : null].filter(Boolean).join(" · ")
+    ? [p.priceCategoryName ?? "kategori", p.branchName, p.effectiveDate ? `berlaku ${tanggalWita(p.effectiveDate)}` : null].filter(Boolean).join(" · ")
     : "harga standar";
 
 function diskon(r: ResultLine): string {
     const potong = Number(r.gross) - Number(r.net);
-    if (!(potong > 0)) return "—";
+    if (!(potong > 0)) return KOSONG;
+
     const rantai = (r.percents ?? []).filter(Boolean);
     return `${rantai.length ? `${rantai.join("+")}% · ` : ""}${rupiah(potong)}`;
 }

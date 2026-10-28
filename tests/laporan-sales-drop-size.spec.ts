@@ -42,7 +42,7 @@ test("siap: tabel per tipe urut nilai, baris Total tertimbang, permintaan memuat
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto(URL_TAB, NAV);
     const main = page.locator("main");
-    await expect(main.getByRole("tab", { name: "Drop Size" })).toHaveAttribute("aria-selected", "true", NAV);
+    await expect(main.getByRole("navigation", { name: "Jenis laporan" }).getByRole("link", { name: "Drop Size" })).toHaveAttribute("aria-current", "page", NAV);
     const tabel = main.getByRole("table", { name: "Drop Size per tipe outlet" });
     await expect(tabel).toBeVisible(NAV);
     const baris = tabel.locator("tbody tr");

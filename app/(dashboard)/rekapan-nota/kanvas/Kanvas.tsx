@@ -2,20 +2,22 @@
  * Tujuan: Worklist Nota kanvas per salesman (Fiori S2): pilih dan tandai/lepas tanda, dialog "tandai semua nota salesman"
  *   (pengganti confirm browser), pernyataan nihil lewat dialog (pengganti kotak centang yang langsung tersimpan).
  * Caller: app/(dashboard)/rekapan-nota/kanvas/page.tsx.
- * Dependensi: GET|POST|DELETE|PATCH /api/rekapan-nota/kanvas; components/fiori/{core,interactive}; lib/rekapan-nota/ui; lib/beranda (witaToday).
+ * Dependensi: GET|POST|DELETE|PATCH /api/rekapan-nota/kanvas; components/fiori/{core,interactive}; lib/rekapan-nota/ui; lib/beranda (witaToday); lib/tampil (KOSONG, waktuWita).
  * Main Functions: Kanvas.
  * Side Effects: HTTP baca/tulis nota_kanvas dan kanvas_nihil. Logic BL-57 tidak ditulis (varian berlabel).
  */
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import Link from "next/link";
 import { Lock, Truck, Undo2 } from "lucide-react";
 import {
     Button, EmptyState, ErrorState, FooterToolbar, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, VariantNote, type Column,
 } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactive";
 import { witaToday } from "@/lib/beranda";
-import { ambil, jamWita, tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { ambil, tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 
 type Nota = { no_nota: string; kode_salesman: string; salesman: string; customer: string | null; jumlah_baris: number; total_pcs: number; kanvas: boolean; terkunci: boolean | null; di_wave: boolean | null };
 type Nihil = { ditandai_at: string; catatan: string | null; oleh: string } | null;
@@ -72,7 +74,7 @@ export default function Kanvas({ permKeys }: { permKeys: string[] }) {
                 setGalat(msg); return;
             }
             const ditandai = (r.payload.ditandai as string[] | undefined) ?? [];
-            setPesan(`${ditandai.length} nota ditandai kanvas ${jamWita(new Date())}: ${ditandai.join(", ")}. Keluar dari pool reguler dan menunggu wave kanvas.`);
+            setPesan(`${ditandai.length} nota ditandai kanvas ${waktuWita(new Date())}: ${ditandai.join(", ")}. Keluar dari pool reguler dan menunggu wave kanvas.`);
             setDialog(null);
             // Tawaran sekali: bila semua yang ditandai dari satu salesman dan salesman itu masih punya nota reguler lain.
             const kode = [...new Set(nota.filter((n) => noNota.includes(n.no_nota)).map((n) => n.kode_salesman))];
@@ -110,7 +112,7 @@ export default function Kanvas({ permKeys }: { permKeys: string[] }) {
 
     const kolom: Column<Nota>[] = [
         { key: "nota", header: "Nota", cell: (n) => <span className="fi-mono">{n.no_nota}</span> },
-        { key: "outlet", header: "Outlet", cell: (n) => n.customer ?? "–" },
+        { key: "outlet", header: "Outlet", cell: (n) => n.customer ?? KOSONG },
         { key: "baris", header: "Baris", align: "end", secondary: true, cell: (n) => <span className="fi-tnum">{n.jumlah_baris}</span> },
         { key: "pcs", header: "Pcs", align: "end", cell: (n) => <span className="fi-tnum">{n.total_pcs}</span> },
         { key: "status", header: "Status", cell: (n) => statusNota(n) },
@@ -125,7 +127,7 @@ export default function Kanvas({ permKeys }: { permKeys: string[] }) {
     return (
         <div className="fi-page" style={{ paddingBottom: 0 }}>
             <header className="fi-page-head">
-                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><a href="/rekapan-nota">Rekapan Nota</a></li><li><span aria-current="page">Nota kanvas</span></li></ol></nav>
+                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><Link href="/rekapan-nota">Rekapan Nota</Link></li><li><span aria-current="page">Nota kanvas</span></li></ol></nav>
                 <h1>Nota kanvas · {tanggalPanjang(tanggal)}</h1>
                 <p>Barang kanvas sudah keluar lewat pemindahan gudang; rekapannya dicetak setelah kanvaser pulang. Nota bertanda masuk wave kanvas, bukan wave reguler. Tanda melekat pada nomor nota, jadi selamat kalau file export diunggah ulang.</p>
                 <div className="fi-page-bar">
@@ -140,7 +142,7 @@ export default function Kanvas({ permKeys }: { permKeys: string[] }) {
             {data.status === "galat" && data.data && <MessageStrip tone="neg" title="Gagal memuat ulang.">{data.error} Yang tampil adalah hasil sebelumnya. <Button variant="tertiary" onClick={muat}>Coba lagi</Button></MessageStrip>}
             {nihil && (
                 <MessageStrip tone="info" title={`Dinyatakan tidak ada nota kanvas ${tanggalPendek(tanggal)}`}>
-                    oleh {nihil.oleh} · {jamWita(nihil.ditandai_at)}{nihil.catatan ? ` · ${nihil.catatan}` : ""}. Penandaan kanvas dimatikan untuk tanggal ini.{" "}
+                    oleh {nihil.oleh} · {waktuWita(nihil.ditandai_at)}{nihil.catatan ? ` · ${nihil.catatan}` : ""}. Penandaan kanvas dimatikan untuk tanggal ini.{" "}
                     {bolehKelola && <Button variant="tertiary" onClick={() => setDialog("cabutNihil")}>Cabut pernyataan…</Button>}
                 </MessageStrip>
             )}
@@ -167,7 +169,7 @@ export default function Kanvas({ permKeys }: { permKeys: string[] }) {
                                 empty={{ title: "Tidak ada nota" }}
                                 mobileItem={(n) => <ListItem
                                     doc={bolehKelola && !n.terkunci && !(n.di_wave && !n.kanvas) ? <label className="fi-check"><input type="checkbox" aria-label={`Pilih ${n.no_nota}`} checked={pilih.has(n.no_nota)} onChange={() => togglePilih(n.no_nota)} />{n.no_nota}</label> : n.no_nota}
-                                    title={`${n.customer ?? "–"} · ${n.jumlah_baris} baris · ${n.total_pcs} pcs`} badge={statusNota(n)} />} />
+                                    title={`${n.customer ?? KOSONG} · ${n.jumlah_baris} baris · ${n.total_pcs} pcs`} badge={statusNota(n)} />} />
                         </Section>
                     );
                 })}

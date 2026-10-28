@@ -4,15 +4,12 @@
  *   Object Page batch dengan ringkasan persetujuan (catatan Klaim/SM, total/transfer/tunai), catatan OM (draf), Setujui (dialog
  *   `omok`) dan Batalkan (dialog `batal`, terminal, alasan wajib).
  * Caller: OpcApp.tsx (MODUL.om).
- * Dependensi: opc/Bersama (KerjaPeran, tulisOpc, kontrak), opc/ObjectPageBatch (slot), components/fiori, lib/opc-ui (TAMPILAN, PREDIKAT),
- *   lib/off-program-control/problematic (SLA_DAYS), lib/promo-ui (rupiah).
+ * Dependensi: opc/Bersama (KerjaPeran, tulisOpc, tanganiTulis, kontrak), opc/ObjectPageBatch (slot), components/fiori, lib/opc-ui
+ *   (TAMPILAN, PREDIKAT), lib/off-program-control/problematic (SLA_DAYS), lib/promo-ui (rupiah).
  * Main Functions: Om, DetailOm, AntreanLangsung.
  * Side Effects: POST /api/off-program-control/batches/[id]/om-decision {action: "approve" | "cancel", note} (payload sama dengan decideOm
- *   lama old-opc.tsx 7473–7508). Setelah berhasil: muat ulang daftar dan detail.
- *
- * Asal fitur (old-opc.tsx): LiveQueueSummaryPanel 7228–7322, decideOm 7473–7508, Detail Persetujuan 7621–7677, Catatan dari Claim
- *   7679–7693, Data Pendukung 7695–7758, Item 7760–7849 (kerangka: bagian Item), Ringkasan Pembayaran 7851–7872 (7340–7365),
- *   Keputusan OM 7874–7922.
+ *   kode lama). Setelah berhasil: muat ulang daftar dan detail; hasil tidak pasti: strip bertahan + muat ulang (laporTidakPasti).
+ *   Port dari LiveQueueSummaryPanel, Detail Persetujuan, Catatan dari Claim, Ringkasan Pembayaran, dan Keputusan OM kode lama (lihat git).
  */
 "use client";
 
@@ -23,7 +20,7 @@ import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { SLA_DAYS } from "@/lib/off-program-control/problematic";
 import { PREDIKAT, TAMPILAN, jumlahItem, labelStatus, tanggalOpc, totalBatch, type BatchOpc, type ItemOpc } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
-import { KerjaPeran, tulisOpc, type DetailProps, type PeranProps } from "../Bersama";
+import { KerjaPeran, tanganiTulis, tulisOpc, type DetailProps, type PeranProps } from "../Bersama";
 import { ObjectPageBatch, type BagianTambahan } from "../ObjectPageBatch";
 
 const enc = encodeURIComponent;
@@ -55,6 +52,10 @@ function DetailOm(props: DetailProps) {
     const alasanUji = data.uji ? "Batch data uji (mock) tidak bisa diproses." : undefined;
     const alasanSetuju = alasanUji ?? ctx.izin("om_approve");
     const alasanBatal = alasanUji ?? ctx.izin("om_cancel");
+    // Dialog yang masih terbuka sesudah hasil tidak pasti: konfirmasi terkunci selama detail dimuat ulang atau bila batch sudah pindah tahap.
+    const kunciDialog = detail.status === "memuat" ? "Menunggu detail batch selesai dimuat ulang."
+        : detail.status === "galat" ? "Detail batch gagal dimuat ulang; status di layar bisa usang. Muat ulang dulu."
+            : !bisa ? "Batch tidak lagi menunggu keputusan OM." : undefined;
     const n = data.items.length || jumlahItem(b);
     // Ringkasan Pembayaran lama: ringkasan server dulu, bila nol/kosong dihitung dari item.
     const ringkasan = data.summary ?? b.summary;
@@ -135,9 +136,11 @@ function DetailOm(props: DetailProps) {
                     ["Langkah berikutnya", `Pembayaran oleh Keuangan, batas ${SLA_DAYS.paymentAfterDeadline} hari kerja setelah deadline klaim`],
                 ]}
                 confirmLabel="Setujui"
+                confirmDisabled={kunciDialog}
                 onConfirm={async () => {
                     // Payload sama dengan decideOm("approve") lama: catatan apa adanya (boleh kosong).
-                    await tulisOpc(`/api/off-program-control/batches/${enc(batchId)}/om-decision`, { body: { action: "approve", note: catatan }, gagal: "Gagal memproses keputusan OM." });
+                    await tulisOpc(`/api/off-program-control/batches/${enc(batchId)}/om-decision`, { body: { action: "approve", note: catatan }, gagal: "Gagal memproses keputusan OM." })
+                        .catch(tanganiTulis(props.laporTidakPasti));
                     setCatatan("");
                     setDialog(null);
                     props.selesai(`${no} disetujui OM dan diteruskan ke Keuangan.`);
@@ -152,10 +155,11 @@ function DetailOm(props: DetailProps) {
                 facts={faktaBatch}
                 confirmLabel="Batalkan batch"
                 cancelLabel="Kembali"
-                confirmDisabled={catatan.trim() ? undefined : "Isi alasan pembatalan dulu"}
+                confirmDisabled={kunciDialog ?? (catatan.trim() ? undefined : "Isi alasan pembatalan dulu")}
                 onConfirm={async () => {
                     // decideOm("cancel") lama: catatan wajib (dicek setelah trim), dikirim apa adanya; server juga menolak catatan kosong.
-                    await tulisOpc(`/api/off-program-control/batches/${enc(batchId)}/om-decision`, { body: { action: "cancel", note: catatan }, gagal: "Gagal memproses keputusan OM." });
+                    await tulisOpc(`/api/off-program-control/batches/${enc(batchId)}/om-decision`, { body: { action: "cancel", note: catatan }, gagal: "Gagal memproses keputusan OM." })
+                        .catch(tanganiTulis(props.laporTidakPasti));
                     setCatatan("");
                     setDialog(null);
                     // Bukan props.selesai: batch tidak pindah ke tahap berikutnya, alurnya berhenti.
@@ -174,7 +178,7 @@ function DetailOm(props: DetailProps) {
     );
 }
 
-/** LiveQueueSummaryPanel lama (7228–7322): predikat disalin apa adanya (tidak semuanya sama persis dengan PREDIKAT antrean). */
+/** LiveQueueSummaryPanel kode lama: predikat disalin apa adanya (tidak semuanya sama persis dengan PREDIKAT antrean). */
 const ANTREAN_LANGSUNG: Array<{ judul: string; ket: string; cocok: (b: BatchOpc) => boolean }> = [
     { judul: "Draf / dikembalikan ke SPV", ket: "Batch masih bisa diubah Supervisor.", cocok: PREDIKAT.spvAntrean },
     { judul: "Menunggu tinjauan SM", ket: "Menunggu validasi benar/salah data batch.", cocok: PREDIKAT.smAntrean },

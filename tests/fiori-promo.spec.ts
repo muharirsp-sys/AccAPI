@@ -10,10 +10,10 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 const path = (p: string) => (url: URL) => url.pathname === p;
 const NAV = { timeout: 60_000 } as const;
-const CORS = { "access-control-allow-origin": "http://localhost:3010", "access-control-allow-credentials": "true", "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, PUT, OPTIONS" };
+const cors = (r: Route) => ({ "access-control-allow-origin": r.request().headers()["origin"] ?? "*", "access-control-allow-credentials": "true", "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, PUT, OPTIONS" });
 const fastapi = (r: Route, body: unknown, status = 200) => r.request().method() === "OPTIONS"
-    ? r.fulfill({ status: 204, headers: CORS })
-    : r.fulfill({ status, headers: { ...CORS, "content-type": "application/json" }, body: JSON.stringify(body) });
+    ? r.fulfill({ status: 204, headers: cors(r) })
+    : r.fulfill({ status, headers: { ...cors(r), "content-type": "application/json" }, body: JSON.stringify(body) });
 
 const ATURAN = [
     { id: 405, suratProgram: "BP2610009096", promoGroup: "SLEEK BABY", promoLabel: "Sleek Oktober", benefitType: "DISC_PCT", benefitValue: "3", benefitBeban: "PRINCIPAL", itemCode: "SBB200", itemName: "SLEEK BABY BATH 200 ML", customerCode: "", periodStart: "2026-10-01", periodEnd: "2026-10-31", tierNo: 1, outletList: "", outletListMode: "" },
@@ -122,7 +122,7 @@ test("Aturan: status tersaring, detail + artinya, BL-52, Hapus dan Impor lewat d
     await expect(detail).toContainText("klaim principal");
     await detail.getByLabel("Minimal belanja").fill("24");
     await expect(detail.getByText("Mengubah aturan asal surat menjadikannya aturan manual.")).toBeVisible();
-    await expect(detail.getByText("usulan BL-52")).toBeVisible();
+    await expect(detail.getByLabel("Usulan BL-52")).toBeVisible();
     await page.screenshot({ path: "test-results/fiori-aturan-promo.png", fullPage: true });
     await detail.getByRole("button", { name: "Batal" }).click();
     await detail.getByRole("button", { name: "Hapus…" }).click();
@@ -161,6 +161,56 @@ test("Daftar outlet: tali daftar terlihat; keluarkan anggota lewat dialog", asyn
     expect(dihapus).toContain("ids=7");
 });
 
+test("Daftar outlet: unggah dua langkah (pilih berkas lalu dialog dengan berkas, kode distributor, daftar); batal tidak mengirim", async ({ page }) => {
+    const kirim: string[] = [];
+    await page.route(path("/api/promo-rule"), (r) => r.fulfill(json({ ok: true, rules: RULES, principals: [], total: 3 })));
+    await page.route(path("/api/promo-outlet"), (r) => {
+        if (r.request().method() === "POST") { kirim.push(r.request().postDataBuffer()?.toString("latin1") ?? ""); return r.fulfill(json({ ok: true, ditambah: 4, diminta: 4, listName: "DAFTAR A", kembar: 0, ditolak: [] })); }
+        return r.fulfill(json({ ok: true, distCode: "0000001", programs: [], lists: [{ name: "DAFTAR A", members: 0, tiers: {}, linked: [] }], members: [] }));
+    });
+    await page.goto("/aturan-promo", NAV);
+    const main = page.locator("main");
+    await main.getByRole("group", { name: "Bagian" }).getByRole("button", { name: "Daftar outlet peserta" }).click(NAV);
+    const berkas = main.getByLabel("Unggah surat / berkas");
+    await berkas.setInputFiles({ name: "peserta-a.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("x") });
+    // Memilih berkas belum menulis apa pun: dialog menyebut berkas, kode distributor, dan akibatnya.
+    let dlg = page.getByRole("dialog");
+    await expect(dlg.getByRole("heading", { name: "Muat peserta-a.xlsx ke daftar outlet?" })).toBeVisible(NAV);
+    await expect(dlg).toContainText("0000001");
+    await expect(dlg).toContainText("semua aturan surat itu ditunjuk ke daftarnya");
+    expect(kirim).toEqual([]);
+    await dlg.getByRole("button", { name: "Batal" }).click();
+    expect(kirim).toEqual([]);
+    await berkas.setInputFiles({ name: "peserta-a.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("x") });
+    dlg = page.getByRole("dialog");
+    await dlg.getByRole("button", { name: "Muat daftar" }).click();
+    await expect(dlg).toBeHidden();
+    expect(kirim).toHaveLength(1);
+    expect(kirim[0]).toContain('name="distCode"');
+    expect(kirim[0]).toContain("peserta-a.xlsx");
+    await expect(main.getByRole("status").filter({ hasText: "4 outlet masuk daftar DAFTAR A" })).toBeVisible();
+});
+
+test("Gerbang faktur: Muat yang ditolak server tetap di dialog dengan sebabnya, daftar yang ditolak ada di strip halaman", async ({ page }) => {
+    const entri = { draft_id: "lain1", title: "Principal A Okt", published_at: "2026-10-02", surat_program: "SURAT-A/10", principal: "PRINCIPLE A", nama_program: "Program A", kelompok: "", period: { start: "2026-10-01", end: "2026-10-31" }, programs: 3, codes: ["A"], sudahDimuat: false };
+    await page.route((u) => u.host === "localhost:8000", (r) => fastapi(r, { ok: true, principles: {}, drafts: [] }));
+    await page.route(path("/api/promo-rule/from-summary"), (r) => {
+        if (r.request().method() === "POST") return r.fulfill(json({ ok: false, error: "Surat ini sudah diubah manual, muat ulang ditolak.", ditolak: ["Program rafaksi tidak bisa dinyatakan utuh"] }, 409));
+        if (new URL(r.request().url()).searchParams.get("simulate")) return r.fulfill(json({ ok: true, simulasi: { ok: true, suratProgram: "SURAT-A/10", ruleCount: 3, groups: [], refused: [], notes: [], warnings: [], trial: { lines: 10, explained: 10, noDiscount: 0, unexplained: [] } },
+            persetujuan: { dicentang: true, dicentangOleh: "Maya", dicentangPada: "2026-10-06T02:00:00Z", catatan: "", buktiNama: "ttd.pdf", buktiUkuran: 20480, buktiOleh: "Maya", buktiPada: "2026-10-06T02:00:00Z" } }));
+        return r.fulfill(json({ ok: true, published: [entri] }));
+    });
+    await page.goto("/summary", NAV);
+    const gerbang = page.locator("main").getByRole("region", { name: "Langkah berikutnya: masuk gerbang faktur" });
+    await gerbang.getByRole("table", { name: "Publikasi Summary" }).getByRole("button", { name: "Simulasikan" }).click(NAV);
+    await gerbang.getByRole("button", { name: "Muat ke gerbang faktur…" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.getByRole("button", { name: "Muat aturan" }).click();
+    await expect(dlg.getByRole("alert")).toContainText("Surat ini sudah diubah manual, muat ulang ditolak.");
+    await expect(dlg).toBeVisible(); // konteks tidak hilang
+    await expect(gerbang.getByText("Program rafaksi tidak bisa dinyatakan utuh").first()).toBeVisible();
+});
+
 test("Summary: buka draf, siklus, Terbitkan butuh centang; gerbang faktur menunggu bukti dan pernyataan", async ({ page }) => {
     const publish: unknown[] = [];
     const draft = { id: "6ea38247aa", revision: 3, status: "draft", title: "Summary KINO NON FOOD Oktober", content: { rows: [{ id: "r1", no: "1", principle: "KINO NON FOOD", surat_program: "BP2610009096", nama_program: "Sleek", kelompok: "SLEEK BABY", variant: "", gramasi: "", kemasan: "", ketentuan: "12", benefit_type: "DISC_PCT", benefit: "3", periode_start: "2026-10-01", periode_end: "2026-10-31" }], extraction: { warnings: ["angka 3% terbaca dari halaman 2 yang buram"] }, period: ["2026-10-01", "2026-10-31"] } };
@@ -185,8 +235,13 @@ test("Summary: buka draf, siklus, Terbitkan butuh centang; gerbang faktur menung
     await expect(main.getByRole("heading", { level: 1, name: draft.title })).toBeVisible();
     await expect(main.getByRole("list", { name: "Siklus Summary" }).locator('[aria-current="step"]')).toContainText("Terbit");
     await expect(main.getByText("1 catatan pembacaan:")).toBeVisible();
+    // Urutan bagian mengikuti siklus (Surat di atas Gerbang faktur) dan hanya aksi tahap aktif yang primary (Terbitkan di footer).
+    const yAtas = async (nama: string) => (await main.getByRole("region", { name: nama }).boundingBox())!.y;
+    expect(await yAtas("Surat")).toBeLessThan(await yAtas("Langkah berikutnya: masuk gerbang faktur"));
+    expect(await yAtas("Aturan tersusun")).toBeLessThan(await yAtas("Dipakai di mana"));
+    await expect(main.locator("button.fi-btn--primary:visible")).toHaveCount(1);
     await expect(main.getByRole("table", { name: "Aturan tersusun" })).toContainText("diskon 3%");
-    await expect(main.getByText("usulan BL-51")).toBeVisible();
+    await expect(main.getByLabel("Usulan BL-51")).toBeVisible();
     await page.screenshot({ path: "test-results/fiori-summary.png", fullPage: true });
     await main.locator(".fi-ftb").getByRole("button", { name: "Terbitkan…" }).click();
     const dlg = page.getByRole("dialog");
@@ -204,7 +259,7 @@ test("Summary: buka draf, siklus, Terbitkan butuh centang; gerbang faktur menung
     const muat = gerbang.getByRole("button", { name: "Muat ke gerbang faktur…" });
     await expect(muat).toBeDisabled();
     await expect(muat).toHaveAttribute("title", "Lengkapi bukti tanda tangan dan pernyataan");
-    await expect(gerbang.getByText("usulan BL-53")).toBeVisible();
+    await expect(gerbang.getByLabel("Usulan BL-53")).toBeVisible();
 });
 
 test("Summary: Cabut publikasi (owner 8 Okt) — alasan wajib ≥ 5 karakter, payload { revision, alasan }; galat server tampil di dialog", async ({ page }) => {

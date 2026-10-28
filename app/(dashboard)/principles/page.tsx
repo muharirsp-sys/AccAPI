@@ -1,16 +1,19 @@
 /*
- * Tujuan: Halaman manajemen master principle dengan upload Excel dan daftar master aktif bergaya warm luxury.
+ * Tujuan: Master Principal (Fiori): unggah Excel master rujukan per principal dan kelola daftar master aktif. Hapus lewat dialog konfirmasi.
  * Caller: Route dashboard `/principles`.
- * Dependensi: FastAPI `/api/principles`, toast Sonner, ikon lucide-react.
- * Main Functions: `PrincipleManagementPage`, `fetchPrinciples`, `handleUpload`, `handleDelete`.
- * Side Effects: HTTP read/write ke FastAPI, upload file Excel, konfirmasi hapus via browser.
+ * Dependensi: FastAPI `/api/principles` (GET daftar, POST add, POST {id}/delete) lewat lib/apiBase, komponen Fiori, lib/tampil.
+ * Main Functions: `PrincipleManagementPage`, `fetchPrinciples`, `handleUpload`, `handleDelete` (dipanggil ConfirmDialog).
+ * Side Effects: HTTP baca/tulis ke FastAPI, unggah berkas Excel, hapus master (tidak bisa dibatalkan).
  */
 "use client";
 
 import { useEffect, useState } from "react";
-import { Trash2, Upload, Database, AlertCircle } from "lucide-react";
-import { toast } from "sonner";
+import { Trash2, Upload } from "lucide-react";
+import { FioriScope } from "@/components/fiori/Scope";
+import { Button, ListItem, MessageStrip, ResponsiveTable, Section, type Column } from "@/components/fiori/core";
+import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { resolveApiBase } from "@/lib/apiBase";
+import { tanggalWita, sebabHttp } from "@/lib/tampil";
 
 interface Principle {
     name: string;
@@ -18,32 +21,33 @@ interface Principle {
     uploaded_by: string;
     created_at: string;
 }
+type Baris = Principle & { id: string };
 
 const API_BASE = resolveApiBase();
+/** Jaringan putus (fetch melempar) dan penolakan server dibedakan; sebabnya ikut dibawa supaya orang yang tepat yang membetulkan. */
+async function minta(url: string, init?: RequestInit) {
+    const fetchUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
+    return fetch(fetchUrl, { credentials: "include", ...init }).catch(() => { throw new Error(sebabHttp(0)); });
+}
 const api = {
     get: async (url: string) => {
-        const fetchUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
-        const res = await fetch(fetchUrl, { credentials: "include" });
-        if (!res.ok) throw new Error("Fetch failed");
+        const res = await minta(url);
+        if (!res.ok) throw new Error(sebabHttp(res.status));
         return { data: await res.json(), status: res.status, ok: res.ok };
     },
     post: async (url: string, data?: unknown) => {
-        const fetchUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
         const isFormData = data instanceof FormData;
-        const res = await fetch(fetchUrl, {
+        const res = await minta(url, {
             method: "POST",
-            credentials: "include",
             body: isFormData ? data : JSON.stringify(data),
             headers: isFormData ? {} : { "Content-Type": "application/json" }
         });
-        // Sebab yang SEBENARNYA ikut dibawa. "Fetch POST failed" membuat HTTP 500 dari
-        // server tidak bisa dibedakan dari kabel yang putus, dan keduanya butuh orang yang
-        // berbeda untuk membetulkannya.
+        // Sebab yang SEBENARNYA ikut dibawa: server menolak dan kabel putus butuh orang berbeda untuk membetulkannya.
         if (!res.ok) {
             const teks = await res.text().catch(() => "");
             let sebab = teks.slice(0, 300);
             try { sebab = String(JSON.parse(teks).error ?? sebab); } catch { /* bukan JSON */ }
-            throw new Error(`HTTP ${res.status}${sebab ? ` — ${sebab}` : ""}`);
+            throw new Error(`${sebabHttp(res.status)}${sebab ? ` ${sebab}` : ""}`);
         }
         return { data: await res.json(), status: res.status, ok: res.ok };
     }
@@ -52,11 +56,16 @@ const api = {
 export default function PrincipleManagementPage() {
     const [loading, setLoading] = useState(true);
     const [principles, setPrinciples] = useState<Record<string, Principle>>({});
-    
+    const [galatMuat, setGalatMuat] = useState<string | null>(null);
+
     // Upload Form States
     const [isUploading, setIsUploading] = useState(false);
     const [newPrincipleName, setNewPrincipleName] = useState("");
     const [file, setFile] = useState<File | null>(null);
+    const [inputKe, setInputKe] = useState(0);
+    const [galatForm, setGalatForm] = useState<string | null>(null);
+    const [pesan, setPesan] = useState<{ tone: "pos" | "neg"; teks: string } | null>(null);
+    const [hapus, setHapus] = useState<Baris | null>(null);
 
     useEffect(() => {
         fetchPrinciples();
@@ -66,9 +75,10 @@ export default function PrincipleManagementPage() {
         setLoading(true);
         try {
             const res = await api.get("/api/principles");
-            if (res.data.ok) setPrinciples(res.data.principles);
-        } catch {
-            toast.error("Gagal memuat Master Principles. Pastikan Python backend menyala.");
+            if (res.data.ok) { setPrinciples(res.data.principles); setGalatMuat(null); }
+            else setGalatMuat(String(res.data.error || "Server tidak mengirim daftar master."));
+        } catch (e) {
+            setGalatMuat(e instanceof Error ? e.message : sebabHttp(0));
         } finally {
             setLoading(false);
         }
@@ -76,7 +86,8 @@ export default function PrincipleManagementPage() {
 
     const handleUpload = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!file || !newPrincipleName) return toast.error("Pilih file Excel dan masukkan nama Principle!");
+        setGalatForm(null); setPesan(null);
+        if (!file || !newPrincipleName) { setGalatForm("Isi nama principal dan pilih berkas Excel master dulu."); return; }
 
         setIsUploading(true);
         const fd = new FormData();
@@ -88,119 +99,73 @@ export default function PrincipleManagementPage() {
             if (res.data.ok) {
                 setNewPrincipleName("");
                 setFile(null);
-                toast.success("Berhasil mengunggah Data Master.");
+                setInputKe((k) => k + 1);
+                setPesan({ tone: "pos", teks: "Master berhasil diunggah." });
                 fetchPrinciples();
-            } else toast.error("Gagal mengunggah: " + res.data.error);
-        } catch (e) { toast.error(`Gagal mengunggah Master: ${e instanceof Error ? e.message : e}`, { duration: 15000 }); }
+            } else setPesan({ tone: "neg", teks: `Master belum terunggah. ${res.data.error ?? ""}`.trim() });
+        } catch (e) { setPesan({ tone: "neg", teks: `Master belum terunggah. ${e instanceof Error ? e.message : sebabHttp(0)}` }); }
         finally { setIsUploading(false); }
     };
 
     const handleDelete = async (pid: string) => {
-        if (!confirm("Yakin ingin menghapus Data Master ini secara permanen?")) return;
-        try {
-            const res = await api.post(`/api/principles/${pid}/delete`);
-            if (res.data.ok) {
-                toast.success("Principle Master berhasil dihapus.");
-                fetchPrinciples();
-            } else toast.error("Gagal menghapus: " + res.data.error);
-        } catch (e) { toast.error(`Gagal menghapus Master: ${e instanceof Error ? e.message : e}`, { duration: 15000 }); }
+        const res = await api.post(`/api/principles/${pid}/delete`);
+        if (!res.data.ok) throw new Error(String(res.data.error || "Server menolak penghapusan."));
+        setHapus(null);
+        setPesan({ tone: "pos", teks: "Master principal dihapus." });
+        fetchPrinciples();
     };
 
+    const baris: Baris[] = Object.entries(principles).map(([id, p]) => ({ id, ...p }));
+    const tombolHapus = (p: Baris) => (
+        <Button variant="tertiary" icon={<Trash2 className="fi-icon" aria-hidden />} aria-label={`Hapus master ${p.name}`} onClick={() => setHapus(p)}>Hapus…</Button>
+    );
+    const kolom: Column<Baris>[] = [
+        { key: "nama", header: "Principal", cell: (p) => p.name },
+        { key: "berkas", header: "Berkas master", cell: (p) => <span className="fi-mono">{p.filename}</span> },
+        { key: "oleh", header: "Diunggah oleh", secondary: true, cell: (p) => p.uploaded_by || "Sistem" },
+        { key: "tanggal", header: "Tanggal", secondary: true, cell: (p) => <span className="fi-tnum">{tanggalWita(p.created_at)}</span> },
+        { key: "aksi", header: "Tindakan", cell: tombolHapus },
+    ];
+    const status = loading ? "memuat" : galatMuat ? "galat" : "siap";
+
     return (
-        <div className="max-w-[1200px] mx-auto pb-12">
-            <div className="mb-8">
-                <h1 className="text-3xl font-bold text-white tracking-tight flex items-center gap-3">
-                    <Database className="text-[#9a7a45]" />
-                    Manajemen Master Principle
-                </h1>
-                <p className="text-slate-400 mt-2 text-lg">Unggah dan kelola data master excel rujukan per Principle (Dibutuhkan untuk Summary Promo AI Regex).</p>
-            </div>
+        <FioriScope>
+            <div className="fi-page">
+                <header className="fi-page-head">
+                    <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Pengaturan</span></li><li><span aria-current="page">Master Principal</span></li></ol></nav>
+                    <h1>Master Principal</h1>
+                    <p>Unggah dan kelola master Excel rujukan per principal. Summary Promo memakainya untuk membaca surat dan menyusun kode barang.</p>
+                </header>
 
-            <div className="grid lg:grid-cols-3 gap-6">
-                
-                {/* Upload Section */}
-                <div className="lg:col-span-1 bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-white/10 relative overflow-hidden h-fit">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-3xl -mr-16 -mt-16"></div>
-                    <div className="flex items-center gap-3 mb-6 relative">
-                        <Upload className="text-[#9a7a45]" size={24} />
-                        <h2 className="text-lg font-bold text-white">Tambah Baru</h2>
-                    </div>
+                {pesan && <MessageStrip tone={pesan.tone} title={pesan.teks} onClose={() => setPesan(null)} />}
 
-                    <form onSubmit={handleUpload} className="space-y-5 relative">
-                        <div>
-                            <label className="block text-sm font-medium text-slate-300 mb-2">Nama Principle / Perusahaan</label>
-                            <input
-                                type="text"
-                                required
-                                value={newPrincipleName}
-                                onChange={e => setNewPrincipleName(e.target.value)}
-                                placeholder="Cth: PT. Unilever"
-                                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-slate-300 outline-none focus:ring-1 focus:ring-[#c79a3f]/50"
-                            />
-                        </div>
+                <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+                    <Section title="Tambah master baru" subtitle="satu berkas Excel per principal">
+                        <form className="fi-sect-in" onSubmit={handleUpload}>
+                            {galatForm && <MessageStrip tone="neg" title={galatForm} />}
+                            <FormField label="Nama principal" required>
+                                {(a11y) => <input {...a11y} className="fi-input" type="text" required value={newPrincipleName} placeholder="mis. PRINCIPLE A" onChange={(e) => setNewPrincipleName(e.target.value)} />}
+                            </FormField>
+                            <FormField label="Berkas Excel master" required help="Format .xlsx atau .xls.">
+                                {(a11y) => <input {...a11y} key={inputKe} className="fi-input" type="file" required accept=".xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] || null)} />}
+                            </FormField>
+                            <div className="fi-btnrow">
+                                <Button type="submit" variant="primary" icon={<Upload className="fi-icon" aria-hidden />} busy={isUploading}>Simpan master</Button>
+                            </div>
+                        </form>
+                    </Section>
 
-                        <div>
-                            <label className="block text-sm font-medium text-slate-300 mb-2">File Excel Master</label>
-                            <input
-                                type="file"
-                                required
-                                accept=".xlsx,.xls"
-                                onChange={e => setFile(e.target.files?.[0] || null)}
-                                className="text-sm block w-full file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-bold file:bg-blue-600 file:text-white file:cursor-pointer hover:file:bg-blue-500 text-slate-400 border border-white/10 rounded-xl bg-black/40 overflow-hidden"
-                            />
-                        </div>
-
-                        <button
-                            type="submit"
-                            disabled={isUploading}
-                            className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500 disabled:opacity-50 transition-all shadow-lg shadow-blue-600/20"
-                        >
-                            {isUploading ? "Mengunggah..." : "Simpan Master"}
-                        </button>
-                    </form>
+                    <Section title="Master principal aktif" subtitle={status === "siap" ? `${baris.length} master` : undefined}>
+                        <ResponsiveTable<Baris> title="Master principal aktif" columns={kolom} rows={baris} rowKey={(p) => p.id} status={status} error={galatMuat ?? undefined} onRetry={fetchPrinciples}
+                            empty={{ title: "Belum ada master principal", message: "Unggah berkas Excel master pertama lewat formulir di samping." }}
+                            mobileItem={(p) => <ListItem doc={p.filename} title={p.name} meta={`${p.uploaded_by || "Sistem"} · ${tanggalWita(p.created_at)}`} badge={tombolHapus(p)} />} />
+                    </Section>
                 </div>
 
-                {/* List Grid */}
-                <div className="lg:col-span-2 bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-white/10">
-                    <div className="flex items-center gap-3 mb-6">
-                        <Database className="text-slate-400" size={24} />
-                        <h2 className="text-lg font-bold text-white">Daftar Master Principle Aktif</h2>
-                    </div>
-
-                    {loading ? (
-                        <div className="text-center py-12 text-slate-500 animate-pulse">Memuat list principle dari node backend...</div>
-                    ) : Object.keys(principles).length === 0 ? (
-                        <div className="text-center py-12 border border-dashed border-white/10 rounded-xl bg-black/20 flex flex-col items-center justify-center gap-2 text-slate-500">
-                            <AlertCircle size={24} />
-                            <p className="text-sm">Belum ada Principle yang diunggah di Sistem.</p>
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {Object.entries(principles).map(([id, p]) => (
-                                <div key={id} className="bg-black/40 border border-white/10 rounded-xl p-5 hover:border-blue-500/50 transition-colors group relative">
-                                    <h3 className="font-bold text-white mb-1.5">{p.name}</h3>
-                                    <p className="text-xs font-mono text-slate-400 mb-4 bg-white/5 py-1 px-2 rounded inline-block truncate max-w-full">
-                                        {p.filename}
-                                    </p>
-
-                                    <div className="flex justify-between items-center text-[10px] text-slate-500 pt-3 border-t border-white/5">
-                                        <span className="truncate max-w-[100px]">By: {p.uploaded_by || "Sistem"}</span>
-                                        <span>{p.created_at}</span>
-                                    </div>
-
-                                    <button
-                                        onClick={() => handleDelete(id)}
-                                        className="absolute top-4 right-4 text-slate-500 hover:text-red-400 hover:bg-red-500/10 p-1.5 rounded-md transition-colors"
-                                        title="Hapus Master Principle"
-                                    >
-                                        <Trash2 size={16} />
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
+                <ConfirmDialog open={hapus !== null} onClose={() => setHapus(null)} tag="Hapus" tone="negative" title={`Hapus master ${hapus?.name ?? ""}?`} confirmLabel="Hapus master"
+                    facts={[["Principal", hapus?.name ?? ""], ["Berkas", hapus?.filename ?? ""], ["Dipakai di", "Pilihan principal tersimpan di Summary Promo"], ["Akibat", "Master dihapus permanen. Unggah ulang berkasnya bila masih dibutuhkan"]]}
+                    onConfirm={() => handleDelete(hapus!.id)} />
             </div>
-        </div>
+        </FioriScope>
     );
 }

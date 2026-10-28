@@ -1,8 +1,8 @@
 /*
- * Tujuan: Daftar outlet peserta program (Fiori S4a) — "toko mana saja yang ikut". Tab di Aturan Promo.
- *   Tiga confirm browser diganti dialog: ganti tunjukan daftar (paksa), ubah periode semua anggota, keluarkan anggota.
+ * Tujuan: Daftar outlet peserta program (Fiori S4a): "toko mana saja yang ikut". Tab di Aturan Promo. Unggah berkas, ganti daftar yang
+ *   ditunjuk (paksa), ubah periode semua anggota, dan keluarkan anggota lewat dialog konfirmasi.
  * Caller: app/(dashboard)/aturan-promo/AturanPromo.tsx.
- * Dependensi: GET|POST|PATCH|DELETE /api/promo-outlet; components/fiori/*; lib/promo-ui.
+ * Dependensi: GET|POST|PATCH|DELETE /api/promo-outlet; components/fiori/*; lib/promo-ui; lib/tampil; lib/claim-workflow-ui (pesanGalat).
  * Main Functions: DaftarOutlet, PilihDaftar.
  * Side Effects: HTTP; setiap simpan menulis `promo_outlet` (izin summary.edit).
  *
@@ -17,6 +17,8 @@ import { Button, EmptyState, ErrorState, ListItem, MessageStrip, ResponsiveTable
 import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
 import { tgl } from "@/lib/promo-ui";
+import { KOSONG, sebabHttp } from "@/lib/tampil";
+import { pesanGalat } from "@/lib/claim-workflow-ui";
 
 type Member = { id: number; listName: string; customerCode: string; customerName: string; tier: string; sourceCode: string;
     periodStart: string | null; periodEnd: string | null; active: boolean; note: string; importedBy: string };
@@ -39,7 +41,7 @@ function PilihDaftar({ id, label, value, onChange, lists, programs, onTunjuk, he
     const pilihan = tujuan || (programs.some((p) => p.suratProgram.toUpperCase() === nama) ? nama : "");
     return (
         <div style={{ display: "grid", gap: 6 }}>
-            <FormField label={label} help={help}>{(a11y) => <input {...a11y} className="fi-input" list={id} disabled={kunci} placeholder="LOYALTY atau nomor surat" value={value} onChange={(e) => onChange(e.target.value.toUpperCase())} />}</FormField>
+            <FormField label={label} help={help}>{(a11y) => <input {...a11y} className="fi-input" list={id} disabled={kunci} placeholder="DAFTAR A atau nomor surat" value={value} onChange={(e) => onChange(e.target.value.toUpperCase())} />}</FormField>
             <datalist id={id}>
                 {programs.map((p) => <option key={`p-${p.suratProgram}`} value={p.suratProgram}>{`promo berjalan · ${p.rules} aturan${p.promoLabel ? ` · ${p.promoLabel}` : ""}`}</option>)}
                 {lists.filter((e) => !programs.some((p) => p.suratProgram === e.name)).map((e) => <option key={`l-${e.name}`} value={e.name}>{`daftar yang sudah ada · ${e.members} toko`}</option>)}
@@ -73,6 +75,7 @@ export default function DaftarOutlet({ bolehUbah }: { bolehUbah: boolean }) {
     const [paksa, setPaksa] = useState<{ nama: string; surat: string; pesan: string } | null>(null);
     const [laporan, setLaporan] = useState<Laporan | null>(null);
     const [sibuk, setSibuk] = useState(false);
+    const [berkas, setBerkas] = useState<File | null>(null);
 
     const query = new URLSearchParams(Object.entries({ list, q: q.trim() }).filter(([, v]) => v)).toString();
     const [data, muat] = useLoad(useCallback(() => ambil<Payload>(`/api/promo-outlet?${query}`, (j) => {
@@ -91,9 +94,9 @@ export default function DaftarOutlet({ bolehUbah }: { bolehUbah: boolean }) {
         try {
             const res = await fetch(url, init);
             const body = (await res.json().catch(() => ({}))) as Record<string, unknown> & { ok?: boolean; error?: string };
-            return { ok: res.ok && body.ok === true, body: res.ok || body.error ? body : { ...body, error: `HTTP ${res.status}` } };
-        } catch (e) {
-            return { ok: false, body: { error: `Server tidak terhubung: ${e instanceof Error ? e.message : String(e)}` } };
+            return { ok: res.ok && body.ok === true, body: res.ok || body.error ? body : { ...body, error: sebabHttp(res.status) } };
+        } catch {
+            return { ok: false, body: { error: sebabHttp(0) } };
         }
     }
 
@@ -134,13 +137,14 @@ export default function DaftarOutlet({ bolehUbah }: { bolehUbah: boolean }) {
         }
     }
 
+    /** Dipanggil dari dialog Muat daftar; galat dilempar supaya tampil di dialog, bukan hilang di strip di belakangnya. */
     async function unggah(file: File) {
         setSibuk(true);
         try {
             const form = new FormData();
             form.append("file", file); form.append("distCode", distCode); form.append("listName", listName);
             const r = await kirim({ method: "POST", body: form });
-            if (!r.ok) { setLaporan({ tone: "neg", judul: String(r.body.error ?? "Gagal membaca berkas"), rincian: [] }); return; }
+            if (!r.ok) throw new Error(String(r.body.error ?? "Berkas belum bisa dibaca."));
             const b = r.body as Record<string, unknown>;
             const kembar = Number(b.kembar) > 0 ? `, ${b.kembar} kembar digabung` : "";
             const lewat = Number(b.ocrPages) > 0 ? ` (dibaca ${b.sumberTeks}, ${b.ocrPages} halaman)` : "";
@@ -188,7 +192,7 @@ export default function DaftarOutlet({ bolehUbah }: { bolehUbah: boolean }) {
     const kolom: Column<Member>[] = [
         { key: "daftar", header: "Daftar", secondary: true, cell: (m) => <span className="fi-small">{m.listName}</span> },
         { key: "outlet", header: "Outlet", cell: (m) => <>{m.customerName}<span className="fi-codes">{m.customerCode}</span>{!m.active && <> <StatusBadge tone="neu">Nonaktif</StatusBadge></>}</> },
-        { key: "ket", header: "Keterangan", secondary: true, cell: (m) => m.tier || "—" },
+        { key: "ket", header: "Keterangan", secondary: true, cell: (m) => m.tier || KOSONG },
         { key: "kode", header: "Kode principal", secondary: true, cell: (m) => m.sourceCode ? <span className="fi-mono fi-small">{m.sourceCode}</span> : <span className="fi-small fi-subtle">diketik langsung</span> },
         { key: "ikut", header: "Ikut", cell: (m) => ubah?.id === m.id ? (
             <span className="fi-page-bar">
@@ -215,14 +219,14 @@ export default function DaftarOutlet({ bolehUbah }: { bolehUbah: boolean }) {
                 actions={<>
                     <a className="fi-btn fi-btn--tertiary" href="/api/promo-outlet?template=1"><Download className="fi-icon" aria-hidden />Template daftar</a>
                     <a className="fi-btn fi-btn--tertiary" href="/api/promo-recap?template=1"><Download className="fi-icon" aria-hidden />Template aturan &amp; tarif MT</a>
-                    {bolehUbah && <label className={`fi-btn fi-btn--secondary${sibuk ? " fi-busy" : ""}`}><FileUp className="fi-icon" aria-hidden />Unggah surat / berkas<input type="file" accept=".pdf,.xlsx,.xls,.csv" disabled={sibuk} className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void unggah(f); }} /></label>}
+                    {bolehUbah && <label className={`fi-btn fi-btn--secondary${sibuk ? " fi-busy" : ""}`}><FileUp className="fi-icon" aria-hidden />Unggah surat / berkas<input type="file" accept=".pdf,.xlsx,.xls,.csv" disabled={sibuk} className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) setBerkas(f); }} /></label>}
                     {bolehUbah && <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} onClick={() => setTambah({ listName: list || lists[0]?.name || "LOYALTY", codes: "", tier: "", periodStart: "", periodEnd: "", note: "" })}>Ketik manual</Button>}
                 </>}>
                 <div className="fi-sect-in">
-                    <p className="fi-small fi-muted">Daftar yang tercetak di surat: unggah suratnya — sistem mengambil baris milik kode distributor kita dan langsung menunjuk semua aturan surat itu ke daftarnya. Template + berkas terpisah hanya untuk daftar yang tidak tercetak di surat (mis. peserta loyalty kuartalan). Surat hasil scan dibaca OCR berbayar per halaman, hanya bila lapisan teksnya tidak menjawab.</p>
+                    <p className="fi-small fi-muted">Daftar yang tercetak di surat: unggah suratnya. Sistem mengambil baris milik kode distributor kita dan langsung menunjuk semua aturan surat itu ke daftarnya. Template dan berkas terpisah hanya untuk daftar yang tidak tercetak di surat (mis. peserta loyalty kuartalan). Surat hasil scan dibaca OCR berbayar per halaman, hanya bila lapisan teksnya tidak menjawab.</p>
                     {bolehUbah && (
                         <div className="fi-formgrid">
-                            <FormField label="Kode distributor kita" help="Tujuh angka di kolom KODE DIST lampiran surat.">{(a11y) => <input {...a11y} className="fi-input" placeholder="1201671" value={distCode} onChange={(e) => setDistCode(e.target.value)} />}</FormField>
+                            <FormField label="Kode distributor kita" help="Tujuh angka di kolom KODE DIST lampiran surat.">{(a11y) => <input {...a11y} className="fi-input" placeholder="Tujuh angka" value={distCode} onChange={(e) => setDistCode(e.target.value)} />}</FormField>
                             <PilihDaftar id="daftar-unggah" label="Nama daftar (berkas terpisah)" help="Surat memakai nomornya sendiri sebagai nama daftar." value={listName} onChange={setListName} lists={lists} programs={programs} onTunjuk={(s) => void tunjuk(listName, s)} />
                         </div>
                     )}
@@ -234,11 +238,11 @@ export default function DaftarOutlet({ bolehUbah }: { bolehUbah: boolean }) {
                     <div className="fi-sect-in">
                         <div className="fi-formgrid">
                             <PilihDaftar id="daftar-ketik" label="Nama daftar / promo" value={tambah.listName} onChange={(v) => setTambah({ ...tambah, listName: v })} lists={lists} programs={programs} onTunjuk={(s) => void tunjuk(tambah.listName, s)} />
-                            <FormField label="Keterangan" help="Bebas, mis. PLATINUM; tidak dipakai memutuskan.">{(a11y) => <input {...a11y} className="fi-input" value={tambah.tier} onChange={(e) => setTambah({ ...tambah, tier: e.target.value })} />}</FormField>
+                            <FormField label="Keterangan" help="Bebas, mis. KATEGORI A; tidak dipakai memutuskan.">{(a11y) => <input {...a11y} className="fi-input" value={tambah.tier} onChange={(e) => setTambah({ ...tambah, tier: e.target.value })} />}</FormField>
                             <FormField label="Ikut mulai" help="Kosong = sejak kapan pun.">{(a11y) => <input {...a11y} className="fi-input" type="date" value={tambah.periodStart} onChange={(e) => setTambah({ ...tambah, periodStart: e.target.value })} />}</FormField>
                             <FormField label="Ikut sampai" help="Kosong = sampai dikeluarkan.">{(a11y) => <input {...a11y} className="fi-input" type="date" value={tambah.periodEnd} onChange={(e) => setTambah({ ...tambah, periodEnd: e.target.value })} />}</FormField>
                         </div>
-                        <FormField label="Kode outlet" required help="Kode internal Accurate (C-WIN013) atau kode pelanggan principal (22160031402), dipisah koma, spasi, atau baris baru. Yang tidak dikenali ditolak satu per satu.">{(a11y) => <textarea {...a11y} className="fi-input" rows={4} value={tambah.codes} onChange={(e) => setTambah({ ...tambah, codes: e.target.value })} />}</FormField>
+                        <FormField label="Kode outlet" required help="Kode internal Accurate (mis. C-KODE-A) atau kode pelanggan principal (mis. 00000001), dipisah koma, spasi, atau baris baru. Yang tidak dikenali ditolak satu per satu.">{(a11y) => <textarea {...a11y} className="fi-input" rows={4} value={tambah.codes} onChange={(e) => setTambah({ ...tambah, codes: e.target.value })} />}</FormField>
                         <FormField label="Catatan">{(a11y) => <input {...a11y} className="fi-input" value={tambah.note} onChange={(e) => setTambah({ ...tambah, note: e.target.value })} />}</FormField>
                     </div>
                 </Section>
@@ -263,14 +267,23 @@ export default function DaftarOutlet({ bolehUbah }: { bolehUbah: boolean }) {
             )}
 
             {data.status === "memuat" && !data.data ? <div className="fi-panel"><Skeleton rows={5} label="Memuat daftar outlet" /></div>
-                : data.status === "galat" && !data.data ? <div className="fi-panel"><ErrorState message={data.error} onRetry={muat} /></div>
+                : data.status === "galat" && !data.data ? <div className="fi-panel"><ErrorState message={pesanGalat("Daftar outlet gagal dimuat.", data.error)} onRetry={muat} /></div>
                 : (
-                    <ResponsiveTable<Member> title="Anggota daftar" count={members.length} columns={kolom} rows={members} rowKey={(m) => String(m.id)} status={data.status} error={data.error} onRetry={muat}
-                        empty={{ title: "Belum ada outlet di daftar ini", message: "Selama daftarnya kosong, aturan yang menunjuknya tidak berlaku untuk siapa pun — disengaja: lebih baik tertahan daripada lolos tanpa dasar." }}
+                    <ResponsiveTable<Member> title="Anggota daftar" count={members.length} columns={kolom} rows={members} rowKey={(m) => String(m.id)} status={data.status} error={data.error ? pesanGalat("Daftar outlet gagal dimuat.", data.error) : undefined} onRetry={muat}
+                        empty={{ title: "Belum ada outlet di daftar ini", message: "Selama daftarnya kosong, aturan yang menunjuknya tidak berlaku untuk siapa pun. Itu disengaja: lebih baik tertahan daripada lolos tanpa dasar." }}
                         mobileItem={(m) => <ListItem doc={m.customerCode} title={m.customerName} meta={`${m.listName} · ${tgl(m.periodStart) || "kapan pun"} – ${tgl(m.periodEnd) || "dikeluarkan"}`} badge={bolehUbah ? <Button variant="tertiary" onClick={() => setKeluarkan(m)}>Keluarkan…</Button> : undefined} />} />
                 )}
             {!data.data && data.status !== "memuat" && data.status !== "galat" && <EmptyState title="Belum ada daftar" />}
 
+            <ConfirmDialog open={berkas !== null} onClose={() => setBerkas(null)} tag="Muat daftar" title={`Muat ${berkas?.name ?? "berkas"} ke daftar outlet?`} confirmLabel="Muat daftar" factsAlign="start"
+                description={distCode.trim() ? undefined : "Kode distributor masih kosong. Untuk surat, kode ini dipakai memilih baris milik kita."}
+                facts={[
+                    ["Berkas", berkas ? `${berkas.name} (${Math.max(1, Math.round(berkas.size / 1024))} KB)` : ""],
+                    ["Kode distributor", distCode.trim() || "Belum diisi"],
+                    ["Nama daftar", `${listName.trim() || "Belum diisi"}, dipakai bila berkas bukan surat; surat memakai nomornya sendiri`],
+                    ["Akibat", "Anggota masuk ke daftar. Bila berkas adalah surat, semua aturan surat itu ditunjuk ke daftarnya dan gerbang faktur mengikuti"],
+                ]}
+                onConfirm={async () => { await unggah(berkas!); setBerkas(null); }} />
             <ConfirmDialog open={paksa !== null} onClose={() => setPaksa(null)} tag="Ganti daftar" title={`Ganti daftar yang ditunjuk aturan ${paksa?.surat ?? ""}?`} confirmLabel="Ganti sekarang"
                 description={paksa?.pesan} onConfirm={() => tunjuk(paksa!.nama, paksa!.surat, true)}
                 facts={[["Daftar baru", paksa?.nama ?? ""], ["Akibat", "Peserta program ini berganti ke anggota daftar baru"]]} />

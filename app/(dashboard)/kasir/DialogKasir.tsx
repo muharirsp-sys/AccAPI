@@ -3,7 +3,8 @@
  *   bukti foto/PDF WAJIB bila Transfer > 0, Giro wajib nomor BG + jatuh tempo — owner 12 Okt), jelaskan (selisih orang / uang tak teralokasi),
  *   tutup hari, buka kembali (OM/Admin), konfirmasi hapus massal cache. Semua lewat ConfirmDialog (tanpa window.*), satu POST per klik.
  * Caller: Kasir.tsx (dipasang hanya saat dialog itu aktif).
- * Dependensi: components/fiori (ConfirmDialog, FormField, useUnsavedGuard, MessageStrip, KeyValues), ./bersama (kirimKasir, nominalKeTeks, format).
+ * Dependensi: components/fiori (ConfirmDialog, FormField, useUnsavedGuard, MessageStrip, KeyValues), ./bersama (kirimKasir, nominalKeTeks, format),
+ *   lib/tampil (KOSONG).
  * Main Functions: DialogSetoran, DialogJelaskan, DialogTutup, DialogBuka, DialogHapus.
  * Side Effects: POST /api/kasir/{setoran,jelaskan,tutup,buka} (via kirimKasir); hasil diteruskan ke pemanggil (selesai / ragu / muat ulang).
  */
@@ -13,9 +14,10 @@ import { useState, type ReactNode } from "react";
 import { MessageStrip } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useUnsavedGuard } from "@/components/fiori/interactive";
 import {
-    bulatAtas100, jamWita, kirimKasir, LABEL_STATUS, LABEL_TINDAK, labelEmber, namaTampil, nominalKeTeks, panjang, rp, rpSen, senDari,
+    bulatAtas100, kirimKasir, LABEL_STATUS, LABEL_TINDAK, labelEmber, namaTampil, nominalKeTeks, panjang, rp, rpSen, senDari,
     tanggalPanjang, waktuWita, type BarisOrang, type Ember, type Hari, type Jawab, type TindakLanjut,
 } from "./bersama";
+import { KOSONG } from "@/lib/tampil";
 
 /** Kabar ke pemanggil. `ragu` = jawaban TIDAK PASTI: pemanggil menutup dialog, memuat ulang, lalu membandingkan dengan `periksa`. */
 export type Kabar = {
@@ -88,7 +90,7 @@ export function DialogSetoran({ hari, tanggal, kunci, kabar, orangAwal }: Umum &
             : galatNominal("giro") ? `Giro: ${galatNominal("giro")}`
             : total > 0 && !isi.form.trim() ? "Isi Nomor Form Kasir (wajib bila setoran lebih dari 0)"
             : panjang(isi.form) > 100 ? "Nomor Form Kasir maksimal 100 karakter"
-            : sen("transfer") > 0 && !bukti && !buktiLama ? "Unggah bukti transfer (foto/PDF) — wajib untuk setoran Transfer"
+            : sen("transfer") > 0 && !bukti && !buktiLama ? "Unggah bukti transfer (foto/PDF); wajib untuk setoran Transfer"
             : galatBukti
             ?? (sen("giro") > 0 && !isi.bg.trim() ? "Isi nomor BG (wajib untuk setoran Giro)"
                 : sen("giro") > 0 && panjang(isi.bg) > 100 ? "Nomor BG maksimal 100 karakter"
@@ -132,13 +134,13 @@ export function DialogSetoran({ hari, tanggal, kunci, kabar, orangAwal }: Umum &
                 const utama = b?.setoranPerKode.find((x) => x.kode === terpilih.orang);
                 return utama && sama(utama)
                     ? `Tersimpan: setoran ${nama} revisi ${utama.revisi} tercatat dengan nominal yang Anda kirim. Jangan catat lagi.`
-                    : `Setoran ${nama} berubah ke revisi baru dengan nominal lain — periksa riwayat revisi sebelum mencatat lagi.`;
+                    : `Setoran ${nama} berubah ke revisi baru dengan nominal lain. Periksa riwayat revisi sebelum mencatat lagi.`;
             });
         }
         if (j.kode === "SETORAN_BERUBAH") {
             const k = (j.data.keadaan ?? {}) as { setoran?: { tunai: string; transfer: string; giro: string } | null };
             if (sama(k.setoran)) return kabar.selesai(`Setoran ${nama} dengan nominal yang sama sudah tercatat (klik ganda); tidak dicatat dua kali.`);
-            tolak(j, kabar, "Data dimuat ulang — periksa revisi terbaru sebelum menyimpan lagi.");
+            tolak(j, kabar, "Data dimuat ulang; periksa revisi terbaru sebelum menyimpan lagi.");
         }
         tolak(j, kabar);
     }
@@ -170,7 +172,7 @@ export function DialogSetoran({ hari, tanggal, kunci, kabar, orangAwal }: Umum &
             facts={[
                 ["Pelunasan Incaso", baris?.pelunasan == null ? (baris ? "belum terbaca" : "tidak ada (setoran tanpa pelunasan)") : `${rp(baris.pelunasan)}${baris.jumlahFaktur != null ? ` · ${baris.jumlahFaktur} faktur` : ""}`],
                 ["Total setoran", rpSen(total)],
-                ["Selisih", selisihSen === null ? "—" : <span key="s">{rpSen(selisihSen)} · {klop ? "Klop" : "Selisih — wajib dijelaskan sebelum Tutup"}</span>],
+                ["Selisih", selisihSen === null ? KOSONG : <span key="s">{rpSen(selisihSen)} · {klop ? "Klop" : "Selisih, wajib dijelaskan sebelum Tutup"}</span>],
             ]}>
             {opsi}
             {baris?.setoran && (
@@ -247,7 +249,7 @@ export function DialogJelaskan({ hari, tanggal, kunci, kabar, target }: Umum & {
                 : `Belum tersimpan: belum ada penjelasan baru untuk ${apa}. Jelaskan lagi bila perlu.`);
         }
         if (j.kode === "TIDAK_PERLU_DIJELASKAN") return kabar.selesai(`${j.pesan} Data dimuat ulang.`);
-        tolak(j, kabar, j.kode === "ANGKA_BERUBAH" ? "Angka sudah berubah sejak dimuat; data dimuat ulang — periksa lalu jelaskan lagi." : "");
+        tolak(j, kabar, j.kode === "ANGKA_BERUBAH" ? "Angka sudah berubah sejak dimuat; data dimuat ulang. Periksa lalu jelaskan lagi." : "");
     }
 
     const facts: Array<[string, ReactNode]> = b ? [
@@ -256,7 +258,7 @@ export function DialogJelaskan({ hari, tanggal, kunci, kabar, target }: Umum & {
         ["Selisih", `${rp(b.selisih)}${b.status ? ` · ${LABEL_STATUS[b.status].label}` : ""}`],
     ] : e ? [
         ["Pelunasan", e.nomor], ["Alasan", labelEmber(e)], ["Sisa", rp(e.sisa)],
-        ["Orang", e.orang.length ? e.orang.map(namaTampil).join(", ") : "—"],
+        ["Orang", e.orang.length ? e.orang.map(namaTampil).join(", ") : KOSONG],
     ] : [];
     return (
         <ConfirmDialog open onClose={kabar.tutup} tag="Jelaskan"
@@ -295,11 +297,11 @@ export function DialogTutup({ hari, tanggal, kunci, kabar, onBasi }: Umum & { on
         if (j.jenis === "ragu") {
             return kabar.ragu(`tutup hari ${tanggalPanjang(tanggal)}`, (h) => {
                 const e = h.hari.event.at(-1);
-                return e && e.id > akhir && e.jenis === "tutup" ? `Tersimpan: hari ditutup ${jamWita(e.pada)} WITA oleh ${e.oleh}.` : "Belum tersimpan: hari belum ditutup. Tutup lagi bila perlu.";
+                return e && e.id > akhir && e.jenis === "tutup" ? `Tersimpan: hari ditutup ${waktuWita(e.pada)} WITA oleh ${e.oleh}.` : "Belum tersimpan: hari belum ditutup. Tutup lagi bila perlu.";
             });
         }
         if (j.kode === "BACA_BELUM_SEGAR") return onBasi();
-        tolak(j, kabar, j.alasan?.length ? `Masih terhalang: ${j.alasan.join(" ")}` : j.kode === "ANGKA_BERUBAH" ? "Data dimuat ulang — periksa angka lalu tutup lagi." : "");
+        tolak(j, kabar, j.alasan?.length ? `Masih terhalang: ${j.alasan.join(" ")}` : j.kode === "ANGKA_BERUBAH" ? "Data dimuat ulang. Periksa angka lalu tutup lagi." : "");
     }
 
     return (
@@ -311,7 +313,7 @@ export function DialogTutup({ hari, tanggal, kunci, kabar, onBasi }: Umum & { on
                 ["Uang tak teralokasi dijelaskan", `${ember}`],
                 ["Pelunasan Incaso", rp(hari.total.pelunasan)],
                 ["Setoran Kasir", rp(hari.total.setoran)],
-                ["Pelunasan dibaca lengkap", hari.baca?.lengkapPada ? `pukul ${jamWita(hari.baca.lengkapPada)} WITA${hari.baca.akun ? ` · akun sinkron ${hari.baca.akun}` : ""}` : "—"],
+                ["Pelunasan dibaca lengkap", hari.baca?.lengkapPada ? `${waktuWita(hari.baca.lengkapPada)} WITA${hari.baca.akun ? ` · akun sinkron ${hari.baca.akun}` : ""}` : KOSONG],
                 ["Sesudah ditutup", "Setoran dan penjelasan terkunci; membuka kembali hanya OM/Admin dengan alasan."],
             ]} />
     );
@@ -371,7 +373,7 @@ export function DialogHapus({ hari, tanggal, kunci, kabar, onKonfirmasi }: Umum 
             title={`Hapus ${daftar.length} pelunasan dari cache ${tanggalPanjang(tanggal)}?`}
             description="Pembaca menahan penghapusan karena jumlahnya besar atau akun sinkron berganti. Konfirmasi hanya bila pelunasan ini memang sudah dihapus atau dipindah tanggal di Accurate. Accurate tidak diubah."
             confirmLabel={`Hapus ${daftar.length} dari cache`} confirmDisabled={kunci} alasanTerlihat
-            facts={[["Akan dihapus", daftar.map((d) => d.nomor || `id ${d.id}`).join(", ") || "—"]]}
+            facts={[["Akan dihapus", daftar.map((d) => d.nomor || `id ${d.id}`).join(", ") || KOSONG]]}
             onConfirm={() => { kabar.tutup(); onKonfirmasi(); }} />
     );
 }

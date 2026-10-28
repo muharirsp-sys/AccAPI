@@ -57,9 +57,9 @@ export function causeLines(row: ReconciliationResult, principal: string): string
     if (row.status === "INVALID_DATA") return ["Data tidak dapat dibandingkan; periksa format sumber."];
     const causes: string[] = [];
     if (row.quantityDifference !== 0)
-        causes.push(`Jumlah: Accurate ${number.format(row.accurateQuantity)}, ${principal} ${number.format(row.principalQuantity)} — ${direction(row.quantityDifference, number.format(Math.abs(row.quantityDifference)))}`);
+        causes.push(`Jumlah: Accurate ${number.format(row.accurateQuantity)}, ${principal} ${number.format(row.principalQuantity)} (${direction(row.quantityDifference, number.format(Math.abs(row.quantityDifference)))})`);
     for (const item of row.amountDifferences)
-        causes.push(`${AMOUNT_LABEL[item.component]}: Accurate ${money(item.accurate)}, ${principal} ${money(item.kino)} — ${direction(item.difference, money(Math.abs(item.difference)))}`);
+        causes.push(`${AMOUNT_LABEL[item.component]}: Accurate ${money(item.accurate)}, ${principal} ${money(item.kino)} (${direction(item.difference, money(Math.abs(item.difference)))})`);
     causes.push(...row.warnings.map((w) => w === "UNMAPPED_CUSTOMER" ? `Pelanggan ${principal} belum dipetakan.` : w === "UNMAPPED_SALESMAN" ? `Salesman ${principal} belum dipetakan.` : w));
     return causes;
 }

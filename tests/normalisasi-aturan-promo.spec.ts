@@ -194,9 +194,9 @@ test("Normalisasi: otomatis per baris hanya untuk yang punya tepat satu aturan b
     const dlg = page.getByRole("dialog");
     await dlg.getByLabel("Beban").selectOption("principal");
     // Tiga faktur, surat berbeda: tidak ada satu surat untuk semuanya.
-    await expect(dlg.getByText("Tidak ada satu surat untuk semua potongan terpilih — pilih “Otomatis per baris”", { exact: false })).toBeVisible();
+    await expect(dlg.getByText("Tidak ada satu surat untuk semua potongan terpilih. Pilih “Otomatis per baris”", { exact: false })).toBeVisible();
     const dasar = dlg.getByLabel(/Aturan promo dasar/);
-    await expect(dasar.locator("option", { hasText: "Otomatis per baris — 1 dari 3 potongan" })).toHaveCount(1);
+    await expect(dasar.locator("option", { hasText: "Otomatis per baris: 1 dari 3 potongan" })).toHaveCount(1);
     await dasar.selectOption("__otomatis__");
     // Pilihan otomatis tetap TERLIHAT terpilih, bukan kembali ke placeholder.
     await expect(dasar).toHaveValue("__otomatis__");

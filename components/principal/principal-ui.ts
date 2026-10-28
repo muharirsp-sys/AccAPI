@@ -2,7 +2,7 @@
  * Tujuan: Bagian bersama layar Data Principal (Fiori S7b): bentuk jawaban /api/principals/**, label jenis alias, saringan daftar,
  *   ringkasan baris riwayat, serta baca/tulis yang membedakan galat PASTI dari jawaban TIDAK PASTI.
  * Caller: components/principal/DataPrincipal.tsx, components/principal/RiwayatPrincipal.tsx, principal-ui.test.ts.
- * Dependensi: lib/principal/resolver (JENIS_ALIAS, SUMBER_KODE — murni), components/admin/admin-ui (waktuWita). Kontrak:
+ * Dependensi: lib/principal/resolver (JENIS_ALIAS, SUMBER_KODE — murni), lib/tampil (waktuWita). Kontrak:
  *   docs/handover/S7-2-KONTRAK-PRINCIPAL-API.md.
  * Main Functions: saring, ringkasLog, aktorTeks, labelJenis, labelVarian, baca, tulis, GalatTulis.
  * Side Effects: baca/tulis melakukan fetch ke /api/principals/**; sisanya murni.
@@ -13,7 +13,7 @@ import type { Load } from "@/components/fiori/interactive";
 import { JENIS_ALIAS, SUMBER_KODE, type JenisAlias } from "@/lib/principal/resolver";
 
 export { JENIS_ALIAS, SUMBER_KODE };
-export { waktuWita } from "@/components/admin/admin-ui";
+export { waktuWita } from "@/lib/tampil";
 
 export type Varian = { principalId: string; variantKey: string; name: string | null; isActive: boolean; createdBy: string | null; createdAt: string };
 export type Alias = {
@@ -63,7 +63,8 @@ export function ringkasLog(l: Log): { apa: string; rinci: string } {
     return { apa: `Alias ${kata}`, rinci: `“${teksDari(isi.aliasAsli) || l.kunci}” · ${labelJenis(teksDari(isi.jenis))}${varian}` };
 }
 
-/** Aktor = id akun sesi (tanpa nama di API); benih memakai `benih:S7-2`. */
+/** Aktor = id akun sesi (tanpa nama di API); benih memakai `benih:S7-2`.
+ *  TODO: tampilkan nama pelaku bila API riwayat menyertakan `actorName` (audit desain 001, No 87); butuh perubahan API, bukan layar. */
 export const aktorTeks = (aktor: string) => (aktor.startsWith("benih:") ? `benih ${aktor.slice(6)}` : aktor);
 
 // ---------------------------------------------------------------------------------------------------------- jaringan
@@ -93,7 +94,7 @@ export async function baca<T>(url: string, pick: (j: Record<string, unknown>) =>
     return { status: "galat", error: `${umum} ${sebab}` };
 }
 
-export const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas, jadi perubahan mungkin sudah tersimpan. Data dimuat ulang — periksa dulu sebelum mengulang.";
+export const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas, jadi perubahan mungkin sudah tersimpan. Data dimuat ulang. Periksa dulu sebelum mengulang.";
 
 /** `belumPasti` = jawaban hilang/tidak terbaca (hasil tulis tidak diketahui); lainnya = server menolak dan tidak menulis apa pun. */
 export class GalatTulis extends Error {
@@ -107,6 +108,6 @@ export async function tulis(url: string, method: "POST" | "PATCH" | "DELETE", bo
     if (status === 0 || status === 502 || status === 504 || data === null) throw new GalatTulis(BELUM_PASTI, status, true);
     const pesan = pesanServer(data) || "Server menolak permintaan.";
     const teks = status === 401 ? `${pesan.replace(/[.\s]+$/, "")}. Sesi login berakhir; masuk ulang lalu coba lagi.`
-        : status === 403 ? `${pesan} — akun Anda belum berhak atas aksi ini; minta admin menambahkan izinnya.` : pesan;
+        : status === 403 ? `${pesan.replace(/[.\s]+$/, "")}. Akun Anda belum berhak atas aksi ini; minta admin menambahkan izinnya.` : pesan;
     throw new GalatTulis(teks, status, false, typeof data.code === "string" ? data.code : undefined);
 }

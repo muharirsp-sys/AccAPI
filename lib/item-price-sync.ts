@@ -15,7 +15,7 @@
  * supaya satu request HTTP tidak perlu hidup 21 menit.
  * Laju dibatasi di bawah batas resmi Accurate (8 request/detik).
  */
-import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
 import { db } from "@/lib/db";
 import { item, itemSellingPrice, syncState } from "@/db/schema";
@@ -89,6 +89,17 @@ function extractRows(itemId: number, itemNo: string, detail: Record<string, unkn
     return rows;
 }
 
+/**
+ * Item yang dikerjakan sync lanjutan: id di atas kursor ATAU satuannya belum pernah terisi (unit1_name kosong).
+ * Tanpa syarat kedua, item yang dijawab s:false/terlewat tidak pernah dicoba lagi karena kursor sudah melewatinya
+ * (audit 9 Okt 2026; 24 Okt: 64 barang baru tanpa satuan -> exception "Isi per karton belum ada" di Rekapan Nota).
+ * ponytail: item yang PERMANEN s:false ikut dicoba tiap putaran (beberapa panggilan detail.do); tandai gagal bila mengganggu.
+ */
+export async function itemTertunda(cursor: number): Promise<{ id: number; no: string }[]> {
+    return db.select({ id: item.id, no: item.no }).from(item)
+        .where(or(gt(item.id, cursor), isNull(item.unit1Name))).orderBy(asc(item.id));
+}
+
 export type SyncItemPricesOptions = {
     limit?: number;
     restart?: boolean;
@@ -142,8 +153,7 @@ export async function syncItemPrices(options: SyncItemPricesOptions = {}): Promi
     const pending = targeted
         ? await db.select({ id: item.id, no: item.no }).from(item)
             .where(inArray(item.no, wantedNos)).orderBy(asc(item.id))
-        : await db.select({ id: item.id, no: item.no }).from(item)
-            .where(gt(item.id, cursor)).orderBy(asc(item.id));
+        : await itemTertunda(cursor);
     const target = Number.isFinite(limit) ? pending.slice(0, limit) : pending;
     log(`Item yang akan diproses: ${target.length}`);
 
@@ -224,7 +234,8 @@ export async function syncItemPrices(options: SyncItemPricesOptions = {}): Promi
         // akan melompati item yang belum pernah disentuh hanya karena ada yang minta harga
         // satu batch diperbarui.
         if (!targeted) {
-            const lastId = batch.at(-1)!.id;
+            // Item ulangan (id di bawah kursor) tidak boleh memundurkan kursor.
+            const lastId = Math.max(cursor, batch.at(-1)!.id);
             await db.insert(syncState).values({ module: MODULE, lastPage: lastId, status: "running" })
                 .onConflictDoUpdate({ target: syncState.module, set: { lastPage: lastId, status: "running", updatedAt: new Date() } });
         }
@@ -236,7 +247,7 @@ export async function syncItemPrices(options: SyncItemPricesOptions = {}): Promi
         if (DELAY_MS > 0) await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     }
 
-    const finalCursor = targeted ? cursor : (target.at(-1)?.id ?? cursor);
+    const finalCursor = targeted ? cursor : Math.max(cursor, target.at(-1)?.id ?? cursor);
     const finished = target.length === pending.length;
     if (!targeted) {
         await db.insert(syncState).values({ module: MODULE, lastPage: finalCursor, status: finished ? "idle" : "running", lastSyncTimestamp: new Date().toISOString() })

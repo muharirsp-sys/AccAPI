@@ -2,7 +2,7 @@
  * Tujuan: Daftar "Pengajuan & SPPD" (Fiori S6a, it08, BL-50): pengajuan terbaru dulu dengan nomor SPPD, rute, tanggal bayar Finance,
  *   nilai, status gabungan transfer/posting, dan jumlah berkas; tiap baris membuka Object Page pengajuan. Baca-saja.
  * Caller: app/(dashboard)/payments/pengajuan/page.tsx (prop permKeys).
- * Dependensi: ../bersama (baca, RangkaPembayaran), components/fiori/*, lib/payments-ui, lib/promo-ui (rupiah).
+ * Dependensi: ../bersama (baca, RangkaPembayaran), components/fiori/*, lib/payments-ui, lib/promo-ui (rupiah), lib/tampil (KOSONG).
  * Main Functions: Pengajuan (default), STATUS_PENGAJUAN, jamTampil.
  * Side Effects: GET /payments/submissions?limit&offset (payments.view).
  */
@@ -16,6 +16,7 @@ import { useLoad } from "@/components/fiori/interactive";
 import { namaAkun, tanggalTampil } from "@/lib/payments-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { RangkaPembayaran, baca } from "../bersama";
+import { KOSONG } from "@/lib/tampil";
 
 export type RingkasPengajuan = {
     id: string; sppd_no: string; created_at_wita: string; created_by: string; target_payment_date: string; method: string; route_label: string;
@@ -31,7 +32,7 @@ export const STATUS_PENGAJUAN: Record<string, Tone> = {
 /** "2026-10-09 10:00:00" (WITA dari server) → "09/10/2026 10.00". */
 export function jamTampil(wita: string): string {
     const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})/.exec(wita ?? "");
-    return m ? `${tanggalTampil(m[1])} ${m[2]}.${m[3]}` : wita || "—";
+    return m ? `${tanggalTampil(m[1])} ${m[2]}.${m[3]}` : wita || KOSONG;
 }
 
 const PAGE = 50;
@@ -52,9 +53,9 @@ export default function Pengajuan({ permKeys }: { permKeys: string[] }) {
                 {r.sppd_no && <span className="fi-small fi-subtle fi-mono">{r.id}</span>}
             </span>
         ) },
-        { key: "diajukan", header: "Diajukan (WITA)", cell: (r) => <span className="grid"><span className="fi-tnum">{jamTampil(r.created_at_wita)}</span><span className="fi-small fi-subtle">{namaAkun(r.created_by) || "—"}</span></span> },
-        { key: "rute", header: "Rute", secondary: true, cell: (r) => r.route_label || "—" },
-        { key: "principal", header: "Principal", secondary: true, cell: (r) => (r.principles.length > 2 ? `${r.principles.slice(0, 2).join(", ")} +${r.principles.length - 2}` : r.principles.join(", ")) || "—" },
+        { key: "diajukan", header: "Diajukan (WITA)", cell: (r) => <span className="grid"><span className="fi-tnum">{jamTampil(r.created_at_wita)}</span><span className="fi-small fi-subtle">{namaAkun(r.created_by) || KOSONG}</span></span> },
+        { key: "rute", header: "Rute", secondary: true, cell: (r) => r.route_label || KOSONG },
+        { key: "principal", header: "Principal", secondary: true, cell: (r) => (r.principles.length > 2 ? `${r.principles.slice(0, 2).join(", ")} +${r.principles.length - 2}` : r.principles.join(", ")) || KOSONG },
         { key: "tanggal", header: "Tanggal bayar", cell: (r) => tanggalTampil(r.target_payment_date) },
         { key: "nilai", header: "Nilai bayar", align: "end", cell: (r) => <span className="fi-tnum">{rupiah(r.total_pembayaran)}</span> },
         { key: "status", header: "Status", cell: (r) => <span className="grid gap-1 justify-items-start"><StatusBadge tone={STATUS_PENGAJUAN[r.status] ?? "neu"}>{r.status_label}</StatusBadge><span className="fi-small fi-subtle">{r.record_count} rekaman · {r.file_count} berkas</span></span> },
@@ -76,7 +77,7 @@ export default function Pengajuan({ permKeys }: { permKeys: string[] }) {
                 ) : undefined}
                 empty={{ title: "Belum ada pengajuan", message: "Pengajuan muncul di sini setelah keranjang diajukan ke Finance dari Rekaman pembayaran.", action: <Link className="fi-btn fi-btn--secondary" href="/payments">Rekaman pembayaran</Link> }}
                 mobileItem={(r) => (
-                    <ListItem doc={judul(r)} amount={rupiah(r.total_pembayaran)} title={`${r.route_label} · ${r.principles.join(", ") || "—"}`}
+                    <ListItem doc={judul(r)} amount={rupiah(r.total_pembayaran)} title={`${r.route_label} · ${r.principles.join(", ") || KOSONG}`}
                         meta={`${jamTampil(r.created_at_wita)} · bayar ${tanggalTampil(r.target_payment_date)}`}
                         badge={<StatusBadge tone={STATUS_PENGAJUAN[r.status] ?? "neu"}>{r.status_label}</StatusBadge>}
                         href={`/payments/pengajuan/${encodeURIComponent(r.id)}`} />

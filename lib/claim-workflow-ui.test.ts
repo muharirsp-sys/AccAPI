@@ -65,8 +65,11 @@ test("riwayat: kalimat, status lama → baru, nominal; kode aksi tidak bocor", (
 test("pola No Claim terbaca; tanggal WITA; galat muat tanpa pesan parser", () => {
     assert.equal(polaTerbaca("{seq}/SUPER-KN/{month}/{year4}"), "{urut}/SUPER-KN/{bulan}/{tahun}");
     assert.equal(tanggalWita("2026-10-05T17:30:00Z"), "06/10/2026"); // 01.30 WITA
-    assert.equal(pesanGalat("Gagal memuat Claim Workflow.", "HTTP 502"), "Gagal memuat Claim Workflow. Server menjawab HTTP 502.");
+    assert.equal(tanggalWita(null), "-");
+    assert.equal(pesanGalat("Gagal memuat Claim Workflow.", "HTTP 502"), "Gagal memuat Claim Workflow. Server sedang bermasalah. Coba lagi beberapa saat lagi.");
     assert.equal(pesanGalat("Gagal memuat Claim Workflow.", "Unexpected end of JSON input"), "Gagal memuat Claim Workflow.");
+    assert.equal(pesanGalat("Gagal memuat Claim Workflow.", "Server sedang bermasalah. Coba lagi beberapa saat lagi."),
+        "Gagal memuat Claim Workflow. Server sedang bermasalah. Coba lagi beberapa saat lagi."); // keluaran `ambil` sesudah sebabHttp
     assert.equal(pesanGalat("Gagal memuat Claim Workflow.", "Unauthorized"), "Unauthorized");
     assert.equal(pesanGalat("Gagal memuat Claim Workflow.", undefined), "Gagal memuat Claim Workflow.");
 });

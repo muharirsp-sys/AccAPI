@@ -3,9 +3,10 @@
  *   membuka batch di kolom kedua (perubahan #2 it03).
  * Caller: app/(dashboard)/off-program-control/OpcApp.tsx.
  * Dependensi: React hooks, lucide-react, lib/fuzzySearch; kelas fi-* (fi-input, fi-sect, fi-menu-item).
- * Main Functions: OffGlobalSearch, pintasan Ctrl/Cmd+K (shell mengalah karena preventDefault), navigasi listbox dengan keyboard;
+ * Main Functions: OffGlobalSearch, pintasan Ctrl/Cmd+K (shell mengalah karena preventDefault; keputusan S1a: OPC memakai quick jump
+ *   sendiri), navigasi listbox dengan keyboard; Escape hanya saat isian fokus. Pesan memuat/galat/tidak ditemukan di luar listbox;
  *   daftar sumber gagal dimuat tampil sebagai galat, bukan "tidak ditemukan".
- * Side Effects: Listener keydown dokumen; callback onSelect.
+ * Side Effects: Listener keydown dokumen (Ctrl/Cmd+K); callback onSelect.
  */
 "use client";
 
@@ -63,10 +64,6 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
                     inputRef.current.focus();
                 }
             }
-            if (e.key === "Escape") {
-                setOpen(false);
-                setQuery("");
-            }
         };
         document.addEventListener("keydown", handleKeyDown);
         return () => document.removeEventListener("keydown", handleKeyDown);
@@ -79,6 +76,12 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
     };
 
     const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+        // Escape hanya milik isian ini; dulu didengar di seluruh dokumen dan mengosongkan kueri saat Escape ditujukan ke dialog lain.
+        if (event.key === "Escape") {
+            setOpen(false);
+            setQuery("");
+            return;
+        }
         if (!hasResultsPopup || filtered.length === 0) return;
         if (event.key === "ArrowDown") {
             event.preventDefault();
@@ -98,6 +101,11 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
         }
     };
 
+    const gagalTotal = muat?.status === "galat" && !muat.adaData;
+    const memuatAwal = muat?.status === "memuat" && !muat.adaData;
+    // Listbox hanya berisi opsi; pesan keadaan berada di luarnya (role option/alert tidak dicampur).
+    const adaOpsi = hasResultsPopup && !gagalTotal && !memuatAwal && filtered.length > 0;
+
     return (
         <div style={{ position: "relative", minWidth: 0 }}>
             <input
@@ -107,8 +115,8 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
                 style={{ width: "100%" }}
                 aria-label="Cari pengajuan OFF"
                 aria-expanded={hasResultsPopup}
-                aria-controls={hasResultsPopup ? resultsId : undefined}
-                aria-activedescendant={hasResultsPopup && resolvedActiveIndex >= 0 ? `${resultsId}-option-${resolvedActiveIndex}` : undefined}
+                aria-controls={adaOpsi ? resultsId : undefined}
+                aria-activedescendant={adaOpsi && resolvedActiveIndex >= 0 ? `${resultsId}-option-${resolvedActiveIndex}` : undefined}
                 aria-autocomplete="list"
                 aria-keyshortcuts="Control+K Meta+K"
                 role="combobox"
@@ -121,16 +129,17 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
             {hasResultsPopup && (
                 <>
                     <div style={{ position: "fixed", inset: 0, zIndex: 30 }} onClick={() => setOpen(false)} aria-hidden="true" />
-                    <div id={resultsId} role="listbox" aria-label="Hasil pencarian pengajuan OFF" className="fi-sect"
+                    <div className="fi-sect"
                         style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 4px)", zIndex: 40, maxHeight: "18rem", overflowY: "auto", padding: 6 }}>
-                        {muat?.status === "galat" && !muat.adaData ? (
-                            <p className="fi-small" role="alert" style={{ padding: "12px 10px" }}>Daftar pengajuan gagal dimuat, jadi pencarian belum bisa dipakai. {muat.error}</p>
-                        ) : muat?.status === "memuat" && !muat.adaData ? (
+                        {gagalTotal ? (
+                            <p className="fi-small" role="alert" style={{ padding: "12px 10px" }}>Daftar pengajuan gagal dimuat, jadi pencarian belum bisa dipakai. {muat?.error}</p>
+                        ) : memuatAwal ? (
                             <p className="fi-small fi-subtle" role="status" style={{ padding: "12px 10px" }}>Memuat daftar pengajuan…</p>
                         ) : filtered.length === 0 ? (
-                            <p className="fi-small fi-subtle" style={{ padding: "12px 10px" }}>Tidak ditemukan batch yang cocok.</p>
+                            <p className="fi-small fi-subtle" role="status" style={{ padding: "12px 10px" }}>Tidak ditemukan batch yang cocok.</p>
                         ) : (
-                            filtered.map((item, index) => (
+                            <div id={resultsId} role="listbox" aria-label="Hasil pencarian pengajuan OFF">
+                            {filtered.map((item, index) => (
                                 <button
                                     key={item.id}
                                     id={`${resultsId}-option-${index}`}
@@ -146,7 +155,8 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
                                     <b className="fi-mono">{item.noPengajuan}</b>
                                     <small>{item.principleName} · {item.status}</small>
                                 </button>
-                            ))
+                            ))}
+                            </div>
                         )}
                         {muat?.status === "galat" && muat.adaData && (
                             <p className="fi-small fi-subtle" role="alert" style={{ padding: "8px 10px" }}>Daftar terakhir gagal diperbarui; hasil dari data sebelumnya.</p>

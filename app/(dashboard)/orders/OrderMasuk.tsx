@@ -1,10 +1,11 @@
 /*
  * Tujuan: List Report Order Masuk (Fiori S6d, it06): order INTERNAL dari petugas dan tarikan Order Sales — kartu status = saringan,
- *   status sampai faktur (status order + Antrean Faktur), sumber, tarik Order Sales dan koneksi tarik otomatis. Order principal ada di
- *   Order Principal; faktur dibuat saat Kirim di Antrean Faktur.
+ *   status sampai faktur (status order + Antrean Faktur), sumber, tarik Order Sales (lewat dialog) dan koneksi tarik otomatis. Order
+ *   principal ada di Order Principal; faktur dibuat saat Kirim di Antrean Faktur.
  * Caller: ./page.tsx (/orders; guard halaman `order.view`).
  * Dependensi: FastAPI GET /orders, POST /orders/pull (tertahan per permintaan: `failed[].kode` O1 → kalimat), GET|POST /orders/connection;
- *   GET /api/orders/invoice-status; ./order-ui; components/order/order-cabang; components/fiori/{core,interactive}; lib/rekapan-nota/ui.
+ *   GET /api/orders/invoice-status; ./order-ui; components/order/order-cabang; ../antrean-faktur/bersama (kalimatAccurate);
+ *   components/fiori/{core,interactive}; lib/tampil.
  * Main Functions: OrderMasuk.
  * Side Effects: HTTP; Tarik menulis order internal (FastAPI, idempoten per permintaan Order Sales); koneksi menulis setelan tarik otomatis.
  *   Tidak ada tulis ke Accurate.
@@ -17,9 +18,10 @@ import { Download, Plus, Power } from "lucide-react";
 import { Button, ListItem, MessageStrip, ResponsiveTable, Skeleton, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { sebabTarik } from "@/components/order/order-cabang";
-import { jamWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { kalimatAccurate } from "../antrean-faktur/bersama";
+import { KOSONG, tanggalWita, waktuWita } from "@/lib/tampil";
 import {
-    BELUM_PASTI, fastapi, nextApi, nilai, nomorOrder, pesanJawaban, statusOrder, sukses, sumberOrder, tidakPasti,
+    BELUM_PASTI, JEDA_TARIK_MENIT, fastapi, nextApi, nilai, nomorOrder, pesanJawaban, statusOrder, sukses, sumberOrder, tidakPasti,
     type OrderRow, type OutboxRow, type StatusKey,
 } from "./order-ui";
 
@@ -39,7 +41,7 @@ const KARTU: Array<{ key: Saring; label: string; waspada?: boolean }> = [
     { key: "semua", label: "Semua order" }, { key: "butuh", label: "Butuh harga", waspada: true }, { key: "siap", label: "Siap diantrekan" },
     { key: "antre", label: "Di antrean" }, { key: "faktur", label: "Difakturkan" }, { key: "masalah", label: "Tidak pasti / ditolak", waspada: true },
 ];
-// Kartu yang angkanya bergantung pada status Antrean Faktur: tanpa bacaan antrean angkanya "–", bukan 0 (termasuk Siap diantrekan).
+// Kartu yang angkanya bergantung pada status Antrean Faktur: tanpa bacaan antrean angkanya KOSONG, bukan 0 (termasuk Siap diantrekan).
 const BUTUH_ANTREAN: ReadonlySet<Saring> = new Set(["siap", "antre", "faktur", "masalah"]);
 const MAKS_FASTAPI = 100;
 
@@ -53,6 +55,7 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
     const [sumber, setSumber] = useState<"" | "sales" | "petugas">("");
     const [tarik, setTarik] = useState<{ busy: boolean; hasil?: HasilTarik; galat?: string; ragu?: boolean }>({ busy: false });
     const [dialogKoneksi, setDialogKoneksi] = useState(false);
+    const [dialogTarik, setDialogTarik] = useState(false);
     const [koneksiRagu, setKoneksiRagu] = useState(false);
 
     // Daftar per cakupan; data cakupan lain tetap tampil redup sampai jawaban baru tiba (List Report).
@@ -95,11 +98,11 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
         && (!q || [o.id, o.outlet, o.customer_no, o.request_id ?? "", o.owner].some((v) => v.toLowerCase().includes(q)))), [rows, saring, sumber, q, statusDari]);
 
     const kolom: Column<OrderRow>[] = [
-        { key: "order", header: "Order", cell: (o) => <><Link className="fi-mono" href={`/orders/${o.id}`}>{nomorOrder(o.id)}</Link><span className="fi-sub">dibuat {jamWita(o.created_at)}</span></> },
+        { key: "order", header: "Order", cell: (o) => <><Link className="fi-mono" href={`/orders/${o.id}`}>{nomorOrder(o.id)}</Link><span className="fi-sub">dibuat {waktuWita(o.created_at)} WITA</span></> },
         { key: "pelanggan", header: "Pelanggan", cell: (o) => <>{o.outlet}<span className="fi-sub fi-mono">{o.customer_no || "tanpa kode"}</span></> },
         { key: "sumber", header: "Sumber", secondary: true, cell: (o) => sumberOrder(o) },
-        { key: "tanggal", header: "Tgl order", secondary: true, cell: (o) => tanggalPendek(o.order_date) },
-        { key: "netto", header: "Netto", align: "end", cell: (o) => <span className="fi-tnum">{o.result?.pending_price ? "—" : nilai(o.result?.net)}</span> },
+        { key: "tanggal", header: "Tgl order", secondary: true, cell: (o) => tanggalWita(o.order_date) },
+        { key: "netto", header: "Netto", align: "end", cell: (o) => <span className="fi-tnum">{o.result?.pending_price ? KOSONG : nilai(o.result?.net)}</span> },
         { key: "status", header: "Status", cell: (o) => { const s = statusDari(o); return <StatusBadge tone={s.tone} busy={s.busy}>{s.label}</StatusBadge>; } },
         { key: "faktur", header: "Faktur / keterangan", secondary: true, cell: (o) => <Keterangan o={o} row={peta?.get(o.id)} /> },
     ];
@@ -162,8 +165,8 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
             {tarik.hasil && (
                 <MessageStrip tone={tarik.hasil.failed.length || tarik.hasil.rejected.length ? "warn" : "pos"} title={`${tarik.hasil.imported} order baru ditarik dari Order Sales.`} onClose={() => setTarik({ busy: false })}>
                     {tarik.hasil.already > 0 && `${tarik.hasil.already} permintaan sudah pernah masuk. `}
-                    {tarik.hasil.failed.length > 0 && <>{tarik.hasil.failed.length} tertahan: {tarik.hasil.failed.slice(0, 3).map((f) => `#${f.request_id.slice(0, 8)} — ${sebabTertahan(f)}`).join("; ")}{tarik.hasil.failed.length > 3 && " …"}. Permintaan yang tertahan tetap menunggu dan ikut tarikan berikutnya.</>}
-                    {tarik.hasil.rejected.length > 0 && <>{" "}{tarik.hasil.rejected.length} ditolak permanen (tidak dicoba lagi; sales perlu mengirim ulang): {tarik.hasil.rejected.slice(0, 3).map((f) => `#${f.request_id.slice(0, 8)} — ${sebabTertahan(f)}`).join("; ")}{tarik.hasil.rejected.length > 3 && " …"}.</>}
+                    {tarik.hasil.failed.length > 0 && <>{tarik.hasil.failed.length} tertahan: {tarik.hasil.failed.slice(0, 3).map((f) => `#${f.request_id.slice(0, 8)}: ${sebabTertahan(f)}`).join("; ")}{tarik.hasil.failed.length > 3 && " …"}. Permintaan yang tertahan tetap menunggu dan ikut tarikan berikutnya.</>}
+                    {tarik.hasil.rejected.length > 0 && <>{" "}{tarik.hasil.rejected.length} ditolak permanen (tidak dicoba lagi; sales perlu mengirim ulang): {tarik.hasil.rejected.slice(0, 3).map((f) => `#${f.request_id.slice(0, 8)}: ${sebabTertahan(f)}`).join("; ")}{tarik.hasil.rejected.length > 3 && " …"}.</>}
                     {tarik.hasil.imported > 0 && " Order tanpa harga berstatus Butuh harga."}
                 </MessageStrip>
             )}
@@ -181,17 +184,17 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
                             <StatusBadge tone={kon.connection.enabled ? "pos" : "neu"}>{kon.connection.enabled ? "Tarik otomatis aktif" : "Tarik otomatis mati"}</StatusBadge>
                             <p className="fi-small fi-muted">
                                 {kon.connection.enabled
-                                    ? `Penjadwal menarik tiap 5 menit atas nama ${kon.connection.owner || "—"}.`
+                                    ? `Penjadwal menarik tiap ${JEDA_TARIK_MENIT} menit atas nama ${kon.connection.owner || KOSONG}.`
                                     : "Order lapangan hanya masuk saat ditarik manual."}
                                 {` Menunggu: ${kon.pending}.`}
-                                {kon.connection.last_run_at && ` Terakhir jalan ${jamWita(kon.connection.last_run_at)} WITA`}
+                                {kon.connection.last_run_at && ` Terakhir jalan ${waktuWita(kon.connection.last_run_at)} WITA`}
                                 {kon.connection.last_result && ` (${kon.connection.last_result.imported} masuk, ${kon.connection.last_result.failed} tertahan).`}
                             </p>
                         </div>
                         <Button icon={<Power className="fi-icon" aria-hidden />} disabled={Boolean(kunciKoneksi)} disabledReason={kunciKoneksi} onClick={() => { setKoneksiRagu(false); setDialogKoneksi(true); }}>
                             {kon.connection.enabled ? "Matikan tarik otomatis…" : "Nyalakan tarik otomatis…"}
                         </Button>
-                        <Button icon={<Download className="fi-icon" aria-hidden />} busy={tarik.busy} disabled={Boolean(tanpaIzinTarik)} disabledReason={tanpaIzinTarik} onClick={() => void tarikSekarang()}>Tarik sekarang</Button>
+                        <Button icon={<Download className="fi-icon" aria-hidden />} busy={tarik.busy} disabled={Boolean(tanpaIzinTarik)} disabledReason={tanpaIzinTarik} onClick={() => setDialogTarik(true)}>Tarik sekarang…</Button>
                         {/* Alasan nonaktif sebagai teks, bukan hanya title (tidak terbaca di sentuh/pembaca layar). */}
                         {kunciKoneksi && <p className="fi-small fi-why" style={{ flexBasis: "100%" }}>{tanpaIzinTarik ? `Tarik dan koneksi nonaktif: ${tanpaIzinTarik.toLowerCase()}.` : `Ubah koneksi nonaktif: ${kunciKoneksi.toLowerCase()}.`}</p>}
                     </div>
@@ -200,7 +203,7 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
 
             {antreanGalat && (
                 <MessageStrip tone="neg" title="Status Antrean Faktur gagal dimuat.">
-                    {antrean.error} Angka Siap diantrekan, Di antrean, Difakturkan, dan Tidak pasti tidak tampil — ini bukan nol; order tersimpan ditandai “status antrean belum terbaca”.{" "}
+                    {antrean.error} Angka Siap diantrekan, Di antrean, Difakturkan, dan Tidak pasti tidak tampil. Ini bukan nol; order tersimpan ditandai “status antrean belum terbaca”.{" "}
                     <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatAntrean}>Coba lagi</button>
                 </MessageStrip>
             )}
@@ -213,7 +216,7 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
                         return (
                             <button key={k.key} type="button" className="fi-kc" aria-pressed={saring === k.key} data-tone={k.waspada && (angka ?? 0) > 0 ? "warn" : undefined} onClick={() => setSaring(k.key)}>
                                 <span>{k.label}</span>
-                                <b>{angka ?? "–"}</b>
+                                <b>{angka ?? KOSONG}</b>
                                 {BUTUH_ANTREAN.has(k.key) && !peta && daftar.data && <small>{antreanGalat ? "gagal dimuat" : "memuat…"}</small>}
                             </button>
                         );
@@ -232,34 +235,49 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
                     actions={
                         <div className="fi-segs" role="group" aria-label="Pemilik order">
                             <button type="button" aria-pressed={scope === "mine"} onClick={() => setScope("mine")}>Milik saya</button>
-                            <button type="button" aria-pressed={scope === "all"} disabled={!bolehEdit} title={!bolehEdit ? "Melihat order semua petugas butuh izin ubah order" : undefined} onClick={() => setScope("all")}>Semua</button>
+                            <button type="button" aria-pressed={scope === "all"} disabled={!bolehEdit} aria-describedby={!bolehEdit ? "order-semua-why" : undefined} onClick={() => setScope("all")}>Semua</button>
                         </div>
                     }
                     chips={sumber ? [{ label: sumber === "sales" ? "Sumber: Order Sales" : "Sumber: Petugas", onRemove: () => setSumber("") }] : []} />
             </div>
+            {!bolehEdit && <p id="order-semua-why" className="fi-small fi-why">Pilihan Semua nonaktif: melihat order semua petugas butuh izin ubah order.</p>}
 
             <ResponsiveTable<OrderRow> title={saring === "semua" ? "Order" : `Order · ${KARTU.find((k) => k.key === saring)?.label}`} count={tampil.length}
                 columns={kolom} rows={tampil} rowKey={(o) => o.id} status={daftar.status} error={daftar.error} onRetry={muatDaftar} empty={kosong}
                 mobileItem={(o) => {
                     const s = statusDari(o);
-                    return <ListItem href={`/orders/${o.id}`} doc={nomorOrder(o.id)} amount={o.result?.pending_price ? "—" : nilai(o.result?.net)}
-                        title={`${o.outlet} · ${o.customer_no || "tanpa kode"}`} meta={`${sumberOrder(o)} · ${tanggalPendek(o.order_date)}`}
+                    return <ListItem href={`/orders/${o.id}`} doc={nomorOrder(o.id)} amount={o.result?.pending_price ? KOSONG : nilai(o.result?.net)}
+                        title={`${o.outlet} · ${o.customer_no || "tanpa kode"}`} meta={`${sumberOrder(o)} · ${tanggalWita(o.order_date)}`}
                         badge={<StatusBadge tone={s.tone} busy={s.busy}>{s.label}</StatusBadge>} />;
                 }} />
             <p className="fi-small fi-subtle">Status antrean dan nomor faktur dibaca dari Antrean Faktur. Setiap baris membuka ordernya; antre faktur dari halaman order.</p>
             {rows.length >= MAKS_FASTAPI && (
-                <VariantNote bl="BL-36">Yang tampil {MAKS_FASTAPI} order terbaru; kartu dan pencarian hanya menghitung yang tampil. Usulan: saring periode/status di server dan simpan pilihan per pengguna.</VariantNote>
+                <p className="fi-small fi-why">Yang tampil {MAKS_FASTAPI} order terbaru; angka kartu dan pencarian hanya menghitung yang tampil.</p>
             )}
-            <VariantNote bl="BL-18">Butuh harga belum punya jalan keluar di layar ini dan order belum bisa dibatalkan (server belum punya aksinya). Usulan: Isi harga dari master dan Batalkan beralasan dari halaman order.</VariantNote>
-            <VariantNote bl="BL-20">Order yang ditahan sebagai dugaan ganda (outlet sama, barang mirip, tanggal sama) ditolak saat disimpan dan belum bisa dilepas dari layar. Usulan: kunci kode pelanggan lintas pemilik dan “Bukan order ganda” beralasan.</VariantNote>
+            {/* Satu catatan varian per layar (audit No 80); kode BL tetap di nama aksesibelnya. */}
+            <VariantNote bl={rows.length >= MAKS_FASTAPI ? "BL-18, BL-20, BL-36" : "BL-18, BL-20"}>
+                Butuh harga belum bisa diisi dan order belum bisa dibatalkan dari layar ini; server belum punya aksinya. Order yang ditahan sebagai
+                dugaan ganda (outlet sama, barang mirip, tanggal sama) ditolak saat disimpan dan belum bisa dilepas dari layar.
+                {rows.length >= MAKS_FASTAPI && " Saringan periode dan status di server, beserta pilihan tersimpan per pengguna, belum ada."}
+            </VariantNote>
 
+            <ConfirmDialog open={dialogTarik} onClose={() => setDialogTarik(false)} title="Tarik permintaan Order Sales sekarang?"
+                description="Permintaan Order Sales yang menunggu dijadikan order internal di daftar ini. Faktur belum dibuat; faktur dibuat saat Kirim di Antrean Faktur."
+                facts={[
+                    ["Menunggu sekarang", `${kon?.pending ?? 0} permintaan`],
+                    ["Yang dibuat", "Satu order internal per permintaan; permintaan yang sudah pernah masuk tidak digandakan"],
+                    ["Tanpa harga", "Order berstatus Butuh harga"],
+                ]}
+                factsAlign="start" confirmLabel="Tarik permintaan"
+                // Badan tulis tetap tarikSekarang (POST /orders/pull, body {}); hasilnya tampil sebagai strip di halaman.
+                onConfirm={async () => { await tarikSekarang(); setDialogTarik(false); }} />
             <ConfirmDialog open={dialogKoneksi} onClose={() => setDialogKoneksi(false)}
                 title={kon?.connection.enabled ? "Matikan tarik otomatis Order Sales?" : "Nyalakan tarik otomatis Order Sales?"}
                 description={kon?.connection.enabled
                     ? "Order lapangan berhenti masuk otomatis; permintaan tetap menunggu sampai ditarik manual."
-                    : "Penjadwal menarik permintaan Order Sales tiap 5 menit sampai dimatikan."}
+                    : `Penjadwal menarik permintaan Order Sales tiap ${JEDA_TARIK_MENIT} menit sampai dimatikan.`}
                 facts={[
-                    ["Atas nama", kon?.connection.enabled ? kon.connection.owner || "—" : "Anda — order hasil tarikan tercatat milik Anda"],
+                    ["Atas nama", kon?.connection.enabled ? kon.connection.owner || KOSONG : "Anda. Order hasil tarikan tercatat milik Anda"],
                     ["Menunggu sekarang", `${kon?.pending ?? 0} permintaan`],
                 ]}
                 confirmLabel={kon?.connection.enabled ? "Matikan" : "Nyalakan"} onConfirm={ubahKoneksi} />
@@ -272,9 +290,10 @@ function Keterangan({ o, row }: { o: OrderRow; row: OutboxRow | undefined }) {
     if (row?.state === "posted") {
         return row.accurateNumber ? <Link className="fi-mono" href={`/faktur?q=${encodeURIComponent(row.accurateNumber)}`}>{row.accurateNumber}</Link> : <span>terposting</span>;
     }
-    if (row?.state === "rejected") return <span className="fi-why">{(row.lastError ?? "ditolak").slice(0, 120)} · <Link href="/antrean-faktur">Antrean Faktur</Link></span>;
+    // Jawaban Accurate dijadikan kalimat (bukan JSON/HTTP mentah); teks asli di title untuk penelusuran.
+    if (row?.state === "rejected") return <span className="fi-why" title={row.lastError ?? undefined}>{(kalimatAccurate(row.lastError ?? "") || "Ditolak Accurate").slice(0, 120)} · <Link href="/antrean-faktur">Antrean Faktur</Link></span>;
     if (row?.state === "unknown") return <span className="fi-why">selesaikan di <Link href="/antrean-faktur">Antrean Faktur</Link></span>;
     if (row) return <span>menunggu Kirim di <Link href="/antrean-faktur">Antrean Faktur</Link></span>;
     if (o.result?.pending_price) return <span className="fi-subtle">{(o.result.lines ?? []).length} barang · belum berharga</span>;
-    return <span className="fi-subtle">—</span>;
+    return <span className="fi-subtle">{KOSONG}</span>;
 }

@@ -262,12 +262,12 @@ const ATURAN: Record<string, Aturan> = {
                 ? `Program promo untuk barang bonus ${bonus.slice(0, 5).join("; ")} tidak bisa dipakai: barang bonus harus barang cabang pelanggan, aktif, dan bisa diorder.`
                 : dariServer(d, "Barang bonus program promo tidak bisa diorder.");
         },
-        tindakan: "Order belum bisa dihitung. Hubungi Admin untuk memeriksa barang bonus di Summary promo (atau master barang), lalu coba lagi.", menolak: true,
+        tindakan: "Order belum bisa dihitung. Hubungi Admin untuk memeriksa barang bonus di Summary Promo (atau master barang), lalu coba lagi.", menolak: true,
     },
     // Harga petugas HANYA untuk baris tanpa harga master sah (owner sesi 13): 409 `barang: [{code, unit, hargaMaster}]`.
     HARGA_PETUGAS_TIDAK_DIIZINKAN: {
         judul: "Harga petugas tidak diizinkan", pesan: (d) => dariServer(d, "Barang ini sudah punya harga master; harga petugas hanya untuk barang tanpa harga master."),
-        tindakan: "Kosongkan harga di barisnya — harga master dipakai dan tidak bisa diubah.", menolak: true,
+        tindakan: "Kosongkan harga di barisnya; harga master dipakai dan tidak bisa diubah.", menolak: true,
     },
     // Keadaan SERVER (aturan promo terbit rusak), bukan kesalahan order — global: tarikan berhenti, permintaan tetap menunggu.
     ATURAN_TERBIT_RUSAK: {

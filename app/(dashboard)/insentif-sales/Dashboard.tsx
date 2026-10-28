@@ -17,7 +17,8 @@ import { Button, EmptyState, ErrorState, ListItem, MessageStrip, ResponsiveTable
 import { FormField, type Load } from "@/components/fiori/interactive";
 import { DEFAULT_KONSTANTA, type Konstanta } from "@/lib/insentif-konstanta";
 import { HALAMAN, halamanTerlihat, sebabNol, formatPctText, formatQty, formatRatio, type ApiRow } from "@/lib/insentif-ui";
-import { formatRp, formatShortRp, getPeriodWorkdayProgress, itemSuper, pct, type WorkdayProgress } from "./data";
+import { bulanIniWita, formatRp, formatShortRp, getPeriodWorkdayProgress, itemSuper, pct, type WorkdayProgress } from "./data";
+import { KOSONG } from "@/lib/tampil";
 import { InsentifRangka, KonstantaCtx, useDashboard, useKonstanta, usePeriode, type DashboardData } from "./Rangka";
 import {
     CatatanTimeGone, Laju, LegendaLaju, SalesBreakdown, SmBreakdown, SpvBreakdown, StatusBayar, TabelRincian, capaianSm, kakiPph, kolomPph,
@@ -138,7 +139,7 @@ function Kosong({ d, label, saringanAktif, hrefData, reset }: { d: DashboardData
     }
     if (cakupan.dibatasi && !cakupan.jumlahKode) {
         return <EmptyState title="Belum ada salesman dalam cakupan Anda"
-            message={`Identitas hierarki Anda: ${cakupan.identitas?.role?.toUpperCase() ?? "-"} "${cakupan.identitas?.name ?? "belum diisi"}". Tidak ada kode sales yang cocok untuk periode ini — pastikan penulisannya sama persis dengan kolom SPV/SM di file target.`} />;
+            message={`Identitas hierarki Anda: ${cakupan.identitas?.role?.toUpperCase() ?? "-"} "${cakupan.identitas?.name ?? "belum diisi"}". Tidak ada kode sales yang cocok untuk periode ini. Pastikan penulisannya sama persis dengan kolom SPV/SM di file target.`} />;
     }
     const keData = hrefData ? <Link className="fi-btn fi-btn--primary" href={hrefData}>Buka Data periode</Link> : undefined;
     if (progressFeed?.progressKeys && !progressFeed.targetKeys) {
@@ -160,8 +161,8 @@ function Ringkasan({ rows, tg, label, spv, sm, month, year, saringanAktif }: {
     const totalReal = jumlah(rows, (r) => r.real.value);
     const totalTarget = jumlah(rows, (r) => r.target.value);
     const capaian = pct(totalReal, totalTarget);
-    const now = new Date();
-    const berjalan = year * 12 + month >= now.getFullYear() * 12 + now.getMonth() + 1;
+    const kini = bulanIniWita();
+    const berjalan = year * 12 + month >= kini.year * 12 + kini.month;
     // Taksiran = sales + SPV + SM (#5). Setiap sumber milik periode yang sama (pemuat tidak meminjam data periode lain). Sumber yang
     // galat — juga bila tabelnya masih menampilkan hasil sebelumnya — TIDAK dijumlah dan disebut, tidak pernah diam-diam jadi Rp 0.
     const sumber = (nama: string, load: Load<Array<{ total: number }>>) => ({
@@ -174,12 +175,12 @@ function Ringkasan({ rows, tg, label, spv, sm, month, year, saringanAktif }: {
     const rincianTaksiran = [
         ...bagian.filter((b) => b.nilai !== undefined).map((b) => `${b.nama} ${formatShortRp(b.nilai!)}`),
         ...(memuat.length ? [`${memuat.join("/")} memuat…`] : []),
-        ...(gagal.length ? [`${gagal.join("/")} gagal dimuat — angka tidak lengkap`] : []),
+        ...(gagal.length ? [`${gagal.join("/")} gagal dimuat; angka tidak lengkap`] : []),
     ].join(" · ");
     return (
         <>
             <div className="fi-kcards">
-                <div className="fi-kc"><span>Time Gone</span><b>{tg.pct}%</b><small>{tg.passed} dari {tg.total} hari kerja</small></div>
+                <div className="fi-kc"><span>Waktu berjalan (Time Gone)</span><b>{tg.pct}%</b><small>{tg.passed} dari {tg.total} hari kerja</small></div>
                 <div className="fi-kc"><span>Realisasi</span><b>{formatShortRp(totalReal)}</b><small>dari target {formatShortRp(totalTarget)} · {rows.length} baris</small></div>
                 <div className="fi-kc"><span>Capaian</span><b>{formatPctText(capaian)}</b><small><Laju nilai={capaian} timeGone={tg.pct} teks /></small></div>
                 <div className="fi-kc" data-tone={gagal.length ? "warn" : undefined}>
@@ -193,7 +194,7 @@ function Ringkasan({ rows, tg, label, spv, sm, month, year, saringanAktif }: {
             </div>
             <CatatanTimeGone tg={tg} label={label} />
             {berjalan && (
-                <MessageStrip tone="info" title="Periode berjalan — nilai sementara.">
+                <MessageStrip tone="info" title="Periode berjalan: nilai sementara.">
                     Insentif sudah dihitung bagi yang mencapai ambang (sales minimal {formatPctText(k.gt.ambangBayar * 100)} per komponen, SPV{" "}
                     {formatPctText(k.spv.ambang * 100)} per principal, SM {formatPctText(k.sm.ambang1 * 100)} total); nilainya bisa berubah setiap hari
                     sampai akhir bulan.
@@ -233,13 +234,13 @@ function CapaianSpv({ rows, tg }: { rows: ApiRow[]; tg: WorkdayProgress }) {
     const nama = (g: GrupSpv) => g.spv || "(tanpa SPV)";
     const kolom: Column<GrupSpv>[] = [
         { key: "spv", header: "SPV", cell: (g) => <><b>{nama(g)}</b><span className="fi-sub">{g.n} salesman</span></> },
-        { key: "target", header: "Target", align: "end", secondary: true, cell: (g) => formatShortRp(g.tv) },
-        { key: "real", header: "Realisasi", align: "end", cell: (g) => formatShortRp(g.rv) },
+        { key: "target", header: "Target", align: "end", secondary: true, cell: (g) => <span className="fi-tnum">{formatShortRp(g.tv)}</span> },
+        { key: "real", header: "Realisasi", align: "end", cell: (g) => <span className="fi-tnum">{formatShortRp(g.rv)}</span> },
         { key: "capaian", header: "Capaian", cell: (g) => <Laju nilai={pct(g.rv, g.tv)} timeGone={tg.pct} /> },
-        { key: "aott", header: "AO TT", cell: (g) => <Laju nilai={pct(g.aoTtReal, g.aoTtTarget)} timeGone={tg.pct} /> },
-        { key: "avgao", header: "Rata AO/sales", align: "end", secondary: true, cell: (g) => formatQty(g.avgAo) },
-        { key: "iatt", header: "IA/toko TT", align: "end", secondary: true, cell: (g) => formatRatio(g.iaTt) },
-        { key: "iamt", header: "IA/toko MT", align: "end", secondary: true, cell: (g) => formatRatio(g.iaMt) },
+        { key: "aott", header: "Aktif Outlet TT", cell: (g) => <Laju nilai={pct(g.aoTtReal, g.aoTtTarget)} timeGone={tg.pct} /> },
+        { key: "avgao", header: "Rata-rata Aktif Outlet per sales", align: "end", secondary: true, cell: (g) => <span className="fi-tnum">{formatQty(g.avgAo)}</span> },
+        { key: "iatt", header: "Item Aktif per toko TT", align: "end", secondary: true, cell: (g) => <span className="fi-tnum">{formatRatio(g.iaTt)}</span> },
+        { key: "iamt", header: "Item Aktif per toko MT", align: "end", secondary: true, cell: (g) => <span className="fi-tnum">{formatRatio(g.iaMt)}</span> },
     ];
     return (
         <Section title="Capaian per SPV" subtitle={`${grup.length} SPV · agregat tim per supervisor`}>
@@ -247,7 +248,7 @@ function CapaianSpv({ rows, tg }: { rows: ApiRow[]; tg: WorkdayProgress }) {
             <ResponsiveTable<GrupSpv> title="Capaian per SPV" columns={kolom} rows={grup} rowKey={(g) => g.spv}
                 empty={{ title: "Tidak ada baris untuk SM ini", message: "Pilih SM lain atau hapus saringan SM." }}
                 mobileItem={(g) => <ListItem doc={nama(g)} amount={<Laju nilai={pct(g.rv, g.tv)} timeGone={tg.pct} />}
-                    title={`${formatShortRp(g.rv)} dari ${formatShortRp(g.tv)}`} meta={`${g.n} salesman · AO TT ${formatPctText(pct(g.aoTtReal, g.aoTtTarget))}`} />} />
+                    title={`${formatShortRp(g.rv)} dari ${formatShortRp(g.tv)}`} meta={`${g.n} salesman · Aktif Outlet TT ${formatPctText(pct(g.aoTtReal, g.aoTtTarget))}`} />} />
         </Section>
     );
 }
@@ -264,15 +265,15 @@ function InsentifSales({ rows, total, smAktif, hapusSm }: { rows: ApiRow[]; tota
     const kolom: Column<ApiRow>[] = [
         { key: "nama", header: "Penerima", cell: (r) => <><b>{r.salesName}</b><span className="fi-sub"><span className="fi-mono">{r.salesCode}</span> · {r.principle}</span></> },
         { key: "channel", header: "Channel", secondary: true, cell: (r) => r.channel },
-        { key: "capaian", header: "Capaian", align: "end", cell: (r) => formatPctText(r.pct.value) },
+        { key: "capaian", header: "Capaian", align: "end", cell: (r) => <span className="fi-tnum">{formatPctText(r.pct.value)}</span> },
         {
             key: "total", header: "Insentif", align: "end", cell: (r) => {
                 const sebab = sebabNol(r, k);
-                return <><b>{formatRp(r.incentive.total)}</b>{sebab && <span className="fi-sub">{sebab}</span>}</>;
+                return <><b className="fi-tnum">{formatRp(r.incentive.total)}</b>{sebab && <span className="fi-sub">{sebab}</span>}</>;
             },
         },
         ...kolomPph<ApiRow>(k, (r) => r.incentive.total),
-        { key: "status", header: "Status", cell: (r) => (r.incentive.total > 0 || r.paymentStatus !== "belum" ? <StatusBayar status={r.paymentStatus} /> : <span className="fi-subtle">—</span>) },
+        { key: "status", header: "Status", cell: (r) => (r.incentive.total > 0 || r.paymentStatus !== "belum" ? <StatusBayar status={r.paymentStatus} /> : <span className="fi-subtle">{KOSONG}</span>) },
     ];
     return (
         <Section title="Insentif sales" subtitle={skemaSales(k)}>
@@ -295,7 +296,7 @@ function InsentifSpv({ load, onRetry, label }: { load: Load<SpvIncentiveRow[]>; 
     const kolom: Column<SpvIncentiveRow>[] = [
         { key: "nama", header: "SPV", cell: (r) => <b>{r.spvName}</b> },
         { key: "jumlah", header: "Principal valid", align: "end", secondary: true, cell: (r) => r.jumlahValid },
-        { key: "rate", header: "Rate/principal", align: "end", secondary: true, cell: (r) => formatRp(r.ratePerPrincipal) },
+        { key: "rate", header: "Rate/principal", align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{formatRp(r.ratePerPrincipal)}</span> },
         {
             key: "total", header: "Insentif", align: "end", cell: (r) => {
                 const sebab = sebabNolSpv(r, k);
@@ -305,7 +306,8 @@ function InsentifSpv({ load, onRetry, label }: { load: Load<SpvIncentiveRow[]>; 
         ...kolomPph<SpvIncentiveRow>(k, (r) => r.total),
     ];
     return (
-        <Section title="Insentif SPV" subtitle={`Berbasis Value, tanpa saringan. Principal dibayar penuh hanya bila pencapaiannya ${formatPctText(k.spv.ambang * 100)} atau lebih; di bawah itu Rp 0. Rate per principal mengikuti jumlah principal valid yang ditangani.`}>
+        <Section title="Insentif SPV" subtitle={`Berbasis Value, tanpa saringan; principal dibayar bila pencapaiannya ${formatPctText(k.spv.ambang * 100)} atau lebih.`}>
+            <div className="fi-sect-in"><p className="fi-small fi-muted">Di bawah ambang Rp 0. Rate per principal mengikuti jumlah principal valid yang ditangani SPV.</p></div>
             <TabelRincian<SpvIncentiveRow> title="Insentif SPV" columns={kolom} rows={rows} rowKey={(r) => r.spvName} rowLabel={(r) => r.spvName}
                 status={load.status} error={load.error} onRetry={onRetry}
                 rincian={(r) => <SpvBreakdown rincian={r.rincian} />}
@@ -336,7 +338,8 @@ function InsentifSm({ load, onRetry, label }: { load: Load<SmIncentiveRow[]>; on
         ...kolomPph<SmIncentiveRow>(k, (r) => r.total),
     ];
     return (
-        <Section title="Insentif SM" subtitle={`Strata flat berbasis Value, tanpa saringan: ${strata}; di bawahnya Rp 0. Hanya SM tertentu yang ikut skema.`}>
+        <Section title="Insentif SM" subtitle={`Strata flat berbasis Value, tanpa saringan: ${strata}.`}>
+            <div className="fi-sect-in"><p className="fi-small fi-muted">Di bawah strata terendah Rp 0. Hanya SM yang terdaftar di Pengaturan yang ikut skema.</p></div>
             <TabelRincian<SmIncentiveRow> title="Insentif SM" columns={kolom} rows={rows} rowKey={(r) => r.smName} rowLabel={(r) => r.smName}
                 status={load.status} error={load.error} onRetry={onRetry}
                 rincian={(r) => <SmBreakdown r={r} />}
