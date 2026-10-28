@@ -102,6 +102,14 @@ test("tanpa DB: alasan cabut < 10 karakter dan note Terima sales kosong ditolak 
         const sales = await jawab(() => m.verify.POST(minta("POST", "/api/invoice-verify", { orderId: "PRINCIPLE-A:SO-A-001", jenis: "sales", sidik: "[\"s\"]", note: "  " })));
         assert.equal(sales.status, 400);
         assert.match(String(sales.body.error), /Alasan menerima sales/);
+        // Tinjauan K3 R-2: satu batas 500 karakter (lib/pencabutan) di ketiga jalur; di atasnya 400 berpesan, bukan dipotong diam-diam.
+        const panjang = "a".repeat(501);
+        const v = await jawab(() => m.verify.DELETE(minta("DELETE", "/api/invoice-verify", { orderId: "PRINCIPLE-A:SO-A-001", jenis: "sales", alasan: panjang })));
+        assert.deepEqual([v.status, v.body.error], [400, "Alasan maksimal 500 karakter (sekarang 501)."]);
+        const a = await jawab(() => m.ack.DELETE(minta("DELETE", URL_ACK, { alasan: panjang })));
+        assert.deepEqual([a.status, a.body.error], [400, "Alasan maksimal 500 karakter (sekarang 501)."]);
+        const isi = await jawab(() => m.verify.POST(minta("POST", "/api/invoice-verify", { orderId: "PRINCIPLE-A:SO-A-001", jenis: "isi", sidik: "[\"s\"]", note: panjang })));
+        assert.deepEqual([isi.status, isi.body.error], [400, "Penjelasan maksimal 500 karakter (sekarang 501)."]);
     } finally {
         if (realTx) Object.defineProperty(m.db, "transaction", realTx);
         else delete (m.db as unknown as Record<string, unknown>).transaction; // metode prototipe: hapus tambalan milik objek
@@ -143,10 +151,15 @@ test("PG: Cabut penjelasan Verifikasi balik = DELETE + log (baris lama, alasan, 
     assert.equal(log.alasan, "Penjelasan keliru, sales belum diganti");
     assert.equal(log.oleh, EMAIL);
     assert.deepEqual([log.baris_lama.note, log.baris_lama.decidedBy, log.baris_lama.sidik], ["Sales diganti", "admin@contoh", "[\"s\"]"]);
+    // Tepat 500 karakter = sah dan tersimpan utuh (batas R-2 inklusif).
+    await pool.query(`INSERT INTO invoice_verify_note (order_id, jenis, sidik, note, decided_by) VALUES ('PRINCIPLE-A:SO-A-010', 'isi', '["i"]', 'Koreksi qty', 'admin@contoh')`);
+    const pas = await jawab(() => m.verify.DELETE(minta("DELETE", "/api/invoice-verify", { orderId: "PRINCIPLE-A:SO-A-010", jenis: "isi", alasan: "b".repeat(500) })));
+    assert.deepEqual([pas.status, pas.body.dicabut], [200, 1], JSON.stringify(pas.body));
+    assert.equal((await q(`SELECT length(alasan) AS n FROM pencabutan_log WHERE kunci = 'PRINCIPLE-A:SO-A-010|isi'`))[0].n, 500);
     // Tidak ada baris = tidak ada jejak palsu.
     const lagi = await jawab(() => m.verify.DELETE(minta("DELETE", "/api/invoice-verify", { orderId: "PRINCIPLE-A:SO-A-009", jenis: "sales", alasan: "Dicabut lagi tanpa baris" })));
     assert.deepEqual([lagi.status, lagi.body.dicabut], [200, 0]);
-    assert.equal((await q(`SELECT 1 FROM pencabutan_log WHERE jenis = 'invoice_verify_note'`)).length, 1);
+    assert.equal((await q(`SELECT 1 FROM pencabutan_log WHERE jenis = 'invoice_verify_note'`)).length, 2);
 });
 
 test("PG: Cabut konfirmasi order ganda = DELETE + log; log gagal -> konfirmasi TIDAK terhapus", { skip: pgSkip }, async () => {

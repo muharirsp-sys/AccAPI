@@ -20,6 +20,7 @@ import { Button, EmptyState, ErrorState, MessageStrip, Section, Skeleton, Status
 import { ConfirmDialog, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
 import { KOSONG, waktuWita } from "@/lib/tampil";
+import { ALASAN_CABUT_MAKS, ALASAN_CABUT_MIN, galatPanjangAlasan } from "@/lib/pencabutan";
 import { TidakPasti, pesanGagal, tulis } from "./bersama";
 
 type Jenis = "sales" | "isi";
@@ -37,8 +38,6 @@ export const muatVerifikasi = (): Promise<Load<Verif>> => ambil<Verif>("/api/inv
 const JENIS: Jenis[] = ["sales", "isi"];
 /** "sales (masterSalesmanId)" → "sales": nama field API tidak tampil di kalimat (audit No 30); teks lengkap di title. */
 const labelField = (field: string) => field.replace(/ \([A-Za-z][A-Za-z0-9]*\)$/, "");
-/** Minimal alasan Terima sales dan Cabut; server menolak Cabut dengan alasan lebih pendek (app/api/invoice-verify). */
-const ALASAN_MIN = 10;
 
 export default function VerifikasiBalik({ bolehUbah, load, muatUlang }: { bolehUbah: boolean; load: Load<Verif>; muatUlang: () => void }) {
     const [semua, setSemua] = useState(false);
@@ -177,10 +176,16 @@ export default function VerifikasiBalik({ bolehUbah, load, muatUlang }: { bolehU
                 ]}
                 factsAlign="start" confirmLabel={tanya?.cabut ? "Cabut penjelasan" : "Terima sales"}
                 reason={tanya?.cabut
-                    ? { label: "Alasan mencabut", min: ALASAN_MIN, placeholder: "mis. penjelasan keliru; sales di Accurate ternyata belum diganti" }
-                    : { label: "Alasan menerima sales", min: ALASAN_MIN, placeholder: "mis. sales lama pindah divisi; sudah dicek di Accurate" }}
+                    ? { label: `Alasan mencabut (maks. ${ALASAN_CABUT_MAKS} karakter)`, min: ALASAN_CABUT_MIN, placeholder: "mis. penjelasan keliru; sales di Accurate ternyata belum diganti" }
+                    : { label: `Alasan menerima sales (maks. ${ALASAN_CABUT_MAKS} karakter)`, min: ALASAN_CABUT_MIN, placeholder: "mis. sales lama pindah divisi; sudah dicek di Accurate" }}
                 // Fungsi tulis tetap `jelaskan` (URL, method, orderId, jenis, sidik sama) ditambah alasan; hasilnya tampil sebagai strip di bagian ini.
-                onConfirm={async (alasan) => { if (!tanya) return; const t = tanya; setTanya(null); await jelaskan(t.r, t.jenis, t.cabut, alasan); }} />
+                onConfirm={async (alasan) => {
+                    if (!tanya) return;
+                    // Batas sama dengan server (R-2): galat tampil di dialog dan alasan yang diketik tidak hilang.
+                    const panjang = galatPanjangAlasan(alasan);
+                    if (panjang) throw new Error(panjang);
+                    const t = tanya; setTanya(null); await jelaskan(t.r, t.jenis, t.cabut, alasan);
+                }} />
         </Section>
     );
 }

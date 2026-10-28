@@ -651,6 +651,12 @@ test("Verifikasi balik: selisih terbuka terlihat; Terima sales/Cabut tetap; draf
     const dlgCabut = page.getByRole("dialog", { name: /^Cabut penjelasan sales SO SO-A-009\?/ });
     expect(tulisKe(log, "/api/invoice-verify", "DELETE")).toHaveLength(0);
     await expect(dlgCabut.getByRole("button", { name: "Cabut penjelasan", exact: true })).toBeDisabled();
+    // Tinjauan K3 R-2: satu batas 500 karakter; lebih panjang = pesan di dialog, alasan tidak hilang, tidak ada yang dikirim.
+    await dlgCabut.getByLabel(/Alasan mencabut/).fill("x".repeat(501));
+    await dlgCabut.getByRole("button", { name: "Cabut penjelasan", exact: true }).click();
+    await expect(dlgCabut.getByRole("alert")).toContainText("Alasan maksimal 500 karakter (sekarang 501).");
+    await expect(dlgCabut.getByLabel(/Alasan mencabut/)).toHaveValue("x".repeat(501));
+    expect(tulisKe(log, "/api/invoice-verify", "DELETE")).toHaveLength(0);
     await dlgCabut.getByLabel(/Alasan mencabut/).fill("Penjelasan keliru, sales belum diganti");
     await dlgCabut.getByRole("button", { name: "Cabut penjelasan", exact: true }).click();
     await expect.poll(() => tulisKe(log, "/api/invoice-verify", "DELETE").length).toBe(1);

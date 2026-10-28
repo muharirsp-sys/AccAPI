@@ -17,12 +17,11 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { orderDupeAck, pencabutanLog } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { ALASAN_CABUT_MIN, galatPanjangAlasan } from "@/lib/pencabutan";
 
 export const runtime = "nodejs";
 
 const text = (value: unknown) => String(value ?? "").trim();
-/** Alasan cabut minimal (sesudah trim), sama dengan dialog Cabut di layar (principal-order/LangkahBatch.tsx). */
-const ALASAN_CABUT_MIN = 10;
 
 async function gateOf(perlu: "order.view" | "order.create") {
     const gate = await resolveRequestPermissionsH();
@@ -72,10 +71,13 @@ export async function DELETE(request: NextRequest) {
     const soNo = text(request.nextUrl.searchParams.get("soNo"));
     if (!principal || !soNo) return NextResponse.json({ ok: false, error: "Principal dan nomor SO wajib diisi" }, { status: 400 });
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
-    const alasan = text(body?.alasan).slice(0, 2000);
+    // Satu batas dengan Verifikasi balik (lib/pencabutan, tinjauan K3 R-2); tidak dipotong diam-diam.
+    const alasan = text(body?.alasan);
     if (alasan.length < ALASAN_CABUT_MIN) {
         return NextResponse.json({ ok: false, error: `Alasan mencabut wajib diisi, minimal ${ALASAN_CABUT_MIN} karakter.` }, { status: 400 });
     }
+    const alasanPanjang = galatPanjangAlasan(alasan);
+    if (alasanPanjang) return NextResponse.json({ ok: false, error: alasanPanjang }, { status: 400 });
     const dicabut = await db.transaction(async (tx) => {
         const gone = await tx.delete(orderDupeAck)
             .where(and(eq(orderDupeAck.principal, principal), eq(orderDupeAck.soNo, soNo)))

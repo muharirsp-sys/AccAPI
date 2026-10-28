@@ -28,6 +28,7 @@ import { invoiceOutbox, invoiceVerifyNote, pencabutanLog, salesInvoiceCache } fr
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import type { InvoicePayload } from "@/lib/accurate-invoice-write";
 import { kandidatCache, readAccurateInvoice, terapkanPenjelasan, verifyInvoice, type JenisTemuan, type VerifyResult } from "@/lib/invoice-verify";
+import { ALASAN_CABUT_MIN, galatPanjangAlasan } from "@/lib/pencabutan";
 
 export const runtime = "nodejs";
 
@@ -36,8 +37,6 @@ const VERIFIABLE = ["posted", "unknown"];
 /** Batas baris cache yang dibaca sekali periksa; melewatinya dilaporkan (`cacheTerpotong`), tidak diam. */
 const BATAS_CACHE = 2000;
 const JENIS: JenisTemuan[] = ["sales", "isi"];
-/** Alasan cabut minimal (sesudah trim), sama dengan dialog Cabut di layar (VerifikasiBalik.tsx). */
-const ALASAN_CABUT_MIN = 10;
 
 export async function GET(request: NextRequest) {
     const gate = await resolveRequestPermissionsH();
@@ -176,10 +175,13 @@ export async function POST(request: NextRequest) {
     const orderId = String(body.orderId ?? "").trim();
     const jenis = String(body.jenis ?? "") as JenisTemuan;
     const sidik = String(body.sidik ?? "");
-    const note = String(body.note ?? "").trim().slice(0, 500);
+    // Tidak dipotong diam-diam (tinjauan K3 R-2): di atas batas = 400.
+    const note = String(body.note ?? "").trim();
     if (!orderId || !JENIS.includes(jenis) || !sidik.startsWith("[") || sidik === "[]" || sidik.length > 20_000) {
         return NextResponse.json({ ok: false, error: "orderId, jenis (sales/isi), dan temuan yang dijelaskan wajib diisi" }, { status: 400 });
     }
+    const terlaluPanjang = galatPanjangAlasan(note, jenis === "isi" ? "Penjelasan" : "Alasan");
+    if (terlaluPanjang) return NextResponse.json({ ok: false, error: terlaluPanjang }, { status: 400 });
     if (!note) {
         return NextResponse.json({ ok: false, error: jenis === "isi"
             ? "Selisih isi faktur wajib dijelaskan, mis. \"koreksi qty saat pengiriman\""
@@ -212,13 +214,15 @@ export async function DELETE(request: NextRequest) {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const orderId = String(body.orderId ?? "").trim();
     const jenis = String(body.jenis ?? "") as JenisTemuan;
-    const alasan = String(body.alasan ?? "").trim().slice(0, 500);
+    const alasan = String(body.alasan ?? "").trim();
     if (!orderId || !JENIS.includes(jenis)) {
         return NextResponse.json({ ok: false, error: "orderId dan jenis (sales/isi) wajib diisi" }, { status: 400 });
     }
     if (alasan.length < ALASAN_CABUT_MIN) {
         return NextResponse.json({ ok: false, error: `Alasan mencabut wajib diisi, minimal ${ALASAN_CABUT_MIN} karakter.` }, { status: 400 });
     }
+    const alasanPanjang = galatPanjangAlasan(alasan);
+    if (alasanPanjang) return NextResponse.json({ ok: false, error: alasanPanjang }, { status: 400 });
     const oleh = String(gate.session?.user?.email ?? "");
     const dicabut = await db.transaction(async (tx) => {
         const lama = await tx.delete(invoiceVerifyNote)
