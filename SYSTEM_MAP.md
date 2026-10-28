@@ -114,8 +114,8 @@ DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)
 Beranda (Fiori, S1b) -> profil peran dari izin -> tile tugas (lib/beranda.ts, GET endpoint yang ada; profil kasir: /api/kasir/ringkasan, K3) + Pintasan + Pantauan + Semua aplikasi
   -> Admin Incaso (pelunasan.kirim, S6e-2b): tile Tidak pasti/Gagal + Pantauan dari GET /api/idempotency/summary?rows=1 (perDatabase,
      database aktif dari /api/auth/accurate-session); jawaban tanpa angka/daftar = galat, bukan 0
-RootLayout -> html[data-theme="surya"] statis (Office Calm/Neon/iOS pensiun, Okt 2026)
-  -> app/workspace.css: remap Surya untuk isi halaman yang belum dimigrasi
+RootLayout -> app/globals.css (dasar Tailwind: target sentuh, fokus, reduced-motion) + app/fiori.css; semua isi di dalam .fiori
+  (tema lama Office Calm/Neon/iOS/Surya pensiun, remap kelas Tailwind lama dihapus)
 SidebarLayout (shell Fiori, S1a) -> shell bar: logo resmi, cari menu Ctrl K, menu profil (Mode/Density, Bantuan -> ChatWidget, Keluar)
   -> navigasi samping dari izin; drawer ponsel (Dialog native); navigasi bawah = Beranda + 3 pintasan ROLE_PROFILES + Menu;
      profil = ★ grup utama (`profileFor`, peta nama preset S7-3), fallback tebakan izin (`roleProfile`)
@@ -986,7 +986,7 @@ AccAPI/_github_clean/
 | `components/off-program-control/OffGlobalSearch.tsx` | `OffGlobalSearch` | Quick jump OFF via Ctrl/Cmd+K; combobox/listbox mendukung Arrow, Home/End, Enter, dan Escape tanpa mengambil alih Ctrl/Cmd+F browser; hasil membuka batch di kolom kedua tab aktif |
 | `components/off-program-control/OffNotificationBell.tsx` | `OffNotificationBell` | Tombol berjumlah + popover masalah SLA per peran; "Buka pengajuan" membuka batch di kolom kedua; Sembunyikan berlaku sampai muat ulang |
 | `app/(dashboard)/insentif-sales/**` (Fiori S4c) | `InsentifSalesPage`, `InsentifRangka`, `usePeriode`, `useDashboard`, `aksesInsentif`, `halamanTerlihat` | Enam rute (Dashboard, `/saya`, `/pembayaran`, `/data-periode`, `/support`, `/pengaturan`); navigasi dari izin + identitas hierarki (server); periode/principal/cabang di query URL untuk semua halaman; `?view=` lama dialihkan; enam keadaan per layar, aksi tulis lewat ConfirmDialog |
-| `app/globals.css` | semantic cockpit classes | Sumber token lebar halaman, spacing, radius, page hierarchy, tab, toolbar, panel, tabel, dan action hierarchy untuk route operasional |
+| `app/globals.css` | dasar global | Tailwind + target sentuh 44 px, cincin fokus global, reduced-motion, PWA, `@theme inline` ke token Fiori; komponen dan token tampilan ada di `app/fiori.css` |
 
 ### Payments UI Safety
 

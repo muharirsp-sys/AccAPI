@@ -1,7 +1,7 @@
 /*
- * Tujuan: Root layout Next.js: font isi lama (Geist), tema Surya untuk halaman yang belum dimigrasi + token Fiori, metadata.
+ * Tujuan: Root layout Next.js: font body (Geist), CSS global + token Fiori, metadata.
  * Caller: Next.js App Router root.
- * Dependensi: next/font, fiori/scheme, globals.css, workspace.css, fiori.css.
+ * Dependensi: next/font, fiori/scheme, globals.css, fiori.css.
  * Main Functions: RootLayout, metadata (judul bawaan; judul per menu aktif dari generateMetadata di app/(dashboard)/layout.tsx), viewport.
  * Side Effects: Inject script mode/density Fiori dari localStorage sebelum paint. Toaster ada di app/(dashboard)/layout.tsx
  *   (satu-satunya grup rute yang memakai toast), supaya font Fiori tidak ikut dimuat di rute cetak.
@@ -10,7 +10,6 @@ import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import { applyStoredSchemeScript } from "@/components/fiori/scheme";
 import "./globals.css";
-import "./workspace.css";
 import "./fiori.css";
 
 const geist = Geist({ variable: "--font-workspace", subsets: ["latin"], display: "swap" });
@@ -49,9 +48,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    // Tema lama Office Calm, Neon, dan iOS pensiun (keputusan owner 6 Okt 2026): isi halaman yang belum dimigrasi
-    // selalu memakai remap Surya; mode terang/gelap Fiori lewat data-scheme.
-    <html lang="id-ID" data-theme="surya" suppressHydrationWarning>
+    // Mode terang/gelap Fiori lewat html[data-scheme] (skrip di <head>); tema lama sudah pensiun semuanya.
+    <html lang="id-ID" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: applyStoredSchemeScript }} />
       </head>

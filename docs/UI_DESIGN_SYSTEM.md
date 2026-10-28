@@ -23,9 +23,9 @@ Contoh hidup: `/dev/ui-kit` (hanya `npm run dev`; 404 di build produksi). Baseli
 | S6–S7 | Layar sisanya per paket Tahap 4 (order, faktur, antrean, Kasir dan Incaso, pelunasan, pembayaran, Finance, admin, Data Principal, master) | selesai: semua rute `app/(dashboard)` di dalam `FioriScope` |
 | Audit desain 001 | Perbaikan lintas layar dari `docs/audit/audit-desain-001-2026-10-25.md`: satu format tanggal dan nilai kosong (`lib/tampil.ts`), nama halaman = label menu, tanpa em dash di teks UI, alasan tombol nonaktif terlihat, Toaster bertoken, `DataTable` keadaan galat, data contoh generik | cabang `feat/desain-audit-gabungan` (26 Okt 2026) |
 
-Semua halaman `app/(dashboard)` sudah Fiori. Remap tema Surya (`html[data-theme="surya"]` statis di root layout; kelas Tailwind lama
-di `app/globals.css` dan `app/workspace.css`) tinggal untuk sisa markup lama; yang diketahui: `app/(dashboard)/error.tsx`. Jangan
-mencampur: halaman Fiori tidak memakai kelas warna Tailwind lama (`text-slate-*`, `bg-white/10`, `bg-[#…]`) yang diremap tema lama.
+Semua halaman `app/(dashboard)` dan auth sudah Fiori; lembar cetak memakai gaya kertasnya sendiri dengan bilah layar Fiori. Remap tema Surya (`html[data-theme="surya"]`, `app/workspace.css`, kelas
+Tailwind lama dan primitive `ui-*` di `app/globals.css`) sudah dihapus (audit desain 001 usulan D, No 98/99). Kelas warna palet Tailwind
+(`text-slate-*`, `bg-white/10`, `bg-[#…]`) tidak lagi diremap: warna hanya lewat token Fiori.
 
 ## Cara memigrasikan satu halaman
 
@@ -64,11 +64,10 @@ Breakpoint: S < 600 · M 600–1023 · L 1024–1439 · XL ≥ 1440. Tabel memak
   `compact`/`cozy`.
 - Disimpan di localStorage `fiori-scheme` / `fiori-density`; diterapkan sebelum paint oleh skrip di `app/layout.tsx`
   (`components/fiori/scheme.ts`).
-- Atributnya `data-scheme`, bukan `data-theme`, supaya tidak bentrok dengan pilihan tema lama selama migrasi.
-- Tema Neon, Office Calm, dan iOS pensiun (keputusan owner 6 Okt 2026): pengalih tema lama dihapus di S1, `data-theme`
-  selalu `surya`. CSS ketiga tema itu sudah dihapus dari `app/globals.css` (audit desain 001 No 148).
-- Pengalih Mode/Kerapatan ada di menu profil shell (`SchemeSwitcher`). Mode mengubah semua isi di dalam `.fiori`; sisa markup
-  lama (lihat Status migrasi) tetap terang.
+- Atributnya `data-scheme` (bukan `data-theme` milik pilihan tema lama).
+- Tema Neon, Office Calm, dan iOS pensiun (keputusan owner 6 Okt 2026); CSS-nya dihapus dari `app/globals.css` (audit desain 001
+  No 148). Tema Surya dan atribut `data-theme` ikut dihapus (audit desain 001 usulan D).
+- Pengalih Mode/Kerapatan ada di menu profil shell (`SchemeSwitcher`). Mode mengubah semua isi di dalam `.fiori`.
 - Logo resmi CV. Surya Perkasa tetap (`public/brand/surya-perkasa-logo-horizontal.png`). Warna PWA: `#004c97`.
 
 ## Komponen
