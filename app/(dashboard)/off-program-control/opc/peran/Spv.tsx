@@ -225,11 +225,9 @@ function UbahBatch(props: DetailProps & Bersama) {
                 bagian={[{
                     id: "opc-setup", label: "Setup batch", letak: "awal",
                     isi: (
-                        <>
-                            <SetupBatch f={f} catatan={dikembalikan
-                                ? "Mode revisi batch yang dikembalikan. Supervisor dapat mengubah data lalu mengirim ulang ke Sales Manager."
-                                : "Draf: ubah data lalu simpan, atau kirim ke Sales Manager. Setelah dikirim, batch baca-saja sampai dikembalikan."} />
-                                        </>
+                        <SetupBatch f={f} catatan={dikembalikan
+                            ? "Mode revisi batch yang dikembalikan. Supervisor dapat mengubah data lalu mengirim ulang ke Sales Manager."
+                            : "Draf: ubah data lalu simpan, atau kirim ke Sales Manager. Setelah dikirim, batch baca-saja sampai dikembalikan."} />
                     ),
                 }]}
                 gantiItem={<EditorItem f={f} />}

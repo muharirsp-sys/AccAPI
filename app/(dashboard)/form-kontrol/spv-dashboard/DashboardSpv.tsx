@@ -207,8 +207,7 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                         <RefreshCw className="fi-icon" aria-hidden />Muat ulang
                     </button>
                 </p>
-                {/* it05 #15: perilaku hari ini sebagai keterangan biasa; satu catatan varian per layar (BL-28, audit No 80). */}
-                {/* Fakta tugas untuk SPV (cara membaca persentase); batasan "belum dari rute JKS" hanya di catatan varian Admin (tinjauan K2). */}
+                {/* Fakta tugas untuk SPV (cara membaca persentase); batasan "belum dari rute JKS" hanya di catatan varian Admin BL-28 (audit No 80, tinjauan K2). */}
                 <p className="fi-small fi-subtle">
                     Persentase dihitung dari status rute yang tercatat hari itu (kunjungan dan &quot;Kirim status rute hari ini&quot;); toko yang belum disentuh
                     dan belum dikirim statusnya tidak ikut terhitung.
