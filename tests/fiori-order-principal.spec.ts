@@ -183,6 +183,7 @@ test("Berkas sama: dialog Ganti membaca antrean batch lama — ada SO antre / ga
     await expect(page.locator(".fi-ftb").getByRole("button", { name: "Simpan batch" })).toHaveCount(0);
     await expect(main.getByRole("complementary", { name: /BL-44/ })).toBeVisible();
     await expect(main.getByRole("complementary", { name: /BL-21/ })).toHaveCount(1); // satu catatan varian per layar
+    await expect(page.getByRole("complementary", { name: /^Usulan BL/ })).toHaveCount(1); // audit No 80: hanya satu di layar Unggah
 
     await page.locator(".fi-ftb").getByRole("button", { name: "Ganti batch lama…" }).click();
     let dlg = page.getByRole("dialog");
@@ -277,6 +278,7 @@ test("Validasi: Ditahan utuh paling atas, harga Accurate & selisih, peringatan s
     for (const h of ["Harga laporan", "Harga Accurate", "Selisih"]) await expect(tabel.getByRole("columnheader", { name: h })).toBeVisible();
     await expect(tabel.locator("tbody tr").first()).toContainText("+5.000");
     await expect(main.getByRole("complementary", { name: /BL-45/ })).toBeVisible();
+    await expect(page.getByRole("complementary", { name: /^Usulan BL/ })).toHaveCount(1); // audit No 80: satu catatan varian di layar Validasi
     await expect(main.getByText(/tanggal awal periode batch \(05\/10\/2026\)/)).toBeVisible();
     // Konfirmasi tercatat tetap tampil.
     await expect(main.getByRole("list", { name: "Konfirmasi bukan order ganda yang tercatat" })).toContainText("INV/2610/KN01412");
@@ -347,6 +349,7 @@ test("Calon faktur → dialog antreN (payload queue:true) → Diantrekan; Hapus 
     await expect(main.getByRole("status").filter({ hasText: "1 faktur akan terbit TANPA sales" })).toBeVisible();
     await expect(main.getByRole("region", { name: "Tidak ikut" })).toContainText("1671-SOP-260013024: ada baris yang perlu ditinjau");
     await expect(main.getByRole("complementary", { name: /BL-23/ })).toBeVisible();
+    await expect(page.getByRole("complementary", { name: /^Usulan BL/ })).toHaveCount(1); // audit No 80: satu catatan varian di layar Calon faktur
     await page.screenshot({ path: "test-results/fiori-order-principal-calon.png", fullPage: true });
 
     await page.locator(".fi-ftb").getByRole("button", { name: "Antrekan 2 faktur…" }).click();
@@ -367,6 +370,8 @@ test("Calon faktur → dialog antreN (payload queue:true) → Diantrekan; Hapus 
     await expect(status).toContainText("Antre");
     await expect(status).toContainText("INV/2610/KN01412");
     await expect(main.getByRole("list", { name: "Alur dokumen" })).toContainText("1 terbit");
+    await expect(page.getByRole("complementary", { name: /^Usulan BL/ })).toHaveCount(1); // audit No 80: satu catatan varian di layar Diantrekan
+    await expect(main.getByRole("complementary", { name: /BL-35/ })).toBeVisible();
     const hapus = page.locator(".fi-ftb").getByRole("button", { name: "Hapus batch…" });
     await expect(hapus).toBeDisabled();
     await expect(hapus).toHaveAttribute("title", "2 SO batch ini ada di Antrean Faktur; batch tidak bisa dihapus.");
