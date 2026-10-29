@@ -205,8 +205,8 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
                 <div className="fi-sect-in">
                     {memproses ? <Skeleton rows={3} label="Mengolah berkas" /> : (
                         <div className="fi-kcards">
-                            <FilePick id="laporan-penjualan" label="Penjualan (INV)" help="Rincian faktur penjualan atau workbook 1. Paste Data · .xlsx · wajib" required file={penjualan} onChange={setPenjualan} disabled={!bolehUnggah} />
-                            <FilePick id="laporan-retur" label="Retur (RJN)" help="Laporan retur (No.Retur) atau rincian RJN · .xlsx · opsional; otomatis dari sheet Paste Lap. Retur" file={retur} onChange={setRetur} disabled={!bolehUnggah} />
+                            <FilePick id="laporan-penjualan" label="Penjualan (INV)" help="Rincian faktur penjualan INV atau workbook 1. Paste Data · .xlsx · wajib" required file={penjualan} onChange={setPenjualan} disabled={!bolehUnggah} />
+                            <FilePick id="laporan-retur" label="Retur (RJN)" help="Rincian retur penjualan (yang biasa ditempel ke Paste Lap. Retur) · .xlsx · opsional" file={retur} onChange={setRetur} disabled={!bolehUnggah} />
                             <FilePick id="laporan-stock" label="Stock" help="3. Stock atau kuantitas barang per gudang · .xlsx · opsional" file={stock} onChange={setStock} disabled={!bolehUnggah} />
                         </div>
                     )}

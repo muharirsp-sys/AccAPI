@@ -3,7 +3,8 @@
 #         owner (laporan_harian_excel_pq.py), bukan oleh kode replika. Gagal bila nilai/urutan/kolom bergeser.
 # Caller: npm run test:python (run_checks.py) atau python python_backend/test_laporan_harian_pq.py.
 # Dependensi: laporan_harian_pq, fixtures/laporan_harian.json.gz (masukan + acuan), python-calamine.
-# Main Functions: main (paritas fixture), check_manager (rekap Pak Fahdhar: angka, formula, paket XLSX).
+# Main Functions: main (paritas fixture), check_export (export Accurate dibaca seperti tempelan sheet Paste),
+#                 check_manager (rekap Pak Fahdhar: angka, formula, paket XLSX).
 # Side Effects: Menulis workbook sementara lalu menghapusnya.
 import datetime as dt
 import gzip
@@ -17,6 +18,7 @@ import openpyxl
 import pandas as pd
 from python_calamine import CalamineWorkbook
 
+import laporan_harian as lh
 import laporan_harian_pq as pq
 from laporan_harian_manager import build_manager_rows, write_manager_report
 
@@ -86,8 +88,27 @@ def main():
                 if line and not line.startswith("#") and not line.startswith("Keyword,")]
     unknown = [k for k in keywords if pq.report_keyword(k) is None]
     assert not unknown, f"keyword mapping_laporan.csv tanpa laporan: {unknown}"
+    check_export(masukan, fix, lk)
     check_manager(lk)
     print(f"OK: FIX {len(fix)} baris + {len(acuan['sheets']) + 2} laporan identik dengan Power Query Excel")
+
+
+def check_export(masukan, fix, lk):
+    """Export Accurate asli punya kolom pemisah kosong, judul berbeda (urutan sama) dan baris kaki laporan."""
+    export_names = {"Kode Customer": "KODE PELANGGAN INDUK", "Market": "MARKET", "Region": "REGION",
+                    "No.Batch/Spec": "Pengembalian Barang", "Keterangan": "Catatan", "Desa": "Jalan",
+                    "Kecamatan": "Negara", "Kode Jenis Produk": "JENIS PRODUK"}
+
+    def exported(rows, names, lead):
+        pad = [None] * len(lead)
+        out = [lead + [x for h in rows[0] for x in (names.get(h, h), "")]]
+        out += [pad + [x for v in r for x in (v, None)] for r in rows[1:]]
+        return out + [["Halaman 1"] + [None] * (len(out[0]) - 1)]
+
+    retur = exported(masukan["Paste Lap. Retur"], export_names, [""])
+    acc = exported(masukan["Paste Acc"], {"NO_SO": "NO. SO", None: "JENIS_TRANSAKSI", "DISKON": "Diskon %"}, [])
+    rebuilt = pq.build_fix(lh._paste_rows(acc, lh.PASTE_ACC_HEADERS, "penjualan"), lh._retur_rows(retur), lk)
+    same("FIX dari export Accurate", [pq.FIX_COLUMNS] + rebuilt, [pq.FIX_COLUMNS] + fix)
 
 
 def check_manager(lk):
