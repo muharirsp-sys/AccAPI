@@ -156,7 +156,8 @@ Status: UI redesign tervalidasi lokal. Audit build menemukan tracing `webhook-ba
 UI upload laporan harian
   -> python_backend/routers/laporan_harian.py
   -> laporan_harian.load_inputs() -> laporan_harian_pq.build_fix()  (replika query "2. To Format Laporan")
-       penjualan = Rincian Faktur Penjualan / "1. Paste Data" (Paste Acc); retur = Laporan Retur (No.Retur) / Rincian RJN
+       penjualan = Rincian Faktur Penjualan INV / "1. Paste Data" (Paste Acc); retur = Rincian Retur Penjualan (No.Retur) /
+       Rincian RJN; export Accurate yang judulnya beda dari sheet Paste dibaca per posisi kolom (seperti ditempel admin)
        atau FIX LAP PENJ jadi (fix_from_table)
   -> laporan_harian_pq.SalesBase  (replika query SalesBase "2.3 To SPV dan SM New": flag AO/EC/IA/Nota Retur/Batal)
   -> laporan_harian.load_stock() -> master_stock()  ("3. Stock" Sheet1; export Accurate dipetakan)

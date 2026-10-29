@@ -11,7 +11,8 @@
 # Masukan yang diterima (dibuktikan sama dengan pipeline Excel, lihat laporan_harian_bandingkan.py):
 #   penjualan = export Accurate "Rincian Faktur Penjualan" atau workbook "1. Paste Data" (sheet Paste Acc;
 #               sheet Paste Lap. Retur ikut dipakai bila retur tidak diunggah terpisah);
-#   retur     = "Laporan Retur" (kolom No.Retur) atau export Rincian RJN (kolom NO_NOTA, dipetakan);
+#   retur     = export "Rincian Retur Penjualan" / sheet Paste Lap. Retur (kolom No.Retur; judul export Accurate
+#               yang berbeda dibaca per posisi seperti ditempel admin) atau Rincian RJN (kolom NO_NOTA, dipetakan);
 #   fix       = "2. To Format Laporan" (sheet FIX LAP PENJ) jadi; stock = "3. Stock" Sheet1 atau export
 #               Accurate "Kuantitas Barang per Gudang".
 # Side Effects: Membaca unggahan, menulis XLSX ke direktori run; tidak mengirim email.
@@ -61,13 +62,48 @@ def _first_sheet(path: str, preferred: tuple) -> list:
     return pq.read_sheet(path, [n for n in preferred if n in names] or names[:1])
 
 
+# Judul sheet "1. Paste Data". Admin menempel NILAI export Accurate di bawah judul tetap ini, jadi export yang
+# judulnya berbeda (mis. Rincian Retur Penjualan: KODE PELANGGAN INDUK, Catatan, JENIS PRODUK) dibaca per posisi.
+PASTE_ACC_HEADERS = [
+    "NO_NOTA", "TANGGAL", "TGL_JT", "MATA_UANG", "KURS", "KODE PELANGGAN INDUK", "CUSTOMER", "KODE_SALESMAN",
+    "SALESMAN", "KODE_BARANG", "NAMA_BARANG", "QTY", "Nama Pelanggan Faktur Penjualan", "HARGA", "POTONGAN",
+    "NILAI JUAL", "DPP", "NILAI_PAJAK", "SATUAN", "NIK Pelanggan Faktur Penjualan", "NPWP Pelanggan Faktur Penjualan",
+    "GDG", "GDGNAMA", "Kuantitas (Unit)", "ALAMAT", "KOTA", "JUMLAH", "CABANG_OR_COSTCENTER", "PRINCIPLE",
+    "JENIS PRODUK", "MARKET", "REGION", "TAHUN", "BULAN", "NO_SO", "QTY_SATUANKECIL", "SATUAN_KECIL", "REM",
+    "KTP / NPWP", "", "DISKON",
+]
+PASTE_RETUR_HEADERS = [
+    "No.Retur", "Tanggal", "Tgl JT", "Mata Uang", "Kurs", "Kode Customer", "Nama Customer", "Alamat Customer",
+    "Kota Customer", "Kode Salesman", "Nama Salesman", "Kode Barang", "Nama Barang", "Qty", "Qty Bonus",
+    "Nilai Bonus", "Nilai Bruto", "Nilai Disc", "Nilai Pajak", "Kode Job", "Nama Job", "Satuan", "NPWP", "Market",
+    "Jenis Market", "Region", "Kode Gudang", "Nama Gudang", "No.Batch/Spec", "Expired Date", "Keterangan Barang",
+    "Spec Barang", "Kode Issue", "Deskripsi Issue", "Keterangan", "Kode Principal", "Nama Principal", "Desa",
+    "Kecamatan", "Wilayah", "Kode Jenis Produk", "No.Invoice",
+]
+
+
+def _paste_rows(rows: list, canonical: list, label: str) -> list:
+    """Baris seperti ditempel ke sheet Paste: judul sama dipakai apa adanya; export Accurate (kolom pemisah
+    kosong, judul berbeda, urutan sama) dipetakan per posisi; baris judul berulang dibuang."""
+    header = ["" if h is None else str(h).strip() for h in rows[0]]
+    if not set(canonical) - {""} - set(header):
+        return [header] + [r for r in rows[1:] if r and r[0] != header[0]]
+    keep = [i for i, h in enumerate(header) if h]
+    if len(keep) != len(canonical) or header[keep[0]] != canonical[0]:
+        missing = sorted(set(canonical) - {""} - set(header))
+        raise ValueError(f"Kolom file {label} tidak dikenali (beda dari sheet Paste): {', '.join(missing[:8])}")
+    first = header[keep[0]]
+    return [list(canonical)] + [[r[i] if i < len(r) else None for i in keep] for r in rows[1:]
+                                if r and (r[keep[0]] if keep[0] < len(r) else None) != first]
+
+
 def _retur_rows(rows: list) -> list:
     header = ["" if h is None else str(h).strip() for h in rows[0]]
     if "No.Retur" in header:
-        return [header] + rows[1:]
+        return _paste_rows(rows, PASTE_RETUR_HEADERS, "retur")
     if "NO_NOTA" in header:
         return [[RINCIAN_TO_RETUR.get(h, h) for h in header]] + rows[1:]
-    raise ValueError("File retur harus berkolom 'No.Retur' (Laporan Retur) atau 'NO_NOTA' (Rincian RJN).")
+    raise ValueError("File retur harus berkolom 'No.Retur' (Rincian Retur Penjualan) atau 'NO_NOTA' (Rincian RJN).")
 
 
 def load_inputs(penjualan_path: Optional[str], retur_path: Optional[str], fix_path: Optional[str],
@@ -75,9 +111,9 @@ def load_inputs(penjualan_path: Optional[str], retur_path: Optional[str], fix_pa
     """Baris FIX LAP PENJ dari unggahan web (urutan dan nilai seperti refresh Power Query)."""
     if penjualan_path:
         acc = _first_sheet(penjualan_path, PENJUALAN_SHEETS)
-        acc[0] = ["" if h is None else str(h).strip() for h in acc[0]]
-        if "NO_NOTA" not in acc[0]:
+        if "NO_NOTA" not in ["" if h is None else str(h).strip() for h in acc[0]]:
             raise ValueError("File penjualan harus berkolom NO_NOTA (export Rincian Faktur Penjualan).")
+        acc = _paste_rows(acc, PASTE_ACC_HEADERS, "penjualan")
         if retur_path:
             retur = _retur_rows(_first_sheet(retur_path, RETUR_SHEETS))
         elif "Paste Lap. Retur" in _sheet_names(penjualan_path):
