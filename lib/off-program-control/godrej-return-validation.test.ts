@@ -50,6 +50,7 @@ const PRINCIPAL_HEADERS = [
   "Quantity(Units)",
   "Amount",
   "Sale Return State",
+  "Bill No",
 ] as const;
 type PrincipalValues = Record<(typeof PRINCIPAL_HEADERS)[number], unknown>;
 function principalRow(overrides: Partial<PrincipalValues> = {}): unknown[] {
@@ -60,6 +61,7 @@ function principalRow(overrides: Partial<PrincipalValues> = {}): unknown[] {
     "Quantity(Units)": 1,
     Amount: 11_100,
     "Sale Return State": "approved",
+    "Bill No": "",
     ...overrides,
   };
   return PRINCIPAL_HEADERS.map((header) => values[header]);
@@ -94,6 +96,157 @@ const basic = reconcileGodrejReturns(
 assert.equal(basic.summary.MATCH, 1);
 assert.equal(basic.results[0].principalDpp, 11100 / 1.11);
 assert.equal(basic.results[0].customerCode, "C-ONE");
+
+const correctedProductMapping = mapping([["G1076202000410", "4103927"], ["G1076202001010", "4103927"]]);
+for (const [invoice, customer, code, status] of [
+  ["RB/BFG-10000006325", "C-AIS022", "G1076202000410", "KOREKSI"],
+  ["RB/BFG-10000006247", "C-580001", "G1076202001010", "MATCH"],
+  ["RB/BFG-10000006325", "C-OTHER", "G1076202001010", "MATCH"],
+]) {
+  const output = reconcileGodrejReturns(
+    accurate(accurateRow({ REM: invoice, "KODE PELANGGAN INDUK": customer, KODE_BARANG: code })),
+    principal(principalRow({ "Sale Return No.": invoice, CUSTOMER: customer, Skunit: "4103927 - HIT 10S" })),
+    correctedProductMapping,
+  );
+  assert.equal(output.results.length, 1);
+  assert.equal(output.results[0].status, status);
+  assert.equal(output.summary.MISSING_PRINCIPAL, 0);
+  assert.equal(output.summary.MISSING_ACCURATE, 0);
+}
+
+for (const [name, code] of [
+  ["PT. LOTTE MART PANAKUKANG", "C-LO0013"],
+  ["CV.MAJU BERSAMA", "C-DU0003"],
+  ["Jack Grocers", "C-JAC767"],
+  ["CV. MITRA BELANJA SEJAHTERA", "C-KIN009"],
+  ["  Minasa   Mart  ", "C-MIN013"],
+]) {
+  const mappedCustomer = reconcileGodrejReturns(
+    accurate(accurateRow({ "KODE PELANGGAN INDUK": code })),
+    principal(principalRow({ CUSTOMER: name })), mapping(),
+  );
+  assert.equal(mappedCustomer.summary.MATCH, 1);
+  assert.equal(mappedCustomer.principalLines[0].customerCode, code);
+}
+const explicitCustomer = reconcileGodrejReturns(
+  accurate(accurateRow({ "KODE PELANGGAN INDUK": "C-OTHER" })),
+  principal(principalRow({ CUSTOMER: "Minasa Mart {C-OTHER}" })), mapping(),
+);
+assert.equal(explicitCustomer.summary.MATCH, 1);
+for (const customer of ["MINASA MART CABANG 2", "TOKO BARU", "MINASA MART C-ONE C-TWO", "MINASA MART C-ONE-BOGUS"]) {
+  assert.throws(() => reconcileGodrejReturns(accurate(accurateRow()),
+    principal(principalRow({ CUSTOMER: customer })), mapping()), /CUSTOMER.*tepat satu/);
+}
+
+const aliasCustomer = reconcileGodrejReturns(
+  accurate(accurateRow({ "KODE PELANGGAN INDUK": "C-MIT057-GD" })),
+  principal(principalRow({ CUSTOMER: "HERO (C-GI0010)" })),
+  mapping(),
+);
+assert.equal(aliasCustomer.summary.MATCH, 1);
+assert.equal(aliasCustomer.principalLines[0].customerCodeRaw, "C-GI0010");
+for (const originalExists of [false, true]) {
+  const customer = reconcileGodrejReturns(
+    accurate(accurateRow({ "KODE PELANGGAN INDUK": "C-IN0081-GD" }),
+      ...(originalExists ? [accurateRow({ "KODE PELANGGAN INDUK": "C-IN00" })] : [])),
+    principal(principalRow({ CUSTOMER: "SUPER INTI PERKAKAS C-IN00" })),
+    mapping(),
+  );
+  assert.equal(customer.summary.MATCH, 1);
+  assert.equal(customer.results.find((row) => row.status === "MATCH")?.customerCode,
+    originalExists ? "C-IN00" : "C-IN0081");
+}
+const otherInvoice = reconcileGodrejReturns(
+  accurate(accurateRow({ "KODE PELANGGAN INDUK": "C-IN0081", REM: "RB/BFG-2" })),
+  principal(principalRow({ CUSTOMER: "SUPER INTI PERKAKAS C-IN00" })),
+  mapping(),
+);
+assert.equal(otherInvoice.summary.MATCH, 0);
+assert.equal(otherInvoice.principalLines[0].customerCode, "C-IN00");
+for (const [original, target] of [
+  ["C-CIT0", "C-CIT002"],
+  ["C-SUR09", "C-SUR097"],
+  ["C-HE0027", "C-MIT058"],
+  ["C-JAS080", "C-JA0011"],
+  ["C-KIN009", "C-KIN012"],
+  ["C-JAN469", "C-ARM013"],
+]) {
+  for (const originalExists of [false, true]) {
+    const output = reconcileGodrejReturns(
+      accurate(accurateRow({ "KODE PELANGGAN INDUK": target }),
+        ...(originalExists ? [accurateRow({ "KODE PELANGGAN INDUK": original })] : [])),
+      principal(principalRow({ CUSTOMER: `CITRA KOSMETIK & BABY S (${original}` })), mapping(),
+    );
+    assert.equal(output.summary.MATCH, 1);
+    assert.equal(output.results.find((row) => row.status === "MATCH")?.customerCode,
+      originalExists ? original : target);
+  }
+  const output = reconcileGodrejReturns(
+    accurate(accurateRow({ "KODE PELANGGAN INDUK": target, REM: "RB/BFG-2" })),
+    principal(principalRow({ CUSTOMER: original })), mapping(),
+  );
+  assert.equal(output.summary.MATCH, 0);
+  assert.equal(output.principalLines[0].customerCode, original);
+}
+const originalCustomer = reconcileGodrejReturns(
+  accurate(accurateRow({ "KODE PELANGGAN INDUK": "C-GI0010" }), accurateRow({ "KODE PELANGGAN INDUK": "C-MIT057" })),
+  principal(principalRow({ CUSTOMER: "HERO (C-GI0010)" })),
+  mapping(),
+);
+assert.equal(originalCustomer.results.find((row) => row.status === "MATCH")?.customerCode, "C-GI0010");
+const unrelatedReturn = reconcileGodrejReturns(
+  accurate(accurateRow({ "KODE PELANGGAN INDUK": "C-MIT057", REM: "RB/BFG-2" })),
+  principal(principalRow({ CUSTOMER: "HERO (C-GI0010)" })),
+  mapping(),
+);
+assert.equal(unrelatedReturn.summary.MATCH, 0);
+assert.equal(unrelatedReturn.principalLines[0].customerCode, "C-GI0010");
+
+for (const [qty, expected] of [[1, "MATCH"], [2, "KOREKSI"]] as const) {
+  const corrected = reconcileGodrejReturns(
+    accurate(accurateRow()),
+    principal(principalRow({ "Bill No": "FK/BFG-10030753", "Quantity(Units)": qty })),
+    mapping(),
+  );
+  assert.equal(corrected.results[0].status, expected);
+  assert.equal(corrected.summary[expected], 1);
+  assert.equal(corrected.summary.QTY_MISMATCH, 0);
+}
+for (const sku of ["P-1 - PRODUCT ONE", "UNKNOWN - UNKNOWN"]) {
+  const missingCorrection = reconcileGodrejReturns(
+    accurate(),
+    principal(principalRow({ "Bill No": "FK/BFG-10030753", Skunit: sku })),
+    mapping(),
+  );
+  assert.equal(missingCorrection.summary.KOREKSI, 1);
+  assert.equal(missingCorrection.summary.MISSING_ACCURATE, 0);
+  assert.equal(missingCorrection.summary.UNMAPPED, 0);
+  assert.match(missingCorrection.results[0].warnings.join(" "), /FK\/BFG-10030753/);
+}
+const mixedCorrection = reconcileGodrejReturns(
+  accurate(),
+  principal(principalRow({ "Bill No": "FK/BFG-10030753" }), principalRow()),
+  mapping(),
+);
+assert.equal(mixedCorrection.summary.MISSING_ACCURATE, 1);
+
+for (const code of ["CA-TK0209", "CA-TK0209-GD"]) {
+  const caCustomer = reconcileGodrejReturns(
+    accurate(accurateRow({ "KODE PELANGGAN INDUK": code })),
+    principal(principalRow({ CUSTOMER: "TK. BARU CA-TK0209}" })),
+    mapping(),
+  );
+  assert.equal(caCustomer.summary.MATCH, 1);
+  assert.equal(caCustomer.results[0].customerCode, "CA-TK0209");
+}
+const distinctCustomer = reconcileGodrejReturns(
+  accurate(accurateRow({ "KODE PELANGGAN INDUK": "C-TK0209" })),
+  principal(principalRow({ CUSTOMER: "TK. BARU CA-TK0209}" })),
+  mapping(),
+);
+assert.equal(distinctCustomer.summary.MATCH, 0);
+assert.equal(distinctCustomer.summary.MISSING_ACCURATE, 1);
+assert.equal(distinctCustomer.summary.MISSING_PRINCIPAL, 1);
 
 assert.equal(
   reconcileGodrejReturns(
@@ -186,7 +339,7 @@ assert.deepEqual(
   ["BAD-0", "BAD-2", "BAD-PREFIX", "BAD-SUFFIX"],
 );
 
-for (const customer of ["C-ONE dan C-TWO", "XC-ONE", "C-ONE-BOGUS"])
+for (const customer of ["C-ONE dan C-TWO", "XC-ONE", "C-ONE-BOGUS", "XCA-TK0209", "CA-TK0209-BOGUS", "CA-TK0209 C-ONE"])
   assert.throws(
     () =>
       reconcileGodrejReturns(
