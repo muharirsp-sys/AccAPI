@@ -1798,7 +1798,7 @@ export function reconcileGodrejReturns(
     row.status = "KOREKSI";
     output.summary.KOREKSI = (output.summary.KOREKSI ?? 0) + 1;
     row.warnings = [
-      `Koreksi — Bill No ${bills.join(", ")} berawalan FK/BFG-.`,
+      `Koreksi: Bill No ${bills.join(", ")} berawalan FK/BFG-.`,
       ...row.warnings,
       row.accurateSourceRows.length
         ? "Pasangan ditemukan tetapi jumlah atau DPP belum cocok."

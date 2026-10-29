@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import * as XLSX from "xlsx";
 
 test("Return KINO: koreksi tampil di hasil dan ekspor tanpa menjadi masalah", async ({ page }) => {
-  const correction = { status: "KOREKSI", invoiceNumber: "1671-SRI-1", customerCode: "C1", principalProductCode: "P1", accurateProductCode: "WIN1", accurateQuantity: 2, principalQuantity: 2, quantityDifference: 0, accurateDpp: 30, principalDpp: 30, dppDifference: 0, accurateTax: 3, principalTax: 3, accurateTotal: 33, principalTotal: 33, accurateSourceRows: [2], principalSourceRows: [6], warnings: ["Koreksi — PAJAK_NO INV/2610/KN00046 berawalan INV; tidak dihitung sebagai selisih atau MATCH."], invalidReason: null };
+  const correction = { status: "KOREKSI", invoiceNumber: "1671-SRI-1", customerCode: "C1", principalProductCode: "P1", accurateProductCode: "WIN1", accurateQuantity: 2, principalQuantity: 2, quantityDifference: 0, accurateDpp: 30, principalDpp: 30, dppDifference: 0, accurateTax: 3, principalTax: 3, accurateTotal: 33, principalTotal: 33, accurateSourceRows: [2], principalSourceRows: [6], warnings: ["Koreksi: PAJAK_NO INV/2610/KN00046 berawalan INV; tidak dihitung sebagai selisih atau MATCH."], invalidReason: null };
   const output = { accurateLines: [], principalLines: [], results: [correction], summary: { MATCH: 0, KOREKSI: 1 }, ignoredLines: [] };
   const json = (body: unknown) => ({ contentType: "application/json", body: JSON.stringify(body) });
   await page.route("**/api/reconciliation/mappings?*", route => route.fulfill(json({ active: { id: "m1", version: 1, originalName: "mapping.xlsx", uploadedByName: "Lokal", createdAt: "2026-10-22T01:00:00Z" }, versions: [], canManage: false })));
