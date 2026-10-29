@@ -52,7 +52,7 @@ LANGKAH KERJA
    - syarat_claim: dokumen klaim, dasar nilai (DBP/RBP/CBP/PRICELIST; boleh lebih dari satu bila berbeda per
      mekanisme), kalimat aturan batas klaim, dan tanggalnya.
    - keterangan: pengecualian (bukan MT/subdist, tidak double promo, no return), budget/plafon, porsi beban distributor,
-     kewajiban meneruskan diskon ke toko.
+     kewajiban meneruskan diskon ke toko. Maks. 3 kalimat pendek; rincian proses ekstraksi masuk flag, bukan keterangan.
 
 3. Tentukan kolom ketentuan per seksi (maks. 6 kolom). Kolom = hal yang membuat benefit berbeda:
    strata qty, range nilai belanja, channel / tipe outlet, nama/kode toko, atau komponen paket.
@@ -180,11 +180,24 @@ Setting sistem (detail item)
 - Jangan setting juga: benefit gimmick (L14), rule yang berlaku.selesai < TANGGAL_PROSES (L06).
 - Gerbang rilis: tidak ada flag kritis/perlu_cek. Jawaban pemilik atas peringatan -> tambahkan ke summary_program_referensi.md.
 
-Perakitan form ringkas (tampilan)
-- Per seksi: kumpulkan rule per baris produk -> vektor teks_tampilan per kolom_id ("-" untuk kolom tanpa rule).
-- Gabungkan baris yang kelompok_barang-nya sama DAN vektornya identik -> satu baris tampilan
-  (variant dan gramasi digabung dengan koma, urut sesuai master).
+Perakitan form ringkas (tampilan) — acuan format: contoh pemilik "Form_Summary_Program_Ringkas.pdf" (28 Okt 2026;
+*.pdf tidak masuk git, aturannya dirangkum di sini).
+Data rule TIDAK diubah untuk tampilan; yang disusun ulang hanya letak sel. Setiap rule tetap masuk tepat satu sel.
+- Satu surat = satu blok. Seksi dari surat yang sama:
+  (a) program sama + outlet_khusus sama + jumlah kolom sama -> ditumpuk, teks sel digabung " + " (voucher + gimmick);
+  (b) >= 2 seksi berkolom tunggal (biasanya per channel/tipe outlet) -> satu seksi, tiap seksi jadi kolom
+      (GT Retail | GT Grosir | GT Star Outlet | MT Lokal); kolom MT di paling kanan;
+  (c) seksi berkolom tunggal yang barangnya bagian dari seksi sebelumnya -> kolom tambahan bila kolom < 6
+      (Rejuve Dahlia), atau satu baris "SEMUA SKU DI ATAS" lintas kolom bila teksnya seragam (lock volume Vinda).
+- Per seksi: kumpulkan rule per barang (kode sama) -> vektor teks_tampilan per kolom ("-" untuk kolom tanpa rule).
+- Gabungkan baris yang MEREKnya sama (kelompok_barang sebelum " - ") DAN vektornya identik -> satu baris tampilan:
+  Kelompok = merek ("CSBNCA FM & HM"), Variant = sub-kelompok + variant ("Sport EDT, EDP, Clay"), gramasi digabung.
+  Daftar variant > 180 karakter -> sub-kelompok + "all variant"; > 5 gramasi -> "All gramasi". Kode tetap lengkap di data.
+- "N+M (CR x%)" dicetak "N+M"; nilai CR pindah ke satu baris catatan "CR paket: 3+1 = 25% · ...".
 - Merge sel kelompok_barang yang sama dan berurutan.
+- Teks kiri/kanan ringkas: periode = tanggal saja; daftar outlet = "Tanpa list" / "Hanya list (N toko | belum diunggah)";
+  syarat claim = "Batas: ..." + dokumen + dasar nilai satu paragraf; keterangan = maks. 3 kalimat pendek;
+  catatan seksi hanya yang perlu dibaca penandatangan (bukan proses ekstraksi, bukan hal yang sudah diputuskan).
 - Kolom kiri (surat, nama, channel, outlet, periode) dan kanan (syarat claim, keterangan) di-merge setinggi blok program;
   baris pertama syarat claim: "Batas: <batas_klaim_tanggal atau batas_klaim_aturan>".
 - Flag tingkat kritis/perlu_cek -> sel kuning + baris catatan di bawah seksi.
