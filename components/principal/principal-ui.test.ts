@@ -28,6 +28,10 @@ test("ringkasan riwayat: isi baris menang, kunci varian jadi cadangan, varian da
     assert.equal(ringkasLog(L({ entitas: "varian", kunci: "PA:", aksi: "aktif", after: { variantKey: "", name: "Dasar A" } })).apa, "Varian Dasar diaktifkan");
     assert.deepEqual(ringkasLog(L({ aksi: "hapus", before: { aliasAsli: "Prinsip Ay", jenis: "nama_surat", variantKey: "VARIAN_A" } })), { apa: "Alias dihapus", rinci: "“Prinsip Ay” · Nama di surat · varian VARIAN_A" });
     assert.equal(aktorTeks("benih:S7-2"), "benih S7-2");
+    // No 87: nama akun dari API menang; tanpa nama, id akun hanya cadangan berlabel.
+    assert.equal(aktorTeks("u-123", "USER A"), "USER A");
+    assert.equal(aktorTeks("u-123", null), "akun u-123");
+    assert.equal(aktorTeks("benih:S7-2", null), "benih S7-2");
 });
 
 function jawab(status: number, body: unknown) {
@@ -39,7 +43,7 @@ test("tulis: sukses; 403 + petunjuk izin; 409 berkode; 502 / bukan JSON / putus 
     assert.deepEqual((await tulis("/x", "POST", {})).principal, { id: "PA" });
 
     jawab(403, { error: "Forbidden" });
-    await assert.rejects(tulis("/x", "POST", {}), (e: unknown) => e instanceof GalatTulis && !e.belumPasti && /^Forbidden — akun Anda belum berhak/.test(e.message));
+    await assert.rejects(tulis("/x", "POST", {}), (e: unknown) => e instanceof GalatTulis && !e.belumPasti && /^Forbidden\. Akun Anda belum berhak/.test(e.message));
 
     jawab(401, { error: "Unauthorized" });
     await assert.rejects(tulis("/x", "POST", {}), (e: unknown) => e instanceof GalatTulis && e.message === "Unauthorized. Sesi login berakhir; masuk ulang lalu coba lagi.");

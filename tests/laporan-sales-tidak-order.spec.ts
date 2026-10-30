@@ -47,7 +47,7 @@ test("siap: ringkasan 8 dari 24 (33,3%), tabel Alasan urut jumlah dengan % dari 
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto(URL_TAB, NAV);
     const main = page.locator("main");
-    await expect(main.getByRole("tab", { name: "Tidak Order" })).toHaveAttribute("aria-selected", "true", NAV);
+    await expect(main.getByRole("navigation", { name: "Jenis laporan" }).getByRole("link", { name: "Tidak Order" })).toHaveAttribute("aria-current", "page", NAV);
     await expect(main.getByText("8 dari 24 kunjungan tidak order (33,3%)")).toBeVisible(NAV);
     const alasan = main.getByRole("table", { name: "Alasan tidak order" });
     const baris = alasan.locator("tbody tr");
@@ -137,11 +137,11 @@ test("tanpa izin: 403 tampil sebagai galat berkalimat izin, bukan kosong", async
 });
 
 test("hierarki belum tertaut: 403 berkode membawa kalimat server, bukan laporan kosong", async ({ page }) => {
-    await mock(page, () => json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki — hubungi Admin." }, 403));
+    await mock(page, () => json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki. Hubungi Admin." }, 403));
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto(URL_TAB, NAV);
     const main = page.locator("main");
-    await expect(main.getByRole("alert")).toContainText("Akun belum tertaut ke hierarki — hubungi Admin.", NAV);
+    await expect(main.getByRole("alert")).toContainText("Akun belum tertaut ke hierarki. Hubungi Admin.", NAV);
     await expect(main.getByText("Belum ada kunjungan tercatat")).toHaveCount(0);
 });
 

@@ -140,7 +140,7 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
 
         // Toko yang sudah di rute (kode JKS tanpa akhiran = pelanggan C-100001-CBA) tidak bisa ditambah.
         await sek.getByRole("listitem").filter({ hasText: "PELANGGAN A" }).click();
-        const tombol = sek.getByRole("button", { name: "Tambah ke kunjungan hari ini" });
+        const tombol = sek.getByRole("button", { name: "Tambah ke kunjungan" });
         await expect(tombol).toBeDisabled();
         await expect(sek).toContainText("PELANGGAN A sudah ada di rute hari ini");
         await sek.getByRole("button", { name: "Ganti pelanggan" }).click();
@@ -172,7 +172,7 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
         await sek.getByRole("button", { name: "Tambah toko luar rute" }).click();
         await sek.getByLabel("Cari pelanggan").fill("PELANGGAN B");
         await sek.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("listitem").filter({ hasText: "PELANGGAN B" }).click();
-        await sek.getByRole("button", { name: "Tambah ke kunjungan hari ini" }).click();
+        await sek.getByRole("button", { name: "Tambah ke kunjungan" }).click();
         await expect(r.getByRole("list", { name: "Toko di rute" }).getByRole("listitem")).toHaveCount(1, NAV);
         expect(postKe(m.tulis, "/luar-rute")[0].principle).toBe("CABANG A");
         await noOverflow(page);
@@ -289,7 +289,7 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
             luar("k6", "C-100007-CBA", "PELANGGAN G", { checkinAt: null, checkoutAt: null, status: null }),
         ] });
         await page.goto("/form-kontrol?tab=laporan", NAV);
-        const lap = page.getByRole("region", { name: "Laporan harian" });
+        const lap = page.getByRole("region", { name: "Laporan kunjungan" });
         const sek = lap.getByRole("region", { name: "Toko luar rute" });
         const daftar = sek.getByRole("list", { name: "Toko luar rute" });
         await expect(daftar.getByRole("listitem")).toHaveCount(5, NAV);
@@ -313,6 +313,11 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
         await noOverflow(page);
         await page.screenshot({ path: "test-results/fkmsm2/ponsel-konfirmasi-luar-rute.png", fullPage: true });
         await masuk.click();
+        // Memasukkan toko ke JKS menulis data induk: lewat dialog konfirmasi (audit desain 001 No 21); isi kiriman tetap sama.
+        const dJks = page.getByRole("dialog");
+        await expect(dJks).toContainText("Masukkan PELANGGAN B ke JKS?");
+        await expect(dJks).toContainText("Selasa · minggu genap");
+        await dJks.getByRole("button", { name: "Masukkan ke JKS" }).click();
         await expect(b).toContainText("Masuk JKS: Selasa · minggu genap", NAV);
         await daftar.getByRole("listitem").filter({ hasText: "PELANGGAN C" }).getByRole("button", { name: "Jangan masukkan JKS" }).click();
         await expect(daftar.getByRole("listitem").filter({ hasText: "PELANGGAN C" })).toContainText("Tidak dimasukkan JKS", NAV);
@@ -518,7 +523,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await sek.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("listitem").first().click();
         o.tambah = [{ status: 502, terapkan: true }];
         const sebelum = nBaca(m.baca, "/ao-control");
-        await sek.getByRole("button", { name: "Tambah ke kunjungan hari ini" }).click();
+        await sek.getByRole("button", { name: "Tambah ke kunjungan" }).click();
         await expect(sek.getByRole("alert")).toContainText("belum dipastikan", NAV);
         await expect(sek.getByRole("alert")).not.toContainText("Bad Gateway");
         await expect.poll(() => nBaca(m.baca, "/ao-control"), NAV).toBeGreaterThan(sebelum);
@@ -559,7 +564,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await expect(daftar.getByRole("button", { name: "Batalkan kunjungan PELANGGAN C" })).toBeEnabled(NAV);
 
         // 409 berkode di dialog (kalimat server apa adanya).
-        o.batal = [{ status: 409, body: { ok: false, kode: "SUDAH_DIKUNJUNGI", error: "PELANGGAN C sudah punya status hari ini (check-in, status rute — termasuk \"tidak dikunjungi\" dari Kirim status rute — atau merchandising); kunjungannya tidak bisa dibatalkan." } }];
+        o.batal = [{ status: 409, body: { ok: false, kode: "SUDAH_DIKUNJUNGI", error: "PELANGGAN C sudah punya status hari ini (check-in, status rute, atau merchandising; status rute termasuk \"tidak dikunjungi\" dari Kirim status rute), jadi kunjungannya tidak bisa dibatalkan." } }];
         await daftar.getByRole("button", { name: "Batalkan kunjungan PELANGGAN C" }).click();
         const d2 = page.getByRole("dialog", { name: "Batalkan kunjungan PELANGGAN C?" });
         await d2.getByRole("button", { name: "Batalkan kunjungan" }).click();
@@ -571,7 +576,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await sek.getByRole("button", { name: "Tambah toko luar rute" }).click();
         await sek.getByLabel("Cari pelanggan").fill("pelanggan b");
         await sek.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("listitem").first().click();
-        await sek.getByRole("button", { name: "Tambah ke kunjungan hari ini" }).click();
+        await sek.getByRole("button", { name: "Tambah ke kunjungan" }).click();
         await expect(daftar.getByRole("listitem").filter({ hasText: "PELANGGAN B" })).toContainText("Luar rute", NAV);
 
         // SPV melihat rute salesman: tanpa Batalkan & tanpa Tambah.
@@ -592,7 +597,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         ] };
         const m = await mockB(page, o);
         await page.goto("/form-kontrol?tab=laporan", NAV);
-        const lap = page.getByRole("region", { name: "Laporan harian" });
+        const lap = page.getByRole("region", { name: "Laporan kunjungan" });
         const sek = lap.getByRole("region", { name: "Toko luar rute" });
         const item = (n: string) => sek.getByRole("list", { name: "Toko luar rute" }).getByRole("listitem").filter({ hasText: n });
         await expect(sek).toContainText("4 menunggu keputusan", NAV);
@@ -616,6 +621,10 @@ test.describe("peninjau B — ponsel 390 px", () => {
         const g409 = nBaca(m.baca, "/luar-rute");
         o.luarGet = [{ status: 200, delay: 1500, terapkan: true }];
         await a.getByRole("button", { name: "Masukkan ke JKS" }).click();
+        const dTolak = page.getByRole("dialog");
+        await dTolak.getByRole("button", { name: "Masukkan ke JKS" }).click();
+        await expect(dTolak.getByRole("alert")).toContainText("belum dikunjungi pada Selasa, 13 Okt 2026", NAV);
+        await dTolak.getByRole("button", { name: "Kembali" }).click();
         await expect(a.getByRole("alert")).toContainText("belum dikunjungi pada Selasa, 13 Okt 2026", NAV);
         await expect(item("PELANGGAN B").locator("p.fi-why", { hasText: "Menunggu daftar dimuat ulang" })).toBeVisible();
         await expect.poll(() => nBaca(m.baca, "/luar-rute"), NAV).toBeGreaterThan(g409);
@@ -624,7 +633,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
 
         // 409 SUDAH_DI_JKS: server sudah mengubah baris menjadi sudah_jks → daftar dimuat ulang, baris jadi "Sudah di JKS Anda", hitungan benar.
         const g0 = nBaca(m.baca, "/luar-rute");
-        o.konf = [{ status: 409, body: { ok: false, kode: "SUDAH_DI_JKS", error: "PELANGGAN B sudah ada di JKS Anda (C-100002: Senin · setiap minggu); tidak ditambahkan lagi — kunjungan ini ditandai \"sudah di JKS\"." } }];
+        o.konf = [{ status: 409, body: { ok: false, kode: "SUDAH_DI_JKS", error: "PELANGGAN B sudah ada di JKS Anda (C-100002: Senin · setiap minggu); tidak ditambahkan lagi, dan kunjungan ini ditandai \"sudah di JKS\"." } }];
         o.luarRute = o.luarRute!.map((r) => r.id === "k2" ? { ...r, konfirmasi: "sudah_jks", jksSaya: [{ salesCode: "S-01", salesName: "SALES A", custCode: "C-100002", hariKunjungan: "Senin", mingguPattern: "all" }] } : r);
         await item("PELANGGAN B").getByRole("button", { name: "Jangan masukkan JKS" }).click();
         await expect(item("PELANGGAN B")).toContainText("Sudah di JKS Anda: Senin · setiap minggu", NAV);
@@ -663,13 +672,13 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await noOverflow(page);
     });
 
-    test("B3b Laporan: daftar luar rute gagal = galat (bukan kosong), kartu \"—\", kirim laporan tidak tertahan", async ({ page }) => {
+    test("B3b Laporan: daftar luar rute gagal = galat (bukan kosong), kartu \"-\", kirim laporan tidak tertahan", async ({ page }) => {
         const o: OpsiB = { luarGagal: 99 };
         const m = await mockB(page, o);
         await page.goto("/form-kontrol?tab=laporan", NAV);
-        const lap = page.getByRole("region", { name: "Laporan harian" });
+        const lap = page.getByRole("region", { name: "Laporan kunjungan" });
         await expect(lap.getByRole("alert").filter({ hasText: "Daftar toko luar rute gagal dimuat." })).toBeVisible(NAV);
-        await expect(lap.locator(".fi-kc", { hasText: "Luar rute dikunjungi" }).locator("b")).toHaveText("—");
+        await expect(lap.locator(".fi-kc", { hasText: "Luar rute dikunjungi" }).locator("b")).toHaveText("-");
         await lap.getByLabel("Tindak lanjut untuk SPV").fill("Catatan");
         await lap.getByRole("button", { name: "Kirim laporan ke SPV…" }).click();
         await page.getByRole("dialog").getByRole("button", { name: "Kirim laporan" }).click();
@@ -730,7 +739,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await sek.getByLabel("Cari pelanggan").fill("pelanggan c");
         await sek.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("listitem").first().click();
         const g0 = nBaca(m.baca, "/ao-control");
-        await sek.getByRole("button", { name: "Tambah ke kunjungan hari ini" }).click();
+        await sek.getByRole("button", { name: "Tambah ke kunjungan" }).click();
         await expect(daftar.getByRole("listitem")).toHaveCount(3, NAV);
         await expect.poll(() => nBaca(m.baca, "/ao-control")).toBeGreaterThan(g0);
         await expect(r.getByText("2 tanda prioritas belum dikirim")).toBeVisible();
@@ -749,7 +758,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await sek.getByRole("button", { name: "Tambah toko luar rute" }).click();
         await sek.getByLabel("Cari pelanggan").fill("pelanggan b");
         await sek.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("listitem").first().click();
-        await sek.getByRole("button", { name: "Tambah ke kunjungan hari ini" }).click();
+        await sek.getByRole("button", { name: "Tambah ke kunjungan" }).click();
         await expect(daftar.getByRole("listitem")).toHaveCount(3, NAV);
         await expect(r.getByRole("button", { name: "Prioritas PELANGGAN B" })).toHaveAttribute("aria-pressed", "false");
         await expect(r.getByText("1 tanda prioritas belum dikirim")).toBeVisible();
@@ -776,7 +785,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         const o: OpsiB = { luarRute: [luarPada(HARI_INI, "k1", "C-100001-CBA", "PELANGGAN A"), luarPada(HARI_INI, "k2", "C-100002-CBA", "PELANGGAN B")] };
         await mockB(page, o);
         await page.goto("/form-kontrol?tab=laporan", NAV);
-        const sek = page.getByRole("region", { name: "Laporan harian" }).getByRole("region", { name: "Toko luar rute" });
+        const sek = page.getByRole("region", { name: "Laporan kunjungan" }).getByRole("region", { name: "Toko luar rute" });
         const item = (n: string) => sek.getByRole("list", { name: "Toko luar rute" }).getByRole("listitem").filter({ hasText: n });
         await expect(sek).toContainText("2 menunggu keputusan", NAV);
         const tidakB = item("PELANGGAN B").getByRole("button", { name: "Jangan masukkan JKS: PELANGGAN B" });
@@ -857,7 +866,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await expect(page.getByRole("heading", { name: "Hasil kunjungan" })).toBeVisible(NAV);
         await page.getByRole("button", { name: "Simpan & lanjut" }).click();
         await expect(page.getByRole("heading", { name: "Merchandising wajib" })).toBeVisible(NAV);
-        for (const b of ["Produk terlihat jelas", "Display rapi & terorganisir", "Area display dibersihkan", "Produk ditata ulang", "Posisi mudah ditemukan konsumen"]) await page.getByLabel(b).check();
+        for (const b of ["Produk terlihat jelas", "Display rapi & terorganisir", "Area display dibersihkan", "Produk ditata ulang", "Posisi mudah ditemukan konsumen"]) await page.getByRole("checkbox", { name: b }).check(); // tombol foto per butir kini bernama "Foto bukti: {butir}" (audit desain 001 No 121), jadi getByLabel(b) ambigu
         await page.getByRole("listitem").filter({ hasText: "Seluruh SKU terpajang" }).getByRole("button", { name: "Foto" }).click();
         const kamera = page.getByRole("dialog", { name: "Foto Bukti Kunjungan" });
         await kamera.locator('input[type="file"]').setInputFiles({ name: "m.png", mimeType: "image/png", buffer: PNG });

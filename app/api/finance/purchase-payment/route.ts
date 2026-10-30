@@ -44,7 +44,7 @@ export async function POST(request: Request) {
     const expectedDatabaseId = typeof body?.expectedDatabaseId === "string" || typeof body?.expectedDatabaseId === "number"
         ? String(body.expectedDatabaseId).trim() : "";
     if (!expectedDatabaseId) {
-        return NextResponse.json({ error: "Database Accurate tujuan tidak disebut — muat ulang halaman Finance lalu ulangi. Tidak ada yang dikirim ke Accurate.", claimed: false }, { status: 400 });
+        return NextResponse.json({ error: "Database Accurate tujuan tidak disebut. Muat ulang halaman Finance lalu ulangi. Tidak ada yang dikirim ke Accurate.", claimed: false }, { status: 400 });
     }
     // Yang dikirim, di-hash dan dijadikan subjek = objek hasil allowlist, bukan kiriman browser.
     const payload = [normalized.item];
@@ -58,7 +58,7 @@ export async function POST(request: Request) {
         session = await getAccurateSession(String(gate.session.user.id));
     } catch (err) {
         console.error("[finance/purchase-payment] baca sesi Accurate gagal:", err);
-        return NextResponse.json({ error: "Gagal membaca sesi Accurate — tidak ada yang dikirim ke Accurate.", claimed: false }, { status: 503 });
+        return NextResponse.json({ error: "Gagal membaca sesi Accurate. Tidak ada yang dikirim ke Accurate.", claimed: false }, { status: 503 });
     }
     if (!session?.sessionHost || !session.sessionId || !session.accessToken || !session.databaseId) {
         return NextResponse.json({ error: "Sesi Accurate belum lengkap. Login dan open database Accurate dulu.", claimed: false }, { status: 400 });
@@ -90,7 +90,7 @@ export async function POST(request: Request) {
     } catch (err) {
         // Klaim gagal (DB) = belum ada yang dikirim.
         console.error("[finance/purchase-payment] klaim attempt gagal:", err);
-        return NextResponse.json({ error: "Gagal mencatat attempt sebelum kirim — tidak ada yang dikirim ke Accurate.", claimed: false }, { status: 503 });
+        return NextResponse.json({ error: "Gagal mencatat attempt sebelum kirim. Tidak ada yang dikirim ke Accurate.", claimed: false }, { status: 503 });
     }
 
     if (!result.claimed) {
@@ -99,7 +99,7 @@ export async function POST(request: Request) {
             // dipanggil (runGuardedWrite kembali sebelum kirim) — tidak ada yang diklaim/dikirim oleh permintaan ini (tinjauan B-6).
             return NextResponse.json({
                 code: "reopened_use_repost", claimed: false,
-                error: "Pembayaran untuk faktur ini sudah dibuka ulang untuk posting ulang (repost). Posting biasa ditolak — posting ulang belum tersedia di versi ini.",
+                error: "Pembayaran untuk faktur ini sudah dibuka ulang untuk posting ulang (repost). Posting biasa ditolak: posting ulang belum tersedia di versi ini.",
                 live: null, generation: result.generation, currentGeneration: result.currentGeneration,
             }, { status: 409 });
         }
@@ -109,7 +109,7 @@ export async function POST(request: Request) {
         return NextResponse.json({
             error: live?.state === "posted"
                 ? `Himpunan faktur ini SUDAH diposting (${live.accurateNumber || live.accurateId}).`
-                : "Ada attempt posting yang belum pasti untuk faktur ini — periksa Accurate lalu selesaikan manual.",
+                : "Ada attempt posting yang belum pasti untuk faktur ini. Periksa Accurate lalu selesaikan manual.",
             live: live && {
                 attemptId: live.id, state: live.state, accurateId: live.accurateId, accurateNumber: live.accurateNumber,
                 targetDbId: live.targetDbId, clientRef: live.clientRef, payloadHash: live.payloadHash,

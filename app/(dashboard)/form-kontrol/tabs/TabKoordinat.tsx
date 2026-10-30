@@ -3,7 +3,7 @@
  *   longitude; diisi contoh toko tanpa koordinat), pratinjau ringan di peramban, lalu unggah lewat dialog konfirmasi dan hasilnya
  *   (disimpan + tabel baris ditolak). Koordinat dipakai penanda toko di peta Supervisor Review.
  * Caller: form-kontrol/FormKontrol.tsx (tab "koordinat"; admin, manager, admin_sales).
- * Dependensi: ../shared (ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive}, lib/supervisor-review/kontrak (tipe),
+ * Dependensi: ../shared (ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive}, lib/supervisor-review/kontrak (tipe), lib/tampil (KOSONG),
  *   xlsx (dimuat saat dipakai: pratinjau + templat).
  * Main Functions: TabKoordinat (default), bacaPratinjau, unduhTemplat.
  * Side Effects: GET /api/supervisor-review/koordinat; POST multipart `file` ke URL yang sama lewat ConfirmDialog; unduh templat-koordinat-toko.xlsx.
@@ -15,6 +15,7 @@ import { Download, RefreshCw, Upload } from "lucide-react";
 import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, ErrorState, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import type { JawabanUnggahKoordinat, RingkasanKoordinat } from "@/lib/supervisor-review/kontrak";
+import { KOSONG } from "@/lib/tampil";
 import { TulisTidakPasti, ambilFk, tulisFk, useIzinFk } from "../shared";
 
 const URL_API = "/api/supervisor-review/koordinat";
@@ -115,7 +116,7 @@ export default function TabKoordinat() {
 
     const kolom: Column<Ditolak>[] = [
         { key: "baris", header: "Baris", align: "end", cell: (r) => <span className="fi-tnum">{r.baris}</span> },
-        { key: "kode", header: "Kode toko", cell: (r) => <span className="fi-mono">{r.kode || "—"}</span> },
+        { key: "kode", header: "Kode toko", cell: (r) => <span className="fi-mono">{r.kode || KOSONG}</span> },
         { key: "pesan", header: "Alasan ditolak", cell: (r) => r.pesan },
     ];
 
@@ -161,7 +162,7 @@ export default function TabKoordinat() {
                     rows={hasil.ditolak}
                     rowKey={(r) => `${r.baris}-${r.kode}`}
                     empty={{ title: "Tidak ada baris ditolak" }}
-                    mobileItem={(r) => <ListItem doc={<span className="fi-mono">{r.kode || "—"}</span>} amount={<span className="fi-tnum">baris {r.baris}</span>} title={r.pesan} />}
+                    mobileItem={(r) => <ListItem doc={<span className="fi-mono">{r.kode || KOSONG}</span>} amount={<span className="fi-tnum">baris {r.baris}</span>} title={r.pesan} />}
                 />
             )}
             <ConfirmDialog
@@ -199,10 +200,10 @@ export default function TabKoordinat() {
                 {pratinjau.status === "siap" && pratinjau.data && (
                     <>
                         <KeyValues items={[
-                            ["Berkas", berkas?.name ?? "—"],
+                            ["Berkas", berkas?.name ?? KOSONG],
                             ["Baris terbaca", <span key="b" className="fi-tnum">{pratinjau.data.baris}</span>],
-                            ["Kolom dikenali", pratinjau.data.dikenali.length ? pratinjau.data.dikenali.join(", ") : "—"],
-                            ["Kolom tidak dikenali", pratinjau.data.asing.length ? `${pratinjau.data.asing.join(", ")} (diabaikan)` : "—"],
+                            ["Kolom dikenali", pratinjau.data.dikenali.length ? pratinjau.data.dikenali.join(", ") : KOSONG],
+                            ["Kolom tidak dikenali", pratinjau.data.asing.length ? `${pratinjau.data.asing.join(", ")} (diabaikan)` : KOSONG],
                         ]} />
                         {pratinjau.data.wajibHilang.length > 0 && (
                             <MessageStrip tone="warn" title={`Kolom wajib tidak ada: ${pratinjau.data.wajibHilang.join(", ")}.`}>

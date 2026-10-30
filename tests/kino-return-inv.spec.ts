@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import * as XLSX from "xlsx";
 
 test("Return KINO: koreksi tampil di hasil dan ekspor tanpa menjadi masalah", async ({ page }) => {
-  const correction = { status: "KOREKSI", invoiceNumber: "1671-SRI-1", customerCode: "C1", principalProductCode: "P1", accurateProductCode: "WIN1", accurateQuantity: 2, principalQuantity: 2, quantityDifference: 0, accurateDpp: 30, principalDpp: 30, dppDifference: 0, accurateTax: 3, principalTax: 3, accurateTotal: 33, principalTotal: 33, accurateSourceRows: [2], principalSourceRows: [6], warnings: ["Koreksi — PAJAK_NO INV/2610/KN00046 berawalan INV; tidak dihitung sebagai selisih atau MATCH."], invalidReason: null };
+  const correction = { status: "KOREKSI", invoiceNumber: "1671-SRI-1", customerCode: "C1", principalProductCode: "P1", accurateProductCode: "WIN1", accurateQuantity: 2, principalQuantity: 2, quantityDifference: 0, accurateDpp: 30, principalDpp: 30, dppDifference: 0, accurateTax: 3, principalTax: 3, accurateTotal: 33, principalTotal: 33, accurateSourceRows: [2], principalSourceRows: [6], warnings: ["Koreksi: PAJAK_NO INV/2610/KN00046 berawalan INV; tidak dihitung sebagai selisih atau MATCH."], invalidReason: null };
   const output = { accurateLines: [], principalLines: [], results: [correction], summary: { MATCH: 0, KOREKSI: 1 }, ignoredLines: [] };
   const json = (body: unknown) => ({ contentType: "application/json", body: JSON.stringify(body) });
   await page.route("**/api/reconciliation/mappings?*", route => route.fulfill(json({ active: { id: "m1", version: 1, originalName: "mapping.xlsx", uploadedByName: "Lokal", createdAt: "2026-10-22T01:00:00Z" }, versions: [], canManage: false })));
@@ -11,7 +11,7 @@ test("Return KINO: koreksi tampil di hasil dan ekspor tanpa menjadi masalah", as
   await page.goto("/reconciliation");
   const main = page.locator("main");
   await main.getByRole("group", { name: "Jenis Rekonsiliasi" }).getByRole("button", { name: "Return", exact: true }).click();
-  await main.getByLabel("Prinsipal", { exact: true }).selectOption("KINO");
+  await main.getByLabel("Principal", { exact: true }).selectOption("KINO");
   await expect(main.getByRole("heading", { level: 1 })).toHaveText("Rekonsiliasi Return KINO");
   const upload = { name: "contoh.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("PK") };
   await main.locator('input[type="file"]').nth(0).setInputFiles(upload);
@@ -22,7 +22,7 @@ test("Return KINO: koreksi tampil di hasil dan ekspor tanpa menjadi masalah", as
   await expect(main.getByRole("group", { name: "Saring hasil" })).toContainText("Masalah saja 0");
   await main.getByRole("button", { name: "Masalah saja 0" }).click();
   await expect(main.getByText("Tidak ada masalah rekonsiliasi", { exact: true })).toBeVisible();
-  await main.getByLabel("Filter status").selectOption("KOREKSI");
+  await main.getByLabel("Saring status").selectOption("KOREKSI");
   await expect(main.locator("#hasil")).toContainText(correction.warnings[0]);
   const history = main.getByRole("region", { name: "Riwayat rekonsiliasi" });
   await expect(history).toContainText("Total 1");

@@ -9,6 +9,7 @@
  *   GET PDF .../{claim-letter,summary,receipt} dan .../submissions/[sid]/{...}; lib/claim-workflow-ui, lib/claim-workflow/no-claim-rules.
  * Main Functions: ClaimDetail.
  * Side Effects: HTTP baca/tulis di atas (uang: pembayaran klaim). Logic BL-07/08/14/15/33/35/42 tidak ditulis: perilaku hari ini + varian berlabel.
+ *   Tanggal dan jam tampil dd/mm/yyyy WITA (lib/tampil); nilai kosong "-". Hanya aksi tahap aktif (footer) yang primary; Simpan per baris secondary.
  */
 "use client";
 
@@ -20,7 +21,8 @@ import {
     Skeleton, StatusBadge, VariantNote, type Column,
 } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
-import { ambil, jamWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { ambil } from "@/lib/rekapan-nota/ui";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 import { rupiah } from "@/lib/promo-ui";
 import { witaToday } from "@/lib/beranda";
 import { claimWorkflowStatuses as S, isLegacyPekaStatus } from "@/lib/claim-workflow/constants";
@@ -93,6 +95,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
     };
     const ncBerubah = (s: Submission) => { const v = drafNc[s.id]?.noClaim; return bolehNoClaim && v !== undefined && v.trim() !== (s.noClaim ?? ""); };
     const tahap = tahapKlaim(wf?.status);
+    const dikirimAtauSebagian = tahap === "dikirim" || tahap === "sebagian";
     const bayarTerisi = Boolean(bayar.paymentAmount.trim() || bayar.paymentNote.trim());
     const belumSimpan = items.some(itemBerubah) || subs.some(ncBerubah);
     const adaDraf = belumSimpan || ((tahap === "dikirim" || tahap === "sebagian") && bayarTerisi) || (tahap !== "ditutup" && catatanTutup.trim() !== "");
@@ -116,7 +119,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
         );
     }
     if (!d || !wf) {
-        const tidakAda = /not found|HTTP 404/i.test(detail.error ?? "");
+        const tidakAda = /not found|tidak ditemukan|HTTP 404/i.test(detail.error ?? "");
         return (
             <div className="fi-page">
                 <ObjectPageHeader breadcrumbs={kepala} title="Klaim" />
@@ -367,15 +370,15 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                 ].filter(Boolean).join(" · ") : "";
                 return (
                     <>
-                        <span className="fi-mono">{it.noSurat || "–"}</span>
-                        <span className="fi-sub">{[it.jenisPromosi, it.periode].filter(Boolean).join(" · ") || "–"}</span>
+                        <span className="fi-mono">{it.noSurat || KOSONG}</span>
+                        <span className="fi-sub">{[it.jenisPromosi, it.periode].filter(Boolean).join(" · ") || KOSONG}</span>
                         {ubah && <span className="fi-sub fi-why">Belum disimpan: {ubah}</span>}
                         {galatItem[it.id] && <span className="fi-msg" role="alert">{galatItem[it.id]}</span>}
                     </>
                 );
             },
         },
-        { key: "toko", header: "Toko", cell: (it) => it.outlet || "–" },
+        { key: "toko", header: "Toko", cell: (it) => it.outlet || KOSONG },
         {
             key: "dpp", header: "DPP", align: "end", cell: (it) => drafItem[it.id] && bolehUbahItem
                 ? <input aria-label={`DPP item ${nomor.get(it.id)}`} className="fi-input fi-cellin" type="number" min="0" step="any" value={isiItem(it, drafItem[it.id]).dpp} onChange={(e) => ubahItem(it, { dpp: e.target.value })} />
@@ -407,7 +410,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                         {subs.map((s) => <option key={s.id} value={s.id}>{s.noClaim ? `${s.noClaim} · ` : ""}{judulBerkas(s)}</option>)}
                     </select>
                 )
-                : <span className={subOf(it.claimSubmissionId)?.noClaim ? "fi-mono" : undefined}>{subOf(it.claimSubmissionId)?.noClaim || (subOf(it.claimSubmissionId) ? judulBerkas(subOf(it.claimSubmissionId)!) : "–")}</span>,
+                : <span className={subOf(it.claimSubmissionId)?.noClaim ? "fi-mono" : undefined}>{subOf(it.claimSubmissionId)?.noClaim || (subOf(it.claimSubmissionId) ? judulBerkas(subOf(it.claimSubmissionId)!) : KOSONG)}</span>,
         },
         ...(bolehUbahItem ? [{
             key: "aksi", header: "Tindakan", cell: (it: WorkflowItem) => drafItem[it.id]
@@ -415,7 +418,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                     <div style={{ display: "grid", gap: 6, minWidth: "12rem" }}>
                         <input aria-label={`Catatan item ${nomor.get(it.id)}`} className="fi-input" placeholder="Catatan" value={isiItem(it, drafItem[it.id]).note} onChange={(e) => ubahItem(it, { note: e.target.value })} />
                         <div className="fi-btnrow">
-                            <Button variant="primary" busy={simpanItemId === it.id} disabled={!itemBerubah(it) || (simpanItemId !== "" && simpanItemId !== it.id)} disabledReason="Belum ada perubahan" onClick={() => simpanItem(it)}>Simpan</Button>
+                            <Button busy={simpanItemId === it.id} disabled={!itemBerubah(it) || (simpanItemId !== "" && simpanItemId !== it.id)} disabledReason="Belum ada perubahan" onClick={() => simpanItem(it)}>Simpan</Button>
                             <Button variant="tertiary" onClick={() => batalUbah(it)}>Batal</Button>
                         </div>
                     </div>
@@ -425,7 +428,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
     ];
     const itemPonsel = (it: WorkflowItem) => {
         if (!(drafItem[it.id] && bolehUbahItem)) {
-            return <ListItem doc={it.noSurat || "–"} amount={rupiah(it.nilaiKlaim)} title={it.outlet || it.jenisPromosi || "Item"}
+            return <ListItem doc={it.noSurat || KOSONG} amount={rupiah(it.nilaiKlaim)} title={it.outlet || it.jenisPromosi || "Item"}
                 meta={`DPP ${rupiah(it.dpp)} · PPN ${persenTeks(it.ppnRate)} · PPh ${persenTeks(it.pphRate)}`}
                 badge={bolehUbahItem ? <Button variant="tertiary" icon={<Pencil className="fi-icon" aria-hidden />} onClick={() => ubahItem(it, {})}>Ubah</Button> : undefined} />;
         }
@@ -434,11 +437,11 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
     };
 
     const kolomBayar: Column<Payment>[] = [
-        { key: "tgl", header: "Tanggal diterima", cell: (p) => tanggalPendek(p.paymentDate) },
+        { key: "tgl", header: "Tanggal diterima", cell: (p) => tanggalWita(p.paymentDate) },
         { key: "nominal", header: "Nominal", align: "end", cell: (p) => p.voidedAt ? <s>{rupiah(p.paymentAmount)}</s> : <b>{rupiah(p.paymentAmount)}</b> },
-        { key: "cara", header: "Cara bayar principal", cell: (p) => p.paymentType || "–" },
-        ...(banyakBerkas ? [{ key: "berkas", header: "Berkas", secondary: true, cell: (p: Payment) => <span className="fi-mono">{subOf(p.claimSubmissionId)?.noClaim || "–"}</span> } satisfies Column<Payment>] : []),
-        { key: "catatan", header: "Catatan", secondary: true, cell: (p) => <>{p.paymentNote || "–"}{p.voidedAt && p.voidReason && <span className="fi-sub">Alasan batal: {p.voidReason}</span>}</> },
+        { key: "cara", header: "Cara bayar principal", cell: (p) => p.paymentType || KOSONG },
+        ...(banyakBerkas ? [{ key: "berkas", header: "Berkas", secondary: true, cell: (p: Payment) => <span className="fi-mono">{subOf(p.claimSubmissionId)?.noClaim || KOSONG}</span> } satisfies Column<Payment>] : []),
+        { key: "catatan", header: "Catatan", secondary: true, cell: (p) => <>{p.paymentNote || KOSONG}{p.voidedAt && p.voidReason && <span className="fi-sub">Alasan batal: {p.voidReason}</span>}</> },
         { key: "status", header: "Status", cell: (p) => p.voidedAt ? <StatusBadge tone="neg">Dibatalkan</StatusBadge> : <StatusBadge tone="pos">Aktif</StatusBadge> },
         {
             key: "aksi", header: "Tindakan", cell: (p) => !p.voidedAt && wf.status !== S.closed
@@ -498,17 +501,14 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                     { label: "Dibayar", value: rupiah(wf.totalPaid) },
                     { label: "Sisa", value: rupiah(wf.remainingAmount) },
                     ...(wf.submittedToPrincipalAt ? [{ label: "Dikirim ke principal", value: `${tanggalWita(wf.submittedToPrincipalAt)}${umur != null && tahap !== "ditutup" ? ` · ${umur} hari` : ""}` }] : []),
-                    { label: "OFF", value: wf.offNoPengajuan || "–" },
+                    { label: "OFF", value: wf.offNoPengajuan || KOSONG },
                 ]}
                 flow={<Flow steps={alurKlaim(wf.status)} label="Tahap klaim" />} />
             <AnchorBar anchors={anchors} />
 
             {strip("atas")}
             {detail.status === "galat" && <MessageStrip tone="neg" title="Gagal memuat ulang.">{detail.error} Yang tampil adalah hasil sebelumnya. <Button variant="tertiary" onClick={muat}>Coba lagi</Button></MessageStrip>}
-            {isLegacyPekaStatus(wf.status) && <MessageStrip tone="info" title="Status lama dari alur PEKA.">Alur PEKA (EC/CN) sudah tidak dipakai; klaim ini ditampilkan sebagai Dikirim. Pembayaran untuk status lama ini belum bisa dicatat dari layar ini.</MessageStrip>}
-            {(tahap === "dikirim" || tahap === "sebagian") && (
-                <VariantNote bl="BL-14">Setelah dikirim ke principal belum ada jalan Minta revisi atau Batalkan klaim. Usulan: keduanya lewat dialog beralasan; batal hanya bila belum ada pembayaran aktif.</VariantNote>
-            )}
+            {isLegacyPekaStatus(wf.status) && <MessageStrip tone="info" title="Status lama dari alur PEKA.">Alur PEKA sudah tidak dipakai; klaim ini ditampilkan sebagai Dikirim. Pembayaran untuk status lama ini belum bisa dicatat dari layar ini.</MessageStrip>}
 
             <Section id="item" title="Item klaim" subtitle={`${items.length} item · DPP ${rupiah(wf.totalDpp)} · PPN ${rupiah(wf.totalPpn)} · PPh ${rupiah(wf.totalPph)}`}>
                 <div className="fi-sect-in">
@@ -522,7 +522,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                         const jejak = siapaUbah(konflik.itemId);
                         const kapan = konflik.at ?? jejak?.createdAt ?? null;
                         return (
-                            <MessageStrip tone="neg" title={`Item ${n}${it?.outlet ? ` (${it.outlet})` : ""} diubah ${jejak?.actorName || "pengguna lain"}${kapan ? ` pada ${jamWita(kapan)}` : ""} sejak Anda membuka halaman ini.`}>
+                            <MessageStrip tone="neg" title={`Item ${n}${it?.outlet ? ` (${it.outlet})` : ""} diubah ${jejak?.actorName || "user lain"}${kapan ? ` pada ${waktuWita(kapan)}` : ""} sejak Anda membuka halaman ini.`}>
                                 Perubahan Anda belum disimpan; baris lain tetap seperti yang Anda lihat.{" "}
                                 <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={() => muatUlangBaris(konflik.itemId)}>Muat ulang baris itu</Button>
                             </MessageStrip>
@@ -574,13 +574,13 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                                         <div className="fi-noclaim">
                                             <FormField label={`No Claim berkas ${i + 1} · ${judulBerkas(s)}`} error={galatNc[s.id]}
                                                 help={[u ? `Usulan: ${u}` : "", adaDokBerkas ? "Mengganti No Claim menghapus dokumen berkas ini." : ""].filter(Boolean).join(" · ") || undefined}>
-                                                {(a) => <input {...a} className="fi-input fi-mono" value={nc.noClaim ?? s.noClaim ?? ""} placeholder={u || "mis. 01/SUPER-KN/10/2026"}
+                                                {(a) => <input {...a} className="fi-input fi-mono" value={nc.noClaim ?? s.noClaim ?? ""} placeholder={u || "mis. 01/KODE-A/10/2026"}
                                                     onChange={(e) => { const val = e.target.value; setDrafNc((p) => ({ ...p, [s.id]: { ...p[s.id], noClaim: val } })); setGalatNc((p) => tanpa(p, s.id)); }} />}
                                             </FormField>
                                             <FormField label="No. urut">{(a) => <input {...a} className="fi-input" inputMode="numeric" placeholder="01" value={nc.urut ?? ""} onChange={(e) => { const val = e.target.value; setDrafNc((p) => ({ ...p, [s.id]: { ...p[s.id], urut: val } })); }} />}</FormField>
                                             <FormField label="Bulan">{(a) => <input {...a} className="fi-input" inputMode="numeric" maxLength={2} placeholder={bulanIni} value={nc.bulan ?? bulanIni} onChange={(e) => { const val = e.target.value; setDrafNc((p) => ({ ...p, [s.id]: { ...p[s.id], bulan: val } })); }} />}</FormField>
                                             <Button disabled={!aturan} disabledReason="Belum ada pola No Claim untuk principal ini" onClick={() => pakaiUsulan(s)}>Pakai usulan</Button>
-                                            <Button variant="primary" busy={simpanNcId === s.id} disabled={!ncBerubah(s)} disabledReason="Belum ada perubahan" onClick={() => simpanNoClaim(s)}>Simpan No Claim</Button>
+                                            <Button busy={simpanNcId === s.id} disabled={!ncBerubah(s)} disabledReason="Belum ada perubahan" onClick={() => simpanNoClaim(s)}>Simpan No Claim</Button>
                                         </div>
                                     )}
                                     <p className="fi-small fi-subtle">
@@ -604,7 +604,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                                 <b>{doc.label}</b>
                                 {wf[doc.path]
                                     ? <>
-                                        <span><StatusBadge tone="pos">Dibuat</StatusBadge> {wf[doc.at] ? jamWita(wf[doc.at]!) : ""}</span>
+                                        <span><StatusBadge tone="pos">Dibuat</StatusBadge> {wf[doc.at] ? waktuWita(wf[doc.at]!) : ""}</span>
                                         <a href={`/api/claim-workflow/${id}/${doc.key}`} target="_blank" rel="noreferrer">Lihat PDF <ExternalLink className="fi-icon" aria-hidden style={{ display: "inline", verticalAlign: "-3px", width: 14, height: 14 }} /></a>
                                     </>
                                     : <span className="fi-subtle">Belum dibuat{tanpaNc.length ? " · perlu No Claim" : ""}</span>}
@@ -617,7 +617,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                             {alasanDok && <span className="fi-small fi-subtle">{alasanDok}</span>}
                         </div>
                     )}
-                    <VariantNote bl="BL-15">Keunikan No Claim antar klaim hari ini dicek aplikasi saat menyimpan; No Claim yang sama di klaim ini menggabungkan berkas (layar ini meminta konfirmasi dulu). Usulan: indeks unik di database.</VariantNote>
+                    <p className="fi-small fi-subtle">No Claim yang sama di klaim ini menggabungkan berkasnya; layar meminta konfirmasi dulu.</p>
                 </div>
             </Section>
 
@@ -636,7 +636,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                 </div>
                 <ResponsiveTable<Payment> title="Riwayat pembayaran" columns={kolomBayar} rows={payments} rowKey={(p) => p.id}
                     empty={{ title: "Belum ada pembayaran tercatat", message: tahap === "dikirim" ? "Catat pembayaran saat dana dari principal diterima." : undefined }}
-                    mobileItem={(p) => <ListItem doc={tanggalPendek(p.paymentDate)} amount={p.voidedAt ? <s>{rupiah(p.paymentAmount)}</s> : rupiah(p.paymentAmount)} title={p.paymentType || "–"}
+                    mobileItem={(p) => <ListItem doc={tanggalWita(p.paymentDate)} amount={p.voidedAt ? <s>{rupiah(p.paymentAmount)}</s> : rupiah(p.paymentAmount)} title={p.paymentType || KOSONG}
                         meta={<>{p.paymentNote || (p.voidReason ? `Alasan batal: ${p.voidReason}` : "")}{!p.voidedAt && wf.status !== S.closed && <Button variant="tertiary" disabled={Boolean(alasanVoid)} disabledReason={alasanVoid} onClick={() => { setVoidPay(p); setDialog("void"); }}>Batalkan…</Button>}</>}
                         badge={p.voidedAt ? <StatusBadge tone="neg">Dibatalkan</StatusBadge> : <StatusBadge tone="pos">Aktif</StatusBadge>} />} />
                 <div className="fi-sect-in">
@@ -660,7 +660,6 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                                 <Button icon={<Wallet className="fi-icon" aria-hidden />} onClick={bukaBayar}>Catat pembayaran…</Button>
                                 {bayarTerisi && <StatusBadge tone="warn">Belum dicatat</StatusBadge>}
                             </div>
-                            <VariantNote bl="BL-08">Server belum mengunci klaim saat mencatat; dua pembayaran yang dicatat bersamaan bisa membuat total melebihi nilai klaim. Usulan (AM-022): pencatatan kedua ditolak dengan sisa terbaru.</VariantNote>
                         </>
                     ) : (
                         <p className="fi-small fi-subtle">
@@ -670,7 +669,6 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                                 : "Pembayaran bisa dicatat setelah klaim dikirim ke principal."}
                         </p>
                     )}
-                    <VariantNote bl="BL-07">Bukti bayar principal belum bisa dilampirkan; hari ini pembayaran tercatat tanpa berkas bukti. Usulan: bukti wajib diunggah dan bisa dibuka dari riwayat pembayaran.</VariantNote>
                 </div>
             </Section>
 
@@ -679,7 +677,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                     {strip("tutup")}
                     {wf.status === S.closed ? (
                         <div style={{ maxWidth: "30rem" }}>
-                            <KeyValues items={[["Ditutup", `${wf.closedAt ? jamWita(wf.closedAt) : "–"}${wf.closedBy ? ` · ${wf.closedBy}` : ""}`], ["Catatan", wf.closeNote || "–"]]} />
+                            <KeyValues items={[["Ditutup", `${wf.closedAt ? waktuWita(wf.closedAt) : KOSONG}${wf.closedBy ? ` · ${wf.closedBy}` : ""}`], ["Catatan", wf.closeNote || KOSONG]]} />
                         </div>
                     ) : (
                         <>
@@ -709,7 +707,6 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                                     {alasanTutup && <span className="fi-small fi-subtle">{alasanTutup}</span>}
                                 </div>
                             )}
-                            {tahap === "sebagian" && <VariantNote bl="BL-42">Klaim yang dibayar kurang oleh principal tidak bisa ditutup dan tertahan di Dibayar sebagian. Usulan: catat selisih principal (dipotong, ditolak, kompensasi) dengan alasan dan bukti.</VariantNote>}
                         </>
                     )}
                 </div>
@@ -725,27 +722,32 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                         <ul className="fi-hist">
                             {[...audit.data].reverse().map((a) => {
                                 const k = kalimatAudit(a);
-                                return <li key={a.id}><time dateTime={a.createdAt}>{jamWita(a.createdAt)}</time><span><b>{a.actorName || "Sistem"}</b> · {k.apa}</span>{k.ubah && <span className="fi-chg">{k.ubah}</span>}</li>;
+                                return <li key={a.id}><time dateTime={a.createdAt}>{waktuWita(a.createdAt)}</time><span><b>{a.actorName || "Sistem"}</b> · {k.apa}</span>{k.ubah && <span className="fi-chg">{k.ubah}</span>}</li>;
                             })}
                         </ul>
                     ) : <EmptyState title="Belum ada riwayat" />}
-                <div className="fi-sect-in">
-                    <VariantNote bl="BL-33">Riwayat hari ini mencatat aksi dan catatannya, belum nilai lama → baru untuk setiap isian. Usulan: riwayat perubahan bersama yang menyimpan nilai sebelum dan sesudah.</VariantNote>
-                </div>
             </Section>
 
             <Section id="alur" title="Alur dokumen" subtitle="dari OFF Program Control sampai pembayaran">
                 <AlurDokumen off={wf.offNoPengajuan} no={no} noClaims={noClaims} jumlahBayar={aktifBayar.length} dibayar={wf.totalPaid} />
-                <div className="fi-sect-in">
-                    <VariantNote bl="BL-35">Alur hari ini hanya ditelusuri dari klaim ke belakang; OFF Program Control belum menautkan balik ke klaim ini. Usulan: tautan dua arah OFF ↔ klaim ↔ pembayaran.</VariantNote>
-                </div>
             </Section>
+
+            {/* Satu catatan varian per layar, hanya Admin (audit No 80 + tinjauan K2: audiens tetap). Yang tetap terlihat semua akun hanya fakta
+                tugas "No Claim yang sama ... meminta konfirmasi" di bagian No Claim. */}
+            <VariantNote bl={["BL-15, BL-08, BL-07, BL-33, BL-35", dikirimAtauSebagian && "BL-14", tahap === "sebagian" && "BL-42"].filter(Boolean).join(", ")}>
+                Keunikan No Claim antar klaim dicek aplikasi saat menyimpan, belum oleh database, dan server belum mengunci klaim saat mencatat pembayaran:
+                dua pembayaran yang dicatat bersamaan bisa membuat total melebihi nilai klaim. Bukti bayar principal belum bisa dilampirkan; pembayaran
+                tercatat tanpa berkas bukti. Riwayat mencatat aksi dan catatannya, belum nilai sebelum dan sesudah tiap isian. Alur hanya ditelusuri dari
+                klaim ke belakang; OFF Program Control belum menautkan balik ke klaim ini.
+                {dikirimAtauSebagian && " Setelah dikirim ke principal, klaim belum bisa diminta revisi atau dibatalkan."}
+                {tahap === "sebagian" && " Klaim yang dibayar kurang oleh principal tidak bisa ditutup dan tertahan di Dibayar sebagian; selisihnya (dipotong, ditolak, kompensasi) belum bisa dicatat."}
+            </VariantNote>
 
             {footer}
 
             <ConfirmDialog open={dialog === "siap"} onClose={tutupDialog} title={`Tandai ${no} siap dikirim?`} tag="Tahap" confirmLabel="Tandai siap dikirim"
                 description="Setelah ditandai, item dan pajak tidak bisa diubah kecuali dikembalikan ke draf." onConfirm={() => transisi("mark_ready")}
-                facts={[["No Claim", noClaims.join(", ") || "–"], ["Item", `${items.length} · ${rupiah(wf.totalClaim)}`], ["Dokumen", "Surat klaim, Ringkasan, Kwitansi"]]} />
+                facts={[["No Claim", noClaims.join(", ") || KOSONG], ["Item", `${items.length} · ${rupiah(wf.totalClaim)}`], ["Dokumen", "Surat klaim, Ringkasan, Kwitansi"]]} />
             <ConfirmDialog open={dialog === "draf"} onClose={tutupDialog} title="Kembalikan ke draf?" tag="Alasan wajib" tone="negative" confirmLabel="Kembalikan ke draf"
                 reason={{ label: "Alasan", placeholder: "Mis. PPN item 3 salah tarif; principal minta dipisah." }} onConfirm={(alasan) => transisi("return_to_draft", alasan)}
                 description={dokAda.length + dokBerkas > 0
@@ -753,27 +755,27 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                     : "Belum ada dokumen yang dibuat; tidak ada yang dihapus."}
                 facts={[["Status", "Siap dikirim → Draf"], ["Setelah ini", "Item, pajak, dan No Claim bisa diubah lagi"]]} />
             <ConfirmDialog open={dialog === "kirim"} onClose={tutupDialog} title={`Kirim ${no} ke principal?`} tag="Tahap" confirmLabel="Kirim ke principal"
-                description="Setelah dikirim, item dan pajak terkunci. Hari ini belum ada jalan revisi atau batal sesudahnya (usulan BL-14)." onConfirm={() => transisi("submit_to_principal")}
-                facts={[["No Claim", noClaims.join(", ") || "–"], ["Total klaim", rupiah(wf.totalClaim)], ["Dokumen", `${dokAda.length} PDF`], ["Tanggal kirim", `${tanggalPendek(witaToday())} (umur tagihan dihitung dari sini)`]]} />
+                description="Setelah dikirim, item dan pajak terkunci. Belum ada jalan revisi atau batal sesudahnya." onConfirm={() => transisi("submit_to_principal")}
+                facts={[["No Claim", noClaims.join(", ") || KOSONG], ["Total klaim", rupiah(wf.totalClaim)], ["Dokumen", `${dokAda.length} PDF`], ["Tanggal kirim", `${tanggalWita(witaToday())} (umur tagihan dihitung dari sini)`]]} />
             <ConfirmDialog open={dialog === "bayar"} onClose={tutupDialog} title={`Catat pembayaran ${rupiah(Number.isFinite(nominal) ? nominal : 0)} dari ${wf.principleName}?`} tag="Pembayaran"
                 confirmLabel={`Catat ${rupiah(Number.isFinite(nominal) ? nominal : 0)}`} confirmDisabled={lebihBayar || undefined} onConfirm={catatBayar}
-                description={<MessageStrip tone="info">Bila orang lain mencatat pembayaran klaim ini bersamaan, hari ini keduanya bisa tersimpan (BL-08 belum). Periksa riwayat pembayaran sesudahnya.</MessageStrip>}
+                description={<MessageStrip tone="info">Bila orang lain mencatat pembayaran klaim ini bersamaan, keduanya bisa tersimpan. Periksa riwayat pembayaran sesudahnya.</MessageStrip>}
                 facts={[
                     ["Klaim", <span key="k" className="fi-mono">{no}</span>],
                     ...(banyakBerkas && targetBayar ? [["Berkas", targetBayar.noClaim || judulBerkas(targetBayar)]] as Fakta : []),
-                    ["Tanggal diterima", tanggalPendek(bayar.paymentDate)],
-                    ["Cara bayar principal", bayar.paymentType.trim() || "–"],
-                    ["Bukti", "Belum bisa dilampirkan (BL-07)"],
+                    ["Tanggal diterima", tanggalWita(bayar.paymentDate)],
+                    ["Cara bayar principal", bayar.paymentType.trim() || KOSONG],
+                    ["Bukti", "Belum bisa dilampirkan"],
                     ["Sisa setelah ini", lebihBayar ? lebihBayar : sisaSesudah === 0 ? "Rp 0 → status Lunas" : `${rupiah(sisaSesudah)} → status Dibayar sebagian`],
                 ]} />
             <ConfirmDialog open={dialog === "void"} onClose={() => { setDialog(null); setVoidPay(null); }} title={`Batalkan pembayaran ${rupiah(voidPay?.paymentAmount ?? 0)}?`} tag="Alasan wajib" tone="negative"
                 confirmLabel="Batalkan pembayaran" reason={{ label: "Alasan", placeholder: "Mis. transfer salah alamat; principal menarik kembali." }} onConfirm={batalkanBayar}
-                facts={voidPay ? [["Tanggal diterima", tanggalPendek(voidPay.paymentDate)], ["Cara bayar principal", voidPay.paymentType || "–"], ["Akibat", akibatVoid], ["Catatan", "Pembayaran tidak dihapus; tercatat sebagai dibatalkan"]] : []} />
+                facts={voidPay ? [["Tanggal diterima", tanggalWita(voidPay.paymentDate)], ["Cara bayar principal", voidPay.paymentType || KOSONG], ["Akibat", akibatVoid], ["Catatan", "Pembayaran tidak dihapus; tercatat sebagai dibatalkan"]] : []} />
             <ConfirmDialog open={dialog === "tutup"} onClose={tutupDialog} title={`Tutup ${banyakBerkas && targetTutup ? `berkas ${targetTutup.noClaim || judulBerkas(targetTutup)}` : `klaim ${no}`}?`}
                 tag={`${cek.filter((c) => c.ok).length}/${cek.length} syarat`} confirmLabel={banyakBerkas ? "Tutup berkas" : "Tutup klaim"} onConfirm={tutupKlaim}
                 description="Setelah ditutup, No Claim, item, dan pembayaran terkunci."
                 facts={targetTutup ? [["Total klaim", rupiah(targetTutup.totalClaim)], ["Dibayar", `${rupiah(targetTutup.totalPaid)} · ${jumlahBayarAktif} pembayaran aktif`], ["Catatan", catatanTutup.trim()]] : []} />
-            <ConfirmDialog open={dialog === "gabung"} onClose={() => { setDialog(null); setGabung(null); }} title={`Gabungkan ke berkas ${gabung?.noClaim ?? ""}?`} tag="BL-15" confirmLabel="Gabungkan"
+            <ConfirmDialog open={dialog === "gabung"} onClose={() => { setDialog(null); setGabung(null); }} title={`Gabungkan ke berkas ${gabung?.noClaim ?? ""}?`} tag="Gabung berkas" confirmLabel="Gabungkan"
                 onConfirm={() => (gabung ? kirimNoClaim(gabung.sub, gabung.noClaim, true) : undefined)}
                 description="Bila bukan maksud Anda, batalkan dan isi No Claim lain. Di klaim lain, No Claim yang sama selalu ditolak."
                 facts={gabung ? [
@@ -784,8 +786,8 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
             <ConfirmDialog open={dialog === "pindah"} onClose={() => { setDialog(null); setPindah(null); }} title={`Pindahkan item ${pindah ? nomor.get(pindah.item.id) : ""} ke berkas ${pindah ? pindah.target.noClaim || judulBerkas(pindah.target) : ""}?`}
                 tag="Berkas" confirmLabel="Pindahkan item" onConfirm={pindahItem}
                 facts={pindah ? [
-                    ["Item", `${pindah.item.noSurat || "–"} · ${pindah.item.outlet || "–"} · ${rupiah(pindah.item.nilaiKlaim)}`],
-                    ["Dari", (() => { const s = subOf(pindah.item.claimSubmissionId); return s ? s.noClaim || judulBerkas(s) : "–"; })()],
+                    ["Item", `${pindah.item.noSurat || KOSONG} · ${pindah.item.outlet || KOSONG} · ${rupiah(pindah.item.nilaiKlaim)}`],
+                    ["Dari", (() => { const s = subOf(pindah.item.claimSubmissionId); return s ? s.noClaim || judulBerkas(s) : KOSONG; })()],
                     ["Ke", pindah.target.noClaim || judulBerkas(pindah.target)],
                     ["Akibat", "Total kedua berkas dihitung ulang"],
                 ] : []} />

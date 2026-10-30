@@ -1,9 +1,10 @@
 /*
  * Tujuan: Modul Log audit OFF Program Control (Fiori S4d, tab `audit`; Klaim, admin): daftar log aksi semua batch (port AuditTimeline
- *   old-opc.tsx 9578–9917) dengan cari + bulan/rentang tanggal di server, ekspor CSV, koreksi non-destruktif lewat dialog, dan tombol
- *   membuka batchnya di kolom kedua tab lain.
+ *   kode lama) dengan cari + bulan/rentang tanggal di server, ekspor CSV, koreksi non-destruktif lewat dialog, dan tombol membuka batchnya
+ *   di kolom kedua tab lain. Hasil koreksi yang tidak pasti tampil sebagai peringatan, bukan gagal.
  * Caller: OpcApp.tsx (MODUL.audit).
- * Dependensi: opc/Bersama (ambilOpc, tulisOpc, kontrak), components/fiori/{core,interactive}, lib/opc-ui.
+ * Dependensi: opc/Bersama (ambilOpc, tulisOpc, tanganiTulis, pesanTidakPasti, kontrak), components/fiori/{core,interactive}, lib/opc-ui,
+ *   lib/tampil (KOSONG).
  * Main Functions: Audit.
  * Side Effects: GET /api/off-program-control/audit?search&dateFrom&dateTo (cari ditunda 300 ms); tautan GET ...&format=csv (tab baru);
  *   POST /api/off-program-control/audit/[id]/correction {correctionReason, note} — baris koreksi baru, log asal tidak diubah.
@@ -15,16 +16,17 @@ import { Download, PencilLine } from "lucide-react";
 import { Button, EmptyState, KeyValues, ListItem, MessageStrip, ResponsiveTable, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad } from "@/components/fiori/interactive";
 import { catatanSendiri, labelAksiAudit, labelPeranAktor, labelStatus, waktuWita, type AuditOpc } from "@/lib/opc-ui";
-import { ambilOpc, tulisOpc, type PeranProps } from "../Bersama";
+import { KOSONG } from "@/lib/tampil";
+import { TautanBatch, ambilOpc, pesanTidakPasti, tanganiTulis, tulisOpc, type PeranProps } from "../Bersama";
 
 const BATAS_TAMPIL = 500;
-/** AUDIT_CORRECTION_WARNING kode lama 9575. */
+/** AUDIT_CORRECTION_WARNING kode lama. */
 const PERINGATAN_KOREKSI = "Perubahan pada audit log akan tercatat sebagai riwayat koreksi. Pastikan perubahan hanya dilakukan untuk memperbaiki kesalahan pencatatan, bukan menghapus jejak aktivitas.";
 
 /** Baris GET /audit: koreksi membawa snapshot nilai sebelum koreksi (route audit/[id]/correction). */
 type BarisAudit = AuditOpc & { previousValue?: { note?: string | null } | null };
 
-/** "2026-09" → rentang tanggal sebulan penuh (saringan Bulan-Tahun lama 9606–9611). */
+/** "2026-09" → rentang tanggal sebulan penuh (saringan Bulan-Tahun kode lama). */
 function rentangBulan(bulan: string): [string, string] {
     const [y, m] = bulan.split("-");
     const akhir = new Date(Number(y), Number(m), 0).getDate();
@@ -41,6 +43,7 @@ export default function Audit({ ctx }: PeranProps) {
     const [koreksi, setKoreksi] = useState<BarisAudit | null>(null);
     const [catatan, setCatatan] = useState("");
     const [pesan, setPesan] = useState<string | null>(null);
+    const [tidakPasti, setTidakPasti] = useState<string | null>(null);
     // Ditunda 300 ms setelah berhenti mengetik (MonitoringSearch kode lama); server memfilter 5.000 log terbaru.
     useEffect(() => { const t = window.setTimeout(() => setQ(cari.trim()), 300); return () => window.clearTimeout(t); }, [cari]);
     const [dateFrom, dateTo] = bulan ? rentangBulan(bulan) : [dari, sampai];
@@ -60,7 +63,7 @@ export default function Audit({ ctx }: PeranProps) {
     const rows = semua.slice(0, BATAS_TAMPIL);
     const adaSaringan = Boolean(q || dateFrom || dateTo);
     const hapusSaringan = () => { setCari(""); setBulan(""); setDari(""); setSampai(""); };
-    // Ekspor memakai saringan yang sama dengan daftar (kode lama 9636 melewatkan saringan bulan; kini ikut).
+    // Ekspor memakai saringan yang sama dengan daftar (kode lama melewatkan saringan bulan; kini ikut).
     const csv = new URLSearchParams({ format: "csv" });
     if (q) csv.set("search", q);
     if (dateFrom) csv.set("dateFrom", dateFrom);
@@ -72,31 +75,32 @@ export default function Audit({ ctx }: PeranProps) {
     async function simpanKoreksi(alasan: string) {
         if (!koreksi) return;
         await tulisOpc(`/api/off-program-control/audit/${encodeURIComponent(koreksi.id)}/correction`, {
-            body: { correctionReason: alasan, note: catatan }, gagal: "Gagal menyimpan koreksi.",
-        });
+            body: { correctionReason: alasan, note: catatan }, gagal: "Gagal menyimpan koreksi.", putus: pesanTidakPasti("koreksi ini", "daftar log"),
+        }).catch(tanganiTulis((p) => { setTidakPasti(p); muat(); }, () => setKoreksi(null)));
         setKoreksi(null);
+        setTidakPasti(null);
         setPesan("Koreksi tercatat sebagai riwayat baru tanpa menghapus jejak lama.");
         muat();
     }
-    // Hanya log asli yang bisa dikoreksi; baris koreksi sendiri tidak (kode lama 9813).
+    // Hanya log asli yang bisa dikoreksi; baris koreksi sendiri tidak (kode lama).
     const tombolKoreksi = (a: BarisAudit) => (a.parentAuditLogId ? null : (
         <Button variant="tertiary" icon={<PencilLine className="fi-icon" aria-hidden />} disabled={Boolean(tanpaKoreksi)} disabledReason={tanpaKoreksi}
             aria-label={`Koreksi log ${labelAksiAudit(a.action)} ${a.noPengajuan || ""}`.trim()} onClick={() => bukaKoreksi(a)}>Koreksi…</Button>
     ));
     const teksCatatan = (a: BarisAudit) => {
-        if (!a.correctionReason) return [catatanSendiri(a), a.note].filter(Boolean).join(" · ") || "–"; // alasan setuju sendiri (BL-10, #132)
+        if (!a.correctionReason) return [catatanSendiri(a), a.note].filter(Boolean).join(" · ") || KOSONG; // alasan setuju sendiri (BL-10, #132)
         const lama = a.previousValue?.note;
         return `Alasan koreksi: ${a.correctionReason}${a.note ? ` · ${a.note}` : ""}${lama && lama !== a.note ? ` (sebelumnya: ${lama})` : ""}`;
     };
     const kolom: Column<BarisAudit>[] = [
         { key: "waktu", header: "Waktu", cell: (a) => <span className="fi-tnum">{waktuWita(a.createdAt)}</span> },
-        { key: "no", header: "No pengajuan", cell: (a) => <span className="fi-mono">{a.noPengajuan || "–"}</span> },
+        { key: "no", header: "No pengajuan", cell: (a) => <span className="fi-mono">{a.noPengajuan || KOSONG}</span> },
         { key: "aksi", header: "Aksi", cell: (a) => <>{labelAksiAudit(a.action)}{a.parentAuditLogId ? <> <StatusBadge tone="warn">Koreksi</StatusBadge></> : null}</> },
-        { key: "status", header: "Status", secondary: true, cell: (a) => (a.fromStatus || a.toStatus ? `${labelStatus(a.fromStatus)} → ${labelStatus(a.toStatus)}` : "–") },
+        { key: "status", header: "Status", secondary: true, cell: (a) => (a.fromStatus || a.toStatus ? `${labelStatus(a.fromStatus)} → ${labelStatus(a.toStatus)}` : KOSONG) },
         { key: "oleh", header: "Oleh", cell: (a) => `${a.actorName || "Sistem"}${a.actorRole ? ` (${labelPeranAktor(a.actorRole)})` : ""}` },
         { key: "catatan", header: "Catatan", secondary: true, cell: teksCatatan },
-        { key: "buka", header: "Batch", cell: (a) => <Button variant="tertiary" onClick={() => ctx.bukaBatch(a.batchId)}>Buka batch</Button> },
-        { key: "koreksi", header: "Koreksi", cell: (a) => tombolKoreksi(a) ?? "–" },
+        { key: "buka", header: "Batch", cell: (a) => <TautanBatch ctx={ctx} id={a.batchId} label={`Buka batch ${a.noPengajuan || ""}`.trim()}>Buka batch</TautanBatch> },
+        { key: "koreksi", header: "Koreksi", cell: (a) => tombolKoreksi(a) ?? KOSONG },
     ];
 
     return (
@@ -105,6 +109,7 @@ export default function Audit({ ctx }: PeranProps) {
                 Klaim dan admin dapat membaca, mengekspor, dan mengoreksi log ini (Manager: membaca dan mengekspor); setiap koreksi tercatat sebagai riwayat baru yang menunjuk log asal.
             </MessageStrip>
             {pesan && <MessageStrip tone="pos" title={pesan} onClose={() => setPesan(null)} />}
+            {tidakPasti && <MessageStrip tone="warn" title="Hasil koreksi terakhir belum pasti." onClose={() => setTidakPasti(null)}>{tidakPasti}</MessageStrip>}
             <div className="fi-panel" style={{ padding: 0, overflow: "clip" }}>
                 <FilterBar title="Saringan log" activeCount={[q, dateFrom || dateTo].filter(Boolean).length} onReset={hapusSaringan}
                     actions={tanpaEkspor
@@ -112,7 +117,7 @@ export default function Audit({ ctx }: PeranProps) {
                         : <a className="fi-btn fi-btn--secondary" href={`/api/off-program-control/audit?${csv}`} target="_blank" rel="noopener noreferrer">
                             <Download className="fi-icon" aria-hidden />Ekspor CSV
                         </a>}
-                    search={<FormField label="Cari">{(a) => <input {...a} className="fi-input" type="search" placeholder="Nomor, principal, catatan, pengguna" value={cari} onChange={(e) => setCari(e.target.value)} />}</FormField>}
+                    search={<FormField label="Cari">{(a) => <input {...a} className="fi-input" type="search" placeholder="Nomor, principal, catatan, user" value={cari} onChange={(e) => setCari(e.target.value)} />}</FormField>}
                     fields={<>
                         <FormField label="Bulan">{(a) => <input {...a} className="fi-input" type="month" value={bulan} onChange={(e) => { setBulan(e.target.value); setDari(""); setSampai(""); }} />}</FormField>
                         <FormField label="Dari tanggal">{(a) => <input {...a} className="fi-input" type="date" value={dari} max={sampai || undefined} onChange={(e) => { setDari(e.target.value); setBulan(""); }} />}</FormField>
@@ -128,15 +133,16 @@ export default function Audit({ ctx }: PeranProps) {
                     empty={adaSaringan ? { title: "Tidak ada log yang cocok dengan saringan", action: <Button onClick={hapusSaringan}>Hapus saringan</Button> } : { title: "Belum ada log audit" }}
                     mobileItem={(a) => (
                         <div style={{ display: "grid" }}>
-                            <ListItem doc={a.noPengajuan || "–"} title={labelAksiAudit(a.action)} meta={`${waktuWita(a.createdAt)} · ${a.actorName || "Sistem"}`}
-                                badge={a.parentAuditLogId ? <StatusBadge tone="warn">Koreksi</StatusBadge> : undefined} onClick={() => ctx.bukaBatch(a.batchId)} />
+                            <ListItem doc={a.noPengajuan || KOSONG} title={labelAksiAudit(a.action)} meta={`${waktuWita(a.createdAt)} · ${a.actorName || "Sistem"}`}
+                                badge={a.parentAuditLogId ? <StatusBadge tone="warn">Koreksi</StatusBadge> : undefined} href={ctx.hrefBatch(a.batchId)} onClick={() => ctx.bukaBatch(a.batchId)} />
                             {!a.parentAuditLogId && <div style={{ padding: "0 8px 6px" }}>{tombolKoreksi(a)}</div>}
                         </div>
                     )} />
             </div>
             {semua.length > BATAS_TAMPIL && <p className="fi-small fi-subtle">Ditampilkan {BATAS_TAMPIL} log terbaru dari {semua.length}; persempit dengan cari atau tanggal.</p>}
-            <VariantNote bl="BL-13">Server menyaring 5.000 log terbaru; log yang lebih lama tidak terjangkau. Usulan: saring dan paginasi di database.</VariantNote>
-            <VariantNote bl="BL-33">Log mencatat aksi dan perubahan status; nilai item atau batch sebelum → sesudah belum disimpan (hanya catatan yang dikoreksi). Usulan: riwayat nilai lama → baru bersama.</VariantNote>
+            {/* Satu catatan varian per layar (audit No 80): BL-13 dan BL-33 digabung. */}
+            <VariantNote bl="BL-13, BL-33">Server menyaring 5.000 log terbaru, jadi log yang lebih lama tidak terjangkau; log mencatat aksi dan perubahan status, belum
+                nilai item atau batch sebelum dan sesudah (hanya catatan yang dikoreksi). Usulan: saring dan paginasi di database, dan riwayat nilai lama ke baru bersama.</VariantNote>
 
             <ConfirmDialog open={koreksi !== null} onClose={() => setKoreksi(null)} tag="Koreksi audit"
                 title={`Koreksi log ${koreksi ? labelAksiAudit(koreksi.action) : ""}${koreksi?.noPengajuan ? ` pada ${koreksi.noPengajuan}` : ""}?`}
@@ -147,10 +153,10 @@ export default function Audit({ ctx }: PeranProps) {
                     <>
                         <KeyValues items={[
                             ["Aksi asal", labelAksiAudit(koreksi.action)],
-                            ["No pengajuan", <span key="n" className="fi-mono">{koreksi.noPengajuan || "–"}</span>],
+                            ["No pengajuan", <span key="n" className="fi-mono">{koreksi.noPengajuan || KOSONG}</span>],
                             ["Waktu", waktuWita(koreksi.createdAt)],
                             ["Oleh", `${koreksi.actorName || "Sistem"}${koreksi.actorRole ? ` (${labelPeranAktor(koreksi.actorRole)})` : ""}`],
-                            ["Catatan saat ini", koreksi.note || "–"],
+                            ["Catatan saat ini", koreksi.note || KOSONG],
                         ]} />
                         <FormField label="Catatan baru (opsional)" help="Terisi catatan saat ini. Bila dikosongkan, riwayat koreksi tercatat tanpa catatan.">
                             {(a) => <textarea {...a} className="fi-input" rows={2} value={catatan} onChange={(e) => setCatatan(e.target.value)} />}

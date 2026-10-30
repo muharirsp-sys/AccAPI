@@ -120,7 +120,7 @@ test("Order Sales: cari pelanggan (jeda 300 ms, min 2 huruf, hanya cabang sendir
     await expect(panel).toContainText("Rp 1.152.000");
     await expect(panel).toContainText("Netto estimasi");
     await expect(panel).toContainText("Rp 1.036.800");
-    await expect(panel.getByRole("list", { name: "Program promo yang berlaku" })).toContainText("PROMO A — potongan Rp 115.200");
+    await expect(panel.getByRole("list", { name: "Program promo yang berlaku" })).toContainText("PROMO A: potongan Rp 115.200");
     await expect(panel).toContainText("Tidak berlaku untuk outlet ini: PROMO C (khusus outlet MT)");
     await page.screenshot({ path: "test-results/order-cabang/sales-promo.png", fullPage: true });
 
@@ -291,7 +291,7 @@ test("Order Sales: barang tanpa harga master sah tidak bisa dipesan (pencarian +
     await expect(b1).toContainText("Minta petugas melengkapinya");
     const kirim = page.getByRole("button", { name: "Kirim order…" });
     await expect(kirim).toBeDisabled();
-    await expect(kirim).toHaveAttribute("title", "Harga barang 1 belum ada di Accurate untuk cabang ini — belum bisa dikirim");
+    await expect(kirim).toHaveAttribute("title", "Harga barang 1 belum ada di Accurate untuk cabang ini; belum bisa dikirim");
     expect(ws.kirim).toHaveLength(0);
 });
 
@@ -538,7 +538,7 @@ test("Order baru: promo A-1 tampil per baris dan ringkasan yang sama dengan Orde
     await expect(promo).toContainText("Diskon promo Rp 115.200", NAV);
     await expect(promo).toContainText("Bonus 2 PCS");
     const panel = main.getByRole("group", { name: "Perkiraan nilai order" });
-    await expect(panel.getByRole("list", { name: "Program promo yang berlaku" })).toContainText("PROMO A — potongan Rp 115.200");
+    await expect(panel.getByRole("list", { name: "Program promo yang berlaku" })).toContainText("PROMO A: potongan Rp 115.200");
     await expect(panel).toContainText("Rp 1.036.800");
     await expect(panel).toContainText("Tidak berlaku untuk outlet ini: PROMO C (khusus outlet MT)"); // pelanggan GT
 
@@ -547,7 +547,7 @@ test("Order baru: promo A-1 tampil per baris dan ringkasan yang sama dengan Orde
     await main.getByLabel("Cari pelanggan").fill("PELANGGAN B");
     await main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button", { name: /PELANGGAN B/ }).click();
     await expect.poll(() => main.getByRole("group", { name: "Perkiraan nilai order" }).textContent()).not.toContain("PROMO C");
-    await expect(main.getByRole("group", { name: "Perkiraan nilai order" })).toContainText("PROMO A — potongan Rp 115.200");
+    await expect(main.getByRole("group", { name: "Perkiraan nilai order" })).toContainText("PROMO A: potongan Rp 115.200");
 });
 
 test("Order baru: 20 hasil teratas = petunjuk persempit pencarian (bukan seolah hanya itu yang ada)", async ({ page }) => {
@@ -561,7 +561,7 @@ test("Order baru: 20 hasil teratas = petunjuk persempit pencarian (bukan seolah 
     const main = page.locator("main");
     await main.getByLabel("Cari pelanggan").fill("PELANGGAN X");
     await expect(main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button")).toHaveCount(20, NAV);
-    await expect(main.getByText("Menampilkan 20 teratas — persempit pencarian dengan nama atau kode yang lebih lengkap.")).toBeVisible();
+    await expect(main.getByText("Menampilkan 20 teratas. Persempit pencarian dengan nama atau kode yang lebih lengkap.")).toBeVisible();
 });
 
 test("Order baru: ganti pelanggan ke cabang lain dengan baris terisi = konfirmasi (baris dibuang, tidak diam); cabang sama = baris tetap; batal = tidak berubah", async ({ page }) => {
@@ -580,7 +580,7 @@ test("Order baru: ganti pelanggan ke cabang lain dengan baris terisi = konfirmas
 
     // Cabang sama (A -> A): tanpa dialog, baris tetap.
     await kartu.getByRole("button", { name: "Ganti pelanggan" }).click();
-    await expect(main.getByRole("button", { name: "Batal ganti — tetap PELANGGAN A" })).toBeVisible();
+    await expect(main.getByRole("button", { name: "Batal ganti, tetap PELANGGAN A" })).toBeVisible();
     await main.getByLabel("Cari pelanggan").fill("PELANGGAN B");
     await main.getByRole("list", { name: "Hasil pencarian pelanggan" }).getByRole("button", { name: /PELANGGAN B/ }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -591,7 +591,7 @@ test("Order baru: ganti pelanggan ke cabang lain dengan baris terisi = konfirmas
 
     // Batal ganti: pelanggan lama tetap.
     await kartu.getByRole("button", { name: "Ganti pelanggan" }).click();
-    await main.getByRole("button", { name: "Batal ganti — tetap PELANGGAN B" }).click();
+    await main.getByRole("button", { name: "Batal ganti, tetap PELANGGAN B" }).click();
     await expect(kartu).toContainText("PELANGGAN B");
 
     // Cabang lain (A -> B) dengan baris terisi: konfirmasi menyebut baris yang dibuang.
@@ -677,7 +677,7 @@ test("Order baru: harga petugas HANYA untuk baris tanpa harga master — master 
     await pilihBarang(b2, "A-2", "BARANG A2");
     const harga = b2.getByLabel("Harga");
     await expect(harga).not.toHaveAttribute("readonly", "");
-    await expect(b2).toContainText("Harga master belum ada — isi harga petugas (lebih dari 0).");
+    await expect(b2).toContainText("Harga master belum ada. Isi harga petugas (lebih dari 0).");
     const simpan = page.getByRole("button", { name: "Simpan order…" });
     await expect(simpan).toBeDisabled();
     await expect(simpan).toHaveAttribute("title", "Isi harga barang 2 (harga master belum ada)");
@@ -760,7 +760,7 @@ test("Order Sales (sidik): PRATINJAU_BERUBAH = BELUM terkirim, angka baru tampil
     await expect(page.getByRole("dialog")).toBeHidden();
     expect(ws.kirim).toHaveLength(1); // satu percobaan, ditolak: TIDAK ada kirim ulang diam-diam
     expect(ws.kirim[0].sidik).toBe(sidikLama);
-    const strip = main.getByRole("status").filter({ hasText: "Hitungan berubah sejak pratinjau — order BELUM terkirim." });
+    const strip = main.getByRole("status").filter({ hasText: "Hitungan berubah sejak pratinjau. Order belum terkirim." });
     await expect(strip).toBeVisible();
     await expect(strip).toContainText("Rp 1.036.800 menjadi Rp 1.041.800");
     await expect(main.getByRole("status").filter({ hasText: "Order terkirim · No. permintaan" })).toHaveCount(0);
@@ -840,7 +840,7 @@ test("Order Sales (sidik): perkiraan gagal = Kirim terkunci + Hitung ulang (serv
     const kirim = main.getByRole("button", { name: "Kirim order…" });
     await expect(main.getByText("Perkiraan harga tidak tersedia.")).toBeVisible(NAV);
     await expect(kirim).toBeDisabled();
-    await expect(kirim).toHaveAttribute("title", "Perkiraan harga belum tersedia — hitung ulang dulu");
+    await expect(kirim).toHaveAttribute("title", "Perkiraan harga belum tersedia; hitung ulang dulu");
     gagal = false;
     await main.getByRole("button", { name: "Hitung ulang" }).click();
     await expect(b1).toContainText("Harga ada", NAV);
@@ -927,7 +927,7 @@ test("Order baru (sidik): simpan membawa sidik; PRATINJAU_BERUBAH = belum tersim
     await expect(page.getByRole("dialog")).toBeHidden();
     expect(orders.simpan).toHaveLength(1);
     expect(orders.simpan[0].sidik).toBe(sidikLama);
-    const strip = main.getByRole("status").filter({ hasText: "Hitungan berubah sejak pratinjau — order BELUM tersimpan." });
+    const strip = main.getByRole("status").filter({ hasText: "Hitungan berubah sejak pratinjau. Order belum tersimpan." });
     await expect(strip).toBeVisible();
     await expect(strip).toContainText("Rp 1.036.800 menjadi Rp 1.043.800");
     await expect(main.getByRole("group", { name: "Perkiraan nilai order" })).toContainText("Rp 1.043.800", NAV);
@@ -1058,7 +1058,7 @@ test("Order baru: ringkasan 'sebelum PPN' + PPN 11% + total faktur; BONUS_TIDAK_
     const strip = main.getByRole("alert").filter({ hasText: "Program promo tidak bisa dipakai." });
     await expect(strip).toBeVisible(NAV);
     await expect(strip).toContainText("Program promo untuk barang bonus G-9 BARANG G (barang cabang CABANG B) tidak bisa dipakai");
-    await expect(strip).toContainText("Hubungi Admin untuk memeriksa barang bonus di Summary promo");
+    await expect(strip).toContainText("Hubungi Admin untuk memeriksa barang bonus di Summary Promo");
     await expect(strip).not.toContainText("BONUS_TIDAK_BISA_DIORDER");
     await expect(simpan).toBeDisabled();
 });
@@ -1282,7 +1282,7 @@ test("Order Sales (putaran 1 peninjau #5): jawaban 2xx tanpa ok ({}) = hasil kir
     await expect(main.getByRole("status").filter({ hasText: "Hasil kirim belum pasti." })).toBeVisible();
     await expect(main.getByText("Permintaan ditolak server")).toHaveCount(0);
     await expect(kirim).toBeDisabled();
-    await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu — order terakhir mungkin sudah masuk");
+    await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu; order terakhir mungkin sudah masuk");
     expect(ws.kirim).toHaveLength(1);
 });
 
@@ -1503,7 +1503,7 @@ test("Order baru (putaran 2 peninjau #2): simpan dijawab 2xx tanpa ok/id ({} ata
     await expect(main.getByRole("status").filter({ hasText: "Hasil simpan belum pasti." })).toBeVisible();
     await expect(page).toHaveURL(/\/orders\/baru$/); // tidak dibawa ke /orders seolah tersimpan
     await expect(simpan).toBeDisabled();
-    await expect(simpan).toHaveAttribute("title", "Periksa Order Masuk dulu — order terakhir mungkin sudah tersimpan");
+    await expect(simpan).toHaveAttribute("title", "Periksa Order Masuk dulu; order terakhir mungkin sudah tersimpan");
     expect(orders.simpan).toHaveLength(1);
     // {ok:true} tanpa id order = juga belum pasti. Mengubah isian melepas tahanan.
     antrean.push({ status: 200, body: { ok: true } });

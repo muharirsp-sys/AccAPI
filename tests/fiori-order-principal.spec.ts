@@ -18,7 +18,7 @@ const PRINCIPAL = "KINO NON FOOD";
 const FILE = "OrderDetail_CABANG-A_2026-10-05.xlsx";
 const HELD = `SO 1671-SOP-260013025 ditahan utuh (2 baris lain ikut ditahan): kode produk BRG-A9 belum ada di mapping. Tambahkan mapping-nya, lalu unggah ulang berkas ini dengan "ganti batch lama".`;
 const DUPE = "SO 1671-SOP-260013030 ini mirip 83% dengan 1671-SOP-260012988 pada outlet dan tanggal yang sama (5 barang sama: BRG-A1, BRG-A2). "
-    + "Mirip tetapi tidak sama persis justru bentuk ketikan ulang yang paling sering lolos — konfirmasi dulu bahwa ini bukan order ganda.";
+    + "Mirip tetapi tidak sama persis justru bentuk ketikan ulang yang paling sering lolos. Konfirmasi dulu bahwa ini bukan order ganda.";
 
 const BATCH = {
     id: "b1", principal: PRINCIPAL, fileName: FILE, branch: "CABANG A", period: "2026-10-05", lineCount: 4, skipped: 1,
@@ -86,7 +86,7 @@ async function pasang(page: Page, m: Mock = {}) {
     await page.route((u) => u.pathname === "/api/principal-order/dupe-ack", async (r) => {
         const req = r.request();
         if (req.method() === "GET") return r.fulfill(json({ ok: true, acks: ACKS }));
-        catat(req, req.method() === "POST" ? req.postDataJSON() : null);
+        catat(req, req.postData() ? req.postDataJSON() : null);
         return m.ack ? m.ack(r) : r.fulfill(json({ ok: true }));
     });
     return kirim;
@@ -131,9 +131,10 @@ test("Unggah: galat daftar bukan kosong; principal lain nonaktif; pratinjau → 
     await main.getByRole("button", { name: "Coba lagi" }).click();
     await expect(main.getByText("Belum ada batch")).toBeVisible();
 
-    const pilih = main.getByLabel("Principal", { exact: true });
-    await expect(pilih).toHaveValue(PRINCIPAL);
-    await expect(pilih.locator("option", { hasText: "Principal lain — format belum didukung" })).toBeDisabled();
+    // Principal tunggal tampil sebagai teks (audit desain 001 No 127): tidak ada pilihan principal lain yang bisa dipilih.
+    await expect(main.getByRole("definition").filter({ hasText: `${PRINCIPAL} · format Order Detail Kino` })).toBeVisible();
+    await expect(main.getByRole("combobox", { name: "Principal" })).toHaveCount(0);
+    await expect(main.getByText("Principal lain belum didukung")).toBeVisible();
     const pratinjau = page.locator(".fi-ftb").getByRole("button", { name: "Pratinjau" });
     await expect(pratinjau).toBeDisabled();
     await expect(pratinjau).toHaveAttribute("title", "Pilih berkas Order Detail dulu.");
@@ -143,14 +144,19 @@ test("Unggah: galat daftar bukan kosong; principal lain nonaktif; pratinjau → 
     await pratinjau.click();
     const ringkas = main.getByRole("region", { name: "Pratinjau berkas" });
     await expect(ringkas.getByRole("status").filter({ hasText: "1 SO ditahan utuh" })).toContainText("SO 1671-SOP-260013025");
-    await expect(ringkas.getByRole("status").filter({ hasText: "Belum termapping" })).toContainText("Salesman (1): (kosong) — SO-nya tertahan di Validasi");
+    await expect(ringkas.getByRole("status").filter({ hasText: "Belum termapping" })).toContainText("Salesman (1): (kosong). SO-nya tertahan di Validasi");
     await expect(ringkas.getByRole("link", { name: "Mapping Principal" }).first()).toHaveAttribute("href", "/principal-mapping");
     await expect(ringkas).toContainText("Baris 9: QTY 0; baris dilewati.");
     expect(field(kirim[0].body as string, "apply")).toBe("false");
     expect(field(kirim[0].body as string, "principal")).toBe(PRINCIPAL);
     await page.screenshot({ path: "test-results/fiori-order-principal-unggah.png", fullPage: true });
 
-    await page.locator(".fi-ftb").getByRole("button", { name: "Simpan batch" }).click();
+    // Simpan batch lewat dialog ringan (audit desain 001 No 18): POST apply=true baru terkirim sesudah konfirmasi.
+    await page.locator(".fi-ftb").getByRole("button", { name: "Simpan batch…" }).click();
+    const dlgSimpan = page.getByRole("dialog", { name: `Simpan 4 baris dari ${FILE}?` });
+    await expect(dlgSimpan).toContainText("1 SO ditahan utuh · 1 baris dilewati");
+    expect(kirim).toHaveLength(1);
+    await dlgSimpan.getByRole("button", { name: "Simpan batch", exact: true }).click();
     await expect(page).toHaveURL(/\/principal-order\?batch=b1$/, NAV);
     expect(field(kirim[1].body as string, "apply")).toBe("true");
     expect(field(kirim[1].body as string, "replace")).toBe("false");
@@ -175,15 +181,18 @@ test("Berkas sama: dialog Ganti membaca antrean batch lama — ada SO antre / ga
     await page.locator(".fi-ftb").getByRole("button", { name: "Pratinjau" }).click();
     await expect(main.getByRole("status").filter({ hasText: "Berkas ini sudah pernah diunggah." })).toContainText("02/10/2026 15.30");
     await expect(page.locator(".fi-ftb").getByRole("button", { name: "Simpan batch" })).toHaveCount(0);
-    await expect(main.getByText("usulan BL-44")).toBeVisible();
+    await expect(main.getByRole("complementary", { name: /BL-44/ })).toBeVisible();
+    await expect(main.getByRole("complementary", { name: /BL-21/ })).toHaveCount(1); // satu catatan varian per layar
+    await expect(page.getByRole("complementary", { name: /^Usulan BL/ })).toHaveCount(1); // audit No 80: hanya satu di layar Unggah
 
     await page.locator(".fi-ftb").getByRole("button", { name: "Ganti batch lama…" }).click();
     let dlg = page.getByRole("dialog");
     const ganti = dlg.getByRole("button", { name: "Ganti batch", exact: true });
     await expect(dlg.getByRole("heading", { name: `Ganti batch ${BATCH_LAMA.fileName} dengan berkas ini?` })).toBeVisible();
     await expect(ganti).toBeDisabled();
-    await expect(ganti).toHaveAttribute("title", /1 SO batch lama sudah di Antrean Faktur; batch tidak bisa diganti \(BL-21\)/);
-    await expect(dlg.getByText("usulan BL-21")).toBeVisible();
+    await expect(ganti).toHaveAttribute("title", /1 SO batch lama sudah di Antrean Faktur; batch tidak bisa diganti\. /);
+    // Catatan varian BL-21 di badan halaman, tidak lagi di dalam dialog tulis (audit desain 001 No 80).
+    await expect(dlg.getByRole("complementary")).toHaveCount(0);
     await page.screenshot({ path: "test-results/fiori-order-principal-ganti-ditolak.png" });
     await dlg.getByRole("button", { name: "Batal" }).click();
 
@@ -228,7 +237,7 @@ test("Ganti: status antrean batch lama dibaca ULANG tepat sebelum replace; putus
     let dlg = page.getByRole("dialog");
     await expect(dlg.getByRole("button", { name: "Ganti batch", exact: true })).toBeEnabled();
     await dlg.getByRole("button", { name: "Ganti batch", exact: true }).click();
-    await expect(dlg.getByRole("alert")).toContainText("1 SO batch lama sudah di Antrean Faktur; batch tidak bisa diganti (BL-21)");
+    await expect(dlg.getByRole("alert")).toContainText("1 SO batch lama sudah di Antrean Faktur; batch tidak bisa diganti. Buang dulu");
     const tulisGanti = () => kirim.filter((k) => k.method === "POST" && k.path === "/api/principal-order" && field(k.body as string, "apply") === "true");
     expect(tulisGanti()).toHaveLength(0);
     await dlg.getByRole("button", { name: "Batal" }).click();
@@ -246,7 +255,7 @@ test("Ganti: status antrean batch lama dibaca ULANG tepat sebelum replace; putus
     await expect(ftb).toContainText("Berkas sama dengan batch yang sudah ada. Hasil simpan sebelumnya belum pasti; periksa Batch terakhir, lalu Pratinjau ulang.");
 });
 
-test("Validasi: Ditahan utuh paling atas, harga Accurate & selisih, peringatan strip, Bukan order ganda lewat dialog, Cabut langsung, Segarkan harga", async ({ page }) => {
+test("Validasi: Ditahan utuh paling atas, harga Accurate & selisih, peringatan strip, Bukan order ganda lewat dialog, Cabut lewat dialog, Segarkan harga lewat dialog", async ({ page }) => {
     let lambat = false;
     const kirim = await pasang(page, {
         validasi: async (r) => {
@@ -268,7 +277,8 @@ test("Validasi: Ditahan utuh paling atas, harga Accurate & selisih, peringatan s
     const tabel = main.getByRole("table", { name: "Baris perlu ditinjau" });
     for (const h of ["Harga laporan", "Harga Accurate", "Selisih"]) await expect(tabel.getByRole("columnheader", { name: h })).toBeVisible();
     await expect(tabel.locator("tbody tr").first()).toContainText("+5.000");
-    await expect(main.getByText("usulan BL-45")).toBeVisible();
+    await expect(main.getByRole("complementary", { name: /BL-45/ })).toBeVisible();
+    await expect(page.getByRole("complementary", { name: /^Usulan BL/ })).toHaveCount(1); // audit No 80: satu catatan varian di layar Validasi
     await expect(main.getByText(/tanggal awal periode batch \(05\/10\/2026\)/)).toBeVisible();
     // Konfirmasi tercatat tetap tampil.
     await expect(main.getByRole("list", { name: "Konfirmasi bukan order ganda yang tercatat" })).toContainText("INV/2610/KN01412");
@@ -289,14 +299,27 @@ test("Validasi: Ditahan utuh paling atas, harga Accurate & selisih, peringatan s
     expect(kirim.filter((k) => k.path === "/api/principal-order/validate")).toHaveLength(1);
     await expect(main.getByRole("status").filter({ hasText: "Perlu dikerjakan:" })).toContainText("LOYALTY");
 
-    // Cabut = tombol langsung (arah aman), lalu validasi ulang.
+    // Cabut lewat dialog beralasan wajib (audit desain 001 No 18, owner 27 Okt): alasan < 10 karakter menahan tombol; DELETE membawa
+    // kunci di query (tetap) dan `{ alasan }` di body; lalu validasi ulang.
+    const nDelete = () => kirim.filter((k) => k.method === "DELETE" && k.path === "/api/principal-order/dupe-ack").length;
     await main.getByRole("button", { name: "Cabut konfirmasi SO 1671-SOP-260013022" }).click();
+    const dlgCabut = page.getByRole("dialog", { name: "Cabut konfirmasi SO 1671-SOP-260013022?" });
+    const cabutYakin = dlgCabut.getByRole("button", { name: "Cabut konfirmasi", exact: true });
+    await expect(cabutYakin).toBeDisabled();
+    await dlgCabut.getByLabel(/Alasan mencabut/).fill("pendek");
+    await expect(cabutYakin).toBeDisabled();
+    expect(nDelete()).toBe(0);
+    await dlgCabut.getByLabel(/Alasan mencabut/).fill("SO ini kiriman ulang order lama SALES A");
+    await cabutYakin.click();
     await expect(main.getByRole("status").filter({ hasText: "Konfirmasi SO 1671-SOP-260013022 dicabut." })).toBeVisible();
-    expect(kirim.find((k) => k.method === "DELETE" && k.path === "/api/principal-order/dupe-ack")?.query).toBe("?principal=KINO%20NON%20FOOD&soNo=1671-SOP-260013022");
+    const del = kirim.find((k) => k.method === "DELETE" && k.path === "/api/principal-order/dupe-ack");
+    expect(del?.query).toBe("?principal=KINO%20NON%20FOOD&soNo=1671-SOP-260013022");
+    expect(del?.body).toEqual({ alasan: "SO ini kiriman ulang order lama SALES A" });
 
     // Segarkan harga = prices=1; Memuat: validasi berjalan, aksi terkunci.
     lambat = true;
-    await page.locator(".fi-ftb").getByRole("button", { name: "Segarkan harga" }).click();
+    await page.locator(".fi-ftb").getByRole("button", { name: "Segarkan harga…" }).click();
+    await page.getByRole("dialog", { name: /Segarkan harga Accurate lalu validasi/ }).getByRole("button", { name: "Segarkan dan validasi" }).click();
     await expect(main.getByRole("status").filter({ hasText: "Menyegarkan harga Accurate lalu memvalidasi…" })).toBeVisible();
     await expect(page.locator(".fi-ftb").getByRole("button", { name: "Lanjut ke calon faktur" })).toBeDisabled();
     await expect(main.getByRole("status").filter({ hasText: "Harga disegarkan: 3 barang, 12 baris harga." })).toBeVisible();
@@ -324,8 +347,9 @@ test("Calon faktur → dialog antreN (payload queue:true) → Diantrekan; Hapus 
     await expect(tabel.locator("tbody tr").nth(1)).toContainText("tanpa sales");
     await expect(tabel.locator("tbody tr").nth(1)).toContainText("dicari dulu di Accurate saat diantrekan");
     await expect(main.getByRole("status").filter({ hasText: "1 faktur akan terbit TANPA sales" })).toBeVisible();
-    await expect(main.getByRole("region", { name: "Tidak ikut" })).toContainText("1671-SOP-260013024 — ada baris yang perlu ditinjau");
-    await expect(main.getByText("usulan BL-23")).toBeVisible();
+    await expect(main.getByRole("region", { name: "Tidak ikut" })).toContainText("1671-SOP-260013024: ada baris yang perlu ditinjau");
+    await expect(main.getByRole("complementary", { name: /BL-23/ })).toBeVisible();
+    await expect(page.getByRole("complementary", { name: /^Usulan BL/ })).toHaveCount(1); // audit No 80: satu catatan varian di layar Calon faktur
     await page.screenshot({ path: "test-results/fiori-order-principal-calon.png", fullPage: true });
 
     await page.locator(".fi-ftb").getByRole("button", { name: "Antrekan 2 faktur…" }).click();
@@ -346,9 +370,11 @@ test("Calon faktur → dialog antreN (payload queue:true) → Diantrekan; Hapus 
     await expect(status).toContainText("Antre");
     await expect(status).toContainText("INV/2610/KN01412");
     await expect(main.getByRole("list", { name: "Alur dokumen" })).toContainText("1 terbit");
+    await expect(page.getByRole("complementary", { name: /^Usulan BL/ })).toHaveCount(1); // audit No 80: satu catatan varian di layar Diantrekan
+    await expect(main.getByRole("complementary", { name: /BL-35/ })).toBeVisible();
     const hapus = page.locator(".fi-ftb").getByRole("button", { name: "Hapus batch…" });
     await expect(hapus).toBeDisabled();
-    await expect(hapus).toHaveAttribute("title", "2 SO batch ini ada di Antrean Faktur; batch tidak bisa dihapus (BL-21).");
+    await expect(hapus).toHaveAttribute("title", "2 SO batch ini ada di Antrean Faktur; batch tidak bisa dihapus.");
     await expect(page.locator(".fi-ftb").getByRole("link", { name: "Buka Antrean Faktur" })).toHaveAttribute("href", "/antrean-faktur");
     await page.screenshot({ path: "test-results/fiori-order-principal-diantrekan.png", fullPage: true });
 });
@@ -395,13 +421,15 @@ test("Hapus dari Batch terakhir: dialog membaca antrean dulu; ada SO / gagal →
     const main = page.locator("main");
     const tabel = main.getByRole("table", { name: "Batch terakhir" });
     await expect(tabel.locator("tbody tr")).toHaveCount(2, NAV);
+    await expect(main.getByRole("complementary", { name: /BL-21/ })).toHaveCount(1); // catatan varian di badan halaman
     await tabel.getByRole("button", { name: `Hapus ${FILE}…` }).click();
     let dlg = page.getByRole("dialog");
     const hapus = dlg.getByRole("button", { name: "Hapus batch", exact: true });
-    await expect(hapus).toHaveAttribute("title", /1 SO batch ini sudah di Antrean Faktur; batch tidak bisa dihapus \(BL-21\)/);
+    await expect(hapus).toHaveAttribute("title", /1 SO batch ini sudah di Antrean Faktur; batch tidak bisa dihapus\. /);
     // Alasan nonaktif juga TEKS di dialog, bukan hanya title.
-    await expect(dlg.locator("p.fi-why")).toContainText("1 SO batch ini sudah di Antrean Faktur; batch tidak bisa dihapus (BL-21)");
-    await expect(dlg.getByText("usulan BL-21")).toBeVisible();
+    await expect(dlg.locator("p.fi-why")).toContainText("1 SO batch ini sudah di Antrean Faktur; batch tidak bisa dihapus. Buang dulu");
+    // Catatan varian BL-21 di badan halaman, tidak di dalam dialog tulis (audit desain 001 No 80).
+    await expect(dlg.getByRole("complementary")).toHaveCount(0);
     await expect(dlg.getByRole("textbox")).toHaveCount(0); // server DELETE tidak menerima alasan
     await dlg.getByRole("button", { name: "Batal" }).click();
 
@@ -456,7 +484,7 @@ test("Hapus: status antrean dibaca ULANG tepat sebelum DELETE (bacaan dialog usa
     const tombol = dlg.getByRole("button", { name: "Hapus batch", exact: true });
     await expect(tombol).toBeEnabled();
     await tombol.click();
-    await expect(dlg.getByRole("alert")).toContainText("1 SO batch ini sudah di Antrean Faktur; batch tidak bisa dihapus (BL-21)");
+    await expect(dlg.getByRole("alert")).toContainText("1 SO batch ini sudah di Antrean Faktur; batch tidak bisa dihapus. Buang dulu");
     expect(kirim.filter((k) => k.method === "DELETE")).toHaveLength(0);
     await dlg.getByRole("button", { name: "Batal" }).click();
 
@@ -480,7 +508,8 @@ test("Validasi 409 (batch dihapus/diganti saat divalidasi) → muat ulang 404: l
     await page.goto("/principal-order?batch=b1", NAV);
     const main = page.locator("main");
     await expect(main.getByRole("table", { name: "Baris perlu ditinjau" })).toBeVisible(NAV);
-    await page.locator(".fi-ftb").getByRole("button", { name: "Validasi ulang" }).click();
+    await page.locator(".fi-ftb").getByRole("button", { name: "Validasi ulang…" }).click();
+    await page.getByRole("dialog", { name: /^Validasi \d+ baris batch / }).getByRole("button", { name: "Validasi", exact: true }).click();
     await expect(main.getByRole("alert").filter({ hasText: HILANG })).toBeVisible();
     await expect(main.getByRole("alert").filter({ hasText: "Batch tidak ditemukan" })).toBeVisible();
     // Batch yang sudah tidak ada tidak lagi tampil sebagai data (tabel, KPI) dan tidak menyisakan tombol tulis.
@@ -491,7 +520,7 @@ test("Validasi 409 (batch dihapus/diganti saat divalidasi) → muat ulang 404: l
 });
 
 test("Ganti/Simpan 409 BERKAS_SUDAH_DISIMPAN (unggahan lain baru menyimpan berkas sama): daftar dimuat ulang, pratinjau usang dibuang", async ({ page }) => {
-    const BENTROK = "Berkas yang sama baru saja disimpan oleh unggahan lain (mis. dua Ganti bersamaan); muat ulang daftar batch — batch terbarunya sudah ada.";
+    const BENTROK = "Berkas yang sama baru saja disimpan oleh unggahan lain (mis. dua Ganti bersamaan); muat ulang daftar batch. Batch terbarunya sudah ada.";
     let bacaDaftar = 0;
     let dup = true;
     const kirim = await pasang(page, {
@@ -528,7 +557,9 @@ test("Ganti/Simpan 409 BERKAS_SUDAH_DISIMPAN (unggahan lain baru menyimpan berka
     dup = false;
     await ftb.getByRole("button", { name: "Pratinjau" }).click();
     sebelum = bacaDaftar;
-    await ftb.getByRole("button", { name: "Simpan batch" }).click(NAV);
+    await ftb.getByRole("button", { name: "Simpan batch…" }).click(NAV);
+    await page.getByRole("dialog").getByRole("button", { name: "Simpan batch", exact: true }).click();
+
     await expect(main.getByRole("status").filter({ hasText: BENTROK })).toContainText("Batch belum tersimpan.");
     await expect.poll(() => bacaDaftar).toBeGreaterThan(sebelum);
     await expect(main.getByRole("heading", { name: "Pratinjau berkas" })).toHaveCount(0);

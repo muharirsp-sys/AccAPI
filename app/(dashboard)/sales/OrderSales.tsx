@@ -6,7 +6,7 @@
  * Caller: ./page.tsx (/sales; dibatasi izin `websales.create`, bukan `order.create`).
  * Dependensi: /api/customers/search, /api/customers/rute (toko rute -> pelanggan cabang), /api/items/search, /api/orders/preview (components/order/*; pratinjau membawa `sidik`), FastAPI
  *   /websales/orders (simpan WAJIB membawa `sidik` pratinjau terakhir; + /api/me untuk CSRF); ../form-kontrol/lapangan (ambilJson, PESAN_SINYAL, toko rute tersimpan); ../form-kontrol/shared (hariIniWita); components/fiori/*;
- *   lib/promo-ui (rupiah); lib/rekapan-nota/ui (tanggalPendek, jamWita).
+ *   lib/promo-ui (rupiah); lib/tampil (KOSONG, tanggalWita, waktuWita).
  * Main Functions: OrderSales, send, csrfHeader.
  * Side Effects: HTTP; permintaan order masuk ke basis data Web Sales yang terpisah. Payload POST sama dengan halaman lama (tanggal
  *   order bawaan = hari ini WITA, bukan UTC); channel + kode pelanggan kini dari hasil pencarian master.
@@ -37,7 +37,7 @@ import { resolveApiBase } from "@/lib/apiBase";
 import { rupiah } from "@/lib/promo-ui";
 import { sisipkanBaris } from "@/lib/riwayat-beli";
 import { RiwayatBeli } from "@/components/order/RiwayatBeli";
-import { jamWita, tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { KOSONG, tanggalWita, waktuWita } from "@/lib/tampil";
 import { PESAN_SINYAL, RUTE_TERSIMPAN, ambilJson, bacaRuteTersimpan, type Jawaban } from "../form-kontrol/lapangan";
 import { hariIniWita } from "../form-kontrol/shared";
 
@@ -88,7 +88,7 @@ const satuanAwal = (b: BarangPilih, lama: string) => (b.units.some((u) => u.unit
  * listener `storage` bila itu terjadi di lapangan.
  */
 const DRAF_ORDER = "accapi.order-sales.draf.v1";
-const TERPUTUS = "Kiriman order ini terputus sebelum ada jawaban server. Order mungkin sudah masuk — periksa Order saya sebelum mengirim ulang.";
+const TERPUTUS = "Kiriman order ini terputus sebelum ada jawaban server. Order mungkin sudah masuk; periksa Order saya sebelum mengirim ulang.";
 type BarisDraf = { code: string; unit: string; quantity: string };
 type DrafOrder = { customerNo: string; outlet: string; note: string; lines: BarisDraf[]; tidakPasti: string; disimpan: string };
 function bacaDrafOrder(raw: string | null): DrafOrder | null {
@@ -273,7 +273,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     const tanpaHargaIdx = pratinjau?.status === "siap" ? lines.findIndex((line) => pratinjau.tanpaHarga.includes(line.code.trim())) : -1;
     const terkunciIsian = petaL.status === "memuat" && !petaL.data ? "Memuat cabang Anda"
         : petaL.status === "galat" && !petaL.data ? "Cabang Anda belum terbaca; muat ulang halaman ini"
-            : blokir ? "Akun belum dihubungkan ke karyawan Accurate — hubungi Admin"
+            : blokir ? "Akun belum dihubungkan ke karyawan Accurate; hubungi Admin"
                 : pel.state.jenis === "kosong" ? "Cari dan pilih pelanggan"
                     : pel.state.jenis === "memuat" ? "Membaca data pelanggan"
                         : pel.state.jenis === "galat" ? "Data pelanggan belum terbaca; pilih pelanggan lagi"
@@ -285,12 +285,12 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                             : tidakLengkap >= 0 ? `Lengkapi satuan dan jumlah barang ${tidakLengkap + 1}`
                                                 : salahSatuan >= 0 ? `Perbaiki satuan barang ${salahSatuan + 1}`
                                                     : salahBarang >= 0 && pratinjau?.status === "barang" ? alasanKunciBarang(pratinjau.galat, salahBarang + 1)
-                                                        : pratinjau?.status === "galat" ? (pratinjau.galat.menolak ? `${pratinjau.galat.judul}. ${pratinjau.galat.tindakan}` : "Perkiraan harga belum tersedia — hitung ulang dulu")
-                                                            : tanpaHargaIdx >= 0 ? `Harga barang ${tanpaHargaIdx + 1} belum ada di Accurate untuk cabang ini — belum bisa dikirim`
+                                                        : pratinjau?.status === "galat" ? (pratinjau.galat.menolak ? `${pratinjau.galat.judul}. ${pratinjau.galat.tindakan}` : "Perkiraan harga belum tersedia; hitung ulang dulu")
+                                                            : tanpaHargaIdx >= 0 ? `Harga barang ${tanpaHargaIdx + 1} belum ada di Accurate untuk cabang ini; belum bisa dikirim`
                                                                 : pratinjau?.status === "memuat" ? "Menunggu harga dihitung"
                                                                     : pratinjau?.status === "siap" && pratinjau.channelMasalah ? pratinjau.channelMasalah
-                                                                        : pratinjau?.status === "siap" && !pratinjau.sidik ? "Pratinjau lengkap belum tersedia — hitung ulang dulu" : undefined;
-    const terkunci = tidakPasti ? "Periksa Order saya dulu — order terakhir mungkin sudah masuk" : terkunciIsian;
+                                                                        : pratinjau?.status === "siap" && !pratinjau.sidik ? "Pratinjau lengkap belum tersedia; hitung ulang dulu" : undefined;
+    const terkunci = tidakPasti ? "Periksa Order saya dulu; order terakhir mungkin sudah masuk" : terkunciIsian;
     // Draf = barang/catatan yang belum dikirim (pelanggan saja tidak dijaga: tetap terisi setelah kirim seperti halaman lama).
     const draf = Boolean(note.trim() || filled.length > 0);
     useUnsavedGuard(draf);
@@ -384,16 +384,16 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                 {tawaran && !blokir && (
                     <MessageStrip tone="info" title="Ada draf order di ponsel ini.">
                         {[tawaran.customerNo.trim() || "Tanpa kode pelanggan", tawaran.outlet.trim(), `${tawaran.lines.filter((l) => l.code.trim()).length} barang`].filter(Boolean).join(" · ")}
-                        {tawaran.disimpan && ` · disimpan ${jamWita(tawaran.disimpan)}`}.
-                        {tawaran.tidakPasti && " Kiriman terakhirnya belum pasti — periksa Order saya sebelum mengirim lagi."}
+                        {tawaran.disimpan && ` · disimpan ${waktuWita(tawaran.disimpan)} WITA`}.
+                        {tawaran.tidakPasti && " Kiriman terakhirnya belum pasti; periksa Order saya sebelum mengirim lagi."}
                         {" "}Tanggal order kembali ke hari ini; pelanggan dan barang dibaca ulang dari master. Mulai mengisi akan menggantinya.{" "}
                         <Button variant="tertiary" onClick={() => void pulihkan()}>Pulihkan draf</Button>{" "}
                         <Button variant="tertiary" onClick={() => setDialog("buang")}>Buang…</Button>
                     </MessageStrip>
                 )}
                 {draf && !sukses && !blokir && <p className="fi-draft" role="status">{simpanPonsel
-                    ? "Isian belum dikirim — tersimpan sebagai draf di ponsel ini, belum di server."
-                    : "Isian belum dikirim — belum tersimpan di server maupun di ponsel; jangan tutup halaman ini."}</p>}
+                    ? "Isian belum dikirim. Tersimpan sebagai draf di ponsel ini, belum di server."
+                    : "Isian belum dikirim. Belum tersimpan di server maupun di ponsel; jangan tutup halaman ini."}</p>}
 
                 {blokir ? (
                     <Section title="Order belum bisa dibuat">
@@ -474,7 +474,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                                 {pratinjau?.status === "siap" && pratinjau.channelMasalah && (
                                                     <MessageStrip tone="warn" title="Channel pelanggan berbeda dari master.">{pratinjau.channelMasalah} Order ini akan ditolak sampai channel pelanggan dibetulkan di Accurate.</MessageStrip>
                                                 )}
-                                                <VariantNote bl="BL-32">Pencarian pelanggan dan barang sudah per cabang karyawan Accurate Anda. Belum dibatasi ke toko di JKS Anda. Usulan: hanya toko JKS salesman.</VariantNote>
+                                                <VariantNote bl="BL-32, BL-18">Pencarian pelanggan dan barang sudah per cabang karyawan Accurate Anda. Belum dibatasi ke toko di JKS Anda. Status hanya “menunggu ditarik” atau “sudah ditarik petugas”; butuh harga, difakturkan, dan dibatalkan belum terlihat, dan salesman belum bisa membatalkan order yang belum ditarik.</VariantNote>
                                             </>
                                         )}
                             </div>
@@ -544,8 +544,8 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                             <div className="fi-sect-in">
                                 <div><Button icon={<Plus className="fi-icon" aria-hidden />} onClick={() => { ubahIsian(); setLines((prev) => [...prev, emptyLine()]); }}>Tambah barang</Button></div>
                                 {berubahKini && (
-                                    <MessageStrip tone="warn" title="Hitungan berubah sejak pratinjau — order BELUM terkirim.">
-                                        Netto estimasi {berubahKini.lama ?? "—"} menjadi {berubahKini.baru} (harga atau promo berubah). Periksa angka baru di bawah, lalu kirim lagi.
+                                    <MessageStrip tone="warn" title="Hitungan berubah sejak pratinjau. Order belum terkirim.">
+                                        Netto estimasi {berubahKini.lama ?? KOSONG} menjadi {berubahKini.baru} (harga atau promo berubah). Periksa angka baru di bawah, lalu kirim lagi.
                                     </MessageStrip>
                                 )}
                                 {pratinjau?.status === "galat" && !pratinjau.galat.menolak && (
@@ -591,7 +591,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                     {orderSaya.data.map((row) => (
                                         <li key={row.id}>
                                             <ListItem doc={nomorPermintaan(row.id)} title={row.outlet}
-                                                meta={`${row.channel} · order ${tanggalPendek(row.order_date)}${row.created_at ? ` · dikirim ${jamWita(row.created_at)}` : ""}`}
+                                                meta={`${row.channel} · order ${tanggalWita(row.order_date)}${row.created_at ? ` · dikirim ${waktuWita(row.created_at)} WITA` : ""}`}
                                                 badge={row.status === "pulled" ? <StatusBadge tone="pos">Sudah ditarik petugas</StatusBadge>
                                                     : row.status === "rejected" ? <StatusBadge tone="neg">Ditolak petugas</StatusBadge> : <StatusBadge tone="info">Menunggu ditarik petugas</StatusBadge>} />
                                             {row.status === "rejected" && (
@@ -605,9 +605,6 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                             )}
                         </div>
                     )}
-                    <div className="fi-sect-in">
-                        <VariantNote bl="BL-18">Status hanya “menunggu ditarik” atau “sudah ditarik petugas”; butuh harga, difakturkan, dan dibatalkan belum terlihat, dan salesman belum bisa membatalkan. Usulan: status sampai faktur dan batal selama belum ditarik.</VariantNote>
-                    </div>
                 </Section>
             </div>
             {!blokir && (
@@ -617,20 +614,20 @@ export default function OrderSales({ akunId }: { akunId: string }) {
             )}
             <ConfirmDialog open={dialog === "buang"} onClose={() => setDialog(null)} tone="negative" title="Buang draf order di ponsel ini?"
                 description="Draf yang belum dikirim dihapus dari ponsel ini dan tidak bisa dikembalikan. Order yang sudah terkirim tidak terpengaruh."
-                facts={tawaran ? [["Pelanggan", tawaran.customerNo.trim() || "–"], ["Barang", `${tawaran.lines.filter((l) => l.code.trim()).length} baris`]] : []}
+                facts={tawaran ? [["Pelanggan", tawaran.customerNo.trim() || KOSONG], ["Barang", `${tawaran.lines.filter((l) => l.code.trim()).length} baris`]] : []}
                 confirmLabel="Buang draf" onConfirm={buangDraf} />
             <ConfirmDialog open={dialog === "biasa" || dialog === "ulang"} onClose={() => setDialog(null)}
                 title={dialog === "ulang" ? `Kirim lagi order untuk ${outlet || kodePel}?` : `Kirim order untuk ${outlet || kodePel}?`}
                 tone={dialog === "ulang" ? "negative" : "primary"}
                 description={dialog === "ulang"
                     ? "Jawaban kiriman sebelumnya tidak pasti. Bila order itu sudah masuk (periksa Order saya), kiriman ini mencatat order yang sama DUA kali dan belum bisa dibatalkan dari ponsel."
-                    : berubahKini ? `Angka berubah sejak pratinjau sebelumnya: netto ${berubahKini.lama ?? "—"} menjadi ${berubahKini.baru}. Kirim lagi hanya bila angka baru ini sudah Anda periksa. Order yang sudah terkirim belum bisa dibatalkan dari ponsel.`
+                    : berubahKini ? `Angka berubah sejak pratinjau sebelumnya: netto ${berubahKini.lama ?? KOSONG} menjadi ${berubahKini.baru}. Kirim lagi hanya bila angka baru ini sudah Anda periksa. Order yang sudah terkirim belum bisa dibatalkan dari ponsel.`
                         : "Order masuk antrean petugas; harga dan promo final dibekukan saat ditarik. Order yang sudah terkirim belum bisa dibatalkan dari ponsel."}
                 facts={[
                     ["Pelanggan", `${kodePel.trim()}${pelanggan ? ` · ${pelanggan.name}` : ""}`],
-                    ["Cabang", cabangPelanggan || "–"],
+                    ["Cabang", cabangPelanggan || KOSONG],
                     ["Channel", channel],
-                    ["Tanggal order", tanggalPendek(orderDate)],
+                    ["Tanggal order", tanggalWita(orderDate)],
                     ["Barang", `${lengkap.length} baris`],
                     ["Netto estimasi (sebelum PPN)", netto ?? "dihitung petugas"],
                     ...(nTanpaHarga ? [["Belum berharga", `${nTanpaHarga} barang`] as [string, string]] : []),

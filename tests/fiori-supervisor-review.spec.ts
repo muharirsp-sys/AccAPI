@@ -18,8 +18,8 @@ const NAV = { timeout: 90_000 } as const;
 const PNG_1PX = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 const WA_A = "https://wa.me/6281234567890?text=Ringkasan%20SALES%20A";
 const WA_C = "https://wa.me/6281234567891?text=Ringkasan%20SALES%20C";
-const TANPA_HP = "No HP belum diisi — Admin: tab Hierarki";
-const TANPA_RINCIAN = "Faktur tanpa salesman terpetakan tidak dipecah per toko — periksa kode salesman faktur di Accurate.";
+const TANPA_HP = "No HP belum diisi. Admin mengisinya di tab Hierarki Sales.";
+const TANPA_RINCIAN = "Faktur tanpa salesman terpetakan tidak dipecah per toko. Periksa kode salesman faktur di Accurate.";
 
 const angka = (o: Partial<Angka> = {}): Angka => ({
     registeredOutlet: 40, callPlan: 12, callRute: 9, callNonRute: 2, ec: 4, noo: 1, quantity: 120.5, itemPerEc: 2.5,
@@ -88,17 +88,17 @@ test("Desktop: tabel per cabang + TOTAL, status ikon dan teks, tanpa salesman te
     await expect(main.getByRole("heading", { level: 1, name: "Supervisor Review" })).toBeVisible(NAV);
     const tabel = tabelRingkasan(page);
     await expect(tabel).toBeVisible(NAV);
-    await expect(tabel.locator("thead th")).toHaveText(["Salesman", "Status", "Registered Outlet", "Call Plan", "Call Rute", "Call Non Rute", "EC", "NOO", "Quantity", "Item/EC",
-        "Nilai Order", "Omzet/EC", "Time at Outlet (jam)", "Time Travel (jam)", "WhatsApp"]);
-    await expect(main.getByText("data per 09.40 WITA")).toBeVisible();
+    await expect(tabel.locator("thead th")).toHaveText(["Salesman", "Status", "Outlet Terdaftar", "Call Plan", "Call Rute", "Call Non Rute", "EC", "NOO", "Jumlah", "Item/EC",
+        "Nilai Order", "Omzet/EC", "Waktu di Toko (jam)", "Waktu Tempuh (jam)", "WhatsApp"]);
+    await expect(main.getByText("data per 16/10/2026 09.40 WITA")).toBeVisible();
 
     // Baris salesman: angka berformat Indonesia (koma desimal, titik ribuan), status = ikon + teks.
     const a = baris(page, "S-01");
     await expect(a).toContainText("SALES A");
-    await expect(a.getByRole("cell").nth(1)).toHaveText("🟢 Di toko");
-    await expect(a.getByRole("cell")).toHaveText(["SALES AS-01", "🟢 Di toko", "40", "12", "9", "2", "4", "1", "120,5", "2,5", "Rp 3.450.000", "Rp 862.500", "3,25", "1,5", "WhatsApp"]);
-    await expect(baris(page, "S-02").getByRole("cell").nth(1)).toHaveText("⚪ Belum check-in");
-    await expect(baris(page, "S-03").getByRole("cell").nth(1)).toHaveText("🔵 Sudah berkunjung");
+    await expect(a.getByRole("cell").nth(1)).toHaveText("Di toko");
+    await expect(a.getByRole("cell")).toHaveText(["SALES AS-01", "Di toko", "40", "12", "9", "2", "4", "1", "120,5", "2,5", "Rp 3.450.000", "Rp 862.500", "3,25", "1,5", "WhatsApp"]);
+    await expect(baris(page, "S-02").getByRole("cell").nth(1)).toHaveText("Belum check-in");
+    await expect(baris(page, "S-03").getByRole("cell").nth(1)).toHaveText("Sudah berkunjung");
 
     // Dikelompokkan per cabang; TOTAL dari totalCabang (bukan jumlah di klien).
     await expect(tabel.locator("tbody")).toHaveCount(2);
@@ -156,11 +156,11 @@ test("Desktop: pilih salesman → rincian kunjungan (belum difakturkan, tanpa ch
     await expect(nama).toHaveAttribute("aria-pressed", "true");
     await expect(peta).toContainText("SALES A");
     const tabel = rincian.getByRole("table", { name: "Rincian kunjungan" });
-    await expect(tabel.locator("thead th")).toHaveText(["Toko", "Mulai", "Selesai", "Menit di toko", "Waktu tempuh (mnt)", "Qty", "Item", "EC"]);
+    await expect(tabel.locator("thead th")).toHaveText(["Toko", "Mulai", "Selesai", "Waktu di toko (mnt)", "Waktu tempuh (mnt)", "Jumlah", "Item", "EC"]);
     await expect(tabel.getByRole("row")).toHaveCount(5); // kepala + 4 kunjungan S-01 (TOKO E milik S-03 tidak ikut)
 
     const a = tabel.getByRole("row").filter({ hasText: "TOKO A" });
-    await expect(a.getByRole("cell")).toHaveText(["TOKO AC-0135 m dari toko", "08.10", "09.00", "50", "—", "24", "3", "✓"]);
+    await expect(a.getByRole("cell")).toHaveText(["TOKO AC-0135 m dari toko", "16/10/2026 08.10", "16/10/2026 09.00", "50", "-", "24", "3", "✓"]);
     await expect(a).not.toContainText("jauh dari toko"); // 35 m ≤ ambang: jarak tampil biasa, bukan penanda jauh
     await expect(a).not.toContainText("belum difakturkan");
     const b = tabel.getByRole("row").filter({ hasText: "TOKO B" });
@@ -173,22 +173,22 @@ test("Desktop: pilih salesman → rincian kunjungan (belum difakturkan, tanpa ch
     await expect(c).toContainText("belum difakturkan");
     await expect(c).toContainText("toko tanpa koordinat"); // ada titik check-in, jarak null
     await expect(c).not.toContainText("tanpa GPS");
-    await expect(c.getByRole("cell").nth(2)).toHaveText("—"); // masih di toko: belum check-out
-    await expect(c.getByRole("cell").nth(5)).toHaveText("—"); // EC tanpa qty
+    await expect(c.getByRole("cell").nth(2)).toHaveText("-"); // masih di toko: belum check-out
+    await expect(c.getByRole("cell").nth(5)).toHaveText("-"); // EC tanpa qty
     await expect(c.getByRole("img", { name: "EC" })).toBeVisible();
     const d = tabel.getByRole("row").filter({ hasText: "TOKO D" });
     await expect(d).toContainText("tanpa check-in");
     await expect(d).not.toContainText("tanpa GPS"); // tanpa check-in memang tanpa titik
     await expect(d).not.toContainText("tanpa koordinat");
-    await expect(d.getByRole("cell").nth(1)).toHaveText("—"); // tanpa jam
+    await expect(d.getByRole("cell").nth(1)).toHaveText("-"); // tanpa jam (penanda kosong satu bentuk: lib/tampil KOSONG)
 
     // Subtotal di bawah tabel.
     const sub = rincian.getByRole("group", { name: "Subtotal kunjungan" });
     const nilai = (label: string) => sub.locator("dl > div").filter({ has: page.getByText(label, { exact: true }) }).locator("dd");
     await expect(nilai("Kunjungan")).toHaveText("4");
-    await expect(nilai("Menit di toko")).toHaveText("80");
+    await expect(nilai("Waktu di toko (mnt)")).toHaveText("80");
     await expect(nilai("Waktu tempuh (mnt)")).toHaveText("35");
-    await expect(nilai("Qty")).toHaveText("42,5");
+    await expect(nilai("Jumlah")).toHaveText("42,5");
     await expect(nilai("Item")).toHaveText("6");
     await expect(nilai("EC")).toHaveText("4");
     await expect(nilai("Nilai")).toHaveText("Rp 2.250.000");
@@ -273,11 +273,12 @@ test("Ponsel 390 px: kartu per salesman → rincian dengan tab Kunjungan | Peta;
 
     await kartuA.getByRole("button").first().click();
     await expect(main.getByRole("button", { name: "Kembali ke daftar" })).toBeVisible();
-    const kunjungan = main.getByRole("tab", { name: "Kunjungan" });
-    const petaTab = main.getByRole("tab", { name: "Peta" });
-    await expect(kunjungan).toHaveAttribute("aria-selected", "true");
-    await expect(petaTab).toHaveAttribute("aria-selected", "false");
-    const panel = main.getByRole("tabpanel", { name: "Kunjungan" });
+    // Dua tampilan bergantian = tombol tekan (aria-pressed), bukan pola tab ARIA (audit desain 001 No 118).
+    const kunjungan = main.getByRole("group", { name: "Tampilan rincian salesman" }).getByRole("button", { name: "Kunjungan" });
+    const petaTab = main.getByRole("group", { name: "Tampilan rincian salesman" }).getByRole("button", { name: "Peta" });
+    await expect(kunjungan).toHaveAttribute("aria-pressed", "true");
+    await expect(petaTab).toHaveAttribute("aria-pressed", "false");
+    const panel = main.getByRole("region", { name: "Kunjungan", exact: true });
     await expect(panel.getByRole("list", { name: "Kunjungan" }).getByRole("listitem")).toHaveCount(4);
     await expect(panel.getByRole("listitem").filter({ hasText: "TOKO B" })).toContainText("jauh dari toko (420 m)");
     await expect(panel.getByRole("listitem").filter({ hasText: "TOKO C" })).toContainText("belum difakturkan");
@@ -288,11 +289,11 @@ test("Ponsel 390 px: kartu per salesman → rincian dengan tab Kunjungan | Peta;
     await page.screenshot({ path: "test-results/sr2/ponsel-rincian.png", fullPage: true });
 
     await petaTab.click();
-    await expect(petaTab).toHaveAttribute("aria-selected", "true");
-    await expect(main.getByRole("tabpanel", { name: "Peta" })).toBeVisible();
-    await expect(main.getByRole("tabpanel", { name: "Kunjungan" })).toHaveCount(0);
+    await expect(petaTab).toHaveAttribute("aria-pressed", "true");
+    await expect(main.getByRole("region", { name: "Peta", exact: true })).toBeVisible();
+    await expect(main.getByRole("region", { name: "Kunjungan", exact: true })).toHaveCount(0);
     await kunjungan.click();
-    await expect(main.getByRole("tabpanel", { name: "Kunjungan" })).toBeVisible();
+    await expect(main.getByRole("region", { name: "Kunjungan", exact: true })).toBeVisible();
 
     await main.getByRole("button", { name: "Kembali ke daftar" }).click();
     await expect(kartuA).toBeVisible();
@@ -335,12 +336,12 @@ test("Keadaan: memuat, galat bisa diulang, galat muat ulang menyisakan data lama
 });
 
 test("Keadaan kosong: pesan server tampil apa adanya (HIERARKI_BELUM_TERTAUT); tanpa pesan = kalimat umum", async ({ page }) => {
-    const pesan = { kode: "HIERARKI_BELUM_TERTAUT", teks: "Akun belum tertaut ke hierarki — hubungi Admin." };
+    const pesan = { kode: "HIERARKI_BELUM_TERTAUT", teks: "Akun belum tertaut ke hierarki. Hubungi Admin." };
     let o: Partial<JawabanSupervisorReview> = { salesman: [], totalCabang: [], kunjungan: [], penanda: [], fakturBelumTerbaca: [], tokoTanpaKoordinat: 0, pesan };
     await pasang(page, () => json(jawaban(o)));
     await page.goto("/supervisor-review", NAV);
     const main = page.locator("main");
-    await expect(main.getByText("Akun belum tertaut ke hierarki — hubungi Admin.")).toBeVisible(NAV);
+    await expect(main.getByText("Akun belum tertaut ke hierarki. Hubungi Admin.")).toBeVisible(NAV);
     await expect(main.getByText("Belum ada data untuk ditampilkan")).toBeVisible();
     await expect(tabelRingkasan(page)).toHaveCount(0);
 
@@ -433,7 +434,7 @@ test("Hierarki: kolom No HP; PUT mengirim noHp HANYA bila diubah; galat NO_HP_TI
     await expect(b.getByText("Draf")).toBeVisible();
     await b.getByRole("button", { name: "Simpan" }).click();
     const d = page.getByRole("dialog", { name: "Ubah hierarki SALES B?" });
-    await expect(d).toContainText("— → 0812");
+    await expect(d).toContainText("- → 0812");
     await d.getByRole("button", { name: "Simpan hierarki" }).click();
     await expect(d.getByRole("alert")).toContainText("No HP harus nomor seluler Indonesia", NAV);
     expect(tulis[0].body).toEqual({ salesCode: "S-02", spvName: "SPV A", smName: "SM A", noHp: "0812" });
@@ -458,12 +459,14 @@ test("Hierarki: kolom No HP; PUT mengirim noHp HANYA bila diubah; galat NO_HP_TI
     await main.getByLabel("No HP SALES A").fill("");
     await a.getByRole("button", { name: "Simpan" }).click();
     const da = page.getByRole("dialog", { name: "Ubah hierarki SALES A?" });
-    await expect(da).toContainText("081234567890 → —");
+    await expect(da).toContainText("081234567890 → -");
     await da.getByRole("button", { name: "Simpan hierarki" }).click();
     await expect(da).toBeHidden(NAV);
     expect(tulis[3].body).toEqual({ salesCode: "S-01", spvName: "SPV A", smName: "SM A", noHp: null });
 });
 
+test.describe("layar sentuh: Hierarki No HP", () => {
+test.use({ hasTouch: true, isMobile: true }); // target 44 px dijamin density pointer kasar, bukan override inline (audit desain 001 No 107)
 test("Hierarki: hanya SPV diubah → PUT tanpa kunci noHp; ponsel 390 px tanpa gulir menyamping, isian No HP ≥ 44 px", async ({ page }) => {
     const tulis = await pasangHierarki(page);
     await page.setViewportSize({ width: 390, height: 844 });
@@ -481,4 +484,5 @@ test("Hierarki: hanya SPV diubah → PUT tanpa kunci noHp; ponsel 390 px tanpa g
     await expect(d).toBeHidden(NAV);
     expect(tulis).toHaveLength(1);
     expect(tulis[0].body).toEqual({ salesCode: "S-01", spvName: "SPV B", smName: "SM A" });
+});
 });

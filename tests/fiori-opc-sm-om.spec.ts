@@ -134,19 +134,23 @@ test("SM: ringkasan, kelengkapan awal, catatan = draf (penjaga pindah batch), Se
     await page.goto("/off-program-control?tab=sales&batch=b-sm1", NAV);
     const main = page.locator("main");
     const detail = detailOf(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "007/KINO/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "007/KINO/10/2026" })).toBeVisible(NAV);
+    // Satu angka inti per peran (owner 27 Okt, audit No 104): "Menunggu Anda" dan jumlah semua di pilihan antrean; sisanya label-nilai kecil.
+    const cakupan = main.getByRole("group", { name: "Cakupan antrean" });
+    await expect(cakupan.getByRole("button", { name: /^Menunggu Anda/ })).toHaveText("Menunggu Anda (2)");
+    await expect(cakupan.getByRole("button", { name: /^Semua/ })).toHaveText("Semua (7)");
     const angka = main.getByRole("group", { name: "Ringkasan Sales Manager" });
-    await expect(angka.locator(".fi-kc").filter({ hasText: "Menunggu tinjauan" })).toContainText("2");
-    await expect(angka.locator(".fi-kc").filter({ hasText: "Total batch" })).toContainText("7");
+    await expect(angka.locator("dt")).toHaveText(["Disetujui SM", "Dikembalikan SM"]);
+    await expect(angka.locator(".fi-kc")).toHaveCount(0);
     await expect(main.getByRole("region", { name: "Pengingat kelengkapan belum lengkap" })).toContainText("010/GDI/09/2026");
     await expect(main.getByRole("region", { name: "Pengingat kelengkapan belum lengkap" })).toContainText("Faktur pajak toko belum ada.");
     const lengkap = detail.getByRole("region", { name: "Kelengkapan awal dari SPV" });
     await expect(lengkap.getByRole("table")).toContainText("KWT, SKP, Foto, Rekap, Lainnya");
     await expect(lengkap.getByRole("table")).toContainText("Surat pernyataan toko");
     // Aksi utama di kanan, tolak negatif di kirinya.
-    await expect(footer(page).getByRole("button")).toHaveText(["Kembalikan ke SPV…", "Setujui & teruskan ke Klaim…"], { useInnerText: true });
+    await expect(footer(page).getByRole("button")).toHaveText(["Kembalikan ke SPV…", "Setujui…"], { useInnerText: true });
     await expect(footer(page).getByRole("button", { name: "Kembalikan ke SPV…" })).toHaveClass(/fi-btn--negative/);
-    await expect(footer(page).getByRole("button", { name: "Setujui & teruskan ke Klaim…" })).toHaveClass(/fi-btn--primary/);
+    await expect(footer(page).getByRole("button", { name: "Setujui…" })).toHaveClass(/fi-btn--primary/);
     await expect(detail.getByLabel("Usulan BL-06")).toBeVisible();
 
     // Draf: catatan diketik belum dikirim → indikator + penjaga pindah batch.
@@ -154,33 +158,33 @@ test("SM: ringkasan, kelengkapan awal, catatan = draf (penjaga pindah batch), Se
     await expect(detail.getByText("Draf belum disimpan")).toBeVisible();
     await expect(detail.getByText("Belum dikirim", { exact: true })).toBeVisible();
     await page.screenshot({ path: "test-results/fiori-opc-sm-draf.png", fullPage: true });
-    await antrean(page).getByRole("button", { name: /011\/HEINZ/ }).click();
+    await antrean(page).getByRole("link", { name: /011\/HEINZ/ }).click();
     const tinggal = page.getByRole("dialog", { name: "Tinggalkan perubahan yang belum disimpan?" });
     await expect(tinggal).toBeVisible();
-    await tinggal.getByRole("button", { name: "Batal" }).click();
+    await tinggal.getByRole("button", { name: "Tetap di sini" }).click();
     await expect(page).toHaveURL(/batch=b-sm1/);
 
-    await footer(page).getByRole("button", { name: "Setujui & teruskan ke Klaim…" }).click();
+    await footer(page).getByRole("button", { name: "Setujui…" }).click();
     const dlg = page.getByRole("dialog", { name: "Setujui 007/KINO/10/2026 dan teruskan ke Klaim?" });
     await expect(dlg).toContainText("Cek ulang nominal TK Mulia");
     await expect(dlg).toContainText("Validasi Klaim, batas 2 hari kerja");
     await expect(dlg).toContainText("4.300.000");
     await page.screenshot({ path: "test-results/fiori-opc-sm-smok.png" });
-    await dlg.getByRole("button", { name: "Setujui & teruskan" }).click();
+    await dlg.getByRole("button", { name: "Setujui", exact: true }).click();
     await expect(dlg).toBeHidden();
     expect(tulis).toEqual([{ method: "POST", path: "/api/off-program-control/batches/b-sm1/sm-approve", body: { note: "Cek ulang nominal TK Mulia" } }]);
     await expect(main.getByText("007/KINO/10/2026 disetujui dan diteruskan ke Klaim.")).toBeVisible();
-    await expect(detail.getByText("Notifikasi untuk OM dibuat.")).toBeVisible();
+    await expect(detail.getByText("Notifikasi OM belum terkirim (tiruan).")).toBeVisible();
     await expect(detail.getByText(/tiruan, tidak dikirim lewat email/)).toBeVisible();
     await expect(detail.getByText("Menunggu Klaim").first()).toBeVisible(NAV);
-    await expect(detail.getByRole("button", { name: /Setujui & teruskan/ })).toHaveCount(0);
+    await expect(detail.getByRole("button", { name: /Setujui…/ })).toHaveCount(0);
     await expect(detail.getByText("Draf belum disimpan")).toHaveCount(0);
-    await expect(antrean(page).getByRole("button")).toHaveCount(1);
+    await expect(antrean(page).getByRole("link")).toHaveCount(1);
     await page.screenshot({ path: "test-results/fiori-opc-sm-sukses.png", fullPage: true });
     // Sukses: batch berikutnya di antrean.
     await footer(page).getByRole("button", { name: "Batch berikutnya" }).click();
     await expect(page).toHaveURL(/batch=b-sm2/);
-    await expect(detail.getByRole("heading", { level: 1, name: "011/HEINZ/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "011/HEINZ/10/2026" })).toBeVisible(NAV);
 });
 
 test("SM Kembalikan: alasan wajib menahan tombol; galat server tampil di dialog dan alasan tetap; payload alasan ter-trim", async ({ page }) => {
@@ -189,7 +193,7 @@ test("SM Kembalikan: alasan wajib menahan tombol; galat server tampil di dialog 
     await page.goto("/off-program-control?tab=sales&batch=b-sm2", NAV);
     const main = page.locator("main");
     const detail = detailOf(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "011/HEINZ/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "011/HEINZ/10/2026" })).toBeVisible(NAV);
     await footer(page).getByRole("button", { name: "Kembalikan ke SPV…" }).click();
     const dlg = page.getByRole("dialog", { name: "Kembalikan 011/HEINZ/10/2026 ke SPV?" });
     const tombol = dlg.getByRole("button", { name: "Kembalikan ke SPV" });
@@ -221,14 +225,14 @@ test("SM: batch di tahap lain tanpa aksi tinjauan; pengembalian selisih diajukan
     await page.goto("/off-program-control?tab=sales&batch=b-klaim", NAV);
     const main = page.locator("main");
     const detail = detailOf(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "005/GDI/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "005/GDI/10/2026" })).toBeVisible(NAV);
     await expect(detail.getByRole("button", { name: /Setujui|Kembalikan/ })).toHaveCount(0);
     await expect(detail.getByRole("region", { name: "Catatan untuk SPV" })).toHaveCount(0);
     await expect(detail.getByRole("region", { name: "Ajukan pengembalian selisih" })).toHaveCount(0);
     await expect(footer(page)).toContainText("Tidak ada aksi untuk Anda di batch ini.");
 
     await page.goto("/off-program-control?tab=sales&batch=b-lebih", NAV);
-    await expect(detail.getByRole("heading", { level: 1, name: "008/HEINZ/09/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "008/HEINZ/09/2026" })).toBeVisible(NAV);
     await expect(detail.getByRole("button", { name: /Setujui|Kembalikan/ })).toHaveCount(0);
     const refund = detail.getByRole("region", { name: "Ajukan pengembalian selisih" });
     await expect(refund).toContainText("Rp 450.000");
@@ -258,18 +262,21 @@ test("OM: ringkasan antrean langsung, ringkasan persetujuan, catatan = draf, Set
     await page.goto("/off-program-control?tab=om&batch=b-om", NAV);
     const main = page.locator("main");
     const detail = detailOf(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "002/KINO/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "002/KINO/10/2026" })).toBeVisible(NAV);
+    // Label-nilai kecil, bukan tujuh kartu KPI 36 px (audit No 104).
     const langsung = main.getByRole("group", { name: "Ringkasan antrean langsung" });
-    await expect(langsung.locator(".fi-kc")).toHaveCount(7);
-    await expect(langsung.locator(".fi-kc").filter({ hasText: "Menunggu persetujuan OM" })).toContainText("1");
-    await expect(langsung.locator(".fi-kc").filter({ hasText: "Menunggu tinjauan SM" })).toContainText("2");
+    await expect(langsung.locator(".fi-kc")).toHaveCount(0);
+    await expect(langsung.locator("dt")).toHaveCount(7);
+    await expect(langsung).toContainText("Menunggu persetujuan OM1");
+    await expect(langsung).toContainText("Menunggu tinjauan SM2");
     const setuju = detail.getByRole("region", { name: "Persetujuan OM" });
     await expect(setuju).toContainText("Berkas lengkap, faktur pajak menyusul.");
     await expect(setuju).toContainText("Catatan SM: Data sesuai surat.");
     await expect(setuju).toContainText("KN-001");
     await expect(setuju).toContainText("Rp 2.100.000");
     await expect(setuju.getByText("Batch ini memakai lebih dari satu cara bayar.")).toBeVisible();
-    await expect(detail.getByLabel("Usulan D-01")).toBeVisible();
+    await expect(detail.getByLabel("Usulan D-01, BL-06")).toBeVisible();
+    await expect(main.getByRole("complementary")).toHaveCount(1); // satu catatan varian per layar (owner 27 Okt, audit No 80)
     await expect(footer(page).getByRole("button")).toHaveText(["Batalkan…", "Setujui…"]);
     await expect(footer(page).getByRole("button", { name: "Batalkan…" })).toHaveClass(/fi-btn--negative/);
 
@@ -296,7 +303,7 @@ test("OM Batalkan: alasan wajib menahan tombol, galat server di dialog (alasan t
     await page.goto("/off-program-control?tab=om&batch=b-om", NAV);
     const main = page.locator("main");
     const detail = detailOf(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "002/KINO/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "002/KINO/10/2026" })).toBeVisible(NAV);
     await footer(page).getByRole("button", { name: "Batalkan…" }).click();
     const dlg = page.getByRole("dialog", { name: "Batalkan 002/KINO/10/2026?" });
     await expect(dlg).toContainText("Pembatalan bersifat akhir.");
@@ -327,7 +334,7 @@ test("OM Batalkan: alasan wajib menahan tombol, galat server di dialog (alasan t
 
     // Batch yang sudah disetujui OM (tahap bayar): tanpa aksi OM.
     await page.goto("/off-program-control?tab=om&batch=b-bayar", NAV);
-    await expect(detail.getByRole("heading", { level: 1, name: "004/URC/09/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "004/URC/09/2026" })).toBeVisible(NAV);
     await expect(detail.getByRole("region", { name: "Persetujuan OM" })).toBeVisible();
     await expect(detail.getByRole("textbox", { name: "Catatan OM" })).toHaveCount(0);
     await expect(detail.getByRole("button", { name: /Setujui…|Batalkan…/ })).toHaveCount(0);
@@ -339,11 +346,11 @@ test("peran Sales Manager dari sesi: hanya antrean SM, tombol aktif", async ({ p
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/off-program-control?tab=om&batch=b-sm1", NAV);
     const main = page.locator("main");
-    await expect(main.getByText("Peran OFF: Sales Manager.")).toBeVisible(NAV);
+    await expect(main.getByText("Peran Anda: Sales Manager.")).toBeVisible(NAV);
     await expect(main.getByRole("navigation", { name: "Antrean OFF Program Control" })).toHaveCount(0);
-    await expect(antrean(page).getByRole("button")).toHaveCount(2, NAV);
-    await expect(detailOf(page).getByRole("heading", { level: 1, name: "007/KINO/10/2026" })).toBeVisible(NAV);
-    await expect(footer(page).getByRole("button", { name: "Setujui & teruskan ke Klaim…" })).toBeEnabled();
+    await expect(antrean(page).getByRole("link")).toHaveCount(2, NAV);
+    await expect(detailOf(page).getByRole("heading", { level: 2, name: "007/KINO/10/2026" })).toBeVisible(NAV);
+    await expect(footer(page).getByRole("button", { name: "Setujui…" })).toBeEnabled();
     await expect(footer(page).getByRole("button", { name: "Kembalikan ke SPV…" })).toBeEnabled();
 });
 
@@ -355,18 +362,18 @@ test("AM-026 peran Manager dari sesi: 7 tab baca, tombol tulis nonaktif beralasa
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/off-program-control?tab=sales&batch=b-sm1", NAV);
     const main = page.locator("main");
-    await expect(main.getByText("Peran OFF: Manager.")).toBeVisible(NAV);
+    await expect(main.getByText("Peran Anda: Manager.")).toBeVisible(NAV);
     await expect(main.getByText(/Baca semua antrean dan log audit/)).toBeVisible();
     await expect(main.getByRole("navigation", { name: "Antrean OFF Program Control" }).getByRole("link"))
         .toHaveText([/^Ringkasan/, /^Supervisor/, /^Sales Manager/, /^Klaim/, /^Operational Manager/, /^Keuangan/, /^Log audit/]);
-    await expect(detailOf(page).getByRole("heading", { level: 1, name: "007/KINO/10/2026" })).toBeVisible(NAV);
+    await expect(detailOf(page).getByRole("heading", { level: 2, name: "007/KINO/10/2026" })).toBeVisible(NAV);
     const alasan = /Manager hanya membaca OFF Program Control/;
-    for (const nama of ["Setujui & teruskan ke Klaim…", "Kembalikan ke SPV…"]) {
+    for (const nama of ["Setujui…", "Kembalikan ke SPV…"]) {
         await expect(footer(page).getByRole("button", { name: nama })).toBeDisabled();
         await expect(footer(page).getByRole("button", { name: nama })).toHaveAttribute("title", alasan);
     }
     await page.goto("/off-program-control?tab=om&batch=b-om", NAV);
-    await expect(detailOf(page).getByRole("heading", { level: 1, name: "002/KINO/10/2026" })).toBeVisible(NAV);
+    await expect(detailOf(page).getByRole("heading", { level: 2, name: "002/KINO/10/2026" })).toBeVisible(NAV);
     for (const nama of ["Setujui…", "Batalkan…"]) await expect(footer(page).getByRole("button", { name: nama })).toBeDisabled();
     await page.goto("/off-program-control?tab=audit", NAV);
     const ekspor = main.getByRole("link", { name: "Ekspor CSV" });
@@ -404,11 +411,11 @@ test("ponsel 390 px: SM dan OM — aksi di footer, dialog, tanpa gulir menyampin
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/off-program-control?tab=sales", NAV);
     const main = page.locator("main");
-    await expect(antrean(page).getByRole("button")).toHaveCount(2, NAV);
+    await expect(antrean(page).getByRole("link")).toHaveCount(2, NAV);
     await noOverflow(page);
-    await antrean(page).getByRole("button", { name: /007\/KINO/ }).click();
+    await antrean(page).getByRole("link", { name: /007\/KINO/ }).click();
     const detail = detailOf(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "007/KINO/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "007/KINO/10/2026" })).toBeVisible(NAV);
     await expect(detail.getByRole("list", { name: "Kelengkapan awal per item" })).toBeVisible();
     // Label pendek di ponsel (nama aksesibel tetap lengkap) dan teks tombol tidak terpotong.
     await expect(footer(page).getByRole("button")).toHaveText(["Kembalikan…", "Setujui…"], { useInnerText: true });
@@ -424,8 +431,8 @@ test("ponsel 390 px: SM dan OM — aksi di footer, dialog, tanpa gulir menyampin
     await page.goto("/off-program-control?tab=om", NAV);
     await expect(main.getByRole("group", { name: "Ringkasan antrean langsung" })).toBeVisible(NAV);
     await noOverflow(page);
-    await antrean(page).getByRole("button", { name: /002\/KINO/ }).click();
-    await expect(detail.getByRole("heading", { level: 1, name: "002/KINO/10/2026" })).toBeVisible(NAV);
+    await antrean(page).getByRole("link", { name: /002\/KINO/ }).click();
+    await expect(detail.getByRole("heading", { level: 2, name: "002/KINO/10/2026" })).toBeVisible(NAV);
     await expect(footer(page).getByRole("button", { name: "Setujui…" })).toBeVisible();
     expect(await footer(page).getByRole("button").evaluateAll((els) => els.every((el) => el.scrollWidth <= el.clientWidth))).toBe(true);
     await noOverflow(page);

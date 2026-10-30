@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { hariBaku, kunciHari, paritasMinggu, pilihNamaAkun } from "./constants.ts";
-import { hariIniWita } from "../../app/(dashboard)/form-kontrol/shared.tsx";
+import { hariIniWita, rentangWita } from "../../app/(dashboard)/form-kontrol/shared.tsx";
 import { cocokKodeRute, pilihPelangganRute } from "../order-cabang.ts";
 import { BATAS_KODE_RUTE, cocokkanTokoRute } from "../../components/order/order-cabang-api.ts";
 
@@ -93,4 +93,11 @@ test("Hierarki (owner 13 Okt): nama SPV/SM = TEPAT SATU akun aktif (kunciNama), 
     assert.deepEqual("galat" in ganda && [ganda.galat.status, ganda.galat.kode], [409, "NAMA_GANDA"]);
     const angka = pilihNamaAkun(7, akun, "SPV");
     assert.deepEqual("galat" in angka && [angka.galat.status, angka.galat.kode], [400, "INPUT_TIDAK_VALID"]);
+});
+
+test("audit desain No 31: rentang check-in–check-out WITA memakai format lib/tampil, tanggal ditulis sekali bila sama", () => {
+    assert.equal(rentangWita("2026-10-06T01:40:00Z", "2026-10-06T02:10:00Z"), "06/10/2026 09.40–10.10");
+    // 23.50 → 00.10 WITA melewati tengah malam: tanggal di kedua ujung.
+    assert.equal(rentangWita("2026-10-06T15:50:00Z", "2026-10-06T16:10:00Z"), "06/10/2026 23.50–07/10/2026 00.10");
+    assert.equal(rentangWita("2026-10-06T01:40:00Z", null), "06/10/2026 09.40–-");
 });

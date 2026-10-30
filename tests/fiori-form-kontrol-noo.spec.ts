@@ -135,7 +135,7 @@ test.describe("salesman ponsel 390 px", () => {
         const r = page.getByRole("region", { name: "Rute hari ini" });
         await expect(r.getByRole("list", { name: "Toko di rute" }).getByRole("listitem")).toHaveCount(1, NAV);
         const sek = r.getByRole("region", { name: "Toko baru (NOO)" });
-        await sek.getByRole("button", { name: "Toko baru (belum ada di Accurate)" }).click();
+        await sek.getByRole("button", { name: "Tambah toko baru" }).click();
         const f = sek.getByRole("form", { name: "Formulir toko baru" });
         const kirim = f.getByRole("button", { name: "Ajukan toko baru" });
         await expect(kirim).toBeDisabled();
@@ -178,7 +178,7 @@ test.describe("salesman ponsel 390 px", () => {
             pembanding: [{ kode: "NOO-AAAA1111", namaToko: "TOKO LAMA A", status: "terdaftar", cocok: ["NIK"] }] } }] });
         await page.goto("/form-kontrol?tab=ao", NAV);
         const sek = page.getByRole("region", { name: "Toko baru (NOO)" });
-        await sek.getByRole("button", { name: "Toko baru (belum ada di Accurate)" }).click(NAV);
+        await sek.getByRole("button", { name: "Tambah toko baru" }).click(NAV);
         const f = sek.getByRole("form", { name: "Formulir toko baru" });
         await isiFormulir(page, f);
         await f.getByRole("button", { name: "Ambil lokasi" }).click();
@@ -230,7 +230,7 @@ test.describe("izin lokasi ditolak (390 px)", () => {
         await mockFk(page, {});
         await page.goto("/form-kontrol?tab=ao", NAV);
         const sek = page.getByRole("region", { name: "Toko baru (NOO)" });
-        await sek.getByRole("button", { name: "Toko baru (belum ada di Accurate)" }).click(NAV);
+        await sek.getByRole("button", { name: "Tambah toko baru" }).click(NAV);
         const f = sek.getByRole("form", { name: "Formulir toko baru" });
         await isiFormulir(page, f);
         await f.getByRole("button", { name: "Ambil lokasi" }).click();
@@ -313,7 +313,7 @@ test.describe("SPV ponsel 390 px", () => {
         const r = noo({ status: "disetujui", diputuskanOlehNama: "SPV A (SPV)", diputuskanPada: `${HARI_INI}T10:00:00+08:00`, boleh: BOLEH });
         await mockFk(page, { scope: { role: "manager", allowedSalesCodes: null, principles: ["PRINCIPLE A"] }, daftar: [r], rinci: { "n-1": r } });
         await page.goto("/form-kontrol?tab=noo", NAV);
-        await page.getByRole("list", { name: "Disetujui — daftarkan di Accurate" }).getByRole("button", { name: /TOKO BARU A/ }).click(NAV);
+        await page.getByRole("list", { name: "Disetujui, daftarkan di Accurate" }).getByRole("button", { name: /TOKO BARU A/ }).click(NAV);
         const rinci = page.getByRole("region", { name: "Rincian toko baru" });
         await expect(rinci).toContainText("KTP lengkap hanya untuk SPV/SM tim dan Admin.", NAV);
         await expect(rinci).toContainText("Menunggu Admin mendaftarkan toko ini di Accurate");
@@ -342,7 +342,7 @@ test.describe("Admin", () => {
         const m = await mockFk(page, { scope: ADMIN, daftar: [r], rinci: { "n-1": r },
             saran: [{ id: 11, customerNo: "C-200011-CBA", name: "TOKO BARU A", alamat: "JL. CONTOH 1", skor: 0.83 }] });
         await page.goto("/form-kontrol?tab=noo", NAV);
-        const daftar = page.getByRole("list", { name: "Disetujui — daftarkan di Accurate" });
+        const daftar = page.getByRole("list", { name: "Disetujui, daftarkan di Accurate" });
         await daftar.getByRole("button", { name: /TOKO BARU A/ }).click(NAV);
         const rinci = page.getByRole("region", { name: "Rincian toko baru" });
         await rinci.getByRole("button", { name: "Salin nomor HP" }).click(NAV);
@@ -378,7 +378,7 @@ test.describe("putaran 2 — salesman 390 px", () => {
         } });
         await page.goto("/form-kontrol?tab=ao", NAV);
         const sek = page.getByRole("region", { name: "Toko baru (NOO)" });
-        await sek.getByRole("button", { name: "Toko baru (belum ada di Accurate)" }).click(NAV);
+        await sek.getByRole("button", { name: "Tambah toko baru" }).click(NAV);
         const f = sek.getByRole("form", { name: "Formulir toko baru" });
         await isiFormulir(page, f);
         await f.getByRole("button", { name: "Ambil lokasi" }).click();
@@ -397,7 +397,7 @@ test.describe("putaran 2 — salesman 390 px", () => {
         await mockFk(page, {});
         await page.goto("/form-kontrol?tab=ao", NAV);
         const sek = page.getByRole("region", { name: "Toko baru (NOO)" });
-        await sek.getByRole("button", { name: "Toko baru (belum ada di Accurate)" }).click(NAV);
+        await sek.getByRole("button", { name: "Tambah toko baru" }).click(NAV);
         const f = sek.getByRole("form", { name: "Formulir toko baru" });
         const hp = f.getByLabel("No. HP pemilik");
         await expect(hp).not.toHaveAttribute("aria-invalid", "true");
@@ -421,7 +421,7 @@ test.describe("putaran 2 — salesman 390 px", () => {
         await mockFk(page, {});
         await page.goto("/form-kontrol?tab=ao", NAV);
         const sek = page.getByRole("region", { name: "Toko baru (NOO)" });
-        await sek.getByRole("button", { name: "Toko baru (belum ada di Accurate)" }).click(NAV);
+        await sek.getByRole("button", { name: "Tambah toko baru" }).click(NAV);
         const f = sek.getByRole("form", { name: "Formulir toko baru" });
         await isiFormulir(page, f);
         const tabNoo = page.getByRole("navigation", { name: "Modul Form Kontrol" }).getByRole("link", { name: /Toko Baru \(NOO\)/ });
@@ -512,14 +512,14 @@ test.describe("putaran 2 — SPV/Admin 390 px", () => {
                 return false;
             } });
         await page.goto("/form-kontrol?tab=noo", NAV);
-        await page.getByRole("list", { name: "Disetujui — daftarkan di Accurate" }).getByRole("button", { name: /TOKO BARU A/ }).click(NAV);
+        await page.getByRole("list", { name: "Disetujui, daftarkan di Accurate" }).getByRole("button", { name: /TOKO BARU A/ }).click(NAV);
         const rinci = page.getByRole("region", { name: "Rincian toko baru" });
         await rinci.getByRole("radio", { name: /C-200011-CBA/ }).check(NAV);
         for (const q of ["galat", "putus"]) {
             await rinci.getByLabel("Cari nama atau kode pelanggan").fill(q);
             await rinci.getByRole("button", { name: "Cari" }).click();
             await expect(rinci.getByRole("alert").filter({ hasText: "Gagal memuat ulang rincian." })).toBeVisible(NAV);
-            await expect(rinci).toContainText(`Pencarian "${q}" gagal dimuat — bukan berarti pelanggan belum ada.`);
+            await expect(rinci).toContainText(`Pencarian "${q}" gagal dimuat. Itu bukan berarti pelanggan belum ada.`);
             await expect(rinci.getByText(/Belum ada pelanggan cocok/)).toHaveCount(0);
             await expect(rinci.getByText(/^Hasil "/)).toHaveCount(0);
             await expect(rinci.getByRole("radio")).toHaveCount(0);
@@ -587,7 +587,7 @@ test.describe("putaran 3 — 390 px", () => {
         await page.goto("/form-kontrol?tab=ao", NAV);
         const sek = page.getByRole("region", { name: "Toko baru (NOO)" });
         const buka = async () => {
-            await sek.getByRole("button", { name: "Toko baru (belum ada di Accurate)" }).click(NAV);
+            await sek.getByRole("button", { name: "Tambah toko baru" }).click(NAV);
             await sek.getByRole("form", { name: "Formulir toko baru" }).getByLabel("Nama toko").fill("TOKO BARU A");
         };
         await buka();
@@ -603,10 +603,17 @@ test.describe("putaran 3 — 390 px", () => {
         await expect(tanya).toBeVisible(NAV);
         await tanya.getByRole("button", { name: "Buang isian dan pindah" }).click();
         await expect(page).toHaveURL(/tab=noo/, NAV);
-        // Formulir dibuang lewat "Batal" → penjaga dilepas: satu kali Kembali langsung ke halaman sebelumnya, tanpa dialog.
+        // Batal pada formulir terisi minta konfirmasi (audit desain 001 No 70): Tetap di sini = isian utuh; Buang = formulir dibuang.
         await page.goto("/form-kontrol?tab=ao", NAV);
         await buka();
         await f.getByRole("button", { name: "Batal" }).click();
+        await expect(tanya).toBeVisible();
+        await tanya.getByRole("button", { name: "Tetap di sini" }).click();
+        await expect(tanya).toBeHidden();
+        await expect(f.getByLabel("Nama toko")).toHaveValue("TOKO BARU A");
+        await f.getByRole("button", { name: "Batal" }).click();
+        await tanya.getByRole("button", { name: "Buang isian", exact: true }).click();
+        // Formulir dibuang → penjaga dilepas: satu kali Kembali langsung ke halaman sebelumnya, tanpa dialog.
         await expect(f).toBeHidden();
         await page.goBack({ waitUntil: "commit" });
         await expect(page).toHaveURL(/tab=noo/, NAV);
@@ -617,7 +624,7 @@ test.describe("putaran 3 — 390 px", () => {
         await mockFk(page, {});
         await page.goto("/form-kontrol?tab=ao", NAV);
         const sek = page.getByRole("region", { name: "Toko baru (NOO)" });
-        await sek.getByRole("button", { name: "Toko baru (belum ada di Accurate)" }).click(NAV);
+        await sek.getByRole("button", { name: "Tambah toko baru" }).click(NAV);
         const f = sek.getByRole("form", { name: "Formulir toko baru" });
         const live = f.locator('[aria-live="polite"][data-uji="galat-live"]');
         await expect(live).toContainText("Nama toko wajib diisi.");

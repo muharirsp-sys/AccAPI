@@ -1,18 +1,21 @@
 /*
  * Tujuan: Worklist Mapping area outlet (Fiori S2): antrean outlet tanpa area dengan usulan, cari/saring keyakinan,
- *   area final per baris (draf → Simpan N outlet), dialog "Terima N usulan Tinggi" (pengganti tulis langsung ke master).
+ *   area final per baris (draf; Simpan per baris lewat dialog ringkas lama → baru; footer "Simpan N outlet" memakai pola Draf dengan ringkasan
+ *   lama → baru), dialog "Terima N usulan Tinggi" (pengganti tulis langsung ke master; semua outlet terdaftar di dialog).
  * Caller: app/(dashboard)/rekapan-nota/area/page.tsx.
- * Dependensi: GET|POST /api/rekapan-nota/area; components/fiori/{core,interactive}; lib/rekapan-nota/ui.
+ * Dependensi: GET|POST /api/rekapan-nota/area; components/fiori/{core,interactive}; lib/rekapan-nota/ui; lib/tampil (KOSONG, sebabHttp, waktuWita).
  * Main Functions: Area.
  * Side Effects: HTTP baca/tulis customer.area (lewat API yang ada). Tidak ada logic baru.
  */
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import Link from "next/link";
 import { Check, Clock } from "lucide-react";
 import { Button, EmptyState, ErrorState, FooterToolbar, ListItem, MessageStrip, ResponsiveTable, Skeleton, StatusBadge, type Column, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
-import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
+import { ambil } from "@/lib/rekapan-nota/ui";
+import { KOSONG, sebabHttp, waktuWita } from "@/lib/tampil";
 
 type Keyakinan = "TINGGI" | "SEDANG" | "RENDAH";
 type Baris = { kode: string; nama: string; alamat: string | null; jumlah_nota: number; usulan: string | null; keyakinan: Keyakinan | null; alasan: string | null };
@@ -30,6 +33,8 @@ export default function Area({ permKeys }: { permKeys: string[] }) {
     const [cari, setCari] = useState("");
     const [keyakinan, setKeyakinan] = useState<SaringKeyakinan>("");
     const [dialog, setDialog] = useState<"terimaTinggi" | null>(null);
+    // Simpan per baris menulis master outlet (berlaku lintas wave), jadi lewat dialog ringkas; isian tetap inline di baris.
+    const [simpanBaris, setSimpanBaris] = useState<Baris | null>(null);
     const [pesan, setPesan] = useState<string | null>(null);
     const [galat, setGalat] = useState<string | null>(null);
     const [sibuk, setSibuk] = useState<string | null>(null);
@@ -46,6 +51,13 @@ export default function Area({ permKeys }: { permKeys: string[] }) {
         return outlet.filter((o) => (!q || o.kode.toLowerCase().includes(q) || o.nama.toLowerCase().includes(q))
             && (!keyakinan || (keyakinan === "TANPA" ? !o.usulan : o.keyakinan === keyakinan)));
     }, [outlet, cari, keyakinan]);
+    // Ringkasan footer (pola Draf): semua baris di antrean ini belum punya area, jadi "lama" selalu belum ada; yang berubah = area barunya.
+    const ringkasDraf = (() => {
+        const per = new Map<string, number>();
+        for (const o of diubah) per.set(areaFinal(o), (per.get(areaFinal(o)) ?? 0) + 1);
+        const daftar = [...per].map(([a, n]) => `${a} (${n})`);
+        return `dari belum ada area menjadi ${daftar.slice(0, 4).join(", ")}${daftar.length > 4 ? `, dan ${daftar.length - 4} area lain` : ""}`;
+    })();
     const ringkas = (rows: Baris[]) => `${rows.length} · ${rows.filter((o) => o.keyakinan === "TINGGI").length} Tinggi · ${rows.filter((o) => o.keyakinan === "SEDANG").length} Sedang · ${rows.filter((o) => o.keyakinan === "RENDAH").length} Rendah · ${rows.filter((o) => !o.usulan).length} tanpa usulan`;
     const daftarArea = useMemo(() => [...new Set(outlet.map((o) => o.usulan).filter((a): a is string => Boolean(a)))].sort(), [outlet]);
 
@@ -57,12 +69,12 @@ export default function Area({ permKeys }: { permKeys: string[] }) {
             const res = await fetch("/api/rekapan-nota/area", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ terima }) });
             const p = (await res.json().catch(() => ({}))) as { tersimpan?: number; gagal?: string[]; error?: string };
             if (!res.ok) {
-                const msg = p.error ?? `Area tidak tersimpan (HTTP ${res.status}).`;
+                const msg = p.error ?? `Area tidak tersimpan. ${sebabHttp(res.status)}`;
                 if (dariDialog) throw new Error(msg);
                 setGalat(msg); return;
             }
             setDialog(null);
-            setPesan(`${p.tersimpan ?? 0} outlet dipetakan ${jamWita(new Date())}${p.gagal?.length ? `; ${p.gagal.length} gagal (${p.gagal.join(", ")})` : ""}. Notanya masuk lembar area mulai wave berikutnya; wave yang sudah berisi tetap memakai area saat nota masuk.`);
+            setPesan(`${p.tersimpan ?? 0} outlet dipetakan ${waktuWita(new Date())}${p.gagal?.length ? `; ${p.gagal.length} gagal (${p.gagal.join(", ")})` : ""}. Notanya masuk lembar area mulai wave berikutnya; wave yang sudah berisi tetap memakai area saat nota masuk.`);
             // Hanya draf yang tersimpan yang dibuang; baris lain (termasuk yang gagal) tetap jadi draf.
             const tersimpan = new Set(terima.map((t) => t.kode).filter((k) => !p.gagal?.includes(k)));
             setIsian((s) => Object.fromEntries(Object.entries(s).filter(([k]) => !tersimpan.has(k))));
@@ -75,15 +87,15 @@ export default function Area({ permKeys }: { permKeys: string[] }) {
     const badgeKy = (o: Baris) => o.keyakinan ? <StatusBadge tone={KY[o.keyakinan].tone}>{KY[o.keyakinan].label}</StatusBadge> : <span className="fi-small fi-subtle">Tanpa usulan</span>;
     const kolom: Column<Baris>[] = [
         { key: "outlet", header: "Outlet", cell: (o) => <><b>{o.nama}</b><span className="fi-codes">{o.kode}</span></> },
-        { key: "alamat", header: "Alamat", secondary: true, cell: (o) => <span className="fi-small">{o.alamat ?? "–"}</span> },
+        { key: "alamat", header: "Alamat", secondary: true, cell: (o) => <span className="fi-small">{o.alamat ?? KOSONG}</span> },
         { key: "nota", header: "Nota", align: "end", cell: (o) => <span className="fi-tnum">{o.jumlah_nota}</span> },
         { key: "usulan", header: "Usulan", cell: (o) => <>{o.usulan && <b>{o.usulan} </b>}{badgeKy(o)}</> },
-        { key: "alasan", header: "Alasan", secondary: true, cell: (o) => <span className="fi-small">{o.alasan ?? "–"}</span> },
+        { key: "alasan", header: "Alasan", secondary: true, cell: (o) => <span className="fi-small">{o.alasan ?? KOSONG}</span> },
         { key: "final", header: "Area final", cell: (o) => bolehKelola
             ? <input className="fi-input" list="fi-area-list" aria-label={`Area final ${o.nama}`} placeholder="Pilih area" value={isian[o.kode] ?? o.usulan ?? ""} onChange={(e) => setIsian((s) => ({ ...s, [o.kode]: e.target.value.toUpperCase() }))} style={{ width: "9rem" }} />
-            : <span>{o.usulan ?? "–"}</span> },
+            : <span>{o.usulan ?? KOSONG}</span> },
         { key: "aksi", header: bolehKelola ? "Tindakan" : "", cell: (o) => bolehKelola
-            ? <Button busy={sibuk === o.kode} disabled={!areaFinal(o)} disabledReason="Pilih area dulu" onClick={() => simpan([{ kode: o.kode, area: areaFinal(o) }], o.kode)}>Simpan</Button>
+            ? <Button busy={sibuk === o.kode} disabled={!areaFinal(o)} disabledReason="Pilih area dulu" onClick={() => setSimpanBaris(o)}>Simpan</Button>
             : null },
     ];
     const memuatAwal = data.status === "memuat" && !data.data;
@@ -91,7 +103,7 @@ export default function Area({ permKeys }: { permKeys: string[] }) {
     return (
         <div className="fi-page" style={{ paddingBottom: 0 }}>
             <header className="fi-page-head">
-                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><a href="/rekapan-nota">Rekapan Nota</a></li><li><span aria-current="page">Mapping area</span></li></ol></nav>
+                <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><Link href="/rekapan-nota">Rekapan Nota</Link></li><li><span aria-current="page">Mapping area</span></li></ol></nav>
                 <h1>Mapping area</h1>
                 <p>Outlet yang muncul di nota tetapi belum punya area. Usulan, bukan penetapan: area kosong ketahuan di antrean ini, area salah diam-diam mengirim barang ke rute keliru. Selama belum dipetakan, notanya tidak muncul di lembar area mana pun.</p>
             </header>
@@ -130,7 +142,7 @@ export default function Area({ permKeys }: { permKeys: string[] }) {
                                 {bolehKelola && (
                                     <span className="fi-page-bar" style={{ marginTop: 6 }}>
                                         <input className="fi-input" list="fi-area-list" aria-label={`Area final ${o.nama}`} placeholder="Pilih area" value={isian[o.kode] ?? o.usulan ?? ""} onChange={(e) => setIsian((s) => ({ ...s, [o.kode]: e.target.value.toUpperCase() }))} style={{ minWidth: "7rem", flex: 1 }} />
-                                        <Button busy={sibuk === o.kode} disabled={!areaFinal(o)} disabledReason="Pilih area dulu" onClick={() => simpan([{ kode: o.kode, area: areaFinal(o) }], o.kode)}>Simpan</Button>
+                                        <Button busy={sibuk === o.kode} disabled={!areaFinal(o)} disabledReason="Pilih area dulu" onClick={() => setSimpanBaris(o)}>Simpan</Button>
                                     </span>
                                 )}
                             </>} />} />
@@ -139,20 +151,35 @@ export default function Area({ permKeys }: { permKeys: string[] }) {
             )}
 
             {bolehKelola && diubah.length > 0 && (
-                <FooterToolbar message={<span className="fi-sum"><b>{diubah.length} diubah</b> · belum disimpan</span>}>
+                <FooterToolbar message={<span className="fi-sum"><b>{diubah.length} diubah</b> · belum disimpan · {ringkasDraf}</span>}>
                     <Button variant="tertiary" onClick={() => setIsian({})}>Batal</Button>
                     <Button variant="primary" busy={sibuk === "footer"} onClick={() => simpan(diubah.map((o) => ({ kode: o.kode, area: areaFinal(o) })), "footer")}>Simpan {diubah.length} outlet</Button>
                 </FooterToolbar>
             )}
 
             <ConfirmDialog open={dialog === "terimaTinggi"} onClose={() => setDialog(null)} title={`Terima ${tinggi.length} usulan berkeyakinan Tinggi?`} tag="Master outlet" confirmLabel={`Terima ${tinggi.length} usulan`}
-                onConfirm={() => simpan(tinggi.map((o) => ({ kode: o.kode, area: o.usulan! })), "dialog", true)}
+                onConfirm={() => simpan(tinggi.map((o) => ({ kode: o.kode, area: o.usulan! })), "dialog", true)} factsAlign="start"
                 facts={[
-                    ...tinggi.slice(0, 3).map((o): [string, string] => [`${o.kode} · ${o.nama}`, `area ${o.usulan}`]),
-                    ...(tinggi.length > 3 ? [[`${tinggi.length - 3} outlet lain`, "lihat daftar"] as [string, string]] : []),
                     ["Ditulis ke", "Area di master outlet; berlaku untuk nota yang masuk wave setelah ini"],
                     ["Wave yang sudah berisi", "Tetap memakai area saat nota masuk"],
-                ]} />
+                ]}>
+                {/* Semua outlet yang akan ditulis, bisa diperiksa satu per satu (gulir bila panjang). */}
+                <ul aria-label="Outlet yang akan dipetakan" tabIndex={0} className="fi-small" style={{ listStyle: "none", margin: 0, padding: 0, maxHeight: "8rem", overflow: "auto" }}>
+                    {tinggi.map((o) => <li key={o.kode} style={{ padding: "2px 0" }}><span className="fi-mono">{o.kode}</span> {o.nama} · area <b>{o.usulan}</b></li>)}
+                </ul>
+            </ConfirmDialog>
+            <ConfirmDialog open={simpanBaris !== null} onClose={() => setSimpanBaris(null)} tag="Master outlet" confirmLabel="Simpan area" factsAlign="start"
+                title={`Simpan area ${simpanBaris ? areaFinal(simpanBaris) : ""} untuk ${simpanBaris?.nama ?? "outlet ini"}?`}
+                facts={simpanBaris ? [
+                    ["Outlet", `${simpanBaris.kode} · ${simpanBaris.nama}`],
+                    ["Area", `belum ada → ${areaFinal(simpanBaris)}`],
+                    ["Berlaku", "Nota outlet ini yang masuk wave berikutnya; wave yang sudah berisi tetap memakai area saat nota masuk"],
+                ] : []}
+                onConfirm={async () => {
+                    const o = simpanBaris!;
+                    await simpan([{ kode: o.kode, area: areaFinal(o) }], o.kode, true);
+                    setSimpanBaris(null);
+                }} />
         </div>
     );
 }

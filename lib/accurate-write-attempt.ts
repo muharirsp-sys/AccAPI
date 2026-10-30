@@ -333,6 +333,6 @@ export async function resolveAttempt(input: ResolveInput): Promise<ResolveResult
     if (rows.length) return { ok: true, attemptId: live.id, state: next };
     const again = await findLive(db, operation, subjectKey, generation);
     return again?.id === live.id && again.state === live.state
-        ? { ok: false, code: "in_flight", message: "attempt baru saja dikirim — Accurate mungkin masih memproses; tunggu 2 menit lalu periksa lagi", live }
-        : { ok: false, code: "changed", message: "attempt berubah saat diselesaikan — muat ulang" };
+        ? { ok: false, code: "in_flight", message: "attempt baru saja dikirim. Accurate mungkin masih memproses; tunggu 2 menit lalu periksa lagi", live }
+        : { ok: false, code: "changed", message: "attempt berubah saat diselesaikan. Muat ulang" };
 }

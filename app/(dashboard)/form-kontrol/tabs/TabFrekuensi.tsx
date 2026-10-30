@@ -3,7 +3,7 @@
  *   kapasitas dari server (simulation). Server menghitung hanya bila kode sales DAN principal terisi (eq keduanya), jadi layar meminta
  *   keduanya alih-alih menampilkan "kosong" yang menyesatkan. SM memilih salesman dari kode timnya (scope yang sudah dimuat).
  * Caller: form-kontrol/FormKontrol.tsx (tab "frekuensi").
- * Dependensi: ../shared (Scope, FreqRow, principalAwal, penjelasanTanpaJks, hariIniWita, ambilFk), components/fiori/{core,interactive}.
+ * Dependensi: ../shared (Scope, FreqRow, principalAwal, penjelasanTanpaJks, hariIniWita, ambilFk, labelPola), components/fiori/{core,interactive}.
  * Main Functions: TabFrekuensi (default).
  * Side Effects: GET /api/form-kontrol/frequency?month&year&salesCode&principle.
  */
@@ -13,7 +13,7 @@ import { useCallback, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button, EmptyState, ListItem, ResponsiveTable, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
-import { ambilFk, hariIniWita, penjelasanTanpaJks, principalAwal, type FreqRow, type Scope } from "../shared";
+import { ambilFk, hariIniWita, labelPola, penjelasanTanpaJks, principalAwal, type FreqRow, type Scope } from "../shared";
 
 type Simulasi = { workDays?: number; visitsPerDay?: number; totalSlots: number; capacity1x: number; capacity2x: number; capacity4x: number };
 type Data = { rows: FreqRow[]; simulation: Simulasi | null };
@@ -47,10 +47,10 @@ export default function TabFrekuensi({ scope }: { scope: Scope }) {
     const kolom: Column<FreqRow>[] = [
         { key: "kode", header: "Kode toko", cell: (r) => <span className="fi-mono">{r.custCode}</span> },
         { key: "nama", header: "Nama toko", cell: (r) => r.custName },
-        { key: "pola", header: "Pola minggu", cell: (r) => r.mingguPattern },
+        { key: "pola", header: "Pola minggu", cell: (r) => labelPola(r.mingguPattern) },
         { key: "freq", header: "Frekuensi", align: "end", cell: (r) => <span className="fi-tnum">{r.visitFrequency}×/bln</span> },
         { key: "aktual", header: "Aktual", align: "end", cell: (r) => <span className="fi-tnum">{r.actualVisits}×</span> },
-        { key: "status", header: "Status", cell: (r) => r.overVisit ? <StatusBadge tone="warn">Over-visit</StatusBadge> : <StatusBadge tone="pos">Normal</StatusBadge> },
+        { key: "status", header: "Status", cell: (r) => r.overVisit ? <StatusBadge tone="warn">Kunjungan berlebih</StatusBadge> : <StatusBadge tone="pos">Normal</StatusBadge> },
     ];
 
     const pilihSales = tim === null ? (
@@ -88,13 +88,14 @@ export default function TabFrekuensi({ scope }: { scope: Scope }) {
                     </>
                 }
             />
-            <p className="fi-small fi-muted">Optimalkan cakupan — hindari over-visit agar waktu salesman tidak terbuang. Toko 1×/bulan yang dikunjungi 2× = over-visit.</p>
+            <p className="fi-small fi-muted">Toko 1×/bulan yang dikunjungi 2× dihitung kunjungan berlebih.</p>
             {sim && (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <div className="fi-kc"><span>Hari kerja / bulan</span><b>{sim.workDays ?? Math.floor(sim.totalSlots / 20)}</b><small>estimasi</small></div>
-                    <div className="fi-kc"><span>Kunjungan / hari</span><b>{sim.visitsPerDay ?? 20}</b><small>kapasitas</small></div>
+                    {/* Angka cadangan (server tidak mengirim) diberi label jujur, rumusnya tetap. */}
+                    <div className="fi-kc"><span>Hari kerja / bulan</span><b>{sim.workDays ?? Math.floor(sim.totalSlots / 20)}</b><small>{sim.workDays != null ? "menurut server" : "perkiraan: total slot dibagi 20"}</small></div>
+                    <div className="fi-kc"><span>Kunjungan / hari</span><b>{sim.visitsPerDay ?? 20}</b><small>{sim.visitsPerDay != null ? "kapasitas menurut server" : "asumsi 20; server tidak mengirim"}</small></div>
                     <div className="fi-kc"><span>Total slot</span><b>{sim.totalSlots}</b><small>1× = {sim.capacity1x} · 2× = {sim.capacity2x} · 4× = {sim.capacity4x} toko</small></div>
-                    <div className="fi-kc" data-tone={over ? "warn" : "pos"}><span>Over-visit</span><b>{over}</b><small>toko bulan ini</small></div>
+                    <div className="fi-kc" data-tone={over ? "warn" : "pos"}><span>Kunjungan berlebih</span><b>{over}</b><small>toko bulan ini</small></div>
                 </div>
             )}
             {timKosong ? (
@@ -116,8 +117,8 @@ export default function TabFrekuensi({ scope }: { scope: Scope }) {
                     empty={{ title: "Tidak ada toko JKS aktif untuk salesman dan principal ini", message: "Periksa kode sales atau impor JKS lebih dulu." }}
                     mobileItem={(r) => (
                         <ListItem doc={<span className="fi-mono">{r.custCode}</span>} amount={<span className="fi-tnum">{r.actualVisits}× / {r.visitFrequency}×</span>}
-                            title={r.custName} meta={`Pola ${r.mingguPattern}`}
-                            badge={r.overVisit ? <StatusBadge tone="warn">Over-visit</StatusBadge> : <StatusBadge tone="pos">Normal</StatusBadge>} />
+                            title={r.custName} meta={labelPola(r.mingguPattern)}
+                            badge={r.overVisit ? <StatusBadge tone="warn">Kunjungan berlebih</StatusBadge> : <StatusBadge tone="pos">Normal</StatusBadge>} />
                     )}
                 />
             )}

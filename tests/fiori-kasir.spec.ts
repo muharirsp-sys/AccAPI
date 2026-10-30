@@ -143,6 +143,17 @@ async function tanpaIzin(page: Page, buang: string[]) {
     });
 }
 
+/** Ganti cap waktu server halaman /kasir (prop jamServerMs di payload RSC; hanya di tes) supaya "hari ini" klien = jam server palsu. */
+async function jamServer(page: Page, ms: number) {
+    await page.route((u) => u.pathname === "/kasir", async (route) => {
+        const res = await route.fetch();
+        const headers = { ...res.headers() };
+        delete headers["content-length"];
+        delete headers["content-encoding"];
+        return route.fulfill({ status: res.status(), headers, body: (await res.text()).replace(/(jamServerMs\\?":)\d+/g, `$1${ms}`) });
+    });
+}
+
 const main = (page: Page) => page.locator("main");
 const footer = (page: Page) => page.locator(".fi-ftb");
 const kpi = (page: Page, label: string) => main(page).getByRole("group", { name: label, exact: true });
@@ -163,7 +174,7 @@ test("Default: KPI, daftar orang (Tanpa salesman terlihat), tak teralokasi, non-
     const log = await pasang(page);
     await page.goto("/kasir", NAV);
     const m = main(page);
-    await expect(m.getByRole("heading", { name: "Kasir ↔ Incaso", level: 1 })).toBeVisible(NAV);
+    await expect(m.getByRole("heading", { name: "Kasir dan Incaso", level: 1 })).toBeVisible(NAV);
     await expect(m.locator(".fi-page-head")).toContainText("Terbuka sampai");
     await expect(m.locator(".fi-page-head")).toContainText("Lengkap");
     await expect(m.locator(".fi-page-head")).toContainText("akun sinkron ADMIN SINKRON");
@@ -215,7 +226,7 @@ test("Galat: GET 500 = galat (bukan kosong) + Coba lagi; Incaso belum terbaca = 
     // Mode dev (StrictMode) memanggil GET dua kali saat pasang: gagal sampai tes menekan Coba lagi.
     let gagal = true;
     await pasang(page, { get: () => gagal ? json({ ok: false, kode: "GALAT_INTERNAL", error: "Gagal memuat hari Kasir." }, 500)
-        : json(hari({ baca: null, incaso: { lengkap: false, sebab: "SESI_SINKRON", pesan: "Sesi Accurate akun sinkron kedaluwarsa — admin login ulang di /sesi-accurate lalu pilih database" } })) });
+        : json(hari({ baca: null, incaso: { lengkap: false, sebab: "SESI_SINKRON", pesan: "Sesi Accurate akun sinkron kedaluwarsa. Admin login ulang di /sesi-accurate lalu pilih database" } })) });
     await page.goto("/kasir", NAV);
     const m = main(page);
     await expect(m.getByRole("alert").filter({ hasText: "Data Kasir belum bisa ditampilkan" })).toContainText("Gagal memuat hari Kasir.", NAV);
@@ -251,7 +262,7 @@ test("Setoran: Form Kasir / bukti transfer / Giro BG + jatuh tempo wajib; 'Rp 1.
     await dlg.getByLabel("Nomor Form Kasir").fill("FK-0415");
     await expect(simpan).toBeEnabled();
     await dlg.getByLabel("Transfer").fill("500.000,50");
-    await expect(dlg).toContainText("Unggah bukti transfer (foto/PDF) — wajib untuk setoran Transfer");
+    await expect(dlg).toContainText("Unggah bukti transfer (foto/PDF); wajib untuk setoran Transfer");
     await expect(simpan).toBeDisabled();
     await dlg.getByLabel("Bukti transfer").setInputFiles(PNG);
     await expect(simpan).toBeEnabled();
@@ -303,7 +314,7 @@ test("Koreksi setoran: revisi lama tampil, dasar dikirim balik; 409 SETORAN_BERU
     await expect(dlg).toContainText("Klop");
     const nGet = log.get.length;
     await dlg.getByRole("button", { name: "Simpan setoran" }).click();
-    await expect(dlg.getByRole("alert")).toContainText("Setoran orang ini sudah berubah. Data dimuat ulang — periksa revisi terbaru");
+    await expect(dlg.getByRole("alert")).toContainText("Setoran orang ini sudah berubah. Data dimuat ulang; periksa revisi terbaru");
     expect(log.setoran[0].type).toContain("application/json");
     const isi = JSON.parse(log.setoran[0].body) as Obj;
     expect(isi).toMatchObject({ orang: "SALES-B", tunai: "9150100", transfer: "0", giro: "0", dasar: [{ kode: "SALES-B", revisi: 1 }] });
@@ -373,7 +384,7 @@ test("Tutup basi: segarkan berjeda ≥ 6 dtk (page.clock) dengan 'Membaca n/N', 
 test("Segarkan: SEDANG_DIBACA diulang berjeda + Batal; 502 BACA_GAGAL = jawaban PASTI (bukan 'belum pasti')", async ({ page }) => {
     await page.clock.install({ time: new Date() });
     const log = await pasang(page, {
-        segarkan: (n) => n === 1 ? json({ ok: false, kode: "SEDANG_DIBACA", error: "Pelunasan tanggal ini sedang dibaca — coba lagi sebentar.", status: BACA_LENGKAP({ status: "berjalan", aktif: true }) }, 409)
+        segarkan: (n) => n === 1 ? json({ ok: false, kode: "SEDANG_DIBACA", error: "Pelunasan tanggal ini sedang dibaca. Coba lagi sebentar.", status: BACA_LENGKAP({ status: "berjalan", aktif: true }) }, 409)
             : json({ ok: false, kode: "BACA_GAGAL", error: "Accurate menjawab 500 untuk list.do.", status: BACA_LENGKAP({ status: "gagal", sebab: "accurate_5xx" }) }, 502),
     });
     await page.goto("/kasir", NAV);
@@ -416,7 +427,8 @@ test("Hapus massal tanpa izin Buka: 'Minta OM/Admin mengonfirmasi', tanpa tombol
     await expect(page.getByRole("button", { name: "Setoran…" })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Tutup hari…" })).toBeDisabled();
     await expect(footer(page)).toContainText("belum berhak menutup hari Kasir");
-    await expect(footer(page)).toContainText("Setoran: Akun Anda belum berhak mencatat setoran");
+    // Kaki memuat satu alasan (Tutup hari); alasan setoran tampil di badan halaman (No 108).
+    await expect(main(page).getByText("Catat setoran: Akun Anda belum berhak mencatat setoran")).toBeVisible();
     expect(log.segarkan).toHaveLength(0);
 });
 
@@ -450,7 +462,7 @@ test("Terkunci 20.00 WITA (page.clock): lewat kunciBerikutnya → muat ulang sen
     await page.goto("/kasir", NAV);
     await expect(page.getByRole("button", { name: "Setoran…" })).toBeEnabled(NAV);
     await page.getByLabel("Tanggal").fill("2026-10-05");
-    await expect(main(page).locator(".fi-page-head")).toContainText("Terbuka sampai 20.00 WITA");
+    await expect(main(page).locator(".fi-page-head")).toContainText("Terbuka sampai 05/10/2026 20.00 WITA");
     await expect(page.getByRole("button", { name: "Setoran…" })).toBeEnabled();
     await page.clock.runFor(62_000);
     await expect(main(page).locator(".fi-page-head")).toContainText("Terkunci otomatis 20.00 WITA");
@@ -522,7 +534,7 @@ test("Kaki: Incaso belum terbaca = bukan 'Klop 0 … siap ditutup'; lengkap tapi
         ? json(SIAP({ segarUntukTutup: false, baca: BACA_LENGKAP({ lengkapPada: menitLalu(20) }) }))
         : json(hari({ baca: BACA_LENGKAP({ status: "sebagian", jumlahDaftar: 9, sisaDetail: 4 }), incaso: { lengkap: false, sebab: "BACA_BELUM_LENGKAP", pesan: "Pelunasan Incaso baru terbaca sebagian (5/9). Angka Incaso belum ditampilkan (bukan nol)." } })) });
     await page.goto("/kasir", NAV);
-    await expect(footer(page)).toContainText("Angka Incaso belum terbaca — Tutup hari… akan menyegarkan pelunasan dulu", NAV);
+    await expect(footer(page)).toContainText("Angka Incaso belum terbaca; Tutup hari… menyegarkan pelunasan dulu.", NAV);
     await expect(footer(page)).not.toContainText("siap ditutup");
     await expect(footer(page)).not.toContainText("Klop 0");
     await expect(page.getByRole("button", { name: "Tutup hari…" })).toBeEnabled();
@@ -534,7 +546,7 @@ test("Kaki: Incaso belum terbaca = bukan 'Klop 0 … siap ditutup'; lengkap tapi
 test("Setoran: galat bukti dari kolom Transfer yang dikosongkan tidak mengunci Simpan; berkas tidak dikirim", async ({ page }) => {
     const log = await pasang(page);
     await page.goto("/kasir", NAV);
-    await page.getByRole("button", { name: "Setoran…", exact: true }).click(NAV);
+    await footer(page).getByRole("button", { name: "Catat setoran…", exact: true }).click(NAV);
     const dlg = page.getByRole("dialog");
     await dlg.getByLabel("Pegawai").selectOption("SALES-D");
     await dlg.getByLabel("Transfer", { exact: true }).fill("500.000");
@@ -563,18 +575,18 @@ test("Jam peramban 6 menit lebih cepat dari server (page.clock): tulis TIDAK ter
                 : { terkunci: false, sebab: null, kunciBerikutnya: "2026-10-05T12:00:00.000Z", bolehDiubah: true, hariKerja: true, berubahSejakDitutup: false, event: [] } }));
     } });
     await page.goto("/kasir", NAV);
-    await expect(page.getByRole("button", { name: "Setoran…", exact: true })).toBeEnabled(NAV);
+    await expect(footer(page).getByRole("button", { name: "Catat setoran…", exact: true })).toBeEnabled(NAV);
     await page.getByLabel("Tanggal").fill("2026-10-05");
-    await expect(main(page).locator(".fi-page-head")).toContainText("Terbuka sampai 20.00 WITA");
+    await expect(main(page).locator(".fi-page-head")).toContainText("Terbuka sampai 05/10/2026 20.00 WITA");
     await page.clock.runFor(5 * 60_000); // peramban 20.01, server 19.55
-    await expect(page.getByRole("button", { name: "Setoran…", exact: true })).toBeEnabled();
+    await expect(footer(page).getByRole("button", { name: "Catat setoran…", exact: true })).toBeEnabled();
     await expect(footer(page)).not.toContainText("20.00 WITA terlewati");
     await page.waitForTimeout(1_000);
     expect(nGet).toBe(1); // timer dari jam SERVER: belum berbunyi, tidak ada muat ulang dini
     terkunci = true;
     await page.clock.runFor(5 * 60_000 + 2_000); // server lewat 20.00
     await expect(main(page).locator(".fi-page-head")).toContainText("Terkunci otomatis 20.00 WITA");
-    await expect(page.getByRole("button", { name: "Setoran…", exact: true })).toBeDisabled();
+    await expect(footer(page).getByRole("button", { name: "Catat setoran…", exact: true })).toBeDisabled();
 });
 
 test("Belum pasti: 504 JSON tanpa kode dan 502 TIDAK_PASTI = belum pasti (bukan ditolak); tulis terkunci selama pemeriksaan", async ({ page }) => {
@@ -596,11 +608,11 @@ test("Belum pasti: 504 JSON tanpa kode dan 502 TIDAK_PASTI = belum pasti (bukan 
         await expect(dlg).toBeHidden();
         const strip = main(page).getByRole("status").filter({ hasText: "belum pasti" });
         await expect(strip).toContainText("Memuat ulang untuk memeriksa…");
-        await expect(page.getByRole("button", { name: "Setoran…", exact: true })).toBeDisabled();
+        await expect(footer(page).getByRole("button", { name: "Catat setoran…", exact: true })).toBeDisabled();
         await expect(footer(page)).toContainText("Hasil aksi sebelumnya belum pasti");
         lepas(); tahan = null;
         await expect(strip).toContainText("Belum tersimpan: revisi setoran SALES-C · SALES C masih sama");
-        await expect(page.getByRole("button", { name: "Setoran…", exact: true })).toBeEnabled();
+        await expect(footer(page).getByRole("button", { name: "Catat setoran…", exact: true })).toBeEnabled();
         await strip.getByRole("button", { name: "Tutup pesan" }).click();
     }
     expect(log.setoran).toHaveLength(2);
@@ -614,7 +626,7 @@ test("Bukti lama: transfer berbeda wajib unggah; transfer sama = JSON buktiLama:
     const dlg = page.getByRole("dialog");
     const simpan = dlg.getByRole("button", { name: "Simpan setoran" });
     await dlg.getByLabel("Transfer", { exact: true }).fill("8.000.000,01");
-    await expect(dlg).toContainText("Unggah bukti transfer (foto/PDF) — wajib untuk setoran Transfer");
+    await expect(dlg).toContainText("Unggah bukti transfer (foto/PDF); wajib untuk setoran Transfer");
     await expect(simpan).toBeDisabled();
     await dlg.getByLabel("Transfer", { exact: true }).fill("Rp 8.000.000,00");
     await expect(dlg).toContainText("Bukti revisi 1 dipakai lagi");
@@ -627,7 +639,7 @@ test("Bukti lama: transfer berbeda wajib unggah; transfer sama = JSON buktiLama:
 test("Form Kasir wajib juga untuk setoran Transfer saja dan Giro saja", async ({ page }) => {
     await pasang(page);
     await page.goto("/kasir", NAV);
-    await page.getByRole("button", { name: "Setoran…", exact: true }).click(NAV);
+    await footer(page).getByRole("button", { name: "Catat setoran…", exact: true }).click(NAV);
     const dlg = page.getByRole("dialog");
     await dlg.getByLabel("Pegawai").selectOption("SALES-D");
     await dlg.getByLabel("Transfer", { exact: true }).fill("100.000");
@@ -639,4 +651,77 @@ test("Form Kasir wajib juga untuk setoran Transfer saja dan Giro saja", async ({
     await dlg.getByLabel("Jatuh tempo Giro").fill(await page.getByLabel("Tanggal").inputValue());
     await expect(dlg).toContainText("Isi Nomor Form Kasir (wajib bila setoran lebih dari 0)");
     await expect(dlg.getByRole("button", { name: "Simpan setoran" })).toBeDisabled();
+});
+
+test("Hari aktual (owner 27 Okt, audit No 109): lewat tengah malam WITA layar di hari lama ikut pindah; dialog terbuka = strip + Pindah ke hari ini", async ({ page }) => {
+    const wita = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(d);
+    const hariIni = wita(new Date()); // sama dengan nilai awal server (todayWita)
+    const besok = wita(new Date(Date.parse(`${hariIni}T12:00:00+08:00`) + 864e5));
+    const lusa = wita(new Date(Date.parse(`${hariIni}T12:00:00+08:00`) + 2 * 864e5));
+    await page.clock.install({ time: new Date(`${hariIni}T23:59:20+08:00`) });
+    await jamServer(page, Date.parse(`${hariIni}T23:59:20+08:00`)); // jam server = jam peramban palsu
+    const log = await pasang(page);
+    await page.goto("/kasir", NAV);
+    const tanggal = page.getByLabel("Tanggal");
+    await expect(tanggal).toHaveValue(hariIni, NAV);
+    await expect(page.getByRole("button", { name: "Setoran…" })).toBeEnabled(NAV);
+    await page.clock.runFor(65_000); // pemeriksaan 30 dtk melewati 00.00 WITA
+    await expect(tanggal).toHaveValue(besok, NAV);
+    await expect(tanggal).toHaveAttribute("max", besok);
+    await expect.poll(() => log.get.some((q) => q.includes(`tanggal=${besok}`))).toBe(true);
+
+    // Dialog terbuka saat hari berganti lagi: tidak dipindah diam-diam.
+    await page.getByRole("button", { name: "Setoran…" }).click(NAV);
+    const dlg = page.getByRole("dialog");
+    await expect(dlg).toBeVisible();
+    await page.clock.fastForward(864e5);
+    await expect(tanggal).toHaveValue(besok);
+    await dlg.getByRole("button", { name: "Batal" }).click();
+    const strip = main(page).getByRole("status").filter({ hasText: "Hari sudah berganti ke" });
+    await expect(strip).toBeVisible(NAV);
+    await strip.getByRole("button", { name: "Pindah ke hari ini" }).click();
+    await expect(tanggal).toHaveValue(lusa);
+    await expect(strip).toBeHidden();
+});
+
+test("Hari berganti saat hasil setoran belum pasti (tinjauan K2 S-1): strip belum pasti bertahan, layar tidak pindah diam-diam", async ({ page }) => {
+    const wita = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(d);
+    const hariIni = wita(new Date());
+    await page.clock.install({ time: new Date(`${hariIni}T23:59:20+08:00`) });
+    await jamServer(page, Date.parse(`${hariIni}T23:59:20+08:00`));
+    await pasang(page, { setoran: () => "putus" });
+    await page.goto("/kasir", NAV);
+    const tanggal = page.getByLabel("Tanggal");
+    await expect(tanggal).toHaveValue(hariIni, NAV);
+    await main(page).getByRole("list", { name: "Daftar orang" }).getByRole("button", { name: /SALES-C/ }).click(NAV);
+    await main(page).getByRole("region", { name: "Rincian orang" }).getByRole("button", { name: "Catat setoran…" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.getByLabel("Tunai").fill("3.600.000");
+    await dlg.getByLabel("Nomor Form Kasir").fill("FK-0412");
+    await dlg.getByRole("button", { name: "Simpan setoran" }).click();
+    await expect(dlg).toBeHidden();
+    const ragu = main(page).getByRole("status").filter({ hasText: "Hasil setoran SALES-C · SALES C belum pasti." });
+    await expect(ragu).toBeVisible(NAV);
+    await page.clock.runFor(65_000); // lewat 00.00 WITA
+    await expect(main(page).getByRole("status").filter({ hasText: "Hari sudah berganti ke" })).toBeVisible(NAV);
+    await expect(tanggal).toHaveValue(hariIni);
+    await expect(ragu).toBeVisible();
+});
+
+test("Hari dari jam server, bukan jam peramban (tinjauan K2 R-1): peramban sudah lewat 00.00, server belum = tetap hari lama sampai server lewat", async ({ page }) => {
+    const wita = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(d);
+    const hariIni = wita(new Date());
+    const besok = wita(new Date(Date.parse(`${hariIni}T12:00:00+08:00`) + 864e5));
+    await page.clock.install({ time: new Date(`${besok}T00:00:30+08:00`) }); // peramban 90 dtk lebih cepat
+    await jamServer(page, Date.parse(`${hariIni}T23:59:00+08:00`));
+    const log = await pasang(page);
+    await page.goto("/kasir", NAV);
+    const tanggal = page.getByLabel("Tanggal");
+    await expect(tanggal).toHaveValue(hariIni, NAV);
+    await expect(tanggal).toHaveAttribute("max", hariIni); // tanggal yang akan ditolak server tidak bisa dipilih
+    await page.clock.runFor(31_000); // server 23.59.31
+    await expect(tanggal).toHaveValue(hariIni);
+    expect(log.get.some((q) => q.includes(`tanggal=${besok}`))).toBe(false);
+    await page.clock.runFor(60_000); // server lewat 00.00
+    await expect(tanggal).toHaveValue(besok, NAV);
 });

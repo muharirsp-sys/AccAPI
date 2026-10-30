@@ -26,7 +26,7 @@ async function badan(request: NextRequest): Promise<{ raw: unknown; berkas: File
         isi = await bacaBadanTerbatas(request, MAKS_BADAN_SETORAN_BYTES);
     } catch (e) {
         if (!(e instanceof BadanTerlaluBesar)) throw e;
-        throw new GalatKasir(413, "BADAN_TERLALU_BESAR", "Permintaan terlalu besar — berkas bukti maksimal 5 MB.", { field: "buktiTransfer" });
+        throw new GalatKasir(413, "BADAN_TERLALU_BESAR", "Permintaan terlalu besar. Berkas bukti maksimal 5 MB.", { field: "buktiTransfer" });
     }
     const jenis = request.headers.get("content-type") || "";
     if (!jenis.toLowerCase().startsWith("multipart/form-data")) {
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
             if (!jenis) throw salahBukti("Bukti transfer harus foto JPG/PNG atau PDF (isi berkas diperiksa, bukan nama berkas).");
             // Gambar di-encode ulang (EXIF/GPS & polyglot terbuang, ≤ 2000 px, JPEG); PDF apa adanya.
             const n = await normalkanBukti(isi, jenis).catch((e: unknown) => {
-                if (e instanceof BuktiRusak) throw salahBukti("Gambar bukti rusak atau tidak terbaca — unggah ulang foto/PDF bukti.");
+                if (e instanceof BuktiRusak) throw salahBukti("Gambar bukti rusak atau tidak terbaca. Unggah ulang foto/PDF bukti.");
                 throw e;
             });
             buktiBaru = await simpanBukti(n.isi, n.jenis);

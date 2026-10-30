@@ -3,6 +3,7 @@
    lebih buruk daripada tidak punya pemeriksaan sama sekali. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { duplicateFinding, findDuplicate, isDuplicateFinding, type OrderFingerprint } from "./order-duplicate.ts";
 
 const order = (key: string, itemCodes: string[], over: Partial<OrderFingerprint> = {}): OrderFingerprint => ({
@@ -73,4 +74,12 @@ test("temuan ganda bisa dikenali layar, dan temuan lain tidak ikut terbawa", () 
     assert.ok(isDuplicateFinding(duplicateFinding(mirip!)));
     assert.ok(isDuplicateFinding(duplicateFinding(sama!)));
     assert.equal(isDuplicateFinding("Harga faktur 7.207 berbeda dari daftar harga 6.306"), false);
+});
+
+test("kalimat temuan sama kata dengan kembaran Python, tanpa em dash (audit desain 001 R-02)", () => {
+    const mirip = duplicateFinding(findDuplicate(order("SO-2", ["K1", "K2", "K3", "K4"]), [order("SO-1", ["K1", "K2", "K3"])])!);
+    const ekor = "paling sering lolos. Konfirmasi dulu bahwa ini bukan order ganda.";
+    assert.ok(mirip.endsWith(ekor), mirip);
+    assert.ok(!mirip.includes("—"), mirip);
+    assert.ok(readFileSync(new URL("../python_backend/order_duplicate.py", import.meta.url), "utf8").includes(ekor), "kembaran Python berbeda kata");
 });

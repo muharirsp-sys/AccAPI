@@ -6,7 +6,7 @@
  *   Selesaikan (./Selesaikan: pencarian server dulu, lalu keputusan tercatat) memperbarui baris.
  * Caller: Pelunasan.tsx.
  * Dependensi: lib/pelunasan/kirim (orkestrasi lock → paket 100 → laporan → complete, S6e-2a), lib/pelunasan/pratinjau-ganda (petunjuk riwayat),
- *   lib/pelunasan-wizard, ./bersama, ./Selesaikan, components/fiori. Kontrak: docs/handover/S6e2-KONTRAK-API.md.
+ *   lib/pelunasan-wizard, ./bersama, ./Selesaikan, components/fiori, lib/tampil (KOSONG). Kontrak: docs/handover/S6e2-KONTRAK-API.md.
  * Main Functions: LangkahTinjau, LangkahHasil.
  * Side Effects: Kirim = TULIS sales-receipt ke Accurate lewat /api/proxy (zona AGENTS §3); Selesaikan (lihat ./Selesaikan); unduh Excel.
  */
@@ -30,6 +30,7 @@ import {
 import { waktuWita } from "@/app/(dashboard)/principal-order/bersama";
 import { ALASAN, bacaSesi, namaDatabase, postJson, tanggalTampil, unduhExcel, type Sesi } from "./bersama";
 import { SelesaikanDialog } from "./Selesaikan";
+import { KOSONG } from "@/lib/tampil";
 
 export type Tinjauan = {
     payload: Bebas[]; manualRows: Bebas[]; review: DuplicateReviewEntry[]; peringatan: string[];
@@ -45,10 +46,10 @@ type Izin = { kirim: boolean; izinkan: boolean; selesaikan: boolean };
 const UKURAN_PAKET = 100;
 /** Kode penolakan proxy yang berarti sesi/izin/database bermasalah: sesi dibaca ulang setelah kirim. */
 const KODE_SESI = new Set(["database_changed", "ACCURATE_SESSION_INCOMPLETE", "DATABASE_REQUIRED", "PERMISSION_REQUIRED"]);
-const PESAN_TERPUTUS = "Kiriman terputus tanpa hasil per baris dari aplikasi — hasilnya belum pasti. Jangan unggah ulang; Finance mencocokkan di Accurate lalu menyelesaikannya.";
+const PESAN_TERPUTUS = "Kiriman terputus tanpa hasil per baris dari aplikasi, jadi hasilnya belum pasti. Jangan unggah ulang; Finance mencocokkan di Accurate lalu menyelesaikannya.";
 
 const outlet = (row: Bebas) => String(row.customerNo ?? "");
-const faktur = (row: Bebas) => { const f = fakturDari(row); return f.length > 1 ? `${f[0]} +${f.length - 1}` : f[0] ?? "—"; };
+const faktur = (row: Bebas) => { const f = fakturDari(row); return f.length > 1 ? `${f[0]} +${f.length - 1}` : f[0] ?? KOSONG; };
 const METODE: Record<string, string> = { CASH_OTHER: "Tunai", BANK_TRANSFER: "Transfer", BANK_CHEQUE: "BG", OTHERS: "Retur/potongan" };
 const metode = (row: Bebas) => METODE[String(row.paymentMethod)] ?? String(row.paymentMethod ?? "");
 
@@ -57,7 +58,7 @@ const metode = (row: Bebas) => METODE[String(row.paymentMethod)] ?? String(row.p
  * tidak pasti (putus, ≥ 502, lock tak terbit) = penguncian MUNGKIN tercatat → pratinjau usang (Kirim terkunci sampai diulang).
  */
 function galatKunci(e: GalatKirim): { pesan: string; sesi?: boolean; basi?: string } {
-    const ragu = "Server tidak memberi jawaban yang pasti saat mengunci baris — hasilnya belum pasti: kunci mungkin sudah tercatat.";
+    const ragu = "Server tidak memberi jawaban yang pasti saat mengunci baris, jadi hasilnya belum pasti: kunci mungkin sudah tercatat.";
     switch (e.code) {
         case "PERMISSION_REQUIRED": return { pesan: ALASAN.kirim };
         case "OVERRIDE_PERMISSION_REQUIRED": return { pesan: `${ALASAN.izinkan} Batalkan izin baris ganda atau minta Finance yang mengirim.` };
@@ -159,7 +160,7 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
     }
 
     const kolomGanda: Column<DuplicateReviewEntry>[] = [
-        { key: "outlet", header: "Outlet / faktur", cell: (r) => <><b className="fi-mono">{r.invoiceNo || "—"}</b><span className="fi-codes">{r.customerNo}</span></> },
+        { key: "outlet", header: "Outlet / faktur", cell: (r) => <><b className="fi-mono">{r.invoiceNo || KOSONG}</b><span className="fi-codes">{r.customerNo}</span></> },
         { key: "nilai", header: "Nilai", align: "end", cell: (r) => <span className="fi-tnum">{rupiah(r.amount)}</span> },
         { key: "alasan", header: "Alasan", secondary: true, cell: (r) => <span className="fi-small">{r.reasons.map((x) => LABEL_ALASAN[x]).join("; ")}{r.matchedReceiptNumbers.length ? ` · ${r.matchedReceiptNumbers.join(", ")}` : ""}</span> },
         { key: "status", header: "Status", cell: (r) => (diizinkan.has(r.reviewId) ? <StatusBadge tone="info">Diizinkan Finance</StatusBadge> : <StatusBadge tone="warn">Ditahan</StatusBadge>) },
@@ -173,7 +174,7 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
 
     const facts: Array<[string, ReactNode]> = [
         ["Database", <span key="db">{namaDatabase(t)}{s?.databaseId === t.databaseId ? " · sama dengan sesi Anda" : ""}</span>],
-        ["Jenis", "Pelunasan penjualan (sales-receipt)"],
+        ["Jenis", "Pelunasan penjualan (Penerimaan Penjualan di Accurate)"],
         ["Tanggal transaksi", tanggalTampil(t.tanggal)],
         ["Baris", `${nKirim} dalam ${nPaket} paket (maks. ${UKURAN_PAKET} per paket)`],
         ["Uang diterima", <b key="nilai">{rupiah(uang)}</b>],
@@ -205,7 +206,7 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
             {t.peringatan.map((p) => <MessageStrip key={p} tone="warn" title="Catatan saat membaca Accurate.">{p}</MessageStrip>)}
             {placeholder && <MessageStrip tone="neg" title="Akun potongan belum lengkap.">Ada baris dengan potongan tanpa akun. Kembali ke langkah Akun dan isi akunnya; tidak ada yang dikirim.</MessageStrip>}
 
-            <div className="fi-kcards" aria-label="Ringkasan tinjauan" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 150px), 1fr))" }}>
+            <div className="fi-kcards" role="group" aria-label="Ringkasan tinjauan" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 150px), 1fr))" }}>
                 <div className="fi-kc"><span>Dibaca</span><b>{t.dibaca}</b><small>baris berkas</small></div>
                 <div className="fi-kc" data-tone="pos"><span>Siap kirim</span><b>{nKirim}</b><small>{rupiah(uang)}</small></div>
                 <div className="fi-kc" data-tone={rencana.ditahan.length ? "warn" : undefined}><span>Potensi ganda</span><b>{ganda.length}</b><small>{rencana.ditahan.length} ditahan{rencana.izin.length ? ` · ${rencana.izin.length} diizinkan` : ""}</small></div>
@@ -229,11 +230,11 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
                                 {diizinkan.size > 0 && <Button variant="tertiary" icon={<ShieldOff className="fi-icon" aria-hidden />} onClick={() => { setDiizinkan(new Set()); setAlasanIzin(""); }}>Batalkan izin</Button>}
                                 <Button icon={<ShieldCheck className="fi-icon" aria-hidden />} disabled={Boolean(kunciIzinkan)} disabledReason={kunciIzinkan} onClick={() => setDialog("izinkan")}>Izinkan yang dicentang…</Button>
                             </span>}
-                            mobileItem={(r) => <ListItem doc={r.invoiceNo || "—"} amount={rupiah(r.amount)} title={r.customerNo} meta={r.reasons.map((x) => LABEL_ALASAN[x]).join("; ")}
+                            mobileItem={(r) => <ListItem doc={r.invoiceNo || KOSONG} amount={rupiah(r.amount)} title={r.customerNo} meta={r.reasons.map((x) => LABEL_ALASAN[x]).join("; ")}
                                 badge={diizinkan.has(r.reviewId) ? <StatusBadge tone="info">Diizinkan</StatusBadge> : <StatusBadge tone="warn">Ditahan</StatusBadge>} />} />
                         {ganda.some(butuhTakeover) && (
-                            <p className="fi-small">Baris berstatus kiriman sebelumnya belum pasti yang ternyata cicilan BELUM terkirim: centang lalu Izinkan yang dicentang…
-                                = kirim ulang terkendali (takeover Finance, tercatat dengan alasan). Periksa di Accurate dulu; bila sudah terposting, selesaikan baris lamanya.</p>
+                            <p className="fi-small">Kiriman sebelumnya belum pasti tetapi ternyata cicilan yang BELUM terkirim: centang, lalu Izinkan yang dicentang… untuk
+                                kirim ulang terkendali (tercatat dengan alasan). Periksa di Accurate dulu; bila sudah terposting, selesaikan baris lamanya.</p>
                         )}
                         {!izin.izinkan && <p className="fi-small fi-why">Izinkan nonaktif: {ALASAN.izinkan}</p>}
                     </div>
@@ -271,7 +272,7 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
                 title={dipilihTakeover.length === pilih.size && pilih.size > 0 ? `Kirim ulang terkendali ${pilih.size} baris?` : `Izinkan ${pilih.size} baris yang mirip pelunasan lain?`}
                 description={`Baris yang diizinkan ikut dikirim. Izin tercatat per baris di server saat baris dikunci (siapa, alasan, status sebelumnya); satu izin berlaku untuk satu kiriman.${diizinkan.size ? ` Izin sebelumnya (${diizinkan.size} baris) tetap berlaku; alasan ini ditambahkan ke alasannya.` : ""}`}
                 facts={ganda.filter((r) => pilih.has(r.reviewId)).slice(0, 8).map((r) => [
-                    `${r.invoiceNo || "—"} · ${r.customerNo}`,
+                    `${r.invoiceNo || KOSONG} · ${r.customerNo}`,
                     `${rupiah(r.amount)} · ${r.reasons.map((x) => LABEL_ALASAN[x]).join("; ")}${r.matchedReceiptNumbers.length ? ` · ${r.matchedReceiptNumbers.join(", ")}` : ""}`,
                 ] as [string, ReactNode])}
                 reason={{ label: "Alasan mengizinkan", min: 15, placeholder: "mis. pelunasan kedua untuk cicilan; dikonfirmasi dengan outlet" }}
@@ -283,7 +284,7 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
                     setPilih(new Set()); setDialog(null);
                 }}>
                 {dipilihTakeover.length > 0 && (
-                    <MessageStrip tone="warn" title={`Kirim ulang terkendali (takeover) untuk ${dipilihTakeover.length} baris yang kiriman sebelumnya belum pasti atau sudah tercatat.`}>
+                    <MessageStrip tone="warn" title={`Kirim ulang terkendali untuk ${dipilihTakeover.length} baris yang kiriman sebelumnya belum pasti atau sudah tercatat.`}>
                         Pakai hanya bila Anda sudah memeriksa di Accurate bahwa baris itu (mis. cicilan lain) BELUM terposting. Bila ternyata sudah, kiriman ini
                         membuat pelunasan ganda. Izin tercatat atas nama Anda; server tetap menahan baris yang mirip riwayat Accurate kecuali ikut diizinkan di sini.
                     </MessageStrip>
@@ -353,7 +354,7 @@ export function LangkahHasil({ tinjauan: t, hasil, izin, onBaru }: { tinjauan: T
                 </MessageStrip>
             )}
             {raguDb.length > 0 && (
-                <MessageStrip tone="warn" title="Database Accurate berubah saat mengirim — hasilnya belum pasti.">
+                <MessageStrip tone="warn" title="Database Accurate berubah saat mengirim; hasilnya belum pasti.">
                     Server menjawab database berubah untuk {daftarPaket(paketDari(raguDb, "tidak_pasti"))} tanpa menjamin tidak ada yang diteruskan: {raguDb.length} baris
                     tetap Tidak pasti. Jangan unggah ulang; Finance mencocokkan di Accurate ({namaDatabase(t)}) lalu menyelesaikannya.
                 </MessageStrip>
@@ -369,7 +370,7 @@ export function LangkahHasil({ tinjauan: t, hasil, izin, onBaru }: { tinjauan: T
                 </MessageStrip>
             )}
 
-            <div className="fi-kcards" aria-label="Ringkasan hasil" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 150px), 1fr))" }}>
+            <div className="fi-kcards" role="group" aria-label="Ringkasan hasil" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 150px), 1fr))" }}>
                 <div className="fi-kc" data-tone="pos"><span>Terposting</span><b>{n.terposting}</b><small>{rupiah(uangPosting)}</small></div>
                 <div className="fi-kc" data-tone={n.gagal ? "neg" : undefined}><span>Gagal</span><b>{n.gagal}</b><small>tidak terkirim · boleh diulang</small></div>
                 <div className="fi-kc" data-tone={n.tidak_pasti ? "warn" : undefined}><span>Tidak pasti</span><b>{n.tidak_pasti}</b><small>diselesaikan Finance</small></div>
@@ -390,12 +391,12 @@ export function LangkahHasil({ tinjauan: t, hasil, izin, onBaru }: { tinjauan: T
                     ...barisLaporanHasil(hasil.kirim, efektif, hasil.ditahan),
                     ...t.dilewati.map((d) => ({ "Code Outlet": "", "Faktur": `baris berkas ${d.row}`, "Metode": "", "Uang diterima": 0, "Paket": "", "Hasil": "Dilewati saat dibaca", "Nomor Accurate": "", "Nomor mirip": "", "Keterangan": LABEL_DILEWATI[d.reason] ?? d.reason })),
                 ], "Hasil Pelunasan", "Hasil_Pelunasan")}>Laporan per baris (Excel)</Button>
-                <Button variant="primary" onClick={onBaru}>Pelunasan baru</Button>
+                <Button variant="primary" onClick={onBaru}>Mulai pelunasan baru</Button>
             </FooterToolbar>
 
             {selesaikan && (
                 <SelesaikanDialog kunci={selesaikan.key} lockDb={{ id: t.databaseId, label: namaDatabase(t) }} izinTakeover={izin.izinkan}
-                    ringkas={<><span className="fi-mono">{faktur(selesaikan.row)}</span> · {outlet(selesaikan.row)} · {rupiah(Number(selesaikan.row.chequeAmount) || 0)} · paket {selesaikan.h?.paket ?? "—"} · {keterangan(selesaikan.h)}</>}
+                    ringkas={<><span className="fi-mono">{faktur(selesaikan.row)}</span> · {outlet(selesaikan.row)} · {rupiah(Number(selesaikan.row.chequeAmount) || 0)} · paket {selesaikan.h?.paket ?? KOSONG} · {keterangan(selesaikan.h)}</>}
                     onClose={(p) => {
                         if (p) {
                             setSelesai((m) => new Map(m).set(selesaikan.key, p));

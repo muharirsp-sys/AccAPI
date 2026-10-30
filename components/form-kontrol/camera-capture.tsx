@@ -1,16 +1,22 @@
 /*
  * Tujuan: Modal kamera langsung untuk mengambil, meninjau, dan mempersistenkan foto bukti kunjungan sebelum ditutup.
  * Caller: app/(dashboard)/form-kontrol/visit/[custCode]/FotoBukti.tsx, app/(dashboard)/form-kontrol/tabs/NooFormulir.tsx (foto toko + KTP;
- *   `judul` sendiri — peninjau B NOO R1: judul bawaan "Foto Bukti Kunjungan", id judul unik per instans).
- * Dependensi: getUserMedia native browser, `Dialog` native bersama, lucide-react ikon.
+ *   `judul` sendiri, dengan id judul unik per instans; judul bawaan "Foto Bukti Kunjungan").
+ * Dependensi: getUserMedia native browser, `Dialog` native bersama, lucide-react ikon, components/fiori/core (MessageStrip, tombol `fi-btn`).
+ *   Dipakai di dalam `.fiori` (halaman Form Kontrol), jadi warna tombol dan galat mengikuti token; latar hitam layar kamera memang tetap hitam.
  * Main Functions: CameraCapture (default export).
  * Side Effects: Membuka stream kamera, membuat object URL pratinjau, menunggu callback persistence, dan menghentikan stream saat modal ditutup.
  */
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { Camera, X, RotateCcw, Check, Loader2, ImageUp, SwitchCamera } from "lucide-react";
 import Dialog from "@/components/ui/Dialog";
+import { MessageStrip } from "@/components/fiori/core";
+
+/** Tombol bulat di atas latar hitam: permukaan token terang dengan tinta gelap, kontrasnya terjaga di mode terang maupun gelap. */
+const BULAT: CSSProperties = { background: "var(--surface-3)", color: "var(--ink)" };
+const PESAN_KAMERA = "Izin kamera ditolak atau kamera tidak ada. Izinkan kamera di pengaturan situs, atau ketuk Pilih Foto.";
 
 export default function CameraCapture({ open, onClose, onCapture, judul = "Foto Bukti Kunjungan" }: {
     open: boolean;
@@ -47,7 +53,7 @@ export default function CameraCapture({ open, onClose, onCapture, judul = "Foto 
             }
         } catch {
             // ponytail: kamera gagal (izin ditolak / tak ada device) → fallback file input, jangan blok.
-            setError("Kamera tidak tersedia. Gunakan pilih file foto.");
+            setError(PESAN_KAMERA);
         } finally { setStarting(false); }
     }, [facing]); // ganti kamera → identitas berubah → effect restart stream dgn facingMode baru
 
@@ -114,9 +120,9 @@ export default function CameraCapture({ open, onClose, onCapture, judul = "Foto 
             labelledBy={judulId}
             className="m-0 h-dvh w-screen max-h-none max-w-none bg-black text-white flex-col open:flex"
         >
-            <div className="flex items-center justify-between px-4 py-3 text-white">
+            <div className="flex items-center justify-between px-4 py-3">
                 <span id={judulId} className="text-sm font-semibold">{judul}</span>
-                <button disabled={submitting} onClick={() => { stopStream(); onClose(); }} className="p-1.5 rounded-lg bg-white/10 disabled:opacity-40" aria-label="Tutup kamera">
+                <button disabled={submitting} onClick={() => { stopStream(); onClose(); }} className="flex h-11 w-11 items-center justify-center rounded-full disabled:opacity-40" style={BULAT} aria-label="Tutup kamera">
                     <X size={18} />
                 </button>
             </div>
@@ -126,22 +132,21 @@ export default function CameraCapture({ open, onClose, onCapture, judul = "Foto 
                     <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-4">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={preview} alt="Hasil foto" className="max-h-[calc(100%-4rem)] max-w-full object-contain" />
-                        {error && <p role="alert" className="text-center text-sm text-rose-300">{error}</p>}
+                        {error && <MessageStrip tone="neg" title="Foto belum disimpan.">{error}</MessageStrip>}
                     </div>
                 ) : error ? (
-                    <div className="text-center px-6 space-y-3">
-                        <Camera size={40} className="mx-auto text-slate-500" />
-                        <p className="text-sm text-slate-300">{error}</p>
-                        <button onClick={() => fileRef.current?.click()}
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold">
-                            <ImageUp size={16} /> Pilih Foto
+                    <div className="grid justify-items-center gap-3 px-6 text-center">
+                        <Camera size={40} className="opacity-70" aria-hidden />
+                        <p className="text-sm" role="alert">{error}</p>
+                        <button type="button" onClick={() => fileRef.current?.click()} className="fi-btn fi-btn--primary">
+                            <ImageUp size={16} aria-hidden /> Pilih Foto
                         </button>
                     </div>
                 ) : (
                     <>
                         <video ref={videoRef} playsInline muted className="max-h-full max-w-full object-contain"
                             style={{ transform: facing === "user" ? "scaleX(-1)" : undefined }} />
-                        {starting && <Loader2 size={28} className="absolute animate-spin text-white/70" />}
+                        {starting && <Loader2 size={28} className="absolute animate-spin opacity-70" aria-hidden />}
                     </>
                 )}
             </div>
@@ -149,13 +154,13 @@ export default function CameraCapture({ open, onClose, onCapture, judul = "Foto 
             <div className="relative px-4 py-5 flex items-center justify-center gap-6">
                 {preview ? (
                     <>
-                        <button onClick={retake} disabled={submitting} className="flex flex-col items-center gap-1 text-slate-300 disabled:opacity-40">
-                            <span className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center"><RotateCcw size={20} /></span>
+                        <button onClick={retake} disabled={submitting} className="flex flex-col items-center gap-1 disabled:opacity-40">
+                            <span className="flex h-12 w-12 items-center justify-center rounded-full" style={BULAT}><RotateCcw size={20} aria-hidden /></span>
                             <span className="text-xs">Ulang</span>
                         </button>
-                        <button onClick={() => void confirm()} disabled={submitting} className="flex flex-col items-center gap-1 text-emerald-400 disabled:opacity-40">
-                            <span className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center text-white">
-                                {submitting ? <Loader2 size={28} className="animate-spin" /> : <Check size={28} />}
+                        <button onClick={() => void confirm()} disabled={submitting} className="flex flex-col items-center gap-1 disabled:opacity-40">
+                            <span className="flex h-16 w-16 items-center justify-center rounded-full" style={{ background: "var(--primary)", color: "var(--on-primary)" }}>
+                                {submitting ? <Loader2 size={28} className="animate-spin" aria-hidden /> : <Check size={28} aria-hidden />}
                             </span>
                             <span className="text-xs">{submitting ? "Menyimpan..." : "Gunakan"}</span>
                         </button>
@@ -164,14 +169,15 @@ export default function CameraCapture({ open, onClose, onCapture, judul = "Foto 
                     <>
                         <button onClick={capture} disabled={starting}
                             aria-label="Ambil foto"
-                            className="rounded-full border-4 border-white/80 p-1 disabled:opacity-40">
-                            <span className="block rounded-full bg-white" style={{ width: 56, height: 56 }} />
+                            className="rounded-full p-1 disabled:opacity-40" style={{ border: "4px solid var(--on-primary)" }}>
+                            <span className="block rounded-full" style={{ width: 56, height: 56, background: "var(--on-primary)" }} />
                         </button>
                         <button onClick={() => setFacing(f => f === "environment" ? "user" : "environment")}
                             disabled={starting}
-                            className="absolute right-6 flex flex-col items-center gap-1 text-slate-300 disabled:opacity-40">
-                            <span className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center"><SwitchCamera size={20} /></span>
-                            <span className="text-xs">{facing === "environment" ? "Depan" : "Belakang"}</span>
+                            aria-label={facing === "environment" ? "Ganti ke kamera depan" : "Ganti ke kamera belakang"}
+                            className="absolute right-6 flex flex-col items-center gap-1 disabled:opacity-40">
+                            <span className="flex h-12 w-12 items-center justify-center rounded-full" style={BULAT}><SwitchCamera size={20} aria-hidden /></span>
+                            <span className="text-xs">{facing === "environment" ? "Kamera depan" : "Kamera belakang"}</span>
                         </button>
                     </>
                 )}

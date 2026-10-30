@@ -3,7 +3,8 @@
  *   dengan saringan status + ekspor XLSX), plus Riwayat run berhalaman. Mapping/riwayat yang gagal dimuat tampil sebagai galat, bukan kosong.
  * Caller: app/(dashboard)/reconciliation/page.tsx.
  * Dependensi: GET|POST /api/reconciliation/mappings, GET /api/reconciliation/history, POST /{config.endpoint} per kontrak;
- *   lib/off-program-control/{reconciliation-config,reconciliation-ui}; components/fiori/{core,interactive}.
+ *   lib/off-program-control/{reconciliation-config,reconciliation-ui}; components/fiori/{core,interactive}; lib/tampil (KOSONG, waktuWita).
+ *   Tanpa izin jalankan: input berkas nonaktif dengan alasan terlihat dan kaki tetap tampil dengan tombol nonaktif beralasan.
  * Main Functions: Rekonsiliasi.
  * Side Effects: HTTP baca/tulis mapping; menjalankan rekonsiliasi (tidak menulis ke Accurate); ekspor XLSX di peramban.
  */
@@ -15,7 +16,7 @@ import {
     Button, EmptyState, ErrorState, Flow, FooterToolbar, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, type Column, type FlowStep,
 } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactive";
-import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
+import { ambil } from "@/lib/rekapan-nota/ui";
 import { RECONCILIATION_CONFIG, getReconciliationConfig, type ReconciliationInputConfig } from "@/lib/off-program-control/reconciliation-config";
 import type { ReconciliationOutput, ReconciliationResult } from "@/lib/off-program-control/sales-reconciliation";
 import type { IgnoredReturnLine, ReturnReconciliationOutput, ReturnReconciliationResult } from "@/lib/off-program-control/return-reconciliation";
@@ -23,6 +24,7 @@ import {
     RETURN_STATUSES, SALES_STATUSES, causeLines, currency, exportSheets, fileSize, number, returnCauseLines, statusLabel, statusTone,
     type Division, type UiStatus,
 } from "@/lib/off-program-control/reconciliation-ui";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 
 type MappingVersion = { id: string; version: number; originalName: string; uploadedByName: string; createdAt: string; isActive?: boolean };
 type MappingResponse = { active: MappingVersion | null; versions: MappingVersion[]; canManage: boolean };
@@ -39,6 +41,7 @@ const DIVISI: Array<[Division, string, "sales" | "purchases" | "returns"]> = [["
 const apiDivision = (d: Division) => DIVISI.find((x) => x[0] === d)![2];
 const principalsFor = (d: Division) => Object.values(RECONCILIATION_CONFIG).filter((c) => c.division === apiDivision(d)).map((c) => c.principal);
 const HIST_STATUS = { processing: ["Diproses", "info"], success: ["Berhasil", "pos"], failed: ["Gagal", "neg"] } as const;
+const TANPA_IZIN = "Akun Anda belum berhak menjalankan rekonsiliasi; minta admin menambahkan izinnya.";
 
 export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
     const keys = useMemo(() => new Set(permKeys), [permKeys]);
@@ -78,7 +81,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
             const res = await fetch(`/${config.endpoint}`, { method: "POST", body: form });
             const payload = (await res.json().catch(() => ({}))) as Output & { error?: string };
             if (!res.ok) throw new Error(payload.error || "Rekonsiliasi gagal diproses.");
-            setHasil({ ...payload, versi: mapping.data?.active?.version, jam: jamWita(new Date()) });
+            setHasil({ ...payload, versi: mapping.data?.active?.version, jam: `${waktuWita(new Date())} WITA` });
             setSaring(payload.results.some((r) => r.status === "KOREKSI") ? "ALL" : payload.results.some((r) => r.status !== "MATCH") ? "ISSUES_ONLY" : "ALL");
             setHistPage(1); muatRiwayat();
         } catch (e) {
@@ -96,7 +99,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
         const payload = (await res.json().catch(() => ({}))) as MappingVersion & { error?: string };
         if (!res.ok) throw new Error(payload.error || "Mapping gagal diaktifkan.");
         setDialog(false); setMappingFile(null);
-        setPesan(`Mapping v${payload.version} aktif ${jamWita(new Date())} untuk semua pengguna ${DIVISI.find((x) => x[0] === division)![1]} ${principal}. Jalankan ulang untuk memakainya; riwayat sebelumnya tetap tercatat dengan versi lama.`);
+        setPesan(`Mapping v${payload.version} aktif ${waktuWita(new Date())} WITA untuk semua user ${DIVISI.find((x) => x[0] === division)![1]} ${principal}. Jalankan ulang untuk memakainya; riwayat sebelumnya tetap tercatat dengan versi lama.`);
         muatMapping(); muatRiwayat();
     }
 
@@ -135,7 +138,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
     }, [hasil, saring]);
     const penyebab = (r: Row) => division === "FAKTUR" ? causeLines(r as ReconciliationResult, principal) : returnCauseLines(r as ReturnReconciliationResult, principal);
     const dokumen = (r: Row) => "orderNumber" in r ? r.orderNumber : r.invoiceNumber;
-    const produk = (r: Row) => "internalProductCode" in r ? r.internalProductCode : `${r.accurateProductCode ?? "–"} / ${r.principalProductCode ?? "–"}`;
+    const produk = (r: Row) => "internalProductCode" in r ? r.internalProductCode : `${r.accurateProductCode ?? KOSONG} / ${r.principalProductCode ?? KOSONG}`;
     const kolom: Column<Row>[] = [
         { key: "status", header: "Status", cell: (r) => <StatusBadge tone={statusTone(r.status)}>{statusLabel(r.status, principal)}</StatusBadge> },
         { key: "dok", header: division === "FAKTUR" ? "Order" : division === "PEMBELIAN" ? "Dokumen Pembelian" : "Invoice", cell: (r) => <span className="fi-mono">{dokumen(r)}</span> },
@@ -144,7 +147,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
         { key: "sebab", header: "Keterangan", cell: (r) => <ul className="fi-small" style={{ margin: 0, paddingLeft: "1rem", minWidth: "16rem" }}>{penyebab(r).map((c) => <li key={c}>{c}</li>)}</ul> },
         { key: "qty", header: `Qty Accurate / ${principal}`, align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{number.format(r.accurateQuantity)} / {number.format(r.principalQuantity)}</span> },
         { key: "nilai", header: division === "FAKTUR" ? `Net Accurate / ${principal}` : `DPP Accurate / ${principal}`, align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{"accurateNet" in r ? `${currency.format(r.accurateNet)} / ${currency.format(r.principalNet)}` : `${currency.format(r.accurateDpp)} / ${currency.format(r.principalDpp)}`}</span> },
-        { key: "selisih", header: division === "FAKTUR" ? "Selisih net" : "Selisih DPP", align: "end", cell: (r) => { if (r.status === "KOREKSI") return <span>–</span>; const v = "valueDifference" in r ? r.valueDifference : r.dppDifference; return <span className={`fi-tnum${v < 0 ? " fi-why" : ""}`}>{currency.format(v)}</span>; } },
+        { key: "selisih", header: division === "FAKTUR" ? "Selisih net" : "Selisih DPP", align: "end", cell: (r) => { if (r.status === "KOREKSI") return <span>{KOSONG}</span>; const v = "valueDifference" in r ? r.valueDifference : r.dppDifference; return <span className={`fi-tnum${v < 0 ? " fi-why" : ""}`}>{currency.format(v)}</span>; } },
     ];
     const langkah: FlowStep[] = [
         { label: "Jenis", state: "done" },
@@ -174,22 +177,22 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                         <div className="fi-segs" role="group" aria-label="Jenis Rekonsiliasi">
                             {DIVISI.map(([d, label]) => <button key={d} type="button" aria-pressed={division === d} disabled={berjalan} onClick={() => { if (d !== division) gantiKontrak(d, principalsFor(d)[0]); }}>{label}</button>)}
                         </div>
-                        <FormField label="Prinsipal">{(a11y) => <select {...a11y} className="fi-input" value={principal} disabled={berjalan} onChange={(e) => gantiKontrak(division, e.target.value)}>{principalsFor(division).map((p) => <option key={p} value={p}>{p}</option>)}</select>}</FormField>
+                        <FormField label="Principal">{(a11y) => <select {...a11y} className="fi-input" value={principal} disabled={berjalan} onChange={(e) => gantiKontrak(division, e.target.value)}>{principalsFor(division).map((p) => <option key={p} value={p}>{p}</option>)}</select>}</FormField>
                     </div>
                 </div>
             </Section>
 
-            <Section title="2 · Mapping SKU" subtitle="berlaku untuk semua pengguna jenis dan principal ini" className="fi-region-mapping">
+            <Section title="2 · Mapping SKU" subtitle="berlaku untuk semua user jenis dan principal ini" className="fi-region-mapping">
                 <div className="fi-sect-in" role="region" aria-label="Mapping aktif">
                     {mapping.status === "memuat" && !mapping.data ? <Skeleton rows={2} label="Memuat mapping" />
                         : mapping.status === "galat" && !mapping.data ? <ErrorState title={`Mapping ${labelJenis} ${principal} gagal dimuat`} message={`${mapping.error}. Rekonsiliasi belum bisa dijalankan tanpa mapping.`} onRetry={muatMapping} />
                         : mapping.data?.active ? (
-                            <p className="fi-small" aria-label="Stempel versi mapping">Mapping aktif <b>Versi {mapping.data.active.version}</b> · <span>{mapping.data.active.originalName}</span> · <span>{mapping.data.active.uploadedByName}</span> · <span className="fi-subtle">{jamWita(mapping.data.active.createdAt)}</span></p>
+                            <p className="fi-small" aria-label="Stempel versi mapping">Mapping aktif <b>Versi {mapping.data.active.version}</b> · <span>{mapping.data.active.originalName}</span> · <span>{mapping.data.active.uploadedByName}</span> · <span className="fi-subtle">{waktuWita(mapping.data.active.createdAt)}</span></p>
                         ) : <p className="fi-small fi-subtle">Belum ada mapping aktif.</p>}
                     {mapping.data && mapping.data.versions.length > 1 && (
-                        <details className="fi-small" role="region" aria-label="Riwayat versi mapping">
+                        <details className="fi-small" aria-label="Riwayat versi mapping">
                             <summary style={{ cursor: "pointer" }}>Riwayat versi ({mapping.data.versions.length}) <ChevronDown className="fi-icon" aria-hidden style={{ display: "inline", verticalAlign: "-3px" }} /></summary>
-                            <ul className="fi-hist" style={{ marginTop: 6 }}>{mapping.data.versions.map((v) => <li key={v.id}><time dateTime={v.createdAt}>{jamWita(v.createdAt)}</time><span><b>Versi {v.version}</b> · {v.originalName} · {v.uploadedByName}{v.isActive ? " · aktif" : ""}</span></li>)}</ul>
+                            <ul className="fi-hist" style={{ marginTop: 6 }}>{mapping.data.versions.map((v) => <li key={v.id}><time dateTime={v.createdAt}>{waktuWita(v.createdAt)}</time><span><b>Versi {v.version}</b> · {v.originalName} · {v.uploadedByName}{v.isActive ? " · aktif" : ""}</span></li>)}</ul>
                         </details>
                     )}
                     {canManage && (
@@ -204,6 +207,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
 
             <Section title="3 · Berkas" subtitle={`${config.inputs.length} berkas wajib · format ${[...new Set(config.inputs.map((i) => i.extension))].join(" / ")}, maksimal 10 MB`}>
                 <div className="fi-sect-in">
+                    {!bolehJalankan && <MessageStrip tone="info" title="Baca saja.">{TANPA_IZIN}</MessageStrip>}
                     <div className="fi-kcards">
                         {config.inputs.map((input) => { const f = fileFor(input.role); return (
                             <div key={input.role} className="fi-dropzone" data-ok={f ? "true" : undefined}>
@@ -220,15 +224,15 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
             {hasil && !berjalan && (
                 <Section id="hasil" title="4 · Hasil" subtitle={`${labelJenis} ${principal} · mapping v${hasil.versi ?? "?"} · ${hasil.jam}`}
                     actions={<Button variant="tertiary" icon={<Download className="fi-icon" aria-hidden />} onClick={ekspor}>Ekspor XLSX</Button>}>
-                    <div className="fi-sect-in" aria-label="Ringkasan hasil">
+                    <div className="fi-sect-in" role="group" aria-label="Ringkasan hasil">
                         {ignoredLines.length > 0 && <details className="fi-panel" aria-label="Baris diabaikan">
-                            <summary>{number.format(ignoredLines.length)} baris KINO diabaikan — PAJAK_NO berawalan INV</summary>
+                            <summary>{number.format(ignoredLines.length)} baris KINO diabaikan: PAJAK_NO berawalan INV</summary>
                             <p className="fi-small">Koreksi/retur ini tidak termasuk pencocokan dan total rekonsiliasi. Rincian ikut dalam lembar Diabaikan pada ekspor XLSX.</p>
                             <ul className="fi-small">{ignoredLines.map((line) => <li key={line.sourceRowNumber}>Baris {line.sourceRowNumber}: {line.invoiceNumber} · {line.taxNumber} · {line.principalProductCode}</li>)}</ul>
                         </details>}
                         <div className="fi-kcards">
                             <div className="fi-kc"><span>Baris</span><b>{number.format(total)}</b><small>termasuk koreksi</small></div>
-                            <div className="fi-kc" data-tone="pos"><span>Cocok</span><b>{number.format(cocok)}</b><small>{total ? `${number.format((cocok / Math.max(1, total - koreksi)) * 100)}%` : "–"}</small></div>
+                            <div className="fi-kc" data-tone="pos"><span>Cocok</span><b>{number.format(cocok)}</b><small>{total ? `${number.format((cocok / Math.max(1, total - koreksi)) * 100)}%` : KOSONG}</small></div>
                             <div className="fi-kc" data-tone={selisih ? "warn" : undefined}><span>Selisih</span><b>{number.format(selisih)}</b><small>jumlah atau nilai</small></div>
                             <div className="fi-kc" data-tone={hilang ? "neg" : undefined}><span>Tidak ditemukan</span><b>{number.format(hilang)}</b><small>di salah satu sisi</small></div>
                         </div>
@@ -239,7 +243,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                                 <button type="button" aria-pressed={saring === "MATCH_ONLY"} onClick={() => setSaring("MATCH_ONLY")}>Cocok {number.format(cocok)}</button>
                                 {koreksi > 0 && <button type="button" aria-pressed={saring === "KOREKSI"} onClick={() => setSaring("KOREKSI")}>Koreksi {number.format(koreksi)}</button>}
                             </div>
-                            <FormField label="Filter status">{(a11y) => <select {...a11y} className="fi-input" value={saring} onChange={(e) => setSaring(e.target.value as Saring)}>
+                            <FormField label="Saring status">{(a11y) => <select {...a11y} className="fi-input" value={saring} onChange={(e) => setSaring(e.target.value as Saring)}>
                                 <option value="ISSUES_ONLY">Hanya bermasalah</option><option value="ALL">Semua status</option><option value="MATCH_ONLY">Hanya cocok</option>
                                 {statuses.filter((s) => s !== "MATCH").map((s) => <option key={s} value={s}>{statusLabel(s, principal)} ({number.format(count(s))})</option>)}
                             </select>}</FormField>
@@ -266,14 +270,14 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                                         const v = versiDari(run.mappingVersionId); const [label, tone] = HIST_STATUS[run.status];
                                         return (
                                             <li key={run.id}>
-                                                <time dateTime={run.startedAt}>{jamWita(run.startedAt)}</time>
+                                                <time dateTime={run.startedAt}>{waktuWita(run.startedAt)}</time>
                                                 <span><b>{run.uploadedByName}</b> · <span>{v ? `Versi ${v}` : "Versi tidak tersedia"}</span> · <StatusBadge tone={tone}>{label}</StatusBadge></span>
                                                 <span className="fi-chg">{run.inputFiles.map((f) => f.name).join(", ")} · {run.durationMs === null ? "Durasi -" : `${number.format(run.durationMs / 1000)} detik`} · <span>Total {tot}</span> · <span>Cocok {match}</span> · <span>Koreksi {run.summary?.KOREKSI ?? 0}</span> · <span>Masalah {tot - match - (run.summary?.KOREKSI ?? 0)}</span></span>
                                                 {(run.error || run.issues?.length) ? (
                                                     <details className="fi-chg"><summary aria-label={`Lihat rincian ${run.id}`} style={{ cursor: "pointer" }}>Lihat penyebab</summary>
                                                         {run.error && <p>{run.error}</p>}
                                                         {run.issues?.map((issue, i) => issue.status === "IGNORED"
-                                                            ? <div key={`${run.id}-${i}`}><b>Diabaikan — baris KINO {issue.sourceRowNumber}</b><p>{issue.invoiceNumber} · {issue.taxNumber} · {issue.principalProductCode}: {issue.reason}</p></div>
+                                                            ? <div key={`${run.id}-${i}`}><b>Diabaikan: baris KINO {issue.sourceRowNumber}</b><p>{issue.invoiceNumber} · {issue.taxNumber} · {issue.principalProductCode}: {issue.reason}</p></div>
                                                             : <div key={`${run.id}-${i}`}><b>{statusLabel(issue.status, principal)}</b><ul style={{ paddingLeft: "1rem" }}>{penyebab(issue).map((c) => <li key={c}>{c}</li>)}</ul></div>)}
                                                     </details>
                                                 ) : null}
@@ -291,14 +295,14 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                 </div>
             </Section>
 
-            {bolehJalankan && (
-                <FooterToolbar message={siap ? (mappingFile ? <span className="fi-sum"><b>{nBerkas} berkas siap</b> · mapping baru belum aktif</span> : undefined) : `Pilih ${config.inputs.length - nBerkas} berkas lagi`}>
-                    <Button variant="primary" icon={<GitCompareArrows className="fi-icon" aria-hidden />} busy={berjalan} disabled={!siap} disabledReason={`Pilih ${config.inputs.length} berkas dulu`} onClick={jalankan}>{berjalan ? "Berjalan…" : hasil ? "Jalankan ulang" : "Jalankan rekonsiliasi"}</Button>
-                </FooterToolbar>
-            )}
+            <FooterToolbar message={!bolehJalankan ? <span className="fi-why">{TANPA_IZIN}</span>
+                : siap ? (mappingFile ? <span className="fi-sum"><b>{nBerkas} berkas siap</b> · mapping baru belum aktif</span> : undefined) : `Pilih ${config.inputs.length - nBerkas} berkas lagi`}>
+                <Button variant="primary" icon={<GitCompareArrows className="fi-icon" aria-hidden />} busy={berjalan} disabled={!bolehJalankan || !siap}
+                    disabledReason={!bolehJalankan ? TANPA_IZIN : `Pilih ${config.inputs.length} berkas dulu`} onClick={jalankan}>{berjalan ? "Berjalan…" : hasil ? "Jalankan ulang" : "Jalankan rekonsiliasi"}</Button>
+            </FooterToolbar>
 
-            <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`Aktifkan mapping baru untuk ${labelJenis} ${principal}?`} tag="Semua pengguna" confirmLabel="Aktifkan mapping" onConfirm={aktifkanMapping}
-                description={<MessageStrip tone="warn" title="Berlaku untuk semua pengguna">yang merekonsiliasi {labelJenis} {principal}, bukan hanya Anda.</MessageStrip>}
+            <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`Aktifkan mapping baru untuk ${labelJenis} ${principal}?`} tag="Semua user" confirmLabel="Aktifkan mapping" onConfirm={aktifkanMapping}
+                description={<MessageStrip tone="warn" title="Berlaku untuk semua user">yang merekonsiliasi {labelJenis} {principal}, bukan hanya Anda.</MessageStrip>}
                 facts={[
                     ["Sekarang", mapping.data?.active ? `v${mapping.data.active.version} · ${mapping.data.active.originalName} · ${mapping.data.active.uploadedByName}` : "Belum ada mapping aktif"],
                     ["Menjadi", mappingFile ? `${mappingFile.name} · ${fileSize(mappingFile.size)}` : ""],

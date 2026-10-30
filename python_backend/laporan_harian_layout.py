@@ -1,5 +1,5 @@
 """Tujuan: Terapkan layout arsip ke workbook hasil tanpa mengubah nilai sumber.
-Caller: laporan_harian.write_report_files dan write_to_format_file.
+Caller: laporan_harian_manager.write_manager_report (rekap Pak Fahdhar).
 Dependensi: stdlib ZIP/XML UTF-8 standar, laporan_harian_layouts.json (metadata tanpa transaksi).
 Main Functions: report_layout, apply_layout (termasuk relasi paket styles/theme).
 Side Effects: Baca metadata; tulis ulang XLSX secara atomik di direktori run.

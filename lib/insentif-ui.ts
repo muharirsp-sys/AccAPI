@@ -2,11 +2,12 @@
  * Tujuan: Bagian murni halaman Insentif Sales (Fiori S4c): enam halaman + izinnya, tipe respons API, format angka,
  *   dan alasan Rp 0. Tanpa React supaya bisa dipakai rute server (pengalihan) dan diuji.
  * Caller: app/(dashboard)/insentif-sales/** (page.tsx server + klien), lib/insentif-ui.test.ts.
- * Dependensi: lib/insentif-konstanta (tipe Konstanta).
- * Main Functions: HALAMAN, halamanTerlihat, halamanAwal, sebabNol, readApi, formatPctText/Qty/Ratio.
+ * Dependensi: lib/insentif-konstanta (tipe Konstanta), lib/tampil (sebabHttp: sebab galat tanpa kode mentah).
+ * Main Functions: HALAMAN, halamanTerlihat, halamanAwal, sebabNol, readApi, labelTipe, labelStatus, formatPctText/Qty/Ratio.
  * Side Effects: Tidak ada.
  */
 import type { Konstanta } from "@/lib/insentif-konstanta";
+import { sebabHttp } from "@/lib/tampil";
 
 export type HalamanKey = "dashboard" | "saya" | "pembayaran" | "data" | "support" | "pengaturan";
 /** Identitas hierarki akun (user.hierarchyRole bila nama juga terisi); null = belum ditautkan. */
@@ -108,6 +109,11 @@ export const STATUS_INSENTIF_OPSI = [
     { value: "principle", label: "Principle" },
 ] as const;
 export const LABEL_STATUS: Record<string, string> = Object.fromEntries(STATUS_INSENTIF_OPSI.map((o) => [o.value, o.label]));
+/** Tipe sales (kolom Tipe Sales target) untuk manusia. */
+export const LABEL_TIPE: Record<string, string> = { exclusive: "Exclusive", mix: "Mix" };
+/** Label tampilan; nilai yang tidak dikenal tidak ditampilkan mentah (audit desain 001 No 30). */
+export const labelTipe = (v: string | null | undefined) => (v ? LABEL_TIPE[v] ?? "Tipe tidak dikenal" : "-");
+export const labelStatus = (v: string | null | undefined) => (v ? LABEL_STATUS[v] ?? "Status tidak dikenal" : "-");
 
 export function paymentSelectionKey(row: { salesCode: string; principle: string }) {
     return `${row.salesCode}::${row.principle}`;
@@ -115,14 +121,14 @@ export function paymentSelectionKey(row: { salesCode: string; principle: string 
 
 /**
  * Baca respons API dengan aman. `res.json()` langsung meledak jadi "Unexpected token 'B'…" ketika yang balik BUKAN dari
- * aplikasi kita (502/504 proxy, halaman login, HTML galat Next) dan menyembunyikan status HTTP-nya.
+ * aplikasi kita (502/504 proxy, halaman login, HTML galat Next). Pesannya = sebab menurut status, tanpa kode/isi mentah (tampil di layar).
  */
 export async function readApi(res: Response): Promise<Record<string, unknown>> {
     const text = await res.text();
     try {
         return JSON.parse(text) as Record<string, unknown>;
     } catch {
-        throw new Error(`HTTP ${res.status} ${res.statusText} — ${text.slice(0, 120).trim() || "respons kosong"}`);
+        throw new Error(`Jawaban server tidak terbaca. ${sebabHttp(res.status)}`);
     }
 }
 

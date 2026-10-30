@@ -95,7 +95,7 @@ function Panel({ pelanggan, tanggal, peran, baris, onTambah }: Props) {
                 {r && r.ringkasan.jumlahFaktur === 0 && r.ringkasan.dilewati === 0 && <p className="fi-muted" style={{ margin: 0 }}>Toko ini belum punya riwayat faktur sejak {sejak}.</p>}
                 {r && r.ringkasan.jumlahFaktur > 0 && r.items.length === 0 && (
                     <p className="fi-muted" style={{ margin: 0 }}>
-                        Ada {r.ringkasan.jumlahFaktur} faktur sejak {sejak}, tetapi rincian barangnya belum tersedia di data kami — rata-rata belum bisa dihitung.
+                        Ada {r.ringkasan.jumlahFaktur} faktur sejak {sejak}, tetapi rincian barangnya belum tersedia di data kami, jadi rata-rata belum bisa dihitung.
                     </p>
                 )}
                 {items.length > 0 && (
@@ -138,19 +138,19 @@ function Panel({ pelanggan, tanggal, peran, baris, onTambah }: Props) {
                 )}
                 {r && r.ringkasan.tanpaRincian > 0 && r.items.length > 0 && (
                     <p className="fi-small fi-why" style={{ margin: "8px 0 0" }}>
-                        {r.ringkasan.tanpaRincian} dari {r.ringkasan.jumlahFaktur} faktur sejak {sejak} belum punya rincian barang di data kami — rata-rata bisa lebih kecil dari kenyataan.
+                        {r.ringkasan.tanpaRincian} dari {r.ringkasan.jumlahFaktur} faktur sejak {sejak} belum punya rincian barang di data kami, jadi rata-rata bisa lebih kecil dari kenyataan.
                     </p>
                 )}
                 {r && r.ringkasan.dilewati > 0 && (
                     <p className="fi-small fi-why" style={{ margin: "8px 0 0" }}>
-                        {r.ringkasan.dilewati} faktur toko ini dilewati karena tanggal atau isinya tidak terbaca di data kami — tidak ikut dihitung.
+                        {r.ringkasan.dilewati} faktur toko ini dilewati karena tanggal atau isinya tidak terbaca di data kami, jadi tidak ikut dihitung.
                     </p>
                 )}
                 {r && r.items.length > 0 && (
                     <p className="fi-small fi-muted" style={{ margin: "8px 0 0" }}>
                         Rata-rata = jumlah dibeli ÷ {angka(r.jendela.bulanTeramati)} bulan
                         {r.ringkasan.dataSejak && r.ringkasan.dataSejak > r.jendela.dari ? ` (data toko ini baru ada sejak ${tanggalPendek(r.ringkasan.dataSejak)})` : ` (sejak ${sejak})`}.
-                        Bonus promo tidak dihitung; retur belum dikurangkan. Tambah memakai pembulatan ke atas — jumlahnya bisa diubah di baris order.
+                        Bonus promo tidak dihitung; retur belum dikurangkan. Tambah memakai pembulatan ke atas; jumlahnya bisa diubah di baris order.
                     </p>
                 )}
             </div>

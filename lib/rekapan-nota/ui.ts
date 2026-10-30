@@ -2,12 +2,14 @@
  * Tujuan: Helper murni layar Rekapan Nota (Fiori S2): label status/exception dalam bahasa tugas, tanggal WITA,
  *   penyaringan pool, dan urutan wave berikutnya. Tidak ada logic bisnis baru — hanya penyajian.
  * Caller: app/(dashboard)/rekapan-nota/*.tsx, ui.test.ts.
- * Dependensi: Tidak ada. Pure.
- * Main Functions: WAVE_STATUS, EXCEPTION_LABEL, menahanKonfirmasi, tanggalPanjang, tanggalPendek, jamWita,
- *   saringPool, urutanBerikutnya, formatKarton, labelEvent, nomorLembar, judulBerkas, hariIniWita, ambil.
+ * Dependensi: lib/tampil (KOSONG, sebabHttp). Pure kecuali `ambil`.
+ * Main Functions: WAVE_STATUS, EXCEPTION_LABEL, menahanKonfirmasi, tanggalPanjang, tanggalPendek,
+ *   saringPool, urutanBerikutnya, formatKarton, labelEvent, nomorLembar, judulBerkas, usulIsiDariNama, hariIniWita, ambil.
  * Side Effects: `ambil` melakukan GET (dipakai komponen klien); sisanya pure.
+ *   Tanggal + jam (layar dan kop cetak) memakai `waktuWita` lib/tampil ("dd/mm/yyyy hh.mm"), tidak ada format jam sendiri di sini.
  */
 import type { Tone } from "@/components/fiori/core";
+import { KOSONG, sebabHttp } from "@/lib/tampil";
 
 export type WaveStatusKode = "draft" | "released" | "confirmed" | "cancelled";
 
@@ -45,15 +47,6 @@ export function tanggalPendek(ymd: string) {
     return new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" }).format(utcNoon(ymd));
 }
 
-/** "6 Okt 09.40" dari timestamp, dalam WITA. */
-export function jamWita(iso: string | Date) {
-    const d = typeof iso === "string" ? new Date(iso) : iso;
-    if (Number.isNaN(d.getTime())) return "";
-    const tgl = new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short", timeZone: "Asia/Makassar" }).format(d);
-    const jam = new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Makassar" }).format(d);
-    return `${tgl} ${jam}`;
-}
-
 /** Tanggal hari ini (yyyy-mm-dd) dalam WITA — bukan UTC, yang masih "kemarin" sampai 08.00 WITA. */
 export const hariIniWita = (d = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(d);
 
@@ -75,8 +68,25 @@ export function judulBerkas(noLembar: string, d = new Date()) {
     return `${noLembar.replaceAll("/", "-")}_${p.year}${p.month}${p.day}-${p.hour}${p.minute}`;
 }
 
+const SATUAN_KECIL = "P|PC|PCS|BTL|PCH|SCH|SACHET|RCG|BOX|DUS|PACK|PAK|TUBE|BAG|CUP|KLG|BKS|LBR|ROLL|POT|JRG|PAIL|GLN|TIN";
+
+/**
+ * Usulan isi per karton dari NAMA barang (owner 24 Okt 2026): "... 55GR X 24P" -> 24, "... 60 PCS X 180G" -> 60,
+ * "... 280ML X 24 PCH" -> 24. Hanya usulan yang dicek admin sebelum disimpan. Lebih dari satu kandidat
+ * ("15/18 GR X 24 RCG PCSX12") atau tidak ada -> null: lebih baik kosong daripada menebak.
+ */
+export function usulIsiDariNama(nama: string | null | undefined): number | null {
+    const n = String(nama ?? "").toUpperCase();
+    const kandidat = new Set<number>();
+    for (const m of n.matchAll(new RegExp(`\\bX\\s*(\\d+)\\s*(?:${SATUAN_KECIL})?(?=\\s|$)`, "g"))) kandidat.add(Number(m[1]));
+    for (const m of n.matchAll(new RegExp(`(\\d+)\\s*(?:PCS|PC)\\s*X\\b`, "g"))) kandidat.add(Number(m[1]));
+    for (const m of n.matchAll(/(?:PCS|PC|P)X(\d+)\b/g)) kandidat.add(Number(m[1]));
+    const v = [...kandidat].filter((x) => x > 1 && x <= 10000);
+    return v.length === 1 ? v[0] : null;
+}
+
 export const formatKarton = (krt: number | null | undefined) =>
-    krt == null ? "–" : new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(krt);
+    krt == null ? KOSONG : new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(krt);
 
 export type PoolFilter = { cari: string; salesman: string; area: string; pareto: boolean };
 export type PoolRow = { no_nota: string; customer: string | null; salesman: string | null; area: string | null; pareto: boolean | null };
@@ -107,10 +117,10 @@ export function labelEvent(event: string, payload: EventPayload = {}): { apa: st
         case "wave.nota_added": return { apa: `Menambah ${n(payload.no_nota)} nota`, ubah: payload.prioritas === "urgent" ? "sebagai urgent" : undefined };
         case "wave.nota_add_rejected": return { apa: `${n(payload.no_nota)} nota ditolak`, ubah: "sudah ada di wave lain" };
         case "wave.groups_selected": return { apa: "Memilih grup cetak", ubah: `${n(payload.pick_group_ids)} grup` };
-        case "wave.released": return { apa: "Merilis wave", ubah: `${n(payload.jumlah_nota)} nota · ${n(payload.exception_open)} exception terdeteksi` };
+        case "wave.released": return { apa: "Merilis wave", ubah: `${n(payload.jumlah_nota)} nota · ${n(payload.exception_open)} masalah terdeteksi` };
         case "wave.confirmed": return { apa: "Mengonfirmasi wave", ubah: `${n(payload.jumlah_nota)} nota` };
         case "wave.cancelled": return { apa: "Membatalkan wave", ubah: [payload.nota_kembali ? `${n(payload.nota_kembali)} nota kembali ke pool` : "", payload.alasan ? String(payload.alasan) : ""].filter(Boolean).join(" · ") || undefined };
-        case "wave.exception_resolved": return { apa: payload.status === "selesai" ? "Menandai exception selesai" : "Mengabaikan exception", ubah: [String(payload.ref_kode ?? ""), payload.alasan ? String(payload.alasan) : ""].filter(Boolean).join(" · ") };
+        case "wave.exception_resolved": return { apa: payload.status === "selesai" ? "Menandai masalah selesai" : "Mengabaikan masalah", ubah: [String(payload.ref_kode ?? ""), payload.alasan ? String(payload.alasan) : ""].filter(Boolean).join(" · ") };
         case "wave.nota_released": return { apa: `Melepas ${String(payload.no_nota ?? "")}`, ubah: payload.alasan ? String(payload.alasan) : undefined };
         case "wave.prioritas_changed": return { apa: `Mengubah prioritas ${String(payload.no_nota ?? "")}`, ubah: `ke ${String(payload.ke ?? "")}` };
         default: return { apa: event };
@@ -126,10 +136,11 @@ export async function ambil<T>(url: string, pick: (json: unknown) => T = (j) => 
         const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) });
         if (!res.ok) {
             const body = (await res.json().catch(() => ({}))) as { error?: string };
-            return { status: "galat", error: body.error ?? `HTTP ${res.status}` };
+            return { status: "galat", error: body.error ?? sebabHttp(res.status) };
         }
         return { status: "siap", data: pick(await res.json()) };
     } catch (e) {
-        return { status: "galat", error: e instanceof DOMException && e.name === "TimeoutError" ? "Server tidak menjawab tepat waktu" : e instanceof Error ? e.message : String(e) };
+        // TypeError = fetch gagal tersambung (pesan peramban "Failed to fetch" tidak boleh sampai ke pengguna).
+        return { status: "galat", error: e instanceof DOMException && e.name === "TimeoutError" ? "Server tidak menjawab tepat waktu" : e instanceof TypeError ? sebabHttp(0) : e instanceof Error ? e.message : sebabHttp(500) };
     }
 }

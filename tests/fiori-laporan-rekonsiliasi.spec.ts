@@ -62,9 +62,11 @@ test.describe("Laporan harian", () => {
         const riwayat = main.getByRole("table", { name: "Riwayat kirim" });
         await expect(riwayat.getByRole("row", { name: /05\/10\/2026/ })).toContainText("Gagal");
         await expect(riwayat.getByRole("row", { name: /01\/10\/2026/ })).toContainText("Macet");
-        await expect(main.getByText("usulan BL-29")).toBeVisible();
+        // BL-29 (run macet tak bisa dilanjutkan) cukup di subjudul Riwayat kirim; satu catatan varian per layar (audit No 80).
+        await expect(main.getByRole("region", { name: "Riwayat kirim" })).toContainText("run macet lebih dari 10 menit belum bisa dilanjutkan");
+        await expect(main.getByLabel("Usulan BL-29")).toHaveCount(0);
         const footer = main.locator(".fi-ftb");
-        await expect(footer.getByRole("button", { name: "Proses dan perbarui dashboard" })).toBeDisabled();
+        await expect(footer.getByRole("button", { name: "Proses berkas" })).toBeDisabled();
         await page.screenshot({ path: "test-results/fiori-laporan-harian-awal.png", fullPage: true });
 
         // Kirim ulang run gagal → dialog, bukan langsung.
@@ -77,7 +79,7 @@ test.describe("Laporan harian", () => {
 
         // Proses → langkah 2–3 → footer Kirim → dialog menyebut penerima yang tidak dikirim.
         await main.locator("#laporan-penjualan").setInputFiles(xlsx("Penjualan 06-10.xlsx"));
-        await footer.getByRole("button", { name: "Proses dan perbarui dashboard" }).click();
+        await footer.getByRole("button", { name: "Proses berkas" }).click();
         await expect(main.getByRole("heading", { level: 1 })).toContainText("data Selasa, 6 Okt 2026", NAV);
         await expect(main.getByText("Pencapaian tersambung ke Insentif Sales.")).toBeVisible();
         await expect(main.getByText("Berkas SPV BARU tidak punya penerima.")).toBeVisible();
@@ -85,7 +87,7 @@ test.describe("Laporan harian", () => {
         await main.getByRole("group", { name: "Penerima" }).getByRole("button", { name: "Pilih tertentu" }).click();
         await main.getByRole("table", { name: "Penerima email" }).getByLabel("Pilih SM_HENDRIK_06-10.xlsx\u0000om@contoh.id").uncheck();
         await expect(main.getByText("1 penerima yang tidak dipilih akan berstatus dilewati")).toBeVisible();
-        await expect(main.getByText("usulan BL-58")).toBeVisible();
+        await expect(main.getByLabel("Usulan BL-58")).toBeAttached();
         await footer.getByRole("button", { name: "4 · Kirim 2 email…" }).click();
         const dlg = page.getByRole("dialog");
         await expect(dlg).toContainText("Kirim 2 email laporan 06/10/2026?");
@@ -104,8 +106,8 @@ test.describe("Laporan harian", () => {
         await page.goto("/laporan-harian", NAV);
         const main = page.locator("main");
         await main.locator("#laporan-penjualan").setInputFiles(xlsx("Penjualan.xlsx"));
-        await main.locator(".fi-ftb").getByRole("button", { name: "Proses dan perbarui dashboard" }).click();
-        await expect(main.getByRole("alert")).toContainText("Tidak bisa menghubungi FastAPI backend");
+        await main.locator(".fi-ftb").getByRole("button", { name: "Proses berkas" }).click();
+        await expect(main.getByRole("alert")).toContainText("Server sedang bermasalah");
         await expect(main.getByRole("alert")).toContainText("Dashboard dan progres insentif tidak berubah");
         await expect(main.getByRole("table", { name: "Riwayat kirim" }).getByRole("row")).toHaveCount(4);
     });
@@ -178,7 +180,7 @@ test.describe("Rekonsiliasi", () => {
         await expect(hasil.getByRole("row")).toHaveCount(3); // 2 masalah (saringan bawaan)
         await expect(hasil).toContainText("Data KINO tidak ditemukan");
         await expect(hasil).not.toContainText("KN01387");
-        await expect(main.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+        await expect(main.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
         await main.getByRole("group", { name: "Saring hasil" }).getByRole("button", { name: /^Semua/ }).click();
         await expect(hasil.getByRole("row")).toHaveCount(4);
         await page.screenshot({ path: "test-results/fiori-rekonsiliasi-hasil.png", fullPage: true });
@@ -186,7 +188,7 @@ test.describe("Rekonsiliasi", () => {
         await main.getByLabel("Ganti mapping").setInputFiles(xlsx("KINO_mapping_SKU_v5.xlsx"));
         await main.getByRole("button", { name: "Aktifkan v5…" }).click();
         const dlg = page.getByRole("dialog");
-        await expect(dlg).toContainText("Berlaku untuk semua pengguna");
+        await expect(dlg).toContainText("Berlaku untuk semua user"); // istilah tunggal "user" (audit No 88)
         await expect(dlg).toContainText("v4 · KINO_mapping_SKU_v4.xlsx");
         await dlg.getByRole("button", { name: "Aktifkan mapping" }).click();
         await expect(main.getByRole("status").filter({ hasText: "Mapping v5 aktif" })).toBeVisible();
@@ -202,7 +204,7 @@ test.describe("Rekonsiliasi", () => {
         await expect(main.getByRole("alert").filter({ hasText: "Riwayat belum termuat" })).toBeVisible();
         await expect(main.getByText("Belum pernah dijalankan")).toHaveCount(0);
         await main.getByRole("group", { name: "Jenis Rekonsiliasi" }).getByRole("button", { name: "Pembelian" }).click();
-        await expect(main.getByLabel("Prinsipal")).toHaveValue("GODREJ");
+        await expect(main.getByLabel("Principal", { exact: true })).toHaveValue("GODREJ");
         await expect(main.getByText("Belum ada file dipilih")).toHaveCount(2);
     });
 });
@@ -230,12 +232,14 @@ test.describe("History penjualan", () => {
         await expect(main.getByRole("alert").filter({ hasText: "Gagal memuat item." })).toBeVisible();
         await expect(main.getByLabel("Produk").first()).toHaveValue("sleek baby"); // saringan tidak berubah
         gagal = false;
+        // Catatan varian BL-60 di badan halaman, tidak di dalam dialog impor (audit desain 001 No 80).
+        await expect(main.getByRole("complementary", { name: /BL-60/ })).toBeVisible();
         await main.getByRole("button", { name: "Impor CSV e-Faktur…" }).click();
         const dlg = page.getByRole("dialog");
         await expect(dlg.getByRole("button", { name: "Impor" })).toBeDisabled();
         await dlg.getByLabel(/Berkas CSV/).setInputFiles({ name: "efaktur_sep_2026.csv", mimeType: "text/csv", buffer: Buffer.from("FK;1") });
         await expect(dlg).toContainText("Impor efaktur_sep_2026.csv?");
-        await expect(dlg).toContainText("usulan BL-60");
+        await expect(dlg.getByRole("complementary")).toHaveCount(0);
         await dlg.getByRole("button", { name: "Impor" }).click();
         await expect(main.getByRole("status").filter({ hasText: "17.940 item diimpor" })).toBeVisible();
         expect(imporHeader).toBe("efaktur_sep_2026.csv");

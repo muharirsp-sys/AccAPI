@@ -120,20 +120,20 @@ test("Shell: tab mengikuti peran dari my-scope (salesman, SPV, admin); tautan Da
 
     await page.goto("/form-kontrol", NAV);
     await expect(main.getByRole("heading", { level: 1, name: "Form Kontrol" })).toBeVisible(NAV);
-    await expect(nav.getByRole("link")).toHaveText(["Form AO Harian", "Toko Tidak Order", "Laporan Harian", "Toko Baru (NOO)"], NAV);
-    await expect(nav.getByRole("link", { name: "Form AO Harian" })).toHaveAttribute("aria-current", "page");
+    await expect(nav.getByRole("link")).toHaveText(["Rute Hari Ini", "Toko Tidak Order", "Laporan Kunjungan", "Toko Baru (NOO)"], NAV);
+    await expect(nav.getByRole("link", { name: "Rute Hari Ini" })).toHaveAttribute("aria-current", "page");
     await expect(main.getByRole("link", { name: "Dashboard SPV" })).toHaveCount(0);
     await expect(main.getByText("Tampilan terkunci ke data Anda (SALES A).")).toBeVisible();
 
     opsi.scope = SCOPE.spv;
     await page.goto("/form-kontrol?tab=hierarki", NAV); // tab yang tidak boleh untuk SPV → tab pertama
-    await expect(nav.getByRole("link")).toHaveText(["Kontrol JKS", "Form AO Harian", "Toko Tidak Order", "Laporan Harian", "Briefing SPV", "Toko Baru (NOO)"], NAV);
+    await expect(nav.getByRole("link")).toHaveText(["Kontrol JKS", "Rute Hari Ini", "Toko Tidak Order", "Laporan Kunjungan", "Briefing SPV", "Toko Baru (NOO)"], NAV);
     await expect(nav.getByRole("link", { name: "Kontrol JKS" })).toHaveAttribute("aria-current", "page");
     await expect(main.getByRole("link", { name: "Dashboard SPV" })).toHaveAttribute("href", "/form-kontrol/spv-dashboard");
 
     opsi.scope = SCOPE.admin;
     await page.goto("/form-kontrol?tab=hierarki", NAV);
-    await expect(nav.getByRole("link")).toHaveText(["Kontrol JKS", "Form AO Harian", "Toko Tidak Order", "Laporan Harian", "Briefing SPV", "Kontrol SM", "Frekuensi Kunjungan", "Hierarki Sales", "Toko Baru (NOO)"], NAV);
+    await expect(nav.getByRole("link")).toHaveText(["Kontrol JKS", "Koordinat Toko", "Rute Hari Ini", "Toko Tidak Order", "Laporan Kunjungan", "Briefing SPV", "Kontrol SM", "Frekuensi Kunjungan", "Hierarki Sales", "Toko Baru (NOO)"], NAV);
     await expect(nav.getByRole("link", { name: "Hierarki Sales" })).toHaveAttribute("aria-current", "page");
     await nav.getByRole("link", { name: "Kontrol SM" }).click();
     await expect(page).toHaveURL(/tab=sm-control/);
@@ -176,10 +176,12 @@ test("Dashboard SPV: Default per salesman, Tandai sudah dibaca lewat dialog (pay
     await expect(andi.getByText("Akurasi GPS rendah 1")).toBeVisible();
     await expect(main.getByRole("article", { name: "SALES B" }).getByText("Belum kirim laporan")).toBeVisible();
     await expect(main.getByRole("article", { name: "SALES B" }).getByRole("button", { name: "Tandai sudah dibaca" })).toHaveCount(0);
-    await expect(main.locator('aside[aria-label="Usulan it05 #15"]')).toBeVisible();
+    // it05 #15 kini keterangan biasa; satu catatan varian per layar = BL-28 (audit No 80).
+    await expect(main.getByText("Persentase dihitung dari status rute yang tercatat hari itu")).toBeVisible();
+    await expect(main.locator("aside.fi-varbox")).toHaveCount(1);
 
     const tombol = andi.getByRole("button", { name: "Tandai sudah dibaca" });
-    expect((await tombol.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    expect((await tombol.boundingBox())!.height).toBeGreaterThanOrEqual(32); // mouse: tinggi kontrol 32 px; 44 px hanya di layar sentuh (audit desain 001 No 107)
     await tombol.click();
     const dialog = page.getByRole("dialog", { name: "Tandai laporan SALES A sudah dibaca?" });
     await expect(dialog).toContainText("TOKO A stok lama, kunjungi ulang Kamis.");
@@ -207,7 +209,7 @@ test("Dashboard SPV: Batalkan tanda dibaca (kontrak #132) lewat dialog → ack:f
     await expect(kartu.getByRole("button", { name: "Tandai sudah dibaca" })).toHaveCount(0);
     await expect(main.getByRole("article", { name: "SALES B" }).getByRole("button", { name: /Batalkan tanda dibaca/ })).toHaveCount(0);
     const tombol = kartu.getByRole("button", { name: "Batalkan tanda dibaca…" });
-    expect((await tombol.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    expect((await tombol.boundingBox())!.height).toBeGreaterThanOrEqual(32); // mouse: tinggi kontrol 32 px; 44 px hanya di layar sentuh (audit desain 001 No 107)
     await tombol.click();
     const dialog = page.getByRole("dialog", { name: "Batalkan tanda dibaca laporan SALES A?" });
     await expect(dialog).toContainText("Laporan kembali berstatus Menunggu dibaca");
@@ -274,7 +276,7 @@ test("Dashboard SPV (admin): pilih SPV dari Hierarki → query spvName; daftar g
 
     opsi.profilesGagal = true;
     await page.goto("/form-kontrol/spv-dashboard", NAV);
-    await expect(main.locator('aside[aria-label="Usulan it05 #16"]')).toBeVisible(NAV);
+    await expect(main.getByText("Ketik nama SPV persis seperti di Hierarki Sales.")).toBeVisible(NAV);
     await main.getByLabel("Nama SPV").fill("SPV A");
     await main.getByRole("button", { name: "Tampilkan" }).click();
     await expect(page).toHaveURL(/spv=SPV(\+|%20)A/);
@@ -390,16 +392,18 @@ test("Briefing dan Hierarki: tulis lewat dialog, payload sama dengan hari ini (t
     await main.getByLabel("SPV SALES C").selectOption("SPV A");
     await main.getByRole("listitem").filter({ hasText: "SALES C" }).getByRole("button", { name: "Simpan" }).click();
     const d2 = page.getByRole("dialog", { name: "Ubah hierarki SALES C?" });
-    await expect(d2).toContainText("— → SPV A");
+    await expect(d2).toContainText("- → SPV A");
     await d2.getByRole("button", { name: "Simpan hierarki" }).click();
     await expect(d2).toBeHidden();
     const put = tulis.find((r) => r.method() === "PUT")!;
     expect(put.postDataJSON()).toEqual({ salesCode: "S-03", spvName: "SPV A", smName: null });
 });
 
+test.describe("layar sentuh: Hierarki", () => {
+test.use({ hasTouch: true, isMobile: true }); // target 44 px dijamin density pointer kasar, bukan override inline (No 107)
 test("Hierarki (owner 13 Okt): SPV/SM dipilih dari akun; nilai tersimpan tak cocok = opsi bertanda + peringatan; galat berkode di dialog; ponsel 390 px", async ({ page }) => {
     const opsi: Opsi = { scope: SCOPE.admin, profiles: [PROFILES[0], { ...PROFILES[2], spvName: "SYAMSUL", smName: "sm a" }],
-        putProfil: [{ status: 409, body: { ok: false, kode: "NAMA_GANDA", error: "Ada 2 akun SPV aktif bernama \"SPV B\" — cakupan akan terbagi ke semuanya; ubah nama salah satu akun dulu." } }] };
+        putProfil: [{ status: 409, body: { ok: false, kode: "NAMA_GANDA", error: "Ada 2 akun SPV aktif bernama \"SPV B\"; cakupan akan terbagi ke semuanya. Ubah nama salah satu akun dulu." } }] };
     const { tulis } = await mockApi(page, opsi);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/form-kontrol?tab=hierarki", NAV);
@@ -407,11 +411,11 @@ test("Hierarki (owner 13 Okt): SPV/SM dipilih dari akun; nilai tersimpan tak coc
     const baris = main.getByRole("listitem").filter({ hasText: "SALES C" });
     const spv = main.getByLabel("SPV SALES C");
     await expect(spv).toHaveValue("SYAMSUL", NAV);
-    await expect(spv.locator("option")).toHaveText(["— kosong —", "SYAMSUL (tidak cocok dengan akun)", "SPV A", "SPV B"]);
-    await expect(baris.getByRole("status").filter({ hasText: 'SPV "SYAMSUL"' })).toContainText("tidak cocok dengan akun SPV mana pun — SPV ini tidak melihat timnya");
+    await expect(spv.locator("option")).toHaveText(["Belum dipilih", "SYAMSUL (tidak cocok dengan akun)", "SPV A", "SPV B"]);
+    await expect(baris.getByRole("status").filter({ hasText: 'SPV "SYAMSUL"' })).toContainText("tidak cocok dengan akun SPV mana pun, jadi SPV ini tidak melihat timnya");
     await expect(main.getByLabel("SM SALES C")).toHaveValue("SM A", NAV); // ejaan lain dari akun yang sama = cocok, tanpa peringatan
     await expect(baris.getByRole("status")).toHaveCount(1);
-    await expect(main.getByLabel("SM SALES A").locator("option")).toHaveText(["— kosong —", "SM A"]);
+    await expect(main.getByLabel("SM SALES A").locator("option")).toHaveText(["Belum dipilih", "SM A"]);
     expect((await spv.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await noOverflow(page);
     await page.screenshot({ path: "test-results/tim/ponsel-hierarki.png", fullPage: true });
@@ -428,6 +432,7 @@ test("Hierarki (owner 13 Okt): SPV/SM dipilih dari akun; nilai tersimpan tak coc
     expect(tulis.filter((r) => r.method() === "PUT").map((r) => r.postDataJSON())).toEqual([
         { salesCode: "S-03", spvName: "SPV B", smName: "sm a" }, { salesCode: "S-03", spvName: "SPV B", smName: "sm a" },
     ]);
+});
 });
 
 test("Briefing: Simpan dikunci saat daftar tersimpan galat dan setelah jawaban tidak pasti (cegah catatan ganda); Frekuensi SM tanpa tim", async ({ page }) => {
@@ -462,6 +467,8 @@ test("Briefing: Simpan dikunci saat daftar tersimpan galat dan setelah jawaban t
     await expect(main.getByText("Pilih salesman dan principal")).toHaveCount(0);
 });
 
+test.describe("layar sentuh: Dashboard SPV", () => {
+test.use({ hasTouch: true, isMobile: true });
 test("Ponsel 390 px: shell, Dashboard SPV, dan JKS tanpa gulir menyamping; Tandai sudah dibaca ≥ 44 px", async ({ page }) => {
     const opsi: Opsi = { scope: SCOPE.spv };
     await mockApi(page, opsi);
@@ -480,4 +487,5 @@ test("Ponsel 390 px: shell, Dashboard SPV, dan JKS tanpa gulir menyamping; Tanda
     await page.goto("/form-kontrol?tab=briefing", NAV);
     await expect(main.getByRole("button", { name: "Simpan briefing pagi" })).toBeVisible(NAV);
     await noOverflow(page);
+});
 });

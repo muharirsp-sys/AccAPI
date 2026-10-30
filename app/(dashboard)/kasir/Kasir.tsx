@@ -1,14 +1,17 @@
 /*
- * Tujuan: Layar Kasir ↔ Incaso (Fiori K2b, BL-59, it11): per ORANG per hari, setoran Kasir (Tunai/Transfer/Giro) dibandingkan pelunasan
+ * Tujuan: Layar Kasir dan Incaso (Fiori K2b, BL-59, it11): per ORANG per hari, setoran Kasir (Tunai/Transfer/Giro) dibandingkan pelunasan
  *   Incaso dari cache Accurate (K1b). Kepala (tanggal WITA, status hari, status baca, Segarkan / Baca penuh / Buka kembali), KPI, daftar orang
- *   + uang tak teralokasi + non-kas (kolom 1 FCL), rincian orang (kolom 2), kaki "Setoran…" / "Tutup hari…".
+ *   + uang tak teralokasi + non-kas (kolom 1 FCL), rincian orang (kolom 2), kaki "Catat setoran…" / "Tutup hari…" (satu alasan di kaki,
+ *   alasan setoran lain di badan halaman).
  *   Aturan: angka Incaso null = "belum terbaca" (BUKAN 0); tulis terkunci beralasan TERLIHAT (terkunci / memuat / galat / usang / tanpa izin /
  *   tidak pasti belum diperiksa); Tutup -> bila belum segar, segarkan berulang (jeda ≥ 6 dtk, maks 20×, Batal) -> muat ulang -> dialog
  *   hanya bila penghalang kosong; jawaban TIDAK PASTI -> muat ulang + bandingkan, TANPA ulang otomatis; lewat kunciBerikutnya -> muat ulang.
  * Caller: app/(dashboard)/kasir/page.tsx.
- * Dependensi: GET /api/kasir, POST /api/kasir/segarkan (kontrak docs/handover/KASIR-KONTRAK.md §7–§8), ./bersama, ./DialogKasir, components/fiori.
+ * Dependensi: GET /api/kasir, POST /api/kasir/segarkan (kontrak docs/handover/KASIR-KONTRAK.md §7–§8), ./bersama, ./DialogKasir, components/fiori,
+ *   lib/tampil (KOSONG).
  * Main Functions: Kasir (default), DetailOrang.
- * Side Effects: fetch (baca + segarkan baca-saja); tulis lewat DialogKasir; timer kunci 20.00 & jeda segarkan.
+ * Side Effects: fetch (baca + segarkan baca-saja); tulis lewat DialogKasir; timer kunci 20.00 & jeda segarkan; "hari ini" WITA dihitung ulang
+ *   di klien (useHariBeku: fokus/terlihat + 30 dtk), layar di hari lama ikut pindah bila tidak ada dialog/pembacaan berjalan (No 109).
  */
 "use client";
 
@@ -19,10 +22,12 @@ import {
 } from "@/components/fiori/core";
 import { FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import {
-    ALASAN, bacaHari, bacaRincian, bulatAtas100, jamWita, LABEL_STATUS, LABEL_TINDAK, labelEmber, labelMetode, namaTampil, rp, rpSen, segarkan, senDari,
+    ALASAN, bacaHari, bacaRincian, bulatAtas100, LABEL_STATUS, LABEL_TINDAK, labelEmber, labelMetode, namaTampil, rp, rpSen, segarkan, senDari,
     tanggalPanjang, waktuWita, type BarisOrang, type Hari, type Metode, type Rincian, type StatusBaca,
 } from "./bersama";
 import { DialogBuka, DialogHapus, DialogJelaskan, DialogSetoran, DialogTutup, type Kabar, type TargetJelaskan } from "./DialogKasir";
+import { KOSONG } from "@/lib/tampil";
+import { useHariBeku } from "../form-kontrol/lapangan";
 
 /** Segarkan berulang (§7 catatan K2): jeda ≥ 6 dtk antarpanggilan + batas ulang. */
 export const JEDA_SEGARKAN_MS = 6_000;
@@ -44,12 +49,12 @@ const DITOLAK_PEMBACA = new Set(["ditolak", "bentuk", "nominal"]);
 function statusBaca(b: StatusBaca | null): { tone: Tone; teks: string } {
     if (!b) return { tone: "neg", teks: "Sesi Accurate akun sinkron belum tersedia" };
     const n = b.jumlahDaftar !== null && b.sisaDetail !== null ? `${b.jumlahDaftar - b.sisaDetail}/${b.jumlahDaftar}` : "";
-    const tunda = b.penuhTertundaPada ? ` · baca penuh tertunda sejak ${waktuWita(b.penuhTertundaPada)}` : "";
-    const dasar: { tone: Tone; teks: string } = b.status === "lengkap" ? { tone: "pos", teks: `Lengkap ${jamWita(b.lengkapPada)} WITA${b.akun ? ` · akun sinkron ${b.akun}` : ""}` }
+    const tunda = b.penuhTertundaPada ? ` · baca penuh tertunda sejak ${waktuWita(b.penuhTertundaPada)} WITA` : "";
+    const dasar: { tone: Tone; teks: string } = b.status === "lengkap" ? { tone: "pos", teks: `Lengkap ${waktuWita(b.lengkapPada)} WITA${b.akun ? ` · akun sinkron ${b.akun}` : ""}` }
         : b.status === "sebagian" ? { tone: "info", teks: `Membaca ${n || "sebagian"}` }
-        : b.status === "berjalan" ? (b.aktif ? { tone: "info", teks: "Sedang dibaca" } : { tone: "warn", teks: "Pembaca terhenti — tekan Segarkan" })
-        : b.status === "gagal" ? { tone: "neg", teks: `Gagal dibaca: ${SEBAB_BACA[b.sebab ?? ""] ?? b.sebab ?? "galat"}${b.pesan ? ` — ${b.pesan}` : ""}` }
-        : { tone: "warn", teks: "Belum dibaca — tekan Segarkan" };
+        : b.status === "berjalan" ? (b.aktif ? { tone: "info", teks: "Sedang dibaca" } : { tone: "warn", teks: "Pembaca terhenti; tekan Segarkan" })
+        : b.status === "gagal" ? { tone: "neg", teks: `Gagal dibaca: ${SEBAB_BACA[b.sebab ?? ""] ?? "sebab tidak dikenal"}${b.pesan ? `. ${b.pesan}` : ""}` }
+        : { tone: "warn", teks: "Belum dibaca; tekan Segarkan" };
     return { ...dasar, teks: dasar.teks + tunda };
 }
 
@@ -57,11 +62,12 @@ function statusHari(h: Hari): { tone: Tone; teks: string } {
     const ev = h.hari.event;
     if (h.hari.terkunci) {
         const tutup = [...ev].reverse().find((e) => e.jenis === "tutup");
-        return h.hari.sebab === "tutup" && tutup ? { tone: "pos", teks: `Ditutup ${jamWita(tutup.pada)} WITA oleh ${tutup.oleh}` } : { tone: "neu", teks: "Terkunci otomatis 20.00 WITA" };
+        return h.hari.sebab === "tutup" && tutup ? { tone: "pos", teks: `Ditutup ${waktuWita(tutup.pada)} WITA oleh ${tutup.oleh}` } : { tone: "neu", teks: "Terkunci otomatis 20.00 WITA" };
     }
     const akhir = ev.at(-1);
     if (akhir?.jenis === "buka") return { tone: "warn", teks: `Dibuka kembali oleh ${akhir.oleh}: ${akhir.alasan ?? ""} · terkunci lagi ${waktuWita(h.hari.kunciBerikutnya)} WITA` };
-    return { tone: "info", teks: `Terbuka sampai ${jamWita(h.hari.kunciBerikutnya) || "20.00"} WITA` };
+    const sampai = waktuWita(h.hari.kunciBerikutnya);
+    return { tone: "info", teks: `Terbuka sampai ${sampai === KOSONG ? "20.00" : sampai} WITA` };
 }
 
 const badgeOrang = (b: BarisOrang) => b.status === null ? <StatusBadge tone="neu">Incaso belum terbaca</StatusBadge>
@@ -70,7 +76,7 @@ const badgeOrang = (b: BarisOrang) => b.status === null ? <StatusBadge tone="neu
 
 const tunda = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariIni: string }) {
+export default function Kasir({ permKeys, hariIni, jamServerMs }: { permKeys: string[]; hariIni: string; jamServerMs: number }) {
     const keys = useMemo(() => new Set(permKeys), [permKeys]);
     const izin = { catat: keys.has("kasir.catat"), tutup: keys.has("kasir.tutup"), buka: keys.has("kasir.buka") };
     const [tanggal, setTanggal] = useState(hariIni);
@@ -103,11 +109,26 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
         return () => clearTimeout(t);
     }, [kb, sekarangServer]);
 
-    const gantiTanggal = (t: string) => {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(t) || t > hariIni) return;
+    const [tawar, setTawar] = useState<string | null>(null); // hari baru yang ditawarkan (strip "Pindah ke hari ini")
+    const pindahKe = (t: string) => {
         if (token.current) token.current.batal = true;
         raguKe.current += 1;
-        setTanggal(t); setPilih(null); setDialog(null); setSukses(null); setRagu(null); setProses(null); setPesanBaca(null);
+        setTanggal(t); setPilih(null); setDialog(null); setSukses(null); setRagu(null); setProses(null); setPesanBaca(null); setTawar(null);
+    };
+    // "Hari ini" dihitung ulang di klien (WITA) saat tab fokus/terlihat lagi dan lewat tengah malam (owner 27 Okt, audit No 109): layar yang
+    // masih di hari lama ikut pindah; tanggal pilihan user tidak ditimpa; dialog, pembacaan, dan hasil tulis yang belum pasti (strip "belum
+    // pasti", juga selama diperiksa) tidak dipindah diam-diam: strip "Pindah ke hari ini" (tinjauan K2 S-1).
+    // Hari dihitung dari jam SERVER (selisih sekali saat dibuka), bukan jam peramban yang bisa miring: route menolak tanggal di atas hari server
+    // (tinjauan K2 R-1). ponytail: selisih memuat latensi render (detik); diperbarui hanya saat halaman dimuat ulang.
+    const [selisihJam] = useState(() => jamServerMs - Date.now());
+    const { hariBaru: hariKini } = useHariBeku((baru, lama) => {
+        if (tanggal !== lama) return;
+        if (dialog || proses || ragu) setTawar(baru); else pindahKe(baru);
+    }, selisihJam);
+    const batasHari = hariKini > hariIni ? hariKini : hariIni;
+    const gantiTanggal = (t: string) => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(t) || t > batasHari) return;
+        pindahKe(t);
     };
 
     async function periksaRagu(aksi: string, periksa: (x: Hari) => string) {
@@ -200,7 +221,7 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
             : proses ? "Sedang membaca pelunasan Accurate…"
                 : !h.baca ? "Sesi Accurate akun sinkron belum tersedia; minta admin login ulang di Sesi Accurate."
                     : hapusMassal ? "Penghapusan pelunasan dari cache menunggu konfirmasi OM/Admin."
-                        : ditolak.length ? "Ada pelunasan ditolak pembaca; perbaiki di Accurate dulu — hari tak bisa ditutup."
+                        : ditolak.length ? "Ada pelunasan ditolak pembaca; perbaiki di Accurate dulu. Hari tak bisa ditutup."
                             : penghalang ? `${penghalang.length} hal belum dijelaskan: ${penghalang[0]}`
                                 : undefined);
 
@@ -215,16 +236,16 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
     const sb = h ? statusBaca(h.baca) : null;
     const kepala = (
         <header className="fi-page-head">
-            <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Keuangan</span></li><li><span aria-current="page">Kasir ↔ Incaso</span></li></ol></nav>
+            <nav aria-label="Jejak halaman"><ol className="fi-crumb"><li><span>Keuangan</span></li><li><span aria-current="page">Kasir dan Incaso</span></li></ol></nav>
             <div className="fi-page-bar">
-                <h1>Kasir ↔ Incaso</h1>
-                {sh && <span aria-live="polite"><StatusBadge tone={sh.tone}>{sh.teks}</StatusBadge></span>}
+                <h1>Kasir dan Incaso</h1>
+                {sh && <span aria-live="polite"><StatusBadge tone={sh.tone} wrap>{sh.teks}</StatusBadge></span>}
                 <span className="fi-spacer" />
                 <Button icon={<RefreshCw className="fi-icon" aria-hidden />} busy={proses?.tujuan === "segarkan"} disabled={Boolean(proses) || !h}
                     disabledReason={proses ? "Sedang membaca pelunasan" : "Data hari belum dimuat"} onClick={() => void bacaPelunasan("segarkan")}>Segarkan</Button>
                 {izin.buka && (
                     <Button variant="tertiary" icon={<RotateCcw className="fi-icon" aria-hidden />} disabled={Boolean(proses) || !h}
-                        disabledReason="Sedang membaca pelunasan" onClick={() => void bacaPelunasan("segarkan", { penuh: true })}>Baca penuh</Button>
+                        disabledReason={proses ? "Sedang membaca pelunasan" : "Data hari belum dimuat"} onClick={() => void bacaPelunasan("segarkan", { penuh: true })}>Baca penuh</Button>
                 )}
                 {h?.hari.terkunci && (
                     <Button icon={<LockKeyholeOpen className="fi-icon" aria-hidden />} disabled={!izin.buka || Boolean(kunciUmum)}
@@ -235,11 +256,11 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
                 setoran = pelunasan dibulatkan ke atas ke Rp 100.</p>
             <div className="flex flex-wrap items-end gap-3">
                 <FormField label="Tanggal">
-                    {(a) => <input {...a} className="fi-input" type="date" max={hariIni} value={tanggal} onChange={(e) => gantiTanggal(e.target.value)} />}
+                    {(a) => <input {...a} className="fi-input" type="date" max={batasHari} value={tanggal} onChange={(e) => gantiTanggal(e.target.value)} />}
                 </FormField>
                 <dl className="fi-attrs">
                     <div><dt>Hari</dt><dd>{tanggalPanjang(tanggal)}{h && !h.hari.hariKerja ? " (Minggu)" : ""}</dd></div>
-                    <div><dt>Pelunasan Accurate</dt><dd>{sb ? <StatusBadge tone={sb.tone} busy={h?.baca?.status === "berjalan" && h.baca.aktif}>{sb.teks}</StatusBadge> : "—"}</dd></div>
+                    <div><dt>Pelunasan Accurate</dt><dd>{sb ? <StatusBadge tone={sb.tone} wrap busy={h?.baca?.status === "berjalan" && h.baca.aktif}>{sb.teks}</StatusBadge> : KOSONG}</dd></div>
                     {h?.hari.terkunci && !izin.buka && <div><dt>Buka kembali</dt><dd className="fi-small">{ALASAN.buka}</dd></div>}
                 </dl>
             </div>
@@ -262,12 +283,12 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
     const nSelisih = h.orang.filter((o) => o.status === "selisih" && !o.dijelaskan).length;
     const nBelum = h.orang.filter((o) => o.status === "belum_setor" && !o.dijelaskan).length;
     const kpi: Array<[string, ReactNode, ReactNode, Tone?]> = [
-        ["Pelunasan Incaso", L ? rp(h.total.pelunasan) : "—", L ? <small>{h.orang.reduce((a, o) => a + (o.jumlahFaktur ?? 0), 0)} faktur · {h.orang.filter((o) => o.pelunasan && senDari(o.pelunasan)).length} orang</small> : belum],
+        ["Pelunasan Incaso", L ? rp(h.total.pelunasan) : KOSONG, L ? <small>{h.orang.reduce((a, o) => a + (o.jumlahFaktur ?? 0), 0)} faktur · {h.orang.filter((o) => o.pelunasan && senDari(o.pelunasan)).length} orang</small> : belum],
         ["Setoran Kasir", rp(h.total.setoran), <small key="s">{h.orang.filter((o) => o.setoran).length} orang mencatat setoran</small>],
-        ["Selisih", L ? rp(h.total.selisih) : "—", L ? <small>{nSelisih} selisih · {nBelum} belum setor (belum dijelaskan)</small> : belum, L && senDari(h.total.selisih) ? "neg" : undefined],
-        ["Klop", L ? `${h.total.klop} dari ${h.total.jumlahOrang}` : "—", L ? <small>orang</small> : belum, "pos"],
-        ["Tak teralokasi", L ? `${h.total.takTeralokasiBelumDijelaskan} belum dijelaskan` : "—", L ? <small>{rp(h.total.takTeralokasi)}</small> : belum, L && h.total.takTeralokasiBelumDijelaskan ? "warn" : undefined],
-        ["Non-kas", L ? rp(h.total.nonKas) : "—", L ? <small>{h.nonKas?.length ?? 0} pelunasan · info</small> : belum],
+        ["Selisih", L ? rp(h.total.selisih) : KOSONG, L ? <small>{nSelisih} selisih · {nBelum} belum setor (belum dijelaskan)</small> : belum, L && senDari(h.total.selisih) ? "neg" : undefined],
+        ["Klop", L ? `${h.total.klop} dari ${h.total.jumlahOrang}` : KOSONG, L ? <small>orang</small> : belum, "pos"],
+        ["Tak teralokasi", L ? `${h.total.takTeralokasiBelumDijelaskan} belum dijelaskan` : KOSONG, L ? <small>{rp(h.total.takTeralokasi)}</small> : belum, L && h.total.takTeralokasiBelumDijelaskan ? "warn" : undefined],
+        ["Non-kas", L ? rp(h.total.nonKas) : KOSONG, L ? <small>{h.nonKas?.length ?? 0} pelunasan · info</small> : belum],
     ];
 
     const baris = pilih === null ? null : h.orang.find((o) => o.orang === pilih) ?? null;
@@ -275,16 +296,17 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
         <div className="grid gap-3">
             <Section title="Orang" subtitle={`${h.orang.length} orang`}>
                 {h.orang.length === 0 ? (
-                    L ? <EmptyState title={`Belum ada pelunasan Incaso untuk ${tanggalPanjang(tanggal)}`} message="Baris muncul per orang begitu Admin Incaso menginput pelunasan ke Accurate. Setoran tetap bisa dicatat lebih dulu lewat Setoran…." />
-                        : <EmptyState title="Belum ada setoran tercatat" message="Pelunasan Incaso belum terbaca lengkap — daftar belum bisa disimpulkan kosong. Setoran tetap bisa dicatat lewat Setoran…." />
+                    L ? <EmptyState title={`Belum ada pelunasan Incaso untuk ${tanggalPanjang(tanggal)}`} message="Baris muncul per orang begitu Admin Incaso menginput pelunasan ke Accurate. Setoran tetap bisa dicatat lebih dulu lewat Catat setoran…." />
+                        : <EmptyState title="Belum ada setoran tercatat" message="Pelunasan Incaso belum terbaca lengkap, jadi daftar belum bisa disimpulkan kosong. Setoran tetap bisa dicatat lewat Catat setoran…." />
                 ) : (
                     <ul aria-label="Daftar orang" style={{ listStyle: "none", padding: 0, margin: 0 }}>
                         {h.orang.map((o) => (
                             <li key={o.orang || "tanpa"}>
+                                {/* Nilai utama = selisih (penentu klop); Incaso dan Kasir sebaris di judul supaya baris bisa dibandingkan sekilas. */}
                                 <ListItem current={pilih === o.orang} onClick={() => setPilih(o.orang)} doc={namaTampil(o)}
-                                    amount={o.setoran ? rp(o.setoran.total) : "—"}
-                                    title={o.pelunasan === null ? "Incaso belum terbaca" : `Incaso ${rp(o.pelunasan)} · ${o.jumlahFaktur ?? 0} faktur`}
-                                    meta={`Kasir ${o.setoran ? rp(o.setoran.total) : "belum setor"} · selisih ${o.selisih === null ? "—" : rp(o.selisih)}`}
+                                    amount={o.status === "klop" ? "Klop" : o.selisih === null ? KOSONG : rp(o.selisih)}
+                                    title={`Incaso ${o.pelunasan === null ? "belum terbaca" : rp(o.pelunasan)} · Kasir ${o.setoran ? rp(o.setoran.total) : "belum setor"}`}
+                                    meta={o.pelunasan === null ? "Faktur belum terbaca" : `${o.jumlahFaktur ?? 0} faktur`}
                                     badge={badgeOrang(o)} />
                             </li>
                         ))}
@@ -304,7 +326,7 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
                                         <span className="fi-spacer" /><b className="fi-tnum">{rp(e.sisa)}</b>
                                     </div>
                                     <span className="fi-small">{labelEmber(e)} · {labelMetode(e.metode)} {rp(e.chequeAmount)} · faktur {rp(e.jumlahInvoicePayment)}{e.orang.length ? ` · ${e.orang.map(namaTampil).join(", ")}` : ""}</span>
-                                    {catat && <span className="fi-small fi-muted">“{catat.penjelasan}” — {catat.oleh}, {waktuWita(catat.pada)}{catat.berlaku === false ? " (tidak berlaku lagi: angka berubah)" : ""}</span>}
+                                    {catat && <span className="fi-small fi-muted">“{catat.penjelasan}” oleh {catat.oleh}, {waktuWita(catat.pada)} WITA{catat.berlaku === false ? " (tidak berlaku lagi: angka berubah)" : ""}</span>}
                                     <div className="fi-btnrow">
                                         <Button disabled={Boolean(kunciJelaskan)} disabledReason={kunciJelaskan}
                                             onClick={() => setDialog({ jenis: "jelaskan", target: { jenis: "tak_teralokasi", pelunasanId: e.pelunasanId } })}>
@@ -318,7 +340,7 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
                 </Section>
             )}
             {(h.nonKas?.length ?? 0) > 0 && (
-                <Section title="Non-kas" subtitle="retur / ayat silang — info, tidak dihitung">
+                <Section title="Non-kas" subtitle="retur dan ayat silang; info, tidak dihitung">
                     <ul aria-label="Pelunasan non-kas" style={{ listStyle: "none", padding: 0, margin: 0 }}>
                         {h.nonKas!.map((x) => <li key={x.pelunasanId}><ListItem doc={x.nomor} amount={rp(x.chequeAmount)} meta={labelMetode(x.metode)} /></li>)}
                     </ul>
@@ -341,6 +363,12 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
         <div className="fi-page">
             {kepala}
             {sukses && <MessageStrip tone="pos" onClose={() => setSukses(null)}>{sukses}</MessageStrip>}
+            {tawar && tawar !== tanggal && (
+                <MessageStrip tone="info" title={`Hari sudah berganti ke ${tanggalPanjang(tawar)}.`} onClose={() => setTawar(null)}>
+                    Layar tetap di {tanggalPanjang(tanggal)} karena ada pekerjaan yang belum selesai.{" "}
+                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => pindahKe(tawar)}>Pindah ke hari ini</button>
+                </MessageStrip>
+            )}
             {ragu && (
                 <MessageStrip tone="warn" title={`Hasil ${ragu.aksi} belum pasti.`} onClose={ragu.status === "memeriksa" ? undefined : () => setRagu(null)}>
                     Server tidak memberi jawaban yang pasti; tidak diulang otomatis.{" "}
@@ -369,7 +397,7 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
             )}
             {ditolak.length > 0 && (
                 <MessageStrip tone="neg" title={`${ditolak.length} pelunasan ditolak pembaca:`}>
-                    {ditolak.map((d) => `${d.nomor || `id ${d.id}`} (${d.pesan || SEBAB_BACA[d.sebab] || d.sebab})`).join("; ")}. Perbaiki di Accurate; hari tak bisa ditutup sampai terbaca.
+                    {ditolak.map((d) => `${d.nomor || `id ${d.id}`} (${d.pesan || SEBAB_BACA[d.sebab] || "sebab tidak dikenal"})`).join("; ")}. Perbaiki di Accurate; hari tak bisa ditutup sampai terbaca.
                 </MessageStrip>
             )}
             {hapusMassal && (
@@ -383,18 +411,20 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
             {h.hari.berubahSejakDitutup && (
                 <MessageStrip tone="warn" title="Angka berubah sejak hari ditutup/terkunci.">Pelunasan Incaso diubah sesudahnya; hubungi OM bila hari perlu dibuka kembali.</MessageStrip>
             )}
-            {/* Nilai Rupiah panjang: kartu ≥ 12rem dan huruf judul 2 (bukan huruf KPI) supaya angka tidak terpotong ke baris baru. */}
-            <div className="fi-kcards" role="group" aria-label="Ringkasan hari" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 12rem), 1fr))" }}>
+            {/* Ponsel 360 px: dua kartu per baris dengan huruf judul 3 supaya Rupiah panjang tidak patah; ≥ 640 px kembali huruf judul 2. */}
+            <div className="fi-kcards [--kpi-font:var(--fs-title-3)] sm:[--kpi-font:var(--fs-title-2)]" role="group" aria-label="Ringkasan hari"
+                style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 9rem), 1fr))" }}>
                 {kpi.map(([label, nilai, sub, tone]) => (
-                    <div key={label} className="fi-kc" data-tone={tone} role="group" aria-label={label}><span>{label}</span><b style={{ font: "var(--fs-title-2)", fontVariantNumeric: "tabular-nums" }}>{nilai}</b>{sub}</div>
+                    <div key={label} className="fi-kc" data-tone={tone} role="group" aria-label={label}><span>{label}</span><b style={{ font: "var(--kpi-font)", fontVariantNumeric: "tabular-nums" }}>{nilai}</b>{sub}</div>
                 ))}
             </div>
             <FlexibleColumnLayout list={daftar} detail={detail} detailOpen={baris !== null} onBack={() => setPilih(null)} listLabel="Daftar orang dan uang" detailLabel="Rincian orang" />
-            <FooterToolbar message={[kunciTutup ?? (!L ? "Angka Incaso belum terbaca — Tutup hari… akan menyegarkan pelunasan dulu"
-                : `Klop ${h.total.klop} dari ${h.total.jumlahOrang} · ${h.segarUntukTutup ? "siap ditutup" : "pelunasan akan disegarkan dulu sebelum ditutup"}`),
-                kunciSetoran && kunciSetoran !== kunciTutup ? `Setoran: ${kunciSetoran}` : null].filter(Boolean).join(" · ")}>
+            {/* Kaki memuat satu alasan (Tutup hari); alasan setoran yang berbeda tampil di sini supaya tetap terbaca di ponsel. */}
+            {kunciSetoran && kunciSetoran !== kunciTutup && <p className="fi-small fi-why">Catat setoran: {kunciSetoran}</p>}
+            <FooterToolbar message={kunciTutup ?? (!L ? "Angka Incaso belum terbaca; Tutup hari… menyegarkan pelunasan dulu."
+                : `Klop ${h.total.klop} dari ${h.total.jumlahOrang} · ${h.segarUntukTutup ? "siap ditutup" : "pelunasan akan disegarkan dulu sebelum ditutup"}`)}>
                 <Button icon={<HandCoins className="fi-icon" aria-hidden />} disabled={Boolean(kunciSetoran)} disabledReason={kunciSetoran}
-                    onClick={() => setDialog({ jenis: "setoran", orang: null })}>Setoran…</Button>
+                    onClick={() => setDialog({ jenis: "setoran", orang: null })}>Catat setoran…</Button>
                 <Button variant="primary" icon={<Lock className="fi-icon" aria-hidden />} disabled={Boolean(kunciTutup)} disabledReason={kunciTutup} onClick={mulaiTutup}>Tutup hari…</Button>
             </FooterToolbar>
 
@@ -432,7 +462,7 @@ function DetailOrang({ h, b, tanggal, kunciSetoran, kunciJelaskan, onSetoran, on
                 <dl className="fi-attrs">
                     <div><dt>Pelunasan Incaso</dt><dd>{b.pelunasan === null ? "belum terbaca" : `${rp(b.pelunasan)} · ${b.jumlahFaktur ?? 0} faktur`}</dd></div>
                     <div><dt>Setoran Kasir</dt><dd>{b.setoran ? rp(b.setoran.total) : "belum setor"}</dd></div>
-                    <div><dt>Selisih</dt><dd>{b.selisih === null ? "—" : rp(b.selisih)}</dd></div>
+                    <div><dt>Selisih</dt><dd>{b.selisih === null ? KOSONG : rp(b.selisih)}</dd></div>
                     {b.kode.length > 1 && <div><dt>Kode digabung</dt><dd>{b.kode.join(", ")}</dd></div>}
                 </dl>
             </header>
@@ -446,7 +476,7 @@ function DetailOrang({ h, b, tanggal, kunciSetoran, kunciJelaskan, onSetoran, on
                 <Section title="Pelunasan vs setoran per metode">
                     <div className="fi-sect-in grid gap-2">
                         <KeyValues items={METODE.map((m) => [labelMetode(m),
-                            `Incaso ${b.pelunasanPerMetode ? rp(b.pelunasanPerMetode[m] ?? "0") : "belum terbaca"} · Kasir ${b.setoran ? rp(b.setoran[SETOR[m]]) : "—"}`] as [string, ReactNode])} />
+                            `Incaso ${b.pelunasanPerMetode ? rp(b.pelunasanPerMetode[m] ?? "0") : "belum terbaca"} · Kasir ${b.setoran ? rp(b.setoran[SETOR[m]]) : "belum setor"}`] as [string, ReactNode])} />
                         <p className="fi-small fi-muted">
                             {pel === null ? "Aturan klop terbaca sesudah pelunasan Incaso terbaca lengkap."
                                 : `Klop bila setoran ${rpSen(pel)}${atas !== pel ? ` atau ${rpSen(atas!)} (dibulatkan ke atas ke Rp 100)` : ""}; selain itu selisih wajib dijelaskan.`}
@@ -469,10 +499,10 @@ function DetailOrang({ h, b, tanggal, kunciSetoran, kunciJelaskan, onSetoran, on
                     <Section title="Setoran terakhir" subtitle={`${t.kode} revisi ${t.revisi}`}>
                         <div className="fi-sect-in">
                             <KeyValues items={[
-                                ["Nomor Form Kasir", t.noFormKasir ?? "—"],
-                                ["Bukti transfer", t.buktiUrl ? <a key="b" href={t.buktiUrl} target="_blank" rel="noopener noreferrer">Lihat bukti</a> : "—"],
-                                ...(t.giroNomor ? [["Giro", `BG ${t.giroNomor} · jatuh tempo ${t.giroJatuhTempo ? tanggalPanjang(t.giroJatuhTempo) : "—"}`] as [string, ReactNode]] : []),
-                                ["Catatan", t.catatan ?? "—"],
+                                ["Nomor Form Kasir", t.noFormKasir ?? KOSONG],
+                                ["Bukti transfer", t.buktiUrl ? <a key="b" href={t.buktiUrl} target="_blank" rel="noopener noreferrer">Lihat bukti</a> : KOSONG],
+                                ...(t.giroNomor ? [["Giro", `BG ${t.giroNomor} · jatuh tempo ${t.giroJatuhTempo ? tanggalPanjang(t.giroJatuhTempo) : KOSONG}`] as [string, ReactNode]] : []),
+                                ["Catatan", t.catatan ?? KOSONG],
                                 ["Dicatat", `${t.oleh} · ${waktuWita(t.pada)} WITA`],
                             ]} />
                         </div>
@@ -491,7 +521,7 @@ function DetailOrang({ h, b, tanggal, kunciSetoran, kunciJelaskan, onSetoran, on
                                             Revisi {r.revisi}: Tunai {rp(r.tunai)} · Transfer {rp(r.transfer)} · Giro {rp(r.giro)} · total {rp(r.total)}
                                             {r.noFormKasir ? ` · Form ${r.noFormKasir}` : ""}{r.giroNomor ? ` · BG ${r.giroNomor}` : ""}
                                             {r.buktiUrl ? <> · <a href={r.buktiUrl} target="_blank" rel="noopener noreferrer">bukti</a></> : null}
-                                            {r.catatan ? ` · “${r.catatan}”` : ""} — {r.oleh}, {waktuWita(r.pada)}
+                                            {r.catatan ? ` · “${r.catatan}”` : ""} · {r.oleh}, {waktuWita(r.pada)} WITA
                                         </li>
                                     ))}
                                 </ul>
@@ -505,7 +535,7 @@ function DetailOrang({ h, b, tanggal, kunciSetoran, kunciJelaskan, onSetoran, on
                             <ul className="fi-berkas">
                                 {jelas.map((p) => p.jenis === "selisih" && (
                                     <li key={p.id} className="fi-small">
-                                        “{p.penjelasan}” · {LABEL_TINDAK[p.tindakLanjut] ?? p.tindakLanjut} · pelunasan {rp(p.pelunasan)} / setoran {rp(p.setoran)} — {p.oleh}, {waktuWita(p.pada)}{" "}
+                                        “{p.penjelasan}” · {LABEL_TINDAK[p.tindakLanjut] ?? p.tindakLanjut} · pelunasan {rp(p.pelunasan)} / setoran {rp(p.setoran)} · {p.oleh}, {waktuWita(p.pada)} WITA{" "}
                                         {p.berlaku === true ? <StatusBadge tone="pos">Berlaku</StatusBadge> : p.berlaku === false ? <StatusBadge tone="warn">Tidak berlaku lagi (angka berubah)</StatusBadge> : null}
                                     </li>
                                 ))}

@@ -6,15 +6,16 @@
  * Side Effects: Tidak ada; tidak mengubah hak akses.
  */
 import {
-    FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, ClipboardList, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, MapPinned, PackageSearch, HandCoins, Banknote, ChartColumn, type LucideIcon } from "lucide-react";
+    FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, MapPinned, PackageSearch, HandCoins, Banknote, ChartColumn,
+    Inbox, FileCheck2, ChartPie, BadgePercent, ListChecks, MessageSquareText, UserRoundCheck, Building2, ArrowLeftRight, FileCog, type LucideIcon } from "lucide-react";
 
-/** `short` = label navigasi bawah ponsel (≤ 10 huruf); bawaan kata pertama `name`. */
+/** `short` = label navigasi bawah ponsel (≤ 10 huruf, unik di katalog); bawaan kata pertama `name`. */
 export type WorkspaceItem = { name: string; href: string; icon: LucideIcon; short?: string };
 export type WorkspaceGroup = { id: string; name: string; description: string; icon: LucideIcon; items: WorkspaceItem[] };
 export const HOME_ITEM: WorkspaceItem = { name: "Beranda", href: "/", icon: Home };
 export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
     { id: "sales", name: "Penjualan", description: "Telusuri faktur dan riwayat transaksi pelanggan.", icon: TrendingUp, items: [
-        { name: "Order Masuk", href: "/orders", icon: ClipboardList, short: "Masuk" },
+        { name: "Order Masuk", href: "/orders", icon: Inbox, short: "Ord. Masuk" },
         { name: "Order Principal", href: "/principal-order", icon: FileSpreadsheet },
         // Halaman sales di lapangan; hanya tampil untuk akun berizin `websales.create`.
         { name: "Order Sales", href: "/sales", icon: Smartphone, short: "Sales" },
@@ -25,10 +26,10 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
     { id: "promo", name: "Promo & Klaim", description: "Susun program, periksa diskon, dan kelola klaim.", icon: Tags, items: [
         { name: "Summary Promo", href: "/summary", icon: CalendarCheck2 },
         { name: "OFF Program Control", href: "/off-program-control", icon: ClipboardCheck, short: "OPC" },
-        { name: "Claim Workflow", href: "/claim-workflow", icon: ReceiptText, short: "Klaim" },
+        { name: "Claim Workflow", href: "/claim-workflow", icon: FileCheck2, short: "Klaim" },
         { name: "Aturan Promo", href: "/aturan-promo", icon: Percent },
-        { name: "Rekap Promo", href: "/rekap-promo", icon: Percent },
-        { name: "Normalisasi Diskon", href: "/normalisasi-diskon", icon: Percent },
+        { name: "Rekap Promo", href: "/rekap-promo", icon: ChartPie },
+        { name: "Normalisasi Diskon", href: "/normalisasi-diskon", icon: BadgePercent },
     ] },
     { id: "warehouse", name: "Gudang", description: "Susun rekapan dan siapkan pengambilan barang.", icon: PackageCheck, items: [
         { name: "Rekapan Nota", href: "/rekapan-nota", icon: PackageCheck },
@@ -37,31 +38,31 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
         { name: "Finance", href: "/finance", icon: DollarSign },
         // Wizard Pelunasan (S6e-2): kirim sales-receipt ke Accurate; dibuka pemegang `pelunasan.kirim` (Admin Incaso, Finance).
         { name: "Pelunasan", href: "/pelunasan", icon: HandCoins },
-        // Kasir ↔ Incaso (K2b, BL-59): setoran Kasir per orang per hari lawan pelunasan Incaso; dibuka pemegang `kasir.view` (Kasir, OM, Admin).
-        { name: "Kasir ↔ Incaso", href: "/kasir", icon: Banknote, short: "Kasir" },
-        { name: "Pembayaran / SPPD", href: "/payments", icon: Wallet, short: "Pembayaran" },
+        // Kasir dan Incaso (K2b, BL-59): setoran Kasir per orang per hari lawan pelunasan Incaso; dibuka pemegang `kasir.view` (Kasir, OM, Admin).
+        { name: "Kasir dan Incaso", href: "/kasir", icon: Banknote, short: "Kasir" },
+        { name: "Pembayaran dan SPPD", href: "/payments", icon: Wallet, short: "Pembayaran" },
         { name: "Format SPPD", href: "/payments/sppd", icon: FileText },
         { name: "Rekonsiliasi", href: "/reconciliation", icon: GitCompareArrows },
     ] },
     { id: "operations", name: "Operasional Sales", description: "Pantau aktivitas tim, insentif, dan laporan harian.", icon: Users, items: [
-        { name: "Form Kontrol", href: "/form-kontrol", icon: ClipboardList, short: "Kontrol" },
+        { name: "Form Kontrol", href: "/form-kontrol", icon: ListChecks, short: "Kontrol" },
         // Supervisor Review (owner 16 Okt 2026): ringkasan harian per salesman + peta kunjungan; dibuka pemegang `supervisor_review.view`.
         { name: "Supervisor Review", href: "/supervisor-review", icon: MapPinned, short: "Supervisor" },
         // Laporan Sales (owner 20 Okt 2026): Top 30, Monitoring Harian, Target vs Realisasi, Drop Size, Coverage Ganda, Tidak Order.
         { name: "Laporan Sales", href: "/laporan-sales", icon: ChartColumn, short: "Lap. Sales" },
         { name: "Insentif Sales", href: "/insentif-sales", icon: Trophy },
-        { name: "Laporan Harian", href: "/laporan-harian", icon: Send },
-        { name: "Penerima laporan", href: "/laporan-harian/mapping", icon: Users, short: "Penerima" },
+        { name: "Laporan Harian", href: "/laporan-harian", icon: MessageSquareText, short: "Lap. Harian" },
+        { name: "Penerima laporan", href: "/laporan-harian/mapping", icon: UserRoundCheck, short: "Penerima" },
     ] },
     { id: "settings", name: "Pengaturan", description: "Atur integrasi Accurate, master data, dan akses.", icon: Settings2, items: [
-        { name: "AOL Form Engine", href: "/api-wrapper", icon: Settings2, short: "AOL" },
+        { name: "Formulir Accurate (AOL)", href: "/api-wrapper", icon: FileCog, short: "AOL" },
         { name: "Master Barang", href: "/master-barang", icon: PackageSearch, short: "Barang" },
-        { name: "Master Principle", href: "/principles", icon: Database, short: "Master" },
+        { name: "Master Principal", href: "/principles", icon: Database, short: "Master" },
         // Data Principal (S7b): daftar resmi principal + varian + alias; dibuka pemegang `principles.view`, tulis `principles.upload`.
-        { name: "Data Principal", href: "/data-principal", icon: Database, short: "Principal" },
-        { name: "Mapping Principal", href: "/principal-mapping", icon: Database },
-        { name: "User & RBAC", href: "/admin/users", icon: Shield },
-        { name: "Kelola Akses Group", href: "/admin/groups", icon: ShieldCheck, short: "Akses" },
+        { name: "Data Principal", href: "/data-principal", icon: Building2, short: "Principal" },
+        { name: "Mapping Principal", href: "/principal-mapping", icon: ArrowLeftRight },
+        { name: "User dan Izin", href: "/admin/users", icon: Shield, short: "User" },
+        { name: "Kelola Akses Grup", href: "/admin/groups", icon: ShieldCheck, short: "Akses" },
     ] },
 ];
 

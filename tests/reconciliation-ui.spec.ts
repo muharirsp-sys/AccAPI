@@ -131,13 +131,13 @@ test("uses the registry and shows mapping access plus paginated persisted histor
   });
 
   await page.goto("/reconciliation");
-  await expect(page.getByLabel("Prinsipal").locator("option")).toHaveText(["KINO", "GODREJ", "SHINZUI", "MOTASA", "CUSSONS"]);
+  await expect(page.getByLabel("Principal", { exact: true }).locator("option")).toHaveText(["KINO", "GODREJ", "SHINZUI", "MOTASA", "CUSSONS"]);
   await page.getByRole("button", { name: "Pembelian" }).click();
-  await expect(page.getByLabel("Prinsipal").locator("option")).toHaveText(["GODREJ", "RECKITT", "CUSSONS", "KINO", "FORISA"]);
+  await expect(page.getByLabel("Principal", { exact: true }).locator("option")).toHaveText(["GODREJ", "RECKITT", "CUSSONS", "KINO", "FORISA"]);
   await expect(page.getByLabel("Stempel versi mapping").getByText("mapping-godrej.xlsx", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Ganti mapping")).toHaveCount(0);
   await page.getByRole("button", { name: "Return" }).click();
-  await expect(page.getByLabel("Prinsipal").locator("option")).toHaveText(["SHINZUI", "KINO", "GODREJ", "HEINZ", "CUSSONS"]);
+  await expect(page.getByLabel("Principal", { exact: true }).locator("option")).toHaveText(["SHINZUI", "KINO", "GODREJ", "HEINZ", "CUSSONS"]);
   await page.getByRole("button", { name: "Faktur" }).click();
 
   const mappingStatus = page.getByRole("region", { name: "Mapping aktif" });
@@ -145,7 +145,7 @@ test("uses the registry and shows mapping access plus paginated persisted histor
   await expect(mappingStamp.getByText("mapping-kino.xlsx", { exact: true })).toBeVisible();
   await expect(mappingStamp.getByText("Versi 3", { exact: true })).toBeVisible();
   await expect(mappingStamp.getByText("Admin Mapping", { exact: true })).toBeVisible();
-  const mappingHistory = page.getByRole("region", { name: "Riwayat versi mapping" });
+  const mappingHistory = page.getByRole("group", { name: "Riwayat versi mapping" });
   await expect(mappingHistory.getByText("mapping-kino-lama.xlsx", { exact: true })).toBeVisible();
   await expect(mappingHistory.getByText("Budi Admin", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Ganti mapping")).toBeVisible();
@@ -159,7 +159,7 @@ test("uses the registry and shows mapping access plus paginated persisted histor
   await expect(history.getByText("Cocok 18", { exact: true }).first()).toBeVisible();
   await expect(history.getByText("Masalah 2", { exact: true }).first()).toBeVisible();
   await history.locator('summary[aria-label="Lihat rincian run-1"]').click();
-  await expect(history.getByText("Jumlah: Accurate 3, KINO 6 — Accurate kurang 3", { exact: true }).first()).toBeVisible();
+  await expect(history.getByText("Jumlah: Accurate 3, KINO 6 (Accurate kurang 3)", { exact: true }).first()).toBeVisible();
   expect(historyRequests).toContain("1:20");
   await history.getByRole("button", { name: "Halaman berikutnya" }).click();
   await expect.poll(() => historyRequests).toContain("2:20");
@@ -190,10 +190,10 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await expect(page.locator('main [role="alert"]')).toHaveCount(0);
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
-  await expect(page.getByLabel("Prinsipal")).toHaveValue("GODREJ");
-  await expect(page.getByLabel("Prinsipal")).toBeEnabled();
-  await expect(page.getByLabel("Prinsipal").locator('option[value="RECKITT"]')).toHaveText("RECKITT");
-  await expect(page.getByLabel("Prinsipal").locator('option[value="CUSSONS"]')).toHaveText("CUSSONS");
+  await expect(page.getByLabel("Principal", { exact: true })).toHaveValue("GODREJ");
+  await expect(page.getByLabel("Principal", { exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Principal", { exact: true }).locator('option[value="RECKITT"]')).toHaveText("RECKITT");
+  await expect(page.getByLabel("Principal", { exact: true }).locator('option[value="CUSSONS"]')).toHaveText("CUSSONS");
   await expect(page.getByLabel("Rincian Faktur Pembelian (Accurate)")).toBeVisible();
   await expect(page.getByLabel("GRN Status Report GODREJ")).toBeVisible();
 
@@ -211,10 +211,10 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await page.getByLabel("GRN Status Report GODREJ").setInputFiles(csv("grn-status.csv"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
   expect(purchaseCalled).toBe(true);
-  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
   await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Qty: Accurate 3, GODREJ 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, GODREJ 5 (Accurate kurang 2)", { exact: true })).toBeVisible();
 
   await expect(page.getByRole("columnheader", { name: "Dokumen Pembelian" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Supplier" })).toBeVisible();
@@ -226,7 +226,7 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
     /^rekonsiliasi-pembelian-godrej-\d{4}-\d{2}-\d{2}\.xlsx$/,
   );
 
-  await page.getByLabel("Prinsipal").selectOption("RECKITT");
+  await page.getByLabel("Principal", { exact: true }).selectOption("RECKITT");
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toHaveCount(0);
@@ -257,10 +257,10 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await reckittFile.setInputFiles(csv("txn-compinv-dtl.csv"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
   expect(reckittCalled).toBe(true);
-  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("2100000077", { exact: true })).toBeVisible();
   await expect(page.getByText("2100000076", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Qty: Accurate 3, RECKITT 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, RECKITT 5 (Accurate kurang 2)", { exact: true })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "DPP RECKITT" })).toBeVisible();
 
   const reckittDownloadPromise = page.waitForEvent("download");
@@ -270,7 +270,7 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
     /^rekonsiliasi-pembelian-reckitt-\d{4}-\d{2}-\d{2}\.xlsx$/,
   );
 
-  await page.getByLabel("Prinsipal").selectOption("GODREJ");
+  await page.getByLabel("Principal", { exact: true }).selectOption("GODREJ");
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await page.unroute("**/api/reconciliation/godrej/purchases");
@@ -281,12 +281,12 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await page.getByLabel("GRN Status Report GODREJ").setInputFiles(csv("grn-invalid.csv"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
   await expect(page.getByRole("alert")).toHaveText("GRN tidak valid.");
-  await page.getByLabel("Prinsipal").selectOption("RECKITT");
+  await page.getByLabel("Principal", { exact: true }).selectOption("RECKITT");
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
 
-  await page.getByLabel("Prinsipal").selectOption("CUSSONS");
+  await page.getByLabel("Principal", { exact: true }).selectOption("CUSSONS");
   await expect(page.getByLabel("Rincian Faktur Pembelian (Accurate)")).toHaveValue("");
   await expect(page.getByText("Bandingkan faktur pembelian Accurate dengan TXN_COMPINV_DTL CUSSONS.", { exact: true })).toBeVisible();
   const cussonsFile = page.getByLabel("TXN_COMPINV_DTL CUSSONS");
@@ -317,10 +317,10 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await cussonsFile.setInputFiles(csv("txn-compinv-dtl-cussons.csv"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
   expect(cussonsCalled).toBe(true);
-  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("110000077", { exact: true })).toBeVisible();
   await expect(page.getByText("110000076", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Qty: Accurate 3, CUSSONS 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, CUSSONS 5 (Accurate kurang 2)", { exact: true })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Dokumen Pembelian" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Supplier" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "DPP CUSSONS" })).toBeVisible();
@@ -332,7 +332,7 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
     `rekonsiliasi-pembelian-cussons-${new Date().toISOString().slice(0, 10)}.xlsx`,
   );
 
-  await page.getByLabel("Prinsipal").selectOption("GODREJ");
+  await page.getByLabel("Principal", { exact: true }).selectOption("GODREJ");
   await expect(page.getByLabel("Rincian Faktur Pembelian (Accurate)")).toHaveValue("");
   await expect(page.getByLabel("GRN Status Report GODREJ")).toHaveValue("");
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
@@ -340,8 +340,6 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await expect(page.getByText("110000077", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Jalankan rekonsiliasi" })).toBeDisabled();
-  // Tema Office Calm/Neon/iOS pensiun (Okt 2026): halaman lama hanya memakai remap Surya.
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "surya");
   await expect(types).toBeVisible();
 });
 
@@ -358,8 +356,8 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
   await expect(page.locator('main [role="alert"]')).toHaveCount(0);
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
-  await expect(page.getByLabel("Prinsipal")).toHaveValue("SHINZUI");
-  await expect(page.getByLabel("Prinsipal")).toBeEnabled();
+  await expect(page.getByLabel("Principal", { exact: true })).toHaveValue("SHINZUI");
+  await expect(page.getByLabel("Principal", { exact: true })).toBeEnabled();
   await expect(page.getByLabel("Retur Penjualan (Accurate)")).toBeVisible();
   await expect(page.getByLabel("PenjualanInvoice SHINZUI")).toBeVisible();
   let returnCalled = false;
@@ -375,7 +373,7 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
   await page.getByLabel("PenjualanInvoice SHINZUI").setInputFiles(xlsx("penjualan-invoice.xlsx"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
   expect(returnCalled).toBe(true);
-  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
   await expect(page.getByText("CUST-02", { exact: true })).toBeVisible();
   await expect(page.getByText("ACC-02 / SHZ-02", { exact: true })).toBeVisible();
@@ -383,9 +381,9 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
   await expect(page.getByRole("columnheader", { name: "Pajak SHINZUI" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Total Accurate" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Total SHINZUI" })).toBeVisible();
-  await expect(page.getByText("Qty: Accurate 3, SHINZUI 5 — Accurate kurang 2", { exact: true })).toBeVisible();
-  await expect(page.getByText("DPP: Accurate Rp60.000, SHINZUI Rp60.000,5 — Accurate kurang Rp0,5", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("DPP: Accurate Rp60.000, SHINZUI Rp90.000 — Accurate kurang Rp30.000", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, SHINZUI 5 (Accurate kurang 2)", { exact: true })).toBeVisible();
+  await expect(page.getByText("DPP: Accurate Rp60.000, SHINZUI Rp60.000,5 (Accurate kurang Rp0,5)", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("DPP: Accurate Rp60.000, SHINZUI Rp90.000 (Accurate kurang Rp30.000)", { exact: true })).toBeVisible();
   const search = page.getByLabel("Cari tabel");
   await search.fill("SHZ-02");
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
@@ -412,8 +410,8 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
     "Total SHINZUI": 66600.55,
   });
   await page.getByRole("button", { name: "Faktur" }).click();
-  await expect(page.getByLabel("Prinsipal")).toHaveValue("KINO");
-  await expect(page.getByLabel("Prinsipal")).toBeEnabled();
+  await expect(page.getByLabel("Principal", { exact: true })).toHaveValue("KINO");
+  await expect(page.getByLabel("Principal", { exact: true })).toBeEnabled();
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Pembelian" })).toHaveAttribute("aria-pressed", "false");
@@ -424,8 +422,8 @@ test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switc
   await page.goto("/reconciliation");
   await page.getByRole("button", { name: "Return" }).click();
 
-  await expect(page.getByLabel("Prinsipal").locator('option[value="SHINZUI"]')).toHaveText("SHINZUI");
-  await page.getByLabel("Prinsipal").selectOption("KINO");
+  await expect(page.getByLabel("Principal", { exact: true }).locator('option[value="SHINZUI"]')).toHaveText("SHINZUI");
+  await page.getByLabel("Principal", { exact: true }).selectOption("KINO");
   await expect(page.getByLabel("Sales Detail KINO")).toBeVisible();
 
   const kinoReturnResult = {
@@ -476,7 +474,7 @@ test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switc
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
 
   expect(returnCalled).toBe(true);
-  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
   await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("columnheader", { name: "Pajak KINO" })).toBeVisible();
@@ -498,7 +496,7 @@ test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switc
     "Produk KINO": "SHZ-02",
     "Pajak KINO": 6600.05,
     "Total KINO": 66600.55,
-    "Penyebab selisih": "Qty: Accurate 3, KINO 5 — Accurate kurang 2",
+    "Penyebab selisih": "Qty: Accurate 3, KINO 5 (Accurate kurang 2)",
     "Baris KINO": "5",
   });
   expect(detail.find((row) => row.Invoice === "BAD-REM")).toMatchObject({
@@ -512,25 +510,25 @@ test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switc
   });
 
   await expect(page.getByLabel("Ringkasan hasil")).toBeVisible();
-  await page.getByLabel("Prinsipal").selectOption("SHINZUI");
+  await page.getByLabel("Principal", { exact: true }).selectOption("SHINZUI");
   await expect(page.getByLabel("PenjualanInvoice SHINZUI")).toBeVisible();
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toHaveCount(0);
 
-  await page.getByLabel("Prinsipal").selectOption("KINO");
+  await page.getByLabel("Principal", { exact: true }).selectOption("KINO");
   await page.unroute("**/api/reconciliation/kino/returns");
   await page.route("**/api/reconciliation/kino/returns", (route) => route.fulfill({ status: 422, json: { error: "Kesalahan Return KINO lama." } }));
   await page.getByLabel("Retur Penjualan (Accurate)").setInputFiles(xlsx("accurate-kino-error.xlsx"));
   await page.getByLabel("Sales Detail KINO").setInputFiles(xlsx("kino-error.xlsx"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
   await expect(page.locator('main [role="alert"]')).toHaveText("Kesalahan Return KINO lama.");
-  await page.getByLabel("Prinsipal").selectOption("SHINZUI");
+  await page.getByLabel("Principal", { exact: true }).selectOption("SHINZUI");
   await expect(page.getByLabel("PenjualanInvoice SHINZUI")).toBeVisible();
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.locator('main [role="alert"]')).toHaveCount(0);
 
-  await page.getByLabel("Prinsipal").selectOption("GODREJ");
+  await page.getByLabel("Principal", { exact: true }).selectOption("GODREJ");
   await expect(
     page.getByText("Bandingkan retur Accurate dengan laporan Sale Returns GODREJ.", { exact: true }),
   ).toBeVisible();
@@ -561,12 +559,12 @@ test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switc
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
 
   expect(godrejReturnCalled).toBe(true);
-  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
   await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("columnheader", { name: "Pajak GODREJ" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Total GODREJ" })).toBeVisible();
-  await expect(page.getByText("Qty: Accurate 3, GODREJ 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, GODREJ 5 (Accurate kurang 2)", { exact: true })).toBeVisible();
 
   const godrejDownloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Ekspor XLSX" }).click();
@@ -578,17 +576,17 @@ test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switc
   const godrejDetail = XLSX.utils.sheet_to_json<Record<string, string | number>>(godrejWorkbook.Sheets.Detail);
   expect(godrejDetail[1]).toMatchObject({
     "Produk GODREJ": "GOD-02",
-    "Penyebab selisih": "Qty: Accurate 3, GODREJ 5 — Accurate kurang 2",
+    "Penyebab selisih": "Qty: Accurate 3, GODREJ 5 (Accurate kurang 2)",
     "Baris GODREJ": "5",
   });
 
-  await page.getByLabel("Prinsipal").selectOption("KINO");
+  await page.getByLabel("Principal", { exact: true }).selectOption("KINO");
   await expect(page.getByLabel("Sales Detail KINO")).toBeVisible();
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toHaveCount(0);
 
-  await page.getByLabel("Prinsipal").selectOption("CUSSONS");
+  await page.getByLabel("Principal", { exact: true }).selectOption("CUSSONS");
   await expect(
     page.getByText("Bandingkan retur Accurate dengan laporan TXN_NOTEPRD CUSSONS.", { exact: true }),
   ).toBeVisible();
@@ -634,7 +632,7 @@ test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switc
   await runButton.click();
 
   expect(cussonsReturnCalled).toBe(true);
-  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("CN26000123", { exact: true })).toBeVisible();
   await expect(page.getByText("Data tidak ditemukan di CUSSONS.", { exact: true })).toBeVisible();
   await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
@@ -653,11 +651,11 @@ test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switc
   expect(cussonsDetail[1]["Penyebab selisih"]).toContain("Data tidak ditemukan di CUSSONS.");
   expect(cussonsDetail[1]["Penyebab selisih"]).toContain("Qty: Accurate 3, CUSSONS 0");
 
-  await page.getByLabel("Prinsipal").selectOption("HEINZ");
+  await page.getByLabel("Principal", { exact: true }).selectOption("HEINZ");
   await expect(page.getByLabel("HEADER HEINZ")).toBeVisible();
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(3);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
-  await page.getByLabel("Prinsipal").selectOption("CUSSONS");
+  await page.getByLabel("Principal", { exact: true }).selectOption("CUSSONS");
   await expect(page.getByLabel("TXN_NOTEPRD CUSSONS")).toBeVisible();
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(runButton).toBeDisabled();
@@ -671,7 +669,7 @@ test("runs HEINZ Return with HEADER and DETAIL then resets all three files", asy
 
   await page.goto("/reconciliation");
   await page.getByRole("button", { name: "Return" }).click();
-  await page.getByLabel("Prinsipal").selectOption("HEINZ");
+  await page.getByLabel("Principal", { exact: true }).selectOption("HEINZ");
 
   const run = page.getByRole("button", { name: "Jalankan rekonsiliasi" });
   await expect(page.getByText("Bandingkan retur Accurate dengan laporan HEADER dan DETAIL HEINZ.", { exact: true })).toBeVisible();
@@ -707,9 +705,9 @@ test("runs HEINZ Return with HEADER and DETAIL then resets all three files", asy
 
   await run.click();
   expect(heinzCalled).toBe(true);
-  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("CN-024277", { exact: true })).toBeVisible();
-  await expect(page.getByText("Qty: Accurate 3, HEINZ 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, HEINZ 5 (Accurate kurang 2)", { exact: true })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Pajak HEINZ" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Total HEINZ" })).toBeVisible();
 
@@ -728,13 +726,13 @@ test("runs HEINZ Return with HEADER and DETAIL then resets all three files", asy
     "Baris HEINZ": "5",
   });
 
-  await page.getByLabel("Prinsipal").selectOption("KINO");
+  await page.getByLabel("Principal", { exact: true }).selectOption("KINO");
   await expect(page.getByLabel("HEADER HEINZ")).toHaveCount(0);
   await expect(page.getByLabel("Sales Detail KINO")).toBeVisible();
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
 
-  await page.getByLabel("Prinsipal").selectOption("HEINZ");
+  await page.getByLabel("Principal", { exact: true }).selectOption("HEINZ");
   await expect(page.getByLabel("Retur Penjualan (Accurate)")).toHaveValue("");
   await expect(page.getByLabel("HEADER HEINZ", { exact: true })).toHaveValue("");
   await expect(page.getByLabel("DETAIL HEINZ", { exact: true })).toHaveValue("");
@@ -787,7 +785,7 @@ test("shows the progressive reconciliation workflow", async ({
     page.getByRole("columnheader", { name: "Kelas transaksi" }),
   ).toHaveCount(0);
   await expect(page.getByText(/baris dipilih/)).toHaveCount(0);
-  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(
     page.getByRole("heading", { name: "Temuan yang perlu diperiksa" }),
   ).toBeVisible();
@@ -796,22 +794,22 @@ test("shows the progressive reconciliation workflow", async ({
   ).toBeVisible();
   await expect(page.getByText("KINO-OK", { exact: true })).toHaveCount(0);
   await expect(
-    page.getByText("Jumlah: Accurate 3, KINO 6 — Accurate kurang 3", {
+    page.getByText("Jumlah: Accurate 3, KINO 6 (Accurate kurang 3)", {
       exact: true,
     }),
   ).toBeVisible();
   await expect(
     page.getByText(
-      "Nilai bersih: Accurate Rp60.000, KINO Rp120.000 — Accurate kurang Rp60.000",
+      "Nilai bersih: Accurate Rp60.000, KINO Rp120.000 (Accurate kurang Rp60.000)",
       { exact: true },
     ),
   ).toBeVisible();
   await expect(
     page.getByText("Accurate: 3 · KINO: 6", { exact: true }),
   ).toBeVisible();
-  await page.getByLabel("Filter status").selectOption("ALL");
+  await page.getByLabel("Saring status").selectOption("ALL");
   await expect(page.getByText("KINO-OK", { exact: true })).toBeVisible();
-  await page.getByLabel("Filter status").selectOption("INVALID_DATA");
+  await page.getByLabel("Saring status").selectOption("INVALID_DATA");
   await expect(
     page.getByText("Tidak ada hasil untuk filter ini."),
   ).toBeVisible();
@@ -845,7 +843,7 @@ test("shows the progressive reconciliation workflow", async ({
     .setInputFiles(xlsx("accurate.xlsx"));
   await page.getByLabel("Sales Detail KINO").setInputFiles(xlsx("kino.xlsx"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
-  await expect(page.getByLabel("Filter status")).toHaveValue("ALL");
+  await expect(page.getByLabel("Saring status")).toHaveValue("ALL");
   await expect(
     page.getByRole("heading", { name: "Semua data cocok" }),
   ).toBeVisible();
@@ -871,7 +869,7 @@ test("shows the progressive reconciliation workflow", async ({
   ).toHaveText("Header wajib tidak ditemukan.");
 
   await page.reload();
-  await page.getByLabel("Prinsipal").selectOption("GODREJ");
+  await page.getByLabel("Principal", { exact: true }).selectOption("GODREJ");
   await expect(
     page.getByText(
       "Bandingkan faktur Accurate dengan data penjualan prinsipal GODREJ.",
@@ -892,7 +890,7 @@ test("shows the progressive reconciliation workflow", async ({
   ).toBeVisible();
 
   await page.reload();
-  await page.getByLabel("Prinsipal").selectOption("SHINZUI");
+  await page.getByLabel("Principal", { exact: true }).selectOption("SHINZUI");
   await expect(
     page.getByText(
       "Bandingkan faktur Accurate dengan data penjualan prinsipal SHINZUI.",
@@ -915,7 +913,7 @@ test("shows the progressive reconciliation workflow", async ({
   ).toBeVisible();
 
   await page.reload();
-  await page.getByLabel("Prinsipal").selectOption("MOTASA");
+  await page.getByLabel("Principal", { exact: true }).selectOption("MOTASA");
   await expect(
     page.getByText(
       "Bandingkan faktur Accurate dengan data penjualan prinsipal MOTASA.",
@@ -936,18 +934,18 @@ test("shows the progressive reconciliation workflow", async ({
   await expect(
     page.getByText("Accurate: 3 · MOTASA: 6", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(
-    page.getByText("Jumlah: Accurate 3, MOTASA 6 — Accurate kurang 3", {
+    page.getByText("Jumlah: Accurate 3, MOTASA 6 (Accurate kurang 3)", {
       exact: true,
     }),
   ).toBeVisible();
 
   await page.reload();
   await expect(
-    page.getByLabel("Prinsipal").locator('option[value="CUSSONS"]'),
+    page.getByLabel("Principal", { exact: true }).locator('option[value="CUSSONS"]'),
   ).toHaveText("CUSSONS");
-  await page.getByLabel("Prinsipal").selectOption("CUSSONS");
+  await page.getByLabel("Principal", { exact: true }).selectOption("CUSSONS");
   const cussonsFile = page.getByLabel("Detail CUSSONS");
   await expect(cussonsFile).toHaveAttribute("accept", /\.csv/);
   await expect(page.getByText("Format .csv, maksimal 10 MB")).toBeVisible();
@@ -970,7 +968,7 @@ test("shows the progressive reconciliation workflow", async ({
   await expect(
     page.getByRole("button", { name: "Jalankan rekonsiliasi" }),
   ).toBeEnabled();
-  await page.getByLabel("Prinsipal").selectOption("GODREJ");
+  await page.getByLabel("Principal", { exact: true }).selectOption("GODREJ");
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await page
     .getByLabel("Sales Detail GODREJ")
@@ -978,7 +976,7 @@ test("shows the progressive reconciliation workflow", async ({
   await expect(
     page.getByRole("button", { name: "Jalankan rekonsiliasi" }),
   ).toBeDisabled();
-  await page.getByLabel("Prinsipal").selectOption("CUSSONS");
+  await page.getByLabel("Principal", { exact: true }).selectOption("CUSSONS");
   await page
     .getByLabel("Rincian Faktur Penjualan (Accurate)")
     .setInputFiles(xlsx("accurate.xlsx"));
@@ -1004,7 +1002,7 @@ test("shows the progressive reconciliation workflow", async ({
     route.fulfill({ json: cussonsResult }),
   );
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
-  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("TI125941", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Data tidak ditemukan di CUSSONS.", { exact: true }),
@@ -1026,6 +1024,6 @@ test("shows the progressive reconciliation workflow", async ({
     "1671-SOP-260000001",
     "TI125941",
   ]);
-  await page.getByLabel("Filter status").selectOption("ALL");
+  await page.getByLabel("Saring status").selectOption("ALL");
   await expect(page.getByText("KINO-OK", { exact: true })).toBeVisible();
 });

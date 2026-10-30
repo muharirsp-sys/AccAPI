@@ -1,12 +1,13 @@
 /*
- * Tujuan: Form batch CLM baru oleh Klaim (Fiori S4d, kolom kedua tampilan "Batch Claim (CLM)", URL `clm=baru`): principal, periode,
- *   nomor otomatis CLM, item berlabel per baris, Simpan sebagai draf lewat dialog. Pengganti Panel Data Klaim kode lama 6985–7219.
+ * Tujuan: Form batch CLM baru oleh Klaim (Fiori S4d, kolom kedua tampilan "Batch Claim (CLM)", URL `clm=baru`): principal (wajib dipilih,
+ *   tanpa nilai bawaan), periode, nomor otomatis CLM, item berlabel, Hapus item lewat dialog bila terisi, Simpan sebagai draf lewat dialog.
+ *   Pengganti Panel Data Klaim kode lama.
  * Caller: opc/peran/Klaim.tsx (kolomKedua KerjaPeran).
- * Dependensi: opc/Bersama (ambilOpc, tulisOpc, kontrak), components/fiori/{core,interactive}, lib/off-program-control/{constants,
- *   program-type,helpers} (daftar principal, tipe CLM, parseCurrency untuk total tampilan), lib/opc-ui, lib/promo-ui.
+ * Dependensi: opc/Bersama (ambilOpc, tulisOpc, tanganiTulis, kontrak), components/fiori/{core,interactive}, lib/off-program-control/{constants,
+ *   program-type,helpers} (daftar principal, tipe CLM, parseCurrency untuk total tampilan), lib/opc-ui, lib/promo-ui, lib/tampil (KOSONG, hariIniWita).
  * Main Functions: FormClm.
  * Side Effects: GET /api/off-program-control/batches/next-number?source=claim; POST /api/off-program-control/batches (payload SAMA
- *   dengan submitClmBatch kode lama 6996–7046), lalu muat ulang daftar.
+ *   dengan submitClmBatch kode lama), lalu muat ulang daftar. Jawaban tidak pasti: strip peringatan + muat ulang daftar.
  */
 "use client";
 
@@ -19,7 +20,8 @@ import { parseCurrency } from "@/lib/off-program-control/helpers";
 import { OFF_CLM_PROGRAM_TYPES } from "@/lib/off-program-control/program-type";
 import { periodeBatch } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
-import { ambilOpc, tulisOpc, type DaftarOpc, type OpcKonteks } from "../Bersama";
+import { KOSONG, hariIniWita } from "@/lib/tampil";
+import { ambilOpc, pesanTidakPasti, tanganiTulis, tulisOpc, type DaftarOpc, type OpcKonteks } from "../Bersama";
 
 /** Baris form = SupervisorBulkRow kode lama (149) tanpa kolom yang tidak dipakai CLM. */
 type BarisClm = {
@@ -33,29 +35,36 @@ const NAMA_BULAN = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Jul
 const terisi = (r: BarisClm) => Object.entries(r).some(([k, v]) => k !== "id" && v !== "" && !(k === "caraBayar" && v === "Transfer"));
 const transfer = (r: BarisClm) => r.caraBayar.trim().toLowerCase() === "transfer";
 
-/** Syarat simpan — kalimat dan urutan cek kode lama 6998–7002 (server memeriksa ulang). */
-function syaratSimpan(rows: BarisClm[], tahun: string): string | undefined {
-    if (rows.length === 0) return "Minimal satu baris wajib diisi.";
+/**
+ * Syarat simpan: urutan cek kode lama (server memeriksa ulang). Principal kosong ditolak server ("Principal tidak valid."), jadi
+ * form tidak lagi memilihkan principal bawaan yang bisa terkirim tanpa disadari (audit desain No 73).
+ */
+function syaratSimpan(rows: BarisClm[], tahun: string, principal: string): string | undefined {
+    if (!principal) return "Pilih principal dulu.";
+    if (rows.length === 0) return "Minimal satu item wajib diisi.";
     const tanpaTipe = rows.findIndex((r) => !(OFF_CLM_PROGRAM_TYPES as readonly string[]).includes(r.type));
-    if (tanpaTipe >= 0) return `Tipe program baris ${tanpaTipe + 1} belum dipilih.`;
+    if (tanpaTipe >= 0) return `Tipe program item ${tanpaTipe + 1} belum dipilih.`;
     const tanpaRekening = rows.findIndex((r) => transfer(r) && !r.noRekening.trim());
-    if (tanpaRekening >= 0) return `No Rekening baris ${tanpaRekening + 1} wajib diisi untuk Transfer.`;
+    if (tanpaRekening >= 0) return `No Rekening item ${tanpaRekening + 1} wajib diisi untuk Transfer.`;
     if (!/^\d{4}$/.test(tahun)) return "Tahun harus 4 angka.";
     return undefined;
 }
 
 export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: DaftarOpc; tutup: () => void }) {
     const izinBuat = ctx.izin("create_batch");
-    const [principal, setPrincipal] = useState("RECKITT BENCKISER, PT");
-    const [bulan, setBulan] = useState(() => String(new Date().getMonth() + 1).padStart(2, "0"));
-    const [tahun, setTahun] = useState(() => String(new Date().getFullYear()));
+    const [principal, setPrincipal] = useState("");
+    // Bulan dan tahun awal = hari ini WITA (bukan jam perangkat), audit No 31.
+    const [bulan, setBulan] = useState(() => hariIniWita().slice(5, 7));
+    const [tahun, setTahun] = useState(() => hariIniWita().slice(0, 4));
     const [rows, setRows] = useState<BarisClm[]>(() => [barisKosong("baris-1")]);
     const [segar, setSegar] = useState(0);
     const [dialog, setDialog] = useState(false);
     const [tersimpan, setTersimpan] = useState<{ id: string; no: string } | null>(null);
+    const [tidakPasti, setTidakPasti] = useState<string | null>(null);
+    const [hapusIdx, setHapusIdx] = useState<number | null>(null);
     const kode = offPrinciples.find((p) => p.name === principal)?.code ?? "";
 
-    // Nomor otomatis CLM (kode lama 5203–5233): dimuat ulang saat principal/bulan/tahun berubah dan setelah simpan (segar).
+    // Nomor otomatis CLM (kode lama): dimuat ulang saat principal/bulan/tahun berubah dan setelah simpan (segar).
     const [nomor] = useLoad(useCallback(async () => {
         void segar;
         if (!kode || !/^\d{4}$/.test(tahun)) return { status: "galat" as const, error: "Pilih principal dan isi tahun 4 angka untuk nomor otomatis." };
@@ -65,6 +74,8 @@ export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: Dafta
     }, [kode, bulan, tahun, segar]));
     const gelombang = (nomor.data?.gelombang ?? "001").padStart(3, "0");
     const noPratinjau = nomor.data?.noPengajuan || `${gelombang}/CLM/${kode}/${bulan}/${tahun}`;
+    // Nomor rakitan lokal hanya tampil sebagai perkiraan bila server sudah menjawab; selama memuat/gagal tidak dipajang seolah sah.
+    const noTampil = nomor.status === "siap" ? noPratinjau : nomor.status === "memuat" ? "Menunggu nomor dari server" : "Belum tersedia";
 
     const dirty = rows.length !== 1 || rows.some(terisi);
     const { setDraf } = ctx;
@@ -73,7 +84,8 @@ export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: Dafta
 
     const ubahBaris = (idx: number, patch: Partial<BarisClm>) => setRows((xs) => xs.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
     const total = rows.reduce((t, r) => t + parseCurrency(r.nominal), 0);
-    const syarat = izinBuat ?? syaratSimpan(rows, tahun);
+    const syarat = izinBuat ?? syaratSimpan(rows, tahun, principal);
+    const hapusItem = (idx: number) => setRows((xs) => xs.filter((_, i) => i !== idx));
 
     const simpan = async () => {
         const data = await tulisOpc("/api/off-program-control/batches", {
@@ -101,8 +113,10 @@ export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: Dafta
                     othersText: "",
                 })),
             },
-        });
+            putus: pesanTidakPasti("batch CLM ini", "daftar Batch Claim (CLM)"),
+        }).catch(tanganiTulis((pesan) => { setTidakPasti(pesan); daftar.muatUlang(); }, () => setDialog(false)));
         setDialog(false);
+        setTidakPasti(null);
         setTersimpan({ id: String(data.batchId || ""), no: String(data.noPengajuan || noPratinjau) });
         setRows([barisKosong(`baris-${Date.now()}`)]);
         setSegar((v) => v + 1);
@@ -111,9 +125,9 @@ export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: Dafta
 
     return (
         <div style={{ display: "grid", gap: 12 }}>
-            <ObjectPageHeader breadcrumbs={[{ label: "OFF Program Control" }, { label: "Batch CLM baru" }]} title="Batch CLM baru" draft={dirty}
+            <ObjectPageHeader headingLevel={2} title="Batch CLM baru" draft={dirty}
                 attributes={[
-                    { label: "No Pengajuan (perkiraan)", value: <span className="fi-mono">{noPratinjau}</span> },
+                    { label: "No Pengajuan (perkiraan)", value: <span className="fi-mono">{noTampil}</span> },
                     { label: "Item", value: <span className="fi-tnum">{rows.length}</span> },
                     { label: "Total", value: <span className="fi-tnum">{rupiah(total)}</span> },
                 ]} />
@@ -124,12 +138,14 @@ export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: Dafta
                         {tersimpan.id && <Button variant="tertiary" icon={<FolderOpen className="fi-icon" aria-hidden />} onClick={() => ctx.ubahUrl({ clm: null, batch: tersimpan.id })}>Buka batch</Button>}
                     </MessageStrip>
                 )}
-                {izinBuat && <MessageStrip tone="warn" title="Baca-saja.">{izinBuat}</MessageStrip>}
+                {tidakPasti && <MessageStrip tone="warn" title="Hasil simpan terakhir belum pasti." onClose={() => setTidakPasti(null)}>{tidakPasti}</MessageStrip>}
+                {izinBuat && <MessageStrip tone="warn" title="Baca-saja:">{izinBuat}</MessageStrip>}
                 <Section title="Pengajuan" subtitle="data dari direksi untuk divisi Klaim">
                     <div className="fi-sect-in">
                         <div className="fi-formgrid">
                             <FormField label="Principal" required>{(a) => (
                                 <select {...a} className="fi-input" value={principal} onChange={(e) => setPrincipal(e.target.value)}>
+                                    <option value="">Pilih principal…</option>
                                     {offPrinciples.map((p) => <option key={p.code} value={p.name}>{p.name} ({p.code})</option>)}
                                 </select>
                             )}</FormField>
@@ -144,26 +160,31 @@ export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: Dafta
                         </div>
                         <KeyValues items={[
                             ["Gelombang otomatis", <span key="g" className="fi-mono">{gelombang}</span>],
-                            ["No Pengajuan CLM", <span key="n" className="fi-mono">{noPratinjau}</span>],
+                            ["No Pengajuan CLM (perkiraan)", <span key="n" className="fi-mono">{noTampil}</span>],
                         ]} />
                         {nomor.status === "memuat" && <p className="fi-small fi-subtle" role="status">Memuat No Pengajuan CLM otomatis…</p>}
-                        {nomor.status === "galat" && <p className="fi-msg" role="alert">{nomor.error}</p>}
+                        {nomor.status === "galat" && (kode
+                            ? <p className="fi-msg" role="alert">{nomor.error}</p>
+                            : <p className="fi-help">Pilih principal untuk melihat nomor otomatis.</p>)}
                         <p className="fi-small fi-subtle">
                             Nomor final diberikan server saat disimpan (format <span className="fi-mono">xxx/CLM/KODE/MM/YYYY</span>). Tipe program: Insentif, Diskon Reguler,
                             Insentif Distributor, Retur.
                         </p>
                     </div>
                 </Section>
-                <Section title="Item" subtitle={`${rows.length} baris · ${rupiah(total)}`}
-                    actions={<Button icon={<Plus className="fi-icon" aria-hidden />} onClick={() => setRows((xs) => [...xs, barisKosong(`baris-${Date.now()}-${xs.length + 1}`)])}>Tambah baris</Button>}>
-                    {rows.length === 0 && <div className="fi-sect-in"><p className="fi-small fi-subtle">Belum ada baris. Tambah minimal satu baris.</p></div>}
+                <Section title="Item" subtitle={`${rows.length} item · ${rupiah(total)}`}
+                    actions={<Button icon={<Plus className="fi-icon" aria-hidden />} onClick={() => setRows((xs) => [...xs, barisKosong(`baris-${Date.now()}-${xs.length + 1}`)])}>Tambah item</Button>}>
+                    {rows.length === 0 && <div className="fi-sect-in"><p className="fi-small fi-subtle">Belum ada item. Tambah minimal satu item.</p></div>}
                     <ol aria-label="Item batch CLM" style={{ listStyle: "none", margin: 0, padding: 0 }}>
                         {rows.map((r, idx) => (
                             <li key={r.id} className="fi-sect-in" style={{ borderTop: idx ? "1px solid var(--line)" : undefined }}>
-                                <div role="group" aria-label={`Baris ${idx + 1}`} style={{ display: "grid", gap: 10 }}>
+                                <div role="group" aria-label={`Item ${idx + 1}`} style={{ display: "grid", gap: 10 }}>
                                     <div className="fi-btnrow">
-                                        <b className="fi-small">Baris {idx + 1}</b>
-                                        <Button variant="tertiary" style={{ marginLeft: "auto" }} icon={<Trash2 className="fi-icon" aria-hidden />} onClick={() => setRows((xs) => xs.filter((_, i) => i !== idx))}>Hapus baris</Button>
+                                        <b className="fi-small">Item {idx + 1}</b>
+                                        {/* Item berisi ditanya dulu; item terakhir tidak bisa dihapus (simpan butuh minimal satu item). */}
+                                        <Button variant="negative" style={{ marginLeft: "auto" }} icon={<Trash2 className="fi-icon" aria-hidden />}
+                                            disabled={rows.length <= 1} disabledReason="Batch minimal punya satu item."
+                                            onClick={() => (terisi(r) ? setHapusIdx(idx) : hapusItem(idx))}>Hapus item</Button>
                                     </div>
                                     <div className="fi-formgrid">
                                         <FormField label="No Surat">{(a) => <input {...a} className="fi-input fi-mono" value={r.noSurat} onChange={(e) => ubahBaris(idx, { noSurat: e.target.value })} />}</FormField>
@@ -187,7 +208,7 @@ export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: Dafta
                                             </select>
                                         )}</FormField>
                                         <FormField label="No rekening" required={transfer(r)}>{(a) => (
-                                            <input {...a} className="fi-input fi-mono" value={r.noRekening} readOnly={!transfer(r)} placeholder={transfer(r) ? "No rekening" : "–"}
+                                            <input {...a} className="fi-input fi-mono" value={r.noRekening} readOnly={!transfer(r)} placeholder={transfer(r) ? "No rekening" : KOSONG}
                                                 onChange={(e) => ubahBaris(idx, { noRekening: e.target.value })} />
                                         )}</FormField>
                                     </div>
@@ -206,10 +227,19 @@ export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: Dafta
                 facts={[
                     ["Principal", `${principal} (${kode})`],
                     ["Periode", periodeBatch({ bulan, tahun })],
-                    ["No Pengajuan (perkiraan)", <span key="n" className="fi-mono">{noPratinjau}</span>],
+                    ["No Pengajuan (perkiraan)", nomor.status === "siap" ? <span key="n" className="fi-mono">{noPratinjau}</span> : "Diberikan server saat disimpan"],
                     ["Item", <span key="i" className="fi-tnum">{rows.length} · {rupiah(total)}</span>],
                 ]}
                 onConfirm={simpan} />
+            <ConfirmDialog open={hapusIdx !== null} onClose={() => setHapusIdx(null)} tone="negative" tag="Hapus item"
+                title={`Hapus item ${(hapusIdx ?? 0) + 1}?`} confirmLabel="Hapus item"
+                description="Isian item ini hilang dari form. Belum ada yang dikirim ke server."
+                facts={hapusIdx !== null && rows[hapusIdx] ? [
+                    ["No Surat", rows[hapusIdx].noSurat || KOSONG],
+                    ["Toko", rows[hapusIdx].toko || KOSONG],
+                    ["Nominal", rupiah(parseCurrency(rows[hapusIdx].nominal))],
+                ] : []}
+                onConfirm={() => { if (hapusIdx !== null) hapusItem(hapusIdx); setHapusIdx(null); }} />
         </div>
     );
 }

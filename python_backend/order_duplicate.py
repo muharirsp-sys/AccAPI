@@ -83,4 +83,4 @@ def duplicate_message(hit, sebutan="Order"):
     contoh = ", ".join(hit["shared"][:8])
     return (f"{sebutan} ini mirip {persen}% dengan {hit['key']} pada outlet dan tanggal yang sama "
             f"({len(hit['shared'])} barang sama: {contoh}). Mirip tetapi tidak sama persis justru "
-            "bentuk ketikan ulang yang paling sering lolos — konfirmasi dulu bahwa ini bukan order ganda.")
+            "bentuk ketikan ulang yang paling sering lolos. Konfirmasi dulu bahwa ini bukan order ganda.")

@@ -1,7 +1,7 @@
 /*
  * Tujuan: Bagian Riwayat Object Page Data Principal: principal_log terbaru dulu, paginasi kursor `sebelum` (kontrak S7-2).
  * Caller: components/principal/DataPrincipal.tsx (dipasang ulang lewat `key` baru sesudah tulis supaya memuat ulang).
- * Dependensi: GET /api/principals/{id}/history, components/fiori/*, ./principal-ui.
+ * Dependensi: GET /api/principals/{id}/history (baris + actorName), components/fiori/*, ./principal-ui (aktorTeks: nama, id cadangan).
  * Main Functions: RiwayatPrincipal.
  * Side Effects: fetch baca-saja.
  */
@@ -47,7 +47,7 @@ export function RiwayatPrincipal({ id }: { id: string }) {
                     return (
                         <li key={l.id}>
                             <time dateTime={l.waktu}>{waktuWita(l.waktu)}</time>
-                            <span><b>{r.apa}</b> · oleh {aktorTeks(l.aktor)}</span>
+                            <span><b>{r.apa}</b> · oleh <span title={l.actorName ? l.aktor : undefined}>{aktorTeks(l.aktor, l.actorName)}</span></span>
                             {r.rinci && <span className="fi-chg">{r.rinci}</span>}
                         </li>
                     );

@@ -23,8 +23,8 @@ test("periksaNik: tepat 16 angka (spasi antarkelompok dibuang); samarkanNik 4 + 
     assert.equal(periksaNik("7371 0101 0101 0012"), "7371010101010012");
     for (const salah of ["737101010101001", "73710101010100123", "7371O10101010012", "", undefined]) assert.equal(periksaNik(salah), null, String(salah));
     assert.equal(samarkanNik("7371010101010012"), "7371••••••••0012");
-    assert.equal(samarkanNik("123"), "—");
-    assert.equal(samarkanNik(null), "—");
+    assert.equal(samarkanNik("123"), "-");
+    assert.equal(samarkanNik(null), "-");
 });
 
 const ISIAN: Record<string, string> = { namaToko: " TOKO  BARU A ", namaPemilik: "PEMILIK A", alamat: "JL. CONTOH 1", noHp: "+6281234567890",

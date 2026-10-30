@@ -1,28 +1,30 @@
 /*
- * Tujuan: Modul peran Klaim OFF Program Control (Fiori S4d, tab `claim`): tiga tampilan (claimView) — Validasi setelah SM, Verifikasi
- *   final (`claimView=after|after-finance|final`, tautan Claim Workflow), Batch Claim (CLM) — dan Object Page batch dengan aksi Klaim:
+ * Tujuan: Modul peran Klaim OFF Program Control (Fiori S4d, tab `claim`): tiga tampilan (claimView): Validasi setelah SM, Verifikasi
+ *   final (`claimView=after|after-finance|final`, tautan Claim Workflow), Batch Claim (CLM); dan Object Page batch dengan aksi Klaim:
  *   isi validasi + Setujui klaim (`claimok`) / setuju batch buatan sendiri (`sendiri`, BL-10: alasan wajib ≥ 5 karakter → `alasanSendiri`,
  *   kontrak #132) / Kembalikan (`kembali`, alasan wajib), verifikasi final + Selesaikan (batch buatan sendiri: alasan yang sama) /
  *   Ingatkan kelengkapan, Kirim CLM ke SM, buka/buat Claim Workflow. Form CLM baru di kolom kedua (`clm=baru`).
  * Caller: OpcApp.tsx (MODUL.claim).
- * Dependensi: opc/Bersama (KerjaPeran, tulisOpc, kontrak), opc/ObjectPageBatch (slot bagian/strip/aksi/draf), opc/peran/KlaimFinal,
- *   opc/peran/KlaimClm, lib/opc-ui (PREDIKAT, TAMPILAN, tahapBatch), components/fiori/{core,interactive}, lib/promo-ui, next/navigation.
+ * Dependensi: opc/Bersama (KerjaPeran, tulisOpc, kirimTulis, tanganiTulis, kontrak), opc/ObjectPageBatch (slot bagian/strip/aksi/draf),
+ *   opc/peran/KlaimFinal, opc/peran/KlaimClm, lib/opc-ui (PREDIKAT, TAMPILAN, tahapBatch), components/fiori/{core,interactive}, lib/promo-ui,
+ *   lib/tampil (KOSONG), next/navigation.
  * Main Functions: Klaim, DetailKlaim, bisaValidasi, bisaFinal, bukaAtauBuatClaimWorkflow.
  * Side Effects: POST /api/off-program-control/batches/[id]/claim-review (approve/return; payload SAMA dengan approveByClaim/returnByClaim
- *   kode lama 5573–5664, approve + `alasanSendiri`), POST /batches/[id]/final-claim (complete + `alasanSendiri`/remind_incomplete_documents,
- *   kode lama 5665–5818), POST /batches/[id]/submit
- *   (CLM, kode lama 7048–7063), POST /api/claim-workflow/from-off-batch/[id] (kode lama 5508–5545) lalu router.push ke Claim Workflow.
+ *   kode lama, approve + `alasanSendiri`), POST /batches/[id]/final-claim (complete + `alasanSendiri`/remind_incomplete_documents),
+ *   POST /batches/[id]/submit (CLM), POST /api/claim-workflow/from-off-batch/[id] (openOrCreateClaimWorkflow kode lama) lalu router.push
+ *   ke Claim Workflow. Jawaban tidak pasti: strip bertahan + muat ulang (laporTidakPasti), bukan "gagal".
  */
 "use client";
 
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { BellRing, Check, ExternalLink, Plus, Send, Undo2 } from "lucide-react";
-import { Button, MessageStrip, VariantNote } from "@/components/fiori/core";
+import { Button, MessageStrip } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { PREDIKAT, TAMPILAN, infoTahap, jumlahItem, periodeBatch, tahapBatch, tanggalOpc, totalBatch, type BatchOpc } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
-import { KerjaPeran, tulisOpc, type DetailProps, type PeranProps } from "../Bersama";
+import { KOSONG } from "@/lib/tampil";
+import { KerjaPeran, kirimTulis, pesanTidakPasti, tanganiTulis, tulisOpc, type DetailProps, type PeranProps } from "../Bersama";
 import { ObjectPageBatch, type BagianTambahan } from "../ObjectPageBatch";
 import { FormClm } from "./KlaimClm";
 import { BagianFinal, awalFinal, kekuranganFinal, payloadSelesai, perkiraanSelisih, uangFinal, type IsianFinal } from "./KlaimFinal";
@@ -35,9 +37,9 @@ const enc = encodeURIComponent;
  * (mis. "Cancelled by OM" tidak ada di daftar pengecualian lama). Lebih ketat dari kode lama; server belum (VariantNote).
  */
 export const bisaValidasi = (b: BatchOpc) => PREDIKAT.klaimAntrean(b) && tahapBatch(b) === "klaim";
-/** isFinalClaimProcessable (kode lama 5837) + bukan batch dibatalkan/dikembalikan (BL-06). */
+/** isFinalClaimProcessable (kode lama) + bukan batch dibatalkan/dikembalikan (BL-06). */
 export const bisaFinal = (b: BatchOpc) => PREDIKAT.finalAntrean(b) && tahapBatch(b) === "final";
-/** "Submit ke SM" CLM hanya untuk Draf (kode lama 7099). */
+/** "Submit ke SM" CLM hanya untuk Draf (kode lama). */
 const bisaKirimClm = (b: BatchOpc) => PREDIKAT.clmAntrean(b) && tahapBatch(b) === "draf";
 
 /** Antrean "Menunggu Anda" = batch yang benar-benar punya aksi (BL-06); "Semua" tetap daftar pemantauan lama (klaimPantau/finalPantau). */
@@ -45,18 +47,18 @@ const TAMPILAN_KLAIM = TAMPILAN.claim.map((t) => (t.kunci === "after-sm" ? { ...
 
 const KELENGKAPAN = ["Lengkap", "Kurang", "Revisi"] as const;
 type IsianValidasi = { tanggal: string; deadline: string; kelengkapan: string; catatan: string };
-// #12: kelengkapan direset ke "Lengkap" tiap batch dibuka (Detail dipasang ulang per batch), tanggal/catatan dari batch (kode lama 5341–5346).
+// #12: kelengkapan direset ke "Lengkap" tiap batch dibuka (Detail dipasang ulang per batch), tanggal/catatan dari batch (kode lama).
 const awalValidasi = (b: BatchOpc): IsianValidasi => ({ tanggal: b.claimSubmittedDate || "", deadline: b.claimDeadline || "", kelengkapan: "Lengkap", catatan: b.claimNote || "" });
 const samaValidasi = (a: IsianValidasi, b: IsianValidasi) => a.tanggal === b.tanggal && a.deadline === b.deadline && a.kelengkapan === b.kelengkapan && a.catatan === b.catatan;
 
-/** POST from-off-batch (openOrCreateClaimWorkflow kode lama 5508–5545): baru → id; 409 CLAIM_WORKFLOW_ALREADY_EXISTS → id yang ada. */
+/**
+ * POST from-off-batch (openOrCreateClaimWorkflow kode lama): baru → id; 409 CLAIM_WORKFLOW_ALREADY_EXISTS → id yang ada. Tetap fetch sendiri
+ * (tanpa `credentials` dan dengan badan `{}`, beda dari tulisOpc); jawabannya diklasifikasi kirimTulis: putus/≥ 502/bukan JSON = tidak pasti.
+ */
 async function bukaAtauBuatClaimWorkflow(batchId: string): Promise<string> {
-    const res = await fetch(`/api/claim-workflow/from-off-batch/${enc(batchId)}`, {
+    const { res, data } = await kirimTulis(() => fetch(`/api/claim-workflow/from-off-batch/${enc(batchId)}`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
-    });
-    const text = await res.text();
-    let data: Record<string, unknown> = {};
-    try { data = text ? (JSON.parse(text) as Record<string, unknown>) : {}; } catch { data = { error: text }; }
+    }), pesanTidakPasti("Claim Workflow untuk batch ini", "menu Claim Workflow"));
     const wf = data.workflow as { id?: string } | undefined;
     if (res.ok && data.ok && wf?.id) return wf.id;
     if (res.status === 409 && data.code === "CLAIM_WORKFLOW_ALREADY_EXISTS" && wf?.id) return wf.id;
@@ -107,7 +109,7 @@ function DetailKlaim(props: DetailProps) {
     const total = Number(data.summary?.totalNominal ?? totalBatch(b));
     const itemFakta = `${data.items.length || jumlahItem(b)} item · ${rupiah(total)}`;
     const tahap = tahapBatch(b);
-    // BL-10 mode lunak: pembuat batch (mis. CLM buatan Klaim) boleh menyetujui sendiri dengan alasan ≥ 5 karakter (#132). Layar Fiori SELALU
+    // BL-10 persetujuan sendiri: pembuat batch (mis. CLM buatan Klaim) boleh menyetujui sendiri dengan alasan ≥ 5 karakter (#132). Layar Fiori SELALU
     // mengirim `alasanSendiri` (kosong bila bukan pembuat): field yang hilang = jalur transisi layar lama yang lolos tanpa alasan di server.
     const sendiri = Boolean(ctx.pengguna.id) && b.createdBy === ctx.pengguna.id;
     const izinReview = ctx.izin("claim_review");
@@ -119,11 +121,14 @@ function DetailKlaim(props: DetailProps) {
             : detail.status === "galat" ? "Detail batch gagal dimuat ulang; status di layar bisa usang. Muat ulang dulu."
                 : undefined;
     const muatSemua = () => { daftar.muatUlang(); muatUlang(); };
+    const tangani = tanganiTulis(props.laporTidakPasti, tutup); // hasil tidak pasti: dialog tertutup, strip bertahan (No 22)
+    // Dialog yang masih terbuka sesudah muat ulang (mis. hasil tidak pasti): aksi hanya berlaku bila batch masih di mode yang sama.
+    const bukanMode = (m: typeof mode) => (mode === m ? undefined : "Status batch sudah berubah; aksi ini tidak berlaku lagi.");
     const cwId = b.claimWorkflowId ?? ringkas?.claimWorkflowId ?? null;
     // Claim Workflow boleh dibuat setelah OM menyetujui (aturan route from-off-batch); batch dibatalkan tidak (BL-06).
     const cwBoleh = b.omStatus === "Approved" && tahap !== "dibatalkan";
 
-    // ── Validasi setelah SM ──
+    // Validasi setelah SM.
     const alasanV = izinReview ?? kunci;
     const syaratSetuju = alasanV ?? (!nilai.tanggal ? "Isi tanggal diajukan ke principal dulu."
         : !nilai.deadline ? "Isi deadline klaim dulu."
@@ -131,53 +136,55 @@ function DetailKlaim(props: DetailProps) {
                 : !nilai.catatan.trim() ? "Keterangan kelengkapan wajib diisi sebelum Setujui klaim." : undefined);
     const setujui = async (alasanSendiri: string) => {
         await tulisOpc(`${dasar}/claim-review`, {
-            gagal: "Gagal menyetujui Claim.",
+            gagal: "Gagal menyetujui klaim.",
             body: { action: "approve", claimSubmittedDate: nilai.tanggal, claimDeadline: nilai.deadline, completenessStatus: nilai.kelengkapan, note: nilai.catatan, alasanSendiri },
-        });
+        }).catch(tangani);
         tutup();
         setIsian(null);
         selesai(`Klaim ${no} disetujui dan diteruskan ke OM.`);
     };
     const kembalikan = async () => {
         await tulisOpc(`${dasar}/claim-review`, {
-            gagal: "Gagal mengembalikan dari Claim.",
+            gagal: "Gagal mengembalikan batch.",
             body: { action: "return", note: alasan, completenessStatus: nilai.kelengkapan },
-        });
+        }).catch(tangani);
         tutup();
         setIsian(null);
         selesai(`${no} dikembalikan untuk diperbaiki.`, b.createdByRole === "claim" ? "Batch kembali ke pembuat CLM-nya (divisi Klaim)." : "Batch kembali ke SPV pembuatnya.");
     };
 
-    // ── Verifikasi final ──
+    // Verifikasi final.
     const kurangF = mode === "final" && nilaiF ? kekuranganFinal(data, nilaiF) : [];
     const syaratSelesai = izinFinal ?? kunci ?? kurangF[0];
     const syaratIngat = izinFinal ?? kunci ?? (!nilaiF?.catatan.trim() ? "Isi catatan verifikasi final dulu." : undefined);
     const uang = uangFinal(data);
     const lebih = nilaiF ? perkiraanSelisih(uang.dibayar, nilaiF.nilaiFix) : 0;
     const selesaikan = async (alasanSendiri: string) => {
-        const hasil = await tulisOpc(`${dasar}/final-claim`, { gagal: "Gagal menyelesaikan final Claim.", body: payloadSelesai(data, nilaiF!, sendiri ? alasanSendiri : "") });
+        const hasil = await tulisOpc(`${dasar}/final-claim`, { gagal: "Gagal menyelesaikan verifikasi final.", body: payloadSelesai(data, nilaiF!, sendiri ? alasanSendiri : "") })
+            .catch(tangani);
         tutup();
         setIsianF(null);
         const sisaSelisih = Number(hasil.overpaidAmount || 0);
         selesai(sisaSelisih > 0 ? `Verifikasi final ${no} selesai; selisih ${rupiah(sisaSelisih)} perlu dikembalikan.` : `Verifikasi final ${no} selesai.`);
     };
     const ingatkan = async () => {
-        await tulisOpc(`${dasar}/final-claim`, { gagal: "Gagal mengirim pengingat kelengkapan.", body: { action: "remind_incomplete_documents", note: nilaiF!.catatan } });
+        await tulisOpc(`${dasar}/final-claim`, { gagal: "Gagal mengirim pengingat kelengkapan.", body: { action: "remind_incomplete_documents", note: nilaiF!.catatan } })
+            .catch(tangani);
         tutup();
         // Isian No Claim/checklist TIDAK ikut tersimpan oleh pengingat, jadi dibiarkan (tetap draf) agar tidak hilang.
         selesai(`Pengingat kelengkapan ${no} tampil untuk Sales Manager dan Supervisor.`, "Batch tetap menunggu verifikasi final Klaim.");
     };
 
-    // ── CLM + Claim Workflow ──
+    // CLM + Claim Workflow.
     const kirimClm = async () => {
-        await tulisOpc(`${dasar}/submit`, { gagal: "Gagal submit ke SM.", body: {} });
+        await tulisOpc(`${dasar}/submit`, { gagal: "Gagal mengirim ke SM.", body: {} }).catch(tangani);
         tutup();
         selesai(`${no} dikirim ke SM.`);
     };
     const keCw = (id: string) => router.push(`/claim-workflow/${enc(id)}?focus=no-claim`);
     const klikCw = () => { if (cwId && !dirty) keCw(cwId); else setDialog("cw"); };
     const konfirmCw = async () => {
-        const id = cwId ?? (await bukaAtauBuatClaimWorkflow(b.id));
+        const id = cwId ?? (await bukaAtauBuatClaimWorkflow(b.id).catch(tangani));
         tutup();
         keCw(id);
     };
@@ -197,7 +204,7 @@ function DetailKlaim(props: DetailProps) {
                 <Button variant="negative" icon={<Undo2 className="fi-icon" aria-hidden />} disabled={Boolean(alasanV)} disabledReason={alasanV}
                     onClick={() => { setAlasan(nilai.catatan); setDialog("kembali"); }}>Kembalikan…</Button>
                 <Button variant="primary" icon={<Check className="fi-icon" aria-hidden />} disabled={Boolean(syaratSetuju)} disabledReason={syaratSetuju}
-                    onClick={() => setDialog(sendiri ? "sendiri" : "claimok")}>Setujui klaim…</Button>
+                    onClick={() => setDialog(sendiri ? "sendiri" : "claimok")}>Setujui…</Button>
             </>
         );
         pesanFooter = syaratSetuju ? `Setujui nonaktif: ${syaratSetuju}` : drafV ? "Isian validasi belum dikirim." : undefined;
@@ -226,13 +233,9 @@ function DetailKlaim(props: DetailProps) {
                     <Button variant="tertiary" onClick={muatSemua}>Muat ulang</Button>
                 </MessageStrip>
             ) : (
-                <MessageStrip tone="info" title="Baca-saja.">
+                <MessageStrip tone="info" title="Baca-saja:">
                     Batch ini di tahap {infoTahap(b).label}. Aksi Klaim hanya untuk batch yang menunggu validasi setelah SM, verifikasi final, atau draf CLM.
                 </MessageStrip>
-            )}
-            {terminal && (
-                <VariantNote bl="BL-06">Untuk batch yang sudah disetujui OM, dibayar, selesai, atau dibatalkan, Kembalikan/Setujui tidak ditampilkan. Server saat ini hanya
-                    memeriksa &quot;sudah disetujui SM&quot;. Usulan: satu aturan transisi untuk UI dan server, transisi ilegal ditolak server.</VariantNote>
             )}
         </>
     ) : stripCw ?? undefined;
@@ -256,7 +259,7 @@ function DetailKlaim(props: DetailProps) {
                     </div>
                     <div className="fi-field">
                         <span className="fi-label" id={idKl}>Kelengkapan berkas<span className="fi-req" aria-hidden>*</span></span>
-                        <div role="radiogroup" aria-labelledby={idKl} className="fi-btnrow">
+                        <div role="radiogroup" aria-labelledby={idKl} aria-required="true" className="fi-btnrow">
                             {KELENGKAPAN.map((k) => (
                                 <label key={k} className="fi-check">
                                     <input type="radio" name={`${idKl}-kl`} value={k} checked={nilai.kelengkapan === k} onChange={() => ubah({ kelengkapan: k })} />{k}
@@ -268,8 +271,6 @@ function DetailKlaim(props: DetailProps) {
                     <FormField label="Keterangan kelengkapan" required help="Wajib diisi sebelum Setujui klaim. Saat mengembalikan, isian ini menjadi usulan alasan.">{(a) => (
                         <textarea {...a} className="fi-input" rows={3} value={nilai.catatan} onChange={(e) => ubah({ catatan: e.target.value })} />
                     )}</FormField>
-                    <VariantNote bl="BL-06">Kembalikan/Setujui hanya tampil untuk batch yang menunggu validasi Klaim. Server saat ini hanya memeriksa &quot;sudah disetujui SM&quot;.
-                        Usulan: server menolak transisi ilegal dengan aturan yang sama.</VariantNote>
                 </div>
             ),
         });
@@ -283,36 +284,36 @@ function DetailKlaim(props: DetailProps) {
         ["Diajukan ke principal", tanggalOpc(nilai.tanggal)],
         ["Deadline klaim", tanggalOpc(nilai.deadline)],
         ["Kelengkapan", nilai.kelengkapan],
-        ["Keterangan", nilai.catatan.trim() || "–"],
+        ["Keterangan", nilai.catatan.trim() || KOSONG],
         ["Item", <span key="i" className="fi-tnum">{itemFakta}</span>],
         ["Langkah berikutnya", "Persetujuan Operational Manager"],
     ];
-    const noteBl11 = (
-        <VariantNote bl="BL-11">Kelengkapan dikirim bersama persetujuan dan tercatat di Riwayat, tetapi belum tersimpan di batch. Usulan: tersimpan di batch dan dipakai
-            peringatan berkas.</VariantNote>
-    );
+    // Catatan BL-11 tidak lagi di dalam dialog: sudah tampil di bagian Validasi klaim Object Page.
     const pembuat = b.createdByRole === "claim" ? "pembuat CLM-nya (divisi Klaim)" : "SPV pembuatnya";
     const alasanSendiri = { label: "Alasan setuju sendiri", placeholder: "Mis. tim Klaim hanya satu orang minggu ini", min: 5 };
 
     return (
         <>
-            <ObjectPageBatch {...props} bagian={bagian} strip={strip} aksi={aksi} pesanFooter={pesanFooter} draf={dirty} />
-            <ConfirmDialog open={dialog === "claimok"} onClose={tutup} tag="Setujui" title={`Setujui klaim ${no}?`} confirmLabel="Setujui klaim"
-                description="Batch dikunci dan diteruskan ke Operational Manager." facts={faktaSetuju} confirmDisabled={kunci} onConfirm={() => setujui("")}>
-                {noteBl11}
-            </ConfirmDialog>
-            <ConfirmDialog open={dialog === "sendiri"} onClose={tutup} tag="Setuju sendiri" title="Setujui batch yang Anda buat sendiri?" confirmLabel="Setujui klaim"
+            <ObjectPageBatch {...props} bagian={bagian} strip={strip} aksi={aksi} pesanFooter={pesanFooter} draf={dirty}
+                // Satu catatan varian per layar (audit No 80), digabung ke catatan Object Page.
+                varian={mode === "validasi"
+                    ? { bl: "BL-06", isi: "Kembalikan/Setujui hanya tampil untuk batch yang menunggu validasi Klaim; server saat ini hanya memeriksa \"sudah disetujui SM\". Usulan: server menolak transisi ilegal dengan aturan yang sama." }
+                    : mode === "baca" && !data.uji && terminal
+                        ? { bl: "BL-06", isi: "Untuk batch yang sudah disetujui OM, dibayar, selesai, atau dibatalkan, Kembalikan/Setujui tidak ditampilkan; server saat ini hanya memeriksa \"sudah disetujui SM\". Usulan: satu aturan transisi untuk UI dan server, transisi ilegal ditolak server." }
+                        : undefined} />
+            <ConfirmDialog open={dialog === "claimok"} onClose={tutup} tag="Setujui" title={`Setujui klaim ${no}?`} confirmLabel="Setujui"
+                description="Batch dikunci dan diteruskan ke Operational Manager." facts={faktaSetuju} confirmDisabled={kunci ?? bukanMode("validasi")} onConfirm={() => setujui("")} />
+            <ConfirmDialog open={dialog === "sendiri"} onClose={tutup} tag="Setuju sendiri" title="Setujui batch yang Anda buat sendiri?" confirmLabel="Setujui"
                 description="Pembuat dan penyetuju batch ini orang yang sama."
                 facts={[["Batch", <span key="b" className="fi-mono">{no}</span>], ["Dibuat oleh", `Anda${ctx.pengguna.nama ? ` (${ctx.pengguna.nama})` : ""}`], ...faktaSetuju]}
-                reason={alasanSendiri} confirmDisabled={kunci} onConfirm={setujui}>
-                <MessageStrip tone="info" title="Mode lunak:">tim belum cukup untuk memisahkan pembuat dan penyetuju. Anda boleh menyetujui sendiri dengan alasan;
+                reason={alasanSendiri} confirmDisabled={kunci ?? bukanMode("validasi")} onConfirm={setujui}>
+                <MessageStrip tone="info" title="Persetujuan sendiri:">tim belum cukup untuk memisahkan pembuat dan penyetuju. Anda boleh menyetujui sendiri dengan alasan;
                     persetujuan dan alasannya tersimpan di Riwayat batch ini atas nama Anda.</MessageStrip>
-                {noteBl11}
             </ConfirmDialog>
             <ConfirmDialog open={dialog === "kembali"} onClose={tutup} tone="negative" tag="Alasan wajib" title={`Kembalikan ${no} untuk diperbaiki?`} confirmLabel="Kembalikan"
                 description={`Batch dibuka lagi untuk ${pembuat}. Alasan tampil di atas batch dan tercatat di Riwayat.`}
                 facts={[["Item", <span key="i" className="fi-tnum">{itemFakta}</span>], ["Kelengkapan", nilai.kelengkapan]]}
-                confirmDisabled={kunci ?? (alasan.trim() ? undefined : "Isi alasan pengembalian dulu")} onConfirm={kembalikan}>
+                confirmDisabled={kunci ?? bukanMode("validasi") ?? (alasan.trim() ? undefined : "Isi alasan pengembalian dulu")} onConfirm={kembalikan}>
                 <FormField label="Alasan pengembalian" required help="Disimpan sebagai catatan Klaim.">{(a) => (
                     <textarea {...a} className="fi-input" rows={3} value={alasan} onChange={(e) => setAlasan(e.target.value)} />
                 )}</FormField>
@@ -329,20 +330,20 @@ function DetailKlaim(props: DetailProps) {
                     ["No Claim", `${data.items.filter((i) => i.noSurat).length} No Surat terisi`],
                     ["Akibat", lebih > 0 ? `Selisih ${rupiah(lebih)} masuk Data Selisih; batch menunggu pengembalian selisih.` : "Batch selesai."],
                 ]}
-                reason={sendiri ? alasanSendiri : undefined} confirmDisabled={kunci} onConfirm={selesaikan}>
+                reason={sendiri ? alasanSendiri : undefined} confirmDisabled={kunci ?? bukanMode("final")} onConfirm={selesaikan}>
                 {sendiri && (
-                    <MessageStrip tone="info" title="Mode lunak:">Anda boleh menyelesaikan verifikasi final batch buatan sendiri dengan alasan; hasil dan alasannya
+                    <MessageStrip tone="info" title="Persetujuan sendiri:">Anda boleh menyelesaikan verifikasi final batch buatan sendiri dengan alasan; hasil dan alasannya
                         tersimpan di Riwayat batch ini atas nama Anda.</MessageStrip>
                 )}
             </ConfirmDialog>
             <ConfirmDialog open={dialog === "ingatkan"} onClose={tutup} tag="Pengingat" title={`Kirim pengingat kelengkapan ${no}?`} confirmLabel="Kirim pengingat"
                 description="Pengingat tampil di web untuk Sales Manager dan Supervisor; batch tetap menunggu verifikasi final Klaim. No Claim dan checklist yang sudah diisi belum ikut tersimpan."
-                facts={[["Catatan", nilaiF?.catatan || "–"], ["Status setelahnya", "Berkas belum lengkap"]]}
-                confirmDisabled={kunci} onConfirm={ingatkan} />
+                facts={[["Catatan", nilaiF?.catatan || KOSONG], ["Status setelahnya", "Berkas belum lengkap"]]}
+                confirmDisabled={kunci ?? bukanMode("final")} onConfirm={ingatkan} />
             <ConfirmDialog open={dialog === "kirimclm"} onClose={tutup} tag="Kirim" title={`Kirim ${no} ke SM?`} confirmLabel="Kirim ke SM"
                 description="PDF surat pengajuan dibuat dan batch masuk antrean Sales Manager."
                 facts={[["Principal", b.principleName], ["Periode", periodeBatch(b)], ["Item", <span key="i" className="fi-tnum">{itemFakta}</span>], ["Penerima", "Sales Manager"]]}
-                confirmDisabled={kunci} onConfirm={kirimClm} />
+                confirmDisabled={kunci ?? bukanMode("clm")} onConfirm={kirimClm} />
             <ConfirmDialog open={dialog === "cw"} onClose={tutup} tag="Claim Workflow" title={cwId ? "Buka Claim Workflow?" : `Buat Claim Workflow untuk ${no}?`}
                 confirmLabel={cwId ? "Buka Claim Workflow" : "Buat dan buka"}
                 description={cwId ? undefined : "Claim Workflow dibuat dari item batch ini (satu berkas per item) lalu dibuka. Bila sudah ada, yang lama dibuka."}

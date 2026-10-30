@@ -9,10 +9,12 @@
  *   Jawaban PATCH tidak pasti (putus, ≥ 502, bukan JSON) → "hasilnya belum pasti" + muat ulang; tulis terkunci selama memuat ulang.
  * Caller: app/(dashboard)/insentif-sales/pengaturan/page.tsx.
  * Dependensi: ./Rangka (InsentifRangka), ./PengaturanHierarki, ./data (formatRp), components/fiori/{core,interactive},
- *   lib/insentif-konstanta, lib/insentif-ui (readApi), lib/rekapan-nota/ui (ambil, jamWita).
+ *   lib/insentif-konstanta, lib/insentif-ui (readApi), lib/rekapan-nota/ui (ambil), lib/tampil (KOSONG, waktuWita), lib/angka-lokal (pengurai
+ *   rupiah bersama: konstanta rupiah diisi sebagai teks berformat ribuan, audit No 122; rasio/qty tetap isian angka, roda mouse melepas fokus).
  * Main Functions: Pengaturan (default).
  * Side Effects: GET /api/insentif-sales/settings; PATCH settings (konstanta, gtAoMode, branchNilaiJual, smBerhak) lewat ConfirmDialog —
- *   MENGUBAH NOMINAL insentif setiap perhitungan berikutnya. beforeunload saat ada draf.
+ *   MENGUBAH NOMINAL insentif setiap perhitungan berikutnya. beforeunload saat ada draf. Kaki menyebut draf daftar yang belum disimpan di
+ *   seksinya (satu Simpan per seksi daftar, Simpan kaki hanya konstanta).
  */
 "use client";
 
@@ -20,10 +22,14 @@ import { useCallback, useMemo, useState } from "react";
 import { Pencil, RefreshCw, RotateCcw } from "lucide-react";
 import { AnchorBar, Button, ErrorState, FooterToolbar, MessageStrip, Section, Skeleton, VariantNote } from "@/components/fiori/core";
 import { ConfirmDialog, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
-import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
+import { ambil } from "@/lib/rekapan-nota/ui";
 import { readApi } from "@/lib/insentif-ui";
 import { DEFAULT_KONSTANTA, KONSTANTA_FIELDS, getField, parseKonstanta, setField, type Konstanta, type KonstantaKind } from "@/lib/insentif-konstanta";
+import { isianNominal, isianPolos, nominalKeTeks } from "@/lib/angka-lokal";
+/** Pengurai rupiah bersama mode ketat (tinjauan K3 S-1): titik hanya pemisah ribuan; "500.00" ditolak, bukan Rp 500. */
+const bacaRupiah = (t: string) => nominalKeTeks(t, { ketat: true });
 import { formatRp } from "./data";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 import { InsentifRangka } from "./Rangka";
 import { AkunTautan, Hierarki } from "./PengaturanHierarki";
 
@@ -38,7 +44,7 @@ type FieldDaftar = "branchNilaiJual" | "smBerhak";
 
 /** PATCH konstanta dijawab 409 KONSTANTA_BERUBAH: admin lain menyimpan sejak editor dimuat (AM-045). */
 class KonstantaBerubah extends Error {}
-const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas. Setelan dimuat ulang — periksa angkanya sebelum menyimpan lagi.";
+const BELUM_PASTI = "Hasilnya belum pasti: server tidak memberi jawaban yang jelas. Setelan dimuat ulang; periksa angkanya sebelum menyimpan lagi.";
 
 /**
  * Setelan berbentuk DAFTAR (cabang beracuan NILAI_JUAL, SM yang ikut skema insentif). Keduanya dulu konstanta di kode:
@@ -49,13 +55,13 @@ const DAFTAR: ReadonlyArray<{ field: FieldDaftar; id: string; judul: string; des
     {
         field: "branchNilaiJual", id: "nilai-jual", judul: "Cabang beracuan NILAI_JUAL",
         desc: "Cabang (kolom JENISPRODUK di file closing) yang realisasi Value-nya diambil dari NILAI_JUAL. Cabang di luar daftar ini memakai DPP.",
-        contoh: "VINDA\nKINO NON FOOD\nMIX NON FOOD\nABC",
+        contoh: "CABANG A\nCABANG B",
         catatan: "Berlaku untuk unggahan closing BERIKUTNYA. Periode yang sudah masuk harus dihapus lalu diunggah ulang agar angkanya ikut berubah.",
     },
     {
         field: "smBerhak", id: "sm-skema", judul: "SM yang ikut skema insentif",
-        desc: "Nama SM yang berhak atas insentif SM (strata flat berbasis Value). Dicocokkan sebagai kata utuh, jadi HENDRIK tidak akan cocok dengan HENDRIKUS.",
-        contoh: "HENDRIK",
+        desc: "Nama SM yang berhak atas insentif SM (strata flat berbasis Value). Dicocokkan sebagai kata utuh, jadi SM A tidak akan cocok dengan SM AB.",
+        contoh: "SM A",
         catatan: "Langsung mengubah nominal insentif SM periode mana pun yang dihitung setelah ini.",
     },
 ];
@@ -85,7 +91,7 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
     // Tulis hanya dari setelan segar: saat dimuat ulang atau gagal dimuat ulang (data lama tetap tampil), semua tombol simpan terkunci.
     const alasanKunci = !setelan ? "Terkunci sampai setelan berhasil dibaca"
         : baru === null && load.status === "memuat" ? "Setelan sedang dimuat ulang"
-            : baru === null && load.status === "galat" ? "Setelan gagal dimuat ulang — coba lagi dulu" : undefined;
+            : baru === null && load.status === "galat" ? "Setelan gagal dimuat ulang; coba lagi dulu" : undefined;
     const gagalBacaKonst = setelan?.konstantaSumber === "gagal_baca";
     // AM-020: angka dari "gagal_baca" adalah bawaan — bukan dasar draf, bukan "tersimpan".
     const tersimpan = useMemo(() => (setelan && setelan.konstantaSumber !== "gagal_baca" ? parseKonstanta(setelan.konstanta) : null), [setelan]);
@@ -104,10 +110,18 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
     const setDraf = (k: Konstanta | null) => setDrafDasar((d) => (k === null ? null
         : { nilai: k, versi: d && berubah.length > 0 ? d.versi : setelan?.konstantaVersi ?? null }));
 
+    /** Teks konstanta rupiah yang sedang diketik atau belum sah, per path (No 122). Dikosongkan setiap draf diganti dari luar isian. */
+    const [ketikRp, setKetikRp] = useState<Record<string, string>>({});
+    const gantiDraf = (k: Konstanta | null) => { setKetikRp({}); setDraf(k); };
+    const rpSalah = Object.values(ketikRp).filter((t) => "galat" in bacaRupiah(t)).length;
+    /** Path konstanta rupiah yang sedang fokus: tampil angka polos tanpa titik ribuan (S-1), ribuan hanya sesudah blur. */
+    const [fokusRp, setFokusRp] = useState<string | null>(null);
+
     const [teks, setTeks] = useState<Record<FieldDaftar, string | null>>({ branchNilaiJual: null, smBerhak: null });
     const daftarNilai = (f: FieldDaftar) => { const t = teks[f]; return t === null ? (setelan?.[f] ?? []) : normDaftar(t); };
     const daftarBerubah = (f: FieldDaftar) => teks[f] !== null && setelan !== null && daftarNilai(f).join("|") !== setelan[f].join("|");
-    const adaDraf = berubah.length > 0 || DAFTAR.some((d) => daftarBerubah(d.field));
+    const nDaftarDraf = DAFTAR.filter((d) => daftarBerubah(d.field)).length;
+    const adaDraf = berubah.length > 0 || nDaftarDraf > 0;
     useUnsavedGuard(adaDraf);
 
     const [dialog, setDialog] = useState<Dlg>(null);
@@ -143,13 +157,13 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
             setDialog({ kind: "konflik" });
             return;
         }
-        setDraf(null); setDialog(null);
+        gantiDraf(null); setDialog(null);
         setPesan(`Konstanta tersimpan (${jumlah} angka berubah). Berlaku untuk perhitungan sesudah ini; pembayaran yang sudah tercatat tidak berubah.`);
     }
 
     /** Konflik: draf basi dibuang, editor menampilkan angka terbaru; perubahan diulang dari sana. */
     function muatUlangKonflik() {
-        setDraf(null); setKonflik(null); setDialog(null);
+        gantiDraf(null); setKonflik(null); setDialog(null);
         muatUlang();
     }
 
@@ -171,9 +185,10 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
     const labelAoTetap = aoAmbang ? `${aoAmbang} (tetap)` : "Ambang tetap";
     const alasanKonst = !setelan ? "Editor konstanta terkunci"
         : gagalBacaKonst ? "Editor konstanta terkunci: konstanta tersimpan gagal dibaca"
-            : alasanKunci ?? (konflik ? "Konstanta sudah diubah admin lain — muat ulang dulu" : undefined);
-    const alasanSimpan = alasanKonst ?? tanpaIzin ?? (berubah.length ? undefined : "Belum ada perubahan konstanta");
-    const teksVersi = (v: string | null | undefined) => (v ? `tersimpan ${jamWita(v)} WITA` : "belum pernah disimpan");
+            : alasanKunci ?? (konflik ? "Konstanta sudah diubah admin lain; muat ulang dulu" : undefined);
+    const alasanSimpan = alasanKonst ?? tanpaIzin ?? (rpSalah ? `${rpSalah} isian rupiah belum sah; perbaiki dulu`
+        : berubah.length ? undefined : "Belum ada perubahan konstanta");
+    const teksVersi = (v: string | null | undefined) => (v ? `tersimpan ${waktuWita(v)} WITA` : "belum pernah disimpan");
     const versiTeks = gagalBacaKonst ? "gagal dibaca" : teksVersi(setelan?.konstantaVersi);
     const dlgDaftar = dialog?.kind === "daftar" ? DAFTAR.find((x) => x.field === dialog.field) : undefined;
     const tambah = dlgDaftar && setelan ? daftarNilai(dlgDaftar.field).filter((v) => !setelan[dlgDaftar.field].includes(v)) : [];
@@ -195,13 +210,13 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                 <dl className="fi-attrs">
                     <div><dt>Versi konstanta</dt><dd>{versiTeks}</dd></div>
                     <div><dt>Penyebut AO GT/TT</dt><dd>{setelan.gtAoMode === "file" ? "Target AO dari berkas" : labelAoTetap}</dd></div>
-                    <div><dt>SM dalam skema</dt><dd>{setelan.smBerhak.join(", ") || "—"}</dd></div>
+                    <div><dt>SM dalam skema</dt><dd>{setelan.smBerhak.join(", ") || KOSONG}</dd></div>
                     <div><dt>Cabang NILAI_JUAL</dt><dd>{setelan.branchNilaiJual.length} cabang</dd></div>
                 </dl>
             )}
             {pesan && <MessageStrip tone="pos" title={pesan} onClose={() => setPesan(null)} />}
             {(galatBaca || gagalBacaKonst) && (
-                <MessageStrip tone="neg" title="Konstanta tersimpan gagal dibaca — editor dikunci agar angka bawaan tidak ikut tersimpan.">
+                <MessageStrip tone="neg" title="Konstanta tersimpan gagal dibaca; editor dikunci agar angka bawaan tidak ikut tersimpan.">
                     {galatBaca ? `${galatBaca} Bagian hierarki dan akun di halaman ini tetap bisa dipakai.` : "Muat ulang nanti. Bagian lain di halaman ini tetap bisa dipakai."}
                 </MessageStrip>
             )}
@@ -219,10 +234,10 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
             )}
 
             <Section id="konstanta" title="Konstanta skema" subtitle={tersimpan ? "pool, bobot, ambang bayar, rate SPV, strata SM, tarif PPh" : "terkunci"}
-                actions={<Button variant="tertiary" disabled={Boolean(alasanKonst || tanpaIzin)} disabledReason={alasanKonst ?? tanpaIzin} onClick={() => setDraf(bawaan)}>Isi dengan bawaan</Button>}>
+                actions={<Button variant="tertiary" disabled={Boolean(alasanKonst || tanpaIzin)} disabledReason={alasanKonst ?? tanpaIzin} onClick={() => gantiDraf(bawaan)}>Isi dengan bawaan</Button>}>
                 <div className="fi-sect-in">
                     {memuatAwal ? <Skeleton rows={6} label="Memuat konstanta" />
-                        : !nilaiK || !tersimpan ? <ErrorState title="Konstanta gagal dibaca — editor dikunci"
+                        : !nilaiK || !tersimpan ? <ErrorState title="Konstanta gagal dibaca; editor dikunci"
                             message={`${galatBaca ?? "Server hanya bisa mengirim angka bawaan, jadi angka itu tidak ditampilkan sebagai tersimpan."} Muat ulang untuk mengubah konstanta.`} onRetry={muatUlang} />
                             : GRUP.map((g) => (
                                 <div key={g} className="grid gap-2">
@@ -233,16 +248,41 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                                             const asal = getField(tersimpan, f.path);
                                             const beda = v !== asal;
                                             const id = `konst-${f.path}`;
+                                            // Rupiah (No 122): teks berformat ribuan lewat pengurai bersama; tidak sah = pesan + Simpan ditahan, angka draf tidak berubah.
+                                            const ketik = ketikRp[f.path];
+                                            const bacaRp = ketik === undefined ? null : bacaRupiah(ketik);
+                                            const galatRp = bacaRp && "galat" in bacaRp ? bacaRp.galat : "";
+                                            const wakiliKetik = ketik !== undefined && (galatRp || (bacaRp && "teks" in bacaRp && Number(bacaRp.teks) === v));
+                                            const nilaiFokus = wakiliKetik ? ketik : isianPolos(String(v));
+                                            const nilaiRp = wakiliKetik || fokusRp === f.path ? nilaiFokus : isianNominal(v) ?? String(v);
                                             return (
                                                 <div key={f.path} className="fi-field">
                                                     <label className="fi-label" htmlFor={id}>{f.label}{beda && <span className="fi-why"> · diubah</span>}</label>
-                                                    <input id={id} aria-describedby={`${id}-help`} className="fi-input fi-tnum" style={{ textAlign: "end" }} type="number" inputMode="decimal"
-                                                        step={f.kind === "rasio" ? "0.01" : "1"} min="0" value={String(v)} disabled={Boolean(tanpaIzin || alasanKonst)}
-                                                        onChange={(e) => {
-                                                            const x = Number(e.target.value);
-                                                            if (!Number.isFinite(x) || x < 0) return;
-                                                            setDraf(setField(nilaiK, f.path, x));
-                                                        }} />
+                                                    {f.kind === "rp" ? (
+                                                        <input id={id} aria-describedby={`${galatRp ? `${id}-err ` : ""}${id}-help`} aria-invalid={galatRp ? true : undefined}
+                                                            className="fi-input fi-tnum" style={{ textAlign: "end" }} type="text" inputMode="numeric" autoComplete="off"
+                                                            value={nilaiRp} disabled={Boolean(tanpaIzin || alasanKonst)}
+                                                            onChange={(e) => {
+                                                                const t = e.target.value;
+                                                                setKetikRp((k) => ({ ...k, [f.path]: t }));
+                                                                const r = bacaRupiah(t);
+                                                                if ("teks" in r) setDraf(setField(nilaiK, f.path, Number(r.teks)));
+                                                            }}
+                                                            // Angka polos ditulis ke DOM seketika + pilih semua: ketikan berikutnya mengganti isi, tidak menempel (S-1).
+                                                            onFocus={(e) => { const el = e.currentTarget; if (el.value !== nilaiFokus) { el.value = nilaiFokus; el.select(); } setFokusRp(f.path); }}
+                                                            onBlur={() => { setFokusRp(null); if (!galatRp) setKetikRp((k) => { const n = { ...k }; delete n[f.path]; return n; }); }} />
+                                                    ) : (
+                                                        <input id={id} aria-describedby={`${id}-help`} className="fi-input fi-tnum" style={{ textAlign: "end" }} type="number" inputMode="decimal"
+                                                            step={f.kind === "rasio" ? "0.01" : "1"} min="0" value={String(v)} disabled={Boolean(tanpaIzin || alasanKonst)}
+                                                            // Roda mouse tidak boleh menggeser konstanta yang menentukan nominal semua orang (No 122).
+                                                            onWheel={(e) => e.currentTarget.blur()}
+                                                            onChange={(e) => {
+                                                                const x = Number(e.target.value);
+                                                                if (!Number.isFinite(x) || x < 0) return;
+                                                                setDraf(setField(nilaiK, f.path, x));
+                                                            }} />
+                                                    )}
+                                                    {galatRp && <p className="fi-msg" id={`${id}-err`}>{galatRp}</p>}
                                                     <p className="fi-help" id={`${id}-help`}>
                                                         {f.kind === "rasio" ? `= ${(v * 100).toLocaleString("id-ID")}%` : tampil(v, f.kind)}
                                                         {beda && <span className="fi-why"> · sebelumnya {tampil(asal, f.kind)}</span>}
@@ -271,6 +311,8 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                                 <button type="button" aria-pressed={setelan.gtAoMode === "file"} disabled={Boolean(tanpaIzin || alasanKunci)} title={tanpaIzin ?? alasanKunci}
                                     onClick={() => { if (setelan.gtAoMode !== "file") setDialog({ kind: "ao", mode: "file" }); }}>Target AO dari berkas</button>
                             </div>
+                            {/* No 50: alasan pilihan nonaktif terlihat, bukan hanya di title. */}
+                            {(tanpaIzin || alasanKunci) && <p className="fi-small fi-why">Ubah penyebut AO: {tanpaIzin ?? alasanKunci}.</p>}
                             <p className="fi-small fi-subtle">
                                 {setelan.gtAoMode === "file"
                                     ? "Tiap sales GT/TT dinilai terhadap Target AO barisnya sendiri di berkas target."
@@ -318,9 +360,10 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                 </div>
             </Section>
 
+            {/* No 59: kaki hanya menyimpan konstanta; draf daftar disebut supaya tidak terbaca "tidak ada perubahan". */}
             <FooterToolbar message={alasanKonst ?? (tanpaIzin ? "Hanya pemegang izin kelola insentif yang dapat mengubah konstanta"
-                : berubah.length ? `${berubah.length} konstanta diubah, belum disimpan` : "Belum ada perubahan konstanta")}>
-                {berubah.length > 0 && <Button variant="tertiary" icon={<RotateCcw className="fi-icon" aria-hidden />} onClick={() => setDraf(null)}>Batalkan perubahan</Button>}
+                : `${rpSalah ? `${rpSalah} isian rupiah belum sah; perbaiki dulu. ` : ""}${berubah.length ? `${berubah.length} konstanta diubah, belum disimpan` : "Belum ada perubahan konstanta"}${nDaftarDraf ? `; ${nDaftarDraf} daftar belum disimpan di seksinya` : ""}`)}>
+                {berubah.length > 0 && <Button variant="tertiary" icon={<RotateCcw className="fi-icon" aria-hidden />} onClick={() => gantiDraf(null)}>Batalkan perubahan</Button>}
                 <Button variant="primary" disabled={Boolean(alasanSimpan)} disabledReason={alasanSimpan} onClick={() => setDialog({ kind: "simpanKonst" })}>
                     {berubah.length ? `Simpan ${berubah.length} perubahan…` : "Simpan"}
                 </Button>
@@ -330,8 +373,8 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                 title={`Simpan ${berubah.length} perubahan konstanta?`} confirmLabel="Simpan" confirmDisabled={alasanSimpan} onConfirm={simpanKonst}
                 facts={[
                     ...berubah.map((f): [string, string] => [`${f.grup} · ${f.label}`, `${tampil(getField(tersimpan ?? DEFAULT_KONSTANTA, f.path), f.kind)} → ${tampil(getField(draf ?? DEFAULT_KONSTANTA, f.path), f.kind)}`]),
-                    ["Versi dasar", `${drafDasar ? teksVersi(drafDasar.versi) : versiTeks} — ditolak bila admin lain menyimpan sesudahnya`],
-                    ["Berlaku untuk", "Setiap perhitungan sesudah disimpan — semua sales, SPV, dan SM, termasuk periode lampau yang belum dibayar"],
+                    ["Versi dasar", `${drafDasar ? teksVersi(drafDasar.versi) : versiTeks}; ditolak bila admin lain menyimpan sesudahnya`],
+                    ["Berlaku untuk", "Setiap perhitungan sesudah disimpan: semua sales, SPV, dan SM, termasuk periode lampau yang belum dibayar"],
                     ["Tidak berubah", "Pembayaran yang sudah tercatat tetap memakai bruto tersimpan"],
                 ]} />
             <ConfirmDialog open={dialog?.kind === "konflik"} onClose={() => setDialog(null)} tag="Konstanta"
@@ -345,8 +388,8 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                 title={`Simpan perubahan ${dlgDaftar?.judul ?? ""}?`} confirmLabel="Simpan"
                 onConfirm={() => (dialog?.kind === "daftar" ? simpanDaftar(dialog.field) : undefined)}
                 facts={dlgDaftar ? [
-                    ["Ditambah", tambah.join(", ") || "—"],
-                    ["Dihapus", hilang.join(", ") || "—"],
+                    ["Ditambah", tambah.join(", ") || KOSONG],
+                    ["Dihapus", hilang.join(", ") || KOSONG],
                     ["Jumlah entri", String(daftarNilai(dlgDaftar.field).length)],
                     ["Akibat", dlgDaftar.catatan],
                 ] : []} />

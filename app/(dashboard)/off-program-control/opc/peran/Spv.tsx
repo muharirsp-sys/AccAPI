@@ -5,36 +5,34 @@
  *   dialog `kirimsm`; batch baru di kolom kedua (`?view=baru`); ajukan pengembalian selisih; pengingat kelengkapan; PDF surat
  *   hanya setelah Klaim menyetujui (#6); Pengajuan diskon SPV (`?view=diskon`).
  * Caller: OpcApp.tsx (MODUL.supervisor).
- * Dependensi: opc/Bersama (KerjaPeran, kontrak), opc/ObjectPageBatch, opc/peran/SpvForm (form + dialog), opc/peran/SpvLain
- *   (refund, pengingat, diskon), lib/opc-ui (TAMPILAN, PREDIKAT), components/fiori, next/navigation.
+ * Dependensi: opc/Bersama (KerjaPeran, kontrak), opc/ObjectPageBatch, opc/peran/SpvForm (form + dialog), opc/peran/SmRefund (AjukanRefund),
+ *   opc/peran/SpvLain (pengingat, diskon), lib/opc-ui (TAMPILAN, PREDIKAT), components/fiori, next/navigation.
  * Main Functions: Spv, DetailSpv, UbahBatch, BatchBaru.
- * Side Effects: Lewat SpvForm (POST/PATCH /batches, POST /batches/[id]/submit, GET next-number) dan SpvLain (POST refund,
- *   GET/POST discount). router.replace ke batch yang baru tersimpan (setelah draf dibersihkan).
+ * Side Effects: Lewat SpvForm (POST/PATCH /batches, POST /batches/[id]/submit, GET next-number), SmRefund (POST refund) dan SpvLain
+ *   (GET/POST discount). router.replace ke batch yang baru tersimpan (setelah draf dibersihkan).
  *
- * Catatan pemetaan fitur lama (old-opc.tsx SupervisorDashboard 2911–4454):
- *  - Mode ubah = openReturnedBatch 3153–3215 (baca-saja bila !PREDIKAT.spvBisaUbah); grid 18 kolom → SpvForm.EditorItem.
- *  - Nomor otomatis 2993–3034, saveDraft 3319, handleSubmitBatch 3422, DuplicateNoSuratPrompt 2805 → SpvForm.
- *  - Hasil kirim 4346–4396 → strip Sukses; PDF surat hanya setelah Klaim menyetujui (#6, 4331–4345).
- *  - Status kunci 4403–4423 → strip baca-saja + Flow 7 tahap. Data Selisih 3764–3834 → tampilan lokal `selisih` + AjukanRefund.
- *  - Kwitansi (handlePrintKwitansi 3588–3621): OFF_KWITANSI_DISABLED → tidak ditampilkan.
+ * Port dari SupervisorDashboard kode lama (lihat git): mode ubah = openReturnedBatch (baca-saja bila !PREDIKAT.spvBisaUbah), grid
+ * 18 kolom menjadi SpvForm.EditorItem, Data Selisih menjadi tampilan lokal `selisih`; kwitansi (OFF_KWITANSI_DISABLED) tidak ditampilkan.
  */
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, FileText, Percent, Plus } from "lucide-react";
-import { Button, FooterToolbar, KeyValues, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
+import { Button, FooterToolbar, KeyValues, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { PREDIKAT, TAMPILAN, labelStatus, tahapBatch, type Tampilan } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
-import { KerjaPeran, type DaftarOpc, type DetailProps, type OpcKonteks, type PeranProps } from "../Bersama";
+import { hariIniWita } from "@/lib/tampil";
+import { KerjaPeran, pesanTidakPasti, type DaftarOpc, type DetailProps, type OpcKonteks, type PeranProps } from "../Bersama";
 import { ObjectPageBatch, type BagianTambahan } from "../ObjectPageBatch";
 import {
     AksiForm, DialogForm, EditorItem, SetupBatch, StripDraf, barisDariItem, barisKosong, gelombangDariNomor, pesanFooter, useFormSpv,
     type HasilKirim, type Pesan,
 } from "./SpvForm";
-import { AjukanRefund, DiskonSpv, PengingatKelengkapan } from "./SpvLain";
+import { AjukanRefund } from "./SmRefund";
+import { DiskonSpv, PengingatKelengkapan } from "./SpvLain";
 
-/** Tampilan lokal Data selisih (menu lama 3640–3679; predikat old 3765). */
+/** Tampilan lokal Data selisih (menu dan predikat kode lama). */
 const SELISIH: Tampilan = {
     kunci: "selisih", label: "Data selisih", antrean: PREDIKAT.selisihTerbuka,
     kosong: "Tidak ada batch dengan selisih yang perlu dikembalikan.",
@@ -50,8 +48,8 @@ function StripPesan({ pesan, tutup }: { pesan: Pesan; tutup?: () => void }) {
 }
 
 /**
- * Hasil kirim (old 4346–4396): tanpa Batch ID internal dan alamat PDF mentah; PDF baru bisa diunduh setelah Klaim menyetujui (#6).
- * `sudahAda` (ALREADY_SUBMITTED, old 3496–3511): pesan lama + ringkasan + PDF yang ada (form baru: status Klaim kosong → catatan saja).
+ * Hasil kirim (kode lama): tanpa Batch ID internal dan alamat PDF mentah; PDF baru bisa diunduh setelah Klaim menyetujui (#6).
+ * `sudahAda` (ALREADY_SUBMITTED, kode lama): pesan lama + ringkasan + PDF yang ada (form baru: status Klaim kosong → catatan saja).
  */
 function StripHasil({ h }: { h: HasilKirim }) {
     return (
@@ -77,7 +75,7 @@ function StripHasil({ h }: { h: HasilKirim }) {
     );
 }
 
-/** Aturan PDF #6 (old 2944, 4331–4345): SPV hanya bisa mengunduh PDF surat setelah pengajuan disetujui Klaim. */
+/** Aturan PDF #6 (kode lama): SPV hanya bisa mengunduh PDF surat setelah pengajuan disetujui Klaim. */
 function StripPdf({ pdfUrl, claimStatus }: { pdfUrl?: string | null; claimStatus: string }) {
     if (!pdfUrl) return null;
     return claimStatus === "Approved"
@@ -85,7 +83,8 @@ function StripPdf({ pdfUrl, claimStatus }: { pdfUrl?: string | null; claimStatus
         : <MessageStrip tone="info" title="PDF surat">dapat dicetak setelah pengajuan disetujui Klaim.</MessageStrip>;
 }
 
-// ── Kolom kedua: batch ──────────────────────────────────────────────────────────────────────────────────
+
+const KUNCI_VERSI_KONFLIK = "Hari ini belum ada kunci versi: perubahan orang lain bisa tertimpa selama batch masih boleh diubah; server hanya menolak batch yang sudah dikirim, terkunci, atau periodenya ditutup. Usulan: tolak bila batch berubah sejak dibuka (versi), simpan dan kirim dalam satu transaksi.";
 
 /** Object Page batch SPV: mode ubah bila boleh diubah; selain itu baca-saja (+ ajukan pengembalian selisih bila ada sisa). */
 function DetailSpv(props: DetailProps) {
@@ -101,6 +100,8 @@ function DetailSpv(props: DetailProps) {
     if (!data) return <ObjectPageBatch {...props} />;
     const b = data.batch;
     const bisaUbah = !data.uji && !hasil && PREDIKAT.spvBisaUbah(b) && !ctx.izin("edit_returned_batch");
+    // Satu catatan varian per layar (audit No 80), digabung ke catatan Object Page: saat konflik, kalimat konflik; mode ubah: kunci versi.
+    const varianKonflik = konflik ? { bl: "BL-09", isi: KUNCI_VERSI_KONFLIK } : undefined;
     const muatUlangKonflik = () => { setKonflik(null); muatUlang(); daftar.muatUlang(); };
     const stripUmum = (
         <>
@@ -111,7 +112,6 @@ function DetailSpv(props: DetailProps) {
                         {konflik} Status batch di server sudah berubah sejak Anda membukanya, jadi perubahan Anda belum disimpan. Muat ulang untuk melihat versi terbaru, lalu ulangi perubahan.{" "}
                         <Button variant="tertiary" onClick={muatUlangKonflik}>Muat ulang</Button>
                     </MessageStrip>
-                    <VariantNote bl="BL-09">Hari ini belum ada kunci versi: perubahan orang lain bisa tertimpa selama batch masih boleh diubah; server hanya menolak batch yang sudah dikirim, terkunci, atau periodenya ditutup. Usulan: tolak bila batch berubah sejak dibuka (versi), simpan dan kirim dalam satu transaksi.</VariantNote>
                 </>
             )}
             {hasil && <StripHasil h={hasil} />}
@@ -128,7 +128,13 @@ function DetailSpv(props: DetailProps) {
     // Batch yang menunggu pengembalian: galat/memuat data refund tampil di tempat form (bukan bagian yang diam-diam hilang).
     const tungguRefund = !data.uji && !r && (PREDIKAT.selisihTerbuka(b) || ctx.sub === "selisih");
     const isiRefund = !data.uji && r?.summary && r.summary.remainingRefund > 0
-        ? <AjukanRefund ctx={ctx} batch={b} ringkasan={r.summary} selesai={(p) => { setPesan({ tone: "pos", judul: p }); muatUlang(); daftar.muatUlang(); }} />
+        ? (
+            // canSubmitRefund kode lama = submit_refund ATAU finance_payment.
+            <AjukanRefund batchId={b.id} no={b.noPengajuan} ringkasan={r.summary}
+                alasan={ctx.izin("submit_refund") && ctx.izin("finance_payment") ? ctx.izin("submit_refund") : undefined}
+                pembuka="Ajukan pengembalian sebesar sisa selisih supaya alur batch ini bisa ditutup."
+                onDraf={ctx.setDraf} onSelesai={(p) => { setPesan({ tone: "pos", judul: p }); muatUlang(); daftar.muatUlang(); }} onTidakPasti={props.laporTidakPasti} />
+        )
         : tungguRefund && data.refund.status === "galat" ? (
             <div className="fi-sect-in">
                 <MessageStrip tone="neg" title="Data pengembalian selisih gagal dimuat.">
@@ -147,7 +153,7 @@ function DetailSpv(props: DetailProps) {
             strip={
                 <>
                     {stripUmum}
-                    {/* Hanya sebelum Klaim (status kunci lama 4403–4423); tahap sesudahnya jelas dari Flow. */}
+                    {/* Hanya sebelum Klaim (status kunci kode lama); tahap sesudahnya jelas dari Flow. */}
                     {!data.uji && !hasil && !PREDIKAT.spvBisaUbah(b) && ["draf", "dikembalikan", "sm"].includes(tahapBatch(b)) && (
                         <MessageStrip tone="info" title="Baca-saja:">Batch sudah dikirim/disetujui atau terkunci. Supervisor hanya bisa mengubah batch Draf atau Dikembalikan.</MessageStrip>
                     )}
@@ -159,6 +165,7 @@ function DetailSpv(props: DetailProps) {
                     onClick={() => berikut && ctx.bukaBatch(berikut.id)}>Batch berikutnya</Button>
             ) : undefined}
             pesanFooter={hasil ? "Tidak ada aksi lain untuk Anda di tahap ini." : undefined}
+            varian={varianKonflik}
         />
     );
 }
@@ -170,16 +177,16 @@ type Bersama = {
 
 /** Mode ubah batch Draf/Dikembalikan di Object Page (slot gantiItem/bagian/aksi). Draf → ctx.setDraf (konfirmasi keluar di OpcApp). */
 function UbahBatch(props: DetailProps & Bersama) {
-    const { ctx, daftar, detail, batchId, strip, konflik, setPesan, setKonflik, setHasil } = props;
+    const { ctx, daftar, detail, batchId, strip, konflik, setPesan, setKonflik, setHasil, laporTidakPasti } = props;
     const data = detail.data!;
     const b = data.batch;
-    // openReturnedBatch (old 3153–3215): isian dari detail batch; nilai cadangan sama dengan kode lama.
+    // openReturnedBatch (kode lama): isian dari detail batch. Tanpa cadangan principal/bulan/tahun karangan (audit No 73): yang kosong wajib diisi.
     const [awal] = useState(() => ({
         setup: {
             supervisorName: b.supervisorName || ctx.pengguna.nama.trim() || "Supervisor",
-            principleName: b.principleName || "RECKITT BENCKISER, PT",
-            bulan: (b.bulan || "05").padStart(2, "0"),
-            tahun: b.tahun || "2026",
+            principleName: b.principleName || "",
+            bulan: b.bulan ? b.bulan.padStart(2, "0") : "",
+            tahun: b.tahun || "",
         },
         rows: data.items.length ? data.items.map(barisDariItem) : [barisKosong()],
     }));
@@ -195,10 +202,13 @@ function UbahBatch(props: DetailProps & Bersama) {
         onPesan: setPesan,
         onKonflik: setKonflik,
         onDrafTersimpan: ({ noPengajuan }) => { setPesan({ tone: "pos", judul: `Draf ${noPengajuan} berhasil disimpan.` }); props.muatUlang(); daftar.muatUlang(); },
-        onGagalKirim: (_h, pesan) => {
+        onGagalKirim: (_h, pesan, pasti) => {
+            // Tidak pasti: dialog sudah ditutup (SpvForm); strip bertahan di Object Page + muat ulang (No 22).
+            if (!pasti) { laporTidakPasti(`Perubahan sudah tersimpan sebagai draf; hasil kirim ke Sales Manager belum pasti. ${pesan}`); return; }
             daftar.muatUlang();
             throw new Error(`Perubahan sudah tersimpan sebagai draf, tetapi batch belum terkirim ke Sales Manager: ${pesan}`);
         },
+        onTidakPasti: laporTidakPasti,
         onTerkirim: (h) => { setHasil(h); props.selesai(`Batch ${h.noPengajuan} berhasil dikirim ke Sales Manager.`); },
         // ALREADY_SUBMITTED hanya dijawab POST (batch baru); PATCH tidak. Tetap ditangani supaya tidak diam.
         onSudahDikirim: () => setPesan({ tone: "warn", judul: "Pengajuan ini sudah pernah dikirim.", isi: "Silakan cek PDF atau lanjutkan alur persetujuan." }),
@@ -214,11 +224,14 @@ function UbahBatch(props: DetailProps & Bersama) {
                 strip={<>{strip}<StripDraf f={f} /></>}
                 bagian={[{
                     id: "opc-setup", label: "Setup batch", letak: "awal",
-                    isi: <SetupBatch f={f} catatan={dikembalikan
-                        ? "Mode revisi batch yang dikembalikan. Supervisor dapat mengubah data lalu mengirim ulang ke Sales Manager."
-                        : "Draf: ubah data lalu simpan, atau kirim ke Sales Manager. Setelah dikirim, batch baca-saja sampai dikembalikan."} />,
+                    isi: (
+                        <SetupBatch f={f} catatan={dikembalikan
+                            ? "Mode revisi batch yang dikembalikan. Supervisor dapat mengubah data lalu mengirim ulang ke Sales Manager."
+                            : "Draf: ubah data lalu simpan, atau kirim ke Sales Manager. Setelah dikirim, batch baca-saja sampai dikembalikan."} />
+                    ),
                 }]}
                 gantiItem={<EditorItem f={f} />}
+                varian={{ bl: "BL-09", isi: konflik ? KUNCI_VERSI_KONFLIK : "Belum ada kunci versi: bila orang lain mengubah batch ini sejak Anda membukanya, isian Anda menimpanya. Server hanya menolak bila batch sudah tidak boleh diubah (sudah dikirim, terkunci, atau periodenya ditutup). Usulan: kiriman ditolak bila batch berubah sejak dibuka, tanpa menimpa apa pun." }}
                 aksi={<AksiForm f={f} konflik={konflik} izinDraf={ctx.izin("edit_returned_batch")} izinKirim={ctx.izin("submit_batch")} />}
                 pesanFooter={pesanFooter(f, konflik)}
             />
@@ -227,9 +240,8 @@ function UbahBatch(props: DetailProps & Bersama) {
     );
 }
 
-// ── Kolom kedua: batch baru ─────────────────────────────────────────────────────────────────────────────
 
-/** Form batch baru (panel Input Batch lama 3977–4401, form kosong). Setelah tersimpan/terkirim, batch dibuka di kolom kedua. */
+/** Form batch baru (panel Input Batch kode lama, form kosong). Setelah tersimpan/terkirim, batch dibuka di kolom kedua. */
 function BatchBaru({ ctx, daftar }: { ctx: OpcKonteks; daftar: DaftarOpc }) {
     const router = useRouter();
     const sp = useSearchParams();
@@ -237,13 +249,11 @@ function BatchBaru({ ctx, daftar }: { ctx: OpcKonteks; daftar: DaftarOpc }) {
     const { titip } = useContext(TitipanCtx);
     const [pesan, setPesan] = useState<Pesan | null>(null);
     const [sudahAda, setSudahAda] = useState<HasilKirim | null>(null);
+    // Tanpa principal bawaan (wajib dipilih, pola Batch CLM); bulan dan tahun = hari ini WITA, bukan jam perangkat (audit No 31, 73).
     const [awal] = useState(() => {
-        const kini = new Date();
+        const hari = hariIniWita();
         return {
-            setup: {
-                supervisorName: ctx.pengguna.nama.trim(), principleName: "RECKITT BENCKISER, PT",
-                bulan: String(kini.getMonth() + 1).padStart(2, "0"), tahun: String(kini.getFullYear()),
-            },
+            setup: { supervisorName: ctx.pengguna.nama.trim(), principleName: "", bulan: hari.slice(5, 7), tahun: hari.slice(0, 4) },
             rows: [barisKosong()],
         };
     });
@@ -262,9 +272,16 @@ function BatchBaru({ ctx, daftar }: { ctx: OpcKonteks; daftar: DaftarOpc }) {
         onPesan: setPesan,
         onKonflik: () => undefined, // POST tidak punya konflik versi
         onDrafTersimpan: (h) => buka({ batchId: h.batchId, pesan: { tone: "pos", judul: `Draf ${h.noPengajuan} berhasil disimpan.` } }),
-        onGagalKirim: (h, p) => buka({ batchId: h.batchId, pesan: { tone: "neg", judul: `Draf ${h.noPengajuan} tersimpan, tetapi belum terkirim ke Sales Manager.`, isi: `${p} Periksa lalu kirim ulang.` } }),
+        onGagalKirim: (h, p, pasti) => buka({
+            batchId: h.batchId,
+            pesan: pasti
+                ? { tone: "neg", judul: `Draf ${h.noPengajuan} tersimpan, tetapi belum terkirim ke Sales Manager.`, isi: `${p} Periksa lalu kirim ulang.` }
+                : { tone: "warn", judul: `Draf ${h.noPengajuan} tersimpan; hasil kirim ke Sales Manager belum pasti.`, isi: p },
+        }),
+        // Batch baru mungkin sudah tersimpan: daftar dimuat ulang supaya bisa diperiksa sebelum menyimpan ulang.
+        onTidakPasti: (p) => { setPesan({ tone: "warn", judul: "Hasil simpan terakhir belum pasti.", isi: p || pesanTidakPasti("batch baru ini") }); daftar.muatUlang(); },
         onTerkirim: (h) => buka({ batchId: h.batchId, pesan: { tone: "pos", judul: "Batch baru terkirim." }, hasil: h }),
-        // old 3496–3511: hasil + PDF yang ada; form tetap terbuka. Bila server menyebut batchnya, batch itu dibuka.
+        // kode lama: hasil + PDF yang ada; form tetap terbuka. Bila server menyebut batchnya, batch itu dibuka.
         onSudahDikirim: (h) => (h.batchId ? buka({ batchId: h.batchId, hasil: h }) : setSudahAda(h)),
     });
     const { setDraf } = ctx;
@@ -273,13 +290,13 @@ function BatchBaru({ ctx, daftar }: { ctx: OpcKonteks; daftar: DaftarOpc }) {
     return (
         <div style={{ display: "grid", gap: 12 }}>
             <ObjectPageHeader
-                breadcrumbs={[{ label: "OFF Program Control" }, { label: "Batch baru" }]}
+                headingLevel={2}
                 title="Batch baru"
                 status={<StatusBadge tone="neu">Draf</StatusBadge>}
                 draft={f.dirty}
                 attributes={[
-                    { label: "No pengajuan (otomatis)", value: <span className="fi-mono">{f.generatedNo}</span> },
-                    { label: "Principal", value: f.setup.principleName },
+                    { label: "No pengajuan (perkiraan)", value: <span className="fi-mono">{f.nomorTampil}</span> },
+                    { label: "Principal", value: f.setup.principleName || "Belum dipilih" },
                     { label: "Item", value: <span className="fi-tnum">{f.rows.length}</span> },
                     { label: "Total", value: <span className="fi-tnum">{rupiah(f.bayar.total)}</span> },
                 ]}
@@ -303,7 +320,6 @@ function BatchBaru({ ctx, daftar }: { ctx: OpcKonteks; daftar: DaftarOpc }) {
     );
 }
 
-// ── Modul ───────────────────────────────────────────────────────────────────────────────────────────────
 
 export default function Spv(props: PeranProps) {
     const { ctx, daftar } = props;
@@ -344,13 +360,13 @@ export default function Spv(props: PeranProps) {
                         {ctx.sub === "selisih" && (
                             <MessageStrip tone="info" title="Data selisih:">
                                 Batch di bawah ini memiliki selisih antara nilai pembayaran Keuangan dan realisasi klaim. Supervisor wajib mengajukan pengembalian dana agar alur batch dapat ditutup.
-                                {/* "Selisih perlu kembali" per batch (old 3786–3807); nominal di baris antrean adalah total batch. */}
+                                {/* "Selisih perlu kembali" per batch (kode lama); nominal di baris antrean adalah total batch. */}
                                 {selisih.length > 0 && (
                                     <KeyValues items={selisih.map((b) => [b.noPengajuan, `${rupiah(Number(b.refundAmount || 0))} perlu kembali · ${labelStatus(b.refundStatus || b.status)}`])} />
                                 )}
                             </MessageStrip>
                         )}
-                        <PengingatKelengkapan batches={daftar.batches} buka={ctx.bukaBatch} />
+                        <PengingatKelengkapan batches={daftar.batches} buka={ctx.bukaBatch} href={ctx.hrefBatch} />
                     </>
                 }
                 kolomKedua={baru ? { isi: <BatchBaru ctx={ctx} daftar={daftar} />, tutup: () => ctx.ubahUrl({ view: null }) } : undefined}

@@ -4,12 +4,17 @@
  * Dependensi: React, next/link, lucide-react, kelas `fi-*` di app/fiori.css.
  * Main Functions: Button, StatusBadge, MessageStrip, Tile, ListItem, ObjectPageHeader, Flow, AnchorBar, FooterToolbar,
  *   KeyValues, EmptyState, ErrorState, Skeleton, ResponsiveTable, FlexibleColumnLayout, Section, VariantNote.
- * Side Effects: Tidak ada; aksi diteruskan ke callback pemanggil.
+ * Side Effects: Tidak ada; aksi diteruskan ke callback pemanggil. Button nonaktif beralasan hanya menampilkan gelembung alasan.
+ *   ResponsiveTable memegang state buka/tutup baris rincian; ListItem `href` + `onClick` = tautan nyata dengan klik biasa ke callback.
  */
-import { Fragment, type ButtonHTMLAttributes, type ReactNode } from "react";
+// Modul klien: Button memegang state gelembung alasan. Semua pemakai sudah komponen klien; komponen server boleh merender
+// komponen di sini selama props-nya bisa diserialisasi (tanpa fungsi).
+"use client";
+
+import { Fragment, useId, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import Link from "next/link";
 import {
-    ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronLeft, ChevronRight, CircleCheck, CircleDashed, CircleX,
+    ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleCheck, CircleDashed, CircleX,
     Inbox, Info, LoaderCircle, Pencil, RefreshCw, TriangleAlert, X,
 } from "lucide-react";
 
@@ -21,28 +26,50 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
     variant?: "primary" | "secondary" | "tertiary" | "negative" | "icon";
     icon?: ReactNode;
     busy?: boolean;
-    /** Alasan tombol nonaktif; tampil sebagai title. Tampilkan juga sebagai teks di FooterToolbar bila itu aksi utama. */
+    /**
+     * Alasan tombol nonaktif. Tombol tetap bisa difokus (`aria-disabled`) sehingga alasan terbaca pembaca layar (dari `title`);
+     * diketuk/Enter menampilkan alasan sebagai gelembung, `onClick` tidak dipanggil. Tulis juga di FooterToolbar bila itu aksi utama.
+     */
     disabledReason?: string;
     count?: number;
 };
 
 /** Label kata kerja. Varian `icon` wajib `aria-label`. Satu `primary` per kelompok aksi. */
-export function Button({ variant = "secondary", icon, busy, disabledReason, count, className = "", children, disabled, type = "button", title, ...rest }: ButtonProps) {
+export function Button({ variant = "secondary", icon, busy, disabledReason, count, className = "", children, disabled, type = "button", title, onClick, ...rest }: ButtonProps) {
     const off = Boolean(disabled || busy);
+    // Sibuk tetap `disabled` asli (penjaga kirim ganda). Nonaktif beralasan memakai aria-disabled: tetap di urutan Tab.
+    const beralasan = off && !busy && Boolean(disabledReason);
+    const [why, setWhy] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
     return (
-        <button {...rest} type={type} className={`fi-btn fi-btn--${variant} ${className}`} disabled={off} aria-busy={busy || undefined}
-            title={off && disabledReason ? disabledReason : title}>
-            {busy ? <LoaderCircle className="fi-icon fi-spin" aria-hidden /> : icon}
-            {children}
-            {count != null && <span className="fi-count">{count}</span>}
-        </button>
+        <>
+            <button {...rest} type={type} className={`fi-btn fi-btn--${variant} ${className}`} disabled={off && !beralasan}
+                aria-disabled={beralasan || undefined} aria-busy={busy || undefined}
+                title={off && disabledReason ? disabledReason : title}
+                onBlur={(e) => { setWhy(null); rest.onBlur?.(e); }}
+                onClick={(e) => {
+                    if (!beralasan) { onClick?.(e); return; }
+                    e.preventDefault(); // juga menahan submit form dan popovertarget
+                    // Alasan yang sudah tertulis di dekat tombol (pemanggil mengikatnya lewat aria-describedby) tidak diulang.
+                    if (rest["aria-describedby"]) return;
+                    const r = e.currentTarget.getBoundingClientRect();
+                    const left = Math.max(8, Math.min(r.left, window.innerWidth - 296));
+                    setWhy(r.bottom + 64 > window.innerHeight ? { left, bottom: window.innerHeight - r.top + 6 } : { left, top: r.bottom + 6 });
+                    window.setTimeout(() => setWhy(null), 4000); // iOS tidak memfokus tombol yang diketuk, jadi blur tidak datang
+                }}>
+                {busy ? <LoaderCircle className="fi-icon fi-spin" aria-hidden /> : icon}
+                {children}
+                {count != null && <span className="fi-count">{count}</span>}
+            </button>
+            {/* Pembaca layar sudah mendapat alasan dari title (deskripsi aksesibel); gelembung ini untuk mata, terutama layar sentuh. */}
+            {beralasan && why && <span className="fi-whypop" style={why} aria-hidden>{disabledReason}</span>}
+        </>
     );
 }
 
-/** Status selalu ikon + label + warna semantik; tidak pernah warna saja. */
-export function StatusBadge({ tone, busy, children }: { tone: Tone; busy?: boolean; children: ReactNode }) {
+/** Status selalu ikon + label + warna semantik; tidak pernah warna saja. `wrap`: label panjang boleh turun baris (kolom sempit). */
+export function StatusBadge({ tone, busy, wrap, children }: { tone: Tone; busy?: boolean; wrap?: boolean; children: ReactNode }) {
     const Icon = busy ? LoaderCircle : TONE_ICON[tone];
-    return <span className="fi-badge" data-tone={tone}><Icon className={`fi-icon${busy ? " fi-spin" : ""}`} aria-hidden />{children}</span>;
+    return <span className="fi-badge" data-tone={tone} data-wrap={wrap || undefined}><Icon className={`fi-icon${busy ? " fi-spin" : ""}`} aria-hidden />{children}</span>;
 }
 
 /** Pesan di halaman. `neg` = role alert (galat); lainnya = role status. Galat validasi tidak memakai toast. */
@@ -81,7 +108,14 @@ export function Tile({ title, subtitle, icon, footer, value, unit, tone, href, o
 
 type ListItemProps = { doc: ReactNode; amount?: ReactNode; title?: ReactNode; meta?: ReactNode; badge?: ReactNode; current?: boolean; href?: string; onClick?: () => void };
 
-/** Baris daftar ponsel dan item worklist (kolom pertama FCL). */
+/** Klik kiri tanpa tombol pengubah: tautan ditangani navigasi klien; klik tengah/Ctrl/Shift/Alt/Cmd dibiarkan ke peramban (tab baru). */
+export const klikBiasa = (e: { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }) =>
+    e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+
+/**
+ * Baris daftar ponsel dan item worklist (kolom pertama FCL). `href` + `onClick`: tautan nyata (bisa dibuka di tab baru dengan klik
+ * tengah/Ctrl), sedangkan klik biasa memanggil `onClick` (navigasi klien pemanggil, mis. penjaga draf OPC).
+ */
 export function ListItem({ doc, amount, title, meta, badge, current, href, onClick }: ListItemProps) {
     const inner = (
         <>
@@ -92,22 +126,32 @@ export function ListItem({ doc, amount, title, meta, badge, current, href, onCli
         </>
     );
     const ariaCurrent = current ? "true" as const : undefined;
+    if (href && onClick) {
+        // Tanpa prefetch: daftar bisa ratusan baris ke rute yang sama dengan kueri berbeda.
+        return (
+            <Link href={href} prefetch={false} className="fi-li" aria-current={ariaCurrent}
+                onClick={(e) => { if (!klikBiasa(e)) return; e.preventDefault(); onClick(); }}>
+                {inner}
+            </Link>
+        );
+    }
     if (href) return <Link href={href} className="fi-li" aria-current={ariaCurrent}>{inner}</Link>;
     if (onClick) return <button type="button" className="fi-li" aria-current={ariaCurrent} onClick={onClick}>{inner}</button>;
     return <div className="fi-li">{inner}</div>;
 }
 
-export function KeyValues({ items }: { items: Array<[string, ReactNode]> }) {
-    return <dl className="fi-kv">{items.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}</dl>;
+/** Nilai rata kanan tabular (angka). `align="start"` untuk nilai berupa kalimat, mis. fakta ConfirmDialog. */
+export function KeyValues({ items, align }: { items: Array<[string, ReactNode]>; align?: "start" }) {
+    return <dl className="fi-kv" data-align={align}>{items.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}</dl>;
 }
 
 export type FlowStep = { label: string; state: "done" | "current" | "late" | "stop" | "todo" };
 const STEP_SR: Record<FlowStep["state"], string> = { done: "selesai", current: "", late: "terlambat", stop: "berhenti", todo: "belum" };
 
-/** Langkah status dokumen; langkah aktif memakai aria-current="step". */
+/** Langkah status dokumen; langkah aktif memakai aria-current="step". Bisa difokus: di layar sempit alurnya digulir menyamping. */
 export function Flow({ steps, label = "Tahap dokumen" }: { steps: FlowStep[]; label?: string }) {
     return (
-        <ol className="fi-flow" aria-label={label}>
+        <ol className="fi-flow" aria-label={label} tabIndex={0}>
             {steps.map((step, index) => (
                 <li key={step.label} data-state={step.state} aria-current={step.state === "current" || step.state === "late" ? "step" : undefined}>
                     <span className="fi-step" aria-hidden>{step.state === "done" ? <Check size={12} /> : index + 1}</span>
@@ -124,10 +168,13 @@ type ObjectPageHeaderProps = {
     title: ReactNode; status?: ReactNode; draft?: boolean; actions?: ReactNode;
     attributes?: Array<{ label: string; value: ReactNode }>;
     flow?: ReactNode;
+    /** 2 bila halaman sudah punya h1 (mis. detail di kolom kedua FCL); bawaan 1. */
+    headingLevel?: 1 | 2;
 };
 
 // ponytail: header tidak menciut saat digulir (dynamic page penuh); AnchorBar yang sticky. Tambah menciut bila Object Page panjang butuh.
-export function ObjectPageHeader({ breadcrumbs, title, status, draft, actions, attributes, flow }: ObjectPageHeaderProps) {
+export function ObjectPageHeader({ breadcrumbs, title, status, draft, actions, attributes, flow, headingLevel = 1 }: ObjectPageHeaderProps) {
+    const Judul = headingLevel === 2 ? "h2" : "h1";
     return (
         <header className="fi-oph">
             {breadcrumbs?.length ? (
@@ -138,7 +185,8 @@ export function ObjectPageHeader({ breadcrumbs, title, status, draft, actions, a
                 </nav>
             ) : null}
             <div className="fi-oph-title">
-                <h1>{title}</h1>
+                {/* tabIndex -1: tujuan fokus saat detail dibuka di ponsel (OPC, audit No 111); tidak masuk urutan Tab. */}
+                <Judul tabIndex={-1}>{title}</Judul>
                 {status}
                 {draft && <span className="fi-draft"><Pencil className="fi-icon" aria-hidden />Draf belum disimpan</span>}
                 {actions && <div className="fi-oph-acts">{actions}</div>}
@@ -212,14 +260,20 @@ type ResponsiveTableProps<T> = {
     selected?: ReadonlySet<string>; onSelectedChange?: (next: Set<string>) => void;
     /** Baris yang boleh dipilih; lainnya kotaknya nonaktif dan tidak ikut "Pilih semua". Bawaan: semua. */
     selectableRow?: (row: T) => boolean;
-    /** Nama aksesibel kotak pilih per baris (bawaan: "Pilih <rowKey>"). */
+    /** Nama aksesibel kotak pilih per baris (bawaan: "Pilih <rincian.nama>" atau "Pilih <rowKey>"). */
     rowLabel?: (row: T) => string;
+    /** Baris sisipan per baris, dibuka lewat tombol "Rincian <nama>" (kolom terakhir; di ponsel di bawah item). Dirender hanya saat dibuka. */
+    rincian?: { isi: (row: T) => ReactNode; nama: (row: T) => string };
+    /** Baris total (tfoot): isi per key kolom; kolom pertama tanpa isi memakai `label`. Di ponsel jadi daftar label-nilai. */
+    foot?: { label: string; cells: Partial<Record<string, ReactNode>> };
 };
 
 // ponytail: tabel desktop dan daftar ponsel dirender dua-duanya lalu dipilih lewat container query — DOM ganda.
 // Cukup untuk halaman berpaginasi (≤ ratusan baris); virtualisasi bila satu halaman memuat ribuan baris.
 export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
-    const { title, count, actions, columns, rows, rowKey, mobileItem, status = "siap", error, onRetry, empty, sort, onSortChange, selected, onSelectedChange, selectableRow, rowLabel } = props;
+    const { title, count, actions, columns, rows, rowKey, mobileItem, status = "siap", error, onRetry, empty, sort, onSortChange, selected, onSelectedChange, selectableRow, rowLabel, rincian, foot } = props;
+    const id = useId();
+    const [buka, setBuka] = useState<Record<string, boolean>>({});
     const selectable = Boolean(selected && onSelectedChange);
     const keys = rows.map(rowKey);
     const pickable = rows.map((row) => !selectableRow || selectableRow(row));
@@ -231,6 +285,15 @@ export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
         if (next.has(key)) next.delete(key); else next.add(key);
         onSelectedChange!(next);
     };
+    const cls = (c: Column<T>) => `${c.align === "end" ? "fi-end" : ""} ${c.secondary ? "fi-secondary" : ""}`;
+    const nCol = columns.length + (selectable ? 1 : 0) + (rincian ? 1 : 0);
+    const tombolRincian = (row: T, key: string, target: string) => (
+        <Button variant="tertiary" aria-expanded={Boolean(buka[key])} aria-controls={buka[key] ? target : undefined} aria-label={`Rincian ${rincian!.nama(row)}`}
+            icon={buka[key] ? <ChevronUp className="fi-icon" aria-hidden /> : <ChevronDown className="fi-icon" aria-hidden />}
+            onClick={() => setBuka((b) => ({ ...b, [key]: !b[key] }))}>
+            Rincian
+        </Button>
+    );
 
     let body: ReactNode;
     if (rows.length === 0 && status === "memuat") body = <Skeleton />;
@@ -238,29 +301,32 @@ export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
     else if (rows.length === 0) body = <EmptyState {...empty} />;
     else body = (
         <div className={status === "memuat" ? "fi-busy" : undefined}>
-            <div className="fi-tablescroll">
+            {/* Wadah gulir menyamping bisa difokus (kibor). role group bernama = caption; bukan region (231 kueri spec, audit No 140c). */}
+            <div className="fi-tablescroll" tabIndex={0} role="group" aria-labelledby={`${id}-cap`}>
                 <table className="fi-table">
-                    <caption className="sr-only">{title}</caption>
+                    <caption id={`${id}-cap`} className="sr-only">{title}</caption>
                     <thead>
                         <tr>
                             {selectable && (
                                 <th className="fi-sel">
-                                    <input type="checkbox" aria-label="Pilih semua baris" disabled={pickableKeys.length === 0}
-                                        checked={pickableKeys.length > 0 && nSelected === pickableKeys.length}
-                                        ref={(el) => { if (el) el.indeterminate = nSelected > 0 && nSelected < pickableKeys.length; }}
-                                        onChange={() => {
-                                            // Hanya baris yang terlihat; pilihan di luar saringan tidak ikut berubah.
-                                            const next = new Set(selected);
-                                            for (const k of pickableKeys) { if (nSelected === pickableKeys.length) next.delete(k); else next.add(k); }
-                                            onSelectedChange!(next);
-                                        }} />
+                                    <label className="fi-selhit">
+                                        <input type="checkbox" aria-label="Pilih semua baris" disabled={pickableKeys.length === 0}
+                                            checked={pickableKeys.length > 0 && nSelected === pickableKeys.length}
+                                            ref={(el) => { if (el) el.indeterminate = nSelected > 0 && nSelected < pickableKeys.length; }}
+                                            onChange={() => {
+                                                // Hanya baris yang terlihat; pilihan di luar saringan tidak ikut berubah.
+                                                const next = new Set(selected);
+                                                for (const k of pickableKeys) { if (nSelected === pickableKeys.length) next.delete(k); else next.add(k); }
+                                                onSelectedChange!(next);
+                                            }} />
+                                    </label>
                                 </th>
                             )}
                             {columns.map((c) => {
                                 const active = sort?.key === c.key;
                                 const SortIcon = active ? (sort!.dir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
                                 return (
-                                    <th key={c.key} scope="col" className={`${c.align === "end" ? "fi-end" : ""} ${c.secondary ? "fi-secondary" : ""}`}
+                                    <th key={c.key} scope="col" className={cls(c)}
                                         aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : undefined}>
                                         {c.sortable && onSortChange
                                             ? <button type="button" onClick={() => onSortChange(c.key)}>{c.header}<SortIcon className="fi-icon" aria-hidden /></button>
@@ -268,30 +334,64 @@ export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
                                     </th>
                                 );
                             })}
+                            {rincian && <th scope="col" className="fi-end"><span className="sr-only">Rincian</span></th>}
                         </tr>
                     </thead>
                     <tbody>
                         {rows.map((row, i) => {
                             const key = keys[i];
                             const isSel = selectable && selected!.has(key);
+                            const target = `${id}-t${i}`;
                             return (
-                                <tr key={key} data-selected={isSel || undefined}>
-                                    {selectable && <td className="fi-sel"><input type="checkbox" aria-label={rowLabel ? rowLabel(row) : `Pilih ${key}`} checked={isSel} disabled={!pickable[i]} onChange={() => toggle(key)} /></td>}
-                                    {columns.map((c, ci) => (
-                                        <td key={c.key} className={`${c.align === "end" ? "fi-end" : ""} ${c.secondary ? "fi-secondary" : ""}`}>
-                                            {c.cell(row)}
-                                            {ci === 0 && secondaryCols.length > 0 && (
-                                                <span className="fi-popin">{secondaryCols.map((s) => <span key={s.key}>{s.header}: {s.cell(row)} · </span>)}</span>
-                                            )}
-                                        </td>
-                                    ))}
-                                </tr>
+                                <Fragment key={key}>
+                                    <tr data-selected={isSel || undefined}>
+                                        {/* Kotak pilih TIDAK ikut membuka rincian: satu klik di kolom ini berarti satu hal saja. */}
+                                        {selectable && <td className="fi-sel"><label className="fi-selhit"><input type="checkbox" aria-label={rowLabel ? rowLabel(row) : `Pilih ${rincian ? rincian.nama(row) : key}`} checked={isSel} disabled={!pickable[i]} onChange={() => toggle(key)} /></label></td>}
+                                        {columns.map((c, ci) => (
+                                            <td key={c.key} className={cls(c)}>
+                                                {c.cell(row)}
+                                                {ci === 0 && secondaryCols.length > 0 && (
+                                                    <span className="fi-popin">{secondaryCols.map((s) => <span key={s.key}>{s.header}: {s.cell(row)} · </span>)}</span>
+                                                )}
+                                            </td>
+                                        ))}
+                                        {rincian && <td className="fi-end">{tombolRincian(row, key, target)}</td>}
+                                    </tr>
+                                    {rincian && buka[key] && <tr id={target}><td colSpan={nCol}>{rincian.isi(row)}</td></tr>}
+                                </Fragment>
                             );
                         })}
                     </tbody>
+                    {foot && (
+                        <tfoot>
+                            <tr>
+                                {selectable && <td />}
+                                {columns.map((c, ci) => <td key={c.key} className={cls(c)}>{foot.cells[c.key] ?? (ci === 0 ? <b>{foot.label}</b> : null)}</td>)}
+                                {rincian && <td />}
+                            </tr>
+                        </tfoot>
+                    )}
                 </table>
             </div>
-            <ul className="fi-list" aria-label={title}>{rows.map((row, i) => <li key={keys[i]}>{mobileItem(row)}</li>)}</ul>
+            <ul className="fi-list" aria-label={title}>
+                {rows.map((row, i) => (
+                    <li key={keys[i]}>
+                        {mobileItem(row)}
+                        {rincian && (
+                            <div className="px-2 pb-2">
+                                {tombolRincian(row, keys[i], `${id}-m${i}`)}
+                                {buka[keys[i]] && <div id={`${id}-m${i}`} className="px-2 pt-2">{rincian.isi(row)}</div>}
+                            </div>
+                        )}
+                    </li>
+                ))}
+                {foot && (
+                    <li className="grid gap-2 px-4 py-3">
+                        <b>{foot.label}</b>
+                        <KeyValues items={columns.filter((c) => foot.cells[c.key] != null).map((c) => [c.header, foot.cells[c.key]])} />
+                    </li>
+                )}
+            </ul>
         </div>
     );
 
@@ -347,9 +447,10 @@ export function Section({ id, title, subtitle, actions, children, className = ""
 
 /** Catatan "varian berlabel": logic BL yang belum ada di main; layar menampilkan perilaku hari ini dan menyebut usulannya. */
 export function VariantNote({ bl, children }: { bl: string; children: ReactNode }) {
+    // Hanya Admin yang melihat kotak ini (fiori.css); kode BL tinggal di nama aksesibel untuk menelusuri usulannya.
     return (
         <aside className="fi-varbox" aria-label={`Usulan ${bl}`}>
-            <span className="fi-tag" data-tone="info">Perilaku hari ini · usulan {bl} lewat tracker AM</span>
+            <span className="fi-tag" data-tone="info">Perilaku hari ini</span>
             <p>{children}</p>
         </aside>
     );

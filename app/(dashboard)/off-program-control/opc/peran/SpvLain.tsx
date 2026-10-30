@@ -1,111 +1,27 @@
 /*
- * Tujuan: Bagian SPV OFF Program Control di luar form batch (Fiori S4d): ajukan pengembalian selisih (bagian refund yang memang
- *   aksi SPV, RefundPanel old-opc.tsx 7958–8216), pengingat kelengkapan belum lengkap (IncompleteDocumentsReminderPanel 2740–2803),
- *   dan Pengajuan diskon SPV (DiscountDashboard 9178–9542, jejak digital). Payload dan validasi = kode lama.
+ * Tujuan: Bagian SPV OFF Program Control di luar form batch (Fiori S4d): pengingat kelengkapan belum lengkap
+ *   (IncompleteDocumentsReminderPanel kode lama) dan Pengajuan diskon SPV (DiscountDashboard kode lama, jejak digital). Payload dan
+ *   validasi = kode lama. Form ajukan pengembalian selisih kini satu komponen bersama di SmRefund.tsx (audit desain No 76).
  * Caller: opc/peran/Spv.tsx.
- * Dependensi: components/fiori/{core,interactive}, opc/Bersama (ambilOpc, tulisOpc, tipe), opc/peran/SpvForm (parseUiCurrency,
- *   kodePrincipal), lib/off-program-control/constants, lib/opc-ui, lib/promo-ui.
- * Main Functions: AjukanRefund, PengingatKelengkapan, DiskonSpv.
- * Side Effects: POST /api/off-program-control/batches/[id]/refund; GET + POST (FormData) /api/off-program-control/discount.
+ * Dependensi: components/fiori/{core,interactive}, opc/Bersama (ambilOpc, tulisOpc, tanganiTulis, pesanTidakPasti, tipe),
+ *   opc/peran/SpvForm (parseUiCurrency, kodePrincipal), lib/off-program-control/constants, lib/opc-ui, lib/promo-ui, lib/tampil (KOSONG).
+ * Main Functions: PengingatKelengkapan, DiskonSpv.
+ * Side Effects: GET + POST (FormData) /api/off-program-control/discount.
  */
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Wallet } from "lucide-react";
-import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, StatusBadge, type Column } from "@/components/fiori/core";
+import { Button, ListItem, MessageStrip, ResponsiveTable, Section, StatusBadge, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { offPrinciples } from "@/lib/off-program-control/constants";
-import { tanggalOpc, waktuWita, type BatchOpc, type RingkasanRefund } from "@/lib/opc-ui";
+import { tanggalOpc, waktuWita, type BatchOpc } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
-import { ambilOpc, tulisOpc, type OpcKonteks } from "../Bersama";
+import { KOSONG } from "@/lib/tampil";
+import { ambilOpc, pesanTidakPasti, tanganiTulis, tulisOpc, type OpcKonteks } from "../Bersama";
 import { kodePrincipal, parseUiCurrency } from "./SpvForm";
 
-// ── Ajukan pengembalian selisih ─────────────────────────────────────────────────────────────────────────
-
-const METODE_REFUND = ["Transfer", "Tunai", "Kompensasi Batch Lain"] as const;
-
-/**
- * Form "Submit Pengembalian Dana" (old 8161–8199) di Object Page batch. Tampil bila sisa selisih > 0 (pemanggil). Tombol aktif bila
- * jumlah dan tanggal terisi (kode lama); jumlah diurai parseUiCurrency sebelum dikirim. Kirim lewat dialog (sebelumnya klik langsung).
- */
-export function AjukanRefund({ ctx, batch, ringkasan, selesai }: { ctx: OpcKonteks; batch: BatchOpc; ringkasan: RingkasanRefund; selesai: (pesan: string) => void }) {
-    const [jumlah, setJumlah] = useState("");
-    const [metode, setMetode] = useState<string>("Transfer");
-    const [tanggal, setTanggal] = useState("");
-    const [pengirim, setPengirim] = useState("");
-    const [bank, setBank] = useState("");
-    const [catatan, setCatatan] = useState("");
-    const [dialog, setDialog] = useState(false);
-    const dirty = Boolean(jumlah || tanggal || pengirim || bank || catatan || metode !== "Transfer");
-    const { setDraf } = ctx;
-    useEffect(() => { setDraf(dirty); return () => setDraf(false); }, [dirty, setDraf]);
-    // canSubmitRefund kode lama = submit_refund ATAU finance_payment.
-    const izin = ctx.izin("submit_refund") && ctx.izin("finance_payment") ? ctx.izin("submit_refund") : undefined;
-    const kurang = !jumlah ? "Isi jumlah pengembalian dulu." : !tanggal ? "Isi tanggal pengembalian dulu." : undefined;
-    const alasan = izin ?? kurang;
-
-    return (
-        <div className="fi-sect-in">
-            <p className="fi-small fi-subtle">Batch ini memiliki selisih antara nilai pembayaran Keuangan dan realisasi klaim. Supervisor wajib mengajukan pengembalian dana agar alur batch dapat ditutup.</p>
-            <KeyValues items={[
-                ["Dana dikeluarkan", rupiah(ringkasan.paidAmount)],
-                ["Realisasi klaim", rupiah(ringkasan.verifiedAmount)],
-                ["Selisih harus kembali", rupiah(ringkasan.overpaidAmount)],
-                ["Sudah dikembalikan", rupiah(ringkasan.totalRefunded)],
-                ["Menunggu verifikasi", rupiah(ringkasan.pendingRefund)],
-                ["Sisa", <b key="s">{rupiah(ringkasan.remainingRefund)}</b>],
-            ]} />
-            <div className="fi-formgrid">
-                <FormField label="Jumlah pengembalian" required>{(a) => <input {...a} className="fi-input fi-tnum" inputMode="decimal" placeholder="Rp 0" value={jumlah} onChange={(e) => setJumlah(e.target.value)} />}</FormField>
-                <FormField label="Metode">{(a) => (
-                    <select {...a} className="fi-input" value={metode} onChange={(e) => setMetode(e.target.value)}>
-                        {METODE_REFUND.map((m) => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                )}</FormField>
-                <FormField label="Tanggal pengembalian" required>{(a) => <input {...a} className="fi-input" type="date" value={tanggal} onChange={(e) => setTanggal(e.target.value)} />}</FormField>
-                <FormField label="Nama pengirim" help="Kosong = nama akun Anda.">{(a) => <input {...a} className="fi-input" value={pengirim} onChange={(e) => setPengirim(e.target.value)} />}</FormField>
-                <FormField label="Bank penerima">{(a) => <input {...a} className="fi-input" value={bank} onChange={(e) => setBank(e.target.value)} />}</FormField>
-                <FormField label="Catatan">{(a) => <input {...a} className="fi-input" value={catatan} onChange={(e) => setCatatan(e.target.value)} />}</FormField>
-            </div>
-            <div className="fi-btnrow">
-                <Button variant="primary" icon={<Wallet className="fi-icon" aria-hidden />} disabled={Boolean(alasan)} disabledReason={alasan} onClick={() => setDialog(true)}>Ajukan pengembalian…</Button>
-                {alasan && <span className="fi-small fi-subtle">{alasan}</span>}
-            </div>
-            <ConfirmDialog
-                open={dialog}
-                onClose={() => setDialog(false)}
-                tag="Pengembalian selisih"
-                title={`Ajukan pengembalian ${rupiah(parseUiCurrency(jumlah))}?`}
-                description="Pengembalian tercatat dengan status menunggu verifikasi Keuangan."
-                facts={[
-                    ["Batch", <span key="b" className="fi-mono">{batch.noPengajuan}</span>],
-                    ["Jumlah", rupiah(parseUiCurrency(jumlah))],
-                    ["Metode", metode],
-                    ["Tanggal", tanggalOpc(tanggal)],
-                    ["Pengirim", pengirim || "Nama akun Anda"],
-                    ["Bank penerima", bank || "–"],
-                    ["Sisa harus dikembalikan", rupiah(ringkasan.remainingRefund)],
-                ]}
-                confirmLabel="Ajukan pengembalian"
-                onConfirm={async () => {
-                    // submitRefund (old 8001): body sama, jumlah diurai parseUiCurrency.
-                    const data = await tulisOpc(`/api/off-program-control/batches/${encodeURIComponent(batch.id)}/refund`, {
-                        body: { refundAmount: parseUiCurrency(jumlah), refundMethod: metode, refundDate: tanggal, senderName: pengirim, receiverBank: bank, note: catatan },
-                        gagal: "Gagal submit refund.",
-                    });
-                    setJumlah(""); setTanggal(""); setPengirim(""); setBank(""); setCatatan(""); setMetode("Transfer");
-                    setDialog(false);
-                    selesai(String(data.message || "Refund berhasil disubmit."));
-                }}
-            />
-        </div>
-    );
-}
-
-// ── Pengingat kelengkapan ───────────────────────────────────────────────────────────────────────────────
-
 /** Batch milik SPV yang ditandai Klaim "kelengkapan belum lengkap" (finalStatus Incomplete Documents). Kosong = tidak dirender. */
-export function PengingatKelengkapan({ batches, buka }: { batches: BatchOpc[]; buka: (id: string) => void }) {
+export function PengingatKelengkapan({ batches, buka, href }: { batches: BatchOpc[]; buka: (id: string) => void; href: (id: string) => string }) {
     const xs = batches.filter((b) => b.finalStatus === "Incomplete Documents");
     if (xs.length === 0) return null;
     return (
@@ -114,16 +30,14 @@ export function PengingatKelengkapan({ batches, buka }: { batches: BatchOpc[]; b
                 {xs.map((b) => (
                     <li key={b.id}>
                         <ListItem doc={b.noPengajuan} title={`${b.principleName} (${b.principleCode})`}
-                            meta={`Catatan Klaim: ${b.finalClaimNote || "–"} · diperbarui ${waktuWita(b.updatedAt)}`}
-                            badge={<StatusBadge tone="warn">Kelengkapan belum lengkap</StatusBadge>} onClick={() => buka(b.id)} />
+                            meta={`Catatan Klaim: ${b.finalClaimNote || KOSONG} · diperbarui ${waktuWita(b.updatedAt)}`}
+                            badge={<StatusBadge tone="warn">Kelengkapan belum lengkap</StatusBadge>} href={href(b.id)} onClick={() => buka(b.id)} />
                     </li>
                 ))}
             </ul>
         </Section>
     );
 }
-
-// ── Pengajuan diskon SPV ────────────────────────────────────────────────────────────────────────────────
 
 type Diskon = {
     id: string; toko: string; principleCode?: string | null; principleName?: string | null; program?: string | null; nominal: number;
@@ -158,6 +72,7 @@ export function DiskonSpv({ ctx }: { ctx: OpcKonteks }) {
             "Pengajuan diskon belum berhasil dimuat.");
     }, [cari, bulan, dari, sampai]), { pertahankan: true });
     const [pesan, setPesan] = useState<string | null>(null);
+    const [tidakPasti, setTidakPasti] = useState<string | null>(null);
     const nSaringan = [cari.trim(), bulan || dari || sampai].filter(Boolean).length;
     const hapusSaringan = () => { setCari(""); setBulan(""); setDari(""); setSampai(""); };
     const rows = load.data ?? [];
@@ -165,13 +80,13 @@ export function DiskonSpv({ ctx }: { ctx: OpcKonteks }) {
     const kolom: Column<Diskon>[] = [
         { key: "tgl", header: "Tanggal", cell: (r) => (r.tanggal ? tanggalOpc(r.tanggal) : waktuWita(r.createdAt)) },
         { key: "toko", header: "Toko/customer", cell: (r) => r.toko },
-        { key: "principal", header: "Principal", cell: (r) => r.principleName || "–" },
+        { key: "principal", header: "Principal", cell: (r) => r.principleName || KOSONG },
         { key: "nominal", header: "Nominal", align: "end", cell: (r) => <span className="fi-tnum">{rupiah(r.nominal)}</span> },
-        { key: "program", header: "Program", secondary: true, cell: (r) => r.program || "–" },
-        { key: "alasan", header: "Alasan", secondary: true, cell: (r) => r.alasan || "–" },
+        { key: "program", header: "Program", secondary: true, cell: (r) => r.program || KOSONG },
+        { key: "alasan", header: "Alasan", secondary: true, cell: (r) => r.alasan || KOSONG },
         { key: "status", header: "Status", secondary: true, cell: (r) => r.status },
-        { key: "user", header: "Dicatat oleh", secondary: true, cell: (r) => r.createdByName || "–" },
-        { key: "dok", header: "Dokumen", secondary: true, cell: (r) => (r.documentUrl ? <a href={r.documentUrl} target="_blank" rel="noreferrer">{r.documentName || "Lihat"}</a> : "–") },
+        { key: "user", header: "Dicatat oleh", secondary: true, cell: (r) => r.createdByName || KOSONG },
+        { key: "dok", header: "Dokumen", secondary: true, cell: (r) => (r.documentUrl ? <a href={r.documentUrl} target="_blank" rel="noreferrer">{r.documentName || "Lihat"}</a> : KOSONG) },
     ];
 
     return (
@@ -182,7 +97,11 @@ export function DiskonSpv({ ctx }: { ctx: OpcKonteks }) {
                     : "Modul ini hanya jejak digital pengajuan diskon. Workflow approval belum aktif dan data tidak memengaruhi alur OFF Program Control."}
             </MessageStrip>
             {pesan && <MessageStrip tone="pos" title={pesan} onClose={() => setPesan(null)} />}
-            {bisaKelola && <FormDiskon ctx={ctx} selesai={(p) => { setPesan(p); muatUlang(); }} />}
+            {tidakPasti && <MessageStrip tone="warn" title="Hasil pencatatan terakhir belum pasti." onClose={() => setTidakPasti(null)}>{tidakPasti}</MessageStrip>}
+            {bisaKelola && (
+                <FormDiskon ctx={ctx} selesai={(p) => { setTidakPasti(null); setPesan(p); muatUlang(); }}
+                    tidakPasti={(p) => { setTidakPasti(p); muatUlang(); }} />
+            )}
             <div className="fi-panel" style={{ padding: 0, overflow: "clip" }}>
                 <FilterBar
                     title="Saringan pengajuan diskon"
@@ -214,8 +133,8 @@ export function DiskonSpv({ ctx }: { ctx: OpcKonteks }) {
     );
 }
 
-/** Form "Buat Pengajuan Diskon" (old 9313–9430). Validasi toko & nominal wajib (kalimat kode lama); kirim FormData lewat dialog. */
-function FormDiskon({ ctx, selesai }: { ctx: OpcKonteks; selesai: (pesan: string) => void }) {
+/** Form "Buat Pengajuan Diskon" (kode lama). Validasi toko & nominal wajib (kalimat kode lama); kirim FormData lewat dialog. */
+function FormDiskon({ ctx, selesai, tidakPasti }: { ctx: OpcKonteks; selesai: (pesan: string) => void; tidakPasti: (pesan: string) => void }) {
     const [toko, setToko] = useState("");
     const [principleName, setPrincipleName] = useState("");
     const [program, setProgram] = useState("");
@@ -268,15 +187,15 @@ function FormDiskon({ ctx, selesai }: { ctx: OpcKonteks; selesai: (pesan: string
                 description="Hanya jejak digital: belum ada alur persetujuan dan tidak memengaruhi alur OFF Program Control."
                 facts={[
                     ["Toko / customer", toko.trim()],
-                    ["Principal", principleName || "–"],
-                    ["Program", program || "–"],
+                    ["Principal", principleName || KOSONG],
+                    ["Program", program || KOSONG],
                     ["Nominal", rupiah(parseUiCurrency(nominal))],
                     ["Tanggal", tanggalOpc(tanggal)],
                     ["Dokumen", docFile?.name || "Tidak ada"],
                 ]}
                 confirmLabel="Catat pengajuan"
                 onConfirm={async () => {
-                    // submitDiscount (old 9261): FormData dengan kunci yang sama.
+                    // submitDiscount (kode lama): FormData dengan kunci yang sama.
                     const formData = new FormData();
                     formData.append("toko", toko.trim());
                     formData.append("principleName", principleName);
@@ -287,7 +206,9 @@ function FormDiskon({ ctx, selesai }: { ctx: OpcKonteks; selesai: (pesan: string
                     formData.append("tanggal", tanggal);
                     formData.append("catatan", catatan);
                     if (docFile) formData.append("document", docFile);
-                    await tulisOpc("/api/off-program-control/discount", { body: formData, gagal: "Gagal menyimpan pengajuan diskon." });
+                    await tulisOpc("/api/off-program-control/discount", {
+                        body: formData, gagal: "Gagal menyimpan pengajuan diskon.", putus: pesanTidakPasti("pengajuan diskon ini", "daftar pengajuan diskon"),
+                    }).catch(tanganiTulis(tidakPasti, () => setDialog(false)));
                     reset();
                     setDialog(false);
                     selesai("Pengajuan diskon tercatat sebagai jejak digital.");

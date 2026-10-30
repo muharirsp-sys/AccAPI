@@ -58,8 +58,13 @@ Layar menampilkan KOREKSI di tabel hasil dan filter; ekspor XLSX menaruhnya pada
 `/summary` -> `/summary/settings` -> API `/summary/review` -> `summary_review.py`
 -> tabel SQLite `summary_review_package` pada volume Summary yang sama.
 
-- `app/(dashboard)/summary/settings/page.tsx`: ringkasan pendek sesuai contoh URC/Priskila; buka referensi September dari volume, koreksi detail, periksa kesiapan, lalu publikasi eksplisit.
+- `app/(dashboard)/summary/settings/page.tsx`: ringkasan pendek sesuai contoh URC/Priskila; buka paket rujukan dari volume (label tombol dari
+  `GET /summary/review/reference`, nonaktif beralasan bila paket tidak ada), koreksi detail, periksa kesiapan, lalu publikasi eksplisit.
 - `python_backend/routers/summary_review.py`: auth Summary view/edit + CSRF, batas JSON 8 MB, endpoint list/import/get/update/readiness/publish.
+  Paket rujukan (audit desain 001 No 81, 27 Okt 2026): `GET /summary/review/reference` (izin `summary.view`; baca-saja: `{tersedia, sebab, periode, judul}` dari
+  berkas env `SUMMARY_REVIEW_REFERENCE`; terdaftar SEBELUM `GET /{package_id}`), `POST /summary/review/reference` (izin `summary.edit` + CSRF; impor lewat
+  `import_package`, idempoten per owner+hash) dan alias lama `POST /reference/september` (fungsi sama). Tidak ada berkas 404, > 8 MB 413, JSON/paket
+  rusak 400. Judul paket `judul_paket(raw)` = "Summary <Bulan> <Tahun>" dari field `created` (tanpa `created` sah: "Paket Summary Program").
 - `python_backend/summary_review.py`: validasi relasi ID dan master, kepemilikan, deduplikasi `(owner, source_hash)`, revisi optimistis; nilai sumber sebelum koreksi tetap disimpan.
 - `python_backend/summary_review_publish.py`: validasi setting per faktur yang didukung -> satu transaksi `summary_review_package` + `summary_draft(status=published)`. Batas historis, grade, alokasi, wilayah, pilihan bonus mix, dan klaim di luar faktur ditahan dengan alasan; tidak diabaikan. `test_summary_review_publish.py` membuktikan publikasi -> perhitungan order.
 - `python_backend/test_summary_review.py`: runnable check impor/koreksi/auth/CAS dengan SQLite sementara; dapat diberi path paket OCR asli.
@@ -114,8 +119,8 @@ DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)
 Beranda (Fiori, S1b) -> profil peran dari izin -> tile tugas (lib/beranda.ts, GET endpoint yang ada; profil kasir: /api/kasir/ringkasan, K3) + Pintasan + Pantauan + Semua aplikasi
   -> Admin Incaso (pelunasan.kirim, S6e-2b): tile Tidak pasti/Gagal + Pantauan dari GET /api/idempotency/summary?rows=1 (perDatabase,
      database aktif dari /api/auth/accurate-session); jawaban tanpa angka/daftar = galat, bukan 0
-RootLayout -> html[data-theme="surya"] statis (Office Calm/Neon/iOS pensiun, Okt 2026)
-  -> app/workspace.css: remap Surya untuk isi halaman yang belum dimigrasi
+RootLayout -> app/globals.css (dasar Tailwind: target sentuh, fokus, reduced-motion) + app/fiori.css; semua isi di dalam .fiori
+  (tema lama Office Calm/Neon/iOS/Surya pensiun, remap kelas Tailwind lama dihapus)
 SidebarLayout (shell Fiori, S1a) -> shell bar: logo resmi, cari menu Ctrl K, menu profil (Mode/Density, Bantuan -> ChatWidget, Keluar)
   -> navigasi samping dari izin; drawer ponsel (Dialog native); navigasi bawah = Beranda + 3 pintasan ROLE_PROFILES + Menu;
      profil = ★ grup utama (`profileFor`, peta nama preset S7-3), fallback tebakan izin (`roleProfile`)
@@ -135,6 +140,13 @@ Halaman yang dimigrasi -> <FioriScope> (components/fiori/Scope.tsx: Plus Jakarta
 ```
 Validasi: `npx playwright test tests/fiori-ui-kit.spec.ts` pada server development lokal (LOCAL_AUTH_BYPASS);
 baseline di `tests/fiori-ui-kit.spec.ts-snapshots/`. Aturan: `docs/UI_DESIGN_SYSTEM.md`.
+Arah visual tunggal untuk agen/skill desain: `DESIGN.md` (token + aturan, format design.md) dan `PRODUCT.md` (pengguna, prinsip).
+Audit desain 001 (25 Okt 2026, 151 temuan + laporan akhir): `docs/audit/audit-desain-001-2026-10-25.md`. Semua halaman dashboard
+kini Fiori (enam halaman lama master data/klaim/summary dimigrasi; spec `tests/fiori-master-lama.spec.ts`).
+Format tampilan bersama: `lib/tampil.ts` (`KOSONG`, `tanggalWita`, `waktuWita` dd/mm/yyyy hh.mm WITA, `hariIniWita`, `sebabHttp`);
+helper tanggal lokal per modul mendelegasikan ke sini. Hanya teks tampilan, tidak untuk nilai yang dikirim ke server.
+ConfirmDialog menulis alasan nonaktif di kaki dialog kecuali teks yang sama sudah ada di isi dialog; Button `disabledReason` =
+`aria-disabled` (tetap bisa di-Tab) + gelembung alasan, klik/submit ditahan.
 Hasil browser desktop/mobile: `docs/design/surya-workspace-desktop.png`, `docs/design/surya-workspace-mobile.png`.
 Checkpoint implementasi dan instruksi resume: `docs/SURYA_IMPLEMENTATION.md` (keputusan, bukti validasi, file yang disentuh, lingkungan uji, dan langkah berikutnya).
 Status: UI redesign tervalidasi lokal. Audit build menemukan tracing `webhook-backfill -> next.config.ts` memasukkan kunci OCR lokal; pengemasan dihentikan dan salinan kunci di artefak dihapus. Lihat handover sebelum deployment.
@@ -143,14 +155,18 @@ Status: UI redesign tervalidasi lokal. Audit build menemukan tracing `webhook-ba
 ```
 UI upload laporan harian
   -> python_backend/routers/laporan_harian.py
-  -> laporan_harian.build_fix_from_accurate() -> build_salesbase()
-  -> laporan_harian.build_stock_frame()
-       -> alias Stock Accurate: Nama Gudang=kode, Deskripsi Gudang=nama, Nama Satuan=satuan
-       -> mapping Principal sumber ke SPV/SM (fallback item penjualan bila Principal kosong)
-  -> laporan_harian.write_report_files() -> XLSX per SPV, SM, dan Principal
-       -> laporan_harian_layout.py + laporan_harian_layouts.json: posisi kolom, sheet, font, format tanggal/angka, lebar arsip, relasi styles/theme paket XLSX
+  -> laporan_harian.load_inputs() -> laporan_harian_pq.build_fix()  (replika query "2. To Format Laporan")
+       penjualan = Rincian Faktur Penjualan INV / "1. Paste Data" (Paste Acc); retur = Rincian Retur Penjualan (No.Retur) /
+       Rincian RJN; export Accurate yang judulnya beda dari sheet Paste dibaca per posisi kolom (seperti ditempel admin)
+       atau FIX LAP PENJ jadi (fix_from_table)
+  -> laporan_harian_pq.SalesBase  (replika query SalesBase "2.3 To SPV dan SM New": flag AO/EC/IA/Nota Retur/Batal)
+  -> laporan_harian.load_stock() -> master_stock()  ("3. Stock" Sheet1; export Accurate dipetakan)
+  -> laporan_harian.write_report_files() -> laporan_harian_pq.build_report() + write_workbook()
+       -> 22 keyword LaporanAuto + JONAL, sama persis dengan arsip/sheet 2.3 (nilai, kolom, urutan baris, nama sheet, format)
   -> laporan_harian_manager.write_manager_report() -> Excel + HTML Pak Fahdhar untuk unduhan/screenshot
        -> agregasi JUMLAH net retur sekali, mapping cabang/principal -> SPV/SM; target periode belum tersedia tetap kosong
+Paritas: laporan_harian_bandingkan.py <hasil> <arsip LaporanAuto> (sel demi sel); test_laporan_harian_pq.py
+  (fixture + acuan dari Excel via laporan_harian_excel_pq.py)
 ```
 
 ### 1. Autentikasi & Guard Halaman
@@ -338,6 +354,15 @@ Antrean Faktur / outbox sales-invoice (S6-0d, DRAFT — zona tulis Accurate):
        (mencari ulang; keputusan selalu dipilih petugas); Antre ulang/Buang (alasan wajib di layar) = POST /api/invoice-outbox;
      jawaban tidak pasti (putus/batas waktu, bukan JSON, >= 502 tanpa amplop {ok:false,error}) = "belum pasti" + muat ulang +
        tulis terkunci; Verifikasi balik = /api/invoice-verify
+  Verifikasi balik (audit desain 001 No 6, owner 27 Okt 2026): POST /api/invoice-verify (order.edit) {orderId, jenis sales|isi, sidik, note}
+     -> note WAJIB untuk kedua jenis (Terima sales = alasan dari dialog; tanpa kalimat bawaan lagi), maks. 500 karakter (lib/pencabutan; lebih = 400,
+        tidak dipotong) -> upsert invoice_verify_note
+     DELETE /api/invoice-verify (order.edit) {orderId, jenis, alasan} -> alasan 10..500 karakter (lib/pencabutan; di luar = 400 SEBELUM DB)
+        -> db.transaction: DELETE invoice_verify_note ... RETURNING + INSERT pencabutan_log (jenis invoice_verify_note, kunci "<order_id>|<jenis>",
+           baris_lama, alasan, oleh = email sesi); log gagal = DELETE batal. Jawaban {ok, dicabut}.
+  Cabut konfirmasi order ganda (audit desain 001 No 18): DELETE /api/principal-order/dupe-ack?principal=&soNo= (order.create) + body {alasan}
+     -> aturan alasan sama -> db.transaction: DELETE order_dupe_ack ... RETURNING + INSERT pencabutan_log (jenis order_dupe_ack,
+        kunci "<principal>|<so_no>"). UI: LangkahBatch.tsx dialog Cabut (alasan wajib; batas sama ditolak di dialog). GET/POST dupe-ack tidak berubah.
 
 Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
   UI Finance (/finance, Fiori S6b: finance/posting.ts postingPurchasePayment — urutan & clientRef = recordKey lama; dialog pp)
@@ -595,7 +620,9 @@ UI pilih pick_group -> /rekapan-nota/wave/[id]/cetak?grup=...   (server componen
   -> window.print(); kaki halaman memuat wave, grup, jumlah SKU, total pcs, waktu cetak
   CETAK SEMUA (owner 24 Okt 2026): /rekapan-nota/wave/[id]/cetak-semua -> lembarCetakSemua(): satu lembar per divisi
      (jenis produk; grup JP-* dibuat otomatis saat unggah), HEINZ ABC = HNZ1..n per grup area (non-pareto), HNZ(n+1) pareto,
-     HNZ-ALL tanpa area; lalu TTF. Tiap lembar nomor & halaman sendiri; tombol aktif sesudah Rilis.
+     HNZ-ALL tanpa area; lalu key account (outlet_all selain Gabung) & MT GDI (outlet_gdi) lembar sendiri lintas divisi
+     (nota itu keluar dari lembar divisi; outlet_all menang atas MT GDI); lalu TTF. Tiap lembar nomor & halaman sendiri;
+     tombol aktif sesudah Rilis.
      Komponen bersama: app/(cetak)/rekapan-nota/LembarRekapan.tsx + LembarTtf.tsx.
   Isi per karton = ISI_SQL: konv dari transaksi > item.isi_per_karton (lembar Konversi) > rasio satuan karton Accurate.
 
@@ -763,7 +790,7 @@ AccAPI/_github_clean/
 │       │   │       ├── pdf/route.ts
 │       │   │       ├── kwitansi/route.ts
 │       │   │       └── audit/route.ts
-│       │   ├── periods/route.ts        # Tutup periode per principal
+│       │   ├── periods/route.ts        # Status (GET) + tutup/buka kunci (POST) periode per principal
 │       │   ├── principles/route.ts
 │       │   ├── discount/route.ts
 │       │   ├── payments/[paymentId]/proof/route.ts
@@ -809,8 +836,9 @@ AccAPI/_github_clean/
 │   ├── off-program-control/
 │   │   ├── OffGlobalSearch.tsx
 │   │   └── OffNotificationBell.tsx
-│   └── ui/                             # Input, Select, DatePickerField (dialog kalender + keyboard), AsyncSearchSelect, Dialog native, AsyncState bersama
+│   └── ui/                             # Dialog native bersama
 ├── lib/
+│   ├── tampil.ts                       # Format tampilan bersama: KOSONG, tanggal/waktu WITA, hariIniWita, sebabHttp (+ tampil.test.ts)
 │   ├── auth.ts                         # Konfigurasi Better Auth server
 │   ├── auth-client.ts                  # Better Auth client (browser)
 │   ├── rbac.ts                         # RBAC legacy (union layer selama transisi)
@@ -948,6 +976,7 @@ AccAPI/_github_clean/
 | `app/api/off-program-control/batches/[id]/claim-review/route.ts` | `POST` | Review & approve Claim |
 | `app/api/off-program-control/batches/[id]/finance-payment/route.ts` | `POST` | Input pembayaran Finance |
 | `app/api/off-program-control/batches/[id]/refund/route.ts` | `POST` | Submit refund kelebihan bayar |
+| `app/api/off-program-control/periods/route.ts` | `GET`, `POST` | GET (audit desain 001 No 27): status penutupan `off_period_closure` per `?bulan=&tahun=[&principleCode=]` (sesi OPC + `off_program_control.view`; bulan/tahun tidak sah 400; baca-saja: status, penutup/pembuka + nama dari `user`, waktu) dipakai Ringkasan › Tutup periode (status nyata, Buka kunci untuk periode tertutup di server). POST close/unlock tidak berubah (izin `period_close`/`period_unlock`, total pengajuan = total klaim, audit per batch) |
 | `app/(dashboard)/off-program-control/page.tsx` | `OffProgramControlPage` | Rute Fiori S4d: izin server (`resolveRequestPermissionsH`) + `FioriScope` → `OpcApp` |
 | `app/(dashboard)/off-program-control/OpcApp.tsx` | `OpcApp` | Peran OPC sama dengan kode lama (sesi + `useLocalAuthRole` → `resolveOffRole`, SM hanya tab Sales Manager); navigasi `?tab=` lama; lonceng + pencarian membuka `?batch=` di kolom kedua untuk peran apa pun; `?mock=N` fixture dev; dialog "Tinggalkan perubahan?" + `useUnsavedGuard` |
 | `app/(dashboard)/off-program-control/opc/Bersama.tsx` | `useDaftarBatch`, `useDetailBatch`, `KerjaPeran`, `Antrean`, `ambilOpc`, `tulisOpc` | Satu daftar 200 batch (polling 45 dtk + fokus tab, SLA `detectProblematicBatches`), detail batch (+ refund, audit per batch), worklist + saringan + FCL; header berisi KONTRAK untuk modul peran |
@@ -971,11 +1000,10 @@ AccAPI/_github_clean/
 | `lib/laporan-sales/kontrak.ts` + `app/(dashboard)/laporan-sales/{page,LaporanSales}.tsx` + `tab/*.tsx` + `app/api/laporan-sales/<tab>/route.ts` + `lib/laporan-sales/<tab>.ts` (Laporan Sales, owner 20 Okt 2026; padanan fungsi EskaLink DMS3SFA `scratch/eskalink-dms3sfa/PETA-LAYAR-2026-10-20.md`) | `TAB`, `tabTerlihat`, `bulanSah`, `rentangBulan` (murni) | Satu halaman, enam tab, satu slice per tab; izin = kunci LAMA per tab (halaman `anyOf` IZIN_HALAMAN, `lib/rbac.ts`): Top 30 + Drop Size `sales_history.view` (Top 30 = SQLite History Penjualan; Drop Size = faktur INV `sales_invoice.dpp` × `customer.category_name`), Target vs Realisasi `insentif_sales.view_all` (target + progres insentif per cabang × principal, hitungan `lib/insentif-sales`), Monitoring Harian / Coverage Ganda / Tidak Order `supervisor_review.view` + cakupan `resolveScope` (faktur INV per pelanggan D1–D31; JKS aktif dilayani > 1 salesman; `ao_control_daily` tanpa order per `no_order_reason`). `?bulan=YYYY-MM`; cabang = cabang Accurate (= divisi principal). Baca-saja. Uji: `lib/laporan-sales/*.test.ts` |
 | `components/ui/Dialog.tsx` | `Dialog` | Primitive modal native bersama: focus trap/restoration browser, Escape, label/deskripsi, dan backdrop opsional |
 | `components/DataTable.tsx` | `DataTable` | Tabel generik dengan caption, status live, loading skeleton, empty state eksplisit, sorting semantik, kontrol kolom/pagination aksesibel, sticky header, dan density baris konsisten |
-| `components/off-program-control/OffGlobalSearch.tsx` | `OffGlobalSearch` | Quick jump OFF via Ctrl/Cmd+K; combobox/listbox mendukung Arrow, Home/End, Enter, dan Escape tanpa mengambil alih Ctrl/Cmd+F browser; hasil membuka batch di kolom kedua tab aktif |
-| `components/off-program-control/OffNotificationBell.tsx` | `OffNotificationBell` | Tombol berjumlah + popover masalah SLA per peran; "Buka pengajuan" membuka batch di kolom kedua; Sembunyikan berlaku sampai muat ulang |
+| `components/off-program-control/OffGlobalSearch.tsx` | `OffGlobalSearch` | Pencarian pengajuan OFF lewat "/" (diabaikan saat mengetik di isian atau dialog modal terbuka; Ctrl K milik cari menu shell); combobox/listbox mendukung Arrow, Home/End, Enter, dan Escape (hanya saat isian fokus); hasil membuka batch di kolom kedua tab aktif |
+| `components/off-program-control/OffNotificationBell.tsx` | `OffNotificationBell` | Tombol berjumlah + popover masalah SLA per peran; "Buka pengajuan" = tautan nyata `?batch=` (tab baru bisa), klik biasa membuka batch di kolom kedua; Sembunyikan berlaku sampai muat ulang |
 | `app/(dashboard)/insentif-sales/**` (Fiori S4c) | `InsentifSalesPage`, `InsentifRangka`, `usePeriode`, `useDashboard`, `aksesInsentif`, `halamanTerlihat` | Enam rute (Dashboard, `/saya`, `/pembayaran`, `/data-periode`, `/support`, `/pengaturan`); navigasi dari izin + identitas hierarki (server); periode/principal/cabang di query URL untuk semua halaman; `?view=` lama dialihkan; enam keadaan per layar, aksi tulis lewat ConfirmDialog |
-| `app/globals.css` | semantic cockpit classes | Sumber token lebar halaman, spacing, radius, page hierarchy, tab, toolbar, panel, tabel, dan action hierarchy untuk route operasional |
-| `components/ui/AsyncState.tsx` | `LoadingState`, `ErrorState`, `EmptyState` | Primitive feedback async bersama; skeleton mengikuti reduced-motion, error meneruskan retry, empty state dapat membawa recovery action |
+| `app/globals.css` | dasar global | Tailwind + target sentuh 44 px, cincin fokus global, reduced-motion, PWA, `@theme inline` ke token Fiori; komponen dan token tampilan ada di `app/fiori.css` |
 
 ### Payments UI Safety
 
@@ -1023,7 +1051,7 @@ AccAPI/_github_clean/
 | `app/api/faktur/[id]/route.ts` | `GET` | Detail 1 faktur + baris item (qty/harga) live dari `sales-invoice/detail.do`; `?raw=1` menampilkan respons Accurate mentah |
 | `app/api/webhook/accurate/route.ts` | `POST` | Terima event webhook Faktur Penjualan dari Accurate (IP whitelist fail-closed + log rotasi + upsert `sales_invoice` + catat perubahan rincian INV ke `sales_invoice_line_change` dengan appKey/timestamp amplop) |
 | `app/api/cron/webhook-backfill/route.ts` | `GET` | Membaca log hanya dari runtime path; dynamic file probe diabaikan oleh Turbopack tracing agar standalone image tidak menyalin seluruh repository |
-| `app/(dashboard)/api-wrapper/page.tsx` | UI | Antarmuka manual query/bulk-submit ke Accurate |
+| `app/(dashboard)/api-wrapper/page.tsx` | UI | Antarmuka manual query/bulk-submit ke Accurate. Audit desain 001 (No 7/78/29, usulan G, 27 Okt 2026): log galat dan laporan Retur Manual tidak lagi diunduh otomatis (strip bertahan + tombol "Unduh log galat" / "Unduh retur manual (Excel)"; isi, sheet, nama berkas sama); tab Unggah Excel = Kirim nonaktif beralasan sampai berkas diunggah (tidak ada kiriman contoh payload bawaan endpoint); jalur Payload JSON (URL, method, body, urutan, idempotensi, override duplikat) tidak berubah |
 | `app/(dashboard)/api-wrapper/parsers/` | `parsePurchaseReturnBulkSave` | Parse Excel ke payload bulk API Accurate |
 
 ### Python FastAPI Backend
@@ -1165,10 +1193,19 @@ toko_koordinat [cust_code PK = kode JKS; lat/lng NOT NULL, CHECK toko_koordinat_
   migrate-pg entri "supervisor review (SR-1)" (sudahAda pg_attribute 4 + 1 kolom + pg_constraint 2 CHECK; lock_timeout 5 dtk + hak toko_koordinat bila
     accapi_app ada — produksi PUNYA DATABASE_MIGRATION_URL, jadi DDL manual lebih dulu agar entri ini SKIP dan ALTER tidak bersaing dengan kunci saat deploy)
 
+# Jejak pencabutan (audit desain 001 No 6 dan 18, owner 27 Okt 2026; db/migrations/0038_pencabutan_log.sql = entri migrate-pg "pencabutan_log";
+#   tanpa DATABASE_MIGRATION_URL jalankan 0038 sebagai role pemilik SEBELUM image: Cabut di dua route butuh tabel ini)
+pencabutan_log [append-only: id bigserial, jenis (CHECK invoice_verify_note | order_dupe_ack), kunci, baris_lama jsonb (baris yang dicabut, kunci
+  camelCase), alasan (CHECK btrim <> '', server 10..500), oleh (email sesi), waktu; indeks (jenis, kunci, id); tanpa FK; accapi_app SELECT/INSERT
+  saja (REVOKE UPDATE/DELETE/TRUNCATE bila role ada)]
+  └── ditulis dalam transaksi yang SAMA dengan DELETE invoice_verify_note (Verifikasi balik) / order_dupe_ack (Order Principal)
+
 # Principal resmi (S7-0/S7-2 BL-64; DDL manual docs/handover/DDL_S7_0.sql lalu DDL_S7_2.sql SEBELUM image)
 principal [code unik = kode OPC/Klaim, TETAP] ── principal_variant (principal_id + variant_key; '' = varian dasar)
   └──────────── principal_alias [id; alias_norm unik per kelompok: kode Master Barang | nama/label/kode OPC -> principal (+ varian); nilai WAJIB dari normalizer baku lib/principal/normalisasi.ts]
 principal_log [append-only (trigger + REVOKE di DDL_S7_2): satu baris per buat/aktif/nonaktif/hapus, transaksi sama dengan perubahannya]
+  Riwayat GET /api/principals/{id}/history (riwayatPrincipal) LEFT JOIN "user" ON user.id = principal_log.aktor -> `actorName` per baris (null untuk
+  benih:… atau akun yang sudah tidak ada); layar Riwayat menulis nama, id akun hanya cadangan (audit desain 001 No 87).
   API app/api/principals/** (lib/principal/tulis.ts; kontrak docs/handover/S7-2-KONTRAK-PRINCIPAL-API.md): GET daftar/riwayat
   (principles.view), tulis (principles.upload; hapus alias principles.delete) — 409 berkode tanpa menimpa, 503 tanpa trigger penjaga.
   Resolver lib/principal/resolver.ts (ruang WAJIB nama | kode_master_barang; alias saja: cocok | tak_dikenal | ambigu; GET /api/principals/resolve).
@@ -1549,32 +1586,26 @@ UI: modul /laporan-harian
   -> POST /api/laporan-harian/upload  (multipart: penjualan wajib, retur dan stock opsional)
      -> requirePermission("laporan_harian.upload")
      -> teruskan ke python_backend FastAPI: POST /laporan-harian/process
-        -> pandas replika logika Power Query SalesBase:
-           merge flag AO/EC/IA, Nota Retur/Batal, map Golongan(SPV)+NAMA SM, Kategori Baru
-        -> output: (a) rows per SPV & per SM, (b) rows stock per SPV, (c) agregat progress harian
-     -> susun output 1:1 sesuai `REPORT_COLUMNS` (tanpa duplikasi `GOLONGAN`/pergeseran AO-EC-IA)
-     -> resolve keyword aktif dari `report_recipient`: SPV (`GOLONGAN`), SM (`NAMA_SM`),
-        atau alias principal (`REPORT_TARGETS` di `laporan_harian_targets.py`)
-     -> untuk target Principal, terapkan parity Power Query di `laporan_harian_principal.py`:
-        FONTERRA exclude `C-TUN020` + stock `GD01`; MOTASA 1/2 berdasarkan prefix salesman;
-        RECKITT tambah `Devisi`; MUSTIKA RATU menghasilkan format khusus 20 kolom dengan
-        Market/HET/NET/DISC/BA; GODREJ/ENERGIZER/ABC/URC memakai filter Principal kanonik;
-        HEINZ penjualan memakai GOLONGAN=ZUL & ARUL, stok memakai PRINCIPAL;
-        SAHAR mengambil salesman _MT/_OFFICE lintas principal dan pengecualian stok sesuai query;
-        YUDI menambah VOLUME_KG Puratos pada kolom ke-51
-     -> referensi `PL_MR` dan `RECKITT LIST` disimpan sebagai CSV read-only di `python_backend/`;
-        Principal asli file stock dipertahankan agar item tanpa penjualan harian tidak hilang
-     -> nama customer memakai `Nama Pelanggan Faktur Penjualan` (fallback kode hanya bila nama kosong)
+        -> laporan_harian_pq.py = replika SETIA Power Query "2. To Format Laporan" + "2.3 To SPV dan SM New"
+           (dibuktikan 26 Okt 2026: FIX tersimpan + 3. Stock -> 22 berkas = arsip LaporanAuto 24 Okt, 0 selisih):
+           - urutan baris meniru mesin Power Query: Table.NestedJoin (baca kiri/kanan bergantian, baris tertampung
+             keluar menurut kemunculan pertama kunci), Table.Sort = introsort .NET (tidak stabil), filter kolom
+             sumber didorong ke bawah join (filter Mapping_PIC/ANI/prefix salesman MOTASA tidak)
+           - "" vs null dipertahankan (Qty Los/Value Los baris INV kosong karena Number.From("") error)
+           - tabel master (GOLONGAN, JENIS PRODUK, Mapping_PIC) di `laporan_harian_lookups.json`; PL_MR dan RECKITT
+             LIST di CSV read-only `python_backend/`
+        -> output: (a) berkas per keyword, (b) agregat progress harian (salesDailyProgress), (c) ringkasan per SPV
+     -> keyword aktif `report_recipient` dicocokkan PERSIS ke 23 laporan (`REPORT_KEYWORDS`):
+        SUMARTONO, MARTEN(+VOLUME_KG), SOFYAN, HEINZ(GOLONGAN ZUL & ARUL), SYAMSUL, STANLEY, YARMAN, RAMLY,
+        RECKIT(+Devisi), ADNAN/IRMAN (NAMA SM; ADNAN menetapkan ulang GOLONGAN JONAL/ANI), ANI (principal MT/OFFICE),
+        MUSTIKA RATU (format 20 kolom; stok diurutkan Nama Gudang = sortState tabel Excel), MOTASA MKS 1/2,
+        FONTERRA (tanpa C-TUN020, stok GD01), URC, ABCPI, ENERGIZER, GODREJJ, MSM/DOLPHIN (= ADNAN difilter principal),
+        JONAL (MT Jonal: principal kelompok Jonal, salesman _MT/OFFICE; sheet JONAL di 2.3);
+        keyword lain dilaporkan `unmatched_report_keywords`
      -> tanggal run/nama file/subject memakai tanggal transaksi penjualan terakhir; retur lebih baru tidak menggesernya
-     -> mapping `GOLONGAN`/`NAMA_SM` pada Stock hanya dipakai untuk filter; output akhir mengikuti
-        `Table.SelectColumns` Power Query 2.3: `Kode`, `Nama Barang`, `Kode Gudang`, `Nama Gudang`,
-        `Satuan`, `Principal`, `Saldo Akhir`
-     -> tulis file per keyword ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
-        nama sheet persis arsip (`<Keyword>` + `<Keyword> STOCK`; MSM/MOTASA `Sheet1` + `Sheet2`)
-        -> `laporan_harian_layout.py` menerapkan profil `laporan_harian_layouts.json` tanpa menyalin transaksi;
-           tanggal tetap nilai Excel dengan format sumber, NPWP teks; FIX lama dinormalisasi sebelum format khusus
-        -> mapping `stock_spv_map` dari Mapping PIC terpisah dari conca sales (FORISA stok -> YUDI)
-        -> MSM ikut dibuat untuk unduhan walaupun tidak tercantum pada mapping email
+     -> tulis file per keyword ke `LH_RUNTIME_DIR/<runId>/` (sheet `<Keyword>` + `<Keyword> STOCK`, TANGGAL format
+        `yyyy-mm-dd h:mm:ss`, TGL_JT tanggal hanya FONTERRA/URC; MSM/DOLPHIN/MOTASA MKS 1/2 meniru arsip manual:
+        `Sheet1`/`Sheet2`, tanggal angka seri). MSM ikut dibuat untuk unduhan walaupun tidak tercantum pada mapping email
         (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
      -> tulis juga download-only `<tanggal>_2.To Format Laporan.xlsx` (snapshot FIX LAP PENJ, tidak
         pernah dikirim email; 63 kolom + sheet lookup JENIS PRODUK/GOLONGAN)
@@ -1606,22 +1637,56 @@ UI: review file opsional -> GET /api/laporan-harian/[runId]/preview?file=...
         UI otomatis menyediakan tombol screenshot dan unduhan Excel Pak Fahdhar sesudah generate
 ```
 
+Laporan ABCPI otomatis (FTP + email, 26 Okt 2026; pengganti otomasi Excel/FTP-ABC.exe di laptop):
+```
+cron VPS 20.00/21.00/22.00 WITA -> GET /api/cron/abcpi-harian (CRON_SECRET; ?tanggal= opsional)
+UI /laporan-harian bagian "Laporan ABCPI" (AbcpiKirim.tsx) -> GET/POST /api/laporan-harian/abcpi
+     (view: riwayat + ?pratinjau=YYYY-MM-DD xlsx tanpa kirim; send: {tanggal, confirm:true})
+  -> lib/abcpi/jalankan.ts jalankanAbcpi: API Accurate BACA-SAJA (sesi sinkron) cabang ABC (branchId 550),
+     transDate 1..tanggal: sales-invoice list+detail (INV/ saja), sales-return list+detail (tanpa RSJ),
+     item/list-stock.do semua gudang + GD0BS
+  -> lib/abcpi/laporan.ts: template ABCPI.xlsx 41 kolom (diskon bertingkat -> Disc1..5_Ext, EC=1 baris pertama
+     tiap faktur, retur negatif, freegoods B bernilai 0) + stok (Baik = semua − GD0BS); kode principle dari
+     lib/abcpi/peta-barang.json (daftar harga ABC PI), cadangan charField3 barang; barang tanpa kode = tidak dikirim
+  -> arsip data/abcpi/<YYYY-MM>/SP_<tgl>_{SALES,STOCK}.csv + ABCPI_SP_<tgl>.xlsx, status per tanggal, log.jsonl
+  -> lib/abcpi/ftp.ts unggah CSV pipe ke FTP ABC (dicek SIZE) + email xlsx + CSV ke report_recipient keyword ABCPI; stok pakai asOfDate = tanggal laporan
+  -> email ringkasan/galat ke admin. Akhir bulan dari cron = DITAHAN (berkas ke admin), kirim dari UI.
+  Konfigurasi: data/abcpi/config.json {ftp:{host,port,user,password,dir}, adminEmail} di volume data (bukan env).
+```
+
+Laporan Enigma / Enesis — PT Marketama Indah (portal enigma.enesis.com, 26 Okt 2026; pengganti workbook "Format Report Enigma Enesis.xlsx"):
+```
+cron VPS 20.30/21.30/22.30 WITA -> GET /api/cron/enigma-harian (CRON_SECRET; ?tanggal= opsional)
+UI /laporan-harian bagian "Laporan Enigma" (KirimPrincipal.tsx kode "enigma") -> GET/POST /api/laporan-harian/enigma
+  -> lib/enigma/jalankan.ts: Accurate cabang MIX FOOD (150) 1..tanggal; faktur INV + retur tanpa RSJ via detail.do per 200
+     (cache sales_invoice TIDAK dipakai: list.do menaikkan last_update tanpa mengganti rincian); jatah laju bersama ABCPI (≤4 req/dtk)
+  -> lib/enigma/laporan.ts: baris barang preferedVendorId 14150 (PT Marketama Indah), 33 kolom template_enigma.xlsx;
+     PRICE_JUAL = Tabel1 (KRT harga karton, selain itu harga pcs), BRUTO = harga × qty, DISC_RUTIN = potongan × (1+PPN),
+     NETTO = BRUTO − DISC; kode MI + harga + TYPE_OUTLET dari lib/enigma/peta.json (barang tanpa kode dilewati + peringatan)
+  -> lib/enigma/portal.ts: login {subdist_id,password}, POST / multipart excel_file + __ncforminfo, tunggu status Riwayat Upload,
+     baca /upload_detail/<id> -> email admin (success / validation_error + Detail log ringkas / gagal)
+  Arsip + status + log.jsonl: data/enigma; konfigurasi data/enigma/config.json {subdistId, password, adminEmail} (volume).
+  Cron hanya mengulang gagal teknis; validation_error tidak diunggah ulang otomatis.
+```
+
 Admin mapping: `/laporan-harian/mapping` -> `app/api/laporan-harian/mapping/route.ts` -> CRUD
 `report_recipient` (keyword/emails/active) langsung dari Next.js, tanpa FastAPI. Permission
-`laporan_harian.manage`. Keyword tetap diresolusi otomatis ke SPV/SM/Principal oleh
-`resolve_report_groups` di backend -- halaman ini hanya mengatur siapa menerima email per keyword.
+`laporan_harian.manage`. Keyword harus salah satu `REPORT_KEYWORDS` di `laporan_harian_pq.py` (nama laporan
+LaporanAuto) -- halaman ini hanya mengatur siapa menerima email per keyword.
 
 State machine pure: `lib/laporan-harian/send-state.ts`; self-check:
 `node --experimental-strip-types lib/laporan-harian/send-state.test.ts`.
 Normalisasi progress pure: `lib/laporan-harian/progress-normalize.ts`; self-check:
 `node --experimental-strip-types lib/laporan-harian/progress-normalize.test.ts`.
-Alias Principal disimpan di `python_backend/laporan_harian_targets.py`; filter/formatter khusus ada di
-`python_backend/laporan_harian_principal.py`. Sumber audit penerima ada di
+Definisi laporan per keyword ada di `python_backend/laporan_harian_pq.py` (`build_report`). Sumber audit penerima ada di
 `config/mapping_laporan.csv`; sinkronkan secara transaksional dengan
-`node scripts/sync-laporan-recipients.mjs` agar tepat 20 keyword aktif dan keyword lama dinonaktifkan.
+`node scripts/sync-laporan-recipients.mjs` agar tepat 21 keyword aktif dan keyword lama dinonaktifkan
+(26 Okt 2026, keputusan owner: HENDRIK->IRMAN, YUDI->MARTEN, DENNY->STANLEY, SAHAR->ANI, tambah JONAL = MT Jonal).
 
-Validasi paritas 14 September 2026 dilakukan di worktree/DB lokal terpisah, tanpa pengiriman email
-atau perubahan production. Self-check: `python python_backend/test_laporan_harian_parity.py`.
+Validasi paritas 26 Oktober 2026 (masukan + arsip LaporanAuto 24 Okt, salinan lokal, tanpa email/produksi):
+`python python_backend/laporan_harian_bandingkan.py <folder hasil> <folder arsip> --tanggal 2026-10-24` -> 0 selisih.
+Self-check: `python python_backend/test_laporan_harian_pq.py` (fixture `python_backend/fixtures/laporan_harian/`,
+acuan dibuat Excel menjalankan query M owner lewat `laporan_harian_excel_pq.py`).
 Simulasi menu web dengan tiga ekspor asli: `tests/laporan-harian-parity.spec.ts`, opt-in
 `LAPORAN_PARITY_FILES=1`, `LAPORAN_PARITY_SOURCE_DIR`, dan `PLAYWRIGHT_BASE_URL` lokal.
 File transaksi/bukti simulasi berada di `outputs/parity/` lokal dan tidak untuk disertakan ke Git.

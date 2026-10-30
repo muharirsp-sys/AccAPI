@@ -2,11 +2,11 @@
  * Tujuan: Dashboard SPV (Fiori S5, it05 — Overview Page): total tim, laporan + tanda per salesman, detail kunjungan, bahan
  *   briefing sore, "Tandai sudah dibaca" (#17) dan "Batalkan tanda dibaca" (S5-4a, kontrak #132) lewat dialog. Admin/manager/admin_sales
  *   memilih SPV (#16): route spv-dashboard
- *   hanya menerima `spvName` untuk peran itu; daftar SPV dari GET sales-profiles (bila gagal: isian teks + VariantNote).
+ *   hanya menerima `spvName` untuk peran itu; daftar SPV dari GET sales-profiles (bila gagal: isian teks + keterangan).
  *   Tanggal "hari ini" = WITA (hariIniWita, dikirim ke server); jam tampil WITA.
  * Caller: app/(dashboard)/form-kontrol/spv-dashboard/page.tsx.
- * Dependensi: ../shared (Scope, hariIniWita, jamWita, ambilFk, tulisFk), components/fiori/{core,interactive},
- *   lib/rekapan-nota/ui (tanggalPanjang, tanggalPendek).
+ * Dependensi: ../shared (Scope, hariIniWita, rentangWita, ambilFk, tulisFk), components/fiori/{core,interactive},
+ *   lib/rekapan-nota/ui (tanggalPanjang, tanggalPendek), lib/tampil (KOSONG, waktuWita).
  * Main Functions: DashboardSpv (default), KartuSalesman.
  * Side Effects: GET my-scope, GET sales-profiles (pemilih SPV), GET spv-dashboard; POST reports/ack (dialog; batal = `ack: false`,
  *   siapa/kapan dicatat server di kontrol_audit_log); router.replace
@@ -21,8 +21,9 @@ import { CheckCheck, RefreshCw, Undo2 } from "lucide-react";
 import { Button, EmptyState, ErrorState, KeyValues, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
-import { alasanIzinFk, ambilFk, hariIniWita, jamWita, tulisFk, useNooMenunggu, type Scope } from "../shared";
+import { alasanIzinFk, ambilFk, hariIniWita, rentangWita, tulisFk, useNooMenunggu, type Scope } from "../shared";
 import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 
 interface VisitRow {
     custCode: string; custName: string; status: string;
@@ -65,7 +66,7 @@ const flagsOf = (v: VisitRow) => [v.gpsFlag, v.durFlag].filter(Boolean).join(","
 
 function statusLaporan(r: SalesmanRow): { tone: Tone; label: string } {
     if (!r.submittedAt) return { tone: "neg", label: "Belum kirim laporan" };
-    if (r.spvAck) return { tone: "pos", label: r.spvAckAt ? `Dibaca ${jamWita(r.spvAckAt)}` : "Sudah dibaca" };
+    if (r.spvAck) return { tone: "pos", label: r.spvAckAt ? `Dibaca ${waktuWita(r.spvAckAt)}` : "Sudah dibaca" };
     return { tone: "warn", label: "Menunggu dibaca" };
 }
 
@@ -87,7 +88,7 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
         () => ambilFk("/api/form-kontrol/my-scope", (j) => j as unknown as Scope, "Akses Form Kontrol belum dapat diverifikasi."), []));
     const peran = scopeLoad.status === "siap" ? scopeLoad.data?.role ?? "" : null;
     const pemilih = peran !== null && PERAN_PILIH_SPV.includes(peran);
-    // Peninjau B S4: NOO menunggu keputusan akun ini (server menghitung hak per baris) → strip + tautan ke tab Toko Baru.
+    // NOO menunggu keputusan akun ini (server menghitung hak per baris) → strip + tautan ke tab Toko Baru; "galat" = jumlahnya gagal dimuat.
     const nooMenunggu = useNooMenunggu(peran === "spv" || peran === "sm" || peran === "admin");
 
     // Daftar SPV untuk admin = nama SPV unik di Hierarki Sales (endpoint yang sudah ada; butuh form_kontrol.manage).
@@ -201,15 +202,16 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                     <div className="fi-kc" data-tone={totals.submitted === rows.length ? "pos" : "warn"}><span>Laporan masuk</span><b>{totals.submitted}/{rows.length}</b></div>
                 </div>
                 <p className="fi-small fi-subtle">
-                    Diperbarui {jamWita(data.diperbarui)} WITA ·{" "}
+                    Diperbarui {waktuWita(data.diperbarui)} WITA ·{" "}
                     <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => { setSukses(""); muatDash(); }}>
                         <RefreshCw className="fi-icon" aria-hidden />Muat ulang
                     </button>
                 </p>
-                <VariantNote bl="it05 #15">
-                    Persentase dihitung dari baris status rute yang tercatat hari itu (dari kunjungan dan &quot;Kirim status rute hari ini&quot;), belum
-                    dari rute JKS yang direncanakan. Toko yang tidak pernah disentuh dan belum dikirim statusnya tidak ikut terhitung.
-                </VariantNote>
+                {/* Fakta tugas untuk SPV (cara membaca persentase); batasan "belum dari rute JKS" hanya di catatan varian Admin BL-28 (audit No 80, tinjauan K2). */}
+                <p className="fi-small fi-subtle">
+                    Persentase dihitung dari status rute yang tercatat hari itu (kunjungan dan &quot;Kirim status rute hari ini&quot;); toko yang belum disentuh
+                    dan belum dikirim statusnya tidak ikut terhitung.
+                </p>
                 {belumKirim.length === 0
                     ? <MessageStrip tone="pos" title="Semua salesman sudah mengirim laporan.">Data siap untuk briefing sore.</MessageStrip>
                     : <MessageStrip tone="warn" title={`${belumKirim.length} salesman belum mengirim laporan:`}>{belumKirim.map((r) => r.salesName).join(", ")}</MessageStrip>}
@@ -220,7 +222,7 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                     <Section title="Bahan briefing sore" subtitle="toko tidak order hari ini">
                         <div className="fi-sect-in">
                             <KeyValues items={rows.filter((r) => r.notOrder > 0).map((r) => [`${r.salesName} · ${r.salesCode}`, `${r.notOrder} toko`])} />
-                            <p className="fi-small fi-subtle">Total {totals.notOrder} toko tidak order — wajib dibahas saat briefing.</p>
+                            <p className="fi-small fi-subtle">Total {totals.notOrder} toko tidak order. Wajib dibahas saat briefing.</p>
                         </div>
                     </Section>
                 )}
@@ -239,23 +241,28 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                     {pilihSpv}
                 </div>
                 {pemilih && spvLoad.status === "galat" && (
-                    <VariantNote bl="it05 #16">
+                    <p className="fi-help">
                         Daftar SPV diambil dari Hierarki Sales dan belum bisa dibaca akun ini ({(spvLoad.error ?? "").replace("Daftar SPV belum berhasil dimuat.", "").trim() || "galat server"}).
                         Ketik nama SPV persis seperti di Hierarki Sales.
-                    </VariantNote>
+                    </p>
                 )}
             </div>
             {sukses && <MessageStrip tone="pos" title={sukses} onClose={() => setSukses("")} />}
-            {nooMenunggu ? (
+            {nooMenunggu === "galat" ? (
+                <MessageStrip tone="warn" title="Jumlah toko baru (NOO) yang menunggu gagal dimuat.">
+                    Pengajuan bisa saja ada dan belum terlihat di sini.{" "}
+                    <Link className="fi-btn fi-btn--tertiary" href="/form-kontrol?tab=noo">Buka Toko Baru (NOO)</Link>
+                </MessageStrip>
+            ) : nooMenunggu ? (
                 <MessageStrip tone="warn" title={`${nooMenunggu} toko baru (NOO) menunggu persetujuan Anda.`}>
                     Salesman belum bisa order di toko itu sampai disetujui dan didaftarkan Admin.{" "}
                     <Link className="fi-btn fi-btn--tertiary" href="/form-kontrol?tab=noo">Buka Toko Baru (NOO)</Link>
                 </MessageStrip>
             ) : null}
             {isi}
-            <VariantNote bl="BL-28">
+            <VariantNote bl="BL-28, it05 #15">
                 Tanggal &quot;hari ini&quot; dihitung di perangkat dalam WITA; penetapan tanggal oleh server menunggu BL-28. Cap waktu yang tercetak
-                di foto kunjungan masih memakai WIB.
+                di foto kunjungan masih memakai WIB. Persentase rute belum dihitung dari rute JKS yang direncanakan.
             </VariantNote>
             <ConfirmDialog
                 open={ack !== null}
@@ -265,8 +272,8 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                 facts={ack ? [
                     ["Salesman", <span key="s">{ack.salesName} · <span className="fi-mono">{ack.salesCode}</span></span>],
                     ["Tanggal laporan", tanggalPendek(date)],
-                    ["Dikirim", `${jamWita(ack.submittedAt)} WITA`],
-                    ["Tindak lanjut", ack.tindakLanjut || "—"],
+                    ["Dikirim", `${waktuWita(ack.submittedAt)} WITA`],
+                    ["Tindak lanjut", ack.tindakLanjut || KOSONG],
                 ] : []}
                 confirmLabel="Tandai sudah dibaca"
                 confirmDisabled={izinAck ?? usang}
@@ -288,7 +295,7 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                 facts={batal ? [
                     ["Salesman", <span key="s">{batal.salesName} · <span className="fi-mono">{batal.salesCode}</span></span>],
                     ["Tanggal laporan", tanggalPendek(date)],
-                    ["Ditandai dibaca", batal.spvAckAt ? `${jamWita(batal.spvAckAt)} WITA` : "—"],
+                    ["Ditandai dibaca", batal.spvAckAt ? `${waktuWita(batal.spvAckAt)} WITA` : KOSONG],
                     ["Sesudahnya", "Menunggu dibaca; bisa ditandai lagi"],
                 ] : []}
                 confirmLabel="Batalkan tanda dibaca"
@@ -347,7 +354,7 @@ function KartuSalesman({ r, kunci, onTandai, onBatal }: { r: SalesmanRow; kunci?
             {r.tindakLanjut && <p className="fi-small"><b>Tindak lanjut:</b> {r.tindakLanjut}</p>}
             {visits.length > 0 && (
                 <details>
-                    <summary className="fi-small" style={{ cursor: "pointer", minHeight: 44, display: "flex", alignItems: "center" }}>
+                    <summary className="fi-small" style={{ cursor: "pointer", minHeight: "var(--ctl-h)", display: "flex", alignItems: "center" }}>
                         Detail kunjungan ({visits.length}) · lapangan {lamaLapangan(r.totalFieldMinutes)}
                     </summary>
                     <ul className="fi-hist">
@@ -366,7 +373,7 @@ function KartuSalesman({ r, kunci, onTandai, onBatal }: { r: SalesmanRow; kunci?
                                     <span className="min-w-0">
                                         <b>{v.custName}</b>{v.luarRute && <> <StatusBadge tone="info">{isKodeNoo(v.custCode) ? "Toko baru (NOO)" : "Luar rute"}</StatusBadge></>}
                                         <span className="fi-sub">
-                                            {jamWita(v.checkinAt)}–{jamWita(v.checkoutAt)} WITA · {v.durationMinutes !== null ? `${v.durationMinutes} mnt` : "—"} · Merch {v.merchDone}/{v.merchTotal}
+                                            {rentangWita(v.checkinAt, v.checkoutAt)} WITA · {v.durationMinutes !== null ? `${v.durationMinutes} mnt` : KOSONG} · Merch {v.merchDone}/{v.merchTotal}
                                             {" · "}{flags.length === 0 ? "tanpa tanda" : flags.map((f) => FLAG_LABEL[f] ?? f).join(", ")}
                                         </span>
                                     </span>
@@ -378,7 +385,7 @@ function KartuSalesman({ r, kunci, onTandai, onBatal }: { r: SalesmanRow; kunci?
             )}
             {r.submittedAt && !r.spvAck && (
                 <div>
-                    <Button variant="primary" style={{ minHeight: 44 }} icon={<CheckCheck className="fi-icon" aria-hidden />}
+                    <Button variant="primary" icon={<CheckCheck className="fi-icon" aria-hidden />}
                         disabled={Boolean(kunci)} disabledReason={kunci} onClick={onTandai}>
                         Tandai sudah dibaca
                     </Button>
@@ -386,7 +393,7 @@ function KartuSalesman({ r, kunci, onTandai, onBatal }: { r: SalesmanRow; kunci?
             )}
             {r.spvAck && (
                 <div>
-                    <Button variant="tertiary" style={{ minHeight: 44 }} icon={<Undo2 className="fi-icon" aria-hidden />}
+                    <Button variant="tertiary" icon={<Undo2 className="fi-icon" aria-hidden />}
                         disabled={Boolean(kunci)} disabledReason={kunci} onClick={onBatal}>
                         Batalkan tanda dibaca…
                     </Button>

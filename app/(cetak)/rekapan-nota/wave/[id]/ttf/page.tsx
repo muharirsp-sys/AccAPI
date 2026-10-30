@@ -1,7 +1,7 @@
 /*
  * Tujuan: Halaman cetak TTF (Tanda Terima Faktur) satu wave. Varian LK tidak dibuat (Q4).
  * Caller: /rekapan-nota/wave/[id]/ttf (tab baru dari layar penyusunan wave).
- * Dependensi: lib/rekapan-nota/query (buildTtf), lib/db, ../../LembarTtf.
+ * Dependensi: lib/rekapan-nota/query (buildTtf), lib/db, ../../LembarTtf, ../../../../BingkaiCetak (WaveTidakAda).
  * Main Functions: CetakTtfPage.
  * Side Effects: Hanya SELECT.
  */
@@ -9,6 +9,7 @@ import type { Metadata } from "next";
 import { pool } from "@/lib/db";
 import { buildTtf } from "@/lib/rekapan-nota/query";
 import { judulBerkas, nomorLembar } from "@/lib/rekapan-nota/ui";
+import { WaveTidakAda } from "../../../../BingkaiCetak";
 import { LembarTtf } from "../../../LembarTtf";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export default async function CetakTtfPage({ params }: { params: Promise<{ id: s
     const id = Number((await params).id);
     const w = await pool.query<{ nama: string; tanggal: string; urutan: number; tipe: string }>(
         `SELECT nama, tanggal::text, urutan, tipe::text FROM wave WHERE id = $1`, [id]);
-    if (!w.rowCount) return <p>Wave tidak ditemukan.</p>;
+    if (!w.rowCount) return <WaveTidakAda />;
     return (
         <main className="cetak">
             <LembarTtf id={id} wave={w.rows[0]} ttf={await buildTtf(id)} sekarang={new Date()} />

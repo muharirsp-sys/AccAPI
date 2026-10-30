@@ -6,7 +6,7 @@
  *   SR-2 (16 Okt 2026): kolom No HP per salesman (tujuan tombol WhatsApp Supervisor Review). PUT mengirim `noHp` HANYA bila diubah; server
  *   menormalkan dan menolak yang tidak sah dengan 400 NO_HP_TIDAK_SAH (kalimatnya tampil di dialog).
  * Caller: form-kontrol/FormKontrol.tsx (tab "hierarki"; peran admin/manager).
- * Dependensi: ../shared (Scope, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive}.
+ * Dependensi: ../shared (Scope, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive}, lib/tampil (KOSONG).
  * Main Functions: TabHierarki (default).
  * Side Effects: GET /api/form-kontrol/sales-profiles; PUT /api/form-kontrol/sales-profiles (payload sama; server menolak nama di luar akun
  *   dengan kalimat berkode yang tampil di dialog).
@@ -19,6 +19,7 @@ import { Button, EmptyState, ErrorState, MessageStrip, Skeleton } from "@/compon
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { kunciNama } from "@/lib/form-kontrol/constants";
 import { normalHp } from "@/lib/form-kontrol/noo-aturan";
+import { KOSONG } from "@/lib/tampil";
 import { ambilFk, tulisFk, useIzinFk, type Scope } from "../shared";
 
 interface Profile { salesCode: string; salesName: string; principle: string; branch: string; spvName: string | null; smName: string | null; noHp?: string | null }
@@ -48,7 +49,7 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
     const opsi = { spv: load.data?.spv ?? [], sm: load.data?.sm ?? [] };
     const nilai = (p: Profile): Edit => edits[p.salesCode] ?? { spvName: p.spvName ?? "", smName: p.smName ?? "", noHp: p.noHp ?? "" };
     // Nama dibandingkan lewat kunciNama (trim + tanpa beda huruf), sama dengan server: ejaan lama "adnan" yang disimpan server sebagai ejaan
-    // akun "ADNAN" bukan perubahan (peninjau B R-2 — tanpa ini baris tetap "Draf" sesudah tersimpan).
+    // akun "ADNAN" bukan perubahan (tanpa ini baris tetap "Draf" sesudah tersimpan).
     const noHpBerubah = (p: Profile, e: Edit) => hpKanonik(e.noHp) !== (p.noHp ?? "");
     const berubah = (p: Profile) => { const e = edits[p.salesCode]; return Boolean(e) && (kunciNama(e.spvName) !== kunciNama(p.spvName) || kunciNama(e.smName) !== kunciNama(p.smName) || noHpBerubah(p, e)); };
     const nDraf = profiles.filter(berubah).length;
@@ -87,7 +88,7 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                                 const e = nilai(p);
                                 const draf = berubah(p);
                                 return (
-                                    <li key={p.salesCode} className="grid items-end gap-3 border-t px-4 py-3 sm:grid-cols-[minmax(10rem,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" style={{ borderColor: "var(--line)" }}>
+                                    <li key={p.salesCode} className="grid items-end gap-3 border-t px-4 py-3 lg:grid-cols-[minmax(10rem,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" style={{ borderColor: "var(--line)" }}>
                                         <div className="min-w-0">
                                             <b className="fi-small">{p.salesName}</b>
                                             <span className="fi-codes">{p.salesCode} · {p.principle}</span>
@@ -98,9 +99,9 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                                             const akun = cocokAkun(v, opsi[k]);
                                             return (
                                                 <FormField key={k} label={`${LABEL[k]} ${p.salesName}`}>{(a) => (
-                                                    <select {...a} className="fi-input" style={{ minHeight: 44 }} value={akun ?? v}
+                                                    <select {...a} className="fi-input" value={akun ?? v}
                                                         onChange={(ev) => ubah(p, k === "spv" ? { spvName: ev.target.value } : { smName: ev.target.value })}>
-                                                        <option value="">— kosong —</option>
+                                                        <option value="">Belum dipilih</option>
                                                         {akun === undefined && <option value={v}>{v.trim()} (tidak cocok dengan akun)</option>}
                                                         {opsi[k].map((n) => <option key={n} value={n}>{n}</option>)}
                                                     </select>
@@ -108,17 +109,17 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                                             );
                                         })}
                                         <FormField label={`No HP ${p.salesName}`}>{(a) => (
-                                            <input {...a} className="fi-input" style={{ minHeight: 44 }} type="tel" inputMode="tel" autoComplete="off" placeholder="08…"
+                                            <input {...a} className="fi-input" type="tel" inputMode="tel" autoComplete="off" placeholder="08…"
                                                 value={e.noHp} onChange={(ev) => ubah(p, { noHp: ev.target.value })} />
                                         )}</FormField>
-                                        <Button variant={draf ? "primary" : "secondary"} style={{ minHeight: 44 }} icon={<Save className="fi-icon" aria-hidden />}
+                                        <Button variant={draf ? "primary" : "secondary"} icon={<Save className="fi-icon" aria-hidden />}
                                             disabled={!draf || Boolean(kunci)} disabledReason={kunci ?? "Belum ada perubahan"} onClick={() => setSimpan(p)}>
                                             Simpan
                                         </Button>
                                         {PERAN.filter((k) => cocokAkun(e[NAMA[k]], opsi[k]) === undefined).map((k) => (
                                             <div key={k} style={{ gridColumn: "1 / -1" }}>
                                                 <MessageStrip tone="warn" title={`${LABEL[k]} "${e[NAMA[k]].trim()}"`}>
-                                                    tidak cocok dengan akun {LABEL[k]} mana pun — {LABEL[k]} ini tidak melihat timnya. Pilih akun {LABEL[k]} dari daftar lalu simpan.
+                                                    tidak cocok dengan akun {LABEL[k]} mana pun, jadi {LABEL[k]} ini tidak melihat timnya. Pilih akun {LABEL[k]} dari daftar lalu simpan.
                                                 </MessageStrip>
                                             </div>
                                         ))}
@@ -141,7 +142,8 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                 <span className="fi-spacer" />
                 <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang}>Muat ulang</Button>
             </div>
-            <p className="fi-small fi-muted">SPV dan SM tiap salesman menentukan siapa yang bisa melihat data siapa (Dashboard SPV, Kontrol SM, cakupan Form Kontrol). Pilihan = nama akun SPV/SM aktif; akun dibuat di layar User.</p>
+            <p className="fi-small fi-muted">SPV dan SM tiap salesman menentukan siapa yang bisa melihat data siapa (Dashboard SPV, Kontrol SM, cakupan Form Kontrol). Pilihan = nama akun SPV/SM aktif; akun dibuat di menu User dan Izin.</p>
+            {kunci && <p className="fi-small fi-why">{kunci}</p>}
             {sukses && <MessageStrip tone="pos" title={sukses} onClose={() => setSukses("")} />}
             {isi}
             <ConfirmDialog
@@ -151,9 +153,9 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                 description="Akibatnya langsung: SPV dan SM baru melihat data salesman ini; yang lama tidak lagi."
                 facts={simpan && target ? [
                     ["Salesman", `${simpan.salesName} · ${simpan.salesCode}`],
-                    ["SPV", `${simpan.spvName ?? "—"} → ${target.spvName.trim() || "—"}`],
-                    ["SM", `${simpan.smName ?? "—"} → ${target.smName.trim() || "—"}`],
-                    ...(noHpBerubah(simpan, target) ? [["No HP", `${simpan.noHp ?? "—"} → ${target.noHp.trim() || "—"}`] as [string, string]] : []),
+                    ["SPV", `${simpan.spvName ?? KOSONG} → ${target.spvName.trim() || KOSONG}`],
+                    ["SM", `${simpan.smName ?? KOSONG} → ${target.smName.trim() || KOSONG}`],
+                    ...(noHpBerubah(simpan, target) ? [["No HP", `${simpan.noHp ?? KOSONG} → ${target.noHp.trim() || KOSONG}`] as [string, string]] : []),
                 ] : []}
                 confirmLabel="Simpan hierarki"
                 confirmDisabled={kunci}

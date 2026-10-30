@@ -5,7 +5,8 @@
  *   cocok dengan baris (dulu = dikira sudah tersimpan).
  * Caller: Playwright lokal, server `LOCAL_AUTH_BYPASS=true` (izin admin, tanpa DB):
  *   `PLAYWRIGHT_BASE_URL=http://localhost:<port> npx playwright test tests/fiori-konsol-riwayat.spec.ts --workers=1`.
- * Dependensi: /api/auth/accurate-session dan /api/proxy di-mock page.route (tidak menyentuh Accurate).
+ * Dependensi: /api/auth/accurate-session dan /api/proxy di-mock page.route (tidak menyentuh Accurate). Kirim = tombol "Kirim ke Accurate…"
+ *   lalu konfirmasi di ConfirmDialog (audit desain 001 M1); Excel log lewat tombol "Unduh log galat" (No 7).
  * Side Effects: Tangkapan di test-results/.
  */
 import { expect, test, type Page } from "@playwright/test";
@@ -34,12 +35,16 @@ async function kirim504(page: Page, routeKey: string, tulis: string, rows: Array
         return r.fulfill(json({ s: false, d: [`tak terduga: ${endpointPath}`] }));
     });
     await page.goto("/api-wrapper", { timeout: 90_000 });
-    await page.locator("select").first().selectOption(routeKey);
-    await page.locator("textarea").fill(JSON.stringify(rows));
-    const unduh = page.waitForEvent("download", { timeout: 20_000 }).catch(() => null);
-    await page.getByRole("button", { name: "Eksekusi Endpoint" }).click();
-    await expect(page.getByText(/Selesai dengan|Digabung dari beberapa request otomatis/).first()).toBeVisible({ timeout: 30_000 });
-    const d = await unduh; // Excel log hanya diunduh bila ada tahap gagal; tanpa unduhan = semua baris dianggap berhasil.
+    // Isian terkunci (inert) sampai kartu sesi membaca database aktif.
+    await expect(page.getByRole("button", { name: "Kirim ke Accurate…" })).toBeEnabled({ timeout: 90_000 });
+    await page.getByLabel("Endpoint API").selectOption(routeKey);
+    await page.getByLabel("Payload JSON").fill(JSON.stringify(rows));
+    await page.getByRole("button", { name: "Kirim ke Accurate…" }).click();
+    await page.getByRole("dialog", { name: `Kirim ${rows.length} baris ke Accurate?` }).getByRole("button", { name: `Kirim ${rows.length} baris` }).click();
+    await expect(page.getByText(/Selesai dengan|Digabung dari beberapa kiriman per tahap/).first()).toBeVisible({ timeout: 30_000 });
+    // Log galat hanya ada bila ada tahap gagal, diunduh lewat tombol (audit desain 001 No 7); tanpa tombol = semua baris dianggap berhasil.
+    const tombol = page.getByRole("button", { name: "Unduh log galat" });
+    const d = await tombol.isVisible() ? (await Promise.all([page.waitForEvent("download"), tombol.click()]))[0] : null;
     const log = d ? XLSX.utils.sheet_to_json<Record<string, string>>(XLSX.readFile(await d.path()).Sheets["Error Log"]) : [];
     const status = d ? log.map((x) => x.Status) : ["(tanpa Excel log: semua baris dihitung terposting)"];
     // Konfirmasi riwayat tampil di log respons (`_confirmedFromHistory`) atau Excel ("BERHASIL (TERKONFIRMASI HISTORI ACCURATE)").

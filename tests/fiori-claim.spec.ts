@@ -67,7 +67,7 @@ test("Daftar: kartu = saringan, kolom No Claim, baris membuka klaimnya; galat ti
     await expect(tabel.getByRole("link", { name: "CLM/002/KINO/08/2026" })).toHaveAttribute("href", "/claim-workflow/wf-sent");
     await expect(tabel.getByRole("link", { name: "Isi No Claim" })).toHaveAttribute("href", "/claim-workflow/wf-draft?focus=no-claim");
     await expect(tabel.getByText("Dibayar sebagian")).toBeVisible();
-    await expect(tabel.getByRole("cell", { name: "47 hari", exact: true })).toBeVisible(); // kolom Umur (salinan pop-in tersembunyi tidak dihitung)
+    await expect(tabel.getByRole("cell", { name: "47 hari Lewat 30 hari", exact: true })).toBeVisible(); // kolom Umur (salinan pop-in tersembunyi tidak dihitung)
 
     const kartu = main.getByRole("group", { name: "Saring menurut tahap" });
     await kartu.getByRole("button", { name: /Siap dikirim/ }).click();
@@ -95,7 +95,7 @@ test("Detail draf: semua bagian + anchor bar, varian BL, Tandai siap nonaktif be
     await page.route(path("/api/claim-workflow/wf-draft/items/it-2"), (r) => {
         patch.push(r.request().postDataJSON());
         audit = [...AUDIT, { id: "a2", actorName: "Ani", actorRole: "claim", action: "update_item_tax", metadata: { itemId: "it-2", dpp: 2500000, ppnRate: 11, pphRate: 2 }, createdAt: "2026-10-07T01:12:00Z" } as never];
-        return r.fulfill(json({ ok: false, code: "CONFLICT", error: "Item ini sudah diubah pengguna lain.", currentUpdatedAt: "2026-10-07T01:12:00.000Z" }, 409));
+        return r.fulfill(json({ ok: false, code: "CONFLICT", error: "Item ini sudah diubah user lain.", currentUpdatedAt: "2026-10-07T01:12:00.000Z" }, 409));
     });
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/claim-workflow/wf-draft", NAV);
@@ -105,7 +105,14 @@ test("Detail draf: semua bagian + anchor bar, varian BL, Tandai siap nonaktif be
         await expect(main.getByRole("region", { name: nama })).toBeVisible();
     }
     await expect(main.getByRole("navigation", { name: "Bagian halaman" }).getByRole("link")).toHaveCount(6);
-    for (const bl of ["BL-15", "BL-07", "BL-33", "BL-35"]) await expect(main.getByText(`usulan ${bl}`)).toBeVisible();
+    // Satu catatan varian per layar, hanya Admin (owner 27 Okt, audit No 80 + tinjauan K2: audiens tetap); fakta tugas No Claim tetap terlihat semua.
+    await expect(main.getByRole("complementary")).toHaveCount(1);
+    const catatan = main.getByLabel(/^Usulan BL-15, BL-08/);
+    for (const teks of ["Bukti bayar principal belum bisa dilampirkan", "Riwayat mencatat aksi dan catatannya", "Alur hanya ditelusuri dari klaim ke belakang"]) {
+        await expect(catatan).toContainText(teks);
+    }
+    await expect(main.getByText("No Claim yang sama di klaim ini menggabungkan berkasnya")).toBeVisible(); // fakta tugas, semua akun
+    await expect(catatan).not.toContainText("No Claim yang sama di klaim ini");
     await expect(main.getByRole("list", { name: "Tahap klaim" }).locator('[aria-current="step"]')).toContainText("Draf");
     await expect(main.getByRole("region", { name: "Riwayat" })).toContainText("Membuat klaim dari OFF Program Control");
     const siap = main.getByRole("button", { name: "Tandai siap dikirim…" });
@@ -118,6 +125,8 @@ test("Detail draf: semua bagian + anchor bar, varian BL, Tandai siap nonaktif be
     await expect(main.getByText("Belum disimpan: PPh 2% → 1,5%")).toBeVisible();
     await expect(main.getByRole("table", { name: "Item klaim" })).toContainText("Rp 37.500"); // 2.500.000 × 1,5% dibulatkan ke rupiah
     await page.screenshot({ path: "test-results/fiori-claim-draf.png", fullPage: true });
+    // Hanya aksi tahap aktif (footer) yang primary; Simpan per baris secondary.
+    await expect(main.getByRole("table", { name: "Item klaim" }).getByRole("button", { name: "Simpan" })).not.toHaveClass(/fi-btn--primary/);
     await main.getByRole("table", { name: "Item klaim" }).getByRole("button", { name: "Simpan" }).click();
     await expect(main.getByRole("alert").filter({ hasText: "diubah Ani" })).toContainText("sejak Anda membuka halaman ini");
     expect(patch[0]).toEqual({ dpp: "2500000", ppnRate: "11", pphRate: "1.5", note: "", expectedUpdatedAt: "2026-10-05T06:10:00.000Z" });
@@ -184,7 +193,12 @@ test("Menunggu bayar: dialog Catat pembayaran mengirim badan yang sama; Batalkan
     const main = page.locator("main");
     const bayar = main.getByRole("region", { name: "Pembayaran dari principal" });
     await expect(bayar).toContainText("termin 1", NAV);
-    for (const bl of ["BL-14", "BL-07", "BL-08"]) await expect(main.getByText(`usulan ${bl}`)).toBeVisible();
+    await expect(main.getByRole("complementary")).toHaveCount(1); // satu catatan varian per layar (audit No 80)
+    const catatan = main.getByLabel(/^Usulan BL-15, BL-08/);
+    await expect(catatan).toHaveAttribute("aria-label", /BL-14/);
+    await expect(catatan).toContainText("dua pembayaran yang dicatat bersamaan");
+    await expect(catatan).toContainText("Setelah dikirim ke principal, klaim belum bisa diminta revisi atau dibatalkan.");
+    await expect(bayar).not.toContainText("Bukti bayar principal belum bisa dilampirkan"); // batasan hanya di catatan Admin
     await expect(main.locator(".fi-ftb")).toContainText("Dikirim 47 hari lalu");
 
     await main.locator(".fi-ftb").getByRole("button", { name: "Catat pembayaran…" }).click();

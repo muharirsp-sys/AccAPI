@@ -2,14 +2,17 @@
  * Tujuan: Bagian bersama layar Order Masuk Fiori (it06): tipe order FastAPI + antrean, panggilan FastAPI ber-CSRF, status order
  *   "sampai faktur" (status order FastAPI ditimpa status Antrean Faktur bila sudah antre), dan teks sumber/nomor order.
  * Caller: ./OrderMasuk.tsx (List Report), ./OrderBaru.tsx (form), ./OrderDetail.tsx (Object Page + dialog Antrekan).
- * Dependensi: lib/apiBase (FastAPI), lib/promo-ui (rupiah), ../form-kontrol/lapangan (ambilJson, Jawaban), components/fiori/core (Tone).
- * Main Functions: fastapi, nextApi, sukses, tidakPasti, pesanJawaban (+ kode O1), nomorOrder, sumberOrder, statusOrder, STATUS_ANTREAN, nilai.
+ * Dependensi: lib/apiBase (FastAPI), lib/promo-ui (rupiah), lib/tampil (KOSONG), ../form-kontrol/lapangan (ambilJson, Jawaban),
+ *   components/fiori/core (Tone).
+ * Main Functions: fastapi, nextApi, sukses, tidakPasti, pesanJawaban (+ kode O1), nomorOrder, sumberOrder, statusOrder, STATUS_ANTREAN, nilai,
+ *   BELUM_PASTI, JEDA_TARIK_MENIT.
  * Side Effects: fetch ke FastAPI (/api/me untuk token CSRF, /orders…).
  */
 import type { Tone } from "@/components/fiori/core";
 import { galatDariJawaban, kalimatPenolakan, kodeDikenal, type Result } from "@/components/order/order-cabang";
 import { resolveApiBase } from "@/lib/apiBase";
 import { rupiah } from "@/lib/promo-ui";
+import { KOSONG } from "@/lib/tampil";
 import { ambilJson, type Jawaban } from "../form-kontrol/lapangan";
 
 export const API_BASE = resolveApiBase();
@@ -64,7 +67,10 @@ export const sukses = (j: Jawaban): j is { status: number; data: Record<string, 
  */
 export const tidakPasti = (j: Jawaban) => galatDariJawaban(j).tidakPasti;
 
-export const BELUM_PASTI = "Server tidak memberi jawaban yang pasti — hasilnya belum pasti. Data dimuat ulang; periksa dulu sebelum mengulang.";
+export const BELUM_PASTI = "Server tidak memberi jawaban yang pasti, jadi hasilnya belum pasti. Data dimuat ulang; periksa dulu sebelum mengulang.";
+
+/** Jeda penjadwal tarik otomatis Order Sales (cron 5 menit, python_backend/routers/orders.py); hanya untuk teks layar. */
+export const JEDA_TARIK_MENIT = 5;
 
 /**
  * Pesan server apa adanya (FastAPI `detail`, Next `error`); tanpa kode status mentah. Kode penolakan Order per cabang (O1: BARANG_BEDA_CABANG,
@@ -85,7 +91,7 @@ export function pesanJawaban(j: Jawaban, umum: string): string {
 export const nomorOrder = (id: string) => `Order ${id.slice(0, 8)}`;
 
 export function sumberOrder(o: Pick<OrderRow, "request_id" | "owner">): string {
-    return o.request_id ? `Order Sales #${o.request_id.slice(0, 8)}` : `Petugas · ${o.owner || "—"}`;
+    return o.request_id ? `Order Sales #${o.request_id.slice(0, 8)}` : `Petugas · ${o.owner || KOSONG}`;
 }
 
 export const STATUS_ANTREAN: Record<OutboxState, { label: string; tone: Tone; busy?: boolean }> = {
@@ -119,6 +125,6 @@ export function statusOrder(o: Pick<OrderRow, "status" | "result">, outbox: Outb
     return { key: "lain", label: "Status tidak dikenal", tone: "neu" };
 }
 
-/** Rupiah dari angka/teks beku FastAPI; kosong/bukan angka → "—" (bukan Rp 0 yang terbaca seperti nilai). */
+/** Rupiah dari angka/teks beku FastAPI; kosong/bukan angka → KOSONG (bukan Rp 0 yang terbaca seperti nilai). */
 export const nilai = (raw: string | number | null | undefined) =>
-    raw === null || raw === undefined || raw === "" || !Number.isFinite(Number(raw)) ? "—" : rupiah(raw);
+    raw === null || raw === undefined || raw === "" || !Number.isFinite(Number(raw)) ? KOSONG : rupiah(raw);

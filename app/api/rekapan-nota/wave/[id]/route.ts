@@ -57,6 +57,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
                         WHEN 'item' THEN (SELECT max(coalesce(i.isi_per_karton, ${RASIO_KARTON_ACCURATE_SQL}))::text FROM item i WHERE i.no = e.ref_kode)
                         WHEN 'customer' THEN (SELECT max(c.area) FROM customer c WHERE ${cocokOutletSql("e.ref_kode")})
                     END AS master_saat_ini,
+                    CASE e.ref_tipe WHEN 'item' THEN (SELECT i.name FROM item i WHERE i.no = e.ref_kode) END AS nama_ref,
                     (SELECT ev.payload->>'alasan' FROM wave_event ev
                       WHERE ev.wave_id = e.wave_id AND ev.event = 'wave.exception_resolved'
                         AND ev.payload->>'exception_id' = e.id::text

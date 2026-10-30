@@ -2,29 +2,31 @@
  * Tujuan: Modul peran Keuangan OFF Program Control (Fiori S4d, tab `finance`, ZONA UANG): antrean "Menunggu Anda" (isFinanceQueueBatch)
  *   + Semua (isFinanceMonitoringBatch), tampilan lokal "Pengembalian selisih", dan Object Page batch dengan pembayaran per item
  *   (pilih item satu cara bayar, form bayar, lampiran bank), Catat pembayaran lewat dialog `bayar`, dan verifikasi pengembalian
- *   selisih (KeuanganRefund.tsx). Pengganti FinanceDashboard + RefundPanel (verifikasi) di old-opc.tsx 7958–9177.
+ *   selisih (KeuanganRefund.tsx). Pengganti FinanceDashboard + RefundPanel (verifikasi) kode lama.
  * Caller: OpcApp.tsx (MODUL.finance).
- * Dependensi: opc/Bersama (KerjaPeran, kontrak), opc/ObjectPageBatch, opc/peran/KeuanganRefund (tulisUang, bagian pengembalian), components/fiori/*,
+ * Dependensi: opc/Bersama (KerjaPeran, tulisOpc, kontrak), opc/ObjectPageBatch, opc/peran/KeuanganRefund (bagian pengembalian), components/fiori/*,
  *   lib/opc-ui (TAMPILAN, PREDIKAT, tanggalOpc, labelStatus), lib/off-program-control/workflow (canProcessFinancePayment = gerbang server),
- *   lib/promo-ui (rupiah), lucide-react.
+ *   lib/promo-ui (rupiah), lib/tampil (KOSONG), lucide-react.
  * Main Functions: Keuangan (default), DetailKeuangan, caraBayar, sudahDibayar, galatBukti.
- * Side Effects: POST /api/off-program-control/batches/[id]/finance-payment (FormData: paymentDate, senderBank, note, itemIds JSON,
- *   paymentProof opsional) — MENCATAT UANG DIBAYAR; payload dan validasi sama dengan submitFinancePayment lama 8503–8600.
+ * Side Effects: POST /api/off-program-control/batches/[id]/finance-payment lewat tulisOpc (FormData: paymentDate, senderBank, note,
+ *   itemIds JSON, paymentProof opsional): MENCATAT UANG DIBAYAR; payload dan validasi sama dengan submitFinancePayment kode lama.
  *   PATCH/POST /refund lewat KeuanganRefund. Menandai draf halaman (ctx.setDraf) selama ada pilihan/isian yang belum dicatat.
+ *   Jawaban tidak pasti dilaporkan lewat laporTidakPasti (strip di Object Page + muat ulang).
  */
 "use client";
 
 import { useEffect, useState } from "react";
 import { Wallet } from "lucide-react";
-import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
+import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, StatusBadge, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { canProcessFinancePayment } from "@/lib/off-program-control/workflow";
 import type { OffBatchRow } from "@/lib/off-program-control/types";
 import { PREDIKAT, TAMPILAN, labelStatus, tanggalOpc, type BatchOpc, type ItemOpc, type PembayaranOpc, type RingkasanBayar, type Tampilan } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
-import { KerjaPeran, type DetailProps, type PeranProps } from "../Bersama";
+import { KOSONG } from "@/lib/tampil";
+import { KerjaPeran, TulisTidakPasti, pesanTidakPasti, tulisOpc, type DetailProps, type PeranProps } from "../Bersama";
 import { ObjectPageBatch, type BagianTambahan } from "../ObjectPageBatch";
-import { TidakPasti, bagianAjukan, bagianRefund, tulisUang } from "./KeuanganRefund";
+import { bagianAjukan, bagianRefund } from "./KeuanganRefund";
 
 /** Item dari GET /batches/[id] (baris DB utuh): financePaymentId ikut terkirim walau tidak ada di tipe bersama. */
 type ItemBayar = ItemOpc & { financePaymentId?: string | null };
@@ -34,23 +36,24 @@ type HasilBayar = {
     paymentProofName: string; paymentProofUrl: string | null; remainingAmount?: number; isFullyPaid?: boolean;
 };
 
-const KOSONG: ReadonlySet<string> = new Set();
+const TANPA_PILIHAN: ReadonlySet<string> = new Set();
 const enc = encodeURIComponent;
 const MIME_BUKTI = ["application/pdf", "image/png", "image/jpeg"];
 const MAKS_BUKTI = 5 * 1024 * 1024;
-const PUTUS = "Server tidak memberi jawaban yang pasti (koneksi putus atau gateway timeout); pembayaran mungkin sudah tercatat atau belum. Detail batch dimuat ulang — periksa riwayat pembayaran sebelum mencoba lagi.";
+// finance-payment membuat PDF sebelum transaksi, jadi timeout proxy bisa datang SESUDAH pembayaran tersimpan.
+const PUTUS = pesanTidakPasti("pembayaran ini", "Riwayat pembayaran");
 
-/** normalizeUiPaymentMethod lama (363): "transfer"/"tunai" → label baku; nilai lain apa adanya. */
+/** normalizeUiPaymentMethod kode lama: "transfer"/"tunai" → label baku; nilai lain apa adanya. */
 function caraBayar(value: string | null | undefined): string {
     const v = String(value || "");
     const n = v.trim().toLowerCase();
     return n === "transfer" ? "Transfer" : n === "tunai" ? "Tunai" : v;
 }
 
-/** isFinanceItemPaid lama (8288): sama dengan cek "alreadyPaid" server. */
+/** isFinanceItemPaid kode lama: sama dengan cek "alreadyPaid" server. */
 const sudahDibayar = (i: ItemBayar) => i.financePaymentStatus === "paid" || Boolean(i.financePaymentId);
 
-/** Validasi lampiran di submitFinancePayment lama (8520–8533), pesan sama; server memeriksa lagi. */
+/** Validasi lampiran di submitFinancePayment kode lama, pesan sama; server memeriksa lagi. */
 function galatBukti(f: File | null): string | undefined {
     if (!f) return undefined;
     if (!MIME_BUKTI.includes(f.type)) return "File bukti pembayaran harus PDF/PNG/JPG/JPEG.";
@@ -60,15 +63,15 @@ function galatBukti(f: File | null): string | undefined {
 
 /**
  * Batch boleh dibayar = gerbang server POST finance-payment (canProcessFinancePayment: SM, Klaim, OM disetujui dan Keuangan menunggu/
- * sebagian/perlu koreksi). Lebih ketat dari isFinanceActionableBatch lama (774) — BL-06: tanpa form/aksi untuk batch yang tidak sah.
+ * sebagian/perlu koreksi). Lebih ketat dari isFinanceActionableBatch kode lama (BL-06): tanpa form/aksi untuk batch yang tidak sah.
  * BatchOpc membawa keempat sumbu yang dibaca fungsi itu.
  */
 const bolehBayar = (b: BatchOpc) => canProcessFinancePayment(b as unknown as OffBatchRow);
 
-/** splitPeriodDates lama (414): "awal - akhir" → dd/mm/yyyy – dd/mm/yyyy. */
+/** splitPeriodDates kode lama: "awal - akhir" → dd/mm/yyyy – dd/mm/yyyy. */
 function periodeItem(periode: string | null | undefined) {
     const [awal = "", akhir = ""] = String(periode || "").split(" - ");
-    return awal || akhir ? `${tanggalOpc(awal)} – ${tanggalOpc(akhir)}` : "–";
+    return awal || akhir ? `${tanggalOpc(awal)} – ${tanggalOpc(akhir)}` : KOSONG;
 }
 
 /** Kolom kedua Keuangan: Object Page + pilih item, form pembayaran, dialog `bayar`, verifikasi pengembalian. */
@@ -76,7 +79,7 @@ function DetailKeuangan(props: DetailProps) {
     const { ctx, daftar, detail, muatUlang } = props;
     const setDraf = ctx.setDraf;
     // Pilihan item = urutan klik (Set menjaga urutan sisip), sama dengan selectedPaymentItemIds lama yang dikirim sebagai itemIds.
-    const [pilih, setPilih] = useState<ReadonlySet<string>>(KOSONG);
+    const [pilih, setPilih] = useState<ReadonlySet<string>>(TANPA_PILIHAN);
     const [tanggal, setTanggal] = useState("");
     const [bank, setBank] = useState("");
     const [bukti, setBukti] = useState<File | null>(null);
@@ -88,7 +91,6 @@ function DetailKeuangan(props: DetailProps) {
     const [hasil, setHasil] = useState<HasilBayar | null>(null);
     const [pesanRefund, setPesanRefund] = useState<string | null>(null);
     const [drafAjukan, setDrafAjukan] = useState(false); // form Ajukan pengembalian (AjukanRefund melapor lewat onDraf)
-    const [tidakPasti, setTidakPasti] = useState<string | null>(null);
 
     const d = detail.data;
     const b = d?.batch;
@@ -102,11 +104,11 @@ function DetailKeuangan(props: DetailProps) {
 
     // Pengembalian: strip sukses dipegang di sini (bagiannya bisa hilang setelah selisih lunas), lalu daftar + detail dimuat ulang.
     const selesaiRefund = (pesan: string) => { setPesanRefund(pesan); daftar.muatUlang(); muatUlang(); };
-    const lanjut = { ...props, onSelesai: selesaiRefund, onTidakPasti: setTidakPasti };
+    const lanjut = { ...props, onSelesai: selesaiRefund };
     const bagianSelisih = [bagianRefund(lanjut), bagianAjukan({ ...lanjut, onDraf: setDrafAjukan })].filter((x): x is BagianTambahan => x !== null);
+    // Strip hasil tidak pasti dirender ObjectPageBatch dari props (KolomDetail), tetap tampil walau form bayar hilang (batch ternyata lunas).
     const strip = (
         <>
-            {tidakPasti && <MessageStrip tone="warn" title="Hasil aksi terakhir belum pasti." onClose={() => setTidakPasti(null)}>{tidakPasti}</MessageStrip>}
             {hasilStrip(hasil, () => setHasil(null))}
             {pesanRefund && <MessageStrip tone="pos" title={pesanRefund} onClose={() => setPesanRefund(null)} />}
         </>
@@ -126,7 +128,7 @@ function DetailKeuangan(props: DetailProps) {
     const metode = metodeDipilih.length === 1 ? metodeDipilih[0] : "";
     const total = dipilih.reduce((t, i) => t + Number(i.nominal || 0), 0);
 
-    // Ringkasan pembayaran disetujui (lama 8253–8293): agregat server, jatuh ke hitungan baris bila kosong.
+    // Ringkasan pembayaran disetujui (kode lama): agregat server, jatuh ke hitungan baris bila kosong.
     const totalNominal = Number(d.summary?.totalNominal || items.reduce((t, i) => t + Number(i.nominal || 0), 0));
     const jumlahCara = (cara: string) => items.filter((i) => caraBayar(i.caraBayar) === cara).reduce((t, i) => t + Number(i.nominal || 0), 0);
     const transfer = Number(d.summary?.transfer || jumlahCara("Transfer"));
@@ -148,7 +150,7 @@ function DetailKeuangan(props: DetailProps) {
             : !tanggal ? "Isi tanggal bayar dulu."
                 : buktiGalat ? `Lampiran bank: ${buktiGalat}` : undefined);
 
-    // isFinanceItemDisabledForSelection lama (8338): lunas tidak bisa dipilih; setelah satu cara bayar dipilih, cara lain nonaktif.
+    // isFinanceItemDisabledForSelection kode lama: lunas tidak bisa dipilih; setelah satu cara bayar dipilih, cara lain nonaktif.
     const bisaDipilih = (i: ItemBayar) => !izin && !terkunci && !sudahDibayar(i) && (!metode || pilih.has(i.id) || caraBayar(i.caraBayar) === metode);
     const ubahPilih = (next: ReadonlySet<string>) => {
         const cara = new Set([...next].map((id) => perId.get(id)).filter((i) => i && !sudahDibayar(i)).map((i) => caraBayar(i!.caraBayar)).filter(Boolean));
@@ -156,12 +158,15 @@ function DetailKeuangan(props: DetailProps) {
         setPesanPilih(null);
         setPilih(next);
     };
-    const kosongkan = () => { setPilih(KOSONG); setPesanPilih(null); };
+    const kosongkan = () => { setPilih(TANPA_PILIHAN); setPesanPilih(null); };
     const adaPilihan = dipilih.length > 0;
     const labelPilih = (i: ItemBayar) => `Pilih item ${i.itemNo} (${i.toko || "tanpa toko"}) untuk dibayar`;
+    // Label pembungkus = target sentuh 44 px di layar sentuh (.fi-check); nama aksesibel tetap dari aria-label.
     const kotak = (i: ItemBayar) => (
-        <input type="checkbox" aria-label={labelPilih(i)} checked={pilih.has(i.id)} disabled={!bisaDipilih(i)}
-            onChange={() => { const next = new Set(pilih); if (next.has(i.id)) next.delete(i.id); else next.add(i.id); ubahPilih(next); }} />
+        <label className="fi-check" style={{ minWidth: 44, justifyContent: "center" }}>
+            <input type="checkbox" aria-label={labelPilih(i)} checked={pilih.has(i.id)} disabled={!bisaDipilih(i)}
+                onChange={() => { const next = new Set(pilih); if (next.has(i.id)) next.delete(i.id); else next.add(i.id); ubahPilih(next); }} />
+        </label>
     );
     const statusItem = (i: ItemBayar) => (sudahDibayar(i) ? <StatusBadge tone="pos">Dibayar</StatusBadge>
         : pilih.has(i.id) ? <StatusBadge tone="info">Akan dibayar</StatusBadge>
@@ -169,16 +174,16 @@ function DetailKeuangan(props: DetailProps) {
                 : "Belum dibayar");
 
     const kolom: Column<ItemBayar>[] = [
-        { key: "surat", header: "No Surat · program", cell: (i) => <><span className="fi-mono">{i.noSurat || "–"}</span><span className="fi-sub">{i.namaProgram || "–"}</span></> },
-        { key: "toko", header: "Toko", cell: (i) => i.toko || "–" },
+        { key: "surat", header: "No Surat · program", cell: (i) => <><span className="fi-mono">{i.noSurat || KOSONG}</span><span className="fi-sub">{i.namaProgram || KOSONG}</span></> },
+        { key: "toko", header: "Toko", cell: (i) => i.toko || KOSONG },
         { key: "nominal", header: "Nominal", align: "end", cell: (i) => <span className="fi-tnum">{rupiah(i.nominal)}</span> },
-        { key: "cara", header: "Cara bayar", cell: (i) => i.caraBayar || "–" },
+        { key: "cara", header: "Cara bayar", cell: (i) => i.caraBayar || KOSONG },
         { key: "status", header: "Keuangan", cell: statusItem },
         // No rekening hanya untuk Transfer (kode lama); server menyamarkannya bagi akun tanpa izin bayar.
-        { key: "rek", header: "No rekening", secondary: true, cell: (i) => (caraBayar(i.caraBayar) === "Transfer" && i.noRekening ? <span className="fi-mono">{i.noRekening}</span> : "–") },
-        { key: "barang", header: "Barang", secondary: true, cell: (i) => i.barang || "–" },
+        { key: "rek", header: "No rekening", secondary: true, cell: (i) => (caraBayar(i.caraBayar) === "Transfer" && i.noRekening ? <span className="fi-mono">{i.noRekening}</span> : KOSONG) },
+        { key: "barang", header: "Barang", secondary: true, cell: (i) => i.barang || KOSONG },
         { key: "periode", header: "Periode", secondary: true, cell: (i) => periodeItem(i.periode) },
-        { key: "tipe", header: "Tipe", secondary: true, cell: (i) => i.type || "–" },
+        { key: "tipe", header: "Tipe", secondary: true, cell: (i) => i.type || KOSONG },
         { key: "deadline", header: "Deadline", secondary: true, cell: (i) => tanggalOpc(i.deadline) },
         { key: "no", header: "Item ke", secondary: true, cell: (i) => <span className="fi-tnum">{i.itemNo}</span> },
     ];
@@ -189,9 +194,10 @@ function DetailKeuangan(props: DetailProps) {
                 actions={adaPilihan ? <Button variant="tertiary" onClick={kosongkan}>Kosongkan pilihan</Button> : undefined}
                 empty={{ title: "Batch ini tidak punya item" }}
                 mobileItem={(i) => (
-                    <div className="fi-wl-row">
+                    // Kolom kotak tetap (CSS .fi-wl-row hanya mengenali input langsung, kini dibungkus label).
+                    <div className="fi-wl-row" style={{ gridTemplateColumns: "auto minmax(0, 1fr)", paddingLeft: 4 }}>
                         {kotak(i)}
-                        <ListItem doc={i.noSurat || `Item ${i.itemNo}`} amount={rupiah(i.nominal)} title={i.toko || "–"}
+                        <ListItem doc={i.noSurat || `Item ${i.itemNo}`} amount={rupiah(i.nominal)} title={i.toko || KOSONG}
                             meta={[i.namaProgram, i.caraBayar, caraBayar(i.caraBayar) === "Transfer" ? i.noRekening : ""].filter(Boolean).join(" · ")}
                             badge={sudahDibayar(i) ? <StatusBadge tone="pos">Dibayar</StatusBadge> : pilih.has(i.id) ? <StatusBadge tone="info">Akan dibayar</StatusBadge> : undefined} />
                     </div>
@@ -241,15 +247,11 @@ function DetailKeuangan(props: DetailProps) {
                 <FormField label="Catatan Keuangan">
                     {(a) => <textarea {...a} className="fi-input" rows={3} value={catatanNilai} disabled={Boolean(izin)} onChange={(e) => setCatatan(e.target.value)} />}
                 </FormField>
-                <VariantNote bl="BL-07">
-                    Lampiran bank divalidasi (jenis dan ukuran) lalu tidak disimpan; yang tersimpan dan bisa dibuka dari Riwayat pembayaran adalah PDF
-                    ringkasan buatan sistem yang mencatat nama lampiran. Bila BL-07 masuk, lampiran tersimpan dengan hash dan bisa dibuka dari riwayat.
-                </VariantNote>
             </div>
         ),
     };
 
-    /** submitFinancePayment lama (8503–8600): validasi, FormData, dan urutan isian sama. */
+    /** submitFinancePayment kode lama: validasi, FormData, dan urutan isian sama. */
     async function catat() {
         if (dipilih.length === 0) throw new Error("Pilih minimal satu item yang akan dibayar.");
         if (metodeDipilih.length !== 1) throw new Error("Pilih item dengan cara bayar yang sama.");
@@ -262,12 +264,13 @@ function DetailKeuangan(props: DetailProps) {
         if (bukti) formData.append("paymentProof", bukti);
         let data: Record<string, unknown>;
         try {
-            data = await tulisUang(`/api/off-program-control/batches/${enc(b!.id)}/finance-payment`, { body: formData, gagal: "Gagal mengirim pembayaran.", putus: PUTUS });
+            data = await tulisOpc(`/api/off-program-control/batches/${enc(b!.id)}/finance-payment`, { body: formData, gagal: "Gagal mengirim pembayaran.", putus: PUTUS });
         } catch (e) {
             // Tolakan server (mis. 409 item sudah dibayar orang lain, periode ditutup) atau koneksi putus: status di layar bisa usang.
             // Muat ulang detail; selama memuat tombol Catat terkunci dan item yang ternyata lunas keluar dari pilihan.
-            muatUlang();
-            if (e instanceof TidakPasti) setTidakPasti(e.message); // tetap tampil walau form hilang (batch ternyata lunas)
+            // Tidak pasti: dialog ditutup (tidak bisa diklik ulang selagi status belum jelas), strip bertahan + muat ulang (No 22).
+            if (e instanceof TulisTidakPasti) { setDialog(false); props.laporTidakPasti(e.message); }
+            else muatUlang();
             throw e;
         }
         const ringkas = data.paymentSummary as RingkasanBayar | undefined;
@@ -280,7 +283,7 @@ function DetailKeuangan(props: DetailProps) {
             paymentProofName: p?.paymentProofName || "", paymentProofUrl: p?.proofUrl || null, remainingAmount: ringkas?.remainingAmount, isFullyPaid: ringkas?.isFullyPaid,
         });
         // Bank pengirim dipertahankan (kode lama juga) untuk pencatatan berikutnya; sisanya dikosongkan.
-        setPilih(KOSONG);
+        setPilih(TANPA_PILIHAN);
         setTanggal("");
         setBukti(null);
         setKunciBukti((k) => k + 1);
@@ -298,6 +301,8 @@ function DetailKeuangan(props: DetailProps) {
             gantiItem={tabelItem}
             bagian={[bagianBayar, ...bagianSelisih]}
             strip={strip}
+            // Satu catatan varian per layar (audit No 80); lampiran bank tidak disimpan (BL-07) sudah di catatan Object Page.
+            varian={{ bl: "BL-08", isi: "Lampiran bank divalidasi (jenis dan ukuran) lalu tidak disimpan; PDF ringkasan buatan sistem mencatat nama lampirannya. Tombol Catat terkunci selama pencatatan berjalan dan server menolak item yang sudah tercatat dibayar, tetapi dua pencatatan yang benar-benar bersamaan belum dicegah. Usulan: lampiran tersimpan dengan hash, dan server mengunci batch sehingga pencatatan kedua ditolak." }}
             pesanFooter={dipilih.length > 0
                 ? <span className="fi-sum"><b>{dipilih.length} item dipilih</b> · {rupiah(total)}{metode ? ` · ${metode}` : ""}{alasan && <span className="fi-why"> · {alasan}</span>}</span>
                 : alasan}
@@ -317,40 +322,35 @@ function DetailKeuangan(props: DetailProps) {
                         facts={[
                             ["Principal", b.principleName],
                             ["Item dibayar", `${dipilih.length} dari ${belum.length} item yang belum dibayar`],
-                            ["Cara bayar", metode || "–"],
+                            ["Cara bayar", metode || KOSONG],
                             ["Nominal", <b key="n" className="fi-tnum">{rupiah(total)}</b>],
                             ["Tanggal bayar", tanggalOpc(tanggal)],
-                            ["Bank pengirim", bank || "–"],
+                            ["Bank pengirim", bank || KOSONG],
                             ["Lampiran bank", bukti ? `${bukti.name} · divalidasi, tidak disimpan` : "Tidak ada"],
                             ["Bukti tersimpan", "PDF ringkasan pembayaran dibuat otomatis"],
                             ["Sisa sebelum dicatat", <span key="s" className="fi-tnum">{rupiah(sisa)}</span>],
                             ["Setelah dicatat", "Bila semua item lunas, batch diteruskan ke verifikasi final Klaim; bila belum, tetap di Keuangan sebagai dibayar sebagian."],
                         ]}
                         onConfirm={catat}
-                    >
-                        <VariantNote bl="BL-08">
-                            Tombol terkunci selama pencatatan berjalan dan klik ganda ditahan. Server hari ini menolak item yang sudah tercatat dibayar, tetapi
-                            dua pencatatan yang benar-benar bersamaan belum dicegah (AM-023). Bila BL-08 masuk, server mengunci batch dan menolak yang kedua.
-                        </VariantNote>
-                    </ConfirmDialog>
+                    />
                 </>
             }
         />
     );
 }
 
-/** Hasil pembayaran (paymentResult lama 8242–8250, ditampilkan 9065–9120) di bawah header Object Page. */
+/** Hasil pembayaran (paymentResult kode lama) di bawah header Object Page. */
 function hasilStrip(h: HasilBayar | null, tutup: () => void) {
     if (!h) return null;
     return (
         <MessageStrip tone="pos" title={h.pesan} onClose={tutup}>
             <KeyValues items={[
-                ["No pembayaran", h.paymentNo ? `Ke-${h.paymentNo}` : "–"],
+                ["No pembayaran", h.paymentNo ? `Ke-${h.paymentNo}` : KOSONG],
                 ["Tanggal bayar", tanggalOpc(h.paymentDate)],
                 ["Jumlah dibayar", <span key="j" className="fi-tnum">{rupiah(h.paidAmount)}</span>],
                 ["Cara bayar", h.paymentMethod],
-                ["Bank pengirim", h.senderBank || "–"],
-                ["Bukti pembayaran", h.paymentProofUrl ? <a key="b" href={h.paymentProofUrl} target="_blank" rel="noreferrer">{h.paymentProofName || "Buka bukti"}</a> : h.paymentProofName || "–"],
+                ["Bank pengirim", h.senderBank || KOSONG],
+                ["Bukti pembayaran", h.paymentProofUrl ? <a key="b" href={h.paymentProofUrl} target="_blank" rel="noreferrer">{h.paymentProofName || "Buka bukti"}</a> : h.paymentProofName || KOSONG],
                 ["Sisa pembayaran", <span key="s" className="fi-tnum">{rupiah(h.remainingAmount ?? 0)}</span>],
                 ["Status", h.isFullyPaid ? "Lunas" : "Belum lunas"],
             ]} />

@@ -46,7 +46,7 @@ test("BL-41 Admin Incaso: tidak pasti + gagal dari ringkasan; jawaban tanpa angk
         rows: [{ key: "PAY_A", status: "UNKNOWN", customerNo: "PELANGGAN-A", transDate: "09/10/2026", invoiceNo: "INV/A/001", amount: 120000, databaseId: "77", updatedAt: "2026-10-10T01:00:00.000Z", category: "uncertain" },
             { key: "PAY_B", status: "FAILED", customerNo: "PELANGGAN-B", transDate: "09/10/2026", invoiceNo: "INV/A/002", amount: 2500000, databaseId: null, updatedAt: null, category: "retryable" }],
         rowsTruncated: false };
-    assert.deepEqual(TILES.pelunasanTidakPasti.pick(summary), { value: 4, unit: "baris", tone: "warn", footer: "2 tidak pasti · 1 mengirim macet · 1 kunci macet > 15 mnt (tak terkirim)" });
+    assert.deepEqual(TILES.pelunasanTidakPasti.pick(summary), { value: 4, unit: "baris", tone: "warn", footer: "2 tidak pasti · 1 mengirim macet · 1 proses terhenti > 15 mnt (tak terkirim)" });
     assert.deepEqual(TILES.pelunasanGagal.pick(summary), { value: 4, unit: "baris", tone: "neg", footer: "Perbaiki lalu unggah ulang lewat wizard" });
     assert.equal(TILES.pelunasanTidakPasti.pick({ ok: true, uncertain: { total: 0 }, retryable: 0, processingStale: 0 }).tone, "pos");
     assert.equal(sourceValid("pelunasan", summary), true);
@@ -66,7 +66,7 @@ test("BL-41 Admin Incaso: tidak pasti + gagal dari ringkasan; jawaban tanpa angk
     assert.equal(card?.extra, "sesiAccurate");
     const sesi = { status: "siap" as const, data: { ok: true, connected: true, databaseConnected: true, databaseId: "77", databaseAlias: "PT CONTOH" } };
     assert.deepEqual(card?.notes?.(summary, sesi), [
-        "Database aktif Anda: PT CONTOH (id 77).", "PT CONTOH (aktif): 2 tidak pasti · 1 gagal", "tidak tercatat: 1 tidak pasti · 3 gagal · 1 kunci macet",
+        "Database aktif Anda: PT CONTOH (id 77).", "PT CONTOH (aktif): 2 tidak pasti · 1 gagal", "tidak tercatat: 1 tidak pasti · 3 gagal · 1 proses terhenti",
     ]);
     assert.match(card?.notes?.(summary, { status: "galat" })[0] ?? "", /tidak terbaca/, "sesi gagal ≠ belum membuka database");
     assert.match(card?.notes?.(summary, { status: "galat" })[1] ?? "", /^database id 77:/);
@@ -132,9 +132,9 @@ test("K3: angka tile Kasir dari ringkasan; nol benar-benar nol; Incaso belum len
     assert.deepEqual(TILES.kasirBelumSetor.pick({ ...RINGKASAN, belumSetor: { jumlah: 2, belumDijelaskan: 0 } }),
         { value: 2, unit: "orang", tone: "warn", footer: "Semuanya sudah dijelaskan" });
     // Hari belum ditutup: ada hari lampau = warn; hanya hari ini = info (normal sampai hari itu ditutup); nol = semua beres.
-    assert.deepEqual(TILES.kasirBelumTutup.pick(RINGKASAN), { value: 3, unit: "hari", tone: "warn", footer: "Termasuk hari ini · terlama 14 Okt · hari lampau terkunci, minta OM/Admin membuka kembali" });
+    assert.deepEqual(TILES.kasirBelumTutup.pick(RINGKASAN), { value: 3, unit: "hari", tone: "warn", footer: "Termasuk hari ini · terlama 14 Okt · perlu dibuka OM/Admin" });
     assert.deepEqual(TILES.kasirBelumTutup.pick({ ...RINGKASAN, hariBelumDitutup: { jumlah: 2, tanggal: ["2026-10-14", "2026-10-16"], jendela: [] } }),
-        { value: 2, unit: "hari", tone: "warn", footer: "Terlama 14 Okt · hari lampau terkunci, minta OM/Admin membuka kembali" });
+        { value: 2, unit: "hari", tone: "warn", footer: "Terlama 14 Okt · perlu dibuka OM/Admin" });
     assert.deepEqual(TILES.kasirBelumTutup.pick({ ...RINGKASAN, hariBelumDitutup: { jumlah: 1, tanggal: ["2026-10-17"], jendela: [] } }),
         { value: 1, unit: "hari", tone: "info", footer: "Hanya hari ini" });
     assert.deepEqual(TILES.kasirBelumTutup.pick({ ...RINGKASAN, hariBelumDitutup: { jumlah: 0, tanggal: [], jendela: [] } }),
@@ -144,7 +144,7 @@ test("K3: angka tile Kasir dari ringkasan; nol benar-benar nol; Incaso belum len
     for (const id of ["kasirSelisih", "kasirBelumSetor"] as const) {
         const v = TILES[id].pick(BELUM_LENGKAP);
         assert.deepEqual([v.value, v.unit, v.tone], [null, "belum terbaca", "neu"], id);
-        assert.match(v.footer, /belum terbaca lengkap/);
+        assert.match(v.footer, /Incaso belum lengkap/);
         const sesi = TILES[id].pick({ ...BELUM_LENGKAP, baca: null, incaso: { lengkap: false, sebab: "SESI_SINKRON", pesan: "x" } });
         assert.equal(sesi.value, null);
         assert.match(sesi.footer, /Sesi Accurate akun sinkron/);

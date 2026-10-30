@@ -3,13 +3,13 @@
  *   saringan periode/principal/cabang di URL (satu periode untuk semua halaman, BL-36 tanpa simpan per pengguna),
  *   pemuat GET dashboard, dan konstanta server lewat context.
  * Caller: Dashboard.tsx, Saya.tsx, Pembayaran.tsx, DataPeriode.tsx, Support.tsx, Pengaturan.tsx.
- * Dependensi: components/fiori/{core,interactive}, lib/insentif-ui, lib/insentif-konstanta, lib/rekapan-nota/ui (ambil).
+ * Dependensi: components/fiori/{core,interactive}, lib/insentif-ui, lib/insentif-konstanta, lib/rekapan-nota/ui (ambil), ./data (bulan WITA).
  * Main Functions: InsentifRangka, usePeriode, useDashboard, KonstantaCtx/useKonstanta.
  * Side Effects: router.replace saat saringan berubah; GET /api/insentif-sales/dashboard.
  */
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useId, useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { EmptyState } from "@/components/fiori/core";
@@ -17,22 +17,25 @@ import { FilterBar, FormField, useLoad, type Load } from "@/components/fiori/int
 import { ambil } from "@/lib/rekapan-nota/ui";
 import { DEFAULT_KONSTANTA, parseKonstanta, type Konstanta } from "@/lib/insentif-konstanta";
 import { HALAMAN, halamanTerlihat, type ApiRow, type Cakupan, type HalamanKey, type PeranHierarki, type ProgressFeedStatus } from "@/lib/insentif-ui";
-import { MONTH_LABELS } from "./data";
+import { MONTH_LABELS, bulanIniWita } from "./data";
 
 /** Kunci URL yang dibawa antarhalaman; `sm` hanya bermakna di Dashboard. */
 const DIBAWA = ["month", "year", "principle", "branch"] as const;
 type Ubah = Partial<Record<(typeof DIBAWA)[number] | "sm", string>>;
 
-/** Periode + saringan dari URL. Bulan/tahun tidak valid jatuh ke bulan berjalan. */
+/**
+ * Periode + saringan dari URL. Bulan/tahun tidak valid jatuh ke bulan berjalan menurut WITA (audit desain 001 No 31); untuk perangkat
+ * berzona WITA hasilnya sama dengan jam perangkat yang dipakai sebelumnya.
+ */
 export function usePeriode() {
     const sp = useSearchParams();
     const router = useRouter();
     const pathname = usePathname();
-    const now = new Date();
+    const kini = bulanIniWita();
     const m = Number(sp.get("month"));
     const y = Number(sp.get("year"));
-    const month = Number.isInteger(m) && m >= 1 && m <= 12 ? m : now.getMonth() + 1;
-    const year = Number.isInteger(y) && y >= 2020 && y <= 2100 ? y : now.getFullYear();
+    const month = Number.isInteger(m) && m >= 1 && m <= 12 ? m : kini.month;
+    const year = Number.isInteger(y) && y >= 2020 && y <= 2100 ? y : kini.year;
     const principle = sp.get("principle") || "ALL";
     const branch = sp.get("branch") || "ALL";
     const sm = sp.get("sm") || "ALL";
@@ -125,6 +128,7 @@ export function InsentifRangka({ halaman, permKeys, deskripsi, saringan, saringa
     // di navigasi hanya muncul bila akun tidak punya halaman lain.
     const ini = terlihat.find((h) => h.key === halaman) ?? HALAMAN.find((h) => h.key === halaman && h.key === "saya");
     const { month, year, principle, branch, sm, ubah, bawa } = usePeriode();
+    const idPeriode = useId();
     const judul = ini?.label ?? "Insentif Sales";
     const smAktif = Boolean(saringan && saringanLain) && sm !== "ALL";
     const aktif = saringan ? Number(principle !== "ALL") + Number(branch !== "ALL") + Number(smAktif) : 0;
@@ -134,11 +138,21 @@ export function InsentifRangka({ halaman, permKeys, deskripsi, saringan, saringa
         ...(smAktif ? [{ label: `SM: ${sm}`, onRemove: () => ubah({ sm: "ALL" }) }] : []),
     ] : [];
 
+    // Bulan + Tahun (audit No 122): `type="month"` jatuh ke kotak teks di Firefox/Safari desktop. Nilai URL sama: month 1..12, year 4 digit.
+    const tahunKini = bulanIniWita().year;
+    const opsiTahun = [...new Set([...Array.from({ length: 5 }, (_, i) => tahunKini - 3 + i), year])].sort((a, b) => a - b);
     const periode = (
-        <FormField label="Periode">{(a) => (
-            <input {...a} className="fi-input" type="month" value={`${year}-${String(month).padStart(2, "0")}`}
-                onChange={(e) => { const [y, m] = e.target.value.split("-"); if (y && m) ubah({ year: y, month: String(Number(m)) }); }} />
-        )}</FormField>
+        <div className="fi-field" role="group" aria-labelledby={idPeriode}>
+            <span className="fi-label" id={idPeriode}>Periode</span>
+            <div style={{ display: "flex", gap: 8 }}>
+                <select className="fi-input" aria-label="Bulan" value={month} onChange={(e) => ubah({ year: String(year), month: e.target.value })}>
+                    {MONTH_LABELS.map((l, i) => <option key={l} value={i + 1}>{l}</option>)}
+                </select>
+                <select className="fi-input" aria-label="Tahun" style={{ maxWidth: "7rem" }} value={year} onChange={(e) => ubah({ year: e.target.value, month: String(month) })}>
+                    {opsiTahun.map((y) => <option key={y} value={y}>{y}</option>)}
+                </select>
+            </div>
+        </div>
     );
 
     return (

@@ -27,7 +27,7 @@ export class GalatBaca extends Error {
 }
 
 /** Pesan 503 sesi sinkron mati (brief K1b) — bukan diam, bukan "0 pelunasan". */
-export const PESAN_SESI_SINKRON = "Sesi Accurate akun sinkron kedaluwarsa — admin login ulang di /sesi-accurate lalu pilih database";
+export const PESAN_SESI_SINKRON = "Sesi Accurate akun sinkron kedaluwarsa. Admin login ulang di /sesi-accurate lalu pilih database";
 
 export const FIELDS_DAFTAR = "id,number,transDate,paymentMethod,chequeAmount,lastUpdate";
 export const UKURAN_HALAMAN = 100;
@@ -99,12 +99,12 @@ export function uraiHalamanDaftar(body: unknown, tanggal: string, halaman: numbe
     const sp = obj(b.sp) ?? {};
     const pageCount = bulat(sp.pageCount);
     if (!(pageCount >= 1 || (pageCount === 0 && b.d.length === 0))) {
-        throw new GalatBaca("terpotong", `list.do halaman ${halaman} tanpa jumlah halaman (sp.pageCount) yang sah — dianggap terpotong`);
+        throw new GalatBaca("terpotong", `list.do halaman ${halaman} tanpa jumlah halaman (sp.pageCount) yang sah, dianggap terpotong`);
     }
     const rowCount = bulat(sp.rowCount);
-    if (Number.isNaN(rowCount)) throw new GalatBaca("terpotong", `list.do halaman ${halaman} tanpa sp.rowCount — kelengkapan daftar tak bisa dibuktikan`);
+    if (Number.isNaN(rowCount)) throw new GalatBaca("terpotong", `list.do halaman ${halaman} tanpa sp.rowCount: kelengkapan daftar tak bisa dibuktikan`);
     if (b.d.length === 0 && halaman < Math.max(pageCountSebelumnya, pageCount)) {
-        throw new GalatBaca("terpotong", `list.do halaman ${halaman} kosong sebelum halaman terakhir yang diumumkan — dianggap gagal baca`);
+        throw new GalatBaca("terpotong", `list.do halaman ${halaman} kosong sebelum halaman terakhir yang diumumkan, dianggap gagal baca`);
     }
     const baris: BarisDaftar[] = b.d.map((x, i) => {
         const r = obj(x);
@@ -113,9 +113,9 @@ export function uraiHalamanDaftar(body: unknown, tanggal: string, halaman: numbe
         const lastUpdate = teks(r?.lastUpdate);
         if (!r || Number.isNaN(id) || !nomor) throw new GalatBaca("bentuk", `list.do halaman ${halaman} baris ${i + 1}: id/number tidak sah`);
         if (dariTanggalAccurate(r.transDate) !== tanggal) {
-            throw new GalatBaca("bentuk", `list.do ${nomor}: transDate ${JSON.stringify(r.transDate)} ≠ ${tanggal} — filter tanggal diabaikan?`);
+            throw new GalatBaca("bentuk", `list.do ${nomor}: transDate ${JSON.stringify(r.transDate)} ≠ ${tanggal}; filter tanggal diabaikan?`);
         }
-        if (!lastUpdate) throw new GalatBaca("bentuk", `list.do ${nomor}: lastUpdate kosong — baca inkremental tak mungkin`);
+        if (!lastUpdate) throw new GalatBaca("bentuk", `list.do ${nomor}: lastUpdate kosong, baca inkremental tak mungkin`);
         return { id, nomor, lastUpdate };
     });
     return { baris, pageCount, rowCount };
@@ -138,7 +138,7 @@ export async function bacaDaftar(tanggal: string, ambil: (halaman: number) => Pr
         const unik = new Map<number, BarisDaftar>();
         let bergeser = false;
         for (let h = 1; h <= pageCount; h++) {
-            if (h > MAKS_HALAMAN) throw new GalatBaca("terpotong", `daftar pelunasan ${tanggal} > ${MAKS_HALAMAN} halaman — terpotong`);
+            if (h > MAKS_HALAMAN) throw new GalatBaca("terpotong", `daftar pelunasan ${tanggal} > ${MAKS_HALAMAN} halaman, terpotong`);
             const hal = uraiHalamanDaftar(await ambil(h), tanggal, h, pageCount, rahasia);
             if (rowCount === null) rowCount = hal.rowCount;
             else if (hal.rowCount !== rowCount) {
@@ -293,7 +293,7 @@ export function kelasGalat(j: Jawaban, rahasia: readonly string[] = []): { kelas
             : { kelas: "jaringan", pesan: `jaringan: ${pesan}` };
     }
     if (j.status === 401) return { kelas: "sesi_sinkron", pesan: PESAN_SESI_SINKRON };
-    if (j.status === 403) return { kelas: "hak_akses", pesan: "Accurate HTTP 403 — akun sinkron tidak berhak membaca pelunasan" };
+    if (j.status === 403) return { kelas: "hak_akses", pesan: "Accurate HTTP 403: akun sinkron tidak berhak membaca pelunasan" };
     if (j.status === 429) return { kelas: "batas_laju", pesan: "Accurate HTTP 429 (batas laju)" };
     if (j.status >= 500) return { kelas: "accurate_5xx", pesan: `Accurate HTTP ${j.status}` };
     let body: Record<string, unknown> | null = null;
@@ -360,7 +360,7 @@ export function statusAkhir(r: {
     if (r.ditolak.length) {
         const contoh = r.ditolak.slice(0, 3).map((d) => `${d.nomor} (${d.sebab}: ${d.pesan})`).join("; ");
         return { status: "gagal", sebab: r.ditolak[0].sebab, ...dasar,
-            pesan: `${r.ditolak.length} pelunasan ditolak pembaca — perbaiki di Accurate: ${contoh}${r.ditolak.length > 3 ? "; …" : ""}` };
+            pesan: `${r.ditolak.length} pelunasan ditolak pembaca. Perbaiki di Accurate: ${contoh}${r.ditolak.length > 3 ? "; …" : ""}` };
     }
     if (r.daftar === null) return { status: "sebagian", sebab: null, pesan: "Batas waktu habis saat membaca daftar pelunasan", ...dasar };
     if (sisaDetail) return { status: "sebagian", sebab: null, pesan: `Membaca ${jumlahDaftar! - sisaDetail}/${jumlahDaftar}`, ...dasar };

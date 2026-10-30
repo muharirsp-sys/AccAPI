@@ -123,7 +123,7 @@ test("tiap tab membuka antreannya (predikat kode lama); Ringkasan per tahap; Log
     for (const [tab, nomor] of harap) {
         await nav.getByRole("link", { name: new RegExp(`^${tab}`) }).click();
         await expect(nav.getByRole("link", { name: new RegExp(`^${tab}`) })).toHaveAttribute("aria-current", "page");
-        await expect(antrean(page).getByRole("button")).toHaveCount(nomor.length, NAV);
+        await expect(antrean(page).getByRole("link")).toHaveCount(nomor.length, NAV);
         for (const n of nomor) await expect(antrean(page)).toContainText(n);
     }
     // Klaim: tiga tampilan claimView; Verifikasi final = isFinalClaimProcessable.
@@ -151,8 +151,8 @@ test("?batch= membuka Object Page di kolom kedua: header, Flow 7 tahap, lewat SL
     await page.goto("/off-program-control?tab=sales&batch=b-sm1", NAV);
     const main = page.locator("main");
     const detail = main.getByRole("region", { name: "Batch terbuka" });
-    await expect(detail.getByRole("heading", { level: 1, name: "007/KINO/10/2026" })).toBeVisible(NAV);
-    await expect(antrean(page).getByRole("button", { name: /007\/KINO\/10\/2026/ })).toHaveAttribute("aria-current", "true");
+    await expect(detail.getByRole("heading", { level: 2, name: "007/KINO/10/2026" })).toBeVisible(NAV);
+    await expect(antrean(page).getByRole("link", { name: /007\/KINO\/10\/2026/ })).toHaveAttribute("aria-current", "true");
     await expect(detail.getByText("Menunggu SM").first()).toBeVisible();
     const flow = detail.getByRole("list", { name: "Tahap batch" });
     await expect(flow.getByRole("listitem")).toHaveCount(7);
@@ -165,12 +165,18 @@ test("?batch= membuka Object Page di kolom kedua: header, Flow 7 tahap, lewat SL
     await expect(detail.getByText("Dikirim ke Sales Manager").first()).toBeVisible(); // enam sumbu status, label Indonesia
     await expect(detail.getByText("Belum ada pembayaran")).toBeVisible();
     await expect(detail.getByText("Tidak ada selisih yang perlu dikembalikan.")).toBeVisible();
-    for (const bl of ["BL-11", "BL-07", "BL-33", "BL-35"]) await expect(detail.getByLabel(`Usulan ${bl}`).first()).toBeVisible();
+    // Satu catatan varian per layar, hanya Admin (audit No 80 + tinjauan K2): catatan modul peran (SM: BL-06) + batasan bagian baca Object Page.
+    await expect(main.getByRole("complementary")).toHaveCount(1);
+    const catatan = detail.getByLabel(/^Usulan BL-06/);
+    for (const teks of ["Kelengkapan yang dipilih Klaim saat menyetujui belum tersimpan di batch", "Bukti yang bisa dibuka adalah PDF ringkasan pembayaran buatan sistem",
+        "Riwayat mencatat aksi dan status, belum nilai sebelum dan sesudah tiap isian", "Tautan ke Claim Workflow muncul setelah klaimnya dibuat"]) {
+        await expect(catatan).toContainText(teks);
+    }
     await page.screenshot({ path: "test-results/fiori-opc-objectpage.png", fullPage: true });
 
     // Alur dokumen menaut Claim Workflow bila daftar membawa relasinya; pindah batch lewat daftar.
     await page.goto("/off-program-control?tab=finance", NAV);
-    await antrean(page).getByRole("button", { name: /004\/URC\/09\/2026/ }).click();
+    await antrean(page).getByRole("link", { name: /004\/URC\/09\/2026/ }).click();
     await expect(page).toHaveURL(/batch=b-bayar/);
     await expect(detail.getByRole("link", { name: /Claim Workflow/ })).toHaveAttribute("href", "/claim-workflow/wf-1", NAV);
     // Riwayat pengembalian selisih memuat kolom Pengirim dan Catatan seperti RefundPanel lama.
@@ -192,12 +198,18 @@ test("ponsel 390 px: daftar ↔ layar detail + Kembali ke daftar, item sebagai d
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/off-program-control?tab=sales", NAV);
     const main = page.locator("main");
-    await expect(antrean(page).getByRole("button")).toHaveCount(2, NAV);
+    await expect(antrean(page).getByRole("link")).toHaveCount(2, NAV);
+    // Baris batch = tautan nyata ?batch= (buka di tab baru bisa, audit No 136).
+    await expect(antrean(page).getByRole("link", { name: /011\/HEINZ\/10\/2026/ })).toHaveAttribute("href", /[?&]batch=b-sm2(&|$)/);
     await noOverflow(page);
-    await antrean(page).getByRole("button", { name: /011\/HEINZ\/10\/2026/ }).click();
+    await antrean(page).getByRole("link", { name: /011\/HEINZ\/10\/2026/ }).click();
     await expect(page).toHaveURL(/batch=b-sm2/);
     const detail = main.getByRole("region", { name: "Batch terbuka" });
-    await expect(detail.getByRole("heading", { level: 1, name: "011/HEINZ/10/2026" })).toBeVisible(NAV);
+    const judul = detail.getByRole("heading", { level: 2, name: "011/HEINZ/10/2026" });
+    await expect(judul).toBeVisible(NAV);
+    // Ponsel: detail digulir ke atas dan fokus pindah ke judulnya (owner 27 Okt, audit No 111).
+    await expect(judul).toBeFocused();
+    expect(await judul.evaluate((el) => el.getBoundingClientRect().top < innerHeight)).toBe(true);
     await expect(antrean(page)).toBeHidden();
     await expect(detail.getByRole("list", { name: "Item batch" })).toBeVisible(); // bukan tabel 18 kolom
     await noOverflow(page);
@@ -215,9 +227,9 @@ test("peran dari sesi: Klaim hanya Klaim + Log audit; claimView=after (Claim Wor
     const main = page.locator("main");
     const nav = main.getByRole("navigation", { name: "Antrean OFF Program Control" });
     await expect(nav.getByRole("link")).toHaveText([/^Klaim/, /^Log audit/], NAV);
-    await expect(main.getByText("Peran OFF: Klaim.")).toBeVisible();
+    await expect(main.getByText("Peran Anda: Klaim.")).toBeVisible();
     await expect(main.getByRole("group", { name: "Tampilan antrean" }).getByRole("button", { name: /Verifikasi final/ })).toHaveAttribute("aria-pressed", "true");
-    await expect(antrean(page).getByRole("button")).toHaveCount(1);
+    await expect(antrean(page).getByRole("link")).toHaveCount(1);
     await expect(antrean(page)).toContainText("001/RB/09/2026");
     await page.goto("/off-program-control?tab=sales", NAV);
     await expect(nav.getByRole("link", { name: /^Klaim/ })).toHaveAttribute("aria-current", "page", NAV);
@@ -238,24 +250,26 @@ test("galat daftar dan detail tidak tampil sebagai kosong; kosong dan saringan p
     await expect(main.getByText("Ini bukan daftar kosong.")).toBeVisible();
     await expect(main.getByText("Tidak ada batch yang menunggu tinjauan Anda.")).toHaveCount(0);
     // Lonceng dan pencarian juga tidak membaca galat sebagai kosong.
-    await main.getByRole("button", { name: /Pengajuan bermasalah/ }).click();
-    const lonceng = page.getByRole("dialog", { name: "Pengajuan bermasalah" });
+    await main.getByRole("button", { name: /Lewat SLA/ }).click();
+    const lonceng = page.getByRole("dialog", { name: "Lewat SLA" });
     await expect(lonceng).toContainText("Daftar pengajuan gagal dimuat");
     await expect(lonceng).not.toContainText("Tidak ada pengajuan yang lewat SLA");
     await page.keyboard.press("Escape");
     await expect(lonceng).toBeHidden();
-    await page.keyboard.press("Control+k");
+    await page.keyboard.press("/");
     const cari = main.getByRole("combobox", { name: "Cari pengajuan OFF" });
     await cari.fill("KINO");
-    await expect(main.getByRole("listbox", { name: "Hasil pencarian pengajuan OFF" })).toContainText("Daftar pengajuan gagal dimuat, jadi pencarian belum bisa dipakai.");
+    // Pesan galat di luar listbox (audit desain No 143): listbox hanya berisi opsi.
+    await expect(main.getByRole("alert").filter({ hasText: "Daftar pengajuan gagal dimuat, jadi pencarian belum bisa dipakai." })).toBeVisible();
+    await expect(main.getByRole("listbox", { name: "Hasil pencarian pengajuan OFF" })).toHaveCount(0);
     await expect(main.getByText("Tidak ditemukan batch yang cocok.")).toHaveCount(0);
     await cari.press("Escape");
     gagal = false;
     await main.getByRole("button", { name: "Coba lagi" }).click();
-    await expect(antrean(page).getByRole("button")).toHaveCount(2, NAV);
+    await expect(antrean(page).getByRole("link")).toHaveCount(2, NAV);
 
     // Detail gagal → ErrorState di kolom kedua, daftar tetap.
-    await antrean(page).getByRole("button", { name: /011\/HEINZ/ }).click();
+    await antrean(page).getByRole("link", { name: /011\/HEINZ/ }).click();
     await expect(main.getByRole("heading", { name: "Detail batch gagal dimuat" })).toBeVisible(NAV);
     await expect(main.getByText("Gagal mengambil detail batch.")).toBeVisible();
 
@@ -263,9 +277,9 @@ test("galat daftar dan detail tidak tampil sebagai kosong; kosong dan saringan p
     await main.locator(".fi-fbar-fields").getByLabel("Cari").fill("tidak-ada-yang-cocok");
     await expect(main.getByRole("heading", { name: "Tidak ada batch yang cocok dengan saringan" })).toBeVisible();
     await main.getByRole("button", { name: "Hapus saringan", exact: true }).click();
-    await expect(antrean(page).getByRole("button")).toHaveCount(2);
+    await expect(antrean(page).getByRole("link")).toHaveCount(2);
     await main.locator(".fi-fbar-fields").getByLabel("Principal").selectOption("HEINZ");
-    await expect(antrean(page).getByRole("button")).toHaveCount(1);
+    await expect(antrean(page).getByRole("link")).toHaveCount(1);
     await expect(main.getByRole("list", { name: "Saringan aktif" })).toContainText("Principal: HEINZ ABC INDONESIA, PT");
 
     // Antrean kosong (server menjawab daftar kosong).
@@ -279,41 +293,51 @@ test("galat daftar dan detail tidak tampil sebagai kosong; kosong dan saringan p
     await expect(main.getByRole("heading", { name: "Ringkasan gagal dimuat" })).toBeVisible(NAV);
 });
 
-test("lonceng dan pencarian (Ctrl K) membuka batch di kolom kedua untuk peran apa pun, juga dari Log audit", async ({ page }) => {
+test("lonceng dan pencarian (/) membuka batch di kolom kedua untuk peran apa pun, juga dari Log audit; Ctrl K tetap cari menu shell", async ({ page }) => {
     await mockOpc(page);
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/off-program-control?tab=finance", NAV);
     const main = page.locator("main");
-    await expect(antrean(page).getByRole("button")).toHaveCount(1, NAV);
-    await main.getByRole("button", { name: /Pengajuan bermasalah/ }).click();
-    const lonceng = page.getByRole("dialog", { name: "Pengajuan bermasalah" });
+    await expect(antrean(page).getByRole("link")).toHaveCount(1, NAV);
+    await main.getByRole("button", { name: /Lewat SLA/ }).click();
+    const lonceng = page.getByRole("dialog", { name: "Lewat SLA" });
     await expect(lonceng).toContainText("007/KINO/10/2026");
     await expect(lonceng).toContainText("Sales Manager belum review");
     await page.screenshot({ path: "test-results/fiori-opc-lonceng.png" });
     // Popover di bawah tombol, tidak menutupinya: klik kedua menutup, klik ketiga membuka lagi.
-    const tombolLonceng = main.getByRole("button", { name: /Pengajuan bermasalah/ });
+    const tombolLonceng = main.getByRole("button", { name: /Lewat SLA/ });
     await tombolLonceng.click();
     await expect(lonceng).toBeHidden();
     await tombolLonceng.click();
     await expect(lonceng).toBeVisible();
-    await lonceng.getByRole("button", { name: "Buka pengajuan" }).first().click();
+    // Tautan nyata ?batch= (bisa dibuka di tab baru, audit No 136); klik biasa tetap navigasi klien.
+    await expect(lonceng.getByRole("link", { name: "Buka pengajuan 007/KINO/10/2026" })).toHaveAttribute("href", /tab=finance.*batch=b-sm1|batch=b-sm1.*tab=finance/);
+    await lonceng.getByRole("link", { name: /^Buka pengajuan/ }).first().click();
     await expect(page).toHaveURL(/tab=finance.*batch=b-sm1|batch=b-sm1.*tab=finance/);
-    await expect(main.getByRole("heading", { level: 1, name: "007/KINO/10/2026" })).toBeVisible(NAV);
+    await expect(main.getByRole("heading", { level: 2, name: "007/KINO/10/2026" })).toBeVisible(NAV);
 
+    // Ctrl K milik cari menu shell, juga di OPC (owner 27 Okt, audit No 142); pencarian pengajuan OPC lewat "/".
     await page.keyboard.press("Control+k");
+    await expect(page.getByRole("dialog", { name: "Cari menu" })).toBeVisible();
+    await expect(main.getByRole("combobox", { name: "Cari pengajuan OFF" })).not.toBeFocused();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("/");
     const cari = main.getByRole("combobox", { name: "Cari pengajuan OFF" });
     await expect(cari).toBeFocused();
+    await expect(cari).toHaveAttribute("placeholder", "Cari pengajuan (tekan /)");
     await cari.fill("HEINZ");
     await expect(main.getByRole("option", { name: /011\/HEINZ\/10\/2026/ })).toBeVisible();
     await cari.press("Enter");
     await expect(page).toHaveURL(/batch=b-sm2/);
-    await expect(main.getByRole("heading", { level: 1, name: "011/HEINZ/10/2026" })).toBeVisible(NAV);
+    await expect(main.getByRole("heading", { level: 2, name: "011/HEINZ/10/2026" })).toBeVisible(NAV);
 
     // Log audit tidak punya kolom kedua: batch dibuka di Ringkasan › Semua pengajuan.
     await page.goto("/off-program-control?tab=audit", NAV);
-    await main.getByRole("table", { name: "Log audit OFF Program Control" }).getByRole("button", { name: "Buka batch" }).first().click();
+    const bukaLog = main.getByRole("table", { name: "Log audit OFF Program Control" }).getByRole("link", { name: /^Buka batch/ }).first();
+    await expect(bukaLog).toHaveAttribute("href", /tab=overview.*batch=|batch=.*tab=overview/); // tautan nyata ke tab yang punya kolom kedua (No 136)
+    await bukaLog.click();
     await expect(page).toHaveURL(/tab=overview/);
-    await expect(main.getByRole("heading", { level: 1, name: "007/KINO/10/2026" })).toBeVisible(NAV);
+    await expect(main.getByRole("heading", { level: 2, name: "007/KINO/10/2026" })).toBeVisible(NAV);
     await expect(main.getByRole("group", { name: "Tampilan ringkasan" }).getByRole("button", { name: /Semua pengajuan/ })).toHaveAttribute("aria-pressed", "true");
 });
 
@@ -328,9 +352,9 @@ test("penjaga draf: tujuan sama tanpa dialog; Tinggalkan tidak mematikan penjaga
     const dicegah = () => page.evaluate(() => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; });
     expect(await dicegah()).toBe(true);
 
-    // Tujuan = URL sekarang (klik batch yang sedang terbuka, Ctrl K ke batch yang sama): tanpa dialog, isian utuh.
-    await antrean(page).getByRole("button", { name: /005\/GDI\/10\/2026/ }).click();
-    await page.keyboard.press("Control+k");
+    // Tujuan = URL sekarang (klik batch yang sedang terbuka, cari "/" ke batch yang sama): tanpa dialog, isian utuh.
+    await antrean(page).getByRole("link", { name: /005\/GDI\/10\/2026/ }).click();
+    await page.keyboard.press("/");
     await main.getByRole("combobox", { name: "Cari pengajuan OFF" }).fill("005/GDI");
     await main.getByRole("option", { name: /005\/GDI\/10\/2026/ }).click();
     await expect(tinggal).toBeHidden();
@@ -344,35 +368,41 @@ test("penjaga draf: tujuan sama tanpa dialog; Tinggalkan tidak mematikan penjaga
     await expect(page).toHaveURL(/batch=b-klaim/);
     await expect(ket).toHaveValue("Faktur pajak item 2 menyusul");
     expect(await dicegah()).toBe(true);
-    await antrean(page).getByRole("button", { name: /001\/RB\/09\/2026/ }).click();
+    await antrean(page).getByRole("link", { name: /001\/RB\/09\/2026/ }).click();
     await expect(tinggal).toBeVisible(); // penjaga masih bekerja
-    await tinggal.getByRole("button", { name: "Batal" }).click();
+    await tinggal.getByRole("button", { name: "Tetap di sini" }).click();
     await expect(page).toHaveURL(/batch=b-klaim/);
     await expect(ket).toHaveValue("Faktur pajak item 2 menyusul");
 
     // Pindah batch membongkar editor: cleanup-nya mematikan penjaga.
-    await antrean(page).getByRole("button", { name: /001\/RB\/09\/2026/ }).click();
+    await antrean(page).getByRole("link", { name: /001\/RB\/09\/2026/ }).click();
     await tinggal.getByRole("button", { name: "Tinggalkan" }).click();
     await expect(page).toHaveURL(/batch=b-final/);
-    await expect(main.getByRole("heading", { level: 1, name: "001/RB/09/2026" })).toBeVisible(NAV);
+    await expect(main.getByRole("heading", { level: 2, name: "001/RB/09/2026" })).toBeVisible(NAV);
     expect(await dicegah()).toBe(false);
 });
 
-test("tulisOpc: 504 HTML dari proxy = hasil tidak pasti tanpa HTML mentah; 4xx JSON = pesan server di dialog", async ({ page }) => {
+test("tulisOpc: 504 HTML dari proxy = hasil tidak pasti (dialog tertutup, strip bertahan, tanpa HTML mentah); 4xx JSON = pesan server di dialog", async ({ page }) => {
     let respon: Respon = { status: 504, contentType: "text/html", body: "<html><head><title>504 Gateway Time-out</title></head><body><center><h1>504 Gateway Time-out</h1></center><hr><center>nginx</center></body></html>" };
     const tulis = await mockOpc(page, { tulis: () => respon });
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/off-program-control?tab=sales&batch=b-sm1", NAV);
     const main = page.locator("main");
-    await main.getByRole("button", { name: "Setujui & teruskan ke Klaim…" }).click(NAV);
+    await main.getByRole("button", { name: "Setujui…" }).click(NAV);
     const dlg = page.getByRole("dialog");
-    await dlg.getByRole("button", { name: "Setujui & teruskan", exact: true }).click();
-    const galat = dlg.getByRole("alert");
-    await expect(galat).toHaveText("Server tidak memberi jawaban yang pasti — hasilnya belum pasti; muat ulang untuk memeriksa sebelum mengulang.");
-    await expect(dlg).not.toContainText("Gateway");
-    await expect(dlg).not.toContainText("<html");
+    await dlg.getByRole("button", { name: "Setujui", exact: true }).click();
+    // Hasil tidak pasti (owner 27 Okt, audit No 22): dialog tertutup (tidak bisa diklik ulang), strip peringatan bertahan di Object Page.
+    await expect(dlg).toBeHidden(NAV);
+    const strip = main.getByRole("region", { name: "Batch terbuka" }).getByRole("status").filter({ hasText: "Hasil aksi terakhir belum pasti." });
+    await expect(strip).toContainText("Server tidak memberi jawaban yang pasti, jadi aksi ini mungkin sudah tersimpan atau belum. Periksa Riwayat batch sebelum mencoba lagi.");
+    await expect(main).not.toContainText("Gateway");
+    await expect(main).not.toContainText("<html");
     respon = json({ ok: false, error: "Batch tidak sedang menunggu tinjauan SM." }, 409);
-    await dlg.getByRole("button", { name: "Setujui & teruskan", exact: true }).click();
+    await main.getByRole("button", { name: "Setujui…" }).click(NAV);
+    await dlg.getByRole("button", { name: "Setujui", exact: true }).click();
+    const galat = dlg.getByRole("alert");
     await expect(galat).toHaveText("Batch tidak sedang menunggu tinjauan SM.");
+    await expect(dlg).toBeVisible();
+    await expect(strip).toBeVisible(); // strip tidak pasti tetap ada sampai ditutup
     expect(tulis).toEqual(["POST /api/off-program-control/batches/b-sm1/sm-approve", "POST /api/off-program-control/batches/b-sm1/sm-approve"]);
 });

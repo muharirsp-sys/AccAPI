@@ -52,7 +52,7 @@ test("profile menu switches the Fiori mode and opens Bantuan", async ({ page }) 
     await expect(page.locator("html")).not.toHaveAttribute("data-scheme", /.+/);
     await profile.getByRole("button", { name: /Bantuan/ }).click();
     await expect(profile).toBeHidden();
-    const chat = page.getByRole("dialog", { name: "AI Assistant" });
+    const chat = page.getByRole("dialog", { name: "Asisten Bantuan" });
     await expect(chat).toBeVisible();
     await chat.getByRole("button", { name: "Tutup chat" }).click();
     await expect(chat).toBeHidden();
@@ -85,7 +85,7 @@ test("mobile: drawer, role bottom navigation, and chat stay usable", async ({ pa
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.getByRole("button", { name: /^Menu profil/ }).click();
     await page.getByRole("dialog", { name: "Menu profil" }).getByRole("button", { name: /Bantuan/ }).click();
-    const chat = page.getByRole("dialog", { name: "AI Assistant" });
+    const chat = page.getByRole("dialog", { name: "Asisten Bantuan" });
     await expect(chat).toBeVisible();
     await expect.poll(() => overlaps(bottomNav, chat)).toBe(false);
     await page.screenshot({ path: "test-results/fiori-shell-mobile.png" });
@@ -94,22 +94,14 @@ test("mobile: drawer, role bottom navigation, and chat stay usable", async ({ pa
     await expect(drawer).toBeHidden();
 });
 
-test("legacy screens fit mobile inside the new shell and Summary upload stays readable", async ({ page }) => {
+// Keterbacaan tombol berkas .fi-input (termasuk /summary) dijaga tests/fiori-file-input.spec.ts.
+test("legacy screens fit mobile inside the new shell", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     for (const path of ["/summary", "/faktur", "/rekapan-nota", "/reconciliation"]) {
         await page.goto(path);
         const content = page.locator("#workspace-content");
         await expect(content.locator("h1")).toBeVisible();
         expect(await content.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
-        if (path === "/summary") {
-            const input = content.locator('input[type="file"]').first();
-            await expect(input).toHaveCSS("color", "rgb(82, 100, 93)");
-            const button = await input.evaluate(element => {
-                const style = getComputedStyle(element, "::file-selector-button");
-                return { background: style.backgroundColor, color: style.color };
-            });
-            expect(button).toEqual({ background: "rgb(23, 105, 79)", color: "rgb(255, 255, 255)" });
-        }
         await page.screenshot({ path: `test-results/fiori-shell-${path.slice(1)}-390.png` });
     }
 });

@@ -3,9 +3,9 @@
  *   (sales, SPV, SM) dengan bruto → PPh → netto dan rincian per baris, pilih semua yang belum dibayar di saringan aktif, penerima
  *   terpilih di luar saringan disebut namanya, dan Tandai lunas lewat dialog. Pengganti FinanceView di page.tsx lama.
  * Caller: app/(dashboard)/insentif-sales/pembayaran/page.tsx (default export, prop permKeys).
- * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard, KonstantaCtx), ./Rincian (TabelRincian, rincian, PPh, StatusBayar,
+ * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard, KonstantaCtx), ./Rincian (rincian, PPh, StatusBayar,
  *   pemuat SPV/SM), ./data (format, MONTH_LABELS), components/fiori/*, lib/insentif-ui, lib/insentif-payee, lib/insentif-pph, lib/insentif-payment-date,
- *   lib/rekapan-nota/ui (ambil, jamWita), sonner.
+ *   lib/rekapan-nota/ui (ambil), lib/tampil (tanggalWita, waktuWita, KOSONG), sonner.
  * Main Functions: Pembayaran (default), barisBulan, ringkasan12Bulan, UbinBulan.
  * Side Effects: GET dashboard (tanpa saringan), spv-dashboard, sm-dashboard, payments?year. Tandai lunas: per penerima terpilih,
  *   paralel, POST /api/insentif-sales/payments (belum tercatat) atau PATCH /payments/[id] (sudah tercatat) — MENCATAT UANG DIBAYAR,
@@ -17,18 +17,19 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Check, Pencil, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { Button, ErrorState, FooterToolbar, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Column, type Tone } from "@/components/fiori/core";
+import { Button, ErrorState, FooterToolbar, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, VariantNote, type Column, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
 import { DEFAULT_KONSTANTA } from "@/lib/insentif-konstanta";
 import { parsePaymentDate, todayWita } from "@/lib/insentif-payment-date";
 import { nettoInsentif } from "@/lib/insentif-pph";
 import { payeeCode, PAYEE_PRINCIPLE_ALL, type PayeeRole } from "@/lib/insentif-payee";
 import { paymentSelectionKey, readApi, sebabNol, type ApiRow, type PaymentRow } from "@/lib/insentif-ui";
-import { ambil, jamWita } from "@/lib/rekapan-nota/ui";
+import { ambil } from "@/lib/rekapan-nota/ui";
+import { KOSONG as NILAI_KOSONG, tanggalWita, waktuWita } from "@/lib/tampil";
 import { MONTH_LABELS, formatRp, formatShortRp } from "./data";
 import { InsentifRangka, KonstantaCtx, useDashboard, usePeriode } from "./Rangka";
 import {
-    SalesBreakdown, SmBreakdown, SpvBreakdown, StatusBayar, TabelRincian, kolomPph, labelPph, sebabNolSpv, useInsentifSm, useInsentifSpv,
+    SalesBreakdown, SmBreakdown, SpvBreakdown, StatusBayar, kolomPph, labelPph, sebabNolSpv, useInsentifSm, useInsentifSpv,
     type SmIncentiveRow, type SpvIncentiveRow,
 } from "./Rincian";
 
@@ -42,11 +43,9 @@ interface Baris {
 
 const LABEL_PERAN: Record<PayeeRole, string> = { sales: "Sales", spv: "SPV", sm: "SM" };
 const KOSONG: ReadonlySet<string> = new Set();
-const fmtTanggal = new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Asia/Makassar" });
-const tanggalWita = (v: string | number | Date) => { const d = new Date(v); return Number.isNaN(d.getTime()) ? "" : fmtTanggal.format(d); };
 /** "YYYY-MM-DD" (tanggal WITA dari isian) → dd/mm/yyyy tanpa melewati zona waktu. */
 const ymdTampil = (ymd: string) => ymd.split("-").reverse().join("/");
-const principal = (r: Baris) => (r.principle === PAYEE_PRINCIPLE_ALL ? "—" : r.principle);
+const principal = (r: Baris) => (r.principle === PAYEE_PRINCIPLE_ALL ? NILAI_KOSONG : r.principle);
 const namaBaris = (r: Baris) => (r.role === "sales" ? `${r.salesName} ${r.principle}` : `${LABEL_PERAN[r.role]} ${r.salesName}`);
 /** "HTTP 500" mentah tidak tampil (aturan 5 brief); pesan server tetap. */
 const sebabMuat = (e?: string) => (e && !/^HTTP \d+$/.test(e) ? e : "Server tidak memberi jawaban yang valid.");
@@ -57,7 +56,7 @@ const sebabMuat = (e?: string) => (e && !/^HTTP \d+$/.test(e) ? e : "Server tida
  */
 const nominalLunas = (r: Baris) => (r.paymentId ? r.bayar?.totalIncentive ?? r.total : Math.round(r.total));
 const bedaTercatat = (r: Baris) => r.paymentId !== null && r.status !== "lunas" && r.bayar !== undefined && Math.abs(r.bayar.totalIncentive - r.total) >= 1;
-const PUTUS = "koneksi terputus; hasilnya tidak pasti — muat ulang untuk memeriksa";
+const PUTUS = "koneksi terputus; hasilnya tidak pasti. Muat ulang untuk memeriksa";
 /** Baris yang bisa ditandai lunas: belum lunas dan ada yang dibayar. Rp 0 tidak masuk daftar bayar; sebabnya tampil di baris. */
 const bisaDibayar = (r: Baris) => r.status !== "lunas" && r.total > 0;
 
@@ -91,13 +90,15 @@ function barisBulan(month: number, apiRows: ApiRow[], spv: SpvIncentiveRow[], sm
     return [...sales, ...extra];
 }
 
-type RingkasBulan = { month: number; label: string; total: number; belumDibayar: number; status: "lunas" | "tunggakan" | "belum" | "tidak lengkap"; belumDihitung: boolean };
+type RingkasBulan = {
+    month: number; label: string; total: number; belumDibayar: number; status: "lunas" | "tunggakan" | "belum" | "tidak lengkap"; belumDihitung: boolean;
+    /** Tampilan saja: bulan terpilih (dihitung ulang) dan jumlah catatan pembayaran bulan itu. */
+    ini: boolean; catatan: number; catatanLunas: number;
+};
 
 /**
- * Ubin 12 bulan. Periode berjalan dihitung ULANG dari dashboard, bukan dibaca dari incentive_payments: baris di tabel itu baru ada
- * setelah seseorang menandai lunas, jadi bulan yang insentifnya sudah dihitung tapi belum dibayar sepeser pun tampil "-" — persis
- * kebalikan dari yang dicari Finance, yaitu berapa yang MASIH HARUS dibayar (dilaporkan user 2026-08-26). Bulan lain tetap dari
- * catatan pembayaran: hitungan hidup untuk bulan lampau tidak tersedia (target/realisasinya bukan periode yang sedang dimuat).
+ * Ubin 12 bulan. Bulan terpilih dihitung ULANG dari dashboard (catatan incentive_payments baru ada sesudah ditandai lunas); bulan lain
+ * hanya dari catatan pembayaran, karena target/realisasinya tidak dimuat.
  */
 function ringkasan12Bulan(month: number, rows: Baris[], payments: Bayar[], lengkap: boolean): RingkasBulan[] {
     return Array.from({ length: 12 }, (_, i) => {
@@ -114,7 +115,10 @@ function ringkasan12Bulan(month: number, rows: Baris[], payments: Bayar[], lengk
         const status = ini && !lengkap ? "tidak lengkap" : hasTunggakan ? "tunggakan" : hasLunas && belumDibayar === 0 ? "lunas" : "belum";
         // Bulan yang bukan periode terpilih DAN belum punya satu pun catatan pembayaran tidak diketahui nilainya — bukan nol.
         // Menampilkannya sebagai "-" terbaca "tidak ada yang harus dibayar", padahal artinya "belum dihitung".
-        return { month: m, label: MONTH_LABELS[i], total, belumDibayar, status, belumDihitung: !ini && monthPayments.length === 0 };
+        return {
+            month: m, label: MONTH_LABELS[i], total, belumDibayar, status, belumDihitung: !ini && monthPayments.length === 0,
+            ini, catatan: monthPayments.length, catatanLunas: monthPayments.filter((p) => p.paymentStatus === "lunas").length,
+        };
     });
 }
 
@@ -124,21 +128,27 @@ const STATUS_UBIN: Partial<Record<RingkasBulan["status"], { tone: Tone; label: s
     "tidak lengkap": { tone: "warn", label: "Belum lengkap" },
 };
 
+/**
+ * No 12 (status jujur): badge Lunas hanya untuk bulan terpilih yang dihitung ulang. Bulan lain hanya tahu catatan yang ADA (penerima yang
+ * belum dicatat tidak terhitung), jadi ubinnya menyebut jumlah catatan lunas, bukan vonis Lunas. Rumus total/belumDibayar tidak berubah.
+ */
 function UbinBulan({ ringkas, month, year, pilih, tersaring }: { ringkas: RingkasBulan[]; month: number; year: number; pilih: (m: number) => void; tersaring: boolean }) {
     return (
         <Section title={`Rekap pembayaran ${year}`}
-            subtitle={`Klik bulan untuk memuat periodenya; bulan terpilih selalu dihitung ulang dari Dashboard. Bulan lain hanya menampilkan catatan pembayaran yang sudah ada; "?" berarti belum pernah dihitung, bukan nol.${tersaring ? " Ubin menjumlah semua principal termasuk SPV dan SM, tanpa saringan." : ""}`}>
+            subtitle={`Bulan terpilih dihitung ulang dari Dashboard; bulan lain hanya dari catatan pembayaran ("?" = belum pernah dihitung).${tersaring ? " Ubin menjumlah semua principal, SPV, dan SM tanpa saringan." : ""}`}>
             <div className="fi-sect-in">
                 <div role="group" aria-label={`Pilih bulan ${year}`} className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
                     {ringkas.map((m) => {
-                        const st = m.belumDihitung ? undefined : STATUS_UBIN[m.status];
+                        const st = m.belumDihitung || (!m.ini && m.status === "lunas") ? undefined : STATUS_UBIN[m.status];
                         return (
                             <button key={m.month} type="button" className="fi-kc" aria-pressed={m.month === month} onClick={() => pilih(m.month)}>
                                 <span>{m.label}</span>
                                 <strong className="fi-tnum">{m.belumDihitung ? "?" : m.total ? formatShortRp(m.total) : "-"}</strong>
                                 {m.belumDihitung ? <small>belum dihitung</small>
                                     : m.belumDibayar > 0 && m.status !== "lunas" ? <small className="fi-tnum">belum: {formatShortRp(m.belumDibayar)}</small> : null}
-                                {st ? <span className="justify-self-start"><StatusBadge tone={st.tone}>{st.label}</StatusBadge></span> :!m.belumDihitung && m.belumDibayar === 0 && <small>Belum dibayar</small>}
+                                {st && <span className="justify-self-start"><StatusBadge tone={st.tone}>{st.label}</StatusBadge></span>}
+                                {!m.belumDihitung && !m.ini && <small>Catatan: {m.catatanLunas} dari {m.catatan} lunas</small>}
+                                {m.ini && !st && m.belumDibayar === 0 && <small>Tidak ada yang terutang</small>}
                             </button>
                         );
                     })}
@@ -225,8 +235,8 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
     // Konstanta tersimpan tak terbaca: nominal di layar dihitung server dengan BAWAAN — tidak boleh ditandai lunas (route juga menolak).
     const konstantaSementara = dash.data?.konstantaSumber === "gagal_baca";
     const terkunci = memuat ? "Menunggu data selesai dimuat"
-        : konstantaSementara ? "Konstanta insentif gagal dibaca — nominal belum pasti; muat ulang setelah Pengaturan terbaca"
-            : gagalMuat.length ? `Data ${gagalMuat.join(", ")} gagal dimuat — muat ulang dulu sebelum menandai` : undefined;
+        : konstantaSementara ? "Konstanta insentif gagal dibaca; nominal belum pasti. Muat ulang setelah Pengaturan terbaca"
+            : gagalMuat.length ? `Data ${gagalMuat.join(", ")} gagal dimuat; muat ulang dulu sebelum menandai` : undefined;
     const alasanTandai = !izinBayar ? "Butuh izin kelola pembayaran insentif"
         : terkunci ?? (dipilih.length === 0 ? "Pilih penerima yang belum dibayar dulu" : undefined);
     const bolehPilih = (r: Baris) => izinBayar && !terkunci && bisaDibayar(r);
@@ -272,7 +282,7 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
         setPilihan((p) => ({ periode: p.periode, keys: new Set([...p.keys].filter((key) => !berhasil.has(key))) }));
         muatBayar();
         const nettoOk = daftar.filter((r) => berhasil.has(paymentSelectionKey(r))).reduce((a, r) => a + nettoInsentif(nominalLunas(r), k.pph.rate), 0);
-        if (berhasil.size > 0) setPesan(`${berhasil.size} pembayaran ${label} ditandai lunas ${jamWita(new Date())} · netto ${formatRp(nettoOk)} · tanggal bayar ${ymdTampil(paymentDate)}.`);
+        if (berhasil.size > 0) setPesan(`${berhasil.size} pembayaran ${label} ditandai lunas ${waktuWita(new Date())} WITA · netto ${formatRp(nettoOk)} · tanggal bayar ${ymdTampil(paymentDate)}.`);
         if (gagal.length === 0) {
             setDialog(false);
             toast.success(`${berhasil.size} pembayaran ditandai lunas.`);
@@ -300,24 +310,27 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
         const s = sebab(r);
         return <>
             {s && <span className="fi-sub">Rp 0 · {s}</span>}
-            {bedaTercatat(r) && <span className="fi-sub fi-why">tercatat {formatRp(nominalLunas(r))} — nominal ini yang ditandai lunas</span>}
+            {bedaTercatat(r) && <span className="fi-sub fi-why">tercatat {formatRp(nominalLunas(r))}; nominal ini yang ditandai lunas</span>}
             {r.drift !== 0 && (
-                <span className="fi-sub fi-why" title="Angka dibayar berbeda dari hasil hitung ulang — support/target berubah setelah pembayaran.">
+                <span className="fi-sub fi-why" title="Angka dibayar berbeda dari hasil hitung ulang: support atau target berubah setelah pembayaran.">
                     hitung ulang: {formatRp(r.total + r.drift)}
                 </span>
             )}
         </>;
     };
+    // Daftar ponsel: label fi-check setinggi --ctl-h (44 px di layar sentuh) supaya kotak mudah disentuh (No 48). Alasan kunci tampil di kaki.
     const kotak = (r: Baris) => (
-        <input type="checkbox" aria-label={`Pilih ${namaBaris(r)}`} checked={selected.has(paymentSelectionKey(r))} disabled={!bolehPilih(r)} title={izinBayar ? terkunci : "Butuh izin kelola pembayaran insentif"}
-            onChange={() => { const next = new Set(selected); const key = paymentSelectionKey(r); if (next.has(key)) next.delete(key); else next.add(key); pilih(next); }} />
+        <label className="fi-check" style={{ minWidth: "var(--ctl-h)", justifyContent: "center" }}>
+            <input type="checkbox" aria-label={`Pilih ${namaBaris(r)}`} checked={selected.has(paymentSelectionKey(r))} disabled={!bolehPilih(r)} title={izinBayar ? terkunci : "Butuh izin kelola pembayaran insentif"}
+                onChange={() => { const next = new Set(selected); const key = paymentSelectionKey(r); if (next.has(key)) next.delete(key); else next.add(key); pilih(next); }} />
+        </label>
     );
 
     const kolom: Column<Baris>[] = [
         { key: "penerima", header: "Penerima", cell: (r) => <><b>{r.salesName}</b><span className="fi-sub"><span className="fi-mono">{r.salesCode}</span></span></> },
         { key: "peran", header: "Peran", cell: (r) => LABEL_PERAN[r.role] },
         { key: "principal", header: "Principal", secondary: true, cell: principal },
-        { key: "bruto", header: "Bruto", align: "end", cell: (r) => <><b>{formatRp(r.total)}</b>{catatan(r)}</> },
+        { key: "bruto", header: "Bruto", align: "end", cell: (r) => <><b className="fi-tnum">{formatRp(r.total)}</b>{catatan(r)}</> },
         // PPh/netto dari nominal yang SUNGGUH ditandai lunas (tercatat bila sudah ada catatan), sama dengan footer dan dialog.
         ...kolomPph<Baris>(k, nominalLunas),
         { key: "status", header: "Status", cell: status },
@@ -365,8 +378,8 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
                         <button type="button" className="fi-btn fi-btn--tertiary" onClick={hapusSaringan}>Tampilkan</button>
                     </MessageStrip>
                 )}
-                <TabelRincian<Baris>
-                    title={`Insentif ${label}`} count={terlihat.length} columns={kolom} rows={terlihat} rowKey={paymentSelectionKey} rowLabel={namaBaris}
+                <ResponsiveTable<Baris>
+                    title={`Insentif ${label}`} count={terlihat.length} columns={kolom} rows={terlihat} rowKey={paymentSelectionKey}
                     status={galatUlang ? "galat" : memuat ? "memuat" : "siap"} error={galatUlang?.error} onRetry={muatSemua}
                     selected={selected} onSelectedChange={pilih} selectableRow={bolehPilih}
                     actions={
@@ -381,14 +394,17 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
                     empty={detailRows.length === 0
                         ? { title: `Belum ada insentif ${label}`, message: "Insentif periode ini belum dihitung: target atau progres belum diunggah. Pilih bulan lain di ubin di atas." }
                         : { title: "Tidak ada penerima untuk saringan ini", message: `${detailRows.length} penerima lain tersembunyi oleh saringan.`, action: <Button onClick={hapusSaringan}>Hapus saringan</Button> }}
-                    rincian={(r) => {
-                        const sales = r.role === "sales" ? salesByKey.get(`${r.salesCode}|${r.principle}`) : undefined;
-                        const spv = r.role === "spv" ? spvByName.get(r.salesName) : undefined;
-                        const sm = r.role === "sm" ? smByName.get(r.salesName) : undefined;
-                        return sales ? <SalesBreakdown r={sales} semuaBaris={apiRows} />
-                            : spv ? <SpvBreakdown rincian={spv.rincian} />
-                                : sm ? <SmBreakdown r={sm} />
-                                    : <p className="fi-small fi-muted">Rincian hanya tersedia untuk periode yang dihitung ulang ({label}). Catatan pembayaran menyimpan nominalnya saja, bukan target dan realisasinya.</p>;
+                    rincian={{
+                        nama: namaBaris,
+                        isi: (r) => {
+                            const sales = r.role === "sales" ? salesByKey.get(`${r.salesCode}|${r.principle}`) : undefined;
+                            const spv = r.role === "spv" ? spvByName.get(r.salesName) : undefined;
+                            const sm = r.role === "sm" ? smByName.get(r.salesName) : undefined;
+                            return sales ? <SalesBreakdown r={sales} semuaBaris={apiRows} />
+                                : spv ? <SpvBreakdown rincian={spv.rincian} />
+                                    : sm ? <SmBreakdown r={sm} />
+                                        : <p className="fi-small fi-muted">Rincian hanya tersedia untuk periode yang dihitung ulang ({label}). Catatan pembayaran menyimpan nominalnya saja, bukan target dan realisasinya.</p>;
+                        },
                     }}
                     mobileItem={(r) => (
                         <div className="fi-wl-row">
@@ -439,11 +455,14 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
                     confirmLabel="Tandai lunas"
                     confirmDisabled={dipilih.length === 0 ? "Tidak ada penerima terpilih" : terkunci ?? galatTanggal}
                     facts={[
-                        ["Penerima", perPeran || "—"],
+                        ["Penerima", perPeran || NILAI_KOSONG],
                         ["Bruto", formatRp(bruto)],
                         [labelPph(k.pph.rate), `-${formatRp(bruto - netto)}`],
                         ["Netto dibayar", <b key="n">{formatRp(netto)}</b>],
-                        ["Tanggal bayar", galatTanggal ? "—" : `${ymdTampil(tanggalBayar)} (WITA) · dicatat bersama nama Anda`],
+                        ["Tanggal bayar", galatTanggal ? NILAI_KOSONG : `${ymdTampil(tanggalBayar)} (WITA) · dicatat bersama nama Anda`],
+                        // Fakta hari ini (dulu VariantNote BL-27/BL-47 di dalam dialog; No 80): nominal yang dicatat dan bukti transfer.
+                        ["Nominal dicatat", "Penerima tanpa catatan dicatat dengan nominal hitung ulang di layar ini; yang sudah punya catatan memakai nominal tercatat."],
+                        ["Bukti transfer", "Belum disimpan dari layar ini."],
                         ...(tercatatBeda.length > 0 ? [["Nominal tercatat", `${tercatatBeda.length} penerima sudah punya catatan; yang lunas adalah nominal tercatat, bukan hitung ulang: `
                             + tercatatBeda.slice(0, 5).map((r) => `${r.salesName} tercatat ${formatRp(nominalLunas(r))}, hitung ulang ${formatRp(r.total)}`).join("; ")] as [string, string]] : []),
                         ...(tersembunyi.length > 0 ? [["Di luar saringan", `${tersembunyi.length} ikut ditandai: ${nama(tersembunyi)}`] as [string, string]] : []),
@@ -454,15 +473,6 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
                         help={`Tanggal transfer menurut WITA; bawaan hari ini. Boleh mundur sampai ${ymdTampil(awalPeriode)}, tidak boleh melewati hari ini.`}>
                         {(a) => <input {...a} className="fi-input" type="date" min={awalPeriode} max={hariIni} value={tanggalBayar} onChange={(e) => setTanggalBayar(e.target.value)} />}
                     </FormField>
-                    <VariantNote bl="BL-27">
-                        Penerima tanpa catatan pembayaran dicatat lunas dengan nominal hitung ulang yang dimuat di layar ini; penerima yang sudah
-                        punya catatan hanya berubah status, dengan nominal tercatatnya. Bila BL-27 masuk, server menghitung ulang bruto, PPh, dan
-                        netto saat Anda menandai lunas, dan menolak seluruhnya bila ada nominal yang berubah sejak halaman dimuat.
-                    </VariantNote>
-                    <VariantNote bl="BL-47">
-                        Bukti transfer belum disimpan (tombol Upload bukti lama hanya memunculkan pesan dan sudah dihapus). Bila BL-47 masuk,
-                        dialog ini meminta satu bukti transfer yang tertaut ke semua penerima di atas.
-                    </VariantNote>
                 </ConfirmDialog>
             </InsentifRangka>
         </KonstantaCtx.Provider>

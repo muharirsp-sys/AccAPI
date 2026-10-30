@@ -1,15 +1,16 @@
 /*
  * Tujuan: Bagian pengembalian selisih di Object Page Keuangan OPC (Fiori S4d, ZONA UANG): "Verifikasi pengembalian" (daftar yang
- *   diajukan dan masih menunggu verifikasi; Verifikasi lewat ConfirmDialog, Tolak lewat dialog `refund` dengan alasan WAJIB — Batal
- *   benar-benar batal, prompt lama old-opc.tsx 8039 tetap menolak walau Batal) dan "Ajukan pengembalian" (RefundPanel lama di tab
- *   Keuangan juga memuat form ajukan: canSubmitRefund = submit_refund || finance_payment, 7969; komponen AjukanRefund dari SmRefund.tsx).
- *   Plus tulisUang: tulis uang yang memperlakukan jawaban tak pasti (koneksi putus, status ≥ 502, bukan JSON) sebagai "hasil tidak pasti".
- * Caller: opc/peran/Keuangan.tsx (bagianRefund, bagianAjukan → BagianTambahan di ObjectPageBatch; tulisUang untuk finance-payment).
- * Dependensi: components/fiori/{core,interactive}, opc/Bersama (DetailProps), opc/peran/SmRefund (AjukanRefund), lib/opc-ui, lib/promo-ui.
- * Main Functions: tulisUang, bagianRefund, VerifikasiRefund, bagianAjukan.
- * Side Effects: PATCH /api/off-program-control/batches/[id]/refund { refundId, action: "verify" | "reject", note } — payload sama
- *   dengan verifyRefund lama (8035–8060; verify mengirim note ""). Server mengubah status refund, menghitung ulang refundStatus batch,
+ *   diajukan dan masih menunggu verifikasi; Verifikasi lewat ConfirmDialog, Tolak lewat dialog dengan alasan WAJIB; Batal benar-benar
+ *   batal, padahal prompt kode lama tetap menolak walau Batal) dan "Ajukan pengembalian" (RefundPanel lama di tab Keuangan juga memuat
+ *   form ajukan: canSubmitRefund = submit_refund || finance_payment; komponen AjukanRefund dari SmRefund.tsx).
+ * Caller: opc/peran/Keuangan.tsx (bagianRefund, bagianAjukan → BagianTambahan di ObjectPageBatch).
+ * Dependensi: components/fiori/{core,interactive}, opc/Bersama (DetailProps, tulisOpc, pesanTidakPasti), opc/peran/SmRefund (AjukanRefund),
+ *   lib/opc-ui, lib/promo-ui, lib/tampil (KOSONG).
+ * Main Functions: bagianRefund, VerifikasiRefund, bagianAjukan.
+ * Side Effects: PATCH /api/off-program-control/batches/[id]/refund { refundId, action: "verify" | "reject", note } lewat tulisOpc; payload
+ *   sama dengan verifyRefund kode lama (verify mengirim note ""). Server mengubah status refund, menghitung ulang refundStatus batch,
  *   dan menutup batch (Completed) bila seluruh selisih sudah kembali. POST /refund lewat AjukanRefund (payload submitRefund lama).
+ *   Jawaban tidak pasti (putus, ≥ 502, bukan JSON) dilaporkan lewat laporTidakPasti, bukan sebagai gagal.
  */
 "use client";
 
@@ -18,56 +19,19 @@ import { Button, KeyValues, MessageStrip, StatusBadge } from "@/components/fiori
 import { ConfirmDialog } from "@/components/fiori/interactive";
 import { PREDIKAT, tanggalOpc, type RefundOpc } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
-import type { DetailProps } from "../Bersama";
+import { KOSONG } from "@/lib/tampil";
+import { TulisTidakPasti, pesanTidakPasti, tulisOpc, type DetailProps } from "../Bersama";
 import type { BagianTambahan } from "../ObjectPageBatch";
 import { AjukanRefund } from "./SmRefund";
 
 const enc = encodeURIComponent;
-const PUTUS = "Server tidak memberi jawaban yang pasti (koneksi putus atau gateway timeout); pengembalian ini mungkin sudah diproses atau belum. Detail batch dimuat ulang — periksa statusnya sebelum mencoba lagi.";
+const PUTUS = pesanTidakPasti("pengembalian ini", "status pengembaliannya");
 
-/**
- * onSelesai: strip sukses + muat ulang daftar dan detail; onTidakPasti: strip peringatan. Keduanya dipegang DetailKeuangan supaya tetap
- * tampil walau bagian ini hilang setelah data dimuat ulang (mis. selisih lunas).
- */
-type Props = DetailProps & { onSelesai: (pesan: string) => void; onTidakPasti: (pesan: string) => void };
-
-/** Jawaban server tidak pasti: aksinya mungkin sudah tersimpan. */
-export class TidakPasti extends Error {}
-
-/**
- * Seperti tulisOpc (fetch, JSON atau FormData apa adanya, `ok` wajib true), tetapi jawaban yang TIDAK PASTI — koneksi putus, status
- * ≥ 502, atau badan bukan JSON (mis. halaman HTML "504 Gateway Time-out" dari proxy) — dilempar sebagai `putus`, bukan teks mentah.
- * finance-payment membuat PDF sebelum transaksi, jadi timeout proxy bisa datang SETELAH data tersimpan. Pemanggil memuat ulang detail.
- */
-export async function tulisUang(url: string, opsi: { method?: "POST" | "PATCH"; body: Record<string, unknown> | FormData; gagal: string; putus: string }) {
-    const isForm = opsi.body instanceof FormData;
-    let res: Response;
-    let text: string;
-    try {
-        res = await fetch(url, {
-            method: opsi.method ?? "POST",
-            credentials: "include",
-            headers: isForm ? undefined : { "Content-Type": "application/json" },
-            body: isForm ? (opsi.body as FormData) : JSON.stringify(opsi.body),
-        });
-        text = await res.text();
-    } catch {
-        throw new TidakPasti(opsi.putus);
-    }
-    let data: Record<string, unknown> | null;
-    try {
-        const j: unknown = text ? JSON.parse(text) : {};
-        data = j && typeof j === "object" ? (j as Record<string, unknown>) : null;
-    } catch {
-        data = null;
-    }
-    if (res.status >= 502 || data === null) throw new TidakPasti(opsi.putus);
-    if (!res.ok || !data.ok) throw new Error(String(data.error || data.message || opsi.gagal));
-    return data;
-}
+/** onSelesai: strip sukses + muat ulang, dipegang DetailKeuangan supaya tetap tampil walau bagian ini hilang (mis. selisih lunas). */
+type Props = DetailProps & { onSelesai: (pesan: string) => void };
 
 /** Form ajukan pengembalian: syarat lama `summary.remainingRefund > 0` (8161) dan izin submit_refund ATAU finance_payment (7969). */
-export function bagianAjukan({ ctx, detail, onSelesai, onDraf }: Props & { onDraf: (draf: boolean) => void }): BagianTambahan | null {
+export function bagianAjukan({ ctx, detail, onSelesai, onDraf, laporTidakPasti }: Props & { onDraf: (draf: boolean) => void }): BagianTambahan | null {
     const d = detail.data;
     const ringkasan = d?.refund.data?.summary;
     if (!d || !ringkasan || ringkasan.remainingRefund <= 0) return null;
@@ -78,7 +42,8 @@ export function bagianAjukan({ ctx, detail, onSelesai, onDraf }: Props & { onDra
             : detail.status === "galat" ? "Detail batch gagal dimuat ulang; sisa selisih di layar bisa usang. Muat ulang dulu." : undefined;
     return {
         id: "opc-ajukan-refund", label: "Ajukan pengembalian",
-        isi: <AjukanRefund batchId={d.batch.id} no={d.batch.noPengajuan} ringkasan={ringkasan} alasan={izin ?? kunci} onDraf={onDraf} onSelesai={onSelesai} />,
+        isi: <AjukanRefund batchId={d.batch.id} no={d.batch.noPengajuan} ringkasan={ringkasan} alasan={izin ?? kunci} onDraf={onDraf} onSelesai={onSelesai}
+            onTidakPasti={laporTidakPasti} />,
     };
 }
 
@@ -90,7 +55,7 @@ export function bagianRefund(props: Props): BagianTambahan | null {
     return ada ? { id: "opc-verifikasi-refund", label: "Verifikasi pengembalian", isi: <VerifikasiRefund {...props} /> } : null;
 }
 
-export function VerifikasiRefund({ ctx, detail, muatUlang, onSelesai, onTidakPasti }: Props) {
+export function VerifikasiRefund({ ctx, detail, muatUlang, onSelesai, laporTidakPasti }: Props) {
     const [aksi, setAksi] = useState<{ jenis: "verify" | "reject"; r: RefundOpc } | null>(null);
     const d = detail.data!;
     const b = d.batch;
@@ -110,13 +75,14 @@ export function VerifikasiRefund({ ctx, detail, muatUlang, onSelesai, onTidakPas
     async function kirim(jenis: "verify" | "reject", note: string) {
         if (!r) return;
         try {
-            await tulisUang(`/api/off-program-control/batches/${enc(b.id)}/refund`, {
+            await tulisOpc(`/api/off-program-control/batches/${enc(b.id)}/refund`, {
                 method: "PATCH", body: { refundId: r.id, action: jenis, note }, gagal: "Gagal memproses pengembalian.", putus: PUTUS,
             });
         } catch (e) {
             // Mis. 409 "Refund sudah Verified" (diproses orang lain) atau jawaban tak pasti: muat ulang supaya daftar tidak usang.
-            muatUlang();
-            if (e instanceof TidakPasti) onTidakPasti(e.message);
+            // Tidak pasti: dialog ditutup, strip bertahan + muat ulang daftar dan detail (No 22).
+            if (e instanceof TulisTidakPasti) { setAksi(null); laporTidakPasti(e.message); }
+            else muatUlang();
             throw e;
         }
         setAksi(null);
@@ -127,8 +93,8 @@ export function VerifikasiRefund({ ctx, detail, muatUlang, onSelesai, onTidakPas
 
     const faktaRefund = (x: RefundOpc): Array<[string, ReactNode]> => [
         ["Batch", <span key="b" className="fi-mono">{b.noPengajuan}</span>],
-        ["Diajukan", `${x.senderName || "Pengirim tidak diisi"} · ${x.refundMethod || "–"} · ${tanggalOpc(x.refundDate)}`],
-        ["Bank penerima", x.receiverBank || "–"],
+        ["Diajukan", `${x.senderName || "Pengirim tidak diisi"} · ${x.refundMethod || KOSONG} · ${tanggalOpc(x.refundDate)}`],
+        ["Bank penerima", x.receiverBank || KOSONG],
         ["Jumlah", <b key="j" className="fi-tnum">{rupiah(x.refundAmount)}</b>],
     ];
 
@@ -153,11 +119,11 @@ export function VerifikasiRefund({ ctx, detail, muatUlang, onSelesai, onTidakPas
                             </div>
                             <KeyValues items={[
                                 ["Tanggal", tanggalOpc(x.refundDate)],
-                                ["Cara", x.refundMethod || "–"],
-                                ["Pengirim", x.senderName || "–"],
-                                ["Bank penerima", x.receiverBank || "–"],
-                                ["Bukti", x.proofUrl ? <a key="p" href={x.proofUrl} target="_blank" rel="noreferrer">{x.proofName || "Buka bukti"}</a> : "–"],
-                                ["Catatan", x.note || "–"],
+                                ["Cara", x.refundMethod || KOSONG],
+                                ["Pengirim", x.senderName || KOSONG],
+                                ["Bank penerima", x.receiverBank || KOSONG],
+                                ["Bukti", x.proofUrl ? <a key="p" href={x.proofUrl} target="_blank" rel="noreferrer">{x.proofName || "Buka bukti"}</a> : KOSONG],
+                                ["Catatan", x.note || KOSONG],
                             ]} />
                             <div className="fi-btnrow">
                                 <Button variant="negative" aria-label={`Tolak pengembalian ke-${x.refundNo}`} disabled={Boolean(alasan)} disabledReason={alasan}
@@ -180,7 +146,7 @@ export function VerifikasiRefund({ ctx, detail, muatUlang, onSelesai, onTidakPas
                 confirmDisabled={alasan}
                 facts={r ? [
                     ...faktaRefund(r),
-                    ["Sisa harus dikembalikan", ringkas ? rupiah(ringkas.remainingRefund) : "–"],
+                    ["Sisa harus dikembalikan", ringkas ? rupiah(ringkas.remainingRefund) : KOSONG],
                     ["Setelah diverifikasi", "Jumlah ini dihitung sudah kembali. Bila seluruh selisih sudah kembali, batch otomatis Selesai."],
                 ] : []}
                 onConfirm={() => kirim("verify", "")}

@@ -56,7 +56,7 @@ test("gudang: wave and kanvas are requested for today in WITA", async ({ page })
     await page.route((url) => url.pathname === "/api/rekapan-nota/kanvas", (route) => { urls.push(route.request().url()); return route.fulfill(json({ jumlahNota: 218, ditandai: 6, nihil: 0 })); });
     await page.goto("/?peran=gudang");
     const tugas = page.getByRole("region", { name: /Perlu tindakan/ });
-    await expect(tugas.getByRole("link", { name: /Exception terbuka/ })).toContainText("4");
+    await expect(tugas.getByRole("link", { name: /Masalah terbuka/ })).toContainText("4"); // "Exception" → "Masalah" (audit No 91)
     await expect(tugas.getByRole("link", { name: /Nota kanvas/ })).toContainText("Dari 218 nota hari ini");
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date());
     expect(urls.length).toBeGreaterThanOrEqual(2);
@@ -134,7 +134,7 @@ test("K3: profil Kasir — tiga tile dari ringkasan; belum terbaca bukan 0 dan b
     await expect(tile(/Salesman belum menyetor/)).toContainText("4");
     await expect(tile(/Salesman belum menyetor/)).toContainText("3 belum dijelaskan");
     await expect(tile(/Hari belum ditutup/)).toContainText("Termasuk hari ini · terlama 14 Okt");
-    await expect(tile(/Hari belum ditutup/)).toContainText("minta OM/Admin membuka kembali");
+    await expect(tile(/Hari belum ditutup/)).toContainText("perlu dibuka OM/Admin");
     for (const nama of [/Selisih belum dijelaskan/, /Salesman belum menyetor/, /Hari belum ditutup/]) await expect(tile(nama)).toHaveAttribute("href", "/kasir");
     await expect(tugas.getByRole("link")).toHaveCount(3);
     // Satu sumber bersama untuk ketiga tile (bukan satu permintaan per tile; dev StrictMode boleh menggandakan efek menjadi 2), tanggal = hari ini WITA.

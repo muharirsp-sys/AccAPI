@@ -22,7 +22,7 @@ type Pesan = { tone: "neg" | "warn"; title: string; text?: string };
 const GALAT_URL = new Map<string, Pesan>([
     ["Accurate login requires app session", {
         tone: "warn", title: "Accurate belum terhubung.",
-        text: "Sesi Ruang Kerja sudah berakhir saat kembali dari Accurate. Masuk, lalu hubungkan Accurate lagi dari AOL Form Engine.",
+        text: "Sesi Ruang Kerja sudah berakhir saat kembali dari Accurate. Masuk, lalu hubungkan Accurate lagi dari Formulir Accurate (AOL).",
     }],
 ]);
 const GALAT_URL_UMUM: Pesan = { tone: "warn", title: "Proses sebelumnya tidak selesai.", text: "Masuk, lalu coba lagi. Bila berulang, hubungi admin TI." };

@@ -360,7 +360,7 @@ export function daftarKosong(
     return [...kurang].map(([nama, { surat, dilewati }]) =>
         `Daftar outlet "${nama}" tidak punya anggota pada tanggal ini, jadi aturan ${[...surat].sort().join(", ")} `
         + (dilewati
-            ? "BERJALAN TANPA daftar itu — outlet yang seharusnya masuk daftar ini belum diperlakukan berbeda. "
+            ? "BERJALAN TANPA daftar itu: outlet yang seharusnya masuk daftar ini belum diperlakukan berbeda. "
             : "tidak berlaku untuk siapa pun dan barisnya ditahan. ")
         + "Muat daftarnya lewat Aturan Promo -> Daftar outlet peserta.");
 }
@@ -997,7 +997,7 @@ export function checkLine(line: LineInput): LineCheck {
                 ? `posisi ${rule.tierNo} ${rule.benefitValue}% (${rule.suratProgram})`
                 : `${rule.benefitValue}% (${rule.suratProgram} ${rule.promoGroup})`)).join(", ");
             const lawan = percentRules.some((rule) => rule.customerCode) ? "aturan terbit" : "aturan terbit untuk barang ini";
-            findings.push(`${sebutan} ${actual}% tidak sama dengan ${lawan}: ${daftar} — jadi tak bertuan.`);
+            findings.push(`${sebutan} ${actual}% tidak sama dengan ${lawan}: ${daftar}, jadi tak bertuan.`);
         } else {
             findings.push(`${sebutan} Rp ${amount.toLocaleString("id-ID")} tidak punya aturan promo terbit, `
                 + `jadi dihitung tak bertuan sampai aturannya ada.`);

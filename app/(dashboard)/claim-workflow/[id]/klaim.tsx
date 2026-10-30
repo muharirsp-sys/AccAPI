@@ -1,7 +1,7 @@
 /*
  * Tujuan: Tipe respons dan helper murni Object Page Claim Workflow (dipisah dari ClaimDetail.tsx supaya berkas komponen ringkas).
  * Caller: app/(dashboard)/claim-workflow/[id]/ClaimDetail.tsx.
- * Dependensi: lib/claim-workflow-ui, lib/promo-ui (rupiah), components/fiori/{core,interactive}.
+ * Dependensi: lib/claim-workflow-ui, lib/promo-ui (rupiah), lib/tampil, components/fiori/{core,interactive}.
  * Main Functions: kirimJson, tanpa, isiItem, persenTeks, judulBerkas, aktif, FormItemPonsel, AlurDokumen.
  * Side Effects: kirimJson melakukan fetch tulis (dipanggil komponen klien); sisanya pure.
  */
@@ -12,6 +12,7 @@ import { Button } from "@/components/fiori/core";
 import { FormField } from "@/components/fiori/interactive";
 import { hitungBaris, labelLingkup } from "@/lib/claim-workflow-ui";
 import { rupiah } from "@/lib/promo-ui";
+import { KOSONG, sebabHttp } from "@/lib/tampil";
 
 export type Workflow = {
     id: string; claimWorkflowNo: string; offBatchId: string; offNoPengajuan?: string | null; principleCode: string; principleName: string; status: string;
@@ -54,7 +55,7 @@ export type Jawab = { ok?: boolean; error?: string; code?: string; currentUpdate
 export type Fakta = Array<[string, ReactNode]>;
 
 export async function kirimJson(url: string, method: string, body: unknown) {
-    const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => { throw new Error(sebabHttp(0)); });
     const data = (await res.json().catch(() => ({}))) as Jawab;
     return { res, data };
 }
@@ -77,7 +78,7 @@ export function FormItemPonsel({ it, v, galat, busy, berubah, onChange, onSave, 
     const h = hitungBaris(v);
     return (
         <div className="fi-sect-in">
-            <span><b className="fi-mono">{it.noSurat || "–"}</b> <span className="fi-small fi-subtle">{it.outlet}</span></span>
+            <span><b className="fi-mono">{it.noSurat || KOSONG}</b> <span className="fi-small fi-subtle">{it.outlet}</span></span>
             <div className="fi-formgrid">
                 <FormField label="DPP">{(a) => <input {...a} className="fi-input" type="number" min="0" step="any" inputMode="decimal" value={v.dpp} onChange={(e) => onChange({ dpp: e.target.value })} />}</FormField>
                 <FormField label="PPN %">{(a) => <input {...a} className="fi-input" type="number" min="0" max="100" step="any" inputMode="decimal" value={v.ppnRate} onChange={(e) => onChange({ ppnRate: e.target.value })} />}</FormField>
@@ -87,7 +88,7 @@ export function FormItemPonsel({ it, v, galat, busy, berubah, onChange, onSave, 
             <p className="fi-small">Nilai klaim <b>{rupiah(h.nilaiKlaim)}</b> · PPN {rupiah(h.ppnAmount)} · PPh {rupiah(h.pphAmount)}</p>
             {galat && <p className="fi-msg" role="alert">{galat}</p>}
             <div className="fi-btnrow">
-                <Button variant="primary" busy={busy} disabled={!berubah} disabledReason="Belum ada perubahan" onClick={onSave}>Simpan</Button>
+                <Button busy={busy} disabled={!berubah} disabledReason="Belum ada perubahan" onClick={onSave}>Simpan</Button>
                 <Button variant="tertiary" onClick={onCancel}>Batal</Button>
             </div>
         </div>

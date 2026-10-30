@@ -1,20 +1,21 @@
 /*
  * Tujuan: Klien OFF Program Control (Fiori S4d): resolusi peran SAMA dengan kode lama (sesi Better Auth + useLocalAuthRole →
  *   resolveOffRole, getOffAccessibleTabs; SM hanya tab Sales Manager), navigasi antar-antrean lewat kunci `?tab=` lama, lonceng +
- *   pencarian global yang membuka `?batch=` di kolom kedua untuk peran apa pun, `?mock=` fixture dev, dan penjaga draf
- *   (dialog sebelum pindah batch/tab + beforeunload). Isi tiap tab = modul peran di opc/peran/*.
+ *   pencarian global (pintasan "/") yang membuka `?batch=` di kolom kedua untuk peran apa pun (baris batch = tautan nyata, hrefBatch), `?mock=` fixture dev, dan penjaga draf
+ *   (dialog sebelum pindah batch/tab + beforeunload). Isi tiap tab = modul peran di opc/peran/*. Cek sesi yang gagal tampil sebagai
+ *   galat (Coba lagi), bukan sebagai "belum memiliki akses".
  * Caller: app/(dashboard)/off-program-control/page.tsx.
  * Dependensi: authClient, useLocalAuthRole (SidebarLayout), lib/off-program-control/{access,dev-fixtures}, lib/opc-ui, opc/Bersama,
  *   opc/peran/*, components/off-program-control/{OffNotificationBell,OffGlobalSearch}, components/fiori.
  * Main Functions: OpcApp.
- * Side Effects: router.replace untuk tab/batch/sub-tampilan; GET daftar batch (lewat useDaftarBatch).
+ * Side Effects: router.replace untuk tab/batch/sub-tampilan; GET daftar batch (lewat useDaftarBatch); refetch sesi saat Coba lagi.
  */
 "use client";
 
 import { useMemo, useState, useSyncExternalStore, type ComponentType } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { EmptyState, Skeleton } from "@/components/fiori/core";
+import { EmptyState, ErrorState, Skeleton } from "@/components/fiori/core";
 import { ConfirmDialog, useUnsavedGuard } from "@/components/fiori/interactive";
 import { useLocalAuthRole } from "@/components/SidebarLayout";
 import OffGlobalSearch from "@/components/off-program-control/OffGlobalSearch";
@@ -43,7 +44,7 @@ export default function OpcApp({ permKeys }: { permKeys: string[] }) {
     const router = useRouter();
     const pathname = usePathname();
     const localAuthRole = useLocalAuthRole();
-    const { data: session, isPending } = authClient.useSession();
+    const { data: session, isPending, error: galatSesi, refetch } = authClient.useSession();
     const user = session?.user as SessionUser | undefined;
     const peran = resolveOffRole({
         role: user?.role ?? localAuthRole, userRole: user?.userRole, type: user?.type, position: user?.position, department: user?.department, email: user?.email,
@@ -52,6 +53,8 @@ export default function OpcApp({ permKeys }: { permKeys: string[] }) {
     const boleh = tabTerlihat(peran);
     const tab = tabEfektif(peran, sp.get("tab"));
     const siap = mounted && !(isPending && !localAuthRole);
+    // Cek sesi gagal (mis. jaringan putus): peran jatuh ke "unknown", tetapi itu bukan vonis tanpa akses.
+    const sesiGagal = siap && !localAuthRole && Boolean(galatSesi) && !session?.user;
     const devBatchCount = getOffDevBatchCount(sp.get("mock"));
     const penggunaId = user?.id ?? "";
     const daftar = useDaftarBatch({ peran, penggunaId, devBatchCount, aktif: siap && boleh.length > 0 });
@@ -83,6 +86,7 @@ export default function OpcApp({ permKeys }: { permKeys: string[] }) {
         izin: (aksi: OffAction) => izinAksi(peran, aksi),
         // Log audit tidak punya kolom kedua: batch dibuka di tab pertama yang punya (Ringkasan bila boleh).
         bukaBatch: (id) => ubahUrl(id && !tabPunyaDetail(tab) ? { tab: boleh.find(tabPunyaDetail) ?? tab, batch: id } : { batch: id }),
+        hrefBatch: (id) => urlDengan(!tabPunyaDetail(tab) ? { tab: boleh.find(tabPunyaDetail) ?? tab, batch: id } : { batch: id }),
         pilihSub: (kunci) => ubahUrl(tab === "claim" ? { claimView: kunci } : { view: kunci }),
         ubahUrl,
         setDraf,
@@ -105,20 +109,22 @@ export default function OpcApp({ permKeys }: { permKeys: string[] }) {
                 <span className="fi-spacer" />
                 {siap && ctx && (
                     <>
-                        <div style={{ flex: "0 1 18rem", minWidth: 0 }}>
-                            <OffGlobalSearch placeholder="Cari pengajuan (Ctrl K)" onSelect={(id) => ctx.bukaBatch(id)} muat={muat}
+                        {/* Ponsel (< 640 px): pencarian turun ke baris sendiri, lonceng tinggal ikon + jumlah di samping judul. */}
+                        {/* Pintasan "/" (owner 27 Okt, audit No 142): Ctrl K tetap milik cari menu shell di semua halaman. */}
+                        <div className="min-w-0 flex-[0_1_18rem] max-sm:order-last max-sm:flex-[1_1_100%]">
+                            <OffGlobalSearch placeholder="Cari pengajuan (tekan /)" onSelect={(id) => ctx.bukaBatch(id)} muat={muat}
                                 items={daftar.batches.map((b) => ({ id: b.id, noPengajuan: b.noPengajuan, principleName: b.principleName, status: infoTahap(b).label, supervisorName: b.supervisorName }))} />
                         </div>
-                        <OffNotificationBell problems={daftar.masalah} onSelectBatch={(id) => ctx.bukaBatch(id)} muat={muat} />
+                        <OffNotificationBell problems={daftar.masalah} onSelectBatch={(id) => ctx.bukaBatch(id)} hrefBatch={ctx.hrefBatch} muat={muat} />
                     </>
                 )}
             </div>
-            {siap && (
+            {siap && !sesiGagal && (
                 <p>
                     {peran === "admin" ? "Pantau semua antrean lalu buka batch untuk melihat detailnya."
-                        : peran === "manager" ? "Baca semua antrean dan log audit (ekspor CSV boleh); aksi tulis milik SPV/SM/Klaim/OM/Keuangan."
+                        : peran === "manager" ? "Baca semua antrean dan log audit (ekspor CSV boleh); aksi tulis milik Supervisor, Sales Manager, Klaim, OM, dan Keuangan."
                         : "Kerjakan batch di antrean Anda; batch terbuka tampil di kolom kanan."}
-                    {" "}Peran OFF: {LABEL_PERAN[peran]}.
+                    {" "}Peran Anda: {LABEL_PERAN[peran]}.
                 </p>
             )}
         </header>
@@ -126,6 +132,16 @@ export default function OpcApp({ permKeys }: { permKeys: string[] }) {
 
     if (!siap) {
         return <div className="fi-page">{head}<Skeleton rows={4} label="Menyiapkan akses OFF Program Control" /></div>;
+    }
+    if (sesiGagal) {
+        return (
+            <div className="fi-page">
+                {head}
+                <ErrorState title="Sesi gagal diperiksa"
+                    message="Peran Anda di OFF Program Control belum bisa dibaca karena pemeriksaan sesi gagal. Ini bukan berarti akun Anda tanpa akses. Periksa koneksi, lalu coba lagi."
+                    onRetry={() => void refetch()} />
+            </div>
+        );
     }
     if (!ctx) {
         return (
@@ -160,7 +176,7 @@ export default function OpcApp({ permKeys }: { permKeys: string[] }) {
             )}
             <Modul key={ctx.tab} ctx={ctx} daftar={daftar} />
             <ConfirmDialog open={tunda !== null} onClose={() => setTunda(null)} tag="Draf" tone="negative"
-                title="Tinggalkan perubahan yang belum disimpan?" confirmLabel="Tinggalkan"
+                title="Tinggalkan perubahan yang belum disimpan?" confirmLabel="Tinggalkan" cancelLabel="Tetap di sini"
                 description="Perubahan yang belum disimpan hilang bila batch atau form yang sedang diubah tertutup karena perpindahan ini."
                 // Draf TIDAK dimatikan di sini: editor yang benar-benar dibongkar mematikannya sendiri (cleanup setDraf(false)).
                 // Bila perpindahan tidak membongkar editor (mis. ganti tampilan dengan batch yang sama), penjaga tetap hidup.

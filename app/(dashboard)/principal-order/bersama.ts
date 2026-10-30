@@ -2,7 +2,8 @@
  * Tujuan: Tipe dan helper bersama layar Order Principal (Fiori S6d): bentuk respons /api/principal-order/*, baca → Load, tulis yang
  *   membedakan penolakan server dari jawaban TIDAK PASTI, pemilah "SO ditahan utuh", label status antrean, dan format angka/waktu.
  * Caller: OrderPrincipal.tsx, LangkahBatch.tsx.
- * Dependensi: app/(dashboard)/form-kontrol/lapangan (ambilJson), components/fiori (tipe Load, Tone), lib/rekapan-nota/ui (tanggalPendek).
+ * Dependensi: app/(dashboard)/form-kontrol/lapangan (ambilJson), components/fiori (tipe Load, Tone), lib/rekapan-nota/ui (tanggalPendek),
+ *   lib/tampil (waktuWita diekspor ulang; pemanggil menulis " WITA" sendiri).
  * Main Functions: baca, tulis, TidakPasti, PESAN_TIDAK_PASTI, ditahanUtuh, LABEL_ANTREAN, angka, waktuWita, tanggalSo, ALASAN_IZIN.
  * Side Effects: baca/tulis melakukan fetch; sisanya murni.
  */
@@ -10,6 +11,7 @@ import type { Tone } from "@/components/fiori/core";
 import type { Load } from "@/components/fiori/interactive";
 import { ambilJson } from "@/app/(dashboard)/form-kontrol/lapangan";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
+export { waktuWita } from "@/lib/tampil";
 
 export type Batch = {
     id: string; principal: string; fileName: string; branch: string; period: string;
@@ -77,7 +79,7 @@ export async function baca<T>(url: string, pick: (data: Record<string, unknown>)
 }
 
 /** Pesan bila jawaban server tidak pasti (aksi mungkin sudah tersimpan, mungkin belum). */
-export const PESAN_TIDAK_PASTI = "Server tidak memberi jawaban yang pasti — hasilnya belum pasti. Data dimuat ulang; periksa dulu sebelum mengulang.";
+export const PESAN_TIDAK_PASTI = "Server tidak memberi jawaban yang pasti, jadi hasilnya belum pasti. Data dimuat ulang; periksa dulu sebelum mengulang.";
 
 /** Dilempar `tulis` bila hasilnya TIDAK PASTI: koneksi putus, status ≥ 502, atau badan bukan JSON (mis. halaman HTML proxy). */
 export class TidakPasti extends Error {
@@ -140,21 +142,13 @@ export const LABEL_ANTREAN: Record<string, { label: string; tone: Tone }> = {
     unknown: { label: "Tidak pasti", tone: "warn" },
     posted: { label: "Terposting", tone: "pos" },
 };
-export const labelAntrean = (state: string) => LABEL_ANTREAN[state] ?? { label: state, tone: "neu" as Tone };
+// Status di luar peta tidak ditampilkan mentah (aturan: tidak ada kode mentah di layar); kodenya tetap di data untuk penelusuran.
+export const labelAntrean = (state: string) => LABEL_ANTREAN[state] ?? { label: "Status tidak dikenal", tone: "neu" as Tone };
 
 /** Nomor SO dari kunci antrean `KINO-NON-FOOD:<SO>`. */
 export const soDariKunci = (key: string) => key.slice(key.indexOf(":") + 1);
 
 export const angka = (value: string | number) => Number(value).toLocaleString("id-ID", { maximumFractionDigits: 2 });
-
-/** "05/10/2026 16.20" dalam WITA. */
-export function waktuWita(iso: string | null | undefined) {
-    if (!iso) return "";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    const f = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Makassar", ...o }).format(d);
-    return `${f({ day: "2-digit", month: "2-digit", year: "numeric" })} ${f({ hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}`;
-}
 
 /** Tanggal SO/periode: setiap YYYY-MM-DD (juga cap waktu ISO) → dd/mm/yyyy; teks lain apa adanya. */
 export const tanggalSo = (teks: string | null | undefined) =>

@@ -69,7 +69,7 @@ export async function sapuSending(database: NodePgDatabase, actor: string): Prom
         WITH disapu AS (
             UPDATE invoice_outbox SET state = 'unknown', updated_at = now(),
                 last_error = ${`Tertahan "mengirim" lebih dari ${SAPU_SETELAH_MENIT} menit (proses berhenti di tengah kirim). `
-                    + "Fakturnya MUNGKIN sudah terbentuk di Accurate — selesaikan lewat pencarian, jangan dikirim ulang."}
+                    + "Fakturnya MUNGKIN sudah terbentuk di Accurate. Selesaikan lewat pencarian, jangan dikirim ulang."}
             WHERE state = 'sending' AND updated_at < now() - make_interval(mins => ${SAPU_SETELAH_MENIT})
             RETURNING order_id, attempts, updated_at)
         INSERT INTO invoice_outbox_event (order_id, jenis, state_from, state_to, actor, reason, detail)
@@ -167,7 +167,7 @@ export async function rencanaKirim(db: NodePgDatabase, options: { limit: number;
         // membuang rupiahnya (INV/2609/KN01376). Dibuang dari antrean lalu diantrekan ulang.
         const campur = barisPersenRupiah(hasil.payload);
         return campur.length && !hasil.error
-            ? { row, ...hasil, error: `${campur.length} baris persen + rupiah (Accurate membuang rupiahnya) — buang dari antrean lalu antrekan ulang` }
+            ? { row, ...hasil, error: `${campur.length} baris persen + rupiah (Accurate membuang rupiahnya). Buang dari antrean lalu antrekan ulang` }
             : { row, ...hasil };
     });
     const ditolak = siap.filter((entry) => entry.error);
@@ -218,11 +218,11 @@ async function sebabDilewati(db: NodePgDatabase, row: BarisAntrean): Promise<str
         const [cek] = (await db.execute(sql`
             SELECT state, payload = ${JSON.stringify(row.payload)}::jsonb AS sama FROM invoice_outbox WHERE order_id = ${row.orderId}`))
             .rows as { state: string; sama: boolean }[];
-        if (!cek) return "dibuang dari antrean sejak diperiksa — muat ulang";
-        if (cek.state !== "queued") return `sudah diambil proses lain (status ${cek.state}) — muat ulang`;
-        return "payload berubah sejak diperiksa — muat ulang";
+        if (!cek) return "dibuang dari antrean sejak diperiksa. Muat ulang";
+        if (cek.state !== "queued") return `sudah diambil proses lain (status ${cek.state}). Muat ulang`;
+        return "payload berubah sejak diperiksa. Muat ulang";
     } catch {
-        return "berubah sejak diperiksa (diambil proses lain atau payload berubah) — muat ulang";
+        return "berubah sejak diperiksa (diambil proses lain atau payload berubah). Muat ulang";
     }
 }
 

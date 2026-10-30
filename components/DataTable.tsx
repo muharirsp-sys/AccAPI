@@ -1,9 +1,10 @@
 /*
- * Tujuan: Tabel data reusable dengan sorting, pencarian fuzzy, visibility kolom, pagination, dan feedback aksesibel.
- * Caller: Route dashboard yang membutuhkan tabel TanStack generik.
- * Dependensi: TanStack React Table, fuzzySearch internal, `AsyncState`, lucide-react.
- * Main Functions: `DataTable`, semantic compact table layout dan feedback async.
- * Side Effects: Mutasi state UI lokal dan listener sementara untuk Escape/outside click pada pemilih kolom.
+ * Tujuan: Tabel data TanStack reusable (urut, cari fuzzy, pilih kolom, paginasi) bergaya Fiori dengan tiga keadaan yang selalu berbeda:
+ *   memuat, kosong (belum ada data ≠ tidak cocok pencarian), dan galat (sebab + Coba lagi).
+ * Caller: Route dashboard yang membutuhkan tabel TanStack generik (belum ada pemakai per audit desain 001; lihat juga ResponsiveTable).
+ * Dependensi: TanStack React Table, fuzzySearch internal, components/fiori (Button, EmptyState, ErrorState, Skeleton, token), lucide-react.
+ * Main Functions: `DataTable`.
+ * Side Effects: Mutasi state UI lokal dan listener sementara untuk Escape/klik-luar pada pemilih kolom.
  */
 
 "use client";
@@ -21,9 +22,10 @@ import {
     FilterFn,
     VisibilityState,
 } from "@tanstack/react-table";
-import { ChevronDown, ChevronUp, Search, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Search, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
-import { EmptyState, LoadingState } from "@/components/ui/AsyncState";
+import { fioriClass } from "@/components/fiori/Scope";
+import { Button, EmptyState, ErrorState, Skeleton } from "@/components/fiori/core";
 
 interface DataTableProps<TData, TValue> {
     columns: ColumnDef<TData, TValue>[];
@@ -32,17 +34,23 @@ interface DataTableProps<TData, TValue> {
     isLoading?: boolean;
     initialColumnVisibility?: VisibilityState;
     caption?: string;
+    /** Judul keadaan kosong saat belum ada data sama sekali (tanpa pencarian). */
     emptyMessage?: string;
+    /** Sebab gagal memuat; diisi = keadaan galat, bukan "kosong". */
+    error?: string;
+    onRetry?: () => void;
 }
 
 export function DataTable<TData, TValue>({
     columns,
     data,
-    searchPlaceholder = "Cari semua kolom...",
+    searchPlaceholder = "Cari di semua kolom",
     isLoading = false,
     initialColumnVisibility = {},
     caption = "Tabel data",
-    emptyMessage = "Tidak ada hasil.",
+    emptyMessage = "Belum ada data",
+    error,
+    onRetry,
 }: DataTableProps<TData, TValue>) {
     const [sorting, setSorting] = useState<SortingState>([]);
     const [globalFilter, setGlobalFilter] = useState("");
@@ -74,6 +82,7 @@ export function DataTable<TData, TValue>({
         state: { sorting, globalFilter },
     });
     const filteredRowCount = table.getFilteredRowModel().rows.length;
+    const colSpan = table.getVisibleLeafColumns().length || 1;
 
     useEffect(() => {
         if (!isViewOpen) return;
@@ -97,56 +106,57 @@ export function DataTable<TData, TValue>({
         };
     }, [isViewOpen]);
 
+    // Galat tidak pernah tampil sebagai kosong; kosong karena pencarian dibedakan dari belum ada data.
+    let keadaan: React.ReactNode = null;
+    if (isLoading) keadaan = <Skeleton rows={3} label="Memuat data tabel" />;
+    else if (error) keadaan = <ErrorState message={error} onRetry={onRetry} />;
+    else if (!table.getRowModel().rows.length) keadaan = globalFilter
+        ? <EmptyState title="Tidak ada baris yang cocok" message="Ubah atau hapus kata pencarian." />
+        : <EmptyState title={emptyMessage} />;
+
     return (
-        <div className="space-y-4">
-            {/* Toolbar */}
+        <div className={`${fioriClass} grid gap-3`} style={{ background: "transparent" }}>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex w-full items-center gap-2 bg-white/5 border border-white/5 rounded-lg px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 focus-within:outline focus-within:outline-2 focus-within:outline-indigo-500 focus-within:outline-offset-2 transition-all sm:w-72">
-                    <Search className="h-4 w-4 text-slate-400" />
+                <div className="relative w-full sm:w-72">
+                    <Search className="fi-icon pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-subtle" aria-hidden />
                     <label htmlFor={searchInputId} className="sr-only">Cari tabel</label>
                     <input
                         id={searchInputId}
+                        type="search"
                         placeholder={searchPlaceholder}
                         value={globalFilter ?? ""}
                         onChange={(event) => setGlobalFilter(event.target.value)}
-                        className="bg-transparent border-none outline-none text-sm text-slate-200 w-full placeholder:text-slate-500"
+                        className="fi-input"
+                        style={{ paddingLeft: 32 }}
                     />
                 </div>
-                
-                <div ref={columnPickerRef} className="flex items-center gap-2 relative">
+
+                <div ref={columnPickerRef} className="relative">
                     <button
                         ref={columnPickerButtonRef}
                         type="button"
                         onClick={() => setIsViewOpen(!isViewOpen)}
                         aria-expanded={isViewOpen}
                         aria-controls={columnMenuId}
-                        aria-label="Atur visibilitas kolom"
-                        className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-3 py-2 text-sm text-slate-300 transition-colors shadow-sm focus-visible:ring-2 focus-visible:ring-indigo-500/50"
                         aria-haspopup="true"
+                        className="fi-btn fi-btn--secondary"
                     >
-                        <SlidersHorizontal className="h-4 w-4" />
-                        Kolom
+                        <SlidersHorizontal className="fi-icon" aria-hidden />
+                        Atur kolom
                     </button>
 
                     {isViewOpen && (
-                        <div id={columnMenuId} role="group" aria-label="Tampilkan kolom" className="absolute right-0 top-full mt-2 w-48 bg-[#1a1c23] border border-white/5 rounded-lg shadow-xl shadow-black/50 z-50 p-2 py-3 backdrop-blur-xl">
-                            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-2 mb-2">Tampilkan Kolom</div>
-                            <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
+                        <div id={columnMenuId} role="group" aria-labelledby={`${columnMenuId}-t`} className="fi-panel absolute right-0 top-full z-[var(--z-popover)] mt-2 w-56" style={{ boxShadow: "var(--shadow-2)", gap: 4 }}>
+                            <p id={`${columnMenuId}-t`} className="fi-caption">Tampilkan kolom</p>
+                            <div className="grid max-h-64 overflow-y-auto">
                                 {table.getAllLeafColumns().map(column => {
                                     if (column.id === "select") return null;
                                     return (
-                                        <label key={column.id} className="flex items-center gap-2 px-2 py-1.5 hover:bg-white/5 rounded-md cursor-pointer transition-colors">
-                                            <input
-                                                type="checkbox"
-                                                className="w-4 h-4 rounded border-white/20 bg-black/20 text-indigo-500 focus:ring-indigo-500/50"
-                                                {...{
-                                                    checked: column.getIsVisible(),
-                                                    onChange: column.getToggleVisibilityHandler(),
-                                                }}
-                                            />
-                                            <span className="text-sm text-slate-300 truncate">{typeof column.columnDef.header === 'string' ? column.columnDef.header : column.id}</span>
+                                        <label key={column.id} className="fi-check">
+                                            <input type="checkbox" checked={column.getIsVisible()} onChange={column.getToggleVisibilityHandler()} />
+                                            <span className="truncate">{typeof column.columnDef.header === "string" ? column.columnDef.header : column.id}</span>
                                         </label>
-                                    )
+                                    );
                                 })}
                             </div>
                         </div>
@@ -155,154 +165,92 @@ export function DataTable<TData, TValue>({
             </div>
 
             <p role="status" aria-live="polite" className="sr-only">
-                {isLoading
-                    ? "Memuat data tabel."
-                    : `${table.getFilteredRowModel().rows.length} baris tersedia.`}
+                {isLoading ? "Memuat data tabel." : error ? "Data tabel gagal dimuat." : `${filteredRowCount} baris tersedia.`}
             </p>
 
-            {/* Table */}
-            <div className="ui-table-frame">
-                <div className="overflow-x-auto">
-                    <table aria-busy={isLoading} className="ui-data-table relative">
-                        <caption className="sr-only">{caption}</caption>
-                        <thead className="text-xs text-slate-400 uppercase bg-black/20 border-b border-white/5">
+            <div className="fi-tablebox" style={{ borderRadius: "var(--r-lg)", boxShadow: "var(--shadow-1)", overflow: "clip" }}>
+                {/* Wadah gulir bisa difokus dan bernama (caption), audit desain 001 No 140c. */}
+                <div className="fi-tablescroll" tabIndex={0} role="group" aria-labelledby={`${tableId}-cap`}>
+                    <table aria-busy={isLoading} className="fi-table">
+                        <caption id={`${tableId}-cap`} className="sr-only">{caption}</caption>
+                        <thead>
                             {table.getHeaderGroups().map((headerGroup) => (
                                 <tr key={headerGroup.id}>
                                     {headerGroup.headers.map((header) => {
                                         const sorted = header.column.getIsSorted();
                                         const canSort = header.column.getCanSort();
                                         const ariaSort = sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : canSort ? "none" : undefined;
+                                        const SortIcon = sorted === "asc" ? ArrowUp : sorted === "desc" ? ArrowDown : ArrowUpDown;
                                         return (
-                                            <th key={header.id} scope="col" aria-sort={ariaSort} className="px-4 py-3 font-medium whitespace-nowrap">
-                                                {header.isPlaceholder ? null : (
-                                                    canSort ? (
-                                                        <button
-                                                            type="button"
-                                                            className="flex items-center gap-1 text-left select-none group"
-                                                            onClick={header.column.getToggleSortingHandler()}
-                                                        >
-                                                            {flexRender(
-                                                                header.column.columnDef.header,
-                                                                header.getContext()
-                                                            )}
-                                                            <span className="text-slate-500 group-hover:text-slate-300 transition-colors">
-                                                                {{
-                                                                    asc: <ChevronUp className="h-3 w-3" />,
-                                                                    desc: <ChevronDown className="h-3 w-3" />,
-                                                                }[sorted as string] ?? null}
-                                                            </span>
-                                                        </button>
-                                                    ) : (
-                                                        <div className="flex items-center gap-1">
-                                                            {flexRender(
-                                                                header.column.columnDef.header,
-                                                                header.getContext()
-                                                            )}
-                                                        </div>
-                                                    )
-                                                )}
+                                            <th key={header.id} scope="col" aria-sort={ariaSort}>
+                                                {header.isPlaceholder ? null : canSort ? (
+                                                    <button type="button" onClick={header.column.getToggleSortingHandler()}>
+                                                        {flexRender(header.column.columnDef.header, header.getContext())}
+                                                        <SortIcon className="fi-icon" aria-hidden />
+                                                    </button>
+                                                ) : flexRender(header.column.columnDef.header, header.getContext())}
                                             </th>
                                         );
                                     })}
                                 </tr>
                             ))}
                         </thead>
-                        <tbody className="divide-y divide-white/5">
-                            {isLoading ? (
+                        <tbody>
+                            {keadaan ? (
                                 <tr>
-                                    <td colSpan={table.getVisibleLeafColumns().length || 1} className="h-24 text-center">
-                                        <LoadingState label="Memuat data tabel" rows={3} embedded />
-                                    </td>
+                                    <td colSpan={colSpan}>{keadaan}</td>
                                 </tr>
-                            ) : table.getRowModel().rows?.length ? (
+                            ) : (
                                 table.getRowModel().rows.map((row) => (
-                                    <tr
-                                        key={row.id}
-                                        className="hover:bg-white/5 transition-colors"
-                                    >
+                                    <tr key={row.id}>
                                         {row.getVisibleCells().map((cell) => (
-                                            <td key={cell.id} className="px-4 py-3 text-slate-300">
-                                                {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                            </td>
+                                            <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
                                         ))}
                                     </tr>
                                 ))
-                            ) : (
-                                <tr>
-                                    <td colSpan={table.getVisibleLeafColumns().length || 1} className="h-24 text-center text-slate-500">
-                                        <EmptyState title={emptyMessage} embedded />
-                                    </td>
-                                </tr>
                             )}
                         </tbody>
                     </table>
                 </div>
             </div>
 
-            {/* Pagination Controls */}
-            {filteredRowCount > 0 && <div className="flex flex-col gap-3 text-sm text-slate-400 sm:flex-row sm:items-center sm:justify-end">
-                <div className="flex flex-wrap items-center gap-4 sm:gap-6 lg:gap-8">
-                    <div className="flex items-center space-x-2">
-                        <label htmlFor={pageSizeId} className="text-xs font-medium">Baris per halaman</label>
+            {filteredRowCount > 0 && !error && (
+                <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-3 fi-small text-ink-muted">
+                    <div className="flex items-center gap-2">
+                        <label htmlFor={pageSizeId} className="fi-label">Baris per halaman</label>
                         <select
                             id={pageSizeId}
                             value={table.getState().pagination.pageSize}
                             onChange={(e) => {
                                 table.setPageSize(Number(e.target.value));
                             }}
-                            className="bg-white/5 border border-white/5 rounded-md py-1 px-2 focus:ring-1 focus:ring-indigo-500 outline-none text-xs"
+                            className="fi-input"
+                            style={{ width: "5rem" }}
                         >
                             {[10, 20, 30, 40, 50].map((pageSize) => (
-                                <option key={pageSize} value={pageSize} className="bg-[#1a1c23]">
+                                <option key={pageSize} value={pageSize}>
                                     {pageSize}
                                 </option>
                             ))}
                         </select>
                     </div>
-                    <div className="flex w-[100px] items-center justify-center text-xs font-medium">
-                        Halaman {table.getState().pagination.pageIndex + 1} dari{" "}
-                        {table.getPageCount()}
-                    </div>
-                    <div className="flex items-center space-x-2">
-                        <button
-                            type="button"
-                            aria-label="Ke halaman pertama"
-                            onClick={() => table.setPageIndex(0)}
-                            disabled={!table.getCanPreviousPage()}
-                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50"
-                        >
-                            <ChevronsLeft className="h-4 w-4" />
-                        </button>
-                        <button
-                            type="button"
-                            aria-label="Ke halaman sebelumnya"
-                            onClick={() => table.previousPage()}
-                            disabled={!table.getCanPreviousPage()}
-                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50"
-                        >
-                            <ChevronLeft className="h-4 w-4" />
-                        </button>
-                        <button
-                            type="button"
-                            aria-label="Ke halaman berikutnya"
-                            onClick={() => table.nextPage()}
-                            disabled={!table.getCanNextPage()}
-                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50"
-                        >
-                            <ChevronRight className="h-4 w-4" />
-                        </button>
-                        <button
-                            type="button"
-                            aria-label="Ke halaman terakhir"
-                            onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-                            disabled={!table.getCanNextPage()}
-                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50"
-                        >
-                            <ChevronsRight className="h-4 w-4" />
-                        </button>
+                    <span className="fi-tnum">Halaman {table.getState().pagination.pageIndex + 1} dari {table.getPageCount()}</span>
+                    <div className="flex items-center gap-1">
+                        <Button variant="icon" aria-label="Ke halaman pertama" onClick={() => table.setPageIndex(0)} disabled={!table.getCanPreviousPage()}>
+                            <ChevronsLeft className="fi-icon" aria-hidden />
+                        </Button>
+                        <Button variant="icon" aria-label="Ke halaman sebelumnya" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
+                            <ChevronLeft className="fi-icon" aria-hidden />
+                        </Button>
+                        <Button variant="icon" aria-label="Ke halaman berikutnya" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
+                            <ChevronRight className="fi-icon" aria-hidden />
+                        </Button>
+                        <Button variant="icon" aria-label="Ke halaman terakhir" onClick={() => table.setPageIndex(table.getPageCount() - 1)} disabled={!table.getCanNextPage()}>
+                            <ChevronsRight className="fi-icon" aria-hidden />
+                        </Button>
                     </div>
                 </div>
-            </div>}
+            )}
         </div>
     );
 }

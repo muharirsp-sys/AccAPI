@@ -162,7 +162,7 @@ test("Rute hari ini: kunjungan berjalan paling atas, hari order, tautan bertangg
     await expect(daftar.getByRole("listitem")).toHaveCount(4, NAV);
     // Sedang dikunjungi → tidak order → belum → selesai.
     await expect(daftar.getByRole("listitem")).toHaveText([/TOKO D/, /TOKO C/, /TOKO B/, /TOKO A/]);
-    await expect(daftar.getByRole("listitem").first()).toContainText("Sedang dikunjungi · check-in 08.10");
+    await expect(daftar.getByRole("listitem").first()).toContainText(`Sedang dikunjungi · check-in ${HARI_INI.split("-").reverse().join("/")} 08.10`);
     await expect(daftar.getByRole("listitem").first()).toContainText("Lanjutkan");
     await expect(r.getByText(/4 hari order bulan ini/)).toBeVisible();
     await expect(r.getByText(/≥ 2× tidak order bulan ini/)).toBeVisible();
@@ -172,7 +172,7 @@ test("Rute hari ini: kunjungan berjalan paling atas, hari order, tautan bertangg
 
     await daftar.getByRole("button", { name: "Prioritas TOKO B" }).click();
     await expect(r.getByText(/1 tanda prioritas belum dikirim/)).toBeVisible();
-    await r.getByRole("button", { name: "Kirim status rute hari ini…" }).click();
+    await r.getByRole("button", { name: "Kirim status rute…" }).click();
     const dlg = page.getByRole("dialog");
     await expect(dlg.getByRole("heading")).toHaveText("Kirim status 4 toko rute hari ini?");
     await expect(dlg).toContainText("Prioritas1");
@@ -202,7 +202,7 @@ test("Kirim status (P6): rute dibaca ulang sebelum dikirim — status kunjungan 
 
     // Bacaan ulang gagal → tidak ada yang dikirim, galat di dialog.
     opsi.ruteGagal = "500";
-    await r.getByRole("button", { name: "Kirim status rute hari ini…" }).click();
+    await r.getByRole("button", { name: "Kirim status rute…" }).click();
     const dlg = page.getByRole("dialog");
     await dlg.getByRole("button", { name: "Kirim status", exact: true }).click();
     await expect(dlg.getByRole("alert")).toContainText("Rute tidak bisa dibaca ulang sebelum dikirim, jadi tidak ada yang dikirim.");
@@ -241,7 +241,7 @@ test("Rute hari ini: galat ≠ kosong; tanpa sinyal disebut sinyal; kosong = tid
     await expect(r.getByRole("alert")).toContainText("Rute gagal dimuat", NAV);
     await expect(r.getByRole("alert")).toContainText("Ini bukan rute kosong");
     await expect(r.getByText("Tidak ada rute terjadwal")).toHaveCount(0);
-    await expect(r.getByRole("button", { name: "Kirim status rute hari ini…" })).toBeDisabled();
+    await expect(r.getByRole("button", { name: "Kirim status rute…" })).toBeDisabled();
     opsi.ruteGagal = "putus";
     await r.getByRole("alert").getByRole("button", { name: "Coba lagi" }).click();
     await expect(r.getByRole("alert")).toContainText("tanpa sinyal");
@@ -268,13 +268,13 @@ test("Tanggal = WITA: 07.30 WITA (UTC masih kemarin) → rute, kirim status, lap
     const tanggalGet = m.baca.filter((u) => u.pathname.endsWith("/ao-control")).map((u) => u.searchParams.get("date"));
     expect(tanggalGet.length).toBeGreaterThan(0);
     expect(new Set(tanggalGet)).toEqual(new Set(["2026-10-09"]));
-    await r.getByRole("button", { name: "Kirim status rute hari ini…" }).click();
+    await r.getByRole("button", { name: "Kirim status rute…" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Kirim status", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
     expect(postKe(m.tulis, "/ao-control").map((p) => p.date)).toEqual(["2026-10-09", "2026-10-09", "2026-10-09", "2026-10-09"]);
 
     await page.goto("/form-kontrol?tab=laporan", NAV);
-    const lap = page.getByRole("region", { name: "Laporan harian" });
+    const lap = page.getByRole("region", { name: "Laporan kunjungan" });
     await expect(lap.getByText("Jumat, 9 Okt 2026 · WITA")).toBeVisible(NAV);
     expect(new Set(m.baca.filter((u) => u.pathname.endsWith("/reports")).map((u) => u.searchParams.get("date")))).toEqual(new Set(["2026-10-09", "2026-10-08"]));
     // Laporan kemarin (WITA) belum terkirim → strip; salesman bisa mengirimnya lewat pilihan "Kemarin" (tanpa pemilih tanggal bebas).
@@ -285,14 +285,14 @@ test("Tanggal = WITA: 07.30 WITA (UTC masih kemarin) → rute, kirim status, lap
     await page.getByRole("dialog").getByRole("button", { name: "Kirim laporan" }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
     expect(postKe(m.tulis, "/reports")).toEqual([{ salesCode: "S-01", date: "2026-10-09", tindakLanjut: "Kunjungi ulang TOKO C" }]);
-    await expect(lap.getByRole("status").filter({ hasText: "Laporan harian terkirim ke SPV" })).toBeVisible();
+    await expect(lap.getByRole("status").filter({ hasText: "Laporan kunjungan terkirim ke SPV" })).toBeVisible();
     await expect(lap.getByRole("button", { name: "Sudah terkirim" })).toBeDisabled();
 
     await lap.getByRole("button", { name: "Buka laporan kemarin" }).click();
     await expect(lap.getByText("Kamis, 8 Okt 2026 · WITA")).toBeVisible();
     await lap.getByLabel("Tindak lanjut untuk SPV").fill("Laporan terlewat: TOKO B tutup");
     await lap.getByRole("button", { name: "Kirim laporan ke SPV…" }).click();
-    await expect(page.getByRole("dialog").getByRole("heading")).toHaveText("Kirim laporan harian kemarin ke SPV?");
+    await expect(page.getByRole("dialog").getByRole("heading")).toHaveText("Kirim laporan kunjungan kemarin ke SPV?");
     await page.getByRole("dialog").getByRole("button", { name: "Kirim laporan" }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
     expect(postKe(m.tulis, "/reports").at(-1)).toEqual({ salesCode: "S-01", date: "2026-10-08", tindakLanjut: "Laporan terlewat: TOKO B tutup" });
@@ -468,7 +468,7 @@ test("Akun form_kontrol.view tanpa submit: tombol tulis nonaktif dengan alasan, 
     await izinTanpaSubmit(page);
     await page.goto("/form-kontrol?tab=ao", NAV);
     const r = page.getByRole("region", { name: "Rute hari ini" });
-    const kirim = r.getByRole("button", { name: "Kirim status rute hari ini…" });
+    const kirim = r.getByRole("button", { name: "Kirim status rute…" });
     await expect(kirim).toBeDisabled(NAV);
     await expect(kirim).toHaveAttribute("title", /belum punya izin/);
     await page.goto(`/form-kontrol/visit/C-03?salesCode=S-01&principle=GODREJ&date=${HARI_INI}`, NAV);
@@ -504,7 +504,7 @@ test("Toko tidak order + Laporan harian: galat ≠ kosong/nol; simpan alasan per
 
     await page.route("**/api/form-kontrol/reports**", (r) => r.fulfill(json({ error: "Internal server error" }, 500)));
     await page.goto("/form-kontrol?tab=laporan", NAV);
-    const lap = page.getByRole("region", { name: "Laporan harian" });
+    const lap = page.getByRole("region", { name: "Laporan kunjungan" });
     await expect(lap.getByRole("alert")).toContainText("Laporan gagal dimuat", NAV);
     await expect(lap.getByRole("alert")).toContainText("Angka tidak ditampilkan agar tidak terbaca sebagai nol.");
     await expect(lap.getByText("Total toko JKS")).toHaveCount(0);
@@ -531,7 +531,7 @@ test("Laporan (P4): lewat 00.00 WITA tindak lanjut yang diketik tidak hilang dan
     await page.clock.setFixedTime(new Date("2026-10-08T15:59:30Z")); // 23.59.30 WITA 8 Okt
     const m = await mockFk(page, {});
     await page.goto("/form-kontrol?tab=laporan", NAV);
-    const lap = page.getByRole("region", { name: "Laporan harian" });
+    const lap = page.getByRole("region", { name: "Laporan kunjungan" });
     const ta = lap.getByLabel("Tindak lanjut untuk SPV");
     await ta.fill("TOKO C stok penuh, kunjungi ulang Kamis", NAV);
     await page.clock.setFixedTime(new Date("2026-10-08T16:00:30Z")); // 00.00.30 WITA 9 Okt
@@ -605,7 +605,7 @@ test("Order Sales: toko rute, harga per baris, satuan salah + harga belum ada di
     // O1: server menolak simpan tanpa harga, jadi Kirim terkunci selama ada barang tanpa harga.
     const kirim = main.getByRole("button", { name: "Kirim order…" });
     await expect(kirim).toBeDisabled();
-    await expect(kirim).toHaveAttribute("title", "Harga barang 2 belum ada di Accurate untuk cabang ini — belum bisa dikirim");
+    await expect(kirim).toHaveAttribute("title", "Harga barang 2 belum ada di Accurate untuk cabang ini; belum bisa dikirim");
     await page.screenshot({ path: "test-results/salesman/order-harga.png", fullPage: true });
     await b2.getByRole("button", { name: "Hapus barang 2" }).click();
 
@@ -660,7 +660,7 @@ test("Order Sales (P1): jawaban tidak pasti menahan Kirim → tepat 1 POST; Kiri
     await expect(strip).toBeVisible();
     await expect(main.getByRole("list", { name: "Order saya" })).toContainText("#3f2a9c1e"); // order sudah masuk
     await expect(kirim).toBeDisabled();
-    await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu — order terakhir mungkin sudah masuk");
+    await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu; order terakhir mungkin sudah masuk");
     expect(m.kirim).toHaveLength(1);
     // Kirim lagi = pilihan eksplisit dengan peringatan order ganda; Batal tidak mengirim apa pun.
     await strip.getByRole("button", { name: "Kirim lagi…" }).click();
@@ -712,7 +712,7 @@ test("Order Sales (owner 8 Okt): draf di ponsel — muat ulang menawarkan Pulihk
     await tawaran.getByRole("button", { name: "Pulihkan draf" }).click();
     await expect(b1.getByRole("group", { name: "Barang 1 terpilih" })).toContainText("A-1", NAV);
     await expect(kirim).toBeDisabled();
-    await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu — order terakhir mungkin sudah masuk");
+    await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu; order terakhir mungkin sudah masuk");
     expect(m.kirim).toHaveLength(1);
 
     // Terkirim → draf dihapus dari ponsel; muat ulang tidak menawarkan apa pun.

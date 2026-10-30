@@ -151,9 +151,11 @@ test("Data periode: Kosong di langkah 1, lalu Draf dengan panduan 14 kolom sesua
     const lanjut = main.getByRole("button", { name: "Lanjut" });
     await expect(lanjut).toBeDisabled();
     await expect(main.locator(".fi-ftb")).toContainText("Pilih jenis data");
-    // Satu periode dari URL: tidak ada pemilih Bulan/Tahun sendiri.
-    await expect(main.getByRole("combobox", { name: /Bulan|Tahun/ })).toHaveCount(0);
-    await expect(main.locator(".fi-fbar").getByLabel("Periode").first()).toHaveValue("2026-10");
+    // Satu periode dari URL: hanya pasangan Bulan + Tahun di saringan bersama (No 122), tidak ada pemilih Bulan/Tahun sendiri.
+    const grupPeriode = main.getByRole("group", { name: "Periode" });
+    await expect(main.getByRole("combobox", { name: /^(Bulan|Tahun)$/ })).toHaveCount(2 * await grupPeriode.count());
+    await expect(grupPeriode.first().getByRole("combobox", { name: "Bulan" })).toHaveValue("10");
+    await expect(grupPeriode.first().getByRole("combobox", { name: "Tahun" })).toHaveValue("2026");
 
     await main.getByRole("group", { name: "Jenis data" }).getByRole("button", { name: "Target bulanan" }).click();
     for (const kolom of ["Kode Salesman", "Channel", "SPLM Value", "Tipe Sales", "Status Insentif"]) {
@@ -390,7 +392,7 @@ test("Pengaturan: Default — anchor bar, konstanta, hierarki, akun belum ditaut
     for (const a of ["Konstanta", "Penyebut AO", "Cabang NILAI_JUAL", "SM dalam skema", "Hierarki", "Akun belum ditautkan", "Riwayat"]) {
         await expect(anchors.getByRole("link", { name: a, exact: true })).toBeVisible();
     }
-    await expect(main.getByRole("spinbutton", { name: "Pool 1 principle" })).toHaveValue("1000000");
+    await expect(main.getByRole("textbox", { name: "Pool 1 principle" })).toHaveValue("1.000.000"); // rupiah berformat ribuan (No 122)
     await expect(main.getByRole("group", { name: "Penyebut AO GT/TT" }).getByRole("button", { name: "240 (tetap)" })).toHaveAttribute("aria-pressed", "true");
     await expect(main.getByRole("textbox", { name: "Cabang beracuan NILAI_JUAL" })).toHaveValue("VINDA\nABC");
     await expect(main.getByRole("table", { name: "Klaim salesman tertunda" })).toContainText("MARTEN");
@@ -399,7 +401,7 @@ test("Pengaturan: Default — anchor bar, konstanta, hierarki, akun belum ditaut
     await expect(main.getByRole("button", { name: "Simpan", exact: true })).toBeDisabled();
     await expect(main.locator(".fi-ftb")).toContainText("Belum ada perubahan konstanta");
     // AM-045 sudah ada: versi = waktu simpan terakhir (WITA), bukan catatan usulan lagi. BL-33 (riwayat) tetap usulan.
-    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 2 Sep 14.05 WITA");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 02/09/2026 14.05 WITA");
     await expect(main.getByRole("complementary", { name: "Usulan AM-045" })).toHaveCount(0);
     await expect(main.getByRole("complementary", { name: "Usulan BL-33" })).toBeVisible();
     await page.screenshot({ path: "test-results/data/atur-default.png", fullPage: true });
@@ -411,7 +413,7 @@ test("Pengaturan: GET settings gagal → editor konstanta dikunci, hierarki teta
     await page.goto("/insentif-sales/pengaturan", NAV);
     const main = page.locator("main");
     await expect(main.getByRole("alert").filter({ hasText: "editor dikunci" }).first()).toBeVisible(NAV);
-    await expect(main.getByRole("spinbutton", { name: "Pool 1 principle" })).toHaveCount(0);
+    await expect(main.getByRole("textbox", { name: "Pool 1 principle" })).toHaveCount(0);
     await expect(main.getByRole("button", { name: "Isi dengan bawaan" })).toBeDisabled();
     await expect(main.getByRole("textbox", { name: "Cabang beracuan NILAI_JUAL" })).toBeDisabled();
     await expect(main.getByRole("button", { name: "Simpan", exact: true })).toBeDisabled();
@@ -425,8 +427,8 @@ test("Pengaturan (a): GET 200 dengan konstanta gagal_baca → editor dikunci, an
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/insentif-sales/pengaturan", NAV);
     const main = page.locator("main");
-    await expect(main.getByRole("alert").filter({ hasText: "Konstanta tersimpan gagal dibaca — editor dikunci" }).first()).toBeVisible(NAV);
-    await expect(main.getByRole("spinbutton", { name: "Pool 1 principle" })).toHaveCount(0);
+    await expect(main.getByRole("alert").filter({ hasText: "Konstanta tersimpan gagal dibaca; editor dikunci" }).first()).toBeVisible(NAV);
+    await expect(main.getByRole("textbox", { name: "Pool 1 principle" })).toHaveCount(0);
     await expect(main.locator("#konstanta").getByRole("button", { name: "Coba lagi" })).toBeVisible();
     await expect(main.getByRole("button", { name: "Isi dengan bawaan" })).toBeDisabled();
     await expect(main.getByRole("button", { name: "Isi dengan bawaan" })).toHaveAttribute("title", /gagal dibaca/);
@@ -447,7 +449,7 @@ test("Pengaturan (b): PATCH 409 → dialog konflik, draf basi tidak terkirim lag
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/insentif-sales/pengaturan", NAV);
     const main = page.locator("main");
-    await main.getByRole("spinbutton", { name: "Pool 1 principle" }).fill("1100000", NAV);
+    await main.getByRole("textbox", { name: "Pool 1 principle" }).fill("1100000", NAV);
     await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
     await page.getByRole("dialog", { name: "Simpan 1 perubahan konstanta?" }).getByRole("button", { name: "Simpan", exact: true }).click();
 
@@ -461,10 +463,10 @@ test("Pengaturan (b): PATCH 409 → dialog konflik, draf basi tidak terkirim lag
     await expect(main.locator(".fi-ftb")).toContainText("Konstanta sudah diubah admin lain");
     const getSebelum = opsi.getSettings ?? 0;
     await main.getByRole("status").filter({ hasText: "Konstanta sudah diubah admin lain" }).getByRole("button", { name: "Muat ulang" }).click();
-    await expect(main.getByRole("spinbutton", { name: "Pool 1 principle" })).toHaveValue("1250000");
+    await expect(main.getByRole("textbox", { name: "Pool 1 principle" })).toHaveValue("1.250.000");
     expect(opsi.getSettings).toBeGreaterThan(getSebelum);
     await expect(page.locator(".fi-draft")).toHaveCount(0);
-    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.20 WITA");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 09/10/2026 10.20 WITA");
     expect(tulis.filter((r) => r.method() === "PATCH")).toHaveLength(1);
 });
 
@@ -474,12 +476,12 @@ test("Pengaturan (skenario 1): draf dari versi lama tetap membawa versi DASAR wa
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/insentif-sales/pengaturan", NAV);
     const main = page.locator("main");
-    await main.getByRole("spinbutton", { name: "Pool 1 principle" }).fill("1100000", NAV); // draf dari versi 02/09
+    await main.getByRole("textbox", { name: "Pool 1 principle" }).fill("1100000", NAV); // draf dari versi 02/09
     // Admin lain menyimpan mix2; lalu admin ini mengganti penyebut AO — jawabannya membawa versi & angka admin lain.
     opsi.adminLainSebelumPatch = true;
     await main.getByRole("group", { name: "Penyebut AO GT/TT" }).getByRole("button", { name: "Target AO dari berkas" }).click();
     await page.getByRole("dialog", { name: /Ubah penyebut AO GT\/TT ke Target AO/ }).getByRole("button", { name: "Ubah penyebut AO" }).click();
-    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.20 WITA");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 09/10/2026 10.20 WITA");
     await main.locator(".fi-ftb").getByRole("button", { name: /^Simpan \d+ perubahan…$/ }).click();
     await page.getByRole("dialog", { name: /^Simpan \d+ perubahan konstanta\?$/ }).getByRole("button", { name: "Simpan", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Konstanta sudah diubah admin lain" })).toBeVisible();
@@ -495,7 +497,7 @@ test("Pengaturan (skenario 2): PATCH konstanta tanpa jawaban → hasilnya belum 
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/insentif-sales/pengaturan", NAV);
     const main = page.locator("main");
-    await main.getByRole("spinbutton", { name: "Pool 1 principle" }).fill("1100000", NAV);
+    await main.getByRole("textbox", { name: "Pool 1 principle" }).fill("1100000", NAV);
     await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
     // Judul dialog ikut berubah setelah muat ulang (angka admin lain menambah selisih), jadi dicari dengan pola.
     const simpan = page.getByRole("dialog", { name: /^Simpan \d+ perubahan konstanta\?$/ });
@@ -505,8 +507,8 @@ test("Pengaturan (skenario 2): PATCH konstanta tanpa jawaban → hasilnya belum 
     await expect.poll(() => opsi.getSettings ?? 0).toBeGreaterThan(1);
     await simpan.getByRole("button", { name: "Batal" }).click();
     // Setelah dimuat ulang: draf tetap terlihat untuk diperiksa, tetapi dasarnya tetap versi lama — bukan versi hasil muat ulang.
-    await expect(main.getByRole("spinbutton", { name: "Pool 1 principle" })).toHaveValue("1100000");
-    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.20 WITA");
+    await expect(main.getByRole("textbox", { name: "Pool 1 principle" })).toHaveValue("1.100.000");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 09/10/2026 10.20 WITA");
     expect(tulis.filter((r) => r.method() === "PATCH")).toHaveLength(1);
     await main.locator(".fi-ftb").getByRole("button", { name: /^Simpan \d+ perubahan…$/ }).click();
     await page.getByRole("dialog", { name: /^Simpan \d+ perubahan konstanta\?$/ }).getByRole("button", { name: "Simpan", exact: true }).click();
@@ -523,7 +525,7 @@ test("Pengaturan: PATCH konstanta tertulis tetapi jawabannya hilang → muat ula
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/insentif-sales/pengaturan", NAV);
     const main = page.locator("main");
-    const pool = main.getByRole("spinbutton", { name: "Pool 1 principle" });
+    const pool = main.getByRole("textbox", { name: "Pool 1 principle" });
     await pool.fill("1100000", NAV);
     await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
     // Judul dialog ikut berubah saat setelan dimuat ulang (selisih jadi 0), jadi dicari dengan pola.
@@ -532,7 +534,7 @@ test("Pengaturan: PATCH konstanta tertulis tetapi jawabannya hilang → muat ula
     await expect(simpan.getByRole("alert")).toContainText("Hasilnya belum pasti");
     await simpan.getByRole("button", { name: "Batal" }).click();
     // Setelah dimuat ulang angka tersimpan = draf (permintaan tadi ternyata tertulis): tidak ada perubahan tersisa.
-    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.30 WITA");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 09/10/2026 10.30 WITA");
     await expect(main.locator(".fi-ftb")).toContainText("Belum ada perubahan konstanta");
     await pool.fill("1200000");
     await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
@@ -550,8 +552,18 @@ test("Pengaturan: simpan konstanta lewat dialog (payload diperiksa) dan tautkan 
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/insentif-sales/pengaturan", NAV);
     const main = page.locator("main");
-    const pool = main.getByRole("spinbutton", { name: "Pool 1 principle" });
-    await pool.fill("1100000", NAV);
+    const pool = main.getByRole("textbox", { name: "Pool 1 principle" });
+    // No 122: teks tidak sah ditolak dengan pesan dan menahan Simpan (tidak jadi 0); "1.100.000" bernilai sama dengan "1100000".
+    await expect(pool).toHaveValue("1.000.000", NAV);
+    await pool.focus();
+    await expect(pool).toHaveValue("1000000"); // tinjauan K3 S-1: saat fokus angka polos, ribuan sesudah blur
+    await pool.fill("1.100.000,555");
+    await expect(main.getByText("Maksimal 2 angka di belakang koma.")).toBeVisible();
+    await expect(main.locator(".fi-ftb")).toContainText("1 isian rupiah belum sah; perbaiki dulu");
+    await pool.fill("1.000.00"); // sisa sunting "1.000.000": ditolak, bukan Rp 1.000
+    await expect(main.getByText("Titik hanya pemisah ribuan", { exact: false })).toBeVisible();
+    await expect(main.locator(".fi-ftb")).toContainText("1 isian rupiah belum sah; perbaiki dulu");
+    await pool.fill("1.100.000");
     await expect(page.locator(".fi-draft")).toContainText("Draf belum disimpan");
     await expect(main.locator(".fi-ftb")).toContainText("1 konstanta diubah, belum disimpan");
     await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
@@ -564,8 +576,8 @@ test("Pengaturan: simpan konstanta lewat dialog (payload diperiksa) dan tautkan 
     // (c) AM-045: PATCH konstanta membawa versi yang dimuat GET; route menolak 400 tanpa versi.
     expect(patch!.postDataJSON()).toEqual({ konstanta: { ...KONSTANTA, gt: { ...KONSTANTA.gt, pool1: 1_100_000 } }, konstantaVersi: VERSI });
     // Versi berikutnya diambil dari jawaban PATCH, bukan versi lama (kalau tidak, simpan kedua selalu 409).
-    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.30 WITA");
-    await main.getByRole("spinbutton", { name: "Pool 1 principle" }).fill("1200000");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 09/10/2026 10.30 WITA");
+    await main.getByRole("textbox", { name: "Pool 1 principle" }).fill("1200000");
     await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
     await page.getByRole("dialog", { name: "Simpan 1 perubahan konstanta?" }).getByRole("button", { name: "Simpan", exact: true }).click();
     await expect(page.locator(".fi-draft")).toHaveCount(0);
@@ -588,7 +600,7 @@ test("Pengaturan di ponsel 390 px: tanpa gulir menyamping", async ({ page }) => 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/insentif-sales/pengaturan", NAV);
     const main = page.locator("main");
-    await expect(main.getByRole("spinbutton", { name: "Pool 1 principle" })).toBeVisible(NAV);
+    await expect(main.getByRole("textbox", { name: "Pool 1 principle" })).toBeVisible(NAV);
     await expect(main.getByRole("list", { name: "Akun belum ditautkan" })).toContainText("Bayu Saputra");
     await noOverflow(page);
     await page.screenshot({ path: "test-results/data/atur-ponsel.png", fullPage: true });

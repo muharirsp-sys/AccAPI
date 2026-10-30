@@ -260,7 +260,7 @@ const TIDAK_PASTI: Array<[string, Jawab]> = [
     ["502 HTML gateway", { status: 502, html: "<html><body><h1>502 Bad Gateway</h1>nginx</body></html>" }],
     ["koneksi putus", "putus"],
     ["200 state unknown (timeout)", { status: 200, body: { attemptId: "at-1", state: "unknown", accurateId: "", accurateNumber: "", message: "tanpa jawaban (TimeoutError). Coba lagi.", persisted: true } }],
-    ["409 unknown", { status: 409, body: { error: "Ada attempt posting yang belum pasti untuk faktur ini — periksa Accurate lalu selesaikan manual.", live: { attemptId: "at-0", state: "unknown", accurateId: "", accurateNumber: "", targetDbId: "DB-1", sameRecord: true, sameTarget: true, stale: true }, generation: 0, currentGeneration: 0 } }],
+    ["409 unknown", { status: 409, body: { error: "Ada attempt posting yang belum pasti untuk faktur ini. Periksa Accurate lalu selesaikan manual.", live: { attemptId: "at-0", state: "unknown", accurateId: "", accurateNumber: "", targetDbId: "DB-1", sameRecord: true, sameTarget: true, stale: true }, generation: 0, currentGeneration: 0 } }],
     // Putaran 2 A: claimed:false dengan kode 409 yang TIDAK terdaftar (konflik attempt kelak) tetap tidak pasti — bukan "failed".
     ["409 claimed:false kode lain", { status: 409, body: { code: "attempt_conflict", claimed: false, live: null, error: "Konflik attempt posting untuk faktur ini (uji)." } }],
 ];
@@ -269,7 +269,7 @@ for (const [nama, j] of TIDAK_PASTI) {
         const m = await siapkan(page, { command: [j] });
         const { main, detail, dlg } = await bukaDialogPosting(page);
         await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
-        await expect(main.getByRole("status").filter({ hasText: "Hasilnya belum pasti — DRAFT-0418 dikunci." })).toBeVisible(NAV);
+        await expect(main.getByRole("status").filter({ hasText: "Hasilnya belum pasti: DRAFT-0418 dikunci." })).toBeVisible(NAV);
         await expect(dlg).toBeHidden();
         expect(m.update.at(-1)).toMatchObject({ accurate_post_status: "unknown", status_pembayaran: "Sudah Transfer" });
         await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled(NAV);
@@ -286,13 +286,13 @@ for (const [nama, j] of TIDAK_PASTI) {
 
 test("Putaran 2 B-6: 409 reopened_use_repost {claimed:false} = tidak terkirim (catatan gagal, tidak dikunci) — bukan tidak pasti", async ({ page }) => {
     const m = await siapkan(page, { command: [{ status: 409, body: { code: "reopened_use_repost", claimed: false, live: null, generation: 0, currentGeneration: 1,
-        error: "Pembayaran untuk faktur ini sudah dibuka ulang untuk posting ulang (repost). Posting biasa ditolak — posting ulang belum tersedia di versi ini." } }] });
+        error: "Pembayaran untuk faktur ini sudah dibuka ulang untuk posting ulang (repost). Posting biasa ditolak: posting ulang belum tersedia di versi ini." } }] });
     const { main, detail, dlg } = await bukaDialogPosting(page);
     await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
     await expect(main.getByRole("alert").filter({ hasText: "Tidak ada yang dikirim ke Accurate untuk DRAFT-0418." })).toContainText("dibuka ulang untuk posting ulang", NAV);
     expect(m.update.at(-1)).toMatchObject({ accurate_post_status: "failed" });
     expect(m.update.some((u) => u.accurate_post_status === "unknown")).toBe(false);
-    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toHaveCount(0, NAV);
+    await expect(detail.getByText("Posting tidak pasti; pengajuan dikunci.")).toHaveCount(0, NAV);
     expect(m.command).toHaveLength(1);
 });
 
@@ -307,7 +307,7 @@ test("A-2/B-2: terposting lalu catatan Finance gagal → belum pasti + nomor PP;
     });
     const { main, detail, dlg } = await bukaDialogPosting(page);
     await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
-    const strip = main.getByRole("status").filter({ hasText: "Hasilnya belum pasti — DRAFT-0418 dikunci." });
+    const strip = main.getByRole("status").filter({ hasText: "Hasilnya belum pasti: DRAFT-0418 dikunci." });
     await expect(strip).toContainText("Accurate menjawab Purchase Payment PP/2610/0031", NAV);
     expect(m.update.map((u) => u.accurate_post_status)).toEqual(["posted", "unknown"]);
     // Muat ulang: server = terposting (catatan tertinggal). Kunci lokal tab ini TIDAK boleh membuat tombolnya buntu.
@@ -331,7 +331,7 @@ test("A-3: attempt posted himpunan faktur sama dari record lain = TIDAK PASTI (b
     const daftar = main.getByRole("list", { name: "Daftar pengajuan" });
     await expect(daftar.getByRole("button", { name: /DRAFT-0418/ })).toContainText("Terposting PP/2610/0031");
     await expect(daftar.getByRole("button", { name: /DRAFT-0419/ })).toContainText("Posting tidak pasti");
-    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+    await expect(detail.getByText("Posting tidak pasti; pengajuan dikunci.")).toBeVisible(NAV);
     await expect(detail.getByRole("button", { name: "Catat hasil posting…" })).toHaveCount(0);
     await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled();
 });
@@ -402,7 +402,7 @@ test("A-1 database dikunci ke kiriman: dialog membaca database SEGAR; berganti s
     expect(m.command[0].expectedDatabaseId).toBe("DB-1");
     expect(m.update.at(-1)).toMatchObject({ accurate_post_status: "failed" });
     await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeEnabled(NAV);
-    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toHaveCount(0);
+    await expect(detail.getByText("Posting tidak pasti; pengajuan dikunci.")).toHaveCount(0);
 });
 
 test("Selesaikan: 'Tidak ada' nonaktif < 2 menit; 'Ada' + nomor → resolve + catatan posted; 404 no_open_attempt ditoleransi", async ({ page }) => {
@@ -414,7 +414,7 @@ test("Selesaikan: 'Tidak ada' nonaktif < 2 menit; 'Ada' + nomor → resolve + ca
         resolve: [{ status: 404, body: { ok: false, code: "no_open_attempt", error: "tidak ada attempt terbuka untuk subjek ini" } }],
     });
     const { main, detail } = await bukaPengajuan(page);
-    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+    await expect(detail.getByText("Posting tidak pasti; pengajuan dikunci.")).toBeVisible(NAV);
     await expect(detail).not.toContainText("Coba lagi.");
     await expect(detail.getByRole("button", { name: "Tandai belum transfer" })).toBeDisabled();
     await detail.getByRole("button", { name: "Selesaikan…" }).click();
@@ -444,7 +444,7 @@ test("Putaran 2 B-3: dialog Selesaikan membaca sesi Accurate SEGAR — berganti 
         attempts: { [sub]: attempt({ state: "sending", status: "stale", stale: true, ageSeconds: 600 }) },
     });
     const { detail } = await bukaPengajuan(page);
-    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+    await expect(detail.getByText("Posting tidak pasti; pengajuan dikunci.")).toBeVisible(NAV);
     m.sesiDb = { id: "DB-2", alias: "PT CONTOH B" }; // tab lain membuka database B setelah daftar dimuat
     await detail.getByRole("button", { name: "Selesaikan…" }).click();
     const dlg = page.getByRole("dialog", { name: "Selesaikan posting tidak pasti" });
@@ -545,7 +545,7 @@ test("B-4: Selesaikan separuh jalan (resolve tercatat, catatan Finance 400) → 
     await expect(main.getByText(/Ulangi/)).toHaveCount(0);
     await expect.poll(() => m.dataDates.length, NAV).toBeGreaterThan(muat);
     expect(m.resolve).toHaveLength(1);
-    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+    await expect(detail.getByText("Posting tidak pasti; pengajuan dikunci.")).toBeVisible(NAV);
 });
 
 test("B-6: gagal muat ulang dengan data masih tampil = tulis terkunci berlasan; galat JSON FastAPI tanpa 'localhost'", async ({ page }) => {
@@ -573,16 +573,16 @@ test("B-6: kunci lokal — kiriman putus sebelum server mencatat apa pun & catat
     const a = await context.newPage();
     const { main, detail, dlg } = await bukaDialogPosting(a);
     await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
-    await expect(main.getByRole("status").filter({ hasText: "Hasilnya belum pasti — DRAFT-0418 dikunci." })).toBeVisible(NAV);
+    await expect(main.getByRole("status").filter({ hasText: "Hasilnya belum pasti: DRAFT-0418 dikunci." })).toBeVisible(NAV);
     expect(m.update.map((u) => u.accurate_post_status)).toEqual(["unknown"]); // catatan ditolak server: tidak ada yang tersimpan
     // Setelah muat ulang server tidak tahu apa-apa (tanpa attempt, tanpa catatan) — hanya kunci lokal tab ini yang menahan.
-    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+    await expect(detail.getByText("Posting tidak pasti; pengajuan dikunci.")).toBeVisible(NAV);
     await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled();
     await expect(detail.getByRole("button", { name: "Selesaikan…" })).toBeEnabled();
     const b = await context.newPage();
     const { detail: detailB } = await bukaPengajuan(b);
     await expect(b.locator("main").getByRole("list", { name: "Daftar pengajuan" }).getByRole("button", { name: /DRAFT-0418/ })).toContainText("Belum diposting", NAV);
-    await expect(detailB.getByText("Posting tidak pasti — pengajuan dikunci.")).toHaveCount(0);
+    await expect(detailB.getByText("Posting tidak pasti; pengajuan dikunci.")).toHaveCount(0);
 });
 
 test("Putaran 2 B-4: kunci lokal lepas saat muat ulang menunjukkan status final dari orang lain; catatan gagal tanpa penyelesaian baru tetap dikunci", async ({ page }) => {
@@ -590,8 +590,8 @@ test("Putaran 2 B-4: kunci lokal lepas saat muat ulang menunjukkan status final 
     const m = await siapkan(page, { commandTakSampai: true, update: [{ status: 500, body: { ok: false, error: "Gagal menulis data pembayaran." } }] });
     const { main, detail, dlg } = await bukaDialogPosting(page);
     await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
-    await expect(main.getByRole("status").filter({ hasText: "Hasilnya belum pasti — DRAFT-0418 dikunci." })).toBeVisible(NAV);
-    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+    await expect(main.getByRole("status").filter({ hasText: "Hasilnya belum pasti: DRAFT-0418 dikunci." })).toBeVisible(NAV);
+    await expect(detail.getByText("Posting tidak pasti; pengajuan dikunci.")).toBeVisible(NAV);
     const muatUlang = async () => {
         const n = m.dataDates.length;
         await main.getByRole("button", { name: "Muat ulang", exact: true }).click();
@@ -602,13 +602,13 @@ test("Putaran 2 B-4: kunci lokal lepas saat muat ulang menunjukkan status final 
     // Catatan "gagal" tanpa penyelesaian baru (mis. tab lain): belum bukti apa pun tentang kiriman tab ini — tetap dikunci.
     Object.assign(m.rows[0], { status_pembayaran: "Sudah Transfer", transfer_date: HARI_INI, transfer_proof: bukti, accurate_post_status: "failed", accurate_post_error: "Accurate menolak: vendor" });
     await muatUlang();
-    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+    await expect(detail.getByText("Posting tidak pasti; pengajuan dikunci.")).toBeVisible(NAV);
     await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled();
     // Finance lain menyelesaikannya "Tidak ada di Accurate" (penyelesaian baru): status final → kunci lokal lepas.
     m.rows[0].accurate_post_resolution = { from: "unknown", to: "failed", source: "manual_attestation", by: "betterauth|finance|finance.b@example.invalid", at: `${HARI_INI} 09:10:00`, note: "dicek manual di Accurate: tidak ditemukan — Pembayaran Pembelian" };
     m.rows[0].accurate_post_error = "dicek manual: tidak ada di Accurate";
     await muatUlang();
-    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toHaveCount(0, NAV);
+    await expect(detail.getByText("Posting tidak pasti; pengajuan dikunci.")).toHaveCount(0, NAV);
     await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeEnabled(NAV);
 });
 
@@ -649,7 +649,7 @@ test("Putaran 2 B-1: tanpa izin selesaikan — terposting lalu catatan Finance g
     await tanpaIzin(page, ["finance.resolve_unknown"]);
     const { main, detail, dlg } = await bukaDialogPosting(page);
     await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
-    const strip = main.getByRole("status").filter({ hasText: "Hasilnya belum pasti — DRAFT-0418 dikunci." });
+    const strip = main.getByRole("status").filter({ hasText: "Hasilnya belum pasti: DRAFT-0418 dikunci." });
     await expect(strip).toContainText("hanya Finance yang berwenang mencatatnya", NAV);
     await expect(strip).not.toContainText(/tekan Catat hasil posting/i);
     expect(m.update.map((u) => u.accurate_post_status)).toEqual(["posted", "unknown"]);
@@ -722,6 +722,11 @@ test("Ponsel 390 px: daftar ↔ detail tanpa gulir menyamping; draf tujuan ditan
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: "test-results/fiori-finance-ponsel.png", fullPage: true });
     await detail.getByRole("button", { name: "Simpan tujuan" }).click();
+    // Audit desain 001 No 11: simpan tujuan lewat ConfirmDialog; tidak ada tulis sebelum dikonfirmasi.
+    const konfirmTujuan = page.getByRole("dialog", { name: "Simpan tujuan pembayaran PRINCIPLE B?" });
+    await expect(konfirmTujuan).toBeVisible();
+    expect(m.mapping).toEqual([]);
+    await konfirmTujuan.getByRole("button", { name: "Simpan tujuan" }).click();
     await expect(main.getByRole("status").filter({ hasText: "Tujuan PRINCIPLE B tersimpan." })).toBeVisible(NAV);
     expect(m.mapping).toEqual([{ principle: "PRINCIPLE B", vendorNo: "V-0031", vendorName: "PRINCIPLE B", bankNo: "1101-01", bankName: "KAS BESAR" }]);
     await expect(detail.getByText("Draf belum disimpan")).toHaveCount(0, NAV);

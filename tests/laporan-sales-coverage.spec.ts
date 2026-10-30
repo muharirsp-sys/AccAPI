@@ -50,7 +50,7 @@ test("siap: ringkasan, tabel Toko/Principal/Salesman, saringan principal memuat 
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/laporan-sales#coverage", NAV);
     const main = page.locator("main");
-    await expect(main.getByRole("tab", { name: "Coverage Ganda" })).toHaveAttribute("aria-selected", "true", NAV);
+    await expect(main.getByRole("navigation", { name: "Jenis laporan" }).getByRole("link", { name: "Coverage Ganda" })).toHaveAttribute("aria-current", "page", NAV);
     const tabel = main.getByRole("table", { name: NAMA_TABEL });
     await expect(tabel).toBeVisible(NAV);
     await expect(main.locator("p[aria-live=polite]")).toHaveText("2 toko dilayani lebih dari satu salesman dari 40 toko JKS.");
@@ -165,9 +165,9 @@ test("tanpa izin / belum tertaut hierarki: penolakan 403 berpesan jelas, tanpa '
     await expect(main.getByRole("heading", { name: "Coverage Ganda tidak bisa dibuka" })).toBeVisible(NAV);
     await expect(main.getByText("Akun Anda tidak punya izin untuk ini.")).toBeVisible();
     await expect(main.getByRole("button", { name: "Coba lagi" })).toHaveCount(0);
-    tolak = json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki — hubungi Admin." }, 403);
+    tolak = json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki. Hubungi Admin." }, 403);
     await main.getByRole("button", { name: "Muat ulang" }).click();
-    await expect(main.getByText("Akun belum tertaut ke hierarki — hubungi Admin.")).toBeVisible(NAV);
+    await expect(main.getByText("Akun belum tertaut ke hierarki. Hubungi Admin.")).toBeVisible(NAV);
     await expect(main.getByRole("button", { name: "Coba lagi" })).toHaveCount(0);
 });
 

@@ -5,11 +5,11 @@
  *     tercatat) → Setujui (duplikat WAJIB centang "pemilik toko memang sama") / Tolak (alasan wajib);
  *   grup Admin (izin form_kontrol.noo_tautkan) = antrean "daftarkan di Accurate" (data siap salin) → Tautkan pelanggan hasil sync (saran
  *     nama/alamat cabang sama + cari) → terdaftar. Manager/Admin Sales melihat tanpa KTP dan tanpa aksi.
- *   Galat memuat ulang TIDAK tampil sebagai kosong/hasil baru (peninjau B T1): strip galat + data sebelumnya ditandai + aksi dikunci.
+ *   Galat memuat ulang TIDAK tampil sebagai kosong/hasil baru: strip galat + data sebelumnya ditandai + aksi dikunci.
  *   Daftar: status aktif selalu lengkap; selesai (terdaftar/ditolak) terpotong 300 terbaru → `selesaiTerpotong` diberitahukan.
  * Caller: ../FormKontrol.tsx (TAB.noo).
- * Dependensi: GET/POST /api/form-kontrol/noo/**, ../shared (Scope, ambilFk, jamWita), ../lapangan (kirimFk, GagalKirim), components/fiori/*,
- *   components/ui/Dialog, lib/form-kontrol/noo-aturan (LABEL_STATUS_NOO), lib/rekapan-nota/ui (tanggalPendek).
+ * Dependensi: GET/POST /api/form-kontrol/noo/**, ../shared (Scope, ambilFk), ../lapangan (kirimFk, GagalKirim), components/fiori/*,
+ *   components/ui/Dialog, lib/form-kontrol/noo-aturan (LABEL_STATUS_NOO), lib/rekapan-nota/ui (tanggalPendek), lib/tampil (KOSONG, waktuWita).
  * Main Functions: TabNoo (default), RincianNoo, DialogKtp (selalu terpasang → fokus kembali ke "Lihat KTP"; isi KTP hanya selama terbuka).
  * Side Effects: HTTP baca/tulis di atas; clipboard (Salin). KTP lengkap hanya di memori selama dialog terbuka (dibuang saat ditutup).
  */
@@ -22,7 +22,8 @@ import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori
 import Dialog from "@/components/ui/Dialog";
 import { LABEL_STATUS_NOO, type StatusNoo } from "@/lib/form-kontrol/noo-aturan";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
-import { NOO_BERUBAH, ambilFk, jamWita, type Scope } from "../shared";
+import { KOSONG, waktuWita } from "@/lib/tampil";
+import { NOO_BERUBAH, ambilFk, type Scope } from "../shared";
 import { GagalKirim, kirimFk } from "../lapangan";
 
 type Boleh = { putuskan: boolean; ktp: boolean; tautkan: boolean; kunjungi: boolean };
@@ -40,6 +41,8 @@ type Saran = { id: number; customerNo: string; name: string; alamat: string | nu
 type Pembanding = { kode: string; namaToko: string; status: StatusNoo; salesCode: string; alamat: string; customerNo: string | null } | null;
 type Daftar = { rows: NooRingkas[]; selesaiTerpotong: boolean; batasSelesai: number };
 
+/** Bendera GPS dari server (kode) dalam bahasa tugas; kode di luar daftar tidak ditampilkan mentah. */
+const BENDERA_GPS: Record<string, string> = { akurasi_rendah: "akurasi rendah (> 1 km)", tanpa_lokasi: "tanpa lokasi" };
 const NADA: Record<StatusNoo, Tone> = { menunggu_spv: "warn", disetujui: "info", ditolak: "neg", terdaftar: "pos" };
 const badge = (s: StatusNoo) => <StatusBadge tone={NADA[s]}>{LABEL_STATUS_NOO[s]}</StatusBadge>;
 
@@ -55,7 +58,7 @@ export default function TabNoo({ scope }: { scope: Scope }) {
         ? [["saya", "Pengajuan saya", rows]]
         : [
             ["menunggu", "Menunggu persetujuan", rows.filter((r) => r.status === "menunggu_spv")],
-            ["disetujui", "Disetujui — daftarkan di Accurate", rows.filter((r) => r.status === "disetujui")],
+            ["disetujui", "Disetujui, daftarkan di Accurate", rows.filter((r) => r.status === "disetujui")],
             ["selesai", "Terdaftar / ditolak", rows.filter((r) => r.status === "terdaftar" || r.status === "ditolak")],
         ];
 
@@ -141,7 +144,7 @@ function RincianNoo({ id, onBerubah }: { id: string; onBerubah: () => void }) {
     if (!load.data) return load.status === "galat" ? <ErrorState title="Rincian belum bisa ditampilkan" message={load.error} onRetry={muatUlang} /> : <Skeleton rows={5} label="Memuat rincian" />;
     const { row: r, pembanding, saran } = load.data;
     const peta = `https://www.google.com/maps?q=${r.lat},${r.lng}`;
-    // Peninjau B T1: data yang tampil BUKAN hasil terbaru (muat ulang gagal / sedang memuat) → aksi tulis dikunci, galat disebut terang.
+    // Data yang tampil BUKAN hasil terbaru (muat ulang gagal / sedang memuat) → aksi tulis dikunci, galat disebut terang.
     const usang = load.status === "galat";
     const kunciAksi = usang ? "Rincian gagal dimuat ulang; muat ulang dulu." : load.status === "memuat" ? "Memuat ulang rincian…" : undefined;
 
@@ -152,7 +155,7 @@ function RincianNoo({ id, onBerubah }: { id: string; onBerubah: () => void }) {
             // Ditolak (mis. sudah diputuskan orang lain) atau tidak pasti → rincian & daftar dimuat ulang; dialog menampilkan kalimatnya.
             muatUlang(); onBerubah();
             throw e instanceof GagalKirim && e.tidakPasti
-                ? new Error(`Jawaban server belum pasti — belum diketahui tersimpan atau belum. Rincian dimuat ulang: bila statusnya belum berubah, tekan ${tombol} lagi (aman, tidak tercatat dua kali).`)
+                ? new Error(`Jawaban server belum pasti: belum diketahui tersimpan atau belum. Rincian dimuat ulang. Bila statusnya belum berubah, tekan ${tombol} lagi (aman, tidak tercatat dua kali).`)
                 : e;
         }
         setDialog(null); setPesan(berhasil); setGalat(""); muatUlang(); onBerubah();
@@ -170,7 +173,7 @@ function RincianNoo({ id, onBerubah }: { id: string; onBerubah: () => void }) {
         <div className="grid gap-4">
             {usang && (
                 <MessageStrip tone="neg" title="Gagal memuat ulang rincian.">
-                    {load.error} Yang tampil hasil sebelumnya — status dan pilihan pelanggan bisa sudah berubah; aksi dikunci sampai muat ulang berhasil.{" "}
+                    {load.error} Yang tampil hasil sebelumnya. Status dan pilihan pelanggan bisa sudah berubah; aksi dikunci sampai muat ulang berhasil.{" "}
                     <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatUlang}>Muat ulang</button>
                 </MessageStrip>
             )}
@@ -213,10 +216,10 @@ function RincianNoo({ id, onBerubah }: { id: string; onBerubah: () => void }) {
                         ["Pemilik", r.boleh.tautkan ? <Salin nilai={r.namaPemilik} label="nama pemilik" /> : r.namaPemilik],
                         ["No. HP pemilik", r.boleh.tautkan ? <Salin nilai={r.noHp} label="nomor HP" /> : <span className="fi-mono">{r.noHp}</span>],
                         ["Salesman", `${r.salesName ?? r.salesCode} (${r.salesCode}) · ${r.principle}`],
-                        ["Cabang", r.branchName ?? "—"],
-                        ["Diajukan", `${tanggalPendek(r.tanggal)} ${jamWita(r.dibuatPada)} WITA`],
-                        ...(r.diputuskanPada ? [[r.status === "ditolak" ? "Ditolak" : "Disetujui", `${r.diputuskanOlehNama ?? "—"} · ${tanggalPendek(r.diputuskanPada.slice(0, 10))} ${jamWita(r.diputuskanPada)}`] as [string, ReactNode]] : []),
-                        ...(r.ditautkanPada ? [["Ditautkan", `${r.ditautkanOlehNama ?? "—"} · ${r.customerNo}`] as [string, ReactNode]] : []),
+                        ["Cabang", r.branchName ?? KOSONG],
+                        ["Diajukan", `${waktuWita(r.dibuatPada)} WITA`],
+                        ...(r.diputuskanPada ? [[r.status === "ditolak" ? "Ditolak" : "Disetujui", `${r.diputuskanOlehNama ?? KOSONG} · ${waktuWita(r.diputuskanPada)} WITA`] as [string, ReactNode]] : []),
+                        ...(r.ditautkanPada ? [["Ditautkan", `${r.ditautkanOlehNama ?? KOSONG} · ${r.customerNo}`] as [string, ReactNode]] : []),
                     ]} />
                 </div>
             </Section>
@@ -224,7 +227,7 @@ function RincianNoo({ id, onBerubah }: { id: string; onBerubah: () => void }) {
             <Section title="Lokasi GPS">
                 <div className="fi-sect-in grid gap-2">
                     <p className="fi-tnum">{r.lat.toFixed(6)}, {r.lng.toFixed(6)} · akurasi ± {Math.round(r.akurasi)} m</p>
-                    {r.gpsFlag && <MessageStrip tone="warn" title="Bendera GPS:">{r.gpsFlag.split(",").map((f) => f === "akurasi_rendah" ? "akurasi rendah (> 1 km)" : f).join(", ")}</MessageStrip>}
+                    {r.gpsFlag && <MessageStrip tone="warn" title="Bendera GPS:">{r.gpsFlag.split(",").map((f) => BENDERA_GPS[f] ?? "tanda tidak dikenal").join(", ")}</MessageStrip>}
                     <a className="fi-btn fi-btn--secondary" href={peta} target="_blank" rel="noopener noreferrer"><MapPin className="fi-icon" aria-hidden />Buka di peta</a>
                 </div>
             </Section>
@@ -268,20 +271,18 @@ function RincianNoo({ id, onBerubah }: { id: string; onBerubah: () => void }) {
                             <Button type="submit" icon={<Search className="fi-icon" aria-hidden />}>Cari</Button>
                         </form>
                         {usang ? (
-                            <p className="fi-small fi-why">{cari ? `Pencarian "${cari}" gagal dimuat` : "Saran pelanggan gagal dimuat"} — bukan berarti pelanggan belum ada. Muat ulang atau cari lagi.</p>
+                            <p className="fi-small fi-why">{cari ? `Pencarian "${cari}" gagal dimuat` : "Saran pelanggan gagal dimuat"}. Itu bukan berarti pelanggan belum ada. Muat ulang atau cari lagi.</p>
                         ) : load.status === "memuat" ? <Skeleton rows={2} label="Mencari pelanggan" /> : (<>
                         <p className="fi-small">{load.data.cari ? `Hasil "${load.data.cari}" di cabang ${r.branchName ?? ""}:` : "Saran (pelanggan baru di sync, nama/alamat mirip):"}</p>
                         {!saran?.length ? <p className="fi-small fi-muted">Belum ada pelanggan cocok. Bila baru didaftarkan, tunggu sync pelanggan lalu muat ulang, atau cari kodenya.</p> : (
-                            <ul role="radiogroup" aria-label="Pelanggan untuk ditautkan" style={{ listStyle: "none", padding: 0 }} className="grid gap-2">
+                            <div role="radiogroup" aria-label="Pelanggan untuk ditautkan" className="grid gap-2">
                                 {saran.map((s) => (
-                                    <li key={s.id}>
-                                        <label className="flex items-start gap-2" style={{ minHeight: 44 }}>
-                                            <input type="radio" name={`tautan-${id}`} checked={pilih?.id === s.id} onChange={() => setPilih(s)} style={{ width: 20, height: 20, marginTop: 2 }} />
-                                            <span><b className="fi-mono">{s.customerNo}</b> {s.name}{s.alamat ? ` · ${s.alamat}` : ""}{s.skor != null ? ` · kemiripan ${Math.round(s.skor * 100)}%` : ""}</span>
-                                        </label>
-                                    </li>
+                                    <label key={s.id} className="flex items-start gap-2" style={{ minHeight: 44 }}>
+                                        <input type="radio" name={`tautan-${id}`} checked={pilih?.id === s.id} onChange={() => setPilih(s)} style={{ width: 20, height: 20, marginTop: 2 }} />
+                                        <span><b className="fi-mono">{s.customerNo}</b> {s.name}{s.alamat ? ` · ${s.alamat}` : ""}{s.skor != null ? ` · kemiripan ${Math.round(s.skor * 100)}%` : ""}</span>
+                                    </label>
                                 ))}
-                            </ul>
+                            </div>
                         )}
                         </>)}
                         <div className="fi-btnrow">
@@ -311,7 +312,7 @@ function RincianNoo({ id, onBerubah }: { id: string; onBerubah: () => void }) {
                 onConfirm={(alasan) => kirim({ aksi: "tolak", alasan }, `${r.kode} ditolak.`, "Tolak")} />
             <ConfirmDialog open={dialog === "tautkan" && Boolean(pilih)} onClose={() => setDialog(null)} title={`Tautkan ${r.kode} ke ${pilih?.customerNo ?? ""}?`}
                 description="Status menjadi terdaftar. Satu pelanggan Accurate hanya bisa tertaut ke satu toko baru; penautan tidak bisa dibatalkan dari layar ini."
-                facts={[["Toko baru", `${r.kode} · ${r.namaToko}`], ["Pelanggan", `${pilih?.customerNo ?? ""} · ${pilih?.name ?? ""}`], ["Cabang", r.branchName ?? "—"]]}
+                facts={[["Toko baru", `${r.kode} · ${r.namaToko}`], ["Pelanggan", `${pilih?.customerNo ?? ""} · ${pilih?.name ?? ""}`], ["Cabang", r.branchName ?? KOSONG]]}
                 confirmLabel="Tautkan" onConfirm={() => kirim({ aksi: "tautkan", customerId: pilih?.id }, `${r.kode} terdaftar sebagai ${pilih?.customerNo}.`, "Tautkan")} />
             <DialogKtp open={ktpBuka} id={id} kode={r.kode} onClose={() => setKtpBuka(false)} />
         </div>
@@ -319,7 +320,7 @@ function RincianNoo({ id, onBerubah }: { id: string; onBerubah: () => void }) {
 }
 
 /**
- * "Lihat KTP": `<dialog>` SELALU terpasang (close() pada node tersambung → fokus kembali ke tombol "Lihat KTP", peninjau B S3); isinya
+ * "Lihat KTP": `<dialog>` SELALU terpasang (close() pada node tersambung → fokus kembali ke tombol "Lihat KTP"); isinya
  * (satu POST — server mencatat audit lebih dulu — lalu NIK + foto) hanya terpasang selama terbuka, jadi KTP hilang dari DOM/state saat ditutup.
  */
 function DialogKtp({ open, id, kode, onClose }: { open: boolean; id: string; kode: string; onClose: () => void }) {
@@ -340,7 +341,7 @@ function IsiKtp({ id, kode }: { id: string; kode: string }) {
             const j = await res.json().catch(() => null) as Record<string, unknown> | null;
             if (res.ok && j && typeof j.nik === "string") return { status: "siap", data: { nik: j.nik, namaKtp: String(j.namaKtp ?? ""), foto: String(j.foto ?? "") } };
             return { status: "galat", error: typeof j?.error === "string" && j.kode ? j.error : res.status === 403 ? "Akun Anda tidak berhak membuka KTP ini." : "KTP gagal dibuka." };
-        } catch { return { status: "galat", error: "Server tidak terjangkau — periksa sinyal, lalu buka lagi." }; }
+        } catch { return { status: "galat", error: "Server tidak terjangkau. Periksa sinyal, lalu buka lagi." }; }
     }, [id]));
     return (
             <div className="fi-dialog-body grid gap-3">

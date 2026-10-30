@@ -3,10 +3,11 @@
  *   kode NOO, No. HP Indonesia kanonik, NIK 16 digit, NIK tersamar, pemeriksa isian formulir, label status.
  * Caller: lib/form-kontrol/noo.ts, app/api/form-kontrol/noo/**, app/api/form-kontrol/ao-control (lewat noo.ts),
  *   app/(dashboard)/form-kontrol/tabs/{TabNoo,NooFormulir,TabAo}.tsx, visit/[custCode]/Kunjungan.tsx, spv-dashboard/DashboardSpv.tsx.
- * Dependensi: tidak ada (aman di klien).
+ * Dependensi: lib/tampil (KOSONG); aman di klien.
  * Main Functions: isKodeNoo, normalHp, periksaNik, samarkanNik, galatIsianNoo (semua galat per isian), periksaIsianNoo (galat pertama), LABEL_STATUS_NOO.
  * Side Effects: Tidak ada.
  */
+import { KOSONG } from "../tampil";
 
 /** Kode NOO = "NOO-" + 8 huruf/angka besar; juga cust_code kunjungan NOO di kunjungan_luar_rute/ao_control_daily. */
 export const POLA_KODE_NOO = /^NOO-[0-9A-Z]{8}$/;
@@ -17,7 +18,7 @@ export const isKodeNoo = (kode: unknown): boolean => typeof kode === "string" &&
 export type StatusNoo = "menunggu_spv" | "disetujui" | "ditolak" | "terdaftar";
 export const LABEL_STATUS_NOO: Record<StatusNoo, string> = {
     menunggu_spv: "Menunggu SPV",
-    disetujui: "Disetujui — menunggu didaftarkan",
+    disetujui: "Disetujui, menunggu didaftarkan",
     ditolak: "Ditolak",
     terdaftar: "Terdaftar",
 };
@@ -39,9 +40,9 @@ export function periksaNik(v: unknown): string | null {
     return /^[0-9]{16}$/.test(s) ? s : null;
 }
 
-/** Tampilan bawaan NIK: 4 angka depan + 8 titik + 4 angka belakang (7371••••••••0012). Bukan NIK sah → "—". */
+/** Tampilan bawaan NIK: 4 angka depan + 8 titik + 4 angka belakang (7371••••••••0012). Bukan NIK sah → KOSONG ("-", audit desain 001 R-02). */
 export const samarkanNik = (nik: string | null | undefined): string =>
-    nik && /^[0-9]{16}$/.test(nik) ? `${nik.slice(0, 4)}${"•".repeat(8)}${nik.slice(12)}` : "—";
+    nik && /^[0-9]{16}$/.test(nik) ? `${nik.slice(0, 4)}${"•".repeat(8)}${nik.slice(12)}` : KOSONG;
 
 export type IsianNoo = {
     namaToko: string; namaPemilik: string; alamat: string; noHp: string; nik: string; namaKtp: string;

@@ -2,7 +2,8 @@
 # Caller: Next.js app/api/laporan-harian/*.
 # Dependensi: shared runtime config, laporan_harian pipeline, resolver target, writer XLSX,
 #             python-calamine, dan openpyxl sebagai fallback.
-# Main Functions: laporan_harian_process() menulis target, snapshot dan rekap Pak Fahdhar download-only,
+# Main Functions: laporan_harian_process() menulis berkas per keyword (replika Power Query 2.3), snapshot dan
+#                 rekap Pak Fahdhar download-only,
 #                 lalu laporan_harian_preview() dan laporan_harian_file().
 # Side Effects: Membaca upload/workbook runtime, menulis workbook runtime, dan mengirim JSON/file melalui HTTP.
 from fastapi import APIRouter
@@ -44,6 +45,7 @@ async def laporan_harian_process(
     report_keywords: Optional[str] = Form(None),
 ):
     import tempfile, os as _os
+    import pandas as pd
     import laporan_harian as LH
 
     tmpdir = tempfile.mkdtemp(prefix="lh_")
@@ -62,20 +64,16 @@ async def laporan_harian_process(
     stock_path = await _save(stock, "stock.xlsx")
 
     try:
-        lk = LH.load_lookups_json()   # master GOLONGAN/JENIS PRODUK/Mapping (untuk NAMA SM juga)
-        if penj_path:
-            fix_df = LH.build_fix_from_accurate(penj_path, ret_path, lk)   # web bangun 2.ToFormat sendiri
-        elif fix_path:
-            fix_df = LH.load_fix(fix_path)                                  # backward-compat: upload FIX jadi
-        else:
-            return ORJSONResponse({"ok": False, "error": "Wajib upload 'penjualan' (+retur) atau 'fix'."}, status_code=400)
-        sb = LH.build_salesbase(fix_df, lk)
-        effective_report_date = LH.latest_sales_date(sb, report_date)
-        progress = LH.aggregate_progress(sb)
-        summary = (sb.groupby("GOLONGAN", dropna=True)
-                     .agg(rows=("NO_NOTA", "size"), dpp=("DPP", "sum"),
-                          ao=("AO", "sum"), ec=("EC", "sum"), ia=("Item Aktif", "sum"))
-                     .reset_index().sort_values("GOLONGAN"))
+        lk = LH.load_lookups_json()   # master GOLONGAN/JENIS PRODUK/Mapping_PIC workbook lama
+        try:
+            fix_rows = LH.load_inputs(penj_path, ret_path, fix_path, lk)
+        except ValueError as exc:
+            return ORJSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        sb = LH.pq.SalesBase(fix_rows, lk)
+        sales = LH.sales_frame(sb)
+        effective_report_date = LH.latest_sales_date(fix_rows, report_date)
+        progress = LH.aggregate_progress(sales)
+        summary = LH.summarize(sales)
         # periode dominan
         pm = int(progress["periodMonth"].dropna().mode().iloc[0]) if len(progress) else None
         py = int(progress["periodYear"].dropna().mode().iloc[0]) if len(progress) else None
@@ -93,15 +91,12 @@ async def laporan_harian_process(
                 "achievedAo": int(r["achievedAo"] or 0),
                 "achievedIa": int(r["achievedIa"] or 0),
             })
-        stock_frame = None
+        stock_rows = None
         stock_spv = []
         if stock_path:
             try:
-                stock_frame = LH.build_stock_frame(stock_path, sb, lk)
-                stock_spv = [
-                    str(value)
-                    for value in stock_frame["GOLONGAN"].dropna().unique()
-                ]
+                stock_rows = LH.load_stock(stock_path)
+                stock_spv = sorted({str(lk.map_spv[r[5]]) for r in stock_rows if lk.map_spv.get(r[5])})
             except Exception as exc:
                 return ORJSONResponse(
                     {"ok": False, "error": f"Gagal memproses file stok: {exc}"},
@@ -129,12 +124,12 @@ async def laporan_harian_process(
             # MSM tetap dibuat untuk unduhan bila CSV tidak mengatur emailnya.
             output_keywords = list(dict.fromkeys(keywords + ["MSM"]))
             files_written, unmatched_report_keywords = LH.write_report_files(
-                sb, out_dir, rdate, output_keywords, lk, stock_frame,
+                sb, fix_rows, stock_rows, out_dir, rdate, output_keywords,
             )
             unmatched_report_keywords = [key for key in unmatched_report_keywords if key in keywords]
-            to_format = LH.write_to_format_file(fix_df, out_dir, rdate)
+            to_format = LH.write_to_format_file(fix_rows, lk, out_dir, rdate)
             from laporan_harian_manager import write_manager_report
-            manager = write_manager_report(sb, lk, out_dir, rdate)
+            manager = write_manager_report(LH.fix_frame(fix_rows), lk, out_dir, rdate)
             archive = LH.create_run_archive(out_dir, rdate)
 
         return ORJSONResponse({
@@ -144,8 +139,8 @@ async def laporan_harian_process(
             "archive": archive,
             "manager": manager,
             "report_date": effective_report_date,
-            "sales_rows": int(len(sb)),
-            "net_dpp": float(sb["DPP"].sum()),
+            "sales_rows": int(sb.n),
+            "net_dpp": float(pd.to_numeric(sales["DPP"], errors="coerce").fillna(0).sum()),
             "period": {"month": pm, "year": py},
             "spv_list": [str(x) for x in summary["GOLONGAN"].tolist()],
             "summary": [

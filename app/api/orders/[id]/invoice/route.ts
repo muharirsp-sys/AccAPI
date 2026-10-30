@@ -126,7 +126,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     if (hasil.blocked.length) return NextResponse.json({ ok: false, error: hasil.blocked[0].reason }, { status: 409 });
     if (hasil.posted.length) {
         return NextResponse.json({ ok: true, queued: false, posted: hasil.posted[0],
-            pesan: `Faktur ${hasil.posted[0].number || hasil.posted[0].accurateId} sudah ada di Accurate — ditandai terposting, tidak dikirim.` });
+            pesan: `Faktur ${hasil.posted[0].number || hasil.posted[0].accurateId} sudah ada di Accurate. Ditandai terposting, tidak dikirim.` });
     }
     if (!hasil.queued.length) return NextResponse.json({ ok: false, error: "Order ini sudah ada di antrean faktur" }, { status: 409 });
     return NextResponse.json({ ok: true, queued: true, payload, salesman: salesmanInfo });

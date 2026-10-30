@@ -1,19 +1,23 @@
 /*
  * Tujuan: Helper murni layar OFF Program Control (Fiori S4d): tipe DTO batch/item/pembayaran/refund/audit dari API yang ada,
  *   pemetaan enam sumbu status → satu alur 7 tahap (Draf → SM → Klaim → OM → Bayar → Final → Selesai, plus Dikembalikan/Dibatalkan),
- *   predikat antrean per tab (SALINAN predikat kode lama, nomor baris old-opc.tsx disebut), tab per peran, saringan klien
- *   (cari/principal/tahap/periode — salinan filter lama), label Indonesia, dan format tanggal WITA. Tidak ada logic bisnis baru.
+ *   predikat antrean per tab (salinan predikat kode lama), tab per peran, saringan klien (cari/principal/tahap/periode, salinan
+ *   filter lama), label Indonesia, dan format tanggal WITA. Tidak ada logic bisnis baru.
  * Caller: app/(dashboard)/off-program-control/{OpcApp.tsx, opc/Bersama.tsx, opc/ObjectPageBatch.tsx, opc/peran/*}, lib/opc-ui.test.ts.
- * Dependensi: lib/off-program-control/{access,search} (murni), tipe FlowStep/Tone dari components/fiori/core.
+ * Dependensi: lib/off-program-control/{access,search} (murni), lib/tampil (KOSONG, waktuWita), tipe FlowStep/Tone dari components/fiori/core.
  * Main Functions: tahapBatch, infoTahap, alurBatch, PREDIKAT, TAMPILAN, tabTerlihat, tabEfektif, subTampilan, saringBatch,
- *   opsiPrincipal, labelStatus, labelAksiAudit, catatanSendiri, labelPeranAktor, izinAksi, pdfBoleh, tanggalOpc, waktuWita, periodeBatch, totalBatch.
+ *   opsiPrincipal, labelStatus, labelAksiAudit, catatanSendiri, labelPeranAktor, izinAksi, pdfBoleh, tanggalOpc, waktuWita, periodeBatch,
+ *   totalBatch, BATAS_DAFTAR.
  * Side Effects: Tidak ada.
  */
 import type { FlowStep, Tone } from "@/components/fiori/core";
 import { canPerformOffAction, getOffAccessibleTabs, type OffAction, type OffRole, type OffTab } from "@/lib/off-program-control/access";
 import { matchesSearch, normalizeSearchText } from "@/lib/off-program-control/search";
+import { KOSONG } from "@/lib/tampil";
 
-// ── DTO (bentuk respons API yang ADA; tidak ada kolom baru) ─────────────────────────────────────────────
+export { waktuWita } from "@/lib/tampil";
+
+// DTO: bentuk respons API yang ada; tidak ada kolom baru.
 
 export type RingkasanBayar = { totalNominal: number; totalPaid: number; remainingAmount: number; isFullyPaid: boolean };
 export type PembayaranOpc = {
@@ -70,7 +74,7 @@ export type AuditOpc = {
     metadata?: { alasanSendiri?: string | null; sendiriTanpaAlasan?: boolean } | null;
 };
 
-// ── Label status (salinan statusLabelMap old-opc.tsx 452–492 + status refund) ───────────────────────────
+// Label status: salinan statusLabelMap kode lama + status refund.
 
 const LABEL_STATUS: Record<string, string> = {
     Draft: "Draf",
@@ -111,13 +115,13 @@ const LABEL_STATUS: Record<string, string> = {
     Rejected: "Ditolak",
 };
 
-/** Label Indonesia satu sumbu status; nilai yang tidak dikenal ditampilkan apa adanya (sama dengan kode lama). */
+/** Label Indonesia satu sumbu status. Nilai di luar peta tidak ditampilkan mentah (audit desain No 30). */
 export function labelStatus(status: string | null | undefined): string {
-    if (!status) return "–";
-    return LABEL_STATUS[status] ?? status;
+    if (!status) return KOSONG;
+    return LABEL_STATUS[status] ?? "Tidak dikenal";
 }
 
-// ── Tahap: enam sumbu → satu alur ───────────────────────────────────────────────────────────────────────
+// Tahap: enam sumbu status → satu alur.
 
 export const ALUR_TAHAP = ["Draf", "SM", "Klaim", "OM", "Bayar", "Final", "Selesai"] as const;
 export type TahapKey = "draf" | "dikembalikan" | "sm" | "klaim" | "om" | "bayar" | "final" | "selesai" | "dibatalkan";
@@ -207,48 +211,48 @@ export function alurBatch(b: SumbuStatus, terlambat = false): FlowStep[] {
     return ALUR_TAHAP.map((label, i) => ({ label, state: i < kini ? "done" : i === kini ? (terlambat ? "late" : "current") : "todo" }));
 }
 
-// ── Predikat per tab: SALINAN kode lama (jangan diubah tanpa mengubah perilaku tab lama) ────────────────
+// Predikat per tab: salinan kode lama; mengubahnya berarti mengubah isi antrean.
 
 type B = BatchOpc;
 export const PREDIKAT = {
-    /** SPV, menu Pengajuan "Draf / Dikembalikan / Perlu Revisi" (old 3056–3063). */
+    /** SPV, menu Pengajuan "Draf / Dikembalikan / Perlu Revisi" (kode lama). */
     spvAntrean: (b: B) => b.status === "Draft" || b.status === "Returned by SM" || b.smStatus === "Returned" || b.status === "Returned by Claim" || b.claimStatus === "Returned",
-    /** isSupervisorEditableBatch (old 734): SPV boleh mengubah. */
+    /** isSupervisorEditableBatch (kode lama): SPV boleh mengubah. */
     spvBisaUbah: (b: B) => !b.locked && (b.status === "Draft" || b.status === "Returned by SM" || b.status === "Returned by Claim" || b.smStatus === "Returned" || b.claimStatus === "Returned"),
-    /** isSmActionableBatch (old 745): antrean + aksi SM. */
+    /** isSmActionableBatch (kode lama): antrean + aksi SM. */
     smAntrean: (b: B) => b.status === "Submitted to SM" && b.smStatus === "Waiting Review",
-    /** hasPassedSalesManager (old 753): daftar tab Sales Manager. */
+    /** hasPassedSalesManager (kode lama): daftar tab Sales Manager. */
     smPantau: (b: B) => b.smStatus !== "Not Started" || ["Submitted to SM", "Waiting Review", "Approved by SM", "Returned by SM"].includes(b.status),
-    /** isClaimQueueBatch (old 5293): antrean + aksi Validasi Setelah SM. */
+    /** isClaimQueueBatch (kode lama): antrean + aksi Validasi Setelah SM. */
     klaimAntrean: (b: B) => b.smStatus === "Approved by SM" && !["Approved", "Returned", "Returned by Claim"].includes(String(b.claimStatus || ""))
         && !["Cancelled", "Completed", "Claim Approved", "Returned by Claim"].includes(String(b.status || "")),
-    /** isClaimInitialMonitoringBatch (old 5311): daftar Validasi Setelah SM. */
+    /** isClaimInitialMonitoringBatch (kode lama): daftar Validasi Setelah SM. */
     klaimPantau: (b: B) => PREDIKAT.klaimAntrean(b) || ["Approved", "Returned", "Returned by Claim"].includes(String(b.claimStatus || ""))
         || ["Claim Approved", "Returned by Claim", "Completed"].includes(String(b.status || "")),
-    /** isFinalClaimProcessable (old 5837): antrean + aksi Validasi Setelah Keuangan. */
+    /** isFinalClaimProcessable (kode lama): antrean + aksi Validasi Setelah Keuangan. */
     finalAntrean: (b: B) => b.financeStatus === "Paid" && ["Waiting Claim Final Verification", "Incomplete Documents"].includes(b.finalStatus),
-    /** isFinalQueueBatch (old 5321): angka "menunggu" di hub Klaim lama (juga mensyaratkan lunas). */
+    /** isFinalQueueBatch (kode lama): angka "menunggu" di hub Klaim lama (juga mensyaratkan lunas). */
     finalAntreanHub: (b: B) => b.financeStatus === "Paid" && ["Waiting Claim Final Verification", "Incomplete Documents"].includes(b.finalStatus)
         && b.status === "Paid" && b.paymentSummary?.isFullyPaid === true,
-    /** Daftar Monitoring Final Klaim (old 5846). */
+    /** Daftar Monitoring Final Klaim (kode lama). */
     finalPantau: (b: B) => (b.financeStatus === "Paid" && b.finalStatus === "Waiting Claim Final Verification") || b.finalStatus === "Incomplete Documents" || b.finalStatus === "Completed",
-    /** Panel Data Klaim: batch CLM milik divisi Claim (old 6994); "Kirim ke SM" hanya untuk Draft (old 7099). */
+    /** Panel Data Klaim: batch CLM milik divisi Claim (kode lama); "Kirim ke SM" hanya untuk Draft (kode lama). */
     clmPantau: (b: B) => b.createdByRole === "claim",
     clmAntrean: (b: B) => b.createdByRole === "claim" && b.status === "Draft",
-    /** isOmActionableBatch (old 765): antrean + aksi OM (daftar tab OM lama = semua batch). */
+    /** isOmActionableBatch (kode lama): antrean + aksi OM (daftar tab OM lama = semua batch). */
     omAntrean: (b: B) => b.claimStatus === "Approved" && b.omStatus === "Waiting Approval" && ["Claim Approved", "Ready for OM", "Waiting OM"].includes(b.status),
-    /** isFinanceQueueBatch (old 8348): antrean Keuangan. */
+    /** isFinanceQueueBatch (kode lama): antrean Keuangan. */
     keuanganAntrean: (b: B) => b.smStatus === "Approved by SM" && b.claimStatus === "Approved" && b.omStatus === "Approved"
         && ["Waiting Payment", "Partial Paid", "Need Correction"].includes(b.financeStatus) && !["Cancelled by OM", "Paid", "Completed", "Cancelled"].includes(b.status),
-    /** isFinanceActionableBatch (old 774): tombol bayar aktif. */
+    /** isFinanceActionableBatch (kode lama): tombol bayar aktif. */
     keuanganBisaBayar: (b: B) => b.omStatus === "Approved" && ["Waiting Payment", "Partial Paid", "Need Correction"].includes(b.financeStatus),
-    /** isFinanceMonitoringBatch (old 895): daftar tab Keuangan. */
+    /** isFinanceMonitoringBatch (kode lama): daftar tab Keuangan. */
     keuanganPantau: (b: B) => {
         const adaBayar = Number(b.paidAmount || 0) > 0 || Boolean(b.paymentSummary && b.paymentSummary.totalPaid > 0) || Boolean(b.payments?.length);
         return ["Waiting Payment", "Partial Paid", "Need Correction", "Paid"].includes(b.financeStatus) || b.status === "Paid" || b.status === "Partial Paid"
             || ((b.status === "Completed" || b.finalStatus === "Completed") && adaBayar);
     },
-    /** Data Selisih SPV (old 3765): refund perlu diajukan. */
+    /** Data Selisih SPV (kode lama): refund perlu diajukan. */
     selisihTerbuka: (b: B) => b.refundStatus === "Pending Refund" || b.refundStatus === "Partially Refunded",
     semua: () => true,
 };
@@ -272,7 +276,7 @@ export const TAMPILAN = {
     overview: [{ kunci: "semua", label: "Semua pengajuan", antrean: PREDIKAT.semua, kosong: "Belum ada pengajuan." }],
 } satisfies Record<Exclude<OffTab, "audit">, Tampilan[]>;
 
-// ── Tab per peran (getOffAccessibleTabs; SM hanya tab Sales Manager, sama dengan kode lama 10616–10619) ──
+// Tab per peran (getOffAccessibleTabs); SM hanya tab Sales Manager, sama dengan kode lama.
 
 export const TAB_OPC: Array<{ key: OffTab; label: string }> = [
     { key: "overview", label: "Ringkasan" },
@@ -311,7 +315,7 @@ export function subTampilan(tab: OffTab | undefined, claimView: string | null, v
 /** Tab yang punya Object Page batch di kolom kedua (Log audit tidak). */
 export const tabPunyaDetail = (tab: OffTab | undefined) => Boolean(tab) && tab !== "audit";
 
-// ── Izin aksi: matriks peran OFF (canPerformOffAction). AM-026 (D-01 §C): Manager = pembaca semua tab + audit, tanpa aksi tulis. ──
+// Izin aksi: matriks peran OFF (canPerformOffAction). AM-026: Manager membaca semua tab + audit, tanpa aksi tulis.
 
 /**
  * `undefined` = boleh; selain itu kalimat alasan untuk `disabledReason`. Sengaja HANYA peran OFF (sama dengan kode lama):
@@ -320,12 +324,12 @@ export const tabPunyaDetail = (tab: OffTab | undefined) => Boolean(tab) && tab !
 export function izinAksi(peran: OffRole, aksi: OffAction): string | undefined {
     if (canPerformOffAction(peran, aksi)) return undefined;
     return peran === "manager"
-        ? "Manager hanya membaca OFF Program Control (matriks D-01): aksi ini milik peran SPV/SM/Klaim/OM/Keuangan."
+        ? "Manager hanya membaca OFF Program Control. Aksi ini milik Supervisor, Sales Manager, Klaim, OM, atau Keuangan."
         : "Peran OFF Anda tidak mencakup aksi ini.";
 }
 
 /**
- * Aturan #6 kode lama (2944–2945, 4331–4345): di tab Supervisor — dan untuk peran Supervisor — PDF surat pengajuan baru boleh
+ * Aturan #6 kode lama: di tab Supervisor, dan untuk peran Supervisor, PDF surat pengajuan baru boleh
  * dibuka setelah Klaim menyetujui. Tab lain (Ringkasan/OM/Klaim/Keuangan) menautkannya bila ada, seperti drawer Ringkasan lama.
  */
 export function pdfBoleh(b: Pick<BatchOpc, "pdfUrl" | "claimStatus">, peran: OffRole, tab: OffTab): boolean {
@@ -333,7 +337,7 @@ export function pdfBoleh(b: Pick<BatchOpc, "pdfUrl" | "claimStatus">, peran: Off
     return (peran !== "supervisor" && tab !== "supervisor") || b.claimStatus === "Approved";
 }
 
-// ── Saringan klien (BL-13: 200 batch terbaru dari server, disaring di browser) ───────────────────────────
+// Saringan klien: 200 batch terbaru dari server (BL-13), disaring di browser.
 
 export type JenisTanggal = "program" | "pengajuan" | "claim" | "bayar";
 export const JENIS_TANGGAL: Record<JenisTanggal, string> = {
@@ -342,14 +346,14 @@ export const JENIS_TANGGAL: Record<JenisTanggal, string> = {
 export type Saringan = { cari: string; principal: string; tahap: TahapKey | ""; jenisTanggal: JenisTanggal; bulan: string; dari: string; sampai: string };
 export const SARINGAN_KOSONG: Saringan = { cari: "", principal: "", tahap: "", jenisTanggal: "pengajuan", bulan: "", dari: "", sampai: "" };
 
-/** Haystack cari: searchText dari server (termasuk item/toko) atau kolom batch (batchSearchText old 625). */
+/** Haystack cari: searchText dari server (termasuk item/toko) atau kolom batch (batchSearchText kode lama). */
 function teksCari(b: BatchOpc) {
     if (b.searchText) return b.searchText;
     return normalizeSearchText([b.noPengajuan, b.principleName, b.principleCode, b.supervisorName, b.status, b.smStatus, b.claimStatus,
         b.omStatus, b.financeStatus, b.finalStatus, b.noClaim].join(" "));
 }
 
-/** Periode (filterBatchesByPeriod old 1015): bulan "YYYY-MM" atau rentang tanggal pada jenis tanggal terpilih; tanpa saringan = semua. */
+/** Periode (filterBatchesByPeriod kode lama): bulan "YYYY-MM" atau rentang tanggal pada jenis tanggal terpilih; tanpa saringan = semua. */
 function cocokPeriode(b: BatchOpc, s: Saringan) {
     if (!s.bulan && !s.dari && !s.sampai) return true;
     const dates = b.periodDates?.[s.jenisTanggal] || [];
@@ -373,19 +377,19 @@ export function saringBatch(rows: BatchOpc[], s: Saringan): BatchOpc[] {
 
 export const jumlahSaringan = (s: Saringan) => [s.cari.trim(), s.principal, s.tahap, s.bulan || s.dari || s.sampai].filter(Boolean).length;
 
-/** Opsi principal dari data yang dimuat (getPrincipalOptions old 681). */
+/** Opsi principal dari data yang dimuat (getPrincipalOptions kode lama). */
 export function opsiPrincipal(rows: BatchOpc[]) {
     return Array.from(new Map(rows.filter((b) => b.principleCode || b.principleName)
         .map((b) => [b.principleCode || b.principleName, { value: b.principleCode || b.principleName, label: b.principleName || b.principleCode }])).values())
         .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-// ── Riwayat ─────────────────────────────────────────────────────────────────────────────────────────────
+// Riwayat.
 
 const AKSI_AUDIT: Record<string, string> = {
     create_batch: "Membuat batch", update_batch: "Mengubah batch", submit_to_sm: "Mengirim ke SM", pdf_generated: "PDF surat dibuat",
     receipt_pdf_generated: "Kwitansi dibuat", sm_approve: "Menyetujui (SM)", sm_return: "Mengembalikan ke SPV (SM)",
-    mock_notification_created: "Notifikasi OM dibuat", claim_approve: "Menyetujui klaim", claim_return: "Mengembalikan (Klaim)",
+    mock_notification_created: "Notifikasi OM dicatat (tidak dikirim)", claim_approve: "Menyetujui klaim", claim_return: "Mengembalikan (Klaim)",
     om_approve: "Menyetujui (OM)", om_cancel: "Membatalkan (OM)", finance_payment_added: "Mencatat pembayaran",
     final_remind_incomplete_documents: "Mengingatkan kelengkapan berkas", complete: "Menyelesaikan verifikasi final",
     final_claim_overpaid: "Verifikasi final: ada selisih yang harus dikembalikan", submit_refund: "Mengajukan pengembalian selisih",
@@ -393,10 +397,10 @@ const AKSI_AUDIT: Record<string, string> = {
     legacy_type_migrated: "Tipe program lama dipetakan", audit_correction: "Koreksi riwayat", period_closed: "Periode ditutup",
     period_unlocked: "Kunci periode dibuka",
 };
-export const labelAksiAudit = (action: string) => AKSI_AUDIT[action] ?? action.replace(/_/g, " ");
+export const labelAksiAudit = (action: string) => AKSI_AUDIT[action] ?? "Aksi lain";
 /** BL-10 (#132): catatan setuju sendiri dari metadata audit; "" bila bukan setuju sendiri. Layar lama (masa transisi) tidak mengirim alasan. */
 export const catatanSendiri = (a: AuditOpc) => (a.metadata?.alasanSendiri ? `Alasan setuju sendiri: ${a.metadata.alasanSendiri}`
-    : a.metadata?.sendiriTanpaAlasan ? "Disetujui sendiri tanpa alasan (layar lama)" : "");
+    : a.metadata?.sendiriTanpaAlasan ? "Disetujui sendiri tanpa alasan (sebelum alasan diwajibkan)" : "");
 
 const PERAN_AKTOR: Record<string, string> = {
     supervisor: "SPV", sales_manager: "SM", claim: "Klaim", operational_manager: "OM", finance: "Keuangan", admin: "Admin", manager: "Manager",
@@ -408,36 +412,29 @@ export const LABEL_PERAN: Record<OffRole, string> = {
     finance: "Keuangan", sales: "Sales", unknown: "Belum dikenali",
 };
 
-// ── Format ──────────────────────────────────────────────────────────────────────────────────────────────
+// Format tampilan.
 
 const BULAN = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 
-/** "2026-10-06" → "06/10/2026"; nilai lain apa adanya; kosong → "–". */
+/** "2026-10-06" → "06/10/2026"; nilai lain apa adanya; kosong → KOSONG. */
 export function tanggalOpc(ymd: string | null | undefined): string {
-    if (!ymd) return "–";
+    if (!ymd) return KOSONG;
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd);
     return m && ymd.length <= 10 ? `${m[3]}/${m[2]}/${m[1]}` : ymd;
 }
 
-/** Timestamp → "06/10/2026 09.40" WITA. */
-export function waktuWita(v: string | number | Date | null | undefined): string {
-    if (v === null || v === undefined || v === "") return "–";
-    const d = v instanceof Date ? v : new Date(v);
-    if (Number.isNaN(d.getTime())) return String(v);
-    const tgl = new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Asia/Makassar" }).format(d);
-    const jam = new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Makassar" }).format(d);
-    return `${tgl} ${jam}`;
-}
-
-export const periodeBatch = (b: Pick<BatchOpc, "bulan" | "tahun">) => (b.bulan && b.tahun ? `${BULAN[Number(b.bulan) - 1] ?? b.bulan} ${b.tahun}` : "–");
+export const periodeBatch = (b: Pick<BatchOpc, "bulan" | "tahun">) => (b.bulan && b.tahun ? `${BULAN[Number(b.bulan) - 1] ?? b.bulan} ${b.tahun}` : KOSONG);
 export const totalBatch = (b: BatchOpc) => Number(b.summary?.totalNominal ?? b.totalNominal ?? 0);
 export const jumlahItem = (b: BatchOpc) => Number(b.summary?.totalRows ?? b.summary?.rowCount ?? 0);
 
-/** Kelengkapan awal dari SPV (itemDocsSummary old 499). */
+/** Kelengkapan awal dari SPV (itemDocsSummary kode lama). */
 export function kelengkapanItem(i: Pick<ItemOpc, "kwt" | "skp" | "fp" | "pc" | "foto" | "rekap" | "others">): string {
     const docs = [i.kwt && "KWT", i.skp && "SKP", i.fp && "FP", i.pc && "PC", i.foto && "Foto", i.rekap && "Rekap", i.others && "Lainnya"].filter(Boolean);
-    return docs.length ? docs.join(", ") : "–";
+    return docs.length ? docs.join(", ") : KOSONG;
 }
+
+/** Jumlah baris maksimal GET /batches (server: 200 terbaru, BL-13). Hanya untuk keterangan tampilan "dari 200 terbaru". */
+export const BATAS_DAFTAR = 200;
 
 /** Severity masalah SLA → tone badge. */
 export const toneMasalah = (severity: "warning" | "danger" | "critical"): Tone => (severity === "warning" ? "warn" : "neg");

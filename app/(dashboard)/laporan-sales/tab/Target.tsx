@@ -24,7 +24,7 @@ const rupiah = (n: number) => `Rp ${NF.format(Math.round(n))}`;
 
 type Baris = BarisTarget & { total?: true };
 
-/** Nada capaian: ≥ 100 baik, < 70 kritis, di antaranya waspada; tanpa target = netral (bukan 0%). */
+/** Nada capaian: ≥ 100 baik, < 70 kritis, di antaranya waspada; tanpa target = netral (bukan 0%). Legenda ambangnya tertulis di bawah tabel. */
 function Persen({ persen }: { persen: number | null }) {
     if (persen === null) return <StatusBadge tone="neu">Tanpa target</StatusBadge>;
     const tone: Tone = persen >= 100 ? "pos" : persen < 70 ? "neg" : "warn";
@@ -58,7 +58,7 @@ export default function Target({ bulan }: PropsTab) {
             )}
             {load.status === "siap" && data && data.tanpaTarget.kombinasi > 0 && (
                 <MessageStrip tone="info">
-                    {NF.format(data.tanpaTarget.kombinasi)} kombinasi salesman × principal belum punya target — realisasi {rupiah(data.tanpaTarget.realisasi)} tidak dihitung (sama dengan dashboard Insentif).
+                    {NF.format(data.tanpaTarget.kombinasi)} kombinasi salesman × principal belum punya target. Realisasi {rupiah(data.tanpaTarget.realisasi)} tidak dihitung (sama dengan dashboard Insentif).
                 </MessageStrip>
             )}
             <ResponsiveTable
@@ -81,6 +81,10 @@ export default function Target({ bulan }: PropsTab) {
                     />
                 )}
             />
+            {/* Legenda ambang warna (audit No 97): ambang dan nada tidak diubah, hanya dijelaskan; tampil bila ada persen berwarna. */}
+            {rows.some((b) => b.persen !== null) && (
+                <p className="fi-small fi-muted">Warna kolom %: hijau 100% ke atas, jingga 70% sampai di bawah 100%, merah di bawah 70%. Ambang ini penanda layar, bukan aturan insentif.</p>
+            )}
         </div>
     );
 }

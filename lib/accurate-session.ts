@@ -158,7 +158,7 @@ export async function resolveSyncCredentials(): Promise<
     // X-Session-ID berumur pendek dan habis independen dari access token.
     if (!session.sessionHost || !session.sessionId) session = await ensureFreshAccurateSession(userId);
     if (!session?.sessionHost || !session.sessionId || !session.accessToken) {
-        return { error: "Sesi Accurate tidak bisa di-refresh — access token kemungkinan sudah kadaluarsa. Login ulang di /sesi-accurate." };
+        return { error: "Sesi Accurate tidak bisa di-refresh: access token kemungkinan sudah kadaluarsa. Login ulang di /sesi-accurate." };
     }
 
     return { creds: { sessionHost: session.sessionHost, sessionId: session.sessionId, apiKey: session.accessToken, databaseId: String(session.databaseId ?? "") } };

@@ -75,7 +75,7 @@ test("Default + Memuat: kepala dari cache tampil segera, barang dan ringkasan me
     await expect(det.getByRole("heading", { level: 2, name: "INV/2610/KN01412" })).toBeVisible();
     await expect(page.locator("h1")).toHaveCount(1); // satu h1 per halaman: "Faktur Penjualan"
     await expect(det.locator(".fi-attrs")).toContainText("TOKO B · C-A0002");
-    await expect(det.locator(".fi-attrs > div").filter({ hasText: "Sisa tagihan" })).toHaveText("Sisa tagihan—"); // null cache ≠ Rp 0
+    await expect(det.locator(".fi-attrs > div").filter({ hasText: "Sisa tagihan" })).toHaveText("Sisa tagihan-"); // null cache ≠ Rp 0 (penanda kosong lib/tampil)
     await expect(det.getByRole("region", { name: "Barang" })).toContainText("Mengambil detail dari Accurate…");
     await expect(det.getByRole("region", { name: "Barang" }).getByRole("status")).toBeVisible();
     await expect(det.getByRole("region", { name: "Ringkasan" }).getByRole("status")).toContainText("Memuat ringkasan");
@@ -95,11 +95,14 @@ test("Default + Memuat: kepala dari cache tampil segera, barang dan ringkasan me
     await expect(info).toContainText("CabangCABANG A");
     await expect(info).toContainText("SalesSALES A (per baris; tidak tercatat di kepala faktur)");
     await expect(info).toContainText("TerminNet 14");
-    await expect(info).toContainText("Dibuat di Accurate—"); // createdAt hanya dari webhook
-    await expect(info).toContainText("Perubahan terakhir06/10/2026, 10.10 WITA");
+    await expect(info).toContainText("Dibuat di Accurate-"); // createdAt hanya dari webhook
+    await expect(info).toContainText("Perubahan terakhir06/10/2026 10.10 WITA");
     await expect(det.getByRole("list", { name: "Alur dokumen" })).toContainText("belum ada pembayaran");
-    for (const bl of ["BL-35", "BL-36"]) await expect(main.getByText(`usulan ${bl}`)).toBeVisible();
-    await expect(main.getByText("usulan BL-22")).toHaveCount(0);
+    // Satu catatan varian per layar (audit No 80): BL-35 di Object Page; batasan daftar (BL-36) jadi keterangan biasa.
+    await expect(main.getByRole("complementary", { name: /BL-35/ })).toBeVisible();
+    await expect(main.getByRole("complementary")).toHaveCount(1);
+    await expect(main.getByText("Cari menurut nomor faktur atau pelanggan; daftar memuat faktur bernomor INV.")).toBeVisible(); // fakta tugas, semua akun
+    await expect(main.getByRole("complementary", { name: /BL-22/ })).toHaveCount(0);
     await expect(main.getByRole("link", { name: "Antrean Faktur", exact: true })).toHaveAttribute("href", "/antrean-faktur");
     await expect(det.getByRole("link", { name: "Buka Antrean Faktur" })).toHaveAttribute("href", "/antrean-faktur");
     await page.screenshot({ path: "test-results/fiori-faktur-default.png", fullPage: true });
@@ -184,7 +187,7 @@ test("Galat detail: pesan Accurate apa adanya + Coba lagi, kepala dari cache tet
     await expect(barang.getByRole("alert")).toContainText("Accurate menolak detail faktur: Data tidak ditemukan", NAV);
     await expect(det.getByRole("heading", { level: 2, name: "INV/2610/KN01412" })).toBeVisible();
     await expect(det.locator(".fi-attrs")).toContainText("TOKO B · C-A0002");
-    await expect(det.getByText("usulan BL-22")).toBeVisible();
+    await expect(det.getByRole("complementary", { name: /BL-22/ })).toBeVisible();
     await expect(det.getByRole("region", { name: "Ringkasan" })).toContainText("Belum terbaca");
     await expect(det.getByRole("region", { name: "Info" })).toContainText("Cabangtidak terbaca");
     await page.screenshot({ path: "test-results/fiori-faktur-galat-detail.png", fullPage: true });
@@ -196,7 +199,7 @@ test("Galat detail: pesan Accurate apa adanya + Coba lagi, kepala dari cache tet
     mode = "ok";
     await barang.getByRole("button", { name: "Coba lagi" }).click();
     await expect(det.getByRole("table", { name: "Barang faktur" })).toContainText("BRG-A2");
-    await expect(det.getByText("usulan BL-22")).toHaveCount(0);
+    await expect(det.getByRole("complementary", { name: /BL-22/ })).toHaveCount(0);
 });
 
 test("Tautan realisasi lama ?invoiceId=&databaseId=: detail langsung dengan databaseId, kepala dari detail; faktur lunas = alur sampai pelunasan; 409", async ({ page }) => {

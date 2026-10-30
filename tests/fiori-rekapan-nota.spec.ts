@@ -93,9 +93,9 @@ test.describe("Wave harian", () => {
         await page.setViewportSize({ width: 1366, height: 900 });
         await page.goto("/rekapan-nota", NAV);
         const main = page.locator("main");
-        await expect(main.getByRole("heading", { level: 1 })).toContainText("Wave", NAV);
+        await expect(main.getByRole("heading", { level: 1 })).toContainText("Rekapan Nota", NAV);
         await expect(main.getByText("Pool reguler")).toBeVisible();
-        await expect(main.getByRole("link", { name: /Exception terbuka/ })).toContainText("4");
+        await expect(main.getByRole("link", { name: /Masalah terbuka/ })).toContainText("4");
         await expect(main.getByRole("link", { name: /Outlet tanpa area/ })).toContainText("19");
         const tabel = main.getByRole("table", { name: "Wave" });
         await expect(tabel.getByRole("row")).toHaveCount(4);
@@ -138,7 +138,7 @@ test.describe("Wave harian", () => {
             await page.goto("/rekapan-nota", NAV);
             const main = page.locator("main");
             await main.getByRole("button", { name: "Unggah file export…" }).first().click(NAV);
-            await expect(page.getByRole("dialog")).toContainText("Tidak ditulis ulang; yang berubah setelah masuk wave dicatat sebagai exception");
+            await expect(page.getByRole("dialog")).toContainText("Tidak ditulis ulang; yang berubah setelah masuk wave dicatat sebagai masalah");
             await page.getByRole("dialog").getByLabel(/File export/).setInputFiles({ name: "Rincian Faktur sore.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("x") });
             await page.getByRole("dialog").getByRole("button", { name: "Unggah ke pool" }).click();
             const ok = main.getByRole("status").filter({ hasText: "87 nota baru masuk pool 06/10/2026" });
@@ -149,7 +149,7 @@ test.describe("Wave harian", () => {
             const selisih = main.getByText("2 nota berubah setelah masuk wave.");
             await expect(selisih).toBeVisible();
             await expect(main.getByRole("link", { name: "Wave Pagi 2" }).first()).toHaveAttribute("href", "/rekapan-nota/wave/317");
-            await expect(main.getByText("usulan BL-54")).toHaveCount(0);
+            await expect(main.getByLabel("Usulan BL-54")).toHaveCount(0);
             await noHorizontalOverflow(page);
             await page.screenshot({ path: `test-results/fiori-rekapan-unggah-sukses-${nama}.png`, fullPage: true });
         });
@@ -166,7 +166,7 @@ test.describe("Wave harian", () => {
         await expect(main.getByText("Belum ada wave")).toHaveCount(0);
         release();
         await expect(main.getByRole("status").filter({ hasText: /Belum ada nota .* di pool/ })).toBeVisible();
-        await expect(main.getByText("usulan BL-55")).toBeVisible();
+        await expect(main.getByLabel("Usulan BL-55")).toBeAttached(); // kotak varian hanya terlihat oleh Admin; kode BL ada di nama aksesibelnya
     });
 
     test("ponsel 390 px: daftar, tanpa gulir menyamping", async ({ page }) => {
@@ -191,21 +191,21 @@ test.describe("Object Page wave", () => {
         await expect(main.getByRole("heading", { level: 1, name: "Wave Pagi 2" })).toBeVisible(NAV);
         await expect(main.getByRole("list", { name: "Status wave" }).locator('[aria-current="step"]')).toContainText("Rilis");
         await expect(main.getByText("2 menahan konfirmasi")).toBeVisible();
-        await expect(main.getByRole("table", { name: "Exception" })).toContainText("Isi per karton beda dengan file");
-        await expect(main.getByText("usulan BL-24")).toHaveCount(0);
-        const tabelExc = main.getByRole("table", { name: "Exception" });
+        await expect(main.getByRole("table", { name: "Masalah" })).toContainText("Isi per karton beda dengan file");
+        await expect(main.getByLabel("Usulan BL-24")).toHaveCount(0);
+        const tabelExc = main.getByRole("table", { name: "Masalah" });
         await expect(tabelExc.getByRole("button", { name: "Selesai ABC10520" })).toBeVisible();
         await expect(tabelExc.getByRole("button", { name: "Abaikan ABC10520" })).toBeVisible();
         await expect(tabelExc).toContainText("Master saat ini 12 per karton");
         await expect(tabelExc).toContainText("Master saat ini belum diisi");
         const konfirmasi = main.getByRole("button", { name: "Konfirmasi selesai…" });
         await expect(konfirmasi).toBeDisabled();
-        await expect(konfirmasi).toHaveAttribute("title", "Tutup 2 exception isi per karton dulu");
-        await expect(main.getByText("2 exception isi per karton masih terbuka")).toBeVisible();
+        await expect(konfirmasi).toHaveAttribute("title", "Tutup 2 masalah isi per karton dulu");
+        await expect(main.getByText("2 masalah isi per karton masih terbuka")).toBeVisible();
         // Baris dilepas: alasan, pelaku, jam (WITA).
         await expect(main.getByRole("table", { name: "Isi wave" })).not.toContainText("KN01380"); // saringan "Semua" = aktif saja
         await main.getByRole("group", { name: "Saring isi wave" }).getByRole("button", { name: /Dilepas/ }).click();
-        await expect(main.getByRole("table", { name: "Isi wave" })).toContainText("Dilepas 6 Okt 09.40 · Bayu · outlet tutup");
+        await expect(main.getByRole("table", { name: "Isi wave" })).toContainText("Dilepas 06/10/2026 09.40 · Bayu · outlet tutup");
         await main.getByRole("group", { name: "Saring isi wave" }).getByRole("button", { name: /Semua/ }).click();
         await expect(main.getByRole("list", { name: "Riwayat" }).or(main.locator(".fi-hist"))).toContainText("Merilis wave");
         await page.screenshot({ path: "test-results/fiori-rekapan-wave-rilis.png", fullPage: true });
@@ -249,7 +249,7 @@ test.describe("Object Page wave", () => {
         await page.setViewportSize({ width: 1366, height: 900 });
         await page.goto("/rekapan-nota/wave/317", NAV);
         const main = page.locator("main");
-        const tabel = main.getByRole("table", { name: "Exception" });
+        const tabel = main.getByRole("table", { name: "Masalah" });
         await expect(tabel).toBeVisible(NAV);
         const konfirmasi = main.getByRole("button", { name: "Konfirmasi selesai…" });
         await expect(konfirmasi).toBeDisabled();
@@ -257,25 +257,29 @@ test.describe("Object Page wave", () => {
         // Abaikan: dialog dengan alasan wajib (min 5), menyebut akibat ke konfirmasi.
         await tabel.getByRole("button", { name: "Abaikan ABC10520" }).click();
         const dlg = page.getByRole("dialog");
-        await expect(dlg.getByRole("heading")).toContainText("Abaikan exception isi per karton beda dengan file?");
+        await expect(dlg.getByRole("heading")).toContainText("Abaikan masalah isi per karton beda dengan file?");
         await expect(dlg).toContainText("Master saat ini 12 per karton");
-        await expect(dlg).toContainText("Tidak lagi ditahan exception ini");
+        await expect(dlg).toContainText("Tidak lagi ditahan masalah ini");
         await expect(dlg.getByRole("button", { name: "Abaikan dengan alasan" })).toBeDisabled();
         await dlg.getByLabel(/Alasan/).fill("file benar; master dikoreksi");
         await page.screenshot({ path: "test-results/fiori-rekapan-exception-abaikan.png" });
         await dlg.getByRole("button", { name: "Abaikan dengan alasan" }).click();
         await expect(dlg).toBeHidden();
         expect(kiriman[0]).toEqual({ exceptionId: 1, aksi: "abaikan", alasan: "file benar; master dikoreksi" });
-        await expect(tabel).toContainText("Diabaikan 6 Okt 10.05 · Admin Gudang A · file benar; master dikoreksi");
+        await expect(tabel).toContainText("Diabaikan 06/10/2026 10.05 · Admin Gudang A · file benar; master dikoreksi");
 
         // 409 (sudah ditutup di layar lain) tampil di halaman, bukan diam-diam.
         // M2: sesudah 409 detail dimuat ulang -> baris menampilkan penutupan layar lain dan tombolnya hilang.
         const sebelum = jumlahGet;
         await tabel.getByRole("button", { name: "Selesai C-MKS0418" }).click();
-        await expect(main.getByRole("alert")).toContainText("sudah ditandai selesai di layar lain");
+        // Selesai menutup exception: lewat dialog ringkas (audit desain 001 No 28); galat server tampil di dialog.
+        await expect(page.getByRole("dialog").getByRole("heading")).toContainText("Tandai masalah outlet tanpa area C-MKS0418 selesai?");
+        await page.getByRole("dialog").getByRole("button", { name: "Tandai selesai" }).click();
+        await expect(page.getByRole("dialog").getByRole("alert")).toContainText("sudah ditandai selesai di layar lain");
+        await page.getByRole("dialog").getByRole("button", { name: "Batal" }).click();
         await expect.poll(() => jumlahGet).toBeGreaterThan(sebelum);
         await expect(tabel.getByRole("button", { name: "Selesai C-MKS0418" })).toHaveCount(0);
-        await expect(tabel).toContainText("Selesai 6 Okt 10.04 · Admin Gudang B");
+        await expect(tabel).toContainText("Selesai 06/10/2026 10.04 · Admin Gudang B");
 
         // R5: 409 di dialog Abaikan -> galat di dialog, fokus tetap di dalam dialog (bukan <body>), detail dimuat ulang.
         const sebelum2 = jumlahGet;
@@ -290,10 +294,30 @@ test.describe("Object Page wave", () => {
 
         // Selesai langsung; setelah dua KONVERSI ditutup, konfirmasi terbuka.
         await tabel.getByRole("button", { name: "Selesai ABC21135" }).click();
+        await page.getByRole("dialog").getByRole("button", { name: "Tandai selesai" }).click();
         await expect(main.getByRole("status").filter({ hasText: "ABC21135 ditandai selesai" })).toBeVisible();
         expect(kiriman.at(-1)).toMatchObject({ exceptionId: 2, aksi: "selesai" });
         await expect(konfirmasi).toBeEnabled();
         await page.screenshot({ path: "test-results/fiori-rekapan-exception-ditutup.png", fullPage: true });
+    });
+
+    test("Simpan isi per karton: dialog ringkas (master lama → baru) sebelum menulis ke master konversi (audit desain 001 No 28)", async ({ page }) => {
+        const detail = structuredClone(DETAIL_RILIS);
+        const kiriman: Array<Record<string, unknown>> = [];
+        await page.route(path("/api/rekapan-nota/wave/317"), (route) => route.fulfill(json(detail)));
+        await page.route(path("/api/rekapan-nota/wave/317/exception"), (route) => { kiriman.push(route.request().postDataJSON() as Record<string, unknown>); return route.fulfill(json({ ok: true })); });
+        await page.setViewportSize({ width: 1366, height: 900 });
+        await page.goto("/rekapan-nota/wave/317", NAV);
+        const main = page.locator("main");
+        await main.getByRole("spinbutton", { name: "Isi per karton ABC21135" }).fill("24");
+        await main.getByRole("button", { name: "Simpan isi per karton ABC21135" }).click();
+        const dlg = page.getByRole("dialog");
+        await expect(dlg.getByRole("heading")).toContainText("Simpan isi 24 per karton untuk ABC21135?");
+        await expect(dlg).toContainText("belum ada → 24");
+        expect(kiriman).toHaveLength(0); // belum ada yang ditulis sebelum konfirmasi
+        await dlg.getByRole("button", { name: "Simpan isi" }).click();
+        await expect(dlg).toBeHidden();
+        expect(kiriman[0]).toEqual({ exceptionId: 2, aksi: "isi", isi: 24 });
     });
 
     test("BL-25: batal wave -> pesan menyebut nota yang kembali ke pool", async ({ page }) => {
@@ -345,14 +369,14 @@ test.describe("Object Page wave", () => {
         await page.goto("/rekapan-nota/wave/317", NAV);
         await expect(page.locator("main").getByRole("heading", { level: 1, name: "Wave Pagi 2" })).toBeVisible(NAV);
         await expect(page.locator("main").getByRole("list", { name: "Isi wave" })).toBeVisible();
-        const excPonsel = page.locator("main").getByRole("list", { name: "Exception" });
+        const excPonsel = page.locator("main").getByRole("list", { name: "Masalah" });
         await expect(excPonsel.getByRole("button", { name: "Selesai ABC10520" })).toBeVisible();
         await expect(excPonsel.getByRole("button", { name: "Abaikan ABC10520" })).toBeVisible();
         await expect(excPonsel).toContainText("Master saat ini 12 per karton");
         await noHorizontalOverflow(page);
         await page.screenshot({ path: "test-results/fiori-rekapan-wave-ponsel.png", fullPage: true });
         await excPonsel.getByRole("button", { name: "Abaikan ABC10520" }).click();
-        await expect(page.getByRole("dialog")).toContainText("Tidak lagi ditahan exception ini");
+        await expect(page.getByRole("dialog")).toContainText("Tidak lagi ditahan masalah ini");
         await noHorizontalOverflow(page);
         await page.screenshot({ path: "test-results/fiori-rekapan-exception-abaikan-ponsel.png" });
     });
@@ -397,7 +421,7 @@ test.describe("Nota kanvas", () => {
         await page.goto("/rekapan-nota/kanvas", NAV);
         const main = page.locator("main");
         await expect(main.getByRole("status").filter({ hasText: /Belum ada nota .* di pool/ })).toBeVisible(NAV);
-        await expect(main.getByText("usulan BL-57")).toBeVisible();
+        await expect(main.getByLabel("Usulan BL-57")).toBeAttached();
         await main.getByRole("button", { name: "Nyatakan nihil…" }).click();
         await page.getByRole("dialog").getByLabel("Catatan").fill("Kanvaser M-014 cuti");
         await page.getByRole("dialog").getByRole("button", { name: "Nyatakan nihil" }).click();
@@ -430,10 +454,31 @@ test.describe("Mapping area", () => {
         await expect(main.getByRole("status").filter({ hasText: "1 outlet dipetakan" })).toBeVisible();
 
         await main.getByRole("button", { name: "Terima 1 usulan Tinggi…" }).click();
-        await expect(page.getByRole("dialog")).toContainText("C-MKS0418 · TK ANUGERAH");
+        await expect(page.getByRole("dialog")).toContainText("C-MKS0418 TK ANUGERAH");
         await page.getByRole("dialog").getByRole("button", { name: "Terima 1 usulan" }).click();
         expect(disimpan[1]).toMatchObject({ terima: [{ kode: "C-MKS0418", area: "1" }] });
         await expect(page.getByRole("dialog")).toBeHidden();
+    });
+
+    test("Simpan per baris: dialog ringkas (belum ada → area) sebelum menulis ke master; Batal tidak menulis (audit desain 001 No 28)", async ({ page }) => {
+        const disimpan: unknown[] = [];
+        await page.route(path("/api/rekapan-nota/area"), (route) => {
+            if (route.request().method() === "POST") { disimpan.push(route.request().postDataJSON()); return route.fulfill(json({ tersimpan: 1, gagal: [] })); }
+            return route.fulfill(json(AREA));
+        });
+        await page.setViewportSize({ width: 1366, height: 900 });
+        await page.goto("/rekapan-nota/area", NAV);
+        const baris = page.locator("main").getByRole("table", { name: "Outlet tanpa area" }).getByRole("row", { name: /TK NUR IMAN/ });
+        await baris.getByRole("button", { name: "Simpan" }).click();
+        const dlg = page.getByRole("dialog");
+        await expect(dlg.getByRole("heading")).toContainText("Simpan area PGS untuk TK NUR IMAN?");
+        await expect(dlg).toContainText("belum ada → PGS");
+        await dlg.getByRole("button", { name: "Batal" }).click();
+        expect(disimpan).toHaveLength(0);
+        await baris.getByRole("button", { name: "Simpan" }).click();
+        await dlg.getByRole("button", { name: "Simpan area" }).click();
+        await expect(dlg).toBeHidden();
+        expect(disimpan[0]).toMatchObject({ terima: [{ kode: "C-GWA0107", area: "PGS" }] });
     });
 
     test("memuat lama: strip 'bisa sampai 2 menit' + kerangka; galat: bukan kosong, ada Coba lagi", async ({ page }) => {

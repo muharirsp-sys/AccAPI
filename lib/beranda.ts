@@ -26,7 +26,7 @@ export const SOURCES = {
     opc: { perm: "off_program_control.view", url: () => "/api/off-program-control/batches", label: "OFF Program Control" },
     claimOutstanding: { perm: "claim_workflow.view", url: () => "/api/claim-workflow/outstanding", label: "Klaim outstanding" },
     claimPaid: { perm: "claim_workflow.view", url: () => "/api/claim-workflow?status=Paid&limit=200", label: "Klaim lunas" },
-    users: { perm: "users.manage", url: () => "/api/admin/users/permissions", label: "User & RBAC" },
+    users: { perm: "users.manage", url: () => "/api/admin/users/permissions", label: "User dan Izin" },
     // BL-41 (S6e-2): ringkasan baca-saja idempotency sales-receipt + daftar baris (?rows=1, kontrak §6). Endpoint juga terbuka untuk
     // finance.resolve_unknown; Beranda memakainya hanya untuk profil Admin Incaso (pelunasan.kirim). `valid`: jawaban tanpa angka/daftar =
     // galat, tidak pernah dibaca nol.
@@ -79,7 +79,7 @@ const financeActionable = (b: Row) => b.omStatus === "Approved" && ["Waiting Pay
 
 /** K3: Incaso belum lengkap / sesi sinkron tak ada -> "belum terbaca" (value null), BUKAN nol. */
 const belumTerbaca = (d: Row): TileValue => ({ value: null, unit: "belum terbaca", tone: "neu",
-    footer: obj(d.incaso).sebab === "SESI_SINKRON" ? "Sesi Accurate akun sinkron belum tersedia" : "Pelunasan Incaso belum terbaca lengkap — buka Kasir lalu Segarkan" });
+    footer: obj(d.incaso).sebab === "SESI_SINKRON" ? "Sesi Accurate akun sinkron belum tersedia" : "Incaso belum lengkap; segarkan di Kasir" });
 const tanggalPendek = (iso: string) => new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${iso}T00:00:00Z`));
 
 export const rupiahRingkas = (value: number) => value >= 1_000_000
@@ -109,13 +109,13 @@ export const TILES = {
         const d = obj(data);
         return count(num(obj(d.summary).selisih), "faktur", `Dari ${num(d.checked)} faktur terbaru`, "neg");
     } },
-    wave: { title: "Wave hari ini", subtitle: "Rekapan nota", href: "/rekapan-nota", source: "wave", icon: "box", pick: (data) => {
+    wave: { title: "Wave hari ini", subtitle: "Rekapan Nota", href: "/rekapan-nota", source: "wave", icon: "box", pick: (data) => {
         const waves = rows(obj(data).wave);
         const nota = waves.reduce((total, w) => total + num(w.jumlah_nota), 0);
         return { value: waves.length, unit: "wave", tone: "info", footer: waves.length ? `${nota} nota di wave` : "Belum ada wave hari ini" };
     } },
-    exception: { title: "Exception terbuka", subtitle: "Wave hari ini", href: "/rekapan-nota", source: "wave", icon: "alert", pick: (data) =>
-        count(rows(obj(data).wave).reduce((total, w) => total + num(w.exception_open), 0), "exception", "Selesaikan sebelum konfirmasi wave", "warn") },
+    exception: { title: "Masalah terbuka", subtitle: "Wave hari ini", href: "/rekapan-nota", source: "wave", icon: "alert", pick: (data) =>
+        count(rows(obj(data).wave).reduce((total, w) => total + num(w.exception_open), 0), "masalah", "Selesaikan sebelum konfirmasi wave", "warn") },
     kanvas: { title: "Nota kanvas", subtitle: "Ditandai hari ini", href: "/rekapan-nota/kanvas", source: "kanvas", icon: "cart", pick: (data) => {
         const d = obj(data);
         return { value: num(d.ditandai), unit: "nota", tone: "neu", footer: `Dari ${num(d.jumlahNota)} nota hari ini` };
@@ -140,7 +140,7 @@ export const TILES = {
         const macet = num(d.processingStale);
         // sendingStale = SENDING ≥ 2 mnt (ambang Selesaikan); staleMinutes hanya untuk kunci PROCESSING (kontrak §6).
         const footer = [num(u.unknown) && `${num(u.unknown)} tidak pasti`, num(u.sendingStale) && `${num(u.sendingStale)} mengirim macet`,
-            macet && `${macet} kunci macet > ${num(d.staleMinutes) || 15} mnt (tak terkirim)`].filter(Boolean).join(" · ") || "Jangan unggah ulang; Finance menyelesaikan";
+            macet && `${macet} proses terhenti > ${num(d.staleMinutes) || 15} mnt (tak terkirim)`].filter(Boolean).join(" · ") || "Jangan unggah ulang; Finance menyelesaikan";
         return count(num(u.total) + macet, "baris", footer, "warn");
     } },
     pelunasanGagal: { title: "Gagal, boleh diulang", subtitle: "Tidak terkirim ke Accurate", href: "/pelunasan", source: "pelunasan", icon: "undo", pick: (data) =>
@@ -167,7 +167,7 @@ export const TILES = {
         if (num(hari.jumlah) === 1 && hariIni) return { value: 1, unit: "hari", tone: "info", footer: "Hanya hari ini" };
         // Hari lampau terkunci otomatis 20.00 dan Kasir tidak bisa menutupnya sendiri: OM/Admin (kasir.buka) yang membuka kembali.
         const lampau = tanggal.some((t) => t !== str(d.tanggal));
-        return count(num(hari.jumlah), "hari", `${hariIni ? "Termasuk hari ini · terlama" : "Terlama"} ${tanggal[0] ? tanggalPendek(tanggal[0]) : "—"}${lampau ? " · hari lampau terkunci, minta OM/Admin membuka kembali" : ""}`, "warn");
+        return count(num(hari.jumlah), "hari", `${hariIni ? "Termasuk hari ini · terlama" : "Terlama"} ${tanggal[0] ? tanggalPendek(tanggal[0]) : "-"}${lampau ? " · perlu dibuka OM/Admin" : ""}`, "warn");
     } },
     userTanpaGrup: { title: "User tanpa grup", subtitle: "Masih memakai akses role lama", href: "/admin/users", source: "users", icon: "users", pick: (data) =>
         count(rows(obj(data).users).filter((u) => !u.groupId && !u.banned).length, "user", "Tetapkan grup akses", "info") },
@@ -241,7 +241,7 @@ const pelunasanNotes = (data: unknown, extra?: SourceLoad): string[] => {
             : sesi.databaseId ? `Database aktif Anda: ${sesi.alias || "tanpa nama"} (id ${sesi.databaseId}).` : "Anda belum membuka database Accurate.";
     const perDb = rows(obj(data).perDatabase).map((d) => {
         const angka = [num(obj(d.uncertain).total) && `${num(obj(d.uncertain).total)} tidak pasti`, num(d.retryable) && `${num(d.retryable)} gagal`,
-            num(d.processingStale) && `${num(d.processingStale)} kunci macet`].filter(Boolean).join(" · ");
+            num(d.processingStale) && `${num(d.processingStale)} proses terhenti`].filter(Boolean).join(" · ");
         return `${labelDb(d.databaseId, sesi)}: ${angka}`;
     });
     return [aktif, ...perDb];
@@ -251,9 +251,9 @@ const pelunasanRows = (data: unknown, extra?: SourceLoad): CardRow[] => {
     const daftar = rows(obj(data).rows);
     return [
         ...daftar.slice(0, 5).map((r): CardRow => ({
-            title: `${str(r.invoiceNo) || "Tanpa faktur"} · ${str(r.customerNo) || "—"}`,
+            title: `${str(r.invoiceNo) || "Tanpa faktur"} · ${str(r.customerNo) || "-"}`,
             meta: [rupiahRingkas(num(r.amount)), str(r.transDate), labelDb(r.databaseId, sesi), witaJam(r.updatedAt) && `${witaJam(r.updatedAt)} WITA`].filter(Boolean).join(" · "),
-            badge: r.category === "retryable" ? ["neg", "Gagal · boleh diulang"] : ["warn", r.category === "processingStale" ? "Tidak pasti · kunci macet" : "Tidak pasti"],
+            badge: r.category === "retryable" ? ["neg", "Gagal · boleh diulang"] : ["warn", r.category === "processingStale" ? "Tidak pasti · proses terhenti" : "Tidak pasti"],
         })),
         ...(daftar.length > 5 ? [{ title: `${daftar.length - 5}${obj(data).rowsTruncated === true ? "+" : ""} baris lain`, meta: "Buka Pelunasan untuk daftar lengkap" }] : []),
     ];
@@ -276,8 +276,8 @@ export const CARDS: Record<string, CardSpec> = {
     gudang: { title: "Wave hari ini", subtitle: "Urut jadwal", href: "/rekapan-nota", more: "Buka Rekapan Nota", source: "wave", kind: "list", rows: (data) =>
         rows(obj(data).wave).map((w) => ({
             title: str(w.nama) || `Wave #${num(w.id)}`,
-            meta: `${num(w.jumlah_nota)} nota${num(w.exception_open) ? ` · ${num(w.exception_open)} exception` : ""}`,
-            badge: [num(w.exception_open) ? "warn" : "neu", str(w.status) || "—"],
+            meta: `${num(w.jumlah_nota)} nota${num(w.exception_open) ? ` · ${num(w.exception_open)} masalah` : ""}`,
+            badge: [num(w.exception_open) ? "warn" : "neu", str(w.status) || "-"],
         })) },
     sm: { title: "Persetujuan menunggu Anda", subtitle: "OFF Program Control", href: "/off-program-control?tab=sales", more: "Buka tab Sales Manager", source: "opc", kind: "list", rows: opcRows(smActionable, "Menunggu", "warn") },
     claim: { title: "Review klaim menunggu", subtitle: "OFF Program Control", href: "/off-program-control?tab=claim", more: "Buka tab Claim", source: "opc", kind: "list", rows: opcRows(claimActionable, "Review", "info") },
