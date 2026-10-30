@@ -319,7 +319,8 @@ test("PG DDL_SUPERVISOR_REVIEW dua kali idempoten + VERIFIKASI (+ sabotase hak/C
     const { migrations } = await import(new URL("../../scripts/migrate-pg.mjs", import.meta.url).href) as { migrations: { nama: string; sudahAda: string; sql: string }[] };
     const entri = migrations.find((x) => x.nama === "supervisor review (SR-1)");
     assert.ok(entri, "entri migrate-pg");
-    assert.equal(migrations.at(-1), entri, "entri terakhir (sesudah noo_toko)");
+    const noo = migrations.findIndex((x) => x.nama === "noo_toko (NOO)");
+    assert.ok(noo >= 0 && migrations.indexOf(entri) > noo, "entri sesudah noo_toko");
     assert.match(entri.sql, /^\s*SET lock_timeout = '5s';/, "tinjauan A #191: ALTER sales_invoice dari migrate-pg tidak menunggu kunci tanpa batas");
     const migrasi = async (p: Pool) => ((await p.query(entri.sudahAda)).rowCount ? "SKIP" : (await p.query(entri.sql), "OK"));
 
