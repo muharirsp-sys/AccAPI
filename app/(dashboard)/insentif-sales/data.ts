@@ -23,8 +23,9 @@ export function bulanIniWita(now = new Date()): { month: number; year: number } 
 }
 
 /**
- * Time Gone: persentase hari kerja (Senin–Jumat) yang telah berlalu terhadap
- * total hari kerja pada bulan dari `ref`. Frontend-only, weekend dianggap libur.
+ * Time Gone: persentase hari kerja (Senin–Sabtu, keputusan pemilik 30 Okt 2026) yang telah berlalu terhadap
+ * total hari kerja pada bulan dari `ref`; hari ini dihitung sudah berlalu. Frontend-only, hanya Minggu libur.
+ * Kembarannya di lib/insentif-sales.ts (API) harus ikut berubah bila aturan ini berubah.
  */
 export interface WorkdayProgress { passed: number; total: number; pct: number }
 
@@ -35,8 +36,7 @@ export function getWorkdayProgress(ref: Date): WorkdayProgress {
     let total = 0;
     let passed = 0;
     for (let d = 1; d <= daysInMonth; d++) {
-        const day = new Date(year, month, d).getDay(); // 0 = Minggu, 6 = Sabtu
-        if (day === 0 || day === 6) continue;
+        if (new Date(year, month, d).getDay() === 0) continue; // Minggu; libur nasional belum dikecualikan (BL-48)
         total++;
         if (d <= ref.getDate()) passed++;
     }

@@ -1,3 +1,13 @@
+/*
+ * Tujuan: Akses data Form Kontrol di Postgres: JKS, rute hari ini, status AO, check-in/out, merchandising, laporan harian, briefing SPV,
+ *   Kontrol SM, frekuensi kunjungan + kapasitas, profil/hierarki sales, Dashboard SPV, audit kontrol.
+ * Caller: app/api/form-kontrol/** lewat lib/form-kontrol (index).
+ * Dependensi: lib/db (Drizzle), db/schema, ./constants, ./noo-aturan, lib/order-cabang (cocokKodeRute), lib/rekapan-nota/ui (tanggalPanjang).
+ * Main Functions: getJksList, upsertJksRows, getTodayRoute, upsertAoControl, saveCheckin, saveCheckout, saveMerchandising, saveReport,
+ *   saveBriefing, saveSmControl, getFrequencyData, getSpvDashboard, updateSalesHierarchy, writeKontrolAudit.
+ * Side Effects: Baca/tulis tabel Form Kontrol (jks_master, ao_control_daily, merchandising_check, salesman_daily_report, spv_briefing,
+ *   sm_control, sales_profile, kontrol_audit_log, kunjungan_luar_rute).
+ */
 import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull, sql, type AnyColumn } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
@@ -8,7 +18,7 @@ import {
 } from "@/db/schema";
 import { cocokKodeRute, type GalatOrder } from "@/lib/order-cabang";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
-import { DAY_TO_HARI, NO_ORDER_REASONS, hariBaku, kunciHari, kunciNama, paritasMinggu } from "./constants";
+import { DAY_TO_HARI, NO_ORDER_REASONS, hariBaku, hariKerjaBulan, kunciHari, kunciNama, paritasMinggu } from "./constants";
 import { isKodeNoo, type StatusNoo } from "./noo-aturan";
 import type { AoStatus, TodayRouteRow } from "./types";
 
@@ -690,10 +700,10 @@ export async function getFrequencyData(salesCode: string, principle: string, per
         overVisit: (visitMap.get(j.custCode) ?? 0) > j.visitFrequency,
     }));
 
-    const WORK_DAYS = 24, VISITS_PER_DAY = 20;
-    const totalSlots = WORK_DAYS * VISITS_PER_DAY;
+    const workDays = hariKerjaBulan(periodYear, periodMonth), VISITS_PER_DAY = 20;
+    const totalSlots = workDays * VISITS_PER_DAY;
     const simulation = {
-        workDays: WORK_DAYS, visitsPerDay: VISITS_PER_DAY, totalSlots,
+        workDays, visitsPerDay: VISITS_PER_DAY, totalSlots,
         capacity1x: totalSlots,
         capacity2x: Math.floor(totalSlots / 2),
         capacity4x: Math.floor(totalSlots / 4),

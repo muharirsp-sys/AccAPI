@@ -1529,7 +1529,7 @@ Tabel additive di `db/schema.ts`: `spvSalesAssignment` (`sales_code` UNIQUE → 
 - UI: `HierarchyAssignmentSection` di `AdminView` (page.tsx) — 2 mini-form assign + list + hapus.
 - Dashboard SPV dan row-level scope membaca assignment sebagai override, lalu fallback ke `sales_targets.spv_name/sm_name`. `scripts/sync-insentif-hierarchy.mjs` mengisi assignment awal dari target terbaru secara idempotent.
 - Akun login dapat ditautkan melalui `user.hierarchyRole/hierarchyName`; null berarti belum discoping. Link akun tetap manual agar nama SPV/SM tidak ditebak.
-- Dashboard utama menerima periode `month/year` dari URL dan menyediakan input bulan; pace historis=100%, masa depan=0%, bulan aktif mengikuti hari kerja berjalan.
+- Dashboard utama menerima periode `month/year` dari URL dan menyediakan input bulan; pace historis=100%, masa depan=0%, bulan aktif mengikuti hari kerja berjalan. Hari kerja Time Gone = Senin–Sabtu (Minggu libur, keputusan pemilik 30 Okt 2026), hari ini dihitung sudah berlalu; libur nasional belum dikecualikan (sisa BL-48). Aturan yang sama ada di `data.getWorkdayProgress` (layar) dan `lib/insentif-sales.getWorkdayProgress` (API). Kapasitas tab Frekuensi Form Kontrol juga memakai hari Senin–Sabtu bulan terpilih: `lib/form-kontrol/constants.hariKerjaBulan` × 20 kunjungan (mis. Nov 2026 = 25 hari = 500 slot), bukan 24 tetap; uji `lib/form-kontrol/fk-msm.test.ts`.
 
 ---
 
