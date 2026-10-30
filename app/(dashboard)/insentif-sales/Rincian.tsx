@@ -1,10 +1,10 @@
 /*
- * Tujuan: Bagian tampilan bersama Insentif Sales (Fiori S4c): warna laju (warna + ikon + teks + legenda), kolom PPh (bruto → PPh → netto
- *   dari konstanta server), rincian per baris Sales/SPV/SM, status bayar, dan pemuat insentif SPV/SM.
+ * Tujuan: Bagian tampilan bersama Insentif Sales (Fiori S4c): warna laju (warna + ikon + teks + legenda, bullet capaian vs Time Gone),
+ *   kolom PPh (bruto → PPh → netto dari konstanta server), rincian per baris Sales/SPV/SM, status bayar, dan pemuat insentif SPV/SM.
  * Caller: Dashboard.tsx, Saya.tsx, Pembayaran.tsx.
- * Dependensi: components/fiori/{core,interactive}, lib/insentif-ui, lib/insentif-pph, lib/insentif-konstanta (tipe), lib/rekapan-nota/ui (ambil),
+ * Dependensi: components/fiori/{core,interactive,chart}, lib/insentif-ui, lib/insentif-pph, lib/insentif-konstanta (tipe), lib/rekapan-nota/ui (ambil),
  *   ./data (formatRp, paceStatus), ./Rangka (useKonstanta).
- * Main Functions: Laju, LegendaLaju, CatatanTimeGone, KeteranganTimeGone, StatusBayar, labelPph, kolomPph, kakiPph, itemsPph, SalesBreakdown, SpvBreakdown, SmBreakdown, strataSm,
+ * Main Functions: Laju, LajuBatang, LegendaLaju, CatatanTimeGone, KeteranganTimeGone, StatusBayar, labelPph, kolomPph, kakiPph, itemsPph, SalesBreakdown, SpvBreakdown, SmBreakdown, strataSm,
  *   sebabNolSpv, sebabNolSm, useInsentifSpv, useInsentifSm.
  * Side Effects: GET /api/insentif-sales/spv-dashboard dan /sm-dashboard (useInsentifSpv/useInsentifSm); lainnya murni tampilan.
  *
@@ -16,6 +16,7 @@
 
 import { useCallback, type ReactNode } from "react";
 import { Check, Clock, TriangleAlert } from "lucide-react";
+import { Bullet } from "@/components/fiori/chart";
 import { KeyValues, StatusBadge, VariantNote, type Column, type Tone } from "@/components/fiori/core";
 import { useLoad, type Load } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
@@ -42,6 +43,21 @@ export function Laju({ nilai, timeGone, teks }: { nilai: number; timeGone: numbe
         <span className="fi-badge fi-tnum" data-tone={l.tone} title={teks ? undefined : l.teks}>
             <l.Icon className="fi-icon" aria-hidden />
             {teks ? l.teks : <>{formatPctText(nilai)}<span className="sr-only"> · {l.teks}</span></>}
+        </span>
+    );
+}
+
+/**
+ * Laju sebagai bullet: batang capaian + penanda Time Gone + garis 100% (skala bersama satu tabel, `skalaBullet`), lalu badge Laju yang
+ * membawa angka, ikon, dan teks. Bullet hanya penguat visual; badge tetap sumber bacaan.
+ */
+export function LajuBatang({ nilai, timeGone, skala, badge = true }: { nilai: number; timeGone: number; skala: number; badge?: boolean }) {
+    const bullet = <Bullet nilai={nilai} acuan={timeGone} skala={skala} tone={LAJU[paceStatus(nilai, timeGone)].tone} />;
+    if (!badge) return bullet; // daftar ponsel: badge sudah tampil di kolom nilai ListItem
+    return (
+        <span className="fi-bullet-cell">
+            {bullet}
+            <Laju nilai={nilai} timeGone={timeGone} />
         </span>
     );
 }

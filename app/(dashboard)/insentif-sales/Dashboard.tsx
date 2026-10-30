@@ -1,10 +1,10 @@
 /*
  * Tujuan: Layar "Dashboard" Insentif Sales (Fiori S4c, Overview Page it07): Time Gone, kartu ringkasan (Taksiran = sales + SPV + SM),
- *   capaian per SPV dengan warna laju, dan insentif tim (sales, SPV, SM) dengan alasan Rp 0 dan rincian per baris. Hanya memantau:
- *   input support pindah ke halaman Support principal.
+ *   capaian per SPV (bullet capaian vs Time Gone, diurut dari yang paling tertinggal, selisih dari laju) dengan warna laju, dan insentif
+ *   tim (sales, SPV, SM) dengan alasan Rp 0 dan rincian per baris. Hanya memantau: input support pindah ke halaman Support principal.
  * Caller: app/(dashboard)/insentif-sales/page.tsx (default export, prop permKeys).
- * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard, KonstantaCtx), ./Rincian (laju, PPh, rincian, pemuat SPV/SM),
- *   ./data (Time Gone, format), components/fiori/*, lib/insentif-ui.
+ * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard, KonstantaCtx), ./Rincian (laju, bullet laju, PPh, rincian, pemuat SPV/SM),
+ *   ./data (Time Gone, format), components/fiori/* (chart: skalaBullet), lib/insentif-ui.
  * Main Functions: Dashboard, Ringkasan, CapaianSpv, InsentifSales, InsentifSpv, InsentifSm.
  * Side Effects: GET /api/insentif-sales/dashboard, /spv-dashboard, /sm-dashboard; router.replace saat saringan SM berubah.
  */
@@ -13,6 +13,7 @@
 import { useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { RefreshCw } from "lucide-react";
+import { skalaBullet } from "@/components/fiori/chart";
 import { Button, EmptyState, ErrorState, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, type Column } from "@/components/fiori/core";
 import { FormField, type Load } from "@/components/fiori/interactive";
 import { DEFAULT_KONSTANTA, type Konstanta } from "@/lib/insentif-konstanta";
@@ -21,7 +22,7 @@ import { bulanIniWita, formatRp, formatShortRp, getPeriodWorkdayProgress, itemSu
 import { KOSONG } from "@/lib/tampil";
 import { InsentifRangka, KonstantaCtx, useDashboard, useKonstanta, usePeriode, type DashboardData } from "./Rangka";
 import {
-    CatatanTimeGone, Laju, LegendaLaju, SalesBreakdown, SmBreakdown, SpvBreakdown, StatusBayar, capaianSm, kakiPph, kolomPph,
+    CatatanTimeGone, Laju, LajuBatang, LegendaLaju, SalesBreakdown, SmBreakdown, SpvBreakdown, StatusBayar, capaianSm, kakiPph, kolomPph,
     sebabNolSm, sebabNolSpv, strataSm, useInsentifSm, useInsentifSpv, type SmIncentiveRow, type SpvIncentiveRow,
 } from "./Rincian";
 
@@ -204,8 +205,15 @@ function Ringkasan({ rows, tg, label, spv, sm, month, year, saringanAktif }: {
     );
 }
 
-type GrupSpv = { spv: string; n: number; rv: number; tv: number; aoTtReal: number; aoTtTarget: number; avgAo: number; iaTt: number; iaMt: number };
+type GrupSpv = { spv: string; n: number; rv: number; tv: number; cap: number; aoTtReal: number; aoTtTarget: number; avgAo: number; iaTt: number; iaMt: number };
 
+/** Selisih capaian dari Time Gone dalam poin persen, satu desimal ("+5,0 poin", "−21,5 poin"). */
+const poinLaju = (d: number) => {
+    const r = Math.round(d * 10) / 10;
+    return `${r > 0 ? "+" : r < 0 ? "−" : ""}${Math.abs(r).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} poin`;
+};
+
+/** Agregat per SPV, diurut dari capaian Value terendah (= paling tertinggal dari Time Gone yang sama untuk semua baris). */
 function grupSpv(rows: ApiRow[]): GrupSpv[] {
     const map = new Map<string, ApiRow[]>();
     for (const r of rows) { const key = r.spvName ?? ""; map.set(key, [...(map.get(key) ?? []), r]); }
@@ -215,9 +223,9 @@ function grupSpv(rows: ApiRow[]): GrupSpv[] {
         // 1 salesman bisa banyak baris (per principle) → hitung salesCode unik untuk angka per-sales; membagi dengan jumlah baris
         // memberi angka 3x lebih kecil untuk populasi yang sama, di bawah label yang sama (M12).
         const n = new Set(list.map((r) => r.salesCode)).size;
+        const rv = jumlah(list, (r) => r.real.value), tv = jumlah(list, (r) => r.target.value);
         return {
-            spv, n,
-            rv: jumlah(list, (r) => r.real.value), tv: jumlah(list, (r) => r.target.value),
+            spv, n, rv, tv, cap: pct(rv, tv),
             aoTtReal: jumlah(tt, (r) => r.real.ao), aoTtTarget: jumlah(tt, (r) => r.target.ao),
             avgAo: n ? Math.round(jumlah(list, (r) => r.real.ao) / n) : 0,
             // IA per OUTLET (itemSuper), bukan total dibagi jumlah baris. Kolom lama menampilkan ~1.200 sementara angka yang dipakai
@@ -225,30 +233,37 @@ function grupSpv(rows: ApiRow[]): GrupSpv[] {
             iaTt: itemSuper(jumlah(tt, (r) => r.real.ia), jumlah(tt, (r) => r.real.ao)),
             iaMt: itemSuper(jumlah(mt, (r) => r.real.ia), jumlah(mt, (r) => r.real.ao)),
         };
-    });
+    }).sort((a, b) => a.cap - b.cap);
 }
 
 /** Capaian per SPV dari baris dashboard (ikut saringan), warna laju terhadap Time Gone. */
 function CapaianSpv({ rows, tg }: { rows: ApiRow[]; tg: WorkdayProgress }) {
     const grup = useMemo(() => grupSpv(rows), [rows]);
+    // Satu skala untuk semua baris: penanda Time Gone harus sejajar supaya jarak tiap SPV darinya bisa dibandingkan.
+    const skala = skalaBullet([...grup.map((g) => g.cap), tg.pct]);
     const nama = (g: GrupSpv) => g.spv || "(tanpa SPV)";
     const kolom: Column<GrupSpv>[] = [
         { key: "spv", header: "SPV", cell: (g) => <><b>{nama(g)}</b><span className="fi-sub">{g.n} salesman</span></> },
         { key: "target", header: "Target", align: "end", secondary: true, cell: (g) => <span className="fi-tnum">{formatShortRp(g.tv)}</span> },
         { key: "real", header: "Realisasi", align: "end", cell: (g) => <span className="fi-tnum">{formatShortRp(g.rv)}</span> },
-        { key: "capaian", header: "Capaian", cell: (g) => <Laju nilai={pct(g.rv, g.tv)} timeGone={tg.pct} /> },
+        { key: "capaian", header: "Capaian", cell: (g) => <LajuBatang nilai={g.cap} timeGone={tg.pct} skala={skala} /> },
+        { key: "selisih", header: "Selisih dari laju", align: "end", secondary: true, cell: (g) => <span className="fi-tnum">{poinLaju(g.cap - tg.pct)}</span> },
         { key: "aott", header: "Aktif Outlet TT", cell: (g) => <Laju nilai={pct(g.aoTtReal, g.aoTtTarget)} timeGone={tg.pct} /> },
         { key: "avgao", header: "Rata-rata Aktif Outlet per sales", align: "end", secondary: true, cell: (g) => <span className="fi-tnum">{formatQty(g.avgAo)}</span> },
         { key: "iatt", header: "Item Aktif per toko TT", align: "end", secondary: true, cell: (g) => <span className="fi-tnum">{formatRatio(g.iaTt)}</span> },
         { key: "iamt", header: "Item Aktif per toko MT", align: "end", secondary: true, cell: (g) => <span className="fi-tnum">{formatRatio(g.iaMt)}</span> },
     ];
     return (
-        <Section title="Capaian per SPV" subtitle={`${grup.length} SPV · agregat tim per supervisor`}>
-            <div className="fi-sect-in"><LegendaLaju timeGone={tg.pct} /></div>
+        <Section title="Capaian per SPV" subtitle={`${grup.length} SPV · agregat tim per supervisor · diurut dari yang paling tertinggal`}>
+            <div className="fi-sect-in">
+                <LegendaLaju timeGone={tg.pct} />
+                <p className="fi-small fi-muted">Batang = capaian Value; garis tebal = Time Gone {tg.pct}%; garis tipis = 100% target.</p>
+            </div>
             <ResponsiveTable<GrupSpv> title="Capaian per SPV" columns={kolom} rows={grup} rowKey={(g) => g.spv}
                 empty={{ title: "Tidak ada baris untuk SM ini", message: "Pilih SM lain atau hapus saringan SM." }}
-                mobileItem={(g) => <ListItem doc={nama(g)} amount={<Laju nilai={pct(g.rv, g.tv)} timeGone={tg.pct} />}
-                    title={`${formatShortRp(g.rv)} dari ${formatShortRp(g.tv)}`} meta={`${g.n} salesman · Aktif Outlet TT ${formatPctText(pct(g.aoTtReal, g.aoTtTarget))}`} />} />
+                mobileItem={(g) => <ListItem doc={nama(g)} amount={<Laju nilai={g.cap} timeGone={tg.pct} />}
+                    title={<>{formatShortRp(g.rv)} dari {formatShortRp(g.tv)}<LajuBatang nilai={g.cap} timeGone={tg.pct} skala={skala} badge={false} /></>}
+                    meta={`${g.n} salesman · ${poinLaju(g.cap - tg.pct)} dari laju · Aktif Outlet TT ${formatPctText(pct(g.aoTtReal, g.aoTtTarget))}`} />} />
         </Section>
     );
 }

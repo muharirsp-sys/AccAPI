@@ -136,8 +136,12 @@ RootLayout -> app/fiori.css (token + kelas fi-*, di-scope ke .fiori; halaman lam
   -> skrip pra-render components/fiori/scheme.ts: localStorage fiori-scheme/fiori-density -> html[data-scheme|data-density]
 Halaman yang dimigrasi -> <FioriScope> (components/fiori/Scope.tsx: Plus Jakarta Sans + Geist Mono)
   -> components/fiori/core.tsx (presentasional) + interactive.tsx (dialog, form, filter bar, SchemeSwitcher)
+  -> components/fiori/chart.tsx (grafik SVG tanpa dependensi, Opsi A+ docs/audit/AUDIT_CHART.md): Bullet + skalaBullet/posisiBullet
+     -> dipakai Insentif Sales › Dashboard › Capaian per SPV (Rincian.tsx LajuBatang: bullet capaian Value vs Time Gone + badge Laju)
 /dev/ui-kit -> semua komponen x 6 keadaan; 404 di build produksi
 ```
+Grafik: chart melengkapi tabel, tidak menggantikannya; angka selalu tertulis (bullet `aria-hidden`, badge membawa angka + ikon + teks);
+warna hanya token (`[data-tone]` → `--ts`), tanpa animasi. Uji: `components/fiori/chart.test.ts`.
 Validasi: `npx playwright test tests/fiori-ui-kit.spec.ts` pada server development lokal (LOCAL_AUTH_BYPASS);
 baseline di `tests/fiori-ui-kit.spec.ts-snapshots/`. Aturan: `docs/UI_DESIGN_SYSTEM.md`.
 Arah visual tunggal untuk agen/skill desain: `DESIGN.md` (token + aturan, format design.md) dan `PRODUCT.md` (pengguna, prinsip).
@@ -1002,7 +1006,7 @@ AccAPI/_github_clean/
 | `components/DataTable.tsx` | `DataTable` | Tabel generik dengan caption, status live, loading skeleton, empty state eksplisit, sorting semantik, kontrol kolom/pagination aksesibel, sticky header, dan density baris konsisten |
 | `components/off-program-control/OffGlobalSearch.tsx` | `OffGlobalSearch` | Pencarian pengajuan OFF lewat "/" (diabaikan saat mengetik di isian atau dialog modal terbuka; Ctrl K milik cari menu shell); combobox/listbox mendukung Arrow, Home/End, Enter, dan Escape (hanya saat isian fokus); hasil membuka batch di kolom kedua tab aktif |
 | `components/off-program-control/OffNotificationBell.tsx` | `OffNotificationBell` | Tombol berjumlah + popover masalah SLA per peran; "Buka pengajuan" = tautan nyata `?batch=` (tab baru bisa), klik biasa membuka batch di kolom kedua; Sembunyikan berlaku sampai muat ulang |
-| `app/(dashboard)/insentif-sales/**` (Fiori S4c) | `InsentifSalesPage`, `InsentifRangka`, `usePeriode`, `useDashboard`, `aksesInsentif`, `halamanTerlihat` | Enam rute (Dashboard, `/saya`, `/pembayaran`, `/data-periode`, `/support`, `/pengaturan`); navigasi dari izin + identitas hierarki (server); periode/principal/cabang di query URL untuk semua halaman; `?view=` lama dialihkan; enam keadaan per layar, aksi tulis lewat ConfirmDialog |
+| `app/(dashboard)/insentif-sales/**` (Fiori S4c) | `InsentifSalesPage`, `InsentifRangka`, `usePeriode`, `useDashboard`, `aksesInsentif`, `halamanTerlihat`, `LajuBatang` | Enam rute (Dashboard, `/saya`, `/pembayaran`, `/data-periode`, `/support`, `/pengaturan`); navigasi dari izin + identitas hierarki (server); periode/principal/cabang di query URL untuk semua halaman; `?view=` lama dialihkan; enam keadaan per layar, aksi tulis lewat ConfirmDialog. Dashboard › Capaian per SPV: diurut dari capaian Value terendah, bullet capaian vs Time Gone (skala bersama, `components/fiori/chart.tsx`) + kolom sekunder "Selisih dari laju" (poin); data dan cakupan tetap dari `/api/insentif-sales/dashboard` (tanpa query baru). Kolom Aktif Outlet TT tetap badge (penyebut target AO file, audit chart N5) |
 | `app/globals.css` | dasar global | Tailwind + target sentuh 44 px, cincin fokus global, reduced-motion, PWA, `@theme inline` ke token Fiori; komponen dan token tampilan ada di `app/fiori.css` |
 
 ### Payments UI Safety

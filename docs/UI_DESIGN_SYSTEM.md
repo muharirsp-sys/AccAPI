@@ -90,6 +90,7 @@ Breakpoint: S < 600 · M 600–1023 · L 1024–1439 · XL ≥ 1440. Tabel memak
 | `FlexibleColumnLayout` | core | 2 kolom ≥ 1024 px; di bawahnya satu kolom daftar ↔ detail dengan tombol "Kembali ke daftar" |
 | `Tile` | core | Beranda per peran; angka besar (`value`) hanya bila angkanya inti tugas |
 | `KeyValues` | core | daftar label–nilai (`dl`), nilai rata kanan tabular; `align="start"` untuk rata kiri |
+| `Bullet` | chart | batang nilai + garis 100% + penanda acuan (mis. capaian vs Time Gone), SVG tanpa dependensi dan tanpa animasi; satu tabel = satu skala (`skalaBullet`) supaya penanda sejajar; `aria-hidden`, jadi angka wajib tertulis di sebelahnya (contoh `LajuBatang` di Insentif Sales: bullet + badge Laju dalam `.fi-bullet-cell` berkolom badge tetap); warna dari `tone` (`--ts`). Melengkapi tabel, tidak menggantikannya |
 | `EmptyState`, `ErrorState`, `Skeleton` | core | tiga keadaan yang selalu berbeda |
 | `useUnsavedGuard` | interactive | peringatan peramban saat meninggalkan halaman dengan draf |
 
