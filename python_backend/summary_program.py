@@ -346,6 +346,8 @@ def jaga(d, teks, m, tanggal, lain=(), dikonfirmasi=frozenset()):
     out = []
     sah = {r["rule_id"] for r in d["item_rules"] if dikonfirmasi and set(fakta({"item_rules": [r]})) <= dikonfirmasi}
     rules = [r for r in d["item_rules"] if r["rule_id"] not in sah]
+    # peringatan model sendiri pada baris yang sudah disetujui pemilik sudah dijawab bulan lalu (uji layar 30 Okt: URC R8)
+    d["flags"] = [f for f in d["flags"] if not (f["rule_id"] in sah and f["tingkat"] in ("kritis", "perlu_cek"))]
     for r in rules:
         b, k = r["benefit"], r["ketentuan"]
         # G1 nilai benefit, minimum, qty bonus harus tertulis di surat (tabel rusak di OCR / angka karangan)
@@ -388,6 +390,8 @@ def jaga(d, teks, m, tanggal, lain=(), dikonfirmasi=frozenset()):
         out += [_flag("tidak_konsisten", "perlu_cek", r, "tidak ada pembaca lain yang membaca sama (nilai/strata/barang)")
                 for r in rules if any(f not in dukung for f in fakta({"item_rules": [r]}))]
         semua = set.intersection(*({f[0] for f in fakta(x)} for x in lain))
+        if dikonfirmasi:  # kode yang juga tidak ada di Summary yang disetujui = sudah diputuskan keluar; yang dulu ada lalu hilang tetap ditanya
+            semua &= {f[0] for f in dikonfirmasi}
         if hilang := sorted(semua - {kd for r in d["item_rules"] for kd in r["barang"]["kode_barang"]}):
             out.append({"jenis": "tidak_konsisten", "tingkat": "perlu_cek", "program_id": None, "rule_id": None,
                         "pesan": f"Penjaga: semua pembaca lain memasukkan {len(hilang)} kode yang tidak ada di hasil ini: {', '.join(hilang[:10])}"})
@@ -431,5 +435,6 @@ async def ekstrak(principal, berkas_raw, master, tanggal, dikonfirmasi=frozenset
     hasil = [umum(rapikan(json.loads(json.dumps(d)), kode), m) for d in hasil]  # salinan: hasil cache tidak ikut berubah
     utama = hasil[0]
     teks = "\n".join(h for b in berkas for h in b["teks"] + b["tabel"])  # dua OCR: biasa + tabel 300 dpi
-    utama["flags"] += jaga(utama, teks, m, tanggal, hasil[1:], dikonfirmasi)
+    baru = jaga(utama, teks, m, tanggal, hasil[1:], dikonfirmasi)  # jaga mengganti utama["flags"]; jangan `+=` langsung
+    utama["flags"] += baru
     return rapikan(utama, kode)

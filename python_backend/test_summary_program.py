@@ -60,6 +60,10 @@ f = sp.jaga(d, "BUY 4 CS FREE 1 2 RENCENG", M, "2026-10-28", [benar, beda])
 assert [x["rule_id"] for x in f if "pembaca lain" in x["pesan"]] == ["R2"], f  # G7: R1 didukung, R2 (bonus 2) tidak
 assert not [x for x in f if "semua pembaca" in x["pesan"]], f                  # A3 hanya di satu pemeriksa: bukan mayoritas
 assert not sp.jaga(copy.deepcopy(d), "", M, "2026-10-28", [benar], frozenset(sp.fakta(d))), "fakta yang sudah disetujui tidak ditanya lagi"
+lalu = copy.deepcopy(d)
+lalu["flags"] = [{"jenis": "ambigu", "tingkat": "perlu_cek", "program_id": "P1", "rule_id": "R1", "pesan": "model ragu"}]
+assert not sp.jaga(lalu, "", M, "2026-10-28", [beda, beda], frozenset(sp.fakta(d))) and not lalu["flags"],     "flag model di baris yang disetujui dan kode yang dulu juga diputuskan keluar (A3) tidak ditanya lagi"
+assert any("A3" in f["pesan"] for f in sp.jaga(copy.deepcopy(d), "", M, "2026-10-28", [beda, beda], frozenset(sp.fakta(beda)))),     "kode yang dulu disetujui lalu hilang tetap ditanya"
 
 # gabung + rapikan
 g = sp.gabung([doc(rule()), doc(rule(kode=("A9",)))])
@@ -93,7 +97,9 @@ def tiruan(req):
     panggilan.append(body["model"])
     teks = json.dumps(body["messages"][1]["content"])
     bonus = 2 if body["model"] == "mistral-large-latest" and "HALAMAN 3" in teks else 1  # pemeriksa membaca beda di halaman 3
-    isi = json.dumps(doc(rule(bonus=(bonus, "RTG"))))
+    d = doc(rule(bonus=(bonus, "RTG")))
+    d["flags"] = [{"jenis": "tenggat_dekat", "tingkat": "kritis", "program_id": "P1", "rule_id": None, "pesan": "model salah hitung hari"}]
+    isi = json.dumps(d)  # tenggat dihitung kode (G6): flag tenggat model harus hilang di hasil akhir
     if body["model"] == "mistral-large-4":
         isi = [{"type": "thinking", "thinking": []}, {"type": "text", "text": isi}]
     return httpx.Response(200, json={"choices": [{"message": {"content": isi}}]})
