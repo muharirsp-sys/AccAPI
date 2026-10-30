@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Tujuan: schema output ekstraksi surat program principal (detail item untuk setting sistem + metadata form summary ringkas). Caller: modul ekstraksi surat program (pemanggil Claude API) sebagai input_schema tool/structured output, dan validator sebelum simpan. Dependensi: prompt_summary_program.md. Main Functions: objek summary_program (programs, item_rules, flags, validasi). Side Effects: tidak ada.",
+  "title": "summary_program",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["principal", "periode_summary", "programs", "item_rules", "flags", "validasi"],
+  "properties": {
+    "principal": { "type": "string" },
+    "periode_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mulai", "selesai"],
+      "properties": {
+        "mulai": { "type": ["string", "null"], "format": "date" },
+        "selesai": { "type": ["string", "null"], "format": "date" }
+      }
+    },
+    "programs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["program_id", "no_surat", "tanggal_surat", "nama_program", "channel", "outlet", "periode",
+                     "mekanisme", "syarat_claim", "keterangan", "sections"],
+        "properties": {
+          "program_id": { "type": "string", "description": "P1, P2, ..." },
+          "no_surat": { "type": "string", "description": "Persis seperti di surat. Bila tidak ada: 'TANPA NOMOR - <judul/tanggal>'." },
+          "tanggal_surat": { "type": ["string", "null"], "format": "date" },
+          "nama_program": { "type": "string" },
+          "channel": { "type": "string", "description": "Singkat, mis. GT, MT, GT & MT, A&D, Cash & Carry, Online." },
+          "outlet": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tipe", "keterangan", "kode_outlet"],
+            "properties": {
+              "tipe": { "enum": ["tanpa_list", "hanya_list"] },
+              "keterangan": { "type": ["string", "null"] },
+              "kode_outlet": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "periode": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mulai", "selesai", "catatan"],
+            "properties": {
+              "mulai": { "type": ["string", "null"], "format": "date" },
+              "selesai": { "type": ["string", "null"], "format": "date" },
+              "catatan": { "type": ["string", "null"] }
+            }
+          },
+          "mekanisme": { "enum": ["on_faktur", "sell_in", "rafaksi", "voucher", "consumer_promo", "campuran", "tidak_tercantum"] },
+          "syarat_claim": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ada_klaim", "dasar_nilai", "dokumen", "batas_klaim_aturan", "batas_klaim_tanggal"],
+            "properties": {
+              "ada_klaim": { "type": "boolean" },
+              "dasar_nilai": {
+                "type": "array",
+                "items": { "enum": ["DBP", "RBP", "CBP", "PRICELIST", "TIDAK_TERCANTUM"] }
+              },
+              "dokumen": { "type": "array", "items": { "type": "string" } },
+              "batas_klaim_aturan": { "type": ["string", "null"], "description": "Kalimat aturan dari surat, mis. 'maks. 45 hari setelah promo berakhir'." },
+              "batas_klaim_tanggal": { "type": ["string", "null"], "format": "date" }
+            }
+          },
+          "keterangan": { "type": "array", "items": { "type": "string" } },
+          "sections": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["section_id", "label", "outlet_khusus", "kolom", "catatan"],
+              "properties": {
+                "section_id": { "type": "string", "description": "P1-S1, P1-S2, ..." },
+                "label": { "type": "string", "description": "Judul baris abu-abu, mis. 'Strata (CTN)', 'TOKO GROSIR'." },
+                "outlet_khusus": { "type": ["string", "null"], "description": "Isi bila daftar outlet seksi ini beda dari program." },
+                "kolom": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 6,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kolom_id", "label"],
+                    "properties": {
+                      "kolom_id": { "type": "string", "description": "P1-S1-K1, ..." },
+                      "label": { "type": "string" }
+                    }
+                  }
+                },
+                "catatan": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "item_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule_id", "program_id", "section_id", "kolom_id", "barang", "segmen", "ketentuan", "benefit", "berlaku", "sumber", "keyakinan"],
+        "properties": {
+          "rule_id": { "type": "string" },
+          "program_id": { "type": "string" },
+          "section_id": { "type": "string" },
+          "kolom_id": { "type": "string" },
+          "barang": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["nama_di_surat", "kode_di_surat", "kode_barang", "kelompok_barang", "variant", "gramasi", "status_match"],
+            "properties": {
+              "nama_di_surat": { "type": "string" },
+              "kode_di_surat": { "type": ["string", "null"], "description": "Barcode/kode material bila tertulis di surat." },
+              "kode_barang": { "type": "array", "items": { "type": "string" }, "description": "Semua kode master yang tercakup baris ini. Kosong bila tidak ketemu." },
+              "kelompok_barang": { "type": "string", "description": "Ikuti penamaan master bila ketemu." },
+              "variant": { "type": ["string", "null"] },
+              "gramasi": { "type": ["string", "null"] },
+              "status_match": { "enum": ["tepat", "lewat_kelompok_gramasi", "sebagian", "tidak_ditemukan", "tanpa_master"] }
+            }
+          },
+          "segmen": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["channel", "tipe_outlet", "kode_outlet"],
+            "properties": {
+              "channel": { "type": ["string", "null"] },
+              "tipe_outlet": { "type": ["string", "null"] },
+              "kode_outlet": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "ketentuan": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["basis", "satuan", "min", "max", "lingkup_mix", "kelipatan", "dihitung_per", "syarat_tambahan"],
+            "properties": {
+              "basis": { "enum": ["qty", "nilai_belanja", "paket", "tanpa_minimum"] },
+              "satuan": { "enum": ["PCS", "CTN", "RTG", "DUS", "BOX", "PAK", "RP", null] },
+              "min": { "type": ["number", "null"] },
+              "max": { "type": ["number", "null"], "description": "Inklusif. null = tanpa batas atas." },
+              "lingkup_mix": { "enum": ["per_sku", "kelompok_gramasi_sama", "kelompok_beda_gramasi", "lintas_kelompok", "paket_tetap", "tidak_tercantum"] },
+              "kelipatan": { "type": ["boolean", "null"] },
+              "dihitung_per": { "enum": ["faktur", "po", "nota", "bulan", "periode", "tidak_tercantum"] },
+              "syarat_tambahan": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "benefit": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tipe", "komponen", "bertingkat", "nominal_per", "bonus", "teks_tampilan"],
+            "properties": {
+              "tipe": { "enum": ["diskon_persen", "potongan_nominal", "bonus_barang", "cut_price", "voucher", "gimmick", "sewa_display"] },
+              "komponen": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["nama", "nilai", "satuan", "beban"],
+                  "properties": {
+                    "nama": { "type": "string", "description": "mis. Disc-1, Bgt DB, Claim, Add disc, Sewa pajangan" },
+                    "nilai": { "type": "number" },
+                    "satuan": { "enum": ["%", "RP"] },
+                    "beban": { "enum": ["principal", "distributor", "tidak_tercantum"] }
+                  }
+                }
+              },
+              "bertingkat": { "type": "boolean", "description": "true bila komponen % dihitung berurutan dari harga setelah komponen sebelumnya." },
+              "nominal_per": { "enum": ["pcs", "ctn", "box", "pak", "rtg", "nota", "bulan", "paket", null] },
+              "bonus": {
+                "type": ["object", "null"],
+                "additionalProperties": false,
+                "required": ["kode_barang", "nama", "qty", "satuan", "maks_qty", "pilihan_bebas"],
+                "properties": {
+                  "kode_barang": { "type": "array", "items": { "type": "string" } },
+                  "nama": { "type": "string" },
+                  "qty": { "type": "number" },
+                  "satuan": { "type": "string" },
+                  "maks_qty": { "type": ["number", "null"] },
+                  "pilihan_bebas": { "type": "boolean" }
+                }
+              },
+              "teks_tampilan": { "type": "string", "description": "Teks singkat untuk sel form, mis. '2%', '15+5+20%', '12+1', 'Rp3.000/nota'." }
+            }
+          },
+          "berlaku": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mulai", "selesai"],
+            "properties": {
+              "mulai": { "type": ["string", "null"], "format": "date" },
+              "selesai": { "type": ["string", "null"], "format": "date" }
+            }
+          },
+          "sumber": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["halaman", "kutipan"],
+            "properties": {
+              "halaman": { "type": ["integer", "null"] },
+              "kutipan": { "type": "string", "description": "Potongan teks/sel tabel surat yang jadi dasar, maks. 20 kata." }
+            }
+          },
+          "keyakinan": { "enum": ["tinggi", "sedang", "rendah"] }
+        }
+      }
+    },
+    "flags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["jenis", "tingkat", "program_id", "rule_id", "pesan"],
+        "properties": {
+          "jenis": {
+            "enum": ["tenggat_dekat", "anomali_angka", "tidak_konsisten", "ambigu", "batas_strata_ambigu", "data_tidak_tercantum",
+                     "tidak_ada_di_master", "beda_dengan_summary_lama", "periode_lewat", "teks_sisa_surat_lama", "tidak_terbaca", "di_luar_cakupan"]
+          },
+          "tingkat": { "enum": ["kritis", "perlu_cek", "info"] },
+          "program_id": { "type": ["string", "null"] },
+          "rule_id": { "type": ["string", "null"] },
+          "pesan": { "type": "string" }
+        }
+      }
+    },
+    "validasi": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jumlah_baris_produk_di_surat", "jumlah_item_rules", "jumlah_rule_tanpa_kode"],
+      "properties": {
+        "jumlah_baris_produk_di_surat": { "type": "integer" },
+        "jumlah_item_rules": { "type": "integer" },
+        "jumlah_rule_tanpa_kode": { "type": "integer" }
+      }
+    }
+  }
+}

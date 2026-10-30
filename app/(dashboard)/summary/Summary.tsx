@@ -4,7 +4,7 @@
  *   gerbang faktur (LangkahGerbang), Summary final + email. Hanya aksi tahap aktif yang primary (footer: Terbitkan/Cabut publikasi; dialog,
  *   cabut = alasan wajib ≥ 5 karakter); aksi bagian lain secondary. Laporkan salah baca dan hapus baris lewat dialog.
  * Caller: app/(dashboard)/summary/page.tsx.
- * Dependensi: FastAPI /summary/* dan /api/principles (lib/apiBase, CSRF), /api/promo-rule/from-summary; components/fiori/*; LangkahGerbang; lib/tampil.
+ * Dependensi: FastAPI /summary/* dan /api/principles (lib/apiBase, CSRF; send/csrfHeader dipakai juga SummaryProgram), /api/promo-rule/from-summary; components/fiori/*; LangkahGerbang; lib/tampil.
  * Main Functions: Summary, PilihBanyak.
  * Side Effects: HTTP ke FastAPI (draf, terbit, cabut, master, koreksi, Summary final, email); unduh berkas. Logic BL-51/52/53 tidak ditulis.
  */
@@ -49,7 +49,7 @@ const JENIS_PROGRAM: { kunci: string; label: string }[] = [
 ];
 
 let cachedCsrf = "";
-async function csrfHeader(): Promise<Record<string, string>> {
+export async function csrfHeader(): Promise<Record<string, string>> {
     if (!cachedCsrf) {
         try {
             const res = await fetch(`${API_BASE}/api/me`, { credentials: "include", signal: AbortSignal.timeout(15_000) });
@@ -62,7 +62,7 @@ async function csrfHeader(): Promise<Record<string, string>> {
 
 /** Satu pintu HTTP ke FastAPI Summary: pesan galat backend dipertahankan, tidak pernah "Fetch failed". */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function send(method: string, url: string, data?: unknown): Promise<{ ok: boolean; body: any; error: string }> {
+export async function send(method: string, url: string, data?: unknown): Promise<{ ok: boolean; body: any; error: string }> {
     const isForm = data instanceof FormData;
     try {
         const res = await fetch(`${API_BASE}${url}`, {
@@ -421,7 +421,7 @@ export default function Summary({ permKeys }: { permKeys: string[] }) {
                 draft={dirty}
                 attributes={draft ? [{ label: "Surat", value: suratUnik.length }, { label: "Aturan tersusun", value: rules.length }, { label: "Periode", value: draftPeriod[0] ? `${tanggalWita(draftPeriod[0])} – ${tanggalWita(draftPeriod[1])}` : "dari baris" }, { label: "Draf", value: <span className="fi-mono">{draft.id.slice(0, 8)}</span> }] : undefined}
                 flow={<Flow steps={langkah} label="Siklus Summary" />}
-                actions={<Link href="/summary/settings" className="fi-btn fi-btn--tertiary">Pengaturan Summary</Link>} />
+                actions={<><Link href="/summary/program" className="fi-btn fi-btn--tertiary">Summary Program (Mistral)</Link><Link href="/summary/settings" className="fi-btn fi-btn--tertiary">Pengaturan Summary</Link></>} />
             <AnchorBar anchors={[
                 { id: "surat", label: "Surat" }, ...(draft ? [{ id: "aturan", label: "Aturan" }] : []), ...(masterToken || rows.length ? [{ id: "baris", label: "Baris" }] : []),
                 ...(draft && bolehUbah ? [{ id: "simulasi", label: "Simulasi" }] : []), ...(draft ? [{ id: "dipakai", label: "Dipakai di mana" }] : []), { id: "gerbang", label: "Gerbang faktur" },
