@@ -776,7 +776,7 @@
       "persentase"
     ],
     "question": "Bagaimana cara hitung pencapaian sales?",
-    "answer": "Pencapaian dihitung berdasarkan:\n\n**Time Gone:**\n- Persentase bulan yang sudah berjalan (hari kerja Senin-Jumat)\n- Misal: 15 hari kerja dari 22 total = 68.2%\n\n**Pace Status:**\n- 🟢 Green: ≥100% dari expected\n- 🟡 Yellow: 80-99%\n- 🔴 Red: <80%\n\n**Achievement %:**\n- (actual / target) × 100\n- Lookup ke tier untuk hitung insentif",
+    "answer": "Pencapaian dihitung berdasarkan:\n\n**Time Gone:**\n- Persentase bulan yang sudah berjalan (hari kerja Senin-Sabtu, Minggu libur)\n- Misal: 15 hari kerja dari 26 total = 57.7%\n\n**Pace Status:**\n- 🟢 Green: ≥100% dari expected\n- 🟡 Yellow: 80-99%\n- 🔴 Red: <80%\n\n**Achievement %:**\n- (actual / target) × 100\n- Lookup ke tier untuk hitung insentif",
     "category": "sales"
   },
   {
