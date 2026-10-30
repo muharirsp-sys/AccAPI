@@ -22,7 +22,7 @@ Cara pakai:
 | No | Aturan | Sumber |
 |---|---|---|
 | L01 | Kode stok bonus berakhiran **B** (nama Accurate diawali `B>`) **tidak ikut** program, walau satu kelompok dan gramasi. Bila kode master suatu barang hanya versi B, rule jadi tanpa kode dan diberi flag: cari kode jual di Accurate (sering berakhiran N). | Pemilik 28 Okt 2026 (perluasan keputusan P> 14 Okt) |
-| L02 | Kode kemasan promo URC **P>** (berakhiran P) tidak ikut program. | Pemilik 14 Okt 2026 |
+| L02 | Kode kemasan promo URC **P>** (berakhiran P) tidak ikut program. Untuk L01 dan L02: `kelompok_barang` dan `gramasi` hanya dari kode yang tersisa (bukan "PIATTOS, P> PIATTOS" atau gramasi kode B/P>). | Pemilik 14 Okt 2026; form 29 Okt 2026 |
 | L03 | Kode **banded/BND/BDD** ikut hanya bila surat menyebut banded (mis. "berlaku juga untuk stock banded barcode sama"). Surat diam atau mengecualikan banded: keluar. | Pemilik 28 Okt 2026 |
 | L04 | Porsi **beban distributor** yang tertulis di surat masuk rantai benefit sebagai komponen ber-`beban: distributor` (mis. Vinda `15+5+20`, Gondowangi `7+12,1372%`, MSM Amago `8+3+1,5%`). Keterangan menyebut bagian distributor; klaim ke principal dikurangi bagian itu. | Pemilik 16 Okt (Vinda), diperluas 28 Okt 2026 |
 | L05 | Batas, dasar, atau dokumen klaim **tidak tercantum** di surat: `batas_klaim_aturan` = "Tidak tercantum di surat - ikut ketentuan klaim principal". Tidak menahan rilis. | Pemilik 28 Okt 2026 |
@@ -34,7 +34,7 @@ Cara pakai:
 | L11 | "MIX VARIANT" = campur varian **gramasi sama**, kecuali surat menyebut beda gramasi. Paket "beli N + bonus M" yang tidak menyebut campur: boleh mix kelompok & gramasi sama, satuan PCS, bonus = barang yang sama. | Pemilik 7 Okt 2026; acuan Priskila Maret, pemilik 28 Okt 2026 |
 | L12 | **ALL VARIANT eksklusif**: baris umum = semua varian **kecuali** yang dipegang baris lain pada surat dan kelompok yang sama (mis. Regazza EDT umum tanpa varian Sport). | Pemilik 16 Sep 2026 |
 | L13 | Surat yang menyebut **kelas harga** (eceran/HET "1000", "2000"), bukan gramasi: pakai daftar kode di bagian principal di bawah. Kode baru yang tidak ada di daftar = flag perlu_cek. | Pemilik 28 Okt 2026 (daftar Summary Okt 2026 yang ditinjau 14 Okt, minus L01/L02) |
-| L14 | Benefit **gimmick** (tumbler, sedotan, cutting box, barang non-produk) dicetak sebagai catatan, tidak disetting, karena faktur tidak bisa memberi barang non-produk. | Summary Fonterra Juni 2026 tanpa gimmick |
+| L14 | Summary hanya memuat **diskon (% / Rp) + bonus barang produk yang on faktur**. Benefit `voucher`, `gimmick` (tumbler, Sipahh/sedotan, cutting box, mug, barang non-produk) dan `sewa_display` (sewa pajangan, lampion) **tidak masuk summary**; **kecuali sewa hanger permanent** (komponen "Sewa hanger"), yang dibayar on faktur dan tetap masuk (pemilik 29 Okt 2026; `OUT_OF_SCOPE` produksi masih memuat HANGER, sesuaikan saat port). Yang keluar: tidak dicetak di Form, tidak disetting. Tetap diekstrak dengan tipe yang benar, lalu dibuang kode (`luar_cakupan`) dan dilaporkan dalam satu flag info `di_luar_cakupan` (bukan hilang diam-diam). Program yang isinya hanya itu (mis. Fonterra F148SP voucher + gimmick) keluar seluruhnya. | Pemilik 19 Jul 2026 (`generic_promo_pipeline.OUT_OF_SCOPE`); ditegaskan ulang 29 Okt 2026 |
 | L15 | Barang yang tidak ada di master: **cek dulu tabel item Accurate** (baca-saja) sebelum menyimpulkan tidak ada. Tetap tidak ada: rule tanpa kode, dicetak bertanda, tidak disetting. | Pemilik 28 Okt 2026 |
 | L16 | "Setiap Pengambilan" = tanpa minimum, satuan apa pun. | Pemilik 16 Okt 2026 |
 | L17 | CTN/CS/karton = **KRT** Accurate. | Pemilik 14 Okt 2026 |
@@ -50,6 +50,8 @@ Cara pakai:
 - SIAPI diabaikan; program tidak dibatasi daftar outlet. Paperpack = dua NU TEA 225ML "PO", dikecualikan. Food (Bag) = NDB + NDB - GURIMI saja
   (tanpa cup, mangkok, kecap). Strata per order (L20). Pemilik 19 Okt 2026.
 - "Cluster A" = satu-satunya tabel strata di surat untuk distributor ini.
+- **KIN bukan lagi produk Surya Perkasa**: kode KIN (mis. KIN - DAIRY) dikeluarkan dari program walau surat menyebutnya;
+  Beverages = NU saja (mix antar-varian NU, bukan lintas merek). Pemilik 29 Okt 2026.
 
 ### DAHLIA
 - Core/Fresh Signature **tidak boleh dicampur** Heritage untuk mencapai minimum (pemilik 16 Okt 2026).
@@ -64,7 +66,9 @@ Cara pakai:
   Grosir Bintang & sewa pajangan = semua produk; stickpack = ANLENE ACTIFIT POLYBAG 30/32GR. Revisi pemilik 19 Okt 2026.
 - MATERNA = MATNA; ANLENE GOLD "800GR" = master 850GR & 825GR; Habbat "560 GR" = HABATUSSAUDA 580GR (F2020040580010).
 - 1 RTG = 10 SCH. "Beli 6 renceng discount Rp3.000" = Rp3.000 per 6 RTG, berlaku kelipatan (L08).
-- BUTTER ANCHOR 200GR tidak ada di Accurate (dicek 28 Okt 2026): tanpa kode (L15). Blok gimmick ikut posisi blok outlet di atasnya.
+- Lampion, sewa pajangan grosir (+0,5% / +1%) dan seluruh F148SP MT (voucher + gimmick) di luar cakupan (L14);
+  yang dicetak: provision Rp3.000/6 RTG, hanger permanent Rp25.000/bulan & tambahan Rp50.000/3 bulan (on faktur),
+  pharmacy 3%/5%, grosir bintang 2,5%/3%/4%. Pemilik 29 Okt 2026.
 
 ### GONDOWANGI (NATUR / AZALEA / HG)
 - NATUR SHAMPOO ARGAN OIL 140ML = **19011040140000** "NATUR SHMP ARGAN OLIVE OIL 48 PCS X 140ML" (pemilik 28 Okt 2026).

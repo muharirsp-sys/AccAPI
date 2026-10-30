@@ -217,7 +217,7 @@
         "properties": {
           "jenis": {
             "enum": ["tenggat_dekat", "anomali_angka", "tidak_konsisten", "ambigu", "batas_strata_ambigu", "data_tidak_tercantum",
-                     "tidak_ada_di_master", "beda_dengan_summary_lama", "periode_lewat", "teks_sisa_surat_lama", "tidak_terbaca"]
+                     "tidak_ada_di_master", "beda_dengan_summary_lama", "periode_lewat", "teks_sisa_surat_lama", "tidak_terbaca", "di_luar_cakupan"]
           },
           "tingkat": { "enum": ["kritis", "perlu_cek", "info"] },
           "program_id": { "type": ["string", "null"] },

@@ -177,14 +177,16 @@ Setting sistem (detail item)
 - Expand: untuk setiap rule, buat satu record per kode_barang
   (kode_barang, program_id, segmen, ketentuan, benefit, berlaku).
   Record inilah yang di-setting ke sistem. Rule dengan kode_barang kosong jangan di-setting otomatis.
-- Jangan setting juga: benefit gimmick (L14), rule yang berlaku.selesai < TANGGAL_PROSES (L06).
+- Di luar cakupan (L14): benefit voucher, gimmick, sewa_display tidak masuk summary sama sekali (tidak dicetak, tidak
+  disetting); kode membuangnya dan melaporkannya dalam flag info di_luar_cakupan.
+- Jangan setting juga: rule yang berlaku.selesai < TANGGAL_PROSES (L06).
 - Gerbang rilis: tidak ada flag kritis/perlu_cek. Jawaban pemilik atas peringatan -> tambahkan ke summary_program_referensi.md.
 
 Perakitan form ringkas (tampilan) — acuan format: contoh pemilik "Form_Summary_Program_Ringkas.pdf" (28 Okt 2026;
 *.pdf tidak masuk git, aturannya dirangkum di sini).
 Data rule TIDAK diubah untuk tampilan; yang disusun ulang hanya letak sel. Setiap rule tetap masuk tepat satu sel.
 - Satu surat = satu blok. Seksi dari surat yang sama:
-  (a) program sama + outlet_khusus sama + jumlah kolom sama -> ditumpuk, teks sel digabung " + " (voucher + gimmick);
+  (a) program sama + outlet_khusus sama + jumlah kolom sama -> ditumpuk, teks sel digabung " + " (mis. strata + add disc);
   (b) >= 2 seksi berkolom tunggal (biasanya per channel/tipe outlet) -> satu seksi, tiap seksi jadi kolom
       (GT Retail | GT Grosir | GT Star Outlet | MT Lokal); kolom MT di paling kanan;
   (c) seksi berkolom tunggal yang barangnya bagian dari seksi sebelumnya -> kolom tambahan bila kolom < 6
@@ -192,13 +194,32 @@ Data rule TIDAK diubah untuk tampilan; yang disusun ulang hanya letak sel. Setia
 - Per seksi: kumpulkan rule per barang (kode sama) -> vektor teks_tampilan per kolom ("-" untuk kolom tanpa rule).
 - Gabungkan baris yang MEREKnya sama (kelompok_barang sebelum " - ") DAN vektornya identik -> satu baris tampilan:
   Kelompok = merek ("CSBNCA FM & HM"), Variant = sub-kelompok + variant ("Sport EDT, EDP, Clay"), gramasi digabung.
+  Sub-kelompok yang hanya dimiliki sebagian merek tetap di Kelompok ("KING BEEF, KING STICK & KING BALL - NET", Variant
+  "All variant"). " & " di dalam nama kelompok bukan pemisah merek ("PIATTOS - BIG & CRISPY").
+  Merek yang sama muncul dengan dan tanpa sub-kelompok + variant "All variant" ("NDB, NDB - GURIMI") -> Variant
+  "All variant, termasuk Gurimi" (bagian tanpa sub = semua varian merek itu; jangan cetak sub-nya saja).
   Daftar variant > 180 karakter -> sub-kelompok + "all variant"; > 5 gramasi -> "All gramasi". Kode tetap lengkap di data.
-- "N+M (CR x%)" dicetak "N+M"; nilai CR pindah ke satu baris catatan "CR paket: 3+1 = 25% · ...".
+- "N+M (CR x%)" dicetak "N+M"; nilai CR masuk kolom Update keterangan ("CR paket: 3+1 = 25% · ...").
 - Merge sel kelompok_barang yang sama dan berurutan.
+- TIDAK ADA baris catatan di bawah seksi/blok (owner 29 Okt). Catatan seksi, legenda CR dan flag masuk kolom
+  Update keterangan blok itu, sesudah keterangan program; duplikat dibuang.
 - Teks kiri/kanan ringkas: periode = tanggal saja; daftar outlet = "Tanpa list" / "Hanya list (N toko | belum diunggah)";
-  syarat claim = "Batas: ..." + dokumen + dasar nilai satu paragraf; keterangan = maks. 3 kalimat pendek;
-  catatan seksi hanya yang perlu dibaca penandatangan (bukan proses ekstraksi, bukan hal yang sudah diputuskan).
+  syarat claim = "Batas: ..." + dokumen inti + dasar nilai, dokumen disingkat seperti contoh
+  ("AL, cover klaim URC, faktur pajak, rekap jual & print out system") tanpa membuang dokumen;
+  keterangan (+ catatan) = kalimat pendek, cukup pendek agar tidak lebih tinggi dari isi blok;
+  catatan hanya yang perlu dibaca penandatangan (bukan proses ekstraksi, bukan hal yang sudah diputuskan,
+  bukan peringatan "⚠ ... konfirmasi ke principal" - itu flag, dan flag wajib 0 sebelum rilis).
 - Kolom kiri (surat, nama, channel, outlet, periode) dan kanan (syarat claim, keterangan) di-merge setinggi blok program;
-  baris pertama syarat claim: "Batas: <batas_klaim_tanggal atau batas_klaim_aturan>".
-- Flag tingkat kritis/perlu_cek -> sel kuning + baris catatan di bawah seksi.
+  baris pertama syarat claim: "Batas: <batas_klaim_tanggal atau batas_klaim_aturan>". Bila teks kanan lebih tinggi,
+  baris barang yang meregang (bukan ruang kosong di bawah blok).
+- Setiap halaman: judul 3 baris + "Dibuat tanggal" + header tabel, dan "Hal. N dari M" per principal. Blok program tidak
+  dipotong antarhalaman bila muat di satu halaman; tanda tangan selalu bersama blok terakhir.
+- Warna per summary (owner 29 Okt), dari beban komponen benefit seluruh rule (rule tanpa komponen = bonus barang
+  = beban principal):
+  semua principal -> "SUMMARY PROGRAM ON FAKTUR BEBAN PRINCIPLE (COKLAT)", header tabel coklat muda;
+  principal + distributor -> "SUMMARY PROGRAM ON FAKTUR BEBAN PRINCIPLE DAN DISTRIBUTOR (PINK)", header merah muda;
+  semua distributor -> "SUMMARY PROGRAM ON FAKTUR BEBAN DISTRIBUTOR (MERAH)", header merah.
+  Baris "Dibuat tanggal" ikut: "(ON PRINCIPLE <WARNA>)".
+- Format seragam: desimal koma ("2,5%", "25%" bukan "25.0%"), "≥" bukan ">=", "→" bukan "->".
+- Flag tingkat kritis/perlu_cek -> sel kuning + teks flag di kolom Update keterangan.
 - Lebar benefit dibagi rata sesuai jumlah kolom seksi (1-6 kolom).
