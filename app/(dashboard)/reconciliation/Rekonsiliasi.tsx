@@ -21,7 +21,7 @@ import { RECONCILIATION_CONFIG, getReconciliationConfig, type ReconciliationInpu
 import type { ReconciliationOutput, ReconciliationResult } from "@/lib/off-program-control/sales-reconciliation";
 import type { IgnoredReturnLine, ReturnReconciliationOutput, ReturnReconciliationResult } from "@/lib/off-program-control/return-reconciliation";
 import {
-    RETURN_STATUSES, SALES_STATUSES, causeLines, currency, exportSheets, fileSize, number, returnCauseLines, statusLabel, statusTone,
+    RETURN_STATUSES, SALES_STATUSES, causeLines, currency, exportSheets, fakturOf, fileSize, number, perFaktur, returnCauseLines, statusLabel, statusTone,
     type Division, type UiStatus,
 } from "@/lib/off-program-control/reconciliation-ui";
 import { KOSONG, waktuWita } from "@/lib/tampil";
@@ -136,11 +136,13 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
         if (saring === "ISSUES_ONLY") return all.filter((r) => r.status !== "MATCH" && r.status !== "KOREKSI");
         return all.filter((r) => r.status === saring);
     }, [hasil, saring]);
+    const grupFaktur = useMemo(() => division === "FAKTUR" ? perFaktur(rows as ReconciliationResult[]) : [], [division, rows]);
     const penyebab = (r: Row) => division === "FAKTUR" ? causeLines(r as ReconciliationResult, principal) : returnCauseLines(r as ReturnReconciliationResult, principal);
     const dokumen = (r: Row) => "orderNumber" in r ? r.orderNumber : r.invoiceNumber;
     const produk = (r: Row) => "internalProductCode" in r ? r.internalProductCode : `${r.accurateProductCode ?? KOSONG} / ${r.principalProductCode ?? KOSONG}`;
     const kolom: Column<Row>[] = [
         { key: "status", header: "Status", cell: (r) => <StatusBadge tone={statusTone(r.status)}>{statusLabel(r.status, principal)}</StatusBadge> },
+        ...(division === "FAKTUR" ? [{ key: "faktur", header: "Faktur", cell: (r: Row) => <span className="fi-mono">{fakturOf(r as ReconciliationResult)}</span> } as Column<Row>] : []),
         { key: "dok", header: division === "FAKTUR" ? "Order" : division === "PEMBELIAN" ? "Dokumen Pembelian" : "Invoice", cell: (r) => <span className="fi-mono">{dokumen(r)}</span> },
         ...(division !== "FAKTUR" ? [{ key: "cust", header: division === "PEMBELIAN" ? "Supplier" : "Pelanggan", cell: (r: Row) => (r as ReturnReconciliationResult).customerCode } as Column<Row>] : []),
         { key: "produk", header: "Produk", cell: (r) => <span className="fi-mono fi-small">{produk(r)}</span> },
@@ -230,6 +232,19 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                             <p className="fi-small">Koreksi/retur ini tidak termasuk pencocokan dan total rekonsiliasi. Rincian ikut dalam lembar Diabaikan pada ekspor XLSX.</p>
                             <ul className="fi-small">{ignoredLines.map((line) => <li key={line.sourceRowNumber}>Baris {line.sourceRowNumber}: {line.invoiceNumber} · {line.taxNumber} · {line.principalProductCode}</li>)}</ul>
                         </details>}
+                        {/* ponytail: ringkasan per faktur saja; rincian barisnya tetap di tabel (kolom Faktur). */}
+                        {grupFaktur.length > 0 && (
+                            <details className="fi-panel" aria-label="Selisih per faktur" open={grupFaktur.length <= 5}>
+                                <summary style={{ cursor: "pointer" }}>Selisih per faktur ({number.format(grupFaktur.length)})</summary>
+                                <ul className="fi-hist">{grupFaktur.map((g) => (
+                                    <li key={g.faktur}>
+                                        <span className="fi-mono"><b>{g.faktur}</b></span>
+                                        <span className="fi-small">{[...g.orders].join(", ")} · {number.format(g.items)} item</span>
+                                        <span className={`fi-tnum${Math.abs(g.netDifference) > 10 ? " fi-why" : ""}`}>{currency.format(g.netDifference)}</span>
+                                    </li>
+                                ))}</ul>
+                            </details>
+                        )}
                         <div className="fi-kcards">
                             <div className="fi-kc"><span>Baris</span><b>{number.format(total)}</b><small>termasuk koreksi</small></div>
                             <div className="fi-kc" data-tone="pos"><span>Cocok</span><b>{number.format(cocok)}</b><small>{total ? `${number.format((cocok / Math.max(1, total - koreksi)) * 100)}%` : KOSONG}</small></div>

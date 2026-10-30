@@ -9,6 +9,7 @@ export type ReconciliationStatus =
   | "QTY_MISMATCH"
   | "VALUE_MISMATCH"
   | "QTY_AND_VALUE_MISMATCH"
+  | "ROUNDING"
   | "MISSING_INTERNAL"
   | "MISSING_PRINCIPAL"
   | "UNMAPPED_SKU"
@@ -47,6 +48,7 @@ export interface CanonicalSalesLine {
   taxAmount: number;
   netAmount: number;
   mappingStatus: MappingStatus;
+  unitMismatch?: { master: string; principal: string };
 }
 export interface ReconciliationResult {
   orderNumber: string;
@@ -63,6 +65,9 @@ export interface ReconciliationResult {
   warnings: string[];
   accurateSourceRows: number[];
   principalSourceRows: number[];
+  accurateDocuments: string[];
+  principalDocuments: string[];
+  unitMismatch?: { master: string; principal: string };
 }
 export interface ReconciliationOutput {
   accurateLines: CanonicalSalesLine[];
@@ -72,6 +77,8 @@ export interface ReconciliationOutput {
 }
 
 const MONEY_SCALE = 10_000;
+// ponytail: selisih <= Rp10 dengan qty sama = pembulatan harga satuan, bukan salah data.
+const ROUNDING_LIMIT_RUPIAH = 10;
 const UNIT_ALIASES: Record<string, string> = {
   BT: "BTL",
   BTL: "BTL",
@@ -85,6 +92,7 @@ const STATUSES: ReconciliationStatus[] = [
   "QTY_MISMATCH",
   "VALUE_MISMATCH",
   "QTY_AND_VALUE_MISMATCH",
+  "ROUNDING",
   "MISSING_INTERNAL",
   "MISSING_PRINCIPAL",
   "UNMAPPED_SKU",
@@ -129,7 +137,7 @@ function isoDate(value: unknown, label: string, row: number): string {
 }
 function orderNumber(value: unknown, label: string, row: number, noun = "order"): string {
   const normalized = text(value),
-    kino = normalized.match(/1671-SOP-\d+/g) ?? [],
+    kino = normalized.match(/1671-SOP-\d{9}/g) ?? [],
     godrej = [...normalized.matchAll(/(?:FK\/BFG|FK|BFG)-(\d+)/g)].map(
       (match) => `BFG-${match[1]}`,
     ),
@@ -644,6 +652,24 @@ export function parseAccurateSales(
         header.columns,
         "KODE_BARANG",
         sourceRowNumber,
+      ),
+      gross = money(
+        value(row, header.columns, "NILAI JUAL"),
+        "NILAI JUAL",
+        sourceRowNumber,
+      ),
+      discount = money(
+        value(row, header.columns, "POTONGAN"),
+        "POTONGAN",
+        sourceRowNumber,
+      ),
+      net = money(
+        value(row, header.columns, "JUMLAH"),
+        "JUMLAH",
+        sourceRowNumber,
+      ),
+      declaredClass = transactionClass(
+        value(row, header.columns, "JENIS_TRANSAKSI"),
       );
     return {
       source: "ACCURATE",
@@ -670,23 +696,17 @@ export function parseAccurateSales(
       salesmanCodeInternal: salesman,
       productCodeRaw: product,
       productCodeInternal: product,
-      transactionClass: transactionClass(
-        value(row, header.columns, "JENIS_TRANSAKSI"),
-      ),
+      // ponytail: Accurate tidak punya kolom bonus; baris diskon penuh (net 0) = bonus.
+      transactionClass:
+        declaredClass === "NORMAL" && net === 0 && gross > 0 && discount >= gross
+          ? "BONUS"
+          : declaredClass,
       quantitySmallest: quantity,
       unitSmallest: unit(
         requiredText(row, header.columns, "SATUAN_KECIL", sourceRowNumber),
       ),
-      grossAmount: money(
-        value(row, header.columns, "NILAI JUAL"),
-        "NILAI JUAL",
-        sourceRowNumber,
-      ),
-      discountAmount: money(
-        value(row, header.columns, "POTONGAN"),
-        "POTONGAN",
-        sourceRowNumber,
-      ),
+      grossAmount: gross,
+      discountAmount: discount,
       dppAmount: money(
         value(row, header.columns, "DPP"),
         "DPP",
@@ -697,11 +717,7 @@ export function parseAccurateSales(
         "NILAI_PAJAK",
         sourceRowNumber,
       ),
-      netAmount: money(
-        value(row, header.columns, "JUMLAH"),
-        "JUMLAH",
-        sourceRowNumber,
-      ),
+      netAmount: net,
       mappingStatus: "OK",
     };
   });
@@ -833,6 +849,9 @@ export function parseKinoSales(
       transactionClass: flag === "Y" ? "BONUS" : "NORMAL",
       quantitySmallest: quantity,
       unitSmallest: mappedProduct?.unit ?? sourceUnit,
+      ...(mappingStatus === "UNIT_CONVERSION_ERROR" && mappedProduct
+        ? { unitMismatch: { master: mappedProduct.unit, principal: sourceUnit } }
+        : {}),
       grossAmount: gross,
       discountAmount: discount,
       dppAmount: gross - discount,
@@ -1446,6 +1465,8 @@ interface Aggregate {
   mappingStatus: MappingStatus;
   warnings: Set<string>;
   rows: number[];
+  documents: Set<string>;
+  unitMismatch?: { master: string; principal: string };
 }
 function aggregate(lines: CanonicalSalesLine[]): Map<string, Aggregate> {
   const result = new Map<string, Aggregate>();
@@ -1464,6 +1485,7 @@ function aggregate(lines: CanonicalSalesLine[]): Map<string, Aggregate> {
         mappingStatus: "OK" as MappingStatus,
         warnings: new Set<string>(),
         rows: [],
+        documents: new Set<string>(),
       };
     current.quantity += line.quantitySmallest;
     current.gross += line.grossAmount;
@@ -1472,6 +1494,8 @@ function aggregate(lines: CanonicalSalesLine[]): Map<string, Aggregate> {
     current.tax += line.taxAmount;
     current.net += line.netAmount;
     current.rows.push(line.sourceRowNumber);
+    current.documents.add(line.documentNumber);
+    if (line.unitMismatch) current.unitMismatch = line.unitMismatch;
     if (
       MAPPING_STATUS_RANK[line.mappingStatus] >
       MAPPING_STATUS_RANK[current.mappingStatus]
@@ -1503,8 +1527,10 @@ function reconcileLines(
     const left = accurate.get(key),
       right = principal.get(key),
       quantityDifference = (left?.quantity ?? 0) - (right?.quantity ?? 0),
+      // ponytail: bonus dicatat beda nilai di kedua sistem; yang wajib cocok cuma qty.
+      isBonus = (left ?? right!).transactionClass === "BONUS",
       amountPairs: Array<[AmountComponent, number, number]> =
-        left && right
+        left && right && !isBonus
           ? [
               ["gross", left.gross, right.gross],
               ["discount", left.discount, right.discount],
@@ -1524,7 +1550,13 @@ function reconcileLines(
           kino: rupiah(principalValue),
           difference: rupiah(accurateValue - principalValue),
         })),
-      valueMismatch = amountDifferences.length > 0;
+      valueMismatch = amountDifferences.length > 0,
+      roundingOnly =
+        valueMismatch &&
+        quantityDifference === 0 &&
+        amountDifferences.every(
+          (item) => Math.abs(item.difference) <= ROUNDING_LIMIT_RUPIAH,
+        );
     let status: ReconciliationStatus;
     if (right?.mappingStatus === "INVALID_DATA") status = "INVALID_DATA";
     else if (right?.mappingStatus === "UNMAPPED_SKU") status = "UNMAPPED_SKU";
@@ -1535,6 +1567,7 @@ function reconcileLines(
     else if (quantityDifference !== 0 && valueMismatch)
       status = "QTY_AND_VALUE_MISMATCH";
     else if (quantityDifference !== 0) status = "QTY_MISMATCH";
+    else if (roundingOnly) status = "ROUNDING";
     else if (valueMismatch) status = "VALUE_MISMATCH";
     else status = "MATCH";
     const current = left ?? right!;
@@ -1555,6 +1588,11 @@ function reconcileLines(
       ],
       accurateSourceRows: left?.rows ?? [],
       principalSourceRows: right?.rows ?? [],
+      accurateDocuments: [...(left?.documents ?? [])],
+      principalDocuments: [...(right?.documents ?? [])],
+      ...(left?.unitMismatch ?? right?.unitMismatch
+        ? { unitMismatch: left?.unitMismatch ?? right?.unitMismatch }
+        : {}),
     });
   }
   const summary = Object.fromEntries(
