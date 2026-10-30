@@ -99,7 +99,34 @@ def main():
                       "PRINCIPLE UJI PERIODE SEPTEMBER 2026", "CV. SURYA PERKASA"):
             assert judul in isi, f"halaman {n} tanpa judul '{judul}'"
 
-    print("OK -- keterangan baris yang dilebur ikut tergabung; yang identik tidak diulang; judul di tiap halaman")
+    # Label tampilan pemilik menggantikan teks sel Kelompok/Gramasi; kodenya tetap, verifier diberi tahu lewat sidecar.
+    MANUAL_MASTER_CACHE[TOKEN] = {"owner": identity(PENGGUNA), "kelompok": ["ANLENE GOLD"], "variant_map": {"ANLENE GOLD": ["COKLAT"]},
+                                  "gramasi_map": {"ANLENE GOLD": ["400GR"]}, "customers": [], "principle_name": "UJI",
+                                  "items": [{"kode_barang": "F1", "nama_barang": "SUSU BOX 400GR", "kelompok": "ANLENE GOLD",
+                                             "variant": "COKLAT", "gramasi": "400GR", "principle": ""}]}
+    berlabel = dict(baris(1, "", "F1"), kelompok="ANLENE GOLD", variant="ALL VARIANT", gramasi="400GR",
+                    label_kelompok="ALL KELOMPOK BARANG POWDER BOX, KECUALI SACHET", label_gramasi="ALL GRAMASI, KECUALI SACHET")
+    hasil4 = backend.summary_manual_generate(FakeRequest(), token=TOKEN, rows_json=json.dumps([berlabel]))
+    assert hasil4.get("ok"), f"generate berlabel gagal: {hasil4}"
+    teks4 = teks_pdf(hasil4["file_id"])
+    assert "POWDER BOX, KECUALI SACHET" in teks4 and "ALL GRAMASI, KECUALI SACHET" in teks4, teks4[:600]
+    with open(MANUAL_OUTPUTS[hasil4["file_id"]]["form"].replace("_Form_Summary_Program.pdf", "_rows.json"), encoding="utf-8") as f:
+        assert json.load(f)["rows"][0]["label"] is True
+
+    # Baris berlabel tidak melebur dengan baris tanpa label (ketentuan+benefit sama): dua baris cetak, label tidak menempel ke sachet.
+    MANUAL_MASTER_CACHE[TOKEN] = {"owner": identity(PENGGUNA), "kelompok": ["ANLENE GOLD"], "variant_map": {"ANLENE GOLD": ["COKLAT"]},
+                                  "gramasi_map": {"ANLENE GOLD": ["25GR", "400GR"]}, "customers": [], "principle_name": "UJI",
+                                  "items": [{"kode_barang": k, "nama_barang": n, "kelompok": "ANLENE GOLD", "variant": "COKLAT",
+                                             "gramasi": g, "principle": ""}
+                                            for k, n, g in (("F1", "SUSU BOX 400GR", "400GR"), ("F2", "SUSU SACHET 25GR", "25GR"))]}
+    tanpa_label = dict(baris(2, "", "F2"), kelompok="ANLENE GOLD", variant="ALL VARIANT", gramasi="25GR")
+    hasil5 = backend.summary_manual_generate(FakeRequest(), token=TOKEN, rows_json=json.dumps([berlabel, tanpa_label]))
+    assert hasil5.get("ok"), f"generate campur label gagal: {hasil5}"
+    with open(MANUAL_OUTPUTS[hasil5["file_id"]]["form"].replace("_Form_Summary_Program.pdf", "_rows.json"), encoding="utf-8") as f:
+        cetak = json.load(f)["rows"]
+    assert [(r["label"], r["kode_internal"]) for r in cetak] == [(True, ["F1"]), (False, ["F2"])], cetak
+
+    print("OK -- keterangan baris yang dilebur ikut tergabung; yang identik tidak diulang; judul di tiap halaman; label sel")
 
 
 if __name__ == "__main__":
