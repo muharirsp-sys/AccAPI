@@ -125,7 +125,7 @@ test("segarkan: lease dipegang -> 409 SEDANG_DIBACA + status; lengkap < 60 dtk -
     const sibuk = st({ status: "berjalan", aktif: true, mulaiPada: "2026-10-05T10:00:00.000Z", pemicu: "cron" });
     const r = await dengan({ izin: ["kasir.view"], deps: { kredensial: async () => KRED, toko: () => toko({ diklaim: false, status: sibuk }) } }, () => postSegarkan(post({ tanggal: D })));
     assert.equal(r.status, 409);
-    assert.deepEqual(await r.json(), { ok: false, kode: "SEDANG_DIBACA", error: "Pelunasan tanggal ini sedang dibaca — coba lagi sebentar.",
+    assert.deepEqual(await r.json(), { ok: false, kode: "SEDANG_DIBACA", error: "Pelunasan tanggal ini sedang dibaca. Coba lagi sebentar.",
         status: await publikkan(sibuk, { nama: async () => new Map() }) });
     const lengkap = st({ status: "lengkap", jumlahDaftar: 3, sisaDetail: 0, lengkapPada: "2026-10-05T10:00:00.000Z" });
     const j = await dengan({ izin: ["kasir.view"], deps: { kredensial: async () => KRED, toko: () => toko({ diklaim: false, status: lengkap }) } }, () => postSegarkan(post({ tanggal: D })));

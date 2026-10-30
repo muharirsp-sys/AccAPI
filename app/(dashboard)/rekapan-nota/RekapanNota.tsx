@@ -92,7 +92,7 @@ export default function RekapanNota({ permKeys }: { permKeys: string[] }) {
         { key: "nama", header: "Wave", cell: (w) => <><b>{w.nama}</b><span className="fi-sub">{TIPE_LABEL[w.tipe] ?? w.tipe} · Wave #{w.id}</span></> },
         { key: "status", header: "Status", cell: (w) => <StatusBadge tone={WAVE_STATUS[w.status]?.tone ?? "neu"}>{WAVE_STATUS[w.status]?.label ?? w.status}</StatusBadge> },
         { key: "nota", header: "Nota", align: "end", cell: (w) => <span className="fi-tnum">{w.jumlah_nota}</span> },
-        { key: "exception", header: "Exception", cell: (w) => w.exception_open ? <span className="fi-why">{w.exception_open} terbuka</span> : <span className="fi-small fi-subtle">{KOSONG}</span> },
+        { key: "exception", header: "Masalah", cell: (w) => w.exception_open ? <span className="fi-why">{w.exception_open} terbuka</span> : <span className="fi-small fi-subtle">{KOSONG}</span> },
         { key: "buka", header: "", cell: (w) => <Link className="fi-btn fi-btn--tertiary" href={`/rekapan-nota/wave/${w.id}`}>Buka<ChevronRight className="fi-icon" aria-hidden /></Link> },
     ];
 
@@ -127,7 +127,7 @@ export default function RekapanNota({ permKeys }: { permKeys: string[] }) {
                     </MessageStrip>
                     {Boolean(hasilUnggah.notaSelisih?.length) && (
                         <MessageStrip tone="warn" title={`${hasilUnggah.notaSelisih!.length} nota berubah setelah masuk wave.`}>
-                            Wave tetap memakai isi lama; selisihnya dicatat sebagai exception “Selisih dengan file”:{" "}
+                            Wave tetap memakai isi lama; selisihnya dicatat sebagai masalah “Selisih dengan file”:{" "}
                             {[...new Map(hasilUnggah.notaSelisih!.map((s) => [s.waveId, s])).values()].map((s, i) => (
                                 <span key={s.waveId}>{i ? ", " : ""}<Link href={`/rekapan-nota/wave/${s.waveId}`}>Wave {s.wave}</Link></span>
                             ))}
@@ -165,8 +165,8 @@ export default function RekapanNota({ permKeys }: { permKeys: string[] }) {
                         <div className="fi-kc"><span>Pool reguler</span><b style={ANGKA_KARTU}>{pool.status === "galat" ? KOSONG : pool.data?.jumlahNota ?? "…"}</b><small>{pool.status === "galat" ? "tidak bisa dimuat" : "nota belum masuk wave"}</small></div>
                         <Link href="/rekapan-nota/kanvas" className="fi-kc"><span>Pool kanvas</span><b style={ANGKA_KARTU}>{pool.status === "galat" ? KOSONG : pool.data?.disembunyikan ?? "…"}</b><small>{pool.data?.kanvasNihilOleh ? `dinyatakan nihil oleh ${pool.data.kanvasNihilOleh}` : "dicetak setelah kanvaser pulang"}</small></Link>
                         {waveException
-                            ? <Link href={`/rekapan-nota/wave/${waveException.id}`} className="fi-kc" data-tone="neg"><span>Exception terbuka</span><b style={ANGKA_KARTU}>{exceptionTerbuka}</b><small>di Wave {waveException.nama}{daftar.filter((w) => w.exception_open > 0).length > 1 ? " dan lainnya" : ""}</small></Link>
-                            : <div className="fi-kc"><span>Exception terbuka</span><b style={ANGKA_KARTU}>{exceptionTerbuka}</b><small>tidak ada yang menahan konfirmasi</small></div>}
+                            ? <Link href={`/rekapan-nota/wave/${waveException.id}`} className="fi-kc" data-tone="neg"><span>Masalah terbuka</span><b style={ANGKA_KARTU}>{exceptionTerbuka}</b><small>di Wave {waveException.nama}{daftar.filter((w) => w.exception_open > 0).length > 1 ? " dan lainnya" : ""}</small></Link>
+                            : <div className="fi-kc"><span>Masalah terbuka</span><b style={ANGKA_KARTU}>{exceptionTerbuka}</b><small>tidak ada yang menahan konfirmasi</small></div>}
                         <Link href="/rekapan-nota/area" className="fi-kc" data-tone={pool.data?.tanpaArea ? "warn" : undefined}><span>Outlet tanpa area</span><b style={ANGKA_KARTU}>{pool.status === "galat" ? KOSONG : pool.data?.tanpaArea ?? "…"}</b><small>nota Heinz di pool tanggal ini, belum dipetakan</small></Link>
                     </div>
                     <ResponsiveTable<Wave>
@@ -175,7 +175,7 @@ export default function RekapanNota({ permKeys }: { permKeys: string[] }) {
                         empty={{ title: "Belum ada wave untuk tanggal ini", message: "Pool sudah berisi nota. Buat wave, lalu pilih nota dari pool.", action: bolehKelola ? <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} onClick={() => setDialog("waveBaru")}>Wave baru…</Button> : undefined }}
                         mobileItem={(w) => (
                             <ListItem href={`/rekapan-nota/wave/${w.id}`} doc={`#${w.id}`} title={`${w.urutan}. Wave ${w.nama} · ${TIPE_LABEL[w.tipe] ?? w.tipe} · ${w.jumlah_nota} nota`}
-                                meta={w.exception_open ? <span className="fi-why">{w.exception_open} exception terbuka</span> : undefined}
+                                meta={w.exception_open ? <span className="fi-why">{w.exception_open} masalah terbuka</span> : undefined}
                                 badge={<StatusBadge tone={WAVE_STATUS[w.status]?.tone ?? "neu"}>{WAVE_STATUS[w.status]?.label ?? w.status}</StatusBadge>} />
                         )} />
                 </>
@@ -193,7 +193,7 @@ export default function RekapanNota({ permKeys }: { permKeys: string[] }) {
             <ConfirmDialog open={dialog === "unggah"} onClose={() => setDialog(null)} title="Unggah file export ke pool" tag="Unggah" confirmLabel="Unggah ke pool"
                 confirmDisabled={berkas ? undefined : "Pilih berkas dulu"} onConfirm={unggah}
                 facts={[["Yang masuk", "Hanya baris Penjualan Bruto bertanggal ini; retur dibuang"], ["File yang sama", "Diproses ulang per nota; pool tidak digandakan"],
-                    ["Nota yang sudah ada", "Tidak ditulis ulang; yang berubah setelah masuk wave dicatat sebagai exception"]]}>
+                    ["Nota yang sudah ada", "Tidak ditulis ulang; yang berubah setelah masuk wave dicatat sebagai masalah"]]}>
                 <FormField label="Tanggal data" required help="Satu file bisa memuat beberapa hari; hanya baris tanggal ini yang masuk pool.">
                     {(a11y) => <input {...a11y} className="fi-input" type="date" value={tanggalBerkas} onChange={(e) => { if (e.target.value) setTanggalBerkas(e.target.value); }} />}
                 </FormField>

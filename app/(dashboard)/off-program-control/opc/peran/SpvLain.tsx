@@ -21,7 +21,7 @@ import { ambilOpc, pesanTidakPasti, tanganiTulis, tulisOpc, type OpcKonteks } fr
 import { kodePrincipal, parseUiCurrency } from "./SpvForm";
 
 /** Batch milik SPV yang ditandai Klaim "kelengkapan belum lengkap" (finalStatus Incomplete Documents). Kosong = tidak dirender. */
-export function PengingatKelengkapan({ batches, buka }: { batches: BatchOpc[]; buka: (id: string) => void }) {
+export function PengingatKelengkapan({ batches, buka, href }: { batches: BatchOpc[]; buka: (id: string) => void; href: (id: string) => string }) {
     const xs = batches.filter((b) => b.finalStatus === "Incomplete Documents");
     if (xs.length === 0) return null;
     return (
@@ -31,7 +31,7 @@ export function PengingatKelengkapan({ batches, buka }: { batches: BatchOpc[]; b
                     <li key={b.id}>
                         <ListItem doc={b.noPengajuan} title={`${b.principleName} (${b.principleCode})`}
                             meta={`Catatan Klaim: ${b.finalClaimNote || KOSONG} · diperbarui ${waktuWita(b.updatedAt)}`}
-                            badge={<StatusBadge tone="warn">Kelengkapan belum lengkap</StatusBadge>} onClick={() => buka(b.id)} />
+                            badge={<StatusBadge tone="warn">Kelengkapan belum lengkap</StatusBadge>} href={href(b.id)} onClick={() => buka(b.id)} />
                     </li>
                 ))}
             </ul>
@@ -208,7 +208,7 @@ function FormDiskon({ ctx, selesai, tidakPasti }: { ctx: OpcKonteks; selesai: (p
                     if (docFile) formData.append("document", docFile);
                     await tulisOpc("/api/off-program-control/discount", {
                         body: formData, gagal: "Gagal menyimpan pengajuan diskon.", putus: pesanTidakPasti("pengajuan diskon ini", "daftar pengajuan diskon"),
-                    }).catch(tanganiTulis(tidakPasti));
+                    }).catch(tanganiTulis(tidakPasti, () => setDialog(false)));
                     reset();
                     setDialog(false);
                     selesai("Pengajuan diskon tercatat sebagai jejak digital.");

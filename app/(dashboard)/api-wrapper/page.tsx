@@ -5,7 +5,8 @@
  * Caller: App Router dashboard `app/(dashboard)/api-wrapper/page.tsx` dan interaksi user di halaman API Wrapper.
  * Dependensi: `accurateRoutes`, `accurateFetch`, parser workbook per-route, Accurate OAuth/session dari browser, parser `xlsx`, toast `sonner`, route idempotency Next, `Dialog` native bersama, komponen Fiori (`components/fiori/*`), `lib/tampil` (KOSONG), `lib/pelunasan/*` (parser Format Pelunasan, retur, cari faktur, alokasi, payload, pratinjau duplikat — dipindah dari halaman ini di S6e-1; kirim sales-receipt `lib/pelunasan/kirim.ts`, S6e-2).
  * Main Functions: `Home`, `terapkanSesi` (kartu `SesiAccurate` bersama /sesi-accurate: masuk ber-`state`, pilih database, keluar — S7-sesi), `handleDownloadTemplate`, `handleExecute` (dipanggil sesudah `bukaKirim` + ConfirmDialog), `handleConfirmDuplicateReview` + `kirimHasilTinjauan`.
- * Side Effects: HTTP call ke Accurate route handler/proxy, baca file Excel lokal, dispatch parser workbook khusus per route, deteksi format pelunasan walau `Total.Trx` kosong, normalisasi lookup invoice/retur termasuk variasi SRB tanpa spasi, susun payload bulk-save, keluarkan laporan manual follow-up untuk retur/pot.lain yang gagal diproses, preview/lock idempotency SQLite, cek histori sales receipt Accurate, konfirmasi hasil error ke histori Accurate HANYA untuk jenis dokumen yang sama (`pemastiRiwayatTulis`; jenis lain tetap TIDAK DIKETAHUI), tampilkan review duplicate, unduh Excel log galat (otomatis + tombol unduh ulang), logging debug ke response UI.
+ * Side Effects: HTTP call ke Accurate route handler/proxy, baca file Excel lokal, dispatch parser workbook khusus per route, deteksi format pelunasan walau `Total.Trx` kosong, normalisasi lookup invoice/retur termasuk variasi SRB tanpa spasi, susun payload bulk-save, laporan manual follow-up retur/pot.lain yang gagal diproses lewat strip + tombol "Unduh retur manual" (tidak otomatis), preview/lock idempotency SQLite, cek histori sales receipt Accurate, konfirmasi hasil error ke histori Accurate HANYA untuk jenis dokumen yang sama (`pemastiRiwayatTulis`; jenis lain tetap TIDAK DIKETAHUI), tampilkan review duplicate, unduh Excel log galat lewat tombol "Unduh log galat" (tidak lagi otomatis, audit desain 001 No 7), logging debug ke response UI.
+ *   Tab Unggah Excel tanpa berkas termuat: Kirim nonaktif beralasan, tidak ada jalur yang mengirim contoh payload bawaan endpoint (audit desain 001 usulan G).
  */
 "use client";
 
@@ -47,7 +48,10 @@ type DuplicateReviewState = {
 };
 
 /** Fakta dialog Kirim, dihitung dari payload yang akan dipakai `handleExecute` (hanya tampilan). */
-type KonfirmasiKirim = { path: string; baris: number; massal: boolean; contohBawaan: boolean; pelunasan: boolean };
+type KonfirmasiKirim = { path: string; baris: number; massal: boolean; pelunasan: boolean };
+
+/** Alasan Kirim nonaktif di tab Unggah Excel (usulan G): berkas yang terbaca dimuat ke Payload JSON dan dikirim dari sana. */
+const ALASAN_TANPA_BERKAS = "Unggah berkas Excel dulu. Isinya dimuat ke Payload JSON untuk diperiksa sebelum dikirim.";
 
 /** Override duplikat menunggu alasan (D-18): hasil hitung `handleConfirmDuplicateReview` yang dulu dipakai sesudah window.prompt. */
 type OverrideTertunda = {
@@ -101,7 +105,9 @@ export default function Home() {
   const [override, setOverride] = useState<OverrideTertunda | null>(null);
   const [galatTinjau, setGalatTinjau] = useState<string | null>(null);
   const [logGalat, setLogGalat] = useState<Record<string, unknown>[] | null>(null);
+  const [returManual, setReturManual] = useState<Record<string, unknown>[] | null>(null); // baris Retur Manual hasil parser Format Pelunasan
   const idTinjau = useId();
+  const idAlasanKirim = useId();
 
   // Initial Load & OAuth Callback handler
   useEffect(() => {
@@ -127,6 +133,7 @@ export default function Home() {
     setPayloadStr(JSON.stringify(accurateRoutes[route].samplePayload, null, 2));
     setResponseLog(null);
     setLogGalat(null);
+    setReturManual(null);
     setGalatPayload(null);
   };
 
@@ -135,7 +142,7 @@ export default function Home() {
     if (!file) return;
 
     if (workbookRouteParsers[selectedRoute] && !isKeySaved) {
-      toast.error("Parser bulk ini butuh login Accurate dan database yang sudah terbuka sebelum upload.");
+      toast.error("Masuk Accurate dan buka database dulu. Berkas endpoint ini dibaca dengan data Accurate.");
       e.target.value = "";
       return;
     }
@@ -148,7 +155,7 @@ export default function Home() {
         const wb = XLSX.read(bstr, { type: 'binary' });
         const workbookParser = workbookRouteParsers[selectedRoute];
         if (workbookParser) {
-            toast.loading(`Menganalisis workbook khusus untuk ${accurateRoutes[selectedRoute].label}...`, { id: "parse" });
+            toast.loading(`Membaca berkas untuk ${accurateRoutes[selectedRoute].label}…`, { id: "parse" });
             const parserResult = await workbookParser({
                 workbook: wb,
                 routeKey: selectedRoute,
@@ -199,19 +206,9 @@ export default function Home() {
                 accurateFetch,
                 lapor: (jenis, pesan, opsi) => { toast[jenis](pesan, opsi); },
             });
+            // Audit desain 001 (pola No 7): laporan Retur Manual tidak lagi diunduh otomatis lewat setTimeout; strip + tombol.
             const manualRows = hasil.manualRows;
-            if (manualRows) {
-                setTimeout(() => {
-                    try {
-                        const wsManual = XLSX.utils.json_to_sheet(manualRows);
-                        const wbManual = XLSX.utils.book_new();
-                        XLSX.utils.book_append_sheet(wbManual, wsManual, "Retur Manual");
-                        XLSX.writeFile(wbManual, `Retur_PotLain_Manual_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
-                    } catch (manualErr) {
-                        console.error("Gagal membuat laporan retur manual", manualErr);
-                    }
-                }, 800);
-            }
+            if (manualRows) setReturManual(manualRows);
             setPayloadStr(JSON.stringify(hasil.payload, null, 2));
             setInputMode("manual");
             e.target.value = '';
@@ -303,9 +300,9 @@ export default function Home() {
                 }
             });
             cleanedData = Array.from(groupedMap.values());
-            toast.success(`Data dikelompokkan: ${rawData.length} baris Excel menjadi ${cleanedData.length} transaksi bersarang.`);
+            toast.success(`${rawData.length} baris berkas dikelompokkan menjadi ${cleanedData.length} transaksi. Periksa di Payload JSON sebelum dikirim.`);
         } else {
-            toast.success(`Berhasil menyedot ${cleanedData.length} baris data Flat dari Excel.`);
+            toast.success(`${cleanedData.length} baris dibaca dari berkas. Periksa di Payload JSON sebelum dikirim.`);
         }
         
         setPayloadStr(JSON.stringify(cleanedData, null, 2));
@@ -315,7 +312,7 @@ export default function Home() {
         const actualMessage = err instanceof Error ? err.message : String(err);
         toast.dismiss("parse");
         setResponseLog({ status: "error", message: actualMessage });
-        toast.error(`Gagal menganalisis workbook: ${actualMessage}`);
+        toast.error(`Berkas tidak terbaca: ${actualMessage}`);
       }
     };
     reader.readAsBinaryString(file);
@@ -329,11 +326,11 @@ export default function Home() {
     const isBulk = routeConfig.isBulk;
     
     if (!headersConfig || headersConfig.length === 0) {
-      toast.error("Endpoint ini tidak memiliki template input yang didukung.");
+      toast.error("Endpoint ini belum punya templat Excel.");
       return;
     }
 
-    const tId = toast.loading("Menyiapkan template dan memuat data sampel riil dari database...");
+    const tId = toast.loading("Menyiapkan templat Excel dan mengambil contoh data dari Accurate…");
     let realData: any[] = [];
     
     try {
@@ -417,7 +414,7 @@ export default function Home() {
     const refRows: any[] = [];
     try {
         if (isKeySaved) {
-            toast.loading("Mengumpulkan Referensi Master Data...", { id: tId });
+            toast.loading("Mengambil daftar referensi dari Accurate…", { id: tId });
             
             const checks = [
                 { key: 'branchId', path: '/api/branch/list.do', nameField: 'name', typeName: 'Cabang' },
@@ -478,7 +475,7 @@ export default function Home() {
 
     const fileName = `Template_${selectedRoute}.xlsx`;
     XLSX.writeFile(wb, fileName);
-    toast.success(`Template ${fileName} dengan 3 Sheet berhasil diunduh!`, { id: tId });
+    toast.success(`Templat ${fileName} diunduh (3 sheet: Data Upload, Penjelasan Kolom, Referensi ID).`, { id: tId });
   };
 
   const getDuplicateReasonLabel = (reason: DuplicateConflictReason) => {
@@ -510,7 +507,7 @@ export default function Home() {
 
   // S6e-2 butir 7: tampilan hasil kirim sales-receipt (toast, log respons, Excel galat) dari hasil per baris lib/pelunasan/kirim.ts.
   const kirimSalesReceipt = async (rows: Bebas[], override?: OverrideKirim) => {
-    toast.loading("Mengunci batch idempotency...", { id: 'exec' });
+    toast.loading("Mengunci baris agar tidak terkirim ganda…", { id: 'exec' });
     const postJson = async (url: string, body: unknown) => {
       const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       let data: unknown = null;
@@ -520,7 +517,7 @@ export default function Home() {
     const { rows: hasil } = await kirimPelunasan(rows, {
       postJson, expectedDatabaseId: openDbId, override, cariRiwayat: previewAccurateSalesReceiptHistory,
       lapor: (p) => {
-        if (p.tahap === "paket") toast.loading(`[Tahap ${p.paket}/${p.totalPaket}] Memproses baris ${p.dari}-${p.sampai}...`, { id: 'exec' });
+        if (p.tahap === "paket") toast.loading(`Tahap ${p.paket} dari ${p.totalPaket}: mengirim baris ${p.dari} sampai ${p.sampai}…`, { id: 'exec' });
       },
     });
     if (hasil.length === 0) {
@@ -528,9 +525,9 @@ export default function Home() {
       return;
     }
     const STATUS: Record<Exclude<BarisHasil["outcome"], "terposting">, string> = {
-      gagal: "GAGAL — TIDAK TERKIRIM (boleh diulang)",
+      gagal: "GAGAL: TIDAK TERKIRIM (boleh diulang)",
       tidak_pasti: "TIDAK PASTI (butuh pemeriksaan Finance)",
-      ditahan: "DITAHAN — MIRIP RIWAYAT ACCURATE (butuh izin Finance)",
+      ditahan: "DITAHAN: MIRIP RIWAYAT ACCURATE (butuh izin Finance)",
     };
     const combinedResults: unknown[] = [];
     const errorLogForExcel: Record<string, unknown>[] = [];
@@ -549,23 +546,14 @@ export default function Home() {
     }
     const errorCount = paketGagal.size;
     if (errorCount === 0) {
-      setResponseLog({ status: "success", data: { s: true, d: combinedResults, _note: "Digabung dari beberapa request otomatis." } });
+      setResponseLog({ status: "success", data: { s: true, d: combinedResults, _note: "Digabung dari beberapa kiriman per tahap." } });
       toast.success(`${combinedResults.length} data terkirim ke Accurate.`, { id: 'exec' });
       return;
     }
-    setResponseLog({ status: "error", message: `Selesai dengan ${errorCount} tahap gagal. Rincian per baris ada di Excel log galat yang diunduh otomatis. Data yang berhasil: ${combinedResults.length}` });
+    // Audit desain 001 No 7: log galat tidak diunduh otomatis; strip neg di Hasil bertahan dengan tombol "Unduh log galat".
+    setResponseLog({ status: "error", message: `Selesai dengan ${errorCount} tahap gagal. Data yang berhasil: ${combinedResults.length}. Rincian per baris ada di log galat: tekan Unduh log galat.` });
     toast.error(`Selesai dengan ${errorCount} tahap gagal.`, { id: 'exec' });
     setLogGalat(errorLogForExcel);
-    setTimeout(async () => {
-      toast("Mengunduh Excel log galat...");
-      try {
-        const XLSX = await import("xlsx");
-        const wsErr = XLSX.utils.json_to_sheet(errorLogForExcel);
-        const wbErr = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wbErr, wsErr, "Error Log");
-        XLSX.writeFile(wbErr, `Laporan_Error_Upload_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
-      } catch(e) { console.error("Gagal buat xlsx error", e); }
-    }, 2000);
   };
 
   const executeBulkPayload = async (
@@ -595,9 +583,9 @@ export default function Home() {
     const totalChunks = Math.ceil(totalRows / chunkSize);
 
     if (totalChunks > 1) {
-      toast.loading(`Mengeksekusi ${totalRows} data dalam ${totalChunks} tahap pemrosesan...`, { id: 'exec' });
+      toast.loading(`Mengirim ${totalRows} baris dalam ${totalChunks} tahap…`, { id: 'exec' });
     } else {
-      toast.loading(`Mengeksekusi ${totalRows} data...`, { id: 'exec' });
+      toast.loading(`Mengirim ${totalRows} baris…`, { id: 'exec' });
     }
 
     let combinedResults: any[] = [];
@@ -651,7 +639,7 @@ export default function Home() {
       const end = Math.min(start + chunkSize, totalRows);
       const chunkPayload = rows.slice(start, end);
 
-      toast.loading(`[Tahap ${i+1}/${totalChunks}] Memproses baris ${start+1}-${end}...`, { id: 'exec' });
+      toast.loading(`Tahap ${i+1} dari ${totalChunks}: mengirim baris ${start+1} sampai ${end}…`, { id: 'exec' });
 
       try {
         const data = await accurateFetch(routeConfig.path, routeConfig.method, chunkPayload, { idempotencyLockId });
@@ -686,7 +674,7 @@ export default function Home() {
               "Paket/Batch": `Tahap ${Math.floor(idx / chunkSize) + 1}`,
               "Baris Ke": idx + 1,
               "Ref / Invoice No": row.invoiceNo || row.customerNo || row.bankNo || row.description || `Baris Asli ke-${idx + 1}`,
-              "Status": "Gagal — tidak terkirim",
+              "Status": "Gagal: tidak terkirim",
               "Pesan Error Accurate": chunkErr.message,
             });
           }
@@ -718,7 +706,7 @@ export default function Home() {
             const singleResult = chunkErr.rawDetails[0];
             const reasonStr = extractReasonStr(singleResult, chunkErr.message);
 
-            toast.loading(`Tahap ${i+1} ditolak utuh. Mengirim ulang per baris...`, { id: 'exec' });
+            toast.loading(`Tahap ${i+1} ditolak utuh. Mengirim ulang per baris…`, { id: 'exec' });
 
             for (let idx = 0; idx < chunkPayload.length; idx++) {
               const row = chunkPayload[idx];
@@ -765,7 +753,7 @@ export default function Home() {
             let repostAttempted = false;
 
             if (failedInvoiceNo && reasonStr.includes("melebihi nilai piutang")) {
-              toast.loading(`Mencoba koreksi otomatis untuk ${failedInvoiceNo}...`, { id: `heal-${failedInvoiceNo}` });
+              toast.loading(`Mencoba koreksi otomatis untuk ${failedInvoiceNo}…`, { id: `heal-${failedInvoiceNo}` });
               try {
                 const invoiceCheck = await accurateFetch('/api/sales-invoice/list.do', 'GET', {
                   fields: "id,number,primeOwing",
@@ -816,7 +804,7 @@ export default function Home() {
                         "Paket/Batch": `Tahap ${chunkIdx+1}`,
                         "Baris Ke": startIdx + rowIdx + 1,
                         "Ref / Invoice No": mainId,
-                        "Status": "BERHASIL (AUTO-CORRECTED)",
+                        "Status": "BERHASIL (DIKOREKSI OTOMATIS)",
                         "Pesan Error Accurate": `Awalnya gagal selisih Rp ${normalizePayloadMoney(diff)} (Tertulis: ${normalizePayloadMoney(userAmount)}, AOL: ${normalizePayloadMoney(actualPrimeOwing)}). Dikoreksi PWA.`
                       });
                     } else {
@@ -913,31 +901,21 @@ export default function Home() {
     }
 
     if (errorCount === 0) {
-      setResponseLog({ status: "success", data: { s: true, d: combinedResults, _note: "Digabung dari beberapa request otomatis." } });
+      setResponseLog({ status: "success", data: { s: true, d: combinedResults, _note: "Digabung dari beberapa kiriman per tahap." } });
       toast.success(`${combinedResults.length} data terkirim ke Accurate.`, { id: 'exec' });
     } else {
       // Baris yang hasilnya tak diketahui (tanpa jawaban Accurate) WAJIB terlihat di layar, bukan hanya di Excel: kirim ulang buta = ganda.
+      // Pembaca Status: awalan "TIDAK DIKETAHUI" di sini dan di spec; jangan diubah tanpa mengubah pembacanya.
       const tidakPasti = errorLogForExcel.filter((r) => String(r.Status).startsWith("TIDAK DIKETAHUI")).length;
+      // Audit desain 001 No 7: log galat tidak diunduh otomatis; strip neg di Hasil bertahan dengan tombol "Unduh log galat".
       setResponseLog({ status: "error", message: [
         dihentikan,
-        `Selesai dengan ${errorCount} tahap gagal. Rincian per baris ada di Excel log galat yang diunduh otomatis. Data yang berhasil: ${combinedResults.length}.`,
-        tidakPasti ? `${tidakPasti} baris TIDAK DIKETAHUI. Cek di Accurate sebelum kirim ulang (lihat Excel log galat).` : "",
+        `Selesai dengan ${errorCount} tahap gagal. Data yang berhasil: ${combinedResults.length}.${errorLogForExcel.length > 0 ? " Rincian per baris ada di log galat: tekan Unduh log galat." : ""}`,
+        tidakPasti ? `${tidakPasti} baris TIDAK DIKETAHUI. Cek di Accurate sebelum kirim ulang (lihat log galat).` : "",
       ].filter(Boolean).join("\n") });
       toast.error(`Selesai dengan ${errorCount} tahap gagal${tidakPasti ? `, ${tidakPasti} baris TIDAK DIKETAHUI` : ""}.`, { id: 'exec' });
 
-      if (errorLogForExcel.length > 0) {
-        setLogGalat(errorLogForExcel);
-        setTimeout(async () => {
-          toast("Mengunduh Excel log galat...");
-          try {
-            const XLSX = await import("xlsx");
-            const wsErr = XLSX.utils.json_to_sheet(errorLogForExcel);
-            const wbErr = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wbErr, wsErr, "Error Log");
-            XLSX.writeFile(wbErr, `Laporan_Error_Upload_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
-          } catch(e) { console.error("Gagal buat xlsx error", e); }
-        }, 2000);
-      }
+      if (errorLogForExcel.length > 0) setLogGalat(errorLogForExcel);
     }
   };
 
@@ -1010,7 +988,7 @@ export default function Home() {
     } catch (err: unknown) {
       if (err instanceof Error) {
         setResponseLog({ status: "error", message: err.message });
-        toast.error(`Eksekusi gagal: ${err.message}`, { id: 'exec' });
+        toast.error(`Ada yang gagal: ${err.message}`, { id: 'exec' });
       }
     } finally {
       setIsLoading(false);
@@ -1019,7 +997,7 @@ export default function Home() {
 
   const handleExecute = async () => {
     if (!isKeySaved) {
-      toast.error("Silakan login dan pilih database terlebih dahulu.");
+      toast.error("Masuk Accurate dan buka database dulu.");
       return;
     }
 
@@ -1028,11 +1006,13 @@ export default function Home() {
       try {
         payloadObj = JSON.parse(payloadStr);
       } catch (e) {
-        toast.error("Format JSON tidak valid. Silakan periksa kembali.");
+        toast.error("Payload JSON tidak valid. Perbaiki di editor.");
         return;
       }
     } else {
-      payloadObj = accurateRoutes[selectedRoute].samplePayload;
+      // Usulan G (owner 27 Okt): tab Unggah Excel tanpa berkas termuat tidak mengirim apa pun (dulu: contoh payload bawaan endpoint).
+      toast.error(ALASAN_TANPA_BERKAS);
+      return;
     }
 
     setIsLoading(true);
@@ -1043,7 +1023,7 @@ export default function Home() {
       // Chunking Engine for Bulk Save (Handles both Max 100 Limit bypass AND Auto-Healing logic for any size)
       if (isBulk && Array.isArray(payloadObj)) {
           if (routeConfig.path.includes('/sales-receipt/')) { // AM-041, lihat executeBulkPayload
-              toast.loading("Menganalisis potensi pembayaran ganda...", { id: 'exec' });
+              toast.loading("Memeriksa kemungkinan pelunasan ganda…", { id: 'exec' });
               const reviewState = await previewSalesReceiptDuplicates(payloadObj, selectedRoute);
               if (reviewState) {
                   setDuplicateReview(reviewState);
@@ -1054,16 +1034,17 @@ export default function Home() {
           await executeBulkPayload(payloadObj, routeConfig);
       } else {
           // Normal Execution
-          toast.loading(`Mengeksekusi ${routeConfig.label}...`, { id: 'exec' });
+          const baca = routeConfig.method === "GET";
+          toast.loading(`${baca ? "Membaca" : "Mengirim"} ${routeConfig.label}…`, { id: 'exec' });
           const data = await accurateFetch(routeConfig.path, routeConfig.method, payloadObj);
           setResponseLog({ status: "success", data });
-          toast.success("Eksekusi berhasil!", { id: 'exec' });
+          toast.success(baca ? "Accurate menjawab." : "Accurate menjawab kiriman. Periksa hasilnya.", { id: 'exec' });
       }
 
     } catch (err: unknown) {
       if (err instanceof Error) {
         setResponseLog({ status: "error", message: err.message });
-        toast.error(`Eksekusi gagal: ${err.message}`, { id: 'exec' });
+        toast.error(`Ada yang gagal: ${err.message}`, { id: 'exec' });
       }
     } finally {
       setIsLoading(false);
@@ -1071,20 +1052,17 @@ export default function Home() {
   };
 
   // Audit desain 001 No 2: tulis ke Accurate hanya sesudah ConfirmDialog. Fakta dialog dihitung dari payload yang sama dengan yang
-  // dipakai handleExecute (editor JSON; contoh bawaan endpoint bila tab Unggah Excel aktif). handleExecute sendiri tidak berubah.
+  // dipakai handleExecute (editor JSON). Tab Unggah Excel: tombol nonaktif, dan jalur ini juga tidak membuka apa pun (usulan G).
   // Cek JSON di sini memakai aturan yang sama (JSON.parse) supaya galatnya tampil di halaman, bukan toast (No 7).
   const bukaKirim = () => {
     const routeConfig = accurateRoutes[selectedRoute];
+    if (inputMode !== "manual") return;
     let payload: unknown;
-    if (inputMode === "manual") {
-      try {
-        payload = JSON.parse(payloadStr);
-      } catch (e) {
-        setGalatPayload(e instanceof Error ? e.message : String(e));
-        return;
-      }
-    } else {
-      payload = routeConfig.samplePayload;
+    try {
+      payload = JSON.parse(payloadStr);
+    } catch (e) {
+      setGalatPayload(e instanceof Error ? e.message : String(e));
+      return;
     }
     setGalatPayload(null);
     if (routeConfig.method === "GET") {
@@ -1097,18 +1075,27 @@ export default function Home() {
       path: routeConfig.path,
       baris: massal ? (payload as unknown[]).length : 1,
       massal,
-      contohBawaan: inputMode !== "manual",
       pelunasan: massal && routeConfig.path.includes('/sales-receipt/'),
     });
   };
 
-  // Unduh ulang Excel log galat terakhir; isi dan nama berkas sama dengan unduhan otomatis sesudah kirim.
+  // Unduh Excel log galat terakhir lewat tombol (No 7: dulu juga diunduh otomatis lewat setTimeout). Isi, nama sheet, dan pola
+  // nama berkas sama dengan unduhan otomatis lama; yang berubah hanya teks Status (tanpa em dash).
   const unduhLogGalat = async () => {
     if (!logGalat) return;
     const XLSX = await import("xlsx");
     const wbErr = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wbErr, XLSX.utils.json_to_sheet(logGalat), "Error Log");
     XLSX.writeFile(wbErr, `Laporan_Error_Upload_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
+  };
+
+  // Unduh laporan Retur Manual lewat tombol; isi, nama sheet, dan pola nama berkas sama dengan unduhan otomatis lama.
+  const unduhReturManual = async () => {
+    if (!returManual) return;
+    const XLSX = await import("xlsx");
+    const wbManual = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbManual, XLSX.utils.json_to_sheet(returManual), "Retur Manual");
+    XLSX.writeFile(wbManual, `Retur_PotLain_Manual_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
   };
 
   // Hidrasi: halaman baru dirender penuh di klien (isMounted); sebelum itu cukup kerangka memuat.
@@ -1125,6 +1112,7 @@ export default function Home() {
   const adaTemplat = Boolean((route as { templateHeaders?: unknown[] }).templateHeaders?.length);
   const adaParser = Boolean(workbookRouteParsers[selectedRoute]);
   const terkunci = !isKeySaved;
+  const tanpaBerkas = inputMode === "excel"; // usulan G: berkas yang terbaca pindah ke Payload JSON, jadi tab Excel = belum ada berkas
   const dbTampil = openDbAlias || (openDbId ? `Tanpa nama (id ${openDbId})` : KOSONG);
 
   // Log hasil (No 1): hasil parser workbook (handleFileUpload) satu-satunya yang membawa kunci `_meta`; jawaban Accurate dan
@@ -1188,6 +1176,15 @@ export default function Home() {
               </div>
             }>
               <div className="fi-sect-in" inert={terkunci}>
+                {returManual && (
+                  <MessageStrip tone="warn" title={`${returManual.length} baris punya retur atau potongan lain yang belum diproses.`}>
+                    Referensi returnya belum ketemu di Accurate, jadi nominal retur dan potongan lainnya tidak masuk payload; tunai, transfer,
+                    dan BG tetap diproses. Unduh daftarnya untuk diproses manual di Accurate.
+                    <div className="mt-2">
+                      <Button icon={<Download className="fi-icon" aria-hidden />} onClick={() => void unduhReturManual()}>Unduh retur manual (Excel)</Button>
+                    </div>
+                  </MessageStrip>
+                )}
                 {galatPayload && (
                   <MessageStrip tone="neg" title="Payload JSON tidak valid." onClose={() => setGalatPayload(null)}>
                     Perbaiki di editor. Tidak ada yang dikirim.
@@ -1239,7 +1236,7 @@ export default function Home() {
                         <Button icon={<Download className="fi-icon" aria-hidden />} disabled={!adaTemplat} disabledReason="Endpoint ini belum punya templat Excel." onClick={handleDownloadTemplate}>Unduh templat Excel</Button>
                         <label className="fi-btn fi-btn--secondary">
                           <Upload className="fi-icon" aria-hidden />Unggah berkas
-                          <input type="file" className="sr-only" accept=".xlsx, .xls, .csv" onChange={(e) => { setLogGalat(null); handleFileUpload(e); }} />
+                          <input type="file" className="sr-only" accept=".xlsx, .xls, .csv" onChange={(e) => { setLogGalat(null); setReturManual(null); handleFileUpload(e); }} />
                         </label>
                       </div>
                       {!adaTemplat && <p className="fi-small fi-why">Endpoint ini belum punya templat Excel; susun kolom sesuai parameter API.</p>}
@@ -1249,8 +1246,12 @@ export default function Home() {
               </div>
               <div className="fi-sect-in border-t border-line">
                 <div className="flex flex-wrap items-center justify-end gap-2">
-                  <p className="fi-small fi-subtle mr-auto">{menulis ? "Ringkasan kiriman ditampilkan untuk dikonfirmasi sebelum terkirim." : "Hanya membaca dari Accurate, tidak mengubah data."}</p>
-                  <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} busy={isLoading} disabled={terkunci} disabledReason="Masuk Accurate dan buka database dulu." onClick={bukaKirim}>
+                  <p id={idAlasanKirim} className={`fi-small mr-auto ${!terkunci && tanpaBerkas ? "fi-why" : "fi-subtle"}`}>
+                    {!terkunci && tanpaBerkas ? ALASAN_TANPA_BERKAS : menulis ? "Ringkasan kiriman ditampilkan untuk dikonfirmasi sebelum terkirim." : "Hanya membaca dari Accurate, tidak mengubah data."}
+                  </p>
+                  <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} busy={isLoading} disabled={terkunci || tanpaBerkas}
+                    disabledReason={terkunci ? "Masuk Accurate dan buka database dulu." : ALASAN_TANPA_BERKAS}
+                    aria-describedby={!terkunci && tanpaBerkas ? idAlasanKirim : undefined} onClick={bukaKirim}>
                     {isLoading ? "Memproses…" : menulis ? "Kirim ke Accurate…" : "Baca dari Accurate"}
                   </Button>
                 </div>
@@ -1267,7 +1268,7 @@ export default function Home() {
                       <span className="whitespace-pre-wrap break-words">{responseLog.message}</span>
                     </MessageStrip>
                     {logGalat && (
-                      <div><Button icon={<Download className="fi-icon" aria-hidden />} onClick={() => void unduhLogGalat()}>Unduh ulang log galat</Button></div>
+                      <div><Button icon={<Download className="fi-icon" aria-hidden />} onClick={() => void unduhLogGalat()}>Unduh log galat</Button></div>
                     )}
                   </>
                 ) : (
@@ -1343,7 +1344,7 @@ export default function Home() {
           facts={k ? [
             ["Endpoint", <span key="endpoint" className="fi-mono">{k.path}</span>],
             ["Isi", k.massal ? `${k.baris} baris, ${Math.ceil(k.baris / 100)} tahap (maks. 100 baris per tahap)` : "1 permintaan"],
-            ["Sumber", k.contohBawaan ? "Contoh payload bawaan endpoint" : "Payload JSON di editor"],
+            ["Sumber", "Payload JSON di editor"],
             ["Database aktif", dbTampil],
           ] : undefined}
           confirmLabel={k?.massal ? `Kirim ${k.baris} baris` : "Kirim ke Accurate"}
@@ -1352,13 +1353,7 @@ export default function Home() {
             setLogGalat(null);
             void handleExecute();
           }}
-        >
-          {k?.contohBawaan && (
-            <MessageStrip tone="warn" title="Tab Unggah Excel aktif tanpa berkas termuat.">
-              Yang dikirim adalah contoh payload bawaan endpoint, bukan isi berkas. Batalkan, lalu unggah berkas bila itu maksud Anda.
-            </MessageStrip>
-          )}
-        </ConfirmDialog>
+        />
 
         <Dialog
           open={Boolean(tinjau)}

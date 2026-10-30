@@ -2,7 +2,8 @@
  * Tujuan: Mapping Principal (Fiori): terjemahan kode di sistem principal menjadi kode internal (barang, pelanggan, salesman, merek surat).
  *   Impor Excel selalu pratinjau dulu; Muat (mengganti seluruh mapping jenis itu), tambah/ubah, dan hapus lewat dialog konfirmasi.
  * Caller: Route dashboard `/principal-mapping`.
- * Dependensi: /api/principal-mapping (GET, PUT, DELETE) dan /api/principal-mapping/import (POST), komponen Fiori, lib/tampil.
+ * Dependensi: /api/principal-mapping (GET, PUT, DELETE) dan /api/principal-mapping/import (POST), komponen Fiori, lib/tampil,
+ *   principal-order/bersama (PRINCIPAL_DIDUKUNG = nilai awal principal).
  * Main Functions: PrincipalMappingPage, load, saveRow, removeRow, runImport.
  * Side Effects: HTTP baca/tulis; impor default PRATINJAU, menulis hanya setelah dikonfirmasi.
  */
@@ -14,6 +15,7 @@ import { FioriScope } from "@/components/fiori/Scope";
 import { Button, ListItem, MessageStrip, ResponsiveTable, Section, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { KOSONG, sebabHttp, waktuWita } from "@/lib/tampil";
+import { PRINCIPAL_DIDUKUNG } from "../principal-order/bersama";
 
 type Kind = "item" | "customer" | "salesman" | "brand";
 
@@ -47,7 +49,8 @@ function useDebounced(value: string, ms: number) {
 const kirim = (url: string, init: RequestInit) => fetch(url, init).catch(() => { throw new Error(sebabHttp(0)); });
 
 export default function PrincipalMappingPage() {
-    const [principal, setPrincipal] = useState("KINO NON FOOD");
+    // Nilai awal = principal yang didukung Order Principal (satu konstanta, bukan literal di sini; audit No 79).
+    const [principal, setPrincipal] = useState(PRINCIPAL_DIDUKUNG);
     const [kind, setKind] = useState<Kind>("item");
     const [query, setQuery] = useState("");
     const [rows, setRows] = useState<Row[]>([]);

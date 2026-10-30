@@ -70,7 +70,7 @@ for (const [mod, actions] of Object.entries(PERMISSION_REGISTRY)) {
     }
 }
 assert.equal(permissionKeyLabel("off_program_control.sm_approve"), "OFF Program Control · Setujui (SM)");
-assert.equal(permissionKeyLabel("form_kontrol.manage"), "Form Kontrol · Manage");
+assert.equal(permissionKeyLabel("form_kontrol.manage"), "Form Kontrol · Kelola");
 assert.equal(permissionKeyLabel("nope.x"), "nope.x");
 // Label OPC tidak memperluas preset role lama. S7-1b: create/update/export dipensiunkan; S7-3: approve ikut (profil Beranda dari ★ grup
 // utama) -> moduleActions OPC tinggal view; preset tidak diperluas ke kunci granular.

@@ -271,7 +271,7 @@ export default function ClaimWorkflowReportsPage() {
                         : rows.length === 0 ? <EmptyState title="Tidak ada data untuk saringan ini" message="Ubah atau hapus saringan." />
                         : (
                             <div className={`min-w-0${loading ? " fi-busy" : ""}`} aria-busy={loading || undefined}>
-                                <div className="fi-tablescroll" tabIndex={0} style={{ maxHeight: "640px", position: "relative" }}>
+                                <div className="fi-tablescroll" tabIndex={0} role="group" aria-label={`Pratinjau laporan klaim ${TAB_LABEL[tab].toLowerCase()}`} style={{ maxHeight: "640px", position: "relative" }}>
                                     <table className="fi-table">
                                         <caption className="sr-only">{`Pratinjau laporan klaim ${TAB_LABEL[tab].toLowerCase()}`}</caption>
                                         <thead>

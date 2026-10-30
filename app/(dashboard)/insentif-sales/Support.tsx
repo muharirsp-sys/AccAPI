@@ -6,7 +6,8 @@
  *   SupportExcelBar di page.tsx lama (dulu di tab Dashboard SM, tidak terbuka untuk Finance).
  * Caller: app/(dashboard)/insentif-sales/support/page.tsx (default export, prop permKeys).
  * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard), ./data (formatRp), components/fiori/*, lib/insentif-ui,
- *   lib/insentif-sales-excel (impor dinamis), lib/rekapan-nota/ui (ambil), lib/tampil (waktuWita), sonner.
+ *   lib/insentif-sales-excel (impor dinamis), lib/rekapan-nota/ui (ambil), lib/tampil (waktuWita), lib/angka-lokal (pengurai id-ID bersama dan
+ *   format ribuan isian support, audit No 122), sonner.
  * Main Functions: Support (default), ExcelSupport.
  * Side Effects: GET dashboard, spv-support, spv-ikut. Simpan (berurutan): POST support → POST spv-support → PATCH targets/status;
  *   per baris: PATCH targets/ao-file, PATCH spv-ikut. Semuanya MENGUBAH NOMINAL insentif periode itu. Unduh template XLSX.
@@ -20,6 +21,7 @@ import { Check, Download, Pencil, RefreshCw, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button, EmptyState, ErrorState, FooterToolbar, MessageStrip, ResponsiveTable, Section, Skeleton, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
+import { isianNominal, isianPolos, nominalKeTeks } from "@/lib/angka-lokal";
 import { DEFAULT_KONSTANTA } from "@/lib/insentif-konstanta";
 import type { SupportTemplateRow } from "@/lib/insentif-sales-excel";
 import { HALAMAN, LABEL_STATUS, STATUS_INSENTIF_OPSI, formatQty, halamanTerlihat, labelTipe, readApi, sebabNol, type ApiRow } from "@/lib/insentif-ui";
@@ -44,19 +46,23 @@ const keySpv = (p: Pasangan) => `${p.spvName}|${p.principle}`;
  */
 const ikutKey = (p: Pasangan) => keySpv(p).trim().toUpperCase().replace(/\s+/g, " ");
 /**
- * Isian kosong = 0 (kebijakan lama); negatif tetap dikirim dan ditolak server (AM-043). Isian bukan angka = NaN, BUKAN 0: dulu
+ * Isian kosong = 0 (kebijakan lama); negatif ditolak di layar sejak pengurai ketat (tinjauan K3 S-1) dan tetap ditolak server (AM-043).
+ * Isian bukan angka = NaN, BUKAN 0: dulu
  * `Number(x) || 0` membuatnya terkirim sebagai support Rp 0 (bayar lebih). Simpan dikunci selama ada isian NaN.
  */
 const angka = (v: string) => (v.trim() === "" ? 0 : Number(v));
 /**
- * Draf untuk isian number yang tidak terbaca peramban (validity.badInput, mis. "e" atau "1e"): value-nya "" sehingga tak bisa
- * dibedakan dari kosong. Disimpan sebagai penanda ini, dan input menampilkan "" lagi supaya React tidak menimpa teks yang diketik.
- * Dibaca di onInput, bukan hanya onChange: React menahan onChange bila value DOM tetap "" ("" → "e" → ""), sehingga tanpa onInput
- * "e" di isian kosong tetap terkirim sebagai 0 dan penanda tidak terhapus saat teksnya dihapus.
+ * Isian support kini teks (audit No 122: roda mouse tidak mengubah nilai, "1.500.000" terbaca ribuan). Yang DISIMPAN di draf tetap
+ * teks desimal kanonik dari pengurai rupiah bersama yang KETAT (nominalKeTeks: titik hanya pemisah ribuan, sama dengan Pengaturan dan
+ * Nilai fix; tinjauan K3 S-1: "500.00" sisa sunting "500.000" ditolak, bukan Rp 500), jadi `angka` dan payload membaca angka yang
+ * sama seperti dulu; teks yang tidak terbaca disimpan sebagai penanda ini (Simpan dikunci, tidak pernah jadi 0).
  */
 const BUKAN_ANGKA = "bukan angka";
-const isiInput = (el: HTMLInputElement) => (el.validity.badInput ? BUKAN_ANGKA : el.value);
-const tampilIsi = (v: string) => (v === BUKAN_ANGKA ? "" : v);
+const kanonik = (t: string) => { if (t.trim() === "") return ""; const r = nominalKeTeks(t, { ketat: true }); return "galat" in r ? BUKAN_ANGKA : r.teks; };
+/** Kalimat galat ketikan (negatif, titik bukan ribuan, > 2 desimal, bukan angka); cadangan bila ketikannya tidak ada lagi. */
+const galatKetik = (t: string | undefined) => { const r = t === undefined ? null : nominalKeTeks(t, { ketat: true }); return r && "galat" in r ? r.galat : "bukan angka rupiah yang sah"; };
+/** Nilai draf/tersimpan -> teks isian: ribuan id-ID bila bisa dibaca bolak-balik tepat; selain itu apa adanya (mis. negatif). */
+const tampilIsi = (v: string) => (v === BUKAN_ANGKA || v === "" ? "" : isianNominal(Number(v)) ?? v);
 /** id keterangan "bukan angka" per isian (aria-describedby): kunci baris berisi spasi/|, jadi dirapikan jadi id yang sah. */
 const idSalah = (jenis: string, kunci: string) => `salah-${jenis}-${kunci.replace(/[^A-Za-z0-9_-]/g, "_")}`;
 const tanpa = (o: Record<string, string>, keys: string[]) => { const n = { ...o }; for (const x of keys) delete n[x]; return n; };
@@ -219,6 +225,28 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
     const draf = drafSemua[periode] ?? DRAF_KOSONG;
     const ubahDraf = (f: (x: Draf) => Draf) => setDrafSemua((a) => ({ ...a, [periode]: f(a[periode] ?? DRAF_KOSONG) }));
 
+    // Teks yang sedang diketik per isian (No 122), kunci per periode. Tampil selama masih mewakili nilai draf (Excel/simpan menggantinya);
+    // sesudah blur isian sah tampil berformat ribuan, isian tidak sah tetap tampil apa adanya.
+    const [ketik, setKetik] = useState<Record<string, string>>({});
+    const ketikan = (id: string, t: string) => setKetik((k) => ({ ...k, [`${periode}|${id}`]: t }));
+    const lepasKetik = (id: string, nilai: string) => { if (nilai !== BUKAN_ANGKA) setKetik((k) => tanpa(k, [`${periode}|${id}`])); };
+    // Saat fokus: angka polos tanpa titik ribuan (S-1), supaya menghapus satu digit tidak menghasilkan "500.00".
+    const [fokus, setFokus] = useState<string | null>(null);
+    const teksIsi = (id: string, nilai: string, difokus = fokus === `${periode}|${id}`) => {
+        const t = ketik[`${periode}|${id}`];
+        if (t !== undefined && kanonik(t) === nilai) return t;
+        return difokus && nilai !== BUKAN_ANGKA ? isianPolos(nilai) : tampilIsi(nilai);
+    };
+    /**
+ * Fokus: angka polos ditulis ke DOM SEKETIKA dan seluruh isi dipilih (bukan menunggu render), supaya ketikan berikutnya (Tab lalu ketik, isi
+ * otomatis) MENGGANTI isi, bukan menempel di belakang teks lama yang baru diganti (dulu "1000000" + "1100000" = "10000001100000").
+     */
+    const masukFokus = (el: HTMLInputElement, id: string, nilai: string) => {
+        const polos = teksIsi(id, nilai, true);
+        if (el.value !== polos) { el.value = polos; el.select(); }
+        setFokus(`${periode}|${id}`);
+    };
+    const pesanSalah = (id: string) => galatKetik(ketik[`${periode}|${id}`]);
     const nilaiSupport = (r: ApiRow) => draf.support[keySales(r)] ?? String(r.support ?? 0);
     const nilaiStatus = (r: ApiRow) => draf.status[keySales(r)] ?? statusLama(r);
     const nilaiSpv = (p: Pasangan) => draf.spv[keySpv(p)] ?? String(savedSpv?.[keySpv(p)] ?? 0);
@@ -355,14 +383,15 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
             {statusBerubah(r) && sebelumnya(labelStatus(statusLama(r)))}
         </>
     );
-    const ketikSupport = (r: ApiRow, el: HTMLInputElement) => { const v = isiInput(el); ubahDraf((x) => ({ ...x, support: { ...x.support, [keySales(r)]: v } })); };
+    const ketikSupport = (r: ApiRow, t: string) => { ketikan(`sup|${keySales(r)}`, t); ubahDraf((x) => ({ ...x, support: { ...x.support, [keySales(r)]: kanonik(t) } })); };
     const isiSupport = (r: ApiRow) => (
         <>
-            <input type="number" min={0} inputMode="numeric" className="fi-input fi-cellin fi-tnum" aria-label={`Support ${r.salesCode} ${r.principle}`}
-                value={tampilIsi(nilaiSupport(r))} disabled={Boolean(kunciIsiSupport)} title={kunciIsiSupport} aria-invalid={Number.isNaN(angka(nilaiSupport(r))) || undefined}
+            <input type="text" inputMode="numeric" autoComplete="off" className="fi-input fi-cellin fi-tnum" aria-label={`Support ${r.salesCode} ${r.principle}`}
+                value={teksIsi(`sup|${keySales(r)}`, nilaiSupport(r))} disabled={Boolean(kunciIsiSupport)} title={kunciIsiSupport} aria-invalid={Number.isNaN(angka(nilaiSupport(r))) || undefined}
                 aria-describedby={Number.isNaN(angka(nilaiSupport(r))) ? idSalah("sup", keySales(r)) : undefined}
-                onChange={(e) => ketikSupport(r, e.currentTarget)} onInput={(e) => ketikSupport(r, e.currentTarget)} />
-            {Number.isNaN(angka(nilaiSupport(r))) && <span id={idSalah("sup", keySales(r))} className="fi-sub fi-why">bukan angka</span>}
+                onChange={(e) => ketikSupport(r, e.target.value)} onFocus={(e) => masukFokus(e.currentTarget, `sup|${keySales(r)}`, nilaiSupport(r))}
+                onBlur={() => { setFokus(null); lepasKetik(`sup|${keySales(r)}`, nilaiSupport(r)); }} />
+            {Number.isNaN(angka(nilaiSupport(r))) && <span id={idSalah("sup", keySales(r))} className="fi-sub fi-why">{pesanSalah(`sup|${keySales(r)}`)}</span>}
             {supportBerubah(r) && sebelumnya(formatRp(r.support ?? 0))}
         </>
     );
@@ -381,14 +410,15 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
         </>
     );
     const insentif = (r: ApiRow) => { const s = sebabNol(r, k); return <><b className="fi-tnum">{formatRp(r.incentive.total)}</b>{s && <span className="fi-sub">{s}</span>}</>; };
-    const ketikSpv = (p: Pasangan, el: HTMLInputElement) => { const v = isiInput(el); ubahDraf((x) => ({ ...x, spv: { ...x.spv, [keySpv(p)]: v } })); };
+    const ketikSpv = (p: Pasangan, t: string) => { ketikan(`spv|${keySpv(p)}`, t); ubahDraf((x) => ({ ...x, spv: { ...x.spv, [keySpv(p)]: kanonik(t) } })); };
     const isiSpv = (p: Pasangan) => (
         <>
-            <input type="number" min={0} inputMode="numeric" className="fi-input fi-cellin fi-tnum" aria-label={`Support SPV ${p.spvName} ${p.principle}`}
-                value={tampilIsi(nilaiSpv(p))} disabled={Boolean(kunciIsiSpv)} title={kunciIsiSpv} aria-invalid={Number.isNaN(angka(nilaiSpv(p))) || undefined}
+            <input type="text" inputMode="numeric" autoComplete="off" className="fi-input fi-cellin fi-tnum" aria-label={`Support SPV ${p.spvName} ${p.principle}`}
+                value={teksIsi(`spv|${keySpv(p)}`, nilaiSpv(p))} disabled={Boolean(kunciIsiSpv)} title={kunciIsiSpv} aria-invalid={Number.isNaN(angka(nilaiSpv(p))) || undefined}
                 aria-describedby={Number.isNaN(angka(nilaiSpv(p))) ? idSalah("spv", keySpv(p)) : undefined}
-                onChange={(e) => ketikSpv(p, e.currentTarget)} onInput={(e) => ketikSpv(p, e.currentTarget)} />
-            {Number.isNaN(angka(nilaiSpv(p))) && <span id={idSalah("spv", keySpv(p))} className="fi-sub fi-why">bukan angka</span>}
+                onChange={(e) => ketikSpv(p, e.target.value)} onFocus={(e) => masukFokus(e.currentTarget, `spv|${keySpv(p)}`, nilaiSpv(p))}
+                onBlur={() => { setFokus(null); lepasKetik(`spv|${keySpv(p)}`, nilaiSpv(p)); }} />
+            {Number.isNaN(angka(nilaiSpv(p))) && <span id={idSalah("spv", keySpv(p))} className="fi-sub fi-why">{pesanSalah(`spv|${keySpv(p)}`)}</span>}
             {spvBerubah(p) && sebelumnya(formatRp(savedSpv?.[keySpv(p)] ?? 0))}
         </>
     );

@@ -214,7 +214,7 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
   await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Qty: Accurate 3, GODREJ 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, GODREJ 5 (Accurate kurang 2)", { exact: true })).toBeVisible();
 
   await expect(page.getByRole("columnheader", { name: "Dokumen Pembelian" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Supplier" })).toBeVisible();
@@ -260,7 +260,7 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("2100000077", { exact: true })).toBeVisible();
   await expect(page.getByText("2100000076", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Qty: Accurate 3, RECKITT 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, RECKITT 5 (Accurate kurang 2)", { exact: true })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "DPP RECKITT" })).toBeVisible();
 
   const reckittDownloadPromise = page.waitForEvent("download");
@@ -320,7 +320,7 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("110000077", { exact: true })).toBeVisible();
   await expect(page.getByText("110000076", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Qty: Accurate 3, CUSSONS 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, CUSSONS 5 (Accurate kurang 2)", { exact: true })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Dokumen Pembelian" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Supplier" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "DPP CUSSONS" })).toBeVisible();
@@ -340,8 +340,6 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await expect(page.getByText("110000077", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Jalankan rekonsiliasi" })).toBeDisabled();
-  // Tema Office Calm/Neon/iOS pensiun (Okt 2026): halaman lama hanya memakai remap Surya.
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "surya");
   await expect(types).toBeVisible();
 });
 
@@ -383,9 +381,9 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
   await expect(page.getByRole("columnheader", { name: "Pajak SHINZUI" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Total Accurate" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Total SHINZUI" })).toBeVisible();
-  await expect(page.getByText("Qty: Accurate 3, SHINZUI 5 — Accurate kurang 2", { exact: true })).toBeVisible();
-  await expect(page.getByText("DPP: Accurate Rp60.000, SHINZUI Rp60.000,5 — Accurate kurang Rp0,5", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("DPP: Accurate Rp60.000, SHINZUI Rp90.000 — Accurate kurang Rp30.000", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, SHINZUI 5 (Accurate kurang 2)", { exact: true })).toBeVisible();
+  await expect(page.getByText("DPP: Accurate Rp60.000, SHINZUI Rp60.000,5 (Accurate kurang Rp0,5)", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("DPP: Accurate Rp60.000, SHINZUI Rp90.000 (Accurate kurang Rp30.000)", { exact: true })).toBeVisible();
   const search = page.getByLabel("Cari tabel");
   await search.fill("SHZ-02");
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
@@ -498,7 +496,7 @@ test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switc
     "Produk KINO": "SHZ-02",
     "Pajak KINO": 6600.05,
     "Total KINO": 66600.55,
-    "Penyebab selisih": "Qty: Accurate 3, KINO 5 — Accurate kurang 2",
+    "Penyebab selisih": "Qty: Accurate 3, KINO 5 (Accurate kurang 2)",
     "Baris KINO": "5",
   });
   expect(detail.find((row) => row.Invoice === "BAD-REM")).toMatchObject({
@@ -566,7 +564,7 @@ test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switc
   await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("columnheader", { name: "Pajak GODREJ" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Total GODREJ" })).toBeVisible();
-  await expect(page.getByText("Qty: Accurate 3, GODREJ 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, GODREJ 5 (Accurate kurang 2)", { exact: true })).toBeVisible();
 
   const godrejDownloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Ekspor XLSX" }).click();
@@ -578,7 +576,7 @@ test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switc
   const godrejDetail = XLSX.utils.sheet_to_json<Record<string, string | number>>(godrejWorkbook.Sheets.Detail);
   expect(godrejDetail[1]).toMatchObject({
     "Produk GODREJ": "GOD-02",
-    "Penyebab selisih": "Qty: Accurate 3, GODREJ 5 — Accurate kurang 2",
+    "Penyebab selisih": "Qty: Accurate 3, GODREJ 5 (Accurate kurang 2)",
     "Baris GODREJ": "5",
   });
 
@@ -709,7 +707,7 @@ test("runs HEINZ Return with HEADER and DETAIL then resets all three files", asy
   expect(heinzCalled).toBe(true);
   await expect(page.getByLabel("Saring status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("CN-024277", { exact: true })).toBeVisible();
-  await expect(page.getByText("Qty: Accurate 3, HEINZ 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, HEINZ 5 (Accurate kurang 2)", { exact: true })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Pajak HEINZ" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Total HEINZ" })).toBeVisible();
 

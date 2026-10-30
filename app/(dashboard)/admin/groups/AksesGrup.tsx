@@ -344,7 +344,7 @@ export default function AksesGrup({ aktorId }: { aktorId: string }) {
                 <div className="fi-page-bar">
                     <h1>Kelola Akses Grup</h1>
                     <span className="fi-spacer" />
-                    <Link className="fi-btn fi-btn--secondary" href="/admin/users">Pengguna dan Izin</Link>
+                    <Link className="fi-btn fi-btn--secondary" href="/admin/users">User dan Izin</Link>
                     <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} onClick={() => { setBaru({ nama: "", deskripsi: "" }); setDialog("baru"); }}>Grup baru…</Button>
                 </div>
                 <p>Izin per modul untuk setiap grup. Izin user = gabungan semua grupnya. Selisih izin ditampilkan sebelum disimpan dan tercatat di riwayat.</p>

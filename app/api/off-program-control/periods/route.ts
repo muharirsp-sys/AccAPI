@@ -1,22 +1,22 @@
 /*
  * Tujuan: API tutup/buka periode OFF Program Control berdasarkan principal dan periode.
- * Caller: OverviewTab halaman OFF Program Control.
- * Dependensi: Better Auth OFF session, Drizzle SQLite, offBatch/offBatchItem/offPayment/offPeriodClosure, audit OFF.
- * Main Functions: POST close/unlock periode, summarizePeriod.
- * Side Effects: DB read/write SQLite untuk status periode dan audit log.
+ * Caller: Ringkasan OFF Program Control (opc/peran/RingkasanPeriode.tsx).
+ * Dependensi: Better Auth OFF session, Drizzle Postgres, offBatch/offBatchItem/offPayment/offPeriodClosure, user, audit OFF.
+ * Main Functions: GET status penutupan per bulan/tahun (audit desain 001 No 27), POST close/unlock periode, summarizePeriod.
+ * Side Effects: GET baca-saja. POST menulis status periode dan audit log.
  */
 
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { claimSubmission, claimWorkflow, offBatch, offBatchItem, offPayment, offPeriodClosure } from "@/db/schema";
+import { claimSubmission, claimWorkflow, offBatch, offBatchItem, offPayment, offPeriodClosure, user } from "@/db/schema";
 import {
   getPrincipleByCode,
   requireOffSession,
   writeOffAudit,
 } from "@/lib/off-program-control";
-import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { requirePermissionH, resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 type PeriodAction = "close" | "unlock";
 
@@ -143,6 +143,60 @@ async function summarizePeriod(input: {
       submittedBatches.length > 0 &&
       moneyComparable(totalSubmitted) === moneyComparable(totalClaimed),
   };
+}
+
+/**
+ * Status penutupan satu periode (`?bulan=&tahun=`, opsional `principleCode`) dari off_period_closure, apa pun sesi yang menutupnya.
+ * Principal tanpa baris = belum pernah ditutup. Nama penutup/pembuka dibaca dari tabel user (id akun); id tetap dikirim sebagai cadangan.
+ */
+export async function GET(request: Request) {
+  const actor = await requireOffSession();
+  if (!actor) {
+    return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
+  }
+  const gate = await requirePermissionH("off_program_control.view");
+  if (gate.response) return gate.response;
+
+  const url = new URL(request.url);
+  const bulan = String(url.searchParams.get("bulan") || "").trim().padStart(2, "0");
+  const tahun = String(url.searchParams.get("tahun") || "").trim();
+  const principleCode = String(url.searchParams.get("principleCode") || "").trim();
+  if (!/^(0[1-9]|1[0-2])$/.test(bulan) || !/^\d{4}$/.test(tahun)) {
+    return NextResponse.json({ ok: false, error: "Bulan dan tahun periode wajib diisi dengan benar." }, { status: 400 });
+  }
+
+  const rows = await db
+    .select()
+    .from(offPeriodClosure)
+    .where(
+      and(
+        eq(offPeriodClosure.bulan, bulan),
+        eq(offPeriodClosure.tahun, tahun),
+        principleCode ? eq(offPeriodClosure.principleCode, principleCode) : undefined,
+      ),
+    );
+  const ids = [...new Set(rows.flatMap((r) => [r.closedBy, r.unlockedBy]).filter((v): v is string => Boolean(v)))];
+  const nama = new Map(
+    (ids.length ? await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, ids)) : [])
+      .map((u) => [u.id, u.name] as const),
+  );
+  return NextResponse.json({
+    ok: true,
+    bulan,
+    tahun,
+    periods: rows.map((r) => ({
+      principleCode: r.principleCode,
+      principleName: r.principleName,
+      status: r.status,
+      closedBy: r.closedBy,
+      closedByName: r.closedBy ? nama.get(r.closedBy) ?? null : null,
+      closedAt: r.closedAt,
+      unlockedBy: r.unlockedBy,
+      unlockedByName: r.unlockedBy ? nama.get(r.unlockedBy) ?? null : null,
+      unlockedAt: r.unlockedAt,
+      updatedAt: r.updatedAt,
+    })),
+  });
 }
 
 export async function POST(request: Request) {

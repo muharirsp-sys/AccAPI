@@ -200,11 +200,11 @@ test("galat ganti bulan: data bulan lama tetap tampil tetapi judul menyebut bula
 });
 
 test("akun belum tertaut hierarki: 403 berkode menampilkan pesan server, bukan tabel kosong", async ({ page }) => {
-    await pasang(page, () => json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki — hubungi Admin." }, 403));
+    await pasang(page, () => json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki. Hubungi Admin." }, 403));
     await page.setViewportSize({ width: 1366, height: 900 });
     await buka(page);
     const galat = page.getByRole("alert").filter({ hasText: "Monitoring Harian belum berhasil dimuat." });
-    await expect(galat).toContainText("Akun belum tertaut ke hierarki — hubungi Admin.", NAV);
+    await expect(galat).toContainText("Akun belum tertaut ke hierarki. Hubungi Admin.", NAV);
     await expect(page.getByRole("heading", { name: "Belum ada faktur bulan ini" })).toHaveCount(0);
 });
 

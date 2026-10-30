@@ -80,7 +80,8 @@ export function VerifikasiRefund({ ctx, detail, muatUlang, onSelesai, laporTidak
             });
         } catch (e) {
             // Mis. 409 "Refund sudah Verified" (diproses orang lain) atau jawaban tak pasti: muat ulang supaya daftar tidak usang.
-            if (e instanceof TulisTidakPasti) laporTidakPasti(e.message); // strip bertahan + muat ulang daftar dan detail
+            // Tidak pasti: dialog ditutup, strip bertahan + muat ulang daftar dan detail (No 22).
+            if (e instanceof TulisTidakPasti) { setAksi(null); laporTidakPasti(e.message); }
             else muatUlang();
             throw e;
         }

@@ -176,7 +176,9 @@ test("Dashboard SPV: Default per salesman, Tandai sudah dibaca lewat dialog (pay
     await expect(andi.getByText("Akurasi GPS rendah 1")).toBeVisible();
     await expect(main.getByRole("article", { name: "SALES B" }).getByText("Belum kirim laporan")).toBeVisible();
     await expect(main.getByRole("article", { name: "SALES B" }).getByRole("button", { name: "Tandai sudah dibaca" })).toHaveCount(0);
-    await expect(main.locator('aside[aria-label="Usulan it05 #15"]')).toBeVisible();
+    // it05 #15 kini keterangan biasa; satu catatan varian per layar = BL-28 (audit No 80).
+    await expect(main.getByText("Persentase dihitung dari status rute yang tercatat hari itu")).toBeVisible();
+    await expect(main.locator("aside.fi-varbox")).toHaveCount(1);
 
     const tombol = andi.getByRole("button", { name: "Tandai sudah dibaca" });
     expect((await tombol.boundingBox())!.height).toBeGreaterThanOrEqual(32); // mouse: tinggi kontrol 32 px; 44 px hanya di layar sentuh (audit desain 001 No 107)
@@ -274,7 +276,7 @@ test("Dashboard SPV (admin): pilih SPV dari Hierarki → query spvName; daftar g
 
     opsi.profilesGagal = true;
     await page.goto("/form-kontrol/spv-dashboard", NAV);
-    await expect(main.locator('aside[aria-label="Usulan it05 #16"]')).toBeVisible(NAV);
+    await expect(main.getByText("Ketik nama SPV persis seperti di Hierarki Sales.")).toBeVisible(NAV);
     await main.getByLabel("Nama SPV").fill("SPV A");
     await main.getByRole("button", { name: "Tampilkan" }).click();
     await expect(page).toHaveURL(/spv=SPV(\+|%20)A/);
@@ -401,7 +403,7 @@ test.describe("layar sentuh: Hierarki", () => {
 test.use({ hasTouch: true, isMobile: true }); // target 44 px dijamin density pointer kasar, bukan override inline (No 107)
 test("Hierarki (owner 13 Okt): SPV/SM dipilih dari akun; nilai tersimpan tak cocok = opsi bertanda + peringatan; galat berkode di dialog; ponsel 390 px", async ({ page }) => {
     const opsi: Opsi = { scope: SCOPE.admin, profiles: [PROFILES[0], { ...PROFILES[2], spvName: "SYAMSUL", smName: "sm a" }],
-        putProfil: [{ status: 409, body: { ok: false, kode: "NAMA_GANDA", error: "Ada 2 akun SPV aktif bernama \"SPV B\" — cakupan akan terbagi ke semuanya; ubah nama salah satu akun dulu." } }] };
+        putProfil: [{ status: 409, body: { ok: false, kode: "NAMA_GANDA", error: "Ada 2 akun SPV aktif bernama \"SPV B\"; cakupan akan terbagi ke semuanya. Ubah nama salah satu akun dulu." } }] };
     const { tulis } = await mockApi(page, opsi);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/form-kontrol?tab=hierarki", NAV);

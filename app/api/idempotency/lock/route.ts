@@ -39,7 +39,7 @@ export async function POST(req: Request) {
 
         // S6e-2 butir 8: kunci = sidik jari payload; penanda akun belum dipilih = payload tak boleh dikirim -> jangan dikunci.
         if (!preview && memuatPlaceholderAkun(keys.map((k: LockEntry) => k.key))) {
-            return NextResponse.json({ error: 'Akun potongan belum dipilih (ISI_KODE_AKUN_…) — pilih akun di langkah Akun. Tidak ada yang dikunci.', code: 'PLACEHOLDER_AKUN' }, { status: 400 });
+            return NextResponse.json({ error: 'Akun potongan belum dipilih (ISI_KODE_AKUN_…). Pilih akun di langkah Akun. Tidak ada yang dikunci.', code: 'PLACEHOLDER_AKUN' }, { status: 400 });
         }
 
         // Tinjauan B3: kolom pelanggan/tanggal yang disimpan (target pencarian Selesaikan & identitas koreksi) harus sama dengan
@@ -49,7 +49,7 @@ export async function POST(req: Request) {
         const awalan = (k: LockEntry) => `PAY_${String(k.customerNo ?? '').trim()}_${String(k.transDate ?? '').trim()}_`;
         const fakturDiKunci = (k: LockEntry) => String(k.invoiceNo ?? '').split(',').map((x) => x.trim()).filter(Boolean).every((no) => kunciMenyentuh(k.key, no));
         if (!preview && keys.some((k: LockEntry) => !k.key.startsWith(awalan(k)) || !fakturDiKunci(k))) {
-            return NextResponse.json({ error: 'Kunci idempotency tidak sesuai pelanggan/tanggal barisnya — muat ulang lalu ulangi dari Tinjau. Tidak ada yang dikunci.', code: 'KEY_IDENTITY_MISMATCH' }, { status: 400 });
+            return NextResponse.json({ error: 'Kunci idempotency tidak sesuai pelanggan/tanggal barisnya. Muat ulang lalu ulangi dari Tinjau. Tidak ada yang dikunci.', code: 'KEY_IDENTITY_MISMATCH' }, { status: 400 });
         }
 
         const entries = keys as LockEntry[];
@@ -95,7 +95,7 @@ export async function POST(req: Request) {
             }
             if (String(sesi.databaseId) !== expected) {
                 return NextResponse.json({
-                    error: `Database Accurate sesi berubah (kini ${sesi.databaseAlias || sesi.databaseId}) — muat ulang lalu periksa tujuan. Tidak ada yang dikunci.`,
+                    error: `Database Accurate sesi berubah (kini ${sesi.databaseAlias || sesi.databaseId}). Muat ulang lalu periksa tujuan. Tidak ada yang dikunci.`,
                     code: 'database_changed', databaseId: sesi.databaseId, databaseAlias: sesi.databaseAlias ?? null,
                 }, { status: 409 });
             }

@@ -241,7 +241,7 @@ export async function POST(request: NextRequest) {
         const start = text(row.PERIOD_START) || monthStart(periode);
         const end = text(row.PERIOD_END) || monthEnd(periode);
         if (!start || !end) {
-            issues.push(`Baris ${index + 2}: periode "${periode}" tidak terbaca — baris TIDAK DIMUAT. `
+            issues.push(`Baris ${index + 2}: periode "${periode}" tidak terbaca. Baris TIDAK DIMUAT. `
                 + "Isi PERIODE (mis. \"September 2026\") atau PERIOD_START dan PERIOD_END.");
             return [];
         }

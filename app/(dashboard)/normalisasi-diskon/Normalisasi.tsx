@@ -20,7 +20,7 @@ import { Tags, Undo2 } from "lucide-react";
 import { Button, FooterToolbar, ListItem, MessageStrip, ResponsiveTable, StatusBadge, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
-import { BEBAN, persen, rupiah, tgl, type BebanKey } from "@/lib/promo-ui";
+import { BEBAN, bulanWita, persen, rupiah, tgl, type BebanKey } from "@/lib/promo-ui";
 import { KOSONG, sebabHttp } from "@/lib/tampil";
 import { pesanGalat } from "@/lib/claim-workflow-ui";
 
@@ -43,7 +43,6 @@ type Grup = { key: string; invoiceNo: string; transDate: string; customerNo: str
     positions: string; percent: number; bucket: Row["bucket"]; rows: Row[]; amount: number; reason: string };
 type Tab = "takBertuan" | "ulang" | "sudah";
 
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const kunciBaris = (row: Pick<Row, "lineKey" | "positions">) => `${row.lineKey}|${row.positions}`;
 const OTOMATIS = "__otomatis__";
 
@@ -116,9 +115,9 @@ const posisiLabel = (p: string) => (p === "faktur" ? "tingkat faktur" : `kolom $
 export default function Normalisasi({ permKeys, awal }: { permKeys: string[]; awal: { from?: string; to?: string; principal?: string } }) {
     const keys = useMemo(() => new Set(permKeys), [permKeys]);
     const bolehUbah = keys.has("summary.edit");
-    const now = new Date();
-    const [from, setFrom] = useState(awal.from ?? ymd(new Date(now.getFullYear(), now.getMonth(), 1)));
-    const [to, setTo] = useState(awal.to ?? ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
+    const [bulan] = useState(() => bulanWita()); // bulan berjalan WITA, bukan jam perangkat
+    const [from, setFrom] = useState(awal.from ?? bulan.from);
+    const [to, setTo] = useState(awal.to ?? bulan.to);
     const [principal, setPrincipal] = useState(awal.principal ?? "");
     const [tab, setTab] = useState<Tab>("takBertuan");
     const [pilih, setPilih] = useState<Set<string>>(new Set());

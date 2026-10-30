@@ -697,7 +697,7 @@ test("Susulan 2b #1: server sudah SUCCESS saat dicari = Terposting tanpa nomor k
     await sel.getByRole("button", { name: "Batal" }).click();
     await expect(page.getByLabel("Ringkasan hasil")).toContainText("Terposting1");
     const tabel = page.getByRole("table", { name: "Hasil per baris" });
-    await expect(tabel).toContainText("Diselesaikan: terposting — nomor pelunasan Accurate lihat jejak penyelesaian");
+    await expect(tabel).toContainText("Diselesaikan: terposting (nomor pelunasan Accurate: lihat jejak penyelesaian)");
     await expect(tabel).not.toContainText("PR.2026.10.00055");
 });
 

@@ -51,8 +51,8 @@ test("hanya exception KONVERSI_* berstatus open yang menahan konfirmasi", () => 
 
 test("riwayat BL-24/25: penutupan exception dan jumlah nota yang kembali saat batal; selisih file berlabel", () => {
     assert.deepEqual(labelEvent("wave.exception_resolved", { status: "diabaikan", ref_kode: "BRG-A", alasan: "file benar" }),
-        { apa: "Mengabaikan exception", ubah: "BRG-A · file benar" });
-    assert.equal(labelEvent("wave.exception_resolved", { status: "selesai", ref_kode: "BRG-A" }).apa, "Menandai exception selesai");
+        { apa: "Mengabaikan masalah", ubah: "BRG-A · file benar" }); // "Exception" → "Masalah" (audit No 91)
+    assert.equal(labelEvent("wave.exception_resolved", { status: "selesai", ref_kode: "BRG-A" }).apa, "Menandai masalah selesai");
     assert.equal(labelEvent("wave.cancelled", { nota_kembali: ["N1", "N2"], alasan: "mobil rusak" }).ubah, "2 nota kembali ke pool · mobil rusak");
     assert.equal(labelEvent("wave.cancelled", {}).ubah, undefined);
     assert.equal(EXCEPTION_LABEL.REKONSILIASI_SELISIH, "Selisih dengan file");

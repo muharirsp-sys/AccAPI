@@ -22,7 +22,7 @@ export async function GET(req: Request) {
         const scope = await resolveScope(gate.session);
         // Cakupan non-global KOSONG = akun belum tertaut Hierarki: pesan jelas, bukan tabel kosong yang menyesatkan.
         if (scope.allowedSalesCodes?.length === 0) {
-            return NextResponse.json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki — hubungi Admin." }, { status: 403 });
+            return NextResponse.json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki. Hubungi Admin." }, { status: 403 });
         }
         const jawaban = await muatHarian(scope, { bulan, cabang: q.get("cabang")?.trim() || null });
         return NextResponse.json(jawaban, { headers: { "Cache-Control": "private, no-store" } });

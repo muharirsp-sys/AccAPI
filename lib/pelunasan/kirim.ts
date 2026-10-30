@@ -79,7 +79,7 @@ export async function kirimPelunasan(rows: Bebas[], deps: DepsKirim): Promise<{ 
     // Butir 8 (pra-cek klien; server juga menolak): akun potongan belum dipilih -> tidak ada yang dikunci/dikirim.
     if (memuatPlaceholderAkun(rows)) {
         return { lockId: null, rows: rows.map((_, index) => ({ index, paket: Math.floor(index / size) + 1, outcome: "gagal", code: "PLACEHOLDER_AKUN",
-            message: "Akun potongan belum dipilih (ISI_KODE_AKUN_…) — pilih akun di langkah Akun. Tidak ada yang dikirim." })) };
+            message: "Akun potongan belum dipilih (ISI_KODE_AKUN_…). Pilih akun di langkah Akun. Tidak ada yang dikirim." })) };
     }
 
     deps.lapor?.({ tahap: "lock" });
@@ -92,7 +92,7 @@ export async function kirimPelunasan(rows: Bebas[], deps: DepsKirim): Promise<{ 
         overrideReason: o.overrideReason ?? "",
         expectedDatabaseId: deps.expectedDatabaseId,
     }).catch((e: unknown) => {
-        throw new GalatKirim(`Gagal mengunci idempotency (${e instanceof Error ? e.message : String(e)}) — tidak ada yang dikirim.`, "NETWORK", 0);
+        throw new GalatKirim(`Gagal mengunci idempotency (${e instanceof Error ? e.message : String(e)}). Tidak ada yang dikirim.`, "NETWORK", 0);
     });
     const ld = lock.data as Data;
     if (lock.status < 200 || lock.status >= 300) {
@@ -101,7 +101,7 @@ export async function kirimPelunasan(rows: Bebas[], deps: DepsKirim): Promise<{ 
     if (Array.isArray(ld?.blockedKeys) && ld.blockedKeys.length > 0) {
         throw new GalatKirim("Beberapa baris berubah status duplikat saat review. Buka ulang review lalu pilih kembali.", "BLOCKED_KEYS", lock.status);
     }
-    if (typeof ld?.lockId !== "string" || !ld.lockId) throw new GalatKirim("Lock idempotency tidak diterbitkan server — tidak ada yang dikirim.", "LOCK_NOT_ISSUED", lock.status);
+    if (typeof ld?.lockId !== "string" || !ld.lockId) throw new GalatKirim("Lock idempotency tidak diterbitkan server. Tidak ada yang dikirim.", "LOCK_NOT_ISSUED", lock.status);
     const lockId = ld.lockId;
 
     // Status idempotency dicatat SERVER untuk baris yang diteruskan (SENDING → SUCCESS/UNKNOWN); laporan klien hanya menaikkan
@@ -150,8 +150,8 @@ export async function kirimPelunasan(rows: Bebas[], deps: DepsKirim): Promise<{ 
                     ditahan.add(i);
                     const nomor = Array.isArray(h.receiptNumbers) ? h.receiptNumbers.map(String) : [];
                     set([i], paket, "ditahan", h.reason === "ACCURATE_HISTORY_UNREADABLE"
-                        ? `Ditahan: riwayat Accurate gagal dibaca (${teks(h.detail) || "galat"}) — tidak dikirim; ulangi atau minta izin Finance.`
-                        : `Ditahan: mirip pelunasan di Accurate (${nomor.join(", ") || "tanpa nomor"}) — tidak dikirim; butuh izin Finance.`,
+                        ? `Ditahan: riwayat Accurate gagal dibaca (${teks(h.detail) || "galat"}). Tidak dikirim; ulangi atau minta izin Finance.`
+                        : `Ditahan: mirip pelunasan di Accurate (${nomor.join(", ") || "tanpa nomor"}). Tidak dikirim; butuh izin Finance.`,
                     { code: teks(h.reason) || "ACCURATE_HISTORY", receiptNumbers: nomor });
                 }
                 await lapor([...ditahan], "FAILED");
@@ -168,8 +168,8 @@ export async function kirimPelunasan(rows: Bebas[], deps: DepsKirim): Promise<{ 
             if (jawab && ((ditolak4xx && d?.sent === false) || jawab.status === 401 || jawab.status === 403)) {
                 const msg = teks(d?.error) || `HTTP ${jawab.status}`;
                 set(idx, paket, "gagal", code === "SALES_RECEIPT_LOCK_REQUIRED"
-                    ? `${msg} — tidak ada yang dikirim ke Accurate; kirim ulang butuh override Finance lewat tinjauan.`
-                    : `${msg} — tidak ada yang dikirim ke Accurate.`, code ? { code } : {});
+                    ? `${msg}. Tidak ada yang dikirim ke Accurate; kirim ulang butuh override Finance lewat tinjauan.`
+                    : `${msg}. Tidak ada yang dikirim ke Accurate.`, code ? { code } : {});
                 await lapor(idx, "FAILED");
                 if (BERHENTI.has(code) || jawab.status === 401 || jawab.status === 403) berhenti = { code: code || `HTTP_${jawab.status}`, message: msg };
                 break;
@@ -203,7 +203,7 @@ export async function kirimPelunasan(rows: Bebas[], deps: DepsKirim): Promise<{ 
         // Kirim ulang sisa paket juga ditahan -> sisanya tidak dikirim lagi (tetap aman: tidak ada yang diteruskan).
         const sisa = idx.filter((i) => !hasil[i]);
         if (sisa.length) {
-            set(sisa, paket, "gagal", "Tidak dikirim: sisa paket tertahan dua kali — kirim ulang dari Tinjau.", { code: "ACCURATE_HISTORY" });
+            set(sisa, paket, "gagal", "Tidak dikirim: sisa paket tertahan dua kali. Kirim ulang dari Tinjau.", { code: "ACCURATE_HISTORY" });
             await lapor(sisa, "FAILED");
         }
     }

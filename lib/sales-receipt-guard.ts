@@ -65,7 +65,7 @@ export async function databaseLockBerbeda(db: NodePgDatabase, lockId: string, us
 /** Pemeriksaan murni (tanpa DB/sesi/jaringan). null = lanjut; teks = alasan penolakan (409). */
 export function checkSalesReceiptWrite(input: Omit<SalesReceiptWrite, "userId">): string | null {
     if (typeof input.lockId !== "string" || !input.lockId) {
-        return "Tulis sales-receipt hanya lewat unggah API Wrapper (bulk-save) dengan lock idempotency — proxy generik menolak kiriman tanpa lock.";
+        return "Tulis sales-receipt hanya lewat unggah API Wrapper (bulk-save) dengan lock idempotency. Proxy generik menolak kiriman tanpa lock.";
     }
     // Re-review d60433f2 LOW: GET mengubah payload menjadi query (yang diperiksa ≠ yang dikirim).
     if (String(input.method).toUpperCase() !== "POST") return "Tulis sales-receipt hanya dengan method POST.";
@@ -106,7 +106,7 @@ export async function authorizeSalesReceiptWrite(
     const rowKeys = [...new Set(rows.map((r) => buildSalesReceiptIdempotencyPayload(r).key))];
     const ownLock = and(eq(idempotencyLog.lockId, lockId), eq(idempotencyLog.lockedBy, userId));
 
-    let result: string | SalesReceiptDispatch | SalesReceiptHeld = "Ada baris sales-receipt yang tidak terkunci oleh lock ini (atau izin kirim ulangnya sudah terpakai) — ulangi unggah dari API Wrapper.";
+    let result: string | SalesReceiptDispatch | SalesReceiptHeld = "Ada baris sales-receipt yang tidak terkunci oleh lock ini (atau izin kirim ulangnya sudah terpakai). Ulangi unggah dari API Wrapper.";
     await db.transaction(async (tx) => {
         const owned = await tx
             .select({ key: idempotencyLog.key, customerNo: idempotencyLog.customerNo, transDate: idempotencyLog.transDate, invoiceNo: idempotencyLog.invoiceNo })

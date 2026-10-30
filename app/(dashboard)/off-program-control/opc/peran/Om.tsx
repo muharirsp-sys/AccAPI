@@ -1,6 +1,6 @@
 /*
  * Tujuan: Modul peran Operational Manager OFF Program Control (Fiori S4d, tab `om`, layar it03 `om`): ringkasan antrean langsung
- *   (LiveQueueSummaryPanel), antrean "Menunggu Anda" (isOmActionableBatch) + Semua (semua batch, sama dengan monitoring OM lama), dan
+ *   (LiveQueueSummaryPanel, daftar label-nilai), antrean "Menunggu Anda" (isOmActionableBatch) + Semua (semua batch, sama dengan monitoring OM lama), dan
  *   Object Page batch dengan ringkasan persetujuan (catatan Klaim/SM, total/transfer/tunai), catatan OM (draf), Setujui (dialog
  *   `omok`) dan Batalkan (dialog `batal`, terminal, alasan wajib).
  * Caller: OpcApp.tsx (MODUL.om).
@@ -15,7 +15,7 @@
 
 import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
-import { Button, KeyValues, MessageStrip, StatusBadge, VariantNote } from "@/components/fiori/core";
+import { Button, KeyValues, MessageStrip, Section, StatusBadge } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { SLA_DAYS } from "@/lib/off-program-control/problematic";
 import { PREDIKAT, TAMPILAN, jumlahItem, labelStatus, tanggalOpc, totalBatch, type BatchOpc, type ItemOpc } from "@/lib/opc-ui";
@@ -91,14 +91,6 @@ function DetailOm(props: DetailProps) {
                                 placeholder="Tulis alasan bila batch dibatalkan" onChange={(e) => setCatatan(e.target.value)} />}
                         </FormField>
                         {dirty && <span><StatusBadge tone="warn">Belum dikirim</StatusBadge></span>}
-                        <VariantNote bl="D-01">
-                            Hari ini satu izin keputusan OM di server membolehkan Setujui dan Batalkan sekaligus. Bila D-01 (matriks kewenangan) diputuskan,
-                            tiap tombol mengikuti izinnya sendiri.
-                        </VariantNote>
-                        <VariantNote bl="BL-06">
-                            Tombol keputusan hanya tampil untuk batch yang disetujui Klaim dan menunggu OM. Server hari ini memeriksa tahapnya dengan
-                            aturannya sendiri; usulan: satu aturan transisi dipakai layar dan server.
-                        </VariantNote>
                     </>
                 )}
             </div>
@@ -122,6 +114,8 @@ function DetailOm(props: DetailProps) {
     return (
         <>
             <ObjectPageBatch {...props} bagian={bagian} aksi={aksi} pesanFooter={pesanFooter} draf={dirty}
+                // Satu catatan varian per layar (audit No 80), digabung ke catatan Object Page.
+                varian={bisa ? { bl: "D-01, BL-06", isi: "Hari ini satu izin keputusan OM di server membolehkan Setujui dan Batalkan sekaligus; tombol keputusan hanya tampil untuk batch yang disetujui Klaim dan menunggu OM, sedangkan server memeriksa tahapnya dengan aturannya sendiri. Usulan: tiap tombol mengikuti izinnya sendiri (D-01) dan satu aturan transisi dipakai layar dan server." } : undefined}
                 strip={pesan ? <MessageStrip tone="pos" title={pesan} onClose={() => setPesan(null)} /> : undefined} />
             <ConfirmDialog
                 open={dialog === "omok"}
@@ -140,7 +134,7 @@ function DetailOm(props: DetailProps) {
                 onConfirm={async () => {
                     // Payload sama dengan decideOm("approve") lama: catatan apa adanya (boleh kosong).
                     await tulisOpc(`/api/off-program-control/batches/${enc(batchId)}/om-decision`, { body: { action: "approve", note: catatan }, gagal: "Gagal memproses keputusan OM." })
-                        .catch(tanganiTulis(props.laporTidakPasti));
+                        .catch(tanganiTulis(props.laporTidakPasti, () => setDialog(null)));
                     setCatatan("");
                     setDialog(null);
                     props.selesai(`${no} disetujui OM dan diteruskan ke Keuangan.`);
@@ -159,7 +153,7 @@ function DetailOm(props: DetailProps) {
                 onConfirm={async () => {
                     // decideOm("cancel") lama: catatan wajib (dicek setelah trim), dikirim apa adanya; server juga menolak catatan kosong.
                     await tulisOpc(`/api/off-program-control/batches/${enc(batchId)}/om-decision`, { body: { action: "cancel", note: catatan }, gagal: "Gagal memproses keputusan OM." })
-                        .catch(tanganiTulis(props.laporTidakPasti));
+                        .catch(tanganiTulis(props.laporTidakPasti, () => setDialog(null)));
                     setCatatan("");
                     setDialog(null);
                     // Bukan props.selesai: batch tidak pindah ke tahap berikutnya, alurnya berhenti.
@@ -193,15 +187,18 @@ const ANTREAN_LANGSUNG: Array<{ judul: string; ket: string; cocok: (b: BatchOpc)
     { judul: "Selesai", ket: "Alur batch sudah selesai.", cocok: (b) => b.status === "Completed" || b.finalStatus === "Completed" },
 ];
 
-/** Angka per antrean dari daftar yang dimuat. Tidak tampil sebelum daftar termuat (galat ≠ nol). */
+/**
+ * Angka per antrean dari daftar yang dimuat: daftar label-nilai kecil, bukan tujuh kartu KPI 36 px (owner 27 Okt, audit No 104). Angka inti
+ * OM = "Menunggu Anda" di atas antrean. Tidak tampil sebelum daftar termuat (galat ≠ nol).
+ */
 function AntreanLangsung({ daftar }: PeranProps) {
     if (!daftar.load.data) return null;
     return (
-        <div className="fi-kcards" role="group" aria-label="Ringkasan antrean langsung" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 150px), 1fr))" }}>
-            {ANTREAN_LANGSUNG.map((a) => (
-                <div key={a.judul} className="fi-kc"><span>{a.judul}</span><b>{daftar.batches.filter(a.cocok).length}</b><small>{a.ket}</small></div>
-            ))}
-        </div>
+        <Section title="Antrean langsung" subtitle="jumlah batch per tahap, dari daftar yang dimuat">
+            <div className="fi-sect-in" role="group" aria-label="Ringkasan antrean langsung" style={{ maxWidth: "36rem" }}>
+                <KeyValues items={ANTREAN_LANGSUNG.map((a) => [a.judul, <span key={a.judul} className="fi-tnum">{daftar.batches.filter(a.cocok).length}<span className="fi-sub">{a.ket}</span></span>])} />
+            </div>
+        </Section>
     );
 }
 

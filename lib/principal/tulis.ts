@@ -9,9 +9,9 @@
  * Side Effects: DB read/write principal, principal_variant, principal_alias, principal_log.
  */
 import { NextResponse } from "next/server";
-import { and, asc, desc, eq, lt, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, lt, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { principal, principalAlias, principalLog, principalVariant } from "@/db/schema";
+import { principal, principalAlias, principalLog, principalVariant, user } from "@/db/schema";
 import { normalisasiPrincipal, rapikanTeks } from "./normalisasi.ts";
 import { buatIndeksAlias, JENIS_ALIAS, resolvePrincipal, RUANG, ruangDari, SUMBER_KODE, type AliasTerindeks, type IndeksAlias, type JenisAlias } from "./resolver.ts";
 import { SQL_PENJAGA_HILANG } from "./penjaga.ts";
@@ -36,7 +36,7 @@ export async function cekDdl(q: Pick<Tx, "execute">) {
     const { rows } = await q.execute(sql.raw(SQL_PENJAGA_HILANG));
     if (rows.length) {
         throw new GalatPrincipal(503, "PRINCIPAL_DDL_BELUM",
-            "Penjaga database principal belum terpasang persis (DDL_S7_0/DDL_S7_2). Hubungi IT Support — perubahan tidak disimpan.",
+            "Penjaga database principal belum terpasang persis (DDL_S7_0/DDL_S7_2). Hubungi IT Support. Perubahan tidak disimpan.",
             { kurang: rows.map((r) => (r as { nama: string }).nama) });
     }
 }
@@ -127,12 +127,14 @@ export async function daftarPrincipal(): Promise<PrincipalDaftar[]> {
     }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }
 
-/** Riwayat terbaru dulu, keyset `sebelum` (id). 404 bila principal tidak ada. */
+/** Riwayat terbaru dulu, keyset `sebelum` (id). 404 bila principal tidak ada. `actorName` = nama akun pelaku (left join `user` lewat
+ * `aktor` = id akun); null bila aktor bukan akun (mis. `benih:S7-2`) atau akunnya sudah tidak ada (audit desain 001 No 87). */
 export async function riwayatPrincipal(principalId: string, opsi: { sebelum?: number; batas?: number } = {}) {
     const batas = Math.min(Math.max(Math.trunc(opsi.batas ?? 50), 1), 200);
     const [p] = await db.select({ id: principal.id }).from(principal).where(eq(principal.id, principalId)).limit(1);
     if (!p) throw tolak(404, "PRINCIPAL_TIDAK_ADA", "Principal tidak ditemukan.");
-    const baris = await db.select().from(principalLog)
+    const baris = await db.select({ ...getTableColumns(principalLog), actorName: user.name }).from(principalLog)
+        .leftJoin(user, eq(user.id, principalLog.aktor))
         .where(opsi.sebelum ? and(eq(principalLog.principalId, principalId), lt(principalLog.id, opsi.sebelum)) : eq(principalLog.principalId, principalId))
         .orderBy(desc(principalLog.id)).limit(batas + 1);
     return { riwayat: baris.slice(0, batas), sebelum: baris.length > batas ? baris[batas - 1].id : null };
@@ -167,7 +169,7 @@ const tulisLog = (tx: Tx, aktor: string, logs: Log[]) =>
 async function kunciPrincipal(tx: Tx, id: string, wajibAktif: boolean) {
     const [p] = await tx.select().from(principal).where(eq(principal.id, id)).limit(1).for("update");
     if (!p) throw tolak(404, "PRINCIPAL_TIDAK_ADA", "Principal tidak ditemukan.");
-    if (wajibAktif && !p.isActive) throw tolak(409, "PRINCIPAL_NONAKTIF", `Principal ${p.code} nonaktif — aktifkan dulu.`);
+    if (wajibAktif && !p.isActive) throw tolak(409, "PRINCIPAL_NONAKTIF", `Principal ${p.code} nonaktif. Aktifkan dulu.`);
     return p;
 }
 
@@ -184,7 +186,7 @@ async function pastikanAliasBebas(tx: Tx, principalId: string, a: AliasBaru) {
     if (ada.principalId === principalId && ada.variantKey === a.variantKey) {
         throw tolak(409, "ALIAS_SUDAH_ADA", `Ejaan "${a.aliasNorm}" sudah menjadi alias principal ini.`, { pemilik: ada });
     }
-    throw tolak(409, "ALIAS_TABRAKAN", `Ejaan "${a.aliasNorm}" sudah dipakai principal ${ada.code}${ada.variantKey === null ? "" : ` varian "${ada.variantKey}"`} — tidak ditimpa.`, { pemilik: ada });
+    throw tolak(409, "ALIAS_TABRAKAN", `Ejaan "${a.aliasNorm}" sudah dipakai principal ${ada.code}${ada.variantKey === null ? "" : ` varian "${ada.variantKey}"`}, jadi tidak ditimpa.`, { pemilik: ada });
 }
 
 async function sisipAlias(tx: Tx, aktor: string, principalId: string, list: AliasBaru[]) {
@@ -289,7 +291,7 @@ export async function tambahAlias(principalId: string, input: Baris, aktor: stri
             const [v] = await tx.select().from(principalVariant)
                 .where(and(eq(principalVariant.principalId, p.id), eq(principalVariant.variantKey, variantKey))).limit(1);
             if (!v) throw tolak(404, "VARIAN_TIDAK_ADA", `Varian "${variantKey}" tidak ada pada ${p.code}.`);
-            if (!v.isActive) throw tolak(409, "VARIAN_NONAKTIF", `Varian "${variantKey}" nonaktif — aktifkan dulu.`);
+            if (!v.isActive) throw tolak(409, "VARIAN_NONAKTIF", `Varian "${variantKey}" nonaktif. Aktifkan dulu.`);
         }
         const alias = await sisipAlias(tx, aktor, p.id, [{ aliasNorm, aliasAsli, jenis, sumber, variantKey }]);
         await tulisLog(tx, aktor, alias.logs);

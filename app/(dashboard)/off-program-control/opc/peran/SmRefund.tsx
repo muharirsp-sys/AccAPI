@@ -102,7 +102,7 @@ export function AjukanRefund({ batchId, no, ringkasan, alasan, pembuka, onDraf, 
                     await tulisOpc(`/api/off-program-control/batches/${encodeURIComponent(batchId)}/refund`, {
                         body: { refundAmount: jumlah, refundMethod: f.cara, refundDate: f.tanggal, senderName: f.pengirim, receiverBank: f.bank, note: f.catatan },
                         gagal: "Gagal mengajukan pengembalian.", putus: PUTUS,
-                    }).catch(tanganiTulis(onTidakPasti));
+                    }).catch(tanganiTulis(onTidakPasti, () => setDialog(false)));
                     setF(KOSONGKAN);
                     setDialog(false);
                     onSelesai(`Pengembalian ${rupiah(jumlah)} untuk ${no} diajukan; menunggu verifikasi Keuangan.`);

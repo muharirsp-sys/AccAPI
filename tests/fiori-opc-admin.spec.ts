@@ -1,7 +1,8 @@
 /*
  * Tujuan: Fiori S4d OFF Program Control — layar admin: Ringkasan (Overview Page: kesehatan proses, antrean per tahap/divisi, lewat SLA,
  *   pengajuan bermasalah, Tutup periode lewat dialog `tutup` dengan payload POST /periods diperiksa — satu principal dan semua
- *   principal termasuk gagal sebagian — lalu Buka kunci lewat dialog; refund tertunda disebut tanpa memblok; Batal benar-benar batal;
+ *   principal termasuk gagal sebagian — lalu Buka kunci lewat dialog; status penutupan dibaca dari GET /periods (siapa, kapan WITA, termasuk
+ *   periode yang ditutup sesi lain; hasil tidak pasti menutup dialog + strip); refund tertunda disebut tanpa memblok; Batal benar-benar batal;
  *   periode terpilih dan fakta dialog beku saat daftar dimuat ulang;
  *   metrik non-admin untuk OM; galat ≠ kosong) dan Log audit (koreksi lewat dialog dengan alasan wajib + payload diperiksa, galat di
  *   dialog, ekspor CSV mengikuti saringan, galat daftar ≠ kosong), ponsel 390 px tanpa gulir menyamping.
@@ -55,11 +56,18 @@ type Opsi = {
     /** Jawaban POST (periods / correction); bawaan sukses. */
     tulis?: (k: Kirim) => ReturnType<typeof json> | null;
     peran?: string;
+    /** Baris off_period_closure awal untuk GET /periods (mis. ditutup sesi lain). POST periods yang sukses memperbaruinya. */
+    tutup?: Over[];
+    /** true = GET /periods menjawab 500 (status penutupan tidak terbaca). */
+    bacaGagal?: () => boolean;
 };
-/** Semua endpoint OPC dimock. Mengembalikan daftar permintaan tulis (method, path, body) dan hitungan GET audit. */
+/** Semua endpoint OPC dimock. Mengembalikan daftar permintaan tulis (method, path, body), hitungan GET audit, dan query GET /periods. */
 async function mockOpc(page: Page, opsi: Opsi = {}) {
     const kirim: Kirim[] = [];
     const getAudit: string[] = [];
+    const getPeriode: string[] = [];
+    // Status penutupan di "server" tiruan (No 27): dibaca GET /periods, diubah POST /periods yang sukses.
+    const penutupan = new Map<string, Over>((opsi.tutup ?? []).map((t) => [`${t.principleCode}|${t.bulan}|${t.tahun}`, t]));
     if (opsi.peran) {
         await page.route((u) => u.pathname === "/api/auth/get-session", (r) => r.fulfill(json({
             session: { id: "s1", userId: "u-1", token: "t", expiresAt: lalu(-1), createdAt: kini, updatedAt: kini },
@@ -76,7 +84,13 @@ async function mockOpc(page: Page, opsi: Opsi = {}) {
             const jawab = opsi.tulis?.(k);
             if (jawab) return r.fulfill(jawab);
             if (p === "/api/off-program-control/periods") {
-                const tutup = (k.body as Over).action === "close";
+                const b = k.body as Over;
+                const tutup = b.action === "close";
+                const kunci = `${b.principleCode}|${b.bulan}|${b.tahun}`;
+                const lama = penutupan.get(kunci) ?? {};
+                penutupan.set(kunci, tutup
+                    ? { ...lama, principleCode: b.principleCode, bulan: b.bulan, tahun: b.tahun, status: "Ditutup", closedBy: "u-admin", closedByName: "ADMIN A", closedAt: new Date().toISOString() }
+                    : { ...lama, principleCode: b.principleCode, bulan: b.bulan, tahun: b.tahun, status: "Terbuka", unlockedBy: "u-admin", unlockedByName: "ADMIN A", unlockedAt: new Date().toISOString() });
                 return r.fulfill(json({ ok: true, status: tutup ? "Ditutup" : "Terbuka", message: tutup ? "Periode berhasil ditutup. Data pada periode ini sudah dikunci." : "Kunci periode berhasil dibuka oleh Admin." }));
             }
             if (/^\/api\/off-program-control\/audit\/[^/]+\/correction$/.test(p)) return r.fulfill(json({ ok: true, message: "Koreksi tercatat sebagai riwayat baru tanpa menghapus jejak lama." }));
@@ -84,9 +98,15 @@ async function mockOpc(page: Page, opsi: Opsi = {}) {
         }
         if (p === "/api/off-program-control/batches") return r.fulfill(opsi.daftar ? opsi.daftar() : json({ ok: true, batches: BATCHES }));
         if (p === "/api/off-program-control/audit") { getAudit.push(url.search); return r.fulfill(opsi.audit ? opsi.audit() : json({ ok: true, audit: AUDIT })); }
+        if (p === "/api/off-program-control/periods") {
+            getPeriode.push(url.search);
+            if (opsi.bacaGagal?.()) return r.fulfill(json({ ok: false, error: "Status periode tidak terbaca" }, 500));
+            const bulan = url.searchParams.get("bulan"), tahun = url.searchParams.get("tahun");
+            return r.fulfill(json({ ok: true, bulan, tahun, periods: [...penutupan.values()].filter((t) => t.bulan === bulan && t.tahun === tahun) }));
+        }
         return r.fulfill(json({ ok: false, error: "tidak dimock" }, 404));
     });
-    return { kirim, getAudit };
+    return { kirim, getAudit, getPeriode };
 }
 
 async function noOverflow(page: Page) {
@@ -118,10 +138,15 @@ test("Ringkasan admin: kesehatan proses, per tahap, per divisi, bermasalah, akti
     // Bagian di kolom kartu (< 600 px) tampil sebagai daftar (ResponsiveTable, container query).
     const bermasalah = main.getByRole("list", { name: "Perlu ditinjau admin" });
     await expect(bermasalah).toContainText("004/URC/09/2026");
-    await expect(bermasalah.getByRole("button", { name: /006\/ENI\/10\/2026/ })).toContainText("Dikembalikan");
+    await expect(bermasalah.getByRole("link", { name: /006\/ENI\/10\/2026/ })).toContainText("Dikembalikan");
+    await expect(bermasalah.getByRole("link", { name: /006\/ENI\/10\/2026/ })).toHaveAttribute("href", /[?&]batch=/); // tautan nyata (No 136)
     await expect(main.getByRole("list", { name: "Batch lewat SLA" })).toContainText("007/KINO/10/2026");
-    await expect(main.getByRole("list", { name: "Aktivitas terakhir" }).getByRole("button")).toHaveCount(5);
-    for (const bl of ["BL-11", "BL-12", "BL-13"]) await expect(main.getByLabel(`Usulan ${bl}`).first()).toBeVisible();
+    await expect(main.getByRole("list", { name: "Aktivitas terakhir" }).getByRole("link")).toHaveCount(5);
+    for (const bl of ["BL-11", "BL-13"]) await expect(main.getByLabel(new RegExp(`^Usulan .*${bl}`)).first()).toBeVisible();
+    await expect(main.getByLabel("Usulan BL-11, BL-13")).toHaveCount(1); // BL-11 dan BL-13 satu catatan (audit No 80)
+    // No 80: catatan BL-12 di Tutup periode kini keterangan biasa (catatan varian layar ini milik Ringkasan); isinya tetap terbaca.
+    await expect(main.getByLabel(/^Usulan .*BL-12/)).toHaveCount(0);
+    await expect(main.getByRole("region", { name: "Tutup periode" })).toContainText("Refund tertunda belum menahan penutupan");
     // Kerangka menggulir di dalam <main>: tangkapan seluruh halaman lewat viewport tinggi.
     await page.setViewportSize({ width: 1366, height: 3000 });
     await page.screenshot({ path: "test-results/fiori-opc-admin-ringkasan.png" });
@@ -135,7 +160,7 @@ test("Ringkasan admin: kesehatan proses, per tahap, per divisi, bermasalah, akti
     await expect(page).toHaveURL(/claimView=after-finance/);
     // Pengajuan bermasalah membuka batch di "Semua pengajuan".
     await page.goto("/off-program-control", NAV);
-    await bermasalah.getByRole("button", { name: /004\/URC\/09\/2026/ }).click();
+    await bermasalah.getByRole("link", { name: /004\/URC\/09\/2026/ }).click();
     await expect(page).toHaveURL(/batch=b-bayar/);
     await expect(main.getByRole("group", { name: "Tampilan ringkasan" }).getByRole("button", { name: /Semua pengajuan/ })).toHaveAttribute("aria-pressed", "true");
     expect(kirim).toEqual([]);
@@ -169,23 +194,87 @@ test("Tutup periode satu principal lewat dialog: refund tertunda disebut, payloa
     await expect(dlg).toContainText("Refund tertunda");
     await expect(dlg).toContainText("1 · 008/HEINZ/09/2026");
     await expect(dlg).toContainText("Rp 9.800.000");
-    await expect(dlg.getByLabel("Usulan BL-12")).toContainText("hanya bisa diselesaikan admin");
+    await expect(dlg).toContainText("hanya bisa diselesaikan admin");
+    await expect(dlg).toContainText("Terbuka (belum pernah ditutup)");
+    await expect(dlg.getByLabel(/^Usulan BL-12/)).toHaveCount(0); // No 80: catatan varian layar ini milik Ringkasan
     await page.screenshot({ path: "test-results/fiori-opc-admin-tutup.png" });
     await dlg.getByRole("button", { name: "Tutup periode", exact: true }).click();
     await expect(dlg).toBeHidden();
     expect(kirim).toEqual([{ method: "POST", path: PERIODS, body: { action: "close", principleCode: "HEINZ", bulan: "09", tahun: "2026" } }]);
     await expect(periode.getByRole("status").filter({ hasText: "Periode September 2026 berhasil ditutup." })).toContainText("Data pada periode ini sudah dikunci.");
-    await expect(periode).toContainText(/Ditutup \d{2}\.\d{2}/);
+    // Status dibaca ulang dari server sesudah tulis: siapa dan kapan (WITA), bukan jam sesi ini.
+    await expect(periode.getByRole("group", { name: "Angka periode terpilih" })).toContainText(/Ditutup oleh ADMIN A · \d{2}\/\d{2}\/\d{4} \d{2}\.\d{2} WITA/);
 
-    // Buka kunci: dialog konfirmasi (endpoint belum menerima alasan → VariantNote BL-12), payload sama dengan kode lama.
+    // Buka kunci: dialog konfirmasi (alasan belum disimpan server, ditulis jujur di deskripsi), payload sama dengan kode lama.
     await periode.getByRole("button", { name: "Buka kunci periode…" }).click();
     dlg = page.getByRole("dialog", { name: "Buka kunci periode September 2026 untuk HEINZ ABC INDONESIA, PT?" });
-    await expect(dlg.getByLabel("Usulan BL-12")).toContainText("alasan wajib");
+    await expect(dlg).toContainText("alasannya belum bisa disimpan server");
+    await expect(dlg).toContainText("Ditutup oleh ADMIN A");
     await expect(dlg.getByRole("textbox")).toHaveCount(0);
     await dlg.getByRole("button", { name: "Buka kunci", exact: true }).click();
     await expect(dlg).toBeHidden();
     expect(kirim[1]).toEqual({ method: "POST", path: PERIODS, body: { action: "unlock", principleCode: "HEINZ", bulan: "09", tahun: "2026" } });
     await expect(periode.getByRole("status").filter({ hasText: "Kunci periode September 2026 dibuka." })).toBeVisible();
+    await expect(periode.getByRole("button", { name: "Buka kunci periode…" })).toHaveCount(0);
+    await expect(periode.getByRole("group", { name: "Angka periode terpilih" })).toContainText("Terbuka · kunci dibuka oleh ADMIN A");
+});
+
+test("Status penutupan dari server (No 27): periode yang ditutup sesi lain terbaca, Buka kunci tampil; sebagian ditutup; hasil tidak pasti menutup dialog", async ({ page }) => {
+    const tutupB = (pc: string) => ({ principleCode: pc, bulan: "08", tahun: "2026", status: "Ditutup", closedBy: "u-b", closedByName: "ADMIN B", closedAt: "2026-09-02T01:15:00.000Z" });
+    let putus = false;
+    let bacaGagal = false;
+    const { kirim, getPeriode } = await mockOpc(page, {
+        bacaGagal: () => bacaGagal,
+        tutup: [tutupB("KINO"), tutupB("GDI"), { ...tutupB("HEINZ"), bulan: "09", closedByName: null, closedBy: "u-hilang" }],
+        tulis: () => (putus ? { status: 504, contentType: "text/html", body: "<html>504 Gateway Time-out</html>" } : null),
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/off-program-control", NAV);
+    const periode = page.locator("main").getByRole("region", { name: "Tutup periode" });
+    const angka = periode.getByRole("group", { name: "Angka periode terpilih" });
+    await periode.getByLabel("Bulan").selectOption("08", NAV);
+    await periode.getByLabel("Tahun").fill("2026");
+    await expect(angka).toContainText("Ditutup untuk semua 2 principal");
+    expect(getPeriode).toContain("?bulan=08&tahun=2026");
+    await expect(periode.getByRole("button", { name: "Buka kunci periode…" })).toBeVisible();
+    await periode.getByLabel("Principal").selectOption("KINO");
+    await expect(angka).toContainText("Ditutup oleh ADMIN B · 02/09/2026 09.15 WITA");
+    // Nama tidak ada di tabel user: id akun jadi cadangan.
+    await periode.getByLabel("Principal").selectOption("HEINZ");
+    await periode.getByLabel("Bulan").selectOption("09");
+    await expect(angka).toContainText("Ditutup oleh u-hilang");
+
+    // Buka kunci KINO dengan jawaban tidak pasti: dialog ditutup, status dibaca ulang, strip peringatan bertahan.
+    await periode.getByLabel("Principal").selectOption("KINO");
+    await periode.getByLabel("Bulan").selectOption("08");
+    await expect(angka).toContainText("Ditutup oleh ADMIN B");
+    const nGet = getPeriode.length;
+    putus = true;
+    bacaGagal = true; // muat ulang status sesudah jawaban tidak pasti ikut gagal (tinjauan K3 R-1)
+    await periode.getByRole("button", { name: "Buka kunci periode…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Buka kunci periode Agustus 2026 untuk KINO INDONESIA. TBK, PT?" });
+    await dlg.getByRole("button", { name: "Buka kunci", exact: true }).click();
+    await expect(dlg).toBeHidden();
+    await expect(periode.getByRole("status").filter({ hasText: "Hasil aksi periode terakhir belum pasti." })).toContainText("Periksa status penutupan dan Riwayat batch");
+    await expect.poll(() => getPeriode.length).toBeGreaterThan(nGet);
+    expect(kirim.at(-1)).toEqual({ method: "POST", path: PERIODS, body: { action: "unlock", principleCode: "KINO", bulan: "08", tahun: "2026" } });
+    // R-1: status gagal dibaca = tidak ada Buka kunci dari data lama dan tidak ada "Ditutup oleh" basi; sama dengan kalimat strip.
+    await expect(periode.getByRole("alert").filter({ hasText: "Status penutupan belum terbaca." })).toContainText("Buka kunci tidak ditampilkan");
+    await expect(periode.getByRole("button", { name: "Buka kunci periode…" })).toHaveCount(0);
+    await expect(angka).toContainText("Belum terbaca dari server");
+    await expect(angka).not.toContainText("Ditutup oleh ADMIN B");
+
+    // Server tiruan belum berubah (jawaban tadi tidak pasti): ulang berhasil, lalu sebagian ditutup (hanya GDI) = tanpa Buka kunci massal.
+    putus = false;
+    bacaGagal = false;
+    await periode.getByRole("alert").filter({ hasText: "Status penutupan belum terbaca." }).getByRole("button", { name: "Coba lagi" }).click();
+    await expect(angka).toContainText("Ditutup oleh ADMIN B");
+    await periode.getByRole("button", { name: "Buka kunci periode…" }).click();
+    await dlg.getByRole("button", { name: "Buka kunci", exact: true }).click();
+    await expect(dlg).toBeHidden();
+    await expect(angka).toContainText("Terbuka · kunci dibuka oleh ADMIN A");
+    await periode.getByLabel("Principal").selectOption("");
+    await expect(angka).toContainText("1 dari 2 principal ditutup: GDI");
     await expect(periode.getByRole("button", { name: "Buka kunci periode…" })).toHaveCount(0);
 });
 
@@ -331,7 +420,8 @@ test("Log audit: koreksi lewat dialog (alasan wajib, payload, galat di dialog), 
     ]);
     await expect(main.getByRole("status").filter({ hasText: "Koreksi tercatat sebagai riwayat baru tanpa menghapus jejak lama." })).toBeVisible();
     await expect.poll(() => getAudit.length).toBeGreaterThan(nGet); // daftar dimuat ulang
-    await expect(main.getByLabel("Usulan BL-33")).toBeVisible();
+    await expect(main.getByLabel("Usulan BL-13, BL-33")).toBeVisible(); // satu catatan varian per layar (audit No 80)
+    await expect(main.getByRole("complementary")).toHaveCount(1);
 });
 
 test("Log audit: alasan setuju sendiri (BL-10, #132) dan penanda tanpa alasan tampil di Catatan", async ({ page }) => {

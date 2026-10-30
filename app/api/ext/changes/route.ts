@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
     const cursor = rawSince === null ? null : parseCursor(rawSince);
     if (rawSince !== null && cursor === null) {
         return NextResponse.json(
-            { ok: false, error: "since tidak valid — format: <ISO8601>|<id>" },
+            { ok: false, error: "since tidak valid. Format: <ISO8601>|<id>" },
             { status: 400 }
         );
     }

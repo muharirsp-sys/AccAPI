@@ -139,7 +139,7 @@ test("persen + rupiah satu baris dikirim sebagai rantai persen saja (INV/2609/KN
             assert.match(error.message, /netto SO Rp 48287654\.33/);
             assert.match(error.message, /netto hasil persen 2\+0\+0\+0\+1\.4538 Rp 48287638\.00/);
             assert.match(error.message, /selisih Rp 16\.33/);
-            assert.match(error.message, /SO ditahan utuh: potongan rupiah baris terlalu besar untuk dipersenkan 4 desimal — buat faktur ini manual di Accurate atau minta perbaikan/);
+            assert.match(error.message, /SO ditahan utuh: potongan rupiah baris terlalu besar untuk dipersenkan 4 desimal\. Buat faktur ini manual di Accurate atau minta perbaikan/);
             return true;
         });
 });

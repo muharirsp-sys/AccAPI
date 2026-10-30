@@ -95,7 +95,7 @@ test("Detail draf: semua bagian + anchor bar, varian BL, Tandai siap nonaktif be
     await page.route(path("/api/claim-workflow/wf-draft/items/it-2"), (r) => {
         patch.push(r.request().postDataJSON());
         audit = [...AUDIT, { id: "a2", actorName: "Ani", actorRole: "claim", action: "update_item_tax", metadata: { itemId: "it-2", dpp: 2500000, ppnRate: 11, pphRate: 2 }, createdAt: "2026-10-07T01:12:00Z" } as never];
-        return r.fulfill(json({ ok: false, code: "CONFLICT", error: "Item ini sudah diubah pengguna lain.", currentUpdatedAt: "2026-10-07T01:12:00.000Z" }, 409));
+        return r.fulfill(json({ ok: false, code: "CONFLICT", error: "Item ini sudah diubah user lain.", currentUpdatedAt: "2026-10-07T01:12:00.000Z" }, 409));
     });
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/claim-workflow/wf-draft", NAV);
@@ -105,7 +105,14 @@ test("Detail draf: semua bagian + anchor bar, varian BL, Tandai siap nonaktif be
         await expect(main.getByRole("region", { name: nama })).toBeVisible();
     }
     await expect(main.getByRole("navigation", { name: "Bagian halaman" }).getByRole("link")).toHaveCount(6);
-    for (const bl of ["BL-15", "BL-07", "BL-33", "BL-35"]) await expect(main.getByLabel(`Usulan ${bl}`)).toBeVisible();
+    // Satu catatan varian per layar, hanya Admin (owner 27 Okt, audit No 80 + tinjauan K2: audiens tetap); fakta tugas No Claim tetap terlihat semua.
+    await expect(main.getByRole("complementary")).toHaveCount(1);
+    const catatan = main.getByLabel(/^Usulan BL-15, BL-08/);
+    for (const teks of ["Bukti bayar principal belum bisa dilampirkan", "Riwayat mencatat aksi dan catatannya", "Alur hanya ditelusuri dari klaim ke belakang"]) {
+        await expect(catatan).toContainText(teks);
+    }
+    await expect(main.getByText("No Claim yang sama di klaim ini menggabungkan berkasnya")).toBeVisible(); // fakta tugas, semua akun
+    await expect(catatan).not.toContainText("No Claim yang sama di klaim ini");
     await expect(main.getByRole("list", { name: "Tahap klaim" }).locator('[aria-current="step"]')).toContainText("Draf");
     await expect(main.getByRole("region", { name: "Riwayat" })).toContainText("Membuat klaim dari OFF Program Control");
     const siap = main.getByRole("button", { name: "Tandai siap dikirim…" });
@@ -186,7 +193,12 @@ test("Menunggu bayar: dialog Catat pembayaran mengirim badan yang sama; Batalkan
     const main = page.locator("main");
     const bayar = main.getByRole("region", { name: "Pembayaran dari principal" });
     await expect(bayar).toContainText("termin 1", NAV);
-    for (const bl of ["BL-14", "BL-07", "BL-08"]) await expect(main.getByLabel(`Usulan ${bl}`)).toBeVisible();
+    await expect(main.getByRole("complementary")).toHaveCount(1); // satu catatan varian per layar (audit No 80)
+    const catatan = main.getByLabel(/^Usulan BL-15, BL-08/);
+    await expect(catatan).toHaveAttribute("aria-label", /BL-14/);
+    await expect(catatan).toContainText("dua pembayaran yang dicatat bersamaan");
+    await expect(catatan).toContainText("Setelah dikirim ke principal, klaim belum bisa diminta revisi atau dibatalkan.");
+    await expect(bayar).not.toContainText("Bukti bayar principal belum bisa dilampirkan"); // batasan hanya di catatan Admin
     await expect(main.locator(".fi-ftb")).toContainText("Dikirim 47 hari lalu");
 
     await main.locator(".fi-ftb").getByRole("button", { name: "Catat pembayaran…" }).click();

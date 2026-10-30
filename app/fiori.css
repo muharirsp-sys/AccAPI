@@ -3,13 +3,12 @@
  * Caller: app/layout.tsx (diimpor sekali); dipakai elemen di dalam `.fiori` (components/fiori/*).
  * Dependensi: font dari components/fiori/Scope.tsx (--font-jakarta, --font-geist-mono-fi); atribut html[data-scheme], html[data-density].
  * Main Functions: token terang/gelap, density compact/cozy, kelas komponen `fi-*`.
- * Side Effects: Tidak ada di luar `.fiori`; halaman lama tidak berubah.
+ * Side Effects: Tidak ada di luar `.fiori`.
  */
 
-/* ponytail: token di-scope ke .fiori, bukan :root. Tema lama sudah memakai --surface/--surface-2 di :root dan
-   html[data-theme=surya|office-calm|neon|ios]; memasang token ini di :root mengubah semua halaman lama.
-   Setelah halaman terakhir dimigrasi (S7), pindahkan kelas .fiori ke <body>; selektor di bawah tetap berlaku.
-   Tema gelap/terang memakai html[data-scheme] (bukan data-theme) supaya tidak bentrok dengan pilihan tema lama. */
+/* ponytail: token di-scope ke .fiori (dan .cetak memakai tokennya sendiri), bukan :root. Tema Surya lama sudah dihapus
+   (audit desain 001 usulan D), jadi memindahkan kelas .fiori ke <body> kini aman bila suatu saat dibutuhkan.
+   Mode gelap/terang lewat html[data-scheme]. */
 
 /* ===== Token: terang (bawaan) ===== */
 .fiori {

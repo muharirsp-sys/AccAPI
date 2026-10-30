@@ -1,6 +1,6 @@
 /*
  * Tujuan: Modul peran Sales Manager OFF Program Control (Fiori S4d, tab `sales`, layar it03 `sm`): antrean "Menunggu Anda"
- *   (isSmActionableBatch) + Semua (hasPassedSalesManager), ringkasan angka SM + pengingat kelengkapan belum lengkap, dan Object Page
+ *   (isSmActionableBatch) + Semua (hasPassedSalesManager), ringkasan angka SM (label-nilai) + pengingat kelengkapan belum lengkap, dan Object Page
  *   batch dengan tinjauan SM: catatan untuk SPV (draf), kelengkapan awal dari SPV, Setujui & teruskan ke Klaim (dialog `smok`) dan
  *   Kembalikan ke SPV (dialog `kembali`, alasan wajib), notifikasi OM hasil persetujuan, dan pengajuan pengembalian selisih.
  * Caller: OpcApp.tsx (MODUL.sales).
@@ -15,7 +15,7 @@
 
 import { useEffect, useState } from "react";
 import { Check, ChevronRight, RotateCcw } from "lucide-react";
-import { Button, ListItem, MessageStrip, ResponsiveTable, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
+import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, StatusBadge, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { SLA_DAYS } from "@/lib/off-program-control/problematic";
 import { PREDIKAT, TAMPILAN, jumlahItem, labelStatus, totalBatch, waktuWita, type ItemOpc } from "@/lib/opc-ui";
@@ -73,10 +73,6 @@ function DetailSm(props: DetailProps) {
                             placeholder="Tulis alasan bila batch dikembalikan" onChange={(e) => setCatatan(e.target.value)} />}
                     </FormField>
                     {catatan.trim() && <span><StatusBadge tone="warn">Belum dikirim</StatusBadge></span>}
-                    <VariantNote bl="BL-06">
-                        Tombol tinjauan hanya tampil untuk batch yang dikirim ke SM dan masih menunggu tinjauan. Server hari ini memeriksa tahapnya
-                        dengan aturannya sendiri; usulan: satu aturan transisi dipakai layar dan server.
-                    </VariantNote>
                 </div>
             ),
         });
@@ -133,7 +129,8 @@ function DetailSm(props: DetailProps) {
 
     return (
         <>
-            <ObjectPageBatch {...props} bagian={bagian} strip={strip} aksi={aksi} pesanFooter={pesanFooter} draf={dirty} />
+            <ObjectPageBatch {...props} bagian={bagian} strip={strip} aksi={aksi} pesanFooter={pesanFooter} draf={dirty}
+                varian={bisa ? { bl: "BL-06", isi: "Tombol tinjauan hanya tampil untuk batch yang dikirim ke SM dan masih menunggu tinjauan; server memeriksa tahapnya dengan aturannya sendiri. Usulan: satu aturan transisi dipakai layar dan server." } : undefined} />
             <ConfirmDialog
                 open={dialog === "smok"}
                 onClose={() => setDialog(null)}
@@ -151,7 +148,7 @@ function DetailSm(props: DetailProps) {
                 onConfirm={async () => {
                     // Payload sama dengan approveBatch lama: catatan apa adanya (boleh kosong).
                     const hasil = await tulisOpc(`/api/off-program-control/batches/${enc(batchId)}/sm-approve`, { body: { note: catatan }, gagal: "Gagal menyetujui batch." })
-                        .catch(tanganiTulis(props.laporTidakPasti));
+                        .catch(tanganiTulis(props.laporTidakPasti, () => setDialog(null)));
                     setNotif((hasil.notification as Notifikasi | undefined) ?? null);
                     setCatatan("");
                     setDialog(null);
@@ -171,7 +168,7 @@ function DetailSm(props: DetailProps) {
                 onConfirm={async () => {
                     // returnToSupervisor lama: catatan wajib, dikirim setelah trim (server juga menolak catatan kosong).
                     await tulisOpc(`/api/off-program-control/batches/${enc(batchId)}/sm-return`, { body: { note: catatan.trim() }, gagal: "Gagal mengembalikan batch ke Supervisor." })
-                        .catch(tanganiTulis(props.laporTidakPasti));
+                        .catch(tanganiTulis(props.laporTidakPasti, () => setDialog(null)));
                     setCatatan("");
                     setNotif(null);
                     setDialog(null);
@@ -211,21 +208,22 @@ function KelengkapanAwal({ items, uji }: { items: ItemOpc[]; uji: boolean }) {
     );
 }
 
-/** Angka SM (metrik kode lama) + pengingat kelengkapan belum lengkap. Tidak tampil sebelum daftar termuat (galat ≠ nol). */
+/**
+ * Angka SM (metrik kode lama) sebagai label-nilai kecil + pengingat kelengkapan belum lengkap (owner 27 Okt, audit No 104). Angka inti
+ * ("Menunggu Anda") dan jumlah semua batch sudah ada di pilihan antrean, jadi tidak diulang di sini. Tidak tampil sebelum daftar termuat.
+ */
 function RingkasanSm({ ctx, daftar }: PeranProps) {
     if (!daftar.load.data) return null;
     const lewat = daftar.batches.filter(PREDIKAT.smPantau);
     const kurang = lewat.filter((b) => b.finalStatus === "Incomplete Documents");
     const angka: Array<[string, number]> = [
-        ["Menunggu Anda", lewat.filter(PREDIKAT.smAntrean).length], // kata yang sama dengan pilihan antrean (audit No 130)
         ["Disetujui SM", lewat.filter((b) => b.smStatus === "Approved by SM").length],
         ["Dikembalikan SM", lewat.filter((b) => b.smStatus === "Returned").length],
-        ["Total batch", lewat.length],
     ];
     return (
         <>
-            <div className="fi-kcards" role="group" aria-label="Ringkasan Sales Manager" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 140px), 1fr))" }}>
-                {angka.map(([label, nilai]) => <div key={label} className="fi-kc"><span>{label}</span><b>{nilai}</b></div>)}
+            <div className="fi-panel" role="group" aria-label="Ringkasan Sales Manager" style={{ maxWidth: "24rem" }}>
+                <KeyValues items={angka.map(([label, nilai]) => [label, <span key={label} className="fi-tnum">{nilai}</span>])} />
             </div>
             {kurang.length > 0 && (
                 <section className="fi-sect" aria-label="Pengingat kelengkapan belum lengkap">
@@ -235,7 +233,7 @@ function RingkasanSm({ ctx, daftar }: PeranProps) {
                             <li key={b.id}>
                                 <ListItem doc={b.noPengajuan} title={b.principleName}
                                     meta={[b.finalClaimNote || "Tanpa catatan Klaim", `diperbarui ${waktuWita(b.updatedAt)}`].join(" · ")}
-                                    badge={<StatusBadge tone="warn">{labelStatus(b.finalStatus)}</StatusBadge>} onClick={() => ctx.bukaBatch(b.id)} />
+                                    badge={<StatusBadge tone="warn">{labelStatus(b.finalStatus)}</StatusBadge>} href={ctx.hrefBatch(b.id)} onClick={() => ctx.bukaBatch(b.id)} />
                             </li>
                         ))}
                     </ul>

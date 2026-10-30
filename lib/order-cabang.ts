@@ -106,7 +106,7 @@ export async function cakupanCabang(userId: string, perms: ReadonlySet<string>):
 export function tripwireIzin(perms: ReadonlySet<string>): GalatOrder | null {
     if (!perms.has("websales.create") || !perms.has("order.view") || perms.has("order.create")) return null;
     return { status: 403, kode: "IZIN_TIDAK_KONSISTEN",
-        error: "Akun Anda punya izin Order Sales sekaligus lihat Order Masuk tanpa izin membuat order — cakupan cabang tidak bisa dipastikan. "
+        error: "Akun Anda punya izin Order Sales sekaligus lihat Order Masuk tanpa izin membuat order, jadi cakupan cabang tidak bisa dipastikan. "
             + "Minta admin membetulkan grup akses (sales: hanya websales.*; petugas: order.create)." };
 }
 

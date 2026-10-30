@@ -137,11 +137,11 @@ test("tanpa izin: 403 tampil sebagai galat berkalimat izin, bukan kosong", async
 });
 
 test("hierarki belum tertaut: 403 berkode membawa kalimat server, bukan laporan kosong", async ({ page }) => {
-    await mock(page, () => json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki — hubungi Admin." }, 403));
+    await mock(page, () => json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki. Hubungi Admin." }, 403));
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto(URL_TAB, NAV);
     const main = page.locator("main");
-    await expect(main.getByRole("alert")).toContainText("Akun belum tertaut ke hierarki — hubungi Admin.", NAV);
+    await expect(main.getByRole("alert")).toContainText("Akun belum tertaut ke hierarki. Hubungi Admin.", NAV);
     await expect(main.getByText("Belum ada kunjungan tercatat")).toHaveCount(0);
 });
 

@@ -142,7 +142,7 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                 <span className="fi-spacer" />
                 <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang}>Muat ulang</Button>
             </div>
-            <p className="fi-small fi-muted">SPV dan SM tiap salesman menentukan siapa yang bisa melihat data siapa (Dashboard SPV, Kontrol SM, cakupan Form Kontrol). Pilihan = nama akun SPV/SM aktif; akun dibuat di menu Pengguna dan Izin.</p>
+            <p className="fi-small fi-muted">SPV dan SM tiap salesman menentukan siapa yang bisa melihat data siapa (Dashboard SPV, Kontrol SM, cakupan Form Kontrol). Pilihan = nama akun SPV/SM aktif; akun dibuat di menu User dan Izin.</p>
             {kunci && <p className="fi-small fi-why">{kunci}</p>}
             {sukses && <MessageStrip tone="pos" title={sukses} onClose={() => setSukses("")} />}
             {isi}

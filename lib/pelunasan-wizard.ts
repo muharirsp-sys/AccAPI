@@ -159,8 +159,8 @@ export function terapkanPenyelesaian(h: BarisHasil | undefined, index: number, s
     return s.status === "SUCCESS"
         // nomor kosong = server sudah SUCCESS tanpa keputusan di dialog ini: nomornya hanya di jejak penyelesaian (kandidat pencarian bukan nomor itu).
         ? { index, paket, outcome: "terposting", code: KODE_DISELESAIKAN, receiptNumbers: s.nomor,
-            message: `Diselesaikan: terposting${s.nomor.length ? ` ${s.nomor.join(", ")}` : " — nomor pelunasan Accurate lihat jejak penyelesaian"}` }
-        : { index, paket, outcome: "gagal", code: KODE_DISELESAIKAN, message: "Diselesaikan: tidak ada di Accurate — boleh dikirim ulang lewat Pelunasan baru." };
+            message: `Diselesaikan: terposting${s.nomor.length ? ` ${s.nomor.join(", ")}` : " (nomor pelunasan Accurate: lihat jejak penyelesaian)"}` }
+        : { index, paket, outcome: "gagal", code: KODE_DISELESAIKAN, message: "Diselesaikan: tidak ada di Accurate, jadi boleh dikirim ulang lewat Pelunasan baru." };
 }
 
 /**

@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
             if (bad) return NextResponse.json({ error: bad, code: "SALES_RECEIPT_LOCK_REQUIRED", sent: false }, { status: 409 });
             // S6e-2 butir 8: akun potongan belum dipilih (penanda alokasi.ts) tidak boleh sampai ke Accurate.
             if (memuatPlaceholderAkun(payload)) {
-                return NextResponse.json({ error: "Akun potongan belum dipilih (ISI_KODE_AKUN_…) — pilih akun di langkah Akun. Tidak ada yang dikirim.", code: "PLACEHOLDER_AKUN", sent: false }, { status: 400 });
+                return NextResponse.json({ error: "Akun potongan belum dipilih (ISI_KODE_AKUN_…). Pilih akun di langkah Akun. Tidak ada yang dikirim.", code: "PLACEHOLDER_AKUN", sent: false }, { status: 400 });
             }
             // S6e-2 (owner #5): kirim pelunasan = kunci `pelunasan.kirim`, ditegakkan di sini (bukan hanya UI).
             // Hanya cabang tulis sales-receipt — GET & tulis endpoint lain tidak berubah.
@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
         }
         if (salesReceipt && String(accurateSession?.databaseId ?? "") !== expectedDatabaseId) {
             return NextResponse.json({
-                error: `Database Accurate sesi berubah (kini ${accurateSession?.databaseAlias || accurateSession?.databaseId || "tidak diketahui"}) — muat ulang lalu periksa tujuan. Tidak ada yang dikirim.`,
+                error: `Database Accurate sesi berubah (kini ${accurateSession?.databaseAlias || accurateSession?.databaseId || "tidak diketahui"}). Muat ulang lalu periksa tujuan. Tidak ada yang dikirim.`,
                 code: "database_changed", sent: false,
                 databaseId: accurateSession?.databaseId ?? null, databaseAlias: accurateSession?.databaseAlias ?? null,
             }, { status: 409 });
@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
             const lockDb = await databaseLockBerbeda(db, String(write.lockId), write.userId, expectedDatabaseId);
             if (lockDb !== null) {
                 return NextResponse.json({
-                    error: `Lock dibuat untuk database Accurate ${lockDb}, bukan database sesi kini — ulangi dari Tinjau. Tidak ada yang dikirim.`,
+                    error: `Lock dibuat untuk database Accurate ${lockDb}, bukan database sesi kini. Ulangi dari Tinjau. Tidak ada yang dikirim.`,
                     code: "database_changed", sent: false, lockDatabaseId: lockDb,
                     databaseId: accurateSession?.databaseId ?? null, databaseAlias: accurateSession?.databaseAlias ?? null,
                 }, { status: 409 });
@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({
                     error: `${r.held.length} baris ditahan: mirip pelunasan yang sudah ada di Accurate`
                         + (tidakTerbaca ? ` (${tidakTerbaca} karena riwayat Accurate gagal dibaca)` : "")
-                        + " — butuh izin Finance (finance.override_duplicate) dengan alasan. Tidak ada yang dikirim.",
+                        + ". Butuh izin Finance (finance.override_duplicate) dengan alasan. Tidak ada yang dikirim.",
                     code: "ACCURATE_HISTORY", sent: false, rows: r.held,
                 }, { status: 409 });
             }

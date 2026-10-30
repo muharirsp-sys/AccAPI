@@ -12,5 +12,7 @@ import Finance from "./Finance";
 
 export default async function FinancePage() {
     const { perms } = await resolveRequestPermissionsH();
-    return <FioriScope><Finance permKeys={[...(perms ?? [])]} hariIni={todayWita(new Date())} /></FioriScope>;
+    // Cap waktu server: "hari ini" berikutnya dihitung dari jam server, bukan jam peramban (No 109, tinjauan K2 R-1).
+    const kini = new Date();
+    return <FioriScope><Finance permKeys={[...(perms ?? [])]} hariIni={todayWita(kini)} jamServerMs={kini.getTime()} /></FioriScope>;
 }

@@ -173,7 +173,7 @@ export function hitungRingkasan(m: MasukanRingkasan): HasilRingkasan {
         const belum = jks.filter((j) => rencana.has(j.custCode) && !kunj.has(j.custCode));
         const angka = rapikan(h);
         const [y, mo, d] = m.tanggal.split("-");
-        const teks = [`Ringkasan kunjungan ${d}/${mo}/${y} — ${s.nama}`, `Call Plan: ${angka.callPlan}`,
+        const teks = [`Ringkasan kunjungan ${d}/${mo}/${y}: ${s.nama}`, `Call Plan: ${angka.callPlan}`,
             `Call Rute: ${angka.callRute} · Call Non Rute: ${angka.callNonRute}`, `EC: ${angka.ec}`, `Nilai Order: ${rupiah(angka.nilaiOrder)}`,
             ...(belum.length ? [`Toko terjadwal belum dikunjungi (${belum.length}):`,
                 ...belum.slice(0, MAKS_DAFTAR_WA).map((j) => `- ${j.custCode} ${j.custName}`),

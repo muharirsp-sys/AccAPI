@@ -174,7 +174,7 @@ export function simulateLetter(letter: PublishedLetter, trialLines: TrialLine[] 
     // Urutannya urutan yang harus diperiksa orang, bukan urutan kemunculannya di kode.
     if (!rows.length) {
         warnings.push("Publikasi ini TIDAK menghasilkan satu aturan pun. Selama begitu, menerbitkannya "
-            + "tidak menahan dan tidak mengesahkan apa pun — periksa daftar penolakan di bawah.");
+            + "tidak menahan dan tidak mengesahkan apa pun. Periksa daftar penolakan di bawah.");
     }
     if (refused.length) {
         warnings.push(`${refused.length} program tidak bisa dimuat. Yang tidak dimuat TIDAK akan menahan `
@@ -183,7 +183,7 @@ export function simulateLetter(letter: PublishedLetter, trialLines: TrialLine[] 
     const tanpaAmbang = rows.filter((row) => row.benefitType === "BONUS_QTY" && Number(row.triggerQty) <= 0);
     if (tanpaAmbang.length) {
         warnings.push("Ada aturan BONUS tanpa ambang beli. Bonus tanpa syarat pembelian berarti setiap "
-            + "pembelian berapa pun berhak bonus — pastikan itu memang bunyi suratnya.");
+            + "pembelian berapa pun berhak bonus. Pastikan itu memang bunyi suratnya.");
     }
     const krt = rows.filter((row) => String(row.triggerUnit).toUpperCase() === "KRT" && Number(row.triggerQty) > 0);
     if (krt.length) {
@@ -191,14 +191,14 @@ export function simulateLetter(letter: PublishedLetter, trialLines: TrialLine[] 
             + "menilainya dan barisnya akan tertahan. Tulis ambangnya dalam satuan terkecil (PCS).");
     }
     if (!trialLines.length) {
-        warnings.push("Belum ada baris faktur nyata untuk diuji, jadi yang terbukti baru bentuk aturannya — "
+        warnings.push("Belum ada baris faktur nyata untuk diuji, jadi yang terbukti baru bentuk aturannya, "
             + "bukan hasilnya. Unggah laporan principal yang memuat barang surat ini untuk pembuktian penuh.");
     } else if (trial.lines === 0) {
         warnings.push("Tidak satu pun baris faktur yang pernah memuat barang surat ini, jadi aturannya belum "
             + "pernah teruji atas data sungguhan.");
     } else if (trial.unexplained.length) {
         warnings.push(`${trial.unexplained.length} baris nyata berpotongan TIDAK dijelaskan aturan ini. `
-            + "Itu belum tentu salah — potongannya bisa milik surat lain — tetapi periksa satu per satu "
+            + "Itu belum tentu salah (potongannya bisa milik surat lain), tetapi periksa satu per satu "
             + "sebelum menyatakan programnya benar.");
     }
 

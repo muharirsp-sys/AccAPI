@@ -754,7 +754,7 @@ export function recap(
                 reason: (adaAturan || adaTarif
                     ? `${entry.percent}% (posisi ${entry.position}) tidak sama dengan aturan ${beban.toLowerCase()} yang berlaku`
                     : `tidak ada aturan ${beban.toLowerCase()} untuk ${owner === "distributor" ? "outlet ini" : "barang ini"}`)
-                    + (serupa ? ` — ${entry.percent}% ada di ${serupa.customerCode ? `tarif outlet posisi ${serupa.tierNo}` : `surat ${serupa.suratProgram}`} `
+                    + (serupa ? `; ${entry.percent}% ada di ${serupa.customerCode ? `tarif outlet posisi ${serupa.tierNo}` : `surat ${serupa.suratProgram}`} `
                         + `(${serupa.benefitBeban.toLowerCase()})` : ""),
             });
             // Baris CAMPURAN (persen + rupiah) membawa rupiah D5-nya sebagai persen setara di posisi 5
@@ -848,14 +848,14 @@ export function recap(
         const golongan = putusan.bucket === "principal" ? "Disc Claim" : "Disc Distributor";
         const tolak = (sebab: string) => {
             row.bekasNormalisasi = putusan.bucket;
-            row.reason = `${row.reason} — normalisasi ${golongan} oleh ${putusan.by} TIDAK dipakai: ${sebab}`;
+            row.reason = `${row.reason}; normalisasi ${golongan} oleh ${putusan.by} TIDAK dipakai: ${sebab}`;
         };
         if (Math.abs(cents(putusan.amount - row.amount)) > TOLERANCE) {
             tolak(`diputuskan atas Rp ${putusan.amount.toLocaleString("id-ID")}, fakturnya kini Rp ${row.amount.toLocaleString("id-ID")}`);
             continue;
         }
         if (!putusan.ruleKey && (putusan.ruleId ?? null) === null) {
-            tolak("keputusan lama tanpa aturan promo dasar — putuskan ulang dengan aturan");
+            tolak("keputusan lama tanpa aturan promo dasar; putuskan ulang dengan aturan");
             continue;
         }
         const sama = (rule: PromoRule) => (putusan.ruleKey ? kunciAturan(rule) === putusan.ruleKey : rule.id === putusan.ruleId);
@@ -864,8 +864,8 @@ export function recap(
             const ada = rules.find(sama);
             const nama = putusan.ruleKey ? String(JSON.parse(putusan.ruleKey)[1]) : `#${putusan.ruleId}`;
             tolak(ada
-                ? `aturan ${ada.suratProgram} #${ada.id} tidak berlaku (${alasanTakBerlaku(ada, row, putusan.bucket, lists, pertama)}) — putuskan ulang`
-                : `aturan ${nama} sudah tidak ada atau nonaktif (dihapus, atau dimuat ulang dengan surat/kelompok/barang/outlet/tingkat lain) — putuskan ulang`);
+                ? `aturan ${ada.suratProgram} #${ada.id} tidak berlaku (${alasanTakBerlaku(ada, row, putusan.bucket, lists, pertama)}); putuskan ulang`
+                : `aturan ${nama} sudah tidak ada atau nonaktif (dihapus, atau dimuat ulang dengan surat/kelompok/barang/outlet/tingkat lain); putuskan ulang`);
             continue;
         }
         out.unowned = cents(out.unowned - row.amount);
@@ -987,13 +987,13 @@ export function parseTariff(
         const periodEnd = pick("PERIOD_END", "PERIODE SAMPAI", "SAMPAI").slice(0, 10);
         if (!DIPAKAI.has(konfirmasi.toUpperCase())) {
             const sebutan = customerCode || customerName || `baris ${index + 2}`;
-            ctx.issues.push(`${TARIFF_SHEET} ${sebutan}: kolom PAKAI belum diisi — posisinya belum dinyatakan pasti, tarifnya tidak dimuat`);
+            ctx.issues.push(`${TARIFF_SHEET} ${sebutan}: kolom PAKAI belum diisi: posisinya belum dinyatakan pasti, tarifnya tidak dimuat`);
             return;
         }
         if (!customerCode) {
             // Baris tanpa kode DILAPORKAN, tidak dilewati diam-diam: tiga baris pada tabel
             // aslinya memang tidak terbaca dari foto, dan itu harus terlihat sebagai lubang.
-            if (customerName) ctx.issues.push(`${TARIFF_SHEET} baris ${index + 2}: "${customerName}" tanpa kode outlet — tarifnya tidak dimuat`);
+            if (customerName) ctx.issues.push(`${TARIFF_SHEET} baris ${index + 2}: "${customerName}" tanpa kode outlet, tarifnya tidak dimuat`);
             return;
         }
         let terisi = 0;
@@ -1051,12 +1051,12 @@ function dedupe<T extends { customerCode: string; tierNo: number; benefitValue: 
         if (kembar.length === 1) { out.push(pertama); continue; }
         const beda = kembar.filter((row) => row.benefitValue !== pertama.benefitValue || row.benefitBeban !== pertama.benefitBeban);
         if (beda.length === 0) {
-            issues.push(`${TARIFF_SHEET} ${pertama.customerCode} posisi ${pertama.tierNo}: tertulis ${kembar.length}x dengan isi yang sama — digabung jadi satu`);
+            issues.push(`${TARIFF_SHEET} ${pertama.customerCode} posisi ${pertama.tierNo}: tertulis ${kembar.length}x dengan isi yang sama, digabung jadi satu`);
             out.push(pertama);
             continue;
         }
         const nilai = [...new Set(kembar.map((row) => `${row.benefitValue}% ${row.benefitBeban}`))].join(" vs ");
-        issues.push(`${TARIFF_SHEET} ${pertama.customerCode} posisi ${pertama.tierNo}: tertulis ${kembar.length}x dengan isi BERBEDA (${nilai}) — tidak dimuat, tentukan dulu yang benar`);
+        issues.push(`${TARIFF_SHEET} ${pertama.customerCode} posisi ${pertama.tierNo}: tertulis ${kembar.length}x dengan isi BERBEDA (${nilai}): tidak dimuat, tentukan dulu yang benar`);
     }
     return out;
 }

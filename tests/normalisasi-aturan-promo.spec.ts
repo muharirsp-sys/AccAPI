@@ -148,7 +148,7 @@ test("Aturan Promo: saringan bergabung dan bisa dihapus; tanggal dd/mm/yyyy; kos
 
 test("Normalisasi: keputusan yang tidak dipakai lagi ada di kelompok Perlu diputuskan ulang dan bisa dirujukkan ulang", async ({ page }) => {
     const bekas = baris({ invoiceNo: "INV/2609/KN00999", invoiceId: "9000999", lineKey: "9", bekasNormalisasi: "principal",
-        reason: "0.75% (posisi 4) tidak sama — normalisasi Disc Claim oleh ari TIDAK dipakai: keputusan lama tanpa aturan promo dasar — putuskan ulang dengan aturan" });
+        reason: "0.75% (posisi 4) tidak sama; normalisasi Disc Claim oleh ari TIDAK dipakai: keputusan lama tanpa aturan promo dasar; putuskan ulang dengan aturan" });
     await bukaNormalisasi(page, (route) => json(route, { ...rekap, recap: { rows: [...rekap.recap.rows, bekas] } }));
     await page.getByRole("group", { name: "Kelompok potongan" }).getByRole("button", { name: "Perlu diputuskan ulang 1" }).click();
     await expect(page.getByRole("table", { name: "Perlu diputuskan ulang" }).getByText("TOKO BERKAH")).toHaveCount(0);

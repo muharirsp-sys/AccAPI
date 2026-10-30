@@ -180,7 +180,7 @@ export async function POST(request: NextRequest) {
         if (berkasBentrok(error)) {
             return NextResponse.json({
                 ok: false, code: "BERKAS_SUDAH_DISIMPAN",
-                error: "Berkas yang sama baru saja disimpan oleh unggahan lain (mis. dua Ganti bersamaan); muat ulang daftar batch — batch terbarunya sudah ada.",
+                error: "Berkas yang sama baru saja disimpan oleh unggahan lain (mis. dua Ganti bersamaan); muat ulang daftar batch. Batch terbarunya sudah ada.",
             }, { status: 409 });
         }
         throw error;

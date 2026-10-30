@@ -17,7 +17,7 @@ import { ArrowRight, Download } from "lucide-react";
 import { Button, EmptyState, ErrorState, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, type Column } from "@/components/fiori/core";
 import { FilterBar, FormField, useLoad } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
-import { BEBAN, persen, rupiah, tgl } from "@/lib/promo-ui";
+import { BEBAN, angkaKoma, bulanWita, persen, rupiah, tgl } from "@/lib/promo-ui";
 import { KOSONG } from "@/lib/tampil";
 import { pesanGalat } from "@/lib/claim-workflow-ui";
 
@@ -35,14 +35,12 @@ type Buka = { jenis: "bucket" | "program"; nilai: string } | null;
 
 const BOM = String.fromCharCode(0xFEFF);
 const CRLF = String.fromCharCode(13, 10);
-// Tanggal SETEMPAT, bukan UTC: tanggal 1 di WITA tidak boleh berubah jadi tanggal 31 bulan sebelumnya.
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const BUCKET_LABEL = { principal: BEBAN.principal.label, distributor: BEBAN.distributor.label, unowned: "Tak bertuan" } as const;
 
 export default function RekapPromo() {
-    const now = new Date();
-    const [from, setFrom] = useState(ymd(new Date(now.getFullYear(), now.getMonth(), 1)));
-    const [to, setTo] = useState(ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
+    const [awal] = useState(() => bulanWita()); // bulan berjalan WITA, bukan jam perangkat
+    const [from, setFrom] = useState(awal.from);
+    const [to, setTo] = useState(awal.to);
     const [principal, setPrincipal] = useState("");
     const [buka, setBuka] = useState<Buka>(null);
     const query = `from=${from}&to=${to}${principal ? `&principal=${encodeURIComponent(principal)}` : ""}`;
@@ -62,12 +60,12 @@ export default function RekapPromo() {
     const judulRincian = !buka ? "" : buka.jenis === "program" ? `Rincian program ${buka.nilai.split("|")[0]} · ${buka.nilai.split("|")[1]}` : `Rincian ${BUCKET_LABEL[buka.nilai as keyof typeof BUCKET_LABEL]}`;
     const normQuery = `?from=${from}&to=${to}${principal ? `&principal=${encodeURIComponent(principal)}` : ""}`;
 
-    /** CSV dengan pemisah kolom titik koma dan BOM untuk nama ber-aksen. Angka ditulis bertitik desimal apa adanya dari server. */
+    /** CSV dengan pemisah kolom titik koma dan BOM untuk nama ber-aksen. Persen dan Rupiah berkoma desimal tanpa pemisah ribuan supaya Excel id-ID membacanya sebagai angka (owner 27 Okt, No 65). */
     function unduh() {
         const judul = ["Faktur", "Tanggal", "Principal", "Kode Outlet", "Outlet", "Kode Barang", "Nama Barang", "Posisi", "Persen", "Rupiah", "Surat", "Kelompok", "Keterangan"];
         const escape = (value: string | number) => `"${String(value ?? "").replace(/"/g, '""')}"`;
         const isi = rincian.map((row) => [row.invoiceNo, row.transDate, row.branchName, row.customerNo, row.customerName, row.itemCode, row.itemName,
-            row.positions, row.percent, row.amount, row.suratProgram, row.promoGroup, row.reason].map(escape).join(";"));
+            row.positions, angkaKoma(row.percent), angkaKoma(row.amount), row.suratProgram, row.promoGroup, row.reason].map(escape).join(";"));
         const teks = BOM + [judul.map(escape).join(";"), ...isi].join(CRLF);
         const url = URL.createObjectURL(new Blob([teks], { type: "text/csv;charset=utf-8" }));
         const a = document.createElement("a");

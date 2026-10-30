@@ -38,7 +38,7 @@ export function periksaKeputusan(body: Record<string, unknown>): Keputusan | { e
     return { keputusan: "jks", hari, minggu: minggu as Minggu };
 }
 
-const labelMinggu = (m: string | null | undefined) => (m === "all" ? "setiap minggu" : m === "ganjil" ? "minggu ganjil" : m === "genap" ? "minggu genap" : m ?? "—");
+const labelMinggu = (m: string | null | undefined) => (m === "all" ? "setiap minggu" : m === "ganjil" ? "minggu ganjil" : m === "genap" ? "minggu genap" : m || "minggu belum diisi");
 const jadwal = (j: { hariKunjungan: string | null; mingguPattern: string | null }) => `${j.hariKunjungan || "hari belum diisi"} · ${labelMinggu(j.mingguPattern)}`;
 const galat = (status: number, kode: string, error: string): { galat: GalatOrder } => ({ galat: { status, kode, error } });
 const kodeBesar = sql`upper(trim(${jksMaster.custCode}))`;
@@ -90,7 +90,7 @@ export async function tambahLuarRute(d: {
     const diRute = hari ? milik.find((j) => kunciHari(j.hariKunjungan) === kunciHari(hari)
         && ["all", paritas].includes(String(j.mingguPattern ?? "").trim().toLowerCase())) : undefined;
     if (diRute) {
-        return galat(409, "SUDAH_DI_RUTE", `${d.pelanggan.name} (${diRute.custCode}) sudah ada di rute Anda hari ini — buka dari daftar Toko di rute, tidak perlu ditambah.`);
+        return galat(409, "SUDAH_DI_RUTE", `${d.pelanggan.name} (${diRute.custCode}) sudah ada di rute Anda hari ini. Buka dari daftar Toko di rute, tidak perlu ditambah.`);
     }
     const customerNo = d.pelanggan.customerNo.trim();
     const kunci = and(eq(kunjunganLuarRute.salesCode, d.salesCode), eq(kunjunganLuarRute.custCode, customerNo),
@@ -190,7 +190,7 @@ export async function konfirmasiLuarRute(d: {
             await tx.update(kunjunganLuarRute).set({ konfirmasi: "sudah_jks", hari: null, mingguPattern: null, jksId: null, ...jejak })
                 .where(eq(kunjunganLuarRute.id, k.id));
             await audit("konfirmasi_sudah_jks", { jks: j.custCode });
-            return galat(409, "SUDAH_DI_JKS", `${k.custName} sudah ada di JKS Anda (${j.custCode}: ${jadwal(j)}); tidak ditambahkan lagi — kunjungan ini ditandai "sudah di JKS".`);
+            return galat(409, "SUDAH_DI_JKS", `${k.custName} sudah ada di JKS Anda (${j.custCode}: ${jadwal(j)}); tidak ditambahkan lagi, dan kunjungan ini ditandai "sudah di JKS".`);
         };
         const [ada] = await jksMilik(k.salesCode, k.principle, k.custCode, tx);
         if (ada) return sudahJks(ada);
@@ -256,7 +256,7 @@ export async function batalLuarRute(d: {
         if (k.tanggal !== d.hariIni) return galat(409, "BUKAN_HARI_INI", `Hanya kunjungan luar rute hari ini (${d.hariIni}) yang bisa dibatalkan; ini kunjungan ${k.tanggal}.`);
         if (k.konfirmasi === "jks") return galat(409, "SUDAH_DIKONFIRMASI", `${k.custName} sudah masuk JKS Anda; kunjungannya tidak bisa dibatalkan.`);
         if (await adaKunjungan(tx, k, false)) {
-            return galat(409, "SUDAH_DIKUNJUNGI", `${k.custName} sudah punya status hari ini (check-in, status rute — termasuk "tidak dikunjungi" dari Kirim status rute — atau merchandising); kunjungannya tidak bisa dibatalkan.`);
+            return galat(409, "SUDAH_DIKUNJUNGI", `${k.custName} sudah punya status hari ini (check-in, status rute, atau merchandising; status rute termasuk "tidak dikunjungi" dari Kirim status rute), jadi kunjungannya tidak bisa dibatalkan.`);
         }
         const now = new Date();
         const [row] = await tx.update(kunjunganLuarRute).set({ dibatalkanPada: now, dibatalkanOleh: d.aktorId })

@@ -7,8 +7,8 @@
  *   GET/POST /api/principal-order/queue; components/fiori/{core,interactive}; lib/order-duplicate (isDuplicateFinding); lib/promo-ui (rupiah);
  *   lib/principal-validation (PPN, teks estimasi); lib/tampil (KOSONG); ./bersama.
  * Main Functions: LangkahBatch, Kepala.
- * Side Effects: HTTP baca/tulis DB lokal (validasi, konfirmasi dan cabut konfirmasi order ganda, baris invoice_outbox), semuanya lewat
- *   dialog. TIDAK ada tulis ke Accurate di sini: faktur dibuat saat Kirim di Antrean Faktur. BL-21 ditegakkan server (route
+ * Side Effects: HTTP baca/tulis DB lokal (validasi, konfirmasi dan cabut konfirmasi order ganda beralasan, baris invoice_outbox), semuanya
+ *   lewat dialog. TIDAK ada tulis ke Accurate di sini: faktur dibuat saat Kirim di Antrean Faktur. BL-21 ditegakkan server (route
  *   principal-order); logic BL-23/35/44/45 tidak ditulis (VariantNote).
  */
 "use client";
@@ -25,6 +25,7 @@ import { isDuplicateFinding } from "@/lib/order-duplicate";
 import { PPN } from "@/lib/principal-validation";
 import { rupiah } from "@/lib/promo-ui";
 import { KOSONG } from "@/lib/tampil";
+import { ALASAN_CABUT_MIN, galatPanjangAlasan } from "@/lib/pencabutan";
 import {
     ALASAN_IZIN, DitolakDenganDaftar, PESAN_TIDAK_PASTI, TidakPasti, angka, baca, ditahanUtuh, labelAntrean, soDariKunci, tanggalSo, tulis,
     waktuWita, type Ack, type BarisAntrean, type Batch, type CalonFaktur, type HasilAntre, type Line, type Rencana, type SoTidakIkut, type StatusAntrean,
@@ -74,6 +75,7 @@ type Props = {
 type Dialog = { jenis: "ganda"; soNo: string; finding: string } | { jenis: "antre" } | { jenis: "validasi"; harga: boolean } | { jenis: "cabut"; ack: Ack } | null;
 
 const pesanDari = (e: unknown, umum: string) => (e instanceof Error && e.message ? e.message : umum);
+
 /** SO yang tidak ikut, satu kalimat per alasan: "alasan (SO a, b)". */
 function perAlasan(skipped: SoTidakIkut[]) {
     const m = new Map<string, string[]>();
@@ -206,13 +208,15 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
     /**
      * Mencabut konfirmasi (dipanggil dari dialog): SO-nya kembali ditahan gerbang order ganda pada validasi ulang yang langsung dijalankan.
      * SO yang sudah antre/terposting lalu ditahan lagi berhenti jadi calon faktur; status antrean batch (penjaga Hapus/Ganti, BL-21)
-     * dihitung server dari SEMUA nomor SO batch. DELETE tidak menerima alasan, jadi dialognya tanpa isian alasan.
+     * dihitung server dari SEMUA nomor SO batch. Alasan wajib (audit No 18) dikirim di body DELETE; server menyalin konfirmasi yang dicabut
+     * + alasan ke jejak pencabutan.
      */
-    async function cabut(soNo: string) {
+    async function cabut(soNo: string, alasan: string) {
         setSibuk("cabut");
         setStrip(null);
         try {
-            await tulis(`/api/principal-order/dupe-ack?principal=${encodeURIComponent(principal)}&soNo=${encodeURIComponent(soNo)}`, { method: "DELETE", gagal: "Gagal mencabut konfirmasi" });
+            await tulis(`/api/principal-order/dupe-ack?principal=${encodeURIComponent(principal)}&soNo=${encodeURIComponent(soNo)}`,
+                { method: "DELETE", body: { alasan }, gagal: "Gagal mencabut konfirmasi" });
         } catch (e) {
             setSibuk(null);
             if (e instanceof TidakPasti) { muatAcks(); muatIsi(); }
@@ -648,7 +652,7 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
 
             <ConfirmDialog open={dialog?.jenis === "cabut"} onClose={() => setDialog(null)} tone="negative"
                 title={`Cabut konfirmasi SO ${dialog?.jenis === "cabut" ? dialog.ack.soNo : ""}?`} confirmLabel="Cabut konfirmasi" confirmDisabled={kunciAck}
-                description="SO ini kembali ditahan gerbang order ganda, lalu batch divalidasi ulang. Bila SO-nya sudah antre atau terposting, ia berhenti jadi calon faktur."
+                description="SO ini kembali ditahan gerbang order ganda, lalu batch divalidasi ulang. Bila SO-nya sudah antre atau terposting, ia berhenti jadi calon faktur. Konfirmasi lama dan alasan Anda tersimpan di jejak pencabutan."
                 facts={dialog?.jenis === "cabut" ? [
                     ["SO", dialog.ack.soNo],
                     ["Principal", principal],
@@ -656,7 +660,14 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
                     ["Catatan", dialog.ack.note || KOSONG],
                 ] : []}
                 factsAlign="start"
-                onConfirm={async () => { if (dialog?.jenis !== "cabut") return; const so = dialog.ack.soNo; setDialog(null); await cabut(so); }} />
+                reason={{ label: "Alasan mencabut", min: ALASAN_CABUT_MIN, placeholder: "mis. dicek ulang ke sales, SO ini ternyata kiriman ulang order lama" }}
+                onConfirm={async (alasan) => {
+                    if (dialog?.jenis !== "cabut") return;
+                    // Batas sama dengan server (R-2): galat tampil di dialog dan alasan yang diketik tidak hilang.
+                    const panjang = galatPanjangAlasan(alasan);
+                    if (panjang) throw new Error(panjang);
+                    const so = dialog.ack.soNo; setDialog(null); await cabut(so, alasan);
+                }} />
         </div>
     );
 }
