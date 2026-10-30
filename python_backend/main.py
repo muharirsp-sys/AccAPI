@@ -587,6 +587,7 @@ from routers.payments import router as payments_router
 from routers.sppd import router as sppd_router
 from routers.finance import router as finance_router
 from routers.summary import router as summary_router
+from routers.summary_program import router as summary_program_router
 from routers.laporan_harian import router as laporan_harian_router
 from routers.orders import router as orders_router
 from routers.websales import router as websales_router
@@ -596,6 +597,7 @@ app.include_router(payments_router)
 app.include_router(sppd_router)
 app.include_router(finance_router)
 app.include_router(summary_router)
+app.include_router(summary_program_router)
 app.include_router(orders_router)
 app.include_router(websales_router)
 app.include_router(laporan_harian_router)
