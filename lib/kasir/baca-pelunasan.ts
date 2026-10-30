@@ -247,7 +247,7 @@ export async function bacaPelunasanHari(opsi: OpsiBaca, deps: DepsBaca = bawaan)
                     const nomor = await toko.nomor(databaseId, rencana.hapus);
                     if (akunGanti) akunSimpan = klaim.akunLama; // penjaga bertahan sampai dikonfirmasi
                     st.galat = { kelas: "hapus_massal", pesan: `${rencana.hapus.length} dari ${cache.size} pelunasan tanggal ini hilang dari daftar Accurate`
-                        + `${akunGanti ? " sesudah akun Accurate sinkron berganti" : ""} — tidak dihapus. Periksa cabang yang terlihat akun sinkron; OM/Admin dapat `
+                        + `${akunGanti ? " sesudah akun Accurate sinkron berganti" : ""}. Tidak dihapus. Periksa cabang yang terlihat akun sinkron; OM/Admin dapat `
                         + "mengonfirmasi hapus." };
                     st.ditolak.push(...rencana.hapus.map((id) => ({ id, nomor: nomor.get(id) ?? `id ${id}`, sebab: "hapus_massal" as const,
                         pesan: "hilang dari daftar Accurate; menunggu konfirmasi hapus" })));
@@ -503,7 +503,7 @@ export async function jawabanSegarkan(h: HasilBaca, deps: Pick<DepsBaca, "nama">
     }
     const s = await publikkan(h.status, deps);
     if (h.jenis === "sedang_dibaca" || h.jenis === "lease_hilang") {
-        return { http: 409, body: { ok: false, kode: "SEDANG_DIBACA", error: "Pelunasan tanggal ini sedang dibaca — coba lagi sebentar.", status: s } };
+        return { http: 409, body: { ok: false, kode: "SEDANG_DIBACA", error: "Pelunasan tanggal ini sedang dibaca. Coba lagi sebentar.", status: s } };
     }
     if (h.jenis === "jeda_lengkap") return { http: 200, body: { ok: true, dariCache: true, status: s } };
     if (s.status === "gagal" && s.sebab === "sesi_sinkron") return { http: 503, body: { ok: false, kode: "SESI_SINKRON", error: PESAN_SESI_SINKRON, status: s } };

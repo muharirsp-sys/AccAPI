@@ -80,8 +80,8 @@ export async function GET(req: Request) {
             if (penuh && sibuk) await bawaan.toko().tandaiPenuhTertunda(s.databaseId, tanggal);
             hasil.push({ tanggal, jenis: h.jenis, status: sibuk ? "sedang_dibaca" : s.status, sebab: s.sebab, pesan: s.pesan, jumlahDaftar: s.jumlahDaftar,
                 sisaDetail: s.sisaDetail, ditolak: s.ditolak.length,
-                ...(sibuk ? penuh ? { kode: "PENUH_TERTUNDA", keterangan: "Baca penuh menunggu pembaca lain sampai batas waktu — dicatat; klaim berikutnya membaca penuh." }
-                    : { keterangan: "Dibaca pembaca lain (tombol/cron lain) — tanggal ini dilewati, bukan galat." } : {}) });
+                ...(sibuk ? penuh ? { kode: "PENUH_TERTUNDA", keterangan: "Baca penuh menunggu pembaca lain sampai batas waktu. Sudah dicatat; klaim berikutnya membaca penuh." }
+                    : { keterangan: "Dibaca pembaca lain (tombol/cron lain). Tanggal ini dilewati, bukan galat." } : {}) });
         }
         const lengkap = hasil.every((r) => r.status === "lengkap");
         // Cron biasa yang bertemu lease pemegang lain bukan galat (202); baca penuh yang menyerah sesudah menunggu = galat (PENUH_TERTUNDA).

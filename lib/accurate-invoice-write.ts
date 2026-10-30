@@ -216,7 +216,7 @@ export function buildInvoicePayload(
                 + `selisih Rp ${Math.abs(netto - net).toFixed(2)}`;
             throw new Error(`Barang ${line.code} (${line.unit}): ${angka}. SO ditahan utuh: ${dilipat
                 ? "potongan rupiah baris terlalu besar untuk dipersenkan 4 desimal"
-                : "rantai diskon beku tidak menghasilkan netto SO"} — buat faktur ini manual di Accurate atau minta perbaikan.`);
+                : "rantai diskon beku tidak menghasilkan netto SO"}. Buat faktur ini manual di Accurate atau minta perbaikan.`);
         }
         return {
             itemNo: line.code,
@@ -319,7 +319,7 @@ export function classifySaveResponse(status: number, text: string): SendOutcome 
         // Identitas = record id Accurate, bilangan bulat positif. Selain itu tidak bisa diverifikasi.
         return /^[1-9]\d*$/.test(identity.id)
             ? { kind: "posted", id: identity.id, number: identity.number }
-            : { kind: "no_answer", message: `sukses tanpa id record yang sah (${status}: "${identity.id}") — cek di Accurate` };
+            : { kind: "no_answer", message: `sukses tanpa id record yang sah (${status}: "${identity.id}"). Cek di Accurate` };
     }
     // Ditolak HANYA amplop penolakan yang dikenal: d = daftar pesan teks tak kosong (selaras DDL E5 `^\["`).
     // {s:false} tanpa d, d teks/kosong/berisi objek = bentuk asing -> tidak pasti, bukan aman dikirim ulang.

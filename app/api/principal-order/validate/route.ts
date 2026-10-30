@@ -338,7 +338,7 @@ export async function POST(request: NextRequest) {
             for (const grup of kuota) {
                 for (const key of grup.overKeys) {
                     overQuota.set(key, `Bonus melewati kuota ${grup.promoGroup}: pembelian ${grup.purchased} `
-                        + `berhak ${grup.entitled}, tetapi diberikan ${grup.given}. Aturannya "setiap ${grup.trigger}" — `
+                        + `berhak ${grup.entitled}, tetapi diberikan ${grup.given}. Aturannya "setiap ${grup.trigger}": `
                         + "bonus tanpa pembeliannya bukan bonus.");
                 }
             }

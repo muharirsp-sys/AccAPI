@@ -160,6 +160,16 @@ function galatIsian(rows: Baris[], mode: "draft" | "submit"): string | undefined
     return undefined;
 }
 
+/** Bulan "01".."12" dan tahun empat angka: satu aturan untuk syarat simpan dan untuk mengunci isian periode (tinjauan K2 R-4). */
+const periodeSah = (s: Pick<Setup, "bulan" | "tahun">) => /^(0[1-9]|1[0-2])$/.test(s.bulan) && /^\d{4}$/.test(s.tahun);
+
+/** Setup wajib (owner 27 Okt, audit No 73): principal dipilih sendiri (tanpa bawaan), bulan dan tahun batch terisi sah. */
+function galatSetup(s: Setup): string | undefined {
+    if (!s.principleName) return "Pilih principal dulu.";
+    if (!periodeSah(s)) return "Isi bulan (01 sampai 12) dan tahun (empat angka) batch dulu.";
+    return undefined;
+}
+
 /** Tanda per item (Default it03: "satu item ditandai") dari aturan validasi yang sama. */
 function masalahBaris(r: Baris): { tipe?: string; rekening?: string } {
     return {
@@ -182,7 +192,7 @@ const nilai = (v: unknown) => (typeof v === "boolean" ? (v ? "ya" : "tidak") : v
 /** Ringkasan perubahan sejak batch dibuka (dialog `kirimsm`, it03 #14). Tanpa BL-33: hanya dari isian di layar. */
 function ringkasPerubahan(awal: Isi, kini: Isi): string[] {
     const out: string[] = [];
-    if (awal.setup.principleName !== kini.setup.principleName) out.push(`Principal: ${awal.setup.principleName} → ${kini.setup.principleName}`);
+    if (awal.setup.principleName !== kini.setup.principleName) out.push(`Principal: ${nilai(awal.setup.principleName)} → ${nilai(kini.setup.principleName)}`);
     if (awal.setup.supervisorName !== kini.setup.supervisorName) out.push(`Nama supervisor: ${nilai(awal.setup.supervisorName)} → ${nilai(kini.setup.supervisorName)}`);
     const lama = new Map(awal.rows.map((r) => [r.id, r]));
     kini.rows.forEach((r, i) => {
@@ -237,7 +247,7 @@ type OpsiForm = {
     /** 409 dari PATCH karena status/kunci batch berubah sejak dibuka (bukan duplikat, bukan periode ditutup) — BL-09 perilaku hari ini. */
     onKonflik: (pesan: string) => void;
     onDrafTersimpan: (h: { batchId: string; noPengajuan: string }) => void;
-    /** Simpan berhasil tetapi submit gagal (`pasti`) atau jawabannya tidak pasti: batch kini draf tersimpan. Boleh melempar Error (tampil di dialog). */
+    /** Simpan berhasil tetapi submit gagal (`pasti`; boleh melempar Error, tampil di dialog) atau jawabannya tidak pasti (dialog sudah ditutup). */
     onGagalKirim: (h: { batchId: string; noPengajuan: string }, pesan: string, pasti: boolean) => void;
     /** Jawaban simpan tidak pasti (putus, ≥ 502, bukan JSON): batch mungkin sudah tersimpan. Pemanggil menampilkan strip + memuat ulang. */
     onTidakPasti: (pesan: string) => void;
@@ -320,11 +330,13 @@ export function useFormSpv(o: OpsiForm) {
                 conflicts: Array.from(new Map((data.conflicts as KonflikNoSurat[]).map((c) => [`${c.noSurat}|${c.batchId}`, c])).values()),
             }
             : null;
+    // Hasil simpan tidak pasti: dialog Kirim/duplikat ditutup supaya tidak dikirim ulang selagi status belum jelas (owner 27 Okt, No 22).
+    const tutupDialog = () => { setDialogKirim(false); setDuplikat(null); };
     const noTersimpan = (data: Record<string, unknown>) => String(data.noPengajuan || (data.batch as BatchOpc | undefined)?.noPengajuan || generatedNo);
 
     /** saveDraft (kode lama). Galat dilempar (dialog duplikat menampilkannya; tombol footer menampilkannya di strip). */
     const simpanDraf = async (force: boolean) => {
-        const { res, data } = await simpanKe(force).catch(tanganiTulis(o.onTidakPasti));
+        const { res, data } = await simpanKe(force).catch(tanganiTulis(o.onTidakPasti, tutupDialog));
         const dup = duplikatDari(res, data, "draft");
         if (dup) {
             setDuplikat(dup);
@@ -362,7 +374,7 @@ export function useFormSpv(o: OpsiForm) {
      */
     const kirim = async (force: boolean) => {
         o.onPesan(null);
-        const { res: saveRes, data: saveData, items } = await simpanKe(force).catch(tanganiTulis(o.onTidakPasti));
+        const { res: saveRes, data: saveData, items } = await simpanKe(force).catch(tanganiTulis(o.onTidakPasti, tutupDialog));
         const lokal = ringkasBayar(items);
         const dup = duplikatDari(saveRes, saveData, "submit");
         if (dup) {
@@ -396,6 +408,7 @@ export function useFormSpv(o: OpsiForm) {
                 pesanTidakPasti("pengiriman ke Sales Manager", "status batch"));
         } catch (e) {
             if (!(e instanceof TulisTidakPasti)) throw e;
+            tutupDialog();
             o.onGagalKirim({ batchId: savedBatchId, noPengajuan: savedNo }, e.message, false);
             return;
         }
@@ -420,7 +433,9 @@ export function useFormSpv(o: OpsiForm) {
 
     return {
         batchId: o.batchId, setup, rows, kode, nomor, generatedNo, nomorSiap, nomorTampil, nomorTetap, dirty, perubahan, bayar, terpilih, setTerpilih,
-        galatDraf: galatIsian(rows, "draft"), galatKirim: galatIsian(rows, "submit"),
+        galatDraf: galatSetup(setup) ?? galatIsian(rows, "draft"), galatKirim: galatSetup(setup) ?? galatIsian(rows, "submit"),
+        // Bulan/tahun dari batch (atau hari ini WITA untuk batch baru) tidak diubah bila sah; kosong atau tak sah (mis. "00") = bisa diperbaiki di sini.
+        periodeTetap: periodeSah(o.awal.setup),
         ubahSetup, ubahBaris, ubahTipe, tambah, hapus, sibukDraf, klikSimpanDraf, simpanDraf, kirim,
         dialogKirim, setDialogKirim, duplikat, setDuplikat, onPesan: o.onPesan,
     };
@@ -428,21 +443,22 @@ export function useFormSpv(o: OpsiForm) {
 
 export type FormSpv = ReturnType<typeof useFormSpv>;
 
-/** Setup batch (kode lama): hanya nama supervisor dan principal yang bisa diubah; bulan/tahun mengikuti batch (kode lama). */
+/** Setup batch (kode lama): nama supervisor dan principal (wajib dipilih) bisa diubah; bulan/tahun mengikuti batch, kecuali kosong. */
 export function SetupBatch({ f, catatan }: { f: FormSpv; catatan: string }) {
     return (
         <div className="fi-sect-in">
             <div className="fi-formgrid">
                 <FormField label="Nama supervisor">{(a) => <input {...a} className="fi-input" value={f.setup.supervisorName} onChange={(e) => f.ubahSetup({ supervisorName: e.target.value })} />}</FormField>
-                <FormField label="Principal">{(a) => (
+                <FormField label="Principal" required>{(a) => (
                     <select {...a} className="fi-input" value={f.setup.principleName} onChange={(e) => f.ubahSetup({ principleName: e.target.value })}>
+                        <option value="">Pilih principal…</option>
                         {offPrinciples.map((p) => <option key={p.code} value={p.name}>{p.name}</option>)}
                     </select>
                 )}</FormField>
                 <FormField label="Kode principal">{(a) => <input {...a} className="fi-input fi-mono" readOnly value={f.kode} />}</FormField>
                 <FormField label="Gelombang otomatis">{(a) => <input {...a} className="fi-input fi-mono" readOnly value={f.generatedNo.split("/")[0] ?? ""} />}</FormField>
-                <FormField label="Bulan">{(a) => <input {...a} className="fi-input fi-tnum" readOnly value={f.setup.bulan} />}</FormField>
-                <FormField label="Tahun">{(a) => <input {...a} className="fi-input fi-tnum" readOnly value={f.setup.tahun} />}</FormField>
+                <FormField label="Bulan" required={!f.periodeTetap}>{(a) => <input {...a} className="fi-input fi-tnum" readOnly={f.periodeTetap} inputMode="numeric" maxLength={2} placeholder="MM" value={f.setup.bulan} onChange={(e) => f.ubahSetup({ bulan: e.target.value.replace(/\D/g, "") })} />}</FormField>
+                <FormField label="Tahun" required={!f.periodeTetap}>{(a) => <input {...a} className="fi-input fi-tnum" readOnly={f.periodeTetap} inputMode="numeric" maxLength={4} placeholder="YYYY" value={f.setup.tahun} onChange={(e) => f.ubahSetup({ tahun: e.target.value.replace(/\D/g, "") })} />}</FormField>
             </div>
             <div className="fi-field">
                 <span className="fi-caption">{f.nomorTetap ? "No pengajuan" : "No pengajuan (perkiraan)"}</span>

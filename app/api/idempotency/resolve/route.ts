@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
     }
     if (String(sesi.databaseId) !== expected) {
         return NextResponse.json({ ok: false, code: "database_changed", databaseId: sesi.databaseId, databaseAlias: sesi.databaseAlias ?? null,
-            error: `Database Accurate sesi berubah (kini ${sesi.databaseAlias || sesi.databaseId}) — muat ulang lalu cari lagi. Tidak ada yang diubah.` }, { status: 409 });
+            error: `Database Accurate sesi berubah (kini ${sesi.databaseAlias || sesi.databaseId}). Muat ulang lalu cari lagi. Tidak ada yang diubah.` }, { status: 409 });
     }
     const baca = bacaAccurate({ sessionHost: sesi.sessionHost, sessionId: sesi.sessionId, accessToken: sesi.accessToken });
     const hasil = await selesaikanPelunasan(db, {

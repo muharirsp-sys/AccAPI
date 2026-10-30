@@ -126,6 +126,15 @@ assert(alfamartAlias.principalLines.every(line => line.customerCodeRaw === "C-AL
 for (const [invoice, source, target] of [
   ["1671-SRI-260002156", "C-HE0027", "C-MIT058"],
   ["1671-SRI-260002108", "322630771184", "C-CIT780"],
+  ["1671-SRI-260002242", "52410325906", "C-SAT307"],
+  ["1671-SRI-260002189", "923120291495", "C-CIT040"],
+  ["1671-SRI-260002190", "22120007096", "C-PRA004"],
+  ["1671-SRI-260002184", "52330222295", "C-BER030"],
+  ["1671-SRI-260002185", "322510497184", "C-SYA061"],
+  ["1671-SRI-260002233", "52440374771", "C-ABI010"],
+  ["1671-SRI-260002208", "52330224298", "C-TK0006"],
+  ["1671-SRI-260002267", "52430367095", "C-UKM004"],
+  ["1671-SRI-260002311", "322510498179", "C-DIA062"],
 ]) {
   const principalRows = workbook("Sheet1", [principalHeader,
     [invoice, source, "P1", -1, -30, 0, 0, 0, -3, -33, "RET01"],

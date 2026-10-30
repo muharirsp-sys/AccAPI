@@ -27,6 +27,8 @@ export type Principal = {
 export type Log = {
     id: number; entitas: "principal" | "varian" | "alias"; kunci: string; principalId: string; aksi: "buat" | "aktif" | "nonaktif" | "hapus";
     before: Record<string, unknown> | null; after: Record<string, unknown> | null; aktor: string; waktu: string;
+    /** Nama akun pelaku (API riwayat, left join user); null = aktor bukan akun (benih) atau akunnya sudah tidak ada. */
+    actorName?: string | null;
 };
 export type HalamanRiwayat = { riwayat: Log[]; sebelum: number | null };
 export type SaringStatus = "semua" | "aktif" | "nonaktif";
@@ -63,9 +65,9 @@ export function ringkasLog(l: Log): { apa: string; rinci: string } {
     return { apa: `Alias ${kata}`, rinci: `“${teksDari(isi.aliasAsli) || l.kunci}” · ${labelJenis(teksDari(isi.jenis))}${varian}` };
 }
 
-/** Aktor = id akun sesi (tanpa nama di API); benih memakai `benih:S7-2`.
- *  TODO: tampilkan nama pelaku bila API riwayat menyertakan `actorName` (audit desain 001, No 87); butuh perubahan API, bukan layar. */
-export const aktorTeks = (aktor: string) => (aktor.startsWith("benih:") ? `benih ${aktor.slice(6)}` : aktor);
+/** Pelaku riwayat: nama akun dari API (`actorName`, audit desain 001 No 87); benih `benih:S7-2` -> "benih S7-2"; id akun hanya cadangan. */
+export const aktorTeks = (aktor: string, actorName?: string | null) =>
+    (actorName?.trim() ? actorName.trim() : aktor.startsWith("benih:") ? `benih ${aktor.slice(6)}` : `akun ${aktor}`);
 
 // ---------------------------------------------------------------------------------------------------------- jaringan
 

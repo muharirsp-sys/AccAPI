@@ -2,7 +2,7 @@
  * Tujuan: Dashboard SPV (Fiori S5, it05 — Overview Page): total tim, laporan + tanda per salesman, detail kunjungan, bahan
  *   briefing sore, "Tandai sudah dibaca" (#17) dan "Batalkan tanda dibaca" (S5-4a, kontrak #132) lewat dialog. Admin/manager/admin_sales
  *   memilih SPV (#16): route spv-dashboard
- *   hanya menerima `spvName` untuk peran itu; daftar SPV dari GET sales-profiles (bila gagal: isian teks + VariantNote).
+ *   hanya menerima `spvName` untuk peran itu; daftar SPV dari GET sales-profiles (bila gagal: isian teks + keterangan).
  *   Tanggal "hari ini" = WITA (hariIniWita, dikirim ke server); jam tampil WITA.
  * Caller: app/(dashboard)/form-kontrol/spv-dashboard/page.tsx.
  * Dependensi: ../shared (Scope, hariIniWita, rentangWita, ambilFk, tulisFk), components/fiori/{core,interactive},
@@ -207,10 +207,11 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                         <RefreshCw className="fi-icon" aria-hidden />Muat ulang
                     </button>
                 </p>
-                <VariantNote bl="it05 #15">
-                    Persentase dihitung dari baris status rute yang tercatat hari itu (dari kunjungan dan &quot;Kirim status rute hari ini&quot;), belum
-                    dari rute JKS yang direncanakan. Toko yang tidak pernah disentuh dan belum dikirim statusnya tidak ikut terhitung.
-                </VariantNote>
+                {/* Fakta tugas untuk SPV (cara membaca persentase); batasan "belum dari rute JKS" hanya di catatan varian Admin BL-28 (audit No 80, tinjauan K2). */}
+                <p className="fi-small fi-subtle">
+                    Persentase dihitung dari status rute yang tercatat hari itu (kunjungan dan &quot;Kirim status rute hari ini&quot;); toko yang belum disentuh
+                    dan belum dikirim statusnya tidak ikut terhitung.
+                </p>
                 {belumKirim.length === 0
                     ? <MessageStrip tone="pos" title="Semua salesman sudah mengirim laporan.">Data siap untuk briefing sore.</MessageStrip>
                     : <MessageStrip tone="warn" title={`${belumKirim.length} salesman belum mengirim laporan:`}>{belumKirim.map((r) => r.salesName).join(", ")}</MessageStrip>}
@@ -240,10 +241,10 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                     {pilihSpv}
                 </div>
                 {pemilih && spvLoad.status === "galat" && (
-                    <VariantNote bl="it05 #16">
+                    <p className="fi-help">
                         Daftar SPV diambil dari Hierarki Sales dan belum bisa dibaca akun ini ({(spvLoad.error ?? "").replace("Daftar SPV belum berhasil dimuat.", "").trim() || "galat server"}).
                         Ketik nama SPV persis seperti di Hierarki Sales.
-                    </VariantNote>
+                    </p>
                 )}
             </div>
             {sukses && <MessageStrip tone="pos" title={sukses} onClose={() => setSukses("")} />}
@@ -259,9 +260,9 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                 </MessageStrip>
             ) : null}
             {isi}
-            <VariantNote bl="BL-28">
+            <VariantNote bl="BL-28, it05 #15">
                 Tanggal &quot;hari ini&quot; dihitung di perangkat dalam WITA; penetapan tanggal oleh server menunggu BL-28. Cap waktu yang tercetak
-                di foto kunjungan masih memakai WIB.
+                di foto kunjungan masih memakai WIB. Persentase rute belum dihitung dari rute JKS yang direncanakan.
             </VariantNote>
             <ConfirmDialog
                 open={ack !== null}

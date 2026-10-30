@@ -23,12 +23,12 @@ export function postStatusNote(status: string, error: string, rawStatus = status
     if (status === "unknown") {
         const rejected = /^Accurate menolak[^:]*:\s*([\s\S]*)$/.exec(error.trim());
         if (rejected) {
-            return `Accurate menolak: ${accurateText(rejected[1])} — status TIDAK PASTI (belum terbukti tidak tersimpan); cek purchase-payment di Accurate lalu selesaikan.`;
+            return `Accurate menolak: ${accurateText(rejected[1])}. Status TIDAK PASTI (belum terbukti tidak tersimpan); cek purchase-payment di Accurate lalu selesaikan.`;
         }
         if (rawStatus === "failed") {
-            return `TIDAK PASTI — tercatat "gagal" sebelum pembaruan, tetapi galatnya ambigu (${error || "tanpa pesan"}); cek purchase-payment sebelum posting ulang.`;
+            return `TIDAK PASTI: tercatat "gagal" sebelum pembaruan, tetapi galatnya ambigu (${error || "tanpa pesan"}); cek purchase-payment sebelum posting ulang.`;
         }
-        return `TIDAK PASTI — tanpa jawaban pasti dari Accurate${error ? ` (${error})` : ""}; cek purchase-payment sebelum posting ulang.`;
+        return `TIDAK PASTI: tanpa jawaban pasti dari Accurate${error ? ` (${error})` : ""}; cek purchase-payment sebelum posting ulang.`;
     }
     return status === "failed" ? `Post gagal: ${error}` : "";
 }

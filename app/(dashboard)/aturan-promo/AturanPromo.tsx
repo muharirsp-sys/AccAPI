@@ -239,7 +239,7 @@ export default function AturanPromo({ permKeys }: { permKeys: string[] }) {
         <EmptyState title="Pilih aturan di daftar" message="Detail dan kalimat artinya tampil di sini." action={bolehUbah ? <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} onClick={() => buka("baru")}>Aturan baru</Button> : undefined} />
     ) : (
         <div style={{ display: "grid", gap: 12 }}>
-            <ObjectPageHeader title={tampil.id ? `Aturan #${tampil.id}` : "Aturan baru"} draft={berubah}
+            <ObjectPageHeader headingLevel={2} title={tampil.id ? `Aturan #${tampil.id}` : "Aturan baru"} draft={berubah}
                 status={tampil.id && asli ? <><StatusBadge tone={statusOf(asli).tone}>{statusOf(asli).label}</StatusBadge> <StatusBadge tone={BEBAN[bebanDari(tampil.benefitBeban ?? "")].tone}>{BEBAN[bebanDari(tampil.benefitBeban ?? "")].label}</StatusBadge></> : undefined}
                 attributes={[{ label: "Asal", value: asalLabel(tampil) }, { label: "Berlaku", value: `${tgl(tampil.periodStart) || "kapan pun"} – ${tgl(tampil.periodEnd) || "dicabut"}` }, ...(tampil.importedBy ? [{ label: "Oleh", value: tampil.importedBy }] : [])]} />
             {galatSimpan && <MessageStrip tone="neg" title={galatSimpan} onClose={() => setGalatSimpan(null)} />}

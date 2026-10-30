@@ -56,7 +56,7 @@ test("gudang: wave and kanvas are requested for today in WITA", async ({ page })
     await page.route((url) => url.pathname === "/api/rekapan-nota/kanvas", (route) => { urls.push(route.request().url()); return route.fulfill(json({ jumlahNota: 218, ditandai: 6, nihil: 0 })); });
     await page.goto("/?peran=gudang");
     const tugas = page.getByRole("region", { name: /Perlu tindakan/ });
-    await expect(tugas.getByRole("link", { name: /Exception terbuka/ })).toContainText("4");
+    await expect(tugas.getByRole("link", { name: /Masalah terbuka/ })).toContainText("4"); // "Exception" → "Masalah" (audit No 91)
     await expect(tugas.getByRole("link", { name: /Nota kanvas/ })).toContainText("Dari 218 nota hari ini");
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date());
     expect(urls.length).toBeGreaterThanOrEqual(2);

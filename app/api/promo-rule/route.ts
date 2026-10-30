@@ -47,7 +47,7 @@ function draftOf(body: Record<string, unknown>, importedBy: string): { row: Draf
     const channel = channelDiisi === "ALL" ? "" : channelDiisi;
 
     if (!text(body.principal)) return { error: "Principal wajib diisi" };
-    if (!text(body.suratProgram)) return { error: "Surat/program wajib diisi — ia yang menjelaskan asal aturannya" };
+    if (!text(body.suratProgram)) return { error: "Surat/program wajib diisi: ia yang menjelaskan asal aturannya" };
     if (!JENIS.has(benefitType)) return { error: `Jenis manfaat harus salah satu dari ${[...JENIS].join(", ")}` };
     if (!BEBAN.has(benefitBeban)) return { error: "Beban harus PRINCIPAL atau DISTRIBUTOR" };
     if (benefitType !== "BONUS_QTY" && !Number.isFinite(Number(benefitValue))) {
@@ -67,7 +67,7 @@ function draftOf(body: Record<string, unknown>, importedBy: string): { row: Draf
         const seharusnya = OWNER[tierNo] === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";
         if (benefitBeban !== seharusnya) {
             return { error: `Posisi ${tierNo} adalah beban ${seharusnya}. Aturan berbeban ${benefitBeban} `
-                + "di posisi itu tidak akan pernah cocok dengan potongan mana pun — ia hanya terlihat ada." };
+                + "di posisi itu tidak akan pernah cocok dengan potongan mana pun; ia hanya terlihat ada." };
         }
     }
 
@@ -165,7 +165,7 @@ export async function POST(request: NextRequest) {
         // kembar — itu penjaga, bukan gangguan. Dua aturan identik berarti dua jawaban.
         const pesan = error instanceof Error ? error.message : "gagal menyimpan";
         return NextResponse.json({ ok: false, error: /duplicate|unique/i.test(pesan)
-            ? "Aturan dengan surat, kelompok, barang, outlet, dan tingkat yang sama sudah ada — ubah yang itu."
+            ? "Aturan dengan surat, kelompok, barang, outlet, dan tingkat yang sama sudah ada. Ubah yang itu."
             : pesan }, { status: 409 });
     }
 }

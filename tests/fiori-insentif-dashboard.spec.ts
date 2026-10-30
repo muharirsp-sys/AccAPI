@@ -176,7 +176,9 @@ test("Dashboard: ganti ke periode yang gagal → galat, tidak pernah angka perio
     const spv = main.getByRole("region", { name: "Insentif SPV" });
     await expect(spv.locator("tbody tr").filter({ hasText: "ANI" })).toHaveCount(1, NAV);
 
-    await page.locator(".fi-fbar").getByRole("textbox", { name: "Periode" }).fill("2026-07");
+    // Periode = pilihan Bulan + Tahun (audit No 122), bukan type="month".
+    const bulanSaring = page.locator(".fi-fbar").getByRole("group", { name: "Periode" }).first().getByRole("combobox", { name: "Bulan" });
+    await bulanSaring.selectOption("7");
     await expect(page).toHaveURL(/month=7/, NAV);
     await expect(spv.getByRole("alert")).toContainText("Insentif SPV belum berhasil dimuat", NAV);
     await expect(spv.locator("tbody tr").filter({ hasText: "ANI" })).toHaveCount(0);
@@ -185,7 +187,7 @@ test("Dashboard: ganti ke periode yang gagal → galat, tidak pernah angka perio
     await expect(taksiran).toHaveAttribute("data-tone", "warn");
     await expect(taksiran).not.toContainText("SPV Rp");
 
-    await page.locator(".fi-fbar").getByRole("textbox", { name: "Periode" }).fill("2026-08");
+    await bulanSaring.selectOption("8");
     await expect(page).toHaveURL(/month=8/, NAV);
     await expect(main.getByRole("alert").filter({ hasText: "Data insentif belum berhasil dimuat." })).toBeVisible(NAV);
     await expect(main.getByText("Yang tampil adalah hasil sebelumnya")).toHaveCount(0);

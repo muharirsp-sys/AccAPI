@@ -2,11 +2,12 @@
  * Tujuan: Helper murni layar Promo (Fiori S4a): satu kosakata beban, status aturan, format rupiah/persen/tanggal, dan
  *   kalimat "artinya" sebuah aturan. Tidak ada logic bisnis baru — hanya penyajian.
  * Caller: app/(dashboard)/{summary,aturan-promo,rekap-promo,normalisasi-diskon}/*.tsx, promo-ui.test.ts.
- * Dependensi: Tidak ada. Pure.
- * Main Functions: rupiah, persen, tgl, BEBAN, bebanDari, statusAturan, bentukAturan, manfaat, JENIS_MANFAAT, artinya.
+ * Dependensi: lib/tampil (hariIniWita). Pure.
+ * Main Functions: rupiah, angkaKoma, persen, bulanWita, tgl, BEBAN, bebanDari, statusAturan, bentukAturan, manfaat, JENIS_MANFAAT, artinya.
  * Side Effects: Tidak ada.
  */
 import type { Tone } from "@/components/fiori/core";
+import { hariIniWita } from "./tampil.ts"; // relatif + .ts: modul ini juga diimpor lib/kasir lewat node tanpa alias
 
 /** Rupiah dengan desimal hanya bila nilainya berdesimal; koma desimal (D-19). */
 export function rupiah(value: number | string): string {
@@ -15,8 +16,17 @@ export function rupiah(value: number | string): string {
     return `Rp ${v.toLocaleString("id-ID", { minimumFractionDigits: pecahan ? 2 : 0, maximumFractionDigits: 2 })}`;
 }
 
+/** 2.25 → "2,25", 123456.5 → "123456,5": koma desimal tanpa pemisah ribuan (sel CSV yang dibaca Excel id-ID sebagai angka, No 65). */
+export const angkaKoma = (value: number | string) => String(value).replace(".", ",");
+
 /** 2.25 → "2,25%" (koma desimal di semua layar). */
-export const persen = (value: number | string) => `${String(value).replace(".", ",")}%`;
+export const persen = (value: number | string) => `${angkaKoma(value)}%`;
+
+/** Periode bawaan Rekap/Normalisasi: tanggal 1 s.d. akhir bulan dari hari WITA ("yyyy-mm-dd"), bukan jam perangkat (No 31). */
+export function bulanWita(hari = hariIniWita()): { from: string; to: string } {
+    const [y, m] = hari.split("-");
+    return { from: `${y}-${m}-01`, to: `${y}-${m}-${String(new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate()).padStart(2, "0")}` };
+}
 
 /** ISO → dd/mm/yyyy, bentuk tanggal di Accurate dan di surat. */
 export const tgl = (iso: string | null | undefined) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "");

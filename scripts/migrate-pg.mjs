@@ -927,6 +927,80 @@ export const migrations = [
       RESET lock_timeout;
     `,
   },
+  {
+    // 2026-10-27 (audit desain 001 No 6 dan 18; zona §3 skema + jejak keputusan, butuh review manusia). Tabel baru APPEND-ONLY saja
+    // (tanpa pembaca lama, tanpa trigger): Cabut penjelasan Verifikasi balik dan Cabut konfirmasi order ganda menyalin baris yang dicabut
+    // + alasan ke sini dalam transaksi yang sama dengan DELETE-nya. Hak accapi_app SELECT/INSERT saja bila role itu ada (pola SR-1).
+    // sudahAda lewat pg_indexes (katalog, tanpa hak tabel). SQL = db/migrations/0038_pencabutan_log.sql (0037 dipakai cabang lain).
+    nama: "pencabutan_log",
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema()
+               AND indexname IN ('pencabutan_log_pkey', 'idx_pencabutan_log_kunci') HAVING count(*) = 2`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS pencabutan_log (
+          id          bigserial PRIMARY KEY,
+          jenis       text NOT NULL,
+          kunci       text NOT NULL,
+          baris_lama  jsonb NOT NULL,
+          alasan      text NOT NULL,
+          oleh        text NOT NULL,
+          waktu       timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT pencabutan_log_jenis CHECK (jenis IN ('invoice_verify_note', 'order_dupe_ack')),
+          CONSTRAINT pencabutan_log_alasan CHECK (btrim(alasan) <> '')
+      );
+      CREATE INDEX IF NOT EXISTS idx_pencabutan_log_kunci ON pencabutan_log (jenis, kunci, id);
+      DO $pencabutan$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
+          REVOKE UPDATE, DELETE, TRUNCATE ON pencabutan_log FROM accapi_app;
+          GRANT SELECT, INSERT ON pencabutan_log TO accapi_app;
+          GRANT USAGE, SELECT ON SEQUENCE pencabutan_log_id_seq TO accapi_app;
+        END IF;
+      END $pencabutan$;
+    `,
+  },
+  {
+    // 2026-10-23 (pencatat perubahan rincian faktur; zona §3 skema + jalur sinkron — butuh review manusia). Tabel BARU saja (EXPAND,
+    // tanpa pembaca lama). SQL = db/migrations/0037_sales_invoice_line_change.sql (lib/sales-invoice-change-pg.test.ts membandingkan
+    // katalog entri ini dengan berkas itu dan Drizzle). sudahAda lewat katalog (pg_indexes), bukan information_schema. Hak accapi_app
+    // (SELECT/INSERT + sequence) ikut di sini bila role ada. Produksi PUNYA DATABASE_MIGRATION_URL: entri ini yang menerapkan.
+    nama: "sales_invoice_line_change",
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE schemaname = current_schema()
+               AND indexname IN ('idx_silc_item_no', 'idx_silc_invoice_id') HAVING count(*) = 2`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS sales_invoice_line_change (
+          id              bigserial     PRIMARY KEY,
+          invoice_id      bigint        NOT NULL,
+          invoice_number  text          NOT NULL,
+          trans_date      text          NOT NULL,
+          customer_no     text          NOT NULL DEFAULT '',
+          kind            text          NOT NULL,
+          line_id         bigint,
+          item_no         text          NOT NULL,
+          item_name       text          NOT NULL DEFAULT '',
+          old_line        jsonb,
+          new_line        jsonb,
+          base_qty_delta  numeric,
+          total_before    numeric(18,2),
+          total_after     numeric(18,2),
+          app_key         text,
+          source          text          NOT NULL,
+          saved_at        timestamptz,
+          printed_at      timestamptz,
+          printed_by      text          NOT NULL DEFAULT '',
+          after_print     boolean       NOT NULL,
+          detected_at     timestamptz   NOT NULL DEFAULT now(),
+          CONSTRAINT sales_invoice_line_change_kind CHECK (kind IN ('removed', 'added', 'changed', 'invoice_deleted')),
+          CONSTRAINT sales_invoice_line_change_source CHECK (source IN ('webhook', 'backfill', 'send'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_silc_item_no ON sales_invoice_line_change (item_no, detected_at);
+      CREATE INDEX IF NOT EXISTS idx_silc_invoice_id ON sales_invoice_line_change (invoice_id);
+      DO $silc$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
+          GRANT SELECT, INSERT ON sales_invoice_line_change TO accapi_app;
+          GRANT USAGE ON SEQUENCE sales_invoice_line_change_id_seq TO accapi_app;
+        END IF;
+      END $silc$;
+    `,
+  },
 ];
 
 async function main() {

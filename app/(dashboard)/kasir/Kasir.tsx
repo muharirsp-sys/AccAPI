@@ -10,7 +10,8 @@
  * Dependensi: GET /api/kasir, POST /api/kasir/segarkan (kontrak docs/handover/KASIR-KONTRAK.md §7–§8), ./bersama, ./DialogKasir, components/fiori,
  *   lib/tampil (KOSONG).
  * Main Functions: Kasir (default), DetailOrang.
- * Side Effects: fetch (baca + segarkan baca-saja); tulis lewat DialogKasir; timer kunci 20.00 & jeda segarkan.
+ * Side Effects: fetch (baca + segarkan baca-saja); tulis lewat DialogKasir; timer kunci 20.00 & jeda segarkan; "hari ini" WITA dihitung ulang
+ *   di klien (useHariBeku: fokus/terlihat + 30 dtk), layar di hari lama ikut pindah bila tidak ada dialog/pembacaan berjalan (No 109).
  */
 "use client";
 
@@ -26,6 +27,7 @@ import {
 } from "./bersama";
 import { DialogBuka, DialogHapus, DialogJelaskan, DialogSetoran, DialogTutup, type Kabar, type TargetJelaskan } from "./DialogKasir";
 import { KOSONG } from "@/lib/tampil";
+import { useHariBeku } from "../form-kontrol/lapangan";
 
 /** Segarkan berulang (§7 catatan K2): jeda ≥ 6 dtk antarpanggilan + batas ulang. */
 export const JEDA_SEGARKAN_MS = 6_000;
@@ -74,7 +76,7 @@ const badgeOrang = (b: BarisOrang) => b.status === null ? <StatusBadge tone="neu
 
 const tunda = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariIni: string }) {
+export default function Kasir({ permKeys, hariIni, jamServerMs }: { permKeys: string[]; hariIni: string; jamServerMs: number }) {
     const keys = useMemo(() => new Set(permKeys), [permKeys]);
     const izin = { catat: keys.has("kasir.catat"), tutup: keys.has("kasir.tutup"), buka: keys.has("kasir.buka") };
     const [tanggal, setTanggal] = useState(hariIni);
@@ -107,11 +109,26 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
         return () => clearTimeout(t);
     }, [kb, sekarangServer]);
 
-    const gantiTanggal = (t: string) => {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(t) || t > hariIni) return;
+    const [tawar, setTawar] = useState<string | null>(null); // hari baru yang ditawarkan (strip "Pindah ke hari ini")
+    const pindahKe = (t: string) => {
         if (token.current) token.current.batal = true;
         raguKe.current += 1;
-        setTanggal(t); setPilih(null); setDialog(null); setSukses(null); setRagu(null); setProses(null); setPesanBaca(null);
+        setTanggal(t); setPilih(null); setDialog(null); setSukses(null); setRagu(null); setProses(null); setPesanBaca(null); setTawar(null);
+    };
+    // "Hari ini" dihitung ulang di klien (WITA) saat tab fokus/terlihat lagi dan lewat tengah malam (owner 27 Okt, audit No 109): layar yang
+    // masih di hari lama ikut pindah; tanggal pilihan user tidak ditimpa; dialog, pembacaan, dan hasil tulis yang belum pasti (strip "belum
+    // pasti", juga selama diperiksa) tidak dipindah diam-diam: strip "Pindah ke hari ini" (tinjauan K2 S-1).
+    // Hari dihitung dari jam SERVER (selisih sekali saat dibuka), bukan jam peramban yang bisa miring: route menolak tanggal di atas hari server
+    // (tinjauan K2 R-1). ponytail: selisih memuat latensi render (detik); diperbarui hanya saat halaman dimuat ulang.
+    const [selisihJam] = useState(() => jamServerMs - Date.now());
+    const { hariBaru: hariKini } = useHariBeku((baru, lama) => {
+        if (tanggal !== lama) return;
+        if (dialog || proses || ragu) setTawar(baru); else pindahKe(baru);
+    }, selisihJam);
+    const batasHari = hariKini > hariIni ? hariKini : hariIni;
+    const gantiTanggal = (t: string) => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(t) || t > batasHari) return;
+        pindahKe(t);
     };
 
     async function periksaRagu(aksi: string, periksa: (x: Hari) => string) {
@@ -239,7 +256,7 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
                 setoran = pelunasan dibulatkan ke atas ke Rp 100.</p>
             <div className="flex flex-wrap items-end gap-3">
                 <FormField label="Tanggal">
-                    {(a) => <input {...a} className="fi-input" type="date" max={hariIni} value={tanggal} onChange={(e) => gantiTanggal(e.target.value)} />}
+                    {(a) => <input {...a} className="fi-input" type="date" max={batasHari} value={tanggal} onChange={(e) => gantiTanggal(e.target.value)} />}
                 </FormField>
                 <dl className="fi-attrs">
                     <div><dt>Hari</dt><dd>{tanggalPanjang(tanggal)}{h && !h.hari.hariKerja ? " (Minggu)" : ""}</dd></div>
@@ -346,6 +363,12 @@ export default function Kasir({ permKeys, hariIni }: { permKeys: string[]; hariI
         <div className="fi-page">
             {kepala}
             {sukses && <MessageStrip tone="pos" onClose={() => setSukses(null)}>{sukses}</MessageStrip>}
+            {tawar && tawar !== tanggal && (
+                <MessageStrip tone="info" title={`Hari sudah berganti ke ${tanggalPanjang(tawar)}.`} onClose={() => setTawar(null)}>
+                    Layar tetap di {tanggalPanjang(tanggal)} karena ada pekerjaan yang belum selesai.{" "}
+                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => pindahKe(tawar)}>Pindah ke hari ini</button>
+                </MessageStrip>
+            )}
             {ragu && (
                 <MessageStrip tone="warn" title={`Hasil ${ragu.aksi} belum pasti.`} onClose={ragu.status === "memeriksa" ? undefined : () => setRagu(null)}>
                     Server tidak memberi jawaban yang pasti; tidak diulang otomatis.{" "}

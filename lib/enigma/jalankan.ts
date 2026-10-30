@@ -106,8 +106,8 @@ export async function jalankanEnigma({ tanggal, kirim, sumber }: { tanggal: stri
         if (outletBaru.size) hasil.peringatan.push(`Pelanggan baru diberi TYPE_OUTLET "MTI OTHERS": ${[...outletBaru].map(([k, v]) => `${k} ${v}`).join("; ")}`);
         const buku = xlsx(baris);
         if (!cfg) { hasil.status = "pratinjau"; return { ...hasil, xlsx: buku }; }
-        if (galat.length) throw new Error("Isian wajib Enigma kosong — tidak diunggah");
-        if (!baris.length) throw new Error("Tidak ada baris Marketama bulan ini — tidak diunggah (cek sesi/database Accurate)");
+        if (galat.length) throw new Error("Isian wajib Enigma kosong. Tidak diunggah");
+        if (!baris.length) throw new Error("Tidak ada baris Marketama bulan ini. Tidak diunggah (cek sesi/database Accurate)");
 
         await writeFile(path.join(folder, `ENIGMA_${ymd}.xlsx`), buku);
         // Begitu portal menerima berkas, tandai "diproses": galat sesudahnya (status tak terbaca) tidak memicu unggah ulang oleh cron.
@@ -117,7 +117,7 @@ export async function jalankanEnigma({ tanggal, kirim, sumber }: { tanggal: stri
         } });
         status.unggah = { waktu: new Date().toISOString(), id: h.id, status: h.status };
         await writeFile(berkasStatus, JSON.stringify(status, null, 1));
-        hasil.portal = `unggahan ${h.id}: ${h.status}${h.keterangan ? ` — ${h.keterangan}` : ""}`;
+        hasil.portal = `unggahan ${h.id}: ${h.status}${h.keterangan ? ` (${h.keterangan})` : ""}`;
         hasil.log = h.log;
         hasil.status = h.status === "success" ? "terkirim" : "validation_error";
         return hasil;
@@ -143,7 +143,7 @@ async function catat(hasil: HasilEnigma, adminEmail: string) {
         text: [`Laporan Enigma (Marketama Indah) bulan berjalan s.d. ${hasil.tanggal}`, `Status: ${hasil.status}`,
             hasil.baris && `Baris: ${hasil.baris.sales} (dari ${hasil.baris.faktur} faktur dan ${hasil.baris.retur} retur cabang MIX FOOD)`,
             hasil.portal && `Portal: ${hasil.portal}`,
-            ...[...kelompok].map(([p, n]) => `Validasi: ${p} — ${n.length} baris (${n.slice(0, 30).join(", ")}${n.length > 30 ? ", …" : ""})`),
+            ...[...kelompok].map(([p, n]) => `Validasi: ${p}, ${n.length} baris (${n.slice(0, 30).join(", ")}${n.length > 30 ? ", …" : ""})`),
             ...hasil.galat.map((g) => `Galat: ${g}`), ...hasil.peringatan.map((p) => `Peringatan: ${p}`),
             hasil.status === "validation_error" && `Perbaiki data/peta lalu unggah ulang dari ${WEB} (bagian "Laporan Enigma").`,
             hasil.status === "gagal" && `Cron mengulang pukul 21.30 dan 22.30 WITA, atau unggah manual dari ${WEB}.`,

@@ -1,6 +1,6 @@
 /*
  * Tujuan: Wizard Laporan Harian (Fiori S3): 1 Unggah export Accurate → 2 Tinjau hasil → 3 Penerima → 4 Kirim (di footer),
- *   plus Riwayat kirim (Kirim ulang untuk run gagal; run macet berlabel BL-29). Dialog Kirim menggantikan window.confirm.
+ *   plus Riwayat kirim (Kirim ulang untuk run gagal; run macet disebut di subjudul, BL-29). Dialog Kirim menggantikan window.confirm.
  * Caller: app/(dashboard)/laporan-harian/page.tsx.
  * Dependensi: POST /api/laporan-harian/upload, GET /api/laporan-harian/[runId]/preview, POST /api/laporan-harian/[runId]/send,
  *   GET /api/laporan-harian/runs; components/fiori/{core,interactive}; lib/laporan-harian/ui; lib/tampil (KOSONG, sebabHttp, waktuWita).
@@ -175,7 +175,6 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
         const bagian = [p.sent ? `${p.sent} terkirim` : "", p.failed ? `${p.failed} gagal` : "", p.skipped ? `${p.skipped} dilewati` : "", p.pending && r.status !== "dry_run" ? `${p.pending} tertunda` : "", m === "closing" ? "closing" : ""].filter(Boolean);
         return bagian.join(" · ") || KOSONG;
     };
-    const macet = (riwayat.data ?? []).some((r) => statusRun(r.status, r.createdAt).kode === "macet");
     const gagalPenerima = runUlang ? (runUlang.penerima.failed ?? 0) + (runUlang.penerima.pending ?? 0) : 0;
 
     return (
@@ -205,8 +204,8 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
                 <div className="fi-sect-in">
                     {memproses ? <Skeleton rows={3} label="Mengolah berkas" /> : (
                         <div className="fi-kcards">
-                            <FilePick id="laporan-penjualan" label="Penjualan (INV)" help="Rincian faktur penjualan atau workbook 1. Paste Data · .xlsx · wajib" required file={penjualan} onChange={setPenjualan} disabled={!bolehUnggah} />
-                            <FilePick id="laporan-retur" label="Retur (RJN)" help="Laporan retur (No.Retur) atau rincian RJN · .xlsx · opsional; otomatis dari sheet Paste Lap. Retur" file={retur} onChange={setRetur} disabled={!bolehUnggah} />
+                            <FilePick id="laporan-penjualan" label="Penjualan (INV)" help="Rincian faktur penjualan INV atau workbook 1. Paste Data · .xlsx · wajib" required file={penjualan} onChange={setPenjualan} disabled={!bolehUnggah} />
+                            <FilePick id="laporan-retur" label="Retur (RJN)" help="Rincian retur penjualan (yang biasa ditempel ke Paste Lap. Retur) · .xlsx · opsional" file={retur} onChange={setRetur} disabled={!bolehUnggah} />
                             <FilePick id="laporan-stock" label="Stock" help="3. Stock atau kuantitas barang per gudang · .xlsx · opsional" file={stock} onChange={setStock} disabled={!bolehUnggah} />
                         </div>
                     )}
@@ -293,7 +292,7 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
                     status={riwayat.status} error={riwayat.error} onRetry={muatRiwayat}
                     empty={{ title: "Belum ada run laporan", message: "Riwayat terisi setelah berkas pertama diproses." }}
                     mobileItem={(r) => { const s = statusRun(r.status, r.createdAt); return <ListItem doc={tanggalPendek(r.reportDate)} title={`${waktuWita(r.createdAt)} · ${r.fileCount} berkas / ${r.emailCount} email`} meta={bolehKirim && r.status === "failed" ? <Button variant="tertiary" onClick={() => { setRunUlang(r); setDialog("kirimUlang"); }}>Kirim ulang…</Button> : catatanRun(r)} badge={<StatusBadge tone={s.tone}>{s.label}</StatusBadge>} />; }} />
-                {macet && <div className="fi-sect-in"><VariantNote bl="BL-29">Run berstatus Macet terputus saat mengirim lebih dari 10 menit lalu; hari ini tidak bisa diklaim ulang dari layar. Usulan: tombol Lanjutkan yang mengirim penerima tertunda atau gagal saja.</VariantNote></div>}
+                {/* BL-29 (run Macet tak bisa dilanjutkan): sudah tertulis di subjudul bagian; satu catatan varian per layar = BL-58 (audit No 80). */}
             </Section>
 
             {(bolehUnggah || (hasil && bolehKirim)) && (

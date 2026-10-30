@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { artinya, bebanDari, manfaat, persen, rupiah, statusAturan, tgl } from "@/lib/promo-ui";
+import { angkaKoma, artinya, bebanDari, bulanWita, manfaat, persen, rupiah, statusAturan, tgl } from "@/lib/promo-ui";
 
 test("rupiah: desimal hanya bila berdesimal; persen koma", () => {
     assert.equal(rupiah(20000), "Rp 20.000");
@@ -15,6 +15,18 @@ test("rupiah: desimal hanya bila berdesimal; persen koma", () => {
     assert.equal(manfaat("DISC_RP", "20000"), "Rp 20.000");
     assert.equal(manfaat("BONUS_QTY", "1"), "bonus 1");
     assert.equal(tgl("2026-10-06"), "06/10/2026");
+});
+
+test("angka CSV Rekap Promo: koma desimal, tanpa pemisah ribuan", () => {
+    assert.equal(angkaKoma(2.25), "2,25");
+    assert.equal(angkaKoma(123456.5), "123456,5");
+    assert.equal(angkaKoma(1500000), "1500000");
+    assert.equal(angkaKoma(-3.5), "-3,5");
+});
+
+test("periode bawaan = bulan WITA penuh", () => {
+    assert.deepEqual(bulanWita("2026-10-27"), { from: "2026-10-01", to: "2026-10-31" });
+    assert.deepEqual(bulanWita("2028-02-10"), { from: "2028-02-01", to: "2028-02-29" });
 });
 
 test("status aturan: nonaktif mengalahkan masa berlaku; batas tanggal inklusif", () => {

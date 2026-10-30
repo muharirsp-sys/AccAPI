@@ -95,9 +95,9 @@ export const KONSTANTA_FIELDS: readonly KonstantaField[] = [
     { path: "mt.ambangIa", grup: "Sales MT", label: "Ambang bayar IA", kind: "rasio" },
 
     { path: "spv.rate1", grup: "SPV", label: "Rate 1 principal", kind: "rp" },
-    { path: "spv.rateBase", grup: "SPV", label: "Rate — konstanta", kind: "rp", catatan: "rate(n) = konstanta + faktor ÷ n, minimum = lantai." },
-    { path: "spv.rateFaktor", grup: "SPV", label: "Rate — faktor", kind: "rp" },
-    { path: "spv.rateFloor", grup: "SPV", label: "Rate — lantai", kind: "rp" },
+    { path: "spv.rateBase", grup: "SPV", label: "Rate konstanta", kind: "rp", catatan: "rate(n) = konstanta + faktor ÷ n, minimum = lantai." },
+    { path: "spv.rateFaktor", grup: "SPV", label: "Rate faktor", kind: "rp" },
+    { path: "spv.rateFloor", grup: "SPV", label: "Rate lantai", kind: "rp" },
     { path: "spv.ambang", grup: "SPV", label: "Ambang bayar", kind: "rasio", catatan: "Semua-atau-tidak: di bawah ambang → Rp 0." },
 
     { path: "sm.ambang1", grup: "SM", label: "Ambang strata 1", kind: "rasio" },

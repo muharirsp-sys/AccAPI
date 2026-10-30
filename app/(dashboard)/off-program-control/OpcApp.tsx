@@ -1,7 +1,7 @@
 /*
  * Tujuan: Klien OFF Program Control (Fiori S4d): resolusi peran SAMA dengan kode lama (sesi Better Auth + useLocalAuthRole →
  *   resolveOffRole, getOffAccessibleTabs; SM hanya tab Sales Manager), navigasi antar-antrean lewat kunci `?tab=` lama, lonceng +
- *   pencarian global yang membuka `?batch=` di kolom kedua untuk peran apa pun, `?mock=` fixture dev, dan penjaga draf
+ *   pencarian global (pintasan "/") yang membuka `?batch=` di kolom kedua untuk peran apa pun (baris batch = tautan nyata, hrefBatch), `?mock=` fixture dev, dan penjaga draf
  *   (dialog sebelum pindah batch/tab + beforeunload). Isi tiap tab = modul peran di opc/peran/*. Cek sesi yang gagal tampil sebagai
  *   galat (Coba lagi), bukan sebagai "belum memiliki akses".
  * Caller: app/(dashboard)/off-program-control/page.tsx.
@@ -86,6 +86,7 @@ export default function OpcApp({ permKeys }: { permKeys: string[] }) {
         izin: (aksi: OffAction) => izinAksi(peran, aksi),
         // Log audit tidak punya kolom kedua: batch dibuka di tab pertama yang punya (Ringkasan bila boleh).
         bukaBatch: (id) => ubahUrl(id && !tabPunyaDetail(tab) ? { tab: boleh.find(tabPunyaDetail) ?? tab, batch: id } : { batch: id }),
+        hrefBatch: (id) => urlDengan(!tabPunyaDetail(tab) ? { tab: boleh.find(tabPunyaDetail) ?? tab, batch: id } : { batch: id }),
         pilihSub: (kunci) => ubahUrl(tab === "claim" ? { claimView: kunci } : { view: kunci }),
         ubahUrl,
         setDraf,
@@ -109,11 +110,12 @@ export default function OpcApp({ permKeys }: { permKeys: string[] }) {
                 {siap && ctx && (
                     <>
                         {/* Ponsel (< 640 px): pencarian turun ke baris sendiri, lonceng tinggal ikon + jumlah di samping judul. */}
+                        {/* Pintasan "/" (owner 27 Okt, audit No 142): Ctrl K tetap milik cari menu shell di semua halaman. */}
                         <div className="min-w-0 flex-[0_1_18rem] max-sm:order-last max-sm:flex-[1_1_100%]">
-                            <OffGlobalSearch placeholder="Cari pengajuan (Ctrl K)" onSelect={(id) => ctx.bukaBatch(id)} muat={muat}
+                            <OffGlobalSearch placeholder="Cari pengajuan (tekan /)" onSelect={(id) => ctx.bukaBatch(id)} muat={muat}
                                 items={daftar.batches.map((b) => ({ id: b.id, noPengajuan: b.noPengajuan, principleName: b.principleName, status: infoTahap(b).label, supervisorName: b.supervisorName }))} />
                         </div>
-                        <OffNotificationBell problems={daftar.masalah} onSelectBatch={(id) => ctx.bukaBatch(id)} muat={muat} />
+                        <OffNotificationBell problems={daftar.masalah} onSelectBatch={(id) => ctx.bukaBatch(id)} hrefBatch={ctx.hrefBatch} muat={muat} />
                     </>
                 )}
             </div>

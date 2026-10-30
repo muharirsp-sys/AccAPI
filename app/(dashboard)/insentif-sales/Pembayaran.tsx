@@ -3,7 +3,7 @@
  *   (sales, SPV, SM) dengan bruto → PPh → netto dan rincian per baris, pilih semua yang belum dibayar di saringan aktif, penerima
  *   terpilih di luar saringan disebut namanya, dan Tandai lunas lewat dialog. Pengganti FinanceView di page.tsx lama.
  * Caller: app/(dashboard)/insentif-sales/pembayaran/page.tsx (default export, prop permKeys).
- * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard, KonstantaCtx), ./Rincian (TabelRincian, rincian, PPh, StatusBayar,
+ * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard, KonstantaCtx), ./Rincian (rincian, PPh, StatusBayar,
  *   pemuat SPV/SM), ./data (format, MONTH_LABELS), components/fiori/*, lib/insentif-ui, lib/insentif-payee, lib/insentif-pph, lib/insentif-payment-date,
  *   lib/rekapan-nota/ui (ambil), lib/tampil (tanggalWita, waktuWita, KOSONG), sonner.
  * Main Functions: Pembayaran (default), barisBulan, ringkasan12Bulan, UbinBulan.
@@ -17,7 +17,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Check, Pencil, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { Button, ErrorState, FooterToolbar, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Column, type Tone } from "@/components/fiori/core";
+import { Button, ErrorState, FooterToolbar, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, VariantNote, type Column, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
 import { DEFAULT_KONSTANTA } from "@/lib/insentif-konstanta";
 import { parsePaymentDate, todayWita } from "@/lib/insentif-payment-date";
@@ -29,7 +29,7 @@ import { KOSONG as NILAI_KOSONG, tanggalWita, waktuWita } from "@/lib/tampil";
 import { MONTH_LABELS, formatRp, formatShortRp } from "./data";
 import { InsentifRangka, KonstantaCtx, useDashboard, usePeriode } from "./Rangka";
 import {
-    SalesBreakdown, SmBreakdown, SpvBreakdown, StatusBayar, TabelRincian, kolomPph, labelPph, sebabNolSpv, useInsentifSm, useInsentifSpv,
+    SalesBreakdown, SmBreakdown, SpvBreakdown, StatusBayar, kolomPph, labelPph, sebabNolSpv, useInsentifSm, useInsentifSpv,
     type SmIncentiveRow, type SpvIncentiveRow,
 } from "./Rincian";
 
@@ -378,8 +378,8 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
                         <button type="button" className="fi-btn fi-btn--tertiary" onClick={hapusSaringan}>Tampilkan</button>
                     </MessageStrip>
                 )}
-                <TabelRincian<Baris>
-                    title={`Insentif ${label}`} count={terlihat.length} columns={kolom} rows={terlihat} rowKey={paymentSelectionKey} rowLabel={namaBaris}
+                <ResponsiveTable<Baris>
+                    title={`Insentif ${label}`} count={terlihat.length} columns={kolom} rows={terlihat} rowKey={paymentSelectionKey}
                     status={galatUlang ? "galat" : memuat ? "memuat" : "siap"} error={galatUlang?.error} onRetry={muatSemua}
                     selected={selected} onSelectedChange={pilih} selectableRow={bolehPilih}
                     actions={
@@ -394,14 +394,17 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
                     empty={detailRows.length === 0
                         ? { title: `Belum ada insentif ${label}`, message: "Insentif periode ini belum dihitung: target atau progres belum diunggah. Pilih bulan lain di ubin di atas." }
                         : { title: "Tidak ada penerima untuk saringan ini", message: `${detailRows.length} penerima lain tersembunyi oleh saringan.`, action: <Button onClick={hapusSaringan}>Hapus saringan</Button> }}
-                    rincian={(r) => {
-                        const sales = r.role === "sales" ? salesByKey.get(`${r.salesCode}|${r.principle}`) : undefined;
-                        const spv = r.role === "spv" ? spvByName.get(r.salesName) : undefined;
-                        const sm = r.role === "sm" ? smByName.get(r.salesName) : undefined;
-                        return sales ? <SalesBreakdown r={sales} semuaBaris={apiRows} />
-                            : spv ? <SpvBreakdown rincian={spv.rincian} />
-                                : sm ? <SmBreakdown r={sm} />
-                                    : <p className="fi-small fi-muted">Rincian hanya tersedia untuk periode yang dihitung ulang ({label}). Catatan pembayaran menyimpan nominalnya saja, bukan target dan realisasinya.</p>;
+                    rincian={{
+                        nama: namaBaris,
+                        isi: (r) => {
+                            const sales = r.role === "sales" ? salesByKey.get(`${r.salesCode}|${r.principle}`) : undefined;
+                            const spv = r.role === "spv" ? spvByName.get(r.salesName) : undefined;
+                            const sm = r.role === "sm" ? smByName.get(r.salesName) : undefined;
+                            return sales ? <SalesBreakdown r={sales} semuaBaris={apiRows} />
+                                : spv ? <SpvBreakdown rincian={spv.rincian} />
+                                    : sm ? <SmBreakdown r={sm} />
+                                        : <p className="fi-small fi-muted">Rincian hanya tersedia untuk periode yang dihitung ulang ({label}). Catatan pembayaran menyimpan nominalnya saja, bukan target dan realisasinya.</p>;
+                        },
                     }}
                     mobileItem={(r) => (
                         <div className="fi-wl-row">

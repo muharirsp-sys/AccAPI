@@ -97,7 +97,7 @@ export function bacaAccurate(target: AccurateTarget) {
 export function accurateTimeoutMessage(method: string) {
     return String(method).toUpperCase() === "GET"
         ? "Accurate tidak merespons dalam 30 detik (timeout). Coba lagi."
-        : "Accurate tidak merespons dalam 30 detik (timeout) — status tulis TIDAK PASTI: periksa di Accurate sebelum mengirim ulang.";
+        : "Accurate tidak merespons dalam 30 detik (timeout). Status tulis TIDAK PASTI: periksa di Accurate sebelum mengirim ulang.";
 }
 
 /**

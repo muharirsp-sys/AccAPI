@@ -65,7 +65,7 @@ export function causeLines(row: ReconciliationResult, principal: string): string
 }
 
 export function returnCauseLines(row: ReturnReconciliationResult, principal: string): string[] {
-    if (row.status === "KOREKSI") return row.warnings.length ? row.warnings : ["Koreksi — PAJAK_NO berawalan INV."];
+    if (row.status === "KOREKSI") return row.warnings.length ? row.warnings : ["Koreksi: PAJAK_NO berawalan INV."];
     if (row.status === "MATCH") return ["Tidak ada selisih."];
     if (row.status === "INVALID_DATA") return row.invalidReason ? [row.invalidReason] : row.warnings.length ? row.warnings : ["Data tidak valid."];
     const causes: string[] = [];
@@ -78,9 +78,9 @@ export function returnCauseLines(row: ReturnReconciliationResult, principal: str
         return causes;
     }
     if (row.quantityDifference !== 0)
-        causes.push(`Qty: Accurate ${number.format(row.accurateQuantity)}, ${principal} ${number.format(row.principalQuantity)} — ${direction(row.quantityDifference, number.format(Math.abs(row.quantityDifference)))}`);
+        causes.push(`Qty: Accurate ${number.format(row.accurateQuantity)}, ${principal} ${number.format(row.principalQuantity)} (${direction(row.quantityDifference, number.format(Math.abs(row.quantityDifference)))})`);
     if (Math.abs(row.dppDifference) > 1)
-        causes.push(`DPP: Accurate ${money(row.accurateDpp)}, ${principal} ${money(row.principalDpp)} — ${direction(row.dppDifference, money(Math.abs(row.dppDifference)))}`);
+        causes.push(`DPP: Accurate ${money(row.accurateDpp)}, ${principal} ${money(row.principalDpp)} (${direction(row.dppDifference, money(Math.abs(row.dppDifference)))})`);
     return causes.length ? causes : row.warnings;
 }
 

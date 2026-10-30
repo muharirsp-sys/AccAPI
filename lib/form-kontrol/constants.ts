@@ -85,7 +85,7 @@ export function pilihNamaAkun(nama: unknown, akun: readonly string[], peran: "SP
     if (cocok.length === 1) return { nama: cocok[0] };
     return cocok.length === 0
         ? { galat: { status: 400, kode: `${peran}_TIDAK_DIKENAL`, error: `${peran} "${teks}" tidak cocok dengan akun ${peran} aktif mana pun; pilih dari daftar akun.` } }
-        : { galat: { status: 409, kode: "NAMA_GANDA", error: `Ada ${cocok.length} akun ${peran} aktif bernama "${cocok[0]}" — cakupan akan terbagi ke semuanya; ubah nama salah satu akun dulu.` } };
+        : { galat: { status: 409, kode: "NAMA_GANDA", error: `Ada ${cocok.length} akun ${peran} aktif bernama "${cocok[0]}"; cakupan akan terbagi ke semuanya. Ubah nama salah satu akun dulu.` } };
 }
 
 // FK-MSM2: kunjungan luar rute.

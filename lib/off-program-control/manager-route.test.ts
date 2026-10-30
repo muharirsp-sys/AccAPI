@@ -97,7 +97,7 @@ test("AM-042 baris 2: CSV tanpa audit_export -> 403 berkode; JSON tetap 200 (aud
         assert.equal(csv.status, 403, role);
         assert.deepEqual(await csv.json(), {
             ok: false, code: "PERMISSION_REQUIRED", permission: "off_program_control.audit_export",
-            error: "Ekspor log audit OFF butuh izin OFF Program Control · Export Audit (off_program_control.audit_export).",
+            error: "Ekspor log audit OFF butuh izin OFF Program Control · Ekspor Audit (off_program_control.audit_export).",
         });
         assert.equal((await sebagai(role, keys, () => m.audit.GET(req("/api/off-program-control/audit")))).status, 200, `${role} JSON`);
     }

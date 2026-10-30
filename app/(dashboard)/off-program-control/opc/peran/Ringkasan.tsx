@@ -19,7 +19,7 @@
 import { useState } from "react";
 import { Button, EmptyState, ErrorState, KeyValues, MessageStrip, Section, Skeleton, StatusBadge, Tile, VariantNote } from "@/components/fiori/core";
 import { BATAS_DAFTAR, OPSI_TAHAP, PREDIKAT, TAMPILAN, labelMasalah, tahapBatch, toneMasalah, type BatchOpc, type TahapKey } from "@/lib/opc-ui";
-import { KerjaPeran, type DetailProps, type PeranProps } from "../Bersama";
+import { KerjaPeran, TautanBatch, type DetailProps, type PeranProps } from "../Bersama";
 import { ObjectPageBatch } from "../ObjectPageBatch";
 import { AngkaAdmin, BagianAdmin, ButuhPerhatian, hitungAdmin } from "./RingkasanAdmin";
 import { BagianPeriode, usePeriode, type PeriodeState } from "./RingkasanPeriode";
@@ -107,7 +107,7 @@ function IkhtisarTahap({ ctx, daftar, buka, periode }: PeranProps & { buka: (t: 
                                 <li key={m.batchId + m.code}>
                                     <span><StatusBadge tone={toneMasalah(m.severity)}>{labelMasalah(m.severity)}</StatusBadge></span>
                                     <span><b className="fi-mono">{m.noPengajuan}</b> · {m.title} · {m.principleName}</span>
-                                    <span className="fi-chg">{m.message} <Button variant="tertiary" aria-label={`Buka ${m.noPengajuan}`} onClick={() => ctx.bukaBatch(m.batchId)}>Buka</Button></span>
+                                    <span className="fi-chg">{m.message} <TautanBatch ctx={ctx} id={m.batchId} label={`Buka ${m.noPengajuan}`}>Buka</TautanBatch></span>
                                 </li>
                             ))}
                         </ul>
@@ -120,8 +120,9 @@ function IkhtisarTahap({ ctx, daftar, buka, periode }: PeranProps & { buka: (t: 
             <div style={grid}>
                 <BagianPeriode ctx={ctx} daftar={daftar} periode={periode} />
             </div>
-            <VariantNote bl="BL-11">Lewat SLA dihitung di browser dari 200 batch terbaru (hari kerja, libur nasional). Usulan: dihitung server, dipakai lonceng dan Kotak Tugas.</VariantNote>
-            <VariantNote bl="BL-13">Angka per tahap, per divisi, dan per periode hanya dari 200 batch terbaru. Usulan: satu ringkasan dari server untuk seluruh periode.</VariantNote>
+            {/* Satu catatan varian per layar (audit No 80): BL-11 dan BL-13 digabung. */}
+            <VariantNote bl="BL-11, BL-13">Lewat SLA (hari kerja, libur nasional) dan angka per tahap, per divisi, dan per periode dihitung di browser dari 200 batch
+                terbaru. Usulan: satu ringkasan dan hitungan SLA dari server untuk seluruh periode, dipakai juga lonceng dan Kotak Tugas.</VariantNote>
         </div>
     );
 }

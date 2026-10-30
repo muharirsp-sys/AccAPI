@@ -4,18 +4,20 @@
  * Caller: OpcApp.tsx, opc/peran/*.tsx, opc/ObjectPageBatch.tsx.
  * Dependensi: components/fiori/{core,interactive}, lib/opc-ui, lib/off-program-control/{problematic,dev-fixtures,access},
  *   lib/promo-ui (rupiah), lib/claim-workflow-ui (pesanGalat), lib/tampil (sebabHttp).
- * Main Functions: useDaftarBatch, useDetailBatch, KerjaPeran, Antrean, ambilOpc, tulisOpc, kirimTulis, pesanTidakPasti, tanganiTulis.
+ * Main Functions: useDaftarBatch, useDetailBatch, KerjaPeran, Antrean, TautanBatch, ambilOpc, tulisOpc, kirimTulis, pesanTidakPasti, tanganiTulis.
  * Side Effects: GET /api/off-program-control/batches (polling 45 dtk + fokus tab), GET /batches/[id], /batches/[id]/refund,
  *   /batches/[id]/audit. Tidak ada tulis di berkas ini; tulisOpc dipanggil modul peran.
  *
  * Cara menulis modul peran: `opc/peran/<Nama>.tsx` merender `<KerjaPeran tampilan Detail atas kolomKedua />`, dan Detail-nya merender
  * `<ObjectPageBatch {...props} bagian strip aksi pesanFooter draf />`. Aksi tulis lewat ConfirmDialog yang memanggil
- * `tulisOpc(...).catch(tanganiTulis(props.laporTidakPasti))` lalu `props.selesai(pesan)`; navigasi lewat `ctx` supaya penjaga draf berlaku.
+ * `tulisOpc(...).catch(tanganiTulis(props.laporTidakPasti, tutupDialog))` lalu `props.selesai(pesan)`: hasil TIDAK PASTI menutup dialog,
+ * memuat ulang, dan meninggalkan strip peringatan (owner 27 Okt, audit No 22). Navigasi lewat `ctx` supaya penjaga draf berlaku;
+ * baris batch memakai `ctx.hrefBatch` (tautan nyata `?batch=`) + `ctx.bukaBatch` (klik biasa).
  */
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { Button, EmptyState, ErrorState, FlexibleColumnLayout, ListItem, MessageStrip, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
+import { Button, EmptyState, ErrorState, FlexibleColumnLayout, ListItem, MessageStrip, Skeleton, StatusBadge, VariantNote, klikBiasa } from "@/components/fiori/core";
 import { FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import type { OffAction, OffRole, OffTab } from "@/lib/off-program-control/access";
 import { createOffDevBatches, isOffDevBatchId } from "@/lib/off-program-control/dev-fixtures";
@@ -43,6 +45,8 @@ export type OpcKonteks = {
     /** undefined = boleh; selain itu alasan (untuk disabledReason). Matriks peran OFF kode lama (canPerformOffAction). */
     izin: (aksi: OffAction) => string | undefined;
     bukaBatch: (id: string | null) => void;
+    /** URL tujuan bukaBatch (tautan nyata baris batch: bisa dibuka di tab baru, audit No 136). */
+    hrefBatch: (id: string) => string;
     pilihSub: (kunci: string | null) => void;
     ubahUrl: (ubah: Record<string, string | null>) => void;
     setDraf: (draf: boolean) => void;
@@ -166,9 +170,13 @@ export async function kirimTulis(kirim: () => Promise<Response>, putus: string =
     return { res, data };
 }
 
-/** `.catch` untuk tulisOpc di onConfirm: hasil TIDAK PASTI dilaporkan (strip + muat ulang), lalu galat dilempar lagi supaya tetap tampil di dialog. */
-export const tanganiTulis = (lapor?: (pesan: string) => void) => (e: unknown): never => {
-    if (e instanceof TulisTidakPasti) lapor?.(e.message);
+/**
+ * `.catch` untuk tulisOpc di onConfirm. Hasil TIDAK PASTI: dialog ditutup (`tutup`) supaya tidak bisa diklik ulang selagi status
+ * belum jelas, lalu dilaporkan (strip bertahan + muat ulang). Galat tetap dilempar: alur sukses berhenti; galat biasa (4xx/500) tampil
+ * di dialog yang masih terbuka.
+ */
+export const tanganiTulis = (lapor?: (pesan: string) => void, tutup?: () => void) => (e: unknown): never => {
+    if (e instanceof TulisTidakPasti) { tutup?.(); lapor?.(e.message); }
     throw e;
 };
 
@@ -264,6 +272,14 @@ export function useDetailBatch(batchId: string, ringkas?: BatchOpc): [Load<Detai
     }, [batchId, ujiSiap]));
 }
 
+/** Tombol "Buka" batch di tabel/daftar baca sebagai tautan nyata `?batch=` (tab baru bisa); klik biasa lewat ctx.bukaBatch (penjaga draf). No 136. */
+export function TautanBatch({ ctx, id, label, children }: { ctx: OpcKonteks; id: string; label: string; children: ReactNode }) {
+    return (
+        <a className="fi-btn fi-btn--tertiary" href={ctx.hrefBatch(id)} aria-label={label}
+            onClick={(e) => { if (!klikBiasa(e)) return; e.preventDefault(); ctx.bukaBatch(id); }}>{children}</a>
+    );
+}
+
 type Cakupan = "antrean" | "semua";
 
 /** Worklist: kepala (judul + jumlah), pilihan "Menunggu Anda | Semua", enam keadaan, baris ListItem dengan tanda lewat SLA. */
@@ -301,7 +317,7 @@ export function Antrean({ ctx, daftar, tampilan, rows, dasar, cakupan, setCakupa
                             <ListItem doc={b.noPengajuan} amount={rupiah(totalBatch(b))} title={b.principleName}
                                 meta={[b.supervisorName && `SPV ${b.supervisorName}`, n ? `${n} item` : "", periodeBatch(b), masalah.length ? `Lewat SLA: ${masalah[0].title}` : ""].filter(Boolean).join(" · ")}
                                 badge={<StatusBadge tone={info.tone}>{info.label}</StatusBadge>}
-                                current={ctx.batchId === b.id} onClick={() => ctx.bukaBatch(b.id)} />
+                                current={ctx.batchId === b.id} href={ctx.hrefBatch(b.id)} onClick={() => ctx.bukaBatch(b.id)} />
                         </li>
                     );
                 })}
@@ -362,12 +378,16 @@ export function KerjaPeran({ ctx, daftar, tampilan, Detail = DetailBacaSaja, ata
     const labelPeriode = saringan.bulan ? `${JENIS_TANGGAL[saringan.jenisTanggal]}: ${saringan.bulan.split("-").reverse().join("/")}`
         : `${JENIS_TANGGAL[saringan.jenisTanggal]}: ${saringan.dari ? saringan.dari.split("-").reverse().join("/") : "awal"} – ${saringan.sampai ? saringan.sampai.split("-").reverse().join("/") : "akhir"}`;
     const detailOpen = Boolean(kolomKedua || ctx.batchId);
-    // < 1024 px (satu kolom): isi di atas daftar disembunyikan saat detail terbuka, dan detail digulir ke atas layar.
+    // < 1024 px (satu kolom): isi di atas daftar disembunyikan saat detail terbuka, detail digulir ke atas layar dan fokus pindah ke
+    // judulnya (owner 27 Okt, audit No 111); gulir halus hanya bila pengguna tidak meminta gerak berkurang.
     const atasPonsel = detailOpen ? "max-lg:hidden" : "";
     const panelRef = useRef<HTMLDivElement>(null);
     const kunciDetail = kolomKedua ? "kolom-kedua" : ctx.batchId;
     useEffect(() => {
-        if (kunciDetail && window.matchMedia("(max-width: 1023px)").matches) panelRef.current?.scrollIntoView({ block: "start" });
+        if (!kunciDetail || !window.matchMedia("(max-width: 1023px)").matches) return;
+        const halus = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        panelRef.current?.scrollIntoView({ block: "start", behavior: halus ? "smooth" : "auto" });
+        panelRef.current?.querySelector<HTMLElement>(".fi-fcl-detail .fi-oph-title > :is(h1, h2)")?.focus({ preventScroll: true });
     }, [kunciDetail]);
 
     return (
@@ -432,13 +452,16 @@ export function KerjaPeran({ ctx, daftar, tampilan, Detail = DetailBacaSaja, ata
                         nAntrean={dasarAntrean.length} nPantau={dasarPantau.length} adaSaringan={nSaringan > 0} hapusSaringan={hapus} />}
                     detail={kolomKedua ? kolomKedua.isi : ctx.batchId
                         ? <KolomDetail key={ctx.batchId} ctx={ctx} daftar={daftar} batchId={ctx.batchId} ringkas={ringkas} Detail={Detail} setPesan={setPesan} />
-                        : <EmptyState title="Belum ada batch terbuka" message="Pilih batch dari antrean. Batch juga bisa dibuka dari lonceng Lewat SLA atau pencarian (Ctrl K)." />}
+                        : <EmptyState title="Belum ada batch terbuka" message="Pilih batch dari antrean. Batch juga bisa dibuka dari lonceng Lewat SLA atau pencarian pengajuan (tekan /)." />}
                 />
             </div>
-            <VariantNote bl="BL-11, BL-13">
-                Antrean, saringan, dan tanda lewat SLA dihitung di browser dari 200 batch terbaru; batch yang lebih lama tidak terjangkau. Usulan:
-                saring, paginasi, dan hitung SLA di server, lalu dipakai juga oleh Kotak Tugas (BL-34).
-            </VariantNote>
+            {/* Satu catatan varian per layar (audit No 80): saat batch terbuka, catatan milik Object Page/peran yang tampil. */}
+            {!detailOpen && (
+                <VariantNote bl="BL-11, BL-13">
+                    Antrean, saringan, dan tanda lewat SLA dihitung di browser dari 200 batch terbaru; batch yang lebih lama tidak terjangkau. Usulan:
+                    saring, paginasi, dan hitung SLA di server, lalu dipakai juga oleh Kotak Tugas (BL-34).
+                </VariantNote>
+            )}
         </div>
     );
 }

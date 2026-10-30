@@ -474,7 +474,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                                 {pratinjau?.status === "siap" && pratinjau.channelMasalah && (
                                                     <MessageStrip tone="warn" title="Channel pelanggan berbeda dari master.">{pratinjau.channelMasalah} Order ini akan ditolak sampai channel pelanggan dibetulkan di Accurate.</MessageStrip>
                                                 )}
-                                                <VariantNote bl="BL-32">Pencarian pelanggan dan barang sudah per cabang karyawan Accurate Anda. Belum dibatasi ke toko di JKS Anda.</VariantNote>
+                                                <VariantNote bl="BL-32, BL-18">Pencarian pelanggan dan barang sudah per cabang karyawan Accurate Anda. Belum dibatasi ke toko di JKS Anda. Status hanya “menunggu ditarik” atau “sudah ditarik petugas”; butuh harga, difakturkan, dan dibatalkan belum terlihat, dan salesman belum bisa membatalkan order yang belum ditarik.</VariantNote>
                                             </>
                                         )}
                             </div>
@@ -605,9 +605,6 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                             )}
                         </div>
                     )}
-                    <div className="fi-sect-in">
-                        <VariantNote bl="BL-18">Status hanya “menunggu ditarik” atau “sudah ditarik petugas”; butuh harga, difakturkan, dan dibatalkan belum terlihat, dan salesman belum bisa membatalkan order yang belum ditarik.</VariantNote>
-                    </div>
                 </Section>
             </div>
             {!blokir && (

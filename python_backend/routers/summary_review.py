@@ -1,6 +1,7 @@
 """Tujuan: API impor dan koreksi detail pengaturan Summary.
 Caller: /summary/settings web. Dependensi: summary_review, summary_library auth/CSRF.
-Main Functions: list/import/get/update/publish detail. Side Effects: SQLite paket privat dan aturan terbit, baca paket referensi volume.
+Main Functions: list/import/get/update/publish detail; paket rujukan (GET /reference metadata, POST /reference impor, alias /reference/september).
+Side Effects: SQLite paket privat dan aturan terbit, baca paket rujukan di volume.
 """
 import json
 import os
@@ -105,6 +106,25 @@ def published_one(request: Request, draft_id: str):
     return {'ok': True, 'published': _ringkas(row), 'content': json.loads(row[3])}
 
 
+def _paket_rujukan():
+    """Isi paket rujukan di volume (env SUMMARY_REVIEW_REFERENCE), atau (None, status, sebab) bila belum bisa dipakai."""
+    path=Path(os.getenv('SUMMARY_REVIEW_REFERENCE',str(Path(__file__).resolve().parents[1]/'data'/'summary_review_seed.json')))
+    if not path.is_file():return None,404,'Paket rujukan belum tersedia di server.'
+    if path.stat().st_size>8*1024*1024:return None,413,'Paket rujukan terlalu besar (maksimal 8 MB).'
+    try:raw=json.loads(path.read_text(encoding='utf8'))
+    except (ValueError,UnicodeDecodeError):return None,400,'Paket rujukan tidak terbaca sebagai JSON.'
+    return (raw,200,'') if isinstance(raw,dict) else (None,400,'Paket rujukan tidak berbentuk paket Summary.')
+
+
+# Didaftarkan SEBELUM /{package_id}: tanpa itu GET /reference dibaca sebagai paket ber-id "reference" (404).
+@router.get('/reference')
+def reference_info(request:Request):
+    require_user(request)
+    raw,_,sebab=_paket_rujukan()
+    if raw is None:return {'ok':True,'tersedia':False,'sebab':sebab,'periode':None,'judul':None}
+    return {'ok':True,'tersedia':True,'sebab':'','periode':service.periode_paket(raw),'judul':service.judul_paket(raw)}
+
+
 @router.get('/{package_id}')
 def get_package(request:Request,package_id:str):
     value=service.get_package(require_user(request),package_id)
@@ -112,13 +132,14 @@ def get_package(request:Request,package_id:str):
     return {'ok':True,'package':value}
 
 
-@router.post('/reference/september')
+@router.post('/reference')
+@router.post('/reference/september')  # alias lama; isinya paket rujukan yang sama, bukan khusus September.
 def reference(request:Request):
     user=require_user(request,True)
-    path=Path(os.getenv('SUMMARY_REVIEW_REFERENCE',str(Path(__file__).resolve().parents[1]/'data'/'summary_review_seed.json')))
-    if not path.is_file():raise HTTPException(404,'Paket referensi September belum tersedia')
-    if path.stat().st_size>8*1024*1024:raise HTTPException(413,'Paket referensi terlalu besar')
-    return {'ok':True,'package':service.import_package(user,json.loads(path.read_text(encoding='utf8')))}
+    raw,status,sebab=_paket_rujukan()
+    if raw is None:raise HTTPException(status,sebab)
+    try:return {'ok':True,'package':service.import_package(user,raw)}
+    except (ValueError,TypeError,KeyError,RecursionError):raise HTTPException(400,'Paket rujukan tidak valid. Periksa ID, master, tanggal, angka, dan status draft.') from None
 
 
 @router.get('/{package_id}/details/{detail_id}/readiness')

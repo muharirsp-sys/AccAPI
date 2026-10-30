@@ -114,8 +114,8 @@ export function duplicateFinding(hit: DuplicateHit, sebutan = "Order"): string {
             + "Pastikan ini bukan order ganda sebelum diproses."
         : `${sebutan} ini mirip ${persen}% dengan ${hit.key} pada outlet dan tanggal yang sama `
             + `(${hit.shared.length} barang sama: ${hit.shared.slice(0, 8).join(", ")}). `
-            + "Mirip tetapi tidak sama persis justru bentuk ketikan ulang yang paling sering lolos — "
-            + "konfirmasi dulu bahwa ini bukan order ganda.";
+            + "Mirip tetapi tidak sama persis justru bentuk ketikan ulang yang paling sering lolos. "
+            + "Konfirmasi dulu bahwa ini bukan order ganda.";
 }
 
 /**

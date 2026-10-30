@@ -234,10 +234,10 @@
       "kelola user"
     ],
     "question": "Bagaimana cara mengelola user dan akses?",
-    "answer": "Kelola user di menu Pengguna dan Izin.\n\n**5 Base Roles:**\n- **Admin**: semua modul, semua aksi, kelola user\n- **Manager**: view, approve, export\n- **Finance**: pembayaran, transfer, post Accurate\n- **Staff**: input data, upload, generate\n- **Viewer**: view-only\n\n**Dynamic RBAC:**\n- Buat Access Groups dengan permission granular\n- Format: module.action (misal: off_program_control.sm_approve)\n- User bisa punya multiple groups (UNION permissions)\n- Audit trail untuk semua perubahan akses",
+    "answer": "Kelola user di menu User dan Izin.\n\n**5 Base Roles:**\n- **Admin**: semua modul, semua aksi, kelola user\n- **Manager**: view, approve, export\n- **Finance**: pembayaran, transfer, post Accurate\n- **Staff**: input data, upload, generate\n- **Viewer**: view-only\n\n**Dynamic RBAC:**\n- Buat Access Groups dengan permission granular\n- Format: module.action (misal: off_program_control.sm_approve)\n- User bisa punya multiple groups (UNION permissions)\n- Audit trail untuk semua perubahan akses",
     "links": [
       {
-        "label": "Pengguna dan Izin",
+        "label": "User dan Izin",
         "href": "/admin/users"
       },
       {

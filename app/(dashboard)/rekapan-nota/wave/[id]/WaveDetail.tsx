@@ -231,7 +231,7 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
     const kodeLembar = data.pickGroupTersedia.filter((g) => grupPilih.has(g.id)).map((g) => g.kode).join("+") || "semua nota";
     const cetakUrl = `/rekapan-nota/wave/${id}/cetak?grup=${[...grupPilih].join(",")}`;
     const anchors = [
-        ...(data.exception.length ? [{ id: "exception", label: "Exception" }] : []),
+        ...(data.exception.length ? [{ id: "exception", label: "Masalah" }] : []),
         { id: "cetak", label: "Grup cetak dan kertas" }, { id: "isi", label: "Isi wave" },
         ...(draft ? [{ id: "pool", label: "Pool" }] : []), { id: "riwayat", label: "Riwayat" },
     ];
@@ -304,15 +304,15 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
             {draft && aktif.length === 0 && <MessageStrip tone="info" title="Wave ini belum berisi nota.">Pilih nota dari pool di bawah. Setelah dirilis, nota hanya bisa dikeluarkan lewat Lepas dengan alasan.</MessageStrip>}
 
             {data.exception.length > 0 && (
-                <Section id="exception" title={exceptionOpen.length ? "Exception terbuka" : "Exception"}
+                <Section id="exception" title={exceptionOpen.length ? "Masalah terbuka" : "Masalah"}
                     subtitle={exceptionOpen.length ? `${exceptionOpen.length} terbuka · ${menahan.length} menahan konfirmasi` : `${data.exception.length} ditutup · tidak ada yang menahan konfirmasi`}>
-                    <ResponsiveTable<Exception> title="Exception" columns={kolomException} rows={data.exception} rowKey={(e) => String(e.id)}
-                        empty={{ title: "Tidak ada exception" }}
+                    <ResponsiveTable<Exception> title="Masalah" columns={kolomException} rows={data.exception} rowKey={(e) => String(e.id)}
+                        empty={{ title: "Tidak ada masalah" }}
                         mobileItem={(e) => <ListItem doc={rujukan(e)} title={jenisLabel(e.jenis)}
                             meta={<>{e.status === "open" ? [e.keterangan, petunjukMaster(e)].filter(Boolean).join(" · ") : penutupan(e)}{aksiException(e)}</>}
                             badge={menahanKonfirmasi(e.jenis, e.status) ? <StatusBadge tone="warn">Menahan</StatusBadge> : badgeStatus(e)} />} />
                     {exceptionOpen.length > 0 && bolehTutup && (
-                        <div className="fi-sect-in"><p className="fi-small fi-subtle">Selesai = sudah diperbaiki · Abaikan = diterima dengan alasan. Konfirmasi hanya ditahan exception isi per karton.</p></div>
+                        <div className="fi-sect-in"><p className="fi-small fi-subtle">Selesai = sudah diperbaiki · Abaikan = diterima dengan alasan. Konfirmasi hanya ditahan masalah isi per karton.</p></div>
                     )}
                 </Section>
             )}
@@ -433,9 +433,9 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                     </FooterToolbar>
             )}
             {bolehKelola && wave.status === "released" && (
-                <FooterToolbar message={menahan.length ? `${menahan.length} exception isi per karton masih terbuka` : grupBerubah ? "Grup cetak diubah, belum disimpan" : undefined}>
+                <FooterToolbar message={menahan.length ? `${menahan.length} masalah isi per karton masih terbuka` : grupBerubah ? "Grup cetak diubah, belum disimpan" : undefined}>
                     <Button variant="tertiary" onClick={() => setDialog("batal")}>Batalkan wave…</Button>
-                    <Button variant="primary" icon={<Check className="fi-icon" aria-hidden />} disabled={menahan.length > 0} disabledReason={`Tutup ${menahan.length} exception isi per karton dulu`} onClick={() => setDialog("konfirmasi")}>Konfirmasi selesai…</Button>
+                    <Button variant="primary" icon={<Check className="fi-icon" aria-hidden />} disabled={menahan.length > 0} disabledReason={`Tutup ${menahan.length} masalah isi per karton dulu`} onClick={() => setDialog("konfirmasi")}>Konfirmasi selesai…</Button>
                 </FooterToolbar>
             )}
 
@@ -443,13 +443,13 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                 facts={[
                     ["Nota", `${aktif.length}${aktif.filter((n) => n.prioritas === "urgent").length ? ` · ${aktif.filter((n) => n.prioritas === "urgent").length} urgent` : ""}`],
                     ["Grup cetak", grupPilih.size ? kodeLembar : "Belum dipilih: lembar memuat semua nota"],
-                    ["Saat rilis", "Exception diperiksa. Rilis tetap jalan bila ada; yang ditahan adalah konfirmasi"],
+                    ["Saat rilis", "Masalah diperiksa. Rilis tetap jalan bila ada; yang ditahan adalah konfirmasi"],
                     ["Setelah rilis", "Nota tidak bisa ditambah; keluarkan lewat Lepas dengan alasan"],
                 ]} />
             <ConfirmDialog open={dialog === "konfirmasi"} onClose={() => setDialog(null)} title={`Konfirmasi Wave ${wave.nama} selesai?`} tag="Konfirmasi" confirmLabel="Konfirmasi selesai" onConfirm={() => transisi("confirm")}
                 facts={[
                     ["Nota", `${aktif.length} aktif${dilepas.length ? ` · ${dilepas.length} dilepas` : ""}`],
-                    ["Exception", `${exceptionOpen.length} terbuka · ${menahan.length} menahan`],
+                    ["Masalah", `${exceptionOpen.length} terbuka · ${menahan.length} menahan`],
                     ["Setelah konfirmasi", "Isi dan grup cetak terkunci di layar ini. Kertas tetap bisa dicetak ulang"],
                 ]} />
             <ConfirmDialog open={dialog === "batal"} onClose={() => setDialog(null)} title={`Batalkan Wave ${wave.nama}?`} tag="Batalkan" tone="negative" confirmLabel="Batalkan wave"
@@ -476,23 +476,23 @@ export default function WaveDetail({ id, permKeys }: { id: string; permKeys: str
                 ] : []}
                 onConfirm={async () => { const d = isiSimpan!; await simpanIsi(d.e, d.n); setDialog(null); setIsiSimpan(null); }} />
             <ConfirmDialog open={dialog === "selesai"} onClose={() => { setDialog(null); setExcSelesai(null); }} tag="Selesai" confirmLabel="Tandai selesai" factsAlign="start"
-                title={`Tandai exception ${jenisLabel(excSelesai?.jenis).toLowerCase()} ${excSelesai?.ref_kode ?? ""} selesai?`}
+                title={`Tandai masalah ${jenisLabel(excSelesai?.jenis).toLowerCase()} ${excSelesai?.ref_kode ?? ""} selesai?`}
                 facts={excSelesai ? [
                     ["Referensi", rujukan(excSelesai)],
                     ["Masalah", excSelesai.keterangan ?? KOSONG],
-                    ["Konfirmasi wave", menahanKonfirmasi(excSelesai.jenis, excSelesai.status) ? "Tidak lagi ditahan exception ini" : "Tidak terpengaruh (exception informasi)"],
+                    ["Konfirmasi wave", menahanKonfirmasi(excSelesai.jenis, excSelesai.status) ? "Tidak lagi ditahan masalah ini" : "Tidak terpengaruh (masalah informasi)"],
                     ["Dicatat", "Selesai, atas nama Anda dengan jam saat ini"],
                 ] : []}
                 onConfirm={async () => { await tutupException(excSelesai!, "selesai"); setDialog(null); setExcSelesai(null); }} />
             <ConfirmDialog open={dialog === "abaikan"} onClose={() => { setDialog(null); setExcAbaikan(null); }}
-                title={`Abaikan exception ${jenisLabel(excAbaikan?.jenis).toLowerCase()}?`} tag="Abaikan" confirmLabel="Abaikan dengan alasan"
+                title={`Abaikan masalah ${jenisLabel(excAbaikan?.jenis).toLowerCase()}?`} tag="Abaikan" confirmLabel="Abaikan dengan alasan"
                 reason={{ label: "Alasan", min: 5, placeholder: "Mis. file benar; master sedang dikoreksi tim master barang" }}
                 onConfirm={async (alasan) => { if (excAbaikan) await tutupException(excAbaikan, "abaikan", alasan); setDialog(null); setExcAbaikan(null); }}
                 facts={[
                     ["Referensi", excAbaikan ? rujukan(excAbaikan) : ""],
                     ["Masalah", excAbaikan?.keterangan ?? KOSONG],
                     ...(excAbaikan && petunjukMaster(excAbaikan) ? [["Petunjuk", petunjukMaster(excAbaikan)] as [string, string]] : []),
-                    ["Konfirmasi", excAbaikan && menahanKonfirmasi(excAbaikan.jenis, excAbaikan.status) ? "Tidak lagi ditahan exception ini" : "Tidak terpengaruh (exception informasi)"],
+                    ["Konfirmasi", excAbaikan && menahanKonfirmasi(excAbaikan.jenis, excAbaikan.status) ? "Tidak lagi ditahan masalah ini" : "Tidak terpengaruh (masalah informasi)"],
                 ]} />
         </div>
     );

@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
     const stock = form.get("stock");
     if (!(penjualan instanceof File) && !(fix instanceof File)) {
         return NextResponse.json(
-            { error: "Upload file 'penjualan' (rincian faktur INV) — retur & stock opsional." },
+            { error: "Upload file 'penjualan' (rincian faktur INV); retur & stock opsional." },
             { status: 400 },
         );
     }

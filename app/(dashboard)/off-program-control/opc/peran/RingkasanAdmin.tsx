@@ -11,12 +11,12 @@
  */
 "use client";
 
-import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, StatusBadge, Tile, type Column, type Tone } from "@/components/fiori/core";
+import { KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, StatusBadge, Tile, type Column, type Tone } from "@/components/fiori/core";
 import type { OffTab } from "@/lib/off-program-control/access";
 import { PREDIKAT, infoTahap, waktuWita, type BatchOpc } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { KOSONG } from "@/lib/tampil";
-import type { PeranProps } from "../Bersama";
+import { TautanBatch, type PeranProps } from "../Bersama";
 import { computeClaimComparison } from "./RingkasanPeriode";
 
 // Predikat kode lama yang belum ada di PREDIKAT (salinan apa adanya).
@@ -117,7 +117,7 @@ export function ButuhPerhatian({ ctx, h }: PeranProps & { h: HitungAdmin }) {
         { key: "noklaim", header: "No klaim", secondary: true, cell: ({ b }) => (b.noClaim ? <span className="fi-mono">{b.noClaim}</span> : KOSONG) },
         { key: "tahap", header: "Tahap", cell: ({ b }) => { const i = infoTahap(b); return <StatusBadge tone={i.tone}>{i.label}</StatusBadge>; } },
         { key: "ket", header: "Keterangan", cell: (m) => m.ket },
-        { key: "buka", header: "Batch", cell: ({ b }) => <Button variant="tertiary" aria-label={`Buka ${b.noPengajuan}`} onClick={() => ctx.bukaBatch(b.id)}>Buka</Button> },
+        { key: "buka", header: "Batch", cell: ({ b }) => <TautanBatch ctx={ctx} id={b.id} label={`Buka ${b.noPengajuan}`}>Buka</TautanBatch> },
     ];
     return (
         <Section title="Butuh perhatian" subtitle={`${perhatian.length} hal`}>
@@ -141,7 +141,7 @@ export function ButuhPerhatian({ ctx, h }: PeranProps & { h: HitungAdmin }) {
             </div>
             <ResponsiveTable title="Perlu ditinjau admin" count={bermasalah.length} columns={kolomMasalah} rows={bermasalah} rowKey={(m) => m.b.id}
                 empty={{ title: "Tidak ada pengajuan yang perlu ditinjau" }}
-                mobileItem={(m) => { const i = infoTahap(m.b); return <ListItem doc={m.b.noPengajuan} title={m.b.principleName} meta={m.ket} badge={<StatusBadge tone={i.tone}>{i.label}</StatusBadge>} onClick={() => ctx.bukaBatch(m.b.id)} />; }} />
+                mobileItem={(m) => { const i = infoTahap(m.b); return <ListItem doc={m.b.noPengajuan} title={m.b.principleName} meta={m.ket} badge={<StatusBadge tone={i.tone}>{i.label}</StatusBadge>} href={ctx.hrefBatch(m.b.id)} onClick={() => ctx.bukaBatch(m.b.id)} />; }} />
         </Section>
     );
 }
@@ -166,7 +166,7 @@ export function BagianAdmin({ ctx, daftar, h }: PeranProps & { h: HitungAdmin })
                         return (
                             <li key={b.id}>
                                 <ListItem doc={b.noPengajuan} title={b.principleName} meta={waktuWita(b.updatedAt || b.createdAt)}
-                                    badge={<StatusBadge tone={i.tone}>{i.label}</StatusBadge>} onClick={() => ctx.bukaBatch(b.id)} />
+                                    badge={<StatusBadge tone={i.tone}>{i.label}</StatusBadge>} href={ctx.hrefBatch(b.id)} onClick={() => ctx.bukaBatch(b.id)} />
                             </li>
                         );
                     })}

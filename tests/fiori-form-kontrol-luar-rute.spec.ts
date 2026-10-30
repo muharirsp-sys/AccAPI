@@ -564,7 +564,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await expect(daftar.getByRole("button", { name: "Batalkan kunjungan PELANGGAN C" })).toBeEnabled(NAV);
 
         // 409 berkode di dialog (kalimat server apa adanya).
-        o.batal = [{ status: 409, body: { ok: false, kode: "SUDAH_DIKUNJUNGI", error: "PELANGGAN C sudah punya status hari ini (check-in, status rute — termasuk \"tidak dikunjungi\" dari Kirim status rute — atau merchandising); kunjungannya tidak bisa dibatalkan." } }];
+        o.batal = [{ status: 409, body: { ok: false, kode: "SUDAH_DIKUNJUNGI", error: "PELANGGAN C sudah punya status hari ini (check-in, status rute, atau merchandising; status rute termasuk \"tidak dikunjungi\" dari Kirim status rute), jadi kunjungannya tidak bisa dibatalkan." } }];
         await daftar.getByRole("button", { name: "Batalkan kunjungan PELANGGAN C" }).click();
         const d2 = page.getByRole("dialog", { name: "Batalkan kunjungan PELANGGAN C?" });
         await d2.getByRole("button", { name: "Batalkan kunjungan" }).click();
@@ -633,7 +633,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
 
         // 409 SUDAH_DI_JKS: server sudah mengubah baris menjadi sudah_jks → daftar dimuat ulang, baris jadi "Sudah di JKS Anda", hitungan benar.
         const g0 = nBaca(m.baca, "/luar-rute");
-        o.konf = [{ status: 409, body: { ok: false, kode: "SUDAH_DI_JKS", error: "PELANGGAN B sudah ada di JKS Anda (C-100002: Senin · setiap minggu); tidak ditambahkan lagi — kunjungan ini ditandai \"sudah di JKS\"." } }];
+        o.konf = [{ status: 409, body: { ok: false, kode: "SUDAH_DI_JKS", error: "PELANGGAN B sudah ada di JKS Anda (C-100002: Senin · setiap minggu); tidak ditambahkan lagi, dan kunjungan ini ditandai \"sudah di JKS\"." } }];
         o.luarRute = o.luarRute!.map((r) => r.id === "k2" ? { ...r, konfirmasi: "sudah_jks", jksSaya: [{ salesCode: "S-01", salesName: "SALES A", custCode: "C-100002", hariKunjungan: "Senin", mingguPattern: "all" }] } : r);
         await item("PELANGGAN B").getByRole("button", { name: "Jangan masukkan JKS" }).click();
         await expect(item("PELANGGAN B")).toContainText("Sudah di JKS Anda: Senin · setiap minggu", NAV);

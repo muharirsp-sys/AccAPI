@@ -385,10 +385,12 @@ const PAKET = (publikasi = false) => ({ id: "pk1", title: "Paket A", revision: 2
 test("Pengaturan Summary: galat daftar bukan kosong, buka paket, koreksi, Terbitkan lewat dialog (galat server tampil di dialog), ponsel 360", async ({ page }) => {
     let daftar: "data" | "galat" = "galat";
     let tolak = true; const publish: unknown[] = []; const simpan: unknown[] = [];
+    let rujukan: Record<string, unknown> = { ok: true, tersedia: true, sebab: "", periode: "Oktober 2026", judul: "Summary Oktober 2026" };
     await page.route((u) => u.host === "localhost:8000", async (r) => {
         const p = new URL(r.request().url()).pathname; const m = r.request().method();
         if (m === "OPTIONS") return fastapi(r, {});
         if (p === "/api/me") return fastapi(r, { csrf_token: "t" });
+        if (p === "/summary/review/reference" && m === "GET") return fastapi(r, rujukan);
         if (p === "/summary/review" && m === "GET") return daftar === "galat" ? fastapi(r, "<html>x</html>", 502) : fastapi(r, { packages: [{ id: "pk1", title: "Paket A", revision: 2 }] });
         if (p === "/summary/review/pk1" && m === "GET") return fastapi(r, { package: PAKET() });
         if (p === "/summary/review/pk1/details/r1" && m === "PUT") { simpan.push(r.request().postDataJSON()); return fastapi(r, { package: PAKET() }); }
@@ -405,6 +407,8 @@ test("Pengaturan Summary: galat daftar bukan kosong, buka paket, koreksi, Terbit
     await expect(main.getByRole("heading", { level: 1, name: "Pengaturan Summary" })).toBeVisible(NAV);
     await expect(main.getByRole("alert").filter({ hasText: "Server sedang bermasalah" })).toBeVisible(NAV);
     await expect(main.getByText(/Unexpected token/)).toHaveCount(0);
+    // Paket rujukan (No 81): label dari periode paket di server, bukan bulan tertulis di kode.
+    await expect(main.getByRole("button", { name: "Buka paket rujukan Oktober 2026" })).toBeEnabled();
     daftar = "data"; await main.getByRole("button", { name: "Coba lagi" }).click();
     await main.getByLabel("Paket tersimpan").selectOption("pk1");
     await expect(main.getByRole("heading", { level: 2, name: "r1, KELOMPOK A" })).toBeVisible(NAV);
@@ -437,7 +441,10 @@ test("Pengaturan Summary: galat daftar bukan kosong, buka paket, koreksi, Terbit
     await expect(main.getByText("Sudah diterbitkan sebagai versi tetap untuk order.")).toBeVisible();
 
     await page.setViewportSize({ width: 360, height: 800 });
+    rujukan = { ok: true, tersedia: false, sebab: "Paket rujukan belum tersedia di server.", periode: null, judul: null };
     await page.reload();
+    await expect(main.getByText("Paket rujukan belum tersedia di server.")).toBeVisible(NAV);
+    await expect(main.getByRole("button", { name: "Buka paket rujukan", exact: true })).toHaveAttribute("aria-disabled", "true");
     await main.getByLabel("Paket tersimpan").selectOption("pk1");
     await expect(main.getByRole("heading", { level: 2, name: "r1, KELOMPOK A" })).toBeVisible(NAV);
     await tanpaGulirSamping(page);

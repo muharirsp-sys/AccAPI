@@ -304,7 +304,7 @@ export default function MasterBarangPage() {
                                         {tab === "form" && (
                                             <Section title="Form Fix" subtitle="hanya baca; ubah struktur lewat Kamus Kode">
                                                 {detail.formRows.length === 0 ? <EmptyState title="Form Fix masih kosong" message="Unggah sumber atau tambah item manual di bagian Sumber." /> : (
-                                                    <div className="fi-tablescroll" tabIndex={0} style={GULIR_TABEL}>
+                                                    <div className="fi-tablescroll" tabIndex={0} role="group" aria-label="Form Fix" style={GULIR_TABEL}>
                                                         <table className="fi-table">
                                                             <caption className="sr-only">Form Fix</caption>
                                                             <thead><tr>{FORM_COLUMNS.map(([key, label]) => <th key={key} scope="col" className={KOLOM_ANGKA.has(key) ? "fi-end" : undefined}>{label}</th>)}</tr></thead>
@@ -360,7 +360,7 @@ export default function MasterBarangPage() {
 
                                                 <Section title="Item dari sumber" subtitle={`${detail.sourceItems.length} item`}>
                                                     {detail.sourceItems.length === 0 ? <EmptyState title="Belum ada item dari sumber" message="Item muncul setelah sumber diunggah atau item manual ditambahkan." /> : (
-                                                        <div className="fi-tablescroll" tabIndex={0} style={GULIR_TABEL}>
+                                                        <div className="fi-tablescroll" tabIndex={0} role="group" aria-label="Item dari sumber" style={GULIR_TABEL}>
                                                             <table className="fi-table">
                                                                 <caption className="sr-only">Item dari sumber</caption>
                                                                 <thead><tr><th scope="col">Sumber</th><th scope="col">Nama barang</th><th scope="col">Isi</th><th scope="col">Gramasi</th><th scope="col">Kemasan</th><th scope="col" className="fi-end">Keyakinan baca</th></tr></thead>
@@ -383,7 +383,7 @@ export default function MasterBarangPage() {
                                                 actions={<Button variant="primary" icon={<Save className="fi-icon" aria-hidden />} onClick={() => setDialog("kamus")}>Simpan kamus…</Button>}>
                                                 <div className="fi-sect-in"><p className="fi-small fi-muted">Menyimpan kamus membuat ulang Form Fix dan membatalkan konfirmasi nama lebih dari {NAMA_WIN_MAX} karakter yang lama.</p></div>
                                                 {codebookDraft.length === 0 ? <EmptyState title="Kamus Kode masih kosong" message="Kamus terisi setelah sumber diunggah." /> : (
-                                                    <div className="fi-tablescroll" tabIndex={0} style={GULIR_TABEL}>
+                                                    <div className="fi-tablescroll" tabIndex={0} role="group" aria-label="Kamus Kode" style={GULIR_TABEL}>
                                                         <table className="fi-table">
                                                             <caption className="sr-only">Kamus Kode</caption>
                                                             <thead><tr><th scope="col">Tingkat</th><th scope="col">Cakupan</th><th scope="col">Nama sumber</th><th scope="col">Nama hasil</th><th scope="col">Kode</th></tr></thead>
@@ -424,7 +424,7 @@ export default function MasterBarangPage() {
                                                     )}
                                                 </div>
                                                 {detail.qc.issues.length === 0 ? <div className="fi-sect-in"><MessageStrip tone="pos" title="Tidak ada temuan QC." /></div> : (
-                                                    <div className="fi-tablescroll" tabIndex={0} style={GULIR_TABEL}>
+                                                    <div className="fi-tablescroll" tabIndex={0} role="group" aria-label="Temuan QC" style={GULIR_TABEL}>
                                                         <table className="fi-table">
                                                             <caption className="sr-only">Temuan QC</caption>
                                                             <thead><tr><th scope="col">Tingkat</th><th scope="col" className="fi-end">Baris</th><th scope="col">Penjelasan</th></tr></thead>

@@ -19,9 +19,10 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, FileText, Percent, Plus } from "lucide-react";
-import { Button, FooterToolbar, KeyValues, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
+import { Button, FooterToolbar, KeyValues, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { PREDIKAT, TAMPILAN, labelStatus, tahapBatch, type Tampilan } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
+import { hariIniWita } from "@/lib/tampil";
 import { KerjaPeran, pesanTidakPasti, type DaftarOpc, type DetailProps, type OpcKonteks, type PeranProps } from "../Bersama";
 import { ObjectPageBatch, type BagianTambahan } from "../ObjectPageBatch";
 import {
@@ -83,6 +84,8 @@ function StripPdf({ pdfUrl, claimStatus }: { pdfUrl?: string | null; claimStatus
 }
 
 
+const KUNCI_VERSI_KONFLIK = "Hari ini belum ada kunci versi: perubahan orang lain bisa tertimpa selama batch masih boleh diubah; server hanya menolak batch yang sudah dikirim, terkunci, atau periodenya ditutup. Usulan: tolak bila batch berubah sejak dibuka (versi), simpan dan kirim dalam satu transaksi.";
+
 /** Object Page batch SPV: mode ubah bila boleh diubah; selain itu baca-saja (+ ajukan pengembalian selisih bila ada sisa). */
 function DetailSpv(props: DetailProps) {
     const { ctx, daftar, detail, batchId, muatUlang } = props;
@@ -97,6 +100,8 @@ function DetailSpv(props: DetailProps) {
     if (!data) return <ObjectPageBatch {...props} />;
     const b = data.batch;
     const bisaUbah = !data.uji && !hasil && PREDIKAT.spvBisaUbah(b) && !ctx.izin("edit_returned_batch");
+    // Satu catatan varian per layar (audit No 80), digabung ke catatan Object Page: saat konflik, kalimat konflik; mode ubah: kunci versi.
+    const varianKonflik = konflik ? { bl: "BL-09", isi: KUNCI_VERSI_KONFLIK } : undefined;
     const muatUlangKonflik = () => { setKonflik(null); muatUlang(); daftar.muatUlang(); };
     const stripUmum = (
         <>
@@ -107,7 +112,6 @@ function DetailSpv(props: DetailProps) {
                         {konflik} Status batch di server sudah berubah sejak Anda membukanya, jadi perubahan Anda belum disimpan. Muat ulang untuk melihat versi terbaru, lalu ulangi perubahan.{" "}
                         <Button variant="tertiary" onClick={muatUlangKonflik}>Muat ulang</Button>
                     </MessageStrip>
-                    <VariantNote bl="BL-09">Hari ini belum ada kunci versi: perubahan orang lain bisa tertimpa selama batch masih boleh diubah; server hanya menolak batch yang sudah dikirim, terkunci, atau periodenya ditutup. Usulan: tolak bila batch berubah sejak dibuka (versi), simpan dan kirim dalam satu transaksi.</VariantNote>
                 </>
             )}
             {hasil && <StripHasil h={hasil} />}
@@ -161,6 +165,7 @@ function DetailSpv(props: DetailProps) {
                     onClick={() => berikut && ctx.bukaBatch(berikut.id)}>Batch berikutnya</Button>
             ) : undefined}
             pesanFooter={hasil ? "Tidak ada aksi lain untuk Anda di tahap ini." : undefined}
+            varian={varianKonflik}
         />
     );
 }
@@ -175,13 +180,13 @@ function UbahBatch(props: DetailProps & Bersama) {
     const { ctx, daftar, detail, batchId, strip, konflik, setPesan, setKonflik, setHasil, laporTidakPasti } = props;
     const data = detail.data!;
     const b = data.batch;
-    // openReturnedBatch (kode lama): isian dari detail batch; nilai cadangan sama dengan kode lama.
+    // openReturnedBatch (kode lama): isian dari detail batch. Tanpa cadangan principal/bulan/tahun karangan (audit No 73): yang kosong wajib diisi.
     const [awal] = useState(() => ({
         setup: {
             supervisorName: b.supervisorName || ctx.pengguna.nama.trim() || "Supervisor",
-            principleName: b.principleName || "RECKITT BENCKISER, PT",
-            bulan: (b.bulan || "05").padStart(2, "0"),
-            tahun: b.tahun || "2026",
+            principleName: b.principleName || "",
+            bulan: b.bulan ? b.bulan.padStart(2, "0") : "",
+            tahun: b.tahun || "",
         },
         rows: data.items.length ? data.items.map(barisDariItem) : [barisKosong()],
     }));
@@ -198,10 +203,8 @@ function UbahBatch(props: DetailProps & Bersama) {
         onKonflik: setKonflik,
         onDrafTersimpan: ({ noPengajuan }) => { setPesan({ tone: "pos", judul: `Draf ${noPengajuan} berhasil disimpan.` }); props.muatUlang(); daftar.muatUlang(); },
         onGagalKirim: (_h, pesan, pasti) => {
-            if (!pasti) {
-                laporTidakPasti(pesan);
-                throw new Error(`Perubahan sudah tersimpan sebagai draf; hasil kirim ke Sales Manager belum pasti. ${pesan}`);
-            }
+            // Tidak pasti: dialog sudah ditutup (SpvForm); strip bertahan di Object Page + muat ulang (No 22).
+            if (!pasti) { laporTidakPasti(`Perubahan sudah tersimpan sebagai draf; hasil kirim ke Sales Manager belum pasti. ${pesan}`); return; }
             daftar.muatUlang();
             throw new Error(`Perubahan sudah tersimpan sebagai draf, tetapi batch belum terkirim ke Sales Manager: ${pesan}`);
         },
@@ -222,20 +225,13 @@ function UbahBatch(props: DetailProps & Bersama) {
                 bagian={[{
                     id: "opc-setup", label: "Setup batch", letak: "awal",
                     isi: (
-                        <>
-                            <SetupBatch f={f} catatan={dikembalikan
-                                ? "Mode revisi batch yang dikembalikan. Supervisor dapat mengubah data lalu mengirim ulang ke Sales Manager."
-                                : "Draf: ubah data lalu simpan, atau kirim ke Sales Manager. Setelah dikirim, batch baca-saja sampai dikembalikan."} />
-                            {/* Dulu di dialog Kirim ke SM; saat konflik catatan yang sama tampil di strip konflik. */}
-                            {!konflik && (
-                                <div className="fi-sect-in" style={{ paddingTop: 0 }}>
-                                    <VariantNote bl="BL-09">Belum ada kunci versi: bila orang lain mengubah batch ini sejak Anda membukanya, isian Anda menimpanya. Server hanya menolak bila batch sudah tidak boleh diubah (sudah dikirim, terkunci, atau periodenya ditutup). Usulan: kiriman ditolak bila batch berubah sejak dibuka, tanpa menimpa apa pun.</VariantNote>
-                                </div>
-                            )}
-                        </>
+                        <SetupBatch f={f} catatan={dikembalikan
+                            ? "Mode revisi batch yang dikembalikan. Supervisor dapat mengubah data lalu mengirim ulang ke Sales Manager."
+                            : "Draf: ubah data lalu simpan, atau kirim ke Sales Manager. Setelah dikirim, batch baca-saja sampai dikembalikan."} />
                     ),
                 }]}
                 gantiItem={<EditorItem f={f} />}
+                varian={{ bl: "BL-09", isi: konflik ? KUNCI_VERSI_KONFLIK : "Belum ada kunci versi: bila orang lain mengubah batch ini sejak Anda membukanya, isian Anda menimpanya. Server hanya menolak bila batch sudah tidak boleh diubah (sudah dikirim, terkunci, atau periodenya ditutup). Usulan: kiriman ditolak bila batch berubah sejak dibuka, tanpa menimpa apa pun." }}
                 aksi={<AksiForm f={f} konflik={konflik} izinDraf={ctx.izin("edit_returned_batch")} izinKirim={ctx.izin("submit_batch")} />}
                 pesanFooter={pesanFooter(f, konflik)}
             />
@@ -253,13 +249,11 @@ function BatchBaru({ ctx, daftar }: { ctx: OpcKonteks; daftar: DaftarOpc }) {
     const { titip } = useContext(TitipanCtx);
     const [pesan, setPesan] = useState<Pesan | null>(null);
     const [sudahAda, setSudahAda] = useState<HasilKirim | null>(null);
+    // Tanpa principal bawaan (wajib dipilih, pola Batch CLM); bulan dan tahun = hari ini WITA, bukan jam perangkat (audit No 31, 73).
     const [awal] = useState(() => {
-        const kini = new Date();
+        const hari = hariIniWita();
         return {
-            setup: {
-                supervisorName: ctx.pengguna.nama.trim(), principleName: "RECKITT BENCKISER, PT",
-                bulan: String(kini.getMonth() + 1).padStart(2, "0"), tahun: String(kini.getFullYear()),
-            },
+            setup: { supervisorName: ctx.pengguna.nama.trim(), principleName: "", bulan: hari.slice(5, 7), tahun: hari.slice(0, 4) },
             rows: [barisKosong()],
         };
     });
@@ -296,12 +290,13 @@ function BatchBaru({ ctx, daftar }: { ctx: OpcKonteks; daftar: DaftarOpc }) {
     return (
         <div style={{ display: "grid", gap: 12 }}>
             <ObjectPageHeader
+                headingLevel={2}
                 title="Batch baru"
                 status={<StatusBadge tone="neu">Draf</StatusBadge>}
                 draft={f.dirty}
                 attributes={[
                     { label: "No pengajuan (perkiraan)", value: <span className="fi-mono">{f.nomorTampil}</span> },
-                    { label: "Principal", value: f.setup.principleName },
+                    { label: "Principal", value: f.setup.principleName || "Belum dipilih" },
                     { label: "Item", value: <span className="fi-tnum">{f.rows.length}</span> },
                     { label: "Total", value: <span className="fi-tnum">{rupiah(f.bayar.total)}</span> },
                 ]}
@@ -371,7 +366,7 @@ export default function Spv(props: PeranProps) {
                                 )}
                             </MessageStrip>
                         )}
-                        <PengingatKelengkapan batches={daftar.batches} buka={ctx.bukaBatch} />
+                        <PengingatKelengkapan batches={daftar.batches} buka={ctx.bukaBatch} href={ctx.hrefBatch} />
                     </>
                 }
                 kolomKedua={baru ? { isi: <BatchBaru ctx={ctx} daftar={daftar} />, tutup: () => ctx.ubahUrl({ view: null }) } : undefined}

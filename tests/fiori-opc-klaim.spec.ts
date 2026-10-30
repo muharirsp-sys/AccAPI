@@ -158,16 +158,16 @@ test("Validasi setelah SM: isian + draf, Setujui klaim lewat dialog (payload cla
     await page.goto("/off-program-control?tab=claim&batch=b-klaim", NAV);
     const main = page.locator("main");
     const detail = kolomBatch(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "005/GDI/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "005/GDI/10/2026" })).toBeVisible(NAV);
     // Antrean "Menunggu Anda" = batch yang punya aksi: batch dibatalkan dengan sumbu tidak konsisten tidak ikut (BL-06).
-    await expect(antrean(page).getByRole("button")).toHaveCount(2);
+    await expect(antrean(page).getByRole("link")).toHaveCount(2);
     await expect(antrean(page)).not.toContainText("008/KINO/10/2026");
 
     const isi = detail.getByRole("region", { name: "Isi validasi" });
     await expect(isi.getByText("Checklist Supervisor bukan persetujuan.")).toBeVisible();
     await expect(isi.getByText("Foto display sudah dicek SM.")).toBeVisible();
     await expect(isi.getByRole("radio", { name: "Lengkap" })).toBeChecked();
-    await expect(isi.getByLabel("Usulan BL-06")).toBeVisible();
+    await expect(detail.getByLabel(/^Usulan BL-06/)).toBeVisible(); // satu catatan varian di akhir Object Page (audit No 80, tinjauan K2)
     const footer = detail.locator(".fi-ftb");
     const setuju = footer.getByRole("button", { name: "Setujui…" });
     await expect(setuju).toBeDisabled();
@@ -194,7 +194,8 @@ test("Validasi setelah SM: isian + draf, Setujui klaim lewat dialog (payload cla
     await expect(dlg).toContainText("06/11/2026");
     await expect(dlg).toContainText("2 item · Rp 4.300.000");
     await expect(dlg).toContainText("Persetujuan Operational Manager");
-    await expect(detail.getByLabel("Usulan BL-11")).toBeVisible();
+    // BL-11 kini keterangan biasa di bagian Validasi klaim (satu catatan varian per layar, audit No 80).
+    await expect(detail.getByText("Kelengkapan yang dipilih Klaim saat menyetujui belum tersimpan di batch")).toBeVisible();
     await page.screenshot({ path: "test-results/fiori-opc-klaim-claimok.png" });
     await dlg.getByRole("button", { name: "Setujui", exact: true }).click();
     await expect(dlg).toBeHidden();
@@ -209,7 +210,7 @@ test("Validasi setelah SM: isian + draf, Setujui klaim lewat dialog (payload cla
     await expect(detail.getByText("Baca-saja:")).toBeVisible();
     await expect(detail.getByRole("button", { name: "Setujui…" })).toHaveCount(0);
     await expect(detail.getByText("Draf belum disimpan")).toHaveCount(0);
-    await expect(antrean(page).getByRole("button")).toHaveCount(1);
+    await expect(antrean(page).getByRole("link")).toHaveCount(1);
     await expect(antrean(page)).not.toContainText("005/GDI/10/2026");
 });
 
@@ -231,7 +232,7 @@ test("Kembalikan: alasan wajib di dialog, galat server tampil di dialog tanpa me
     await isi.getByRole("radio", { name: "Kurang" }).check();
 
     // Draf: pindah batch meminta konfirmasi; Batal benar-benar batal.
-    await antrean(page).getByRole("button", { name: /001\/CLM\/GDI\/10\/2026/ }).click();
+    await antrean(page).getByRole("link", { name: /001\/CLM\/GDI\/10\/2026/ }).click();
     const tinggal = page.getByRole("dialog");
     await expect(tinggal.getByRole("heading", { name: "Tinggalkan perubahan yang belum disimpan?" })).toBeVisible();
     await tinggal.getByRole("button", { name: "Tetap di sini" }).click();
@@ -322,7 +323,7 @@ test("Selesaikan verifikasi final batch buatan sendiri (BL-10, #132): alasan waj
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/off-program-control?tab=claim&claimView=after&batch=b-fs", NAV);
     const detail = kolomBatch(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "001/CLM/PRA/09/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "001/CLM/PRA/09/2026" })).toBeVisible(NAV);
     const riwayat = detail.getByRole("list", { name: "Riwayat aksi" });
     await expect(riwayat).toContainText("Alasan setuju sendiri: Tim Klaim hanya satu orang");
     await expect(riwayat).toContainText("Disetujui sendiri tanpa alasan (sebelum alasan diwajibkan)");
@@ -359,7 +360,7 @@ test("Batch terminal tanpa aksi Klaim (BL-06): disetujui OM, dibayar, dibatalkan
     const detail = kolomBatch(page);
     for (const [id, no] of [["b-om", "002/KINO/10/2026"], ["b-bayar", "004/URC/09/2026"], ["b-batal", "008/KINO/10/2026"], ["b-selesai", "003/GDI/09/2026"]]) {
         await page.goto(`/off-program-control?tab=claim&batch=${id}`, NAV);
-        await expect(detail.getByRole("heading", { level: 1, name: no })).toBeVisible(NAV);
+        await expect(detail.getByRole("heading", { level: 2, name: no })).toBeVisible(NAV);
         await expect(detail.getByText("Baca-saja:")).toBeVisible();
         for (const nama of ["Setujui…", "Kembalikan…", "Selesaikan…", "Ingatkan kelengkapan…", "Kirim ke SM…"]) {
             await expect(detail.getByRole("button", { name: nama })).toHaveCount(0);
@@ -391,7 +392,7 @@ test("Detail usang (BL-06): daftar terbaru menunjukkan batch sudah lewat tahap �
     await page.setViewportSize({ width: 1366, height: 900 });
     const detail = kolomBatch(page);
     await page.goto("/off-program-control?tab=claim&batch=b-klaim", NAV);
-    await expect(detail.getByRole("heading", { level: 1, name: "005/GDI/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "005/GDI/10/2026" })).toBeVisible(NAV);
     const usang = detail.getByRole("status").filter({ hasText: "Status batch berubah." });
     await expect(usang).toContainText("Daftar terbaru menunjukkan batch ini di tahap Verifikasi final");
     for (const nama of ["Setujui…", "Kembalikan…"]) await expect(detail.getByRole("button", { name: nama })).toHaveCount(0);
@@ -400,7 +401,7 @@ test("Detail usang (BL-06): daftar terbaru menunjukkan batch sudah lewat tahap �
     await page.screenshot({ path: "test-results/fiori-opc-klaim-usang.png", fullPage: true });
 
     await page.goto("/off-program-control?tab=claim&claimView=after&batch=b-final", NAV);
-    await expect(detail.getByRole("heading", { level: 1, name: "001/RB/09/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "001/RB/09/2026" })).toBeVisible(NAV);
     await expect(detail.getByRole("status").filter({ hasText: "Status batch berubah." })).toContainText("tahap Selesai");
     for (const nama of ["Selesaikan…", "Ingatkan kelengkapan…"]) await expect(detail.getByRole("button", { name: nama })).toHaveCount(0);
     expect(kirim).toEqual([]);
@@ -413,7 +414,7 @@ test("Verifikasi final (claimView=after): No Claim + checklist per item, Ingatka
     await page.goto("/off-program-control?tab=claim&claimView=after&batch=b-final", NAV);
     const main = page.locator("main");
     const detail = kolomBatch(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "001/RB/09/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "001/RB/09/2026" })).toBeVisible(NAV);
     await expect(main.getByRole("group", { name: "Tampilan antrean" }).getByRole("button", { name: /Verifikasi final/ })).toHaveAttribute("aria-pressed", "true");
     const final = detail.getByRole("region", { name: "Verifikasi final" });
     await expect(final).toContainText("Rp 4.300.000");
@@ -457,7 +458,23 @@ test("Verifikasi final (claimView=after): No Claim + checklist per item, Ingatka
     await item2.getByRole("checkbox", { name: "Lainnya" }).check();
     await item2.getByLabel("Keterangan lainnya").fill("Surat jalan");
     await item2.getByLabel("Catatan kelengkapan final").fill("Asli menyusul");
-    await final.getByLabel("Nilai fix (isi bila berbeda)").fill("4000000");
+    // No 122: isian teks; masukan tidak sah ditolak dengan pesan (tidak diam-diam = dibayar); "4.000.000" bernilai sama dengan "4000000".
+    const fix = final.getByLabel("Nilai fix (isi bila berbeda)");
+    await expect(fix).toHaveAttribute("type", "text");
+    await fix.fill("4.000.000,555");
+    await expect(footer).toContainText("Nilai fix belum sah: Maksimal 2 angka di belakang koma.");
+    await expect(footer.getByRole("button", { name: "Selesaikan…" })).toBeDisabled();
+    // Tinjauan K3 S-1: titik bukan kelompok ribuan ("4.000.00" = sisa sunting "4.000.000") ditolak dengan pesan, bukan Rp 4.000.
+    await fix.fill("4.000.00");
+    await expect(footer).toContainText("Nilai fix belum sah: Titik hanya pemisah ribuan");
+    await expect(footer.getByRole("button", { name: "Selesaikan…" })).toBeDisabled();
+    await fix.fill("4.000.000");
+    await fix.blur();
+    await expect(fix).toHaveValue("4.000.000");
+    await fix.focus();
+    await expect(fix).toHaveValue("4000000"); // saat fokus angka polos
+    await fix.blur();
+    await expect(fix).toHaveValue("4.000.000");
     await expect(final.getByRole("status").filter({ hasText: "Selisih Rp 300.000." })).toContainText("Akan masuk Data Selisih");
     await expect(footer.getByRole("button", { name: "Selesaikan…" })).toBeEnabled();
     await page.screenshot({ path: "test-results/fiori-opc-klaim-final.png", fullPage: true });
@@ -506,12 +523,12 @@ test("Batch CLM: form di kolom kedua (clm=baru), nomor otomatis, Simpan draf lew
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/off-program-control?tab=claim&claimView=data-claim", NAV);
     const main = page.locator("main");
-    await expect(antrean(page).getByRole("button")).toHaveCount(1, NAV);
+    await expect(antrean(page).getByRole("link")).toHaveCount(1, NAV);
     await expect(antrean(page)).toContainText("002/CLM/RB/10/2026");
     await main.getByRole("button", { name: "Buat batch CLM" }).click();
     await expect(page).toHaveURL(/clm=baru/);
     const form = main.getByRole("region", { name: "Batch terbuka" });
-    await expect(form.getByRole("heading", { level: 1, name: "Batch CLM baru" })).toBeVisible(NAV);
+    await expect(form.getByRole("heading", { level: 2, name: "Batch CLM baru" })).toBeVisible(NAV);
 
     await form.getByLabel("Principal").selectOption("GODREJ DISTRIBUSI INDONESIA, PT");
     await form.getByLabel("Bulan").selectOption("10");
@@ -566,13 +583,13 @@ test("Batch CLM: form di kolom kedua (clm=baru), nomor otomatis, Simpan draf lew
     const ok = form.getByRole("status").filter({ hasText: "Batch CLM 002/CLM/GDI/10/2026 tersimpan sebagai draf." });
     await expect(ok).toBeVisible();
     await expect(form.getByText("Draf belum disimpan")).toHaveCount(0);
-    await expect(antrean(page).getByRole("button")).toHaveCount(2, NAV);
+    await expect(antrean(page).getByRole("link")).toHaveCount(2, NAV);
     await ok.getByRole("button", { name: "Buka batch" }).click();
     await expect(page).toHaveURL(/batch=b-new/);
     await expect(page).not.toHaveURL(/clm=baru/);
 
     const detail = kolomBatch(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "002/CLM/GDI/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "002/CLM/GDI/10/2026" })).toBeVisible(NAV);
     await detail.locator(".fi-ftb").getByRole("button", { name: "Kirim ke SM…" }).click();
     const kirimDlg = page.getByRole("dialog");
     await expect(kirimDlg.getByRole("heading", { name: "Kirim 002/CLM/GDI/10/2026 ke SM?" })).toBeVisible();
@@ -587,9 +604,9 @@ test("ponsel 390 px: validasi Klaim + dialog dan form CLM tanpa gulir menyamping
     await mockKlaim(page);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/off-program-control?tab=claim", NAV);
-    await expect(antrean(page).getByRole("button")).toHaveCount(2, NAV);
+    await expect(antrean(page).getByRole("link")).toHaveCount(2, NAV);
     await noOverflow(page);
-    await antrean(page).getByRole("button", { name: /005\/GDI\/10\/2026/ }).click();
+    await antrean(page).getByRole("link", { name: /005\/GDI\/10\/2026/ }).click();
     const detail = kolomBatch(page);
     const isi = detail.getByRole("region", { name: "Isi validasi" });
     await isi.getByLabel("Tanggal diajukan ke principal").fill("2026-10-06", NAV);
@@ -607,7 +624,7 @@ test("ponsel 390 px: validasi Klaim + dialog dan form CLM tanpa gulir menyamping
     await expect(detail.getByRole("region", { name: "Verifikasi final" }).getByRole("group", { name: "Item 1" })).toBeVisible(NAV);
     await noOverflow(page);
     await page.goto("/off-program-control?tab=claim&claimView=data-claim&clm=baru", NAV);
-    await expect(page.locator("main").getByRole("heading", { level: 1, name: "Batch CLM baru" })).toBeVisible(NAV);
+    await expect(page.locator("main").getByRole("heading", { level: 2, name: "Batch CLM baru" })).toBeVisible(NAV);
     await noOverflow(page);
     await page.screenshot({ path: "test-results/fiori-opc-klaim-ponsel-clm.png", fullPage: true });
 });

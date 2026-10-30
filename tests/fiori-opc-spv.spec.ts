@@ -12,8 +12,8 @@ import { expect, test, type Page, type Request } from "@playwright/test";
 const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 const NAV = { timeout: 60_000 } as const;
 const kini = new Date().toISOString();
-const MM = String(new Date().getMonth() + 1).padStart(2, "0");
-const YYYY = String(new Date().getFullYear());
+// Bulan/tahun batch baru = hari ini WITA (audit No 31), bukan jam mesin uji.
+const [YYYY, MM] = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar", year: "numeric", month: "2-digit" }).format(new Date()).split("-");
 type Over = Record<string, unknown>;
 type Tulis = { method: string; path: string; body: unknown };
 
@@ -57,11 +57,14 @@ type Opsi = {
     post?: (body: Record<string, unknown>) => ReturnType<typeof json> | null;
     refund?: (id: string) => ReturnType<typeof json> | null;
     diskon?: () => ReturnType<typeof json>;
+    /** Ubah data awal sebelum halaman dimuat (mis. batch lama dengan bulan tak sah). */
+    ubahAwal?: (s: ReturnType<typeof awal>) => void;
 };
 
 /** Semua endpoint OPC dimock (berstatus: PATCH/POST/submit mengubah data). Mengembalikan daftar permintaan tulis berurutan. */
 async function mockSpv(page: Page, opsi: Opsi = {}) {
     const s = awal();
+    opsi.ubahAwal?.(s);
     const tulis: Tulis[] = [];
     let nPatch = 0;
     const cari = (id: string) => s.batches.find((b) => b.id === id);
@@ -161,9 +164,9 @@ test("Default → Draf (konfirmasi keluar) → Kirim ke SM: dialog ringkasan, PA
     await page.goto("/off-program-control?batch=b-ret", NAV);
     const main = page.locator("main");
     const detail = detailOf(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "006/ENI/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "006/ENI/10/2026" })).toBeVisible(NAV);
     // Hanya batch milik SPV ini; antrean Draf & dikembalikan.
-    await expect(antrean(page).getByRole("button")).toHaveCount(2);
+    await expect(antrean(page).getByRole("link")).toHaveCount(2);
     await expect(antrean(page)).not.toContainText("001/RB/10/2026");
     await expect(main.getByRole("region", { name: "Pengingat kelengkapan belum lengkap" })).toContainText("Faktur pajak item 2 belum ada.");
     // Default: mode ubah, nomor asli, catatan SM, item 2 ditandai, Kirim nonaktif dengan alasan validasi kode lama.
@@ -188,7 +191,7 @@ test("Default → Draf (konfirmasi keluar) → Kirim ke SM: dialog ringkasan, PA
     await expect(detail.getByText("Perubahan belum disimpan:")).toBeVisible();
     await expect(kirim).toBeEnabled();
     // Pindah batch dengan draf → konfirmasi; Batal tetap di batch ini.
-    await antrean(page).getByRole("button", { name: /009\/KINO\/10\/2026/ }).click();
+    await antrean(page).getByRole("link", { name: /009\/KINO\/10\/2026/ }).click();
     const tinggal = page.getByRole("dialog", { name: "Tinggalkan perubahan yang belum disimpan?" });
     await expect(tinggal).toBeVisible();
     await tinggal.getByRole("button", { name: "Tetap di sini" }).click();
@@ -230,7 +233,7 @@ test("Default → Draf (konfirmasi keluar) → Kirim ke SM: dialog ringkasan, PA
     await expect(detail.getByRole("button", { name: "Kirim ke SM…" })).toHaveCount(0);
     await expect(detail.locator(".fi-ftb")).toContainText("Tidak ada aksi lain untuk Anda di tahap ini.");
     await expect(detail.getByText("dapat dicetak setelah pengajuan disetujui Klaim.").first()).toBeVisible();
-    await expect(antrean(page).getByRole("button", { name: /006\/ENI\/10\/2026/ })).toHaveCount(0, NAV);
+    await expect(antrean(page).getByRole("link", { name: /006\/ENI\/10\/2026/ })).toHaveCount(0, NAV);
     await page.screenshot({ path: "test-results/fiori-opc-spv-sukses.png", fullPage: true });
 });
 
@@ -252,7 +255,7 @@ test("No Surat duplikat lewat dialog; galat server tampil di dialog; konflik 409
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/off-program-control?batch=b-draf", NAV);
     const detail = detailOf(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "009/KINO/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "009/KINO/10/2026" })).toBeVisible(NAV);
     const simpan = detail.getByRole("button", { name: "Simpan draf" });
 
     // Duplikat → dialog; Batal = benar-benar batal.
@@ -322,10 +325,14 @@ test("Batch baru di kolom kedua: nomor otomatis per principal, validasi kode lam
     await main.getByRole("button", { name: "Batch baru" }).click(NAV);
     await expect(page).toHaveURL(/view=baru/);
     const detail = detailOf(page);
-    await expect(detail.getByRole("heading", { level: 1, name: "Batch baru" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "Batch baru" })).toBeVisible(NAV);
     const setup = detail.getByRole("region", { name: "Setup batch" });
-    await expect(setup).toContainText(`004/RB/${MM}/${YYYY}`);
-    await setup.getByLabel("Principal", { exact: true }).selectOption("KINO INDONESIA TBK, PT");
+    // Tanpa principal bawaan (owner 27 Okt, audit No 73): wajib dipilih; bulan/tahun dari hari ini WITA (No 31).
+    await expect(setup.getByLabel(/^Principal\*?$/)).toHaveValue("");
+    await expect(setup.getByLabel("Bulan")).toHaveValue(MM);
+    await expect(setup.getByLabel("Tahun")).toHaveValue(YYYY);
+    await expect(detail.locator(".fi-ftb")).toContainText("Kirim nonaktif: Pilih principal dulu.");
+    await setup.getByLabel(/^Principal\*?$/).selectOption("KINO INDONESIA TBK, PT");
     await expect(setup).toContainText(`004/KINO/${MM}/${YYYY}`);
     await expect(setup.getByLabel("Nama supervisor")).toHaveValue("Rahmat Hidayat");
     await expect(detail.locator(".fi-ftb")).toContainText("Tipe program pada item 1 wajib dipilih");
@@ -357,7 +364,7 @@ test("Batch baru di kolom kedua: nomor otomatis per principal, validasi kode lam
     // Tanpa dialog "Tinggalkan perubahan" (draf sudah tersimpan); batch baru terbuka dalam mode ubah.
     await expect(page).toHaveURL(/batch=b-baru/, NAV);
     await expect(page).not.toHaveURL(/view=baru/);
-    await expect(detail.getByRole("heading", { level: 1, name: `004/KINO/${MM}/${YYYY}` })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: `004/KINO/${MM}/${YYYY}` })).toBeVisible(NAV);
     await expect(detail.getByText(`Draf 004/KINO/${MM}/${YYYY} berhasil disimpan.`)).toBeVisible();
     await expect(page.getByRole("dialog", { name: "Tinggalkan perubahan yang belum disimpan?" })).toBeHidden();
     await expect(detail.getByRole("region", { name: "Setup batch" })).toBeVisible();
@@ -378,8 +385,8 @@ test("Data selisih: ajukan pengembalian lewat dialog (payload kode lama); PDF su
     await expect(page).toHaveURL(/view=selisih/);
     await expect(main.getByText("Supervisor wajib mengajukan pengembalian dana")).toBeVisible();
     await expect(main.getByText("Rp 450.000 perlu kembali · Menunggu pengembalian")).toBeVisible(); // old 3786–3807
-    await expect(antrean(page).getByRole("button")).toHaveCount(1);
-    await antrean(page).getByRole("button", { name: /008\/HEINZ\/09\/2026/ }).click();
+    await expect(antrean(page).getByRole("link")).toHaveCount(1);
+    await antrean(page).getByRole("link", { name: /008\/HEINZ\/09\/2026/ }).click();
     const detail = detailOf(page);
     const refund = detail.getByRole("region", { name: "Ajukan pengembalian" });
     // GET refund gagal → galat di tempat form, bukan bagian yang hilang.
@@ -437,13 +444,13 @@ test("Diskon SPV: daftar, galat ≠ kosong, catat lewat dialog (FormData kode la
     for (const [k, v] of [["toko", "TK Diskon"], ["principleName", "KINO INDONESIA TBK, PT"], ["principleCode", "KINO"], ["nominal", "Rp 125.000"]]) {
         expect(fd).toContain(`name="${k}"\r\n\r\n${v}\r\n`);
     }
-    // Ctrl K dari Diskon membuka batch di kolom kedua; tombol Diskon menutup batch dan kembali ke Diskon.
-    await page.keyboard.press("Control+k");
+    // Cari "/" dari Diskon membuka batch di kolom kedua; tombol Diskon menutup batch dan kembali ke Diskon.
+    await page.keyboard.press("/");
     const cari = main.getByRole("combobox", { name: "Cari pengajuan OFF" });
     await cari.fill("ENI");
     await cari.press("Enter");
     await expect(page).toHaveURL(/batch=b-ret/);
-    await expect(detailOf(page).getByRole("heading", { level: 1, name: "006/ENI/10/2026" })).toBeVisible(NAV);
+    await expect(detailOf(page).getByRole("heading", { level: 2, name: "006/ENI/10/2026" })).toBeVisible(NAV);
     await main.getByRole("button", { name: "Pengajuan diskon SPV" }).click();
     await expect(page).not.toHaveURL(/batch=/);
     await expect(main.getByRole("button", { name: "Kembali ke pengajuan" })).toBeVisible(NAV);
@@ -456,11 +463,11 @@ test("ponsel 390 px: mode ubah sebagai daftar item + form berlabel; batch baru; 
     await page.setViewportSize({ width: 390, height: 844 });
     const detail = detailOf(page);
     await page.goto("/off-program-control?view=baru", NAV);
-    await expect(detail.getByRole("heading", { level: 1, name: "Batch baru" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "Batch baru" })).toBeVisible(NAV);
     await expect(detail.getByRole("list", { name: "Daftar item" })).toBeVisible();
     await noOverflow(page);
     await page.goto("/off-program-control?batch=b-ret", NAV);
-    await expect(detail.getByRole("heading", { level: 1, name: "006/ENI/10/2026" })).toBeVisible(NAV);
+    await expect(detail.getByRole("heading", { level: 2, name: "006/ENI/10/2026" })).toBeVisible(NAV);
     const daftar = detail.getByRole("list", { name: "Daftar item" });
     await expect(daftar).toBeVisible();
     await expect(detail.getByRole("table", { name: "Daftar item" })).toBeHidden();
@@ -472,4 +479,19 @@ test("ponsel 390 px: mode ubah sebagai daftar item + form berlabel; batch baru; 
     await expect(detail.getByRole("button", { name: "Kirim ke SM…" })).toBeVisible();
     await noOverflow(page);
     await page.screenshot({ path: "test-results/fiori-opc-spv-ponsel.png", fullPage: true });
+});
+
+test("Batch lama dengan bulan tak sah (tinjauan K2 R-4): isian Bulan/Tahun bisa diperbaiki, syarat simpan hilang sesudah diisi sah", async ({ page }) => {
+    await mockSpv(page, { ubahAwal: (s) => { (s.batches.find((b) => b.id === "b-draf") as { bulan: string }).bulan = "00"; } });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/off-program-control?batch=b-draf", NAV);
+    const detail = detailOf(page);
+    const setup = detail.getByRole("region", { name: "Setup batch" });
+    const bulan = setup.getByLabel(/^Bulan\*?$/);
+    await expect(bulan).toHaveValue("00", NAV);
+    await expect(bulan).not.toHaveAttribute("readonly", "");
+    await expect(detail.locator(".fi-ftb")).toContainText("Isi bulan (01 sampai 12) dan tahun (empat angka) batch dulu.");
+    await bulan.fill("10");
+    await expect(detail.locator(".fi-ftb")).not.toContainText("Isi bulan");
+    await expect(detail.getByRole("button", { name: "Simpan draf" })).toBeEnabled();
 });

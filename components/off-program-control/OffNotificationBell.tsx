@@ -1,7 +1,7 @@
 /*
  * Tujuan: Lonceng "Lewat SLA" OFF Program Control (Fiori S4d): tombol berjumlah + popover daftar batch lewat SLA (nama sama dengan
  *   daftar "Lewat SLA" di Ringkasan); "Buka pengajuan" membuka batch di kolom kedua untuk peran apa pun (perubahan #2 it03). Daftar gagal
- *   dimuat tampil sebagai galat, bukan "tidak ada masalah". Di ponsel tombol tinggal ikon + jumlah (label tetap untuk pembaca layar).
+ *   dimuat tampil sebagai galat, bukan "tidak ada masalah". "Buka pengajuan" = tautan nyata `?batch=`. Di ponsel tombol tinggal ikon + jumlah (label tetap untuk pembaca layar).
  * Caller: app/(dashboard)/off-program-control/OpcApp.tsx.
  * Dependensi: components/fiori/core, lucide-react, lib/off-program-control/problematic (tipe), lib/opc-ui (label/tone severity).
  * Main Functions: OffNotificationBell.
@@ -12,7 +12,7 @@
 
 import { useId, useRef, useState } from "react";
 import { Bell } from "lucide-react";
-import { Button, StatusBadge } from "@/components/fiori/core";
+import { Button, StatusBadge, klikBiasa } from "@/components/fiori/core";
 import type { ProblematicBatch } from "@/lib/off-program-control/problematic";
 import { labelMasalah, toneMasalah } from "@/lib/opc-ui";
 
@@ -21,13 +21,15 @@ export type MuatDaftar = { status: "memuat" | "siap" | "galat"; error?: string; 
 
 interface OffNotificationBellProps {
     problems: ProblematicBatch[];
-    onSelectBatch?: (batchId: string) => void;
+    onSelectBatch: (batchId: string) => void;
+    /** URL batch: "Buka pengajuan" = tautan nyata (tab baru bisa); klik biasa tetap onSelectBatch. */
+    hrefBatch: (batchId: string) => string;
     muat?: MuatDaftar;
 }
 
 const LEBAR = 400;
 
-export default function OffNotificationBell({ problems, onSelectBatch, muat }: OffNotificationBellProps) {
+export default function OffNotificationBell({ problems, onSelectBatch, hrefBatch, muat }: OffNotificationBellProps) {
     const id = useId();
     const ref = useRef<HTMLDivElement>(null);
     const [dismissed, setDismissed] = useState<Set<string>>(new Set());
@@ -77,10 +79,13 @@ export default function OffNotificationBell({ problems, onSelectBatch, muat }: O
                                 <b>{problem.title}</b>
                                 <span className="fi-small fi-subtle">{problem.message} · {problem.principleName}</span>
                                 <span className="fi-btnrow">
-                                    {onSelectBatch && (
-                                        <Button aria-label={`Buka pengajuan ${problem.noPengajuan}`}
-                                            onClick={() => { ref.current?.hidePopover(); onSelectBatch(problem.batchId); }}>Buka pengajuan</Button>
-                                    )}
+                                    <a className="fi-btn fi-btn--secondary" href={hrefBatch(problem.batchId)} aria-label={`Buka pengajuan ${problem.noPengajuan}`}
+                                        onClick={(e) => {
+                                            if (!klikBiasa(e)) return; // tab baru: biarkan peramban
+                                            e.preventDefault();
+                                            ref.current?.hidePopover();
+                                            onSelectBatch(problem.batchId);
+                                        }}>Buka pengajuan</a>
                                     <Button variant="tertiary" aria-label={`Sembunyikan peringatan ${problem.noPengajuan}`} onClick={() => dismiss(problem)}>Sembunyikan</Button>
                                 </span>
                             </li>

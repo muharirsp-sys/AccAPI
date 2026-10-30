@@ -448,15 +448,15 @@ export default function TabAo({ scope }: { scope: Scope }) {
                         <Link className="fi-btn fi-btn--secondary" href="/form-kontrol?tab=laporan"><FileText className="fi-icon" aria-hidden />Buka laporan ke SPV</Link>
                     </div>
                     {kirimTerkunci && rows.length > 0 && <p className="fi-small fi-why">{kirimTerkunci}</p>}
-                    <VariantNote bl="it05 #4">
-                        Status kunjungan sudah tersimpan per toko saat check-in/status/check-out, tetapi tanda prioritas dan toko yang tidak
-                        dikunjungi baru tercatat lewat kiriman ini, dan Dashboard SPV menghitung rute dari baris kiriman ini. Usulan: status
-                        ditulis hanya per kunjungan dan rute direncanakan dibaca dari JKS; tombol ini lalu dihapus.
-                    </VariantNote>
                 </div>
             </Section>
 
-            <VariantNote bl="BL-28">Tanggal “hari ini” dihitung di ponsel dalam WITA. Usulan: server yang menetapkan tanggal dan cap foto WITA.</VariantNote>
+            {/* Satu catatan varian per layar (audit No 80): it05 #4 dan BL-28 digabung. */}
+            <VariantNote bl="it05 #4, BL-28">
+                Status kunjungan sudah tersimpan per toko saat check-in/status/check-out, tetapi tanda prioritas dan toko yang tidak dikunjungi baru
+                tercatat lewat Kirim status rute, dan Dashboard SPV menghitung rute dari kiriman itu. Tanggal &quot;hari ini&quot; dihitung di ponsel dalam
+                WITA. Usulan: status ditulis hanya per kunjungan, rute direncanakan dibaca dari JKS, dan server yang menetapkan tanggal serta cap foto WITA.
+            </VariantNote>
 
             <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`Kirim status ${rows.length} toko rute ${judulHari}?`}
                 description="Rute dibaca ulang dari server sesaat sebelum dikirim; status setiap toko dikirim dari bacaan itu, satu per satu, ditambah tanda prioritas dari layar ini. Toko yang belum disentuh tercatat “tidak dikunjungi”; Dashboard SPV menghitung rute dari kiriman ini."

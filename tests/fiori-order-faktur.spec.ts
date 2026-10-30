@@ -98,7 +98,10 @@ test("Default + Memuat: kepala dari cache tampil segera, barang dan ringkasan me
     await expect(info).toContainText("Dibuat di Accurate-"); // createdAt hanya dari webhook
     await expect(info).toContainText("Perubahan terakhir06/10/2026 10.10 WITA");
     await expect(det.getByRole("list", { name: "Alur dokumen" })).toContainText("belum ada pembayaran");
-    for (const bl of [/BL-35/, /BL-36/]) await expect(main.getByRole("complementary", { name: bl })).toBeVisible();
+    // Satu catatan varian per layar (audit No 80): BL-35 di Object Page; batasan daftar (BL-36) jadi keterangan biasa.
+    await expect(main.getByRole("complementary", { name: /BL-35/ })).toBeVisible();
+    await expect(main.getByRole("complementary")).toHaveCount(1);
+    await expect(main.getByText("Cari menurut nomor faktur atau pelanggan; daftar memuat faktur bernomor INV.")).toBeVisible(); // fakta tugas, semua akun
     await expect(main.getByRole("complementary", { name: /BL-22/ })).toHaveCount(0);
     await expect(main.getByRole("link", { name: "Antrean Faktur", exact: true })).toHaveAttribute("href", "/antrean-faktur");
     await expect(det.getByRole("link", { name: "Buka Antrean Faktur" })).toHaveAttribute("href", "/antrean-faktur");

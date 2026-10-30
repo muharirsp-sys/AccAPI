@@ -28,6 +28,10 @@ test("ringkasan riwayat: isi baris menang, kunci varian jadi cadangan, varian da
     assert.equal(ringkasLog(L({ entitas: "varian", kunci: "PA:", aksi: "aktif", after: { variantKey: "", name: "Dasar A" } })).apa, "Varian Dasar diaktifkan");
     assert.deepEqual(ringkasLog(L({ aksi: "hapus", before: { aliasAsli: "Prinsip Ay", jenis: "nama_surat", variantKey: "VARIAN_A" } })), { apa: "Alias dihapus", rinci: "“Prinsip Ay” · Nama di surat · varian VARIAN_A" });
     assert.equal(aktorTeks("benih:S7-2"), "benih S7-2");
+    // No 87: nama akun dari API menang; tanpa nama, id akun hanya cadangan berlabel.
+    assert.equal(aktorTeks("u-123", "USER A"), "USER A");
+    assert.equal(aktorTeks("u-123", null), "akun u-123");
+    assert.equal(aktorTeks("benih:S7-2", null), "benih S7-2");
 });
 
 function jawab(status: number, body: unknown) {

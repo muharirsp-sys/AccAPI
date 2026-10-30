@@ -12,7 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { resolveSyncCredentials } from '@/lib/accurate-session';
 import { AccurateInvoiceGoneError, upsertMasterById, upsertSalesInvoiceById } from '@/lib/sync';
-import { flattenCustomerIds, flattenItemIds, flattenSalesInvoiceIds } from '@/lib/accurate-webhook';
+import { flattenCustomerIds, flattenItemIds, salesInvoiceEvents } from '@/lib/accurate-webhook';
 
 const MAX_LOG_BYTES = 20 * 1024 * 1024;
 
@@ -63,11 +63,11 @@ export async function POST(request: Request) {
         fs.appendFileSync(logFilePath, (entry.length > 100_000 ? entry.slice(0, 100_000) : entry) + "\n", 'utf8');
         console.log(`[+] Disimpan ke webhook_events.log`);
 
-        const invoiceIds = flattenSalesInvoiceIds(payload);
+        const invoiceEvents = salesInvoiceEvents(payload);
         const customerIds = flattenCustomerIds(payload);
         const itemIds = flattenItemIds(payload);
-        console.log(`>> ${invoiceIds.length} faktur, ${customerIds.length} pelanggan, ${itemIds.length} barang terdeteksi`);
-        if (invoiceIds.length + customerIds.length + itemIds.length === 0) {
+        console.log(`>> ${invoiceEvents.length} faktur, ${customerIds.length} pelanggan, ${itemIds.length} barang terdeteksi`);
+        if (invoiceEvents.length + customerIds.length + itemIds.length === 0) {
             // Bukan galat: Accurate juga mengirim tipe lain. Dicatat supaya tipe yang belum
             // dikenali ketahuan dari log, bukan hilang diam-diam.
             const tipe = (Array.isArray(payload) ? payload : [payload])
@@ -86,9 +86,10 @@ export async function POST(request: Request) {
         // nanti batch per webhook membesar atau modul lain ikut diaktifkan.
         const processed: unknown[] = [];
         const failed: Array<{ id: number; error: string }> = [];
-        for (const id of invoiceIds) {
+        for (const { id, appKey, savedAt } of invoiceEvents) {
             try {
-                const summary = await upsertSalesInvoiceById(id, accurate.creds);
+                // appKey/timestamp amplop = siapa dan kapan faktur disimpan, untuk pencatat perubahan rincian (spec 2026-10-23 §7).
+                const summary = await upsertSalesInvoiceById(id, accurate.creds, { source: "webhook", appKey, savedAt });
                 console.log(`[+] Faktur tersimpan: ${summary.number ?? id} | ${summary.customerName ?? '-'} | total ${summary.totalAmount} | sisa ${summary.outstanding} | ${summary.status ?? '-'}`);
                 processed.push(summary);
             } catch (e) {

@@ -31,7 +31,7 @@ export async function GET(req: Request) {
         const { allowedSalesCodes: cakupan } = await resolveScope(gate.session);
         // Cakupan non-global KOSONG = akun belum tertaut Hierarki: pesan jelas, bukan laporan kosong yang menyesatkan.
         if (cakupan?.length === 0) {
-            return NextResponse.json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki — hubungi Admin." }, { status: 403 });
+            return NextResponse.json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki. Hubungi Admin." }, { status: 403 });
         }
         const r = rentangBulan(bulan);
         const [baris, alasan, profil] = await Promise.all([

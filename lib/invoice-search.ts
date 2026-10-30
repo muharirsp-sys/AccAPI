@@ -203,10 +203,10 @@ export async function cariFaktur(input: {
         if (!jawab.ok) return { hasil: "gagal_cek", alasan: jawab.alasan };
         const sp = obj(jawab.body.sp);
         total = Number(sp.rowCount ?? NaN);
-        if (!Number.isFinite(total)) return { hasil: "gagal_cek", alasan: "list.do tanpa sp.rowCount — jumlah faktur tidak terbukti" };
+        if (!Number.isFinite(total)) return { hasil: "gagal_cek", alasan: "list.do tanpa sp.rowCount: jumlah faktur tidak terbukti" };
         // Filter yang diabaikan diam-diam (seperti charField1) terlihat sebagai rowCount raksasa.
         if (total > batas.barisListDo) {
-            return { hasil: "gagal_cek", alasan: `list.do mengembalikan ${total} faktur (batas ${batas.barisListDo}) — filter pelanggan/lastUpdate tidak menyempitkan; periksa manual di Accurate` };
+            return { hasil: "gagal_cek", alasan: `list.do mengembalikan ${total} faktur (batas ${batas.barisListDo}): filter pelanggan/lastUpdate tidak menyempitkan; periksa manual di Accurate` };
         }
         const d = Array.isArray(jawab.body.d) ? jawab.body.d as unknown[] : null;
         if (!d) return { hasil: "gagal_cek", alasan: "list.do tanpa daftar d" };
@@ -214,7 +214,7 @@ export async function cariFaktur(input: {
         if (page >= Number(sp.pageCount ?? 1) || d.length === 0) break;
     }
     // sp.pageCount absen/salah = halaman berikutnya tidak pernah dibaca: kurang dari rowCount bukan "tidak ketemu".
-    if (baris.length < total) return { hasil: "gagal_cek", alasan: `list.do hanya memberi ${baris.length} dari ${total} faktur — halaman tidak lengkap` };
+    if (baris.length < total) return { hasil: "gagal_cek", alasan: `list.do hanya memberi ${baris.length} dari ${total} faktur, halaman tidak lengkap` };
 
     // Saring ULANG di sini: id pelanggan beda = bukan faktur kita; lastUpdate yang terbaca dan lebih
     // tua dari jendela = dibuat sebelum antre. Yang tidak terbaca tetap jadi calon (gagal-tertutup).
@@ -238,7 +238,7 @@ export async function cariFaktur(input: {
     }
     // Batas hanya untuk yang butuh detail.do (satu panggilan per faktur).
     if (!ketemu.length && perluDetail.length > batas.calonDetail) {
-        return { hasil: "gagal_cek", alasan: `${perluDetail.length} faktur calon tanpa charField1 di list.do (batas ${batas.calonDetail}) — periksa manual di Accurate` };
+        return { hasil: "gagal_cek", alasan: `${perluDetail.length} faktur calon tanpa charField1 di list.do (batas ${batas.calonDetail}). Periksa manual di Accurate` };
     }
     for (const row of ketemu.length ? [] : perluDetail) {
         const id = String(row.id);

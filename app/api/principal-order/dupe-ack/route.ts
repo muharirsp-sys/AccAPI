@@ -1,8 +1,9 @@
 /*
  * Tujuan: Menyatakan bahwa sebuah SO yang ditahan gerbang kemiripan BUKAN order ganda.
  * Caller: halaman Order Principal, tombol konfirmasi pada SO yang tertahan.
- * Dependensi: db (order_dupe_ack), rbac. Main Functions: GET, POST, DELETE.
- * Side Effects: menulis `order_dupe_ack`; SO yang tercatat di sana tidak lagi ditahan gerbang.
+ * Dependensi: db (order_dupe_ack, pencabutan_log), rbac. Main Functions: GET, POST, DELETE.
+ * Side Effects: menulis `order_dupe_ack`; SO yang tercatat di sana tidak lagi ditahan gerbang. DELETE (cabut, alasan wajib)
+ *   menyalin baris yang dicabut + alasan ke `pencabutan_log` dalam transaksi yang sama (audit desain 001 No 18).
  *
  * Konfirmasinya BERTAHAN, dan itu disengaja: validasi batch dijalankan berulang kali, dan
  * konfirmasi yang hilang tiap kali divalidasi ulang sama saja dengan tidak punya konfirmasi.
@@ -14,8 +15,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { orderDupeAck } from "@/db/schema";
+import { orderDupeAck, pencabutanLog } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { ALASAN_CABUT_MIN, galatPanjangAlasan } from "@/lib/pencabutan";
 
 export const runtime = "nodejs";
 
@@ -58,15 +60,34 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, principal, soNo, confirmedBy: gate.email });
 }
 
-/** Mencabut konfirmasi: SO-nya kembali ditahan gerbang pada validasi berikutnya. */
+/**
+ * Mencabut konfirmasi: SO-nya kembali ditahan gerbang pada validasi berikutnya. Kunci tetap di query (`principal`, `soNo`); body
+ * JSON `{ alasan }` wajib. Baris yang dicabut + alasan disalin ke `pencabutan_log` dalam transaksi yang sama (DELETE ... RETURNING).
+ */
 export async function DELETE(request: NextRequest) {
     const gate = await gateOf("order.create");
     if (gate.response) return gate.response;
     const principal = text(request.nextUrl.searchParams.get("principal"));
     const soNo = text(request.nextUrl.searchParams.get("soNo"));
     if (!principal || !soNo) return NextResponse.json({ ok: false, error: "Principal dan nomor SO wajib diisi" }, { status: 400 });
-    const gone = await db.delete(orderDupeAck)
-        .where(and(eq(orderDupeAck.principal, principal), eq(orderDupeAck.soNo, soNo)))
-        .returning({ soNo: orderDupeAck.soNo });
-    return NextResponse.json({ ok: true, dicabut: gone.length });
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    // Satu batas dengan Verifikasi balik (lib/pencabutan, tinjauan K3 R-2); tidak dipotong diam-diam.
+    const alasan = text(body?.alasan);
+    if (alasan.length < ALASAN_CABUT_MIN) {
+        return NextResponse.json({ ok: false, error: `Alasan mencabut wajib diisi, minimal ${ALASAN_CABUT_MIN} karakter.` }, { status: 400 });
+    }
+    const alasanPanjang = galatPanjangAlasan(alasan);
+    if (alasanPanjang) return NextResponse.json({ ok: false, error: alasanPanjang }, { status: 400 });
+    const dicabut = await db.transaction(async (tx) => {
+        const gone = await tx.delete(orderDupeAck)
+            .where(and(eq(orderDupeAck.principal, principal), eq(orderDupeAck.soNo, soNo)))
+            .returning();
+        if (gone.length) {
+            await tx.insert(pencabutanLog).values(gone.map((baris) => ({
+                jenis: "order_dupe_ack", kunci: `${baris.principal}|${baris.soNo}`, barisLama: baris, alasan, oleh: gate.email!,
+            })));
+        }
+        return gone.length;
+    });
+    return NextResponse.json({ ok: true, dicabut });
 }

@@ -381,7 +381,7 @@ async function dariSurat(
     if (!listName) {
         return NextResponse.json({
             ok: false,
-            error: `Nomor surat tidak terbaca pada halaman pertama${perluOcr ? " meski sudah lewat OCR" : ""}, dan nama daftar belum diisi. Isi "Nama daftar" lalu unggah lagi — berkasnya tidak akan dibaca ulang, hasil bacanya sudah disimpan.`,
+            error: `Nomor surat tidak terbaca pada halaman pertama${perluOcr ? " meski sudah lewat OCR" : ""}, dan nama daftar belum diisi. Isi "Nama daftar" lalu unggah lagi. Berkasnya tidak akan dibaca ulang, hasil bacanya sudah disimpan.`,
         }, { status: 422 });
     }
     if (!surat.outlets.length) {

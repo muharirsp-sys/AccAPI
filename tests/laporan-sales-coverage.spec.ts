@@ -165,9 +165,9 @@ test("tanpa izin / belum tertaut hierarki: penolakan 403 berpesan jelas, tanpa '
     await expect(main.getByRole("heading", { name: "Coverage Ganda tidak bisa dibuka" })).toBeVisible(NAV);
     await expect(main.getByText("Akun Anda tidak punya izin untuk ini.")).toBeVisible();
     await expect(main.getByRole("button", { name: "Coba lagi" })).toHaveCount(0);
-    tolak = json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki — hubungi Admin." }, 403);
+    tolak = json({ kode: "HIERARKI_BELUM_TERTAUT", error: "Akun belum tertaut ke hierarki. Hubungi Admin." }, 403);
     await main.getByRole("button", { name: "Muat ulang" }).click();
-    await expect(main.getByText("Akun belum tertaut ke hierarki — hubungi Admin.")).toBeVisible(NAV);
+    await expect(main.getByText("Akun belum tertaut ke hierarki. Hubungi Admin.")).toBeVisible(NAV);
     await expect(main.getByRole("button", { name: "Coba lagi" })).toHaveCount(0);
 });
 

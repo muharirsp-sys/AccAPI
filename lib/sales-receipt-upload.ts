@@ -30,8 +30,8 @@ export function salesReceiptRowReports(n: number, data: unknown, noAnswer = ""):
         if (o === "SUCCESS") return { ok: true, message: "", item: item ?? data };
         return answered
             // C11 (S6e-2 butir 4): jawaban Accurate selain s:true BELUM TERBUKTI berarti tidak tersimpan — bukan "ditolak".
-            ? { ok: false, item, message: `Jawaban Accurate: ${text(item ?? data) || "tanpa pesan"} — belum terbukti tersimpan atau tidak: status tidak pasti, butuh pemeriksaan Finance` }
-            : { ok: false, item, message: `Tanpa jawaban Accurate${cause ? ` (${cause})` : ""} — status tidak pasti, cek Accurate sebelum kirim ulang` };
+            ? { ok: false, item, message: `Jawaban Accurate: ${text(item ?? data) || "tanpa pesan"}. Belum terbukti tersimpan atau tidak: status tidak pasti, butuh pemeriksaan Finance` }
+            : { ok: false, item, message: `Tanpa jawaban Accurate${cause ? ` (${cause})` : ""}. Status tidak pasti, cek Accurate sebelum kirim ulang` };
     });
 }
 

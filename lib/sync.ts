@@ -7,7 +7,7 @@
  * ponytail: full resync tiap run (throttled 150ms/halaman); delta sync via lastUpdate kalau volume mulai berat.
  */
 import { db } from "./db";
-import { syncState, branch, accurateAutoNumber, accurateUnit, accurateEmployee, item, customer, salesInvoiceCache, salesReturnCache } from "../db/schema";
+import { syncState, branch, accurateAutoNumber, accurateUnit, accurateEmployee, item, customer, salesInvoiceCache, salesReturnCache, salesInvoiceLineChange } from "../db/schema";
 import { parseAccurateDateTime } from "./accurate-invoice";
 import { matchBranchAutoNumbers } from "./branch-auto-number";
 import { eq, sql } from "drizzle-orm";
@@ -15,8 +15,10 @@ import { recordInvoiceRealization } from "./program-realization-store";
 import { cabangDariTag, normalNama, petaCabang } from "./order-cabang";
 import { redactAccurateSecrets } from "./accurate-redact";
 import { ringkasFaktur } from "./supervisor-review/ringkas-faktur";
+import { BACKFILL, deletedInvoiceLines, diffInvoiceLines, type ChangeContext, type LineChangeRow } from "./sales-invoice-change";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export interface AccurateCredentials {
     databaseId?: string;
@@ -155,6 +157,72 @@ export function barisItem(row: Record<string, unknown>, peta: ReadonlyMap<string
 
 /** Hitungan tag yang membuat barang tak bisa diorder padahal bukan non-jual (tak dikenal / kosong). */
 export type TagTakDikenal = Record<string, number>;
+
+/**
+ * Upsert baris faktur (list.do cron atau detail.do webhook) ke cache sales_invoice. `q` = transaksi pemanggil bila ada: jalur
+ * webhook membaca isi lama, menimpa, dan mencatat perubahan rincian dalam satu transaksi (spec 2026-10-23 §5).
+ */
+async function upsertSalesInvoiceRows(rows: Array<Record<string, unknown>>, q: Pick<typeof db, "insert"> = db) {
+    const payloads = rows.map((row) => ({
+        // Supervisor Review (spec 2026-10-16 §3.2): salesman header, Σ qty satuan terkecil, jumlah baris, Σ DPP. list.do tanpa
+        // detailItem -> semuanya null -> penjaga di set{} mempertahankan ringkasan dari detail.do.
+        ...ringkasFaktur(row),
+        id: Number(row.id),
+        number: str(row.number ?? row.no),
+        transDate: str(row.transDate),
+        customerNo: str(nested(row, "customer").customerNo ?? row.customerNo),
+        customerName: str(nested(row, "customer").name),
+        totalAmount: num(row.totalAmount),
+        outstanding: num(row.primeOwing),
+        status: str(row.statusName),
+        dueDate: str(row.dueDate),
+        age: num(row.age),
+        rawData: JSON.stringify(row),
+        lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
+        lastUpdateAt: parseAccurateDateTime(row.lastUpdate),
+        // createDate hanya dikirim detail.do (jalur webhook). Dari list.do nilainya null —
+        // COALESCE di set{} menjaga agar cron tidak menghapus yang sudah benar.
+        createdAt: parseAccurateDateTime(row.createDate),
+    }));
+    await q.insert(salesInvoiceCache).values(payloads).onConflictDoUpdate({
+        target: salesInvoiceCache.id,
+        set: {
+            number: sql`excluded."number"`,
+            transDate: sql`excluded."trans_date"`,
+            customerNo: sql`excluded."customer_no"`,
+            customerName: sql`excluded."customer_name"`,
+            totalAmount: sql`excluded."total_amount"`,
+            outstanding: sql`excluded."outstanding"`,
+            status: sql`excluded."status"`,
+            dueDate: sql`excluded."due_date"`,
+            age: sql`excluded."age"`,
+            // JANGAN menimpa rincian baris dengan jawaban yang tidak punya rincian.
+            // `list.do` (cron) tidak mengirim `detailItem`; `detail.do` (webhook) iya.
+            // Tanpa penjagaan ini, sync terjadwal menghapus satu-satunya salinan baris
+            // faktur yang dipakai Rekap Promo DAN verifikasi balik (butir 4.30) — dan
+            // keduanya lalu melaporkan "tidak ada apa-apa" dengan nada meyakinkan.
+            // ponytail: cocokkan teksnya, karena raw_data tersimpan sebagai STRING JSON
+            // di kolom jsonb sehingga operator `?` tidak bisa dipakai. Kalau suatu saat
+            // penyimpanannya diperbaiki jadi objek, ganti dengan `raw_data ? 'detailItem'`.
+            rawData: sql`case when excluded."raw_data"::text like '%detailItem%'
+                               or sales_invoice.raw_data::text not like '%detailItem%'
+                          then excluded."raw_data" else sales_invoice.raw_data end`,
+            lastUpdate: sql`excluded."last_update"`,
+            // COALESCE: kalau Accurate tidak mengirim lastUpdate di satu panggilan,
+            // jangan hapus nilai yang sudah benar (pelajaran dari raw_data yang tertimpa).
+            lastUpdateAt: sql`coalesce(excluded."last_update_at", sales_invoice.last_update_at)`,
+            createdAt: sql`coalesce(excluded."created_at", sales_invoice.created_at)`,
+            // Ringkasan Supervisor Review mengikuti aturan raw_data di atas: jawaban TANPA rincian (list.do -> null) tidak
+            // mengosongkan; jawaban BER-rincian (qty_total terisi) menang utuh — termasuk salesman yang dikosongkan di Accurate,
+            // yang dengan coalesce polos akan tertinggal salesman lama.
+            salesmanId: sql`case when excluded."qty_total" is not null then excluded."salesman_id" else sales_invoice.salesman_id end`,
+            qtyTotal: sql`coalesce(excluded."qty_total", sales_invoice.qty_total)`,
+            jumlahItem: sql`coalesce(excluded."jumlah_item", sales_invoice.jumlah_item)`,
+            dpp: sql`coalesce(excluded."dpp", sales_invoice.dpp)`,
+            syncedAt: bumpSyncedAt("sales_invoice"),
+        },
+    });
+}
 
 // 2. Registry modul sync: endpoint + fields (WAJIB — list.do tanpa `fields` hanya
 // mengembalikan { id }, dibuktikan live production 2026-07-13) + upsert per halaman.
@@ -424,67 +492,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
         // — terbukti terisi di list.do, mis. 396000.945944. Bentuk yang sama juga ada di detail.do,
         // jadi jalur webhook (upsertSalesInvoiceById -> upsertPage ini) ikut mengisinya.
         fields: "id,number,customerNo,customer,totalAmount,transDate,dueDate,statusName,age,lastUpdate,primeOwing,primeReceipt",
-        upsertPage: async (rows) => {
-            const payloads = rows.map((row) => ({
-                // Supervisor Review (spec 2026-10-16 §3.2): salesman header, Σ qty satuan terkecil, jumlah baris, Σ DPP. list.do tanpa
-                // detailItem -> semuanya null -> penjaga di set{} mempertahankan ringkasan dari detail.do.
-                ...ringkasFaktur(row),
-                id: Number(row.id),
-                number: str(row.number ?? row.no),
-                transDate: str(row.transDate),
-                customerNo: str(nested(row, "customer").customerNo ?? row.customerNo),
-                customerName: str(nested(row, "customer").name),
-                totalAmount: num(row.totalAmount),
-                outstanding: num(row.primeOwing),
-                status: str(row.statusName),
-                dueDate: str(row.dueDate),
-                age: num(row.age),
-                rawData: JSON.stringify(row),
-                lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
-                lastUpdateAt: parseAccurateDateTime(row.lastUpdate),
-                // createDate hanya dikirim detail.do (jalur webhook). Dari list.do nilainya null —
-                // COALESCE di set{} menjaga agar cron tidak menghapus yang sudah benar.
-                createdAt: parseAccurateDateTime(row.createDate),
-            }));
-            await db.insert(salesInvoiceCache).values(payloads).onConflictDoUpdate({
-                target: salesInvoiceCache.id,
-                set: {
-                    number: sql`excluded."number"`,
-                    transDate: sql`excluded."trans_date"`,
-                    customerNo: sql`excluded."customer_no"`,
-                    customerName: sql`excluded."customer_name"`,
-                    totalAmount: sql`excluded."total_amount"`,
-                    outstanding: sql`excluded."outstanding"`,
-                    status: sql`excluded."status"`,
-                    dueDate: sql`excluded."due_date"`,
-                    age: sql`excluded."age"`,
-                    // JANGAN menimpa rincian baris dengan jawaban yang tidak punya rincian.
-                    // `list.do` (cron) tidak mengirim `detailItem`; `detail.do` (webhook) iya.
-                    // Tanpa penjagaan ini, sync terjadwal menghapus satu-satunya salinan baris
-                    // faktur yang dipakai Rekap Promo DAN verifikasi balik (butir 4.30) — dan
-                    // keduanya lalu melaporkan "tidak ada apa-apa" dengan nada meyakinkan.
-                    // ponytail: cocokkan teksnya, karena raw_data tersimpan sebagai STRING JSON
-                    // di kolom jsonb sehingga operator `?` tidak bisa dipakai. Kalau suatu saat
-                    // penyimpanannya diperbaiki jadi objek, ganti dengan `raw_data ? 'detailItem'`.
-                    rawData: sql`case when excluded."raw_data"::text like '%detailItem%'
-                                       or sales_invoice.raw_data::text not like '%detailItem%'
-                                  then excluded."raw_data" else sales_invoice.raw_data end`,
-                    lastUpdate: sql`excluded."last_update"`,
-                    // COALESCE: kalau Accurate tidak mengirim lastUpdate di satu panggilan,
-                    // jangan hapus nilai yang sudah benar (pelajaran dari raw_data yang tertimpa).
-                    lastUpdateAt: sql`coalesce(excluded."last_update_at", sales_invoice.last_update_at)`,
-                    createdAt: sql`coalesce(excluded."created_at", sales_invoice.created_at)`,
-                    // Ringkasan Supervisor Review mengikuti aturan raw_data di atas: jawaban TANPA rincian (list.do -> null) tidak
-                    // mengosongkan; jawaban BER-rincian (qty_total terisi) menang utuh — termasuk salesman yang dikosongkan di Accurate,
-                    // yang dengan coalesce polos akan tertinggal salesman lama.
-                    salesmanId: sql`case when excluded."qty_total" is not null then excluded."salesman_id" else sales_invoice.salesman_id end`,
-                    qtyTotal: sql`coalesce(excluded."qty_total", sales_invoice.qty_total)`,
-                    jumlahItem: sql`coalesce(excluded."jumlah_item", sales_invoice.jumlah_item)`,
-                    dpp: sql`coalesce(excluded."dpp", sales_invoice.dpp)`,
-                    syncedAt: bumpSyncedAt("sales_invoice"),
-                },
-            });
-        },
+        upsertPage: (rows) => upsertSalesInvoiceRows(rows),
     },
     sales_return: {
         endpoint: "/sales-return/list.do",
@@ -586,7 +594,41 @@ export async function upsertMasterById(
     return { kind, id, code };
 }
 
-export async function upsertSalesInvoiceById(id: number, creds: AccurateCredentials) {
+/** Kunci per faktur di dalam transaksi: dua event untuk faktur yang sama tidak membaca isi lama yang sama (spec 2026-10-23 §8). */
+const kunciFaktur = (tx: Tx, id: number) =>
+    tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`sales_invoice:${id}`}, 0))`);
+
+/** Alasan galat untuk log: cause (alasan Postgres) didahulukan, karena pesan Drizzle sendiri ("Failed query ... params:") memuat data faktur/pelanggan. */
+const sebab = (e: unknown) => e instanceof Error ? (e.cause instanceof Error ? e.cause.message : e.message) : String(e);
+
+/**
+ * Simpan baris perubahan rincian di SAVEPOINT (drizzle tx.transaction bersarang). Gagal (tabel belum ada karena migrasi belum jalan,
+ * data aneh) TIDAK membatalkan upsert cache di transaksi yang sama: pencatatan tidak boleh menahan faktur (spec 2026-10-23 §8).
+ */
+async function catatPerubahan(tx: Tx, id: number, hitung: () => LineChangeRow[]) {
+    let baris: LineChangeRow[];
+    try {
+        baris = hitung();
+    } catch (e) {
+        console.error(`[perubahan-faktur] ${id}: pembanding gagal, tidak dicatat: ${e instanceof Error ? e.message : e}`);
+        return;
+    }
+    if (!baris.length) return;
+    try {
+        await tx.transaction(async (sp) => {
+            // DDL/kunci di masa depan pada tabel perubahan tidak boleh membuat webhook menunggu sampai statement_timeout sambil
+            // memegang baris sales_invoice + kunci advisory (spec 2026-10-23 §8). Gagal -> ikut dibatalkan bersama SAVEPOINT;
+            // berhasil -> hanya berlaku sampai akhir transaksi ini (tidak ada perintah lain sesudahnya).
+            await sp.execute(sql`SET LOCAL lock_timeout = '2s'`);
+            await sp.insert(salesInvoiceLineChange).values(baris);
+        });
+        console.log(`[perubahan-faktur] ${baris[0].invoiceNumber}: ${baris.length} baris (${[...new Set(baris.map((b) => b.kind))].join(", ")})`);
+    } catch (e) {
+        console.error(`[perubahan-faktur] ${id}: gagal dicatat, upsert dilanjutkan: ${sebab(e)}`);
+    }
+}
+
+export async function upsertSalesInvoiceById(id: number, creds: AccurateCredentials, ctx: ChangeContext = BACKFILL) {
     const url = `${creds.sessionHost}/accurate/api/sales-invoice/detail.do?id=${id}`;
     const res = await fetch(url, { headers: accurateHeaders(creds), signal: AbortSignal.timeout(30_000) });
     if (!res.ok) throw new Error(`detail.do faktur ${id}: HTTP ${res.status}`);
@@ -601,13 +643,19 @@ export async function upsertSalesInvoiceById(id: number, creds: AccurateCredenti
     if (fakturSudahTiada(body)) {
         const dbFaktur = String(process.env.ACCURATE_INVOICE_DB_ID || "").trim();
         if (dbFaktur && String(creds.databaseId ?? "") === dbFaktur) {
-            const dibuang = await db.delete(salesInvoiceCache).where(eq(salesInvoiceCache.id, id))
-                .returning({ number: salesInvoiceCache.number, outstanding: salesInvoiceCache.outstanding });
+            // Isi terakhir faktur dicatat (invoice_deleted) di transaksi yang sama sebelum barisnya dibuang (spec 2026-10-23 §5).
+            const dibuang = await db.transaction(async (tx) => {
+                await kunciFaktur(tx, id);
+                const hapus = await tx.delete(salesInvoiceCache).where(eq(salesInvoiceCache.id, id))
+                    .returning({ number: salesInvoiceCache.number, outstanding: salesInvoiceCache.outstanding, raw: salesInvoiceCache.rawData });
+                if (hapus.length) await catatPerubahan(tx, id, () => deletedInvoiceLines(hapus[0].raw, ctx));
+                return hapus;
+            }, { isolationLevel: "read committed" }); // dipatok: baca sesudah kunci advisory harus melihat commit pemegang sebelumnya
             if (dibuang.length) console.log(`[sync] faktur ${id} ${dibuang[0].number ?? "-"} (sisa ${dibuang[0].outstanding ?? "-"}) tidak ada di Accurate -> cache dibuang`);
         } else {
             // Galat biasa, BUKAN Gone: webhook menganggap Gone sukses (200, tanpa kirim ulang), jadi env hilang saat deploy
             // atau sesi di database lain akan menelan diam-diam event faktur sah (tinjauan akhir PR #185, M1).
-            throw new Error(`detail.do faktur ${id}: tidak ada di Accurate, tetapi database sesi ${creds.databaseId ?? "?"} bukan ACCURATE_INVOICE_DB_ID (${dbFaktur || "kosong"}) — cache tidak dibuang`);
+            throw new Error(`detail.do faktur ${id}: tidak ada di Accurate, tetapi database sesi ${creds.databaseId ?? "?"} bukan ACCURATE_INVOICE_DB_ID (${dbFaktur || "kosong"}), jadi cache tidak dibuang`);
         }
         if (creds.databaseId) await recordInvoiceRealization(creds.databaseId, String(id), null);
         throw new AccurateInvoiceGoneError(id);
@@ -621,7 +669,14 @@ export async function upsertSalesInvoiceById(id: number, creds: AccurateCredenti
     }
 
     const row = body.d as Record<string, unknown>;
-    await SYNC_MODULES.sales_invoice.upsertPage([row]);
+    // Isi lama dibaca, cache ditimpa, dan selisih baris dicatat dalam SATU transaksi berkunci per faktur (spec 2026-10-23 §5, §8).
+    await db.transaction(async (tx) => {
+        await kunciFaktur(tx, id);
+        const [lama] = await tx.select({ raw: salesInvoiceCache.rawData }).from(salesInvoiceCache)
+            .where(eq(salesInvoiceCache.id, id)).limit(1);
+        await upsertSalesInvoiceRows([row], tx);
+        if (lama) await catatPerubahan(tx, id, () => diffInvoiceLines(lama.raw, row, ctx));
+    }, { isolationLevel: "read committed" }); // dipatok: SELECT sesudah kunci advisory harus melihat commit pemegang sebelumnya
     if (creds.databaseId) await recordInvoiceRealization(creds.databaseId, String(id), row);
 
     // Ringkasan untuk log/response — bukti cepat bahwa baris yang benar yang tersimpan.

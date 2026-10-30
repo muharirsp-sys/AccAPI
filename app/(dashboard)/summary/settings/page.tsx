@@ -1,6 +1,6 @@
 /** Tujuan: Pengaturan Summary (Fiori): koreksi detail program, strata, SKU, dan syarat outlet dari paket Summary, lalu terbitkan aturan untuk order lewat dialog.
  * Caller: halaman Summary (tombol Pengaturan Summary) dan halaman Realisasi program. Dependensi: FastAPI /summary/review (lib/apiBase, CSRF dari /api/me), komponen Fiori, lib/tampil.
- * Main Functions: SettingsPage, request, save, terbitkan, download; ringkasan singkat dan detail terpisah.
+ * Main Functions: SettingsPage, request, save, terbitkan, download; ringkasan singkat dan detail terpisah; tombol paket rujukan dari GET /summary/review/reference.
  * Side Effects: HTTP impor/koreksi/publikasi eksplisit dan unduh paket lokal.
  */
 "use client";
@@ -27,6 +27,8 @@ type Package = { id: string; title: string; revision: number; content: {
   details: Detail[]; summary: Brief[]; master: Record<string, {name: string}>; [key: string]: unknown;
 }};
 type ListEntry = Pick<Package, "id" | "title" | "revision">;
+/** GET /summary/review/reference: paket rujukan di server; `periode` dari field `created` paket ("September 2026"). */
+type Rujukan = { tersedia: boolean; sebab: string; periode: string | null; judul: string | null };
 type Pesan = { tone: "pos" | "warn" | "neg" | "info"; teks: string };
 const base = resolveApiBase();
 
@@ -65,6 +67,9 @@ export default function SettingsPage() {
   const [dialogTerbit,setDialogTerbit] = useState(false);
   const ambilDaftar = useCallback(() => request("").then(r=>{setList(r.packages);setDaftarMuat("siap");}).catch(e=>{setDaftarMuat("galat");setPesan({tone:"neg",teks:e.message});}),[]);
   useEffect(() => { void ambilDaftar(); },[ambilDaftar]);
+  // Paket rujukan di server (audit No 81): label tombol dari isi paket, bukan bulan tertulis di kode.
+  const [rujukan,setRujukan] = useState<Rujukan | string>("memuat"); // teks = "memuat" atau sebab gagal baca
+  useEffect(() => { request("/reference").then(r=>setRujukan(r as Rujukan)).catch(e=>setRujukan(`Paket rujukan belum terbaca: ${e.message}`)); },[]);
 
   function receive(value: Package, selected?: string) {
     setPack(value);setDirty(false);setReviewed(false);setIssues([]);setAturanSiap(null);
@@ -115,6 +120,9 @@ export default function SettingsPage() {
   const labels:Record<string,string>={quantity:'Kuantitas',value:'Nilai pembelian',assigned_grade:'Grade tetap',fixed_basket:'Komposisi paket',invoice:'Per faktur',calendar_month:'Kumulatif bulanan',first_order_in_month:'Order pertama bulan',unspecified:'Belum ditentukan',same_sku:'SKU sama',same_master_group_and_size:'Kelompok dan gramasi sama',same_product_family:'Keluarga produk sama',unresolved:'Perlu koreksi',bonus:'Bonus barang',bonus_per_ctn:'Bonus per karton',percentage:'Persen',rupiah_per_unit:'Rupiah per unit',rupiah_per_invoice:'Rupiah per faktur',package_price:'Harga paket',net_price:'Harga nett',on_invoice:'On faktur',rafaksi:'Rafaksi',choose_rafaksi_or_on_invoice:'Pilih rafaksi atau on faktur'};
   const labelStrata:Record<string,string>={minimum:'minimum',maximum:'maksimum',amount:'nilai'};
   const alasanBerpindah = busy ? undefined : dirty ? "Simpan atau batalkan perubahan dulu" : undefined;
+  const alasanRujukan = rujukan === "memuat" ? "Memeriksa paket rujukan di server" : typeof rujukan === "string" ? rujukan
+    : !rujukan.tersedia ? rujukan.sebab || "Paket rujukan belum tersedia di server." : undefined;
+  const labelRujukan = typeof rujukan === "object" && rujukan.periode ? `Buka paket rujukan ${rujukan.periode}` : "Buka paket rujukan";
 
   const kolomRingkasan: Column<Brief>[] = [
     { key: "program", header: "Principal dan produk", cell: (s) => <>{s.principal}<span className="fi-sub">{s.kelompok}</span></> },
@@ -153,13 +161,15 @@ export default function SettingsPage() {
           <FormField label="File pengaturan (JSON)">{(a)=><input {...a} className="fi-input" type="file" accept=".json,application/json" disabled={busy||dirty} onChange={e=>setFile(e.target.files?.[0]||null)}/>}</FormField>
         </div>
         <div className="fi-btnrow">
-          <Button disabled={busy||dirty} disabledReason={alasanBerpindah} onClick={()=>void run(async()=>receive((await request('/reference/september','POST',{})).package))}>Buka paket rujukan September 2026</Button>
+          <Button disabled={busy||dirty||Boolean(alasanRujukan)} disabledReason={alasanBerpindah ?? alasanRujukan} aria-describedby={alasanRujukan && rujukan !== "memuat" && !alasanBerpindah ? "alasan-rujukan" : undefined}
+            onClick={()=>void run(async()=>receive((await request('/reference','POST',{})).package))}>{labelRujukan}</Button>
           <Button disabled={!file||busy||dirty} disabledReason={dirty?alasanBerpindah:"Pilih file pengaturan dulu"} onClick={()=>void run(async()=>{
             if(!file)return;if(file.size>8*1024*1024)throw new Error("File maksimal 8 MB");
             let isi: unknown;try{isi=JSON.parse(await file.text());}catch{throw new Error("Berkas bukan JSON yang valid.");}
             receive((await request('/import','POST',isi)).package);setPesan({tone:"pos",teks:"Paket dibuka. Impor berulang tidak menggandakan paket yang sama."});
           })}>Impor paket</Button>
         </div>
+        {alasanRujukan && rujukan !== "memuat" && <p id="alasan-rujukan" className="fi-small fi-subtle">{alasanRujukan}</p>}
       </div>
     </Section>
 

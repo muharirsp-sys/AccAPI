@@ -88,7 +88,7 @@ export async function PATCH(request: Request, context: Context) {
         if (!item.updatedAt || expectedMs !== item.updatedAt.getTime()) {
             return NextResponse.json({
                 ok: false,
-                error: "Item ini sudah diubah pengguna lain. Muat ulang halaman untuk melihat versi terbaru sebelum menyimpan.",
+                error: "Item ini sudah diubah user lain. Muat ulang halaman untuk melihat versi terbaru sebelum menyimpan.",
                 code: "CONFLICT",
                 currentUpdatedAt: item.updatedAt ?? null,
             }, { status: 409 });
@@ -225,7 +225,7 @@ export async function PATCH(request: Request, context: Context) {
         if (error instanceof OptimisticLockError) {
             return NextResponse.json({
                 ok: false,
-                error: "Item ini sudah diubah pengguna lain. Muat ulang halaman untuk melihat versi terbaru sebelum menyimpan.",
+                error: "Item ini sudah diubah user lain. Muat ulang halaman untuk melihat versi terbaru sebelum menyimpan.",
                 code: "CONFLICT",
             }, { status: 409 });
         }

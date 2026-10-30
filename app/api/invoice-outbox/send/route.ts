@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
             await upsertSalesInvoiceById(Number(row.accurateId), {
                 databaseId: targetDb, sessionHost: session.sessionHost,
                 sessionId: session.sessionId, apiKey: session.accessToken,
-            });
+            }, { source: "send", appKey: null, savedAt: null });
         } catch (error) {
             // Fakturnya SUDAH terbentuk; yang gagal hanya pembacaan baliknya. Itu bukan
             // kegagalan kirim, dan tidak boleh dilaporkan sebagai berhasil juga.
