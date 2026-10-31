@@ -1,6 +1,6 @@
 /*
  * Tujuan: Bagian laporan principal otomatis di Laporan Harian (ABCPI: FTP + email 20.00 WITA, closing ditahan; Enigma: unggah portal
- *   Enesis 20.30 WITA) — kirim/unggah manual per tanggal, unduh pratinjau, riwayat putaran sebagai bukti.
+ *   Enesis 20.30 WITA, closing ditahan) — kirim/unggah manual per tanggal, unduh pratinjau, riwayat putaran sebagai bukti.
  * Caller: app/(dashboard)/laporan-harian/LaporanHarian.tsx (hanya bila punya laporan_harian.send).
  * Dependensi: GET/POST /api/laporan-harian/{abcpi,enigma}, components/fiori/{core,interactive}.
  * Main Functions: KirimPrincipal.

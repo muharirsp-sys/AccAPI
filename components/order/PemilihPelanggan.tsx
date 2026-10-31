@@ -10,12 +10,12 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { RefreshCw, Search } from "lucide-react";
+import { ArrowLeft, RefreshCw, Search } from "lucide-react";
 import { Button, EmptyState, ListItem, MessageStrip, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { FormField } from "@/components/fiori/interactive";
 import { MIN_HURUF, galatTidakDitemukan, type Cakupan, type Galat, type PelangganPilih, type Peran } from "./order-cabang";
 import { bacaPelangganKode, cariPelanggan } from "./order-cabang-api";
-import { useCari } from "./useCari";
+import { useCari, useLapisanCari } from "./useCari";
 
 /** kosong = belum dipilih; memuat/galat = pelanggan dari kode (rute hari ini, draf) sedang/gagal dibaca; siap = terpilih. */
 export type StatePelanggan =
@@ -69,6 +69,7 @@ export function PemilihPelanggan({ state, peran, onPilih, onLepas, onBacaUlang, 
     // "Ganti pelanggan" membuka pencarian TANPA melepas pelanggan lama: yang lama baru diganti saat yang baru dipilih (dan pemanggil
     // menyetujuinya — Order Baru meminta konfirmasi bila barisnya akan terbuang), jadi membatalkan tidak kehilangan apa pun.
     const [mengganti, setMengganti] = useState(false);
+    const { buka: lapisan, setBuka: setLapisan, tutup: tutupLapisan, ref: refLapisan } = useLapisanCari();
     const [cabang, setCabang] = useState<number | null>(null);
     const [dikenal, setDikenal] = useState<Map<number, string>>(new Map());
     const cari = useCallback(async (kata: string, signal: AbortSignal) => {
@@ -79,7 +80,8 @@ export function PemilihPelanggan({ state, peran, onPilih, onLepas, onBacaUlang, 
     }, [cabang, peran, saringCabang]);
     const mencari = state.jenis === "kosong" || (state.jenis === "siap" && mengganti);
     const [hasil, cobaLagi] = useCari(q, mencari, `cab:${cabang ?? ""}`, cari);
-    const pilihItem = (p: PelangganPilih) => { setQ(""); setMengganti(false); onPilih(p); };
+    const batalCari = () => { setQ(""); setMengganti(false); tutupLapisan(); };
+    const pilihItem = (p: PelangganPilih) => { batalCari(); onPilih(p); };
 
     if (state.jenis === "memuat") return <Skeleton rows={2} label={`Membaca pelanggan ${state.kode}`} />;
     if (state.jenis === "galat") {
@@ -100,7 +102,7 @@ export function PemilihPelanggan({ state, peran, onPilih, onLepas, onBacaUlang, 
                         <b style={{ overflowWrap: "anywhere" }}>{p.name}</b>
                         <div className="fi-small fi-muted fi-mono">{p.customerNo}</div>
                     </div>
-                    <Button variant="tertiary" disabled={Boolean(kunci)} disabledReason={kunci} onClick={() => setMengganti(true)}>Ganti pelanggan</Button>
+                    <Button variant="tertiary" disabled={Boolean(kunci)} disabledReason={kunci} onClick={() => { setMengganti(true); setLapisan(true); }}>Ganti pelanggan</Button>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 fi-small">
                     <StatusBadge tone="info">Cabang {p.branchName}</StatusBadge>
@@ -117,17 +119,23 @@ export function PemilihPelanggan({ state, peran, onPilih, onLepas, onBacaUlang, 
         ? (cakupan?.branchName ? `Hanya pelanggan cabang ${cakupan.branchName} (cabang karyawan Accurate Anda).` : "Hanya pelanggan di cabang Anda.")
         : cabang !== null ? `Cabang ${dikenal.get(cabang) ?? cabang}.` : "Semua cabang.";
     return (
-        <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
+        <div className="fi-cari" data-buka={lapisan || undefined} ref={refLapisan}>
+            {lapisan && <div className="fi-cari-kepala"><Button variant="tertiary" icon={<ArrowLeft className="fi-icon" aria-hidden />} onClick={batalCari}>Kembali</Button></div>}
             {/* Alasan terkunci ditulis di bantuan isian (terbaca di layar sentuh dan pembaca layar), bukan hanya title (audit No 50). */}
             <FormField label="Cari pelanggan" required help={kunci ? `Pencarian terkunci: ${kunci}.` : `Ketik nama atau kode, minimal ${MIN_HURUF} huruf. ${lingkup}`}>
                 {(a) => (
+                    // autoFocus hanya sesudah "Ganti pelanggan" (lapisan sudah terbuka saat kolom ini muncul), bukan saat halaman dibuka.
                     <input {...a} type="search" className="fi-input" autoComplete="off" value={q} placeholder="mis. PELANGGAN A atau C-01" disabled={Boolean(kunci)} title={kunci}
+                        autoFocus={lapisan} onFocus={() => setLapisan(true)}
                         onChange={(e) => setQ(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter" && items[0]) { e.preventDefault(); pilihItem(items[0]); } }} />
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter" && items[0]) { e.preventDefault(); pilihItem(items[0]); }
+                            if (e.key === "Escape" && lapisan) batalCari();
+                        }} />
                 )}
             </FormField>
             {mengganti && state.jenis === "siap" && (
-                <div><Button variant="tertiary" onClick={() => { setMengganti(false); setQ(""); }}>Batal ganti, tetap {state.p.name}</Button></div>
+                <div><Button variant="tertiary" onClick={batalCari}>Batal ganti, tetap {state.p.name}</Button></div>
             )}
             {saringCabang && (
                 <FormField label="Saring cabang" help={dikenal.size ? undefined : "Pilihan cabang muncul dari hasil pencarian."}>
@@ -139,7 +147,7 @@ export function PemilihPelanggan({ state, peran, onPilih, onLepas, onBacaUlang, 
                     )}
                 </FormField>
             )}
-            <div aria-live="polite" style={{ minWidth: 0 }}>
+            <div className="fi-cari-hasil" aria-live="polite" style={{ minWidth: 0 }}>
                 {hasil.jenis === "memuat" && <StatusBadge tone="info" busy>Mencari pelanggan…</StatusBadge>}
                 {hasil.jenis === "galat" && (
                     <MessageStrip tone="neg" title={`${hasil.galat.judul}.`}>
@@ -164,7 +172,7 @@ export function PemilihPelanggan({ state, peran, onPilih, onLepas, onBacaUlang, 
                 )}
                 {hasil.jenis === "siap" && items.length >= BATAS_HASIL && <p className="fi-small fi-muted">Menampilkan {BATAS_HASIL} teratas. Persempit pencarian dengan nama atau kode yang lebih lengkap.</p>}
 
-                {hasil.jenis === "diam" && <p className="fi-small fi-muted"><Search className="fi-icon" aria-hidden style={{ verticalAlign: "-0.15em" }} /> Hasil muncul setelah {MIN_HURUF} huruf pertama.</p>}
+                {hasil.jenis === "diam" && <p className="fi-small fi-muted"><Search className="fi-icon" aria-hidden style={{ display: "inline", verticalAlign: "-0.15em" }} /> Hasil muncul setelah {MIN_HURUF} huruf pertama.</p>}
             </div>
         </div>
     );

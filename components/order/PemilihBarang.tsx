@@ -11,13 +11,13 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { ArrowLeft, RefreshCw } from "lucide-react";
 import { Button, EmptyState, ListItem, MessageStrip, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { FormField } from "@/components/fiori/interactive";
 import { rupiah } from "@/lib/promo-ui";
 import { MIN_HURUF, labelSatuan, type BarangPilih, type Galat, type PelangganPilih, type Peran } from "./order-cabang";
 import { cariBarang } from "./order-cabang-api";
-import { useCari } from "./useCari";
+import { useCari, useLapisanCari } from "./useCari";
 
 const BATAS_HASIL = 20;
 
@@ -40,10 +40,14 @@ type Props = {
 
 export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran, onPilih, onLepas, onBacaUlang, kunci }: Props) {
     const [q, setQ] = useState("");
+    // "Ganti barang" membuka pencarian TANPA melepas barang lama (seperti Ganti pelanggan): batal/Kembali = barang, satuan, dan jumlah utuh.
+    const [mengganti, setMengganti] = useState(false);
+    const { buka: lapisan, setBuka: setLapisan, tutup: tutupLapisan, ref: refLapisan } = useLapisanCari();
+    const batalCari = () => { setQ(""); setMengganti(false); tutupLapisan(); };
     const cari = useCallback(async (kata: string, signal: AbortSignal) => (pelanggan
         ? cariBarang({ q: kata, pelanggan, tanggal, limit: BATAS_HASIL }, signal, peran)
         : { ok: false as const, batal: true as const }), [pelanggan, tanggal, peran]);
-    const [hasil, cobaLagi] = useCari(q, nilai === null && !bacaan && pelanggan !== null, `${pelanggan?.id ?? ""}|${tanggal}`, cari);
+    const [hasil, cobaLagi] = useCari(q, (nilai === null || mengganti) && !bacaan && pelanggan !== null, `${pelanggan?.id ?? ""}|${tanggal}`, cari);
 
     if (bacaan?.jenis === "memuat") return <Skeleton rows={1} label={`Membaca barang ${bacaan.kode}`} />;
     if (bacaan?.jenis === "galat") {
@@ -55,7 +59,7 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
             </MessageStrip>
         );
     }
-    if (nilai) {
+    if (nilai && !mengganti) {
         return (
             <div className="fi-panel" role="group" aria-label={`Barang ${nomor} terpilih`} style={{ padding: "var(--sp-3)" }}>
                 <div className="fi-btnrow" style={{ justifyContent: "space-between", flexWrap: "nowrap" }}>
@@ -63,7 +67,7 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
                         <b style={{ overflowWrap: "anywhere" }}>{nilai.name || nilai.no}</b>
                         <div className="fi-small fi-muted"><span className="fi-mono">{nilai.no}</span>{nilai.branchName ? ` · ${nilai.branchName}` : ""}</div>
                     </div>
-                    <Button variant="tertiary" disabled={Boolean(kunci)} disabledReason={kunci} aria-label={`Ganti barang ${nomor}`} onClick={onLepas}>Ganti barang</Button>
+                    <Button variant="tertiary" disabled={Boolean(kunci)} disabledReason={kunci} aria-label={`Ganti barang ${nomor}`} onClick={() => { setMengganti(true); setLapisan(true); }}>Ganti barang</Button>
                 </div>
             </div>
         );
@@ -72,16 +76,23 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
     const items = hasil.jenis === "siap" ? hasil.data.items : [];
     const cabang = pelanggan?.branchName ?? "";
     return (
-        <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
-            <FormField label="Cari barang" help={!pelanggan ? "Pilih pelanggan dulu; barang mengikuti cabang pelanggan."
+        <div className="fi-cari" data-buka={lapisan || undefined} ref={refLapisan}>
+            {lapisan && <div className="fi-cari-kepala"><Button variant="tertiary" icon={<ArrowLeft className="fi-icon" aria-hidden />} onClick={batalCari}>Kembali</Button></div>}
+            <FormField label={`Cari barang ${nomor}`} help={!pelanggan ? "Pilih pelanggan dulu; barang mengikuti cabang pelanggan."
                 : kunci ? `Pencarian terkunci: ${kunci}.`
                     : `Ketik kode atau nama, minimal ${MIN_HURUF} huruf. Hanya barang cabang ${cabang}; harga mengikuti pelanggan.`}>
                 {(a) => (
+                    // autoFocus hanya sesudah "Ganti barang" (lapisan sudah terbuka saat kolom ini muncul), bukan untuk baris baru.
                     <input {...a} type="search" className="fi-input" autoComplete="off" value={q} placeholder="mis. BARANG A atau A-1"
-                        disabled={!pelanggan || Boolean(kunci)} title={!pelanggan ? "Pilih pelanggan dulu" : kunci} onChange={(e) => setQ(e.target.value)} />
+                        disabled={!pelanggan || Boolean(kunci)} title={!pelanggan ? "Pilih pelanggan dulu" : kunci}
+                        autoFocus={lapisan} onFocus={() => setLapisan(true)} onChange={(e) => setQ(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Escape" && lapisan) batalCari(); }} />
                 )}
             </FormField>
-            <div aria-live="polite" style={{ minWidth: 0 }}>
+            {mengganti && nilai && (
+                <div><Button variant="tertiary" onClick={batalCari}>Batal ganti, tetap {nilai.name || nilai.no}</Button></div>
+            )}
+            <div className="fi-cari-hasil" aria-live="polite" style={{ minWidth: 0 }}>
                 {hasil.jenis === "memuat" && <StatusBadge tone="info" busy>Mencari barang…</StatusBadge>}
                 {hasil.jenis === "galat" && (
                     <MessageStrip tone="neg" title={`${hasil.galat.judul}.`}>
@@ -106,7 +117,12 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
                                 <li key={b.id}>
                                     <ListItem doc={b.no} title={b.name} meta={`${b.branchName ?? ""} · ${ringkas}`}
                                         badge={tutup ? <StatusBadge tone="warn">Belum bisa dipilih</StatusBadge> : undefined}
-                                        onClick={tutup ? undefined : () => { setQ(""); onPilih(b); }} />
+                                        onClick={tutup ? undefined : () => {
+                                            // Ganti = baris dikosongkan dulu (satuan + jumlah lama tidak terbawa ke barang baru), seperti sebelumnya.
+                                            if (mengganti) onLepas();
+                                            batalCari();
+                                            onPilih(b);
+                                        }} />
                                 </li>
                             );
                         })}
