@@ -96,6 +96,14 @@ const EKSPRESI_SIRUP = `CASE WHEN upper(coalesce(p.jenisproduk,'')) <> 'HEINZ AB
         ELSE 'NON SIRUP' END`;
 
 /**
+ * Grup Pemisah GDI satu baris -- hanya untuk divisi GODREJ (owner 31 Okt 2026: "yang GDI hanya untuk Godrej saja").
+ * Grup GDI menempel di outlet induk, jadi tanpa ini nota Dolphin/Heinz/dll. dari outlet MT GDI ikut ke lembar OG-*
+ * (INV/2610/DL00211). Divisi lain = NULL: tidak masuk grup outlet_gdi mana pun, tetap di lembar divisinya.
+ * Excel lama tidak menyaring ini (slicer JENISPRODUK lembar GMT selalu memilih semua, 15 snapshot Nov 2025-Agu 2026).
+ */
+const EKSPRESI_GRUP_GDI = `CASE WHEN upper(coalesce(p.jenisproduk,'')) = 'GODREJ' THEN wa.snap_grup_gdi END`;
+
+/**
  * Grup dari dimensi berbeda di-AND-kan, grup dalam dimensi sama di-OR-kan — persis seperti
  * pivot Excel memakai filter Area DAN filter Pareto sekaligus. Tanpa ini, "cetak HNZ1"
  * (area 1/10/PGU DAN non-pareto) tidak bisa dinyatakan sama sekali.
@@ -119,7 +127,7 @@ function bangunFilter(groups: PickGroupRow[], params: unknown[]): string {
         }
         const kolom = dimensi === "area" ? "wa.snap_area"
             : dimensi === "outlet_all" ? "wa.snap_grup_all"
-            : dimensi === "outlet_gdi" ? "wa.snap_grup_gdi"
+            : dimensi === "outlet_gdi" ? `(${EKSPRESI_GRUP_GDI})`
             : dimensi === "jenis_produk" ? "p.jenisproduk"
             : dimensi === "sirup" ? `(${EKSPRESI_SIRUP})`
             : null;
@@ -192,7 +200,7 @@ const DIVISI_HEINZ = "HEINZ ABC";
 
 /**
  * Cetak semua (owner 24 Okt 2026): nota KEY ACCOUNT (grup outlet_all selain Gabung: Alfa & Indo, Sat & Midi, IDM & IDG, Satu Sama,
- * Ektong) dan MT GDI (outlet_gdi) dapat lembar sendiri lintas divisi, urut cetak grup, SESUDAH lembar divisi; nota itu tidak
+ * Ektong) dan MT GDI (outlet_gdi, Godrej saja) dapat lembar sendiri lintas divisi, urut cetak grup, SESUDAH lembar divisi; nota itu tidak
  * muncul di lembar divisi (tiap baris tepat satu lembar). Sisanya (Gabungan): SATU lembar per DIVISI, urut nama. HEINZ ABC dipecah:
  * HNZ1..n = grup cetak dimensi area (urut cetak) untuk nota NON pareto, HNZ(n+1) = nota pareto (seperti HNZ6 Excel),
  * HNZ-ALL = Heinz non-pareto yang areanya kosong atau di luar semua grup area. Area/pareto = SNAPSHOT wave.
@@ -225,7 +233,7 @@ export async function lembarCetakSemua(waveId: number): Promise<LembarTipe[]> {
     const kaAll = ka.rows.filter((g) => g.dimensi === "outlet_all").flatMap((g) => g.nilai);
     const kaGdi = ka.rows.filter((g) => g.dimensi === "outlet_gdi").flatMap((g) => g.nilai);
     const GRUP_ALL = `upper(coalesce(wa.snap_grup_all, ''))`;
-    const GRUP_GDI = `upper(coalesce(wa.snap_grup_gdi, ''))`;
+    const GRUP_GDI = `upper(coalesce(${EKSPRESI_GRUP_GDI}, ''))`;
 
     // Tiap baris nota masuk TEPAT SATU lembar: key account outlet_all lebih dulu, lalu MT GDI (outlet_gdi), sisanya
     // (Gabungan) per divisi -- Heinz per area. `saring` menambah parameternya sendiri lewat p() supaya nomor $n benar.
