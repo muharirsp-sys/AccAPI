@@ -273,7 +273,7 @@ Claim Review:
 OM Approve:
   -> PATCH /api/off-program-control/batches/[id]/om-decision
      -> canActorPerformOffAction(actor, "om_approve")
-     -> db.update(offBatch) + db.insert(claimWorkflow) [auto-create]
+     -> db.update(offBatch); pembuatan Claim Workflow melalui POST /api/claim-workflow/from-off-batch/[offBatchId] setelah OM Approved
      -> writeOffAudit()
 
 Finance Payment:
@@ -1800,6 +1800,19 @@ suggested-tests: Scan the rebuilt image for the old secret without printing it, 
 ---
 
 ## Summary Promo Editor (Manual) — `/summary`
+
+### Koreksi navigasi terverifikasi 18 September 2026
+
+Bagian audit Juli di bawah adalah riwayat, bukan deskripsi runtime September. Alur aktif:
+
+- `app/(dashboard)/summary/page.tsx` -> `python_backend/routers/summary.py` (ekstrak/generate), `routers/summary_library.py` (draft/publikasi), `summary_mistral.py`, `kino_letter.py`, `shared.py` (master/renderer), `summary_store.py` (SQLite). Generate dokumen dan publikasi adalah tindakan terpisah.
+- Order Masuk/Order Sales -> `/api/orders/preview` (harga Accurate) -> `routers/orders.py` -> `summary_rules.py`, `outlet_class.py`, `outlet_channel.py` -> aturan `summary_draft` berstatus published. Order internal menyimpan salinan aturan/hasil.
+- Aturan Promo -> `/api/promo-rule/from-summary` -> `lib/summary-bridge.ts` -> PostgreSQL `promo_rule`/`promo_outlet`. Muat membutuhkan konfirmasi dan bukti surat; mengganti hanya irisan `source='surat'`, sehingga aturan Excel/manual dapat tetap bertumpang tindih.
+- Order Principal -> `/api/principal-order/validate` -> `lib/principal-validation.ts` + master harga + `promo_rule`/`promo_outlet` -> hasil validasi baris; `/api/principal-order/queue` -> `lib/principal-invoice.ts` -> `invoice_outbox`. Rekap Promo memakai `lib/promo-recap.ts` atas faktur dan aturan PostgreSQL.
+- Validator Diskon `/validator` adalah jalur unggah tersendiri ke `/validate_json`; jangan dianggap otomatis memakai aturan terbit yang sama. Claim Workflow mengikuti jalur OFF Program Control yang dipetakan di atas; keterhubungan dengan Rekap Promo tidak boleh diasumsikan.
+- Pemeriksaan terfokus tersedia: `lib/summary-bridge.test.ts`, `lib/summary-ke-gerbang.test.ts`, `lib/principal-validation.test.ts`, `lib/promo-recap.test.ts`, `python_backend/test_orders.py`, `python_backend/test_summary_rules.py`. Kelulusan fungsi terpisah belum membuktikan kesetaraan antarmenu.
+
+### Riwayat implementasi Juli 2026 (sebagian sudah digantikan)
 
 On-demand (bukan cron). UI `app/(dashboard)/summary/page.tsx` hanya proxy tampilan; **semua logic di Python FastAPI**, tanpa DB. Alur: load Master Barang → upload surat PDF → ekstrak (Regex atau AI OCR) → edit grid → generate **Form PDF + Dataset Diskon xlsx** → download/email. Cache master & output = dict **in-memory** (`MANUAL_MASTER_CACHE`/`MANUAL_OUTPUTS`, hilang saat restart / pecah bila uvicorn multi-worker).
 
