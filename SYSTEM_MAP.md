@@ -623,6 +623,7 @@ UI pilih pick_group -> /rekapan-nota/wave/[id]/cetak?grup=...   (server componen
      (jenis produk; grup JP-* dibuat otomatis saat unggah), HEINZ ABC = HNZ1..n per grup area (non-pareto), HNZ(n+1) pareto,
      HNZ-ALL tanpa area; lalu key account (outlet_all selain Gabung) & MT GDI (outlet_gdi) lembar sendiri lintas divisi
      (nota itu keluar dari lembar divisi; outlet_all menang atas MT GDI); lalu TTF. Tiap lembar nomor & halaman sendiri;
+     grup outlet_gdi (OG-*) hanya berlaku untuk baris GODREJ (owner 31 Okt 2026) -- di Cetak Semua maupun pilih grup manual;
      tombol aktif sesudah Rilis.
      Komponen bersama: app/(cetak)/rekapan-nota/LembarRekapan.tsx + LembarTtf.tsx.
   Isi per karton = ISI_SQL: konv dari transaksi > item.isi_per_karton (lembar Konversi) > rasio satuan karton Accurate.
