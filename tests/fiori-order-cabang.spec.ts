@@ -1726,3 +1726,50 @@ test("O3 Order baru (petugas): panel riwayat; Tambah barang berharga master + ba
     await expect(page.getByRole("button", { name: "Simpan order…" })).toBeEnabled(NAV);
     await page.screenshot({ path: "test-results/order-cabang/o3-baru-riwayat.png", fullPage: true });
 });
+
+test.describe("Layar cari penuh — ponsel 390 px", () => {
+    test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+    test("Order Sales: ketuk cari = lapisan selayar (hasil tak tertutup bilah Kirim); Kembali = tutup + lepas fokus; Ganti barang → Kembali = baris utuh; fokus pindah ke luar = tertutup", async ({ page }) => {
+        const { opsi } = await mockOrderCabang(page, { peran: "sales" });
+        await mockWebsales(page, { cabang: opsi });
+        await page.goto("/sales", NAV);
+        const main = page.locator("main");
+        const lapisan = page.locator(".fi-cari[data-buka]");
+        const cari = main.getByLabel("Cari pelanggan");
+        await expect(cari).toBeVisible(NAV);
+
+        await cari.tap();
+        await expect(lapisan).toHaveCount(1);
+        expect(await lapisan.evaluate((e) => { const b = e.getBoundingClientRect(); return [getComputedStyle(e).position, b.top, b.height === innerHeight]; })).toEqual(["fixed", 0, true]);
+        await cari.fill("PELANG");
+        const hasil = main.getByRole("list", { name: "Hasil pencarian pelanggan" });
+        await expect(hasil).toBeVisible(NAV);
+        // Baris hasil terakhir yang terlihat tidak tertutup bilah Kirim (lapisan di atasnya).
+        expect(await hasil.getByRole("button").last().evaluate((e) => { const b = e.getBoundingClientRect(); return document.elementFromPoint(b.left + 20, b.top + 20)?.closest("button") === e; })).toBe(true);
+        await main.getByRole("button", { name: "Kembali" }).tap();
+        await expect(lapisan).toHaveCount(0);
+        await expect(cari).toHaveValue("");
+        expect(await cari.evaluate((e) => e === document.activeElement), "keyboard iOS ikut menutup").toBe(false);
+
+        await pilihPelanggan(main, "PELANG", "PELANGGAN A");
+        await expect(lapisan).toHaveCount(0);
+        const b1 = main.getByRole("listitem", { name: "Barang 1" });
+        await pilihBarang(b1, "A-1", "BARANG A");
+        await b1.getByLabel("Satuan").selectOption("KRT");
+        await b1.getByLabel("Jumlah").fill("3");
+        await b1.getByRole("button", { name: "Ganti barang 1" }).tap();
+        await expect(lapisan).toHaveCount(1);
+        await expect(b1.getByLabel("Cari barang")).toBeFocused();
+        await main.getByRole("button", { name: "Kembali" }).tap();
+        await expect(b1.getByRole("group", { name: "Barang 1 terpilih" })).toContainText("BARANG A");
+        await expect(b1.getByLabel("Satuan")).toHaveValue("KRT");
+        await expect(b1.getByLabel("Jumlah")).toHaveValue("3");
+
+        await main.getByRole("button", { name: "Tambah barang" }).tap();
+        await main.getByRole("listitem", { name: "Barang 2" }).getByLabel("Cari barang").tap();
+        await expect(lapisan).toHaveCount(1);
+        await main.getByLabel("Catatan").focus();
+        await expect(lapisan, "panah 'berikutnya' / Tab ke luar menutup lapisan, tidak bertumpuk").toHaveCount(0);
+    });
+});
