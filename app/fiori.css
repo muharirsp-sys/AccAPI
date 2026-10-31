@@ -270,6 +270,7 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-kv dt { color:var(--ink-muted); }
 .fi-kv dd { font-weight:600; text-align:right; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .fi-kv[data-align="start"] dd { text-align:left; } /* nilai berupa kalimat (fakta dialog) dibaca dari kiri */
+@media (max-width:599px) { .fi-kv { grid-template-columns:fit-content(45%) minmax(0,1fr); } } /* label panjang ("Netto estimasi (sebelum PPN)") membungkus, nama pelanggan tidak terpotong di tengah kata */
 
 /* ===== Tabel responsif + list item ===== */
 .fi-tablebox { container-type:inline-size; background:var(--surface); min-width:0; }
@@ -305,6 +306,17 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-li-title { grid-column:1; font:600 .9375rem/1.375rem var(--font-sans); }
 .fi-li-r3 { grid-column:1; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; font:var(--fs-small); color:var(--ink-subtle); }
 .fi-li > .fi-chev { grid-column:2; grid-row:1 / 4; align-self:center; color:var(--ink-subtle); }
+/* Pemilih pelanggan/barang (components/order). Di ponsel, mengetuk kolom cari membuka layar cari penuh: hasil tepat di bawah kolom, tidak
+   tertutup keyboard, bilah Kirim, dan navigasi bawah, dan halaman di belakangnya tidak melompat sesudah memilih. Hanya daftar hasil yang
+   bergulir: kolom cari dan Kembali tetap di atas. Ponsel mendatar (layar pendek, sentuh) ikut. Layar lebar tetap sebaris. */
+.fi-cari { display:grid; gap:10px; min-width:0; align-content:start; }
+.fi-cari-kepala { display:none; }
+@media (max-width:599px), (pointer:coarse) and (max-height:500px) {
+  .fi-cari[data-buka] { position:fixed; inset:0; z-index:var(--z-dialog); background:var(--surface); display:flex; flex-direction:column; padding:max(8px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); }
+  .fi-cari[data-buka] > .fi-cari-kepala { display:flex; margin-left:calc(-1 * var(--ctl-px)); }
+  /* ponytail: tinggi keyboard tak terbaca dari CSS; ruang 50vh di bawah = hasil terakhir tetap bisa digulir ke atas keyboard. */
+  .fi-cari[data-buka] > .fi-cari-hasil { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding-bottom:50vh; }
+}
 
 /* ===== Tile ===== */
 .fi-tiles { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 160px), 1fr)); gap:12px; }
