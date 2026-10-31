@@ -14,6 +14,7 @@ import * as XLSX from "xlsx";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
 import { daftar, hariIniWita, keAccurate, rincian } from "@/lib/accurate-baca";
 import { sendEmail } from "@/lib/email";
+import { akhirBulan } from "@/lib/abcpi/laporan";
 import { barisEnigma, KOLOM_ENIGMA, type BarisEnigma } from "./laporan";
 import { unggahEnigma } from "./portal";
 
@@ -67,9 +68,9 @@ function xlsx(baris: BarisEnigma[]) {
     return XLSX.write(wb, { type: "buffer", bookType: "xlsx", compression: true }) as Buffer;
 }
 
-type Status = { unggah?: { waktu: string; id: number; status: string } };
+type Status = { unggah?: { waktu: string; id: number; status: string }; ditahan?: string };
 export type HasilEnigma = {
-    tanggal: string; sumber: "cron" | "manual"; status: "terkirim" | "validation_error" | "dilewati" | "gagal" | "pratinjau";
+    tanggal: string; sumber: "cron" | "manual"; status: "terkirim" | "validation_error" | "ditahan" | "dilewati" | "gagal" | "pratinjau";
     baris?: { sales: number; faktur: number; retur: number }; portal?: string; log?: string[]; galat: string[]; peringatan: string[];
 };
 
@@ -78,6 +79,7 @@ let berjalan = false;
 /**
  * kirim=false → pratinjau xlsx. Cron: tanggal yang sudah punya hasil final (success ATAU validation_error) sesudah 20.30 WITA
  * dilewati — validation_error tidak diulang otomatis (datanya perlu dibetulkan, mengulang hanya menumpuk unggahan gagal).
+ * Akhir bulan dari cron = DITAHAN (owner 31 Okt 2026, sama dengan ABCPI): admin dikirimi berkasnya, unggah manual dari web.
  * Manual: selalu unggah.
  */
 export async function jalankanEnigma({ tanggal, kirim, sumber }: { tanggal: string; kirim: boolean; sumber: "cron" | "manual" }): Promise<HasilEnigma & { xlsx?: Buffer }> {
@@ -92,7 +94,8 @@ export async function jalankanEnigma({ tanggal, kirim, sumber }: { tanggal: stri
     try {
         await mkdir(folder, { recursive: true });
         const status = urai<Status>(await readFile(berkasStatus, "utf8").catch(() => "{}"), {});
-        if (kirim && sumber === "cron" && status.unggah && status.unggah.waktu >= `${tanggal}T12:30:00.000Z`) {
+        const tahan = kirim && sumber === "cron" && akhirBulan(tanggal);
+        if (kirim && sumber === "cron" && (tahan ? status.ditahan : status.unggah && status.unggah.waktu >= `${tanggal}T12:30:00.000Z`)) {
             hasil.status = "dilewati";
             return hasil;
         }
@@ -110,6 +113,19 @@ export async function jalankanEnigma({ tanggal, kirim, sumber }: { tanggal: stri
         if (!baris.length) throw new Error("Tidak ada baris Marketama bulan ini. Tidak diunggah (cek sesi/database Accurate)");
 
         await writeFile(path.join(folder, `ENIGMA_${ymd}.xlsx`), buku);
+        if (tahan) {
+            const tgl = tanggal.split("-").reverse().join("/");
+            const ok = await sendEmail({ to: cfg.adminEmail, subject: `[Enigma] Closing ${tgl} DITAHAN: unggah manual`,
+                attachments: [{ filename: `ENIGMA_${ymd}.xlsx`, content: buku, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }],
+                text: [`Laporan closing Enigma (Marketama Indah) 01–${tgl} (${baris.length} baris dari ${dokumen.faktur} faktur dan ${dokumen.retur} retur cabang MIX FOOD) sudah disusun tetapi BELUM diunggah ke portal Enigma.`,
+                    `Periksa lampiran, lalu unggah dari ${WEB} (bagian "Laporan Enigma", tanggal ${tgl}, tombol Unggah). Data ditarik ulang dari Accurate saat tombol ditekan.`,
+                    ...hasil.peringatan.map((p) => `Peringatan: ${p}`)].join("\n\n") });
+            if (!ok) throw new Error("Email pemberitahuan closing ke admin gagal (cek SMTP)");
+            status.ditahan = new Date().toISOString();
+            await writeFile(berkasStatus, JSON.stringify(status, null, 1));
+            hasil.status = "ditahan";
+            return hasil;
+        }
         // Begitu portal menerima berkas, tandai "diproses": galat sesudahnya (status tak terbaca) tidak memicu unggah ulang oleh cron.
         const h = await unggahEnigma(cfg.akun, buku, "template_enigma.xlsx", { diterima: async () => {
             status.unggah = { waktu: new Date().toISOString(), id: 0, status: "diproses" };
@@ -135,7 +151,7 @@ export async function jalankanEnigma({ tanggal, kirim, sumber }: { tanggal: stri
 async function catat(hasil: HasilEnigma, adminEmail: string) {
     await appendFile(path.join(DIR, "log.jsonl"), `${JSON.stringify({ waktu: new Date().toISOString(), ...hasil, log: hasil.log?.slice(0, 200) })}\n`).catch(() => undefined);
     const admin = adminEmail || await konfigurasi().then((c) => c.adminEmail, () => "");
-    if (!admin) return;
+    if (!admin || hasil.status === "ditahan") return;
     // Ringkas log Enigma per jenis pesan: "QTY_CRT tidak sesuai … pada baris | 56" ×173 → satu baris + daftar nomor baris.
     const kelompok = new Map<string, string[]>();
     for (const l of hasil.log ?? []) { const [pesan, no = ""] = l.split("|").map((s) => s.trim()); kelompok.set(pesan, [...(kelompok.get(pesan) ?? []), no]); }
