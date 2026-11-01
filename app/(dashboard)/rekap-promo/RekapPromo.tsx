@@ -147,8 +147,8 @@ export default function RekapPromo() {
                             </div>
                             {r.kuotaGalat && <MessageStrip tone="warn" title="Kuota beli belum dicek.">{r.kuotaGalat}</MessageStrip>}
                             {r.kuotaCatatan && <MessageStrip tone="info" title="Kuota beli dicek sebagian.">{r.kuotaCatatan}</MessageStrip>}
-                            {r.unowned === 0 && !r.kuotaGalat
-                                ? <MessageStrip tone="pos" title="Periode ini bersih:">setiap potongan cocok dengan aturan promo yang berlaku.</MessageStrip>
+                            {r.unowned === 0
+                                ? !r.kuotaGalat && <MessageStrip tone="pos" title="Periode ini bersih:">setiap potongan cocok dengan aturan promo yang berlaku.</MessageStrip>
                                 : <MessageStrip tone="neg" title={`${rupiah(r.unowned)} potongan belum bisa dipertanggungjawabkan.`}>
                                     Tak bertuan berarti potongannya tidak sesuai promo yang berlaku, di posisi mana pun, termasuk posisi 1–3 yang belum punya aturan beban distributor.{" "}
                                     <Button variant="tertiary" onClick={() => setBuka({ jenis: "bucket", nilai: "unowned" })}>Lihat rincian</Button>{" "}
