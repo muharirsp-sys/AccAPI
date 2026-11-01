@@ -46,6 +46,8 @@ const DETAIL_HEADER = ["SURAT_PROGRAM", "PROMO_LABEL", "PROMO_GROUP_ID", "PROMO_
     "TRIGGER_QTY", "TRIGGER_UNIT", "BENEFIT_TYPE", "BENEFIT_VALUE", "BENEFIT_UNIT", "BENEFIT_BEBAN",
     "CATATAN"];
 
+const BACKEND = process.env.FASTAPI_BASE_URL || process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || "http://localhost:8000";
+
 const TARIFF_HEADER = ["KODE_OUTLET", "PELANGGAN", "POSISI 1", "POSISI 2", "POSISI 3", "POSISI 4",
     "POSISI 5", "PAKAI", "PERIODE MULAI", "PERIODE SAMPAI", "CATATAN"];
 
@@ -178,7 +180,23 @@ export async function GET(request: NextRequest) {
         ));
         pertama = pemberianPertama(riwayat.flatMap((row) => invoiceLines(row.raw)), aturanPertama);
     }
-    const result = recap(lines, scopedRules, members, normalisasi, pertama);
+    // Kuota beli sell-in (python_backend kuota_beli) dibaca dari layanan order dengan sesi peminta; gagal = tidak dicek, DIUMUMKAN.
+    let kuotaBeli: Map<string, number> | undefined;
+    let kuotaGalat = "";
+    if (scopedRules.some((rule) => rule.benefitBeban === "SELLIN")) {
+        try {
+            const res = await fetch(`${BACKEND}/orders/kuota`, { headers: { cookie: request.headers.get("cookie") ?? "" },
+                signal: AbortSignal.timeout(15_000) });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data?.ok) throw new Error(String(data?.detail ?? res.status));
+            kuotaBeli = new Map((data.kuota as { surat_program: string; code: string; quantity: string }[])
+                .map((k) => [`${k.surat_program.trim().toUpperCase()}|${k.code}`, Number(k.quantity)]));
+        } catch {
+            kuotaGalat = "Kuota beli tidak terbaca dari layanan order; potongan sell-in belum dicek terhadap budget.";
+        }
+    }
+    const result = recap(lines, scopedRules, members, normalisasi, pertama, kuotaBeli);
+    if (kuotaGalat) result.kuotaGalat = kuotaGalat;
     // Faktur yang terbit LEWAT web sudah dinilai gerbang; menu normalisasi hanya untuk yang tidak.
     const webInvoiceIds = (await db.select({ id: invoiceOutbox.accurateId }).from(invoiceOutbox)
         .where(and(eq(invoiceOutbox.state, "posted"), ne(invoiceOutbox.accurateId, "")))).map((row) => row.id);

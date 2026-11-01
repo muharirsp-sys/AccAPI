@@ -98,6 +98,24 @@ def cek_hitungan():
     assert "kelipatan" not in compile_programs(rows)[0][0]["tiers"][0], "langkah beda satuan diabaikan, bukan 12 KRT"
 
 
+def cek_posisi():
+    """Owner 1 Nov 2026: sell-in di depan; bukan sell-in + tambahan distributor di belakang; Kino/Dahlia/Forisa tetap."""
+    from summary_rules import rantai_posisi
+    rows = [dict(surat_program="110", kode_barangs="A", ketentuan="Setiap pengambilan, tidak ada minimum", benefit_type="DISC_PCT",
+                 benefit="8+3+1.5D", principle="MSM", periode_start="2026-11-01", periode_end="2026-11-30")]
+    amago = [Program.model_validate(x) for x in compile_programs(rows)[0]]
+    assert amago[0].tiers[0].beban == ["P", "P", "D"] and amago[0].principal == "MSM"
+    hasil = calculate(amago, [baris("A", "KRT", "1")], "2026-11-05", "GT", kuota={})
+    assert hasil["lines"][0]["percents"] == ["0", "0", "1.5", "8", "3"], hasil
+    sellin = program(principal="MSM", codes=["A"], tiers=[dict(TIER, minimum="1", percentages=["3"])])
+    hasil = hitung([sellin], [baris("A", "KRT", "1")], {(SURAT, "A"): (Decimal(100), "PCS")})
+    assert hasil["lines"][0]["percents"] == ["3"], hasil
+    assert rantai_posisi([("3", "depan"), ("8", "prin"), ("1.5", "dist")]) == ["3", "0", "0", "1.5", "8"]
+    assert rantai_posisi([("8", "prin"), ("2", "asli")]) == ["8", "2"], "ada bentuk lama = urutan lama"
+    kino = program(principal="KINO NON FOOD", kuota=False, codes=["A"], tiers=[dict(TIER, minimum="1", percentages=["5"])])
+    assert hitung([kino], [baris("A", "KRT", "1")], {})["lines"][0]["percents"] == ["5"]
+
+
 def xlsx(kepala, isi):
     buku = openpyxl.Workbook()
     lembar = buku.active
@@ -202,6 +220,7 @@ def cek_alur():
 
 if __name__ == "__main__":
     cek_hitungan()
+    cek_posisi()
     cek_budget()
     cek_alur()
     print("test_kuota_beli: OK")

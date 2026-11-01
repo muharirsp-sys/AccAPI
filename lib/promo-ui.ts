@@ -35,9 +35,14 @@ export const tgl = (iso: string | null | undefined) => (iso ? iso.slice(0, 10).s
 export const BEBAN = {
     principal: { label: "Klaim principal", hint: "bisa ditagihkan ke principal", tone: "pos" as Tone },
     distributor: { label: "Beban distributor", hint: "jadi biaya distributor sendiri", tone: "warn" as Tone },
+    // Ditanggung principal lewat potongan harga beli (sell-in), jadi TIDAK ditagihkan lagi (owner 1 Nov 2026, MSM).
+    sellin: { label: "Sell-in (tidak diklaim)", hint: "ditanggung principal lewat harga beli, tidak ditagihkan", tone: "neu" as Tone },
 } as const;
 export type BebanKey = keyof typeof BEBAN;
-export const bebanDari = (benefitBeban: string): BebanKey => (benefitBeban.toUpperCase() === "PRINCIPAL" ? "principal" : "distributor");
+export const bebanDari = (benefitBeban: string): BebanKey => {
+    const beban = benefitBeban.toUpperCase();
+    return beban === "PRINCIPAL" ? "principal" : beban === "SELLIN" ? "sellin" : "distributor";
+};
 
 export type StatusAturanKey = "aktif" | "nonaktif" | "berakhir" | "belum";
 export const STATUS_ATURAN: Record<StatusAturanKey, { label: string; tone: Tone }> = {

@@ -1,7 +1,10 @@
 # Kuota promo sell-in MSM — November 2026
 
-Owner 1 Nov 2026: surat 110 (Amago), 278 (Lervia), 168 (Medicare) berlaku untuk penjualan November. Diskonnya sudah diterima
-saat membeli dari MSM (sell-in), jadi diskon ke outlet DIBATASI per SKU:
+Owner 1 Nov 2026: surat 110 (Amago), 278 (Lervia), 168 (Medicare) berlaku untuk penjualan November.
+
+**Amago (110) DIKLAIM** ke MSM untuk porsi beban principal, tanpa kuota: suratnya tidak menyebut sell-in dan potongan beli botol
+tidak sesuai surat. Porsi beban distributor (1,5% / 0,75%) biaya sendiri. **Lervia (278) dan Medicare (168) SELL-IN** (surat:
+"Sell-In (Discount on invoice)"): diskonnya sudah diterima saat membeli dari MSM, tidak diklaim, dan DIBATASI per SKU:
 
 > budget = qty dibeli dengan diskon sesuai surat − qty yang sudah keluar ke outlet dengan diskon yang sama (sebelum 1 Nov)
 
@@ -13,19 +16,21 @@ diskon**; bonus yang melebihi sisa tidak diberikan. Strata dan minimum dus di su
 Unggah ketiga surat seperti biasa, lalu pada setiap baris:
 
 - `periode_start` 2026-11-01, `periode_end` 2026-11-30.
-- `keterangan` memuat **`kuota beli`** (inilah penanda program berkuota; tanpa frasa ini program berjalan tanpa batas).
+- Lervia & Medicare: `keterangan` memuat **`kuota beli`** (penanda sell-in berkuota; tanpa frasa ini program berjalan tanpa batas
+  dan dimuat sebagai klaim principal). Amago: **jangan** tulis `kuota beli`.
+- Porsi **tanggungan distributor** ditandai **D** di benefit (`8+3+1.5D`); komponen lain = beban principal.
 - `kode_barangs` dan ketentuan sebagai berikut (KRT = DUS):
 
 | Surat | Barang (kode) | Ketentuan | Benefit |
 |---|---|---|---|
 | 110/MSM/SL/X/2026 REV 1 | Amago pouch 2L `M6141000200010`, 1,5L `M6141000100110` | Setiap pengambilan, tidak ada minimum | DISC_PCT 8+2 |
-| | Botol 750 ml `M6141000075020` | sama | DISC_PCT 8+3+1.5 |
-| | Botol 500 ml `M6141000050020` | sama | DISC_PCT 8+8.75+0.75 |
-| | Botol 380 ml `M6141000038020` | sama | DISC_PCT 8+4.75+0.75 |
+| | Botol 750 ml `M6141000075020` | sama | DISC_PCT 8+3+1.5D |
+| | Botol 500 ml `M6141000050020` | sama | DISC_PCT 8+8.75+0.75D |
+| | Botol 380 ml `M6141000038020` | sama | DISC_PCT 8+4.75+0.75D |
 | | Botol 250 ml `M6141000025020` | sama | DISC_PCT 8+7 |
 | 278/MSM/MKT/X/2026 | Sabun susu bar 80 gr `M603110[1-6]008010` | Beli 50 / 100 / 500 / 3000 KRT mix varian beda gramasi | DISC_PCT 3 / 4 / 5.5 / 7 |
 | | 90 gr BD3 `M6031101009020`, `M6031102009020`, `M6031104009020` | Beli 20 KRT mix varian gramasi sama | DISC_PCT 8 |
-| | Cair pouch 400 `M603120[4-8]040040` | Beli 60 KRT mix varian gramasi sama | DISC_PCT 10 |
+| | Cair pouch 400 `M603120[4-9]040040` (6 varian, termasuk Almond Oats) | Beli 60 KRT mix varian gramasi sama | DISC_PCT 10 |
 | | Cair botol 200 gr `M6031201025030`, `M6031202025030`, `M6031206025030` | Beli 20 KRT mix varian gramasi sama | DISC_PCT 10 |
 | | Lotion 200 ml `M603210[1-3]020010` | Beli 15 KRT mix varian gramasi sama | DISC_PCT 10 |
 | 168/MSM/MKT/VII/2026 | Sabun bar 80 gr @72 `M602110[1-5]008010` | Beli 3 KRT berlaku kelipatan | BONUS_QTY 1 KRT |
@@ -37,7 +42,16 @@ Unggah ketiga surat seperti biasa, lalu pada setiap baris:
 Bonus Medicare dihitung per SKU dan otomatis masuk sebagai barang yang sama berdiskon 100%. Sales cukup mengetik qty beli.
 "Lervia 90 gr @72" yang bukan BD3 belum punya kode di master MSM.
 
-## 2. Budget (layar Order Masuk › Kuota promo)
+## Letak diskon di faktur dan Rekap Promo (owner 1 Nov 2026)
+
+- Sell-in di DEPAN (kolom 1..), mis. Lervia `3`. Bukan sell-in + tanggungan distributor di BELAKANG, rata kanan ke kolom 5:
+  Amago 750 ml `0+0+1.5+8+3` (kolom 3 distributor, 4-5 principal). Kino, Dahlia, Forisa tetap seperti dulu.
+- Aturan Promo dari Summary: satu aturan per komponen (tingkat 101, 102, ...), beban PRINCIPAL / DISTRIBUTOR; program `kuota beli`
+  berbeban **SELLIN**.
+- Rekap Promo: kartu **Sell-in (tidak diklaim)** terpisah dari Klaim principal; sell-in yang melewati kuota beli (mis. faktur
+  diketik langsung di Accurate) = tak bertuan. Klaim principal dihitung sesudah potongan kolom sebelumnya (urutan rantai Accurate).
+
+## 2. Budget (layar Order Masuk › Kuota promo, hanya Lervia & Medicare)
 
 Per surat: unggah **Rincian Faktur Pembelian** dan **Rincian Faktur Penjualan** (keduanya ekspor Accurate dengan kolom `Diskon %`,
 cabang MSM, penjualan mencakup sejak pembelian pertama sampai 31 Okt) → Hitung → periksa pola diskon per SKU → Simpan.
@@ -54,9 +68,6 @@ yang sama dari dua berkas itu.
 
 | SKU | Dibeli berdiskon surat | Sudah keluar | Budget November |
 |---|---|---|---|
-| Amago pouch 2L | 2.680 KRT (8+2+1) | 0 | **2.680 KRT** |
-| Amago pouch 1,5L | 200 KRT (8+2+1) | 0 | **200 KRT** |
-| Amago botol 750/500/380/250 ml | 0 (dibeli 5,25–9% + lainnya, bukan angka surat) | – | **0** |
 | Lervia 80 gr Goat Jojoba / Almond Vanilla | 200 / 200 KRT (4+1) | 63 / 60 KRT (7%) | **137 / 140 KRT** |
 | Lervia 80 gr Goat Milk / Goat Avocado / Almond S.Butter | 0 (dibeli 1+6 / 1+6,5) | – | **0** |
 | Lervia 90 gr BD3 Goat Milk / Goat Avocado / Alm Vanilla | 100 / 100 / 100 KRT (8) | 0 / 42 / 28 KRT | **100 / 58 / 72 KRT** |
