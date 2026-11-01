@@ -212,6 +212,18 @@ test("sales per baris ikut di SETIAP baris, hanya bila salesnya sah", () => {
     assert.ok(tanpa.detailItem.every((line) => !("salesmanListNumber" in line)));
 });
 
+test("bonus program berkuota: berharga + diskon 100%, bonus lama tetap harga 0", () => {
+    // Owner 1 Nov 2026 (Medicare 3+1): bonus otomatis masuk sebagai barang yang sama berdiskon 100%.
+    const o = order();
+    o.result.bonuses = [{ program_id: "P-1", code: "M5012001000740", unit: "KRT", quantity: "2", price: "72000" },
+        { program_id: "P-2", code: "M5012001000740", unit: "KRT", quantity: "1" }];
+    const [, berharga, lama] = buildInvoicePayload(o, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }).detailItem;
+    assert.deepEqual([berharga.unitPrice, berharga.itemDiscPercent, berharga.quantity], [72000, "100", 2]);
+    assert.deepEqual([lama.unitPrice, lama.itemDiscPercent], [0, ""]);
+    o.result.bonuses = [{ program_id: "P-1", code: "M5012001000740", unit: "KRT", quantity: "1", price: "-1" }];
+    assert.throws(() => buildInvoicePayload(o, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }), /negatif/);
+});
+
 test("tanggal faktur pilihan: hanya transDate yang diganti, tidak boleh sebelum SO", () => {
     const beku = { customerNo: "C-MAJ010-KN", transDate: "28/09/2026", typeAutoNumber: 1702, taxable: true,
         inclusiveTax: false, description: "Order X", detailItem: [], charField1: "KINO-NON-FOOD:SO1", charField2: "" } as InvoicePayload;

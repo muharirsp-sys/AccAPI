@@ -44,6 +44,10 @@ def connect():
           request_id TEXT, customer_no TEXT NOT NULL DEFAULT '',
           created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
         CREATE TABLE IF NOT EXISTS outlet_class(customer_no TEXT NOT NULL, klass TEXT NOT NULL, PRIMARY KEY(customer_no,klass));
+        CREATE TABLE IF NOT EXISTS promo_kuota(
+          surat_program TEXT NOT NULL, code TEXT NOT NULL, quantity TEXT NOT NULL, unit TEXT NOT NULL, isi TEXT NOT NULL DEFAULT '',
+          sumber TEXT NOT NULL DEFAULT '', updated_by TEXT NOT NULL DEFAULT '',
+          updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), PRIMARY KEY(surat_program,code));
         CREATE INDEX IF NOT EXISTS sales_order_owner ON sales_order(owner,created_at DESC,id);
         CREATE INDEX IF NOT EXISTS sales_order_status ON sales_order(status,created_at DESC,id);
         """)

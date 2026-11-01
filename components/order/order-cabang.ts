@@ -33,7 +33,7 @@ export type BarangPilih = {
 // ------------------------------------------------------------------ tipe pratinjau (bentuk respons /api/orders/preview + FastAPI)
 
 export type ResultLine = { code: string; unit: string; quantity: string; gross: string; net: string; percents?: string[]; cash?: string };
-export type Bonus = { program_id: string; code: string; unit: string; quantity: string; eligible_codes?: string[]; program_name?: string };
+export type Bonus = { program_id: string; code: string; unit: string; quantity: string; eligible_codes?: string[]; program_name?: string; price?: string };
 export type Blocked = { program_id: string; program_name?: string; reason?: string };
 export type Result = {
     pending_price?: boolean; gross?: string; discount?: string; net?: string;
