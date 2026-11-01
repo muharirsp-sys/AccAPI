@@ -800,3 +800,21 @@ test("sell-in di depan = golongan sell-in (tidak diklaim); melewati kuota beli =
     // Tanpa data kuota (layanan tak terbaca) sell-in tidak dicek, tetapi tetap tidak diklaim.
     assert.equal(recap(lines, rules).sellin, 20000);
 });
+
+test("bonus berambang KARTON dinilai dalam satuan terkecil; isi karton tak terbaca = ditahan, bukan diloloskan", () => {
+    // Medicare "beli 3 DUS gratis 1 DUS" (isi 72): beli 6 KRT berhak 2 KRT bonus.
+    const rules = [aturan({ principal: "MSM", suratProgram: "168", itemCode: "M", benefitType: "BONUS_QTY", benefitValue: "1",
+        benefitUnit: "KRT", triggerQty: 3, triggerUnit: "KRT", benefitBeban: "SELLIN", periodStart: "2026-11-01", periodEnd: "2026-11-30" })];
+    const faktur = (id: string, beli: [number, string, number], bonus: [number, string, number]) => invoiceLines({ id, number: id,
+        transDate: "05/11/2026", customer: { customerNo: "C-X001-MSM" }, detailItem: [
+            { id: `${id}-1`, itemNo: "M", quantity: beli[0], itemUnit: { name: beli[1] }, quantityDefault: beli[2], unitPrice: 1000, itemDiscPercent: "" },
+            { id: `${id}-2`, itemNo: "M", quantity: bonus[0], itemUnit: { name: bonus[1] }, quantityDefault: bonus[2], unitPrice: 1000, itemDiscPercent: "100" }] });
+    const sah = recap(faktur("B1", [6, "KRT", 432], [2, "KRT", 144]), rules);
+    assert.equal(sah.unowned, 0);
+    assert.equal(sah.sellin, 2000);
+    const lewat = recap(faktur("B2", [6, "KRT", 432], [3, "KRT", 216]), rules);
+    assert.equal(lewat.sellin, 0);
+    assert.match(lewat.rows.find((r) => r.bucket === "unowned")!.reason, /melewati kuota/);
+    // Semua baris satuan terkecil: isi karton tidak diketahui -> kuota 0 -> ditahan.
+    assert.equal(recap(faktur("B3", [432, "PCS", 432], [72, "PCS", 72]), rules).sellin, 0);
+});

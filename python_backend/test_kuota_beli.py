@@ -110,7 +110,11 @@ def cek_posisi():
     sellin = program(principal="MSM", codes=["A"], tiers=[dict(TIER, minimum="1", percentages=["3"])])
     hasil = hitung([sellin], [baris("A", "KRT", "1")], {(SURAT, "A"): (Decimal(100), "PCS")})
     assert hasil["lines"][0]["percents"] == ["3"], hasil
-    assert rantai_posisi([("3", "depan"), ("8", "prin"), ("1.5", "dist")]) == ["3", "0", "0", "1.5", "8"]
+    assert rantai_posisi([("3", "depan"), ("8", "prin"), ("1.5", "dist")]) == ["3", "0", "1.5", "0", "8"]
+    assert rantai_posisi([("8", "prin"), ("1.5", "dist")]) == ["0", "0", "1.5", "0", "8"], "distributor tetap di kolom 1-3"
+    assert rantai_posisi([("1.5", "dist")]) == ["0", "0", "1.5"]
+    assert rantai_posisi([("5", "prin"), ("3", "prin"), ("2", "prin")]) == ["5", "3", "2"], "principal > 2 kolom: urutan lama"
+    assert rantai_posisi([("8", "prin")], ada_rupiah=True) == ["8"], "rupiah dilipat di ujung: urutan lama"
     assert rantai_posisi([("8", "prin"), ("2", "asli")]) == ["8", "2"], "ada bentuk lama = urutan lama"
     kino = program(principal="KINO NON FOOD", kuota=False, codes=["A"], tiers=[dict(TIER, minimum="1", percentages=["5"])])
     assert hitung([kino], [baris("A", "KRT", "1")], {})["lines"][0]["percents"] == ["5"]

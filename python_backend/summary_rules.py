@@ -269,22 +269,33 @@ def jenis_posisi(program, tier, i):
     return "dist" if tier.beban and tier.beban[i] == "D" else "prin"
 
 
-def rantai_posisi(slot):
+def rantai_posisi(slot, ada_rupiah=False):
     """[(persen, jenis)] satu baris -> rantai `itemDiscPercent` berposisi, nol sebagai pengisi kolom kosong.
 
-    Sell-in 3% -> ["3"]; Amago 8+3+1.5D -> ["0","0","1.5","8","3"]; keduanya -> ["3","0","1.5","8","3"]. Ada yang asli ->
-    urutan lama apa adanya. Nol diterima Accurate (INV/2606/SZ01003 "0.5380+0+2.5") dan netto tidak berubah (perkalian).
-    ponytail: lebih dari 5 komponen tidak muat kolom 1-5 -> disambung tanpa pengisi; Rekap menandai kolom 6+ tak bertuan.
+    Kolom Rekap: 1-3 distributor, 4-5 principal. Sell-in mengisi dari kolom 1, tanggungan distributor BERAKHIR di kolom 3,
+    principal BERAKHIR di kolom 5: sell-in 3% -> ["3"]; Amago 8+3+1.5D -> ["0","0","1.5","8","3"]; 8+1.5D -> ["0","0","1.5","0","8"].
+    Nol diterima Accurate (INV/2606/SZ01003 "0.5380+0+2.5") dan netto tidak berubah (perkalian).
+    Urutan LAMA bila ada program bentuk lama, bila tidak muat batas kolom (sell-in + distributor > 3 atau principal > 2), atau
+    bila baris juga membawa potongan rupiah: `buildInvoicePayload` melipat rupiahnya jadi persen di UJUNG rantai, dan rantai
+    berpengisi sudah 5 kolom (kolom 6 = tak bertuan di Rekap).
     """
-    if not slot or any(jenis == "asli" for _, jenis in slot):
-        return [persen for persen, _ in slot]
+    lama = [persen for persen, _ in slot]
+    if not slot or ada_rupiah or any(jenis == "asli" for _, jenis in slot):
+        return lama
     depan = [p for p, j in slot if j == "depan"]
-    belakang = [p for p, j in slot if j == "dist"] + [p for p, j in slot if j == "prin"]
-    if not belakang:
-        return depan
-    if len(depan) + len(belakang) > 5:
-        return depan + belakang
-    return depan + ["0"] * (5 - len(depan) - len(belakang)) + belakang
+    dist = [p for p, j in slot if j == "dist"]
+    prin = [p for p, j in slot if j == "prin"]
+    if len(depan) + len(dist) > 3 or len(prin) > 2:
+        return lama
+    kolom = ["0"] * 5
+    kolom[:len(depan)] = depan
+    if dist:
+        kolom[3 - len(dist):3] = dist
+    if prin:
+        kolom[5 - len(prin):5] = prin
+    while kolom and kolom[-1] == "0":
+        kolom.pop()
+    return kolom
 
 
 def teks_kuota(nilai):
@@ -466,7 +477,7 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
     net = sum((line["net"] for line in lines), Decimal(0))
     hasil = dict(gross=str(gross), discount=str(gross-net), net=str(net), bonuses=bonuses, applications=applications, blocked=blocked,
                  lines=[{**{k: str(v) if isinstance(v, Decimal) else v for k, v in line.items()
-                             if k not in ("applied", "rasio", "price", "slot")}, "percents": rantai_posisi(line["slot"])} for line in lines])
+                             if k not in ("applied", "rasio", "price", "slot")}, "percents": rantai_posisi(line["slot"], line["cash"] > 0)} for line in lines])
     # Hanya bila ada: order tanpa program berkuota tetap berbentuk (dan bersidik) sama seperti sebelum kuota ada.
     if terpakai:
         hasil["kuota"] = [dict(surat_program=s, code=c, quantity=teks_kuota(q), unit=satuan_kuota[(s, c)])

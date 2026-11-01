@@ -28,7 +28,7 @@ type TarifMenganggur = { customerCode: string; tierNo: number; benefitValue: str
 type OutletTanpaAturan = { customerNo: string; customerName: string; amount: number; lines: number; positions: string[]; percents: number[] };
 type Data = {
     from: string; to: string; principal: string; principals: string[]; invoicesInRange: number; invoicesWithoutDetail: number; rules: number;
-    recap: { invoices: number; lines: number; gross: number; distributor: number; principal: number; sellin?: number; kuotaGalat?: string; unowned: number; programs: Program[]; rows: DetailRow[];
+    recap: { invoices: number; lines: number; gross: number; distributor: number; principal: number; sellin?: number; kuotaGalat?: string; kuotaCatatan?: string; unowned: number; programs: Program[]; rows: DetailRow[];
         tarifMenganggur: TarifMenganggur[]; outletTanpaAturan: OutletTanpaAturan[] };
 };
 type Buka = { jenis: "bucket" | "program"; nilai: string } | null;
@@ -146,7 +146,8 @@ export default function RekapPromo() {
                                 <Link href={`/normalisasi-diskon${normQuery}`} className="fi-kc" data-tone={r.unowned ? "neg" : "pos"}><span>Tak bertuan</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(r.unowned)}</b><small>{r.unowned ? "tidak sesuai promo yang berlaku · golongkan di Normalisasi Diskon" : "semua potongan punya aturan"}</small></Link>
                             </div>
                             {r.kuotaGalat && <MessageStrip tone="warn" title="Kuota beli belum dicek.">{r.kuotaGalat}</MessageStrip>}
-                            {r.unowned === 0
+                            {r.kuotaCatatan && <MessageStrip tone="info" title="Kuota beli dicek sebagian.">{r.kuotaCatatan}</MessageStrip>}
+                            {r.unowned === 0 && !r.kuotaGalat
                                 ? <MessageStrip tone="pos" title="Periode ini bersih:">setiap potongan cocok dengan aturan promo yang berlaku.</MessageStrip>
                                 : <MessageStrip tone="neg" title={`${rupiah(r.unowned)} potongan belum bisa dipertanggungjawabkan.`}>
                                     Tak bertuan berarti potongannya tidak sesuai promo yang berlaku, di posisi mana pun, termasuk posisi 1–3 yang belum punya aturan beban distributor.{" "}

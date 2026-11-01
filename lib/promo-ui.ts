@@ -89,9 +89,11 @@ export function artinya(rule: RuleLike): string {
     const chan = rule.channel ? ` berkategori ${rule.channel === "GT" ? "TT (GT)" : rule.channel} di Accurate` : "";
     const siapa = rule.customerCode ? `Outlet ${rule.customerCode}` : `Semua outlet${chan}${daftar}`;
     const barang = rule.itemCode ? `barang ${rule.itemCode}` : "semua barang";
-    const beban = bebanDari(rule.benefitBeban ?? "") === "principal"
-        ? "termasuk klaim principal, bisa ditagihkan"
-        : "termasuk beban distributor, jadi biaya sendiri";
+    const beban = {
+        principal: "termasuk klaim principal, bisa ditagihkan",
+        distributor: "termasuk beban distributor, jadi biaya sendiri",
+        sellin: "termasuk sell-in: ditanggung principal lewat harga beli, tidak ditagihkan",
+    }[bebanDari(rule.benefitBeban ?? "")];
     const n = (v: string | undefined) => Number(v || 0).toLocaleString("id-ID");
     // "SEMUA" = program tanpa minimum (Setiap Pengambilan): tidak ada ambang untuk diceritakan.
     const ambang = Number(rule.triggerQty) > 0 && rule.triggerUnit !== "SEMUA"
@@ -100,5 +102,7 @@ export function artinya(rule: RuleLike): string {
     if (rule.benefitType === "DISC_RP") return `${siapa}${ambang} dapat potongan ${rupiah(rule.benefitValue ?? 0)} untuk seluruh nota. Potongan ini ${beban}.`;
     if (rule.benefitType === "BONUS_QTY") return `${siapa}${ambang} dapat bonus barang ${rule.benefitValue ?? ""}. Bonus ini ${beban}.`;
     return `${siapa} dapat diskon ${persen(rule.benefitValue ?? "")} atas ${barang}${ambang ? ambang.replace(",", "") : ""}, `
-        + `tertulis di kolom DISC_${rule.tierNo ?? 1} pada laporan principal. Potongan ini ${beban}.`;
+        + ((rule.tierNo ?? 1) > 100
+            ? `komponen ke-${(rule.tierNo ?? 0) % 100} strata ${Math.floor((rule.tierNo ?? 0) / 100)} dari surat. Potongan ini ${beban}.`
+            : `tertulis di kolom DISC_${rule.tierNo ?? 1} pada laporan principal. Potongan ini ${beban}.`);
 }

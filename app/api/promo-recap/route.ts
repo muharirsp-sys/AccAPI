@@ -197,6 +197,11 @@ export async function GET(request: NextRequest) {
     }
     const result = recap(lines, scopedRules, members, normalisasi, pertama, kuotaBeli);
     if (kuotaGalat) result.kuotaGalat = kuotaGalat;
+    // Budget kuota berlaku sejak awal program; rekap yang dibuka di tengah program tidak melihat pemakaian sebelumnya.
+    const awalSellin = scopedRules.filter((rule) => rule.benefitBeban === "SELLIN" && rule.periodStart).map((rule) => rule.periodStart!).sort()[0];
+    if (kuotaBeli && awalSellin && from > awalSellin) {
+        result.kuotaCatatan = `Cek kuota beli hanya menghitung faktur mulai ${from}; program sell-in mulai ${awalSellin}. Buka rekap sejak ${awalSellin} untuk pemeriksaan lengkap.`;
+    }
     // Faktur yang terbit LEWAT web sudah dinilai gerbang; menu normalisasi hanya untuk yang tidak.
     const webInvoiceIds = (await db.select({ id: invoiceOutbox.accurateId }).from(invoiceOutbox)
         .where(and(eq(invoiceOutbox.state, "posted"), ne(invoiceOutbox.accurateId, "")))).map((row) => row.id);

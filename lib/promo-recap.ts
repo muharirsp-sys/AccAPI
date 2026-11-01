@@ -73,6 +73,8 @@ export type InvoiceLine = {
     cashDiscount: number;
     /** `detailItem[].id` Accurate: kunci baris yang tetap walau urutan baris faktur berubah. */
     lineId: string;
+    /** Nama satuan baris (`detailItem[].itemUnit.name`), mis. KRT; kosong bila Accurate tidak mengirimnya. */
+    unit?: string;
 };
 
 const cents = (value: number) => Math.round(value * 100) / 100;
@@ -149,6 +151,7 @@ export function invoiceLines(raw: unknown): InvoiceLine[] {
             discounts: percents,
             cashDiscount: num(detail.itemCashDiscount),
             lineId: String(detail.id ?? ""),
+            unit: String(((detail.itemUnit ?? {}) as Record<string, unknown>).name ?? "").trim().toUpperCase(),
         };
     });
 }
@@ -470,6 +473,8 @@ export type Recap = {
     sellin: number;
     /** Kuota beli tidak bisa diperiksa (layanan order tak terbaca); kosong = diperiksa atau tidak ada sell-in. */
     kuotaGalat?: string;
+    /** Rentang rekap mulai sesudah awal program sell-in: pemakaian kuota sebelumnya tidak ikut terhitung. */
+    kuotaCatatan?: string;
     /**
      * Potongan yang TIDAK cocok aturan mana pun, di posisi mana pun. Bukan "posisi 6 ke atas":
      * keputusan pengguna 2026-09-12 — yang membuat sebuah potongan tak bertuan adalah TIDAK
@@ -600,25 +605,31 @@ export function recap(
         });
         for (const isi of perFaktur.values()) {
             const tanggal = isi[0].line.transDate;
-            // Ambang/bonus ber-KARTON (Medicare "beli 3 DUS gratis 1 DUS") dibandingkan dalam karton: isi kartonnya dibaca dari
-            // baris faktur yang sama (jumlah dasar / jumlah). Isi tak terbaca = aturan itu tidak dinilai, bukan dinilai salah.
+            // Ambang/bonus ber-KARTON (Medicare "beli 3 DUS gratis 1 DUS") diubah ke SATUAN TERKECIL dengan isi karton dari
+            // baris berunit karton pada faktur yang sama; baris tetap satuan terkecil (tanpa pecahan). Isi karton tak terbaca =
+            // kuota 0, bonusnya ditahan sebagai tak bertuan (gagal tertutup), bukan diloloskan tanpa batas.
             const isiKarton = new Map<string, number>();
-            for (const { line } of isi) if (line.quantity > 0) isiKarton.set(line.itemCode, Math.max(isiKarton.get(line.itemCode) ?? 1, (line.baseQuantity || line.quantity) / line.quantity));
-            const karton = (rule: PromoRule) => KARTON.has(String(rule.triggerUnit || "").toUpperCase());
+            for (const { line } of isi) {
+                if (line.quantity > 0 && KARTON.has(line.unit ?? "")) isiKarton.set(line.itemCode, (line.baseQuantity || line.quantity) / line.quantity);
+            }
             const aturanBonus = rules
                 .filter((rule) => rule.benefitType === "BONUS_QTY" && rule.itemCode && inPeriod(rule, tanggal)
-                    && outletAllowed(rule, isi[0].line.customerNo, listsOn(tanggal))
-                    && (!karton(rule) || (isiKarton.get(rule.itemCode) ?? 1) > 1 || !isi.some(({ line }) => line.itemCode === rule.itemCode)))
-                .map((rule) => ({
-                    itemCode: rule.itemCode, suratProgram: rule.suratProgram, promoGroup: rule.promoGroup,
-                    triggerQty: Number(rule.triggerQty) || 0, benefitValue: rule.benefitValue,
-                }));
+                    && outletAllowed(rule, isi[0].line.customerNo, listsOn(tanggal)))
+                .map((rule) => {
+                    const ambangKarton = KARTON.has(String(rule.triggerUnit || "").toUpperCase());
+                    const bonusKarton = KARTON.has(String(rule.benefitUnit || "").toUpperCase());
+                    const isiItem = isiKarton.get(rule.itemCode);
+                    const buta = (ambangKarton || bonusKarton) && !isiItem;
+                    return {
+                        itemCode: rule.itemCode, suratProgram: rule.suratProgram, promoGroup: rule.promoGroup,
+                        triggerQty: buta ? Number.POSITIVE_INFINITY : (Number(rule.triggerQty) || 0) * (ambangKarton ? isiItem! : 1),
+                        benefitValue: buta ? "1" : String((Number(rule.benefitValue) || 0) * (bonusKarton ? isiItem! : 1)),
+                    };
+                });
             if (!aturanBonus.length) continue;
-            const berkarton = new Set(rules.filter((rule) => rule.benefitType === "BONUS_QTY" && karton(rule)).map((rule) => rule.itemCode));
             const kuota = bonusQuota(isi.map(({ line, index }) => ({
                 key: kunciBaris(line, index), itemCode: line.itemCode,
-                quantity: (line.baseQuantity || line.quantity) / (berkarton.has(line.itemCode) ? isiKarton.get(line.itemCode) ?? 1 : 1),
-                bonus: isBonusLine(line.discounts),
+                quantity: line.baseQuantity || line.quantity, bonus: isBonusLine(line.discounts),
             })), aturanBonus);
             for (const grup of kuota) for (const key of grup.overKeys) lewatKuota.set(key, grup);
         }
