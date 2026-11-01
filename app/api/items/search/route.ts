@@ -4,6 +4,7 @@
  * Caller: app/(dashboard)/sales/OrderSales.tsx, app/(dashboard)/orders/OrderBaru.tsx (O2).
  * Dependensi: db item/customer/branch (hasil sync), lib/order-cabang, lib/item-price (itemUnits, resolvePrices), lib/rbac/resolve.
  * Main Functions: GET ?q=&branchId=&customerId=&tanggal=YYYY-MM-DD&limit= (limit 1–50, bawaan 20; tanggal bawaan hari ini WITA).
+ *   Tiap barang membawa `stok` (teks Accurate, mis. "2 KRT 5 PCS", null = belum tersinkron) gudang `gudangStok`; `stokPer` = sinkron terakhir (ISO).
  * Side Effects: DB read-only.
  *
  * Owner 12 Okt: pelanggan cabang X hanya boleh dipesankan barang ber-cabang X -> dengan `customerId` cabangnya = cabang pelanggan
@@ -17,8 +18,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, asc, eq, ilike, isNotNull, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { branch, customer, item } from "@/db/schema";
-import { angkaQuery, cakupanCabang, hargaSah, jawabGalat, polaLike, tolakCabangLain } from "@/lib/order-cabang";
+import { branch, customer, item, syncState } from "@/db/schema";
+import { GUDANG_STOK, angkaQuery, cakupanCabang, hargaSah, jawabGalat, polaLike, tolakCabangLain } from "@/lib/order-cabang";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { todayWita } from "@/lib/insentif-payment-date";
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
@@ -70,7 +71,8 @@ export async function GET(request: NextRequest) {
     const syarat: SQL[] = [eq(item.suspended, false), isNotNull(item.branchId)];
     if (cabang !== null) syarat.push(eq(item.branchId, cabang));
     if (q) syarat.push(or(ilike(item.no, polaLike(q)), ilike(item.name, polaLike(q)))!);
-    const rows = await db.select({ id: item.id, no: item.no, name: item.name, branchId: item.branchId, branchName: branch.name, tag: item.charField2 })
+    const rows = await db.select({ id: item.id, no: item.no, name: item.name, branchId: item.branchId, branchName: branch.name, tag: item.charField2,
+        stok: item.quantityInAllUnit })
         .from(item).leftJoin(branch, eq(branch.id, item.branchId)).where(and(...syarat))
         .orderBy(sql`(upper(${item.no}) = upper(${q})) desc`, asc(item.name), asc(item.no))
         .limit(limit);
@@ -86,10 +88,12 @@ export async function GET(request: NextRequest) {
     const cabangTanpaBarang = rows.length === 0 && cabang !== null
         ? (await db.select({ id: item.id }).from(item).where(and(eq(item.branchId, cabang), eq(item.suspended, false))).limit(1)).length === 0
         : false;
+    // Stok = kolom item hasil sync GD01 (4x sehari), bukan stok saat ini — layar menyebut jam sinkron terakhirnya.
+    const [sinkron] = await db.select({ t: syncState.lastSyncTimestamp }).from(syncState).where(eq(syncState.module, "item_stock")).limit(1);
     return NextResponse.json({
-        ok: true, tanggal, branchId: cabang, cabangTanpaBarang,
+        ok: true, tanggal, branchId: cabang, cabangTanpaBarang, stokPer: sinkron?.t ?? null,
         items: rows.map((r) => ({
-            ...r,
+            ...r, gudangStok: GUDANG_STOK,
             units: (units.get(r.no) ?? []).map((unit) => {
                 const h = hargaDari.get(`${r.no}|${unit}`);
                 return pelanggan

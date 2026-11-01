@@ -3,7 +3,7 @@
  *   salesman = cabang karyawannya di Accurate; harga = cabang pelanggan. SATU pemeriksa untuk pratinjau dan simpan order.
  * Caller: lib/sync (tag barang -> cabang), app/api/orders/{preview,harga}, app/api/customers/{search,rute}, app/api/items/search.
  * Dependensi: db (customer, item, branch, accurate_employee, sales_profile), lib/item-price (resolvePrices).
- * Main Functions: cabangDariTag, petaCabang, hargaSah, hargaPetugasSah, putusanHarga, alasanBonus, tripwireIzin, cocokKodeRute,
+ * Main Functions: GUDANG_STOK, cabangDariTag, petaCabang, hargaSah, hargaPetugasSah, putusanHarga, alasanBonus, tripwireIzin, cocokKodeRute,
  *   pilihPelangganRute (murni); cakupanCabang,
  *   periksaOrder, periksaBonus (DB baca-saja).
  * Side Effects: DB read-only.
@@ -14,6 +14,9 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { branch, customer, item } from "@/db/schema";
 import { resolvePrices, type PriceResult } from "@/lib/item-price";
+
+/** Gudang stok di pemilih barang = sumber `item.quantity` (lib/sync item_stock). Owner 31 Okt 2026: GD01 saja, bukan semua gudang. */
+export const GUDANG_STOK = "GD01";
 
 // ---------------------------------------------------------------- tag divisi barang -> cabang (murni)
 

@@ -34,10 +34,12 @@ export const PELANGGAN: PelangganMock[] = [
 ];
 
 /** `harga`: satuan -> harga cabang (null = baris harga ada tetapi belum berharga untuk cabang/tanggal ini). {} = belum ada daftar harga. */
-export type BarangMock = { id: number; no: string; name: string; branchId: number; branchName: string; tag: string; harga: Record<string, number | null> };
+export type BarangMock = { id: number; no: string; name: string; branchId: number; branchName: string; tag: string; harga: Record<string, number | null>;
+    /** Stok GD01 hasil sinkron ("12 KRT 3 PCS"); tanpa = belum tersinkron. */
+    stok?: string };
 export const BARANG: BarangMock[] = [
-    { id: 11, no: "A-1", name: "BARANG A", branchId: 50, branchName: "CABANG A", tag: "TAG A", harga: { KRT: 576000, PCS: 24000 } },
-    { id: 12, no: "A-2", name: "BARANG A2", branchId: 50, branchName: "CABANG A", tag: "TAG A", harga: { LSN: null } },
+    { id: 11, no: "A-1", name: "BARANG A", branchId: 50, branchName: "CABANG A", tag: "TAG A", harga: { KRT: 576000, PCS: 24000 }, stok: "12 KRT 3 PCS" },
+    { id: 12, no: "A-2", name: "BARANG A2", branchId: 50, branchName: "CABANG A", tag: "TAG A", harga: { LSN: null }, stok: "0" },
     { id: 13, no: "A-3", name: "BARANG A3", branchId: 50, branchName: "CABANG A", tag: "TAG A", harga: {} },
     { id: 14, no: "A-4", name: "BARANG A4", branchId: 50, branchName: "CABANG A", tag: "TAG A", harga: { LSN: 120000 } },
     { id: 21, no: "B-1", name: "BARANG B", branchId: 90, branchName: "CABANG B", tag: "TAG B", harga: { KRT: 700000 } },
@@ -217,12 +219,14 @@ export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<
         const limit = Number(url.searchParams.get("limit") ?? 20);
         const items = BARANG.filter((x) => (cab === null || x.branchId === cab) && (!q || x.no.toLowerCase().includes(q) || x.name.toLowerCase().includes(q))).slice(0, limit)
             .map((x) => ({ id: x.id, no: x.no, name: x.name, branchId: x.branchId, branchName: x.branchName, tag: x.tag,
+                stok: x.stok ?? null, gudangStok: "GD01",
                 units: Object.entries(x.harga).map(([unit, price]) => (p
                     ? { unit, price, source: price === null ? "missing" : "tier", branchName: price === null ? null : x.branchName, effectiveDate: price === null ? null : "2026-10-01" }
                     : { unit })) }));
         // Kosong karena cabangnya memang tanpa barang orderan (bukan karena ketikan tak cocok): flag server.
         const cabangTanpaBarang = items.length === 0 && cab !== null && !BARANG.some((x) => x.branchId === cab);
-        return kirim(r, { body: { ok: true, tanggal: url.searchParams.get("tanggal") ?? "2026-10-12", branchId: cab, cabangTanpaBarang, items } });
+        return kirim(r, { body: { ok: true, tanggal: url.searchParams.get("tanggal") ?? "2026-10-12", branchId: cab, cabangTanpaBarang, items,
+            stokPer: "2026-10-31T03:15:00.000Z" } });
     });
 
     await page.route((u) => u.pathname === "/api/orders/preview", async (r) => {

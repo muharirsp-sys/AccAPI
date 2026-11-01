@@ -24,6 +24,8 @@ export type PelangganPilih = {
 export type UnitHarga = { unit: string; price: number | null; source?: string; branchName?: string | null; effectiveDate?: string | null; hargaDefault?: boolean };
 export type BarangPilih = {
     id: number; no: string; name: string; branchId: number | null; branchName: string | null; tag: string | null; units: UnitHarga[];
+    /** Stok hasil sinkron Accurate ("2 KRT 5 PCS") di `gudangStok`; null = belum tersinkron. Info saja, tidak membatasi jumlah. */
+    stok?: string | null; gudangStok?: string | null;
     /** Harga di `units` berlaku untuk pelanggan+tanggal ini; berubah = harga di daftar dianggap basi (yang final tetap dari pratinjau). */
     hargaUntuk: string;
 };
@@ -108,7 +110,8 @@ export function bacaBarang(raw: unknown, hargaUntuk: string): BarangPilih | null
     });
     const branchId = angka(r.branchId);
     return { id, no: r.no, name: String(r.name ?? ""), branchId: Number.isFinite(branchId) ? branchId : null,
-        branchName: teksAtauNull(r.branchName), tag: teksAtauNull(r.tag), units, hargaUntuk };
+        branchName: teksAtauNull(r.branchName), tag: teksAtauNull(r.tag), units, hargaUntuk,
+        stok: teksAtauNull(r.stok), gudangStok: teksAtauNull(r.gudangStok) };
 }
 
 /** Kunci "harga di daftar masih berlaku": pelanggan (kategori harga) + tanggal order. */
