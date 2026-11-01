@@ -61,13 +61,16 @@ def published_rules():
         rows = db.execute("SELECT id,revision,content FROM summary_draft WHERE status='published' ORDER BY updated_at,id").fetchall()
     programs, sources = [], []
     for row in rows:
-        stored = json.loads(row["content"]).get("programs") or []
+        isi = json.loads(row["content"])
+        stored = isi.get("programs") or []
         if not stored:
             continue
+        # Publikasi sebelum 1 Nov 2026 tidak membawa principal per program; diambil dari baris Summary-nya (letak diskon di faktur).
+        principal = next((str(r.get("principle") or "").strip() for r in isi.get("rows") or [] if str(r.get("principle") or "").strip()), "")
         sources.append({"draft_id": row["id"], "revision": row["revision"]})
         for program in sorted(stored, key=lambda item: (item["priority"], item["id"])):
             try:
-                programs.append(Program.model_validate({**program, "priority": len(programs) + 1,
+                programs.append(Program.model_validate({"principal": principal[:160], **program, "priority": len(programs) + 1,
                                                         "id": f"{row['id'][:8]}:{program['id']}"[:80]}))
             except (ValidationError, KeyError, TypeError) as error:
                 # Keadaan SERVER (aturan terbit rusak), bukan kesalahan order: galat berkode GLOBAL — tarikan berhenti dan permintaan

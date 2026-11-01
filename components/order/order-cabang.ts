@@ -506,7 +506,7 @@ export function promoBaris(result: Result | null | undefined, code: string, unit
     // Bonus "dari barang yang dibeli" menempel di barang yang memenuhi syarat; bonus berkode barang tertentu tampil di ringkasan order.
     const bonus = (result?.bonuses ?? []).filter((b) => !b.code && (b.eligible_codes ?? []).includes(code));
     return { gross: num(baris.gross), net: num(baris.net), diskon: Math.max(0, num(baris.gross) - num(baris.net)),
-        persen: (baris.percents ?? []).map(String), tunai: num(baris.cash), bonus };
+        persen: (baris.percents ?? []).map(String).filter((p) => Number(p) !== 0), tunai: num(baris.cash), bonus };
 }
 
 const namaProgram = (id: string, nama: string | undefined, result: Result, saran: Suggestion[]) =>

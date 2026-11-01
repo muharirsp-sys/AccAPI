@@ -73,9 +73,15 @@ export type InvoiceLine = {
     cashDiscount: number;
     /** `detailItem[].id` Accurate: kunci baris yang tetap walau urutan baris faktur berubah. */
     lineId: string;
+    /** Nama satuan baris (`detailItem[].itemUnit.name`), mis. KRT; kosong bila Accurate tidak mengirimnya. */
+    unit?: string;
 };
 
 const cents = (value: number) => Math.round(value * 100) / 100;
+/** Principal yang kolom diskonnya tetap menyatakan penanggung (1-3 distributor, 4-5 principal); sama dengan `POSISI_LAMA` di summary_rules.py. */
+const POSISI_KETAT = /KINO|DAHLIA|FORISA/i;
+/** Satuan karton: ambang bonus di surat ("beli 3 DUS") dibandingkan dalam karton, bukan satuan terkecil. */
+const KARTON = new Set(["KRT", "CTN", "DUS", "BOX"]);
 
 function safeParse(raw: string): unknown {
     try {
@@ -147,11 +153,12 @@ export function invoiceLines(raw: unknown): InvoiceLine[] {
             discounts: percents,
             cashDiscount: num(detail.itemCashDiscount),
             lineId: String(detail.id ?? ""),
+            unit: String(((detail.itemUnit ?? {}) as Record<string, unknown>).name ?? "").trim().toUpperCase(),
         };
     });
 }
 
-export type Bucket = "principal" | "distributor" | "unowned";
+export type Bucket = "principal" | "distributor" | "sellin" | "unowned";
 
 /**
  * Satu potongan yang sudah digolongkan — bahan kartu, rincian layar, DAN unduhan CSV sekaligus.
@@ -227,10 +234,11 @@ const inPeriod = (rule: { periodStart?: string | null; periodEnd?: string | null
  * distributor, dan sebaliknya. Posisi menyatakan siapa yang DIMAKSUD menanggung; aturan
  * menyatakan apakah maksud itu sah.
  */
-export function ruleFor(line: InvoiceLine, rules: PromoRule[], beban: string, percent: number): PromoRule | null {
+export function ruleFor(line: InvoiceLine, rules: PromoRule[], beban: string | string[], percent: number): PromoRule | null {
     if (percent <= 0) return null;
+    const boleh = Array.isArray(beban) ? beban : [beban];
     return rules.find((rule) => rule.itemCode === line.itemCode && !rule.customerCode
-        && rule.benefitBeban === beban
+        && boleh.includes(rule.benefitBeban)
         && rule.benefitType === "DISC_PCT"
         && inPeriod(rule, line.transDate)
         && Math.abs(cents(Number(rule.benefitValue) - percent)) <= 0.01) ?? null;
@@ -461,6 +469,15 @@ export type Recap = {
     /** Potongan yang COCOK aturan distributor — beban sendiri, dan memang seharusnya begitu. */
     distributor: number;
     /**
+     * Potongan SELL-IN (aturan berbeban SELLIN, kolom distributor/depan): principal sudah menanggungnya lewat harga beli,
+     * jadi TIDAK ditagihkan. Yang melewati kuota beli dipindah ke tak bertuan (owner 1 Nov 2026, MSM).
+     */
+    sellin: number;
+    /** Kuota beli tidak bisa diperiksa (layanan order tak terbaca); kosong = diperiksa atau tidak ada sell-in. */
+    kuotaGalat?: string;
+    /** Rentang rekap mulai sesudah awal program sell-in: pemakaian kuota sebelumnya tidak ikut terhitung. */
+    kuotaCatatan?: string;
+    /**
      * Potongan yang TIDAK cocok aturan mana pun, di posisi mana pun. Bukan "posisi 6 ke atas":
      * keputusan pengguna 2026-09-12 — yang membuat sebuah potongan tak bertuan adalah TIDAK
      * SESUAINYA dengan promo yang berlaku, bukan letak kolomnya. Untuk Kino hari ini itu berarti
@@ -519,6 +536,8 @@ export function recap(
      * terlihat "pertama" di rekap bulannya sendiri. Bawaannya hanya faktur rentang ini.
      */
     pertama: Map<string, Pemberian> = pemberianPertama(lines, rules),
+    /** Budget kuota beli per `SURAT|kode`, satuan terkecil (python_backend kuota_beli). Tanpa ini sell-in tidak dicek kuotanya. */
+    kuotaBeli?: Map<string, number>,
 ): Recap {
     // Keanggotaan daftar berganti tiap kuartal sementara rekap membentang sebulan, jadi ia
     // disusun PER TANGGAL BARIS — bukan sekali untuk seluruh periode. Hasilnya disimpan
@@ -533,7 +552,7 @@ export function recap(
     };
     const out: Recap = {
         invoices: 0, lines: lines.length, gross: 0,
-        principal: 0, distributor: 0, unowned: 0, programs: [], rows: [],
+        principal: 0, distributor: 0, sellin: 0, unowned: 0, programs: [], rows: [],
         tarifMenganggur: [], outletTanpaAturan: [],
     };
     // Aturan yang BENAR-BENAR menjelaskan sesuatu, dicatat saat dipakai — bukan ditebak ulang
@@ -561,6 +580,17 @@ export function recap(
         programInvoices.get(key)!.add(invoiceNo);
     };
 
+    // Pemakaian kuota beli oleh potongan sell-in; dinilai berurutan tanggal SESUDAH semua baris digolongkan.
+    const catatSellin: { row: DetailRow; key: string; qty: number; lineKey: string }[] = [];
+    // Golongan = BEBAN ATURANNYA. Untuk Kino/Dahlia/Forisa aturan yang cocok selalu sebeban dengan kolomnya, jadi sama saja;
+    // principal lain menulis rantai menurut urutan surat (Amago 0+0+8+3+1.5), jadi kolom tidak lagi menyatakan penanggung.
+    const golongan = (rule: PromoRule, _owner?: string) => rule.benefitBeban === "SELLIN" ? "sellin" as const
+        : rule.benefitBeban === "PRINCIPAL" ? "principal" as const : "distributor" as const;
+    const catat = (row: DetailRow, rule: PromoRule, line: InvoiceLine) => {
+        if (row.bucket === "sellin") catatSellin.push({ row, key: `${rule.suratProgram.trim().toUpperCase()}|${line.itemCode}`,
+            qty: line.baseQuantity || line.quantity, lineKey: row.lineKey });
+    };
+
     // Potongan tingkat faktur tidak bisa dinilai per baris — nominalnya milik seluruh faktur.
     const perInvoice = new Map<string, { gross: number; leftover: number; lines: InvoiceLine[]; dilipat: DetailRow[] }>();
 
@@ -580,13 +610,27 @@ export function recap(
         });
         for (const isi of perFaktur.values()) {
             const tanggal = isi[0].line.transDate;
+            // Ambang/bonus ber-KARTON (Medicare "beli 3 DUS gratis 1 DUS") diubah ke SATUAN TERKECIL dengan isi karton dari
+            // baris berunit karton pada faktur yang sama; baris tetap satuan terkecil (tanpa pecahan). Isi karton tak terbaca =
+            // kuota 0, bonusnya ditahan sebagai tak bertuan (gagal tertutup), bukan diloloskan tanpa batas.
+            const isiKarton = new Map<string, number>();
+            for (const { line } of isi) {
+                if (line.quantity > 0 && KARTON.has(line.unit ?? "")) isiKarton.set(line.itemCode, (line.baseQuantity || line.quantity) / line.quantity);
+            }
             const aturanBonus = rules
                 .filter((rule) => rule.benefitType === "BONUS_QTY" && rule.itemCode && inPeriod(rule, tanggal)
                     && outletAllowed(rule, isi[0].line.customerNo, listsOn(tanggal)))
-                .map((rule) => ({
-                    itemCode: rule.itemCode, suratProgram: rule.suratProgram, promoGroup: rule.promoGroup,
-                    triggerQty: Number(rule.triggerQty) || 0, benefitValue: rule.benefitValue,
-                }));
+                .map((rule) => {
+                    const ambangKarton = KARTON.has(String(rule.triggerUnit || "").toUpperCase());
+                    const bonusKarton = KARTON.has(String(rule.benefitUnit || "").toUpperCase());
+                    const isiItem = isiKarton.get(rule.itemCode);
+                    const buta = (ambangKarton || bonusKarton) && !isiItem;
+                    return {
+                        itemCode: rule.itemCode, suratProgram: rule.suratProgram, promoGroup: rule.promoGroup,
+                        triggerQty: buta ? Number.POSITIVE_INFINITY : (Number(rule.triggerQty) || 0) * (ambangKarton ? isiItem! : 1),
+                        benefitValue: buta ? "1" : String((Number(rule.benefitValue) || 0) * (bonusKarton ? isiItem! : 1)),
+                    };
+                });
             if (!aturanBonus.length) continue;
             const kuota = bonusQuota(isi.map(({ line, index }) => ({
                 key: kunciBaris(line, index), itemCode: line.itemCode,
@@ -623,6 +667,10 @@ export function recap(
             .filter((entry) => (OWNER[entry.position] ?? "unowned") === owner)
             .map((entry) => String(entry.position)).join("+");
 
+        // Selain Kino/Dahlia/Forisa, potongan boleh dijelaskan aturan beban lain bila aturan sebeban-kolom tidak ada (owner 1 Nov 2026).
+        const kolomBebas = Boolean(line.branchName.trim()) && !POSISI_KETAT.test(line.branchName);
+        const bebanLain = (owner: "distributor" | "principal") => owner === "distributor" ? ["PRINCIPAL"] : ["DISTRIBUTOR", "SELLIN"];
+
         const base = {
             invoiceNo: line.invoiceNo, invoiceId: line.invoiceId, lineKey: line.lineId || kunciBaris(line, urutan),
             transDate: line.transDate, branchName: line.branchName,
@@ -649,11 +697,13 @@ export function recap(
                 reason: `bonus melewati kuota ${kuota.promoGroup}: beli ${kuota.purchased} berhak ${kuota.entitled}, diberi ${kuota.given}` });
         } else if (bonusRule && bonusAmount > 0) {
             terpakai.add(kunci(bonusRule));
-            out.principal = cents(out.principal + bonusAmount);
-            add(bonusRule, bonusAmount, line.invoiceNo);
-            out.rows.push({ ...base, bucket: "principal", positions: positionsAt("distributor") || positionsAt("principal"),
+            const bucket = golongan(bonusRule as PromoRule, "principal");
+            out[bucket] = cents(out[bucket] + bonusAmount);
+            if (bucket === "principal") add(bonusRule, bonusAmount, line.invoiceNo);
+            out.rows.push({ ...base, bucket, positions: positionsAt("distributor") || positionsAt("principal"),
                 percent: 100, amount: bonusAmount, suratProgram: bonusRule.suratProgram,
                 promoGroup: bonusRule.promoGroup, reason: "" });
+            catat(out.rows.at(-1)!, bonusRule as PromoRule, line);
         }
 
         // Potongan yang tidak terjelaskan UTUH per beban, dinilai lagi per posisi di bawah.
@@ -664,19 +714,23 @@ export function recap(
             const amount = owner === "distributor" ? split.distributor : split.principal;
             if (amount <= 0) continue;
             const percent = percentAt(owner);
-            const beban = owner === "distributor" ? "DISTRIBUTOR" : "PRINCIPAL";
+            // Kolom distributor (depan) juga tempat potongan sell-in: aturan SELLIN menjelaskannya, golongannya sell-in.
+            const beban = owner === "distributor" ? ["DISTRIBUTOR", "SELLIN"] : "PRINCIPAL";
             // Tarif outlet dicoba setelah aturan per barang: yang per barang lebih sempit,
             // jadi kalau keduanya bisa menjelaskan, yang menyebut barangnya yang dipakai.
             // Kedua sisi, sama seperti gerbang: tabel tarif memuat posisi 4-5 PRINCIPAL juga.
             const cocokTarif = tariffFor(line, berlakuDiOutlet, owner);
-            const matched = ruleFor(line, berlakuDiOutlet, beban, percent) ?? cocokTarif?.[0] ?? null;
+            const matched = ruleFor(line, berlakuDiOutlet, beban, percent) ?? cocokTarif?.[0]
+                ?? (kolomBebas ? ruleFor(line, berlakuDiOutlet, bebanLain(owner), percent) : null) ?? null;
             if (matched) {
                 for (const dipakai of cocokTarif ?? [matched]) terpakai.add(kunci(dipakai));
                 for (const slot of cocokTarif ?? []) slotTerpakai.add(slot);
-                out[owner] = cents(out[owner] + amount);
-                if (owner === "principal") add(matched, amount, line.invoiceNo);
-                out.rows.push({ ...base, bucket: owner, positions: positionsAt(owner), percent, amount,
+                const bucket = golongan(matched, owner);
+                out[bucket] = cents(out[bucket] + amount);
+                if (bucket === "principal") add(matched, amount, line.invoiceNo);
+                out.rows.push({ ...base, bucket, positions: positionsAt(owner), percent, amount,
                     suratProgram: matched.suratProgram, promoGroup: matched.promoGroup, reason: "" });
+                catat(out.rows.at(-1)!, matched, line);
                 continue;
             }
             sisa.push(...potongan.filter((entry) => OWNER[entry.position] === owner));
@@ -688,18 +742,19 @@ export function recap(
         // 21 Sep 2026: `3+0.5` di posisi 1-2, tarifnya 3% posisi 1 (distributor) dan 0,5% posisi 4
         // (principal). Digabung, 3,5% seluruhnya tak bertuan, padahal 3%-nya jelas milik tarif, dan
         // menu Normalisasi tidak bisa memutuskan 0,5%-nya sendiri.
-        const penjelasan = new Map<Potongan, { rule: PromoRule; bucket: "distributor" | "principal"; note: string }>();
+        const penjelasan = new Map<Potongan, { rule: PromoRule; bucket: "distributor" | "principal" | "sellin"; note: string }>();
         const sama = (rule: PromoRule, entry: Potongan) => Math.abs(cents(Number(rule.benefitValue) - entry.percent)) <= 0.01;
         const slotTarif = (rule: PromoRule) => !rule.itemCode && rule.benefitType === "DISC_PCT" && !slotTerpakai.has(rule);
         const tarifOutlet = berlakuDiOutlet.filter((rule) => rule.customerCode && inPeriod(rule, line.transDate)
             && milikOutlet(rule, line.customerNo));
         for (const entry of sisa) {
             const beban = OWNER[entry.position] === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";
-            const rule = ruleFor(line, berlakuDiOutlet, beban, entry.percent)
-                ?? tarifOutlet.find((slot) => slotTarif(slot) && slot.benefitBeban === beban && slot.tierNo === entry.position && sama(slot, entry));
+            const rule = ruleFor(line, berlakuDiOutlet, beban === "DISTRIBUTOR" ? [beban, "SELLIN"] : beban, entry.percent)
+                ?? tarifOutlet.find((slot) => slotTarif(slot) && slot.benefitBeban === beban && slot.tierNo === entry.position && sama(slot, entry))
+                ?? (kolomBebas ? ruleFor(line, berlakuDiOutlet, bebanLain(OWNER[entry.position]), entry.percent) : null);
             if (!rule) continue;
             if (rule.customerCode) slotTerpakai.add(rule);
-            penjelasan.set(entry, { rule, bucket: OWNER[entry.position], note: "" });
+            penjelasan.set(entry, { rule, bucket: golongan(rule, OWNER[entry.position]), note: "" });
         }
         // Jaringan: posisi DIMAKLUMI, nilai tidak (keputusan pengguna 2026-09-24, sama dengan
         // `normalisasiJaringan` di gerbang). Posisi tepat didahulukan di atas, baru sisanya
@@ -716,7 +771,7 @@ export function recap(
                 const rule = slot ?? surat;
                 if (!rule) continue;
                 if (slot) slotTerpakai.add(slot);
-                penjelasan.set(entry, { rule, bucket: rule.benefitBeban === "PRINCIPAL" ? "principal" : "distributor",
+                penjelasan.set(entry, { rule, bucket: rule.benefitBeban === "PRINCIPAL" ? "principal" : golongan(rule, "distributor"),
                     note: `posisi ${entry.position} dimaklumi (jaringan): ${slot ? `tarif posisi ${slot.tierNo}` : `surat ${rule.suratProgram}`}` });
             }
         }
@@ -728,6 +783,7 @@ export function recap(
                 if (jelas.bucket === "principal") add(jelas.rule, entry.rupiah, line.invoiceNo);
                 out.rows.push({ ...base, bucket: jelas.bucket, positions: String(entry.position), percent: entry.percent,
                     amount: entry.rupiah, suratProgram: jelas.rule.suratProgram, promoGroup: jelas.rule.promoGroup, reason: jelas.note });
+                catat(out.rows.at(-1)!, jelas.rule, line);
                 continue;
             }
             const owner = OWNER[entry.position];
@@ -879,6 +935,32 @@ export function recap(
     }
 
     for (const [key, program] of byProgram) program.invoices = programInvoices.get(key)?.size ?? 0;
+
+    // KUOTA BELI sell-in, berurutan tanggal: baris yang membuat pemakaian melewati budget pindah SELURUHNYA ke tak bertuan
+    // (sama dengan mesin order: baris melebihi sisa = tanpa diskon). Menangkap faktur yang diketik langsung di Accurate.
+    if (kuotaBeli) {
+        const dipakai = new Map<string, number>();
+        const lewat = new Map<string, number>();
+        const dihitung = new Set<string>();
+        const urut = [...catatSellin].sort((a, b) => a.row.transDate.localeCompare(b.row.transDate) || a.row.invoiceNo.localeCompare(b.row.invoiceNo));
+        for (const c of urut) {
+            const tanda = `${c.lineKey}|${c.key}`;
+            const budget = kuotaBeli.get(c.key) ?? 0;
+            if (!dihitung.has(tanda)) {
+                dihitung.add(tanda);
+                const total = (dipakai.get(c.key) ?? 0) + c.qty;
+                if (total > budget + 1e-6) lewat.set(tanda, budget);
+                else dipakai.set(c.key, total);
+            }
+            if (!lewat.has(tanda)) continue;
+            out.sellin = cents(out.sellin - c.row.amount);
+            out.unowned = cents(out.unowned + c.row.amount);
+            c.row.bucket = "unowned";
+            c.row.reason = kuotaBeli.has(c.key)
+                ? `sell-in melewati kuota beli ${c.key.split("|")[0]}: budget ${budget}, sudah terpakai ${dipakai.get(c.key) ?? 0}, baris ini ${c.qty}`
+                : `sell-in tanpa kuota beli (${c.key.split("|")[0]} belum punya budget untuk barang ini)`;
+        }
+    }
 
     out.invoices = new Set(lines.map((line) => line.invoiceId || line.invoiceNo)).size;
     out.programs = [...byProgram.values()].sort((a, b) => b.amount - a.amount);

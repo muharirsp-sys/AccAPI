@@ -83,13 +83,17 @@ test("RAFAKSI ditolak seluruhnya: ia tidak memotong faktur", () => {
     assert.equal(bridgeRows(letter({ settlement: "choose_rafaksi_or_on_invoice" })).rows.length, 0);
 });
 
-test("rantai beberapa persen dalam satu strata ditolak, bukan diambil yang pertama", () => {
-    // "8%+2%" adalah DUA potongan di dua posisi, dan posisi menentukan siapa menanggung.
+test("rantai beberapa persen dalam satu strata = satu aturan per komponen dengan penanggungnya sendiri", () => {
+    // Owner 1 Nov 2026 (Amago "8+3+1.5D"): tiap komponen satu aturan; tingkat i*100+k menjaga kunci unik tetap unik.
     const hasil = bridgeRows(letter({
-        programs: [program({ tiers: [{ minimum: "2", percentages: ["8", "2"] }] })],
+        programs: [program({ codes: ["A"], tiers: [{ minimum: "2", percentages: ["8", "3", "1.5"], beban: ["P", "P", "D"] }] })],
     }));
-    assert.deepEqual(hasil.rows, []);
-    assert.match(hasil.refused[0], /8\+2/);
+    assert.deepEqual(hasil.refused, []);
+    assert.deepEqual(hasil.rows.map((r) => [r.tierNo, r.benefitValue, r.benefitBeban]),
+        [[101, "8", "PRINCIPAL"], [102, "3", "PRINCIPAL"], [103, "1.5", "DISTRIBUTOR"]]);
+    // Sell-in (kuota beli): seluruh komponen dan bonusnya SELLIN, tidak pernah masuk klaim principal.
+    const sellin = bridgeRows(letter({ programs: [program({ codes: ["A"], kuota: true, tiers: [{ minimum: "2", percentages: ["10"] }] })] }));
+    assert.deepEqual(sellin.rows.map((r) => r.benefitBeban), ["SELLIN"]);
 });
 
 test("kelas outlet jadi daftar peserta, dua arah", () => {
