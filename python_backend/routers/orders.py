@@ -17,13 +17,16 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from fastapi import APIRouter, HTTPException, Request
+from fractions import Fraction
+import asyncio
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from order_duplicate import duplicate_message, find_duplicate
 from pydantic import ValidationError
-from shared import get_current_user, user_has_permission, validate_csrf_request
+from shared import get_current_user, read_upload_file_limited, user_has_permission, validate_csrf_request
 from summary_store import JsonStore, connect, identity
 from summary_rules import Program, RasioKosong, calculate, suggestions
+import kuota_beli
 import order_cabang
 import outlet_class
 import outlet_channel
@@ -132,13 +135,23 @@ def hitung_promo(customer_no, channel, order_date, lines, saran=False):
     if not programs:
         raise Ditolak(409, "ATURAN_BELUM_TERBIT", "Belum ada aturan promo terbit; terbitkan Summary sebelum order dihitung")
     kelas, tahu = outlet_class.classes_of(customer_no), outlet_class.known()
+    # Kuota sell-in (owner 1 Nov 2026) hanya dibaca bila ada program berkuota terbit: principal lain tidak membayar apa pun.
+    berkuota = [program for program in programs if program.kuota]
+    kuota = {}
+    if berkuota:
+        with connect() as db:
+            kuota = kuota_beli.sisa_kuota(db, {p.surat_program for p in berkuota}, min(p.start for p in berkuota).isoformat())
     try:
-        result = calculate(programs, lines, order_date, channel, outlet_classes=kelas, known_classes=tahu)
+        result = calculate(programs, lines, order_date, channel, outlet_classes=kelas, known_classes=tahu, kuota=kuota)
     except RasioKosong as error:
         # Owner 16 Okt 2026: rasio satuan yang dibutuhkan program tidak ada -> order DITAHAN, bukan baris diam-diam tak dihitung.
         raise Ditolak(409, "RASIO_SATUAN_KOSONG", str(error)) from None
     hasil = {"rules": [program.model_dump(mode="json") for program in programs], "sources": sources, "result": result,
-             "sidik": sidik_order(customer_no, channel, order_date, lines, result)}
+             "sidik": sidik_order(customer_no, channel, order_date, lines, result),
+             # Sisa kuota barang order ini SEBELUM order ini, untuk layar; sengaja di luar `result` supaya order lain yang memakai
+             # kuota tidak membatalkan sidik pratinjau yang hasilnya sendiri tidak berubah.
+             "kuota_sisa": [{"surat_program": s, "code": c, "sisa": kuota_beli.teks_kuota(q), "unit": u}
+                            for (s, c), (q, u) in sorted(kuota.items()) if any(c == line["code"] for line in lines)]}
     if saran:
         hasil["suggestions"] = suggestions(programs, lines, order_date, channel, outlet_classes=kelas, known_classes=tahu)
     return hasil
@@ -204,11 +217,22 @@ def store_order(owner, outlet, channel, order_date, note, lines, request_id=None
             raise Ditolak(409, "ORDER_GANDA", duplicate_message(hit))
 
     order_id = str(uuid.uuid4())
+    pakai = hasil["result"].get("kuota") or []
     # Jejak konfirmasi ikut pada catatan ordernya: siapa pun yang membuka order ini nanti harus
     # bisa tahu bahwa ia pernah ditahan sebagai dugaan ganda, dan sengaja diloloskan.
     if confirm_duplicate:
         note = (note + " | dikonfirmasi BUKAN order ganda").strip()[:500]
     with connect() as db:
+        if pakai:
+            # Kuota dihitung ulang DI DALAM kunci tulis: dua order yang sama-sama melihat sisa terakhir tidak boleh dua-duanya lolos.
+            db.execute("BEGIN IMMEDIATE")
+            sisa = kuota_beli.sisa_kuota(db, {entri["surat_program"] for entri in pakai},
+                                         min(str(rule["start"]) for rule in hasil["rules"] if rule.get("kuota")))
+            habis = [entri for entri in pakai if (entri["surat_program"], entri["code"]) not in sisa
+                     or Fraction(Decimal(entri["quantity"])) > sisa[(entri["surat_program"], entri["code"])][0]]
+            if habis:
+                raise Ditolak(409, "KUOTA_BERUBAH", "Kuota promo " + ", ".join(entri["code"] for entri in habis)
+                              + " sudah terpakai order lain sejak pratinjau. Hitung pratinjau ulang lalu simpan.")
         db.execute("INSERT INTO sales_order(id,owner,outlet,channel,order_date,status,note,lines,rules,sources,"
                    "result,request_id,customer_no) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                    (order_id, owner, outlet[:160], channel[:80], order_date, "draft", note,
@@ -307,7 +331,7 @@ async def preview_order(request: Request):
     except (ValueError, KeyError, TypeError) as error:
         raise HTTPException(400, public_error(error)) from None
     return {"ok": True, "result": hasil["result"], "suggestions": hasil["suggestions"], "sources": hasil["sources"],
-            "sidik": hasil["sidik"], "channel_masalah": channel_masalah}
+            "sidik": hasil["sidik"], "channel_masalah": channel_masalah, "kuota_sisa": hasil["kuota_sisa"]}
 
 
 @router.post("")
@@ -513,6 +537,126 @@ async def pull_cron(request: Request):
                  last_result={key: len(value) for key, value in result.items()})
     CONNECTION["state"] = state
     return {"ok": True, **result}
+
+
+def require_kuota_editor(request):
+    """Budget promo mengubah potongan faktur berikutnya: izin yang sama dengan menerbitkan Summary, plus CSRF."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(401, "Silakan login")
+    if not user_has_permission(user, "summary", "edit"):
+        raise HTTPException(403, "Mengatur kuota promo butuh izin Summary (ubah)")
+    if not validate_csrf_request(request, request.headers.get("X-CSRF-Token", "")):
+        raise HTTPException(403, "Permintaan lintas situs ditolak")
+    return user
+
+
+def program_kuota():
+    """Program berkuota yang TERBIT, per nomor surat (huruf besar = kunci `promo_kuota`)."""
+    programs, _ = published_rules()
+    per_surat = {}
+    for program in programs:
+        if program.kuota:
+            per_surat.setdefault(program.surat_program.strip().upper(), []).append(program)
+    return per_surat
+
+
+def daftar_kuota(per_surat):
+    with connect() as db:
+        sisa = kuota_beli.sisa_kuota(db, set(per_surat), min((p.start.isoformat() for ps in per_surat.values() for p in ps), default=""))
+        rows = db.execute("SELECT surat_program,code,quantity,unit,isi,sumber,updated_by,updated_at FROM promo_kuota "
+                          "ORDER BY surat_program,code").fetchall()
+    return {"ok": True,
+            "surat": [{"surat_program": surat, "mulai": min(p.start for p in programs).isoformat(),
+                       "selesai": max(p.end for p in programs).isoformat(),
+                       "programs": [{"id": p.id, "name": p.name, "codes": p.codes} for p in programs]}
+                      for surat, programs in sorted(per_surat.items())],
+            "kuota": [{**dict(row), "sisa": kuota_beli.teks_kuota(sisa[(row[0], row[1])][0]) if (row[0], row[1]) in sisa else None}
+                      for row in rows]}
+
+
+@router.get("/kuota")
+def kuota_list(request: Request):
+    """Kuota per surat + kode: tersimpan, sisa (setelah order beku). Baris surat yang tak lagi terbit tetap tampil tanpa sisa."""
+    require_user(request)
+    try:
+        return daftar_kuota(program_kuota())
+    except Ditolak as error:
+        return jawab(error)
+
+
+BATAS_EKSPOR = 25 * 1024 * 1024
+
+
+@router.post("/kuota/hitung")
+async def kuota_hitung(request: Request, surat_program: str = Form(...), beli: UploadFile = File(...), jual: UploadFile = File(...)):
+    """Pratinjau budget satu surat dari ekspor Accurate: dibeli berdiskon surat - sudah keluar berdiskon sama sebelum program mulai.
+
+    Tidak menyimpan apa pun; yang disimpan adalah angka yang diperiksa manusia lewat POST /orders/kuota.
+    """
+    require_kuota_editor(request)
+    try:
+        per_surat = program_kuota()
+    except Ditolak as error:
+        return jawab(error)
+    surat = surat_program.strip().upper()
+    if surat not in per_surat:
+        raise HTTPException(404, "Surat itu belum terbit sebagai program berkuota (tulis 'kuota beli' di keterangan baris Summary-nya)")
+    try:
+        data_beli = await read_upload_file_limited(beli, BATAS_EKSPOR, [".xlsx"], "Rincian Faktur Pembelian")
+        data_jual = await read_upload_file_limited(jual, BATAS_EKSPOR, [".xlsx"], "Rincian Faktur Penjualan")
+        # openpyxl pada ekspor besar memakan puluhan detik: jangan di loop acara (uvicorn satu worker melayani semua order).
+        baris_beli, baris_jual = await asyncio.gather(
+            asyncio.to_thread(kuota_beli.baca_rincian, data_beli, "Rincian Faktur Pembelian"),
+            asyncio.to_thread(kuota_beli.baca_rincian, data_jual, "Rincian Faktur Penjualan"))
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from None
+    programs = per_surat[surat]
+    sebelum = min(p.start for p in programs).isoformat()
+    baris = kuota_beli.hitung_budget(kuota_beli.pola_program(programs, surat), baris_beli, baris_jual, sebelum)
+    teks = lambda d: format(d.normalize(), "f")
+    return {"ok": True, "surat_program": surat, "sebelum": sebelum,
+            "baris": [{**item, "beli": teks(item["beli"]), "keluar": teks(item["keluar"]), "budget": teks(item["budget"]),
+                       "pola_beli": {k: teks(v) for k, v in item["pola_beli"].items()},
+                       "pola_keluar": {k: teks(v) for k, v in item["pola_keluar"].items()}} for item in baris]}
+
+
+@router.post("/kuota")
+async def kuota_simpan(request: Request):
+    """Simpan budget satu surat (mengganti yang lama). Kode wajib milik program surat itu; jumlah dalam satuan terkecil."""
+    user = require_kuota_editor(request)
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(400, "Format permintaan tidak valid") from None
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Format permintaan tidak valid")
+    try:
+        per_surat = program_kuota()
+    except Ditolak as error:
+        return jawab(error)
+    surat, rows = str(body.get("surat_program") or "").strip().upper(), body.get("rows")
+    if surat not in per_surat:
+        raise HTTPException(404, "Surat itu belum terbit sebagai program berkuota")
+    codes = {code for program in per_surat[surat] for code in program.codes}
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 2000:
+        raise HTTPException(400, "Isi 1-2000 baris kuota")
+    bersih, dilihat = [], set()
+    for row in rows:
+        code = str((row or {}).get("code") or "").strip() if isinstance(row, dict) else ""
+        unit = str(row.get("unit") or "").strip().upper() if isinstance(row, dict) else ""
+        try:
+            jumlah = Decimal(str(row.get("quantity")))
+        except Exception:
+            jumlah = Decimal(-1)
+        if code not in codes or code in dilihat or not unit.isalpha() or len(unit) > 20 or not jumlah.is_finite() or jumlah < 0:
+            raise HTTPException(400, f"Baris kuota tidak valid: {code or '(tanpa kode)'} (kode milik surat, satuan huruf, jumlah >= 0, tanpa ganda)")
+        dilihat.add(code)
+        bersih.append({"code": code, "quantity": jumlah, "unit": unit, "isi": str(row.get("isi") or "")[:10]})
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        kuota_beli.simpan_kuota(db, surat, bersih, identity(user), str(body.get("sumber") or ""))
+    return daftar_kuota(per_surat)
 
 
 def order_detail_row(order_id, user, everyone=False):
