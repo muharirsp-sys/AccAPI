@@ -776,8 +776,8 @@ test("saringan Periode Aturan Promo: bersinggungan, ujung kosong = tak terbatas"
     assert.equal(bersinggungan(lintas, "", "2026-09-14"), false);
 });
 
-test("sell-in di depan = golongan sell-in (tidak diklaim); melewati kuota beli = tak bertuan; distributor tambahan di posisi 3", () => {
-    // Owner 1 Nov 2026 (MSM): Lervia sell-in 10% di kolom 1, Amago "0+0+1.5+8+3" (1,5% tanggungan distributor, 8+3 klaim).
+test("sell-in di depan = golongan sell-in (tidak diklaim); melewati kuota beli = tak bertuan; urutan surat Amago", () => {
+    // Owner 1 Nov 2026 (MSM): Lervia sell-in 10% di kolom 1, Amago "0+0+8+3+1.5" (8+3 klaim, 1,5% tanggungan distributor terakhir).
     const msm = { principal: "MSM", periodStart: "2026-11-01", periodEnd: "2026-11-30" };
     const rules = [
         aturan({ ...msm, suratProgram: "278", itemCode: "L", benefitValue: "10", benefitBeban: "SELLIN" }),
@@ -785,17 +785,18 @@ test("sell-in di depan = golongan sell-in (tidak diklaim); melewati kuota beli =
         aturan({ ...msm, suratProgram: "110", itemCode: "A", benefitValue: "3", tierNo: 102 }),
         aturan({ ...msm, suratProgram: "110", itemCode: "A", benefitValue: "1.5", tierNo: 103, benefitBeban: "DISTRIBUTOR" }),
     ];
-    const baris = (id: string, tgl: string, itemNo: string, chain: string, base: number) => ({ id, number: id, transDate: tgl,
+    const baris = (id: string, tgl: string, itemNo: string, chain: string, base: number) => ({ id, number: id, transDate: tgl, branchName: "MSM",
         customer: { customerNo: "C-X001-MSM" }, detailItem: [{ itemNo, quantity: 1, unitPrice: 100000, itemDiscPercent: chain,
             itemCashDiscount: 0, quantityDefault: base, id: `${id}-1` }] });
     const lines = [baris("I1", "02/11/2026", "L", "10", 24), baris("I2", "03/11/2026", "L", "10", 24),
-        baris("I3", "03/11/2026", "A", "0+0+1.5+8+3", 12)].flatMap((f) => invoiceLines(f));
+        baris("I3", "03/11/2026", "A", "0+0+8+3+1.5", 12)].flatMap((f) => invoiceLines(f));
     const hasil = recap(lines, rules, [], new Map(), undefined, new Map([["278|L", 30]]));
     assert.equal(hasil.sellin, 10000, "faktur pertama dalam budget 30");
     assert.equal(hasil.rows.find((r) => r.invoiceNo === "I2")?.bucket, "unowned", "faktur kedua: 24 + 24 > 30");
     assert.match(hasil.rows.find((r) => r.invoiceNo === "I2")!.reason, /melewati kuota beli/);
-    assert.equal(hasil.distributor, 1500);
-    assert.equal(hasil.principal, cents(98500 * 0.08 + 98500 * 0.92 * 0.03));
+    // Urutan surat: klaim principal dari bruto, tanggungan distributor 1,5% terakhir (kolom 5) tetap golongan distributor.
+    assert.equal(hasil.principal, cents(8000 + 92000 * 0.03));
+    assert.equal(hasil.distributor, cents(89240 * 0.015));
     assert.deepEqual(hasil.programs.map((p) => p.suratProgram), ["110"], "sell-in tidak masuk tabel klaim");
     // Tanpa data kuota (layanan tak terbaca) sell-in tidak dicek, tetapi tetap tidak diklaim.
     assert.equal(recap(lines, rules).sellin, 20000);

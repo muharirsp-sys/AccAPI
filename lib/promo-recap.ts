@@ -78,6 +78,8 @@ export type InvoiceLine = {
 };
 
 const cents = (value: number) => Math.round(value * 100) / 100;
+/** Principal yang kolom diskonnya tetap menyatakan penanggung (1-3 distributor, 4-5 principal); sama dengan `POSISI_LAMA` di summary_rules.py. */
+const POSISI_KETAT = /KINO|DAHLIA|FORISA/i;
 /** Satuan karton: ambang bonus di surat ("beli 3 DUS") dibandingkan dalam karton, bukan satuan terkecil. */
 const KARTON = new Set(["KRT", "CTN", "DUS", "BOX"]);
 
@@ -580,7 +582,10 @@ export function recap(
 
     // Pemakaian kuota beli oleh potongan sell-in; dinilai berurutan tanggal SESUDAH semua baris digolongkan.
     const catatSellin: { row: DetailRow; key: string; qty: number; lineKey: string }[] = [];
-    const golongan = (rule: PromoRule, owner: "distributor" | "principal") => rule.benefitBeban === "SELLIN" ? "sellin" as const : owner;
+    // Golongan = BEBAN ATURANNYA. Untuk Kino/Dahlia/Forisa aturan yang cocok selalu sebeban dengan kolomnya, jadi sama saja;
+    // principal lain menulis rantai menurut urutan surat (Amago 0+0+8+3+1.5), jadi kolom tidak lagi menyatakan penanggung.
+    const golongan = (rule: PromoRule, _owner?: string) => rule.benefitBeban === "SELLIN" ? "sellin" as const
+        : rule.benefitBeban === "PRINCIPAL" ? "principal" as const : "distributor" as const;
     const catat = (row: DetailRow, rule: PromoRule, line: InvoiceLine) => {
         if (row.bucket === "sellin") catatSellin.push({ row, key: `${rule.suratProgram.trim().toUpperCase()}|${line.itemCode}`,
             qty: line.baseQuantity || line.quantity, lineKey: row.lineKey });
@@ -662,6 +667,10 @@ export function recap(
             .filter((entry) => (OWNER[entry.position] ?? "unowned") === owner)
             .map((entry) => String(entry.position)).join("+");
 
+        // Selain Kino/Dahlia/Forisa, potongan boleh dijelaskan aturan beban lain bila aturan sebeban-kolom tidak ada (owner 1 Nov 2026).
+        const kolomBebas = Boolean(line.branchName.trim()) && !POSISI_KETAT.test(line.branchName);
+        const bebanLain = (owner: "distributor" | "principal") => owner === "distributor" ? ["PRINCIPAL"] : ["DISTRIBUTOR", "SELLIN"];
+
         const base = {
             invoiceNo: line.invoiceNo, invoiceId: line.invoiceId, lineKey: line.lineId || kunciBaris(line, urutan),
             transDate: line.transDate, branchName: line.branchName,
@@ -711,7 +720,8 @@ export function recap(
             // jadi kalau keduanya bisa menjelaskan, yang menyebut barangnya yang dipakai.
             // Kedua sisi, sama seperti gerbang: tabel tarif memuat posisi 4-5 PRINCIPAL juga.
             const cocokTarif = tariffFor(line, berlakuDiOutlet, owner);
-            const matched = ruleFor(line, berlakuDiOutlet, beban, percent) ?? cocokTarif?.[0] ?? null;
+            const matched = ruleFor(line, berlakuDiOutlet, beban, percent) ?? cocokTarif?.[0]
+                ?? (kolomBebas ? ruleFor(line, berlakuDiOutlet, bebanLain(owner), percent) : null) ?? null;
             if (matched) {
                 for (const dipakai of cocokTarif ?? [matched]) terpakai.add(kunci(dipakai));
                 for (const slot of cocokTarif ?? []) slotTerpakai.add(slot);
@@ -740,7 +750,8 @@ export function recap(
         for (const entry of sisa) {
             const beban = OWNER[entry.position] === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";
             const rule = ruleFor(line, berlakuDiOutlet, beban === "DISTRIBUTOR" ? [beban, "SELLIN"] : beban, entry.percent)
-                ?? tarifOutlet.find((slot) => slotTarif(slot) && slot.benefitBeban === beban && slot.tierNo === entry.position && sama(slot, entry));
+                ?? tarifOutlet.find((slot) => slotTarif(slot) && slot.benefitBeban === beban && slot.tierNo === entry.position && sama(slot, entry))
+                ?? (kolomBebas ? ruleFor(line, berlakuDiOutlet, bebanLain(OWNER[entry.position]), entry.percent) : null);
             if (!rule) continue;
             if (rule.customerCode) slotTerpakai.add(rule);
             penjelasan.set(entry, { rule, bucket: golongan(rule, OWNER[entry.position]), note: "" });

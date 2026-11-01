@@ -254,8 +254,9 @@ def jumlah_dalam(line, program_unit):
 
 
 # Owner 1 Nov 2026: diskon sell-in DI DEPAN (kolom 1..); diskon surat yang bukan sell-in dan tambahan tanggungan distributor
-# DI BELAKANG (rata kanan ke kolom 5: distributor lalu principal, sesuai Rekap kolom 1-3 distributor / 4-5 principal) —
-# kecuali principal ini, yang letaknya tetap seperti dulu (urutan program dari kolom 1).
+# DI BELAKANG, rata kanan ke kolom 5, dalam URUTAN SURAT (Amago "TPR 8 + add 3 & 1.5 distributor" -> 0+0+8+3+1.5: klaim
+# principal dihitung dari bruto, tanggungan distributor terakhir). Siapa menanggung dibawa aturannya (Rekap menggolongkan
+# menurut beban aturan), bukan nomor kolom — kecuali principal ini, yang letak dan kolomnya tetap seperti dulu.
 POSISI_LAMA = ("KINO", "DAHLIA", "FORISA")
 
 
@@ -272,30 +273,22 @@ def jenis_posisi(program, tier, i):
 def rantai_posisi(slot, ada_rupiah=False):
     """[(persen, jenis)] satu baris -> rantai `itemDiscPercent` berposisi, nol sebagai pengisi kolom kosong.
 
-    Kolom Rekap: 1-3 distributor, 4-5 principal. Sell-in mengisi dari kolom 1, tanggungan distributor BERAKHIR di kolom 3,
-    principal BERAKHIR di kolom 5: sell-in 3% -> ["3"]; Amago 8+3+1.5D -> ["0","0","1.5","8","3"]; 8+1.5D -> ["0","0","1.5","0","8"].
-    Nol diterima Accurate (INV/2606/SZ01003 "0.5380+0+2.5") dan netto tidak berubah (perkalian).
-    Urutan LAMA bila ada program bentuk lama, bila tidak muat batas kolom (sell-in + distributor > 3 atau principal > 2), atau
-    bila baris juga membawa potongan rupiah: `buildInvoicePayload` melipat rupiahnya jadi persen di UJUNG rantai, dan rantai
-    berpengisi sudah 5 kolom (kolom 6 = tak bertuan di Rekap).
+    Sell-in mengisi dari kolom 1; sisanya (urutan surat/program) rata kanan berakhir di kolom 5: sell-in 3% -> ["3"];
+    Amago 8+3+1.5D -> ["0","0","8","3","1.5"]; keduanya -> ["3","0","8","3","1.5"]. Nol diterima Accurate
+    (INV/2606/SZ01003 "0.5380+0+2.5") dan netto tidak berubah (perkalian). Urutan LAMA bila ada program bentuk lama, bila
+    lebih dari 5 komponen, atau bila baris juga membawa potongan rupiah: `buildInvoicePayload` melipat rupiahnya jadi persen
+    di UJUNG rantai, dan rantai berpengisi sudah 5 kolom (kolom 6 = tak bertuan di Rekap).
     """
     lama = [persen for persen, _ in slot]
     if not slot or ada_rupiah or any(jenis == "asli" for _, jenis in slot):
         return lama
     depan = [p for p, j in slot if j == "depan"]
-    dist = [p for p, j in slot if j == "dist"]
-    prin = [p for p, j in slot if j == "prin"]
-    if len(depan) + len(dist) > 3 or len(prin) > 2:
+    belakang = [p for p, j in slot if j != "depan"]
+    if not belakang:
+        return depan
+    if len(depan) + len(belakang) > 5:
         return lama
-    kolom = ["0"] * 5
-    kolom[:len(depan)] = depan
-    if dist:
-        kolom[3 - len(dist):3] = dist
-    if prin:
-        kolom[5 - len(prin):5] = prin
-    while kolom and kolom[-1] == "0":
-        kolom.pop()
-    return kolom
+    return depan + ["0"] * (5 - len(depan) - len(belakang)) + belakang
 
 
 def teks_kuota(nilai):

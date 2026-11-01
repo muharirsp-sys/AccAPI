@@ -44,12 +44,14 @@ Bonus Medicare dihitung per SKU dan otomatis masuk sebagai barang yang sama berd
 
 ## Letak diskon di faktur dan Rekap Promo (owner 1 Nov 2026)
 
-- Sell-in di DEPAN (kolom 1..), mis. Lervia `3`. Bukan sell-in + tanggungan distributor di BELAKANG, rata kanan ke kolom 5:
-  Amago 750 ml `0+0+1.5+8+3` (kolom 3 distributor, 4-5 principal). Kino, Dahlia, Forisa tetap seperti dulu.
+- Sell-in di DEPAN (kolom 1..), mis. Lervia `3`. Bukan sell-in + tanggungan distributor di BELAKANG, rata kanan ke kolom 5,
+  URUTAN SURAT (distributor terakhir): Amago 750 ml `0+0+8+3+1.5`. Klaim principal dihitung dari bruto. Kino, Dahlia, Forisa
+  tetap seperti dulu.
 - Aturan Promo dari Summary: satu aturan per komponen (tingkat 101, 102, ...), beban PRINCIPAL / DISTRIBUTOR; program `kuota beli`
   berbeban **SELLIN**.
 - Rekap Promo: kartu **Sell-in (tidak diklaim)** terpisah dari Klaim principal; sell-in yang melewati kuota beli (mis. faktur
-  diketik langsung di Accurate) = tak bertuan. Klaim principal dihitung sesudah potongan kolom sebelumnya (urutan rantai Accurate).
+  diketik langsung di Accurate) = tak bertuan. Selain Kino/Dahlia/Forisa, penanggung dibaca dari beban ATURAN (kolom tidak lagi
+  menentukan); aturan yang sebeban dengan kolomnya didahulukan.
 
 ## 2. Budget (layar Order Masuk › Kuota promo, hanya Lervia & Medicare)
 
