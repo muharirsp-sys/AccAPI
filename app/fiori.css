@@ -300,9 +300,10 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-li:hover { background:var(--surface-2); }
 .fi-li:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
 .fi-li[aria-current="true"] { background:var(--brand-tint); }
-.fi-li-r1 { display:flex; justify-content:space-between; gap:8px; grid-column:1; }
+/* Nilai kanan (jumlah / stok) turun ke baris sendiri bila tak muat, bukan memotong kode dokumen di tengah (ponsel 320 px). */
+.fi-li-r1 { display:flex; flex-wrap:wrap; justify-content:space-between; gap:0 8px; grid-column:1; }
 .fi-li-doc { font:500 .8125rem/1.25rem var(--font-mono); }
-.fi-li-amt { font:700 .9375rem/1.25rem var(--font-sans); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.fi-li-amt { margin-left:auto; font:700 .9375rem/1.25rem var(--font-sans); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .fi-li-title { grid-column:1; font:600 .9375rem/1.375rem var(--font-sans); }
 .fi-li-r3 { grid-column:1; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; font:var(--fs-small); color:var(--ink-subtle); }
 .fi-li > .fi-chev { grid-column:2; grid-row:1 / 4; align-self:center; color:var(--ink-subtle); }

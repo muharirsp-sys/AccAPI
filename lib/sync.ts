@@ -10,9 +10,9 @@ import { db } from "./db";
 import { syncState, branch, accurateAutoNumber, accurateUnit, accurateEmployee, item, customer, salesInvoiceCache, salesReturnCache, salesInvoiceLineChange } from "../db/schema";
 import { parseAccurateDateTime } from "./accurate-invoice";
 import { matchBranchAutoNumbers } from "./branch-auto-number";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, ne, notInArray, sql } from "drizzle-orm";
 import { recordInvoiceRealization } from "./program-realization-store";
-import { cabangDariTag, normalNama, petaCabang } from "./order-cabang";
+import { GUDANG_STOK, cabangDariTag, normalNama, petaCabang } from "./order-cabang";
 import { redactAccurateSecrets } from "./accurate-redact";
 import { ringkasFaktur } from "./supervisor-review/ringkas-faktur";
 import { BACKFILL, deletedInvoiceLines, diffInvoiceLines, type ChangeContext, type LineChangeRow } from "./sales-invoice-change";
@@ -49,7 +49,7 @@ export async function* AccuratePaginator(
 
     while (currentPage <= pageCount) {
         const fieldsParam = fields ? `&fields=${encodeURIComponent(fields)}` : "";
-        const url = `${creds.sessionHost}/accurate/api${endpoint}?sp.page=${currentPage}&sp.pageSize=100${fieldsParam}`;
+        const url = `${creds.sessionHost}/accurate/api${endpoint}${endpoint.includes("?") ? "&" : "?"}sp.page=${currentPage}&sp.pageSize=100${fieldsParam}`;
 
         const response = await fetch(url, {
             method: "GET",
@@ -384,8 +384,10 @@ const SYNC_MODULES: Record<SyncModuleName, {
     // hanya mengembalikan item yang punya stok tercatat. Upsert HANYA kolom stok: item module
     // (di atas) tetap otoritas untuk name/unitPrice/itemType/rawData, supaya insert parsial dari
     // sini (name/no saja, tanpa unitPrice/itemType) tidak menimpa data lebih lengkap yang sudah ada.
+    // Gudang GD01 saja (owner 31 Okt 2026: stok yang dilihat sales saat order), bukan agregat semua gudang (GD0BS = barang rusak dll).
+    // Barang yang tidak muncul di daftar GD01 dinolkan di syncModule sesudah satu putaran penuh.
     item_stock: {
-        endpoint: "/item/list-stock.do",
+        endpoint: `/item/list-stock.do?warehouseName=${GUDANG_STOK}`,
         fields: "id,no,name,quantity,quantityInAllUnit",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
@@ -727,6 +729,8 @@ export async function syncModule(moduleName: SyncModuleName, creds: AccurateCred
     let totalRows = 0;
     // O1: tag barang yang tak bisa dipetakan ke cabang — dicatat (log + hasil), tidak diam.
     const tagTakDikenal: TagTakDikenal = {};
+    // item_stock: id yang muncul di daftar GD01 pada putaran penuh (dari halaman 1). Run lanjutan checkpoint tidak menyapu.
+    const terlihat = moduleName === "item_stock" && (state.lastPage ?? 1) === 1 ? new Set<number>() : null;
     try {
         const paginator = AccuratePaginator(mod.endpoint, creds, state.lastPage ?? 1, mod.fields);
         for await (const chunk of paginator) {
@@ -734,9 +738,16 @@ export async function syncModule(moduleName: SyncModuleName, creds: AccurateCred
                 const catat = await mod.upsertPage(chunk.data);
                 for (const [tag, n] of Object.entries(catat ?? {})) tagTakDikenal[tag] = (tagTakDikenal[tag] ?? 0) + n;
                 totalRows += chunk.data.length;
+                for (const r of chunk.data) terlihat?.add(Number(r.id));
             }
             // Checkpoint per halaman — run terputus bisa dilanjutkan.
             await db.update(syncState).set({ lastPage: chunk.page + 1, updatedAt: new Date() }).where(eq(syncState.module, moduleName));
+        }
+        // Barang yang tak lagi ada di daftar GD01 (atau dulu terisi agregat semua gudang) jangan menyimpan stok lama.
+        // ponytail: NOT IN satu parameter per id — batas Postgres 65.535; pakai `<> ALL($1::bigint[])` bila barang berstok mendekatinya.
+        if (terlihat?.size) {
+            await db.update(item).set({ quantity: 0, quantityInAllUnit: "0", syncedAt: new Date() })
+                .where(and(ne(item.quantity, 0), notInArray(item.id, [...terlihat])));
         }
 
         // Pemasangan cabang <-> seri penomoran Faktur Penjualan dijalankan ulang setiap kali

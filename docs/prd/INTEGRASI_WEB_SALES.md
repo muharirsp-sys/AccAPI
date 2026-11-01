@@ -116,7 +116,7 @@ watermark feed WAJIB pakai kolom lokal `synced_at`, bukan `lastUpdate`.
 | Data untuk Web Sales | Status |
 |---|---|
 | Harga | ✅ `item.unitPrice` (tier per-kategori di `master_barang`, belum diekspos di feed) |
-| Stok gudang | ✅ modul `item_stock` di `lib/sync.ts` — `item.quantity` + `item.quantityInAllUnit` |
+| Stok gudang | ✅ modul `item_stock` di `lib/sync.ts` — `item.quantity` + `item.quantityInAllUnit`; sejak 31 Okt 2026 gudang GD01 saja (`warehouseName=GD01`), bukan agregat semua gudang |
 | Limit kredit | ✅ modul `customer` — `creditLimitEnabled/Amount`, `creditAgeLimitEnabled/Days` |
 | Status faktur (`statusName`) + umur (`age`) + jatuh tempo (`dueDate`) | ✅ modul `sales_invoice` |
 | Outstanding AR per faktur | ❌ tidak tersedia di `list.do`; harus diturunkan atau via `detail.do` |

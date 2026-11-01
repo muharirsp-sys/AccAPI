@@ -1755,7 +1755,16 @@ test.describe("Layar cari penuh — ponsel 390 px", () => {
         await pilihPelanggan(main, "PELANG", "PELANGGAN A");
         await expect(lapisan).toHaveCount(0);
         const b1 = main.getByRole("listitem", { name: "Barang 1" });
+        // Stok GD01 (owner 31 Okt): di baris hasil + jam sinkron (WITA) + di kartu terpilih. Info saja.
+        await b1.getByLabel("Cari barang").tap();
+        await b1.getByLabel("Cari barang").fill("A-");
+        const hasilBarang = main.getByRole("list", { name: "Hasil pencarian barang" });
+        await expect(hasilBarang.getByRole("button", { name: /A-1/ })).toContainText("Stok 12 KRT 3 PCS");
+        await expect(hasilBarang.getByRole("button", { name: /A-4/ })).not.toContainText("Stok");
+        await expect(lapisan).toContainText("Stok gudang GD01 per sinkron Accurate 31/10/2026 11.15 WITA");
+        await main.getByRole("button", { name: "Kembali" }).tap();
         await pilihBarang(b1, "A-1", "BARANG A");
+        await expect(b1.getByRole("group", { name: "Barang 1 terpilih" })).toContainText("Stok GD01: 12 KRT 3 PCS");
         await b1.getByLabel("Satuan").selectOption("KRT");
         await b1.getByLabel("Jumlah").fill("3");
         await b1.getByRole("button", { name: "Ganti barang 1" }).tap();

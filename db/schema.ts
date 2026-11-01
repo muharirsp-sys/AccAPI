@@ -85,7 +85,7 @@ export const item = pgTable("item", {
     // Audit F3: real, bukan integer — harga desimal terpotong kalau integer (diubah selagi tabel kosong)
     unitPrice: doublePrecision("unitPrice"),
     // Verifikasi live 2026-07-28 via /api/item/list-stock.do (endpoint terpisah dari item/list.do).
-    // Agregat semua gudang (dipanggil tanpa warehouseId) — bukan breakdown per gudang.
+    // Sejak 31 Okt 2026 stok gudang GD01 saja (lib/order-cabang GUDANG_STOK), bukan lagi agregat semua gudang.
     quantity: doublePrecision("quantity"),
     quantityInAllUnit: text("quantity_in_all_unit"), // Cth: "0 PCS" — string, bukan angka
     // Kolom modul Rekapan Nota (diisi dari sheet `Konversi`, bukan dari sync Accurate)

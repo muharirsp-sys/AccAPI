@@ -43,13 +43,14 @@ export async function cariPelanggan(o: { q: string; branchId?: number | null; li
  * Barang cabang pelanggan. Hasil kosong dibedakan oleh server (`cabangTanpaBarang`, kontrak O1 §3): "tidak ada yang cocok dengan ketikan"
  * vs "cabang ini memang belum punya barang yang bisa diorder" (belum tersinkron / semua non-jual).
  */
-export async function cariBarang(o: { q: string; pelanggan: PelangganPilih; tanggal: string; limit?: number }, signal: AbortSignal, peran: Peran): Promise<Hasil<{ items: BarangPilih[]; cabangKosong: boolean }>> {
+export async function cariBarang(o: { q: string; pelanggan: PelangganPilih; tanggal: string; limit?: number }, signal: AbortSignal, peran: Peran): Promise<Hasil<{ items: BarangPilih[]; cabangKosong: boolean; stokPer: string | null }>> {
     const untuk = kunciHarga(o.pelanggan.id, o.tanggal);
     const r = await minta(urlCariBarang({ q: o.q, customerId: o.pelanggan.id, tanggal: o.tanggal, limit: o.limit }), signal, peran);
     if ("batal" in r) return { ok: false, batal: true };
     if ("galat" in r) return { ok: false, galat: r.galat };
     const items = (Array.isArray(r.d.items) ? r.d.items : []).map((b) => bacaBarang(b, untuk)).filter((b): b is BarangPilih => b !== null);
-    return { ok: true, data: { items, cabangKosong: items.length === 0 && r.d.cabangTanpaBarang === true } };
+    return { ok: true, data: { items, cabangKosong: items.length === 0 && r.d.cabangTanpaBarang === true,
+        stokPer: typeof r.d.stokPer === "string" ? r.d.stokPer : null } };
 }
 
 /** Satu pelanggan dari kodenya (kode persis, tanpa membedakan huruf besar). null = tidak ditemukan di hasil pencarian (nonaktif / luar cabang / belum ada). */

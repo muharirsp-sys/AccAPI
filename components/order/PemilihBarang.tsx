@@ -2,9 +2,10 @@
  * Tujuan: Pemilih barang satu baris order (O2): cari kode/nama HANYA di barang cabang pelanggan (jeda 300 ms, minimal 2 huruf, permintaan
  *   lama dibatalkan), hasil menampilkan satuan + harga per cabang pelanggan, barang tanpa daftar harga tidak bisa dipilih (Order Sales: juga
  *   barang yang SEMUA satuannya tanpa harga sah — petugas Order Baru boleh, memakai harga petugas), dan "cabang tanpa barang" (flag server)
- *   dijelaskan, bukan daftar kosong polos. Barang terpilih tampil sebagai kartu (Ganti barang).
+ *   dijelaskan, bukan daftar kosong polos. Barang terpilih tampil sebagai kartu (Ganti barang). Stok gudang GD01 hasil sinkron Accurate
+ *   tampil di hasil dan kartu sebagai info (tidak membatasi jumlah).
  * Caller: app/(dashboard)/sales/OrderSales.tsx, app/(dashboard)/orders/OrderBaru.tsx.
- * Dependensi: ./useCari, ./order-cabang(-api), lib/promo-ui (rupiah), components/fiori/{core,interactive}.
+ * Dependensi: ./useCari, ./order-cabang(-api), lib/promo-ui (rupiah), lib/tampil (waktuWita), components/fiori/{core,interactive}.
  * Main Functions: PemilihBarang.
  * Side Effects: HTTP GET /api/items/search.
  */
@@ -15,6 +16,7 @@ import { ArrowLeft, RefreshCw } from "lucide-react";
 import { Button, EmptyState, ListItem, MessageStrip, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { FormField } from "@/components/fiori/interactive";
 import { rupiah } from "@/lib/promo-ui";
+import { waktuWita } from "@/lib/tampil";
 import { MIN_HURUF, labelSatuan, type BarangPilih, type Galat, type PelangganPilih, type Peran } from "./order-cabang";
 import { cariBarang } from "./order-cabang-api";
 import { useCari, useLapisanCari } from "./useCari";
@@ -66,6 +68,7 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
                     <div style={{ minWidth: 0 }}>
                         <b style={{ overflowWrap: "anywhere" }}>{nilai.name || nilai.no}</b>
                         <div className="fi-small fi-muted"><span className="fi-mono">{nilai.no}</span>{nilai.branchName ? ` · ${nilai.branchName}` : ""}</div>
+                        {nilai.stok && <div className="fi-small">Stok {nilai.gudangStok}: <b>{nilai.stok}</b></div>}
                     </div>
                     <Button variant="tertiary" disabled={Boolean(kunci)} disabledReason={kunci} aria-label={`Ganti barang ${nomor}`} onClick={() => { setMengganti(true); setLapisan(true); }}>Ganti barang</Button>
                 </div>
@@ -115,7 +118,7 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
                             const tutup = tanpaDaftar || tanpaHargaSah;
                             return (
                                 <li key={b.id}>
-                                    <ListItem doc={b.no} title={b.name} meta={`${b.branchName ?? ""} · ${ringkas}`}
+                                    <ListItem doc={b.no} amount={b.stok ? `Stok ${b.stok}` : undefined} title={b.name} meta={`${b.branchName ?? ""} · ${ringkas}`}
                                         badge={tutup ? <StatusBadge tone="warn">Belum bisa dipilih</StatusBadge> : undefined}
                                         onClick={tutup ? undefined : () => {
                                             // Ganti = baris dikosongkan dulu (satuan + jumlah lama tidak terbawa ke barang baru), seperti sebelumnya.
@@ -127,6 +130,9 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
                             );
                         })}
                     </ul>
+                )}
+                {hasil.jenis === "siap" && items.some((b) => b.stok) && (
+                    <p className="fi-small fi-muted">Stok gudang {items.find((b) => b.gudangStok)?.gudangStok}{hasil.data.stokPer ? ` per sinkron Accurate ${waktuWita(hasil.data.stokPer)} WITA` : ""}. Hanya info; bisa berubah sebelum faktur dikirim.</p>
                 )}
                 {hasil.jenis === "siap" && items.length >= BATAS_HASIL && <p className="fi-small fi-muted">Menampilkan {BATAS_HASIL} teratas. Persempit pencarian dengan kode atau nama yang lebih lengkap.</p>}
 
