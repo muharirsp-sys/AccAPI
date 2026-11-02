@@ -50,8 +50,13 @@ function sesi(dasar: string) {
     return async function minta(jalur: string, init: RequestInit = {}) {
         let url = new URL(jalur, dasar), opsi = init;
         for (let lompat = 0; lompat < 6; lompat++) {
+            // Portal tumbang (2 Nov 2026: 503, ECONNRESET, timeout) dilaporkan sebagai gangguan, bukan "login ditolak".
             const res = await fetch(url, { ...opsi, redirect: "manual", signal: AbortSignal.timeout(120_000),
-                headers: { ...(opsi.headers as Record<string, string> | undefined), cookie: [...kue].map(([k, v]) => `${k}=${v}`).join("; ") } });
+                headers: { ...(opsi.headers as Record<string, string> | undefined), cookie: [...kue].map(([k, v]) => `${k}=${v}`).join("; ") } })
+                .catch((e: Error & { cause?: { code?: string; errors?: Array<{ code?: string }> } }) => {
+                    throw new Error(`Enigma: portal tidak bisa dihubungi (${e.cause?.code ?? e.cause?.errors?.[0]?.code ?? e.name}), bukan masalah ID/password`);
+                });
+            if (res.status >= 500) throw new Error(`Enigma: portal sedang gangguan (HTTP ${res.status}), bukan masalah ID/password`);
             for (const c of res.headers.getSetCookie()) { const [kv] = c.split(";"); const i = kv.indexOf("="); if (i > 0) kue.set(kv.slice(0, i).trim(), kv.slice(i + 1).trim()); }
             const lokasi = res.headers.get("location");
             if (res.status >= 300 && res.status < 400 && lokasi) {
@@ -80,7 +85,10 @@ export async function unggahEnigma(akun: { id: string; password: string }, berka
     const form = new FormData();
     for (const [k, v] of Object.entries(isianTersembunyi(beranda.html))) form.append(k, v);
     form.append("excel_file", new Blob([new Uint8Array(berkas)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), namaBerkas);
-    const kirim = await minta("/", { method: "POST", body: form });
+    // Putus di sini (termasuk GET / sesudah 302) bisa terjadi sesudah portal menerima berkas: jangan tampak "aman diulang".
+    const kirim = await minta("/", { method: "POST", body: form }).catch((e: Error) => {
+        throw new Error(`${e.message}. Berkas belum pasti terunggah: cek Riwayat Upload di portal sebelum unggah ulang`);
+    });
     if (kirim.res.status >= 400) throw new Error(`Enigma: unggah ditolak HTTP ${kirim.res.status}`);
     await opsi.diterima?.();
 
@@ -89,7 +97,8 @@ export async function unggahEnigma(akun: { id: string; password: string }, berka
         const beranda = await minta("/").catch(() => null);
         const baru = beranda ? uraiRiwayat(beranda.html).filter((r) => r.id > sebelum).sort((a, b) => b.id - a.id)[0] : undefined;
         if (baru && FINAL(baru.status)) {
-            const detail = uraiDetail((await minta(`/upload_detail/${baru.id}`)).html);
+            // Status final sudah terbaca; Detail hanya pelengkap — portal tersendat di sini tak boleh membuat unggahan tercatat gagal.
+            const detail = uraiDetail((await minta(`/upload_detail/${baru.id}`).catch(() => null))?.html ?? "");
             return { id: baru.id, status: baru.status, keterangan: detail.keterangan, log: detail.log };
         }
         if (Date.now() > batas) throw new Error(baru ? `Enigma: unggahan ${baru.id} belum selesai diproses (status "${baru.status}")` : "Enigma: unggahan tidak muncul di Riwayat Upload");
