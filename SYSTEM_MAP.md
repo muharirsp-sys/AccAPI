@@ -673,6 +673,9 @@ hidup di `python_backend/routers/summary.py` (BUKAN `main.py`, yang kini 559 bar
 ```
 surat (PDF) + principle_name → summary_manual_parse_pdf_ai (routers/summary.py)
   │
+  ├─ baris_berkas — bila berkas `baris` (JSON baris draft) ikut diunggah: surat TIDAK dibaca, PDF tetap sumber,
+  │    baris tidak dirapikan (kode diturunkan saat Simpan draf). Jalur darurat saat OCR mati (Mistral 402, Nov 2026)
+  │
   ├─ kino_extraction / deterministic_extraction — surat berlapis teks, 0 panggilan API
   │
   └─ summary_mistral.extract — Mistral OCR 4.1, 1 panggilan per halaman, skema JSON ketat

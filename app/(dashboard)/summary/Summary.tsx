@@ -143,6 +143,7 @@ export default function Summary({ permKeys }: { permKeys: string[] }) {
     const [kelompokList, setKelompokList] = useState<string[]>([]);
     const [masterStatus, setMasterStatus] = useState<{ tone: "pos" | "neg" | "info"; teks: string } | null>(null);
     const [pdfFile, setPdfFile] = useState<File | null>(null);
+    const [barisFile, setBarisFile] = useState<File | null>(null);
     const [membaca, setMembaca] = useState(false);
     const [galatBaca, setGalatBaca] = useState<string | null>(null);
     const [draft, setDraft] = useState<Draft | null>(null);
@@ -245,6 +246,7 @@ export default function Summary({ permKeys }: { permKeys: string[] }) {
         setMembaca(true); setGalatBaca(null); setPesan(null);
         const fd = new FormData();
         fd.append("pdf", pdfFile); fd.append("token", masterToken); fd.append("principle_name", principleName);
+        if (barisFile) fd.append("baris", barisFile);
         const r = await send("POST", "/summary/manual/parse_pdf_ai", fd);
         setMembaca(false);
         if (!r.ok) { setGalatBaca(r.error); return; }
@@ -463,6 +465,7 @@ export default function Summary({ permKeys }: { permKeys: string[] }) {
                     {bolehUbah && (masterToken ? (
                         <div className="fi-page-bar">
                             <FormField label="Surat promo (PDF atau foto JPG/PNG)" help="Semua halaman dibaca otomatis menjadi draf yang wajib ditinjau. Nilai transaksi dihitung aturan terbit, bukan pembaca surat.">{(a11y) => <input {...a11y} className="fi-input" type="file" accept="application/pdf,image/jpeg,image/png" disabled={membaca || st === "published"} onChange={(e) => setPdfFile(e.target.files?.[0] || null)} />}</FormField>
+                            <FormField label="Baris dari berkas (JSON, opsional)" help="Bila pembaca surat tidak tersedia: baris diambil dari berkas, surat tidak dibaca. PDF tetap jadi sumber dan draf tetap wajib ditinjau.">{(a11y) => <input {...a11y} className="fi-input" type="file" accept="application/json,.json" disabled={membaca || st === "published"} onChange={(e) => setBarisFile(e.target.files?.[0] || null)} />}</FormField>
                             <Button icon={<Upload className="fi-icon" aria-hidden />} busy={membaca} disabled={!pdfFile || st === "published" || (dirty && Boolean(draft))} disabledReason={st === "published" ? "Draf sudah terbit" : dirty && draft ? "Simpan atau buang perubahan dulu" : "Pilih surat dulu"} onClick={() => void bacaSurat()} style={{ alignSelf: "end" }}>{draft ? "Susulkan surat" : "Baca surat"}</Button>
                         </div>
                     ) : <p className="fi-small fi-subtle">Pakai master barang principal dulu untuk membaca surat.</p>)}
