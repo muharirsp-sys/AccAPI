@@ -160,7 +160,8 @@ export async function upsertJksRows(rows: {
         for (const principle of new Set(rows.map((r) => r.principle))) {
             const lama = await db.select({ id: jksMaster.id, salesCode: jksMaster.salesCode, custCode: jksMaster.custCode }).from(jksMaster)
                 .where(and(eq(jksMaster.principle, principle), eq(jksMaster.isActive, true),
-                    sql`NOT EXISTS (SELECT 1 FROM ${kunjunganLuarRute} k WHERE k.jks_id = jks_master.id AND k.konfirmasi = 'jks')`));
+                    sql`NOT EXISTS (SELECT 1 FROM ${kunjunganLuarRute} k WHERE k.jks_id = jks_master.id AND k.konfirmasi = 'jks')`))
+                .orderBy(asc(jksMaster.salesCode));
             const buang = lama.filter((l) => !diBerkas.has(`${l.salesCode}\u0000${l.custCode}\u0000${principle}`));
             if (buang.length) await db.update(jksMaster).set({ isActive: false, updatedAt: now }).where(inArray(jksMaster.id, buang.map((b) => b.id)));
             const per = new Map<string, number>();
