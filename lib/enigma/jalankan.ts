@@ -128,6 +128,7 @@ export async function jalankanEnigma({ tanggal, kirim, sumber }: { tanggal: stri
         }
         // Begitu portal menerima berkas, tandai "diproses": galat sesudahnya (status tak terbaca) tidak memicu unggah ulang oleh cron.
         const h = await unggahEnigma(cfg.akun, buku, "template_enigma.xlsx", { diterima: async () => {
+            hasil.portal = "berkas diterima, status belum terbaca";
             status.unggah = { waktu: new Date().toISOString(), id: 0, status: "diproses" };
             await writeFile(berkasStatus, JSON.stringify(status, null, 1));
         } });
@@ -162,7 +163,10 @@ async function catat(hasil: HasilEnigma, adminEmail: string) {
             ...[...kelompok].map(([p, n]) => `Validasi: ${p}, ${n.length} baris (${n.slice(0, 30).join(", ")}${n.length > 30 ? ", …" : ""})`),
             ...hasil.galat.map((g) => `Galat: ${g}`), ...hasil.peringatan.map((p) => `Peringatan: ${p}`),
             hasil.status === "validation_error" && `Perbaiki data/peta lalu unggah ulang dari ${WEB} (bagian "Laporan Enigma").`,
-            hasil.status === "gagal" && `Cron mengulang pukul 21.30 dan 22.30 WITA, atau unggah manual dari ${WEB}.`,
+            // Berkas sudah diterima → arahkan cek Riwayat Upload (penanda "diproses" menghentikan ulangan cron malam itu). Janji ulang
+            // cron hanya untuk putaran cron; putaran manual (tanggal lampau / sesudah 22.30) tidak diulang siapa pun.
+            hasil.status === "gagal" && (hasil.portal ? "Portal sudah menerima berkas: cek statusnya di Riwayat Upload enigma.enesis.com sebelum unggah ulang."
+                : hasil.sumber === "cron" ? `Cron mengulang pukul 21.30 dan 22.30 WITA, atau unggah manual dari ${WEB}.` : `Unggah ulang manual dari ${WEB}.`),
         ].filter(Boolean).join("\n") }).catch(() => undefined);
 }
 
