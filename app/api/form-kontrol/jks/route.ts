@@ -73,6 +73,8 @@ export async function POST(req: Request) {
         const contentType = req.headers.get("content-type") ?? "";
         let rows: Record<string, unknown>[] = [];
         const excel = contentType.includes("multipart/form-data");
+        // Mode ganti (lib/form-kontrol upsertJksRows): FormData `ganti=1` / JSON `ganti: true`.
+        let ganti = false;
 
         if (excel) {
             // Import Excel dari UI (TabJks kirim file .xlsx via FormData).
@@ -86,18 +88,26 @@ export async function POST(req: Request) {
             if (!sheet) return NextResponse.json({ error: "Sheet kosong" }, { status: 400 });
             const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
             rows = raw.map(mapExcelRow);
+            ganti = form.get("ganti") === "1";
         } else {
             const body = await req.json();
             rows = Array.isArray(body) ? body : (body.rows ?? []);
+            ganti = !Array.isArray(body) && body.ganti === true;
         }
 
         if (!Array.isArray(rows) || rows.length === 0) {
             return NextResponse.json({ error: "Tidak ada baris untuk diimport" }, { status: 400 });
         }
-        const { ditolak, ...result } = await upsertJksRows(rows as Parameters<typeof upsertJksRows>[0]);
+        const { ditolak, gantiBatal, ...result } = await upsertJksRows(rows as Parameters<typeof upsertJksRows>[0], { ganti });
         // Nomor baris seperti yang dilihat pengunggah: Excel = baris sheet (baris 1 = judul kolom); JSON = urutan ke-n.
-        return NextResponse.json({ success: true, ...result,
-            ditolak: ditolak.map((d) => ({ baris: d.indeks + (excel ? 2 : 1), custCode: d.custCode, hari: d.hari })) });
+        const baris = ditolak.map((d) => ({ baris: d.indeks + (excel ? 2 : 1), custCode: d.custCode, hari: d.hari }));
+        if (gantiBatal) {
+            const contoh = baris.slice(0, 5).map((d) => `baris ${d.baris} (${d.custCode}: "${d.hari}")`).join("; ");
+            return NextResponse.json({ kode: "GANTI_DIBATALKAN", skipped: result.skipped, ditolak: baris,
+                error: `Ganti JKS dibatalkan, tidak ada yang ditulis: ${result.skipped} baris tanpa kode sales/kode toko/principal, `
+                    + `${baris.length} baris hari tidak dikenal${contoh ? ` (${contoh})` : ""}. Perbaiki berkasnya lalu ulangi.` }, { status: 400 });
+        }
+        return NextResponse.json({ success: true, ...result, ditolak: baris });
     } catch (e: unknown) {
         return NextResponse.json({ error: e instanceof Error ? e.message : "Gagal import" }, { status: 500 });
     }

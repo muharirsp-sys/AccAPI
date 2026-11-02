@@ -87,16 +87,28 @@ export async function getJksPrinciples(salesCodes: string[] | null): Promise<str
  * pengecualian (FK-MSM2): baris tambahan salesman berkode LENGKAP (C-1-CBA) yang tokonya ada di berkas dengan kode JKS lain yang cocok
  * (C-1, cocokKodeRute) untuk salesman + principal yang sama → baris tambahan itu DINONAKTIFKAN (tidak dihapus; jejaknya tetap) dan
  * dilaporkan di `digantikan`, supaya toko yang sama tidak dua kali di rute. Kode persis sama = baris yang sama (upsert biasa).
+ * `ganti` (JKS MSM 2 Nov 2026: berkas baru menggantikan JKS lama): setiap principal di berkas, baris aktif yang TIDAK ada di berkas (kunci persis
+ * sales + toko + principal) DINONAKTIFKAN (tidak dihapus; unggah ulang menghidupkannya) dan dihitung per salesman di `dinonaktifkan`; baris
+ * tambahan salesman (konfirmasi luar rute) tetap. Satu baris cacat (kolom wajib kosong / hari tak dikenal) = `gantiBatal`, TIDAK ada yang ditulis —
+ * kalau ditulis sebagian, toko di baris cacat ikut hilang dari rute.
  */
 export async function upsertJksRows(rows: {
     salesCode: string; salesName: string; custCode: string; custName: string;
     market?: string; alamat?: string; kota?: string; hariKunjungan?: string;
     mingguPattern?: string; area?: string; rayon?: string; principle: string;
     channel?: string; visitFrequency?: number;
-}[]) {
+}[], opsi: { ganti?: boolean } = {}) {
     const now = new Date();
     let imported = 0, skipped = 0;
     const ditolak: { indeks: number; custCode: string; hari: string }[] = [];
+    const dinonaktifkan: { salesCode: string; principle: string; jumlah: number }[] = [];
+    if (opsi.ganti) {
+        for (const [indeks, r] of rows.entries()) {
+            if (!r.salesCode || !r.custCode || !r.principle) skipped++;
+            else if (hariBaku(r.hariKunjungan) === null) ditolak.push({ indeks, custCode: String(r.custCode), hari: String(r.hariKunjungan) });
+        }
+        if (skipped || ditolak.length) return { imported, skipped, ditolak, digantikan: [], dinonaktifkan, gantiBatal: true };
+    }
     /** salesCode + principal → kode toko (huruf besar) yang ditulis berkas ini. */
     const tertulis = new Map<string, Set<string>>();
     for (const [indeks, r] of rows.entries()) {
@@ -143,7 +155,20 @@ export async function upsertJksRows(rows: {
             digantikan.push({ salesCode, principle, custCode: t.custCode, custName: t.custName, kodeBerkas });
         }
     }
-    return { imported, skipped, ditolak, digantikan };
+    if (opsi.ganti) {
+        const diBerkas = new Set(rows.map((r) => `${r.salesCode}\u0000${r.custCode}\u0000${r.principle}`));
+        for (const principle of new Set(rows.map((r) => r.principle))) {
+            const lama = await db.select({ id: jksMaster.id, salesCode: jksMaster.salesCode, custCode: jksMaster.custCode }).from(jksMaster)
+                .where(and(eq(jksMaster.principle, principle), eq(jksMaster.isActive, true),
+                    sql`NOT EXISTS (SELECT 1 FROM ${kunjunganLuarRute} k WHERE k.jks_id = jks_master.id AND k.konfirmasi = 'jks')`));
+            const buang = lama.filter((l) => !diBerkas.has(`${l.salesCode}\u0000${l.custCode}\u0000${principle}`));
+            if (buang.length) await db.update(jksMaster).set({ isActive: false, updatedAt: now }).where(inArray(jksMaster.id, buang.map((b) => b.id)));
+            const per = new Map<string, number>();
+            for (const b of buang) per.set(b.salesCode, (per.get(b.salesCode) ?? 0) + 1);
+            for (const [salesCode, jumlah] of per) dinonaktifkan.push({ salesCode, principle, jumlah });
+        }
+    }
+    return { imported, skipped, ditolak, digantikan, dinonaktifkan, gantiBatal: false };
 }
 
 // ── Today's route with AO status ──────────────────────────────────────────
