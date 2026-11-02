@@ -306,6 +306,44 @@ test("butir 4: unggah JKS tidak menghapus baris tambahan salesman; berkas berkod
     assert.equal((await pool.query(`SELECT konfirmasi FROM kunjungan_luar_rute WHERE cust_code = 'C-100003-CBA'`)).rows[0].konfirmasi, "jks", "jejak tetap");
 });
 
+test("unggah JKS mode ganti: baris lama principal itu yang tak ada di berkas dinonaktifkan; baris cacat = batal tanpa menulis", { skip: pgSkip }, async () => {
+    const P = "PRINCIPLE G";
+    const jks = (id: string, sales: string, cust: string, principle = P) => pool.query(`INSERT INTO jks_master (id, sales_code, sales_name, cust_code,
+        cust_name, hari_kunjungan, minggu_pattern, principle, channel, visit_frequency, is_active, created_at, updated_at)
+        VALUES ($1, $2, 'SALES A', $3, 'TOKO', 'Senin', 'all', $4, 'TT', 4, true, now(), now())`, [id, sales, cust, principle]);
+    await jks("g1", "M-SLA", "C-900001");
+    await jks("g2", "M-SLA", "C-900002");
+    await jks("g3", "M-SLB", "C-900003");
+    await jks("g5", "M-SLA", "C-900005-CBA");
+    await jks("g9", "M-SLA", "C-900009", "PRINCIPLE H");
+    await pool.query(`INSERT INTO kunjungan_luar_rute (id, sales_code, principle, tanggal, cust_code, cust_name, dibuat_oleh, konfirmasi, hari,
+        minggu_pattern, jks_id, dikonfirmasi_pada) VALUES ('klr-g5', 'M-SLA', $1, $2, 'C-900005-CBA', 'TOKO', 'u-sla', 'jks', 'Senin', 'all', 'g5', now())`, [P, HARI_INI]);
+    const b = (cust: string, hari = "Selasa") => ({ salesCode: "M-SLA", salesName: "SALES A", custCode: cust, custName: "TOKO", principle: P,
+        hariKunjungan: hari, mingguPattern: "ganjil" });
+    const unggah = async (rows: unknown[]) => jawab(await sebagai("u-admin", () => m.jks.POST(req("/api/form-kontrol/jks", "POST", { rows, ganti: true }))));
+    const aktif = async () => Object.fromEntries((await pool.query(`SELECT cust_code, is_active FROM jks_master WHERE cust_code LIKE 'C-9000%'`)).rows
+        .map((r) => [r.cust_code, r.is_active]));
+
+    const batal = await unggah([b("C-900001"), b("C-900004", "Minggu")]);
+    assert.equal(batal.status, 400);
+    assert.equal(batal.body.kode, "GANTI_DIBATALKAN");
+    assert.deepEqual(batal.body.ditolak, [{ baris: 2, custCode: "C-900004", hari: "Minggu" }]);
+    assert.deepEqual(await aktif(), { "C-900001": true, "C-900002": true, "C-900003": true, "C-900005-CBA": true, "C-900009": true }, "tidak ada yang ditulis");
+
+    const ok = await unggah([b("C-900001"), b("C-900004")]);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.imported, 2);
+    assert.deepEqual(ok.body.dinonaktifkan, [{ salesCode: "M-SLA", principle: P, jumlah: 1 }, { salesCode: "M-SLB", principle: P, jumlah: 1 }]);
+    assert.deepEqual(await aktif(), { "C-900001": true, "C-900002": false, "C-900003": false, "C-900004": true, "C-900005-CBA": true, "C-900009": true },
+        "yang tak ada di berkas nonaktif (salesman lain ikut); tambahan salesman & principal lain tetap");
+    assert.equal((await pool.query(`SELECT hari_kunjungan FROM jks_master WHERE id = 'g1'`)).rows[0].hari_kunjungan, "Selasa", "baris di berkas diperbarui");
+
+    const biasa = await jawab(await sebagai("u-admin", () => m.jks.POST(req("/api/form-kontrol/jks", "POST", { rows: [b("C-900002")] }))));
+    assert.deepEqual(biasa.body.dinonaktifkan, [], "tanpa ganti tidak menonaktifkan apa pun");
+    assert.equal((await aktif())["C-900004"], true);
+    assert.equal((await aktif())["C-900002"], true, "unggah ulang menghidupkan lagi");
+});
+
 test("Dashboard SPV menandai kunjungan luar rute (nama toko dari kunjungannya)", { skip: pgSkip }, async () => {
     const d = await jawab(await sebagai("u-spva", () => m.spv.GET(req(`/api/form-kontrol/spv-dashboard?date=${HARI_INI}`))));
     assert.equal(d.status, 200);
