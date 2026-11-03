@@ -2,7 +2,7 @@
  * Tujuan: Token dan komponen design system Fiori (UI kit Tahap 2, aksen Biru SP) untuk halaman yang sudah dimigrasi.
  * Caller: app/layout.tsx (diimpor sekali); dipakai elemen di dalam `.fiori` (components/fiori/*).
  * Dependensi: font dari components/fiori/Scope.tsx (--font-jakarta, --font-geist-mono-fi); atribut html[data-scheme], html[data-density].
- * Main Functions: token terang/gelap, density compact/cozy, kelas komponen `fi-*`.
+ * Main Functions: token terang/gelap, density compact/cozy, kelas komponen `fi-*` (termasuk grafik `fi-bullet*`).
  * Side Effects: Tidak ada di luar `.fiori`.
  */
 
@@ -153,6 +153,17 @@ html[data-density="cozy"] .fiori {
 [data-tone="neg"] { --tb:var(--neg-bg); --tf:var(--neg); --ts:var(--neg-solid); }
 [data-tone="info"] { --tb:var(--info-bg); --tf:var(--info); --ts:var(--info-solid); }
 [data-tone="neu"] { --tb:var(--neu-bg); --tf:var(--neu); --ts:var(--neu-solid); }
+
+/* ===== Grafik: bullet (components/fiori/chart.tsx). Nada dari [data-tone] (--ts); angka selalu tertulis di sebelahnya ===== */
+.fi-bullet { display:block; width:100%; min-width:96px; height:20px; overflow:visible; }
+.fi-bullet-track { fill:var(--surface-3); }
+.fi-bullet-bar { fill:var(--ts); }
+.fi-bullet-full { stroke:var(--ink-subtle); stroke-width:1; vector-effect:non-scaling-stroke; }
+.fi-bullet-ref { stroke:var(--ink); stroke-width:2; vector-effect:non-scaling-stroke; }
+/* Kolom badge selebar tetap: trek semua baris sama panjang, jadi penanda acuan sejajar antarbaris. */
+.fi-bullet-cell { display:grid; grid-template-columns:minmax(120px,1fr) 5rem; gap:8px; align-items:center; min-width:0; }
+.fi-bullet-cell > .fi-badge { justify-self:start; }
+.fi-li-title .fi-bullet { margin-top:6px; }
 
 /* ===== Message strip ===== */
 .fi-strip { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:10px; align-items:start; padding:10px 12px; border-radius:var(--r-md); background:var(--tb); color:var(--ink); border:1px solid color-mix(in srgb, var(--tf) 30%, transparent); }
