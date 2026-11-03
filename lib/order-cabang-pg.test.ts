@@ -163,6 +163,10 @@ function fetchTiruan(url: string | URL | Request, init?: RequestInit): Promise<R
     const halaman = Number(u.searchParams.get("sp.page") ?? 1);
     if (u.pathname.endsWith("/item/list.do")) return json({ s: true, d: BARANG[halaman - 1] ?? [], sp: { page: halaman, pageCount: BARANG.length, rowCount: 13 } });
     if (u.pathname.endsWith("/customer/list.do")) return json({ s: true, d: PELANGGAN[halaman - 1] ?? [], sp: { page: halaman, pageCount: 1, rowCount: 7 } });
+    // Stok: GD01 hanya K-01; tanpa gudang = agregat semua gudang (tidak boleh dipakai lagi).
+    if (u.pathname.endsWith("/item/list-stock.do")) return json({ s: true, sp: { page: halaman, pageCount: 1, rowCount: 1 }, d: u.searchParams.get("warehouseName") === "GD01"
+        ? [{ id: 1, no: "K-01", name: "SABUN ANGGREK", quantity: 29, quantityInAllUnit: "1 KRT 5 PCS" }]
+        : [{ id: 1, no: "K-01", name: "SABUN ANGGREK", quantity: 99, quantityInAllUnit: "4 KRT 3 PCS" }, { id: 3, no: "K-03", name: "SAMPO CEMARA", quantity: 9, quantityInAllUnit: "9 PCS" }] });
     const det = u.pathname.match(/\/(item|customer)\/detail\.do$/);
     if (det) return json({ s: true, d: DETAIL[`${det[1]}:${u.searchParams.get("id")}`] });
     if (u.pathname === "/orders/preview") {
@@ -631,6 +635,24 @@ test("PG O1 cari barang: hanya cabang pelanggan, tanpa suspended/non-jual/tak di
     const semua = noOf(await cari("u-admin", "?limit=50")).sort();
     assert.deepEqual(semua, ["D-01", "F-01", "H-01", "K-01", "K-03", "K-04", "M-01", "M-02", "S-01"], "tanpa K-02 (suspended), A-01, X-01, Z-01");
     assert.deepEqual(noOf(await cari("u-admin", "?q=tisu%20b")), ["M-02"]);
+});
+
+test("PG stok GD01 (31 Okt): item_stock hanya gudang GD01, barang yang hilang dari daftar dinolkan; cari barang membawa stok + jam sinkron", { skip: pgSkip }, async () => {
+    // K-03 = sisa agregat semua gudang dari sync lama; K-04 tak pernah berstok (NULL tetap NULL, bukan "0").
+    await utama.pool.query("UPDATE item SET quantity = 9, quantity_in_all_unit = '9 PCS' WHERE no = 'K-03'");
+    const hasil = await m.sync.syncModule("item_stock", CREDS) as { success: boolean; rows: number };
+    assert.equal(hasil.success, true, JSON.stringify(hasil));
+    assert.ok(dipanggil.some((u) => u.startsWith("/accurate/api/item/list-stock.do?warehouseName=GD01&sp.page=1&")), "gudang GD01, URL tetap sah");
+    const stok = Object.fromEntries((await utama.pool.query("SELECT no, quantity, quantity_in_all_unit AS t FROM item WHERE no IN ('K-01', 'K-03', 'K-04')"))
+        .rows.map((r) => [r.no, [r.quantity, r.t]]));
+    assert.deepEqual(stok, { "K-01": [29, "1 KRT 5 PCS"], "K-03": [0, "0"], "K-04": [null, null] });
+
+    sebagai("u-sa");
+    const r = await panggil(m.cariBarang.GET(req("GET", "/api/items/search?customerId=9001&tanggal=2026-10-12")));
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const items = r.body.items as Array<{ no: string; stok: string | null; gudangStok: string }>;
+    assert.deepEqual(items.map((x) => [x.no, x.stok, x.gudangStok]).sort(), [["K-01", "1 KRT 5 PCS", "GD01"], ["K-03", "0", "GD01"], ["K-04", null, "GD01"]]);
+    assert.match(String(r.body.stokPer), /^\d{4}-\d{2}-\d{2}T/, "jam sinkron terakhir item_stock");
 });
 
 test("PG O1 salesmen?branchId: hanya salesman aktif cabang itu; tanpa = semua aktif", { skip: pgSkip }, async () => {

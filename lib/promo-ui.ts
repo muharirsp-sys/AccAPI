@@ -35,9 +35,14 @@ export const tgl = (iso: string | null | undefined) => (iso ? iso.slice(0, 10).s
 export const BEBAN = {
     principal: { label: "Klaim principal", hint: "bisa ditagihkan ke principal", tone: "pos" as Tone },
     distributor: { label: "Beban distributor", hint: "jadi biaya distributor sendiri", tone: "warn" as Tone },
+    // Ditanggung principal lewat potongan harga beli (sell-in), jadi TIDAK ditagihkan lagi (owner 1 Nov 2026, MSM).
+    sellin: { label: "Sell-in (tidak diklaim)", hint: "ditanggung principal lewat harga beli, tidak ditagihkan", tone: "neu" as Tone },
 } as const;
 export type BebanKey = keyof typeof BEBAN;
-export const bebanDari = (benefitBeban: string): BebanKey => (benefitBeban.toUpperCase() === "PRINCIPAL" ? "principal" : "distributor");
+export const bebanDari = (benefitBeban: string): BebanKey => {
+    const beban = benefitBeban.toUpperCase();
+    return beban === "PRINCIPAL" ? "principal" : beban === "SELLIN" ? "sellin" : "distributor";
+};
 
 export type StatusAturanKey = "aktif" | "nonaktif" | "berakhir" | "belum";
 export const STATUS_ATURAN: Record<StatusAturanKey, { label: string; tone: Tone }> = {
@@ -84,9 +89,11 @@ export function artinya(rule: RuleLike): string {
     const chan = rule.channel ? ` berkategori ${rule.channel === "GT" ? "TT (GT)" : rule.channel} di Accurate` : "";
     const siapa = rule.customerCode ? `Outlet ${rule.customerCode}` : `Semua outlet${chan}${daftar}`;
     const barang = rule.itemCode ? `barang ${rule.itemCode}` : "semua barang";
-    const beban = bebanDari(rule.benefitBeban ?? "") === "principal"
-        ? "termasuk klaim principal, bisa ditagihkan"
-        : "termasuk beban distributor, jadi biaya sendiri";
+    const beban = {
+        principal: "termasuk klaim principal, bisa ditagihkan",
+        distributor: "termasuk beban distributor, jadi biaya sendiri",
+        sellin: "termasuk sell-in: ditanggung principal lewat harga beli, tidak ditagihkan",
+    }[bebanDari(rule.benefitBeban ?? "")];
     const n = (v: string | undefined) => Number(v || 0).toLocaleString("id-ID");
     // "SEMUA" = program tanpa minimum (Setiap Pengambilan): tidak ada ambang untuk diceritakan.
     const ambang = Number(rule.triggerQty) > 0 && rule.triggerUnit !== "SEMUA"
@@ -95,5 +102,7 @@ export function artinya(rule: RuleLike): string {
     if (rule.benefitType === "DISC_RP") return `${siapa}${ambang} dapat potongan ${rupiah(rule.benefitValue ?? 0)} untuk seluruh nota. Potongan ini ${beban}.`;
     if (rule.benefitType === "BONUS_QTY") return `${siapa}${ambang} dapat bonus barang ${rule.benefitValue ?? ""}. Bonus ini ${beban}.`;
     return `${siapa} dapat diskon ${persen(rule.benefitValue ?? "")} atas ${barang}${ambang ? ambang.replace(",", "") : ""}, `
-        + `tertulis di kolom DISC_${rule.tierNo ?? 1} pada laporan principal. Potongan ini ${beban}.`;
+        + ((rule.tierNo ?? 1) > 100
+            ? `komponen ke-${(rule.tierNo ?? 0) % 100} strata ${Math.floor((rule.tierNo ?? 0) / 100)} dari surat. Potongan ini ${beban}.`
+            : `tertulis di kolom DISC_${rule.tierNo ?? 1} pada laporan principal. Potongan ini ${beban}.`);
 }

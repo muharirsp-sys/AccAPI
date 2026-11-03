@@ -30,7 +30,7 @@
  *   ada multiple No Claim.
  */
 import { NextResponse } from "next/server";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { claimSubmission, claimWorkflow, offBatchItem } from "@/db/schema";
 import {
@@ -259,7 +259,8 @@ export async function PATCH(request: Request, context: Context) {
             const updateResult = await tx
                 .update(offBatchItem)
                 .set({ noClaim, updatedAt: now })
-                .where(eq(offBatchItem.batchId, workflow.offBatchId))
+                // Item beban distributor (DM) tidak ditagih ke principal: tidak diberi No Claim (NULL = CL, data lama).
+                .where(and(eq(offBatchItem.batchId, workflow.offBatchId), or(isNull(offBatchItem.beban), ne(offBatchItem.beban, "DM"))))
                 .returning({ id: offBatchItem.id });
             const syncedItemCount = updateResult.length;
 

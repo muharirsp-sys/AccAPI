@@ -1,5 +1,5 @@
 /*
- * Tujuan: Laporan Enigma (Enesis / Marketama Indah) terjadwal — 20.30 WITA (ulang 21.30/22.30 hanya bila gagal teknis), unggah portal.
+ * Tujuan: Laporan Enigma (Enesis / Marketama Indah) terjadwal — 20.30 WITA (ulang 21.30/22.30 hanya bila gagal teknis), unggah portal; akhir bulan ditahan.
  * Caller: cron VPS /etc/cron.d/accapi → accapi-cron.sh dengan Bearer CRON_SECRET. ?tanggal=YYYY-MM-DD untuk tanggal lain.
  * Dependensi: lib/enigma/jalankan. Side Effects: lihat jalankanEnigma (baca Accurate, unggah enigma.enesis.com, email admin).
  */

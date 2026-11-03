@@ -42,7 +42,11 @@ export type FrozenResultLine = {
     /** Harga satuan bila baris hasil membawanya sendiri (jalur laporan principal). */
     price?: string;
 };
-export type FrozenBonus = { program_id: string; code: string; unit: string; quantity: string; eligible_codes?: string[] };
+/**
+ * `price` hanya dibawa bonus program BERKUOTA (python_backend summary_rules, owner 1 Nov 2026): barisnya dikirim berharga
+ * dengan diskon 100%, bukan harga 0, supaya nilai barang gratis terlihat di faktur. Tanpa `price` = bentuk lama (harga 0).
+ */
+export type FrozenBonus = { program_id: string; code: string; unit: string; quantity: string; eligible_codes?: string[]; price?: string };
 
 export type InvoiceOrder = {
     id: string;
@@ -236,10 +240,13 @@ export function buildInvoicePayload(
         const unitId = options.unitIds.get(bonus.unit.trim().toUpperCase());
         const quantity = money(bonus.quantity, "Jumlah bonus");
         if (!unitId || quantity <= 0 || !Number.isInteger(quantity)) throw new Error("Satuan/jumlah bonus tidak valid");
-        // Baris bonus berharga 0, jadi tidak punya rantai persen sama sekali — dikirim kosong,
-        // bukan dihilangkan: field yang absen membuat Accurate memakai nilai bawaannya sendiri.
-        detailItem.push({ itemNo: bonus.code, quantity, unitPrice: 0, itemUnitId: unitId,
-            itemDiscPercent: "", itemCashDiscount: 0,
+        const harga = bonus.price === undefined ? 0 : money(bonus.price, "Harga bonus");
+        if (harga < 0) throw new Error(`Harga bonus ${bonus.code} negatif`);
+        // Baris bonus berharga 0 tidak punya rantai persen sama sekali — dikirim kosong, bukan
+        // dihilangkan: field yang absen membuat Accurate memakai nilai bawaannya sendiri. Bonus
+        // berharga (program berkuota) = diskon 100%, bentuk yang sudah terbukti di jalur laporan principal.
+        detailItem.push({ itemNo: bonus.code, quantity, unitPrice: harga, itemUnitId: unitId,
+            itemDiscPercent: harga > 0 ? "100" : "", itemCashDiscount: 0,
             detailNotes: `Bonus ${bonus.program_id}`.slice(0, 250), charField1: order.id, ...perBaris });
     }
 

@@ -270,6 +270,7 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-kv dt { color:var(--ink-muted); }
 .fi-kv dd { font-weight:600; text-align:right; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .fi-kv[data-align="start"] dd { text-align:left; } /* nilai berupa kalimat (fakta dialog) dibaca dari kiri */
+@media (max-width:599px) { .fi-kv { grid-template-columns:fit-content(45%) minmax(0,1fr); } } /* label panjang ("Netto estimasi (sebelum PPN)") membungkus, nama pelanggan tidak terpotong di tengah kata */
 
 /* ===== Tabel responsif + list item ===== */
 .fi-tablebox { container-type:inline-size; background:var(--surface); min-width:0; }
@@ -299,12 +300,24 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-li:hover { background:var(--surface-2); }
 .fi-li:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
 .fi-li[aria-current="true"] { background:var(--brand-tint); }
-.fi-li-r1 { display:flex; justify-content:space-between; gap:8px; grid-column:1; }
+/* Nilai kanan (jumlah / stok) turun ke baris sendiri bila tak muat, bukan memotong kode dokumen di tengah (ponsel 320 px). */
+.fi-li-r1 { display:flex; flex-wrap:wrap; justify-content:space-between; gap:0 8px; grid-column:1; }
 .fi-li-doc { font:500 .8125rem/1.25rem var(--font-mono); }
-.fi-li-amt { font:700 .9375rem/1.25rem var(--font-sans); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.fi-li-amt { margin-left:auto; font:700 .9375rem/1.25rem var(--font-sans); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .fi-li-title { grid-column:1; font:600 .9375rem/1.375rem var(--font-sans); }
 .fi-li-r3 { grid-column:1; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; font:var(--fs-small); color:var(--ink-subtle); }
 .fi-li > .fi-chev { grid-column:2; grid-row:1 / 4; align-self:center; color:var(--ink-subtle); }
+/* Pemilih pelanggan/barang (components/order). Di ponsel, mengetuk kolom cari membuka layar cari penuh: hasil tepat di bawah kolom, tidak
+   tertutup keyboard, bilah Kirim, dan navigasi bawah, dan halaman di belakangnya tidak melompat sesudah memilih. Hanya daftar hasil yang
+   bergulir: kolom cari dan Kembali tetap di atas. Ponsel mendatar (layar pendek, sentuh) ikut. Layar lebar tetap sebaris. */
+.fi-cari { display:grid; gap:10px; min-width:0; align-content:start; }
+.fi-cari-kepala { display:none; }
+@media (max-width:599px), (pointer:coarse) and (max-height:500px) {
+  .fi-cari[data-buka] { position:fixed; inset:0; z-index:var(--z-dialog); background:var(--surface); display:flex; flex-direction:column; padding:max(8px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); }
+  .fi-cari[data-buka] > .fi-cari-kepala { display:flex; margin-left:calc(-1 * var(--ctl-px)); }
+  /* ponytail: tinggi keyboard tak terbaca dari CSS; ruang 50vh di bawah = hasil terakhir tetap bisa digulir ke atas keyboard. */
+  .fi-cari[data-buka] > .fi-cari-hasil { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding-bottom:50vh; }
+}
 
 /* ===== Tile ===== */
 .fi-tiles { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 160px), 1fr)); gap:12px; }
@@ -603,3 +616,25 @@ dialog.fi-drawer .fi-sidenav { border-right:0; }
 .fi-auth-row { display:flex; justify-content:flex-end; }
 .fi-auth-row a { display:inline-flex; align-items:center; min-height:var(--ctl-h); font:var(--fs-small); } /* target sentuh 44 px di pointer kasar */
 @media (max-width:767px) { .fi-auth { grid-template-columns:minmax(0,1fr); } .fi-auth-brand { display:none; } }
+
+/* Pemandu OPC (owner 3 Nov 2026): tur spotlight (components/fiori/Tur.tsx), papan Misi Anda, bar progres. */
+.fi-tur-tahan { position:fixed; inset:0; z-index:1000; }
+.fi-tur-tahan[data-gelap] { background:var(--scrim); }
+.fi-tur-sorot { position:fixed; z-index:1001; display:none; border-radius:var(--r-md); box-shadow:0 0 0 9999px var(--scrim); outline:2px solid var(--primary); pointer-events:none;
+  transition:left var(--dur-base) var(--ease-standard), top var(--dur-base) var(--ease-standard), width var(--dur-base) var(--ease-standard), height var(--dur-base) var(--ease-standard); }
+.fi-tur-kartu { position:fixed; z-index:1002; width:min(380px, calc(100vw - 16px)); background:var(--surface); color:var(--ink); border-radius:var(--r-lg); box-shadow:var(--shadow-3); padding:var(--sp-4); display:grid; gap:var(--sp-3); }
+.fi-tur-kartu[data-letak="tengah"] { left:50%; top:50%; transform:translate(-50%, -50%); }
+.fi-tur-kartu[data-letak="bawah-layar"] { left:8px; right:8px; bottom:8px; width:auto; }
+.fi-tur-titik { display:flex; flex-wrap:wrap; gap:4px; }
+.fi-tur-titik span { width:6px; height:6px; border-radius:3px; background:var(--line-strong); }
+.fi-tur-titik span[data-aktif] { width:16px; background:var(--primary); }
+@media (prefers-reduced-motion: reduce) { .fi-tur-sorot { transition:none; } }
+.fi-misi > summary { cursor:pointer; list-style:none; display:flex; flex-wrap:wrap; align-items:center; gap:8px; font:600 .875rem/1.25rem var(--font-sans); }
+.fi-misi > summary::-webkit-details-marker { display:none; }
+.fi-misi > summary::before { content:"▸"; color:var(--ink-subtle); transition:transform var(--dur-fast); }
+.fi-misi[open] > summary::before { transform:rotate(90deg); }
+.fi-progress { width:100%; max-width:220px; height:8px; accent-color:var(--primary); vertical-align:middle; }
+.fi-progress { appearance:none; border:0; border-radius:4px; background:var(--surface-3); overflow:hidden; }
+.fi-progress::-webkit-progress-bar { background:var(--surface-3); }
+.fi-progress::-webkit-progress-value { background:var(--primary); }
+.fi-progress::-moz-progress-bar { background:var(--primary); }

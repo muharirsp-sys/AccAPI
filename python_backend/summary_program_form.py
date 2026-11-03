@@ -7,6 +7,7 @@ Letak isi = prototipe tmp/summary_program_okt26/rakit_form.py (HTML + Edge) yang
 punya browser, jadi tata letaknya digambar ulang dengan ReportLab:
 - judul 5 baris + kepala kolom di SETIAP halaman, "Hal. x dari y" per principal (nomor mulai 1 tiap principal);
 - warna kepala: COKLAT semua beban principal, PINK principal + distributor, MERAH semua beban distributor;
+- yang menyetujui: Operational Manager bila COKLAT, Direktur bila ada beban distributor (PINK/MERAH);
 - satu blok program tidak dipotong antar halaman bila muat; tanda tangan ikut blok terakhir;
 - catatan seksi, legenda CR, dan peringatan masuk kolom Update keterangan (bukan baris di bawah seksi);
 - teks kiri/kanan yang lebih tinggi meregangkan baris barang (tanpa ruang kosong di bawah blok).
@@ -471,8 +472,9 @@ def _principal_pdf(doc, urut_master, dibuat):
         t = Table([[P(e("PERLU CEK: " + m))] for m in umum], colWidths=[LEBAR])
         t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, GRID), ("BACKGROUND", (0, 0), (-1, -1), KUNING)]))
         tabel.append(t)
+    # Pemilik 2 Nov 2026: ada beban distributor (PINK/MERAH) -> yang menyetujui Direktur, bukan Operational Manager.
     ttd = [("Dibuat oleh,", "Admin"), ("Diketahui oleh,", "SM"), ("Diketahui oleh,", "Kepala Accounting"),
-           ("Diperiksa oleh,", "Claim"), ("Disetujui oleh,", "Operational Manager")]
+           ("Diperiksa oleh,", "Claim"), ("Disetujui oleh,", "Operational Manager" if warna == "COKLAT" else "Direktur")]
     kota = f"Makassar, {dibuat.day:02d} {BULAN_PANJANG[dibuat.month - 1]} {dibuat.year}"
     tt = Table([[P(kota)] + [""] * 4, [P(a, rata="CENTER") for a, _ in ttd], [""] * 5, [P("(.............................)", rata="CENTER")] * 5,
                 [P(b, tebal=True, rata="CENTER") for _, b in ttd]], colWidths=[LEBAR / 5] * 5, rowHeights=[None, None, 6 * mm, None, None])

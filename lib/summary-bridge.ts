@@ -36,6 +36,10 @@ export type SummaryTier = {
     bonus_unit?: string;
     bonus_scope?: "code" | "purchased";
     repeat?: boolean;
+    /** Langkah pengulangan bila beda dari minimum ("min 40 DUS, per 5 DUS gratis 1"). */
+    kelipatan?: string;
+    /** Penanggung tiap persen, sejajar `percentages`: "P" principal, "D" tambahan tanggungan distributor. */
+    beban?: string[];
 };
 
 /** Program terbit; bentuknya sama dengan `Program` pada `python_backend/summary_rules.py`. */
@@ -63,6 +67,8 @@ export type SummaryProgram = {
     stacking?: boolean;
     /** Hanya PO pertama per outlet per barang (`FIRST_PO_MARKS` di summary_rules.py). */
     first_po?: boolean;
+    /** Sell-in: principal sudah menanggungnya lewat harga beli; diskon dibatasi kuota beli dan TIDAK diklaim. */
+    kuota?: boolean;
     priority?: number;
     tiers: SummaryTier[];
     source_page?: number;
@@ -149,20 +155,22 @@ const num = (value: unknown) => {
  * tetap aturan per barang. Menyamakan keduanya berarti satu potongan nota dikalikan sebanyak
  * barisnya.
  */
-function benefitOf(tier: SummaryTier): { type: BridgeRow["benefitType"]; value: string; unit: string; perFaktur: boolean } | { error: string } {
+type Komponen = { value: string; distributor: boolean };
+
+function benefitOf(tier: SummaryTier): { type: BridgeRow["benefitType"]; value: string; unit: string; perFaktur: boolean; komponen?: Komponen[] } | { error: string } {
     const percentages = (tier.percentages ?? []).map(text).filter(Boolean);
     const rupiah = num(tier.rupiah);
     const bonus = num(tier.bonus_quantity);
     const kinds = [percentages.length > 0, rupiah > 0, bonus > 0].filter(Boolean).length;
     if (kinds === 0) return { error: "strata tanpa benefit yang bisa dihitung" };
     if (kinds > 1) return { error: "satu strata membawa lebih dari satu jenis benefit; pecah dulu programnya" };
-    if (percentages.length > 1) {
-        // Rantai seperti "8%+2%" adalah DUA potongan di dua posisi berbeda, dan posisi
-        // menentukan siapa menanggung. Memuat yang pertama saja akan meloloskan potongan kedua
-        // tanpa dasar; menjumlahkannya akan menyembunyikan penanggungnya.
-        return { error: `strata membawa ${percentages.length} persen sekaligus (${percentages.join("+")}); satu aturan hanya bisa menyatakan satu posisi` };
+    if (percentages.length) {
+        // Rantai seperti "8+3+1.5D" adalah BEBERAPA potongan di posisi berbeda: tiap komponen jadi satu aturan dengan
+        // penanggungnya sendiri (owner 1 Nov 2026). Menjumlahkannya akan menyembunyikan penanggungnya.
+        const beban = tier.beban ?? [];
+        return { type: "DISC_PCT", value: percentages[0], unit: "%", perFaktur: false,
+            komponen: percentages.map((value, i) => ({ value, distributor: text(beban[i]).toUpperCase() === "D" })) };
     }
-    if (percentages.length === 1) return { type: "DISC_PCT", value: percentages[0], unit: "%", perFaktur: false };
     if (bonus > 0) return { type: "BONUS_QTY", value: String(bonus), unit: text(tier.bonus_unit) || "PCS", perFaktur: false };
     return { type: "DISC_RP", value: String(rupiah), unit: "RP", perFaktur: (tier.rupiah_mode ?? "once") === "once" };
 }
@@ -244,6 +252,9 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
 
         const calon: BridgeRow[] = [];
         let gagal = "";
+        // Sell-in tidak diklaim: seluruh potongannya (dan bonusnya) ditanggung principal lewat harga beli.
+        const bebanProgram = program.kuota ? "SELLIN" : beban;
+        if (program.kuota) notes.push(`${sebut}: sell-in (kuota beli) — dimuat berbeban SELLIN, tidak masuk klaim principal`);
         tiers.forEach((tier, index) => {
             if (gagal) return;
             const benefit = benefitOf(tier);
@@ -259,11 +270,12 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
                 periodEnd: program.end,
                 active: true,
                 tierNo: index + 1,
-                triggerQty: String(num(tier.minimum)),
+                // Bonus berulang dengan langkah sendiri (min 40, per 5): kuota bonus Rekap menghitung per LANGKAH.
+                triggerQty: String(tier.repeat && num(tier.kelipatan) > 0 ? num(tier.kelipatan) : num(tier.minimum)),
                 triggerUnit: program.threshold === "value" ? "RP" : (text(program.unit).toUpperCase() || "PCS"),
                 benefitValue: benefit.value,
                 benefitUnit: benefit.unit,
-                benefitBeban: beban,
+                benefitBeban: bebanProgram,
                 // Channel dari suratnya sendiri. "ALL" disimpan kosong supaya satu arti punya
                 // satu bentuk di basis data, dan supaya baris lama yang kosong berarti sama.
                 channel: text(program.channel).toUpperCase() === "ALL" ? "" : text(program.channel).toUpperCase(),
@@ -293,8 +305,13 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
                     triggerUnit: "RP", benefitType: benefit.type });
                 return;
             }
+            // Satu baris per KOMPONEN persen: tingkatnya i*100+k supaya kunci unik (surat, kelompok, barang, tingkat) tetap
+            // unik — strata ke-1 "8+3+1.5D" menjadi tingkat 101, 102, 103. Strata satu komponen tetap bernomor i.
+            const komponen = benefit.komponen ?? [{ value: benefit.value, distributor: false }];
             for (const code of program.codes) {
-                calon.push({ ...dasar, itemCode: text(code), itemName: text(letter.itemNames[code]), benefitType: benefit.type });
+                komponen.forEach((k, ke) => calon.push({ ...dasar, itemCode: text(code), itemName: text(letter.itemNames[code]), benefitType: benefit.type,
+                    benefitValue: k.value, tierNo: komponen.length > 1 ? (index + 1) * 100 + ke + 1 : index + 1,
+                    benefitBeban: program.kuota ? "SELLIN" : k.distributor ? "DISTRIBUTOR" : beban }));
             }
         });
         if (gagal) { tolak(gagal); continue; }

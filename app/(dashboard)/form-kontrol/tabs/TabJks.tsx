@@ -54,6 +54,8 @@ type DataJks = { rows: JksRow[]; total: number };
 type Ditolak = { baris: number; custCode: string; hari: string };
 /** Baris tambahan salesman (kode lengkap) yang dinonaktifkan karena tokonya ada di berkas dengan kode JKS lain (FK-MSM2). */
 type Digantikan = { salesCode: string; principle: string; custCode: string; custName: string; kodeBerkas: string };
+/** Mode ganti: baris lama per salesman yang dinonaktifkan karena tidak ada di berkas. */
+type Dinonaktifkan = { salesCode: string; principle: string; jumlah: number };
 
 /** "oleh SALES A · 12/10/2026 17.05 · kunjungan 12/10/2026": jejak baris JKS tambahan salesman. */
 function jejak(t: NonNullable<JksRow["tambahanSalesman"]>): string {
@@ -127,7 +129,9 @@ export default function TabJks({ scope }: { scope: Scope }) {
     const [impor, setImpor] = useState(false);
     const [berkas, setBerkas] = useState<File | null>(null);
     const [pratinjau, setPratinjau] = useState<{ status: "kosong" | "membaca" | "siap" | "galat"; data?: Pratinjau }>({ status: "kosong" });
-    const [hasil, setHasil] = useState<{ nama: string; imported: number; skipped: number; ditolak: Ditolak[]; digantikan: Digantikan[] } | null>(null);
+    const [hasil, setHasil] = useState<{ nama: string; imported: number; skipped: number; ditolak: Ditolak[]; digantikan: Digantikan[];
+        dinonaktifkan: Dinonaktifkan[] } | null>(null);
+    const [ganti, setGanti] = useState(false);
     const [galatTemplat, setGalatTemplat] = useState("");
 
     const giliran = useRef(0); // pratinjau berkas yang sudah diganti tidak boleh menimpa pratinjau berkas terbaru
@@ -140,7 +144,7 @@ export default function TabJks({ scope }: { scope: Scope }) {
         try { hasilBaca = { status: "siap", data: await bacaPratinjau(file) }; } catch { hasilBaca = { status: "galat" }; }
         if (ini === giliran.current) setPratinjau(hasilBaca);
     };
-    const bukaImpor = () => { setBerkas(null); setPratinjau({ status: "kosong" }); setImpor(true); };
+    const bukaImpor = () => { setBerkas(null); setPratinjau({ status: "kosong" }); setGanti(false); setImpor(true); };
 
     const blokirImpor = !berkas ? "Pilih berkas dulu"
         : pratinjau.status === "membaca" ? "Tunggu pratinjau selesai"
@@ -210,6 +214,11 @@ export default function TabJks({ scope }: { scope: Scope }) {
                     {hasil.ditolak.length > 0 ? `, ${hasil.ditolak.length} baris ditolak` : ""}.
                 </MessageStrip>
             )}
+            {hasil && hasil.dinonaktifkan.length > 0 && (
+                <MessageStrip tone="info" title={`${hasil.dinonaktifkan.reduce((n, d) => n + d.jumlah, 0)} baris JKS lama dinonaktifkan: tidak ada di berkas.`}>
+                    {hasil.dinonaktifkan.map((d) => `${d.salesCode} ${d.jumlah}`).join(", ")}. Unggah ulang baris itu untuk mengaktifkannya lagi.
+                </MessageStrip>
+            )}
             {hasil && hasil.ditolak.length > 0 && (
                 <MessageStrip tone="warn" title={`${hasil.ditolak.length} baris tidak ditulis: hari kunjungan tidak dikenal.`}>
                     Isi Senin–Sabtu, perbaiki barisnya di berkas lalu impor ulang:{" "}
@@ -267,10 +276,12 @@ export default function TabJks({ scope }: { scope: Scope }) {
                 onConfirm={async () => {
                     const fd = new FormData();
                     fd.append("file", berkas!);
+                    if (ganti) fd.append("ganti", "1");
                     try {
                         const d = await tulisFk("/api/form-kontrol/jks", { body: fd, gagal: "Impor JKS gagal." });
                         setHasil({ nama: berkas!.name, imported: Number(d.imported ?? 0), skipped: Number(d.skipped ?? 0),
-                            ditolak: Array.isArray(d.ditolak) ? d.ditolak as Ditolak[] : [], digantikan: Array.isArray(d.digantikan) ? d.digantikan as Digantikan[] : [] });
+                            ditolak: Array.isArray(d.ditolak) ? d.ditolak as Ditolak[] : [], digantikan: Array.isArray(d.digantikan) ? d.digantikan as Digantikan[] : [],
+                            dinonaktifkan: Array.isArray(d.dinonaktifkan) ? d.dinonaktifkan as Dinonaktifkan[] : [] });
                         setImpor(false);
                         muatUlang();
                     } catch (e) {
@@ -286,6 +297,11 @@ export default function TabJks({ scope }: { scope: Scope }) {
                 <FormField label="Berkas JKS (.xlsx)" required help="Sheet pertama dibaca. Pakai templat bila ragu nama kolomnya.">{(a) => (
                     <input {...a} className="fi-input" type="file" accept=".xlsx,.xls" onChange={(e) => void pilihBerkas(e.target.files?.[0] ?? null)} />
                 )}</FormField>
+                <label className="flex items-start gap-2" style={{ minHeight: 44 }}>
+                    <input type="checkbox" checked={ganti} onChange={(e) => setGanti(e.target.checked)} style={{ width: 22, height: 22, marginTop: 2 }} />
+                    <span>Ganti JKS lama: untuk setiap principal di berkas, toko yang tidak ada di berkas dinonaktifkan (semua salesman principal itu,
+                        termasuk salesman yang tidak ada di berkas). Toko tambahan salesman dari kunjungan luar rute tetap. Satu baris bermasalah = batal seluruhnya.</span>
+                </label>
                 {pratinjau.status === "membaca" && <Skeleton rows={2} label={`Membaca ${berkas?.name ?? "berkas"}`} />}
                 {pratinjau.status === "galat" && <p className="fi-msg" role="alert">Berkas tidak bisa dibaca sebagai Excel. Pilih berkas .xlsx lain.</p>}
                 {pratinjau.status === "siap" && pratinjau.data && (

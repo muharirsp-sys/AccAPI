@@ -154,6 +154,7 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
                 <div className="fi-page-bar">
                     <h1>Order Masuk</h1>
                     <span className="fi-spacer" />
+                    <Link className="fi-btn" href="/orders/kuota">Kuota promo</Link>
                     {bolehBuat
                         ? <Link className="fi-btn fi-btn--primary" href="/orders/baru"><Plus className="fi-icon" aria-hidden />Buat order</Link>
                         : <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} disabled disabledReason="Akun Anda tidak berhak membuat order">Buat order</Button>}

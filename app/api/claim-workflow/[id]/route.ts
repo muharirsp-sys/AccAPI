@@ -40,6 +40,7 @@ function normalizeFinancePaymentMethod(value: string | null | undefined): string
     const lower = trimmed.toLowerCase();
     if (lower === "transfer") return "Transfer";
     if (lower === "tunai" || lower === "cash") return "Tunai";
+    if (lower === "potong tagihan") return "Potong Tagihan";
     return trimmed;
 }
 

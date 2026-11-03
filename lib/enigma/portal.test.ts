@@ -10,7 +10,7 @@ const DETAIL = `<div class="container"><div class="row"><div>Status</div><div>:<
 <p>Detail log:</p><ul><li>Terdapat isian kosong pada kolom PRODUK_ID_MI pada baris | 258</li>
 <li>QTY_CRT tidak sesuai dengan VALUE_BRUTO (Rasio -5.44%) pada baris | 56</li></ul></div>`;
 
-function portalTiruan(statusAkhir: string) {
+function portalTiruan(statusAkhir: string, detail503 = false, beranda503SesudahUnggah = false) {
     const diterima: { berkas?: string; nc?: boolean } = {};
     let unggahan = 0, panggilBeranda = 0;
     const baris = (id: number, st: string) => `<tr><td>26 October 2026 20:31</td><td><a href="/uploads/REPORT-1000718-${id}-template_enigma.xlsx">REPORT-1000718-${id}-template_enigma.xlsx</a></td><td>${st}</td><td><a href="/upload_detail/${id}">Detail</a></td></tr>`;
@@ -34,11 +34,12 @@ function portalTiruan(statusAkhir: string) {
                 return res.end();
             }
             if (req.url === "/") {
+                if (beranda503SesudahUnggah && unggahan) { res.writeHead(503); return res.end(); }
                 const st = unggahan && ++panggilBeranda > 2 ? statusAkhir : "processing";
                 return res.end(`<form method="post" action="/" enctype="multipart/form-data"><input type="file" name="excel_file"><input type="hidden" name="__ncforminfo" value="TOKENNC"/></form>
 <table><tbody>${unggahan ? baris(unggahan, st) : ""}${baris(266593, "success")}</tbody></table>`);
             }
-            if (req.url?.startsWith("/upload_detail/")) return res.end(DETAIL);
+            if (req.url?.startsWith("/upload_detail/")) { if (detail503) res.writeHead(503); return res.end(detail503 ? "" : DETAIL); }
             res.writeHead(404); res.end();
         });
     });
@@ -65,6 +66,42 @@ test("password salah = galat jelas, tidak mengunggah", async () => {
     await assert.rejects(unggahEnigma({ id: "1000718", password: "salah" }, Buffer.from("x"), "t.xlsx", { dasar: p.dasar, selaMs: 10, tungguMs: 500 }), /login ditolak/);
     assert.equal(p.diterima.berkas, undefined);
     p.tutup();
+});
+
+test("portal tumbang (503 / tak tersambung) = galat gangguan, bukan login ditolak", async () => {
+    const srv = http.createServer((_req, res) => { res.writeHead(503); res.end("Service Unavailable"); });
+    await new Promise<void>((ok) => srv.listen(0, "127.0.0.1", ok));
+    const dasar = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    try {
+        await assert.rejects(unggahEnigma({ id: "1000718", password: "rahasia" }, Buffer.from("x"), "t.xlsx", { dasar }), /gangguan \(HTTP 503\)/);
+    } finally {
+        srv.closeAllConnections();
+        await new Promise((ok) => srv.close(ok));
+    }
+    await assert.rejects(unggahEnigma({ id: "1000718", password: "rahasia" }, Buffer.from("x"), "t.xlsx", { dasar }), /tidak bisa dihubungi \(ECONNREFUSED\)/);
+});
+
+test("POST diterima (302) lalu GET sesudahnya 503 = tetap ditandai diterima (cron tidak mengunggah ulang)", async () => {
+    const p = await portalTiruan("success", false, true);
+    let diterima = 0;
+    try {
+        await assert.rejects(unggahEnigma({ id: "1000718", password: "rahasia" }, Buffer.from("x"), "t.xlsx", { dasar: p.dasar, selaMs: 10, tungguMs: 50,
+            diterima: async () => { diterima++; } }), /gangguan \(HTTP 503\).*Portal sudah menerima berkas/);
+        assert.equal(diterima, 1);
+        assert.equal(p.diterima.berkas, "t.xlsx");
+    } finally {
+        p.tutup();
+    }
+});
+
+test("Detail 503 sesudah status final = hasil tetap dari Riwayat (unggahan sukses tidak tercatat gagal)", async () => {
+    const p = await portalTiruan("success", true);
+    try {
+        const h = await unggahEnigma({ id: "1000718", password: "rahasia" }, Buffer.from("x"), "t.xlsx", { dasar: p.dasar, selaMs: 10, tungguMs: 5000 });
+        assert.deepEqual(h, { id: 266600, status: "success", keterangan: "", log: [] });
+    } finally {
+        p.tutup();
+    }
 });
 
 test("uraiDetail membaca status sukses tanpa log", () => {

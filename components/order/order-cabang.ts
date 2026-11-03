@@ -24,6 +24,8 @@ export type PelangganPilih = {
 export type UnitHarga = { unit: string; price: number | null; source?: string; branchName?: string | null; effectiveDate?: string | null; hargaDefault?: boolean };
 export type BarangPilih = {
     id: number; no: string; name: string; branchId: number | null; branchName: string | null; tag: string | null; units: UnitHarga[];
+    /** Stok hasil sinkron Accurate ("2 KRT 5 PCS") di `gudangStok`; null = belum tersinkron. Info saja, tidak membatasi jumlah. */
+    stok?: string | null; gudangStok?: string | null;
     /** Harga di `units` berlaku untuk pelanggan+tanggal ini; berubah = harga di daftar dianggap basi (yang final tetap dari pratinjau). */
     hargaUntuk: string;
 };
@@ -31,7 +33,7 @@ export type BarangPilih = {
 // ------------------------------------------------------------------ tipe pratinjau (bentuk respons /api/orders/preview + FastAPI)
 
 export type ResultLine = { code: string; unit: string; quantity: string; gross: string; net: string; percents?: string[]; cash?: string };
-export type Bonus = { program_id: string; code: string; unit: string; quantity: string; eligible_codes?: string[]; program_name?: string };
+export type Bonus = { program_id: string; code: string; unit: string; quantity: string; eligible_codes?: string[]; program_name?: string; price?: string };
 export type Blocked = { program_id: string; program_name?: string; reason?: string };
 export type Result = {
     pending_price?: boolean; gross?: string; discount?: string; net?: string;
@@ -108,7 +110,8 @@ export function bacaBarang(raw: unknown, hargaUntuk: string): BarangPilih | null
     });
     const branchId = angka(r.branchId);
     return { id, no: r.no, name: String(r.name ?? ""), branchId: Number.isFinite(branchId) ? branchId : null,
-        branchName: teksAtauNull(r.branchName), tag: teksAtauNull(r.tag), units, hargaUntuk };
+        branchName: teksAtauNull(r.branchName), tag: teksAtauNull(r.tag), units, hargaUntuk,
+        stok: teksAtauNull(r.stok), gudangStok: teksAtauNull(r.gudangStok) };
 }
 
 /** Kunci "harga di daftar masih berlaku": pelanggan (kategori harga) + tanggal order. */
@@ -503,7 +506,7 @@ export function promoBaris(result: Result | null | undefined, code: string, unit
     // Bonus "dari barang yang dibeli" menempel di barang yang memenuhi syarat; bonus berkode barang tertentu tampil di ringkasan order.
     const bonus = (result?.bonuses ?? []).filter((b) => !b.code && (b.eligible_codes ?? []).includes(code));
     return { gross: num(baris.gross), net: num(baris.net), diskon: Math.max(0, num(baris.gross) - num(baris.net)),
-        persen: (baris.percents ?? []).map(String), tunai: num(baris.cash), bonus };
+        persen: (baris.percents ?? []).map(String).filter((p) => Number(p) !== 0), tunai: num(baris.cash), bonus };
 }
 
 const namaProgram = (id: string, nama: string | undefined, result: Result, saran: Suggestion[]) =>

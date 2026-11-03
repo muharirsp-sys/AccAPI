@@ -42,5 +42,6 @@ n2 = len(hal) - 1
 assert all(f"Hal. {i} dari {n2}" in hal[i] and "BEBAN DISTRIBUTOR (MERAH)" in hal[i] for i in range(1, len(hal))), "nomor halaman per principal"
 assert "2,5%" in hal[0] and "≥ 10 CTN" in hal[0] and "→" in hal[0], hal[0][:400]       # angka seragam, panah & ≥ tampil
 assert "PERLU CEK: cek angka" in hal[0] and "(!)" in hal[0]                               # flag -> keterangan + sel bertanda
-assert "Operational Manager" in hal[-1] and "Operational Manager" not in hal[1]           # tanda tangan ikut blok terakhir
+assert "Direktur" in hal[-1] and "Direktur" not in hal[1]                                 # tanda tangan ikut blok terakhir
+assert "Operational Manager" in hal[0] and "Operational Manager" not in hal[-1]          # beban distributor -> Direktur (2 Nov 2026)
 print("summary_program_form ok")

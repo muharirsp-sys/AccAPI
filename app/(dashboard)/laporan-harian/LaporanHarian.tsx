@@ -282,7 +282,7 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
                 keterangan="Faktur INV + retur RJN cabang ABC (tanpa RSJ) bulan berjalan sampai tanggal laporan dan stok per tanggal itu, ditarik langsung dari Accurate. FTP ABC menerima CSV; penerima keyword ABCPI menerima Excel (template ABCPI) + CSV."
                 tombol="Kirim ke FTP dan email" konfirmasi="Kirim laporan ABCPI"
                 fakta={[["Tujuan", "FTP ABC (SP_…_SALES.csv & SP_…_STOCK.csv) dan email penerima keyword ABCPI"], ["Kirim ulang", "Berkas FTP bernama sama ditimpa; email terkirim lagi"]]} />}
-            {bolehKirim && <KirimPrincipal kode="enigma" judul="Laporan Enigma (Marketama Indah)" subjudul="otomatis tiap hari 20.30 WITA ke portal Enesis · validation_error dilaporkan ke email admin"
+            {bolehKirim && <KirimPrincipal kode="enigma" judul="Laporan Enigma (Marketama Indah)" subjudul="otomatis tiap hari 20.30 WITA ke portal Enesis · akhir bulan ditahan, unggah di sini · validation_error dilaporkan ke email admin"
                 keterangan="Faktur INV + retur cabang MIX FOOD (tanpa RSJ) untuk barang berpemasok PT Marketama Indah, bulan berjalan sampai tanggal laporan. Harga = Tabel1 BARANG (KRT: harga karton, selain itu harga pcs), bruto = harga × qty, netto = bruto − potongan."
                 tombol="Unggah ke Enigma" konfirmasi="Unggah laporan Enigma"
                 fakta={[["Tujuan", "Portal enigma.enesis.com (ID distributor 1000718) sebagai template_enigma.xlsx"], ["Hasil", "Status success/validation_error dibaca dari Riwayat Upload dan dikirim ke email admin"]]} />}

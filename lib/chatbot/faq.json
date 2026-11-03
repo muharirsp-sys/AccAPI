@@ -420,7 +420,7 @@
       "tipe sample"
     ],
     "question": "Apa saja tipe program di OPC?",
-    "answer": "Tipe program OPC:\n\n**Program Utama:**\n- Display\n- Visibility\n- Promo On Store\n- Event\n- Sample\n\n**Program CLM:**\n- Insentif\n- Diskon Reguler\n- Insentif Distributor\n- Retur\n\nTipe legacy juga didukung dengan normalisasi otomatis.",
+    "answer": "Tipe program OPC untuk Supervisor:\n- Loyalty & Cashback Toko\n- Listing & Biaya Ritel Modern\n- Display\n- Diskon & Rafaksi\n- Insentif & Gaji Tenaga Penjual\n- Promo Konsumen & Bonus Barang\n- Event & Aktivasi\n- Visibility & Branding\n- Sampel & Free Drink\n- Hadiah & Relasi Toko\n- Retur & Near ED\n- Lainnya (wajib tulis alasan)\n\n**Program CLM (tim Klaim):** Insentif, Diskon Reguler, Insentif Distributor, Retur.\n\nTidak yakin? Di form ada tombol Bantu saya memilih tipe, dan sistem menyarankan tipe dari nama program. Coba juga Mode latihan di halaman OFF Program Control.",
     "category": "opc"
   },
   {

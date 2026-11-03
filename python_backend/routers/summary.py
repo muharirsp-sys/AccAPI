@@ -194,6 +194,35 @@ def deterministic_extraction(raw, master):
     return None
 
 
+def baris_berkas(data, raw):
+    """Baris Summary dari berkas JSON (daftar objek baris draft) — surat TIDAK dibaca.
+
+    ponytail: jalur darurat saat pembaca surat mati (Mistral HTTP 402 sejak Nov 2026). PDF tetap
+    disimpan sebagai sumber dan draftnya tetap wajib ditinjau lalu diterbitkan seperti hasil baca;
+    yang dilewati hanya OCR. Hapus bila pembaca surat kembali dan tak ada lagi yang memakainya.
+    """
+    import hashlib
+
+    import fitz
+    from routers.summary_library import BARIS_DRAFT
+
+    try:
+        rows = json.loads(data)
+    except ValueError:
+        raise ValueError("Berkas baris bukan JSON yang valid") from None
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 2000 or any(not isinstance(row, dict) for row in rows):
+        raise ValueError("Berkas baris harus berisi daftar 1-2000 objek baris")
+    with fitz.open(stream=raw, filetype="pdf") as doc:
+        halaman = doc.page_count
+    bersih = [{key: str(row.get(key) if row.get(key) is not None else "")[:4000]
+               for key in BARIS_DRAFT if key not in ("id", "no")} for row in rows]
+    for row in bersih:
+        row["source_page"] = row["source_page"] or "1"
+    return {"rows": bersih, "warnings": ["Baris dari berkas, surat tidak dibaca; bandingkan tiap baris dengan PDF sumber."],
+            "page_count": halaman, "model": "berkas", "pipeline_version": 1, "cached": False,
+            "on_faktur": True, "mechanism": "", "source_hash": hashlib.sha256(raw).hexdigest()}
+
+
 @router.post("/summary/manual")
 async def summary_manual_auto_generate(
     request: Request,
@@ -1487,7 +1516,8 @@ async def summary_manual_parse_pdf_regex(request: Request):
 
 
 @router.post("/summary/manual/parse_pdf_ai")
-async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), pdf: UploadFile = File(...), principle_name: str = Form(default="")):
+async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), pdf: UploadFile = File(...), principle_name: str = Form(default=""),
+                                      baris: UploadFile | None = File(default=None)):
     from routers.summary_library import require_user
     user = require_user(request, True)
     master = MANUAL_MASTER_CACHE.get(token)
@@ -1498,8 +1528,13 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         raw = foto_ke_pdf(await read_upload_file_limited(pdf, max_bytes=MAX_PDF_UPLOAD_BYTES,
                                                          allowed_exts=(".pdf", ".jpg", ".jpeg", ".png"),
                                                          label="Surat program"))
-        result = (kino_extraction(raw, master) or deterministic_extraction(raw, master)
-                  or await extract_mistral(raw, master, user, principle_name))
+        if baris is not None:
+            result = baris_berkas(await read_upload_file_limited(baris, max_bytes=2 * 1024 * 1024, allowed_exts=(".json",),
+                                                                  label="Baris Summary"), raw)
+            principle_name = principle_name or result["rows"][0]["principle"]
+        else:
+            result = (kino_extraction(raw, master) or deterministic_extraction(raw, master)
+                      or await extract_mistral(raw, master, user, principle_name))
         # Yang jawabannya sudah pasti tidak perlu ditanyakan kepada peninjau: principal yang
         # sudah dipilih di layar, badan surat yang terbawa ke nama program, dan aturan
         # "tidak menyebut varian/gramasi tertentu berarti SEMUA". Lihat `baca_surat_rapi`.
@@ -1518,7 +1553,9 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         # sekali: barisnya langsung diserahkan ke `_apply_native_kelompok`, yang memilih matcher
         # dari penanda barisnya. Kino dan principal lain tetap di jalur lama, tidak berubah.
         jalur_det = surat_struktur.jalur(principle_name)
-        if jalur_det:
+        if baris is not None:
+            pass  # baris disusun manusia: tidak dirapikan/dicocokkan ulang; kodenya diturunkan saat Simpan draf
+        elif jalur_det:
             if surat_struktur.nomor_terbawa(result["rows"]):
                 result["warnings"] = [*(result.get("warnings") or []),
                                       "Nomor surat diisi dari halaman sebelumnya pada baris yang halamannya "

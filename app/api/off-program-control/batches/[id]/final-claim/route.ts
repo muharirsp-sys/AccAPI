@@ -11,6 +11,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem } from "@/db/schema";
 import {
+  bebanItem,
   canOpenFinalClaim,
   computeOffFinancePaymentSummary,
   computeOffPaymentSummary,
@@ -193,9 +194,10 @@ export async function POST(request: Request, context: Context) {
       sanitizedClaimRefs.map((ref): [string, ClaimRef] => [ref.itemId, ref]),
     );
 
-    // Validasi: setiap item yang punya noSurat wajib punya noClaim
+    // Validasi: setiap item yang punya noSurat wajib punya noClaim, kecuali beban distributor (DM): tidak ditagih ke principal.
     const missingNoClaim = data.items
       .filter((item) => String(item.noSurat || "").trim())
+      .filter((item) => bebanItem(item.beban) === "CL")
       .filter((item) => !claimRefMap.get(item.id)?.noClaim)
       .map((item) => String(item.noSurat || "").trim());
 

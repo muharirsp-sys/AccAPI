@@ -21,7 +21,7 @@ import { statusKlaim } from "@/lib/claim-workflow-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { KOSONG } from "@/lib/tampil";
 import {
-    alurBatch, catatanSendiri, infoTahap, jumlahItem, kelengkapanItem, labelAksiAudit, labelPeranAktor, labelStatus, pdfBoleh, periodeBatch, tahapBatch, tanggalOpc, totalBatch,
+    alurBatch, catatanSendiri, infoTahap, jumlahItem, kelengkapanItem, labelAksiAudit, labelBeban, labelPeranAktor, labelStatus, labelTipeItem, pdfBoleh, periodeBatch, progresBatch, tahapBatch, tanggalOpc, totalBatch,
     waktuWita, type AuditOpc, type BatchOpc, type ItemOpc, type PembayaranOpc, type RefundOpc,
 } from "@/lib/opc-ui";
 import type { DetailProps } from "./Bersama";
@@ -71,6 +71,7 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
     const nItem = items.length || jumlahItem(b);
     const tahap = tahapBatch(b);
     const catatanKembali = b.claimNote || b.smNote || b.returnNote;
+    const progres = progresBatch(b, items);
     const di = (letak: NonNullable<BagianTambahan["letak"]>) => bagian.filter((x) => (x.letak ?? "setelahItem") === letak);
     const anchors = [
         ...di("awal"),
@@ -98,6 +99,16 @@ export function ObjectPageBatch(props: ObjectPageBatchProps) {
                     { label: "Item", value: <span className="fi-tnum">{nItem}</span> },
                     { label: b.createdByRole === "claim" ? "Dibuat Klaim" : "SPV", value: b.supervisorName || KOSONG },
                     { label: "Pemilik tahap", value: info.pemilik ?? KOSONG },
+                    {
+                        label: "Progres",
+                        value: (
+                            <span style={{ display: "grid", gap: 2 }} data-tur="progres">
+                                <progress className="fi-progress" max={progres.dari} value={progres.tahap} aria-label={progres.teksTahap} />
+                                <span className="fi-small">{progres.teksTahap}</span>
+                                <span className="fi-small fi-subtle">{progres.teksBerkas}</span>
+                            </span>
+                        ),
+                    },
                     { label: "Diperbarui", value: waktuWita(b.updatedAt) },
                 ]}
                 flow={
@@ -197,7 +208,8 @@ function TabelItem({ items, uji }: { items: ItemOpc[]; uji: boolean }) {
         { key: "nominal", header: "Nominal", align: "end", cell: (i) => <span className="fi-tnum">{rupiah(i.nominal)}</span> },
         { key: "bayar", header: "Cara bayar", secondary: true, cell: (i) => i.caraBayar || KOSONG },
         { key: "no", header: "Item ke", secondary: true, cell: (i) => <span className="fi-tnum">{i.itemNo}</span> },
-        { key: "tipe", header: "Tipe", secondary: true, cell: (i) => i.type || KOSONG },
+        { key: "tipe", header: "Tipe", secondary: true, cell: (i) => labelTipeItem(i) || KOSONG },
+        { key: "beban", header: "Beban", secondary: true, cell: (i) => (labelBeban(i.beban) === "DM" ? <StatusBadge tone="neu">DM · distributor</StatusBadge> : "CL · principal") },
         { key: "periode", header: "Periode", secondary: true, cell: (i) => i.periode || KOSONG },
         { key: "deadline", header: "Deadline", secondary: true, cell: (i) => tanggalOpc(i.deadline) },
         { key: "lengkap", header: "Kelengkapan awal", secondary: true, cell: (i) => kelengkapanItem(i) },
@@ -208,7 +220,7 @@ function TabelItem({ items, uji }: { items: ItemOpc[]; uji: boolean }) {
             empty={{ title: uji ? "Item tidak dimuat untuk data uji" : "Batch ini tidak punya item" }}
             mobileItem={(i) => (
                 <ListItem doc={i.noSurat || `Item ${i.itemNo}`} amount={rupiah(i.nominal)} title={i.toko || KOSONG}
-                    meta={[i.namaProgram, i.caraBayar, i.type].filter(Boolean).join(" · ")}
+                    meta={[i.namaProgram, i.caraBayar, labelTipeItem(i), labelBeban(i.beban) === "DM" ? "beban distributor" : ""].filter(Boolean).join(" · ")}
                     badge={dibayar(i) ? <StatusBadge tone="pos">Dibayar</StatusBadge> : undefined} />
             )} />
     );

@@ -1,18 +1,29 @@
-import { offPaymentMethods } from "./constants";
+import { bebanItem, offPaymentMethods } from "./constants";
 import type { OffItemRow, OffPaymentRow } from "./types";
 
-export function normalizePaymentMethod(value: string | null | undefined) {
-    const normalized = String(value || "").trim().toLowerCase();
+export type OffCaraBayar = (typeof offPaymentMethods)[number];
+
+/** Pesan galat cara bayar; route membandingkan teks ini untuk menjawab 400. */
+export const PESAN_CARA_BAYAR = "Jenis pembayaran hanya boleh Transfer, Tunai, atau Potong Tagihan.";
+
+function kenali(value: unknown): OffCaraBayar | null {
+    const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
     if (normalized === "transfer") return "Transfer";
-    if (normalized === "tunai") return "Tunai";
-    return String(value || "-");
+    if (normalized === "tunai" || normalized === "cash") return "Tunai";
+    if (normalized === "potong tagihan") return "Potong Tagihan";
+    return null;
 }
 
-export function normalizeOffPaymentMethod(value: unknown) {
-    const normalized = String(value || "").trim().toLowerCase();
-    if (normalized === "transfer") return "Transfer";
-    if (normalized === "tunai") return "Tunai";
-    throw new Error("Jenis pembayaran hanya boleh Tunai atau Transfer.");
+/** Untuk tampilan: nilai dikenal dinormalisasi, selain itu apa adanya ("-" bila kosong). */
+export function normalizePaymentMethod(value: string | null | undefined) {
+    return kenali(value) ?? String(value || "-");
+}
+
+/** Untuk penyimpanan: melempar PESAN_CARA_BAYAR bila bukan Transfer/Tunai/Potong Tagihan. */
+export function normalizeOffPaymentMethod(value: unknown): OffCaraBayar {
+    const method = kenali(value);
+    if (!method) throw new Error(PESAN_CARA_BAYAR);
+    return method;
 }
 
 export function isOffPaymentMethod(value: unknown) {
@@ -20,17 +31,22 @@ export function isOffPaymentMethod(value: unknown) {
     return offPaymentMethods.some((method) => method === normalized);
 }
 
-export function computeOffPaymentSummary(items: OffItemRow[]) {
+export type OffRingkasBayar = { total: number; transfer: number; tunai: number; potongTagihan: number; bebanDistributor: number };
+
+/** Ringkasan per cara bayar + total beban distributor (DM). Nominal boleh angka atau teks yang sudah diurai pemanggil. */
+export function computeOffPaymentSummary(items: Array<Pick<OffItemRow, "nominal" | "caraBayar"> & { beban?: string | null }>): OffRingkasBayar {
     return items.reduce(
         (summary, item) => {
             const nominal = Number(item.nominal || 0);
             summary.total += nominal;
-            const method = normalizePaymentMethod(item.caraBayar);
+            const method = kenali(item.caraBayar);
             if (method === "Transfer") summary.transfer += nominal;
             if (method === "Tunai") summary.tunai += nominal;
+            if (method === "Potong Tagihan") summary.potongTagihan += nominal;
+            if (bebanItem(item.beban) === "DM") summary.bebanDistributor += nominal;
             return summary;
         },
-        { total: 0, transfer: 0, tunai: 0 }
+        { total: 0, transfer: 0, tunai: 0, potongTagihan: 0, bebanDistributor: 0 }
     );
 }
 

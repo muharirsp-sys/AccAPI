@@ -22,20 +22,20 @@ import { KOSONG } from "@/lib/tampil";
 import { pesanGalat } from "@/lib/claim-workflow-ui";
 
 type Program = { key: string; suratProgram: string; promoLabel: string; promoGroup: string; amount: number; lines: number; invoices: number; normalisasi?: number; normalisasiBaris?: number };
-type DetailRow = { bucket: "principal" | "distributor" | "unowned"; invoiceNo: string; transDate: string; branchName: string; customerNo: string; customerName: string;
+type DetailRow = { bucket: "principal" | "distributor" | "sellin" | "unowned"; invoiceNo: string; transDate: string; branchName: string; customerNo: string; customerName: string;
     itemCode: string; itemName: string; positions: string; percent: number; amount: number; suratProgram: string; promoGroup: string; reason: string };
 type TarifMenganggur = { customerCode: string; tierNo: number; benefitValue: string; benefitBeban: string; suratProgram: string; promoLabel: string; outletBertransaksi: boolean };
 type OutletTanpaAturan = { customerNo: string; customerName: string; amount: number; lines: number; positions: string[]; percents: number[] };
 type Data = {
     from: string; to: string; principal: string; principals: string[]; invoicesInRange: number; invoicesWithoutDetail: number; rules: number;
-    recap: { invoices: number; lines: number; gross: number; distributor: number; principal: number; unowned: number; programs: Program[]; rows: DetailRow[];
+    recap: { invoices: number; lines: number; gross: number; distributor: number; principal: number; sellin?: number; kuotaGalat?: string; kuotaCatatan?: string; unowned: number; programs: Program[]; rows: DetailRow[];
         tarifMenganggur: TarifMenganggur[]; outletTanpaAturan: OutletTanpaAturan[] };
 };
 type Buka = { jenis: "bucket" | "program"; nilai: string } | null;
 
 const BOM = String.fromCharCode(0xFEFF);
 const CRLF = String.fromCharCode(13, 10);
-const BUCKET_LABEL = { principal: BEBAN.principal.label, distributor: BEBAN.distributor.label, unowned: "Tak bertuan" } as const;
+const BUCKET_LABEL = { principal: BEBAN.principal.label, distributor: BEBAN.distributor.label, sellin: BEBAN.sellin.label, unowned: "Tak bertuan" } as const;
 
 export default function RekapPromo() {
     const [awal] = useState(() => bulanWita()); // bulan berjalan WITA, bukan jam perangkat
@@ -142,10 +142,13 @@ export default function RekapPromo() {
                                 <div className="fi-kc"><span>Bruto faktur</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(r.gross)}</b><small>{r.invoices} faktur · {r.lines} baris</small></div>
                                 <button type="button" className="fi-kc" data-tone="pos" aria-pressed={buka?.nilai === "principal"} onClick={() => setBuka(buka?.nilai === "principal" ? null : { jenis: "bucket", nilai: "principal" })}><span>{BEBAN.principal.label}</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(r.principal)}</b><small>cocok aturan principal, bisa ditagihkan · lihat rincian</small></button>
                                 <button type="button" className="fi-kc" aria-pressed={buka?.nilai === "distributor"} onClick={() => setBuka(buka?.nilai === "distributor" ? null : { jenis: "bucket", nilai: "distributor" })}><span>{BEBAN.distributor.label}</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(r.distributor)}</b><small>cocok aturan distributor, biaya sendiri · lihat rincian</small></button>
+                                {(r.sellin ?? 0) > 0 && <button type="button" className="fi-kc" aria-pressed={buka?.nilai === "sellin"} onClick={() => setBuka(buka?.nilai === "sellin" ? null : { jenis: "bucket", nilai: "sellin" })}><span>{BEBAN.sellin.label}</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(r.sellin ?? 0)}</b><small>{BEBAN.sellin.hint} · lihat rincian</small></button>}
                                 <Link href={`/normalisasi-diskon${normQuery}`} className="fi-kc" data-tone={r.unowned ? "neg" : "pos"}><span>Tak bertuan</span><b className="fi-tnum" style={{ fontSize: "1.25rem" }}>{rupiah(r.unowned)}</b><small>{r.unowned ? "tidak sesuai promo yang berlaku · golongkan di Normalisasi Diskon" : "semua potongan punya aturan"}</small></Link>
                             </div>
+                            {r.kuotaGalat && <MessageStrip tone="warn" title="Kuota beli belum dicek.">{r.kuotaGalat}</MessageStrip>}
+                            {r.kuotaCatatan && <MessageStrip tone="info" title="Kuota beli dicek sebagian.">{r.kuotaCatatan}</MessageStrip>}
                             {r.unowned === 0
-                                ? <MessageStrip tone="pos" title="Periode ini bersih:">setiap potongan cocok dengan aturan promo yang berlaku.</MessageStrip>
+                                ? !r.kuotaGalat && <MessageStrip tone="pos" title="Periode ini bersih:">setiap potongan cocok dengan aturan promo yang berlaku.</MessageStrip>
                                 : <MessageStrip tone="neg" title={`${rupiah(r.unowned)} potongan belum bisa dipertanggungjawabkan.`}>
                                     Tak bertuan berarti potongannya tidak sesuai promo yang berlaku, di posisi mana pun, termasuk posisi 1–3 yang belum punya aturan beban distributor.{" "}
                                     <Button variant="tertiary" onClick={() => setBuka({ jenis: "bucket", nilai: "unowned" })}>Lihat rincian</Button>{" "}

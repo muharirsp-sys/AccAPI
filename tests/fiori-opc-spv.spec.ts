@@ -151,6 +151,10 @@ const detailOf = (page: Page) => page.locator("main").getByRole("region", { name
 test.describe.configure({ timeout: 150_000 });
 let kunciGanda: string[] = [];
 test.beforeEach(async ({ page }) => {
+    // Pemandu: tur pertama kali (opc/Pemandu.tsx) menutup layar dengan penahan klik; uji lama menganggapnya sudah dilihat.
+    await page.addInitScript(() => {
+        try { for (const p of ["admin", "manager", "supervisor", "sales_manager", "claim", "operational_manager", "finance", "sales", "unknown"]) localStorage.setItem(`opc-tur-v1:${p}`, "1"); } catch { /* */ }
+    });
     await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "light" });
     page.on("dialog", (d) => { throw new Error(`window.${d.type()} masih dipakai: ${d.message()}`); });
     kunciGanda = [];
@@ -178,7 +182,7 @@ test("Default → Draf (konfirmasi keluar) → Kirim ke SM: dialog ringkasan, PA
     await expect(form2.getByText('Tipe lama "Promo" perlu dipilih ulang.')).toBeVisible();
     const kirim = detail.getByRole("button", { name: "Kirim ke SM…" });
     await expect(kirim).toBeDisabled();
-    await expect(detail.locator(".fi-ftb")).toContainText("Tipe program pada item 2 wajib dipilih dari daftar (Display/Visibility/Promo On Store/Event/Sample) sebelum dikirim ke Sales Manager.");
+    await expect(detail.locator(".fi-ftb")).toContainText("Tipe program pada item 2 wajib dipilih dari daftar sebelum dikirim ke Sales Manager.");
     await expect(detail.getByRole("button", { name: "Simpan draf" })).toBeDisabled();
     await page.screenshot({ path: "test-results/fiori-opc-spv-default.png", fullPage: true });
 
@@ -223,6 +227,8 @@ test("Default → Draf (konfirmasi keluar) → Kirim ke SM: dialog ringkasan, PA
         noSurat: "ENI/PRG/0931", namaProgram: "Display Zwitsal Okt", periodeAwal: "2026-10-01", periodeAkhir: "2026-10-31", periode: "2026-10-01 - 2026-10-31",
         toko: "TK Mulia", barang: "", nominal: "Rp 1.000.000", caraBayar: "Transfer", noRekening: "BRI 0231-01", type: "Display", originalType: "Display",
         pphExempt: false, deadline: "2026-10-31", kwt: true, skp: true, fp: false, pc: false, foto: true, rekap: true, others: false, othersText: "",
+        // Pemandu 3 Nov 2026 (migrasi 0039): alasan tipe Lainnya + beban CL/DM; data lama tanpa beban = CL.
+        typeNote: "", beban: "CL",
     });
     expect(items[1]).toMatchObject({ toko: "UD Sejahtera", nominal: "Rp 2.100.000", caraBayar: "Tunai", noRekening: "", type: "Display", originalType: "Promo" });
     expect(tulis[1].body).toBeNull(); // submit tanpa body (kode lama)

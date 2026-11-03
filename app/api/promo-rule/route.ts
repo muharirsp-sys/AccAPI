@@ -25,7 +25,7 @@ import { bersinggungan } from "@/lib/promo-recap";
 export const runtime = "nodejs";
 
 const text = (value: unknown) => String(value ?? "").trim();
-const BEBAN = new Set(["PRINCIPAL", "DISTRIBUTOR"]);
+const BEBAN = new Set(["PRINCIPAL", "DISTRIBUTOR", "SELLIN"]);
 const JENIS = new Set(["DISC_PCT", "DISC_RP", "BONUS_QTY"]);
 const MODE = new Set(["", "INCLUDE", "EXCLUDE"]);
 
@@ -49,7 +49,7 @@ function draftOf(body: Record<string, unknown>, importedBy: string): { row: Draf
     if (!text(body.principal)) return { error: "Principal wajib diisi" };
     if (!text(body.suratProgram)) return { error: "Surat/program wajib diisi: ia yang menjelaskan asal aturannya" };
     if (!JENIS.has(benefitType)) return { error: `Jenis manfaat harus salah satu dari ${[...JENIS].join(", ")}` };
-    if (!BEBAN.has(benefitBeban)) return { error: "Beban harus PRINCIPAL atau DISTRIBUTOR" };
+    if (!BEBAN.has(benefitBeban)) return { error: "Beban harus PRINCIPAL, DISTRIBUTOR, atau SELLIN" };
     if (benefitType !== "BONUS_QTY" && !Number.isFinite(Number(benefitValue))) {
         return { error: `Nilai manfaat "${benefitValue}" bukan angka` };
     }

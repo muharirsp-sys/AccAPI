@@ -393,7 +393,7 @@ export function KerjaPeran({ ctx, daftar, tampilan, Detail = DetailBacaSaja, ata
     return (
         <div style={{ display: "grid", gap: 12 }}>
             {tampilan.length > 1 && (
-                <div className={`fi-segs ${atasPonsel}`} role="group" aria-label="Tampilan antrean">
+                <div className={`fi-segs ${atasPonsel}`} role="group" aria-label="Tampilan antrean" data-tur="segmen-antrean">
                     {tampilan.map((t) => (
                         <button key={t.kunci} type="button" aria-pressed={t.kunci === aktif.kunci} onClick={() => ctx.pilihSub(t.kunci)}>
                             {t.label}{daftar.load.data ? ` (${semua.filter(t.antrean).length})` : ""}
@@ -408,7 +408,7 @@ export function KerjaPeran({ ctx, daftar, tampilan, Detail = DetailBacaSaja, ata
                     {daftar.load.error} Yang tampil adalah hasil sebelumnya. <Button variant="tertiary" onClick={daftar.muatUlang}>Coba lagi</Button>
                 </MessageStrip>
             )}
-            <div ref={panelRef} className="fi-panel" style={{ padding: 0, overflow: "clip" }}>
+            <div ref={panelRef} className="fi-panel" style={{ padding: 0, overflow: "clip" }} data-tur="antrean">
                 <div className="fi-fcl-atas">
                 <FilterBar
                     title="Saringan"

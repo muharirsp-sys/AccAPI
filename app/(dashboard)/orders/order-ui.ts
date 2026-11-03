@@ -4,7 +4,7 @@
  * Caller: ./OrderMasuk.tsx (List Report), ./OrderBaru.tsx (form), ./OrderDetail.tsx (Object Page + dialog Antrekan).
  * Dependensi: lib/apiBase (FastAPI), lib/promo-ui (rupiah), lib/tampil (KOSONG), ../form-kontrol/lapangan (ambilJson, Jawaban),
  *   components/fiori/core (Tone).
- * Main Functions: fastapi, nextApi, sukses, tidakPasti, pesanJawaban (+ kode O1), nomorOrder, sumberOrder, statusOrder, STATUS_ANTREAN, nilai,
+ * Main Functions: fastapi, fastapiForm, nextApi, sukses, tidakPasti, pesanJawaban (+ kode O1), nomorOrder, sumberOrder, statusOrder, STATUS_ANTREAN, nilai,
  *   BELUM_PASTI, JEDA_TARIK_MENIT.
  * Side Effects: fetch ke FastAPI (/api/me untuk token CSRF, /orders…).
  */
@@ -49,6 +49,11 @@ export async function fastapi(method: "GET" | "POST", path: string, body?: unkno
         body: body === undefined ? undefined : JSON.stringify(body),
         headers: { "Content-Type": "application/json", ...(await csrfHeader()) },
     });
+}
+
+/** FastAPI dengan unggahan berkas (multipart); browser yang menulis batas multipart, jadi tanpa Content-Type. */
+export async function fastapiForm(path: string, form: FormData): Promise<Jawaban> {
+    return ambilJson(`${API_BASE}${path}`, { method: "POST", credentials: "include", body: form, headers: await csrfHeader() });
 }
 
 /** Rute Next (/api/orders/…) dengan JSON; bentuk jawaban sama dengan `fastapi`. */
