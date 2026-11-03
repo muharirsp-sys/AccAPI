@@ -3,7 +3,7 @@
  * ASLI pada Postgres = lib/form-kontrol/fk-msm-pg.test.ts. Data contoh generik. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hariBaku, kunciHari, paritasMinggu, pilihNamaAkun } from "./constants.ts";
+import { hariBaku, hariKerjaBulan, kunciHari, paritasMinggu, pilihNamaAkun } from "./constants.ts";
 import { hariIniWita, rentangWita } from "../../app/(dashboard)/form-kontrol/shared.tsx";
 import { cocokKodeRute, pilihPelangganRute } from "../order-cabang.ts";
 import { BATAS_KODE_RUTE, cocokkanTokoRute } from "../../components/order/order-cabang-api.ts";
@@ -20,6 +20,12 @@ test("butir 2: kunci hari tak peka huruf/spasi/tanda; bentuk baku unggah; hari t
     assert.equal(hariBaku(undefined), "");
     // KC1: isian tanpa huruf hari BUKAN kosong — ditolak per baris, bukan disimpan tanpa hari.
     for (const v of ["1", "-", "?", 1]) assert.equal(hariBaku(v), null, String(v));
+});
+
+test("owner 30 Okt: hari kerja kapasitas frekuensi = Senin–Sabtu bulan terpilih, bukan 24 tetap", () => {
+    assert.equal(hariKerjaBulan(2026, 11), 25, "Nov 2026: 30 hari − 5 Minggu");
+    assert.equal(hariKerjaBulan(2026, 10), 27, "Okt 2026: 31 hari − 4 Minggu");
+    assert.equal(hariKerjaBulan(2026, 2), 24, "Feb 2026: 28 hari − 4 Minggu");
 });
 
 test("owner 12 Okt: paritas minggu selang-seling terus dari minggu acuan (Senin 12 Okt 2026 = genap), bukan minggu ISO", () => {

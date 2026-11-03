@@ -71,7 +71,7 @@ Setiap sesi menyimpan agenda terchecklist, toko yang dibahas, penyebab, dan solu
 Dashboard & log kontrol SM atas seluruh SPV: cek JKS tiap hari, monitor laporan foto kunjungan, catat SPV yang produktif/tidak, coaching, identifikasi penyebab toko tidak order, catat penyimpangan & keterlambatan beserta tindak lanjut, dan Time Gone per SPV. Menegaskan: "tugas SM bukan mengontrol salesman langsung, tetapi memastikan SPV benar-benar mengontrol salesmannya".
 
 ### 3.8 Kontrol Frekuensi Kunjungan (Komponen 8)
-Konfigurasi & simulasi frekuensi: tiap toko punya frekuensi (1×/2×/4× per bulan) diturunkan dari pola minggu JKS. Simulasi kapasitas mengikuti infografis (24 hari kerja × 20 kunjungan/hari = 480 kunjungan → 480÷1 = 480 toko, 480÷2 = 240 toko). Sistem memberi peringatan **over-visit** (toko cukup 1×/bulan justru dikunjungi 2×) agar coverage optimal dan waktu tidak terbuang.
+Konfigurasi & simulasi frekuensi: tiap toko punya frekuensi (1×/2×/4× per bulan) diturunkan dari pola minggu JKS. Simulasi kapasitas mengikuti infografis (24 hari kerja × 20 kunjungan/hari = 480 kunjungan → 480÷1 = 480 toko, 480÷2 = 240 toko); sejak 30 Okt 2026 hari kerja = jumlah Senin–Sabtu bulan terpilih (`hariKerjaBulan`, mis. Nov 2026 = 25 → 500 slot), bukan 24 tetap. Sistem memberi peringatan **over-visit** (toko cukup 1×/bulan justru dikunjungi 2×) agar coverage optimal dan waktu tidak terbuang.
 
 ## 4. User Flow
 

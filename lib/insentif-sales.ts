@@ -37,8 +37,7 @@ export function getWorkdayProgress(ref: Date) {
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     let total = 0, passed = 0;
     for (let d = 1; d <= daysInMonth; d++) {
-        const day = new Date(year, month, d).getDay();
-        if (day === 0 || day === 6) continue;
+        if (new Date(year, month, d).getDay() === 0) continue; // Senin–Sabtu, sama dengan app/(dashboard)/insentif-sales/data.ts
         total++;
         if (d <= ref.getDate()) passed++;
     }

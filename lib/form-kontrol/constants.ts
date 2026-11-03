@@ -1,3 +1,11 @@
+/*
+ * Tujuan: Konstanta dan aturan murni Form Kontrol: alasan tidak order, hari kunjungan + kunci hari, paritas minggu, kunci nama SPV/SM,
+ *   kode JKS, item merchandising, hari kerja bulan (kapasitas frekuensi).
+ * Caller: lib/form-kontrol/{db,scope,luar-rute}.ts, app/api/form-kontrol/**, layar app/(dashboard)/form-kontrol.
+ * Dependensi: Tidak ada (TS murni).
+ * Main Functions: validateNoOrderReason, kunciHari, hariBaku, hariKerjaBulan, paritasMinggu, kunciNama, pilihNamaAkun, kodeJksUntuk, statusBintang.
+ * Side Effects: Tidak ada.
+ */
 export const NO_ORDER_REASONS = [
     { id: "R01", reasonCode: "R01", label: "Stok masih cukup",               category: "stok",    sortOrder: 1,  isActive: true },
     { id: "R02", reasonCode: "R02", label: "SKU belum lengkap",               category: "produk",  sortOrder: 2,  isActive: true },
@@ -35,6 +43,12 @@ export function validateNoOrderReason(
 }
 
 export const HARI_KUNJUNGAN = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"] as const;
+
+/** Hari kerja bulan `bulan` (1–12) = hari rute Senin–Sabtu, Minggu libur (owner 30 Okt 2026: kapasitas frekuensi ikut bulan, bukan 24 tetap).
+ *  ponytail: libur nasional belum dikecualikan (BL-48). */
+export const hariKerjaBulan = (tahun: number, bulan: number) =>
+    Array.from({ length: new Date(tahun, bulan, 0).getDate() }, (_, i) => new Date(tahun, bulan - 1, i + 1).getDay()).filter((h) => h !== 0).length;
+
 export const MINGGU_PATTERNS = ["ganjil", "genap", "all"] as const;
 
 /**

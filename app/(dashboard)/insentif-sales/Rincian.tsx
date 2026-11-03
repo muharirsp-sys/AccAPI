@@ -58,19 +58,19 @@ export function LegendaLaju({ timeGone }: { timeGone: number }) {
     );
 }
 
-/** Time Gone hari ini = data.getPeriodWorkdayProgress (Senin sampai Jumat, tanpa libur nasional); usulan Senin sampai Sabtu belum masuk. */
+/** Time Gone hari ini = data.getPeriodWorkdayProgress (Senin sampai Sabtu, tanpa libur nasional); usulan pengecualian libur nasional belum masuk. */
 export function CatatanTimeGone({ tg, label }: { tg: WorkdayProgress; label: string }) {
     return (
         <VariantNote bl="BL-48">
-            Time Gone {label}: {tg.passed} dari {tg.total} hari kerja ({tg.pct}%), dihitung Senin sampai Jumat tanpa libur nasional. Usulan: Sabtu ikut
-            dihitung dan libur nasional dikecualikan; persen Time Gone dan warna laju akan bergeser.
+            Time Gone {label}: {tg.passed} dari {tg.total} hari kerja ({tg.pct}%), dihitung Senin sampai Sabtu tanpa libur nasional. Usulan: libur
+            nasional dikecualikan; persen Time Gone dan warna laju akan bergeser.
         </VariantNote>
     );
 }
 
 /** Keterangan Time Gone untuk layar salesman: fakta hari ini saja, tanpa catatan usulan (audit desain 001 No 80). */
 export function KeteranganTimeGone({ tg, label }: { tg: WorkdayProgress; label: string }) {
-    return <p className="fi-small fi-muted">Time Gone {label}: {tg.passed} dari {tg.total} hari kerja ({tg.pct}%), dihitung Senin sampai Jumat tanpa libur nasional.</p>;
+    return <p className="fi-small fi-muted">Time Gone {label}: {tg.passed} dari {tg.total} hari kerja ({tg.pct}%), dihitung Senin sampai Sabtu tanpa libur nasional.</p>;
 }
 
 const STATUS_BAYAR: Record<string, { tone: Tone; label: string }> = {

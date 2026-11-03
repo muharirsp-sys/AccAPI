@@ -123,7 +123,8 @@ export default function TabFrekuensi({ scope }: { scope: Scope }) {
                 />
             )}
             <VariantNote bl="BL-48">
-                Kapasitas memakai 24 hari kerja × 20 kunjungan tetap dari server. &quot;Aktual&quot; menghitung hari yang punya baris status rute,
+                Kapasitas memakai hari kerja bulan terpilih (Senin sampai Sabtu, libur nasional belum dikecualikan) × 20 kunjungan dari server.
+                &quot;Aktual&quot; menghitung hari yang punya baris status rute,
                 termasuk baris &quot;tidak dikunjungi&quot;.
             </VariantNote>
         </>

@@ -223,13 +223,18 @@ assert.throws(() => normalizeTipe("zzz"), "tipe tak dikenal → throw");
 // --- periode dashboard ---
 assert.deepStrictEqual(
     getPeriodWorkdayProgress(2026, 6, new Date(2026, 6, 15)),
-    { passed: 22, total: 22, pct: 100 },
+    { passed: 26, total: 26, pct: 100 },
     "bulan lalu harus selesai 100%",
 );
 assert.deepStrictEqual(
     getPeriodWorkdayProgress(2026, 8, new Date(2026, 6, 15)),
-    { passed: 0, total: 21, pct: 0 },
+    { passed: 0, total: 26, pct: 0 },
     "bulan depan harus 0%",
+);
+assert.deepStrictEqual(
+    getPeriodWorkdayProgress(2026, 10, new Date(2026, 9, 30)),
+    { passed: 26, total: 27, pct: 96 },
+    "Sabtu ikut hari kerja: Jumat 30 Okt 2026 = 26 dari 27, bukan 22 dari 22",
 );
 
 // === Ambang AO bisa diganti target baris (setelan insentif_gt_ao_target = "file") ===
