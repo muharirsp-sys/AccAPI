@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem, offPayment } from "@/db/schema";
-import { canProcessFinancePayment, computeOffFinancePaymentSummary, computeOffPaymentSummary, generateOffPaymentProofPdf, getBatchWithItems, isOffPeriodClosedForBatch, normalizeOffPaymentMethod, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { PESAN_CARA_BAYAR, canProcessFinancePayment, computeOffFinancePaymentSummary, computeOffPaymentSummary, generateOffPaymentProofPdf, getBatchWithItems, isOffPeriodClosedForBatch, normalizeOffPaymentMethod, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
 const OFF_PAYMENT_CONFLICT = "AM023_OFF_PAYMENT_CONFLICT";
@@ -218,7 +218,7 @@ export async function POST(request: Request, context: Context) {
             // Review AM-022/023 LOW: konflik juga bisa dari status/periode yang berubah, bukan hanya pembayaran lain.
             return NextResponse.json({ ok: false, error: "Pengajuan ini baru saja berubah: pembayaran lain tercatat, atau status/periode berubah. Muat ulang lalu pilih item lagi." }, { status: 409 });
         }
-        if (message === "Jenis pembayaran hanya boleh Tunai atau Transfer.") {
+        if (message === PESAN_CARA_BAYAR) {
             return NextResponse.json({ ok: false, error: message }, { status: 400 });
         }
         console.error("[OFF FINANCE PAYMENT ERROR]", error);

@@ -19,6 +19,7 @@ import {
   terbilangRupiah,
 } from "./helpers";
 import { computeOffPaymentSummary, normalizePaymentMethod } from "./payments";
+import { bebanItem } from "./constants";
 import { getBatchWithItems } from "./data";
 
 const execFileAsync = promisify(execFile);
@@ -189,7 +190,8 @@ async function buildPdf(batch: OffBatchRow, items: OffItemRow[]) {
         item.barang || "-",
         money(item.nominal),
         item.caraBayar || "-",
-        item.type || "-",
+        // Penanda DM di depan: kolom Type hanya ±11 huruf (fitText), penanda di belakang terpotong.
+        `${bebanItem(item.beban) === "DM" ? "DM · " : ""}${item.type || "-"}`,
         formatDateForPrint(item.deadline),
         docsLabel(item),
         item.othersText || "-",
@@ -220,9 +222,10 @@ async function buildPdf(batch: OffBatchRow, items: OffItemRow[]) {
 
     if (page === totalPages - 1) {
       const summaryX = margin + 16;
-      const summaryY = 116;
+      // ponytail: kotak 104..192 tepat di antara tanda tangan (34..96) dan baris tabel ke-8 (195..218); baris baru = geser angka ini.
+      const summaryY = 104;
       const summaryWidth = 250;
-      const summaryHeight = 64;
+      const summaryHeight = 88;
       pdfPage.drawRectangle({
         x: summaryX,
         y: summaryY,
@@ -234,23 +237,35 @@ async function buildPdf(batch: OffBatchRow, items: OffItemRow[]) {
       });
       pdfPage.drawText("Summary Pembayaran", {
         x: summaryX + 10,
-        y: summaryY + 48,
+        y: summaryY + 72,
         size: 8,
         font: bold,
       });
       pdfPage.drawText(`Total: ${money(summary.total)}`, {
         x: summaryX + 10,
-        y: summaryY + 34,
+        y: summaryY + 58,
         size: 7.8,
         font: bold,
       });
       pdfPage.drawText(`Transfer: ${money(summary.transfer)}`, {
         x: summaryX + 10,
-        y: summaryY + 22,
+        y: summaryY + 46,
         size: 7.2,
         font,
       });
       pdfPage.drawText(`Tunai: ${money(summary.tunai)}`, {
+        x: summaryX + 10,
+        y: summaryY + 34,
+        size: 7.2,
+        font,
+      });
+      pdfPage.drawText(`Potong Tagihan: ${money(summary.potongTagihan)}`, {
+        x: summaryX + 10,
+        y: summaryY + 22,
+        size: 7.2,
+        font,
+      });
+      pdfPage.drawText(`Beban distributor (DM, tidak diklaim): ${money(summary.bebanDistributor)}`, {
         x: summaryX + 10,
         y: summaryY + 10,
         size: 7.2,
@@ -840,7 +855,8 @@ async function generatePrintWorkbook(batch: OffBatchRow, items: OffItemRow[]) {
     setCell(ws, `I${row}`, "-");
     setCell(ws, `J${row}`, normalizePaymentMethod(item.caraBayar));
     setCell(ws, `K${row}`, Number(item.nominal || 0));
-    setCell(ws, `L${row}`, item.type || "-");
+    // Kolom L: beban + tipe program (form Excel SPV menamai kolom ini "Type (CL / DM)"; tipe program tetap tercetak).
+    setCell(ws, `L${row}`, `${bebanItem(item.beban)} · ${item.type || "-"}`);
     setCell(ws, `M${row}`, docsLabel(item));
     setCell(ws, `N${row}`, formatDateForPrint(item.deadline));
   });
@@ -853,6 +869,8 @@ async function generatePrintWorkbook(batch: OffBatchRow, items: OffItemRow[]) {
   setCell(ws, `J${summaryRow + 1}`, summary.transfer);
   setCell(ws, `I${summaryRow + 2}`, "Tunai");
   setCell(ws, `J${summaryRow + 2}`, summary.tunai);
+  setCell(ws, `I${summaryRow + 3}`, "Potong Tagihan");
+  setCell(ws, `J${summaryRow + 3}`, summary.potongTagihan);
   setCell(ws, `B${summaryRow + 6}`, "SM");
   setCell(ws, `D${summaryRow + 6}`, "CLAIM");
   setCell(ws, `L${summaryRow + 6}`, "OPERATIONAL MANAGER");

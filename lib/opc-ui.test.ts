@@ -8,8 +8,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    LABEL_PERAN, PREDIKAT, SARINGAN_KOSONG, TAMPILAN, alurBatch, infoTahap, izinAksi, labelPeranAktor, pdfBoleh, saringBatch, subTampilan, tabEfektif,
-    tabTerlihat, tahapBatch, tanggalOpc, waktuWita, type BatchOpc,
+    LABEL_PERAN, PREDIKAT, SARINGAN_KOSONG, TAMPILAN, alurBatch, infoTahap, izinAksi, labelPeranAktor, pdfBoleh, progresBatch, saringBatch, subTampilan, tabEfektif,
+    tabTerlihat, tahapBatch, tanggalOpc, waktuWita, type BatchOpc, type ItemOpc,
 } from "./opc-ui";
 import { createOffDevBatches } from "./off-program-control/dev-fixtures";
 
@@ -179,4 +179,20 @@ test("format tanggal dd/mm/yyyy dan jam WITA", () => {
     assert.equal(tanggalOpc("2026-10-06"), "06/10/2026");
     assert.equal(tanggalOpc(null), "-");
     assert.equal(waktuWita("2026-10-06T01:40:00Z"), "06/10/2026 09.40");
+});
+
+test("progres pengajuan: nomor tahap sama dengan Flow; berkas awal sebelum final, ceklis final sesudahnya", () => {
+    const item = (over: Partial<ItemOpc> = {}): ItemOpc => ({
+        id: "i", itemNo: 1, noSurat: "S", namaProgram: "P", periode: null, toko: "T", barang: null, nominal: 1, caraBayar: "Tunai", type: "Display",
+        deadline: null, kwt: false, skp: false, fp: false, pc: false, foto: false, rekap: false, others: false, othersText: null, ...over,
+    });
+    const draf = progresBatch(b(), [item({ kwt: true }), item()]);
+    assert.equal(draf.tahap, 1);
+    assert.equal(draf.berkasAda, 1);
+    const bayar = progresBatch(b({ status: "OM Approved", ...disetujuiOm, financeStatus: "Waiting Payment" }), [item({ kwt: true })]);
+    assert.equal(bayar.tahap, 5); // Flow: Draf 1, SM 2, Klaim 3, OM 4, Bayar 5
+    assert.match(bayar.teksTahap, /^Tahap 5 dari 7/);
+    const final = progresBatch(b({ status: "Paid", ...disetujuiOm, financeStatus: "Paid", finalStatus: "Waiting Claim Final Verification" }), [item({ kwt: true })]);
+    assert.equal(final.berkasAda, 0); // ceklis final belum diisi Klaim, walau berkas awal ada
+    assert.equal(progresBatch(b({ status: "Cancelled by OM", omStatus: "Cancelled" }), []).teksTahap, "Dibatalkan");
 });

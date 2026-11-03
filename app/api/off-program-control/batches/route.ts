@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem, offPayment, claimWorkflow, claimSubmission } from "@/db/schema";
-import { buildSearchHaystack, computeOffFinancePaymentSummary, computeOffPaymentSummary, findOffNoSuratConflicts, getNextOffBatchNumber, getPrincipleByCode, getPrincipleByName, matchesSearch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, searchOffBatchIdsWithElasticsearch, writeOffAudit, type OffSearchDocument } from "@/lib/off-program-control";
+import { PESAN_ALASAN_LAINNYA, PESAN_CARA_BAYAR, bebanItem, buildSearchHaystack, catatanTipeLainnya, computeOffFinancePaymentSummary, computeOffPaymentSummary, findOffNoSuratConflicts, getNextOffBatchNumber, getPrincipleByCode, getPrincipleByName, matchesSearch, normalizeOffPaymentMethod, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, searchOffBatchIdsWithElasticsearch, writeOffAudit, type OffSearchDocument } from "@/lib/off-program-control";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
 // PPh masih HOLD. NOTE: PPh disiapkan nullable di level item/toko, tetapi
@@ -28,13 +28,6 @@ function asNumber(value: unknown) {
 
 function bool(value: unknown) {
     return value === true || value === "true" || value === 1 || value === "1";
-}
-
-function normalizeCaraBayar(value: unknown) {
-    const normalized = String(value || "").trim().toLowerCase();
-    if (normalized === "transfer") return "Transfer";
-    if (normalized === "tunai") return "Tunai";
-    throw new Error("Jenis pembayaran hanya boleh Tunai atau Transfer.");
 }
 
 function normalizeItemNoRekening(value: unknown, caraBayar: string) {
@@ -60,7 +53,7 @@ function normalizeItems(items: unknown[]) {
             row.type ?? row.normalizedType,
             row.originalType,
         );
-        const caraBayar = normalizeCaraBayar(row.caraBayar);
+        const caraBayar = normalizeOffPaymentMethod(row.caraBayar);
         return {
             id: randomUUID(),
             itemNo: index + 1,
@@ -77,6 +70,8 @@ function normalizeItems(items: unknown[]) {
             normalizedType: resolvedType.normalizedType,
             originalType: resolvedType.originalType || resolvedType.normalizedType,
             typeIsLegacy: resolvedType.typeIsLegacy,
+            typeNote: catatanTipeLainnya(resolvedType.normalizedType, row.typeNote, resolvedType.originalType, resolvedType.forcedToFallback),
+            beban: bebanItem(row.beban),
             // PPh HOLD: nullable, tidak memblokir submit.
             pphExempt: bool(row.pphExempt),
             pphAmount: nullableNumber(row.pphAmount),
@@ -301,7 +296,7 @@ export async function GET(request: Request) {
                 if (page.length < PAGE) break;
             }
         }
-        const summaries = new Map<string, { totalRows: number; totalNominal: number; transfer: number; tunai: number }>();
+        const summaries = new Map<string, { totalRows: number; totalNominal: number; transfer: number; tunai: number; potongTagihan: number; bebanDistributor: number }>();
         const paymentSummaries = new Map<string, { totalNominal: number; totalPaid: number; remainingAmount: number; isFullyPaid: boolean }>();
         const paymentsByBatch = new Map<string, Array<typeof offPayment.$inferSelect>>();
         const itemsByBatch = new Map<string, Array<typeof offBatchItem.$inferSelect>>();
@@ -314,6 +309,8 @@ export async function GET(request: Request) {
                 totalNominal: paymentSummary.total,
                 transfer: paymentSummary.transfer,
                 tunai: paymentSummary.tunai,
+                potongTagihan: paymentSummary.potongTagihan,
+                bebanDistributor: paymentSummary.bebanDistributor,
             });
             itemsByBatch.set(row.id, batchItems);
             paymentsByBatch.set(row.id, batchPayments);
@@ -602,7 +599,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true, batchId, noPengajuan, gelombang });
     } catch (error) {
         const message = error instanceof Error ? error.message : "";
-        if (message === "Jenis pembayaran hanya boleh Tunai atau Transfer." || message === "No Rekening wajib diisi untuk baris Transfer.") {
+        if (message === PESAN_CARA_BAYAR || message === PESAN_ALASAN_LAINNYA || message === "No Rekening wajib diisi untuk baris Transfer.") {
             return NextResponse.json({ ok: false, error: message }, { status: 400 });
         }
         if (message.toLowerCase().includes("unique") || message.toLowerCase().includes("no_pengajuan")) {

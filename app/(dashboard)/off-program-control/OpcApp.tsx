@@ -25,6 +25,7 @@ import { resolveOffRole, type OffAction, type OffTab } from "@/lib/off-program-c
 import { getOffDevBatchCount } from "@/lib/off-program-control/dev-fixtures";
 import { LABEL_PERAN, TAB_OPC, TAMPILAN, infoTahap, izinAksi, subTampilan, tabEfektif, tabPunyaDetail, tabTerlihat } from "@/lib/opc-ui";
 import { useDaftarBatch, type OpcKonteks, type PeranProps } from "./opc/Bersama";
+import { MisiAnda, TombolPanduan, useTurPertama } from "./opc/Pemandu";
 import Audit from "./opc/peran/Audit";
 import Keuangan from "./opc/peran/Keuangan";
 import Klaim from "./opc/peran/Klaim";
@@ -60,6 +61,8 @@ export default function OpcApp({ permKeys }: { permKeys: string[] }) {
     const daftar = useDaftarBatch({ peran, penggunaId, devBatchCount, aktif: siap && boleh.length > 0 });
 
     const [draf, setDraf] = useState(false);
+    // Tur pertama kali per peran: terbuka sendiri sekali sesudah antrean termuat (Pemandu, owner 3 Nov 2026).
+    const [turBuka, setTurBuka] = useTurPertama(peran, siap && !sesiGagal && boleh.length > 0 && daftar.load.status === "siap");
     const [tunda, setTunda] = useState<string | null>(null);
     useUnsavedGuard(draf);
 
@@ -111,11 +114,14 @@ export default function OpcApp({ permKeys }: { permKeys: string[] }) {
                     <>
                         {/* Ponsel (< 640 px): pencarian turun ke baris sendiri, lonceng tinggal ikon + jumlah di samping judul. */}
                         {/* Pintasan "/" (owner 27 Okt, audit No 142): Ctrl K tetap milik cari menu shell di semua halaman. */}
-                        <div className="min-w-0 flex-[0_1_18rem] max-sm:order-last max-sm:flex-[1_1_100%]">
+                        <div className="min-w-0 flex-[0_1_18rem] max-sm:order-last max-sm:flex-[1_1_100%]" data-tur="cari">
                             <OffGlobalSearch placeholder="Cari pengajuan (tekan /)" onSelect={(id) => ctx.bukaBatch(id)} muat={muat}
                                 items={daftar.batches.map((b) => ({ id: b.id, noPengajuan: b.noPengajuan, principleName: b.principleName, status: infoTahap(b).label, supervisorName: b.supervisorName }))} />
                         </div>
-                        <OffNotificationBell problems={daftar.masalah} onSelectBatch={(id) => ctx.bukaBatch(id)} hrefBatch={ctx.hrefBatch} muat={muat} />
+                        <span data-tur="lonceng" style={{ display: "inline-flex" }}>
+                            <OffNotificationBell problems={daftar.masalah} onSelectBatch={(id) => ctx.bukaBatch(id)} hrefBatch={ctx.hrefBatch} muat={muat} />
+                        </span>
+                        <TombolPanduan peran={peran} buka={turBuka} setBuka={setTurBuka} />
                     </>
                 )}
             </div>
@@ -160,8 +166,10 @@ export default function OpcApp({ permKeys }: { permKeys: string[] }) {
     return (
         <div className="fi-page">
             {head}
+            <MisiAnda peran={peran} boleh={boleh} daftar={daftar} onBukaBatch={(id) => ctx.bukaBatch(id)}
+                hrefTab={(t, sub) => urlDengan({ tab: t, batch: null, claimView: t === "claim" ? sub : null, view: t === "claim" ? null : sub })} aksi={null} />
             {boleh.length > 1 && (
-                <nav className="fi-subnav" aria-label="Antrean OFF Program Control">
+                <nav className="fi-subnav" aria-label="Antrean OFF Program Control" data-tur="tab-peran">
                     {TAB_OPC.filter((t) => boleh.includes(t.key)).map((t) => {
                         const href = urlDengan({ tab: t.key, batch: null, claimView: null, view: null });
                         const n = nTab(t.key);

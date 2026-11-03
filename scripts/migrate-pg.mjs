@@ -1001,6 +1001,17 @@ export const migrations = [
       END $silc$;
     `,
   },
+  {
+    // 2026-11-03. OFF Program Control: tipe "Lainnya" wajib alasan (type_note) dan beban per item (beban: CL ditagih ke
+    // principal | DM beban distributor). Keduanya nullable: NULL = data lama (tanpa alasan, beban CL). SQL = db/migrations/0039.
+    nama: "off_batch_item.type_note + beban",
+    sudahAda: `SELECT 1 FROM information_schema.columns
+               WHERE table_name = 'off_batch_item' AND column_name IN ('type_note', 'beban') HAVING count(*) = 2`,
+    sql: `
+      ALTER TABLE off_batch_item ADD COLUMN IF NOT EXISTS type_note TEXT;
+      ALTER TABLE off_batch_item ADD COLUMN IF NOT EXISTS beban TEXT;
+    `,
+  },
 ];
 
 async function main() {

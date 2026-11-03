@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem, offPayment } from "@/db/schema";
-import { computeOffFinancePaymentSummary, computeOffPaymentSummary, findOffNoSuratConflicts, getNextOffBatchNumber, getPrincipleByCode, getPrincipleByName, getBatchWithItems, isOffPeriodClosedForBatch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, writeOffAudit } from "@/lib/off-program-control";
+import { PESAN_ALASAN_LAINNYA, PESAN_CARA_BAYAR, bebanItem, catatanTipeLainnya, computeOffFinancePaymentSummary, computeOffPaymentSummary, findOffNoSuratConflicts, getNextOffBatchNumber, getPrincipleByCode, getPrincipleByName, getBatchWithItems, isOffPeriodClosedForBatch, normalizeOffPaymentMethod, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, writeOffAudit } from "@/lib/off-program-control";
 import { requirePermissionH, resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
@@ -30,13 +30,6 @@ function nullableNumber(value: unknown) {
 
 function bool(value: unknown) {
     return value === true || value === "true" || value === 1 || value === "1";
-}
-
-function normalizeCaraBayar(value: unknown) {
-    const normalized = String(value || "").trim().toLowerCase();
-    if (normalized === "transfer") return "Transfer";
-    if (normalized === "tunai") return "Tunai";
-    throw new Error("Jenis pembayaran hanya boleh Tunai atau Transfer.");
 }
 
 function normalizeItemNoRekening(value: unknown, caraBayar: string) {
@@ -88,6 +81,8 @@ function batchSummary(items: Array<typeof offBatchItem.$inferSelect>) {
         totalNominal: items.reduce((total, item) => total + Number(item.nominal || 0), 0),
         transfer: paymentSummary.transfer,
         tunai: paymentSummary.tunai,
+        potongTagihan: paymentSummary.potongTagihan,
+        bebanDistributor: paymentSummary.bebanDistributor,
     };
 }
 
@@ -248,12 +243,14 @@ export async function PATCH(request: Request, context: Context) {
                     toko: String(item.toko || ""),
                     barang: String(item.barang || ""),
                     nominal: asNumber(item.nominal),
-                    caraBayar: normalizeCaraBayar(item.caraBayar),
-                    noRekening: normalizeItemNoRekening(item.noRekening, normalizeCaraBayar(item.caraBayar)),
+                    caraBayar: normalizeOffPaymentMethod(item.caraBayar),
+                    noRekening: normalizeItemNoRekening(item.noRekening, normalizeOffPaymentMethod(item.caraBayar)),
                     type: resolvedType.normalizedType,
                     normalizedType: resolvedType.normalizedType,
                     originalType: resolvedType.originalType || resolvedType.normalizedType,
                     typeIsLegacy: resolvedType.typeIsLegacy,
+                    typeNote: catatanTipeLainnya(resolvedType.normalizedType, item.typeNote, resolvedType.originalType, resolvedType.forcedToFallback),
+                    beban: bebanItem(item.beban),
                     // PPh HOLD: nullable, tidak memblokir submit.
                     pphExempt: bool(item.pphExempt),
                     pphAmount: nullableNumber(item.pphAmount),
@@ -323,7 +320,7 @@ export async function PATCH(request: Request, context: Context) {
         if (message === OFF_BATCH_EDIT_CONFLICT) {
             return NextResponse.json({ ok: false, error: "Status batch baru saja berubah (terkunci/diproses/periode ditutup). Muat ulang sebelum mengedit." }, { status: 409 });
         }
-        if (message === "Jenis pembayaran hanya boleh Tunai atau Transfer." || message === "No Rekening wajib diisi untuk baris Transfer.") {
+        if (message === PESAN_CARA_BAYAR || message === PESAN_ALASAN_LAINNYA || message === "No Rekening wajib diisi untuk baris Transfer.") {
             return NextResponse.json({ ok: false, error: message }, { status: 400 });
         }
         return NextResponse.json({ ok: false, error: "Gagal menyimpan revisi batch." }, { status: 500 });

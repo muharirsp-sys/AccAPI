@@ -26,7 +26,20 @@ export const offPrinciples = [
     { name: "PURATOS, PT", code: "PURATOS" },
 ];
 
-export const offPaymentMethods = ["Transfer", "Tunai"] as const;
+/** Cara bayar ke toko. "Potong Tagihan" = nilai dipotongkan dari piutang toko (owner 3 Nov 2026; 202 baris form SPV Excel). */
+export const offPaymentMethods = ["Transfer", "Tunai", "Potong Tagihan"] as const;
+
+/**
+ * Beban biaya per item (kolom "Type (CL / DM)" form Excel SPV). CL = ditagih ke principal lewat Claim Workflow;
+ * DM = dana marketing / SDS / budget distributor sendiri, TIDAK ditagih ke principal. Nilai kosong di DB = CL (data lama).
+ */
+export const OFF_BEBAN = {
+    CL: { label: "Ditagih ke principal (CL)", singkat: "CL" },
+    DM: { label: "Beban distributor (DM)", singkat: "DM" },
+} as const;
+export type OffBeban = keyof typeof OFF_BEBAN;
+/** Normalisasi beban: hanya "DM" yang dikenali sebagai beban distributor; selain itu CL. */
+export const bebanItem = (value: unknown): OffBeban => (String(value ?? "").trim().toUpperCase() === "DM" ? "DM" : "CL");
 
 export const offStatuses = {
     draft: "Draft",

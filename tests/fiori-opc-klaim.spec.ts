@@ -143,6 +143,10 @@ const antrean = (page: Page) => page.locator("main").getByRole("list", { name: /
 const kolomBatch = (page: Page) => page.locator("main").getByRole("region", { name: "Batch terbuka" });
 
 test.beforeEach(async ({ page }) => {
+    // Pemandu: tur pertama kali (opc/Pemandu.tsx) menutup layar dengan penahan klik; uji lama menganggapnya sudah dilihat.
+    await page.addInitScript(() => {
+        try { for (const p of ["admin", "manager", "supervisor", "sales_manager", "claim", "operational_manager", "finance", "sales", "unknown"]) localStorage.setItem(`opc-tur-v1:${p}`, "1"); } catch { /* */ }
+    });
     test.setTimeout(240_000); // mode dev: kompilasi rute pertama (OPC, Claim Workflow) lambat
     await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "light" });
     page.on("dialog", (d) => {

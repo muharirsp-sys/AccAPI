@@ -18,19 +18,23 @@ import { useCallback, useId, useMemo, useRef, useState, type ReactNode } from "r
 import { Pencil, Plus, Send, Trash2 } from "lucide-react";
 import { Button, ListItem, MessageStrip, ResponsiveTable, StatusBadge, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
-import { offPaymentMethods, offPrinciples } from "@/lib/off-program-control/constants";
+import { OFF_BEBAN, offPaymentMethods, offPrinciples } from "@/lib/off-program-control/constants";
 import { getPrincipleByName } from "@/lib/off-program-control/helpers";
+import { computeOffPaymentSummary, normalizePaymentMethod, type OffRingkasBayar } from "@/lib/off-program-control/payments";
 import { SLA_DAYS } from "@/lib/off-program-control/problematic";
-import { OFF_PROGRAM_TYPES, resolveProgramType } from "@/lib/off-program-control/program-type";
-import { kelengkapanItem, labelStatus, tanggalOpc, type BatchOpc, type ItemOpc } from "@/lib/opc-ui";
+import { INFO_TIPE, OFF_PROGRAM_TYPES, TIPE_LAINNYA, labelTipe, resolveProgramType } from "@/lib/off-program-control/program-type";
+import { BANTUAN_KOLOM, faktaBayar, kelengkapanItem, labelBeban, labelStatus, tanggalOpc, teksBayar, type BatchOpc, type ItemOpc } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { KOSONG } from "@/lib/tampil";
 import { TulisTidakPasti, kirimTulis, pesanTidakPasti, tanganiTulis } from "../Bersama";
+import { BantuanTipe } from "../PemilihTipe";
 
 /** Satu baris item di editor (SupervisorBulkRow kode lama). Nominal tetap teks apa adanya; server yang mengurai. */
 export type Baris = {
     id: string; noSurat: string; namaProgram: string; periodeAwal: string; periodeAkhir: string; toko: string; barang: string;
     nominal: string; caraBayar: string; noRekening: string; type: string; originalType: string; typeIsLegacy: boolean; pphExempt: boolean;
+    /** Alasan bila tipe "Lainnya". */ typeNote: string;
+    /** "CL" ditagih ke principal | "DM" beban distributor. */ beban: string;
     deadline: string; kwt: boolean; skp: boolean; fp: boolean; pc: boolean; foto: boolean; rekap: boolean; others: boolean; othersText: string;
 };
 export type Setup = { supervisorName: string; principleName: string; bulan: string; tahun: string };
@@ -38,7 +42,7 @@ export type Setup = { supervisorName: string; principleName: string; bulan: stri
 export type NomorAsli = { noPengajuan: string; gelombang: string; principleCode: string; bulan: string; tahun: string };
 export type Pesan = { tone: "pos" | "neg" | "info" | "warn"; judul: string; isi?: ReactNode };
 /** Hasil kirim (submitResult kode lama). `sudahAda` = jawaban ALREADY_SUBMITTED: pengajuan ini sudah pernah dikirim (kode lama). */
-export type HasilKirim = { batchId: string; noPengajuan: string; rowCount: number; total: number; transfer: number; tunai: number; pdfUrl: string; sudahAda?: boolean };
+export type HasilKirim = { batchId: string; noPengajuan: string; rowCount: number; bayar: OffRingkasBayar; pdfUrl: string; sudahAda?: boolean };
 type KonflikNoSurat = { noSurat: string; batchId: string; noPengajuan: string; principleCode: string; principleName: string; status: string };
 type Duplikat = { mode: "draft" | "submit"; principleName: string; conflicts: KonflikNoSurat[] };
 type Isi = { setup: Setup; rows: Baris[] };
@@ -68,25 +72,12 @@ export function parseUiCurrency(value: string | number) {
     return Number(cleaned) || 0;
 }
 
-/** normalizeUiPaymentMethod (kode lama). */
-function caraBayar(value: string) {
-    const n = value.trim().toLowerCase();
-    if (n === "transfer") return "Transfer";
-    if (n === "tunai") return "Tunai";
-    return value;
-}
+/** normalizeUiPaymentMethod (kode lama) + Potong Tagihan: nilai lain apa adanya. */
+const caraBayar = (value: string) => normalizePaymentMethod(value);
 
-/** computeUiPaymentSummary (kode lama). */
-function ringkasBayar(items: Array<{ nominal: string | number; caraBayar: string }>) {
-    return items.reduce((s, item) => {
-        const nominal = parseUiCurrency(item.nominal);
-        s.total += nominal;
-        const m = caraBayar(item.caraBayar);
-        if (m === "Transfer") s.transfer += nominal;
-        if (m === "Tunai") s.tunai += nominal;
-        return s;
-    }, { total: 0, transfer: 0, tunai: 0 });
-}
+/** computeUiPaymentSummary (kode lama): nominal teks diurai dulu, lalu ringkasan bersama (cara bayar + beban DM). */
+const ringkasBayar = (items: Array<{ nominal: string | number; caraBayar: string; beban?: string }>) =>
+    computeOffPaymentSummary(items.map((i) => ({ nominal: parseUiCurrency(i.nominal), caraBayar: i.caraBayar, beban: i.beban })));
 
 // ponytail: id baris baru dari penghitung modul (bukan Date.now() saat render); hanya kunci React, tidak dikirim ke server.
 let urutBaris = 0;
@@ -95,7 +86,7 @@ export function barisKosong(): Baris {
     urutBaris += 1;
     return {
         id: `baris-baru-${urutBaris}`, noSurat: "", namaProgram: "", periodeAwal: "", periodeAkhir: "", toko: "", barang: "", nominal: "",
-        caraBayar: "Transfer", noRekening: "", type: "", originalType: "", typeIsLegacy: false, pphExempt: false, deadline: "",
+        caraBayar: "Transfer", noRekening: "", type: "", originalType: "", typeIsLegacy: false, pphExempt: false, typeNote: "", beban: "CL", deadline: "",
         kwt: false, skp: false, fp: false, pc: false, foto: false, rekap: false, others: false, othersText: "",
     };
 }
@@ -112,7 +103,7 @@ export function barisDariItem(item: ItemOpc, index: number): Baris {
         type: resolved.forcedToFallback ? "" : resolved.normalizedType,
         originalType: item.originalType || String(item.type || ""),
         typeIsLegacy: Boolean(item.typeIsLegacy) || resolved.typeIsLegacy,
-        pphExempt: Boolean(item.pphExempt), deadline: item.deadline || "",
+        pphExempt: Boolean(item.pphExempt), typeNote: item.typeNote || "", beban: labelBeban(item.beban), deadline: item.deadline || "",
         kwt: Boolean(item.kwt), skp: Boolean(item.skp), fp: Boolean(item.fp), pc: Boolean(item.pc), foto: Boolean(item.foto), rekap: Boolean(item.rekap),
         others: Boolean(item.others), othersText: item.othersText || "",
     };
@@ -137,6 +128,8 @@ function itemPayload(rows: Baris[]) {
         originalType: row.originalType || row.type,
         // PPh masih HOLD; hanya kirim penanda exempt. Tidak memblokir submit.
         pphExempt: row.pphExempt,
+        typeNote: row.type === TIPE_LAINNYA ? row.typeNote.trim() : "",
+        beban: row.beban,
         deadline: row.deadline,
         kwt: row.kwt, skp: row.skp, fp: row.fp, pc: row.pc, foto: row.foto, rekap: row.rekap, others: row.others,
         othersText: row.othersText,
@@ -145,6 +138,7 @@ function itemPayload(rows: Baris[]) {
 
 const TIPE = OFF_PROGRAM_TYPES as readonly string[];
 const butuhRekening = (r: Baris) => caraBayar(r.caraBayar) === "Transfer" && !r.noRekening.trim();
+const butuhAlasan = (r: Baris) => r.type === TIPE_LAINNYA && !r.typeNote.trim();
 
 /**
  * Validasi isian sebelum simpan/kirim (findInvalidTypeRowNumber + findMissingTransferRekeningRowNumber, kode lama):
@@ -153,8 +147,10 @@ const butuhRekening = (r: Baris) => caraBayar(r.caraBayar) === "Transfer" && !r.
 function galatIsian(rows: Baris[], mode: "draft" | "submit"): string | undefined {
     const t = rows.findIndex((r) => !TIPE.includes(r.type));
     if (t !== -1) {
-        return `Tipe program pada item ${t + 1} wajib dipilih dari daftar (Display/Visibility/Promo On Store/Event/Sample) sebelum ${mode === "draft" ? "disimpan" : "dikirim ke Sales Manager"}.`;
+        return `Tipe program pada item ${t + 1} wajib dipilih dari daftar sebelum ${mode === "draft" ? "disimpan" : "dikirim ke Sales Manager"}.`;
     }
+    const l = rows.findIndex(butuhAlasan);
+    if (l !== -1) return `Alasan tipe Lainnya pada item ${l + 1} wajib diisi.`;
     const r = rows.findIndex(butuhRekening);
     if (r !== -1) return `No Rekening pada item ${r + 1} wajib diisi karena Cara Bayar adalah Transfer.`;
     return undefined;
@@ -171,20 +167,21 @@ function galatSetup(s: Setup): string | undefined {
 }
 
 /** Tanda per item (Default it03: "satu item ditandai") dari aturan validasi yang sama. */
-function masalahBaris(r: Baris): { tipe?: string; rekening?: string } {
+function masalahBaris(r: Baris): { tipe?: string; rekening?: string; alasan?: string } {
     return {
         tipe: TIPE.includes(r.type) ? undefined : r.originalType ? `Tipe lama "${r.originalType}" perlu dipilih ulang.` : "Pilih tipe program.",
         rekening: butuhRekening(r) ? "Wajib diisi karena cara bayar Transfer." : undefined,
+        alasan: butuhAlasan(r) ? "Wajib diisi untuk tipe Lainnya." : undefined,
     };
 }
-const adaMasalah = (r: Baris) => { const m = masalahBaris(r); return Boolean(m.tipe || m.rekening); };
+const adaMasalah = (r: Baris) => { const m = masalahBaris(r); return Boolean(m.tipe || m.rekening || m.alasan); };
 /** Item berisi (bukan baris kosong bawaan): hapusnya ditanya dulu. */
-const terisi = (r: Baris) => Object.entries(r).some(([k, v]) => k !== "id" && v !== "" && v !== false && !(k === "caraBayar" && v === "Transfer"));
+const terisi = (r: Baris) => Object.entries(r).some(([k, v]) => k !== "id" && v !== "" && v !== false && !(k === "caraBayar" && v === "Transfer") && !(k === "beban" && v === "CL"));
 
 const LABEL_ISIAN: Array<[keyof Baris, string]> = [
     ["noSurat", "No Surat"], ["namaProgram", "nama program"], ["periodeAwal", "periode awal"], ["periodeAkhir", "periode akhir"], ["toko", "toko"],
     ["barang", "barang"], ["nominal", "nominal"], ["caraBayar", "cara bayar"], ["noRekening", "no rekening"], ["type", "tipe"],
-    ["pphExempt", "tidak kena PPh"], ["deadline", "deadline"], ["kwt", "KWT"], ["skp", "SKP"], ["fp", "FP"], ["pc", "PC"], ["foto", "foto"],
+    ["typeNote", "alasan tipe Lainnya"], ["beban", "beban"], ["pphExempt", "tidak kena PPh"], ["deadline", "deadline"], ["kwt", "KWT"], ["skp", "SKP"], ["fp", "FP"], ["pc", "PC"], ["foto", "foto"],
     ["rekap", "rekap"], ["others", "lainnya"], ["othersText", "dokumen lainnya"],
 ];
 const nilai = (v: unknown) => (typeof v === "boolean" ? (v ? "ya" : "tidak") : v === "" ? "kosong" : /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? tanggalOpc(String(v)) : String(v));
@@ -284,9 +281,9 @@ export function useFormSpv(o: OpsiForm) {
     const bayar = ringkasBayar(rows);
 
     const ubahSetup = (u: Partial<Setup>) => setSetup((s) => ({ ...s, ...u }));
-    /** updateRow (kode lama): Tunai mengosongkan No Rekening. */
+    /** updateRow (kode lama): selain Transfer (Tunai, Potong Tagihan) mengosongkan No Rekening. */
     const ubahBaris = <K extends keyof Baris>(id: string, field: K, value: Baris[K]) => setRows((cur) => cur.map((r) => (r.id === id
-        ? { ...r, [field]: value, ...(field === "caraBayar" && caraBayar(String(value)) === "Tunai" ? { noRekening: "" } : {}) }
+        ? { ...r, [field]: value, ...(field === "caraBayar" && caraBayar(String(value)) !== "Transfer" ? { noRekening: "" } : {}) }
         : r)));
     /** updateRowType (kode lama): memilih tipe valid melepas penanda "Data Lama". */
     const ubahTipe = (id: string, value: string) => setRows((cur) => cur.map((r) => (r.id === id ? { ...r, type: value, typeIsLegacy: false } : r)));
@@ -388,7 +385,7 @@ export function useFormSpv(o: OpsiForm) {
             setDialogKirim(false);
             o.onSudahDikirim({
                 batchId: String(saveData.existingBatchId || ""), noPengajuan: String(saveData.noPengajuan || generatedNo), rowCount: items.length,
-                total: lokal.total, transfer: lokal.transfer, tunai: lokal.tunai, pdfUrl: String(saveData.pdfUrl || ""), sudahAda: true,
+                bayar: lokal, pdfUrl: String(saveData.pdfUrl || ""), sudahAda: true,
             });
             return;
         }
@@ -417,16 +414,15 @@ export function useFormSpv(o: OpsiForm) {
             o.onGagalKirim({ batchId: savedBatchId, noPengajuan: savedNo }, String(submitData.error || "Gagal mengirim batch"), true);
             return;
         }
-        const ringkas = submitData.summary as { total?: number; transfer?: number; tunai?: number } | undefined;
+        const ringkas = submitData.summary as Partial<OffRingkasBayar> | undefined;
         setDialogKirim(false);
         setDuplikat(null);
         o.onTerkirim({
             batchId: String(submitData.batchId || savedBatchId),
             noPengajuan: String(submitData.noPengajuan || savedNo),
             rowCount: items.length,
-            total: Number(ringkas?.total || lokal.total),
-            transfer: Number(ringkas?.transfer || lokal.transfer),
-            tunai: Number(ringkas?.tunai || lokal.tunai),
+            // Ringkasan server dulu (bila terisi), selebihnya hitungan lokal: sama dengan perilaku lama per angka.
+            bayar: { ...lokal, ...Object.fromEntries(Object.entries(ringkas ?? {}).filter(([, v]) => Number(v) > 0)) },
             pdfUrl: String(submitData.pdfUrl || ""),
         });
     };
@@ -448,17 +444,17 @@ export function SetupBatch({ f, catatan }: { f: FormSpv; catatan: string }) {
     return (
         <div className="fi-sect-in">
             <div className="fi-formgrid">
-                <FormField label="Nama supervisor">{(a) => <input {...a} className="fi-input" value={f.setup.supervisorName} onChange={(e) => f.ubahSetup({ supervisorName: e.target.value })} />}</FormField>
-                <FormField label="Principal" required>{(a) => (
-                    <select {...a} className="fi-input" value={f.setup.principleName} onChange={(e) => f.ubahSetup({ principleName: e.target.value })}>
+                <FormField label="Nama supervisor" help={BANTUAN_KOLOM.supervisorName}>{(a) => <input {...a} className="fi-input" value={f.setup.supervisorName} onChange={(e) => f.ubahSetup({ supervisorName: e.target.value })} />}</FormField>
+                <FormField label="Principal" required help={BANTUAN_KOLOM.principal}>{(a) => (
+                    <select {...a} className="fi-input" value={f.setup.principleName} onChange={(e) => f.ubahSetup({ principleName: e.target.value })} data-tur="spv-principal">
                         <option value="">Pilih principal…</option>
                         {offPrinciples.map((p) => <option key={p.code} value={p.name}>{p.name}</option>)}
                     </select>
                 )}</FormField>
-                <FormField label="Kode principal">{(a) => <input {...a} className="fi-input fi-mono" readOnly value={f.kode} />}</FormField>
-                <FormField label="Gelombang otomatis">{(a) => <input {...a} className="fi-input fi-mono" readOnly value={f.generatedNo.split("/")[0] ?? ""} />}</FormField>
-                <FormField label="Bulan" required={!f.periodeTetap}>{(a) => <input {...a} className="fi-input fi-tnum" readOnly={f.periodeTetap} inputMode="numeric" maxLength={2} placeholder="MM" value={f.setup.bulan} onChange={(e) => f.ubahSetup({ bulan: e.target.value.replace(/\D/g, "") })} />}</FormField>
-                <FormField label="Tahun" required={!f.periodeTetap}>{(a) => <input {...a} className="fi-input fi-tnum" readOnly={f.periodeTetap} inputMode="numeric" maxLength={4} placeholder="YYYY" value={f.setup.tahun} onChange={(e) => f.ubahSetup({ tahun: e.target.value.replace(/\D/g, "") })} />}</FormField>
+                <FormField label="Kode principal" help={BANTUAN_KOLOM.kodePrincipal}>{(a) => <input {...a} className="fi-input fi-mono" readOnly value={f.kode} />}</FormField>
+                <FormField label="Gelombang otomatis" help={BANTUAN_KOLOM.gelombang}>{(a) => <input {...a} className="fi-input fi-mono" readOnly value={f.generatedNo.split("/")[0] ?? ""} />}</FormField>
+                <FormField label="Bulan" required={!f.periodeTetap} help={BANTUAN_KOLOM.bulan}>{(a) => <input {...a} className="fi-input fi-tnum" readOnly={f.periodeTetap} inputMode="numeric" maxLength={2} placeholder="MM" value={f.setup.bulan} onChange={(e) => f.ubahSetup({ bulan: e.target.value.replace(/\D/g, "") })} />}</FormField>
+                <FormField label="Tahun" required={!f.periodeTetap} help={BANTUAN_KOLOM.tahun}>{(a) => <input {...a} className="fi-input fi-tnum" readOnly={f.periodeTetap} inputMode="numeric" maxLength={4} placeholder="YYYY" value={f.setup.tahun} onChange={(e) => f.ubahSetup({ tahun: e.target.value.replace(/\D/g, "") })} />}</FormField>
             </div>
             <div className="fi-field">
                 <span className="fi-caption">{f.nomorTetap ? "No pengajuan" : "No pengajuan (perkiraan)"}</span>
@@ -483,7 +479,8 @@ export function EditorItem({ f }: { f: FormSpv }) {
     const r = f.rows.find((x) => x.id === f.terpilih) ?? f.rows[0];
     const n = nomor.get(r.id) ?? 1;
     const m = masalahBaris(r);
-    const tunai = caraBayar(r.caraBayar) === "Tunai";
+    // No rekening hanya untuk Transfer; Tunai dan Potong Tagihan tidak memakainya.
+    const tanpaRekening = caraBayar(r.caraBayar) !== "Transfer";
     const nDitandai = f.rows.filter(adaMasalah).length;
     const pilih = (id: string) => {
         f.setTerpilih(id);
@@ -504,7 +501,7 @@ export function EditorItem({ f }: { f: FormSpv }) {
         },
         { key: "toko", header: "Toko", cell: (x) => x.toko || KOSONG },
         { key: "nominal", header: "Nominal", align: "end", cell: (x) => <span className="fi-tnum">{rupiah(parseUiCurrency(x.nominal))}</span> },
-        { key: "bayar", header: "Bayar · tipe", secondary: true, cell: (x) => `${x.caraBayar || KOSONG} · ${x.type || "tipe belum dipilih"}` },
+        { key: "bayar", header: "Bayar · tipe · beban", secondary: true, cell: (x) => `${x.caraBayar || KOSONG} · ${x.type ? labelTipe(x.type) : "tipe belum dipilih"} · ${x.beban}` },
         { key: "lengkap", header: "Kelengkapan", secondary: true, cell: (x) => kelengkapanItem(x) },
         {
             key: "ubah", header: "Aksi", cell: (x) => (
@@ -517,17 +514,17 @@ export function EditorItem({ f }: { f: FormSpv }) {
             <div className="fi-sect-in" style={{ paddingBottom: 0 }}>
                 <div className="fi-btnrow">
                     <span className="fi-small fi-tnum">
-                        {f.rows.length} item · {rupiah(f.bayar.total)} (Transfer {rupiah(f.bayar.transfer)} · Tunai {rupiah(f.bayar.tunai)})
+                        {f.rows.length} item · {rupiah(f.bayar.total)} ({teksBayar(f.bayar)})
                         {nDitandai > 0 ? ` · ${nDitandai} perlu dilengkapi` : ""}
                     </span>
                     <span style={{ flex: 1 }} />
-                    <Button icon={<Plus className="fi-icon" aria-hidden />} onClick={f.tambah}>Tambah item</Button>
+                    <Button icon={<Plus className="fi-icon" aria-hidden />} onClick={f.tambah} data-tur="spv-tambah-item">Tambah item</Button>
                 </div>
             </div>
             <ResponsiveTable title="Daftar item" columns={kolom} rows={f.rows} rowKey={(x) => x.id} empty={{ title: "Belum ada item" }}
                 mobileItem={(x) => (
                     <ListItem doc={`Item ${nomor.get(x.id)} · ${x.noSurat || "tanpa No Surat"}`} amount={rupiah(parseUiCurrency(x.nominal))} title={x.toko || "Toko belum diisi"}
-                        meta={[x.namaProgram, x.caraBayar, x.type || "tipe belum dipilih"].filter(Boolean).join(" · ")} badge={tanda(x)}
+                        meta={[x.namaProgram, x.caraBayar, x.type ? labelTipe(x.type) : "tipe belum dipilih", x.beban === "DM" ? "beban distributor" : ""].filter(Boolean).join(" · ")} badge={tanda(x)}
                         current={x.id === r.id} onClick={() => pilih(x.id)} />
                 )} />
             <section id={formId} className="fi-sect-in" aria-label={`Ubah item ${n}`} style={{ borderTop: "1px solid var(--line)" }}>
@@ -538,34 +535,50 @@ export function EditorItem({ f }: { f: FormSpv }) {
                         onClick={() => (terisi(r) ? setHapus(r) : f.hapus(r.id))}>Hapus item</Button>
                 </div>
                 <div className="fi-formgrid">
-                    <FormField label="No Surat">{(a) => <input {...a} className="fi-input fi-mono" value={r.noSurat} onChange={(e) => f.ubahBaris(r.id, "noSurat", e.target.value)} />}</FormField>
-                    <FormField label="Nama program">{(a) => <input {...a} className="fi-input" value={r.namaProgram} onChange={(e) => f.ubahBaris(r.id, "namaProgram", e.target.value)} />}</FormField>
-                    <FormField label="Periode awal">{(a) => <input {...a} className="fi-input" type="date" value={r.periodeAwal} onChange={(e) => f.ubahBaris(r.id, "periodeAwal", e.target.value)} />}</FormField>
-                    <FormField label="Periode akhir">{(a) => <input {...a} className="fi-input" type="date" value={r.periodeAkhir} onChange={(e) => f.ubahBaris(r.id, "periodeAkhir", e.target.value)} />}</FormField>
-                    <FormField label="Toko">{(a) => <input {...a} className="fi-input" value={r.toko} onChange={(e) => f.ubahBaris(r.id, "toko", e.target.value)} />}</FormField>
-                    <FormField label="Barang">{(a) => <input {...a} className="fi-input" value={r.barang} onChange={(e) => f.ubahBaris(r.id, "barang", e.target.value)} />}</FormField>
-                    <FormField label="Nominal">{(a) => <input {...a} className="fi-input fi-tnum" inputMode="decimal" placeholder="Rp 0" value={r.nominal} onChange={(e) => f.ubahBaris(r.id, "nominal", e.target.value)} />}</FormField>
-                    <FormField label="Cara bayar">{(a) => (
+                    <FormField label="No Surat" help={BANTUAN_KOLOM.noSurat}>{(a) => <input {...a} className="fi-input fi-mono" value={r.noSurat} onChange={(e) => f.ubahBaris(r.id, "noSurat", e.target.value)} />}</FormField>
+                    <FormField label="Nama program" help={BANTUAN_KOLOM.namaProgram}>{(a) => <input {...a} className="fi-input" value={r.namaProgram} onChange={(e) => f.ubahBaris(r.id, "namaProgram", e.target.value)} data-tur="spv-nama-program" />}</FormField>
+                    <FormField label="Periode awal" help={BANTUAN_KOLOM.periodeAwal}>{(a) => <input {...a} className="fi-input" type="date" value={r.periodeAwal} onChange={(e) => f.ubahBaris(r.id, "periodeAwal", e.target.value)} />}</FormField>
+                    <FormField label="Periode akhir" help={BANTUAN_KOLOM.periodeAkhir}>{(a) => <input {...a} className="fi-input" type="date" value={r.periodeAkhir} onChange={(e) => f.ubahBaris(r.id, "periodeAkhir", e.target.value)} />}</FormField>
+                    <FormField label="Toko" help={BANTUAN_KOLOM.toko}>{(a) => <input {...a} className="fi-input" value={r.toko} onChange={(e) => f.ubahBaris(r.id, "toko", e.target.value)} />}</FormField>
+                    <FormField label="Barang" help={BANTUAN_KOLOM.barang}>{(a) => <input {...a} className="fi-input" value={r.barang} onChange={(e) => f.ubahBaris(r.id, "barang", e.target.value)} />}</FormField>
+                    <FormField label="Nominal" help={BANTUAN_KOLOM.nominal}>{(a) => <input {...a} className="fi-input fi-tnum" inputMode="decimal" placeholder="Rp 0" value={r.nominal} onChange={(e) => f.ubahBaris(r.id, "nominal", e.target.value)} />}</FormField>
+                    <FormField label="Cara bayar" help={BANTUAN_KOLOM.caraBayar}>{(a) => (
                         <select {...a} className="fi-input" value={r.caraBayar} onChange={(e) => f.ubahBaris(r.id, "caraBayar", e.target.value)}>
                             {offPaymentMethods.map((x) => <option key={x} value={x}>{x}</option>)}
                         </select>
                     )}</FormField>
-                    <FormField label="No rekening" required={!tunai} error={m.rekening} help={tunai ? "Tidak dipakai untuk Tunai." : undefined}>{(a) => (
-                        <input {...a} className="fi-input fi-mono" readOnly={tunai} placeholder={tunai ? "-" : "No rekening tujuan"} value={r.noRekening} onChange={(e) => f.ubahBaris(r.id, "noRekening", e.target.value)} />
+                    <FormField label="No rekening" required={!tanpaRekening} error={m.rekening}
+                        help={tanpaRekening ? `Tidak dipakai untuk ${caraBayar(r.caraBayar)}.` : BANTUAN_KOLOM.noRekening}>{(a) => (
+                        <input {...a} className="fi-input fi-mono" readOnly={tanpaRekening} placeholder={tanpaRekening ? "-" : "No rekening tujuan"} value={r.noRekening} onChange={(e) => f.ubahBaris(r.id, "noRekening", e.target.value)} />
                     )}</FormField>
-                    <FormField label="Tipe program" required error={m.tipe} help={r.typeIsLegacy && r.type ? `Data lama${r.originalType ? ` (${r.originalType})` : ""}.` : undefined}>{(a) => (
-                        <select {...a} className="fi-input" value={r.type} onChange={(e) => f.ubahTipe(r.id, e.target.value)}>
-                            <option value="">Pilih tipe…</option>
-                            {OFF_PROGRAM_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                    <FormField label="Beban" help={BANTUAN_KOLOM.beban}>{(a) => (
+                        <select {...a} className="fi-input" value={r.beban} onChange={(e) => f.ubahBaris(r.id, "beban", e.target.value)} data-tur="spv-beban">
+                            {Object.entries(OFF_BEBAN).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                         </select>
                     )}</FormField>
-                    <FormField label="Deadline">{(a) => <input {...a} className="fi-input" type="date" value={r.deadline} onChange={(e) => f.ubahBaris(r.id, "deadline", e.target.value)} />}</FormField>
+                    <FormField label="Deadline" help={BANTUAN_KOLOM.deadline}>{(a) => <input {...a} className="fi-input" type="date" value={r.deadline} onChange={(e) => f.ubahBaris(r.id, "deadline", e.target.value)} />}</FormField>
                     <div className="fi-field">
                         <span className="fi-label">PPh</span>
                         {/* NOTE: PPh disiapkan nullable di level item/toko, tetapi perhitungan final ditahan karena masih terkait format kwitansi setelah pembayaran. */}
                         <label className="fi-check"><input type="checkbox" checked={r.pphExempt} onChange={(e) => f.ubahBaris(r.id, "pphExempt", e.target.checked)} />Tidak kena PPh</label>
+                        <p className="fi-help">{BANTUAN_KOLOM.pph}</p>
                     </div>
                 </div>
+                {/* Tipe program selebar form: dropdown + arti tipe + saran dari nama program + pemilih "Uang ini dipakai untuk apa?". */}
+                <div className="fi-formgrid" data-tur="spv-tipe">
+                    <FormField label="Tipe program" required error={m.tipe} help={r.typeIsLegacy && r.type ? `Data lama${r.originalType ? ` (${r.originalType})` : ""}.` : undefined}>{(a) => (
+                        <select {...a} className="fi-input" value={r.type} onChange={(e) => f.ubahTipe(r.id, e.target.value)}>
+                            <option value="">Pilih tipe…</option>
+                            {OFF_PROGRAM_TYPES.map((t) => <option key={t} value={t}>{INFO_TIPE[t].label}</option>)}
+                        </select>
+                    )}</FormField>
+                    {r.type === TIPE_LAINNYA && (
+                        <FormField label="Alasan tipe Lainnya" required error={m.alasan} help={BANTUAN_KOLOM.typeNote}>{(a) => (
+                            <input {...a} className="fi-input" maxLength={300} value={r.typeNote} onChange={(e) => f.ubahBaris(r.id, "typeNote", e.target.value)} />
+                        )}</FormField>
+                    )}
+                </div>
+                <BantuanTipe tipe={r.type} namaProgram={r.namaProgram} onPilih={(t) => f.ubahTipe(r.id, t)} />
                 <fieldset className="fi-field" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
                     <legend className="fi-label">Kelengkapan awal</legend>
                     <div className="fi-btnrow">
@@ -573,8 +586,9 @@ export function EditorItem({ f }: { f: FormSpv }) {
                             <label key={k} className="fi-check"><input type="checkbox" checked={r[k]} onChange={(e) => f.ubahBaris(r.id, k, e.target.checked)} />{label}</label>
                         ))}
                     </div>
+                    <p className="fi-help">{BANTUAN_KOLOM.kelengkapan}</p>
                 </fieldset>
-                <FormField label="Dokumen lainnya">{(a) => <input {...a} className="fi-input" placeholder="Sebutkan dokumen lainnya" value={r.othersText} onChange={(e) => f.ubahBaris(r.id, "othersText", e.target.value)} />}</FormField>
+                <FormField label="Dokumen lainnya" help={BANTUAN_KOLOM.othersText}>{(a) => <input {...a} className="fi-input" placeholder="Sebutkan dokumen lainnya" value={r.othersText} onChange={(e) => f.ubahBaris(r.id, "othersText", e.target.value)} />}</FormField>
                 <p className="fi-small fi-subtle">Kelengkapan yang diisi Supervisor adalah informasi awal. Validasi aman/tidaknya tetap ditentukan oleh Klaim.</p>
             </section>
             <ConfirmDialog open={hapus !== null} onClose={() => setHapus(null)} tone="negative" tag="Hapus item"
@@ -638,7 +652,7 @@ export function DialogForm({ f, baru }: { f: FormSpv; baru: boolean }) {
                 facts={[
                     ["Principal", `${f.setup.principleName} (${f.kode})`],
                     ["Item", <span key="i" className="fi-tnum">{f.rows.length} · {rupiah(f.bayar.total)}</span>],
-                    ["Transfer · Tunai", <span key="t" className="fi-tnum">{rupiah(f.bayar.transfer)} · {rupiah(f.bayar.tunai)}</span>],
+                    ...faktaBayar(f.bayar),
                     ["Perubahan sejak dibuka", baru ? "Batch baru" : daftar.length === 0 ? "Tidak ada; dikirim apa adanya" : (
                         <ul key="p" style={{ margin: 0, paddingLeft: "1.1em", textAlign: "left", fontWeight: 400 }}>
                             {daftar.map((p) => <li key={p}>{p}</li>)}

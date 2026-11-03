@@ -12,7 +12,10 @@
  */
 import type { FlowStep, Tone } from "@/components/fiori/core";
 import { canPerformOffAction, getOffAccessibleTabs, type OffAction, type OffRole, type OffTab } from "@/lib/off-program-control/access";
+import { computeOffPaymentSummary, type OffRingkasBayar } from "@/lib/off-program-control/payments";
+import { labelTipe } from "@/lib/off-program-control/program-type";
 import { matchesSearch, normalizeSearchText } from "@/lib/off-program-control/search";
+import { rupiah } from "@/lib/promo-ui";
 import { KOSONG } from "@/lib/tampil";
 
 export { waktuWita } from "@/lib/tampil";
@@ -37,7 +40,7 @@ export type BatchOpc = {
     pdfUrl?: string | null; receiptPdfUrl?: string | null;
     createdAt?: string | null; updatedAt?: string | null; submittedAt?: string | null; smApprovedAt?: string | null;
     claimReviewedAt?: string | null; returnedAt?: string | null; paidAt?: string | null;
-    summary?: { totalNominal: number; totalRows?: number; rowCount?: number; transfer?: number; tunai?: number };
+    summary?: { totalNominal: number; totalRows?: number; rowCount?: number; transfer?: number; tunai?: number; potongTagihan?: number; bebanDistributor?: number };
     paymentSummary?: RingkasanBayar;
     payments?: PembayaranOpc[];
     createdByRole?: string | null; createdBy?: string | null;
@@ -52,6 +55,8 @@ export type ItemOpc = {
     barang: string | null; nominal: number; caraBayar: string | null; noRekening?: string | null;
     financePaymentStatus?: string | null; financePaidAmount?: number | null;
     type: string | null; normalizedType?: string | null; originalType?: string | null; typeIsLegacy?: boolean | null; pphExempt?: boolean | null;
+    /** Alasan tipe "Lainnya" (migrasi 0039). */ typeNote?: string | null;
+    /** "CL" ditagih ke principal | "DM" beban distributor; null = CL (data lama). */ beban?: string | null;
     deadline: string | null; kwt: boolean; skp: boolean; fp: boolean; pc: boolean; foto: boolean; rekap: boolean; others: boolean; othersText: string | null;
     finalKwt?: boolean | null; finalSkp?: boolean | null; finalFp?: boolean | null; finalPc?: boolean | null; finalFoto?: boolean | null;
     finalRekap?: boolean | null; finalOthers?: boolean | null; finalOthersText?: string | null; finalCompletenessNote?: string | null;
@@ -431,6 +436,96 @@ export const jumlahItem = (b: BatchOpc) => Number(b.summary?.totalRows ?? b.summ
 export function kelengkapanItem(i: Pick<ItemOpc, "kwt" | "skp" | "fp" | "pc" | "foto" | "rekap" | "others">): string {
     const docs = [i.kwt && "KWT", i.skp && "SKP", i.fp && "FP", i.pc && "PC", i.foto && "Foto", i.rekap && "Rekap", i.others && "Lainnya"].filter(Boolean);
     return docs.length ? docs.join(", ") : KOSONG;
+}
+
+/**
+ * Ringkasan cara bayar + beban DM: dihitung dari item bila ada (sama dengan server, computeOffPaymentSummary), selain itu ringkasan
+ * server (daftar tanpa item).
+ */
+export function ringkasBayarBatch(items: Array<Pick<ItemOpc, "nominal" | "caraBayar" | "beban">>, server?: BatchOpc["summary"] | null): OffRingkasBayar {
+    if (items.length) return computeOffPaymentSummary(items);
+    return {
+        total: Number(server?.totalNominal || 0), transfer: Number(server?.transfer || 0), tunai: Number(server?.tunai || 0),
+        potongTagihan: Number(server?.potongTagihan || 0), bebanDistributor: Number(server?.bebanDistributor || 0),
+    };
+}
+
+/** Fakta KeyValues cara bayar: Transfer dan Tunai selalu; Potong Tagihan dan beban distributor hanya bila ada nilainya. */
+export function faktaBayar(r: OffRingkasBayar): Array<[string, string]> {
+    const out: Array<[string, string]> = [["Transfer", rupiah(r.transfer)], ["Tunai", rupiah(r.tunai)]];
+    if (r.potongTagihan) out.push(["Potong Tagihan", rupiah(r.potongTagihan)]);
+    if (r.bebanDistributor) out.push(["Beban distributor (DM)", `${rupiah(r.bebanDistributor)}, tidak ditagih ke principal`]);
+    return out;
+}
+
+/** Satu baris teks cara bayar untuk fakta dialog: "Transfer Rp … · Tunai Rp … · Potong Tagihan Rp …". */
+export const teksBayar = (r: OffRingkasBayar) => faktaBayar(r).filter(([k]) => !k.startsWith("Beban")).map(([k, v]) => `${k} ${v}`).join(" · ");
+
+/** True bila batch memakai lebih dari satu cara bayar (peringatan OM/Keuangan). */
+export const bayarCampur = (r: OffRingkasBayar) => [r.transfer, r.tunai, r.potongTagihan].filter((x) => x > 0).length > 1;
+
+/** Tipe program item untuk tampilan: label baru (mis. "Promo Konsumen & Bonus Barang") + alasan bila "Lainnya". */
+export function labelTipeItem(i: Pick<ItemOpc, "type" | "typeNote">): string {
+    const label = labelTipe(i.type);
+    if (!label) return "";
+    return i.type === "Lainnya" && i.typeNote ? `${label}: ${i.typeNote}` : label;
+}
+
+/**
+ * Bantuan per kolom form pengajuan (pemandu, owner 3 Nov 2026): satu kalimat "isi apa di sini" untuk orang yang baru memakai.
+ * Dipakai form Supervisor, form batch CLM, dan mode latihan supaya kalimatnya sama di semua tempat.
+ */
+export const BANTUAN_KOLOM = {
+    supervisorName: "Nama Anda sebagai pengaju. Tercetak di PDF pengajuan.",
+    principal: "Principal pemilik program, sesuai kop surat program.",
+    kodePrincipal: "Terisi otomatis dari principal.",
+    gelombang: "Urutan pengajuan principal ini di bulan yang sama. Terisi otomatis.",
+    bulan: "Bulan pengajuan, dua angka. Contoh: 11 untuk November.",
+    tahun: "Tahun pengajuan, empat angka.",
+    noSurat: "Nomor surat program dari principal, biasanya di kanan atas kop surat.",
+    namaProgram: "Nama program seperti tertulis di surat. Sistem menyarankan tipe program dari nama ini.",
+    periodeAwal: "Tanggal program mulai berlaku, sesuai surat.",
+    periodeAkhir: "Tanggal program berakhir, sesuai surat.",
+    toko: "Toko penerima, sebaiknya dengan kode pelanggannya. Contoh: TOKO A (C-TA0001).",
+    barang: "Barang atau merek yang ikut program. Kosongkan bila semua barang ikut.",
+    nominal: "Uang yang dibayarkan ke toko untuk item ini, dalam rupiah.",
+    caraBayar: "Transfer ke rekening toko, tunai, atau dipotong dari tagihan toko.",
+    noRekening: "Nomor rekening, nama bank, dan nama pemilik rekening toko.",
+    typeNote: "Jelaskan untuk apa uang ini dipakai, supaya tim Klaim bisa menilainya.",
+    beban: "CL bila biaya ini ditagih balik ke principal. DM bila dibayar dari dana distributor sendiri dan tidak diklaim.",
+    deadline: "Batas waktu klaim ke principal, sesuai surat program.",
+    pph: "Centang bila toko ini tidak dipotong PPh.",
+    kelengkapan: "Centang dokumen yang sudah ada di tangan Anda. Syarat lengkapnya tertulis di surat program.",
+    othersText: "Sebutkan dokumen lain yang sudah ada, misalnya invoice atau surat jalan.",
+} as const;
+
+/** Label beban satu item untuk tabel ("CL" / "DM"). */
+export const labelBeban = (beban: string | null | undefined) => (String(beban ?? "").trim().toUpperCase() === "DM" ? "DM" : "CL");
+
+export type ProgresBatch = { tahap: number; dari: number; teksTahap: string; berkasAda: number; berkasDari: number; teksBerkas: string };
+
+/**
+ * Bar progres per pengajuan (pemandu, owner 3 Nov 2026): posisi di tujuh tahap Flow (Draf → SM → Klaim → OM → Bayar → Final → Selesai) dan
+ * berapa item yang sudah punya berkas. Sebelum verifikasi final dihitung dari kelengkapan awal SPV; sesudahnya dari ceklis final Klaim.
+ */
+export function progresBatch(b: Parameters<typeof infoTahap>[0], items: ItemOpc[]): ProgresBatch {
+    const info = infoTahap(b);
+    // Nomor tahap sama dengan Flow di header (Draf = 1 … Selesai = 7) supaya teks dan langkah tidak berbeda hitungan.
+    const dari = ALUR_TAHAP.length;
+    const ke = info.posisi + 1;
+    const teksTahap = info.kunci === "dibatalkan" ? "Dibatalkan"
+        : info.kunci === "selesai" ? `Selesai, tahap ${dari} dari ${dari}`
+        : info.posisi === 0 ? `Tahap 1 dari ${dari}: ${info.label.toLowerCase()}, belum dikirim ke Sales Manager`
+        : `Tahap ${ke} dari ${dari}: ${info.label.toLowerCase()}`;
+    const final = ["final", "selesai"].includes(info.kunci);
+    const punya = (i: ItemOpc) => (final
+        ? Boolean(i.finalKwt || i.finalSkp || i.finalFp || i.finalPc || i.finalFoto || i.finalRekap || i.finalOthers)
+        : Boolean(i.kwt || i.skp || i.fp || i.pc || i.foto || i.rekap || i.others));
+    const berkasAda = items.filter(punya).length;
+    return {
+        tahap: info.kunci === "dibatalkan" ? 0 : ke, dari, teksTahap, berkasAda, berkasDari: items.length,
+        teksBerkas: items.length ? `${berkasAda} dari ${items.length} item sudah ada berkas ${final ? "final" : "awal"}` : "Belum ada item",
+    };
 }
 
 /** Jumlah baris maksimal GET /batches (server: 200 terbaru, BL-13). Hanya untuk keterangan tampilan "dari 200 terbaru". */

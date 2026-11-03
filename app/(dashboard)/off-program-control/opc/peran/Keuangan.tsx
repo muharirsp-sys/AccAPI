@@ -21,7 +21,8 @@ import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, StatusBadge
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { canProcessFinancePayment } from "@/lib/off-program-control/workflow";
 import type { OffBatchRow } from "@/lib/off-program-control/types";
-import { PREDIKAT, TAMPILAN, labelStatus, tanggalOpc, type BatchOpc, type ItemOpc, type PembayaranOpc, type RingkasanBayar, type Tampilan } from "@/lib/opc-ui";
+import { normalizePaymentMethod } from "@/lib/off-program-control/payments";
+import { PREDIKAT, TAMPILAN, bayarCampur, faktaBayar, labelStatus, ringkasBayarBatch, tanggalOpc, type BatchOpc, type ItemOpc, type PembayaranOpc, type RingkasanBayar, type Tampilan } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { KOSONG } from "@/lib/tampil";
 import { KerjaPeran, TulisTidakPasti, pesanTidakPasti, tulisOpc, type DetailProps, type PeranProps } from "../Bersama";
@@ -43,12 +44,8 @@ const MAKS_BUKTI = 5 * 1024 * 1024;
 // finance-payment membuat PDF sebelum transaksi, jadi timeout proxy bisa datang SESUDAH pembayaran tersimpan.
 const PUTUS = pesanTidakPasti("pembayaran ini", "Riwayat pembayaran");
 
-/** normalizeUiPaymentMethod kode lama: "transfer"/"tunai" → label baku; nilai lain apa adanya. */
-function caraBayar(value: string | null | undefined): string {
-    const v = String(value || "");
-    const n = v.trim().toLowerCase();
-    return n === "transfer" ? "Transfer" : n === "tunai" ? "Tunai" : v;
-}
+/** Transfer/Tunai/Potong Tagihan → label baku; nilai lain apa adanya ("" bila kosong). */
+const caraBayar = (value: string | null | undefined): string => (value ? normalizePaymentMethod(value) : "");
 
 /** isFinanceItemPaid kode lama: sama dengan cek "alreadyPaid" server. */
 const sudahDibayar = (i: ItemBayar) => i.financePaymentStatus === "paid" || Boolean(i.financePaymentId);
@@ -130,9 +127,7 @@ function DetailKeuangan(props: DetailProps) {
 
     // Ringkasan pembayaran disetujui (kode lama): agregat server, jatuh ke hitungan baris bila kosong.
     const totalNominal = Number(d.summary?.totalNominal || items.reduce((t, i) => t + Number(i.nominal || 0), 0));
-    const jumlahCara = (cara: string) => items.filter((i) => caraBayar(i.caraBayar) === cara).reduce((t, i) => t + Number(i.nominal || 0), 0);
-    const transfer = Number(d.summary?.transfer || jumlahCara("Transfer"));
-    const tunai = Number(d.summary?.tunai || jumlahCara("Tunai"));
+    const bayar = ringkasBayarBatch(items, d.summary);
     const totalPaid = Number(d.paymentSummary?.totalPaid ?? b.paidAmount ?? d.payments.reduce((t, p) => t + Number(p.paidAmount || 0), 0));
     const sisa = Number(d.paymentSummary?.remainingAmount ?? Math.max(0, totalNominal - totalPaid));
 
@@ -202,7 +197,7 @@ function DetailKeuangan(props: DetailProps) {
                             badge={sudahDibayar(i) ? <StatusBadge tone="pos">Dibayar</StatusBadge> : pilih.has(i.id) ? <StatusBadge tone="info">Akan dibayar</StatusBadge> : undefined} />
                     </div>
                 )} />
-            {pesanPilih && <div className="fi-sect-in"><MessageStrip tone="warn" title={pesanPilih} onClose={() => setPesanPilih(null)}>Satu pencatatan hanya untuk item dengan cara bayar yang sama; catat Transfer dan Tunai terpisah.</MessageStrip></div>}
+            {pesanPilih && <div className="fi-sect-in"><MessageStrip tone="warn" title={pesanPilih} onClose={() => setPesanPilih(null)}>Satu pencatatan hanya untuk item dengan cara bayar yang sama; catat Transfer, Tunai, dan Potong Tagihan terpisah.</MessageStrip></div>}
         </>
     );
 
@@ -219,18 +214,17 @@ function DetailKeuangan(props: DetailProps) {
                     ["Status Keuangan", labelStatus(b.financeStatus)],
                     ["Belum dibayar", <span key="n" className="fi-tnum">{belum.length} dari {items.length} item</span>],
                     ["Sisa pembayaran", <span key="s" className="fi-tnum">{rupiah(sisa)}</span>],
-                    ["Total transfer baris", <span key="t" className="fi-tnum">{rupiah(transfer)}</span>],
-                    ["Total tunai baris", <span key="u" className="fi-tnum">{rupiah(tunai)}</span>],
+                    ...faktaBayar(bayar).map(([k, v]): [string, string] => [k.startsWith("Beban") ? k : `Total ${k.toLowerCase()} baris`, v]),
                     ["Deadline klaim", tanggalOpc(b.claimDeadline)],
                 ]} />
-                {transfer > 0 && tunai > 0 && (
+                {bayarCampur(bayar) && (
                     <MessageStrip tone="warn" title="Batch ini memiliki lebih dari satu cara bayar.">Pastikan pembayaran sesuai rincian baris.</MessageStrip>
                 )}
                 <div className="fi-formgrid">
-                    <FormField label="Tanggal bayar" required>
+                    <FormField label="Tanggal bayar" required help="Tanggal uang benar-benar keluar atau tagihan toko dipotong.">
                         {(a) => <input {...a} className="fi-input" type="date" value={tanggal} disabled={Boolean(izin)} onChange={(e) => setTanggal(e.target.value)} />}
                     </FormField>
-                    <FormField label="Bank pengirim">
+                    <FormField label="Bank pengirim" help="Rekening perusahaan yang dipakai untuk transfer. Kosongkan untuk Tunai atau Potong Tagihan.">
                         {(a) => <input {...a} className="fi-input" value={bank} disabled={Boolean(izin)} onChange={(e) => setBank(e.target.value)} />}
                     </FormField>
                 </div>
@@ -244,7 +238,7 @@ function DetailKeuangan(props: DetailProps) {
                     {(a) => <input {...a} key={kunciBukti} className="fi-input" type="file" accept="application/pdf,image/png,image/jpeg" disabled={Boolean(izin)}
                         onChange={(e) => setBukti(e.target.files?.[0] ?? null)} />}
                 </FormField>
-                <FormField label="Catatan Keuangan">
+                <FormField label="Catatan Keuangan" help="Catatan untuk Klaim dan Supervisor, misalnya nomor referensi transfer.">
                     {(a) => <textarea {...a} className="fi-input" rows={3} value={catatanNilai} disabled={Boolean(izin)} onChange={(e) => setCatatan(e.target.value)} />}
                 </FormField>
             </div>

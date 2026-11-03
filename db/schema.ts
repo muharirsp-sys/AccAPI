@@ -1003,6 +1003,10 @@ export const offBatchItem = pgTable("off_batch_item", {
     originalType: text("original_type"),
     normalizedType: text("normalized_type"),
     typeIsLegacy: boolean("type_is_legacy").notNull().default(false),
+    // Alasan tipe "Lainnya" (wajib dari form), atau tipe asal data lama yang tidak dikenali. Owner 3 Nov 2026, migrasi 0039.
+    typeNote: text("type_note"),
+    // Beban: "CL" = ditagih ke principal | "DM" = beban distributor (tidak dibuat klaim, tidak wajib No Claim). NULL = CL (data lama).
+    beban: text("beban"),
     // --- PPh level item/toko (HOLD) ---
     // NOTE: PPh disiapkan nullable di level item/toko, tetapi perhitungan final
     // ditahan karena masih terkait format kwitansi setelah pembayaran.
