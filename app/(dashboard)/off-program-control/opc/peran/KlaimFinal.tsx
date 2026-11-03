@@ -19,7 +19,7 @@ import { MessageStrip, KeyValues, ListItem, ResponsiveTable, type Column } from 
 import { FormField } from "@/components/fiori/interactive";
 import { hasMinimalFinalChecklist } from "@/lib/off-program-control/workflow";
 import { rupiah } from "@/lib/promo-ui";
-import { tanggalOpc, type BatchOpc, type ItemOpc } from "@/lib/opc-ui";
+import { faktaBayar, labelBeban, labelTipeItem, ringkasBayarBatch, tanggalOpc, type BatchOpc, type ItemOpc } from "@/lib/opc-ui";
 import { isianNominal, isianPolos, nominalKeTeks } from "@/lib/angka-lokal";
 import { KOSONG } from "@/lib/tampil";
 import type { DetailBatch } from "../Bersama";
@@ -47,23 +47,12 @@ export function awalFinal({ batch, items }: DetailBatch): IsianFinal {
     };
 }
 
-const metode = (v: string | null) => {
-    const n = String(v || "").trim().toLowerCase();
-    return n === "transfer" ? "Transfer" : n === "tunai" ? "Tunai" : v;
-};
-const jumlah = (xs: ItemOpc[]) => xs.reduce((t, i) => t + Number(i.nominal || 0), 0);
-
-/** Ringkasan uang final (kode lama): total/transfer/tunai dari ringkasan server atau item; dibayar & sisa dari pembayaran. */
+/** Ringkasan uang final: cara bayar + beban DM dari item (atau ringkasan server); dibayar & sisa dari pembayaran. */
 export function uangFinal({ batch, items, summary, paymentSummary }: DetailBatch) {
-    const total = Number(summary?.totalNominal || jumlah(items));
+    const bayar = ringkasBayarBatch(items, summary);
+    const total = Number(summary?.totalNominal || bayar.total);
     const dibayar = Number(paymentSummary?.totalPaid ?? batch.paidAmount ?? 0);
-    return {
-        total,
-        transfer: Number(summary?.transfer || jumlah(items.filter((i) => metode(i.caraBayar) === "Transfer"))),
-        tunai: Number(summary?.tunai || jumlah(items.filter((i) => metode(i.caraBayar) === "Tunai"))),
-        dibayar,
-        sisa: Number(paymentSummary?.remainingAmount ?? Math.max(0, total - dibayar)),
-    };
+    return { ...bayar, total, dibayar, sisa: Number(paymentSummary?.remainingAmount ?? Math.max(0, total - dibayar)) };
 }
 
 /** Alasan Selesaikan belum bisa: urutan dan kalimat cek klien kode lama (server memeriksa ulang). */
@@ -71,7 +60,8 @@ export function kekuranganFinal(data: DetailBatch, isian: IsianFinal): string[] 
     const kurang: string[] = [];
     if (uangFinal(data).sisa > 0) kurang.push("Pembayaran belum lunas, belum bisa disetujui Klaim.");
     const bersurat = data.items.filter((i) => i.noSurat);
-    const tanpaNoClaim = bersurat.filter((i) => !String(isian.refs[i.id] || "").trim());
+    // Beban distributor (DM) tidak ditagih ke principal: No Claim tidak wajib (sama dengan server final-claim).
+    const tanpaNoClaim = bersurat.filter((i) => labelBeban(i.beban) === "CL" && !String(isian.refs[i.id] || "").trim());
     if (tanpaNoClaim.length) kurang.push(`No Claim wajib diisi untuk No Surat: ${tanpaNoClaim.map((i) => i.noSurat).join(", ")}.`);
     const tanpaCeklis = bersurat.filter((i) => { const cl = isian.ceklis[i.id]; return !cl || !hasMinimalFinalChecklist(cl); });
     if (tanpaCeklis.length) kurang.push(`Checklist kelengkapan final wajib diisi minimal satu untuk No Surat: ${tanpaCeklis.map((i) => i.noSurat).join(", ")}.`);
@@ -137,8 +127,7 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
     const ringkas = (
         <KeyValues items={[
             ["Total diajukan", <span key="t" className="fi-tnum">{rupiah(u.total)}</span>],
-            ["Transfer", <span key="tr" className="fi-tnum">{rupiah(u.transfer)}</span>],
-            ["Tunai", <span key="tu" className="fi-tnum">{rupiah(u.tunai)}</span>],
+            ...faktaBayar(u),
             ["Dibayar Keuangan", <span key="d" className="fi-tnum">{rupiah(u.dibayar)}</span>],
             ["Sisa pembayaran", <span key="s" className="fi-tnum">{rupiah(u.sisa)}</span>],
             ["Tanggal bayar", tanggalOpc(b.paymentDate)],
@@ -204,14 +193,15 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
                                     <b>Item {i.itemNo}</b> · <span className="fi-mono">{i.noSurat || "tanpa No Surat"}</span> · {i.toko || KOSONG} · <span className="fi-tnum">{rupiah(i.nominal)}</span>
                                 </p>
                                 <p className="fi-small fi-subtle">
-                                    {[i.namaProgram, periodeItem(i.periode), i.barang, i.caraBayar, i.type, i.deadline ? `deadline ${tanggalOpc(i.deadline)}` : ""].filter(Boolean).join(" · ")}
+                                    {[i.namaProgram, periodeItem(i.periode), i.barang, i.caraBayar, labelTipeItem(i), `beban ${labelBeban(i.beban)}`, i.deadline ? `deadline ${tanggalOpc(i.deadline)}` : ""].filter(Boolean).join(" · ")}
                                 </p>
                                 <div className="fi-formgrid">
-                                    <FormField label="No Claim" required={Boolean(i.noSurat)}>{(a) => (
-                                        <input {...a} className="fi-input fi-mono" value={isian.refs[i.id] || ""} placeholder="Isi No Claim"
+                                    <FormField label="No Claim" required={Boolean(i.noSurat) && labelBeban(i.beban) === "CL"}
+                                        help={labelBeban(i.beban) === "DM" ? "Beban distributor (DM): tidak ditagih ke principal, No Claim tidak wajib." : "Nomor klaim dari Claim Workflow untuk item ini."}>{(a) => (
+                                        <input {...a} className="fi-input fi-mono" value={isian.refs[i.id] || ""} placeholder={labelBeban(i.beban) === "DM" ? "Tidak wajib" : "Isi No Claim"}
                                             onChange={(e) => { const v = e.target.value; ubah((x) => ({ ...x, refs: { ...x.refs, [i.id]: v } })); }} />
                                     )}</FormField>
-                                    <FormField label="Keterangan lainnya">{(a) => (
+                                    <FormField label="Keterangan lainnya" help="Isi bila dokumen Lainnya dicentang.">{(a) => (
                                         <input {...a} className="fi-input" value={cl?.finalOthersText || ""} disabled={!cl?.finalOthers} placeholder="Bila Lainnya dicentang"
                                             onChange={(e) => ubahCeklis(i.id, { finalOthersText: e.target.value })} />
                                     )}</FormField>
@@ -227,7 +217,7 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
                                         ))}
                                     </div>
                                 </div>
-                                <FormField label="Catatan kelengkapan final">{(a) => (
+                                <FormField label="Catatan kelengkapan final" help="Catatan khusus item ini, misalnya dokumen yang masih kurang.">{(a) => (
                                     <textarea {...a} className="fi-input" rows={2} value={cl?.finalCompletenessNote || ""} placeholder="Catatan per item"
                                         onChange={(e) => ubahCeklis(i.id, { finalCompletenessNote: e.target.value })} />
                                 )}</FormField>
@@ -243,7 +233,7 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
                         <b className="fi-tnum">{rupiah(u.dibayar)}</b>
                     </div>
                     <FormField label="Nilai fix (isi bila berbeda)" error={galatFix || undefined}
-                        help={`Isi bila realisasi klaim berbeda dari total yang sudah dibayar Keuangan, mis. 1.500.000. Kosong berarti sama dengan ${rupiah(u.dibayar)}. Selisih masuk Data Selisih dan dikembalikan SPV/SM.`}>
+                        help={`Isi bila realisasi klaim berbeda dari total yang sudah dibayar Keuangan, mis. 1.500.000. Kosong berarti sama dengan ${rupiah(u.dibayar)}. Selisih masuk Data Selisih dan dikembalikan SPV/SM.${u.bebanDistributor ? ` Nilai fix tetap MENCAKUP item beban distributor (DM) ${rupiah(u.bebanDistributor)}; jangan dikurangi bagian DM walau tidak ditagih ke principal.` : ""}`}>
                         {(a) => (
                             // type="text": roda mouse tidak mengubah nilai yang menentukan selisih, dan "1.500.000" terbaca sebagai ribuan.
                             <input {...a} className="fi-input fi-tnum" type="text" inputMode="numeric" autoComplete="off" value={teksFix}

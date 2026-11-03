@@ -49,7 +49,7 @@ check("Visibilty -> original kept", visibilty.originalType, "Visibilty");
 check("Visibilty -> legacy true", visibilty.typeIsLegacy, true);
 
 const unknownType = resolveLegacyProgramType("Kategori Asing XYZ");
-check("Unknown -> fallback Sample", unknownType.normalizedType, "Sample");
+check("Unknown -> fallback Lainnya (3 Nov 2026)", unknownType.normalizedType, "Lainnya");
 check("Unknown -> forcedToFallback true", unknownType.forcedToFallback, true);
 check("Unknown -> original kept", unknownType.originalType, "Kategori Asing XYZ");
 

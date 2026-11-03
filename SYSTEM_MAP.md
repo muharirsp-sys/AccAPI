@@ -244,6 +244,13 @@ UI: OffProgramControlPage (tab supervisor)
      -> writeOffAudit() — lib/off-program-control/helpers.ts
   <- { ok: true, batchId, noPengajuan }
 
+Item (owner 3 Nov 2026, migrasi 0039): tipe program = 11 kelompok + "Lainnya" (lib/off-program-control/program-type.ts; type_note
+  wajib untuk Lainnya, catatanTipeLainnya) — tipe CLM disimpan apa adanya, tipe tak dikenal → Lainnya (dulu Sample); beban
+  "CL" (ditagih ke principal) | "DM" (beban distributor, tidak diklaim; NULL = CL); cara bayar Transfer | Tunai | Potong Tagihan
+  (payments.ts normalizeOffPaymentMethod, PESAN_CARA_BAYAR). Pemandu UI: opc/Pemandu.tsx (Misi Anda + tur per peran,
+  components/fiori/Tur.tsx), opc/PemilihTipe.tsx (saran sarankanTipe + "Uang ini dipakai untuk apa?"), BANTUAN_KOLOM (lib/opc-ui.ts),
+  mode latihan /off-program-control/latihan (tanpa API).
+
 UI: Supervisor submit batch
   -> POST /api/off-program-control/batches/[id]/submit
      -> canActorPerformOffAction(actor, "submit_batch")
@@ -275,8 +282,15 @@ Claim Review:
 OM Approve:
   -> PATCH /api/off-program-control/batches/[id]/om-decision
      -> canActorPerformOffAction(actor, "om_approve")
-     -> db.update(offBatch) + db.insert(claimWorkflow) [auto-create]
+     -> db.update(offBatch) — Claim Workflow TIDAK dibuat di sini
      -> writeOffAudit()
+
+Buat Claim Workflow (tim Klaim, setelah OM Approved):
+  -> POST /api/claim-workflow/from-off-batch/[offBatchId]
+     -> hanya item beban CL; semua DM → 409 SEMUA_BEBAN_DISTRIBUTOR
+     -> db.insert(claimWorkflow + claimSubmission per item + claimWorkflowItem) dalam satu transaksi
+
+Verifikasi final (final-claim): No Claim wajib untuk item ber-No Surat dengan beban CL; item DM dikecualikan.
 
 Finance Payment:
   -> POST /api/off-program-control/batches/[id]/finance-payment

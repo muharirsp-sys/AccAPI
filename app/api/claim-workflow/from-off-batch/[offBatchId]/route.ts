@@ -21,6 +21,7 @@ import {
     SCOPE_LABEL_MAX_LENGTH,
 } from "@/lib/claim-workflow";
 import { requirePermissionH } from "@/lib/rbac/resolve";
+import { bebanItem } from "@/lib/off-program-control/constants";
 import { recalcWorkflowAggregateFromSubmissions } from "@/lib/claim-workflow/submissions";
 
 type Context = { params: Promise<{ offBatchId: string }> };
@@ -107,10 +108,19 @@ export async function POST(request: NextRequest, context: Context) {
             }, { status: 409 });
         }
 
-        const offItems = await db
+        const semuaItem = await db
             .select()
             .from(offBatchItem)
             .where(eq(offBatchItem.batchId, offBatchId));
+        // Item beban distributor (DM) dibayar dari dana distributor sendiri: tidak ditagih ke principal (owner 3 Nov 2026).
+        const offItems = semuaItem.filter((item) => bebanItem(item.beban) === "CL");
+        if (offItems.length === 0) {
+            return NextResponse.json({
+                ok: false,
+                code: "SEMUA_BEBAN_DISTRIBUTOR",
+                error: "Semua item pengajuan ini beban distributor (DM), jadi tidak ada yang ditagih ke principal.",
+            }, { status: 409 });
+        }
         const now = new Date();
         const workflowId = randomUUID();
         const submissionByOffItemId = new Map<string, string>();
@@ -198,6 +208,7 @@ export async function POST(request: NextRequest, context: Context) {
             offBatchId,
             noPengajuan: batch.noPengajuan,
             itemCount: items.length,
+            itemBebanDistributorDilewati: semuaItem.length - offItems.length,
             submissionMode: "per_item",
             activeSubmissionCount: submissions.length,
             dppSource: "off_batch_item.nominal",

@@ -20,7 +20,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, FileText, Percent, Plus } from "lucide-react";
 import { Button, FooterToolbar, KeyValues, MessageStrip, ObjectPageHeader, Section, Skeleton, StatusBadge } from "@/components/fiori/core";
-import { PREDIKAT, TAMPILAN, labelStatus, tahapBatch, type Tampilan } from "@/lib/opc-ui";
+import { PREDIKAT, TAMPILAN, faktaBayar, labelStatus, tahapBatch, type Tampilan } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { hariIniWita } from "@/lib/tampil";
 import { KerjaPeran, pesanTidakPasti, type DaftarOpc, type DetailProps, type OpcKonteks, type PeranProps } from "../Bersama";
@@ -65,9 +65,8 @@ function StripHasil({ h }: { h: HasilKirim }) {
                 <KeyValues items={[
                     ["No pengajuan", <span key="n" className="fi-mono">{h.noPengajuan}</span>],
                     ["Jumlah baris terkirim", <span key="r" className="fi-tnum">{h.rowCount}</span>],
-                    ["Total nominal", rupiah(h.total)],
-                    ["Transfer", rupiah(h.transfer)],
-                    ["Tunai", rupiah(h.tunai)],
+                    ["Total nominal", rupiah(h.bayar.total)],
+                    ...faktaBayar(h.bayar),
                 ]} />
             </div>
             {h.sudahAda && <StripPdf pdfUrl={h.pdfUrl} claimStatus="" />}
@@ -354,7 +353,7 @@ export default function Spv(props: PeranProps) {
                     <>
                         <div className="fi-btnrow">
                             <Button icon={<Plus className="fi-icon" aria-hidden />} disabled={Boolean(izinBaru)} disabledReason={izinBaru}
-                                onClick={() => ctx.ubahUrl({ view: "baru", batch: null })}>Batch baru</Button>
+                                onClick={() => ctx.ubahUrl({ view: "baru", batch: null })} data-tur="spv-batch-baru">Batch baru</Button>
                             <Button variant="tertiary" icon={<Percent className="fi-icon" aria-hidden />} onClick={() => ctx.ubahUrl({ view: "diskon", batch: null })}>Pengajuan diskon SPV</Button>
                         </div>
                         {ctx.sub === "selisih" && (

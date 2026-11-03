@@ -21,7 +21,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { BellRing, Check, ExternalLink, Plus, Send, Undo2 } from "lucide-react";
 import { Button, MessageStrip } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
-import { PREDIKAT, TAMPILAN, infoTahap, jumlahItem, periodeBatch, tahapBatch, tanggalOpc, totalBatch, type BatchOpc } from "@/lib/opc-ui";
+import { PREDIKAT, TAMPILAN, infoTahap, jumlahItem, labelBeban, periodeBatch, tahapBatch, tanggalOpc, totalBatch, type BatchOpc } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { KOSONG } from "@/lib/tampil";
 import { KerjaPeran, kirimTulis, pesanTidakPasti, tanganiTulis, tulisOpc, type DetailProps, type PeranProps } from "../Bersama";
@@ -127,6 +127,8 @@ function DetailKlaim(props: DetailProps) {
     const cwId = b.claimWorkflowId ?? ringkas?.claimWorkflowId ?? null;
     // Claim Workflow boleh dibuat setelah OM menyetujui (aturan route from-off-batch); batch dibatalkan tidak (BL-06).
     const cwBoleh = b.omStatus === "Approved" && tahap !== "dibatalkan";
+    // Semua item beban distributor (DM): tidak ada yang ditagih ke principal, route from-off-batch menolak (409 SEMUA_BEBAN_DISTRIBUTOR).
+    const semuaDm = data.items.length > 0 && data.items.every((i) => labelBeban(i.beban) === "DM");
 
     // Validasi setelah SM.
     const alasanV = izinReview ?? kunci;
@@ -190,7 +192,11 @@ function DetailKlaim(props: DetailProps) {
     };
 
     // Claim Workflow = navigasi ke dokumen lanjutan, bukan aksi final batch: di bawah header (footer tetap untuk Setujui/Selesaikan).
-    const stripCw = cwBoleh ? (
+    const stripCw = cwBoleh && semuaDm && !cwId ? (
+        <MessageStrip tone="info" title="Claim Workflow tidak diperlukan:">
+            semua item pengajuan ini beban distributor (DM), jadi tidak ada yang ditagih ke principal dan No Claim tidak wajib.
+        </MessageStrip>
+    ) : cwBoleh ? (
         <MessageStrip tone="info" title="Claim Workflow:">
             {cwId ? "sudah dibuat untuk batch ini; No Claim diisi di sana. " : "belum dibuat untuk batch ini. "}
             <Button variant="tertiary" icon={<ExternalLink className="fi-icon" aria-hidden />} onClick={klikCw}>{cwId ? "Buka Claim Workflow" : "Buat Claim Workflow…"}</Button>
@@ -250,10 +256,10 @@ function DetailKlaim(props: DetailProps) {
                     {/* #12: catatan Sales Manager tampil agar Klaim tahu keterangan SM. */}
                     {b.smNote && <MessageStrip tone="info" title="Catatan Sales Manager:">{b.smNote}</MessageStrip>}
                     <div className="fi-formgrid">
-                        <FormField label="Tanggal diajukan ke principal" required>{(a) => (
+                        <FormField label="Tanggal diajukan ke principal" required help="Tanggal berkas klaim dikirim atau akan dikirim ke principal.">{(a) => (
                             <input {...a} className="fi-input" type="date" value={nilai.tanggal} onChange={(e) => ubah({ tanggal: e.target.value })} />
                         )}</FormField>
-                        <FormField label="Deadline klaim" required>{(a) => (
+                        <FormField label="Deadline klaim" required help="Batas akhir principal menerima klaim, sesuai surat program. Alarm keterlambatan dihitung dari tanggal ini.">{(a) => (
                             <input {...a} className="fi-input" type="date" value={nilai.deadline} onChange={(e) => ubah({ deadline: e.target.value })} />
                         )}</FormField>
                     </div>

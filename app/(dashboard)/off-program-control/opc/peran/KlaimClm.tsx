@@ -18,7 +18,7 @@ import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactiv
 import { offPaymentMethods, offPrinciples } from "@/lib/off-program-control/constants";
 import { parseCurrency } from "@/lib/off-program-control/helpers";
 import { OFF_CLM_PROGRAM_TYPES } from "@/lib/off-program-control/program-type";
-import { periodeBatch } from "@/lib/opc-ui";
+import { BANTUAN_KOLOM, periodeBatch } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { KOSONG, hariIniWita } from "@/lib/tampil";
 import { ambilOpc, pesanTidakPasti, tanganiTulis, tulisOpc, type DaftarOpc, type OpcKonteks } from "../Bersama";
@@ -187,27 +187,27 @@ export function FormClm({ ctx, daftar, tutup }: { ctx: OpcKonteks; daftar: Dafta
                                             onClick={() => (terisi(r) ? setHapusIdx(idx) : hapusItem(idx))}>Hapus item</Button>
                                     </div>
                                     <div className="fi-formgrid">
-                                        <FormField label="No Surat">{(a) => <input {...a} className="fi-input fi-mono" value={r.noSurat} onChange={(e) => ubahBaris(idx, { noSurat: e.target.value })} />}</FormField>
-                                        <FormField label="Nama program">{(a) => <input {...a} className="fi-input" value={r.namaProgram} onChange={(e) => ubahBaris(idx, { namaProgram: e.target.value })} />}</FormField>
-                                        <FormField label="Tipe program (CLM)" required>{(a) => (
+                                        <FormField label="No Surat" help={BANTUAN_KOLOM.noSurat}>{(a) => <input {...a} className="fi-input fi-mono" value={r.noSurat} onChange={(e) => ubahBaris(idx, { noSurat: e.target.value })} />}</FormField>
+                                        <FormField label="Nama program" help={BANTUAN_KOLOM.namaProgram}>{(a) => <input {...a} className="fi-input" value={r.namaProgram} onChange={(e) => ubahBaris(idx, { namaProgram: e.target.value })} />}</FormField>
+                                        <FormField label="Tipe program (CLM)" required help="Tipe program arahan direksi untuk tim Klaim.">{(a) => (
                                             <select {...a} className="fi-input" value={r.type} onChange={(e) => ubahBaris(idx, { type: e.target.value })}>
                                                 <option value="">Pilih tipe…</option>
                                                 {OFF_CLM_PROGRAM_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                                             </select>
                                         )}</FormField>
-                                        <FormField label="Periode awal">{(a) => <input {...a} className="fi-input" type="date" value={r.periodeAwal} onChange={(e) => ubahBaris(idx, { periodeAwal: e.target.value })} />}</FormField>
-                                        <FormField label="Periode akhir">{(a) => <input {...a} className="fi-input" type="date" value={r.periodeAkhir} min={r.periodeAwal || undefined} onChange={(e) => ubahBaris(idx, { periodeAkhir: e.target.value })} />}</FormField>
-                                        <FormField label="Deadline">{(a) => <input {...a} className="fi-input" type="date" value={r.deadline} onChange={(e) => ubahBaris(idx, { deadline: e.target.value })} />}</FormField>
-                                        <FormField label="Toko">{(a) => <input {...a} className="fi-input" value={r.toko} onChange={(e) => ubahBaris(idx, { toko: e.target.value })} />}</FormField>
-                                        <FormField label="Barang">{(a) => <input {...a} className="fi-input" value={r.barang} onChange={(e) => ubahBaris(idx, { barang: e.target.value })} />}</FormField>
-                                        <FormField label="Nominal">{(a) => <input {...a} className="fi-input fi-tnum" inputMode="numeric" placeholder="0" value={r.nominal} onChange={(e) => ubahBaris(idx, { nominal: e.target.value })} />}</FormField>
-                                        <FormField label="Cara bayar">{(a) => (
+                                        <FormField label="Periode awal" help={BANTUAN_KOLOM.periodeAwal}>{(a) => <input {...a} className="fi-input" type="date" value={r.periodeAwal} onChange={(e) => ubahBaris(idx, { periodeAwal: e.target.value })} />}</FormField>
+                                        <FormField label="Periode akhir" help={BANTUAN_KOLOM.periodeAkhir}>{(a) => <input {...a} className="fi-input" type="date" value={r.periodeAkhir} min={r.periodeAwal || undefined} onChange={(e) => ubahBaris(idx, { periodeAkhir: e.target.value })} />}</FormField>
+                                        <FormField label="Deadline" help={BANTUAN_KOLOM.deadline}>{(a) => <input {...a} className="fi-input" type="date" value={r.deadline} onChange={(e) => ubahBaris(idx, { deadline: e.target.value })} />}</FormField>
+                                        <FormField label="Toko" help={BANTUAN_KOLOM.toko}>{(a) => <input {...a} className="fi-input" value={r.toko} onChange={(e) => ubahBaris(idx, { toko: e.target.value })} />}</FormField>
+                                        <FormField label="Barang" help={BANTUAN_KOLOM.barang}>{(a) => <input {...a} className="fi-input" value={r.barang} onChange={(e) => ubahBaris(idx, { barang: e.target.value })} />}</FormField>
+                                        <FormField label="Nominal" help={BANTUAN_KOLOM.nominal}>{(a) => <input {...a} className="fi-input fi-tnum" inputMode="numeric" placeholder="0" value={r.nominal} onChange={(e) => ubahBaris(idx, { nominal: e.target.value })} />}</FormField>
+                                        <FormField label="Cara bayar" help={BANTUAN_KOLOM.caraBayar}>{(a) => (
                                             <select {...a} className="fi-input" value={r.caraBayar}
-                                                onChange={(e) => ubahBaris(idx, { caraBayar: e.target.value, noRekening: e.target.value === "Tunai" ? "" : r.noRekening })}>
+                                                onChange={(e) => ubahBaris(idx, { caraBayar: e.target.value, noRekening: e.target.value === "Transfer" ? r.noRekening : "" })}>
                                                 {offPaymentMethods.map((m) => <option key={m} value={m}>{m}</option>)}
                                             </select>
                                         )}</FormField>
-                                        <FormField label="No rekening" required={transfer(r)}>{(a) => (
+                                        <FormField label="No rekening" required={transfer(r)} help={transfer(r) ? BANTUAN_KOLOM.noRekening : "Hanya untuk Transfer."}>{(a) => (
                                             <input {...a} className="fi-input fi-mono" value={r.noRekening} readOnly={!transfer(r)} placeholder={transfer(r) ? "No rekening" : KOSONG}
                                                 onChange={(e) => ubahBaris(idx, { noRekening: e.target.value })} />
                                         )}</FormField>

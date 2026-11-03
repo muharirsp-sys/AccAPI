@@ -18,20 +18,13 @@ import { Check, X } from "lucide-react";
 import { Button, KeyValues, MessageStrip, Section, StatusBadge } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { SLA_DAYS } from "@/lib/off-program-control/problematic";
-import { PREDIKAT, TAMPILAN, jumlahItem, labelStatus, tanggalOpc, totalBatch, type BatchOpc, type ItemOpc } from "@/lib/opc-ui";
+import { PREDIKAT, TAMPILAN, bayarCampur, faktaBayar, jumlahItem, labelStatus, ringkasBayarBatch, tanggalOpc, teksBayar, totalBatch, type BatchOpc } from "@/lib/opc-ui";
 import { rupiah } from "@/lib/promo-ui";
 import { KerjaPeran, tanganiTulis, tulisOpc, type DetailProps, type PeranProps } from "../Bersama";
 import { ObjectPageBatch, type BagianTambahan } from "../ObjectPageBatch";
 
 const enc = encodeURIComponent;
 
-/** normalizeUiPaymentMethod lama (363): hanya "transfer"/"tunai" yang dikenali. */
-const caraBayar = (v: string | null) => {
-    const x = String(v || "").trim().toLowerCase();
-    return x === "transfer" ? "Transfer" : x === "tunai" ? "Tunai" : v;
-};
-const jumlahCara = (items: ItemOpc[], cara: "Transfer" | "Tunai") =>
-    items.filter((i) => caraBayar(i.caraBayar) === cara).reduce((t, i) => t + Number(i.nominal || 0), 0);
 
 /** Kolom kedua OM: Object Page + ringkasan persetujuan + catatan OM (draf) + keputusan bila batch menunggu OM. */
 function DetailOm(props: DetailProps) {
@@ -60,8 +53,7 @@ function DetailOm(props: DetailProps) {
     // Ringkasan Pembayaran lama: ringkasan server dulu, bila nol/kosong dihitung dari item.
     const ringkasan = data.summary ?? b.summary;
     const total = Number(ringkasan?.totalNominal || data.items.reduce((t, i) => t + Number(i.nominal || 0), 0) || totalBatch(b));
-    const transfer = Number(ringkasan?.transfer || jumlahCara(data.items, "Transfer"));
-    const tunai = Number(ringkasan?.tunai || jumlahCara(data.items, "Tunai"));
+    const bayar = ringkasBayarBatch(data.items, ringkasan);
 
     const bagian: BagianTambahan[] = [{
         id: "opc-om-ringkas", label: "Persetujuan OM", letak: "awal",
@@ -78,10 +70,9 @@ function DetailOm(props: DetailProps) {
                     ["Deadline klaim", tanggalOpc(b.claimDeadline)],
                     ["Terkunci untuk SPV", b.locked ? "Ya" : "Tidak"],
                     ["Total", <span key="t" className="fi-tnum">{rupiah(total)}</span>],
-                    ["Transfer", <span key="tr" className="fi-tnum">{rupiah(transfer)}</span>],
-                    ["Tunai", <span key="tu" className="fi-tnum">{rupiah(tunai)}</span>],
+                    ...faktaBayar(bayar),
                 ]} />
-                {transfer > 0 && tunai > 0 && (
+                {bayarCampur(bayar) && (
                     <MessageStrip tone="warn" title="Batch ini memakai lebih dari satu cara bayar.">Pastikan pembayaran sesuai rincian per item.</MessageStrip>
                 )}
                 {bisa && (
@@ -125,7 +116,7 @@ function DetailOm(props: DetailProps) {
                 facts={[
                     ...faktaBatch,
                     ["Validasi klaim", `${labelStatus(b.claimStatus)} · No Claim ${b.noClaim || "belum ada"} · deadline ${tanggalOpc(b.claimDeadline)}`],
-                    ["Cara bayar", `Transfer ${rupiah(transfer)} · Tunai ${rupiah(tunai)}`],
+                    ["Cara bayar", teksBayar(bayar)],
                     ["Catatan OM", catatan.trim() || "Tanpa catatan"],
                     ["Langkah berikutnya", `Pembayaran oleh Keuangan, batas ${SLA_DAYS.paymentAfterDeadline} hari kerja setelah deadline klaim`],
                 ]}

@@ -616,3 +616,25 @@ dialog.fi-drawer .fi-sidenav { border-right:0; }
 .fi-auth-row { display:flex; justify-content:flex-end; }
 .fi-auth-row a { display:inline-flex; align-items:center; min-height:var(--ctl-h); font:var(--fs-small); } /* target sentuh 44 px di pointer kasar */
 @media (max-width:767px) { .fi-auth { grid-template-columns:minmax(0,1fr); } .fi-auth-brand { display:none; } }
+
+/* Pemandu OPC (owner 3 Nov 2026): tur spotlight (components/fiori/Tur.tsx), papan Misi Anda, bar progres. */
+.fi-tur-tahan { position:fixed; inset:0; z-index:1000; }
+.fi-tur-tahan[data-gelap] { background:var(--scrim); }
+.fi-tur-sorot { position:fixed; z-index:1001; display:none; border-radius:var(--r-md); box-shadow:0 0 0 9999px var(--scrim); outline:2px solid var(--primary); pointer-events:none;
+  transition:left var(--dur-base) var(--ease-standard), top var(--dur-base) var(--ease-standard), width var(--dur-base) var(--ease-standard), height var(--dur-base) var(--ease-standard); }
+.fi-tur-kartu { position:fixed; z-index:1002; width:min(380px, calc(100vw - 16px)); background:var(--surface); color:var(--ink); border-radius:var(--r-lg); box-shadow:var(--shadow-3); padding:var(--sp-4); display:grid; gap:var(--sp-3); }
+.fi-tur-kartu[data-letak="tengah"] { left:50%; top:50%; transform:translate(-50%, -50%); }
+.fi-tur-kartu[data-letak="bawah-layar"] { left:8px; right:8px; bottom:8px; width:auto; }
+.fi-tur-titik { display:flex; flex-wrap:wrap; gap:4px; }
+.fi-tur-titik span { width:6px; height:6px; border-radius:3px; background:var(--line-strong); }
+.fi-tur-titik span[data-aktif] { width:16px; background:var(--primary); }
+@media (prefers-reduced-motion: reduce) { .fi-tur-sorot { transition:none; } }
+.fi-misi > summary { cursor:pointer; list-style:none; display:flex; flex-wrap:wrap; align-items:center; gap:8px; font:600 .875rem/1.25rem var(--font-sans); }
+.fi-misi > summary::-webkit-details-marker { display:none; }
+.fi-misi > summary::before { content:"▸"; color:var(--ink-subtle); transition:transform var(--dur-fast); }
+.fi-misi[open] > summary::before { transform:rotate(90deg); }
+.fi-progress { width:100%; max-width:220px; height:8px; accent-color:var(--primary); vertical-align:middle; }
+.fi-progress { appearance:none; border:0; border-radius:4px; background:var(--surface-3); overflow:hidden; }
+.fi-progress::-webkit-progress-bar { background:var(--surface-3); }
+.fi-progress::-webkit-progress-value { background:var(--primary); }
+.fi-progress::-moz-progress-bar { background:var(--primary); }
