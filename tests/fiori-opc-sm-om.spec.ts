@@ -358,7 +358,7 @@ test("peran Sales Manager dari sesi: hanya antrean SM, tombol aktif", async ({ p
     await expect(footer(page).getByRole("button", { name: "Kembalikan ke SPV…" })).toBeEnabled();
 });
 
-test("AM-026 peran Manager dari sesi: 7 tab baca, tombol tulis nonaktif beralasan, Ekspor CSV log audit aktif", async ({ page }) => {
+test("AM-026 peran Manager dari sesi: 8 tab baca, tombol tulis nonaktif beralasan, Ekspor CSV log audit aktif", async ({ page }) => {
     const tulis = await mockOpc(page, { peran: "manager" });
     await page.route((u) => u.pathname === "/api/off-program-control/audit", (r) => r.fulfill(json({ ok: true, audit: [
         { id: "a1", batchId: "b-sm1", noPengajuan: "007/KINO/10/2026", action: "batch_submitted", actorName: "Rahmat", actorRole: "supervisor", createdAt: kini },
@@ -369,7 +369,7 @@ test("AM-026 peran Manager dari sesi: 7 tab baca, tombol tulis nonaktif beralasa
     await expect(main.getByText("Peran Anda: Manager.")).toBeVisible(NAV);
     await expect(main.getByText(/Baca semua antrean dan log audit/)).toBeVisible();
     await expect(main.getByRole("navigation", { name: "Antrean OFF Program Control" }).getByRole("link"))
-        .toHaveText([/^Ringkasan/, /^Supervisor/, /^Sales Manager/, /^Klaim/, /^Operational Manager/, /^Keuangan/, /^Log audit/]);
+        .toHaveText([/^Ringkasan/, /^Supervisor/, /^Sales Manager/, /^Klaim/, /^Operational Manager/, /^Keuangan/, /^Potong Tagihan/, /^Log audit/]);
     await expect(detailOf(page).getByRole("heading", { level: 2, name: "007/KINO/10/2026" })).toBeVisible(NAV);
     const alasan = /Manager hanya membaca OFF Program Control/;
     for (const nama of ["Setujui…", "Kembalikan ke SPV…"]) {

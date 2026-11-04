@@ -47,6 +47,9 @@ const PUTUS = pesanTidakPasti("pembayaran ini", "Riwayat pembayaran");
 /** Transfer/Tunai/Potong Tagihan → label baku; nilai lain apa adanya ("" bila kosong). */
 const caraBayar = (value: string | null | undefined): string => (value ? normalizePaymentMethod(value) : "");
 
+/** Owner 3 Nov 2026: item Potong Tagihan dicatat Incaso (tab Potong Tagihan), bukan Keuangan; server menolak bila dipaksa. */
+const milikIncaso = (i: ItemBayar) => caraBayar(i.caraBayar) === "Potong Tagihan";
+
 /** isFinanceItemPaid kode lama: sama dengan cek "alreadyPaid" server. */
 const sudahDibayar = (i: ItemBayar) => i.financePaymentStatus === "paid" || Boolean(i.financePaymentId);
 
@@ -118,7 +121,8 @@ function DetailKeuangan(props: DetailProps) {
 
     const items = d.items as ItemBayar[];
     const perId = new Map(items.map((i) => [i.id, i]));
-    const belum = items.filter((i) => !sudahDibayar(i));
+    const belum = items.filter((i) => !sudahDibayar(i) && !milikIncaso(i));
+    const potongBelum = items.filter((i) => !sudahDibayar(i) && milikIncaso(i));
     // Item yang ternyata sudah dibayar (detail dimuat ulang) keluar dari pilihan, tidak ikut terkirim.
     const dipilih = [...pilih].map((id) => perId.get(id)).filter((i): i is ItemBayar => Boolean(i) && !sudahDibayar(i!));
     const metodeDipilih = Array.from(new Set(dipilih.map((i) => caraBayar(i.caraBayar)))).filter(Boolean);
@@ -146,7 +150,7 @@ function DetailKeuangan(props: DetailProps) {
                 : buktiGalat ? `Lampiran bank: ${buktiGalat}` : undefined);
 
     // isFinanceItemDisabledForSelection kode lama: lunas tidak bisa dipilih; setelah satu cara bayar dipilih, cara lain nonaktif.
-    const bisaDipilih = (i: ItemBayar) => !izin && !terkunci && !sudahDibayar(i) && (!metode || pilih.has(i.id) || caraBayar(i.caraBayar) === metode);
+    const bisaDipilih = (i: ItemBayar) => !izin && !terkunci && !sudahDibayar(i) && !milikIncaso(i) && (!metode || pilih.has(i.id) || caraBayar(i.caraBayar) === metode);
     const ubahPilih = (next: ReadonlySet<string>) => {
         const cara = new Set([...next].map((id) => perId.get(id)).filter((i) => i && !sudahDibayar(i)).map((i) => caraBayar(i!.caraBayar)).filter(Boolean));
         if (cara.size > 1) { setPesanPilih("Pilih item dengan cara bayar yang sama."); return; } // "Pilih semua" pada batch campuran
@@ -163,7 +167,8 @@ function DetailKeuangan(props: DetailProps) {
                 onChange={() => { const next = new Set(pilih); if (next.has(i.id)) next.delete(i.id); else next.add(i.id); ubahPilih(next); }} />
         </label>
     );
-    const statusItem = (i: ItemBayar) => (sudahDibayar(i) ? <StatusBadge tone="pos">Dibayar</StatusBadge>
+    const statusItem = (i: ItemBayar) => (sudahDibayar(i) ? <StatusBadge tone="pos">{milikIncaso(i) ? "Dipotong" : "Dibayar"}</StatusBadge>
+        : milikIncaso(i) ? <span className="fi-sub">Dicatat Incaso</span>
         : pilih.has(i.id) ? <StatusBadge tone="info">Akan dibayar</StatusBadge>
             : metode && caraBayar(i.caraBayar) !== metode ? <span className="fi-sub">Cara bayar berbeda dari pilihan</span>
                 : "Belum dibayar");
@@ -197,7 +202,7 @@ function DetailKeuangan(props: DetailProps) {
                             badge={sudahDibayar(i) ? <StatusBadge tone="pos">Dibayar</StatusBadge> : pilih.has(i.id) ? <StatusBadge tone="info">Akan dibayar</StatusBadge> : undefined} />
                     </div>
                 )} />
-            {pesanPilih && <div className="fi-sect-in"><MessageStrip tone="warn" title={pesanPilih} onClose={() => setPesanPilih(null)}>Satu pencatatan hanya untuk item dengan cara bayar yang sama; catat Transfer, Tunai, dan Potong Tagihan terpisah.</MessageStrip></div>}
+            {pesanPilih && <div className="fi-sect-in"><MessageStrip tone="warn" title={pesanPilih} onClose={() => setPesanPilih(null)}>Satu pencatatan hanya untuk item dengan cara bayar yang sama; catat Transfer dan Tunai terpisah. Potong Tagihan dicatat Incaso.</MessageStrip></div>}
         </>
     );
 
@@ -217,14 +222,19 @@ function DetailKeuangan(props: DetailProps) {
                     ...faktaBayar(bayar).map(([k, v]): [string, string] => [k.startsWith("Beban") ? k : `Total ${k.toLowerCase()} baris`, v]),
                     ["Deadline klaim", tanggalOpc(b.claimDeadline)],
                 ]} />
+                {potongBelum.length > 0 && (
+                    <MessageStrip tone="info" title={`${potongBelum.length} item Potong Tagihan dicatat oleh Incaso.`}>
+                        Item itu tidak bisa dipilih di sini. Incaso mengisi nomor faktur yang dipotong di tab Potong Tagihan.
+                    </MessageStrip>
+                )}
                 {bayarCampur(bayar) && (
                     <MessageStrip tone="warn" title="Batch ini memiliki lebih dari satu cara bayar.">Pastikan pembayaran sesuai rincian baris.</MessageStrip>
                 )}
                 <div className="fi-formgrid">
-                    <FormField label="Tanggal bayar" required help="Tanggal uang benar-benar keluar atau tagihan toko dipotong.">
+                    <FormField label="Tanggal bayar" required help="Tanggal uang benar-benar keluar.">
                         {(a) => <input {...a} className="fi-input" type="date" value={tanggal} disabled={Boolean(izin)} onChange={(e) => setTanggal(e.target.value)} />}
                     </FormField>
-                    <FormField label="Bank pengirim" help="Rekening perusahaan yang dipakai untuk transfer. Kosongkan untuk Tunai atau Potong Tagihan.">
+                    <FormField label="Bank pengirim" help="Rekening perusahaan yang dipakai untuk transfer. Kosongkan untuk Tunai.">
                         {(a) => <input {...a} className="fi-input" value={bank} disabled={Boolean(izin)} onChange={(e) => setBank(e.target.value)} />}
                     </FormField>
                 </div>

@@ -15,6 +15,8 @@ export type OffRole =
   | "claim"
   | "operational_manager"
   | "finance"
+  // Owner 3 Nov 2026: item Potong Tagihan dicatat Incaso (nomor faktur yang dipotong), bukan Keuangan.
+  | "incaso"
   | "sales"
   | "unknown";
 
@@ -31,6 +33,7 @@ export type OffTab =
   | "claim"
   | "om"
   | "finance"
+  | "incaso"
   | "audit";
 
 export type OffAction =
@@ -51,7 +54,8 @@ export type OffAction =
   | "period_close"
   | "period_unlock"
   | "discount_view"
-  | "discount_manage";
+  | "discount_manage"
+  | "potong_tagihan";
 
 export type OffRoleResolution = {
   role: OffRole;
@@ -112,6 +116,9 @@ export function normalizeOffRole(value?: unknown): OffRole {
   if (role === "finance" || role === "keuangan") {
     return "finance";
   }
+
+  // "admin_incaso" = role turunan grup preset "Admin Incaso" (GROUP_NAME_TO_ROLE).
+  if (role === "incaso" || role === "admin_incaso") return "incaso";
 
   if (role === "sales") return "sales";
 
@@ -186,6 +193,7 @@ export function getOffAccessibleTabs(roleInput: OffRole | string): OffTab[] {
         "claim",
         "om",
         "finance",
+        "incaso",
         "audit",
       ];
 
@@ -203,6 +211,9 @@ export function getOffAccessibleTabs(roleInput: OffRole | string): OffTab[] {
 
     case "finance":
       return ["finance"];
+
+    case "incaso":
+      return ["incaso"];
 
     case "sales":
       return [];
@@ -237,6 +248,7 @@ export function canPerformOffAction(
     claim: ["claim_review", "claim_final", "audit_read", "audit_export", "audit_correct", "period_close", "create_batch", "submit_batch", "edit_returned_batch"],
     operational_manager: ["om_approve", "om_cancel"],
     finance: ["finance_payment", "submit_refund"],
+    incaso: ["potong_tagihan"],
     sales: [],
     unknown: [],
   };

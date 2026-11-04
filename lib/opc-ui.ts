@@ -12,7 +12,7 @@
  */
 import type { FlowStep, Tone } from "@/components/fiori/core";
 import { canPerformOffAction, getOffAccessibleTabs, type OffAction, type OffRole, type OffTab } from "@/lib/off-program-control/access";
-import { computeOffPaymentSummary, type OffRingkasBayar } from "@/lib/off-program-control/payments";
+import { computeOffPaymentSummary, normalizePaymentMethod, type OffRingkasBayar } from "@/lib/off-program-control/payments";
 import { labelTipe } from "@/lib/off-program-control/program-type";
 import { matchesSearch, normalizeSearchText } from "@/lib/off-program-control/search";
 import { rupiah } from "@/lib/promo-ui";
@@ -175,8 +175,22 @@ export function tahapBatch(b: SumbuStatus): TahapKey {
 
 export type InfoTahap = { kunci: TahapKey; label: string; tone: Tone; pemilik: string | null; posisi: number };
 
+/**
+ * Sisa belum tercatat per pemegang (owner 3 Nov 2026): Potong Tagihan dicatat Incaso, Transfer/Tunai dibayar Keuangan.
+ * null = ringkasan batch tidak ada (fixture/respons lama): pemanggil memakai perilaku lama (semuanya Keuangan).
+ */
+export function sisaPemegang(b: Pick<BatchOpc, "summary" | "payments">): { keuangan: number; incaso: number } | null {
+    if (!b.summary) return null;
+    const potong = Number(b.summary.potongTagihan || 0);
+    const total = Number(b.summary.totalNominal || 0);
+    const dibayar = (pt: boolean) => (b.payments ?? [])
+        .filter((p) => (normalizePaymentMethod(p.paymentMethod) === "Potong Tagihan") === pt)
+        .reduce((t, p) => t + Number(p.paidAmount || 0), 0);
+    return { keuangan: Math.max(0, total - potong - dibayar(false)), incaso: Math.max(0, potong - dibayar(true)) };
+}
+
 /** Badge + pemilik tahap. Dikembalikan/Dibatalkan negatif; draf = "Draf" (bukan "Perlu Revisi Supervisor"); lewat SLA → kuning. */
-export function infoTahap(b: SumbuStatus & Pick<BatchOpc, "createdByRole">, terlambat = false): InfoTahap {
+export function infoTahap(b: SumbuStatus & Pick<BatchOpc, "createdByRole"> & Partial<Pick<BatchOpc, "summary" | "payments">>, terlambat = false): InfoTahap {
     const kunci = tahapBatch(b);
     const pembuat = b.createdByRole === "claim" ? "Klaim" : "Supervisor";
     let label = OPSI_TAHAP.find((o) => o.kunci === kunci)!.label;
@@ -188,11 +202,13 @@ export function infoTahap(b: SumbuStatus & Pick<BatchOpc, "createdByRole">, terl
         case "sm": pemilik = "Sales Manager"; break;
         case "klaim": pemilik = "Klaim"; break;
         case "om": pemilik = "Operational Manager"; break;
-        case "bayar":
-            pemilik = "Keuangan";
+        case "bayar": {
+            const sisa = sisaPemegang(b);
+            pemilik = sisa && sisa.incaso > 0 ? (sisa.keuangan > 0 ? "Keuangan · Incaso" : "Incaso") : "Keuangan";
             if (b.financeStatus === "Partial Paid" || b.status === "Partial Paid") { label = "Dibayar sebagian"; tone = "warn"; }
             else if (b.financeStatus === "Need Correction") { label = "Perlu koreksi bayar"; tone = "warn"; }
             break;
+        }
         case "final":
             pemilik = "Klaim";
             if (menungguSelisih(b)) { label = "Menunggu pengembalian selisih"; tone = "warn"; pemilik = "Supervisor (pengembalian) · Keuangan (verifikasi)"; }
@@ -247,8 +263,10 @@ export const PREDIKAT = {
     /** isOmActionableBatch (kode lama): antrean + aksi OM (daftar tab OM lama = semua batch). */
     omAntrean: (b: B) => b.claimStatus === "Approved" && b.omStatus === "Waiting Approval" && ["Claim Approved", "Ready for OM", "Waiting OM"].includes(b.status),
     /** isFinanceQueueBatch (kode lama): antrean Keuangan. */
-    keuanganAntrean: (b: B) => b.smStatus === "Approved by SM" && b.claimStatus === "Approved" && b.omStatus === "Approved"
-        && ["Waiting Payment", "Partial Paid", "Need Correction"].includes(b.financeStatus) && !["Cancelled by OM", "Paid", "Completed", "Cancelled"].includes(b.status),
+    keuanganAntrean: (b: B) => menungguBayar(b) && (sisaPemegang(b)?.keuangan ?? 1) > 0,
+    /** Owner 3 Nov 2026: antrean Incaso = batch menunggu bayar yang masih punya item Potong Tagihan belum dicatat. */
+    incasoAntrean: (b: B) => menungguBayar(b) && (sisaPemegang(b)?.incaso ?? 0) > 0,
+    incasoPantau: (b: B) => Number(b.summary?.potongTagihan || 0) > 0 && b.omStatus === "Approved",
     /** isFinanceActionableBatch (kode lama): tombol bayar aktif. */
     keuanganBisaBayar: (b: B) => b.omStatus === "Approved" && ["Waiting Payment", "Partial Paid", "Need Correction"].includes(b.financeStatus),
     /** isFinanceMonitoringBatch (kode lama): daftar tab Keuangan. */
@@ -264,6 +282,12 @@ export const PREDIKAT = {
 
 export type Predikat = (b: BatchOpc) => boolean;
 
+/** isFinanceQueueBatch kode lama: batch menunggu pembayaran (siapa pun pemegang item-nya). */
+function menungguBayar(b: BatchOpc) {
+    return b.smStatus === "Approved by SM" && b.claimStatus === "Approved" && b.omStatus === "Approved"
+        && ["Waiting Payment", "Partial Paid", "Need Correction"].includes(b.financeStatus) && !["Cancelled by OM", "Paid", "Completed", "Cancelled"].includes(b.status);
+}
+
 /** Satu tampilan antrean di sebuah tab. `antrean` = "Menunggu Anda"; `pantau` = daftar tab lama (pemantauan). */
 export type Tampilan = { kunci: string; label: string; antrean: Predikat; pantau?: Predikat; kosong: string };
 
@@ -278,6 +302,7 @@ export const TAMPILAN = {
     ],
     om: [{ kunci: "persetujuan", label: "Persetujuan OM", antrean: PREDIKAT.omAntrean, pantau: PREDIKAT.semua, kosong: "Tidak ada batch yang menunggu persetujuan OM." }],
     finance: [{ kunci: "pembayaran", label: "Pembayaran", antrean: PREDIKAT.keuanganAntrean, pantau: PREDIKAT.keuanganPantau, kosong: "Tidak ada batch yang menunggu pembayaran." }],
+    incaso: [{ kunci: "potong", label: "Potong Tagihan", antrean: PREDIKAT.incasoAntrean, pantau: PREDIKAT.incasoPantau, kosong: "Tidak ada item Potong Tagihan yang menunggu dicatat." }],
     overview: [{ kunci: "semua", label: "Semua pengajuan", antrean: PREDIKAT.semua, kosong: "Belum ada pengajuan." }],
 } satisfies Record<Exclude<OffTab, "audit">, Tampilan[]>;
 
@@ -290,6 +315,7 @@ export const TAB_OPC: Array<{ key: OffTab; label: string }> = [
     { key: "claim", label: "Klaim" },
     { key: "om", label: "Operational Manager" },
     { key: "finance", label: "Keuangan" },
+    { key: "incaso", label: "Potong Tagihan" },
     { key: "audit", label: "Log audit" },
 ];
 
@@ -395,7 +421,7 @@ const AKSI_AUDIT: Record<string, string> = {
     create_batch: "Membuat batch", update_batch: "Mengubah batch", submit_to_sm: "Mengirim ke SM", pdf_generated: "PDF surat dibuat",
     receipt_pdf_generated: "Kwitansi dibuat", sm_approve: "Menyetujui (SM)", sm_return: "Mengembalikan ke SPV (SM)",
     mock_notification_created: "Notifikasi OM dicatat (tidak dikirim)", claim_approve: "Menyetujui klaim", claim_return: "Mengembalikan (Klaim)",
-    om_approve: "Menyetujui (OM)", om_cancel: "Membatalkan (OM)", finance_payment_added: "Mencatat pembayaran",
+    om_approve: "Menyetujui (OM)", om_cancel: "Membatalkan (OM)", finance_payment_added: "Mencatat pembayaran", potong_tagihan_added: "Mencatat potong tagihan (Incaso)",
     final_remind_incomplete_documents: "Mengingatkan kelengkapan berkas", complete: "Menyelesaikan verifikasi final",
     final_claim_overpaid: "Verifikasi final: ada selisih yang harus dikembalikan", submit_refund: "Mengajukan pengembalian selisih",
     verify_refund: "Memverifikasi pengembalian", reject_refund: "Menolak pengembalian", refund_settled: "Selisih lunas dikembalikan",
@@ -408,13 +434,13 @@ export const catatanSendiri = (a: AuditOpc) => (a.metadata?.alasanSendiri ? `Ala
     : a.metadata?.sendiriTanpaAlasan ? "Disetujui sendiri tanpa alasan (sebelum alasan diwajibkan)" : "");
 
 const PERAN_AKTOR: Record<string, string> = {
-    supervisor: "SPV", sales_manager: "SM", claim: "Klaim", operational_manager: "OM", finance: "Keuangan", admin: "Admin", manager: "Manager",
+    supervisor: "SPV", sales_manager: "SM", claim: "Klaim", operational_manager: "OM", finance: "Keuangan", incaso: "Incaso", admin: "Admin", manager: "Manager",
 };
 export const labelPeranAktor = (role: string | null | undefined) => (role ? PERAN_AKTOR[role] ?? role : "");
 
 export const LABEL_PERAN: Record<OffRole, string> = {
     admin: "Admin", manager: "Manager", supervisor: "Supervisor", sales_manager: "Sales Manager", claim: "Klaim", operational_manager: "Operational Manager",
-    finance: "Keuangan", sales: "Sales", unknown: "Belum dikenali",
+    finance: "Keuangan", incaso: "Incaso", sales: "Sales", unknown: "Belum dikenali",
 };
 
 // Format tampilan.

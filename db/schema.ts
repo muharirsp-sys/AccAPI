@@ -701,7 +701,9 @@ export const salesInvoiceCache = pgTable("sales_invoice", {
     index("idx_sales_invoice_created_at").on(t.createdAt, t.id),
     index("idx_sales_invoice_trans_date").on(t.transDate),
     index("idx_sales_invoice_customer_no").on(t.customerNo),
-    index("idx_sales_invoice_synced_at").on(t.syncedAt, t.id)
+    index("idx_sales_invoice_synced_at").on(t.syncedAt, t.id),
+    // Potong Tagihan OPC (0040): cari faktur per nomor.
+    index("idx_sales_invoice_number").on(t.number)
 ]);
 
 // Perubahan rincian faktur INV yang terlihat saat cache faktur diperbarui (owner 23 Okt 2026; spec
@@ -1053,6 +1055,22 @@ export const offPayment = pgTable("off_payment", {
     createdAt: timestamp("created_at").notNull(),
     updatedAt: timestamp("updated_at").notNull()
 }, (t) => [index("idx_off_payment_batch").on(t.batchId)]);
+
+// Owner 3 Nov 2026: rincian Potong Tagihan yang dicatat Incaso — satu baris per (item, faktur); satu item boleh dari beberapa
+// faktur. Σ amount per item = nominal item; Σ per invoice_no ≤ sisa tagihan faktur saat dicatat. SQL = db/migrations/0040.
+export const offPotongTagihan = pgTable("off_potong_tagihan", {
+    id: text("id").primaryKey(),
+    batchId: text("batch_id").notNull().references(() => offBatch.id),
+    itemId: text("item_id").notNull().references(() => offBatchItem.id),
+    paymentId: text("payment_id").notNull().references(() => offPayment.id),
+    invoiceId: bigint("invoice_id", { mode: "number" }),
+    invoiceNo: text("invoice_no").notNull(),
+    customerNo: text("customer_no"),
+    customerName: text("customer_name"),
+    amount: doublePrecision("amount").notNull(),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at").notNull(),
+}, (t) => [index("idx_off_potong_tagihan_invoice").on(t.invoiceNo), index("idx_off_potong_tagihan_batch").on(t.batchId)]);
 
 export const offRefund = pgTable("off_refund", {
     id: text("id").primaryKey(),

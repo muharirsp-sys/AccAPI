@@ -47,6 +47,8 @@ export const PERMISSION_REGISTRY = {
         "claim_review", "claim_final", "om_approve", "om_cancel", "finance_payment",
         "submit_refund", "audit_read", "audit_export", "audit_correct", "period_close",
         "period_unlock", "discount_view", "discount_manage",
+        // Owner 3 Nov 2026: item Potong Tagihan dicatat Incaso (nomor faktur), bukan Keuangan; salesman memantau pengajuan principalnya.
+        "potong_tagihan", "pantau_sales",
     ],
     claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export"],
     // S7-1b: create_user/edit_user/delete_user/set_role/set_permission DIPENSIUNKAN -> users.manage (KUNCI_PENSIUN).

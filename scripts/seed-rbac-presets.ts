@@ -103,6 +103,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
             ...k("dashboard", ["view"]),
             ...k("form_kontrol", ["view", "submit"]),
             ...k("insentif_sales", ["view"]),
+            ...k("off_program_control", ["pantau_sales"]),
         ],
     },
     {
@@ -121,6 +122,7 @@ const ROLE_TO_GROUP: Record<string, string> = {
     spv: "SPV", supervisor: "SPV", sm: "SM", sales_manager: "SM",
     claim: "Claim", om: "OM", operational_manager: "OM",
     salesman: "Salesman", sales: "Salesman", admin_sales: "Admin Sales",
+    admin_incaso: "Admin Incaso",
 };
 
 // Sanity: semua key preset harus valid di registry (cegah typo nyebar ke DB).
