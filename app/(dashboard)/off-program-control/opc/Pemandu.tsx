@@ -35,6 +35,7 @@ const LANGKAH_PERAN: Partial<Record<OffRole, string>> = {
     claim: "Setelah Sales Manager menyetujui, periksa berkas di Validasi setelah SM. Setelah Keuangan membayar, lanjutkan di Verifikasi final.",
     operational_manager: "Pengajuan yang sudah lolos pemeriksaan Klaim akan menunggu persetujuan Anda di tab Operational Manager.",
     finance: "Pengajuan yang disetujui OM akan menunggu pembayaran di tab Keuangan.",
+    incaso: "Item Potong Tagihan dari pengajuan yang disetujui OM akan menunggu di tab Potong Tagihan.",
     admin: "Pantau semua antrean dari tab Ringkasan.",
     manager: "Pantau semua antrean dari tab Ringkasan; aksi tulis milik peran masing-masing.",
 };
@@ -128,7 +129,8 @@ export function langkahTurOpc(peran: OffRole): LangkahTur[] {
             { target: "antrean", judul: "Pengajuan yang menunggu Klaim", isi: "Buka pengajuan untuk memeriksa kelengkapan berkas. Item beban distributor (DM) tidak perlu No Claim." },
         ],
         operational_manager: [{ target: "antrean", judul: "Persetujuan OM", isi: "Pengajuan di sini sudah diperiksa Klaim. Setujui supaya Keuangan bisa membayar, atau batalkan dengan alasan." }],
-        finance: [{ target: "antrean", judul: "Pembayaran", isi: "Buka pengajuan, centang item dengan cara bayar yang sama, lalu catat tanggal bayar. Potong Tagihan berarti nilai dipotongkan dari tagihan toko." }],
+        finance: [{ target: "antrean", judul: "Pembayaran", isi: "Buka pengajuan, centang item dengan cara bayar yang sama (Transfer atau Tunai), lalu catat tanggal bayar. Item Potong Tagihan dicatat Incaso." }],
+        incaso: [{ target: "antrean", judul: "Potong Tagihan", isi: "Buka pengajuan, centang item Potong Tagihan, lalu tulis nomor faktur toko yang dipotong. Satu item boleh dari beberapa faktur; faktur harus milik toko yang sama dan sisa tagihannya cukup." }],
         admin: [{ target: "antrean", judul: "Semua pengajuan", isi: "Sebagai admin Anda bisa membuka pengajuan mana pun dan melihat riwayatnya." }],
         manager: [{ target: "antrean", judul: "Semua pengajuan", isi: "Anda bisa membaca semua antrean dan log audit. Aksi tulis milik peran masing-masing." }],
     };

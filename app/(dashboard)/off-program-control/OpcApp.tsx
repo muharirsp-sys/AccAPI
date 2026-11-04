@@ -28,13 +28,14 @@ import { useDaftarBatch, type OpcKonteks, type PeranProps } from "./opc/Bersama"
 import { MisiAnda, TombolPanduan, useTurPertama } from "./opc/Pemandu";
 import Audit from "./opc/peran/Audit";
 import Keuangan from "./opc/peran/Keuangan";
+import Incaso from "./opc/peran/Incaso";
 import Klaim from "./opc/peran/Klaim";
 import Om from "./opc/peran/Om";
 import Ringkasan from "./opc/peran/Ringkasan";
 import Sm from "./opc/peran/Sm";
 import Spv from "./opc/peran/Spv";
 
-const MODUL: Record<OffTab, ComponentType<PeranProps>> = { overview: Ringkasan, supervisor: Spv, sales: Sm, claim: Klaim, om: Om, finance: Keuangan, audit: Audit };
+const MODUL: Record<OffTab, ComponentType<PeranProps>> = { overview: Ringkasan, supervisor: Spv, sales: Sm, claim: Klaim, om: Om, finance: Keuangan, incaso: Incaso, audit: Audit };
 
 type SessionUser = { id?: string | null; name?: string | null; email?: string | null; role?: unknown; userRole?: unknown; type?: unknown; position?: unknown; department?: unknown };
 

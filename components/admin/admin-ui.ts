@@ -92,6 +92,7 @@ export function selisihIzin(sebelum: Iterable<string>, sesudah: Iterable<string>
 export const ROLE_PRESET: Readonly<Record<string, string>> = {
     Admin: "admin", Manager: "manager", Finance: "finance", Staff: "staff", Viewer: "viewer",
     SPV: "spv", SM: "sm", Claim: "claim", OM: "om", Salesman: "salesman", "Admin Sales": "admin_sales",
+    "Admin Incaso": "admin_incaso",
 };
 const ROLE_BAWAAN = "viewer";
 

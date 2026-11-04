@@ -152,6 +152,7 @@ export async function userTarget(tx: Tx, userId: string) {
 export const GROUP_NAME_TO_ROLE: Readonly<Record<string, string>> = {
     Admin: "admin", Manager: "manager", Finance: "finance", Staff: "staff", Viewer: "viewer",
     SPV: "spv", SM: "sm", Claim: "claim", OM: "om", Salesman: "salesman", "Admin Sales": "admin_sales",
+    "Admin Incaso": "admin_incaso",
 };
 
 export type GrupUser = { groupId: string; name: string; isPreset: boolean; isPrimary: boolean };

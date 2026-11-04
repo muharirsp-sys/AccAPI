@@ -28,14 +28,14 @@ type Tahap = -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6;
 type Isi = {
     noSurat: string; namaProgram: string; toko: string; nominal: string; caraBayar: string; rekening: string; tipe: string; alasan: string; beban: string;
     kwt: boolean; skp: boolean; foto: boolean;
-    catatanKembali: string; tglAju: string; deadline: string; berkasLengkap: boolean; tglBayar: string; noClaim: string; ceklisFinal: boolean;
+    catatanKembali: string; tglAju: string; deadline: string; berkasLengkap: boolean; tglBayar: string; noFaktur: string; noClaim: string; ceklisFinal: boolean;
 };
 
 // Data contoh generik (aturan owner 8 Okt: PRINCIPLE A, TOKO A; tanpa nama principal/orang nyata).
 const AWAL: Isi = {
     noSurat: "001/PRINCIPLE A/XI/2026", namaProgram: "Cashback loyalty kuartal 4", toko: "TOKO A (C-TA0001)", nominal: "1500000", caraBayar: "Transfer",
     rekening: "", tipe: "", alasan: "", beban: "CL", kwt: true, skp: false, foto: true,
-    catatanKembali: "", tglAju: "", deadline: "", berkasLengkap: false, tglBayar: "", noClaim: "", ceklisFinal: false,
+    catatanKembali: "", tglAju: "", deadline: "", berkasLengkap: false, tglBayar: "", noFaktur: "", noClaim: "", ceklisFinal: false,
 };
 
 const PERAN: Record<Exclude<Tahap, -1 | 6>, { peran: string; misi: string }> = {
@@ -46,6 +46,9 @@ const PERAN: Record<Exclude<Tahap, -1 | 6>, { peran: string; misi: string }> = {
     4: { peran: "Keuangan", misi: "Catat pembayaran ke toko sesuai cara bayarnya." },
     5: { peran: "Klaim (verifikasi final)", misi: "Cocokkan yang dibayar dengan yang diklaim, isi No Claim, lalu selesaikan." },
 };
+// Owner 3 Nov 2026: item Potong Tagihan dicatat Incaso (nomor faktur yang dipotong), bukan Keuangan.
+const PERAN_INCASO = { peran: "Incaso", misi: "Catat potong tagihan: isi nomor faktur toko yang dipotong dan tanggal potongnya." };
+const potongTagihan = (isi: Isi) => isi.caraBayar === "Potong Tagihan";
 
 const KUNCI_TUR = "opc-tur-latihan-v1";
 const jam = () => new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
@@ -69,7 +72,7 @@ function langkahTurLatihan(t: Tahap): LangkahTur[] {
         1: [{ target: "lat-aksi", judul: "Setujui atau kembalikan", isi: "Coba Kembalikan sekali untuk melihat apa yang terjadi: pengajuan kembali ke Supervisor bersama catatan Anda." }],
         2: [{ target: "lat-kartu", judul: "Pemeriksaan berkas", isi: "Klaim memastikan berkas lengkap dan mencatat deadline klaim ke principal. Alarm keterlambatan dihitung dari deadline ini." }],
         3: [{ target: "lat-aksi", judul: "Keputusan OM", isi: "Setelah disetujui, pengajuan pindah ke Keuangan untuk dibayar." }],
-        4: [{ target: "lat-kartu", judul: "Catat pembayaran", isi: "Keuangan mencatat tanggal bayar. Untuk Potong Tagihan, nilainya dipotongkan dari tagihan toko." }],
+        4: [{ target: "lat-kartu", judul: "Catat pembayaran", isi: "Transfer dan Tunai dicatat Keuangan. Potong Tagihan dicatat Incaso: isi nomor faktur toko yang dipotong; satu item boleh dari beberapa faktur." }],
         5: [{ target: "lat-kartu", judul: "Verifikasi final", isi: "No Claim wajib untuk item beban principal (CL). Item beban distributor (DM) tidak diklaim, jadi No Claim tidak wajib." }],
     };
     return [
@@ -102,7 +105,7 @@ export default function Latihan() {
     }, []);
     const tutupTur = () => { setTur(null); try { window.localStorage.setItem(KUNCI_TUR, "1"); } catch { /* mode privat */ } };
 
-    const info = t >= 0 && t <= 5 ? PERAN[t as Exclude<Tahap, -1 | 6>] : null;
+    const info = t === 4 && potongTagihan(isi) ? PERAN_INCASO : t >= 0 && t <= 5 ? PERAN[t as Exclude<Tahap, -1 | 6>] : null;
     return (
         <div className="fi-page">
             <header className="fi-page-head">
@@ -144,7 +147,8 @@ export default function Latihan() {
                     kembali={() => lanjut(0, "Sales Manager", `Kembalikan ke Supervisor: ${isi.catatanKembali.trim()}`)} />}
                 {t === 2 && <TahapKlaim isi={isi} ubah={ubah} setuju={() => lanjut(3, "Klaim", `Setujui klaim, deadline ${isi.deadline}`)} />}
                 {t === 3 && <TahapOm isi={isi} setuju={() => lanjut(4, "Operational Manager", "Setujui")} batal={() => lanjut(-1, "Operational Manager", "Batalkan")} />}
-                {t === 4 && <TahapKeuangan isi={isi} ubah={ubah} bayar={() => lanjut(5, "Keuangan", `Catat pembayaran ${isi.caraBayar} tanggal ${isi.tglBayar}`)} />}
+                {t === 4 && <TahapKeuangan isi={isi} ubah={ubah} bayar={() => lanjut(5, potongTagihan(isi) ? "Incaso" : "Keuangan", potongTagihan(isi)
+                    ? `Catat potong tagihan faktur ${isi.noFaktur.trim()} tanggal ${isi.tglBayar}` : `Catat pembayaran ${isi.caraBayar} tanggal ${isi.tglBayar}`)} />}
                 {t === 5 && <TahapFinal isi={isi} ubah={ubah} selesai={() => lanjut(6, "Klaim", isi.beban === "DM" ? "Selesaikan (beban distributor, tanpa No Claim)" : `Selesaikan dengan No Claim ${isi.noClaim.trim()}`)} />}
                 {t === 6 && <Akhir judul="Selamat, latihan selesai!" ikon ulang={ulang}>
                     Anda sudah menjalankan satu pengajuan dari Supervisor sampai verifikasi final. Di sistem nyata, setiap langkah ini dikerjakan orang
@@ -296,12 +300,15 @@ function TahapOm({ isi, setuju, batal }: { isi: Isi; setuju: () => void; batal: 
 }
 
 function TahapKeuangan({ isi, ubah, bayar }: PropsTahap & { bayar: () => void }) {
-    const alasan = !isi.tglBayar ? "Isi tanggal bayar dulu." : undefined;
+    const potong = potongTagihan(isi);
+    const alasan = potong && !isi.noFaktur.trim() ? "Isi nomor faktur dulu." : !isi.tglBayar ? (potong ? "Isi tanggal potong dulu." : "Isi tanggal bayar dulu.") : undefined;
     return (
-        <Kartu judul="Pembayaran Keuangan" alasan={alasan} aksi={<Button variant="primary" disabled={Boolean(alasan)} disabledReason={alasan} onClick={bayar}>Catat pembayaran</Button>}>
+        <Kartu judul={potong ? "Potong Tagihan oleh Incaso" : "Pembayaran Keuangan"} alasan={alasan}
+            aksi={<Button variant="primary" disabled={Boolean(alasan)} disabledReason={alasan} onClick={bayar}>{potong ? "Catat potong tagihan" : "Catat pembayaran"}</Button>}>
             <KeyValues items={[["Toko", isi.toko], ["Cara bayar", isi.caraBayar], ["Nominal", rupiah(Number(isi.nominal || 0))], ...(isi.rekening ? [["Rekening tujuan", isi.rekening] as [string, string]] : [])]} />
-            {isi.caraBayar === "Potong Tagihan" && <MessageStrip tone="info" title="Potong Tagihan:">uang tidak keluar; nilainya dipotongkan dari tagihan TOKO A.</MessageStrip>}
-            <FormField label="Tanggal bayar" required help="Tanggal uang keluar atau tagihan toko dipotong.">{(a) => <input {...a} className="fi-input" type="date" value={isi.tglBayar} onChange={(e) => ubah({ tglBayar: e.target.value })} />}</FormField>
+            {potong && <MessageStrip tone="info" title="Potong Tagihan:">uang tidak keluar; nilainya dipotongkan dari tagihan toko. Di sistem nyata, faktur dicek: harus milik toko yang sama dan sisa tagihannya cukup.</MessageStrip>}
+            {potong && <FormField label="No faktur yang dipotong" required help="Faktur penjualan toko ini. Di sistem nyata, satu item boleh dipotong dari beberapa faktur.">{(a) => <input {...a} className="fi-input fi-mono" placeholder="mis. INV/2026/0001" value={isi.noFaktur} onChange={(e) => ubah({ noFaktur: e.target.value })} />}</FormField>}
+            <FormField label={potong ? "Tanggal potong" : "Tanggal bayar"} required help={potong ? "Tanggal tagihan toko dipotong." : "Tanggal uang keluar."}>{(a) => <input {...a} className="fi-input" type="date" value={isi.tglBayar} onChange={(e) => ubah({ tglBayar: e.target.value })} />}</FormField>
         </Kartu>
     );
 }

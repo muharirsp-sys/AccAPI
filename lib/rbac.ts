@@ -122,7 +122,7 @@ export const permissionActions = [
     // legacy OPC tetap 5 aksi, jadi preset role lama tidak berubah.
     "create_batch", "edit_returned_batch", "submit_batch", "sm_approve", "sm_return", "claim_review", "claim_final",
     "om_approve", "om_cancel", "finance_payment", "submit_refund", "audit_read", "audit_export", "audit_correct",
-    "period_close", "period_unlock", "discount_view", "discount_manage",
+    "period_close", "period_unlock", "discount_view", "discount_manage", "potong_tagihan", "pantau_sales",
 ] as const;
 export type PermissionAction = (typeof permissionActions)[number];
 
@@ -187,6 +187,8 @@ export const actionLabels: Record<PermissionAction, string> = {
     period_unlock: "Buka Kunci Periode",
     discount_view: "Lihat Diskon",
     discount_manage: "Kelola Diskon",
+    potong_tagihan: "Catat Potong Tagihan (Incaso)",
+    pantau_sales: "Pantau Pengajuan (Salesman)",
 };
 
 /** SATU sumber label modul untuk layar grup/izin (S7a): 20 modul registry, termasuk `form_kontrol` yang bukan AppModule. */
@@ -407,6 +409,8 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/summary", module: "summary", action: "view" },
     { prefix: "/api-wrapper", module: "api_wrapper", action: "view" },
     { prefix: "/sesi-accurate", module: "api_wrapper", action: "view", anyOf: SESI_ACCURATE_KEYS },
+    // Pantau Pengajuan Promo (owner 3 Nov 2026): salesman tanpa off_program_control.view. HARUS sebelum /off-program-control (entri pertama menang).
+    { prefix: "/off-program-control/pantau", module: "off_program_control", action: "pantau_sales" },
     { prefix: "/off-program-control", module: "off_program_control", action: "view" },
     { prefix: "/reconciliation", module: "reconciliation", action: "view" },
     { prefix: "/claim-workflow", module: "claim_workflow", action: "view" },

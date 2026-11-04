@@ -12,15 +12,23 @@ test("Tutup periode: OM dikunci, Klaim boleh, preset lama (kunci dasar/pensiun c
 
 const SEMUA_AKSI: OffAction[] = ["create_batch", "edit_returned_batch", "submit_batch", "sm_approve", "sm_return", "claim_review", "claim_final",
     "om_approve", "om_cancel", "finance_payment", "submit_refund", "audit_read", "audit_export", "audit_correct", "period_close", "period_unlock",
-    "discount_view", "discount_manage"];
+    "discount_view", "discount_manage", "potong_tagihan"];
 
-test("AM-026 (D-01 §C): manager bukan admin — peran sendiri, 7 tab, hanya audit_read + audit_export; admin tidak berubah", () => {
+test("AM-026 (D-01 §C): manager bukan admin — peran sendiri, 8 tab, hanya audit_read + audit_export; admin tidak berubah", () => {
     assert.equal(normalizeOffRole("manager"), "manager");
     assert.equal(normalizeOffRole(" Manager "), "manager");
     assert.equal(normalizeOffRole("admin"), "admin");
-    assert.deepEqual(getOffAccessibleTabs("manager"), ["overview", "supervisor", "sales", "claim", "om", "finance", "audit"]);
+    assert.deepEqual(getOffAccessibleTabs("manager"), ["overview", "supervisor", "sales", "claim", "om", "finance", "incaso", "audit"]);
     assert.deepEqual(getOffAccessibleTabs("manager"), getOffAccessibleTabs("admin"));
     assert.deepEqual(SEMUA_AKSI.filter((a) => canPerformOffAction("manager", a)), ["audit_read", "audit_export"]);
     assert.deepEqual(SEMUA_AKSI.filter((a) => canPerformOffAction("admin", a)), SEMUA_AKSI);
     assert.equal(canPerformOffAction("manager", "discount_view"), false, "PK-6: tanpa discount_view");
+});
+
+test("Incaso (owner 3 Nov 2026): role grup Admin Incaso -> tab Potong Tagihan saja, hanya aksi potong_tagihan; Keuangan tidak", () => {
+    assert.equal(normalizeOffRole("admin_incaso"), "incaso");
+    assert.equal(normalizeOffRole("Incaso"), "incaso");
+    assert.deepEqual(getOffAccessibleTabs("incaso"), ["incaso"]);
+    assert.deepEqual(SEMUA_AKSI.filter((a) => canPerformOffAction("incaso", a)), ["potong_tagihan"]);
+    assert.equal(canPerformOffAction("finance", "potong_tagihan"), false);
 });

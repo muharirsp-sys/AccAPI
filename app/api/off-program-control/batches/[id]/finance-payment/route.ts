@@ -3,11 +3,17 @@ import { asc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import { db } from "@/lib/db";
-import { offBatch, offBatchItem, offPayment } from "@/db/schema";
+import { offBatch, offBatchItem, offPayment, offPotongTagihan } from "@/db/schema";
 import { PESAN_CARA_BAYAR, canProcessFinancePayment, computeOffFinancePaymentSummary, computeOffPaymentSummary, generateOffPaymentProofPdf, getBatchWithItems, isOffPeriodClosedForBatch, normalizeOffPaymentMethod, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
-import { requirePermissionH } from "@/lib/rbac/resolve";
+import { cariFakturPotong, kunciFakturPotong, potonganTerpakai } from "@/lib/off-program-control/potong-tagihan-db";
+import { nomorFakturKunci, parseAlokasi, periksaAlokasi, type AlokasiPotong } from "@/lib/off-program-control/potong-tagihan";
+import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 const OFF_PAYMENT_CONFLICT = "AM023_OFF_PAYMENT_CONFLICT";
+/** Awalan galat periksa ulang Potong Tagihan di dalam transaksi; sisanya = pesan untuk pengguna. */
+const OFF_POTONG_INVALID = "OPC_POTONG_INVALID:";
+const IZIN_BAYAR = "off_program_control.finance_payment";
+const IZIN_POTONG = "off_program_control.potong_tagihan";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -36,8 +42,11 @@ export async function POST(request: Request, context: Context) {
     try {
         const actor = await requireOffSession();
         if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-        const gate = await requirePermissionH("off_program_control.finance_payment");
+        // Owner 3 Nov 2026: Potong Tagihan dicatat Incaso (potong_tagihan), cara bayar lain oleh Keuangan (finance_payment).
+        // Di sini cukup salah satu; kunci yang tepat dicek setelah cara bayar item terpilih diketahui.
+        const gate = await resolveRequestPermissionsH();
         if (gate.response) return gate.response;
+        if (!gate.perms.has(IZIN_BAYAR) && !gate.perms.has(IZIN_POTONG)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         const { id } = await context.params;
         const data = await getBatchWithItems(id);
         if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
@@ -77,6 +86,21 @@ export async function POST(request: Request, context: Context) {
             return NextResponse.json({ ok: false, error: "Pilih item dengan cara bayar yang sama." }, { status: 400 });
         }
         const paymentMethod = methods[0];
+        const potong = paymentMethod === "Potong Tagihan";
+        if (!gate.perms.has(potong ? IZIN_POTONG : IZIN_BAYAR)) {
+            return NextResponse.json({ ok: false, error: potong ? "Item Potong Tagihan dicatat oleh Incaso." : "Item ini dibayar oleh Keuangan; Incaso hanya mencatat Potong Tagihan." }, { status: 403 });
+        }
+        let alokasi: AlokasiPotong[] = [];
+        let nomorResmi = new Map<string, string>(); // kunci nomor -> nomor faktur resmi (huruf sesuai Accurate) untuk PDF
+        const itemPotong = selectedItems.map((item) => ({ id: item.id, itemNo: item.itemNo, toko: item.toko, nominal: Number(item.nominal || 0) }));
+        if (potong) {
+            try { alokasi = parseAlokasi(formData.get("alokasi")); } catch { return NextResponse.json({ ok: false, error: "Rincian faktur tidak valid." }, { status: 400 }); }
+            const nomor = alokasi.map((a) => a.nomorFaktur);
+            const faktur = await cariFakturPotong(nomor);
+            const hasil = periksaAlokasi({ items: itemPotong, alokasi, faktur, terpakai: await potonganTerpakai(nomor) });
+            if (!hasil.ok) return NextResponse.json({ ok: false, error: hasil.error }, { status: 400 });
+            nomorResmi = new Map([...faktur].map(([kunci, f]) => [kunci, f[0].number]));
+        }
         const paidAmount = selectedItems.reduce((total, item) => total + Number(item.nominal || 0), 0);
         if (paidAmount <= 0) return NextResponse.json({ ok: false, error: "Total item yang dipilih wajib lebih dari 0." }, { status: 400 });
 
@@ -113,6 +137,7 @@ export async function POST(request: Request, context: Context) {
             remainingAmount,
             isFullyPaid,
             uploadedProofName,
+            potongTagihan: potong ? alokasi.map((a) => ({ itemNo: selectedItems.find((item) => item.id === a.itemId)?.itemNo ?? 0, nomorFaktur: nomorResmi.get(nomorFakturKunci(a.nomorFaktur)) ?? a.nomorFaktur, nominal: a.nominal })) : undefined,
         });
         let auditGagal = false;
         const [payment] = await db.transaction(async (tx) => {
@@ -144,6 +169,16 @@ export async function POST(request: Request, context: Context) {
             if (selectedTaken || selectedGone || cents(freshPaidBefore) !== cents(itemPaidBefore) || freshNo !== paymentNo) {
                 throw new Error(OFF_PAYMENT_CONFLICT);
             }
+            // Potong Tagihan: kunci per faktur lalu periksa ulang sisa tagihan — dua pencatatan bersamaan (batch lain) atas faktur
+            // yang sama tidak boleh sama-sama memakai sisa yang sama.
+            let fakturTx: Awaited<ReturnType<typeof cariFakturPotong>> | null = null;
+            if (potong) {
+                const nomor = alokasi.map((a) => a.nomorFaktur);
+                await kunciFakturPotong(tx, nomor);
+                fakturTx = await cariFakturPotong(nomor, tx);
+                const ulang = periksaAlokasi({ items: itemPotong, alokasi, faktur: fakturTx, terpakai: await potonganTerpakai(nomor, tx) });
+                if (!ulang.ok) throw new Error(OFF_POTONG_INVALID + ulang.error);
+            }
             const [createdPayment] = await tx.insert(offPayment).values({
             id: paymentId,
             batchId: id,
@@ -161,6 +196,13 @@ export async function POST(request: Request, context: Context) {
             createdAt: now,
             updatedAt: now,
             }).returning();
+            if (fakturTx) {
+                const peta = fakturTx;
+                await tx.insert(offPotongTagihan).values(alokasi.map((a) => {
+                    const f = peta.get(nomorFakturKunci(a.nomorFaktur))![0];
+                    return { id: randomUUID(), batchId: id, itemId: a.itemId, paymentId, invoiceId: f.id, invoiceNo: f.number, customerNo: f.customerNo, customerName: f.customerName, amount: a.nominal, createdBy: actor.id, createdAt: now };
+                }));
+            }
             for (const item of selectedItems) {
                 await tx.update(offBatchItem).set({
                     financePaymentStatus: "paid",
@@ -186,17 +228,17 @@ export async function POST(request: Request, context: Context) {
             await writeOffAudit({
                 batchId: id,
                 actor,
-                action: "finance_payment_added",
+                action: potong ? "potong_tagihan_added" : "finance_payment_added",
                 fromStatus: data.batch.financeStatus,
                 toStatus: isFullyPaid ? "Paid" : "Partial Paid",
                 note,
-                metadata: { paymentNo, itemIds, selectedItemCount: itemIds.length, selectedTotal: paidAmount, paymentMethod, proofName: generatedProof.fileName, uploadedProofName, hasUploadedProof: hasProof, totalPaidAfter, remainingAmount },
+                metadata: { paymentNo, itemIds, selectedItemCount: itemIds.length, selectedTotal: paidAmount, paymentMethod, proofName: generatedProof.fileName, uploadedProofName, hasUploadedProof: hasProof, totalPaidAfter, remainingAmount, ...(potong ? { potongTagihan: alokasi } : {}) },
             }, tx).catch((error: unknown) => { auditGagal = true; throw error; });
             return [createdPayment];
         }).catch(async (error: unknown) => {
             // Konflik & galat audit terjadi DI DALAM transaksi (rollback pasti) -> bukti tanpa pembayaran dibuang.
             // Galat lain (mis. saat COMMIT) bisa ambigu: bukti dibiarkan agar pembayaran tersimpan tak kehilangan berkas.
-            if (auditGagal || (error instanceof Error && error.message === OFF_PAYMENT_CONFLICT)) {
+            if (auditGagal || (error instanceof Error && (error.message === OFF_PAYMENT_CONFLICT || error.message.startsWith(OFF_POTONG_INVALID)))) {
                 await unlink(generatedProof.filePath).catch(() => undefined); // bukti tanpa pembayaran
             }
             throw error;
@@ -204,7 +246,9 @@ export async function POST(request: Request, context: Context) {
         const updated = await getBatchWithItems(id);
         return NextResponse.json({
             ok: true,
-            message: isFullyPaid
+            message: potong
+                ? (isFullyPaid ? "Potong tagihan dicatat. Pengajuan lunas dan dikirim ke verifikasi final Klaim." : "Potong tagihan dicatat. Item lain pengajuan ini masih menunggu pembayaran.")
+                : isFullyPaid
                 ? "Pembayaran lunas dan dikirim ke Claim Final Verification."
                 : "Pembayaran berhasil dicatat. Pengajuan masih Partial Paid di Keuangan.",
             batch: updated ? publicBatch(updated.batch) : null,
@@ -217,6 +261,9 @@ export async function POST(request: Request, context: Context) {
         if (message === OFF_PAYMENT_CONFLICT) {
             // Review AM-022/023 LOW: konflik juga bisa dari status/periode yang berubah, bukan hanya pembayaran lain.
             return NextResponse.json({ ok: false, error: "Pengajuan ini baru saja berubah: pembayaran lain tercatat, atau status/periode berubah. Muat ulang lalu pilih item lagi." }, { status: 409 });
+        }
+        if (message.startsWith(OFF_POTONG_INVALID)) {
+            return NextResponse.json({ ok: false, error: message.slice(OFF_POTONG_INVALID.length) }, { status: 409 });
         }
         if (message === PESAN_CARA_BAYAR) {
             return NextResponse.json({ ok: false, error: message }, { status: 400 });

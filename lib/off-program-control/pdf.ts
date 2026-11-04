@@ -427,9 +427,13 @@ type PaymentProofInput = {
   remainingAmount: number;
   isFullyPaid: boolean;
   uploadedProofName?: string | null;
+  /** Potong Tagihan (owner 3 Nov 2026): faktur yang dipotong per item, dicatat Incaso. */
+  potongTagihan?: Array<{ itemNo: number; nomorFaktur: string; nominal: number }>;
 };
 
 async function buildPaymentProofPdf(input: PaymentProofInput) {
+  const potong = Boolean(input.potongTagihan?.length);
+  const fakturItem = (itemNo: number) => (input.potongTagihan ?? []).filter((a) => a.itemNo === itemNo).map((a) => a.nomorFaktur).join(", ");
   const pdfDoc = await PDFDocument.create();
   pdfDoc.setTitle(`Bukti Pembayaran ${input.batch.noPengajuan} #${input.paymentNo}`);
   pdfDoc.setSubject("Bukti Pembayaran OFF Program Control");
@@ -494,7 +498,7 @@ async function buildPaymentProofPdf(input: PaymentProofInput) {
       height: 66,
       color: rgb(0.08, 0.18, 0.3),
     });
-    page.drawText("BUKTI PEMBAYARAN OFF", {
+    page.drawText(potong ? "BUKTI POTONG TAGIHAN OFF" : "BUKTI PEMBAYARAN OFF", {
       x: margin + 18,
       y: pageHeight - margin - 28,
       size: 17,
@@ -524,7 +528,7 @@ async function buildPaymentProofPdf(input: PaymentProofInput) {
     drawLabelValue(page, margin + 300, y, "Tanggal Bayar", formatDateForPrint(input.paymentDate), 18);
     y -= 16;
     drawLabelValue(page, margin + 18, y, "Metode", input.paymentMethod, 22);
-    drawLabelValue(page, margin + 300, y, "Bank Pengirim", input.senderBank || "-", 18);
+    drawLabelValue(page, margin + 300, y, potong ? "Dicatat oleh" : "Bank Pengirim", potong ? "Incaso" : input.senderBank || "-", 18);
     y -= 16;
     drawLabelValue(page, margin + 18, y, "Total Dibayar", money(input.paidAmount), 22);
     drawLabelValue(page, margin + 300, y, "Status", input.isFullyPaid ? "Lunas" : "Belum Lunas", 18);
@@ -541,7 +545,7 @@ async function buildPaymentProofPdf(input: PaymentProofInput) {
 
     const tableY = y - 42;
     const widths = [28, 80, 152, 90, 74, 86];
-    const headers = ["No", "No Surat", "Nama Program", "Toko", "Metode", "Nominal"];
+    const headers = ["No", "No Surat", "Nama Program", "Toko", potong ? "No Faktur" : "Metode", "Nominal"];
     let x = margin + 18;
     page.drawRectangle({
       x,
@@ -569,7 +573,7 @@ async function buildPaymentProofPdf(input: PaymentProofInput) {
         item.noSurat || "-",
         item.namaProgram || "-",
         item.toko || "-",
-        item.caraBayar || "-",
+        potong ? fakturItem(item.itemNo) || "-" : item.caraBayar || "-",
         money(Number(item.financePaidAmount || item.nominal || 0)),
       ];
       row.forEach((cell, idx) => {
@@ -594,8 +598,22 @@ async function buildPaymentProofPdf(input: PaymentProofInput) {
     });
 
     if (pageIndex === totalPages - 1) {
-      const noteY = Math.max(margin + 104, rowY - 36);
-      page.drawText("Catatan Keuangan", {
+      // Potong Tagihan: rincian lengkap faktur per item (kolom No Faktur di tabel bisa terpotong bila lebih dari satu faktur).
+      const rincian = potong
+        ? receiptLines((input.potongTagihan ?? []).map((a) => `Item ${a.itemNo}: ${a.nomorFaktur} ${money(a.nominal)}`).join("; "), 100).slice(0, 5)
+        : [];
+      rincian.forEach((line, lineIndex) => {
+        page.drawText(fitText(lineIndex === 0 ? `Faktur dipotong: ${line}` : line, 118), {
+          x: margin + 18,
+          y: rowY - 14 - lineIndex * 10,
+          size: 7,
+          font,
+          color: rgb(0.08, 0.1, 0.14),
+        });
+      });
+      // Judul catatan (noteY + 24) berjarak ≥ 16 pt di bawah baris rincian terakhir.
+      const noteY = Math.max(margin + 104, rowY - 36 - (rincian.length ? 8 + rincian.length * 10 : 0));
+      page.drawText(potong ? "Catatan Incaso" : "Catatan Keuangan", {
         x: margin + 18,
         y: noteY + 24,
         size: 8,
@@ -611,7 +629,7 @@ async function buildPaymentProofPdf(input: PaymentProofInput) {
           color: rgb(0.08, 0.1, 0.14),
         });
       });
-      page.drawText("Disetujui / Dibayar oleh Keuangan", {
+      page.drawText(potong ? "Dicatat oleh Incaso" : "Disetujui / Dibayar oleh Keuangan", {
         x: pageWidth - margin - 190,
         y: margin + 68,
         size: 8,

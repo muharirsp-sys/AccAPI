@@ -1012,6 +1012,36 @@ export const migrations = [
       ALTER TABLE off_batch_item ADD COLUMN IF NOT EXISTS beban TEXT;
     `,
   },
+  {
+    // 2026-11-03. OFF Program Control: Potong Tagihan dicatat Incaso dengan nomor faktur (satu item boleh beberapa faktur),
+    // plus indeks cari faktur per nomor. Aditif: tabel baru + 2 indeks, tanpa UPDATE data. SQL = db/migrations/0040.
+    nama: "off_potong_tagihan + idx_sales_invoice_number",
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sales_invoice_number'
+               AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'off_potong_tagihan')`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS off_potong_tagihan (
+          id            TEXT PRIMARY KEY,
+          batch_id      TEXT NOT NULL REFERENCES off_batch(id),
+          item_id       TEXT NOT NULL REFERENCES off_batch_item(id),
+          payment_id    TEXT NOT NULL REFERENCES off_payment(id),
+          invoice_id    BIGINT,
+          invoice_no    TEXT NOT NULL,
+          customer_no   TEXT,
+          customer_name TEXT,
+          amount        DOUBLE PRECISION NOT NULL,
+          created_by    TEXT,
+          created_at    TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_off_potong_tagihan_invoice ON off_potong_tagihan (invoice_no);
+      CREATE INDEX IF NOT EXISTS idx_off_potong_tagihan_batch ON off_potong_tagihan (batch_id);
+      CREATE INDEX IF NOT EXISTS idx_sales_invoice_number ON sales_invoice (number);
+      DO $opt$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
+          GRANT SELECT, INSERT ON off_potong_tagihan TO accapi_app;
+        END IF;
+      END $opt$;
+    `,
+  },
 ];
 
 async function main() {

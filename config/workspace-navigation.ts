@@ -7,7 +7,7 @@
  */
 import {
     FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, MapPinned, PackageSearch, HandCoins, Banknote, ChartColumn,
-    Inbox, FileCheck2, ChartPie, BadgePercent, ListChecks, MessageSquareText, UserRoundCheck, Building2, ArrowLeftRight, FileCog, type LucideIcon } from "lucide-react";
+    Inbox, FileCheck2, ChartPie, BadgePercent, ListChecks, MessageSquareText, UserRoundCheck, Building2, ArrowLeftRight, FileCog, ScanSearch, type LucideIcon } from "lucide-react";
 
 /** `short` = label navigasi bawah ponsel (≤ 10 huruf, unik di katalog); bawaan kata pertama `name`. */
 export type WorkspaceItem = { name: string; href: string; icon: LucideIcon; short?: string };
@@ -26,6 +26,8 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
     { id: "promo", name: "Promo & Klaim", description: "Susun program, periksa diskon, dan kelola klaim.", icon: Tags, items: [
         { name: "Summary Promo", href: "/summary", icon: CalendarCheck2 },
         { name: "OFF Program Control", href: "/off-program-control", icon: ClipboardCheck, short: "OPC" },
+        // Pantau Pengajuan Promo (owner 3 Nov 2026): salesman melihat progres pengajuan principalnya; dibuka `off_program_control.pantau_sales`.
+        { name: "Pantau Pengajuan", href: "/off-program-control/pantau", icon: ScanSearch, short: "Pantau" },
         { name: "Claim Workflow", href: "/claim-workflow", icon: FileCheck2, short: "Klaim" },
         { name: "Aturan Promo", href: "/aturan-promo", icon: Percent },
         { name: "Rekap Promo", href: "/rekap-promo", icon: ChartPie },

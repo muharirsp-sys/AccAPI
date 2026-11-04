@@ -42,7 +42,8 @@ test("all existing modules appear exactly once across six groups", () => {
     // 30 sejak Supervisor Review (16 Okt 2026): SPV/SM/Admin melihat ringkasan harian per salesman (supervisor_review.view).
     // 31 sejak Data Principal (S7b, 17 Okt 2026): daftar resmi principal + varian + alias (principles.view; tulis principles.upload).
     // 32 sejak Laporan Sales (20 Okt 2026): 6 laporan padanan EskaLink, tiap tab dijaga kunci lamanya sendiri.
-    assert.equal(items.length, 32);
+    // 33 sejak Pantau Pengajuan (3 Nov 2026): salesman melihat progres pengajuan OPC principalnya (off_program_control.pantau_sales).
+    assert.equal(items.length, 33);
     assert.equal(WORKSPACE_GROUPS.find(group => group.id === "settings")?.items.find(item => item.href === "/data-principal")?.name, "Data Principal");
     assert.equal(WORKSPACE_GROUPS.find(group => group.id === "operations")?.items.find(item => item.href === "/supervisor-review")?.name, "Supervisor Review");
     assert.ok(items.some(item => item.href === "/pelunasan"));
@@ -74,6 +75,11 @@ test("all existing modules appear exactly once across six groups", () => {
 test("Data Principal dibuka principles.view, bukan dashboard.view (tanpa entri jatuh ke '/')", () => {
     assert.equal(canAccessPathWithKeys("/data-principal", ["principles.view"]), true);
     assert.equal(canAccessPathWithKeys("/data-principal", ["dashboard.view"]), false);
+});
+test("Pantau Pengajuan dibuka pantau_sales tanpa membuka OPC; entrinya mendahului /off-program-control", () => {
+    assert.equal(canAccessPathWithKeys("/off-program-control/pantau", ["off_program_control.pantau_sales"]), true);
+    assert.equal(canAccessPathWithKeys("/off-program-control", ["off_program_control.pantau_sales"]), false);
+    assert.equal(canAccessPathWithKeys("/off-program-control/pantau", ["off_program_control.view"]), false);
 });
 test("navigation is default-deny and removes empty groups", () => {
     assert.deepEqual(navigationForPermissions(() => false), []);

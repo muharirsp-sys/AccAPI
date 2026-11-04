@@ -115,7 +115,7 @@ test("antrean per tab = predikat kode lama", () => {
 });
 
 test("tab per peran (SM hanya Sales Manager), ?tab= tak boleh jatuh ke tab pertama, claimView", () => {
-    assert.deepEqual(tabTerlihat("admin"), ["overview", "supervisor", "sales", "claim", "om", "finance", "audit"]);
+    assert.deepEqual(tabTerlihat("admin"), ["overview", "supervisor", "sales", "claim", "om", "finance", "incaso", "audit"]);
     assert.deepEqual(tabTerlihat("sales_manager"), ["sales"]);
     assert.deepEqual(tabTerlihat("claim"), ["claim", "audit"]);
     assert.deepEqual(tabTerlihat("sales"), []);
@@ -146,8 +146,8 @@ test("izin aksi = matriks peran OFF kode lama", () => {
     assert.match(izinAksi("supervisor", "finance_payment") ?? "", /Peran OFF/);
 });
 
-test("AM-026 (D-01 §C): Manager = pembaca 7 tab; hanya baca/ekspor audit; semua tombol tulis nonaktif beralasan; label Manager", () => {
-    assert.deepEqual(tabTerlihat("manager"), ["overview", "supervisor", "sales", "claim", "om", "finance", "audit"]);
+test("AM-026 (D-01 §C): Manager = pembaca 8 tab; hanya baca/ekspor audit; semua tombol tulis nonaktif beralasan; label Manager", () => {
+    assert.deepEqual(tabTerlihat("manager"), ["overview", "supervisor", "sales", "claim", "om", "finance", "incaso", "audit"]);
     assert.equal(tabEfektif("manager", "finance"), "finance");
     assert.equal(izinAksi("manager", "audit_read"), undefined);
     assert.equal(izinAksi("manager", "audit_export"), undefined);
@@ -195,4 +195,20 @@ test("progres pengajuan: nomor tahap sama dengan Flow; berkas awal sebelum final
     const final = progresBatch(b({ status: "Paid", ...disetujuiOm, financeStatus: "Paid", finalStatus: "Waiting Claim Final Verification" }), [item({ kwt: true })]);
     assert.equal(final.berkasAda, 0); // ceklis final belum diisi Klaim, walau berkas awal ada
     assert.equal(progresBatch(b({ status: "Cancelled by OM", omStatus: "Cancelled" }), []).teksTahap, "Dibatalkan");
+});
+
+test("Potong Tagihan (owner 3 Nov 2026): Incaso memegang sisa Potong Tagihan, Keuangan sisa Transfer/Tunai; tanpa ringkasan = perilaku lama", () => {
+    const k = Object.fromEntries(KASUS.map(([nama, batch]) => [nama, batch]));
+    const dasar = k["disetujui OM"];
+    const potongSemua = { ...dasar, summary: { totalNominal: 500, potongTagihan: 500 }, payments: [] };
+    const campur = { ...dasar, summary: { totalNominal: 800, potongTagihan: 500 }, payments: [] };
+    const potongTercatat = { ...campur, payments: [{ id: "p", batchId: dasar.id, paymentNo: 1, paymentDate: "2026-11-03", paymentMethod: "Potong Tagihan", paidAmount: 500 }] };
+    assert.deepEqual([PREDIKAT.keuanganAntrean(potongSemua), PREDIKAT.incasoAntrean(potongSemua)], [false, true]);
+    assert.deepEqual([PREDIKAT.keuanganAntrean(campur), PREDIKAT.incasoAntrean(campur)], [true, true]);
+    assert.deepEqual([PREDIKAT.keuanganAntrean(potongTercatat), PREDIKAT.incasoAntrean(potongTercatat)], [true, false]);
+    assert.deepEqual([PREDIKAT.keuanganAntrean(dasar), PREDIKAT.incasoAntrean(dasar)], [true, false]); // fixture tanpa summary
+    assert.equal(infoTahap(potongSemua).pemilik, "Incaso");
+    assert.equal(infoTahap(campur).pemilik, "Keuangan · Incaso");
+    assert.deepEqual(tabTerlihat("incaso"), ["incaso"]);
+    assert.equal(LABEL_PERAN.incaso, "Incaso");
 });
