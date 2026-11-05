@@ -65,7 +65,7 @@ function langkahTurLatihan(t: Tahap): LangkahTur[] {
         0: [
             { target: "lat-nama", judul: "Nama program", isi: "Tulis nama program seperti di surat. Di bawah kolom Tipe muncul saran tipe dari nama ini." },
             { target: "lat-tipe", judul: "Pilih tipe program", isi: "Tekan Pakai saran, atau Bantu saya memilih tipe untuk menjawab satu pertanyaan: uang ini dipakai untuk apa." },
-            { target: "lat-beban", judul: "Beban CL atau DM", isi: "CL bila biaya ditagih balik ke principal. DM bila dibayar dari dana distributor sendiri." },
+            { target: "lat-beban", judul: "Beban CL atau DM", isi: "CL bila biaya ditagih balik ke principal. DM bila memakai dana principal yang sudah disimpan di distributor, jadi tidak perlu diklaim." },
             { target: "lat-bayar", judul: "Cara bayar", isi: "Transfer butuh nomor rekening. Tunai dan Potong Tagihan tidak." },
             { target: "lat-aksi", judul: "Kirim", isi: "Tombol ini aktif setelah semua isian wajib lengkap. Bila belum, alasannya tertulis di sampingnya." },
         ],
@@ -73,7 +73,7 @@ function langkahTurLatihan(t: Tahap): LangkahTur[] {
         2: [{ target: "lat-kartu", judul: "Pemeriksaan berkas", isi: "Klaim memastikan berkas lengkap dan mencatat deadline klaim ke principal. Alarm keterlambatan dihitung dari deadline ini." }],
         3: [{ target: "lat-aksi", judul: "Keputusan OM", isi: "Setelah disetujui, pengajuan pindah ke Keuangan untuk dibayar." }],
         4: [{ target: "lat-kartu", judul: "Catat pembayaran", isi: "Transfer dan Tunai dicatat Keuangan. Potong Tagihan dicatat Incaso: isi nomor faktur toko yang dipotong; satu item boleh dari beberapa faktur." }],
-        5: [{ target: "lat-kartu", judul: "Verifikasi final", isi: "No Claim wajib untuk item beban principal (CL). Item beban distributor (DM) tidak diklaim, jadi No Claim tidak wajib." }],
+        5: [{ target: "lat-kartu", judul: "Verifikasi final", isi: "No Claim wajib untuk item CL. Item DM tidak diklaim karena dananya sudah ada di distributor, jadi No Claim tidak wajib." }],
     };
     return [
         { judul: "Selamat datang di mode latihan", isi: "Anda akan menjalankan satu pengajuan contoh dari awal sampai selesai, memerankan semua meja secara bergantian. Tidak ada data yang tersimpan atau terkirim, jadi bebas mencoba." },
@@ -149,7 +149,7 @@ export default function Latihan() {
                 {t === 3 && <TahapOm isi={isi} setuju={() => lanjut(4, "Operational Manager", "Setujui")} batal={() => lanjut(-1, "Operational Manager", "Batalkan")} />}
                 {t === 4 && <TahapKeuangan isi={isi} ubah={ubah} bayar={() => lanjut(5, potongTagihan(isi) ? "Incaso" : "Keuangan", potongTagihan(isi)
                     ? `Catat potong tagihan faktur ${isi.noFaktur.trim()} tanggal ${isi.tglBayar}` : `Catat pembayaran ${isi.caraBayar} tanggal ${isi.tglBayar}`)} />}
-                {t === 5 && <TahapFinal isi={isi} ubah={ubah} selesai={() => lanjut(6, "Klaim", isi.beban === "DM" ? "Selesaikan (beban distributor, tanpa No Claim)" : `Selesaikan dengan No Claim ${isi.noClaim.trim()}`)} />}
+                {t === 5 && <TahapFinal isi={isi} ubah={ubah} selesai={() => lanjut(6, "Klaim", isi.beban === "DM" ? "Selesaikan (DM, tanpa No Claim)" : `Selesaikan dengan No Claim ${isi.noClaim.trim()}`)} />}
                 {t === 6 && <Akhir judul="Selamat, latihan selesai!" ikon ulang={ulang}>
                     Anda sudah menjalankan satu pengajuan dari Supervisor sampai verifikasi final. Di sistem nyata, setiap langkah ini dikerjakan orang
                     yang berbeda dan pengajuan baru selesai setelah No Claim tercatat.{isi.beban === "DM" ? " Karena bebannya DM, pengajuan ini tidak ditagih ke principal." : ""}
@@ -320,7 +320,7 @@ function TahapFinal({ isi, ubah, selesai }: PropsTahap & { selesai: () => void }
         <Kartu judul="Verifikasi final Klaim" alasan={alasan} aksi={<Button variant="primary" disabled={Boolean(alasan)} disabledReason={alasan} onClick={selesai}>Selesaikan</Button>}>
             <KeyValues items={[["Dibayar Keuangan", rupiah(Number(isi.nominal || 0))], ["Tanggal bayar", isi.tglBayar], ["Beban", OFF_BEBAN[dm ? "DM" : "CL"].label]]} />
             <div className="fi-formgrid">
-                <FormField label="No Claim" required={!dm} help={dm ? "Beban distributor (DM): tidak ditagih ke principal, No Claim tidak wajib." : "Nomor klaim dari Claim Workflow. Contoh: CLM/001/PRINCIPLE A/XI/2026."}>{(a) => (
+                <FormField label="No Claim" required={!dm} help={dm ? "DM: dananya sudah ada di distributor, tidak diklaim; No Claim tidak wajib." : "Nomor klaim dari Claim Workflow. Contoh: CLM/001/PRINCIPLE A/XI/2026."}>{(a) => (
                     <input {...a} className="fi-input fi-mono" value={isi.noClaim} placeholder={dm ? "Tidak wajib" : "Isi No Claim"} onChange={(e) => ubah({ noClaim: e.target.value })} />
                 )}</FormField>
             </div>

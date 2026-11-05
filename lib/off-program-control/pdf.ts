@@ -265,7 +265,7 @@ async function buildPdf(batch: OffBatchRow, items: OffItemRow[]) {
         size: 7.2,
         font,
       });
-      pdfPage.drawText(`Beban distributor (DM, tidak diklaim): ${money(summary.bebanDistributor)}`, {
+      pdfPage.drawText(`DM, dana principal di distributor (tidak diklaim): ${money(summary.bebanDistributor)}`, {
         x: summaryX + 10,
         y: summaryY + 10,
         size: 7.2,

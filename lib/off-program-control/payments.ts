@@ -33,7 +33,7 @@ export function isOffPaymentMethod(value: unknown) {
 
 export type OffRingkasBayar = { total: number; transfer: number; tunai: number; potongTagihan: number; bebanDistributor: number };
 
-/** Ringkasan per cara bayar + total beban distributor (DM). Nominal boleh angka atau teks yang sudah diurai pemanggil. */
+/** Ringkasan per cara bayar + total item DM (dana principal di distributor, tidak diklaim). Nominal boleh angka atau teks yang sudah diurai pemanggil. */
 export function computeOffPaymentSummary(items: Array<Pick<OffItemRow, "nominal" | "caraBayar"> & { beban?: string | null }>): OffRingkasBayar {
     return items.reduce(
         (summary, item) => {

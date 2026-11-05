@@ -112,13 +112,13 @@ export async function POST(request: NextRequest, context: Context) {
             .select()
             .from(offBatchItem)
             .where(eq(offBatchItem.batchId, offBatchId));
-        // Item beban distributor (DM) dibayar dari dana distributor sendiri: tidak ditagih ke principal (owner 3 Nov 2026).
+        // Item DM: tetap beban principal, tetapi dananya sudah disimpan di distributor, jadi tidak diklaim (owner 3 & 5 Nov 2026).
         const offItems = semuaItem.filter((item) => bebanItem(item.beban) === "CL");
         if (offItems.length === 0) {
             return NextResponse.json({
                 ok: false,
                 code: "SEMUA_BEBAN_DISTRIBUTOR",
-                error: "Semua item pengajuan ini beban distributor (DM), jadi tidak ada yang ditagih ke principal.",
+                error: "Semua item pengajuan ini DM (dananya sudah ada di distributor), jadi tidak ada yang diklaim.",
             }, { status: 409 });
         }
         const now = new Date();

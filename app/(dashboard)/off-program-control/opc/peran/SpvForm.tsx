@@ -34,7 +34,7 @@ export type Baris = {
     id: string; noSurat: string; namaProgram: string; periodeAwal: string; periodeAkhir: string; toko: string; barang: string;
     nominal: string; caraBayar: string; noRekening: string; type: string; originalType: string; typeIsLegacy: boolean; pphExempt: boolean;
     /** Alasan bila tipe "Lainnya". */ typeNote: string;
-    /** "CL" ditagih ke principal | "DM" beban distributor. */ beban: string;
+    /** "CL" diklaim ke principal | "DM" dana principal di distributor, tidak diklaim. */ beban: string;
     deadline: string; kwt: boolean; skp: boolean; fp: boolean; pc: boolean; foto: boolean; rekap: boolean; others: boolean; othersText: string;
 };
 export type Setup = { supervisorName: string; principleName: string; bulan: string; tahun: string };
@@ -524,7 +524,7 @@ export function EditorItem({ f }: { f: FormSpv }) {
             <ResponsiveTable title="Daftar item" columns={kolom} rows={f.rows} rowKey={(x) => x.id} empty={{ title: "Belum ada item" }}
                 mobileItem={(x) => (
                     <ListItem doc={`Item ${nomor.get(x.id)} · ${x.noSurat || "tanpa No Surat"}`} amount={rupiah(parseUiCurrency(x.nominal))} title={x.toko || "Toko belum diisi"}
-                        meta={[x.namaProgram, x.caraBayar, x.type ? labelTipe(x.type) : "tipe belum dipilih", x.beban === "DM" ? "beban distributor" : ""].filter(Boolean).join(" · ")} badge={tanda(x)}
+                        meta={[x.namaProgram, x.caraBayar, x.type ? labelTipe(x.type) : "tipe belum dipilih", x.beban === "DM" ? "DM, tidak diklaim" : ""].filter(Boolean).join(" · ")} badge={tanda(x)}
                         current={x.id === r.id} onClick={() => pilih(x.id)} />
                 )} />
             <section id={formId} className="fi-sect-in" aria-label={`Ubah item ${n}`} style={{ borderTop: "1px solid var(--line)" }}>

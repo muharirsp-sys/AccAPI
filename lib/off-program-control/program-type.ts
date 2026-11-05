@@ -77,7 +77,7 @@ export const INFO_TIPE: Record<OffProgramType, InfoTipe> = {
     jelas: "Insentif, reward, atau gaji untuk salesman, SPG, motoris, dan tim penjual.",
     contoh: ["Insentif salesman", "Reward SPV dan SF", "Gaji sales eksklusif", "Gaji motoris"],
     jawaban: "Membayar insentif atau gaji tenaga penjual",
-    catatanBeban: "Sebagian program ini beban distributor (DM). Periksa surat programnya.",
+    catatanBeban: "Sebagian program ini memakai dana principal di distributor (DM). Periksa surat programnya.",
   },
   "Promo On Store": {
     label: "Promo Konsumen & Bonus Barang",
@@ -108,7 +108,7 @@ export const INFO_TIPE: Record<OffProgramType, InfoTipe> = {
     jelas: "Bingkisan untuk menjaga hubungan baik dengan pemilik toko.",
     contoh: ["Hampers hari raya", "Parcel", "Hajatan pemilik toko"],
     jawaban: "Memberi hadiah atau bingkisan ke pemilik toko",
-    catatanBeban: "Hampir separuh program ini beban distributor (DM). Periksa surat programnya.",
+    catatanBeban: "Hampir separuh program ini memakai dana principal di distributor (DM). Periksa surat programnya.",
   },
   "Retur & Near ED": {
     label: "Retur & Near ED",

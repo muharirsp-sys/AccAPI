@@ -56,7 +56,7 @@ export type ItemOpc = {
     financePaymentStatus?: string | null; financePaidAmount?: number | null;
     type: string | null; normalizedType?: string | null; originalType?: string | null; typeIsLegacy?: boolean | null; pphExempt?: boolean | null;
     /** Alasan tipe "Lainnya" (migrasi 0039). */ typeNote?: string | null;
-    /** "CL" ditagih ke principal | "DM" beban distributor; null = CL (data lama). */ beban?: string | null;
+    /** "CL" diklaim ke principal | "DM" dana principal di distributor, tidak diklaim; null = CL (data lama). */ beban?: string | null;
     deadline: string | null; kwt: boolean; skp: boolean; fp: boolean; pc: boolean; foto: boolean; rekap: boolean; others: boolean; othersText: string | null;
     finalKwt?: boolean | null; finalSkp?: boolean | null; finalFp?: boolean | null; finalPc?: boolean | null; finalFoto?: boolean | null;
     finalRekap?: boolean | null; finalOthers?: boolean | null; finalOthersText?: string | null; finalCompletenessNote?: string | null;
@@ -476,11 +476,11 @@ export function ringkasBayarBatch(items: Array<Pick<ItemOpc, "nominal" | "caraBa
     };
 }
 
-/** Fakta KeyValues cara bayar: Transfer dan Tunai selalu; Potong Tagihan dan beban distributor hanya bila ada nilainya. */
+/** Fakta KeyValues cara bayar: Transfer dan Tunai selalu; Potong Tagihan dan beban DM hanya bila ada nilainya. */
 export function faktaBayar(r: OffRingkasBayar): Array<[string, string]> {
     const out: Array<[string, string]> = [["Transfer", rupiah(r.transfer)], ["Tunai", rupiah(r.tunai)]];
     if (r.potongTagihan) out.push(["Potong Tagihan", rupiah(r.potongTagihan)]);
-    if (r.bebanDistributor) out.push(["Beban distributor (DM)", `${rupiah(r.bebanDistributor)}, tidak ditagih ke principal`]);
+    if (r.bebanDistributor) out.push(["Beban DM (dana di distributor)", `${rupiah(r.bebanDistributor)}, tidak diklaim`]);
     return out;
 }
 
@@ -518,7 +518,7 @@ export const BANTUAN_KOLOM = {
     caraBayar: "Transfer ke rekening toko, tunai, atau dipotong dari tagihan toko.",
     noRekening: "Nomor rekening, nama bank, dan nama pemilik rekening toko.",
     typeNote: "Jelaskan untuk apa uang ini dipakai, supaya tim Klaim bisa menilainya.",
-    beban: "CL bila biaya ini ditagih balik ke principal. DM bila dibayar dari dana distributor sendiri dan tidak diklaim.",
+    beban: "CL bila biaya ini ditagih ke principal lewat klaim. DM bila memakai dana principal yang sudah disimpan di distributor, jadi tidak perlu diklaim.",
     deadline: "Batas waktu klaim ke principal, sesuai surat program.",
     pph: "Centang bila toko ini tidak dipotong PPh.",
     kelengkapan: "Centang dokumen yang sudah ada di tangan Anda. Syarat lengkapnya tertulis di surat program.",
