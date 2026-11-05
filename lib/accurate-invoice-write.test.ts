@@ -64,15 +64,20 @@ test("payload memakai angka beku dan tidak pernah mengarang nomor faktur", () =>
     assert.throws(() => buildInvoicePayload(meleset, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }), (error: Error) => {
         assert.match(error.message, /Barang M5012001000740 \(KRT\): netto SO Rp 2060640\.00, netto hasil diskon 10\+5 \+ Rp 8960 Rp 1948648\.00, selisih Rp 111992\.00/);
         assert.match(error.message, /SO ditahan utuh: rantai diskon beku tidak menghasilkan netto SO/);
-        assert.doesNotMatch(error.message, /4 desimal/);
+        assert.doesNotMatch(error.message, /desimal/);
         return true;
     });
 
-    // Sebabnya batas 4 desimal: persen + rupiah persis menghasilkan netto, persen setaranya tidak.
+    // 4 desimal meleset Rp 16,33 di baris Rp 50 juta: HANYA baris seperti ini yang naik ke 6 desimal.
     const besar = order({ lines: [{ code: "M5012001000740", unit: "KRT", quantity: "1", price: "50000000" }] });
     besar.result.lines = [{ code: "M5012001000740", unit: "KRT", quantity: "1", gross: "50000000.00", net: "48287654.33", percents: ["2"], cash: "712345.67" }];
-    assert.throws(() => buildInvoicePayload(besar, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }),
-        /selisih Rp 16\.33\. SO ditahan utuh: potongan rupiah baris terlalu besar untuk dipersenkan 4 desimal/);
+    assert.equal(buildInvoicePayload(besar, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }).detailItem[0].itemDiscPercent, "2+1.453767");
+
+    // Sebabnya batas 6 desimal: persen + rupiah persis menghasilkan netto, persen setaranya tidak.
+    const raksasa = order({ lines: [{ code: "M5012001000740", unit: "KRT", quantity: "1", price: "5000000000" }] });
+    raksasa.result.lines = [{ code: "M5012001000740", unit: "KRT", quantity: "1", gross: "5000000000.00", net: "4828765432.11", percents: ["2"], cash: "71234567.89" }];
+    assert.throws(() => buildInvoicePayload(raksasa, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }),
+        /selisih Rp 15\.11\. SO ditahan utuh: potongan rupiah baris terlalu besar untuk dipersenkan 6 desimal/);
 
     // Bagian rupiah tidak boleh melebihi total diskon baris.
     const salah = order();

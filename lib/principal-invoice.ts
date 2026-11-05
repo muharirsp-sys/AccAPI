@@ -16,7 +16,7 @@
  *    primary key `invoice_outbox` dan dilewati.
  */
 import { splitDiscounts, type DiscountAt } from "@/lib/principal-validation";
-import { persenSetara, type InvoiceOrder } from "@/lib/accurate-invoice-write";
+import { butuhEnamDesimal, persenSetara, type InvoiceOrder } from "@/lib/accurate-invoice-write";
 
 export type BatchLine = {
     rowNumber: number;
@@ -57,17 +57,22 @@ const cents = (value: number) => Math.round(value * 100) / 100;
  * terbaca klaim principal. Baris yang SEMUA potongannya rupiah tidak punya rantai sama sekali —
  * rupiahnya dikirim apa adanya (bentuk lama yang diterima Accurate), karena Rekap Promo hanya
  * mengenali potongan tingkat faktur (MSG) dari `itemCashDiscount` (RISKA INV/2609/KN00451).
+ * `net` diisi = rantai 4 desimal yang akan ditahan buildInvoicePayload dihitung ulang 6 desimal.
  */
-export function percentChain(discounts: DiscountAt[], gross: number): string[] {
+export function percentChain(discounts: DiscountAt[], gross: number, net?: number): string[] {
     if (!discounts.some((entry) => entry.amount === undefined)) return [];
-    let remaining = gross;
-    const byPosition = new Map<number, string>();
-    for (const entry of [...discounts].sort((a, b) => a.position - b.position)) {
-        byPosition.set(entry.position, entry.amount === undefined ? String(entry.percent) : persenSetara(entry.amount, remaining));
-        remaining -= entry.amount ?? cents(remaining * entry.percent / 100);
-    }
-    const last = Math.max(5, ...byPosition.keys());
-    return Array.from({ length: last }, (_, index) => byPosition.get(index + 1) ?? "0");
+    const rantai = (digits: number) => {
+        let remaining = gross;
+        const byPosition = new Map<number, string>();
+        for (const entry of [...discounts].sort((a, b) => a.position - b.position)) {
+            byPosition.set(entry.position, entry.amount === undefined ? String(entry.percent) : persenSetara(entry.amount, remaining, digits));
+            remaining -= entry.amount ?? cents(remaining * entry.percent / 100);
+        }
+        const last = Math.max(5, ...byPosition.keys());
+        return Array.from({ length: last }, (_, index) => byPosition.get(index + 1) ?? "0");
+    };
+    const empat = rantai(4);
+    return net !== undefined && butuhEnamDesimal(gross, empat, net) ? rantai(6) : empat;
 }
 
 /** Kunci antrean; sengaja tidak memuat id batch (lihat catatan kepala berkas). */
@@ -132,7 +137,7 @@ export function groupCandidates(
             gross = cents(gross + rowGross);
             net = cents(net + rowNet);
             const sorted = [...row.discounts].sort((a, b) => a.position - b.position);
-            const percents = percentChain(sorted, rowGross);
+            const percents = percentChain(sorted, rowGross, rowNet);
             return {
                 code: row.itemCode!,
                 unit: row.unit,
