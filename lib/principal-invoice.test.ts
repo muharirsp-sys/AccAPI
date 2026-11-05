@@ -127,19 +127,38 @@ test("persen + rupiah satu baris dikirim sebagai rantai persen saja (INV/2609/KN
     assert.equal(item.itemCashDiscount, 0);
     assert.equal(candidates[0].net, 334093.7);
 
-    // Batas 4 desimal (yang terbukti disimpan Accurate): baris besar yang melesetnya lewat Rp 1
-    // DITAHAN, bukan dikirim dengan netto lain — dan pesannya harus bisa ditindaklanjuti petugas.
+    // SO 1671-SOP-260016034 (5 Nov 2026), OVALE 10 KRT: 4 desimal "1.9405" meleset Rp 3,93 dan
+    // menahan SO-nya. Hanya baris seperti ini yang naik ke 6 desimal.
+    const ovale = groupCandidates("KINO", [line({
+        qty: "10", price: "833513.5152",
+        discounts: [{ position: 1, percent: 2 }, { position: 5, percent: 1.9404519218517986, amount: 158504.5045 }],
+    })], { fallbackDate: "2026-11-03" });
+    const [baris] = buildInvoicePayload(ovale.candidates[0].order, { unitIds: new Map([["KRT", 100]]), branchId: 50, typeAutoNumber: 7 }).detailItem;
+    assert.equal(baris.itemDiscPercent, "2+0+0+0+1.940452");
+    assert.equal(baris.itemCashDiscount, 0);
+
+    // Baris yang LOLOS dengan 4 desimal tidak berubah satu karakter pun — termasuk saat selisih
+    // per posisinya Rp 1,03 tetapi potongan 50% sesudahnya mengecilkan selisih nettonya.
+    const tepi = groupCandidates("KINO", [line({
+        qty: "1", price: "3000044",
+        discounts: [{ position: 1, percent: 123456.78 / 3000044 * 100, amount: 123456.78 }, { position: 2, percent: 50 }],
+    })], { fallbackDate: "2026-11-03" });
+    assert.equal(buildInvoicePayload(tepi.candidates[0].order, { unitIds: new Map([["KRT", 100]]), branchId: 50, typeAutoNumber: 7 })
+        .detailItem[0].itemDiscPercent, "4.1152+50+0+0+0");
+
+    // Batas 6 desimal: baris yang TETAP melesetnya lewat Rp 1 DITAHAN, bukan dikirim dengan netto
+    // lain — dan pesannya harus bisa ditindaklanjuti petugas.
     const besar = groupCandidates("KINO", [line({
-        qty: "1", price: "50000000",
-        discounts: [{ position: 1, percent: 2 }, { position: 5, percent: 712345.67 / 49000000 * 100, amount: 712345.67 }],
+        qty: "1", price: "5000000000",
+        discounts: [{ position: 1, percent: 2 }, { position: 5, percent: 71234567.89 / 4900000000 * 100, amount: 71234567.89 }],
     })], { fallbackDate: "2026-09-30" });
     assert.throws(() => buildInvoicePayload(besar.candidates[0].order, { unitIds: new Map([["KRT", 100]]), branchId: 50, typeAutoNumber: 7 }),
         (error: Error) => {
             assert.match(error.message, /Barang ITM-1 \(KRT\)/);
-            assert.match(error.message, /netto SO Rp 48287654\.33/);
-            assert.match(error.message, /netto hasil persen 2\+0\+0\+0\+1\.4538 Rp 48287638\.00/);
-            assert.match(error.message, /selisih Rp 16\.33/);
-            assert.match(error.message, /SO ditahan utuh: potongan rupiah baris terlalu besar untuk dipersenkan 4 desimal\. Buat faktur ini manual di Accurate atau minta perbaikan/);
+            assert.match(error.message, /netto SO Rp 4828765432\.11/);
+            assert.match(error.message, /netto hasil persen 2\+0\+0\+0\+1\.453767 Rp 4828765417\.00/);
+            assert.match(error.message, /selisih Rp 15\.11/);
+            assert.match(error.message, /SO ditahan utuh: potongan rupiah baris terlalu besar untuk dipersenkan 6 desimal\. Buat faktur ini manual di Accurate atau minta perbaikan/);
             return true;
         });
 });

@@ -125,16 +125,32 @@ const cents = (value: number) => Math.round(value * 100) / 100;
  * ponytail: paling banyak 4 desimal — yang TERBUKTI disimpan dan dihitung persis oleh Accurate
  * (INV/2606/SZ01003 "0.5380+0+2.5"; tidak ada satu pun faktur ≥ 5 desimal, dicek 5 Okt 2026).
  * Meleset ≤ sisa × 0,0000005: baris bersisa > ± Rp 2 juta bisa lewat Rp 1 dan ditahan pemeriksa
- * netto di buildInvoicePayload. Naikkan batasnya setelah satu faktur 6 desimal terbukti.
+ * netto di buildInvoicePayload. HANYA baris yang akan ditahan itu yang dihitung ulang dengan
+ * `digits` 6 (keputusan pengguna 5 Nov 2026, SO 1671-SOP-260016034 meleset Rp 3,93) — lihat
+ * `butuhEnamDesimal`. Faktur 6 desimal pertama dibuktikan verifikasi balik. Batas 6 desimal pun
+ * meleset ≤ sisa × 0,000000005: baris bersisa > ± Rp 200 juta tetap bisa ditahan.
  */
-export function persenSetara(amount: number, remaining: number): string {
+export function persenSetara(amount: number, remaining: number, digits = 4): string {
     let text = "";
-    for (let digits = 2; digits <= 4; digits += 1) {
-        text = (amount / remaining * 100).toFixed(digits);
+    for (let d = 2; d <= digits; d += 1) {
+        text = (amount / remaining * 100).toFixed(d);
         if (Math.abs(remaining * Number(text) / 100 - amount) < 0.005) break;
     }
     return text.replace(/\.?0+$/, "");
 }
+
+/** Netto rantai persen seperti dihitung Accurate: tiap posisi atas sisa sebelumnya, dibulatkan ke sen. */
+export const nettoRantai = (gross: number, percents: string[]) =>
+    percents.reduce((left, p) => left - cents(left * Number(p) / 100), gross);
+
+/**
+ * Rantai 4 desimal yang akan DITAHAN pemeriksa netto buildInvoicePayload (meleset > Rp 1)?
+ * Syaratnya sengaja SAMA PERSIS dengan pemeriksa itu, bukan selisih per posisi: potongan persen
+ * sesudahnya mengecilkan selisih, dan baris yang hari ini lolos dengan 4 desimal tidak boleh
+ * berubah satu karakter pun.
+ */
+export const butuhEnamDesimal = (gross: number, percents: string[], net: number) =>
+    !(Math.abs(nettoRantai(gross, percents) - net) <= 1);
 
 /**
  * Baris berbentuk persen + rupiah sekaligus (catatan barisnya). Payload DIBEKUKAN saat antre,
@@ -200,7 +216,7 @@ export function buildInvoicePayload(
         // terisi, potongan baris dihitung dari persen saja dan rupiahnya dibuang. Terbukti pada
         // INV/2609/KN01376 (30 Sep 2026): "2+0+0+0+0" + rupiah di 7 baris, DPP Accurate = bruto
         // × 98% persis, Rp 18.019,82 hilang. Rupiahnya dilipat jadi persen setara di ujung rantai.
-        const sisa = percents.reduce((left, p) => left - cents(left * Number(p) / 100), gross);
+        const sisa = nettoRantai(gross, percents);
         // Netto persen + rupiah APA ADANYA, sebelum dilipat: pembeda sebab bila rantainya meleset.
         const asli = { rantai: `${percents.join("+") || "-"}${cash > 0 ? ` + Rp ${cash}` : ""}`, netto: sisa - cash };
         // Rupiah yang dilipat di sini, atau sudah dilipat pemanggil (jalur laporan principal).
@@ -208,18 +224,19 @@ export function buildInvoicePayload(
         if (percents.length > 0 && cash > 0) {
             dilipat = Math.abs(asli.netto - net) <= 1;
             percents.push(persenSetara(cash, sisa));
+            if (butuhEnamDesimal(gross, percents, net)) percents[percents.length - 1] = persenSetara(cash, sisa, 6);
             cash = 0;
         }
         // Accurate menghitung ulang persennya sendiri, jadi beberapa sen selisih diterima; rantai
         // yang memberi netto lain = dasar yang salah, dan faktur tidak bisa ditarik setelah terbit.
         // Galatnya menahan SO UTUH (pemanggil menolak seluruh faktur, tidak ada faktur separuh isi).
-        const hasil = percents.reduce((left, p) => left - cents(left * Number(p) / 100), gross) - cash;
+        const hasil = nettoRantai(gross, percents) - cash;
         if (!(Math.abs(hasil - net) <= 1)) {
             const [rantai, netto] = dilipat ? [`persen ${percents.join("+")}`, hasil] : [`diskon ${asli.rantai}`, asli.netto];
             const angka = `netto SO Rp ${net.toFixed(2)}, netto hasil ${rantai} Rp ${netto.toFixed(2)}, `
                 + `selisih Rp ${Math.abs(netto - net).toFixed(2)}`;
             throw new Error(`Barang ${line.code} (${line.unit}): ${angka}. SO ditahan utuh: ${dilipat
-                ? "potongan rupiah baris terlalu besar untuk dipersenkan 4 desimal"
+                ? "potongan rupiah baris terlalu besar untuk dipersenkan 6 desimal"
                 : "rantai diskon beku tidak menghasilkan netto SO"}. Buat faktur ini manual di Accurate atau minta perbaikan.`);
         }
         return {
