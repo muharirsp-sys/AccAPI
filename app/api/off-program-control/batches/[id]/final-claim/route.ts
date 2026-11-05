@@ -194,7 +194,7 @@ export async function POST(request: Request, context: Context) {
       sanitizedClaimRefs.map((ref): [string, ClaimRef] => [ref.itemId, ref]),
     );
 
-    // Validasi: setiap item yang punya noSurat wajib punya noClaim, kecuali beban distributor (DM): tidak ditagih ke principal.
+    // Validasi: setiap item yang punya noSurat wajib punya noClaim, kecuali item DM (dananya sudah di distributor, tidak diklaim).
     const missingNoClaim = data.items
       .filter((item) => String(item.noSurat || "").trim())
       .filter((item) => bebanItem(item.beban) === "CL")

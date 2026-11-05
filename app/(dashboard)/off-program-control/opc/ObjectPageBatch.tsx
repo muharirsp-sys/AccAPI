@@ -209,7 +209,7 @@ function TabelItem({ items, uji }: { items: ItemOpc[]; uji: boolean }) {
         { key: "bayar", header: "Cara bayar", secondary: true, cell: (i) => i.caraBayar || KOSONG },
         { key: "no", header: "Item ke", secondary: true, cell: (i) => <span className="fi-tnum">{i.itemNo}</span> },
         { key: "tipe", header: "Tipe", secondary: true, cell: (i) => labelTipeItem(i) || KOSONG },
-        { key: "beban", header: "Beban", secondary: true, cell: (i) => (labelBeban(i.beban) === "DM" ? <StatusBadge tone="neu">DM · distributor</StatusBadge> : "CL · principal") },
+        { key: "beban", header: "Beban", secondary: true, cell: (i) => (labelBeban(i.beban) === "DM" ? <StatusBadge tone="neu">DM · tidak diklaim</StatusBadge> : "CL · principal") },
         { key: "periode", header: "Periode", secondary: true, cell: (i) => i.periode || KOSONG },
         { key: "deadline", header: "Deadline", secondary: true, cell: (i) => tanggalOpc(i.deadline) },
         { key: "lengkap", header: "Kelengkapan awal", secondary: true, cell: (i) => kelengkapanItem(i) },
@@ -220,7 +220,7 @@ function TabelItem({ items, uji }: { items: ItemOpc[]; uji: boolean }) {
             empty={{ title: uji ? "Item tidak dimuat untuk data uji" : "Batch ini tidak punya item" }}
             mobileItem={(i) => (
                 <ListItem doc={i.noSurat || `Item ${i.itemNo}`} amount={rupiah(i.nominal)} title={i.toko || KOSONG}
-                    meta={[i.namaProgram, i.caraBayar, labelTipeItem(i), labelBeban(i.beban) === "DM" ? "beban distributor" : ""].filter(Boolean).join(" · ")}
+                    meta={[i.namaProgram, i.caraBayar, labelTipeItem(i), labelBeban(i.beban) === "DM" ? "DM, tidak diklaim" : ""].filter(Boolean).join(" · ")}
                     badge={dibayar(i) ? <StatusBadge tone="pos">Dibayar</StatusBadge> : undefined} />
             )} />
     );

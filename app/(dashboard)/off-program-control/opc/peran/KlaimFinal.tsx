@@ -60,7 +60,7 @@ export function kekuranganFinal(data: DetailBatch, isian: IsianFinal): string[] 
     const kurang: string[] = [];
     if (uangFinal(data).sisa > 0) kurang.push("Pembayaran belum lunas, belum bisa disetujui Klaim.");
     const bersurat = data.items.filter((i) => i.noSurat);
-    // Beban distributor (DM) tidak ditagih ke principal: No Claim tidak wajib (sama dengan server final-claim).
+    // Item DM (dananya sudah di distributor) tidak diklaim: No Claim tidak wajib (sama dengan server final-claim).
     const tanpaNoClaim = bersurat.filter((i) => labelBeban(i.beban) === "CL" && !String(isian.refs[i.id] || "").trim());
     if (tanpaNoClaim.length) kurang.push(`No Claim wajib diisi untuk No Surat: ${tanpaNoClaim.map((i) => i.noSurat).join(", ")}.`);
     const tanpaCeklis = bersurat.filter((i) => { const cl = isian.ceklis[i.id]; return !cl || !hasMinimalFinalChecklist(cl); });
@@ -197,7 +197,7 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
                                 </p>
                                 <div className="fi-formgrid">
                                     <FormField label="No Claim" required={Boolean(i.noSurat) && labelBeban(i.beban) === "CL"}
-                                        help={labelBeban(i.beban) === "DM" ? "Beban distributor (DM): tidak ditagih ke principal, No Claim tidak wajib." : "Nomor klaim dari Claim Workflow untuk item ini."}>{(a) => (
+                                        help={labelBeban(i.beban) === "DM" ? "DM: dananya sudah ada di distributor, tidak diklaim; No Claim tidak wajib." : "Nomor klaim dari Claim Workflow untuk item ini."}>{(a) => (
                                         <input {...a} className="fi-input fi-mono" value={isian.refs[i.id] || ""} placeholder={labelBeban(i.beban) === "DM" ? "Tidak wajib" : "Isi No Claim"}
                                             onChange={(e) => { const v = e.target.value; ubah((x) => ({ ...x, refs: { ...x.refs, [i.id]: v } })); }} />
                                     )}</FormField>
@@ -233,7 +233,7 @@ export function BagianFinal({ data, isian, ubah, kurang = [] }: BagianFinalProps
                         <b className="fi-tnum">{rupiah(u.dibayar)}</b>
                     </div>
                     <FormField label="Nilai fix (isi bila berbeda)" error={galatFix || undefined}
-                        help={`Isi bila realisasi klaim berbeda dari total yang sudah dibayar Keuangan, mis. 1.500.000. Kosong berarti sama dengan ${rupiah(u.dibayar)}. Selisih masuk Data Selisih dan dikembalikan SPV/SM.${u.bebanDistributor ? ` Nilai fix tetap MENCAKUP item beban distributor (DM) ${rupiah(u.bebanDistributor)}; jangan dikurangi bagian DM walau tidak ditagih ke principal.` : ""}`}>
+                        help={`Isi bila realisasi klaim berbeda dari total yang sudah dibayar Keuangan, mis. 1.500.000. Kosong berarti sama dengan ${rupiah(u.dibayar)}. Selisih masuk Data Selisih dan dikembalikan SPV/SM.${u.bebanDistributor ? ` Nilai fix tetap MENCAKUP item DM ${rupiah(u.bebanDistributor)}; jangan dikurangi bagian DM walau tidak diklaim.` : ""}`}>
                         {(a) => (
                             // type="text": roda mouse tidak mengubah nilai yang menentukan selisih, dan "1.500.000" terbaca sebagai ribuan.
                             <input {...a} className="fi-input fi-tnum" type="text" inputMode="numeric" autoComplete="off" value={teksFix}

@@ -259,7 +259,7 @@ export async function PATCH(request: Request, context: Context) {
             const updateResult = await tx
                 .update(offBatchItem)
                 .set({ noClaim, updatedAt: now })
-                // Item beban distributor (DM) tidak ditagih ke principal: tidak diberi No Claim (NULL = CL, data lama).
+                // Item DM (dananya sudah di distributor) tidak diklaim: tidak diberi No Claim (NULL = CL, data lama).
                 .where(and(eq(offBatchItem.batchId, workflow.offBatchId), or(isNull(offBatchItem.beban), ne(offBatchItem.beban, "DM"))))
                 .returning({ id: offBatchItem.id });
             const syncedItemCount = updateResult.length;

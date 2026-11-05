@@ -31,14 +31,15 @@ export const offPaymentMethods = ["Transfer", "Tunai", "Potong Tagihan"] as cons
 
 /**
  * Beban biaya per item (kolom "Type (CL / DM)" form Excel SPV). CL = ditagih ke principal lewat Claim Workflow;
- * DM = dana marketing / SDS / budget distributor sendiri, TIDAK ditagih ke principal. Nilai kosong di DB = CL (data lama).
+ * DM = tetap beban principal, tetapi dananya (dana marketing / SDS) sudah disimpan di distributor, jadi TIDAK diklaim lagi
+ * (owner 5 Nov 2026). Nilai kosong di DB = CL (data lama).
  */
 export const OFF_BEBAN = {
     CL: { label: "Ditagih ke principal (CL)", singkat: "CL" },
-    DM: { label: "Beban distributor (DM)", singkat: "DM" },
+    DM: { label: "Dana principal di distributor (DM)", singkat: "DM" },
 } as const;
 export type OffBeban = keyof typeof OFF_BEBAN;
-/** Normalisasi beban: hanya "DM" yang dikenali sebagai beban distributor; selain itu CL. */
+/** Normalisasi beban: hanya "DM" yang dikenali sebagai DM (tidak diklaim); selain itu CL. */
 export const bebanItem = (value: unknown): OffBeban => (String(value ?? "").trim().toUpperCase() === "DM" ? "DM" : "CL");
 
 export const offStatuses = {

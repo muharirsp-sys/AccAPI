@@ -230,7 +230,7 @@ function DaftarItem({ items }: { items: ItemPantau[] }) {
             {items.map((i) => (
                 <li key={i.no}>
                     <ListItem doc={i.noSurat || `Item ${i.no}`} amount={rupiah(i.nominal)} title={i.toko || KOSONG}
-                        meta={[i.namaProgram, i.periode ? formatPeriodForPrint(i.periode) : "", i.caraBayar, i.beban === "DM" ? "beban distributor" : "",
+                        meta={[i.namaProgram, i.periode ? formatPeriodForPrint(i.periode) : "", i.caraBayar, i.beban === "DM" ? "DM, tidak diklaim" : "",
                             i.pembayaranKe ? `pembayaran ke-${i.pembayaranKe}` : ""].filter(Boolean).join(" · ")}
                         badge={statusItem(i)} />
                 </li>
