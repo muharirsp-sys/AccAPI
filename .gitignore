@@ -143,3 +143,8 @@ python_backend/api_key_mistral.txt
 data/abcpi/
 # Laporan Enigma: arsip, log, dan config.json berisi password portal (volume produksi)
 data/enigma/
+
+# Laporan Puratos: arsip 5 CSV per tanggal, log, dan config.json berisi password server Puratos (volume produksi)
+data/puratos/
+# Bahan uji laporan Puratos (5 CSV contoh 02.11.2026) — *.gz di atas membuangnya
+!lib/puratos/contoh-*.json.gz
