@@ -2,7 +2,7 @@
  * db = urutan jawaban select tiruan, Accurate = fetch tiruan per URL (bukan provider asli). */
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { BATAS_CARI, cariFaktur, cocokFaktur, jendelaCari, kueriListDo, milikKunci } from "./invoice-search.ts";
+import { BATAS_CARI, cariFaktur, cocokFaktur, fakturLuarAntrean, jendelaCari, kueriListDo, milikKunci } from "./invoice-search.ts";
 
 const KEY = "KINO:1671-SOP-260014013";
 const SESI = { sessionHost: "https://accurate.tiruan", sessionId: "sesi", accessToken: "token" };
@@ -256,4 +256,21 @@ test("detail.do: charField1 hilang tetapi description pola kita -> ketemu {cocok
         assert.deepEqual(hasil, { hasil: "tidak_ketemu_dicek", sumber: "accurate", diperiksa: 2, barisListDo: 2,
             calonTanpaKunci: [{ id: "91", number: "INV/91", totalAmount: 125000.5, transDate: "08/10/2026" }] });
     });
+});
+
+test("fakturLuarAntrean: faktur tangan yang menyebut nomor SO = sudah difakturkan; faktur antrean & SO lain tidak", () => {
+    const key = "KINO-NON-FOOD:1671-SOP-260016032";
+    const so = "1671-SOP-260016032";
+    // Bentuk nyata INV/2611/KN00220 (ATIGA, Fakturist9, 6 Nov 2026): cache menyimpan STRING JSON, charField1 kosong.
+    const tangan = JSON.stringify({ number: "INV/2611/KN00220", charField1: "", description: so, poNumber: null });
+    assert.equal(fakturLuarAntrean(tangan, so, key), true);
+    assert.equal(fakturLuarAntrean({ description: `SO ${so}, 1671-SOP-260016033` }, "1671-SOP-260016033", "KINO-NON-FOOD:1671-SOP-260016033"), true);
+    assert.equal(fakturLuarAntrean({ description: "", poNumber: so }, so, key), true);
+    // Batas angka: SO yang nomornya awalan SO lain tidak ikut tertahan.
+    assert.equal(fakturLuarAntrean(tangan, "1671-SOP-26001603", "KINO-NON-FOOD:1671-SOP-26001603"), false);
+    assert.equal(fakturLuarAntrean({ description: "1671-SOP-260016033" }, so, key), false);
+    // Faktur milik kunci antrean (buatan web) bukan urusannya — itu jalur antrean + pencarian E2.
+    assert.equal(fakturLuarAntrean({ charField1: key, description: `Order ${key} | ATIGA` }, so, key), false);
+    assert.equal(fakturLuarAntrean({ charField1: "", description: `Order ${key} | ATIGA` }, so, key), false);
+    assert.equal(fakturLuarAntrean(tangan, "", key), false);
 });
