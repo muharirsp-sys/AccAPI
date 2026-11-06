@@ -12,12 +12,14 @@
  *   - SO yang punya satu saja baris `review` TIDAK ikut,
  *   - kunci antrean = principal + nomor SO, jadi SO yang sama dari berkas lain bentrok di
  *     primary key dan dilewati, bukan jadi faktur kedua,
+ *   - SO yang nomornya sudah tertulis di faktur Accurate buatan tangan (keterangan / No. PO) dilewati,
  *   - cabang + seri penomoran diambil dari pelanggan; ketidakpastian = SO itu dilewati.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { accurateEmployee, invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
+import { accurateEmployee, invoiceOutbox, principalOrderBatch, principalOrderLine, salesInvoiceCache } from "@/db/schema";
+import { fakturLuarAntrean, lolosRegex } from "@/lib/invoice-search";
 import { antrekan, pencariPenekan } from "@/lib/invoice-outbox-actions";
 import { pernahDibuang } from "@/lib/invoice-outbox-event";
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
@@ -120,6 +122,32 @@ export async function POST(request: NextRequest) {
         .from(invoiceOutbox).where(inArray(invoiceOutbox.orderId, candidates.map((candidate) => candidate.key)));
     const already = new Map(existing.map((row) => [row.orderId, row.state]));
 
+    // Faktur yang dibuat fakturist LANGSUNG di Accurate tidak punya baris antrean dan tidak membawa charField1,
+    // jadi gerbang di atas buta terhadapnya (ATIGA 6 Nov 2026: 5 SO sudah difakturkan tangan, batchnya masih
+    // bisa diantrekan). Nomor SO di keterangan / No. PO faktur pelanggan yang sama = sudah difakturkan.
+    // ponytail: dibaca dari cache sales_invoice, hanya pelanggan yang sama. Keterangan faktur hanya ada bila
+    // baris cache datang dari webhook (detail.do); baris cron list.do tidak membawanya (4 dari 27.610 faktur
+    // Okt-Nov 2026). Faktur yang dibuat sesaat sebelum Antrekan, webhook-nya hilang, atau ke kode pelanggan
+    // lain lolos. Upgrade: list.do + detail.do per pelanggan seperti cariFaktur (b) di lib/invoice-search.
+    const baru = candidates.filter((candidate) => !already.has(candidate.key));
+    const luarAntrean = new Map<string, string[]>();
+    if (baru.length) {
+        const tgl = sql`substr(${salesInvoiceCache.transDate}, 7, 4) || substr(${salesInvoiceCache.transDate}, 4, 2) || substr(${salesInvoiceCache.transDate}, 1, 2)`;
+        const faktur = await db.select({ number: salesInvoiceCache.number, customerNo: salesInvoiceCache.customerNo, raw: salesInvoiceCache.rawData })
+            .from(salesInvoiceCache).where(and(
+                inArray(salesInvoiceCache.customerNo, [...new Set(baru.map((candidate) => candidate.customerNo))]),
+                // trans_date = teks DD/MM/YYYY, dibandingkan sebagai teks YYYYMMDD: baris rusak tidak melempar seperti to_date.
+                sql`${tgl} >= ${baru.map((candidate) => candidate.orderDate.replace(/-/g, "")).sort()[0]}`,
+                // Saringan kasar, satu regex per baris; batas angka diperiksa fakturLuarAntrean.
+                sql`${salesInvoiceCache.rawData}::text ~ ${baru.map((candidate) => lolosRegex(candidate.soNo)).join("|")}`,
+            ));
+        for (const candidate of baru) {
+            const nomor = faktur.filter((row) => row.customerNo === candidate.customerNo && fakturLuarAntrean(row.raw, candidate.soNo, candidate.key))
+                .map((row) => row.number || "(tanpa nomor)");
+            if (nomor.length) luarAntrean.set(candidate.key, nomor);
+        }
+    }
+
     type Ready = {
         key: string; soNo: string; customerNo: string; orderDate: string; lineCount: number;
         gross: number; net: number; branch: string; payload: InvoicePayload;
@@ -131,6 +159,12 @@ export async function POST(request: NextRequest) {
     for (const candidate of candidates) {
         const state = already.get(candidate.key);
         if (state) { blocked.push({ soNo: candidate.soNo, reason: `sudah ada di antrean faktur (status ${state})` }); continue; }
+        const luar = luarAntrean.get(candidate.key);
+        if (luar) {
+            blocked.push({ soNo: candidate.soNo, reason: `sudah difakturkan di Accurate di luar antrean: ${luar.join(", ")} (nomor SO ada di keterangan/No. PO). `
+                + "Mengantrekannya = faktur kembar. Bila faktur itu sudah dihapus di Accurate, ulangi setelah daftar faktur tersinkron" });
+            continue;
+        }
         const resolved = await resolveOrderBranch(candidate.customerNo);
         if (!resolved.branch) { blocked.push({ soNo: candidate.soNo, reason: resolved.error }); continue; }
         try {
