@@ -1362,6 +1362,7 @@ Status Lifecycle wave:
 |---|---|---|
 | **Accurate Online ERP** | REST API (OAuth2, Bearer token) | `lib/sync.ts`, `app/api/proxy/route.ts`, `app/api/auth/callback/route.ts` |
 | **Accurate Webhook** | Inbound HTTP POST (IP whitelist) | `app/api/webhook/accurate/route.ts` |
+| **Puratos SalesSync** | Outbound HTTP POST multipart (form login, tanpa TLS) | `lib/puratos/jalankan.ts` <- `app/api/cron/puratos-harian/route.ts` |
 | **SMTP Email** | Outbound (nodemailer) | `lib/email.ts` <- `lib/auth.ts` (reset/verifikasi) |
 | **Elasticsearch** (opsional) | REST search index | `lib/off-program-control/search.ts` <- `app/api/off-program-control/batches/route.ts` |
 | **SumoPod AI / OpenAI** (opsional) | LLM/OCR API | `python_backend/main.py` (validator + dokumen) |
@@ -1695,6 +1696,20 @@ UI /laporan-harian bagian "Laporan Enigma" (KirimPrincipal.tsx kode "enigma") ->
      baca /upload_detail/<id> -> email admin (success / validation_error + Detail log ringkas / gagal)
   Arsip + status + log.jsonl: data/enigma; konfigurasi data/enigma/config.json {subdistId, password, adminEmail} (volume).
   Cron hanya mengulang gagal teknis; validation_error tidak diunggah ulang otomatis.
+```
+
+Laporan Puratos — SalesSync (server puratos-eu.spot2d.com, 6 Nov 2026; pengganti sales_sync.exe + penyusunan manual di laptop):
+```
+cron VPS 10.00/11.00/12.00 WITA -> GET /api/cron/puratos-harian (CRON_SECRET; tanggal laporan D = H-1; ?tanggal= · ?pratinjau=1 tanpa kirim · ?ulang=1)
+  -> lib/puratos/jalankan.ts kumpulkan: Accurate BACA-SAJA (sesi sinkron) cabang PURATOS (601), 45 hari D-44..D:
+     faktur + retur (RSJ ikut) list+detail; master barang charField1/2 "PURATOS"; pelanggan & salesman sepanjang masa dari
+     list.do (customer, masterSalesman) + customer/detail.do; stok item/list-stock.do asOfDate × GD01+GDLJ (hanya halaman kode Puratos)
+  -> lib/puratos/laporan.ts susun: 5 CSV (sku, delivery+DUMMY, stocks, ttoptions, ta), kg = quantityDefault × pcs/satuan dasar × kg/pcs
+     dari nama barang; barang lama + koreksi gramasi di lib/puratos/lama.json, pelanggan lama di volume data/puratos/pelanggan-lama.json
+     (data pribadi, repo publik); validasi silang (gagal = tidak dikirim)
+  -> arsip data/puratos/<YYYY-MM-DD>/*.csv + status.json; POST multipart satu per satu {__login, __password, ufile} ke
+     http://puratos-eu.spot2d.com/upload/auto, sukses = 200 + "was accepted"; 11.00/12.00 kirim ulang berkas gagal dari arsip
+  -> log.jsonl + email admin (5 CSV terlampir). Konfigurasi data/puratos/config.json {login, password, adminEmail} (volume).
 ```
 
 Admin mapping: `/laporan-harian/mapping` -> `app/api/laporan-harian/mapping/route.ts` -> CRUD
