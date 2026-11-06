@@ -12,7 +12,7 @@
  * Side Effects: HTTP baca Accurate (list.do/detail.do/list-stock.do); POST ke server Puratos; tulis data/puratos/<tanggal>/*,
  *   data/puratos/log.jsonl; email admin.
  */
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
 import { ambil, daftar, hariIniWita, keAccurate, rincian, type Obj } from "@/lib/accurate-baca";
@@ -20,24 +20,31 @@ import type { AccurateCredentials } from "@/lib/sync";
 import { sendEmail } from "@/lib/email";
 import lama from "./lama.json";
 import { NAMA_BERKAS, pcsPerSatuanDasar, periode, susun, tgl, kodePelanggan, type Baris, type Data } from "./laporan";
+import { LogSalesSync, awalLog, mulaiKirimLog, ringkasLog, unggahBerkas } from "./salessync";
 
 const URL_PURATOS = "http://puratos-eu.spot2d.com/upload/auto";
 const CABANG = "PURATOS", PRINCIPAL = "PURATOS", GUDANG = ["GD01", "GDLJ"]; // GD0BS = gudang rusak, tidak dihitung
 const DIR = path.join(/*turbopackIgnore: true*/ process.cwd(), "data", "puratos");
+const RETENSI_HARI = 45; // config.json SalesSync: archive.retention_days
 
 type Config = { login: string; password: string; adminEmail: string; url?: string };
 type Status = { dibuat?: string; berkas: Record<string, { waktu: string; jawaban: string }> };
 export type HasilPuratos = {
     tanggal: string; sumber: "cron" | "manual"; status: "terkirim" | "sebagian" | "gagal" | "dilewati" | "pratinjau";
-    ringkasan?: Record<string, number>; terkirim: string[]; galat: string[]; peringatan: string[];
+    ringkasan?: Record<string, number>; terkirim: string[]; galat: string[]; peringatan: string[]; log?: string;
 };
 
 const urai = <T>(teks: string, cadangan: T): T => { try { return JSON.parse(teks) as T; } catch { return cadangan; } };
 
-async function konfigurasi(): Promise<Config> {
+/** config.json di volume; kredensial kosong dicatat dengan pesan sales_sync.exe (HTTP_LOGIN/HTTP_PASSWORD not found.). */
+async function konfigurasi(log?: LogSalesSync): Promise<Config> {
     // Pesan JSON.parse memuat potongan isi berkas (kata sandi) — jangan diteruskan ke log/email.
-    const c = urai<Partial<Config>>(await readFile(path.join(DIR, "config.json"), "utf8").catch(() => ""), {});
-    if (!c.login || !c.password || !c.adminEmail) throw new Error("data/puratos/config.json belum lengkap (login, password, adminEmail)");
+    const teks = await readFile(path.join(DIR, "config.json"), "utf8").catch(() => null);
+    if (teks === null) { log?.main("ERROR", 158, ".env file not found."); throw new Error("data/puratos/config.json tidak ada"); }
+    const c = urai<Partial<Config>>(teks, {});
+    if (!c.login) { log?.main("ERROR", 178, "HTTP_LOGIN not found."); throw new Error("data/puratos/config.json: login kosong"); }
+    if (!c.password) { log?.main("ERROR", 186, "HTTP_PASSWORD not found."); throw new Error("data/puratos/config.json: password kosong"); }
+    if (!c.adminEmail) throw new Error("data/puratos/config.json: adminEmail kosong");
     return c as Config;
 }
 
@@ -141,24 +148,24 @@ export async function kumpulkan(creds: AccurateCredentials, tanggal: string): Pr
         dokumen: { faktur: fakturList.length, retur: returList.length } };
 }
 
-/** Satu berkas ke server Puratos, persis sales_sync.exe. */
-async function kirimBerkas(cfg: Config, nama: string, isi: Buffer): Promise<string> {
-    const form = new FormData();
-    form.append("__login", cfg.login);
-    form.append("__password", cfg.password);
-    form.append("ufile", new Blob([new Uint8Array(isi)], { type: "text/plain" }), nama.replace(/\.csv$/, ""));
-    const res = await fetch(cfg.url || URL_PURATOS, { method: "POST", body: form, redirect: "manual", signal: AbortSignal.timeout(60_000) });
-    const teks = (await res.text().catch(() => "")).trim().replace(/\s+/g, " ").slice(0, 300);
-    if (res.status !== 200) throw new Error(`${nama}: HTTP ${res.status}${res.headers.get("location") ? ` → ${res.headers.get("location")}` : ""} ${teks}`);
-    if (!teks.toLowerCase().includes("was accepted")) throw new Error(`${nama}: server tidak mengonfirmasi ("${teks}")`);
-    return teks;
+/** cleanup_archive sales_sync.exe: folder arsip bertanggal lebih tua dari 45 hari dihapus. */
+async function bersihkanArsip(log: LogSalesSync) {
+    const batas = new Date(Date.parse(`${hariIniWita()}T00:00:00Z`) - RETENSI_HARI * 86_400_000).toISOString().slice(0, 10);
+    for (const nama of await readdir(DIR).catch(() => [] as string[])) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(nama) || nama >= batas) continue;
+        try {
+            await rm(path.join(DIR, nama), { recursive: true, force: true });
+            log.tulis("INFO", "uploader:cleanup_archive:307", `Deleted old archive : ${nama}`);
+        } catch (e) { log.tulis("ERROR", "uploader:cleanup_archive:314", `Failed deleting archive ${nama} : ${(e as Error).message}`); }
+    }
 }
 
 let berjalan = false; // satu proses Node per container: cron dan pemanggilan manual tidak boleh menumpuk
 
 /**
  * pratinjau: susun saja (tanpa simpan/kirim). Cron: berkas tersimpan untuk tanggal itu dikirim ulang hanya yang belum diterima
- * (11.00/12.00), semua sudah diterima → dilewati. ulang (manual): tarik ulang dari Accurate dan kirim kelima berkas lagi.
+ * (11.00/12.00; yang sudah diterima tercatat "Skipped" seperti sales_sync.exe), semua sudah diterima → dilewati.
+ * ulang (manual): tarik ulang dari Accurate dan kirim kelima berkas lagi. Log tiap putaran = format sales_sync.exe.
  */
 export async function jalankanPuratos({ tanggal, sumber, pratinjau = false, ulang = false }:
     { tanggal: string; sumber: "cron" | "manual"; pratinjau?: boolean; ulang?: boolean }): Promise<HasilPuratos> {
@@ -167,11 +174,13 @@ export async function jalankanPuratos({ tanggal, sumber, pratinjau = false, ulan
     berjalan = true;
     const folder = path.join(DIR, tanggal), berkasStatus = path.join(folder, "status.json");
     const hasil: HasilPuratos = { tanggal, sumber, status: "gagal", terkirim: [], galat: [], peringatan: [] };
+    const log = new LogSalesSync();
     let cfg: Config | null = null;
     try {
         let status = urai<Status>(await readFile(berkasStatus, "utf8").catch(() => ""), { berkas: {} });
         if (!pratinjau && !ulang && NAMA_BERKAS.every((n) => status.berkas[n])) { hasil.status = "dilewati"; return hasil; }
-        cfg = pratinjau ? null : await konfigurasi();
+        awalLog(log);
+        cfg = pratinjau ? null : await konfigurasi(log);
         let berkas: Record<string, Buffer> | null = null;
         if (!pratinjau && !ulang && status.dibuat) {
             const isi = await Promise.all(NAMA_BERKAS.map((n) => readFile(path.join(folder, n)).catch(() => null)));
@@ -193,45 +202,59 @@ export async function jalankanPuratos({ tanggal, sumber, pratinjau = false, ulan
             status = { dibuat: new Date().toISOString(), berkas: {} };
             await writeFile(berkasStatus, JSON.stringify(status, null, 1));
         }
-        // Status disimpan segera sesudah tiap berkas diterima: putaran yang terputus (deploy) tidak mengirim ulang berkas itu.
-        for (const n of NAMA_BERKAS) {
-            if (status.berkas[n]) { hasil.terkirim.push(n); continue; }
-            try {
-                status.berkas[n] = { waktu: new Date().toISOString(), jawaban: await kirimBerkas(cfg!, n, berkas[n]) };
-                await writeFile(berkasStatus, JSON.stringify(status, null, 1));
-                hasil.terkirim.push(n);
-            } catch (e) { hasil.galat.push((e as Error).message); }
+        // Urutan & aturan = sales_sync.exe (config.json "files"). Status disimpan segera sesudah tiap berkas diterima: putaran yang
+        // terputus (deploy) tidak mengirim ulang berkas itu.
+        mulaiKirimLog(log);
+        const n = { uploaded: 0, failed: 0, skipped: 0 };
+        for (const nama of NAMA_BERKAS) {
+            if (status.berkas[nama]) { log.main("WARNING", 219, `Skipped : ${nama}`); n.skipped++; hasil.terkirim.push(nama); continue; }
+            const jawaban = await unggahBerkas({ url: cfg!.url || URL_PURATOS, login: cfg!.login, password: cfg!.password, nama, isi: berkas[nama], log });
+            if (jawaban === null) { n.failed++; hasil.galat.push(`${nama} tidak diterima server Puratos (lihat log)`); continue; }
+            status.berkas[nama] = { waktu: new Date().toISOString(), jawaban: jawaban.slice(0, 300) };
+            await writeFile(berkasStatus, JSON.stringify(status, null, 1));
+            n.uploaded++;
+            hasil.terkirim.push(nama);
         }
+        await bersihkanArsip(log);
+        ringkasLog(log, n);
         hasil.status = hasil.terkirim.length === NAMA_BERKAS.length ? "terkirim" : hasil.terkirim.length ? "sebagian" : "gagal";
         return hasil;
     } catch (e) {
         hasil.galat.push((e as Error).message);
         hasil.status = "gagal";
+        // Gagal sebelum kirim (konfigurasi/Accurate/validasi) tak ada di sales_sync.exe: dicatat dengan nama modul AccAPI.
+        for (const g of hasil.galat) log.tulis("ERROR", "accapi:puratos:0", g);
+        log.main("WARNING", 284, "PROCESS FINISHED WITH ERRORS");
         return hasil;
     } finally {
         berjalan = false;
+        hasil.log = log.teks();
         if (!pratinjau && hasil.status !== "dilewati") await catat(hasil, cfg?.adminEmail, folder);
     }
 }
 
-/** Jejak putaran (data/puratos/log.jsonl) + kabar ke admin dengan 5 CSV terlampir bila ada. */
+/** Jejak putaran: logs/sales_sync.log (seperti sales_sync.exe) + log.jsonl ringkas + email admin berisi log dan 5 CSV. */
 async function catat(hasil: HasilPuratos, adminEmail: string | undefined, folder: string) {
-    await mkdir(DIR, { recursive: true }).catch(() => undefined);
-    await appendFile(path.join(DIR, "log.jsonl"), `${JSON.stringify({ waktu: new Date().toISOString(), ...hasil })}\n`).catch(() => undefined);
+    const { log = "", ...ringkas } = hasil;
+    // ponytail: tanpa rotasi 10 MB/30 hari seperti loguru — ±2 KB/hari; tambah rotasi bila berkas sudah besar.
+    await mkdir(path.join(DIR, "logs"), { recursive: true }).catch(() => undefined);
+    await appendFile(path.join(DIR, "logs", "sales_sync.log"), log).catch(() => undefined);
+    await appendFile(path.join(DIR, "log.jsonl"), `${JSON.stringify({ waktu: new Date().toISOString(), ...ringkas })}\n`).catch(() => undefined);
     const admin = adminEmail || await konfigurasi().then((c) => c.adminEmail, () => "");
     if (!admin) return;
-    const lampiran = (await Promise.all(NAMA_BERKAS.map(async (n) => {
+    const csv = (await Promise.all(NAMA_BERKAS.map(async (n) => {
         const content = await readFile(path.join(folder, n)).catch(() => null);
         return content ? [{ filename: n as string, content, contentType: "text/csv" }] : [];
     }))).flat();
     const r = hasil.ringkasan;
-    await sendEmail({ to: admin, subject: `[Puratos] ${hasil.status.toUpperCase()} ${tgl(hasil.tanggal)} (${hasil.sumber}): ${hasil.terkirim.length}/5 berkas diterima`,
-        attachments: lampiran,
-        text: [`Tanggal laporan: ${tgl(hasil.tanggal)} (periode 45 hari ${tgl(periode(hasil.tanggal)[0])} s/d ${tgl(hasil.tanggal)})`, `Status: ${hasil.status}`,
-            r && `Baris: sku ${r.sku}, delivery ${r.delivery} (${r.barisAsli} asli dari ${r.faktur} faktur + ${r.retur} retur), stocks ${r.stocks}, ttoptions ${r.ttoptions}, ta ${r.ta}`,
-            r && `Nilai 45 hari Rp ${r.nilai.toLocaleString("id-ID")}, ${r.kg.toLocaleString("id-ID")} kg; stok ${tgl(hasil.tanggal)} ${r.stokKgD.toLocaleString("id-ID")} kg`,
-            `Diterima server Puratos: ${hasil.terkirim.join(", ") || "-"}`,
-            ...hasil.galat.map((g) => `Galat: ${g}`), ...hasil.peringatan.map((p) => `Peringatan: ${p}`),
+    const akhir = hasil.status === "terkirim" ? "PROCESS FINISHED" : "PROCESS FINISHED WITH ERRORS";
+    await sendEmail({ to: admin, subject: `[Puratos] Sales Sync ${tgl(hasil.tanggal)}: ${akhir} (${hasil.terkirim.length}/5 diterima)`,
+        attachments: [{ filename: "sales_sync.log", content: Buffer.from(log, "utf8"), contentType: "text/plain" }, ...csv],
+        text: [log,
+            `Tanggal laporan ${tgl(hasil.tanggal)} (45 hari ${tgl(periode(hasil.tanggal)[0])} s/d ${tgl(hasil.tanggal)}), ${hasil.sumber}.`,
+            r && `sku ${r.sku}, delivery ${r.delivery} (${r.barisAsli} baris asli dari ${r.faktur} faktur + ${r.retur} retur), stocks ${r.stocks}, `
+                + `ttoptions ${r.ttoptions}, ta ${r.ta}; Rp ${r.nilai.toLocaleString("id-ID")}, ${r.kg.toLocaleString("id-ID")} kg; stok ${r.stokKgD.toLocaleString("id-ID")} kg.`,
+            ...hasil.peringatan.map((p) => `Peringatan: ${p}`),
             hasil.status !== "terkirim" && "Cron mengulang pukul 11.00 dan 12.00 WITA untuk berkas yang belum diterima.",
         ].filter(Boolean).join("\n") }).catch(() => undefined);
 }

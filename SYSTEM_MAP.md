@@ -1709,7 +1709,10 @@ cron VPS 10.00/11.00/12.00 WITA -> GET /api/cron/puratos-harian (CRON_SECRET; ta
      (data pribadi, repo publik); validasi silang (gagal = tidak dikirim)
   -> arsip data/puratos/<YYYY-MM-DD>/*.csv + status.json; POST multipart satu per satu {__login, __password, ufile} ke
      http://puratos-eu.spot2d.com/upload/auto, sukses = 200 + "was accepted"; 11.00/12.00 kirim ulang berkas gagal dari arsip
-  -> log.jsonl + email admin (5 CSV terlampir). Konfigurasi data/puratos/config.json {login, password, adminEmail} (volume).
+  -> lib/puratos/salessync.ts: pengirim + log PERSIS sales_sync.exe 1.0.0 (format loguru, modul:fungsi:baris asli, jam WITA;
+     Skipped = sudah diterima; arsip > 45 hari dihapus "Deleted old archive") -> data/puratos/logs/sales_sync.log + log.jsonl
+  -> email admin: isi = log SalesSync putaran itu + lampiran sales_sync.log + 5 CSV (berhasil maupun gagal).
+     Konfigurasi data/puratos/config.json {login, password, adminEmail} (volume).
 ```
 
 Admin mapping: `/laporan-harian/mapping` -> `app/api/laporan-harian/mapping/route.ts` -> CRUD
