@@ -6,7 +6,8 @@
  * Dependensi: GET /api/claim-workflow/[id], GET .../audit, POST .../status, POST .../documents/generate-all, PATCH .../items/[itemId],
  *   PATCH .../submissions/[sid], POST .../submissions/[sid]/items, POST .../payments | .../submissions/[sid]/payments,
  *   POST .../payments/[pid]/void | .../submissions/[sid]/payments/[pid]/void, POST .../close | .../submissions/[sid]/close,
- *   GET PDF .../{claim-letter,summary,receipt} dan .../submissions/[sid]/{...}; lib/claim-workflow-ui, lib/claim-workflow/no-claim-rules.
+ *   GET PDF .../{claim-letter,summary,receipt} dan .../submissions/[sid]/{...}, POST .../tax (kirim / setujui / kembalikan, owner 6 Nov 2026);
+ *   lib/claim-workflow-ui, lib/claim-workflow/no-claim-rules.
  * Main Functions: ClaimDetail.
  * Side Effects: HTTP baca/tulis di atas (uang: pembayaran klaim). Logic BL-07/08/14/15/33/35/42 tidak ditulis: perilaku hari ini + varian berlabel.
  *   Tanggal dan jam tampil dd/mm/yyyy WITA (lib/tampil); nilai kosong "-". Hanya aksi tahap aktif (footer) yang primary; Simpan per baris secondary.
@@ -32,7 +33,7 @@ import {
 } from "@/lib/claim-workflow-ui";
 
 import {
-    AlurDokumen, FormItemPonsel, aktif, isiItem, judulBerkas, kirimJson, persenTeks, tanpa,
+    AlurDokumen, FormItemPonsel, StripTax, aktif, isiItem, judulBerkas, kirimJson, persenTeks, tanpa,
     type AuditRow, type Bagian, type DetailResult, type Dlg, type DrafItem, type DrafNc, type Fakta, type Jawab, type Payment, type Submission, type WorkflowItem,
 } from "./klaim";
 
@@ -155,15 +156,25 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
     const umur = umurHari(wf.submittedToPrincipalAt);
 
     const barisTakValid = items.some((it) => { const v = hitungBaris(isiItem(it, bolehUbahItem ? drafItem[it.id] : undefined)); return !(v.dpp > 0) || !(v.nilaiKlaim > 0); });
+    // Tax (owner 6 Nov 2026): klaim ber-PPN/PPh disetujui Tax sebelum surat klaim, ringkasan, dan kwitansi dibuat. Server menegakkan
+    // hal yang sama di rute dokumen dan mark_ready; alasanDokumen datang dari server.
+    const pajak = statusEdit ? d.tax : undefined;
+    const bolehNilaiTax = pajak?.tahap === "menunggu" && keys.has("claim_workflow.tax_review");
+    const bolehKirimTax = Boolean(pajak?.bolehKirim) && keys.has("claim_workflow.update");
+    const alasanKirimTax = tanpaNc.length ? `Isi dan simpan No Claim ${tanpaNc.length} berkas dulu.`
+        : belumSimpan ? "Simpan perubahan item dan No Claim dulu."
+        : barisTakValid ? "Ada item dengan DPP atau nilai klaim 0." : "";
     const alasanDok = !statusEdit ? "Dokumen hanya dibuat saat Draf atau Perlu revisi."
         : aktifSubs.length === 0 ? "Belum ada berkas klaim aktif."
         : tanpaNc.length ? `Isi dan simpan No Claim ${tanpaNc.length} berkas dulu.`
         : belumSimpan ? "Simpan perubahan item dan No Claim dulu."
         : barisTakValid ? "Ada item dengan DPP atau nilai klaim 0."
+        : pajak?.alasanDokumen ? pajak.alasanDokumen
         : aktifSubs.some((s) => !(Number(s.totalClaim || 0) > 0)) ? "Ada berkas dengan nilai klaim 0." : "";
     const alasanSiap = aktifSubs.length === 0 ? "Belum ada berkas klaim aktif."
         : tanpaNc.length ? `Isi No Claim ${tanpaNc.length} berkas dulu.`
         : belumSimpan ? "Ada perubahan belum disimpan."
+        : pajak?.alasanDokumen ? pajak.alasanDokumen
         : dokAda.length < 3 ? `Buat dokumen dulu (${dokAda.length} dari 3 siap).` : "";
 
     // No Claim: pola principal (no-claim-rules) hanya pratinjau; isian manual tetap boleh.
@@ -211,6 +222,16 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
         hasil("atas", action === "mark_ready" ? `${no} ditandai siap dikirim. Item dan pajak kini terkunci.`
             : action === "return_to_draft" ? `${no} dikembalikan ke draf. Dokumen lama dihapus; buat ulang setelah perbaikan.`
             : `${no} dikirim ke principal. Umur tagihan dihitung mulai hari ini.`);
+    }
+
+    async function aksiTax(action: "kirim" | "setujui" | "kembalikan", note?: string) {
+        // sidik: Tax menyetujui nilai yang ia lihat; bila Claim mengubah pajak sementara itu, server menolak (muat ulang).
+        const { res, data } = await kirimJson(`/api/claim-workflow/${id}/tax`, "POST", { action, note, sidik: d?.tax?.sidik });
+        if (!res.ok || !data.ok) throw new Error(data.error || "Gagal menyimpan pemeriksaan Tax.");
+        setDialog(null);
+        hasil("noclaim", action === "kirim" ? `${no} dikirim ke Tax. Dokumen bisa dibuat setelah Tax menyetujui.`
+            : action === "setujui" ? `PPN/PPh ${no} disetujui. Claim kini bisa membuat surat klaim, ringkasan, dan kwitansi.`
+            : `${no} dikembalikan ke Claim dengan catatan.`);
     }
 
     async function buatSemuaDokumen() {
@@ -457,7 +478,22 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
     const daftarHref = baruDitutup ? `/claim-workflow?ditutup=${encodeURIComponent(no)}` : "/claim-workflow";
 
     let footer: ReactNode = null;
-    if (tahap === "draf") {
+    if (tahap === "draf" && bolehNilaiTax) {
+        footer = (
+            <FooterToolbar message="Periksa DPP, PPN, dan PPh tiap item; setujui, atau kembalikan ke Claim dengan catatan.">
+                <Button variant="negative" icon={<RotateCcw className="fi-icon" aria-hidden />} onClick={() => setDialog("tax_kembalikan")}>Kembalikan ke Claim…</Button>
+                <Button variant="primary" icon={<Check className="fi-icon" aria-hidden />} onClick={() => setDialog("tax_setujui")}>Setujui pajak…</Button>
+            </FooterToolbar>
+        );
+    } else if (tahap === "draf" && bolehKirimTax) {
+        footer = (
+            <FooterToolbar message={alasanKirimTax || pajak?.alasanDokumen}>
+                <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} disabled={Boolean(alasanKirimTax)} disabledReason={alasanKirimTax} onClick={() => setDialog("tax_kirim")}>
+                    {pajak?.tahap === "belum_dikirim" ? "Kirim ke Tax…" : "Kirim ulang ke Tax…"}
+                </Button>
+            </FooterToolbar>
+        );
+    } else if (tahap === "draf") {
         footer = (
             <FooterToolbar message={!bolehTahap ? "Hanya peran admin atau claim dengan izin persetujuan klaim yang dapat menandai siap dikirim." : alasanSiap || "No Claim dan tiga dokumen lengkap."}>
                 {bolehTahap && <Button variant="primary" icon={<Check className="fi-icon" aria-hidden />} disabled={Boolean(alasanSiap)} disabledReason={alasanSiap} onClick={() => setDialog("siap")}>Tandai siap dikirim…</Button>}
@@ -598,6 +634,7 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
                     </ul>
                 )}
                 <div className="fi-sect-in">
+                    {pajak && pajak.tahap !== "tidak_perlu" && <StripTax pajak={pajak} penilai={bolehNilaiTax} />}
                     <div className="fi-docs" role="list" aria-label="Dokumen klaim">
                         {DOKUMEN.map((doc) => (
                             <div key={doc.key} className="fi-doc" role="listitem">
@@ -757,6 +794,15 @@ export default function ClaimDetail({ id, permKeys, focus }: { id: string; permK
             <ConfirmDialog open={dialog === "kirim"} onClose={tutupDialog} title={`Kirim ${no} ke principal?`} tag="Tahap" confirmLabel="Kirim ke principal"
                 description="Setelah dikirim, item dan pajak terkunci. Belum ada jalan revisi atau batal sesudahnya." onConfirm={() => transisi("submit_to_principal")}
                 facts={[["No Claim", noClaims.join(", ") || KOSONG], ["Total klaim", rupiah(wf.totalClaim)], ["Dokumen", `${dokAda.length} PDF`], ["Tanggal kirim", `${tanggalWita(witaToday())} (umur tagihan dihitung dari sini)`]]} />
+            <ConfirmDialog open={dialog === "tax_kirim"} onClose={tutupDialog} title={`Kirim ${no} ke Tax?`} tag="Tax" confirmLabel="Kirim ke Tax"
+                description="Tax memeriksa PPN dan PPh tiap item. Surat klaim, ringkasan, dan kwitansi bisa dibuat setelah Tax menyetujui." onConfirm={() => aksiTax("kirim")}
+                facts={[["No Claim", noClaims.join(", ") || KOSONG], ["DPP", rupiah(wf.totalDpp)], ["PPN", rupiah(wf.totalPpn)], ["PPh", rupiah(wf.totalPph)], ["Nilai klaim", rupiah(wf.totalClaim)]]} />
+            <ConfirmDialog open={dialog === "tax_setujui"} onClose={tutupDialog} title={`Setujui PPN/PPh ${no}?`} tag="Tax" confirmLabel="Setujui pajak"
+                description="Persetujuan berlaku untuk nilai yang tampil sekarang. Bila Claim mengubah pajak sesudahnya, klaim harus dikirim ulang ke Tax." onConfirm={() => aksiTax("setujui")}
+                facts={[["Item", String(items.length)], ["DPP", rupiah(wf.totalDpp)], ["PPN", rupiah(wf.totalPpn)], ["PPh", rupiah(wf.totalPph)], ["Nilai klaim", rupiah(wf.totalClaim)]]} />
+            <ConfirmDialog open={dialog === "tax_kembalikan"} onClose={tutupDialog} title={`Kembalikan ${no} ke Claim?`} tag="Catatan wajib" tone="negative" confirmLabel="Kembalikan ke Claim"
+                reason={{ label: "Catatan untuk Claim", placeholder: "Mis. PPh item 2 seharusnya 2%, bukan 15%." }} onConfirm={(catatan) => aksiTax("kembalikan", catatan)}
+                facts={[["Setelah ini", "Claim memperbaiki pajak, lalu mengirim ulang ke Tax"]]} />
             <ConfirmDialog open={dialog === "bayar"} onClose={tutupDialog} title={`Catat pembayaran ${rupiah(Number.isFinite(nominal) ? nominal : 0)} dari ${wf.principleName}?`} tag="Pembayaran"
                 confirmLabel={`Catat ${rupiah(Number.isFinite(nominal) ? nominal : 0)}`} confirmDisabled={lebihBayar || undefined} onConfirm={catatBayar}
                 description={<MessageStrip tone="info">Bila orang lain mencatat pembayaran klaim ini bersamaan, keduanya bisa tersimpan. Periksa riwayat pembayaran sesudahnya.</MessageStrip>}

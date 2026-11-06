@@ -34,7 +34,7 @@ for (const action of ["resolve_unknown", "override_duplicate", "repost_payment"]
 // AM-057: centang modul di UI grup TIDAK menyalakan kunci kapabilitas Finance (harus satu per satu);
 // mematikan modul mencabut semuanya, termasuk kapabilitas.
 // Kunci ditulis literal (re-review b955f836 #1): iterasi CAPABILITY_KEYS sendiri lulus walau satu kunci dibuang.
-assert.equal(CAPABILITY_KEYS.size, 7);
+assert.equal(CAPABILITY_KEYS.size, 8);
 const moduleOn = toggleModuleKeys(new Set(), "finance");
 assert.ok(moduleOn.has("finance.view") && moduleOn.has("finance.post_accurate"), "centang modul menyalakan kunci biasa");
 for (const k of ["finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment"]) {
@@ -125,6 +125,9 @@ assert.ok(isValidPermissionKey("form_kontrol.noo_setujui") && !CAPABILITY_KEYS.h
 assert.ok(isValidPermissionKey("form_kontrol.noo_ktp") && CAPABILITY_KEYS.has("form_kontrol.noo_ktp"), "noo_ktp wajib kunci kapabilitas");
 // Owner 13 Okt malam: hanya grup Admin yang menautkan → noo_tautkan kapabilitas (bukan bagian centang modul yang dipegang Manager).
 assert.ok(isValidPermissionKey("form_kontrol.noo_tautkan") && CAPABILITY_KEYS.has("form_kontrol.noo_tautkan"), "noo_tautkan wajib kunci kapabilitas");
+// Owner 6 Nov 2026: persetujuan Tax = kapabilitas; centang modul Claim Workflow tidak memberikannya.
+assert.ok(isValidPermissionKey("claim_workflow.tax_review") && CAPABILITY_KEYS.has("claim_workflow.tax_review"), "tax_review wajib kunci kapabilitas");
+assert.ok(!toggleModuleKeys(new Set(), "claim_workflow").has("claim_workflow.tax_review"), "centang modul menyalakan tax_review");
 const fkOn = toggleModuleKeys(new Set(), "form_kontrol");
 assert.ok(fkOn.has("form_kontrol.noo_setujui") && !fkOn.has("form_kontrol.noo_ktp") && !fkOn.has("form_kontrol.noo_tautkan"),
     "centang modul Form Kontrol tanpa noo_ktp/noo_tautkan");

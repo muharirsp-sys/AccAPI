@@ -32,6 +32,7 @@ import {
     requireClaimSession,
     writeClaimAudit,
 } from "@/lib/claim-workflow";
+import { tolakDokumenBelumTax } from "@/lib/claim-workflow/tax-db";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import type { ClaimWorkflowItemRow } from "@/lib/claim-workflow";
 
@@ -49,6 +50,9 @@ export async function POST(_request: Request, context: Context) {
 
     try {
         const { id } = await context.params;
+        // Owner 6 Nov 2026: klaim ber-PPN/PPh dicetak setelah disetujui Tax.
+        const belumTax = await tolakDokumenBelumTax(id);
+        if (belumTax) return belumTax;
         const [workflow] = await db
             .select()
             .from(claimWorkflow)

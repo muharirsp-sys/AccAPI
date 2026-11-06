@@ -1209,6 +1209,12 @@ export const claimWorkflow = pgTable("claim_workflow", {
     closedAt: timestamp("closed_at"),
     closedBy: text("closed_by"),
     closeNote: text("close_note"),
+    // Owner 6 Nov 2026: klaim ber-PPN/PPh wajib disetujui tim Tax sebelum surat, kwitansi, dan rekap dicetak (lib/claim-workflow/tax.ts).
+    // tax_status: NULL (belum dikirim / tanpa pajak) | menunggu | dikembalikan | disetujui. tax_sidik = sidik nilai pajak yang disetujui.
+    taxStatus: text("tax_status"),
+    taxStatusAt: timestamp("tax_status_at"),
+    taxNote: text("tax_note"),
+    taxSidik: text("tax_sidik"),
     createdBy: text("created_by"),
     createdAt: timestamp("created_at").notNull(),
     updatedAt: timestamp("updated_at").notNull()

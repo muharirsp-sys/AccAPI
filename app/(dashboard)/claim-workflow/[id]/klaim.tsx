@@ -2,17 +2,17 @@
  * Tujuan: Tipe respons dan helper murni Object Page Claim Workflow (dipisah dari ClaimDetail.tsx supaya berkas komponen ringkas).
  * Caller: app/(dashboard)/claim-workflow/[id]/ClaimDetail.tsx.
  * Dependensi: lib/claim-workflow-ui, lib/promo-ui (rupiah), lib/tampil, components/fiori/{core,interactive}.
- * Main Functions: kirimJson, tanpa, isiItem, persenTeks, judulBerkas, aktif, FormItemPonsel, AlurDokumen.
+ * Main Functions: kirimJson, tanpa, isiItem, persenTeks, judulBerkas, aktif, FormItemPonsel, AlurDokumen, StripTax.
  * Side Effects: kirimJson melakukan fetch tulis (dipanggil komponen klien); sisanya pure.
  */
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { Button } from "@/components/fiori/core";
+import { Button, MessageStrip } from "@/components/fiori/core";
 import { FormField } from "@/components/fiori/interactive";
 import { hitungBaris, labelLingkup } from "@/lib/claim-workflow-ui";
 import { rupiah } from "@/lib/promo-ui";
-import { KOSONG, sebabHttp } from "@/lib/tampil";
+import { KOSONG, sebabHttp, waktuWita } from "@/lib/tampil";
 
 export type Workflow = {
     id: string; claimWorkflowNo: string; offBatchId: string; offNoPengajuan?: string | null; principleCode: string; principleName: string; status: string;
@@ -46,10 +46,16 @@ export type DetailResult = {
     canAssignNoClaim?: boolean; canGenerateNoClaim?: boolean; noClaimGateReason?: string | null; offFinanceStatus?: string | null;
     offPaymentSummary?: { totalNominal: number; totalPaid: number; isFullyPaid: boolean } | null;
     canRecordPayment?: boolean; canVoidPayment?: boolean; canClose?: boolean; closeBlockers?: string[];
+    tax?: Pajak;
+};
+/** Persetujuan Tax (owner 6 Nov 2026), dihitung server (lib/claim-workflow/tax). sidik = nilai pajak yang dilihat Tax saat menyetujui. */
+export type Pajak = {
+    tahap: "tidak_perlu" | "belum_dikirim" | "menunggu" | "dikembalikan" | "disetujui" | "berubah";
+    sejak?: string | null; catatan?: string | null; sidik: string; alasanDokumen: string; bolehKirim: boolean;
 };
 export type DrafItem = { dpp?: string; ppnRate?: string; pphRate?: string; note?: string };
 export type DrafNc = { noClaim?: string; urut?: string; bulan?: string };
-export type Dlg = "siap" | "draf" | "kirim" | "bayar" | "void" | "tutup" | "gabung" | "pindah" | null;
+export type Dlg = "siap" | "draf" | "kirim" | "bayar" | "void" | "tutup" | "gabung" | "pindah" | "tax_kirim" | "tax_setujui" | "tax_kembalikan" | null;
 export type Bagian = "atas" | "item" | "noclaim" | "bayar" | "tutup";
 export type Jawab = { ok?: boolean; error?: string; code?: string; currentUpdatedAt?: string | null; statusChanged?: boolean; workflow?: { status?: string } };
 export type Fakta = Array<[string, ReactNode]>;
@@ -108,4 +114,25 @@ export function AlurDokumen({ off, no, noClaims, jumlahBayar, dibayar }: { off?:
             <span role="listitem" className="fi-dnode" data-off={jumlahBayar === 0}><b>Pembayaran</b><span>{jumlahBayar ? `${jumlahBayar} tercatat · ${rupiah(dibayar)}` : "belum"}</span></span>
         </div>
     );
+}
+
+/** Posisi klaim ber-PPN/PPh di pemeriksaan Tax; penilai = pemegang claim_workflow.tax_review saat klaim menunggu. */
+export function StripTax({ pajak, penilai }: { pajak: Pajak; penilai: boolean }) {
+    const sejak = pajak.sejak ? ` sejak ${waktuWita(pajak.sejak)}` : "";
+    switch (pajak.tahap) {
+        case "belum_dikirim":
+            return <MessageStrip tone="info" title="Klaim ini memuat PPN/PPh dan perlu disetujui Tax.">Isi No Claim, lalu kirim ke Tax. Surat klaim, ringkasan, dan kwitansi bisa dibuat setelah Tax menyetujui.</MessageStrip>;
+        case "menunggu":
+            return <MessageStrip tone="info" title={`Menunggu pemeriksaan Tax${sejak}.`}>{penilai
+                ? "Periksa DPP, PPN, dan PPh tiap item di atas, lalu setujui atau kembalikan ke Claim dengan catatan."
+                : "Surat klaim, ringkasan, dan kwitansi bisa dibuat setelah Tax menyetujui."}</MessageStrip>;
+        case "dikembalikan":
+            return <MessageStrip tone="warn" title={`Dikembalikan Tax${sejak}.`}>{pajak.catatan ? `Catatan Tax: ${pajak.catatan.replace(/[.\s]+$/, "")}. ` : ""}Perbaiki, lalu kirim ulang ke Tax.</MessageStrip>;
+        case "disetujui":
+            return <MessageStrip tone="pos" title={`PPN/PPh disetujui Tax${sejak}.`}>Surat klaim, ringkasan, dan kwitansi bisa dibuat.</MessageStrip>;
+        case "berubah":
+            return <MessageStrip tone="warn" title="Nilai PPN/PPh berubah sejak disetujui Tax.">Kirim ulang ke Tax sebelum membuat dokumen.</MessageStrip>;
+        default:
+            return null;
+    }
 }

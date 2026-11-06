@@ -313,6 +313,15 @@ Input item klaim:
      -> validateClaimItem() — lib/claim-workflow/calculations.ts
      -> db.update(claimWorkflowItem)
 
+Persetujuan Tax (owner 6 Nov 2026; klaim ber-PPN/PPh, hanya selagi Draf / Perlu revisi):
+  -> POST /api/claim-workflow/[id]/tax { action: kirim | setujui | kembalikan, note?, sidik? }
+     -> kirim: peran admin/claim + claim_workflow.update, semua berkas aktif ber-No Claim
+     -> setujui/kembalikan: claim_workflow.tax_review (kapabilitas, grup "Tax"); setujui wajib sidik = nilai pajak sekarang
+     -> db.update(claimWorkflow, { taxStatus, taxStatusAt, taxNote, taxSidik }) + claim_audit_log tax_*
+  -> Gerbang: tolakDokumenBelumTax() — lib/claim-workflow/tax-db.ts (409 CLAIM_TAX_BELUM_DISETUJUI) di rute buat & unduh
+     claim-letter / summary / receipt (klaim + per berkas), documents/generate-all, dan mark_ready (status/route.ts).
+     Pajak item berubah sesudah disetujui (sidik beda) = terkunci lagi sampai dikirim ulang. Aturan murni: lib/claim-workflow/tax.ts.
+
 Generate Surat Klaim (PDF):
   -> POST /api/claim-workflow/[id]/claim-letter
      -> buildClaimLetterPdf() — lib/claim-workflow/pdf.ts [pdf-lib]
