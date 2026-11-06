@@ -15,6 +15,7 @@ import {
     writeClaimAudit,
 } from "@/lib/claim-workflow";
 import { requirePermissionH } from "@/lib/rbac/resolve";
+import { alasanTaxDokumen } from "@/lib/claim-workflow/tax";
 
 const CLAIM_LETTERS_DIR = path.resolve(process.cwd(), "runtime", "claim-workflow", "letters");
 const SUMMARY_DIR = path.resolve(process.cwd(), "runtime", "claim-workflow", "summaries");
@@ -201,6 +202,11 @@ export async function POST(request: Request, context: Context) {
                     error: "Setiap item harus memiliki DPP dan Nilai Klaim lebih dari 0 sebelum Ready to Submit.",
                     itemId: invalidItem.id,
                 }, { status: 422 });
+            }
+            // Owner 6 Nov 2026: klaim ber-PPN/PPh siap dikirim hanya setelah disetujui Tax (dokumen lama bisa dibuat sebelum aturan ini).
+            const alasanTax = alasanTaxDokumen(workflow, items);
+            if (alasanTax) {
+                return NextResponse.json({ ok: false, code: "CLAIM_TAX_BELUM_DISETUJUI", error: alasanTax }, { status: 409 });
             }
 
             // R7 BLOCKER FIX: Validasi per submission aktif, bukan workflow cache.

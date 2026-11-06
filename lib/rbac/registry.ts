@@ -50,7 +50,10 @@ export const PERMISSION_REGISTRY = {
         // Owner 3 Nov 2026: item Potong Tagihan dicatat Incaso (nomor faktur), bukan Keuangan; salesman memantau pengajuan principalnya.
         "potong_tagihan", "pantau_sales",
     ],
-    claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export"],
+    // tax_review (owner 6 Nov 2026) = tim Tax menyetujui/mengembalikan klaim ber-PPN/PPh sebelum surat, kwitansi, rekap dicetak.
+    //   KAPABILITAS: centang modul Claim Workflow tidak memberinya (Claim tidak menyetujui pajaknya sendiri). Grup "Tax" lewat
+    //   docs/handover/RBAC_PRESET_CLAIM_TAX.sql.
+    claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export", "tax_review"],
     // S7-1b: create_user/edit_user/delete_user/set_role/set_permission DIPENSIUNKAN -> users.manage (KUNCI_PENSIUN).
     users: ["view", "manage"],
     // Modul yang sebelumnya TIDAK terdaftar di RBAC (temuan Fase 3 — page-guard gap):
@@ -127,7 +130,7 @@ export const KUNCI_PENSIUN: ReadonlySet<string> = new Set([
  * backend tetap menegakkan. */
 export const CAPABILITY_KEYS: ReadonlySet<string> = new Set([
     "finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment", "order.resolve_unknown",
-    "kasir.buka", "form_kontrol.noo_ktp", "form_kontrol.noo_tautkan",
+    "kasir.buka", "form_kontrol.noo_ktp", "form_kontrol.noo_tautkan", "claim_workflow.tax_review",
 ]);
 
 const moduleKeys = (mod: PermissionModule) => PERMISSION_REGISTRY[mod].map((a) => `${mod}.${a}`);

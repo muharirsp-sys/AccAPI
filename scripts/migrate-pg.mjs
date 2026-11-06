@@ -1042,6 +1042,18 @@ export const migrations = [
       END $opt$;
     `,
   },
+  {
+    // 2026-11-06. Claim Workflow: klaim ber-PPN/PPh wajib disetujui tim Tax sebelum surat, kwitansi, dan rekap dicetak.
+    // Aditif: empat kolom nullable di claim_workflow, tanpa UPDATE data. SQL = db/migrations/0041.
+    nama: "claim_workflow tax_*",
+    sudahAda: `SELECT 1 FROM information_schema.columns WHERE table_name = 'claim_workflow' AND column_name = 'tax_sidik'`,
+    sql: `
+      ALTER TABLE claim_workflow ADD COLUMN IF NOT EXISTS tax_status TEXT;
+      ALTER TABLE claim_workflow ADD COLUMN IF NOT EXISTS tax_status_at TIMESTAMP;
+      ALTER TABLE claim_workflow ADD COLUMN IF NOT EXISTS tax_note TEXT;
+      ALTER TABLE claim_workflow ADD COLUMN IF NOT EXISTS tax_sidik TEXT;
+    `,
+  },
 ];
 
 async function main() {

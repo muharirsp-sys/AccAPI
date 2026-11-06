@@ -93,6 +93,13 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
         ],
     },
     {
+        // Owner 6 Nov 2026: klaim ber-PPN/PPh disetujui Tax sebelum surat, kwitansi, dan rekap dicetak.
+        name: "Tax", desc: "Periksa dan setujui PPN/PPh klaim sebelum dokumen dicetak", keys: [
+            ...k("dashboard", ["view"]),
+            ...k("claim_workflow", ["view", "tax_review"]),
+        ],
+    },
+    {
         name: "OM", desc: "Operational Manager — approve akhir OPC", keys: [
             ...k("dashboard", ["view"]),
             ...k("off_program_control", ["view", "om_approve", "om_cancel"]),
