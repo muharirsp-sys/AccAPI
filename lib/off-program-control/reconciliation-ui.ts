@@ -3,7 +3,7 @@
  *   label status, kalimat penyebab selisih, lembar ekspor XLSX. Perilaku sama dengan sebelumnya.
  * Caller: app/(dashboard)/reconciliation/Rekonsiliasi.tsx, tests.
  * Dependensi: tipe hasil sales-reconciliation / return-reconciliation.
- * Main Functions: statusLabel, causeLines, returnCauseLines, statusTone, exportSheets, fileSize, SALES_STATUSES, RETURN_STATUSES.
+ * Main Functions: statusLabel, causeLines, fakturOf, perFaktur, returnCauseLines, statusTone, exportSheets, fileSize, SALES_STATUSES, RETURN_STATUSES.
  * Side Effects: Tidak ada.
  */
 import type { Tone } from "@/components/fiori/core";
@@ -14,7 +14,7 @@ export type Division = "FAKTUR" | "PEMBELIAN" | "RETURN";
 export type UiStatus = ReconciliationStatus | ReturnStatus;
 
 export const SALES_STATUSES: ReconciliationStatus[] = [
-    "MATCH", "QTY_MISMATCH", "VALUE_MISMATCH", "QTY_AND_VALUE_MISMATCH", "MISSING_INTERNAL", "MISSING_PRINCIPAL",
+    "MATCH", "QTY_MISMATCH", "VALUE_MISMATCH", "QTY_AND_VALUE_MISMATCH", "ROUNDING", "MISSING_INTERNAL", "MISSING_PRINCIPAL",
     "UNMAPPED_SKU", "UNIT_CONVERSION_ERROR", "INVALID_DATA",
 ];
 export const RETURN_STATUSES: ReturnStatus[] = [
@@ -24,7 +24,7 @@ export const RETURN_STATUSES: ReturnStatus[] = [
 
 const FIXED_LABEL: Partial<Record<UiStatus, string>> = {
     MATCH: "Cocok", QTY_MISMATCH: "Selisih jumlah", VALUE_MISMATCH: "Selisih nilai", QTY_AND_VALUE_MISMATCH: "Selisih jumlah dan nilai",
-    MISSING_INTERNAL: "Data Accurate tidak ditemukan", INVALID_DATA: "Data tidak valid",
+    ROUNDING: "Selisih pembulatan", MISSING_INTERNAL: "Data Accurate tidak ditemukan", INVALID_DATA: "Data tidak valid",
 };
 const AMOUNT_LABEL = { gross: "Nilai jual", discount: "Diskon", dpp: "DPP", tax: "Pajak", net: "Nilai bersih" } as const;
 
@@ -42,7 +42,7 @@ export function statusLabel(status: UiStatus, principal: string): string {
 }
 
 export function statusTone(status: UiStatus): Tone {
-    if (status === "KOREKSI") return "info";
+    if (status === "KOREKSI" || status === "ROUNDING") return "info";
     if (status === "MATCH") return "pos";
     if (status === "QTY_MISMATCH" || status === "VALUE_MISMATCH" || status === "QTY_AND_VALUE_MISMATCH") return "warn";
     return "neg";
@@ -53,15 +53,33 @@ export function causeLines(row: ReconciliationResult, principal: string): string
     if (row.status === "MISSING_INTERNAL") return ["Data tidak ditemukan di Accurate."];
     if (row.status === "MISSING_PRINCIPAL") return [`Data tidak ditemukan di ${principal}.`];
     if (row.status === "UNMAPPED_SKU") return [`SKU ${principal} belum memiliki pasangan produk Accurate.`];
-    if (row.status === "UNIT_CONVERSION_ERROR") return [`Konversi satuan gagal; periksa master ${principal} dan baris sumber.`];
+    if (row.status === "UNIT_CONVERSION_ERROR")
+        return [row.unitMismatch
+            ? `Satuan tidak sama — master: ${row.unitMismatch.master}, ${principal}: ${row.unitMismatch.principal}. Samakan SATUAN di mapping lalu unggah versi baru.`
+            : `Konversi satuan gagal; periksa master ${principal} dan baris sumber.`];
     if (row.status === "INVALID_DATA") return ["Data tidak dapat dibandingkan; periksa format sumber."];
     const causes: string[] = [];
     if (row.quantityDifference !== 0)
         causes.push(`Jumlah: Accurate ${number.format(row.accurateQuantity)}, ${principal} ${number.format(row.principalQuantity)} (${direction(row.quantityDifference, number.format(Math.abs(row.quantityDifference)))})`);
     for (const item of row.amountDifferences)
         causes.push(`${AMOUNT_LABEL[item.component]}: Accurate ${money(item.accurate)}, ${principal} ${money(item.kino)} (${direction(item.difference, money(Math.abs(item.difference)))})`);
+    if (row.status === "ROUNDING") causes.push("Selisih ≤ Rp10 — beda pembulatan harga satuan, bukan salah data.");
     causes.push(...row.warnings.map((w) => w === "UNMAPPED_CUSTOMER" ? `Pelanggan ${principal} belum dipetakan.` : w === "UNMAPPED_SALESMAN" ? `Salesman ${principal} belum dipetakan.` : w));
     return causes;
+}
+
+/** Faktur pertama baris ini; `?.` karena issues riwayat lama tersimpan tanpa daftar dokumen. */
+export const fakturOf = (row: ReconciliationResult) => row.accurateDocuments?.[0] ?? row.principalDocuments?.[0] ?? "-";
+
+/** Ringkas per faktur: order, jumlah item, selisih net — terbesar dulu. */
+export function perFaktur(rows: ReconciliationResult[]) {
+    const groups = new Map<string, { faktur: string; orders: Set<string>; items: number; netDifference: number }>();
+    for (const row of rows) {
+        const faktur = fakturOf(row), group = groups.get(faktur) ?? { faktur, orders: new Set<string>(), items: 0, netDifference: 0 };
+        group.orders.add(row.orderNumber); group.items += 1; group.netDifference += row.valueDifference;
+        groups.set(faktur, group);
+    }
+    return [...groups.values()].sort((a, b) => Math.abs(b.netDifference) - Math.abs(a.netDifference));
 }
 
 export function returnCauseLines(row: ReturnReconciliationResult, principal: string): string[] {
@@ -108,7 +126,7 @@ export function exportSheets(division: Division, principal: string, summary: Rec
             "Baris Accurate": row.accurateSourceRows.join(", "), [`Baris ${principal}`]: row.principalSourceRows.join(", "),
         }))
         : (results as ReconciliationResult[]).map((row) => ({
-            Status: excelText(row.status), Order: excelText(row.orderNumber), "Produk Internal": excelText(row.internalProductCode),
+            Status: excelText(row.status), Faktur: excelText(fakturOf(row)), Order: excelText(row.orderNumber), "Produk Internal": excelText(row.internalProductCode),
             "Kelas Transaksi": excelText(row.transactionClass), "Qty Accurate": row.accurateQuantity, "Qty Prinsipal": row.principalQuantity,
             "Selisih Qty": row.quantityDifference, "Net Accurate": row.accurateNet, "Net Prinsipal": row.principalNet,
             "Selisih Net": row.valueDifference, Peringatan: excelText(row.warnings.join(", ")),
