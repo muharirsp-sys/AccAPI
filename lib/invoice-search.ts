@@ -2,9 +2,9 @@
  * Tujuan: AM-029 — mencari faktur Accurate milik satu kunci antrean (charField1 = `PRINCIPAL:NO-SO`
  *         atau id order) SEBELUM baris itu dikirim/diantre ulang atau diselesaikan (S6-0d E2, BL-16).
  * Caller: lib/invoice-outbox-actions (antre ulang, selesaikan), app/api/principal-order/queue
- *         (SO yang pernah dibuang), app/api/invoice-outbox/resolve.
+ *         (SO yang pernah dibuang; faktur luar antrean), app/api/invoice-outbox/resolve.
  * Dependensi: db sales_invoice (cache) + customer (id pelanggan Accurate); fetch GET list.do/detail.do.
- * Main Functions: cocokFaktur, milikKunci, jendelaCari, kueriListDo, cariFaktur.
+ * Main Functions: cocokFaktur, milikKunci, fakturLuarAntrean, jendelaCari, kueriListDo, cariFaktur.
  * Side Effects: BACA SAJA — SELECT cache lokal dan GET sales-invoice/list.do + detail.do. Tidak
  *   menulis apa pun, termasuk cache.
  *
@@ -82,6 +82,23 @@ export function cocokFaktur(raw: unknown, key: string): CaraCocok | null {
 }
 
 export const milikKunci = (raw: unknown, key: string): boolean => cocokFaktur(raw, key) !== null;
+
+/**
+ * Faktur yang menyebut nomor SO ini di keterangan / No. PO tetapi BUKAN milik kunci antrean — faktur yang
+ * dibuat fakturist langsung di layar Accurate (ATIGA 6 Nov 2026: INV/2611/KN00220-222, KN00268-269,
+ * keterangan = nomor SO, charField1 kosong). Mengantrekan SO-nya = faktur kembar yang tidak bisa ditarik.
+ * Batas angka di kedua sisi: "SOP-26001603" tidak mengenai "SOP-260016032". Faktur milik kunci
+ * (charField1 / pola `Order <kunci>`) bukan urusan fungsi ini — itu jalur antrean + pencarian E2.
+ */
+export const lolosRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+export function fakturLuarAntrean(raw: unknown, soNo: string, key: string): boolean {
+    const so = soNo.trim();
+    if (!so || cocokFaktur(raw, key)) return false;
+    const row = bacaJson(raw);
+    const pola = new RegExp(`(^|\\D)${lolosRegex(so)}(\\D|$)`);
+    return [row.description, row.poNumber].some((field) => pola.test(String(field ?? "")));
+}
 
 /** "dd/MM/yyyy HH:mm:ss" pada UTC+7 — zona lastUpdate Accurate (lib/accurate-invoice.ts). */
 function keWaktuAccurate(at: Date): string {
