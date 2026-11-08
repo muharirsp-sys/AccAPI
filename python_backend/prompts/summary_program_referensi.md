@@ -85,7 +85,9 @@ Cara pakai:
 - Amago "TPR x% + Add disc y%" = **bertingkat**; beban TPR principal (pemilik 28 Okt 2026). Porsi add disc distributor masuk rantai (L04).
 
 ### PRISKILA
-- Casablanca Deo Body Spray 150ml = `P DEO` + `P DEO B. MIST` (nama principal: "Perfumed Deodorant Body Spray Pink Crush / White Clouds").
+- Casablanca Deo Body Spray 150ml = **hanya** kelompok `P DEO B.SPRAY` (FM Purple Glaze, Twinkle Blue; HM Blue Air, Brown Legend,
+  Infinity Black, Red Hyped). `P DEO B. MIST` (Pink Crush, White Cloud) **bukan** bagian program: Priskila tidak punya program
+  Deo Body Mist, kecuali surat menyebut "Body Mist" sendiri (pemilik 8 Nov 2026; membatalkan catatan sebelumnya yang menggabungkan keduanya).
 - Regazza EDT Sport 100ml = REGAZZA FM - EDT varian AZZURO/BIANCO/NERO/ROSSO; Regazza EDT umum = sisanya (L12);
   REGAZZA SPORT COLOGNE adalah cologne, bukan EDT.
 - Casablanca Spray Cologne Series = WHITE SR + BLACK SR (SR = Series); GLASS dikecualikan (pemilik 15 Jul 2026).
