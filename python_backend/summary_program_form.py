@@ -6,8 +6,9 @@ Side Effects: tidak ada; bytes PDF dikembalikan ke pemanggil.
 Letak isi = prototipe tmp/summary_program_okt26/rakit_form.py (HTML + Edge) yang disetujui pemilik 29 Okt 2026; produksi tidak
 punya browser, jadi tata letaknya digambar ulang dengan ReportLab:
 - judul 5 baris + kepala kolom di SETIAP halaman, "Hal. x dari y" per principal (nomor mulai 1 tiap principal);
-- warna kepala: COKLAT semua beban principal, PINK principal + distributor, MERAH semua beban distributor;
-- yang menyetujui: Operational Manager bila COKLAT, Direktur bila ada beban distributor (PINK/MERAH);
+- warna kepala: COKLAT semua beban principal, PINK principal + distributor, MERAH semua beban distributor,
+  HIJAU principal + dana marketing / SDS / Selmar tanpa beban distributor;
+- yang menyetujui: Operational Manager bila COKLAT/HIJAU, Direktur bila ada beban distributor (PINK/MERAH);
 - satu blok program tidak dipotong antar halaman bila muat; tanda tangan ikut blok terakhir;
 - catatan seksi, legenda CR, dan peringatan masuk kolom Update keterangan (bukan baris di bawah seksi);
 - teks kiri/kanan yang lebih tinggi meregangkan baris barang (tanpa ruang kosong di bawah blok).
@@ -31,7 +32,7 @@ BULAN = "JAN FEB MAR APR MEI JUN JUL AGT SEP OKT NOV DES".split()
 BULAN_PANJANG = "JANUARI FEBRUARI MARET APRIL MEI JUNI JULI AGUSTUS SEPTEMBER OKTOBER NOVEMBER DESEMBER".split()
 SUB = 60  # area benefit = 60 sub-kolom, habis dibagi 1..6 kolom ketentuan
 KRITIS = ("kritis", "perlu_cek")
-WARNA = {"COKLAT": "#d2b48c", "PINK": "#f4b8c8", "MERAH": "#e88080"}
+WARNA = {"COKLAT": "#d2b48c", "PINK": "#f4b8c8", "MERAH": "#e88080", "HIJAU": "#a9d4a0"}
 W_KIRI, W_BEN, W_KANAN = [2.4, 6.4, 6.4, 3.2, 5.4, 4.6, 7.0, 8.0, 4.2], 32.4, [10.0, 10.0]  # % lebar, TEMPLATE hal. 14
 HAL = landscape(A4)
 KIRI, KANAN, ATAS, BAWAH = 7 * mm, 7 * mm, 5 * mm, 7 * mm
@@ -294,11 +295,16 @@ def meta_blok(progs):
 
 def jenis_beban(doc):
     """Pemilik 29 Okt: semua beban principal -> COKLAT; principal + distributor -> PINK; semua beban distributor -> MERAH.
+    Pemilik 10 Nov: principal + dana marketing / SDS / Selmar (mis. Bgt DB Vinda), tanpa beban distributor -> HIJAU.
     Rule tanpa komponen (bonus barang) dihitung beban principal: bonusnya diklaim ke principal."""
-    dist = {k["beban"] == "distributor" for r in doc["item_rules"] for k in r["benefit"]["komponen"] or [{"beban": "principal"}]}
-    if dist == {True}:
+    beban = {k["beban"] for r in doc["item_rules"] for k in r["benefit"]["komponen"] or [{"beban": "principal"}]}
+    if beban == {"distributor"}:
         return "BEBAN DISTRIBUTOR", "MERAH"
-    return ("BEBAN PRINCIPLE DAN DISTRIBUTOR", "PINK") if True in dist else ("BEBAN PRINCIPLE", "COKLAT")
+    if "distributor" in beban:
+        return "BEBAN PRINCIPLE DAN DISTRIBUTOR", "PINK"
+    if "dana_marketing" in beban:
+        return "BEBAN PRINCIPLE & DANA MARKETING / SDS / SELMAR", "HIJAU"
+    return "BEBAN PRINCIPLE", "COKLAT"
 
 
 # ---------------------------------------------------------------- gambar
@@ -473,8 +479,9 @@ def _principal_pdf(doc, urut_master, dibuat):
         t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, GRID), ("BACKGROUND", (0, 0), (-1, -1), KUNING)]))
         tabel.append(t)
     # Pemilik 2 Nov 2026: ada beban distributor (PINK/MERAH) -> yang menyetujui Direktur, bukan Operational Manager.
+    # ponytail: HIJAU (dana marketing, bukan beban distributor) ikut Operational Manager; ubah di sini bila pemilik memutuskan lain.
     ttd = [("Dibuat oleh,", "Admin"), ("Diketahui oleh,", "SM"), ("Diketahui oleh,", "Kepala Accounting"),
-           ("Diperiksa oleh,", "Claim"), ("Disetujui oleh,", "Operational Manager" if warna == "COKLAT" else "Direktur")]
+           ("Diperiksa oleh,", "Claim"), ("Disetujui oleh,", "Operational Manager" if warna in ("COKLAT", "HIJAU") else "Direktur")]
     kota = f"Makassar, {dibuat.day:02d} {BULAN_PANJANG[dibuat.month - 1]} {dibuat.year}"
     tt = Table([[P(kota)] + [""] * 4, [P(a, rata="CENTER") for a, _ in ttd], [""] * 5, [P("(.............................)", rata="CENTER")] * 5,
                 [P(b, tebal=True, rata="CENTER") for _, b in ttd]], colWidths=[LEBAR / 5] * 5, rowHeights=[None, None, 6 * mm, None, None])

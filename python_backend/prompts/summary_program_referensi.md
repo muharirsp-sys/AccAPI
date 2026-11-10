@@ -24,7 +24,7 @@ Cara pakai:
 | L01 | Kode stok bonus berakhiran **B** (nama Accurate diawali `B>`) **tidak ikut** program, walau satu kelompok dan gramasi. Bila kode master suatu barang hanya versi B, rule jadi tanpa kode dan diberi flag: cari kode jual di Accurate (sering berakhiran N). | Pemilik 28 Okt 2026 (perluasan keputusan P> 14 Okt) |
 | L02 | Kode kemasan promo URC **P>** (berakhiran P) tidak ikut program. Untuk L01 dan L02: `kelompok_barang` dan `gramasi` hanya dari kode yang tersisa (bukan "PIATTOS, P> PIATTOS" atau gramasi kode B/P>). | Pemilik 14 Okt 2026; form 29 Okt 2026 |
 | L03 | Kode **banded/BND/BDD** ikut hanya bila surat menyebut banded (mis. "berlaku juga untuk stock banded barcode sama"). Surat diam atau mengecualikan banded: keluar. | Pemilik 28 Okt 2026 |
-| L04 | Porsi **beban distributor** yang tertulis di surat masuk rantai benefit sebagai komponen ber-`beban: distributor` (mis. Vinda `15+5+20`, Gondowangi `7+12,1372%`, MSM Amago `8+3+1,5%`). Keterangan menyebut bagian distributor; klaim ke principal dikurangi bagian itu. | Pemilik 16 Okt (Vinda), diperluas 28 Okt 2026 |
+| L04 | Porsi **beban distributor** yang tertulis di surat masuk rantai benefit sebagai komponen ber-`beban: distributor` (mis. Gondowangi `7+12,1372%`, MSM Amago `8+3+1,5%`; Vinda Bgt DB = `dana_marketing`, lihat bagian VINDA). Keterangan menyebut bagian distributor; klaim ke principal dikurangi bagian itu. | Pemilik 16 Okt (Vinda), diperluas 28 Okt 2026 |
 | L05 | Batas, dasar, atau dokumen klaim **tidak tercantum** di surat: `batas_klaim_aturan` = "Tidak tercantum di surat - ikut ketentuan klaim principal". Tidak menahan rilis. | Pemilik 28 Okt 2026 |
 | L06 | Program yang periodenya **sudah selesai** sebelum tanggal proses tetap dicetak sebagai arsip klaim, tetapi tidak disetting. Program periode lalu (mis. kuartal sebelumnya) tanpa surat perpanjangan dikeluarkan dari summary bulan berjalan. | Pemilik 28 Okt 2026 |
 | L07 | Program "hanya toko terlampir/terdaftar" yang daftarnya belum ada: Form terbit, tetapi aturan tidak memotong faktur siapa pun sampai daftar diunggah (gagal tertutup). Bila surat menyebut channel luas sekaligus "hanya toko terlampir", **daftar yang menang**. | Pemilik 28 Okt 2026 |
@@ -110,7 +110,8 @@ Cara pakai:
 - "Buy 4 CS free 1 renceng" berlaku kelipatan (L08); Cloud9 bonus satuan "db" = display box (L10 untuk judul vs tabel).
 
 ### VINDA
-- Benefit = rantai Disc-1 + Bgt DB + Claim (mis. `15+5+20`); Bgt DB beban distributor (pemilik 16 Okt 2026). Disc-1 menggantikan
+- Benefit = rantai Disc-1 + Bgt DB + Claim (mis. `15+5+20`); Bgt DB = **dana marketing / SDS / Selmar** (`beban: dana_marketing`,
+  Form HIJAU; pemilik 10 Nov 2026, menggantikan "beban distributor" 16 Okt 2026). Disc-1 menggantikan
   Disc. Strata Reguler, jadi jangan dipotong dobel.
 - Strata: <=1 / 2-24 / 25-100 / 101-300 / 301-499 / 500-1199 / 1200 CTN UP (L09). Lock volume 25+1 berlaku kelipatan, bonus SKU sama (L08).
 - Deluxe FT SP 3PLY L 16x(2x330) strata 1200 UP = Claim **29,8%** sesuai surat (lebih kecil dari 33,3%); konfirmasi ke Vinda tetap diminta

@@ -164,7 +164,8 @@
                     "nama": { "type": "string", "description": "mis. Disc-1, Bgt DB, Claim, Add disc, Sewa pajangan" },
                     "nilai": { "type": "number" },
                     "satuan": { "enum": ["%", "RP"] },
-                    "beban": { "enum": ["principal", "distributor", "tidak_tercantum"] }
+                    "beban": { "enum": ["principal", "distributor", "dana_marketing", "tidak_tercantum"],
+                                "description": "dana_marketing = dana marketing / SDS / Selmar yang dipegang distributor (mis. Bgt DB Vinda)" }
                   }
                 }
               },

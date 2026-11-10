@@ -44,4 +44,16 @@ assert "2,5%" in hal[0] and "≥ 10 CTN" in hal[0] and "→" in hal[0], hal[0][:
 assert "PERLU CEK: cek angka" in hal[0] and "(!)" in hal[0]                               # flag -> keterangan + sel bertanda
 assert "Direktur" in hal[-1] and "Direktur" not in hal[1]                                 # tanda tangan ikut blok terakhir
 assert "Operational Manager" in hal[0] and "Operational Manager" not in hal[-1]          # beban distributor -> Direktur (2 Nov 2026)
+
+# Pemilik 10 Nov 2026: principal + dana marketing / SDS / Selmar (tanpa beban distributor) -> HIJAU, disetujui Operational Manager.
+hijau = doc()
+hijau["item_rules"][0]["benefit"]["komponen"].append({"beban": "dana_marketing"})
+assert f.jenis_beban(hijau) == ("BEBAN PRINCIPLE & DANA MARKETING / SDS / SELMAR", "HIJAU")
+campur = doc(beban="distributor")
+campur["item_rules"][0]["benefit"]["komponen"].append({"beban": "dana_marketing"})
+assert f.jenis_beban(campur)[1] == "PINK"                                                # ada beban distributor tetap PINK
+with fitz.open(stream=f.form_pdf([(hijau, {})], date(2026, 11, 10)), filetype="pdf") as d:
+    t = " ".join(d[0].get_text().split())
+assert "BEBAN PRINCIPLE & DANA MARKETING / SDS / SELMAR (HIJAU)" in t and "(ON PRINCIPLE HIJAU)" in t, t[:300]
+assert "Operational Manager" in t and "Direktur" not in t
 print("summary_program_form ok")
