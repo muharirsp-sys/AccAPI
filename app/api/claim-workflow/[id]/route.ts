@@ -20,6 +20,7 @@ import {
     requireClaimSession,
 } from "@/lib/claim-workflow";
 import { requirePermissionH } from "@/lib/rbac/resolve";
+import { alasanTaxDokumen, sidikPajak, tahapTax } from "@/lib/claim-workflow/tax";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -271,6 +272,16 @@ export async function GET(_request: Request, context: Context) {
             closeBlockers.push("Belum ada Berkas Claim yang memenuhi syarat Close.");
         }
         const canClose = canManageClaim && closeableSubmissions.length > 0;
+        // Owner 6 Nov 2026: klaim ber-PPN/PPh dicetak setelah disetujui Tax. sidik = nilai pajak yang dilihat Tax saat menyetujui.
+        const tahapPajak = tahapTax(row.workflow, items);
+        const tax = {
+            tahap: tahapPajak,
+            sejak: row.workflow.taxStatusAt,
+            catatan: row.workflow.taxNote,
+            sidik: sidikPajak(items),
+            alasanDokumen: alasanTaxDokumen(row.workflow, items),
+            bolehKirim: canManageClaim && isEditableStatus && ["belum_dikirim", "dikembalikan", "berubah"].includes(tahapPajak),
+        };
 
         return NextResponse.json({
             ok: true,
@@ -346,6 +357,7 @@ export async function GET(_request: Request, context: Context) {
             canVoidPayment,
             canClose,
             closeBlockers,
+            tax,
         });
     } catch (error) {
         console.error("[CLAIM WORKFLOW DETAIL ERROR]", error);

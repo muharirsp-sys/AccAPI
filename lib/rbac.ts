@@ -123,6 +123,8 @@ export const permissionActions = [
     "create_batch", "edit_returned_batch", "submit_batch", "sm_approve", "sm_return", "claim_review", "claim_final",
     "om_approve", "om_cancel", "finance_payment", "submit_refund", "audit_read", "audit_export", "audit_correct",
     "period_close", "period_unlock", "discount_view", "discount_manage", "potong_tagihan", "pantau_sales",
+    // Claim Workflow (owner 6 Nov 2026): tim Tax menyetujui klaim ber-PPN/PPh sebelum dokumen dicetak.
+    "tax_review",
 ] as const;
 export type PermissionAction = (typeof permissionActions)[number];
 
@@ -189,6 +191,7 @@ export const actionLabels: Record<PermissionAction, string> = {
     discount_manage: "Kelola Diskon",
     potong_tagihan: "Catat Potong Tagihan (Incaso)",
     pantau_sales: "Pantau Pengajuan (Salesman)",
+    tax_review: "Setujui Pajak (Tax)",
 };
 
 /** SATU sumber label modul untuk layar grup/izin (S7a): 20 modul registry, termasuk `form_kontrol` yang bukan AppModule. */
@@ -239,7 +242,7 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     // S7-1b: create/update/export dipensiunkan (KUNCI_PENSIUN, lib/rbac/registry.ts); S7-3: approve ikut.
     off_program_control: ["view"],
     reconciliation: ["view", "run", "manage"],
-    claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export"],
+    claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export", "tax_review"],
     users: ["view", "manage"],
     sales_history: ["view", "export", "manage"],
     laporan_harian: ["view", "upload", "send", "manage"],

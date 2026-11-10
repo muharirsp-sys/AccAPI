@@ -1,6 +1,6 @@
 /*
  * Tujuan: List Report Claim Workflow (Fiori S4b): kartu tahap sebagai saringan (Draf, Siap dikirim, Menunggu bayar, Dibayar sebagian,
- *   Lunas belum ditutup, Ditutup, Belum lunas per No Claim dari ringkasan server), kolom No Claim, umur sejak dikirim, satu tabel yang
+ *   Lunas belum ditutup, Ditutup, Belum lunas per No Claim dari ringkasan server, Menunggu Tax = antrean tim Tax), kolom No Claim, umur sejak dikirim, satu tabel yang
  *   setiap barisnya membuka klaimnya. Galat muat tidak pernah tampil sebagai kosong.
  * Caller: app/(dashboard)/claim-workflow/page.tsx.
  * Dependensi: GET /api/claim-workflow, GET /api/claim-workflow/outstanding; components/fiori/{core,interactive}; lib/claim-workflow-ui,
@@ -24,7 +24,7 @@ type Row = {
     id: string; claimWorkflowNo: string; offBatchId: string; offNoPengajuan?: string | null; principleName: string; status: string;
     totalClaim: number; totalPaid: number; remainingAmount: number; noClaim?: string | null; createdAt: string;
     submittedToPrincipalAt?: string | null; offFinanceStatus?: string | null; noClaimList?: string[]; documentStatus?: string | null;
-    canGenerateNoClaim?: boolean; noClaimGateReason?: string | null;
+    canGenerateNoClaim?: boolean; noClaimGateReason?: string | null; taxStatus?: string | null;
 };
 type OutRow = {
     workflowId: string; submissionId: string; claimWorkflowNo: string; noClaim?: string | null; principleName: string; status: string;
@@ -33,11 +33,11 @@ type OutRow = {
 type OutSummary = { submissionCount: number; totalClaim: number; totalPaid: number; totalOutstanding: number };
 type Daftar = { workflows: Row[]; hasMore: boolean };
 type Outstanding = { rows: OutRow[]; summary: OutSummary | null };
-type Saring = "semua" | Exclude<TahapKey, "batal" | "lain"> | "belumLunas";
+type Saring = "semua" | Exclude<TahapKey, "batal" | "lain"> | "belumLunas" | "tax";
 type Tindakan = "" | "ready_no_claim" | "waiting_finance" | "docs_incomplete";
 
 const KARTU: Array<{ key: Saring; label: string }> = [
-    { key: "semua", label: "Semua klaim" }, { key: "draf", label: "Draf" }, { key: "siap", label: "Siap dikirim" },
+    { key: "semua", label: "Semua klaim" }, { key: "draf", label: "Draf" }, { key: "tax", label: "Menunggu Tax" }, { key: "siap", label: "Siap dikirim" },
     { key: "dikirim", label: "Menunggu bayar" }, { key: "sebagian", label: "Dibayar sebagian" }, { key: "lunas", label: "Lunas, belum ditutup" },
     { key: "ditutup", label: "Ditutup" }, { key: "belumLunas", label: "Belum lunas" },
 ];
@@ -48,6 +48,8 @@ const noClaimDari = (r: Row) => {
     const daftar = r.noClaimList?.length ? r.noClaimList : r.noClaim ? [r.noClaim] : [];
     return daftar.length === 0 ? "" : daftar.length === 1 ? daftar[0] : `${daftar[0]} +${daftar.length - 1} lainnya`;
 };
+// Owner 6 Nov 2026: klaim ber-PPN/PPh menunggu persetujuan Tax (hanya selagi Draf/Perlu revisi; aturan lib/claim-workflow/tax).
+const menungguTax = (r: Row) => r.taxStatus === "menunggu" && tahapKlaim(r.status) === "draf";
 const umurTeks = (hari: number | null | undefined) => (hari == null ? KOSONG : `${hari} hari`);
 const umurBaris = (r: Row) => (["dikirim", "sebagian", "lunas"].includes(tahapKlaim(r.status)) ? umurHari(r.submittedToPrincipalAt) : null);
 const cocokTindakan = (r: Row, t: Tindakan) =>
@@ -56,7 +58,8 @@ const berisi = (q: string, nilai: Array<string | null | undefined>) => !q || nil
 
 export default function ClaimList({ permKeys, ditutup }: { permKeys: string[]; ditutup?: string }) {
     const keys = useMemo(() => new Set(permKeys), [permKeys]);
-    const [saring, setSaring] = useState<Saring>("semua");
+    // Tim Tax (bisa menilai, tidak mengubah klaim) langsung melihat antreannya.
+    const [saring, setSaring] = useState<Saring>(() => (keys.has("claim_workflow.tax_review") && !keys.has("claim_workflow.update") ? "tax" : "semua"));
     const [cari, setCari] = useState("");
     const [principal, setPrincipal] = useState("");
     const [tindakan, setTindakan] = useState<Tindakan>("");
@@ -88,6 +91,7 @@ export default function ClaimList({ permKeys, ditutup }: { permKeys: string[]; d
             n[t] = (n[t] ?? 0) + 1;
             sisa[t] = (sisa[t] ?? 0) + Number(r.remainingAmount || 0);
         }
+        n.tax = semua.filter(menungguTax).length;
         return { n, sisa, perluNoClaim: semua.filter((r) => r.canGenerateNoClaim).length };
     }, [semua]);
     const ringkas = out.data?.summary ?? null;
@@ -97,7 +101,7 @@ export default function ClaimList({ permKeys, ditutup }: { permKeys: string[]; d
     const isOut = saring === "belumLunas";
     const principals = useMemo(() => [...new Set([...semua.map((r) => r.principleName), ...(out.data?.rows ?? []).map((r) => r.principleName)].filter(Boolean))].sort(), [semua, out.data]);
     const barisKlaim = useMemo(() => semua.filter((r) =>
-        (saring === "semua" || tahapKlaim(r.status) === saring)
+        (saring === "semua" || (saring === "tax" ? menungguTax(r) : tahapKlaim(r.status) === saring))
         && (!principal || r.principleName === principal)
         && cocokTindakan(r, tindakan)
         && berisi(q, [r.claimWorkflowNo, r.noClaim, r.principleName, r.offNoPengajuan, statusKlaim(r.status).label, ...(r.noClaimList ?? [])])), [semua, saring, principal, tindakan, q]);
@@ -113,7 +117,7 @@ export default function ClaimList({ permKeys, ditutup }: { permKeys: string[]; d
         { key: "total", header: "Total", align: "end", cell: (r) => rupiah(r.totalClaim) },
         { key: "dibayar", header: "Dibayar", align: "end", secondary: true, cell: (r) => rupiah(r.totalPaid) },
         { key: "sisa", header: "Sisa", align: "end", cell: (r) => rupiah(r.remainingAmount) },
-        { key: "status", header: "Status", cell: (r) => <StatusBadge tone={statusKlaim(r.status).tone}>{statusKlaim(r.status).label}</StatusBadge> },
+        { key: "status", header: "Status", cell: (r) => <><StatusBadge tone={statusKlaim(r.status).tone}>{statusKlaim(r.status).label}</StatusBadge>{menungguTax(r) && <> <StatusBadge tone="info">Menunggu Tax</StatusBadge></>}</> },
         { key: "finance", header: "Finance OFF", secondary: true, cell: (r) => r.offFinanceStatus === "Paid" ? "Lunas" : <><span className="fi-why">{FINANCE_OFF[r.offFinanceStatus ?? ""] ?? "Menunggu"}</span>{r.noClaimGateReason && <span className="fi-sub">{r.noClaimGateReason}</span>}</> },
         { key: "umur", header: "Umur", secondary: true, cell: (r) => { const u = umurBaris(r); return u != null && u > 30 ? <><span className="fi-tnum">{umurTeks(u)}</span> <StatusBadge tone="warn">Lewat 30 hari</StatusBadge></> : <span className="fi-tnum">{umurTeks(u)}</span>; } },
         { key: "dibuat", header: "Dibuat", secondary: true, cell: (r) => tanggalWita(r.createdAt) },
@@ -157,8 +161,9 @@ export default function ClaimList({ permKeys, ditutup }: { permKeys: string[]; d
                         const kecil = k.key === "belumLunas"
                             ? out.status === "galat" && !out.data ? "gagal dimuat" : ringkas ? `per No Claim · ${rupiah(ringkas.totalOutstanding)}` : "memuat…"
                             : k.key === "draf" ? (jumlah.perluNoClaim ? `${jumlah.perluNoClaim} siap isi No Claim` : "No Claim & dokumen")
-                            : k.key === "dikirim" || k.key === "sebagian" ? `sisa ${rupiah(jumlah.sisa[k.key] ?? 0)}` : undefined;
-                        const waspada = (k.key === "dikirim" || k.key === "sebagian" || k.key === "belumLunas") && (nilai ?? 0) > 0;
+                            : k.key === "dikirim" || k.key === "sebagian" ? `sisa ${rupiah(jumlah.sisa[k.key] ?? 0)}`
+                            : k.key === "tax" ? "persetujuan PPN/PPh" : undefined;
+                        const waspada = (k.key === "dikirim" || k.key === "sebagian" || k.key === "belumLunas" || k.key === "tax") && (nilai ?? 0) > 0;
                         return (
                             <button key={k.key} type="button" className="fi-kc" aria-pressed={saring === k.key} data-tone={waspada ? "warn" : undefined} onClick={() => setSaring(k.key)}>
                                 <span>{k.label}</span>
