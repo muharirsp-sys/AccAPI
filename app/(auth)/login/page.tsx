@@ -101,14 +101,17 @@ export default function LoginPage({ searchParams }: { searchParams: Promise<{ er
             <form onSubmit={handleLogin} noValidate>
                 <FormField label="Email" error={salah.email}>
                     {(a11y) => (
-                        <input {...a11y} ref={emailRef} className="fi-input" type="email" autoComplete="username" value={email} disabled={loading}
+                        <input {...a11y} ref={emailRef} className="fi-input" type="email" autoComplete="username"
+                            autoCapitalize="none" autoCorrect="off" spellCheck={false} value={email} disabled={loading}
                             onChange={(e) => { setEmail(e.target.value); setSalah((s) => ({ ...s, email: undefined })); }} />
                     )}
                 </FormField>
                 <FormField label="Kata sandi" error={salah.sandi}>
                     {(a11y) => (
                         <div className="fi-auth-pw">
-                            <input {...a11y} ref={sandiRef} className="fi-input" type={tampil ? "text" : "password"} autoComplete="current-password" value={sandi} disabled={loading}
+                            <input {...a11y} ref={sandiRef} className="fi-input" type={tampil ? "text" : "password"} autoComplete="current-password"
+                                // ponytail: saat "tampilkan sandi" input jadi type="text" dan keyboard HP mengapitalkan huruf pertama.
+                                autoCapitalize="none" autoCorrect="off" spellCheck={false} value={sandi} disabled={loading}
                                 onChange={(e) => { setSandi(e.target.value); setSalah((s) => ({ ...s, sandi: undefined })); }} />
                             <Button variant="icon" aria-label="Tampilkan sandi" aria-pressed={tampil} disabled={loading} onClick={() => setTampil((t) => !t)}
                                 icon={tampil ? <EyeOff className="fi-icon" aria-hidden /> : <Eye className="fi-icon" aria-hidden />} />
