@@ -81,7 +81,8 @@ LANGKAH KERJA
 
 6. Normalisasi benefit.
    - diskon_persen: satu komponen per angka, berurutan. "15+5+20%" (Disc-1 + Bgt DB + Claim) = tiga komponen,
-     bertingkat = true. Isi beban tiap komponen (principal / distributor) bila disebut.
+     bertingkat = true. Isi beban tiap komponen (principal / distributor / dana_marketing) bila disebut; dana_marketing =
+     dana marketing / SDS / Selmar (mis. Bgt DB Vinda), bukan uang distributor sendiri.
    - potongan_nominal: nilai Rp + nominal_per (pcs/ctn/nota/bulan/paket).
    - bonus_barang: "12+1" = beli 12 bonus 1 barang yang sama, kelipatan = true bila surat menyebut kelipatan.
      Isi bonus.kode_barang, qty, satuan, maks_qty, pilihan_bebas (true bila toko boleh pilih varian bonus).
@@ -138,7 +139,7 @@ Potongan output item_rules (rule kedua dan ketiga sama polanya):
 }
 Contoh komponen bertingkat (Vinda 150S, strata < 2 CTN):
 "komponen": [ { "nama": "Disc-1", "nilai": 15, "satuan": "%", "beban": "principal" },
-              { "nama": "Bgt DB", "nilai": 5, "satuan": "%", "beban": "distributor" },
+              { "nama": "Bgt DB", "nilai": 5, "satuan": "%", "beban": "dana_marketing" },
               { "nama": "Claim", "nilai": 20, "satuan": "%", "beban": "principal" } ],
 "bertingkat": true, "teks_tampilan": "15+5+20%"
 ```
@@ -218,7 +219,9 @@ Data rule TIDAK diubah untuk tampilan; yang disusun ulang hanya letak sel. Setia
   = beban principal):
   semua principal -> "SUMMARY PROGRAM ON FAKTUR BEBAN PRINCIPLE (COKLAT)", header tabel coklat muda;
   principal + distributor -> "SUMMARY PROGRAM ON FAKTUR BEBAN PRINCIPLE DAN DISTRIBUTOR (PINK)", header merah muda;
-  semua distributor -> "SUMMARY PROGRAM ON FAKTUR BEBAN DISTRIBUTOR (MERAH)", header merah.
+  semua distributor -> "SUMMARY PROGRAM ON FAKTUR BEBAN DISTRIBUTOR (MERAH)", header merah;
+  principal + dana marketing tanpa distributor -> "SUMMARY PROGRAM ON FAKTUR BEBAN PRINCIPLE & DANA MARKETING / SDS / SELMAR
+  (HIJAU)", header hijau muda (owner 10 Nov 2026).
   Baris "Dibuat tanggal" ikut: "(ON PRINCIPLE <WARNA>)".
 - Format seragam: desimal koma ("2,5%", "25%" bukan "25.0%"), "≥" bukan ">=", "→" bukan "->".
 - Flag tingkat kritis/perlu_cek -> sel kuning + teks flag di kolom Update keterangan.
