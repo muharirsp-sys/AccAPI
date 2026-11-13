@@ -33,7 +33,7 @@ import { Button, EmptyState, ErrorState, ListItem, MessageStrip, Section, Skelet
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { waktuWita } from "@/lib/tampil";
-import { type Scope, type AoRow, compareRoute, hariIniWita, rentangWita, penjelasanTanpaJks, principalAwal, useIzinFk, visitDurationMin } from "../shared";
+import { type Scope, type AoRow, LencanaJks, compareRoute, hariIniWita, rentangWita, penjelasanTanpaJks, principalAwal, useIzinFk, visitDurationMin } from "../shared";
 import { adaHasilKunjungan, statusBintang } from "@/lib/form-kontrol/constants";
 import { bacaFk, ditolakBukanRute, keBarisRute, kirimFk, simpanRute, useHariBeku } from "../lapangan";
 import { BatalkanLuarRute, TambahLuarRute } from "./LuarRute";
@@ -74,7 +74,9 @@ function badgeNoo(r: AoRow): ReactNode {
 
 function metaToko(r: AoRow): string {
     const bagian: string[] = [];
+    if (r.urutan != null) bagian.push(`Urutan ${r.urutan}`);
     if (r.luarRute) bagian.push(isKodeNoo(r.custCode) ? "Toko baru (NOO) · tanpa order" : "Luar rute");
+    if (r.targetToko) bagian.push(`Target ${new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 }).format(r.targetToko)}/bln`);
     // #3: angka ini menghitung HARI dengan status order/aktif bulan ini (db.ts getTodayRoute), bukan jumlah kunjungan.
     if (r.monthlyOrderCount > 0) bagian.push(`${r.monthlyOrderCount} hari order bulan ini`);
     if (r.needsAttention) bagian.push("≥ 2× tidak order bulan ini");
@@ -323,7 +325,8 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                             <Star className="fi-icon" aria-hidden style={r.isPriority ? { fill: "var(--warn-solid)", color: "var(--warn-solid)" } : undefined} />
                                         </Button>
                                         <ListItem href={`/form-kontrol/visit/${encodeURIComponent(r.custCode)}?${q}`} doc={r.custCode} title={r.custName}
-                                            meta={<>{metaToko(r)}{r.nooAlasanTolak && <span className="block" style={{ overflowWrap: "anywhere" }}>Alasan ditolak: {r.nooAlasanTolak}</span>}</>}
+                                            meta={<>{metaToko(r)}{r.nooAlasanTolak && <span className="block" style={{ overflowWrap: "anywhere" }}>Alasan ditolak: {r.nooAlasanTolak}</span>}
+                                                <span className="block"><LencanaJks r={r} /></span></>}
                                             badge={r.nooStatus
                                                 ? <span className="flex flex-wrap items-center gap-1">{badgeNoo(r)}<StatusBadge tone={b.tone}>{b.label}</StatusBadge></span>
                                                 : <StatusBadge tone={b.tone}>{b.label}</StatusBadge>} />

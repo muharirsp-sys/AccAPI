@@ -17,9 +17,10 @@ import { useCallback, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Download, RefreshCw, Upload } from "lucide-react";
 import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Skeleton, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
-import { HARI, ambilFk, labelPola, tulisFk, useIzinFk, type JksRow, type Scope } from "../shared";
+import { HARI, LencanaJks, ambilFk, labelPola, tulisFk, useIzinFk, type JksRow, type Scope } from "../shared";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { KOSONG, waktuWita } from "@/lib/tampil";
+import { cariSheetWebLl, nilaiUntukPeta, tebakPeta, type PetaJks } from "@/lib/form-kontrol/jks-webll";
 
 /**
  * Kolom templat + header yang dikenali server. ponytail: `alias` = salinan kunci HEADER_MAP di app/api/form-kontrol/jks/route.ts
@@ -47,8 +48,13 @@ const WAJIB = KOLOM.filter((k) => k.isi === "Wajib");
 const normal = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
 const LIMIT = 50; // bawaan route GET jks
 
-/** `channelKosong` = jumlah baris dengan sel Channel kosong; null bila berkas tanpa kolom Channel (server memakai TT). */
-type Pratinjau = { baris: number; dikenali: string[]; asing: string[]; wajibHilang: string[]; channelKosong: number | null };
+/**
+ * `channelKosong` = jumlah baris dengan sel Channel kosong; null bila berkas tanpa kolom Channel (server memakai TT). `webll` = berkas JKS hasil
+ * hitung Web-LL (sheet "JKS semua sales"): nilai SALESMAN/PRINCIPAL yang wajib dipetakan Admin sebelum Terapkan (owner 13 Nov 2026).
+ */
+type Pratinjau = { baris: number; dikenali: string[]; asing: string[]; wajibHilang: string[]; channelKosong: number | null;
+    webll?: ReturnType<typeof nilaiUntukPeta> };
+type ProfilSales = { salesCode: string; salesName: string; principle: string };
 type DataJks = { rows: JksRow[]; total: number };
 /** Baris berkas yang ditolak server karena hari kunjungan tidak dikenal (tidak ditulis). */
 type Ditolak = { baris: number; custCode: string; hari: string };
@@ -67,6 +73,11 @@ function jejak(t: NonNullable<JksRow["tambahanSalesman"]>): string {
 async function bacaPratinjau(file: File): Promise<Pratinjau> {
     const XLSX = await import("xlsx");
     const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    const sheetWebLl = cariSheetWebLl(wb.SheetNames);
+    if (sheetWebLl) {
+        const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[sheetWebLl], { defval: "" });
+        return { baris: rows.length, dikenali: [], asing: [], wajibHilang: [], channelKosong: null, webll: nilaiUntukPeta(rows) };
+    }
     const sheet = wb.Sheets[wb.SheetNames[0]];
     if (!sheet) return { baris: 0, dikenali: [], asing: [], wajibHilang: WAJIB.map((k) => k.header), channelKosong: null };
     const mentah = (XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" })[0] ?? []).map(String); // = kunci objek baris
@@ -130,26 +141,46 @@ export default function TabJks({ scope }: { scope: Scope }) {
     const [berkas, setBerkas] = useState<File | null>(null);
     const [pratinjau, setPratinjau] = useState<{ status: "kosong" | "membaca" | "siap" | "galat"; data?: Pratinjau }>({ status: "kosong" });
     const [hasil, setHasil] = useState<{ nama: string; imported: number; skipped: number; ditolak: Ditolak[]; digantikan: Digantikan[];
-        dinonaktifkan: Dinonaktifkan[] } | null>(null);
+        dinonaktifkan: Dinonaktifkan[]; koordinatBaru?: number } | null>(null);
     const [ganti, setGanti] = useState(false);
     const [galatTemplat, setGalatTemplat] = useState("");
+    // JKS Web-LL: profil sales (pilihan peta salesman) + peta pilihan Admin; tebakan awal dari nama (jks-webll.ts tebakPeta).
+    const [profil, setProfil] = useState<ProfilSales[] | null>(null);
+    const [galatProfil, setGalatProfil] = useState("");
+    const [peta, setPeta] = useState<PetaJks>({ sales: {}, principal: {} });
+    const [isiSemua, setIsiSemua] = useState("");
 
     const giliran = useRef(0); // pratinjau berkas yang sudah diganti tidak boleh menimpa pratinjau berkas terbaru
     const pilihBerkas = async (file: File | null) => {
         const ini = ++giliran.current;
         setBerkas(file);
+        setGalatProfil("");
         if (!file) { setPratinjau({ status: "kosong" }); return; }
         setPratinjau({ status: "membaca" });
         let hasilBaca: typeof pratinjau;
         try { hasilBaca = { status: "siap", data: await bacaPratinjau(file) }; } catch { hasilBaca = { status: "galat" }; }
+        if (hasilBaca.data?.webll) {
+            const muat = await ambilFk("/api/form-kontrol/sales-profiles", (j) => (j.rows ?? []) as ProfilSales[], "Daftar profil sales belum berhasil dimuat.");
+            if (ini !== giliran.current) return;
+            if (muat.status === "siap") {
+                setProfil(muat.data ?? []);
+                setPeta(tebakPeta(hasilBaca.data.webll, muat.data ?? [], scope.principles ?? []));
+            } else setGalatProfil(muat.error ?? "Daftar profil sales belum berhasil dimuat.");
+        }
         if (ini === giliran.current) setPratinjau(hasilBaca);
     };
-    const bukaImpor = () => { setBerkas(null); setPratinjau({ status: "kosong" }); setGanti(false); setImpor(true); };
+    const bukaImpor = () => { setBerkas(null); setPratinjau({ status: "kosong" }); setGanti(false); setPeta({ sales: {}, principal: {} }); setIsiSemua(""); setImpor(true); };
 
+    const webll = pratinjau.status === "siap" ? pratinjau.data?.webll : undefined;
+    const belumSales = webll?.sales.filter((s) => !peta.sales[s.nilai]).length ?? 0;
+    const belumPrincipal = webll?.principal.filter((p) => !peta.principal[p.nilai]?.trim()).length ?? 0;
     const blokirImpor = !berkas ? "Pilih berkas dulu"
         : pratinjau.status === "membaca" ? "Tunggu pratinjau selesai"
         : pratinjau.status === "galat" ? "Berkas tidak bisa dibaca sebagai Excel"
-        : pratinjau.data?.baris === 0 ? "Berkas tidak berisi baris" : undefined;
+        : pratinjau.data?.baris === 0 ? "Berkas tidak berisi baris"
+        : webll && galatProfil ? "Daftar profil sales gagal dimuat; pilih ulang berkasnya"
+        : webll && (belumSales || belumPrincipal) ? `Petakan dulu ${[belumSales && `${belumSales} salesman`, belumPrincipal && `${belumPrincipal} principal`].filter(Boolean).join(" dan ")}`
+        : undefined;
 
     const kolom: Column<JksRow>[] = [
         { key: "cust", header: "Kode toko", cell: (r) => <span className="fi-mono">{r.custCode}</span> },
@@ -163,6 +194,7 @@ export default function TabJks({ scope }: { scope: Scope }) {
         { key: "rayon", header: "Rayon", secondary: true, cell: (r) => r.rayon || KOSONG },
         { key: "principle", header: "Principal", cell: (r) => r.principle },
         { key: "freq", header: "Frekuensi", align: "end", cell: (r) => <span className="fi-tnum">{r.visitFrequency}×/bln</span> },
+        { key: "ket", header: "Keterangan", secondary: true, cell: (r) => <LencanaJks r={r} /> },
         { key: "asal", header: "Asal", cell: (r) => r.tambahanSalesman
             ? <span className="grid gap-1"><StatusBadge tone="info">Ditambahkan salesman</StatusBadge><span className="fi-small fi-muted">{jejak(r.tambahanSalesman)}</span></span>
             : "Unggahan" },
@@ -212,6 +244,7 @@ export default function TabJks({ scope }: { scope: Scope }) {
                     {hasil.nama}: {hasil.imported} baris ditulis, {hasil.skipped} baris dilewati
                     {hasil.skipped > 0 ? " (tanpa kode sales, kode toko, atau principal)" : ""}
                     {hasil.ditolak.length > 0 ? `, ${hasil.ditolak.length} baris ditolak` : ""}.
+                    {hasil.koordinatBaru !== undefined ? ` ${hasil.koordinatBaru} titik GPS lapangan baru masuk Koordinat Toko (titik yang sudah ada tidak ditimpa).` : ""}
                 </MessageStrip>
             )}
             {hasil && hasil.dinonaktifkan.length > 0 && (
@@ -277,11 +310,14 @@ export default function TabJks({ scope }: { scope: Scope }) {
                     const fd = new FormData();
                     fd.append("file", berkas!);
                     if (ganti) fd.append("ganti", "1");
+                    if (webll) fd.append("peta", JSON.stringify({ sales: peta.sales,
+                        principal: Object.fromEntries(Object.entries(peta.principal).map(([k, v]) => [k, v.trim()])) }));
                     try {
                         const d = await tulisFk("/api/form-kontrol/jks", { body: fd, gagal: "Impor JKS gagal." });
                         setHasil({ nama: berkas!.name, imported: Number(d.imported ?? 0), skipped: Number(d.skipped ?? 0),
                             ditolak: Array.isArray(d.ditolak) ? d.ditolak as Ditolak[] : [], digantikan: Array.isArray(d.digantikan) ? d.digantikan as Digantikan[] : [],
-                            dinonaktifkan: Array.isArray(d.dinonaktifkan) ? d.dinonaktifkan as Dinonaktifkan[] : [] });
+                            dinonaktifkan: Array.isArray(d.dinonaktifkan) ? d.dinonaktifkan as Dinonaktifkan[] : [],
+                            koordinatBaru: typeof d.koordinatBaru === "number" ? d.koordinatBaru : undefined });
                         setImpor(false);
                         muatUlang();
                     } catch (e) {
@@ -294,17 +330,63 @@ export default function TabJks({ scope }: { scope: Scope }) {
                     }
                 }}
             >
-                <FormField label="Berkas JKS (.xlsx)" required help="Sheet pertama dibaca. Pakai templat bila ragu nama kolomnya.">{(a) => (
+                <FormField label="Berkas JKS (.xlsx)" required help="Templat: sheet pertama dibaca. Berkas JKS Web-LL (JKS_<PRINCIPAL>_<tgl>.xlsx): sheet JKS semua sales dibaca otomatis.">{(a) => (
                     <input {...a} className="fi-input" type="file" accept=".xlsx,.xls" onChange={(e) => void pilihBerkas(e.target.files?.[0] ?? null)} />
                 )}</FormField>
-                <label className="flex items-start gap-2" style={{ minHeight: 44 }}>
-                    <input type="checkbox" checked={ganti} onChange={(e) => setGanti(e.target.checked)} style={{ width: 22, height: 22, marginTop: 2 }} />
-                    <span>Ganti JKS lama: untuk setiap principal di berkas, toko yang tidak ada di berkas dinonaktifkan (semua salesman principal itu,
-                        termasuk salesman yang tidak ada di berkas). Toko tambahan salesman dari kunjungan luar rute tetap. Satu baris bermasalah = batal seluruhnya.</span>
-                </label>
+                {!webll && (
+                    <label className="flex items-start gap-2" style={{ minHeight: 44 }}>
+                        <input type="checkbox" checked={ganti} onChange={(e) => setGanti(e.target.checked)} style={{ width: 22, height: 22, marginTop: 2 }} />
+                        <span>Ganti JKS lama: untuk setiap principal di berkas, toko yang tidak ada di berkas dinonaktifkan (semua salesman principal itu,
+                            termasuk salesman yang tidak ada di berkas). Toko tambahan salesman dari kunjungan luar rute tetap. Satu baris bermasalah = batal seluruhnya.</span>
+                    </label>
+                )}
                 {pratinjau.status === "membaca" && <Skeleton rows={2} label={`Membaca ${berkas?.name ?? "berkas"}`} />}
                 {pratinjau.status === "galat" && <p className="fi-msg" role="alert">Berkas tidak bisa dibaca sebagai Excel. Pilih berkas .xlsx lain.</p>}
-                {pratinjau.status === "siap" && pratinjau.data && (
+                {webll && (
+                    <>
+                        <MessageStrip tone="info" title={`Berkas JKS Web-LL: ${pratinjau.data!.baris} baris, siklus 4 minggu (M1–M4).`}>
+                            JKS lama principal yang dipetakan DIGANTI (toko yang tidak ada di berkas dinonaktifkan; toko tambahan salesman tetap). Toko F8
+                            (2× seminggu) jadi satu baris dua hari. Titik GPS lapangan masuk Koordinat Toko hanya untuk toko yang belum berkoordinat.
+                            Satu baris bermasalah = tidak ada yang ditulis.
+                        </MessageStrip>
+                        {galatProfil && <MessageStrip tone="neg" title="Profil sales belum dimuat.">{galatProfil}</MessageStrip>}
+                        <fieldset className="grid gap-2" style={{ border: 0, padding: 0, margin: 0 }}>
+                            <legend className="fi-title-3">Salesman di berkas → kode sales ({webll.sales.length - belumSales} dari {webll.sales.length} terpetakan)</legend>
+                            {webll.sales.map((s) => (
+                                <FormField key={s.nilai} label={`${s.nilai} · ${s.baris} baris`} error={!peta.sales[s.nilai] ? "Pilih profil sales" : undefined}>{(a) => (
+                                    <select {...a} className="fi-input" value={peta.sales[s.nilai] ?? ""}
+                                        onChange={(e) => setPeta((p) => ({ ...p, sales: { ...p.sales, [s.nilai]: e.target.value } }))}>
+                                        <option value="">Pilih profil sales</option>
+                                        {(profil ?? []).map((p) => <option key={p.salesCode} value={p.salesCode}>{p.salesName} · {p.salesCode} · {p.principle}</option>)}
+                                    </select>
+                                )}</FormField>
+                            ))}
+                        </fieldset>
+                        <fieldset className="grid gap-2" style={{ border: 0, padding: 0, margin: 0 }}>
+                            <legend className="fi-title-3">Principal di berkas → principal JKS sistem ({webll.principal.length - belumPrincipal} dari {webll.principal.length} terpetakan)</legend>
+                            <datalist id="principal-sistem">{(scope.principles ?? []).map((p) => <option key={p} value={p} />)}</datalist>
+                            {webll.principal.length > 1 && (
+                                <div className="fi-btnrow">
+                                    <FormField label="Isi semua principal dengan">{(a) => (
+                                        <input {...a} className="fi-input" list="principal-sistem" value={isiSemua} onChange={(e) => setIsiSemua(e.target.value)} placeholder="mis. MIX FOOD" />
+                                    )}</FormField>
+                                    <Button disabled={!isiSemua.trim()} disabledReason="Isi nama principal dulu"
+                                        onClick={() => setPeta((p) => ({ ...p, principal: Object.fromEntries(webll.principal.map((x) => [x.nilai, isiSemua.trim()])) }))}>
+                                        Isi semua
+                                    </Button>
+                                </div>
+                            )}
+                            {webll.principal.map((x) => (
+                                <FormField key={x.nilai} label={`${x.nilai} · ${x.baris} baris`} error={!peta.principal[x.nilai]?.trim() ? "Isi principal sistem" : undefined}
+                                    help="Pilih principal JKS yang sudah ada supaya rute, laporan, dan item super cocok; nama baru = principal JKS baru.">{(a) => (
+                                    <input {...a} className="fi-input" list="principal-sistem" value={peta.principal[x.nilai] ?? ""}
+                                        onChange={(e) => setPeta((p) => ({ ...p, principal: { ...p.principal, [x.nilai]: e.target.value } }))} />
+                                )}</FormField>
+                            ))}
+                        </fieldset>
+                    </>
+                )}
+                {pratinjau.status === "siap" && pratinjau.data && !webll && (
                     <>
                         <KeyValues items={[
                             ["Berkas", berkas?.name ?? KOSONG],

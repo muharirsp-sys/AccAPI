@@ -7,7 +7,7 @@
  * Kontrak keluaran: lib/supervisor-review/kontrak.ts (JANGAN diubah tanpa orkestrator).
  */
 import type { Angka, BarisSalesman, JawabanSupervisorReview, Kunjungan, PenandaToko, StatusSalesman, TotalCabang } from "./kontrak";
-import { DAY_TO_HARI, kodeJksUntuk, kunciHari, paritasMinggu } from "../form-kontrol/constants";
+import { kodeJksUntuk, terjadwalPada } from "../form-kontrol/constants";
 import { normalHp } from "../form-kontrol/noo-aturan";
 
 export interface MasukanRingkasan {
@@ -56,14 +56,8 @@ export function waUrl(noHp: string | null | undefined, teks: string): string | n
     return hp ? `https://wa.me/62${hp.slice(1)}?text=${encodeURIComponent(teks)}` : null;
 }
 
-/** Jadwal JKS hari itu — filter SAMA dengan getTodayRoute (lib/form-kontrol/db.ts): kunci hari + pola minggu ∈ {all, paritas}. */
-function terjadwal(tanggal: string) {
-    const [y, m, d] = tanggal.split("-").map(Number);
-    const hari = DAY_TO_HARI[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
-    const pola = new Set(["all", paritasMinggu(tanggal)]);
-    return (j: { hariKunjungan: string | null; mingguPattern: string }) =>
-        Boolean(hari) && kunciHari(j.hariKunjungan) === kunciHari(hari) && pola.has(String(j.mingguPattern ?? "").trim().toLowerCase());
-}
+/** Jadwal JKS hari itu — filter SAMA dengan getTodayRoute (lib/form-kontrol/db.ts): constants.ts terjadwalPada (hari F8 + minggu siklus). */
+const terjadwal = terjadwalPada;
 
 function koordinatToko(kode: string, koordinat: MasukanRingkasan["koordinat"]) {
     for (const k of [kode, ...kodeJksUntuk(kode)]) { const t = koordinat.get(k); if (t) return t; }

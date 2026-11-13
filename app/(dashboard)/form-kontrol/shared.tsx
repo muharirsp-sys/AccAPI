@@ -10,6 +10,8 @@
 
 import { createContext, useCallback, useContext, useEffect } from "react";
 import { useLoad, type Load } from "@/components/fiori/interactive";
+import { StatusBadge } from "@/components/fiori/core";
+import { lokasiPerkiraan } from "@/lib/form-kontrol/constants";
 import type { StatusNoo } from "@/lib/form-kontrol/noo-aturan";
 import { KOSONG, waktuWita } from "@/lib/tampil";
 
@@ -40,12 +42,20 @@ export interface JksRow {
     alamat: string;
     kota: string;
     hariKunjungan: string;
-    mingguPattern: "ganjil" | "genap" | "all";
+    mingguPattern: "ganjil" | "genap" | "all" | "m1" | "m2" | "m3" | "m4";
     area: string;
     rayon: string;
     principle: string;
-    visitFrequency: 1 | 2 | 4;
+    visitFrequency: number;
     isActive: boolean;
+    /** JKS Web-LL (owner 13 Nov 2026); null = JKS berformat lama. */
+    urutan?: number | null;
+    kategori?: string | null;
+    kelasA?: boolean | null;
+    targetToko?: number | null;
+    statusJks?: string | null;
+    salesSebelum?: string | null;
+    lokasiDari?: string | null;
     /** FK-MSM2: baris hasil konfirmasi kunjungan luar rute (siapa, kapan, dari kunjungan tanggal berapa); null = unggahan. */
     tambahanSalesman?: { oleh: string | null; pada: string; dariKunjungan: string } | null;
 }
@@ -73,6 +83,14 @@ export interface AoRow {
     nooStatus?: StatusNoo | null;
     /** R4: alasan tolak SPV — hanya bila nooStatus = "ditolak". */
     nooAlasanTolak?: string | null;
+    /** JKS Web-LL (owner 13 Nov 2026): urutan kunjungan hari itu + keterangan toko; null = JKS format lama / luar rute. */
+    urutan?: number | null;
+    kategori?: string | null;
+    kelasA?: boolean | null;
+    targetToko?: number | null;
+    statusJks?: string | null;
+    salesSebelum?: string | null;
+    lokasiDari?: string | null;
 }
 
 export interface Reason {
@@ -91,7 +109,7 @@ export interface FreqRow {
     overVisit: boolean;
 }
 
-export type TabKey = "jks" | "koordinat" | "ao" | "no-order" | "laporan" | "briefing" | "sm-control" | "frekuensi" | "hierarki" | "noo";
+export type TabKey = "jks" | "koordinat" | "item-super" | "ao" | "no-order" | "laporan" | "briefing" | "sm-control" | "frekuensi" | "hierarki" | "noo";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -99,6 +117,8 @@ export const TABS: { key: TabKey; label: string; roles: string[] }[] = [
     { key: "jks", label: "Kontrol JKS", roles: ["admin", "manager", "admin_sales", "sm", "spv"] },
     // Supervisor Review (SR-3): titik koordinat toko untuk peta; sumbernya berkas yang diunggah admin, bukan JKS.
     { key: "koordinat", label: "Koordinat Toko", roles: ["admin", "manager", "admin_sales"] },
+    // Item Super (owner 13 Nov 2026): daftar saran item per principal × channel; Admin mengunggah, SPV/SM melihat isinya.
+    { key: "item-super", label: "Item Super", roles: ["admin", "manager", "admin_sales", "sm", "spv"] },
     { key: "ao", label: "Rute Hari Ini", roles: ["salesman", "spv", "staff", "admin", "manager"] },
     { key: "no-order", label: "Toko Tidak Order", roles: ["salesman", "spv", "sm", "staff", "admin", "manager"] },
     // Tab Merchandising lama dihapus (S5): merch bagian wizard kunjungan (ber-foto/GPS); SPV melihat hasilnya di Dashboard SPV.
@@ -132,8 +152,28 @@ export function rentangWita(mulai: string | null | undefined, selesai: string | 
 }
 
 /** Pola minggu JKS dari server (ganjil, genap, all) dalam bahasa tugas; nilai di luar daftar tidak ditampilkan mentah. */
-export const LABEL_MINGGU: Record<string, string> = { ganjil: "Minggu ganjil", genap: "Minggu genap", all: "Setiap minggu" };
+export const LABEL_MINGGU: Record<string, string> = { ganjil: "Minggu ganjil", genap: "Minggu genap", all: "Setiap minggu",
+    m1: "Minggu ke-1 siklus (M1)", m2: "Minggu ke-2 siklus (M2)", m3: "Minggu ke-3 siklus (M3)", m4: "Minggu ke-4 siklus (M4)" };
 export const labelPola = (m: string | null | undefined): string => LABEL_MINGGU[m ?? ""] ?? "Tidak dikenal";
+
+/**
+ * Keterangan toko JKS Web-LL (owner 13 Nov 2026) sebagai lencana: Kelas A, Outlet potensi / baru, Pindahan sales (dari siapa), lokasi perkiraan.
+ * JKS berformat lama (semua null) = tanpa lencana.
+ */
+export function LencanaJks({ r }: { r: Pick<JksRow, "kategori" | "kelasA" | "statusJks" | "salesSebelum" | "lokasiDari"> }) {
+    const ada = r.kelasA || r.kategori === "OUTLET POTENSI" || r.kategori === "OUTLET BARU" || (r.statusJks && r.statusJks !== "TETAP") || lokasiPerkiraan(r.lokasiDari);
+    if (!ada) return null;
+    return (
+        <span className="flex flex-wrap gap-1">
+            {r.kelasA && <StatusBadge tone="pos">Kelas A</StatusBadge>}
+            {r.kategori === "OUTLET POTENSI" && <StatusBadge tone="info">Outlet potensi</StatusBadge>}
+            {r.kategori === "OUTLET BARU" && <StatusBadge tone="info">Outlet baru</StatusBadge>}
+            {r.statusJks === "PINDAH SALES" && <StatusBadge tone="warn">{`Pindahan${r.salesSebelum ? ` dari ${r.salesSebelum}` : ""}`}</StatusBadge>}
+            {r.statusJks === "BARU DITUGASKAN" && <StatusBadge tone="warn">Baru ditugaskan</StatusBadge>}
+            {lokasiPerkiraan(r.lokasiDari) && <StatusBadge tone="neu">Lokasi perkiraan</StatusBadge>}
+        </span>
+    );
+}
 
 // ── Izin & HTTP (S5) ───────────────────────────────────────────────────────
 
@@ -302,8 +342,9 @@ function routeRank(r: AoRow): number {
     return 3;
 }
 
+/** Urutan JKS Web-LL (urutan kunjungan hari itu) di dalam kelompok status yang sama; tanpa urutan = di belakang, lalu nama. */
 export function compareRoute(a: AoRow, b: AoRow): number {
-    return routeRank(a) - routeRank(b) || a.custName.localeCompare(b.custName);
+    return routeRank(a) - routeRank(b) || (a.urutan ?? Infinity) - (b.urutan ?? Infinity) || a.custName.localeCompare(b.custName);
 }
 
 export function visitDurationMin(r: AoRow): number | null {

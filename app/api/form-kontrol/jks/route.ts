@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
+import { inArray } from "drizzle-orm";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import * as XLSX from "xlsx";
-import { canAccessSales, getJksList, resolveScope, upsertJksRows } from "@/lib/form-kontrol";
+import { db } from "@/lib/db";
+import { salesProfile } from "@/db/schema";
+import { POLA_JKS, canAccessSales, getJksList, isiKoordinatLapangan, resolveScope, upsertJksRows, writeKontrolAudit } from "@/lib/form-kontrol";
+import { bacaJksWebLl, cariSheetWebLl, type PetaJks } from "@/lib/form-kontrol/jks-webll";
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -57,7 +61,7 @@ function mapExcelRow(raw: Record<string, unknown>) {
         let v: unknown = typeof val === "string" ? val.trim() : val;
         if (field === "mingguPattern" && typeof v === "string") {
             const low = v.toLowerCase();
-            v = ["ganjil", "genap", "all"].includes(low) ? low : "all";
+            v = (POLA_JKS as readonly string[]).includes(low) ? low : "all";
         }
         if (field === "visitFrequency") v = parseInt(String(v), 10) || undefined;
         out[field] = v;
@@ -84,6 +88,11 @@ export async function POST(req: Request) {
                 return NextResponse.json({ error: "File tidak ditemukan" }, { status: 400 });
             }
             const wb = XLSX.read(Buffer.from(await file.arrayBuffer()), { type: "buffer" });
+            // JKS Web-LL (owner 13 Nov 2026): sheet "JKS semua sales" + peta salesman/principal pilihan Admin; SELALU mengganti JKS lama
+            // principal itu ("Diganti per principal"), dan satu baris bermasalah = tidak ada yang ditulis.
+            const sheetWebLl = cariSheetWebLl(wb.SheetNames);
+            if (sheetWebLl) return imporWebLl(XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[sheetWebLl], { defval: "" }),
+                form.get("peta"), gate.session.user);
             const sheet = wb.Sheets[wb.SheetNames[0]];
             if (!sheet) return NextResponse.json({ error: "Sheet kosong" }, { status: 400 });
             const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
@@ -111,4 +120,42 @@ export async function POST(req: Request) {
     } catch (e: unknown) {
         return NextResponse.json({ error: e instanceof Error ? e.message : "Gagal import" }, { status: 500 });
     }
+}
+
+/** Peta dari FormData `peta` (JSON {sales:{…}, principal:{…}}); bentuk lain = null. */
+function bacaPeta(v: FormDataEntryValue | null): PetaJks | null {
+    try {
+        const p = JSON.parse(typeof v === "string" ? v : "") as Partial<PetaJks>;
+        const objek = (o: unknown) => o && typeof o === "object" && Object.values(o).every((x) => typeof x === "string");
+        return objek(p.sales) && objek(p.principal) ? { sales: p.sales!, principal: p.principal! } : null;
+    } catch { return null; }
+}
+
+async function imporWebLl(rows: Record<string, unknown>[], petaMentah: FormDataEntryValue | null, user: { id: string; name?: string | null }) {
+    const peta = bacaPeta(petaMentah);
+    if (!peta) return NextResponse.json({ kode: "PETA_WAJIB", error: "Berkas JKS Web-LL perlu peta salesman dan principal. Pilih ulang berkasnya di dialog impor." }, { status: 400 });
+    // Kode sales di peta wajib profil Hierarki yang ada (ketikan lama / profil terhapus = ditolak sebelum menulis apa pun).
+    const kodePeta = [...new Set(Object.values(peta.sales).filter(Boolean))];
+    const ada = new Set(kodePeta.length ? (await db.select({ k: salesProfile.salesCode }).from(salesProfile).where(inArray(salesProfile.salesCode, kodePeta))).map((r) => r.k) : []);
+    const asing = kodePeta.filter((k) => !ada.has(k));
+    if (asing.length) return NextResponse.json({ kode: "SALES_TIDAK_DIKENAL", error: `Kode sales tidak ada di Hierarki: ${asing.join(", ")}.` }, { status: 400 });
+
+    const { baris, galat, koordinat } = bacaJksWebLl(rows, peta);
+    if (galat.length || baris.length === 0) {
+        // Layar hanya menampilkan `error` (tulisFk): contoh baris bermasalah wajib ada di kalimatnya, bukan hanya di `ditolak`.
+        const contoh = galat.slice(0, 5).map((g) => `baris ${g.baris}${g.kode ? ` (${g.kode})` : ""}: ${g.pesan}`).join("; ");
+        return NextResponse.json({ kode: "GANTI_DIBATALKAN", ditolak: galat, error: galat.length
+            ? `Impor JKS dibatalkan, tidak ada yang ditulis: ${galat.length} baris bermasalah — ${contoh}${galat.length > 5 ? `; dan ${galat.length - 5} baris lain` : ""}. Perbaiki peta atau berkasnya lalu ulangi.`
+            : "Berkas tidak berisi baris JKS." }, { status: 400 });
+    }
+    const { ditolak, gantiBatal, ...hasil } = await upsertJksRows(baris, { ganti: true });
+    if (gantiBatal) {
+        return NextResponse.json({ kode: "GANTI_DIBATALKAN", ditolak: ditolak.map((d) => ({ baris: d.indeks + 2, kode: d.custCode, pesan: `Hari "${d.hari}" tidak dikenal.` })),
+            error: "Impor JKS dibatalkan, tidak ada yang ditulis." }, { status: 400 });
+    }
+    const koordinatBaru = await isiKoordinatLapangan(koordinat, user.id);
+    const principal = [...new Set(baris.map((b) => b.principle))];
+    await writeKontrolAudit("jks", principal.join(","), "impor_webll", user.id, user.name ?? null,
+        { principal, baris: baris.length, dinonaktifkan: hasil.dinonaktifkan, koordinatBaru, peta });
+    return NextResponse.json({ success: true, format: "webll", ...hasil, ditolak: [], koordinatBaru });
 }

@@ -55,8 +55,15 @@ export async function PUT(req: Request) {
         if (adaHp && !kosong && !noHp) {
             return jawabGalat({ status: 400, kode: "NO_HP_TIDAK_SAH", error: "No HP harus nomor seluler Indonesia (08…, +62…), 10–13 angka." });
         }
+        // Dua tipe sales (owner 13 Nov 2026): `sumberOrder` accapi | principal; kunci absen = tidak diubah. Kiriman berisi sumberOrder/noHp
+        // saja TIDAK mengubah hierarki (nama SPV/SM hanya dibaca bila dikirim, atau pada kiriman lama tanpa keduanya).
+        const adaSumber = "sumberOrder" in body;
+        if (adaSumber && body.sumberOrder !== "accapi" && body.sumberOrder !== "principal") {
+            return jawabGalat({ status: 400, kode: "SUMBER_ORDER_TIDAK_SAH", error: "Tipe sales harus Input di AccAPI atau Input di sistem principal." });
+        }
+        const sumberOrder = adaSumber ? (body.sumberOrder as "accapi" | "principal") : undefined;
         let spvNama: string | null | undefined, smNama: string | null | undefined;
-        if (!adaHp || "spvName" in body || "smName" in body) {
+        if ((!adaHp && !adaSumber) || "spvName" in body || "smName" in body) {
             const [akunSpv, akunSm] = await Promise.all([namaAkunPeran("spv"), namaAkunPeran("sm")]);
             const spv = pilihNamaAkun(body.spvName, akunSpv, "SPV");
             if ("galat" in spv) return jawabGalat(spv.galat);
@@ -64,10 +71,10 @@ export async function PUT(req: Request) {
             if ("galat" in sm) return jawabGalat(sm.galat);
             [spvNama, smNama] = [spv.nama, sm.nama];
         }
-        if (!await updateSalesHierarchy(salesCode, spvNama, smNama, noHp)) {
+        if (!await updateSalesHierarchy(salesCode, spvNama, smNama, noHp, sumberOrder)) {
             return jawabGalat({ status: 404, kode: "PROFIL_TIDAK_ADA", error: `Profil sales ${salesCode} tidak ditemukan; muat ulang Hierarki.` });
         }
-        return NextResponse.json({ success: true, spvName: spvNama, smName: smNama, ...(adaHp && { noHp }) });
+        return NextResponse.json({ success: true, spvName: spvNama, smName: smNama, ...(adaHp && { noHp }), ...(adaSumber && { sumberOrder }) });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }

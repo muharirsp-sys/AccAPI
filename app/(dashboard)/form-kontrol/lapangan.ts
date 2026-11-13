@@ -115,6 +115,14 @@ export function keBarisRute(rows: unknown, principle: string): AoRow[] {
         // R4: status pengajuan NOO dari server (nilai tak dikenal / server lama = null → kartu seperti semula); alasan hanya bila ditolak.
         nooStatus: typeof r.nooStatus === "string" && Object.keys(LABEL_STATUS_NOO).includes(r.nooStatus) ? r.nooStatus as StatusNoo : null,
         nooAlasanTolak: r.nooStatus === "ditolak" && typeof r.nooAlasanTolak === "string" && r.nooAlasanTolak.trim() ? r.nooAlasanTolak : null,
+        // JKS Web-LL (owner 13 Nov 2026): keterangan toko; server lama / JKS format lama = null.
+        urutan: typeof r.urutan === "number" ? r.urutan : null,
+        kategori: typeof r.kategori === "string" ? r.kategori : null,
+        kelasA: r.kelasA === true,
+        targetToko: typeof r.targetToko === "number" ? r.targetToko : null,
+        statusJks: typeof r.statusJks === "string" ? r.statusJks : null,
+        salesSebelum: typeof r.salesSebelum === "string" ? r.salesSebelum : null,
+        lokasiDari: typeof r.lokasiDari === "string" ? r.lokasiDari : null,
     }));
 }
 

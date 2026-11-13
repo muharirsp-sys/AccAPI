@@ -35,7 +35,15 @@ export function validateNoOrderReason(
 }
 
 export const HARI_KUNJUNGAN = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"] as const;
+/** Pola minggu kunjungan luar rute yang dikonfirmasi salesman (CHECK kunjungan_luar_rute_jadwal). */
 export const MINGGU_PATTERNS = ["ganjil", "genap", "all"] as const;
+/**
+ * JKS siklus 4 minggu (Web-LL, owner 13 Nov 2026): toko F1 dikunjungi sekali per siklus = satu minggu m1..m4. F2 = m1+m3 (ganjil) /
+ * m2+m4 (genap), F4 dan F8 = all — jadi hanya F1 yang butuh pola baru. Pola yang dikenal unggah JKS = POLA_JKS.
+ */
+export const MINGGU_SIKLUS = ["m1", "m2", "m3", "m4"] as const;
+export const POLA_JKS = [...MINGGU_PATTERNS, ...MINGGU_SIKLUS] as const;
+export type PolaJks = (typeof POLA_JKS)[number];
 
 /**
  * Kunci pembanding hari JKS: huruf besar tanpa spasi/tanda ("SENIN", " Senin ", "JUM'AT" → "SENIN"/"JUMAT"). Rute membandingkan kunci,
@@ -44,12 +52,24 @@ export const MINGGU_PATTERNS = ["ganjil", "genap", "all"] as const;
 export const kunciHari = (v: unknown) => String(v ?? "").toUpperCase().replace(/[^A-Z]/g, "");
 const HARI_BAKU = new Map<string, string>(HARI_KUNJUNGAN.map((h) => [kunciHari(h), h]));
 /**
+ * Toko F8 (2× seminggu, owner 13 Nov 2026) punya DUA hari dalam satu baris JKS: tersimpan "Senin, Kamis" (pemisah koma). Kunci hari per
+ * bagian; JKS lama (satu hari) = satu kunci. SAMA dengan ekspresi SQL `hariIni` di db.ts (string_to_array per koma).
+ */
+export const daftarKunciHari = (v: unknown) => String(v ?? "").split(",").map(kunciHari).filter(Boolean);
+/** Hari JKS (satu atau beberapa hari) memuat `hari`? */
+export const hariCocok = (hariJks: unknown, hari: unknown) => Boolean(kunciHari(hari)) && daftarKunciHari(hariJks).includes(kunciHari(hari));
+/**
  * Bentuk baku hari untuk disimpan saat unggah: "" = kosong (boleh, ditandai di Kontrol JKS); null = tidak dikenal (baris ditolak).
  * Kosong diputuskan dari teks mentah ter-trim, bukan dari kunci: "1", "-", "?" berkunci kosong tetapi BUKAN sel kosong → ditolak.
+ * Beberapa hari (F8: "Senin, Kamis", "senin+kamis", "Senin dan Kamis") → baku urut Senin..Sabtu dipisah ", "; satu bagian tak dikenal = null.
  */
 export function hariBaku(v: unknown): string | null {
-    if (!String(v ?? "").trim()) return "";
-    return HARI_BAKU.get(kunciHari(v)) ?? null;
+    const teks = String(v ?? "").trim();
+    if (!teks) return "";
+    const bagian = teks.split(/[,;/+&]|\bdan\b/i).map((b) => b.trim()).filter(Boolean);
+    const baku = bagian.map((b) => HARI_BAKU.get(kunciHari(b)) ?? null);
+    if (baku.length === 0 || baku.includes(null)) return null;
+    return HARI_KUNJUNGAN.filter((h) => baku.includes(h)).join(", ");
 }
 
 // ponytail: acuan paritas minggu JKS (keputusan owner 12 Okt 2026) — minggu yang memuat Senin 12 Okt 2026 (tanggal WITA) = GENAP, lalu
@@ -64,6 +84,46 @@ const nomorHari = (ymd: string) => { const [y, m, d] = ymd.split("-").map(Number
 export function paritasMinggu(ymd: string): "ganjil" | "genap" {
     const minggu = Math.floor((nomorHari(ymd) - nomorHari(ACUAN_MINGGU_GENAP)) / 7);
     return minggu % 2 === 0 ? "genap" : "ganjil";
+}
+
+/**
+ * Minggu ke berapa dalam siklus 4 minggu JKS (owner 13 Nov 2026: "pakai hitungan minggu per tahun"): m = ((nomor minggu − 1) mod 4) + 1,
+ * dengan nomor minggu ISO 2026 — minggu acuan 12 Okt 2026 = minggu ke-42 = m2; 13 Nov 2026 = minggu ke-46 = m2; 16 Nov = m3. Selaras paritas:
+ * m1/m3 = ganjil, m2/m4 = genap. ponytail: berjalan TERUS dari acuan seperti paritasMinggu (tidak melompat di tahun 53 minggu ISO: 28 Des 2026
+ * = m1, 4 Jan 2027 = m2, bukan dua m1 berturut-turut yang membuat toko F1 dikunjungi dua kali); sejak 2027 nomornya bergeser satu dari
+ * nomor minggu ISO. Plafon: mengganti acuan menggeser jadwal F1 SEMUA JKS — hanya atas keputusan owner.
+ */
+export function mingguSiklus(ymd: string): (typeof MINGGU_SIKLUS)[number] {
+    const minggu = Math.floor((nomorHari(ymd) - nomorHari(ACUAN_MINGGU_GENAP)) / 7);
+    return MINGGU_SIKLUS[(((minggu + 1) % 4) + 4) % 4];
+}
+
+/** Pola minggu JKS yang berlaku pada tanggal itu: all + paritas + minggu siklus. Satu-satunya sumber untuk SQL (db.ts) dan TS. */
+export const polaBerlaku = (ymd: string): string[] => ["all", paritasMinggu(ymd), mingguSiklus(ymd)];
+
+/**
+ * Baris JKS terjadwal pada tanggal WITA `ymd`? Kunci hari (satu atau beberapa hari, F8) + pola minggu huruf kecil ter-trim ∈ polaBerlaku.
+ * Saringan TS yang SAMA dengan SQL getTodayRoute (db.ts hariIni/polaMinggu); dipakai luar-rute, Supervisor Review, Kontrol JKS.
+ */
+export function terjadwalPada(ymd: string) {
+    const [y, m, d] = ymd.split("-").map(Number);
+    const hari = DAY_TO_HARI[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+    const pola = new Set(polaBerlaku(ymd));
+    return (j: { hariKunjungan: string | null; mingguPattern: string | null }) =>
+        Boolean(hari) && hariCocok(j.hariKunjungan, hari) && pola.has(String(j.mingguPattern ?? "").trim().toLowerCase());
+}
+
+/** Lokasi toko JKS Web-LL yang BUKAN titik lapangan (perkiraan alamat/wilayah) → perlu dicek di lapangan. null = JKS format lama. */
+export const lokasiPerkiraan = (lokasiDari: string | null | undefined) => Boolean(lokasiDari?.trim()) && !/^(gps lapangan|titik lapangan)/i.test(lokasiDari!.trim());
+
+/**
+ * Kunjungan per bulan bawaan bila berkas tidak menyebut frekuensi: pola × jumlah hari (F8 "Senin, Kamis" + all = 8). ponytail: 4 minggu =
+ * sebulan (siklus JKS), bukan 4,3.
+ */
+export function frekuensiBawaan(pola: string, hari: string | null | undefined): number {
+    const perMinggu = Math.max(1, daftarKunciHari(hari).length);
+    const minggu = pola === "all" ? 4 : pola === "ganjil" || pola === "genap" ? 2 : 1;
+    return perMinggu * minggu;
 }
 
 /** FK-MSM butir 5: kunci nama SPV/SM — trim + huruf besar (" spv a " = "SPV A"); kosong tidak cocok apa pun (pemanggil menjaga). */

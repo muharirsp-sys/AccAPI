@@ -3,7 +3,9 @@
  *   tersimpan tampil lagi, galat di langkahnya (langkah tidak maju), foto tetap di layar bila tanpa sinyal. Toko tutup (R15, owner 8 Okt,
  *   kontrak #132): Tidak order + alasan R15 → merchandising DILEWATI → foto bukti toko tutup (= foto check-out, wajib) → selesai tanpa order.
  * Caller: ./page.tsx (rute /form-kontrol/visit/[custCode]?salesCode&principle&date).
- * Dependensi: GET /api/form-kontrol/visit + /reasons; POST /api/form-kontrol/checkin, /ao-control, /merchandising, /checkout;
+ * Owner 13 Nov 2026: Status — sales tipe principal mencatat nomor order di sistem principal, tipe AccAPI diarahkan ke Order Sales; Merchandising
+ *   — blok Item super (saran wajib: ditawarkan → dipesan → alasan), dikirim bersama merchandising (server memeriksa ulang).
+ * Dependensi: GET /api/form-kontrol/visit + /reasons + /item-super/saran; POST /api/form-kontrol/checkin, /ao-control, /merchandising, /checkout;
  *   ./FotoBukti; ../../lapangan (ambilJson, kirimFk, sebabGagal, PESAN_SINYAL), ../../shared (alasanIzinFk, rentangWita); components/fiori/*; lib/rekapan-nota/ui; lib/tampil (KOSONG, waktuWita).
  * Main Functions: Kunjungan (muat/kosong/galat), Wizard (langkah), MERCH_STEPS.
  * Side Effects: HTTP baca/tulis kunjungan; kamera/lokasi lewat FotoBukti. Langkah hanya maju setelah simpan sukses. Payload sama dengan
@@ -25,8 +27,9 @@ import {
 import { FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { TOKO_TUTUP_CODE } from "@/lib/form-kontrol/constants";
+import { ALASAN_ITEM_SUPER } from "@/lib/form-kontrol/item-super";
 import type { GeoCoords } from "@/lib/form-kontrol/location";
-import { PESAN_SINYAL, ambilJson, ditolakBukanRute, kirimFk, sebabGagal } from "../../lapangan";
+import { GagalKirim, PESAN_SINYAL, ambilJson, ditolakBukanRute, kirimFk, sebabGagal } from "../../lapangan";
 import { KOSONG, waktuWita } from "@/lib/tampil";
 import { alasanIzinFk, hariIniWita, rentangWita } from "../../shared";
 import FotoBukti from "./FotoBukti";
@@ -44,6 +47,15 @@ interface AoInfo {
     noOrderReasonCode: string | null; noOrderNote: string | null;
     checkinAt: string | null; checkinPhotoUrl: string | null;
     checkoutAt: string | null; checkoutPhotoUrl: string | null;
+    /** Sales tipe principal (owner 13 Nov 2026): nomor order di sistem principal (kolom invoice_number). */
+    invoiceNumber?: string | null;
+}
+/** Saran item super kunjungan ini (GET /api/form-kontrol/item-super/saran; lib/form-kontrol/item-super.ts pilihSaran). */
+interface SaranItem { kodeBarang: string; kodeLain: string[]; namaBarang: string; peringkat: number; terakhirDibeli: string | null }
+type Jawaban = { ditawarkan: boolean | null; dipesan: boolean | null; alasan: string; catatan: string };
+interface ItemSuperInfo {
+    wajib: SaranItem[]; lain: SaranItem[]; riwayatTerbaca: boolean; adaDaftar: boolean;
+    tersimpan: { kodeBarang: string; ditawarkan: boolean; dipesan: boolean | null; alasan: string | null; catatan: string | null }[];
 }
 interface MerchInfo {
     produkJelas: boolean; displayRapi: boolean; dibersihkan: boolean;
@@ -53,7 +65,22 @@ interface MerchInfo {
 interface Reason { id: string; reasonCode: string; label: string; category: string }
 /** Penolakan "toko tidak (lagi) di rute": kode server, kalimatnya, dan tahapnya — `awal` = dari GET visit, sebelum foto check-in diambil. */
 type BukanRute = { kode: string; pesan: string; tahap: "awal" | "checkin" | "lanjut" };
-type Data = { store: StoreInfo | null; ao: AoInfo | null; merch: MerchInfo | null; reasons: Reason[]; bukanRute: BukanRute | null };
+type Data = { store: StoreInfo | null; ao: AoInfo | null; merch: MerchInfo | null; reasons: Reason[]; bukanRute: BukanRute | null;
+    /** Dua tipe sales (owner 13 Nov 2026). */
+    sumberOrder: "accapi" | "principal";
+    /** null = saran item super gagal dimuat (`saranGalat`): halaman tetap terbuka, hanya Simpan merchandising yang menunggu muat ulang saran. */
+    itemSuper: ItemSuperInfo | null; saranGalat: string | null };
+
+/** GET saran item super kunjungan ini; jawaban tak dikenal / galat = pesan (bukan daftar kosong yang menyesatkan). */
+async function ambilSaran(p: URLSearchParams): Promise<{ info: ItemSuperInfo } | { galat: string }> {
+    const s = await ambilJson(`/api/form-kontrol/item-super/saran?${p}`);
+    if (s.status < 200 || s.status >= 300 || !s.data) {
+        return { galat: `Saran item super gagal dimuat. ${s.status === 0 ? `${PESAN_SINYAL} Coba lagi saat ada sinyal.` : sebabGagal(s.status)}` };
+    }
+    const is = s.data as Partial<ItemSuperInfo>;
+    return { info: { wajib: Array.isArray(is.wajib) ? is.wajib : [], lain: Array.isArray(is.lain) ? is.lain : [],
+        tersimpan: Array.isArray(is.tersimpan) ? is.tersimpan : [], riwayatTerbaca: is.riwayatTerbaca !== false, adaDaftar: is.adaDaftar === true } };
+}
 
 /** `bukanRute` dari GET visit (FK-MSM3) → BukanRute tahap awal; bentuk lain = tidak ada penolakan. */
 function luarRuteAwal(v: unknown): BukanRute | null {
@@ -79,10 +106,10 @@ export default function Kunjungan(props: Props) {
     const router = useRouter();
     const loader = useCallback(async (): Promise<Load<Data>> => {
         const p = new URLSearchParams({ salesCode, custCode, principle, date });
-        const [v, r] = await Promise.all([ambilJson(`/api/form-kontrol/visit?${p}`), ambilJson("/api/form-kontrol/reasons")]);
+        const [v, r, s] = await Promise.all([ambilJson(`/api/form-kontrol/visit?${p}`), ambilJson("/api/form-kontrol/reasons"), ambilSaran(p)]);
         const tanpaSinyal = `${PESAN_SINYAL} Ini bukan toko kosong; coba lagi saat ada sinyal.`;
         // 404 = toko tidak ada di JKS salesman/principal ini → Kosong, bukan Galat.
-        if (v.status === 404) return { status: "siap", data: { store: null, ao: null, merch: null, reasons: [], bukanRute: null } };
+        if (v.status === 404) return { status: "siap", data: { store: null, ao: null, merch: null, reasons: [], bukanRute: null, sumberOrder: "accapi", itemSuper: null, saranGalat: null } };
         if (v.status === 400) return { status: "galat", error: "Kode salesman atau principal tidak terbawa. Buka kunjungan dari Rute hari ini." };
         if (v.status < 200 || v.status >= 300 || !v.data) return { status: "galat", error: v.status === 0 ? tanpaSinyal : sebabGagal(v.status) };
         if (r.status < 200 || r.status >= 300 || !r.data) return { status: "galat", error: `Daftar alasan tidak order gagal dimuat. ${r.status === 0 ? tanpaSinyal : sebabGagal(r.status)}` };
@@ -92,6 +119,8 @@ export default function Kunjungan(props: Props) {
                 store: (v.data.store as StoreInfo) ?? null, ao: (v.data.ao as AoInfo) ?? null, merch: (v.data.merch as MerchInfo) ?? null,
                 reasons: (Array.isArray(r.data.rows) ? r.data.rows : []) as Reason[],
                 bukanRute: luarRuteAwal(v.data.bukanRute),
+                sumberOrder: v.data.sumberOrder === "principal" ? "principal" : "accapi",
+                itemSuper: "info" in s ? s.info : null, saranGalat: "galat" in s ? s.galat : null,
             },
         };
     }, [salesCode, custCode, principle, date]);
@@ -172,6 +201,36 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
     const [saving, setSaving] = useState(false);
     const [galat, setGalat] = useState("");
     const [lihat, setLihat] = useState<number | null>(null);
+    // Dua tipe sales (owner 13 Nov 2026): sales tipe principal mencatat nomor order dari sistem principal saat ORDER.
+    const principalSales = data.sumberOrder === "principal";
+    const [nomorOrder, setNomorOrder] = useState(data.ao?.invoiceNumber ?? "");
+    // Item super: saran (bisa dimuat ulang tanpa membuang isian) + jawaban per saran (wajib + lain), awal = yang tersimpan untuk kunjungan ini.
+    const [saranIs, setSaranIs] = useState<ItemSuperInfo | null>(data.itemSuper);
+    const [galatSaran, setGalatSaran] = useState<string | null>(data.saranGalat);
+    const [memuatSaran, setMemuatSaran] = useState(false);
+    const [jawaban, setJawaban] = useState<Record<string, Jawaban>>(() => jawabanAwal(data.itemSuper, {}));
+    const isKurang = saranIs ? saranIs.wajib.filter((s) => !jawabanLengkap(jawaban[s.kodeBarang])).length : 0;
+    const ubahJawaban = (kode: string, patch: Partial<Jawaban>) => {
+        setMerchPersisted(false); setGalat("");
+        setJawaban((p) => {
+            const lama = p[kode];
+            const n = { ...lama, ...patch };
+            // Ganti "Ditawarkan" = pertanyaan berikutnya berbeda: pesanan dan alasan lama (mis. "Tidak sempat ditawarkan") tidak terbawa.
+            if (patch.ditawarkan !== undefined && patch.ditawarkan !== lama?.ditawarkan) { n.dipesan = null; n.alasan = ""; n.catatan = ""; }
+            if (n.dipesan === true) { n.alasan = ""; n.catatan = ""; }
+            return { ...p, [kode]: n };
+        });
+    };
+    /** Muat ulang saran (galat awal / daftar berubah di server); jawaban yang sudah diisi dipertahankan, item baru kosong. */
+    async function muatUlangSaran(): Promise<boolean> {
+        setMemuatSaran(true);
+        const s = await ambilSaran(new URLSearchParams({ salesCode, custCode, principle, date }));
+        setMemuatSaran(false);
+        if ("galat" in s) { setGalatSaran(s.galat); return false; }
+        setSaranIs(s.info); setGalatSaran(null);
+        setJawaban((p) => jawabanAwal(s.info, p));
+        return true;
+    }
 
     const nMerch = MERCH_STEPS.filter((s) => merch[s.key]).length;
     const allMerchDone = nMerch === MERCH_STEPS.length;
@@ -184,10 +243,13 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
     const maks = checkoutDone ? 4 : checkinDone && statusDone && (tutup || (allMerchDone && merchPersisted)) ? 3 : checkinDone && statusDone ? 2 : checkinDone ? 1 : 0;
     // `lihat` = langkah yang dibuka lewat Kembali; tidak pernah melewati langkah terjauh yang sudah tersimpan.
     const step = maks === 4 ? 4 : Math.min(lihat ?? maks, maks);
-    const tersimpanStatus = { status: (ao?.status && ao.status !== "not_visited") ? awalDari(ao.status) : null, code: ao?.noOrderReasonCode ?? "", note: ao?.noOrderNote ?? "" };
+    const tersimpanStatus = { status: (ao?.status && ao.status !== "not_visited") ? awalDari(ao.status) : null, code: ao?.noOrderReasonCode ?? "", note: ao?.noOrderNote ?? "",
+        nomor: ao?.invoiceNumber ?? "" };
     const drafStatus = orderStatus !== tersimpanStatus.status
-        || (orderStatus === "not_order" && (reasonCode !== tersimpanStatus.code || reasonNote !== tersimpanStatus.note));
-    const draf = !checkoutDone && ((drafStatus && orderStatus !== null) || (!tutup && !merchPersisted && nMerch > 0));
+        || (orderStatus === "not_order" && (reasonCode !== tersimpanStatus.code || reasonNote !== tersimpanStatus.note))
+        || (principalSales && orderStatus === "ordered" && nomorOrder.trim() !== tersimpanStatus.nomor);
+    const adaJawaban = Object.values(jawaban).some((j) => j.ditawarkan !== null);
+    const draf = !checkoutDone && ((drafStatus && orderStatus !== null) || (!tutup && !merchPersisted && (nMerch > 0 || adaJawaban)));
     useUnsavedGuard(draf);
 
     const tanpaIzin = alasanIzinFk(new Set(izinFk), "submit");
@@ -213,16 +275,20 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
         setSaving(true);
         setGalat("");
         try {
+            const nomor = orderStatus === "ordered" ? nomorOrder.trim() || null : null;
             await kirimFk("/api/form-kontrol/ao-control", {
                 salesCode, custCode, principle, date, status: orderStatus,
                 noOrderReasonCode: orderStatus === "not_order" ? reasonCode : null,
                 noOrderNote: orderStatus === "not_order" ? reasonNote : null,
+                // Sales tipe AccAPI tidak mengirim kunci ini (nomor tidak diubah); tipe principal mengirim isiannya (boleh kosong).
+                ...(principalSales ? { nomorOrderPrincipal: nomor } : {}),
             }, { ulangAman: true });
             setAo((current) => ({
                 ...(current ?? { id: "", checkinAt: null, checkinPhotoUrl: null, checkoutAt: null, checkoutPhotoUrl: null }),
                 status: orderStatus,
                 noOrderReasonCode: orderStatus === "not_order" ? reasonCode : null,
                 noOrderNote: orderStatus === "not_order" ? reasonNote : null,
+                invoiceNumber: principalSales ? nomor : current?.invoiceNumber ?? null,
             }));
             setStatusConfirmed(true);
             // Toko tutup langsung ke foto bukti (langkah terjauh); selain itu ke Merchandising seperti biasa.
@@ -234,7 +300,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
     }
 
     async function doSaveMerch() {
-        if (!allMerchDone || saving) return;
+        if (!allMerchDone || !saranIs || isKurang > 0 || saving) return;
         if (merchPersisted) { pindah(null); return; }
         setSaving(true);
         setGalat("");
@@ -245,11 +311,19 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                 dibersihkan: !!merch.dibersihkan, ditataulang: !!merch.ditataulang,
                 posisiMudah: !!merch.posisiMudah, semuaSku: !!merch.semuaSku,
                 stepPhotos: Object.keys(stepPhotos).length > 0 ? stepPhotos : null, note: null,
+                // Item super (owner 13 Nov 2026): semua saran wajib + saran lain yang dijawab lengkap; server memeriksa ulang.
+                itemSuper: Object.entries(jawaban).filter(([, j]) => jawabanLengkap(j)).map(([kodeBarang, j]) => ({ kodeBarang, ditawarkan: j.ditawarkan,
+                    dipesan: j.ditawarkan ? j.dipesan : null, alasan: j.dipesan === true ? null : j.alasan || null, catatan: j.catatan.trim() || null })),
             }, { ulangAman: true });
             setMerchPersisted(true);
             pindah(null);
         } catch (e) {
             if (ditolakBukanRute(e)) return onBukanRute({ kode: e.kode ?? "", pesan: e.message, tahap: "lanjut" });
+            // Daftar saran wajib di server berubah sejak layar dibuka (unggahan item super baru / riwayat beli): muat ulang saran, isian tetap.
+            if (e instanceof GagalKirim && e.kode === "ITEM_SUPER_BELUM_LENGKAP" && await muatUlangSaran()) {
+                setGalat("Merchandising belum tersimpan: daftar item super berubah sejak layar dibuka. Jawab item yang belum terisi lalu simpan lagi.");
+                return;
+            }
             // #7: galat merchandising tampil di langkah ini dan langkah tidak maju (dulu diam lalu muncul "Gagal check-out").
             setGalat(`Merchandising belum tersimpan. ${e instanceof Error ? e.message : ""}`.trim());
         } finally { setSaving(false); }
@@ -327,6 +401,18 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                             </label>
                         ))}
                     </div>
+                    {orderStatus === "ordered" && principalSales && (
+                        <FormField label={`Nomor order di sistem ${store.principle}`}
+                            help="Order Anda diinput di sistem principal, jadi fakturnya baru masuk Accurate sesudah admin menarik laporan principal. Nomor ini dipakai SPV mencocokkan order dengan faktur; kosongkan bila belum ada.">
+                            {(a) => <input {...a} className="fi-input" value={nomorOrder} maxLength={60} autoComplete="off" placeholder="mis. SO-…"
+                                onChange={(e) => { setNomorOrder(e.target.value); setGalat(""); }} />}
+                        </FormField>
+                    )}
+                    {orderStatus === "ordered" && !principalSales && !noo && (
+                        <MessageStrip tone="info" title="Input order di AccAPI:">
+                            buat order toko ini di <Link href="/sales">Order Sales</Link>. Faktur Accurate hari ini menjadi bukti order di Supervisor Review.
+                        </MessageStrip>
+                    )}
                     {orderStatus === "not_order" && (
                         <>
                             <FormField label="Alasan tidak order" required error={!reasonCode ? "Pilih alasan" : undefined}>
@@ -360,7 +446,9 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                 : <Button variant="primary" busy={saving} disabled={Boolean(kurang)} disabledReason={kurang} onClick={() => void doSaveStatus()}>Simpan &amp; lanjut</Button>}
         </FooterToolbar>;
     } else if (step === 2) {
-        const kurang = !allMerchDone ? `Lengkapi ${MERCH_STEPS.length - nMerch} butir lagi` : tanpaIzin;
+        const kurang = !allMerchDone ? `Lengkapi ${MERCH_STEPS.length - nMerch} butir lagi`
+            : !saranIs ? "Muat ulang saran item super dulu"
+            : isKurang > 0 ? `Jawab ${isKurang} item super lagi` : tanpaIzin;
         isi = (
             <div className="grid gap-4">
                 <div className="fi-panel">
@@ -390,6 +478,14 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                         );
                     })}
                 </ul>
+                {saranIs
+                    ? <ItemSuperBlok info={saranIs} jawaban={jawaban} ubah={ubahJawaban} terkunci={saving || Boolean(tanpaIzin)} isKurang={isKurang} />
+                    : (
+                        <MessageStrip tone="neg" title="Saran item super belum termuat.">
+                            {galatSaran} Merchandising baru bisa disimpan sesudah saran termuat.{" "}
+                            <Button variant="tertiary" busy={memuatSaran} onClick={() => void muatUlangSaran()}>Muat ulang saran</Button>
+                        </MessageStrip>
+                    )}
                 {galat && <MessageStrip tone="neg" title="Gagal menyimpan.">{galat}</MessageStrip>}
             </div>
         );
@@ -410,6 +506,8 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                         ["Check-in", checkinAt ? `${waktuWita(checkinAt)} WITA` : "Tercatat"],
                         ["Status", ao?.status === "not_order" && ao.noOrderReasonCode ? `TIDAK ORDER · ${alasanLabel(ao.noOrderReasonCode)}` : statusTeks(ao?.status)],
                         ["Merchandising", tutup ? "Dilewati (toko tutup)" : `${nMerch} dari ${MERCH_STEPS.length} · ${Object.keys(stepPhotos).length} foto`],
+                        ...(!tutup && (saranIs?.wajib.length ?? 0) > 0 ? [["Item super", ringkasItemSuper(jawaban)] as [string, ReactNode]] : []),
+                        ...(principalSales && ao?.invoiceNumber ? [["No. order principal", ao.invoiceNumber] as [string, ReactNode]] : []),
                     ]} />
                 </div>
                 <div className="fi-panel">
@@ -436,6 +534,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                         ["Waktu", checkinAt && checkoutAt ? `${rentangWita(checkinAt, checkoutAt)} WITA (${durasi} menit)` : "Tercatat"],
                         ["Status", tutup ? `TIDAK ORDER · ${alasanLabel(TOKO_TUTUP_CODE)}` : statusTeks(ao?.status)],
                         ["Merchandising", tutup ? "Dilewati (toko tutup) · foto bukti tersimpan" : `${nMerch} dari ${MERCH_STEPS.length}`],
+                        ...(!tutup && (saranIs?.wajib.length ?? 0) > 0 ? [["Item super", ringkasItemSuper(jawaban)] as [string, ReactNode]] : []),
                     ]} />
                 </div>
                 <VariantNote bl="BL-43">Order dari kunjungan belum tertaut ke kunjungannya. Usulan: tombol “Buat order untuk toko ini” membuka Order Sales dengan toko ini terisi dan order tersimpan bersama kunjungan.</VariantNote>
@@ -472,4 +571,113 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
 /** Status tersimpan → pilihan wizard (kode lama: selain ordered/active — termasuk priority — dianggap tidak order). */
 function awalDari(s: string): "ordered" | "not_order" {
     return s === "ordered" || s === "active" ? "ordered" : "not_order";
+}
+
+/** Jawaban per saran: isian di layar (`sebelumnya`) menang, lalu yang tersimpan di server, selain itu kosong. */
+function jawabanAwal(info: ItemSuperInfo | null, sebelumnya: Record<string, Jawaban>): Record<string, Jawaban> {
+    if (!info) return sebelumnya;
+    return Object.fromEntries([...info.wajib, ...info.lain].map((s) => {
+        const t = info.tersimpan.find((x) => x.kodeBarang === s.kodeBarang);
+        return [s.kodeBarang, sebelumnya[s.kodeBarang] ?? (t ? { ditawarkan: t.ditawarkan, dipesan: t.dipesan, alasan: t.alasan ?? "", catatan: t.catatan ?? "" }
+            : { ditawarkan: null, dipesan: null, alasan: "", catatan: "" })];
+    }));
+}
+
+/**
+ * Jawaban saran item super lengkap — aturan SAMA dengan server (lib/form-kontrol/item-super.ts periksaTawaran): ditawarkan dipilih; ditawarkan →
+ * dipesan dipilih; tidak dipesan (termasuk tidak ditawarkan) → alasan; alasan Lainnya → catatan ≥ 5 huruf.
+ */
+function jawabanLengkap(j: Jawaban | undefined): boolean {
+    if (!j || j.ditawarkan === null) return false;
+    if (j.ditawarkan && j.dipesan === null) return false;
+    if (j.dipesan === true) return true;
+    return Boolean(j.alasan) && (j.alasan !== "LAINNYA" || j.catatan.trim().length >= 5);
+}
+
+function ringkasItemSuper(j: Record<string, Jawaban>): string {
+    const v = Object.values(j).filter(jawabanLengkap);
+    return `${v.filter((x) => x.ditawarkan).length} ditawarkan · ${v.filter((x) => x.dipesan).length} dipesan · ${v.filter((x) => !x.ditawarkan).length} tidak ditawarkan`;
+}
+
+/** Pilihan Ya/Tidak bersentuh 44 px (radiogroup bernama). */
+function YaTidak({ nama, label, nilai, ubah, terkunci }: { nama: string; label: string; nilai: boolean | null; ubah: (v: boolean) => void; terkunci: boolean }) {
+    return (
+        <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label={label}>
+            <span className="fi-small" style={{ minWidth: "7rem" }}>{label}</span>
+            {[true, false].map((v) => (
+                <label key={String(v)} className="fi-btn fi-btn--secondary" style={{ minHeight: 44, minWidth: 72,
+                    ...(nilai === v ? { background: v ? "var(--pos-bg)" : "var(--neg-bg)", borderColor: v ? "var(--pos)" : "var(--neg)", color: v ? "var(--pos)" : "var(--neg)" } : {}) }}>
+                    <input type="radio" name={nama} checked={nilai === v} disabled={terkunci} onChange={() => ubah(v)}
+                        style={{ width: 18, height: 18, minHeight: 0, minWidth: 0, margin: 0, accentColor: "var(--primary)" }} />
+                    {v ? "Ya" : "Tidak"}
+                </label>
+            ))}
+        </div>
+    );
+}
+
+/**
+ * Item super di langkah Merchandising (owner 13 Nov 2026): saran WAJIB = item super principal × channel toko yang belum dibeli toko 3 bulan
+ * terakhir (maks. 10, urut peringkat); tiap saran: ditawarkan? → dipesan? → alasan bila tidak dipesan. Saran lain (sudah dibeli / di luar 10)
+ * boleh dijawab, tidak wajib.
+ */
+function ItemSuperBlok({ info, jawaban, ubah, terkunci, isKurang }: {
+    info: ItemSuperInfo; jawaban: Record<string, Jawaban>; ubah: (kode: string, patch: Partial<Jawaban>) => void; terkunci: boolean; isKurang: number;
+}) {
+    if (!info.adaDaftar) {
+        return <p className="fi-small fi-muted">Belum ada daftar item super untuk principal dan channel toko ini, jadi tidak ada penawaran yang perlu dicatat.</p>;
+    }
+    const baris = (s: SaranItem) => {
+        const j = jawaban[s.kodeBarang] ?? { ditawarkan: null, dipesan: null, alasan: "", catatan: "" };
+        const perluAlasan = j.ditawarkan === false || j.dipesan === false;
+        return (
+            <li key={s.kodeBarang} className="grid gap-2" style={{ borderBottom: "1px solid var(--line)", padding: "10px 0" }}>
+                <div className="min-w-0">
+                    <b className="fi-small" style={{ overflowWrap: "anywhere" }}>{s.namaBarang}</b>
+                    <span className="fi-codes">
+                        #{s.peringkat} · {s.kodeBarang}{s.kodeLain.length ? ` (+${s.kodeLain.length} varian)` : ""} · {s.terakhirDibeli
+                            ? `terakhir dibeli ${tanggalPanjang(s.terakhirDibeli)}` : "belum dibeli 3 bulan terakhir"}
+                    </span>
+                </div>
+                <YaTidak nama={`tawar-${s.kodeBarang}`} label="Ditawarkan?" nilai={j.ditawarkan} terkunci={terkunci} ubah={(v) => ubah(s.kodeBarang, { ditawarkan: v })} />
+                {j.ditawarkan && <YaTidak nama={`pesan-${s.kodeBarang}`} label="Dipesan toko?" nilai={j.dipesan} terkunci={terkunci} ubah={(v) => ubah(s.kodeBarang, { dipesan: v })} />}
+                {perluAlasan && (
+                    <FormField label={j.ditawarkan === false ? "Alasan tidak ditawarkan" : "Alasan tidak dipesan"} required error={!j.alasan ? "Pilih alasan" : undefined}>{(a) => (
+                        <select {...a} className="fi-input" value={j.alasan} disabled={terkunci} onChange={(e) => ubah(s.kodeBarang, { alasan: e.target.value })}>
+                            <option value="">Pilih alasan</option>
+                            {ALASAN_ITEM_SUPER.map((x) => <option key={x.kode} value={x.kode}>{x.label}</option>)}
+                        </select>
+                    )}</FormField>
+                )}
+                {perluAlasan && j.alasan === "LAINNYA" && (
+                    <FormField label="Catatan alasan" required error={j.catatan.trim().length < 5 ? "Tulis minimal 5 huruf" : undefined}>{(a) => (
+                        <input {...a} className="fi-input" value={j.catatan} maxLength={300} disabled={terkunci} onChange={(e) => ubah(s.kodeBarang, { catatan: e.target.value })} />
+                    )}</FormField>
+                )}
+            </li>
+        );
+    };
+    return (
+        <section className="fi-panel grid gap-2" aria-labelledby="judul-item-super">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="fi-title-3" id="judul-item-super">Item super</h2>
+                {info.wajib.length > 0 && <StatusBadge tone={isKurang ? "neu" : "pos"}>{info.wajib.length - isKurang} dari {info.wajib.length}</StatusBadge>}
+            </div>
+            <p className="fi-small fi-muted">
+                Tawarkan item super yang belum dibeli toko ini. Catat apakah ditawarkan dan dipesan; bila tidak dipesan, pilih alasannya.
+                {!info.riwayatTerbaca && " Riwayat beli toko sedang tidak terbaca, jadi saran diurut menurut peringkat saja."}
+            </p>
+            {info.wajib.length === 0
+                ? <MessageStrip tone="pos" title="Toko ini sudah membeli semua item super dalam 3 bulan terakhir.">Tidak ada penawaran wajib.</MessageStrip>
+                : <ul aria-label="Item super yang wajib ditawarkan" style={{ listStyle: "none", margin: 0, padding: 0 }}>{info.wajib.map(baris)}</ul>}
+            {info.lain.length > 0 && (
+                <details>
+                    <summary className="fi-small" style={{ minHeight: 44, display: "flex", alignItems: "center", cursor: "pointer" }}>
+                        Item super lain ({info.lain.length}) · sudah dibeli atau di luar 10 teratas · tidak wajib
+                    </summary>
+                    <ul aria-label="Item super lain" style={{ listStyle: "none", margin: 0, padding: 0 }}>{info.lain.map(baris)}</ul>
+                </details>
+            )}
+        </section>
+    );
 }

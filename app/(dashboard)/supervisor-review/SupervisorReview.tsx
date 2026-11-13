@@ -19,6 +19,7 @@ import type { BarisSalesman } from "@/lib/supervisor-review/kontrak";
 import { waktuWita } from "@/lib/tampil";
 import { angka, bacaSupervisorReview, KOLOM, kunciBaris, namaBaris, rp, tanggalPanjang, TANPA_RINCIAN } from "./bersama";
 import { DaftarKunjungan, KepalaSalesman, LabelStatus, Wa } from "./Rincian";
+import Kontrol from "./Kontrol";
 
 const Peta = dynamic(() => import("./Peta"), { ssr: false, loading: () => <Skeleton rows={3} label="Memuat peta" /> });
 
@@ -249,6 +250,8 @@ export default function SupervisorReview({ hariIni }: { hariIni: string }) {
             {kepala}
             {catatan}
             <div className={load.status === "memuat" ? "fi-busy grid gap-3" : "grid gap-3"} aria-busy={load.status === "memuat" || undefined}>{isi}</div>
+            {/* Owner 13 Nov 2026: kontrol JKS + item super sebulan berjalan (dimuat terpisah; ponsel: hanya di daftar, bukan di rincian salesman). */}
+            {(desktop || !terpilih) && <Kontrol tanggal={tanggal} cabang={cabang} principle={principle} />}
         </div>
     );
 }
