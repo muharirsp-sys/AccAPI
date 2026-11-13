@@ -542,7 +542,7 @@
       "lupa password"
     ],
     "question": "Bagaimana cara login?",
-    "answer": "Login dengan email dan password yang dibuatkan oleh admin.\n\n**Catatan penting:**\n- Sign-up dinonaktifkan: admin yang membuat akun\n- Email wajib diverifikasi sebelum login\n- Rate limit: 5 percobaan per 15 menit per IP\n- Password reset via email (berlaku 1 jam)\n\nHubungi admin jika lupa password atau butuh akun baru.",
+    "answer": "Login dengan email dan password yang dibuatkan oleh admin.\n\n**Catatan penting:**\n- Sign-up dinonaktifkan: admin yang membuat akun\n- Email wajib diverifikasi sebelum login\n- Rate limit: 30 percobaan per 15 menit per jaringan (IP), dihitung bersama untuk satu kantor; bila terblokir, halaman login menampilkan sisa menitnya\n- Password reset via email (berlaku 1 jam)\n\nHubungi admin jika lupa password atau butuh akun baru.",
     "links": [
       {
         "label": "Masuk",

@@ -19,11 +19,11 @@ async function buka(page: Page, url: string) {
 }
 
 /** Mock satu endpoint Better Auth; mengembalikan daftar request yang tertangkap. */
-async function mockAuth(page: Page, path: string, status: number, json: unknown) {
+async function mockAuth(page: Page, path: string, status: number, json: unknown, headers?: Record<string, string>) {
     const tertangkap: Request[] = [];
     await page.route(`**/api/auth/${path}`, (route) => {
         tertangkap.push(route.request());
-        return route.fulfill({ status, json });
+        return route.fulfill({ status, json, headers });
     });
     return tertangkap;
 }
@@ -107,7 +107,7 @@ test("masuk: galat generik tanpa teks server; 403 belum diverifikasi; 429 terlal
     const kasus = [
         [401, { code: "INVALID_EMAIL_OR_PASSWORD", message: "Invalid email or password RAHASIA-SERVER" }, "Email atau kata sandi salah."],
         [403, { code: "EMAIL_NOT_VERIFIED", message: "Email not verified" }, "Email belum diverifikasi."],
-        [429, { message: "Too many requests. Please try again later." }, "Terlalu banyak percobaan masuk."],
+        [429, { message: "Too many requests. Please try again later." }, "Terlalu banyak percobaan masuk dari jaringan ini."],
     ] as const;
     for (const [status, json, kalimat] of kasus) {
         await page.unrouteAll({ behavior: "wait" });
@@ -121,6 +121,23 @@ test("masuk: galat generik tanpa teks server; 403 belum diverifikasi; 429 terlal
         await expect(galat).toContainText(kalimat);
         await expect(page.locator(".fi-auth")).not.toContainText("RAHASIA-SERVER");
         await expect(page.locator(":focus")).toContainText(kalimat);
+    }
+});
+
+test("masuk 429: sisa menit dari header X-Retry-After; tanpa header kalimat umum", async ({ page }) => {
+    const kasus: [Record<string, string>, string][] = [
+        [{ "X-Retry-After": "130" }, "Coba lagi dalam 3 menit."],
+        [{}, "Coba lagi beberapa menit lagi."],
+    ];
+    for (const [headers, kalimat] of kasus) {
+        await page.unrouteAll({ behavior: "wait" });
+        await page.route("**/api/auth/**", (route) => route.fulfill({ status: 500, json: {} }));
+        await mockAuth(page, "sign-in/email", 429, { message: "Too many requests. Please try again later." }, headers);
+        await buka(page, "/login");
+        await page.getByLabel("Email").fill("andi@contoh.test");
+        await page.getByLabel("Kata sandi", { exact: true }).fill("salah-sekali");
+        await page.getByRole("button", { name: "Masuk", exact: true }).click();
+        await expect(kartu(page).getByRole("alert")).toContainText(kalimat);
     }
 });
 
