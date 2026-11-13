@@ -4,25 +4,34 @@ import { db } from "@/lib/db";
 import {
     jksMaster, aoControlDaily, noOrderReason,
     merchandisingCheck, salesmanDailyReport,
-    spvBriefing, smControl, kontrolAuditLog, salesProfile, kunjunganLuarRute, nooToko,
+    spvBriefing, smControl, kontrolAuditLog, salesProfile, kunjunganLuarRute, nooToko, tokoKoordinat, tawaranItemSuper,
 } from "@/db/schema";
 import { cocokKodeRute, type GalatOrder } from "@/lib/order-cabang";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
-import { DAY_TO_HARI, NO_ORDER_REASONS, hariBaku, kunciHari, kunciNama, paritasMinggu } from "./constants";
+import { DAY_TO_HARI, NO_ORDER_REASONS, POLA_JKS, frekuensiBawaan, hariBaku, kunciHari, kunciNama, polaBerlaku } from "./constants";
 import { isKodeNoo, type StatusNoo } from "./noo-aturan";
-import type { AoStatus, TodayRouteRow } from "./types";
+import type { AoStatus, MingguPattern, TodayRouteRow } from "./types";
 
-// Paritas minggu = paritasMinggu (constants.ts, acuan owner 12 Okt 2026), dihitung dari string tanggal WITA yang dikirim layar.
+// Pola minggu = polaBerlaku (constants.ts: paritas acuan owner 12 Okt 2026 + minggu siklus m1..m4 owner 13 Nov 2026), dari tanggal WITA layar.
 
 // FK-MSM butir 2: JKS dibandingkan lewat kunci hari (huruf besar tanpa spasi/tanda) dan pola minggu huruf kecil ter-trim, sehingga JKS lama
 // ("SENIN", " Senin ", "JUM'AT", "GENAP") terbaca tanpa unggah ulang. Kunci = kunciHari (constants.ts). ponytail: ekspresi tidak memakai
 // indeks (principle, hari_kunjungan); baris sudah disaring sales_code + principle lewat idx_jks_sales_principle.
-const kunciHariSql = sql`regexp_replace(upper(coalesce(${jksMaster.hariKunjungan}, '')), '[^A-Z]', '', 'g')`;
-const hariIni = (dayName: string) => sql`${kunciHariSql} = ${kunciHari(dayName)}`;
-const polaMinggu = (parity: "ganjil" | "genap") => sql`lower(trim(${jksMaster.mingguPattern})) in ('all', ${parity})`;
+// F8 (owner 13 Nov 2026): hari JKS boleh beberapa hari dipisah koma ("Senin, Kamis") → kunci per bagian (constants.ts daftarKunciHari).
+const kunciHariSql = sql`string_to_array(regexp_replace(upper(coalesce(${jksMaster.hariKunjungan}, '')), '[^A-Z,]', '', 'g'), ',')`;
+const hariIni = (dayName: string) => sql`${kunciHari(dayName)} = ANY(${kunciHariSql})`;
+/** Pola minggu yang berlaku pada tanggal WITA itu (constants.ts polaBerlaku: all + paritas + minggu siklus m1..m4). */
+const polaMinggu = (dateStr: string) => {
+    const [semua, paritas, siklus] = polaBerlaku(dateStr);
+    return sql`lower(trim(${jksMaster.mingguPattern})) in (${semua}, ${paritas}, ${siklus})`;
+};
 
 // FK-MSM butir 5: nama SPV/SM Hierarki dibandingkan sesudah trim + tanpa beda huruf (kunciNama, constants.ts); nama kosong tidak cocok apa pun.
 const samaNama = (kolom: AnyColumn, nama: string) => sql`upper(trim(${kolom})) = ${kunciNama(nama)}`;
+
+/** Keterangan JKS Web-LL kosong — untuk baris tiruan kunjungan luar rute (bukan baris jks_master). */
+const INFO_JKS_KOSONG = { urutan: null, kategori: null, kelasA: null, targetToko: null, omzetRata: null, statusJks: null, salesSebelum: null,
+    lokasiDari: null } as const;
 
 export function parseDateString(dateStr: string): Date {
     const [y, m, d] = dateStr.split("-").map(Number);
@@ -97,6 +106,9 @@ export async function upsertJksRows(rows: {
     market?: string; alamat?: string; kota?: string; hariKunjungan?: string;
     mingguPattern?: string; area?: string; rayon?: string; principle: string;
     channel?: string; visitFrequency?: number;
+    /** JKS Web-LL (lib/form-kontrol/jks-webll.ts); tidak ada = NULL (JKS berformat lama). */
+    urutan?: number | null; kategori?: string | null; kelasA?: boolean | null; targetToko?: number | null; omzetRata?: number | null;
+    statusJks?: string | null; salesSebelum?: string | null; lokasiDari?: string | null;
 }[], opsi: { ganti?: boolean } = {}) {
     const now = new Date();
     let imported = 0, skipped = 0;
@@ -116,8 +128,13 @@ export async function upsertJksRows(rows: {
         const hari = hariBaku(r.hariKunjungan);
         if (hari === null) { ditolak.push({ indeks, custCode: String(r.custCode), hari: String(r.hariKunjungan) }); continue; }
         const polaMasuk = String(r.mingguPattern ?? "").trim().toLowerCase();
-        const pattern = (["ganjil", "genap", "all"].includes(polaMasuk) ? polaMasuk : "all") as "ganjil" | "genap" | "all";
-        const freq = r.visitFrequency ?? (pattern === "all" ? 4 : 2);
+        const pattern = ((POLA_JKS as readonly string[]).includes(polaMasuk) ? polaMasuk : "all");
+        const freq = r.visitFrequency ?? frekuensiBawaan(pattern, hari);
+        // Keterangan Web-LL: baris berformat lama menulis NULL (unggah ulang format lama menghapus keterangan lama — sumbernya berkas itu).
+        const info = {
+            urutan: r.urutan ?? null, kategori: r.kategori ?? null, kelasA: r.kelasA ?? null, targetToko: r.targetToko ?? null,
+            omzetRata: r.omzetRata ?? null, statusJks: r.statusJks ?? null, salesSebelum: r.salesSebelum ?? null, lokasiDari: r.lokasiDari ?? null,
+        };
         await db.insert(jksMaster).values({
             id: randomUUID(), salesCode: r.salesCode, salesName: r.salesName,
             custCode: r.custCode, custName: r.custName, market: r.market ?? null,
@@ -125,7 +142,7 @@ export async function upsertJksRows(rows: {
             hariKunjungan: hari || null, mingguPattern: pattern,
             area: r.area ?? null, rayon: r.rayon ?? null, principle: r.principle,
             channel: r.channel ?? "TT", visitFrequency: freq,
-            isActive: true, createdAt: now, updatedAt: now,
+            isActive: true, createdAt: now, updatedAt: now, ...info,
         }).onConflictDoUpdate({
             target: [jksMaster.salesCode, jksMaster.custCode, jksMaster.principle],
             set: {
@@ -133,7 +150,7 @@ export async function upsertJksRows(rows: {
                 alamat: r.alamat ?? null, kota: r.kota ?? null,
                 hariKunjungan: hari || null, mingguPattern: pattern,
                 area: r.area ?? null, rayon: r.rayon ?? null, channel: r.channel ?? "TT",
-                visitFrequency: freq, isActive: true, updatedAt: now,
+                visitFrequency: freq, isActive: true, updatedAt: now, ...info,
             },
         });
         imported++;
@@ -172,6 +189,20 @@ export async function upsertJksRows(rows: {
     return { imported, skipped, ditolak, digantikan, dinonaktifkan, gantiBatal: false };
 }
 
+/**
+ * Titik GPS LAPANGAN dari berkas JKS Web-LL -> toko_koordinat, HANYA untuk toko yang belum berkoordinat (ON CONFLICT DO NOTHING): koordinat
+ * unggahan Admin (tab Koordinat Toko) tidak pernah ditimpa. Lokasi perkiraan tidak sampai ke sini (jks-webll.ts LOKASI_LAPANGAN).
+ */
+export async function isiKoordinatLapangan(titik: { custCode: string; lat: number; lng: number }[], oleh: string): Promise<number> {
+    let baru = 0;
+    for (let i = 0; i < titik.length; i += 500) {
+        const r = await db.insert(tokoKoordinat).values(titik.slice(i, i + 500).map((t) => ({ ...t, diperbaruiOleh: oleh })))
+            .onConflictDoNothing({ target: tokoKoordinat.custCode }).returning({ c: tokoKoordinat.custCode });
+        baru += r.length;
+    }
+    return baru;
+}
+
 // ── Today's route with AO status ──────────────────────────────────────────
 
 /**
@@ -181,7 +212,6 @@ export async function upsertJksRows(rows: {
 export async function getTodayRoute(salesCode: string, principle: string, dateStr: string): Promise<TodayRouteRow[]> {
     const date = parseDateString(dateStr);
     const dayName = DAY_TO_HARI[date.getDay()];
-    const parity = paritasMinggu(dateStr);
 
     const [jksDb, luar] = await Promise.all([
         dayName ? db.select().from(jksMaster).where(
@@ -189,7 +219,7 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
                 eq(jksMaster.salesCode, salesCode),
                 eq(jksMaster.principle, principle),
                 hariIni(dayName),
-                polaMinggu(parity),
+                polaMinggu(dateStr),
                 eq(jksMaster.isActive, true),
             )
         ) : Promise.resolve([]),
@@ -204,7 +234,7 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
     const jksRows: (typeof jksDb[number] & { luarRute?: boolean })[] = [...jksTampil, ...luar.filter((l) => !kodeJks.has(l.custCode)).map((l) => ({
         id: l.id, salesCode: l.salesCode, salesName: "", custCode: l.custCode, custName: l.custName, market: null, alamat: l.alamat, kota: null,
         hariKunjungan: null, mingguPattern: "all", area: null, rayon: null, principle: l.principle, channel: "", visitFrequency: 0,
-        isActive: true, createdAt: l.dibuatPada, updatedAt: l.dibuatPada, luarRute: true,
+        isActive: true, createdAt: l.dibuatPada, updatedAt: l.dibuatPada, luarRute: true, ...INFO_JKS_KOSONG,
     }))];
 
     if (jksRows.length === 0) return [];
@@ -266,7 +296,7 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
         const noo = nooMap.get(j.custCode);
         return {
             ...j,
-            mingguPattern: j.mingguPattern as "ganjil" | "genap" | "all",
+            mingguPattern: j.mingguPattern as MingguPattern,
             aoStatus: (ao?.status as AoStatus | undefined) ?? null,
             noOrderReasonCode: ao?.noOrderReasonCode ?? null,
             noOrderNote: ao?.noOrderNote ?? null,
@@ -311,7 +341,7 @@ async function galatBukanRute(q: Pick<typeof db, "select">, d: KunciKunjungan): 
     const hari = DAY_TO_HARI[parseDateString(d.date).getDay()];
     if (hari) {
         const [j] = await q.select({ id: jksMaster.id }).from(jksMaster).where(and(eq(jksMaster.salesCode, d.salesCode),
-            eq(jksMaster.principle, d.principle), eq(jksMaster.custCode, d.custCode), hariIni(hari), polaMinggu(paritasMinggu(d.date)),
+            eq(jksMaster.principle, d.principle), eq(jksMaster.custCode, d.custCode), hariIni(hari), polaMinggu(d.date),
             eq(jksMaster.isActive, true))).limit(1);
         if (j) return null;
     }
@@ -349,6 +379,11 @@ export function cekRuteKunjungan(d: KunciKunjungan): Promise<GalatOrder | null> 
 export async function upsertAoControl(data: KunciKunjungan & {
     status: AoStatus; isVisited?: boolean; noOrderReasonCode?: string | null;
     noOrderNote?: string | null; createdBy?: string;
+    /**
+     * Dua tipe sales (owner 13 Nov 2026): nomor order di SISTEM PRINCIPAL untuk salesman `sumber_order = principal`, disimpan di kolom
+     * ao_control_daily.invoice_number (sebelumnya tidak dipakai). undefined = tidak diubah; status selain ORDER mengosongkannya.
+     */
+    nomorOrderPrincipal?: string | null;
 }): Promise<HasilTulisKunjungan> {
     const now = new Date();
     const [yearStr] = data.date.split("-");
@@ -361,6 +396,8 @@ export async function upsertAoControl(data: KunciKunjungan & {
         // Peninjau A R-2: satu INSERT … ON CONFLICT (idx_ao_unique), bukan SELECT lalu INSERT — check-in + status serentak pada toko tanpa
         // baris AO dulu berakhir 23505 → 500. Yang diperbarui hanya kolom STATUS; check-in/check-out tidak disentuh; is_visited tanpa nilai
         // = tetap (dulu ditimpa null sesudah check-in menulis true).
+        const order = data.status === "ordered" || data.status === "active";
+        const nomor = !order ? null : data.nomorOrderPrincipal === undefined ? undefined : (data.nomorOrderPrincipal?.trim() || null);
         const [row] = await tx.insert(aoControlDaily).values({
             id: randomUUID(), salesCode: data.salesCode, custCode: data.custCode,
             principle: data.principle, date: data.date,
@@ -368,6 +405,7 @@ export async function upsertAoControl(data: KunciKunjungan & {
             status: data.status, isVisited: data.isVisited ?? null,
             noOrderReasonCode: data.noOrderReasonCode ?? null,
             noOrderNote: data.noOrderNote ?? null,
+            invoiceNumber: nomor ?? null,
             autoMatched: false, source: "manual",
             createdBy: data.createdBy ?? null,
             createdAt: now, updatedAt: now,
@@ -376,6 +414,7 @@ export async function upsertAoControl(data: KunciKunjungan & {
             isVisited: sql`coalesce(excluded.is_visited, ao_control_daily.is_visited)`,
             noOrderReasonCode: data.noOrderReasonCode ?? null,
             noOrderNote: data.noOrderNote ?? null,
+            ...(nomor === undefined ? {} : { invoiceNumber: nomor }),
             updatedAt: now,
         } }).returning({ id: aoControlDaily.id });
         return { id: row.id };
@@ -409,6 +448,9 @@ export async function saveMerchandising(data: KunciKunjungan & {
     produkJelas: boolean; displayRapi: boolean; dibersihkan: boolean;
     ditataulang: boolean; posisiMudah: boolean; semuaSku: boolean;
     photoUrl?: string | null; stepPhotos?: Record<string, string> | null; note?: string | null;
+    /** Penawaran item super (owner 13 Nov 2026) yang SUDAH diperiksa route (item-super.ts periksaTawaran); ditulis di transaksi yang sama. */
+    tawaran?: { kodeBarang: string; namaBarang: string; ditawarkan: boolean; dipesan: boolean | null; alasan: string | null; catatan: string | null }[];
+    dibuatOleh?: string;
 }): Promise<HasilTulisKunjungan> {
     const values = {
         produkJelas: data.produkJelas, displayRapi: data.displayRapi,
@@ -422,6 +464,14 @@ export async function saveMerchandising(data: KunciKunjungan & {
     return db.transaction(async (tx) => {
         const galat = await galatBukanRute(tx, data);
         if (galat) return { galat };
+        for (const t of data.tawaran ?? []) {
+            const isi = { namaBarang: t.namaBarang, ditawarkan: t.ditawarkan, dipesan: t.dipesan, alasan: t.alasan, catatan: t.catatan,
+                dibuatOleh: data.dibuatOleh ?? "", diperbaruiPada: new Date() };
+            await tx.insert(tawaranItemSuper).values({ id: randomUUID(), salesCode: data.salesCode, custCode: data.custCode, principle: data.principle,
+                tanggal: data.date, kodeBarang: t.kodeBarang, ...isi })
+                .onConflictDoUpdate({ target: [tawaranItemSuper.salesCode, tawaranItemSuper.custCode, tawaranItemSuper.principle, tawaranItemSuper.tanggal,
+                    tawaranItemSuper.kodeBarang], set: isi });
+        }
         const existing = await tx.select({ id: merchandisingCheck.id })
             .from(merchandisingCheck)
             .where(and(
@@ -480,12 +530,11 @@ async function computeReportSummary(salesCode: string, dateStr: string) {
     const dayName = DAY_TO_HARI[date.getDay()];
     let totalTokoJks = aoRows.length;
     if (dayName) {
-        const parity = paritasMinggu(dateStr);
         const cnt = await db.select({ count: sql<number>`count(*)` }).from(jksMaster).where(
             and(
                 eq(jksMaster.salesCode, salesCode),
                 hariIni(dayName),
-                polaMinggu(parity),
+                polaMinggu(dateStr),
                 eq(jksMaster.isActive, true),
             )
         );
@@ -745,12 +794,12 @@ export async function getAllSalesProfiles() {
  * Hierarki boleh mengirim No HP saja). noHp sudah kanonik 08… (normalHp) atau null = hapus; CHECK sales_profile_no_hp menjaga di DB.
  */
 export async function updateSalesHierarchy(salesCode: string, spvName: string | null | undefined, smName: string | null | undefined,
-    noHp?: string | null): Promise<boolean> {
+    noHp?: string | null, sumberOrder?: "accapi" | "principal"): Promise<boolean> {
     // Disimpan ter-trim (butir 5); isian bukan teks/kosong = null.
     const bersih = (v: unknown) => (typeof v === "string" ? v.trim() : "") || null;
     const ditulis = await db.update(salesProfile)
         .set({ ...(spvName !== undefined && { spvName: bersih(spvName) }), ...(smName !== undefined && { smName: bersih(smName) }),
-            ...(noHp !== undefined && { noHp }), updatedAt: new Date() })
+            ...(noHp !== undefined && { noHp }), ...(sumberOrder !== undefined && { sumberOrder }), updatedAt: new Date() })
         .where(eq(salesProfile.salesCode, salesCode)).returning({ id: salesProfile.id });
     return ditulis.length > 0;
 }
@@ -856,13 +905,16 @@ export async function getVisitDetail(
                 eq(kunjunganLuarRute.principle, principle), eq(kunjunganLuarRute.tanggal, dateStr), isNull(kunjunganLuarRute.dibatalkanPada))).limit(1);
         if (l) store = { id: l.k.id, salesCode, salesName: l.salesName ?? "", custCode, custName: l.k.custName, market: null, alamat: l.k.alamat,
             kota: null, hariKunjungan: null, mingguPattern: "all", area: null, rayon: null, principle, channel: "", visitFrequency: 0, isActive: true,
-            createdAt: l.k.dibuatPada, updatedAt: l.k.dibuatPada, luarRute: true };
+            createdAt: l.k.dibuatPada, updatedAt: l.k.dibuatPada, luarRute: true, ...INFO_JKS_KOSONG };
     }
     if (!store) return null;
+    // Dua tipe sales (owner 13 Nov 2026): `principal` = order diinput di sistem principal → langkah Status meminta nomor order principal.
+    const [profil] = await db.select({ sumberOrder: salesProfile.sumberOrder }).from(salesProfile).where(eq(salesProfile.salesCode, salesCode)).limit(1);
     return {
         store,
         ao: aoRows[0] ?? null,
         merch: merchRows[0] ?? null,
+        sumberOrder: (profil?.sumberOrder === "principal" ? "principal" : "accapi") as "principal" | "accapi",
     };
 }
 

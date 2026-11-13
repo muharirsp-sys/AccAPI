@@ -4,7 +4,7 @@
  *   miliknya (hari + pola minggu) / tidak / nanti (tetap `menunggu`). Baris JKS hasil konfirmasi berkode pelanggan Accurate LENGKAP.
  * Caller: app/api/form-kontrol/luar-rute/route.ts (GET daftar, POST tambah), app/api/form-kontrol/luar-rute/konfirmasi/route.ts.
  * Dependensi: db (kunjungan_luar_rute, jks_master, ao_control_daily, sales_profile, kontrol_audit_log), lib/order-cabang (cocokKodeRute,
- *   GalatOrder), ./constants (kunciHari, hariBaku, MINGGU_PATTERNS, DAY_TO_HARI, paritasMinggu), ./db (parseDateString).
+ *   GalatOrder), ./constants (hariBaku, HARI_KUNJUNGAN, MINGGU_PATTERNS, terjadwalPada).
  * Main Functions: periksaKeputusan (murni; kodeJksUntuk di ./constants agar dipakai layar); tambahLuarRute, daftarLuarRute, konfirmasiLuarRute,
  *   batalLuarRute (DB).
  * Side Effects: INSERT/UPDATE kunjungan_luar_rute, INSERT/UPDATE jks_master (konfirmasi), INSERT kontrol_audit_log. Tidak pernah DELETE: "Batalkan"
@@ -17,8 +17,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { aoControlDaily, jksMaster, kontrolAuditLog, kunjunganLuarRute, merchandisingCheck, salesProfile } from "@/db/schema";
 import { cocokKodeRute, type GalatOrder } from "@/lib/order-cabang";
-import { DAY_TO_HARI, MINGGU_PATTERNS, hariBaku, kodeJksUntuk, kunciHari, paritasMinggu } from "./constants";
-import { parseDateString } from "./db";
+import { HARI_KUNJUNGAN, MINGGU_PATTERNS, hariBaku, kodeJksUntuk, terjadwalPada } from "./constants";
 import { POLA_KODE_NOO, isKodeNoo } from "./noo-aturan";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 
@@ -32,13 +31,15 @@ export function periksaKeputusan(body: Record<string, unknown>): Keputusan | { e
     if (body.keputusan === "tidak") return { keputusan: "tidak" };
     if (body.keputusan !== "jks") return { error: "Pilih: masukkan ke JKS, atau jangan masukkan JKS." };
     const hari = hariBaku(body.hari);
-    if (!hari) return { error: "Pilih hari kunjungan Senin–Sabtu." };
+    // Satu hari saja (CHECK kunjungan_luar_rute_jadwal); hariBaku juga menerima beberapa hari (F8 unggahan JKS).
+    if (!hari || !(HARI_KUNJUNGAN as readonly string[]).includes(hari)) return { error: "Pilih hari kunjungan Senin–Sabtu." };
     const minggu = String(body.mingguPattern ?? "").trim().toLowerCase();
     if (!(MINGGU_PATTERNS as readonly string[]).includes(minggu)) return { error: "Pilih minggu: ganjil, genap, atau setiap minggu." };
     return { keputusan: "jks", hari, minggu: minggu as Minggu };
 }
 
-const labelMinggu = (m: string | null | undefined) => (m === "all" ? "setiap minggu" : m === "ganjil" ? "minggu ganjil" : m === "genap" ? "minggu genap" : m || "minggu belum diisi");
+const labelMinggu = (m: string | null | undefined) => (m === "all" ? "setiap minggu" : m === "ganjil" ? "minggu ganjil" : m === "genap" ? "minggu genap"
+    : /^m[1-4]$/.test(m ?? "") ? `minggu ke-${m!.slice(1)} siklus (${m!.toUpperCase()})` : m || "minggu belum diisi");
 const jadwal = (j: { hariKunjungan: string | null; mingguPattern: string | null }) => `${j.hariKunjungan || "hari belum diisi"} · ${labelMinggu(j.mingguPattern)}`;
 const galat = (status: number, kode: string, error: string): { galat: GalatOrder } => ({ galat: { status, kode, error } });
 const kodeBesar = sql`upper(trim(${jksMaster.custCode}))`;
@@ -83,12 +84,8 @@ export async function tambahLuarRute(d: {
     aktorId: string; aktorNama: string | null;
 }): Promise<{ row: BarisLuarRute; baru: boolean } | { galat: GalatOrder }> {
     const milik = await jksMilik(d.salesCode, d.principle, d.pelanggan.customerNo);
-    const tgl = parseDateString(d.tanggal);
-    const hari = DAY_TO_HARI[tgl.getDay()];
-    const paritas = paritasMinggu(d.tanggal);
-    // Sama dengan saringan SQL rute (db.ts hariIni/polaMinggu): kunci hari + pola minggu huruf kecil ter-trim.
-    const diRute = hari ? milik.find((j) => kunciHari(j.hariKunjungan) === kunciHari(hari)
-        && ["all", paritas].includes(String(j.mingguPattern ?? "").trim().toLowerCase())) : undefined;
+    // Sama dengan saringan SQL rute (db.ts hariIni/polaMinggu): constants.ts terjadwalPada (hari F8 + pola minggu siklus).
+    const diRute = milik.find(terjadwalPada(d.tanggal));
     if (diRute) {
         return galat(409, "SUDAH_DI_RUTE", `${d.pelanggan.name} (${diRute.custCode}) sudah ada di rute Anda hari ini. Buka dari daftar Toko di rute, tidak perlu ditambah.`);
     }

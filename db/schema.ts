@@ -1369,10 +1369,15 @@ export const salesProfile = pgTable("sales_profile", {
     // Supervisor Review (owner 16 Okt 2026): No HP salesman untuk tombol WhatsApp (wa.me). Bentuk kanonik 08… sama dengan NOO (normalHp,
     // lib/form-kontrol/noo-aturan.ts); diisi Admin di tab Hierarki. DDL: docs/handover/DDL_SUPERVISOR_REVIEW.sql.
     noHp: text("no_hp"),
+    // Dua tipe sales (owner 13 Nov 2026; 0041): `accapi` = order diinput di AccAPI/Accurate (faktur hari itu = bukti order); `principal` =
+    // order diinput di sistem principal (faktur masuk Accurate SESUDAH admin menarik laporan principal, H+1 atau lebih) — Form Kontrol
+    // meminta nomor order principal dan Supervisor Review memantau order yang belum berfaktur. Diatur Admin di tab Hierarki.
+    sumberOrder: text("sumber_order").notNull().default("accapi"),
 }, (t) => ({
     codeIdx: index("idx_sales_profile_code").on(t.salesCode),
     userIdx: index("idx_sales_profile_user").on(t.userId),
     noHpSah: check("sales_profile_no_hp", sql`${t.noHp} ~ '^08[1-9][0-9]{7,10}$'`),
+    sumberOrderSah: check("sales_profile_sumber_order", sql`${t.sumberOrder} IN ('accapi', 'principal')`),
 }));
 
 /**
@@ -1629,6 +1634,17 @@ export const jksMaster = pgTable("jks_master", {
     isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at").notNull(),
     updatedAt: timestamp("updated_at").notNull(),
+    // JKS Web-LL (owner 13 Nov 2026; db/migrations/0041_jks_item_super.sql): keterangan per toko dari berkas JKS hasil hitung — semua NULL
+    // untuk JKS berformat lama. urutan = urutan kunjungan hari itu; kategori AKTIF | OUTLET BARU | OUTLET POTENSI; statusJks TETAP |
+    // PINDAH SALES | BARU DITUGASKAN (salesSebelum = sales nota terakhir); lokasiDari = sumber titik (GPS lapangan / perkiraan ...).
+    urutan: integer("urutan"),
+    kategori: text("kategori"),
+    kelasA: boolean("kelas_a"),
+    targetToko: numeric("target_toko", { precision: 18, scale: 2, mode: "number" }),
+    omzetRata: numeric("omzet_rata", { precision: 18, scale: 2, mode: "number" }),
+    statusJks: text("status_jks"),
+    salesSebelum: text("sales_sebelum"),
+    lokasiDari: text("lokasi_dari"),
 }, (t) => ({
     salesPrincipleIdx: index("idx_jks_sales_principle").on(t.salesCode, t.principle),
     custCodeIdx: index("idx_jks_cust_code").on(t.custCode),
@@ -1832,6 +1848,61 @@ export const aoControlDaily = pgTable("ao_control_daily", {
     statusIdx: index("idx_ao_status").on(t.status),
     uniqueEntry: uniqueIndex("idx_ao_unique").on(t.salesCode, t.custCode, t.principle, t.date),
 }));
+
+/**
+ * Item Super (owner 13 Nov 2026; 0041): item yang membentuk 80% omzet rata-rata/bulan per principal × channel (berkas "Item Super per Channel
+ * per Principal"), plus daftar khusus sales MT (`salesCode` terisi). Satu baris = satu SARAN: varian bertiga belas digit sama / kode digabung
+ * di berkas DIGABUNG (owner: "gabung jadi satu saran") — kode utama = omzet terbesar, varian di `kodeLain`. Unggah menggantikan seluruh
+ * baris principal itu (DELETE + INSERT satu transaksi).
+ */
+export const itemSuper = pgTable("item_super", {
+    id: text("id").primaryKey(),
+    principle: text("principle").notNull(),
+    channel: text("channel").notNull(),
+    /** "" = semua sales channel itu; terisi = daftar MT khusus salesman ini. */
+    salesCode: text("sales_code").notNull().default(""),
+    kodeBarang: text("kode_barang").notNull(),
+    kodeLain: text("kode_lain").array().notNull().default(sql`'{}'::text[]`),
+    namaBarang: text("nama_barang").notNull(),
+    peringkat: integer("peringkat").notNull(),
+    kontribusi: numeric("kontribusi", { precision: 9, scale: 6, mode: "number" }),
+    omzetRata: numeric("omzet_rata", { precision: 18, scale: 2, mode: "number" }),
+    jumlahToko: integer("jumlah_toko"),
+    periode: text("periode").notNull(),
+    diunggahOleh: text("diunggah_oleh").notNull(),
+    diunggahPada: timestamp("diunggah_pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    uniqueIndex("idx_item_super_unik").on(t.principle, t.channel, t.salesCode, t.kodeBarang),
+    check("item_super_channel", sql`${t.channel} IN ('GT', 'MT', 'NKA')`),
+]);
+
+/**
+ * Penawaran item super per kunjungan (owner 13 Nov 2026; 0041): langkah Merchandising mencatat tiap saran — ditawarkan atau tidak, dipesan
+ * atau tidak, dan ALASAN bila tidak dipesan (termasuk tidak ditawarkan). Kunci = kunjungan (sales, toko, principal, tanggal) + kode saran.
+ */
+export const tawaranItemSuper = pgTable("tawaran_item_super", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    custCode: text("cust_code").notNull(),
+    principle: text("principle").notNull(),
+    /** YYYY-MM-DD WITA, sama dengan ao_control_daily.date. */
+    tanggal: text("tanggal").notNull(),
+    kodeBarang: text("kode_barang").notNull(),
+    namaBarang: text("nama_barang").notNull(),
+    ditawarkan: boolean("ditawarkan").notNull(),
+    /** null bila tidak ditawarkan. */
+    dipesan: boolean("dipesan"),
+    /** Kode ALASAN_ITEM_SUPER (lib/form-kontrol/item-super.ts); wajib bila tidak dipesan. */
+    alasan: text("alasan"),
+    catatan: text("catatan"),
+    dibuatOleh: text("dibuat_oleh").notNull(),
+    diperbaruiPada: timestamp("diperbarui_pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    uniqueIndex("idx_tis_unik").on(t.salesCode, t.custCode, t.principle, t.tanggal, t.kodeBarang),
+    index("idx_tis_sales_tanggal").on(t.salesCode, t.tanggal),
+    check("tawaran_item_super_isi", sql`(${t.ditawarkan} AND ${t.dipesan} IS NOT NULL) OR (NOT ${t.ditawarkan} AND ${t.dipesan} IS NULL)`),
+    check("tawaran_item_super_alasan", sql`${t.dipesan} IS TRUE OR ${t.alasan} IS NOT NULL`),
+]);
 
 export const merchandisingCheck = pgTable("merchandising_check", {
     id: text("id").primaryKey(),

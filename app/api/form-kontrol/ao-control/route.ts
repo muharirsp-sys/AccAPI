@@ -82,6 +82,9 @@ export async function POST(req: Request) {
             salesCode, custCode, principle, date,
             status: status as AoStatus,
             isVisited, noOrderReasonCode: reasonCode, noOrderNote,
+            // Sales tipe principal (owner 13 Nov 2026): nomor order di sistem principal (teks bebas ≤ 60); tidak dikirim = tidak diubah.
+            nomorOrderPrincipal: typeof body.nomorOrderPrincipal === "string" ? body.nomorOrderPrincipal.slice(0, 60)
+                : body.nomorOrderPrincipal === null ? null : undefined,
             createdBy: session.user.id, penulis: { pemilik: scope.salesCode === salesCode, hariIni: witaToday() },
         });
         if ("galat" in hasil) return jawabGalat(hasil.galat);

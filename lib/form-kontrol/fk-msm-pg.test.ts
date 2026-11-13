@@ -73,6 +73,8 @@ before(async () => {
     await pool.query(await readFile(new URL("../../db/migrations/0034_kunjungan_luar_rute.sql", import.meta.url), "utf8"));
     // Supervisor Review (SR-1): sales_profile.no_hp — Drizzle memilih semua kolom sales_profile.
     await pool.query(await readFile(new URL("../../db/migrations/0036_supervisor_review.sql", import.meta.url), "utf8"));
+    // JKS Web-LL + Item Super (owner 13 Nov 2026): kolom baru jks_master/sales_profile + tabel item super — Drizzle memilih semua kolom.
+    await pool.query(await readFile(new URL("../../db/migrations/0041_jks_item_super.sql", import.meta.url), "utf8"));
     const p = pool;
     await p.query(`INSERT INTO "user" (id, name, email, "emailVerified", role, "createdAt", "updatedAt") VALUES
         ('u-sla', 'Sales A', 'sla@uji.test', true, 'staff', now(), now()),

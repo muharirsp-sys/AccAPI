@@ -1,7 +1,8 @@
 import type { StatusNoo } from "./noo-aturan";
 
 export type AoStatus = "ordered" | "active" | "not_order" | "not_visited" | "priority";
-export type MingguPattern = "ganjil" | "genap" | "all";
+/** m1..m4 = satu minggu dalam siklus 4 minggu JKS Web-LL (toko F1; constants.ts mingguSiklus). */
+export type MingguPattern = "ganjil" | "genap" | "all" | "m1" | "m2" | "m3" | "m4";
 export type BriefingSession = "pagi" | "sore";
 
 export interface JksMasterRow {
@@ -21,6 +22,15 @@ export interface JksMasterRow {
     channel: string;
     visitFrequency: number;
     isActive: boolean;
+    /** JKS Web-LL (owner 13 Nov 2026); NULL = JKS berformat lama / kunjungan luar rute. */
+    urutan?: number | null;
+    kategori?: string | null;
+    kelasA?: boolean | null;
+    targetToko?: number | null;
+    omzetRata?: number | null;
+    statusJks?: string | null;
+    salesSebelum?: string | null;
+    lokasiDari?: string | null;
 }
 
 export interface AoControlRow {

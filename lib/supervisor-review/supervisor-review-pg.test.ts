@@ -92,6 +92,8 @@ before(async () => {
     pool = new Pool({ connectionString: urlSkema(), max: 3 });
     for (const f of ["0033_order_cabang", "0034_kunjungan_luar_rute", "0035_noo_toko"]) await pool.query(await berkas(`../../db/migrations/${f}.sql`));
     await pool.query(await berkas("../../docs/handover/DDL_SUPERVISOR_REVIEW.sql"));
+    // JKS Web-LL + Item Super (owner 13 Nov 2026): kolom baru jks_master/sales_profile + tabel item super — Drizzle memilih semua kolom.
+    await pool.query(await berkas("../../db/migrations/0041_jks_item_super.sql"));
     const p = pool;
     await p.query(`INSERT INTO "user" (id, name, email, "emailVerified", role, "createdAt", "updatedAt") VALUES
         ('u-spva', 'SPV A (SPV)', 'spva@uji.test', true, 'spv', now(), now()), ('u-spvx', 'SPV X (SPV)', 'spvx@uji.test', true, 'spv', now(), now()),
@@ -346,8 +348,9 @@ test("PG DDL_SUPERVISOR_REVIEW dua kali idempoten + VERIFIKASI (+ sabotase hak/C
         .filter((x) => ka.kol.some((k) => k.c === x.name)).map((x) => ({ c: x.name, tipe: norm(x.getSQLType()), wajib: x.notNull, bawaan: x.hasDefault }));
     assert.deepEqual(drizzle.sort((p, q) => p.c.localeCompare(q.c)), ka.kol.map((x) => ({ c: x.c, tipe: norm(String(x.tipe)), wajib: x.wajib,
         bawaan: x.bawaan !== null })).sort((p, q) => p.c.localeCompare(q.c)), "Drizzle = katalog");
+    // sales_profile_sumber_order = 0041 (JKS Web-LL + dua tipe sales, owner 13 Nov 2026), bukan bagian DDL ini.
     assert.deepEqual([...getTableConfig(tokoKoordinat).checks, ...getTableConfig(salesProfile).checks].map((x) => x.name).sort(),
-        ["sales_profile_no_hp", "toko_koordinat_wilayah"]);
+        ["sales_profile_no_hp", "sales_profile_sumber_order", "toko_koordinat_wilayah"]);
 
     const verif = ddl.slice(ddl.lastIndexOf("COMMIT;") + "COMMIT;".length);
     const k = await b.pool.connect();

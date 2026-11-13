@@ -22,8 +22,12 @@ import { normalHp } from "@/lib/form-kontrol/noo-aturan";
 import { KOSONG } from "@/lib/tampil";
 import { ambilFk, tulisFk, useIzinFk, type Scope } from "../shared";
 
-interface Profile { salesCode: string; salesName: string; principle: string; branch: string; spvName: string | null; smName: string | null; noHp?: string | null }
-type Edit = { spvName: string; smName: string; noHp: string };
+interface Profile { salesCode: string; salesName: string; principle: string; branch: string; spvName: string | null; smName: string | null; noHp?: string | null;
+    sumberOrder?: SumberOrder }
+/** Dua tipe sales (owner 13 Nov 2026): tempat salesman menginput order — menentukan langkah Status kunjungan dan kontrol di Supervisor Review. */
+type SumberOrder = "accapi" | "principal";
+const LABEL_SUMBER: Record<SumberOrder, string> = { accapi: "Input di AccAPI/Accurate", principal: "Input di sistem principal" };
+type Edit = { spvName: string; smName: string; noHp: string; sumberOrder: SumberOrder };
 type Data = { rows: Profile[]; spv: string[]; sm: string[] };
 const TANPA_SPV = "Belum diatur";
 const PERAN = ["spv", "sm"] as const;
@@ -47,11 +51,12 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
 
     const profiles = load.data?.rows ?? [];
     const opsi = { spv: load.data?.spv ?? [], sm: load.data?.sm ?? [] };
-    const nilai = (p: Profile): Edit => edits[p.salesCode] ?? { spvName: p.spvName ?? "", smName: p.smName ?? "", noHp: p.noHp ?? "" };
+    const nilai = (p: Profile): Edit => edits[p.salesCode] ?? { spvName: p.spvName ?? "", smName: p.smName ?? "", noHp: p.noHp ?? "", sumberOrder: p.sumberOrder ?? "accapi" };
+    const sumberBerubah = (p: Profile, e: Edit) => e.sumberOrder !== (p.sumberOrder ?? "accapi");
     // Nama dibandingkan lewat kunciNama (trim + tanpa beda huruf), sama dengan server: ejaan lama "adnan" yang disimpan server sebagai ejaan
     // akun "ADNAN" bukan perubahan (tanpa ini baris tetap "Draf" sesudah tersimpan).
     const noHpBerubah = (p: Profile, e: Edit) => hpKanonik(e.noHp) !== (p.noHp ?? "");
-    const berubah = (p: Profile) => { const e = edits[p.salesCode]; return Boolean(e) && (kunciNama(e.spvName) !== kunciNama(p.spvName) || kunciNama(e.smName) !== kunciNama(p.smName) || noHpBerubah(p, e)); };
+    const berubah = (p: Profile) => { const e = edits[p.salesCode]; return Boolean(e) && (kunciNama(e.spvName) !== kunciNama(p.spvName) || kunciNama(e.smName) !== kunciNama(p.smName) || noHpBerubah(p, e) || sumberBerubah(p, e)); };
     const nDraf = profiles.filter(berubah).length;
     useUnsavedGuard(nDraf > 0);
     const kunci = izin ?? (load.status !== "siap" ? "Tunggu daftar selesai dimuat ulang." : undefined);
@@ -88,7 +93,7 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                                 const e = nilai(p);
                                 const draf = berubah(p);
                                 return (
-                                    <li key={p.salesCode} className="grid items-end gap-3 border-t px-4 py-3 lg:grid-cols-[minmax(10rem,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" style={{ borderColor: "var(--line)" }}>
+                                    <li key={p.salesCode} className="grid items-end gap-3 border-t px-4 py-3 lg:grid-cols-[minmax(10rem,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" style={{ borderColor: "var(--line)" }}>
                                         <div className="min-w-0">
                                             <b className="fi-small">{p.salesName}</b>
                                             <span className="fi-codes">{p.salesCode} · {p.principle}</span>
@@ -111,6 +116,11 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                                         <FormField label={`No HP ${p.salesName}`}>{(a) => (
                                             <input {...a} className="fi-input" type="tel" inputMode="tel" autoComplete="off" placeholder="08…"
                                                 value={e.noHp} onChange={(ev) => ubah(p, { noHp: ev.target.value })} />
+                                        )}</FormField>
+                                        <FormField label={`Tipe input order ${p.salesName}`}>{(a) => (
+                                            <select {...a} className="fi-input" value={e.sumberOrder} onChange={(ev) => ubah(p, { sumberOrder: ev.target.value as SumberOrder })}>
+                                                {(Object.keys(LABEL_SUMBER) as SumberOrder[]).map((s) => <option key={s} value={s}>{LABEL_SUMBER[s]}</option>)}
+                                            </select>
                                         )}</FormField>
                                         <Button variant={draf ? "primary" : "secondary"} icon={<Save className="fi-icon" aria-hidden />}
                                             disabled={!draf || Boolean(kunci)} disabledReason={kunci ?? "Belum ada perubahan"} onClick={() => setSimpan(p)}>
@@ -142,7 +152,7 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                 <span className="fi-spacer" />
                 <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang}>Muat ulang</Button>
             </div>
-            <p className="fi-small fi-muted">SPV dan SM tiap salesman menentukan siapa yang bisa melihat data siapa (Dashboard SPV, Kontrol SM, cakupan Form Kontrol). Pilihan = nama akun SPV/SM aktif; akun dibuat di menu User dan Izin.</p>
+            <p className="fi-small fi-muted">SPV dan SM tiap salesman menentukan siapa yang bisa melihat data siapa (Dashboard SPV, Kontrol SM, cakupan Form Kontrol). Pilihan = nama akun SPV/SM aktif; akun dibuat di menu User dan Izin. Tipe input order: salesman yang menginput order di sistem principal diminta nomor order principal saat kunjungan, dan Supervisor Review memantau order mereka yang belum masuk faktur Accurate.</p>
             {kunci && <p className="fi-small fi-why">{kunci}</p>}
             {sukses && <MessageStrip tone="pos" title={sukses} onClose={() => setSukses("")} />}
             {isi}
@@ -156,6 +166,7 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                     ["SPV", `${simpan.spvName ?? KOSONG} → ${target.spvName.trim() || KOSONG}`],
                     ["SM", `${simpan.smName ?? KOSONG} → ${target.smName.trim() || KOSONG}`],
                     ...(noHpBerubah(simpan, target) ? [["No HP", `${simpan.noHp ?? KOSONG} → ${target.noHp.trim() || KOSONG}`] as [string, string]] : []),
+                    ...(sumberBerubah(simpan, target) ? [["Tipe input order", `${LABEL_SUMBER[simpan.sumberOrder ?? "accapi"]} → ${LABEL_SUMBER[target.sumberOrder]}`] as [string, string]] : []),
                 ] : []}
                 confirmLabel="Simpan hierarki"
                 confirmDisabled={kunci}
@@ -164,11 +175,13 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                     const e = nilai(p);
                     const gagal = "Hierarki belum tersimpan.";
                     const hp = noHpBerubah(p, e);
+                    const sumber = sumberBerubah(p, e);
                     try {
                         await tulisFk("/api/form-kontrol/sales-profiles", {
                             method: "PUT",
                             // noHp hanya dikirim bila diubah: menyimpan SPV/SM tidak menyentuh nomor; "" = hapus (server: null).
-                            body: { salesCode: p.salesCode, spvName: e.spvName.trim() || null, smName: e.smName.trim() || null, ...(hp ? { noHp: e.noHp.trim() || null } : {}) },
+                            body: { salesCode: p.salesCode, spvName: e.spvName.trim() || null, smName: e.smName.trim() || null, ...(hp ? { noHp: e.noHp.trim() || null } : {}),
+                                ...(sumber ? { sumberOrder: e.sumberOrder } : {}) },
                             gagal,
                         });
                     } catch (err) {
