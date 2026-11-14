@@ -50,6 +50,8 @@ type Opsi = {
     scope?: unknown; rute?: unknown[]; ruteGagal?: "500" | "putus";
     visit?: { store: unknown; ao: unknown; merch: unknown } | "404";
     merchGagal?: number; checkoutGagal?: number; uploadPutus?: boolean; tundaPostMs?: number;
+    /** Owner 14 Nov 2026: check-in di luar radius titik toko — tanpa alasan 409 DI_LUAR_RADIUS, dengan alasan = tersimpan + diajukan ke IT. */
+    checkinLuarRadius?: boolean;
     /** Tanggal laporan yang sudah terkirim (server). */
     laporanTerkirim?: string[];
 };
@@ -84,6 +86,11 @@ async function mockFk(page: Page, opsi: Opsi) {
         }
         if (p === "merchandising" && opsi.merchGagal) { opsi.merchGagal--; return route.fulfill(json({ error: "Internal server error" }, 500)); }
         if (p === "checkout" && opsi.checkoutGagal) { opsi.checkoutGagal--; return route.fulfill(json({ error: "Internal server error" }, 500)); }
+        if (p === "checkin" && opsi.checkinLuarRadius) {
+            return route.fulfill(req.postDataJSON().alasanLuarRadius ? json({ success: true, id: "x", diajukanKeIt: true })
+                : json({ ok: false, kode: "DI_LUAR_RADIUS", jarakM: 85, radiusM: 20, statusTitik: "fix",
+                    error: "Lokasi check-in Anda ±85 m dari titik toko (batas 20 m untuk titik fix; akurasi GPS ±12 m). Pastikan Anda di depan toko lalu tekan Coba lagi, atau ajukan ke IT dengan alasan bila titik toko memang keliru." }, 409));
+        }
         if (req.method() === "POST" && opsi.tundaPostMs) await new Promise((r) => setTimeout(r, opsi.tundaPostMs));
         if (p === "reports" && req.method() === "GET") {
             const terkirim = (opsi.laporanTerkirim ?? []).includes(url.searchParams.get("date") ?? "");
@@ -167,7 +174,7 @@ test("Rute hari ini: kunjungan berjalan paling atas, hari order, tautan bertangg
     await expect(r.getByText(/4 hari order bulan ini/)).toBeVisible();
     await expect(r.getByText(/≥ 2× tidak order bulan ini/)).toBeVisible();
     await expect(r.getByText("2 dari 4 dikunjungi")).toBeVisible(); // TOKO A + TOKO D sudah check-in
-    await expect(daftar.getByRole("link", { name: /TOKO B/ })).toHaveAttribute("href", `/form-kontrol/visit/C-02?salesCode=S-01&principle=GODREJ&date=${HARI_INI}`);
+    await expect(daftar.getByRole("link", { name: /^(?!Buka peta|Cari di peta).*TOKO B/ })).toHaveAttribute("href", `/form-kontrol/visit/C-02?salesCode=S-01&principle=GODREJ&date=${HARI_INI}`);
     expect(m.baca.filter((u) => u.pathname.endsWith("/ao-control")).map((u) => u.searchParams.get("date"))).toContain(HARI_INI);
 
     await daftar.getByRole("button", { name: "Prioritas TOKO B" }).click();
@@ -264,7 +271,7 @@ test("Tanggal = WITA: 07.30 WITA (UTC masih kemarin) → rute, kirim status, lap
     await page.goto("/form-kontrol?tab=ao", NAV);
     const r = page.getByRole("region", { name: "Rute hari ini" });
     await expect(r.getByText("Jumat, 9 Okt 2026 · WITA")).toBeVisible(NAV);
-    await expect(r.getByRole("list", { name: "Toko di rute" }).getByRole("link", { name: /TOKO B/ })).toHaveAttribute("href", /&date=2026-10-09$/);
+    await expect(r.getByRole("list", { name: "Toko di rute" }).getByRole("link", { name: /^(?!Buka peta|Cari di peta).*TOKO B/ })).toHaveAttribute("href", /&date=2026-10-09$/);
     const tanggalGet = m.baca.filter((u) => u.pathname.endsWith("/ao-control")).map((u) => u.searchParams.get("date"));
     expect(tanggalGet.length).toBeGreaterThan(0);
     expect(new Set(tanggalGet)).toEqual(new Set(["2026-10-09"]));
@@ -357,7 +364,7 @@ test("Kunjungan: status tersimpan tampil lagi, Kembali di setiap langkah, galat 
     await simpan.click();
     await expect(langkah).toContainText("Check-out");
     const merch = postKe(m.tulis, "/merchandising");
-    expect(merch.at(-1)).toEqual({ salesCode: "S-01", custCode: "C-03", principle: "GODREJ", date: HARI_INI, produkJelas: true, displayRapi: true, dibersihkan: true, ditataulang: true, posisiMudah: true, semuaSku: true, stepPhotos: null, note: null });
+    expect(merch.at(-1)).toEqual({ salesCode: "S-01", custCode: "C-03", principle: "GODREJ", date: HARI_INI, produkJelas: true, displayRapi: true, dibersihkan: true, ditataulang: true, posisiMudah: true, semuaSku: true, stepPhotos: null, note: null, itemSuper: [] });
     await expect(main.getByText("TIDAK ORDER · R03 · Produk belum terpajang")).toBeVisible();
     // Kembali dari Check-out → Merchandising tersimpan (Lanjut tanpa kirim ulang).
     await main.getByRole("button", { name: "Kembali", exact: true }).click();
@@ -411,7 +418,9 @@ test("Kunjungan Toko tutup (R15, owner 8 Okt): merchandising dilewati, foto bukt
     await main.getByRole("button", { name: "Coba lagi" }).click();
     await expect(main.getByRole("status").filter({ hasText: "Kunjungan selesai." })).toBeVisible();
     await expect(main.getByText("Dilewati (toko tutup) · foto bukti tersimpan")).toBeVisible();
-    const checkout = { salesCode: "S-01", custCode: "C-03", principle: "GODREJ", date: HARI_INI, photoUrl: "/api/uploads/form-kontrol/baru.jpg" };
+    // Owner 14 Nov 2026: GPS wajib saat check-out juga — titik ikut terkirim.
+    const checkout = expect.objectContaining({ salesCode: "S-01", custCode: "C-03", principle: "GODREJ", date: HARI_INI, photoUrl: "/api/uploads/form-kontrol/baru.jpg",
+        lat: -5.147665, lng: 119.432732 });
     expect(postKe(m.tulis, "/checkout")).toEqual([checkout, checkout]);
     expect(m.unggah()).toBe(1); // Coba lagi memakai url unggahan yang sama
     expect(postKe(m.tulis, "/merchandising")).toHaveLength(0);
@@ -461,6 +470,36 @@ test("Kunjungan tanpa sinyal: foto check-in tetap di layar, langkah tidak maju, 
     const fd = m.tulis.find((r) => r.url().endsWith("/api/upload/form-kontrol"))!.postData() ?? "";
     expect(fd).toContain('name="salesName"');
     expect(fd).toContain('name="lat"');
+});
+
+test("Kunjungan di luar radius titik toko (owner 14 Nov 2026): jarak tampil, Coba lagi membaca GPS ulang, Ajukan ke IT butuh alasan lalu lanjut", async ({ page }) => {
+    const opsi: Opsi = { visit: { store: STORE, ao: null, merch: null, titik: { lat: -5.1470, lng: 119.4327, status: "fix" } } as Opsi["visit"], checkinLuarRadius: true };
+    const m = await mockFk(page, opsi);
+    await page.goto(`/form-kontrol/visit/C-03?salesCode=S-01&principle=GODREJ&date=${HARI_INI}`, NAV);
+    const main = page.locator("main");
+    const langkah = main.getByRole("list", { name: "Langkah kunjungan" }).locator('[aria-current="step"]');
+    await expect(main.getByText(/harus dalam 20 m dari titik toko \(titik fix\)/)).toBeVisible(NAV);
+    await main.getByRole("button", { name: "Ambil foto check-in" }).click();
+    const kamera = page.getByRole("dialog", { name: "Foto Bukti Kunjungan" });
+    await kamera.locator('input[type="file"]').setInputFiles({ name: "toko.png", mimeType: "image/png", buffer: PNG });
+    await kamera.getByRole("button", { name: /Gunakan/ }).click();
+    await expect(main.getByRole("alert")).toContainText("±85 m dari titik toko (batas 20 m");
+    await expect(langkah).toContainText("Check-in");
+    const ajukan = main.getByRole("button", { name: "Ajukan ke IT & lanjutkan" });
+    await expect(ajukan).toBeDisabled();
+    // Coba lagi = kirim ulang (GPS dibaca ulang), masih di luar radius.
+    await main.getByRole("button", { name: "Coba lagi" }).click();
+    await expect(main.getByRole("alert")).toContainText("±85 m");
+    expect(postKe(m.tulis, "/checkin")).toHaveLength(2);
+    await main.getByLabel(/Alasan untuk IT/).fill("titik toko di peta salah, toko di belakang pasar");
+    await ajukan.click();
+    await expect(langkah).toContainText("Status");
+    await expect(main.getByRole("status").filter({ hasText: "Diajukan ke IT." })).toContainText("Lokasi check-in Anda di luar radius titik toko");
+    const ci = postKe(m.tulis, "/checkin");
+    expect(ci).toHaveLength(3);
+    expect(ci[0].alasanLuarRadius).toBeUndefined();
+    expect(ci[2]).toEqual(expect.objectContaining({ alasanLuarRadius: "titik toko di peta salah, toko di belakang pasar", lat: -5.147665, lng: 119.432732 }));
+    expect(m.unggah()).toBe(1); // foto diunggah sekali; pengajuan memakai url yang sama
 });
 
 test("Akun form_kontrol.view tanpa submit: tombol tulis nonaktif dengan alasan, tidak disembunyikan", async ({ page }) => {

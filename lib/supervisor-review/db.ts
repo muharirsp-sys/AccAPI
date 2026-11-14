@@ -9,7 +9,7 @@
  */
 import { and, eq, inArray, isNull, like, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { accurateEmployee, aoControlDaily, branch, customer, jksMaster, kunjunganLuarRute, nooToko, salesInvoiceCache, salesProfile,
+import { accurateEmployee, aoControlDaily, branch, customer, jksMaster, kunjunganLuarRute, nooToko, pengajuanLokasi, salesInvoiceCache, salesProfile,
     tokoKoordinat } from "@/db/schema";
 import { muatPetaOrang } from "@/lib/kasir/hari";
 import { orangDariSalesmanId } from "@/lib/kasir/rekonsiliasi";
@@ -78,11 +78,12 @@ export async function muatSupervisorReview(scope: UserScope, opsi: { tanggal: st
 
     const daftarKode = [...kode];
     const ada = daftarKode.length > 0;
-    const [jks, ao, luarRute, noo, koordinat] = await Promise.all([
+    const [jks, ao, luarRute, noo, koordinat, ajuan] = await Promise.all([
         ada ? db.select({ salesCode: jksMaster.salesCode, custCode: jksMaster.custCode, custName: jksMaster.custName, hariKunjungan: jksMaster.hariKunjungan,
             mingguPattern: jksMaster.mingguPattern }).from(jksMaster).where(and(eq(jksMaster.isActive, true), inArray(jksMaster.salesCode, daftarKode))) : [],
         ada ? db.select({ salesCode: aoControlDaily.salesCode, custCode: aoControlDaily.custCode, status: aoControlDaily.status,
-            checkinAt: aoControlDaily.checkinAt, checkoutAt: aoControlDaily.checkoutAt, lat: aoControlDaily.checkinLat, lng: aoControlDaily.checkinLng })
+            checkinAt: aoControlDaily.checkinAt, checkoutAt: aoControlDaily.checkoutAt, lat: aoControlDaily.checkinLat, lng: aoControlDaily.checkinLng,
+            latKeluar: aoControlDaily.checkoutLat, lngKeluar: aoControlDaily.checkoutLng })
             .from(aoControlDaily).where(and(eq(aoControlDaily.date, tanggal), inArray(aoControlDaily.salesCode, daftarKode))) : [],
         ada ? db.select({ salesCode: kunjunganLuarRute.salesCode, custCode: kunjunganLuarRute.custCode, custName: kunjunganLuarRute.custName })
             .from(kunjunganLuarRute).where(and(eq(kunjunganLuarRute.tanggal, tanggal), isNull(kunjunganLuarRute.dibatalkanPada),
@@ -90,9 +91,12 @@ export async function muatSupervisorReview(scope: UserScope, opsi: { tanggal: st
         ada ? db.select({ salesCode: nooToko.salesCode }).from(nooToko).where(and(eq(nooToko.tanggal, tanggal), inArray(nooToko.salesCode, daftarKode))) : [],
         // ponytail: seluruh toko_koordinat (≤ jumlah toko JKS, 3 kolom) — lebih murah daripada ribuan parameter kode; saring bila tabel membengkak.
         db.select({ custCode: tokoKoordinat.custCode, lat: tokoKoordinat.lat, lng: tokoKoordinat.lng }).from(tokoKoordinat),
+        // Pengajuan lokasi ke IT tanggal itu (owner 14 Nov 2026).
+        ada ? db.select({ salesCode: pengajuanLokasi.salesCode, custCode: pengajuanLokasi.custCode, status: pengajuanLokasi.status }).from(pengajuanLokasi)
+            .where(and(eq(pengajuanLokasi.tanggal, tanggal), inArray(pengajuanLokasi.salesCode, daftarKode))) : [],
     ]);
 
-    const hasil = hitungRingkasan({ tanggal, salesman: terpilih, jks, ao, luarRute, noo, faktur: fakturTampil,
+    const hasil = hitungRingkasan({ tanggal, salesman: terpilih, jks, ao, luarRute, noo, faktur: fakturTampil, ajuan,
         koordinat: new Map(koordinat.map((k) => [k.custCode, { lat: k.lat, lng: k.lng }])) });
     return {
         ...dasar, ...hasil,

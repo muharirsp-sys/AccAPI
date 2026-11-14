@@ -60,3 +60,33 @@ test("pindahan / potensi / kelas A sudah order (faktur atau ORDER dilaporkan); l
     assert.equal(s1.itemSuper.dipesan, 1);
     assert.deepEqual(s1.itemSuper.alasan.map((a) => [a.kode, a.jumlah]), [["HARGA", 2], ["TIDAK_SEMPAT", 1]]);
 });
+
+test("analisa kunjungan GPS (owner 14 Nov 2026): check-in/check-out jauh dari toko, tanpa GPS, rata-rata menit, singkat, rincian jauh", () => {
+    const t = (hhmm: string) => new Date(`2026-11-10T${hhmm}:00Z`);
+    const [s1] = hitungKontrol(dasar({
+        koordinat: new Map([["C-1", { lat: -5.1477, lng: 119.4327 }], ["C-2", { lat: -5.2, lng: 119.5 }]]),
+        ajuan: [{ salesCode: "S1", status: "menunggu" }, { salesCode: "S1", status: "ditolak" }, { salesCode: "S1", status: "disetujui" }, { salesCode: "S2", status: "menunggu" }],
+        ao: [
+            // C-1 dekat (±11 m) saat check-in dan check-out; 30 menit.
+            { salesCode: "S1", custCode: "C-1-KN", date: "2026-11-10", status: "ordered", nomorOrder: null, checkin: true,
+                checkinAt: t("01:00"), checkoutAt: t("01:30"), lat: -5.1477, lng: 119.4328, latKeluar: -5.1477, lngKeluar: 119.4328 },
+            // C-2 check-in ±1,5 km dari toko, check-out di toko; 3 menit (singkat).
+            { salesCode: "S1", custCode: "C-2", date: "2026-11-11", status: "not_order", nomorOrder: null, checkin: true,
+                checkinAt: t("02:00"), checkoutAt: t("02:03"), lat: -5.2, lng: 119.5135, latKeluar: -5.2, lngKeluar: 119.5 },
+            // Baris principal KEDUA toko C-1 hari yang sama = kunjungan yang SAMA (digabung seperti ringkasan harian), bukan kunjungan baru.
+            { salesCode: "S1", custCode: "C-1", date: "2026-11-10", status: "not_order", nomorOrder: null, checkin: true,
+                checkinAt: t("01:05"), checkoutAt: t("01:20"), lat: null, lng: null, latKeluar: -5.1477, lngKeluar: 119.4328 },
+            // Check-in tanpa GPS (baris lama), belum check-out.
+            { salesCode: "S1", custCode: "C-2", date: "2026-11-12", status: "not_order", nomorOrder: null, checkin: true,
+                checkinAt: t("03:00"), checkoutAt: null, lat: null, lng: null },
+            // Tanpa check-in = bukan kunjungan.
+            { salesCode: "S1", custCode: "C-1", date: "2026-11-12", status: "priority", nomorOrder: null, checkin: false, checkinAt: null },
+        ],
+    }));
+    assert.deepEqual(s1.gps, { kunjungan: 3, tanpaGps: 1, terukur: 2, masukJauh: 1, keluarJauh: 0, rataMenit: 17, singkat: 1, jauh: 1,
+        ajuanMenunggu: 1, ajuanDitolak: 1 });
+    assert.deepEqual(s1.kunjunganJauh.map((k) => [k.custCode, k.namaToko, k.tanggal, k.masukM !== null && k.masukM > 1_000, k.keluarM]),
+        [["C-2", "TOKO 2", "2026-11-11", true, 0]]);
+    const [tanpa] = hitungKontrol(dasar());
+    assert.deepEqual(tanpa.gps, { kunjungan: 0, tanpaGps: 0, terukur: 0, masukJauh: 0, keluarJauh: 0, rataMenit: null, singkat: 0, jauh: 0, ajuanMenunggu: 0, ajuanDitolak: 0 });
+});

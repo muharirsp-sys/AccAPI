@@ -105,6 +105,7 @@ before(async () => {
     await pool.query(await berkas("../../db/migrations/0036_supervisor_review.sql"));
     // JKS Web-LL + Item Super (owner 13 Nov 2026): kolom baru jks_master/sales_profile + tabel item super — Drizzle memilih semua kolom.
     await pool.query(await berkas("../../db/migrations/0041_jks_item_super.sql"));
+    await pool.query(await berkas("../../db/migrations/0042_gps_kunjungan.sql"));
     const p = pool;
     await p.query(`INSERT INTO "user" (id, name, email, "emailVerified", role, "createdAt", "updatedAt") VALUES
         ('u-sla', 'Sales A', 'sla@uji.test', true, 'staff', now(), now()),
@@ -192,7 +193,11 @@ test("butir 1: pelanggan cabang sendiri -> kunjungan HARI INI bertanda luar rute
     assert.equal(besok.status, 404, "luar rute hanya untuk tanggalnya");
     const ci = await jawab(await sebagai("u-sla", () => m.checkin.POST(req("/api/form-kontrol/checkin", "POST",
         { salesCode: "M-SLA", custCode: "C-100002-CBA", principle: "PRINCIPLE A", date: HARI_INI, photoUrl: "/api/uploads/form-kontrol/a.jpg" }))));
-    assert.equal(ci.status, 200);
+    // Owner 14 Nov 2026: GPS wajib saat check-in — tanpa titik = 400 GPS_WAJIB (sebelum pemeriksaan rute), tanpa baris AO.
+    assert.deepEqual([ci.status, ci.body.kode], [400, "GPS_WAJIB"]);
+    const ciGps = await jawab(await sebagai("u-sla", () => m.checkin.POST(req("/api/form-kontrol/checkin", "POST",
+        { salesCode: "M-SLA", custCode: "C-100002-CBA", principle: "PRINCIPLE A", date: HARI_INI, photoUrl: "/api/uploads/form-kontrol/a.jpg", lat: -5.1477, lng: 119.4327, accuracy: 12 }))));
+    assert.equal(ciGps.status, 200);
     const v2 = await jawab(await sebagai("u-sla", () => m.visit.GET(req(`/api/form-kontrol/visit?${q}`))));
     assert.ok((v2.body.ao as { checkinAt: string | null }).checkinAt, "check-in tercatat di ao_control_daily");
 });
@@ -369,7 +374,7 @@ test("Batalkan: hanya milik sendiri + hari ini + belum ada check-in/status/merch
     assert.deepEqual(kode(await batal("u-sla", "tidak-ada")), [404, "LUAR_RUTE_TIDAK_ADA"]);
     // Sudah check-in / status AO TANPA check-in / merchandising saja -> SUDAH_DIKUNJUNGI.
     assert.equal((await jawab(await sebagai("u-sla", () => m.checkin.POST(req("/api/form-kontrol/checkin", "POST",
-        { salesCode: "M-SLA", custCode: "C-100011-CBA", principle: "PRINCIPLE A", date: HARI_INI, photoUrl: "/api/uploads/form-kontrol/k.jpg" }))))).status, 200);
+        { salesCode: "M-SLA", custCode: "C-100011-CBA", principle: "PRINCIPLE A", date: HARI_INI, photoUrl: "/api/uploads/form-kontrol/k.jpg", lat: -5.1477, lng: 119.4327, accuracy: 12 }))))).status, 200);
     assert.deepEqual(kode(await batal("u-sla", k)), [409, "SUDAH_DIKUNJUNGI"], "sudah check-in");
     // Baris AO tanpa check-in, status "tidak dikunjungi" (bentuk kiriman "Kirim status rute") — status apa pun menahan batal.
     await pool.query(`INSERT INTO ao_control_daily (id, sales_code, cust_code, principle, date, period_month, period_year, status, created_at, updated_at)
@@ -529,7 +534,7 @@ const KUNJ = { salesCode: "M-SLA", principle: "PRINCIPLE A", date: HARI_INI };
 /** Tiga jalur tulis kunjungan (route ASLI) untuk satu toko M-SLA hari ini. */
 const tulis: Record<"checkin" | "status" | "merch", (custCode: string, u?: string) => Promise<J>> = {
     checkin: async (custCode, u = "u-sla") => jawab(await sebagai(u, () => m.checkin.POST(req("/api/form-kontrol/checkin", "POST",
-        { ...KUNJ, custCode, photoUrl: "/api/uploads/form-kontrol/c.jpg" })))),
+        { ...KUNJ, custCode, photoUrl: "/api/uploads/form-kontrol/c.jpg", lat: -5.1477, lng: 119.4327, accuracy: 12 })))),
     status: async (custCode, u = "u-sla") => jawab(await sebagai(u, () => m.ao.POST(req("/api/form-kontrol/ao-control", "POST", { ...KUNJ, custCode, status: "ordered" })))),
     merch: async (custCode, u = "u-sla") => jawab(await sebagai(u, () => m.merch.POST(req("/api/form-kontrol/merchandising", "POST", { ...KUNJ, custCode, produkJelas: true })))),
 };

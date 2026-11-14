@@ -93,6 +93,11 @@ export async function kirimFk(url: string, body: Record<string, unknown> | FormD
     throw new GagalKirim(sebabGagal(j.status), false, j.status);
 }
 
+const angkaAtauNull = (v: unknown) => {
+    const n = typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN;
+    return Number.isFinite(n) ? n : null;
+};
+
 /** Baris GET ao-control → AoRow (pemetaan sama dengan kode lama TabAo). */
 export function keBarisRute(rows: unknown, principle: string): AoRow[] {
     return (Array.isArray(rows) ? rows as Record<string, unknown>[] : []).map((r) => ({
@@ -123,6 +128,13 @@ export function keBarisRute(rows: unknown, principle: string): AoRow[] {
         statusJks: typeof r.statusJks === "string" ? r.statusJks : null,
         salesSebelum: typeof r.salesSebelum === "string" ? r.salesSebelum : null,
         lokasiDari: typeof r.lokasiDari === "string" ? r.lokasiDari : null,
+        // Jadwal harian (owner 14 Nov 2026): omzet, alamat, titik toko untuk Google Maps; numeric Postgres bisa tiba sebagai teks.
+        omzetRata: angkaAtauNull(r.omzetRata),
+        market: typeof r.market === "string" ? r.market : null,
+        alamat: typeof r.alamat === "string" ? r.alamat : null,
+        kota: typeof r.kota === "string" ? r.kota : null,
+        lat: angkaAtauNull(r.lat),
+        lng: angkaAtauNull(r.lng),
     }));
 }
 

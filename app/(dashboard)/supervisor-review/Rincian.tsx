@@ -55,7 +55,11 @@ function LabelKunjungan({ k }: { k: Kunjungan }) {
     // Jarak tak boleh hilang diam-diam: ada jarak = "N m"; titik check-in ada tetapi toko tanpa koordinat; check-in tanpa GPS sama sekali.
     const tanpaKoordinat = k.lat !== null && m === null;
     const tanpaGps = k.jenis !== "tanpa_checkin" && k.lat === null;
-    if (k.jenis === "rute" && !k.belumDifakturkan && m === null && !tanpaKoordinat && !tanpaGps) return null;
+    // Owner 14 Nov 2026: titik check-out (GPS wajib sejak 0042) — jarak ke toko / jauh. Check-out tanpa titik hanya baris sebelum GPS wajib:
+    // tidak diberi tanda (bukan pelanggaran salesman).
+    const mk = k.jarakKeluarKeTokoM ?? null;
+    const jauhKeluar = mk !== null && mk > JARAK_JAUH_M;
+    if (k.jenis === "rute" && !k.belumDifakturkan && m === null && mk === null && !tanpaKoordinat && !tanpaGps && !k.ajuanIt) return null;
     return (
         <span className="mt-1 flex flex-wrap items-center gap-1">
             {k.jenis === "tanpa_checkin" && <StatusBadge tone="neu">tanpa check-in</StatusBadge>}
@@ -65,6 +69,11 @@ function LabelKunjungan({ k }: { k: Kunjungan }) {
             {m !== null && !jauh && <span className="fi-small fi-subtle">{angka(m)} m dari toko</span>}
             {tanpaKoordinat && <StatusBadge tone="neu">toko tanpa koordinat</StatusBadge>}
             {tanpaGps && <StatusBadge tone="neu">tanpa GPS</StatusBadge>}
+            {jauhKeluar && <StatusBadge tone="warn">check-out jauh dari toko ({angka(mk)} m)</StatusBadge>}
+            {mk !== null && !jauhKeluar && <span className="fi-small fi-subtle">check-out {angka(mk)} m dari toko</span>}
+            {k.ajuanIt === "menunggu" && <StatusBadge tone="warn">lokasi menunggu IT</StatusBadge>}
+            {k.ajuanIt === "ditolak" && <StatusBadge tone="neg">lokasi ditolak IT</StatusBadge>}
+            {k.ajuanIt === "disetujui" && <StatusBadge tone="neu">lokasi disetujui IT</StatusBadge>}
         </span>
     );
 }

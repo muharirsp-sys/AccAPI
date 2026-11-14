@@ -4,12 +4,13 @@ import { db } from "@/lib/db";
 import {
     jksMaster, aoControlDaily, noOrderReason,
     merchandisingCheck, salesmanDailyReport,
-    spvBriefing, smControl, kontrolAuditLog, salesProfile, kunjunganLuarRute, nooToko, tokoKoordinat, tawaranItemSuper,
+    spvBriefing, smControl, kontrolAuditLog, salesProfile, kunjunganLuarRute, nooToko, tokoKoordinat, tawaranItemSuper, pengajuanLokasi,
 } from "@/db/schema";
 import { cocokKodeRute, type GalatOrder } from "@/lib/order-cabang";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
-import { DAY_TO_HARI, NO_ORDER_REASONS, POLA_JKS, frekuensiBawaan, hariBaku, kunciHari, kunciNama, polaBerlaku } from "./constants";
+import { DAY_TO_HARI, NO_ORDER_REASONS, POLA_JKS, frekuensiBawaan, hariBaku, kodeJksUntuk, kunciHari, kunciNama, polaBerlaku } from "./constants";
 import { isKodeNoo, type StatusNoo } from "./noo-aturan";
+import { periksaRadius, statusTitik, type HasilRadius, type StatusTitik, type TitikToko } from "./radius";
 import type { AoStatus, MingguPattern, TodayRouteRow } from "./types";
 
 // Pola minggu = polaBerlaku (constants.ts: paritas acuan owner 12 Okt 2026 + minggu siklus m1..m4 owner 13 Nov 2026), dari tanggal WITA layar.
@@ -287,15 +288,21 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
     // Toko DITOLAK tetap di rute (kunjungannya sudah terjadi); alasan tolak hanya dibawa bila status = ditolak. Kode NOO unik; saringan salesCode =
     // lapis kedua supaya NOO milik salesman lain (baris rute berkode tak lazim) tidak membocorkan status/alasan ke rute ini.
     const kodeNoo = custCodes.filter(isKodeNoo);
-    const nooRows = kodeNoo.length === 0 ? [] : await db.select({ kode: nooToko.kode, status: nooToko.status, alasanTolak: nooToko.alasanTolak })
-        .from(nooToko).where(and(inArray(nooToko.kode, kodeNoo), eq(nooToko.salesCode, salesCode)));
+    const [nooRows, titik] = await Promise.all([
+        kodeNoo.length === 0 ? [] : db.select({ kode: nooToko.kode, status: nooToko.status, alasanTolak: nooToko.alasanTolak })
+            .from(nooToko).where(and(inArray(nooToko.kode, kodeNoo), eq(nooToko.salesCode, salesCode))),
+        titikToko(custCodes),
+    ]);
     const nooMap = new Map(nooRows.map(r => [r.kode, r]));
 
     return jksRows.map(j => {
         const ao = aoMap.get(j.custCode);
         const noo = nooMap.get(j.custCode);
+        const t = titik(j.custCode);
         return {
             ...j,
+            lat: t?.lat ?? null,
+            lng: t?.lng ?? null,
             mingguPattern: j.mingguPattern as MingguPattern,
             aoStatus: (ao?.status as AoStatus | undefined) ?? null,
             noOrderReasonCode: ao?.noOrderReasonCode ?? null,
@@ -312,6 +319,43 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
             nooAlasanTolak: noo?.status === "ditolak" ? noo.alasanTolak : null,
         };
     });
+}
+
+/**
+ * Titik toko (toko_koordinat) untuk tombol Google Maps rute/kunjungan (owner 14 Nov 2026): SATU query IN atas kode + kode tanpa akhiran cabang
+ * (kodeJksUntuk: pelanggan luar rute "C-1-CBA" memakai titik JKS "C-1"). Kembali = pencari kode -> titik | undefined.
+ */
+async function titikToko(kode: string[]) {
+    const semua = [...new Set(kode.flatMap((c) => [c, ...kodeJksUntuk(c)]))];
+    const rows = semua.length === 0 ? [] : await db.select({ custCode: tokoKoordinat.custCode, lat: tokoKoordinat.lat, lng: tokoKoordinat.lng,
+        status: tokoKoordinat.status }).from(tokoKoordinat).where(inArray(tokoKoordinat.custCode, semua));
+    const peta = new Map(rows.map((r): [string, TitikToko] => [r.custCode.trim().toUpperCase(), { lat: r.lat, lng: r.lng, status: statusTitik(r.status) }]));
+    return (c: string): TitikToko | undefined => [c.trim().toUpperCase(), ...kodeJksUntuk(c)].map((k) => peta.get(k)).find(Boolean);
+}
+
+/**
+ * Radius check-in/check-out (owner 14 Nov 2026; lib/form-kontrol/radius.ts): titik salesman vs titik toko (toko_koordinat, kode lengkap lalu
+ * tanpa akhiran cabang). Toko tanpa titik = dalam (tanpa radius; titiknya bahan Antrean perbaikan lokasi).
+ */
+export async function cekRadiusKunjungan(custCode: string, sales: { lat: number; lng: number; accuracy?: number | null }): Promise<HasilRadius> {
+    return periksaRadius(sales, (await titikToko([custCode]))(custCode) ?? null);
+}
+
+/** Pengajuan lokasi ke IT yang ditulis BERSAMA check-in/check-out di luar radius (satu transaksi). */
+export type AjuanLokasi = {
+    tahap: "checkin" | "checkout"; lat: number; lng: number; akurasi: number; titikLat: number; titikLng: number; statusTitik: StatusTitik;
+    jarakM: number; radiusM: number; alasan: string; diajukanOleh: string | null;
+};
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+async function tulisAjuan(tx: Tx, k: KunciKunjungan, a: AjuanLokasi) {
+    const isi = { lat: a.lat, lng: a.lng, akurasi: a.akurasi, titikLat: a.titikLat, titikLng: a.titikLng, statusTitik: a.statusTitik, jarakM: a.jarakM,
+        radiusM: a.radiusM, alasan: a.alasan, diajukanOleh: a.diajukanOleh };
+    await tx.insert(pengajuanLokasi).values({ id: randomUUID(), salesCode: k.salesCode, custCode: k.custCode, principle: k.principle, tanggal: k.date,
+        tahap: a.tahap, ...isi, status: "menunggu" })
+        .onConflictDoUpdate({ target: [pengajuanLokasi.salesCode, pengajuanLokasi.custCode, pengajuanLokasi.principle, pengajuanLokasi.tanggal, pengajuanLokasi.tahap],
+            set: { ...isi, diajukanPada: sql`now()` },
+            // Keputusan IT (disetujui/ditolak) tidak terhapus oleh pengajuan ulang di tahap yang sama; kunjungannya tetap tersimpan.
+            setWhere: eq(pengajuanLokasi.status, "menunggu") });
 }
 
 // ── Penjaga tulis kunjungan (FK-MSM3) ───────────────────────────────────────
@@ -819,6 +863,8 @@ export function computeGpsFlag(lat: number | null, lng: number | null, accuracy:
 export async function saveCheckin(data: KunciKunjungan & {
     photoUrl: string; createdBy?: string;
     lat?: number | null; lng?: number | null; accuracy?: number | null;
+    /** Di luar radius titik toko (owner 14 Nov 2026): pengajuan ke IT ditulis di transaksi yang sama. */
+    ajuan?: AjuanLokasi;
 }): Promise<HasilTulisKunjungan> {
     const now = new Date();
     const periodYear = parseInt(data.date.split("-")[0], 10);
@@ -846,6 +892,7 @@ export async function saveCheckin(data: KunciKunjungan & {
             checkinLat: lat, checkinLng: lng, checkinAccuracy: accuracy, gpsFlag,
             isVisited: true, updatedAt: now,
         } }).returning({ id: aoControlDaily.id });
+        if (data.ajuan) await tulisAjuan(tx, data, data.ajuan);
         return { id: row.id };
     });
 }
@@ -853,16 +900,24 @@ export async function saveCheckin(data: KunciKunjungan & {
 export async function saveCheckout(data: {
     salesCode: string; custCode: string; principle: string; date: string;
     photoUrl: string;
+    /** Owner 14 Nov 2026: GPS wajib saat check-out (route memeriksa lewat lib/form-kontrol/gps.ts periksaGps). */
+    lat: number; lng: number; accuracy: number;
+    /** Di luar radius titik toko: pengajuan ke IT ditulis di transaksi yang sama. */
+    ajuan?: AjuanLokasi;
 }) {
     const now = new Date();
-    await db.update(aoControlDaily).set({
-        checkoutAt: now, checkoutPhotoUrl: data.photoUrl, updatedAt: now,
-    }).where(and(
-        eq(aoControlDaily.salesCode, data.salesCode),
-        eq(aoControlDaily.custCode, data.custCode),
-        eq(aoControlDaily.principle, data.principle),
-        eq(aoControlDaily.date, data.date),
-    ));
+    await db.transaction(async (tx) => {
+        await tx.update(aoControlDaily).set({
+            checkoutAt: now, checkoutPhotoUrl: data.photoUrl, updatedAt: now,
+            checkoutLat: data.lat, checkoutLng: data.lng, checkoutAccuracy: data.accuracy,
+        }).where(and(
+            eq(aoControlDaily.salesCode, data.salesCode),
+            eq(aoControlDaily.custCode, data.custCode),
+            eq(aoControlDaily.principle, data.principle),
+            eq(aoControlDaily.date, data.date),
+        ));
+        if (data.ajuan) await tulisAjuan(tx, data, data.ajuan);
+    });
 }
 
 // ── Visit detail ──────────────────────────────────────────────────────────────
@@ -909,12 +964,17 @@ export async function getVisitDetail(
     }
     if (!store) return null;
     // Dua tipe sales (owner 13 Nov 2026): `principal` = order diinput di sistem principal → langkah Status meminta nomor order principal.
-    const [profil] = await db.select({ sumberOrder: salesProfile.sumberOrder }).from(salesProfile).where(eq(salesProfile.salesCode, salesCode)).limit(1);
+    const [[profil], titik] = await Promise.all([
+        db.select({ sumberOrder: salesProfile.sumberOrder }).from(salesProfile).where(eq(salesProfile.salesCode, salesCode)).limit(1),
+        titikToko([custCode]),
+    ]);
     return {
         store,
         ao: aoRows[0] ?? null,
         merch: merchRows[0] ?? null,
         sumberOrder: (profil?.sumberOrder === "principal" ? "principal" : "accapi") as "principal" | "accapi",
+        /** Titik toko (toko_koordinat) + status radius (fix 20 m / validasi 100 m) untuk tombol Google Maps; null = cari alamat, tanpa radius. */
+        titik: titik(custCode) ?? null,
     };
 }
 

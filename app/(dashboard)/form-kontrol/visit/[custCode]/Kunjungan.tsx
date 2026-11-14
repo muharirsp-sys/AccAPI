@@ -11,6 +11,8 @@
  * Side Effects: HTTP baca/tulis kunjungan; kamera/lokasi lewat FotoBukti. Langkah hanya maju setelah simpan sukses. Payload sama dengan
  *   wizard lama. FK-MSM3: 409 KUNJUNGAN_DIBATALKAN / BUKAN_RUTE_HARI_INI (toko tidak lagi di rute) → wizard diganti penjelasan (judul per kode,
  *   isian yang tidak tersimpan disebut, fokus ke penjelasan) + Rute hari ini langsung di bagian Kunjungan luar rute (`#luar-rute`).
+ * Owner 14 Nov 2026: kepala menampilkan alamat + tombol Google Maps (lib/form-kontrol/peta.ts; titik toko_koordinat dari GET visit `titik`);
+ *   GPS WAJIB saat check-in dan check-out (FotoBukti `wajibLokasi`; server menolak tanpa titik 400 GPS_WAJIB) — titik check-out ikut terkirim.
  */
 "use client";
 
@@ -19,7 +21,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 // NOO (owner 13 Okt 2026, P7): kunjungan toko baru (kode NOO) = hanya "Tidak order" + alasan; server menolak ORDER (409 NOO_BELUM_TERDAFTAR).
 import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
-import { ArrowLeft, ShoppingCart, XCircle } from "lucide-react";
+import { ArrowLeft, MapPin, ShoppingCart, XCircle } from "lucide-react";
 import {
     Button, EmptyState, ErrorState, Flow, FooterToolbar, KeyValues, MessageStrip, ObjectPageHeader, Skeleton, StatusBadge, VariantNote,
     type FlowStep,
@@ -29,6 +31,8 @@ import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { TOKO_TUTUP_CODE } from "@/lib/form-kontrol/constants";
 import { ALASAN_ITEM_SUPER } from "@/lib/form-kontrol/item-super";
 import type { GeoCoords } from "@/lib/form-kontrol/location";
+import { alamatRingkas, punyaTitik, urlPeta } from "@/lib/form-kontrol/peta";
+import { LABEL_STATUS_TITIK, RADIUS_M, statusTitik, type StatusTitik } from "@/lib/form-kontrol/radius";
 import { GagalKirim, PESAN_SINYAL, ambilJson, ditolakBukanRute, kirimFk, sebabGagal } from "../../lapangan";
 import { KOSONG, waktuWita } from "@/lib/tampil";
 import { alasanIzinFk, hariIniWita, rentangWita } from "../../shared";
@@ -69,7 +73,9 @@ type Data = { store: StoreInfo | null; ao: AoInfo | null; merch: MerchInfo | nul
     /** Dua tipe sales (owner 13 Nov 2026). */
     sumberOrder: "accapi" | "principal";
     /** null = saran item super gagal dimuat (`saranGalat`): halaman tetap terbuka, hanya Simpan merchandising yang menunggu muat ulang saran. */
-    itemSuper: ItemSuperInfo | null; saranGalat: string | null };
+    itemSuper: ItemSuperInfo | null; saranGalat: string | null;
+    /** Titik toko (toko_koordinat) + status radius untuk tombol Google Maps; null = peta mencari nama + alamat, tanpa radius. */
+    titik: { lat: number; lng: number; status: StatusTitik } | null };
 
 /** GET saran item super kunjungan ini; jawaban tak dikenal / galat = pesan (bukan daftar kosong yang menyesatkan). */
 async function ambilSaran(p: URLSearchParams): Promise<{ info: ItemSuperInfo } | { galat: string }> {
@@ -109,7 +115,7 @@ export default function Kunjungan(props: Props) {
         const [v, r, s] = await Promise.all([ambilJson(`/api/form-kontrol/visit?${p}`), ambilJson("/api/form-kontrol/reasons"), ambilSaran(p)]);
         const tanpaSinyal = `${PESAN_SINYAL} Ini bukan toko kosong; coba lagi saat ada sinyal.`;
         // 404 = toko tidak ada di JKS salesman/principal ini → Kosong, bukan Galat.
-        if (v.status === 404) return { status: "siap", data: { store: null, ao: null, merch: null, reasons: [], bukanRute: null, sumberOrder: "accapi", itemSuper: null, saranGalat: null } };
+        if (v.status === 404) return { status: "siap", data: { store: null, ao: null, merch: null, reasons: [], bukanRute: null, sumberOrder: "accapi", itemSuper: null, saranGalat: null, titik: null } };
         if (v.status === 400) return { status: "galat", error: "Kode salesman atau principal tidak terbawa. Buka kunjungan dari Rute hari ini." };
         if (v.status < 200 || v.status >= 300 || !v.data) return { status: "galat", error: v.status === 0 ? tanpaSinyal : sebabGagal(v.status) };
         if (r.status < 200 || r.status >= 300 || !r.data) return { status: "galat", error: `Daftar alasan tidak order gagal dimuat. ${r.status === 0 ? tanpaSinyal : sebabGagal(r.status)}` };
@@ -121,6 +127,8 @@ export default function Kunjungan(props: Props) {
                 bukanRute: luarRuteAwal(v.data.bukanRute),
                 sumberOrder: v.data.sumberOrder === "principal" ? "principal" : "accapi",
                 itemSuper: "info" in s ? s.info : null, saranGalat: "galat" in s ? s.galat : null,
+                titik: v.data.titik && typeof v.data.titik === "object" && punyaTitik(v.data.titik as { lat?: number; lng?: number })
+                    ? { ...v.data.titik as { lat: number; lng: number }, status: statusTitik((v.data.titik as { status?: unknown }).status) } : null,
             },
         };
     }, [salesCode, custCode, principle, date]);
@@ -254,13 +262,19 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
 
     const tanpaIzin = alasanIzinFk(new Set(izinFk), "submit");
     const pindah = (s: number | null) => { setGalat(""); setLihat(s); };
+    /** Tahap yang diajukan ke IT di sesi ini (lokasi di luar radius titik toko). */
+    const [ajuanIt, setAjuanIt] = useState<string[]>([]);
+    const radiusTeks = data.titik ? `Check-in dan check-out harus dalam ${RADIUS_M[data.titik.status]} m dari titik toko (${LABEL_STATUS_TITIK[data.titik.status].toLowerCase()}).`
+        : "Toko belum punya titik: lokasi check-in Anda dicatat sebagai bahan titik toko.";
 
-    async function doCheckin(url: string, coords: GeoCoords | null) {
+    async function doCheckin(url: string, coords: GeoCoords | null, alasan?: string) {
         try {
-            await kirimFk("/api/form-kontrol/checkin", {
+            const d = await kirimFk("/api/form-kontrol/checkin", {
                 salesCode, custCode, principle, date, photoUrl: url,
                 lat: coords?.lat ?? null, lng: coords?.lng ?? null, accuracy: coords?.accuracy ?? null,
+                ...(alasan ? { alasanLuarRadius: alasan } : {}),
             }, { ulangAman: true });
+            if (d.diajukanKeIt === true) setAjuanIt((x) => [...x.filter((t) => t !== "check-in"), "check-in"]);
         } catch (e) {
             if (ditolakBukanRute(e)) onBukanRute({ kode: e.kode ?? "", pesan: e.message, tahap: "checkin" });
             throw e;
@@ -329,8 +343,10 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
         } finally { setSaving(false); }
     }
 
-    async function doCheckout(url: string) {
-        await kirimFk("/api/form-kontrol/checkout", { salesCode, custCode, principle, date, photoUrl: url }, { ulangAman: true });
+    async function doCheckout(url: string, coords: GeoCoords | null, alasan?: string) {
+        const d = await kirimFk("/api/form-kontrol/checkout", { salesCode, custCode, principle, date, photoUrl: url,
+            lat: coords?.lat ?? null, lng: coords?.lng ?? null, accuracy: coords?.accuracy ?? null, ...(alasan ? { alasanLuarRadius: alasan } : {}) }, { ulangAman: true });
+        if (d.diajukanKeIt === true) setAjuanIt((x) => [...x.filter((t) => t !== "check-out"), "check-out"]);
         setCheckoutPhoto(url);
         setCheckoutAt(new Date().toISOString());
     }
@@ -368,8 +384,8 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
         ) : (
             <div className="fi-panel">
                 <h2 className="fi-title-3">Mulai kunjungan</h2>
-                <p className="fi-small fi-muted">Foto di depan toko sebagai bukti check-in (wajib).</p>
-                <FotoBukti label="Ambil foto check-in" judulGagal="Foto check-in belum terkirim." akibat="Langkah ini belum maju; check-in belum dipastikan tercatat."
+                <p className="fi-small fi-muted">Foto di depan toko sebagai bukti check-in (wajib). GPS ponsel wajib menyala: titik Anda dicatat untuk analisa kunjungan. {radiusTeks}</p>
+                <FotoBukti wajibLokasi label="Ambil foto check-in" judulGagal="Foto check-in belum terkirim." akibat="Langkah ini belum maju; check-in belum dipastikan tercatat."
                     salesName={store.salesName} custName={store.custName} disabledReason={tanpaIzin} onPersist={doCheckin} />
             </div>
         );
@@ -518,7 +534,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                     </p>
                     <FotoBukti label={tutup ? "Ambil foto bukti toko tutup" : "Ambil foto check-out"} judulGagal={tutup ? "Foto bukti toko tutup belum terkirim." : "Foto check-out belum terkirim."}
                         akibat="Langkah ini belum maju; check-out belum dipastikan tercatat."
-                        salesName={store.salesName} custName={store.custName} disabledReason={terkunci} onPersist={(url) => doCheckout(url)} />
+                        wajibLokasi salesName={store.salesName} custName={store.custName} disabledReason={terkunci} onPersist={doCheckout} />
                 </div>
                 <VariantNote bl="BL-28">Server belum menolak check-out tanpa check-in; layar ini yang menjaganya. Cap foto dibakar server dalam WIB (Asia/Jakarta). Usulan: tanggal dan cap WITA dari server, check-in ulang tersimpan sebagai riwayat.</VariantNote>
             </div>
@@ -554,13 +570,22 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                     { label: "Kode", value: <span className="fi-mono">{store.custCode}</span> },
                     { label: "Principal", value: store.principle },
                     { label: "Tanggal", value: `${tanggalPanjang(date)} · WITA` },
-                    ...(store.alamat || store.market ? [{ label: "Alamat", value: [store.market, store.alamat, store.kota].filter(Boolean).join(" · ") }] : []),
+                    { label: "Alamat", value: <span className="flex flex-wrap items-center gap-x-2">
+                        <span>{alamatRingkas(store) || KOSONG}</span>
+                        <a className="fi-btn fi-btn--tertiary" href={urlPeta({ ...store, ...data.titik })} target="_blank" rel="noopener noreferrer">
+                            <MapPin className="fi-icon" aria-hidden />{data.titik ? "Buka peta" : "Cari di peta"}<span className="sr-only"> {store.custName} di Google Maps</span></a>
+                    </span> },
                     store.luarRute ? { label: "Jenis", value: <StatusBadge tone="info">{isKodeNoo(store.custCode) ? "Toko baru (NOO)" : "Luar rute"}</StatusBadge> } : { label: "Frekuensi", value: `${store.visitFrequency}×/bulan` },
                 ]}
                 flow={step < 4 ? <><Flow steps={flow} label="Langkah kunjungan" /><span className="fi-small fi-subtle">Langkah {step + 1} dari 4 · {LANGKAH[step]}</span></> : undefined}
             />
             <div className="fi-page" style={{ maxWidth: "46rem" }}>
                 {tanpaIzin && <MessageStrip tone="warn" title="Hanya lihat.">{tanpaIzin}</MessageStrip>}
+                {ajuanIt.length > 0 && (
+                    <MessageStrip tone="info" title="Diajukan ke IT.">
+                        Lokasi {ajuanIt.join(" dan ")} Anda di luar radius titik toko. Kunjungan tetap tersimpan dan menunggu persetujuan IT.
+                    </MessageStrip>
+                )}
                 {isi}
             </div>
             {kaki}

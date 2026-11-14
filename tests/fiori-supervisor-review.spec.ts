@@ -40,7 +40,8 @@ const K = (o: Partial<Kunjungan> = {}): Kunjungan => ({
 });
 const KUNJUNGAN: Kunjungan[] = [
     K(),
-    K({ custCode: "C-02", namaToko: "TOKO B", jenis: "luar_rute", mulai: WITA("09:20"), selesai: WITA("09:50"), menitDiToko: 30, menitTempuh: 20, qty: 12.5, item: 2, nilai: 900_000, jarakKeTokoM: 420 }),
+    K({ custCode: "C-02", namaToko: "TOKO B", jenis: "luar_rute", mulai: WITA("09:20"), selesai: WITA("09:50"), menitDiToko: 30, menitTempuh: 20, qty: 12.5, item: 2, nilai: 900_000, jarakKeTokoM: 420,
+        jarakKeluarKeTokoM: 650 }), // owner 14 Nov 2026: titik check-out jauh
     K({ custCode: "C-03", namaToko: "TOKO C", mulai: WITA("10:05"), selesai: null, menitDiToko: null, menitTempuh: 15, qty: null, item: null, nilai: null, belumDifakturkan: true, jarakKeTokoM: null }),
     K({ custCode: "C-04", namaToko: "TOKO D", jenis: "tanpa_checkin", mulai: null, selesai: null, menitDiToko: null, menitTempuh: null, qty: 6, item: 1, nilai: 150_000, lat: null, lng: null, jarakKeTokoM: null }),
     K({ salesCode: "S-03", custCode: "C-05", namaToko: "TOKO E", lat: null, lng: null, jarakKeTokoM: null }), // check-in tanpa GPS
@@ -166,6 +167,7 @@ test("Desktop: pilih salesman → rincian kunjungan (belum difakturkan, tanpa ch
     const b = tabel.getByRole("row").filter({ hasText: "TOKO B" });
     await expect(b).toContainText("luar rute");
     await expect(b).toContainText("jauh dari toko (420 m)");
+    await expect(b).toContainText("check-out jauh dari toko (650 m)");
     await expect(b).not.toContainText("m dari toko"); // satu penanda saja, bukan dua
     await expect(b.getByRole("cell").nth(4)).toHaveText("20");
     await expect(b.getByRole("cell").nth(5)).toHaveText("12,5");
