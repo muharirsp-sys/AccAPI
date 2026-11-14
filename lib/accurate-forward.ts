@@ -4,7 +4,7 @@
  * Caller: app/api/proxy/route.ts, app/api/finance/purchase-payment/route.ts.
  * Dependensi: fetch global.
  * Main Functions: flattenPayload, buildAccurateRequest, forwardAccurate, isGuardedAccurateWrite,
- *   isSalesReceiptWrite, isSalesInvoiceWrite, isAccurateRead, isCatalogWrite.
+ *   isSalesReceiptWrite, isSalesInvoiceWrite, isCustomerWrite, isAccurateRead, isCatalogWrite.
  * Dependensi tambahan: config/accurateRoutes.js (katalog Konsol — sumber yang sama dengan UI /api-wrapper).
  * Side Effects: forwardAccurate = HTTP ke host Accurate (timeout 30 s, redirect manual).
  */
@@ -148,6 +148,14 @@ export function isSalesReceiptWrite(endpointPath: string) {
  */
 export function isSalesInvoiceWrite(endpointPath: string) {
     return matchesWritePath(endpointPath, /\/sales-invoice\/(bulk-)?save\.do/i, "sales-invoice");
+}
+
+/**
+ * Owner 13 Nov 2026: tulis pelanggan (juga pos/customer) diperiksa lib/pelanggan-terlindungi sebelum diteruskan —
+ * 8 toko NKA/DC tidak boleh dinonaktifkan atau diberi batas piutang / batas umur piutang. Normalisasi sama (fail-closed).
+ */
+export function isCustomerWrite(endpointPath: string) {
+    return matchesWritePath(endpointPath, /\/customer\/(bulk-)?save\.do/i, "customer");
 }
 
 function matchesWritePath(endpointPath: string, guarded: RegExp, resource: string) {

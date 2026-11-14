@@ -336,7 +336,11 @@ UI: API Wrapper page (/api-wrapper)
          S7-1b AM-024: tulis LAIN = api_wrapper.execute (403 PERMISSION_REQUIRED {permission, sent:false}) + hanya save/bulk-save
          katalog Konsol config/accurateRoutes.js (isCatalogWrite; delete.do & endpoint tak dikenal 403 ENDPOINT_TIDAK_DIIZINKAN) —
          semua SEBELUM sesi Accurate/DB/jaringan; baca = GET jalur kanonik {list,detail,get-stock,list-stock}.do (isAccurateRead),
-         cukup sesi app (Finance & Pelunasan membaca tanpa api_wrapper.*). [PROXY FIRE] tulis mencatat id pengguna.)
+         cukup sesi app (Finance & Pelunasan membaca tanpa api_wrapper.*). [PROXY FIRE] tulis mencatat id pengguna.
+         Owner 13 Nov 2026: tulis customer/(bulk-)save.do (isCustomerWrite) diperiksa lib/pelanggan-terlindungi SETELAH sesi:
+         8 toko NKA/DC (C-IND051, C-IN0050, C-AL0063, C-AL0064, C-ALF052, C-IND080, C-IND086, C-IN0088 + varian divisi) tidak
+         boleh suspended atau diberi customerLimitAmount[Value] / customerLimitAge[Value]; mematikan batas boleh. Baris ber-id
+         dicari kodenya via GET customer/detail.do (4 bersamaan); tak terbaca = tolak. 403 PELANGGAN_TERLINDUNGI {sent:false}.)
      <- JSON response
   Klien: lib/apiFetcher.ts classifyWriteError — 4xx + sent:false = rejected (tidak terkirim), bukan TIDAK PASTI; Konsol berhenti
   di tahap yang ditolak dan menampilkan pesan server.
@@ -1070,7 +1074,7 @@ AccAPI/_github_clean/
 | File | Fungsi Utama | Peran |
 |---|---|---|
 | `lib/sync.ts` | `AccuratePaginator`, `syncModule` | Sync paginated data Accurate ke SQLite lokal (item/customer) dengan checkpoint |
-| `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment & sales-invoice; sales-receipt = `pelunasan.kirim`; tulis lain = `api_wrapper.execute` + katalog Konsol (S7-1b) |
+| `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment & sales-invoice; sales-receipt = `pelunasan.kirim`; tulis lain = `api_wrapper.execute` + katalog Konsol (S7-1b); tulis `customer/(bulk-)save.do` yang menonaktifkan atau memasang batas piutang / batas umur piutang pada 8 toko NKA/DC (`lib/pelanggan-terlindungi.ts`, owner 13 Nov 2026) = 403 `PELANGGAN_TERLINDUNGI` (id dicari via `customer/detail.do`; tak terbaca = tolak) |
 | `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance (`finance.update` ∧ `finance.post_accurate`, S7-1c): database sesi wajib = `expectedDatabaseId` (409 `database_changed`), klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
 | `app/api/finance/purchase-payment/resolve/route.ts` | `POST` | Atestasi manual attempt purchase-payment tidak pasti (alasan + sumber pemeriksaan) |
 | `app/api/finance/purchase-payment/attempts/route.ts` | `GET` | Baca-saja status attempt terbaru per kelompok faktur (S6-0e; kontrak `docs/handover/S6-0e-KONTRAK-API.md`) |
