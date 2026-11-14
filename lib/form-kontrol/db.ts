@@ -23,11 +23,9 @@ import type { AoStatus, MingguPattern, TodayRouteRow } from "./types";
 // F8 (owner 13 Nov 2026): hari JKS boleh beberapa hari dipisah koma ("Senin, Kamis") → kunci per bagian (constants.ts daftarKunciHari).
 const kunciHariSql = sql`string_to_array(regexp_replace(upper(coalesce(${jksMaster.hariKunjungan}, '')), '[^A-Z,]', '', 'g'), ',')`;
 const hariIni = (dayName: string) => sql`${kunciHari(dayName)} = ANY(${kunciHariSql})`;
-/** Pola minggu yang berlaku pada tanggal WITA itu (constants.ts polaBerlaku: all + paritas + minggu siklus m1..m4). */
-const polaMinggu = (dateStr: string) => {
-    const [semua, paritas, siklus] = polaBerlaku(dateStr);
-    return sql`lower(trim(${jksMaster.mingguPattern})) in (${semua}, ${paritas}, ${siklus})`;
-};
+/** Pola minggu yang berlaku pada tanggal WITA itu (constants.ts polaBerlaku: all + paritas + minggu siklus m1..m4 + pola tiga minggu F3). */
+const polaMinggu = (dateStr: string) =>
+    sql`lower(trim(${jksMaster.mingguPattern})) in (${sql.join(polaBerlaku(dateStr).map((p) => sql`${p}`), sql`, `)})`;
 
 // FK-MSM butir 5: nama SPV/SM Hierarki dibandingkan sesudah trim + tanpa beda huruf (kunciNama, constants.ts); nama kosong tidak cocok apa pun.
 const samaNama = (kolom: AnyColumn, nama: string) => sql`upper(trim(${kolom})) = ${kunciNama(nama)}`;

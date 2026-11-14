@@ -73,9 +73,13 @@ export function tebakPeta(nilai: ReturnType<typeof nilaiUntukPeta>, profil: read
     return { sales, principal };
 }
 
-/** M1..M4 tercentang -> pola minggu JKS; kombinasi selain 1 minggu / ganjil / genap / semua = null (baris ditolak). */
+/**
+ * M1..M4 tercentang -> pola minggu JKS; tiga minggu (F3, owner 14 Nov 2026) = "m" + nomor minggunya (m123, m124, m134, m234). Kombinasi lain
+ * (dua minggu berurutan / tanpa centang) = null (baris ditolak).
+ */
 export function polaDariMinggu(m: readonly boolean[]): string | null {
     const ke = m.map((v, i) => (v ? i + 1 : 0)).filter(Boolean).join("");
+    if (ke.length === 3) return `m${ke}`;
     return ({ "1234": "all", "13": "ganjil", "24": "genap", "1": "m1", "2": "m2", "3": "m3", "4": "m4" } as Record<string, string>)[ke] ?? null;
 }
 
@@ -101,8 +105,8 @@ export function bacaJksWebLl(rows: readonly BarisMentah[], peta: PetaJks) {
             : !salesCode ? `Salesman "${salesBerkas}" belum dipetakan ke kode sales.`
             : !principle ? `Principal "${principalBerkas}" belum dipetakan.`
             : !hari ? `Hari "${teks(r["HARI"])}" tidak dikenal (Senin–Sabtu).`
-            : !pola ? "Centang minggu M1–M4 tidak dikenal (harus satu minggu, M1+M3, M2+M4, atau semua)."
-            : ![1, 2, 4, 8].includes(frek) ? `Frekuensi "${teks(r["FREKUENSI"])}" tidak dikenal (F1, F2, F4, F8).` : null;
+            : !pola ? "Centang minggu M1–M4 tidak dikenal (harus satu minggu, M1+M3, M2+M4, tiga minggu, atau semua)."
+            : ![1, 2, 3, 4, 8].includes(frek) ? `Frekuensi "${teks(r["FREKUENSI"])}" tidak dikenal (F1, F2, F3, F4, F8).` : null;
         if (pesan) { galat.push({ baris, kode, pesan }); return; }
         const kunci = `${salesCode}\u0000${kode.toUpperCase()}\u0000${principle}`;
         const lama = hasil.get(kunci);

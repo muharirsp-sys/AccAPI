@@ -1,8 +1,8 @@
 import type { StatusNoo } from "./noo-aturan";
 
 export type AoStatus = "ordered" | "active" | "not_order" | "not_visited" | "priority";
-/** m1..m4 = satu minggu dalam siklus 4 minggu JKS Web-LL (toko F1; constants.ts mingguSiklus). */
-export type MingguPattern = "ganjil" | "genap" | "all" | "m1" | "m2" | "m3" | "m4";
+/** m1..m4 = satu minggu dalam siklus 4 minggu JKS Web-LL (toko F1; constants.ts mingguSiklus); m123..m234 = tiga minggu (toko F3). */
+export type MingguPattern = "ganjil" | "genap" | "all" | "m1" | "m2" | "m3" | "m4" | "m123" | "m124" | "m134" | "m234";
 export type BriefingSession = "pagi" | "sore";
 
 export interface JksMasterRow {
