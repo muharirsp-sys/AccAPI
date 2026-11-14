@@ -33,8 +33,8 @@ const rute = (custCode: string, custName: string, over: Record<string, unknown>)
 });
 const RUTE = [
     rute("C-01", "TOKO A", { aoStatus: "ordered", monthlyOrderCount: 3, checkinAt: jam("07:40"), checkoutAt: jam("07:58") }),
-    rute("C-02", "TOKO B", { monthlyOrderCount: 4, targetToko: 2_000_000, realisasiBulan: 500_000, fakturBulan: 2 }),
-    rute("C-03", "TOKO C", { aoStatus: "not_order", noOrderReasonCode: "R01", noOrderNote: "stok lama", needsAttention: true }),
+    rute("C-02", "TOKO B", { monthlyOrderCount: 4, targetToko: 2_000_000, realisasiBulan: 500_000, fakturBulan: 2, kelasA: true, statusJks: "PINDAH SALES", salesSebelum: "SALES Z" }),
+    rute("C-03", "TOKO C", { aoStatus: "not_order", noOrderReasonCode: "R01", noOrderNote: "stok lama", needsAttention: true, statusJks: "BARU DITUGASKAN" }),
     rute("C-04", "TOKO D", { aoStatus: "not_visited", monthlyOrderCount: 1, checkinAt: jam("08:10") }),
 ];
 const REASONS = [
@@ -174,6 +174,9 @@ test("Rute hari ini: kunjungan berjalan paling atas, hari order, tautan bertangg
     await expect(r.getByText(/4 hari order bulan ini/)).toBeVisible();
     // Owner 14 Nov 2026: realisasi faktur Accurate bulan berjalan per toko + ringkasan rute.
     await expect(r.getByText(/Realisasi 500\srb \(2 faktur, 25% target\)/)).toBeVisible();
+    // Owner 14 Nov 2026: status pindah sales (kolom STATUS Web-LL) tidak ditampilkan per toko; lencana lain (Kelas A) tetap.
+    await expect(r.getByText("Kelas A")).toBeVisible();
+    await expect(r.getByText(/Pindahan|Baru ditugaskan/)).toHaveCount(0);
     await expect(r.getByText(/Realisasi Accurate .* s\.d\. .*Rp\s?500\.000.* dari target Rp\s?2\.000\.000 \(25%\) · 2 faktur di 1 dari 4 toko/)).toBeVisible();
     await expect(r.getByText(/≥ 2× tidak order bulan ini/)).toBeVisible();
     await expect(r.getByText("2 dari 4 dikunjungi")).toBeVisible(); // TOKO A + TOKO D sudah check-in
