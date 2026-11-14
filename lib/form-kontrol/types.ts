@@ -96,6 +96,9 @@ export interface TodayRouteRow extends JksMasterRow {
     /** Titik toko (toko_koordinat) untuk tombol Google Maps (owner 14 Nov 2026); null = belum berkoordinat (peta mencari alamat). */
     lat: number | null;
     lng: number | null;
+    /** Realisasi faktur Accurate bulan berjalan s.d. tanggal rute (termasuk PPN) + jumlah faktur (owner 14 Nov 2026; db.ts realisasiBulanToko). */
+    realisasiBulan: number | null;
+    fakturBulan: number | null;
 }
 
 export interface VisitDetail {

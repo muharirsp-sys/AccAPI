@@ -10,6 +10,8 @@
 export type TokoPeta = {
     custCode: string; custName: string; market?: string | null; alamat?: string | null; kota?: string | null;
     lat?: number | null; lng?: number | null; urutan?: number | null; kelasA?: boolean | null; targetToko?: number | null; omzetRata?: number | null;
+    /** Realisasi faktur Accurate bulan berjalan (termasuk PPN) + jumlah faktur; null = tidak diketahui. */
+    realisasiBulan?: number | null; fakturBulan?: number | null;
 };
 
 export function punyaTitik(t: Pick<TokoPeta, "lat" | "lng">): t is { lat: number; lng: number } {
@@ -33,22 +35,33 @@ export function urlPeta(t: TokoPeta): string {
 }
 
 const ringkas = (n: number) => new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 }).format(n);
-const keterangan = (t: TokoPeta) => [t.kelasA ? "Kelas A" : "", t.targetToko ? `target ${ringkas(t.targetToko)}/bln` : "",
-    t.omzetRata ? `omzet ±${ringkas(t.omzetRata)}/bln` : ""].filter(Boolean).join(" · ");
+/**
+ * Realisasi bulan berjalan: "realisasi 750 rb (3 faktur, 50% target)" / "belum ada faktur <bulan>"; tidak diketahui (null) = "".
+ * `bulan` = nama bulan tanggal rute (bawaan "bulan ini") supaya tampilan tanggal lampau tidak menyebut "bulan ini".
+ */
+export function teksRealisasi(t: Pick<TokoPeta, "realisasiBulan" | "fakturBulan" | "targetToko">, bulan = "bulan ini"): string {
+    if (t.realisasiBulan == null) return "";
+    if (!t.fakturBulan && !t.realisasiBulan) return `belum ada faktur ${bulan}`;
+    const persen = t.targetToko ? `, ${Math.round((t.realisasiBulan / t.targetToko) * 100)}% target` : "";
+    return `realisasi ${ringkas(t.realisasiBulan)} (${t.fakturBulan ?? 0} faktur${persen})`;
+}
+
+const keterangan = (t: TokoPeta, bulan?: string) => [t.kelasA ? "Kelas A" : "", t.targetToko ? `target ${ringkas(t.targetToko)}/bln` : "",
+    teksRealisasi(t, bulan), t.omzetRata ? `omzet ±${ringkas(t.omzetRata)}/bln` : ""].filter(Boolean).join(" · ");
 
 /** Teks rute untuk WhatsApp / bagikan: judul lalu tiap toko sesuai urutan (nama, alamat, target/omzet/Kelas A, tautan peta). */
-export function teksRute(judul: string, toko: TokoPeta[]): string {
+export function teksRute(judul: string, toko: TokoPeta[], bulan?: string): string {
     return [judul, ...toko.map((t, i) => [`${t.urutan ?? i + 1}. ${rapi(t.custName)} (${t.custCode})`,
-        ...[alamatRingkas(t), keterangan(t)].filter(Boolean).map((x) => `   ${x}`),
+        ...[alamatRingkas(t), keterangan(t, bulan)].filter(Boolean).map((x) => `   ${x}`),
         `   Peta: ${urlPeta(t)}${punyaTitik(t) ? "" : " (cari alamat)"}`].join("\n"))].join("\n\n");
 }
 
 const esc = (v: string) => v.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /** Halaman cetak rute (dibuka di jendela baru lalu window.print): tabel urutan, toko, alamat, target/omzet/Kelas A, tautan peta. */
-export function htmlRute(judul: string, toko: TokoPeta[]): string {
+export function htmlRute(judul: string, toko: TokoPeta[], bulan?: string): string {
     const baris = toko.map((t, i) => `<tr><td>${t.urutan ?? i + 1}</td><td><b>${esc(rapi(t.custName))}</b><br><small>${esc(t.custCode)}</small></td>`
-        + `<td>${esc(alamatRingkas(t)) || "–"}</td><td>${esc(keterangan(t)) || "–"}</td>`
+        + `<td>${esc(alamatRingkas(t)) || "–"}</td><td>${esc(keterangan(t, bulan)) || "–"}</td>`
         + `<td><a href="${esc(urlPeta(t))}">${punyaTitik(t) ? "Buka peta" : "Cari alamat"}</a></td></tr>`).join("");
     return `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>${esc(judul)}</title><style>`
         + "body{font:12px system-ui,sans-serif;margin:16px;color:#111}h1{font-size:15px;margin:0 0 8px}table{border-collapse:collapse;width:100%}"

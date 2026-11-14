@@ -98,6 +98,9 @@ export interface AoRow {
     kota?: string | null;
     lat?: number | null;
     lng?: number | null;
+    /** Realisasi faktur Accurate bulan berjalan s.d. tanggal rute (termasuk PPN) + jumlah faktur; null = server lama. */
+    realisasiBulan?: number | null;
+    fakturBulan?: number | null;
 }
 
 export interface Reason {

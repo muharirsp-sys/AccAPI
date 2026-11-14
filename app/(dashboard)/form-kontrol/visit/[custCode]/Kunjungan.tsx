@@ -31,7 +31,7 @@ import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { TOKO_TUTUP_CODE } from "@/lib/form-kontrol/constants";
 import { ALASAN_ITEM_SUPER } from "@/lib/form-kontrol/item-super";
 import type { GeoCoords } from "@/lib/form-kontrol/location";
-import { alamatRingkas, punyaTitik, urlPeta } from "@/lib/form-kontrol/peta";
+import { alamatRingkas, punyaTitik, teksRealisasi, urlPeta } from "@/lib/form-kontrol/peta";
 import { LABEL_STATUS_TITIK, RADIUS_M, statusTitik, type StatusTitik } from "@/lib/form-kontrol/radius";
 import { GagalKirim, PESAN_SINYAL, ambilJson, ditolakBukanRute, kirimFk, sebabGagal } from "../../lapangan";
 import { KOSONG, waktuWita } from "@/lib/tampil";
@@ -43,6 +43,8 @@ interface StoreInfo {
     custCode: string; custName: string;
     market: string | null; alamat: string | null; kota: string | null;
     principle: string; visitFrequency: number;
+    /** JKS Web-LL: target toko per bulan (termasuk PPN); null = JKS lama / luar rute. */
+    targetToko?: number | null;
     /** FK-MSM2: kunjungan luar rute (toko tidak di JKS; ditambahkan salesman hari itu). */
     luarRute?: boolean;
 }
@@ -75,7 +77,9 @@ type Data = { store: StoreInfo | null; ao: AoInfo | null; merch: MerchInfo | nul
     /** null = saran item super gagal dimuat (`saranGalat`): halaman tetap terbuka, hanya Simpan merchandising yang menunggu muat ulang saran. */
     itemSuper: ItemSuperInfo | null; saranGalat: string | null;
     /** Titik toko (toko_koordinat) + status radius untuk tombol Google Maps; null = peta mencari nama + alamat, tanpa radius. */
-    titik: { lat: number; lng: number; status: StatusTitik } | null };
+    titik: { lat: number; lng: number; status: StatusTitik } | null;
+    /** Realisasi faktur Accurate bulan berjalan (owner 14 Nov 2026); null = server lama. */
+    realisasi: { total: number; faktur: number } | null };
 
 /** GET saran item super kunjungan ini; jawaban tak dikenal / galat = pesan (bukan daftar kosong yang menyesatkan). */
 async function ambilSaran(p: URLSearchParams): Promise<{ info: ItemSuperInfo } | { galat: string }> {
@@ -115,7 +119,7 @@ export default function Kunjungan(props: Props) {
         const [v, r, s] = await Promise.all([ambilJson(`/api/form-kontrol/visit?${p}`), ambilJson("/api/form-kontrol/reasons"), ambilSaran(p)]);
         const tanpaSinyal = `${PESAN_SINYAL} Ini bukan toko kosong; coba lagi saat ada sinyal.`;
         // 404 = toko tidak ada di JKS salesman/principal ini → Kosong, bukan Galat.
-        if (v.status === 404) return { status: "siap", data: { store: null, ao: null, merch: null, reasons: [], bukanRute: null, sumberOrder: "accapi", itemSuper: null, saranGalat: null, titik: null } };
+        if (v.status === 404) return { status: "siap", data: { store: null, ao: null, merch: null, reasons: [], bukanRute: null, sumberOrder: "accapi", itemSuper: null, saranGalat: null, titik: null, realisasi: null } };
         if (v.status === 400) return { status: "galat", error: "Kode salesman atau principal tidak terbawa. Buka kunjungan dari Rute hari ini." };
         if (v.status < 200 || v.status >= 300 || !v.data) return { status: "galat", error: v.status === 0 ? tanpaSinyal : sebabGagal(v.status) };
         if (r.status < 200 || r.status >= 300 || !r.data) return { status: "galat", error: `Daftar alasan tidak order gagal dimuat. ${r.status === 0 ? tanpaSinyal : sebabGagal(r.status)}` };
@@ -129,6 +133,8 @@ export default function Kunjungan(props: Props) {
                 itemSuper: "info" in s ? s.info : null, saranGalat: "galat" in s ? s.galat : null,
                 titik: v.data.titik && typeof v.data.titik === "object" && punyaTitik(v.data.titik as { lat?: number; lng?: number })
                     ? { ...v.data.titik as { lat: number; lng: number }, status: statusTitik((v.data.titik as { status?: unknown }).status) } : null,
+                realisasi: v.data.realisasi && typeof (v.data.realisasi as { total?: unknown }).total === "number"
+                    ? v.data.realisasi as { total: number; faktur: number } : null,
             },
         };
     }, [salesCode, custCode, principle, date]);
@@ -576,6 +582,14 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                             <MapPin className="fi-icon" aria-hidden />{data.titik ? "Buka peta" : "Cari di peta"}<span className="sr-only"> {store.custName} di Google Maps</span></a>
                     </span> },
                     store.luarRute ? { label: "Jenis", value: <StatusBadge tone="info">{isKodeNoo(store.custCode) ? "Toko baru (NOO)" : "Luar rute"}</StatusBadge> } : { label: "Frekuensi", value: `${store.visitFrequency}×/bulan` },
+                    // Owner 14 Nov 2026: realisasi faktur Accurate bulan berjalan s.d. tanggal kunjungan.
+                    ...(data.realisasi && /^\d{4}-\d{2}-\d{2}$/.test(date) ? (() => {
+                        const bulan = new Intl.DateTimeFormat("id-ID", { month: "long" }).format(new Date(`${date}T00:00:00`));
+                        // "750 rb (3 faktur, 50% target)" — label sudah menyebut "Realisasi <bulan>", kata itu tidak diulang di nilainya.
+                        const nilai = teksRealisasi({ realisasiBulan: data.realisasi.total, fakturBulan: data.realisasi.faktur, targetToko: store.targetToko }, bulan)
+                            .replace(/^realisasi /, "");
+                        return [{ label: `Realisasi ${bulan}`, value: nilai }];
+                    })() : []),
                 ]}
                 flow={step < 4 ? <><Flow steps={flow} label="Langkah kunjungan" /><span className="fi-small fi-subtle">Langkah {step + 1} dari 4 · {LANGKAH[step]}</span></> : undefined}
             />
