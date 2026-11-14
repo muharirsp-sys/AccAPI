@@ -135,6 +135,9 @@ export function keBarisRute(rows: unknown, principle: string): AoRow[] {
         kota: typeof r.kota === "string" ? r.kota : null,
         lat: angkaAtauNull(r.lat),
         lng: angkaAtauNull(r.lng),
+        // Realisasi faktur Accurate bulan berjalan (owner 14 Nov 2026); server lama = null (tidak tampil).
+        realisasiBulan: angkaAtauNull(r.realisasiBulan),
+        fakturBulan: angkaAtauNull(r.fakturBulan),
     }));
 }
 

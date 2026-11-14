@@ -1,10 +1,11 @@
-import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull, sql, type AnyColumn } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull, like, or, sql, type AnyColumn } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import {
     jksMaster, aoControlDaily, noOrderReason,
     merchandisingCheck, salesmanDailyReport,
     spvBriefing, smControl, kontrolAuditLog, salesProfile, kunjunganLuarRute, nooToko, tokoKoordinat, tawaranItemSuper, pengajuanLokasi,
+    salesInvoiceCache, customer, branch,
 } from "@/db/schema";
 import { cocokKodeRute, type GalatOrder } from "@/lib/order-cabang";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
@@ -288,10 +289,11 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
     // Toko DITOLAK tetap di rute (kunjungannya sudah terjadi); alasan tolak hanya dibawa bila status = ditolak. Kode NOO unik; saringan salesCode =
     // lapis kedua supaya NOO milik salesman lain (baris rute berkode tak lazim) tidak membocorkan status/alasan ke rute ini.
     const kodeNoo = custCodes.filter(isKodeNoo);
-    const [nooRows, titik] = await Promise.all([
+    const [nooRows, titik, realisasi] = await Promise.all([
         kodeNoo.length === 0 ? [] : db.select({ kode: nooToko.kode, status: nooToko.status, alasanTolak: nooToko.alasanTolak })
             .from(nooToko).where(and(inArray(nooToko.kode, kodeNoo), eq(nooToko.salesCode, salesCode))),
         titikToko(custCodes),
+        realisasiBulanToko(custCodes, principle, dateStr),
     ]);
     const nooMap = new Map(nooRows.map(r => [r.kode, r]));
 
@@ -299,10 +301,13 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
         const ao = aoMap.get(j.custCode);
         const noo = nooMap.get(j.custCode);
         const t = titik(j.custCode);
+        const r = realisasi(j.custCode);
         return {
             ...j,
             lat: t?.lat ?? null,
             lng: t?.lng ?? null,
+            realisasiBulan: r?.total ?? null,
+            fakturBulan: r?.faktur ?? null,
             mingguPattern: j.mingguPattern as MingguPattern,
             aoStatus: (ao?.status as AoStatus | undefined) ?? null,
             noOrderReasonCode: ao?.noOrderReasonCode ?? null,
@@ -331,6 +336,52 @@ async function titikToko(kode: string[]) {
         status: tokoKoordinat.status }).from(tokoKoordinat).where(inArray(tokoKoordinat.custCode, semua));
     const peta = new Map(rows.map((r): [string, TitikToko] => [r.custCode.trim().toUpperCase(), { lat: r.lat, lng: r.lng, status: statusTitik(r.status) }]));
     return (c: string): TitikToko | undefined => [c.trim().toUpperCase(), ...kodeJksUntuk(c)].map((k) => peta.get(k)).find(Boolean);
+}
+
+/**
+ * Realisasi toko bulan berjalan (owner 14 Nov 2026: "jumlah total transaksi toko yang sudah realisasi di Accurate sampai saat ini, per bulan"):
+ * faktur INV tanggal 1 s.d. `dateStr` (trans_date teks dd/MM/yyyy, berindeks) untuk kode toko rute — kode persis atau kode + akhiran cabang
+ * ("C-1" -> "C-1-KN") — dari pelanggan yang cabangnya = principal rute (satu outlet punya satu customerNo PER CABANG; db/schema customer).
+ * total = Σ total_amount per nomor faktur (termasuk PPN, sama dengan target toko JKS; BELUM dikurangi retur); faktur = jumlah nomor faktur.
+ * SEMUA salesman di cabang itu (beda dengan Kontrol bulan ini Supervisor Review yang per salesman).
+ * Kembali = pencari kode -> {total, faktur} | null. null (tidak tampil, bukan nol palsu) bila principal rute bukan nama cabang Accurate (mis.
+ * principal di cabang gabungan MIX FOOD) atau kueri gagal — angka ini tambahan, rute/kunjungan tetap termuat.
+ * ponytail: upper(btrim(customer_no)) melewati indeks customer_no; yang membatasi = indeks trans_date (faktur INV satu bulan, ribuan baris).
+ * Jalan naik bila bulan membengkak: kolom customer_no ternormalisasi berindeks.
+ */
+async function realisasiBulanToko(kode: string[], principle: string, dateStr: string): Promise<(c: string) => { total: number; faktur: number } | null> {
+    const tidakTahu = () => null;
+    const rute = new Set(kode.map((c) => c.trim().toUpperCase()));
+    const p = principle.trim().toUpperCase();
+    const [y, m, d] = dateStr.split("-");
+    if (rute.size === 0 || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return tidakTahu;
+    try {
+        const [cabangAda] = await db.select({ id: branch.id }).from(branch).where(eq(sql`upper(btrim(${branch.name}))`, p)).limit(1);
+        if (!cabangAda) return tidakTahu;
+        const hari = Array.from({ length: Number(d) }, (_, i) => `${String(i + 1).padStart(2, "0")}/${m}/${y}`);
+        // LIKE: \ % _ di kode toko diloloskan (escape bawaan Postgres = backslash).
+        const lolos = (c: string) => c.replace(/[\\%_]/g, (x) => `\\${x}`);
+        const noPelanggan = sql`upper(btrim(${salesInvoiceCache.customerNo}))`;
+        const fakturDb = await db.select({ number: salesInvoiceCache.number, customerNo: salesInvoiceCache.customerNo, total: salesInvoiceCache.totalAmount })
+            .from(salesInvoiceCache).innerJoin(customer, eq(customer.customerNo, salesInvoiceCache.customerNo))
+            .where(and(inArray(salesInvoiceCache.transDate, hari), like(salesInvoiceCache.number, "INV%"), eq(sql`upper(btrim(${customer.branchName}))`, p),
+                or(...[...rute].flatMap((c) => [eq(noPelanggan, c), like(noPelanggan, `${lolos(c)}-%`)]))));
+        // Satu nomor faktur sekali (baris cache kembar tidak menggandakan total).
+        const per = new Map<string, Map<string, number>>();
+        for (const f of fakturDb) {
+            const k = kodeJksUntuk(f.customerNo ?? "").find((x) => rute.has(x));
+            if (!k) continue;
+            const x = per.get(k) ?? new Map<string, number>();
+            x.set(f.number ?? "", f.total ?? 0);
+            per.set(k, x);
+        }
+        return (c: string) => {
+            const x = per.get(c.trim().toUpperCase());
+            return { total: x ? [...x.values()].reduce((a, b) => a + b, 0) : 0, faktur: x?.size ?? 0 };
+        };
+    } catch {
+        return tidakTahu;
+    }
 }
 
 /**
@@ -964,9 +1015,10 @@ export async function getVisitDetail(
     }
     if (!store) return null;
     // Dua tipe sales (owner 13 Nov 2026): `principal` = order diinput di sistem principal → langkah Status meminta nomor order principal.
-    const [[profil], titik] = await Promise.all([
+    const [[profil], titik, realisasi] = await Promise.all([
         db.select({ sumberOrder: salesProfile.sumberOrder }).from(salesProfile).where(eq(salesProfile.salesCode, salesCode)).limit(1),
         titikToko([custCode]),
+        realisasiBulanToko([custCode], principle, dateStr),
     ]);
     return {
         store,
@@ -975,6 +1027,8 @@ export async function getVisitDetail(
         sumberOrder: (profil?.sumberOrder === "principal" ? "principal" : "accapi") as "principal" | "accapi",
         /** Titik toko (toko_koordinat) + status radius (fix 20 m / validasi 100 m) untuk tombol Google Maps; null = cari alamat, tanpa radius. */
         titik: titik(custCode) ?? null,
+        /** Realisasi faktur Accurate bulan berjalan s.d. tanggal kunjungan (owner 14 Nov 2026). */
+        realisasi: realisasi(custCode),
     };
 }
 

@@ -1,7 +1,7 @@
 /* Uji murni petunjuk arah toko (owner 14 Nov 2026: jadwal harian — Google Maps, bagikan, cetak) + GPS wajib check-in/check-out. Data generik. */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { alamatRingkas, htmlRute, punyaTitik, teksRute, urlPeta, type TokoPeta } from "./peta";
+import { alamatRingkas, htmlRute, punyaTitik, teksRealisasi, teksRute, urlPeta, type TokoPeta } from "./peta";
 import { periksaGps } from "./gps";
 
 const A: TokoPeta = { custCode: "C-1", custName: "TOKO A", market: "Pasar Sentral A", alamat: "PASAR SENTRAL A BLOK 2", kota: "KOTA A",
@@ -29,6 +29,14 @@ test("teks rute (bagikan): judul lalu toko sesuai urutan dengan alamat, Kelas A/
     assert.equal(bagian[0], "Rute SALES A · PRINCIPLE A · Senin, 16 Nov 2026 (minggu M3)");
     assert.match(bagian[1], /^1\. TOKO B & CO \(C-2\)\n {3}Jl\. Mawar, JL MAWAR 5, KOTA A\n {3}Peta: https:\/\/www\.google\.com\/maps\/search\/.+ \(cari alamat\)$/);
     assert.match(bagian[2], /^2\. TOKO A \(C-1\)\n {3}PASAR SENTRAL A BLOK 2, KOTA A\n {3}Kelas A · target 1,5\sjt\/bln · omzet ±1,2\sjt\/bln\n {3}Peta: https:\/\/www\.google\.com\/maps\/dir\//);
+});
+
+test("realisasi bulan berjalan (owner 14 Nov 2026): total + jumlah faktur + % target; nol = belum ada faktur; tak diketahui = kosong", () => {
+    assert.match(teksRealisasi({ realisasiBulan: 750_000, fakturBulan: 3, targetToko: 1_500_000 }), /^realisasi 750\srb \(3 faktur, 50% target\)$/);
+    assert.match(teksRealisasi({ realisasiBulan: 750_000, fakturBulan: 3, targetToko: null }), /^realisasi 750\srb \(3 faktur\)$/);
+    assert.equal(teksRealisasi({ realisasiBulan: 0, fakturBulan: 0, targetToko: 1_000 }), "belum ada faktur bulan ini");
+    assert.equal(teksRealisasi({ realisasiBulan: null, fakturBulan: null }), "");
+    assert.match(teksRute("Rute", [{ ...A, realisasiBulan: 600_000, fakturBulan: 2 }]), /Kelas A · target 1,5\sjt\/bln · realisasi 600\srb \(2 faktur, 40% target\) · omzet/);
 });
 
 test("halaman cetak: isi di-escape (nama toko berisi tag tidak menjadi HTML)", () => {

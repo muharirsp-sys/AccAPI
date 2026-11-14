@@ -38,7 +38,7 @@ import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { waktuWita } from "@/lib/tampil";
 import { type Scope, type AoRow, LencanaJks, compareRoute, hariIniWita, rentangWita, penjelasanTanpaJks, principalAwal, useIzinFk, visitDurationMin } from "../shared";
 import { adaHasilKunjungan, mingguSiklus, statusBintang } from "@/lib/form-kontrol/constants";
-import { alamatRingkas, htmlRute, punyaTitik, teksRute, urlPeta } from "@/lib/form-kontrol/peta";
+import { alamatRingkas, htmlRute, punyaTitik, teksRealisasi, teksRute, urlPeta } from "@/lib/form-kontrol/peta";
 import { bacaFk, ditolakBukanRute, keBarisRute, kirimFk, simpanRute, useHariBeku } from "../lapangan";
 import { BatalkanLuarRute, TambahLuarRute } from "./LuarRute";
 
@@ -76,12 +76,18 @@ function badgeNoo(r: AoRow): ReactNode {
     return r.nooStatus ? <StatusBadge tone={TONE_NOO[r.nooStatus]}><span className="sr-only">Status pengajuan: </span>{LABEL_STATUS_NOO[r.nooStatus]}</StatusBadge> : null;
 }
 
-function metaToko(r: AoRow): string {
+/** Nama bulan tanggal rute ("November"); tanggal tak sah = "bulan ini". */
+const namaBulan = (ymd: string) => { const t = new Date(`${ymd}T00:00:00`); return Number.isNaN(t.getTime()) ? "bulan ini" : new Intl.DateTimeFormat("id-ID", { month: "long" }).format(t); };
+
+function metaToko(r: AoRow, bulan: string): string {
     const bagian: string[] = [];
     if (r.urutan != null) bagian.push(`Urutan ${r.urutan}`);
     if (r.luarRute) bagian.push(isKodeNoo(r.custCode) ? "Toko baru (NOO) · tanpa order" : "Luar rute");
     const ringkas = (n: number) => new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 }).format(n);
     if (r.targetToko) bagian.push(`Target ${ringkas(r.targetToko)}/bln`);
+    // Owner 14 Nov 2026: realisasi faktur Accurate bulan berjalan per toko (jumlah faktur + % target).
+    const real = teksRealisasi(r, bulan);
+    if (real) bagian.push(real.charAt(0).toUpperCase() + real.slice(1));
     if (r.omzetRata) bagian.push(`Omzet ±${ringkas(r.omzetRata)}/bln`);
     // #3: angka ini menghitung HARI dengan status order/aktif bulan ini (db.ts getTodayRoute), bukan jumlah kunjungan.
     if (r.monthlyOrderCount > 0) bagian.push(`${r.monthlyOrderCount} hari order bulan ini`);
@@ -270,7 +276,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
     const minggu = mingguSiklus(tanggal).toUpperCase();
     const judulRute = `Rute ${salesman && scope.salesName ? scope.salesName : salesCode} · ${principle} · ${hariLabel} (minggu ${minggu})`;
     async function bagikan() {
-        const teks = teksRute(judulRute, rows.slice().sort(urutJks));
+        const teks = teksRute(judulRute, rows.slice().sort(urutJks), namaBulan(tanggal));
         setInfoBagi("");
         try {
             if (typeof navigator !== "undefined" && navigator.share) { await navigator.share({ title: judulRute, text: teks }); return; }
@@ -283,7 +289,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
     function cetak() {
         const w = window.open("", "_blank");
         if (!w) { setInfoBagi("Jendela cetak diblokir peramban. Izinkan pop-up untuk situs ini, lalu tekan Cetak rute lagi."); return; }
-        w.document.write(htmlRute(judulRute, rows.slice().sort(urutJks)));
+        w.document.write(htmlRute(judulRute, rows.slice().sort(urutJks), namaBulan(tanggal)));
         w.document.close();
         w.focus();
         w.print();
@@ -311,6 +317,11 @@ export default function TabAo({ scope }: { scope: Scope }) {
     } else {
         const lebar = (k: number) => `${rows.length ? (k / rows.length) * 100 : 0}%`;
         const nOrder = n.order + n.aktif;
+        // Realisasi bulan berjalan toko-toko di rute ini (server lama tanpa angka = baris tidak tampil).
+        const adaReal = rows.some((r) => r.realisasiBulan != null);
+        const real = { total: rows.reduce((s, r) => s + (r.realisasiBulan ?? 0), 0), faktur: rows.reduce((s, r) => s + (r.fakturBulan ?? 0), 0),
+            target: rows.reduce((s, r) => s + (r.targetToko ?? 0), 0), toko: rows.filter((r) => (r.fakturBulan ?? 0) > 0).length };
+        const rp = (v: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(v);
         isi = (
             <div className={load.status === "memuat" ? "fi-busy grid gap-4" : "grid gap-4"} aria-busy={load.status === "memuat" || undefined}>
                 {load.status === "galat" && (
@@ -330,6 +341,13 @@ export default function TabAo({ scope }: { scope: Scope }) {
                         <i style={{ width: lebar(n.tidak), background: "var(--neg-solid)" }} />
                     </div>
                     <p className="fi-small fi-muted fi-tnum">{nOrder} order · {n.tidak} tidak order · {rows.length - nOrder - n.tidak} belum</p>
+                    {adaReal && (
+                        <p className="fi-small fi-tnum">
+                            Realisasi Accurate {namaBulan(tanggal)} s.d. {hariLabel}: <b>{rp(real.total)}</b>
+                            {real.target > 0 && <> dari target {rp(real.target)} ({Math.round((real.total / real.target) * 100)}%)</>} · {real.faktur} faktur di {real.toko} dari {rows.length} toko
+                            <span className="block fi-subtle">Semua salesman di cabang {principle}; faktur termasuk PPN, belum dikurangi retur.</span>
+                        </p>
+                    )}
                 </div>
                 <div className="flex flex-wrap gap-2" role="group" aria-label="Saring toko">
                     {([["semua", "Semua", rows.length], ["belum", "Belum selesai", n.belumSelesai], ["tidak", "Tidak order", n.tidak], ["perhatian", "Perhatian", n.perhatian]] as const).map(([k, label, jml]) => (
@@ -357,7 +375,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                             <Star className="fi-icon" aria-hidden style={r.isPriority ? { fill: "var(--warn-solid)", color: "var(--warn-solid)" } : undefined} />
                                         </Button>
                                         <ListItem href={`/form-kontrol/visit/${encodeURIComponent(r.custCode)}?${q}`} doc={r.custCode} title={r.custName}
-                                            meta={<>{metaToko(r)}{alamat && <span className="block" style={{ overflowWrap: "anywhere" }}>{alamat}</span>}
+                                            meta={<>{metaToko(r, namaBulan(tanggal))}{alamat && <span className="block" style={{ overflowWrap: "anywhere" }}>{alamat}</span>}
                                                 {r.nooAlasanTolak && <span className="block" style={{ overflowWrap: "anywhere" }}>Alasan ditolak: {r.nooAlasanTolak}</span>}
                                                 <span className="block"><LencanaJks r={r} /></span></>}
                                             badge={r.nooStatus
