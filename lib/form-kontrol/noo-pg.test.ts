@@ -149,6 +149,7 @@ before(async () => {
     await pool.query(await berkas("../../db/migrations/0036_supervisor_review.sql"));
     // JKS Web-LL + Item Super (owner 13 Nov 2026): kolom baru jks_master/sales_profile + tabel item super — Drizzle memilih semua kolom.
     await pool.query(await berkas("../../db/migrations/0041_jks_item_super.sql"));
+    await pool.query(await berkas("../../db/migrations/0042_gps_kunjungan.sql"));
     const p = pool;
     await p.query(`INSERT INTO "user" (id, name, email, "emailVerified", role, "createdAt", "updatedAt") VALUES
         ('u-sla', 'Sales A', 'sla@uji.test', true, 'staff', now(), now()),
@@ -249,7 +250,7 @@ test("ajukan: multipart salesman -> 201, kunjungan HARI INI bertanda luar rute (
     const q = new URLSearchParams({ salesCode: "M-SLA", custCode: KODE_A, principle: "PRINCIPLE A", date: HARI_INI });
     assert.equal((await jawab(await sebagai("u-sla", () => m.visit.GET(req(`/api/form-kontrol/visit?${q}`))))).status, 200);
     const ci = await jawab(await sebagai("u-sla", () => m.checkin.POST(req("/api/form-kontrol/checkin", "POST",
-        { salesCode: "M-SLA", custCode: KODE_A, principle: "PRINCIPLE A", date: HARI_INI, photoUrl: "/api/uploads/form-kontrol/a.jpg" }))));
+        { salesCode: "M-SLA", custCode: KODE_A, principle: "PRINCIPLE A", date: HARI_INI, photoUrl: "/api/uploads/form-kontrol/a.jpg", lat: -5.1477, lng: 119.4327, accuracy: 12 }))));
     assert.equal(ci.status, 200, ci.teks);
 
     // Kirim ulang id sama (jawaban tak pasti di ponsel) = baris sama, tanpa baris/berkas/audit tambahan.

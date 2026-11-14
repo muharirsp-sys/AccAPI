@@ -31,6 +31,7 @@ before(async () => {
     await pool.query(`INSERT INTO sales_profile (id, user_id, sales_code, sales_name, principle, branch, created_at, updated_at) VALUES
         ('p1', 'u1', 'S-A', 'SALES A', 'KINO NON FOOD', 'CABANG A', now(), now()), ('p2', 'u2', 'S-B', 'SALES B', 'PRINCIPLE A', 'CABANG A', now(), now())`);
     await pool.query(await berkas("../../db/migrations/0041_jks_item_super.sql"));
+    await pool.query(await berkas("../../db/migrations/0042_gps_kunjungan.sql"));
     process.env.DATABASE_URL = urlSkema();
     fk = await import("./db.ts");
 });
@@ -48,6 +49,7 @@ test("PG 0041: sumber_order awal KINO = principal, lainnya accapi; jalan ulang t
     assert.deepEqual(await sumber(), { "S-A": "principal", "S-B": "accapi" });
     await pool.query(`UPDATE sales_profile SET sumber_order = 'accapi' WHERE sales_code = 'S-A'`);
     await pool.query(await berkas("../../db/migrations/0041_jks_item_super.sql"));
+    await pool.query(await berkas("../../db/migrations/0042_gps_kunjungan.sql"));
     assert.deepEqual(await sumber(), { "S-A": "accapi", "S-B": "accapi" });
     await assert.rejects(pool.query(`UPDATE sales_profile SET sumber_order = 'lain' WHERE sales_code = 'S-B'`), /sales_profile_sumber_order/);
     const { migrations } = await import("../../scripts/migrate-pg.mjs") as { migrations: { nama: string; sudahAda: string }[] };

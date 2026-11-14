@@ -8,7 +8,7 @@
  */
 import { and, eq, gte, inArray, like, lte } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { accurateEmployee, aoControlDaily, branch, jksMaster, salesInvoiceCache, salesProfile } from "@/db/schema";
+import { accurateEmployee, aoControlDaily, branch, jksMaster, pengajuanLokasi, salesInvoiceCache, salesProfile, tokoKoordinat } from "@/db/schema";
 import { muatPetaOrang } from "@/lib/kasir/hari";
 import { orangDariSalesmanId } from "@/lib/kasir/rekonsiliasi";
 import type { UserScope } from "@/lib/form-kontrol/scope";
@@ -47,18 +47,23 @@ export async function muatKontrol(scope: UserScope, opsi: { tanggal: string; cab
 
     const [y, m, d] = tanggal.split("-");
     const hariFaktur = Array.from({ length: Number(d) }, (_, i) => `${String(i + 1).padStart(2, "0")}/${m}/${y}`);
-    const [jks, ao, fakturDb, tawaran, { peta }] = await Promise.all([
+    const [jks, ao, fakturDb, tawaran, { peta }, koordinat, ajuan] = await Promise.all([
         db.select({ salesCode: jksMaster.salesCode, custCode: jksMaster.custCode, custName: jksMaster.custName, kategori: jksMaster.kategori,
             kelasA: jksMaster.kelasA, statusJks: jksMaster.statusJks, targetToko: jksMaster.targetToko, lokasiDari: jksMaster.lokasiDari })
             .from(jksMaster).where(and(eq(jksMaster.isActive, true), inArray(jksMaster.salesCode, kode))),
         db.select({ salesCode: aoControlDaily.salesCode, custCode: aoControlDaily.custCode, date: aoControlDaily.date, status: aoControlDaily.status,
-            nomorOrder: aoControlDaily.invoiceNumber, checkinAt: aoControlDaily.checkinAt }).from(aoControlDaily)
+            nomorOrder: aoControlDaily.invoiceNumber, checkinAt: aoControlDaily.checkinAt, checkoutAt: aoControlDaily.checkoutAt,
+            lat: aoControlDaily.checkinLat, lng: aoControlDaily.checkinLng, latKeluar: aoControlDaily.checkoutLat, lngKeluar: aoControlDaily.checkoutLng }).from(aoControlDaily)
             .where(and(inArray(aoControlDaily.salesCode, kode), gte(aoControlDaily.date, dari), lte(aoControlDaily.date, tanggal))),
         db.select({ customerNo: salesInvoiceCache.customerNo, transDate: salesInvoiceCache.transDate, salesmanId: salesInvoiceCache.salesmanId,
             total: salesInvoiceCache.totalAmount }).from(salesInvoiceCache)
             .where(and(inArray(salesInvoiceCache.transDate, hariFaktur), like(salesInvoiceCache.number, "INV%"))),
         tawaranBulan(kode, dari, tanggal),
         muatPetaOrang(db, tanggal),
+        // Analisa kunjungan GPS (owner 14 Nov 2026): seluruh toko_koordinat, pola sama dengan ./db.ts muatSupervisorReview.
+        db.select({ custCode: tokoKoordinat.custCode, lat: tokoKoordinat.lat, lng: tokoKoordinat.lng }).from(tokoKoordinat),
+        db.select({ salesCode: pengajuanLokasi.salesCode, status: pengajuanLokasi.status }).from(pengajuanLokasi)
+            .where(and(inArray(pengajuanLokasi.salesCode, kode), gte(pengajuanLokasi.tanggal, dari), lte(pengajuanLokasi.tanggal, tanggal))),
     ]);
     const kodeProfil = new Map(profil.map((p) => [besar(p.salesCode), p.salesCode]));
     const faktur = fakturDb.map((f) => {
@@ -69,7 +74,8 @@ export async function muatKontrol(scope: UserScope, opsi: { tanggal: string; cab
     });
     return {
         tanggal, dari,
-        salesman: hitungKontrol({ tanggal, salesman, jks, faktur, tawaran,
-            ao: ao.map((a) => ({ salesCode: a.salesCode, custCode: a.custCode, date: a.date, status: a.status, nomorOrder: a.nomorOrder, checkin: a.checkinAt !== null })) }),
+        salesman: hitungKontrol({ tanggal, salesman, jks, faktur, tawaran, ajuan,
+            koordinat: new Map(koordinat.map((k) => [k.custCode.trim().toUpperCase(), { lat: k.lat, lng: k.lng }])),
+            ao: ao.map((a) => ({ ...a, checkin: a.checkinAt !== null })) }),
     };
 }

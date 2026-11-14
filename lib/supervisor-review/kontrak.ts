@@ -64,6 +64,15 @@ export interface Kunjungan {
     lng: number | null;
     /** Jarak titik check-in ke toko_koordinat; null bila salah satu tak ada. Tandai "jauh" bila > JARAK_JAUH_M. */
     jarakKeTokoM: number | null;
+    /**
+     * Titik check-out (owner 14 Nov 2026: GPS wajib saat check-out; db/migrations/0042) dan jaraknya ke toko_koordinat. null = belum check-out,
+     * check-out sebelum GPS wajib, atau toko tanpa koordinat (jarak).
+     */
+    latKeluar?: number | null;
+    lngKeluar?: number | null;
+    jarakKeluarKeTokoM?: number | null;
+    /** Pengajuan lokasi ke IT (check-in/check-out di luar radius titik toko; 0042): status terburuk ditolak > menunggu > disetujui; null = tidak ada. */
+    ajuanIt?: "menunggu" | "disetujui" | "ditolak" | null;
 }
 
 /** Penanda toko di peta (hanya toko yang punya toko_koordinat). */

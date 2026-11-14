@@ -23,6 +23,7 @@ const MemuatTab = () => <Skeleton rows={4} label="Memuat modul" />;
 const TAB: Record<TabKey, ComponentType<{ scope: Scope }>> = {
     jks: dynamic(() => import("./tabs/TabJks"), { ssr: false, loading: MemuatTab }),
     koordinat: dynamic(() => import("./tabs/TabKoordinat"), { ssr: false, loading: MemuatTab }),
+    lokasi: dynamic(() => import("./tabs/TabLokasi"), { ssr: false, loading: MemuatTab }),
     "item-super": dynamic(() => import("./tabs/TabItemSuper"), { ssr: false, loading: MemuatTab }),
     ao: dynamic(() => import("./tabs/TabAo"), { ssr: false, loading: MemuatTab }),
     "no-order": dynamic(() => import("./tabs/TabNoOrder"), { ssr: false, loading: MemuatTab }),

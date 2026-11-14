@@ -2,7 +2,8 @@
  * Tujuan: Panel "Kontrol bulan ini" Supervisor Review (owner 13 Nov 2026): per salesman dalam cakupan + saringan, tanggal 1 s.d. tanggal tampilan —
  *   ORDER Form Kontrol vs faktur Accurate (dua tipe sales: AccAPI batas 1 hari, sistem principal batas 3 hari), toko pindahan / outlet potensi /
  *   kelas A yang sudah order, target toko vs omzet faktur, penawaran item super + alasan teratas, toko berlokasi perkiraan. Order lewat batas tanpa
- *   faktur dirinci per salesman.
+ *   faktur dirinci per salesman. Owner 14 Nov 2026: kolom Kunjungan GPS (rata-rata menit di toko, check-in/check-out jauh dari toko, tanpa
+ *   GPS, singkat) + rincian kunjungan jauh — bahan briefing.
  * Caller: ./SupervisorReview.tsx.
  * Dependensi: GET /api/supervisor-review/kontrol (lib/supervisor-review/kontrol.ts BarisKontrol), ../form-kontrol/shared (ambilFk), components/fiori.
  * Main Functions: Kontrol (default). Side Effects: fetch GET.
@@ -12,7 +13,8 @@
 import { useCallback } from "react";
 import { ListItem, MessageStrip, ResponsiveTable, Section, StatusBadge, type Column } from "@/components/fiori/core";
 import { useLoad } from "@/components/fiori/interactive";
-import { BATAS_FAKTUR_HARI, type BarisKontrol } from "@/lib/supervisor-review/kontrol";
+import { BATAS_FAKTUR_HARI, MENIT_SINGKAT, type BarisKontrol } from "@/lib/supervisor-review/kontrol";
+import { JARAK_JAUH_M } from "@/lib/supervisor-review/kontrak";
 import { ambilFk } from "../form-kontrol/shared";
 import { angka, rp, tanggalPanjang } from "./bersama";
 
@@ -30,6 +32,8 @@ export default function Kontrol({ tanggal, cabang, principle }: { tanggal: strin
     const d = load.data;
     const rows = Array.isArray(d?.salesman) ? d!.salesman : [];
     const terlambat = rows.filter((r) => r.orderTerlambat.length > 0);
+    // Server lama (tanpa analisa GPS) = kolom kosong, bukan galat.
+    const jauh = rows.filter((r) => (r.kunjunganJauh ?? []).length > 0);
 
     const kolom: Column<BarisKontrol>[] = [
         { key: "s", header: "Salesman", cell: (r) => <><b>{r.nama}</b><span className="fi-codes">{r.salesCode} · {r.cabang}</span>
@@ -49,6 +53,18 @@ export default function Kontrol({ tanggal, cabang, principle }: { tanggal: strin
                 ({persen(r.itemSuper.ditawarkan, r.itemSuper.saran)} ditawarkan)</span>
             {r.itemSuper.alasan.length > 0 && <span className="fi-small fi-muted">Alasan: {r.itemSuper.alasan.map((a) => `${a.label} (${a.jumlah})`).join("; ")}</span>}
         </span> : "–" },
+        { key: "g", header: "Kunjungan GPS (rata-rata di toko)", cell: (r) => r.gps?.kunjungan ? <span className="grid gap-1">
+            <span className="fi-tnum">{angka(r.gps.kunjungan)} kunjungan{r.gps.rataMenit !== null ? ` · rata-rata ${angka(r.gps.rataMenit)} mnt` : ""}</span>
+            <span className="flex flex-wrap gap-1">
+                {r.gps.masukJauh > 0 && <StatusBadge tone="warn">{`${angka(r.gps.masukJauh)} check-in jauh`}</StatusBadge>}
+                {r.gps.keluarJauh > 0 && <StatusBadge tone="warn">{`${angka(r.gps.keluarJauh)} check-out jauh`}</StatusBadge>}
+                {r.gps.tanpaGps > 0 && <StatusBadge tone="neu">{`${angka(r.gps.tanpaGps)} tanpa GPS`}</StatusBadge>}
+                {r.gps.singkat > 0 && <StatusBadge tone="neu">{`${angka(r.gps.singkat)} < ${MENIT_SINGKAT} mnt`}</StatusBadge>}
+                {(r.gps.ajuanMenunggu ?? 0) > 0 && <StatusBadge tone="warn">{`${angka(r.gps.ajuanMenunggu)} menunggu IT`}</StatusBadge>}
+                {(r.gps.ajuanDitolak ?? 0) > 0 && <StatusBadge tone="neg">{`${angka(r.gps.ajuanDitolak)} ditolak IT`}</StatusBadge>}
+            </span>
+            {r.gps.terukur < r.gps.kunjungan && <span className="fi-small fi-muted">{angka(r.gps.kunjungan - r.gps.terukur)} tidak terukur (tanpa GPS / toko tanpa koordinat)</span>}
+        </span> : "–" },
         { key: "l", header: "Lokasi perkiraan", align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{r.lokasiPerkiraan ? angka(r.lokasiPerkiraan) : "–"}</span> },
     ];
 
@@ -58,7 +74,8 @@ export default function Kontrol({ tanggal, cabang, principle }: { tanggal: strin
                 <p className="fi-small fi-muted">
                     Sales &quot;Input AccAPI&quot; mengorder lewat AccAPI: ORDER di Form Kontrol harus berfaktur paling lambat {BATAS_FAKTUR_HARI.accapi} hari. Sales
                     &quot;Input sistem principal&quot; mengorder di sistem principal: fakturnya masuk sesudah admin menarik laporan principal, batas {BATAS_FAKTUR_HARI.principal} hari.
-                    Omzet faktur = total faktur termasuk PPN, dibandingkan dengan target toko dari JKS.
+                    Omzet faktur = total faktur termasuk PPN, dibandingkan dengan target toko dari JKS. Kunjungan GPS: titik check-in dan check-out
+                    dibandingkan dengan titik toko; lebih dari {JARAK_JAUH_M} m = jauh.
                 </p>
                 {d?.pesan && <MessageStrip tone="warn">{d.pesan.teks}</MessageStrip>}
                 {load.status === "galat" && d && (
@@ -74,6 +91,8 @@ export default function Kontrol({ tanggal, cabang, principle }: { tanggal: strin
                     meta={[TIPE[r.sumberOrder], r.order.terlambat ? `${angka(r.order.terlambat)} order tanpa faktur` : "",
                         r.pindahan.total ? `pindahan ${angka(r.pindahan.order)}/${angka(r.pindahan.total)}` : "",
                         r.potensi.total ? `potensi order ${angka(r.potensi.order)}/${angka(r.potensi.total)}` : "",
+                        r.gps?.kunjungan ? `${angka(r.gps.kunjungan)} kunjungan${r.gps.rataMenit !== null ? ` rata-rata ${angka(r.gps.rataMenit)} mnt` : ""}` : "",
+                        r.gps?.masukJauh || r.gps?.keluarJauh ? `${angka((r.gps.masukJauh ?? 0) + (r.gps.keluarJauh ?? 0))} titik jauh dari toko` : "",
                         r.lokasiPerkiraan ? `${angka(r.lokasiPerkiraan)} lokasi perkiraan` : ""].filter(Boolean).join(" · ")} />} />
             {terlambat.length > 0 && (
                 <details className="px-4 py-3">
@@ -91,6 +110,29 @@ export default function Kontrol({ tanggal, cabang, principle }: { tanggal: strin
                                         </li>
                                     ))}
                                     {r.order.terlambat > r.orderTerlambat.length && <li className="fi-small fi-muted">dan {angka(r.order.terlambat - r.orderTerlambat.length)} lainnya</li>}
+                                </ul>
+                            </li>
+                        ))}
+                    </ul>
+                </details>
+            )}
+            {jauh.length > 0 && (
+                <details className="px-4 py-3">
+                    <summary style={{ minHeight: 44, display: "flex", alignItems: "center", cursor: "pointer" }}>
+                        <b>Kunjungan jauh dari toko ({angka(jauh.reduce((n, r) => n + (r.gps?.jauh ?? r.kunjunganJauh.length), 0))})</b>
+                    </summary>
+                    <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                        {jauh.map((r) => (
+                            <li key={r.salesCode} className="py-2">
+                                <b className="fi-small">{r.nama}</b>
+                                <ul className="list-disc pl-5">
+                                    {r.kunjunganJauh.map((k, i) => (
+                                        <li key={`${k.custCode}|${k.tanggal}|${i}`} className="fi-small">
+                                            {tanggalPanjang(k.tanggal)} · {k.namaToko} ({k.custCode}) · check-in {k.masukM !== null ? `${angka(k.masukM)} m` : "–"}
+                                            {" "}· check-out {k.keluarM !== null ? `${angka(k.keluarM)} m` : "–"} dari toko
+                                        </li>
+                                    ))}
+                                    {(r.gps?.jauh ?? 0) > r.kunjunganJauh.length && <li className="fi-small fi-muted">dan {angka(r.gps.jauh - r.kunjunganJauh.length)} lainnya</li>}
                                 </ul>
                             </li>
                         ))}

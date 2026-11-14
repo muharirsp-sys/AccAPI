@@ -1811,8 +1811,50 @@ export const tokoKoordinat = pgTable("toko_koordinat", {
     lng: doublePrecision("lng").notNull(),
     diperbaruiPada: timestamp("diperbarui_pada", { withTimezone: true }).notNull().defaultNow(),
     diperbaruiOleh: text("diperbarui_oleh").notNull(),
+    /**
+     * Owner 14 Nov 2026 (0042): radius check-in/check-out — 'fix' 20 m, 'validasi' 100 m (lib/form-kontrol/radius.ts). Unggahan berkas selisih titik
+     * (sheet SANGAT BERBEDA / BERBEDA / ALAMAT KELIRU) menandai 'validasi'; IT menyetujui pengajuan + pindah titik / Admin menetapkan titik = 'fix'.
+     */
+    status: text("status").notNull().default("fix"),
 }, (t) => [
     check("toko_koordinat_wilayah", sql`${t.lat} BETWEEN -11 AND 6 AND ${t.lng} BETWEEN 95 AND 141`),
+    check("toko_koordinat_status", sql`${t.status} IN ('fix', 'validasi')`),
+]);
+
+/**
+ * Pengajuan lokasi ke IT (owner 14 Nov 2026; 0042): check-in/check-out di LUAR radius titik toko. Kunjungan tetap tersimpan (bertanda menunggu);
+ * IT (form_kontrol.manage) menyetujui — opsional memindah titik toko ke titik salesman (status 'fix') — atau menolak (kunjungan tidak sah).
+ * Satu baris per (salesman, toko, principal, tanggal, tahap); pengajuan ulang menimpa titik/alasan dan kembali 'menunggu'.
+ */
+export const pengajuanLokasi = pgTable("pengajuan_lokasi", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    custCode: text("cust_code").notNull(),
+    principle: text("principle").notNull(),
+    tanggal: text("tanggal").notNull(),
+    tahap: text("tahap").notNull(),
+    lat: doublePrecision("lat").notNull(),
+    lng: doublePrecision("lng").notNull(),
+    akurasi: doublePrecision("akurasi").notNull(),
+    titikLat: doublePrecision("titik_lat").notNull(),
+    titikLng: doublePrecision("titik_lng").notNull(),
+    statusTitik: text("status_titik").notNull(),
+    jarakM: integer("jarak_m").notNull(),
+    radiusM: integer("radius_m").notNull(),
+    alasan: text("alasan").notNull(),
+    status: text("status").notNull().default("menunggu"),
+    diajukanOleh: text("diajukan_oleh"),
+    diajukanPada: timestamp("diajukan_pada", { withTimezone: true }).notNull().defaultNow(),
+    diputuskanOleh: text("diputuskan_oleh"),
+    diputuskanPada: timestamp("diputuskan_pada", { withTimezone: true }),
+    catatanPutusan: text("catatan_putusan"),
+    titikDipindah: boolean("titik_dipindah").notNull().default(false),
+}, (t) => [
+    uniqueIndex("idx_pengajuan_lokasi_unik").on(t.salesCode, t.custCode, t.principle, t.tanggal, t.tahap),
+    index("idx_pengajuan_lokasi_status").on(t.status, t.diajukanPada),
+    check("pengajuan_lokasi_tahap", sql`${t.tahap} IN ('checkin', 'checkout')`),
+    check("pengajuan_lokasi_status", sql`${t.status} IN ('menunggu', 'disetujui', 'ditolak')`),
+    check("pengajuan_lokasi_alasan", sql`btrim(${t.alasan}) <> ''`),
 ]);
 
 export const aoControlDaily = pgTable("ao_control_daily", {
@@ -1837,6 +1879,10 @@ export const aoControlDaily = pgTable("ao_control_daily", {
     checkinLng: doublePrecision("checkin_lng"),
     checkinAccuracy: doublePrecision("checkin_accuracy"),
     gpsFlag: text("gps_flag"), // null = OK; comma-joined flags utk review SPV
+    // Titik check-out (owner 14 Nov 2026; db/migrations/0042): GPS wajib saat check-in DAN check-out (lib/form-kontrol/gps.ts); NULL = baris lama.
+    checkoutLat: doublePrecision("checkout_lat"),
+    checkoutLng: doublePrecision("checkout_lng"),
+    checkoutAccuracy: doublePrecision("checkout_accuracy"),
     autoMatched: boolean("auto_matched").notNull().default(false),
     source: text("source").notNull().default("manual"),
     createdBy: text("created_by"),

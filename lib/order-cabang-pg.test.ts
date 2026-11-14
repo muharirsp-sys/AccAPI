@@ -195,6 +195,7 @@ before(async () => {
     await utama.pool.query(await berkas("../db/migrations/0036_supervisor_review.sql"));
     // JKS Web-LL + Item Super (owner 13 Nov 2026): kolom baru jks_master/sales_profile + tabel item super — Drizzle memilih semua kolom.
     await utama.pool.query(await berkas("../db/migrations/0041_jks_item_super.sql"));
+    await utama.pool.query(await berkas("../db/migrations/0042_gps_kunjungan.sql"));
     const p = utama.pool;
     for (const [id, name, def] of CABANG) await p.query("INSERT INTO branch (id, name, default_branch) VALUES ($1, $2, $3)", [id, name, def]);
     await p.query(`INSERT INTO accurate_employee (id, number, name, branch_id, salesman, suspended) VALUES

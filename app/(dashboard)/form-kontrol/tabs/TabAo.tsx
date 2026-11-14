@@ -14,6 +14,9 @@
  *
  * Kirim status TIDAK dihapus (keputusan orkestrator S5): kunjungan sudah menulis check-in/status/merch/check-out per toko, TETAPI tanda
  * prioritas dan baris "tidak dikunjungi" hanya tertulis lewat kiriman ini, dan Dashboard SPV menghitung "Rute" dari baris AO.
+ * Jadwal harian (owner 14 Nov 2026, butir 1): kepala menyebut minggu siklus (M1–M4) tanggal itu; tiap toko menampilkan alamat, target, omzet
+ *   rata-rata, Kelas A, dan tombol Google Maps (lib/form-kontrol/peta.ts: titik toko_koordinat, tanpa titik = cari alamat); rute bisa
+ *   dibagikan (Web Share / WhatsApp) dan dicetak (jendela cetak) sesuai urutan JKS.
  * Payload per toko sama dengan Submit AO lama (urut, berhenti di galat pertama). Dua penjaga: hanya salesman
  * pemilik rute yang mengirim (peran lain baca-saja), dan rute DIBACA ULANG sesaat sebelum mengirim — status dari bacaan terbaru, hanya
  * tanda bintang sesi ini di atasnya — supaya status kunjungan yang tersimpan sesudah layar dimuat tidak tertimpa.
@@ -28,13 +31,14 @@ import Link from "next/link";
 // NOO (owner 13 Okt 2026): toko baru (belum di Accurate) diajukan dari sini; kunjungannya bertanda NOO dan tidak masuk daftar Order Sales.
 import { isKodeNoo, LABEL_STATUS_NOO, type StatusNoo } from "@/lib/form-kontrol/noo-aturan";
 import { TambahNoo } from "./NooFormulir";
-import { CalendarDays, FileText, RefreshCw, Send, Star } from "lucide-react";
+import { CalendarDays, FileText, MapPin, Printer, RefreshCw, Send, Share2, Star } from "lucide-react";
 import { Button, EmptyState, ErrorState, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { waktuWita } from "@/lib/tampil";
 import { type Scope, type AoRow, LencanaJks, compareRoute, hariIniWita, rentangWita, penjelasanTanpaJks, principalAwal, useIzinFk, visitDurationMin } from "../shared";
-import { adaHasilKunjungan, statusBintang } from "@/lib/form-kontrol/constants";
+import { adaHasilKunjungan, mingguSiklus, statusBintang } from "@/lib/form-kontrol/constants";
+import { alamatRingkas, htmlRute, punyaTitik, teksRute, urlPeta } from "@/lib/form-kontrol/peta";
 import { bacaFk, ditolakBukanRute, keBarisRute, kirimFk, simpanRute, useHariBeku } from "../lapangan";
 import { BatalkanLuarRute, TambahLuarRute } from "./LuarRute";
 
@@ -76,7 +80,9 @@ function metaToko(r: AoRow): string {
     const bagian: string[] = [];
     if (r.urutan != null) bagian.push(`Urutan ${r.urutan}`);
     if (r.luarRute) bagian.push(isKodeNoo(r.custCode) ? "Toko baru (NOO) · tanpa order" : "Luar rute");
-    if (r.targetToko) bagian.push(`Target ${new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 }).format(r.targetToko)}/bln`);
+    const ringkas = (n: number) => new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 }).format(n);
+    if (r.targetToko) bagian.push(`Target ${ringkas(r.targetToko)}/bln`);
+    if (r.omzetRata) bagian.push(`Omzet ±${ringkas(r.omzetRata)}/bln`);
     // #3: angka ini menghitung HARI dengan status order/aktif bulan ini (db.ts getTodayRoute), bukan jumlah kunjungan.
     if (r.monthlyOrderCount > 0) bagian.push(`${r.monthlyOrderCount} hari order bulan ini`);
     if (r.needsAttention) bagian.push("≥ 2× tidak order bulan ini");
@@ -88,6 +94,9 @@ function metaToko(r: AoRow): string {
     else bagian.push("Belum dikunjungi");
     return bagian.join(" · ");
 }
+
+/** Urutan kunjungan JKS (bagikan/cetak): urutan dulu, lalu nama — tanpa status kunjungan. */
+const urutJks = (a: AoRow, b: AoRow) => (a.urutan ?? Infinity) - (b.urutan ?? Infinity) || a.custName.localeCompare(b.custName);
 
 /** Toggle bintang (lib/form-kontrol statusBintang); membatalkan bintang yang dipasang sesi ini mengembalikan baris semula. */
 const bintang = (r: AoRow): AoRow => {
@@ -130,6 +139,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
     const [saring, setSaring] = useState<Saring>("semua");
     const [dialog, setDialog] = useState(false);
     const [sukses, setSukses] = useState("");
+    const [infoBagi, setInfoBagi] = useState("");
     // Hasil "Batalkan" luar rute terakhir tidak pasti → semua Batalkan dikunci sampai rute dimuat ulang (cegah keputusan dari daftar usang).
     const [batalTakPasti, setBatalTakPasti] = useState(false);
     const tanpaIzin = useIzinFk("submit");
@@ -257,6 +267,27 @@ export default function TabAo({ scope }: { scope: Scope }) {
 
     const hariLabel = tanggalPanjang(tanggal);
     const judulHari = tanggal === hariIniWita() ? "hari ini" : hariLabel;
+    const minggu = mingguSiklus(tanggal).toUpperCase();
+    const judulRute = `Rute ${salesman && scope.salesName ? scope.salesName : salesCode} · ${principle} · ${hariLabel} (minggu ${minggu})`;
+    async function bagikan() {
+        const teks = teksRute(judulRute, rows.slice().sort(urutJks));
+        setInfoBagi("");
+        try {
+            if (typeof navigator !== "undefined" && navigator.share) { await navigator.share({ title: judulRute, text: teks }); return; }
+        } catch (e) { if (e instanceof DOMException && e.name === "AbortError") return; }
+        // Tanpa Web Share (desktop) / gagal: WhatsApp, penerima dipilih sendiri. Jendela diblokir = kalimat, bukan diam.
+        const w = window.open(`https://wa.me/?text=${encodeURIComponent(teks)}`, "_blank");
+        if (!w) { setInfoBagi("Jendela WhatsApp diblokir peramban. Izinkan pop-up untuk situs ini, lalu tekan Bagikan rute lagi."); return; }
+        w.opener = null;
+    }
+    function cetak() {
+        const w = window.open("", "_blank");
+        if (!w) { setInfoBagi("Jendela cetak diblokir peramban. Izinkan pop-up untuk situs ini, lalu tekan Cetak rute lagi."); return; }
+        w.document.write(htmlRute(judulRute, rows.slice().sort(urutJks)));
+        w.document.close();
+        w.focus();
+        w.print();
+    }
     let isi: ReactNode;
     if (!salesCode && tim !== null && tim.length === 0) {
         isi = <EmptyState title="Belum ada salesman di tim Anda" message="Salesman muncul setelah Admin Sales mengisi SPV/SM mereka di Hierarki Sales." />;
@@ -318,6 +349,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                 // Owner 13 Okt: kunjungan luar rute salah tambah boleh dibatalkan pemiliknya hari itu, selama belum ada check-in/status
                                 // APA PUN (juga "tidak dikunjungi" dari Kirim status rute; server menolaknya).
                                 const bisaBatal = r.luarRute && salesman && !bukanPemilik && tanggal === hariIniWita() && !r.checkinAt && !r.adaStatus;
+                                const alamat = alamatRingkas(r);
                                 return (
                                     <li key={r.id ?? r.custCode} className="fi-wl-row" style={{ gridTemplateColumns: "auto minmax(0,1fr)", paddingLeft: 4 }}>
                                         <Button variant="icon" aria-pressed={r.isPriority} aria-label={`Prioritas ${r.custName}`} title="Tandai prioritas"
@@ -325,21 +357,26 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                             <Star className="fi-icon" aria-hidden style={r.isPriority ? { fill: "var(--warn-solid)", color: "var(--warn-solid)" } : undefined} />
                                         </Button>
                                         <ListItem href={`/form-kontrol/visit/${encodeURIComponent(r.custCode)}?${q}`} doc={r.custCode} title={r.custName}
-                                            meta={<>{metaToko(r)}{r.nooAlasanTolak && <span className="block" style={{ overflowWrap: "anywhere" }}>Alasan ditolak: {r.nooAlasanTolak}</span>}
+                                            meta={<>{metaToko(r)}{alamat && <span className="block" style={{ overflowWrap: "anywhere" }}>{alamat}</span>}
+                                                {r.nooAlasanTolak && <span className="block" style={{ overflowWrap: "anywhere" }}>Alasan ditolak: {r.nooAlasanTolak}</span>}
                                                 <span className="block"><LencanaJks r={r} /></span></>}
                                             badge={r.nooStatus
                                                 ? <span className="flex flex-wrap items-center gap-1">{badgeNoo(r)}<StatusBadge tone={b.tone}>{b.label}</StatusBadge></span>
                                                 : <StatusBadge tone={b.tone}>{b.label}</StatusBadge>} />
-                                        {bisaBatal && (
-                                            // Di baris bawah kartu (kolom isi), tidak memeras nama toko panjang di 390 px.
-                                            <div style={{ gridColumn: 2, justifySelf: "start" }}>
-                                            <BatalkanLuarRute id={r.id} custName={r.custName} custCode={r.custCode}
-                                                kunci={tanpaIzin ?? (batalTakPasti ? "Hasil pembatalan terakhir belum pasti; muat ulang rute dulu."
-                                                    : load.status !== "siap" ? "Menunggu rute selesai dimuat" : undefined)}
-                                                onTakPasti={() => setBatalTakPasti(true)}
-                                                onBatal={() => { setSukses(`Kunjungan luar rute ${r.custName} dibatalkan.`); muatUlang(); }} />
-                                            </div>
-                                        )}
+                                        {/* Baris bawah kartu (kolom isi): tidak memeras nama toko panjang di 390 px; tautan peta di luar ListItem (bukan tautan bersarang). */}
+                                        <div className="flex flex-wrap gap-2" style={{ gridColumn: 2, justifySelf: "start" }}>
+                                            <a className="fi-btn fi-btn--tertiary" href={urlPeta(r)} target="_blank" rel="noopener noreferrer">
+                                                <MapPin className="fi-icon" aria-hidden />{punyaTitik(r) ? "Buka peta" : "Cari di peta"}
+                                                <span className="sr-only"> {r.custName} di Google Maps</span>
+                                            </a>
+                                            {bisaBatal && (
+                                                <BatalkanLuarRute id={r.id} custName={r.custName} custCode={r.custCode}
+                                                    kunci={tanpaIzin ?? (batalTakPasti ? "Hasil pembatalan terakhir belum pasti; muat ulang rute dulu."
+                                                        : load.status !== "siap" ? "Menunggu rute selesai dimuat" : undefined)}
+                                                    onTakPasti={() => setBatalTakPasti(true)}
+                                                    onBatal={() => { setSukses(`Kunjungan luar rute ${r.custName} dibatalkan.`); muatUlang(); }} />
+                                            )}
+                                        </div>
                                     </li>
                                 );
                             })}
@@ -356,7 +393,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
                 <h2 id={judulId} className="fi-title-2" tabIndex={-1}>Rute hari ini</h2>
                 <p className="fi-small fi-muted flex flex-wrap items-center gap-x-2">
                     <CalendarDays className="fi-icon" aria-hidden />
-                    <span>{hariLabel} · WITA</span>
+                    <span>{hariLabel} · WITA · minggu {minggu}</span>
                     {salesCode && <span>· <span className="fi-mono">{salesCode}</span>{scope.salesName && salesman ? ` ${scope.salesName}` : ""}{principle ? ` · ${principle}` : ""}</span>}
                 </p>
             </div>
@@ -393,8 +430,12 @@ export default function TabAo({ scope }: { scope: Scope }) {
                     </FormField>
                 )}
                 {salesCode && principle && (
-                    <div className="flex items-end">
+                    <div className="flex flex-wrap items-end gap-2">
                         <Button icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang} busy={load.status === "memuat" && Boolean(asal)}>Muat ulang</Button>
+                        {rows.length > 0 && <>
+                            <Button variant="tertiary" icon={<Share2 className="fi-icon" aria-hidden />} onClick={() => void bagikan()}>Bagikan rute</Button>
+                            <Button variant="tertiary" icon={<Printer className="fi-icon" aria-hidden />} onClick={cetak}>Cetak rute</Button>
+                        </>}
                     </div>
                 )}
             </div>
@@ -413,6 +454,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
                 </MessageStrip>
             )}
             {sukses && <MessageStrip tone="pos" title="Terkirim.">{sukses}</MessageStrip>}
+            {infoBagi && <MessageStrip tone="warn" title="Jendela diblokir peramban." onClose={() => setInfoBagi("")}>{infoBagi}</MessageStrip>}
             {batalTakPasti && (
                 <MessageStrip tone="warn" title="Hasil pembatalan terakhir belum pasti.">
                     Muat ulang rute untuk melihat apakah kunjungan itu sudah batal; Batalkan dikunci sampai rute dimuat ulang.{" "}

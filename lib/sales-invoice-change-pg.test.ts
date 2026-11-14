@@ -61,6 +61,7 @@ before(async () => {
     await pool.query(await berkas("../db/migrations/0036_supervisor_review.sql"));
     // JKS Web-LL + Item Super (owner 13 Nov 2026): kolom baru jks_master/sales_profile + tabel item super — Drizzle memilih semua kolom.
     await pool.query(await berkas("../db/migrations/0041_jks_item_super.sql"));
+    await pool.query(await berkas("../db/migrations/0042_gps_kunjungan.sql"));
     await pool.query(await berkas("../db/migrations/0037_sales_invoice_line_change.sql"));
     process.env.DATABASE_URL = urlSkema();
     process.env.ACCURATE_INVOICE_DB_ID = DB_FAKTUR;

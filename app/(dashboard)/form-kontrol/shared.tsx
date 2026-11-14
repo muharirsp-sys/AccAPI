@@ -91,6 +91,13 @@ export interface AoRow {
     statusJks?: string | null;
     salesSebelum?: string | null;
     lokasiDari?: string | null;
+    /** Jadwal harian (owner 14 Nov 2026): omzet rata-rata JKS, alamat, dan titik toko_koordinat untuk tombol Google Maps / bagikan / cetak. */
+    omzetRata?: number | null;
+    market?: string | null;
+    alamat?: string | null;
+    kota?: string | null;
+    lat?: number | null;
+    lng?: number | null;
 }
 
 export interface Reason {
@@ -109,7 +116,7 @@ export interface FreqRow {
     overVisit: boolean;
 }
 
-export type TabKey = "jks" | "koordinat" | "item-super" | "ao" | "no-order" | "laporan" | "briefing" | "sm-control" | "frekuensi" | "hierarki" | "noo";
+export type TabKey = "jks" | "koordinat" | "lokasi" | "item-super" | "ao" | "no-order" | "laporan" | "briefing" | "sm-control" | "frekuensi" | "hierarki" | "noo";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -117,6 +124,8 @@ export const TABS: { key: TabKey; label: string; roles: string[] }[] = [
     { key: "jks", label: "Kontrol JKS", roles: ["admin", "manager", "admin_sales", "sm", "spv"] },
     // Supervisor Review (SR-3): titik koordinat toko untuk peta; sumbernya berkas yang diunggah admin, bukan JKS.
     { key: "koordinat", label: "Koordinat Toko", roles: ["admin", "manager", "admin_sales"] },
+    // Validasi lokasi (owner 14 Nov 2026): radius check-in 20/100 m, pengajuan ke IT, antrean perbaikan titik toko.
+    { key: "lokasi", label: "Validasi Lokasi", roles: ["admin", "manager", "admin_sales"] },
     // Item Super (owner 13 Nov 2026): daftar saran item per principal × channel; Admin mengunggah, SPV/SM melihat isinya.
     { key: "item-super", label: "Item Super", roles: ["admin", "manager", "admin_sales", "sm", "spv"] },
     { key: "ao", label: "Rute Hari Ini", roles: ["salesman", "spv", "staff", "admin", "manager"] },

@@ -93,6 +93,9 @@ export interface TodayRouteRow extends JksMasterRow {
     nooStatus: StatusNoo | null;
     /** R4: alasan tolak SPV — hanya bila nooStatus = "ditolak". */
     nooAlasanTolak: string | null;
+    /** Titik toko (toko_koordinat) untuk tombol Google Maps (owner 14 Nov 2026); null = belum berkoordinat (peta mencari alamat). */
+    lat: number | null;
+    lng: number | null;
 }
 
 export interface VisitDetail {

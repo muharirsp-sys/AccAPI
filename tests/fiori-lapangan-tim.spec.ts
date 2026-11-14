@@ -127,13 +127,13 @@ test("Shell: tab mengikuti peran dari my-scope (salesman, SPV, admin); tautan Da
 
     opsi.scope = SCOPE.spv;
     await page.goto("/form-kontrol?tab=hierarki", NAV); // tab yang tidak boleh untuk SPV → tab pertama
-    await expect(nav.getByRole("link")).toHaveText(["Kontrol JKS", "Rute Hari Ini", "Toko Tidak Order", "Laporan Kunjungan", "Briefing SPV", "Toko Baru (NOO)"], NAV);
+    await expect(nav.getByRole("link")).toHaveText(["Kontrol JKS", "Item Super", "Rute Hari Ini", "Toko Tidak Order", "Laporan Kunjungan", "Briefing SPV", "Toko Baru (NOO)"], NAV);
     await expect(nav.getByRole("link", { name: "Kontrol JKS" })).toHaveAttribute("aria-current", "page");
     await expect(main.getByRole("link", { name: "Dashboard SPV" })).toHaveAttribute("href", "/form-kontrol/spv-dashboard");
 
     opsi.scope = SCOPE.admin;
     await page.goto("/form-kontrol?tab=hierarki", NAV);
-    await expect(nav.getByRole("link")).toHaveText(["Kontrol JKS", "Koordinat Toko", "Rute Hari Ini", "Toko Tidak Order", "Laporan Kunjungan", "Briefing SPV", "Kontrol SM", "Frekuensi Kunjungan", "Hierarki Sales", "Toko Baru (NOO)"], NAV);
+    await expect(nav.getByRole("link")).toHaveText(["Kontrol JKS", "Koordinat Toko", "Validasi Lokasi", "Item Super", "Rute Hari Ini", "Toko Tidak Order", "Laporan Kunjungan", "Briefing SPV", "Kontrol SM", "Frekuensi Kunjungan", "Hierarki Sales", "Toko Baru (NOO)"], NAV);
     await expect(nav.getByRole("link", { name: "Hierarki Sales" })).toHaveAttribute("aria-current", "page");
     await nav.getByRole("link", { name: "Kontrol SM" }).click();
     await expect(page).toHaveURL(/tab=sm-control/);
@@ -154,7 +154,7 @@ test("Shell: galat verifikasi akses tampil sebagai galat (bukan kosong); Coba la
     await expect(main.getByText(/Belum ada modul/)).toHaveCount(0);
     opsi.scopeGagal = false;
     await galat.getByRole("button", { name: "Coba lagi" }).click();
-    await expect(main.getByRole("navigation", { name: "Modul Form Kontrol" }).getByRole("link")).toHaveCount(6, NAV); // + Toko Baru (NOO)
+    await expect(main.getByRole("navigation", { name: "Modul Form Kontrol" }).getByRole("link")).toHaveCount(7, NAV); // + Item Super (13 Nov 2026), Toko Baru (NOO)
 });
 
 test("Dashboard SPV: Default per salesman, Tandai sudah dibaca lewat dialog (payload), Sukses", async ({ page }) => {

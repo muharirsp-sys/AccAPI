@@ -155,7 +155,7 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
         expect(postKe(m.tulis, "/luar-rute")).toEqual([{ salesCode: "S-01", principle: "PRINCIPLE A", date: HARI_INI, customerNo: "C-100002-CBA" }]);
         const item = r.getByRole("list", { name: "Toko di rute" }).getByRole("listitem").filter({ hasText: "PELANGGAN B" });
         await expect(item).toContainText("Luar rute");
-        await expect(item.getByRole("link")).toHaveAttribute("href", new RegExp(`/form-kontrol/visit/C-100002-CBA\\?salesCode=S-01&principle=PRINCIPLE\\+A&date=${HARI_INI}`));
+        await expect(item.getByRole("link", { name: /^(?!Buka peta|Cari di peta)/ })).toHaveAttribute("href", new RegExp(`/form-kontrol/visit/C-100002-CBA\\?salesCode=S-01&principle=PRINCIPLE\\+A&date=${HARI_INI}`));
         await expect(sek.getByText("PELANGGAN B ditambahkan ke kunjungan hari ini.")).toBeVisible();
         await noOverflow(page);
         await page.screenshot({ path: "test-results/fkmsm2/ponsel-rute-luar-rute.png", fullPage: true });
@@ -545,7 +545,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         // R-6: tombol di baris bawah kartu — judul toko panjang tidak diperas (tombol di bawah judul, judul selebar kolom isi).
         const kartuB = daftar.getByRole("listitem").filter({ hasText: "PELANGGAN B DENGAN" });
         const bB = daftar.getByRole("button", { name: /^Batalkan kunjungan PELANGGAN B/ });
-        const judul = (await kartuB.getByRole("link").boundingBox())!;
+        const judul = (await kartuB.getByRole("link", { name: /^(?!Buka peta|Cari di peta)/ }).boundingBox())!;
         expect((await bB.boundingBox())!.y).toBeGreaterThanOrEqual(judul.y + judul.height - 1);
         expect(judul.width).toBeGreaterThan(250);
         await noOverflow(page);
@@ -940,7 +940,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await expect(r.getByRole("button", { name: "Prioritas TOKO JKS A" })).toHaveAttribute("aria-pressed", "false");
         await expect(r.getByRole("status").filter({ hasText: "1 tanda prioritas dibuang." })).toContainText("TOKO JKS A sudah punya hasil kunjungan");
         // R2 (S-3): buka Kunjungan lalu kembali → tanda B masih ada.
-        await r.getByRole("link", { name: /TOKO JKS A/ }).click();
+        await r.getByRole("link", { name: /^(?!Buka peta|Cari di peta).*TOKO JKS A/ }).click();
         await expect(page.getByRole("heading", { name: "TOKO JKS A" })).toBeVisible(NAV);
         await page.goBack();
         const r2 = page.getByRole("region", { name: "Rute hari ini" });

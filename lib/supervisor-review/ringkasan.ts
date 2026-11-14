@@ -18,7 +18,9 @@ export interface MasukanRingkasan {
     /** jks_master AKTIF milik salesman di atas (semua hari). */
     jks: { salesCode: string; custCode: string; custName: string; hariKunjungan: string | null; mingguPattern: string }[];
     /** ao_control_daily tanggal itu. checkinAt/checkoutAt = Date (kolom tanpa zona berisi UTC, dibaca Drizzle sebagai UTC). */
-    ao: { salesCode: string; custCode: string; status: string; checkinAt: Date | null; checkoutAt: Date | null; lat: number | null; lng: number | null }[];
+    ao: { salesCode: string; custCode: string; status: string; checkinAt: Date | null; checkoutAt: Date | null; lat: number | null; lng: number | null;
+        /** Titik check-out (0042); null = belum / baris lama. */
+        latKeluar?: number | null; lngKeluar?: number | null }[];
     /** kunjungan_luar_rute tanggal itu, belum dibatalkan. */
     luarRute: { salesCode: string; custCode: string; custName: string }[];
     /** noo_toko tanggal itu (satu entri per baris). */
@@ -30,6 +32,8 @@ export interface MasukanRingkasan {
     faktur: { salesCode: string | null; cabang: string; customerNo: string; customerName: string; qty: number; item: number; dpp: number }[];
     /** toko_koordinat: kode JKS -> titik. */
     koordinat: ReadonlyMap<string, { lat: number; lng: number }>;
+    /** pengajuan_lokasi tanggal itu (owner 14 Nov 2026): check-in/check-out di luar radius titik toko. */
+    ajuan?: { salesCode: string; custCode: string; status: string }[];
 }
 
 export type HasilRingkasan = Pick<JawabanSupervisorReview, "salesman" | "totalCabang" | "kunjungan" | "penanda" | "tokoTanpaKoordinat" | "fakturBelumTerbaca">;
@@ -64,7 +68,9 @@ function koordinatToko(kode: string, koordinat: MasukanRingkasan["koordinat"]) {
     return null;
 }
 
-type Kunj = { custCode: string; mulai: Date; selesai: Date | null; lat: number | null; lng: number | null };
+type Kunj = { custCode: string; mulai: Date; selesai: Date | null; lat: number | null; lng: number | null; latKeluar: number | null; lngKeluar: number | null };
+const jarak = (titik: { lat: number | null; lng: number | null }, toko: { lat: number; lng: number } | null) =>
+    toko && titik.lat !== null && titik.lng !== null ? Math.round(haversineM({ lat: titik.lat, lng: titik.lng }, toko)) : null;
 type Fak = { qty: number; item: number; dpp: number; nama: string };
 type Hitung = Angka & { jumlahItem: number };
 
@@ -104,14 +110,27 @@ export function hitungRingkasan(m: MasukanRingkasan): HasilRingkasan {
         const rencana = new Set(jks.filter(hariIni).map((j) => j.custCode));
 
         // Satu toko satu kunjungan (baris ao per principal digabung): mulai = check-in paling awal, selesai = check-out paling akhir bila
-        // SEMUA baris ber-check-in sudah check-out (selain itu masih di toko). GPS = titik check-in paling awal.
+        // SEMUA baris ber-check-in sudah check-out (selain itu masih di toko). GPS = titik check-in paling awal; titik check-out = milik check-out
+        // paling akhir (owner 14 Nov 2026).
         const kunj = new Map<string, Kunj>();
         for (const a of [...ao].filter((x) => x.checkinAt).sort((x, y) => x.checkinAt!.getTime() - y.checkinAt!.getTime())) {
             const k = kunj.get(a.custCode);
-            if (!k) kunj.set(a.custCode, { custCode: a.custCode, mulai: a.checkinAt!, selesai: a.checkoutAt, lat: a.lat, lng: a.lng });
-            else k.selesai = k.selesai && a.checkoutAt ? new Date(Math.max(k.selesai.getTime(), a.checkoutAt.getTime())) : null;
+            const keluar = { latKeluar: a.checkoutAt ? a.latKeluar ?? null : null, lngKeluar: a.checkoutAt ? a.lngKeluar ?? null : null };
+            if (!k) kunj.set(a.custCode, { custCode: a.custCode, mulai: a.checkinAt!, selesai: a.checkoutAt, lat: a.lat, lng: a.lng, ...keluar });
+            else {
+                if (k.selesai && a.checkoutAt && a.checkoutAt.getTime() >= k.selesai.getTime()) Object.assign(k, keluar);
+                k.selesai = k.selesai && a.checkoutAt ? new Date(Math.max(k.selesai.getTime(), a.checkoutAt.getTime())) : null;
+            }
         }
         const urutKunj = [...kunj.values()].sort((x, y) => x.mulai.getTime() - y.mulai.getTime());
+        // Pengajuan ke IT per toko (beberapa principal / tahap): status terburuk ditolak > menunggu > disetujui.
+        const PERINGKAT_AJUAN = { disetujui: 1, menunggu: 2, ditolak: 3 } as const;
+        const ajuanToko = new Map<string, "menunggu" | "disetujui" | "ditolak">();
+        for (const a of (m.ajuan ?? []).filter((x) => x.salesCode === s.salesCode)) {
+            const st = a.status === "ditolak" || a.status === "disetujui" ? a.status : "menunggu";
+            const lama = ajuanToko.get(a.custCode);
+            if (!lama || PERINGKAT_AJUAN[st] > PERINGKAT_AJUAN[lama]) ajuanToko.set(a.custCode, st);
+        }
 
         // Toko faktur -> kode toko yang sudah dikenal salesman (JKS / kunjungan / luar rute; kode lengkap dulu, lalu tanpa akhiran cabang),
         // selain itu kode lengkap pelanggan Accurate (kodeJksUntuk, lib/form-kontrol/constants.ts).
@@ -148,13 +167,15 @@ export function hitungRingkasan(m: MasukanRingkasan): HasilRingkasan {
                 menitTempuh: tempuh === null ? null : Math.round(tempuh / 60_000),
                 qty: f ? bulat(f.qty) : null, item: f ? f.item : null, nilai: f ? bulat(f.dpp) : null,
                 ec: ec.has(k.custCode), belumDifakturkan: order.has(k.custCode) && !f, lat: k.lat, lng: k.lng,
-                jarakKeTokoM: toko && k.lat !== null && k.lng !== null ? Math.round(haversineM({ lat: k.lat, lng: k.lng }, toko)) : null });
+                jarakKeTokoM: jarak(k, toko),
+                latKeluar: k.selesai ? k.latKeluar : null, lngKeluar: k.selesai ? k.lngKeluar : null,
+                jarakKeluarKeTokoM: k.selesai ? jarak({ lat: k.latKeluar, lng: k.lngKeluar }, toko) : null, ajuanIt: ajuanToko.get(k.custCode) ?? null });
             sebelum = k;
         }
         for (const [kode, f] of [...fak].filter(([c]) => !kunj.has(c)).sort(([a], [b]) => a.localeCompare(b))) {
             kunjungan.push({ salesCode: s.salesCode, custCode: kode, namaToko: nama.get(kode) ?? f.nama, jenis: "tanpa_checkin", mulai: null, selesai: null,
                 menitDiToko: null, menitTempuh: null, qty: bulat(f.qty), item: f.item, nilai: bulat(f.dpp), ec: true, belumDifakturkan: false,
-                lat: null, lng: null, jarakKeTokoM: null });
+                lat: null, lng: null, jarakKeTokoM: null, latKeluar: null, lngKeluar: null, jarakKeluarKeTokoM: null });
         }
         for (const kode of new Set([...rencana, ...kunj.keys(), ...fak.keys()])) {
             const toko = koordinatToko(kode, m.koordinat);

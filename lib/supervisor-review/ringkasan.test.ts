@@ -137,3 +137,23 @@ test("periksaKoordinat: tolak per baris (kode bukan JKS, bukan angka, di luar In
     assert.deepEqual(hasil.ditolak.map((d) => [d.baris, d.kode]), [[3, "C-404"], [4, "C-2"], [5, "C-3"], [6, "C-1"]]);
     for (const d of hasil.ditolak) assert.ok(d.pesan.length > 5);
 });
+
+test("ringkasan: titik check-out (owner 14 Nov 2026) — jarak ke toko dari check-out PALING AKHIR; belum check-out / tanpa titik = null", () => {
+    const ao: MasukanRingkasan["ao"] = [
+        { salesCode: "M-SLA", custCode: "C-1", status: "ordered", checkinAt: utc("01:00"), checkoutAt: utc("01:30"), lat: -5.1477, lng: 119.4328,
+            latKeluar: -5.1477, lngKeluar: 119.4328 },
+        // Baris principal kedua toko yang sama, check-out lebih akhir ±560 m dari toko -> titik keluar kunjungan = baris ini.
+        { salesCode: "M-SLA", custCode: "C-1", status: "not_order", checkinAt: utc("01:05"), checkoutAt: utc("01:40"), lat: null, lng: null,
+            latKeluar: -5.1477, lngKeluar: 119.4378 },
+        { salesCode: "M-SLA", custCode: "C-2", status: "not_order", checkinAt: utc("02:00"), checkoutAt: null, lat: -5.15, lng: 119.44 },
+        { salesCode: "M-SLA", custCode: "C-9", status: "not_order", checkinAt: utc("03:00"), checkoutAt: utc("03:10"), lat: -5.2, lng: 119.5 },
+    ];
+    const ajuan = [{ salesCode: "M-SLA", custCode: "C-1", status: "disetujui" }, { salesCode: "M-SLA", custCode: "C-1", status: "menunggu" },
+        { salesCode: "M-SLB", custCode: "C-2", status: "ditolak" }];
+    const k = hitungRingkasan({ ...MASUK, ao, ajuan }).kunjungan.filter((x) => x.salesCode === "M-SLA" && x.jenis !== "tanpa_checkin");
+    assert.deepEqual(k.map((x) => x.ajuanIt), ["menunggu", null, null], "status pengajuan terburuk per toko; milik salesman lain tidak ikut");
+    assert.deepEqual(k.map((x) => [x.custCode, x.jarakKeTokoM, x.jarakKeluarKeTokoM !== null && x.jarakKeluarKeTokoM > 500, x.latKeluar]),
+        [["C-1", 11, true, -5.1477], ["C-2", 0, false, null], ["C-9", null, false, null]]);
+    assert.equal(k[1].jarakKeluarKeTokoM, null, "belum check-out");
+    assert.equal(k[2].jarakKeluarKeTokoM, null, "check-out tanpa titik (baris sebelum GPS wajib)");
+});

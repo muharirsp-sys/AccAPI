@@ -31,6 +31,30 @@ export function getCurrentCoords(timeoutMs = 8000): Promise<GeoCoords | null> {
 export type GalatLokasi = "ditolak" | "tidak_tersedia" | "waktu_habis" | "tidak_didukung";
 
 /**
+ * Kunjungan (owner 14 Nov 2026: GPS wajib saat check-in & check-out): presisi tinggi dulu (15 dtk); bila posisi tidak tersedia / waktu habis
+ * (dalam pasar/gedung), coba sekali lagi dengan posisi terakhir ≤ 60 dtk atau presisi rendah. Izin ditolak / tidak didukung = langsung galat.
+ */
+export async function ambilLokasiKunjungan(): Promise<{ coords: GeoCoords } | { galat: GalatLokasi }> {
+    const awal = await ambilLokasi();
+    if ("coords" in awal || awal.galat === "ditolak" || awal.galat === "tidak_didukung") return awal;
+    return new Promise((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+            (pos) => resolve({ coords: { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy } }),
+            (e) => resolve({ galat: e.code === 1 ? "ditolak" : e.code === 3 ? "waktu_habis" : "tidak_tersedia" }),
+            { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 },
+        );
+    });
+}
+
+/** Kunjungan (owner 14 Nov 2026: GPS wajib saat check-in & check-out): kalimat per galat, diakhiri "Coba lagi" milik FotoBukti. */
+export const PESAN_GPS_KUNJUNGAN: Record<GalatLokasi, string> = {
+    ditolak: "Izin lokasi ditolak. Ketuk ikon gembok/info di bilah alamat peramban → Izin situs → Lokasi → Izinkan, pastikan GPS ponsel menyala, lalu tekan Coba lagi.",
+    tidak_tersedia: "Lokasi belum terbaca. Nyalakan GPS/Lokasi ponsel (mode akurasi tinggi), pindah ke tempat terbuka, lalu tekan Coba lagi.",
+    waktu_habis: "Lokasi terlalu lama terbaca. Pastikan GPS menyala, lalu tekan Coba lagi di tempat terbuka.",
+    tidak_didukung: "Peramban ini tidak bisa membaca lokasi. Pakai Chrome atau Edge terbaru di ponsel.",
+};
+
+/**
  * NOO (13 Okt 2026): lokasi WAJIB — berbeda dengan getCurrentCoords (null diam-diam), sebab kegagalan dibedakan supaya layar bisa menjelaskan
  * cara menyalakan izin lokasi. Error GeolocationPositionError: 1 = izin ditolak, 2 = posisi tidak tersedia, 3 = waktu habis.
  */
