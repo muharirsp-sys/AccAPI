@@ -42,7 +42,12 @@ export const MINGGU_PATTERNS = ["ganjil", "genap", "all"] as const;
  * m2+m4 (genap), F4 dan F8 = all — jadi hanya F1 yang butuh pola baru. Pola yang dikenal unggah JKS = POLA_JKS.
  */
 export const MINGGU_SIKLUS = ["m1", "m2", "m3", "m4"] as const;
-export const POLA_JKS = [...MINGGU_PATTERNS, ...MINGGU_SIKLUS] as const;
+/**
+ * Toko F3 (owner 14 Nov 2026, akun MT Web-LL): dikunjungi TIGA dari empat minggu siklus (mis. M1+M2+M3). Pola = "m" + nomor minggunya.
+ * Berlaku pada minggu siklus yang angkanya ada di pola (polaBerlaku).
+ */
+export const MINGGU_TIGA = ["m123", "m124", "m134", "m234"] as const;
+export const POLA_JKS = [...MINGGU_PATTERNS, ...MINGGU_SIKLUS, ...MINGGU_TIGA] as const;
 export type PolaJks = (typeof POLA_JKS)[number];
 
 /**
@@ -98,8 +103,14 @@ export function mingguSiklus(ymd: string): (typeof MINGGU_SIKLUS)[number] {
     return MINGGU_SIKLUS[(((minggu + 1) % 4) + 4) % 4];
 }
 
-/** Pola minggu JKS yang berlaku pada tanggal itu: all + paritas + minggu siklus. Satu-satunya sumber untuk SQL (db.ts) dan TS. */
-export const polaBerlaku = (ymd: string): string[] => ["all", paritasMinggu(ymd), mingguSiklus(ymd)];
+/**
+ * Pola minggu JKS yang berlaku pada tanggal itu: all + paritas + minggu siklus + pola tiga minggu yang memuat minggu siklus itu (F3).
+ * Satu-satunya sumber untuk SQL (db.ts polaMinggu) dan TS (terjadwalPada).
+ */
+export const polaBerlaku = (ymd: string): string[] => {
+    const siklus = mingguSiklus(ymd);
+    return ["all", paritasMinggu(ymd), siklus, ...MINGGU_TIGA.filter((p) => p.includes(siklus.slice(1)))];
+};
 
 /**
  * Baris JKS terjadwal pada tanggal WITA `ymd`? Kunci hari (satu atau beberapa hari, F8) + pola minggu huruf kecil ter-trim ∈ polaBerlaku.
@@ -122,7 +133,7 @@ export const lokasiPerkiraan = (lokasiDari: string | null | undefined) => Boolea
  */
 export function frekuensiBawaan(pola: string, hari: string | null | undefined): number {
     const perMinggu = Math.max(1, daftarKunciHari(hari).length);
-    const minggu = pola === "all" ? 4 : pola === "ganjil" || pola === "genap" ? 2 : 1;
+    const minggu = pola === "all" ? 4 : pola === "ganjil" || pola === "genap" ? 2 : (MINGGU_TIGA as readonly string[]).includes(pola) ? 3 : 1;
     return perMinggu * minggu;
 }
 

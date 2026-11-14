@@ -18,7 +18,9 @@ test("minggu siklus = nomor minggu ISO 2026 ((n-1) mod 4)+1, selaras paritas, ti
         const d = new Date(Date.UTC(2026, 8, 1) + i * 86_400_000).toISOString().slice(0, 10);
         assert.equal(["m1", "m3"].includes(mingguSiklus(d)), paritasMinggu(d) === "ganjil", d);
     }
-    assert.deepEqual(polaBerlaku("2026-11-16"), ["all", "ganjil", "m3"]);
+    // F3 (owner 14 Nov 2026): pola tiga minggu yang memuat m3 ikut berlaku.
+    assert.deepEqual(polaBerlaku("2026-11-16"), ["all", "ganjil", "m3", "m123", "m134", "m234"]);
+    assert.deepEqual(polaBerlaku("2026-11-09"), ["all", "genap", "m2", "m123", "m124", "m234"]);
 });
 
 test("hari F8: beberapa hari dibakukan, dicocokkan per hari; JKS lama satu hari tetap terbaca", () => {
@@ -57,6 +59,7 @@ test("JKS Web-LL: M1..M4 -> pola, F8 dua baris -> satu baris dua hari, status pi
     assert.equal(polaDariMinggu([false, true, false, true]), "genap");
     assert.equal(polaDariMinggu([false, false, true, false]), "m3");
     assert.equal(polaDariMinggu([true, true, false, false]), null);
+    assert.equal(polaDariMinggu([false, false, false, false]), null);
     const r = bacaJksWebLl([
         barisJks({}),
         barisJks({ "KODE OUTLET": "C-2", HARI: "Senin", FREKUENSI: "F8", M1: "✓", M2: "✓", M3: "✓", M4: "✓", URUTAN: 9, "KELAS A": "YA" }),
@@ -146,4 +149,20 @@ test("isian penawaran: semua saran wajib dijawab; tidak dipesan wajib alasan; La
     assert.ok("baris" in ok);
     assert.deepEqual(ok.baris.map((b) => [b.kodeBarang, b.dipesan, b.alasan]), [["A", null, "TIDAK_SEMPAT"], ["B", true, null], ["C", false, "STOK_ADA"]]);
     assert.deepEqual(periksaTawaran(null, { wajib: [], lain: [] }), { baris: [] });
+});
+
+test("F3 tiga dari empat minggu: M1+M2+M3 -> m123, terjadwal di m1/m2/m3 saja, frekuensi bawaan 3 per hari", () => {
+    assert.equal(polaDariMinggu([true, true, true, false]), "m123");
+    assert.equal(polaDariMinggu([false, true, true, true]), "m234");
+    assert.equal(polaDariMinggu([true, false, true, true]), "m134");
+    const toko = { hariKunjungan: "Senin", mingguPattern: "m123" };
+    // Senin 2 Nov 2026 = m1, 9 Nov = m2, 16 Nov = m3, 23 Nov = m4, 30 Nov = m1.
+    assert.deepEqual(["2026-11-02", "2026-11-09", "2026-11-16", "2026-11-23", "2026-11-30"].map((d) => terjadwalPada(d)(toko)), [true, true, true, false, true]);
+    assert.deepEqual(["2026-11-02", "2026-11-09", "2026-11-16", "2026-11-23"].map((d) => terjadwalPada(d)({ hariKunjungan: "Kamis, Senin", mingguPattern: " M234 " })),
+        [false, true, true, true]);
+    assert.equal(frekuensiBawaan("m123", "Senin"), 3);
+    const r = bacaJksWebLl([barisJks({ FREKUENSI: "F3", M1: "✓", M2: "✓", M3: "✓", M4: "" })], peta);
+    assert.deepEqual(r.galat, []);
+    assert.equal(r.baris[0].mingguPattern, "m123");
+    assert.equal(r.baris[0].visitFrequency, 3);
 });

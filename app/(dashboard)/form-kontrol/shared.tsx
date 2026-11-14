@@ -42,7 +42,7 @@ export interface JksRow {
     alamat: string;
     kota: string;
     hariKunjungan: string;
-    mingguPattern: "ganjil" | "genap" | "all" | "m1" | "m2" | "m3" | "m4";
+    mingguPattern: "ganjil" | "genap" | "all" | "m1" | "m2" | "m3" | "m4" | "m123" | "m124" | "m134" | "m234";
     area: string;
     rayon: string;
     principle: string;
@@ -169,7 +169,10 @@ export function rentangWita(mulai: string | null | undefined, selesai: string | 
 
 /** Pola minggu JKS dari server (ganjil, genap, all) dalam bahasa tugas; nilai di luar daftar tidak ditampilkan mentah. */
 export const LABEL_MINGGU: Record<string, string> = { ganjil: "Minggu ganjil", genap: "Minggu genap", all: "Setiap minggu",
-    m1: "Minggu ke-1 siklus (M1)", m2: "Minggu ke-2 siklus (M2)", m3: "Minggu ke-3 siklus (M3)", m4: "Minggu ke-4 siklus (M4)" };
+    m1: "Minggu ke-1 siklus (M1)", m2: "Minggu ke-2 siklus (M2)", m3: "Minggu ke-3 siklus (M3)", m4: "Minggu ke-4 siklus (M4)",
+    // Toko F3 (owner 14 Nov 2026): tiga dari empat minggu siklus.
+    m123: "Minggu ke-1, 2, 3 siklus (M1+M2+M3)", m124: "Minggu ke-1, 2, 4 siklus (M1+M2+M4)",
+    m134: "Minggu ke-1, 3, 4 siklus (M1+M3+M4)", m234: "Minggu ke-2, 3, 4 siklus (M2+M3+M4)" };
 export const labelPola = (m: string | null | undefined): string => LABEL_MINGGU[m ?? ""] ?? "Tidak dikenal";
 
 /**

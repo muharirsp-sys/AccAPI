@@ -39,7 +39,7 @@ export function periksaKeputusan(body: Record<string, unknown>): Keputusan | { e
 }
 
 const labelMinggu = (m: string | null | undefined) => (m === "all" ? "setiap minggu" : m === "ganjil" ? "minggu ganjil" : m === "genap" ? "minggu genap"
-    : /^m[1-4]$/.test(m ?? "") ? `minggu ke-${m!.slice(1)} siklus (${m!.toUpperCase()})` : m || "minggu belum diisi");
+    : /^m[1-4]{1,3}$/.test(m ?? "") ? `minggu ke-${m!.slice(1).split("").join(", ")} siklus (${m!.slice(1).split("").map((x) => `M${x}`).join("+")})` : m || "minggu belum diisi");
 const jadwal = (j: { hariKunjungan: string | null; mingguPattern: string | null }) => `${j.hariKunjungan || "hari belum diisi"} · ${labelMinggu(j.mingguPattern)}`;
 const galat = (status: number, kode: string, error: string): { galat: GalatOrder } => ({ galat: { status, kode, error } });
 const kodeBesar = sql`upper(trim(${jksMaster.custCode}))`;
