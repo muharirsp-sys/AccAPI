@@ -232,6 +232,52 @@ test("S7-1b: Finance [finance.view, finance.update] GET vendor/list.do & glaccou
     }
 });
 
+// ---------------- Owner 13 Nov 2026: pelanggan terlindungi (lib/pelanggan-terlindungi) ----------------
+
+test("pelanggan terlindungi: nonaktif / batas piutang / batas umur piutang 8 toko -> 403 PELANGGAN_TERLINDUNGI setelah sesi, tanpa kirim", async () => {
+    const kunci = ["api_wrapper.view", "api_wrapper.execute"];
+    for (const [endpointPath, payload] of [
+        ["/api/customer/save.do", { customerNo: "C-AL0063", customerLimitAmount: true, customerLimitAmountValue: 251953000 }],
+        ["/api/customer/save.do", { customerNo: "C-IND051-KN", customerLimitAgeValue: 30 }],
+        ["/api/customer/save.do", { customerNo: "C-IN0088", suspended: true }],
+        ["/api/customer/bulk-save.do", [{ customerNo: "C-ANE050", name: "X" }, { customerNo: "C-ALF052", customerLimitAge: true }]],
+        ["/api/pos/customer/save.do", { customerNo: "C-IND080", customerLimitAmount: "true" }],
+    ] as const) {
+        const { res, json, c } = await proxySebagai(kunci, { endpointPath, method: "POST", payload });
+        assert.equal(res.status, 403, `${endpointPath} ${JSON.stringify(payload)}`);
+        assert.equal(json.code, "PELANGGAN_TERLINDUNGI");
+        assert.equal(json.sent, false);
+        assert.match(String(json.error), /tidak boleh ditutup di Accurate/);
+        assert.deepEqual([c.sesiDibaca, c.kiriman.length], [1, 0], "dinilai setelah sesi, tidak ada kiriman ke Accurate");
+    }
+});
+
+test("pelanggan terlindungi: hanya id -> kode dicari via customer/detail.do; tak terbaca = 403 tanpa POST", async () => {
+    // fetch tiruan proxySebagai menjawab { s:true, d:[...] } (bukan objek pelanggan) = kode tidak bisa dipastikan.
+    const { res, json, c } = await proxySebagai(["api_wrapper.execute"], { endpointPath: "/api/customer/save.do", method: "POST", payload: { id: 55, customerLimitAmountValue: 1 } });
+    assert.equal(res.status, 403);
+    assert.equal(json.code, "PELANGGAN_TERLINDUNGI");
+    assert.match(String(json.error), /id 55 tidak bisa dipastikan/);
+    assert.equal(c.kiriman.length, 1);
+    assert.equal(c.kiriman[0].method, "GET");
+    assert.equal(new URL(c.kiriman[0].url).pathname, "/accurate/api/customer/detail.do");
+    assert.equal(new URL(c.kiriman[0].url).searchParams.get("id"), "55");
+});
+
+test("pelanggan terlindungi: mematikan batas, edit biasa, dan batas toko lain tetap diteruskan apa adanya", async () => {
+    for (const payload of [
+        { customerNo: "C-AL0063", customerLimitAmount: false, customerLimitAge: false },
+        { customerNo: "C-AL0063", name: "ALFAMART MAKASSAR" },
+        { customerNo: "C-ANE050", customerLimitAmount: true, customerLimitAmountValue: 21000000 },
+    ]) {
+        const { res, c } = await proxySebagai(["api_wrapper.execute"], { endpointPath: "/api/customer/save.do", method: "POST", payload });
+        assert.equal(res.status, 200, JSON.stringify(payload));
+        assert.equal(c.kiriman.length, 1);
+        assert.equal(c.kiriman[0].method, "POST");
+        assert.deepEqual(c.kiriman[0].body, payload);
+    }
+});
+
 test("S7-1b PK-3: jalur tulis non-proxy tidak terputus — Antrean Faktur (order.edit) & Finance purchase-payment (finance.update) tidak lewat /api/proxy maupun api_wrapper.*", async () => {
     const { readFileSync } = await import("node:fs");
     const baca = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");

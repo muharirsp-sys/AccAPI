@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
 import { redactAccurateSecrets } from "@/lib/accurate-redact";
-import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, isAccurateRead, isCatalogWrite, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
+import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, isAccurateRead, isCatalogWrite, isCustomerWrite, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
+import { periksaPenutupanPelanggan } from "@/lib/pelanggan-terlindungi";
 import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, databaseLockBerbeda, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
 import { db } from "@/lib/db";
 import { memuatPlaceholderAkun } from "@/lib/sales-receipt-upload";
@@ -118,6 +119,27 @@ export async function POST(req: NextRequest) {
                     code: "database_changed", sent: false, lockDatabaseId: lockDb,
                     databaseId: accurateSession?.databaseId ?? null, databaseAlias: accurateSession?.databaseAlias ?? null,
                 }, { status: 409 });
+            }
+        }
+        // Owner 13 Nov 2026: 8 toko NKA/DC tidak boleh dinonaktifkan atau diberi batas piutang / batas umur piutang
+        // (lib/pelanggan-terlindungi). Dinilai SETELAH izin, katalog, dan sesi (id dicari lewat customer/detail.do), SEBELUM kirim.
+        if (isCustomerWrite(endpointPath)) {
+            const baca = bacaAccurate({ sessionHost, sessionId, accessToken: apiKey });
+            const tutup = await periksaPenutupanPelanggan(payload, async (id) => {
+                const d = await baca("/api/customer/detail.do", "GET", { id });
+                const no = d?.s ? (d.d?.customerNo ?? d.d?.no) : undefined;
+                return no ? String(no) : null;
+            });
+            if (tutup.kode.length > 0 || tutup.idTakTerbaca.length > 0) {
+                console.warn(`[PROXY TOLAK] pelanggan terlindungi ${String(method).toUpperCase()} ${endpointPath} user=${write.userId}`);
+                return NextResponse.json({
+                    error: tutup.kode.length > 0
+                        ? `Pelanggan ${tutup.kode.join(", ")} tidak boleh ditutup di Accurate (${tutup.alasan.join(", ")}), di semua divisi. `
+                            + "Batas piutang dan batas umur piutang hanya boleh dimatikan. Tidak ada yang dikirim."
+                        : `Kode pelanggan untuk id ${tutup.idTakTerbaca.join(", ")} tidak bisa dipastikan dari Accurate, jadi perubahan status/batas `
+                            + "pelanggan ditolak. Tidak ada yang dikirim.",
+                    code: "PELANGGAN_TERLINDUNGI", sent: false, pelanggan: tutup.kode,
+                }, { status: 403 });
             }
         }
         // Re-review d60433f2 MEDIUM: baris ditandai SENDING (dan override dihabiskan) sebelum kirim; hasilnya
