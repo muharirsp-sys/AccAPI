@@ -169,19 +169,18 @@ export const LABEL_MINGGU: Record<string, string> = { ganjil: "Minggu ganjil", g
 export const labelPola = (m: string | null | undefined): string => LABEL_MINGGU[m ?? ""] ?? "Tidak dikenal";
 
 /**
- * Keterangan toko JKS Web-LL (owner 13 Nov 2026) sebagai lencana: Kelas A, Outlet potensi / baru, Pindahan sales (dari siapa), lokasi perkiraan.
- * JKS berformat lama (semua null) = tanpa lencana.
+ * Keterangan toko JKS Web-LL (owner 13 Nov 2026) sebagai lencana: Kelas A, Outlet potensi / baru, lokasi perkiraan. JKS berformat lama (semua
+ * null) = tanpa lencana. Owner 14 Nov 2026: status pindah sales ("Pindahan dari …" / "Baru ditugaskan", kolom STATUS + SALES SEKARANG berkas
+ * Web-LL) TIDAK ditampilkan per toko; datanya tetap tersimpan (jks_master.status_jks / sales_sebelum).
  */
-export function LencanaJks({ r }: { r: Pick<JksRow, "kategori" | "kelasA" | "statusJks" | "salesSebelum" | "lokasiDari"> }) {
-    const ada = r.kelasA || r.kategori === "OUTLET POTENSI" || r.kategori === "OUTLET BARU" || (r.statusJks && r.statusJks !== "TETAP") || lokasiPerkiraan(r.lokasiDari);
+export function LencanaJks({ r }: { r: Pick<JksRow, "kategori" | "kelasA" | "lokasiDari"> }) {
+    const ada = r.kelasA || r.kategori === "OUTLET POTENSI" || r.kategori === "OUTLET BARU" || lokasiPerkiraan(r.lokasiDari);
     if (!ada) return null;
     return (
         <span className="flex flex-wrap gap-1">
             {r.kelasA && <StatusBadge tone="pos">Kelas A</StatusBadge>}
             {r.kategori === "OUTLET POTENSI" && <StatusBadge tone="info">Outlet potensi</StatusBadge>}
             {r.kategori === "OUTLET BARU" && <StatusBadge tone="info">Outlet baru</StatusBadge>}
-            {r.statusJks === "PINDAH SALES" && <StatusBadge tone="warn">{`Pindahan${r.salesSebelum ? ` dari ${r.salesSebelum}` : ""}`}</StatusBadge>}
-            {r.statusJks === "BARU DITUGASKAN" && <StatusBadge tone="warn">Baru ditugaskan</StatusBadge>}
             {lokasiPerkiraan(r.lokasiDari) && <StatusBadge tone="neu">Lokasi perkiraan</StatusBadge>}
         </span>
     );
