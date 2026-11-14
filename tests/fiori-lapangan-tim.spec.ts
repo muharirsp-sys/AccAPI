@@ -81,6 +81,14 @@ async function mockApi(page: Page, opsi: Opsi) {
             return route.fulfill(j ? json(j.body, j.status) : json({ success: true }));
         }
         if (p === "jks" && req.method() === "GET") return route.fulfill(json({ rows: JKS, total: JKS.length, page: 1, limit: 50 }));
+        // Hapus JKS (owner 14 Nov 2026): ringkasan per principal + hasil hapus.
+        if (p === "jks/hapus" && req.method() === "GET") return route.fulfill(json({ rows: [{ principle: "GODREJ", aktif: 120, tambahan: 3 }, { principle: "KINO NON FOOD", aktif: 1475, tambahan: 0 }] }));
+        if (p === "jks/hapus" && req.method() === "POST") {
+            const bd = req.postDataJSON() as { principle: string | null; pertahankanTambahan: boolean };
+            const jumlah = bd.principle === "GODREJ" ? (bd.pertahankanTambahan ? 117 : 120) : 1592;
+            return route.fulfill(json({ success: true, jumlah, jejakAudit: true,
+                perPrincipal: bd.principle === "GODREJ" ? [{ principle: "GODREJ", baris: jumlah, salesman: 10 }] : [{ principle: "GODREJ", baris: 117, salesman: 10 }, { principle: "KINO NON FOOD", baris: 1475, salesman: 8 }] }));
+        }
         if (p === "jks" && req.method() === "POST") return route.fulfill(json({ success: true, imported: 2, skipped: 1 }));
         if (p === "briefing" && req.method() === "GET") {
             return opsi.briefingGagal ? route.fulfill(json({ error: "Internal server error" }, 500)) : route.fulfill(json({ rows: [{ session: "pagi", createdAt: kini }], total: 1 }));
@@ -488,4 +496,29 @@ test("Ponsel 390 px: shell, Dashboard SPV, dan JKS tanpa gulir menyamping; Tanda
     await expect(main.getByRole("button", { name: "Simpan briefing pagi" })).toBeVisible(NAV);
     await noOverflow(page);
 });
+});
+
+test("Kontrol JKS: Hapus JKS lewat dialog — pilih principal, tambahan salesman dipertahankan, wajib ketik HAPUS; hasil + daftar dimuat ulang", async ({ page }) => {
+    const { tulis } = await mockApi(page, { scope: SCOPE.admin });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/form-kontrol?tab=jks", NAV);
+    const main = page.locator("main");
+    await main.getByRole("button", { name: "Hapus JKS…" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByLabel("Principal")).toHaveValue("__semua__", NAV);
+    await expect(dlg.getByLabel("Principal").locator("option")).toHaveText(["Semua principal (1595 baris)", "GODREJ (120 baris)", "KINO NON FOOD (1475 baris)"]);
+    await dlg.getByLabel("Principal").selectOption("GODREJ");
+    await expect(dlg).toContainText("117 dari 120 baris aktif");
+    await expect(dlg.getByRole("checkbox", { name: /Pertahankan 3 toko tambahan salesman/ })).toBeChecked();
+    const konfirmasi = dlg.getByRole("button", { name: "Hapus JKS" });
+    await expect(konfirmasi).toHaveAttribute("aria-disabled", "true");
+    await expect(dlg).toContainText("Ketik HAPUS untuk konfirmasi");
+    await dlg.getByLabel("Ketik HAPUS untuk konfirmasi").fill("hapus");
+    await page.screenshot({ path: "test-results/tim/hapus-jks-dialog-390.png" });
+    await konfirmasi.click();
+    await expect(dlg).toBeHidden(NAV);
+    const post = tulis.filter((r) => new URL(r.url()).pathname.endsWith("/jks/hapus")).map((r) => r.postDataJSON());
+    expect(post).toEqual([{ principle: "GODREJ", pertahankanTambahan: true, konfirmasi: "hapus" }]);
+    await expect(main.getByRole("status").filter({ hasText: "117 baris JKS dihapus." })).toContainText("GODREJ 117 baris (10 salesman)");
+    await page.screenshot({ path: "test-results/tim/hapus-jks-390.png", fullPage: true });
 });
