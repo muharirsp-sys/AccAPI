@@ -1170,6 +1170,42 @@ export const migrations = [
       RESET lock_timeout;
     `,
   },
+  {
+    // 2026-11-14 (order kunjungan, dua alur order salesman; zona §3 skema — butuh review manusia). EXPAND: 2 kolom nullable ao_control_daily
+    // (order_ref, order_dicatat_pada = langkah Order kunjungan selesai), tabel baru stok_toko_kunjungan (stok toko saat kunjungan dari riwayat
+    // pengambilan). SQL = db/migrations/0043. Tanpa DATABASE_MIGRATION_URL jalankan docs/handover/DDL_ORDER_KUNJUNGAN.sql SEBELUM image.
+    nama: "order kunjungan",
+    sudahAda: `SELECT 1 WHERE (SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('ao_control_daily') AND NOT attisdropped
+                 AND attname IN ('order_ref', 'order_dicatat_pada')) = 2
+               AND EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_stok_toko_kunjungan_unik')`,
+    sql: `
+      SET lock_timeout = '5s';
+      ALTER TABLE IF EXISTS ao_control_daily ADD COLUMN IF NOT EXISTS order_ref text, ADD COLUMN IF NOT EXISTS order_dicatat_pada timestamptz;
+      CREATE TABLE IF NOT EXISTS stok_toko_kunjungan (
+          id               text PRIMARY KEY,
+          sales_code       text NOT NULL,
+          cust_code        text NOT NULL,
+          principle        text NOT NULL,
+          tanggal          text NOT NULL,
+          kode_barang      text NOT NULL,
+          nama_barang      text NOT NULL,
+          satuan           text NOT NULL,
+          stok             numeric(14,2) NOT NULL,
+          rata_bulan       numeric(14,2),
+          dibuat_oleh      text NOT NULL,
+          diperbarui_pada  timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT stok_toko_kunjungan_stok CHECK (stok >= 0)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_stok_toko_kunjungan_unik ON stok_toko_kunjungan (sales_code, cust_code, principle, tanggal, kode_barang, satuan);
+      DO $stk$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
+          REVOKE DELETE, TRUNCATE ON stok_toko_kunjungan FROM accapi_app;
+          GRANT SELECT, INSERT, UPDATE ON stok_toko_kunjungan TO accapi_app;
+        END IF;
+      END $stk$;
+      RESET lock_timeout;
+    `,
+  },
 ];
 
 async function main() {

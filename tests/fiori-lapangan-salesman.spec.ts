@@ -172,12 +172,18 @@ test("Rute hari ini: kunjungan berjalan paling atas, hari order, tautan bertangg
     await expect(daftar.getByRole("listitem").first()).toContainText(`Sedang dikunjungi · check-in ${HARI_INI.split("-").reverse().join("/")} 08.10`);
     await expect(daftar.getByRole("listitem").first()).toContainText("Lanjutkan");
     await expect(r.getByText(/4 hari order bulan ini/)).toBeVisible();
-    // Owner 14 Nov 2026: realisasi faktur Accurate bulan berjalan per toko + ringkasan rute.
-    await expect(r.getByText(/Realisasi 500\srb \(2 faktur, 25% target\)/)).toBeVisible();
+    // Owner 14 Nov 2026: realisasi faktur Accurate bulan berjalan per toko (kartu: tiga angka Target / Realisasi / Limit) + ringkasan rute.
+    const b = daftar.getByRole("listitem").filter({ hasText: "TOKO B" });
+    await expect(b).toContainText(/Target\s*2\sjt\s*per bulan/);
+    await expect(b).toContainText(/Realisasi \S+\s*500\srb\s*25% · 2 faktur/);
+    await expect(r.getByText(/Urutan \d/)).toHaveCount(0);
     // Owner 14 Nov 2026: status pindah sales (kolom STATUS Web-LL) tidak ditampilkan per toko; lencana lain (Kelas A) tetap.
     await expect(r.getByText("Kelas A")).toBeVisible();
     await expect(r.getByText(/Pindahan|Baru ditugaskan/)).toHaveCount(0);
-    await expect(r.getByText(/Realisasi Accurate .* s\.d\. .*Rp\s?500\.000.* dari target Rp\s?2\.000\.000 \(25%\) · 2 faktur di 1 dari 4 toko/)).toBeVisible();
+    await expect(r.getByText(/Realisasi .* s\.d\. /)).toBeVisible();
+    await expect(r.getByRole("definition").filter({ hasText: /Rp\s?500\.000/ })).toBeVisible();
+    await expect(r.getByRole("definition").filter({ hasText: /Rp\s?2\.000\.000 \(25%\)/ })).toBeVisible();
+    await expect(r.getByText(/2 faktur di 1 dari 4 toko/)).toBeVisible();
     await expect(r.getByText(/≥ 2× tidak order bulan ini/)).toBeVisible();
     await expect(r.getByText("2 dari 4 dikunjungi")).toBeVisible(); // TOKO A + TOKO D sudah check-in
     await expect(daftar.getByRole("link", { name: /^(?!Buka peta|Cari di peta).*TOKO B/ })).toHaveAttribute("href", `/form-kontrol/visit/C-02?salesCode=S-01&principle=GODREJ&date=${HARI_INI}`);

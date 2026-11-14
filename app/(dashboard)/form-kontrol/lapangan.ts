@@ -138,6 +138,9 @@ export function keBarisRute(rows: unknown, principle: string): AoRow[] {
         // Realisasi faktur Accurate bulan berjalan (owner 14 Nov 2026); server lama = null (tidak tampil).
         realisasiBulan: angkaAtauNull(r.realisasiBulan),
         fakturBulan: angkaAtauNull(r.fakturBulan),
+        // Limit kredit toko (owner 14 Nov 2026); server lama / toko tanpa pelanggan cabang = null (tidak tampil).
+        limit: r.adaLimit === true ? { limit: angkaAtauNull(r.limitKredit), piutang: angkaAtauNull(r.piutang) } : null,
+        orderRef: typeof r.orderRef === "string" && r.orderRef ? r.orderRef : null,
     }));
 }
 

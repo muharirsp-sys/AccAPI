@@ -101,6 +101,10 @@ export interface AoRow {
     /** Realisasi faktur Accurate bulan berjalan s.d. tanggal rute (termasuk PPN) + jumlah faktur; null = server lama. */
     realisasiBulan?: number | null;
     fakturBulan?: number | null;
+    /** Limit kredit toko (owner 14 Nov 2026); null = tidak diketahui (tidak tampil). limit.limit null = tidak diatur di Accurate. */
+    limit?: { limit: number | null; piutang: number | null } | null;
+    /** Order kunjungan tercatat (websales:<id>[,…] | principal); null = belum. */
+    orderRef?: string | null;
 }
 
 export interface Reason {
