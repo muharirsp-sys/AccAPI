@@ -63,7 +63,8 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
         await expect(r.getByRole("list", { name: "Toko di rute" }).getByRole("listitem")).toHaveCount(2, NAV);
         await expect(r.getByLabel("Principal")).toHaveCount(0);
         await expect(r.getByText("S-01", { exact: true })).toBeVisible();
-        await expect(r).toContainText("SALES A · PRINCIPLE A");
+        // Owner 14 Nov 2026 (Rute hari ini dirapikan): principal di depan, lalu kode + nama salesman.
+        await expect(r).toContainText("PRINCIPLE A · S-01 SALES A");
         expect(principalDiminta(m.baca)).toEqual(["PRINCIPLE A"]);
         await noOverflow(page);
         await page.screenshot({ path: "test-results/fkmsm/ponsel-rute-satu-principal.png", fullPage: true });

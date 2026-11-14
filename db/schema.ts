@@ -1883,6 +1883,10 @@ export const aoControlDaily = pgTable("ao_control_daily", {
     checkoutLat: doublePrecision("checkout_lat"),
     checkoutLng: doublePrecision("checkout_lng"),
     checkoutAccuracy: doublePrecision("checkout_accuracy"),
+    // Order kunjungan (owner 14 Nov 2026; db/migrations/0043): langkah Order kunjungan ORDER selesai. order_ref = 'websales:<id>' (order masuk
+    // antrean Web Sales) | 'principal' (salesman tipe principal menekan "Sudah input order"; tidak ada yang dikirim ke Accurate). NULL = belum / baris lama.
+    orderRef: text("order_ref"),
+    orderDicatatPada: timestamp("order_dicatat_pada", { withTimezone: true }),
     autoMatched: boolean("auto_matched").notNull().default(false),
     source: text("source").notNull().default("manual"),
     createdBy: text("created_by"),
@@ -1948,6 +1952,29 @@ export const tawaranItemSuper = pgTable("tawaran_item_super", {
     index("idx_tis_sales_tanggal").on(t.salesCode, t.tanggal),
     check("tawaran_item_super_isi", sql`(${t.ditawarkan} AND ${t.dipesan} IS NOT NULL) OR (NOT ${t.ditawarkan} AND ${t.dipesan} IS NULL)`),
     check("tawaran_item_super_alasan", sql`${t.dipesan} IS TRUE OR ${t.alasan} IS NOT NULL`),
+]);
+
+/**
+ * Stok toko saat kunjungan (owner 14 Nov 2026; 0043): di halaman order kunjungan salesman mengisi stok toko sekarang untuk barang dari riwayat
+ * pengambilan toko (faktur Accurate 3 bulan, per barang + satuan), sebelum input order. Satu baris per kunjungan × barang × satuan; simpan ulang
+ * menimpa. accapi_app tanpa DELETE.
+ */
+export const stokTokoKunjungan = pgTable("stok_toko_kunjungan", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    custCode: text("cust_code").notNull(),
+    principle: text("principle").notNull(),
+    tanggal: text("tanggal").notNull(),
+    kodeBarang: text("kode_barang").notNull(),
+    namaBarang: text("nama_barang").notNull(),
+    satuan: text("satuan").notNull(),
+    stok: numeric("stok", { precision: 14, scale: 2, mode: "number" }).notNull(),
+    rataBulan: numeric("rata_bulan", { precision: 14, scale: 2, mode: "number" }),
+    dibuatOleh: text("dibuat_oleh").notNull(),
+    diperbaruiPada: timestamp("diperbarui_pada", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    uniqueIndex("idx_stok_toko_kunjungan_unik").on(t.salesCode, t.custCode, t.principle, t.tanggal, t.kodeBarang, t.satuan),
+    check("stok_toko_kunjungan_stok", sql`${t.stok} >= 0`),
 ]);
 
 export const merchandisingCheck = pgTable("merchandising_check", {

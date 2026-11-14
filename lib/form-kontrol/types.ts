@@ -99,6 +99,12 @@ export interface TodayRouteRow extends JksMasterRow {
     /** Realisasi faktur Accurate bulan berjalan s.d. tanggal rute (termasuk PPN) + jumlah faktur (owner 14 Nov 2026; db.ts realisasiBulanToko). */
     realisasiBulan: number | null;
     fakturBulan: number | null;
+    /** Limit kredit toko (owner 14 Nov 2026; db.ts limitToko): adaLimit false = tidak diketahui (tidak tampil); limitKredit null = tidak diatur. */
+    adaLimit: boolean;
+    limitKredit: number | null;
+    piutang: number | null;
+    /** Order kunjungan tercatat (0043): websales:<id>[,…] | principal; null = belum. */
+    orderRef: string | null;
 }
 
 export interface VisitDetail {

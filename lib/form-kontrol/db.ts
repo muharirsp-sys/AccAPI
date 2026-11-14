@@ -5,8 +5,9 @@ import {
     jksMaster, aoControlDaily, noOrderReason,
     merchandisingCheck, salesmanDailyReport,
     spvBriefing, smControl, kontrolAuditLog, salesProfile, kunjunganLuarRute, nooToko, tokoKoordinat, tawaranItemSuper, pengajuanLokasi,
-    salesInvoiceCache, customer, branch,
+    salesInvoiceCache, customer, branch, stokTokoKunjungan,
 } from "@/db/schema";
+import { gabungRefOrder, type IsianStok, type LimitToko } from "./order-kunjungan";
 import { cocokKodeRute, type GalatOrder } from "@/lib/order-cabang";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { DAY_TO_HARI, NO_ORDER_REASONS, POLA_JKS, frekuensiBawaan, hariBaku, kodeJksUntuk, kunciHari, kunciNama, polaBerlaku } from "./constants";
@@ -289,11 +290,12 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
     // Toko DITOLAK tetap di rute (kunjungannya sudah terjadi); alasan tolak hanya dibawa bila status = ditolak. Kode NOO unik; saringan salesCode =
     // lapis kedua supaya NOO milik salesman lain (baris rute berkode tak lazim) tidak membocorkan status/alasan ke rute ini.
     const kodeNoo = custCodes.filter(isKodeNoo);
-    const [nooRows, titik, realisasi] = await Promise.all([
+    const [nooRows, titik, realisasi, limit] = await Promise.all([
         kodeNoo.length === 0 ? [] : db.select({ kode: nooToko.kode, status: nooToko.status, alasanTolak: nooToko.alasanTolak })
             .from(nooToko).where(and(inArray(nooToko.kode, kodeNoo), eq(nooToko.salesCode, salesCode))),
         titikToko(custCodes),
         realisasiBulanToko(custCodes, principle, dateStr),
+        limitToko(custCodes, principle),
     ]);
     const nooMap = new Map(nooRows.map(r => [r.kode, r]));
 
@@ -302,12 +304,18 @@ export async function getTodayRoute(salesCode: string, principle: string, dateSt
         const noo = nooMap.get(j.custCode);
         const t = titik(j.custCode);
         const r = realisasi(j.custCode);
+        const l = limit(j.custCode);
         return {
             ...j,
             lat: t?.lat ?? null,
             lng: t?.lng ?? null,
             realisasiBulan: r?.total ?? null,
             fakturBulan: r?.faktur ?? null,
+            // Limit kredit toko (owner 14 Nov 2026); adaLimit false = toko tanpa pelanggan cabang / server tidak tahu (tidak tampil).
+            adaLimit: l !== null,
+            limitKredit: l?.limit ?? null,
+            piutang: l?.piutang ?? null,
+            orderRef: ao?.orderRef ?? null,
             mingguPattern: j.mingguPattern as MingguPattern,
             aoStatus: (ao?.status as AoStatus | undefined) ?? null,
             noOrderReasonCode: ao?.noOrderReasonCode ?? null,
@@ -379,6 +387,43 @@ async function realisasiBulanToko(kode: string[], principle: string, dateStr: st
             const x = per.get(c.trim().toUpperCase());
             return { total: x ? [...x.values()].reduce((a, b) => a + b, 0) : 0, faktur: x?.size ?? 0 };
         };
+    } catch {
+        return tidakTahu;
+    }
+}
+
+/**
+ * Limit kredit toko (owner 14 Nov 2026, "tambahkan juga limitnya"): pelanggan Accurate yang cabangnya = principal rute dan kodenya = kode toko
+ * rute persis atau + akhiran cabang (pola sama dengan realisasiBulanToko). limit = customer.credit_limit_amount bila credit_limit_enabled, selain
+ * itu null (tidak diatur di Accurate); piutang = customer.balance (saldo sinkron terakhir, bukan saat ini). Beberapa pelanggan cocok untuk satu
+ * toko (jarang) = kode persis didahulukan. Kembali = pencari kode -> LimitToko | null; null (tidak tampil) bila principal bukan nama cabang
+ * Accurate, toko tanpa pelanggan cabang, atau kueri gagal — angka ini tambahan, rute/kunjungan tetap termuat.
+ */
+async function limitToko(kode: string[], principle: string): Promise<(c: string) => LimitToko | null> {
+    const tidakTahu = () => null;
+    const rute = new Set(kode.map((c) => c.trim().toUpperCase()));
+    const p = principle.trim().toUpperCase();
+    if (rute.size === 0) return tidakTahu;
+    try {
+        const lolos = (c: string) => c.replace(/[\\%_]/g, (x) => `\\${x}`);
+        const noPelanggan = sql`upper(btrim(${customer.customerNo}))`;
+        const rows = await db.select({ customerNo: customer.customerNo, aktif: customer.creditLimitEnabled, limit: customer.creditLimitAmount,
+            piutang: customer.balance }).from(customer)
+            .where(and(eq(sql`upper(btrim(${customer.branchName}))`, p),
+                or(...[...rute].flatMap((c) => [eq(noPelanggan, c), like(noPelanggan, `${lolos(c)}-%`)]))))
+            .orderBy(asc(customer.customerNo));
+        // Kode persis menang; selain itu pelanggan berakhiran pertama menurut kode (urutan tetap, bukan urutan baris acak).
+        const per = new Map<string, { persis: boolean; l: LimitToko }>();
+        for (const r of rows) {
+            const no = (r.customerNo ?? "").trim().toUpperCase();
+            const k = rute.has(no) ? no : kodeJksUntuk(no).find((x) => rute.has(x));
+            if (!k) continue;
+            const persis = no === k;
+            const ada = per.get(k);
+            if (ada && (ada.persis || !persis)) continue;
+            per.set(k, { persis, l: { limit: r.aktif && r.limit != null ? r.limit : null, piutang: r.piutang ?? null } });
+        }
+        return (c: string) => per.get(c.trim().toUpperCase())?.l ?? null;
     } catch {
         return tidakTahu;
     }
@@ -510,6 +555,9 @@ export async function upsertAoControl(data: KunciKunjungan & {
             noOrderReasonCode: data.noOrderReasonCode ?? null,
             noOrderNote: data.noOrderNote ?? null,
             ...(nomor === undefined ? {} : { invoiceNumber: nomor }),
+            // Order kunjungan (0043): hasil bukan ORDER = langkah Order tidak lagi selesai; order_ref TETAP sebagai jejak (order Web Sales yang
+            // sudah terkirim tidak batal karena status diubah). Kembali ke ORDER = halaman order dibuka lagi.
+            ...(order ? {} : { orderDicatatPada: null }),
             updatedAt: now,
         } }).returning({ id: aoControlDaily.id });
         return { id: row.id };
@@ -559,14 +607,7 @@ export async function saveMerchandising(data: KunciKunjungan & {
     return db.transaction(async (tx) => {
         const galat = await galatBukanRute(tx, data);
         if (galat) return { galat };
-        for (const t of data.tawaran ?? []) {
-            const isi = { namaBarang: t.namaBarang, ditawarkan: t.ditawarkan, dipesan: t.dipesan, alasan: t.alasan, catatan: t.catatan,
-                dibuatOleh: data.dibuatOleh ?? "", diperbaruiPada: new Date() };
-            await tx.insert(tawaranItemSuper).values({ id: randomUUID(), salesCode: data.salesCode, custCode: data.custCode, principle: data.principle,
-                tanggal: data.date, kodeBarang: t.kodeBarang, ...isi })
-                .onConflictDoUpdate({ target: [tawaranItemSuper.salesCode, tawaranItemSuper.custCode, tawaranItemSuper.principle, tawaranItemSuper.tanggal,
-                    tawaranItemSuper.kodeBarang], set: isi });
-        }
+        await tulisTawaran(tx, data, data.tawaran ?? [], data.dibuatOleh ?? "");
         const existing = await tx.select({ id: merchandisingCheck.id })
             .from(merchandisingCheck)
             .where(and(
@@ -590,6 +631,70 @@ export async function saveMerchandising(data: KunciKunjungan & {
         });
         return { id };
     });
+}
+
+type BarisTawaran = { kodeBarang: string; namaBarang: string; ditawarkan: boolean; dipesan: boolean | null; alasan: string | null; catatan: string | null };
+
+/** Upsert penawaran item super satu kunjungan (idx_tis_unik); dipakai merchandising (TIDAK ORDER) dan order kunjungan (ORDER). */
+async function tulisTawaran(tx: Tx, k: KunciKunjungan, tawaran: readonly BarisTawaran[], oleh: string) {
+    for (const t of tawaran) {
+        const isi = { namaBarang: t.namaBarang, ditawarkan: t.ditawarkan, dipesan: t.dipesan, alasan: t.alasan, catatan: t.catatan,
+            dibuatOleh: oleh, diperbaruiPada: new Date() };
+        await tx.insert(tawaranItemSuper).values({ id: randomUUID(), salesCode: k.salesCode, custCode: k.custCode, principle: k.principle,
+            tanggal: k.date, kodeBarang: t.kodeBarang, ...isi })
+            .onConflictDoUpdate({ target: [tawaranItemSuper.salesCode, tawaranItemSuper.custCode, tawaranItemSuper.principle, tawaranItemSuper.tanggal,
+                tawaranItemSuper.kodeBarang], set: isi });
+    }
+}
+
+// ── Order kunjungan (owner 14 Nov 2026, 0043) ────────────────────────────────
+
+/**
+ * Halaman order kunjungan: penawaran item super (SUDAH diperiksa route: periksaTawaran) + stok toko (periksaStok) untuk kunjungan berstatus
+ * ORDER, dalam satu transaksi. `selesai` = langkah Order kunjungan selesai: ref (periksaRefOrder: websales:<id> | principal) DITAMBAHKAN ke
+ * ao_control_daily.order_ref + order_dicatat_pada; salesman tipe principal boleh membawa nomor order sistem principal (kolom invoice_number,
+ * sama dengan langkah Status lama; undefined = tidak diubah). Tidak ada yang dikirim ke Accurate dari sini.
+ * Penolakan: toko tidak di rute (galatBukanRute), hasil kunjungan belum / bukan ORDER (409 STATUS_BUKAN_ORDER).
+ */
+export async function simpanOrderKunjungan(data: KunciKunjungan & {
+    tawaran: readonly BarisTawaran[]; stok: readonly IsianStok[]; dibuatOleh: string;
+    selesai?: { ref: string; nomorOrderPrincipal?: string | null } | null;
+}): Promise<HasilTulisKunjungan> {
+    return db.transaction(async (tx) => {
+        const galat = await galatBukanRute(tx, data);
+        if (galat) return { galat };
+        const kunci = and(eq(aoControlDaily.salesCode, data.salesCode), eq(aoControlDaily.custCode, data.custCode),
+            eq(aoControlDaily.principle, data.principle), eq(aoControlDaily.date, data.date));
+        const [ao] = await tx.select({ id: aoControlDaily.id, status: aoControlDaily.status, orderRef: aoControlDaily.orderRef })
+            .from(aoControlDaily).where(kunci).for("update").limit(1);
+        if (!ao || (ao.status !== "ordered" && ao.status !== "active")) {
+            return { galat: { status: 409, kode: "STATUS_BUKAN_ORDER",
+                error: "Hasil kunjungan toko ini belum tersimpan sebagai ORDER, jadi halaman order tidak dicatat. Kembali ke langkah Status lalu simpan ORDER." } };
+        }
+        await tulisTawaran(tx, data, data.tawaran, data.dibuatOleh);
+        for (const s of data.stok) {
+            const isi = { namaBarang: s.namaBarang, stok: s.stok, rataBulan: s.rataBulan, dibuatOleh: data.dibuatOleh, diperbaruiPada: new Date() };
+            await tx.insert(stokTokoKunjungan).values({ id: randomUUID(), salesCode: data.salesCode, custCode: data.custCode, principle: data.principle,
+                tanggal: data.date, kodeBarang: s.kodeBarang, satuan: s.satuan, ...isi })
+                .onConflictDoUpdate({ target: [stokTokoKunjungan.salesCode, stokTokoKunjungan.custCode, stokTokoKunjungan.principle,
+                    stokTokoKunjungan.tanggal, stokTokoKunjungan.kodeBarang, stokTokoKunjungan.satuan], set: isi });
+        }
+        if (data.selesai) {
+            const nomor = data.selesai.nomorOrderPrincipal;
+            await tx.update(aoControlDaily).set({
+                orderRef: gabungRefOrder(ao.orderRef, data.selesai.ref), orderDicatatPada: new Date(), updatedAt: new Date(),
+                ...(nomor === undefined ? {} : { invoiceNumber: nomor?.trim() || null }),
+            }).where(eq(aoControlDaily.id, ao.id));
+        }
+        return { id: ao.id };
+    });
+}
+
+/** Stok toko yang sudah tersimpan untuk satu kunjungan (halaman order dimuat ulang = isian kembali). */
+export async function bacaStokKunjungan(k: { salesCode: string; custCode: string; principle: string; date: string }) {
+    return db.select({ kodeBarang: stokTokoKunjungan.kodeBarang, satuan: stokTokoKunjungan.satuan, stok: stokTokoKunjungan.stok })
+        .from(stokTokoKunjungan).where(and(eq(stokTokoKunjungan.salesCode, k.salesCode), eq(stokTokoKunjungan.custCode, k.custCode),
+            eq(stokTokoKunjungan.principle, k.principle), eq(stokTokoKunjungan.tanggal, k.date)));
 }
 
 export async function getMerchandisingForDate(salesCode: string, principle: string, dateStr: string) {
@@ -1015,10 +1120,12 @@ export async function getVisitDetail(
     }
     if (!store) return null;
     // Dua tipe sales (owner 13 Nov 2026): `principal` = order diinput di sistem principal → langkah Status meminta nomor order principal.
-    const [[profil], titik, realisasi] = await Promise.all([
+    const [[profil], titik, realisasi, limit, stok] = await Promise.all([
         db.select({ sumberOrder: salesProfile.sumberOrder }).from(salesProfile).where(eq(salesProfile.salesCode, salesCode)).limit(1),
         titikToko([custCode]),
         realisasiBulanToko([custCode], principle, dateStr),
+        limitToko([custCode], principle),
+        bacaStokKunjungan({ salesCode, custCode, principle, date: dateStr }),
     ]);
     return {
         store,
@@ -1029,6 +1136,10 @@ export async function getVisitDetail(
         titik: titik(custCode) ?? null,
         /** Realisasi faktur Accurate bulan berjalan s.d. tanggal kunjungan (owner 14 Nov 2026). */
         realisasi: realisasi(custCode),
+        /** Limit kredit toko di cabang principal (limitToko); null = tidak diketahui (tidak tampil). */
+        limit: limit(custCode),
+        /** Stok toko yang sudah dicatat di halaman order kunjungan ini (0043). */
+        stok,
     };
 }
 

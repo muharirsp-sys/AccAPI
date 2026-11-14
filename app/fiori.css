@@ -137,8 +137,9 @@ html[data-density="cozy"] .fiori {
 .fi-btn:has(input:focus-visible) { outline:2px solid var(--focus); outline-offset:2px; }
 /* Alasan tombol nonaktif (Button disabledReason): muncul saat tombol diketuk/ditekan, di lapisan atas sehingga tata letak tidak bergeser. */
 .fi-whypop { position:fixed; z-index:var(--z-toast); max-width:min(18rem, calc(100vw - 16px)); padding:6px 10px; border-radius:var(--r-md); background:var(--ink); color:var(--surface); font:var(--fs-small); box-shadow:var(--shadow-2); white-space:normal; pointer-events:none; }
-.fi-btn .fi-count, .fi-subnav .fi-count { min-width:18px; height:18px; border-radius:9px; background:color-mix(in srgb, currentColor 18%, transparent); font:700 .6875rem/18px var(--font-sans); padding:0 5px; }
+.fi-btn .fi-count, .fi-subnav .fi-count, .fi-segs .fi-count { min-width:18px; height:18px; border-radius:9px; background:color-mix(in srgb, currentColor 18%, transparent); font:700 .6875rem/18px var(--font-sans); padding:0 5px; }
 .fi-subnav .fi-count { display:inline-block; margin-left:6px; text-align:center; }
+.fi-segs .fi-count { display:inline-block; text-align:center; }
 .fi-btnrow { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
 .fi-spin { animation:fi-spin 800ms linear infinite; }
 @keyframes fi-spin { to { transform:rotate(360deg); } }
@@ -211,6 +212,8 @@ select.fi-input { appearance:none; background-image:linear-gradient(45deg, trans
 .fi-flow li[aria-current="step"] .fi-step { background:var(--primary); color:var(--on-primary); }
 .fi-flow li[data-state="late"] .fi-step { background:var(--warn-solid); color:#18212d; } /* putih di atas oranye < 4,5:1 */
 .fi-flow li[data-state="stop"] .fi-step { background:var(--neg-bg); color:var(--neg); }
+/* Alur berlabel panjang (wizard Kunjungan 5 langkah): label tidak bertumpuk; di layar sempit alur bergeser menyamping di dalam dirinya. */
+.fi-flow-lega { min-width:0; } .fi-flow-lega .fi-flow li { min-width:max-content; padding:0 6px; }
 .fi-anchors { position:sticky; top:0; z-index:var(--z-sticky); display:flex; gap:4px; overflow-x:auto; scrollbar-width:none; background:var(--surface); border-bottom:1px solid var(--line); padding:0 16px; }
 .fi-anchors a { padding:10px; font:600 .8125rem/1 var(--font-sans); color:var(--ink-muted); text-decoration:none; border-bottom:2px solid transparent; white-space:nowrap; }
 .fi-anchors a:hover { color:var(--brand); border-color:var(--brand); }

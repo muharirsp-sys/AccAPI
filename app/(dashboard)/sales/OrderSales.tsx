@@ -21,10 +21,14 @@
  * dikirim; PRATINJAU_BERUBAH (409) = order BELUM terkirim, angka baru ditampilkan dan Kirim meminta konfirmasi ulang.
  * O3: panel "Biasa diambil toko ini" (components/order/RiwayatBeli; GET /api/customers/riwayat-beli) — Tambah mengisi baris order
  *   (lib/riwayat-beli sisipkanBaris) lalu pratinjau dihitung ulang seperti biasa.
+ * Mode kunjungan (owner 14 Nov 2026, prop `kunjungan`; dipakai form-kontrol/visit/[custCode]/order/OrderKunjungan): pelanggan = toko kunjungan
+ *   (terisi otomatis), kepala halaman dari pemanggil, panel riwayat diganti `sebelumBarang` (stok toko + item super), isian barang + Kirim
+ *   dikunci selama `kunci` (item super belum ditawarkan), `sebelumKirim` menyimpan stok + item super SEBELUM POST order (gagal = order tidak
+ *   dikirim), `sesudahKirim(id)` mencatat order ke kunjungan; draf ponsel per kunjungan; Order saya = order toko ini hari ini + "Catat ke kunjungan".
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Plus, Send, Trash2 } from "lucide-react";
 import { Button, EmptyState, ErrorState, FooterToolbar, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
@@ -45,7 +49,27 @@ const API_BASE = resolveApiBase();
 
 /** `barang` null + `bacaan` null = baris baru (belum memilih barang); `bacaan` = barang dari draf sedang/gagal dibaca. */
 type Line = { code: string; unit: string; quantity: string; barang: BarangPilih | null; bacaan: BacaanBarang | null };
-type RequestRow = { id: string; outlet: string; channel: string; order_date: string; status: string; created_at: string; reject_code?: string | null; reject_reason?: string | null };
+type RequestRow = { id: string; outlet: string; channel: string; order_date: string; status: string; created_at: string; customer_no?: string | null; reject_code?: string | null; reject_reason?: string | null };
+
+/** Alat untuk isi `sebelumBarang` mode kunjungan: menambah baris order dari stok toko / item super. */
+export type ApiOrderKunjungan = {
+    pelanggan: PelangganPilih | null; tanggal: string; baris: readonly { code: string; unit: string }[];
+    tambah: (b: BarangPilih, unit: string, quantity: string) => void;
+};
+export type ModeKunjungan = {
+    /** Pelanggan cabang toko kunjungan (hasil cocokkan kode JKS); null = belum cocok, salesman mencari sendiri. */
+    customerNo: string | null;
+    /** Pembeda draf ponsel per kunjungan (kode toko|tanggal). */
+    kunciDraf: string;
+    kepala: ReactNode;
+    sebelumBarang: (api: ApiOrderKunjungan) => ReactNode;
+    /** Alasan isian barang + Kirim dikunci (item super belum ditawarkan / stok belum diisi). */
+    kunci?: string;
+    sebelumKirim: () => Promise<void>;
+    sesudahKirim: (id: string) => void;
+    /** Id permintaan yang sudah tercatat di kunjungan ini. */
+    tercatat: readonly string[];
+};
 type DataCakupan = { cakupan?: Cakupan; blokir?: Galat };
 
 const tanpaLangganan = () => () => {};
@@ -127,12 +151,13 @@ const galatMenungguPelanggan = (kode: string): Galat => ({
     pesan: `Barang ${kode} belum bisa dibaca karena pelanggan order ini belum terbaca.`, tindakan: "Pilih pelanggan dulu, lalu cari barangnya lagi.",
 });
 
-export default function OrderSales({ akunId }: { akunId: string }) {
-    const kunciDraf = `${DRAF_ORDER}.${akunId}`;
+export default function OrderSales({ akunId, kunjungan }: { akunId: string; kunjungan?: ModeKunjungan }) {
+    const kunciDraf = kunjungan ? `${DRAF_ORDER}.${akunId}.kunjungan.${kunjungan.kunciDraf}` : `${DRAF_ORDER}.${akunId}`;
     // Hari ini dari jam peramban dalam WITA; snapshot server "" supaya hidrasi tidak bentrok dengan jam server.
     const hariIni = useSyncExternalStore(tanpaLangganan, hariIniKlien, () => "");
     const ruteRaw = useSyncExternalStore(tanpaLangganan, () => { try { return sessionStorage.getItem(RUTE_TERSIMPAN); } catch { return null; } }, () => null);
-    const tokoRute = useMemo(() => bacaRuteTersimpan(ruteRaw, hariIni), [ruteRaw, hariIni]);
+    // Mode kunjungan: pelanggan = toko kunjungan, jadi pemilih "Toko di rute hari ini" tidak dipakai.
+    const tokoRute = useMemo(() => (kunjungan ? [] : bacaRuteTersimpan(ruteRaw, hariIni)), [kunjungan, ruteRaw, hariIni]);
 
     const pel = usePelanggan("sales");
     const pelanggan: PelangganPilih | null = pel.state.jenis === "siap" ? pel.state.p : null;
@@ -216,6 +241,15 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     const [petaL, muatUlangPeta] = useLoad(muatPeta);
     const blokir = petaL.data?.blokir ?? null;
 
+    // Mode kunjungan: pelanggan toko kunjungan dibaca sekali saat cabang Anda siap (draf yang dipulihkan memakai toko yang sama).
+    const pelangganKunjungan = kunjungan?.customerNo ?? null;
+    const sudahIsiKunjungan = useRef(false);
+    useEffect(() => {
+        if (!pelangganKunjungan || !petaL.data?.cakupan || sudahIsiKunjungan.current || pel.state.jenis !== "kosong") return;
+        sudahIsiKunjungan.current = true;
+        void pel.bacaKode(pelangganKunjungan).then((p) => { if (p) setOutlet((o) => o || p.name); });
+    }, [pelangganKunjungan, petaL.data?.cakupan, pel]);
+
     // FK-MSM butir 6: kode toko rute = kode JKS TANPA akhiran cabang (C-100001); server mencocokkannya ke pelanggan CABANG Anda
     // (C-100001-<akhiran>). Hanya toko dengan tepat satu pelanggan aktif yang ditawarkan; sisanya tampil dengan alasannya (bukan hilang diam).
     const kodeRute = useMemo(() => tokoRute.map((t) => t.kode).join("\n"), [tokoRute]);
@@ -290,7 +324,7 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                                                 : pratinjau?.status === "memuat" ? "Menunggu harga dihitung"
                                                                     : pratinjau?.status === "siap" && pratinjau.channelMasalah ? pratinjau.channelMasalah
                                                                         : pratinjau?.status === "siap" && !pratinjau.sidik ? "Pratinjau lengkap belum tersedia; hitung ulang dulu" : undefined;
-    const terkunci = tidakPasti ? "Periksa Order saya dulu; order terakhir mungkin sudah masuk" : terkunciIsian;
+    const terkunci = tidakPasti ? "Periksa Order saya dulu; order terakhir mungkin sudah masuk" : kunjungan?.kunci ?? terkunciIsian;
     // Draf = barang/catatan yang belum dikirim (pelanggan saja tidak dijaga: tetap terisi setelah kirim seperti halaman lama).
     const draf = Boolean(note.trim() || filled.length > 0);
     useUnsavedGuard(draf);
@@ -309,6 +343,8 @@ export default function OrderSales({ akunId }: { akunId: string }) {
         // Sidik pratinjau TERAKHIR untuk isian yang sekarang; tombol Kirim sudah terkunci bila tidak ada, ini sabuk pengaman.
         const sidik = pratinjau?.status === "siap" ? pratinjau.sidik : null;
         if (!sidik) throw new Error("Pratinjau harga dan promo belum tersedia untuk isian ini. Tunggu perkiraan selesai atau hitung ulang, lalu kirim lagi.");
+        // Mode kunjungan: stok toko + item super tersimpan dulu (idempoten); gagal = order TIDAK dikirim, galat tampil di dialog.
+        if (kunjungan) await kunjungan.sebelumKirim();
         const isi = { customerNo: kodePel, outlet, note, lines: buatBarisDraf(lines) };
         tulisPonsel(kunciDraf, { ...isi, tidakPasti: TERPUTUS }); // lihat DRAF_ORDER: dilepas hanya oleh jawaban pasti
         mengirim.current = true;
@@ -352,6 +388,8 @@ export default function OrderSales({ akunId }: { akunId: string }) {
         setHasil(null);
         setBerubah(null);
         muatUlangOrder();
+        // Order SUDAH terkirim: pencatatan ke kunjungan ditangani pemanggil (galatnya bukan galat kirim; tidak boleh memicu kirim ulang).
+        if (kunjungan && req.id) kunjungan.sesudahKirim(String(req.id));
     }
 
     const nTanpaHarga = pratinjau?.status === "siap" ? pratinjau.tanpaHarga.length : 0;
@@ -363,13 +401,25 @@ export default function OrderSales({ akunId }: { akunId: string }) {
     const namaBarang = (code: string) => lines.find((l) => l.code.trim() === code)?.barang?.name || code;
     const cabangPelanggan = pelanggan?.branchName ?? "";
 
+    const tambahBaris = (b: BarangPilih, unit: string, quantity: string) => {
+        ubahIsian();
+        setLines((prev) => sisipkanBaris(prev, { code: b.no, unit, quantity, barang: b, bacaan: null }));
+    };
+    // Mode kunjungan: Order saya = order toko ini (pelanggan terpilih) hari ini, supaya order yang sudah terkirim tidak dikirim ulang.
+    const orderTampil = kunjungan && orderSaya.data
+        ? orderSaya.data.filter((r) => r.order_date === hariIni && (!kodePel.trim() || (r.customer_no ?? "").trim() === kodePel.trim())) : orderSaya.data;
+
     return (
         <div>
+            {kunjungan?.kepala}
             <div className="fi-page" style={{ maxWidth: "48rem" }}>
-                <div className="fi-page-head">
-                    <h1>Order Sales</h1>
-                    <p>Kirim jumlah barang; harga cabang pelanggan, diskon, dan bonus dihitung server dari master Accurate dan promo yang berlaku.</p>
-                </div>
+                {!kunjungan && (
+                    <div className="fi-page-head">
+                        <h1>Order Sales</h1>
+                        <p>Kirim jumlah barang; harga cabang pelanggan, diskon, dan bonus dihitung server dari master Accurate dan promo yang berlaku.</p>
+                    </div>
+                )}
+                {kunjungan?.sebelumBarang({ pelanggan, tanggal: orderDate, baris: lines, tambah: tambahBaris })}
                 {sukses && (
                     <MessageStrip tone="pos" title={sukses === "terkirim" ? "Order terkirim." : `Order terkirim · No. permintaan ${sukses}.`}>
                         Menunggu ditarik petugas. Statusnya terlihat di Order saya.
@@ -479,10 +529,14 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                         )}
                             </div>
                         </Section>
-                        {pelanggan && <RiwayatBeli pelanggan={pelanggan} tanggal={orderDate} peran="sales" baris={lines}
-                            onTambah={(b, unit, quantity) => { ubahIsian(); setLines((prev) => sisipkanBaris(prev, { code: b.no, unit, quantity, barang: b, bacaan: null })); }} />}
+                        {pelanggan && !kunjungan && <RiwayatBeli pelanggan={pelanggan} tanggal={orderDate} peran="sales" baris={lines} onTambah={tambahBaris} />}
 
-                        <Section title="Barang" subtitle={`${lines.length} baris${cabangPelanggan ? ` · barang cabang ${cabangPelanggan}` : ""}`}>
+                        <Section title={kunjungan ? "Barang order" : "Barang"} subtitle={`${lines.length} baris${cabangPelanggan ? ` · barang cabang ${cabangPelanggan}` : ""}`}>
+                            {kunjungan?.kunci ? (
+                                <div className="fi-sect-in">
+                                    <MessageStrip tone="info" title="Isian order terkunci.">{kunjungan.kunci}. Sesudah itu barang bisa ditambah dari stok toko, item super, atau pencarian.</MessageStrip>
+                                </div>
+                            ) : (<>
                             <ul aria-label="Barang" style={{ listStyle: "none", padding: 0 }}>
                                 {lines.map((line, index) => {
                                     const code = line.code.trim();
@@ -565,11 +619,12 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                     <p className="fi-small fi-why">{nTanpaHarga} barang belum berharga; netto estimasi belum bisa dihitung.</p>
                                 )}
                             </div>
+                            </>)}
                         </Section>
                     </>
                 )}
 
-                <Section title="Order saya" subtitle="permintaan terbaru">
+                <Section title={kunjungan ? "Order toko ini hari ini" : "Order saya"} subtitle={kunjungan ? "dari akun Anda" : "permintaan terbaru"}>
                     {orderSaya.status === "galat" && !orderSaya.data?.length ? (
                         <ErrorState title="Order saya gagal dimuat" message={orderSaya.error} onRetry={muatUlangOrder} />
                     ) : !orderSaya.data ? (
@@ -584,11 +639,12 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                     </MessageStrip>
                                 </div>
                             )}
-                            {orderSaya.data.length === 0 ? (
-                                <EmptyState title="Belum ada order terkirim" message="Order yang dikirim muncul di sini dengan nomor permintaan." />
+                            {(orderTampil ?? []).length === 0 ? (
+                                <EmptyState title={kunjungan ? "Belum ada order untuk toko ini hari ini" : "Belum ada order terkirim"}
+                                    message={kunjungan ? "Order yang Anda kirim dari halaman ini muncul di sini dengan nomor permintaan." : "Order yang dikirim muncul di sini dengan nomor permintaan."} />
                             ) : (
                                 <ul aria-label="Order saya" style={{ listStyle: "none", padding: 0 }}>
-                                    {orderSaya.data.map((row) => (
+                                    {(orderTampil ?? []).map((row) => (
                                         <li key={row.id}>
                                             <ListItem doc={nomorPermintaan(row.id)} title={row.outlet}
                                                 meta={`${row.channel} · order ${tanggalWita(row.order_date)}${row.created_at ? ` · dikirim ${waktuWita(row.created_at)} WITA` : ""}`}
@@ -598,6 +654,13 @@ export default function OrderSales({ akunId }: { akunId: string }) {
                                                 <p className="fi-small fi-why" style={{ padding: "0 14px 10px" }}>
                                                     {kalimatPenolakan(galatDariJawaban({ status: 409, data: { kode: row.reject_code ?? "", error: row.reject_reason ?? "" } }, "sales")) || "Ditolak saat ditarik."} Order ini tidak akan diproses; buat order baru dengan isian yang sudah dibetulkan.
                                                 </p>
+                                            )}
+                                            {/* Order terkirim tetapi pencatatan ke kunjungan terputus (sinyal / halaman dimuat ulang): catat tanpa kirim ulang. */}
+                                            {kunjungan && row.status !== "rejected" && (
+                                                <div style={{ padding: "0 14px 10px" }}>
+                                                    {kunjungan.tercatat.includes(row.id) ? <StatusBadge tone="pos">Tercatat di kunjungan ini</StatusBadge>
+                                                        : <Button variant="tertiary" onClick={() => kunjungan.sesudahKirim(row.id)}>Catat ke kunjungan ini</Button>}
+                                                </div>
                                             )}
                                         </li>
                                     ))}

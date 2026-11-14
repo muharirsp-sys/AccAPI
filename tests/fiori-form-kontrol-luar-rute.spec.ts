@@ -859,12 +859,11 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await expect(isi).not.toContainText("tidak lagi di rute");
         await expect(isi).toContainText("TOKO JKS A (C-900) tidak ada di rute");
 
-        // K4: merchandising 409 sesudah check-in + status → wizard diganti; check-in tetap tercatat.
-        o.visit = { store: STORE_JKS, ao: { ...AO_CHECKIN, status: "ordered" }, merch: null };
+        // K4: merchandising 409 sesudah check-in + status + order kunjungan tercatat (owner 14 Nov 2026: ORDER melewati halaman order)
+        // → wizard diganti; check-in tetap tercatat.
+        o.visit = { store: STORE_JKS, ao: { ...AO_CHECKIN, status: "ordered", orderRef: "principal", orderDicatatPada: new Date().toISOString() }, merch: null };
         o.merch = [K409("BUKAN_RUTE_HARI_INI", MSG_BUKAN)];
         await page.goto(kunjunganUrl("C-900"), NAV);
-        await expect(page.getByRole("heading", { name: "Hasil kunjungan" })).toBeVisible(NAV);
-        await page.getByRole("button", { name: "Simpan & lanjut" }).click();
         await expect(page.getByRole("heading", { name: "Merchandising wajib" })).toBeVisible(NAV);
         for (const b of ["Produk terlihat jelas", "Display rapi & terorganisir", "Area display dibersihkan", "Produk ditata ulang", "Posisi mudah ditemukan konsumen"]) await page.getByRole("checkbox", { name: b }).check(); // tombol foto per butir kini bernama "Foto bukti: {butir}" (audit desain 001 No 121), jadi getByLabel(b) ambigu
         await page.getByRole("listitem").filter({ hasText: "Seluruh SKU terpajang" }).getByRole("button", { name: "Foto" }).click();

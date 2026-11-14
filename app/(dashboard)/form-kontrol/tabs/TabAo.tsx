@@ -23,6 +23,10 @@
  * FK-MSM3: tanda yang belum dikirim bertahan melewati muat ulang rute dan membuka Kunjungan lalu kembali (sessionStorage per
  *   salesman|principal|tanggal, S-3); toko yang hilang dari rute disebut, tandanya dibuang.
  *   Server menolak status untuk toko yang tidak lagi di rute (409 KUNJUNGAN_DIBATALKAN / BUKAN_RUTE_HARI_INI) → rute dimuat ulang.
+ * Owner 14 Nov 2026 (tampilan terlalu ramai): informasi sama, susunan baru (antislop: satu fokus per kartu = nama + status kunjungan).
+ *   Kartu toko: kode + status di baris atas, nama, status kunjungan, alamat, tiga angka (Target, Realisasi bulan, Limit kredit + sisa),
+ *   keterangan kecil, lencana; nomor urut JKS TIDAK ditampilkan (urutan daftar tetap; bagikan/cetak tetap bernomor). Kepala: satu baris aksi
+ *   ringkas; saringan = kontrol segmen; ringkasan realisasi = dua angka + keterangan.
  */
 "use client";
 
@@ -35,10 +39,11 @@ import { CalendarDays, FileText, MapPin, Printer, RefreshCw, Send, Share2, Star 
 import { Button, EmptyState, ErrorState, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
-import { waktuWita } from "@/lib/tampil";
+import { KOSONG, waktuWita } from "@/lib/tampil";
 import { type Scope, type AoRow, LencanaJks, compareRoute, hariIniWita, rentangWita, penjelasanTanpaJks, principalAwal, useIzinFk, visitDurationMin } from "../shared";
 import { adaHasilKunjungan, mingguSiklus, statusBintang } from "@/lib/form-kontrol/constants";
-import { alamatRingkas, htmlRute, punyaTitik, teksRealisasi, teksRute, urlPeta } from "@/lib/form-kontrol/peta";
+import { sisaLimit } from "@/lib/form-kontrol/order-kunjungan";
+import { alamatRingkas, htmlRute, punyaTitik, teksRute, urlPeta } from "@/lib/form-kontrol/peta";
 import { bacaFk, ditolakBukanRute, keBarisRute, kirimFk, simpanRute, useHariBeku } from "../lapangan";
 import { BatalkanLuarRute, TambahLuarRute } from "./LuarRute";
 
@@ -79,26 +84,59 @@ function badgeNoo(r: AoRow): ReactNode {
 /** Nama bulan tanggal rute ("November"); tanggal tak sah = "bulan ini". */
 const namaBulan = (ymd: string) => { const t = new Date(`${ymd}T00:00:00`); return Number.isNaN(t.getTime()) ? "bulan ini" : new Intl.DateTimeFormat("id-ID", { month: "long" }).format(t); };
 
-function metaToko(r: AoRow, bulan: string): string {
-    const bagian: string[] = [];
-    if (r.urutan != null) bagian.push(`Urutan ${r.urutan}`);
-    if (r.luarRute) bagian.push(isKodeNoo(r.custCode) ? "Toko baru (NOO) · tanpa order" : "Luar rute");
-    const ringkas = (n: number) => new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 }).format(n);
-    if (r.targetToko) bagian.push(`Target ${ringkas(r.targetToko)}/bln`);
-    // Owner 14 Nov 2026: realisasi faktur Accurate bulan berjalan per toko (jumlah faktur + % target).
-    const real = teksRealisasi(r, bulan);
-    if (real) bagian.push(real.charAt(0).toUpperCase() + real.slice(1));
-    if (r.omzetRata) bagian.push(`Omzet ±${ringkas(r.omzetRata)}/bln`);
-    // #3: angka ini menghitung HARI dengan status order/aktif bulan ini (db.ts getTodayRoute), bukan jumlah kunjungan.
-    if (r.monthlyOrderCount > 0) bagian.push(`${r.monthlyOrderCount} hari order bulan ini`);
-    if (r.needsAttention) bagian.push("≥ 2× tidak order bulan ini");
-    if (sedang(r)) bagian.push(`Sedang dikunjungi · check-in ${waktuWita(r.checkinAt)}`);
-    else if (r.checkoutAt) {
+const ringkas = (n: number) => new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 }).format(n);
+
+/**
+ * Status kunjungan toko hari ini, satu kalimat. "Belum dikunjungi" hanya ditulis bila badge tidak sudah mengatakannya (badge "Belum"):
+ * toko bertanda Order/Tidak order/Prioritas tanpa check-in tetap disebut belum dikunjungi.
+ */
+function kunjunganToko(r: AoRow): string {
+    if (sedang(r)) return `Sedang dikunjungi · check-in ${waktuWita(r.checkinAt)}`;
+    if (r.checkoutAt) {
         const menit = visitDurationMin(r);
-        bagian.push(`Selesai ${rentangWita(r.checkinAt, r.checkoutAt)}${menit !== null ? ` (${menit} menit)` : ""}`);
+        return `Selesai ${rentangWita(r.checkinAt, r.checkoutAt)}${menit !== null ? ` (${menit} menit)` : ""}`;
     }
-    else bagian.push("Belum dikunjungi");
-    return bagian.join(" · ");
+    return badgeToko(r).label === "Belum" ? "" : "Belum dikunjungi";
+}
+
+/** Keterangan kecil di bawah angka: jenis kunjungan, omzet rata-rata JKS, hari order, peringatan. */
+function catatanToko(r: AoRow): string {
+    return [
+        r.luarRute ? (isKodeNoo(r.custCode) ? "Toko baru (NOO) · tanpa order" : "Luar rute") : "",
+        r.omzetRata ? `Omzet ±${ringkas(r.omzetRata)}/bln` : "",
+        // #3: angka ini menghitung HARI dengan status order/aktif bulan ini (db.ts getTodayRoute), bukan jumlah kunjungan.
+        r.monthlyOrderCount > 0 ? `${r.monthlyOrderCount} hari order bulan ini` : "",
+        r.needsAttention ? "≥ 2× tidak order bulan ini" : "",
+    ].filter(Boolean).join(" · ");
+}
+
+/**
+ * Tiga angka toko (owner 14 Nov 2026): target JKS per bulan, realisasi faktur Accurate bulan berjalan (% target + jumlah faktur), limit kredit
+ * (sisa = limit − piutang sinkron terakhir). Angka yang tidak diketahui = "-"; ketiganya tidak diketahui = tidak tampil.
+ */
+function AngkaToko({ r, bulan }: { r: AoRow; bulan: string }) {
+    if (!r.targetToko && r.realisasiBulan == null && !r.limit) return null;
+    const persen = r.targetToko && r.realisasiBulan != null ? Math.round((r.realisasiBulan / r.targetToko) * 100) : null;
+    const sisa = r.limit ? sisaLimit(r.limit) : null;
+    const sel: [string, string, ReactNode][] = [
+        ["Target", r.targetToko ? ringkas(r.targetToko) : KOSONG, r.targetToko ? "per bulan" : ""],
+        // Label pendek (bulan disingkat: "Nov") supaya tiga kolom sejajar di 390 px; bulan penuh ada di ringkasan rute.
+        [`Realisasi ${bulan === "bulan ini" ? "" : bulan.slice(0, 3)}`.trim(), r.realisasiBulan == null ? KOSONG : ringkas(r.realisasiBulan),
+            r.realisasiBulan == null ? "" : !r.fakturBulan ? "belum ada faktur" : `${persen !== null ? `${persen}% · ` : ""}${r.fakturBulan} faktur`],
+        ["Limit kredit", !r.limit ? KOSONG : r.limit.limit === null ? "Tidak diatur" : ringkas(r.limit.limit),
+            sisa === null ? "" : sisa < 0 ? <b style={{ color: "var(--neg)" }}>lewat {ringkas(-sisa)}</b> : `sisa ${ringkas(sisa)}`],
+    ];
+    return (
+        <span className="grid grid-cols-3 gap-2" style={{ padding: "6px 0", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
+            {sel.map(([label, nilai, sub]) => (
+                <span key={label} className="grid min-w-0" style={{ alignContent: "start" }}>
+                    <span className="fi-caption" style={{ overflowWrap: "anywhere" }}>{label}</span>
+                    <b className="fi-tnum" style={{ color: "var(--ink)" }}>{nilai}</b>
+                    {sub && <span className="fi-caption fi-tnum">{sub}</span>}
+                </span>
+            ))}
+        </span>
+    );
 }
 
 /** Urutan kunjungan JKS (bagikan/cetak): urutan dulu, lalu nama — tanpa status kunjungan. */
@@ -330,34 +368,46 @@ export default function TabAo({ scope }: { scope: Scope }) {
                         <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatUlang}>Coba lagi</button>
                     </MessageStrip>
                 )}
-                <div className="fi-panel">
-                    <div className="flex flex-wrap justify-between gap-2">
-                        <b className="fi-tnum">{n.dikunjungi} dari {rows.length} dikunjungi</b>
-                        <span className="fi-small fi-subtle fi-tnum">{rows.length - n.dikunjungi} belum</span>
+                <div className="fi-panel grid gap-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                        <b className="fi-title-3 fi-tnum">{n.dikunjungi} dari {rows.length} dikunjungi</b>
+                        <span className="fi-small fi-subtle fi-tnum">{nOrder} order · {n.tidak} tidak order · {rows.length - nOrder - n.tidak} belum</span>
                     </div>
                     <div role="img" aria-label={`${nOrder} order, ${n.tidak} tidak order, ${rows.length - nOrder - n.tidak} belum`}
                         className="flex overflow-hidden" style={{ height: 8, borderRadius: "var(--r-pill)", background: "var(--surface-3)" }}>
                         <i style={{ width: lebar(nOrder), background: "var(--pos-solid)" }} />
                         <i style={{ width: lebar(n.tidak), background: "var(--neg-solid)" }} />
                     </div>
-                    <p className="fi-small fi-muted fi-tnum">{nOrder} order · {n.tidak} tidak order · {rows.length - nOrder - n.tidak} belum</p>
                     {adaReal && (
-                        <p className="fi-small fi-tnum">
-                            Realisasi Accurate {namaBulan(tanggal)} s.d. {hariLabel}: <b>{rp(real.total)}</b>
-                            {real.target > 0 && <> dari target {rp(real.target)} ({Math.round((real.total / real.target) * 100)}%)</>} · {real.faktur} faktur di {real.toko} dari {rows.length} toko
-                            <span className="block fi-subtle">Semua salesman di cabang {principle}; faktur termasuk PPN, belum dikurangi retur.</span>
-                        </p>
+                        <div className="grid gap-1">
+                            <dl className="grid grid-cols-2 gap-3" style={{ margin: 0 }}>
+                                <div className="grid">
+                                    <dt className="fi-caption">Realisasi {namaBulan(tanggal)} s.d. {hariLabel}</dt>
+                                    <dd className="fi-tnum" style={{ margin: 0 }}><b>{rp(real.total)}</b></dd>
+                                </div>
+                                <div className="grid">
+                                    <dt className="fi-caption">Target toko rute ini</dt>
+                                    <dd className="fi-tnum" style={{ margin: 0 }}>{real.target > 0 ? <><b>{rp(real.target)}</b> ({Math.round((real.total / real.target) * 100)}%)</> : KOSONG}</dd>
+                                </div>
+                            </dl>
+                            <p className="fi-caption fi-tnum" style={{ margin: 0 }}>
+                                {real.faktur} faktur di {real.toko} dari {rows.length} toko. Faktur Accurate semua salesman di cabang {principle}, termasuk PPN, belum dikurangi retur.
+                            </p>
+                        </div>
                     )}
                 </div>
-                <div className="flex flex-wrap gap-2" role="group" aria-label="Saring toko">
+                {/* Satu baris segmen; di ponsel sempit segmen terakhir bergeser di dalam kontrol ini saja (halaman tidak bergulir menyamping). */}
+                <div className="fi-segs" role="group" aria-label="Saring toko" style={{ justifySelf: "start", flexWrap: "nowrap", overflowX: "auto", maxWidth: "100%" }}>
                     {([["semua", "Semua", rows.length], ["belum", "Belum selesai", n.belumSelesai], ["tidak", "Tidak order", n.tidak], ["perhatian", "Perhatian", n.perhatian]] as const).map(([k, label, jml]) => (
-                        <Button key={k} variant={saring === k ? "primary" : "secondary"} aria-pressed={saring === k} count={jml} onClick={() => setSaring(k)}>{label}</Button>
+                        <button key={k} type="button" aria-pressed={saring === k} onClick={() => setSaring(k)} style={{ flex: "none", whiteSpace: "nowrap" }}>
+                            {label}<span className="fi-count">{jml}</span>
+                        </button>
                     ))}
                 </div>
                 <Section title="Toko di rute" subtitle={`${shown.length} toko`}>
                     {shown.length === 0 ? <EmptyState title="Tidak ada toko pada saringan ini" message="Pilih saringan lain untuk melihat toko lainnya." /> : (<>
-                        <p className="fi-small fi-muted" style={{ padding: "8px 16px 0" }}>
-                            Bintang menandai toko prioritas; toko yang sudah punya hasil kunjungan tidak bisa ditandai.{bukanPemilik ? ` ${bukanPemilik}` : ""}
+                        <p className="fi-caption" style={{ padding: "8px 16px 0", margin: 0 }}>
+                            Ketuk toko untuk mulai kunjungan. Bintang menandai toko prioritas; toko yang sudah punya hasil kunjungan tidak bisa ditandai.{bukanPemilik ? ` ${bukanPemilik}` : ""}
                         </p>
                         <ul aria-label="Toko di rute" style={{ listStyle: "none", padding: 0 }}>
                             {shown.map((r) => {
@@ -375,12 +425,16 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                             <Star className="fi-icon" aria-hidden style={r.isPriority ? { fill: "var(--warn-solid)", color: "var(--warn-solid)" } : undefined} />
                                         </Button>
                                         <ListItem href={`/form-kontrol/visit/${encodeURIComponent(r.custCode)}?${q}`} doc={r.custCode} title={r.custName}
-                                            meta={<>{metaToko(r, namaBulan(tanggal))}{alamat && <span className="block" style={{ overflowWrap: "anywhere" }}>{alamat}</span>}
-                                                {r.nooAlasanTolak && <span className="block" style={{ overflowWrap: "anywhere" }}>Alasan ditolak: {r.nooAlasanTolak}</span>}
-                                                <span className="block"><LencanaJks r={r} /></span></>}
-                                            badge={r.nooStatus
-                                                ? <span className="flex flex-wrap items-center gap-1">{badgeNoo(r)}<StatusBadge tone={b.tone}>{b.label}</StatusBadge></span>
-                                                : <StatusBadge tone={b.tone}>{b.label}</StatusBadge>} />
+                                            amount={<StatusBadge tone={b.tone}>{b.label}</StatusBadge>}
+                                            meta={<span className="grid gap-1.5">
+                                                {kunjunganToko(r) && <span style={{ color: sedang(r) ? "var(--info)" : "var(--ink-muted)" }}>{kunjunganToko(r)}</span>}
+                                                {alamat && <span style={{ overflowWrap: "anywhere" }}>{alamat}</span>}
+                                                <AngkaToko r={r} bulan={namaBulan(tanggal)} />
+                                                {catatanToko(r) && <span>{catatanToko(r)}</span>}
+                                                {r.nooAlasanTolak && <span style={{ overflowWrap: "anywhere" }}>Alasan ditolak: {r.nooAlasanTolak}</span>}
+                                                <LencanaJks r={r} />
+                                            </span>}
+                                            badge={badgeNoo(r)} />
                                         {/* Baris bawah kartu (kolom isi): tidak memeras nama toko panjang di 390 px; tautan peta di luar ListItem (bukan tautan bersarang). */}
                                         <div className="flex flex-wrap gap-2" style={{ gridColumn: 2, justifySelf: "start" }}>
                                             <a className="fi-btn fi-btn--tertiary" href={urlPeta(r)} target="_blank" rel="noopener noreferrer">
@@ -408,12 +462,22 @@ export default function TabAo({ scope }: { scope: Scope }) {
     return (
         <section aria-labelledby={judulId} className="grid gap-4">
             <div className="grid gap-1">
-                <h2 id={judulId} className="fi-title-2" tabIndex={-1}>Rute hari ini</h2>
-                <p className="fi-small fi-muted flex flex-wrap items-center gap-x-2">
+                <div className="flex items-center justify-between gap-2">
+                    <h2 id={judulId} className="fi-title-2" tabIndex={-1}>Rute hari ini</h2>
+                    {salesCode && principle && (
+                        <Button variant="icon" aria-label="Muat ulang" title="Muat ulang rute" icon={<RefreshCw className="fi-icon" aria-hidden />}
+                            onClick={muatUlang} busy={load.status === "memuat" && Boolean(asal)} />
+                    )}
+                </div>
+                <p className="fi-small fi-muted flex flex-wrap items-center gap-x-2" style={{ margin: 0 }}>
                     <CalendarDays className="fi-icon" aria-hidden />
                     <span>{hariLabel} · WITA · minggu {minggu}</span>
-                    {salesCode && <span>· <span className="fi-mono">{salesCode}</span>{scope.salesName && salesman ? ` ${scope.salesName}` : ""}{principle ? ` · ${principle}` : ""}</span>}
                 </p>
+                {salesCode && (
+                    <p className="fi-small fi-muted" style={{ margin: 0 }}>
+                        {principle && <b style={{ color: "var(--ink)" }}>{principle}</b>}{principle ? " · " : ""}<span className="fi-mono">{salesCode}</span>{scope.salesName && salesman ? ` ${scope.salesName}` : ""}
+                    </p>
+                )}
             </div>
 
             <div className="fi-formgrid">
@@ -447,13 +511,11 @@ export default function TabAo({ scope }: { scope: Scope }) {
                         {(a) => <input {...a} type="date" className="fi-input" value={tanggalPilih} onChange={(e) => { if (e.target.value) setTanggalPilih(e.target.value); setSukses(""); }} />}
                     </FormField>
                 )}
-                {salesCode && principle && (
-                    <div className="flex flex-wrap items-end gap-2">
-                        <Button icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang} busy={load.status === "memuat" && Boolean(asal)}>Muat ulang</Button>
-                        {rows.length > 0 && <>
-                            <Button variant="tertiary" icon={<Share2 className="fi-icon" aria-hidden />} onClick={() => void bagikan()}>Bagikan rute</Button>
-                            <Button variant="tertiary" icon={<Printer className="fi-icon" aria-hidden />} onClick={cetak}>Cetak rute</Button>
-                        </>}
+                {salesCode && principle && rows.length > 0 && (
+                    // Satu baris aksi ringkas (tersier; Muat ulang = ikon di samping judul): di ponsel 390 px muat sebaris, rute tetap fokus layar.
+                    <div className="flex flex-wrap items-end gap-1" role="group" aria-label="Aksi rute">
+                        <Button variant="tertiary" icon={<Share2 className="fi-icon" aria-hidden />} onClick={() => void bagikan()}>Bagikan rute</Button>
+                        <Button variant="tertiary" icon={<Printer className="fi-icon" aria-hidden />} onClick={cetak}>Cetak rute</Button>
                     </div>
                 )}
             </div>
