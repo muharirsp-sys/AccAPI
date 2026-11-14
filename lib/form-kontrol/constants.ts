@@ -35,6 +35,8 @@ export function validateNoOrderReason(
 }
 
 export const HARI_KUNJUNGAN = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"] as const;
+/** Kata yang diketik Admin untuk Hapus JKS (owner 14 Nov 2026); diperiksa layar DAN server (app/api/form-kontrol/jks/hapus). */
+export const KATA_HAPUS_JKS = "HAPUS";
 /** Pola minggu kunjungan luar rute yang dikonfirmasi salesman (CHECK kunjungan_luar_rute_jadwal). */
 export const MINGGU_PATTERNS = ["ganjil", "genap", "all"] as const;
 /**

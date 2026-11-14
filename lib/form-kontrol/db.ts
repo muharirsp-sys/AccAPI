@@ -190,6 +190,38 @@ export async function upsertJksRows(rows: {
     return { imported, skipped, ditolak, digantikan, dinonaktifkan, gantiBatal: false };
 }
 
+/** Baris JKS tambahan salesman = hasil konfirmasi kunjungan luar rute (FK-MSM2), bukan dari berkas unggahan. */
+const barisTambahanSalesman = sql`EXISTS (SELECT 1 FROM ${kunjunganLuarRute} k WHERE k.jks_id = jks_master.id AND k.konfirmasi = 'jks')`;
+
+/** Ringkasan JKS AKTIF per principal untuk dialog Hapus JKS: jumlah baris + berapa di antaranya tambahan salesman. */
+export async function ringkasanJksAktif(): Promise<{ principle: string; aktif: number; tambahan: number }[]> {
+    const rows = await db.select({ principle: jksMaster.principle, aktif: sql<number>`count(*)::int`,
+        tambahan: sql<number>`(count(*) FILTER (WHERE ${barisTambahanSalesman}))::int` })
+        .from(jksMaster).where(eq(jksMaster.isActive, true)).groupBy(jksMaster.principle).orderBy(asc(jksMaster.principle));
+    return rows.map((r) => ({ principle: r.principle, aktif: Number(r.aktif), tambahan: Number(r.tambahan) }));
+}
+
+/**
+ * Hapus JKS (owner 14 Nov 2026: "hapus semua JKS yang ada agar saya bisa upload ulang JKS yang benar"): baris AKTIF principal itu
+ * (null = semua principal) DINONAKTIFKAN, sama dengan impor mode ganti — bukan DELETE. Akibat: toko principal itu hilang dari Rute hari ini
+ * sampai JKS diunggah ulang; riwayat kunjungan (ao_control_daily), jejak luar rute, dan koordinat toko tetap; unggah ulang menghidupkan lagi
+ * baris yang ada di berkas. `pertahankanTambahan` = baris tambahan salesman (konfirmasi kunjungan luar rute, tidak ada di berkas JKS) tetap aktif.
+ */
+export async function hapusJks(o: { principle: string | null; pertahankanTambahan: boolean }) {
+    const rows = await db.update(jksMaster).set({ isActive: false, updatedAt: new Date() })
+        .where(and(eq(jksMaster.isActive, true), o.principle ? eq(jksMaster.principle, o.principle) : undefined,
+            o.pertahankanTambahan ? sql`NOT ${barisTambahanSalesman}` : undefined))
+        .returning({ principle: jksMaster.principle, salesCode: jksMaster.salesCode });
+    const per = new Map<string, { baris: number; sales: Set<string> }>();
+    for (const r of rows) {
+        const x = per.get(r.principle) ?? { baris: 0, sales: new Set<string>() };
+        x.baris++; x.sales.add(r.salesCode);
+        per.set(r.principle, x);
+    }
+    return { jumlah: rows.length, perPrincipal: [...per].map(([principle, x]) => ({ principle, baris: x.baris, salesman: x.sales.size }))
+        .sort((a, b) => a.principle.localeCompare(b.principle)) };
+}
+
 /**
  * Titik GPS LAPANGAN dari berkas JKS Web-LL -> toko_koordinat, HANYA untuk toko yang belum berkoordinat (ON CONFLICT DO NOTHING): koordinat
  * unggahan Admin (tab Koordinat Toko) tidak pernah ditimpa. Lokasi perkiraan tidak sampai ke sini (jks-webll.ts LOKASI_LAPANGAN).

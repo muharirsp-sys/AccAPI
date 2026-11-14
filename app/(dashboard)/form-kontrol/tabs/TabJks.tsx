@@ -10,17 +10,20 @@
  * FK-MSM2: kolom Asal — baris hasil konfirmasi kunjungan luar rute bertanda "Ditambahkan salesman" (siapa, kapan, dari kunjungan tanggal
  * berapa; server `tambahanSalesman`); hasil impor melaporkan baris tambahan salesman yang DINONAKTIFKAN karena tokonya ada di berkas dengan
  * kode JKS lain (`digantikan`).
+ * Hapus JKS (owner 14 Nov 2026, "agar bisa upload ulang JKS yang benar"): dialog pilih principal (atau semua) + jumlah baris dari
+ * GET /api/form-kontrol/jks/hapus, opsi pertahankan baris tambahan salesman, ketik HAPUS; POST menonaktifkan baris (bukan DELETE).
  */
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Download, RefreshCw, Upload } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, RefreshCw, Trash2, Upload } from "lucide-react";
 import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Skeleton, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { HARI, LencanaJks, ambilFk, labelPola, tulisFk, useIzinFk, type JksRow, type Scope } from "../shared";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { KOSONG, waktuWita } from "@/lib/tampil";
 import { cariSheetWebLl, nilaiUntukPeta, tebakPeta, type PetaJks } from "@/lib/form-kontrol/jks-webll";
+import { KATA_HAPUS_JKS } from "@/lib/form-kontrol/constants";
 
 /**
  * Kolom templat + header yang dikenali server. ponytail: `alias` = salinan kunci HEADER_MAP di app/api/form-kontrol/jks/route.ts
@@ -62,6 +65,10 @@ type Ditolak = { baris: number; custCode: string; hari: string };
 type Digantikan = { salesCode: string; principle: string; custCode: string; custName: string; kodeBerkas: string };
 /** Mode ganti: baris lama per salesman yang dinonaktifkan karena tidak ada di berkas. */
 type Dinonaktifkan = { salesCode: string; principle: string; jumlah: number };
+/** Hapus JKS: ringkasan baris aktif per principal (dialog) dan hasil hapus. */
+type RingkasJks = { principle: string; aktif: number; tambahan: number };
+type HasilHapus = { jumlah: number; perPrincipal: { principle: string; baris: number; salesman: number }[]; pertahankanTambahan: boolean; jejakAudit: boolean };
+const SEMUA = "__semua__";
 
 /** "oleh SALES A · 12/10/2026 17.05 · kunjungan 12/10/2026": jejak baris JKS tambahan salesman. */
 function jejak(t: NonNullable<JksRow["tambahanSalesman"]>): string {
@@ -171,6 +178,28 @@ export default function TabJks({ scope }: { scope: Scope }) {
     };
     const bukaImpor = () => { setBerkas(null); setPratinjau({ status: "kosong" }); setGanti(false); setPeta({ sales: {}, principal: {} }); setIsiSemua(""); setImpor(true); };
 
+    // Hapus JKS: ringkasan dimuat tiap dialog dibuka (jumlah terkini, bukan dari daftar berhalaman).
+    const [hapus, setHapus] = useState(false);
+    const [ringkasHapus, setRingkasHapus] = useState<Load<RingkasJks[]>>({ status: "memuat" });
+    const [pilihHapus, setPilihHapus] = useState(SEMUA);
+    const [jagaTambahan, setJagaTambahan] = useState(true);
+    const [ketikHapus, setKetikHapus] = useState("");
+    const [hasilHapus, setHasilHapus] = useState<HasilHapus | null>(null);
+    const bukaHapus = async () => {
+        setPilihHapus(principle || SEMUA); setJagaTambahan(true); setKetikHapus(""); setRingkasHapus({ status: "memuat" }); setHapus(true);
+        setRingkasHapus(await ambilFk("/api/form-kontrol/jks/hapus", (j) => (j.rows ?? []) as RingkasJks[], "Jumlah JKS aktif belum berhasil dimuat."));
+    };
+    const daftarHapus = ringkasHapus.data ?? [];
+    const terpilih = pilihHapus === SEMUA ? daftarHapus : daftarHapus.filter((r) => r.principle === pilihHapus);
+    const nAktif = terpilih.reduce((a, r) => a + r.aktif, 0);
+    const nTambahan = terpilih.reduce((a, r) => a + r.tambahan, 0);
+    const nHapus = nAktif - (jagaTambahan ? nTambahan : 0);
+    const namaPilihan = pilihHapus === SEMUA ? "semua principal" : pilihHapus;
+    const blokirHapus = ringkasHapus.status === "memuat" ? "Menunggu jumlah JKS aktif"
+        : ringkasHapus.status === "galat" ? "Jumlah JKS aktif gagal dimuat; tutup lalu buka lagi"
+        : nHapus === 0 ? "Tidak ada baris JKS aktif yang akan dihapus"
+        : ketikHapus.trim().toUpperCase() !== KATA_HAPUS_JKS ? `Ketik ${KATA_HAPUS_JKS} untuk konfirmasi` : undefined;
+
     const webll = pratinjau.status === "siap" ? pratinjau.data?.webll : undefined;
     const belumSales = webll?.sales.filter((s) => !peta.sales[s.nilai]).length ?? 0;
     const belumPrincipal = webll?.principal.filter((p) => !peta.principal[p.nilai]?.trim()).length ?? 0;
@@ -215,6 +244,7 @@ export default function TabJks({ scope }: { scope: Scope }) {
                     <div className="fi-btnrow">
                         <Button variant="tertiary" icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang}>Muat ulang</Button>
                         <Button icon={<Download className="fi-icon" aria-hidden />} onClick={() => { setGalatTemplat(""); unduhTemplat().catch(() => setGalatTemplat("Templat gagal dibuat di peramban ini. Coba lagi atau pakai peramban lain.")); }}>Unduh templat</Button>
+                        <Button variant="tertiary" icon={<Trash2 className="fi-icon" aria-hidden />} disabled={Boolean(izinImpor)} disabledReason={izinImpor} onClick={() => void bukaHapus()}>Hapus JKS…</Button>
                         <Button variant="primary" icon={<Upload className="fi-icon" aria-hidden />} disabled={Boolean(izinImpor)} disabledReason={izinImpor} onClick={bukaImpor}>Impor Excel</Button>
                     </div>
                 }
@@ -239,6 +269,14 @@ export default function TabJks({ scope }: { scope: Scope }) {
                 }
             />
             {galatTemplat && <MessageStrip tone="neg" title="Templat gagal diunduh." onClose={() => setGalatTemplat("")}>{galatTemplat}</MessageStrip>}
+            {hasilHapus && (
+                <MessageStrip tone="pos" title={`${hasilHapus.jumlah} baris JKS dihapus.`} onClose={() => setHasilHapus(null)}>
+                    {hasilHapus.perPrincipal.map((p) => `${p.principle} ${p.baris} baris (${p.salesman} salesman)`).join(", ")}.
+                    {hasilHapus.pertahankanTambahan ? " Toko tambahan salesman tetap aktif." : ""} Toko itu tidak muncul di Rute hari ini sampai JKS
+                    diunggah ulang lewat Impor Excel; riwayat kunjungan tetap tersimpan.
+                    {hasilHapus.jejakAudit ? "" : " Catatan: jejak audit hapus gagal ditulis; laporkan ke IT."}
+                </MessageStrip>
+            )}
             {hasil && (
                 <MessageStrip tone="pos" title="Impor JKS diterapkan." onClose={() => setHasil(null)}>
                     {hasil.nama}: {hasil.imported} baris ditulis, {hasil.skipped} baris dilewati
@@ -410,6 +448,59 @@ export default function TabJks({ scope }: { scope: Scope }) {
                     Pratinjau perubahan per baris (baru, berubah, tidak ada di berkas) belum ada di server: Terapkan langsung menulis, menjadikan
                     semua baris di berkas Aktif, dan membaca pola minggu yang tidak dikenal sebagai &quot;all&quot;.
                 </VariantNote>
+            </ConfirmDialog>
+
+            <ConfirmDialog
+                open={hapus}
+                onClose={() => setHapus(false)}
+                tag="Hapus JKS"
+                tone="negative"
+                title={`Hapus JKS ${namaPilihan}?`}
+                description="Baris JKS dinonaktifkan, tidak dihapus permanen: toko principal itu hilang dari Rute hari ini dan Kontrol JKS sampai JKS diunggah ulang lewat Impor Excel (baris yang ada di berkas aktif lagi). Riwayat kunjungan, status order, dan koordinat toko tidak berubah. Sebaiknya di luar jam kunjungan salesman."
+                confirmLabel="Hapus JKS"
+                confirmDisabled={blokirHapus}
+                factsAlign="start"
+                facts={ringkasHapus.status === "siap" ? [
+                    ["Principal", namaPilihan],
+                    ["Baris dihapus", `${nHapus} dari ${nAktif} baris aktif`],
+                    ...(nTambahan > 0 ? [["Tambahan salesman", jagaTambahan ? `${nTambahan} tetap aktif` : `${nTambahan} ikut dihapus`] as [string, string]] : []),
+                ] : []}
+                onConfirm={async () => {
+                    const d = await tulisFk("/api/form-kontrol/jks/hapus", { body: { principle: pilihHapus === SEMUA ? null : pilihHapus,
+                        pertahankanTambahan: jagaTambahan, konfirmasi: ketikHapus.trim() }, gagal: "JKS belum berhasil dihapus." });
+                    setHasilHapus({ jumlah: Number(d.jumlah ?? 0), perPrincipal: (d.perPrincipal ?? []) as HasilHapus["perPrincipal"],
+                        pertahankanTambahan: jagaTambahan, jejakAudit: d.jejakAudit !== false });
+                    setHapus(false);
+                    saring(() => setPrinciple(""));
+                    muatUlang();
+                }}
+            >
+                {ringkasHapus.status === "memuat" ? <Skeleton rows={2} label="Memuat jumlah JKS aktif" />
+                    : ringkasHapus.status === "galat" ? <MessageStrip tone="neg" title="Jumlah JKS aktif gagal dimuat.">{ringkasHapus.error}</MessageStrip>
+                    : daftarHapus.length === 0 ? <MessageStrip tone="info" title="Tidak ada JKS aktif.">Tidak ada yang perlu dihapus; langsung Impor Excel.</MessageStrip>
+                    : (
+                        <>
+                            <FormField label="Principal" required>{(a) => (
+                                <select {...a} className="fi-input" value={pilihHapus} onChange={(e) => setPilihHapus(e.target.value)}>
+                                    <option value={SEMUA}>Semua principal ({daftarHapus.reduce((x, r) => x + r.aktif, 0)} baris)</option>
+                                    {daftarHapus.map((r) => <option key={r.principle} value={r.principle}>{r.principle} ({r.aktif} baris)</option>)}
+                                </select>
+                            )}</FormField>
+                            {nTambahan > 0 && (
+                                <label className="flex items-start gap-3" style={{ minHeight: 44, cursor: "pointer" }}>
+                                    <input type="checkbox" checked={jagaTambahan} onChange={(e) => setJagaTambahan(e.target.checked)}
+                                        style={{ width: 22, height: 22, minHeight: 0, margin: "2px 0 0", accentColor: "var(--primary)" }} />
+                                    <span className="fi-small">
+                                        Pertahankan {nTambahan} toko tambahan salesman (dimasukkan ke JKS dari kunjungan luar rute). Baris ini tidak ada di berkas JKS,
+                                        jadi bila ikut dihapus tidak kembali lewat unggah ulang.
+                                    </span>
+                                </label>
+                            )}
+                            <FormField label={`Ketik ${KATA_HAPUS_JKS} untuk konfirmasi`} required>{(a) => (
+                                <input {...a} className="fi-input" value={ketikHapus} autoComplete="off" onChange={(e) => setKetikHapus(e.target.value)} placeholder={KATA_HAPUS_JKS} />
+                            )}</FormField>
+                        </>
+                    )}
             </ConfirmDialog>
         </>
     );
