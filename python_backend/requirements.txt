@@ -20,3 +20,6 @@ pyexcelerate>=0.11,<1.0
 # manual." — pesan yang tidak menyebut sebabnya, jadi tidak ada yang tahu bahwa yang kurang
 # hanyalah satu paket. Diperiksa di produksi 2026-09-16: ModuleNotFoundError: reportlab.
 reportlab>=4.0,<5.0
+# Validasi wajah check-in Form Kontrol (routers/wajah.py): YuNet + SFace butuh cv2.FaceDetectorYN/FaceRecognizerSF.
+# Versi headless = tanpa GUI/libGL; >=4.10 karena itu rilis pertama yang dibangun untuk numpy 2 (ditarik pandas).
+opencv-python-headless>=4.10,<5

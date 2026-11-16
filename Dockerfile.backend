@@ -1,7 +1,7 @@
 # Tujuan: Build image FastAPI AccAPI beserta dependensi dan direktori runtime persisten.
 # Caller: CI container build dan Docker Compose production.
 # Dependensi: python_backend/requirements.txt, source FastAPI, dan image python:3.12-slim.
-# Main Functions: Install dependensi, salin backend, siapkan output, dan jalankan Uvicorn.
+# Main Functions: Install dependensi, unduh model wajah (sha256 terkunci), salin backend, siapkan output, dan jalankan Uvicorn.
 # Side Effects: Membuat image dan direktori output pembayaran serta laporan harian.
 FROM python:3.12-slim
 
@@ -25,6 +25,15 @@ RUN apt-get update \
 COPY python_backend/requirements.txt ./requirements.txt
 RUN pip install --upgrade pip \
     && pip install -r requirements.txt
+
+# Model wajah Form Kontrol (routers/wajah.py) dari opencv_zoo, dikunci ke commit + sha256: berkas berubah = build gagal.
+# `github.com/.../raw/<commit>` (bukan raw.githubusercontent.com) karena model disimpan Git LFS; raw hanya memberi berkas pointer.
+RUN Z=https://github.com/opencv/opencv_zoo/raw/48b10fa505aeb51fbd127fc60a5c660040e823b7/models \
+    && mkdir -p /app/python_backend/models && cd /app/python_backend/models \
+    && curl -fsSL --retry 3 -o face_detection_yunet_2023mar.onnx "$Z/face_detection_yunet/face_detection_yunet_2023mar.onnx" \
+    && curl -fsSL --retry 3 -o face_recognition_sface_2021dec.onnx "$Z/face_recognition_sface/face_recognition_sface_2021dec.onnx" \
+    && echo "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4  face_detection_yunet_2023mar.onnx" | sha256sum -c - \
+    && echo "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79  face_recognition_sface_2021dec.onnx" | sha256sum -c -
 
 COPY python_backend/ ./
 

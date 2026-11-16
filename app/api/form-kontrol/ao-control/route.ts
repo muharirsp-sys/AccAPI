@@ -2,7 +2,9 @@
 import { tolakOrderNoo } from "@/lib/form-kontrol/noo";
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
-import { getTodayRoute, upsertAoControl, getAoForDate, writeKontrolAudit, resolveScope, canAccessSales, getReasons, validateNoOrderReason } from "@/lib/form-kontrol";
+import { getTodayRoute, upsertAoControl, getAoForDate, writeKontrolAudit, resolveScope, canAccessSales, getReasons, validateNoOrderReason, galatTanggalSalesman } from "@/lib/form-kontrol";
+import { periksaTagihan } from "@/lib/form-kontrol/nota";
+import { ringkasNotaRute } from "@/lib/form-kontrol/nota-db";
 import type { AoStatus } from "@/lib/form-kontrol";
 import { jawabGalat } from "@/lib/order-cabang";
 import { witaToday } from "@/lib/beranda";
@@ -42,7 +44,10 @@ export async function GET(req: Request) {
             return NextResponse.json({ rows, summary });
         }
 
-        const route = await getTodayRoute(salesCode, principle, dateStr);
+        const rute = await getTodayRoute(salesCode, principle, dateStr);
+        // Nota belum lunas per toko (owner 16 Nov 2026): ringkasan dari cache (satu kueri); kunjungan membaca Accurate langsung. null = tidak tampil.
+        const nota = await ringkasNotaRute(rute.map((r) => r.custCode), principle, witaToday());
+        const route = rute.map((r) => ({ ...r, nota: nota(r.custCode) }));
         const summary = { total: route.length, ordered: 0, notOrder: 0, notVisited: 0, priority: 0 };
         for (const r of route) {
             if (!r.aoStatus || r.aoStatus === "not_visited") summary.notVisited++;
@@ -71,8 +76,14 @@ export async function POST(req: Request) {
         if (!canAccessSales(scope, salesCode)) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
+        // Owner 16 Nov 2026: akun salesman tidak mengisi tanggal mundur (tanggal = hari ini WITA server).
+        const mundur = galatTanggalSalesman(scope, date, witaToday());
+        if (mundur) return jawabGalat(mundur);
         const noo = await tolakOrderNoo(custCode, status);
         if (noo) return noo;
+        // Tagihan nota belum lunas (owner 16 Nov 2026): tidak dikirim = tidak diubah; null = dikosongkan; selain itu harus sah.
+        const tagih = periksaTagihan(body.tagihan);
+        if ("error" in tagih) return jawabGalat({ status: 400, kode: "TAGIHAN_TIDAK_VALID", error: tagih.error });
 
         const reasonCode = typeof noOrderReasonCode === "string" && noOrderReasonCode.trim() ? noOrderReasonCode.trim() : null;
         const existing = (await getAoForDate(salesCode, principle, date)).find((r) => r.custCode === custCode);
@@ -87,6 +98,7 @@ export async function POST(req: Request) {
             nomorOrderPrincipal: typeof body.nomorOrderPrincipal === "string" ? body.nomorOrderPrincipal.slice(0, 60)
                 : body.nomorOrderPrincipal === null ? null : undefined,
             createdBy: session.user.id, penulis: { pemilik: scope.salesCode === salesCode, hariIni: witaToday() },
+            tagihan: tagih.tagihan,
         });
         if ("galat" in hasil) return jawabGalat(hasil.galat);
         await writeKontrolAudit("ao", hasil.id, "upsert", session.user.id, session.user.name, body);

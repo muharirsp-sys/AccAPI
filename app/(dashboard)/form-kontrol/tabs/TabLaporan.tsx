@@ -1,6 +1,7 @@
 /*
  * Tujuan: "Laporan kunjungan" salesman (Fiori S5, it05): lima angka otomatis dari Form AO (WITA) + tindak lanjut, dikirim ke SPV lewat
  *   dialog; status dibaca SPV. Tanggal = Hari ini atau Kemarin (laporan yang terlewat), tanpa pemilih tanggal bebas. Galat muat ≠ nol.
+ *   Owner 16 Nov 2026 (tidak ada input mundur tanggal): laporan Kemarin hanya DILIHAT; Kirim terkunci, server menolak 409 TANGGAL_BUKAN_HARI_INI.
  * Caller: form-kontrol/FormKontrol.tsx (shell tab, default export `({ scope })`). Bukan modul Laporan Harian (email ekspor Accurate).
  * Dependensi: GET/POST /api/form-kontrol/reports; ../shared (Scope, useIzinFk); ../lapangan (bacaFk, kirimFk, useHariBeku,
  *   kemarinDari); components/fiori/*; lib/rekapan-nota/ui (tanggalPanjang); lib/tampil (KOSONG, waktuWita).
@@ -83,7 +84,9 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
     useUnsavedGuard(draf);
     const kemarinTertunda = Boolean(lapKemarin && !lapKemarin.submittedAt && !terkirimSesi[kemarin] && lapKemarin.totalJks > 0);
 
+    // Owner 16 Nov 2026: "Salesman tidak boleh input apa pun mundur tanggal" — laporan kemarin hanya dilihat (server 409 TANGGAL_BUKAN_HARI_INI).
     const terkunci = !salesCode ? "Profil salesman belum terdaftar" : tanpaIzin ? tanpaIzin
+        : pilih === "kemarin" ? "Laporan kemarin tidak bisa dikirim mundur"
         : load.status !== "siap" ? (load.status === "galat" ? "Laporan gagal dimuat; muat ulang dulu" : "Menunggu laporan dimuat")
             : !lap ? "Laporan tanggal ini tidak terbaca"
                 : terkirim ? "Laporan tanggal ini sudah terkirim"
@@ -177,8 +180,8 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
             )}
             {pilih === "hari" && kemarinTertunda && (
                 <MessageStrip tone="warn" title="Laporan kemarin belum terkirim.">
-                    {tanggalPanjang(kemarin)} belum dilaporkan ke SPV.{" "}
-                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => setPilih("kemarin")}>Buka laporan kemarin</button>
+                    {tanggalPanjang(kemarin)} tidak dilaporkan dan tidak bisa dikirim mundur; sampaikan langsung ke SPV.{" "}
+                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={() => setPilih("kemarin")}>Lihat laporan kemarin</button>
                 </MessageStrip>
             )}
             {isi}

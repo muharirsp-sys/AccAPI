@@ -149,6 +149,11 @@ type Aturan = { judul: string; pesan?: (d: Record<string, unknown>) => string; t
 const dariServer = (d: Record<string, unknown>, cadangan: string) => (typeof d.error === "string" && d.error ? d.error : typeof d.detail === "string" && d.detail ? d.detail : cadangan);
 
 const ATURAN: Record<string, Aturan> = {
+    // Owner 16 Nov 2026: order sales hanya bertanggal hari ini WITA (server Web Sales).
+    TANGGAL_BUKAN_HARI_INI: {
+        judul: "Tanggal order harus hari ini", menolak: true,
+        tindakan: "Muat ulang halaman supaya tanggal order menjadi hari ini, lalu kirim lagi.",
+    },
     SALESMAN_BELUM_TERHUBUNG: {
         judul: "Akun Anda belum dihubungkan ke karyawan Accurate",
         pesan: () => "Akun ini belum ditautkan ke karyawan salesman di Accurate, jadi cabang Anda belum diketahui dan order belum bisa dibuat.",

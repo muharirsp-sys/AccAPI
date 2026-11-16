@@ -8,6 +8,8 @@ import {
     salesInvoiceCache, customer, branch, stokTokoKunjungan,
 } from "@/db/schema";
 import { gabungRefOrder, type IsianStok, type LimitToko } from "./order-kunjungan";
+import type { Tagihan } from "./nota";
+import { benderaWajah } from "./wajah";
 import { cocokKodeRute, type GalatOrder } from "@/lib/order-cabang";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { DAY_TO_HARI, NO_ORDER_REASONS, POLA_JKS, frekuensiBawaan, hariBaku, kodeJksUntuk, kunciHari, kunciNama, polaBerlaku } from "./constants";
@@ -430,20 +432,36 @@ async function realisasiBulanToko(kode: string[], principle: string, dateStr: st
  * Accurate, toko tanpa pelanggan cabang, atau kueri gagal — angka ini tambahan, rute/kunjungan tetap termuat.
  */
 async function limitToko(kode: string[], principle: string): Promise<(c: string) => LimitToko | null> {
-    const tidakTahu = () => null;
+    try {
+        const cari = await pelangganCabang(kode, principle);
+        return (c: string) => {
+            const r = cari(c);
+            return r ? { limit: r.aktif && r.limit != null ? r.limit : null, piutang: r.piutang ?? null } : null;
+        };
+    } catch {
+        return () => null;
+    }
+}
+
+/**
+ * Pelanggan Accurate (cache customer) untuk kode toko rute di cabang principal (owner 14 Nov 2026; dipakai limitToko + nota belum lunas
+ * 16 Nov): cabang = principal rute, kode = kode toko persis atau + akhiran cabang ("C-1" -> "C-1-KN"). Beberapa cocok (jarang) = kode persis
+ * menang, selain itu kode berakhiran pertama menurut urutan kode (tetap, bukan urutan baris acak). Kembali = pencari kode -> pelanggan | null.
+ * Melempar bila kueri gagal (pemanggil memutuskan tampil/tidak).
+ */
+export async function pelangganCabang(kode: string[], principle: string) {
     const rute = new Set(kode.map((c) => c.trim().toUpperCase()));
     const p = principle.trim().toUpperCase();
-    if (rute.size === 0) return tidakTahu;
-    try {
+    type Pel = { id: number; customerNo: string; aktif: boolean | null; limit: number | null; piutang: number | null };
+    const per = new Map<string, { persis: boolean; r: Pel }>();
+    if (rute.size > 0) {
         const lolos = (c: string) => c.replace(/[\\%_]/g, (x) => `\\${x}`);
         const noPelanggan = sql`upper(btrim(${customer.customerNo}))`;
-        const rows = await db.select({ customerNo: customer.customerNo, aktif: customer.creditLimitEnabled, limit: customer.creditLimitAmount,
-            piutang: customer.balance }).from(customer)
+        const rows = await db.select({ id: customer.id, customerNo: customer.customerNo, aktif: customer.creditLimitEnabled,
+            limit: customer.creditLimitAmount, piutang: customer.balance }).from(customer)
             .where(and(eq(sql`upper(btrim(${customer.branchName}))`, p),
                 or(...[...rute].flatMap((c) => [eq(noPelanggan, c), like(noPelanggan, `${lolos(c)}-%`)]))))
             .orderBy(asc(customer.customerNo));
-        // Kode persis menang; selain itu pelanggan berakhiran pertama menurut kode (urutan tetap, bukan urutan baris acak).
-        const per = new Map<string, { persis: boolean; l: LimitToko }>();
         for (const r of rows) {
             const no = (r.customerNo ?? "").trim().toUpperCase();
             const k = rute.has(no) ? no : kodeJksUntuk(no).find((x) => rute.has(x));
@@ -451,12 +469,10 @@ async function limitToko(kode: string[], principle: string): Promise<(c: string)
             const persis = no === k;
             const ada = per.get(k);
             if (ada && (ada.persis || !persis)) continue;
-            per.set(k, { persis, l: { limit: r.aktif && r.limit != null ? r.limit : null, piutang: r.piutang ?? null } });
+            per.set(k, { persis, r: { ...r, id: Number(r.id) } });
         }
-        return (c: string) => per.get(c.trim().toUpperCase())?.l ?? null;
-    } catch {
-        return tidakTahu;
     }
+    return (c: string): Pel | null => per.get(c.trim().toUpperCase())?.r ?? null;
 }
 
 /**
@@ -554,6 +570,8 @@ export async function upsertAoControl(data: KunciKunjungan & {
      * ao_control_daily.invoice_number (sebelumnya tidak dipakai). undefined = tidak diubah; status selain ORDER mengosongkannya.
      */
     nomorOrderPrincipal?: string | null;
+    /** Hasil tagih nota belum lunas (owner 16 Nov 2026; 0044): undefined = tidak diubah, null = dikosongkan. */
+    tagihan?: Tagihan | null;
 }): Promise<HasilTulisKunjungan> {
     const now = new Date();
     const [yearStr] = data.date.split("-");
@@ -568,6 +586,13 @@ export async function upsertAoControl(data: KunciKunjungan & {
         // = tetap (dulu ditimpa null sesudah check-in menulis true).
         const order = data.status === "ordered" || data.status === "active";
         const nomor = !order ? null : data.nomorOrderPrincipal === undefined ? undefined : (data.nomorOrderPrincipal?.trim() || null);
+        const t = data.tagihan;
+        const tagih = t === undefined ? {} : {
+            tagihStatus: t?.status ?? null,
+            tagihNominal: t?.status === "tertagih" ? t.nominal : null,
+            tagihAlasan: t?.status === "tidak_tertagih" ? t.alasan : null,
+            tagihCatatan: t?.catatan ?? null,
+        };
         const [row] = await tx.insert(aoControlDaily).values({
             id: randomUUID(), salesCode: data.salesCode, custCode: data.custCode,
             principle: data.principle, date: data.date,
@@ -576,6 +601,7 @@ export async function upsertAoControl(data: KunciKunjungan & {
             noOrderReasonCode: data.noOrderReasonCode ?? null,
             noOrderNote: data.noOrderNote ?? null,
             invoiceNumber: nomor ?? null,
+            ...tagih,
             autoMatched: false, source: "manual",
             createdBy: data.createdBy ?? null,
             createdAt: now, updatedAt: now,
@@ -585,6 +611,7 @@ export async function upsertAoControl(data: KunciKunjungan & {
             noOrderReasonCode: data.noOrderReasonCode ?? null,
             noOrderNote: data.noOrderNote ?? null,
             ...(nomor === undefined ? {} : { invoiceNumber: nomor }),
+            ...tagih,
             // Order kunjungan (0043): hasil bukan ORDER = langkah Order tidak lagi selesai; order_ref TETAP sebagai jejak (order Web Sales yang
             // sudah terkirim tidak batal karena status diubah). Kembali ke ORDER = halaman order dibuka lagi.
             ...(order ? {} : { orderDicatatPada: null }),
@@ -1202,6 +1229,7 @@ export async function getSpvDashboard(spvName: string, dateStr: string) {
             checkinAt: aoControlDaily.checkinAt,
             checkoutAt: aoControlDaily.checkoutAt,
             gpsFlag: aoControlDaily.gpsFlag,
+            wajahStatus: aoControlDaily.wajahStatus,
             checkinPhotoUrl: aoControlDaily.checkinPhotoUrl,
             checkoutPhotoUrl: aoControlDaily.checkoutPhotoUrl,
         }).from(aoControlDaily).where(
@@ -1272,6 +1300,8 @@ export async function getSpvDashboard(spvName: string, dateStr: string) {
                     durationMinutes,
                     gpsFlag: r.gpsFlag ?? null,
                     durFlag,
+                    // Owner 16 Nov 2026: selfie check-in tidak cocok / tanpa wajah = tanda SPV (lib/form-kontrol/wajah.ts).
+                    wajahFlag: benderaWajah(r.wajahStatus),
                     checkinPhotoUrl: r.checkinPhotoUrl ?? null,
                     checkoutPhotoUrl: r.checkoutPhotoUrl ?? null,
                     merchDone,

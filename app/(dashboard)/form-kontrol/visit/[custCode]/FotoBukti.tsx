@@ -49,6 +49,8 @@ type Props = {
     kecil?: boolean;
     /** GPS wajib (check-in/check-out): tanpa lokasi tidak ada unggahan maupun tulis. */
     wajibLokasi?: boolean;
+    /** Owner 16 Nov 2026: check-in = selfie (kamera depan) untuk validasi wajah. */
+    selfie?: boolean;
 };
 
 /** Lokasi wajib belum terbaca: kalimatnya sudah memuat cara menyalakan GPS + Coba lagi. */
@@ -63,7 +65,7 @@ function pesanGagal(e: unknown): string {
     return e instanceof Error ? e.message : "Foto belum tersimpan.";
 }
 
-export default function FotoBukti({ label, judulGagal, akibat, existingUrl, butir, salesName, custName, onPersist, disabledReason, kecil, wajibLokasi }: Props) {
+export default function FotoBukti({ label, judulGagal, akibat, existingUrl, butir, salesName, custName, onPersist, disabledReason, kecil, wajibLokasi, selfie }: Props) {
     const [kamera, setKamera] = useState(false);
     const [tunda, setTunda] = useState<Tunda | null>(null);
     const [status, setStatus] = useState<"kirim" | "galat" | null>(null);
@@ -178,7 +180,8 @@ export default function FotoBukti({ label, judulGagal, akibat, existingUrl, buti
             {!kecil && disabledReason && <p className="fi-small fi-why">{disabledReason}</p>}
             {!kecil && <p className="fi-small fi-subtle">{wajibLokasi ? "Foto langsung dari kamera · GPS wajib menyala; lokasi dan waktu tercatat otomatis."
                 : "Foto langsung dari kamera · lokasi dan waktu tercatat otomatis."}</p>}
-            <CameraCapture open={kamera} onClose={() => setKamera(false)} onCapture={async (blob) => ambil(blob)} />
+            <CameraCapture open={kamera} onClose={() => setKamera(false)} onCapture={async (blob) => ambil(blob)}
+                {...(selfie ? { judul: "Selfie check-in", kameraAwal: "user" as const } : {})} />
         </div>
     );
 }

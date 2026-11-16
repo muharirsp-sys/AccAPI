@@ -379,6 +379,13 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
  */
 export const SESI_ACCURATE_KEYS = ["api_wrapper.view", "order.edit", "pelunasan.kirim", "finance.update", "finance.resolve_unknown"] as const;
 
+/**
+ * Halaman Incaso "Tagihan kunjungan" (owner 16 Nov 2026; baca-saja): Admin Incaso (pelunasan.kirim), Kasir/OM/Admin (kasir.view), Manager/Admin
+ * Sales (form_kontrol.manage). ponytail: memakai kunci yang sudah dipegang grup-grup itu supaya layar terbuka tanpa SQL preset baru; bila
+ * kelak perlu dipisah, tambah kunci baru di registry + preset grup.
+ */
+export const IZIN_TAGIHAN_KUNJUNGAN = ["pelunasan.kirim", "kasir.view", "form_kontrol.manage"] as const;
+
 /** `anyOf` = kunci alternatif: halaman terbuka bila `module.action` ATAU salah satu kunci ini dipegang. */
 export const pagePermissions: Array<{ prefix: string; module: AppModule; action: PermissionAction; anyOf?: readonly string[] }> = [
     { prefix: "/admin/groups", module: "users", action: "manage" },
@@ -392,6 +399,8 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/pelunasan", module: "pelunasan", action: "kirim" },
     // Kasir ↔ Incaso (K1a BL-59; halaman = K2). Tanpa entri ini /kasir jatuh ke "/" = dashboard.view.
     { prefix: "/kasir", module: "kasir", action: "view" },
+    // Tagihan kunjungan (owner 16 Nov 2026): kunjungan tidak tertagih / tidak order untuk Incaso.
+    { prefix: "/tagihan-kunjungan", module: "kasir", action: "view", anyOf: IZIN_TAGIHAN_KUNJUNGAN },
     { prefix: "/principal-mapping", module: "principles", action: "view" },
     { prefix: "/master-barang", module: "master_barang", action: "view" },
     { prefix: "/principles", module: "principles", action: "view" },
