@@ -342,14 +342,21 @@ UI: API Wrapper page (/api-wrapper)
          boleh suspended atau diberi customerLimitAmount[Value] / customerLimitAge[Value]; mematikan batas boleh. Baris ber-id
          dicari kodenya via GET customer/detail.do (4 bersamaan); tak terbaca = tolak. 403 PELANGGAN_TERLINDUNGI {sent:false}.
          Owner 17 Nov 2026 (lib/pelanggan-hendra): SEBELUM itu, pelanggan yang catatan (notes) Accurate-nya memuat "Hendra" =
-         keputusan manual — tulis APA PUN ke pelanggan itu ditolak 403 PELANGGAN_HENDRA {sent:false} (id -> detail.do; kode ->
-         salinan customer / list.do; kode yang tidak ada = pelanggan baru, boleh; tak terbaca = tolak).)
-  Pemulih limit pelanggan Hendra (lib/pelanggan-hendra, owner 17 Nov 2026): GET /api/cron/pulih-limit-hendra (Bearer CRON_SECRET,
-  usul tiap 15 menit; ?coba=1 = laporan saja) dan otomatis di akhir /api/cron/sync-accurate setelah modul customer sukses.
-  Salinan customer (raw_data notes, sync kini meminta `notes`) -> kandidat Hendra -> banding acuan limit_hendra_acuan (0044):
-  berubah di menit ramai (>= 20 pelanggan/menit, menit sebelah ikut) = impor massal -> cek detail.do (lastUpdate sama, catatan
-  masih Hendra) -> customer/save.do id + 4 kolom limit SAJA (Limit Piutang, Limit Hari) ke acuan; berubah sendirian (sesudah
-  sync penuh) = edit tangan -> acuan baru; kolom lain tidak pernah dikembalikan. Keputusan ditunda 15 menit setelah perubahan.
+         keputusan manual — tulis APA PUN ke pelanggan itu ditolak 403 PELANGGAN_HENDRA {sent:false}. Identitas dibaca dari bentuk
+         datar payload (flattenPayload): SEMUA id + SEMUA customerNo/no/number (juga di samping id). id -> detail.do; kode ->
+         salinan customer / list.do; kode yang tidak ada = pelanggan baru, boleh. Tidak terbaca (gagal, jawaban tanpa objek
+         pelanggan, payload teks) = 503 PELANGGAN_TAK_TERBACA {sent:false}.)
+  Pengamat + pemulih limit pelanggan Hendra (lib/pelanggan-hendra, owner 17 Nov 2026):
+  - Pengamat di upsertPage customer (lib/sync; dipakai webhook upsertMasterById DAN sync list.do, field kini memuat `notes`):
+    salinan dibaca sebelum upsert; tiap simpanan baru (lastUpdate berubah) menambah limit_menit_simpan[menit]; perubahan Limit
+    Piutang/Hari pelanggan Hendra dicatat di limit_hendra_ubah (lama, baru). Simpanan pemulih sendiri (berbalik persis dari
+    peristiwa `dipulihkan`) = `sistem`, tidak dihitung. Gagal = log saja, sync tetap jalan.
+  - Pemulih: GET /api/cron/pulih-limit-hendra (Bearer CRON_SECRET, usul tiap 15 menit; ?coba=1 = laporan saja) dan otomatis di
+    akhir /api/cron/sync-accurate (modul customer sukses). Peristiwa `baru` >= 15 menit -> klaim (`diproses`, basi 30 menit) ->
+    menit ramai (>= 20 simpanan; menit sebelah ikut; bila hitungan lokal sepi: customer/list.do filter lastUpdate BETWEEN
+    sp.rowCount) = impor -> detail.do (catatan masih Hendra, limit masih = `baru`) -> tandai `dipulihkan` LALU customer/save.do
+    id + 4 kolom limit = `lama`; tidak ramai = edit satuan -> `dibiarkan`. Kolom lain tidak pernah dikembalikan.
+    Env PULIH_LIMIT_HENDRA=mati = saklar darurat pemulih.
      <- JSON response
   Klien: lib/apiFetcher.ts classifyWriteError — 4xx + sent:false = rejected (tidak terkirim), bukan TIDAK PASTI; Konsol berhenti
   di tahap yang ditolak dan menampilkan pesan server.
@@ -1089,8 +1096,8 @@ AccAPI/_github_clean/
 | File | Fungsi Utama | Peran |
 |---|---|---|
 | `lib/sync.ts` | `AccuratePaginator`, `syncModule` | Sync paginated data Accurate ke SQLite lokal (item/customer) dengan checkpoint |
-| `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment & sales-invoice; sales-receipt = `pelunasan.kirim`; tulis lain = `api_wrapper.execute` + katalog Konsol (S7-1b); tulis `customer/(bulk-)save.do` yang menonaktifkan atau memasang batas piutang / batas umur piutang pada 8 toko NKA/DC (`lib/pelanggan-terlindungi.ts`, owner 13 Nov 2026) = 403 `PELANGGAN_TERLINDUNGI` (id dicari via `customer/detail.do`; tak terbaca = tolak); tulis apa pun ke pelanggan bercatatan "Hendra" (`lib/pelanggan-hendra.ts`, owner 17 Nov 2026) = 403 `PELANGGAN_HENDRA` |
-| `app/api/cron/pulih-limit-hendra/route.ts` | `GET` | Bearer CRON_SECRET. Pemulih Limit Piutang + Limit Hari pelanggan bercatatan "Hendra" yang diubah impor massal ke acuan `limit_hendra_acuan` (0044); edit satuan = acuan baru; `?coba=1` laporan saja. Juga dijalankan di akhir `sync-accurate` (modul customer sukses) |
+| `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment & sales-invoice; sales-receipt = `pelunasan.kirim`; tulis lain = `api_wrapper.execute` + katalog Konsol (S7-1b); tulis `customer/(bulk-)save.do` yang menonaktifkan atau memasang batas piutang / batas umur piutang pada 8 toko NKA/DC (`lib/pelanggan-terlindungi.ts`, owner 13 Nov 2026) = 403 `PELANGGAN_TERLINDUNGI` (id dicari via `customer/detail.do`; tak terbaca = tolak); tulis apa pun ke pelanggan bercatatan "Hendra" (`lib/pelanggan-hendra.ts`, owner 17 Nov 2026; id/customerNo/no/number) = 403 `PELANGGAN_HENDRA`, pelanggan tak terbaca = 503 `PELANGGAN_TAK_TERBACA` |
+| `app/api/cron/pulih-limit-hendra/route.ts` | `GET` | Bearer CRON_SECRET. Memutuskan peristiwa `limit_hendra_ubah` (0044): perubahan Limit Piutang/Hari pelanggan bercatatan "Hendra" dari impor massal (menit ramai di `limit_menit_simpan` atau hitungan Accurate) dikembalikan ke nilai sebelum impor (save.do id + 4 kolom limit); edit satuan dibiarkan; `?coba=1` laporan saja; env `PULIH_LIMIT_HENDRA=mati` mematikan. Juga dijalankan di akhir `sync-accurate` (modul customer sukses) |
 | `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance (`finance.update` ∧ `finance.post_accurate`, S7-1c): database sesi wajib = `expectedDatabaseId` (409 `database_changed`), klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
 | `app/api/finance/purchase-payment/resolve/route.ts` | `POST` | Atestasi manual attempt purchase-payment tidak pasti (alasan + sumber pemeriksaan) |
 | `app/api/finance/purchase-payment/attempts/route.ts` | `GET` | Baca-saja status attempt terbaru per kelompok faktur (S6-0e; kontrak `docs/handover/S6-0e-KONTRAK-API.md`) |

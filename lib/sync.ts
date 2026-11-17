@@ -16,6 +16,7 @@ import { GUDANG_STOK, cabangDariTag, normalNama, petaCabang } from "./order-caba
 import { redactAccurateSecrets } from "./accurate-redact";
 import { ringkasFaktur } from "./supervisor-review/ringkas-faktur";
 import { BACKFILL, deletedInvoiceLines, diffInvoiceLines, type ChangeContext, type LineChangeRow } from "./sales-invoice-change";
+import { amatiHalamanPelanggan, bacaSalinanLama } from "./pelanggan-hendra";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -417,10 +418,13 @@ const SYNC_MODULES: Record<SyncModuleName, {
         // sebagai OBJEK. Varian datar (categoryId/branchId/salesman) diabaikan diam-diam oleh
         // list.do — dibuktikan probe live 2026-09-09.
         // `suspended` (O1, 12 Okt 2026): pelanggan suspended tidak bisa dipilih untuk order baru (lib/order-cabang).
-        // `notes` (owner 17 Nov 2026): catatan "Hendra" = keputusan manual (lib/pelanggan-hendra). Tanpa ini sync menimpa
-        // raw_data webhook (detail.do, membawa notes) dengan jawaban list.do tanpa notes, dan pelanggan Hendra "hilang".
+        // `notes` (owner 17 Nov 2026): catatan "Hendra" = keputusan manual (lib/pelanggan-hendra). Tanpa ini pengamat di jalur sync
+        // tidak mengenali pelanggan Hendra, dan sync menimpa raw_data webhook (detail.do, membawa notes) dengan jawaban tanpa notes.
         fields: "id,customerNo,name,balance,customerLimitAmount,customerLimitAmountValue,customerLimitAge,customerLimitAgeValue,billStreet,billCity,billProvince,priceCategory,category,branch,suspended,notes,lastUpdate",
         upsertPage: async (rows) => {
+            // Owner 17 Nov 2026 (lib/pelanggan-hendra): salinan SEBELUM upsert, untuk mengamati simpanan baru (menit simpan) dan
+            // perubahan limit pelanggan bercatatan Hendra. Jalur ini dipakai cron sync DAN webhook (upsertMasterById).
+            const lamaHendra = await bacaSalinanLama(rows.map((r) => Number(r.id)).filter(Number.isFinite));
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
                 customerNo: String(row.customerNo ?? ""),
@@ -485,6 +489,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     syncedAt: bumpSyncedAt("customer"),
                 },
             });
+            await amatiHalamanPelanggan(rows, lamaHendra); // tidak pernah melempar
         },
     },
     sales_invoice: {

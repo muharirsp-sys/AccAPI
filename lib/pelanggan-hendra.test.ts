@@ -1,13 +1,229 @@
-/* Owner 17 Nov 2026: pelanggan bercatatan "Hendra" — sistem tidak boleh mengubah apa pun; pemulih hanya mengembalikan Limit Piutang
- * dan Limit Hari yang diubah impor massal (edit satuan = acuan baru). Uji murni lib/pelanggan-hendra (tanpa jaringan/DB). */
+/* Owner 17 Nov 2026: pelanggan bercatatan "Hendra" — sistem tidak boleh mengubah apa pun; yang boleh dikembalikan hanya Limit Piutang
+ * dan Limit Hari yang diubah IMPOR MASSAL (edit satuan dibiarkan). Uji murni lib/pelanggan-hendra (tanpa jaringan/DB). */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    AMBANG_MASSAL, TUNGGU_MS, isCatatanHendra, payloadPulih, periksaTulisPelangganHendra, pulihkanLimitHendra, putuskanLimit,
-    type DepsPulih, type DetailLimit, type Kandidat, type Limit, type PelangganAccurate,
+    AMBANG_MASSAL, TUNGGU_MS, amatiSimpanan, identitasTulis, isCatatanHendra, payloadPulih, periksaTulisPelangganHendra, pulihkanLimitHendra,
+    type DepsPulih, type DetailLimit, type Limit, type PelangganAccurate, type Peristiwa, type SimpananLama,
 } from "./pelanggan-hendra.ts";
 import { parseAccurateDateTime } from "./accurate-invoice.ts";
 import { GET as cronPulih } from "../app/api/cron/pulih-limit-hendra/route.ts";
+
+const t = (s: string) => parseAccurateDateTime(s)!;
+const L = (aktif: boolean, nilai: number, hariAktif: boolean, hari: number): Limit => ({ aktif, nilai, hariAktif, hari });
+
+test("catatan Hendra: semua variasi yang dipakai tim; catatan lain tidak", () => {
+    for (const n of ["Hendra", "hendra", "Hendra via Wa", "Hendra (Acc Pak Fahdar)", "Hold OD60 dibuka permanen ... Hendra", "LIMIT TURUN - PAK ADNANhendra"]) {
+        assert.equal(isCatatanHendra(n), true, n);
+    }
+    for (const n of ["", null, undefined, "Toko Cash", "Acc Pak Haji"]) assert.equal(isCatatanHendra(n), false, String(n));
+});
+
+// ---------------- (1) penjaga tulis ----------------
+
+test("identitasTulis: id/customerNo/no/number di atas dan data[n], semua bentuk; kontak bersarang bukan pelanggan", () => {
+    assert.deepEqual(identitasTulis({ id: 7, name: "x" }), { ids: ["7"], kode: [], rusak: false });
+    assert.deepEqual(identitasTulis({ ID: 7, id: 8 }).ids.sort(), ["7", "8"]);
+    assert.deepEqual(identitasTulis({ id: [7, 8] }).ids, ["7", "8"]);
+    assert.deepEqual(identitasTulis({ "data[0]": { id: 9 } }).ids, ["9"]);
+    assert.deepEqual(identitasTulis({ "data[0][id]": 9 }).ids, ["9"]);
+    assert.deepEqual(identitasTulis({ number: "c-pel017-fr", customerNo: "X-1", no: "Y-2" }).kode.sort(), ["C-PEL017-FR", "X-1", "Y-2"]);
+    assert.deepEqual(identitasTulis([{ id: 1 }, { number: "C-2", detailContact: [{ id: 99, name: "kontak" }] }]), { ids: ["1"], kode: ["C-2"], rusak: false });
+    assert.deepEqual(identitasTulis({ data: [{ id: 3, detailShipAddress: [{ id: 98 }] }] }).ids, ["3"]);
+    assert.equal(identitasTulis('{"id":1}').rusak, true, "payload teks = tak terbaca");
+    assert.equal(identitasTulis(null).rusak, false);
+});
+
+const DATA: Record<string, PelangganAccurate> = {
+    "22001": { customerNo: "C-PEL017-FR", notes: "Hendra" },
+    "102": { customerNo: "C-ANE050-FR", notes: "" },
+};
+const NO: Record<string, PelangganAccurate> = { "C-ISR001-AB": { customerNo: "C-ISR001-AB", notes: "hendra" }, "C-PEL017-FR": DATA["22001"] };
+const cariId = async (id: string) => DATA[id] ?? null;
+const cariNo = async (no: string) => NO[no] ?? null;
+
+test("penjaga: tulis APA PUN ke pelanggan Hendra ditolak — lewat id, kode, number, bulk, data[n], kode di samping id lain", async () => {
+    for (const payload of [
+        { id: 22001, name: "PELITA LISTRIK" },
+        { id: "22001", customerLimitAmountValue: 445000 },
+        { number: "C-PEL017-FR", notes: "", customerLimitAmountValue: 1 },
+        { data: [{ number: "C-PEL017-FR", notes: "" }] },
+        { customerNo: "c-isr001-ab", billStreet: "JL. X" },
+        [{ id: 102, name: "A" }, { id: 22001, notes: "Hendra" }],
+        { "data[0].id": 22001, "data[0].name": "X" },
+        { id: 102, number: "C-PEL017-FR" },
+        { id: [102, 22001] },
+    ]) {
+        const r = await periksaTulisPelangganHendra(payload, cariId, cariNo);
+        assert.equal(r.kode.length, 1, JSON.stringify(payload));
+        assert.deepEqual(r.takTerbaca, [], JSON.stringify(payload));
+    }
+});
+
+test("penjaga: pelanggan biasa & pelanggan baru lolos; id fiktif, gagal baca, payload teks = takTerbaca", async () => {
+    assert.deepEqual(await periksaTulisPelangganHendra([{ id: 102, name: "A" }, { customerNo: "C-BARU-01" }], cariId, cariNo), { kode: [], takTerbaca: [] });
+    assert.deepEqual(await periksaTulisPelangganHendra({ id: 999 }, cariId, cariNo), { kode: [], takTerbaca: ["id 999"] });
+    const gagal = await periksaTulisPelangganHendra({ customerNo: "C-X" }, cariId, async () => { throw new Error("Accurate HTTP 429"); });
+    assert.deepEqual(gagal.takTerbaca, ["C-X"]);
+    assert.deepEqual((await periksaTulisPelangganHendra('{"id":22001}', cariId, cariNo)).takTerbaca, ["payload bukan objek/array"]);
+});
+
+// ---------------- (2) pengamat simpanan ----------------
+
+const baris = (id: number, lastUpdate: string, l: Limit, notes = "Hendra", customerNo = `C-${id}`) => ({
+    id, customerNo, notes, lastUpdate, customerLimitAmount: l.aktif, customerLimitAmountValue: l.nilai, customerLimitAge: l.hariAktif, customerLimitAgeValue: l.hari,
+});
+
+test("pengamat: simpanan baru dihitung per menit; jawaban ulang tidak; peristiwa hanya untuk limit pelanggan Hendra yang berubah", () => {
+    const lama = new Map<number, SimpananLama>([
+        [1, { lastUpdate: "10/11/2026 09:00:00", limit: L(true, 445000, true, 28) }],
+        [2, { lastUpdate: "10/11/2026 09:00:00", limit: L(true, 1000, false, 28) }],
+        [3, { lastUpdate: "10/11/2026 09:00:00", limit: L(true, 5000, false, 28) }],
+        [4, { lastUpdate: "13/11/2026 10:22:40", limit: L(true, 200000, true, 28) }],
+    ]);
+    const { menit, ubah } = amatiSimpanan([
+        baris(1, "13/11/2026 10:22:36", L(true, 200000, true, 28)),             // Hendra, limit turun -> peristiwa
+        baris(2, "13/11/2026 10:22:50", L(true, 200000, false, 28), ""),        // bukan Hendra -> dihitung saja
+        baris(3, "13/11/2026 10:23:01", L(true, 5000, false, 28)),              // Hendra, ganti alamat (limit sama) -> dihitung saja
+        baris(4, "13/11/2026 10:22:40", L(true, 200000, true, 28)),             // jawaban ulang -> tidak dihitung
+        baris(5, "13/11/2026 10:22:59", L(false, 0, false, 0)),                 // pelanggan baru -> dihitung
+        baris(6, "2026-11-13T03:22:00.000Z", L(true, 1, true, 1)),              // lastUpdate ISO (cadangan sync) -> dilewati
+    ], lama, new Map());
+    assert.deepEqual([...menit], [["13/11/2026 10:22", 3], ["13/11/2026 10:23", 1]]);
+    assert.deepEqual(ubah, [{ customerId: 1, customerNo: "C-1", lastUpdate: "13/11/2026 10:22:36", lama: L(true, 445000, true, 28), baru: L(true, 200000, true, 28), status: "baru" }]);
+});
+
+test("pengamat: simpanan pemulih sendiri (limit berbalik persis) = `sistem`, tidak dihitung ke menit ramai", () => {
+    const lama = new Map<number, SimpananLama>([[1, { lastUpdate: "13/11/2026 10:22:36", limit: L(true, 200000, true, 28) }]]);
+    const pulih = new Map([[1, { lama: L(true, 445000, true, 28), baru: L(true, 200000, true, 28) }]]);
+    const { menit, ubah } = amatiSimpanan([baris(1, "17/11/2026 13:13:07", L(true, 445000, true, 28))], lama, pulih);
+    assert.equal(menit.size, 0);
+    assert.equal(ubah[0].status, "sistem");
+    // Nilai lain (bukan balikan persis) = perubahan biasa.
+    const lain = amatiSimpanan([baris(1, "17/11/2026 13:13:07", L(true, 500000, true, 28))], lama, pulih);
+    assert.equal(lain.ubah[0].status, "baru");
+    assert.equal(lain.menit.get("17/11/2026 13:13"), 1);
+});
+
+// ---------------- (3) pemulih ----------------
+
+const SEKARANG = t("17/11/2026 13:00:00");
+const P = (id: number, lastUpdate: string, lama: Limit, baru: Limit, customerId = 22001, customerNo = "C-PEL017-FR"): Peristiwa => ({ id, customerId, customerNo, lastUpdate, lama, baru });
+const IMPOR = P(1, "13/11/2026 10:22:36", L(true, 445000, true, 28), L(true, 200000, true, 28));
+const DET = (l: Limit, notes = "Hendra"): DetailLimit => ({ customerNo: "C-PEL017-FR", notes, lastUpdate: "13/11/2026 10:22:36", ...l });
+
+function palsu(o: { daftar: Peristiwa[]; menit?: Record<string, number>; live?: number; detail?: DetailLimit | null; klaim?: boolean; tulisGagal?: boolean }) {
+    const jejak: string[] = [];
+    const deps: DepsPulih = {
+        daftar: async () => o.daftar,
+        hitungMenit: async (m) => new Map(m.map((x) => [x, o.menit?.[x] ?? 0])),
+        hitungAccurate: async (dari, sampai) => { jejak.push(`hitung ${dari}..${sampai}`); return o.live ?? 0; },
+        klaim: async (id) => { jejak.push(`klaim ${id}`); return o.klaim ?? true; },
+        selesai: async (id, status) => { jejak.push(`selesai ${id} ${status}`); },
+        bacaDetail: async () => (o.detail === undefined ? DET(L(true, 200000, true, 28)) : o.detail),
+        tulisLimit: async (id, l) => { if (o.tulisGagal) throw new Error("save.do HTTP 500"); jejak.push(`tulis ${id} ${l.nilai}/${l.hari}`); },
+    };
+    return { deps, jejak };
+}
+
+test("pemulih: C-PEL017-FR diturunkan impor 13 Nov (339 simpanan/menit) -> dikembalikan ke 445.000; ditandai SEBELUM ditulis", async () => {
+    const { deps, jejak } = palsu({ daftar: [IMPOR], menit: { "13/11/2026 10:22": 339 } });
+    const h = await pulihkanLimitHendra(deps, { sekarang: SEKARANG });
+    assert.deepEqual(h.dipulihkan, ["C-PEL017-FR (13/11/2026 10:22:36)"]);
+    assert.deepEqual(jejak, ["klaim 1", "selesai 1 dipulihkan", "tulis 22001 445000/28"]);
+});
+
+test("pemulih: menit sebelah ramai (juga lewat pergantian jam) = impor; menit sepi -> dibiarkan tanpa tulis", async () => {
+    for (const [menit, harap] of [
+        [{ "13/11/2026 10:21": AMBANG_MASSAL }, "dipulihkan"],
+        [{ "13/11/2026 10:23": 58 }, "dipulihkan"],
+        [{ "13/11/2026 10:24": 300 }, "dibiarkan"],
+        [{ "13/11/2026 10:22": AMBANG_MASSAL - 1 }, "dibiarkan"],
+    ] as const) {
+        const { deps, jejak } = palsu({ daftar: [IMPOR], menit });
+        await pulihkanLimitHendra(deps, { sekarang: SEKARANG });
+        assert.ok(jejak.includes(`selesai 1 ${harap}`), JSON.stringify(menit));
+        assert.equal(jejak.some((j) => j.startsWith("tulis")), harap === "dipulihkan");
+    }
+    const jam = palsu({ daftar: [P(2, "13/11/2026 10:59:30", L(true, 1, true, 1), L(true, 2, true, 1))], menit: { "13/11/2026 11:00": 40 },
+        detail: DET(L(true, 2, true, 1)) });
+    await pulihkanLimitHendra(jam.deps, { sekarang: SEKARANG });
+    assert.ok(jam.jejak.includes("selesai 2 dipulihkan"), "10:59 bersebelahan dengan 11:00");
+});
+
+test("pemulih: hitungan lokal sepi tapi Accurate langsung ramai (pengamatan terlewat) -> dipulihkan; dua-duanya sepi -> dibiarkan", async () => {
+    const a = palsu({ daftar: [IMPOR], live: 557 });
+    await pulihkanLimitHendra(a.deps, { sekarang: SEKARANG });
+    assert.ok(a.jejak.includes("hitung 13/11/2026 10:21..13/11/2026 10:23"));
+    assert.ok(a.jejak.includes("selesai 1 dipulihkan"));
+    const b = palsu({ daftar: [IMPOR], live: 4 });
+    const hb = await pulihkanLimitHendra(b.deps, { sekarang: SEKARANG });
+    assert.deepEqual(hb.dibiarkan, ["C-PEL017-FR (13/11/2026 10:22:36)"]);
+});
+
+test("pemulih: limit sudah berubah lagi / catatan dihapus / tidak terbaca -> dilewati tanpa tulis", async () => {
+    for (const detail of [DET(L(true, 900000, true, 28)), DET(L(true, 200000, true, 28), ""), null]) {
+        const { deps, jejak } = palsu({ daftar: [IMPOR], menit: { "13/11/2026 10:22": 339 }, detail });
+        const h = await pulihkanLimitHendra(deps, { sekarang: SEKARANG });
+        assert.equal(h.dilewati.length, 1);
+        assert.ok(jejak.includes("selesai 1 dilewati"));
+        assert.equal(jejak.some((j) => j.startsWith("tulis")), false);
+    }
+});
+
+test("pemulih: impor lalu edit tangan pada pelanggan sama -> impor dilewati, edit dibiarkan (keputusan terakhir menang)", async () => {
+    const edit = P(2, "15/11/2026 08:00:10", L(true, 200000, true, 28), L(true, 900000, true, 28));
+    const { deps, jejak } = palsu({ daftar: [IMPOR, edit], menit: { "13/11/2026 10:22": 339, "15/11/2026 08:00": 1 }, detail: DET(L(true, 900000, true, 28)) });
+    await pulihkanLimitHendra(deps, { sekarang: SEKARANG });
+    assert.ok(jejak.includes("selesai 1 dilewati"));
+    assert.ok(jejak.includes("selesai 2 dibiarkan"));
+    assert.equal(jejak.some((j) => j.startsWith("tulis")), false);
+});
+
+test("pemulih: < 15 menit = ditunda tanpa klaim; klaim direbut jalan lain = dilompati; tulis gagal = kembali `baru`", async () => {
+    const segar = P(3, "17/11/2026 12:50:00", L(true, 1, true, 1), L(true, 2, true, 1));
+    assert.ok(t(segar.lastUpdate).getTime() > SEKARANG.getTime() - TUNGGU_MS);
+    const a = palsu({ daftar: [segar], menit: { "17/11/2026 12:50": 400 } });
+    assert.equal((await pulihkanLimitHendra(a.deps, { sekarang: SEKARANG })).ditunda, 1);
+    assert.deepEqual(a.jejak, []);
+    const b = palsu({ daftar: [IMPOR], menit: { "13/11/2026 10:22": 339 }, klaim: false });
+    await pulihkanLimitHendra(b.deps, { sekarang: SEKARANG });
+    assert.deepEqual(b.jejak, ["klaim 1"]);
+    const c = palsu({ daftar: [IMPOR], menit: { "13/11/2026 10:22": 339 }, tulisGagal: true });
+    const hc = await pulihkanLimitHendra(c.deps, { sekarang: SEKARANG });
+    assert.equal(hc.gagal.length, 1);
+    assert.deepEqual(c.jejak, ["klaim 1", "selesai 1 dipulihkan", "selesai 1 baru"]);
+});
+
+test("pemulih: coba=1 tidak mengklaim/menandai/menulis; batas maks per jalan", async () => {
+    const a = palsu({ daftar: [IMPOR], menit: { "13/11/2026 10:22": 339 } });
+    const h = await pulihkanLimitHendra(a.deps, { sekarang: SEKARANG, coba: true });
+    assert.deepEqual([h.coba, h.dipulihkan.length], [true, 1]);
+    assert.deepEqual(a.jejak, []);
+    const tiga = [1, 2, 3].map((i) => P(i, "13/11/2026 10:22:36", L(true, 445000, true, 28), L(true, 200000, true, 28), 100 + i, `C-${i}`));
+    const b = palsu({ daftar: tiga, menit: { "13/11/2026 10:22": 339 } });
+    const hb = await pulihkanLimitHendra(b.deps, { sekarang: SEKARANG, maks: 2 });
+    assert.deepEqual([hb.dipulihkan.length, hb.ditunda], [2, 1]);
+    assert.ok(b.jejak.includes("selesai 3 baru"));
+});
+
+test("pemulih: 8 toko NKA/DC (aturan 13 Nov) tidak pernah diberi batas kembali, walau bercatatan Hendra dan diubah impor", async () => {
+    const dc = P(9, "13/11/2026 10:22:36", L(true, 737575000, false, 28), L(false, 737575000, false, 28), 34996, "C-AL0063-KN");
+    const { deps, jejak } = palsu({ daftar: [dc], menit: { "13/11/2026 10:22": 339 } });
+    const h = await pulihkanLimitHendra(deps, { sekarang: SEKARANG });
+    assert.equal(h.dilewati.length, 1);
+    assert.deepEqual(jejak, ["klaim 9", "selesai 9 dilewati"]);
+    // Mematikan batas (lama = mati) tetap boleh dipulihkan untuk toko itu.
+    const mati = P(10, "13/11/2026 10:22:36", L(false, 1, false, 28), L(true, 200000, true, 28), 34996, "C-AL0063-KN");
+    const b = palsu({ daftar: [mati], menit: { "13/11/2026 10:22": 339 }, detail: { ...DET(L(true, 200000, true, 28)), customerNo: "C-AL0063-KN" } });
+    await pulihkanLimitHendra(b.deps, { sekarang: SEKARANG });
+    assert.ok(b.jejak.includes("tulis 34996 1/28"));
+});
+
+test("payloadPulih: id + 4 kolom limit, tidak ada kolom lain", () => {
+    assert.deepEqual(payloadPulih(22001, L(true, 445000, true, 28)),
+        { id: 22001, customerLimitAmount: true, customerLimitAmountValue: 445000, customerLimitAge: true, customerLimitAgeValue: 28 });
+});
 
 test("cron pulih-limit-hendra: tanpa / salah Bearer CRON_SECRET -> 401 (tidak menyentuh Accurate)", async () => {
     const lama = process.env.CRON_SECRET;
@@ -20,189 +236,4 @@ test("cron pulih-limit-hendra: tanpa / salah Bearer CRON_SECRET -> 401 (tidak me
     } finally {
         if (lama === undefined) delete process.env.CRON_SECRET; else process.env.CRON_SECRET = lama;
     }
-});
-
-const t = (s: string) => parseAccurateDateTime(s)!;
-const menit = (s: string) => Math.floor(t(s).getTime() / 60_000);
-
-test("catatan Hendra: semua variasi yang dipakai tim; catatan lain tidak", () => {
-    for (const n of ["Hendra", "hendra", "Hendra via Wa", "Hendra (Acc Pak Fahdar)", "Hold OD60 dibuka permanen ... Hendra", "LIMIT TURUN - PAK ADNANhendra"]) {
-        assert.equal(isCatatanHendra(n), true, n);
-    }
-    for (const n of ["", null, undefined, "Toko Cash", "Acc Pak Haji"]) assert.equal(isCatatanHendra(n), false, String(n));
-});
-
-// ---------------- penjaga tulis ----------------
-
-const DATA: Record<string, PelangganAccurate> = {
-    "101": { customerNo: "C-PEL017-FR", notes: "Hendra" },
-    "102": { customerNo: "C-ANE050-FR", notes: "" },
-    "103": { customerNo: "C-HEN016-M2", notes: "LIMIT TURUN" }, // nama mengandung HENDRA di toko lain, catatan bukan
-};
-const NO: Record<string, PelangganAccurate> = { "C-ISR001-AB": { customerNo: "C-ISR001-AB", notes: "hendra" }, "C-BIASA-AB": { customerNo: "C-BIASA-AB", notes: "x" } };
-function pencari() {
-    const panggil: string[] = [];
-    return {
-        panggil,
-        cariId: async (id: string) => { panggil.push(`id:${id}`); return DATA[id] ?? null; },
-        cariNo: async (no: string) => { panggil.push(`no:${no}`); return NO[no] ?? null; },
-    };
-}
-
-test("penjaga: tulis APA PUN ke pelanggan Hendra ditolak (id, kode, bulk, data[n] datar)", async () => {
-    for (const payload of [
-        { id: 101, name: "PELITA LISTRIK" },
-        { id: "101", customerLimitAmountValue: 445000 },
-        { customerNo: "c-isr001-ab", billStreet: "JL. X" },
-        [{ id: 102, name: "A" }, { id: 101, notes: "Hendra" }],
-        { "data[0].id": 101, "data[0].name": "X" },
-        { data: [{ customerNo: "C-ISR001-AB" }] },
-    ]) {
-        const p = pencari();
-        const r = await periksaTulisPelangganHendra(payload, p.cariId, p.cariNo);
-        assert.equal(r.kode.length, 1, JSON.stringify(payload));
-        assert.deepEqual(r.takTerbaca, []);
-    }
-});
-
-test("penjaga: pelanggan biasa, pelanggan baru, dan id kontak bersarang lolos; id kontak tidak dicari", async () => {
-    const p = pencari();
-    const r = await periksaTulisPelangganHendra([
-        { id: 102, name: "A", detailContact: [{ id: 101, name: "kontak" }], "detailContact[0].id": 101 },
-        { id: 103, customerLimitAmount: true },
-        { customerNo: "C-BIASA-AB" },
-        { customerNo: "C-BARU-01", name: "Toko baru" },
-    ], p.cariId, p.cariNo);
-    assert.deepEqual(r, { kode: [], takTerbaca: [] });
-    assert.deepEqual(p.panggil.sort(), ["id:102", "id:103", "no:C-BARU-01", "no:C-BIASA-AB"]);
-});
-
-test("penjaga: id yang tidak ada / gagal dibaca = takTerbaca (fail-closed)", async () => {
-    const p = pencari();
-    assert.deepEqual(await periksaTulisPelangganHendra({ id: 999, name: "x" }, p.cariId, p.cariNo), { kode: [], takTerbaca: ["id 999"] });
-    const gagal = await periksaTulisPelangganHendra({ customerNo: "C-X" }, p.cariId, async () => { throw new Error("Accurate HTTP 500"); });
-    assert.deepEqual(gagal.takTerbaca, ["C-X"]);
-});
-
-// ---------------- keputusan pemulih ----------------
-
-const L = (aktif: boolean, nilai: number, hariAktif: boolean, hari: number): Limit => ({ aktif, nilai, hariAktif, hari });
-const K = (lastUpdate: string, l: Limit, id = 22001, customerNo = "C-PEL017-FR"): Kandidat => ({ id, customerNo, lastUpdate, ...l });
-const SEKARANG = t("17/11/2026 13:00:00");
-const SYNC_LAMA = t("13/11/2026 09:00:00");
-const SYNC_BARU = t("13/11/2026 18:00:00");
-const ramaiDi = (...m: string[]) => (x: Date) => m.map(menit).includes(Math.floor(x.getTime() / 60_000));
-
-test("putuskanLimit: acuan awal, sama, tunggu, pulihkan (impor), acuan baru (edit satuan)", () => {
-    const acuan = L(true, 445000, true, 28);
-    const impor = K("13/11/2026 10:22:36", L(true, 200000, true, 28));
-    assert.equal(putuskanLimit(undefined, impor, ramaiDi(), SEKARANG, SYNC_BARU), "acuan_awal");
-    assert.equal(putuskanLimit(acuan, K("13/11/2026 10:22:36", acuan), ramaiDi(), SEKARANG, SYNC_BARU), "sama");
-    assert.equal(putuskanLimit(acuan, impor, ramaiDi("13/11/2026 10:22"), SEKARANG, SYNC_BARU), "pulihkan");
-    assert.equal(putuskanLimit(acuan, impor, ramaiDi(), SEKARANG, SYNC_BARU), "acuan_baru");
-    assert.equal(putuskanLimit(acuan, impor, ramaiDi(), SEKARANG, SYNC_LAMA), "tunggu", "edit satuan baru disimpulkan sesudah sync penuh");
-    assert.equal(putuskanLimit(acuan, impor, ramaiDi(), SEKARANG, null), "tunggu");
-    const baru = new Date(t("13/11/2026 10:22:36").getTime() + TUNGGU_MS - 1000);
-    assert.equal(putuskanLimit(acuan, impor, ramaiDi("13/11/2026 10:22"), baru, SYNC_BARU), "tunggu", "impor mungkin masih berjalan");
-    assert.equal(putuskanLimit(acuan, K("2026-11-13T02:22:36.000Z", L(true, 1, true, 28)), ramaiDi(), SEKARANG, SYNC_BARU), "tunggu", "lastUpdate bukan format Accurate");
-    assert.equal(putuskanLimit(acuan, K("13/11/2026 10:22:36", L(true, 445000.2, true, 28)), ramaiDi(), SEKARANG, SYNC_BARU), "sama", "selisih pembulatan");
-    assert.equal(putuskanLimit(acuan, K("13/11/2026 10:22:36", L(true, 445000, true, 14)), ramaiDi("13/11/2026 10:22"), SEKARANG, SYNC_BARU), "pulihkan", "limit hari ikut");
-});
-
-test("payloadPulih: id + 4 kolom limit, tidak ada kolom lain", () => {
-    assert.deepEqual(payloadPulih(22001, L(true, 445000, true, 28)),
-        { id: 22001, customerLimitAmount: true, customerLimitAmountValue: 445000, customerLimitAge: true, customerLimitAgeValue: 28 });
-});
-
-// ---------------- pemulih (jalan penuh, dependensi palsu) ----------------
-
-function palsu(o: { kandidat: Kandidat[]; acuan: [number, Limit][]; detail?: Record<number, DetailLimit | null>; ramai?: string[]; sync?: Date | null; tulisGagal?: number[] }) {
-    const catat = { tulis: [] as [number, Limit][], acuan: [] as [string, string][], pulih: [] as number[] };
-    const deps: DepsPulih = {
-        kandidat: async () => o.kandidat,
-        perMenit: async () => new Map((o.ramai ?? []).map((m) => [menit(m), AMBANG_MASSAL + 100])),
-        acuan: async () => new Map(o.acuan),
-        syncPenuh: async () => (o.sync === undefined ? SYNC_BARU : o.sync),
-        simpanAcuan: async (k, sumber) => { catat.acuan.push([k.customerNo, sumber]); },
-        catatPulih: async (id) => { catat.pulih.push(id); },
-        bacaDetail: async (id) => (o.detail ?? {})[id] ?? null,
-        tulisLimit: async (id, l) => { if (o.tulisGagal?.includes(id)) throw new Error("save.do HTTP 500"); catat.tulis.push([id, l]); },
-    };
-    return { deps, catat };
-}
-
-test("pemulih: C-PEL017-FR diturunkan impor 13 Nov -> dikembalikan ke acuan 445.000; hanya limit yang ditulis", async () => {
-    const kini = K("13/11/2026 10:22:36", L(true, 200000, true, 28));
-    const { deps, catat } = palsu({
-        kandidat: [kini], acuan: [[22001, L(true, 445000, true, 28)]], ramai: ["13/11/2026 10:22"],
-        detail: { 22001: { customerNo: "C-PEL017-FR", notes: "Hendra", lastUpdate: "13/11/2026 10:22:36", ...L(true, 200000, true, 28) } },
-    });
-    const h = await pulihkanLimitHendra(deps, { sekarang: SEKARANG });
-    assert.deepEqual(h.dipulihkan, ["C-PEL017-FR"]);
-    assert.deepEqual(catat.tulis, [[22001, L(true, 445000, true, 28)]]);
-    assert.deepEqual(catat.pulih, [22001]);
-    assert.deepEqual(catat.acuan, [], "acuan tidak diganti nilai impor");
-});
-
-test("pemulih: menit sebelah yang ramai (awal/ekor impor) = impor; menit sepi jauh = bukan impor", async () => {
-    const det = { customerNo: "C-PEL017-FR", notes: "Hendra", lastUpdate: "13/11/2026 10:22:36", ...L(true, 200000, true, 28) };
-    for (const [ramai, harap] of [[["13/11/2026 10:21"], 1], [["13/11/2026 10:23"], 1], [["13/11/2026 10:24"], 0]] as const) {
-        const { deps, catat } = palsu({ kandidat: [K("13/11/2026 10:22:36", L(true, 200000, true, 28))], acuan: [[22001, L(true, 445000, true, 28)]],
-            ramai: [...ramai], detail: { 22001: det }, sync: SYNC_LAMA });
-        await pulihkanLimitHendra(deps, { sekarang: SEKARANG });
-        assert.equal(catat.tulis.length, harap, ramai.join());
-    }
-});
-
-test("pemulih: coba=1 hanya melaporkan; tidak menulis Accurate maupun acuan", async () => {
-    const { deps, catat } = palsu({
-        kandidat: [K("13/11/2026 10:22:36", L(true, 200000, true, 28)), K("16/11/2026 09:00:00", L(false, 0, false, 0), 5, "C-BARU-HZ")],
-        acuan: [[22001, L(true, 445000, true, 28)]], ramai: ["13/11/2026 10:22"],
-        detail: { 22001: { customerNo: "C-PEL017-FR", notes: "Hendra", lastUpdate: "13/11/2026 10:22:36", ...L(true, 200000, true, 28) } },
-    });
-    const h = await pulihkanLimitHendra(deps, { sekarang: SEKARANG, coba: true });
-    assert.deepEqual([h.coba, h.dipulihkan, h.acuanAwal], [true, ["C-PEL017-FR"], 1]);
-    assert.deepEqual([catat.tulis, catat.acuan, catat.pulih], [[], [], []]);
-});
-
-test("pemulih: edit satuan -> acuan baru; pelanggan baru Hendra -> acuan awal; tanpa tulis Accurate", async () => {
-    const { deps, catat } = palsu({
-        kandidat: [K("15/11/2026 08:00:10", L(true, 900000, true, 28)), K("16/11/2026 09:00:00", L(false, 0, false, 0), 5, "C-BARU-HZ")],
-        acuan: [[22001, L(true, 445000, true, 28)]], ramai: ["13/11/2026 10:22"], sync: t("16/11/2026 18:00:00"),
-    });
-    const h = await pulihkanLimitHendra(deps, { sekarang: SEKARANG });
-    assert.deepEqual(h.acuanBaru, ["C-PEL017-FR"]);
-    assert.equal(h.acuanAwal, 1);
-    assert.deepEqual(catat.acuan, [["C-PEL017-FR", "edit_manual"], ["C-BARU-HZ", "awal"]]);
-    assert.deepEqual(catat.tulis, []);
-});
-
-test("pemulih: Accurate sudah berubah lagi / catatan dihapus / sudah sama -> tidak menulis", async () => {
-    const kini = K("13/11/2026 10:22:36", L(true, 200000, true, 28));
-    const acuan: [number, Limit][] = [[22001, L(true, 445000, true, 28)]];
-    for (const [det, harap] of [
-        [{ customerNo: "C-PEL017-FR", notes: "Hendra", lastUpdate: "17/11/2026 12:00:00", ...L(true, 300000, true, 28) }, "ditunda"],
-        [{ customerNo: "C-PEL017-FR", notes: "", lastUpdate: "13/11/2026 10:22:36", ...L(true, 200000, true, 28) }, "dilewati"],
-        [null, "dilewati"],
-        [{ customerNo: "C-PEL017-FR", notes: "Hendra", lastUpdate: "13/11/2026 10:22:36", ...L(true, 445000, true, 28) }, "sama"],
-    ] as const) {
-        const { deps, catat } = palsu({ kandidat: [kini], acuan, ramai: ["13/11/2026 10:22"], detail: { 22001: det as DetailLimit | null } });
-        const h = await pulihkanLimitHendra(deps, { sekarang: SEKARANG });
-        assert.deepEqual(catat.tulis, [], harap);
-        if (harap === "ditunda") assert.equal(h.ditunda, 1);
-        if (harap === "dilewati") assert.equal(h.dilewati.length, 1);
-        if (harap === "sama") assert.deepEqual([h.dipulihkan, h.ditunda, h.dilewati], [[], 0, []]);
-    }
-});
-
-test("pemulih: satu gagal tulis tidak menghentikan yang lain; batas maks per jalan", async () => {
-    const kandidat = [1, 2, 3].map((i) => K("13/11/2026 10:22:36", L(true, 200000, false, 28), i, `C-${i}`));
-    const acuan: [number, Limit][] = [1, 2, 3].map((i) => [i, L(true, 900000, false, 28)]);
-    const detail = Object.fromEntries([1, 2, 3].map((i) => [i, { customerNo: `C-${i}`, notes: "hendra", lastUpdate: "13/11/2026 10:22:36", ...L(true, 200000, false, 28) }]));
-    const a = palsu({ kandidat, acuan, detail, ramai: ["13/11/2026 10:22"], tulisGagal: [2] });
-    const h = await pulihkanLimitHendra(a.deps, { sekarang: SEKARANG });
-    assert.deepEqual([h.dipulihkan, h.gagal.length], [["C-1", "C-3"], 1]);
-    const b = palsu({ kandidat, acuan, detail, ramai: ["13/11/2026 10:22"] });
-    const hb = await pulihkanLimitHendra(b.deps, { sekarang: SEKARANG, maks: 2 });
-    assert.deepEqual([hb.dipulihkan.length, hb.dilewati.length], [2, 1]);
 });

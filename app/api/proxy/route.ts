@@ -129,17 +129,22 @@ export async function POST(req: NextRequest) {
             // Owner 17 Nov 2026: pelanggan bercatatan "Hendra" = keputusan manual — sistem tidak boleh mengubah APA PUN di sana
             // (lib/pelanggan-hendra). Hanya pemulih limit (server, bukan proxy) yang boleh mengembalikan Limit Piutang/Hari.
             const hendra = await periksaTulisPelangganHendra(payload, cari.cariId, cari.cariNo);
-            if (hendra.kode.length > 0 || hendra.takTerbaca.length > 0) {
+            if (hendra.kode.length > 0) {
                 console.warn(`[PROXY TOLAK] pelanggan Hendra ${String(method).toUpperCase()} ${endpointPath} user=${write.userId}`);
                 return NextResponse.json({
-                    error: hendra.kode.length > 0
-                        ? `Pelanggan ${hendra.kode.join(", ")} bercatatan Hendra (keputusan manual) dan tidak boleh diubah sistem. Tidak ada yang dikirim.`
-                        : `Pelanggan ${hendra.takTerbaca.join(", ")} tidak bisa dipastikan dari Accurate (catatan Hendra tidak terbaca), jadi tulis `
-                            + "pelanggan ditolak. Tidak ada yang dikirim.",
+                    error: `Pelanggan ${hendra.kode.join(", ")} bercatatan Hendra (keputusan manual) dan tidak boleh diubah sistem. Tidak ada yang dikirim.`,
                     code: "PELANGGAN_HENDRA", sent: false, pelanggan: hendra.kode,
                 }, { status: 403 });
             }
-            const tutup = await periksaPenutupanPelanggan(payload, async (id) => (await cari.cariId(id))?.customerNo || null);
+            if (hendra.takTerbaca.length > 0) {
+                // Bukan penolakan aturan: pelanggan tidak bisa dibaca dari Accurate (gagal / batas laju / payload rusak). Fail-closed.
+                return NextResponse.json({
+                    error: `Pelanggan ${hendra.takTerbaca.join(", ")} tidak bisa dibaca dari Accurate untuk memeriksa catatan Hendra. `
+                        + "Tidak ada yang dikirim; coba lagi.",
+                    code: "PELANGGAN_TAK_TERBACA", sent: false,
+                }, { status: 503 });
+            }
+            const tutup = await periksaPenutupanPelanggan(payload, async (id) => (await cari.cariId(id).catch(() => null))?.customerNo || null);
             if (tutup.kode.length > 0 || tutup.idTakTerbaca.length > 0) {
                 console.warn(`[PROXY TOLAK] pelanggan terlindungi ${String(method).toUpperCase()} ${endpointPath} user=${write.userId}`);
                 return NextResponse.json({

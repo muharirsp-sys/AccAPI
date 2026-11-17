@@ -94,7 +94,8 @@ export async function periksaPenutupanPelanggan(payload: unknown, cariKode: (id:
     for (const rec of barisDari(payload)) {
         const why = alasanMenutup(rec);
         if (why.length === 0) continue;
-        for (const no of kolom(rec, "customerno", "no")) {
+        // `number` = kunci identitas katalog Konsol (customer/save.do, pos/customer/save.do) — review 17 Nov 2026 H1.
+        for (const no of kolom(rec, "customerno", "no", "number")) {
             if (isPelangganTerlindungi(no)) { kode.add(norm(no)); why.forEach((w) => alasan.add(w)); }
         }
         for (const id of kolom(rec, "id").map(norm).filter(Boolean)) perId.set(id, [...(perId.get(id) ?? []), ...why]);

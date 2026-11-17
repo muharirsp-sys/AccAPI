@@ -9,7 +9,7 @@ import { NextResponse } from "next/server";
 import { requireCronSecret } from "@/lib/api-security";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
 import { SYNC_MODULE_NAMES, syncModule, type SyncModuleName } from "@/lib/sync";
-import { jalankanPulihLimitHendra } from "@/lib/pelanggan-hendra";
+import { jalankanPulihLimitHendra, ringkasPulih } from "@/lib/pelanggan-hendra";
 
 export const maxDuration = 3600; // sync penuh bisa lama; jalan out-of-band, bukan request user
 
@@ -44,8 +44,11 @@ export async function GET(req: Request) {
     let pulihLimitHendra: unknown;
     if ((results.customer as { success?: boolean } | undefined)?.success) {
         try {
-            pulihLimitHendra = await jalankanPulihLimitHendra({ sessionHost: creds.sessionHost, sessionId: creds.sessionId, accessToken: creds.apiKey });
+            const h = await jalankanPulihLimitHendra({ sessionHost: creds.sessionHost, sessionId: creds.sessionId, accessToken: creds.apiKey });
+            console.log(`[PULIH LIMIT HENDRA] (sync) ${"mati" in h ? "dimatikan (PULIH_LIMIT_HENDRA=mati)" : ringkasPulih(h)}`);
+            pulihLimitHendra = h;
         } catch (e) {
+            console.error("[PULIH LIMIT HENDRA] (sync) galat", e instanceof Error ? e.message : e);
             pulihLimitHendra = { error: e instanceof Error ? e.message : String(e) };
         }
     }

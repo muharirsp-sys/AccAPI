@@ -664,21 +664,30 @@ export const customer = pgTable("customer", {
     index("idx_customer_synced_at").on(t.syncedAt, t.id)
 ]);
 
-// Owner 17 Nov 2026 (lib/pelanggan-hendra, db/migrations/0044): acuan Limit Piutang + Limit Hari pelanggan yang catatan Accurate-nya
-// memuat "Hendra". Pemulih mengembalikan ke acuan HANYA bila limit berubah karena impor massal; edit satuan di Accurate = acuan baru.
-export const limitHendraAcuan = pgTable("limit_hendra_acuan", {
-    customerId: bigint("customer_id", { mode: "number" }).primaryKey(),
+// Owner 17 Nov 2026 (lib/pelanggan-hendra, db/migrations/0044). Peristiwa perubahan Limit Piutang / Limit Hari pelanggan yang catatan
+// Accurate-nya memuat "Hendra", diamati saat salinan customer di-upsert (webhook + sync). Pemulih memutuskan tiap peristiwa: dari impor
+// massal -> limit dikembalikan ke `lama`; edit satuan -> dibiarkan. Satu baris per simpanan (customer_id, last_update).
+export const limitHendraUbah = pgTable("limit_hendra_ubah", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    customerId: bigint("customer_id", { mode: "number" }).notNull(),
     customerNo: text("customer_no").notNull(),
-    limitAktif: boolean("limit_aktif").notNull(), // customerLimitAmount
-    limitNilai: doublePrecision("limit_nilai"), // customerLimitAmountValue
-    hariAktif: boolean("hari_aktif").notNull(), // customerLimitAge
-    hariNilai: integer("hari_nilai"), // customerLimitAgeValue
-    acuanLastUpdate: text("acuan_last_update"), // lastUpdate Accurate saat acuan dicatat
-    sumber: text("sumber").notNull(), // 'awal' | 'edit_manual'
-    diperbaruiPada: timestamp("diperbarui_pada", { withTimezone: true }).notNull().defaultNow(),
-    terakhirDipulihkanPada: timestamp("terakhir_dipulihkan_pada", { withTimezone: true }),
-    terakhirDipulihkanDari: jsonb("terakhir_dipulihkan_dari"), // nilai limit sebelum dipulihkan (jejak)
-    jumlahDipulihkan: integer("jumlah_dipulihkan").notNull().default(0),
+    lastUpdate: text("last_update").notNull(), // lastUpdate Accurate simpanan yang mengubah limit (dd/MM/yyyy HH:mm:ss WIB)
+    lama: jsonb("lama").notNull(), // { aktif, nilai, hariAktif, hari } sebelum simpanan
+    baru: jsonb("baru").notNull(), // sesudah simpanan
+    status: text("status").notNull().default("baru"), // baru | diproses | dipulihkan | dibiarkan | dilewati | sistem
+    alasan: text("alasan"),
+    dicatatPada: timestamp("dicatat_pada", { withTimezone: true }).notNull().defaultNow(),
+    diputuskanPada: timestamp("diputuskan_pada", { withTimezone: true }),
+}, (t) => [
+    uniqueIndex("idx_limit_hendra_ubah_simpanan").on(t.customerId, t.lastUpdate),
+    index("idx_limit_hendra_ubah_status").on(t.status, t.id),
+]);
+
+// Jumlah simpanan pelanggan Accurate per menit (lastUpdate 'dd/MM/yyyy HH:mm' WIB) yang teramati webhook/sync — penentu impor
+// massal untuk pemulih limit Hendra. Hanya bertambah: simpanan berikutnya tidak menggerus hitungan menit yang lalu.
+export const limitMenitSimpan = pgTable("limit_menit_simpan", {
+    menit: text("menit").primaryKey(),
+    jumlah: integer("jumlah").notNull().default(0),
 });
 
 // Audit F3 / PRD 02-03: cache faktur penjualan (sumber piutang/nota) dari Accurate.

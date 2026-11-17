@@ -255,12 +255,14 @@ test("pelanggan terlindungi: nonaktif / batas piutang / batas umur piutang 8 tok
     }
 });
 
-test("pelanggan terlindungi: hanya id -> kode dicari via customer/detail.do; tak terbaca = 403 tanpa POST", async () => {
-    // fetch tiruan proxySebagai menjawab { s:true, d:[...] } (bukan objek pelanggan) = kode tidak bisa dipastikan.
+test("pelanggan tak terbaca: hanya id -> dicari via customer/detail.do; jawaban tanpa objek pelanggan = 503 tanpa POST (fail-closed)", async () => {
+    // fetch tiruan proxySebagai menjawab { s:true, d:[...] } (bukan objek pelanggan). Sejak penjaga Hendra (17 Nov 2026, review L1)
+    // ini TIDAK lagi dianggap "bukan Hendra": catatan tidak terbaca = tolak, kode PELANGGAN_TAK_TERBACA (bukan penolakan aturan).
     const { res, json, c } = await proxySebagai(["api_wrapper.execute"], { endpointPath: "/api/customer/save.do", method: "POST", payload: { id: 55, customerLimitAmountValue: 1 } });
-    assert.equal(res.status, 403);
-    assert.equal(json.code, "PELANGGAN_TERLINDUNGI");
-    assert.match(String(json.error), /id 55 tidak bisa dipastikan/);
+    assert.equal(res.status, 503);
+    assert.equal(json.code, "PELANGGAN_TAK_TERBACA");
+    assert.equal(json.sent, false);
+    assert.match(String(json.error), /id 55 tidak bisa dibaca/);
     assert.equal(c.kiriman.length, 1);
     assert.equal(c.kiriman[0].method, "GET");
     assert.equal(new URL(c.kiriman[0].url).pathname, "/accurate/api/customer/detail.do");
@@ -291,7 +293,11 @@ const accurateHendra = (url: URL) => {
             ? { s: true, d: { id: 22001, customerNo: "C-PEL017-FR", notes: "Hendra" } }
             : { s: true, d: { id: Number(url.searchParams.get("id")), customerNo: "C-ANE050-FR", notes: "" } };
     }
-    if (url.pathname.endsWith("/customer/list.do")) return { s: true, d: [] };
+    if (url.pathname.endsWith("/customer/list.do")) {
+        return url.searchParams.get("filter.keywords.val[0]") === "C-PEL017-FR"
+            ? { s: true, d: [{ id: 22001, customerNo: "C-PEL017-FR", notes: "Hendra" }] }
+            : { s: true, d: [] };
+    }
     return undefined;
 };
 
@@ -300,6 +306,10 @@ test("pelanggan Hendra: tulis apa pun lewat Konsol -> 403 PELANGGAN_HENDRA, tida
         ["/api/customer/save.do", { id: 22001, customerLimitAmountValue: 445000 }],
         ["/api/customer/save.do", { id: 22001, name: "PELITA LISTRIK. TK", billStreet: "JL. BARU" }],
         ["/api/customer/bulk-save.do", [{ id: 3, name: "A" }, { id: 22001, notes: "" }]],
+        // review 17 Nov H1: `number` = kunci identitas katalog (customer & pos/customer save.do)
+        ["/api/customer/save.do", { number: "C-PEL017-FR", notes: "", customerLimitAmountValue: 1 }],
+        ["/api/pos/customer/save.do", { data: [{ number: "C-PEL017-FR", notes: "" }] }],
+        ["/api/customer/save.do", { id: 3, number: "C-PEL017-FR" }],
     ] as const) {
         const { res, json, c } = await proxySebagai(["api_wrapper.execute"], { endpointPath, method: "POST", payload }, { jawab: accurateHendra });
         assert.equal(res.status, 403, JSON.stringify(payload));
