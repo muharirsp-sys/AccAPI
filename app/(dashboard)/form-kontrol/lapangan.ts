@@ -141,6 +141,11 @@ export function keBarisRute(rows: unknown, principle: string): AoRow[] {
         // Limit kredit toko (owner 14 Nov 2026); server lama / toko tanpa pelanggan cabang = null (tidak tampil).
         limit: r.adaLimit === true ? { limit: angkaAtauNull(r.limitKredit), piutang: angkaAtauNull(r.piutang) } : null,
         orderRef: typeof r.orderRef === "string" && r.orderRef ? r.orderRef : null,
+        // Nota belum lunas (owner 16 Nov 2026; cache sinkron, kunjungan membaca Accurate langsung); server lama / tanpa pelanggan = null.
+        nota: r.nota && typeof r.nota === "object" && typeof (r.nota as { jumlah?: unknown }).jumlah === "number" ? (() => {
+            const n = r.nota as Record<string, unknown>;
+            return { jumlah: Number(n.jumlah), sisa: angkaAtauNull(n.sisa) ?? 0, umurMaks: angkaAtauNull(n.umurMaks) ?? 0, lewatTempo: angkaAtauNull(n.lewatTempo) ?? 0 };
+        })() : null,
     }));
 }
 

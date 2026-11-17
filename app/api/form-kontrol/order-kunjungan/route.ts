@@ -15,7 +15,7 @@ import { eq } from "drizzle-orm";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import { db } from "@/lib/db";
 import { salesProfile } from "@/db/schema";
-import { canAccessSales, resolveScope, simpanOrderKunjungan } from "@/lib/form-kontrol";
+import { canAccessSales, galatTanggalSalesman, resolveScope, simpanOrderKunjungan } from "@/lib/form-kontrol";
 import { muatSaranKunjungan } from "@/lib/form-kontrol/item-super-db";
 import { periksaTawaran } from "@/lib/form-kontrol/item-super";
 import { periksaRefOrder, periksaStok } from "@/lib/form-kontrol/order-kunjungan";
@@ -63,6 +63,9 @@ export async function POST(req: Request) {
         }
         const scope = await resolveScope(session);
         if (!canAccessSales(scope, salesCode)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        // Owner 16 Nov 2026: akun salesman tidak mengisi tanggal mundur (tanggal = hari ini WITA server).
+        const mundur = galatTanggalSalesman(scope, date, witaToday());
+        if (mundur) return jawabGalat(mundur);
 
         const saran = await muatSaranKunjungan({ salesCode, custCode, principle, tanggal: date });
         const cek = periksaTawaran(body.itemSuper ?? null, saran);

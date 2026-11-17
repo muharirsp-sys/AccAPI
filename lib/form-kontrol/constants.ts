@@ -20,6 +20,40 @@ export const NO_ORDER_REASONS = [
 export const TOKO_TUTUP_CODE = "R15";
 
 /**
+ * Owner 16 Nov 2026: "Merchandising di form kontrol, non-aktifkan saja dulu, jadi check in, order atau tidak, check out." Wizard Kunjungan
+ * melewati langkah Merchandising (juga blok item super kunjungan TIDAK ORDER yang ada di langkah itu); kunjungan ORDER tetap menawarkan item
+ * super di halaman order. true = langkah Merchandising kembali seperti semula (kode dan tabelnya tidak dihapus).
+ */
+export const MERCHANDISING_AKTIF = false;
+
+/**
+ * Alasan nota tidak tertagih (owner 16 Nov 2026; ao_control_daily.tagih_alasan). Kunjungan TIDAK ORDER + tidak tertagih muncul di layar Incaso
+ * (Tagihan kunjungan). Toko tutup (R15) otomatis "Toko tutup" tanpa ditanya.
+ */
+export const ALASAN_TIDAK_TERTAGIH = [
+    { kode: "BELUM_ADA_UANG", label: "Toko belum ada uang" },
+    { kode: "PEMBAYAR_TIDAK_ADA", label: "Pemilik / yang membayar tidak ada" },
+    { kode: "JANJI_BAYAR", label: "Janji bayar di kunjungan berikut" },
+    { kode: "NOTA_TIDAK_DIBAWA", label: "Nota / tanda terima tidak dibawa" },
+    { kode: "KOMPLAIN_NOTA", label: "Toko komplain / selisih nota" },
+    { kode: "TOKO_TUTUP", label: "Toko tutup" },
+    { kode: "LAINNYA", label: "Lainnya (tulis di catatan)" },
+] as const;
+export type AlasanTidakTertagih = (typeof ALASAN_TIDAK_TERTAGIH)[number]["kode"];
+export const labelAlasanTagih = (kode: string | null | undefined) => ALASAN_TIDAK_TERTAGIH.find((a) => a.kode === kode)?.label ?? kode ?? "";
+
+/**
+ * Owner 16 Nov 2026: "Salesman tidak boleh input apa pun mundur tanggal." Akun salesman (profil tertaut = `salesCode` di scope) hanya menulis
+ * kunjungan bertanggal hari ini WITA menurut SERVER; SPV/SM/Admin tidak dibatasi (koreksi). Kembali = penolakan berkode atau null.
+ * Pasangan layar: Rute hari ini sudah membekukan tanggal akun salesman (it05 #1); ini menutup jalan lewat URL/permintaan langsung.
+ */
+export function galatTanggalSalesman(scope: { salesCode?: string }, tanggal: string, hariIni: string): { status: number; kode: string; error: string } | null {
+    if (!scope.salesCode || tanggal === hariIni) return null;
+    return { status: 409, kode: "TANGGAL_BUKAN_HARI_INI",
+        error: `Salesman hanya boleh mengisi kunjungan hari ini (${hariIni}), bukan ${tanggal || "tanggal kosong"}. Muat ulang Rute hari ini.` };
+}
+
+/**
  * #21: status not_order wajib membawa kode alasan aktif (code sudah dipangkas; kosong = null).
  * Kirim ulang baris yang di DB sudah not_order dengan kode sama (Submit AO lama mengirim semua baris) tetap lolos.
  */

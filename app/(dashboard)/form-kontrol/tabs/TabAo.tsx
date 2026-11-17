@@ -431,6 +431,13 @@ export default function TabAo({ scope }: { scope: Scope }) {
                                                 {alamat && <span style={{ overflowWrap: "anywhere" }}>{alamat}</span>}
                                                 <AngkaToko r={r} bulan={namaBulan(tanggal)} />
                                                 {catatanToko(r) && <span>{catatanToko(r)}</span>}
+                                                {r.nota && r.nota.jumlah > 0 && (
+                                                    // Owner 16 Nov 2026: nota belum lunas (data sinkron; rincian langsung dari Accurate di layar kunjungan).
+                                                    <span className="fi-tnum" style={r.nota.lewatTempo > 0 ? { color: "var(--neg)" } : undefined}>
+                                                        {r.nota.jumlah} nota belum lunas · sisa {ringkas(r.nota.sisa)} · tertua {r.nota.umurMaks} hari
+                                                        {r.nota.lewatTempo > 0 ? ` · ${r.nota.lewatTempo} lewat tempo` : ""}
+                                                    </span>
+                                                )}
                                                 {r.nooAlasanTolak && <span style={{ overflowWrap: "anywhere" }}>Alasan ditolak: {r.nooAlasanTolak}</span>}
                                                 <LencanaJks r={r} />
                                             </span>}

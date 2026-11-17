@@ -165,8 +165,9 @@ export default function OrderSales({ akunId, kunjungan }: { akunId: string; kunj
     const [outlet, setOutlet] = useState("");
     const channel = pelanggan?.channel ?? "";
     const channelMasalah = pelanggan && !pelanggan.channel ? `Outlet ${pelanggan.customerNo} belum punya kategori (TT/MT) di Accurate. Isi kategorinya di Accurate lebih dulu.` : "";
-    const [tanggalIsi, setTanggalIsi] = useState<string | null>(null);
-    const orderDate = tanggalIsi ?? hariIni;
+    // Owner 16 Nov 2026: "Salesman tidak boleh input apa pun mundur tanggal" — tanggal order = hari ini WITA, tidak bisa diubah (server
+    // Web Sales menolak tanggal lain dengan TANGGAL_BUKAN_HARI_INI).
+    const orderDate = hariIni;
     const [note, setNote] = useState("");
     const [lines, setLines] = useState<Line[]>([emptyLine()]);
     const [hasil, setHasil] = useState<{ key: string; p: Pratinjau } | null>(null);
@@ -506,8 +507,8 @@ export default function OrderSales({ akunId, kunjungan }: { akunId: string; kunj
                                                     <FormField label="Outlet" required help={pelanggan ? undefined : "Terisi dari nama pelanggan yang dipilih."}>
                                                         {(a) => <input {...a} className="fi-input" value={outlet} placeholder="Nama outlet" onChange={(e) => { ubahIsian(); setOutlet(e.target.value); }} />}
                                                     </FormField>
-                                                    <FormField label="Tanggal order" help="Bawaan hari ini (WITA). Harga di daftar barang mengikuti tanggal ini.">
-                                                        {(a) => <input {...a} type="date" className="fi-input" value={orderDate} onChange={(e) => { ubahIsian(); setTanggalIsi(e.target.value); }} />}
+                                                    <FormField label="Tanggal order" help="Selalu hari ini (WITA); order tidak bisa diberi tanggal mundur.">
+                                                        {(a) => <input {...a} type="date" className="fi-input" value={orderDate} readOnly aria-readonly="true" tabIndex={-1} />}
                                                     </FormField>
                                                     <FormField label="Catatan">
                                                         {(a) => <input {...a} className="fi-input" value={note} placeholder="opsional" onChange={(e) => { ubahIsian(); setNote(e.target.value); }} />}

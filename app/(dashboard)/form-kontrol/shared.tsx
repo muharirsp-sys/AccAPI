@@ -105,6 +105,8 @@ export interface AoRow {
     limit?: { limit: number | null; piutang: number | null } | null;
     /** Order kunjungan tercatat (websales:<id>[,…] | principal); null = belum. */
     orderRef?: string | null;
+    /** Nota belum lunas toko dari data sinkron (owner 16 Nov 2026); null = tidak diketahui (tidak tampil). */
+    nota?: { jumlah: number; sisa: number; umurMaks: number; lewatTempo: number } | null;
 }
 
 export interface Reason {

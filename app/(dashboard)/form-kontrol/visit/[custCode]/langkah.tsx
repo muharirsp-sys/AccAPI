@@ -7,11 +7,16 @@
  * Side Effects: Tidak ada.
  */
 import { rupiah } from "@/lib/promo-ui";
+import { MERCHANDISING_AKTIF } from "@/lib/form-kontrol/constants";
 import { sisaLimit, type LimitToko } from "@/lib/form-kontrol/order-kunjungan";
 
 /** Langkah kunjungan. Order hanya untuk hasil ORDER; TIDAK ORDER melewatinya (toko tutup juga melewati Merchandising). */
 export const LANGKAH = ["Check-in", "Status", "Order", "Merchandising", "Check-out"] as const;
 export const L = { checkin: 0, status: 1, order: 2, merch: 3, checkout: 4, selesai: 5 } as const;
+/** Langkah yang tampil di alur (owner 16 Nov 2026: Merchandising nonaktif = tidak tampil); indeks L tetap. */
+export const LANGKAH_TAMPIL = LANGKAH.filter((_, i) => MERCHANDISING_AKTIF || i !== L.merch);
+/** Langkah sesudah Order kunjungan (teks tombol/penjelasan halaman order). */
+export const SESUDAH_ORDER = MERCHANDISING_AKTIF ? "Merchandising" : "check-out";
 
 type Kunci = { custCode: string; salesCode: string; principle: string; date: string };
 const q = (k: Kunci) => new URLSearchParams({ salesCode: k.salesCode, principle: k.principle, date: k.date });

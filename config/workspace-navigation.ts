@@ -7,7 +7,7 @@
  */
 import {
     FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, MapPinned, PackageSearch, HandCoins, Banknote, ChartColumn,
-    Inbox, FileCheck2, ChartPie, BadgePercent, ListChecks, MessageSquareText, UserRoundCheck, Building2, ArrowLeftRight, FileCog, ScanSearch, type LucideIcon } from "lucide-react";
+    Inbox, FileCheck2, ChartPie, Store, BadgePercent, ListChecks, MessageSquareText, UserRoundCheck, Building2, ArrowLeftRight, FileCog, ScanSearch, type LucideIcon } from "lucide-react";
 
 /** `short` = label navigasi bawah ponsel (≤ 10 huruf, unik di katalog); bawaan kata pertama `name`. */
 export type WorkspaceItem = { name: string; href: string; icon: LucideIcon; short?: string };
@@ -42,6 +42,8 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
         { name: "Pelunasan", href: "/pelunasan", icon: HandCoins },
         // Kasir dan Incaso (K2b, BL-59): setoran Kasir per orang per hari lawan pelunasan Incaso; dibuka pemegang `kasir.view` (Kasir, OM, Admin).
         { name: "Kasir dan Incaso", href: "/kasir", icon: Banknote, short: "Kasir" },
+        // Tagihan kunjungan (owner 16 Nov 2026): toko dikunjungi tetapi tidak tertagih / tidak order; dibuka IZIN_TAGIHAN_KUNJUNGAN (lib/rbac).
+        { name: "Tagihan Kunjungan", href: "/tagihan-kunjungan", icon: Store, short: "Tagihan" },
         { name: "Pembayaran dan SPPD", href: "/payments", icon: Wallet, short: "Pembayaran" },
         { name: "Format SPPD", href: "/payments/sppd", icon: FileText },
         { name: "Rekonsiliasi", href: "/reconciliation", icon: GitCompareArrows },
@@ -84,7 +86,7 @@ export const ROLE_PROFILES: Array<{ id: string; label: string; when?: string; sh
     { id: "gudang", label: "Admin Gudang", when: "rekapan_nota.manage", shortcuts: ["/rekapan-nota"] },
     // TERAKHIR (susulan S6e, tinjauan 2b): pelunasan.kirim juga diberikan ke Finance (owner #1) dan bisa ke peran lain; profil
     // utama mereka menang, Admin Incaso hanya bila tidak ada peran lain yang cocok.
-    { id: "incaso", label: "Admin Incaso", when: "pelunasan.kirim", shortcuts: ["/pelunasan"] },
+    { id: "incaso", label: "Admin Incaso", when: "pelunasan.kirim", shortcuts: ["/pelunasan", "/tagihan-kunjungan"] },
     { id: "spv", label: "Supervisor", shortcuts: ["/supervisor-review", "/form-kontrol", "/insentif-sales"] },
     { id: "om", label: "Operational Manager", shortcuts: ["/kasir", "/pelunasan", "/finance"] },
     { id: "kasir", label: "Kasir", shortcuts: ["/kasir"] },

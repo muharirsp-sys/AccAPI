@@ -3,7 +3,7 @@
  *   pengambilan) → Item super (WAJIB ditawarkan sebelum input order) → order.
  *   - Salesman input di AccAPI (sales_profile.sumber_order = accapi): Order Sales mode kunjungan (../../../../sales/OrderSales) — isian barang
  *     terkunci sampai stok + item super lengkap; Kirim order = simpan stok + item super lalu kirim ke antrean Web Sales, lalu order dicatat ke
- *     kunjungan (ref websales:<id>) dan kembali ke wizard (Merchandising).
+ *     kunjungan (ref websales:<id>) dan kembali ke wizard (Merchandising, atau check-out bila Merchandising nonaktif — owner 16 Nov 2026).
  *   - Salesman input di sistem principal: TIDAK ada isian order; tombol "Sudah input order" mencatat langkah ini saja (ref principal + nomor
  *     order principal opsional). Tidak ada yang dikirim ke Accurate maupun Web Sales.
  * Caller: ./page.tsx.
@@ -30,7 +30,7 @@ import OrderSales, { type ApiOrderKunjungan } from "../../../../sales/OrderSales
 import { GagalKirim, PESAN_SINYAL, ambilJson, ditolakBukanRute, kirimFk, sebabGagal } from "../../../lapangan";
 import { alasanIzinFk } from "../../../shared";
 import { ItemSuperBlok, ambilSaran, isianTawaran, jawabanAwal, jumlahBelum, ringkasItemSuper, ubahJawabanDi, type ItemSuperInfo, type Jawaban, type SaranItem } from "../ItemSuper";
-import { L, LANGKAH, TeksLimit, bacaLimit, urlKunjungan } from "../langkah";
+import { L, LANGKAH_TAMPIL, SESUDAH_ORDER, TeksLimit, bacaLimit, urlKunjungan } from "../langkah";
 import { StokToko, barisStokWajib, bacaStok, isianStok } from "./StokToko";
 
 type Props = { custCode: string; salesCode: string; principle: string; date: string; akunId: string; izinFk: string[] };
@@ -179,7 +179,7 @@ function Isi({ custCode, salesCode, principle, date, akunId, izinFk, d, kembaliK
                 <MessageStrip tone="pos" title="Order kunjungan ini sudah tercatat.">
                     {principal ? "Anda sudah menandai order diinput di sistem principal." : `Order ${nomorDariRef(d.orderRef).join(", ")} tercatat.`}{" "}
                     {principal ? "Simpan lagi bila ada perubahan." : "Kirim order lagi hanya bila ada barang yang tertinggal."}{" "}
-                    <Link className="fi-btn fi-btn--tertiary" href={kembaliKe}>Lanjut ke Merchandising</Link>
+                    <Link className="fi-btn fi-btn--tertiary" href={kembaliKe}>Lanjut ke {SESUDAH_ORDER}</Link>
                 </MessageStrip>
             )}
             {galat && <MessageStrip tone="neg" title="Belum tersimpan.">{galat}</MessageStrip>}
@@ -206,8 +206,8 @@ function Isi({ custCode, salesCode, principle, date, akunId, izinFk, d, kembaliK
 
     const flow = (
         <>
-            <div className="fi-flow-lega"><Flow label="Langkah kunjungan" steps={LANGKAH.map((label, i) => ({ label, state: i < L.order ? "done" : i === L.order ? "current" : "todo" }))} /></div>
-            <span className="fi-small fi-subtle">Langkah {L.order + 1} dari {LANGKAH.length} · Order · {principal ? `input di sistem ${d.store.principle}` : "input di AccAPI"}</span>
+            <div className="fi-flow-lega"><Flow label="Langkah kunjungan" steps={LANGKAH_TAMPIL.map((label, i) => ({ label, state: i < L.order ? "done" : i === L.order ? "current" : "todo" }))} /></div>
+            <span className="fi-small fi-subtle">Langkah {L.order + 1} dari {LANGKAH_TAMPIL.length} · Order · {principal ? `input di sistem ${d.store.principle}` : "input di AccAPI"}</span>
         </>
     );
     const kepala = (
@@ -243,7 +243,7 @@ function Isi({ custCode, salesCode, principle, date, akunId, izinFk, d, kembaliK
                     <h2 className="fi-title-3" id="judul-order-principal">Order di sistem {d.store.principle}</h2>
                     <p className="fi-small">
                         Input order toko ini di aplikasi {d.store.principle}, sesuai permintaan toko dan saran Anda dari stok di atas. Halaman ini tidak mengirim
-                        order ke Accurate. Sesudah selesai, tekan <b>Sudah input order</b> untuk lanjut ke Merchandising.
+                        order ke Accurate. Sesudah selesai, tekan <b>Sudah input order</b> untuk lanjut ke {SESUDAH_ORDER}.
                     </p>
                     <FormField label={`Nomor order di sistem ${d.store.principle}`} help="Boleh kosong. Dipakai SPV mencocokkan order dengan faktur yang masuk sesudah laporan principal ditarik.">
                         {(a) => <input {...a} className="fi-input" value={nomor} maxLength={60} autoComplete="off" placeholder="Nomor dari aplikasi principal" disabled={Boolean(tanpaIzin)}
@@ -257,7 +257,7 @@ function Isi({ custCode, salesCode, principle, date, akunId, izinFk, d, kembaliK
                     onClick={() => setDialog(true)}>Sudah input order</Button>
             </FooterToolbar>
             <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`Order ${d.store.custName} sudah diinput di sistem ${d.store.principle}?`}
-                description="Langkah Order kunjungan ini dicatat sebagai selesai, lalu Anda lanjut ke Merchandising. Tidak ada yang dikirim ke Accurate."
+                description={`Langkah Order kunjungan ini dicatat sebagai selesai, lalu Anda lanjut ke ${SESUDAH_ORDER}. Tidak ada yang dikirim ke Accurate.`}
                 facts={[
                     ["Stok toko", `${isianStok(riwayat.data, stok).length} barang dicatat`],
                     ["Item super", saranIs?.wajib.length ? ringkasItemSuper(jawaban) : "tidak ada saran wajib"],

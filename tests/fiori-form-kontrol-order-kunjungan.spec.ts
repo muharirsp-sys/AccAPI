@@ -2,7 +2,7 @@
  * Tujuan: Dua alur order salesman di Form Kontrol (owner 14 Nov 2026). Rute hari ini: nomor urut JKS tidak tampil, limit kredit + sisa tampil,
  *   saringan = kontrol segmen. Kunjungan: Status ORDER → halaman order dibuka OTOMATIS; stok toko dari riwayat pengambilan WAJIB (10 teratas),
  *   item super WAJIB ditawarkan sebelum order. Salesman sistem principal: tanpa isian order, "Sudah input order" (dialog) = POST order-kunjungan
- *   ref principal, TIDAK ada kiriman Web Sales, kembali ke wizard di Merchandising tanpa blok item super. Salesman AccAPI: isian order terkunci
+ *   ref principal, TIDAK ada kiriman Web Sales, kembali ke wizard di Check-out (Merchandising nonaktif, owner 16 Nov 2026). Salesman AccAPI: isian order terkunci
  *   sampai stok + item super lengkap; Tambah dari stok; Kirim order = simpan stok + item super DULU, lalu POST Web Sales, lalu dicatat ke
  *   kunjungan (ref websales:<id>). Ponsel 390 px: tanpa gulir menyamping.
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true): `PLAYWRIGHT_BASE_URL=http://localhost:3001 npx playwright test tests/fiori-form-kontrol-order-kunjungan.spec.ts`.
@@ -93,7 +93,7 @@ test("Rute hari ini: tanpa nomor urut, limit kredit + sisa (lewat limit disebut)
     await page.screenshot({ path: "test-results/order-kunjungan/rute-390.png", fullPage: true });
 });
 
-test("Salesman sistem principal: ORDER membuka halaman order; stok + item super wajib; Sudah input order tanpa kiriman Web Sales; kembali di Merchandising", async ({ page }) => {
+test("Salesman sistem principal: ORDER membuka halaman order; stok + item super wajib; Sudah input order tanpa kiriman Web Sales; kembali di Check-out", async ({ page }) => {
     const k: Kunjungan = { sumber: "principal", status: "not_visited", orderRef: null, dicatat: null, tersimpan: [] };
     const tulis = await mockFk(page, k);
     await mockOrderCabang(page, { peran: "sales", riwayat: RIWAYAT });
@@ -101,14 +101,14 @@ test("Salesman sistem principal: ORDER membuka halaman order; stok + item super 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(URL_KUNJUNGAN, NAV);
     const main = page.locator("main");
-    await expect(main.getByText("Langkah 2 dari 5 · Status")).toBeVisible(NAV);
+    await expect(main.getByText("Langkah 2 dari 4 · Status")).toBeVisible(NAV);
     await expect(main.getByText("Limit kredit")).toBeVisible();
     await main.getByRole("radiogroup", { name: "Hasil kunjungan" }).getByText("ORDER", { exact: true }).click();
     await expect(main.getByRole("status").filter({ hasText: "Berikutnya halaman order" })).toContainText("Sudah input order");
     await main.getByRole("button", { name: "Simpan & buka order" }).click();
 
     await expect(page).toHaveURL(/\/form-kontrol\/visit\/C-01\/order\?/, NAV);
-    await expect(main.getByText("Langkah 3 dari 5 · Order · input di sistem CABANG A")).toBeVisible(NAV);
+    await expect(main.getByText("Langkah 3 dari 4 · Order · input di sistem CABANG A")).toBeVisible(NAV);
     // Tanpa isian order AccAPI.
     await expect(main.getByRole("list", { name: "Barang", exact: true })).toHaveCount(0);
     await expect(main.getByLabel("Cari barang")).toHaveCount(0);
@@ -132,7 +132,7 @@ test("Salesman sistem principal: ORDER membuka halaman order; stok + item super 
     await dialog.getByRole("button", { name: "Sudah input order" }).click();
 
     await expect(page).toHaveURL(/\/form-kontrol\/visit\/C-01\?/, NAV);
-    await expect(main.getByText("Langkah 4 dari 5 · Merchandising")).toBeVisible(NAV);
+    await expect(main.getByText("Langkah 4 dari 4 · Check-out")).toBeVisible(NAV);
     await expect(main.getByRole("heading", { name: "Item super" })).toHaveCount(0);
     const [simpan] = postKe(tulis, "/order-kunjungan");
     expect(simpan).toMatchObject({ salesCode: "S-01", custCode: "C-01", principle: "CABANG A", date: HARI_INI,
@@ -153,7 +153,7 @@ test("Salesman AccAPI: isian order terkunci sampai stok + item super; Kirim orde
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/form-kontrol/visit/C-01/order?salesCode=S-01&principle=CABANG+A&date=${HARI_INI}`, NAV);
     const main = page.locator("main");
-    await expect(main.getByText("Langkah 3 dari 5 · Order · input di AccAPI")).toBeVisible(NAV);
+    await expect(main.getByText("Langkah 3 dari 4 · Order · input di AccAPI")).toBeVisible(NAV);
     await expect(main.getByRole("group", { name: "Pelanggan terpilih" })).toContainText("PELANGGAN A", NAV);
     await expect(main.getByText("Isian order terkunci.")).toBeVisible();
     await expect(main.getByLabel("Cari barang")).toHaveCount(0);
@@ -179,7 +179,7 @@ test("Salesman AccAPI: isian order terkunci sampai stok + item super; Kirim orde
     await kirim.click();
     await page.getByRole("dialog").getByRole("button", { name: "Kirim order" }).click();
     await expect(page).toHaveURL(/\/form-kontrol\/visit\/C-01\?/, NAV);
-    await expect(main.getByText("Langkah 4 dari 5 · Merchandising")).toBeVisible(NAV);
+    await expect(main.getByText("Langkah 4 dari 4 · Check-out")).toBeVisible(NAV);
 
     const simpan = postKe(tulis, "/order-kunjungan");
     expect(simpan).toHaveLength(2);
@@ -190,7 +190,7 @@ test("Salesman AccAPI: isian order terkunci sampai stok + item super; Kirim orde
     expect(ws.kirim[0]).toMatchObject({ customer_no: "C-01", lines: [{ code: "A-1", unit: "PCS", quantity: "14" }] });
 });
 
-test("Wizard: TIDAK ORDER melewati langkah Order dan menjawab item super di Merchandising seperti semula", async ({ page }) => {
+test("Wizard: TIDAK ORDER melewati langkah Order dan (Merchandising nonaktif, owner 16 Nov 2026) langsung ke Check-out tanpa item super", async ({ page }) => {
     const k: Kunjungan = { sumber: "accapi", status: "not_visited", orderRef: null, dicatat: null, tersimpan: [] };
     await mockFk(page, k);
     await page.setViewportSize({ width: 390, height: 844 });
@@ -199,8 +199,9 @@ test("Wizard: TIDAK ORDER melewati langkah Order dan menjawab item super di Merc
     await main.getByRole("radiogroup", { name: "Hasil kunjungan" }).getByText("TIDAK ORDER", { exact: true }).click();
     await main.getByLabel("Alasan tidak order").selectOption("R01");
     await main.getByRole("button", { name: "Simpan & lanjut" }).click();
-    await expect(main.getByText("Langkah 4 dari 5 · Merchandising")).toBeVisible(NAV);
+    await expect(main.getByText("Langkah 4 dari 4 · Check-out")).toBeVisible(NAV);
     await expect(page.getByRole("list", { name: "Langkah kunjungan" })).toContainText("Order dilewati");
-    await expect(main.getByRole("heading", { name: "Item super" })).toBeVisible();
+    await expect(page.getByRole("list", { name: "Langkah kunjungan" })).not.toContainText("Merchandising");
+    await expect(main.getByRole("heading", { name: "Item super" })).toHaveCount(0);
     await expect(page).toHaveURL(/\/form-kontrol\/visit\/C-01\?/);
 });

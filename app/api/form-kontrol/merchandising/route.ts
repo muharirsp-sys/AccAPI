@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
-import { getMerchandisingForDate, saveMerchandising, resolveScope, canAccessSales } from "@/lib/form-kontrol";
+import { getMerchandisingForDate, saveMerchandising, resolveScope, canAccessSales, galatTanggalSalesman } from "@/lib/form-kontrol";
 import { jawabGalat } from "@/lib/order-cabang";
 import { witaToday } from "@/lib/beranda";
 import { muatSaranKunjungan } from "@/lib/form-kontrol/item-super-db";
@@ -48,6 +48,9 @@ export async function POST(req: Request) {
         if (!canAccessSales(scope, salesCode)) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
+        // Owner 16 Nov 2026: akun salesman tidak mengisi tanggal mundur (tanggal = hari ini WITA server).
+        const mundur = galatTanggalSalesman(scope, date, witaToday());
+        if (mundur) return jawabGalat(mundur);
         // Item Super (owner 13 Nov 2026): saran dihitung ulang di server; semua saran wajib harus dijawab (ditawarkan/dipesan/alasan).
         const saran = await muatSaranKunjungan({ salesCode, custCode, principle, tanggal: date });
         const cek = periksaTawaran(body.itemSuper ?? null, saran);

@@ -10,6 +10,8 @@
  * Main Functions: TabHierarki (default).
  * Side Effects: GET /api/form-kontrol/sales-profiles; PUT /api/form-kontrol/sales-profiles (payload sama; server menolak nama di luar akun
  *   dengan kalimat berkode yang tampil di dialog).
+ * Owner 16 Nov 2026: per salesman tampil acuan wajah (foto + tanggal; diambil otomatis dari selfie check-in berwajah pertama) dan tombol
+ *   Kosongkan acuan (POST /api/form-kontrol/wajah-acuan) bila acuannya keliru — check-in berikutnya menjadi acuan baru.
  */
 "use client";
 
@@ -19,11 +21,13 @@ import { Button, EmptyState, ErrorState, MessageStrip, Skeleton } from "@/compon
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { kunciNama } from "@/lib/form-kontrol/constants";
 import { normalHp } from "@/lib/form-kontrol/noo-aturan";
-import { KOSONG } from "@/lib/tampil";
+import { KOSONG, tanggalWita } from "@/lib/tampil";
 import { ambilFk, tulisFk, useIzinFk, type Scope } from "../shared";
 
 interface Profile { salesCode: string; salesName: string; principle: string; branch: string; spvName: string | null; smName: string | null; noHp?: string | null;
-    sumberOrder?: SumberOrder }
+    sumberOrder?: SumberOrder;
+    /** Acuan wajah (owner 16 Nov 2026); null = belum ada; undefined = tidak terbaca / server lama. */
+    wajahAcuan?: { fotoUrl: string; dibuatPada: string } | null }
 /** Dua tipe sales (owner 13 Nov 2026): tempat salesman menginput order — menentukan langkah Status kunjungan dan kontrol di Supervisor Review. */
 type SumberOrder = "accapi" | "principal";
 const LABEL_SUMBER: Record<SumberOrder, string> = { accapi: "Input di AccAPI/Accurate", principal: "Input di sistem principal" };
@@ -47,6 +51,7 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
             (j) => ({ rows: (j.rows ?? []) as Profile[], spv: teks(j.spvOptions), sm: teks(j.smOptions) }), "Hierarki sales belum berhasil dimuat."), []));
     const [edits, setEdits] = useState<Record<string, Edit>>({});
     const [simpan, setSimpan] = useState<Profile | null>(null);
+    const [resetWajah, setResetWajah] = useState<Profile | null>(null);
     const [sukses, setSukses] = useState("");
 
     const profiles = load.data?.rows ?? [];
@@ -98,6 +103,14 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
                                             <b className="fi-small">{p.salesName}</b>
                                             <span className="fi-codes">{p.salesCode} · {p.principle}</span>
                                             {draf && <span className="fi-draft"><Pencil className="fi-icon" aria-hidden />Draf</span>}
+                                            {p.wajahAcuan !== undefined && (
+                                                <span className="fi-small fi-subtle" style={{ display: "block" }}>
+                                                    {p.wajahAcuan ? <>Wajah acuan {tanggalWita(p.wajahAcuan.dibuatPada)} · <a href={p.wajahAcuan.fotoUrl} target="_blank" rel="noopener noreferrer">lihat foto</a>
+                                                        {" · "}<button type="button" className="fi-btn fi-btn--tertiary" style={{ minHeight: 0, padding: 0, height: "auto" }}
+                                                            disabled={Boolean(izin)} onClick={() => setResetWajah(p)}>Kosongkan</button></>
+                                                        : "Wajah acuan: dari selfie check-in berikutnya"}
+                                                </span>
+                                            )}
                                         </div>
                                         {PERAN.map((k) => {
                                             const v = e[NAMA[k]];
@@ -156,6 +169,23 @@ export default function TabHierarki({ scope }: { scope: Scope }) {
             {kunci && <p className="fi-small fi-why">{kunci}</p>}
             {sukses && <MessageStrip tone="pos" title={sukses} onClose={() => setSukses("")} />}
             {isi}
+            <ConfirmDialog
+                open={resetWajah !== null}
+                onClose={() => setResetWajah(null)}
+                title={`Kosongkan wajah acuan ${resetWajah?.salesName ?? ""}?`}
+                description="Selfie check-in berwajah berikutnya dari salesman ini menjadi wajah acuan baru. Pastikan yang check-in berikutnya memang salesman ini."
+                facts={resetWajah ? [["Salesman", `${resetWajah.salesName} · ${resetWajah.salesCode}`],
+                    ["Acuan sekarang", resetWajah.wajahAcuan ? tanggalWita(resetWajah.wajahAcuan.dibuatPada) : KOSONG]] : []}
+                confirmLabel="Kosongkan acuan"
+                confirmDisabled={izin}
+                onConfirm={async () => {
+                    const p = resetWajah!;
+                    await tulisFk("/api/form-kontrol/wajah-acuan", { body: { salesCode: p.salesCode }, gagal: "Wajah acuan belum dikosongkan." });
+                    setResetWajah(null);
+                    setSukses(`Wajah acuan ${p.salesName} dikosongkan; selfie check-in berikutnya menjadi acuan.`);
+                    muatUlang();
+                }}
+            />
             <ConfirmDialog
                 open={simpan !== null}
                 onClose={() => setSimpan(null)}
