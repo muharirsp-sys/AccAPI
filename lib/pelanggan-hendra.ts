@@ -346,14 +346,15 @@ export async function pulihkanLimitHendra(d: DepsPulih, opsi: { sekarang: Date; 
                 continue;
             }
             const ke = target.get(terakhir.id);
+            if (ke && samaLimit(det, ke)) {
+                // Sudah bernilai sebelum impor (tulis terdahulu ternyata masuk, atau impor berikutnya mengembalikannya) — tanpa
+                // save.do: lastUpdate pelanggan Hendra tidak disentuh sia-sia (review 3 E, review 5 nit 1).
+                status.set(terakhir.id, ["dipulihkan", "sudah sesuai nilai sebelum impor, tanpa tulis"]);
+                await tutup(status);
+                h.dilewati.push(`${label(terakhir)}: sudah sesuai, tanpa tulis`);
+                continue;
+            }
             if (!samaLimit(det, terakhir.baru)) {
-                if (ke && samaLimit(det, ke)) {
-                    // Sudah bernilai sebelum impor (mis. tulis jalan terdahulu ternyata masuk) — tanpa tulis ulang (review 3 E).
-                    status.set(terakhir.id, ["dipulihkan", "sudah sesuai nilai sebelum impor, tanpa tulis"]);
-                    await tutup(status);
-                    h.dilewati.push(`${label(terakhir)}: sudah sesuai, tanpa tulis`);
-                    continue;
-                }
                 // Accurate berubah lagi tanpa peristiwa teramati (belum diamati webhook/sync): putuskan utuh nanti (review 4 F3).
                 if (!tua) { await ulang("limit berubah lagi, peristiwanya belum teramati; diulang"); continue; }
                 for (const e of kelompok) if (impor.get(e.id)) status.set(e.id, ["dilewati", "limit berubah lagi sesudahnya (> 2 hari)"]);
@@ -383,7 +384,14 @@ export async function pulihkanLimitHendra(d: DepsPulih, opsi: { sekarang: Date; 
                 const cek = await d.bacaDetail(customerId).catch(() => null);
                 if (!cek || !samaLimit(cek, ke)) {
                     h.gagal.push(`${label(terakhir)}: ${err instanceof Error ? err.message : String(err)}`);
-                    if (cek && samaLimit(cek, terakhir.baru)) await ulang("tulis gagal, diulang utuh jalan berikutnya");
+                    if (cek && samaLimit(cek, terakhir.baru)) {
+                        // Ditolak terus (mis. validasi Accurate) tidak diulang tanpa ujung: batas 2 hari yang sama (review 5 nit 2).
+                        if (!tua) await ulang("tulis gagal, diulang utuh jalan berikutnya");
+                        else {
+                            for (const e of kelompok) if (impor.get(e.id)) status.set(e.id, ["dilewati", "tulis Accurate gagal terus > 2 hari"]);
+                            await tutup(status);
+                        }
+                    }
                     // Accurate tak terbaca: biarkan `diproses` -> diklaim ulang setelah basi dan diputuskan dari Accurate.
                     continue;
                 }
