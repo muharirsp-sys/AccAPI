@@ -664,6 +664,23 @@ export const customer = pgTable("customer", {
     index("idx_customer_synced_at").on(t.syncedAt, t.id)
 ]);
 
+// Owner 17 Nov 2026 (lib/pelanggan-hendra, db/migrations/0044): acuan Limit Piutang + Limit Hari pelanggan yang catatan Accurate-nya
+// memuat "Hendra". Pemulih mengembalikan ke acuan HANYA bila limit berubah karena impor massal; edit satuan di Accurate = acuan baru.
+export const limitHendraAcuan = pgTable("limit_hendra_acuan", {
+    customerId: bigint("customer_id", { mode: "number" }).primaryKey(),
+    customerNo: text("customer_no").notNull(),
+    limitAktif: boolean("limit_aktif").notNull(), // customerLimitAmount
+    limitNilai: doublePrecision("limit_nilai"), // customerLimitAmountValue
+    hariAktif: boolean("hari_aktif").notNull(), // customerLimitAge
+    hariNilai: integer("hari_nilai"), // customerLimitAgeValue
+    acuanLastUpdate: text("acuan_last_update"), // lastUpdate Accurate saat acuan dicatat
+    sumber: text("sumber").notNull(), // 'awal' | 'edit_manual'
+    diperbaruiPada: timestamp("diperbarui_pada", { withTimezone: true }).notNull().defaultNow(),
+    terakhirDipulihkanPada: timestamp("terakhir_dipulihkan_pada", { withTimezone: true }),
+    terakhirDipulihkanDari: jsonb("terakhir_dipulihkan_dari"), // nilai limit sebelum dipulihkan (jejak)
+    jumlahDipulihkan: integer("jumlah_dipulihkan").notNull().default(0),
+});
+
 // Audit F3 / PRD 02-03: cache faktur penjualan (sumber piutang/nota) dari Accurate.
 // Kolom typed nullable — hanya diisi bila field tersedia di respons list.do; rawData
 // menyimpan payload utuh sehingga tidak ada data yang dikarang.

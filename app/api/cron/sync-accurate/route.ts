@@ -2,12 +2,14 @@
  * Tujuan: Trigger sync terjadwal Accurate -> cache lokal (Audit F2+F3, prasyarat PRD 02/03/04).
  * Caller: Scheduler eksternal (Coolify scheduled task / cron) dengan Bearer CRON_SECRET.
  * Kredensial Accurate: userId dari env ACCURATE_SYNC_USER_ID, fallback sesi OAuth terbaru milik admin.
- * Side Effects: tulis tabel item/customer/sales_invoice/sales_return + sync_state.
+ * Side Effects: tulis tabel item/customer/sales_invoice/sales_return + sync_state. Sesudah modul customer sukses: pemulih limit
+ *   pelanggan "Hendra" (lib/pelanggan-hendra) — customer/save.do 4 kolom limit untuk yang diubah impor massal + limit_hendra_acuan.
  */
 import { NextResponse } from "next/server";
 import { requireCronSecret } from "@/lib/api-security";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
 import { SYNC_MODULE_NAMES, syncModule, type SyncModuleName } from "@/lib/sync";
+import { jalankanPulihLimitHendra } from "@/lib/pelanggan-hendra";
 
 export const maxDuration = 3600; // sync penuh bisa lama; jalan out-of-band, bukan request user
 
@@ -37,5 +39,15 @@ export async function GET(req: Request) {
         results[mod] = await syncModule(mod, creds);
     }
     const ok = Object.values(results).every((r) => (r as { success: boolean }).success);
-    return NextResponse.json({ ok, results }, { status: ok ? 200 : 502 });
+    // Owner 17 Nov 2026: sesudah salinan pelanggan segar penuh, pemulih limit pelanggan "Hendra" jalan (lib/pelanggan-hendra) —
+    // tanpa baris cron baru. Galatnya dilaporkan terpisah dan TIDAK mengubah `ok` sync.
+    let pulihLimitHendra: unknown;
+    if ((results.customer as { success?: boolean } | undefined)?.success) {
+        try {
+            pulihLimitHendra = await jalankanPulihLimitHendra({ sessionHost: creds.sessionHost, sessionId: creds.sessionId, accessToken: creds.apiKey });
+        } catch (e) {
+            pulihLimitHendra = { error: e instanceof Error ? e.message : String(e) };
+        }
+    }
+    return NextResponse.json({ ok, results, ...(pulihLimitHendra ? { pulihLimitHendra } : {}) }, { status: ok ? 200 : 502 });
 }

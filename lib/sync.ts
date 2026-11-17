@@ -417,7 +417,9 @@ const SYNC_MODULES: Record<SyncModuleName, {
         // sebagai OBJEK. Varian datar (categoryId/branchId/salesman) diabaikan diam-diam oleh
         // list.do — dibuktikan probe live 2026-09-09.
         // `suspended` (O1, 12 Okt 2026): pelanggan suspended tidak bisa dipilih untuk order baru (lib/order-cabang).
-        fields: "id,customerNo,name,balance,customerLimitAmount,customerLimitAmountValue,customerLimitAge,customerLimitAgeValue,billStreet,billCity,billProvince,priceCategory,category,branch,suspended,lastUpdate",
+        // `notes` (owner 17 Nov 2026): catatan "Hendra" = keputusan manual (lib/pelanggan-hendra). Tanpa ini sync menimpa
+        // raw_data webhook (detail.do, membawa notes) dengan jawaban list.do tanpa notes, dan pelanggan Hendra "hilang".
+        fields: "id,customerNo,name,balance,customerLimitAmount,customerLimitAmountValue,customerLimitAge,customerLimitAgeValue,billStreet,billCity,billProvince,priceCategory,category,branch,suspended,notes,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),

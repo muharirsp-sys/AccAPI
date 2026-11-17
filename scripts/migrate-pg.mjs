@@ -1206,6 +1206,38 @@ export const migrations = [
       RESET lock_timeout;
     `,
   },
+  {
+    // 2026-11-17 (limit pelanggan "Hendra", owner; zona §3 skema — butuh review manusia). EXPAND: tabel baru limit_hendra_acuan (acuan
+    // Limit Piutang + Limit Hari pelanggan bercatatan Hendra; pemulih lib/pelanggan-hendra). SQL = db/migrations/0044. Tanpa
+    // DATABASE_MIGRATION_URL jalankan docs/handover/DDL_LIMIT_HENDRA.sql SEBELUM image.
+    nama: "limit hendra acuan",
+    sudahAda: `SELECT 1 WHERE to_regclass('limit_hendra_acuan') IS NOT NULL`,
+    sql: `
+      SET lock_timeout = '5s';
+      CREATE TABLE IF NOT EXISTS limit_hendra_acuan (
+          customer_id               bigint PRIMARY KEY,
+          customer_no               text NOT NULL,
+          limit_aktif               boolean NOT NULL,
+          limit_nilai               double precision,
+          hari_aktif                boolean NOT NULL,
+          hari_nilai                integer,
+          acuan_last_update         text,
+          sumber                    text NOT NULL,
+          diperbarui_pada           timestamptz NOT NULL DEFAULT now(),
+          terakhir_dipulihkan_pada  timestamptz,
+          terakhir_dipulihkan_dari  jsonb,
+          jumlah_dipulihkan         integer NOT NULL DEFAULT 0,
+          CONSTRAINT limit_hendra_acuan_sumber CHECK (sumber IN ('awal', 'edit_manual'))
+      );
+      DO $lha$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
+          REVOKE DELETE, TRUNCATE ON limit_hendra_acuan FROM accapi_app;
+          GRANT SELECT, INSERT, UPDATE ON limit_hendra_acuan TO accapi_app;
+        END IF;
+      END $lha$;
+      RESET lock_timeout;
+    `,
+  },
 ];
 
 async function main() {
