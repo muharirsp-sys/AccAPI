@@ -91,7 +91,7 @@ test("PG Hendra: impor (26 simpanan 10:22) teramati lewat webhook -> peristiwa; 
     assert.equal(tulisSave().length, 0);
     // 2b) Sync pelanggan sedang berjalan: pemulih menunggu (hitungan bisa belum lengkap).
     await lewatSejam();
-    await pool.query(`INSERT INTO sync_state (module, status, updated_at) VALUES ('customer', 'syncing', now())`);
+    await pool.query(`INSERT INTO sync_state (module, status, updated_at) VALUES ('customer', 'syncing', now() AT TIME ZONE 'UTC')`);
     assert.ok("tertunda" in (await hendra.jalankanPulihLimitHendra(TARGET)));
     await pool.query(`UPDATE sync_state SET status = 'idle' WHERE module = 'customer'`);
 

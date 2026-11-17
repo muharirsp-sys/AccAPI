@@ -243,8 +243,11 @@ export type DepsPulih = {
     daftar(): Promise<Peristiwa[]>;
     /** Hitungan simpanan untuk menit-menit ini (limit_menit_simpan). */
     hitungMenit(menit: string[]): Promise<Map<string, number>>;
-    /** Klaim SEMUA peristiwa satu pelanggan sekaligus (semua-atau-tidak); gagal = jalan lain sedang memegangnya. */
-    klaim(ids: number[]): Promise<boolean>;
+    /**
+     * Klaim SEMUA peristiwa terbuka satu pelanggan (semua-atau-tidak). Gagal = jalan lain memegang sebagian, atau ada peristiwa
+     * pelanggan itu yang belum ada di `ids` (teramati sesudah daftar dibaca) — pelanggan diputuskan jalan berikutnya.
+     */
+    klaim(customerId: number, ids: number[]): Promise<boolean>;
     /** Catat nilai yang AKAN ditulis (status tetap `diproses`) SEBELUM save.do — pengamat mengenali simpanan itu sebagai `sistem`. */
     tandaiTarget(id: number, ke: Limit): Promise<void>;
     selesai(id: number, status: "dipulihkan" | "dibiarkan" | "dilewati" | "baru", alasan: string): Promise<void>;
@@ -256,10 +259,14 @@ export type HasilPulih = {
     peristiwa: number; dipulihkan: string[]; dibiarkan: string[]; dilewati: string[]; ditunda: number; gagal: string[]; coba: boolean;
 };
 
+/** Pelanggan yang tidak terbaca / berubah lagi tanpa peristiwa teramati diulang paling lama 2 hari, lalu dilewati. */
+export const BATAS_ULANG_MS = 2 * 24 * 3_600_000;
+
 /**
- * Pemulih. Ramai = hitungan pengamat (hanya bertambah) di menit itu atau sebelahnya >= AMBANG_MASSAL. Peristiwa satu pelanggan
- * diputuskan sebagai SATU kesatuan dalam satu jalan (diklaim bersama; ditunda bersama bila salah satunya belum matang), supaya
- * rantai dua impor beruntun (A->B lalu B->C) selalu kembali ke A (review 3 A).
+ * Pemulih. Ramai = hitungan pengamat (hanya bertambah) di menit itu atau sebelahnya >= AMBANG_MASSAL. Peristiwa SATU pelanggan
+ * diputuskan sebagai satu kesatuan dari SATU pembacaan Accurate, dan statusnya baru ditulis SESUDAH hasilnya pasti — tulis gagal,
+ * pelanggan tak terbaca, atau perubahan yang belum teramati = seluruh kelompok kembali `baru` dan dihitung ulang utuh jalan
+ * berikutnya (review 3 A, review 4 F1/F3). Rantai: impor beruntun A->B lalu B->C kembali ke A; edit satuan memutus rantai.
  * ponytail: tanpa pendapat kedua dari Accurate (filter lastUpdate) — hitungan Accurate ikut memuat simpanan pemulih sendiri dan
  * tergerus simpanan berikutnya (review 2 #4). Plafon: impor yang terjadi saat pengamat mati/belum terpasang tidak dipulihkan, dan
  * edit tangan yang webhook-nya hilang lalu disusul impor sebelum sync berikut dipulihkan ke nilai sebelum edit (review 2 #6).
@@ -267,6 +274,7 @@ export type HasilPulih = {
 export async function pulihkanLimitHendra(d: DepsPulih, opsi: { sekarang: Date; coba?: boolean; maks?: number }): Promise<HasilPulih> {
     const coba = Boolean(opsi.coba);
     const maks = opsi.maks ?? 300; // ponytail: pelanggan Hendra ±281 (17 Nov); batas mencegah salah hitung menulis tanpa ujung
+    const sekarang = opsi.sekarang.getTime();
     const daftar = await d.daftar();
     const h: HasilPulih = { peristiwa: daftar.length, dipulihkan: [], dibiarkan: [], dilewati: [], ditunda: 0, gagal: [], coba };
     const ramaiCache = new Map<string, boolean>();
@@ -278,90 +286,114 @@ export async function pulihkanLimitHendra(d: DepsPulih, opsi: { sekarang: Date; 
         }
         return ramaiCache.get(menit)!;
     };
+    const waktu = (e: Peristiwa) => (FORMAT_ACCURATE.test(e.lastUpdate) ? parseAccurateDateTime(e.lastUpdate) : null);
     const matang = (e: Peristiwa) => {
-        const t = parseAccurateDateTime(e.lastUpdate);
-        const sekarang = opsi.sekarang.getTime();
-        return Boolean(t) && FORMAT_ACCURATE.test(e.lastUpdate) && sekarang - t!.getTime() >= TUNGGU_MS
-            && sekarang - e.dicatatPada.getTime() >= TUNGGU_MS;
+        const t = waktu(e);
+        return Boolean(t) && sekarang - t!.getTime() >= TUNGGU_MS && sekarang - e.dicatatPada.getTime() >= TUNGGU_MS;
     };
+    const label = (e: Peristiwa) => `${e.customerNo} (${e.lastUpdate})`;
     const perPelanggan = new Map<number, Peristiwa[]>();
     for (const e of daftar) perPelanggan.set(e.customerId, [...(perPelanggan.get(e.customerId) ?? []), e]);
 
-    for (const kelompok of perPelanggan.values()) {
+    for (const [customerId, kelompok] of perPelanggan) {
         if (!kelompok.every(matang) || h.dipulihkan.length >= maks) { h.ditunda += kelompok.length; continue; }
-        if (!coba && !(await d.klaim(kelompok.map((e) => e.id)))) continue;
-        // Dua impor beruntun (A->B lalu B->C): yang pertama dilewati (Accurate sudah C), yang kedua kembali ke A (review 2 #5).
-        let rantai: Pemulihan | undefined;
-        for (let i = 0; i < kelompok.length; i++) {
-            const e = kelompok[i];
-            const label = `${e.customerNo} (${e.lastUpdate})`;
-            let target: Limit = e.lama;
-            try {
-                if (!(await ramai(e.lastUpdate.slice(0, 16)))) {
-                    rantai = undefined;
-                    if (!coba) await d.selesai(e.id, "dibiarkan", "edit satuan = keputusan baru");
-                    h.dibiarkan.push(label);
-                    continue;
-                }
-                if (rantai && samaLimit(rantai.baru, e.lama)) target = rantai.ke;
-                // Aturan 13 Nov (lib/pelanggan-terlindungi) menang: 8 toko NKA/DC tidak pernah diberi batas, juga oleh pemulih ini.
-                if (isPelangganTerlindungi(e.customerNo) && (target.aktif || target.hariAktif)) {
-                    const alasan = "toko terlindungi 13 Nov: batas tidak boleh dipasang kembali";
-                    if (!coba) await d.selesai(e.id, "dilewati", alasan);
-                    h.dilewati.push(`${label}: ${alasan}`);
-                    continue;
-                }
-                const det = await d.bacaDetail(e.customerId);
-                if (!det) {
-                    // Accurate tidak terbaca (bukan berarti pelanggan tak ada): seluruh sisa kelompok kembali `baru`, diulang (review 3 D).
-                    for (const sisa of kelompok.slice(i)) if (!coba) await d.selesai(sisa.id, "baru", "pelanggan tidak terbaca di Accurate, diulang");
-                    h.ditunda += kelompok.length - i;
-                    break;
-                }
-                if (!isCatatanHendra(det.notes)) {
-                    rantai = undefined;
-                    if (!coba) await d.selesai(e.id, "dilewati", "catatan Hendra sudah tidak ada");
-                    h.dilewati.push(`${label}: catatan Hendra sudah tidak ada`);
-                    continue;
-                }
-                if (samaLimit(det, target)) {
+        if (!coba && !(await d.klaim(customerId, kelompok.map((e) => e.id)))) continue;
+        const terakhir = kelompok[kelompok.length - 1];
+        const tua = sekarang - (waktu(terakhir)?.getTime() ?? sekarang) >= BATAS_ULANG_MS;
+        /** Kembalikan seluruh kelompok ke `baru` (diulang utuh). */
+        const ulang = async (alasan: string) => {
+            if (!coba) for (const e of kelompok) await d.selesai(e.id, "baru", alasan).catch(() => undefined);
+            h.ditunda += kelompok.length;
+        };
+        /** Tulis status akhir seluruh kelompok sekaligus. */
+        const tutup = async (status: Map<number, ["dipulihkan" | "dibiarkan" | "dilewati", string]>) => {
+            for (const e of kelompok) {
+                const [s, alasan] = status.get(e.id)!;
+                if (!coba) await d.selesai(e.id, s, alasan);
+                if (s === "dibiarkan") h.dibiarkan.push(label(e));
+                else if (s === "dilewati") h.dilewati.push(`${label(e)}: ${alasan}`);
+            }
+        };
+        try {
+            // 1) Keputusan per peristiwa tanpa menulis apa pun: impor atau edit satuan, dan target rantai tiap impor.
+            const impor = new Map<number, boolean>();
+            for (const e of kelompok) impor.set(e.id, await ramai(e.lastUpdate.slice(0, 16)));
+            const target = new Map<number, Limit>();
+            let rantai: Pemulihan | undefined;
+            for (const e of kelompok) {
+                if (!impor.get(e.id)) { rantai = undefined; continue; }
+                const ke = rantai && samaLimit(rantai.baru, e.lama) ? rantai.ke : e.lama;
+                target.set(e.id, ke);
+                rantai = { baru: e.baru, ke };
+            }
+            const status = new Map<number, ["dipulihkan" | "dibiarkan" | "dilewati", string]>();
+            for (const e of kelompok) {
+                status.set(e.id, impor.get(e.id) ? ["dilewati", "digantikan peristiwa berikutnya"] : ["dibiarkan", "edit satuan = keputusan baru"]);
+            }
+            if (![...impor.values()].some(Boolean)) { await tutup(status); continue; }
+
+            // 2) Satu pembacaan Accurate untuk seluruh kelompok.
+            const det = await d.bacaDetail(customerId);
+            if (!det) {
+                if (!tua) { await ulang("pelanggan tidak terbaca di Accurate, diulang"); continue; }
+                for (const e of kelompok) if (impor.get(e.id)) status.set(e.id, ["dilewati", "pelanggan tidak terbaca di Accurate > 2 hari"]);
+                await tutup(status);
+                continue;
+            }
+            if (!isCatatanHendra(det.notes)) {
+                for (const e of kelompok) if (impor.get(e.id)) status.set(e.id, ["dilewati", "catatan Hendra sudah tidak ada"]);
+                await tutup(status);
+                continue;
+            }
+            const ke = target.get(terakhir.id);
+            if (!samaLimit(det, terakhir.baru)) {
+                if (ke && samaLimit(det, ke)) {
                     // Sudah bernilai sebelum impor (mis. tulis jalan terdahulu ternyata masuk) — tanpa tulis ulang (review 3 E).
-                    if (!coba) await d.selesai(e.id, "dipulihkan", "sudah sesuai nilai sebelum impor, tanpa tulis");
-                    h.dilewati.push(`${label}: sudah sesuai, tanpa tulis`);
+                    status.set(terakhir.id, ["dipulihkan", "sudah sesuai nilai sebelum impor, tanpa tulis"]);
+                    await tutup(status);
+                    h.dilewati.push(`${label(terakhir)}: sudah sesuai, tanpa tulis`);
                     continue;
                 }
-                if (!samaLimit(det, e.baru)) {
-                    rantai = { baru: e.baru, ke: target };
-                    const alasan = "limit sudah berubah lagi sesudahnya (peristiwa berikutnya yang menentukan)";
-                    if (!coba) await d.selesai(e.id, "dilewati", alasan);
-                    h.dilewati.push(`${label}: ${alasan}`);
-                    continue;
-                }
-            } catch (err) {
-                h.gagal.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
-                for (const sisa of kelompok.slice(i)) if (!coba) await d.selesai(sisa.id, "baru", "gagal sebelum menulis, diulang").catch(() => undefined);
-                break;
+                // Accurate berubah lagi tanpa peristiwa teramati (belum diamati webhook/sync): putuskan utuh nanti (review 4 F3).
+                if (!tua) { await ulang("limit berubah lagi, peristiwanya belum teramati; diulang"); continue; }
+                for (const e of kelompok) if (impor.get(e.id)) status.set(e.id, ["dilewati", "limit berubah lagi sesudahnya (> 2 hari)"]);
+                await tutup(status);
+                continue;
             }
-            if (coba) { h.dipulihkan.push(label); continue; }
-            // Urutan aman (review 2 #4, #9): target dicatat (status tetap `diproses`) -> save.do -> `dipulihkan`. Jalan terputus di
-            // tengah = `diproses` basi, diklaim ulang 30 menit kemudian dan diputuskan lagi dari Accurate (sudah masuk = sudah sesuai).
+            // Keadaan Accurate = hasil peristiwa terakhir. Edit satuan -> dibiarkan; impor -> pulihkan ke target rantainya.
+            if (!ke) { await tutup(status); continue; }
+            if (isPelangganTerlindungi(terakhir.customerNo) && (ke.aktif || ke.hariAktif)) {
+                // Aturan 13 Nov (lib/pelanggan-terlindungi) menang: 8 toko NKA/DC tidak pernah diberi batas, juga oleh pemulih ini.
+                status.set(terakhir.id, ["dilewati", "toko terlindungi 13 Nov: batas tidak boleh dipasang kembali"]);
+                await tutup(status);
+                continue;
+            }
+            if (coba) {
+                h.dipulihkan.push(label(terakhir));
+                for (const e of kelompok) if (e !== terakhir) { const [s, a] = status.get(e.id)!; if (s === "dibiarkan") h.dibiarkan.push(label(e)); else h.dilewati.push(`${label(e)}: ${a}`); }
+                continue;
+            }
+            // 3) Urutan aman (review 2 #4, #9): target dicatat (status tetap `diproses`) -> save.do -> status akhir seluruh kelompok.
+            status.set(terakhir.id, ["dipulihkan", "impor massal: limit dikembalikan ke nilai sebelum impor"]);
             try {
-                await d.tandaiTarget(e.id, target);
-                await d.tulisLimit(e.customerId, target);
-                await d.selesai(e.id, "dipulihkan", "impor massal: limit dikembalikan ke nilai sebelum impor");
-                h.dipulihkan.push(label);
+                await d.tandaiTarget(terakhir.id, ke);
+                await d.tulisLimit(customerId, ke);
             } catch (err) {
-                // Tulis tak pasti (timeout, 5xx): pastikan dari Accurate, jangan langsung `baru` (bisa sudah masuk).
-                const cek = await d.bacaDetail(e.customerId).catch(() => null);
-                if (cek && samaLimit(cek, target)) {
-                    await d.selesai(e.id, "dipulihkan", "tulis tak pasti, terbukti masuk di Accurate").catch(() => undefined);
-                    h.dipulihkan.push(label);
-                } else {
-                    h.gagal.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
-                    if (cek && samaLimit(cek, e.baru)) await d.selesai(e.id, "baru", "tulis gagal, diulang jalan berikutnya").catch(() => undefined);
-                    // Accurate tak terbaca: biarkan `diproses` -> diklaim ulang setelah basi.
+                // Tulis tak pasti (timeout, 5xx): pastikan dari Accurate.
+                const cek = await d.bacaDetail(customerId).catch(() => null);
+                if (!cek || !samaLimit(cek, ke)) {
+                    h.gagal.push(`${label(terakhir)}: ${err instanceof Error ? err.message : String(err)}`);
+                    if (cek && samaLimit(cek, terakhir.baru)) await ulang("tulis gagal, diulang utuh jalan berikutnya");
+                    // Accurate tak terbaca: biarkan `diproses` -> diklaim ulang setelah basi dan diputuskan dari Accurate.
+                    continue;
                 }
+                status.set(terakhir.id, ["dipulihkan", "tulis tak pasti, terbukti masuk di Accurate"]);
             }
+            await tutup(status);
+            h.dipulihkan.push(label(terakhir));
+        } catch (err) {
+            h.gagal.push(`${label(terakhir)}: ${err instanceof Error ? err.message : String(err)}`);
+            await ulang("gagal sebelum menulis, diulang");
         }
     }
     return h;
@@ -387,7 +419,7 @@ export async function jalankanPulihLimitHendra(target: AccurateTarget, opsi: { c
     // Sync pelanggan sedang berjalan = hitungan per menit dari impor yang baru teramati sync belum lengkap (review 3 B). `syncing`
     // yang basi (> 2 jam, sync terputus) tidak menahan. Dari akhir sync-accurate statusnya sudah `idle`.
     const [s] = (await db.execute(sql`SELECT 1 AS ya FROM ${syncState} WHERE module = 'customer' AND status = 'syncing'
-            AND updated_at > now() - interval '2 hours'`)).rows as Rec[];
+            AND updated_at > (now() AT TIME ZONE 'UTC') - interval '2 hours'`)).rows as Rec[]; // updated_at = timestamp tanpa zona, ditulis drizzle dalam UTC (review 4 F2)
     if (s) return { tertunda: "sync pelanggan sedang berjalan; diputuskan jalan berikutnya" };
     const baca = bacaAccurate(target);
     return pulihkanLimitHendra({
@@ -402,13 +434,16 @@ export async function jalankanPulihLimitHendra(target: AccurateTarget, opsi: { c
         tandaiTarget: async (id, ke) => {
             await db.execute(sql`UPDATE ${limitHendraUbah} SET dipulihkan_ke = ${JSON.stringify(ke)}::jsonb WHERE id = ${id}`);
         },
-        klaim: async (ids) => {
+        klaim: async (customerId, ids) => {
+            // SEMUA peristiwa terbuka pelanggan ini (review 4 F3), bukan hanya yang ada di daftar jalan ini.
             const dapat = ((await db.execute(sql`UPDATE ${limitHendraUbah} SET status = 'diproses', diputuskan_pada = now()
-                WHERE id = ANY(${sql.param(ids)}::bigint[])
+                WHERE customer_id = ${customerId}
                   AND (status = 'baru' OR (status = 'diproses' AND diputuskan_pada < now() - make_interval(secs => ${KLAIM_BASI_MS / 1000})))
                 RETURNING id`)).rows as Rec[]).map((r) => Number(r.id));
-            if (dapat.length === ids.length) return true;
-            // Sebagian dipegang jalan lain: lepas yang sempat diklaim, pelanggan ini diputuskan jalan berikutnya (semua-atau-tidak).
+            const harap = new Set(ids);
+            if (dapat.length === ids.length && dapat.every((id) => harap.has(id))) return true;
+            // Sebagian dipegang jalan lain, atau ada peristiwa yang teramati sesudah daftar dibaca: lepas yang sempat diklaim,
+            // pelanggan ini diputuskan utuh jalan berikutnya (semua-atau-tidak).
             if (dapat.length) await db.execute(sql`UPDATE ${limitHendraUbah} SET status = 'baru' WHERE id = ANY(${sql.param(dapat)}::bigint[])`);
             return false;
         },

@@ -353,12 +353,14 @@ UI: API Wrapper page (/api-wrapper)
     dipulihkan_ke dari pemulihan `diproses` atau `dipulihkan` 2 hari terakhir) = `sistem`, tidak dihitung. Gagal = log saja.
   - Pemulih: GET /api/cron/pulih-limit-hendra (Bearer CRON_SECRET, usul tiap 15 menit; ?coba=1 = laporan saja) dan otomatis di
     akhir /api/cron/sync-accurate (modul customer sukses); ditunda selama sync pelanggan berjalan. Peristiwa satu pelanggan = satu
-    kesatuan: semuanya >= 15 menit sejak disimpan DAN sejak teramati -> diklaim bersama (`diproses`, basi 30 menit) ->
-    menit ramai (hitungan pengamat >= 20 di menit itu atau sebelahnya) = impor -> target = `lama` (dua impor beruntun yang
-    tertunda: `lama` impor pertama) -> detail.do (catatan masih Hendra, limit masih = `baru`; 8 toko 13 Nov tidak pernah diberi
-    batas; sudah bernilai sebelum impor = `dipulihkan` tanpa tulis; tak terbaca = kembali `baru`) -> catat dipulihkan_ke ->
-    customer/save.do id + 4 kolom limit -> `dipulihkan` (tulis tak pasti = dicek detail.do);
-    tidak ramai = edit satuan -> `dibiarkan`. Kolom lain tidak pernah dikembalikan. Env PULIH_LIMIT_HENDRA=mati = saklar darurat.
+    kesatuan: semuanya >= 15 menit sejak disimpan DAN sejak teramati -> SEMUA peristiwa terbuka pelanggan diklaim bersama
+    (`diproses`, basi 30 menit) -> tiap peristiwa: menit ramai (hitungan pengamat >= 20 di menit itu atau sebelahnya) = impor,
+    selain itu edit satuan; target impor = `lama` (impor beruntun: `lama` impor pertama; edit satuan memutus rantai) -> SATU
+    detail.do untuk kelompok: Accurate = `baru` peristiwa terakhir -> terakhir impor: catat dipulihkan_ke -> customer/save.do
+    id + 4 kolom limit -> status akhir seluruh kelompok (impor lain `dilewati`, edit `dibiarkan`); terakhir edit satuan: tanpa tulis.
+    Sudah bernilai sebelum impor = `dipulihkan` tanpa tulis; catatan Hendra hilang / 8 toko 13 Nov (tidak pernah diberi batas) =
+    `dilewati`. Tulis gagal, tak terbaca, atau Accurate berubah tanpa peristiwa teramati = seluruh kelompok kembali `baru`
+    (diulang utuh, paling lama 2 hari). Kolom lain tidak pernah dikembalikan. Env PULIH_LIMIT_HENDRA=mati = saklar darurat.
     Plafon: impor saat pengamat mati/belum terpasang tidak dipulihkan (mis. impor 13 Nov 2026 — 15 toko dipulihkan manual 17 Nov).
      <- JSON response
   Klien: lib/apiFetcher.ts classifyWriteError — 4xx + sent:false = rejected (tidak terkirim), bukan TIDAK PASTI; Konsol berhenti
