@@ -1919,6 +1919,16 @@ export const aoControlDaily = pgTable("ao_control_daily", {
     // antrean Web Sales) | 'principal' (salesman tipe principal menekan "Sudah input order"; tidak ada yang dikirim ke Accurate). NULL = belum / baris lama.
     orderRef: text("order_ref"),
     orderDicatatPada: timestamp("order_dicatat_pada", { withTimezone: true }),
+    // Tagihan kunjungan (owner 16 Nov 2026; db/migrations/0044): toko dengan nota belum lunas -> salesman mencatat hasil tagih di langkah Status.
+    // 'tertagih' (tagih_nominal > 0) | 'tidak_tertagih' (tagih_alasan = kode ALASAN_TIDAK_TERTAGIH) | NULL = toko tanpa nota / baris lama.
+    tagihStatus: text("tagih_status"),
+    tagihNominal: numeric("tagih_nominal", { precision: 18, scale: 2, mode: "number" }),
+    tagihAlasan: text("tagih_alasan"),
+    tagihCatatan: text("tagih_catatan"),
+    // Validasi wajah check-in (owner 16 Nov 2026; 0044): selfie check-in vs wajah_acuan salesman (lib/form-kontrol/wajah.ts STATUS_WAJAH).
+    // Tidak pernah menolak kunjungan; 'beda' / 'tanpa_wajah' = ditinjau SPV. wajah_skor = kemiripan kosinus (null bila tidak dibandingkan).
+    wajahStatus: text("wajah_status"),
+    wajahSkor: doublePrecision("wajah_skor"),
     autoMatched: boolean("auto_matched").notNull().default(false),
     source: text("source").notNull().default("manual"),
     createdBy: text("created_by"),
@@ -1929,7 +1939,29 @@ export const aoControlDaily = pgTable("ao_control_daily", {
     custPeriodIdx: index("idx_ao_cust_period").on(t.custCode, t.periodMonth, t.periodYear),
     statusIdx: index("idx_ao_status").on(t.status),
     uniqueEntry: uniqueIndex("idx_ao_unique").on(t.salesCode, t.custCode, t.principle, t.date),
+    // 0044 (NOT VALID di DB: baris lama semuanya NULL).
+    tagihCek: check("ao_control_daily_tagih", sql`(${t.tagihStatus} IS NULL AND ${t.tagihNominal} IS NULL AND ${t.tagihAlasan} IS NULL)
+        OR (${t.tagihStatus} = 'tertagih' AND ${t.tagihNominal} > 0 AND ${t.tagihAlasan} IS NULL)
+        OR (${t.tagihStatus} = 'tidak_tertagih' AND ${t.tagihNominal} IS NULL AND btrim(coalesce(${t.tagihAlasan}, '')) <> '')`),
+    wajahCek: check("ao_control_daily_wajah", sql`${t.wajahStatus} IS NULL OR ${t.wajahStatus} IN ('cocok', 'beda', 'tanpa_wajah', 'acuan_baru', 'tidak_terbaca')`),
 }));
+
+/**
+ * Wajah acuan salesman (owner 16 Nov 2026; 0044): satu sidik wajah (128 angka SFace, FastAPI /wajah/sidik) per salesman, diambil dari check-in
+ * pertama yang berwajah (sumber 'checkin'). Check-in berikutnya dibandingkan dengannya (lib/form-kontrol/wajah.ts). Admin/SPV mengosongkannya
+ * (DELETE) di Hierarki bila acuannya keliru -> check-in berikut menjadi acuan baru. Data biometrik: hanya dibaca server, tidak dikirim ke layar.
+ */
+export const wajahAcuan = pgTable("wajah_acuan", {
+    salesCode: text("sales_code").primaryKey(),
+    sidik: doublePrecision("sidik").array().notNull(),
+    fotoUrl: text("foto_url").notNull(),
+    sumber: text("sumber").notNull(),
+    dibuatPada: timestamp("dibuat_pada", { withTimezone: true }).notNull().defaultNow(),
+    dibuatOleh: text("dibuat_oleh"),
+}, (t) => [
+    check("wajah_acuan_sidik", sql`cardinality(${t.sidik}) = 128`),
+    check("wajah_acuan_sumber", sql`${t.sumber} IN ('checkin')`),
+]);
 
 /**
  * Item Super (owner 13 Nov 2026; 0041): item yang membentuk 80% omzet rata-rata/bulan per principal × channel (berkas "Item Super per Channel

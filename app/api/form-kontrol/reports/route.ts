@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
-import { getReport, saveReport, resolveScope, canAccessSales } from "@/lib/form-kontrol";
+import { getReport, saveReport, resolveScope, canAccessSales, galatTanggalSalesman } from "@/lib/form-kontrol";
+import { jawabGalat } from "@/lib/order-cabang";
+import { witaToday } from "@/lib/beranda";
 
 export async function GET(req: Request) {
     const gate = await requirePermissionH("form_kontrol.view");
@@ -35,9 +37,13 @@ export async function POST(req: Request) {
         if (!salesCode || !date || !tindakLanjut) {
             return NextResponse.json({ error: "Missing required fields (salesCode, date, tindakLanjut)" }, { status: 400 });
         }
-        if (!canAccessSales(await resolveScope(session), salesCode)) {
+        const scope = await resolveScope(session);
+        if (!canAccessSales(scope, salesCode)) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
+        // Owner 16 Nov 2026: akun salesman tidak mengisi tanggal mundur (tanggal = hari ini WITA server).
+        const mundur = galatTanggalSalesman(scope, date, witaToday());
+        if (mundur) return jawabGalat(mundur);
         const id = await saveReport({ salesCode, date, tindakLanjut });
         return NextResponse.json({ success: true, id });
     } catch {

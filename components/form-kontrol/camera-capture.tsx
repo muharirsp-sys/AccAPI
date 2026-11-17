@@ -18,11 +18,13 @@ import { MessageStrip } from "@/components/fiori/core";
 const BULAT: CSSProperties = { background: "var(--surface-3)", color: "var(--ink)" };
 const PESAN_KAMERA = "Izin kamera ditolak atau kamera tidak ada. Izinkan kamera di pengaturan situs, atau ketuk Pilih Foto.";
 
-export default function CameraCapture({ open, onClose, onCapture, judul = "Foto Bukti Kunjungan" }: {
+export default function CameraCapture({ open, onClose, onCapture, judul = "Foto Bukti Kunjungan", kameraAwal = "environment" }: {
     open: boolean;
     onClose: () => void;
     onCapture: (blob: Blob) => Promise<void>;
     judul?: string;
+    /** Kamera yang dibuka pertama (owner 16 Nov 2026: check-in = selfie kamera depan untuk validasi wajah). */
+    kameraAwal?: "environment" | "user";
 }) {
     const judulId = useId();
     const videoRef  = useRef<HTMLVideoElement>(null);
@@ -33,7 +35,7 @@ export default function CameraCapture({ open, onClose, onCapture, judul = "Foto 
     const [blob, setBlob]       = useState<Blob | null>(null);
     const [starting, setStarting] = useState(false);
     const [submitting, setSubmitting] = useState(false);
-    const [facing, setFacing]   = useState<"environment" | "user">("environment"); // belakang default
+    const [facing, setFacing]   = useState<"environment" | "user">(kameraAwal); // belakang default; check-in = depan
 
     const stopStream = useCallback(() => {
         streamRef.current?.getTracks().forEach(t => t.stop());
@@ -183,7 +185,7 @@ export default function CameraCapture({ open, onClose, onCapture, judul = "Foto 
                 )}
             </div>
 
-            <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onPickFile} />
+            <input ref={fileRef} type="file" accept="image/*" capture={kameraAwal} className="hidden" onChange={onPickFile} />
         </Dialog>
     );
 }

@@ -148,3 +148,6 @@ data/enigma/
 data/puratos/
 # Bahan uji laporan Puratos (5 CSV contoh 02.11.2026) — *.gz di atas membuangnya
 !lib/puratos/contoh-*.json.gz
+
+# Model ONNX wajah (YuNet + SFace, ±38 MB) — diunduh saat build image (Dockerfile.backend, sha256 terkunci), bukan isi repo
+python_backend/models/

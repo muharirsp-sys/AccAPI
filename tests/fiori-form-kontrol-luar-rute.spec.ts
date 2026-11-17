@@ -196,7 +196,8 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
         await page.getByRole("radio", { name: "TIDAK ORDER" }).check();
         await page.getByLabel("Alasan tidak order").selectOption("R01");
         await page.getByRole("button", { name: "Simpan & lanjut" }).click();
-        await expect(page.getByRole("heading", { name: "Merchandising wajib" })).toBeVisible(NAV);
+        // Merchandising nonaktif (owner 16 Nov 2026): langsung foto check-out.
+        await expect(page.getByRole("heading", { name: "Foto check-out" })).toBeVisible(NAV);
         expect(postKe(m.tulis, "/ao-control")).toEqual([{ salesCode: "S-01", custCode: "C-100002-CBA", principle: "PRINCIPLE A", date: HARI_INI,
             status: "not_order", noOrderReasonCode: "R01", noOrderNote: "" }]);
         await noOverflow(page);
@@ -409,7 +410,8 @@ const kunjunganUrl = (cust: string) => `/form-kontrol/visit/${cust}?salesCode=S-
 const ruteN = (n: number) => Array.from({ length: n }, (_, i) => baris(`C-9${String(i).padStart(2, "0")}`, `TOKO JKS ${String.fromCharCode(65 + i)}`));
 async function ambilFoto(page: Page, label: string) {
     await page.locator("main").getByRole("button", { name: label }).click();
-    const kamera = page.getByRole("dialog", { name: "Foto Bukti Kunjungan" });
+    // Owner 16 Nov 2026: check-in = selfie (judul kamera "Selfie check-in"); foto lain tetap "Foto Bukti Kunjungan".
+    const kamera = page.getByRole("dialog", { name: /^(Foto Bukti Kunjungan|Selfie check-in)$/ });
     await kamera.locator('input[type="file"]').setInputFiles({ name: "toko.png", mimeType: "image/png", buffer: PNG });
     await kamera.getByRole("button", { name: /Gunakan/ }).click();
 }
@@ -833,7 +835,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         const m = await mockB(page, o);
         await page.goto(kunjunganUrl("C-100002-CBA"), NAV);
         await expect(page.getByRole("heading", { name: "PELANGGAN B" })).toBeVisible(NAV);
-        await ambilFoto(page, "Ambil foto check-in");
+        await ambilFoto(page, "Ambil selfie check-in");
         const isi = page.locator(".fi-page");
         await expect(isi.getByRole("heading", { name: "Kunjungan luar rute ini sudah dibatalkan" })).toBeVisible(NAV);
         await expect(isi).toContainText("sudah dibatalkan, jadi tidak dicatat");
@@ -848,32 +850,19 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await expect.poll(() => tambah.evaluate((e) => e.getBoundingClientRect().bottom <= innerHeight), NAV).toBe(true);
     });
 
-    test("FK-MSM3 K2/K4 Kunjungan: toko JKS hari lain — judul 'tidak ada di rute hari ini'; merchandising 409 sesudah check-in → isian disebut tidak tersimpan", async ({ page }) => {
+    test("FK-MSM3 K2 Kunjungan: toko JKS hari lain — judul 'tidak ada di rute hari ini'", async ({ page }) => {
         const o: OpsiB = { visit: { store: STORE_JKS, ao: null, merch: null }, checkin: [K409("BUKAN_RUTE_HARI_INI", MSG_BUKAN)], rute: ruteN(3) };
         await mockB(page, o);
         await page.goto(kunjunganUrl("C-900"), NAV);
         await expect(page.getByRole("heading", { name: "Mulai kunjungan" })).toBeVisible(NAV);
-        await ambilFoto(page, "Ambil foto check-in");
+        await ambilFoto(page, "Ambil selfie check-in");
         const isi = page.locator(".fi-page");
         await expect(isi.getByRole("heading", { name: "Toko ini tidak ada di rute hari ini" })).toBeVisible(NAV);
         await expect(isi).not.toContainText("tidak lagi di rute");
         await expect(isi).toContainText("TOKO JKS A (C-900) tidak ada di rute");
 
-        // K4: merchandising 409 sesudah check-in + status + order kunjungan tercatat (owner 14 Nov 2026: ORDER melewati halaman order)
-        // → wizard diganti; check-in tetap tercatat.
-        o.visit = { store: STORE_JKS, ao: { ...AO_CHECKIN, status: "ordered", orderRef: "principal", orderDicatatPada: new Date().toISOString() }, merch: null };
-        o.merch = [K409("BUKAN_RUTE_HARI_INI", MSG_BUKAN)];
-        await page.goto(kunjunganUrl("C-900"), NAV);
-        await expect(page.getByRole("heading", { name: "Merchandising wajib" })).toBeVisible(NAV);
-        for (const b of ["Produk terlihat jelas", "Display rapi & terorganisir", "Area display dibersihkan", "Produk ditata ulang", "Posisi mudah ditemukan konsumen"]) await page.getByRole("checkbox", { name: b }).check(); // tombol foto per butir kini bernama "Foto bukti: {butir}" (audit desain 001 No 121), jadi getByLabel(b) ambigu
-        await page.getByRole("listitem").filter({ hasText: "Seluruh SKU terpajang" }).getByRole("button", { name: "Foto" }).click();
-        const kamera = page.getByRole("dialog", { name: "Foto Bukti Kunjungan" });
-        await kamera.locator('input[type="file"]').setInputFiles({ name: "m.png", mimeType: "image/png", buffer: PNG });
-        await kamera.getByRole("button", { name: /Gunakan/ }).click();
-        await expect(page.getByText("6 dari 6")).toBeVisible(NAV);
-        await page.getByRole("button", { name: "Simpan & lanjut" }).click();
-        await expect(isi.getByRole("heading", { name: "Toko ini tidak ada di rute hari ini" })).toBeVisible(NAV);
-        await expect(isi).toContainText("Isian di layar ini tidak tersimpan; check-in yang sudah dikirim tetap tercatat.");
+        // K4 (merchandising 409 sesudah check-in) dihapus 16 Nov 2026: Merchandising nonaktif (MERCHANDISING_AKTIF); penolakan sesudah check-in
+        // tetap diuji lewat status 409 ("FK-MSM3 Kunjungan: status ditolak 409 KUNJUNGAN_DIBATALKAN").
         await noOverflow(page);
     });
 
@@ -885,7 +874,7 @@ test.describe("peninjau B — ponsel 390 px", () => {
         await expect(isi.getByRole("heading", { name: "Toko ini tidak ada di rute hari ini" })).toBeVisible(NAV);
         await expect(isi).toContainText("TOKO JKS A (C-900) tidak ada di rute");
         await expect(isi).toContainText("Kunjungan tidak bisa dimulai dari layar ini.");
-        await expect(page.getByRole("button", { name: "Ambil foto check-in" })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Ambil selfie check-in" })).toHaveCount(0);
         expect(m.tulis.filter((q) => q.method() === "POST"), "tanpa unggah foto / check-in").toHaveLength(0);
         expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe("BODY");
         await expect(isi.getByRole("link", { name: "Rute hari ini" })).toHaveAttribute("href", "/form-kontrol?tab=ao#luar-rute");

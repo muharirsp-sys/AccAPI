@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
-import { saveCheckin, resolveScope, canAccessSales } from "@/lib/form-kontrol";
+import { saveCheckin, resolveScope, canAccessSales, galatTanggalSalesman } from "@/lib/form-kontrol";
 import { jawabGalat } from "@/lib/order-cabang";
 import { periksaGps } from "@/lib/form-kontrol/gps";
 import { periksaLokasiKunjungan } from "@/lib/form-kontrol/lokasi-db";
 import { witaToday } from "@/lib/beranda";
+import { periksaWajahCheckin } from "@/lib/form-kontrol/wajah-db";
 
 export async function POST(req: Request) {
     const gate = await requirePermissionH("form_kontrol.submit");
@@ -24,6 +25,9 @@ export async function POST(req: Request) {
         if (!canAccessSales(scope, salesCode)) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
+        // Owner 16 Nov 2026: akun salesman tidak mengisi tanggal mundur (tanggal = hari ini WITA server).
+        const mundur = galatTanggalSalesman(scope, date, witaToday());
+        if (mundur) return jawabGalat(mundur);
         // Owner 14 Nov 2026: radius titik toko (fix 20 m / validasi 100 m); di luar radius = 409 DI_LUAR_RADIUS, atau ajuan ke IT bila beralasan.
         const lokasi = await periksaLokasiKunjungan(custCode, gps.titik, alasanLuarRadius, "checkin", session.user.id);
         if ("galat" in lokasi) return jawabGalat(lokasi.galat);
@@ -34,7 +38,12 @@ export async function POST(req: Request) {
             lat: gps.titik.lat, lng: gps.titik.lng, accuracy: gps.titik.accuracy, ajuan: lokasi.ajuan,
         });
         if ("galat" in hasil) return jawabGalat(hasil.galat);
-        return NextResponse.json({ success: true, id: hasil.id, diajukanKeIt: Boolean(lokasi.ajuan) });
+        // Owner 16 Nov 2026: selfie check-in dicocokkan dengan wajah acuan salesman SESUDAH check-in tersimpan; hasil apa pun (beda, tanpa
+        // wajah, layanan mati) tidak membatalkan check-in — hanya ditandai untuk SPV. Tidak pernah melempar. Hanya check-in dari akun salesman
+        // itu sendiri: SPV/Admin yang check-in atas namanya tidak boleh menjadikan wajahnya acuan salesman (tanpa penilaian wajah = null).
+        const wajah = scope.salesCode === salesCode
+            ? await periksaWajahCheckin({ salesCode, custCode, principle, date, photoUrl, cookie: req.headers.get("cookie") }) : null;
+        return NextResponse.json({ success: true, id: hasil.id, diajukanKeIt: Boolean(lokasi.ajuan), wajah });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }

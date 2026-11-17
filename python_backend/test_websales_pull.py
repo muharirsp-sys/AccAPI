@@ -24,6 +24,9 @@ import order_cabang  # noqa: E402
 import outlet_channel  # noqa: E402
 import websales_store  # noqa: E402
 from routers import orders, websales  # noqa: E402
+
+# Owner 16 Nov 2026: order sales hanya bertanggal hari ini WITA; uji ini memakai tanggal tetap 15 Juni 2026 sebagai "hari ini".
+websales.hari_ini_wita = lambda: "2026-06-15"
 from summary_store import connect, create_draft  # noqa: E402
 
 SALES = {"X-Test-User": "sales@surya.local"}
@@ -218,6 +221,8 @@ def main():
                 [dict(code="", unit="PCS", quantity="1")], [dict(code="A", unit="", quantity="1")]):
         assert client.post("/websales/orders", headers=SALES, json={**ask, "lines": bad, "sidik": "x"}).status_code == 400, bad
     assert client.post("/websales/orders", headers=SALES, json={**ask, "order_date": "15-06-2026"}).status_code == 400
+    mundur = client.post("/websales/orders", headers=SALES, json={**ask, "order_date": "2026-06-14"})
+    assert mundur.status_code == 409 and mundur.json()["kode"] == "TANGGAL_BUKAN_HARI_INI", mundur.text
     # Pelanggan Accurate wajib: order tanpa itu tidak akan pernah bisa menjadi faktur.
     assert client.post("/websales/orders", headers=SALES, json={**ask, "customer_no": ""}).status_code == 400
 

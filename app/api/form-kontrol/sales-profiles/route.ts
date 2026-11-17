@@ -3,7 +3,7 @@
  * Caller: app/(dashboard)/form-kontrol/tabs/TabHierarki.tsx (GET + PUT), spv-dashboard/DashboardSpv.tsx (GET: pemilih SPV).
  * Dependensi: lib/form-kontrol (resolveScope, getAllSalesProfiles, updateSalesHierarchy, namaAkunPeran, pilihNamaAkun, kunciNama),
  *   lib/order-cabang (jawabGalat).
- * Main Functions: GET -> { rows (+ noHp), spvOptions, smOptions }; PUT { salesCode, spvName, smName, noHp? }.
+ * Main Functions: GET -> { rows (+ noHp, wajahAcuan), spvOptions, smOptions }; PUT { salesCode, spvName, smName, noHp? }.
  * Side Effects: PUT mengubah sales_profile.spv_name/sm_name/no_hp.
  *
  * Supervisor Review (owner 16 Okt 2026, kontrak lib/supervisor-review/kontrak.ts HierarkiNoHp): `noHp` opsional — kunci absen = tidak diubah;
@@ -21,6 +21,7 @@ import { requirePermissionH } from "@/lib/rbac/resolve";
 import { getAllSalesProfiles, kunciNama, namaAkunPeran, pilihNamaAkun, resolveScope, updateSalesHierarchy } from "@/lib/form-kontrol";
 import { jawabGalat } from "@/lib/order-cabang";
 import { normalHp } from "@/lib/form-kontrol/noo-aturan";
+import { statusAcuanWajah } from "@/lib/form-kontrol/wajah-db";
 
 /** Satu opsi per nama (kunciNama); nama ganda tetap ditawarkan sekali — PUT menolaknya dengan NAMA_GANDA. */
 const unik = (nama: string[]) => [...new Map(nama.map((n) => [kunciNama(n), n])).values()];
@@ -33,7 +34,10 @@ export async function GET() {
     if (scope.allowedSalesCodes !== null) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     try {
         const [rows, spv, sm] = await Promise.all([getAllSalesProfiles(), namaAkunPeran("spv"), namaAkunPeran("sm")]);
-        return NextResponse.json({ rows, spvOptions: unik(spv), smOptions: unik(sm) });
+        // Owner 16 Nov 2026: acuan wajah per salesman (foto + tanggal; sidik biometrik tidak dikirim). Gagal dibaca = tidak tampil.
+        const acuan = await statusAcuanWajah(rows.map((r) => r.salesCode)).catch(() => null);
+        return NextResponse.json({ rows: rows.map((r) => ({ ...r, wajahAcuan: acuan ? acuan.get(r.salesCode) ?? null : undefined })),
+            spvOptions: unik(spv), smOptions: unik(sm) });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }

@@ -1,7 +1,7 @@
 """Tujuan: Endpoint Web Sales: sales mengirim permintaan order berisi kuantitas saja.
 Caller: layar Order Sales (app/(dashboard)/sales) dan pengujian.
 Dependensi: shared auth/RBAC, websales_store, routers.orders (hitung_order + cocokkan: hitungan promo yang SAMA dengan pratinjau).
-Main Functions: create_request_endpoint, list_requests.
+Main Functions: create_request_endpoint, list_requests, hari_ini_wita.
 Side Effects: Tulis ke basis data Web Sales; HTTP ke Next (order_cabang, outlet_channel) dan BACA aturan terbit saat simpan. Tidak
 menulis store internal; harga tidak disimpan di permintaan.
 
@@ -14,8 +14,9 @@ angkanya WAJIB sama dengan pratinjau yang dilihat sales (`sidik`, `PRATINJAU_BER
 tarik. Yang disimpan: kuantitas + sidik; angka uang dibekukan saat tarik dari sumber yang sama dan dicocokkan lagi dengan sidik ini.
 """
 import json
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 import order_cabang
 from routers import orders
 from shared import get_current_user, user_has_permission, validate_csrf_request
@@ -23,6 +24,11 @@ from summary_store import identity
 from websales_store import connect, create_request
 
 router = APIRouter(prefix="/websales")
+
+
+def hari_ini_wita():
+    """Tanggal hari ini WITA (UTC+8, tanpa musim panas) menurut jam SERVER — jam container bisa UTC, jam ponsel tidak dipercaya."""
+    return (datetime.now(timezone.utc) + timedelta(hours=8)).date().isoformat()
 
 
 def require_sales(request, create=False):
@@ -66,6 +72,11 @@ async def create_request_endpoint(request: Request):
         valid_date = False
     if not outlet or not channel or not valid_date:
         raise HTTPException(400, "Outlet, channel, dan tanggal order (YYYY-MM-DD) wajib diisi")
+    # Owner 16 Nov 2026: "Salesman tidak boleh input apa pun mundur tanggal" — order sales hanya bertanggal hari ini WITA (juga tidak maju).
+    hari_ini = hari_ini_wita()
+    if order_date != hari_ini:
+        return JSONResponse(status_code=409, content={"ok": False, "kode": "TANGGAL_BUKAN_HARI_INI",
+                                                      "detail": f"Tanggal order harus hari ini ({hari_ini}, WITA); order tidak bisa diberi tanggal lain."})
     # Pelanggan Accurate wajib: tanpa `customerNo` order tidak bisa menjadi faktur.
     if not customer_no:
         raise HTTPException(400, "Kode pelanggan Accurate wajib diisi")

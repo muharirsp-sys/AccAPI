@@ -296,7 +296,7 @@ test("Tanggal = WITA: 07.30 WITA (UTC masih kemarin) → rute, kirim status, lap
     const lap = page.getByRole("region", { name: "Laporan kunjungan" });
     await expect(lap.getByText("Jumat, 9 Okt 2026 · WITA")).toBeVisible(NAV);
     expect(new Set(m.baca.filter((u) => u.pathname.endsWith("/reports")).map((u) => u.searchParams.get("date")))).toEqual(new Set(["2026-10-09", "2026-10-08"]));
-    // Laporan kemarin (WITA) belum terkirim → strip; salesman bisa mengirimnya lewat pilihan "Kemarin" (tanpa pemilih tanggal bebas).
+    // Laporan kemarin (WITA) belum terkirim → strip. Owner 16 Nov 2026: tidak ada input mundur tanggal — laporan kemarin hanya dilihat.
     await expect(lap.getByRole("status").filter({ hasText: "Laporan kemarin belum terkirim." })).toBeVisible();
     await expect(lap.locator('input[type="date"]')).toHaveCount(0);
     await lap.getByLabel("Tindak lanjut untuk SPV").fill("Kunjungi ulang TOKO C");
@@ -307,23 +307,19 @@ test("Tanggal = WITA: 07.30 WITA (UTC masih kemarin) → rute, kirim status, lap
     await expect(lap.getByRole("status").filter({ hasText: "Laporan kunjungan terkirim ke SPV" })).toBeVisible();
     await expect(lap.getByRole("button", { name: "Sudah terkirim" })).toBeDisabled();
 
-    await lap.getByRole("button", { name: "Buka laporan kemarin" }).click();
+    await lap.getByRole("button", { name: "Lihat laporan kemarin" }).click();
     await expect(lap.getByText("Kamis, 8 Okt 2026 · WITA")).toBeVisible();
-    await lap.getByLabel("Tindak lanjut untuk SPV").fill("Laporan terlewat: TOKO B tutup");
-    await lap.getByRole("button", { name: "Kirim laporan ke SPV…" }).click();
-    await expect(page.getByRole("dialog").getByRole("heading")).toHaveText("Kirim laporan kunjungan kemarin ke SPV?");
-    await page.getByRole("dialog").getByRole("button", { name: "Kirim laporan" }).click();
-    await expect(page.getByRole("dialog")).toBeHidden();
-    expect(postKe(m.tulis, "/reports").at(-1)).toEqual({ salesCode: "S-01", date: "2026-10-08", tindakLanjut: "Laporan terlewat: TOKO B tutup" });
+    await expect(lap.getByRole("button", { name: "Kirim laporan ke SPV…" })).toBeDisabled();
+    await expect(lap.getByText("Laporan kemarin tidak bisa dikirim mundur").first()).toBeVisible();
+    expect(postKe(m.tulis, "/reports")).toHaveLength(1);
     await lap.getByRole("button", { name: "Hari ini", exact: true }).click();
-    await expect(lap.getByText("Laporan kemarin belum terkirim.")).toHaveCount(0);
 
     await mockOrder(page, {});
     await page.goto("/sales", NAV);
     await expect(page.locator("main").getByLabel("Tanggal order")).toHaveValue("2026-10-09", NAV);
 });
 
-test("Kunjungan: status tersimpan tampil lagi, Kembali di setiap langkah, galat merch tidak maju, checkbox 24 px dalam baris 56 px", async ({ page }) => {
+test("Kunjungan: status tersimpan tampil lagi, Kembali di setiap langkah; Merchandising nonaktif = Status langsung ke Check-out", async ({ page }) => {
     const opsi: Opsi = {};
     const m = await mockFk(page, opsi);
     await page.setViewportSize({ width: 1024, height: 900 });
@@ -343,7 +339,7 @@ test("Kunjungan: status tersimpan tampil lagi, Kembali di setiap langkah, galat 
     await main.getByRole("button", { name: "Lanjut", exact: true }).click();
     await expect(langkah).toContainText("Status");
     await main.getByRole("button", { name: "Simpan & lanjut" }).click();
-    await expect(langkah).toContainText("Merchandising");
+    await expect(langkah).toContainText("Check-out");
     expect(postKe(m.tulis, "/ao-control")).toEqual([{ salesCode: "S-01", custCode: "C-03", principle: "GODREJ", date: HARI_INI, status: "not_order", noOrderReasonCode: "R03", noOrderNote: "stok lama" }]);
     // P3: Kembali ke Status yang sudah dikonfirmasi lalu maju tanpa perubahan = Lanjut tanpa menulis ulang.
     await main.getByRole("button", { name: "Kembali", exact: true }).click();
@@ -351,8 +347,25 @@ test("Kunjungan: status tersimpan tampil lagi, Kembali di setiap langkah, galat 
     await expect(main.getByText("Tersimpan: TIDAK ORDER.")).toBeVisible();
     await expect(main.getByRole("button", { name: "Simpan & lanjut" })).toHaveCount(0);
     await main.getByRole("button", { name: "Lanjut", exact: true }).click();
-    await expect(langkah).toContainText("Merchandising");
+    await expect(langkah).toContainText("Check-out");
     expect(postKe(m.tulis, "/ao-control")).toHaveLength(1);
+    await expect(main.getByText("TIDAK ORDER · R03 · Produk belum terpajang")).toBeVisible();
+    // Owner 16 Nov 2026: Merchandising nonaktif — tidak ada di alur, tidak ada POST merchandising, ringkasan tanpa baris Merchandising.
+    await expect(main.getByRole("list", { name: "Langkah kunjungan" })).not.toContainText("Merchandising");
+    await expect(main.getByRole("list", { name: "Merchandising" })).toHaveCount(0);
+    expect(postKe(m.tulis, "/merchandising")).toHaveLength(0);
+    expect(postKe(m.tulis, "/checkout")).toHaveLength(0);
+});
+
+test.skip("Merchandising (nonaktif sejak 16 Nov 2026 — MERCHANDISING_AKTIF; aktifkan uji ini bila langkahnya dinyalakan lagi)", async ({ page }) => {
+    const opsi: Opsi = {};
+    const m = await mockFk(page, opsi);
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await page.goto(`/form-kontrol/visit/C-03?salesCode=S-01&principle=GODREJ&date=${HARI_INI}`, NAV);
+    const main = page.locator("main");
+    const langkah = main.getByRole("list", { name: "Langkah kunjungan" }).locator('[aria-current="step"]');
+    await main.getByRole("button", { name: "Simpan & lanjut" }).click();
+    await expect(langkah).toContainText("Merchandising");
 
     // #6: checkbox asli 24 px, baris ≥ 56 px, berlabel.
     const cek = main.getByRole("checkbox", { name: "Produk terlihat jelas" });
@@ -407,9 +420,8 @@ test("Kunjungan Toko tutup (R15, owner 8 Okt): merchandising dilewati, foto bukt
 
     // Langsung ke foto bukti: langkah Merchandising dilewati, tanpa POST merchandising.
     await expect(langkah).toContainText("Foto bukti & check-out");
-    await expect(main.getByRole("list", { name: "Langkah kunjungan" })).toContainText("Merchandising dilewati");
+    await expect(main.getByRole("list", { name: "Langkah kunjungan" })).not.toContainText("Merchandising"); // nonaktif sejak 16 Nov 2026
     await expect(main.getByRole("heading", { name: "Foto bukti toko tutup" })).toBeVisible();
-    await expect(main.getByText("Dilewati (toko tutup)")).toBeVisible();
     await expect(main.getByText("TIDAK ORDER · R15 · Toko tutup")).toBeVisible();
     expect(postKe(m.tulis, "/ao-control")).toEqual([{ salesCode: "S-01", custCode: "C-03", principle: "GODREJ", date: HARI_INI, status: "not_order", noOrderReasonCode: "R15", noOrderNote: "Pintu tertutup sejak pagi" }]);
     // Kembali dari foto bukti → Status (bukan Merchandising).
@@ -429,7 +441,6 @@ test("Kunjungan Toko tutup (R15, owner 8 Okt): merchandising dilewati, foto bukt
     await page.screenshot({ path: "test-results/salesman/kunjungan-toko-tutup.png", fullPage: true });
     await main.getByRole("button", { name: "Coba lagi" }).click();
     await expect(main.getByRole("status").filter({ hasText: "Kunjungan selesai." })).toBeVisible();
-    await expect(main.getByText("Dilewati (toko tutup) · foto bukti tersimpan")).toBeVisible();
     // Owner 14 Nov 2026: GPS wajib saat check-out juga — titik ikut terkirim.
     const checkout = expect.objectContaining({ salesCode: "S-01", custCode: "C-03", principle: "GODREJ", date: HARI_INI, photoUrl: "/api/uploads/form-kontrol/baru.jpg",
         lat: -5.147665, lng: 119.432732 });
@@ -458,8 +469,8 @@ test("Kunjungan tanpa sinyal: foto check-in tetap di layar, langkah tidak maju, 
     const main = page.locator("main");
     const langkah = main.getByRole("list", { name: "Langkah kunjungan" }).locator('[aria-current="step"]');
     await expect(langkah).toContainText("Check-in", NAV);
-    await main.getByRole("button", { name: "Ambil foto check-in" }).click();
-    const kamera = page.getByRole("dialog", { name: "Foto Bukti Kunjungan" });
+    await main.getByRole("button", { name: "Ambil selfie check-in" }).click();
+    const kamera = page.getByRole("dialog", { name: "Selfie check-in" });
     await kamera.locator('input[type="file"]').setInputFiles({ name: "toko.png", mimeType: "image/png", buffer: PNG });
     await kamera.getByRole("button", { name: /Gunakan/ }).click();
     await expect(kamera).toBeHidden();
@@ -491,8 +502,8 @@ test("Kunjungan di luar radius titik toko (owner 14 Nov 2026): jarak tampil, Cob
     const main = page.locator("main");
     const langkah = main.getByRole("list", { name: "Langkah kunjungan" }).locator('[aria-current="step"]');
     await expect(main.getByText(/harus dalam 20 m dari titik toko \(titik fix\)/)).toBeVisible(NAV);
-    await main.getByRole("button", { name: "Ambil foto check-in" }).click();
-    const kamera = page.getByRole("dialog", { name: "Foto Bukti Kunjungan" });
+    await main.getByRole("button", { name: "Ambil selfie check-in" }).click();
+    const kamera = page.getByRole("dialog", { name: "Selfie check-in" });
     await kamera.locator('input[type="file"]').setInputFiles({ name: "toko.png", mimeType: "image/png", buffer: PNG });
     await kamera.getByRole("button", { name: /Gunakan/ }).click();
     await expect(main.getByRole("alert")).toContainText("±85 m dari titik toko (batas 20 m");
@@ -845,10 +856,11 @@ test.describe("ponsel 390 px (layar sentuh)", () => {
         await target44(main);
         await page.screenshot({ path: "test-results/salesman/ponsel-kunjungan-status.png", fullPage: true });
         await main.getByRole("button", { name: "Simpan & lanjut" }).click();
-        await expect(main.getByRole("checkbox", { name: "Produk terlihat jelas" })).toBeVisible();
+        // Merchandising nonaktif (owner 16 Nov 2026): Status langsung ke foto check-out.
+        await expect(main.getByRole("heading", { name: "Foto check-out" })).toBeVisible();
         await noOverflow(page);
         await target44(main);
-        await page.screenshot({ path: "test-results/salesman/ponsel-kunjungan-merch.png", fullPage: true });
+        await page.screenshot({ path: "test-results/salesman/ponsel-kunjungan-checkout.png", fullPage: true });
 
         await page.goto("/sales", NAV);
         await expect(main.getByRole("heading", { name: "Order Sales" })).toBeVisible(NAV);

@@ -1207,6 +1207,58 @@ export const migrations = [
     `,
   },
   {
+    // 2026-11-16 (tagihan + validasi wajah kunjungan; zona §3 skema — butuh review manusia). EXPAND: 6 kolom nullable ao_control_daily
+    // (tagih_status/nominal/alasan/catatan = hasil tagih nota belum lunas; wajah_status/skor = selfie check-in vs acuan) + 2 CHECK NOT VALID,
+    // tabel baru wajah_acuan (sidik wajah acuan per salesman). SQL = db/migrations/0044. Tanpa DATABASE_MIGRATION_URL jalankan
+    // docs/handover/DDL_TAGIHAN_WAJAH.sql SEBELUM image.
+    nama: "tagihan wajah kunjungan",
+    sudahAda: `SELECT 1 WHERE (SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('ao_control_daily') AND NOT attisdropped
+                 AND attname IN ('tagih_status', 'tagih_nominal', 'tagih_alasan', 'tagih_catatan', 'wajah_status', 'wajah_skor')) = 6
+               AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ao_control_daily_tagih')
+               AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ao_control_daily_wajah')
+               AND to_regclass('wajah_acuan') IS NOT NULL`,
+    sql: `
+      SET lock_timeout = '5s';
+      ALTER TABLE IF EXISTS ao_control_daily
+          ADD COLUMN IF NOT EXISTS tagih_status text,
+          ADD COLUMN IF NOT EXISTS tagih_nominal numeric(18,2),
+          ADD COLUMN IF NOT EXISTS tagih_alasan text,
+          ADD COLUMN IF NOT EXISTS tagih_catatan text,
+          ADD COLUMN IF NOT EXISTS wajah_status text,
+          ADD COLUMN IF NOT EXISTS wajah_skor double precision;
+      DO $tgh$ BEGIN
+        IF to_regclass('ao_control_daily') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ao_control_daily_tagih') THEN
+          ALTER TABLE ao_control_daily ADD CONSTRAINT ao_control_daily_tagih CHECK (
+            (tagih_status IS NULL AND tagih_nominal IS NULL AND tagih_alasan IS NULL)
+            OR (tagih_status = 'tertagih' AND tagih_nominal > 0 AND tagih_alasan IS NULL)
+            OR (tagih_status = 'tidak_tertagih' AND tagih_nominal IS NULL AND btrim(coalesce(tagih_alasan, '')) <> '')
+          ) NOT VALID;
+        END IF;
+        IF to_regclass('ao_control_daily') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ao_control_daily_wajah') THEN
+          ALTER TABLE ao_control_daily ADD CONSTRAINT ao_control_daily_wajah CHECK (
+            wajah_status IS NULL OR wajah_status IN ('cocok', 'beda', 'tanpa_wajah', 'acuan_baru', 'tidak_terbaca')
+          ) NOT VALID;
+        END IF;
+      END $tgh$;
+      CREATE TABLE IF NOT EXISTS wajah_acuan (
+          sales_code   text PRIMARY KEY,
+          sidik        double precision[] NOT NULL,
+          foto_url     text NOT NULL,
+          sumber       text NOT NULL,
+          dibuat_pada  timestamptz NOT NULL DEFAULT now(),
+          dibuat_oleh  text,
+          CONSTRAINT wajah_acuan_sidik CHECK (cardinality(sidik) = 128),
+          CONSTRAINT wajah_acuan_sumber CHECK (sumber IN ('checkin'))
+      );
+      DO $wjh$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
+          GRANT SELECT, INSERT, UPDATE, DELETE ON wajah_acuan TO accapi_app;
+        END IF;
+      END $wjh$;
+      RESET lock_timeout;
+    `,
+  },
+  {
     // 2026-11-17 (limit pelanggan "Hendra", owner; zona §3 skema — butuh review manusia). EXPAND: tabel baru limit_hendra_ubah
     // (peristiwa perubahan limit pelanggan Hendra, lama/baru) + limit_menit_simpan (simpanan per menit, penentu impor massal);
     // lib/pelanggan-hendra. SQL = db/migrations/0045. Tanpa DATABASE_MIGRATION_URL jalankan docs/handover/DDL_LIMIT_HENDRA.sql SEBELUM image.

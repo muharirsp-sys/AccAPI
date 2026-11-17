@@ -35,3 +35,6 @@ python_backend/__pycache__
 *.db
 *.db-shm
 *.db-wal
+
+# Model wajah diunduh di dalam image (Dockerfile.backend, sha256 terkunci); salinan lokal tidak boleh ikut context lalu menimpanya
+python_backend/models

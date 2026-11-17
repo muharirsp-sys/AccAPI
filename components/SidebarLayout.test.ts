@@ -43,7 +43,8 @@ test("all existing modules appear exactly once across six groups", () => {
     // 31 sejak Data Principal (S7b, 17 Okt 2026): daftar resmi principal + varian + alias (principles.view; tulis principles.upload).
     // 32 sejak Laporan Sales (20 Okt 2026): 6 laporan padanan EskaLink, tiap tab dijaga kunci lamanya sendiri.
     // 33 sejak Pantau Pengajuan (3 Nov 2026): salesman melihat progres pengajuan OPC principalnya (off_program_control.pantau_sales).
-    assert.equal(items.length, 33);
+    // 34 sejak Tagihan Kunjungan (16 Nov 2026): Incaso melihat toko dikunjungi tetapi tidak tertagih / tidak order.
+    assert.equal(items.length, 34);
     assert.equal(WORKSPACE_GROUPS.find(group => group.id === "settings")?.items.find(item => item.href === "/data-principal")?.name, "Data Principal");
     assert.equal(WORKSPACE_GROUPS.find(group => group.id === "operations")?.items.find(item => item.href === "/supervisor-review")?.name, "Supervisor Review");
     assert.ok(items.some(item => item.href === "/pelunasan"));
@@ -156,7 +157,8 @@ test("S7-3: pintasan profil = daftar owner, semuanya ada di katalog, dan tidak p
     }
     // OM tanpa pelunasan.kirim: Pelunasan tidak muncul; kekurangan diisi halaman lain yang boleh dibuka.
     const om = izinkan(["dashboard.view", "kasir.view", "finance.view"]);
-    assert.deepEqual(roleShortcuts(om.set, om.allowed, 3, profileFor("OM", om.set)).map(i => i.href), ["/kasir", "/finance", "/form-kontrol"]);
+    // 16 Nov 2026: Tagihan Kunjungan (kasir.view cukup) berada di grup Keuangan sebelum Form Kontrol, jadi ia pengisi pertama.
+    assert.deepEqual(roleShortcuts(om.set, om.allowed, 3, profileFor("OM", om.set)).map(i => i.href), ["/kasir", "/finance", "/tagihan-kunjungan"]);
     const spv = izinkan(["dashboard.view", "supervisor_review.view", "insentif_sales.view"]);
     assert.deepEqual(roleShortcuts(spv.set, spv.allowed, 3, profileFor("SPV", spv.set)).map(i => i.href), ["/supervisor-review", "/form-kontrol", "/insentif-sales"]);
 });

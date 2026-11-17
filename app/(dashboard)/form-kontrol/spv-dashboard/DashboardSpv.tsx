@@ -23,6 +23,8 @@ import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori
 import { tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { alasanIzinFk, ambilFk, hariIniWita, rentangWita, tulisFk, useNooMenunggu, type Scope } from "../shared";
 import { isKodeNoo } from "@/lib/form-kontrol/noo-aturan";
+// Owner 16 Nov 2026: Merchandising nonaktif → angka "Merch 0/6" per kunjungan tidak ditampilkan (menyesatkan).
+import { MERCHANDISING_AKTIF } from "@/lib/form-kontrol/constants";
 import { KOSONG, waktuWita } from "@/lib/tampil";
 
 interface VisitRow {
@@ -30,6 +32,8 @@ interface VisitRow {
     checkinAt: string | null; checkoutAt: string | null;
     durationMinutes: number | null;
     gpsFlag: string | null; durFlag: string | null;
+    /** Owner 16 Nov 2026: wajah_beda | wajah_tanpa | null. */
+    wajahFlag?: string | null;
     checkinPhotoUrl: string | null; checkoutPhotoUrl: string | null;
     merchDone: number; merchTotal: number;
     /** FK-MSM2: kunjungan luar rute (toko tidak di JKS hari itu). */
@@ -53,6 +57,8 @@ const FLAG_LABEL: Record<string, string> = {
     tanpa_lokasi: "Tanpa lokasi",
     durasi_singkat: "Kunjungan < 5 menit",
     durasi_lama: "Kunjungan > 2 jam",
+    wajah_beda: "Wajah tidak cocok",
+    wajah_tanpa: "Wajah tidak terlihat",
 };
 
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
@@ -62,7 +68,7 @@ function lamaLapangan(min?: number) {
     return h > 0 ? `${h} j ${m} mnt` : `${m} mnt`;
 }
 /** gpsFlag/durFlag bisa berisi beberapa kode dipisah koma. */
-const flagsOf = (v: VisitRow) => [v.gpsFlag, v.durFlag].filter(Boolean).join(",").split(",").filter(Boolean);
+const flagsOf = (v: VisitRow) => [v.gpsFlag, v.durFlag, v.wajahFlag].filter(Boolean).join(",").split(",").filter(Boolean);
 
 function statusLaporan(r: SalesmanRow): { tone: Tone; label: string } {
     if (!r.submittedAt) return { tone: "neg", label: "Belum kirim laporan" };
@@ -373,7 +379,7 @@ function KartuSalesman({ r, kunci, onTandai, onBatal }: { r: SalesmanRow; kunci?
                                     <span className="min-w-0">
                                         <b>{v.custName}</b>{v.luarRute && <> <StatusBadge tone="info">{isKodeNoo(v.custCode) ? "Toko baru (NOO)" : "Luar rute"}</StatusBadge></>}
                                         <span className="fi-sub">
-                                            {rentangWita(v.checkinAt, v.checkoutAt)} WITA · {v.durationMinutes !== null ? `${v.durationMinutes} mnt` : KOSONG} · Merch {v.merchDone}/{v.merchTotal}
+                                            {rentangWita(v.checkinAt, v.checkoutAt)} WITA · {v.durationMinutes !== null ? `${v.durationMinutes} mnt` : KOSONG}{MERCHANDISING_AKTIF ? ` · Merch ${v.merchDone}/${v.merchTotal}` : ""}
                                             {" · "}{flags.length === 0 ? "tanpa tanda" : flags.map((f) => FLAG_LABEL[f] ?? f).join(", ")}
                                         </span>
                                     </span>
