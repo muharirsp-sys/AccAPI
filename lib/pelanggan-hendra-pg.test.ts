@@ -35,7 +35,9 @@ before(async () => {
     if (!PG_URL) return;
     admin = new Pool({ connectionString: PG_URL, max: 1 });
     await admin.query(`CREATE SCHEMA ${skema}`);
-    await admin.query(`CREATE TABLE ${skema}.customer (LIKE public.customer INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING INDEXES)`);
+    for (const t of ["customer", "sync_state"]) {
+        await admin.query(`CREATE TABLE ${skema}.${t} (LIKE public.${t} INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING INDEXES)`);
+    }
     pool = new Pool({ connectionString: urlSkema(), max: 2 });
     await pool.query(await berkas("../db/migrations/0045_limit_hendra.sql"));
     await pool.query(await berkas("../db/migrations/0045_limit_hendra.sql")); // jalan ulang = tanpa perubahan
@@ -68,6 +70,9 @@ after(async () => {
 
 const ubah = async () => (await pool.query(`SELECT customer_id, last_update, lama, baru, status FROM limit_hendra_ubah ORDER BY id`)).rows;
 const menit = async (m: string) => Number((await pool.query(`SELECT jumlah FROM limit_menit_simpan WHERE menit = $1`, [m])).rows[0]?.jumlah ?? 0);
+/** Waktu berlalu: peristiwa dianggap teramati 1 jam lalu (pemulih menunggu 15 menit sejak teramati). */
+const lewatSejam = () => pool.query(`UPDATE limit_hendra_ubah SET dicatat_pada = now() - interval '1 hour'`);
+const tulisSave = () => kiriman.filter((k) => k.path.endsWith("/customer/save.do"));
 
 test("PG Hendra: impor (26 simpanan 10:22) teramati lewat webhook -> peristiwa; pemulih mengembalikan 445rb; simpanan sendiri = sistem; edit satuan dibiarkan", { skip: pgSkip }, async () => {
     // 1) Impor 13 Nov 10:22: semua pelanggan disimpan ulang; C-PEL017-FR turun ke 200rb.
@@ -79,14 +84,24 @@ test("PG Hendra: impor (26 simpanan 10:22) teramati lewat webhook -> peristiwa; 
     assert.equal(await menit("13/11/2026 10:22"), 26);
     assert.deepEqual((await ubah()).map((r) => [Number(r.customer_id), r.status, r.lama.nilai, r.baru.nilai]), [[22001, "baru", 445000, 200000]]);
 
-    // 2) Pemulih: menit ramai -> save.do berisi id + 4 kolom limit saja, peristiwa `dipulihkan`.
+    // 2a) Baru teramati (< 15 menit): belum diputuskan, tidak ada tulis.
     kiriman.length = 0;
+    const tunda = await hendra.jalankanPulihLimitHendra(TARGET);
+    assert.ok("ditunda" in tunda && tunda.ditunda === 1, JSON.stringify(tunda));
+    assert.equal(tulisSave().length, 0);
+    // 2b) Sync pelanggan sedang berjalan: pemulih menunggu (hitungan bisa belum lengkap).
+    await lewatSejam();
+    await pool.query(`INSERT INTO sync_state (module, status, updated_at) VALUES ('customer', 'syncing', now())`);
+    assert.ok("tertunda" in (await hendra.jalankanPulihLimitHendra(TARGET)));
+    await pool.query(`UPDATE sync_state SET status = 'idle' WHERE module = 'customer'`);
+
+    // 2c) Pemulih: menit ramai -> save.do berisi id + 4 kolom limit saja, peristiwa `dipulihkan`, target tercatat.
     const h = await hendra.jalankanPulihLimitHendra(TARGET);
-    assert.ok(!("mati" in h));
-    if (!("mati" in h)) assert.deepEqual(h.dipulihkan, ["C-PEL017-FR (13/11/2026 10:22:36)"]);
-    const save = kiriman.filter((k) => k.path.endsWith("/customer/save.do"));
-    assert.deepEqual(save.map((k) => k.body), [{ id: 22001, customerLimitAmount: true, customerLimitAmountValue: 445000, customerLimitAge: true, customerLimitAgeValue: 28 }]);
+    assert.ok("dipulihkan" in h);
+    if ("dipulihkan" in h) assert.deepEqual(h.dipulihkan, ["C-PEL017-FR (13/11/2026 10:22:36)"]);
+    assert.deepEqual(tulisSave().map((k) => k.body), [{ id: 22001, customerLimitAmount: true, customerLimitAmountValue: 445000, customerLimitAge: true, customerLimitAgeValue: 28 }]);
     assert.equal((await ubah())[0].status, "dipulihkan");
+    assert.equal((await pool.query(`SELECT dipulihkan_ke ->> 'nilai' AS n FROM limit_hendra_ubah WHERE id = (SELECT min(id) FROM limit_hendra_ubah)`)).rows[0].n, "445000");
 
     // 3) Webhook atas simpanan pemulih sendiri: `sistem`, menit itu tidak dihitung, jalan berikut tidak menulis apa pun.
     detail[22001] = pelanggan(22001, "17/11/2026 13:30:00", 445000, "Hendra");
@@ -94,16 +109,18 @@ test("PG Hendra: impor (26 simpanan 10:22) teramati lewat webhook -> peristiwa; 
     assert.equal((await ubah())[1].status, "sistem");
     assert.equal(await menit("17/11/2026 13:30"), 0);
     kiriman.length = 0;
+    await lewatSejam();
     await hendra.jalankanPulihLimitHendra(TARGET);
-    assert.equal(kiriman.filter((k) => k.path.endsWith("/customer/save.do")).length, 0);
+    assert.equal(tulisSave().length, 0);
 
     // 4) Edit satuan (Hendra menaikkan ke 900rb sendirian): dibiarkan, tidak ditulis.
     detail[22001] = pelanggan(22001, "16/11/2026 08:00:10", 900000, "Hendra");
     await sync.upsertMasterById("customer", 22001, CREDS);
     kiriman.length = 0;
+    await lewatSejam();
     const h2 = await hendra.jalankanPulihLimitHendra(TARGET);
-    if (!("mati" in h2)) assert.deepEqual(h2.dibiarkan, ["C-PEL017-FR (16/11/2026 08:00:10)"]);
-    assert.equal(kiriman.filter((k) => k.path.endsWith("/customer/save.do")).length, 0);
+    if ("dibiarkan" in h2) assert.deepEqual(h2.dibiarkan, ["C-PEL017-FR (16/11/2026 08:00:10)"]);
+    assert.equal(tulisSave().length, 0);
     assert.equal((await ubah()).at(-1)!.status, "dibiarkan");
 });
 

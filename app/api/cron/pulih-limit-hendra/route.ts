@@ -26,6 +26,7 @@ export async function GET(req: Request) {
     try {
         const hasil = await jalankanPulihLimitHendra({ sessionHost, sessionId, accessToken: apiKey }, { coba });
         if ("mati" in hasil) return NextResponse.json({ ok: true, mati: true, pesan: "PULIH_LIMIT_HENDRA=mati: pemulih dimatikan" });
+        if ("tertunda" in hasil) return NextResponse.json({ ok: true, tertunda: true, pesan: hasil.tertunda });
         console.log(`[PULIH LIMIT HENDRA] ${ringkasPulih(hasil)}`);
         return NextResponse.json({ ok: hasil.gagal.length === 0, ...hasil }, { status: hasil.gagal.length === 0 ? 200 : 502 });
     } catch (e) {

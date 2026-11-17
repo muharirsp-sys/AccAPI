@@ -45,7 +45,7 @@ export async function GET(req: Request) {
     if ((results.customer as { success?: boolean } | undefined)?.success) {
         try {
             const h = await jalankanPulihLimitHendra({ sessionHost: creds.sessionHost, sessionId: creds.sessionId, accessToken: creds.apiKey });
-            console.log(`[PULIH LIMIT HENDRA] (sync) ${"mati" in h ? "dimatikan (PULIH_LIMIT_HENDRA=mati)" : ringkasPulih(h)}`);
+            console.log(`[PULIH LIMIT HENDRA] (sync) ${"mati" in h ? "dimatikan (PULIH_LIMIT_HENDRA=mati)" : "tertunda" in h ? h.tertunda : ringkasPulih(h)}`);
             pulihLimitHendra = h;
         } catch (e) {
             console.error("[PULIH LIMIT HENDRA] (sync) galat", e instanceof Error ? e.message : e);

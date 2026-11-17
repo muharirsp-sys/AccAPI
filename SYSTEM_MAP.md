@@ -350,12 +350,14 @@ UI: API Wrapper page (/api-wrapper)
   - Pengamat di upsertPage customer (lib/sync; dipakai webhook upsertMasterById DAN sync list.do, field kini memuat `notes`):
     salinan dibaca sebelum upsert; tiap simpanan baru (lastUpdate berubah) menambah limit_menit_simpan[menit]; perubahan Limit
     Piutang/Hari pelanggan Hendra dicatat di limit_hendra_ubah (lama, baru). Simpanan pemulih sendiri (berbalik persis baru ->
-    dipulihkan_ke dari pemulihan mana pun, status diproses/dipulihkan) = `sistem`, tidak dihitung. Gagal = log saja, sync jalan.
+    dipulihkan_ke dari pemulihan `diproses` atau `dipulihkan` 2 hari terakhir) = `sistem`, tidak dihitung. Gagal = log saja.
   - Pemulih: GET /api/cron/pulih-limit-hendra (Bearer CRON_SECRET, usul tiap 15 menit; ?coba=1 = laporan saja) dan otomatis di
-    akhir /api/cron/sync-accurate (modul customer sukses). Peristiwa `baru` >= 15 menit -> klaim (`diproses`, basi 30 menit) ->
+    akhir /api/cron/sync-accurate (modul customer sukses); ditunda selama sync pelanggan berjalan. Peristiwa satu pelanggan = satu
+    kesatuan: semuanya >= 15 menit sejak disimpan DAN sejak teramati -> diklaim bersama (`diproses`, basi 30 menit) ->
     menit ramai (hitungan pengamat >= 20 di menit itu atau sebelahnya) = impor -> target = `lama` (dua impor beruntun yang
     tertunda: `lama` impor pertama) -> detail.do (catatan masih Hendra, limit masih = `baru`; 8 toko 13 Nov tidak pernah diberi
-    batas) -> catat dipulihkan_ke -> customer/save.do id + 4 kolom limit -> `dipulihkan` (tulis tak pasti = dicek detail.do);
+    batas; sudah bernilai sebelum impor = `dipulihkan` tanpa tulis; tak terbaca = kembali `baru`) -> catat dipulihkan_ke ->
+    customer/save.do id + 4 kolom limit -> `dipulihkan` (tulis tak pasti = dicek detail.do);
     tidak ramai = edit satuan -> `dibiarkan`. Kolom lain tidak pernah dikembalikan. Env PULIH_LIMIT_HENDRA=mati = saklar darurat.
     Plafon: impor saat pengamat mati/belum terpasang tidak dipulihkan (mis. impor 13 Nov 2026 — 15 toko dipulihkan manual 17 Nov).
      <- JSON response
