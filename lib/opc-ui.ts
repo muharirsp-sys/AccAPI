@@ -14,6 +14,7 @@ import type { FlowStep, Tone } from "@/components/fiori/core";
 import { canPerformOffAction, getOffAccessibleTabs, type OffAction, type OffRole, type OffTab } from "@/lib/off-program-control/access";
 import { computeOffPaymentSummary, normalizePaymentMethod, type OffRingkasBayar } from "@/lib/off-program-control/payments";
 import { labelTipe } from "@/lib/off-program-control/program-type";
+import { canReviewClaim } from "@/lib/off-program-control/workflow";
 import { matchesSearch, normalizeSearchText } from "@/lib/off-program-control/search";
 import { rupiah } from "@/lib/promo-ui";
 import { KOSONG } from "@/lib/tampil";
@@ -245,8 +246,7 @@ export const PREDIKAT = {
     /** hasPassedSalesManager (kode lama): daftar tab Sales Manager. */
     smPantau: (b: B) => b.smStatus !== "Not Started" || ["Submitted to SM", "Waiting Review", "Approved by SM", "Returned by SM"].includes(b.status),
     /** isClaimQueueBatch (kode lama): antrean + aksi Validasi Setelah SM. */
-    klaimAntrean: (b: B) => b.smStatus === "Approved by SM" && !["Approved", "Returned", "Returned by Claim"].includes(String(b.claimStatus || ""))
-        && !["Cancelled", "Completed", "Claim Approved", "Returned by Claim"].includes(String(b.status || "")),
+    klaimAntrean: (b: B) => canReviewClaim(b) === null, // satu aturan dengan route claim-review (BL-06)
     /** isClaimInitialMonitoringBatch (kode lama): daftar Validasi Setelah SM. */
     klaimPantau: (b: B) => PREDIKAT.klaimAntrean(b) || ["Approved", "Returned", "Returned by Claim"].includes(String(b.claimStatus || ""))
         || ["Claim Approved", "Returned by Claim", "Completed"].includes(String(b.status || "")),

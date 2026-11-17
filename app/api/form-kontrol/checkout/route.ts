@@ -25,7 +25,8 @@ export async function POST(req: Request) {
         // Owner 14 Nov 2026: radius titik toko juga saat check-out; di luar radius = 409 DI_LUAR_RADIUS, atau ajuan ke IT bila beralasan.
         const lokasi = await periksaLokasiKunjungan(custCode, gps.titik, alasanLuarRadius, "checkout", session.user.id);
         if ("galat" in lokasi) return jawabGalat(lokasi.galat);
-        await saveCheckout({ salesCode, custCode, principle, date, photoUrl, ...gps.titik, ajuan: lokasi.ajuan });
+        const tolak = await saveCheckout({ salesCode, custCode, principle, date, photoUrl, ...gps.titik, ajuan: lokasi.ajuan });
+        if (tolak) return jawabGalat(tolak.galat);
         return NextResponse.json({ success: true, diajukanKeIt: Boolean(lokasi.ajuan) });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });

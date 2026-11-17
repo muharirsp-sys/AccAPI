@@ -493,6 +493,12 @@ async def payments_finance_update(request: Request):
                 if not proof_id or not isinstance(proof_meta, dict) or not proof_meta:
                     return JSONResponse(status_code=400, content={"ok": False, "error": "Bukti transfer wajib diupload sebelum status Sudah Transfer."})
 
+            def never_submitted(rec: Dict[str, Any]) -> bool:
+                """Belum pernah diajukan dari Pembayaran: tanpa pengajuan, tanpa jam ajuan, status transfer masih kosong.
+                Owner 17 Nov 2026: rekaman seperti ini bukan urusan Finance — dulu jalur `no_lpb` bisa menandainya
+                "Sudah Transfer", dan jalur `principle` tanpa saringan ikut menyapunya."""
+                return not (s(rec.get("submission_id", "")) or s(rec.get("submitted_at", "")) or s(rec.get("status_pembayaran", "")))
+
             def post_status_conflict(rec: Dict[str, Any]) -> Optional[str]:
                 """posted final dari layar ini; unknown hanya keluar lewat catatan penyelesaian."""
                 current = effective_post_status(rec)  # "failed" lama bergalat ambigu = unknown (tinjauan S6-0a)
@@ -565,6 +571,8 @@ async def payments_finance_update(request: Request):
             if no and no in db.get("lpb", {}):
                 if resolve_only_denied(db["lpb"][no]):
                     return JSONResponse(status_code=403, content={"ok": False, "error": resolve_only_error})
+                if never_submitted(db["lpb"][no]):
+                    return JSONResponse(status_code=409, content={"ok": False, "error": f"LPB {no} belum pernah diajukan dari Pembayaran; ajukan dulu sebelum mengubah status transfer."})
                 conflict = post_status_conflict(db["lpb"][no])
                 if conflict:
                     return JSONResponse(status_code=409, content={"ok": False, "error": conflict})
@@ -572,6 +580,8 @@ async def payments_finance_update(request: Request):
                 continue
             if principle:
                 for k, r in db.get("lpb", {}).items():
+                    if never_submitted(r):
+                        continue
                     submitted_at = s(r.get("submitted_at", ""))
                     submitted_date = _normalize_yyyy_mm_dd(submitted_at.split(" ")[0]) if submitted_at else ""
                     target_date = _normalize_yyyy_mm_dd(s(r.get("target_payment_date", ""))) or submitted_date

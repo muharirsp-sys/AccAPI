@@ -1083,6 +1083,9 @@ export async function saveCheckin(data: KunciKunjungan & {
     });
 }
 
+/** Jawaban check-out tanpa check-in (BL-28). Diekspor untuk tes. */
+export const BELUM_CHECKIN: GalatOrder = { status: 409, kode: "BELUM_CHECKIN", error: "Toko ini belum check-in hari ini. Check-in dulu, lalu check-out." };
+
 export async function saveCheckout(data: {
     salesCode: string; custCode: string; principle: string; date: string;
     photoUrl: string;
@@ -1090,10 +1093,12 @@ export async function saveCheckout(data: {
     lat: number; lng: number; accuracy: number;
     /** Di luar radius titik toko: pengajuan ke IT ditulis di transaksi yang sama. */
     ajuan?: AjuanLokasi;
-}) {
+}): Promise<{ galat: GalatOrder } | null> {
     const now = new Date();
-    await db.transaction(async (tx) => {
-        await tx.update(aoControlDaily).set({
+    return db.transaction(async (tx) => {
+        // BL-28 (owner 17 Nov 2026): check-out hanya untuk kunjungan yang SUDAH check-in. Dulu UPDATE tanpa syarat —
+        // tanpa baris AO tidak ada yang berubah tetapi jawabannya tetap sukses, dan pengajuan lokasi tetap tertulis.
+        const kena = await tx.update(aoControlDaily).set({
             checkoutAt: now, checkoutPhotoUrl: data.photoUrl, updatedAt: now,
             checkoutLat: data.lat, checkoutLng: data.lng, checkoutAccuracy: data.accuracy,
         }).where(and(
@@ -1101,8 +1106,11 @@ export async function saveCheckout(data: {
             eq(aoControlDaily.custCode, data.custCode),
             eq(aoControlDaily.principle, data.principle),
             eq(aoControlDaily.date, data.date),
-        ));
+            isNotNull(aoControlDaily.checkinAt),
+        )).returning({ id: aoControlDaily.id });
+        if (!kena.length) return { galat: BELUM_CHECKIN };
         if (data.ajuan) await tulisAjuan(tx, data, data.ajuan);
+        return null;
     });
 }
 

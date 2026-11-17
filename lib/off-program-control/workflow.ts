@@ -33,6 +33,45 @@ export function canOpenFinalClaim(batch: OffBatchRow) {
   );
 }
 
+// Gerbang tahap persetujuan (submit -> SM -> Klaim -> OM). Dulu fungsi privat di tiap route;
+// dipindah ke sini TANPA mengubah isinya supaya aturan satu tahap terbaca di satu berkas
+// (daftar mesin status: docs/MESIN_STATUS.md). Layar punya predikat antrean sendiri di lib/opc-ui.ts.
+export function canSubmitBatch(batch: { status: string; smStatus: string; claimStatus: string }) {
+  return (
+    ["Draft", "Returned by SM", "Returned by Claim"].includes(batch.status) ||
+    batch.smStatus === "Returned" ||
+    batch.claimStatus === "Returned"
+  );
+}
+
+export function canReviewSm(status: string, smStatus: string) {
+  return status === "Submitted to SM" || smStatus === "Waiting Review";
+}
+
+/**
+ * null = boleh ditinjau Klaim (setujui ATAU kembalikan); selain itu alasan penolakan.
+ * BL-06 (owner 17 Nov 2026): dulu hanya memeriksa smStatus, jadi Klaim bisa mengembalikan/menyetujui ulang
+ * pengajuan yang sudah disetujui OM atau dibayar — submit ulang lalu mengosongkan finance_status padahal
+ * pembayarannya masih ada. Kini sama dengan antrean layar (lib/opc-ui.ts PREDIKAT.klaimAntrean memanggil
+ * fungsi ini): Klaim hanya meninjau yang BELUM diputuskannya.
+ */
+export function canReviewClaim(batch: { status?: string | null; smStatus?: string | null; claimStatus?: string | null }) {
+  if (batch.smStatus !== "Approved by SM") return "Pengajuan belum disetujui Sales Manager.";
+  if (
+    ["Approved", "Returned", "Returned by Claim"].includes(String(batch.claimStatus || "")) ||
+    ["Cancelled", "Completed", "Claim Approved", "Returned by Claim"].includes(String(batch.status || ""))
+  ) return "Pengajuan ini sudah diputuskan Klaim dan tidak bisa ditinjau ulang. Muat ulang halaman.";
+  return null;
+}
+
+/** null = boleh diputuskan OM; selain itu alasan penolakan yang dibaca pengguna. */
+export function canDecideOm(batch: { smStatus: string; claimStatus: string; omStatus: string }) {
+  if (batch.smStatus !== "Approved by SM") return "Pengajuan belum disetujui Sales Manager.";
+  if (batch.claimStatus !== "Approved") return "Pengajuan belum disetujui Klaim.";
+  if (batch.omStatus !== "Waiting Approval") return "Pengajuan tidak sedang menunggu persetujuan OM.";
+  return null;
+}
+
 export function paymentsHaveProofs(payments: OffPaymentRow[]) {
   // Revisi B: bukti pembayaran tidak wajib untuk metode Tunai.
   // Untuk Transfer/non-tunai bukti tetap wajib.

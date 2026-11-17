@@ -19,7 +19,7 @@ import {
 import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactive";
 import { ambil, tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
 import { KOSONG, sebabHttp, waktuWita } from "@/lib/tampil";
-import { modeDariNote, rupiah, statusRun } from "@/lib/laporan-harian/ui";
+import { MACET_MENIT, modeDariNote, rupiah, statusRun } from "@/lib/laporan-harian/ui";
 import KirimPrincipal from "./KirimPrincipal";
 
 type Summary = { spv: string; rows: number; dpp: number; ao: number; ec: number; ia: number };
@@ -162,13 +162,15 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
         { key: "target", header: "Target", cell: (r) => <b>{r.keyword} · {r.groupType.toUpperCase()}</b> },
         { key: "email", header: "Email", cell: (r) => r.email },
     ];
+    // Kirim ulang untuk run gagal DAN run macet (BL-29) — sama dengan yang boleh diklaim server (canClaimReportRun).
+    const bisaUlang = (r: Run) => r.status === "failed" || statusRun(r.status, r.createdAt, undefined, r.note).kode === "macet";
     const kolomRun: Column<Run>[] = [
         { key: "tgl", header: "Tanggal laporan", cell: (r) => <b>{tanggalPendek(r.reportDate)}</b> },
         { key: "unggah", header: "Diunggah", secondary: true, cell: (r) => `${waktuWita(r.createdAt)}${r.uploadedBy ? ` · ${r.uploadedBy}` : ""}` },
         { key: "n", header: "Berkas / email", align: "end", cell: (r) => <span className="fi-tnum">{r.fileCount} / {r.emailCount}</span> },
-        { key: "status", header: "Status", cell: (r) => { const s = statusRun(r.status, r.createdAt); return <StatusBadge tone={s.tone}>{s.label}</StatusBadge>; } },
+        { key: "status", header: "Status", cell: (r) => { const s = statusRun(r.status, r.createdAt, undefined, r.note); return <StatusBadge tone={s.tone}>{s.label}</StatusBadge>; } },
         { key: "cat", header: "Catatan", secondary: true, cell: (r) => <span className="fi-small">{catatanRun(r)}</span> },
-        { key: "aksi", header: bolehKirim ? "Tindakan" : "", cell: (r) => bolehKirim && r.status === "failed" ? <Button onClick={() => { setRunUlang(r); setDialog("kirimUlang"); }}>Kirim ulang…</Button> : null },
+        { key: "aksi", header: bolehKirim ? "Tindakan" : "", cell: (r) => bolehKirim && bisaUlang(r) ? <Button onClick={() => { setRunUlang(r); setDialog("kirimUlang"); }}>Kirim ulang…</Button> : null },
     ];
     const catatanRun = (r: Run) => {
         const p = r.penerima; const m = modeDariNote(r.note);
@@ -287,12 +289,12 @@ export default function LaporanHarian({ permKeys }: { permKeys: string[] }) {
                 tombol="Unggah ke Enigma" konfirmasi="Unggah laporan Enigma"
                 fakta={[["Tujuan", "Portal enigma.enesis.com (ID distributor 1000718) sebagai template_enigma.xlsx"], ["Hasil", "Status success/validation_error dibaca dari Riwayat Upload dan dikirim ke email admin"]]} />}
 
-            <Section id="riwayat" title="Riwayat kirim" subtitle={`run per unggahan · run macet lebih dari 10 menit belum bisa dilanjutkan`}>
+            <Section id="riwayat" title="Riwayat kirim" subtitle={`run per unggahan · run macet lebih dari ${MACET_MENIT} menit bisa dikirim ulang; yang sudah terkirim dilewati`}>
                 <ResponsiveTable<Run> title="Riwayat kirim" columns={kolomRun} rows={riwayat.data ?? []} rowKey={(r) => r.id}
                     status={riwayat.status} error={riwayat.error} onRetry={muatRiwayat}
                     empty={{ title: "Belum ada run laporan", message: "Riwayat terisi setelah berkas pertama diproses." }}
-                    mobileItem={(r) => { const s = statusRun(r.status, r.createdAt); return <ListItem doc={tanggalPendek(r.reportDate)} title={`${waktuWita(r.createdAt)} · ${r.fileCount} berkas / ${r.emailCount} email`} meta={bolehKirim && r.status === "failed" ? <Button variant="tertiary" onClick={() => { setRunUlang(r); setDialog("kirimUlang"); }}>Kirim ulang…</Button> : catatanRun(r)} badge={<StatusBadge tone={s.tone}>{s.label}</StatusBadge>} />; }} />
-                {/* BL-29 (run Macet tak bisa dilanjutkan): sudah tertulis di subjudul bagian; satu catatan varian per layar = BL-58 (audit No 80). */}
+                    mobileItem={(r) => { const s = statusRun(r.status, r.createdAt, undefined, r.note); return <ListItem doc={tanggalPendek(r.reportDate)} title={`${waktuWita(r.createdAt)} · ${r.fileCount} berkas / ${r.emailCount} email`} meta={bolehKirim && bisaUlang(r) ? <Button variant="tertiary" onClick={() => { setRunUlang(r); setDialog("kirimUlang"); }}>Kirim ulang…</Button> : catatanRun(r)} badge={<StatusBadge tone={s.tone}>{s.label}</StatusBadge>} />; }} />
+                {/* BL-29 (ditutup 17 Nov 2026): run Macet bisa dikirim ulang; aturannya di lib/laporan-harian/send-state.ts. */}
             </Section>
 
             {(bolehUnggah || (hasil && bolehKirim)) && (

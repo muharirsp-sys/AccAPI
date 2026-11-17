@@ -18,7 +18,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { invoiceOutbox, principalOrderBatch, salesInvoiceCache } from "@/db/schema";
-import { discardable, resendable, type InvoicePayload, type OutboxState } from "@/lib/accurate-invoice-write";
+import { DISCARDABLE_STATES, discardable, resendable, type InvoicePayload, type OutboxState } from "@/lib/accurate-invoice-write";
 import { catatEvent, menitSejakKirimTerakhir, pernahDibuang, waktuAntrePertama } from "@/lib/invoice-outbox-event";
 import { cariFaktur, type HasilCari, type SesiCari } from "@/lib/invoice-search";
 import { getAccurateSession } from "@/lib/accurate-session";
@@ -110,7 +110,7 @@ export async function aksiAntrean(
         // BL-17: barisnya tetap DIHAPUS (PK bebas untuk antre ulang), salinannya masuk event `buang`.
         const removed = await database.transaction(async (tx) => {
             const rows = await tx.delete(invoiceOutbox)
-                .where(and(eq(invoiceOutbox.orderId, orderId), inArray(invoiceOutbox.state, ["rejected", "queued"])))
+                .where(and(eq(invoiceOutbox.orderId, orderId), inArray(invoiceOutbox.state, [...DISCARDABLE_STATES])))
                 .returning();
             for (const gone of rows) {
                 await catatEvent(tx, {
@@ -271,7 +271,7 @@ export async function antrekan(
         const inserted = await database.transaction(async (tx) => {
             if (input.batchId && !batchSah(await kunciBatch(tx, input.batchId, "key share"), input.batchVersi)) return null;
             const rows = await tx.insert(invoiceOutbox).values(biasa.map(({ entry }) => ({
-                orderId: entry.orderId, customerNo: entry.customerNo, orderDate: entry.orderDate, state: "queued",
+                orderId: entry.orderId, customerNo: entry.customerNo, orderDate: entry.orderDate, state: "queued" as const,
                 payload: entry.payload, programSnapshot: entry.programSnapshot ?? null, queuedBy: input.actor,
             }))).onConflictDoNothing().returning({ orderId: invoiceOutbox.orderId });
             const pencarianOf = new Map(biasa.map(({ entry, pencarian }) => [entry.orderId, pencarian]));

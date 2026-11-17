@@ -26,14 +26,14 @@ import { and, desc, eq, inArray, or, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox, invoiceVerifyNote, pencabutanLog, salesInvoiceCache } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import type { InvoicePayload } from "@/lib/accurate-invoice-write";
+import type { InvoicePayload, OutboxState } from "@/lib/accurate-invoice-write";
 import { kandidatCache, readAccurateInvoice, terapkanPenjelasan, verifyInvoice, type JenisTemuan, type VerifyResult } from "@/lib/invoice-verify";
 import { ALASAN_CABUT_MIN, galatPanjangAlasan } from "@/lib/pencabutan";
 
 export const runtime = "nodejs";
 
 /** Yang berpotensi punya faktur di Accurate: `posted` pasti, `unknown` mungkin. */
-const VERIFIABLE = ["posted", "unknown"];
+const VERIFIABLE: OutboxState[] = ["posted", "unknown"];
 /** Batas baris cache yang dibaca sekali periksa; melewatinya dilaporkan (`cacheTerpotong`), tidak diam. */
 const BATAS_CACHE = 2000;
 const JENIS: JenisTemuan[] = ["sales", "isi"];

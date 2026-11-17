@@ -1124,7 +1124,7 @@ AccAPI/_github_clean/
 | `lib/rekapan-nota/query.ts` | `buildRekapan`, `buildTtf`, `notaPool`, `ambilPickGroup`, `ambilSetting` | Satu CTE, dua proyeksi (withdrawal + allocation); pool anti-join; TTF |
 | `lib/rekapan-nota/exception.ts` | `deteksiException`, `hitungExceptionOpen` | Deteksi set-based sekali per release, idempoten lewat `uq_wave_exception` |
 | `lib/rekapan-nota/area-suggest.ts` | `parseKelKec`, `bangunIndeks`, `usulkanArea`, `usulkanSemua` | Usulan area; memakai `lib/sales-history/fuzzy.ts`, tidak menulis matcher baru |
-| `lib/rekapan-nota/wave-state.ts` | `transisiWave`, `tolakUbahIsi` | State machine draft->released->confirmed/cancelled + penjaga ubah isi per status (BL-25). Pure |
+| `lib/rekapan-nota/wave-state.ts` | `transisiWave`, `tolakUbahIsi` | State machine draft->released->confirmed/cancelled + penjaga ubah isi per status (BL-25). Pure. Daftar SEMUA mesin status + berkas aturannya: `docs/MESIN_STATUS.md` |
 | `lib/rekapan-nota/wave-penjaga-pg.test.ts` | 10 uji PG | BL-24/25/54 pada route asli di skema sekali-pakai (migrasi 0002), termasuk 409 serentak deterministik; dilewati tanpa `AM040_DATABASE_URL` |
 | `lib/rekapan-nota/parse.test.ts` + `rules.test.ts` + `area-suggest.test.ts` | 13 self-check | `npm run test:rekapan`. Uji file-based SKIP (bukan lulus diam-diam) kalau sumbernya tidak ada |
 | `app/api/rekapan-nota/upload/route.ts` | `POST` | Upload + parse + isi pool, idempoten per sha256; nota yang sudah ada dilewati/diganti/jadi exception selisih (BL-54). Guard `rekapan_nota.manage` |

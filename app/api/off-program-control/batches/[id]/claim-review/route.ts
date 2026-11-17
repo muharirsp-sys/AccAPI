@@ -11,6 +11,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch } from "@/db/schema";
 import {
+  canReviewClaim,
   getBatchWithItems,
   isOffPeriodClosedForBatch,
   publicBatch,
@@ -21,10 +22,6 @@ import {
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
-
-function canReviewClaim(smStatus: string) {
-  return smStatus === "Approved by SM";
-}
 
 export async function POST(request: Request, context: Context) {
   try {
@@ -49,9 +46,10 @@ export async function POST(request: Request, context: Context) {
         { status: 409 },
       );
     }
-    if (!canReviewClaim(data.batch.smStatus)) {
+    const tolakKlaim = canReviewClaim(data.batch);
+    if (tolakKlaim) {
       return NextResponse.json(
-        { ok: false, error: "Pengajuan belum disetujui Sales Manager." },
+        { ok: false, error: tolakKlaim },
         { status: 409 },
       );
     }

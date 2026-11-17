@@ -26,6 +26,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, asc, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
+import { OUTBOX_STATES, type OutboxState } from "@/lib/accurate-invoice-write";
 import { aksiAntrean, pencariPenekan } from "@/lib/invoice-outbox-actions";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { salesmanDariPayload } from "@/lib/order-salesman";
@@ -35,7 +36,7 @@ export const runtime = "nodejs";
 /** Keputusan pengguna 2026-09-11: masalah yang sudah berumur 2 jam tembus ke OM. */
 export const ESCALATE_AFTER_MINUTES = 120;
 
-const STATES = ["queued", "sending", "posted", "unknown", "rejected"] as const;
+const STATES = OUTBOX_STATES;
 
 /** Kunci jalur laporan principal berbentuk `PRINCIPAL:NO-SO`; order internal memakai uuid. */
 function soNoOf(orderId: string): string | null {
@@ -51,7 +52,7 @@ export async function GET(request: NextRequest) {
     }
 
     const wanted = (request.nextUrl.searchParams.get("state") ?? "")
-        .split(",").map((value) => value.trim()).filter((value) => (STATES as readonly string[]).includes(value));
+        .split(",").map((value) => value.trim()).filter((value): value is OutboxState => (STATES as readonly string[]).includes(value));
     const onlyOverdue = request.nextUrl.searchParams.get("overdue") === "1";
 
     // Bawaan: semua yang BELUM selesai. Faktur yang sudah `posted` bukan pekerjaan siapa pun.

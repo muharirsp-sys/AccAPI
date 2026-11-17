@@ -18,7 +18,7 @@ import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser, getUserHierarchyIdentity, payeeInScope } from "@/lib/insentif-hierarchy-scope";
 import { parsePayee } from "@/lib/insentif-payee";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
-import { perubahanLunas, resolvePaidAt } from "@/lib/insentif-payment-date";
+import { STATUS_BAYAR_INSENTIF, perubahanLunas, resolvePaidAt, tolakMundurLunas } from "@/lib/insentif-payment-date";
 import { tolakLunasTanpaKonstanta } from "@/lib/insentif-settings";
 
 export async function GET(req: NextRequest) {
@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
     // Status ditolak kalau nilainya asing, bukan dijatuhkan ke default: "Lunas" berkapital
     // tersimpan apa adanya lalu dibaca sebagai "belum" di tiga tempat berbeda — satu baris uang
     // dengan tiga tafsir (audit 2026-08-28, M5).
-    const STATUS_SAH = ["belum", "lunas", "tunggakan"] as const;
+    const STATUS_SAH = STATUS_BAYAR_INSENTIF;
     if (body.paymentStatus !== undefined && !STATUS_SAH.includes(body.paymentStatus)) {
         return NextResponse.json(
             { error: `paymentStatus harus salah satu dari: ${STATUS_SAH.join(", ")}` },
@@ -178,13 +178,16 @@ export async function POST(req: NextRequest) {
     // Transaksi: baris yang SUDAH lunas lalu dilunasi lagi menimpa tanggal/pencatat — nilai lamanya
     // dicatat di kontrol_audit_log bersama penimpaannya (tinjauan PR #134).
     const row = await db.transaction(async (tx) => {
-        const [lama] = markingLunas
+        // Baris dikunci juga saat status dikirim selain lunas: baris yang SUDAH lunas tidak boleh mundur (tolakMundurLunas).
+        const [lama] = body.paymentStatus !== undefined
             ? await tx.select({
                 paymentStatus: incentivePayments.paymentStatus,
                 paymentDate: incentivePayments.paymentDate,
                 paidBy: incentivePayments.paidBy,
             }).from(incentivePayments).where(kunci).for("update")
             : [];
+        const mundur = tolakMundurLunas(lama?.paymentStatus, body.paymentStatus);
+        if (mundur) return { mundur };
         const [hasil] = await tx
             .insert(incentivePayments)
             .values({
@@ -235,6 +238,7 @@ export async function POST(req: NextRequest) {
         }
         return hasil;
     });
+    if ("mundur" in row) return NextResponse.json({ error: row.mundur }, { status: 409 });
 
     const action = row.createdAt.getTime() === now.getTime() ? "created" : "updated";
     return NextResponse.json({ id: row.id, action }, { status: action === "created" ? 201 : 200 });

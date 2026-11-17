@@ -13,7 +13,7 @@ import { db } from "@/lib/db";
 import { incentivePayments, kontrolAuditLog } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser, getUserHierarchyIdentity, payeeInScope } from "@/lib/insentif-hierarchy-scope";
-import { perubahanLunas, resolvePaidAt } from "@/lib/insentif-payment-date";
+import { STATUS_BAYAR_INSENTIF, perubahanLunas, resolvePaidAt, tolakMundurLunas } from "@/lib/insentif-payment-date";
 import { tolakLunasTanpaKonstanta } from "@/lib/insentif-settings";
 
 export async function PATCH(
@@ -37,7 +37,7 @@ export async function PATCH(
     }
 
     // Nilai status asing ditolak, bukan disimpan apa adanya (audit 2026-08-28, M5).
-    const STATUS_SAH = ["belum", "lunas", "tunggakan"];
+    const STATUS_SAH: readonly string[] = STATUS_BAYAR_INSENTIF;
     if (body.paymentStatus !== undefined && !STATUS_SAH.includes(body.paymentStatus)) {
         return NextResponse.json(
             { error: `paymentStatus harus salah satu dari: ${STATUS_SAH.join(", ")}` },
@@ -92,14 +92,17 @@ export async function PATCH(
 
     // Melunasi ulang baris yang sudah lunas menimpa tanggal/pencatat: nilai lama dicatat dalam
     // transaksi yang sama (tinjauan PR #134).
-    await db.transaction(async (tx) => {
-        const [lama] = paidAt
+    // Baris dikunci juga saat status dipindah DARI lunas: pemeriksaan dan tulisnya satu transaksi.
+    const tolakMundur = await db.transaction(async (tx) => {
+        const [lama] = paidAt || body.paymentStatus
             ? await tx.select({
                 paymentStatus: incentivePayments.paymentStatus,
                 paymentDate: incentivePayments.paymentDate,
                 paidBy: incentivePayments.paidBy,
             }).from(incentivePayments).where(eq(incentivePayments.id, id)).for("update")
             : [];
+        const mundur = tolakMundurLunas(lama?.paymentStatus, body.paymentStatus);
+        if (mundur) return mundur;
         await tx.update(incentivePayments).set(updateSet).where(eq(incentivePayments.id, id));
         const ubah = paidAt ? perubahanLunas(lama, { paymentDate: paidAt, paidBy: gate.session.user.id }) : null;
         if (ubah) {
@@ -108,7 +111,9 @@ export async function PATCH(
                 actorId: gate.session.user.id, actorName, payload: ubah, createdAt: now,
             });
         }
+        return null;
     });
+    if (tolakMundur) return NextResponse.json({ error: tolakMundur }, { status: 409 });
 
     return NextResponse.json({ id, updated: true });
 }

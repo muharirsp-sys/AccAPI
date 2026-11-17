@@ -30,8 +30,8 @@ const KASUS: Array<[string, BatchOpc, string, string]> = [
     ["disetujui SM", b({ status: "Approved by SM", ...disetujuiSm, omStatus: "Notify OM" }), "klaim", "Menunggu Klaim"],
     // claim-review route (return) menulis locked:false + finalStatus "Not Started" — SPV boleh mengubahnya lagi.
     ["dikembalikan Klaim", b({ status: "Returned by Claim", ...disetujuiSm, claimStatus: "Returned", locked: false }), "dikembalikan", "Dikembalikan Klaim"],
-    // BL-06: route claim-review hanya memeriksa "disetujui SM", jadi Klaim bisa mengembalikan batch yang sudah disetujui OM / dibayar;
-    // omStatus/financeStatus lama tertinggal. Tahap tetap Dikembalikan (bukan Bayar/Final).
+    // BL-06 (ditutup 17 Nov 2026: canReviewClaim kini menolaknya): dulu Klaim bisa mengembalikan batch yang sudah disetujui OM / dibayar,
+    // omStatus/financeStatus lama tertinggal. Baris lama seperti itu tetap bertahap Dikembalikan (bukan Bayar/Final).
     ["dikembalikan Klaim setelah OM", b({ status: "Returned by Claim", ...disetujuiOm, claimStatus: "Returned", financeStatus: "Waiting Payment", locked: false }), "dikembalikan", "Dikembalikan Klaim"],
     ["dikembalikan Klaim setelah bayar", b({ status: "Returned by Claim", ...disetujuiOm, claimStatus: "Returned", financeStatus: "Paid", locked: false }), "dikembalikan", "Dikembalikan Klaim"],
     ["disetujui Klaim", b({ status: "Claim Approved", ...disetujuiKlaim, omStatus: "Waiting Approval" }), "om", "Menunggu OM"],

@@ -31,7 +31,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { db as defaultDb } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
-import { barisPersenRupiah, classifySaveResponse, nextOutboxState, pakaiTanggalFaktur, type InvoicePayload, type SendOutcome } from "@/lib/accurate-invoice-write";
+import { SAPU_SETELAH_MENIT, barisPersenRupiah, classifySaveResponse, nextOutboxState, pakaiTanggalFaktur, type InvoicePayload, type SendOutcome } from "@/lib/accurate-invoice-write";
 import { refreshRealization } from "@/lib/program-realization-store";
 import { kodeGalat, potongJawaban } from "@/lib/invoice-outbox-event";
 import { nilaiPayload } from "@/lib/invoice-verify";
@@ -52,12 +52,7 @@ export type SendResult = {
 
 export type SendSummary = { results: SendResult[]; sent: number; unknown: number; rejected: number; error?: string };
 
-/**
- * Ambang penyapu (BL-16, S6-0d): baris `sending` yang tidak berubah selama ini dianggap ditinggal
- * proses yang mati di tengah kirim. Jauh di atas umur sah sebuah klaim — satu klaim hidup paling
- * lama selama satu fetch save.do (timeout 60 dtk), dan route-nya dibatasi maxDuration 600 dtk.
- */
-export const SAPU_SETELAH_MENIT = 15;
+export { SAPU_SETELAH_MENIT };
 
 /**
  * `sending` > 15 menit -> `unknown` + event `sapu`, SATU pernyataan (CTE): tidak ada baris tersapu

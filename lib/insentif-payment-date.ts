@@ -9,6 +9,13 @@
 
 const WITA_MS = 8 * 60 * 60 * 1000;
 
+/**
+ * Status pembayaran insentif yang sah — satu daftar untuk POST dan PATCH payments dan tipe kolom
+ * incentive_payments.payment_status. Nilai asing ditolak, bukan disimpan (audit 2026-08-28, M5).
+ */
+export const STATUS_BAYAR_INSENTIF = ["belum", "lunas", "tunggakan"] as const;
+export type StatusBayarInsentif = (typeof STATUS_BAYAR_INSENTIF)[number];
+
 export function todayWita(now: Date): string {
     return new Date(now.getTime() + WITA_MS).toISOString().slice(0, 10);
 }
@@ -52,6 +59,16 @@ export function resolvePaidAt(
 }
 
 type JejakLunas = { paymentStatus: string | null; paymentDate: Date | null; paidBy: string | null };
+
+/**
+ * null = boleh; selain itu alasan 409. Baris yang SUDAH lunas tidak bisa dipindah ke belum/tunggakan lewat POST/PATCH
+ * (owner 17 Nov 2026): dulu boleh, dengan tanggal bayar dan pencatat lama tertinggal dan tanpa jejak audit — uang yang
+ * sudah ditransfer muncul kembali sebagai utang. Tanpa `statusBaru` (permintaan tidak menyentuh status) = boleh.
+ */
+export function tolakMundurLunas(statusLama: string | null | undefined, statusBaru: unknown): string | null {
+    if (statusLama !== "lunas" || statusBaru === undefined || statusBaru === null || statusBaru === "" || statusBaru === "lunas") return null;
+    return `Pembayaran ini sudah lunas; statusnya tidak bisa dikembalikan ke "${String(statusBaru)}".`;
+}
 
 /**
  * Baris yang SUDAH lunas lalu ditandai lunas lagi menimpa tanggal/pencatat. Kembalikan

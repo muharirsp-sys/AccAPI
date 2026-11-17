@@ -31,7 +31,8 @@ export async function GET(req: Request) {
 
         if (!salesCode || !principle) {
             const rows = await getAoForDate(salesCode, principle, dateStr);
-            const summary = { total: rows.length, ordered: 0, notOrder: 0, notVisited: rows.length, priority: 0 };
+            // Mulai dari 0: baris di sini SUDAH baris AO (bukan rute), jadi "belum dikunjungi" = yang berstatus not_visited saja.
+            const summary = { total: rows.length, ordered: 0, notOrder: 0, notVisited: 0, priority: 0 };
             for (const r of rows) {
                 if (r.status === "ordered" || r.status === "active") summary.ordered++;
                 else if (r.status === "not_order") summary.notOrder++;
