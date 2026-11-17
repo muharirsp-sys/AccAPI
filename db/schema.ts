@@ -664,7 +664,7 @@ export const customer = pgTable("customer", {
     index("idx_customer_synced_at").on(t.syncedAt, t.id)
 ]);
 
-// Owner 17 Nov 2026 (lib/pelanggan-hendra, db/migrations/0044). Peristiwa perubahan Limit Piutang / Limit Hari pelanggan yang catatan
+// Owner 17 Nov 2026 (lib/pelanggan-hendra, db/migrations/0045). Peristiwa perubahan Limit Piutang / Limit Hari pelanggan yang catatan
 // Accurate-nya memuat "Hendra", diamati saat salinan customer di-upsert (webhook + sync). Pemulih memutuskan tiap peristiwa: dari impor
 // massal -> limit dikembalikan ke `lama`; edit satuan -> dibiarkan. Satu baris per simpanan (customer_id, last_update).
 export const limitHendraUbah = pgTable("limit_hendra_ubah", {

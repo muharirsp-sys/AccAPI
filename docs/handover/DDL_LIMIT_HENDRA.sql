@@ -1,5 +1,5 @@
 -- DDL MANUAL Limit pelanggan "Hendra" (owner 17 Nov 2026). Rujukan: db/schema.ts (limitHendraUbah, limitMenitSimpan), scripts/migrate-pg.mjs (entri
--- "limit hendra" = SQL sama dengan db/migrations/0044_limit_hendra.sql), lib/pelanggan-hendra.ts.
+-- "limit hendra" = SQL sama dengan db/migrations/0045_limit_hendra.sql), lib/pelanggan-hendra.ts.
 --
 -- SIAPA & KAPAN (pola DDL lain, owner 9 Okt "DDL manual = Claude tulis, IT Support jalankan"): IT Support, SAAT DEPLOY, sebagai role
 -- PEMILIK tabel (accapi, bukan accapi_app), SEBELUM image baru — hanya bila DATABASE_MIGRATION_URL tidak di-set. Idempoten.

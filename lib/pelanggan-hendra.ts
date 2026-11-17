@@ -12,7 +12,7 @@
  *   peristiwa; tidak ramai = edit satuan -> dibiarkan. Hitungan per menit hanya bertambah (tidak tergerus simpanan berikutnya).
  * Caller: app/api/proxy/route.ts (penjaga tulis); lib/sync.ts customer.upsertPage (pengamat); app/api/cron/pulih-limit-hendra +
  *   app/api/cron/sync-accurate (pemulih).
- * Dependensi: tabel customer (salinan), limit_hendra_ubah, limit_menit_simpan (0044), Accurate customer/detail.do, list.do, save.do.
+ * Dependensi: tabel customer (salinan), limit_hendra_ubah, limit_menit_simpan (0045), Accurate customer/detail.do, list.do, save.do.
  * Main Functions: isCatatanHendra, periksaTulisPelangganHendra, cariPelangganAccurate, amatiSimpanan, amatiHalamanPelanggan,
  *   pulihkanLimitHendra, jalankanPulihLimitHendra.
  * Side Effects: pengamat menulis limit_menit_simpan + limit_hendra_ubah (gagal = dicatat log, sync tetap jalan); pemulih =

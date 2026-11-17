@@ -1209,7 +1209,7 @@ export const migrations = [
   {
     // 2026-11-17 (limit pelanggan "Hendra", owner; zona §3 skema — butuh review manusia). EXPAND: tabel baru limit_hendra_ubah
     // (peristiwa perubahan limit pelanggan Hendra, lama/baru) + limit_menit_simpan (simpanan per menit, penentu impor massal);
-    // lib/pelanggan-hendra. SQL = db/migrations/0044. Tanpa DATABASE_MIGRATION_URL jalankan docs/handover/DDL_LIMIT_HENDRA.sql SEBELUM image.
+    // lib/pelanggan-hendra. SQL = db/migrations/0045. Tanpa DATABASE_MIGRATION_URL jalankan docs/handover/DDL_LIMIT_HENDRA.sql SEBELUM image.
     nama: "limit hendra",
     sudahAda: `SELECT 1 WHERE to_regclass('limit_hendra_ubah') IS NOT NULL AND to_regclass('limit_menit_simpan') IS NOT NULL
                AND EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_limit_hendra_ubah_simpanan')`,
