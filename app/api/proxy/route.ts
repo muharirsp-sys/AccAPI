@@ -4,6 +4,7 @@ import { getAccurateSession } from "@/lib/accurate-session";
 import { redactAccurateSecrets } from "@/lib/accurate-redact";
 import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, isAccurateRead, isCatalogWrite, isCustomerWrite, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
 import { periksaPenutupanPelanggan } from "@/lib/pelanggan-terlindungi";
+import { cariPelangganAccurate, periksaTulisPelangganHendra } from "@/lib/pelanggan-hendra";
 import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, databaseLockBerbeda, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
 import { db } from "@/lib/db";
 import { memuatPlaceholderAkun } from "@/lib/sales-receipt-upload";
@@ -124,12 +125,26 @@ export async function POST(req: NextRequest) {
         // Owner 13 Nov 2026: 8 toko NKA/DC tidak boleh dinonaktifkan atau diberi batas piutang / batas umur piutang
         // (lib/pelanggan-terlindungi). Dinilai SETELAH izin, katalog, dan sesi (id dicari lewat customer/detail.do), SEBELUM kirim.
         if (isCustomerWrite(endpointPath)) {
-            const baca = bacaAccurate({ sessionHost, sessionId, accessToken: apiKey });
-            const tutup = await periksaPenutupanPelanggan(payload, async (id) => {
-                const d = await baca("/api/customer/detail.do", "GET", { id });
-                const no = d?.s ? (d.d?.customerNo ?? d.d?.no) : undefined;
-                return no ? String(no) : null;
-            });
+            const cari = cariPelangganAccurate({ sessionHost, sessionId, accessToken: apiKey });
+            // Owner 17 Nov 2026: pelanggan bercatatan "Hendra" = keputusan manual — sistem tidak boleh mengubah APA PUN di sana
+            // (lib/pelanggan-hendra). Hanya pemulih limit (server, bukan proxy) yang boleh mengembalikan Limit Piutang/Hari.
+            const hendra = await periksaTulisPelangganHendra(payload, cari.cariId, cari.cariNo);
+            if (hendra.kode.length > 0) {
+                console.warn(`[PROXY TOLAK] pelanggan Hendra ${String(method).toUpperCase()} ${endpointPath} user=${write.userId}`);
+                return NextResponse.json({
+                    error: `Pelanggan ${hendra.kode.join(", ")} bercatatan Hendra (keputusan manual) dan tidak boleh diubah sistem. Tidak ada yang dikirim.`,
+                    code: "PELANGGAN_HENDRA", sent: false, pelanggan: hendra.kode,
+                }, { status: 403 });
+            }
+            if (hendra.takTerbaca.length > 0) {
+                // Bukan penolakan aturan: pelanggan tidak bisa dibaca dari Accurate (gagal / batas laju / payload rusak). Fail-closed.
+                return NextResponse.json({
+                    error: `Pelanggan ${hendra.takTerbaca.join(", ")} tidak bisa dibaca dari Accurate untuk memeriksa catatan Hendra. `
+                        + "Tidak ada yang dikirim; coba lagi.",
+                    code: "PELANGGAN_TAK_TERBACA", sent: false,
+                }, { status: 503 });
+            }
+            const tutup = await periksaPenutupanPelanggan(payload, async (id) => (await cari.cariId(id).catch(() => null))?.customerNo || null);
             if (tutup.kode.length > 0 || tutup.idTakTerbaca.length > 0) {
                 console.warn(`[PROXY TOLAK] pelanggan terlindungi ${String(method).toUpperCase()} ${endpointPath} user=${write.userId}`);
                 return NextResponse.json({

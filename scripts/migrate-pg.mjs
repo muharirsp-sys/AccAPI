@@ -1258,6 +1258,45 @@ export const migrations = [
       RESET lock_timeout;
     `,
   },
+  {
+    // 2026-11-17 (limit pelanggan "Hendra", owner; zona §3 skema — butuh review manusia). EXPAND: tabel baru limit_hendra_ubah
+    // (peristiwa perubahan limit pelanggan Hendra, lama/baru) + limit_menit_simpan (simpanan per menit, penentu impor massal);
+    // lib/pelanggan-hendra. SQL = db/migrations/0045. Tanpa DATABASE_MIGRATION_URL jalankan docs/handover/DDL_LIMIT_HENDRA.sql SEBELUM image.
+    nama: "limit hendra",
+    sudahAda: `SELECT 1 WHERE to_regclass('limit_hendra_ubah') IS NOT NULL AND to_regclass('limit_menit_simpan') IS NOT NULL
+               AND EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_limit_hendra_ubah_simpanan')`,
+    sql: `
+      SET lock_timeout = '5s';
+      CREATE TABLE IF NOT EXISTS limit_hendra_ubah (
+          id              bigserial PRIMARY KEY,
+          customer_id     bigint NOT NULL,
+          customer_no     text NOT NULL,
+          last_update     text NOT NULL,
+          lama            jsonb NOT NULL,
+          baru            jsonb NOT NULL,
+          dipulihkan_ke   jsonb,
+          status          text NOT NULL DEFAULT 'baru',
+          alasan          text,
+          dicatat_pada    timestamptz NOT NULL DEFAULT now(),
+          diputuskan_pada timestamptz,
+          CONSTRAINT limit_hendra_ubah_status CHECK (status IN ('baru', 'diproses', 'dipulihkan', 'dibiarkan', 'dilewati', 'sistem'))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_limit_hendra_ubah_simpanan ON limit_hendra_ubah (customer_id, last_update);
+      CREATE INDEX IF NOT EXISTS idx_limit_hendra_ubah_status ON limit_hendra_ubah (status, id);
+      CREATE TABLE IF NOT EXISTS limit_menit_simpan (
+          menit   text PRIMARY KEY,
+          jumlah  integer NOT NULL DEFAULT 0
+      );
+      DO $lh$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
+          REVOKE DELETE, TRUNCATE ON limit_hendra_ubah, limit_menit_simpan FROM accapi_app;
+          GRANT SELECT, INSERT, UPDATE ON limit_hendra_ubah, limit_menit_simpan TO accapi_app;
+          GRANT USAGE, SELECT ON SEQUENCE limit_hendra_ubah_id_seq TO accapi_app;
+        END IF;
+      END $lh$;
+      RESET lock_timeout;
+    `,
+  },
 ];
 
 async function main() {

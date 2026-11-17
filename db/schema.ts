@@ -664,6 +664,33 @@ export const customer = pgTable("customer", {
     index("idx_customer_synced_at").on(t.syncedAt, t.id)
 ]);
 
+// Owner 17 Nov 2026 (lib/pelanggan-hendra, db/migrations/0045). Peristiwa perubahan Limit Piutang / Limit Hari pelanggan yang catatan
+// Accurate-nya memuat "Hendra", diamati saat salinan customer di-upsert (webhook + sync). Pemulih memutuskan tiap peristiwa: dari impor
+// massal -> limit dikembalikan ke `lama`; edit satuan -> dibiarkan. Satu baris per simpanan (customer_id, last_update).
+export const limitHendraUbah = pgTable("limit_hendra_ubah", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    customerId: bigint("customer_id", { mode: "number" }).notNull(),
+    customerNo: text("customer_no").notNull(),
+    lastUpdate: text("last_update").notNull(), // lastUpdate Accurate simpanan yang mengubah limit (dd/MM/yyyy HH:mm:ss WIB)
+    lama: jsonb("lama").notNull(), // { aktif, nilai, hariAktif, hari } sebelum simpanan
+    baru: jsonb("baru").notNull(), // sesudah simpanan
+    dipulihkanKe: jsonb("dipulihkan_ke"), // nilai yang ditulis pemulih (dicatat SEBELUM save.do; pengenal simpanan `sistem`)
+    status: text("status").notNull().default("baru"), // baru | diproses | dipulihkan | dibiarkan | dilewati | sistem
+    alasan: text("alasan"),
+    dicatatPada: timestamp("dicatat_pada", { withTimezone: true }).notNull().defaultNow(),
+    diputuskanPada: timestamp("diputuskan_pada", { withTimezone: true }),
+}, (t) => [
+    uniqueIndex("idx_limit_hendra_ubah_simpanan").on(t.customerId, t.lastUpdate),
+    index("idx_limit_hendra_ubah_status").on(t.status, t.id),
+]);
+
+// Jumlah simpanan pelanggan Accurate per menit (lastUpdate 'dd/MM/yyyy HH:mm' WIB) yang teramati webhook/sync — penentu impor
+// massal untuk pemulih limit Hendra. Hanya bertambah: simpanan berikutnya tidak menggerus hitungan menit yang lalu.
+export const limitMenitSimpan = pgTable("limit_menit_simpan", {
+    menit: text("menit").primaryKey(),
+    jumlah: integer("jumlah").notNull().default(0),
+});
+
 // Audit F3 / PRD 02-03: cache faktur penjualan (sumber piutang/nota) dari Accurate.
 // Kolom typed nullable — hanya diisi bila field tersedia di respons list.do; rawData
 // menyimpan payload utuh sehingga tidak ada data yang dikarang.

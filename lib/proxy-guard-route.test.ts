@@ -44,7 +44,7 @@ test("proxy: tulis purchase-payment -> 403 tanpa baca sesi & tanpa fetch", async
 type Catatan = { sesiDibaca: number; transaksi: number; kiriman: Array<{ url: string; method: string; body: unknown }> };
 
 /** Satu permintaan proxy sebagai user bergrup dengan izin `keys`; sesi Accurate palsu, `fetch` tiruan yang mencatat. */
-async function proxySebagai(keys: string[], body: Record<string, unknown>, opsi: { bypass?: boolean } = {}) {
+async function proxySebagai(keys: string[], body: Record<string, unknown>, opsi: { bypass?: boolean; jawab?: (url: URL) => unknown } = {}) {
     const saved = [
         [auth.api, "getSession", Object.getOwnPropertyDescriptor(auth.api, "getSession")],
         [db, "select", Object.getOwnPropertyDescriptor(db, "select")],
@@ -68,7 +68,8 @@ async function proxySebagai(keys: string[], body: Record<string, unknown>, opsi:
     Object.defineProperty(db, "transaction", { configurable: true, value: () => { c.transaksi += 1; throw new Error("TIDAK BOLEH menulis DB"); } });
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: async (url: string, init: RequestInit) => {
         c.kiriman.push({ url: String(url), method: String(init.method), body: init.body ? JSON.parse(String(init.body)) : undefined });
-        return new Response(JSON.stringify({ s: true, d: [{ s: true, r: { id: 7 } }] }), { status: 200 });
+        const kustom = opsi.jawab?.(new URL(String(url)));
+        return new Response(JSON.stringify(kustom ?? { s: true, d: [{ s: true, r: { id: 7 } }] }), { status: 200 });
     } });
     try {
         const req = new NextRequest(opsi.bypass ? "http://localhost:3030/api/proxy" : "http://app.test/api/proxy", {
@@ -248,16 +249,20 @@ test("pelanggan terlindungi: nonaktif / batas piutang / batas umur piutang 8 tok
         assert.equal(json.code, "PELANGGAN_TERLINDUNGI");
         assert.equal(json.sent, false);
         assert.match(String(json.error), /tidak boleh ditutup di Accurate/);
-        assert.deepEqual([c.sesiDibaca, c.kiriman.length], [1, 0], "dinilai setelah sesi, tidak ada kiriman ke Accurate");
+        // Sejak penjaga Hendra (17 Nov 2026) pelanggan dibaca dulu (GET); yang dijaga: tidak ada TULIS ke Accurate.
+        assert.equal(c.sesiDibaca, 1, "dinilai setelah sesi");
+        assert.deepEqual(c.kiriman.filter((k) => k.method !== "GET"), [], "tidak ada tulis ke Accurate");
     }
 });
 
-test("pelanggan terlindungi: hanya id -> kode dicari via customer/detail.do; tak terbaca = 403 tanpa POST", async () => {
-    // fetch tiruan proxySebagai menjawab { s:true, d:[...] } (bukan objek pelanggan) = kode tidak bisa dipastikan.
+test("pelanggan tak terbaca: hanya id -> dicari via customer/detail.do; jawaban tanpa objek pelanggan = 503 tanpa POST (fail-closed)", async () => {
+    // fetch tiruan proxySebagai menjawab { s:true, d:[...] } (bukan objek pelanggan). Sejak penjaga Hendra (17 Nov 2026, review L1)
+    // ini TIDAK lagi dianggap "bukan Hendra": catatan tidak terbaca = tolak, kode PELANGGAN_TAK_TERBACA (bukan penolakan aturan).
     const { res, json, c } = await proxySebagai(["api_wrapper.execute"], { endpointPath: "/api/customer/save.do", method: "POST", payload: { id: 55, customerLimitAmountValue: 1 } });
-    assert.equal(res.status, 403);
-    assert.equal(json.code, "PELANGGAN_TERLINDUNGI");
-    assert.match(String(json.error), /id 55 tidak bisa dipastikan/);
+    assert.equal(res.status, 503);
+    assert.equal(json.code, "PELANGGAN_TAK_TERBACA");
+    assert.equal(json.sent, false);
+    assert.match(String(json.error), /id 55 tidak bisa dibaca/);
     assert.equal(c.kiriman.length, 1);
     assert.equal(c.kiriman[0].method, "GET");
     assert.equal(new URL(c.kiriman[0].url).pathname, "/accurate/api/customer/detail.do");
@@ -272,9 +277,56 @@ test("pelanggan terlindungi: mematikan batas, edit biasa, dan batas toko lain te
     ]) {
         const { res, c } = await proxySebagai(["api_wrapper.execute"], { endpointPath: "/api/customer/save.do", method: "POST", payload });
         assert.equal(res.status, 200, JSON.stringify(payload));
-        assert.equal(c.kiriman.length, 1);
-        assert.equal(c.kiriman[0].method, "POST");
-        assert.deepEqual(c.kiriman[0].body, payload);
+        // GET list.do = penjaga Hendra mencari kode (17 Nov 2026); tulisnya tetap satu, apa adanya.
+        const post = c.kiriman.filter((k) => k.method === "POST");
+        assert.equal(post.length, 1);
+        assert.deepEqual(post[0].body, payload);
+    }
+});
+
+// ---------------- Owner 17 Nov 2026: pelanggan bercatatan Hendra (lib/pelanggan-hendra) ----------------
+
+/** Accurate tiruan: detail.do id 22001 = C-PEL017-FR bercatatan Hendra; id lain = pelanggan biasa; list.do = kosong (kode baru). */
+const accurateHendra = (url: URL) => {
+    if (url.pathname.endsWith("/customer/detail.do")) {
+        return url.searchParams.get("id") === "22001"
+            ? { s: true, d: { id: 22001, customerNo: "C-PEL017-FR", notes: "Hendra" } }
+            : { s: true, d: { id: Number(url.searchParams.get("id")), customerNo: "C-ANE050-FR", notes: "" } };
+    }
+    if (url.pathname.endsWith("/customer/list.do")) {
+        return url.searchParams.get("filter.keywords.val[0]") === "C-PEL017-FR"
+            ? { s: true, d: [{ id: 22001, customerNo: "C-PEL017-FR", notes: "Hendra" }] }
+            : { s: true, d: [] };
+    }
+    return undefined;
+};
+
+test("pelanggan Hendra: tulis apa pun lewat Konsol -> 403 PELANGGAN_HENDRA, tidak ada POST ke Accurate", async () => {
+    for (const [endpointPath, payload] of [
+        ["/api/customer/save.do", { id: 22001, customerLimitAmountValue: 445000 }],
+        ["/api/customer/save.do", { id: 22001, name: "PELITA LISTRIK. TK", billStreet: "JL. BARU" }],
+        ["/api/customer/bulk-save.do", [{ id: 3, name: "A" }, { id: 22001, notes: "" }]],
+        // review 17 Nov H1: `number` = kunci identitas katalog (customer & pos/customer save.do)
+        ["/api/customer/save.do", { number: "C-PEL017-FR", notes: "", customerLimitAmountValue: 1 }],
+        ["/api/pos/customer/save.do", { data: [{ number: "C-PEL017-FR", notes: "" }] }],
+        ["/api/customer/save.do", { id: 3, number: "C-PEL017-FR" }],
+    ] as const) {
+        const { res, json, c } = await proxySebagai(["api_wrapper.execute"], { endpointPath, method: "POST", payload }, { jawab: accurateHendra });
+        assert.equal(res.status, 403, JSON.stringify(payload));
+        assert.equal(json.code, "PELANGGAN_HENDRA");
+        assert.equal(json.sent, false);
+        assert.deepEqual(json.pelanggan, ["C-PEL017-FR"]);
+        assert.equal(c.kiriman.filter((k) => k.method === "POST").length, 0, "tidak ada tulis ke Accurate");
+    }
+});
+
+test("pelanggan Hendra: pelanggan biasa dan pelanggan baru tetap diteruskan", async () => {
+    for (const payload of [{ id: 3, name: "TOKO BIASA" }, { customerNo: "C-BARU-01", name: "Toko baru" }]) {
+        const { res, c } = await proxySebagai(["api_wrapper.execute"], { endpointPath: "/api/customer/save.do", method: "POST", payload }, { jawab: accurateHendra });
+        assert.equal(res.status, 200, JSON.stringify(payload));
+        const post = c.kiriman.filter((k) => k.method === "POST");
+        assert.equal(post.length, 1);
+        assert.deepEqual(post[0].body, payload);
     }
 });
 

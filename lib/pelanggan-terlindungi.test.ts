@@ -37,6 +37,7 @@ test("nonaktif, batas piutang, batas umur piutang (hari) untuk toko terlindungi:
         [{ customerNo: "C-IND051-KN", customerLimitAge: 1 }, ["batas umur piutang (hari)"]],
         [{ customerNo: "C-IN0050", customerLimitAmount: false, customerLimitAge: true }, ["batas umur piutang (hari)"]],
         [{ customerNo: "C-IN0050", customerLimitAmount: false, CustomerLimitAmount: true }, ["batas piutang"]],
+        [{ number: "C-AL0063", customerLimitAmount: true, customerLimitAmountValue: 1 }, ["batas piutang"]], // review 17 Nov H1
         [{ suspended: false, Suspended: true, customerNo: "C-IND086" }, ["dinonaktifkan"]],
         [{ customerNo: "C-ANE050", no: "C-IND080", customerLimitAmountValue: 1 }, ["batas piutang"]],
         [{ customerNo: "C-IND086", suspended: "ya", customerLimitAmount: true, customerLimitAge: true }, ["dinonaktifkan", "batas piutang", "batas umur piutang (hari)"]],
