@@ -10,17 +10,10 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch } from "@/db/schema";
-import { getBatchWithItems, isOffPeriodClosedForBatch, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { canDecideOm, getBatchWithItems, isOffPeriodClosedForBatch, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
-
-function canDecideOm(batch: { smStatus: string; claimStatus: string; omStatus: string }) {
-    if (batch.smStatus !== "Approved by SM") return "Pengajuan belum disetujui Sales Manager.";
-    if (batch.claimStatus !== "Approved") return "Pengajuan belum disetujui Klaim.";
-    if (batch.omStatus !== "Waiting Approval") return "Pengajuan tidak sedang menunggu persetujuan OM.";
-    return null;
-}
 
 export async function POST(request: Request, context: Context) {
     try {

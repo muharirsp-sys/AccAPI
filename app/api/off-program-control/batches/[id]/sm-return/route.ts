@@ -2,14 +2,10 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch } from "@/db/schema";
-import { getBatchWithItems, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { canReviewSm, getBatchWithItems, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
-
-function canReviewSm(status: string, smStatus: string) {
-    return status === "Submitted to SM" || smStatus === "Waiting Review";
-}
 
 export async function POST(request: Request, context: Context) {
     try {

@@ -9,6 +9,7 @@
  * Side Effects: fetch ke FastAPI (/api/me untuk token CSRF, /orders…).
  */
 import type { Tone } from "@/components/fiori/core";
+import type { OutboxState } from "@/lib/accurate-invoice-write";
 import { galatDariJawaban, kalimatPenolakan, kodeDikenal, type Result } from "@/components/order/order-cabang";
 import { resolveApiBase } from "@/lib/apiBase";
 import { rupiah } from "@/lib/promo-ui";
@@ -26,7 +27,7 @@ export type OrderRow = {
 };
 /** FastAPI GET /orders/{id}: baris daftar + isi beku. */
 export type OrderFull = OrderRow & { note: string; lines: OrderLine[]; rules: { id: string; name: string }[]; sources: { draft_id: string; revision: number }[] };
-export type OutboxState = "queued" | "sending" | "posted" | "unknown" | "rejected";
+export type { OutboxState };
 export type OutboxRow = { orderId?: string; state: OutboxState; accurateNumber: string | null; lastError: string | null; updatedAt: string | null };
 export type { PriceInfo } from "@/components/order/order-cabang";
 

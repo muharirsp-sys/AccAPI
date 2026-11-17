@@ -23,6 +23,7 @@ import {
 } from "@/components/fiori/core";
 import { FilterBar, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { ambil } from "@/lib/rekapan-nota/ui";
+import { discardable, resendable } from "@/lib/accurate-invoice-write";
 import { KOSONG, tanggalWita, waktuWita } from "@/lib/tampil";
 import {
     SAPU_MENIT, STATUS, hariIniWita, kalimatAccurate, nomorSo, principalDari, usia,
@@ -164,10 +165,10 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
             {r.state === "unknown" && (
                 <Button aria-label={`Selesaikan SO ${nomorSo(r)}`} disabled={Boolean(alasanSelesai)} disabledReason={alasanSelesai} onClick={() => setDialog({ jenis: "selesai", row: r })}>Selesaikan…</Button>
             )}
-            {r.state === "rejected" && (
+            {resendable(r.state) && (
                 <Button variant="tertiary" aria-label={`Antre ulang SO ${nomorSo(r)}`} disabled={Boolean(alasanTulis)} disabledReason={alasanTulis} onClick={() => setDialog({ jenis: "antreUlang", row: r })}>Antre ulang…</Button>
             )}
-            {(r.state === "rejected" || r.state === "queued") && (
+            {discardable(r.state) && (
                 <Button variant="icon" aria-label={`Buang SO ${nomorSo(r)}`} icon={<Trash2 className="fi-icon" aria-hidden />}
                     disabled={Boolean(alasanTulis)} disabledReason={alasanTulis} title="Buang dari antrean (alasan wajib)" onClick={() => setDialog({ jenis: "buang", row: r })} />
             )}

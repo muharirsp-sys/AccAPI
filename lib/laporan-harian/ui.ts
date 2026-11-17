@@ -7,17 +7,18 @@
  */
 import type { Tone } from "@/components/fiori/core";
 
-/** Run "sending" lebih lama dari ini dianggap macet (send-state belum bisa mengklaim ulang; BL-29). */
-export const MACET_MENIT = 10;
+import { MACET_MENIT, runMacet } from "./send-state";
+
+export { MACET_MENIT };
 
 export type StatusRun = { kode: "belum" | "mengirim" | "macet" | "terkirim" | "gagal"; label: string; tone: Tone };
 
-export function statusRun(status: string, createdAt: string | Date, now: Date = new Date()): StatusRun {
+/** `note` membawa jam klaim (send-state): tanpa itu kirim ulang run lama langsung terbaca Macet padahal sedang jalan. */
+export function statusRun(status: string, createdAt: string | Date, now: Date = new Date(), note?: string | null): StatusRun {
     if (status === "sent") return { kode: "terkirim", label: "Terkirim", tone: "pos" };
     if (status === "failed") return { kode: "gagal", label: "Gagal", tone: "neg" };
     if (status === "sending") {
-        const umur = (now.getTime() - new Date(createdAt).getTime()) / 60_000;
-        return umur > MACET_MENIT ? { kode: "macet", label: "Macet", tone: "warn" } : { kode: "mengirim", label: "Mengirim", tone: "info" };
+        return runMacet(status, note, createdAt, now) ? { kode: "macet", label: "Macet", tone: "warn" } : { kode: "mengirim", label: "Mengirim", tone: "info" };
     }
     return { kode: "belum", label: "Belum dikirim", tone: "neu" };
 }

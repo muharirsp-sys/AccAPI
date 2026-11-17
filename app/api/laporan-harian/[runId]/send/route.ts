@@ -7,14 +7,16 @@
  * Side Effects: HTTP fetch file; kirim email; DB update report_run + report_run_recipient.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { reportRun, reportRunRecipient } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { sendEmail } from "@/lib/email";
 import {
     canClaimReportRun,
+    catatSendingAt,
     finalReportRunStatus,
+    runMacet,
     RETRYABLE_RECIPIENT_STATUSES,
 } from "@/lib/laporan-harian/send-state";
 
@@ -74,19 +76,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
         );
     }
     const emailMode = storedMode ?? requestedMode;
-    // GATE 2: cegah dobel/concurrent send. Run gagal boleh di-retry.
-    if (!canClaimReportRun(run.status)) {
+    // GATE 2: cegah dobel/concurrent send. Run gagal boleh di-retry; run macet (BL-29) boleh dilanjutkan.
+    const now = new Date();
+    const macet = runMacet(run.status, run.note, run.createdAt, now);
+    if (!canClaimReportRun(run.status, macet)) {
         const error = run.status === "sent" ? "Run ini sudah pernah dikirim." : "Run ini sedang/tidak dapat dikirim.";
         return NextResponse.json({ error, status: run.status }, { status: 409 });
     }
 
+    // Jam klaim ikut ditulis: dasar deteksi macet, dan pembeda dua klaim-ulang serentak pada run "sending".
+    const noteKlaim = catatSendingAt(storedMode ? run.note : `${run.note ? `${run.note}; ` : ""}email_mode:${emailMode}`, now);
     const claimed = await db
         .update(reportRun)
-        .set({
-            status: "sending",
-            note: storedMode ? run.note : `${run.note ? `${run.note}; ` : ""}email_mode:${emailMode}`,
-        })
-        .where(and(eq(reportRun.id, runId), eq(reportRun.status, run.status)));
+        .set({ status: "sending", note: noteKlaim })
+        .where(and(
+            eq(reportRun.id, runId), eq(reportRun.status, run.status),
+            run.note === null ? isNull(reportRun.note) : eq(reportRun.note, run.note),
+        ));
     if (claimed.rowCount !== 1) {
         return NextResponse.json({ error: "Status run berubah; muat ulang sebelum mengirim.", status: "conflict" }, { status: 409 });
     }
@@ -99,6 +105,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
             inArray(reportRunRecipient.sendStatus, [...RETRYABLE_RECIPIENT_STATUSES]),
         ));
     if (recips.length === 0) {
+        // Run macet yang semua penerimanya sudah tercatat: prosesnya mati sesudah email terakhir, sebelum status akhir ditulis.
+        if (macet) {
+            await db.update(reportRun).set({ status: "sent" }).where(eq(reportRun.id, runId));
+            return NextResponse.json({ ok: true, runId, status: "sent", emailsSent: 0, emailsFailed: 0, emailsSkipped: 0, files: 0 });
+        }
         await db.update(reportRun).set({ status: "failed" }).where(eq(reportRun.id, runId));
         return NextResponse.json({ error: "Tidak ada penerima pending/gagal untuk run ini." }, { status: 400 });
     }
@@ -171,7 +182,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
     }
 
     const finalStatus = finalReportRunStatus(failed);
-    await db.update(reportRun).set({ status: finalStatus }).where(eq(reportRun.id, runId));
+    // Hanya klaim INI yang menulis status akhir: bila run sempat diklaim ulang (dianggap macet), note-nya sudah berganti
+    // dan proses lama tidak menimpa status milik klaim yang baru.
+    await db.update(reportRun).set({ status: finalStatus }).where(and(eq(reportRun.id, runId), eq(reportRun.note, noteKlaim)));
 
     return NextResponse.json({
         ok: failed === 0,

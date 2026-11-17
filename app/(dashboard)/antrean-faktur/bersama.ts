@@ -8,8 +8,9 @@
  * Side Effects: `tulis` melakukan POST/DELETE (dipakai komponen klien); sisanya pure.
  */
 import type { Tone } from "@/components/fiori/core";
+import { SAPU_SETELAH_MENIT, type OutboxState } from "@/lib/accurate-invoice-write";
 
-export type State = "queued" | "sending" | "posted" | "unknown" | "rejected";
+export type State = OutboxState;
 
 export type Row = {
     orderId: string; soNo: string | null; source: string; customerNo: string; outlet: string; salesman: string;
@@ -45,8 +46,8 @@ export const STATUS: Record<State, { label: string; tone: Tone }> = {
     rejected: { label: "Ditolak", tone: "neg" },
 };
 
-/** Ambang penyapu server (lib/invoice-sender SAPU_SETELAH_MENIT): `sending` lebih lama dari ini menjadi Tidak pasti. */
-export const SAPU_MENIT = 15;
+/** Ambang penyapu server: `sending` lebih lama dari ini menjadi Tidak pasti. Angkanya milik lib/accurate-invoice-write. */
+export const SAPU_MENIT = SAPU_SETELAH_MENIT;
 
 export const nomorSo = (row: { orderId: string; soNo: string | null }) => row.soNo ?? row.orderId;
 /** Principal dari kunci `PRINCIPAL:NO-SO`; order internal (uuid) tidak berprinsipal. */

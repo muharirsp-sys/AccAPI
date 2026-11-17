@@ -25,6 +25,12 @@ Not lazy about: input validation at trust boundaries, error handling that preven
 
 (Yes, this file also applies to agents working on the ponytail repo itself. Especially to them.)
 
+## Mesin status
+
+Sebelum menambah atau mengubah nilai status, transisi, atau syarat tombol yang bergantung pada status: baca
+`docs/MESIN_STATUS.md`. Aturannya tinggal di satu berkas pure per mesin; server dan layar mengimpornya. Jangan
+menulis `if (status !== "...")` baru di route atau komponen, dan perbarui daftar itu bila mesinnya berubah.
+
 ## UI/UX Rule
 
 Never redesign UI based on aesthetic preference alone.

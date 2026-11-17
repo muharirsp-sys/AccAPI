@@ -99,9 +99,37 @@ def check_cart_resubmit():
     assert raw() == before, "submit ditolak tetapi ledger berubah"
 
 
+def check_never_submitted():
+    """17 Nov 2026: Finance tidak bisa mengubah status transfer rekaman yang belum pernah diajukan dari Pembayaran."""
+    baru = rec("N", "", "", sub="")
+    baru.update({"submitted_at": "", "draft_id": "", "target_payment_date": ""})
+    with open(DB_PATH, "w", encoding="utf-8") as f:
+        json.dump({"lpb": {"N": baru, "A": rec("A", "Belum Transfer", "")}, "submissions": {}, "drafts": {},
+                   "proofs": {"P1": {"name": "bukti.pdf"}}}, f)
+    before = raw()
+    for status in ("Belum Transfer", "Ajukan Ulang"):
+        r = mark("N", status)
+        assert r.status_code == 409 and "belum pernah diajukan" in r.json()["error"], (status, r.status_code, r.text)
+    r = client.post("/payments/finance/update", json={"items": [{"no_lpb": "N", "status_pembayaran": "Sudah Transfer",
+                                                                 "transfer_date": "2026-10-10", "proof_id": "P1"}]})
+    assert r.status_code == 409 and "belum pernah diajukan" in r.json()["error"], (r.status_code, r.text)
+    assert raw() == before, "penolakan tidak boleh menulis apa pun"
+    # Jalur principle tanpa saringan: hanya rekaman yang pernah diajukan yang disentuh.
+    r = client.post("/payments/finance/update", json={"items": [{"principle": "PT ABC", "status_pembayaran": "Ajukan Ulang"}]})
+    assert r.status_code == 200 and r.json()["updated"] == 1, (r.status_code, r.text)
+    lpb = json.loads(raw())["lpb"]
+    assert lpb["A"]["status_pembayaran"] == "Ajukan Ulang" and lpb["N"]["status_pembayaran"] == "", lpb
+    # Rekaman lama tanpa submission_id tetapi sudah berstatus/berjam ajuan tetap bisa diproses Finance.
+    lama = rec("L", "Belum Transfer", "", sub="")
+    with open(DB_PATH, "w", encoding="utf-8") as f:
+        json.dump({"lpb": {"L": lama}, "submissions": {}, "drafts": {}, "proofs": {}}, f)
+    assert mark("L", "Ajukan Ulang").status_code == 200
+
+
 def main_check():
     check_finance_return()
     check_cart_resubmit()
+    check_never_submitted()
     print("OK test_finance_bl49")
 
 

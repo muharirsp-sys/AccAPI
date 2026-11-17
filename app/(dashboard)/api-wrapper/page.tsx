@@ -48,7 +48,8 @@ type DuplicateReviewState = {
 };
 
 /** Fakta dialog Kirim, dihitung dari payload yang akan dipakai `handleExecute` (hanya tampilan). */
-type KonfirmasiKirim = { path: string; baris: number; massal: boolean; pelunasan: boolean };
+/** `payloadStr` + `route` = isi yang DIKONFIRMASI: kiriman dibatalkan bila editor/endpoint berubah selagi dialog terbuka. */
+type KonfirmasiKirim = { path: string; baris: number; massal: boolean; pelunasan: boolean; payloadStr: string; route: RouteKey };
 
 /** Alasan Kirim nonaktif di tab Unggah Excel (usulan G): berkas yang terbaca dimuat ke Payload JSON dan dikirim dari sana. */
 const ALASAN_TANPA_BERKAS = "Unggah berkas Excel dulu. Isinya dimuat ke Payload JSON untuk diperiksa sebelum dikirim.";
@@ -82,6 +83,9 @@ export default function Home() {
   const [responseLog, setResponseLog] = useState<LogState | null>(null);
   const [duplicateReview, setDuplicateReview] = useState<DuplicateReviewState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Berkas sedang dibaca (pembaca endpoint tertentu memanggil Accurate, bisa lama): Kirim, endpoint, dan unggah terkunci
+  // supaya hasil baca tidak mendarat di bawah endpoint lain atau menimpa isi yang sedang dikonfirmasi.
+  const [membaca, setMembaca] = useState(false);
 
 
   // Format Pelunasan Mapping States
@@ -313,8 +317,13 @@ export default function Home() {
         toast.dismiss("parse");
         setResponseLog({ status: "error", message: actualMessage });
         toast.error(`Berkas tidak terbaca: ${actualMessage}`);
+      } finally {
+        setMembaca(false);
       }
     };
+    reader.onerror = () => { setMembaca(false); toast.error("Berkas tidak terbaca."); };
+    reader.onabort = () => setMembaca(false);
+    setMembaca(true);
     reader.readAsBinaryString(file);
     // Reset file input
     e.target.value = '';
@@ -1056,7 +1065,7 @@ export default function Home() {
   // Cek JSON di sini memakai aturan yang sama (JSON.parse) supaya galatnya tampil di halaman, bukan toast (No 7).
   const bukaKirim = () => {
     const routeConfig = accurateRoutes[selectedRoute];
-    if (inputMode !== "manual") return;
+    if (inputMode !== "manual" || membaca) return;
     let payload: unknown;
     try {
       payload = JSON.parse(payloadStr);
@@ -1076,6 +1085,8 @@ export default function Home() {
       baris: massal ? (payload as unknown[]).length : 1,
       massal,
       pelunasan: massal && routeConfig.path.includes('/sales-receipt/'),
+      payloadStr,
+      route: selectedRoute,
     });
   };
 
@@ -1149,7 +1160,7 @@ export default function Home() {
               <div className="fi-sect-in" inert={terkunci}>
                 <FormField label="Endpoint API">
                   {(a11y) => (
-                    <select {...a11y} className="fi-input" value={selectedRoute} onChange={handleChangeRoute}>
+                    <select {...a11y} className="fi-input" value={selectedRoute} onChange={handleChangeRoute} disabled={membaca}>
                       {(Object.keys(accurateRoutes) as RouteKey[]).map((key) => (
                         <option key={key} value={key}>{accurateRoutes[key].label}</option>
                       ))}
@@ -1234,9 +1245,9 @@ export default function Home() {
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Button icon={<Download className="fi-icon" aria-hidden />} disabled={!adaTemplat} disabledReason="Endpoint ini belum punya templat Excel." onClick={handleDownloadTemplate}>Unduh templat Excel</Button>
-                        <label className="fi-btn fi-btn--secondary">
-                          <Upload className="fi-icon" aria-hidden />Unggah berkas
-                          <input type="file" className="sr-only" accept=".xlsx, .xls, .csv" onChange={(e) => { setLogGalat(null); setReturManual(null); handleFileUpload(e); }} />
+                        <label className="fi-btn fi-btn--secondary" aria-disabled={membaca || undefined}>
+                          <Upload className="fi-icon" aria-hidden />{membaca ? "Membaca berkas…" : "Unggah berkas"}
+                          <input type="file" className="sr-only" accept=".xlsx, .xls, .csv" disabled={membaca} onChange={(e) => { setLogGalat(null); setReturManual(null); handleFileUpload(e); }} />
                         </label>
                       </div>
                       {!adaTemplat && <p className="fi-small fi-why">Endpoint ini belum punya templat Excel; susun kolom sesuai parameter API.</p>}
@@ -1249,8 +1260,8 @@ export default function Home() {
                   <p id={idAlasanKirim} className={`fi-small mr-auto ${!terkunci && tanpaBerkas ? "fi-why" : "fi-subtle"}`}>
                     {!terkunci && tanpaBerkas ? ALASAN_TANPA_BERKAS : menulis ? "Ringkasan kiriman ditampilkan untuk dikonfirmasi sebelum terkirim." : "Hanya membaca dari Accurate, tidak mengubah data."}
                   </p>
-                  <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} busy={isLoading} disabled={terkunci || tanpaBerkas}
-                    disabledReason={terkunci ? "Masuk Accurate dan buka database dulu." : ALASAN_TANPA_BERKAS}
+                  <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} busy={isLoading} disabled={terkunci || tanpaBerkas || membaca}
+                    disabledReason={terkunci ? "Masuk Accurate dan buka database dulu." : membaca ? "Berkas masih dibaca. Tunggu sampai selesai." : ALASAN_TANPA_BERKAS}
                     aria-describedby={!terkunci && tanpaBerkas ? idAlasanKirim : undefined} onClick={bukaKirim}>
                     {isLoading ? "Memproses…" : menulis ? "Kirim ke Accurate…" : "Baca dari Accurate"}
                   </Button>
@@ -1350,6 +1361,12 @@ export default function Home() {
           confirmLabel={k?.massal ? `Kirim ${k.baris} baris` : "Kirim ke Accurate"}
           onConfirm={() => {
             setKonfirmasiKirim(null);
+            // Yang dikirim harus yang dikonfirmasi: handleExecute membaca editor saat ini, jadi bila isinya atau
+            // endpoint-nya berubah sejak dialog dibuka (mis. berkas selesai dibaca), tidak ada yang dikirim.
+            if (!k || k.payloadStr !== payloadStr || k.route !== selectedRoute || membaca) {
+              toast.error("Isi kiriman berubah sejak dialog dibuka. Tidak ada yang dikirim; periksa lagi lalu tekan Kirim.");
+              return;
+            }
             setLogGalat(null);
             void handleExecute();
           }}

@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
             const rows = preview.flatMap((p) =>
                 p.emails.map((email) => ({
                     id: randomUUID(), runId, keyword: p.keyword, email, fileName: p.fileName,
-                    sendStatus: "pending", error: null as string | null,
+                    sendStatus: "pending" as const, error: null as string | null,
                 })),
             );
             for (let i = 0; i < rows.length; i += 400) await db.insert(reportRunRecipient).values(rows.slice(i, i + 400));

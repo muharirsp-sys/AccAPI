@@ -355,7 +355,21 @@ export function classifySaveResponse(status: number, text: string): SendOutcome 
         : { kind: "no_answer", message: `penolakan tanpa daftar pesan Accurate (${status}): ${identity.message}` };
 }
 
-export type OutboxState = "queued" | "sending" | "posted" | "unknown" | "rejected";
+/**
+ * Mesin status antrean faktur — SATU sumber untuk server dan layar (daftar: docs/MESIN_STATUS.md).
+ * Status, siapa yang boleh dikirim/dilepas ulang/dibuang, dan ambang penyapu ada di berkas ini;
+ * route, pengirim, dan komponen mengimpor dari sini, tidak menyalin literalnya.
+ */
+export const OUTBOX_STATES = ["queued", "sending", "posted", "unknown", "rejected"] as const;
+export type OutboxState = (typeof OUTBOX_STATES)[number];
+/** Dipakai predikat `discardable` DAN klausa WHERE penghapusnya: mengubah satu berarti mengubah keduanya. */
+export const DISCARDABLE_STATES = ["rejected", "queued"] as const satisfies readonly OutboxState[];
+/**
+ * Ambang penyapu (BL-16, S6-0d): baris `sending` yang tidak berubah selama ini dianggap ditinggal
+ * proses yang mati di tengah kirim. Jauh di atas umur sah sebuah klaim — satu klaim hidup paling
+ * lama selama satu fetch save.do (timeout 60 dtk), dan route-nya dibatasi maxDuration 600 dtk.
+ */
+export const SAPU_SETELAH_MENIT = 15;
 export type SendOutcome =
     | { kind: "posted"; id: string; number: string }
     // Accurate MENJAWAB dan menolak: aman diperbaiki lalu dicoba lagi.
@@ -410,5 +424,5 @@ export function resendable(state: OutboxState): boolean {
  * sana, dan menghapus jejak lokalnya hanya menghilangkan satu-satunya petunjuk untuk mencarinya.
  */
 export function discardable(state: OutboxState): boolean {
-    return state === "rejected" || state === "queued";
+    return (DISCARDABLE_STATES as readonly OutboxState[]).includes(state);
 }

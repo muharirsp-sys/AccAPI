@@ -8,6 +8,11 @@
 import { sql } from "drizzle-orm";
 import { pgTable, text, integer, bigint, bigserial, smallint, numeric, date, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, unique, foreignKey, primaryKey, check, customType, pgEnum } from "drizzle-orm/pg-core";
 import type { ChangeKind, ChangeSource, LineSnapshot } from "../lib/sales-invoice-change";
+// Tipe status (hanya tipe — tidak mengubah DDL): literal status yang salah ketik gagal di tsc.
+import type { OutboxState } from "../lib/accurate-invoice-write";
+import type { RecipientSendStatus, ReportRunStatus } from "../lib/laporan-harian/send-state";
+import type { StatusBayarInsentif } from "../lib/insentif-payment-date";
+import type { MasterStatus } from "../lib/master-barang/status";
 
 export const user = pgTable("user", {
     id: text("id").primaryKey(),
@@ -153,7 +158,7 @@ export const invoiceOutbox = pgTable("invoice_outbox", {
     orderId: text("order_id").primaryKey(),
     customerNo: text("customer_no").notNull(),
     orderDate: date("order_date").notNull(),
-    state: text("state").notNull().default("queued"),
+    state: text("state").$type<OutboxState>().notNull().default("queued"),
     payload: jsonb("payload").notNull(),
     programSnapshot: jsonb("program_snapshot"),
     realization: jsonb("realization"),
@@ -1490,7 +1495,7 @@ export const incentivePayments = pgTable("incentive_payments", {
     periodMonth: integer("period_month").notNull(),
     periodYear: integer("period_year").notNull(),
     totalIncentive: doublePrecision("total_incentive").notNull().default(0),
-    paymentStatus: text("payment_status").notNull().default("belum"),
+    paymentStatus: text("payment_status").$type<StatusBayarInsentif>().notNull().default("belum"),
     paymentProofUrl: text("payment_proof_url"),
     paymentDate: timestamp("payment_date"),
     paidBy: text("paid_by"),
@@ -2136,7 +2141,7 @@ export const reportRecipient = pgTable("report_recipient", {
 export const reportRun = pgTable("report_run", {
     id: text("id").primaryKey(),
     reportDate: text("report_date").notNull(),     // YYYY-MM-DD periode laporan
-    status: text("status").notNull().default("dry_run"), // 'dry_run' | 'sending' | 'sent' | 'failed'
+    status: text("status").$type<ReportRunStatus>().notNull().default("dry_run"),
     fileCount: integer("file_count").notNull().default(0),
     emailCount: integer("email_count").notNull().default(0),
     salesRows: integer("sales_rows").notNull().default(0),
@@ -2155,7 +2160,7 @@ export const reportRunRecipient = pgTable("report_run_recipient", {
     keyword: text("keyword").notNull(),
     email: text("email").notNull(),
     fileName: text("file_name"),
-    sendStatus: text("send_status").notNull().default("pending"), // 'pending' | 'sent' | 'failed' | 'skipped'
+    sendStatus: text("send_status").$type<RecipientSendStatus>().notNull().default("pending"),
     error: text("error"),
 }, (t) => ({
     runIdx: index("idx_rrr_run").on(t.runId),
@@ -2348,7 +2353,7 @@ export const masterBarang = pgTable("master_barang", {
     principleCode: text("principle_code").notNull(),
     principleName: text("principle_name").notNull(),
     principleNameNorm: text("principle_name_norm").notNull(),
-    status: text("status").notNull().default("draft"), // blocked_similarity | draft | review | ready
+    status: text("status").$type<MasterStatus>().notNull().default("draft"),
     revision: integer("revision").notNull().default(1),
     revisionHash: text("revision_hash").notNull().default(""),
     sourceItems: jsonb("source_items").notNull().default([]),

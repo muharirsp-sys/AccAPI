@@ -8,11 +8,13 @@ import {
     claimAuditScopes,
     claimDocumentTypes,
     claimWorkflowStatuses,
+    claimWorkflowTransitions,
     getActiveSubmissions,
     isActiveSubmission,
     isPathInsideClaimDocumentRoot,
     requireClaimSession,
     writeClaimAudit,
+    type ClaimWorkflowAction,
 } from "@/lib/claim-workflow";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
@@ -48,16 +50,9 @@ function shouldUnlinkClaimDocument(targetPath: string | null | undefined): boole
 
 type Context = { params: Promise<{ id: string }> };
 
-type TransitionAction =
-    | "mark_ready"
-    | "return_to_draft"
-    | "submit_to_principal";
+type TransitionAction = ClaimWorkflowAction;
 
-const ACTIONS: ReadonlyArray<TransitionAction> = [
-    "mark_ready",
-    "return_to_draft",
-    "submit_to_principal",
-];
+const ACTIONS = Object.keys(claimWorkflowTransitions) as TransitionAction[];
 
 function isTransitionAction(value: unknown): value is TransitionAction {
     return typeof value === "string" && (ACTIONS as ReadonlyArray<string>).includes(value);
@@ -117,52 +112,28 @@ export async function POST(request: Request, context: Context) {
         }
 
         const fromStatus = workflow.status;
-        let toStatus: string;
+        const transisi = claimWorkflowTransitions[action];
 
         let activeSubmissionsForSync: Awaited<ReturnType<typeof getActiveSubmissions>> = [];
 
-        if (action === "mark_ready") {
-            if (
-                fromStatus !== claimWorkflowStatuses.draft &&
-                fromStatus !== claimWorkflowStatuses.needRevision
-            ) {
-                return NextResponse.json({
-                    ok: false,
-                    code: "CLAIM_WORKFLOW_INVALID_STATE",
-                    error: "Mark Ready hanya tersedia saat status Draft atau Need Revision.",
-                }, { status: 409 });
-            }
-            toStatus = claimWorkflowStatuses.readyToSubmit;
-        } else if (action === "return_to_draft") {
-            if (fromStatus !== claimWorkflowStatuses.readyToSubmit) {
-                return NextResponse.json({
-                    ok: false,
-                    code: "CLAIM_WORKFLOW_INVALID_STATE",
-                    error: "Return to Draft hanya tersedia saat status Ready to Submit.",
-                }, { status: 409 });
-            }
-            // return_to_draft dapat menginvalidasi Claim Letter PDF aktif dan
-            // membuka kembali tax editing, jadi audit wajib mencatat alasan
-            // konkret. Tolak jika note kosong/blank.
-            if (!note) {
-                return NextResponse.json({
-                    ok: false,
-                    code: "RETURN_TO_DRAFT_NOTE_REQUIRED",
-                    error: "Alasan wajib diisi saat mengembalikan Claim Workflow ke Draft.",
-                }, { status: 400 });
-            }
-            toStatus = claimWorkflowStatuses.draft;
-        } else {
-            // submit_to_principal
-            if (fromStatus !== claimWorkflowStatuses.readyToSubmit) {
-                return NextResponse.json({
-                    ok: false,
-                    code: "CLAIM_WORKFLOW_INVALID_STATE",
-                    error: "Submit to Principal hanya tersedia saat status Ready to Submit.",
-                }, { status: 409 });
-            }
-            toStatus = claimWorkflowStatuses.submittedToPrincipal;
+        if (!(transisi.dari as ReadonlyArray<string>).includes(fromStatus)) {
+            return NextResponse.json({
+                ok: false,
+                code: "CLAIM_WORKFLOW_INVALID_STATE",
+                error: transisi.tolak,
+            }, { status: 409 });
         }
+        // return_to_draft dapat menginvalidasi Claim Letter PDF aktif dan
+        // membuka kembali tax editing, jadi audit wajib mencatat alasan
+        // konkret. Tolak jika note kosong/blank.
+        if (action === "return_to_draft" && !note) {
+            return NextResponse.json({
+                ok: false,
+                code: "RETURN_TO_DRAFT_NOTE_REQUIRED",
+                error: "Alasan wajib diisi saat mengembalikan Claim Workflow ke Draft.",
+            }, { status: 400 });
+        }
+        const toStatus: string = transisi.ke;
 
         // Validation untuk mark_ready: workflow harus memiliki item dan
         // total/komponen pajak per item harus konsisten > 0 sebelum dilock.

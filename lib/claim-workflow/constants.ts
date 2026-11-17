@@ -35,6 +35,32 @@ export type ClaimWorkflowStatus =
 export const claimWorkflowStatusList = Object.values(claimWorkflowStatuses);
 
 /**
+ * Transisi manual Claim Workflow — satu tabel untuk POST /api/claim-workflow/[id]/status
+ * (daftar mesin status: docs/MESIN_STATUS.md). `tolak` = pesan 409 bila status asal tidak cocok.
+ * Di luar tabel ini, sengaja: Partially Paid/Paid diturunkan dari pembayaran
+ * (lib/claim-workflow/submissions.ts), Closed ditulis route close.
+ */
+export const claimWorkflowTransitions = {
+    mark_ready: {
+        dari: [claimWorkflowStatuses.draft, claimWorkflowStatuses.needRevision],
+        ke: claimWorkflowStatuses.readyToSubmit,
+        tolak: "Mark Ready hanya tersedia saat status Draft atau Need Revision.",
+    },
+    return_to_draft: {
+        dari: [claimWorkflowStatuses.readyToSubmit],
+        ke: claimWorkflowStatuses.draft,
+        tolak: "Return to Draft hanya tersedia saat status Ready to Submit.",
+    },
+    submit_to_principal: {
+        dari: [claimWorkflowStatuses.readyToSubmit],
+        ke: claimWorkflowStatuses.submittedToPrincipal,
+        tolak: "Submit to Principal hanya tersedia saat status Ready to Submit.",
+    },
+} as const satisfies Record<string, { dari: readonly ClaimWorkflowStatus[]; ke: ClaimWorkflowStatus; tolak: string }>;
+
+export type ClaimWorkflowAction = keyof typeof claimWorkflowTransitions;
+
+/**
  * Legacy PEKA status labels yang mungkin masih ada di SQLite lama. Tidak
  * dipakai untuk transisi baru. Dipakai oleh helper `isLegacyPekaStatus`
  * dan `displayClaimStatusLabel` agar UI tetap bisa render row legacy

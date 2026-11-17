@@ -11,7 +11,7 @@ import { stat } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch } from "@/db/schema";
-import { computeOffPaymentSummary, generateOffBatchPdf, getBatchWithItems, isOffPeriodClosedForBatch, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { canSubmitBatch, computeOffPaymentSummary, generateOffBatchPdf, getBatchWithItems, isOffPeriodClosedForBatch, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
 export const runtime = "nodejs";
@@ -36,7 +36,7 @@ export async function POST(_request: Request, context: Context) {
             return NextResponse.json({ ok: false, error: "Periode ini sudah ditutup dan tidak dapat diubah." }, { status: 409 });
         }
         if (data.batch.locked) return NextResponse.json({ ok: false, error: "Pengajuan ini sudah terkunci." }, { status: 409 });
-        if (!["Draft", "Returned by SM", "Returned by Claim"].includes(data.batch.status) && !["Returned"].includes(data.batch.smStatus) && !["Returned"].includes(data.batch.claimStatus)) {
+        if (!canSubmitBatch(data.batch)) {
             return NextResponse.json({ ok: false, error: "Batch hanya bisa disubmit saat Draft atau Returned/Rejected dan belum terkunci." }, { status: 409 });
         }
         if (data.items.length === 0) return NextResponse.json({ ok: false, error: "Cannot generate PDF: batch has no items" }, { status: 400 });

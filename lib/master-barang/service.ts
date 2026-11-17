@@ -27,6 +27,7 @@ import {
     type SourceItem,
 } from "@/lib/master-barang/engine";
 import { kodeMasterBarang, muatDataResmi, wajibPrincipal } from "@/lib/principal/pemakai";
+import { tolakNamaMirip, type MasterStatus } from "@/lib/master-barang/status";
 
 type ConfirmationBucket = {
     revisionHash: string;
@@ -48,7 +49,7 @@ export type MasterRecord = {
     principleCode: string;
     principleName: string;
     principleNameNorm: string;
-    status: string;
+    status: MasterStatus;
     revision: number;
     revisionHash: string;
     sourceItems: SourceItem[];
@@ -175,7 +176,8 @@ export async function appendSource(input: {
     const [row] = await db.select().from(masterBarang).where(eq(masterBarang.id, input.masterId)).limit(1);
     if (!row) throw new Error("Master Barang tidak ditemukan.");
     const current = toRecord(row);
-    if (current.status === "blocked_similarity") throw new Error("Selesaikan 3 konfirmasi nama mirip sebelum upload sumber.");
+    const tolak = tolakNamaMirip(current.status, "upload");
+    if (tolak) throw new Error(tolak);
     const sha256 = createHash("sha256").update(input.bytes).digest("hex");
     const [duplicate] = await db.select({ id: masterBarangSource.id }).from(masterBarangSource)
         .where(and(eq(masterBarangSource.masterId, input.masterId), eq(masterBarangSource.sha256, sha256))).limit(1);
@@ -215,6 +217,10 @@ export async function updateCodebook(masterId: string, codebook: CodebookEntry[]
     const [row] = await db.select().from(masterBarang).where(eq(masterBarang.id, masterId)).limit(1);
     if (!row) throw new Error("Master Barang tidak ditemukan.");
     const current = toRecord(row);
+    // Gerbang yang sama dengan upload dan finalisasi: tanpa ini simpan kamus menulis status "review"
+    // dan kedua gerbang itu (yang membaca status) ikut terbuka sebelum nama mirip dikonfirmasi.
+    const tolak = tolakNamaMirip(current.status, "kamus");
+    if (tolak) throw new Error(tolak);
     if (!Array.isArray(codebook) || codebook.some((entry) => !entry.key || !CODEBOOK_LEVELS.has(entry.level) || !String(entry.code ?? "").match(/^\d{0,4}$/))) {
         throw new Error("Format Kamus Kode tidak valid.");
     }
@@ -252,7 +258,8 @@ export async function finalizeMaster(masterId: string, actorId: string) {
         const [row] = await tx.select().from(masterBarang).where(eq(masterBarang.id, masterId)).limit(1).for("update");
         if (!row) throw new Error("Master Barang tidak ditemukan.");
         const current = toRecord(row);
-        if (current.status === "blocked_similarity") throw new Error("Konfirmasi nama mirip belum selesai 3 tahap.");
+        const tolak = tolakNamaMirip(current.status, "finalisasi");
+        if (tolak) throw new Error(tolak);
         if (!current.formRows.length) throw new Error("Form Fix masih kosong.");
         if (current.qc.errors > 0) throw new Error(`Masih ada ${current.qc.errors} error QC yang wajib diperbaiki lewat Kamus Kode.`);
         if (current.qc.over50 > 0 && (!current.confirmationState.len50?.complete || current.confirmationState.len50.revisionHash !== current.revisionHash)) {

@@ -74,8 +74,8 @@ function DetailKlaim(props: DetailProps) {
     const idKl = useId();
     const data = detail.data;
     const b = data?.batch;
-    // BL-06: aksi hanya bila detail DAN baris daftar terbaru (polling) sama-sama sah — server claim-review hanya memeriksa "sudah
-    // disetujui SM" (tetap benar sampai lunas), jadi detail usang tidak boleh membuka Kembalikan untuk batch yang sudah lewat Klaim.
+    // BL-06: aksi hanya bila detail DAN baris daftar terbaru (polling) sama-sama sah. Sejak 17 Nov 2026 server claim-review memakai
+    // aturan yang sama (canReviewClaim), jadi detail usang yang lolos di sini tetap ditolak 409 di server.
     const sah = (p: (x: BatchOpc) => boolean) => Boolean(b) && p(b!) && (!ringkas || p(ringkas));
     const mode = sah(bisaValidasi) ? "validasi" : sah(bisaFinal) ? "final" : sah(bisaKirimClm) ? "clm" : "baca";
     // Detail berkata sah tetapi daftar terbaru tidak: detail usang → tanpa aksi + ajakan muat ulang.
