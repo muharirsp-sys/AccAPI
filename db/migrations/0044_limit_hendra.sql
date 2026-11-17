@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS limit_hendra_ubah (
     last_update     text NOT NULL,
     lama            jsonb NOT NULL,
     baru            jsonb NOT NULL,
+    dipulihkan_ke   jsonb,
     status          text NOT NULL DEFAULT 'baru',
     alasan          text,
     dicatat_pada    timestamptz NOT NULL DEFAULT now(),

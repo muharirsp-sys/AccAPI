@@ -27,6 +27,7 @@ test("identitasTulis: id/customerNo/no/number di atas dan data[n], semua bentuk;
     assert.deepEqual(identitasTulis({ id: [7, 8] }).ids, ["7", "8"]);
     assert.deepEqual(identitasTulis({ "data[0]": { id: 9 } }).ids, ["9"]);
     assert.deepEqual(identitasTulis({ "data[0][id]": 9 }).ids, ["9"]);
+    assert.deepEqual(identitasTulis({ data: { id: 22001 } }).ids, ["22001"], "data sebagai objek (review 2 #7)");
     assert.deepEqual(identitasTulis({ number: "c-pel017-fr", customerNo: "X-1", no: "Y-2" }).kode.sort(), ["C-PEL017-FR", "X-1", "Y-2"]);
     assert.deepEqual(identitasTulis([{ id: 1 }, { number: "C-2", detailContact: [{ id: 99, name: "kontak" }] }]), { ids: ["1"], kode: ["C-2"], rusak: false });
     assert.deepEqual(identitasTulis({ data: [{ id: 3, detailShipAddress: [{ id: 98 }] }] }).ids, ["3"]);
@@ -93,9 +94,12 @@ test("pengamat: simpanan baru dihitung per menit; jawaban ulang tidak; peristiwa
     assert.deepEqual(ubah, [{ customerId: 1, customerNo: "C-1", lastUpdate: "13/11/2026 10:22:36", lama: L(true, 445000, true, 28), baru: L(true, 200000, true, 28), status: "baru" }]);
 });
 
-test("pengamat: simpanan pemulih sendiri (limit berbalik persis) = `sistem`, tidak dihitung ke menit ramai", () => {
+test("pengamat: simpanan pemulih sendiri (berbalik persis dari pemulihan MANA PUN) = `sistem`, tidak dihitung ke menit ramai", () => {
     const lama = new Map<number, SimpananLama>([[1, { lastUpdate: "13/11/2026 10:22:36", limit: L(true, 200000, true, 28) }]]);
-    const pulih = new Map([[1, { lama: L(true, 445000, true, 28), baru: L(true, 200000, true, 28) }]]);
+    const pulih = new Map([[1, [
+        { baru: L(true, 300000, true, 28), ke: L(true, 100000, true, 28) },   // pemulihan lama, bukan yang ini
+        { baru: L(true, 200000, true, 28), ke: L(true, 445000, true, 28) },
+    ]]]);
     const { menit, ubah } = amatiSimpanan([baris(1, "17/11/2026 13:13:07", L(true, 445000, true, 28))], lama, pulih);
     assert.equal(menit.size, 0);
     assert.equal(ubah[0].status, "sistem");
@@ -105,6 +109,14 @@ test("pengamat: simpanan pemulih sendiri (limit berbalik persis) = `sistem`, tid
     assert.equal(lain.menit.get("17/11/2026 13:13"), 1);
 });
 
+test("SQL: setiap ANY(...) memakai satu parameter array (sql.param), bukan array mentah yang dirender drizzle sebagai ($1, $2)", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(new URL("./pelanggan-hendra.ts", import.meta.url), "utf8");
+    const any = [...src.matchAll(/ANY\(\$\{([^}]*)\}/g)].map((m) => m[1]);
+    assert.ok(any.length >= 3, "ada kueri ANY");
+    for (const isi of any) assert.match(isi, /^sql\.param\(/, `ANY(\${${isi}}) harus sql.param(...)`);
+});
+
 // ---------------- (3) pemulih ----------------
 
 const SEKARANG = t("17/11/2026 13:00:00");
@@ -112,25 +124,31 @@ const P = (id: number, lastUpdate: string, lama: Limit, baru: Limit, customerId 
 const IMPOR = P(1, "13/11/2026 10:22:36", L(true, 445000, true, 28), L(true, 200000, true, 28));
 const DET = (l: Limit, notes = "Hendra"): DetailLimit => ({ customerNo: "C-PEL017-FR", notes, lastUpdate: "13/11/2026 10:22:36", ...l });
 
-function palsu(o: { daftar: Peristiwa[]; menit?: Record<string, number>; live?: number; detail?: DetailLimit | null; klaim?: boolean; tulisGagal?: boolean }) {
+type Detail = DetailLimit | null | ((ke: number) => DetailLimit | null);
+function palsu(o: { daftar: Peristiwa[]; menit?: Record<string, number>; detail?: Detail; klaim?: boolean; tulisGagal?: boolean }) {
     const jejak: string[] = [];
+    let baca = 0;
     const deps: DepsPulih = {
         daftar: async () => o.daftar,
         hitungMenit: async (m) => new Map(m.map((x) => [x, o.menit?.[x] ?? 0])),
-        hitungAccurate: async (dari, sampai) => { jejak.push(`hitung ${dari}..${sampai}`); return o.live ?? 0; },
         klaim: async (id) => { jejak.push(`klaim ${id}`); return o.klaim ?? true; },
+        tandaiTarget: async (id, ke) => { jejak.push(`tandai ${id} ${ke.nilai}/${ke.hari}`); },
         selesai: async (id, status) => { jejak.push(`selesai ${id} ${status}`); },
-        bacaDetail: async () => (o.detail === undefined ? DET(L(true, 200000, true, 28)) : o.detail),
-        tulisLimit: async (id, l) => { if (o.tulisGagal) throw new Error("save.do HTTP 500"); jejak.push(`tulis ${id} ${l.nilai}/${l.hari}`); },
+        bacaDetail: async () => {
+            baca++;
+            if (o.detail === undefined) return DET(L(true, 200000, true, 28));
+            return typeof o.detail === "function" ? o.detail(baca) : o.detail;
+        },
+        tulisLimit: async (id, l) => { if (o.tulisGagal) throw new Error("save.do HTTP 504"); jejak.push(`tulis ${id} ${l.nilai}/${l.hari}`); },
     };
     return { deps, jejak };
 }
 
-test("pemulih: C-PEL017-FR diturunkan impor 13 Nov (339 simpanan/menit) -> dikembalikan ke 445.000; ditandai SEBELUM ditulis", async () => {
+test("pemulih: C-PEL017-FR diturunkan impor 13 Nov (339 simpanan/menit) -> dikembalikan ke 445.000; target dicatat SEBELUM ditulis", async () => {
     const { deps, jejak } = palsu({ daftar: [IMPOR], menit: { "13/11/2026 10:22": 339 } });
     const h = await pulihkanLimitHendra(deps, { sekarang: SEKARANG });
     assert.deepEqual(h.dipulihkan, ["C-PEL017-FR (13/11/2026 10:22:36)"]);
-    assert.deepEqual(jejak, ["klaim 1", "selesai 1 dipulihkan", "tulis 22001 445000/28"]);
+    assert.deepEqual(jejak, ["klaim 1", "tandai 1 445000/28", "tulis 22001 445000/28", "selesai 1 dipulihkan"]);
 });
 
 test("pemulih: menit sebelah ramai (juga lewat pergantian jam) = impor; menit sepi -> dibiarkan tanpa tulis", async () => {
@@ -151,14 +169,32 @@ test("pemulih: menit sebelah ramai (juga lewat pergantian jam) = impor; menit se
     assert.ok(jam.jejak.includes("selesai 2 dipulihkan"), "10:59 bersebelahan dengan 11:00");
 });
 
-test("pemulih: hitungan lokal sepi tapi Accurate langsung ramai (pengamatan terlewat) -> dipulihkan; dua-duanya sepi -> dibiarkan", async () => {
-    const a = palsu({ daftar: [IMPOR], live: 557 });
-    await pulihkanLimitHendra(a.deps, { sekarang: SEKARANG });
-    assert.ok(a.jejak.includes("hitung 13/11/2026 10:21..13/11/2026 10:23"));
-    assert.ok(a.jejak.includes("selesai 1 dipulihkan"));
-    const b = palsu({ daftar: [IMPOR], live: 4 });
-    const hb = await pulihkanLimitHendra(b.deps, { sekarang: SEKARANG });
-    assert.deepEqual(hb.dibiarkan, ["C-PEL017-FR (13/11/2026 10:22:36)"]);
+test("pemulih: dua impor beruntun yang sama-sama tertunda (A->B, B->C) -> kembali ke A, bukan B", async () => {
+    const e1 = P(1, "13/11/2026 10:22:36", L(true, 445000, true, 28), L(true, 200000, true, 28));
+    const e2 = P(2, "13/11/2026 11:05:10", L(true, 200000, true, 28), L(true, 300000, true, 28));
+    const { deps, jejak } = palsu({ daftar: [e1, e2], menit: { "13/11/2026 10:22": 339, "13/11/2026 11:05": 120 }, detail: DET(L(true, 300000, true, 28)) });
+    await pulihkanLimitHendra(deps, { sekarang: SEKARANG });
+    assert.deepEqual(jejak, ["klaim 1", "selesai 1 dilewati", "klaim 2", "tandai 2 445000/28", "tulis 22001 445000/28", "selesai 2 dipulihkan"]);
+    // Edit satuan di antaranya memutus rantai: impor sesudahnya kembali ke nilai edit itu.
+    const edit = P(2, "13/11/2026 11:00:10", L(true, 200000, true, 28), L(true, 600000, true, 28));
+    const e3 = P(3, "13/11/2026 11:05:10", L(true, 600000, true, 28), L(true, 300000, true, 28));
+    const b = palsu({ daftar: [e1, edit, e3], menit: { "13/11/2026 10:22": 339, "13/11/2026 11:05": 120 }, detail: DET(L(true, 300000, true, 28)) });
+    await pulihkanLimitHendra(b.deps, { sekarang: SEKARANG });
+    assert.ok(b.jejak.includes("tulis 22001 600000/28"));
+});
+
+test("pemulih: tulis tak pasti (timeout) -> dicek ke Accurate: sudah masuk = dipulihkan; belum = `baru`; tak terbaca = tetap `diproses`", async () => {
+    const masuk = palsu({ daftar: [IMPOR], menit: { "13/11/2026 10:22": 339 }, tulisGagal: true, detail: (n) => DET(L(true, n === 1 ? 200000 : 445000, true, 28)) });
+    const h1 = await pulihkanLimitHendra(masuk.deps, { sekarang: SEKARANG });
+    assert.deepEqual([h1.dipulihkan.length, h1.gagal.length], [1, 0]);
+    assert.deepEqual(masuk.jejak, ["klaim 1", "tandai 1 445000/28", "selesai 1 dipulihkan"]);
+    const belum = palsu({ daftar: [IMPOR], menit: { "13/11/2026 10:22": 339 }, tulisGagal: true });
+    const h2 = await pulihkanLimitHendra(belum.deps, { sekarang: SEKARANG });
+    assert.equal(h2.gagal.length, 1);
+    assert.deepEqual(belum.jejak, ["klaim 1", "tandai 1 445000/28", "selesai 1 baru"]);
+    const gelap = palsu({ daftar: [IMPOR], menit: { "13/11/2026 10:22": 339 }, tulisGagal: true, detail: (n) => (n === 1 ? DET(L(true, 200000, true, 28)) : null) });
+    await pulihkanLimitHendra(gelap.deps, { sekarang: SEKARANG });
+    assert.deepEqual(gelap.jejak, ["klaim 1", "tandai 1 445000/28"], "tetap diproses, diklaim ulang setelah basi");
 });
 
 test("pemulih: limit sudah berubah lagi / catatan dihapus / tidak terbaca -> dilewati tanpa tulis", async () => {
@@ -180,7 +216,7 @@ test("pemulih: impor lalu edit tangan pada pelanggan sama -> impor dilewati, edi
     assert.equal(jejak.some((j) => j.startsWith("tulis")), false);
 });
 
-test("pemulih: < 15 menit = ditunda tanpa klaim; klaim direbut jalan lain = dilompati; tulis gagal = kembali `baru`", async () => {
+test("pemulih: < 15 menit = ditunda tanpa klaim; klaim direbut jalan lain = dilompati; tulis gagal (Accurate masih `baru`) = kembali `baru`", async () => {
     const segar = P(3, "17/11/2026 12:50:00", L(true, 1, true, 1), L(true, 2, true, 1));
     assert.ok(t(segar.lastUpdate).getTime() > SEKARANG.getTime() - TUNGGU_MS);
     const a = palsu({ daftar: [segar], menit: { "17/11/2026 12:50": 400 } });
@@ -192,7 +228,7 @@ test("pemulih: < 15 menit = ditunda tanpa klaim; klaim direbut jalan lain = dilo
     const c = palsu({ daftar: [IMPOR], menit: { "13/11/2026 10:22": 339 }, tulisGagal: true });
     const hc = await pulihkanLimitHendra(c.deps, { sekarang: SEKARANG });
     assert.equal(hc.gagal.length, 1);
-    assert.deepEqual(c.jejak, ["klaim 1", "selesai 1 dipulihkan", "selesai 1 baru"]);
+    assert.deepEqual(c.jejak, ["klaim 1", "tandai 1 445000/28", "selesai 1 baru"]);
 });
 
 test("pemulih: coba=1 tidak mengklaim/menandai/menulis; batas maks per jalan", async () => {

@@ -38,10 +38,10 @@ const FORMAT_ACCURATE = /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}/;
 
 /**
  * Kunci identitas pelanggan dalam payload, dibaca dari bentuk DATAR yang sama dengan yang dikirim ke Accurate (flattenPayload):
- * id / customerNo / no / number di tingkat atas atau data[n] — termasuk "data[0][id]", "ID", dan nilai array. Kunci objek
- * bersarang lain (detailContact[0].id, detailShipAddress) bukan pelanggan.
+ * id / customerNo / no / number di tingkat atas, data[n], atau data (objek) — termasuk "data[0][id]", "ID", dan nilai array.
+ * Kunci objek bersarang lain (detailContact[0].id, detailShipAddress) bukan pelanggan.
  */
-const KUNCI_IDENTITAS = /^(?:data\[\d+\](?:\.|\[))?(id|customerno|no|number)\]?(?:\[\d+\])?$/i;
+const KUNCI_IDENTITAS = /^(?:data(?:\[\d+\])?(?:\.|\[))?(id|customerno|no|number)\]?(?:\[\d+\])?$/i;
 
 export function identitasTulis(payload: unknown): { ids: string[]; kode: string[]; rusak: boolean } {
     if (!Array.isArray(payload) && !isRec(payload)) return { ids: [], kode: [], rusak: payload !== null && payload !== undefined };
@@ -131,14 +131,18 @@ export const samaLimit = (a: Limit, b: Limit) => a.aktif === b.aktif && a.hariAk
 
 export type SimpananLama = { lastUpdate: string; limit: Limit };
 export type PeristiwaBaru = { customerId: number; customerNo: string; lastUpdate: string; lama: Limit; baru: Limit; status: "baru" | "sistem" };
+/** Pemulihan yang sudah / sedang ditulis pemulih: limit `baru` peristiwa itu dikembalikan `ke` nilai ini. */
+export type Pemulihan = { baru: Limit; ke: Limit };
 
 /**
- * Murni. `rows` = jawaban Accurate (detail.do atau list.do) yang akan di-upsert; `lama` = salinan SEBELUM upsert; `pulihTerakhir`
- * = pemulihan terakhir per pelanggan (lama/baru peristiwa yang dipulihkan). Simpanan baru = lastUpdate berbeda dari salinan
- * (jawaban ulang yang sama tidak dihitung dua kali). Simpanan pemulih sendiri (limit berbalik persis) = peristiwa `sistem`, tidak
- * dihitung ke menit ramai dan tidak diputuskan.
+ * Murni. `rows` = jawaban Accurate (detail.do atau list.do) yang akan di-upsert; `lama` = salinan SEBELUM upsert; `pemulihan` =
+ * SEMUA pemulihan pemulih per pelanggan (status diproses/dipulihkan dengan `dipulihkan_ke`). Simpanan baru = lastUpdate berbeda dari
+ * salinan (jawaban ulang yang sama tidak dihitung dua kali). Simpanan pemulih sendiri (limit berbalik persis baru -> ke dari salah
+ * satu pemulihan) = peristiwa `sistem`, tidak dihitung ke menit ramai dan tidak diputuskan.
+ * ponytail: webhook dan sync yang membaca salinan lama bersamaan bisa menghitung satu simpanan dua kali (menit normal butuh ~10
+ * simpanan nyata untuk melewati ambang 20). Hitungan per (pelanggan, lastUpdate) bila itu terbukti terjadi.
  */
-export function amatiSimpanan(rows: Rec[], lama: Map<number, SimpananLama>, pulihTerakhir: Map<number, { lama: Limit; baru: Limit }>) {
+export function amatiSimpanan(rows: Rec[], lama: Map<number, SimpananLama>, pemulihan: Map<number, Pemulihan[]>) {
     const menit = new Map<string, number>();
     const ubah: PeristiwaBaru[] = [];
     for (const row of rows) {
@@ -149,8 +153,7 @@ export function amatiSimpanan(rows: Rec[], lama: Map<number, SimpananLama>, puli
         if (sebelum && sebelum.lastUpdate === lu) continue;
         const sesudah = limitDariAccurate(row);
         if (sebelum && isCatatanHendra(row.notes) && !samaLimit(sebelum.limit, sesudah)) {
-            const p = pulihTerakhir.get(id);
-            const sistem = Boolean(p && samaLimit(p.lama, sesudah) && samaLimit(p.baru, sebelum.limit));
+            const sistem = (pemulihan.get(id) ?? []).some((p) => samaLimit(p.ke, sesudah) && samaLimit(p.baru, sebelum.limit));
             ubah.push({ customerId: id, customerNo: teks(row.customerNo), lastUpdate: lu, lama: sebelum.limit, baru: sesudah, status: sistem ? "sistem" : "baru" });
             if (sistem) continue;
         }
@@ -165,8 +168,9 @@ const benar = (v: unknown) => v === true || v === "t" || v === "true";
 export async function bacaSalinanLama(ids: number[]): Promise<Map<number, SimpananLama> | null> {
     if (!ids.length) return new Map();
     try {
+        // sql.param: SATU parameter array ($1::bigint[]). `${ids}` mentah dirender drizzle sebagai daftar ($1, $2) = SQL rusak (review 2 #1).
         const rows = (await db.execute(sql`SELECT id, last_update AS lu, credit_limit_enabled AS a, credit_limit_amount AS n,
-                credit_age_limit_enabled AS ha, credit_age_limit_days AS h FROM ${customer} WHERE id = ANY(${ids}::bigint[])`)).rows as Rec[];
+                credit_age_limit_enabled AS ha, credit_age_limit_days AS h FROM ${customer} WHERE id = ANY(${sql.param(ids)}::bigint[])`)).rows as Rec[];
         return new Map(rows.map((r) => [Number(r.id), { lastUpdate: teks(r.lu),
             limit: { aktif: benar(r.a), nilai: angka(r.n), hariAktif: benar(r.ha), hari: angka(r.h) } }]));
     } catch (e) {
@@ -183,11 +187,16 @@ export async function amatiHalamanPelanggan(rows: Rec[], lama: Map<number, Simpa
     if (!lama) return;
     try {
         const hendraIds = rows.filter((r) => isCatatanHendra(r.notes)).map((r) => Number(r.id)).filter(Number.isFinite);
-        const pulih = new Map<number, { lama: Limit; baru: Limit }>();
+        const pulih = new Map<number, Pemulihan[]>();
         if (hendraIds.length) {
-            const p = (await db.execute(sql`SELECT DISTINCT ON (customer_id) customer_id AS id, lama, baru FROM ${limitHendraUbah}
-                WHERE status = 'dipulihkan' AND customer_id = ANY(${hendraIds}::bigint[]) ORDER BY customer_id, id DESC`)).rows as Rec[];
-            for (const r of p) pulih.set(Number(r.id), { lama: r.lama as Limit, baru: r.baru as Limit });
+            const p = (await db.execute(sql`SELECT customer_id, baru, dipulihkan_ke FROM ${limitHendraUbah}
+                WHERE status IN ('diproses', 'dipulihkan') AND dipulihkan_ke IS NOT NULL
+                  AND customer_id = ANY(${sql.param(hendraIds)}::bigint[])`)).rows as Rec[];
+            for (const r of p) {
+                const daftar = pulih.get(Number(r.customer_id)) ?? [];
+                daftar.push({ baru: r.baru as Limit, ke: r.dipulihkan_ke as Limit });
+                pulih.set(Number(r.customer_id), daftar);
+            }
         }
         const { menit, ubah } = amatiSimpanan(rows, lama, pulih);
         for (const [m, n] of menit) {
@@ -229,9 +238,9 @@ export type DepsPulih = {
     daftar(): Promise<Peristiwa[]>;
     /** Hitungan simpanan untuk menit-menit ini (limit_menit_simpan). */
     hitungMenit(menit: string[]): Promise<Map<string, number>>;
-    /** Hitungan langsung Accurate: pelanggan dengan lastUpdate di [dari:00, sampai:59] (sp.rowCount). */
-    hitungAccurate(dari: string, sampai: string): Promise<number>;
     klaim(id: number): Promise<boolean>;
+    /** Catat nilai yang AKAN ditulis (status tetap `diproses`) SEBELUM save.do — pengamat mengenali simpanan itu sebagai `sistem`. */
+    tandaiTarget(id: number, ke: Limit): Promise<void>;
     selesai(id: number, status: "dipulihkan" | "dibiarkan" | "dilewati" | "baru", alasan: string): Promise<void>;
     bacaDetail(customerId: number): Promise<DetailLimit | null>;
     tulisLimit(customerId: number, limit: Limit): Promise<void>;
@@ -241,6 +250,12 @@ export type HasilPulih = {
     peristiwa: number; dipulihkan: string[]; dibiarkan: string[]; dilewati: string[]; ditunda: number; gagal: string[]; coba: boolean;
 };
 
+/**
+ * Pemulih. Ramai = hitungan pengamat (hanya bertambah) di menit itu atau sebelahnya >= AMBANG_MASSAL.
+ * ponytail: tanpa pendapat kedua dari Accurate (filter lastUpdate) — hitungan Accurate ikut memuat simpanan pemulih sendiri dan
+ * tergerus simpanan berikutnya (review 2 #4). Plafon: impor yang terjadi saat pengamat mati/belum terpasang tidak dipulihkan, dan
+ * edit tangan yang webhook-nya hilang lalu disusul impor sebelum sync berikut dipulihkan ke nilai sebelum edit (review 2 #6).
+ */
 export async function pulihkanLimitHendra(d: DepsPulih, opsi: { sekarang: Date; coba?: boolean; maks?: number }): Promise<HasilPulih> {
     const coba = Boolean(opsi.coba);
     const maks = opsi.maks ?? 300; // ponytail: pelanggan Hendra ±281 (17 Nov); batas mencegah salah hitung menulis tanpa ujung
@@ -251,31 +266,35 @@ export async function pulihkanLimitHendra(d: DepsPulih, opsi: { sekarang: Date; 
         if (!ramaiCache.has(menit)) {
             const sekitar = [menitGeser(menit, -1), menit, menitGeser(menit, 1)];
             const n = await d.hitungMenit(sekitar);
-            let r = sekitar.some((m) => (n.get(m) ?? 0) >= AMBANG_MASSAL);
-            // Pengamatan bisa terlewat (webhook mati + simpanan tertimpa sebelum sync): pendapat kedua dari Accurate langsung.
-            if (!r) r = (await d.hitungAccurate(sekitar[0], sekitar[2])) >= AMBANG_MASSAL;
-            ramaiCache.set(menit, r);
+            ramaiCache.set(menit, sekitar.some((m) => (n.get(m) ?? 0) >= AMBANG_MASSAL));
         }
         return ramaiCache.get(menit)!;
     };
+    // Dua impor beruntun (A->B lalu B->C) yang sama-sama tertunda: yang pertama dilewati (Accurate sudah C), yang kedua harus kembali
+    // ke A, bukan ke B (review 2 #5). Rantai per pelanggan dalam satu jalan; edit satuan memutus rantai.
+    const rantai = new Map<number, Pemulihan>();
     for (const e of daftar) {
         const label = `${e.customerNo} (${e.lastUpdate})`;
         const t = parseAccurateDateTime(e.lastUpdate);
         if (!t || !FORMAT_ACCURATE.test(e.lastUpdate) || opsi.sekarang.getTime() - t.getTime() < TUNGGU_MS) { h.ditunda++; continue; }
         if (!coba && !(await d.klaim(e.id))) continue;
+        let target: Limit = e.lama;
         try {
             if (!(await ramai(e.lastUpdate.slice(0, 16)))) {
+                rantai.delete(e.customerId);
                 if (!coba) await d.selesai(e.id, "dibiarkan", "edit satuan = keputusan baru");
                 h.dibiarkan.push(label);
                 continue;
             }
+            const sebelumnya = rantai.get(e.customerId);
+            if (sebelumnya && samaLimit(sebelumnya.baru, e.lama)) target = sebelumnya.ke;
             if (h.dipulihkan.length >= maks) {
                 if (!coba) await d.selesai(e.id, "baru", `batas ${maks} pemulihan per jalan`);
                 h.ditunda++;
                 continue;
             }
             // Aturan 13 Nov (lib/pelanggan-terlindungi) menang: 8 toko NKA/DC tidak pernah diberi batas, juga oleh pemulih ini.
-            if (isPelangganTerlindungi(e.customerNo) && (e.lama.aktif || e.lama.hariAktif)) {
+            if (isPelangganTerlindungi(e.customerNo) && (target.aktif || target.hariAktif)) {
                 const alasan = "toko terlindungi 13 Nov: batas tidak boleh dipasang kembali";
                 if (!coba) await d.selesai(e.id, "dilewati", alasan);
                 h.dilewati.push(`${label}: ${alasan}`);
@@ -285,20 +304,35 @@ export async function pulihkanLimitHendra(d: DepsPulih, opsi: { sekarang: Date; 
             const lewati = !det ? "pelanggan tidak terbaca di Accurate" : !isCatatanHendra(det.notes) ? "catatan Hendra sudah tidak ada"
                 : !samaLimit(det, e.baru) ? "limit sudah berubah lagi sesudahnya (peristiwa berikutnya yang menentukan)" : "";
             if (lewati) {
+                if (det && isCatatanHendra(det.notes)) rantai.set(e.customerId, { baru: e.baru, ke: target });
                 if (!coba) await d.selesai(e.id, "dilewati", lewati);
                 h.dilewati.push(`${label}: ${lewati}`);
                 continue;
             }
-            if (!coba) {
-                // Tandai DULU, baru tulis: webhook bisa mengamati simpanan pemulih sebelum baris ini selesai, dan pengamat mengenalinya
-                // sebagai `sistem` hanya lewat peristiwa `dipulihkan`. Tulis gagal -> catch mengembalikan status ke `baru`.
-                await d.selesai(e.id, "dipulihkan", "impor massal: limit dikembalikan ke nilai sebelum impor");
-                await d.tulisLimit(e.customerId, e.lama);
-            }
-            h.dipulihkan.push(label);
         } catch (err) {
             h.gagal.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
-            if (!coba) await d.selesai(e.id, "baru", "gagal, diulang jalan berikutnya").catch(() => undefined);
+            if (!coba) await d.selesai(e.id, "baru", "gagal sebelum menulis, diulang jalan berikutnya").catch(() => undefined);
+            continue;
+        }
+        if (coba) { h.dipulihkan.push(label); continue; }
+        // Urutan aman (review 2 #4, #9): target dicatat (status tetap `diproses`) -> save.do -> `dipulihkan`. Jalan terputus di tengah =
+        // `diproses` basi, diklaim ulang 30 menit kemudian dan diputuskan lagi dari Accurate (sudah masuk = dilewati, belum = ditulis).
+        try {
+            await d.tandaiTarget(e.id, target);
+            await d.tulisLimit(e.customerId, target);
+            await d.selesai(e.id, "dipulihkan", "impor massal: limit dikembalikan ke nilai sebelum impor");
+            h.dipulihkan.push(label);
+        } catch (err) {
+            // Tulis tak pasti (timeout, 5xx): pastikan dari Accurate, jangan langsung `baru` (bisa sudah masuk).
+            const cek = await d.bacaDetail(e.customerId).catch(() => null);
+            if (cek && samaLimit(cek, target)) {
+                await d.selesai(e.id, "dipulihkan", "tulis tak pasti, terbukti masuk di Accurate").catch(() => undefined);
+                h.dipulihkan.push(label);
+            } else {
+                h.gagal.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+                if (cek && samaLimit(cek, e.baru)) await d.selesai(e.id, "baru", "tulis gagal, diulang jalan berikutnya").catch(() => undefined);
+                // Accurate tak terbaca: biarkan `diproses` -> diklaim ulang setelah basi.
+            }
         }
     }
     return h;
@@ -330,12 +364,9 @@ export async function jalankanPulihLimitHendra(target: AccurateTarget, opsi: { c
             lama: r.lama as Limit, baru: r.baru as Limit,
         })),
         hitungMenit: async (menit) => new Map(((await db.execute(sql`SELECT menit, jumlah FROM ${limitMenitSimpan}
-                WHERE menit = ANY(${menit}::text[])`)).rows as Rec[]).map((r) => [teks(r.menit), Number(r.jumlah)])),
-        hitungAccurate: async (dari, sampai) => {
-            const r = await baca("/api/customer/list.do", "GET", { fields: "id", "filter.lastUpdate.op": "BETWEEN",
-                "filter.lastUpdate.val[0]": `${dari}:00`, "filter.lastUpdate.val[1]": `${sampai}:59`, "sp.pageSize": 1 });
-            if (!r?.s) throw new Error("hitungan lastUpdate Accurate gagal");
-            return Number((r.sp as Rec | undefined)?.rowCount ?? 0);
+                WHERE menit = ANY(${sql.param(menit)}::text[])`)).rows as Rec[]).map((r) => [teks(r.menit), Number(r.jumlah)])),
+        tandaiTarget: async (id, ke) => {
+            await db.execute(sql`UPDATE ${limitHendraUbah} SET dipulihkan_ke = ${JSON.stringify(ke)}::jsonb WHERE id = ${id}`);
         },
         klaim: async (id) => ((await db.execute(sql`UPDATE ${limitHendraUbah} SET status = 'diproses', diputuskan_pada = now()
                 WHERE id = ${id} AND (status = 'baru' OR (status = 'diproses' AND diputuskan_pada < now() - make_interval(secs => ${KLAIM_BASI_MS / 1000})))

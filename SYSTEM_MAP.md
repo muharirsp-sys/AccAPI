@@ -349,14 +349,15 @@ UI: API Wrapper page (/api-wrapper)
   Pengamat + pemulih limit pelanggan Hendra (lib/pelanggan-hendra, owner 17 Nov 2026):
   - Pengamat di upsertPage customer (lib/sync; dipakai webhook upsertMasterById DAN sync list.do, field kini memuat `notes`):
     salinan dibaca sebelum upsert; tiap simpanan baru (lastUpdate berubah) menambah limit_menit_simpan[menit]; perubahan Limit
-    Piutang/Hari pelanggan Hendra dicatat di limit_hendra_ubah (lama, baru). Simpanan pemulih sendiri (berbalik persis dari
-    peristiwa `dipulihkan`) = `sistem`, tidak dihitung. Gagal = log saja, sync tetap jalan.
+    Piutang/Hari pelanggan Hendra dicatat di limit_hendra_ubah (lama, baru). Simpanan pemulih sendiri (berbalik persis baru ->
+    dipulihkan_ke dari pemulihan mana pun, status diproses/dipulihkan) = `sistem`, tidak dihitung. Gagal = log saja, sync jalan.
   - Pemulih: GET /api/cron/pulih-limit-hendra (Bearer CRON_SECRET, usul tiap 15 menit; ?coba=1 = laporan saja) dan otomatis di
     akhir /api/cron/sync-accurate (modul customer sukses). Peristiwa `baru` >= 15 menit -> klaim (`diproses`, basi 30 menit) ->
-    menit ramai (>= 20 simpanan; menit sebelah ikut; bila hitungan lokal sepi: customer/list.do filter lastUpdate BETWEEN
-    sp.rowCount) = impor -> detail.do (catatan masih Hendra, limit masih = `baru`) -> tandai `dipulihkan` LALU customer/save.do
-    id + 4 kolom limit = `lama`; tidak ramai = edit satuan -> `dibiarkan`. Kolom lain tidak pernah dikembalikan.
-    Env PULIH_LIMIT_HENDRA=mati = saklar darurat pemulih.
+    menit ramai (hitungan pengamat >= 20 di menit itu atau sebelahnya) = impor -> target = `lama` (dua impor beruntun yang
+    tertunda: `lama` impor pertama) -> detail.do (catatan masih Hendra, limit masih = `baru`; 8 toko 13 Nov tidak pernah diberi
+    batas) -> catat dipulihkan_ke -> customer/save.do id + 4 kolom limit -> `dipulihkan` (tulis tak pasti = dicek detail.do);
+    tidak ramai = edit satuan -> `dibiarkan`. Kolom lain tidak pernah dikembalikan. Env PULIH_LIMIT_HENDRA=mati = saklar darurat.
+    Plafon: impor saat pengamat mati/belum terpasang tidak dipulihkan (mis. impor 13 Nov 2026 — 15 toko dipulihkan manual 17 Nov).
      <- JSON response
   Klien: lib/apiFetcher.ts classifyWriteError — 4xx + sent:false = rejected (tidak terkirim), bukan TIDAK PASTI; Konsol berhenti
   di tahap yang ditolak dan menampilkan pesan server.
@@ -1097,7 +1098,7 @@ AccAPI/_github_clean/
 |---|---|---|
 | `lib/sync.ts` | `AccuratePaginator`, `syncModule` | Sync paginated data Accurate ke SQLite lokal (item/customer) dengan checkpoint |
 | `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment & sales-invoice; sales-receipt = `pelunasan.kirim`; tulis lain = `api_wrapper.execute` + katalog Konsol (S7-1b); tulis `customer/(bulk-)save.do` yang menonaktifkan atau memasang batas piutang / batas umur piutang pada 8 toko NKA/DC (`lib/pelanggan-terlindungi.ts`, owner 13 Nov 2026) = 403 `PELANGGAN_TERLINDUNGI` (id dicari via `customer/detail.do`; tak terbaca = tolak); tulis apa pun ke pelanggan bercatatan "Hendra" (`lib/pelanggan-hendra.ts`, owner 17 Nov 2026; id/customerNo/no/number) = 403 `PELANGGAN_HENDRA`, pelanggan tak terbaca = 503 `PELANGGAN_TAK_TERBACA` |
-| `app/api/cron/pulih-limit-hendra/route.ts` | `GET` | Bearer CRON_SECRET. Memutuskan peristiwa `limit_hendra_ubah` (0044): perubahan Limit Piutang/Hari pelanggan bercatatan "Hendra" dari impor massal (menit ramai di `limit_menit_simpan` atau hitungan Accurate) dikembalikan ke nilai sebelum impor (save.do id + 4 kolom limit); edit satuan dibiarkan; `?coba=1` laporan saja; env `PULIH_LIMIT_HENDRA=mati` mematikan. Juga dijalankan di akhir `sync-accurate` (modul customer sukses) |
+| `app/api/cron/pulih-limit-hendra/route.ts` | `GET` | Bearer CRON_SECRET. Memutuskan peristiwa `limit_hendra_ubah` (0044): perubahan Limit Piutang/Hari pelanggan bercatatan "Hendra" dari impor massal (menit ramai di `limit_menit_simpan`) dikembalikan ke nilai sebelum impor (save.do id + 4 kolom limit); edit satuan dibiarkan; `?coba=1` laporan saja; env `PULIH_LIMIT_HENDRA=mati` mematikan. Juga dijalankan di akhir `sync-accurate` (modul customer sukses) |
 | `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance (`finance.update` ∧ `finance.post_accurate`, S7-1c): database sesi wajib = `expectedDatabaseId` (409 `database_changed`), klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
 | `app/api/finance/purchase-payment/resolve/route.ts` | `POST` | Atestasi manual attempt purchase-payment tidak pasti (alasan + sumber pemeriksaan) |
 | `app/api/finance/purchase-payment/attempts/route.ts` | `GET` | Baca-saja status attempt terbaru per kelompok faktur (S6-0e; kontrak `docs/handover/S6-0e-KONTRAK-API.md`) |

@@ -674,6 +674,7 @@ export const limitHendraUbah = pgTable("limit_hendra_ubah", {
     lastUpdate: text("last_update").notNull(), // lastUpdate Accurate simpanan yang mengubah limit (dd/MM/yyyy HH:mm:ss WIB)
     lama: jsonb("lama").notNull(), // { aktif, nilai, hariAktif, hari } sebelum simpanan
     baru: jsonb("baru").notNull(), // sesudah simpanan
+    dipulihkanKe: jsonb("dipulihkan_ke"), // nilai yang ditulis pemulih (dicatat SEBELUM save.do; pengenal simpanan `sistem`)
     status: text("status").notNull().default("baru"), // baru | diproses | dipulihkan | dibiarkan | dilewati | sistem
     alasan: text("alasan"),
     dicatatPada: timestamp("dicatat_pada", { withTimezone: true }).notNull().defaultNow(),
