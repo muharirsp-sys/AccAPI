@@ -364,7 +364,7 @@ export async function pulihkanLimitHendra(d: DepsPulih, opsi: { sekarang: Date; 
             // Keadaan Accurate = hasil peristiwa terakhir. Edit satuan -> dibiarkan; impor -> pulihkan ke target rantainya.
             if (!ke) { await tutup(status); continue; }
             if (isPelangganTerlindungi(terakhir.customerNo) && (ke.aktif || ke.hariAktif)) {
-                // Aturan 13 Nov (lib/pelanggan-terlindungi) menang: 8 toko NKA/DC tidak pernah diberi batas, juga oleh pemulih ini.
+                // Aturan 13 Nov (lib/pelanggan-terlindungi) menang: 9 toko NKA/DC tidak pernah diberi batas, juga oleh pemulih ini.
                 status.set(terakhir.id, ["dilewati", "toko terlindungi 13 Nov: batas tidak boleh dipasang kembali"]);
                 await tutup(status);
                 continue;

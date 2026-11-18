@@ -338,7 +338,7 @@ UI: API Wrapper page (/api-wrapper)
          semua SEBELUM sesi Accurate/DB/jaringan; baca = GET jalur kanonik {list,detail,get-stock,list-stock}.do (isAccurateRead),
          cukup sesi app (Finance & Pelunasan membaca tanpa api_wrapper.*). [PROXY FIRE] tulis mencatat id pengguna.
          Owner 13 Nov 2026: tulis customer/(bulk-)save.do (isCustomerWrite) diperiksa lib/pelanggan-terlindungi SETELAH sesi:
-         8 toko NKA/DC (C-IND051, C-IN0050, C-AL0063, C-AL0064, C-ALF052, C-IND080, C-IND086, C-IN0088 + varian divisi) tidak
+         9 toko NKA/DC (C-IND051, C-IN0050, C-AL0063, C-AL0064, C-ALF052, C-IND080, C-IND086, C-IN0088, C-IN0087 [18 Nov] + varian divisi) tidak
          boleh suspended atau diberi customerLimitAmount[Value] / customerLimitAge[Value]; mematikan batas boleh. Baris ber-id
          dicari kodenya via GET customer/detail.do (4 bersamaan); tak terbaca = tolak. 403 PELANGGAN_TERLINDUNGI {sent:false}.
          Owner 17 Nov 2026 (lib/pelanggan-hendra): SEBELUM itu, pelanggan yang catatan (notes) Accurate-nya memuat "Hendra" =

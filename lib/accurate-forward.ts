@@ -152,7 +152,7 @@ export function isSalesInvoiceWrite(endpointPath: string) {
 
 /**
  * Owner 13 Nov 2026: tulis pelanggan (juga pos/customer) diperiksa lib/pelanggan-terlindungi sebelum diteruskan —
- * 8 toko NKA/DC tidak boleh dinonaktifkan atau diberi batas piutang / batas umur piutang. Normalisasi sama (fail-closed).
+ * 9 toko NKA/DC tidak boleh dinonaktifkan atau diberi batas piutang / batas umur piutang. Normalisasi sama (fail-closed).
  */
 export function isCustomerWrite(endpointPath: string) {
     return matchesWritePath(endpointPath, /\/customer\/(bulk-)?save\.do/i, "customer");
