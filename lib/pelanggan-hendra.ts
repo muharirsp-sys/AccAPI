@@ -157,7 +157,9 @@ export function amatiSimpanan(rows: Rec[], lama: Map<number, SimpananLama>, pemu
             ubah.push({ customerId: id, customerNo: teks(row.customerNo), lastUpdate: lu, lama: sebelum.limit, baru: sesudah, status: sistem ? "sistem" : "baru" });
             if (sistem) continue;
         }
-        menit.set(lu.slice(0, 16), (menit.get(lu.slice(0, 16)) ?? 0) + 1);
+        // Toko terlindungi tidak dihitung (19 Nov): alat luar + pelepas AccAPI menyimpan 12 divisi C-IN0087 tiap 15 menit — mesin, bukan
+        // impor; dihitung = menit itu tampak ramai dan edit tangan pelanggan Hendra di menit yang sama dikira impor lalu dikembalikan.
+        if (!isPelangganTerlindungi(row.customerNo)) menit.set(lu.slice(0, 16), (menit.get(lu.slice(0, 16)) ?? 0) + 1);
     }
     return { menit, ubah };
 }

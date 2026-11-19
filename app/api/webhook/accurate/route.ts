@@ -12,7 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { resolveSyncCredentials } from '@/lib/accurate-session';
 import { AccurateInvoiceGoneError, upsertMasterById, upsertSalesInvoiceById } from '@/lib/sync';
-import { flattenCustomerIds, flattenItemIds, salesInvoiceEvents } from '@/lib/accurate-webhook';
+import { appKeyPelanggan, flattenCustomerIds, flattenItemIds, salesInvoiceEvents } from '@/lib/accurate-webhook';
 
 const MAX_LOG_BYTES = 20 * 1024 * 1024;
 
@@ -110,7 +110,9 @@ export async function POST(request: Request) {
         for (const [kind, ids] of [["customer", customerIds], ["item", itemIds]] as const) {
             for (const id of ids) {
                 try {
-                    const summary = await upsertMasterById(kind, id, accurate.creds);
+                    // appKey penyimpan ikut ke log pelepas toko terlindungi: alat luar yang mencentang batas jadi bisa dikenali (19 Nov).
+                    const summary = await upsertMasterById(kind, id, accurate.creds,
+                        kind === "customer" ? `webhook appKey ${appKeyPelanggan(payload).get(id) || "(layar Accurate)"}` : "webhook");
                     console.log(`[+] Master ${kind} tersegarkan: ${summary.code} (id ${id})`);
                     processed.push(summary);
                 } catch (e) {

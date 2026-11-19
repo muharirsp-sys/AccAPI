@@ -2,7 +2,8 @@
  * Uji murni lib/pelanggan-terlindungi (tanpa jaringan; pencarian id dipalsukan). Rute: lib/proxy-guard-route.test.ts. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PELANGGAN_TERLINDUNGI, isPelangganTerlindungi, periksaPenutupanPelanggan } from "./pelanggan-terlindungi.ts";
+import { PELANGGAN_TERLINDUNGI, isPelangganTerlindungi, lepasTerlindungi, periksaPenutupanPelanggan } from "./pelanggan-terlindungi.ts";
+import { appKeyPelanggan } from "./accurate-webhook.ts";
 import { isCustomerWrite } from "./accurate-forward.ts";
 
 const kodeId: Record<string, string> = { "101": "C-IND051", "102": "C-ALF052-KN", "200": "C-ANE050", "201": "C-IND0801" };
@@ -115,4 +116,32 @@ test("yang tetap lolos: mematikan batas, edit biasa, toko lain, baris tanpa tand
         assert.deepEqual(await periksaPenutupanPelanggan(payload, hitung), kosong, JSON.stringify(payload));
     }
     assert.equal(dicari, 2, "hanya baris ber-id yang menutup (id 200, 201) yang dicari");
+});
+
+test("lepasTerlindungi (owner 19 Nov): batas tercentang toko terlindungi dilepas -- id + 2 kolom aktif SAJA; lainnya tidak disentuh; tidak melempar", async () => {
+    const kirim: unknown[] = [];
+    const ok = async (p: Record<string, unknown>) => { kirim.push(p); return { status: 200, text: '{"s":true,"d":["ok"]}' }; };
+    const rows = [
+        { id: 35568, customerNo: "C-IN0087-KN", customerLimitAmount: true, customerLimitAmountValue: 632438000, customerLimitAge: true, customerLimitAgeValue: 28 },
+        { id: 22341, customerNo: "C-IN0087-RC", customerLimitAmount: false, customerLimitAge: true },  // satu saja tercentang
+        { id: 1, customerNo: "C-IN0088-M1", customerLimitAmount: false, customerLimitAge: false },     // sudah lepas
+        { id: 2, customerNo: "C-RE0049-SZ", customerLimitAmount: true, customerLimitAge: true },       // bukan toko terlindungi (hold OD)
+        { id: "x", customerNo: "C-IND051", customerLimitAmount: true },                                // id rusak
+    ];
+    assert.deepEqual(await lepasTerlindungi(rows, ok, "uji"), ["C-IN0087-KN", "C-IN0087-RC"]);
+    assert.deepEqual(kirim, [{ id: 35568, customerLimitAmount: false, customerLimitAge: false }, { id: 22341, customerLimitAmount: false, customerLimitAge: false }]);
+    // Ditolak Accurate / jaringan putus: dicatat log, tidak melempar (webhook & sync jalan terus).
+    assert.deepEqual(await lepasTerlindungi([rows[0]], async () => ({ status: 200, text: '{"s":false,"d":["gagal"]}' }), "uji"), []);
+    assert.deepEqual(await lepasTerlindungi([rows[0]], async () => { throw new Error("ECONNRESET"); }, "uji"), []);
+    process.env.LEPAS_TERLINDUNGI = "mati";
+    try { assert.deepEqual(await lepasTerlindungi([rows[0]], ok, "uji"), []); } finally { delete process.env.LEPAS_TERLINDUNGI; }
+});
+
+test("appKeyPelanggan: appKey amplop CUSTOMER per id (kosong = layar Accurate); amplop lain diabaikan", () => {
+    const m = appKeyPelanggan([
+        { type: "CUSTOMER", appKey: "app-luar", data: [{ customerId: 35568, action: "WRITE" }, { id: 22341 }] },
+        { type: "CUSTOMER", data: [{ customerId: 7 }] },
+        { type: "SALES_INVOICE", appKey: "x", data: [{ salesInvoiceId: 9 }] },
+    ]);
+    assert.deepEqual([...m], [[35568, "app-luar"], [22341, "app-luar"], [7, ""]]);
 });

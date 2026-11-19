@@ -17,6 +17,7 @@ import { redactAccurateSecrets } from "./accurate-redact";
 import { ringkasFaktur } from "./supervisor-review/ringkas-faktur";
 import { BACKFILL, deletedInvoiceLines, diffInvoiceLines, type ChangeContext, type LineChangeRow } from "./sales-invoice-change";
 import { amatiHalamanPelanggan, bacaSalinanLama } from "./pelanggan-hendra";
+import { lepasTerlindungi } from "./pelanggan-terlindungi";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -35,6 +36,14 @@ export const accurateHeaders = (creds: AccurateCredentials) => ({
     "Authorization": `Bearer ${creds.apiKey}`,
     "X-Session-ID": creds.sessionId,
 });
+
+/** Penulis customer/save.do untuk lepasTerlindungi (owner 19 Nov 2026), dengan kredensial sync/webhook. */
+const tulisPelanggan = (creds: AccurateCredentials) => async (payload: Record<string, unknown>) => {
+    const res = await fetch(`${creds.sessionHost}/accurate/api/customer/save.do`, {
+        method: "POST", headers: accurateHeaders(creds), body: JSON.stringify(payload), signal: AbortSignal.timeout(30_000),
+    });
+    return { status: res.status, text: await res.text() };
+};
 
 // 1. AccuratePaginator: Generator asinkron pagination + throttle rate limit.
 // Catatan: Accurate list.do TANPA parameter `fields` hanya mengembalikan { id } per baris
@@ -583,7 +592,7 @@ export function fakturSudahTiada(body: unknown): boolean {
  * buruk daripada menunggu cron.
  */
 export async function upsertMasterById(
-    kind: "customer" | "item", id: number, creds: AccurateCredentials,
+    kind: "customer" | "item", id: number, creds: AccurateCredentials, asal = "webhook",
 ): Promise<{ kind: string; id: number; code: string }> {
     const path = kind === "customer" ? "customer" : "item";
     const url = `${creds.sessionHost}/accurate/api/${path}/detail.do?id=${id}`;
@@ -597,6 +606,7 @@ export async function upsertMasterById(
     if (!code) throw new Error(`detail.do ${kind} ${id}: tanpa ${kind === "customer" ? "customerNo" : "no"}; tidak ditulis`);
 
     const takDikenal = await SYNC_MODULES[kind].upsertPage([row]);
+    if (kind === "customer") await lepasTerlindungi([row], tulisPelanggan(creds), asal); // tidak pernah melempar
     if (takDikenal && Object.keys(takDikenal).length) {
         console.warn(`[sync] webhook item ${code}: tag charField2 tanpa cabang -> tidak bisa diorder: ${JSON.stringify(takDikenal)}`);
     }
@@ -743,6 +753,7 @@ export async function syncModule(moduleName: SyncModuleName, creds: AccurateCred
         for await (const chunk of paginator) {
             if (chunk.data.length > 0) {
                 const catat = await mod.upsertPage(chunk.data);
+                if (moduleName === "customer") await lepasTerlindungi(chunk.data, tulisPelanggan(creds), "sync"); // tidak pernah melempar
                 for (const [tag, n] of Object.entries(catat ?? {})) tagTakDikenal[tag] = (tagTakDikenal[tag] ?? 0) + n;
                 totalRows += chunk.data.length;
                 for (const r of chunk.data) terlihat?.add(Number(r.id));
