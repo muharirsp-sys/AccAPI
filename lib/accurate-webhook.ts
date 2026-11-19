@@ -39,6 +39,20 @@ export function flattenCustomerIds(payload: unknown): number[] {
     return flattenEventIds(payload, "CUSTOMER", ["customerId", "id"]);
 }
 
+/** appKey amplop CUSTOMER per id ('' = disimpan orang di layar Accurate) — untuk log siapa yang menyimpan (lib/pelanggan-terlindungi). */
+export function appKeyPelanggan(payload: unknown): Map<number, string> {
+    const hasil = new Map<number, string>();
+    for (const envelope of (Array.isArray(payload) ? payload : [payload]) as Array<{ type?: string; appKey?: unknown; data?: Array<Record<string, unknown>> }>) {
+        if (envelope?.type !== "CUSTOMER") continue;
+        const appKey = typeof envelope.appKey === "string" ? envelope.appKey : "";
+        for (const record of envelope.data ?? []) {
+            const id = Number(record?.customerId ?? record?.id);
+            if (Number.isFinite(id) && id > 0) hasil.set(id, appKey);
+        }
+    }
+    return hasil;
+}
+
 /** Barang berubah (nama, satuan, status aktif). */
 export function flattenItemIds(payload: unknown): number[] {
     return flattenEventIds(payload, "ITEM", ["itemId", "id"]);

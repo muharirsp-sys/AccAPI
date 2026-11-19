@@ -94,6 +94,12 @@ test("pengamat: simpanan baru dihitung per menit; jawaban ulang tidak; peristiwa
     assert.deepEqual(ubah, [{ customerId: 1, customerNo: "C-1", lastUpdate: "13/11/2026 10:22:36", lama: L(true, 445000, true, 28), baru: L(true, 200000, true, 28), status: "baru" }]);
 });
 
+test("pengamat: simpanan toko terlindungi (alat luar + pelepas AccAPI, 19 Nov) tidak dihitung ke menit ramai", () => {
+    const rows = Array.from({ length: 24 }, (_, i) => baris(100 + i, "19/11/2026 09:18:" + String(10 + i), L(true, 1000, true, 28), "", i < 12 ? `C-IN0087-D${i}` : `C-IN0087-E${i}`));
+    const { menit } = amatiSimpanan([...rows, baris(1, "19/11/2026 09:18:40", L(true, 5000, true, 28), "", "C-BIASA-KN")], new Map(), new Map());
+    assert.equal(menit.get("19/11/2026 09:18"), 1);
+});
+
 test("pengamat: simpanan pemulih sendiri (berbalik persis dari pemulihan MANA PUN) = `sistem`, tidak dihitung ke menit ramai", () => {
     const lama = new Map<number, SimpananLama>([[1, { lastUpdate: "13/11/2026 10:22:36", limit: L(true, 200000, true, 28) }]]);
     const pulih = new Map([[1, [

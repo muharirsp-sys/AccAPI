@@ -6,10 +6,12 @@
  *   (`customerLimitAmount` / `customerLimitAmountValue`) dan batas umur piutang dalam hari (`customerLimitAge` /
  *   `customerLimitAgeValue`). Bukti: Pesanan Penjualan ALFAMART (C-AL0063) ditolak Accurate "melewati batas piutang".
  *   Mematikan batas tetap boleh. Hapus (`customer/delete.do`) sudah ditolak katalog Konsol (isCatalogWrite).
- * Caller: app/api/proxy/route.ts (tulis customer/save.do & bulk-save.do lewat Konsol), sebelum diteruskan.
- * Dependensi: tidak ada; pencarian kode dari id (GET customer/detail.do) disuntikkan pemanggil.
- * Main Functions: PELANGGAN_TERLINDUNGI, isPelangganTerlindungi, periksaPenutupanPelanggan.
- * Side Effects: tidak ada di modul ini.
+ *   Owner 19 Nov 2026 ("tetap lepas"): batas yang dicentang ulang di luar AccAPI dilepas lagi otomatis (lepasTerlindungi).
+ * Caller: app/api/proxy/route.ts (tulis customer/save.do & bulk-save.do lewat Konsol), sebelum diteruskan;
+ *   lib/sync.ts (lepasTerlindungi: webhook pelanggan + sync customer).
+ * Dependensi: tidak ada; pencarian kode dari id (GET customer/detail.do) dan penulis customer/save.do disuntikkan pemanggil.
+ * Main Functions: PELANGGAN_TERLINDUNGI, isPelangganTerlindungi, periksaPenutupanPelanggan, lepasTerlindungi.
+ * Side Effects: lepasTerlindungi menulis customer/save.do lewat penulis suntikan; selebihnya tidak ada.
  */
 
 export const PELANGGAN_TERLINDUNGI = [
@@ -115,4 +117,37 @@ export async function periksaPenutupanPelanggan(payload: unknown, cariKode: (id:
         }));
     }
     return { kode: [...kode], alasan: [...alasan], idTakTerbaca: [...idTakTerbaca] };
+}
+
+/**
+ * Owner 19 Nov 2026 ("tetap lepas"): sebuah alat di LUAR AccAPI (belum dikenal) mencentang ulang batas piutang/umur setiap 15 menit
+ * (:03/:18/:33/:48 WIB) — terbukti 18 & 19 Nov: ke-12 divisi C-IN0087 dicentang lagi +-5 menit sesudah dilepas, urut id, +-1,5 dtk
+ * per pelanggan, nilai lama. Penjaga proxy tidak menjangkau alat itu, jadi setiap kali AccAPI melihat toko terlindungi yang batasnya
+ * tercentang (webhook = hitungan detik; sync 4x sehari = cadangan), batasnya dilepas lagi: customer/save.do berisi id + 2 kolom aktif
+ * SAJA (nominal & hari dibiarkan, sama seperti 14 & 18 Nov). Simpanan ini memicu webhook yang membaca batas sudah lepas -> tidak
+ * berulang. Tidak pernah melempar; saklar darurat env LEPAS_TERLINDUNGI=mati. `asal` = untuk log (mis. appKey webhook penyimpan).
+ * ponytail: `suspended` tidak dibuka otomatis (alat itu hanya mencentang batas); tambahkan bila terbukti dinonaktifkan juga.
+ */
+export async function lepasTerlindungi(
+    rows: Rec[], tulis: (payload: Rec) => Promise<{ status: number; text: string }>, asal: string,
+): Promise<string[]> {
+    if (process.env.LEPAS_TERLINDUNGI === "mati") return [];
+    const dilepas: string[] = [];
+    for (const row of rows) {
+        const id = Number(row.id);
+        const no = String(row.customerNo ?? "");
+        if (!Number.isFinite(id) || id <= 0 || !isPelangganTerlindungi(no)) continue;
+        if (row.customerLimitAmount !== true && row.customerLimitAge !== true) continue;
+        try {
+            const r = await tulis({ id, customerLimitAmount: false, customerLimitAge: false });
+            let s: unknown;
+            try { s = (JSON.parse(r.text) as Rec)?.s; } catch { /* bukan JSON = gagal */ }
+            if (r.status < 200 || r.status >= 300 || s !== true) throw new Error(`save.do HTTP ${r.status}: ${r.text.slice(0, 200)}`);
+            dilepas.push(no);
+            console.warn(`[pelanggan-terlindungi] ${no}: batas dicentang lagi di luar AccAPI (${asal}) -> dilepas`);
+        } catch (e) {
+            console.error(`[pelanggan-terlindungi] ${no}: gagal melepas batas (${asal}): ${e instanceof Error ? e.message : e}`);
+        }
+    }
+    return dilepas;
 }

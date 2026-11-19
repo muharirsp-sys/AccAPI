@@ -341,6 +341,11 @@ UI: API Wrapper page (/api-wrapper)
          9 toko NKA/DC (C-IND051, C-IN0050, C-AL0063, C-AL0064, C-ALF052, C-IND080, C-IND086, C-IN0088, C-IN0087 [18 Nov] + varian divisi) tidak
          boleh suspended atau diberi customerLimitAmount[Value] / customerLimitAge[Value]; mematikan batas boleh. Baris ber-id
          dicari kodenya via GET customer/detail.do (4 bersamaan); tak terbaca = tolak. 403 PELANGGAN_TERLINDUNGI {sent:false}.
+         Owner 19 Nov 2026 ("tetap lepas"): alat LUAR AccAPI (belum dikenal) mencentang ulang batas tiap 15 mnt (:03/:18/:33/:48 WIB);
+         lib/sync (upsertMasterById customer = webhook, syncModule customer = cadangan) -> lepasTerlindungi: toko terlindungi yang
+         batasnya tercentang -> customer/save.do {id, customerLimitAmount:false, customerLimitAge:false} (nominal dibiarkan); log
+         `[pelanggan-terlindungi] … (webhook appKey <penyimpan>) -> dilepas`. Saklar env LEPAS_TERLINDUNGI=mati. Simpanan toko
+         terlindungi tidak dihitung ke limit_menit_simpan (menit ramai pemulih Hendra).
          Owner 17 Nov 2026 (lib/pelanggan-hendra): SEBELUM itu, pelanggan yang catatan (notes) Accurate-nya memuat "Hendra" =
          keputusan manual — tulis APA PUN ke pelanggan itu ditolak 403 PELANGGAN_HENDRA {sent:false}. Identitas dibaca dari bentuk
          datar payload (flattenPayload): SEMUA id + SEMUA customerNo/no/number (juga di samping id). id -> detail.do; kode ->
