@@ -1,5 +1,6 @@
 /**
- * Tujuan: Aturan tetap owner (13 Nov 2026): 8 toko NKA/DC tidak boleh "ditutup" di Accurate, di semua divisi
+ * Tujuan: Aturan tetap owner (13 Nov 2026; C-IN0087 INDOMARET PALOPO ditambah 18 Nov 2026): 9 toko NKA/DC tidak boleh
+ *   "ditutup" di Accurate, di semua divisi
  *   (kode dasar dan varian principal, mis. C-IND051-KN), meskipun tidak ada transaksi atau tercatat atas nama siapa pun.
  *   Ditutup = dinonaktifkan (`suspended`), atau diberi batas yang menahan pesanannya: batas total piutang
  *   (`customerLimitAmount` / `customerLimitAmountValue`) dan batas umur piutang dalam hari (`customerLimitAge` /
@@ -13,6 +14,7 @@
 
 export const PELANGGAN_TERLINDUNGI = [
     "C-IND051", "C-IN0050", "C-AL0063", "C-AL0064", "C-ALF052", "C-IND080", "C-IND086", "C-IN0088",
+    "C-IN0087", // owner 18 Nov 2026: "masih tertutup" — batas 12 divisi dimatikan hari itu
 ] as const;
 
 type Rec = Record<string, unknown>;

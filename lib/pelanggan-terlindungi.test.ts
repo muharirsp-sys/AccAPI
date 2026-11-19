@@ -11,8 +11,8 @@ const cek = (payload: unknown) => periksaPenutupanPelanggan(payload, cari);
 const kosong = { kode: [], alasan: [], idTakTerbaca: [] };
 
 test("daftar tepat 8 kode owner; varian divisi ikut, nomor lain tidak", () => {
-    assert.deepEqual([...PELANGGAN_TERLINDUNGI].sort(), ["C-AL0063", "C-AL0064", "C-ALF052", "C-IN0050", "C-IN0088", "C-IND051", "C-IND080", "C-IND086"]);
-    for (const k of ["C-IND051", " c-ind051 ", "C-IND051-KN", "C-IND051 RB", "C-IND051KN", "C-IN0088_CS"]) assert.equal(isPelangganTerlindungi(k), true, k);
+    assert.deepEqual([...PELANGGAN_TERLINDUNGI].sort(), ["C-AL0063", "C-AL0064", "C-ALF052", "C-IN0050", "C-IN0087", "C-IN0088", "C-IND051", "C-IND080", "C-IND086"]);
+    for (const k of ["C-IND051", " c-ind051 ", "C-IND051-KN", "C-IND051 RB", "C-IND051KN", "C-IN0088_CS", "C-IN0087-KN"]) assert.equal(isPelangganTerlindungi(k), true, k);
     for (const k of ["C-IND0510", "C-IND0801", "C-IND05", "C-ANE050", "", null, undefined]) assert.equal(isPelangganTerlindungi(k), false, String(k));
 });
 

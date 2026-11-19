@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
                 }, { status: 409 });
             }
         }
-        // Owner 13 Nov 2026: 8 toko NKA/DC tidak boleh dinonaktifkan atau diberi batas piutang / batas umur piutang
+        // Owner 13 Nov 2026: 9 toko NKA/DC tidak boleh dinonaktifkan atau diberi batas piutang / batas umur piutang
         // (lib/pelanggan-terlindungi). Dinilai SETELAH izin, katalog, dan sesi (id dicari lewat customer/detail.do), SEBELUM kirim.
         if (isCustomerWrite(endpointPath)) {
             const cari = cariPelangganAccurate({ sessionHost, sessionId, accessToken: apiKey });
