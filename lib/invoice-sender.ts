@@ -3,12 +3,15 @@
  * Caller: app/api/cron/post-invoices (terjadwal, bergerbang env) dan
  *         app/api/invoice-outbox/send (tombol Kirim, bergerbang izin + sesi penekannya).
  * Dependensi: db invoice_outbox + invoice_outbox_event, lib/accurate-invoice-write (status + identitas),
- *   lib/invoice-outbox-event (riwayat append-only).
+ *   lib/invoice-outbox-event (riwayat append-only), lib/gt-hitlist-npl (nota hit list tidak menahan order, owner 19 Nov 2026).
  * Main Functions: sendQueuedInvoices, sapuSending, cekSesiBacaSaja, rencanaKirim, pratinjauKirim, cekTanggalFaktur,
  *   orderIdsDariQuery.
  * Side Effects: MENULIS FAKTUR DI ACCURATE dan mengubah status antrean. Tidak bisa dibatalkan.
  *   Tiap klaim dan tiap hasil tercatat di invoice_outbox_event DALAM pernyataan SQL yang sama
  *   (CTE) dengan perubahan statusnya: status HTTP + potongan jawaban + pengirim (BL-17 + R6).
+ *   Nota GT Hit List yang ditolak HANYA karena batas umur: centang batas umur pelanggan dilepas
+ *   sementara (customer/save.do), faktur dikirim sekali lagi dalam klaim yang sama, lalu dipulihkan;
+ *   jejaknya di detail event hasil (`gt_hitlist`).
  *
  * Dipisah dari route-nya supaya dua pintu masuk memakai jalur kirim yang SAMA PERSIS. Kalau
  * masing-masing menyalin logikanya, satu pintu akan menyimpang tanpa ada yang tahu — dan
@@ -35,6 +38,7 @@ import { SAPU_SETELAH_MENIT, barisPersenRupiah, classifySaveResponse, nextOutbox
 import { refreshRealization } from "@/lib/program-realization-store";
 import { kodeGalat, potongJawaban } from "@/lib/invoice-outbox-event";
 import { nilaiPayload } from "@/lib/invoice-verify";
+import { BATAS_WAKTU_LEPAS_MS, BATAS_WAKTU_PERIKSA_MS, MAKS_PERIKSA_PER_KIRIM, gtHitlistMati, lolosBatasPiutang, notaGtHitlist, pelangganAccurate, pelangganHitlist, tolakBatas, type HasilLolos } from "@/lib/gt-hitlist-npl";
 
 export type SenderSession = {
     sessionHost: string;
@@ -48,9 +52,15 @@ export type SendResult = {
     accurateId?: string;
     number?: string;
     error?: string;
+    /** Outlet GT Hit List yang ditolak batas piutang: batas dilepas sementara atau tidak, dan sebabnya (lib/gt-hitlist-npl). */
+    catatan?: string;
 };
 
-export type SendSummary = { results: SendResult[]; sent: number; unknown: number; rejected: number; error?: string };
+export type SendSummary = {
+    results: SendResult[]; sent: number; unknown: number; rejected: number; error?: string;
+    /** Pelonggaran GT Hit List yang batas pelanggannya GAGAL dikembalikan (lib/gt-hitlist-npl): kiriman berhenti, petugas mencentang ulang. */
+    gagalPulih?: number;
+};
 
 export { SAPU_SETELAH_MENIT };
 
@@ -221,8 +231,29 @@ async function sebabDilewati(db: NodePgDatabase, row: BarisAntrean): Promise<str
     }
 }
 
+/**
+ * Pelanggan yang batasnya GAGAL dikembalikan pelonggaran GT Hit List dalam 24 jam terakhir (detail event `gt_hitlist`, tanpa join:
+ * baris antrean bisa sudah dibuang) -> batas mana yang dilepas. Faktur mereka baru dikirim lagi setelah Accurate terbaca tercentang.
+ */
+async function pelangganBelumPulih(db: NodePgDatabase, customerNos: string[]): Promise<Map<string, { umur: boolean; nominal: boolean }>> {
+    const nos = [...new Set(customerNos.map((no) => String(no ?? "").trim().toUpperCase()).filter(Boolean))];
+    if (!nos.length) return new Map();
+    const hasil = await db.execute(sql`
+        SELECT upper(trim(detail->'gt_hitlist'->>'pelanggan')) AS no,
+               bool_or(coalesce(detail->'gt_hitlist'->'lepas'->>'umur', 'true') = 'true') AS umur,
+               bool_or(coalesce(detail->'gt_hitlist'->'lepas'->>'nominal', 'false') = 'true') AS nominal
+        FROM invoice_outbox_event
+        WHERE created_at > now() - interval '24 hours' AND detail->'gt_hitlist'->>'dipulihkan' = 'false'
+          AND upper(trim(detail->'gt_hitlist'->>'pelanggan')) IN (${sql.join(nos.map((no) => sql`${no}`), sql`, `)})
+        GROUP BY 1`);
+    return new Map(hasil.rows.map((row) => {
+        const r = row as { no: unknown; umur: unknown; nominal: unknown };
+        return [String(r.no), { umur: r.umur === true, nominal: r.nominal === true }];
+    }));
+}
+
 /** Ketergantungan yang bisa diganti uji (Postgres evaluasi, simulator) — produksi memakai bawaan. */
-export type SenderDeps = { db?: NodePgDatabase; refresh?: typeof refreshRealization };
+export type SenderDeps = { db?: NodePgDatabase; refresh?: typeof refreshRealization; lolos?: typeof lolosBatasPiutang };
 
 /**
  * Jawaban cron atas hasil kirim. Penolakan SEBELUM kirim (`error`) wajib diteruskan: satu baris
@@ -231,7 +262,7 @@ export type SenderDeps = { db?: NodePgDatabase; refresh?: typeof refreshRealizat
  */
 export function jawabanCron(outcome: SendSummary): { status: number; body: Record<string, unknown> } {
     if (outcome.error) return { status: 409, body: { ok: false, error: outcome.error, sent: 0, unknown: 0, results: [] } };
-    return { status: 200, body: { ok: outcome.unknown === 0, sent: outcome.sent, unknown: outcome.unknown, results: outcome.results } };
+    return { status: 200, body: { ok: outcome.unknown === 0 && !outcome.gagalPulih, sent: outcome.sent, unknown: outcome.unknown, results: outcome.results } };
 }
 
 /**
@@ -262,7 +293,23 @@ export async function sendQueuedInvoices(
     if (sesiMati) return { results: [], sent: 0, unknown: 0, rejected: 0, error: sesiMati };
 
     const results: SendResult[] = [];
+    let diperiksa = 0;
+    const mulai = Date.now();
+    const belumPulih = await pelangganBelumPulih(db, siap.map(({ payload }) => payload.customerNo));
     for (const { row, payload } of siap) {
+        // Batas pelanggan ini gagal dikembalikan di kiriman sebelumnya: selama Accurate masih membacanya tidak tercentang, fakturnya
+        // (nota apa pun) tidak dikirim — tanpa ini nota lain ikut lewat batas. Tidak diklaim = tetap antre.
+        const no = String(payload.customerNo ?? "").trim().toUpperCase();
+        const lepasLama = belumPulih.get(no);
+        if (lepasLama) {
+            const cek = await pelangganAccurate(session).baca(no).catch(() => null);
+            if (!cek || (lepasLama.umur && !cek.umurAktif) || (lepasLama.nominal && !cek.nominalAktif)) {
+                results.push({ orderId: row.orderId, state: "dilewati", error: "Batas hari / limit pelanggan ini gagal dikembalikan pada "
+                    + "kiriman GT Hit List sebelumnya dan masih belum tercentang di Accurate. Centang ulang di Accurate lalu Kirim lagi." });
+                continue;
+            }
+            belumPulih.delete(no);
+        }
         // Klaim dulu: `sending` menandai bahwa request MUNGKIN sudah terkirim. Payload bertanggal
         // pilihan disimpan DI KLAIM YANG SAMA, jadi yang tercatat = yang benar-benar dikirim.
         // Event `kirim` (pengirim + percobaan ke-n) ikut dalam SATU pernyataan: klaim tanpa jejak
@@ -290,32 +337,47 @@ export async function sendQueuedInvoices(
         const diklaim = (claimed.rows[0] as { payload: unknown }).payload;
         const kirimPayload = (typeof diklaim === "string" ? JSON.parse(diklaim) : diklaim) as InvoicePayload;
 
-        let outcome: SendOutcome;
-        let httpStatus: number | null = null;
-        let excerpt = "";
-        let errorCode = "";
-        try {
-            const response = await fetch(`${session.sessionHost}/accurate/api/sales-invoice/save.do`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                    Authorization: `Bearer ${session.accessToken}`,
-                    "X-Session-ID": session.sessionId,
-                },
-                body: JSON.stringify(kirimPayload),
-                signal: AbortSignal.timeout(60_000),
-            });
-            httpStatus = response.status;
-            const text = await response.text();
-            excerpt = potongJawaban(text);
-            // Non-JSON, null, JSON gateway, 5xx, 401/403/429, sukses tanpa id -> tidak pasti (AM-015/016, D-07).
-            outcome = classifySaveResponse(response.status, text);
-        } catch (error) {
-            // Timeout atau koneksi putus: fakturnya MUNGKIN sudah terbentuk di Accurate.
-            errorCode = kodeGalat(error);
-            outcome = { kind: "no_answer", message: error instanceof Error ? error.message : "tanpa jawaban" };
+        const kirimSekali = async (): Promise<{ outcome: SendOutcome; httpStatus: number | null; excerpt: string; errorCode: string }> => {
+            try {
+                const response = await fetch(`${session.sessionHost}/accurate/api/sales-invoice/save.do`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Accept: "application/json",
+                        Authorization: `Bearer ${session.accessToken}`,
+                        "X-Session-ID": session.sessionId,
+                    },
+                    body: JSON.stringify(kirimPayload),
+                    signal: AbortSignal.timeout(60_000),
+                });
+                const text = await response.text();
+                // Non-JSON, null, JSON gateway, 5xx, 401/403/429, sukses tanpa id -> tidak pasti (AM-015/016, D-07).
+                return { outcome: classifySaveResponse(response.status, text), httpStatus: response.status, excerpt: potongJawaban(text), errorCode: "" };
+            } catch (error) {
+                // Timeout atau koneksi putus: fakturnya MUNGKIN sudah terbentuk di Accurate.
+                return {
+                    outcome: { kind: "no_answer", message: error instanceof Error ? error.message : "tanpa jawaban" },
+                    httpStatus: null, excerpt: "", errorCode: kodeGalat(error),
+                };
+            }
+        };
+        let kirim = await kirimSekali();
+        // Owner 19 Nov 2026: nota hit list belum lunas tidak boleh menahan order outlet hit list (batas hari / limit) — lib/gt-hitlist-npl.
+        let gtHitlist: Record<string, unknown> | null = null;
+        const tolakPertama = kirim.outcome.kind === "rejected" ? kirim.outcome.message : "";
+        const tolak = tolakPertama ? tolakBatas(tolakPertama) : null;
+        if (tolak && !gtHitlistMati() && pelangganHitlist(kirimPayload.customerNo)) {
+            const order = { customerNo: kirimPayload.customerNo, hitlist: notaGtHitlist(kirimPayload), total: nilaiPayload(kirimPayload).total };
+            const h: HasilLolos<typeof kirim> = diperiksa++ >= MAKS_PERIKSA_PER_KIRIM || Date.now() - mulai > BATAS_WAKTU_PERIKSA_MS
+                ? { dicoba: false, alasan: `batas pemeriksaan kiriman ini tercapai (${MAKS_PERIKSA_PER_KIRIM} order / ${BATAS_WAKTU_PERIKSA_MS / 60_000} menit); Antre ulang lalu Kirim lagi` }
+                : await (deps.lolos ?? lolosBatasPiutang)(order, tolak,
+                    { ...pelangganAccurate(session), kirimUlang: kirimSekali, tenggatLepas: mulai + BATAS_WAKTU_LEPAS_MS });
+            gtHitlist = { pelanggan: kirimPayload.customerNo, nota_hitlist: order.hitlist, total_order: order.total, dicoba: h.dicoba,
+                alasan: h.alasan, tolak_pertama: tolakPertama, lepas: h.lepas ?? null, asal: h.asal ?? null,
+                dipulihkan: h.dipulihkan ?? null, galat_pulih: h.galatPulih ?? "" };
+            if (h.hasil) kirim = h.hasil;
         }
+        const { outcome, httpStatus, excerpt, errorCode } = kirim;
 
         const state = nextOutboxState("sending", outcome);
         const posted = outcome.kind === "posted" ? outcome : null;
@@ -338,7 +400,8 @@ export async function sendQueuedInvoices(
                 SELECT ${row.orderId}, ${state}, 'sending', ${state}, ${options.actor}, ${httpStatus}::int, ${excerpt},
                        ${errorCode}, ${message.slice(0, 1000)},
                        jsonb_build_object('baris_diperbarui', EXISTS (SELECT 1 FROM u),
-                           'accurate_id', ${posted?.id ?? ""}::text, 'number', ${posted?.number ?? ""}::text)`);
+                           'accurate_id', ${posted?.id ?? ""}::text, 'number', ${posted?.number ?? ""}::text)
+                       || ${JSON.stringify(gtHitlist ? { gt_hitlist: gtHitlist } : {})}::jsonb`);
         } catch (error) {
             // Baris tetap `sending` -> penyapu menjadikannya TIDAK PASTI (bukan diam-diam aman dikirim ulang).
             console.error("[invoice-sender] hasil kirim tidak tercatat, baris tetap sending:", row.orderId, error);
@@ -356,9 +419,13 @@ export async function sendQueuedInvoices(
         results.push({
             orderId: row.orderId, state,
             ...(posted ? { accurateId: posted.id, number: posted.number } : { error: message.slice(0, 200) }),
+            ...(gtHitlist ? { catatan: `GT Hit List: ${String(gtHitlist.alasan)}${gtHitlist.dipulihkan === false
+                ? ` — BATAS GAGAL DIPULIHKAN (${String(gtHitlist.galat_pulih)})` : ""}` } : {}),
         });
         // Status TIDAK PASTI menghentikan batch.
         if (state === "unknown") break;
+        // Batas gagal dikembalikan: faktur berikutnya (bisa pelanggan yang sama, nota bukan hit list) tidak boleh ikut lewat.
+        if (gtHitlist?.dipulihkan === false) break;
     }
 
     return {
@@ -366,5 +433,6 @@ export async function sendQueuedInvoices(
         sent: results.filter((item) => item.state === "posted").length,
         unknown: results.filter((item) => item.state === "unknown").length,
         rejected: results.filter((item) => item.state === "rejected").length,
+        gagalPulih: results.filter((item) => item.catatan?.includes("BATAS GAGAL DIPULIHKAN")).length,
     };
 }

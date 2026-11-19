@@ -123,13 +123,14 @@ export async function POST(request: NextRequest) {
         .from(invoiceOutbox).where(inArray(invoiceOutbox.state, ["queued"]));
 
     return NextResponse.json({
-        ok: outcome.unknown === 0 && mismatched === 0,
+        ok: outcome.unknown === 0 && mismatched === 0 && !outcome.gagalPulih,
         sent: outcome.sent,
         verifiedOk: clean,
         mismatched,
         unchecked,
         rejected: outcome.rejected,
         unknown: outcome.unknown,
+        gagalPulih: outcome.gagalPulih ?? 0,
         remaining: stillQueued.length,
         results: outcome.results,
         verified,

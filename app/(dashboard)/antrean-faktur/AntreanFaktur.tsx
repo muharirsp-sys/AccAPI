@@ -71,7 +71,9 @@ function PanelKiriman({ k, onClose }: { k: Kiriman; onClose: () => void }) {
     const dilewati = h.results.filter((r) => r.state === "dilewati").length;
     const urut = [...k.urutan.map((o) => ({ orderId: o.orderId, so: o.soNo ?? o.orderId })),
         ...h.results.filter((r) => !k.urutan.some((o) => o.orderId === r.orderId)).map((r) => ({ orderId: r.orderId, so: r.orderId }))];
-    const [tone, judul]: [Exclude<Tone, "neu">, string] = h.unknown > 0 ? ["warn", "Pengiriman berhenti: ada faktur yang hasilnya tidak pasti."]
+    const [tone, judul]: [Exclude<Tone, "neu">, string] = h.gagalPulih
+        ? ["neg", "Pengiriman berhenti: batas hari / limit pelanggan GT Hit List gagal dikembalikan. Centang ulang di Accurate (lihat catatan baris)."]
+        : h.unknown > 0 ? ["warn", "Pengiriman berhenti: ada faktur yang hasilnya tidak pasti."]
         : h.mismatched > 0 ? ["neg", "Ada faktur terkirim yang isinya berselisih dengan yang dikirim."]
             : h.rejected > 0 ? ["warn", "Sebagian ditolak Accurate. Perbaiki penyebabnya lalu Antre ulang."]
             : h.results.length === 0 ? ["warn", "Tidak ada faktur yang terkirim."]
@@ -89,9 +91,11 @@ function PanelKiriman({ k, onClose }: { k: Kiriman; onClose: () => void }) {
                 <ul className="fi-sect-in" style={{ padding: 0, margin: 0, listStyle: "none" }} aria-label="Hasil per faktur">
                     {urut.map((o) => {
                         const x = hasilOrder(k, o.orderId);
+                        const catatan = h.results.find((r) => r.orderId === o.orderId)?.catatan;
                         return (
                             <li key={o.orderId} className="fi-btnrow">
-                                <span className="fi-mono">{o.so}</span><StatusBadge tone={x.tone}>{x.label}</StatusBadge><span className="fi-small">{x.teks}</span>
+                                <span className="fi-mono">{o.so}</span><StatusBadge tone={x.tone}>{x.label}</StatusBadge>
+                                <span className="fi-small">{x.teks}{catatan ? ` · ${catatan}` : ""}</span>
                             </li>
                         );
                     })}

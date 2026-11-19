@@ -380,6 +380,16 @@ Antrean Faktur / outbox sales-invoice (S6-0d, DRAFT — zona tulis Accurate):
      -> per baris: CTE klaim queued->sending + event `kirim` (aktor) -> save.do -> classifySaveResponse:
         {s:true,r.id bulat positif}=posted; {s:false,d:[teks…]} non-5xx (bukan 401/403/429) = rejected; lainnya = unknown
         (klaim mensyaratkan payload yang diperiksa; yang dikirim = payload RETURNING klaim)
+     -> owner 19 Nov 2026 (lib/gt-hitlist-npl): rejected HANYA batas piutang (tolakBatas: umur "lebih dari N hari" dan/atau nominal
+        "Total piutang dan pesanan") + pelanggan outlet hit list (-KN) -> lolosBatasPiutang: customer list/detail.do + sales-invoice
+        list.do (outstandingFilter) + detail.do tiap nota (nota hit list = semua baris SKU hit list) + sales-order list.do status
+        NOT_EQUAL CLOSED (jeda baca 200 ms; Accurate maks 8 req/dtk per token) -> putuskan (order apa pun): nota hit list belum lunas
+        tidak dihitung; tidak boleh ada nota BUKAN hit list belum lunas >= N hari; piutang bukan hit list + pesanan terbuka + order
+        <= limit; angka/halaman tak terbaca = ditahan -> customer/save.do lepas centang yang disebut Accurate -> save.do faktur SEKALI lagi ->
+        pulihkan (baca dulu; tulis centang + nilai asal, maks 2x); Hendra/terlindungi tidak disentuh; maks 10 pemeriksaan / 4 menit per
+        Kirim/cron, jeda 7 dtk antar-pelepasan (ambang impor massal Hendra); pemulihan gagal = kiriman berhenti + `gagalPulih`
+        (ok:false) + catatan di panel hasil, kiriman berikutnya melewati pelanggan itu (24 jam) selama Accurate belum tercentang;
+        jejak `gt_hitlist` di detail event; env GT_HITLIST_LOLOS=mati
      -> CTE hasil (WHERE state='sending') + event (status HTTP, potongan ≤ 500, kode galat)
   pratinjau BL-39: GET /api/invoice-outbox/send/preview -> pratinjauKirim (rencanaKirim yang sama + nilaiPayload)
   antre ulang/buang: POST /api/invoice-outbox -> aksiAntrean: resend = cariFaktur dulu (ketemu -> posted, tidak dikirim;
