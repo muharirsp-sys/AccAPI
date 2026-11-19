@@ -41,7 +41,9 @@ type Pratinjau = {
 };
 export type HasilKirim = {
     ok: boolean; sent: number; verifiedOk: number; mismatched: number; unchecked: number; rejected: number; unknown: number; remaining: number;
-    results: { orderId: string; state: string; accurateId?: string; number?: string; error?: string }[];
+    /** Pelonggaran GT Hit List yang batas pelanggannya gagal dikembalikan (kiriman berhenti di situ). */
+    gagalPulih?: number;
+    results: { orderId: string; state: string; accurateId?: string; number?: string; error?: string; catatan?: string }[];
     verified: { orderId: string; status: "cocok" | "selisih" | "tak-terperiksa"; reason?: string; invoiceNumber?: string }[];
     sentBy: string;
 };
