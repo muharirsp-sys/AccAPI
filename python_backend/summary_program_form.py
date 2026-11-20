@@ -147,12 +147,33 @@ def nama_variant(b):
     return " ".join(x for x in [" & ".join(dict.fromkeys(subs)), judul_kata(v)] if x)
 
 
-def ringkas_daftar(teks, subs, batas=180):
-    """Daftar variant terlalu panjang -> sub-kelompok + 'all variant'; kode tetap lengkap di JSON."""
-    if len(teks) <= batas:
-        return teks
-    subs = list(dict.fromkeys(judul_kata(s) for s in subs if s))
-    return (", ".join(subs) + " - all variant") if subs else f"All variant ({len(teks.split(', '))} varian)"
+def teks_variant(lns):
+    return gabung(nama_variant(x["barang"]) for x in lns)
+
+
+def teks_gramasi(lns):
+    return gabung(re.sub(r"(?i)(\d)gr\b", r"\1GR", x["barang"]["gramasi"] or "") for x in lns)
+
+
+def potong(lns, batas=180):
+    """Baris gabungan yang daftar variant/gramasinya > batas huruf -> beberapa baris: per sub-kelompok, lalu potongan <= batas.
+    Daftar selalu ditulis utuh. Dulu diringkas jadi '<sub> - all variant' / 'All gramasi'; pengguna 20 Nov 2026 (Natur Online
+    26110002, 9 SKU) menemukan Form mengklaim semua varian padahal rule hanya SKU tertentu. Batas menjaga satu baris muat satu halaman.
+    ponytail: batas = jumlah huruf, bukan tinggi sel terukur; ukur Paragraph.wrap bila kolom Variant/Gramasi diubah lebarnya."""
+    muat = lambda xs: len(teks_variant(xs)) <= batas and len(teks_gramasi(xs)) <= batas
+    if muat(lns):
+        return [lns]
+    per_sub, out = {}, []
+    for x in lns:
+        per_sub.setdefault(tuple(s for _, s in merek(x["barang"]["kelompok_barang"])), []).append(x)
+    for xs in per_sub.values():
+        out.append([xs[0]])
+        for x in xs[1:]:
+            if muat(out[-1] + [x]):
+                out[-1].append(x)
+            else:
+                out.append([x])
+    return out
 
 
 def memuat(sel, t):  # sel = satu teks atau beberapa teks lapis digabung " + "
@@ -189,11 +210,9 @@ def baris_seksi(ds, urut_master):
     rows = []
     for (kel, vec), lns in grup.items():
         lns.sort(key=lambda x: min((urut_master.get(k, 1e9) for k in x["barang"]["kode_barang"]), default=1e9))
-        gram = gabung(re.sub(r"(?i)(\d)gr\b", r"\1GR", x["barang"]["gramasi"] or "") for x in lns)
-        rows.append({"kelompok": kel, "vec": vec, "rules": [rk for x in lns for rk in x["rules"]],
-                     "variant": ringkas_daftar(gabung(nama_variant(x["barang"]) for x in lns),
-                                               [s for x in lns for _, s in merek(x["barang"]["kelompok_barang"])]),
-                     "gramasi": gram if len(gram.split(", ")) <= 5 else "All gramasi"})
+        for bag in potong(lns):
+            rows.append({"kelompok": kel, "vec": vec, "rules": [rk for x in bag for rk in x["rules"]],
+                         "variant": teks_variant(bag), "gramasi": teks_gramasi(bag)})
     ids = [r["rule_id"] for row in rows for r, _ in row["rules"]]
     if Counter(ids) != Counter(r["rule_id"] for r, _, _ in ds["rules"]):
         raise ValueError(f"{ds['id']}: rule tidak masuk tepat satu baris tampilan")

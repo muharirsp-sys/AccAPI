@@ -199,7 +199,9 @@ Data rule TIDAK diubah untuk tampilan; yang disusun ulang hanya letak sel. Setia
   "All variant"). " & " di dalam nama kelompok bukan pemisah merek ("PIATTOS - BIG & CRISPY").
   Merek yang sama muncul dengan dan tanpa sub-kelompok + variant "All variant" ("NDB, NDB - GURIMI") -> Variant
   "All variant, termasuk Gurimi" (bagian tanpa sub = semua varian merek itu; jangan cetak sub-nya saja).
-  Daftar variant > 180 karakter -> sub-kelompok + "all variant"; > 5 gramasi -> "All gramasi". Kode tetap lengkap di data.
+  Daftar variant/gramasi selalu ditulis utuh; "all variant"/"All gramasi" hanya bila data rule memang begitu (pengguna
+  20 Nov 2026, Natur Online 26110002). Baris gabungan > 180 karakter dipecah per sub-kelompok (lalu per potongan <= 180)
+  agar satu baris muat satu halaman; Kelompok yang sama tetap di-merge.
 - "N+M (CR x%)" dicetak "N+M"; nilai CR masuk kolom Update keterangan ("CR paket: 3+1 = 25% · ...").
 - Merge sel kelompok_barang yang sama dan berurutan.
 - TIDAK ADA baris catatan di bawah seksi/blok (owner 29 Okt). Catatan seksi, legenda CR dan flag masuk kolom

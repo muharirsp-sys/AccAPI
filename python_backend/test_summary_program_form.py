@@ -56,4 +56,43 @@ with fitz.open(stream=f.form_pdf([(hijau, {})], date(2026, 11, 10)), filetype="p
     t = " ".join(d[0].get_text().split())
 assert "BEBAN PRINCIPLE & DANA MARKETING / SDS / SELMAR (HIJAU)" in t and "(ON PRINCIPLE HIJAU)" in t, t[:300]
 assert "Operational Manager" in t and "Direktur" not in t
-print("summary_program_form ok")
+
+
+def test_daftar_panjang_tidak_jadi_all_variant():
+    """Pengguna 20 Nov 2026, Gondowangi PROID-TP/ONLINE/26110002 Existing Outlet: 9 SKU Natur 24+1 tercetak
+    'Cond, Hair Tonic, H.recovery, H.vit, SHMP - all variant | All gramasi' (daftar gabungan > 180 huruf). Form hanya boleh
+    menulis all variant / all gramasi bila data rule memang begitu; daftar panjang dipecah per sub-kelompok, tidak diringkas."""
+    natur = [("19013010165000", "COND", "ALOE VERA", "165ML"), (None, "COND", "ARGAN OIL & OLIVE OIL", "160ML"),
+             ("19012020090000", "HAIR TONIC", "GINSENG", "90ML"), ("19016010060000", "H.RECOVERY", "A.VERA OIL", "60ML"),
+             ("19014020080000N", "H.VIT", "ARGAN OIL&OLIVE OIL", "80ML"), ("19011040140000", "SHMP", "ARGAN OLIVE OIL", "140ML"),
+             ("19011030140000", "SHMP", "ANTI DANDRUFF", "140ML"), ("19011050140000", "SHMP", "MORINGA", "140ML"),
+             ("19011020270000", "SHMP", "GINSENG EXT", "270ML")]
+    vinda = [(f"V{i:02d}", None, f"TISU WAJAH VARIAN PANJANG NOMOR {i}", f"{i}0SHEET") for i in range(1, 21)]  # tanpa sub-kelompok
+    d = doc()
+    d["flags"] = []
+    s = d["programs"][0]["sections"][0]
+    s["kolom"] = s["kolom"][:1]
+    d["item_rules"] = []
+    for i, (kode, sub, var, gram) in enumerate(natur + vinda + [("N99", None, "ALL VARIANT", "All gramasi")]):
+        r = rule(f"N{i}", "P1-S1", "P1-S1-K1", "12+1" if kode == "N99" else "24+1", kode=(kode,) if kode else ())
+        nama = "VINDA" if (kode or "").startswith("V") else "NATUR"
+        r["barang"].update(kelompok_barang=f"{nama} - {sub}" if sub else nama, variant=var, gramasi=gram, nama_di_surat=f"{nama} {var}")
+        d["item_rules"].append(r)
+    rows = f.baris_seksi(f.susun(d)[0][1][0], {})
+    teks = [(row["variant"], row["gramasi"]) for row in rows]
+    klaim = [(v, g) for v, g in teks if "all variant" in v.lower() or "all gramasi" in g.lower()]
+    assert klaim == [("All variant", "All gramasi")], teks                                       # hanya rule yang datanya 'all'
+    semua = " | ".join(v + " | " + g for v, g in teks)
+    for _, _, var, gram in natur + vinda:
+        assert f.judul_kata(var) in semua and gram in semua, (var, teks)                         # tiap SKU tertulis
+    assert all(len(v) <= 180 and len(g) <= 180 for v, g in teks), teks                          # satu baris tetap pendek
+    assert [row["kelompok"] for row in rows][:5] == ["NATUR"] * 5, teks                         # Natur: 5 sub-kelompok -> 5 baris
+    assert sum(row["kelompok"] == "VINDA" for row in rows) > 1, teks                             # tanpa sub: dipotong, tak diringkas
+    with fitz.open(stream=f.form_pdf([(d, {})], date(2026, 11, 20)), filetype="pdf") as pdf:
+        t = " ".join(" ".join(p.get_text().split()) for p in pdf)
+    assert t.count("All variant") == t.count("All gramasi") == 1 and "Anti Dandruff" in t and "270ML" in t, t[:600]
+
+
+if __name__ == "__main__":
+    test_daftar_panjang_tidak_jadi_all_variant()
+    print("summary_program_form ok")
