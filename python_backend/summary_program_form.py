@@ -10,7 +10,9 @@ punya browser, jadi tata letaknya digambar ulang dengan ReportLab:
   HIJAU principal + dana marketing / SDS / Selmar tanpa beban distributor;
 - yang menyetujui: Operational Manager bila COKLAT/HIJAU, Direktur bila ada beban distributor (PINK/MERAH);
 - satu blok program tidak dipotong antar halaman bila muat; tanda tangan ikut blok terakhir;
-- catatan seksi, legenda CR, dan peringatan masuk kolom Update keterangan (bukan baris di bawah seksi);
+- catatan seksi dan legenda CR masuk kolom Update keterangan (bukan baris di bawah seksi);
+- hanya isi surat: Form dicetak setelah semuanya jelas, jadi flag kritis/perlu_cek tidak dicetak (tetap di JSON/editor) dan
+  daftar outlet tanpa status unggah (pengguna 20 Nov 2026);
 - teks kiri/kanan yang lebih tinggi meregangkan baris barang (tanpa ruang kosong di bawah blok).
 """
 import io
@@ -31,7 +33,6 @@ from reportlab.platypus import BaseDocTemplate, Frame, KeepTogether, PageTemplat
 BULAN = "JAN FEB MAR APR MEI JUN JUL AGT SEP OKT NOV DES".split()
 BULAN_PANJANG = "JANUARI FEBRUARI MARET APRIL MEI JUNI JULI AGUSTUS SEPTEMBER OKTOBER NOVEMBER DESEMBER".split()
 SUB = 60  # area benefit = 60 sub-kolom, habis dibagi 1..6 kolom ketentuan
-KRITIS = ("kritis", "perlu_cek")
 WARNA = {"COKLAT": "#d2b48c", "PINK": "#f4b8c8", "MERAH": "#e88080", "HIJAU": "#a9d4a0"}
 W_KIRI, W_BEN, W_KANAN = [2.4, 6.4, 6.4, 3.2, 5.4, 4.6, 7.0, 8.0, 4.2], 32.4, [10.0, 10.0]  # % lebar, TEMPLATE hal. 14
 HAL = landscape(A4)
@@ -40,7 +41,7 @@ LEBAR = HAL[0] - KIRI - KANAN
 LEBAR_KOLOM = [LEBAR * w / 100 for w in W_KIRI] + [LEBAR * W_BEN / 100 / SUB] * SUB + [LEBAR * w / 100 for w in W_KANAN]
 NK = len(LEBAR_KOLOM)  # 71
 B0, B1 = len(W_KIRI), len(W_KIRI) + SUB  # kolom benefit = B0..B1-1
-GRID, ABU, KUNING = colors.HexColor("#808080"), colors.HexColor("#e6e6e6"), colors.HexColor("#fff2cc")
+GRID, ABU = colors.HexColor("#808080"), colors.HexColor("#e6e6e6")
 PAD = 2.0
 
 
@@ -297,7 +298,7 @@ def meta_blok(progs):
         o = p["outlet"]
         if o["tipe"] == "tanpa_list":
             return "Tanpa list"
-        return f"Hanya list ({len(o['kode_outlet'])} toko)" if o["kode_outlet"] else "Hanya list (belum diunggah)"
+        return f"Hanya list ({len(o['kode_outlet'])} toko)" if o["kode_outlet"] else "Hanya list"
     tipe = Counter(outlet_teks(p) for p in progs).most_common(1)[0][0]
     beda = [f"{kepala(p['sections'][0]['label'])}: {outlet_teks(p).lower()}" for p in progs if p["sections"] and outlet_teks(p) != tipe]
     pers = list(dict.fromkeys(rentang(p["periode"]["mulai"], p["periode"]["selesai"], ringkas=True) or "TIDAK TERCANTUM" for p in progs))
@@ -340,12 +341,12 @@ def _tinggi(sel, c0, c1):
     return (sel.wrap(_lebar(c0, c1) - 2 * PAD, 10000)[1] if isinstance(sel, Paragraph) else 0) + 2 * PAD
 
 
-def _blok_tabel(progs, unit, urut_master, kuning_rule, catatan_flag, nomor):
+def _blok_tabel(progs, unit, urut_master, nomor):
     """Satu blok program -> Table 71 kolom. Sel kiri (surat..periode) dan kanan (syarat, keterangan) merentang seluruh baris blok."""
     rows, span, gaya_t, item = [], [], [], []
     catatan = []
     for ds in unit:
-        kol, n = [k for k, _ in ds["kolom"]], len(ds["kolom"])
+        n = len(ds["kolom"])
         if not 1 <= n <= 6:
             raise ValueError(f"{ds['id']}: {n} kolom ketentuan (maks. 6)")
         w = SUB // n
@@ -373,26 +374,20 @@ def _blok_tabel(progs, unit, urut_master, kuning_rule, catatan_flag, nomor):
                 if lagi > 1:
                     span.append(((6, ri), (6, ri + lagi - 1)))
             baris[7], baris[8] = P(e(row["variant"])), P(e(row["gramasi"]), rata="CENTER")
-            kuning = {k for r, k in row["rules"] if r["rule_id"] in kuning_rule}
             vec = []
             for v in row["vec"]:
                 m = CR.match(v or "")
                 if m:
                     cr.setdefault(m[1], m[2])
                 vec.append(m[1] if m else v)
-            isi = lambda v, ks: e(v if v is not None else "-") + (" (!)" if kuning & ks else "")
             uk = 6.1 if n >= 5 else 6.5
             if n > 1 and vec[0] is not None and len(set(vec)) == 1:  # benefit sama di semua kolom -> satu sel
-                baris[B0] = P(isi(vec[0], set(kol)), rata="CENTER", ukuran=uk)
+                baris[B0] = P(e(vec[0]), rata="CENTER", ukuran=uk)
                 span.append(((B0, ri), (B1 - 1, ri)))
-                if kuning:
-                    gaya_t.append(("BACKGROUND", (B0, ri), (B1 - 1, ri), KUNING))
             else:
-                for j, (k, v) in enumerate(zip(kol, vec)):
-                    baris[B0 + j * w] = P(isi(v, {k}), rata="CENTER", ukuran=uk)
+                for j, v in enumerate(vec):
+                    baris[B0 + j * w] = P(e(v if v is not None else "-"), rata="CENTER", ukuran=uk)
                     span.append(((B0 + j * w, ri), (B0 + (j + 1) * w - 1, ri)))
-                    if k in kuning:
-                        gaya_t.append(("BACKGROUND", (B0 + j * w, ri), (B0 + (j + 1) * w - 1, ri), KUNING))
             rows.append(baris)
         if ds.get("semua"):  # seksi ikutan bertekst seragam -> satu baris lintas kolom (lock volume Vinda)
             teks, rs = ds["semua"]
@@ -405,9 +400,8 @@ def _blok_tabel(progs, unit, urut_master, kuning_rule, catatan_flag, nomor):
             baris[B0] = P(e(teks), rata="CENTER")
             span.append(((B0, ri), (B1 - 1, ri)))
             rows.append(baris)
-        # pemilik 29 Okt: catatan seksi, legenda CR, peringatan -> kolom Update keterangan, bukan baris di bawah seksi
+        # pemilik 29 Okt: catatan seksi, legenda CR -> kolom Update keterangan, bukan baris di bawah seksi
         catatan += ds["catatan"] + (["CR paket: " + " · ".join(f"{k} = {v}" for k, v in cr.items())] if cr else [])
-        catatan += [f"PERLU CEK: {m}" for m in catatan_flag[ds["id"]]]
     nama, chan, (tipe, beda), per, (batas, klaim), ket = meta_blok(progs)
     ket = " ".join(k if k.endswith(".") else k + "." for k in dict.fromkeys(ket + catatan))
     L = len(rows)
@@ -475,27 +469,9 @@ class _Kanvas(canvas.Canvas):
 
 def _principal_pdf(doc, urut_master, dibuat):
     beban, warna = jenis_beban(doc)
-    blok = susun(doc)
-    seksi_rule = {r["rule_id"]: ds["id"] for _, unit in blok for ds in unit for r, _, _ in ds["rules"]}
-    seksi_prog = {p["program_id"]: unit[-1]["id"] for progs, unit in blok for p in progs}
-    kuning, catatan_flag, umum = set(), defaultdict(list), []
-    for f in doc["flags"]:
-        if f["tingkat"] not in KRITIS:
-            continue
-        if f["rule_id"] in seksi_rule:
-            kuning.add(f["rule_id"])
-            catatan_flag[seksi_rule[f["rule_id"]]].append(f["pesan"])
-        elif f["program_id"] in seksi_prog:
-            catatan_flag[seksi_prog[f["program_id"]]].append(f["pesan"])
-        else:
-            umum.append(f["pesan"])
     tabel, nomor = [], 0
-    for progs, unit in blok:
-        t, nomor = _blok_tabel(progs, unit, urut_master, kuning, catatan_flag, nomor)
-        tabel.append(t)
-    if umum:
-        t = Table([[P(e("PERLU CEK: " + m))] for m in umum], colWidths=[LEBAR])
-        t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, GRID), ("BACKGROUND", (0, 0), (-1, -1), KUNING)]))
+    for progs, unit in susun(doc):  # doc["flags"] sengaja tidak dibaca: flag dibahas di editor, bukan dicetak (20 Nov 2026)
+        t, nomor = _blok_tabel(progs, unit, urut_master, nomor)
         tabel.append(t)
     # Pemilik 2 Nov 2026: ada beban distributor (PINK/MERAH) -> yang menyetujui Direktur, bukan Operational Manager.
     # ponytail: HIJAU (dana marketing, bukan beban distributor) ikut Operational Manager; ubah di sini bila pemilik memutuskan lain.

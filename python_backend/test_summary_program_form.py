@@ -41,7 +41,7 @@ assert "Hal. 1 dari 1" in hal[0] and "BEBAN PRINCIPLE (COKLAT)" in hal[0]
 n2 = len(hal) - 1
 assert all(f"Hal. {i} dari {n2}" in hal[i] and "BEBAN DISTRIBUTOR (MERAH)" in hal[i] for i in range(1, len(hal))), "nomor halaman per principal"
 assert "2,5%" in hal[0] and "≥ 10 CTN" in hal[0] and "→" in hal[0], hal[0][:400]       # angka seragam, panah & ≥ tampil
-assert "PERLU CEK: cek angka" in hal[0] and "(!)" in hal[0]                               # flag -> keterangan + sel bertanda
+assert "cek angka" not in hal[0] and "(!)" not in hal[0]                                  # flag tidak dicetak (20 Nov 2026)
 assert "Direktur" in hal[-1] and "Direktur" not in hal[1]                                 # tanda tangan ikut blok terakhir
 assert "Operational Manager" in hal[0] and "Operational Manager" not in hal[-1]          # beban distributor -> Direktur (2 Nov 2026)
 
@@ -93,6 +93,21 @@ def test_daftar_panjang_tidak_jadi_all_variant():
     assert t.count("All variant") == t.count("All gramasi") == 1 and "Anti Dandruff" in t and "270ML" in t, t[:600]
 
 
+def test_form_hanya_isi_surat():
+    """Pengguna 20 Nov 2026: Form dicetak setelah semuanya jelas dan hanya memuat isi surat. Flag kritis/perlu_cek tetap di
+    JSON/editor tetapi tidak dicetak (tanpa 'PERLU CEK', tanpa sel '(!)'); hanya list tanpa kode outlet -> 'Hanya list'."""
+    d = doc(2)
+    d["programs"][0]["outlet"] = {"tipe": "hanya_list", "kode_outlet": []}
+    d["programs"][1]["outlet"] = {"tipe": "hanya_list", "kode_outlet": ["C1", "C2"]}
+    d["flags"] += [{"jenis": "x", "tingkat": "kritis", "program_id": "P2", "rule_id": None, "pesan": "cek program"},
+                   {"jenis": "x", "tingkat": "perlu_cek", "program_id": "PX", "rule_id": None, "pesan": "cek umum"}]
+    with fitz.open(stream=f.form_pdf([(d, {})], date(2026, 11, 20)), filetype="pdf") as pdf:
+        t = " ".join(" ".join(p.get_text().split()) for p in pdf)
+    assert not [x for x in ("PERLU CEK", "(!)", "belum diunggah", "cek angka", "cek program", "cek umum") if x in t], t
+    assert "Hanya list" in t and "Hanya list (2 toko)" in t, t
+
+
 if __name__ == "__main__":
     test_daftar_panjang_tidak_jadi_all_variant()
+    test_form_hanya_isi_surat()
     print("summary_program_form ok")
