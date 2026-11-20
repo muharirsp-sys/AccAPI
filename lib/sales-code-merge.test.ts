@@ -17,6 +17,24 @@ assert.strictEqual(namePrefix("SPV_SUMARTONO"), null, "SPV bukan prefiks rute");
 assert.strictEqual(namePrefix("EN_OFFICE"), null, "OFFICE tanpa angka → null");
 assert.strictEqual(namePrefix(""), null, "kosong → null");
 
+// --- format baru Accurate "NAMA_ KODE" (owner 20 Nov 2026) = prefiks/orang yang sama ---
+assert.strictEqual(namePrefix("TANSI_ MS10"), "MS10", "format baru MS10");
+assert.strictEqual(namePrefix("YUANITA VIRNI KUSUMA_ M2_5 MT"), "M2_5", "format baru bertingkat + kode berspasi");
+assert.strictEqual(namePrefix("SYAHRUL RAMADAN_ FS1_MT"), "FS1", "format baru: MT bukan prefiks");
+assert.strictEqual(namePrefix("SUMARTONO_ SPV"), null, "format baru SPV bukan prefiks rute");
+assert.strictEqual(namePrefix("OFFICE_ EN"), null, "format baru OFFICE → null");
+assert.strictEqual(personName("BASRI YUSUF_ FRN5"), "BASRI YUSUF", "format baru FRN5");
+assert.strictEqual(personName("BASRI YUSUF_ M2_1"), "BASRI YUSUF", "format baru M2_1");
+assert.strictEqual(personName("DINI PRATIWI_ GDI3_MT"), "DINI PRATIWI", "format baru penanda MT dibuang");
+assert.strictEqual(personName("OFFICE_ FRN"), null, "format baru OFFICE bukan orang");
+{
+    const g = groupByPrefix([
+        { salesCode: "M-ISK", salesName: "MS10_ISMAIL KADIR" },     // closing lama
+        { salesCode: "M-TNS", salesName: "TANSI_ MS10" },           // closing sesudah ganti nama
+    ]);
+    assert.strictEqual(g.length, 1, "format lama + baru tetap satu kandidat MS10");
+}
+
 // --- MS10 kolisi nyata: ISMAIL KADIR vs TANSI ---
 {
     const g = groupByPrefix([
