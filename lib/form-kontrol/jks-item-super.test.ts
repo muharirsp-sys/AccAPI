@@ -97,6 +97,12 @@ test("tebak peta: nama kursi dibuang, principal gabungan MIX tidak ditebak", () 
     assert.deepEqual(t.principal, { KINO: "KINO NON FOOD" });
 });
 
+test("tebak peta: nama format baru Accurate \"NAMA_ KODE\" (20 Nov 2026) cocok dengan profil format lama dan sebaliknya", () => {
+    const nilai = nilaiUntukPeta([barisJks({ SALESMAN: "IRDAWATI ALIM_ KN2" }), barisJks({ SALESMAN: "KN_MT2__MELIZA" })]);
+    const t = tebakPeta(nilai, [{ salesCode: "E1", salesName: "KN2_IRDAWATI ALIM" }, { salesCode: "E2", salesName: "MELIZA_ KN_MT2" }], ["KINO NON FOOD"]);
+    assert.deepEqual(t.sales, { "IRDAWATI ALIM_ KN2": "E1", "KN_MT2__MELIZA": "E2" });
+});
+
 const item = (x: Record<string, unknown>) => ({ PRINCIPAL: "UNITAMA SARI MAS, PT", CHANNEL: "GT", RANK: 1, "KODE BARANG": "U3020202007510",
     "NAMA BARANG": "DH 75G", "OMZET RATA-RATA / BULAN (ACUAN)": 100, KONTRIBUSI: 0.1, "JUMLAH TOKO BELI": 10, ...x });
 const petaItem = { principal: { "UNITAMA SARI MAS, PT": "UNITAMA" }, sales: { DANI: "EMP-9" } };

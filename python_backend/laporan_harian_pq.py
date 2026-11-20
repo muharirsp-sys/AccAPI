@@ -19,6 +19,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import json
+import re
 import zipfile
 from functools import lru_cache
 from pathlib import Path
@@ -562,6 +563,19 @@ def normalize(v) -> str:
                     .replace("\r", " ").split(" ") if p)
 
 
+# Nama salesman format baru Accurate (owner 20-11-2026) "NAMA_ KODE": "RISDA HARIS_ M2_5 MT", "OFFICE_ FS_MT".
+# Format lama "KODE_NAMA" tidak pernah memuat "_ " (garis bawah lalu spasi). Padanan TS: lib/salesman-name.ts keKodeNama.
+_NAMA_KODE = re.compile(r"^(.*\S)_\s+([A-Z][A-Z0-9]*(?:[_ ][A-Z0-9]+)*)$")
+
+
+def salesman_kode_nama(v) -> str:
+    """Nama salesman -> format lama KODE_NAMA (huruf besar, spasi dirapatkan), supaya aturan _MT/OFFICE/kode MOTASA
+    memberi hasil sama sebelum dan sesudah nama diganti di Accurate. "RISDA HARIS_ M2_5 MT" -> "M2_5_MT_RISDA HARIS"."""
+    s = normalize(v)
+    m = _NAMA_KODE.match(s)
+    return f"{m.group(2).replace(' ', '_')}_{m.group(1)}" if m else s
+
+
 def principal_key(v) -> str:
     p = normalize(v)
     return "FOKUS RITEL NUSAPRIMA, PT" if p == "FOKUS RETAIL NUSAPRIMA, PT" else p
@@ -585,14 +599,14 @@ MOTASA_SALESMAN = {
 
 
 def _ani(t) -> bool:
-    p, s = principal_key(t["PRINCIPAL"]), normalize(t["SALESMAN"])
+    p, s = principal_key(t["PRINCIPAL"]), salesman_kode_nama(t["SALESMAN"])
     is_mt, is_office = "_MT" in s, "OFFICE" in s
     return p in ANI_PRINCIPALS and (is_mt or is_office) and (p != "FORISA NUSAPERSADA, PT" or is_mt)
 
 
 def _jonal(principal, salesman) -> bool:
     """Query JONAL (MT Jonal): principal kelompok Jonal dengan salesman _MT/OFFICE."""
-    s = normalize(salesman)
+    s = salesman_kode_nama(salesman)
     return principal_key(principal) in JONAL_PRINCIPALS and ("_MT" in s or "OFFICE" in s)
 
 
@@ -600,7 +614,7 @@ def _motasa(keyword):
     def keep(t):
         if t["PRINCIPAL"] != "MOTASA INDONESIA, PT":
             return False
-        s = "" if t["SALESMAN"] is None else t["SALESMAN"].strip().upper()
+        s = salesman_kode_nama(t["SALESMAN"])
         return (s.split("_", 1)[0] if "_" in s else s) in MOTASA_SALESMAN[keyword]
     return keep
 
@@ -643,7 +657,7 @@ def _adnan(rows: list, lk: Lookups) -> list:
     rows = apply_join(rows, lambda r: normalize(r[SX["PRINCIPAL"]]), list(groups))
     out = []
     for r in rows:
-        p, s = normalize(r[SX["PRINCIPAL"]]), normalize(r[SX["SALESMAN"]])
+        p, s = normalize(r[SX["PRINCIPAL"]]), salesman_kode_nama(r[SX["SALESMAN"]])
         mt_office = "_MT" in s or "OFFICE" in s
         spv = (groups.get(p) or [None])[0]
         r = list(r)

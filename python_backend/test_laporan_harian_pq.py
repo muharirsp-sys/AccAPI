@@ -90,6 +90,7 @@ def main():
     assert not unknown, f"keyword mapping_laporan.csv tanpa laporan: {unknown}"
     check_export(masukan, fix, lk)
     check_manager(lk)
+    check_salesman_dua_format()
     print(f"OK: FIX {len(fix)} baris + {len(acuan['sheets']) + 2} laporan identik dengan Power Query Excel")
 
 
@@ -144,6 +145,37 @@ def check_manager(lk):
         wf = openpyxl.load_workbook(Path(temp, result["fileName"]), data_only=False)
         assert wf.active["H2"].value == "=ROUND(G2,0)" and wf.active["I2"].value == "=TRUNC(H2/1000,0)"
         wf.close()
+
+
+def check_salesman_dua_format():
+    """Nama salesman Accurate format baru "NAMA_ KODE" (owner 20-11-2026) diperlakukan sama dengan format lama "KODE_NAMA"."""
+    pasangan = {   # format baru -> format lama (pola nyata: kode bertingkat, kode berspasi, penanda MT/MT2, SPV_, OFFICE, koma)
+        "IRMAWATI_ RB3": "RB3_IRMAWATI",
+        "HAPPY VALENDINO HENDRIK BUDI_ ABC1_MT": "ABC1_MT_HAPPY VALENDINO HENDRIK BUDI",
+        "RISDA HARIS_ M2_5 MT": "M2_5_MT_RISDA HARIS",
+        "MELIZA_ KN_MT2": "KN_MT2_MELIZA",
+        "OFFICE_ FS_MT": "FS_MT_OFFICE",
+        "OFFICE_ MTS1": "MTS1_OFFICE",
+        "SYACHRULLAH, ANDI_ SPV_HEINZ": "SPV_HEINZ_SYACHRULLAH, ANDI",
+        "ANDI IRFANDI ZUBAIR, SE._ GDI8": "GDI8_ANDI IRFANDI ZUBAIR, SE.",
+        "  tansi_   ms10 ": "MS10_TANSI",
+    }
+    for baru, lama in pasangan.items():
+        assert pq.salesman_kode_nama(baru) == lama, (baru, pq.salesman_kode_nama(baru))
+        assert pq.salesman_kode_nama(lama) == lama, lama           # format lama tidak berubah
+    assert pq.salesman_kode_nama(None) == "" and pq.salesman_kode_nama("ISMAIL") == "ISMAIL"
+    for baru, lama in pasangan.items():
+        for principal in ("ABC PRESIDENT INDONESIA, PT", "FORISA NUSAPERSADA, PT", "GODREJ CONSUMER PRODUCTS INDONESIA, PT"):
+            assert pq._ani({"PRINCIPAL": principal, "SALESMAN": baru}) == pq._ani({"PRINCIPAL": principal, "SALESMAN": lama}), (principal, baru)
+            assert pq._jonal(principal, baru) == pq._jonal(principal, lama), (principal, baru)
+    assert pq._ani({"PRINCIPAL": "ABC PRESIDENT INDONESIA, PT", "SALESMAN": "RISDA HARIS_ M2_5 MT"})      # MT walau kode berspasi
+    assert pq._ani({"PRINCIPAL": "ABC PRESIDENT INDONESIA, PT", "SALESMAN": "OFFICE_ ABC"})
+    assert not pq._ani({"PRINCIPAL": "ABC PRESIDENT INDONESIA, PT", "SALESMAN": "ARMAN BAHRI_ ABC2"})
+    satu, dua = pq._motasa("MOTASA MKS 1"), pq._motasa("MOTASA MKS 2")
+    motasa = lambda s: {"PRINCIPAL": "MOTASA INDONESIA, PT", "SALESMAN": s}  # noqa: E731
+    assert satu(motasa("LUKMAN_ MS1")) and satu(motasa("OFFICE_ MTS1")) and not satu(motasa("TANSI_ MS10"))
+    assert dua(motasa("TANSI_ MS10")) and dua(motasa("OFFICE_ MTS2")) and not dua(motasa("LUKMAN_ MS1"))
+    assert satu(motasa("MS1_LUKMAN")) and dua(motasa("MS10_TANSI"))
 
 
 if __name__ == "__main__":

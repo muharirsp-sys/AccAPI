@@ -3,10 +3,11 @@
  *   upsertJksRows: siklus 4 minggu (kolom M1..M4) -> pola minggu, F8 (dua baris, dua hari) -> satu baris "Senin, Kamis", nama salesman/principal
  *   berkas -> kode sales/principal sistem lewat peta pilihan Admin, plus keterangan toko (urutan, kategori, kelas A, target, status pindah, lokasi).
  * Caller: app/api/form-kontrol/jks/route.ts (POST multipart, server), app/(dashboard)/form-kontrol/tabs/TabJks.tsx (pratinjau + peta, klien).
- * Dependensi: ./constants (hariBaku, kunciNama) — MURNI, tanpa impor server, aman di klien.
+ * Dependensi: ./constants (hariBaku, kunciNama), ../salesman-name (keKodeNama) — MURNI, tanpa impor server, aman di klien.
  * Main Functions: SHEET_WEBLL, cariSheetWebLl, nilaiUntukPeta, tebakPeta, bacaJksWebLl. Side Effects: tidak ada.
  */
 import { hariBaku, kunciNama } from "./constants";
+import { keKodeNama } from "../salesman-name";
 
 export const SHEET_WEBLL = "JKS semua sales";
 /** Lokasi yang dipercaya untuk toko_koordinat (titik lapangan); perkiraan dari alamat/tengah wilayah TIDAK ditulis sebagai koordinat. */
@@ -55,7 +56,7 @@ export function nilaiUntukPeta(rows: readonly BarisMentah[]) {
  */
 export function tebakPeta(nilai: ReturnType<typeof nilaiUntukPeta>, profil: readonly { salesCode: string; salesName: string }[],
     principalSistem: readonly string[]): PetaJks {
-    const tanpaKursi = (s: string) => kunciNama(s.split("_").pop());
+    const tanpaKursi = (s: string) => kunciNama(keKodeNama(s).split("_").pop());   // "IRDAWATI ALIM_ KN2" (format baru) ~ "KN2_IRDAWATI ALIM"
     const sales: Record<string, string> = {};
     for (const { nilai: n } of nilai.sales) {
         const persis = profil.filter((p) => kunciNama(p.salesName) === kunciNama(n));

@@ -2,7 +2,7 @@
  * Tujuan: Item Super di Form Kontrol (owner 13 Nov 2026) — baca berkas "Item Super per Channel per Principal" (sheet Item Super per Channel,
  *   Item Super MT per Sales, Ringkasan per Sales) menjadi SARAN, gabung varian, pilih saran untuk satu toko, dan periksa isian penawaran.
  * Caller: app/api/form-kontrol/item-super/** (server), lib/form-kontrol/item-super-db.ts, tabs/TabItemSuper.tsx + visit Kunjungan (klien).
- * Dependensi: ./constants (kunciNama) — MURNI, tanpa impor server, aman di klien.
+ * Dependensi: ./constants (kunciNama), ../salesman-name (keKodeNama) — MURNI, tanpa impor server, aman di klien.
  * Main Functions: ALASAN_ITEM_SUPER, SHEET_ITEM_SUPER, bacaItemSuper, tebakPetaItemSuper, pilihSaran, periksaTawaran, MAKS_SARAN_WAJIB.
  * Side Effects: tidak ada.
  *
@@ -14,6 +14,7 @@
  *  - Penawaran: ditawarkan ya/tidak; ditawarkan → dipesan ya/tidak; tidak dipesan (termasuk tidak ditawarkan) → alasan wajib.
  */
 import { kunciNama } from "./constants";
+import { keKodeNama } from "../salesman-name";
 
 export const SHEET_ITEM_SUPER = { channel: "Item Super per Channel", mtSales: "Item Super MT per Sales", ringkasanSales: "Ringkasan per Sales" } as const;
 /** ponytail: 10 saran wajib per kunjungan (beban isi salesman ±1 menit); naikkan bila SPV meminta. */
@@ -77,7 +78,7 @@ export function tebakPetaItemSuper(nilai: ReturnType<typeof nilaiUntukPetaItemSu
         const cocok = principalSistem.filter((s) => kata.length > 0 && kunciNama(s).split(/[^A-Z0-9]+/).includes(kata[0]));
         if (cocok.length === 1) principal[p] = cocok[0];
     }
-    const nama = (s: string) => kunciNama(s.split("_").pop());
+    const nama = (s: string) => kunciNama(keKodeNama(s).split("_").pop());   // format baru "NAMA_ KODE" ~ lama "KODE_NAMA"
     const sales: Record<string, string> = {};
     for (const s of nilai.sales) {
         const kandidat = new Set(profil.filter((p) => s.salesmanData.some((d) => nama(d) === nama(p.salesName))).map((p) => p.salesCode));

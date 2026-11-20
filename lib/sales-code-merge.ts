@@ -3,7 +3,7 @@
  *   prefiks rute/slot yang sama (mis. MS10_ISMAIL KADIR vs MS10_TANSI), yang biasanya berarti
  *   pergantian orang di tengah bulan. Pencapaian digabung ke kode yang dipilih user.
  * Caller: lib/insentif-sales (agregasi MTD), app/api/insentif-sales/code-merge.
- * Dependensi: tidak ada (pure).
+ * Dependensi: lib/salesman-name (keKodeNama: nama format baru "NAMA_ KODE" dibaca seperti "KODE_NAMA").
  * Main Functions: namePrefix, personName, groupByPrefix, groupByPerson, mergeCandidates,
  *   applyMergeMap.
  * Side Effects: none.
@@ -14,15 +14,18 @@
  * yang harus dikonfirmasi user, bukan keputusan.
  */
 
+import { keKodeNama } from "./salesman-name.ts";
+
 /**
  * Prefiks rute/slot dari nama salesman di file closing.
  * "MS10_TANSI" → "MS10" | "M2_5_MT_YUANITA" → "M2_5" | "FS1_MT_SYAHRUL" → "FS1"
  * Penanda channel (_MT_) bukan bagian prefiks — supaya GT & MT dengan nomor sama tetap
  * terdeteksi sebagai kandidat dan bisa ditolak user secara sadar.
  * null kalau nama tidak berpola prefiks (mis. "SPV_SUMARTONO", "EN_OFFICE").
+ * Format baru "NAMA_ KODE" ("TANSI_ MS10") memberi prefiks yang sama.
  */
 export function namePrefix(salesName: string): string | null {
-    const s = (salesName ?? "").trim().toUpperCase();
+    const s = keKodeNama(salesName);
     // M2_5_MT_NAMA / M2_1_NAMA → M2_5 / M2_1
     const multi = s.match(/^([A-Z]+\d+_\d+)_/);
     if (multi) return multi[1];
@@ -43,10 +46,10 @@ export function namePrefix(salesName: string): string | null {
  * JUSNIATI kebalikannya: target di M-JUS (FRN5_), penjualan di M-JUS2 (M2_1_).
  *
  * null kalau nama tidak berpola prefiks_nama, atau sisanya bukan nama orang
- * (mis. "EN_OFFICE" → null; baris kantor bukan salesman).
+ * (mis. "EN_OFFICE" → null; baris kantor bukan salesman). Format baru "BASRI YUSUF_ FRN5" sama.
  */
 export function personName(salesName: string): string | null {
-    const s = (salesName ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+    const s = keKodeNama(salesName);
     // Buang prefiks rute + penanda channel: FRN5_, M2_1_, GDI3_MT_, MTRHNZ10_
     const m = s.match(/^[A-Z]+\d*(?:_\d+)?(?:_MT\d*)?_(.+)$/);
     if (!m) return null;
