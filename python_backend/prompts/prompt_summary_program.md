@@ -199,12 +199,15 @@ Data rule TIDAK diubah untuk tampilan; yang disusun ulang hanya letak sel. Setia
   "All variant"). " & " di dalam nama kelompok bukan pemisah merek ("PIATTOS - BIG & CRISPY").
   Merek yang sama muncul dengan dan tanpa sub-kelompok + variant "All variant" ("NDB, NDB - GURIMI") -> Variant
   "All variant, termasuk Gurimi" (bagian tanpa sub = semua varian merek itu; jangan cetak sub-nya saja).
-  Daftar variant > 180 karakter -> sub-kelompok + "all variant"; > 5 gramasi -> "All gramasi". Kode tetap lengkap di data.
+  Daftar variant/gramasi selalu ditulis utuh; "all variant"/"All gramasi" hanya bila data rule memang begitu (pengguna
+  20 Nov 2026, Natur Online 26110002). Baris gabungan > 180 karakter dipecah per sub-kelompok (lalu per potongan <= 180)
+  agar satu baris muat satu halaman; Kelompok yang sama tetap di-merge.
 - "N+M (CR x%)" dicetak "N+M"; nilai CR masuk kolom Update keterangan ("CR paket: 3+1 = 25% · ...").
 - Merge sel kelompok_barang yang sama dan berurutan.
-- TIDAK ADA baris catatan di bawah seksi/blok (owner 29 Okt). Catatan seksi, legenda CR dan flag masuk kolom
+- TIDAK ADA baris catatan di bawah seksi/blok (owner 29 Okt). Catatan seksi dan legenda CR masuk kolom
   Update keterangan blok itu, sesudah keterangan program; duplikat dibuang.
-- Teks kiri/kanan ringkas: periode = tanggal saja; daftar outlet = "Tanpa list" / "Hanya list (N toko | belum diunggah)";
+- Teks kiri/kanan ringkas: periode = tanggal saja; daftar outlet = "Tanpa list" / "Hanya list (N toko)" / "Hanya list"
+  (kode outlet belum ada: tanpa status unggah, pengguna 20 Nov 2026);
   syarat claim = "Batas: ..." + dokumen inti + dasar nilai, dokumen disingkat seperti contoh
   ("AL, cover klaim URC, faktur pajak, rekap jual & print out system") tanpa membuang dokumen;
   keterangan (+ catatan) = kalimat pendek, cukup pendek agar tidak lebih tinggi dari isi blok;
@@ -224,5 +227,6 @@ Data rule TIDAK diubah untuk tampilan; yang disusun ulang hanya letak sel. Setia
   (HIJAU)", header hijau muda (owner 10 Nov 2026).
   Baris "Dibuat tanggal" ikut: "(ON PRINCIPLE <WARNA>)".
 - Format seragam: desimal koma ("2,5%", "25%" bukan "25.0%"), "≥" bukan ">=", "→" bukan "->".
-- Flag tingkat kritis/perlu_cek -> sel kuning + teks flag di kolom Update keterangan.
+- Form hanya memuat isi surat dan dicetak setelah semuanya jelas (pengguna 20 Nov 2026): flag kritis/perlu_cek TIDAK
+  dicetak (tanpa sel kuning, tanpa "PERLU CEK"); flag tetap di JSON/editor.
 - Lebar benefit dibagi rata sesuai jumlah kolom seksi (1-6 kolom).
