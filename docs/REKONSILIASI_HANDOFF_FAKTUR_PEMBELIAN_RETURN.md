@@ -223,6 +223,7 @@ Status yang benar-benar tersedia:
 - `QTY_MISMATCH`
 - `VALUE_MISMATCH`
 - `QTY_AND_VALUE_MISMATCH`
+- `ROUNDING`: qty sama dan seluruh selisih nilai <= Rp10 (beda pembulatan harga satuan).
 - `MISSING_INTERNAL`: ada di prinsipal, tidak ada di Accurate.
 - `MISSING_PRINCIPAL`: ada di Accurate, tidak ada di prinsipal.
 - `UNMAPPED_SKU`
@@ -244,8 +245,9 @@ Precedence status akhir yang benar-benar ada di source:
 5. `MISSING_PRINCIPAL`
 6. `QTY_AND_VALUE_MISMATCH`
 7. `QTY_MISMATCH`
-8. `VALUE_MISMATCH`
-9. `MATCH`
+8. `ROUNDING`
+9. `VALUE_MISMATCH`
+10. `MATCH`
 
 Dokumen rencana awal juga menyebut `PARTIAL_MATCH`, `DUPLICATE`, `PENDING_CUTOFF`, dan status batch. Status tersebut **belum diimplementasikan** pada engine Faktur aktif.
 
@@ -261,11 +263,13 @@ Sumber:
 
 Kunci dan mapping:
 
-- Token order harus tepat satu `1671-SOP-\d+`.
+- Token order harus tepat satu `1671-SOP-\d{9}`; karakter sisa di belakang nomor diabaikan.
 - Accurate mengambil token dari `REM`; KINO dari `ORDER_NO`.
 - `PRODUCT_CODE -> Mapping_Prd.KODE ALIAS -> KODE ITEM -> Accurate.KODE_BARANG`.
 - Banyak alias KINO boleh menuju satu SKU Accurate; agregasi dilakukan setelah mapping.
 - `FLAG_BONUS=Y -> BONUS`, `N -> NORMAL`; selain itu upload ditolak.
+- Accurate tidak punya kolom bonus: baris dengan potongan >= nilai jual dan `JUMLAH` 0 dianggap `BONUS`.
+- Untuk kelas `BONUS` hanya quantity yang dibandingkan; nilai diabaikan karena kedua sistem mencatatnya berbeda.
 
 Quantity dan nilai:
 
@@ -281,7 +285,7 @@ Quantity dan nilai:
 Error/mapping:
 
 - SKU tidak terpetakan: `UNMAPPED_SKU`, key `UNMAPPED:<PRODUCT_CODE>`.
-- UOM tidak sesuai: `UNIT_CONVERSION_ERROR`.
+- UOM tidak sesuai: `UNIT_CONVERSION_ERROR`, disertai `unitMismatch` berisi satuan master dan satuan prinsipal.
 - Customer/salesman tidak termapping hanya warning.
 
 Acceptance historis yang tertanam di test:
