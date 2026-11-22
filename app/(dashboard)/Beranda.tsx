@@ -3,7 +3,7 @@
  * Caller: app/(dashboard)/page.tsx.
  * Dependensi: lib/beranda (katalog tile), config/workspace-navigation (profil dari ★ grup utama / izin, katalog menu), lib/rbac,
  *   lib/tampil (KOSONG), components/fiori/core.
- * Main Functions: Beranda.
+ * Main Functions: Beranda. `peringatanAccurate` (admin, dihitung server) = strip merah kredensial Accurate sistem mati.
  * Side Effects: GET ke endpoint sumber tile (sekali per sumber per muat, ulang per sumber lewat Coba lagi); tidak menulis data.
  */
 "use client";
@@ -27,7 +27,9 @@ const ICONS: Record<string, LucideIcon> = {
 
 type Load = SourceLoad;
 
-export default function Beranda({ permKeys, primaryGroup, firstName, greeting, dateLabel, previewProfile }: {
+export default function Beranda({ peringatanAccurate, permKeys, primaryGroup, firstName, greeting, dateLabel, previewProfile }: {
+    /** Kredensial Accurate sistem (cron, webhook, stok live) mati — hanya dikirim untuk admin; null = sehat / tidak terperiksa. */
+    peringatanAccurate?: string | null;
     /** Nama ★ grup utama (S7-3): menentukan profil; null = tebakan dari izin. */
     permKeys: string[]; primaryGroup: string | null; firstName: string; greeting: string; dateLabel: string;
     /** Hanya development: pratinjau Beranda peran lain (?peran=). */
@@ -81,6 +83,13 @@ export default function Beranda({ permKeys, primaryGroup, firstName, greeting, d
                 <h1 className="fi-display">{greeting}, {firstName}</h1>
                 <span className="fi-small fi-subtle"><CalendarDays className="fi-icon" aria-hidden />{dateLabel}</span>
             </div>
+
+            {peringatanAccurate && (
+                <MessageStrip tone="neg" title="Accurate terputus.">
+                    {peringatanAccurate}{" "}
+                    <Link className="fi-btn fi-btn--tertiary" href="/sesi-accurate" prefetch={false}>Buka Sesi Accurate</Link>
+                </MessageStrip>
+            )}
 
             {failed.length > 0 && (
                 <MessageStrip tone="neg" title={`${failed.map((k) => SOURCES[k].label).join(", ")} gagal dimuat.`}>

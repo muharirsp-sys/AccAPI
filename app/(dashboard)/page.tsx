@@ -1,15 +1,18 @@
 /*
  * Tujuan: Beranda ruang kerja per peran (Fiori Launchpad) — sapaan WITA, lalu Beranda klien yang memuat tile tugas.
  * Caller: Next.js route /.
- * Dependensi: Better Auth, RBAC union + ★ grup utama (getPrimaryGroup, S7-3), FioriScope, Beranda (klien).
+ * Dependensi: Better Auth, RBAC union + ★ grup utama (getPrimaryGroup, S7-3), FioriScope, Beranda (klien),
+ *   lib/accurate-session (peringatanKredensialSistem — admin saja).
  * Main Functions: DashboardLanding.
- * Side Effects: Membaca session/permission; tidak menampilkan statistik simulasi.
+ * Side Effects: Membaca session/permission; tidak menampilkan statistik simulasi. Admin: token Accurate sistem diperiksa
+ *   (db-list.do, hasil disimpan 5 menit per proses) — insiden 22 Nov 2026, token mati tanpa tanda bahaya.
  */
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { rolePermissionPresets } from "@/lib/rbac";
 import { getPrimaryGroup, getUserPermissions } from "@/lib/rbac/resolve";
 import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
+import { peringatanKredensialSistem } from "@/lib/accurate-session";
 import { FioriScope } from "@/components/fiori/Scope";
 import Beranda from "./Beranda";
 
@@ -18,6 +21,8 @@ export default async function DashboardLanding({ searchParams }: { searchParams:
     const session = await auth.api.getSession({ headers: requestHeaders }).catch(() => null);
     const userId = String(session?.user?.id || "");
     const bypass = isLocalAuthBypassEnabled(requestHeaders);
+    // Jalan bersamaan dengan pembacaan izin; hanya admin yang bisa memulihkan kredensial sistem (masuk Accurate sebagai admin).
+    const cekAccurate = userId && session?.user?.role === "admin" ? peringatanKredensialSistem() : Promise.resolve(null);
     const [permKeys, utama] = bypass
         ? [new Set(Object.entries(rolePermissionPresets.admin).flatMap(([moduleName, actions]) => (actions || []).map(action => `${moduleName}.${action}`))), null]
         : userId ? await Promise.all([getUserPermissions(userId), getPrimaryGroup(userId)]) : [new Set<string>(), null];
@@ -34,7 +39,7 @@ export default async function DashboardLanding({ searchParams }: { searchParams:
     const satu = (v: string | string[] | undefined) => (typeof v === "string" ? v : undefined);
     return (
         <FioriScope>
-            <Beranda permKeys={[...permKeys]} primaryGroup={satu(grup) ?? utama?.name ?? null} firstName={firstName} greeting={greeting} dateLabel={dateLabel} previewProfile={satu(peran)} />
+            <Beranda peringatanAccurate={await cekAccurate} permKeys={[...permKeys]} primaryGroup={satu(grup) ?? utama?.name ?? null} firstName={firstName} greeting={greeting} dateLabel={dateLabel} previewProfile={satu(peran)} />
         </FioriScope>
     );
 }

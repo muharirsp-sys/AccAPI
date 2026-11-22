@@ -221,7 +221,7 @@ test("route sesi cukup sesi app (pemegang order.edit saja tidak 403); tanpa sesi
     await dengan({}, async () => {
         const res = await sesiGet(new NextRequest("https://app.test/api/auth/accurate-session"));
         assert.equal(res.status, 200);
-        assert.deepEqual(await res.json(), { ok: true, connected: false, databaseConnected: false, sessionHost: null, databaseId: null, databaseAlias: null });
+        assert.deepEqual(await res.json(), { ok: true, connected: false, token: null, databaseConnected: false, sessionHost: null, databaseId: null, databaseAlias: null });
     });
     await dengan({ sesiApp: false }, async () => {
         assert.equal((await sesiGet(new NextRequest("https://app.test/api/auth/accurate-session"))).status, 401);
@@ -265,6 +265,33 @@ test("db-list: galat Accurate/exception → kode tetap + kalimat netral; isi jaw
         assert.equal((await res.json()).code, "SESI_BELUM_TERHUBUNG");
         assert.equal(c.fetch.length, 0);
     });
+});
+
+test("route sesi ?periksa=1 (insiden 22 Nov 2026): token diperiksa sungguhan; tanpa periksa tidak ke jaringan; token tidak bocor", async () => {
+    const sesiRow = await barisSesi();
+    await dengan({ sesiRow }, async (c) => {
+        const res = await sesiGet(new NextRequest("https://app.test/api/auth/accurate-session"));
+        assert.equal((await res.json()).token, null);
+        assert.equal(c.fetch.length, 0, "pemanggil lain (Pelunasan, Finance) tidak menambah panggilan Accurate");
+    });
+    const kasus: Array<[(url: string) => Promise<Response>, string]> = [
+        [async () => new Response(`{"error":"invalid_token","error_description":"${RAHASIA}"}`, { status: 401 }), "mati"],
+        [async () => new Response(JSON.stringify({ s: true, d: [{ id: 77, alias: "PT CONTOH" }] }), { status: 200 }), "hidup"],
+        [async () => new Response("sibuk", { status: 503 }), "tak_terperiksa"],
+        [async () => { throw new Error(`putus ${RAHASIA}`); }, "tak_terperiksa"],
+    ];
+    for (const [fetch, token] of kasus) {
+        await dengan({ sesiRow, fetch }, async (c) => {
+            const res = await sesiGet(new NextRequest("https://app.test/api/auth/accurate-session?periksa=1"));
+            const teks = await res.text();
+            assert.equal(res.status, 200);
+            assert.equal(JSON.parse(teks).token, token);
+            assert.equal(JSON.parse(teks).connected, true);
+            assert.deepEqual(c.fetch.map((f) => f.url), ["https://account.accurate.id/api/db-list.do"]);
+            assert.ok(tanpaRahasia(teks), teks);
+            assert.ok(tanpaRahasia(c.log), c.log);
+        });
+    }
 });
 
 test("open-db: galat Accurate/exception → kode tetap tanpa isi mentah, sesi tidak diubah; sukses menyimpan database", async () => {

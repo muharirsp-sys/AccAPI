@@ -45,6 +45,8 @@ punya host sendiri yang baru diketahui **setelah** `open-db.do`. Jangan hardcode
 Kalau `X-Session-ID` habis: `401 {"s":false,"d":["Data Session Key tidak tepat"]}`.
 Kalau access token habis: `401 {"error":"invalid_token"}`.
 Keduanya 401 — bedakan dari isi body, bukan status code.
+Kode kita membedakannya di `lib/accurate-401.ts` (22 Nov 2026): token mati = minta masuk ulang, sesi habis = buka ulang
+sekali lewat `open-db.do` (`lib/sync.ts` `fetchAccurate`). Badan 401 bisa memuat token — jangan dicetak atau diteruskan.
 
 ---
 

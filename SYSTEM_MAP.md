@@ -227,6 +227,24 @@ Gerbang klien: SidebarLayout menghitung ulang canAccessPathWithKeys(usePathname)
 db-list/open-db galat = {ok:false, code, error netral}: SESI_BELUM_TERHUBUNG 400, DATABASE_ID_KOSONG 400, ACCURATE_MENOLAK 502
   (+accurateStatus), GALAT_SERVER 500 — isi jawaban Accurate/pesan exception tidak ke peramban maupun log.
 ```
+**Token Accurate kedaluwarsa vs sesi habis (22 Nov 2026).** Keduanya HTTP 401; dibedakan dari badannya di `lib/accurate-401.ts`
+(`invalid_token` / `Invalid access token` = token mati, selain itu = X-Session-ID habis). Badan 401 menggemakan token: tidak pernah ke
+pesan, log, atau peramban.
+```
+Kredensial sistem (resolveSyncCredentials: cron sync, webhook, /api/faktur/[id], /api/items/stok, laporan principal)
+  -> lib/sync fetchAccurate (AccuratePaginator, upsertMasterById, upsertSalesInvoiceById, lib/accurate-baca ambil, /api/faktur/[id])
+       401 token mati -> TokenAccurateMati "Token Accurate kedaluwarsa. Masuk ulang Accurate di /sesi-accurate." (tanpa coba ulang)
+       401 sesi habis -> creds.segarkanSesi() (ensureFreshAccurateSession: open-db.do; panggilan paralel berbagi satu) -> ulang SEKALI
+                         -> masih 401 / tak bisa dibuka -> SesiAccurateHabis
+  -> ensureFreshAccurateSession: 401 di lapis akun (db-list.do/open-db.do) = TokenAccurateMati -> resolveSyncCredentials {error: pesan token}
+Sesi user: bacaAccurate (lib/accurate-forward) 401 -> galat berpesan; /api/proxy 401 -> HTTP 200 {s:false, d:[pesan], error, code:
+  ACCURATE_TOKEN_MATI|ACCURATE_SESI_HABIS} (amplop ditolak = tidak terkirim; dulu badan Accurate diteruskan apa adanya)
+/sesi-accurate -> GET /api/auth/accurate-session?periksa=1 -> periksaToken (db-list.do, 8 dtk) -> token hidup|mati|tak_terperiksa
+  -> mati = lencana "Token kedaluwarsa, masuk ulang" + Masuk ulang Accurate (Konsol: eksekusi terkunci); tanpa ?periksa (Pelunasan,
+     Finance) = tidak ke Accurate, token null
+Beranda (role admin) -> peringatanKredensialSistem (token sistem diperiksa, cache 5 menit per proses, dikosongkan saat masuk ulang)
+  -> strip merah "Accurate terputus." + tautan Sesi Accurate; galat DB/jaringan = tanpa peringatan
+```
 **Gerbang halaman Konsol (S7-sesi).** `proxy.ts` memasang `x-current-path` yang dibaca layout. Matcher lama `(?!api|…)` ikut melewatkan
 halaman `/api-wrapper`, sehingga layout menilai "/" dan `dashboard.view` cukup membuka Konsol. Kini hanya `/api` dan `/api/...`
 dikecualikan (`lib/proxy-matcher.test.ts`). **Dampak produksi saat rilis:** user tanpa `api_wrapper.view` (mis. Fakturist, Admin Incaso)

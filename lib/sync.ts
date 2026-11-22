@@ -14,6 +14,7 @@ import { and, eq, ne, notInArray, sql } from "drizzle-orm";
 import { recordInvoiceRealization } from "./program-realization-store";
 import { GUDANG_STOK, cabangDariTag, normalNama, petaCabang } from "./order-cabang";
 import { redactAccurateSecrets } from "./accurate-redact";
+import { SesiAccurateHabis, galat401, tokenMati } from "./accurate-401";
 import { ringkasFaktur } from "./supervisor-review/ringkas-faktur";
 import { BACKFILL, deletedInvoiceLines, diffInvoiceLines, type ChangeContext, type LineChangeRow } from "./sales-invoice-change";
 import { amatiHalamanPelanggan, bacaSalinanLama } from "./pelanggan-hendra";
@@ -27,6 +28,8 @@ export interface AccurateCredentials {
     sessionHost: string;
     sessionId: string;
     apiKey: string;
+    /** Buka ulang X-Session-ID (kredensial sistem, lib/accurate-session); tanpa ini 401 sesi habis langsung jadi galat. */
+    segarkanSesi?: () => Promise<AccurateCredentials | null>;
 }
 
 export const accurateHeaders = (creds: AccurateCredentials) => ({
@@ -36,6 +39,29 @@ export const accurateHeaders = (creds: AccurateCredentials) => ({
     "Authorization": `Bearer ${creds.apiKey}`,
     "X-Session-ID": creds.sessionId,
 });
+
+/**
+ * Baca ke host data Accurate (`jalur` sesudah /accurate/api, boleh berquery). HTTP 401 dibedakan dari badannya (lib/accurate-401):
+ * token mati -> TokenAccurateMati tanpa coba ulang (wajib masuk ulang manual); sesi habis -> creds.segarkanSesi() lalu diulang
+ * sekali. `creds` DIPERBARUI di tempat, jadi halaman/rincian berikutnya (juga pekerja paralel) memakai sesi baru. Jawaban selain
+ * 401 dikembalikan apa adanya. Badan 401 tidak pernah dibawa ke pesan (menggemakan token).
+ */
+export async function fetchAccurate(creds: AccurateCredentials, jalur: string, timeoutMs = 30_000): Promise<Response> {
+    for (let diulang = false; ; diulang = true) {
+        const dipakai = creds.sessionId;
+        const res = await fetch(`${creds.sessionHost}/accurate/api${jalur}`, {
+            headers: accurateHeaders(creds), signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (res.status !== 401) return res;
+        const badan = await res.text().catch(() => "");
+        if (tokenMati(badan) || diulang || !creds.segarkanSesi) throw galat401(badan);
+        if (creds.sessionId === dipakai) { // pekerja paralel lain belum menyegarkan
+            const baru = await creds.segarkanSesi();
+            if (!baru) throw new SesiAccurateHabis();
+            Object.assign(creds, { sessionHost: baru.sessionHost, sessionId: baru.sessionId, apiKey: baru.apiKey, databaseId: baru.databaseId });
+        }
+    }
+}
 
 /** Penulis customer/save.do untuk lepasTerlindungi (owner 19 Nov 2026), dengan kredensial sync/webhook. */
 const tulisPelanggan = (creds: AccurateCredentials) => async (payload: Record<string, unknown>) => {
@@ -59,13 +85,8 @@ export async function* AccuratePaginator(
 
     while (currentPage <= pageCount) {
         const fieldsParam = fields ? `&fields=${encodeURIComponent(fields)}` : "";
-        const url = `${creds.sessionHost}/accurate/api${endpoint}${endpoint.includes("?") ? "&" : "?"}sp.page=${currentPage}&sp.pageSize=100${fieldsParam}`;
-
-        const response = await fetch(url, {
-            method: "GET",
-            headers: accurateHeaders(creds),
-            signal: AbortSignal.timeout(60_000),
-        });
+        const response = await fetchAccurate(creds,
+            `${endpoint}${endpoint.includes("?") ? "&" : "?"}sp.page=${currentPage}&sp.pageSize=100${fieldsParam}`, 60_000);
 
         if (!response.ok) {
             throw new Error(`Accurate API Error: HTTP ${response.status}`);
@@ -595,8 +616,7 @@ export async function upsertMasterById(
     kind: "customer" | "item", id: number, creds: AccurateCredentials, asal = "webhook",
 ): Promise<{ kind: string; id: number; code: string }> {
     const path = kind === "customer" ? "customer" : "item";
-    const url = `${creds.sessionHost}/accurate/api/${path}/detail.do?id=${id}`;
-    const res = await fetch(url, { headers: accurateHeaders(creds), signal: AbortSignal.timeout(30_000) });
+    const res = await fetchAccurate(creds, `/${path}/detail.do?id=${id}`);
     if (!res.ok) throw new Error(`detail.do ${kind} ${id}: HTTP ${res.status}`);
     const body = await res.json();
     const row = body?.d as Record<string, unknown> | undefined;
@@ -648,8 +668,7 @@ async function catatPerubahan(tx: Tx, id: number, hitung: () => LineChangeRow[])
 }
 
 export async function upsertSalesInvoiceById(id: number, creds: AccurateCredentials, ctx: ChangeContext = BACKFILL) {
-    const url = `${creds.sessionHost}/accurate/api/sales-invoice/detail.do?id=${id}`;
-    const res = await fetch(url, { headers: accurateHeaders(creds), signal: AbortSignal.timeout(30_000) });
+    const res = await fetchAccurate(creds, `/sales-invoice/detail.do?id=${id}`);
     if (!res.ok) throw new Error(`detail.do faktur ${id}: HTTP ${res.status}`);
 
     const body = await res.json();

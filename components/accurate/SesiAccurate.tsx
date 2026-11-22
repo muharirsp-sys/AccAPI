@@ -3,8 +3,9 @@
  *   daftar & buka database, Ganti database, Keluar (dikonfirmasi); kabar callback `?accurate=connected|error&alasan=<kode>` sebagai
  *   MessageStrip (pemetaan kode, bukan teks mentah). Fokus pindah ke elemen bernama sesudah aksi (elemen yang ditekan bisa hilang).
  * Caller: app/(dashboard)/sesi-accurate/page.tsx dan Konsol app/(dashboard)/api-wrapper/page.tsx (kartu yang sama).
- * Dependensi: GET/DELETE /api/auth/accurate-session, GET /api/auth/db-list, POST /api/auth/open-db, lib/accurate-oauth, lib/tampil (KOSONG),
- *   components/fiori. Atribut Database menampilkan nama; id database hanya di title (audit desain 001 No 30).
+ * Dependensi: GET/DELETE /api/auth/accurate-session (GET `?periksa=1`: token diperiksa ke Accurate), GET /api/auth/db-list, POST /api/auth/open-db, lib/accurate-oauth, lib/tampil (KOSONG),
+ *   components/fiori. Atribut Database menampilkan nama; id database hanya di title (audit desain 001 No 30). Token mati (insiden
+ *   22 Nov 2026) = lencana "Token kedaluwarsa, masuk ulang" + tombol Masuk Accurate, bukan "Database aktif".
  * Main Functions: SesiAccurate, StatusSesi.
  * Side Effects: fetch route sesi; membuang `accurate`/`alasan` dari URL saat dimuat (returnTo tetap); navigasi ke halaman authorize Accurate.
  */
@@ -17,7 +18,11 @@ import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { kabarAccurate, type Kabar, type ReturnTo } from "@/lib/accurate-oauth";
 import { KOSONG } from "@/lib/tampil";
 
-export type StatusSesi = { connected: boolean; databaseConnected: boolean; sessionHost: string | null; databaseId: string | null; databaseAlias: string | null };
+/** `token`: hasil pemeriksaan sungguhan ke Accurate; null = tidak diperiksa (belum masuk Accurate). */
+export type StatusSesi = {
+    connected: boolean; databaseConnected: boolean; token: "hidup" | "mati" | "tak_terperiksa" | null;
+    sessionHost: string | null; databaseId: string | null; databaseAlias: string | null;
+};
 type Db = { id: string | number; alias: string };
 /** `masukUlang` = sesi login aplikasi berakhir (401): yang menolong adalah masuk ulang, bukan Coba lagi. */
 type Galat = { pesan: string; masukUlang?: boolean };
@@ -33,13 +38,14 @@ const galatDari = (e: unknown, umum: string): Galat => (e instanceof GalatBaca ?
 const SESI_APP_BERAKHIR = "Sesi login aplikasi Anda berakhir.";
 
 async function bacaStatus(): Promise<StatusSesi> {
-    const res = await fetch("/api/auth/accurate-session", { cache: "no-store", credentials: "include" });
+    const res = await fetch("/api/auth/accurate-session?periksa=1", { cache: "no-store", credentials: "include" });
     const d = await res.json().catch(() => null) as Record<string, unknown> | null;
     if (res.status === 401) throw new GalatBaca(SESI_APP_BERAKHIR, true);
     if (!res.ok || !d?.ok) throw new GalatBaca("Server tidak memberi status sesi.", false);
     return {
         connected: Boolean(d.connected),
         databaseConnected: Boolean(d.databaseConnected),
+        token: d.token === "hidup" || d.token === "mati" || d.token === "tak_terperiksa" ? d.token : null,
         sessionHost: typeof d.sessionHost === "string" ? d.sessionHost : null,
         databaseId: d.databaseId == null ? null : String(d.databaseId),
         databaseAlias: typeof d.databaseAlias === "string" ? d.databaseAlias : null,
@@ -117,7 +123,7 @@ export function SesiAccurate({ returnTo, kabar: kabarUrl, onStatus, judul = "Ses
             if (!hidup) return;
             setKeadaan({ status: "siap", sesi });
             onStatusRef.current?.(sesi);
-            if (!sesi.connected) { setDaftar(null); return; }
+            if (!sesi.connected || sesi.token === "mati") { setDaftar(null); return; }
             if (sesi.databaseConnected) return; // daftar hanya dimuat untuk memilih; Ganti database memuatnya sendiri
             // Daftar lama tetap tampil selama dimuat ulang (isian yang sedang difokus tidak hilang).
             setDaftar((d) => (d?.status === "siap" ? d : { status: "memuat" }));
@@ -184,10 +190,12 @@ export function SesiAccurate({ returnTo, kabar: kabarUrl, onStatus, judul = "Ses
     const badge = keadaan.status === "memuat" ? <StatusBadge tone="neu" busy>Memeriksa sesi Accurate…</StatusBadge>
         : !s ? <StatusBadge tone="neg">Sesi Accurate tidak terbaca</StatusBadge>
             : !s.connected ? <StatusBadge tone="warn">Belum masuk ke Accurate</StatusBadge>
-                : !s.databaseConnected ? <StatusBadge tone="warn">Database belum dibuka</StatusBadge>
-                    : <StatusBadge tone="pos">Database aktif</StatusBadge>;
+                : s.token === "mati" ? <StatusBadge tone="neg">Token kedaluwarsa, masuk ulang</StatusBadge>
+                    : !s.databaseConnected ? <StatusBadge tone="warn">Database belum dibuka</StatusBadge>
+                        : s.token === "tak_terperiksa" ? <StatusBadge tone="warn">Database tercatat, token belum terperiksa</StatusBadge>
+                            : <StatusBadge tone="pos">Database aktif</StatusBadge>;
     const alasanSibuk = sibuk === "buka" ? "Tunggu, database sedang dibuka." : undefined;
-    const tampilDaftar = Boolean(s?.connected && (!s.databaseConnected || ganti));
+    const tampilDaftar = Boolean(s?.connected && s.token !== "mati" && (!s.databaseConnected || ganti));
 
     const pemilih = daftar?.status === "galat" ? <StripGalat galat={daftar} onCobaLagi={ganti ? () => void mulaiGanti() : muatUlang} />
         : daftar?.status !== "siap" ? <p className="fi-small">Mengambil daftar database…</p>
@@ -228,11 +236,13 @@ export function SesiAccurate({ returnTo, kabar: kabarUrl, onStatus, judul = "Ses
                 </div>
                 {keadaan.status === "memuat" ? null
                     : keadaan.status === "galat" ? <StripGalat galat={keadaan} onCobaLagi={muatUlang} />
-                        : !s?.connected ? (
+                        : !s?.connected || s.token === "mati" ? (
                             <>
-                                <p className="fi-small">Masuk dengan akun Accurate Anda sendiri. Dokumen yang Anda kirim ke Accurate memakai sesi ini.</p>
+                                <p className="fi-small">{s?.connected
+                                    ? "Token Accurate sudah kedaluwarsa dan tidak bisa diperpanjang otomatis. Masuk ulang ke Accurate, lalu buka lagi databasenya."
+                                    : "Masuk dengan akun Accurate Anda sendiri. Dokumen yang Anda kirim ke Accurate memakai sesi ini."}</p>
                                 <div><a className="fi-btn fi-btn--primary" href={`/api/auth/accurate-login?returnTo=${encodeURIComponent(returnTo)}`}>
-                                    <LogIn className="fi-icon" aria-hidden />Masuk Accurate</a></div>
+                                    <LogIn className="fi-icon" aria-hidden />{s?.connected ? "Masuk ulang Accurate" : "Masuk Accurate"}</a></div>
                             </>
                         ) : (
                             <>

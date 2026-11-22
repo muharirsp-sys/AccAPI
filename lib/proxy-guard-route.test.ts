@@ -69,6 +69,7 @@ async function proxySebagai(keys: string[], body: Record<string, unknown>, opsi:
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: async (url: string, init: RequestInit) => {
         c.kiriman.push({ url: String(url), method: String(init.method), body: init.body ? JSON.parse(String(init.body)) : undefined });
         const kustom = opsi.jawab?.(new URL(String(url)));
+        if (kustom instanceof Response) return kustom;
         return new Response(JSON.stringify(kustom ?? { s: true, d: [{ s: true, r: { id: 7 } }] }), { status: 200 });
     } });
     try {
@@ -160,6 +161,38 @@ test("S7-1b: dengan api_wrapper.view + execute -> diteruskan (URL + flatten bulk
     }
     const fire = logs.filter((l) => l.startsWith("[PROXY FIRE]"));
     assert.deepEqual(fire, ["[PROXY FIRE] POST /api/sales-return/bulk-save.do user=u-p", "[PROXY FIRE] POST /api/purchase-order/save.do user=u-p"]);
+});
+
+test("401 Accurate (insiden 22 Nov 2026): badan yang menggemakan token tidak diteruskan ke peramban/log; amplop ditolak berkode", async () => {
+    const RAHASIA = "0d4c5a6e-1111-4222-8333-944455556666";
+    const kasus: Array<[string, string]> = [
+        [JSON.stringify({ error: "invalid_token", error_description: `Invalid access token: ${RAHASIA}` }), "ACCURATE_TOKEN_MATI"],
+        [`Invalid access token: ${RAHASIA}`, "ACCURATE_TOKEN_MATI"], // bukan JSON: dulu 1000 huruf pertamanya ikut `detail`
+        [JSON.stringify({ s: false, d: ["Data Session Key tidak tepat"] }), "ACCURATE_SESI_HABIS"],
+    ];
+    const logs: string[] = [];
+    const asli = console.error;
+    console.error = (...a: unknown[]) => { logs.push(a.map(String).join(" ")); };
+    try {
+        for (const [badan, code] of kasus) {
+            for (const body of [
+                { endpointPath: "/api/sales-return/bulk-save.do", method: "POST", payload: RETUR },
+                { endpointPath: "/api/customer/list.do", method: "GET", payload: { "sp.pageSize": 1 } },
+            ]) {
+                const { res, json, c } = await proxySebagai(["api_wrapper.view", "api_wrapper.execute"], body, { jawab: () => new Response(badan, { status: 401 }) });
+                assert.equal(c.kiriman.length, 1, "dikirim sekali, tidak diulang");
+                assert.equal(res.status, 200, "seperti jawaban Accurate lain yang diteruskan");
+                assert.equal(json.code, code);
+                assert.equal(json.s, false, "amplop ditolak: lib/apiFetcher menganggapnya tidak terkirim");
+                assert.ok(Array.isArray(json.d) && /\/sesi-accurate/.test(String(json.d[0])));
+                assert.ok(!JSON.stringify(json).includes(RAHASIA), JSON.stringify(json));
+            }
+        }
+    } finally {
+        console.error = asli;
+    }
+    assert.ok(logs.length > 0);
+    assert.ok(!logs.join("|").includes(RAHASIA), logs.join("|"));
 });
 
 test("S7-1b: GET save.do / delete.do / tak dikenal / varian path = tulis -> butuh execute; dengan execute di luar katalog = 403 ENDPOINT_TIDAK_DIIZINKAN", async () => {
