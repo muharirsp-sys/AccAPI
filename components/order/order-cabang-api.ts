@@ -5,8 +5,9 @@
  * Caller: components/order/{useCari.ts,PemilihPelanggan.tsx,PemilihBarang.tsx}, app/(dashboard)/sales/OrderSales.tsx,
  *   app/(dashboard)/orders/{OrderBaru,AntreFaktur}.tsx.
  * Dependensi: ./order-cabang (murni), app/(dashboard)/form-kontrol/lapangan (ambilJson).
- * Main Functions: cariPelanggan, cariBarang, bacaPelangganKode, cocokkanTokoRute, bacaBarangKode, muatCakupan, hitungPratinjau.
- * Side Effects: HTTP GET /api/customers/search, /api/customers/rute, /api/items/search; POST /api/orders/preview (tanpa menyimpan apa pun).
+ * Main Functions: cariPelanggan, cariBarang, bacaPelangganKode, cocokkanTokoRute, bacaStokLive, bacaBarangKode, muatCakupan, hitungPratinjau.
+ * Side Effects: HTTP GET /api/customers/search, /api/customers/rute, /api/items/search, /api/items/stok; POST /api/orders/preview (tanpa
+ *   menyimpan apa pun).
  */
 import { ambilJson } from "@/app/(dashboard)/form-kontrol/lapangan";
 import {
@@ -83,6 +84,15 @@ export async function cocokkanTokoRute(kode: string[], signal: AbortSignal | und
         }
     }
     return { ok: true, data };
+}
+
+/** Stok GD01 terkini satu barang langsung dari Accurate (kartu barang terpilih); galat = kartu tetap memakai angka sync. */
+export async function bacaStokLive(no: string, signal: AbortSignal, peran: Peran): Promise<Hasil<{ stok: string; gudangStok: string; per: string }>> {
+    const r = await minta(`/api/items/stok?${new URLSearchParams({ no })}`, signal, peran);
+    if ("batal" in r) return { ok: false, batal: true };
+    if ("galat" in r) return { ok: false, galat: r.galat };
+    if (typeof r.d.stok !== "string" || typeof r.d.per !== "string") return { ok: false, galat: galatDariJawaban({ status: 502, data: r.d }, peran) };
+    return { ok: true, data: { stok: r.d.stok, gudangStok: typeof r.d.gudangStok === "string" ? r.d.gudangStok : "", per: r.d.per } };
 }
 
 export async function bacaBarangKode(kode: string, pelanggan: PelangganPilih, tanggal: string, signal: AbortSignal, peran: Peran): Promise<Hasil<BarangPilih | null>> {

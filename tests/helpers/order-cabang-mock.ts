@@ -1,6 +1,6 @@
 /*
  * Tujuan: Mock bersama Playwright untuk layar Order per cabang (O2): /api/customers/search, /api/customers/rute (FK-MSM: kode toko JKS ->
- *   pelanggan cabang), /api/items/search, /api/orders/preview,
+ *   pelanggan cabang), /api/items/search, /api/items/stok (stok GD01 terkini), /api/orders/preview,
  *   /api/orders/salesmen (sesuai docs/handover/O1-KONTRAK-ORDER-CABANG.md) + FastAPI Web Sales (:8000). Data contoh GENERIK
  *   (PELANGGAN A, CABANG A, SALES A, BARANG A) — bukan nama principal/orang nyata.
  * Caller: tests/fiori-order-cabang.spec.ts, tests/fiori-order-masuk.spec.ts (Order baru + Antrekan), tests/fiori-lapangan-salesman.spec.ts (Order Sales).
@@ -35,10 +35,10 @@ export const PELANGGAN: PelangganMock[] = [
 
 /** `harga`: satuan -> harga cabang (null = baris harga ada tetapi belum berharga untuk cabang/tanggal ini). {} = belum ada daftar harga. */
 export type BarangMock = { id: number; no: string; name: string; branchId: number; branchName: string; tag: string; harga: Record<string, number | null>;
-    /** Stok GD01 hasil sinkron ("12 KRT 3 PCS"); tanpa = belum tersinkron. */
-    stok?: string };
+    /** Stok GD01 hasil sinkron ("12 KRT 3 PCS"); tanpa = belum tersinkron. `stokLive` = angka Accurate terkini (/api/items/stok). */
+    stok?: string; stokLive?: string };
 export const BARANG: BarangMock[] = [
-    { id: 11, no: "A-1", name: "BARANG A", branchId: 50, branchName: "CABANG A", tag: "TAG A", harga: { KRT: 576000, PCS: 24000 }, stok: "12 KRT 3 PCS" },
+    { id: 11, no: "A-1", name: "BARANG A", branchId: 50, branchName: "CABANG A", tag: "TAG A", harga: { KRT: 576000, PCS: 24000 }, stok: "12 KRT 3 PCS", stokLive: "11 KRT 9 PCS" },
     { id: 12, no: "A-2", name: "BARANG A2", branchId: 50, branchName: "CABANG A", tag: "TAG A", harga: { LSN: null }, stok: "0" },
     { id: 13, no: "A-3", name: "BARANG A3", branchId: 50, branchName: "CABANG A", tag: "TAG A", harga: {} },
     { id: 14, no: "A-4", name: "BARANG A4", branchId: 50, branchName: "CABANG A", tag: "TAG A", harga: { LSN: 120000 } },
@@ -69,10 +69,12 @@ export type OpsiMock = {
     saranTambahan?: Record<string, unknown>[];
     /** O3: ganti jawaban /api/customers/riwayat-beli (bawaan: toko tanpa riwayat faktur). */
     riwayat?: (url: URL, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
+    /** Ganti jawaban /api/items/stok (stok GD01 terkini kartu barang; bawaan: `stokLive` barang). */
+    stokLive?: (url: URL, n: number) => Jawab | undefined | Promise<Jawab | undefined>;
 };
 export type PreviewBody = { channel: string; order_date: string; customer_no: string; lines: { code: string; unit: string; quantity: string; price?: string }[] };
 
-export type LogMock = { pelanggan: URL[]; rute: URL[]; barang: URL[]; preview: PreviewBody[]; sidik: string[]; salesmen: URL[]; dibatalkan: string[] };
+export type LogMock = { pelanggan: URL[]; rute: URL[]; barang: URL[]; stok: URL[]; preview: PreviewBody[]; sidik: string[]; salesmen: URL[]; dibatalkan: string[] };
 
 const kirim = async (r: Route, j: Jawab) => {
     try {
@@ -159,7 +161,7 @@ export function sidikDari(b: PreviewBody, geser = 0): { sidik: string; pratinjau
 }
 
 export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<{ log: LogMock; opsi: OpsiMock }> {
-    const log: LogMock = { pelanggan: [], rute: [], barang: [], preview: [], sidik: [], salesmen: [], dibatalkan: [] };
+    const log: LogMock = { pelanggan: [], rute: [], barang: [], stok: [], preview: [], sidik: [], salesmen: [], dibatalkan: [] };
     page.on("requestfailed", (r) => { if (/ERR_ABORTED/.test(r.failure()?.errorText ?? "")) log.dibatalkan.push(new URL(r.url()).search); });
     const sales = () => (opsi.peran ?? "petugas") === "sales";
     const blokirSales = (): Jawab | undefined => {
@@ -227,6 +229,17 @@ export async function mockOrderCabang(page: Page, opsi: OpsiMock = {}): Promise<
         const cabangTanpaBarang = items.length === 0 && cab !== null && !BARANG.some((x) => x.branchId === cab);
         return kirim(r, { body: { ok: true, tanggal: url.searchParams.get("tanggal") ?? "2026-10-12", branchId: cab, cabangTanpaBarang, items,
             stokPer: "2026-10-31T03:15:00.000Z" } });
+    });
+
+    // Stok GD01 terkini (Accurate get-stock.do) untuk kartu barang terpilih: bawaan = `stokLive` barang (beda dari angka sync), jam 12/11 14.05 WITA.
+    await page.route((u) => u.pathname === "/api/items/stok", async (r) => {
+        const url = new URL(r.request().url());
+        log.stok.push(url);
+        const ganti = await opsi.stokLive?.(url, log.stok.length);
+        if (ganti) return kirim(r, ganti);
+        const x = BARANG.find((b) => b.no === url.searchParams.get("no"));
+        if (!x) return kirim(r, { status: 404, body: { ok: false, kode: "BARANG_TIDAK_ADA", error: "Barang tidak ada di master Accurate hasil sync." } });
+        return kirim(r, { body: { ok: true, no: x.no, gudangStok: "GD01", quantity: 0, stok: x.stokLive ?? x.stok ?? "0", per: "2026-11-12T06:05:00.000Z" } });
     });
 
     await page.route((u) => u.pathname === "/api/orders/preview", async (r) => {
