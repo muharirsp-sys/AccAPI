@@ -779,7 +779,7 @@ test("Order Sales (sidik): PRATINJAU_BERUBAH = BELUM terkirim, angka baru tampil
     await expect(main.getByRole("status").filter({ hasText: `No. permintaan #${ID_WEBSALES.slice(0, 8)}` })).toBeVisible();
 });
 
-test("Order Sales (sidik): mengubah baris/pelanggan/tanggal membatalkan sidik lama — Kirim terkunci sampai pratinjau segar; yang dikirim = sidik terbaru", async ({ page }) => {
+test("Order Sales (sidik): mengubah baris/pelanggan membatalkan sidik lama — Kirim terkunci sampai pratinjau segar; yang dikirim = sidik terbaru", async ({ page }) => {
     const { log, opsi } = await mockOrderCabang(page, { peran: "sales" });
     const ws = await mockWebsales(page, { cabang: opsi });
     await bukaSales(page);
@@ -809,25 +809,33 @@ test("Order Sales (sidik): mengubah baris/pelanggan/tanggal membatalkan sidik la
     expect(ws.kirim[0]).toMatchObject({ sidik: sidikBaru, lines: [{ code: "A-1", unit: "KRT", quantity: "5" }] });
 });
 
-test("Order Sales (sidik): tanggal diganti = pratinjau lama usang (Kirim terkunci) dan sidik baru dipakai", async ({ page }) => {
-    const { log, opsi } = await mockOrderCabang(page, { peran: "sales" });
-    const ws = await mockWebsales(page, { cabang: opsi });
-    await bukaSales(page);
-    const { main } = await isiSalesSiap(page);
-    const kirim = main.getByRole("button", { name: "Kirim order…" });
-    await expect(kirim).toBeEnabled(NAV);
+// Tanggal Order Sales terkunci hari ini sejak 16 Nov 2026 (e12f704e); aturan "tanggal ikut sidik" diuji di Order Baru yang tanggalnya bisa diganti.
+test("Order baru (sidik): tanggal diganti = pratinjau lama usang dan sidik baru dipakai", async ({ page }) => {
+    const { log, opsi } = await mockOrderCabang(page);
+    const orders = await mockOrdersInternal(page, { cabang: opsi });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/orders/baru", NAV);
+    const main = page.locator("main");
+    await pilihPelanggan(main, "PELANGGAN A", "PELANGGAN A");
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await pilihBarang(b1, "A-1", "BARANG A\\b.*KRT");
+    await b1.getByLabel("Satuan").selectOption("KRT");
+    await b1.getByLabel("Jumlah").fill("2");
+    const simpan = page.getByRole("button", { name: "Simpan order…" });
+    await expect(simpan).toBeEnabled(NAV);
     const sidikLama = log.sidik.at(-1)!;
     const kemarin = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
     const sebelum = log.preview.length;
     await main.getByLabel("Tanggal order").fill(kemarin);
     await expect.poll(() => log.preview.length, NAV).toBeGreaterThan(sebelum);
-    await expect(kirim).toBeEnabled(NAV);
+    await expect(simpan).toBeEnabled(NAV);
     expect(log.preview.at(-1)!.order_date).toBe(kemarin);
     expect(log.sidik.at(-1)).not.toBe(sidikLama); // tanggal ikut sidik
-    await kirim.click();
-    await page.getByRole("dialog").getByRole("button", { name: "Kirim order" }).click();
+    await simpan.click();
+    await page.getByRole("dialog").getByRole("button", { name: "Simpan order" }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
-    expect(ws.kirim[0]).toMatchObject({ order_date: kemarin, sidik: log.sidik.at(-1) });
+    await expect.poll(() => orders.simpan.length, NAV).toBe(1);
+    expect(orders.simpan[0]).toMatchObject({ order_date: kemarin, sidik: log.sidik.at(-1) });
 });
 
 test("Order Sales (sidik): perkiraan gagal = Kirim terkunci + Hitung ulang (server tidak menerima simpan tanpa sidik); channel master beda = ditahan", async ({ page }) => {
@@ -1235,18 +1243,22 @@ test("Order baru (putaran 1 peninjau #3): daftar pencarian usang (tanpa harga ma
     expect(log.preview.at(-1)!.lines[0].price).toBeUndefined();
 });
 
-test("Order Sales (putaran 1 peninjau #4): tanggal order dikosongkan = Kirim terkunci dengan alasan 'Isi tanggal order' (bukan aktif tanpa alasan); diisi lagi = terbuka", async ({ page }) => {
-    const { opsi } = await mockOrderCabang(page, { peran: "sales" });
-    await mockWebsales(page, { cabang: opsi });
+test("Order Sales (owner 16 Nov 2026): Tanggal order hanya-baca = hari ini WITA (tidak bisa dikosongkan/dimundurkan); order terkirim bertanggal hari ini", async ({ page }) => {
+    const { log, opsi } = await mockOrderCabang(page, { peran: "sales" });
+    const ws = await mockWebsales(page, { cabang: opsi });
     await bukaSales(page);
     const { main } = await isiSalesSiap(page);
     const kirim = main.getByRole("button", { name: "Kirim order…" });
     await expect(kirim).toBeEnabled(NAV);
-    await main.getByLabel("Tanggal order").fill("");
-    await expect(kirim).toBeDisabled();
-    await expect(kirim).toHaveAttribute("title", "Isi tanggal order");
-    await main.getByLabel("Tanggal order").fill(HARI_INI);
-    await expect(kirim).toBeEnabled(NAV);
+    const tanggal = main.getByLabel("Tanggal order");
+    await expect(tanggal).toHaveValue(HARI_INI);
+    await expect(tanggal).not.toBeEditable();
+    expect(log.preview.at(-1)!.order_date).toBe(HARI_INI);
+    await kirim.click();
+    await page.getByRole("dialog").getByRole("button", { name: "Kirim order" }).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
+    await expect.poll(() => ws.kirim.length, NAV).toBe(1);
+    expect(ws.kirim[0]).toMatchObject({ order_date: HARI_INI, sidik: log.sidik.at(-1) });
 });
 
 test("Order baru (putaran 1 peninjau #4): tanggal order dikosongkan = Simpan terkunci dengan alasan 'Isi tanggal order'; diisi lagi = terbuka", async ({ page }) => {
