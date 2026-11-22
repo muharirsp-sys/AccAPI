@@ -746,10 +746,12 @@ export async function syncModule(moduleName: SyncModuleName, creds: AccurateCred
     let totalRows = 0;
     // O1: tag barang yang tak bisa dipetakan ke cabang — dicatat (log + hasil), tidak diam.
     const tagTakDikenal: TagTakDikenal = {};
-    // item_stock: id yang muncul di daftar GD01 pada putaran penuh (dari halaman 1). Run lanjutan checkpoint tidak menyapu.
-    const terlihat = moduleName === "item_stock" && (state.lastPage ?? 1) === 1 ? new Set<number>() : null;
+    // item_stock SELALU satu putaran penuh dari halaman 1 (±42 halaman), checkpoint diabaikan: run lanjutan dulu melewati halaman awal
+    // dan sapuan nol, padahal lastSyncTimestamp tetap dicap baru — "per sinkron HH:MM" di pemilih barang lebih segar dari isinya (12 Nov 2026).
+    // `terlihat` = id yang muncul di daftar GD01 putaran ini.
+    const terlihat = moduleName === "item_stock" ? new Set<number>() : null;
     try {
-        const paginator = AccuratePaginator(mod.endpoint, creds, state.lastPage ?? 1, mod.fields);
+        const paginator = AccuratePaginator(mod.endpoint, creds, terlihat ? 1 : state.lastPage ?? 1, mod.fields);
         for await (const chunk of paginator) {
             if (chunk.data.length > 0) {
                 const catat = await mod.upsertPage(chunk.data);

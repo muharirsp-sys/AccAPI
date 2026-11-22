@@ -643,9 +643,13 @@ test("PG O1 cari barang: hanya cabang pelanggan, tanpa suspended/non-jual/tak di
 test("PG stok GD01 (31 Okt): item_stock hanya gudang GD01, barang yang hilang dari daftar dinolkan; cari barang membawa stok + jam sinkron", { skip: pgSkip }, async () => {
     // K-03 = sisa agregat semua gudang dari sync lama; K-04 tak pernah berstok (NULL tetap NULL, bukan "0").
     await utama.pool.query("UPDATE item SET quantity = 9, quantity_in_all_unit = '9 PCS' WHERE no = 'K-03'");
+    // 12 Nov: checkpoint run gagal (halaman 7) TIDAK dilanjutkan untuk item_stock — tetap dari halaman 1 + sapuan nol.
+    await utama.pool.query(`INSERT INTO sync_state (module, last_page, status, updated_at) VALUES ('item_stock', 7, 'error', now())
+        ON CONFLICT (module) DO UPDATE SET last_page = 7, status = 'error'`);
     const hasil = await m.sync.syncModule("item_stock", CREDS) as { success: boolean; rows: number };
     assert.equal(hasil.success, true, JSON.stringify(hasil));
     assert.ok(dipanggil.some((u) => u.startsWith("/accurate/api/item/list-stock.do?warehouseName=GD01&sp.page=1&")), "gudang GD01, URL tetap sah");
+    assert.ok(!dipanggil.some((u) => u.includes("list-stock.do") && u.includes("sp.page=7")), "checkpoint halaman 7 diabaikan");
     const stok = Object.fromEntries((await utama.pool.query("SELECT no, quantity, quantity_in_all_unit AS t FROM item WHERE no IN ('K-01', 'K-03', 'K-04')"))
         .rows.map((r) => [r.no, [r.quantity, r.t]]));
     assert.deepEqual(stok, { "K-01": [29, "1 KRT 5 PCS"], "K-03": [0, "0"], "K-04": [null, null] });

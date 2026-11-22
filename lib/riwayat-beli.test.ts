@@ -11,7 +11,7 @@ import type { SQL } from "drizzle-orm";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
 import { customer, item, userGroup } from "../db/schema.ts";
-import { bacaRiwayat, bulanTeramati, jendelaRiwayat, jumlahTambah, ringkasRiwayat, satuanTambah, sisipkanBaris, type BarisFaktur } from "./riwayat-beli.ts";
+import { bacaRiwayat, bacaStokToko, bulanTeramati, jendelaRiwayat, ringkasRiwayat, saranTambah, satuanTambah, sisipkanBaris, type BarisFaktur } from "./riwayat-beli.ts";
 import * as riwayat from "../app/api/customers/riwayat-beli/route.ts";
 
 // ---------------------------------------------------------------- murni
@@ -82,12 +82,21 @@ test("rata-rata dengan faktur awal BARU: dibagi bulan sejak faktur pertama (buka
     assert.deepEqual(sebentar.items.map((x) => [x.code, x.rataPerBulan]), [["A-4", 10], ["A-1", 3]]); // 12 hari -> 1 bulan, bukan 0,4
 });
 
-test("tombol Tambah: jumlah = pembulatan ke atas rata-rata, minimal 1", () => {
-    assert.equal(jumlahTambah(2.5), 3);
-    assert.equal(jumlahTambah(1.2), 2); // ke atas, bukan dibulatkan biasa (1,2 -> 2)
-    assert.equal(jumlahTambah(2), 2);
-    assert.equal(jumlahTambah(0.2), 1);
-    assert.equal(jumlahTambah(0), 1);
+test("saran Tambah (12 Nov): rata-rata − stok toko, ke atas; stok menutup rata-rata = 0; tanpa galat float", () => {
+    assert.equal(saranTambah(2.5, 0), 3);
+    assert.equal(saranTambah(1.2, 0), 2); // ke atas, bukan dibulatkan biasa (1,2 -> 2)
+    assert.equal(saranTambah(0.2, 0), 1);
+    assert.equal(saranTambah(2.5, 1), 2); // 1,5 -> 2
+    assert.equal(saranTambah(12, 5), 7);
+    assert.equal(saranTambah(2.5, 3), 0);
+    assert.equal(saranTambah(2, 2), 0);
+    assert.equal(saranTambah(3.1, 0.1), 3); // float: 3,1 − 0,1 = 3,0000000000000004 -> tetap 3, bukan 4
+});
+
+test("stok toko: bilangan bulat ≥ 0 (spasi tepi boleh); kosong / desimal / negatif / huruf = null", () => {
+    assert.equal(bacaStokToko("0"), 0);
+    assert.equal(bacaStokToko(" 12 "), 12);
+    for (const t of ["", "  ", "1,5", "1.5", "-1", "2 KRT", "abc"]) assert.equal(bacaStokToko(t), null, JSON.stringify(t));
 });
 
 test("satuan saat Tambah: satuan master (ejaan master); sales tak bisa satuan tanpa harga sah; petugas boleh (harga petugas)", () => {

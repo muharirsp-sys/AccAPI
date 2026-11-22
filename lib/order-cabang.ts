@@ -1,9 +1,9 @@
 /*
  * Tujuan: Order per cabang Accurate (O1, owner 12 Okt 2026). Pelanggan cabang X hanya boleh dipesankan barang bercabang X; cabang
  *   salesman = cabang karyawannya di Accurate; harga = cabang pelanggan. SATU pemeriksa untuk pratinjau dan simpan order.
- * Caller: lib/sync (tag barang -> cabang), app/api/orders/{preview,harga}, app/api/customers/{search,rute}, app/api/items/search.
+ * Caller: lib/sync (tag barang -> cabang), app/api/orders/{preview,harga}, app/api/customers/{search,rute}, app/api/items/{search,stok}.
  * Dependensi: db (customer, item, branch, accurate_employee, sales_profile), lib/item-price (resolvePrices).
- * Main Functions: GUDANG_STOK, cabangDariTag, petaCabang, hargaSah, hargaPetugasSah, putusanHarga, alasanBonus, tripwireIzin, cocokKodeRute,
+ * Main Functions: GUDANG_STOK, jumlahGetStock, teksStok, cabangDariTag, petaCabang, hargaSah, hargaPetugasSah, putusanHarga, alasanBonus, tripwireIzin, cocokKodeRute,
  *   pilihPelangganRute (murni); cakupanCabang,
  *   periksaOrder, periksaBonus (DB baca-saja).
  * Side Effects: DB read-only.
@@ -17,6 +17,44 @@ import { resolvePrices, type PriceResult } from "@/lib/item-price";
 
 /** Gudang stok di pemilih barang = sumber `item.quantity` (lib/sync item_stock). Owner 31 Okt 2026: GD01 saja, bukan semua gudang. */
 export const GUDANG_STOK = "GD01";
+
+const angkaSah = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v
+    : typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
+
+/**
+ * Jumlah stok (satuan dasar) dari `d` jawaban item/get-stock.do. null = bentuk tak dikenal -> pemanggil menolak, TIDAK menebak angka.
+ * ponytail: OpenAPI Accurate (acc.json.do.txt) tanpa skema respons get-stock.do, jadi bentuknya belum dibuktikan live: angka polos atau
+ *   objek ber-`availableStock`/`quantity`. Batas: kunci lain = galat "tidak terbaca" (stok sync tetap tampil). Jalan naik: buktikan
+ *   lewat `/api/items/stok?no=...&raw=1` sesudah deploy, lalu persempit ke satu kunci.
+ */
+export function jumlahGetStock(d: unknown): number | null {
+    if (angkaSah(d) !== null) return angkaSah(d);
+    if (!d || typeof d !== "object") return null;
+    for (const k of ["availableStock", "quantity", "availableQuantity", "availableQty"]) {
+        const n = angkaSah((d as Record<string, unknown>)[k]);
+        if (n !== null) return n;
+    }
+    return null;
+}
+
+/**
+ * Stok satuan dasar -> teks bersatuan seperti `quantityInAllUnit` Accurate (6280 PCS, KRT = 72 -> "87 KRT 16 PCS"): satuan terbesar
+ * dulu, bagian 0 tidak ditulis, sisa pecahan di satuan dasar. `rasio` = rasioSatuan barang; kosong (satuan belum tersinkron) = angka saja.
+ */
+export function teksStok(qty: number, rasio: Readonly<Record<string, number>>): string {
+    const fmt = (n: number) => n.toLocaleString("id-ID", { maximumFractionDigits: 2 });
+    const urut = Object.entries(rasio).sort((a, b) => b[1] - a[1]);
+    const dasar = urut.find(([, isi]) => isi === 1)?.[0];
+    if (!dasar) return fmt(qty);
+    let sisa = Math.abs(qty);
+    const bagian: string[] = [];
+    for (const [unit, isi] of urut) {
+        const n = isi === 1 ? Math.round(sisa * 100) / 100 : Math.floor(sisa / isi + 1e-9);
+        sisa = Math.round((sisa - n * isi) * 100) / 100;
+        if (n) bagian.push(`${fmt(n)} ${unit}`);
+    }
+    return `${qty < 0 ? "-" : ""}${bagian.join(" ") || `0 ${dasar}`}`;
+}
 
 // ---------------------------------------------------------------- tag divisi barang -> cabang (murni)
 
