@@ -2,13 +2,14 @@
  * Tujuan: Pembaca API Accurate untuk laporan principal terjadwal (ABCPI, Enigma/Marketama) — list.do lengkap, detail.do
  *   paralel terbatas di bawah satu jatah laju bersama.
  * Caller: lib/abcpi/jalankan.ts, lib/enigma/jalankan.ts.
- * Dependensi: lib/sync (accurateHeaders), lib/accurate-redact.
+ * Dependensi: lib/sync (fetchAccurate: pembeda 401 token mati / sesi habis + buka ulang sesi sekali), lib/accurate-401, lib/accurate-redact.
  * Main Functions: ambil, daftar, rincian, hariIniWita, keAccurate.
  * Catatan: cache sales_invoice TIDAK dipakai — sync list.do memperbarui last_update tanpa mengganti rincian, dan list.do tidak
  *   memberi optLock/versi (probe 26 Okt 2026), jadi salinan lama tak bisa dibedakan dari yang terbaru.
  * Side Effects: HTTP GET ke Accurate (baca saja).
  */
-import { accurateHeaders, type AccurateCredentials } from "@/lib/sync";
+import { fetchAccurate, type AccurateCredentials } from "@/lib/sync";
+import { SesiAccurateHabis, TokenAccurateMati } from "@/lib/accurate-401";
 import { redactAccurateSecrets } from "@/lib/accurate-redact";
 
 export type Obj = Record<string, unknown>;
@@ -26,11 +27,14 @@ const giliran = async () => {
 };
 
 export async function ambil(creds: AccurateCredentials, jalur: string, params: Record<string, string>) {
-    const url = new URL(`${creds.sessionHost}/accurate/api${jalur}`);
-    for (const [k, v] of Object.entries(params)) url.searchParams.append(k, v);
+    const query = new URLSearchParams(params).toString();
     for (let coba = 1; ; coba++) {
         await giliran();
-        const res = await fetch(url, { headers: accurateHeaders(creds), signal: AbortSignal.timeout(60_000) }).catch((e: Error) => e);
+        // 401 (token mati / sesi tak bisa dibuka ulang) bukan galat jaringan: langsung dilempar, tidak dicoba ulang 6 kali.
+        const res = await fetchAccurate(creds, query ? `${jalur}?${query}` : jalur, 60_000).catch((e: Error) => {
+            if (e instanceof TokenAccurateMati || e instanceof SesiAccurateHabis) throw e;
+            return e;
+        });
         const body = res instanceof Error ? null : await res.json().catch(() => null) as { s?: boolean; d?: unknown; m?: unknown; sp?: Obj } | null;
         const pesan = res instanceof Error ? res.message : `HTTP ${res.status} ${String(body?.m ?? body?.d ?? "")}`;
         if (res instanceof Error || res.status === 429 || res.status >= 500 || /melebihi toleransi|request per detik/i.test(pesan)) {

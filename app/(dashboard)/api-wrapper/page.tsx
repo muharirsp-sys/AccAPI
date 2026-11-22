@@ -125,7 +125,7 @@ export default function Home() {
   }, []);
 
   const terapkanSesi = (sesi: StatusSesi | null) => {
-    setIsKeySaved(Boolean(sesi?.databaseConnected));
+    setIsKeySaved(Boolean(sesi?.databaseConnected && sesi.token !== "mati"));
     setOpenDbId(sesi?.databaseId ?? "");
     setOpenDbAlias(sesi?.databaseAlias ?? "");
     setSesiDibaca(true);

@@ -4,11 +4,12 @@
  * Caller: app/api/proxy/route.ts, app/api/finance/purchase-payment/route.ts.
  * Dependensi: fetch global.
  * Main Functions: flattenPayload, buildAccurateRequest, forwardAccurate, isGuardedAccurateWrite,
- *   isSalesReceiptWrite, isSalesInvoiceWrite, isCustomerWrite, isAccurateRead, isCatalogWrite.
- * Dependensi tambahan: config/accurateRoutes.js (katalog Konsol — sumber yang sama dengan UI /api-wrapper).
+ *   isSalesReceiptWrite, isSalesInvoiceWrite, isCustomerWrite, isAccurateRead, isCatalogWrite, jawaban401.
+ * Dependensi tambahan: config/accurateRoutes.js (katalog Konsol — sumber yang sama dengan UI /api-wrapper), lib/accurate-401.
  * Side Effects: forwardAccurate = HTTP ke host Accurate (timeout 30 s, redirect manual).
  */
 import { accurateRoutes } from "@/config/accurateRoutes";
+import { TokenAccurateMati, galat401 } from "@/lib/accurate-401";
 
 // Helper untuk nge-flatten JSON bersarang atau array ke dalam format properti dot/bracket (data[0].key)
 export const flattenPayload = (obj: unknown, prefix = ""): Record<string, unknown> => {
@@ -78,12 +79,14 @@ export async function forwardAccurate(target: AccurateTarget, endpointPath: stri
 
 /**
  * Pembaca Accurate BACA-SAJA di server dengan sesi `target` (S6e-2: riwayat sales-receipt, Selesaikan). Hanya GET;
- * status non-2xx / bukan JSON / timeout 30 dtk = melempar (pemanggil memperlakukannya sebagai TIDAK TERBACA).
+ * status non-2xx / bukan JSON / timeout 30 dtk = melempar (pemanggil memperlakukannya sebagai TIDAK TERBACA). 401 = pesan tetap
+ * token kedaluwarsa / sesi habis (lib/accurate-401); badannya tidak dibawa.
  */
 export function bacaAccurate(target: AccurateTarget) {
     return async (endpointPath: string, method: string, payload?: unknown) => {
         if (String(method).toUpperCase() !== "GET") throw new Error("bacaAccurate hanya GET");
         const r = await forwardAccurate(target, endpointPath, "GET", payload);
+        if (r.status === 401) throw galat401(r.text);
         if (r.status < 200 || r.status >= 300) throw new Error(`Accurate HTTP ${r.status}`);
         try {
             return JSON.parse(r.text) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any -- JSON Accurate bebas bentuk (AccurateFetch)
@@ -91,6 +94,16 @@ export function bacaAccurate(target: AccurateTarget) {
             throw new Error("jawaban Accurate bukan JSON");
         }
     };
+}
+
+/**
+ * Jawaban proxy untuk HTTP 401 Accurate, pengganti badan aslinya (menggemakan access token; dulu `{"error":"invalid_token"}`
+ * diteruskan apa adanya, atau 1000 huruf pertamanya bila bukan JSON). Amplop `{s:false, d:[pesan]}` = ditolak Accurate, tidak
+ * terkirim (lib/apiFetcher): 401 ditolak di lapis otorisasi sebelum dokumen diproses.
+ */
+export function jawaban401(badan: string) {
+    const galat = galat401(badan);
+    return { s: false, d: [galat.message], error: galat.message, code: galat instanceof TokenAccurateMati ? "ACCURATE_TOKEN_MATI" : "ACCURATE_SESI_HABIS" };
 }
 
 /** Pesan 504 proxy (tinjauan S6-0a): tulis Accurate yang timeout = status TIDAK PASTI — jangan menyuruh mengulang. */

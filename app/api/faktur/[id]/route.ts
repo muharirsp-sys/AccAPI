@@ -1,7 +1,8 @@
 /*
  * Tujuan: Detail satu faktur (header + baris item, qty, harga) langsung dari Accurate detail.do.
  * Caller: halaman faktur saat baris diperluas atau dibuka dari realisasi dengan database+ID.
- * Dependensi: lib/accurate-session (kredensial sistem), lib/accurate-invoice (mapper), RBAC.
+ * Dependensi: lib/accurate-session (kredensial sistem), lib/sync fetchAccurate (401 token mati / sesi habis), lib/accurate-invoice
+ *   (mapper), RBAC.
  * Main Functions: GET, cek database tujuan opsional sebelum membaca detail.
  * Side Effects: 1 panggilan HTTP ke Accurate per pembukaan faktur (read-only).
  *
@@ -13,7 +14,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
 import { mapFakturDetail } from "@/lib/accurate-invoice";
-import { accurateHeaders } from "@/lib/sync";
+import { fetchAccurate } from "@/lib/sync";
+import { SesiAccurateHabis, TokenAccurateMati } from "@/lib/accurate-401";
 
 export const runtime = "nodejs";
 
@@ -36,10 +38,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     }
 
     try {
-        const res = await fetch(`${accurate.creds.sessionHost}/accurate/api/sales-invoice/detail.do?id=${id}`, {
-            headers: accurateHeaders(accurate.creds),
-            signal: AbortSignal.timeout(30_000),
-        });
+        const res = await fetchAccurate(accurate.creds, `/sales-invoice/detail.do?id=${id}`);
         const body = await res.json().catch(() => null);
         if (!res.ok || !body?.s || !body?.d) {
             return NextResponse.json(
@@ -53,6 +52,10 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
         const raw = request.nextUrl.searchParams.get("raw") === "1" ? body.d : undefined;
         return NextResponse.json({ ok: true, faktur: mapFakturDetail(body.d), raw });
     } catch (error) {
+        if (error instanceof TokenAccurateMati || error instanceof SesiAccurateHabis) {
+            console.error(`[FAKTUR DETAIL] ${error.name}`);
+            return NextResponse.json({ ok: false, error: error.message }, { status: 503 });
+        }
         console.error("[FAKTUR DETAIL ERROR]", error);
         return NextResponse.json({ ok: false, error: "Gagal mengambil detail dari Accurate." }, { status: 502 });
     }

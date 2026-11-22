@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
 import { redactAccurateSecrets } from "@/lib/accurate-redact";
-import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, isAccurateRead, isCatalogWrite, isCustomerWrite, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
+import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, isAccurateRead, jawaban401, isCatalogWrite, isCustomerWrite, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
 import { periksaPenutupanPelanggan } from "@/lib/pelanggan-terlindungi";
 import { cariPelangganAccurate, periksaTulisPelangganHendra } from "@/lib/pelanggan-hendra";
 import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, databaseLockBerbeda, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
@@ -190,6 +190,13 @@ export async function POST(req: NextRequest) {
         // Hasil per baris sales-receipt dicatat SERVER di sendSalesReceipt (timeout/non-JSON/5xx = UNKNOWN).
         const { status, text: rawText, json, data } = await sendSalesReceipt(db, dispatch,
             () => forwardAccurate({ sessionHost, sessionId, accessToken: apiKey }, endpointPath, method, payload));
+        // 401 = token kedaluwarsa / sesi habis (lib/accurate-401): pesan tetap; badan Accurate (menggemakan token) tidak diteruskan
+        // ke peramban maupun log. HTTP 200 seperti jawaban Accurate lain yang diteruskan.
+        if (status === 401) {
+            const ganti = jawaban401(rawText);
+            console.error(`[ACCURATE 401] ${ganti.code} ${String(method).toUpperCase()} ${endpointPath}`);
+            return NextResponse.json(ganti);
+        }
         if (!json) {
             console.error("[ACCURATE API RETURNED NON-JSON]", redactAccurateSecrets(rawText));
             return NextResponse.json({ error: "Accurate mengembalikan respons non-JSON (Gagal)", detail: rawText.substring(0, 1000) }, { status: 502 });
