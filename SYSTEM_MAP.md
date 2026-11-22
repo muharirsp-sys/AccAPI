@@ -175,9 +175,9 @@ Paritas: laporan_harian_bandingkan.py <hasil> <arsip LaporanAuto> (sel demi sel)
 ### 1. Autentikasi & Guard Halaman
 ```
 Browser -> /login page (app/(auth)/login/page.tsx; kerangka Fiori app/(auth)/layout.tsx untuk login/lupa/atur ulang/daftar)
-  -> authClient.signIn.email -> /api/auth/sign-in/email (lib/auth.ts; 5 percobaan/15 menit/IP)
+  -> authClient.signIn.email -> /api/auth/sign-in/email (lib/auth.ts; 30 permintaan/15 menit/IP, login sukses ikut dihitung — satu kantor berbagi kuota)
   -> Better Auth + Drizzle Postgres (tabel user/session)
-  -> window.location.assign("/") | galat generik (401) · "belum diverifikasi" (403) · "terlalu banyak percobaan" (429)
+  -> window.location.assign("/") | galat generik (401) · "belum diverifikasi" (403) · "terlalu banyak percobaan dari jaringan ini" (429, sisa menit dari header X-Retry-After)
   ?error= (hari ini hanya /api/auth/callback tanpa sesi app) -> kalimat terpetakan; kode tak dikenal -> kalimat umum (teks query tidak dicetak)
 
 Browser -> /forgot-password -> authClient.requestPasswordReset -> layar NETRAL identik (tanpa mengulang email)

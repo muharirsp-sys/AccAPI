@@ -53,12 +53,15 @@ export const auth = betterAuth({
         "/admin/revoke-user-sessions",
     ],
     rateLimit: {
-        // ponytail: explicit — don't rely on NODE_ENV inference; custom rule gentler than
-        // the 3/10s default while still blocking brute force (5 per 15 min per IP)
+        // ponytail: explicit — don't rely on NODE_ENV inference. Kunci Better Auth = IP + path (bukan email) dan login
+        // SUKSES ikut dihitung, jadi satu kantor di balik NAT berbagi satu kuota. 5/15 mnt membuat staf ke-6 terkunci
+        // pada percobaan pertamanya (handover10 §6.3). Sesi bertahan 7 hari, jadi 30/15 mnt muat satu kantor dan tetap
+        // menahan tebak sandi. Plafon: penyerang dengan banyak IP lolos; jalur naik = hitung gagal per akun (email).
+        // Sisa waktu blokir dibaca halaman /login dari header X-Retry-After, jadi angka di sini tidak disalin ke UI.
         enabled: true,
         storage: "memory",
         customRules: {
-            "/sign-in/email": { window: 900, max: 5 },
+            "/sign-in/email": { window: 900, max: 30 },
         },
     },
     advanced: {

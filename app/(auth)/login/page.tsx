@@ -34,14 +34,23 @@ function pesanDariUrl(error: string | string[] | undefined): Pesan | undefined {
 
 type AuthError = { status?: number; message?: string; code?: string };
 
-/** Galat masuk generik: tidak membedakan email tidak ada vs sandi salah, dan tidak mencetak pesan server. */
-function pesanMasukGagal(error: AuthError): Pesan {
+/**
+ * Galat masuk generik: tidak membedakan email tidak ada vs sandi salah, dan tidak mencetak pesan server.
+ * `detikTunggu` = header X-Retry-After dari batas laju Better Auth (429), bila ada.
+ */
+function pesanMasukGagal(error: AuthError, detikTunggu?: number): Pesan {
     const teks = `${error.message || ""} ${error.code || ""}`.toLowerCase();
     if (error.status === 403 && teks.includes("email") && teks.includes("verif")) {
         return { tone: "neg", title: "Email belum diverifikasi.", text: "Minta admin memeriksa akun Anda." };
     }
-    // ponytail: "15 menit" menyalin batas laju lib/auth.ts (/sign-in/email: 5 per 900 dtk per IP); ubah bersama bila batasnya berubah.
-    if (error.status === 429) return { tone: "neg", title: "Terlalu banyak percobaan masuk.", text: "Coba lagi dalam 15 menit." };
+    // Kuota lib/auth.ts dihitung per IP, jadi rekan satu jaringan ikut memakainya — judul tidak menyalahkan pengguna.
+    if (error.status === 429) {
+        const menit = detikTunggu && detikTunggu > 0 ? Math.ceil(detikTunggu / 60) : undefined;
+        return {
+            tone: "neg", title: "Terlalu banyak percobaan masuk dari jaringan ini.",
+            text: menit ? `Coba lagi dalam ${menit} menit.` : "Coba lagi beberapa menit lagi.",
+        };
+    }
     return { tone: "neg", title: "Email atau kata sandi salah." };
 }
 
@@ -77,9 +86,13 @@ export default function LoginPage({ searchParams }: { searchParams: Promise<{ er
         }
         setLoading(true);
         try {
-            const { error } = await authClient.signIn.email({ email: trimmedEmail, password: sandi });
+            let detikTunggu: number | undefined;
+            const { error } = await authClient.signIn.email(
+                { email: trimmedEmail, password: sandi },
+                { onError: (ctx) => { detikTunggu = Number(ctx.response.headers.get("X-Retry-After")) || undefined; } },
+            );
             if (error) {
-                setGalat(pesanMasukGagal(error));
+                setGalat(pesanMasukGagal(error, detikTunggu));
                 setLoading(false);
                 return;
             }
