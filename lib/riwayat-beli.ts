@@ -1,10 +1,10 @@
 /*
  * Tujuan: Riwayat beli toko (O3, owner 12 Okt 2026 sesi 13) — "kalau toko sudah pernah order, munculkan average pengambilannya selama
  *   sebulan". Logika MURNI (tanpa DB, aman diimpor klien): jendela tanggal, bulan teramati, agregasi baris faktur per barang + satuan,
- *   jumlah usulan tombol Tambah, satuan saat Tambah, sisip baris order, baca jawaban API.
+ *   saran tombol Tambah (rata-rata − stok toko, owner 12 Nov 2026), baca stok toko, satuan saat Tambah, sisip baris order, baca jawaban API.
  * Caller: app/api/customers/riwayat-beli/route.ts (server), components/order/RiwayatBeli.tsx (klien), lib/riwayat-beli.test.ts.
  * Dependensi: tidak ada.
- * Main Functions: jendelaRiwayat, bulanTeramati, ringkasRiwayat, jumlahTambah, satuanTambah, sisipkanBaris, bacaRiwayat, urlRiwayat.
+ * Main Functions: jendelaRiwayat, bulanTeramati, ringkasRiwayat, saranTambah, bacaStokToko, satuanTambah, sisipkanBaris, bacaRiwayat, urlRiwayat.
  * Side Effects: Tidak ada.
  */
 
@@ -88,8 +88,14 @@ export type Riwayat = { jendela: Jendela; ringkasan: RingkasanRiwayat; items: Ba
 export const urlRiwayat = (customerNo: string, bulan = BULAN_BAWAAN) =>
     `/api/customers/riwayat-beli?${new URLSearchParams({ customerNo: customerNo.trim(), bulan: String(bulan) })}`;
 
-/** Tombol Tambah: jumlah = pembulatan ke atas rata-rata per bulan, minimal 1 (bisa diubah di barisnya). */
-export const jumlahTambah = (rata: number) => Math.max(1, Math.ceil(rata));
+/**
+ * Saran tombol Tambah (owner 12 Nov 2026): rata-rata per bulan DIKURANGI stok toko (satuan baris yang sama), dibulatkan ke atas; 0 = stok
+ * toko sudah menutup rata-rata sebulan (tanpa tombol). Selisih dibulatkan 2 desimal dulu: 3,1 − 0,1 di float = 3,0000000000000004 -> 4.
+ */
+export const saranTambah = (rata: number, stokToko: number) => Math.max(0, Math.ceil(bulat2(rata - stokToko)));
+
+/** Stok toko yang diketik sales: bilangan bulat ≥ 0 dalam satuan baris (sama dengan jumlah order); kosong/tak sah = null. */
+export const bacaStokToko = (t: string) => (/^\d{1,9}$/.test(t.trim()) ? Number(t.trim()) : null);
 
 /** Kunci "barang + satuan sudah ada di order". */
 export const kunciBaris = (code: string, unit: string) => `${code.trim()}|${unit.trim().toUpperCase()}`;

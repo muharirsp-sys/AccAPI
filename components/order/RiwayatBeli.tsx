@@ -1,7 +1,9 @@
 /*
  * Tujuan: Panel "Biasa diambil toko ini" (O3, owner 12 Okt 2026 sesi 13): setelah pelanggan dipilih, barang yang pernah dibeli toko itu
  *   (rata-rata per bulan + satuan, terakhir beli; urut terbesar, 10 teratas + "Lihat semua") supaya sales tahu apa yang biasa diambil.
- *   Tombol Tambah menambah baris order dengan satuan itu dan jumlah = pembulatan ke atas rata-rata (bisa diubah) — barang dibaca ulang dari
+ *   Owner 12 Nov 2026: sales WAJIB mengisi stok toko per barang + satuan dulu; saran = rata-rata − stok toko, ke atas (0 = "Stok toko cukup",
+ *   tanpa tombol; petugas boleh kosong = 0). Stok toko hanya di layar, tidak ikut order.
+ *   Tombol Tambah menambah baris order dengan satuan itu dan jumlah = saran (bisa diubah) — barang dibaca ulang dari
  *   pencarian barang cabang pelanggan (harga/satuan terkini), lalu pratinjau dihitung ulang seperti biasa (sidik). Barang yang kini tak bisa
  *   diorder tampil bertanda tanpa tombol. Keadaan: memuat / belum ada riwayat / galat + Coba lagi / sebagian faktur tanpa rincian (catatan) /
  *   faktur rusak dilewati (catatan). Ganti pelanggan membatalkan pembacaan barang Tambah yang masih berjalan.
@@ -19,7 +21,7 @@ import { Button, MessageStrip, Section, Skeleton, StatusBadge } from "@/componen
 import { useLoad, type Load } from "@/components/fiori/interactive";
 import { ambilJson } from "@/app/(dashboard)/form-kontrol/lapangan";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
-import { bacaRiwayat, jumlahTambah, kunciBaris, satuanTambah, urlRiwayat, type BarangRiwayatOrder, type Riwayat } from "@/lib/riwayat-beli";
+import { bacaRiwayat, bacaStokToko, kunciBaris, saranTambah, satuanTambah, urlRiwayat, type BarangRiwayatOrder, type Riwayat } from "@/lib/riwayat-beli";
 import { galatDariJawaban, kalimatGalat, kunciHarga, tanggalSah, type BarangPilih, type PelangganPilih, type Peran } from "./order-cabang";
 import { bacaBarangKode } from "./order-cabang-api";
 
@@ -63,7 +65,12 @@ function Panel({ pelanggan, tanggal, peran, baris, onTambah }: Props) {
     const lepas = useRef<AbortController | null>(null);
     useEffect(() => { const c = new AbortController(); lepas.current = c; return () => c.abort(); }, []);
 
-    async function tambah(x: BarangRiwayatOrder) {
+    // Stok toko per barang + satuan (teks ketikan). Sales WAJIB mengisinya (0 bila habis) sebelum Tambah; petugas Order Baru boleh
+    // kosong (= 0, saran = rata-rata seperti dulu). Hanya di layar: tidak dikirim/disimpan bersama order.
+    const [stokToko, setStokToko] = useState<Record<string, string>>({});
+    const wajibStok = peran === "sales";
+
+    async function tambah(x: BarangRiwayatOrder, jumlah: number) {
         const sinyal = lepas.current?.signal;
         if (!sinyal) return;
         const k = kunciBaris(x.code, x.unit);
@@ -76,7 +83,7 @@ function Panel({ pelanggan, tanggal, peran, baris, onTambah }: Props) {
         const s = satuanTambah(h.data, x.unit, peran, kunciHarga(pelanggan.id, tanggal));
         if ("alasan" in s) { set({ jenis: "galat", pesan: s.alasan }); return; }
         set(null);
-        onTambah(h.data, s.unit, String(jumlahTambah(x.rataPerBulan)));
+        onTambah(h.data, s.unit, String(jumlah));
     }
 
     const r = riwayat.data;
@@ -103,25 +110,50 @@ function Panel({ pelanggan, tanggal, peran, baris, onTambah }: Props) {
                         {items.map((x) => {
                             const k = kunciBaris(x.code, x.unit);
                             const a = aksi[k];
-                            const n = jumlahTambah(x.rataPerBulan);
+                            const nama = x.name || x.code;
+                            // Baris yang bisa ditambah: kolom stok toko + tombol bersaran. Lainnya: tanda saja (tanpa kolom stok).
+                            const isiStok = x.bisaDiorder && !diOrder.has(k);
+                            const teks = stokToko[k] ?? "";
+                            const stok = bacaStokToko(teks) ?? (wajibStok || teks.trim() ? null : 0);
+                            const n = stok === null ? null : saranTambah(x.rataPerBulan, stok);
+                            const alasanStok = teks.trim() ? "Stok toko harus bilangan bulat 0 atau lebih" : "Isi stok toko dulu (0 bila habis)";
+                            const meta = (
+                                <span className="fi-small fi-muted" style={{ overflowWrap: "anywhere", ...(isiStok ? { gridColumn: "1 / -1" } : {}) }}>
+                                    <span className="fi-mono">{x.code}</span> · terakhir {tanggalPendek(x.terakhirBeli)} · {x.jumlahFaktur} faktur
+                                </span>
+                            );
                             return (
-                                // Dua kolom (nama | rata-rata, keterangan | aksi): di ponsel 390 px tombol tetap sebaris dengan barangnya.
+                                // Dua kolom (nama | rata-rata, stok toko | aksi): di ponsel 390 px tombol tetap sebaris dengan barangnya.
                                 <li key={k} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: "2px 12px", padding: "10px 0", borderTop: "1px solid var(--line)" }}>
-                                    <b style={{ overflowWrap: "anywhere" }}>{x.name || x.code}</b>
+                                    <b style={{ overflowWrap: "anywhere" }}>{nama}</b>
                                     <span className="fi-tnum" style={{ whiteSpace: "nowrap", justifySelf: "end" }}><b>{angka(x.rataPerBulan)} {x.unit}</b><span className="fi-small fi-muted"> / bulan</span></span>
-                                    <span className="fi-small fi-muted" style={{ overflowWrap: "anywhere" }}>
-                                        <span className="fi-mono">{x.code}</span> · terakhir {tanggalPendek(x.terakhirBeli)} · {x.jumlahFaktur} faktur
-                                    </span>
-                                    <span style={{ justifySelf: "end" }}>
-                                        {!x.bisaDiorder ? (
-                                            <StatusBadge tone="warn">Tidak bisa diorder</StatusBadge>
-                                        ) : diOrder.has(k) ? (
-                                            <StatusBadge tone="neu">Sudah di order</StatusBadge>
-                                        ) : (
-                                            <Button variant="secondary" icon={<Plus className="fi-icon" aria-hidden />} busy={a?.jenis === "memuat"} disabled={Boolean(tanpaTanggal)} disabledReason={tanpaTanggal}
-                                                aria-label={`Tambah ${n} ${x.unit} ${x.name || x.code}`} onClick={() => void tambah(x)}>Tambah {n} {x.unit}</Button>
-                                        )}
-                                    </span>
+                                    {meta}
+                                    {isiStok ? (
+                                        <>
+                                            <label className="fi-small" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, marginTop: 4 }}>
+                                                <span style={{ whiteSpace: "nowrap" }}>Stok toko</span>
+                                                <input className="fi-input fi-tnum" inputMode="numeric" autoComplete="off" style={{ width: 72, flex: "none" }}
+                                                    aria-label={`Stok toko ${nama} (${x.unit})`} placeholder={wajibStok ? "wajib" : "0"} value={teks}
+                                                    aria-invalid={(teks.trim() !== "" && bacaStokToko(teks) === null) || undefined}
+                                                    onChange={(e) => { const v = e.target.value; setStokToko((p) => ({ ...p, [k]: v })); }} />
+                                                <span>{x.unit}</span>
+                                            </label>
+                                            <span style={{ justifySelf: "end", marginTop: 4 }}>
+                                                {n === 0 ? (
+                                                    <StatusBadge tone="pos">Stok toko cukup</StatusBadge>
+                                                ) : (
+                                                    <Button variant="secondary" icon={<Plus className="fi-icon" aria-hidden />} busy={a?.jenis === "memuat"}
+                                                        disabled={Boolean(tanpaTanggal) || n === null} disabledReason={tanpaTanggal ?? (n === null ? alasanStok : undefined)}
+                                                        aria-label={n === null ? `Tambah ${nama} ${x.unit}` : `Tambah ${n} ${x.unit} ${nama}`}
+                                                        onClick={() => { if (n) void tambah(x, n); }}>{n === null ? "Tambah" : `Tambah ${n} ${x.unit}`}</Button>
+                                                )}
+                                            </span>
+                                        </>
+                                    ) : (
+                                        <span style={{ justifySelf: "end" }}>
+                                            {!x.bisaDiorder ? <StatusBadge tone="warn">Tidak bisa diorder</StatusBadge> : <StatusBadge tone="neu">Sudah di order</StatusBadge>}
+                                        </span>
+                                    )}
                                     {/* Alasan di baris PENUH, bukan di sel kanan: alasan bertag (`tanpa cabang (tag "…" tidak bisa diorder)`) selebar
                                         teksnya di sel `auto` meruntuhkan kolom nama ke 0 px di 390 px. */}
                                     {!x.bisaDiorder && x.alasan && <span className="fi-small fi-muted" style={{ gridColumn: "1 / -1", overflowWrap: "anywhere" }}>{x.alasan}</span>}
@@ -150,7 +182,8 @@ function Panel({ pelanggan, tanggal, peran, baris, onTambah }: Props) {
                     <p className="fi-small fi-muted" style={{ margin: "8px 0 0" }}>
                         Rata-rata = jumlah dibeli ÷ {angka(r.jendela.bulanTeramati)} bulan
                         {r.ringkasan.dataSejak && r.ringkasan.dataSejak > r.jendela.dari ? ` (data toko ini baru ada sejak ${tanggalPendek(r.ringkasan.dataSejak)})` : ` (sejak ${sejak})`}.
-                        Bonus promo tidak dihitung; retur belum dikurangkan. Tambah memakai pembulatan ke atas; jumlahnya bisa diubah di baris order.
+                        Bonus promo tidak dihitung; retur belum dikurangkan. Saran Tambah = rata-rata per bulan − stok toko (satuan yang sama),
+                        dibulatkan ke atas{wajibStok ? "; stok toko wajib diisi, 0 bila habis" : "; stok toko kosong = 0"}. Jumlahnya bisa diubah di baris order.
                     </p>
                 )}
             </div>

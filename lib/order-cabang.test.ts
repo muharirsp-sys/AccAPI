@@ -8,8 +8,8 @@ import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
-import { alasanBonus, alasanHarga, angkaQuery, cabangDariTag, hargaPetugasSah, hargaSah, normalNama, petaCabang, polaLike, putusanHarga, rasioSatuan, sumberHarga,
-    TAG_KE_CABANG, TAG_NON_JUAL, tolakCabangLain, tripwireIzin } from "./order-cabang.ts";
+import { alasanBonus, alasanHarga, angkaQuery, cabangDariTag, hargaPetugasSah, hargaSah, jumlahGetStock, normalNama, petaCabang, polaLike, putusanHarga, rasioSatuan,
+    sumberHarga, TAG_KE_CABANG, TAG_NON_JUAL, teksStok, tolakCabangLain, tripwireIzin } from "./order-cabang.ts";
 import { requireCronSecret, samaRahasia } from "./api-security.ts";
 import { barisItem } from "./sync.ts";
 import * as preview from "../app/api/orders/preview/route.ts";
@@ -17,6 +17,7 @@ import * as harga from "../app/api/orders/harga/route.ts";
 import * as salesmen from "../app/api/orders/salesmen/route.ts";
 import * as cariPelanggan from "../app/api/customers/search/route.ts";
 import * as cariBarang from "../app/api/items/search/route.ts";
+import * as stokLive from "../app/api/items/stok/route.ts";
 import * as tautan from "../app/api/admin/users/[id]/salesman/route.ts";
 import * as cariKode from "../app/api/customers/lookup/route.ts";
 
@@ -136,6 +137,7 @@ const TITIK: Array<[string, H, string, string, string[]]> = [
     ["POST orders/harga", harga.POST as unknown as H, "POST", "/api/orders/harga", ["order.view", "websales.view"]],
     ["GET customers/search", cariPelanggan.GET as unknown as H, "GET", "/api/customers/search?q=a", ["order.view", "websales.view"]],
     ["GET items/search", cariBarang.GET as unknown as H, "GET", "/api/items/search?q=a", ["order.view", "websales.view"]],
+    ["GET items/stok", stokLive.GET as unknown as H, "GET", "/api/items/stok?no=A-1", ["order.view", "websales.view"]],
     ["GET customers/lookup", cariKode.GET as unknown as H, "GET", "/api/customers/lookup?no=C-A", ["order.view", "websales.view"]],
     ["GET orders/salesmen", salesmen.GET as unknown as H, "GET", "/api/orders/salesmen", ["order.view", "order.create"]],
     ["GET admin salesman", tautan.GET, "GET", "/api/admin/users/u-target/salesman", ["order.edit", "websales.create"]],
@@ -170,6 +172,9 @@ test("gerbang: query tidak valid 400 sebelum DB (pencarian, salesmen); PUT tauta
     }
     for (const url of ["/api/items/search?customerId=x", "/api/items/search?tanggal=12-10-2026", "/api/items/search?limit=99"]) {
         assert.equal((await sebagai(pel, () => cariBarang.GET(req("GET", url)))).status, 400, url);
+    }
+    for (const url of ["/api/items/stok", "/api/items/stok?no=%20", `/api/items/stok?no=${"A".repeat(61)}`]) {
+        assert.equal((await sebagai(pel, () => stokLive.GET(req("GET", url)))).status, 400, url);
     }
     assert.equal((await sebagai(["order.edit"], () => salesmen.GET(req("GET", "/api/orders/salesmen?branchId=-3")))).status, 400);
     const put = await sebagai(["users.manage"], () => tautan.PUT(req("PUT", "/api/admin/users/u-target/salesman", { employeeNumber: "  " }), ctx));
@@ -292,4 +297,21 @@ test("rasioSatuan: satuan dasar = 1, kelipatan dari ratio Accurate; nama/rasio k
     assert.deepEqual(rasioSatuan({ ...kosong, unit1Name: "pcs", unit2Name: "KRT", ratio2: 120 }), { PCS: 1, KRT: 120 });
     assert.deepEqual(rasioSatuan({ ...kosong, unit1Name: "PCS", unit2Name: "KRT", ratio2: 0, unit3Name: " ", ratio3: 12 }), { PCS: 1 });
     assert.deepEqual(rasioSatuan(kosong), {});
+});
+
+test("stok live (12 Nov): teksStok seperti quantityInAllUnit Accurate (satuan terbesar dulu, bagian 0 tak ditulis); jumlahGetStock tak menebak", () => {
+    const lervia = { PCS: 1, KRT: 72 };
+    assert.equal(teksStok(6280, lervia), "87 KRT 16 PCS"); // kasus MSM LERVIA GOAT: Gudang GD01 Accurate 6,280 = 87 KRT 16 PCS
+    assert.equal(teksStok(6390, lervia), "88 KRT 54 PCS");
+    assert.equal(teksStok(144, lervia), "2 KRT");
+    assert.equal(teksStok(5, lervia), "5 PCS");
+    assert.equal(teksStok(0, lervia), "0 PCS");
+    assert.equal(teksStok(-80, lervia), "-1 KRT 8 PCS");
+    assert.equal(teksStok(1234 * 12 + 7, { PCS: 1, PAK: 12, KRT: 144 }), "102 KRT 10 PAK 7 PCS");
+    assert.equal(teksStok(6280, {}), "6.280"); // satuan belum tersinkron: angka saja, tanpa menebak satuan
+    assert.equal(teksStok(2.5, { KG: 1 }), "2,5 KG");
+    for (const [d, n] of [[6280, 6280], ["6280.0", 6280], [{ availableStock: 6280 }, 6280], [{ quantity: "12" }, 12], [0, 0]] as const) {
+        assert.equal(jumlahGetStock(d), n, JSON.stringify(d));
+    }
+    for (const d of [null, undefined, "", "x", {}, { balance: 9 }, [6280]]) assert.equal(jumlahGetStock(d), null, JSON.stringify(d));
 });

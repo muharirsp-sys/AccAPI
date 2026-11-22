@@ -1568,7 +1568,17 @@ test.describe("O3 riwayat beli — ponsel 390 px", () => {
         }
         expect(await f1.evaluate((e) => e.getBoundingClientRect().height), "tinggi baris alasan panjang").toBeLessThan(160);
         await noOverflow(page);
-        await expect(daftar.getByRole("button", { name: "Tambah 2 LSN BARANG A4" })).toBeVisible(); // rata 1,2 -> ke atas 2 (bukan 1)
+        // 12 Nov: sales WAJIB mengisi stok toko dulu (tombol nonaktif beralasan); saran = rata-rata − stok toko, ke atas.
+        const tombolA4 = daftar.getByRole("button", { name: "Tambah BARANG A4 LSN" });
+        await expect(tombolA4).toHaveAttribute("aria-disabled", "true");
+        await expect(tombolA4).toHaveAttribute("title", "Isi stok toko dulu (0 bila habis)");
+        const stokA4 = daftar.getByLabel("Stok toko BARANG A4 (LSN)");
+        await stokA4.fill("1,5");
+        await expect(tombolA4).toHaveAttribute("title", "Stok toko harus bilangan bulat 0 atau lebih");
+        await expect(stokA4).toHaveAttribute("aria-invalid", "true");
+        await stokA4.fill("0");
+        await expect(daftar.getByRole("button", { name: "Tambah 2 LSN BARANG A4" })).toBeVisible(); // rata 1,2 − 0 -> ke atas 2 (bukan 1)
+        await expect(panel).toContainText("stok toko wajib diisi, 0 bila habis");
         await expect(panel).toContainText("2 dari 8 faktur sejak 15/07/2026 belum punya rincian barang");
         await expect(panel).toContainText("Bonus promo tidak dihitung; retur belum dikurangkan.");
         await panel.getByRole("button", { name: "Lihat semua (12)" }).click();
@@ -1580,23 +1590,31 @@ test.describe("O3 riwayat beli — ponsel 390 px", () => {
         await panel.getByRole("heading", { name: "Biasa diambil toko ini" }).scrollIntoViewIfNeeded();
         await page.screenshot({ path: "test-results/order-cabang/o3-sales-riwayat.png", fullPage: true });
 
-        // Tambah KRT (rata 2,5 -> 3): mengisi baris kosong pertama, satuan KRT, jumlah 3; pratinjau dihitung ulang.
+        // Stok toko menutup rata-rata (3 ≥ 2,5) = "Stok toko cukup", tanpa tombol; stok 1 -> saran 2,5 − 1 = 1,5 -> ke atas 2.
+        const krtA = daftar.getByRole("listitem").filter({ hasText: "2,5 KRT / bulan" });
+        await krtA.getByLabel("Stok toko BARANG A (KRT)").fill("3");
+        await expect(krtA).toContainText("Stok toko cukup");
+        await expect(krtA.getByRole("button")).toHaveCount(0);
+        await krtA.getByLabel("Stok toko BARANG A (KRT)").fill("1");
+        // Tambah KRT (saran 2): mengisi baris kosong pertama, satuan KRT, jumlah 2; pratinjau dihitung ulang.
         const nPratinjau = log.preview.length;
-        await panel.getByRole("button", { name: "Tambah 3 KRT BARANG A" }).click();
+        await panel.getByRole("button", { name: "Tambah 2 KRT BARANG A" }).click();
         const b1 = main.getByRole("listitem", { name: "Barang 1" });
         await expect(b1.getByRole("group", { name: "Barang 1 terpilih" })).toContainText("A-1", NAV);
         await expect(b1.getByLabel("Satuan")).toHaveValue("KRT");
-        await expect(b1.getByLabel("Jumlah")).toHaveValue("3");
+        await expect(b1.getByLabel("Jumlah")).toHaveValue("2");
         await expect(b1).toContainText("Harga ada", NAV);
         expect(log.preview.length).toBeGreaterThan(nPratinjau);
-        expect(log.preview.at(-1)).toMatchObject({ customer_no: "C-01", lines: [{ code: "A-1", unit: "KRT", quantity: "3" }] });
-        await expect(daftar.getByRole("listitem").filter({ hasText: "2,5 KRT / bulan" })).toContainText("Sudah di order");
+        expect(log.preview.at(-1)).toMatchObject({ customer_no: "C-01", lines: [{ code: "A-1", unit: "KRT", quantity: "2" }] });
+        await expect(krtA).toContainText("Sudah di order");
+        await expect(krtA.getByLabel("Stok toko BARANG A (KRT)")).toHaveCount(0); // sudah di order = tanpa kolom stok
         // Tambah PCS = baris BARU (baris 1 sudah terisi); pratinjau memuat dua baris.
+        await daftar.getByLabel("Stok toko BARANG A (PCS)").fill("0");
         await panel.getByRole("button", { name: "Tambah 12 PCS BARANG A" }).click();
         const b2 = main.getByRole("listitem", { name: "Barang 2" });
         await expect(b2.getByLabel("Satuan")).toHaveValue("PCS", NAV);
         await expect(b2.getByLabel("Jumlah")).toHaveValue("12");
-        await expect.poll(() => log.preview.at(-1)?.lines).toEqual([{ code: "A-1", unit: "KRT", quantity: "3" }, { code: "A-1", unit: "PCS", quantity: "12" }]);
+        await expect.poll(() => log.preview.at(-1)?.lines).toEqual([{ code: "A-1", unit: "KRT", quantity: "2" }, { code: "A-1", unit: "PCS", quantity: "12" }]);
         // Jumlah usulan bisa diubah -> pratinjau baru lagi.
         await b1.getByLabel("Jumlah").fill("5");
         await expect.poll(() => log.preview.at(-1)?.lines[0]).toEqual({ code: "A-1", unit: "KRT", quantity: "5" });
@@ -1645,6 +1663,7 @@ test("O3 Order Sales: keadaan panel — memuat, galat + Coba lagi (bukan 'belum 
 
     // Tambah yang tidak bisa: satuan tanpa harga sah (sales), barang tak lagi di cabang pelanggan, satuan tak lagi di master.
     const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    for (const label of ["Stok toko BARANG A2 (LSN)", "Stok toko BARANG LAMA (PCS)", "Stok toko BARANG A (DUS)"]) await daftar.getByLabel(label).fill("0");
     await panel.getByRole("button", { name: "Tambah 4 LSN BARANG A2" }).click();
     await expect(daftar.getByRole("listitem").filter({ hasText: "BARANG A2" }).getByRole("alert")).toContainText("Harga LSN belum ada di Accurate untuk cabang pelanggan", NAV);
     await panel.getByRole("button", { name: "Tambah 3 PCS BARANG LAMA" }).click();
@@ -1682,6 +1701,7 @@ test("O3 putaran 1: ganti pelanggan saat Tambah masih membaca barang = pembacaan
     const main = await bukaSales(page);
     await pilihPelanggan(main, "PELANG", "PELANGGAN A");
     const panel = main.getByRole("region", { name: "Biasa diambil toko ini" });
+    await panel.getByLabel("Stok toko BARANG A (KRT)").fill("0", NAV);
     await panel.getByRole("button", { name: "Tambah 3 KRT BARANG A" }).click();
     await expect.poll(() => log.barang.some((u) => u.searchParams.get("q") === "A-1"), NAV).toBe(true); // pembacaan berangkat, ditahan
 
@@ -1698,6 +1718,23 @@ test("O3 putaran 1: ganti pelanggan saat Tambah masih membaca barang = pembacaan
     await expect(main.getByRole("listitem", { name: "Barang 2" })).toHaveCount(0);
     expect(log.preview.filter((p) => p.lines.some((l) => l.code === "A-1"))).toEqual([]);
     expect(log.dibatalkan.some((s) => s.includes("q=A-1"))).toBe(true); // panel lama dilepas = permintaannya dibatalkan peramban
+});
+
+test("Stok live (12 Nov): kartu meminta /api/items/stok per barang terpilih; gagal = angka sync + keterangan, bukan kosong; barang tanpa angka sync tetap dapat angka live", async ({ page }) => {
+    const { log } = await mockOrderCabang(page, { peran: "sales",
+        stokLive: (url) => url.searchParams.get("no") === "A-1" ? { status: 502, body: { ok: false, kode: "STOK_GAGAL", error: "Stok GD01 dari Accurate gagal dibaca: HTTP 429" } } : undefined });
+    await mockWebsales(page);
+    const main = await bukaSales(page);
+    await pilihPelanggan(main, "PELANG", "PELANGGAN A");
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await pilihBarang(b1, "A-1", "BARANG A");
+    await expect(b1.getByRole("group", { name: "Barang 1 terpilih" })).toContainText("Stok GD01: 12 KRT 3 PCS · per sinkron; stok terkini gagal dibaca", NAV);
+    expect(log.stok.map((u) => u.searchParams.get("no"))).toContain("A-1");
+    // A-4 belum pernah tersinkron (tanpa angka sync): angka live tetap tampil.
+    await main.getByRole("button", { name: "Tambah barang" }).click();
+    const b2 = main.getByRole("listitem", { name: "Barang 2" });
+    await pilihBarang(b2, "A-4", "BARANG A4");
+    await expect(b2.getByRole("group", { name: "Barang 2 terpilih" })).toContainText("Stok GD01: 0 · Accurate 12/11/2026 14.05 WITA", NAV);
 });
 
 test("O3 Order baru (petugas): panel riwayat; Tambah barang berharga master + barang TANPA harga master (petugas boleh, kolom harga petugas aktif) → pratinjau baru", async ({ page }) => {
@@ -1764,7 +1801,8 @@ test.describe("Layar cari penuh — ponsel 390 px", () => {
         await expect(lapisan).toContainText("Stok gudang GD01 per sinkron Accurate 31/10/2026 11.15 WITA");
         await main.getByRole("button", { name: "Kembali" }).tap();
         await pilihBarang(b1, "A-1", "BARANG A");
-        await expect(b1.getByRole("group", { name: "Barang 1 terpilih" })).toContainText("Stok GD01: 12 KRT 3 PCS");
+        // 12 Nov: kartu terpilih = stok GD01 TERKINI dari Accurate (/api/items/stok), bukan angka sync pencarian.
+        await expect(b1.getByRole("group", { name: "Barang 1 terpilih" })).toContainText("Stok GD01: 11 KRT 9 PCS · Accurate 12/11/2026 14.05 WITA");
         await b1.getByLabel("Satuan").selectOption("KRT");
         await b1.getByLabel("Jumlah").fill("3");
         await b1.getByRole("button", { name: "Ganti barang 1" }).tap();

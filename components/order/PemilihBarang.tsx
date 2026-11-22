@@ -3,22 +3,23 @@
  *   lama dibatalkan), hasil menampilkan satuan + harga per cabang pelanggan, barang tanpa daftar harga tidak bisa dipilih (Order Sales: juga
  *   barang yang SEMUA satuannya tanpa harga sah — petugas Order Baru boleh, memakai harga petugas), dan "cabang tanpa barang" (flag server)
  *   dijelaskan, bukan daftar kosong polos. Barang terpilih tampil sebagai kartu (Ganti barang). Stok gudang GD01 hasil sinkron Accurate
- *   tampil di hasil dan kartu sebagai info (tidak membatasi jumlah).
+ *   tampil di hasil sebagai info (tidak membatasi jumlah); kartu barang terpilih membaca stok GD01 TERKINI dari Accurate (12 Nov 2026:
+ *   angka sync 4x sehari tertinggal), gagal = angka sync dengan keterangan "per sinkron".
  * Caller: app/(dashboard)/sales/OrderSales.tsx, app/(dashboard)/orders/OrderBaru.tsx.
  * Dependensi: ./useCari, ./order-cabang(-api), lib/promo-ui (rupiah), lib/tampil (waktuWita), components/fiori/{core,interactive}.
  * Main Functions: PemilihBarang.
- * Side Effects: HTTP GET /api/items/search.
+ * Side Effects: HTTP GET /api/items/search, /api/items/stok (satu per barang terpilih).
  */
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 import { Button, EmptyState, ListItem, MessageStrip, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { FormField } from "@/components/fiori/interactive";
 import { rupiah } from "@/lib/promo-ui";
 import { waktuWita } from "@/lib/tampil";
 import { MIN_HURUF, labelSatuan, type BarangPilih, type Galat, type PelangganPilih, type Peran } from "./order-cabang";
-import { cariBarang } from "./order-cabang-api";
+import { bacaStokLive, cariBarang } from "./order-cabang-api";
 import { useCari, useLapisanCari } from "./useCari";
 
 const BATAS_HASIL = 20;
@@ -40,6 +41,36 @@ type Props = {
     kunci?: string;
 };
 
+type StokLive = { jenis: "memuat" } | { jenis: "siap"; stok: string; gudangStok: string; per: string } | { jenis: "galat" };
+
+/** Stok GD01 terkini barang terpilih, sekali per kode barang; ganti barang / lepas kartu = permintaan lama dibatalkan. */
+function useStokLive(no: string | null, peran: Peran): StokLive | null {
+    const [s, setS] = useState<{ no: string; v: StokLive } | null>(null);
+    useEffect(() => {
+        if (!no) return;
+        const c = new AbortController();
+        void bacaStokLive(no, c.signal, peran).then((h) => {
+            if (h.ok) setS({ no, v: { jenis: "siap", ...h.data } });
+            else if (!("batal" in h)) setS({ no, v: { jenis: "galat" } });
+        });
+        return () => c.abort();
+    }, [no, peran]);
+    return !no ? null : s?.no === no ? s.v : { jenis: "memuat" };
+}
+
+/** Angka Accurate terkini bila terbaca; selama memeriksa / bila gagal = angka sync pencarian, dengan keterangan mana yang tampil. */
+function BarisStok({ b, live }: { b: BarangPilih; live: StokLive | null }) {
+    if (live?.jenis === "siap") {
+        return <div className="fi-small">Stok {live.gudangStok || b.gudangStok}: <b>{live.stok}</b> <span className="fi-muted">· Accurate {waktuWita(live.per)} WITA</span></div>;
+    }
+    if (!b.stok) return live?.jenis === "memuat" ? <div className="fi-small fi-muted">Stok {b.gudangStok ?? "gudang"}: memeriksa Accurate…</div> : null;
+    return (
+        <div className="fi-small">Stok {b.gudangStok}: <b>{b.stok}</b>{" "}
+            <span className="fi-muted">· {live?.jenis === "memuat" ? "memeriksa Accurate…" : "per sinkron; stok terkini gagal dibaca"}</span>
+        </div>
+    );
+}
+
 export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran, onPilih, onLepas, onBacaUlang, kunci }: Props) {
     const [q, setQ] = useState("");
     // "Ganti barang" membuka pencarian TANPA melepas barang lama (seperti Ganti pelanggan): batal/Kembali = barang, satuan, dan jumlah utuh.
@@ -50,6 +81,7 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
         ? cariBarang({ q: kata, pelanggan, tanggal, limit: BATAS_HASIL }, signal, peran)
         : { ok: false as const, batal: true as const }), [pelanggan, tanggal, peran]);
     const [hasil, cobaLagi] = useCari(q, (nilai === null || mengganti) && !bacaan && pelanggan !== null, `${pelanggan?.id ?? ""}|${tanggal}`, cari);
+    const live = useStokLive(nilai?.no ?? null, peran);
 
     if (bacaan?.jenis === "memuat") return <Skeleton rows={1} label={`Membaca barang ${bacaan.kode}`} />;
     if (bacaan?.jenis === "galat") {
@@ -68,7 +100,7 @@ export function PemilihBarang({ nomor, pelanggan, tanggal, nilai, bacaan, peran,
                     <div style={{ minWidth: 0 }}>
                         <b style={{ overflowWrap: "anywhere" }}>{nilai.name || nilai.no}</b>
                         <div className="fi-small fi-muted"><span className="fi-mono">{nilai.no}</span>{nilai.branchName ? ` · ${nilai.branchName}` : ""}</div>
-                        {nilai.stok && <div className="fi-small">Stok {nilai.gudangStok}: <b>{nilai.stok}</b></div>}
+                        <BarisStok b={nilai} live={live} />
                     </div>
                     <Button variant="tertiary" disabled={Boolean(kunci)} disabledReason={kunci} aria-label={`Ganti barang ${nomor}`} onClick={() => { setMengganti(true); setLapisan(true); }}>Ganti barang</Button>
                 </div>
