@@ -16,7 +16,7 @@ import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { discountNormalization, invoiceOutbox, promoOutlet, promoRule, salesInvoiceCache } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { invoiceLines, parseTariff, pemberianPertama, recap, TARIFF_SHEET, type InvoiceLine, type PromoRule, type Putusan } from "@/lib/promo-recap";
+import { berhakDaftar, invoiceLines, parseTariff, pemberianPertama, recap, TARIFF_SHEET, type InvoiceLine, type PromoRule, type Putusan } from "@/lib/promo-recap";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -178,7 +178,7 @@ export async function GET(request: NextRequest) {
             // Satu ekspresi untuk semua kode: `or` per kode membongkar `raw_data` sekali per kode.
             sql`${teks} like any (array[${sql.join(kode.map((code) => sql`${`%${code}%`}`), sql`, `)}])`,
         ));
-        pertama = pemberianPertama(riwayat.flatMap((row) => invoiceLines(row.raw)), aturanPertama);
+        pertama = pemberianPertama(riwayat.flatMap((row) => invoiceLines(row.raw)), aturanPertama, berhakDaftar(members));
     }
     // Kuota beli sell-in (python_backend kuota_beli) dibaca dari layanan order dengan sesi peminta; gagal = tidak dicek, DIUMUMKAN.
     let kuotaBeli: Map<string, number> | undefined;

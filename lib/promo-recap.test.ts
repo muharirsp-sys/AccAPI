@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { percentChain } from "./principal-invoice.ts";
-import { alasanTakBerlaku, bersinggungan, fakturRuleFor, invoiceLines, isoDate, kunciAturan, kunciNormalisasi, kunciPertama, parseTariff, pemberianPertama, recap, ruleFor, temuanPoPertama, type PromoRule, type Putusan } from "./promo-recap.ts";
+import { alasanTakBerlaku, berhakDaftar, bersinggungan, fakturRuleFor, invoiceLines, isoDate, kunciAturan, kunciNormalisasi, kunciPertama, parseTariff, pemberianPertama, recap, ruleFor, temuanPoPertama, type PromoRule, type Putusan } from "./promo-recap.ts";
 
 const cents = (value: number) => Math.round(value * 100) / 100;
 
@@ -290,6 +290,9 @@ test("jaringan: posisi dimaklumi, nilai tidak — surat principal terbaca walau 
     assert.equal(hasilAlfa.distributor, 21310.27);
 });
 
+/** Semua outlet berhak: aturan uji di bawah tidak menunjuk daftar peserta. */
+const semua = () => true;
+
 test("first PO: hanya faktur PERTAMA per outlet x barang yang dibenarkan surat listing", () => {
     // BP2609008707: "DISC 3% (FIRST PO)" SASHA NATURAL BLACK 30ML untuk Indomaret, 15 Sep - 31 Des.
     const listing = aturan({ suratProgram: "BP2609008707", promoGroup: "SASHA SHAMPOO - COLOR", itemCode: "K1531001003011",
@@ -315,7 +318,7 @@ test("first PO: hanya faktur PERTAMA per outlet x barang yang dibenarkan surat l
     // Riwayat dari luar rentang rekap (dihitung pemanggil sejak awal periode aturan): PO Oktober
     // bukan "pertama" hanya karena rekapnya dibuka per Oktober.
     const oktober = invoiceLines(faktur(4, "INV/2610/KN00001", "02/10/2026"));
-    const riwayat = pemberianPertama([...baris, ...oktober], [listing]);
+    const riwayat = pemberianPertama([...baris, ...oktober], [listing], semua);
     assert.equal(recap(oktober, [listing], [], new Map(), riwayat).unowned, 3000);
     assert.equal(recap(oktober, [listing]).principal, 3000, "tanpa riwayat, rekap bulannya sendiri mengira pertama");
 
@@ -336,18 +339,43 @@ test("first PO di GERBANG: SO yang outletnya sudah mendapatkannya ditahan, denga
         { invoiceId: "335001", invoiceNo: "INV/2609/KN01059", transDate: "2026-09-25" }]]);
 
     // Riwayat faktur lain -> ditahan, dengan nomor fakturnya.
-    const tahan = temuanPoPertama([so("1", "SO-2", "2026-10-02")], [listing], sudahDiberikan, new Set());
+    const tahan = temuanPoPertama([so("1", "SO-2", "2026-10-02")], [listing], sudahDiberikan, new Set(), semua);
     assert.match(tahan.get("1") ?? "", /hanya untuk PO PERTAMA.*INV\/2609\/KN01059 \(2026-09-25\)/);
     // Faktur itu milik SO ini sendiri (validasi ulang sesudah terbit) -> tidak menahan dirinya.
-    assert.equal(temuanPoPertama([so("1", "SO-1", "2026-09-25")], [listing], sudahDiberikan, new Set(["335001"])).size, 0);
+    assert.equal(temuanPoPertama([so("1", "SO-1", "2026-09-25")], [listing], sudahDiberikan, new Set(["335001"]), semua).size, 0);
     // Belum pernah diberikan: dari dua SO di batch yang sama, hanya yang LEBIH AWAL yang pertama.
-    const dua = temuanPoPertama([so("7", "SO-B", "2026-09-26"), so("3", "SO-A", "2026-09-25")], [listing], new Map(), new Set());
+    const dua = temuanPoPertama([so("7", "SO-B", "2026-09-26"), so("3", "SO-A", "2026-09-25")], [listing], new Map(), new Set(), semua);
     assert.equal(dua.has("3"), false);
     assert.match(dua.get("7") ?? "", /SO SO-A yang lebih awal/);
     // Outlet lain, SO tanpa potongan itu, dan aturan tanpa first PO tidak tersentuh.
-    assert.equal(temuanPoPertama([so("1", "SO-2", "2026-10-02", "C-IN0086-KN")], [listing], sudahDiberikan, new Set()).size, 0);
-    assert.equal(temuanPoPertama([so("1", "SO-2", "2026-10-02", "C-IN0050-KN", 2)], [listing], sudahDiberikan, new Set()).size, 0);
-    assert.equal(temuanPoPertama([so("1", "SO-2", "2026-10-02")], [{ ...listing, firstPo: false }], sudahDiberikan, new Set()).size, 0);
+    assert.equal(temuanPoPertama([so("1", "SO-2", "2026-10-02", "C-IN0086-KN")], [listing], sudahDiberikan, new Set(), semua).size, 0);
+    assert.equal(temuanPoPertama([so("1", "SO-2", "2026-10-02", "C-IN0050-KN", 2)], [listing], sudahDiberikan, new Set(), semua).size, 0);
+    assert.equal(temuanPoPertama([so("1", "SO-2", "2026-10-02")], [{ ...listing, firstPo: false }], sudahDiberikan, new Set(), semua).size, 0);
+});
+
+test("first PO hanya untuk outlet PESERTA surat: tarif 3% Lotte Mart bukan PO pertama listing Indomaret (23 Nov 2026)", () => {
+    // BP2609008707 #367 dibatasi daftar peserta BP2609008707 (9 outlet Indomaret). Lotte Mart C-LO0013 bukan peserta,
+    // tetapi tarif outletnya (#267) 3% semua barang di DISC_1: persen yang sama dengan surat itu.
+    const listing = aturan({ suratProgram: "BP2609008707", itemCode: "K1100010004520", periodStart: "2026-09-15", periodEnd: "2026-12-31",
+        firstPo: true, outletList: "BP2609008707", outletListMode: "INCLUDE" });
+    const berhak = berhakDaftar([{ listName: "BP2609008707", customerCode: "C-IN0050", periodStart: "2026-09-01", periodEnd: "2026-12-31" }]);
+    const faktur = (outlet: string) => invoiceLines({ id: 376191, number: "INV/2610/KN01059", transDate: "23/10/2026",
+        customer: { customerNo: `${outlet}-KN`, name: outlet },
+        detailItem: [{ id: 1, itemNo: "K1100010004520", item: { name: "KNF ELLIPS H.VIT ULTRA LIGHT 45ML X 36 BTL" },
+            quantity: 1, unitPrice: 1094594.59, itemDiscPercent: "3", itemCashDiscount: 32837.84 }] });
+    // Riwayat: 3% tarif Lotte Mart tidak tercatat sebagai pemberian PO pertama; 3% peserta tetap tercatat.
+    assert.equal(pemberianPertama(faktur("C-LO0013"), [listing], berhak).size, 0);
+    assert.equal(pemberianPertama(faktur("C-IN0050"), [listing], berhak).size, 1);
+
+    // Gerbang: SO Lotte Mart dengan D1 3% tidak ditahan, walau riwayat lama sempat mencatat pemberian untuknya.
+    const so = (customerNo: string) => ({ key: "36", soNo: "1671-SOP-260017020", soDate: "2026-11-18", customerNo,
+        itemCode: "K1100010004520", discounts: [{ position: 1, percent: 3 }] });
+    const pemberian = (customerNo: string) => new Map([[`${customerNo}|K1100010004520|BP2609008707`,
+        { invoiceId: "376191", invoiceNo: "INV/2610/KN01059", transDate: "2026-10-23" }]]);
+    assert.equal(temuanPoPertama([so("C-LO0013-KN")], [listing], pemberian("C-LO0013-KN"), new Set(), berhak).size, 0);
+    // Peserta tetap dijaga: SO kedua sesudah pemberian pertama ditahan.
+    assert.match(temuanPoPertama([so("C-IN0050-KN")], [listing], pemberian("C-IN0050-KN"), new Set(), berhak).get("36") ?? "",
+        /hanya untuk PO PERTAMA/);
 });
 
 test("raw_data yang tersimpan sebagai TEKS JSON tetap terbaca", () => {

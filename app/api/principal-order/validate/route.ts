@@ -27,7 +27,7 @@ import { aturanBerlaku, bonusQuota, channelAllowed, channelOutlet, checkLine, ch
 import { duplicateFinding, findDuplicate, type OrderFingerprint } from "@/lib/order-duplicate";
 import { invoiceKey } from "@/lib/principal-invoice";
 import { kunciBatch } from "@/lib/invoice-outbox-actions";
-import { invoiceLines, pemberianPertama, temuanPoPertama } from "@/lib/promo-recap";
+import { invoiceLines, pemberianPertama, temuanPoPertama, type BerhakAturan } from "@/lib/promo-recap";
 
 export const runtime = "nodejs";
 
@@ -412,10 +412,13 @@ export async function POST(request: NextRequest) {
         const milikSendiri = new Set((await db.select({ id: invoiceOutbox.accurateId }).from(invoiceOutbox)
             .where(inArray(invoiceOutbox.orderId, [...new Set(lines.map((line) => invoiceKey(batch.principal, String(line.soNo))))])))
             .map((row) => row.id).filter(Boolean));
+        // Saringan peserta yang sama dengan `berlaku` (daftar + channel): surat listing Indomaret tidak menahan Lotte Mart.
+        const berhak: BerhakAturan = (rule, customerNo, date) =>
+            outletAllowed(rule, customerNo, listsOn(date)) && channelAllowed(rule, channelOf.get(customerNo));
         firstPoFindings = temuanPoPertama(lines.map((line) => ({
             key: String(line.rowNumber), soNo: String(line.soNo), soDate: dateOf(line), customerNo: customerNoOf(line),
             itemCode: items.get(line.productCode) ?? null, discounts: discountsOfLine.get(line.rowNumber) ?? [],
-        })), aturanPertama, pemberianPertama(riwayat.flatMap((row) => invoiceLines(row.raw)), aturanPertama), milikSendiri);
+        })), aturanPertama, pemberianPertama(riwayat.flatMap((row) => invoiceLines(row.raw)), aturanPertama, berhak), milikSendiri, berhak);
     }
 
     // PERINGATAN SE-BATCH: daftar outlet yang DITUNJUK aturan tetapi kosong pada tanggal SO.
