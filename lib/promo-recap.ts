@@ -334,7 +334,26 @@ export const kunciPertama = (customerNo: string, itemCode: string, suratProgram:
 export type AturanPertama = {
     firstPo?: boolean; itemCode: string; benefitType: string; benefitValue: string; suratProgram: string;
     periodStart?: string | null; periodEnd?: string | null;
+    outletList?: string; outletListMode?: string; channel?: string;
 };
+
+/**
+ * Outlet ini PESERTA aturan itu pada tanggal itu: saringan yang sama dengan pencocokan aturan
+ * biasa pemanggilnya (gerbang: daftar + channel; Rekap: daftar). Wajib, bukan opsional: tanpa
+ * saringan ini surat listing Indomaret BP2609008707 (daftar peserta 9 outlet Indomaret) menahan
+ * Lotte Mart C-LO0013, dan tarif 3% outlet itu tercatat sebagai "PO pertama sudah dipakai"
+ * (INV/2610/KN01059, laporan pengguna 23 Nov 2026).
+ */
+export type BerhakAturan = (rule: AturanPertama, customerNo: string, date: string) => boolean;
+
+/** `BerhakAturan` dari daftar outlet peserta saja (cara Rekap Promo menyaring aturan per outlet). */
+export function berhakDaftar(members: OutletMember[]): BerhakAturan {
+    const perTanggal = new Map<string, Map<string, Set<string>>>();
+    return (rule, customerNo, date) => {
+        if (!perTanggal.has(date)) perTanggal.set(date, outletListsOn(members, date));
+        return outletAllowed(rule, customerNo, perTanggal.get(date)!);
+    };
+}
 
 const bawaPersen = (rule: AturanPertama, discounts: DiscountAt[]) =>
     discounts.some((entry) => entry.amount === undefined && Math.abs(cents(Number(rule.benefitValue) - entry.percent)) <= 0.01);
@@ -348,7 +367,7 @@ const bawaPersen = (rule: AturanPertama, discounts: DiscountAt[]) =>
  * faktur mana yang pertama. Batasnya: hanya faktur yang `raw_data`-nya memuat rincian baris yang
  * terlihat; faktur tanpa rincian (lihat webhook-backfill) tidak bisa dihitung sebagai pemberian.
  */
-export function pemberianPertama(lines: InvoiceLine[], rules: AturanPertama[]): Map<string, Pemberian> {
+export function pemberianPertama(lines: InvoiceLine[], rules: AturanPertama[], berhak: BerhakAturan): Map<string, Pemberian> {
     const aturan = rules.filter((rule) => rule.firstPo && rule.itemCode && rule.benefitType === "DISC_PCT");
     const hasil = new Map<string, Pemberian>();
     if (!aturan.length) return hasil;
@@ -356,6 +375,9 @@ export function pemberianPertama(lines: InvoiceLine[], rules: AturanPertama[]): 
     for (const line of urut) {
         for (const rule of aturan) {
             if (rule.itemCode !== line.itemCode || !inPeriod(rule, line.transDate)) continue;
+            // Outlet bukan peserta tidak pernah MENERIMA potongan surat ini: persen yang sama di
+            // fakturnya milik aturan lain (mis. tarif outlet), bukan pemberian PO pertama.
+            if (!berhak(rule, line.customerNo, line.transDate)) continue;
             if (!bawaPersen(rule, line.discounts)) continue;
             const key = kunciPertama(line.customerNo, line.itemCode, rule.suratProgram);
             if (!hasil.has(key)) hasil.set(key, { invoiceId: line.invoiceId || line.invoiceNo, invoiceNo: line.invoiceNo, transDate: line.transDate });
@@ -377,7 +399,7 @@ export type BarisSo = { key: string; soNo: string; soDate: string; customerNo: s
  *   hanya satu yang pertama.
  */
 export function temuanPoPertama(
-    baris: BarisSo[], rules: AturanPertama[], riwayat: Map<string, Pemberian>, milikSendiri: Set<string>,
+    baris: BarisSo[], rules: AturanPertama[], riwayat: Map<string, Pemberian>, milikSendiri: Set<string>, berhak: BerhakAturan,
 ): Map<string, string> {
     const aturan = rules.filter((rule) => rule.firstPo && rule.itemCode && rule.benefitType === "DISC_PCT");
     const temuan = new Map<string, string>();
@@ -387,6 +409,8 @@ export function temuanPoPertama(
         if (!line.customerNo || !line.itemCode) continue;
         for (const rule of aturan) {
             if (rule.itemCode !== line.itemCode || !inPeriod(rule, line.soDate) || !bawaPersen(rule, line.discounts)) continue;
+            // Outlet bukan peserta: surat ini tidak berlaku baginya, jadi tidak ada "PO pertama" yang bisa terlewati.
+            if (!berhak(rule, line.customerNo, line.soDate)) continue;
             const key = kunciPertama(line.customerNo, line.itemCode, rule.suratProgram);
             const grant = riwayat.get(key);
             if (grant && !milikSendiri.has(grant.invoiceId)) {
@@ -535,7 +559,7 @@ export function recap(
      * aturannya — bukan hanya rentang rekap ini. Tanpa riwayat, PO kedua di bulan berikutnya akan
      * terlihat "pertama" di rekap bulannya sendiri. Bawaannya hanya faktur rentang ini.
      */
-    pertama: Map<string, Pemberian> = pemberianPertama(lines, rules),
+    pertama: Map<string, Pemberian> = pemberianPertama(lines, rules, berhakDaftar(members)),
     /** Budget kuota beli per `SURAT|kode`, satuan terkecil (python_backend kuota_beli). Tanpa ini sell-in tidak dicek kuotanya. */
     kuotaBeli?: Map<string, number>,
 ): Recap {
