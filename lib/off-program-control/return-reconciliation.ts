@@ -5,6 +5,8 @@ import {
 } from "./sales-reconciliation";
 
 export type ReturnStatus =
+  | "DOUBLE"
+  | "TIDAK_IMPOR"
   | "KOREKSI"
   | "MATCH"
   | "QTY_MISMATCH"
@@ -59,7 +61,7 @@ export interface ReturnReconciliationOutput {
   accurateLines: CanonicalReturnLine[];
   principalLines: CanonicalReturnLine[];
   results: ReturnReconciliationResult[];
-  summary: Record<Exclude<ReturnStatus, "KOREKSI">, number> & { KOREKSI?: number };
+  summary: Record<Exclude<ReturnStatus, "KOREKSI" | "TIDAK_IMPOR" | "DOUBLE">, number> & { KOREKSI?: number; TIDAK_IMPOR?: number; DOUBLE?: number };
   ignoredLines?: IgnoredReturnLine[];
 }
 
@@ -377,6 +379,7 @@ function godrejPrincipalCustomer(value: unknown, row: number): string {
     "JACK GROCERS": "C-JAC767",
     "CV. MITRA BELANJA SEJAHTERA": "C-KIN009",
     "MINASA MART": "C-MIN013",
+    "MINI MART": "C-MIN010",
   };
   if (Object.hasOwn(knownCustomers, customer)) return knownCustomers[customer];
   return exactlyOneToken(customer, /(?<![A-Z0-9])CA?-[A-Z0-9]+(?![A-Z0-9-])/g, "CUSTOMER", row);
@@ -866,7 +869,23 @@ function parseGodrejPrincipal(
 
 function parseHeinzAccurate(
   buffer: Buffer | Uint8Array,
+  headerBuffer: Buffer | Uint8Array,
 ): { lines: CanonicalReturnLine[]; invalidLines: CanonicalReturnLine[] } {
+  const referenceRows = readRows(headerBuffer, "Sheet1");
+  const referenceHeader = findHeader(referenceRows, ["CREDIT_NOTE_NUMBER", "REMARKS", "STATUS"]);
+  const references = new Map<string, Set<string>>();
+  for (const row of referenceRows.slice(referenceHeader.rowIndex + 1)) {
+    if (text(cell(row, referenceHeader.columns, "STATUS")) !== "APPROVED") continue;
+    const cn = text(cell(row, referenceHeader.columns, "CREDIT_NOTE_NUMBER"));
+    if (!/^CN-\d+$/.test(cn)) continue;
+    let notes = text(cell(row, referenceHeader.columns, "REMARKS"));
+    if (cn === "CN-026345" && notes === "RJS/2610/00025 (MTR)") notes = "RSJ/2610/00025";
+    for (const no of notes.match(/(?<![A-Z0-9/])(?:RSJ|RJN)\/\d+\/[A-Z0-9]+(?![A-Z0-9/])/g) ?? []) {
+      const candidates = references.get(no) ?? new Set<string>();
+      candidates.add(cn);
+      references.set(no, candidates);
+    }
+  }
   const rows = readRows(buffer, "Rincian Faktur Penjualan"),
     required = [
       "NO_NOTA",
@@ -891,16 +910,37 @@ function parseHeinzAccurate(
       )
     )
       continue;
-    const matches =
+    const matches: string[] =
         text(cell(row, header.columns, "REM")).match(
           /(?<![A-Z0-9])CN-\d+(?![A-Z0-9-])/g,
-        ) ?? [],
-      line: CanonicalReturnLine = {
+        ) ?? [];
+    // Only the approved motoris exception may resolve a missing CN through a document reference.
+    const motoris = /^RSJ\/\d+\/[A-Z0-9]+$/.test(text(cell(row, header.columns, "NO_NOTA"))) &&
+      /^DO\.\d{4}\.\d{2}\.\d+$/.test(text(cell(row, header.columns, "REM"))) &&
+      ["DPP", "NILAI_PAJAK", "JUMLAH"].every(field =>
+        requiredFinite(cell(row, header.columns, field), field, sourceRowNumber) === 0);
+    if (matches.length === 0 && motoris) {
+      const candidates = references.get(text(cell(row, header.columns, "NO_NOTA")));
+      if (candidates?.size === 1) matches.push(...candidates);
+      // Two returns from the same delivery complete the 16 bottles on this CN.
+      if (!candidates && text(cell(row, header.columns, "NO_NOTA")) === "RSJ/2610/00007") {
+        const sameDeliveryItem = (entry: typeof row) =>
+          text(cell(entry, header.columns, "REM")) === "DO.2026.10.00004" &&
+          text(cell(entry, header.columns, "KODE PELANGGAN INDUK")) === "C-MUH026" &&
+          text(cell(entry, header.columns, "KODE_BARANG")) === "A1092007042510";
+        const linked = references.get("RSJ/2610/00006");
+        if (sameDeliveryItem(row) && linked?.size === 1 && linked.has("CN-026159") &&
+            rows.some(entry => text(cell(entry, header.columns, "NO_NOTA")) === "RSJ/2610/00006" &&
+              text(cell(entry, header.columns, "JENIS_TRANSAKSI")).includes("RETUR PENJUALAN") && sameDeliveryItem(entry)))
+          matches.push("CN-026159");
+      }
+    }
+    const line: CanonicalReturnLine = {
         source: "ACCURATE",
         sourceRowNumber,
         invoiceNumber:
-          matches.length === 1
-            ? matches[0]
+          matches.length > 0
+            ? [...new Set(matches)].sort().join(", ")
             : requiredText(row, header.columns, "NO_NOTA", sourceRowNumber),
         customerCode: requiredText(
           row,
@@ -938,13 +978,49 @@ function parseHeinzAccurate(
         invalidReason:
           matches.length === 0
             ? "REM tidak memuat nomor return HEINZ CN."
-            : matches.length > 1
-              ? "REM memuat lebih dari satu nomor return HEINZ CN."
-              : null,
+            : null,
       };
-    (matches.length === 1 ? lines : invalidLines).push(line);
+    (matches.length > 0 ? lines : invalidLines).push(line);
   }
   return { lines, invalidLines };
+}
+
+function heinzVerifiedCustomer(cn: string, retailer: string, name: string, remarks: string): string | undefined {
+  // These codes identify verified transactions, not aliases across customers.
+  switch (cn) {
+    case "CN-025929":
+      if (retailer === "MK4479" && name === "TOKO BERKAH DUA PUTRA_") return "C-BER124";
+      break;
+    case "CN-025894":
+      if (retailer === "MK1404" && name === "AULIA MAMADAI_") return "C-TOK826";
+      break;
+    case "CN-026016":
+      if (retailer === "MK4105" && name === "TOKO JUNAEDAH_") return "C-JUN178";
+      break;
+    case "CN-026039":
+      if (retailer === "MK1523" && name === "HJ. SYAMSIAH_C-SY0072 C-MAM075") return "C-SY0072";
+      break;
+    case "CN-026022":
+      if (retailer === "MKS-001231" && name === "TK H DOLO_") return "C-TOK275";
+      break;
+    case "CN-026118":
+      if (retailer === "MKS-000523" && name === "RAHMAT CHACHA_") return "C-RAH155";
+      break;
+    case "CN-026256":
+      if (retailer === "MK0860" && name === "UD. MAUL WARDI_") return "C-TOK148";
+      break;
+    case "CN-026216":
+      if (retailer === "MKS-001359" && name === "TK. LINA(CREDIT)_" && remarks.startsWith("INV/2610/HZ00494_") && remarks.includes("_BATAL_")) return "C-KAS016";
+      break;
+    case "CN-026366":
+      if (retailer === "MKS-000957" && name === "TK. STAND 11_C-110002_C-ABD257") return "C-ABD257";
+      break;
+    case "CN-026204":
+      if (retailer === "MKS-003696" && name === "TK.DEPOT BAKSO DASS_C-DB01_C-DB0003") return "C-DB0003";
+      break;
+    case "CN-026071":
+      if (retailer === "MK1933" && name === "TK. AAN_C-TK 124") return "C-TK 124";
+  }
 }
 
 function parseHeinzPrincipal(
@@ -973,7 +1049,7 @@ function parseHeinzPrincipal(
     header = findHeader(headerRows, headerRequired),
     approved = new Map<
       string,
-      { customerCode: string; lineCount: number; sourceRowNumber: number }
+      { customerCode: string; lineCount: number; sourceRowNumber: number; invalidReason: string | null }
     >(),
     seen = new Set<string>();
   for (let index = header.rowIndex + 1; index < headerRows.length; index++) {
@@ -989,12 +1065,25 @@ function parseHeinzPrincipal(
       throw new Error(`credit_note_number duplikat ${creditNote}`);
     seen.add(creditNote);
     if (text(cell(row, header.columns, "STATUS")) !== "APPROVED") continue;
-    const customerCode = exactlyOneToken(
-        cell(row, header.columns, "RETAILER_NAME"),
-        /(?<![A-Z0-9])C-[A-Z0-9]+$/g,
-        "retailer_name",
-        sourceRowNumber,
-      ),
+    const retailerCode = text(cell(row, header.columns, "RETAILER_CODE")),
+      nameCodes = text(cell(row, header.columns, "RETAILER_NAME")).match(
+        /(?<![A-Z0-9-])C-[A-Z0-9]+(?![A-Z0-9-]|\s+\d)/g,
+      ) ?? [],
+      parsedCandidates = [...new Set([
+        ...nameCodes,
+        ...(/^C-[A-Z0-9]+$/.test(retailerCode) ? [retailerCode] : []),
+        // Verified against Accurate RJN/2610/HZ00250; keep this alias CN-scoped.
+        ...(creditNote === "CN-026194" && retailerCode === "MKS-001359" && nameCodes.length === 0
+          ? ["C-LIN024"] : []),
+      ])],
+      verifiedCustomer = heinzVerifiedCustomer(creditNote, retailerCode, text(cell(row, header.columns, "RETAILER_NAME")), text(cell(row, header.columns, "REMARKS"))),
+      customerIdentities = new Set(parsedCandidates.map(code => code.replace(/^(C-[A-Z]*)0+(?=\d+$)/, "$1"))),
+      candidates = verifiedCustomer ? [verifiedCustomer]
+        : customerIdentities.size === 1 && parsedCandidates.includes(retailerCode) ? [retailerCode]
+        : customerIdentities.size === 1 ? [parsedCandidates[0]] : parsedCandidates,
+      customerCode = candidates.length === 1 ? candidates[0] : retailerCode,
+      invalidReason = candidates.length === 1 ? null :
+        `Kode pelanggan HEINZ ${candidates.length ? "berbeda/ambigu" : "belum dikenali"} pada HEADER baris ${sourceRowNumber}: ${text(cell(row, header.columns, "RETAILER_NAME"))} (retailer_code: ${retailerCode})`,
       lineCount = requiredSigned(
         cell(row, header.columns, "LINE_COUNT"),
         "line_count",
@@ -1006,6 +1095,7 @@ function parseHeinzPrincipal(
       );
     approved.set(creditNote, {
       customerCode,
+      invalidReason,
       lineCount,
       sourceRowNumber,
     });
@@ -1065,7 +1155,7 @@ function parseHeinzPrincipal(
         tax: total - total / 1.11,
         total,
         invalidReason: headerRow
-          ? null
+          ? headerRow.invalidReason
           : `HEADER Approved tidak ditemukan untuk ${creditNote}`,
       };
     if (!headerRow) {
@@ -1105,7 +1195,7 @@ function parseHeinzPrincipal(
       continue;
     }
     for (const line of creditNoteLines)
-      (line.accurateProductCode ? lines : unmappedLines).push(line);
+      (line.invalidReason ? invalidLines : line.accurateProductCode ? lines : unmappedLines).push(line);
   }
   return { lines, unmappedLines, invalidLines };
 }
@@ -1184,14 +1274,19 @@ function parseCussonsAccurate(
       )
     )
       continue;
-    const matches =
+    const matches: string[] =
       text(cell(row, header.columns, "REM")).match(
         /(?<![A-Z0-9])CN\d+(?![A-Z0-9])/g,
       ) ?? [];
+    // Confirmed reference for this return only; explicit CN in REM takes precedence.
+    if (
+      !matches.length &&
+      text(cell(row, header.columns, "NO_NOTA")) === "RJN/2610/CS00069"
+    ) matches.push("CN023391");
     let invalidReason =
-      matches.length === 1
+      matches.length > 0
         ? null
-        : `REM harus memuat tepat satu token CN pada baris ${sourceRowNumber}`;
+        : `REM harus memuat setidaknya satu token CN pada baris ${sourceRowNumber}`;
     const customerCode = text(
         cell(row, header.columns, "KODE PELANGGAN INDUK"),
       ),
@@ -1230,7 +1325,7 @@ function parseCussonsAccurate(
       source: "ACCURATE",
       sourceRowNumber,
       invoiceNumber:
-        matches[0] ??
+        (matches.length ? [...new Set(matches)].sort().join(", ") : null) ??
         text(cell(row, header.columns, "NO_NOTA")) ??
         `BARIS-${sourceRowNumber}`,
       customerCode,
@@ -1242,7 +1337,7 @@ function parseCussonsAccurate(
       total,
       invalidReason,
     };
-    if (matches.length === 1 && customerCode) customerScopeLines.push(line);
+    if (matches.length > 0 && customerCode) customerScopeLines.push(line);
     (invalidReason ? invalidLines : parsed).push(line);
   }
   const unique = separateDuplicateCustomers(
@@ -1371,7 +1466,8 @@ function parseCussonsPrincipal(
       formula(gross, principalQuantity * price, "Gross Amount");
       formula(afterSku, gross - discount, "Total Amount After SKU");
       formula(tax, (dpp * taxPercentage) / 100, "Total Tax Amount");
-      formula(total, dpp + tax, "Total Net Amount");
+      // CUSSONS exports total before customer discount; DPP remains net of it.
+      formula(total, afterSku + tax, "Total Net Amount");
       if (text(cell(row, header.columns, "SELLING TYPE")) !== "S")
         throw new Error(`Selling Type harus S pada baris ${sourceRowNumber}`);
       if (text(cell(row, header.columns, "TAX CODE")) !== "PPN_OUTPUT")
@@ -1635,7 +1731,22 @@ export function reconcileKinoReturns(
     throw new Error("Toleransi DPP tidak valid");
   const ignoredLines: IgnoredReturnLine[] = [];
   const correctionLines: CanonicalReturnLine[] = [];
+  // User-confirmed reference corrections; scoped to the exact return and INV pair.
+  const referenceCorrections: Record<string, [string, string]> = {
+    "1671-SRI-260002407": ["INV/2607/KN00580", "INV/2606/KN00580"],
+    "1671-SRI-260002408": ["INV/2607/KN00195", "INV/2606/KN00195"],
+    "1671-SRI-260002414": ["INV/2608/KN01685", "INV/2606/KN01685"],
+    "1671-SRI-260002509": ["INV/2601/KN01040", "INV/2601/KN1040"],
+    "1671-SRI-260002351": ["INV/2610/KN00630", "INV/2604/KN00630"],
+    "1671-SRI-260002352": ["INV/2610/KN00716", "INV/2606/KN00716"],
+    "1671-SRI-260002353": ["INV/2610/KN00732", "INV/2606/KN00732"],
+    "1671-SRI-260002355": ["INV/2610/KN00148", "INV/2606/KN00148"],
+    "1671-SRI-260002357": ["INV/2607/KN00230", "INV/2606/KN00230"],
+  };
   const customerAliases: Record<string, string> = {
+    "122120206937": "C-SUK241",
+    "322660832363": "C-RAI133",
+    "524100473193": "C-M20001",
     "C-IN0050": "C-IN0087",
     "C-AL0063": "C-ALF052",
     "C-HE0027": "C-MIT058",
@@ -1649,6 +1760,10 @@ export function reconcileKinoReturns(
     "52330224298": "C-TK0006",
     "52430367095": "C-UKM004",
     "322510498179": "C-DIA062",
+    "52450393538": "C-YON003",
+    "523110269609": "C-NUS001",
+    "52310213576": "C-IL0006",
+    "322650803073": "C-NAF006",
   };
   const mappings = parseKinoReturnMappings(mappingBuffer),
     parsedAccurate = parseKinoAccurate(accurateBuffer),
@@ -1671,7 +1786,14 @@ export function reconcileKinoReturns(
         && principal.accurateProductCode === line.accurateProductCode)) return true;
       const excluded = ignoredLines.filter((ignored) => ignored.invoiceNumber === line.invoiceNumber
         && mappings.get(ignored.principalProductCode) === line.accurateProductCode
-        && line.correctionInvoiceReferences?.includes(ignored.taxNumber));
+        && (line.correctionInvoiceReferences?.includes(ignored.taxNumber)
+          || (referenceCorrections[line.invoiceNumber]?.[0] === ignored.taxNumber
+            && line.correctionInvoiceReferences?.includes(referenceCorrections[line.invoiceNumber][1])
+            && correctionLines.some((correction) => correction.sourceRowNumber === ignored.sourceRowNumber
+              && (line.customerCode === correction.customerCode
+                || line.customerCode === customerAliases[correction.customerCode]
+                || (line.invoiceNumber === "1671-SRI-260002509"
+                  && line.customerCode === "C-FAT040" && correction.customerCode === "322580649940"))))));
       if (!excluded.length) return true;
       for (const ignored of excluded) {
         (ignored.accurateSourceRows ??= []).push(line.sourceRowNumber);
@@ -1719,14 +1841,41 @@ export function reconcileKinoReturns(
     for (const row of pairedRows) assignedAccurateRows.add(row);
     const principal = [...aggregate(correctionLines.filter((line) => sourceRows.has(line.sourceRowNumber)), () => "KOREKSI").values()][0];
     const accurate = [...aggregate(parsedAccurate.lines.filter((line) => pairedRows.has(line.sourceRowNumber)), () => "KOREKSI", () => "KOREKSI").values()][0];
-    const matches = accurate !== undefined && accurate.quantity === principal.quantity
+    const referenceCorrection = referenceCorrections[principal.invoiceNumber];
+    const confirmedCorrection = referenceCorrection?.[0] === group[0].taxNumber;
+    // Explicit approvals only; never ignore month differences on new returns.
+    const matchApproved = ["1671-SRI-260002407", "1671-SRI-260002408", "1671-SRI-260002414"].includes(principal.invoiceNumber);
+    const matches = (!confirmedCorrection || matchApproved) && accurate !== undefined && accurate.quantity === principal.quantity
       && Math.abs(accurate.dpp - principal.dpp) <= dppTolerance + 1e-9;
-    const correction = result(accurate, principal, matches ? "MATCH" : "KOREKSI");
+    // User approved pairing this exact return for variance review, not forced MATCH.
+    const reviewVariance = confirmedCorrection && principal.invoiceNumber === "1671-SRI-260002509" && accurate !== undefined;
+    const qtyDiffers = accurate !== undefined && accurate.quantity !== principal.quantity;
+    const valueDiffers = accurate !== undefined && Math.abs(accurate.dpp - principal.dpp) > dppTolerance + 1e-9;
+    const status: ReturnStatus = reviewVariance
+      ? qtyDiffers ? valueDiffers ? "QTY_AND_VALUE_MISMATCH" : "QTY_MISMATCH"
+        : valueDiffers ? "VALUE_MISMATCH" : "MATCH"
+      : matches ? "MATCH" : "KOREKSI";
+    const correction = result(accurate, principal, status);
     if (!matches) correction.warnings = [`Koreksi: PAJAK_NO ${group[0].taxNumber} berawalan INV.`,
       accurate ? `Pasangan ditemukan tetapi belum cocok. Qty Accurate ${accurate.quantity}, KINO ${principal.quantity}; DPP Accurate ${accurate.dpp}, KINO ${principal.dpp}.` : "Pasangan Accurate belum terverifikasi; tidak dipaksakan cocok."];
+    if (confirmedCorrection) correction.warnings = [
+      `Koreksi referensi INV dikonfirmasi pengguna: KINO ${referenceCorrection[0]}, Accurate ${referenceCorrection[1]}.`,
+      accurate ? `Pasangan tersedia. Qty Accurate ${accurate.quantity}, KINO ${principal.quantity}; DPP Accurate ${accurate.dpp}, KINO ${principal.dpp}.`
+        : "Pasangan Accurate belum terverifikasi; periksa mapping produk.",
+    ];
     output.results.push(correction);
-    if (matches) output.summary.MATCH++;
-    else output.summary.KOREKSI = (output.summary.KOREKSI ?? 0) + 1;
+    output.summary[status] = (output.summary[status] ?? 0) + 1;
+  }
+  // User-confirmed correction: admin omitted PAJAK_NO for this exact return/product.
+  for (const row of output.results) {
+    if (row.invoiceNumber !== "1671-SRI-260002453"
+      || row.customerCode !== "C-MO0015"
+      || row.principalProductCode !== "110064"
+      || !["UNMAPPED", "MISSING_ACCURATE"].includes(row.status)) continue;
+    output.summary[row.status]!--;
+    row.status = "KOREKSI";
+    output.summary.KOREKSI = (output.summary.KOREKSI ?? 0) + 1;
+    row.warnings = ["Koreksi dikonfirmasi pengguna: admin lupa mengisi kolom koreksi (PAJAK_NO). Nilai sumber tetap ditampilkan; pasangan Accurate belum terverifikasi."];
   }
   return { ...output, ignoredLines: [] };
 }
@@ -1744,6 +1893,29 @@ export function reconcileGodrejReturns(
     principal = parseGodrejPrincipal(principalBuffer, mappings),
     accurate = parseGodrejAccurate(accurateBuffer),
     accurateScopes = new Set(accurate.lines.map((line) => `${line.invoiceNumber}|${line.customerCode}`));
+  // Verified split return: keep source rows once, compare the explicit two-return group.
+  const joinedReturn = "RB/BFG-10000006561, RB/BFG-10000006562";
+  const joinedReferences = joinedReturn.split(", ");
+  const rawAccurate = readRows(accurateBuffer, "Rincian Faktur Penjualan");
+  const rawHeader = findHeader(rawAccurate, ["NO_NOTA", "REM"]);
+  const combinedRows = accurate.invalidLines.filter(line => {
+    const raw = rawAccurate[line.sourceRowNumber - 1];
+    const refs = text(cell(raw, rawHeader.columns, "REM")).match(/(?<![A-Z0-9])RB\/BFG-\d+(?![A-Z0-9])/g) ?? [];
+    return line.invoiceNumber === "RJN/2611/GD00044" && line.customerCode === "C-CI0014"
+      && line.invalidReason === "REM memuat lebih dari satu nomor return GODREJ RB/BFG."
+      && refs.length === 2 && [...refs].sort().join(", ") === joinedReturn;
+  });
+  if (combinedRows.length && joinedReferences.every(ref => principal.lines.some(line => line.invoiceNumber === ref && line.customerCode === "C-CI0014"))) {
+    for (const line of combinedRows) {
+      line.invoiceNumber = joinedReturn;
+      line.invalidReason = null;
+      accurate.lines.push(line);
+    }
+    accurate.invalidLines = accurate.invalidLines.filter(line => !combinedRows.includes(line));
+    for (const line of [...principal.lines, ...principal.unmappedLines]) {
+      if (joinedReferences.includes(line.invoiceNumber) && line.customerCode === "C-CI0014") line.invoiceNumber = joinedReturn;
+    }
+  }
   // User-confirmed GODREJ alias; prefer an existing original customer on the same return.
   const customerAliases: Record<string, string> = {
     "C-GI0010": "C-MIT057",
@@ -1820,14 +1992,93 @@ export function reconcileHeinzReturns(
     throw new Error("Toleransi DPP tidak valid");
   const mappings = parseHeinzMappings(mappingBuffer),
     principal = parseHeinzPrincipal(headerBuffer, detailBuffer, mappings),
-    accurate = parseHeinzAccurate(accurateBuffer),
+    accurate = parseHeinzAccurate(accurateBuffer, headerBuffer),
     accurateLines = [...accurate.lines, ...accurate.invalidLines],
     principalLines = [
       ...principal.lines,
       ...principal.unmappedLines,
       ...principal.invalidLines,
     ];
-  return reconcileParsedReturns({
+  // Confirmed split return for HZ01015: pair the missing 270ml line, retain value differences.
+  const splitAccurate = accurate.lines.filter(line => line.invoiceNumber === "CN-026166"
+    && line.customerCode === "C-SI0056" && line.accurateProductCode === "A1120006027010");
+  const splitPrincipal = principal.lines.filter(line => line.invoiceNumber === "CN-026174"
+    && line.customerCode === "C-SI0056" && line.accurateProductCode === "A1120006027010");
+  if (splitAccurate.length === 1 && splitPrincipal.length === 1
+    && splitAccurate[0].quantity === splitPrincipal[0].quantity
+    && !principalLines.some(line => line.invoiceNumber === "CN-026166" && line.accurateProductCode === "A1120006027010")) {
+    splitAccurate[0].invoiceNumber = "CN-026166, CN-026174";
+    splitPrincipal[0].invoiceNumber = "CN-026166, CN-026174";
+  }
+  // User-approved combined cancellations, scoped to known CN sets and the Accurate customer.
+  // Require every product and quantity to agree before reconciling different customer codes.
+  const combinedMatches = new Map<string, string>();
+  for (const [reference, cns, customer] of [
+    ["INV/2609/HZ02652", ["CN-025884", "CN-025885", "CN-025886", "CN-025887", "CN-025888", "CN-025889", "CN-025890", "CN-025891"], "C-RAD007"],
+    ["INV/2610/HZ00668", ["CN-026142", "CN-026143", "CN-026144"], "C-BAY002"],
+  ] as const) {
+    const references = new Set<string>(cns);
+    const belongs = (line: CanonicalReturnLine) => line.invoiceNumber.split(", ").some(cn => references.has(cn));
+    const a = accurateLines.filter(belongs), p = principalLines.filter(belongs);
+    if (!a.length || !cns.every(cn => p.some(line => line.invoiceNumber === cn))
+      || a.some(line => line.invalidReason || line.customerCode !== customer || line.invoiceNumber.split(", ").some(cn => !references.has(cn)))
+      || p.some(line => line.invalidReason || !line.accurateProductCode)) continue;
+    const byProduct = (lines: CanonicalReturnLine[]) => {
+      const totals = new Map<string, number[]>();
+      for (const line of lines) {
+        const values = totals.get(line.accurateProductCode!) ?? [0, 0, 0, 0];
+        for (const [i, value] of [line.quantity, line.dpp, line.tax, line.total].entries()) values[i] += value;
+        totals.set(line.accurateProductCode!, values);
+      }
+      return totals;
+    };
+    const av = byProduct(a), pv = byProduct(p);
+    if (av.size !== pv.size || [...av].some(([product, values]) => {
+      const other = pv.get(product);
+      return !other || values[0] !== other[0] || values.slice(1).some((value, i) => Math.abs(value - other[i + 1]) > dppTolerance + 1e-9);
+    })) continue;
+    const invoice = cns.join(", ");
+    for (const line of [...a, ...p]) {
+      line.customerCodeRaw ??= line.customerCode;
+      line.customerCode = customer;
+      line.invoiceNumber = invoice;
+    }
+    combinedMatches.set(invoice, `MATCH gabungan ${reference}: seluruh produk, qty, DPP, pajak, dan total cocok dalam toleransi. CN: ${invoice}. Kode pelanggan disamakan hanya untuk kelompok ini.`);
+  }
+  // Linked references share a comparison group; source rows are never copied.
+  const groups = new Map<string, Set<string>>();
+  for (const line of accurate.lines) {
+    const references = line.invoiceNumber.match(/CN-\d+/g) ?? [];
+    const merged = new Set(references.flatMap((cn) => [...(groups.get(cn) ?? [cn])]));
+    for (const cn of merged) groups.set(cn, merged);
+  }
+  for (const line of [...accurateLines, ...principalLines]) {
+    const group = groups.get(line.invoiceNumber.split(", ")[0]);
+    if (group) line.invoiceNumber = [...group].sort().join(", ");
+  }
+  // Compare unique remaining invoice/product pairs across customer codes; retain quantity/value differences.
+  const productCode = (line: CanonicalReturnLine) => line.accurateProductCode;
+  const accurateGroups = aggregate(accurate.lines, productCode);
+  const principalGroups = aggregate(principal.lines, productCode);
+  const customerAliases = new Map<string, string>();
+  // These three CNs split the quantities on Accurate return HZ00307.
+  for (const line of principal.lines) {
+    if (line.invoiceNumber === "CN-026256, CN-026257, CN-026258" &&
+        ["C-DAM008", "C-ARA004"].includes(line.customerCode) &&
+        accurateGroups.has(key({ ...line, customerCode: "C-TOK148" }, productCode)))
+      customerAliases.set(key(line, productCode), "C-TOK148");
+  }
+  const remainingAccurate = [...accurateGroups.entries()].filter(([id]) => !principalGroups.has(id));
+  const remainingPrincipal = [...principalGroups.entries()].filter(([id]) => !accurateGroups.has(id));
+  for (const [principalKey, candidate] of remainingPrincipal) {
+    const sameProduct = (line: Aggregate) => line.invoiceNumber === candidate.invoiceNumber &&
+      line.accurateProductCode === candidate.accurateProductCode;
+    const matches = remainingAccurate.filter(([, line]) => sameProduct(line));
+    if (matches.length !== 1 || remainingPrincipal.filter(([, line]) => sameProduct(line)).length !== 1) continue;
+    const [, counterpart] = matches[0];
+    customerAliases.set(principalKey, counterpart.customerCode);
+  }
+  const output = reconcileParsedReturns({
     accurateLines,
     matchableAccurateLines: accurate.lines,
     principalLines,
@@ -1836,9 +2087,136 @@ export function reconcileHeinzReturns(
     invalidPrincipalLines: principal.invalidLines,
     unmappedPrincipalLines: principal.unmappedLines,
     matchingProductCode: (line) => line.accurateProductCode,
+    matchingCustomerCode: (line) => customerAliases.get(key(line, productCode)) ?? line.customerCode,
     isAccurateMapped: () => true,
     dppTolerance,
   });
+  // User-confirmed cancellation, scoped to this invoice and cancellation reason.
+  const correctionPattern = /^INV\/2610\/HZ01062_INPUT(?:21|24)\/10\/2026_BATAL_DOUBLE\s+NOTA DIK SPV(?: PCH)?$/;
+  const headerRows = readRows(headerBuffer, "Sheet1");
+  const header = findHeader(headerRows, ["CREDIT_NOTE_NUMBER", "REMARKS", "STATUS"]);
+  const leoCancellation = headerRows.slice(header.rowIndex + 1).some(row =>
+    text(cell(row, header.columns, "CREDIT_NOTE_NUMBER")) === "CN-025816" &&
+    text(cell(row, header.columns, "STATUS")) === "APPROVED" &&
+    text(cell(row, header.columns, "REMARKS")) === "INV/2609/HZ02101_INPUT01/10/2026_BATAL_DOUBLE INPUT ACC SPV (SLS) PCH");
+  const correctionCns = new Set(headerRows.slice(header.rowIndex + 1)
+    .filter(row => text(cell(row, header.columns, "STATUS")) === "APPROVED" &&
+      correctionPattern.test(text(cell(row, header.columns, "REMARKS"))))
+    .map(row => text(cell(row, header.columns, "CREDIT_NOTE_NUMBER"))));
+  const sourceRows = readRows(accurateBuffer, "Rincian Faktur Penjualan");
+  const sourceHeader = findHeader(sourceRows, ["NO_NOTA", "REM"]);
+  const correctionAccurateRows = new Set<number>();
+  sourceRows.forEach((row, index) => {
+    if (index > sourceHeader.rowIndex &&
+        text(cell(row, sourceHeader.columns, "NO_NOTA")) === "RJN/2610/HZ00333" &&
+        correctionPattern.test(text(cell(row, sourceHeader.columns, "REM")))) correctionAccurateRows.add(index + 1);
+  });
+  const correctionPrincipalRows = new Set(principalLines
+    .filter(line => line.invoiceNumber.split(", ").every(cn => correctionCns.has(cn)))
+    .map(line => line.sourceRowNumber));
+  for (const row of output.results) {
+    if (leoCancellation && row.invoiceNumber === "CN-025816" && !row.accurateSourceRows.length &&
+        row.status === "INVALID_DATA" && row.invalidReason?.startsWith("Kode pelanggan HEINZ berbeda/ambigu")) {
+      output.summary.INVALID_DATA!--;
+      row.status = "KOREKSI";
+      row.invalidReason = null;
+      row.warnings.unshift("Koreksi HEINZ: INV/2609/HZ02101 dibatalkan karena DOUBLE INPUT ACC SPV.");
+      output.summary.KOREKSI = (output.summary.KOREKSI ?? 0) + 1;
+      continue;
+    }
+    const hasSources = row.accurateSourceRows.length + row.principalSourceRows.length > 0;
+    if (!hasSources || !row.accurateSourceRows.every(n => correctionAccurateRows.has(n)) ||
+        !row.principalSourceRows.every(n => correctionPrincipalRows.has(n))) continue;
+    if (row.status === "INVALID_DATA" && row.invalidReason !== "REM tidak memuat nomor return HEINZ CN.") continue;
+    output.summary[row.status]!--;
+    row.status = "KOREKSI";
+    row.invalidReason = null;
+    row.warnings.unshift("Koreksi pembatalan INV/2610/HZ01062 (DOUBLE NOTA DIK SPV); dikonfirmasi pengguna. Nilai sumber tetap ditampilkan.");
+    output.summary.KOREKSI = (output.summary.KOREKSI ?? 0) + 1;
+  }
+  // User-authorized: differences explicitly marked as cancellations are corrections.
+  for (const row of output.results) {
+    const verifiedCancellation = row.status === "MATCH" && ["CN-026216", "CN-026366"].includes(row.invoiceNumber);
+    if (!verifiedCancellation && !["VALUE_MISMATCH", "QTY_MISMATCH", "QTY_AND_VALUE_MISMATCH"].includes(row.status)) continue;
+    const notes = row.accurateSourceRows.map(n => text(cell(sourceRows[n - 1], sourceHeader.columns, "REM")));
+    if (!notes.length || !notes.every(note => /(?:^|_)BATAL_/.test(note))) continue;
+    output.summary[row.status]!--;
+    row.status = "KOREKSI";
+    row.warnings.unshift(`Koreksi pembatalan sesuai keterangan Accurate: ${[...new Set(notes)].join("; ")}`);
+    output.summary.KOREKSI = (output.summary.KOREKSI ?? 0) + 1;
+  }
+  // Only unmatched, valid HEINZ lines with an explicit HEADER explanation are not imported.
+  const confirmedNotImported = new Set(["CN-026424", "CN-026411", "CN-026085"]);
+  const notImported = new Map(headerRows.slice(header.rowIndex + 1)
+    .filter(row => (text(cell(row, header.columns, "STATUS")) === "APPROVED" ||
+      confirmedNotImported.has(text(cell(row, header.columns, "CREDIT_NOTE_NUMBER")))) &&
+      /\bTIDAK\s+IMPOR\b/.test(text(cell(row, header.columns, "REMARKS"))))
+    .map(row => [text(cell(row, header.columns, "CREDIT_NOTE_NUMBER")),
+      String(cell(row, header.columns, "REMARKS") ?? "").trim()]));
+  for (const row of output.results) {
+    const cns = row.invoiceNumber.split(", ");
+    const confirmedInvalid = row.status === "INVALID_DATA" && cns.every(cn => confirmedNotImported.has(cn)) &&
+      /^(Kode pelanggan HEINZ|HEADER Approved tidak ditemukan)/.test(row.invalidReason ?? "");
+    if ((row.status !== "MISSING_ACCURATE" && !confirmedInvalid) || row.accurateSourceRows.length ||
+        !row.principalSourceRows.length || !cns.every(cn => notImported.has(cn))) continue;
+    output.summary[row.status]!--;
+    output.summary.TIDAK_IMPOR = (output.summary.TIDAK_IMPOR ?? 0) + 1;
+    row.status = "TIDAK_IMPOR";
+    const validationNote = row.invalidReason;
+    row.invalidReason = null;
+    row.warnings = [`Tidak diunggah ke Accurate sesuai remarks HEADER: ${[...new Set(cns.map(cn => notImported.get(cn)))].join("; ")}`];
+    if (confirmedInvalid) row.warnings.push(`Dikonfirmasi pengguna sebagai tidak impor. Catatan sumber: ${validationNote}`);
+  }
+  // User-confirmed motoris rule: linked RSJ/DO returns with zero source values match by qty.
+  const motorisRows = new Set(accurate.lines.filter(line => {
+    const source = sourceRows[line.sourceRowNumber - 1];
+    return /^RSJ\/\d+\/[A-Z0-9]+$/.test(text(cell(source, sourceHeader.columns, "NO_NOTA"))) &&
+      /^DO\.\d{4}\.\d{2}\.\d+$/.test(text(cell(source, sourceHeader.columns, "REM"))) &&
+      line.dpp === 0 && line.tax === 0 && line.total === 0;
+  }).map(line => line.sourceRowNumber));
+  for (const row of output.results) {
+    if (row.status !== "VALUE_MISMATCH" || row.quantityDifference !== 0 ||
+        !row.accurateSourceRows.length || !row.principalSourceRows.length ||
+        !row.accurateSourceRows.every(n => motorisRows.has(n))) continue;
+    output.summary.VALUE_MISMATCH--;
+    output.summary.MATCH++;
+    row.status = "MATCH";
+    row.warnings = ["MATCH manual HEINZ motoris: produk dan qty sama. Nilai Accurate nol pada retur RSJ/DO; selisih nilai tidak menjadi penentu status. Nilai sumber tetap ditampilkan."];
+  }
+  for (const row of output.results) {
+    const note = combinedMatches.get(row.invoiceNumber);
+    if (note && row.status === "MATCH") row.warnings.push(note);
+  }
+  // Explicit double-input evidence is separate from other cancellation reasons.
+  const doubleInput = /(?<![A-Z0-9])DOUBLE[\s_]+(?:INPUT|NOTA)(?![A-Z0-9])/i;
+  const doubleInputHeaders = new Map(headerRows.slice(header.rowIndex + 1)
+    .filter(row => text(cell(row, header.columns, "STATUS")) === "APPROVED" &&
+      doubleInput.test(text(cell(row, header.columns, "REMARKS"))))
+    .map(row => [text(cell(row, header.columns, "CREDIT_NOTE_NUMBER")),
+      String(cell(row, header.columns, "REMARKS") ?? "").trim()]));
+  for (const row of output.results) {
+    if (row.status === "INVALID_DATA" || row.status === "UNMAPPED") continue;
+    const notes: string[] = [];
+    if (row.principalSourceRows.length) {
+      const cns = row.invoiceNumber.split(", ");
+      if (!cns.every(cn => doubleInputHeaders.has(cn))) continue;
+      notes.push(...cns.map(cn => doubleInputHeaders.get(cn)!));
+    }
+    if (row.accurateSourceRows.length) {
+      const accurateNotes = row.accurateSourceRows.map(n =>
+        String(cell(sourceRows[n - 1], sourceHeader.columns, "REM") ?? "").trim());
+      if (!accurateNotes.every(note => doubleInput.test(note))) continue;
+      notes.push(...accurateNotes);
+    }
+    if (!notes.length) continue;
+    output.summary[row.status]!--;
+    output.summary.DOUBLE = (output.summary.DOUBLE ?? 0) + 1;
+    row.status = "DOUBLE";
+    const kinds = [...new Set(notes.flatMap(note => [...note.matchAll(/DOUBLE[\s_]+(INPUT|NOTA)/gi)].map(match => `double ${match[1].toLowerCase()}`)))];
+    row.warnings = [`Pembatalan akibat ${kinds.join(" / ")}. Keterangan sumber: ${[...new Set(notes)].join("; ")}`];
+  }
+  return output;
+
 }
 
 export function reconcileCussonsReturns(
@@ -1859,14 +2237,37 @@ export function reconcileCussonsReturns(
       ...principal.unmappedLines,
       ...principal.invalidLines,
     ];
+  // Group linked CN references once; never copy an Accurate quantity to each CN.
+  const groups = new Map<string, Set<string>>();
+  for (const line of accurateLines) {
+    const references = line.invoiceNumber.match(/CN\d+/g) ?? [];
+    const merged = new Set(references.flatMap((cn) => [...(groups.get(cn) ?? [cn])]));
+    for (const cn of merged) groups.set(cn, merged);
+  }
+  for (const line of [...accurateLines, ...principalLines]) {
+    const group = groups.get(line.invoiceNumber.split(", ")[0]);
+    if (group) line.invoiceNumber = [...group].sort().join(", ");
+  }
+  // Recheck customers across the whole CN group, including invalid source rows.
+  const groupedAccurate = separateDuplicateCustomers(
+    accurate.lines, accurate.invalidLines, accurateLines,
+  );
+  const groupedPrincipal = separateDuplicateCustomers(
+    principal.lines, principal.invalidLines, principalLines,
+  );
+  const invalidPrincipalRows = new Set(
+    groupedPrincipal.invalidLines.map((line) => line.sourceRowNumber),
+  );
   return reconcileParsedReturns({
     accurateLines,
-    matchableAccurateLines: accurate.lines,
+    matchableAccurateLines: groupedAccurate.lines,
     principalLines,
-    matchablePrincipalLines: principal.lines,
-    invalidAccurateLines: accurate.invalidLines,
-    invalidPrincipalLines: principal.invalidLines,
-    unmappedPrincipalLines: principal.unmappedLines,
+    matchablePrincipalLines: groupedPrincipal.lines,
+    invalidAccurateLines: groupedAccurate.invalidLines,
+    invalidPrincipalLines: groupedPrincipal.invalidLines,
+    unmappedPrincipalLines: principal.unmappedLines.filter(
+      (line) => !invalidPrincipalRows.has(line.sourceRowNumber),
+    ),
     matchingProductCode: (line) => line.accurateProductCode,
     matchingCustomerCode: () => "",
     isAccurateMapped: () => true,

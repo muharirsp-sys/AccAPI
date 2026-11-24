@@ -18,6 +18,8 @@ export const SALES_STATUSES: ReconciliationStatus[] = [
     "UNMAPPED_SKU", "UNIT_CONVERSION_ERROR", "INVALID_DATA",
 ];
 export const RETURN_STATUSES: ReturnStatus[] = [
+    "DOUBLE",
+    "TIDAK_IMPOR",
     "KOREKSI",
     "MATCH", "QTY_MISMATCH", "VALUE_MISMATCH", "QTY_AND_VALUE_MISMATCH", "MISSING_ACCURATE", "MISSING_PRINCIPAL", "UNMAPPED", "INVALID_DATA",
 ];
@@ -34,6 +36,8 @@ const money = (value: number) => `Rp${number.format(value)}`;
 const direction = (difference: number, formatted: string) => `Accurate ${difference < 0 ? "kurang" : "lebih"} ${formatted}`;
 
 export function statusLabel(status: UiStatus, principal: string): string {
+    if (status === "DOUBLE") return "Double";
+    if (status === "TIDAK_IMPOR") return "Tidak impor";
     if (status === "MISSING_ACCURATE") return "Data Accurate tidak ditemukan";
     if (status === "MISSING_PRINCIPAL") return `Data ${principal} tidak ditemukan`;
     if (status === "UNMAPPED_SKU" || status === "UNMAPPED") return `SKU ${principal} belum dipetakan`;
@@ -42,7 +46,7 @@ export function statusLabel(status: UiStatus, principal: string): string {
 }
 
 export function statusTone(status: UiStatus): Tone {
-    if (status === "KOREKSI") return "info";
+    if (status === "KOREKSI" || status === "TIDAK_IMPOR" || status === "DOUBLE") return "info";
     if (status === "MATCH") return "pos";
     if (status === "QTY_MISMATCH" || status === "VALUE_MISMATCH" || status === "QTY_AND_VALUE_MISMATCH") return "warn";
     return "neg";
@@ -65,8 +69,13 @@ export function causeLines(row: ReconciliationResult, principal: string): string
 }
 
 export function returnCauseLines(row: ReturnReconciliationResult, principal: string): string[] {
+    if (row.status === "DOUBLE") return row.warnings.length ? row.warnings : ["Pembatalan akibat input ganda (double input)."];
+    if (row.status === "TIDAK_IMPOR") return row.warnings.length ? row.warnings : ["Tidak diunggah ke Accurate sesuai remarks HEADER."];
     if (row.status === "KOREKSI") return row.warnings.length ? row.warnings : ["Koreksi: PAJAK_NO berawalan INV."];
-    if (row.status === "MATCH") return ["Tidak ada selisih."];
+    if (row.status === "MATCH") {
+        const manual = row.warnings.filter(warning => warning.startsWith("MATCH manual HEINZ"));
+        return manual.length ? manual : ["Tidak ada selisih."];
+    }
     if (row.status === "INVALID_DATA") return row.invalidReason ? [row.invalidReason] : row.warnings.length ? row.warnings : ["Data tidak valid."];
     const causes: string[] = [];
     if (row.status === "MISSING_ACCURATE") causes.push("Data tidak ditemukan di Accurate.");
@@ -100,8 +109,8 @@ export function exportSheets(division: Division, principal: string, summary: Rec
             [division === "PEMBELIAN" ? "Dokumen Pembelian" : "Invoice"]: excelText(row.invoiceNumber),
             [division === "PEMBELIAN" ? "Supplier" : "Pelanggan"]: excelText(row.customerCode),
             "Produk Accurate": excelText(row.accurateProductCode ?? ""), [`Produk ${principal}`]: excelText(row.principalProductCode ?? ""),
-            "Qty Accurate": row.accurateQuantity, [`Qty ${principal}`]: row.principalQuantity, "Selisih Qty": row.status === "KOREKSI" ? null : row.quantityDifference,
-            "DPP Accurate": row.accurateDpp, [`DPP ${principal}`]: row.principalDpp, "Selisih DPP": row.status === "KOREKSI" ? null : row.dppDifference,
+            "Qty Accurate": row.accurateQuantity, [`Qty ${principal}`]: row.principalQuantity, "Selisih Qty": row.status === "KOREKSI" || row.status === "TIDAK_IMPOR" || row.status === "DOUBLE" ? null : row.quantityDifference,
+            "DPP Accurate": row.accurateDpp, [`DPP ${principal}`]: row.principalDpp, "Selisih DPP": row.status === "KOREKSI" || row.status === "TIDAK_IMPOR" || row.status === "DOUBLE" ? null : row.dppDifference,
             "Pajak Accurate": row.accurateTax, [`Pajak ${principal}`]: row.principalTax,
             "Total Accurate": row.accurateTotal, [`Total ${principal}`]: row.principalTotal,
             "Penyebab selisih": excelText(returnCauseLines(row, principal).join("\n")),
