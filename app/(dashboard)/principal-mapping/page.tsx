@@ -1,16 +1,18 @@
 /*
  * Tujuan: Mapping Principal (Fiori): terjemahan kode di sistem principal menjadi kode internal (barang, pelanggan, salesman, merek surat).
  *   Impor Excel selalu pratinjau dulu; Muat (mengganti seluruh mapping jenis itu), tambah/ubah, dan hapus lewat dialog konfirmasi.
+ *   Unduh Excel = seluruh mapping principal itu dalam bentuk berkas impor (bisa diubah lalu diimpor ulang).
  * Caller: Route dashboard `/principal-mapping`.
- * Dependensi: /api/principal-mapping (GET, PUT, DELETE) dan /api/principal-mapping/import (POST), komponen Fiori, lib/tampil,
+ * Dependensi: /api/principal-mapping (GET, PUT, DELETE), /api/principal-mapping/import (POST), /api/principal-mapping/export (GET),
+ *   komponen Fiori, lib/tampil,
  *   principal-order/bersama (PRINCIPAL_DIDUKUNG = nilai awal principal).
- * Main Functions: PrincipalMappingPage, load, saveRow, removeRow, runImport.
+ * Main Functions: PrincipalMappingPage, load, saveRow, removeRow, runImport, unduhExcel.
  * Side Effects: HTTP baca/tulis; impor default PRATINJAU, menulis hanya setelah dikonfirmasi.
  */
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, Search, Upload } from "lucide-react";
+import { Download, Plus, Search, Upload } from "lucide-react";
 import { FioriScope } from "@/components/fiori/Scope";
 import { Button, ListItem, MessageStrip, ResponsiveTable, Section, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
@@ -67,6 +69,8 @@ export default function PrincipalMappingPage() {
     const [inputKe, setInputKe] = useState(0);
     const [galatImpor, setGalatImpor] = useState<string | null>(null);
     const [pesan, setPesan] = useState<string | null>(null);
+    const [mengunduh, setMengunduh] = useState(false);
+    const [galatUnduh, setGalatUnduh] = useState<string | null>(null);
 
     const tab = KIND_TABS.find((entry) => entry.kind === kind)!;
     // Ketikan dijeda: satu permintaan per jeda ketik, dan jawaban lama yang datang terlambat tidak menimpa yang terbaru.
@@ -149,6 +153,33 @@ export default function PrincipalMappingPage() {
         }
     }
 
+    async function unduhExcel() {
+        const nama = principal.trim();
+        setMengunduh(true);
+        setGalatUnduh(null);
+        try {
+            const res = await kirim(`/api/principal-mapping/export?principal=${encodeURIComponent(nama)}`, { credentials: "include" });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(String(data.error ?? sebabHttp(res.status)));
+            }
+            const jumlah = Number(res.headers.get("x-jumlah-baris") ?? 0);
+            const url = URL.createObjectURL(await res.blob());
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "mapping-principal.xlsx";
+            a.click();
+            URL.revokeObjectURL(url);
+            setPesan(jumlah
+                ? `${jumlah} baris mapping ${nama} diunduh (barang, pelanggan, salesman, merek surat).`
+                : `Belum ada mapping untuk ${nama}. Berkas berisi judul kolom saja, bisa dipakai sebagai templat impor.`);
+        } catch (error) {
+            setGalatUnduh(error instanceof Error ? error.message : sebabHttp(0));
+        } finally {
+            setMengunduh(false);
+        }
+    }
+
     const tampilRows = muatKunci === kunci ? rows : [];
     const status = gagalMuat ? "galat" : busy ? "memuat" : "siap";
     const aksiBaris = (row: Row) => (
@@ -180,6 +211,7 @@ export default function PrincipalMappingPage() {
                 </header>
 
                 {pesan && <MessageStrip tone="pos" title={pesan} onClose={() => setPesan(null)} />}
+                {galatUnduh && <MessageStrip tone="neg" title="Mapping belum bisa diunduh." onClose={() => setGalatUnduh(null)}>{galatUnduh}</MessageStrip>}
 
                 <Section title="Impor dari berkas" subtitle="pratinjau dulu, baru muat">
                     <div className="fi-sect-in">
@@ -224,7 +256,11 @@ export default function PrincipalMappingPage() {
                 <p className="fi-small fi-muted">{tab.hint}</p>
 
                 <Section title={`Mapping ${tab.label.toLowerCase()}`} subtitle={muatKunci === kunci && !gagalMuat ? `${total} baris` : undefined}
-                    actions={<Button icon={<Plus className="fi-icon" aria-hidden />} onClick={() => setDraft(empty(principal, kind))}>Tambah baris</Button>}>
+                    actions={<>
+                        <Button icon={<Download className="fi-icon" aria-hidden />} busy={mengunduh} disabled={!principal.trim()} disabledReason="Isi principal dulu"
+                            title="Semua jenis mapping principal ini, dalam bentuk berkas impor" onClick={() => void unduhExcel()}>Unduh Excel</Button>
+                        <Button icon={<Plus className="fi-icon" aria-hidden />} onClick={() => setDraft(empty(principal, kind))}>Tambah baris</Button>
+                    </>}>
                     <div className="fi-sect-in">
                         <FormField label="Cari">
                             {(a11y) => <input {...a11y} className="fi-input" type="search" value={query} placeholder="Kode principal atau kode internal" onChange={(event) => { setQuery(event.target.value); setOffset(0); }} />}

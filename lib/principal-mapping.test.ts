@@ -3,7 +3,8 @@
    menaikkan baris ke KRT hanya bila QTY habis dibagi ISI, jadi ISI yang hilang = salah 36x. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { columnOf, packOf, parseMappingRows } from "./principal-mapping.ts";
+import * as XLSX from "xlsx";
+import { columnOf, packOf, parseMappingRows, readMappingSheet, writeMappingBook, type ExportRow } from "./principal-mapping.ts";
 
 test("kolom dicari lewat judul, bukan indeks tetap", () => {
     const header = ["KODE ITEM", "Kode Alias", "Satuan", "ISI"];
@@ -61,4 +62,21 @@ test("judul yang tidak ketemu ditolak, bukan menghasilkan nol baris diam-diam", 
     const { rows, issues } = parseMappingRows("customer", [["Kolom A", "Kolom B"], ["1", "2"]]);
     assert.equal(rows.length, 0);
     assert.match(issues[0], /tidak menemukan kolom/);
+});
+
+test("berkas unduhan bisa diimpor ulang apa adanya: baris sama, nol di depan tetap, jenis kosong tidak mengganti apa pun", () => {
+    const meta = { note: "cek", updatedBy: "a@b", updatedAt: "24/11/2026 10.00" };
+    const rows: ExportRow[] = [
+        { kind: "item", sourceCode: "0106072", targetCode: "K1111009005010B", unit: "BTL", packSize: 36, ...meta },
+        { kind: "customer", sourceCode: "002191200122844", targetCode: "C-100001", unit: null, packSize: null, ...meta },
+        { kind: "salesman", sourceCode: "1671GR4102", targetCode: "M-SIT", unit: null, packSize: null, ...meta },
+    ];
+    const book = XLSX.read(XLSX.write(writeMappingBook(rows), { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
+    for (const kind of ["item", "customer", "salesman"] as const) {
+        const hasil = readMappingSheet(book, kind);
+        assert.deepEqual(hasil.rows, rows.filter((row) => row.kind === kind).map((row) => ({ kind: row.kind, sourceCode: row.sourceCode, targetCode: row.targetCode, unit: row.unit, packSize: row.packSize })), kind);
+        assert.deepEqual(hasil.issues, [], kind);
+    }
+    // Sheet merek ada (judul saja) dan terbaca 0 baris: rute impor hanya mengganti jenis yang punya baris.
+    assert.equal(readMappingSheet(book, "brand").rows.length, 0);
 });
