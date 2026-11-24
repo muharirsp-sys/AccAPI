@@ -114,8 +114,25 @@ for (const [invoice, customer, code, status] of [
   assert.equal(output.summary.MISSING_ACCURATE, 0);
 }
 
+// Other product differences use the template, with no return-specific overrides.
+for (const [invoice, customer, product, mappedCode, actualCode] of [
+  ["RB/BFG-10000006479", "C-KIN009", "4502085", "G1264002000010", "G1262104004211"],
+  ["RB/BFG-10000006426", "C-TRI029", "4502439", "G1262005004210", "G1262009004210"],
+]) {
+  const output = reconcileGodrejReturns(
+    accurate(accurateRow({ REM: invoice, "KODE PELANGGAN INDUK": customer, KODE_BARANG: actualCode })),
+    principal(principalRow({ "Sale Return No.": invoice, CUSTOMER: customer, Skunit: product + " - PRODUCT" })),
+    mapping([[mappedCode, product]]),
+  );
+  assert.equal(output.summary.MATCH, 0);
+  assert.equal(output.summary.KOREKSI ?? 0, 0);
+  assert.equal(output.summary.MISSING_PRINCIPAL, 1);
+  assert.equal(output.summary.MISSING_ACCURATE, 1);
+}
+
 for (const [name, code] of [
   ["PT. LOTTE MART PANAKUKANG", "C-LO0013"],
+  ["MINI MART", "C-MIN010"],
   ["CV.MAJU BERSAMA", "C-DU0003"],
   ["Jack Grocers", "C-JAC767"],
   ["CV. MITRA BELANJA SEJAHTERA", "C-KIN009"],
@@ -133,7 +150,7 @@ const explicitCustomer = reconcileGodrejReturns(
   principal(principalRow({ CUSTOMER: "Minasa Mart {C-OTHER}" })), mapping(),
 );
 assert.equal(explicitCustomer.summary.MATCH, 1);
-for (const customer of ["MINASA MART CABANG 2", "TOKO BARU", "MINASA MART C-ONE C-TWO", "MINASA MART C-ONE-BOGUS"]) {
+for (const customer of ["MINI MART CABANG 2", "MINASA MART CABANG 2", "TOKO BARU", "MINASA MART C-ONE C-TWO", "MINASA MART C-ONE-BOGUS"]) {
   assert.throws(() => reconcileGodrejReturns(accurate(accurateRow()),
     principal(principalRow({ CUSTOMER: customer })), mapping()), /CUSTOMER.*tepat satu/);
 }

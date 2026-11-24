@@ -82,7 +82,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
             const payload = (await res.json().catch(() => ({}))) as Output & { error?: string };
             if (!res.ok) throw new Error(payload.error || "Rekonsiliasi gagal diproses.");
             setHasil({ ...payload, versi: mapping.data?.active?.version, jam: `${waktuWita(new Date())} WITA` });
-            setSaring(payload.results.some((r) => r.status === "KOREKSI") ? "ALL" : payload.results.some((r) => r.status !== "MATCH") ? "ISSUES_ONLY" : "ALL");
+            setSaring(payload.results.some((r) => (r.status === "KOREKSI" || r.status === "TIDAK_IMPOR" || r.status === "DOUBLE")) ? "ALL" : payload.results.some((r) => r.status !== "MATCH") ? "ISSUES_ONLY" : "ALL");
             setHistPage(1); muatRiwayat();
         } catch (e) {
             setGalat(e instanceof Error ? e.message : "Rekonsiliasi gagal diproses.");
@@ -126,14 +126,16 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
     const ignoredLines = hasil && "ignoredLines" in hasil ? hasil.ignoredLines ?? [] : [];
     const cocok = count("MATCH");
     const koreksi = count("KOREKSI");
-    const masalah = total - cocok - koreksi;
+    const tidakImpor = count("TIDAK_IMPOR");
+    const doubleInput = count("DOUBLE");
+    const masalah = total - cocok - koreksi - tidakImpor - doubleInput;
     const selisih = count("QTY_MISMATCH") + count("VALUE_MISMATCH") + count("QTY_AND_VALUE_MISMATCH");
     const hilang = count("MISSING_PRINCIPAL") + (division === "FAKTUR" ? count("MISSING_INTERNAL") : count("MISSING_ACCURATE"));
     const rows: Row[] = useMemo(() => {
         const all = hasil?.results ?? [];
         if (saring === "ALL") return all;
         if (saring === "MATCH_ONLY") return all.filter((r) => r.status === "MATCH");
-        if (saring === "ISSUES_ONLY") return all.filter((r) => r.status !== "MATCH" && r.status !== "KOREKSI");
+        if (saring === "ISSUES_ONLY") return all.filter((r) => r.status !== "MATCH" && r.status !== "KOREKSI" && r.status !== "TIDAK_IMPOR" && r.status !== "DOUBLE");
         return all.filter((r) => r.status === saring);
     }, [hasil, saring]);
     const penyebab = (r: Row) => division === "FAKTUR" ? causeLines(r as ReconciliationResult, principal) : returnCauseLines(r as ReturnReconciliationResult, principal);
@@ -147,7 +149,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
         { key: "sebab", header: "Keterangan", cell: (r) => <ul className="fi-small" style={{ margin: 0, paddingLeft: "1rem", minWidth: "16rem" }}>{penyebab(r).map((c) => <li key={c}>{c}</li>)}</ul> },
         { key: "qty", header: `Qty Accurate / ${principal}`, align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{number.format(r.accurateQuantity)} / {number.format(r.principalQuantity)}</span> },
         { key: "nilai", header: division === "FAKTUR" ? `Net Accurate / ${principal}` : `DPP Accurate / ${principal}`, align: "end", secondary: true, cell: (r) => <span className="fi-tnum">{"accurateNet" in r ? `${currency.format(r.accurateNet)} / ${currency.format(r.principalNet)}` : `${currency.format(r.accurateDpp)} / ${currency.format(r.principalDpp)}`}</span> },
-        { key: "selisih", header: division === "FAKTUR" ? "Selisih net" : "Selisih DPP", align: "end", cell: (r) => { if (r.status === "KOREKSI") return <span>{KOSONG}</span>; const v = "valueDifference" in r ? r.valueDifference : r.dppDifference; return <span className={`fi-tnum${v < 0 ? " fi-why" : ""}`}>{currency.format(v)}</span>; } },
+        { key: "selisih", header: division === "FAKTUR" ? "Selisih net" : "Selisih DPP", align: "end", cell: (r) => { if (r.status === "KOREKSI" || r.status === "TIDAK_IMPOR" || r.status === "DOUBLE") return <span>{KOSONG}</span>; const v = "valueDifference" in r ? r.valueDifference : r.dppDifference; return <span className={`fi-tnum${v < 0 ? " fi-why" : ""}`}>{currency.format(v)}</span>; } },
     ];
     const langkah: FlowStep[] = [
         { label: "Jenis", state: "done" },
@@ -231,8 +233,8 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                             <ul className="fi-small">{ignoredLines.map((line) => <li key={line.sourceRowNumber}>Baris {line.sourceRowNumber}: {line.invoiceNumber} · {line.taxNumber} · {line.principalProductCode}</li>)}</ul>
                         </details>}
                         <div className="fi-kcards">
-                            <div className="fi-kc"><span>Baris</span><b>{number.format(total)}</b><small>termasuk koreksi</small></div>
-                            <div className="fi-kc" data-tone="pos"><span>Cocok</span><b>{number.format(cocok)}</b><small>{total ? `${number.format((cocok / Math.max(1, total - koreksi)) * 100)}%` : KOSONG}</small></div>
+                            <div className="fi-kc"><span>Baris</span><b>{number.format(total)}</b><small>termasuk koreksi, tidak impor, dan double</small></div>
+                            <div className="fi-kc" data-tone="pos"><span>Cocok</span><b>{number.format(cocok)}</b><small>{total ? `${number.format((cocok / Math.max(1, total - koreksi - tidakImpor - doubleInput)) * 100)}%` : KOSONG}</small></div>
                             <div className="fi-kc" data-tone={selisih ? "warn" : undefined}><span>Selisih</span><b>{number.format(selisih)}</b><small>jumlah atau nilai</small></div>
                             <div className="fi-kc" data-tone={hilang ? "neg" : undefined}><span>Tidak ditemukan</span><b>{number.format(hilang)}</b><small>di salah satu sisi</small></div>
                         </div>
@@ -241,6 +243,8 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                                 <button type="button" aria-pressed={saring === "ISSUES_ONLY"} onClick={() => setSaring("ISSUES_ONLY")}>Masalah saja {number.format(masalah)}</button>
                                 <button type="button" aria-pressed={saring === "ALL"} onClick={() => setSaring("ALL")}>Semua {number.format(total)}</button>
                                 <button type="button" aria-pressed={saring === "MATCH_ONLY"} onClick={() => setSaring("MATCH_ONLY")}>Cocok {number.format(cocok)}</button>
+                                {doubleInput > 0 && <button type="button" aria-pressed={saring === "DOUBLE"} onClick={() => setSaring("DOUBLE")}>Double {number.format(doubleInput)}</button>}
+                                {tidakImpor > 0 && <button type="button" aria-pressed={saring === "TIDAK_IMPOR"} onClick={() => setSaring("TIDAK_IMPOR")}>Tidak impor {number.format(tidakImpor)}</button>}
                                 {koreksi > 0 && <button type="button" aria-pressed={saring === "KOREKSI"} onClick={() => setSaring("KOREKSI")}>Koreksi {number.format(koreksi)}</button>}
                             </div>
                             <FormField label="Saring status">{(a11y) => <select {...a11y} className="fi-input" value={saring} onChange={(e) => setSaring(e.target.value as Saring)}>
@@ -272,7 +276,7 @@ export default function Rekonsiliasi({ permKeys }: { permKeys: string[] }) {
                                             <li key={run.id}>
                                                 <time dateTime={run.startedAt}>{waktuWita(run.startedAt)}</time>
                                                 <span><b>{run.uploadedByName}</b> · <span>{v ? `Versi ${v}` : "Versi tidak tersedia"}</span> · <StatusBadge tone={tone}>{label}</StatusBadge></span>
-                                                <span className="fi-chg">{run.inputFiles.map((f) => f.name).join(", ")} · {run.durationMs === null ? "Durasi -" : `${number.format(run.durationMs / 1000)} detik`} · <span>Total {tot}</span> · <span>Cocok {match}</span> · <span>Koreksi {run.summary?.KOREKSI ?? 0}</span> · <span>Masalah {tot - match - (run.summary?.KOREKSI ?? 0)}</span></span>
+                                                <span className="fi-chg">{run.inputFiles.map((f) => f.name).join(", ")} · {run.durationMs === null ? "Durasi -" : `${number.format(run.durationMs / 1000)} detik`} · <span>Total {tot}</span> · <span>Cocok {match}</span> · <span>Koreksi {run.summary?.KOREKSI ?? 0}</span> · <span>Tidak impor {run.summary?.TIDAK_IMPOR ?? 0}</span> · <span>Double {run.summary?.DOUBLE ?? 0}</span> · <span>Masalah {tot - match - (run.summary?.KOREKSI ?? 0) - (run.summary?.TIDAK_IMPOR ?? 0) - (run.summary?.DOUBLE ?? 0)}</span></span>
                                                 {(run.error || run.issues?.length) ? (
                                                     <details className="fi-chg"><summary aria-label={`Lihat rincian ${run.id}`} style={{ cursor: "pointer" }}>Lihat penyebab</summary>
                                                         {run.error && <p>{run.error}</p>}

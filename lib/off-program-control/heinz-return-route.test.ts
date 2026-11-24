@@ -334,10 +334,16 @@ async function main(): Promise<void> {
       ),
     ),
   );
-  assert.equal(invalidRetailer.status, 422);
-  assert.deepEqual(await invalidRetailer.json(), {
-    error: "retailer_name harus memuat tepat satu token pada baris 2",
-  });
+  // Unknown retailer marks only that CN invalid; the rest of the upload still reconciles.
+  assert.equal(invalidRetailer.status, 200);
+  const retailerResult = await invalidRetailer.json();
+  assert.equal(retailerResult.summary.MATCH, 0);
+  assert.deepEqual(
+    retailerResult.results
+      .filter((row: { status: string }) => row.status === "INVALID_DATA")
+      .map((row: { invalidReason: string }) => row.invalidReason),
+    ["Kode pelanggan HEINZ belum dikenali pada HEADER baris 2: TOKO TANPA KODE (retailer_code: OLD-1)"],
+  );
 
   for (const lineCount of [-1, 1.5]) {
     const invalidLineCount = await withPermissions(
