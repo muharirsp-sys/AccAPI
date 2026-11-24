@@ -2,8 +2,8 @@
  * Tujuan: Keputusan owner 19 Nov 2026 — nota hit list (GT Hit List Massive Distribusi NPL, Kino) tidak boleh menahan order:
  *   order APA PUN (nota hit list atau bukan) untuk outlet hit list yang tertahan batas hari dan/atau limit KARENA nota hit list yang
  *   belum lunas tetap masuk — asal piutang di luar nota hit list + pesanan terbuka + order <= limit, dan tidak ada nota BUKAN hit list
- *   belum lunas yang sudah mencapai batas hari. (Tafsiran ketat atas "jangan sampai ... ada nota selain dari hit list yang masih belum
- *   lunas ... sehingga menyebabkan kena batas hari": berlaku juga untuk nota hit list.)
+ *   belum lunas yang sudah mencapai batas hari — syarat batas hari ini hanya untuk order BIASA: owner 24 Nov 2026, order NPL (nota hit
+ *   list) tetap lolos walau nota biasa sudah lewat batas hari; limit tetap berlaku untuk keduanya.
  *   Selain itu tetap ditolak Accurate seperti biasa.
  * Caller: lib/invoice-sender (sesudah Accurate menolak satu faktur).
  * Dependensi: lib/accurate-forward (baca/tulis Accurate dengan sesi pengirim), lib/pelanggan-hendra, lib/pelanggan-terlindungi.
@@ -288,8 +288,8 @@ const umurHari = (tanggal: string, hariIni: string) => Math.floor((Date.parse(`$
 
 /**
  * Keputusan owner 19 Nov 2026 (murni). Nota hit list belum lunas TIDAK ikut menahan, untuk order apa pun:
- * - batas hari: tidak boleh ada nota NON-hit-list belum lunas yang umurnya (dari tanggal faktur, >= N hari — lebih ketat dari Accurate)
- *   sudah mencapai batas;
+ * - batas hari (hanya order biasa; order NPL tidak diperiksa — owner 24 Nov 2026): tidak boleh ada nota NON-hit-list belum lunas yang
+ *   umurnya (dari tanggal faktur, >= N hari — lebih ketat dari Accurate) sudah mencapai batas;
  * - batas nominal: piutang NON-hit-list + pesanan terbuka + order <= limit. Angka yang tidak terbaca (NaN) = ditahan.
  * Yang dilepas hanya batas yang disebut Accurate; batas lain tetap diperiksa Accurate sendiri saat kirim ulang.
  */
@@ -298,7 +298,8 @@ export function putuskan(p: PelangganBatas, beban: Beban, order: Order, tolak: T
     const tidak = (alasan: string) => ({ boleh: false, alasan, lepas: tolak });
     if (tolak.umur && !p.umurAktif) return tidak("Accurate menolak batas hari, tetapi batas hari pelanggan terbaca tidak tercentang");
     if (tolak.nominal && !p.nominalAktif) return tidak("Accurate menolak batas nominal, tetapi limit piutang terbaca tidak tercentang");
-    if (p.umurAktif) {
+    // Owner 24 Nov 2026: order NPL (nota hit list) tidak ditahan batas hari sama sekali, walau nota biasa sudah lewat; order biasa tetap.
+    if (p.umurAktif && !order.hitlist) {
         const lewat = nota.filter((n) => !n.hitlist && !(umurHari(n.tanggal, hariIni) < (p.umur ?? 0)));
         if (lewat.length) return tidak(`nota bukan hit list belum lunas sudah ${p.umur} hari: ${lewat.map((n) => n.nomor).join(", ")}`);
     }
@@ -311,7 +312,7 @@ export function putuskan(p: PelangganBatas, beban: Beban, order: Order, tolak: T
     }
     const hl = nota.filter((n) => n.hitlist);
     return { boleh: true, lepas: tolak, alasan: `batas ${[tolak.umur && "hari", tolak.nominal && "nominal"].filter(Boolean).join(" + ")} dilepas sementara`
-        + ` (${order.hitlist ? "nota hit list" : "nota bukan hit list"}; ${hl.length} nota hit list belum lunas ${rupiah(hl.reduce((s, n) => s + n.sisa, 0))} tidak dihitung)` };
+        + ` (${order.hitlist ? "nota hit list, batas hari tidak berlaku" : "nota bukan hit list"}; ${hl.length} nota hit list belum lunas ${rupiah(hl.reduce((s, n) => s + n.sisa, 0))} tidak dihitung)` };
 }
 
 export type DepsLolos<T> = {
