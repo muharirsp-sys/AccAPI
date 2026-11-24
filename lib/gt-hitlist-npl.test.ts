@@ -1,5 +1,6 @@
 /* Owner 19 Nov 2026: nota hit list belum lunas tidak boleh menahan order outlet hit list. Order apa pun lolos bila (piutang di luar hit
- * list + pesanan terbuka + order) <= limit dan tidak ada nota BUKAN hit list belum lunas yang sudah mencapai batas hari.
+ * list + pesanan terbuka + order) <= limit dan — untuk order biasa — tidak ada nota BUKAN hit list belum lunas yang sudah mencapai batas
+ * hari. Owner 24 Nov 2026: order NPL (semua baris SKU hit list) tidak diperiksa batas hari.
  * Tanpa DB dan tanpa Accurate: pembaca/penulis dipalsukan, `db` dan `fetch` diganti tiruan. */
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
@@ -62,13 +63,16 @@ test("putuskan: order BUKAN hit list lolos bila yang menahan hanya nota hit list
     assert.deepEqual(k.lepas, DUA);
 });
 
-test("putuskan: nota BUKAN hit list belum lunas yang sudah mencapai batas hari -> order APA PUN (hit list juga) tetap ditahan", () => {
-    for (const hl of [false, true]) {
-        const k = putuskan(pelanggan(), beban([NOTA_HL_LAMA, NOTA_BUKAN_LAMA]), order(hl), DUA, HARI_INI);
-        assert.equal(k.boleh, false, `order hit list: ${hl}`);
-        assert.match(k.alasan, /INV\/B2/);
-    }
-    assert.equal(putuskan(pelanggan(), beban([n("INV/B5", "2026-10-23", 1, false)]), order(true), DUA, HARI_INI).boleh, true, "27 hari = belum");
+test("putuskan: nota BUKAN hit list belum lunas sudah mencapai batas hari -> order biasa ditahan; order NPL tetap lolos (owner 24 Nov)", () => {
+    const biasa = putuskan(pelanggan(), beban([NOTA_HL_LAMA, NOTA_BUKAN_LAMA]), order(false), DUA, HARI_INI);
+    assert.equal(biasa.boleh, false);
+    assert.match(biasa.alasan, /INV\/B2/);
+    assert.equal(putuskan(pelanggan(), beban([n("INV/B5", "2026-10-23", 1, false)]), order(false), DUA, HARI_INI).boleh, true, "27 hari = belum");
+    const npl = putuskan(pelanggan(), beban([NOTA_HL_LAMA, NOTA_BUKAN_LAMA]), order(true), DUA, HARI_INI);
+    assert.equal(npl.boleh, true, npl.alasan);
+    assert.match(npl.alasan, /batas hari tidak berlaku/);
+    // Limit tetap: nota biasa yang lewat hari tetap dihitung ke limit untuk order NPL.
+    assert.match(putuskan(pelanggan(), beban([n("INV/B6", "2026-10-01", 900_000, false)]), order(true), DUA, HARI_INI).alasan, /melewati limit/);
 });
 
 test("putuskan: limit = piutang bukan hit list + pesanan terbuka + order; angka tak terbaca = ditahan", () => {
@@ -304,6 +308,15 @@ test("kirim: ada nota BUKAN hit list belum lunas lewat batas hari -> order bukan
     assert.equal(a.simpanPelanggan.length, 0);
     assert.equal(hasil.rejected, 1);
     assert.match(hasil.results[0].catatan ?? "", /INV\/B2/);
+});
+
+test("kirim: order NPL ditolak batas hari karena nota BIASA lewat hari -> lolos, hanya batas hari dilepas lalu dipulihkan", async (t) => {
+    const a = antrean(t, [{ items: [HL] }], [TOLAK_UMUR, TERIMA], { nota: [{ number: "INV/B2", tanggal: "01/10/2026", sisa: 100_000, items: [BUKAN] }] });
+    const hasil = await kirimSemua();
+    assert.equal(hasil.sent, 1, hasil.results[0].catatan);
+    assert.deepEqual(a.simpanPelanggan[0], { id: 77, customerLimitAge: false });
+    assert.deepEqual(a.batas(), BATAS_ASAL);
+    assert.match(hasil.results[0].catatan ?? "", /batas hari tidak berlaku/);
 });
 
 test("kirim: pesanan terbuka melewati limit / jumlah halaman tak terbaca / sisa faktur tak terbaca -> ditolak, pelanggan tidak disentuh", async (t) => {
