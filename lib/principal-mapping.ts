@@ -1,7 +1,7 @@
 /*
- * Tujuan: Baca sheet terjemahan principal (KINO.xlsx) menjadi baris `principal_mapping`.
- * Caller: app/api/principal-mapping/import, halaman Mapping Principal.
- * Dependensi: xlsx (sudah terpasang). Main Functions: readMappingSheet, parseMappingRows, KINDS.
+ * Tujuan: Baca sheet terjemahan principal (KINO.xlsx) menjadi baris `principal_mapping`, dan tulis balik ke bentuk yang sama.
+ * Caller: app/api/principal-mapping/import, app/api/principal-mapping/export, halaman Mapping Principal.
+ * Dependensi: xlsx (sudah terpasang). Main Functions: readMappingSheet, parseMappingRows, writeMappingBook, KINDS.
  * Side Effects: Tidak ada — murni, tanpa DB dan tanpa jaringan.
  *
  * Judul kolom berkas Kino TIDAK stabil (laporan ad hoc, spasi menempel, huruf besar-kecil
@@ -148,4 +148,35 @@ export function readMappingSheet(book: XLSX.WorkBook, kind: MappingKind): ParseR
     if (!name) return { rows: [], issues: [`Sheet ${spec.sheet} tidak ada di berkas ini.`] };
     const raw = XLSX.utils.sheet_to_json<unknown[]>(book.Sheets[name], { header: 1, blankrows: false, defval: "" });
     return parseMappingRows(kind, raw);
+}
+
+/** Judul kolom unduhan, dipilih dari sinonim KINDS: berkas unduhan bisa langsung diimpor ulang tanpa diubah. */
+const EXPORT_HEADERS: Record<MappingKind, string[]> = {
+    item: ["Kode Principal", "Kode Internal", "Satuan", "ISI"],
+    customer: ["Code Principal", "Code Internal"],
+    salesman: ["Kode Sales Principal", "Kode Internal"],
+    brand: ["Merek Surat", "Nama Master"],
+};
+
+export type ExportRow = MappingRow & { note: string; updatedBy: string; updatedAt: string };
+
+/**
+ * Semua baris satu principal -> workbook empat sheet bernama sama dengan sheet impor.
+ * Jenis tanpa baris tetap mendapat sheet berisi judul saja: impor melewatinya (0 baris), jadi tidak mengosongkan apa pun.
+ * Kode ditulis sebagai teks supaya nol di depan (kode outlet, kode alias) tidak hilang di Excel.
+ */
+export function writeMappingBook(rows: ExportRow[]): XLSX.WorkBook {
+    const book = XLSX.utils.book_new();
+    for (const kind of Object.keys(KINDS) as MappingKind[]) {
+        const header = [...EXPORT_HEADERS[kind], "Catatan", "Diubah Oleh", "Diubah Pada (WITA)"];
+        const body = rows.filter((row) => row.kind === kind).map((row) => [
+            row.sourceCode, row.targetCode,
+            ...(kind === "item" ? [row.unit ?? "", row.packSize ?? ""] : []),
+            row.note, row.updatedBy, row.updatedAt,
+        ]);
+        const sheet = XLSX.utils.aoa_to_sheet([header, ...body]);
+        sheet["!cols"] = header.map((title) => ({ wch: Math.max(title.length + 2, 16) }));
+        XLSX.utils.book_append_sheet(book, sheet, KINDS[kind].sheet);
+    }
+    return book;
 }
