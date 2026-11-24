@@ -23,7 +23,7 @@ import { syncItemPrices } from "@/lib/item-price-sync";
 import { aturanBerlaku, bonusQuota, channelAllowed, channelOutlet, checkLine, checkSoPromo, daftarKosong,
     isBonusLine, JARINGAN_POSISI_BEBAS, matchItemRule, needsTriggerCheck, normalisasiJaringan, outletAllowed, outletListsOn, purchaseByGroup,
     sebabDaftar, splitDiscounts, triggerGroupKey, triggerReached,
-    type DiscountAt, type Normalisasi, type PublishedRule, type TriggerBuy } from "@/lib/principal-validation";
+    type DiscountAt, type LineInput, type Normalisasi, type PublishedRule, type TriggerBuy } from "@/lib/principal-validation";
 import { duplicateFinding, findDuplicate, type OrderFingerprint } from "@/lib/order-duplicate";
 import { invoiceKey } from "@/lib/principal-invoice";
 import { kunciBatch } from "@/lib/invoice-outbox-actions";
@@ -216,7 +216,8 @@ export async function POST(request: NextRequest) {
 
     const [knownItems, knownCustomers, unitsByCode] = await Promise.all([
         itemCodes.length ? db.select({ no: item.no }).from(item).where(inArray(item.no, itemCodes)) : Promise.resolve([]),
-        customerNos.length ? db.select({ no: customer.customerNo, name: customer.name, branchId: customer.branchId, categoryName: customer.categoryName }).from(customer).where(inArray(customer.customerNo, customerNos)) : Promise.resolve([]),
+        customerNos.length ? db.select({ no: customer.customerNo, name: customer.name, branchId: customer.branchId, branchName: customer.branchName,
+            categoryName: customer.categoryName }).from(customer).where(inArray(customer.customerNo, customerNos)) : Promise.resolve([]),
         itemUnits(itemCodes),
     ]);
     const itemSet = new Set(knownItems.map((row) => row.no));
@@ -228,6 +229,7 @@ export async function POST(request: NextRequest) {
     // lain. Tanpa cabang, pemilih jatuh ke cabang default (Kantor Pusat) dan mengambil harga
     // lama — 47 dari 53 baris tertahan sebagai "selisih harga" yang sebenarnya tidak ada.
     const branchOf = new Map(knownCustomers.map((row) => [row.no, row.branchId ?? undefined]));
+    const branchNameOf = new Map(knownCustomers.map((row) => [row.no, row.branchName ?? ""]));
     // CHANNEL OUTLET DARI MASTER, bukan dari laporan principal dan bukan dari yang diketik.
     // Laporan bisa salah — dan sudah: HINDA MART (C-HIL009) disebut "General Trade" oleh Kino
     // sedangkan master kita menyimpannya MT. Yang dipakai memutuskan promo adalah master,
@@ -235,7 +237,7 @@ export async function POST(request: NextRequest) {
     const channelOf = new Map(knownCustomers.map((row) => [row.no, channelOutlet(row.categoryName)]));
 
     // Harga dilihat per pelanggan: kategori harga berbeda memberi harga berbeda untuk item sama.
-    const priceByKey = new Map<string, { price: number | null; source: string }>();
+    const priceByKey = new Map<string, { price: number | null; source: string; from: LineInput["priceFrom"] }>();
     const grouped = new Map<string, { code: string; unit: string }[]>();
     for (const line of lines) {
         const itemCode = items.get(line.productCode);
@@ -251,7 +253,14 @@ export async function POST(request: NextRequest) {
             customerNo,
             branchId: branchOf.get(customerNo),
         });
-        for (const result of results) priceByKey.set(`${customerNo}|${result.code}|${result.unit}`, { price: result.price, source: result.source });
+        for (const result of results) {
+            priceByKey.set(`${customerNo}|${result.code}|${result.unit}`, {
+                price: result.price, source: result.source,
+                // Asal harga untuk kalimat temuan selisih: kategori + cabang baris harga vs cabang pelanggan.
+                from: { source: result.source, category: result.priceCategoryName, branch: result.branchName, branchId: result.branchId,
+                    customerBranch: branchNameOf.get(customerNo), customerBranchId: branchOf.get(customerNo) },
+            });
+        }
     }
 
     // POSISI DISKON JARINGAN (Indomaret, Alfamart, Indogrosir, Alfamidi — nama di MASTER) mengikuti
@@ -449,7 +458,7 @@ export async function POST(request: NextRequest) {
                 customerCode: line.customerCode, customerNo, customerExists: customerNo ? customerSet.has(customerNo) : false,
                 salesmanCode: line.salesmanCode, salesmanInternal,
                 unit: line.unit, knownUnits: itemCode ? (unitsByCode.get(itemCode) ?? []) : [],
-                price: Number(line.price), expectedPrice: found?.price ?? null,
+                price: Number(line.price), expectedPrice: found?.price ?? null, priceFrom: found?.from,
                 // ISI baris ini, dibaca dari apa yang sudah terjadi: qty laporan (satuan
                 // terkecil) dibagi qty faktur. Baris yang tidak naik ke KRT menghasilkan 1.
                 unitRatio: Number(line.qty) > 0 ? Number(line.reportQty) / Number(line.qty) : 1,

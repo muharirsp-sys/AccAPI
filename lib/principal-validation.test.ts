@@ -47,6 +47,17 @@ test("selisih harga sampai Rp 1 lolos, di atas itu ditahan dua arah", () => {
     assert.match(checkLine(line({ price: 13000 })).findings[0], /lebih rendah/);
 });
 
+test("temuan selisih harga menyebut kategori + cabang asal harga; cabang lain dari cabang pelanggan diberi tahu", () => {
+    // 24 Nov 2026 TOP MODE (cabang KINO NON FOOD): harga MT KINO NON FOOD belum ada di cache -> jatuh ke MT Kantor Pusat 9.909,91.
+    const dari = { source: "tier", category: "MT", branch: "Kantor Pusat", branchId: 50, customerBranch: "KINO NON FOOD", customerBranchId: 1051 };
+    const f = checkLine(line({ unit: "BOX", knownUnits: ["BOX"], price: 10900.9, expectedPrice: 9909.91, priceFrom: dari })).findings[0];
+    assert.match(f, /dari harga Accurate 9\.909,91 \(MT cabang Kantor Pusat; cabang pelanggan KINO NON FOOD tidak punya harga ini .*Segarkan harga"\)\.$/);
+    const sama = checkLine(line({ price: 13600, priceFrom: { ...dari, branch: "KINO NON FOOD", branchId: 1051 } })).findings[0];
+    assert.match(sama, /\(MT cabang KINO NON FOOD\)\.$/);
+    assert.match(checkLine(line({ price: 13600, priceFrom: { source: "standard" } })).findings[0], /\(harga standar barang/);
+    assert.match(checkLine(line({ price: 13600 })).findings[0], /dari harga Accurate 13\.513,51\.$/, "tanpa asal = kalimat lama");
+});
+
 test("mapping dan master yang hilang ditahan, masing-masing dengan sebabnya", () => {
     assert.match(checkLine(line({ itemCode: null })).findings[0], /belum ada di mapping/);
     assert.match(checkLine(line({ itemExists: false })).findings[0], /tidak ada di master Accurate/);
