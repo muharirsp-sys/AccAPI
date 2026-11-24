@@ -135,6 +135,10 @@ for (const [invoice, source, target] of [
   ["1671-SRI-260002208", "52330224298", "C-TK0006"],
   ["1671-SRI-260002267", "52430367095", "C-UKM004"],
   ["1671-SRI-260002311", "322510498179", "C-DIA062"],
+  ["1671-SRI-260002351", "52450393538", "C-YON003"],
+  ["1671-SRI-260002352", "523110269609", "C-NUS001"],
+  ["1671-SRI-260002353", "52310213576", "C-IL0006"],
+  ["1671-SRI-260002357", "322650803073", "C-NAF006"],
 ]) {
   const principalRows = workbook("Sheet1", [principalHeader,
     [invoice, source, "P1", -1, -30, 0, 0, 0, -3, -33, "RET01"],
@@ -153,6 +157,27 @@ for (const [invoice, source, target] of [
 }
 
 // Exclude only verified Accurate counterparts, never an entire invoice.
+for (const [invoice, source, target, kinoRef, accurateRef] of [
+  ["1671-SRI-260002351", "52450393538", "C-YON003", "INV/2610/KN00630", "INV/2604/KN00630"],
+  ["1671-SRI-260002352", "523110269609", "C-NUS001", "INV/2610/KN00716", "INV/2606/KN00716"],
+  ["1671-SRI-260002353", "52310213576", "C-IL0006", "INV/2610/KN00732", "INV/2606/KN00732"],
+  ["1671-SRI-260002355", "C-WI0001", "C-WI0001", "INV/2610/KN00148", "INV/2606/KN00148"],
+  ["1671-SRI-260002357", "322650803073", "C-NAF006", "INV/2607/KN00230", "INV/2606/KN00230"],
+]) {
+  const principal = workbook("Sheet1", [[...principalHeader, "PAJAK_NO"],
+    [invoice, source, "P1", -1, -30, 0, 0, 0, -3, -33, "RET01", kinoRef],
+  ]);
+  const run = (ref: string, customer = target) => reconcileKinoReturns(workbook("Rincian Faktur Penjualan", [accurateHeader,
+    ["R1", customer, "WIN1", -1, -30, -3, -33, `${ref} - ${invoice}`, "Retur Penjualan"],
+  ]), principal, mapping);
+  const corrected = run(accurateRef);
+  assert.equal(corrected.summary.MATCH, 0);
+  assert.equal(corrected.summary.KOREKSI, 1);
+  assert.equal(corrected.summary.MISSING_PRINCIPAL, 0);
+  assert.deepEqual(corrected.results[0].accurateSourceRows, [2]);
+  assert.equal(run("INV/2501/KN99999").summary.MISSING_PRINCIPAL, 1);
+  assert.equal(run(accurateRef, "C-OTHER").summary.MISSING_PRINCIPAL, 1);
+}
 const invPrincipal = workbook("Sheet1", [[...principalHeader, "PAJAK_NO"],
   ["1671-SRI-700", "C1", "P1", -1, -30, 0, 0, 0, -3, -33, "RET01", "inv/2610/kn00046"],
 ]);
@@ -382,3 +407,97 @@ if (process.argv.length === 5) {
   assert.ok(Math.abs(sum("principalTotal") - 312484.234) < 0.0001);
   console.log("KINO Return real-workbook validation passed.");
 }
+
+// Confirmed November customer alias and correction must remain narrowly scoped.
+const novemberConfirmed = reconcileKinoReturns(
+  workbook("Rincian Faktur Penjualan", [accurateHeader,
+    ["R1", "C-SUK241", "WIN1", 1, 7090, 0, 7090, "1671-SRI-260002420", "Retur Penjualan"],
+  ]),
+  workbook("Sheet1", [principalHeader,
+    ["1671-SRI-260002420", "122120206937", "P1", -1, -7090, 0, 0, 0, 0, -7090, "RET01"],
+    ["1671-SRI-260002453", "C-MO0015", "110064", -22, -642162.1624, 0, 0, 0, -70637.8379, -712800.0003, "RET01"],
+    ["1671-SRI-260002454", "C-MO0015", "110064", -1, -30, 0, 0, 0, 0, -30, "RET01"],
+    ["1671-SRI-260002453", "C-OTHER", "110064", -1, -30, 0, 0, 0, 0, -30, "RET01"],
+  ]), mapping,
+);
+assert.equal(novemberConfirmed.summary.MATCH, 1);
+assert.equal(novemberConfirmed.summary.KOREKSI, 1);
+assert.equal(novemberConfirmed.summary.UNMAPPED, 2);
+assert.equal(novemberConfirmed.summary.MISSING_ACCURATE, 0);
+assert.equal(novemberConfirmed.summary.MISSING_PRINCIPAL, 0);
+const confirmedCorrection = novemberConfirmed.results.find(row => row.status === "KOREKSI")!;
+assert.equal(confirmedCorrection.principalQuantity, 22);
+assert.equal(confirmedCorrection.principalDpp, 642162.1624);
+assert.deepEqual(confirmedCorrection.accurateSourceRows, []);
+assert.match(confirmedCorrection.warnings.join(" "), /admin lupa/);
+assert.equal(Object.values(novemberConfirmed.summary).reduce((a, b) => a + b, 0), novemberConfirmed.results.length);
+
+// Customer aliases approved after all products, quantities and DPP were compared.
+for (const [principalCustomer, accurateCustomer] of [["322660832363", "C-RAI133"], ["524100473193", "C-M20001"]]) {
+  const checkedAlias = reconcileKinoReturns(
+    workbook("Rincian Faktur Penjualan", [accurateHeader,
+      ["R1", accurateCustomer, "WIN1", 1, 30, 0, 30, "1671-SRI-260002999", "Retur Penjualan"],
+    ]),
+    workbook("Sheet1", [principalHeader,
+      ["1671-SRI-260002999", principalCustomer, "P1", -1, -30, 0, 0, 0, 0, -30, "RET01"],
+    ]), mapping,
+  );
+  assert.equal(checkedAlias.summary.MATCH, 1);
+  assert.equal(checkedAlias.principalLines[0].customerCode, accurateCustomer);
+  assert.equal(checkedAlias.principalLines[0].customerCodeRaw, principalCustomer);
+}
+
+// Admin confirmed the Accurate reference for this return; still require matching values.
+for (const [qty, dpp, expected] of [[1, 30, "MATCH"], [2, 30, "KOREKSI"], [1, 35, "KOREKSI"]] as const) {
+  const confirmed2407 = reconcileKinoReturns(
+    workbook("Rincian Faktur Penjualan", [accurateHeader,
+      ["R1", "C-RAI133", "WIN1", qty, dpp, 0, dpp, "INV/2606/KN00580 - 1671-SRI-260002407", "Retur Penjualan"],
+    ]),
+    workbook("Sheet1", [[...principalHeader, "PAJAK_NO"],
+      ["1671-SRI-260002407", "322660832363", "P1", -1, -30, 0, 0, 0, 0, -30, "RET01", "INV/2607/KN00580"],
+    ]), mapping,
+  );
+  assert.equal(confirmed2407.results.length, 1);
+  assert.equal(confirmed2407.results[0].status, expected);
+  assert.equal(confirmed2407.summary.MISSING_PRINCIPAL, 0);
+  assert.deepEqual(confirmed2407.results[0].accurateSourceRows, [2]);
+  assert.match(confirmed2407.results[0].warnings.join(" "), /INV\/2606\/KN00580/);
+}
+
+// Month differences are accepted only for the exact approved return/reference pairs.
+for (const [invoice, customer, sourceCustomer, kinoRef, accRef, approved] of [
+  ["1671-SRI-260002408", "C-210020", "C-210020", "INV/2607/KN00195", "INV/2606/KN00195", true],
+  ["1671-SRI-260002414", "C-M20001", "524100473193", "INV/2608/KN01685", "INV/2606/KN01685", true],
+  ["1671-SRI-260009999", "C-210020", "C-210020", "INV/2607/KN00195", "INV/2606/KN00195", false],
+  ["1671-SRI-260002408", "C-210020", "C-210020", "INV/2608/KN00195", "INV/2606/KN00195", false],
+] as const) {
+  const scoped = reconcileKinoReturns(
+    workbook("Rincian Faktur Penjualan", [accurateHeader,
+      ["R1", customer, "WIN1", 1, 30, 0, 30, `${accRef} - ${invoice}`, "Retur Penjualan"],
+    ]),
+    workbook("Sheet1", [[...principalHeader, "PAJAK_NO"],
+      [invoice, sourceCustomer, "P1", -1, -30, 0, 0, 0, 0, -30, "RET01", kinoRef],
+    ]), mapping,
+  );
+  assert.equal(scoped.summary.MATCH, approved ? 1 : 0);
+  assert.equal(scoped.summary.MISSING_PRINCIPAL, approved ? 0 : 1);
+}
+
+// Explicitly paired 2509 remains a variance, and does not consume unrelated returns.
+const variance2509 = reconcileKinoReturns(
+  workbook("Rincian Faktur Penjualan", [accurateHeader,
+    ["R1", "C-FAT040", "WIN1", 3, 99, 0, 99, "INV/2601/KN1040 - 1671-SRI-260002509", "Retur Penjualan"],
+    ["R2", "C-FAT040", "WIN1", 3, 99, 0, 99, "INV/2601/KN1040 - 1671-SRI-260009999", "Retur Penjualan"],
+  ]),
+  workbook("Sheet1", [[...principalHeader, "PAJAK_NO"],
+    ["1671-SRI-260002509", "322580649940", "P1", -3, -100, 0, 0, 0, -11, -111, "RET01", "INV/2601/KN01040"],
+    ["1671-SRI-260009999", "322580649940", "P1", -3, -100, 0, 0, 0, -11, -111, "RET01", "INV/2601/KN01040"],
+  ]), mapping, { dppTolerance: 0 },
+);
+assert.equal(variance2509.summary.VALUE_MISMATCH, 1);
+assert.equal(variance2509.summary.MISSING_PRINCIPAL, 1);
+assert.equal(variance2509.summary.KOREKSI, 1);
+const varianceRow = variance2509.results.find(row => row.status === "VALUE_MISMATCH")!;
+assert.equal(varianceRow.dppDifference, -1);
+assert.deepEqual(varianceRow.accurateSourceRows, [2]);
+assert.deepEqual(varianceRow.principalSourceRows, [2]);

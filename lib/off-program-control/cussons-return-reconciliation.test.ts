@@ -88,7 +88,7 @@ function principalRow(
     afterSku,
     customerDiscount,
     tax,
-    dpp + tax,
+    afterSku + tax,
     "PPN_Output",
     11,
   ];
@@ -157,10 +157,10 @@ const output = reconcileCussonsReturns(accurate, principal, mapping(), {
 
 assert.equal(output.summary.MATCH, 3);
 assert.equal(output.summary.VALUE_MISMATCH, 1);
-assert.equal(output.summary.MISSING_PRINCIPAL, 1);
+assert.equal(output.summary.MISSING_PRINCIPAL, 2);
 assert.equal(output.summary.MISSING_ACCURATE, 1);
 assert.equal(output.summary.UNMAPPED, 2);
-assert.equal(output.summary.INVALID_DATA, 9);
+assert.equal(output.summary.INVALID_DATA, 8);
 
 const aggregated = output.results.find(
   (row) => row.invoiceNumber === "CN100" && row.status === "MATCH",
@@ -321,3 +321,76 @@ if (realPaths.every(existsSync)) {
 console.log(
   "OK - CUSSONS Return exact CN+produk, diskon, agregasi, toleransi, EA/CS, invalid, missing, dan data nyata.",
 );
+
+// Multiple CN references share one comparison group without duplicating quantities.
+for (const rem of ["CN900, CN901", "CN901, CN900, CN900"]) {
+  const multi = reconcileCussonsReturns(
+    workbook({ "Rincian Faktur Penjualan": [
+      accurateHeader,
+      ["R900", "C-A", "INT-1", 3, 300, 33, 333, rem, "Retur Penjualan"],
+    ] }),
+    csv([principalHeader,
+      principalRow("CN900", "C-A", "P-1", 1, 100),
+      principalRow("CN901", "C-A", "P-1", 2, 100),
+    ]), mapping(),
+  );
+  assert.equal(multi.summary.MATCH, 1);
+  assert.equal(multi.results[0].accurateQuantity, 3);
+  assert.equal(multi.results[0].principalQuantity, 3);
+  assert.equal(multi.results[0].invoiceNumber, "CN900, CN901");
+}
+const multiCustomer = reconcileCussonsReturns(
+  workbook({ "Rincian Faktur Penjualan": [accurateHeader,
+    ["R900", "C-A", "INT-1", 3, 300, 33, 333, "CN900, CN901", "Retur Penjualan"],
+  ] }),
+  csv([principalHeader,
+    principalRow("CN900", "C-A", "P-1", 1, 100),
+    principalRow("CN901", "C-B", "P-1", 2, 100),
+  ]), mapping(),
+);
+assert.equal(multiCustomer.summary.MATCH, 0);
+assert.equal(multiCustomer.summary.INVALID_DATA, 2);
+
+
+// Export total includes customer discount, while matching DPP excludes it.
+const discountedExport = principalRow("CN950", "C-A", "P-1", 1, 15000, 0, 375);
+discountedExport[14] = 16609; // CSV rounds 15000 + 1608.75.
+const discountedAccurate = workbook({ "Rincian Faktur Penjualan": [
+  accurateHeader,
+  ["R950", "C-A", "INT-1", 1, 14625, 1608.75, 16233.75, "CN950", "Retur Penjualan"],
+] });
+const discountedResult = reconcileCussonsReturns(
+  discountedAccurate, csv([principalHeader, discountedExport]), mapping(),
+);
+assert.equal(discountedResult.summary.MATCH, 1);
+assert.equal(discountedResult.results[0].principalDpp, 14625);
+assert.equal(discountedResult.results[0].principalTotal, 16609);
+const wrongTotal = [...discountedExport];
+wrongTotal[14] = 17000;
+assert.equal(reconcileCussonsReturns(
+  discountedAccurate, csv([principalHeader, wrongTotal]), mapping(),
+).summary.INVALID_DATA, 1);
+const wrongDppAccurate = workbook({ "Rincian Faktur Penjualan": [
+  accurateHeader,
+  ["R950", "C-A", "INT-1", 1, 15000, 1650, 16650, "CN950", "Retur Penjualan"],
+] });
+assert.equal(reconcileCussonsReturns(
+  wrongDppAccurate, csv([principalHeader, discountedExport]), mapping(),
+).summary.VALUE_MISMATCH, 1);
+
+
+for (const [nota, rem, qty, status] of [
+  ["RJN/2610/CS00069", "INV/2609/CS00744", 1, "MATCH"],
+  ["RJN/2610/CS00069", "INV/2609/CS00744", 2, "QTY_MISMATCH"],
+  ["RJN/2610/CS00070", "INV/2609/CS00744", 1, "INVALID_DATA"],
+  ["RJN/2610/CS00069", "CN999999", 1, "MISSING_PRINCIPAL"],
+] as const) {
+  const check = reconcileCussonsReturns(
+    workbook({ "Rincian Faktur Penjualan": [accurateHeader,
+      [nota, "C-A", "INT-1", qty, 100, 11, 111, rem, "Retur Penjualan"],
+    ] }),
+    csv([principalHeader, principalRow("CN023391", "C-A", "P-1", 1, 100)]),
+    mapping(),
+  );
+  assert.equal(check.summary[status], 1);
+}
