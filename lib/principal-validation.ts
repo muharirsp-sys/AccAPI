@@ -82,6 +82,12 @@ export type LineInput = {
     price: number;
     expectedPrice: number | null;
     /**
+     * Asal `expectedPrice` (lib/item-price resolvePrices) + cabang pelanggan — hanya untuk kalimat temuan selisih harga.
+     * Contoh nyata 24 Nov 2026: harga MT KINO NON FOOD belum ada di cache, pemilih jatuh ke MT Kantor Pusat 9.909,91, dan
+     * temuan "dari harga Accurate 9.909,91" tidak menyebut cabangnya — admin bingung karena SPA KINO NON FOOD-nya 10.900,90.
+     */
+    priceFrom?: { source: string; category?: string; branch?: string; branchId?: number; customerBranch?: string; customerBranchId?: number };
+    /**
      * Berapa satuan terkecil dalam satu baris faktur (ISI), bila barisnya dinaikkan ke KRT.
      * 1 = baris masih dalam satuan terkecil. Dipakai HANYA untuk toleransi harga.
      */
@@ -885,6 +891,18 @@ export function checkSoPromo(
     };
 }
 
+/** " (MT cabang Kantor Pusat; cabang pelanggan ... )" untuk temuan selisih harga; kosong bila asalnya tidak diketahui. */
+export function asalHarga(p: LineInput["priceFrom"]): string {
+    if (p?.source === "standard") return " (harga standar barang: tidak ada daftar harga untuk kategori harga/satuan pelanggan ini)";
+    if (p?.source !== "tier") return "";
+    const dari = [p.category, p.branch && `cabang ${p.branch}`].filter(Boolean).join(" ");
+    const lain = p.branchId !== undefined && p.customerBranchId !== undefined && p.branchId !== p.customerBranchId
+        ? `cabang pelanggan ${p.customerBranch || p.customerBranchId} tidak punya harga ini di data aplikasi; bila sudah diisi di Accurate, tekan "Segarkan harga"`
+        : "";
+    const isi = [dari, lain].filter(Boolean).join("; ");
+    return isi ? ` (${isi})` : "";
+}
+
 /**
  * Satu baris -> status + temuan. Setiap temuan menahan barisnya; tidak ada yang "cuma warning",
  * karena semua yang diperiksa di sini berakhir sebagai angka pada faktur.
@@ -922,7 +940,7 @@ export function checkLine(line: LineInput): LineCheck {
         const gapPerSmallest = cents(gap / ratio);
         if (Math.abs(gapPerSmallest) > TOLERANCE) {
             findings.push(`Harga laporan ${line.price.toLocaleString("id-ID")} berbeda ${gap > 0 ? "lebih tinggi" : "lebih rendah"} `
-                + `${Math.abs(gap).toLocaleString("id-ID")} dari harga Accurate ${line.expectedPrice.toLocaleString("id-ID")}`
+                + `${Math.abs(gap).toLocaleString("id-ID")} dari harga Accurate ${line.expectedPrice.toLocaleString("id-ID")}${asalHarga(line.priceFrom)}`
                 + (ratio > 1 ? ` (setara ${Math.abs(gapPerSmallest).toLocaleString("id-ID")} per satuan terkecil dari ${ratio}).` : "."));
         }
     }
