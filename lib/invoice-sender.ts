@@ -9,9 +9,9 @@
  * Side Effects: MENULIS FAKTUR DI ACCURATE dan mengubah status antrean. Tidak bisa dibatalkan.
  *   Tiap klaim dan tiap hasil tercatat di invoice_outbox_event DALAM pernyataan SQL yang sama
  *   (CTE) dengan perubahan statusnya: status HTTP + potongan jawaban + pengirim (BL-17 + R6).
- *   Nota GT Hit List yang ditolak HANYA karena batas umur: centang batas umur pelanggan dilepas
- *   sementara (customer/save.do), faktur dikirim sekali lagi dalam klaim yang sama, lalu dipulihkan;
- *   jejaknya di detail event hasil (`gt_hitlist`).
+ *   Outlet GT Hit List yang ditolak HANYA karena batas piutang dan lolos lib/gt-hitlist-npl `putuskan`: centang
+ *   batas yang disebut Accurate dilepas sementara (customer/save.do), faktur dikirim sekali lagi dalam klaim yang
+ *   sama, lalu dipulihkan; jejaknya di detail event hasil (`gt_hitlist`).
  *
  * Dipisah dari route-nya supaya dua pintu masuk memakai jalur kirim yang SAMA PERSIS. Kalau
  * masing-masing menyalin logikanya, satu pintu akan menyimpang tanpa ada yang tahu — dan
