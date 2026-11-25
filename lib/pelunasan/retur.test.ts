@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { buatEmulator } from "./uji/emulator-accurate.ts";
 import { fakturAntrean } from "./uji/fixture.ts";
 import { jalankanLib } from "./uji/jalankan.ts";
-import { buildReturSearchVariants, parseReturReference, returDocumentMatches, scoreReturCandidate } from "./retur.ts";
+import { buildReturSearchVariants, cariRetur, parseReturReference, returDocumentMatches, scoreReturCandidate } from "./retur.ts";
 
 const golden = JSON.parse(readFileSync("lib/pelunasan/uji/golden.json", "utf8")) as Record<string, { payload: unknown; manualRows: unknown }>;
 const json = (v: unknown) => JSON.stringify(v, null, 2);
@@ -55,13 +55,28 @@ test("skor retur bertoken tidak bergantung expectedCharField1 maupun pelanggan",
     }
 });
 
-test("PERILAKU SAAT INI (pertanyaan terbuka): SRB tersimpan tanpa spasi → varian ketemu, skor 0 → NOT_FOUND", () => {
+test("Accurate mengabaikan filter.returnDocumentNumber (jawaban retur acak): varian SRB tanpa spasi tetap dicoba dan ketemu", async () => {
+    // Tiruan perilaku nyata 25 Nov 2026: keywords CONTAIN jalan (spasi = 0 hasil), returnDocumentNumber/number/keyword DIABAIKAN.
+    const benar = { number: "RJN/2609/CS00170", customer: { customerNo: "C-NU0023-CS" }, primeOwing: 105000,
+        description: "INV/2607/CS00145_SRB2667.57_input28/09/2026_#_@ - CN023185" };
+    const acak = [{ number: "RJN/2611/AB00253", customer: { customerNo: "C-AL0064-AB" }, description: "DR-K26000003793_input25/11/2026_*", primeOwing: 1 }];
+    const fetch = async (_path: string, _m: string, q?: unknown) => {
+        const p = (q ?? {}) as Record<string, unknown>;
+        if (p["filter.keywords.op"]) return { s: true, d: String(p["filter.keywords.val"]) === "SRB2667.57" ? [benar] : [] };
+        return { s: true, d: acak };
+    };
+    const peta = new Map();
+    await cariRetur(new Map([["C-NU0023|SRB 2667.57", { desc: "SRB 2667.57", invNos: new Set(["INV/2607/CS00145"]), sourceCustomerNo: "C-NU0023", isAyatSilang: false }]]), peta, fetch);
+    assert.equal(peta.get("C-NU0023|SRB 2667.57")?.number, "RJN/2609/CS00170", "dulu NOT_FOUND: jawaban acak menghentikan varian");
+});
+
+test("SRB tersimpan tanpa spasi di Accurate (…_SRB2653.57_…) tetap diterima: skor lolos ambang 90", () => {
     const excel = "SRB 2610.0003";
     assert.ok(buildReturSearchVariants(excel).includes("SRB2610.0003"), "pencarian memang mencoba varian tanpa spasi");
     const kandidat = { number: "SRT/2610/XX0003", keywords: "SRB2610.0003", customer: { customerNo: "PLG-D-002" } };
-    assert.equal(scoreReturCandidate(kandidat, "PLG-D-002", "", parseReturReference(excel)), 0, "skor 0 < ambang 90");
-    // Jalur ayat silang menilai teks TERNORMALISASI dan akan menerimanya — dua jalur tidak sepakat.
-    assert.equal(returDocumentMatches(kandidat, excel), true);
-    // Golden kode lama f05: baris itu menjadi baris manual (retur dilewati, kas tetap diproses).
-    assert.match(json(golden["f05-retur-srb-rjs"].manualRows), /SRB 2610\.0003/);
+    assert.ok(scoreReturCandidate(kandidat, "PLG-D-002", "", parseReturReference(excel)) >= 90, "dulu skor 0 → NOT_FOUND (retur manual)");
+    assert.equal(returDocumentMatches(kandidat, excel), true, "jalur ayat silang dan jalur SRB kini sepakat");
+    // Bentuk nyata Accurate (RJN/2609/GD00062): deskripsi memuat SRB rapat di antara garis bawah.
+    const nyata = { number: "RJN/2609/GD00062", description: "INV/2604/GD00731_SRB2653.57_input09/09/2026_#", customer: { customerNo: "C-580001-GD" } };
+    assert.ok(scoreReturCandidate(nyata, "C-580001", "", parseReturReference("SRB 2653.57")) >= 90);
 });

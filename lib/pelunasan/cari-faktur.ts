@@ -95,6 +95,8 @@ export async function cariFaktur(invoiceNos: Set<string>, accurateFetch: Accurat
                         invoiceNo: invObj.number || cleanInvNo,
                         branchId: invObj.branch?.id,
                         branchName: invObj.branch?.name,
+                        // Pelanggan faktur di Accurate (bersufiks divisi, mis. C-DEL015-SZ): pelunasan wajib atas pelanggan ini.
+                        customerNo: invObj.customer?.customerNo || invObj.customer?.no || "",
                         outstanding: invObj.primeOwing,
                         // Tidak dibaca di mana pun: pencarian retur (satu-satunya pembaca, W:683-691) jalan SEBELUM peta ini diisi.
                         charField1: invObj.charField1 || invObj.customer?.charField1 || "",

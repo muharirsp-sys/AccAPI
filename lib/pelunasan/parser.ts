@@ -124,11 +124,16 @@ export async function parsePelunasan(rows: Bebas[], opsi: OpsiPelunasan): Promis
         ({ invoiceBranchMap, invoiceLookupDebugMap } = await cariFaktur(invoiceNos, accurateFetch));
     }
 
-    const { groupedMap, ayatSilangDocs, unresolvedReturWarnings, dilewati } = alokasikan(cleanedData, {
+    const { groupedMap, ayatSilangDocs, unresolvedReturWarnings, dilewati, trxTakCocok } = alokasikan(cleanedData, {
         trxDate, peta: opsi.peta, returMap, invoiceBranchMap, invoiceLookupDebugMap,
     });
 
     const payload = finalisasiPayload(Array.from(groupedMap.values()), ayatSilangDocs);
+    if (trxTakCocok.length > 0) {
+        const contoh = trxTakCocok.slice(0, 8).join(", ");
+        lapor("warning", `${trxTakCocok.length} baris: Total.Trx berbeda dari jumlah kolom pembayaran (kolom Total.Trx di berkas tampak bergeser); `
+            + `yang dipakai jumlah kolom Tunai/Trf/BG/potongan/retur. Baris data ke-${contoh}${trxTakCocok.length > 8 ? ", …" : ""}.`);
+    }
     let manualRows: Bebas[] | null = null;
     if (unresolvedReturWarnings.length > 0) {
         lapor("warning", pesanPeringatanRetur(unresolvedReturWarnings));
