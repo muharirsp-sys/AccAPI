@@ -31,3 +31,16 @@ test("sudah di Accurate: hanya baris yang belum diinput yang dikirim; sisanya di
     assert.equal(e.paymentAmount, 16061.07, "uang tetap 16.062,4; selisih -1,33 ke akun selisih");
     assert.deepEqual(e.detailDiscount, [{ amount: 16061.07 - 16062.4, accountNo: "600136" }]);
 });
+
+test("retur ketemu tetapi sudah habis terpakai: tidak ada pelunasan sampah berisi selisih saja, masuk retur manual (uji kering 24 Nov)", () => {
+    // INV/2611/KN00063: Pot. Lain RJN/2611/KN00158 Rp364.600,47, sisa faktur Rp364.600, retur di Accurate sudah terpakai (sisa 0).
+    const rows = [{ "Code Outlet": "C-RAN772", "No. Nota": "INV/2611/KN00063", "Pot. Lain": 364600.4687, "Ket. Pot": "RJN/2611/KN00158" }];
+    const returMap = new Map<string, Record<string, unknown>>([["DOC|RJN/2611/KN00158", {
+        isArray: true, number: "RJN/2611/KN00158", outstanding: 0, customerNo: "C-RAN772-KN",
+        returns: [{ number: "RJN/2611/KN00158", primeOwing: 0, customer: { customerNo: "C-RAN772-KN" } }],
+    }]]);
+    const invoiceBranchMap = new Map<string, Record<string, unknown>>([["INV/2611/KN00063", { customerNo: "C-RAN772-KN", branchId: 1, outstanding: 364600 }]]);
+    const out = alokasikan(rows, { trxDate: "2026-11-24", peta: PETA, returMap, invoiceBranchMap, invoiceLookupDebugMap: new Map() });
+    assert.deepEqual([...out.groupedMap.values()].flatMap((s) => s.detailInvoice), [], "dulu: INV -0,47 dengan 600136 -0,47");
+    assert.equal(out.unresolvedReturWarnings[0]?.unresolvedSrbAmt, 364600.4687);
+});

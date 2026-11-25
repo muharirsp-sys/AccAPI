@@ -411,6 +411,20 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
         };
         prosesRetur(srbDesc, usedSrb, "srb");
         prosesRetur(rjsDesc, usedRjs, "rjs");
+        if ((kurangRetur.srb > 0 || kurangRetur.rjs > 0) && selisih !== 0) {
+            // Faktur tidak tertutup (retur tidak cukup), jadi selisih pembulatan tidak berlaku di pelunasan mana pun dari baris ini.
+            // Bukti uji kering 24 Nov 2026: tanpa ini terbentuk baris faktur -0,47 yang hanya berisi akun selisih.
+            for (const s of hostSr.values()) {
+                const line = s.detailInvoice.find((d: Bebas) => d.invoiceNo === invNo);
+                const i = line?.detailDiscount?.findIndex((d: Bebas) => d.accountNo === akun.selisih) ?? -1;
+                if (!line || i < 0) continue;
+                line.paymentAmount -= line.detailDiscount[i].amount;
+                terlunasi -= line.detailDiscount[i].amount;
+                line.detailDiscount.splice(i, 1);
+                if (line.detailDiscount.length === 0) delete line.detailDiscount;
+                if (!(line.paymentAmount > SANGAT_KECIL) && !line.detailDiscount) s.detailInvoice.splice(s.detailInvoice.indexOf(line), 1);
+            }
+        }
         if (kurangRetur.srb > 0 || kurangRetur.rjs > 0) {
             // Retur ketemu, tetapi sisanya di Accurate sudah terpakai baris lain: bagian itu tidak dilunasi dan masuk laporan manual.
             unresolvedReturWarnings.push({
