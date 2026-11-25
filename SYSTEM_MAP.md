@@ -484,6 +484,21 @@ Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConf
      jejak idempotency_resolution, lib/idempotency-resolve.ts). Lock mencatat database di idempotency_log."databaseId" DAN
      idempotency_override.database_id (DDL_S6E2.sql); proxy menolak bila salah satunya ≠ database sesi
   -> GET /api/idempotency/summary — Tidak pasti / Gagal boleh diulang (BL-41; pelunasan.kirim ATAU finance.resolve_unknown)
+  Unggah (25 Nov 2026): Form Kerja Inc harian ("New Laporan AR\DD.xlsx"/"DDNKA.xlsx") dibaca APA ADANYA — lib/pelunasan-wizard.ts
+     cariBarisHeader (header = baris ber-"Code Outlet"+"No. Nota", biasanya baris 4) + tanggalLaporan (D1 -> tanggal transaksi) +
+     bersihkanHeader (nama kolom disamakan: Ket.Trf/Biaya Trf/BG/Pot.RT Gt/Pot.Lain/Ket.Potong/Ket.ALL Trx -> nama mesin); baris tanpa
+     Code Outlet & No. Nota dibuang. Aturan jenis -> rekening/akun = lib/pelunasan/akun.ts (dipelajari dari ±55 rb pelunasan Accurate):
+     Tunai 110102, TF Maybank 110105 / Permata 110106 / BRI 110108 / lain = pilihan, BG 110104, PPN retur (Pot. Lain "PPN") = pelunasan
+     110118 terpisah, potongan Kwitansi & Pot. Lain klaim 110512, Biaya TF 600126 / BG 600123, selisih <= Rp100 -> 600136 (uang tidak
+     diubah). Mesin (lib/pelunasan/alokasi.ts): pelanggan = pelanggan faktur Accurate (sufiks divisi), retur pelanggan sama = baris
+     negatif di pelunasan Kas, beda pelanggan = ayat silang 110120 (faktur tidak dibayar dua kali), faktur pasti tak ada = dilewati.
+     Retur RJN/SRT dicari tepat sales-invoice/list.do filter.number EQUAL (keyword bergaris miring diabaikan Accurate). Tinjau
+     menampilkan Kelompok pelunasan (ringkasKelompok: per rekening, akun potongan, retur, ayat silang).
+     Cek "sudah di Accurate": sisa piutang faktur ≈ 6_Saldo -> dikirim; ≈ 6_Saldo − bayar -> SUDAH_DI_ACCURATE (diinput sales/admin);
+     lainnya -> PERLU_CEK (ditahan, Excel). Jejak untuk Hermes: pratinjau -> POST /api/pelunasan/unggah (barisUnggah) -> pelunasan_unggah
+     (0046); sesudah Kirim -> PATCH (terapkanHasilUnggah: status + nomor). Hermes (VPS, cron jaga-pelunasan 10/14/17 WITA Sen–Sab,
+     docs/hermes/jaga-pelunasan.py, role hermes_ro) mencocokkan dengan kasir_pelunasan(_faktur): kurang/lebih dari berkas, rekening
+     tidak sesuai Ket. Trf -> Telegram hanya saat berubah. Hermes TIDAK menulis ke Accurate.
   UI (S6e-2b): /pelunasan wizard Jenis -> Unggah -> Akun -> Tinjau -> Hasil (app/(dashboard)/pelunasan/*); pratinjau membaca ulang sesi
      di akhir (database berganti selama pratinjau = dibuang); nomor Hasil = nomor terposting (item r.number / keputusan Selesaikan),
      nomor mirip di kolom Excel terpisah; galat lock dipetakan menurut
@@ -1169,6 +1184,7 @@ AccAPI/_github_clean/
 | `app/api/idempotency/complete/route.ts` | `POST` | Tandai idempotency key selesai diproses |
 | `app/api/idempotency/resolve/route.ts` | `GET` | Pratinjau pencarian Selesaikan pelunasan tidak pasti (baca-saja) |
 | `app/api/idempotency/summary/route.ts` | `GET` | Ringkasan pelunasan Tidak pasti / Gagal boleh diulang (Beranda BL-41) |
+| `app/api/pelunasan/unggah/route.ts` | `POST`, `PATCH` | Jejak unggahan Pelunasan per baris berkas (pelunasan_unggah) untuk penjaga Hermes; izin pelunasan.kirim, PATCH hanya pembuat |
 | `lib/fuzzySearch.ts` | `fuzzySearch` | Pencarian fuzzy in-memory fallback |
 | `lib/pdf-text.ts` | `uppercasePageText` | Uppercase teks untuk header PDF |
 | `lib/off-program-control/holidays.ts` | `isHoliday`, `getNextWorkday` | Kalender hari libur untuk kalkulasi deadline |
@@ -1345,6 +1361,7 @@ kasir_hari_event [append-only; tutup (snapshot.terhalang WAJIB [] — owner T2) 
   S7-1c (PK-2: tegakkan = kunci lama ∧ baru di Python finance/payments/summary + POST /api/finance/purchase-payment):
   cadangan -> RBAC_S7_1C_KUNCI.sql (mode cek -> terapkan) SEBELUM image -> image (pasangan: lib/rbac/s7-1c-pg.test.ts)
 kasir_pelunasan (database_id + pelunasan_id; chequeAmount, metode, last_update) ── kasir_pelunasan_faktur (faktur_id, master_salesman_id, invoice_payment) [cache K1b, TANPA raw_data]
+pelunasan_unggah (id; database_id, tanggal, nama_berkas, dibuat_oleh, dikirim_pada, baris jsonb per baris berkas) [jejak /pelunasan, 0046; dibaca hermes_ro]
   masterSalesmanId -> accurate_employee.number -> sales_code_merge (merge, per bulan) -> ORANG; OTHERS dikeluarkan; Σ invoicePayment ≠ chequeAmount -> ember tak teralokasi; cheque uang < 0 -> ember nominal_negatif (K-1 a)
 kasir_pelunasan_baca (database_id + tanggal; status berjalan|lengkap|sebagian|gagal, sebab (+hapus_massal), sisa_detail, ditolak, token lease 2 mnt, lengkap_pada, akun_sinkron, penuh_tertunda_pada) [K1b; DDL_K1A -> DDL_S7_2 -> DDL_K1B SEBELUM image; 0031 sesudah 0030]
   pembaca K1b (lib/kasir/baca-pelunasan.ts, identitas SINKRON resolveSyncCredentials; murni lib/kasir/pembaca.ts):

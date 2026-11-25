@@ -52,9 +52,11 @@ export function finalisasiPayload(kelompok: Bebas[], ayatSilangDocs: Bebas[]) {
 
 /** W:1594-1598: teks toast peringatan retur yang belum ketemu. */
 export const pesanPeringatanRetur = (unresolvedReturWarnings: PeringatanRetur[]) => {
+    // Retur NKA bisa memuat ratusan nomor RJN per baris: contoh di pesan dipotong (daftar lengkap ada di Excel retur manual).
+    const ringkas = (s: string) => (s.length > 80 ? `${s.slice(0, 77)}…` : s);
     const sample = unresolvedReturWarnings
         .slice(0, 3)
-        .map((item) => `${item.invoiceNo} [${item.refs.join(" | ")}]`)
+        .map((item) => `${item.invoiceNo} [${ringkas(item.refs.join(" | "))}]`)
         .join(", ");
     return `${unresolvedReturWarnings.length} baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: ${sample}`;
 };
