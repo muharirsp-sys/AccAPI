@@ -25,7 +25,7 @@ import { memuatPlaceholderAkun } from "@/lib/sales-receipt-upload";
 import { rupiah } from "@/lib/promo-ui";
 import {
     KODE_DISELESAIKAN, LABEL_ALASAN, LABEL_DILEWATI, LABEL_HASIL, barisLaporanHasil, butuhTakeover, fakturDari, hitungHasil, nilaiUang, nomorTerposting, paketDari, rencanaKirim,
-    terapkanPenyelesaian, type Penyelesaian,
+    ringkasKelompok, terapkanPenyelesaian, type BarisKelompok, type Penyelesaian,
 } from "@/lib/pelunasan-wizard";
 import { waktuWita } from "@/app/(dashboard)/principal-order/bersama";
 import { ALASAN, bacaSesi, namaDatabase, postJson, tanggalTampil, unduhExcel, type Sesi } from "./bersama";
@@ -51,7 +51,7 @@ const PESAN_TERPUTUS = "Kiriman terputus tanpa hasil per baris dari aplikasi, ja
 const outlet = (row: Bebas) => String(row.customerNo ?? "");
 const faktur = (row: Bebas) => { const f = fakturDari(row); return f.length > 1 ? `${f[0]} +${f.length - 1}` : f[0] ?? KOSONG; };
 const METODE: Record<string, string> = { CASH_OTHER: "Tunai", BANK_TRANSFER: "Transfer", BANK_CHEQUE: "BG", OTHERS: "Retur/potongan" };
-const metode = (row: Bebas) => METODE[String(row.paymentMethod)] ?? String(row.paymentMethod ?? "");
+const metode = (row: Bebas) => `${METODE[String(row.paymentMethod)] ?? String(row.paymentMethod ?? "")}${row.bankNo ? ` · ${row.bankNo}` : ""}`;
 
 /**
  * GalatKirim (lock gagal, kontrak §7) → kalimat + akibat, MENURUT `code` (teks server tidak dicocokkan). Semua `sent:false`. Jawaban lock yang
@@ -96,6 +96,7 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
     const [basi, setBasi] = useState<string | null>(null);
 
     const rencana = useMemo(() => rencanaKirim(t.payload, t.review, diizinkan), [t, diizinkan]);
+    const kelompok = useMemo(() => ringkasKelompok(rencana.kirim), [rencana.kirim]);
     const ganda = t.review.filter((r) => !r.recommended);
     const nKirim = rencana.kirim.length;
     const nPaket = Math.ceil(nKirim / UKURAN_PAKET);
@@ -171,6 +172,13 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
         { key: "uang", header: "Uang diterima", align: "end", cell: ({ row }) => <span className="fi-tnum">{rupiah(Number(row.chequeAmount) || 0)}</span> },
     ];
     const barisKirim = rencana.kirim.map((row, i) => ({ i, row }));
+    const kolomKelompok: Column<BarisKelompok>[] = [
+        { key: "kelompok", header: "Kelompok", cell: (b) => <b>{b.kelompok}</b> },
+        { key: "akun", header: "Rekening / akun", cell: (b) => <><span className="fi-mono">{b.akun || KOSONG}</span>{b.nama && <span className="fi-codes">{b.nama}</span>}</> },
+        { key: "pelunasan", header: "Pelunasan", align: "end", secondary: true, cell: (b) => (b.pelunasan ? b.pelunasan : KOSONG) },
+        { key: "baris", header: "Baris", align: "end", secondary: true, cell: (b) => b.baris },
+        { key: "nilai", header: "Nilai", align: "end", cell: (b) => <span className="fi-tnum">{rupiah(b.nilai)}</span> },
+    ];
 
     const facts: Array<[string, ReactNode]> = [
         ["Database", <span key="db">{namaDatabase(t)}{s?.databaseId === t.databaseId ? " · sama dengan sesi Anda" : ""}</span>],
@@ -249,6 +257,12 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
                     </ul>
                 </Section>
             )}
+
+            <Section title="Kelompok pelunasan" subtitle="yang akan dikirim, per rekening uang, akun potongan, retur, dan ayat silang">
+                <ResponsiveTable<BarisKelompok> title="Kelompok pelunasan" count={kelompok.length} columns={kolomKelompok} rows={kelompok} rowKey={(b) => b.kunci}
+                    empty={{ title: "Tidak ada pelunasan yang bisa dikirim" }}
+                    mobileItem={(b) => <ListItem doc={b.akun || b.kelompok} amount={rupiah(b.nilai)} title={b.kelompok} meta={`${b.nama ? `${b.nama} · ` : ""}${b.pelunasan ? `${b.pelunasan} pelunasan · ` : ""}${b.baris} baris`} />} />
+            </Section>
 
             <Section title="Siap kirim" subtitle={`${namaDatabase(t)} · tanggal ${tanggalTampil(t.tanggal)} · ${t.namaBerkas}`}>
                 <ResponsiveTable<{ i: number; row: Bebas }> title="Siap kirim" count={nKirim} columns={kolomKirim} rows={barisKirim} rowKey={({ i }) => String(i)}

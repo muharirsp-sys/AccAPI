@@ -1,78 +1,166 @@
 /*
- * Tujuan: Helper murni wizard Pelunasan (Fiori S6e-2b, it02 #16–19): isi berkas (BG, transfer tanpa bank, potongan), pemeriksaan langkah
- *   Akun (BG/potongan wajib bila berkas memuatnya; penanda ISI_KODE_AKUN_ tidak boleh lolos), rencana kirim dari pratinjau ganda (baris
- *   ditahan vs diizinkan Finance → kunci override lock), label alasan/hasil, dan hitungan langkah Hasil.
+ * Tujuan: Helper murni wizard Pelunasan (Fiori S6e-2b, it02 #16–19): baca Form Kerja Inc harian (baris header, nama kolom, tanggal laporan),
+ *   isi berkas per jenis pelunasan, pemeriksaan langkah Akun (rekening/akun wajib bila berkas memuat jenisnya; penanda ISI_KODE_AKUN_ tidak
+ *   boleh lolos), ringkasan Kelompok pelunasan di Tinjau, rencana kirim dari pratinjau ganda (baris ditahan vs diizinkan Finance → kunci
+ *   override lock), label alasan/hasil, dan hitungan langkah Hasil.
  * Caller: app/(dashboard)/pelunasan/*; lib/pelunasan-wizard.test.ts.
- * Dependensi: lib/pelunasan (sel, tipe PetaAkun & pratinjau ganda), lib/sales-receipt-fingerprint, lib/sales-receipt-upload (override, penanda akun).
- * Main Functions: bersihkanHeader, isiBerkas, periksaAkun, petaDari, rencanaKirim, LABEL_ALASAN, LABEL_DILEWATI, LABEL_HASIL, hitungHasil,
- *   paketDari, LABEL_STATUS_SERVER, terapkanPenyelesaian, nomorTerposting, nilaiUang, barisLaporanHasil.
+ * Dependensi: lib/pelunasan (sel, akun, tipe PetaAkun & pratinjau ganda), lib/excel-date, lib/sales-receipt-fingerprint,
+ *   lib/sales-receipt-upload (override, penanda akun).
+ * Main Functions: bersihkanHeader, cariBarisHeader, tanggalLaporan, isiBerkas, periksaAkun, petaDari, ringkasKelompok, rencanaKirim,
+ *   LABEL_ALASAN, LABEL_DILEWATI, LABEL_HASIL, hitungHasil, paketDari, LABEL_STATUS_SERVER, terapkanPenyelesaian, nomorTerposting, nilaiUang,
+ *   barisLaporanHasil.
  * Side Effects: tidak ada (murni).
  */
 import { getTextVal, getVal, type Bebas } from "./pelunasan/sel.ts";
 import type { PetaAkun } from "./pelunasan/alokasi.ts";
+import { AKUN_BAWAAN, LABEL_AKUN, bankTransfer, jenisPotLain, namaRekening, type AkunPelunasan } from "./pelunasan/akun.ts";
 import type { DuplicateConflictReason, DuplicateReviewEntry } from "./pelunasan/pratinjau-ganda.ts";
 import type { BarisHasil, HasilKirim } from "./pelunasan/kirim.ts";
 import { buildSalesReceiptIdempotencyPayload } from "./sales-receipt-fingerprint.ts";
 import { PLACEHOLDER_AKUN, overrideKeysNeeded } from "./sales-receipt-upload.ts";
+import { excelDateToIso } from "./excel-date.ts";
 
-/** Header "(*wajib)" dibuang — sama dengan Konsol AOL. */
+const rapat = (v: unknown) => String(v ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+/**
+ * Nama kolom yang dibaca mesin (lib/pelunasan/alokasi.ts, parser.ts). Kolom berkas dicocokkan tanpa spasi/titik/huruf besar, jadi
+ * Form Kerja Inc harian ("Ket.Trf", "Biaya Trf/BG", "No.SRB RT Ktr", "Pot.RT Gt", "Pot.Lain", "Ket.ALL Trx") terbaca sama dengan
+ * Format Pelunasan lama ("Ket. Trf", "BiayaTrf/BG", "No.SRB Rt Ktr", "Pot. RT Gt", "Pot. Lain", "Ket. All Trx").
+ */
+const KOLOM_MESIN = ["Code Outlet", "No. Nota", "Tunai", "Trf", "Ket. Trf", "BG", "Ket.BG", "Pot.DiscTB", "Pot.1 Kwtnsi", "Pot.2 Kwtnsi",
+    "Pot.3 Kwtnsi", "Ket Kwitansi", "BiayaTrf/BG", "Pot.RT Ktr", "No.SRB Rt Ktr", "Pot. RT Gt", "No.RJS RT Gt", "Pot. Lain", "Ket. Pot",
+    "Ket. All Trx", "Total Pot", "Total.Trx"];
+const ALIAS_KOLOM = new Map<string, string>([...KOLOM_MESIN.map((k) => [rapat(k), k] as [string, string]), ["KETTF", "Ket. Trf"], ["KETPOTONG", "Ket. Pot"]]);
+
+/** Header "(*wajib)" dibuang (sama dengan Konsol AOL) dan nama kolom disamakan ke nama yang dibaca mesin. */
 export const bersihkanHeader = (rows: Bebas[]): Bebas[] => rows.map((row) => {
     const bersih: Bebas = {};
-    for (const key in row) bersih[key.replace(/\s\(\*wajib\)$/i, "").trim()] = row[key];
+    for (const key in row) {
+        const polos = key.replace(/\s\(\*wajib\)$/i, "").trim();
+        const nama = ALIAS_KOLOM.get(rapat(polos)) ?? polos;
+        // Dua kolom berkas bernama setara: yang pertama berisi menang (kolom kosong tidak menimpa).
+        if (nama in bersih && (bersih[nama] ?? "") !== "" && (row[key] ?? "") === "") continue;
+        bersih[nama] = row[key];
+    }
     return bersih;
 });
 
-const nominal = (row: Bebas, kolom: string) => Number(getVal(row, kolom)) || 0;
-
-export type IsiBerkas = { baris: number; bg: number; trfTanpaBank: number; pot: [number, number, number] };
-
 /**
- * Jumlah baris yang menuntut akun di langkah Akun.
- * ponytail: aturan bank transfer menyalin lib/pelunasan/alokasi.ts (Ket. Trf berisi MAYBANK/PRMT/PERMATA = bank tetap). Bila aturan
- * itu berubah di lib, ubah juga di sini; uji pelunasan-wizard.test.ts mengunci bentuknya.
+ * Baris header (indeks dari baris pertama `aoa`) = baris pertama yang memuat "Code Outlet" dan "No. Nota". Form Kerja Inc harian
+ * (laporan AR "New Laporan AR\DD.xlsx") punya tanggal, baris kosong, dan baris total di atas header; Format Pelunasan lama = 0. -1 = tidak ada.
  */
-export function isiBerkas(rows: Bebas[]): IsiBerkas {
-    const isi: IsiBerkas = { baris: 0, bg: 0, trfTanpaBank: 0, pot: [0, 0, 0] };
-    for (const row of rows) {
-        if (!getTextVal(row, "Code Outlet") && !getTextVal(row, "No. Nota")) continue;
-        isi.baris += 1;
-        if (nominal(row, "BG") > 0) isi.bg += 1;
-        if (nominal(row, "Trf") > 0) {
-            const ket = String(getVal(row, "Ket. Trf") || getVal(row, "Ket.TF") || "").toUpperCase();
-            if (!ket.includes("MAYBANK") && !ket.includes("PRMT") && !ket.includes("PERMATA")) isi.trfTanpaBank += 1;
-        }
-        (["Pot.1 Kwtnsi", "Pot.2 Kwtnsi", "Pot.3 Kwtnsi"] as const).forEach((kolom, i) => { if (nominal(row, kolom) > 0) isi.pot[i] += 1; });
+export function cariBarisHeader(aoa: unknown[][]): number {
+    for (let i = 0; i < Math.min(aoa.length, 30); i++) {
+        const sel = new Set((aoa[i] ?? []).map(rapat));
+        if (sel.has("CODEOUTLET") && sel.has("NONOTA")) return i;
     }
-    return isi;
+    return -1;
 }
 
-export type Akun = { tunai: string; trf: string; bg: string; pot1: string; pot2: string; pot3: string };
-export const AKUN_KOSONG: Akun = { tunai: "", trf: "", bg: "", pot1: "", pot2: "", pot3: "" };
+/** Tanggal laporan (YYYY-MM-DD) dari sel tanggal pertama DI ATAS header (Form Kerja Inc: D1). null = tidak ada. */
+export function tanggalLaporan(aoa: unknown[][], barisHeader: number): string | null {
+    for (let i = 0; i < barisHeader; i++) {
+        for (const v of aoa[i] ?? []) {
+            // Serial Excel 40000–60000 = 2009–2064; angka lain di atas header adalah total/jumlah, bukan tanggal.
+            if (v instanceof Date || (typeof v === "number" && v >= 40000 && v <= 60000)) return excelDateToIso(v);
+        }
+    }
+    return null;
+}
+
+const nominal = (row: Bebas, kolom: string) => Number(getVal(row, kolom)) || 0;
+
+export type JenisIsi = keyof AkunPelunasan | "retur";
+export type IsiBerkas = { baris: number; jenis: Record<JenisIsi, { baris: number; nilai: number }> };
+
+/**
+ * Baris + nilai per jenis pelunasan (langkah Akun). Aturan bank & Pot. Lain = fungsi yang SAMA dengan mesin (lib/pelunasan/akun.ts).
+ * "selisih" baru diketahui saat Tinjau (butuh sisa piutang Accurate), jadi di sini selalu 0.
+ */
+export function isiBerkas(rows: Bebas[]): IsiBerkas {
+    const jenis = Object.fromEntries([...LABEL_AKUN.map((l) => l.k), "retur"].map((k) => [k, { baris: 0, nilai: 0 }])) as IsiBerkas["jenis"];
+    const tambah = (k: JenisIsi, nilai: number) => { jenis[k].baris += 1; jenis[k].nilai += nilai; };
+    let baris = 0;
+    for (const row of rows) {
+        if (!getTextVal(row, "Code Outlet") && !getTextVal(row, "No. Nota")) continue;
+        baris += 1;
+        const tunai = nominal(row, "Tunai"), trf = nominal(row, "Trf"), bg = nominal(row, "BG"), biaya = nominal(row, "BiayaTrf/BG"), potLain = nominal(row, "Pot. Lain");
+        if (tunai > 0) tambah("tunai", tunai);
+        if (trf > 0) tambah(bankTransfer(String(getVal(row, "Ket. Trf") || "")) ?? "trf", trf);
+        if (bg > 0) tambah("bg", bg);
+        const kw = nominal(row, "Pot.1 Kwtnsi") + nominal(row, "Pot.2 Kwtnsi") + nominal(row, "Pot.3 Kwtnsi");
+        if (kw > 0) tambah("kwitansi", kw);
+        if (biaya > 0) tambah(bg > 0 ? "biayaBg" : "biayaTrf", biaya);
+        const pl = potLain > 0 ? jenisPotLain(getTextVal(row, "Ket. Pot")) : null;
+        if (pl === "ppn") tambah("ppnRetur", potLain);
+        if (pl === "klaim") tambah("potLain", potLain);
+        const retur = nominal(row, "Pot.RT Ktr") + nominal(row, "Pot. RT Gt") + (pl === "retur" ? potLain : 0);
+        if (retur > 0) tambah("retur", retur);
+    }
+    return { baris, jenis };
+}
+
+export type Akun = AkunPelunasan;
+/** Isian awal langkah Akun = praktik Accurate (lib/pelunasan/akun.ts); Transfer bank lain sengaja kosong (wajib dipilih bila dipakai). */
+export const AKUN_AWAL: Akun = { ...AKUN_BAWAAN };
 
 /** Galat per isian langkah Akun; objek kosong = boleh lanjut. */
 export function periksaAkun(akun: Akun, isi: IsiBerkas): Partial<Record<keyof Akun, string>> {
     const galat: Partial<Record<keyof Akun, string>> = {};
-    const wajib: Array<[keyof Akun, number, string]> = [
-        ["trf", isi.trfTanpaBank, "baris transfer tanpa bank Maybank/Permata di Ket. Trf"],
-        ["bg", isi.bg, "baris berisi BG"],
-        ["pot1", isi.pot[0], "baris berisi Pot.1 Kwtnsi"],
-        ["pot2", isi.pot[1], "baris berisi Pot.2 Kwtnsi"],
-        ["pot3", isi.pot[2], "baris berisi Pot.3 Kwtnsi"],
-    ];
-    for (const [k, n, apa] of wajib) if (n > 0 && !akun[k].trim()) galat[k] = `Wajib: ${n} ${apa}.`;
+    for (const { k, kolom } of LABEL_AKUN) {
+        const n = isi.jenis[k]?.baris ?? 0;
+        if (n > 0 && !akun[k].trim()) galat[k] = `Wajib: ${n} baris (${kolom}).`;
+    }
     for (const k of Object.keys(akun) as Array<keyof Akun>) {
         if (akun[k].toUpperCase().includes(PLACEHOLDER_AKUN)) galat[k] = "Isi nomor akun Accurate yang sebenarnya; penanda akun kosong tidak boleh dikirim.";
     }
     return galat;
 }
 
-/** Penomoran "Otomatis": AutoNumber kosong = bawaan lib (Accurate memberi nomor). Rekening Tunai kosong = bawaan lib. */
+/** Penomoran otomatis per rekening (lib/pelunasan/akun.ts REKENING). Pot.1–3 Kwitansi memakai satu akun (praktik: semuanya 110512). */
 export const petaDari = (a: Akun): PetaAkun => ({
     mapTunaiAutoNum: "", mapTunaiBank: a.tunai.trim(),
     mapTrfAutoNum: "", mapTrfBank: a.trf.trim(),
     mapBgAutoNum: "", mapBgBank: a.bg.trim(),
-    mapPot1Account: a.pot1.trim(), mapPot2Account: a.pot2.trim(), mapPot3Account: a.pot3.trim(),
+    mapPot1Account: a.kwitansi.trim(), mapPot2Account: a.kwitansi.trim(), mapPot3Account: a.kwitansi.trim(),
+    mapMaybankBank: a.maybank.trim(), mapPermataBank: a.permata.trim(), mapBriBank: a.bri.trim(), mapPpnReturBank: a.ppnRetur.trim(),
+    mapPotLainAccount: a.potLain.trim(), mapBiayaTrfAccount: a.biayaTrf.trim(), mapBiayaBgAccount: a.biayaBg.trim(), mapSelisihAccount: a.selisih.trim(),
 });
+
+export type BarisKelompok = { kunci: string; kelompok: string; akun: string; nama: string; pelunasan: number; baris: number; nilai: number };
+
+const METODE_KELOMPOK: Record<string, string> = { CASH_OTHER: "Tunai", BANK_TRANSFER: "Transfer", BANK_CHEQUE: "BG / Cek" };
+
+/**
+ * Ringkasan Tinjau per kelompok pelunasan: rekening uang (per rekening + metode), potongan per akun, retur (baris negatif), ayat silang.
+ * `pelunasan` = dokumen sales-receipt, `baris` = baris faktur/potongan/retur, `nilai` = uang (rekening) atau nominal (potongan/retur).
+ */
+export function ringkasKelompok(rows: Bebas[]): BarisKelompok[] {
+    const m = new Map<string, BarisKelompok>();
+    const tambah = (kunci: string, kelompok: string, akun: string, pelunasan: number, baris: number, nilai: number) => {
+        const b = m.get(kunci) ?? { kunci, kelompok, akun, nama: namaRekening(akun), pelunasan: 0, baris: 0, nilai: 0 };
+        b.pelunasan += pelunasan; b.baris += baris; b.nilai += nilai;
+        m.set(kunci, b);
+    };
+    for (const r of rows) {
+        const bank = String(r.bankNo ?? ""), pm = String(r.paymentMethod ?? ""), uang = Number(r.chequeAmount) || 0;
+        const faktur = (Array.isArray(r.detailInvoice) ? r.detailInvoice : []) as Bebas[];
+        const kelompok = bank === "110120" ? (uang < 0 ? "Ayat silang · sisi retur" : "Ayat silang · sisi faktur")
+            : pm === "OTHERS" ? (bank === AKUN_BAWAAN.ppnRetur ? "PPN retur" : "Tanpa uang (retur/potongan)")
+                : METODE_KELOMPOK[pm] ?? pm;
+        tambah(`U|${bank}|${kelompok}`, kelompok, bank, 1, faktur.filter((d) => Number(d.paymentAmount) > 0).length, uang);
+        if (bank === "110120") continue;
+        for (const d of faktur) {
+            if (Number(d.paymentAmount) < 0) tambah("R", "Retur (baris negatif)", "", 0, 1, -Number(d.paymentAmount));
+            for (const p of (Array.isArray(d.detailDiscount) ? d.detailDiscount : []) as Bebas[]) {
+                const akun = String(p.accountNo ?? p.discountNotes ?? "");
+                tambah(`P|${akun}`, "Potongan", akun, 0, 1, Number(p.amount) || 0);
+            }
+        }
+    }
+    const urut = (b: BarisKelompok) => (b.kunci.startsWith("U") ? 0 : b.kunci.startsWith("P") ? 1 : 2);
+    return [...m.values()].sort((a, b) => urut(a) - urut(b) || a.akun.localeCompare(b.akun));
+}
 
 const DIKUNCI: DuplicateConflictReason[] = ["ALREADY_SUCCESS", "STILL_PROCESSING", "UNKNOWN_OUTCOME"];
 const RIWAYAT: DuplicateConflictReason[] = ["ACCURATE_HISTORY", "ACCURATE_HISTORY_UNREADABLE"];
@@ -123,7 +211,8 @@ export const butuhTakeover = (r: Pick<DuplicateReviewEntry, "reasons">) => r.rea
 
 export const LABEL_DILEWATI: Record<string, string> = {
     KODE_OUTLET_KOSONG: "Code Outlet kosong",
-    TANPA_NOMINAL: "Tanpa nominal (Tunai, Trf, BG, dan potongan kosong)",
+    TANPA_NOMINAL: "Tanpa nominal (Tunai, Trf, BG, retur, dan potongan kosong)",
+    FAKTUR_TIDAK_DITEMUKAN: "No. Nota tidak ditemukan di Accurate (pasti ditolak bila dikirim)",
 };
 
 export const LABEL_HASIL: Record<HasilKirim, { label: string; tone: "pos" | "neg" | "warn" }> = {

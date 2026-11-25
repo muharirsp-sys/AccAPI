@@ -1,7 +1,8 @@
 /*
- * Tujuan: Wizard Pelunasan (Fiori S6e-2b, it02 #16–19): 1 Jenis (Pembayaran pembelian nonaktif, D-06) → 2 Unggah (Format Pelunasan Internal,
- *   berkas lain = kosong beralasan) → 3 Akun (rekening Tunai/Trf/BG, Pot.1–3, penomoran Otomatis; BG/potongan wajib bila berkas memuatnya)
- *   → 4 Tinjau → 5 Hasil (LangkahKirim). Kepala menampilkan database Accurate aktif + tautan halaman Sesi Accurate (S7-sesi: masuk & pilih database tanpa Konsol).
+ * Tujuan: Wizard Pelunasan (Fiori S6e-2b, it02 #16–19): 1 Jenis (Pembayaran pembelian nonaktif, D-06) → 2 Unggah (Form Kerja Inc harian
+ *   "New Laporan AR\DD.xlsx" apa adanya — header dicari, nama kolom disamakan, tanggal laporan dari D1 — atau Format Pelunasan Internal;
+ *   berkas lain = kosong beralasan) → 3 Akun (rekening/akun PER JENIS pelunasan, terisi praktik Accurate lib/pelunasan/akun.ts, wajib bila
+ *   berkas memuat jenis itu) → 4 Tinjau (termasuk Kelompok pelunasan) → 5 Hasil (LangkahKirim). Kepala menampilkan database Accurate aktif + tautan halaman Sesi Accurate (S7-sesi: masuk & pilih database tanpa Konsol).
  *   Langkah Jenis juga memuat daftar Perlu tindakan (Tidak pasti + Gagal dari kiriman sebelumnya, BL-41) dengan Selesaikan untuk Finance.
  * Caller: app/(dashboard)/pelunasan/page.tsx.
  * Dependensi: lib/pelunasan (deteksi/parse, pratinjau ganda, tanggal WITA), lib/pelunasan-wizard, lib/apiFetcher (GET Accurate lewat proxy),
@@ -20,14 +21,16 @@ import { accurateFetch } from "@/lib/apiFetcher";
 import { deteksiFormatPelunasan, parsePelunasan } from "@/lib/pelunasan/parser";
 import { pratinjauDuplikat } from "@/lib/pelunasan/pratinjau-ganda";
 import { tanggalKemarin } from "@/lib/pelunasan/payload";
-import type { Bebas } from "@/lib/pelunasan/sel";
-import { AKUN_KOSONG, bersihkanHeader, isiBerkas, periksaAkun, petaDari, type Akun, type IsiBerkas } from "@/lib/pelunasan-wizard";
+import { getTextVal, type Bebas } from "@/lib/pelunasan/sel";
+import { AKUN_AWAL, bersihkanHeader, cariBarisHeader, isiBerkas, periksaAkun, petaDari, tanggalLaporan, type Akun, type IsiBerkas } from "@/lib/pelunasan-wizard";
+import { LABEL_AKUN, namaRekening } from "@/lib/pelunasan/akun";
+import { rupiah } from "@/lib/promo-ui";
 import { ALASAN, bacaSesi, namaDatabase, pratinjauKunci, type Sesi } from "./bersama";
 import { LangkahHasil, LangkahTinjau, type Hasil, type Tinjauan } from "./LangkahKirim";
 import { DaftarTindakan } from "./Selesaikan";
 
 const LANGKAH = ["Jenis", "Unggah", "Akun", "Tinjau", "Hasil"];
-type Berkas = { nama: string; sheet: string; rows: Bebas[]; isi: IsiBerkas };
+type Berkas = { nama: string; sheet: string; rows: Bebas[]; isi: IsiBerkas; tanggalBerkas: string | null };
 type Bacaan = { status: "memuat"; nama: string } | { status: "kosong"; nama: string; sheet: string } | { status: "galat"; nama: string; pesan: string } | null;
 
 function Kepala({ langkah, sesi, onPeriksa }: { langkah: number; sesi: Load<Sesi>; onPeriksa: () => void }) {
@@ -49,7 +52,8 @@ function Kepala({ langkah, sesi, onPeriksa }: { langkah: number; sesi: Load<Sesi
                 {/* pelunasan.kirim (gerbang halaman ini) termasuk SESI_ACCURATE_KEYS — tautan selalu boleh dibuka. */}
                 <a className="fi-btn fi-btn--secondary" href="/sesi-accurate?returnTo=/pelunasan" target="_blank" rel="noopener"><ExternalLink className="fi-icon" aria-hidden />Masuk/ganti database Accurate</a>
             </div>
-            <p>Unggah Format Pelunasan Internal, pilih rekening dan akun, tinjau baris ganda dan retur manual, lalu kirim ke Accurate. Login Accurate dan
+            <p>Unggah Form Kerja Inc harian apa adanya (atau Format Pelunasan), periksa rekening dan akun per jenis pelunasan, tinjau kelompok, baris ganda,
+                dan retur manual, lalu kirim ke Accurate. Login Accurate dan
                 pilihan database di halaman Sesi Accurate (tab baru); kembali ke sini lalu tekan Periksa ulang sesi.</p>
             <Flow steps={steps} label="Langkah Pelunasan" />
         </header>
@@ -84,7 +88,7 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
     const [tanggal, setTanggal] = useState(() => tanggalKemarin());
     const [bacaan, setBacaan] = useState<Bacaan>(null);
     const [berkas, setBerkas] = useState<Berkas | null>(null);
-    const [akun, setAkun] = useState<Akun>(AKUN_KOSONG);
+    const [akun, setAkun] = useState<Akun>(AKUN_AWAL);
     const [tinjauan, setTinjauan] = useState<Tinjauan | null>(null);
     const [hasil, setHasil] = useState<Hasil | null>(null);
     const [menyiapkan, setMenyiapkan] = useState<string | null>(null);
@@ -100,7 +104,7 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
             : !sesiSiap ? "Masuk ke Accurate dan buka database dulu (halaman Sesi Accurate), lalu Periksa ulang sesi." : undefined;
 
     function mulaiBaru() {
-        setLangkah(1); setBacaan(null); setBerkas(null); setAkun(AKUN_KOSONG); setTinjauan(null); setHasil(null); setGalatSiap(null); setTanggal(tanggalKemarin());
+        setLangkah(1); setBacaan(null); setBerkas(null); setAkun(AKUN_AWAL); setTinjauan(null); setHasil(null); setGalatSiap(null); setTanggal(tanggalKemarin());
     }
 
     async function pilihBerkas(file: File | null) {
@@ -112,11 +116,20 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
             const XLSX = await import("xlsx");
             const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
             const sheet = wb.SheetNames[0] ?? "";
-            const rows = bersihkanHeader(sheet ? XLSX.utils.sheet_to_json<Bebas>(wb.Sheets[sheet]) : []);
+            const ws = sheet ? wb.Sheets[sheet] : undefined;
+            // Header bisa di baris mana pun (Form Kerja Inc harian: baris ke-4, di bawah tanggal & total); Format Pelunasan lama: baris pertama.
+            const aoa = ws ? XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, blankrows: true }) : [];
+            const h = cariBarisHeader(aoa);
+            const awal = ws?.["!ref"] ? XLSX.utils.decode_range(ws["!ref"]).s.r : 0;
+            // Baris tanpa Code Outlet DAN tanpa No. Nota = sisa rumus di bawah data (Form Kerja Inc: ±90 baris berisi Total.Trx/PIC saja), bukan pelunasan.
+            const rows = bersihkanHeader(ws && h >= 0 ? XLSX.utils.sheet_to_json<Bebas>(ws, { range: awal + h }) : [])
+                .filter((r) => getTextVal(r, "Code Outlet") || getTextVal(r, "No. Nota"));
             if (urut !== urutBaca.current) return; // berkas lain dipilih selagi membaca
             if (!deteksiFormatPelunasan(rows)) { setBacaan({ status: "kosong", nama: file.name, sheet }); return; }
+            const tanggalBerkas = h > 0 ? tanggalLaporan(aoa, h) : null;
+            if (tanggalBerkas) setTanggal(tanggalBerkas);
             setBacaan(null);
-            setBerkas({ nama: file.name, sheet, rows, isi: isiBerkas(rows) });
+            setBerkas({ nama: file.name, sheet, rows, isi: isiBerkas(rows), tanggalBerkas });
         } catch (e) {
             if (urut === urutBaca.current) setBacaan({ status: "galat", nama: file.name, pesan: e instanceof Error ? e.message : "Berkas tidak bisa dibuka." });
         }
@@ -196,7 +209,7 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
                             <button type="button" className="fi-tile" onClick={() => setLangkah(1)}>
                                 <span className="fi-tile-ico" aria-hidden><HandCoins className="fi-icon" /></span>
                                 <span className="fi-tile-t">Pelunasan penjualan</span>
-                                <span className="fi-tile-s">Format Pelunasan Internal: Tunai, Transfer, BG, potongan. Cek ganda dan retur manual.</span>
+                                <span className="fi-tile-s">Form Kerja Inc harian: Tunai, Transfer, BG, kwitansi, biaya, retur, PPN retur. Cek ganda dan retur manual.</span>
                                 <span className="fi-tile-f">Penerimaan Penjualan di Accurate · diinput Admin Incaso</span>
                             </button>
                             <JenisLain judul="Retur pembelian" isi="Berkas retur dari principal. Belum menjadi wizard." ikon={<Undo2 className="fi-icon" />}
@@ -223,14 +236,16 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
                 <Section title="Berkas pelunasan" subtitle="sheet pertama dibaca; tidak ada yang dikirim di langkah ini">
                     <div className="fi-sect-in">
                         <div className="fi-formgrid">
-                            <FormField label="Tanggal transaksi" required help="Bawaan: kemarin menurut WITA. Menjadi tanggal pelunasan di Accurate.">
+                            <FormField label="Tanggal transaksi" required
+                                help={berkas?.tanggalBerkas ? `Diambil dari tanggal laporan di berkas (${berkas.tanggalBerkas.split("-").reverse().join("/")}); boleh diubah. Menjadi tanggal pelunasan di Accurate.`
+                                    : "Bawaan: kemarin menurut WITA. Menjadi tanggal pelunasan di Accurate."}>
                                 {(a11y) => <input {...a11y} type="date" className="fi-input" value={tanggal} onChange={(e) => { setTanggal(e.target.value); setTinjauan(null); }} />}
                             </FormField>
                             <div className="fi-dropzone" data-ok={berkas ? "true" : undefined}>
-                                <label className="fi-label" htmlFor="pelunasan-berkas">Berkas Format Pelunasan<span className="fi-req" aria-hidden>*</span></label>
+                                <label className="fi-label" htmlFor="pelunasan-berkas">Berkas pelunasan<span className="fi-req" aria-hidden>*</span></label>
                                 <span>{berkas
                                     ? <><FileSpreadsheet className="fi-icon" aria-hidden style={{ display: "inline", verticalAlign: "-3px" }} /> <b>{berkas.nama}</b> · sheet {berkas.sheet}</>
-                                    : "Kolom Code Outlet, No. Nota, Tunai, Trf, BG, Pot.1–3 · .xlsx atau .xls"}</span>
+                                    : "Form Kerja Inc harian (New Laporan AR, mis. 01.xlsx / 02NKA.xlsx) apa adanya, atau Format Pelunasan · .xlsx atau .xls"}</span>
                                 <input id="pelunasan-berkas" className="fi-input" type="file" accept=".xlsx,.xls" disabled={bacaan?.status === "memuat"}
                                     onChange={(e) => void pilihBerkas(e.target.files?.[0] ?? null)} />
                             </div>
@@ -245,12 +260,14 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
                 )}
                 {bacaan?.status === "galat" && <MessageStrip tone="neg" title="Berkas tidak terbaca.">{bacaan.nama}: {bacaan.pesan} Pilih berkas lain.</MessageStrip>}
                 {berkas && (
-                    <Section title="Isi berkas" subtitle={`${berkas.nama} · sheet ${berkas.sheet}`}>
+                    <Section title="Isi berkas per jenis pelunasan" subtitle={`${berkas.nama} · sheet ${berkas.sheet} · ${berkas.isi.baris} baris`}>
                         <div className="fi-sect-in">
-                            <div className="fi-kcards" role="group" aria-label="Ringkasan berkas" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 150px), 1fr))" }}>
-                                <div className="fi-kc"><span>Baris dibaca</span><b>{berkas.isi.baris}</b><small>berisi Code Outlet atau No. Nota</small></div>
-                                <div className="fi-kc"><span>Berisi BG</span><b>{berkas.isi.bg}</b><small>{berkas.isi.bg ? "rekening BG wajib di langkah Akun" : "rekening BG tidak dipakai"}</small></div>
-                                <div className="fi-kc"><span>Berisi potongan</span><b>{berkas.isi.pot.reduce((a, b) => a + b, 0)}</b><small>Pot.1 {berkas.isi.pot[0]} · Pot.2 {berkas.isi.pot[1]} · Pot.3 {berkas.isi.pot[2]}</small></div>
+                            <div className="fi-kcards" role="group" aria-label="Ringkasan berkas" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 170px), 1fr))" }}>
+                                {[...LABEL_AKUN.map((l) => ({ k: l.k as keyof IsiBerkas["jenis"], label: l.label })), { k: "retur" as const, label: "Retur (RT Ktr / RT Gt / RJN)" }]
+                                    .filter(({ k }) => berkas.isi.jenis[k].baris > 0)
+                                    .map(({ k, label }) => (
+                                        <div key={k} className="fi-kc"><span>{label}</span><b>{berkas.isi.jenis[k].baris}</b><small className="fi-tnum">{rupiah(berkas.isi.jenis[k].nilai)}</small></div>
+                                    ))}
                             </div>
                         </div>
                     </Section>
@@ -266,9 +283,11 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
     // ── Langkah 3 · Akun ─────────────────────────────────────────────────────────────────────────────────
     const isi = berkas?.isi;
     const kunciTinjau = !berkas ? "Berkas belum dipilih." : menyiapkan ? "Pratinjau sedang disiapkan."
-        : nGalatAkun ? (galatAkun.bg ? "Lengkapi rekening BG" : "Lengkapi rekening dan akun yang wajib") : kunciSesi;
+        : nGalatAkun ? "Lengkapi rekening dan akun yang wajib" : kunciSesi;
     const ubah = (k: keyof Akun) => (e: ChangeEvent<HTMLInputElement>) => { setAkun((a) => ({ ...a, [k]: e.target.value })); setTinjauan(null); };
-    const wajibBila = (n: number, apa: string) => (n > 0 ? `Wajib: ${n} ${apa}.` : "Tidak dipakai di berkas ini.");
+    // Selisih pembulatan baru diketahui saat Tinjau (butuh sisa piutang Accurate), jadi selalu ditampilkan.
+    const dipakai = LABEL_AKUN.filter((l) => l.k === "selisih" || (isi?.jenis[l.k].baris ?? 0) > 0);
+    const tidakDipakai = LABEL_AKUN.length - dipakai.length;
     return (
         <div className="fi-page" style={{ paddingBottom: 0 }}>
             {kepala}
@@ -278,34 +297,28 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
                 </MessageStrip>
             )}
             {galatSiap && <MessageStrip tone="neg" title="Pratinjau gagal." onClose={() => setGalatSiap(null)}>{galatSiap}</MessageStrip>}
-            <Section title="Rekening dan akun" subtitle={`dipakai untuk ${isi?.baris ?? 0} baris · ${berkas?.nama ?? ""}`}>
+            <Section title="Rekening dan akun per jenis pelunasan" subtitle={`${isi?.baris ?? 0} baris · ${berkas?.nama ?? ""} · terisi sesuai kebiasaan di Accurate, boleh diubah`}>
                 <div className="fi-sect-in">
                     <div className="fi-formgrid">
-                        <FormField label="Rekening Tunai" help="Kosong = 110102 (bawaan aplikasi)." error={galatAkun.tunai}>
-                            {(a11y) => <input {...a11y} className="fi-input" value={akun.tunai} onChange={ubah("tunai")} placeholder="No. akun kas" />}
+                        {dipakai.map(({ k, label, kolom, rekening }) => {
+                            const n = isi?.jenis[k].baris ?? 0;
+                            const nama = namaRekening(akun[k].trim());
+                            return (
+                                <FormField key={k} label={`${rekening ? "Rekening" : "Akun"} ${label}`} required={k !== "selisih"} error={galatAkun[k]}
+                                    help={galatAkun[k] ? undefined : `${k === "selisih" ? "Selisih ≤ Rp 100 terhadap sisa piutang Accurate (dihitung saat Tinjau)" : `${n} baris · ${rupiah(isi?.jenis[k].nilai ?? 0)} · ${kolom}`}${nama ? ` · ${nama}` : ""}`}>
+                                    {(a11y) => <input {...a11y} className="fi-input fi-mono" value={akun[k]} onChange={ubah(k)} placeholder={rekening ? "No. akun kas/bank" : "No. akun GL"} />}
+                                </FormField>
+                            );
+                        })}
+                        <FormField label="Penomoran" help="Nomor pelunasan diberi Accurate menurut rekening (mis. 110105.2026.10.xxxxx).">
+                            {(a11y) => <input {...a11y} className="fi-input" value="Otomatis per rekening (AutoNumber Accurate)" readOnly />}
                         </FormField>
-                        <FormField label="Rekening Transfer" required={(isi?.trfTanpaBank ?? 0) > 0} error={galatAkun.trf}
-                            help={isi?.trfTanpaBank ? "Dipakai baris transfer yang Ket. Trf-nya bukan Maybank/Permata." : "Ket. Trf Maybank/Permata memakai rekening bank itu; selebihnya rekening ini."}>
-                            {(a11y) => <input {...a11y} className="fi-input" value={akun.trf} onChange={ubah("trf")} placeholder="No. akun bank" />}
-                        </FormField>
-                        <FormField label="Rekening BG" required={(isi?.bg ?? 0) > 0} error={galatAkun.bg} help={galatAkun.bg ? undefined : wajibBila(isi?.bg ?? 0, "baris berisi BG")}>
-                            {(a11y) => <input {...a11y} className="fi-input" value={akun.bg} onChange={ubah("bg")} placeholder="No. akun BG" />}
-                        </FormField>
-                        <FormField label="Penomoran" help="Nomor pelunasan diberi Accurate.">
-                            {(a11y) => <input {...a11y} className="fi-input" value="Otomatis (AutoNumber Accurate)" readOnly />}
-                        </FormField>
-                        <FormField label="Akun Potongan 1" required={(isi?.pot[0] ?? 0) > 0} error={galatAkun.pot1} help={galatAkun.pot1 ? undefined : wajibBila(isi?.pot[0] ?? 0, "baris berisi Pot.1 Kwtnsi")}>
-                            {(a11y) => <input {...a11y} className="fi-input" value={akun.pot1} onChange={ubah("pot1")} placeholder="No. akun GL" />}
-                        </FormField>
-                        <FormField label="Akun Potongan 2" required={(isi?.pot[1] ?? 0) > 0} error={galatAkun.pot2} help={galatAkun.pot2 ? undefined : wajibBila(isi?.pot[1] ?? 0, "baris berisi Pot.2 Kwtnsi")}>
-                            {(a11y) => <input {...a11y} className="fi-input" value={akun.pot2} onChange={ubah("pot2")} placeholder="No. akun GL" />}
-                        </FormField>
-                        {(isi?.pot[2] ?? 0) > 0 && (
-                            <FormField label="Akun Potongan 3" required error={galatAkun.pot3} help={galatAkun.pot3 ? undefined : wajibBila(isi?.pot[2] ?? 0, "baris berisi Pot.3 Kwtnsi")}>
-                                {(a11y) => <input {...a11y} className="fi-input" value={akun.pot3} onChange={ubah("pot3")} placeholder="No. akun GL" />}
-                            </FormField>
-                        )}
                     </div>
+                    <p className="fi-small">
+                        Retur (RT Ktr, RT Gt, Pot. Lain bernomor RJN/SRT) tidak butuh akun: retur pelanggan yang sama menjadi baris retur negatif di pelunasan Kas,
+                        retur pelanggan/divisi lain menjadi pasangan ayat silang {namaRekening("110120")} (110120).
+                        {tidakDipakai > 0 ? ` ${tidakDipakai} jenis lain tidak ada di berkas ini.` : ""}
+                    </p>
                 </div>
             </Section>
             {menyiapkan && <><p className="fi-small" role="status">{menyiapkan}</p><Skeleton rows={3} label="Menyiapkan pratinjau" /></>}

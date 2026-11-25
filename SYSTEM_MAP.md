@@ -484,6 +484,16 @@ Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConf
      jejak idempotency_resolution, lib/idempotency-resolve.ts). Lock mencatat database di idempotency_log."databaseId" DAN
      idempotency_override.database_id (DDL_S6E2.sql); proxy menolak bila salah satunya ≠ database sesi
   -> GET /api/idempotency/summary — Tidak pasti / Gagal boleh diulang (BL-41; pelunasan.kirim ATAU finance.resolve_unknown)
+  Unggah (25 Nov 2026): Form Kerja Inc harian ("New Laporan AR\DD.xlsx"/"DDNKA.xlsx") dibaca APA ADANYA — lib/pelunasan-wizard.ts
+     cariBarisHeader (header = baris ber-"Code Outlet"+"No. Nota", biasanya baris 4) + tanggalLaporan (D1 -> tanggal transaksi) +
+     bersihkanHeader (nama kolom disamakan: Ket.Trf/Biaya Trf/BG/Pot.RT Gt/Pot.Lain/Ket.Potong/Ket.ALL Trx -> nama mesin); baris tanpa
+     Code Outlet & No. Nota dibuang. Aturan jenis -> rekening/akun = lib/pelunasan/akun.ts (dipelajari dari ±55 rb pelunasan Accurate):
+     Tunai 110102, TF Maybank 110105 / Permata 110106 / BRI 110108 / lain = pilihan, BG 110104, PPN retur (Pot. Lain "PPN") = pelunasan
+     110118 terpisah, potongan Kwitansi & Pot. Lain klaim 110512, Biaya TF 600126 / BG 600123, selisih <= Rp100 -> 600136 (uang tidak
+     diubah). Mesin (lib/pelunasan/alokasi.ts): pelanggan = pelanggan faktur Accurate (sufiks divisi), retur pelanggan sama = baris
+     negatif di pelunasan Kas, beda pelanggan = ayat silang 110120 (faktur tidak dibayar dua kali), faktur pasti tak ada = dilewati.
+     Retur RJN/SRT dicari tepat sales-invoice/list.do filter.number EQUAL (keyword bergaris miring diabaikan Accurate). Tinjau
+     menampilkan Kelompok pelunasan (ringkasKelompok: per rekening, akun potongan, retur, ayat silang).
   UI (S6e-2b): /pelunasan wizard Jenis -> Unggah -> Akun -> Tinjau -> Hasil (app/(dashboard)/pelunasan/*); pratinjau membaca ulang sesi
      di akhir (database berganti selama pratinjau = dibuang); nomor Hasil = nomor terposting (item r.number / keputusan Selesaikan),
      nomor mirip di kolom Excel terpisah; galat lock dipetakan menurut
