@@ -7,28 +7,71 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-    AKUN_KOSONG, KODE_DISELESAIKAN, barisLaporanHasil, bersihkanHeader, hitungHasil, isiBerkas, nomorTerposting, paketDari, periksaAkun, rencanaKirim, terapkanPenyelesaian,
+    AKUN_AWAL, KODE_DISELESAIKAN, barisLaporanHasil, bersihkanHeader, cariBarisHeader, hitungHasil, isiBerkas, nomorTerposting, paketDari, periksaAkun,
+    rencanaKirim, ringkasKelompok, tanggalLaporan, terapkanPenyelesaian,
 } from "./pelunasan-wizard.ts";
 import { buildSalesReceiptIdempotencyPayload } from "./sales-receipt-fingerprint.ts";
 import type { DuplicateReviewEntry } from "./pelunasan/pratinjau-ganda.ts";
 
-test("isi berkas: BG, transfer tanpa bank tetap, dan potongan dihitung per baris", () => {
-    const rows = bersihkanHeader([
-        { "Code Outlet (*wajib)": "PELANGGAN-A", "No. Nota": "INV-1", Trf: 1000, "Ket. Trf": "BCA" },
-        { "Code Outlet": "PELANGGAN-B", "No. Nota": "INV-2", Trf: 500, "Ket. Trf": "maybank cabang a" },
-        { "Code Outlet": "PELANGGAN-C", "No. Nota": "INV-3", BG: 700, "Pot.2 Kwtnsi": 10 },
-        { "Code Outlet": "", "No. Nota": "" },
-    ]);
-    assert.deepEqual(isiBerkas(rows), { baris: 3, bg: 1, trfTanpaBank: 1, pot: [0, 1, 0] });
+test("Form Kerja Inc harian: header di baris ke-4, tanggal di D1, nama kolom disamakan ke nama mesin", () => {
+    // Bentuk nyata New Laporan AR\DD.xlsx (Okt 2026): D1 tanggal (serial), baris 2 kosong, baris 3 total, baris 4 header.
+    const aoa = [
+        [null, null, null, 46296],
+        [],
+        [null, null, null, null, 345986492.03, "60  >> BG", 761],
+        ["Fix_Inc_1.xlsx", "Form Kerja Inc", "Code Outlet", "No. Nota", "Ket.Trf", "Biaya Trf/BG", "No.SRB RT Ktr", "Pot.RT Gt", "Pot.Lain", "Ket.Potong", "Ket.ALL Trx"],
+    ];
+    assert.equal(cariBarisHeader(aoa), 3);
+    assert.equal(tanggalLaporan(aoa, 3), "2026-10-01");
+    assert.equal(cariBarisHeader([["Code Outlet", "No. Nota", "Tunai"]]), 0, "Format Pelunasan lama: header di baris pertama");
+    assert.equal(cariBarisHeader([["a"], ["b"]]), -1);
+    const [b] = bersihkanHeader([{ "Code Outlet": "C-DEL015", "Ket.Trf": "TF MAYBANK (1) 1/10", "Biaya Trf/BG": 10000, "No.SRB RT Ktr": "SRB 2653.57",
+        "Pot.RT Gt": 5, "Pot.Lain": 7, "Ket.Potong": "PPN RETUR", "Ket.ALL Trx": "TF, " }]);
+    assert.deepEqual(Object.keys(b), ["Code Outlet", "Ket. Trf", "BiayaTrf/BG", "No.SRB Rt Ktr", "Pot. RT Gt", "Pot. Lain", "Ket. Pot", "Ket. All Trx"]);
 });
 
-test("akun: BG & potongan wajib bila berkas memuatnya; penanda ISI_KODE_AKUN_ tidak lolos", () => {
-    const isi = { baris: 3, bg: 4, trfTanpaBank: 0, pot: [2, 0, 0] as [number, number, number] };
-    assert.deepEqual(Object.keys(periksaAkun(AKUN_KOSONG, isi)).sort(), ["bg", "pot1"]);
-    assert.match(periksaAkun(AKUN_KOSONG, isi).bg ?? "", /Wajib: 4 baris berisi BG/);
-    assert.deepEqual(periksaAkun({ ...AKUN_KOSONG, bg: "110104", pot1: "4102" }, isi), {});
-    assert.ok(periksaAkun({ ...AKUN_KOSONG, bg: "110104", pot1: "isi_kode_akun_pot1_di_ui" }, isi).pot1, "penanda (huruf apa pun) ditolak");
-    assert.ok(periksaAkun({ ...AKUN_KOSONG, tunai: "ISI_KODE_AKUN_X" }, { ...isi, bg: 0, pot: [0, 0, 0] }).tunai, "isian opsional pun diperiksa");
+test("isi berkas per jenis: bank transfer dari Ket. Trf (salah ketik Maybank ikut), Pot. Lain PPN/klaim/retur, biaya BG vs transfer", () => {
+    const rows = bersihkanHeader([
+        { "Code Outlet (*wajib)": "PELANGGAN-A", "No. Nota": "INV-1", Trf: 1000, "Ket. Trf": "BCA" },
+        { "Code Outlet": "PELANGGAN-B", "No. Nota": "INV-2", Trf: 500, "Ket.Trf": "TF MAYBAK (500) 1/10", "Biaya Trf/BG": 10 },
+        { "Code Outlet": "PELANGGAN-C", "No. Nota": "INV-3", BG: 700, "Pot.2 Kwtnsi": 10, "Biaya Trf/BG": 5 },
+        { "Code Outlet": "PELANGGAN-D", "No. Nota": "INV-4", "Pot.Lain": 30, "Ket.Potong": "PPN RETUR" },
+        { "Code Outlet": "PELANGGAN-E", "No. Nota": "INV-5", "Pot.Lain": 40, "Ket.Potong": "061/SUPER-ABCPI/04/2026" },
+        { "Code Outlet": "PELANGGAN-F", "No. Nota": "INV-6", "Pot.Lain": 50, "Ket.Potong": "RJN/2608/M200134", "Pot.RT Ktr": 5 },
+        { "Code Outlet": "", "No. Nota": "" },
+    ]);
+    const { baris, jenis } = isiBerkas([...rows, ...bersihkanHeader([{ "Code Outlet": "PELANGGAN-G", "No. Nota": "INV-7", Trf: 70, "Ket.Trf": "KELEBIHAN TF (26,024,973) AR TGL 8/4" }])]);
+    assert.equal(baris, 7);
+    assert.deepEqual(jenis.trf, { baris: 1, nilai: 1000 });
+    assert.deepEqual(jenis.maybank, { baris: 2, nilai: 570 }, "KELEBIHAN TF ikut Maybank (praktik admin)");
+    assert.deepEqual(jenis.bg, { baris: 1, nilai: 700 });
+    assert.deepEqual(jenis.kwitansi, { baris: 1, nilai: 10 });
+    assert.deepEqual([jenis.biayaTrf.nilai, jenis.biayaBg.nilai], [10, 5]);
+    assert.deepEqual([jenis.ppnRetur.nilai, jenis.potLain.nilai, jenis.retur.nilai], [30, 40, 55]);
+});
+
+test("akun: bawaan praktik Accurate lolos; Transfer bank lain wajib bila dipakai; penanda ISI_KODE_AKUN_ tidak lolos", () => {
+    const isi = isiBerkas([{ "Code Outlet": "A", "No. Nota": "I", Trf: 10, "Ket. Trf": "BCA" }, { "Code Outlet": "B", "No. Nota": "J", BG: 4, "Pot.1 Kwtnsi": 2 }]);
+    assert.deepEqual(Object.keys(periksaAkun(AKUN_AWAL, isi)), ["trf"]);
+    assert.match(periksaAkun(AKUN_AWAL, isi).trf ?? "", /Wajib: 1 baris/);
+    assert.deepEqual(periksaAkun({ ...AKUN_AWAL, trf: "110103" }, isi), {});
+    assert.ok(periksaAkun({ ...AKUN_AWAL, trf: "110103", bg: "" }, isi).bg, "rekening yang dipakai berkas tidak boleh dikosongkan");
+    assert.ok(periksaAkun({ ...AKUN_AWAL, trf: "110103", kwitansi: "isi_kode_akun_pot1_di_ui" }, isi).kwitansi, "penanda (huruf apa pun) ditolak");
+});
+
+test("ringkasan kelompok: rekening uang, potongan per akun, retur negatif, ayat silang", () => {
+    const k = ringkasKelompok([
+        { bankNo: "110105", paymentMethod: "BANK_TRANSFER", chequeAmount: 990, detailInvoice: [{ invoiceNo: "I1", paymentAmount: 1000, detailDiscount: [{ amount: 10, accountNo: "600126" }] }] },
+        { bankNo: "110102", paymentMethod: "OTHERS", chequeAmount: 0, detailInvoice: [{ invoiceNo: "I2", paymentAmount: 50 }, { invoiceNo: "RJN/1", paymentAmount: -50 }] },
+        { bankNo: "110120", paymentMethod: "OTHERS", chequeAmount: 30, detailInvoice: [{ invoiceNo: "I3", paymentAmount: 30 }] },
+        { bankNo: "110120", paymentMethod: "OTHERS", chequeAmount: -30, detailInvoice: [{ invoiceNo: "RJN/2", paymentAmount: -30 }] },
+    ]);
+    const cari = (kelompok: string) => k.find((b) => b.kelompok === kelompok);
+    assert.deepEqual([cari("Transfer")?.akun, cari("Transfer")?.nilai, cari("Transfer")?.nama], ["110105", 990, "Bank Maybank 2115003838"]);
+    assert.deepEqual([cari("Potongan")?.akun, cari("Potongan")?.nilai], ["600126", 10]);
+    assert.deepEqual([cari("Retur (baris negatif)")?.baris, cari("Retur (baris negatif)")?.nilai], [1, 50]);
+    assert.deepEqual([cari("Ayat silang · sisi faktur")?.nilai, cari("Ayat silang · sisi retur")?.nilai], [30, -30]);
+    assert.deepEqual([cari("Ayat silang · sisi faktur")?.baris, cari("Ayat silang · sisi retur")?.baris], [1, 1]);
 });
 
 const row = (customerNo: string, invoiceNo: string, amount: number) => ({ customerNo, transDate: "09/10/2026", paymentMethod: "CASH_OTHER", chequeAmount: amount, detailInvoice: [{ invoiceNo, paymentAmount: amount, detailDiscount: [] }] });
@@ -118,4 +161,41 @@ test("susulan S6e (2b #3): nomor terposting dari item jawaban Accurate; nomor mi
     const ditahan = [{ customerNo: "C9", invoiceNo: "INV-C9", paymentMethod: "CASH_OTHER", row: { chequeAmount: 5 }, reasons: ["ACCURATE_HISTORY"], matchedReceiptNumbers: ["PR.H"] }] as unknown as DuplicateReviewEntry[];
     const r = barisLaporanHasil(["C0", "C1", "C2", "C3", "C4"].map(baris), hasil, ditahan);
     assert.deepEqual(r.map((x) => [x["Nomor Accurate"], x["Nomor mirip"]]), [["PR.1", ""], ["", "PR.MIRIP"], ["PR.9", ""], ["", "PR.SAMA"], ["", ""], ["", "PR.H"]]);
+});
+
+test("jejak Hermes: ringkasan per baris berkas (rekening yang diharapkan, status), status sesudah kirim, validasi badan", async () => {
+    const { barisUnggah, terapkanHasilUnggah, bersihkanBarisUnggah } = await import("./pelunasan-wizard.ts");
+    const rows = bersihkanHeader([
+        { "Code Outlet": "C-A1", "No. Nota": "INV/1", "6_Saldo": 1000, Tunai: 400 },
+        { "Code Outlet": "C-A2", "No. Nota": "INV/2", "6_Saldo": 500, Trf: 490, "Ket.Trf": "TF BRI (490) 1/11", "Biaya Trf/BG": 10 },
+        { "Code Outlet": "C-A3", "No. Nota": "INV/3", "6_Saldo": 300, "Pot.RT Gt": 300, "No.RJS RT Gt": "RJN/2611/X1" },
+        { "Code Outlet": "C-A4", "No. Nota": "INV/4", "6_Saldo": 90, Tunai: 90 },
+    ]);
+    const out = {
+        payload: [
+            { customerNo: "C-A1-SZ", bankNo: "110102", detailInvoice: [{ invoiceNo: "INV/1", paymentAmount: 400 }] },
+            { customerNo: "C-A2-GD", bankNo: "110108", detailInvoice: [{ invoiceNo: "INV/2", paymentAmount: 500 }] },
+        ],
+        manualRows: [{ "Invoice No": "INV/3" }],
+        counts: { skipped: [{ row: 4, reason: "SUDAH_DI_ACCURATE" }] },
+    };
+    const b = barisUnggah(rows, out, AKUN_AWAL);
+    assert.deepEqual(b.map((x) => [x.faktur, x.status, x.rekening.join("+"), x.total, x.pelanggan]), [
+        ["INV/1", "diproses", "110102", 400, "C-A1-SZ"],
+        ["INV/2", "diproses", "110108", 500, "C-A2-GD"],
+        ["INV/3", "retur_manual", "110102+110120", 300, ""],
+        ["INV/4", "sudah_di_accurate", "110102", 90, ""],
+    ]);
+    assert.equal(b[1].potongan, 10);
+    const kirim = out.payload;
+    const sesudah = terapkanHasilUnggah(b, [
+        { index: 0, outcome: "terposting", item: { r: { number: "110102.2026.11.00001" } } },
+        { index: 1, outcome: "tidak_pasti" },
+    ], kirim, []);
+    assert.deepEqual(sesudah.map((x) => [x.status, x.nomor ?? []]), [
+        ["terposting", ["110102.2026.11.00001"]], ["tidak_pasti", []], ["retur_manual", []], ["sudah_di_accurate", []],
+    ]);
+    assert.deepEqual(bersihkanBarisUnggah(JSON.parse(JSON.stringify(sesudah))), sesudah, "bentuk sah lolos utuh");
+    assert.equal(bersihkanBarisUnggah([{ ...sesudah[0], status: "hapus" }]), null, "status di luar daftar ditolak");
+    assert.equal(bersihkanBarisUnggah({}), null);
 });

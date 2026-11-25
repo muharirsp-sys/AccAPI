@@ -173,6 +173,20 @@ const fetchReturByDocument = async (accurateFetch: AccurateFetch, documentNo: st
         }
     };
 
+    // Nomor dokumen lengkap (RJN/2609/GD00062, SRT.2025.12.02413): cari TEPAT lewat filter.number. Bukti 25 Nov 2026: Accurate
+    // MENGABAIKAN `keyword` bergaris miring di sales-invoice/list.do (jawaban = seluruh 282.992 faktur), jadi pindaian keyword di bawah
+    // hanya menemukan retur yang kebetulan ada di 400 faktur terbaru. filter.number EQUAL memuat dokumen retur beserta primeOwing-nya.
+    if (documentNo.includes("/") || /^SRT[.\-/]/i.test(documentNo)) {
+        const exact = await safeSearchFetch('/api/sales-invoice/list.do', {
+            fields: AYAT_SILANG_SEARCH_FIELDS,
+            "filter.number.op": "EQUAL",
+            "filter.number.val": documentNo.trim().toUpperCase(),
+        }, `${label}_${documentNo}_EQUAL`);
+        const hit = (Array.isArray(exact?.d) ? exact.d : []).filter((item: Bebas) => returDocumentMatches(item, documentNo));
+        xrayLogs.push(`${label}_${documentNo}_Equal:[${hit.map((item: Bebas) => item.number).join('|') || '-'}]`);
+        if (hit.length > 0) return hit;
+    }
+
     for (const variant of variants) {
         let currentPage = 1;
         let pageCount = 1;
@@ -303,12 +317,15 @@ export const scoreReturCandidate = (ret: Bebas, custNo: string, expectedCharFiel
 
     parsedRef.codeTokens.forEach((token) => {
         const norm = normalizeLookupText(token);
+        // Berkas menulis "SRB 2653.57", Accurate menyimpan "…_SRB2653.57_…" (bukti 25 Nov 2026, RJN/2609/GD00062): bentuk rapat ikut dicocokkan.
+        const rapat = token.replace(/\s+/g, "");
+        const kenaBatas = (raw: string) => matchesReturTokenBoundary(raw, token) || (rapat !== token && matchesReturTokenBoundary(raw, rapat));
         const tokenBoundaryHit =
-            matchesReturTokenBoundary(rawDesc, token) ||
-            matchesReturTokenBoundary(rawNumber, token) ||
-            matchesReturTokenBoundary(rawKeywords, token) ||
-            matchesReturTokenBoundary(rawReturnDocumentNumber, token) ||
-            matchesReturTokenBoundary(rawDocumentCode, token);
+            kenaBatas(rawDesc) ||
+            kenaBatas(rawNumber) ||
+            kenaBatas(rawKeywords) ||
+            kenaBatas(rawReturnDocumentNumber) ||
+            kenaBatas(rawDocumentCode);
 
         if (tokenBoundaryHit) {
             score += 140;
@@ -355,7 +372,14 @@ export async function cariRetur(returQueries: Map<string, KueriRetur>, returMap:
                 if (!keyword) return;
                 const safeSearchFetch = async (payload: Bebas, variantLabel: string) => {
                     try {
-                        return await accurateFetch('/api/sales-return/list.do', 'GET', payload);
+                        const res = await accurateFetch('/api/sales-return/list.do', 'GET', payload);
+                        // Bukti 25 Nov 2026: Accurate MENGABAIKAN filter.returnDocumentNumber / filter.number di sales-return/list.do dan
+                        // menjawab retur terbaru acak. Jawaban itu tidak kosong, jadi varian berikutnya (mis. "SRB2667.57" tanpa spasi, yang
+                        // ketemu lewat filter.keywords) tidak pernah dicoba → NOT_FOUND. Hanya baris yang memuat nilai yang dicari dihitung.
+                        const dicari = normalizeLookupText(String(payload["filter.keywords.val"] ?? payload["filter.returnDocumentNumber.val"]
+                            ?? payload["filter.number.val"] ?? payload.keyword ?? ""));
+                        if (!dicari || !Array.isArray(res?.d)) return res;
+                        return { ...res, d: res.d.filter((item: Bebas) => extractReturLookupTexts(item).some((t) => normalizeLookupText(t).includes(dicari))) };
                     } catch (err) {
                         const msg = err instanceof Error ? err.message : String(err);
                         xrayLogs.push(`${label}_${variantLabel}_ERR:${msg.substring(0, 180)}`);
