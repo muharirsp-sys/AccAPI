@@ -403,9 +403,9 @@ Antrean Faktur / outbox sales-invoice (S6-0d, DRAFT — zona tulis Accurate):
         "Total piutang dan pesanan") + pelanggan outlet hit list (-KN) -> lolosBatasPiutang: customer list/detail.do + sales-invoice
         list.do (outstandingFilter) + detail.do tiap nota (nota hit list = semua baris SKU hit list) + sales-order list.do status
         NOT_EQUAL CLOSED (jeda baca 200 ms; Accurate maks 8 req/dtk per token) -> putuskan (order apa pun): nota hit list belum lunas
-        tidak dihitung; order biasa: tidak boleh ada nota BUKAN hit list belum lunas >= N hari (order NPL = semua baris SKU hit list:
-        batas hari tidak diperiksa, owner 24 Nov 2026); piutang bukan hit list + pesanan terbuka + order
-        <= limit; angka/halaman tak terbaca = ditahan -> customer/save.do lepas centang yang disebut Accurate -> save.do faktur SEKALI lagi ->
+        tidak dihitung; order biasa/campuran: tidak boleh ada nota BUKAN hit list belum lunas >= N hari; piutang bukan hit list + pesanan
+        terbuka + order <= limit; angka/halaman tak terbaca = ditahan. Order NPL (semua baris SKU hit list, owner 25 Nov 2026): piutang
+        TIDAK dibaca/diperiksa, hanya toko hold OD (tokoHold: limit Rp 1 / 1 hari atau catatan Hold) yang ditahan -> customer/save.do lepas centang yang disebut Accurate -> save.do faktur SEKALI lagi ->
         pulihkan (baca dulu; tulis centang + nilai asal, maks 2x); Hendra/terlindungi tidak disentuh; maks 10 pemeriksaan / 4 menit per
         Kirim/cron, jeda 7 dtk antar-pelepasan (ambang impor massal Hendra); pemulihan gagal = kiriman berhenti + `gagalPulih`
         (ok:false) + catatan di panel hasil, kiriman berikutnya melewati pelanggan itu (24 jam) selama Accurate belum tercentang;
