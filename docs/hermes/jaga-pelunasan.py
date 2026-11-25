@@ -8,7 +8,8 @@ Masalah yang dilaporkan (per berkas terakhir per tanggal, 7 hari terakhir):
 - KURANG   faktur belum terlunasi sebesar berkas di Accurate (tanggal berkas s.d. +7 hari): perlu cek, retur manual, gagal,
            tidak pasti, atau belum dikirim. Pembanding = uang + retur + PPN (invoicePayment Accurate), potongan tidak dihitung.
 - LEBIH    terlunasi lebih besar dari berkas (dugaan input dobel sales + admin).
-- REKENING pelunasan faktur pada tanggal berkas masuk rekening di luar yang sesuai berkas (mis. Ket. Trf "TF BRI" tapi 110105).
+- REKENING (laporan penyesuaian) uang faktur pada tanggal berkas masuk rekening di luar cara bayar berkas (mis. berkas Tunai
+           tapi Accurate Transfer Maybank; "TF BRI" tapi 110105). Pelunasan retur (baris negatif) & ayat silang 110120 tidak dihitung.
 Hanya tanggal yang cache Accurate-nya LENGKAP (kasir_pelunasan_baca) yang dinilai; selain itu dilaporkan 'menunggu'.
 Diam bila aman. Mengirim pesan hanya saat daftar masalah BERUBAH (baru muncul / ada yang beres). Toleransi Rp100 (selisih pembulatan).
 
@@ -35,13 +36,18 @@ with u as (
 b as (
   select u.database_id, u.tanggal, u.nama_berkas, e->>'faktur' as faktur, e->>'outlet' as outlet, e->>'status' as status,
          coalesce((e->>'total')::numeric, 0) - coalesce((e->>'potongan')::numeric, 0) as harap,
-         array(select jsonb_array_elements_text(coalesce(e->'rekening', '[]'::jsonb))) as rekening
+         -- cara bayar uang per rekening (jejak sejak laporan penyesuaian); jejak lama: rekening[]
+         case when jsonb_typeof(e->'cara') = 'array' then array(select c->>'rekening' from jsonb_array_elements(e->'cara') c)
+              else array(select jsonb_array_elements_text(coalesce(e->'rekening', '[]'::jsonb))) end as rekening,
+         jsonb_typeof(e->'cara') = 'array' as ada_cara
   from u cross join lateral jsonb_array_elements(u.baris) e
   where coalesce(e->>'faktur', '') <> '' and e->>'status' <> 'dilewati'
 ),
 lengkap as (select database_id, tanggal from kasir_pelunasan_baca where status = 'lengkap'),
 fk as (
-  select p.database_id, f.nomor_faktur, p.tanggal, split_part(p.nomor, '.', 1) as rek, p.nomor, f.invoice_payment as ip
+  select p.database_id, f.nomor_faktur, p.tanggal, split_part(p.nomor, '.', 1) as rek, p.nomor, f.invoice_payment as ip,
+         exists (select 1 from kasir_pelunasan_faktur n where n.database_id = p.database_id and n.pelunasan_id = p.pelunasan_id
+                 and n.invoice_payment < 0) as ada_retur
   from kasir_pelunasan p
   join kasir_pelunasan_faktur f on f.database_id = p.database_id and f.pelunasan_id = p.pelunasan_id
 ),
@@ -68,7 +74,8 @@ select distinct 'rekening', 'rekening:' || b.database_id || ':' || b.tanggal || 
        b.faktur || ' (' || b.outlet || '): ' || fk.nomor || ' masuk rekening ' || fk.rek || ', berkas: '
          || array_to_string(b.rekening, '/')
 from b join fk on fk.database_id = b.database_id and fk.nomor_faktur = b.faktur and fk.tanggal = b.tanggal and fk.ip > 0
-where cardinality(b.rekening) > 0 and not (fk.rek = any(b.rekening))
+where (b.ada_cara or cardinality(b.rekening) > 0) and not fk.ada_retur and fk.rek <> '110120'
+  and not (fk.rek = any(b.rekening))
 union all
 select 'menunggu', 'menunggu:' || u.database_id || ':' || u.tanggal || ':' || u.nama_berkas,
        u.nama_berkas || ' ' || to_char(u.tanggal, 'DD/MM'),
@@ -76,7 +83,7 @@ select 'menunggu', 'menunggu:' || u.database_id || ':' || u.tanggal || ':' || u.
 from u where not exists (select 1 from lengkap l where l.database_id = u.database_id and l.tanggal = u.tanggal)
 order by 1, 3, 2
 """
-JUDUL = {"kurang": "Belum lunas sesuai berkas", "lebih": "Lebih dari berkas", "rekening": "Rekening tidak sesuai berkas",
+JUDUL = {"kurang": "Belum lunas sesuai berkas", "lebih": "Lebih dari berkas", "rekening": "Laporan penyesuaian — cara bayar di Accurate beda dari berkas",
          "menunggu": "Menunggu cache Accurate"}
 
 
@@ -112,6 +119,8 @@ def tulis(baris, sebelum):
             print(("- BARU " if r["kunci"] not in sebelum else "- ") + f"[{r['berkas']}] {r['pesan']}")
         if len(isi) > MAKS_BARIS:
             print(f"- … dan {len(isi) - MAKS_BARIS} lagi")
+    if per.get("rekening"):
+        print("Rincian & Excel: web-super.online/pelunasan → Laporan penyesuaian")
     beres = [k for k in sebelum if k not in {r["kunci"] for r in baris}]
     if beres:
         print(f"\nSudah beres sejak cek sebelumnya: {len(beres)}")

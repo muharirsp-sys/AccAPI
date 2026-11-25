@@ -199,3 +199,31 @@ test("jejak Hermes: ringkasan per baris berkas (rekening yang diharapkan, status
     assert.equal(bersihkanBarisUnggah([{ ...sesudah[0], status: "hapus" }]), null, "status di luar daftar ditolak");
     assert.equal(bersihkanBarisUnggah({}), null);
 });
+
+test("laporan penyesuaian: hanya uang yang masuk rekening di luar berkas; retur, ayat silang, potongan, dan belum diinput tidak masuk", async () => {
+    const { bandingkanCaraBayar } = await import("./pelunasan-wizard.ts");
+    const b = (faktur: string, cara: Array<{ jenis: "tunai" | "trf" | "bg" | "ppn"; rekening: string; nilai: number }>, retur = 0) => ({
+        baris: 1, outlet: "C-X", faktur, pelanggan: "C-X-MS", tunai: 0, trf: 0, bg: 0, potongan: 0, retur, ppn: 0, total: 0, saldo: null,
+        rekening: cara.map((c) => c.rekening), cara, status: "sudah_di_accurate" as const,
+    });
+    const berkas = [{ nama: "24.xlsx", baris: [
+        b("INV/MS02884", [{ jenis: "tunai", rekening: "110102", nilai: 500000 }]),      // berkas Tunai, Accurate juga Maybank → masuk
+        b("INV/BRI", [{ jenis: "trf", rekening: "110108", nilai: 200000 }]),            // berkas TF BRI, Accurate Maybank → masuk
+        b("INV/COCOK", [{ jenis: "tunai", rekening: "110102", nilai: 100000 }]),        // sesuai → tidak
+        b("INV/RETUR", [], 50000),                                                      // retur di pelunasan Kas ber-RJN → tidak
+        b("INV/BELUM", [{ jenis: "bg", rekening: "110104", nilai: 300000 }]),           // belum ada di Accurate → tidak
+    ] }];
+    const acc = [
+        { faktur: "INV/MS02884", nomor: "110102.2026.11.14000", ip: 500000, adaRetur: false },
+        { faktur: "INV/MS02884", nomor: "110105.2026.11.02120", ip: 500000, adaRetur: false },
+        { faktur: "INV/BRI", nomor: "110105.2026.11.02200", ip: 200000, adaRetur: false },
+        { faktur: "INV/COCOK", nomor: "110102.2026.11.14001", ip: 100000, adaRetur: false },
+        { faktur: "INV/RETUR", nomor: "110102.2026.11.14002", ip: 50000, adaRetur: true },
+        { faktur: "INV/RETUR", nomor: "110120.2026.11.00010", ip: 50000, adaRetur: false },
+    ];
+    const r = bandingkanCaraBayar(berkas, acc);
+    assert.deepEqual(r.map((x) => x.faktur), ["INV/MS02884", "INV/BRI"]);
+    assert.equal(r[1].caraBerkas, "Transfer Rp200.000 → 110108 Bank BRI 0343.0188.8838.566");
+    assert.equal(r[1].caraAccurate, "Rp200.000 → 110105 Bank Maybank 2115003838");
+    assert.equal(r[0].nomorAccurate, "110102.2026.11.14000, 110105.2026.11.02120");
+});

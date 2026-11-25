@@ -301,11 +301,15 @@ export function barisLaporanHasil(kirim: Bebas[], hasil: Array<Pick<BarisHasil, 
 export const STATUS_UNGGAH = ["diproses", "sudah_di_accurate", "perlu_cek", "retur_manual", "dilewati", "terposting", "gagal", "tidak_pasti", "ditahan"] as const;
 export type StatusUnggah = (typeof STATUS_UNGGAH)[number];
 
+export const JENIS_CARA = ["tunai", "trf", "bg", "ppn"] as const;
+/** Cara bayar UANG di berkas: jenis + rekening tujuan (Tunai 110102, TF menurut Ket. Trf, BG 110104, PPN 110118) + nilai. */
+export type CaraBayar = { jenis: (typeof JENIS_CARA)[number]; rekening: string; nilai: number };
+
 /** `rekening` = rekening kas/bank yang WAJAR untuk pelunasan baris ini (uang per jenis; retur = Kas + ayat silang 110120). */
 export type BarisUnggah = {
     baris: number; outlet: string; faktur: string; pelanggan: string;
     tunai: number; trf: number; bg: number; potongan: number; retur: number; ppn: number; total: number; saldo: number | null;
-    rekening: string[]; status: StatusUnggah; detail?: string; nomor?: string[];
+    rekening: string[]; cara: CaraBayar[]; status: StatusUnggah; detail?: string; nomor?: string[];
 };
 
 const STATUS_DILEWATI: Record<string, StatusUnggah> = { SUDAH_DI_ACCURATE: "sudah_di_accurate", PERLU_CEK: "perlu_cek" };
@@ -327,11 +331,12 @@ export function barisUnggah(rows: Bebas[], out: { payload: Bebas[]; manualRows: 
         const potongan = n("Pot.1 Kwtnsi") + n("Pot.2 Kwtnsi") + n("Pot.3 Kwtnsi") + n("Pot.DiscTB") + n("BiayaTrf/BG") + (pl === "klaim" ? potLain : 0);
         const retur = n("Pot.RT Ktr") + n("Pot. RT Gt") + (pl === "retur" ? potLain : 0);
         const ppn = pl === "ppn" ? potLain : 0;
-        const rekening = new Set<string>();
-        if (tunai > 0) rekening.add(akun.tunai);
-        if (trf > 0) { const b = bankTransfer(String(getVal(row, "Ket. Trf") || "")); rekening.add(b ? akun[b] : akun.trf); }
-        if (bg > 0) rekening.add(akun.bg);
-        if (ppn > 0) rekening.add(akun.ppnRetur);
+        const cara: CaraBayar[] = [];
+        if (tunai > 0) cara.push({ jenis: "tunai", rekening: akun.tunai, nilai: bulat(tunai) });
+        if (trf > 0) { const b = bankTransfer(String(getVal(row, "Ket. Trf") || "")); cara.push({ jenis: "trf", rekening: b ? akun[b] : akun.trf, nilai: bulat(trf) }); }
+        if (bg > 0) cara.push({ jenis: "bg", rekening: akun.bg, nilai: bulat(bg) });
+        if (ppn > 0) cara.push({ jenis: "ppn", rekening: akun.ppnRetur, nilai: bulat(ppn) });
+        const rekening = new Set<string>(cara.map((c) => c.rekening));
         if (retur > 0) { rekening.add(akun.tunai); rekening.add("110120"); }
         if (potongan > 0 && tunai + trf + bg === 0) rekening.add(akun.tunai);
         const lw = lewat.get(i + 1);
@@ -341,7 +346,7 @@ export function barisUnggah(rows: Bebas[], out: { payload: Bebas[]; manualRows: 
             baris: i + 1, outlet: getTextVal(row, "Code Outlet"), faktur, pelanggan: pelanggan.get(faktur) ?? "",
             tunai: bulat(tunai), trf: bulat(trf), bg: bulat(bg), potongan: bulat(potongan), retur: bulat(retur), ppn: bulat(ppn),
             total: bulat(tunai + trf + bg + potongan + retur + ppn), saldo: getTextVal(row, "Saldo") ? bulat(n("Saldo")) : null,
-            rekening: [...rekening].filter(Boolean), status, ...(detail ? { detail } : {}),
+            rekening: [...rekening].filter(Boolean), cara: cara.filter((c) => c.rekening), status, ...(detail ? { detail } : {}),
         };
     });
 }
@@ -386,10 +391,64 @@ export function bersihkanBarisUnggah(v: unknown): BarisUnggah[] | null {
             tunai: angkaAman(o.tunai), trf: angkaAman(o.trf), bg: angkaAman(o.bg), potongan: angkaAman(o.potongan), retur: angkaAman(o.retur),
             ppn: angkaAman(o.ppn), total: angkaAman(o.total), saldo: o.saldo === null ? null : angkaAman(o.saldo),
             rekening: Array.isArray(o.rekening) ? o.rekening.slice(0, 8).map((r) => teksAman(r, 20)).filter(Boolean) : [],
+            cara: (Array.isArray(o.cara) ? o.cara.slice(0, 8) : []).filter((c): c is Record<string, unknown> => !!c && typeof c === "object"
+                && JENIS_CARA.includes(c.jenis as CaraBayar["jenis"]) && !!teksAman(c.rekening, 20))
+                .map((c) => ({ jenis: c.jenis as CaraBayar["jenis"], rekening: teksAman(c.rekening, 20), nilai: angkaAman(c.nilai) })),
             status: o.status as StatusUnggah,
             ...(typeof o.detail === "string" ? { detail: teksAman(o.detail, 300) } : {}),
             ...(Array.isArray(o.nomor) ? { nomor: o.nomor.slice(0, 30).map((r) => teksAman(r, 40)).filter(Boolean) } : {}),
         });
+    }
+    return hasil;
+}
+
+// ── Laporan penyesuaian (25 Nov 2026) ────────────────────────────────────────────────────────────────────────────────────────
+// Pemilik: "jika ada yang cara bayarnya berbeda dengan file Excel yang di Accurate, itu masuk di laporan penyesuaian". Pembanding =
+// cache pelunasan Accurate (kasir_pelunasan, dibaca tiap 15 menit), siapa pun yang menginput (sales, admin, menu).
+
+/** Satu baris faktur di pelunasan Accurate tanggal berkas. `adaRetur` = pelunasan itu memuat baris negatif (retur), bukan uang. */
+export type PelunasanAccurate = { faktur: string; nomor: string; ip: number; adaRetur: boolean };
+export type BarisPenyesuaian = {
+    berkas: string; baris: number; outlet: string; faktur: string; pelanggan: string; status: StatusUnggah;
+    caraBerkas: string; caraAccurate: string; nomorAccurate: string;
+};
+
+const NAMA_CARA: Record<CaraBayar["jenis"], string> = { tunai: "Tunai", trf: "Transfer", bg: "BG/Cek", ppn: "PPN retur" };
+const rp = (n: number) => `Rp${Math.round(n).toLocaleString("id-ID")}`;
+const rekNama = (r: string) => `${r}${namaRekening(r) ? ` ${namaRekening(r)}` : ""}`;
+
+/**
+ * Faktur yang UANG-nya di Accurate (tanggal berkas) masuk rekening yang tidak ada di cara bayar berkas. Tidak dihitung: pelunasan berisi
+ * retur (baris negatif), ayat silang 110120, potongan (invoicePayment 0). Faktur yang belum ada uangnya di Accurate tidak masuk (itu
+ * "belum diinput", bukan beda cara bayar). Baris tanpa `cara` (jejak lama) dilewati.
+ */
+export function bandingkanCaraBayar(berkas: Array<{ nama: string; baris: BarisUnggah[] }>, acc: PelunasanAccurate[]): BarisPenyesuaian[] {
+    const uang = new Map<string, Map<string, { nilai: number; nomor: string[] }>>();
+    for (const a of acc) {
+        const rek = a.nomor.split(".")[0];
+        if (!(a.ip > 0) || a.adaRetur || rek === "110120") continue;
+        const per = uang.get(a.faktur) ?? new Map();
+        const x = per.get(rek) ?? { nilai: 0, nomor: [] };
+        x.nilai += a.ip;
+        if (!x.nomor.includes(a.nomor)) x.nomor.push(a.nomor);
+        per.set(rek, x);
+        uang.set(a.faktur, per);
+    }
+    const hasil: BarisPenyesuaian[] = [];
+    for (const f of berkas) {
+        for (const b of f.baris) {
+            const di = uang.get(b.faktur);
+            if (!di || b.status === "dilewati" || !Array.isArray(b.cara)) continue;
+            const harap = new Set(b.cara.map((c) => c.rekening));
+            if ([...di.keys()].every((r) => harap.has(r))) continue;
+            hasil.push({
+                berkas: f.nama, baris: b.baris, outlet: b.outlet, faktur: b.faktur, pelanggan: b.pelanggan, status: b.status,
+                caraBerkas: b.cara.length ? b.cara.map((c) => `${NAMA_CARA[c.jenis]} ${rp(c.nilai)} → ${rekNama(c.rekening)}`).join("; ")
+                    : `tanpa uang (${[b.retur > 0 ? "retur" : "", b.potongan > 0 ? "potongan" : ""].filter(Boolean).join(" + ") || "—"})`,
+                caraAccurate: [...di].map(([r, x]) => `${rp(x.nilai)} → ${rekNama(r)}`).join("; "),
+                nomorAccurate: [...di.values()].flatMap((x) => x.nomor).join(", "),
+            });
+        }
     }
     return hasil;
 }

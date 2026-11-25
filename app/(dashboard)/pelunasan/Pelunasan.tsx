@@ -30,6 +30,7 @@ import { rupiah } from "@/lib/promo-ui";
 import { ALASAN, bacaSesi, namaDatabase, pratinjauKunci, simpanJejak, type Sesi } from "./bersama";
 import { LangkahHasil, LangkahTinjau, type Hasil, type Tinjauan } from "./LangkahKirim";
 import { DaftarTindakan } from "./Selesaikan";
+import { LaporanPenyesuaian } from "./Penyesuaian";
 
 const LANGKAH = ["Jenis", "Unggah", "Akun", "Tinjau", "Hasil"];
 type Berkas = { nama: string; sheet: string; rows: Bebas[]; isi: IsiBerkas; tanggalBerkas: string | null };
@@ -234,6 +235,7 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
                     </div>
                 </Section>
                 <DaftarTindakan izinSelesaikan={izin.selesaikan} izinTakeover={izin.izinkan} sesi={s} sesiMemuat={sesi.status === "memuat"} />
+                <LaporanPenyesuaian />
             </div>
         );
     }
