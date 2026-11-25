@@ -40,10 +40,10 @@ test("isi berkas per jenis: bank transfer dari Ket. Trf (salah ketik Maybank iku
         { "Code Outlet": "PELANGGAN-F", "No. Nota": "INV-6", "Pot.Lain": 50, "Ket.Potong": "RJN/2608/M200134", "Pot.RT Ktr": 5 },
         { "Code Outlet": "", "No. Nota": "" },
     ]);
-    const { baris, jenis } = isiBerkas(rows);
-    assert.equal(baris, 6);
+    const { baris, jenis } = isiBerkas([...rows, ...bersihkanHeader([{ "Code Outlet": "PELANGGAN-G", "No. Nota": "INV-7", Trf: 70, "Ket.Trf": "KELEBIHAN TF (26,024,973) AR TGL 8/4" }])]);
+    assert.equal(baris, 7);
     assert.deepEqual(jenis.trf, { baris: 1, nilai: 1000 });
-    assert.deepEqual(jenis.maybank, { baris: 1, nilai: 500 });
+    assert.deepEqual(jenis.maybank, { baris: 2, nilai: 570 }, "KELEBIHAN TF ikut Maybank (praktik admin)");
     assert.deepEqual(jenis.bg, { baris: 1, nilai: 700 });
     assert.deepEqual(jenis.kwitansi, { baris: 1, nilai: 10 });
     assert.deepEqual([jenis.biayaTrf.nilai, jenis.biayaBg.nilai], [10, 5]);

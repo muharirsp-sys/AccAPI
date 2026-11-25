@@ -51,7 +51,7 @@ export const AKUN_BAWAAN: AkunPelunasan = {
 /** Label + kolom berkas per isian (urutan = urutan tampil di langkah Akun dan ringkasan). */
 export const LABEL_AKUN: Array<{ k: keyof AkunPelunasan; label: string; kolom: string; rekening: boolean }> = [
     { k: "tunai", label: "Tunai", kolom: "Tunai", rekening: true },
-    { k: "maybank", label: "Transfer Maybank", kolom: "Trf, Ket. Trf berisi MAYBANK", rekening: true },
+    { k: "maybank", label: "Transfer Maybank", kolom: "Trf, Ket. Trf berisi MAYBANK atau KELEBIHAN TF", rekening: true },
     { k: "permata", label: "Transfer Permata", kolom: "Trf, Ket. Trf berisi PRMT/PERMATA", rekening: true },
     { k: "bri", label: "Transfer BRI", kolom: "Trf, Ket. Trf berisi BRI", rekening: true },
     { k: "trf", label: "Transfer bank lain", kolom: "Trf, Ket. Trf tanpa bank dikenal", rekening: true },
@@ -68,13 +68,15 @@ export type BankTransfer = "maybank" | "permata" | "bri" | null;
 
 /**
  * Bank tujuan dari Ket. Trf. ponytail: cocok kata, bukan daftar lengkap. Salah ketik nyata di berkas (MAYBAK, MAYABNK, MAY BANK) ikut
- * Maybank lewat awalan "MAY"; bank lain (atau "KELEBIHAN TF") = null → rekening Transfer bank lain dari langkah Akun.
+ * Maybank lewat awalan "MAY". "KELEBIHAN TF … AR TGL …" (kelebihan transfer lama dipakai) = Maybank: praktik admin 8 dari 10 kasus
+ * Sep–Okt 2026 ke 110105 BANK_TRANSFER (keputusan pengguna 25 Nov 2026: ikuti admin). Bank lain = null → rekening Transfer bank lain.
  */
 export function bankTransfer(ket: string): BankTransfer {
     const t = ` ${String(ket || "").toUpperCase()} `;
     if (/\bMAY/.test(t)) return "maybank";
     if (/PRMT|PERMATA/.test(t)) return "permata";
     if (/\bBRI\b/.test(t)) return "bri";
+    if (/KELEBIHAN/.test(t)) return "maybank";
     return null;
 }
 
