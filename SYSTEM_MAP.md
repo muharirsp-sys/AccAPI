@@ -499,6 +499,10 @@ Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConf
      (0046); sesudah Kirim -> PATCH (terapkanHasilUnggah: status + nomor). Hermes (VPS, cron jaga-pelunasan 10/14/17 WITA Sen–Sab,
      docs/hermes/jaga-pelunasan.py, role hermes_ro) mencocokkan dengan kasir_pelunasan(_faktur): kurang/lebih dari berkas, rekening
      tidak sesuai Ket. Trf -> Telegram hanya saat berubah. Hermes TIDAK menulis ke Accurate.
+     Laporan penyesuaian (25 Nov): langkah Jenis /pelunasan (Penyesuaian.tsx) -> GET /api/pelunasan/penyesuaian?tanggal= ->
+     pelunasan_unggah terbaru per berkas + kasir_pelunasan(_faktur) tanggal itu -> bandingkanCaraBayar: uang faktur di Accurate masuk
+     rekening di luar cara bayar berkas (BarisUnggah.cara; retur ber-RJN negatif, ayat silang 110120, potongan tidak dihitung) -> tabel
+     + Excel. Hermes jaga-pelunasan memakai aturan yang sama (judul "Laporan penyesuaian").
   UI (S6e-2b): /pelunasan wizard Jenis -> Unggah -> Akun -> Tinjau -> Hasil (app/(dashboard)/pelunasan/*); pratinjau membaca ulang sesi
      di akhir (database berganti selama pratinjau = dibuang); nomor Hasil = nomor terposting (item r.number / keputusan Selesaikan),
      nomor mirip di kolom Excel terpisah; galat lock dipetakan menurut
@@ -1185,6 +1189,7 @@ AccAPI/_github_clean/
 | `app/api/idempotency/resolve/route.ts` | `GET` | Pratinjau pencarian Selesaikan pelunasan tidak pasti (baca-saja) |
 | `app/api/idempotency/summary/route.ts` | `GET` | Ringkasan pelunasan Tidak pasti / Gagal boleh diulang (Beranda BL-41) |
 | `app/api/pelunasan/unggah/route.ts` | `POST`, `PATCH` | Jejak unggahan Pelunasan per baris berkas (pelunasan_unggah) untuk penjaga Hermes; izin pelunasan.kirim, PATCH hanya pembuat |
+| `app/api/pelunasan/penyesuaian/route.ts` | `GET` | Laporan penyesuaian: faktur yang cara bayarnya di Accurate beda dari berkas (pelunasan_unggah vs kasir_pelunasan); pelunasan.kirim atau finance.view |
 | `lib/fuzzySearch.ts` | `fuzzySearch` | Pencarian fuzzy in-memory fallback |
 | `lib/pdf-text.ts` | `uppercasePageText` | Uppercase teks untuk header PDF |
 | `lib/off-program-control/holidays.ts` | `isHoliday`, `getNextWorkday` | Kalender hari libur untuk kalkulasi deadline |
