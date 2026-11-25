@@ -22,10 +22,12 @@ import { deteksiFormatPelunasan, parsePelunasan } from "@/lib/pelunasan/parser";
 import { pratinjauDuplikat } from "@/lib/pelunasan/pratinjau-ganda";
 import { tanggalKemarin } from "@/lib/pelunasan/payload";
 import { getTextVal, type Bebas } from "@/lib/pelunasan/sel";
-import { AKUN_AWAL, bersihkanHeader, cariBarisHeader, isiBerkas, periksaAkun, petaDari, tanggalLaporan, type Akun, type IsiBerkas } from "@/lib/pelunasan-wizard";
+import {
+    AKUN_AWAL, barisUnggah, bersihkanHeader, cariBarisHeader, isiBerkas, periksaAkun, petaDari, tanggalLaporan, terapkanHasilUnggah, type Akun, type IsiBerkas,
+} from "@/lib/pelunasan-wizard";
 import { LABEL_AKUN, namaRekening } from "@/lib/pelunasan/akun";
 import { rupiah } from "@/lib/promo-ui";
-import { ALASAN, bacaSesi, namaDatabase, pratinjauKunci, type Sesi } from "./bersama";
+import { ALASAN, bacaSesi, namaDatabase, pratinjauKunci, simpanJejak, type Sesi } from "./bersama";
 import { LangkahHasil, LangkahTinjau, type Hasil, type Tinjauan } from "./LangkahKirim";
 import { DaftarTindakan } from "./Selesaikan";
 
@@ -168,10 +170,15 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
                     : !akhir.data.databaseConnected ? "Sesi Accurate berakhir selama pratinjau; pratinjau dibuang."
                         : `Database Accurate berubah selama pratinjau (dari ${namaDatabase(s)} ke ${namaDatabase(akhir.data)}); pratinjau dibuang karena faktur dan riwayat bisa terbaca dari database lain. Ulangi pratinjau.`);
             }
+            // Jejak untuk Hermes (pengecekan berkas vs Accurate): gagal simpan = catatan saja, pratinjau tetap jalan.
+            const jejak = { id: crypto.randomUUID(), baris: barisUnggah(berkas.rows, out, akun) };
+            setMenyiapkan("Menyimpan jejak unggahan untuk pengecekan Hermes…");
+            const galatJejak = await simpanJejak("POST", { id: jejak.id, databaseId: s.databaseId, tanggal, namaBerkas: berkas.nama, baris: jejak.baris });
+            if (galatJejak) peringatan.push(`Jejak unggahan untuk Hermes tidak tersimpan (${galatJejak}); pengecekan otomatis Hermes untuk berkas ini tidak jalan.`);
             setTinjauan({
                 payload: out.payload, manualRows: out.manualRows ?? [], review: cek?.reviewRows ?? [], peringatan,
                 dibaca: out.counts.read, dilewati: out.counts.skipped,
-                databaseId: s.databaseId as string, databaseAlias: s.databaseAlias, tanggal, namaBerkas: berkas.nama, dibuat: Date.now(),
+                databaseId: s.databaseId as string, databaseAlias: s.databaseAlias, tanggal, namaBerkas: berkas.nama, dibuat: Date.now(), jejak,
             });
             setLangkah(3);
         } catch (e) {
@@ -194,7 +201,12 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
                 <LangkahTinjau key={tinjauan.dibuat} tinjauan={tinjauan} sesi={sesi} muatSesi={muatSesi} izin={izin}
                     menyiapkan={menyiapkan} galatSiap={galatSiap} onUlangi={() => void siapkanTinjauan()}
                     onKembali={() => { setTinjauan(null); setLangkah(2); }}
-                    onHasil={(h) => { setHasil(h); setLangkah(4); }} />
+                    onHasil={(h) => {
+                        setHasil(h); setLangkah(4);
+                        // Status & nomor pelunasan per faktur untuk Hermes; gagal hanya dicatat di konsol (hasil kirim sudah final di layar).
+                        void simpanJejak("PATCH", { id: tinjauan.jejak.id, baris: terapkanHasilUnggah(tinjauan.jejak.baris, h.rows, h.kirim, h.ditahan) })
+                            .then((g) => { if (g) console.error("[pelunasan] jejak hasil kirim tidak tersimpan:", g); });
+                    }} />
             </div>
         );
     }

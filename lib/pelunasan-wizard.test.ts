@@ -162,3 +162,40 @@ test("susulan S6e (2b #3): nomor terposting dari item jawaban Accurate; nomor mi
     const r = barisLaporanHasil(["C0", "C1", "C2", "C3", "C4"].map(baris), hasil, ditahan);
     assert.deepEqual(r.map((x) => [x["Nomor Accurate"], x["Nomor mirip"]]), [["PR.1", ""], ["", "PR.MIRIP"], ["PR.9", ""], ["", "PR.SAMA"], ["", ""], ["", "PR.H"]]);
 });
+
+test("jejak Hermes: ringkasan per baris berkas (rekening yang diharapkan, status), status sesudah kirim, validasi badan", async () => {
+    const { barisUnggah, terapkanHasilUnggah, bersihkanBarisUnggah } = await import("./pelunasan-wizard.ts");
+    const rows = bersihkanHeader([
+        { "Code Outlet": "C-A1", "No. Nota": "INV/1", "6_Saldo": 1000, Tunai: 400 },
+        { "Code Outlet": "C-A2", "No. Nota": "INV/2", "6_Saldo": 500, Trf: 490, "Ket.Trf": "TF BRI (490) 1/11", "Biaya Trf/BG": 10 },
+        { "Code Outlet": "C-A3", "No. Nota": "INV/3", "6_Saldo": 300, "Pot.RT Gt": 300, "No.RJS RT Gt": "RJN/2611/X1" },
+        { "Code Outlet": "C-A4", "No. Nota": "INV/4", "6_Saldo": 90, Tunai: 90 },
+    ]);
+    const out = {
+        payload: [
+            { customerNo: "C-A1-SZ", bankNo: "110102", detailInvoice: [{ invoiceNo: "INV/1", paymentAmount: 400 }] },
+            { customerNo: "C-A2-GD", bankNo: "110108", detailInvoice: [{ invoiceNo: "INV/2", paymentAmount: 500 }] },
+        ],
+        manualRows: [{ "Invoice No": "INV/3" }],
+        counts: { skipped: [{ row: 4, reason: "SUDAH_DI_ACCURATE" }] },
+    };
+    const b = barisUnggah(rows, out, AKUN_AWAL);
+    assert.deepEqual(b.map((x) => [x.faktur, x.status, x.rekening.join("+"), x.total, x.pelanggan]), [
+        ["INV/1", "diproses", "110102", 400, "C-A1-SZ"],
+        ["INV/2", "diproses", "110108", 500, "C-A2-GD"],
+        ["INV/3", "retur_manual", "110102+110120", 300, ""],
+        ["INV/4", "sudah_di_accurate", "110102", 90, ""],
+    ]);
+    assert.equal(b[1].potongan, 10);
+    const kirim = out.payload;
+    const sesudah = terapkanHasilUnggah(b, [
+        { index: 0, outcome: "terposting", item: { r: { number: "110102.2026.11.00001" } } },
+        { index: 1, outcome: "tidak_pasti" },
+    ], kirim, []);
+    assert.deepEqual(sesudah.map((x) => [x.status, x.nomor ?? []]), [
+        ["terposting", ["110102.2026.11.00001"]], ["tidak_pasti", []], ["retur_manual", []], ["sudah_di_accurate", []],
+    ]);
+    assert.deepEqual(bersihkanBarisUnggah(JSON.parse(JSON.stringify(sesudah))), sesudah, "bentuk sah lolos utuh");
+    assert.equal(bersihkanBarisUnggah([{ ...sesudah[0], status: "hapus" }]), null, "status di luar daftar ditolak");
+    assert.equal(bersihkanBarisUnggah({}), null);
+});

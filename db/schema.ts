@@ -2753,3 +2753,21 @@ export const kasirPelunasanBaca = pgTable("kasir_pelunasan_baca", {
         AND (${t.status} <> 'lengkap' OR (coalesce(${t.sisaDetail}, -1) = 0 AND ${t.jumlahDaftar} IS NOT NULL
             AND ${t.ditolak} = '[]'::jsonb AND ${t.lengkapPada} IS NOT NULL))`),
 ]);
+
+// Jejak unggahan Pelunasan (25 Nov 2026): satu baris per pratinjau berkas di /pelunasan, `baris` = ringkasan per baris berkas
+// (faktur, nominal per jenis, rekening yang diharapkan, status, nomor pelunasan) — lib/pelunasan-wizard barisUnggah. Dibaca Hermes
+// (role hermes_ro, skrip jaga-pelunasan) untuk mencocokkan berkas dengan cache pelunasan Accurate (kasir_pelunasan). Bukan sumber
+// kebenaran Accurate; tanpa hapus (accapi_app SELECT/INSERT/UPDATE). Lihat db/migrations/0046_pelunasan_unggah.sql.
+export const pelunasanUnggah = pgTable("pelunasan_unggah", {
+    id: text("id").primaryKey(),
+    databaseId: text("database_id").notNull(),
+    tanggal: date("tanggal").notNull(),
+    namaBerkas: text("nama_berkas").notNull(),
+    dibuatOleh: text("dibuat_oleh").notNull(),
+    dibuatPada: timestamp("dibuat_pada", { withTimezone: true }).notNull().defaultNow(),
+    dikirimPada: timestamp("dikirim_pada", { withTimezone: true }),
+    baris: jsonb("baris").notNull(),
+}, (t) => [
+    index("idx_pelunasan_unggah_tanggal").on(t.databaseId, t.tanggal),
+    check("pelunasan_unggah_baris_array", sql`jsonb_typeof(${t.baris}) = 'array'`),
+]);

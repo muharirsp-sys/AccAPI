@@ -1297,6 +1297,36 @@ export const migrations = [
       RESET lock_timeout;
     `,
   },
+  {
+    // 2026-11-25 (jejak unggahan Pelunasan untuk Hermes, pemilik; zona §3 skema — butuh review manusia). EXPAND: tabel baru
+    // pelunasan_unggah (ringkasan per baris berkas + status + nomor pelunasan; POST/PATCH /api/pelunasan/unggah, dibaca hermes_ro).
+    // SQL = db/migrations/0046. Tanpa DATABASE_MIGRATION_URL jalankan berkas itu sebagai owner SEBELUM image.
+    nama: "pelunasan unggah",
+    sudahAda: `SELECT 1 WHERE to_regclass('pelunasan_unggah') IS NOT NULL
+               AND EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_pelunasan_unggah_tanggal')`,
+    sql: `
+      SET lock_timeout = '5s';
+      CREATE TABLE IF NOT EXISTS pelunasan_unggah (
+          id            text PRIMARY KEY,
+          database_id   text NOT NULL,
+          tanggal       date NOT NULL,
+          nama_berkas   text NOT NULL,
+          dibuat_oleh   text NOT NULL,
+          dibuat_pada   timestamptz NOT NULL DEFAULT now(),
+          dikirim_pada  timestamptz,
+          baris         jsonb NOT NULL,
+          CONSTRAINT pelunasan_unggah_baris_array CHECK (jsonb_typeof(baris) = 'array')
+      );
+      CREATE INDEX IF NOT EXISTS idx_pelunasan_unggah_tanggal ON pelunasan_unggah (database_id, tanggal);
+      DO $pu$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
+          REVOKE DELETE, TRUNCATE ON pelunasan_unggah FROM accapi_app;
+          GRANT SELECT, INSERT, UPDATE ON pelunasan_unggah TO accapi_app;
+        END IF;
+      END $pu$;
+      RESET lock_timeout;
+    `,
+  },
 ];
 
 async function main() {

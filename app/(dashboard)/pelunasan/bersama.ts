@@ -37,6 +37,21 @@ export async function postJson(url: string, body: unknown): Promise<{ status: nu
     return { status: res.status, data };
 }
 
+/**
+ * Jejak unggahan untuk Hermes (POST saat pratinjau, PATCH sesudah Kirim; app/api/pelunasan/unggah). Tidak pernah melempar: gagal =
+ * pesan (ditampilkan sebagai catatan), Pelunasan tetap jalan — jejak hanya bahan pengecekan Hermes, bukan syarat kirim.
+ */
+export async function simpanJejak(method: "POST" | "PATCH", body: unknown): Promise<string | null> {
+    try {
+        const res = await fetch("/api/pelunasan/unggah", { method, credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        if (res.ok) return null;
+        const j = await res.json().catch(() => null);
+        return typeof j?.error === "string" ? j.error : `HTTP ${res.status}`;
+    } catch (e) {
+        return e instanceof Error ? e.message : "koneksi putus";
+    }
+}
+
 /** Pratinjau lock (tidak menulis). Ditolak/tidak terjawab = melempar: cek ganda wajib terbaca sebelum Tinjau bisa dikirim. */
 export async function pratinjauKunci(keys: unknown[]) {
     const j = await ambilJson("/api/idempotency/lock", {

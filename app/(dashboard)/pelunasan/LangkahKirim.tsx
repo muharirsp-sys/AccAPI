@@ -25,7 +25,7 @@ import { memuatPlaceholderAkun } from "@/lib/sales-receipt-upload";
 import { rupiah } from "@/lib/promo-ui";
 import {
     KODE_DISELESAIKAN, LABEL_ALASAN, LABEL_DILEWATI, LABEL_HASIL, barisLaporanHasil, butuhTakeover, fakturDari, hitungHasil, nilaiUang, nomorTerposting, paketDari, rencanaKirim,
-    ringkasKelompok, terapkanPenyelesaian, type BarisKelompok, type Penyelesaian,
+    ringkasKelompok, terapkanPenyelesaian, type BarisKelompok, type BarisUnggah, type Penyelesaian,
 } from "@/lib/pelunasan-wizard";
 import { waktuWita } from "@/app/(dashboard)/principal-order/bersama";
 import { ALASAN, bacaSesi, namaDatabase, postJson, tanggalTampil, unduhExcel, type Sesi } from "./bersama";
@@ -39,6 +39,8 @@ export type Tinjauan = {
     databaseId: string; databaseAlias: string | null; tanggal: string; namaBerkas: string;
     /** Penanda pratinjau (Date.now()): pratinjau ulang = pilihan izin lama dibuang. */
     dibuat: number;
+    /** Jejak unggahan untuk Hermes (tabel pelunasan_unggah): id + ringkasan per baris berkas. */
+    jejak: { id: string; baris: BarisUnggah[] };
 };
 export type Hasil = { rows: BarisHasil[]; kirim: Bebas[]; ditahan: DuplicateReviewEntry[]; selesai: string; paket: number; terputus?: boolean };
 type Izin = { kirim: boolean; izinkan: boolean; selesaikan: boolean };

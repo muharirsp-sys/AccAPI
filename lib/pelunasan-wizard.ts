@@ -293,3 +293,103 @@ export function barisLaporanHasil(kirim: Bebas[], hasil: Array<Pick<BarisHasil, 
         })),
     ];
 }
+
+// ── Jejak unggahan untuk Hermes (25 Nov 2026) ───────────────────────────────────────────────────────────────────────────────
+// Satu objek per baris berkas: nominal per jenis + rekening yang diharapkan + status. Disimpan POST/PATCH /api/pelunasan/unggah
+// (tabel pelunasan_unggah) dan dibaca skrip Hermes jaga-pelunasan untuk dicocokkan dengan cache pelunasan Accurate (kasir_pelunasan).
+
+export const STATUS_UNGGAH = ["diproses", "sudah_di_accurate", "perlu_cek", "retur_manual", "dilewati", "terposting", "gagal", "tidak_pasti", "ditahan"] as const;
+export type StatusUnggah = (typeof STATUS_UNGGAH)[number];
+
+/** `rekening` = rekening kas/bank yang WAJAR untuk pelunasan baris ini (uang per jenis; retur = Kas + ayat silang 110120). */
+export type BarisUnggah = {
+    baris: number; outlet: string; faktur: string; pelanggan: string;
+    tunai: number; trf: number; bg: number; potongan: number; retur: number; ppn: number; total: number; saldo: number | null;
+    rekening: string[]; status: StatusUnggah; detail?: string; nomor?: string[];
+};
+
+const STATUS_DILEWATI: Record<string, StatusUnggah> = { SUDAH_DI_ACCURATE: "sudah_di_accurate", PERLU_CEK: "perlu_cek" };
+
+/** Ringkasan per baris berkas dari hasil parsePelunasan (pratinjau). `rows` = baris berkas ASLI yang sama yang diberikan ke parse. */
+export function barisUnggah(rows: Bebas[], out: { payload: Bebas[]; manualRows: Bebas[] | null; counts: { skipped: Array<{ row: number; reason: string; detail?: string }> } },
+    akun: Akun): BarisUnggah[] {
+    const lewat = new Map(out.counts.skipped.map((d) => [d.row, d]));
+    const manual = new Set((out.manualRows ?? []).map((m) => String(m["Invoice No"] ?? "")));
+    const pelanggan = new Map<string, string>();
+    for (const r of out.payload) for (const d of (r.detailInvoice ?? []) as Bebas[]) if (Number(d.paymentAmount) > 0 && !pelanggan.has(String(d.invoiceNo))) pelanggan.set(String(d.invoiceNo), String(r.customerNo ?? ""));
+    const bulat = (n: number) => Math.round(n * 100) / 100;
+    return rows.map((row, i) => {
+        const n = (k: string) => nominal(row, k);
+        const faktur = getTextVal(row, "No. Nota");
+        const potLain = n("Pot. Lain");
+        const pl = potLain > 0 ? jenisPotLain(getTextVal(row, "Ket. Pot")) : null;
+        const tunai = n("Tunai"), trf = n("Trf"), bg = n("BG");
+        const potongan = n("Pot.1 Kwtnsi") + n("Pot.2 Kwtnsi") + n("Pot.3 Kwtnsi") + n("Pot.DiscTB") + n("BiayaTrf/BG") + (pl === "klaim" ? potLain : 0);
+        const retur = n("Pot.RT Ktr") + n("Pot. RT Gt") + (pl === "retur" ? potLain : 0);
+        const ppn = pl === "ppn" ? potLain : 0;
+        const rekening = new Set<string>();
+        if (tunai > 0) rekening.add(akun.tunai);
+        if (trf > 0) { const b = bankTransfer(String(getVal(row, "Ket. Trf") || "")); rekening.add(b ? akun[b] : akun.trf); }
+        if (bg > 0) rekening.add(akun.bg);
+        if (ppn > 0) rekening.add(akun.ppnRetur);
+        if (retur > 0) { rekening.add(akun.tunai); rekening.add("110120"); }
+        if (potongan > 0 && tunai + trf + bg === 0) rekening.add(akun.tunai);
+        const lw = lewat.get(i + 1);
+        const status: StatusUnggah = lw ? (STATUS_DILEWATI[lw.reason] ?? "dilewati") : manual.has(faktur) ? "retur_manual" : "diproses";
+        const detail = lw ? (lw.detail ?? LABEL_DILEWATI[lw.reason] ?? lw.reason) : undefined;
+        return {
+            baris: i + 1, outlet: getTextVal(row, "Code Outlet"), faktur, pelanggan: pelanggan.get(faktur) ?? "",
+            tunai: bulat(tunai), trf: bulat(trf), bg: bulat(bg), potongan: bulat(potongan), retur: bulat(retur), ppn: bulat(ppn),
+            total: bulat(tunai + trf + bg + potongan + retur + ppn), saldo: getTextVal(row, "Saldo") ? bulat(n("Saldo")) : null,
+            rekening: [...rekening].filter(Boolean), status, ...(detail ? { detail } : {}),
+        };
+    });
+}
+
+/** Urutan "lebih buruk" bila satu faktur ada di beberapa pelunasan (Tunai + retur + ayat silang): tidak pasti > gagal > ditahan > terposting. */
+const PERINGKAT: Partial<Record<StatusUnggah, number>> = { terposting: 1, ditahan: 2, gagal: 3, tidak_pasti: 4 };
+const KE_STATUS: Record<HasilKirim, StatusUnggah> = { terposting: "terposting", gagal: "gagal", tidak_pasti: "tidak_pasti", ditahan: "ditahan" };
+
+/** Status per faktur sesudah Kirim (+ nomor pelunasan terposting). Baris retur_manual tetap retur_manual kecuali kirimannya gagal/tidak pasti. */
+export function terapkanHasilUnggah(baris: BarisUnggah[], hasil: Array<Pick<BarisHasil, "index" | "outcome" | "code" | "receiptNumbers" | "item">>, kirim: Bebas[],
+    ditahan: Array<Pick<DuplicateReviewEntry, "row">>): BarisUnggah[] {
+    const per = new Map<string, { status: StatusUnggah; nomor: string[] }>();
+    const catat = (faktur: string, status: StatusUnggah, nomor: string[]) => {
+        const a = per.get(faktur) ?? { status, nomor: [] };
+        if ((PERINGKAT[status] ?? 0) > (PERINGKAT[a.status] ?? 0)) a.status = status;
+        a.nomor.push(...nomor.filter((x) => !a.nomor.includes(x)));
+        per.set(faktur, a);
+    };
+    for (const h of hasil) for (const f of fakturDari(kirim[h.index] ?? {})) catat(f, KE_STATUS[h.outcome], nomorTerposting(h));
+    for (const r of ditahan) for (const f of fakturDari(r.row)) catat(f, "ditahan", []);
+    return baris.map((b) => {
+        const p = per.get(b.faktur);
+        if (!p || (b.status !== "diproses" && b.status !== "retur_manual")) return b;
+        const status = b.status === "retur_manual" && (PERINGKAT[p.status] ?? 0) <= 2 ? "retur_manual" : p.status;
+        return { ...b, status, ...(p.nomor.length ? { nomor: p.nomor } : {}) };
+    });
+}
+
+const teksAman = (v: unknown, maks: number) => (typeof v === "string" ? v.slice(0, maks) : "");
+const angkaAman = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/** Validasi badan POST/PATCH (batas kepercayaan): bentuk BarisUnggah[], ≤ 5000 baris, teks dipotong; selain itu null. */
+export function bersihkanBarisUnggah(v: unknown): BarisUnggah[] | null {
+    if (!Array.isArray(v) || v.length > 5000) return null;
+    const hasil: BarisUnggah[] = [];
+    for (const x of v) {
+        if (!x || typeof x !== "object") return null;
+        const o = x as Record<string, unknown>;
+        if (!STATUS_UNGGAH.includes(o.status as StatusUnggah)) return null;
+        hasil.push({
+            baris: Math.trunc(angkaAman(o.baris)), outlet: teksAman(o.outlet, 40), faktur: teksAman(o.faktur, 60), pelanggan: teksAman(o.pelanggan, 40),
+            tunai: angkaAman(o.tunai), trf: angkaAman(o.trf), bg: angkaAman(o.bg), potongan: angkaAman(o.potongan), retur: angkaAman(o.retur),
+            ppn: angkaAman(o.ppn), total: angkaAman(o.total), saldo: o.saldo === null ? null : angkaAman(o.saldo),
+            rekening: Array.isArray(o.rekening) ? o.rekening.slice(0, 8).map((r) => teksAman(r, 20)).filter(Boolean) : [],
+            status: o.status as StatusUnggah,
+            ...(typeof o.detail === "string" ? { detail: teksAman(o.detail, 300) } : {}),
+            ...(Array.isArray(o.nomor) ? { nomor: o.nomor.slice(0, 30).map((r) => teksAman(r, 40)).filter(Boolean) } : {}),
+        });
+    }
+    return hasil;
+}
