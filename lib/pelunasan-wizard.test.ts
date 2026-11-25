@@ -71,6 +71,7 @@ test("ringkasan kelompok: rekening uang, potongan per akun, retur negatif, ayat 
     assert.deepEqual([cari("Potongan")?.akun, cari("Potongan")?.nilai], ["600126", 10]);
     assert.deepEqual([cari("Retur (baris negatif)")?.baris, cari("Retur (baris negatif)")?.nilai], [1, 50]);
     assert.deepEqual([cari("Ayat silang · sisi faktur")?.nilai, cari("Ayat silang · sisi retur")?.nilai], [30, -30]);
+    assert.deepEqual([cari("Ayat silang · sisi faktur")?.baris, cari("Ayat silang · sisi retur")?.baris], [1, 1]);
 });
 
 const row = (customerNo: string, invoiceNo: string, amount: number) => ({ customerNo, transDate: "09/10/2026", paymentMethod: "CASH_OTHER", chequeAmount: amount, detailInvoice: [{ invoiceNo, paymentAmount: amount, detailDiscount: [] }] });

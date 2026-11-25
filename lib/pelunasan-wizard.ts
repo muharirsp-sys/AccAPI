@@ -148,7 +148,8 @@ export function ringkasKelompok(rows: Bebas[]): BarisKelompok[] {
         const kelompok = bank === "110120" ? (uang < 0 ? "Ayat silang · sisi retur" : "Ayat silang · sisi faktur")
             : pm === "OTHERS" ? (bank === AKUN_BAWAAN.ppnRetur ? "PPN retur" : "Tanpa uang (retur/potongan)")
                 : METODE_KELOMPOK[pm] ?? pm;
-        tambah(`U|${bank}|${kelompok}`, kelompok, bank, 1, faktur.filter((d) => Number(d.paymentAmount) > 0).length, uang);
+        // Sisi retur ayat silang hanya berisi baris negatif; selebihnya yang dihitung baris faktur (positif).
+        tambah(`U|${bank}|${kelompok}`, kelompok, bank, 1, faktur.filter((d) => (uang < 0 ? Number(d.paymentAmount) < 0 : Number(d.paymentAmount) > 0)).length, uang);
         if (bank === "110120") continue;
         for (const d of faktur) {
             if (Number(d.paymentAmount) < 0) tambah("R", "Retur (baris negatif)", "", 0, 1, -Number(d.paymentAmount));
