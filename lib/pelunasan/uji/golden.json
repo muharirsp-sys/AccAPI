@@ -1737,7 +1737,7 @@
       {
         "Invoice No": "INV/2610/XX00081",
         "Code Outlet": "PLG-H-001",
-        "Referensi Retur/Pot.Lain": "",
+        "Referensi Retur/Pot.Lain": "SRB 2610.0081",
         "Nominal SRB Belum Diproses": 25000,
         "Nominal RJS Belum Diproses": 0,
         "Tunai Tetap Diproses": 250000,
@@ -1758,7 +1758,7 @@
       ],
       [
         "warning",
-        "1 baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: INV/2610/XX00081 []"
+        "1 baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: INV/2610/XX00081 [SRB 2610.0081]"
       ],
       [
         "success",

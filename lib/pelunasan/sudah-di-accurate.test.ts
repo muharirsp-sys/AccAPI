@@ -32,6 +32,23 @@ test("sudah di Accurate: hanya baris yang belum diinput yang dikirim; sisanya di
     assert.deepEqual(e.detailDiscount, [{ amount: 16061.07 - 16062.4, accountNo: "600136" }]);
 });
 
+test("NKA: sisa RJN di Accurate lebih kecil dari retur di berkas → yang ada dipakai, kekurangannya masuk retur manual (putar ulang 23NKA)", () => {
+    // Faktur Rp33.982.123 = TF Rp8.356.714 + retur Rp25.625.409, tetapi RJN di daftar berkas hanya bersisa Rp57.043 (pelanggan/divisi lain).
+    const rows = [{ "Code Outlet": "C-AL0063", "No. Nota": "INV/2608/M101032", "Trf": 8356714, "Ket. Trf": "TF MAYBANK (1) 23/10", "Pot. RT Gt": 25625409, "No.RJS RT Gt": "RJN/2609/M100201,M200073" }];
+    const returMap = new Map<string, Record<string, unknown>>([["DOC|RJN/2609/M100201,M200073", {
+        isArray: true, number: "RJN/2609/M100201", outstanding: 57043, customerNo: "C-AL0063-M2",
+        returns: [{ number: "RJN/2609/M200073", primeOwing: 57043, customer: { customerNo: "C-AL0063-M2" }, branch: { id: 2, name: "MIX FOOD 2" } }],
+    }]]);
+    const invoiceBranchMap = new Map<string, Record<string, unknown>>([["INV/2608/M101032", { customerNo: "C-AL0063-M1", branchId: 1, outstanding: 33982123 }]]);
+    const out = alokasikan(rows, { trxDate: "2026-10-23", peta: PETA, returMap, invoiceBranchMap, invoiceLookupDebugMap: new Map() });
+    assert.equal(out.unresolvedReturWarnings.length, 1, "dulu: kekurangan Rp25,57 jt hilang tanpa peringatan");
+    assert.equal(out.unresolvedReturWarnings[0].unresolvedRjsAmt, 25625409 - 57043);
+    assert.deepEqual(out.unresolvedReturWarnings[0].refs, ["RJN/2609/M100201,M200073"]);
+    const docs = [...out.groupedMap.values(), ...out.ayatSilangDocs];
+    assert.equal(docs.find((d) => d.bankNo === "110105")?.chequeAmount, 8356714, "transfer tetap utuh");
+    assert.deepEqual(out.ayatSilangDocs.map((d) => d.chequeAmount), [57043, -57043], "retur yang ada tetap dipakai lewat ayat silang");
+});
+
 test("retur ketemu tetapi sudah habis terpakai: tidak ada pelunasan sampah berisi selisih saja, masuk retur manual (uji kering 24 Nov)", () => {
     // INV/2611/KN00063: Pot. Lain RJN/2611/KN00158 Rp364.600,47, sisa faktur Rp364.600, retur di Accurate sudah terpakai (sisa 0).
     const rows = [{ "Code Outlet": "C-RAN772", "No. Nota": "INV/2611/KN00063", "Pot. Lain": 364600.4687, "Ket. Pot": "RJN/2611/KN00158" }];

@@ -77,6 +77,9 @@ function kapasitasRetur(returMap: Map<string, Bebas>, customerNo: string, desc: 
     if (Math.abs(amt - retOut) <= TOLERANSI_SELISIH) { r.avail = retOut; r.kompensasi = retOut - amt; }
     else if (retOut < 0.01) r.avail = amt; // ANTI-GHOSTING RETUR: jangan bunuh baris bila API membaca retur sudah lunas
     else r.avail = Math.min(amt, retOut);
+    // Sisa retur di Accurate lebih kecil dari nilai di berkas (sebagian sudah terpakai): kekurangannya dilaporkan, bukan hilang diam-diam.
+    // Bukti putar ulang 23NKA (Alfamart, 542 RJN): faktur M101032 retur Rp25,6 jt, sisa RJN-nya di Accurate Rp57 rb, tanpa peringatan.
+    if (amt - r.avail > TOLERANSI_SELISIH) r.unresolved = amt - r.avail;
     return r;
 }
 
@@ -286,7 +289,7 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
                 unresolvedReturWarnings.push({
                     invoiceNo: invNo,
                     customerNo,
-                    refs: [srb.number === "NOT_FOUND" ? srbDesc : "", rjs.number === "NOT_FOUND" ? rjsDesc : ""].filter(Boolean) as string[],
+                    refs: [srb.unresolved > 0 ? srbDesc : "", rjs.unresolved > 0 ? rjsDesc : ""].filter(Boolean) as string[],
                     unresolvedSrbAmt: srb.unresolved,
                     unresolvedRjsAmt: rjs.unresolved,
                     tunaiAmt, trfAmt, bgAmt, biayaBg,
