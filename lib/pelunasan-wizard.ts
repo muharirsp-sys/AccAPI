@@ -29,8 +29,10 @@ const rapat = (v: unknown) => String(v ?? "").toUpperCase().replace(/[^A-Z0-9]/g
  */
 const KOLOM_MESIN = ["Code Outlet", "No. Nota", "Tunai", "Trf", "Ket. Trf", "BG", "Ket.BG", "Pot.DiscTB", "Pot.1 Kwtnsi", "Pot.2 Kwtnsi",
     "Pot.3 Kwtnsi", "Ket Kwitansi", "BiayaTrf/BG", "Pot.RT Ktr", "No.SRB Rt Ktr", "Pot. RT Gt", "No.RJS RT Gt", "Pot. Lain", "Ket. Pot",
-    "Ket. All Trx", "Total Pot", "Total.Trx"];
-const ALIAS_KOLOM = new Map<string, string>([...KOLOM_MESIN.map((k) => [rapat(k), k] as [string, string]), ["KETTF", "Ket. Trf"], ["KETPOTONG", "Ket. Pot"]]);
+    "Ket. All Trx", "Total Pot", "Total.Trx", "Saldo", "Sisa"];
+const ALIAS_KOLOM = new Map<string, string>([...KOLOM_MESIN.map((k) => [rapat(k), k] as [string, string]), ["KETTF", "Ket. Trf"], ["KETPOTONG", "Ket. Pot"],
+    // Form Kerja Inc: "6_Saldo" = sisa piutang sebelum baris ini, "6_Sisa" = sesudahnya (dipakai cek "sudah diinput di Accurate").
+    ["6SALDO", "Saldo"], ["6SISA", "Sisa"]]);
 
 /** Header "(*wajib)" dibuang (sama dengan Konsol AOL) dan nama kolom disamakan ke nama yang dibaca mesin. */
 export const bersihkanHeader = (rows: Bebas[]): Bebas[] => rows.map((row) => {
@@ -214,6 +216,8 @@ export const LABEL_DILEWATI: Record<string, string> = {
     KODE_OUTLET_KOSONG: "Code Outlet kosong",
     TANPA_NOMINAL: "Tanpa nominal (Tunai, Trf, BG, retur, dan potongan kosong)",
     FAKTUR_TIDAK_DITEMUKAN: "No. Nota tidak ditemukan di Accurate (pasti ditolak bila dikirim)",
+    SUDAH_DI_ACCURATE: "Sudah diinput di Accurate (sales/admin): sisa piutang = saldo berkas − bayar",
+    PERLU_CEK: "Perlu dicek: sisa piutang Accurate tidak sama dengan saldo berkas maupun sesudah bayar",
 };
 
 export const LABEL_HASIL: Record<HasilKirim, { label: string; tone: "pos" | "neg" | "warn" }> = {

@@ -34,7 +34,7 @@ import { KOSONG } from "@/lib/tampil";
 
 export type Tinjauan = {
     payload: Bebas[]; manualRows: Bebas[]; review: DuplicateReviewEntry[]; peringatan: string[];
-    dibaca: number; dilewati: Array<{ row: number; reason: string }>;
+    dibaca: number; dilewati: Array<{ row: number; reason: string; invoiceNo?: string; detail?: string }>;
     /** Database yang dipakai pratinjau = database yang ditampilkan di dialog dan dikirim sebagai expectedDatabaseId. */
     databaseId: string; databaseAlias: string | null; tanggal: string; namaBerkas: string;
     /** Penanda pratinjau (Date.now()): pratinjau ulang = pilihan izin lama dibuang. */
@@ -97,6 +97,10 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
 
     const rencana = useMemo(() => rencanaKirim(t.payload, t.review, diizinkan), [t, diizinkan]);
     const kelompok = useMemo(() => ringkasKelompok(rencana.kirim), [rencana.kirim]);
+    // Baris yang sudah diinput sales/admin di Accurate tidak dikirim; yang sisa piutangnya bergerak lain ditahan untuk dicek.
+    const sudahDiAccurate = t.dilewati.filter((d) => d.reason === "SUDAH_DI_ACCURATE");
+    const perluCek = t.dilewati.filter((d) => d.reason === "PERLU_CEK");
+    const dilewatiLain = t.dilewati.filter((d) => d.reason !== "SUDAH_DI_ACCURATE" && d.reason !== "PERLU_CEK");
     const ganda = t.review.filter((r) => !r.recommended);
     const nKirim = rencana.kirim.length;
     const nPaket = Math.ceil(nKirim / UKURAN_PAKET);
@@ -218,9 +222,28 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
                 <div className="fi-kc"><span>Dibaca</span><b>{t.dibaca}</b><small>baris berkas</small></div>
                 <div className="fi-kc" data-tone="pos"><span>Siap kirim</span><b>{nKirim}</b><small>{rupiah(uang)}</small></div>
                 <div className="fi-kc" data-tone={rencana.ditahan.length ? "warn" : undefined}><span>Potensi ganda</span><b>{ganda.length}</b><small>{rencana.ditahan.length} ditahan{rencana.izin.length ? ` · ${rencana.izin.length} diizinkan` : ""}</small></div>
+                <div className="fi-kc"><span>Sudah di Accurate</span><b>{sudahDiAccurate.length}</b><small>diinput sales/admin, tidak dikirim</small></div>
+                <div className="fi-kc" data-tone={perluCek.length ? "warn" : undefined}><span>Perlu cek</span><b>{perluCek.length}</b><small>sisa piutang berbeda</small></div>
                 <div className="fi-kc"><span>Retur manual</span><b>{t.manualRows.length}</b><small>dipisah ke Excel</small></div>
-                <div className="fi-kc" data-tone={t.dilewati.length ? "warn" : undefined}><span>Dilewati</span><b>{t.dilewati.length}</b><small>saat dibaca</small></div>
+                <div className="fi-kc" data-tone={dilewatiLain.length ? "warn" : undefined}><span>Dilewati</span><b>{dilewatiLain.length}</b><small>saat dibaca</small></div>
             </div>
+
+            {perluCek.length > 0 && (
+                <Section title="Perlu dicek di Accurate" subtitle="tidak dikirim: sisa piutang di Accurate tidak sama dengan saldo berkas maupun sesudah bayar">
+                    <div className="fi-sect-in">
+                        <p className="fi-small">Biasanya sebagian baris sudah diinput (mis. transfer sudah, retur belum), atau ada pembayaran lain untuk faktur yang sama.
+                            Selesaikan di Accurate secara manual.</p>
+                        <ul className="fi-small" style={{ listStyle: "disc", paddingLeft: "2rem" }}>
+                            {perluCek.slice(0, 50).map((d) => <li key={`${d.row}-${d.invoiceNo}`}>Baris {d.row} · <b className="fi-mono">{d.invoiceNo}</b>: {d.detail}</li>)}
+                            {perluCek.length > 50 && <li>… dan {perluCek.length - 50} baris lain (lihat Excel)</li>}
+                        </ul>
+                        <Button icon={<Download className="fi-icon" aria-hidden />}
+                            onClick={() => void unduhExcel(perluCek.map((d) => ({ "Baris": d.row, "No. Nota": d.invoiceNo ?? "", "Keterangan": d.detail ?? "" })), "Perlu Cek", "Pelunasan_Perlu_Cek")}>
+                            {perluCek.length} baris perlu cek (Excel)
+                        </Button>
+                    </div>
+                </Section>
+            )}
 
             {ganda.length > 0 && (
                 <Section title="Potensi ganda" subtitle="kunci aplikasi dan kemiripan riwayat Accurate">
@@ -249,11 +272,11 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
                 </Section>
             )}
 
-            {t.dilewati.length > 0 && (
+            {dilewatiLain.length > 0 && (
                 <Section title="Dilewati saat dibaca" subtitle="tidak dikirim">
                     <ul className="fi-sect-in fi-small" style={{ listStyle: "disc", paddingLeft: "2rem" }}>
-                        {t.dilewati.slice(0, 20).map((d) => <li key={`${d.row}-${d.reason}`}>Baris {d.row}: {LABEL_DILEWATI[d.reason] ?? d.reason}</li>)}
-                        {t.dilewati.length > 20 && <li>… dan {t.dilewati.length - 20} baris lain</li>}
+                        {dilewatiLain.slice(0, 20).map((d) => <li key={`${d.row}-${d.reason}`}>Baris {d.row}{d.invoiceNo ? ` · ${d.invoiceNo}` : ""}: {LABEL_DILEWATI[d.reason] ?? d.reason}</li>)}
+                        {dilewatiLain.length > 20 && <li>… dan {dilewatiLain.length - 20} baris lain</li>}
                     </ul>
                 </Section>
             )}

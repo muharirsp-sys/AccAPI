@@ -10,7 +10,9 @@
  *     pasangan ayat silang 110120 dan nilai retur TIDAK lagi ikut dibayar di pelunasan utama (dulu faktur terbayar dua kali);
  *   - Pot. Lain: RJN/SRT = retur (seperti dulu), PPN = pelunasan terpisah rekening PPN retur, lainnya = potongan akun Pot. Lain
  *     (dulu Pot. Lain non-retur diabaikan diam-diam);
- *   - faktur yang PASTI tidak ada di Accurate dilewati (FAKTUR_TIDAK_DITEMUKAN), bukan dikirim untuk ditolak.
+ *   - faktur yang PASTI tidak ada di Accurate dilewati (FAKTUR_TIDAK_DITEMUKAN), bukan dikirim untuk ditolak;
+ *   - baris yang SUDAH diinput di Accurate (oleh sales/admin; sisa piutang = Saldo − bayar) dilewati, yang sisa piutangnya bergerak lain
+ *     ditahan PERLU_CEK — hanya yang belum diinput yang dikirim (butuh kolom Saldo, ada di Form Kerja Inc).
  *   Urutan alokasi per baris tetap: Potongan → Retur → Uang; batas atas = Total.Trx (atau jumlah kolom) dan sisa piutang Accurate.
  * Caller: lib/pelunasan/parser.ts (parsePelunasan).
  * Main Functions: alokasikan.
@@ -31,8 +33,15 @@ export type PetaAkun = {
     mapPotLainAccount?: string; mapBiayaTrfAccount?: string; mapBiayaBgAccount?: string; mapSelisihAccount?: string;
 };
 
-/** Baris Excel yang dilewati alokasi. */
-export type BarisDilewati = { row: number; reason: "KODE_OUTLET_KOSONG" | "TANPA_NOMINAL" | "FAKTUR_TIDAK_DITEMUKAN" };
+/** Baris Excel yang dilewati alokasi. SUDAH_DI_ACCURATE / PERLU_CEK membawa faktur + keterangan angka (langkah Tinjau). */
+export type BarisDilewati = {
+    row: number;
+    reason: "KODE_OUTLET_KOSONG" | "TANPA_NOMINAL" | "FAKTUR_TIDAK_DITEMUKAN" | "SUDAH_DI_ACCURATE" | "PERLU_CEK";
+    invoiceNo?: string;
+    detail?: string;
+};
+
+const rp = (n: number) => `Rp ${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}`;
 
 export type PeringatanRetur = {
     invoiceNo: string,
@@ -215,12 +224,34 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
         // Total.Trx hanya dipakai bila SAMA dengan jumlah kolom (± Rp 1). Bukti 25 Nov 2026: di 17 dari 73 Form Kerja Inc Sep–Okt 2026
         // (5.272 baris) Total.Trx bergeser satu baris (Total.Trx baris i = jumlah baris i-1), dan admin memposting sesuai kolom.
         const intendedRowPayable = totalDisc + srbAmt + rjsAmt + tunaiAmt + trfAmt + bgAmt + ppnAmt;
+        const accuratePrimeOwing = fakturMeta?.outstanding != null && !isNaN(Number(fakturMeta.outstanding)) ? Number(fakturMeta.outstanding) : undefined;
+
+        // 5a. Sudah diinput di Accurate? Pelunasan ada yang diinput sales, ada yang diinput admin. Form Kerja Inc membawa 6_Saldo (sisa
+        // piutang SEBELUM baris ini): sisa Accurate ≈ Saldo → belum, diproses; ≈ Saldo − bayar → sudah (dilewati); selain itu sisa Accurate
+        // sudah bergerak lain (sebagian/lebih/pembayaran lain) → PERLU_CEK, tidak dikirim. Bukti 25 Nov 2026 berkas 24 Nov: 825 sudah,
+        // 55 belum, 17 berbeda dari 897 baris. Berkas tanpa kolom Saldo (Format Pelunasan) tidak diperiksa (perilaku lama).
+        if (invNo && accuratePrimeOwing !== undefined && hasMeaningfulCellValue(row, "Saldo") && intendedRowPayable > 0) {
+            const saldo = nilai("Saldo");
+            const sesudah = Math.max(0, saldo - intendedRowPayable);
+            const jarakBelum = Math.abs(accuratePrimeOwing - saldo);
+            const jarakSudah = accuratePrimeOwing <= 1 && sesudah <= TOLERANSI_SELISIH ? 0 : Math.abs(accuratePrimeOwing - sesudah);
+            if (jarakSudah < jarakBelum && jarakSudah <= TOLERANSI_SELISIH) {
+                dilewati.push({ row: indeks + 1, reason: "SUDAH_DI_ACCURATE", invoiceNo: invNo });
+                return;
+            }
+            if (!(jarakBelum <= TOLERANSI_SELISIH && jarakBelum <= jarakSudah)) {
+                dilewati.push({ row: indeks + 1, reason: "PERLU_CEK", invoiceNo: invNo,
+                    detail: `Sisa piutang Accurate ${rp(accuratePrimeOwing)}; berkas: saldo ${rp(saldo)}, bayar ${rp(intendedRowPayable)}, sisa ${rp(sesudah)}. `
+                        + `Sudah masuk di Accurate ${rp(saldo - accuratePrimeOwing)}.` });
+                return;
+            }
+        }
+
         const adaTrxBerkas = hasMeaningfulCellValue(row, "Total.Trx");
         const hasExplicitTrxAmt = adaTrxBerkas && Math.abs(nilai("Total.Trx") - intendedRowPayable) <= 1;
         if (adaTrxBerkas && !hasExplicitTrxAmt) trxTakCocok.push(indeks + 1);
         const trxAmt = hasExplicitTrxAmt ? nilai("Total.Trx") : 0;
         let maxPayable = (hasExplicitTrxAmt ? trxAmt : intendedRowPayable) + srb.kompensasi + rjs.kompensasi;
-        const accuratePrimeOwing = fakturMeta?.outstanding != null && !isNaN(Number(fakturMeta.outstanding)) ? Number(fakturMeta.outstanding) : undefined;
         let selisih = 0;
         if (accuratePrimeOwing !== undefined) {
             const diff = accuratePrimeOwing - maxPayable;
