@@ -10,8 +10,9 @@
  *   Tiap klaim dan tiap hasil tercatat di invoice_outbox_event DALAM pernyataan SQL yang sama
  *   (CTE) dengan perubahan statusnya: status HTTP + potongan jawaban + pengirim (BL-17 + R6).
  *   Outlet GT Hit List yang ditolak HANYA karena batas piutang dan lolos lib/gt-hitlist-npl `putuskan`: centang
- *   batas yang disebut Accurate dilepas sementara (customer/save.do), faktur dikirim sekali lagi dalam klaim yang
- *   sama, lalu dipulihkan; jejaknya di detail event hasil (`gt_hitlist`).
+ *   batas yang disebut Accurate dilepas sementara (customer/save.do dengan sesi SISTEM — sesiSistemBatas, owner 27 Nov
+ *   2026; sesi penekan tidak punya hak Ubah Pelanggan), faktur dikirim sekali lagi dengan sesi penekan dalam klaim
+ *   yang sama, lalu dipulihkan; jejaknya di detail event hasil (`gt_hitlist`).
  *
  * Dipisah dari route-nya supaya dua pintu masuk memakai jalur kirim yang SAMA PERSIS. Kalau
  * masing-masing menyalin logikanya, satu pintu akan menyimpang tanpa ada yang tahu — dan
@@ -38,7 +39,9 @@ import { SAPU_SETELAH_MENIT, barisPersenRupiah, classifySaveResponse, nextOutbox
 import { refreshRealization } from "@/lib/program-realization-store";
 import { kodeGalat, potongJawaban } from "@/lib/invoice-outbox-event";
 import { nilaiPayload } from "@/lib/invoice-verify";
-import { BATAS_WAKTU_LEPAS_MS, BATAS_WAKTU_PERIKSA_MS, MAKS_PERIKSA_PER_KIRIM, gtHitlistMati, lolosBatasPiutang, notaGtHitlist, pelangganAccurate, pelangganHitlist, tolakBatas, type HasilLolos } from "@/lib/gt-hitlist-npl";
+import { BATAS_WAKTU_LEPAS_MS, BATAS_WAKTU_PERIKSA_MS, MAKS_PERIKSA_PER_KIRIM, gtHitlistMati, lolosBatasPiutang, notaGtHitlist, pelangganAccurate, pelangganHitlist,
+    sesiSistemBatas, tolakBatas, type HasilLolos } from "@/lib/gt-hitlist-npl";
+import type { AccurateTarget } from "@/lib/accurate-forward";
 
 export type SenderSession = {
     sessionHost: string;
@@ -253,7 +256,9 @@ async function pelangganBelumPulih(db: NodePgDatabase, customerNos: string[]): P
 }
 
 /** Ketergantungan yang bisa diganti uji (Postgres evaluasi, simulator) — produksi memakai bawaan. */
-export type SenderDeps = { db?: NodePgDatabase; refresh?: typeof refreshRealization; lolos?: typeof lolosBatasPiutang };
+export type SenderDeps = { db?: NodePgDatabase; refresh?: typeof refreshRealization; lolos?: typeof lolosBatasPiutang;
+    /** Sesi untuk lepas/pulih batas GT Hit List (bawaan: sesiSistemBatas). Teks = tidak bisa dipakai. */
+    sesiBatas?: (targetDb: string) => Promise<AccurateTarget | string> };
 
 /**
  * Jawaban cron atas hasil kirim. Penolakan SEBELUM kirim (`error`) wajib diteruskan: satu baris
@@ -294,6 +299,8 @@ export async function sendQueuedInvoices(
 
     const results: SendResult[] = [];
     let diperiksa = 0;
+    /** Sesi sistem untuk lepas/pulih batas GT Hit List: dicari sekali per kiriman, hanya bila dibutuhkan. */
+    let sesiBatas: Promise<AccurateTarget | string> | null = null;
     const mulai = Date.now();
     const belumPulih = await pelangganBelumPulih(db, siap.map(({ payload }) => payload.customerNo));
     for (const { row, payload } of siap) {
@@ -370,8 +377,14 @@ export async function sendQueuedInvoices(
             const order = { customerNo: kirimPayload.customerNo, hitlist: notaGtHitlist(kirimPayload), total: nilaiPayload(kirimPayload).total };
             const h: HasilLolos<typeof kirim> = diperiksa++ >= MAKS_PERIKSA_PER_KIRIM || Date.now() - mulai > BATAS_WAKTU_PERIKSA_MS
                 ? { dicoba: false, alasan: `batas pemeriksaan kiriman ini tercapai (${MAKS_PERIKSA_PER_KIRIM} order / ${BATAS_WAKTU_PERIKSA_MS / 60_000} menit); Antre ulang lalu Kirim lagi` }
-                : await (deps.lolos ?? lolosBatasPiutang)(order, tolak,
-                    { ...pelangganAccurate(session), kirimUlang: kirimSekali, tenggatLepas: mulai + BATAS_WAKTU_LEPAS_MS });
+                : await (async (): Promise<HasilLolos<typeof kirim>> => {
+                    // Baca + lepas/pulih batas dengan sesi SISTEM (pemilik), bukan sesi penekan; kirim ulang tetap sesi penekan.
+                    const sesi = await (sesiBatas ??= Promise.resolve().then(() => (deps.sesiBatas ?? sesiSistemBatas)(options.targetDb))
+                        .catch((e: unknown) => `galat: ${e instanceof Error ? e.message : String(e)}`));
+                    if (typeof sesi === "string") return { dicoba: false, alasan: `sesi Accurate sistem untuk membuka batas tidak bisa dipakai: ${sesi}` };
+                    return (deps.lolos ?? lolosBatasPiutang)(order, tolak,
+                        { ...pelangganAccurate(sesi), kirimUlang: kirimSekali, tenggatLepas: mulai + BATAS_WAKTU_LEPAS_MS });
+                })();
             gtHitlist = { pelanggan: kirimPayload.customerNo, nota_hitlist: order.hitlist, total_order: order.total, dicoba: h.dicoba,
                 alasan: h.alasan, tolak_pertama: tolakPertama, lepas: h.lepas ?? null, asal: h.asal ?? null,
                 dipulihkan: h.dipulihkan ?? null, galat_pulih: h.galatPulih ?? "" };

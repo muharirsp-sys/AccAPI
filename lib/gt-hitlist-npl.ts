@@ -6,8 +6,9 @@
  *   order NPL (semua baris SKU hit list) -> centang limit + batas umur nota dilepas, faktur masuk, centang dikembalikan, TANPA memeriksa
  *   piutang; hanya toko hold OD yang tetap ditahan. Selain itu tetap ditolak Accurate seperti biasa.
  * Caller: lib/invoice-sender (sesudah Accurate menolak satu faktur).
- * Dependensi: lib/accurate-forward (baca/tulis Accurate dengan sesi pengirim), lib/pelanggan-hendra, lib/pelanggan-terlindungi.
- * Main Functions: pelangganHitlist, notaGtHitlist, tolakBatas, putuskan, lolosBatasPiutang, pelangganAccurate, gtHitlistMati.
+ * Dependensi: lib/accurate-forward (baca/tulis Accurate), lib/accurate-session (sesi SISTEM untuk baca + lepas/pulih batas, bukan sesi
+ *   penekan Kirim — `sesiSistemBatas`), lib/api-security, lib/pelanggan-hendra, lib/pelanggan-terlindungi.
+ * Main Functions: pelangganHitlist, notaGtHitlist, tolakBatas, putuskan, lolosBatasPiutang, pelangganAccurate, sesiSistemBatas, gtHitlistMati.
  * Side Effects: lolosBatasPiutang membaca pelanggan (+ untuk order biasa: nota belum lunas + pesanan penjualan terbuka) (list.do/detail.do, berjeda: Accurate
  *   membatasi 8 request/detik per token) dan menulis customer/save.do (lepas lalu pulihkan centang batas) lewat penulis suntikan.
  *
@@ -24,6 +25,8 @@
  * ponytail: daftar ditanam di kode (tanpa tabel/unggahan) — hit list berganti = berkas ini diganti; bila sering berganti, pindah ke tabel.
  */
 import { bacaAccurate, forwardAccurate, type AccurateTarget } from "@/lib/accurate-forward";
+import { resolveSyncCredentials } from "@/lib/accurate-session";
+import { isAllowedAccurateHost } from "@/lib/api-security";
 import { isCatatanHendra } from "@/lib/pelanggan-hendra";
 import { isPelangganTerlindungi } from "@/lib/pelanggan-terlindungi";
 
@@ -448,7 +451,23 @@ export const KENA_BATAS_LAJU = /melebihi toleransi/i;
 const JEDA_ULANG_MS = 1_500;
 const tidur = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Pembaca + penulis Accurate dengan sesi pengirim faktur (pelanggan: list.do kode persis -> detail.do; nota & pesanan: list.do + detail.do). */
+/**
+ * Sesi Accurate untuk membaca + MELEPAS/MEMULIHKAN batas pelanggan: sesi SISTEM (resolveSyncCredentials: ACCURATE_SYNC_USER_ID, fallback
+ * sesi admin terbaru — sama dengan sync dan pemulih limit Hendra), BUKAN sesi penekan Kirim. 26 Nov 2026: customer/save.do dengan sesi
+ * fakturist1 ditolak "Anda tidak memiliki hak Ubah Pelanggan"; owner 27 Nov: "sesi dari punyaku, sesi itu yang buka pada saat Fakturist
+ * kirim, hanya untuk buka, lalu setelah masuk tutup lagi". Fakturnya tetap dikirim dengan sesi penekan.
+ * Teks = sebab sesi sistem tidak bisa dipakai (gagal-tertutup: order tetap ditolak). Database wajib sama dengan database faktur.
+ */
+export async function sesiSistemBatas(targetDb: string): Promise<AccurateTarget | string> {
+    const r = await resolveSyncCredentials();
+    if (!r.creds) return r.error;
+    const { sessionHost, sessionId, apiKey, databaseId } = r.creds;
+    if (!isAllowedAccurateHost(sessionHost)) return "host sesi Accurate sistem tidak diizinkan";
+    if (String(databaseId ?? "") !== String(targetDb)) return `sesi Accurate sistem terbuka pada database ${databaseId || "?"}, bukan ${targetDb}`;
+    return { sessionHost, sessionId, accessToken: apiKey };
+}
+
+/** Pembaca + penulis Accurate dengan sesi yang diberikan (pelanggan: list.do kode persis -> detail.do; nota & pesanan: list.do + detail.do). */
 export function pelangganAccurate(target: AccurateTarget): Pick<DepsLolos<unknown>, "baca" | "beban" | "tulis"> {
     const bacaLangsung = bacaAccurate(target);
     const baca: typeof bacaLangsung = async (...arg) => {
