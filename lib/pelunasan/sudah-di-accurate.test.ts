@@ -198,3 +198,21 @@ test("4A: berkas ber-Saldo + faktur gagal dibaca → ditahan FAKTUR_TAK_TERBACA,
     assert.deepEqual(tanpaSisa.dilewati.map((d) => d.reason), ["FAKTUR_TAK_TERBACA"]);
     assert.equal(tanpaSisa.groupedMap.size, 0);
 });
+
+test("4D: akun Accurate tanpa hak Lihat Retur Penjualan → peringatan jelas di Tinjau, bukan sekadar 'retur belum ditemukan'", async () => {
+    const { parsePelunasan } = await import("./parser.ts");
+    const pesan: string[] = [];
+    const fetchTanpaHak = async (path: string) => {
+        if (path.includes("sales-return")) throw new Error("Anda tidak memiliki hak Aktif / Buat / Ubah / Hapus / Lihat Retur Penjualan");
+        return { s: true, d: [], sp: { pageCount: 1 } };
+    };
+    const rows = [{ "Code Outlet": "C-X0001", "No. Nota": "INV/2611/CS00001", "Tunai": 90000, "No.SRB Rt Ktr": "SRB 2676.01", "Pot.RT Ktr": 10000 }];
+    await parsePelunasan(rows, { trxDate: "2026-11-26", isKeySaved: true, peta: PETA, accurateFetch: fetchTanpaHak as never,
+        lapor: (jenis, p) => { if (jenis === "warning") pesan.push(p); } });
+    assert.ok(pesan.some((p) => /1 referensi retur tidak bisa dicari: akun Accurate di sesi ini tidak punya hak Lihat Retur Penjualan/.test(p)), pesan.join(" | "));
+    // Galat lain (mis. jaringan) tidak memicu kalimat hak akses.
+    const lain: string[] = [];
+    await parsePelunasan(rows, { trxDate: "2026-11-26", isKeySaved: true, peta: PETA, accurateFetch: (async () => { throw new Error("HTTP 502"); }) as never,
+        lapor: (jenis, p) => { if (jenis === "warning") lain.push(p); } });
+    assert.ok(!lain.some((p) => /hak Lihat Retur/.test(p)));
+});
