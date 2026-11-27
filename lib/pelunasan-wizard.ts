@@ -19,6 +19,7 @@ import type { BarisHasil, HasilKirim } from "./pelunasan/kirim.ts";
 import { buildSalesReceiptIdempotencyPayload } from "./sales-receipt-fingerprint.ts";
 import { PLACEHOLDER_AKUN, overrideKeysNeeded } from "./sales-receipt-upload.ts";
 import { excelDateToIso } from "./excel-date.ts";
+import { deteksiFormatPelunasan } from "./pelunasan/parser.ts";
 
 const rapat = (v: unknown) => String(v ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
@@ -66,6 +67,35 @@ export function tanggalLaporan(aoa: unknown[][], barisHeader: number): string | 
             // Serial Excel 40000–60000 = 2009–2064; angka lain di atas header adalah total/jumlah, bukan tanggal.
             if (v instanceof Date || (typeof v === "number" && v >= 40000 && v <= 60000)) return excelDateToIso(v);
         }
+    }
+    return null;
+}
+
+/** Tanggal dari nama berkas "P.26-11-2026.xlsx" / "P.25-11-2026 NKA.xlsx" (dd-mm-yyyy, pemisah - . _). null = tidak ada. */
+export function tanggalDariNama(nama: string): string | null {
+    const m = /(\d{1,2})[-._](\d{1,2})[-._](\d{4})/.exec(nama);
+    if (!m) return null;
+    const [d, b, t] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    const tgl = new Date(Date.UTC(t, b - 1, d));
+    return tgl.getUTCDate() === d && tgl.getUTCMonth() === b - 1 ? tgl.toISOString().slice(0, 10) : null;
+}
+
+/**
+ * Sheet pelunasan pertama di buku kerja: header ber-"Code Outlet"+"No. Nota" DAN berisi kolom pelunasan (deteksiFormatPelunasan).
+ * Berkas "P.dd-mm-yyyy.xlsx" (27 Nov 2026) diawali sheet NOTA_BATAL / Retur Tulis Nota; pelunasannya di sheet "Mita" (header baris 2).
+ * `aoa` = sheet_to_json(header:1, raw:true, blankrows:true). Kolom kosong di header dilewati; nama ganda = yang pertama dipakai.
+ */
+export function lembarPelunasan(lembar: Array<{ nama: string; aoa: unknown[][] }>): { nama: string; rows: Bebas[]; tanggal: string | null } | null {
+    for (const { nama, aoa } of lembar) {
+        const h = cariBarisHeader(aoa);
+        if (h < 0) continue;
+        const kolom = (aoa[h] ?? []).map((k) => String(k ?? "").trim());
+        const rows = bersihkanHeader(aoa.slice(h + 1).map((r) => {
+            const o: Bebas = {};
+            kolom.forEach((k, i) => { if (k && !(k in o)) o[k] = r?.[i] ?? null; });
+            return o;
+        })).filter((r) => getTextVal(r, "Code Outlet") || getTextVal(r, "No. Nota"));
+        if (deteksiFormatPelunasan(rows)) return { nama, rows, tanggal: h > 0 ? tanggalLaporan(aoa, h) : null };
     }
     return null;
 }
