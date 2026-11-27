@@ -13,6 +13,8 @@
  *   - faktur yang PASTI tidak ada di Accurate dilewati (FAKTUR_TIDAK_DITEMUKAN), bukan dikirim untuk ditolak;
  *   - baris yang SUDAH diinput di Accurate (oleh sales/admin; sisa piutang = Saldo − bayar) dilewati, yang sisa piutangnya bergerak lain
  *     ditahan PERLU_CEK — hanya yang belum diinput yang dikirim (butuh kolom Saldo, ada di Form Kerja Inc).
+ *   27 Nov 2026: sisa RJN Belum Lunas di Accurate bernilai NEGATIF (sisaDok) — dulu dibaca "sudah terpakai" sehingga RJN tak pernah dipakai;
+ *   baris yang uangnya sudah diinput tetapi returnya belum (sisa Accurate = retur yang belum terpakai) dikirim bagian returnya saja.
  *   Urutan alokasi per baris tetap: Potongan → Retur → Uang; batas atas = Total.Trx (atau jumlah kolom) dan sisa piutang Accurate.
  * Caller: lib/pelunasan/parser.ts (parsePelunasan).
  * Main Functions: alokasikan.
@@ -61,6 +63,21 @@ const SANGAT_KECIL = 0.000001;
 
 type Bayar = { type: "TUNAI" | "TRF" | "BG" | "PPN" | "RETUR_ONLY"; amt: number; bank: string; code: string; cNo: string; pMeth: string; used: number };
 
+/**
+ * Sisa dokumen retur yang BELUM terpakai. RJN "Belum Lunas" bernilai NEGATIF di Accurate (faktur bernilai minus; bukti 27 Nov 2026:
+ * 100 dari 100 RJN/2611 terbaru primeOwing < 0, mis. RJN/2610/CS00140 −118.300). Dulu `primeOwing <= 0` dianggap "sudah terpakai",
+ * jadi TIDAK ADA RJN yang pernah dipakai dan semua retur RJN jatuh ke retur manual. Besarnya = nilai mutlak; 0 = Lunas/terpakai.
+ */
+const sisaDok = (d: Bebas) => Math.abs(Number(d?.primeOwing) || 0);
+/** Sisa retur HIDUP satu referensi berkas (berkurang saat baris sebelumnya memakai dokumen yang sama); tak ketemu = 0. */
+function sisaReturHidup(returMap: Map<string, Bebas>, customerNo: string, desc: string) {
+    const retData = desc ? returMap.get(buildReturLookupKey(customerNo.trim(), desc.trim())) : undefined;
+    if (!retData || retData.number === "NOT_FOUND") return 0;
+    return Array.isArray(retData.returns) ? retData.returns.reduce((s: number, d: Bebas) => s + sisaDok(d), 0) : Math.abs(Number(retData.outstanding) || 0);
+}
+/** Keterangan pelunasan memuat daftar retur berkas, yang di NKA bisa ratusan nomor RJN (±2.600 huruf): dipotong. */
+const ringkasRef = (s: string) => (s.length > 120 ? `${s.slice(0, 117)}…` : s);
+
 /** Kapasitas retur dari peta retur (dulu W:300-365): nominal yang bisa dipakai, nomor Accurate, dan yang belum ketemu. */
 function kapasitasRetur(returMap: Map<string, Bebas>, customerNo: string, desc: string, amt: number) {
     const r = { avail: 0, unresolved: 0, number: undefined as string | undefined, outstanding: undefined as number | undefined, kompensasi: 0 };
@@ -70,7 +87,7 @@ function kapasitasRetur(returMap: Map<string, Bebas>, customerNo: string, desc: 
     if (!retData) { r.unresolved = amt; return r; }
     r.number = retData.number;
     if (retData.number === "NOT_FOUND") { r.unresolved = amt; return r; }
-    const rawOut = retData.outstanding;
+    const rawOut = Array.isArray(retData.returns) ? sisaReturHidup(returMap, customerNo, desc) : retData.outstanding;
     if (rawOut == null || isNaN(Number(rawOut))) { r.avail = amt; return r; }
     const retOut = Math.abs(Number(rawOut));
     r.outstanding = retOut;
@@ -114,6 +131,8 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
     const dilewati: BarisDilewati[] = [];
     // Baris (mulai 1) yang Total.Trx-nya berbeda dari jumlah kolom pembayaran → dipakai jumlah kolom; dilaporkan di Tinjau.
     const trxTakCocok: number[] = [];
+    // Baris (mulai 1) yang uangnya sudah diinput di Accurate sehingga hanya bagian retur yang dikirim (1a); dilaporkan di Tinjau.
+    const hanyaReturBaris: number[] = [];
 
     cleanedData.forEach((row: Bebas, indeks: number) => {
         const nilai = (kolom: string) => Number(getVal(row, kolom)) || 0;
@@ -153,9 +172,9 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
         const custReceipt = fakturCust && fakturCust.toUpperCase().startsWith(`${customerNo.trim().toUpperCase()}-`) ? fakturCust : customerNo;
 
         // 1. Nominal pembayaran & potongan
-        const tunaiAmt = nilai("Tunai");
-        const trfAmt = nilai("Trf");
-        const bgAmt = nilai("BG");
+        let tunaiAmt = nilai("Tunai");
+        let trfAmt = nilai("Trf");
+        let bgAmt = nilai("BG");
         let srbAmt = nilai("Pot.RT Ktr");
         let rjsAmt = nilai("Pot. RT Gt");
 
@@ -172,13 +191,65 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
                 rjsAmt = potLain; rjsDesc = ketPotRaw;
             }
         }
-        const ppnAmt = jenisPL === "ppn" ? potLain : 0;
-        const klaimAmt = jenisPL === "klaim" ? potLain : 0;
-        const pot1 = nilai("Pot.1 Kwtnsi");
-        const pot2 = nilai("Pot.2 Kwtnsi");
-        const pot3 = nilai("Pot.3 Kwtnsi");
-        const potTB = nilai("Pot.DiscTB");
-        const biayaBg = nilai("BiayaTrf/BG");
+        let ppnAmt = jenisPL === "ppn" ? potLain : 0;
+        let klaimAmt = jenisPL === "klaim" ? potLain : 0;
+        let pot1 = nilai("Pot.1 Kwtnsi");
+        let pot2 = nilai("Pot.2 Kwtnsi");
+        let pot3 = nilai("Pot.3 Kwtnsi");
+        let potTB = nilai("Pot.DiscTB");
+        let biayaBg = nilai("BiayaTrf/BG");
+
+        // 1a. Sudah diinput di Accurate? Pelunasan ada yang diinput sales, ada yang diinput admin. Form Kerja Inc membawa 6_Saldo (sisa
+        // piutang SEBELUM baris ini): sisa Accurate ≈ Saldo → belum, diproses; ≈ Saldo − bayar → sudah (dilewati); selain itu sisa Accurate
+        // sudah bergerak lain (sebagian/lebih/pembayaran lain) → PERLU_CEK, tidak dikirim. Bukti 25 Nov 2026 berkas 24 Nov: 825 sudah,
+        // 55 belum, 17 berbeda dari 897 baris. Berkas tanpa kolom Saldo (Format Pelunasan) tidak diperiksa (perilaku lama).
+        // Pengecualian (pemilik 27 Nov 2026 "harusnya sekalian saja semuanya"): uang + potongan SUDAH diinput admin, retur (sebagian RJN)
+        // BELUM. Bukti: sisa retur R = sisa Accurate − sisa sesudah baris TIDAK melebihi retur berkas (jadi nilai uang sudah masuk) dan
+        // dokumen retur di daftar baris itu masih ada yang belum terpakai → dokumen itu dipakai untuk faktur ini, paling banyak R; uang &
+        // potongan tidak dikirim ulang; kekurangan (nomor RJN salah tulis / tak ada) masuk retur manual. Bukti 25NKA (data Accurate 27 Nov):
+        // INV/2609/UN00142 R 3.456.085 = RT Gt, 25 RJN utuh Rp 3.445.515; INV/2609/M101092 R 7.621.187,89, 70 dari 206 RJN belum terpakai
+        // Rp 7.615.421 (RJN/2611/KN000115 tak ada). Retur tak tersisa sama sekali / R > retur berkas → tetap PERLU_CEK.
+        const accuratePrimeOwing = fakturMeta?.outstanding != null && !isNaN(Number(fakturMeta.outstanding)) ? Number(fakturMeta.outstanding) : undefined;
+        let hanyaRetur = false;
+        // = intendedRowPayable di bawah (potongan hanya yang > 0, seperti susunan `potongan`), dihitung sebelum uang/potongan dinolkan.
+        const totalBerkas = [pot1, pot2, pot3, potTB, biayaBg, klaimAmt].reduce((s, v) => s + (v > 0 ? v : 0), 0)
+            + srbAmt + rjsAmt + tunaiAmt + trfAmt + bgAmt + ppnAmt;
+        if (invNo && accuratePrimeOwing !== undefined && hasMeaningfulCellValue(row, "Saldo") && totalBerkas > 0) {
+            const saldo = nilai("Saldo");
+            const sesudah = Math.max(0, saldo - totalBerkas);
+            const jarakBelum = Math.abs(accuratePrimeOwing - saldo);
+            const jarakSudah = accuratePrimeOwing <= 1 && sesudah <= TOLERANSI_SELISIH ? 0 : Math.abs(accuratePrimeOwing - sesudah);
+            if (jarakSudah < jarakBelum && jarakSudah <= TOLERANSI_SELISIH) {
+                dilewati.push({ row: indeks + 1, reason: "SUDAH_DI_ACCURATE", invoiceNo: invNo });
+                return;
+            }
+            if (!(jarakBelum <= TOLERANSI_SELISIH && jarakBelum <= jarakSudah)) {
+                const sisaRetur = accuratePrimeOwing - sesudah;
+                const srbAda = Math.min(srbAmt, sisaReturHidup(returMap, customerNo, srbDesc));
+                const rjsAda = Math.min(rjsAmt, sisaReturHidup(returMap, customerNo, rjsDesc));
+                // Retur tersisa LEBIH BESAR dari sisa faktur = ada pembayaran lain yang tak jelas → tetap PERLU_CEK.
+                if (sisaRetur > TOLERANSI_SELISIH && sisaRetur <= srbAmt + rjsAmt + TOLERANSI_SELISIH
+                    && srbAda + rjsAda > TOLERANSI_SELISIH && srbAda + rjsAda <= sisaRetur + TOLERANSI_SELISIH) {
+                    hanyaRetur = true;
+                    const kurang = sisaRetur - srbAda - rjsAda;
+                    if (kurang > TOLERANSI_SELISIH) {
+                        unresolvedReturWarnings.push({
+                            invoiceNo: invNo, customerNo, refs: [srbAmt > 0 ? srbDesc : "", rjsAmt > 0 ? rjsDesc : ""].filter(Boolean),
+                            unresolvedSrbAmt: rjsAmt > 0 ? 0 : kurang, unresolvedRjsAmt: rjsAmt > 0 ? kurang : 0, tunaiAmt: 0, trfAmt: 0, bgAmt: 0, biayaBg: 0,
+                            ketAllTrx: String(getVal(row, "Ket. All Trx") || ""),
+                        });
+                    }
+                    tunaiAmt = trfAmt = bgAmt = ppnAmt = klaimAmt = pot1 = pot2 = pot3 = potTB = biayaBg = 0;
+                    srbAmt = srbAda; rjsAmt = rjsAda;
+                    hanyaReturBaris.push(indeks + 1);
+                } else {
+                    dilewati.push({ row: indeks + 1, reason: "PERLU_CEK", invoiceNo: invNo,
+                        detail: `Sisa piutang Accurate ${rp(accuratePrimeOwing)}; berkas: saldo ${rp(saldo)}, bayar ${rp(totalBerkas)}, sisa ${rp(sesudah)}. `
+                            + `Sudah masuk di Accurate ${rp(saldo - accuratePrimeOwing)}.` });
+                    return;
+                }
+            }
+        }
 
         // 2. Potongan di baris faktur (urutan = urutan kolom berkas)
         const potongan: Bebas[] = [];
@@ -227,30 +298,9 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
         // Total.Trx hanya dipakai bila SAMA dengan jumlah kolom (± Rp 1). Bukti 25 Nov 2026: di 17 dari 73 Form Kerja Inc Sep–Okt 2026
         // (5.272 baris) Total.Trx bergeser satu baris (Total.Trx baris i = jumlah baris i-1), dan admin memposting sesuai kolom.
         const intendedRowPayable = totalDisc + srbAmt + rjsAmt + tunaiAmt + trfAmt + bgAmt + ppnAmt;
-        const accuratePrimeOwing = fakturMeta?.outstanding != null && !isNaN(Number(fakturMeta.outstanding)) ? Number(fakturMeta.outstanding) : undefined;
 
-        // 5a. Sudah diinput di Accurate? Pelunasan ada yang diinput sales, ada yang diinput admin. Form Kerja Inc membawa 6_Saldo (sisa
-        // piutang SEBELUM baris ini): sisa Accurate ≈ Saldo → belum, diproses; ≈ Saldo − bayar → sudah (dilewati); selain itu sisa Accurate
-        // sudah bergerak lain (sebagian/lebih/pembayaran lain) → PERLU_CEK, tidak dikirim. Bukti 25 Nov 2026 berkas 24 Nov: 825 sudah,
-        // 55 belum, 17 berbeda dari 897 baris. Berkas tanpa kolom Saldo (Format Pelunasan) tidak diperiksa (perilaku lama).
-        if (invNo && accuratePrimeOwing !== undefined && hasMeaningfulCellValue(row, "Saldo") && intendedRowPayable > 0) {
-            const saldo = nilai("Saldo");
-            const sesudah = Math.max(0, saldo - intendedRowPayable);
-            const jarakBelum = Math.abs(accuratePrimeOwing - saldo);
-            const jarakSudah = accuratePrimeOwing <= 1 && sesudah <= TOLERANSI_SELISIH ? 0 : Math.abs(accuratePrimeOwing - sesudah);
-            if (jarakSudah < jarakBelum && jarakSudah <= TOLERANSI_SELISIH) {
-                dilewati.push({ row: indeks + 1, reason: "SUDAH_DI_ACCURATE", invoiceNo: invNo });
-                return;
-            }
-            if (!(jarakBelum <= TOLERANSI_SELISIH && jarakBelum <= jarakSudah)) {
-                dilewati.push({ row: indeks + 1, reason: "PERLU_CEK", invoiceNo: invNo,
-                    detail: `Sisa piutang Accurate ${rp(accuratePrimeOwing)}; berkas: saldo ${rp(saldo)}, bayar ${rp(intendedRowPayable)}, sisa ${rp(sesudah)}. `
-                        + `Sudah masuk di Accurate ${rp(saldo - accuratePrimeOwing)}.` });
-                return;
-            }
-        }
-
-        const adaTrxBerkas = hasMeaningfulCellValue(row, "Total.Trx");
+        // Total.Trx berkas mencakup uang yang sudah diinput, jadi tidak berlaku untuk baris hanya-retur.
+        const adaTrxBerkas = !hanyaRetur && hasMeaningfulCellValue(row, "Total.Trx");
         const hasExplicitTrxAmt = adaTrxBerkas && Math.abs(nilai("Total.Trx") - intendedRowPayable) <= 1;
         if (adaTrxBerkas && !hasExplicitTrxAmt) trxTakCocok.push(indeks + 1);
         const trxAmt = hasExplicitTrxAmt ? nilai("Total.Trx") : 0;
@@ -314,6 +364,7 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
                     chequeNo: pmt.cNo || "",
                     // Praktik Accurate: pelunasan tanpa uang berketerangan teks kwitansi/klaim (mis. "RAFAKSI JULI", "019/SUPER-PR/08/2026").
                     description: pmt.type === "PPN" ? (ketPotRaw || "PPN RETUR")
+                        : hanyaRetur ? `Retur ${ringkasRef([srbAmt > 0 ? srbDesc : "", rjsAmt > 0 ? rjsDesc : ""].filter(Boolean).join(", "))}`
                         : (pmt.type === "RETUR_ONLY" && [getTextVal(row, "Ket Kwitansi"), klaimAmt > 0 ? ketPotRaw : ""].filter(Boolean).join(", "))
                             || getVal(row, "Ket. All Trx") || "Pelunasan Batch",
                     paymentMethod: pmt.pMeth,
@@ -367,11 +418,11 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
             const groupedAllocations = new Map<string, { customerNo: string, branchId?: number, branchName?: string, chequeAmount: number, detailInvoice: Array<{ invoiceNo: string, paymentAmount: number }> }>();
             for (const retItem of returnsToProcess) {
                 if (remainingToCover <= 0) break;
-                const limit = Number(retItem.primeOwing || 0);
-                if (limit <= 0) continue; // sudah terpakai baris sebelumnya
+                const limit = sisaDok(retItem); // RJN Belum Lunas = primeOwing NEGATIF (lihat sisaDok)
+                if (limit <= SANGAT_KECIL) continue; // Lunas / sudah terpakai baris sebelumnya
                 const allocated = Math.min(limit, remainingToCover);
                 remainingToCover -= allocated;
-                retItem.primeOwing -= allocated;
+                retItem.primeOwing = (Number(retItem.primeOwing) < 0 ? -1 : 1) * (limit - allocated);
                 const targetCustomerNo = retItem.customer?.customerNo || retItem.customer?.no || custReceipt;
                 const targetBranchId = retItem.branch?.id || undefined;
                 const groupKey = `${targetCustomerNo}|${targetBranchId || 0}`;
@@ -399,19 +450,20 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
                 ayatSilangDocs.push({
                     bankNo: "110120", chequeAmount: group.chequeAmount, customerNo: custReceipt, transDate: tanggal,
                     branchId: branchId || undefined, branchName: branchName || undefined, chequeDate: tanggal,
-                    description: `Ayat Silang Faktur ${invNo} - ${desc}`, paymentMethod: "OTHERS",
+                    description: `Ayat Silang Faktur ${invNo} - ${ringkasRef(desc)}`, paymentMethod: "OTHERS",
                     detailInvoice: [{ invoiceNo: invNo, paymentAmount: group.chequeAmount }]
                 });
                 ayatSilangDocs.push({
                     bankNo: "110120", chequeAmount: -Math.abs(group.chequeAmount), customerNo: group.customerNo, transDate: tanggal,
                     branchId: group.branchId, branchName: group.branchName, chequeDate: tanggal,
-                    description: `Ayat Silang Retur ${desc}`, paymentMethod: "OTHERS", detailInvoice: group.detailInvoice
+                    description: `Ayat Silang Retur ${ringkasRef(desc)}`, paymentMethod: "OTHERS", detailInvoice: group.detailInvoice
                 });
             }
             // Retur yang tidak tertutup dokumen (sisa retur Accurate habis di antara baris) tidak boleh ikut membayar faktur.
             if (remainingToCover > SANGAT_KECIL) { kurangiFaktur(remainingToCover, false); kurangRetur[jenis] = remainingToCover; }
             if (lineInv && !(lineInv.paymentAmount > SANGAT_KECIL) && !lineInv.detailDiscount) sr.detailInvoice.splice(sr.detailInvoice.indexOf(lineInv), 1);
         };
+        const awalAyat = ayatSilangDocs.length;
         prosesRetur(srbDesc, usedSrb, "srb");
         prosesRetur(rjsDesc, usedRjs, "rjs");
         if ((kurangRetur.srb > 0 || kurangRetur.rjs > 0) && selisih !== 0) {
@@ -428,6 +480,16 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
                 if (!(line.paymentAmount > SANGAT_KECIL) && !line.detailDiscount) s.detailInvoice.splice(s.detailInvoice.indexOf(line), 1);
             }
         }
+        // Semua retur pindah ke ayat silang dan yang tersisa di baris faktur pelunasan Kas hanya selisih pembulatan: selisih ikut ke dokumen
+        // ayat silang faktur pertama baris ini. Putar ulang 26/11 (27 Nov 2026): INV/2611/CL00085 tersisa baris faktur −0,1 berpotongan −0,1.
+        const hostLine = sr?.detailInvoice.find((d: Bebas) => d.invoiceNo === invNo);
+        const fakturAyat = ayatSilangDocs.slice(awalAyat).find((d) => d.customerNo === custReceipt && d.detailInvoice[0]?.invoiceNo === invNo);
+        if (sr && hostLine && fakturAyat && hostLine.detailDiscount?.length && hostLine.detailDiscount.every((d: Bebas) => d.accountNo === akun.selisih)
+            && Math.abs(hostLine.paymentAmount - hostLine.detailDiscount.reduce((s: number, d: Bebas) => s + d.amount, 0)) < SANGAT_KECIL) {
+            fakturAyat.detailInvoice[0].paymentAmount += hostLine.paymentAmount;
+            fakturAyat.detailInvoice[0].detailDiscount = hostLine.detailDiscount;
+            sr.detailInvoice.splice(sr.detailInvoice.indexOf(hostLine), 1);
+        }
         if (kurangRetur.srb > 0 || kurangRetur.rjs > 0) {
             // Retur ketemu, tetapi sisanya di Accurate sudah terpakai baris lain: bagian itu tidak dilunasi dan masuk laporan manual.
             unresolvedReturWarnings.push({
@@ -441,5 +503,5 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
         if (invNo && invoiceBranchMap.has(invNo.trim())) invoiceBranchMap.get(invNo.trim())!.outstanding -= terlunasi;
     });
 
-    return { groupedMap, ayatSilangDocs, unresolvedReturWarnings, dilewati, trxTakCocok };
+    return { groupedMap, ayatSilangDocs, unresolvedReturWarnings, dilewati, trxTakCocok, hanyaReturBaris };
 }

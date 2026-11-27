@@ -61,3 +61,104 @@ test("retur ketemu tetapi sudah habis terpakai: tidak ada pelunasan sampah beris
     assert.deepEqual([...out.groupedMap.values()].flatMap((s) => s.detailInvoice), [], "dulu: INV -0,47 dengan 600136 -0,47");
     assert.equal(out.unresolvedReturWarnings[0]?.unresolvedSrbAmt, 364600.4687);
 });
+
+/* 27 Nov 2026: bentuk NYATA Accurate — RJN Belum Lunas primeOwing NEGATIF (RJN/2610/CS00140 −118.300). Dulu dibaca "sudah terpakai",
+ * jadi semua retur RJN berkas 26/11 jatuh ke retur manual dan 2 faktur NKA 25/11 (TF sudah, retur belum) tertahan PERLU_CEK. */
+const rjn = (number: string, primeOwing: number, customerNo: string) => ({ number, primeOwing, customer: { customerNo }, branch: { id: 9, name: "DIV" } });
+const peta = (key: string, returns: ReturnType<typeof rjn>[]) => new Map<string, Record<string, unknown>>([[key, {
+    isArray: true, number: returns[0].number, outstanding: returns.reduce((s, r) => s + Math.abs(r.primeOwing), 0), customerNo: returns[0].customer.customerNo, returns,
+}]]);
+const semua = (out: ReturnType<typeof alokasikan>) => [...out.groupedMap.values(), ...out.ayatSilangDocs];
+
+test("RJN primeOwing negatif dipakai: divisi sama = baris negatif di pelunasan Kas, divisi lain = ayat silang 110120 (26/11 C-CIT036 & C-BA0003)", () => {
+    const rows = [{ "Code Outlet": "C-CIT036", "No. Nota": "INV/2611/CS00066", "Saldo": 1640824.2, "Trf": 1509511.2, "Ket. Trf": "TF MAYBANK 26/11",
+        "Pot. RT Gt": 118300, "No.RJS RT Gt": "RJN/2610/CS00140, RJN/2610/M100686" }];
+    const returMap = peta("DOC|RJN/2610/CS00140, RJN/2610/M100686", [rjn("RJN/2610/CS00140", -100000, "C-CIT036-CS"), rjn("RJN/2610/M100686", -278228, "C-CIT036-M1")]);
+    const invoiceBranchMap = new Map<string, Record<string, unknown>>([["INV/2611/CS00066", { customerNo: "C-CIT036-CS", branchId: 1, outstanding: 1640824.2 }]]);
+    const out = alokasikan(rows, { trxDate: "2026-11-26", peta: PETA, returMap, invoiceBranchMap, invoiceLookupDebugMap: new Map() });
+    assert.deepEqual(out.unresolvedReturWarnings, [], "dulu: seluruh 118.300 masuk retur manual");
+    const kas = semua(out).find((d) => d.bankNo === "110102");
+    assert.deepEqual(kas?.detailInvoice, [{ invoiceNo: "INV/2611/CS00066", paymentAmount: 100000 }, { invoiceNo: "RJN/2610/CS00140", paymentAmount: -100000 }]);
+    assert.equal(kas?.chequeAmount, 0);
+    assert.deepEqual(out.ayatSilangDocs.map((d) => [d.customerNo, d.chequeAmount, d.detailInvoice]), [
+        ["C-CIT036-CS", 18300, [{ invoiceNo: "INV/2611/CS00066", paymentAmount: 18300 }]],
+        ["C-CIT036-M1", -18300, [{ invoiceNo: "RJN/2610/M100686", paymentAmount: -18300 }]],
+    ]);
+    assert.equal(semua(out).find((d) => d.bankNo === "110105")?.chequeAmount, 1509511.2, "transfer utuh");
+    assert.equal(returMap.get("DOC|RJN/2610/CS00140, RJN/2610/M100686")!.returns[1].primeOwing, -(278228 - 18300), "sisa tetap negatif untuk baris berikutnya");
+});
+
+test("uang sudah diinput admin, retur belum: hanya bagian retur yang dikirim (25NKA INV/2609/UN00142); sebagian RJN terpakai: hanya yang tersisa", () => {
+    const rows = [
+        // UN00142: TF 11.145.130,95 sudah di Accurate, sisa 3.456.085 = seluruh RT Gt.
+        { "Code Outlet": "C-ALF052", "No. Nota": "INV/2609/UN00142", "Saldo": 14601215.95, "Trf": 11145130.95, "Ket. Trf": "TF MAYBANK 20/11", "Total.Trx": 14601215.95,
+            "Pot. RT Gt": 3456085, "No.RJS RT Gt": "RJN/2611/DL00084,UN00071" },
+        // M101092: TF + biaya + sebagian RJN sudah; RJN A terpakai (0), B & C tersisa 700.000 = sisa faktur.
+        { "Code Outlet": "C-AL0063", "No. Nota": "INV/2609/M101092", "Saldo": 2010000, "Trf": 1000000, "Ket. Trf": "TF MAYBANK 20/11", "BiayaTrf/BG": 10000,
+            "Pot. RT Gt": 1000000, "No.RJS RT Gt": "RJN/2610/M100433,KN00061,AB00266" },
+        // Retur tersisa (200.000) lebih besar dari sisa faktur (120.000): ada pembayaran lain yang tak jelas → tetap PERLU_CEK.
+        { "Code Outlet": "C-ALF052", "No. Nota": "INV/2609/UN00999", "Saldo": 500000, "Trf": 300000, "Ket. Trf": "TF MAYBANK 20/11",
+            "Pot. RT Gt": 200000, "No.RJS RT Gt": "RJN/2611/UN00999" },
+    ];
+    const returMap = new Map([
+        ...peta("DOC|RJN/2611/DL00084,UN00071", [rjn("RJN/2611/DL00084", -1445515, "C-ALF052-DLP"), rjn("RJN/2611/UN00071", -2000000, "C-ALF052-UN")]), // kurang 10.570
+        ...peta("DOC|RJN/2610/M100433,KN00061,AB00266", [rjn("RJN/2610/M100433", 0, "C-AL0063-M1"), rjn("RJN/2610/KN00061", -400000, "C-AL0063-KN"), rjn("RJN/2610/AB00266", -300000, "C-AL0063-AB")]),
+        ...peta("DOC|RJN/2611/UN00999", [rjn("RJN/2611/UN00999", -200000, "C-ALF052-UN")]),
+    ]);
+    const invoiceBranchMap = new Map<string, Record<string, unknown>>([
+        ["INV/2609/UN00142", { customerNo: "C-ALF052-UN", branchId: 1, outstanding: 3456085 }],
+        ["INV/2609/M101092", { customerNo: "C-AL0063-M1", branchId: 1, outstanding: 700000 }],
+        ["INV/2609/UN00999", { customerNo: "C-ALF052-UN", branchId: 1, outstanding: 120000 }],
+    ]);
+    const out = alokasikan(rows, { trxDate: "2026-11-25", peta: PETA, returMap, invoiceBranchMap, invoiceLookupDebugMap: new Map() });
+    assert.deepEqual(out.hanyaReturBaris, [1, 2]);
+    assert.deepEqual(out.dilewati.map((d) => [d.invoiceNo, d.reason]), [["INV/2609/UN00999", "PERLU_CEK"]]);
+    assert.equal(semua(out).some((d) => d.bankNo === "110105"), false, "transfer TIDAK dikirim ulang");
+    assert.deepEqual(out.trxTakCocok, [], "Total.Trx tidak berlaku untuk baris hanya-retur");
+    assert.deepEqual(out.unresolvedReturWarnings.map((w) => [w.invoiceNo, w.unresolvedRjsAmt, w.trfAmt]), [["INV/2609/UN00142", 10570, 0]],
+        "kekurangan RJN (nomor salah tulis) masuk retur manual; transfer tidak diproses ulang");
+    const kas = semua(out).filter((d) => d.bankNo === "110102" && d.detailInvoice.length > 0); // kelompok kosong dibuang finalisasiPayload
+    assert.deepEqual(kas.map((d) => [d.customerNo, d.chequeAmount, d.detailInvoice]), [
+        ["C-ALF052-UN", 0, [{ invoiceNo: "INV/2609/UN00142", paymentAmount: 2000000 }, { invoiceNo: "RJN/2611/UN00071", paymentAmount: -2000000 }]],
+    ], "divisi sama = baris negatif; potongan biaya TF tidak ikut");
+    assert.match(String(kas[0].description), /^Retur RJN\/2611\/DL00084,UN00071/);
+    const pasangan = out.ayatSilangDocs.map((d) => [d.customerNo, d.chequeAmount, d.detailInvoice.map((x: { invoiceNo: string; paymentAmount: number }) => `${x.invoiceNo}:${x.paymentAmount}`).join(" ")]);
+    assert.deepEqual(pasangan, [
+        ["C-ALF052-UN", 1445515, "INV/2609/UN00142:1445515"], ["C-ALF052-DLP", -1445515, "RJN/2611/DL00084:-1445515"],
+        ["C-AL0063-M1", 400000, "INV/2609/M101092:400000"], ["C-AL0063-KN", -400000, "RJN/2610/KN00061:-400000"],
+        ["C-AL0063-M1", 300000, "INV/2609/M101092:300000"], ["C-AL0063-AB", -300000, "RJN/2610/AB00266:-300000"],
+    ], "RJN yang sudah terpakai (M100433, sisa 0) tidak disentuh");
+});
+
+test("keterangan ayat silang dengan ratusan RJN dipotong (NKA ±2.600 huruf)", () => {
+    const daftar = `RJN/2610/${Array.from({ length: 200 }, (_, i) => `KN${String(i).padStart(5, "0")}`).join(",")}`;
+    const rows = [{ "Code Outlet": "C-AL0063", "No. Nota": "INV/X", "Pot. RT Gt": 1000, "No.RJS RT Gt": daftar }];
+    const out = alokasikan(rows, { trxDate: "2026-11-25", peta: PETA, returMap: peta(`DOC|${daftar}`, [rjn("RJN/2610/KN00000", -1000, "C-AL0063-KN")]),
+        invoiceBranchMap: new Map([["INV/X", { customerNo: "C-AL0063-M1", branchId: 1, outstanding: 1000 }]]), invoiceLookupDebugMap: new Map() });
+    assert.equal(out.ayatSilangDocs.length, 2);
+    for (const d of out.ayatSilangDocs) assert.ok(String(d.description).length <= 160, String(d.description).length);
+});
+
+test("selisih pembulatan tidak tertinggal sendirian di pelunasan Kas saat semua retur pindah ke ayat silang (putar ulang 26/11 CL00085, GD01905)", () => {
+    const rows = [
+        { "Code Outlet": "C-CIT040", "No. Nota": "INV/2611/CL00085", "Pot. RT Gt": 55150, "No.RJS RT Gt": "RJN/2611/M100187" },   // RJN 55.150,10 > sisa 55.150
+        { "Code Outlet": "C-BA0003", "No. Nota": "INV/2607/GD01905", "Pot. RT Gt": 3000, "No.RJS RT Gt": "RJN/2610/CL00034" },    // sisa faktur 3.000,28
+    ];
+    const returMap = new Map([
+        ...peta("DOC|RJN/2611/M100187", [rjn("RJN/2611/M100187", -55150.1, "C-CIT040-M1")]),
+        ...peta("DOC|RJN/2610/CL00034", [rjn("RJN/2610/CL00034", -3000, "C-BA0003-CL")]),
+    ]);
+    const invoiceBranchMap = new Map<string, Record<string, unknown>>([
+        ["INV/2611/CL00085", { customerNo: "C-CIT040-CL", branchId: 1, outstanding: 55150 }],
+        ["INV/2607/GD01905", { customerNo: "C-BA0003-GD", branchId: 1, outstanding: 3000.28 }],
+    ]);
+    const out = alokasikan(rows, { trxDate: "2026-11-26", peta: PETA, returMap, invoiceBranchMap, invoiceLookupDebugMap: new Map() });
+    assert.deepEqual([...out.groupedMap.values()].flatMap((s) => s.detailInvoice), [], "tidak ada baris faktur Kas berisi selisih saja");
+    const faktur = out.ayatSilangDocs.filter((d) => d.chequeAmount > 0).map((d) => [d.chequeAmount, d.detailInvoice[0]]);
+    assert.equal(faktur.length, 2);
+    assert.equal(faktur[0][0], 55150.1);
+    assert.ok(Math.abs(faktur[0][1].paymentAmount - 55150) < 1e-6, "faktur terbayar tepat sisanya");
+    assert.ok(Math.abs(faktur[0][1].detailDiscount[0].amount + 0.1) < 1e-6 && faktur[0][1].detailDiscount[0].accountNo === "600136");
+    assert.ok(Math.abs(faktur[1][1].paymentAmount - 3000.28) < 1e-6 && Math.abs(faktur[1][1].detailDiscount[0].amount - 0.28) < 1e-6);
+    assert.deepEqual(out.ayatSilangDocs.filter((d) => d.chequeAmount < 0).map((d) => d.chequeAmount), [-55150.1, -3000], "RJN habis terpakai");
+});

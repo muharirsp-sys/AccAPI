@@ -124,7 +124,7 @@ export async function parsePelunasan(rows: Bebas[], opsi: OpsiPelunasan): Promis
         ({ invoiceBranchMap, invoiceLookupDebugMap } = await cariFaktur(invoiceNos, accurateFetch));
     }
 
-    const { groupedMap, ayatSilangDocs, unresolvedReturWarnings, dilewati, trxTakCocok } = alokasikan(cleanedData, {
+    const { groupedMap, ayatSilangDocs, unresolvedReturWarnings, dilewati, trxTakCocok, hanyaReturBaris } = alokasikan(cleanedData, {
         trxDate, peta: opsi.peta, returMap, invoiceBranchMap, invoiceLookupDebugMap,
     });
 
@@ -133,6 +133,11 @@ export async function parsePelunasan(rows: Bebas[], opsi: OpsiPelunasan): Promis
         const contoh = trxTakCocok.slice(0, 8).join(", ");
         lapor("warning", `${trxTakCocok.length} baris: Total.Trx berbeda dari jumlah kolom pembayaran (kolom Total.Trx di berkas tampak bergeser); `
             + `yang dipakai jumlah kolom Tunai/Trf/BG/potongan/retur. Baris data ke-${contoh}${trxTakCocok.length > 8 ? ", …" : ""}.`);
+    }
+    if (hanyaReturBaris.length > 0) {
+        const contoh = hanyaReturBaris.slice(0, 8).join(", ");
+        lapor("warning", `${hanyaReturBaris.length} baris: uang/potongan sudah diinput di Accurate, returnya belum — hanya retur yang belum `
+            + `terpakai di Accurate yang dikirim (kekurangannya masuk retur manual). Baris data ke-${contoh}${hanyaReturBaris.length > 8 ? ", …" : ""}.`);
     }
     let manualRows: Bebas[] | null = null;
     if (unresolvedReturWarnings.length > 0) {
