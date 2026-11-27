@@ -498,7 +498,9 @@ Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConf
      Retur RJN/SRT dicari tepat sales-invoice/list.do filter.number EQUAL (keyword bergaris miring diabaikan Accurate). Tinjau
      menampilkan Kelompok pelunasan (ringkasKelompok: per rekening, akun potongan, retur, ayat silang).
      Cek "sudah di Accurate": sisa piutang faktur ≈ 6_Saldo -> dikirim; ≈ 6_Saldo − bayar -> SUDAH_DI_ACCURATE (diinput sales/admin);
-     lainnya -> PERLU_CEK (ditahan, Excel). Jejak untuk Hermes: pratinjau -> POST /api/pelunasan/unggah (barisUnggah) -> pelunasan_unggah
+     lainnya -> PERLU_CEK (ditahan, Excel), KECUALI uang sudah masuk & retur belum (sisa ≤ retur berkas, RJN daftar baris itu masih ada
+     yang belum terpakai, tidak melebihi sisa) -> hanya retur dikirim, kekurangan ke retur manual (27 Nov 2026). Sisa RJN Belum Lunas di
+     Accurate = primeOwing NEGATIF (alokasi.sisaDok). Selisih yang tertinggal sendirian di Kas ikut dokumen ayat silang faktur. Jejak untuk Hermes: pratinjau -> POST /api/pelunasan/unggah (barisUnggah) -> pelunasan_unggah
      (0046); sesudah Kirim -> PATCH (terapkanHasilUnggah: status + nomor). Hermes (VPS, cron jaga-pelunasan 10/14/17 WITA Sen–Sab,
      docs/hermes/jaga-pelunasan.py, role hermes_ro) mencocokkan dengan kasir_pelunasan(_faktur): kurang/lebih dari berkas, rekening
      tidak sesuai Ket. Trf -> Telegram hanya saat berubah. Hermes TIDAK menulis ke Accurate.

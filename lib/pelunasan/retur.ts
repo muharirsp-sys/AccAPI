@@ -575,7 +575,8 @@ export async function cariRetur(returQueries: Map<string, KueriRetur>, returMap:
 
             if (matchedReturns.length > 0) {
                 const finalizedReturns = meta.isAyatSilang ? await enrichReturDetails(accurateFetch, matchedReturns, xrayLogs) : matchedReturns;
-                const totalOutstanding = finalizedReturns.reduce((sum, item) => sum + (item.primeOwing || 0), 0);
+                // RJN Belum Lunas = primeOwing NEGATIF di Accurate (27 Nov 2026): dijumlah besarnya, bukan saling meniadakan.
+                const totalOutstanding = finalizedReturns.reduce((sum, item) => sum + Math.abs(Number(item.primeOwing) || 0), 0);
                 returMap.set(compositeKey, {
                     isArray: true,
                     returns: finalizedReturns,
