@@ -207,11 +207,16 @@ test("lolosBatasPiutang: pemulihan tak menempel -> dua tulisan, dilaporkan GAGAL
 
 const dialect = new PgDialect();
 const SESI = { sessionHost: "https://contoh.invalid", sessionId: "sesi", accessToken: "token" };
+/** Sesi SISTEM (pemilik) untuk baca + lepas/pulih batas — owner 27 Nov 2026; sesi penekan (SESI) hanya mengirim faktur. */
+const SESI_SISTEM = { sessionHost: "https://contoh.invalid", sessionId: "sesi-pemilik", accessToken: "token-pemilik" };
 /** Pelonggaran asli tanpa jeda 7 dtk dan dengan tanggal tetap. */
 const tanpaJeda: SenderDeps = {
     refresh: async () => undefined,
     lolos: (o, tolak, d) => lolosBatasPiutang(o, tolak, { ...d, jeda: async () => undefined, hariIni: HARI_INI }),
+    sesiBatas: async () => SESI_SISTEM,
 };
+/** Token Bearer yang dipakai satu panggilan fetch tiruan. */
+const tokenDari = (c: { arguments: unknown[] }) => String(((c.arguments[1] as RequestInit | undefined)?.headers as Record<string, string> | undefined)?.Authorization ?? "");
 
 type Jawab = { s: boolean; d?: unknown; r?: unknown } | Error;
 type NotaAccurate = { number: string; tanggal: string; sisa: number; items: string[] };
@@ -348,6 +353,28 @@ test("kirim: order NPL ditolak batas hari dan/atau limit -> lolos tanpa membaca 
             assert.deepEqual(a.batas(), BATAS_ASAL);
             assert.match(hasil.results[0].catatan ?? "", /order NPL/);
             assert.ok(!a.kirim.mock.calls.some((c) => /\/sales-(invoice|order)\/list/.test(String(c.arguments[0]))), "piutang tidak dibaca");
+            // Owner 27 Nov: pelanggan dibaca + dilepas/dipulihkan dengan sesi SISTEM; faktur dikirim (2x) dengan sesi penekan.
+            const pelangganC = a.kirim.mock.calls.filter((c) => /\/customer\//.test(String(c.arguments[0])));
+            assert.ok(pelangganC.length > 0 && pelangganC.every((c) => tokenDari(c) === "Bearer token-pemilik"), "pelanggan = sesi sistem");
+            const fakturC = a.kirim.mock.calls.filter((c) => /\/sales-invoice\/save\.do/.test(String(c.arguments[0])));
+            assert.ok(fakturC.length === 2 && fakturC.every((c) => tokenDari(c) === "Bearer token"), "faktur = sesi penekan");
+        });
+    }
+});
+
+test("kirim: sesi Accurate sistem tidak bisa dipakai -> order tetap ditolak, pelanggan tidak dibaca/disentuh, sebabnya tercatat", async (t) => {
+    for (const [nama, sesiBatas] of [
+        ["tidak ada sesi admin", async () => "Tidak ada sesi Accurate milik admin."],
+        ["galat", async () => { throw new Error("db putus"); }],
+    ] as const) {
+        await t.test(nama, async (st) => {
+            const a = antrean(st, [{ items: [HL] }], [TOLAK_UMUR, TERIMA]);
+            const hasil = await kirimSemua({ ...tanpaJeda, sesiBatas });
+            assert.equal(hasil.rejected, 1);
+            assert.equal(a.fakturDikirim.length, 1);
+            assert.equal(a.simpanPelanggan.length, 0);
+            assert.ok(!a.kirim.mock.calls.some((c) => /\/customer\/(list|detail)/.test(String(c.arguments[0]))));
+            assert.match(hasil.results[0].catatan ?? "", /sesi Accurate sistem untuk membuka batas tidak bisa dipakai/);
         });
     }
 });
@@ -420,7 +447,8 @@ test(`kirim: paling banyak ${MAKS_PERIKSA_PER_KIRIM} pemeriksaan per kiriman; si
     const jumlah = MAKS_PERIKSA_PER_KIRIM + 1;
     antrean(t, Array.from({ length: jumlah }, () => ({ items: [HL] })), [TOLAK_UMUR]);
     let dipanggil = 0;
-    const hasil = await kirimSemua({ refresh: async () => undefined, lolos: async () => { dipanggil++; return { dicoba: false, alasan: "uji" }; } });
+    const hasil = await kirimSemua({ refresh: async () => undefined, sesiBatas: async () => SESI_SISTEM,
+        lolos: async () => { dipanggil++; return { dicoba: false, alasan: "uji" }; } });
     assert.equal(dipanggil, MAKS_PERIKSA_PER_KIRIM);
     assert.equal(hasil.rejected, jumlah);
     assert.match(hasil.results[jumlah - 1].catatan ?? "", /batas pemeriksaan kiriman ini tercapai/);
