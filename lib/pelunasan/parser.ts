@@ -115,6 +115,14 @@ export async function parsePelunasan(rows: Bebas[], opsi: OpsiPelunasan): Promis
         } catch {
             lapor("error", "Gagal menarik data Retur Penjualan", { id: "parse" });
         }
+        // Celah 4D (27 Nov 2026): akun Accurate tanpa hak "Lihat Retur Penjualan" → pencarian SRB galat, ditelan jadi NOT_FOUND, lalu masuk
+        // retur manual berlabel "belum ditemukan" walau returnya ada. Bukti putar ulang 26/11: 9 penolakan sales-return/list.do.
+        const tanpaHak = [...returMap.values()].filter((r) => r.number === "NOT_FOUND" && /tidak memiliki hak/i.test(String(r.DEBUG_RAW ?? ""))).length;
+        if (tanpaHak > 0) {
+            lapor("warning", `${tanpaHak} referensi retur tidak bisa dicari: akun Accurate di sesi ini tidak punya hak Lihat Retur Penjualan. `
+                + "Baris yang masih memerlukan retur itu masuk retur manual walau returnya mungkin ada di Accurate; masuk Accurate dengan akun yang "
+                + "berhak lalu ulangi pratinjau.");
+        }
     }
 
     let invoiceBranchMap = new Map<string, Bebas>();

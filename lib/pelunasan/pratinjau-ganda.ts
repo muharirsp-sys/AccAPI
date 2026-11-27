@@ -224,21 +224,30 @@ async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ke
     return struk;
 }
 
+/** Galat kelompok BERUNTUN sebelum pratinjau berhenti membaca (sesi mati / 429 terus-menerus); sisa kelompok = tidak terbaca. */
+export const GALAT_BERUNTUN_MAKS = 5;
+
 /** W:1903-1977: kunci fingerprint → nomor sales-receipt Accurate yang identik KASAR (per pelanggan + tanggal). Pratinjau klien:
- * kelompok berurutan, galat menghentikan pencarian (hasil sebagian) — perilaku lama, dikunci golden. S6e-2: `tidakTerbaca` =
- * kunci yang kelompoknya gagal dibaca / bentuk detailnya tak dikenali / tidak sempat dibaca setelah galat (bukan "aman"). */
+ * kelompok berurutan. `tidakTerbaca` (S6e-2) = kunci yang kelompoknya gagal dibaca / bentuk detailnya tak dikenali / tidak sempat
+ * dibaca (bukan "aman"). Celah 4B (27 Nov 2026): dulu galat pertama MENGHENTIKAN seluruh pencarian — satu pelanggan tanpa sufiks
+ * divisi (C-ALF052, list.do "Pelanggan tidak tepat") menahan ke-43 baris NKA "Riwayat tidak terbaca". Kini hanya kelompok yang
+ * galat ditandai, yang lain tetap dibaca. Golden p01 tanpa galat, tetap identik.
+ * ponytail: berhenti sesudah GALAT_BERUNTUN_MAKS galat beruntun agar sesi mati / 429 tidak memukul Accurate ratusan kali; plafon:
+ * galat yang berselang-seling dengan sukses tetap dibaca semua (paling buruk satu panggilan gagal per kelompok). */
 export const pratinjauRiwayatAccurate = async (rows: Bebas[], accurateFetch: AccurateFetch) => {
     const matchedReceiptsByKey = new Map<string, string[]>();
     const tidakTerbaca = new Set<string>();
-    const groups = kelompokkan(rows.map(targetRiwayat));
-    let i = 0;
-    try {
-        for (; i < groups.length; i++) {
-            cocokkan(groups[i], await riwayatKelompok(groups[i], accurateFetch, false, tidakTerbaca), matchedReceiptsByKey);
+    let beruntun = 0;
+    for (const group of kelompokkan(rows.map(targetRiwayat))) {
+        if (beruntun >= GALAT_BERUNTUN_MAKS) { group.targets.forEach((_, k) => tidakTerbaca.add(k)); continue; }
+        try {
+            cocokkan(group, await riwayatKelompok(group, accurateFetch, false, tidakTerbaca), matchedReceiptsByKey);
+            beruntun = 0;
+        } catch (historyErr) {
+            beruntun++;
+            group.targets.forEach((_, k) => tidakTerbaca.add(k));
+            console.error(`Accurate history preview: kelompok ${group.customerNo} ${group.transDate} tidak terbaca:`, historyErr);
         }
-    } catch (historyErr) {
-        groups.slice(i).forEach((g) => g.targets.forEach((_, k) => tidakTerbaca.add(k)));
-        console.error("Accurate history preview skipped:", historyErr);
     }
     return Object.assign(matchedReceiptsByKey, { tidakTerbaca });
 };

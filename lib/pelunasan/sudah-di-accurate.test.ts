@@ -162,3 +162,57 @@ test("selisih pembulatan tidak tertinggal sendirian di pelunasan Kas saat semua 
     assert.ok(Math.abs(faktur[1][1].paymentAmount - 3000.28) < 1e-6 && Math.abs(faktur[1][1].detailDiscount[0].amount - 0.28) < 1e-6);
     assert.deepEqual(out.ayatSilangDocs.filter((d) => d.chequeAmount < 0).map((d) => d.chequeAmount), [-55150.1, -3000], "RJN habis terpakai");
 });
+
+/* Celah 4A (27 Nov 2026): Tinjau 25NKA 15.45 bersamaan penyegaran kasir → pencarian 3 faktur galat (sisa Accurate 0 = sudah diinput admin)
+ * → dulu baris jalan terus TANPA cek "sudah di Accurate" dan disiapkan kirim sesuai berkas (atas pelanggan C-ALF052 tanpa sufiks). */
+test("4A: berkas ber-Saldo + faktur gagal dibaca → ditahan FAKTUR_TAK_TERBACA, tidak dikirim; tanpa Saldo tetap perilaku lama", async () => {
+    const { parsePelunasan } = await import("./parser.ts");
+    const { buatEmulator } = await import("./uji/emulator-accurate.ts");
+    const { barisUnggah, AKUN_AWAL } = await import("../pelunasan-wizard.ts");
+    const fk = (number: string, primeOwing: number) => ({ id: Number(number.slice(-3)), number, primeOwing, branch: { id: 1, name: "B" }, customer: { customerNo: "C-ALF052-M2" } });
+    const emu = buatEmulator({
+        salesInvoice: [fk("INV/2608/M200309", 0), fk("INV/2608/M200400", 300000), fk("INV/2608/M200305", 80000)],
+        salesReturn: [], galat: ["M200309", "M200305"],
+    });
+    const rows = [
+        { "Code Outlet": "C-ALF052", "No. Nota": "INV/2608/M200309", "Saldo": 500000, "Trf": 500000, "Ket. Trf": "TF MAYBANK 25/11" }, // galat, sudah lunas
+        { "Code Outlet": "C-ALF052", "No. Nota": "INV/2608/M200400", "Saldo": 300000, "Trf": 300000, "Ket. Trf": "TF MAYBANK 25/11" }, // terbaca, belum
+        { "Code Outlet": "C-ALF052", "No. Nota": "INV/2608/M200305", "Trf": 80000, "Ket. Trf": "TF MAYBANK 25/11" },                    // galat, tanpa Saldo
+    ];
+    const out = await parsePelunasan(rows, { trxDate: "2026-11-25", isKeySaved: true, peta: PETA, accurateFetch: emu.accurateFetch as never });
+    assert.deepEqual(out.counts.skipped.map((d) => [d.row, d.reason, d.invoiceNo]), [[1, "FAKTUR_TAK_TERBACA", "INV/2608/M200309"]]);
+    assert.match(out.counts.skipped[0].detail ?? "", /tidak terbaca dari Accurate \(galat saat membaca\).*Ulangi pratinjau/);
+    const faktur = out.payload.flatMap((s) => s.detailInvoice.map((d: { invoiceNo: string }) => d.invoiceNo));
+    assert.deepEqual(faktur.sort(), ["INV/2608/M200305", "INV/2608/M200400"], "dulu: M200309 ikut dikirim Rp500.000 atas C-ALF052");
+    // Jejak Hermes: perlu_cek (dinilai Hermes), bukan "dilewati" (diabaikan Hermes).
+    assert.deepEqual(barisUnggah(rows, out, AKUN_AWAL).map((b) => b.status), ["perlu_cek", "diproses", "diproses"]);
+
+    // 429 (proxy sudah mengulang 4×): petunjuk "Accurate sibuk" — teks galat mentah TIDAK disalin ke detail (bisa memuat isi jawaban proxy).
+    const sibuk = alokasikan([rows[0]], { trxDate: "2026-11-25", peta: PETA, returMap: new Map(), invoiceBranchMap: new Map(),
+        invoiceLookupDebugMap: new Map([["INV/2608/M200309", { found: false, lookupSource: "ERROR", error: "HTTP 429 melebihi toleransi 8 request per detik token=rahasia" }]]) });
+    assert.match(sibuk.dilewati[0].detail ?? "", /Accurate sibuk/);
+    assert.doesNotMatch(sibuk.dilewati[0].detail ?? "", /rahasia/);
+    // Faktur terbaca tetapi primeOwing kosong = sama-sama tak terbaca (fail-closed).
+    const tanpaSisa = alokasikan([rows[0]], { trxDate: "2026-11-25", peta: PETA, returMap: new Map(), invoiceLookupDebugMap: new Map(),
+        invoiceBranchMap: new Map([["INV/2608/M200309", { customerNo: "C-ALF052-M2", branchId: 1, outstanding: null }]]) });
+    assert.deepEqual(tanpaSisa.dilewati.map((d) => d.reason), ["FAKTUR_TAK_TERBACA"]);
+    assert.equal(tanpaSisa.groupedMap.size, 0);
+});
+
+test("4D: akun Accurate tanpa hak Lihat Retur Penjualan → peringatan jelas di Tinjau, bukan sekadar 'retur belum ditemukan'", async () => {
+    const { parsePelunasan } = await import("./parser.ts");
+    const pesan: string[] = [];
+    const fetchTanpaHak = async (path: string) => {
+        if (path.includes("sales-return")) throw new Error("Anda tidak memiliki hak Aktif / Buat / Ubah / Hapus / Lihat Retur Penjualan");
+        return { s: true, d: [], sp: { pageCount: 1 } };
+    };
+    const rows = [{ "Code Outlet": "C-X0001", "No. Nota": "INV/2611/CS00001", "Tunai": 90000, "No.SRB Rt Ktr": "SRB 2676.01", "Pot.RT Ktr": 10000 }];
+    await parsePelunasan(rows, { trxDate: "2026-11-26", isKeySaved: true, peta: PETA, accurateFetch: fetchTanpaHak as never,
+        lapor: (jenis, p) => { if (jenis === "warning") pesan.push(p); } });
+    assert.ok(pesan.some((p) => /1 referensi retur tidak bisa dicari: akun Accurate di sesi ini tidak punya hak Lihat Retur Penjualan/.test(p)), pesan.join(" | "));
+    // Galat lain (mis. jaringan) tidak memicu kalimat hak akses.
+    const lain: string[] = [];
+    await parsePelunasan(rows, { trxDate: "2026-11-26", isKeySaved: true, peta: PETA, accurateFetch: (async () => { throw new Error("HTTP 502"); }) as never,
+        lapor: (jenis, p) => { if (jenis === "warning") lain.push(p); } });
+    assert.ok(!lain.some((p) => /hak Lihat Retur/.test(p)));
+});

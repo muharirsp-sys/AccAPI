@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buatEmulator } from "./uji/emulator-accurate.ts";
 import { fixturePratinjau } from "./uji/fixture.ts";
-import { pemastiRiwayatTulis, periksaRiwayatAccurate, pratinjauRiwayatAccurate, targetRiwayat } from "./pratinjau-ganda.ts";
+import { GALAT_BERUNTUN_MAKS, pemastiRiwayatTulis, periksaRiwayatAccurate, pratinjauRiwayatAccurate, targetRiwayat } from "./pratinjau-ganda.ts";
 import type { AccurateFetch } from "./retur.ts";
 import type { Bebas } from "./sel.ts";
 
@@ -27,8 +27,27 @@ test("server: galat baca satu kelompok -> kunci kelompok itu GAGAL (ditahan), ke
     assert.deepEqual([...r.gagal.keys()], [target(p.rows[2]).key]);
     assert.match(r.gagal.get(target(p.rows[2]).key)!, /galat buatan/);
     assert.equal(r.cocok.size, 1, "PLG-A-003 tetap cocok");
-    // Pratinjau klien (fail-open lama) TIDAK berubah: galat menghentikan pencarian tanpa melempar.
-    await pratinjauRiwayatAccurate(p.rows, emu.accurateFetch as AccurateFetch);
+    // Celah 4B (27 Nov 2026): pratinjau klien juga hanya menandai kelompok yang galat; dulu galat pertama menghentikan pencarian dan
+    // semua kelompok sesudahnya (PLG-A-003 yang identik, PLG-A-004) ikut "tidak terbaca".
+    const klien = await pratinjauRiwayatAccurate(p.rows, emu.accurateFetch as AccurateFetch);
+    assert.deepEqual([...klien.tidakTerbaca], [target(p.rows[2]).key]);
+    assert.deepEqual([...klien], [...r.cocok], "PLG-A-003 tetap cocok RCP/2610/0001");
+});
+
+test("4B pratinjau klien: galat beruntun (sesi mati / 429 terus) berhenti sesudah GALAT_BERUNTUN_MAKS; sisanya tidak terbaca", async () => {
+    const rows = Array.from({ length: 12 }, (_, i) => ({ customerNo: `C${i}`, transDate: "01/10/2026", detailInvoice: [{ invoiceNo: `I${i}`, paymentAmount: 1 }] }));
+    let panggilan = 0;
+    const mati: AccurateFetch = async () => { panggilan++; throw new Error("401 invalid_token"); };
+    const r = await pratinjauRiwayatAccurate(rows, mati);
+    assert.equal(panggilan, GALAT_BERUNTUN_MAKS, "tidak memukul Accurate sekali per kelompok");
+    assert.equal(r.tidakTerbaca.size, 12, "semua kunci ditandai, tidak ada yang lolos sebagai aman");
+    // Galat berselang-seling dengan sukses: penghitung beruntun di-nol-kan, semua kelompok tetap dibaca.
+    const selang: AccurateFetch = async (_p, _m, q) => {
+        if (Number(String((q as Bebas)["filter.customerNo"]).slice(1)) % 2 === 0) throw new Error("Pelanggan tidak tepat");
+        return { s: true, d: [], sp: { pageCount: 1 } };
+    };
+    const s = await pratinjauRiwayatAccurate(rows, selang);
+    assert.deepEqual([...s.tidakTerbaca], rows.filter((_, i) => i % 2 === 0).map((x) => target(x).key));
 });
 
 test("server: jawaban bukan s:true / detail kosong / daftar terpotong = GAGAL (bukan lolos)", async () => {
