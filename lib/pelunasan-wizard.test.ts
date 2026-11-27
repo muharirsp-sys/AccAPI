@@ -227,3 +227,24 @@ test("laporan penyesuaian: hanya uang yang masuk rekening di luar berkas; retur,
     assert.equal(r[1].caraAccurate, "Rp200.000 → 110105 Bank Maybank 2115003838");
     assert.equal(r[0].nomorAccurate, "110102.2026.11.14000, 110105.2026.11.02120");
 });
+
+test("berkas P.dd-mm-yyyy.xlsx: sheet pelunasan dicari (bukan sheet pertama), header baris 2, tanggal dari nama berkas", async () => {
+    const { lembarPelunasan, tanggalDariNama } = await import("./pelunasan-wizard.ts");
+    const notaBatal = [["Code Outlet", "No. Nota", "Tgl. Nota", "Jumlah", "Status"], ["C-TOK239", "INV/2609/HZ02252", 46287, 315776.8, "B"]];
+    const mita = [
+        [null, null, null, null, 3169502295.9, 531443660.9],
+        ["Tgl", "Kode Inc", "Code Outlet", "No. Nota", "Saldo", "Tunai", "Trf", "Ket. Trf", "Pot. RT Gt", "Ket. All Trx", "Total.Trx", "", "Column1"],
+        ["26", "Fix_Inc_5.xlsx", "C-100015", "INV/2610/KN00781", 105399.99, 105399.99, null, null, null, "T, ", null],
+        ["26", "Fix_Inc_5.xlsx", null, null, null, null, null, null, null, null, 0],
+    ];
+    const l = lembarPelunasan([{ nama: "NOTA_BATAL", aoa: notaBatal }, { nama: "Mita", aoa: mita }]);
+    assert.equal(l?.nama, "Mita");
+    assert.equal(l?.rows.length, 1, "baris sisa tanpa outlet & nota dibuang");
+    assert.equal(l?.rows[0]["Saldo"], 105399.99);
+    assert.equal(l?.tanggal, null, "baris total bukan tanggal");
+    assert.equal(lembarPelunasan([{ nama: "NOTA_BATAL", aoa: notaBatal }]), null);
+    assert.equal(tanggalDariNama("P.26-11-2026.xlsx"), "2026-11-26");
+    assert.equal(tanggalDariNama("P.25-11-2026 NKA.xlsx"), "2026-11-25");
+    assert.equal(tanggalDariNama("24.xlsx"), null);
+    assert.equal(tanggalDariNama("P.31-02-2026.xlsx"), null, "tanggal mustahil ditolak");
+});

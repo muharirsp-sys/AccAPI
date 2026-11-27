@@ -18,12 +18,12 @@ import { Button, Flow, FooterToolbar, MessageStrip, Section, Skeleton, StatusBad
 import { FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { canAccessPathWithKeys } from "@/lib/rbac";
 import { accurateFetch } from "@/lib/apiFetcher";
-import { deteksiFormatPelunasan, parsePelunasan } from "@/lib/pelunasan/parser";
+import { parsePelunasan } from "@/lib/pelunasan/parser";
 import { pratinjauDuplikat } from "@/lib/pelunasan/pratinjau-ganda";
 import { tanggalKemarin } from "@/lib/pelunasan/payload";
-import { getTextVal, type Bebas } from "@/lib/pelunasan/sel";
+import type { Bebas } from "@/lib/pelunasan/sel";
 import {
-    AKUN_AWAL, barisUnggah, bersihkanHeader, cariBarisHeader, isiBerkas, periksaAkun, petaDari, tanggalLaporan, terapkanHasilUnggah, type Akun, type IsiBerkas,
+    AKUN_AWAL, barisUnggah, isiBerkas, lembarPelunasan, periksaAkun, petaDari, tanggalDariNama, terapkanHasilUnggah, type Akun, type IsiBerkas,
 } from "@/lib/pelunasan-wizard";
 import { LABEL_AKUN, namaRekening } from "@/lib/pelunasan/akun";
 import { rupiah } from "@/lib/promo-ui";
@@ -118,18 +118,13 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
         try {
             const XLSX = await import("xlsx");
             const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
-            const sheet = wb.SheetNames[0] ?? "";
-            const ws = sheet ? wb.Sheets[sheet] : undefined;
-            // Header bisa di baris mana pun (Form Kerja Inc harian: baris ke-4, di bawah tanggal & total); Format Pelunasan lama: baris pertama.
-            const aoa = ws ? XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, blankrows: true }) : [];
-            const h = cariBarisHeader(aoa);
-            const awal = ws?.["!ref"] ? XLSX.utils.decode_range(ws["!ref"]).s.r : 0;
-            // Baris tanpa Code Outlet DAN tanpa No. Nota = sisa rumus di bawah data (Form Kerja Inc: ±90 baris berisi Total.Trx/PIC saja), bukan pelunasan.
-            const rows = bersihkanHeader(ws && h >= 0 ? XLSX.utils.sheet_to_json<Bebas>(ws, { range: awal + h }) : [])
-                .filter((r) => getTextVal(r, "Code Outlet") || getTextVal(r, "No. Nota"));
+            // Sheet pelunasan pertama (P.dd-mm-yyyy.xlsx: NOTA_BATAL & Retur Tulis Nota dulu, pelunasan di "Mita"); header di baris mana pun
+            // (Form Kerja Inc harian: baris ke-4); baris tanpa Code Outlet DAN No. Nota (sisa rumus) dibuang — lib/pelunasan-wizard lembarPelunasan.
+            const lembar = lembarPelunasan(wb.SheetNames.map((nama) => ({ nama, aoa: XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[nama], { header: 1, raw: true, blankrows: true }) })));
             if (urut !== urutBaca.current) return; // berkas lain dipilih selagi membaca
-            if (!deteksiFormatPelunasan(rows)) { setBacaan({ status: "kosong", nama: file.name, sheet }); return; }
-            const tanggalBerkas = h > 0 ? tanggalLaporan(aoa, h) : null;
+            if (!lembar) { setBacaan({ status: "kosong", nama: file.name, sheet: wb.SheetNames.join(", ") }); return; }
+            const { nama: sheet, rows } = lembar;
+            const tanggalBerkas = lembar.tanggal ?? tanggalDariNama(file.name);
             if (tanggalBerkas) setTanggal(tanggalBerkas);
             setBacaan(null);
             setBerkas({ nama: file.name, sheet, rows, isi: isiBerkas(rows), tanggalBerkas });
@@ -247,11 +242,11 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
         return (
             <div className="fi-page" style={{ paddingBottom: 0 }}>
                 {kepala}
-                <Section title="Berkas pelunasan" subtitle="sheet pertama dibaca; tidak ada yang dikirim di langkah ini">
+                <Section title="Berkas pelunasan" subtitle="sheet pelunasan dicari otomatis; tidak ada yang dikirim di langkah ini">
                     <div className="fi-sect-in">
                         <div className="fi-formgrid">
                             <FormField label="Tanggal transaksi" required
-                                help={berkas?.tanggalBerkas ? `Diambil dari tanggal laporan di berkas (${berkas.tanggalBerkas.split("-").reverse().join("/")}); boleh diubah. Menjadi tanggal pelunasan di Accurate.`
+                                help={berkas?.tanggalBerkas ? `Diambil dari berkas (tanggal laporan atau nama berkas: ${berkas.tanggalBerkas.split("-").reverse().join("/")}); boleh diubah. Menjadi tanggal pelunasan di Accurate.`
                                     : "Bawaan: kemarin menurut WITA. Menjadi tanggal pelunasan di Accurate."}>
                                 {(a11y) => <input {...a11y} type="date" className="fi-input" value={tanggal} onChange={(e) => { setTanggal(e.target.value); setTinjauan(null); }} />}
                             </FormField>
@@ -269,7 +264,7 @@ export default function Pelunasan({ permKeys }: { permKeys: string[] }) {
                 {bacaan?.status === "memuat" && <><p className="fi-small" role="status">Membaca {bacaan.nama}…</p><Skeleton rows={3} label="Membaca berkas" /></>}
                 {bacaan?.status === "kosong" && (
                     <MessageStrip tone="neg" title="Berkas tidak berisi baris pelunasan.">
-                        Kolom Code Outlet dan No. Nota (dengan kolom Tunai/Trf/BG/potongan) tidak ditemukan di sheet pertama{bacaan.sheet ? ` (${bacaan.sheet})` : ""} {bacaan.nama}. Tidak ada yang dikirim; pilih berkas lain.
+                        Kolom Code Outlet dan No. Nota (dengan kolom Tunai/Trf/BG/potongan) tidak ditemukan di sheet mana pun{bacaan.sheet ? ` (${bacaan.sheet})` : ""} {bacaan.nama}. Tidak ada yang dikirim; pilih berkas lain.
                     </MessageStrip>
                 )}
                 {bacaan?.status === "galat" && <MessageStrip tone="neg" title="Berkas tidak terbaca.">{bacaan.nama}: {bacaan.pesan} Pilih berkas lain.</MessageStrip>}
