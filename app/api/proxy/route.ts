@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
 import { redactAccurateSecrets } from "@/lib/accurate-redact";
-import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, isAccurateRead, jawaban401, isCatalogWrite, isCustomerWrite, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
+import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, forwardAccurateBaca, isAccurateRead, jawaban401, isCatalogWrite, isCustomerWrite, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
 import { periksaPenutupanPelanggan } from "@/lib/pelanggan-terlindungi";
 import { cariPelangganAccurate, periksaTulisPelangganHendra } from "@/lib/pelanggan-hendra";
 import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, databaseLockBerbeda, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
@@ -189,7 +189,10 @@ export async function POST(req: NextRequest) {
 
         // Hasil per baris sales-receipt dicatat SERVER di sendSalesReceipt (timeout/non-JSON/5xx = UNKNOWN).
         const { status, text: rawText, json, data } = await sendSalesReceipt(db, dispatch,
-            () => forwardAccurate({ sessionHost, sessionId, accessToken: apiKey }, endpointPath, method, payload));
+            // BACA kanonik: jatah per sesi + ulang saat batas laju Accurate (pratinjau riwayat Tinjau). Tulis TIDAK pernah diulang.
+            () => isAccurateRead(endpointPath, method)
+                ? forwardAccurateBaca({ sessionHost, sessionId, accessToken: apiKey }, endpointPath, payload)
+                : forwardAccurate({ sessionHost, sessionId, accessToken: apiKey }, endpointPath, method, payload));
         // 401 = token kedaluwarsa / sesi habis (lib/accurate-401): pesan tetap; badan Accurate (menggemakan token) tidak diteruskan
         // ke peramban maupun log. HTTP 200 seperti jawaban Accurate lain yang diteruskan.
         if (status === 401) {

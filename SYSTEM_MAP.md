@@ -240,6 +240,9 @@ Kredensial sistem (resolveSyncCredentials: cron sync, webhook, /api/faktur/[id],
   -> ensureFreshAccurateSession: 401 di lapis akun (db-list.do/open-db.do) = TokenAccurateMati -> resolveSyncCredentials {error: pesan token}
 Sesi user: bacaAccurate (lib/accurate-forward) 401 -> galat berpesan; /api/proxy 401 -> HTTP 200 {s:false, d:[pesan], error, code:
   ACCURATE_TOKEN_MATI|ACCURATE_SESI_HABIS} (amplop ditolak = tidak terkirim; dulu badan Accurate diteruskan apa adanya)
+Sesi user BACA (bacaAccurate + GET baca kanonik /api/proxy) -> forwardAccurateBaca: jatah ≤ 5/dtk per sesi (jarak 200 ms, per proses)
+  + 429 / badan "melebihi toleransi … request per detik" diulang ≤ 4× (1/2/4/6 dtk, Retry-After ≤ 10 dtk); TULIS tidak pernah diulang
+  (27 Nov 2026: 29/47 baris pelunasan ditahan HTTP 429 — token sesi Ari = token sinkron/webhook/kasir)
 /sesi-accurate -> GET /api/auth/accurate-session?periksa=1 -> periksaToken (db-list.do, 8 dtk) -> token hidup|mati|tak_terperiksa
   -> mati = lencana "Token kedaluwarsa, masuk ulang" + Masuk ulang Accurate (Konsol: eksekusi terkunci); tanpa ?periksa (Pelunasan,
      Finance) = tidak ke Accurate, token null
@@ -472,7 +475,7 @@ Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConf
   -> POST /api/proxy sales-receipt/bulk-save.do WAJIB idempotencyLockId + expectedDatabaseId (lib/sales-receipt-guard.ts):
      placeholder akun 400 -> pelunasan.kirim 403 -> database sesi ≠ expected 409 database_changed -> lock dinilai
      (dry-run) -> riwayat Accurate dibaca server (lib/pelunasan/pratinjau-ganda.ts periksaRiwayatAccurate, fail-closed,
-     4 serentak, 60 dtk) -> baris yang punya SATU faktur bernominal sama (per faktur, tanpa potongan, tanpa beda huruf)
+     4 serentak, 60 dtk, baca lewat bacaAccurate = jatah + ulang 429) -> baris yang punya SATU faktur bernominal sama (per faktur, tanpa potongan, tanpa beda huruf)
      dengan pelunasan pelanggan+tanggal mana pun / tak terbaca tanpa override 409 ACCURATE_HISTORY ->
      baris milik lock ditandai SENDING -> kirim -> hasil per baris dicatat SERVER (classifySalesReceiptReply:
      s:true = SUCCESS, selain itu UNKNOWN — C11; server tidak pernah menyimpulkan FAILED)

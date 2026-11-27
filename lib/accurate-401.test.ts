@@ -124,6 +124,25 @@ test("bacaAccurate (sesi user: riwayat pelunasan, pelanggan Hendra): 401 dibedak
     assert.ok(await baca("/api/sales-receipt/list.do", "GET", {}).catch((x: unknown) => x) instanceof SesiAccurateHabis);
 });
 
+test("bacaAccurate: batas laju (429 / badan 'request per detik') diulang dengan jeda; tetap 429 = melempar sesudah 5 panggilan", async (t) => {
+    const jeda: number[] = [];
+    const tunggu = async (ms: number) => { jeda.push(ms); };
+    const sesi = (id: string) => bacaAccurate({ sessionHost: "https://lama.accurate.id", sessionId: id, accessToken: RAHASIA }, tunggu);
+    const LAJU = JSON.stringify({ s: false, d: ["Permintaan melebihi toleransi 8 request per detik"] });
+    const panggilan = palsukanFetch(t, [[429, "{}"], [200, LAJU], [200, OK]]);
+    assert.deepEqual((await sesi("a")("/api/sales-receipt/list.do", "GET", {})).d, { id: 7 });
+    assert.equal(panggilan.length, 3);
+    assert.ok(jeda.filter((ms) => ms >= 1000).length === 2, `dua jeda ulang: ${jeda}`);
+    t.mock.restoreAll();
+    const terus = palsukanFetch(t, [[429, "{}"]]);
+    assert.match(String(await sesi("b")("/api/sales-receipt/list.do", "GET", {}).catch((e: Error) => e.message)), /Accurate HTTP 429/);
+    assert.equal(terus.length, 5, "1 + 4 ulang");
+    t.mock.restoreAll();
+    const sekali = palsukanFetch(t, [[500, "{}"]]);
+    await sesi("c")("/api/sales-receipt/list.do", "GET", {}).catch(() => null);
+    assert.equal(sekali.length, 1, "5xx bukan batas laju: tidak diulang");
+});
+
 test("jawaban401 (proxy): amplop ditolak berkode, tanpa badan Accurate", () => {
     const mati = jawaban401(TOKEN_MATI);
     assert.deepEqual(mati, { s: false, d: [PESAN_TOKEN_MATI], error: PESAN_TOKEN_MATI, code: "ACCURATE_TOKEN_MATI" });
