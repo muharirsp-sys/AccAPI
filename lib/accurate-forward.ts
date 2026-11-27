@@ -3,7 +3,7 @@
  *   server (purchase-payment) agar keduanya tidak bisa berbeda diam-diam.
  * Caller: app/api/proxy/route.ts, app/api/finance/purchase-payment/route.ts.
  * Dependensi: fetch global.
- * Main Functions: flattenPayload, buildAccurateRequest, forwardAccurate, isGuardedAccurateWrite,
+ * Main Functions: flattenPayload, buildAccurateRequest, forwardAccurate, forwardAccurateBaca, bacaAccurate, isGuardedAccurateWrite,
  *   isSalesReceiptWrite, isSalesInvoiceWrite, isCustomerWrite, isAccurateRead, isCatalogWrite, jawaban401.
  * Dependensi tambahan: config/accurateRoutes.js (katalog Konsol — sumber yang sama dengan UI /api-wrapper), lib/accurate-401.
  * Side Effects: forwardAccurate = HTTP ke host Accurate (timeout 30 s, redirect manual).
@@ -74,18 +74,56 @@ export function buildAccurateRequest(target: AccurateTarget, endpointPath: strin
 export async function forwardAccurate(target: AccurateTarget, endpointPath: string, method: string, payload: unknown) {
     const { url, init } = buildAccurateRequest(target, endpointPath, method, payload);
     const response = await fetch(url, init);
-    return { status: response.status, text: await response.text() };
+    return { status: response.status, text: await response.text(), retryAfter: response.headers.get("retry-after") };
+}
+
+const tidur = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/**
+ * Batas Accurate: 8 request/detik dan 8 proses paralel PER TOKEN (lib/accurate-baca). Token sesi user bisa sama dengan token
+ * sinkron (ACCURATE_SYNC_USER_ID: webhook, kasir), jadi BACA lewat sini dijatah ≤ 5/detik per sesi dan batas laju diulang.
+ * Bukti 27 Nov 2026: riwayat pelunasan 4 jalur tanpa jeda → 29 dari 47 baris ditahan "Accurate HTTP 429", paket tidak terkirim.
+ * ponytail: jatah per proses (satu container); lebih dari satu replika = jatah dikali replika.
+ */
+const JARAK_BACA_MS = 200;
+const ULANG_BATAS_LAJU_MS = [1000, 2000, 4000, 6000];
+const giliranBaca = new Map<string, number>();
+async function giliran(kunci: string, tunggu: (ms: number) => Promise<void>) {
+    const sekarang = Date.now();
+    const t = Math.max(sekarang, giliranBaca.get(kunci) ?? 0);
+    giliranBaca.set(kunci, t + JARAK_BACA_MS);
+    if (giliranBaca.size > 200) for (const [k, v] of giliranBaca) if (v < sekarang) giliranBaca.delete(k);
+    if (t > sekarang) await tunggu(t - sekarang);
+}
+/** 429, atau penolakan berbadan "melebihi toleransi … request per detik" (bentuk yang ditangani lib/accurate-baca). */
+function kenaBatasLaju(status: number, text: string) {
+    if (status === 429) return true;
+    if (status >= 500 || !/melebihi toleransi|request per detik/i.test(text)) return false;
+    try { return (JSON.parse(text) as { s?: unknown }).s !== true; } catch { return true; }
+}
+
+/**
+ * GET BACA dengan jatah per sesi + ulang saat batas laju (≤ 4×, Retry-After dihormati s.d. 10 dtk); jawaban terakhir apa adanya.
+ * HANYA baca: tulis tidak pernah diulang di sini (bisa terposting ganda). `tunggu` diinjeksi untuk uji.
+ */
+export async function forwardAccurateBaca(target: AccurateTarget, endpointPath: string, payload: unknown, tunggu = tidur) {
+    for (let coba = 0; ; coba++) {
+        await giliran(`${target.sessionHost}|${target.sessionId}`, tunggu);
+        const r = await forwardAccurate(target, endpointPath, "GET", payload);
+        if (coba >= ULANG_BATAS_LAJU_MS.length || !kenaBatasLaju(r.status, r.text)) return r;
+        const detik = Number(r.retryAfter);
+        await tunggu(Math.max(ULANG_BATAS_LAJU_MS[coba], Number.isFinite(detik) && detik > 0 ? Math.min(detik, 10) * 1000 : 0));
+    }
 }
 
 /**
  * Pembaca Accurate BACA-SAJA di server dengan sesi `target` (S6e-2: riwayat sales-receipt, Selesaikan). Hanya GET;
  * status non-2xx / bukan JSON / timeout 30 dtk = melempar (pemanggil memperlakukannya sebagai TIDAK TERBACA). 401 = pesan tetap
- * token kedaluwarsa / sesi habis (lib/accurate-401); badannya tidak dibawa.
+ * token kedaluwarsa / sesi habis (lib/accurate-401); badannya tidak dibawa. Batas laju diulang dulu (forwardAccurateBaca).
  */
-export function bacaAccurate(target: AccurateTarget) {
+export function bacaAccurate(target: AccurateTarget, tunggu = tidur) {
     return async (endpointPath: string, method: string, payload?: unknown) => {
         if (String(method).toUpperCase() !== "GET") throw new Error("bacaAccurate hanya GET");
-        const r = await forwardAccurate(target, endpointPath, "GET", payload);
+        const r = await forwardAccurateBaca(target, endpointPath, payload, tunggu);
         if (r.status === 401) throw galat401(r.text);
         if (r.status < 200 || r.status >= 300) throw new Error(`Accurate HTTP ${r.status}`);
         try {
