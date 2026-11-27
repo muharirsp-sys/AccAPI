@@ -104,6 +104,8 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
     const perluCek = t.dilewati.filter((d) => d.reason === "PERLU_CEK");
     const dilewatiLain = t.dilewati.filter((d) => d.reason !== "SUDAH_DI_ACCURATE" && d.reason !== "PERLU_CEK");
     const takTerbaca = t.dilewati.filter((d) => d.reason === "FAKTUR_TAK_TERBACA");
+    // Baris tanpa Saldo (Format Pelunasan lama) dikirim TANPA cek "sudah di Accurate" (lib/pelunasan/alokasi.ts 1a): tandai, jangan diam.
+    const tanpaSaldo = t.jejak.baris.filter((b) => b.faktur && b.saldo === null && b.status === "diproses");
     const ganda = t.review.filter((r) => !r.recommended);
     const nKirim = rencana.kirim.length;
     const nPaket = Math.ceil(nKirim / UKURAN_PAKET);
@@ -225,6 +227,13 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
                     diinput atau belum: {takTerbaca.slice(0, 5).map((d) => d.invoiceNo).join(", ")}{takTerbaca.length > 5 ? ", …" : ""}. Baris lain aman dikirim;
                     sesudahnya ulangi pratinjau untuk faktur ini (yang sudah terkirim akan terbaca &quot;Sudah di Accurate&quot;).{" "}
                     <button type="button" className="fi-btn fi-btn--tertiary" disabled={Boolean(menyiapkan)} onClick={onUlangi}>Ulangi pratinjau</button>
+                </MessageStrip>
+            )}
+            {tanpaSaldo.length > 0 && (
+                <MessageStrip tone="warn" title={`${tanpaSaldo.length} baris tanpa kolom Saldo: belum dicek apakah sudah diinput di Accurate.`}>
+                    Tanpa Saldo, aplikasi tidak bisa membedakan pelunasan yang sudah diinput sales/admin dari yang belum; baris ini dikirim sesuai berkas
+                    ({tanpaSaldo.slice(0, 5).map((b) => b.faktur).join(", ")}{tanpaSaldo.length > 5 ? ", …" : ""}). Pakai Form Kerja Inc / P.dd-mm-yyyy
+                    yang berkolom Saldo, atau pastikan di Accurate bahwa faktur ini belum dilunasi sebelum Kirim.
                 </MessageStrip>
             )}
             {placeholder && <MessageStrip tone="neg" title="Akun potongan belum lengkap.">Ada baris dengan potongan tanpa akun. Kembali ke langkah Akun dan isi akunnya; tidak ada yang dikirim.</MessageStrip>}
