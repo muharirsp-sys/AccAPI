@@ -15,6 +15,7 @@
  *     ditahan PERLU_CEK — hanya yang belum diinput yang dikirim (butuh kolom Saldo, ada di Form Kerja Inc).
  *   27 Nov 2026: sisa RJN Belum Lunas di Accurate bernilai NEGATIF (sisaDok) — dulu dibaca "sudah terpakai" sehingga RJN tak pernah dipakai;
  *   baris yang uangnya sudah diinput tetapi returnya belum (sisa Accurate = retur yang belum terpakai) dikirim bagian returnya saja.
+ *   Baris ber-Saldo yang sisa piutang fakturnya tak terbaca (galat/429) ditahan FAKTUR_TAK_TERBACA, bukan dikirim tanpa cek.
  *   Urutan alokasi per baris tetap: Potongan → Retur → Uang; batas atas = Total.Trx (atau jumlah kolom) dan sisa piutang Accurate.
  * Caller: lib/pelunasan/parser.ts (parsePelunasan).
  * Main Functions: alokasikan.
@@ -35,10 +36,10 @@ export type PetaAkun = {
     mapPotLainAccount?: string; mapBiayaTrfAccount?: string; mapBiayaBgAccount?: string; mapSelisihAccount?: string;
 };
 
-/** Baris Excel yang dilewati alokasi. SUDAH_DI_ACCURATE / PERLU_CEK membawa faktur + keterangan angka (langkah Tinjau). */
+/** Baris Excel yang dilewati alokasi. SUDAH_DI_ACCURATE / PERLU_CEK / FAKTUR_TAK_TERBACA membawa faktur + keterangan (langkah Tinjau). */
 export type BarisDilewati = {
     row: number;
-    reason: "KODE_OUTLET_KOSONG" | "TANPA_NOMINAL" | "FAKTUR_TIDAK_DITEMUKAN" | "SUDAH_DI_ACCURATE" | "PERLU_CEK";
+    reason: "KODE_OUTLET_KOSONG" | "TANPA_NOMINAL" | "FAKTUR_TIDAK_DITEMUKAN" | "FAKTUR_TAK_TERBACA" | "SUDAH_DI_ACCURATE" | "PERLU_CEK";
     invoiceNo?: string;
     detail?: string;
 };
@@ -214,6 +215,19 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
         // = intendedRowPayable di bawah (potongan hanya yang > 0, seperti susunan `potongan`), dihitung sebelum uang/potongan dinolkan.
         const totalBerkas = [pot1, pot2, pot3, potTB, biayaBg, klaimAmt].reduce((s, v) => s + (v > 0 ? v : 0), 0)
             + srbAmt + rjsAmt + tunaiAmt + trfAmt + bgAmt + ppnAmt;
+        // Celah 4A (27 Nov 2026): berkas ber-Saldo tetapi sisa piutang faktur TAK TERBACA (cari-faktur galat, mis. 429 saat penyegaran kasir,
+        // atau faktur terbaca tanpa primeOwing) → cek "sudah di Accurate" tidak bisa jalan, jadi baris DITAHAN, bukan dikirim sesuai berkas.
+        // Bukti Tinjau 25NKA 15.45: INV/2608/M200309, M200305, M200473 (sisa Accurate 0 = sudah diinput) siap dikirim ulang Rp 11,2 jt atas
+        // C-ALF052/C-AL0063 tanpa sufiks; tertahan hanya karena riwayat pelanggan itu kebetulan galat. Penjaga riwayat (pelanggan + tanggal)
+        // TIDAK menangkapnya: putar ulang 27 Nov, riwayat 25/11 pelanggan aslinya tidak memuat ketiganya (admin menginput di tanggal lain).
+        // Berkas tanpa Saldo (Format Pelunasan) tetap perilaku lama (anti-ghosting).
+        if (invNo && accuratePrimeOwing === undefined && hasMeaningfulCellValue(row, "Saldo") && totalBerkas > 0) {
+            const sibuk = /429|toleransi|per detik/i.test(String(debugFaktur?.error ?? ""));
+            dilewati.push({ row: indeks + 1, reason: "FAKTUR_TAK_TERBACA", invoiceNo: invNo,
+                detail: `Sisa piutang faktur tidak terbaca dari Accurate (${sibuk ? "Accurate sibuk, batas request per detik" : debugFaktur?.lookupSource === "ERROR" ? "galat saat membaca" : "sisa piutang kosong"}); `
+                    + "belum bisa dipastikan sudah diinput atau belum, jadi tidak dikirim. Ulangi pratinjau." });
+            return;
+        }
         if (invNo && accuratePrimeOwing !== undefined && hasMeaningfulCellValue(row, "Saldo") && totalBerkas > 0) {
             const saldo = nilai("Saldo");
             const sesudah = Math.max(0, saldo - totalBerkas);

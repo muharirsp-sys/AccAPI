@@ -103,6 +103,7 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
     const sudahDiAccurate = t.dilewati.filter((d) => d.reason === "SUDAH_DI_ACCURATE");
     const perluCek = t.dilewati.filter((d) => d.reason === "PERLU_CEK");
     const dilewatiLain = t.dilewati.filter((d) => d.reason !== "SUDAH_DI_ACCURATE" && d.reason !== "PERLU_CEK");
+    const takTerbaca = t.dilewati.filter((d) => d.reason === "FAKTUR_TAK_TERBACA");
     const ganda = t.review.filter((r) => !r.recommended);
     const nKirim = rencana.kirim.length;
     const nPaket = Math.ceil(nKirim / UKURAN_PAKET);
@@ -218,6 +219,14 @@ export function LangkahTinjau({ tinjauan: t, sesi, muatSesi, izin, menyiapkan, g
             {galatSiap && <MessageStrip tone="neg" title="Pratinjau ulang gagal.">{galatSiap} Pratinjau sebelumnya tetap tampil; Kirim tetap terkunci bila database berubah.</MessageStrip>}
             {menyiapkan && <p className="fi-small" role="status">{menyiapkan}</p>}
             {t.peringatan.map((p) => <MessageStrip key={p} tone="warn" title="Catatan saat membaca Accurate.">{p}</MessageStrip>)}
+            {takTerbaca.length > 0 && (
+                <MessageStrip tone="warn" title={`${takTerbaca.length} faktur tidak terbaca dari Accurate, tidak dikirim.`}>
+                    Sisa piutangnya gagal dibaca (biasanya Accurate sibuk saat penyegaran kasir menit :00/:15/:30/:45), jadi belum bisa dipastikan sudah
+                    diinput atau belum: {takTerbaca.slice(0, 5).map((d) => d.invoiceNo).join(", ")}{takTerbaca.length > 5 ? ", …" : ""}. Baris lain aman dikirim;
+                    sesudahnya ulangi pratinjau untuk faktur ini (yang sudah terkirim akan terbaca &quot;Sudah di Accurate&quot;).{" "}
+                    <button type="button" className="fi-btn fi-btn--tertiary" disabled={Boolean(menyiapkan)} onClick={onUlangi}>Ulangi pratinjau</button>
+                </MessageStrip>
+            )}
             {placeholder && <MessageStrip tone="neg" title="Akun potongan belum lengkap.">Ada baris dengan potongan tanpa akun. Kembali ke langkah Akun dan isi akunnya; tidak ada yang dikirim.</MessageStrip>}
 
             <div className="fi-kcards" role="group" aria-label="Ringkasan tinjauan" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 150px), 1fr))" }}>

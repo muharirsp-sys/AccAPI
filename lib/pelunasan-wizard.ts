@@ -246,6 +246,7 @@ export const LABEL_DILEWATI: Record<string, string> = {
     KODE_OUTLET_KOSONG: "Code Outlet kosong",
     TANPA_NOMINAL: "Tanpa nominal (Tunai, Trf, BG, retur, dan potongan kosong)",
     FAKTUR_TIDAK_DITEMUKAN: "No. Nota tidak ditemukan di Accurate (pasti ditolak bila dikirim)",
+    FAKTUR_TAK_TERBACA: "Sisa piutang faktur tidak terbaca dari Accurate: belum bisa dipastikan sudah diinput, tidak dikirim. Ulangi pratinjau",
     SUDAH_DI_ACCURATE: "Sudah diinput di Accurate (sales/admin): sisa piutang = saldo berkas − bayar",
     PERLU_CEK: "Perlu dicek: sisa piutang Accurate tidak sama dengan saldo berkas maupun sesudah bayar",
 };
@@ -342,7 +343,9 @@ export type BarisUnggah = {
     rekening: string[]; cara: CaraBayar[]; status: StatusUnggah; detail?: string; nomor?: string[];
 };
 
-const STATUS_DILEWATI: Record<string, StatusUnggah> = { SUDAH_DI_ACCURATE: "sudah_di_accurate", PERLU_CEK: "perlu_cek" };
+// FAKTUR_TAK_TERBACA = perlu_cek, bukan "dilewati": Hermes jaga-pelunasan mengabaikan "dilewati", padahal baris ini belum terlunasi
+// bila pratinjau tidak diulang — Hermes harus melaporkannya sebagai KURANG.
+const STATUS_DILEWATI: Record<string, StatusUnggah> = { SUDAH_DI_ACCURATE: "sudah_di_accurate", PERLU_CEK: "perlu_cek", FAKTUR_TAK_TERBACA: "perlu_cek" };
 
 /** Ringkasan per baris berkas dari hasil parsePelunasan (pratinjau). `rows` = baris berkas ASLI yang sama yang diberikan ke parse. */
 export function barisUnggah(rows: Bebas[], out: { payload: Bebas[]; manualRows: Bebas[] | null; counts: { skipped: Array<{ row: number; reason: string; detail?: string }> } },
