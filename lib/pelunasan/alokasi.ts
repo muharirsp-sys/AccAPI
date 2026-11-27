@@ -211,7 +211,9 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
         // Rp 7.615.421 (RJN/2611/KN000115 tak ada). Retur tak tersisa sama sekali / R > retur berkas → tetap PERLU_CEK.
         const accuratePrimeOwing = fakturMeta?.outstanding != null && !isNaN(Number(fakturMeta.outstanding)) ? Number(fakturMeta.outstanding) : undefined;
         let hanyaRetur = false;
-        const totalBerkas = pot1 + pot2 + pot3 + potTB + biayaBg + klaimAmt + srbAmt + rjsAmt + tunaiAmt + trfAmt + bgAmt + ppnAmt;
+        // = intendedRowPayable di bawah (potongan hanya yang > 0, seperti susunan `potongan`), dihitung sebelum uang/potongan dinolkan.
+        const totalBerkas = [pot1, pot2, pot3, potTB, biayaBg, klaimAmt].reduce((s, v) => s + (v > 0 ? v : 0), 0)
+            + srbAmt + rjsAmt + tunaiAmt + trfAmt + bgAmt + ppnAmt;
         if (invNo && accuratePrimeOwing !== undefined && hasMeaningfulCellValue(row, "Saldo") && totalBerkas > 0) {
             const saldo = nilai("Saldo");
             const sesudah = Math.max(0, saldo - totalBerkas);
