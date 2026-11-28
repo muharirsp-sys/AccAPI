@@ -117,6 +117,12 @@ export async function parsePelunasan(rows: Bebas[], opsi: OpsiPelunasan): Promis
         }
         // Celah 4D (27 Nov 2026): akun Accurate tanpa hak "Lihat Retur Penjualan" → pencarian SRB galat, ditelan jadi NOT_FOUND, lalu masuk
         // retur manual berlabel "belum ditemukan" walau returnya ada. Bukti putar ulang 26/11: 9 penolakan sales-return/list.do.
+        // Satu RJN/SRT bisa tercantum di daftar beberapa baris (teks daftar berbeda = entri returMap berbeda, tiap entri salinan sendiri):
+        // alokasi memotong sisa (primeOwing) di objeknya, jadi tanpa ini sisa yang sama terpakai berulang. Satu objek per nomor dokumen.
+        const satuDok = new Map<string, Bebas>();
+        for (const v of returMap.values()) {
+            if (Array.isArray(v.returns)) v.returns = v.returns.map((r: Bebas) => !r?.number ? r : satuDok.get(r.number) ?? (satuDok.set(r.number, r), r));
+        }
         const tanpaHak = [...returMap.values()].filter((r) => r.number === "NOT_FOUND" && /tidak memiliki hak/i.test(String(r.DEBUG_RAW ?? ""))).length;
         if (tanpaHak > 0) {
             lapor("warning", `${tanpaHak} referensi retur tidak bisa dicari: akun Accurate di sesi ini tidak punya hak Lihat Retur Penjualan. `
