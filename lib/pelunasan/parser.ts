@@ -82,6 +82,55 @@ function kumpulkanKueri(cleanedData: Bebas[]) {
     return { returQueries, invoiceNos };
 }
 
+const rp = (n: number) => `Rp ${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}`;
+const tglAccurate = (d: Date) => `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}`;
+
+/**
+ * Laporan PERLU_CEK (pemilik 28 Nov 2026 "masukkan ke laporan saja"): keterangan tiap baris ditambah pelunasan Accurate yang menyentuh
+ * fakturnya (nomor, tanggal, nilai) dan tanda dugaan input dobel (tanggal + nilai sama), supaya admin/Finance bisa menyelesaikannya
+ * tanpa menelusuri Accurate. Bukti P.27-11-2026: INV/2610/HZ02233 dilunasi 2× Rp 700.000 pada 28/11 (110102.2026.11.16019 & 16020).
+ * ponytail: jendela 60 hari sebelum tanggal berkas s.d. hari ini, ≤ 30 pelunasan per pelanggan (detail.do satu per satu); pelunasan
+ * lebih lama tidak tampak. Galat baca = catatan "tidak terbaca", Tinjau tetap jalan. Baca-saja.
+ */
+async function buktiPerluCek(baris: BarisDilewati[], invoiceBranchMap: Map<string, Bebas>, trxDate: string, accurateFetch: AccurateFetch) {
+    const awal = new Date(`${trxDate}T00:00:00Z`);
+    awal.setUTCDate(awal.getUTCDate() - 60);
+    const akhir = new Date(Date.now() + 8 * 3600_000 + 24 * 3600_000); // besok WITA: pelunasan hari ini ikut
+    const perPelanggan = new Map<string, BarisDilewati[]>();
+    for (const b of baris) {
+        const cust = String(invoiceBranchMap.get(String(b.invoiceNo).trim())?.customerNo ?? "").trim();
+        if (!cust) { b.detail = `${b.detail ?? ""} Pelunasan di Accurate: pelanggan faktur tidak terbaca.`; continue; }
+        perPelanggan.set(cust, [...(perPelanggan.get(cust) ?? []), b]);
+    }
+    for (const [cust, daftar] of perPelanggan) {
+        const temuan = new Map<string, Array<{ nomor: string; tanggal: string; nilai: number }>>();
+        try {
+            const list = await accurateFetch("/api/sales-receipt/list.do", "GET", {
+                fields: "id,number,transDate", "filter.customerNo": cust, "filter.transDate.op": "BETWEEN",
+                "filter.transDate.val[0]": tglAccurate(awal), "filter.transDate.val[1]": tglAccurate(akhir), "sp.pageSize": 30,
+            });
+            for (const c of (Array.isArray(list?.d) ? list.d : []).slice(0, 30)) {
+                const d = (await accurateFetch("/api/sales-receipt/detail.do", "GET", { id: c.id }))?.d;
+                for (const x of (Array.isArray(d?.detailInvoice) ? d.detailInvoice : [])) {
+                    const no = String(x?.invoice?.number ?? x?.invoiceNo ?? "").trim();
+                    if (!daftar.some((b) => String(b.invoiceNo).trim() === no)) continue;
+                    temuan.set(no, [...(temuan.get(no) ?? []), { nomor: String(d.number ?? c.number), tanggal: String(d.transDate ?? c.transDate ?? ""), nilai: Number(x.paymentAmount) || 0 }]);
+                }
+            }
+        } catch {
+            for (const b of daftar) b.detail = `${b.detail ?? ""} Pelunasan di Accurate: tidak terbaca (ulangi pratinjau untuk melihatnya).`;
+            continue;
+        }
+        for (const b of daftar) {
+            const t = temuan.get(String(b.invoiceNo).trim()) ?? [];
+            const kembar = t.filter((x, i) => t.some((y, j) => j !== i && y.tanggal === x.tanggal && Math.abs(y.nilai - x.nilai) < 0.01));
+            b.detail = `${b.detail ?? ""} Pelunasan di Accurate sejak ${tglAccurate(awal)}: `
+                + (t.length ? t.map((x) => `${x.nomor} (${x.tanggal}) ${rp(x.nilai)}`).join("; ") : "tidak ada")
+                + (kembar.length ? `. DUGAAN INPUT DOBEL: ${kembar.map((x) => x.nomor).join(", ")} (tanggal & nilai sama).` : ".");
+        }
+    }
+}
+
 export type OpsiPelunasan = {
     /** Tanggal transaksi YYYY-MM-DD (dari pemilih tanggal halaman). */
     trxDate: string;
@@ -138,9 +187,14 @@ export async function parsePelunasan(rows: Bebas[], opsi: OpsiPelunasan): Promis
         ({ invoiceBranchMap, invoiceLookupDebugMap } = await cariFaktur(invoiceNos, accurateFetch));
     }
 
-    const { groupedMap, ayatSilangDocs, unresolvedReturWarnings, dilewati, trxTakCocok, hanyaReturBaris } = alokasikan(cleanedData, {
+    const { groupedMap, ayatSilangDocs, unresolvedReturWarnings, dilewati, trxTakCocok, hanyaReturBaris, returIkutAccurate } = alokasikan(cleanedData, {
         trxDate, peta: opsi.peta, returMap, invoiceBranchMap, invoiceLookupDebugMap,
     });
+    const perluCek = dilewati.filter((d) => d.reason === "PERLU_CEK" && d.invoiceNo);
+    if (perluCek.length > 0 && isKeySaved) {
+        lapor("loading", `Mencari pelunasan di Accurate untuk ${perluCek.length} baris perlu cek...`, { id: "parse" });
+        await buktiPerluCek(perluCek, invoiceBranchMap, trxDate, accurateFetch);
+    }
 
     const payload = finalisasiPayload(Array.from(groupedMap.values()), ayatSilangDocs);
     if (trxTakCocok.length > 0) {
@@ -151,12 +205,18 @@ export async function parsePelunasan(rows: Bebas[], opsi: OpsiPelunasan): Promis
     if (hanyaReturBaris.length > 0) {
         const contoh = hanyaReturBaris.slice(0, 8).join(", ");
         lapor("warning", `${hanyaReturBaris.length} baris: uang/potongan sudah diinput di Accurate, returnya belum — hanya retur yang belum `
-            + `terpakai di Accurate yang dikirim (kekurangannya masuk retur manual). Baris data ke-${contoh}${hanyaReturBaris.length > 8 ? ", …" : ""}.`);
+            + `terpakai di Accurate yang dikirim (kekurangannya dilunasi sesuai Accurate). Baris data ke-${contoh}${hanyaReturBaris.length > 8 ? ", …" : ""}.`);
     }
     let manualRows: Bebas[] | null = null;
     if (unresolvedReturWarnings.length > 0) {
         lapor("warning", pesanPeringatanRetur(unresolvedReturWarnings));
         manualRows = susunBarisManual(unresolvedReturWarnings);
+    }
+    if (returIkutAccurate.length > 0) {
+        const total = returIkutAccurate.reduce((s, r) => s + r.kurang, 0);
+        const contoh = returIkutAccurate.slice(0, 5).map((r) => `${r.invoiceNo} (${rp(r.kurang)})`).join(", ");
+        lapor("warning", `${returIkutAccurate.length} baris: retur di berkas lebih besar dari sisa RJN di Accurate, dilunasi sesuai Accurate; `
+            + `selisih ${rp(total)} tetap menjadi sisa piutang fakturnya (bukan retur manual). Contoh: ${contoh}${returIkutAccurate.length > 5 ? ", …" : ""}.`);
     }
 
     lapor("success", `Format Pelunasan dikonversi menjadi ${payload.length} Sales Receipt.`, { id: "parse" });

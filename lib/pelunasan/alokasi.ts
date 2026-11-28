@@ -79,9 +79,16 @@ function sisaReturHidup(returMap: Map<string, Bebas>, customerNo: string, desc: 
 /** Keterangan pelunasan memuat daftar retur berkas, yang di NKA bisa ratusan nomor RJN (±2.600 huruf): dipotong. */
 const ringkasRef = (s: string) => (s.length > 120 ? `${s.slice(0, 117)}…` : s);
 
-/** Kapasitas retur dari peta retur (dulu W:300-365): nominal yang bisa dipakai, nomor Accurate, dan yang belum ketemu. */
+/** Retur yang dokumennya ADA di Accurate tetapi sisanya lebih kecil dari nilai berkas: dilunasi sesuai Accurate, bukan retur manual. */
+export type ReturIkutAccurate = { row: number; invoiceNo: string; refs: string[]; kurang: number };
+
+/**
+ * Kapasitas retur dari peta retur (dulu W:300-365): nominal yang bisa dipakai, nomor Accurate, `unresolved` = dokumen TIDAK ketemu
+ * (retur manual), `kurang` = dokumen ketemu tetapi sisanya < nilai berkas. Aturan pemilik 28 Nov 2026: berkas > Accurate → lunaskan
+ * sesuai Accurate; berkas < Accurate dengan selisih ≤ Rp 100 → RJN dihabiskan (kompensasi); selisih > Rp 100 → sesuai berkas.
+ */
 function kapasitasRetur(returMap: Map<string, Bebas>, customerNo: string, desc: string, amt: number) {
-    const r = { avail: 0, unresolved: 0, number: undefined as string | undefined, outstanding: undefined as number | undefined, kompensasi: 0 };
+    const r = { avail: 0, unresolved: 0, kurang: 0, number: undefined as string | undefined, outstanding: undefined as number | undefined, kompensasi: 0 };
     if (!(amt > 0) || !desc) return r;
     const key = buildReturLookupKey(customerNo.trim(), desc.trim());
     const retData = returMap.get(key);
@@ -95,9 +102,9 @@ function kapasitasRetur(returMap: Map<string, Bebas>, customerNo: string, desc: 
     if (Math.abs(amt - retOut) <= TOLERANSI_SELISIH) { r.avail = retOut; r.kompensasi = retOut - amt; }
     else if (retOut < 0.01) r.avail = amt; // ANTI-GHOSTING RETUR: jangan bunuh baris bila API membaca retur sudah lunas
     else r.avail = Math.min(amt, retOut);
-    // Sisa retur di Accurate lebih kecil dari nilai di berkas (sebagian sudah terpakai): kekurangannya dilaporkan, bukan hilang diam-diam.
-    // Bukti putar ulang 23NKA (Alfamart, 542 RJN): faktur M101032 retur Rp25,6 jt, sisa RJN-nya di Accurate Rp57 rb, tanpa peringatan.
-    if (amt - r.avail > TOLERANSI_SELISIH) r.unresolved = amt - r.avail;
+    // Sisa retur di Accurate lebih kecil dari nilai di berkas: dilunasi sesuai Accurate (aturan pemilik 28 Nov 2026), kekurangannya dicatat
+    // sebagai info di Tinjau, bukan retur manual. Dulu (23NKA, M101032 retur Rp25,6 jt, sisa RJN Rp57 rb) masuk retur manual.
+    if (amt - r.avail > TOLERANSI_SELISIH) r.kurang = amt - r.avail;
     return r;
 }
 
@@ -128,6 +135,7 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
     const ayatSilangDocs: Bebas[] = [];
     const unresolvedReturWarnings: PeringatanRetur[] = [];
     const unresolvedReturKeys = new Set<string>();
+    const returIkutAccurate: ReturIkutAccurate[] = [];
     // S6e-2 butir 9: baris data yang tidak menghasilkan pelunasan (nomor baris mulai 1) — untuk langkah Tinjau.
     const dilewati: BarisDilewati[] = [];
     // Baris (mulai 1) yang Total.Trx-nya berbeda dari jumlah kolom pembayaran → dipakai jumlah kolom; dilaporkan di Tinjau.
@@ -137,6 +145,7 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
 
     cleanedData.forEach((row: Bebas, indeks: number) => {
         const nilai = (kolom: string) => Number(getVal(row, kolom)) || 0;
+        let kurangIkut = 0; // retur berkas yang tidak tertutup sisa RJN di Accurate (dilunasi sesuai Accurate)
         const rawOutlet = getTextVal(row, "Code Outlet");
         let srbDesc = getTextVal(row, "No.SRB Rt Ktr");
         let rjsDesc = getTextVal(row, "No.RJS RT Gt");
@@ -246,13 +255,7 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
                     && srbAda + rjsAda > TOLERANSI_SELISIH && srbAda + rjsAda <= sisaRetur + TOLERANSI_SELISIH) {
                     hanyaRetur = true;
                     const kurang = sisaRetur - srbAda - rjsAda;
-                    if (kurang > TOLERANSI_SELISIH) {
-                        unresolvedReturWarnings.push({
-                            invoiceNo: invNo, customerNo, refs: [srbAmt > 0 ? srbDesc : "", rjsAmt > 0 ? rjsDesc : ""].filter(Boolean),
-                            unresolvedSrbAmt: rjsAmt > 0 ? 0 : kurang, unresolvedRjsAmt: rjsAmt > 0 ? kurang : 0, tunaiAmt: 0, trfAmt: 0, bgAmt: 0, biayaBg: 0,
-                            ketAllTrx: String(getVal(row, "Ket. All Trx") || ""),
-                        });
-                    }
+                    if (kurang > TOLERANSI_SELISIH) kurangIkut += kurang; // dokumen ada, sisanya kurang: sesuai Accurate
                     tunaiAmt = trfAmt = bgAmt = ppnAmt = klaimAmt = pot1 = pot2 = pot3 = potTB = biayaBg = 0;
                     srbAmt = srbAda; rjsAmt = rjsAda;
                     hanyaReturBaris.push(indeks + 1);
@@ -322,7 +325,7 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
         let selisih = 0;
         if (accuratePrimeOwing !== undefined) {
             const diff = accuratePrimeOwing - maxPayable;
-            const bolehSnap = !(hasExplicitTrxAmt && trxAmt === 0) && srb.unresolved === 0 && rjs.unresolved === 0;
+            const bolehSnap = !(hasExplicitTrxAmt && trxAmt === 0) && srb.unresolved === 0 && rjs.unresolved === 0 && srb.kurang === 0 && rjs.kurang === 0;
             if (bolehSnap && Math.abs(diff) <= TOLERANSI_SELISIH) selisih = Math.abs(diff) < SANGAT_KECIL ? 0 : diff;
             else if (maxPayable > accuratePrimeOwing) maxPayable = accuratePrimeOwing; // batas lebih bayar (walau sisa 0 = sudah lunas)
         }
@@ -504,18 +507,16 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
             fakturAyat.detailInvoice[0].detailDiscount = hostLine.detailDiscount;
             sr.detailInvoice.splice(sr.detailInvoice.indexOf(hostLine), 1);
         }
-        if (kurangRetur.srb > 0 || kurangRetur.rjs > 0) {
-            // Retur ketemu, tetapi sisanya di Accurate sudah terpakai baris lain: bagian itu tidak dilunasi dan masuk laporan manual.
-            unresolvedReturWarnings.push({
-                invoiceNo: invNo, customerNo, refs: [kurangRetur.srb > 0 ? srbDesc : "", kurangRetur.rjs > 0 ? rjsDesc : ""].filter(Boolean),
-                unresolvedSrbAmt: kurangRetur.srb, unresolvedRjsAmt: kurangRetur.rjs, tunaiAmt, trfAmt, bgAmt, biayaBg,
-                ketAllTrx: String(getVal(row, "Ket. All Trx") || "")
-            });
+        // Retur ketemu, tetapi sisanya di Accurate kurang / sudah terpakai baris lain: bagian itu tidak dilunasi (sesuai Accurate) dan
+        // dicatat sebagai info — bukan retur manual (aturan pemilik 28 Nov 2026).
+        kurangIkut += srb.kurang + rjs.kurang + kurangRetur.srb + kurangRetur.rjs;
+        if (invNo && kurangIkut > TOLERANSI_SELISIH) {
+            returIkutAccurate.push({ row: indeks + 1, invoiceNo: invNo, refs: [srbDesc, rjsDesc].filter(Boolean), kurang: kurangIkut });
         }
 
         // Sisa piutang lokal agar baris berikutnya atas faktur yang sama tidak mengalokasikan berlebih.
         if (invNo && invoiceBranchMap.has(invNo.trim())) invoiceBranchMap.get(invNo.trim())!.outstanding -= terlunasi;
     });
 
-    return { groupedMap, ayatSilangDocs, unresolvedReturWarnings, dilewati, trxTakCocok, hanyaReturBaris };
+    return { groupedMap, ayatSilangDocs, unresolvedReturWarnings, dilewati, trxTakCocok, hanyaReturBaris, returIkutAccurate };
 }
