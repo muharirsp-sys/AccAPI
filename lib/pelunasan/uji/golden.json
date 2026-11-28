@@ -1201,21 +1201,7 @@
         ]
       }
     ],
-    "manualRows": [
-      {
-        "Invoice No": "INV/2610/XX00052",
-        "Code Outlet": "PLG-E-001",
-        "Referensi Retur/Pot.Lain": "RJN/2610/XX0001,XX0002",
-        "Nominal SRB Belum Diproses": 20000,
-        "Nominal RJS Belum Diproses": 0,
-        "Tunai Tetap Diproses": 0,
-        "Transfer Tetap Diproses": 0,
-        "BG Tetap Diproses": 0,
-        "Biaya Tetap Diproses": 0,
-        "Ket. All Trx": "",
-        "Aksi Manual": "Retur/Pot.Lain perlu diproses manual di Accurate"
-      }
-    ],
+    "manualRows": null,
     "toasts": [
       [
         "loading",
@@ -1240,7 +1226,7 @@
       ],
       [
         "warning",
-        "1 baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: INV/2610/XX00052 [RJN/2610/XX0001,XX0002]"
+        "1 baris: retur di berkas lebih besar dari sisa RJN di Accurate, dilunasi sesuai Accurate; selisih Rp 20.000 tetap menjadi sisa piutang fakturnya (bukan retur manual). Contoh: INV/2610/XX00052 (Rp 20.000)."
       ],
       [
         "success",
