@@ -149,7 +149,9 @@ test("SRB: sisa dibaca dari dokumen RJN; retur pelanggan lain ditolak; salah tul
     const fetch = async (path: string, _m: string, q?: unknown) => {
         const p = (q ?? {}) as Record<string, unknown>;
         if (path.startsWith("/api/sales-return/")) {
-            const cari = String(p["filter.keywords.val"] ?? p.keyword ?? "").replace(/\s+/g, "").toUpperCase();
+            // Bentuk nyata (28 Nov 2026): `keyword` DIABAIKAN — jawabannya retur terbaru pelanggan lain; filter.keywords CONTAIN bekerja.
+            if (p.keyword !== undefined) return { s: true, d: [ret("RJN/2611/KN09999", "C-KIN012-KN", "27/11/26_input28/11/2026_*", 71827)] };
+            const cari = String(p["filter.keywords.val"] ?? "").replace(/\s+/g, "").toUpperCase();
             return { s: true, d: cari ? dataRetur.filter((r) => r.description.replace(/\s+/g, "").toUpperCase().includes(cari)).map((r) => ({ ...r })) : [] };
         }
         const no = String(p["filter.number.val"] ?? "");

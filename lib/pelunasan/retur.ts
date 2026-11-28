@@ -575,6 +575,26 @@ export async function cariRetur(returQueries: Map<string, KueriRetur>, returMap:
                     }
                 }
             }
+            // Step4b: Accurate MENGABAIKAN `keyword` di sales-return/list.do (bukti 28 Nov 2026: jawaban = 44 rb retur terbaru, 444 halaman),
+            // jadi Step4/Step5 tidak pernah menemukan apa pun di produksi. `filter.keywords CONTAIN <ekor faktur>` bekerja: retur pelanggan yang
+            // sama yang keterangannya menyebut nomor faktur LENGKAP baris ini (mis. INV/2609/AB00896 → RJN/2611/AB00217) diterima.
+            if (!ret && !meta.isAyatSilang && meta.invNos.size > 0) {
+                for (const inv of Array.from(meta.invNos)) {
+                    if (ret) break;
+                    const ekor = inv.split('/').pop()?.trim() || "";
+                    if (!ekor) continue;
+                    try {
+                        const res = await accurateFetch('/api/sales-return/list.do', 'GET', {
+                            fields: SALES_RETURN_SEARCH_FIELDS, "filter.keywords.op": "CONTAIN", "filter.keywords.val": ekor, "sp.pageSize": 100,
+                        });
+                        const pilih = (Array.isArray(res?.d) ? res.d : []).find((item: Bebas) => samaPelanggan(item) && menyebutFaktur(item));
+                        xrayLogs.push(`Step4b_${ekor}:${pilih?.number ?? "-"}`);
+                        if (pilih) ret = pilih;
+                    } catch (err) {
+                        xrayLogs.push(`Step4b_${ekor}_ERR:${(err instanceof Error ? err.message : String(err)).substring(0, 120)}`);
+                    }
+                }
+            }
             if (!ret && !meta.isAyatSilang) {
                 const cleanCust = custNo.split('-').slice(0, 2).join('-');
                 const allReturns: Bebas[] = [];
