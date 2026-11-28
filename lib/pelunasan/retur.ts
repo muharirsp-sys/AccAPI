@@ -274,7 +274,9 @@ const sisaDariDokumenRjn = async (accurateFetch: AccurateFetch, returns: Bebas[]
             const res = await accurateFetch('/api/sales-invoice/list.do', 'GET', {
                 fields: AYAT_SILANG_SEARCH_FIELDS, "filter.number.op": "EQUAL", "filter.number.val": nomor,
             });
-            const dok = (Array.isArray(res?.d) ? res.d : []).find((x: Bebas) => normalizeLookupText(String(x?.number ?? "")) === normalizeLookupText(nomor));
+            // Hanya dokumen retur: RJN Belum Lunas bersisa NEGATIF (0 = terpakai). Sisa positif = faktur biasa → tidak dipakai sebagai retur.
+            const dok = (Array.isArray(res?.d) ? res.d : []).find((x: Bebas) => normalizeLookupText(String(x?.number ?? "")) === normalizeLookupText(nomor)
+                && Number(x?.primeOwing) <= 0);
             xrayLogs.push(`SisaRJN_${nomor}:${dok ? dok.primeOwing : "-"}`);
             hasil.push(dok ? { ...retItem, primeOwing: dok.primeOwing } : retItem);
         } catch (err) {
