@@ -163,6 +163,23 @@ test("susulan S6e (2b #3): nomor terposting dari item jawaban Accurate; nomor mi
     assert.deepEqual(r.map((x) => [x["Nomor Accurate"], x["Nomor mirip"]]), [["PR.1", ""], ["", "PR.MIRIP"], ["PR.9", ""], ["", "PR.SAMA"], ["", ""], ["", "PR.H"]]);
 });
 
+test("28 Nov 2026: laporan per baris memuat faktur + bukti Perlu cek dan retur manual (kolom sama dengan baris terkirim)", async () => {
+    const { barisLaporanTakTerkirim } = await import("./pelunasan-wizard.ts");
+    const r = barisLaporanTakTerkirim([
+        { row: 234, reason: "PERLU_CEK", invoiceNo: "INV/2610/HZ02233", detail: "Sisa piutang Accurate Rp6.396.470. DUGAAN INPUT DOBEL: 110102.2026.11.16019, 16020" },
+        { row: 5, reason: "SUDAH_DI_ACCURATE", invoiceNo: "INV/1" },
+        { row: 9, reason: "KODE_OUTLET_KOSONG" },
+    ], [{ "Invoice No": "INV/2609/AB00321", "Code Outlet": "C-MAM075", "Referensi Retur/Pot.Lain": "SRB2676.47", "Nominal SRB Belum Diproses": 81392,
+        "Nominal RJS Belum Diproses": 0, "Aksi Manual": "Retur/Pot.Lain perlu diproses manual di Accurate" }]);
+    assert.deepEqual(Object.keys(r[0]), ["Code Outlet", "Faktur", "Metode", "Uang diterima", "Paket", "Hasil", "Nomor Accurate", "Nomor mirip", "Keterangan"]);
+    assert.deepEqual(r.map((x) => [x["Code Outlet"], x.Faktur, x.Hasil]), [
+        ["", "INV/2610/HZ02233", "Dilewati saat dibaca"], ["", "INV/1", "Dilewati saat dibaca"], ["", "baris berkas 9", "Dilewati saat dibaca"],
+        ["C-MAM075", "INV/2609/AB00321", "Retur manual"]]);
+    assert.match(r[0].Keterangan, /^Baris berkas 234: Perlu dicek: .*DUGAAN INPUT DOBEL: 110102\.2026\.11\.16019/);
+    assert.equal(r[1].Keterangan, "Baris berkas 5: Sudah diinput di Accurate (sales/admin): sisa piutang = saldo berkas − bayar");
+    assert.equal(r[3].Keterangan, "Retur/Pot.Lain perlu diproses manual di Accurate; referensi SRB2676.47; SRB belum diproses Rp81.392");
+});
+
 test("jejak Hermes: ringkasan per baris berkas (rekening yang diharapkan, status), status sesudah kirim, validasi badan", async () => {
     const { barisUnggah, terapkanHasilUnggah, bersihkanBarisUnggah } = await import("./pelunasan-wizard.ts");
     const rows = bersihkanHeader([
