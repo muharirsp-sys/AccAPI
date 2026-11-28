@@ -8,7 +8,7 @@
  *   lib/sales-receipt-upload (override, penanda akun).
  * Main Functions: bersihkanHeader, cariBarisHeader, tanggalLaporan, isiBerkas, periksaAkun, petaDari, ringkasKelompok, rencanaKirim,
  *   LABEL_ALASAN, LABEL_DILEWATI, LABEL_HASIL, hitungHasil, paketDari, LABEL_STATUS_SERVER, terapkanPenyelesaian, nomorTerposting, nilaiUang,
- *   barisLaporanHasil.
+ *   barisLaporanHasil, barisLaporanTakTerkirim.
  * Side Effects: tidak ada (murni).
  */
 import { getTextVal, getVal, type Bebas } from "./pelunasan/sel.ts";
@@ -322,6 +322,27 @@ export function barisLaporanHasil(kirim: Bebas[], hasil: Array<Pick<BarisHasil, 
             "Hasil": "Dilewati · potensi ganda", "Nomor Accurate": "", "Nomor mirip": r.matchedReceiptNumbers.join(", "),
             "Keterangan": r.reasons.map((x) => LABEL_ALASAN[x]).join("; "),
         })),
+    ];
+}
+
+/**
+ * Laporan per baris, bagian yang TIDAK dikirim (pemilik 28 Nov 2026: "perlu cek masukkan ke laporan"): baris dilewati saat dibaca membawa
+ * faktur + keterangan lengkap (bukti pelunasan Accurate untuk Perlu cek), lalu baris retur manual. Kolom sama dengan barisLaporanHasil.
+ */
+export function barisLaporanTakTerkirim(dilewati: Array<{ row: number; reason: string; invoiceNo?: string; detail?: string }>, manual: Bebas[]) {
+    const baris = (outlet: string, faktur: string, hasil: string, ket: string) =>
+        ({ "Code Outlet": outlet, "Faktur": faktur, "Metode": "", "Uang diterima": 0, "Paket": "", "Hasil": hasil, "Nomor Accurate": "", "Nomor mirip": "", "Keterangan": ket });
+    return [
+        ...dilewati.map((d) => {
+            const label = LABEL_DILEWATI[d.reason] ?? d.reason;
+            return baris("", d.invoiceNo || `baris berkas ${d.row}`, "Dilewati saat dibaca", `Baris berkas ${d.row}: ${d.detail && d.detail !== label ? `${label}. ${d.detail}` : label}`);
+        }),
+        ...manual.map((m) => {
+            const belum = [["SRB", m["Nominal SRB Belum Diproses"]], ["RJS", m["Nominal RJS Belum Diproses"]]]
+                .filter(([, n]) => Number(n) > 0).map(([k, n]) => `${k} belum diproses ${rp(Number(n))}`);
+            return baris(String(m["Code Outlet"] ?? ""), String(m["Invoice No"] ?? ""), "Retur manual",
+                [m["Aksi Manual"], m["Referensi Retur/Pot.Lain"] && `referensi ${m["Referensi Retur/Pot.Lain"]}`, ...belum].filter(Boolean).join("; "));
+        }),
     ];
 }
 

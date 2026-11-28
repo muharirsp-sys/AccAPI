@@ -5,7 +5,7 @@
  *   menurut `GalatKirim.code`. Hasil: per baris (dengan paket) Terposting / Gagal / Tidak pasti / Ditahan / Dilewati, Excel atas permintaan,
  *   Selesaikan (./Selesaikan: pencarian server dulu, lalu keputusan tercatat) memperbarui baris.
  * Caller: Pelunasan.tsx.
- * Dependensi: lib/pelunasan/kirim (orkestrasi lock → paket 100 → laporan → complete, S6e-2a), lib/pelunasan/pratinjau-ganda (petunjuk riwayat),
+ * Dependensi: lib/pelunasan/kirim (orkestrasi lock → paket 40 → laporan → complete, S6e-2a), lib/pelunasan/pratinjau-ganda (petunjuk riwayat),
  *   lib/pelunasan-wizard, ./bersama, ./Selesaikan, components/fiori, lib/tampil (KOSONG). Kontrak: docs/handover/S6e2-KONTRAK-API.md.
  * Main Functions: LangkahTinjau, LangkahHasil.
  * Side Effects: Kirim = TULIS sales-receipt ke Accurate lewat /api/proxy (zona AGENTS §3); Selesaikan (lihat ./Selesaikan); unduh Excel.
@@ -24,7 +24,7 @@ import { buildSalesReceiptIdempotencyPayload } from "@/lib/sales-receipt-fingerp
 import { memuatPlaceholderAkun } from "@/lib/sales-receipt-upload";
 import { rupiah } from "@/lib/promo-ui";
 import {
-    KODE_DISELESAIKAN, LABEL_ALASAN, LABEL_DILEWATI, LABEL_HASIL, barisLaporanHasil, butuhTakeover, fakturDari, hitungHasil, nilaiUang, nomorTerposting, paketDari, rencanaKirim,
+    KODE_DISELESAIKAN, LABEL_ALASAN, LABEL_DILEWATI, LABEL_HASIL, barisLaporanHasil, barisLaporanTakTerkirim, butuhTakeover, fakturDari, hitungHasil, nilaiUang, nomorTerposting, paketDari, rencanaKirim,
     ringkasKelompok, terapkanPenyelesaian, type BarisKelompok, type BarisUnggah, type Penyelesaian,
 } from "@/lib/pelunasan-wizard";
 import { waktuWita } from "@/app/(dashboard)/principal-order/bersama";
@@ -45,7 +45,9 @@ export type Tinjauan = {
 export type Hasil = { rows: BarisHasil[]; kirim: Bebas[]; ditahan: DuplicateReviewEntry[]; selesai: string; paket: number; terputus?: boolean };
 type Izin = { kirim: boolean; izinkan: boolean; selesaikan: boolean };
 
-const UKURAN_PAKET = 100;
+// 28 Nov 2026: paket 100 pelunasan butuh > 30 dtk di Accurate (batas lib/accurate-forward.ts) → 200 baris "Tidak pasti" padahal tersimpan
+// semua; paket 32–48 selalu terjawab. 40 = ukuran yang sudah terbukti.
+const UKURAN_PAKET = 40;
 /** Kode penolakan proxy yang berarti sesi/izin/database bermasalah: sesi dibaca ulang setelah kirim. */
 const KODE_SESI = new Set(["database_changed", "ACCURATE_SESSION_INCOMPLETE", "DATABASE_REQUIRED", "PERMISSION_REQUIRED"]);
 const PESAN_TERPUTUS = "Kiriman terputus tanpa hasil per baris dari aplikasi, jadi hasilnya belum pasti. Jangan unggah ulang; Finance mencocokkan di Accurate lalu menyelesaikannya.";
@@ -446,7 +448,7 @@ export function LangkahHasil({ tinjauan: t, hasil, izin, onBaru }: { tinjauan: T
             <FooterToolbar message={`Selesai ${waktuWita(hasil.selesai)} WITA · ${hasil.paket} paket · ${namaDatabase(t)}`}>
                 <Button icon={<Download className="fi-icon" aria-hidden />} onClick={() => void unduhExcel([
                     ...barisLaporanHasil(hasil.kirim, efektif, hasil.ditahan),
-                    ...t.dilewati.map((d) => ({ "Code Outlet": "", "Faktur": `baris berkas ${d.row}`, "Metode": "", "Uang diterima": 0, "Paket": "", "Hasil": "Dilewati saat dibaca", "Nomor Accurate": "", "Nomor mirip": "", "Keterangan": LABEL_DILEWATI[d.reason] ?? d.reason })),
+                    ...barisLaporanTakTerkirim(t.dilewati, t.manualRows),
                 ], "Hasil Pelunasan", "Hasil_Pelunasan")}>Laporan per baris (Excel)</Button>
                 <Button variant="primary" onClick={onBaru}>Mulai pelunasan baru</Button>
             </FooterToolbar>
