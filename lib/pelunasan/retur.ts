@@ -556,11 +556,18 @@ export async function cariRetur(returQueries: Map<string, KueriRetur>, returMap:
                     const invTokens = inv.split('/');
                     const pureInv = invTokens.pop() || inv.replace(/[^a-zA-Z0-9]/g, '');
 
-                    const fbRes = await accurateFetch('/api/sales-return/list.do', 'GET', {
-                        fields: SALES_RETURN_SEARCH_FIELDS,
-                        "keyword": pureInv,
-                        "sp.pageSize": 100
-                    });
+                    // Galat di sini dulu MELOMPATI Step4b/Step5 (dilempar ke catch luar → NOT_FOUND "belum ditemukan"): kini dicatat, lanjut.
+                    let fbRes: Bebas | null = null;
+                    try {
+                        fbRes = await accurateFetch('/api/sales-return/list.do', 'GET', {
+                            fields: SALES_RETURN_SEARCH_FIELDS,
+                            "keyword": pureInv,
+                            "sp.pageSize": 100
+                        });
+                    } catch (err) {
+                        xrayLogs.push(`Step4_InvKey_${pureInv}_ERR:${(err instanceof Error ? err.message : String(err)).substring(0, 120)}`);
+                        continue;
+                    }
                     if (fbRes && fbRes.d && fbRes.d.length > 0) {
                         xrayLogs.push(`Step4_InvKey_${pureInv}_Len:${fbRes.d.length} | FirstDsc:[${fbRes.d[0]?.description}]`);
                         const ranked = fbRes.d
@@ -604,12 +611,18 @@ export async function cariRetur(returQueries: Map<string, KueriRetur>, returMap:
 
                 while (hasMore && sanityTimeout < 4) {
                     sanityTimeout++;
-                    const fallbackRes = await accurateFetch('/api/sales-return/list.do', 'GET', {
-                        fields: SALES_RETURN_SEARCH_FIELDS,
-                        "keyword": cleanCust,
-                        "sp.pageSize": 100,
-                        "sp.page": currentPage
-                    });
+                    let fallbackRes: Bebas | null = null;
+                    try {
+                        fallbackRes = await accurateFetch('/api/sales-return/list.do', 'GET', {
+                            fields: SALES_RETURN_SEARCH_FIELDS,
+                            "keyword": cleanCust,
+                            "sp.pageSize": 100,
+                            "sp.page": currentPage
+                        });
+                    } catch (err) {
+                        xrayLogs.push(`Step5_Omni_ERR:${(err instanceof Error ? err.message : String(err)).substring(0, 120)}`);
+                        break;
+                    }
 
                     if (fallbackRes && fallbackRes.d && fallbackRes.d.length > 0) {
                         allReturns.push(...fallbackRes.d);
@@ -660,6 +673,9 @@ export async function cariRetur(returQueries: Map<string, KueriRetur>, returMap:
                     number: "NOT_FOUND",
                     customerNo: custNo,
                     outstanding: 0,
+                    // Ada bacaan yang galat (Accurate sibuk/timeout/tanpa hak): "tidak ketemu" belum tentu "tidak ada" (bukti 28 Nov 2026:
+                    // 3 SRB P.27 "belum ditemukan" di Tinjau pengguna, ketemu semua saat diputar ulang dengan sesi & kode yang sama).
+                    tidakTerbaca: xrayLogs.some((l) => l.includes("_ERR:")),
                     DEBUG_RAW: `NOT_FOUND | Logs: ${xrayLogs.join(';')}`
                 });
             }
@@ -669,6 +685,7 @@ export async function cariRetur(returQueries: Map<string, KueriRetur>, returMap:
                 number: "NOT_FOUND",
                 customerNo: meta.sourceCustomerNo,
                 outstanding: 0,
+                tidakTerbaca: true,
                 DEBUG_RAW: `ERROR: ${innerErr instanceof Error ? innerErr.message : String(innerErr)}`
             });
         }

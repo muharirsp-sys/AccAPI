@@ -171,3 +171,35 @@ test("SRB: sisa dibaca dari dokumen RJN; retur pelanggan lain ditolak; salah tul
         "dulu: keduanya retur manual (SRB tanpa sisa); tanpa syarat pelanggan, AB00216 terpakai untuk SINAR ABADI");
     assert.equal(out.manualRows, null);
 });
+
+test("retur gagal dibaca (28 Nov 2026): galat Step4 tidak melompati Step4b; galat menyeluruh = retur manual berlabel GAGAL DIBACA, bukan 'belum ditemukan'", async () => {
+    const { parsePelunasan } = await import("./parser.ts");
+    const rjn = { id: 1, number: "RJN/2611/AB00217", customer: { customerNo: "C-SIN172-AB" }, branch: { id: 5, name: "ABC" }, description: "INV/2609/AB00896_SRB2676.48_input21/11/2026_#" };
+    const buat = (salesReturnGagal: (p: Record<string, unknown>) => boolean) => async (path: string, _m: string, q?: unknown) => {
+        const p = (q ?? {}) as Record<string, unknown>;
+        if (path.startsWith("/api/sales-return/")) {
+            if (salesReturnGagal(p)) throw new Error("Accurate tidak merespons dalam 30 detik (timeout). Coba lagi.");
+            const cari = String(p["filter.keywords.val"] ?? "").toUpperCase();
+            return { s: true, d: cari && rjn.description.includes(cari) ? [{ ...rjn }] : [] };
+        }
+        const no = String(p["filter.number.val"] ?? "");
+        if (no === "RJN/2611/AB00217") return { s: true, d: [{ number: no, primeOwing: -49399.3992, customer: rjn.customer }] };
+        if (no === "INV/2609/AB00896") return { s: true, d: [{ number: no, primeOwing: 54833.3992, customer: rjn.customer, branch: rjn.branch }] };
+        return { s: true, d: [] };
+    };
+    const PETA0 = { mapTunaiAutoNum: "", mapTunaiBank: "", mapTrfAutoNum: "", mapTrfBank: "", mapBgAutoNum: "", mapBgBank: "", mapPot1Account: "", mapPot2Account: "", mapPot3Account: "" };
+    const rows = [{ "Code Outlet": "C-SIN172", "No. Nota": "INV/2609/AB00896", "Tunai": 5434, "No.SRB Rt Ktr": "SRB2676.47", "Pot.RT Ktr": 49399 }];
+
+    // Step4 (`keyword` ekor faktur) galat: dulu dilempar ke catch luar → NOT_FOUND tanpa mencoba Step4b; kini Step4b tetap menemukan.
+    const a = await parsePelunasan(rows, { trxDate: "2026-11-27", isKeySaved: true, peta: PETA0, accurateFetch: buat((p) => p.keyword === "AB00896") as never });
+    assert.ok(a.payload.some((d) => d.detailInvoice.some((l: { invoiceNo: string }) => l.invoiceNo === "RJN/2611/AB00217")), "RJN AB00217 ikut terkirim");
+    assert.equal(a.manualRows, null);
+
+    // Semua bacaan sales-return galat: retur manual, tetapi berlabel gagal dibaca + peringatan "ulangi pratinjau".
+    const pesan: string[] = [];
+    const b = await parsePelunasan(rows, { trxDate: "2026-11-27", isKeySaved: true, peta: PETA0, accurateFetch: buat(() => true) as never,
+        lapor: (j, p) => { if (j === "warning") pesan.push(p); } });
+    assert.equal(b.manualRows?.length, 1);
+    assert.match(String(b.manualRows?.[0]["Aksi Manual"]), /^Retur GAGAL DIBACA dari Accurate/);
+    assert.ok(pesan.some((p) => /1 di antaranya GAGAL DIBACA dari Accurate.*ulangi pratinjau/.test(p)), pesan.join(" | "));
+});
