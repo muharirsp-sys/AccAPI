@@ -22,7 +22,9 @@ export const matchesReturTokenBoundary = (rawValue: string, token: string) => {
 };
 
 export const parseReturReference = (rawDesc: string) => {
-    const desc = getTextVal({ value: rawDesc }, "value");
+    // "RJN2607/VI00015, …" (salah tulis admin, bukti P.27-11-2026 INV/2607/RB00025) = "RJN/2607/VI00015, …"; dulu periode hilang dan
+    // nomor-nomor itu tidak pernah dicari.
+    const desc = getTextVal({ value: rawDesc }, "value").replace(/\bRJN(\d{4})\//gi, "RJN/$1/");
     if (!desc) {
         return {
             prefix: "",
@@ -66,6 +68,9 @@ export const parseReturReference = (rawDesc: string) => {
                 pushUnique("S", srtTokens, item.toUpperCase());
                 return;
             }
+            // "…HZ00248,RJN/2606/HZ00008": potongan "RJN" = awal dokumen berikutnya, BUKAN nomor. Dulu jadi token "RJN/2605/RJN" yang
+            // (lewat pencarian longgar) mencocokkan RJN terbaru pelanggan lain. Bukti P.27-11-2026: RJN/2611/M100748–M100750 terpakai di 6 faktur.
+            if (/^(RJN|SRT)$/i.test(item)) return;
 
             const upperItem = item.toUpperCase();
             if (currentPeriod) {
@@ -182,9 +187,13 @@ const fetchReturByDocument = async (accurateFetch: AccurateFetch, documentNo: st
             "filter.number.op": "EQUAL",
             "filter.number.val": documentNo.trim().toUpperCase(),
         }, `${label}_${documentNo}_EQUAL`);
-        const hit = (Array.isArray(exact?.d) ? exact.d : []).filter((item: Bebas) => returDocumentMatches(item, documentNo));
+        // Hanya dokumen yang nomornya PERSIS nomor yang dicari. Tidak ketemu = tidak ada di Accurate → retur manual. Dulu jatuh ke pindaian
+        // keyword di bawah: keyword bergaris miring diabaikan Accurate (jawaban = faktur/RJN terbaru), lalu varian ekor ("RJN", "HZ00187")
+        // dicocokkan longgar → RJN pelanggan lain, bahkan faktur biasa, bisa terpakai sebagai retur (bukti P.27-11-2026, 28 Nov).
+        const hit = (Array.isArray(exact?.d) ? exact.d : [])
+            .filter((item: Bebas) => normalizeLookupText(String(item?.number ?? "")) === normalizeLookupText(documentNo));
         xrayLogs.push(`${label}_${documentNo}_Equal:[${hit.map((item: Bebas) => item.number).join('|') || '-'}]`);
-        if (hit.length > 0) return hit;
+        return hit;
     }
 
     for (const variant of variants) {

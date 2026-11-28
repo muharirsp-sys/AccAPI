@@ -80,3 +80,54 @@ test("SRB tersimpan tanpa spasi di Accurate (…_SRB2653.57_…) tetap diterima:
     const nyata = { number: "RJN/2609/GD00062", description: "INV/2604/GD00731_SRB2653.57_input09/09/2026_#", customer: { customerNo: "C-580001-GD" } };
     assert.ok(scoreReturCandidate(nyata, "C-580001", "", parseReturReference("SRB 2653.57")) >= 90);
 });
+
+/* 28 Nov 2026 (uji kering P.27-11-2026): "…HZ00248,RJN/2606/HZ00008" diurai jadi token "RJN/2605/RJN"; nomor itu tak ada, lalu pindaian
+ * keyword longgar mencocokkan RJN TERBARU pelanggan lain (RJN/2611/M100748–M100750, sisa Rp 73 rb) di 6 faktur, ±5× sisanya. */
+const DAFTAR_HZ = "RJN/2605/HZ00187,HZ00248,RJN/2606/HZ00008,HZ00613,RJN/2607/HZ00266";
+test("RJN: potongan 'RJN' sebelum periode berikutnya bukan nomor; 'RJN2607/' salah tulis dibaca 'RJN/2607/'", () => {
+    assert.deepEqual(parseReturReference(DAFTAR_HZ).fullDocTokens,
+        ["RJN/2605/HZ00187", "RJN/2605/HZ00248", "RJN/2606/HZ00008", "RJN/2606/HZ00613", "RJN/2607/HZ00266"]);
+    assert.deepEqual(parseReturReference("RJN/2610/GD00036, RJN/2611/GD00104").fullDocTokens, ["RJN/2610/GD00036", "RJN/2611/GD00104"]);
+    assert.deepEqual(parseReturReference("RJN2607/VI00015, KN00142, RJN/2609/AB00055").fullDocTokens,
+        ["RJN/2607/VI00015", "RJN/2607/KN00142", "RJN/2609/AB00055"]);
+});
+
+test("RJN: nomor lengkap hanya diterima bila PERSIS ada (EQUAL); RJN terbaru pelanggan lain tidak pernah ikut", async () => {
+    const ada = new Map([["RJN/2605/HZ00187", -500000], ["RJN/2606/HZ00008", -200000]].map(([n, p]) => [n as string, { id: n, number: n, primeOwing: p, customer: { customerNo: "C-CI0014-HZ" } }]));
+    const terbaru = [{ id: 1, number: "RJN/2611/M100750", primeOwing: -33249.1, customer: { customerNo: "C-MI0090-M1" }, description: "" },
+        { id: 2, number: "INV/2605/HZ00187", primeOwing: 900000, customer: { customerNo: "C-LAIN-HZ" }, description: "" }];
+    const fetch = async (path: string, _m: string, q?: unknown) => {
+        const p = (q ?? {}) as Record<string, unknown>;
+        if (path.endsWith("detail.do")) return { s: true, d: ada.get(String(p.number)) ?? terbaru.find((x) => x.number === p.number) };
+        if (p["filter.number.op"] === "EQUAL") { const d = ada.get(String(p["filter.number.val"])); return { s: true, d: d ? [d] : [] }; }
+        return { s: true, d: terbaru, sp: { pageCount: 1 } }; // keyword bergaris miring diabaikan Accurate: jawaban = dokumen terbaru
+    };
+    const peta = new Map();
+    await cariRetur(new Map([[`DOC|${DAFTAR_HZ}`, { desc: DAFTAR_HZ, invNos: new Set(["INV/2606/HZ01958"]), sourceCustomerNo: "C-CI0014", isAyatSilang: true }]]), peta, fetch);
+    assert.deepEqual(peta.get(`DOC|${DAFTAR_HZ}`).returns.map((r: { number: string }) => r.number), ["RJN/2605/HZ00187", "RJN/2606/HZ00008"],
+        "dulu: ikut RJN/2611/M100750 (pelanggan lain) dan INV/2605/HZ00187 (faktur biasa)");
+});
+
+test("RJN yang sama di dua daftar berbeda: sisanya terpakai sekali, kekurangan masuk retur manual", async () => {
+    const { parsePelunasan } = await import("./parser.ts");
+    const rjn = { id: 7, number: "RJN/2611/AA00001", primeOwing: -100000, customer: { customerNo: "C-A0001-AA" }, branch: { id: 2, name: "B" } };
+    const faktur = (n: string) => ({ number: n, primeOwing: 500000, customer: { customerNo: "C-A0001-AA" }, branch: { id: 2, name: "B" } });
+    const fetch = async (path: string, _m: string, q?: unknown) => {
+        const p = (q ?? {}) as Record<string, unknown>;
+        if (path.endsWith("detail.do")) return { s: true, d: { ...rjn } };
+        const no = String(p["filter.number.val"] ?? "");
+        if (no === rjn.number) return { s: true, d: [{ ...rjn }] };
+        if (no.startsWith("INV/")) return { s: true, d: [faktur(no)] };
+        return { s: true, d: [] };
+    };
+    const PETA0 = { mapTunaiAutoNum: "", mapTunaiBank: "", mapTrfAutoNum: "", mapTrfBank: "", mapBgAutoNum: "", mapBgBank: "", mapPot1Account: "", mapPot2Account: "", mapPot3Account: "" };
+    const rows = [
+        { "Code Outlet": "C-A0001", "No. Nota": "INV/2611/AA00010", "Tunai": 400000, "Pot. RT Gt": 100000, "No.RJS RT Gt": "RJN/2611/AA00001" },
+        { "Code Outlet": "C-A0001", "No. Nota": "INV/2611/AA00011", "Tunai": 400000, "Pot. RT Gt": 100000, "No.RJS RT Gt": "RJN/2611/AA00001, AA00099" },
+    ];
+    const out = await parsePelunasan(rows, { trxDate: "2026-11-27", isKeySaved: true, peta: PETA0, accurateFetch: fetch as never });
+    const dipakai = out.payload.flatMap((d) => d.detailInvoice).filter((l: { invoiceNo: string }) => l.invoiceNo === rjn.number)
+        .reduce((s: number, l: { paymentAmount: number }) => s + l.paymentAmount, 0);
+    assert.equal(dipakai, -100000, `dulu −200.000 (sisa 100.000 terpakai dua kali); kini ${dipakai}`);
+    assert.equal(out.manualRows?.length, 1, "baris kedua: retur tak tertutup → retur manual");
+});
