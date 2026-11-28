@@ -32,7 +32,7 @@ test("sudah di Accurate: hanya baris yang belum diinput yang dikirim; sisanya di
     assert.deepEqual(e.detailDiscount, [{ amount: 16061.07 - 16062.4, accountNo: "600136" }]);
 });
 
-test("NKA: sisa RJN di Accurate lebih kecil dari retur di berkas → yang ada dipakai, kekurangannya masuk retur manual (putar ulang 23NKA)", () => {
+test("NKA: sisa RJN di Accurate lebih kecil dari retur di berkas → dilunasi sesuai Accurate, kekurangan dicatat (aturan pemilik 28 Nov), bukan retur manual", () => {
     // Faktur Rp33.982.123 = TF Rp8.356.714 + retur Rp25.625.409, tetapi RJN di daftar berkas hanya bersisa Rp57.043 (pelanggan/divisi lain).
     const rows = [{ "Code Outlet": "C-AL0063", "No. Nota": "INV/2608/M101032", "Trf": 8356714, "Ket. Trf": "TF MAYBANK (1) 23/10", "Pot. RT Gt": 25625409, "No.RJS RT Gt": "RJN/2609/M100201,M200073" }];
     const returMap = new Map<string, Record<string, unknown>>([["DOC|RJN/2609/M100201,M200073", {
@@ -41,15 +41,15 @@ test("NKA: sisa RJN di Accurate lebih kecil dari retur di berkas → yang ada di
     }]]);
     const invoiceBranchMap = new Map<string, Record<string, unknown>>([["INV/2608/M101032", { customerNo: "C-AL0063-M1", branchId: 1, outstanding: 33982123 }]]);
     const out = alokasikan(rows, { trxDate: "2026-10-23", peta: PETA, returMap, invoiceBranchMap, invoiceLookupDebugMap: new Map() });
-    assert.equal(out.unresolvedReturWarnings.length, 1, "dulu: kekurangan Rp25,57 jt hilang tanpa peringatan");
-    assert.equal(out.unresolvedReturWarnings[0].unresolvedRjsAmt, 25625409 - 57043);
-    assert.deepEqual(out.unresolvedReturWarnings[0].refs, ["RJN/2609/M100201,M200073"]);
+    assert.deepEqual(out.unresolvedReturWarnings, [], "dokumen ADA di Accurate: bukan retur manual");
+    assert.deepEqual(out.returIkutAccurate.map((r) => [r.invoiceNo, r.kurang, r.refs]), [["INV/2608/M101032", 25625409 - 57043, ["RJN/2609/M100201,M200073"]]],
+        "kekurangan tetap tercatat (tidak hilang diam-diam)");
     const docs = [...out.groupedMap.values(), ...out.ayatSilangDocs];
     assert.equal(docs.find((d) => d.bankNo === "110105")?.chequeAmount, 8356714, "transfer tetap utuh");
     assert.deepEqual(out.ayatSilangDocs.map((d) => d.chequeAmount), [57043, -57043], "retur yang ada tetap dipakai lewat ayat silang");
 });
 
-test("retur ketemu tetapi sudah habis terpakai: tidak ada pelunasan sampah berisi selisih saja, masuk retur manual (uji kering 24 Nov)", () => {
+test("retur ketemu tetapi sudah habis terpakai: tidak ada pelunasan sampah berisi selisih saja; dicatat sesuai Accurate (uji kering 24 Nov)", () => {
     // INV/2611/KN00063: Pot. Lain RJN/2611/KN00158 Rp364.600,47, sisa faktur Rp364.600, retur di Accurate sudah terpakai (sisa 0).
     const rows = [{ "Code Outlet": "C-RAN772", "No. Nota": "INV/2611/KN00063", "Pot. Lain": 364600.4687, "Ket. Pot": "RJN/2611/KN00158" }];
     const returMap = new Map<string, Record<string, unknown>>([["DOC|RJN/2611/KN00158", {
@@ -59,7 +59,8 @@ test("retur ketemu tetapi sudah habis terpakai: tidak ada pelunasan sampah beris
     const invoiceBranchMap = new Map<string, Record<string, unknown>>([["INV/2611/KN00063", { customerNo: "C-RAN772-KN", branchId: 1, outstanding: 364600 }]]);
     const out = alokasikan(rows, { trxDate: "2026-11-24", peta: PETA, returMap, invoiceBranchMap, invoiceLookupDebugMap: new Map() });
     assert.deepEqual([...out.groupedMap.values()].flatMap((s) => s.detailInvoice), [], "dulu: INV -0,47 dengan 600136 -0,47");
-    assert.equal(out.unresolvedReturWarnings[0]?.unresolvedSrbAmt, 364600.4687);
+    assert.deepEqual(out.unresolvedReturWarnings, []);
+    assert.equal(out.returIkutAccurate[0]?.kurang, 364600.4687);
 });
 
 /* 27 Nov 2026: bentuk NYATA Accurate — RJN Belum Lunas primeOwing NEGATIF (RJN/2610/CS00140 −118.300). Dulu dibaca "sudah terpakai",
@@ -115,8 +116,9 @@ test("uang sudah diinput admin, retur belum: hanya bagian retur yang dikirim (25
     assert.deepEqual(out.dilewati.map((d) => [d.invoiceNo, d.reason]), [["INV/2609/UN00999", "PERLU_CEK"]]);
     assert.equal(semua(out).some((d) => d.bankNo === "110105"), false, "transfer TIDAK dikirim ulang");
     assert.deepEqual(out.trxTakCocok, [], "Total.Trx tidak berlaku untuk baris hanya-retur");
-    assert.deepEqual(out.unresolvedReturWarnings.map((w) => [w.invoiceNo, w.unresolvedRjsAmt, w.trfAmt]), [["INV/2609/UN00142", 10570, 0]],
-        "kekurangan RJN (nomor salah tulis) masuk retur manual; transfer tidak diproses ulang");
+    assert.deepEqual(out.unresolvedReturWarnings, [], "aturan pemilik 28 Nov: dokumen ada → sesuai Accurate, bukan retur manual");
+    assert.deepEqual(out.returIkutAccurate.map((r) => [r.invoiceNo, r.kurang]), [["INV/2609/UN00142", 10570]],
+        "kekurangan RJN (nomor salah tulis) tercatat; transfer tidak diproses ulang");
     const kas = semua(out).filter((d) => d.bankNo === "110102" && d.detailInvoice.length > 0); // kelompok kosong dibuang finalisasiPayload
     assert.deepEqual(kas.map((d) => [d.customerNo, d.chequeAmount, d.detailInvoice]), [
         ["C-ALF052-UN", 0, [{ invoiceNo: "INV/2609/UN00142", paymentAmount: 2000000 }, { invoiceNo: "RJN/2611/UN00071", paymentAmount: -2000000 }]],
@@ -215,4 +217,33 @@ test("4D: akun Accurate tanpa hak Lihat Retur Penjualan → peringatan jelas di 
     await parsePelunasan(rows, { trxDate: "2026-11-26", isKeySaved: true, peta: PETA, accurateFetch: (async () => { throw new Error("HTTP 502"); }) as never,
         lapor: (jenis, p) => { if (jenis === "warning") lain.push(p); } });
     assert.ok(!lain.some((p) => /hak Lihat Retur/.test(p)));
+});
+
+test("PERLU_CEK: keterangan memuat pelunasan Accurate faktur itu + tanda dugaan input dobel (P.27-11-2026 INV/2610/HZ02233)", async () => {
+    const { parsePelunasan } = await import("./parser.ts");
+    const struk: Record<number, { number: string; transDate: string; detailInvoice: unknown[] }> = {
+        1: { number: "110102.2026.11.16019", transDate: "28/11/2026", detailInvoice: [{ invoice: { number: "INV/2610/HZ02233" }, paymentAmount: 700000 }] },
+        2: { number: "110102.2026.11.16020", transDate: "28/11/2026", detailInvoice: [{ invoice: { number: "INV/2610/HZ02233" }, paymentAmount: 700000 }] },
+        3: { number: "110102.2026.11.15105", transDate: "25/11/2026", detailInvoice: [{ invoice: { number: "INV/2610/HZ09999" }, paymentAmount: 800000 }] },
+    };
+    const kueri: Record<string, unknown>[] = [];
+    const fetch = async (path: string, _m: string, q?: unknown) => {
+        const p = (q ?? {}) as Record<string, unknown>;
+        if (path === "/api/sales-receipt/list.do") { kueri.push(p); return { s: true, d: [{ id: 1 }, { id: 2 }, { id: 3 }] }; }
+        if (path === "/api/sales-receipt/detail.do") return { s: true, d: struk[Number(p.id)] };
+        if (p["filter.number.val"] === "INV/2610/HZ02233") return { s: true, d: [{ number: "INV/2610/HZ02233", primeOwing: 6396469.83, customer: { customerNo: "C-SI0054-HZ" }, branch: { id: 1, name: "B" } }] };
+        return { s: true, d: [] };
+    };
+    const rows = [{ "Code Outlet": "C-SI0054", "No. Nota": "INV/2610/HZ02233", "Saldo": 7796470.06, "Tunai": 700000 }];
+    const out = await parsePelunasan(rows, { trxDate: "2026-11-27", isKeySaved: true, peta: PETA, accurateFetch: fetch as never });
+    assert.equal(out.payload.length, 0, "tetap tidak dikirim");
+    const d = out.counts.skipped[0];
+    assert.equal(d.reason, "PERLU_CEK");
+    assert.match(d.detail ?? "", /Pelunasan di Accurate sejak 28\/09\/2026: 110102\.2026\.11\.16019 \(28\/11\/2026\) Rp 700\.000; 110102\.2026\.11\.16020 \(28\/11\/2026\) Rp 700\.000\. DUGAAN INPUT DOBEL: 110102\.2026\.11\.16019, 110102\.2026\.11\.16020/);
+    assert.doesNotMatch(d.detail ?? "", /15105/, "pelunasan faktur lain tidak ikut");
+    assert.equal(kueri[0]["filter.customerNo"], "C-SI0054-HZ");
+    // Galat baca riwayat: Tinjau tetap jalan, keterangan menyebutnya.
+    const galat = await parsePelunasan(rows, { trxDate: "2026-11-27", isKeySaved: true, peta: PETA,
+        accurateFetch: (async (path: string, m: string, q?: unknown) => (path.startsWith("/api/sales-receipt/") ? Promise.reject(new Error("429")) : fetch(path, m, q))) as never });
+    assert.match(galat.counts.skipped[0].detail ?? "", /Pelunasan di Accurate: tidak terbaca/);
 });

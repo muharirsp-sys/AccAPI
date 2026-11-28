@@ -108,7 +108,7 @@ test("RJN: nomor lengkap hanya diterima bila PERSIS ada (EQUAL); RJN terbaru pel
         "dulu: ikut RJN/2611/M100750 (pelanggan lain) dan INV/2605/HZ00187 (faktur biasa)");
 });
 
-test("RJN yang sama di dua daftar berbeda: sisanya terpakai sekali, kekurangan masuk retur manual", async () => {
+test("RJN yang sama di dua daftar berbeda: sisanya terpakai sekali, kekurangan dilunasi sesuai Accurate (dicatat, bukan retur manual)", async () => {
     const { parsePelunasan } = await import("./parser.ts");
     const rjn = { id: 7, number: "RJN/2611/AA00001", primeOwing: -100000, customer: { customerNo: "C-A0001-AA" }, branch: { id: 2, name: "B" } };
     const faktur = (n: string) => ({ number: n, primeOwing: 500000, customer: { customerNo: "C-A0001-AA" }, branch: { id: 2, name: "B" } });
@@ -125,9 +125,47 @@ test("RJN yang sama di dua daftar berbeda: sisanya terpakai sekali, kekurangan m
         { "Code Outlet": "C-A0001", "No. Nota": "INV/2611/AA00010", "Tunai": 400000, "Pot. RT Gt": 100000, "No.RJS RT Gt": "RJN/2611/AA00001" },
         { "Code Outlet": "C-A0001", "No. Nota": "INV/2611/AA00011", "Tunai": 400000, "Pot. RT Gt": 100000, "No.RJS RT Gt": "RJN/2611/AA00001, AA00099" },
     ];
-    const out = await parsePelunasan(rows, { trxDate: "2026-11-27", isKeySaved: true, peta: PETA0, accurateFetch: fetch as never });
+    const pesan: string[] = [];
+    const out = await parsePelunasan(rows, { trxDate: "2026-11-27", isKeySaved: true, peta: PETA0, accurateFetch: fetch as never, lapor: (j, p) => { if (j === "warning") pesan.push(p); } });
     const dipakai = out.payload.flatMap((d) => d.detailInvoice).filter((l: { invoiceNo: string }) => l.invoiceNo === rjn.number)
         .reduce((s: number, l: { paymentAmount: number }) => s + l.paymentAmount, 0);
     assert.equal(dipakai, -100000, `dulu −200.000 (sisa 100.000 terpakai dua kali); kini ${dipakai}`);
-    assert.equal(out.manualRows?.length, 1, "baris kedua: retur tak tertutup → retur manual");
+    assert.equal(out.manualRows, null, "aturan pemilik 28 Nov: dokumen ada → sesuai Accurate, bukan retur manual");
+    assert.ok(pesan.some((p) => /1 baris: retur di berkas lebih besar dari sisa RJN di Accurate.*INV\/2611\/AA00011 \(Rp 100\.000\)/.test(p)), pesan.join(" | "));
+});
+
+/* 28 Nov 2026 (P.27-11-2026): jalur SRB. sales-return/list.do TIDAK membawa primeOwing, jadi SRB yang ketemu selalu terbaca "habis" dan
+ * jatuh ke retur manual (AB00321 SRB2676.47 = RJN/2611/AB00216 sisa 81.391,89; AB00322 SRB 2676.49 = RJN/2611/AB00218). Dan berkas menulis
+ * SRB2676.47 juga untuk INV/2609/AB00896 (SINAR ABADI), padahal itu retur H.MAMING; retur AB00896 = RJN/2611/AB00217 "INV/2609/AB00896_SRB2676.48_…". */
+test("SRB: sisa dibaca dari dokumen RJN; retur pelanggan lain ditolak; salah tulis SRB tetap ketemu lewat nomor faktur di keterangan", async () => {
+    const { parsePelunasan } = await import("./parser.ts");
+    const ret = (number: string, customerNo: string, description: string, total: number) => ({ id: number, number, customer: { customerNo }, branch: { id: 5, name: "ABC" }, description, totalAmount: total }); // tanpa primeOwing (bentuk nyata)
+    const dataRetur = [
+        ret("RJN/2611/AB00216", "C-MAM075-AB", "INV/2609/AB00321_SRB2676.47_input21/11/2026_#", 81391.8906),
+        ret("RJN/2611/AB00217", "C-SIN172-AB", "INV/2609/AB00896_SRB2676.48_input21/11/2026_#", 49399.3992),
+    ];
+    const sisaRjn: Record<string, number> = { "RJN/2611/AB00216": -81391.8906, "RJN/2611/AB00217": -49399.3992 };
+    const faktur: Record<string, [string, number]> = { "INV/2609/AB00321": ["C-MAM075-AB", 91325.205], "INV/2609/AB00896": ["C-SIN172-AB", 54833.3992] };
+    const fetch = async (path: string, _m: string, q?: unknown) => {
+        const p = (q ?? {}) as Record<string, unknown>;
+        if (path.startsWith("/api/sales-return/")) {
+            const cari = String(p["filter.keywords.val"] ?? p.keyword ?? "").replace(/\s+/g, "").toUpperCase();
+            return { s: true, d: cari ? dataRetur.filter((r) => r.description.replace(/\s+/g, "").toUpperCase().includes(cari)).map((r) => ({ ...r })) : [] };
+        }
+        const no = String(p["filter.number.val"] ?? "");
+        if (p["filter.number.op"] === "EQUAL" && sisaRjn[no] != null) return { s: true, d: [{ number: no, primeOwing: sisaRjn[no], customer: dataRetur.find((r) => r.number === no)!.customer }] };
+        if (p["filter.number.op"] === "EQUAL" && faktur[no]) return { s: true, d: [{ number: no, primeOwing: faktur[no][1], customer: { customerNo: faktur[no][0] }, branch: { id: 5, name: "ABC" } }] };
+        return { s: true, d: [] };
+    };
+    const PETA0 = { mapTunaiAutoNum: "", mapTunaiBank: "", mapTrfAutoNum: "", mapTrfBank: "", mapBgAutoNum: "", mapBgBank: "", mapPot1Account: "", mapPot2Account: "", mapPot3Account: "" };
+    const rows = [ // AB00896 sengaja DULUAN: dulu retur H.MAMING (AB00216) habis untuk SINAR ABADI
+        { "Code Outlet": "C-SIN172", "No. Nota": "INV/2609/AB00896", "Tunai": 5434, "No.SRB Rt Ktr": "SRB2676.47", "Pot.RT Ktr": 49399 },
+        { "Code Outlet": "C-MAM075", "No. Nota": "INV/2609/AB00321", "Tunai": 9933, "No.SRB Rt Ktr": "SRB2676.47", "Pot.RT Ktr": 81392 },
+    ];
+    const out = await parsePelunasan(rows, { trxDate: "2026-11-27", isKeySaved: true, peta: PETA0, accurateFetch: fetch as never });
+    const retur = out.payload.flatMap((d) => d.detailInvoice.filter((l: { invoiceNo: string }) => l.invoiceNo.startsWith("RJN")).map((l: { invoiceNo: string; paymentAmount: number }) => [d.customerNo, l.invoiceNo, l.paymentAmount]));
+    // Selisih berkas vs RJN ≤ Rp 100 → RJN dihabiskan (aturan pemilik): −49.399,3992 dan −81.391,8906.
+    assert.deepEqual(retur, [["C-SIN172-AB", "RJN/2611/AB00217", -49399.3992], ["C-MAM075-AB", "RJN/2611/AB00216", -81391.8906]],
+        "dulu: keduanya retur manual (SRB tanpa sisa); tanpa syarat pelanggan, AB00216 terpakai untuk SINAR ABADI");
+    assert.equal(out.manualRows, null);
 });

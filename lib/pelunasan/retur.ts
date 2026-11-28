@@ -261,6 +261,31 @@ const enrichReturDetails = async (accurateFetch: AccurateFetch, returns: Bebas[]
 };
 
 /**
+ * Jalur SRB: dokumen dari `sales-return/list.do` TIDAK membawa primeOwing (bukti 28 Nov 2026, RJN/2611/AB00216), sehingga sisaDok = 0 dan
+ * setiap retur SRB jatuh ke retur manual. Sisa yang benar ada di dokumen RJN yang sama di `sales-invoice/list.do` (primeOwing NEGATIF =
+ * Belum Lunas). Hanya dokumen tanpa primeOwing yang dibaca ulang; nomor tak ketemu = tetap tanpa sisa (retur manual, seperti dulu).
+ */
+const sisaDariDokumenRjn = async (accurateFetch: AccurateFetch, returns: Bebas[], xrayLogs: string[]) => {
+    const hasil: Bebas[] = [];
+    for (const retItem of returns) {
+        const nomor = String(retItem?.number || "").trim();
+        if (retItem?.primeOwing != null || !nomor) { hasil.push(retItem); continue; }
+        try {
+            const res = await accurateFetch('/api/sales-invoice/list.do', 'GET', {
+                fields: AYAT_SILANG_SEARCH_FIELDS, "filter.number.op": "EQUAL", "filter.number.val": nomor,
+            });
+            const dok = (Array.isArray(res?.d) ? res.d : []).find((x: Bebas) => normalizeLookupText(String(x?.number ?? "")) === normalizeLookupText(nomor));
+            xrayLogs.push(`SisaRJN_${nomor}:${dok ? dok.primeOwing : "-"}`);
+            hasil.push(dok ? { ...retItem, primeOwing: dok.primeOwing } : retItem);
+        } catch (err) {
+            xrayLogs.push(`SisaRJN_${nomor}_ERR:${(err instanceof Error ? err.message : String(err)).substring(0, 120)}`);
+            hasil.push(retItem);
+        }
+    }
+    return hasil;
+};
+
+/**
  * Skor kandidat retur (W:517-598, apa adanya). CATATAN S6e-1 (dibuktikan uji, TIDAK diubah):
  * - `isAyatSilangRef` di sini = "referensi punya token apa pun" — benar untuk SETIAP referensi tak-kosong yang wajar
  *   (kode tanpa garis miring pun menjadi codeTokens). Jadi blok pelanggan/charField1 (+40/+25/+40/-25) praktis TIDAK
@@ -375,6 +400,16 @@ export async function cariRetur(returQueries: Map<string, KueriRetur>, returMap:
             xrayLogs.push(`AcceptScore:${acceptScore}`);
 
             const expectedCharField1 = "";
+            // Jalur SRB (retur pelanggan yang sama, bukan ayat silang): retur WAJIB milik pelanggan baris ini. Bukti 28 Nov 2026 (P.27-11-2026):
+            // berkas menulis SRB2676.47 untuk INV/2609/AB00896 (SINAR ABADI C-SIN172), padahal SRB2676.47 = RJN/2611/AB00216 milik H.MAMING
+            // (C-MAM075); retur AB00896 yang benar RJN/2611/AB00217 "INV/2609/AB00896_SRB2676.48_…".
+            const samaPelanggan = (item: Bebas) => {
+                const c = String(item?.customer?.customerNo || item?.customer?.no || "").toUpperCase().trim();
+                const k = custNo.toUpperCase().trim();
+                return Boolean(c && k) && (c === k || c.startsWith(`${k}-`));
+            };
+            // Keterangan RJN di Accurate berpola "<faktur>_<SRB>_input…": nomor faktur baris ini di keterangan = retur untuk faktur ini.
+            const menyebutFaktur = (item: Bebas) => Array.from(meta.invNos).some((inv) => matchesReturTokenBoundary(String(item?.description || ""), inv.trim()));
 
             const tryFindRetur = async (keyword: string, label: string) => {
                 if (ret && !meta.isAyatSilang) return;
@@ -489,7 +524,7 @@ export async function cariRetur(returQueries: Map<string, KueriRetur>, returMap:
                 xrayLogs.push(`${label}_${keyword}_Len:${res.d.length}_Best:${ranked[0]?.score || 0}`);
                 xrayLogs.push(`${label}_${keyword}_Top:[${ranked.slice(0, 3).map((r: Bebas) => `${r.item.number}:${r.score}:${r.item.customer?.customerNo || r.item.customer?.no || '-'}`).join('|')}]`);
                 ranked.forEach((r: Bebas) => {
-                    if (r.score >= acceptScore && !matchedReturns.some((existing: Bebas) => existing.number === r.item.number)) {
+                    if (r.score >= acceptScore && samaPelanggan(r.item) && !matchedReturns.some((existing: Bebas) => existing.number === r.item.number)) {
                         matchedReturns.push(r.item);
                     }
                 });
@@ -529,9 +564,10 @@ export async function cariRetur(returQueries: Map<string, KueriRetur>, returMap:
                         const ranked = fbRes.d
                             .map((item: Bebas) => ({ item, score: scoreReturCandidate(item, custNo, expectedCharField1, parsedRef) }))
                             .sort((a: Bebas, b: Bebas) => b.score - a.score);
-                        if (ranked.length > 0 && ranked[0].score > 0) {
-                            ret = ranked[0].item;
-                        }
+                        // Nomor faktur di keterangan (pelanggan sama) didahulukan: tetap ketemu walau nomor SRB di berkas salah tulis.
+                        const pilih = ranked.find((r: Bebas) => samaPelanggan(r.item) && menyebutFaktur(r.item))
+                            ?? ranked.find((r: Bebas) => r.score > 0 && samaPelanggan(r.item));
+                        if (pilih) ret = pilih.item;
                     } else {
                         xrayLogs.push(`Step4_InvKey_${pureInv}_NoRes`);
                     }
@@ -572,9 +608,9 @@ export async function cariRetur(returQueries: Map<string, KueriRetur>, returMap:
                     const ranked = allReturns
                         .map((item: Bebas) => ({ item, score: scoreReturCandidate(item, custNo, expectedCharField1, parsedRef) }))
                         .sort((a: Bebas, b: Bebas) => b.score - a.score);
-                    if (ranked.length > 0 && ranked[0].score > 0) {
-                        ret = ranked[0].item;
-                    }
+                    const pilih = ranked.find((r: Bebas) => samaPelanggan(r.item) && menyebutFaktur(r.item))
+                        ?? ranked.find((r: Bebas) => r.score > 0 && samaPelanggan(r.item));
+                    if (pilih) ret = pilih.item;
                 }
             }
 
@@ -583,7 +619,8 @@ export async function cariRetur(returQueries: Map<string, KueriRetur>, returMap:
             }
 
             if (matchedReturns.length > 0) {
-                const finalizedReturns = meta.isAyatSilang ? await enrichReturDetails(accurateFetch, matchedReturns, xrayLogs) : matchedReturns;
+                const finalizedReturns = meta.isAyatSilang ? await enrichReturDetails(accurateFetch, matchedReturns, xrayLogs)
+                    : await sisaDariDokumenRjn(accurateFetch, matchedReturns, xrayLogs);
                 // RJN Belum Lunas = primeOwing NEGATIF di Accurate (27 Nov 2026): dijumlah besarnya, bukan saling meniadakan.
                 const totalOutstanding = finalizedReturns.reduce((sum, item) => sum + Math.abs(Number(item.primeOwing) || 0), 0);
                 returMap.set(compositeKey, {
