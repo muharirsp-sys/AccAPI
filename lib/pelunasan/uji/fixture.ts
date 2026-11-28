@@ -203,7 +203,7 @@ const returOmni = () => Array.from({ length: 120 }, (_, i) => retur(400 + i, `SR
 const f7 = (): Fixture => ({
     nama: "f07-retur-step4-step5-galat",
     catatan: "Pencarian kode retur galat jaringan (_ERR) → Step4 (keyword ekor faktur) menemukan; Step5 omni pelanggan dengan paginasi; "
-        + "Step4 melempar → ERROR → NOT_FOUND; baris retur-saja yang NOT_FOUND dilewati; peringatan kembar dideduplikasi.",
+        + "Step4 melempar → dicatat, lanjut Step4b/Step5 → NOT_FOUND bertanda gagal dibaca (retur manual GAGAL DIBACA); baris retur-saja yang NOT_FOUND dilewati; peringatan kembar dideduplikasi.",
     opsi: { ...OPSI_DASAR },
     rows: [
         { "Code Outlet": "PLG-F-001", "No. Nota": "INV/2610/XX00061", "Tunai": 300000, "No.SRB Rt Ktr": "RB-0005", "Pot.RT Ktr": 60000 },

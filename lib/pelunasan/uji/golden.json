@@ -1249,7 +1249,7 @@
     ]
   },
   "f07-retur-step4-step5-galat": {
-    "catatan": "Pencarian kode retur galat jaringan (_ERR) → Step4 (keyword ekor faktur) menemukan; Step5 omni pelanggan dengan paginasi; Step4 melempar → ERROR → NOT_FOUND; baris retur-saja yang NOT_FOUND dilewati; peringatan kembar dideduplikasi.",
+    "catatan": "Pencarian kode retur galat jaringan (_ERR) → Step4 (keyword ekor faktur) menemukan; Step5 omni pelanggan dengan paginasi; Step4 melempar → dicatat, lanjut Step4b/Step5 → NOT_FOUND bertanda gagal dibaca (retur manual GAGAL DIBACA); baris retur-saja yang NOT_FOUND dilewati; peringatan kembar dideduplikasi.",
     "payload": [
       {
         "bankNo": "110102",
@@ -1400,7 +1400,7 @@
         "BG Tetap Diproses": 0,
         "Biaya Tetap Diproses": 0,
         "Ket. All Trx": "",
-        "Aksi Manual": "Retur/Pot.Lain perlu diproses manual di Accurate"
+        "Aksi Manual": "Retur GAGAL DIBACA dari Accurate (belum tentu tidak ada): ulangi pratinjau di menit sepi sebelum input manual"
       },
       {
         "Invoice No": "INV/2610/XX00065",
@@ -1440,7 +1440,7 @@
       ],
       [
         "warning",
-        "2 baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: INV/2610/XX00064 [RB-0007], INV/2610/XX00065 [RB-0008]"
+        "2 baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: INV/2610/XX00064 [RB-0007], INV/2610/XX00065 [RB-0008]. 1 di antaranya GAGAL DIBACA dari Accurate (Accurate sibuk/timeout), belum tentu tidak ada: ulangi pratinjau di luar menit :00/:15/:30/:45 sebelum input manual."
       ],
       [
         "success",
@@ -1460,6 +1460,7 @@
       "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"RB-0007\",\"sp.pageSize\":100}",
       "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"RB-0008\",\"sp.pageSize\":100}",
       "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"XX00063\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"XX00064\",\"sp.pageSize\":100}",
       "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"XX00065\",\"sp.pageSize\":100}",
       "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"RB-0005\",\"sp.pageSize\":100}",
       "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"RB-0006\",\"sp.pageSize\":100}",
@@ -1471,6 +1472,8 @@
       "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.returnDocumentNumber.op\":\"CONTAIN\",\"filter.returnDocumentNumber.val\":\"RB-0008\",\"sp.pageSize\":100}",
       "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-F\",\"sp.pageSize\":100,\"sp.page\":1}",
       "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-F\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-F\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-F\",\"sp.pageSize\":100,\"sp.page\":2}",
       "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-F\",\"sp.pageSize\":100,\"sp.page\":2}",
       "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-F\",\"sp.pageSize\":100,\"sp.page\":2}",
       "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"RB-0005\",\"sp.pageSize\":100}",
