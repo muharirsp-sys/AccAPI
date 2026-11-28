@@ -58,7 +58,10 @@ export const pesanPeringatanRetur = (unresolvedReturWarnings: PeringatanRetur[])
         .slice(0, 3)
         .map((item) => `${item.invoiceNo} [${ringkas(item.refs.join(" | "))}]`)
         .join(", ");
-    return `${unresolvedReturWarnings.length} baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: ${sample}`;
+    const galat = unresolvedReturWarnings.filter((item) => item.tidakTerbaca).length;
+    return `${unresolvedReturWarnings.length} baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: ${sample}`
+        + (galat ? `. ${galat} di antaranya GAGAL DIBACA dari Accurate (Accurate sibuk/timeout), belum tentu tidak ada: ulangi pratinjau di luar menit `
+            + ":00/:15/:30/:45 sebelum input manual." : "");
 };
 
 /** W:1601-1613: baris laporan "Retur Manual" (diunduh halaman sebagai Excel). */
@@ -73,5 +76,7 @@ export const susunBarisManual = (unresolvedReturWarnings: PeringatanRetur[]) => 
     "BG Tetap Diproses": item.bgAmt,
     "Biaya Tetap Diproses": item.biayaBg,
     "Ket. All Trx": item.ketAllTrx,
-    "Aksi Manual": "Retur/Pot.Lain perlu diproses manual di Accurate"
+    "Aksi Manual": item.tidakTerbaca
+        ? "Retur GAGAL DIBACA dari Accurate (belum tentu tidak ada): ulangi pratinjau di menit sepi sebelum input manual"
+        : "Retur/Pot.Lain perlu diproses manual di Accurate"
 }));

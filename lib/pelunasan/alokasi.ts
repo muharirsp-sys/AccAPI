@@ -56,7 +56,9 @@ export type PeringatanRetur = {
     trfAmt: number,
     bgAmt: number,
     biayaBg: number,
-    ketAllTrx: string
+    ketAllTrx: string,
+    /** Retur tak ketemu karena bacaan Accurate GALAT (bukan terbukti tidak ada): ulangi pratinjau sebelum input manual. */
+    tidakTerbaca?: boolean
 };
 
 const TOLERANSI_SELISIH = 100;
@@ -88,13 +90,13 @@ export type ReturIkutAccurate = { row: number; invoiceNo: string; refs: string[]
  * sesuai Accurate; berkas < Accurate dengan selisih ≤ Rp 100 → RJN dihabiskan (kompensasi); selisih > Rp 100 → sesuai berkas.
  */
 function kapasitasRetur(returMap: Map<string, Bebas>, customerNo: string, desc: string, amt: number) {
-    const r = { avail: 0, unresolved: 0, kurang: 0, number: undefined as string | undefined, outstanding: undefined as number | undefined, kompensasi: 0 };
+    const r = { avail: 0, unresolved: 0, kurang: 0, number: undefined as string | undefined, outstanding: undefined as number | undefined, kompensasi: 0, tidakTerbaca: false };
     if (!(amt > 0) || !desc) return r;
     const key = buildReturLookupKey(customerNo.trim(), desc.trim());
     const retData = returMap.get(key);
     if (!retData) { r.unresolved = amt; return r; }
     r.number = retData.number;
-    if (retData.number === "NOT_FOUND") { r.unresolved = amt; return r; }
+    if (retData.number === "NOT_FOUND") { r.unresolved = amt; r.tidakTerbaca = retData.tidakTerbaca === true; return r; }
     const rawOut = Array.isArray(retData.returns) ? sisaReturHidup(returMap, customerNo, desc) : retData.outstanding;
     if (rawOut == null || isNaN(Number(rawOut))) { r.avail = amt; return r; }
     const retOut = Math.abs(Number(rawOut));
@@ -360,7 +362,8 @@ export function alokasikan(cleanedData: Bebas[], ctx: {
                     unresolvedSrbAmt: srb.unresolved,
                     unresolvedRjsAmt: rjs.unresolved,
                     tunaiAmt, trfAmt, bgAmt, biayaBg,
-                    ketAllTrx: String(getVal(row, "Ket. All Trx") || "")
+                    ketAllTrx: String(getVal(row, "Ket. All Trx") || ""),
+                    ...((srb.unresolved > 0 && srb.tidakTerbaca) || (rjs.unresolved > 0 && rjs.tidakTerbaca) ? { tidakTerbaca: true } : {}),
                 });
             }
         }
